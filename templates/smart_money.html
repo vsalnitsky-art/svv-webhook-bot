@@ -1975,7 +1975,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     💰 Funding — ММ по монетах
                     <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— окремий скан монет із 💰 Funding Rate Scanner на появу «ММ»</span>
                 </div>
-                <button onclick="clearAnomalies()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити таблицю Funding">🗑️ Очистити всі</button>
+                <div style="display:flex;gap:8px">
+                    <button onclick="showFundingArchive()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(96,165,250,0.4);background:rgba(96,165,250,0.1);color:#60a5fa;cursor:pointer" title="Архів історії всіх монет (зокрема тих, що зникли з радара)">📜 Архів монет</button>
+                    <button onclick="clearAnomalies()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити таблицю Funding">🗑️ Очистити всі</button>
+                </div>
             </div>
 
             <!-- ⚙️ Налаштування для таблиці 💰 Funding — ММ по монетах -->
@@ -7223,7 +7226,7 @@ function renderFuelFilter(d) {
                        : v >= 1e3 ? '$' + (v/1e3).toFixed(0) + 'K' : '$' + v.toFixed(0))
                     : '<span style="color:#667">—</span>';
                 return `<tr style="background:rgba(16,185,129,0.06)">
-                    <td style="font-weight:600"><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
+                    <td style="font-weight:600"><span onclick="showFundingHistory('${a.symbol}')" title="Історія монети (архів)" style="cursor:pointer;margin-right:4px">📜</span><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
                     <td>${dirHtml}</td>
                     <td style="font-size:0.72rem">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}${a.paused ? ' <span title="Сесія на паузі (WAIT) — тримається за напрямком" style="color:#fbbf24;font-weight:700">⏸</span>' : ''}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
@@ -8005,6 +8008,97 @@ function renderTradeHistoryChart(h, meta) {
     const pricePanel = panel('Ціна', [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 4 });
 
     return info + info2 + dcLine + pnlPanel + mmPanel + bannerStrip() + pricePanel;
+}
+
+// ── 📜 Funding-coin ARCHIVE (history of appear/flip/exit + metrics) ──────
+async function showFundingHistory(sym) {
+    const modal = ensureHistModal();
+    modal.querySelector('.tm-hist-title').textContent = `📜 ${sym} — історія funding-монети`;
+    const body = modal.querySelector('.tm-hist-body');
+    body.innerHTML = '<div style="padding:24px;color:#888">Завантаження…</div>';
+    modal.style.display = 'flex';
+    try {
+        const d = await (await fetch('/api/fuel-filter/funding-history?symbol=' + encodeURIComponent(sym))).json();
+        const h = (d && d.history) || [];
+        if (!h.length) { body.innerHTML = '<div style="padding:24px;color:#888">Немає архіву для цієї монети (ще не записувалась).</div>'; return; }
+        body.innerHTML = renderFundingHistoryChart(h, d);
+    } catch (e) { body.innerHTML = `<div style="padding:24px;color:#f87171">Помилка: ${e}</div>`; }
+}
+
+async function showFundingArchive() {
+    const modal = ensureHistModal();
+    modal.querySelector('.tm-hist-title').textContent = '📜 Архів funding-монет';
+    const body = modal.querySelector('.tm-hist-body');
+    body.innerHTML = '<div style="padding:24px;color:#888">Завантаження…</div>';
+    modal.style.display = 'flex';
+    try {
+        const d = await (await fetch('/api/fuel-filter/funding-archive')).json();
+        const coins = (d && d.coins) || [];
+        if (!coins.length) { body.innerHTML = '<div style="padding:24px;color:#888">Архів порожній.</div>'; return; }
+        const _fmtDT = t => { try { return new Date(t * 1000).toLocaleString('uk-UA'); } catch (e) { return t; } };
+        body.innerHTML = '<div style="max-height:70vh;overflow:auto">'
+            + '<table class="tm-table" style="width:100%"><thead><tr><th>Монета</th><th>Записів</th><th>Перше</th><th>Останнє</th><th></th></tr></thead><tbody>'
+            + coins.map(c => `<tr>
+                <td><b style="cursor:pointer;color:#60a5fa" onclick="showFundingHistory('${c.symbol}')">📜 ${c.symbol}</b>${c.live ? ' <span style="color:#34d399" title="Зараз на радарі">●</span>' : ''}</td>
+                <td>${c.count}</td>
+                <td style="color:#8b93a7">${_fmtDT(c.first_t)}</td>
+                <td style="color:#8b93a7">${_fmtDT(c.last_t)}</td>
+                <td><button class="tk-btn" style="padding:2px 8px;font-size:0.72rem" onclick="showFundingHistory('${c.symbol}')">Історія</button></td>
+            </tr>`).join('')
+            + '</tbody></table></div>';
+    } catch (e) { body.innerHTML = `<div style="padding:24px;color:#f87171">Помилка: ${e}</div>`; }
+}
+
+function renderFundingHistoryChart(h, meta) {
+    const t0 = h[0].t, tN = h[h.length - 1].t, span = Math.max(1, tN - t0);
+    const W = 860, PAD = 34;
+    const xOf = s => PAD + ((s.t - t0) / span) * (W - 2 * PAD);
+    const _fmtDT = t => { try { return new Date(t * 1000).toLocaleString('uk-UA'); } catch (e) { return t; } };
+
+    function panel(title, series, opts) {
+        const H = opts.h || 150;
+        let all = [];
+        series.forEach(se => h.forEach(s => { const v = se.acc(s); if (v != null && isFinite(v)) all.push(v); }));
+        if (!all.length) return '';
+        let lo = (opts.min != null) ? opts.min : Math.min(...all);
+        let hi = (opts.max != null) ? opts.max : Math.max(...all);
+        if (opts.includeZero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+        if (lo === hi) { lo -= 1; hi += 1; }
+        const yOf = v => PAD + (1 - (v - lo) / (hi - lo)) * (H - 2 * PAD);
+        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block"><rect width="${W}" height="${H}" fill="rgba(255,255,255,0.02)"/>`;
+        [lo, (lo + hi) / 2, hi].forEach(gv => { const y = yOf(gv); svg += `<line x1="${PAD}" y1="${y.toFixed(1)}" x2="${W - PAD}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.08)"/><text x="4" y="${(y + 3).toFixed(1)}" fill="#8b93a7" font-size="10">${gv.toFixed(opts.dec != null ? opts.dec : 1)}</text>`; });
+        if (lo < 0 && hi > 0) { const yz = yOf(0); svg += `<line x1="${PAD}" y1="${yz.toFixed(1)}" x2="${W - PAD}" y2="${yz.toFixed(1)}" stroke="rgba(255,255,255,0.25)" stroke-dasharray="3 3"/>`; }
+        // event markers
+        h.forEach(s => { if (s.ev && s.ev !== 'sample') { const x = xOf(s); const c = s.ev === 'appear' ? '#22c55e' : (s.ev === 'flip' ? '#fbbf24' : '#ef4444'); svg += `<line x1="${x.toFixed(1)}" y1="${PAD}" x2="${x.toFixed(1)}" y2="${H - PAD}" stroke="${c}" stroke-opacity="0.35" stroke-dasharray="2 2"/>`; } });
+        series.forEach(se => { const pts = h.map(s => { const v = se.acc(s); if (v == null || !isFinite(v)) return null; return `${xOf(s).toFixed(1)},${yOf(v).toFixed(1)}`; }).filter(Boolean); if (pts.length) svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="${se.color}" stroke-width="1.8"/>`; });
+        svg += `<text x="${PAD}" y="14" fill="#cbd5e1" font-size="11" font-weight="700">${title}</text></svg>`;
+        const legend = series.map(se => `<span style="color:${se.color}">■ ${se.name}</span>`).join(' &nbsp; ');
+        return `<div style="margin-bottom:10px">${svg}<div style="font-size:0.66rem;color:#8b93a7;text-align:center">${legend}</div></div>`;
+    }
+    function bannerStrip() {
+        if (!h.some(s => s.btc_dir != null || s.btc_paused != null)) return '';
+        const H = 40, top = 18, bh = 14, colOf = d => d === 'LONG' ? '#22c55e' : (d === 'SHORT' ? '#ef4444' : '#6b7280');
+        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block"><text x="${PAD}" y="12" fill="#cbd5e1" font-size="11" font-weight="700">₿ Банер BTCUSDT</text>`;
+        for (let i = 0; i < h.length; i++) { const s = h[i]; const x1 = xOf(s), x2 = i < h.length - 1 ? xOf(h[i + 1]) : (W - PAD); svg += `<rect x="${x1.toFixed(1)}" y="${top}" width="${Math.max(1, x2 - x1).toFixed(1)}" height="${bh}" fill="${colOf(s.btc_dir)}" opacity="${s.btc_paused ? 0.35 : 0.9}"/>`; }
+        svg += `</svg>`;
+        return `<div style="margin-bottom:10px">${svg}<div style="font-size:0.66rem;color:#8b93a7;text-align:center"><span style="color:#22c55e">■ LONG</span> &nbsp; <span style="color:#ef4444">■ SHORT</span> &nbsp; <span style="color:#6b7280">■ WAIT</span> &nbsp; напівпрозорий=ПАУЗА</div></div>`;
+    }
+    const events = h.filter(s => s.ev && s.ev !== 'sample');
+    const evName = e => e === 'appear' ? '🟢 поява' : (e === 'flip' ? '🔄 розворот' : (e === 'exit' ? '🔴 зникнення' : e));
+    const evLog = events.length ? `<div style="max-height:130px;overflow:auto;font-size:0.72rem;color:#cbd5e1;margin-bottom:10px;border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px">`
+        + `<div style="color:#8b93a7;margin-bottom:4px">Події:</div>`
+        + events.map(s => `<div>${_fmtDT(s.t)} · ${evName(s.ev)} · <b>${s.mm_dir || '—'}</b> · ММ ${s.mm != null ? s.mm + '%' : '—'} · фандінг ${s.funding != null ? (+s.funding).toFixed(4) + '%' : '—'} · ₿ ${s.btc_dir || 'WAIT'}${s.btc_paused ? ' ⏸' : ''}</div>`).join('')
+        + `</div>` : '';
+    const info = `<div style="font-size:0.74rem;color:#cbd5e1;margin-bottom:6px;display:flex;gap:16px;flex-wrap:wrap">`
+        + `<span>Записів: <b>${h.length}</b></span>`
+        + `<span>Подій: <b>${events.length}</b></span>`
+        + (meta.live ? `<span style="color:#34d399"><b>● зараз на радарі</b></span>` : `<span style="color:#8b93a7">поза радаром</span>`)
+        + `<span style="color:#8b93a7">${_fmtDT(t0)} → ${_fmtDT(tN)}</span></div>`;
+    const mmPanel = panel('ММ, %', [{ name: 'ММ', color: '#fbbf24', acc: s => s.mm }], { min: 0, max: 100, dec: 0 });
+    const fundPanel = panel('Фандінг, %', [{ name: 'Funding', color: '#a78bfa', acc: s => s.funding }], { includeZero: true, dec: 4 });
+    const pricePanel = panel('Ціна', [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 6 });
+    const volPanel = panel('Vol 24h ($)', [{ name: 'Vol', color: '#34d399', acc: s => s.vol24h }], { dec: 0 });
+    return info + evLog + mmPanel + fundPanel + pricePanel + volPanel + bannerStrip();
 }
 
 async function loadTMState() {

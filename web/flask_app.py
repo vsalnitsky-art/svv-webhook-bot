@@ -2873,6 +2873,31 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/funding-history')
+    def api_ff_funding_history():
+        """Archived per-coin funding history (signals, ММ, funding, price, ₿,
+        Vol) for one symbol. Spans multiple appear→exit episodes."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            return jsonify(ff.get_funding_history(request.args.get('symbol', '')))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/funding-archive')
+    def api_ff_funding_archive():
+        """Index of all archived funding coins (incl. ones off the radar now)."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            return jsonify({'ok': True, 'coins': ff.get_funding_archive_list()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/settings', methods=['POST'])
     def api_fuel_filter_settings():
         """Update settings. Body may include any of: enabled, duration_minutes,

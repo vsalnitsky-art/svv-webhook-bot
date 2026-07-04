@@ -70,6 +70,10 @@ MIN_HOLD_AFTER_OPEN_SEC = 90
 _DB_SETTINGS = 'fuel_filter_settings'
 _DB_STATE = 'fuel_filter_state'
 _DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
+_DB_FUNDING_ARCHIVE = 'fuel_filter_funding_archive'  # per-coin funding history
+FUNDING_ARCH_MAX = 800          # max samples kept per coin
+FUNDING_ARCH_COINS_MAX = 400    # max distinct coins archived
+FUNDING_ARCH_SAMPLE_SEC = 60    # periodic sample cadence while a coin is live
 
 # ─── queue (❤️ Черга на вхід) removal operations ───
 # Every place that REMOVES a coin from _pending is numbered and guarded. These
@@ -225,6 +229,15 @@ class FuelFilterDaemon:
         # {symbol: ts of last funding "appear" TG} — anti-spam cooldown so a coin
         # that flickers around the ММ-strength threshold isn't re-announced.
         self._funding_notify_at: Dict[str, float] = {}
+        # Persistent per-coin funding archive: {sym: [ {t,ev,mm,mm_dir,funding,
+        # price,vol24h,btc_dir,btc_paused} ]}. Re-appearing coins APPEND to the
+        # existing series. _funding_prev_state tracks last snapshot for event
+        # detection; _funding_arch_last throttles periodic samples.
+        self._funding_archive: Dict[str, List[Dict]] = {}
+        self._funding_prev_state: Dict[str, Dict] = {}
+        self._funding_arch_last: Dict[str, float] = {}
+        self._funding_arch_dirty = False
+        self._funding_arch_saved_at = 0.0
         # {symbol: current funding %} for funding-sourced coins (UI display).
         self._funding_rates: Dict[str, float] = {}
         # {symbol: nextFundingTime ms} — countdown to next funding settlement.
@@ -522,6 +535,17 @@ class FuelFilterDaemon:
             # live in their OWN table, persist across fuel loss, and are removed
             # only by the user (manual delete / clear). {symbol: {...}}
             self._anomalies = st.get('anomalies', {}) or {}
+            # Persistent per-coin funding archive (separate DB key — can grow).
+            try:
+                fa = self._db.get_setting(_DB_FUNDING_ARCHIVE, {}) or {}
+                if isinstance(fa, dict):
+                    self._funding_archive = {str(k).upper(): (v or [])
+                                             for k, v in fa.items()
+                                             if isinstance(v, list)}
+                    print(f"[FuelFilter] restored funding archive: "
+                          f"{len(self._funding_archive)} coin(s)")
+            except Exception as e:
+                print(f"[FuelFilter] funding archive load error: {e}")
             # Candle-confirm attempt counters per coin — restored so the
             # "🕯️ Спроби" column and the "Opened by" attempt number survive
             # a bot restart instead of resetting to 0.
@@ -581,6 +605,101 @@ class FuelFilterDaemon:
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
+
+    # ------------------------------------------------------------------
+    # per-coin funding ARCHIVE (history of what happened & when)
+    # ------------------------------------------------------------------
+    def _push_funding_arch(self, sym, event, snap, now):
+        """Append one archive record for `sym`. Re-appearing coins extend the
+        SAME series (self._funding_archive[sym] already exists)."""
+        rec = {
+            't': int(now), 'ev': event,
+            'mm': snap.get('mm'), 'mm_dir': snap.get('dir'),
+            'funding': snap.get('funding'), 'price': snap.get('price'),
+            'vol24h': snap.get('vol24h'),
+            'btc_dir': self._btc_verdict_dir,
+            'btc_paused': bool(self._btc_paused),
+        }
+        arr = self._funding_archive.get(sym)
+        if arr is None:
+            # cap distinct coins — drop the least-recently-updated archive
+            if len(self._funding_archive) >= FUNDING_ARCH_COINS_MAX:
+                try:
+                    oldest = min(self._funding_archive,
+                                 key=lambda k: (self._funding_archive[k][-1]['t']
+                                                if self._funding_archive[k] else 0))
+                    self._funding_archive.pop(oldest, None)
+                except Exception:
+                    pass
+            arr = self._funding_archive[sym] = []
+        arr.append(rec)
+        if len(arr) > FUNDING_ARCH_MAX:
+            del arr[:len(arr) - FUNDING_ARCH_MAX]
+        self._funding_arch_dirty = True
+
+    def _archive_funding_pass(self, now):
+        """Central event detector for the funding table → archive. Compares the
+        current holding coins to the previous tick and records appear / flip /
+        exit / periodic sample. One place → no edits to the scan branches."""
+        prev = self._funding_prev_state
+        cur = {}
+        for sym, a in self._anomalies.items():
+            if a.get('funding') and a.get('holding'):
+                rate = self._funding_rates.get(sym)
+                if rate is None:
+                    rate = a.get('rate')
+                cur[sym] = {
+                    'dir': a.get('dir'), 'mm': a.get('mm_str'),
+                    'price': a.get('last_price') or a.get('start_price'),
+                    'funding': rate, 'vol24h': a.get('vol24h'),
+                }
+        for sym in (set(prev) | set(cur)):
+            ps, cs = prev.get(sym), cur.get(sym)
+            if cs and not ps:
+                self._push_funding_arch(sym, 'appear', cs, now)
+                self._funding_arch_last[sym] = now
+            elif cs and ps and cs.get('dir') != ps.get('dir'):
+                self._push_funding_arch(sym, 'flip', cs, now)
+                self._funding_arch_last[sym] = now
+            elif ps and not cs:
+                self._push_funding_arch(sym, 'exit', ps, now)
+            elif cs and ps:
+                if (now - self._funding_arch_last.get(sym, 0)) >= FUNDING_ARCH_SAMPLE_SEC:
+                    self._push_funding_arch(sym, 'sample', cs, now)
+                    self._funding_arch_last[sym] = now
+        self._funding_prev_state = cur
+        # Throttled persist of the (growing) archive to its own DB key.
+        if self._funding_arch_dirty and (now - self._funding_arch_saved_at) >= 30:
+            try:
+                self._db.set_setting(_DB_FUNDING_ARCHIVE, self._funding_archive)
+                self._funding_arch_saved_at = now
+                self._funding_arch_dirty = False
+            except Exception as e:
+                print(f"[FuelFilter] funding archive persist error: {e}")
+
+    def get_funding_history(self, sym: str) -> List[Dict]:
+        """Full archived series for one funding coin (may span several
+        appear→exit episodes)."""
+        sym = (sym or '').upper()
+        with self._lock:
+            live = bool(sym in self._anomalies and self._anomalies[sym].get('holding'))
+            return {'ok': True, 'symbol': sym, 'live': live,
+                    'history': list(self._funding_archive.get(sym) or [])}
+
+    def get_funding_archive_list(self) -> List[Dict]:
+        """Index of archived coins (incl. ones no longer on the radar), newest
+        activity first."""
+        with self._lock:
+            out = []
+            for s, arr in self._funding_archive.items():
+                if not arr:
+                    continue
+                live = bool(s in self._anomalies and self._anomalies[s].get('holding'))
+                out.append({'symbol': s, 'count': len(arr),
+                            'first_t': arr[0].get('t'), 'last_t': arr[-1].get('t'),
+                            'live': live})
+            out.sort(key=lambda x: -(x.get('last_t') or 0))
+            return out
 
     # ------------------------------------------------------------------
     # per-coin SCORE for the active-timers table
@@ -1758,6 +1877,11 @@ class FuelFilterDaemon:
                                 reason=_reason)
                         self._anomalies.pop(sym, None)
                         self._funding_notify_at.pop(sym, None)
+            # Record what happened this tick into the per-coin archive.
+            try:
+                self._archive_funding_pass(now)
+            except Exception as e:
+                print(f"[FuelFilter] funding archive pass error: {e}")
             self._persist_state()
 
     @staticmethod
