@@ -150,6 +150,12 @@ DEFAULT_SETTINGS = {
     # A funding coin appears in the 💰 ММ table only if its ММ (fuel) STRENGTH
     # (|fuel dir|×100) ≥ this. 0 = off, 30 = помірний (≥30%), 60 = сильне (≥60%).
     'funding_min_mm_strength': 0,
+    # Extra filter for the ENTRY ("appear") Telegram message ONLY (does NOT
+    # affect the table, and does NOT affect exit messages):
+    #   funding_tg_entry_dir     — 'any' | 'LONG' | 'SHORT' (тільки цей напрямок)
+    #   funding_tg_entry_min_mm  — мін. сила ММ, щоб слати «появу» (0 = off)
+    'funding_tg_entry_dir': 'any',
+    'funding_tg_entry_min_mm': 0,
     # Anti-spam for funding-coin appear alerts:
     #  cooldown — не слати повторну «появу» по монеті стільки хвилин;
     #  hysteresis — монета «зникає» лише коли сила ММ впаде на стільки % НИЖЧЕ
@@ -1790,6 +1796,20 @@ class FuelFilterDaemon:
             return
         if (not entered) and not settings.get('ff_tg_on_exit'):
             return
+        # ENTRY-only extra filters (do NOT touch exit messages): direction and
+        # minimum ММ strength. E.g. «пропускати лише LONG і з ММ ≥ 90».
+        if entered:
+            _edir = str(settings.get('funding_tg_entry_dir', 'any') or 'any').upper()
+            if _edir in ('LONG', 'SHORT') and d != _edir:
+                return
+            try:
+                _emin = int(settings.get('funding_tg_entry_min_mm', 0) or 0)
+            except (TypeError, ValueError):
+                _emin = 0
+            if _emin > 0:
+                _sv = strength if strength is not None else self._fuel_str.get(sym)
+                if _sv is None or float(_sv) < _emin:
+                    return
         try:
             rate = self._funding_rates.get(sym)
             # rate from the scanner may be gone once a coin left it — fall back

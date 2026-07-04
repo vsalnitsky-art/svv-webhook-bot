@@ -2020,6 +2020,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <input type="checkbox" id="ff-tg-exit" onchange="saveFuelFilterSettings()"> ⛔ TG на зникнення
                             </label>
                         </div>
+                        <!-- Фільтр ЛИШЕ для повідомлень про ПОЯВУ (не для зникнення) -->
+                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:end;margin-top:8px">
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Слати оповіщення про ПОЯВУ лише для цього напрямку. На зникнення не впливає.">Появу слати: напрямок</label>
+                                <select id="ff-funding-entry-dir" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                                    <option value="any">Будь-який</option>
+                                    <option value="LONG">Тільки LONG</option>
+                                    <option value="SHORT">Тільки SHORT</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Слати оповіщення про ПОЯВУ лише якщо сила ММ ≥ цього. 0 = вимкнено. На зникнення не впливає.">Появу слати: ММ ≥</label>
+                                <input type="number" id="ff-funding-entry-minmm" min="0" max="100" step="5" onchange="saveFuelFilterSettings()" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                            </div>
+                        </div>
                         <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:8px">
                             <div style="flex:1;min-width:260px">
                                 <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px">Шаблон: поява монети <button type="button" onclick="ffResetTpl('entry')" style="margin-left:6px;font-size:0.6rem;padding:1px 6px;border-radius:4px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#9ca3af;cursor:pointer" title="Скинути до стандартного тексту й зберегти">↩️ Стандартний</button></label>
@@ -7042,6 +7057,8 @@ function renderFuelFilter(d) {
     setIf('ff-funding-session', !!s.funding_session_mode);
     setIf('ff-funding-duration', s.funding_duration_minutes != null ? s.funding_duration_minutes : 0);
     setIf('ff-tg-entry', !!s.ff_tg_on_entry);
+    setIf('ff-funding-entry-dir', s.funding_tg_entry_dir || 'any');
+    setIf('ff-funding-entry-minmm', String(s.funding_tg_entry_min_mm != null ? s.funding_tg_entry_min_mm : 0));
     setIf('ff-tg-exit', !!s.ff_tg_on_exit);
     setIf('ff-tg-entry-tpl', s.ff_tg_entry_template != null ? s.ff_tg_entry_template : '');
     setIf('ff-tg-exit-tpl', s.ff_tg_exit_template != null ? s.ff_tg_exit_template : '');
@@ -7675,6 +7692,8 @@ async function saveFuelFilterSettings() {
         funding_mm_hysteresis: parseInt(_v('ff-funding-hyst', '10') || '10', 10),
         funding_session_mode: _c('ff-funding-session'),
         ff_tg_on_entry: _c('ff-tg-entry'),
+        funding_tg_entry_dir: _v('ff-funding-entry-dir', 'any') || 'any',
+        funding_tg_entry_min_mm: parseInt(_v('ff-funding-entry-minmm', '0') || '0', 10),
         ff_tg_on_exit: _c('ff-tg-exit'),
         ff_tg_entry_template: _v('ff-tg-entry-tpl', ''),
         ff_tg_exit_template: _v('ff-tg-exit-tpl', ''),
