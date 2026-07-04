@@ -7808,7 +7808,7 @@ function ffFuelCell(dir, now, prev) {
 function tvSym(sym, label) {
     const s = String(sym || '').toUpperCase();
     // Bybit PERPETUAL futures on TradingView = SYMBOL.P (spot has no suffix).
-    const url = `https://www.tradingview.com/chart/?symbol=BYBIT:${s}.P`;
+    const url = `https://ru.tradingview.com/chart/?symbol=BYBIT:${s}.P`;
     // window.open(url, 'tvchart') RE-USES the named tab we opened earlier
     // (target="tvchart" + rel=noopener was spawning a fresh tab each click).
     return `<a href="${url}"`
