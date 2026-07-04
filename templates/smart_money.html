@@ -3348,7 +3348,7 @@ function renderWatchlist(list) {
         // table is now fed by intercepting the main LONG/SHORT open flow.)
 
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span><span style="color:${srcColor};font-weight:600">${short}</span></span>
+            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span><span style="color:${srcColor};font-weight:600">${tvSym(sym, short)}</span></span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
@@ -7150,7 +7150,7 @@ function renderFuelFilter(d) {
                 // positions tables).
                 const scoreHtml = ffScoreBadgeHTML(t.score);
                 return `<tr style="${rowStyle}">
-                    <td style="font-weight:600${symColor}">${srcBadge}<span>${t.symbol}</span>${fundLbl}${fundNext}</td>
+                    <td style="font-weight:600${symColor}">${srcBadge}${tvSym(t.symbol)}${fundLbl}${fundNext}</td>
                     <td>${dirHtml}</td>
                     <td style="white-space:nowrap;font-size:0.8rem">${mmHtml}</td>
                     <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
@@ -7223,7 +7223,7 @@ function renderFuelFilter(d) {
                        : v >= 1e3 ? '$' + (v/1e3).toFixed(0) + 'K' : '$' + v.toFixed(0))
                     : '<span style="color:#667">—</span>';
                 return `<tr style="background:rgba(16,185,129,0.06)">
-                    <td style="font-weight:600"><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span><span>${a.symbol}</span></td>
+                    <td style="font-weight:600"><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
                     <td>${dirHtml}</td>
                     <td style="font-size:0.72rem">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}${a.paused ? ' <span title="Сесія на паузі (WAIT) — тримається за напрямком" style="color:#fbbf24;font-weight:700">⏸</span>' : ''}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
@@ -7802,21 +7802,32 @@ function ffFuelCell(dir, now, prev) {
 // ── 📈 Per-trade history chart (clicking a closed trade) ─────────────────
 // Symbol cell becomes a link when the trade carries a recorded time-series
 // (hist_len>0). Click → fetch /api/tm/trade-history → SVG chart modal.
-function histSymCell(c, isShadow) {
-    if (!(c.hist_len > 0)) return `<b>${c.symbol}</b>`;
-    const ca = JSON.stringify(c.closed_at);
-    return `<b style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px"`
-        + ` title="Показати графік хронології (${c.hist_len} точок)"`
-        + ` onclick="showTradeHistory('${c.symbol}', ${ca}, ${isShadow ? 'true' : 'false'})">📈 ${c.symbol}</b>`;
+// Coin name → TradingView chart, REUSING one browser tab (target="tvchart").
+// Bybit is the trade venue, so we prefix BYBIT:. stopPropagation so the link
+// doesn't also trigger a row's select/other onclick.
+function tvSym(sym, label) {
+    const s = String(sym || '').toUpperCase();
+    return `<a href="https://www.tradingview.com/chart/?symbol=BYBIT:${s}" target="tvchart" rel="noopener"`
+        + ` title="Відкрити BYBIT:${s} у TradingView (одна вкладка)"`
+        + ` onclick="event.stopPropagation()"`
+        + ` style="color:inherit;text-decoration:none;border-bottom:1px dotted rgba(255,255,255,0.4)">${label != null ? label : s}</a>`;
 }
 
-// Open-position symbol cell — same 📈 chart link (icon on the LEFT), fetches
-// the live/in-progress history (closed_at = null → endpoint uses open pos).
+// Closed-trade cell: 📈 (left) = history chart, the NAME = TradingView link.
+function histSymCell(c, isShadow) {
+    const tv = tvSym(c.symbol);
+    if (!(c.hist_len > 0)) return `<b>${tv}</b>`;
+    const ca = JSON.stringify(c.closed_at);
+    return `<b><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${c.hist_len} точок)"`
+        + ` onclick="event.stopPropagation();showTradeHistory('${c.symbol}', ${ca}, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`;
+}
+
+// Open-position cell: 📈 (left) = live history chart, NAME = TradingView link.
 function histSymOpen(p, isShadow) {
-    if (!(p.hist_len > 0)) return `<b class="tm-sym-name">${p.symbol}</b>`;
-    return `<b class="tm-sym-name" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px"`
-        + ` title="Показати графік хронології (${p.hist_len} точок)"`
-        + ` onclick="showTradeHistory('${p.symbol}', null, ${isShadow ? 'true' : 'false'})">📈 ${p.symbol}</b>`;
+    const tv = tvSym(p.symbol);
+    if (!(p.hist_len > 0)) return `<b class="tm-sym-name">${tv}</b>`;
+    return `<b class="tm-sym-name"><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${p.hist_len} точок)"`
+        + ` onclick="event.stopPropagation();showTradeHistory('${p.symbol}', null, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`;
 }
 
 function ensureHistModal() {
