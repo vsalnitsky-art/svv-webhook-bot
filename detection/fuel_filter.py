@@ -92,8 +92,9 @@ FUNDING_ARCH_SAMPLE_SEC = 60    # periodic sample cadence while a coin is live
 #   7 = remove_pending()
 #   8 = clear_pending()
 #   9 = manual force-open (force_open_timer success)
+#  10 = TTL expiry — coin waited longer than queue_ttl_hours without opening
 _QUEUE_OPS_ALLOWED = {1: True, 2: True, 3: True, 4: True, 5: True,
-                      6: True, 7: True, 8: True, 9: True}
+                      6: True, 7: True, 8: True, 9: True, 10: True}
 
 
 def _q_allowed(op: int) -> bool:
@@ -110,6 +111,10 @@ DEFAULT_SETTINGS = {
     'use_potential_exit': True,   # toggle the exhaustion exit on/off
     'max_exhaustion_pct': 75,     # engine/open GATE: skip a coin if its move is
                                   # more exhausted than this % (0..100). Active.
+    # ❤️ queue TTL: a coin that has waited longer than this many HOURS without
+    # opening is auto-dropped from the queue (OP-10). Keeps the now two-sided
+    # queue from growing forever. 0 = off (only manual/flip removal).
+    'queue_ttl_hours': 24,
     'skip_wait_coins': False,     # (legacy) not used for auto-open anymore
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its ММ (fuel) STRENGTH
@@ -379,6 +384,10 @@ class FuelFilterDaemon:
             1, min(100, int(s.get('potential_threshold_pct', 95) or 95)))
         s['max_exhaustion_pct'] = max(
             1, min(100, int(s.get('max_exhaustion_pct', 75) or 75)))
+        try:
+            s['queue_ttl_hours'] = max(0, min(720, int(s.get('queue_ttl_hours', 24) or 0)))
+        except (TypeError, ValueError):
+            s['queue_ttl_hours'] = 24
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
         s['enabled'] = bool(s.get('enabled', False))
@@ -434,18 +443,15 @@ class FuelFilterDaemon:
     # ❤️ FF "база" — intercepted coins waiting to open
     # ------------------------------------------------------------------
     def intercept(self, symbol: str, side: str) -> bool:
-        """Catch a coin the main LONG/SHORT flow would have opened. We ONLY
-        accumulate FRESH signals whose direction matches an ENABLED main button
-        (LONG button on → only LONG signals queue, and vice versa). Direction
-        self-overwrites on re-entry. The engine opens it later on ₿ START when
-        its fuel matches. Returns True if queued, False if dropped."""
+        """Catch a coin the main LONG/SHORT flow would have opened. We accumulate
+        EVERY fresh signal REGARDLESS of direction — the queue is now two-sided
+        (both LONG and SHORT wait together). The main LONG/SHORT buttons no longer
+        gate ENTRY; they gate OPENING only (the engine's _entry_gates decides which
+        side may actually open). Direction self-overwrites on re-entry. Returns
+        True if queued, False if the input was invalid."""
         sym = (symbol or '').upper().strip()
         side = (side or '').upper().strip()
         if not sym or side not in ('LONG', 'SHORT'):
-            return False
-        # Direction gate: the matching main button must be ON.
-        allow_long, allow_short = self._entry_gates()
-        if (side == 'LONG' and not allow_long) or (side == 'SHORT' and not allow_short):
             return False
         with self._lock:
             prev = self._pending.get(sym) or {}
@@ -1209,17 +1215,23 @@ class FuelFilterDaemon:
                 self._persist_state()
             return
 
-        # OPPOSITE direction → NEW session: reset timer + CLEAR the whole queue.
+        # OPPOSITE direction → NEW session: reset timer. The queue is now
+        # TWO-SIDED, so a flip must NOT wipe everything — it purges ONLY the
+        # entries that point AGAINST the new session direction (they can't open
+        # anymore), and KEEPS the coins that match the new side (they just became
+        # the actionable ones). This is the original OP-4 «purge opposite» intent.
         self._btc_verdict_dir = live
         self._btc_verdict_since = now
         self._btc_paused = False
-        if _q_allowed(4):   # OP 4: session flip → clear the queue
+        if _q_allowed(4):   # OP 4: session flip → purge OPPOSITE-direction entries
             with self._lock:
-                n = len(self._pending)
-                self._pending = {}
-                self._engine_attempts.clear()
-            if n:
-                print(f"[FuelFilter] сеанс {sess}→{live}: чергу очищено ({n} монет)")
+                opp = [s for s, i in self._pending.items() if i.get('dir') != live]
+                for s in opp:
+                    self._pending.pop(s, None)
+                    self._engine_attempts.pop(s, None)
+            if opp:
+                print(f"[FuelFilter] сеанс {sess}→{live}: прибрано {len(opp)} "
+                      f"монет протилежного напрямку (монети {live} лишились)")
         self._persist_state()
 
     def _bias(self, symbol: str) -> Dict:
@@ -1648,6 +1660,27 @@ class FuelFilterDaemon:
             self._funding_vols = self._get_funding_volumes()
             managed = list(self._fuel_managed.keys())
             pending = list(self._pending.keys())
+
+        # OP-10: drop queued coins that have waited longer than the TTL
+        # (queue_ttl_hours) without ever opening. Bounds the now two-sided queue.
+        # 0 = disabled (only manual/flip removal).
+        try:
+            _ttl_h = float(settings.get('queue_ttl_hours', 0) or 0)
+        except (TypeError, ValueError):
+            _ttl_h = 0.0
+        if _ttl_h > 0 and _q_allowed(10):
+            _ttl = _ttl_h * 3600.0
+            with self._lock:
+                _expired = [s for s, i in self._pending.items()
+                            if (now - i.get('added_at', now)) > _ttl]
+                for s in _expired:
+                    self._pending.pop(s, None)
+                    self._engine_attempts.pop(s, None)
+                if _expired:
+                    self._persist_state()
+            if _expired:
+                print(f"[FuelFilter] TTL {_ttl_h:.0f}h: прибрано з черги "
+                      f"{len(_expired)} застарілих: {', '.join(_expired)}")
 
         # Prune STALE managed markers (TM no longer holds the position) EVERY
         # tick — independent of the manage_open_positions toggle. Without this,

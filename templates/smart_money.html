@@ -1880,6 +1880,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="ff-max-exh" min="1" max="100" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="TTL черги (год): монета, що чекає в ❤️ Черзі довше за цей час без відкриття, автоматично прибирається (OP-10). Стримує двонапрямкову чергу від нескінченного росту. 0 = вимкнено.">TTL черги (год)</label>
+                            <input type="number" id="ff-queue-ttl" min="0" max="720" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
+                        </div>
+                        <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Закривати відкриті угоди (real+test) за банером ₿ BTCUSDT. «На паузі» — закриває вже коли банер втратив підтвердження сторони (ПАУЗА/WAIT) або розвернувся (раніше). «На розвороті» — лише коли банер повністю змінив напрямок.">₿ Закривати за банером</label>
                             <select id="ff-close-btc-mode" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(245,158,11,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="off">Вимкнено</option>
@@ -1959,6 +1963,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
                 <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">❤️ Черга на вхід <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети, перехоплені з ЛОНГ/ШОРТ; чекають ₿ START + ММ у напрямку</span></div>
                 <button onclick="clearAllTimers()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всю чергу">🗑️ Очистити всі</button>
+            </div>
+            <!-- Direction view filter — the queue is now TWO-SIDED (both LONG and
+                 SHORT wait together). These tabs only FILTER the view; the engine
+                 still opens per the main buttons. «⚡ працюємо» = ₿-session dir. -->
+            <div id="ff-queue-dir-tabs" style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
+                <span style="color:#8b93a7">Показати:</span>
+                <button type="button" data-qdir="all" onclick="ffQueueDir('all')" class="ff-qdir-btn">Всі <span class="ff-qdir-n"></span></button>
+                <button type="button" data-qdir="LONG" onclick="ffQueueDir('LONG')" class="ff-qdir-btn">🟢 LONG <span class="ff-qdir-n"></span></button>
+                <button type="button" data-qdir="SHORT" onclick="ffQueueDir('SHORT')" class="ff-qdir-btn">🔴 SHORT <span class="ff-qdir-n"></span></button>
+                <span id="ff-queue-working" style="margin-left:8px;font-weight:700"></span>
             </div>
             <!-- GLOBAL engine gate: why NOTHING opens right now (двигун вимкнено /
                  BTC пауза / чекає START / кнопки L·S). Hidden when engine active. -->
@@ -7104,13 +7118,63 @@ function ffQueueRowHTML(t) {
     </tr>`;
 }
 
-// Render the queue tbody from window._ffTimersData applying the active sort.
+// Direction view filter for the two-sided queue: 'all' | 'LONG' | 'SHORT'.
+window._ffQueueDirFilter = window._ffQueueDirFilter || 'all';
+// ₿-session direction we currently "work" (for the ⚡ hint on the tabs).
+window._ffWorkingDir = window._ffWorkingDir || null;
+window._ffWorkingPaused = window._ffWorkingPaused || false;
+
+function ffQueueDir(dir) {
+    window._ffQueueDirFilter = (dir === 'LONG' || dir === 'SHORT') ? dir : 'all';
+    ffRenderQueue();
+}
+
+// Style the direction tabs (active state + per-side counts) and the ⚡ hint.
+function _ffUpdateQueueDirTabs() {
+    const data = window._ffTimersData || [];
+    const counts = {
+        all: data.length,
+        LONG: data.filter(t => t.dir === 'LONG').length,
+        SHORT: data.filter(t => t.dir === 'SHORT').length,
+    };
+    const cur = window._ffQueueDirFilter || 'all';
+    document.querySelectorAll('#ff-queue-dir-tabs .ff-qdir-btn').forEach(b => {
+        const k = b.getAttribute('data-qdir');
+        const on = (k === cur);
+        b.style.cssText = 'cursor:pointer;padding:3px 10px;border-radius:11px;'
+            + 'font-size:0.68rem;font-weight:700;'
+            + 'border:1px solid ' + (on ? '#ffffff55' : '#ffffff18') + ';'
+            + 'background:' + (on ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.03)') + ';'
+            + 'color:' + (on ? '#e5e7eb' : '#9aa3b5') + ';';
+        const nEl = b.querySelector('.ff-qdir-n');
+        if (nEl) nEl.textContent = '(' + (counts[k] != null ? counts[k] : 0) + ')';
+    });
+    const wEl = document.getElementById('ff-queue-working');
+    if (wEl) {
+        const wd = window._ffWorkingDir;
+        if (wd === 'LONG' || wd === 'SHORT') {
+            const paused = window._ffWorkingPaused ? ' · ⏸ пауза' : '';
+            wEl.style.color = window._ffWorkingPaused ? '#9aa3b5' : (wd === 'LONG' ? '#4ade80' : '#f87171');
+            wEl.innerHTML = `⚡ працюємо: ${wd === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}${paused}`;
+        } else {
+            wEl.innerHTML = '';
+        }
+    }
+}
+
+// Render the queue tbody from window._ffTimersData applying the active sort
+// and the active direction view-filter.
 function ffRenderQueue() {
     const tb = document.getElementById('ff-timers-tbody');
     if (!tb) return;
-    const rows = (window._ffTimersData || []).slice();
+    _ffUpdateQueueDirTabs();
+    let rows = (window._ffTimersData || []).slice();
+    const df = window._ffQueueDirFilter || 'all';
+    if (df === 'LONG' || df === 'SHORT') rows = rows.filter(t => t.dir === df);
     if (!rows.length) {
-        tb.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">Черга порожня</td></tr>';
+        const msg = (df === 'all') ? 'Черга порожня'
+            : `Немає ${df === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}-монет у черзі`;
+        tb.innerHTML = `<tr><td colspan="7" class="tm-empty-msg">${msg}</td></tr>`;
         _ffUpdateQueueHeaderArrows();
         return;
     }
@@ -7205,6 +7269,7 @@ function renderFuelFilter(d) {
     setIf('ff-min-mm-short', String(s.engine_min_mm_strength_short != null ? s.engine_min_mm_strength_short : (s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0)));
     setIf('ff-min-decision', s.engine_min_decision || 'any');
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
+    setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
     setIf('ff-funding-cooldown', String(s.funding_notify_cooldown_min != null ? s.funding_notify_cooldown_min : 30));
     setIf('ff-funding-hyst', String(s.funding_mm_hysteresis != null ? s.funding_mm_hysteresis : 10));
@@ -7252,6 +7317,10 @@ function renderFuelFilter(d) {
     // timers
     if (document.getElementById('ff-timers-tbody')) {
         window._ffTimersData = d.timers || [];
+        // Working direction = ₿-session dir (drives the ⚡ hint on the tabs).
+        const _bs = d.btc_start || {};
+        window._ffWorkingDir = (_bs.dir === 'LONG' || _bs.dir === 'SHORT') ? _bs.dir : null;
+        window._ffWorkingPaused = !!_bs.paused;
         ffRenderQueue();
     }
     // GLOBAL engine gate banner — why the engine can't open ANYTHING now.
@@ -7790,6 +7859,7 @@ async function saveFuelFilterSettings() {
         engine_min_mm_strength_short: parseInt(_v('ff-min-mm-short', '0') || '0', 10),
         engine_min_decision: _v('ff-min-decision', 'any') || 'any',
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
+        queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
         funding_notify_cooldown_min: parseInt(_v('ff-funding-cooldown', '30') || '30', 10),
         funding_mm_hysteresis: parseInt(_v('ff-funding-hyst', '10') || '10', 10),
