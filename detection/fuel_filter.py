@@ -253,6 +253,15 @@ class FuelFilterDaemon:
         # {symbol: count} — how many times the engine tried to open this coin but
         # the candle confirmation failed (it stayed in the table waiting).
         self._engine_attempts: Dict[str, int] = {}
+        # ── Diagnostics: WHY the engine didn't open a coin this tick ──
+        # {symbol: human UA reason} — surfaced per-row in the ❤️ queue so the
+        # operator sees exactly which gate blocked each coin (e.g. «паливо не
+        # SHORT», «виснаж 88%>75%», «рішення СЛАБКИЙ»). Cleared/refreshed each
+        # engine tick.  _engine_gate = a GLOBAL reason when the engine as a whole
+        # can't open anything right now (двигун вимкнено / BTC пауза / чекає
+        # START / кнопки L/S вимкнені).  Both are purely informational.
+        self._engine_skip: Dict[str, str] = {}
+        self._engine_gate: str = ''
         # Direction smoothing state (anti-twitch): EMA of the raw liq-fuel
         # imbalance per symbol, plus the hysteresis direction latch. Advanced
         # ONCE per scan cycle in _tick; everyone else reads it. Persisted so
@@ -2418,6 +2427,9 @@ class FuelFilterDaemon:
         indep_mode = bool(s.get('start_engine_independent'))
         if not s.get('enabled') or not (btc_mode or indep_mode):
             self._engine_attempts.clear()   # engine off → reset counters
+            self._engine_gate = ('двигун вимкнено' if not s.get('enabled')
+                                 else 'режим двигуна вимкнено (ні ₿ START, ні незалежний)')
+            self._engine_skip = {}
             _persist_attempts_if_changed()
             return
         now = time.time()
@@ -2426,17 +2438,24 @@ class FuelFilterDaemon:
             # ₿ START gate: the SESSION must hold a direction ≥ threshold.
             if self._btc_verdict_dir not in ('LONG', 'SHORT') or not self._btc_verdict_since:
                 self._engine_attempts.clear()
+                self._engine_gate = 'BTC-сеанс без напрямку (STOP)'
+                self._engine_skip = {}
                 _persist_attempts_if_changed()
                 return
             # Do NOT open while the session is PAUSED (live ML is WAIT/balanced).
             # The session, its timer and the queue stay alive — opening simply
             # waits until the ML resumes the session direction.
             if self._btc_paused:
+                self._engine_gate = 'BTC на ПАУЗІ (WAIT) — двигун чекає, поки ML поверне напрямок сеансу'
+                self._engine_skip = {}
                 _persist_attempts_if_changed()
                 return
             period = float(s.get('start_signal_minutes', 5) or 5) * 60
             if (now - self._btc_verdict_since) < period:
                 self._engine_attempts.clear()
+                self._engine_gate = (f'BTC ще не START — чекає ще '
+                                     f'{int(period - (now - self._btc_verdict_since))}s до сигналу')
+                self._engine_skip = {}
                 _persist_attempts_if_changed()
                 return
 
@@ -2457,6 +2476,10 @@ class FuelFilterDaemon:
         mode_lbl = "BTC-START" if btc_mode else "НЕЗАЛЕЖНИЙ"
         if not cand:
             self._engine_attempts.clear()
+            self._engine_gate = (f'0 кандидатів — головні кнопки ЛОНГ={allow_long} '
+                                 f'ШОРТ={allow_short}: монети в черзі не проходять за напрямком '
+                                 f'(увімкни потрібну кнопку)')
+            self._engine_skip = {}
             _persist_attempts_if_changed()
             print(f"[FF-Engine] {mode_lbl} · 0 кандидатів (кнопки L={allow_long} S={allow_short})")
             return
@@ -2559,9 +2582,9 @@ class FuelFilterDaemon:
                     print(f"[FF-Engine] opened {d} {sym} ({mode_lbl}, exh="
                           f"{('%.1f%%' % exh) if exh is not None else '—'})")
                 else:
-                    trace.append(f"{sym}:_open-відхилив")
+                    trace.append(f"{sym}:TM відхилив відкриття (Trade Manager / Test Mode вимкнені?)")
             except Exception as e:
-                trace.append(f"{sym}:помилка")
+                trace.append(f"{sym}:помилка відкриття")
                 print(f"[FF-Engine] open error {sym}: {e}")
 
         # Prune attempt counters for coins that are no longer candidates.
@@ -2572,6 +2595,18 @@ class FuelFilterDaemon:
 
         # Persist the counters to DB if they changed this tick (survives restart).
         _persist_attempts_if_changed()
+
+        # Diagnostics: expose per-coin skip reasons (parsed from the trace we
+        # just built) so the ❤️ queue can show WHY each coin didn't open. The
+        # engine ran through candidates, so the GLOBAL gate is clear.
+        _skip = {}
+        for _entry in trace:
+            _sym, _sep, _reason = _entry.partition(':')
+            if not _sep or _reason.startswith('✅'):
+                continue   # opened (or malformed) → not a skip reason
+            _skip[_sym] = _reason
+        self._engine_skip = _skip
+        self._engine_gate = ''
 
         print(f"[FF-Engine] {mode_lbl} · кнопки L={allow_long} S={allow_short} · "
               f"{len(cand)} канд · паливо-гейт · "
@@ -2624,6 +2659,11 @@ class FuelFilterDaemon:
                     'funding_rate': None,
                     'funding_next_ms': None,
                     'engine_attempts': self._engine_attempts.get(sym, 0),
+                    # Diagnostics: WHY the engine didn't open THIS coin last tick
+                    # (per-coin gate reason). The GLOBAL gate (двигун вимкнено /
+                    # BTC пауза / кнопки) is surfaced separately in `engine_gate`
+                    # so it isn't duplicated on every row. None = nothing blocking.
+                    'engine_reason': self._engine_skip.get(sym) or None,
                 })
             all_timers = sorted(timers, key=lambda x: -x['held_sec'])
             bs = self._btc_state or {}
@@ -2701,6 +2741,11 @@ class FuelFilterDaemon:
             'pending_count': len(self._pending),
             'pending_visible': visible_pending,   # rows actually shown (= header)
             'scan_stats': dict(self._scan_stats),
+            # GLOBAL engine gate reason (empty when the engine is actively
+            # scanning candidates). Shown above the ❤️ queue so the operator
+            # instantly sees why NOTHING is opening (двигун вимкнено / BTC пауза
+            # / чекає START / кнопки L/S).
+            'engine_gate': self._engine_gate or '',
         }
 
     def active_symbols(self) -> List[str]:
