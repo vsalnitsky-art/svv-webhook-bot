@@ -1957,7 +1957,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th>Символ</th><th>Напрямок</th><th title="Сила бабла (ММ) по монеті: 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне)">ММ</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th title="Скільки часу монета вже чекає в черзі">Очікує</th><th title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще.">SCORE</th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Сила бабла (ММ) по монеті: 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне). Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
                         <tr><td colspan="7" class="tm-empty-msg">Черга порожня</td></tr>
@@ -7008,6 +7008,136 @@ async function loadFuelFilterStatus() {
     } catch (e) { /* non-fatal */ }
 }
 
+// ── ❤️ Черга на вхід: click-to-sort ──────────────────────────────────
+// Default sort: by ММ strength, descending (strongest fuel on top).
+window._ffQueueSort = window._ffQueueSort || { col: 'mm', dir: -1 };
+window._ffTimersData = window._ffTimersData || [];
+
+// Sort-value accessor for a queue row `t` by logical column key.
+// Nulls always sink to the bottom regardless of direction.
+function _ffQueueSortVal(t, col) {
+    switch (col) {
+        case 'symbol': return (t.symbol || '').toUpperCase();
+        case 'dir':    return t.dir || '';           // '', 'LONG', 'SHORT'
+        case 'mm':     return (t.mm_str != null) ? Number(t.mm_str) : null;
+        case 'exh':    return (t.exhaustion != null) ? Number(t.exhaustion) : null;
+        case 'held':   return (t.held_sec != null) ? Number(t.held_sec) : null;
+        case 'score':  return (t.score != null) ? Number(t.score) : null;
+        default:       return null;
+    }
+}
+
+// Build the <tr> HTML for one queue row (extracted from the old inline map).
+function ffQueueRowHTML(t) {
+    const isFunding = !!t.funding;
+    const exh = (t.exhaustion != null)
+        ? t.exhaustion.toFixed(1) + '%' : '—';
+    const exhColor = (t.exhaustion != null && t.exhaustion >= 85)
+        ? '#f87171' : (t.exhaustion != null && t.exhaustion >= 66
+            ? '#facc15' : '#cbd5e1');
+    // Funding-only coins get a uniform emerald wash across the row.
+    const rowStyle = isFunding ? 'background:rgba(16,185,129,0.13)' : '';
+    // Origin marker BEFORE the symbol — where the coin came from:
+    //   💰 Funding Rate Scanner · 📡 Tickr-FF · T Tickr-auto · M manual
+    let srcSym, srcTitle, srcColor;
+    if (isFunding) {
+        srcSym = '💰'; srcColor = '#34d399';
+        srcTitle = 'З 💰 Funding Rate Scanner (поза WATCHLIST)';
+    } else {
+        const src = (typeof wlSources !== 'undefined' && wlSources[t.symbol]) || 'manual';
+        if (src === 'tickr_ff') { srcSym = '📡'; srcColor = '#34d399'; srcTitle = 'FF-добірка із 📡 Tickr'; }
+        else if (src === 'tickr') { srcSym = 'T'; srcColor = '#60a5fa'; srcTitle = 'Авто-список 📡 Tickr'; }
+        else { srcSym = 'M'; srcColor = '#94a3b8'; srcTitle = 'Додано вручну у WATCHLIST'; }
+    }
+    const srcBadge = `<span title="${srcTitle}" style="display:inline-block;min-width:16px;text-align:center;font-size:0.66rem;font-weight:700;color:${srcColor};margin-right:5px;user-select:none;-webkit-user-select:none">${srcSym}</span>`;
+    const dirHtml = t.dir === 'LONG'
+        ? '<span style="color:#22c55e">🟢 LONG</span>'
+        : (t.dir === 'SHORT'
+            ? '<span style="color:#ef4444">🔴 SHORT</span>'
+            : '<span style="color:#8b93a7">⚪ —</span>');
+    // ММ = fuel direction dot + strength 0..100% + mini-bar + trend.
+    const mmHtml = ffFuelCell(t.mm || null, t.mm_str, t.mm_str_prev);
+    const heldHtml = t.dir
+        ? `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (t.held_sec||0)}">${fmtTimer(t.held_sec)}</span>`
+        : '<span class="ff-timer">—</span>';
+    const symColor = isFunding ? ';color:#6ee7b7' : '';
+    // Current funding for 💰 funding-sourced coins.
+    const fundLbl = (isFunding && t.funding_rate != null)
+        ? ` <span title="Поточний funding" style="font-size:0.66rem;font-weight:700;color:${t.funding_rate >= 0 ? '#4ade80' : '#f87171'}">${t.funding_rate >= 0 ? '+' : ''}${Number(t.funding_rate).toFixed(3)}%</span>`
+        : '';
+    // Countdown to the next funding settlement (live-ticking).
+    const fundNext = (isFunding && t.funding_next_ms)
+        ? ` <span class="ff-fundnext" data-next="${t.funding_next_ms}" title="До наступного нарахування funding" style="font-size:0.64rem;color:#9aa3b5">⏳ ${fmtFundLeft(t.funding_next_ms)}</span>`
+        : '';
+    // SCORE — per-coin hold verdict (shared badge with the open positions tables).
+    const scoreHtml = ffScoreBadgeHTML(t.score);
+    return `<tr style="${rowStyle}">
+        <td style="font-weight:600${symColor}">${srcBadge}${tvSym(t.symbol)}${fundLbl}${fundNext}</td>
+        <td>${dirHtml}</td>
+        <td style="white-space:nowrap;font-size:0.8rem">${mmHtml}</td>
+        <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
+        <td style="font-size:0.74rem;color:#cbd5e1">${heldHtml}</td>
+        <td style="white-space:nowrap">${scoreHtml}</td>
+        <td style="white-space:nowrap">
+            <span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>
+            <span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span>
+        </td>
+    </tr>`;
+}
+
+// Render the queue tbody from window._ffTimersData applying the active sort.
+function ffRenderQueue() {
+    const tb = document.getElementById('ff-timers-tbody');
+    if (!tb) return;
+    const rows = (window._ffTimersData || []).slice();
+    if (!rows.length) {
+        tb.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">Черга порожня</td></tr>';
+        _ffUpdateQueueHeaderArrows();
+        return;
+    }
+    const srt = window._ffQueueSort || { col: 'mm', dir: -1 };
+    rows.sort((a, b) => {
+        const va = _ffQueueSortVal(a, srt.col);
+        const vb = _ffQueueSortVal(b, srt.col);
+        // Nulls always sink to the bottom.
+        const na = (va == null || va === ''), nb = (vb == null || vb === '');
+        if (na && nb) return 0;
+        if (na) return 1;
+        if (nb) return -1;
+        let cmp;
+        if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+        else cmp = String(va).localeCompare(String(vb));
+        return cmp * srt.dir;
+    });
+    tb.innerHTML = rows.map(ffQueueRowHTML).join('');
+    _ffUpdateQueueHeaderArrows();
+}
+
+// Toggle sort on a header click: same column flips direction, new column
+// starts descending for numeric fields, ascending for text.
+function ffSortQueue(col) {
+    const srt = window._ffQueueSort || { col: 'mm', dir: -1 };
+    if (srt.col === col) {
+        srt.dir = -srt.dir;
+    } else {
+        srt.col = col;
+        srt.dir = (col === 'symbol' || col === 'dir') ? 1 : -1;
+    }
+    window._ffQueueSort = srt;
+    ffRenderQueue();
+}
+
+// Paint the ▲/▼ indicator on the active sort column header.
+function _ffUpdateQueueHeaderArrows() {
+    const srt = window._ffQueueSort || { col: 'mm', dir: -1 };
+    document.querySelectorAll('#ff-timers-table th[data-sortcol]').forEach(th => {
+        const arrow = th.querySelector('.ff-sort-arrow');
+        if (!arrow) return;
+        arrow.textContent = (th.getAttribute('data-sortcol') === srt.col)
+            ? (srt.dir < 0 ? ' ▼' : ' ▲') : '';
+    });
+}
+
 function renderFuelFilter(d) {
     const s = d.settings || {};
     // BTC START/STOP banner — refresh from state, then let the global ticker
@@ -7100,73 +7230,9 @@ function renderFuelFilter(d) {
     }
 
     // timers
-    const tb = document.getElementById('ff-timers-tbody');
-    if (tb) {
-        let rows = d.timers || [];
-        if (!rows.length) {
-            tb.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">Черга порожня</td></tr>';
-        } else {
-            tb.innerHTML = rows.map(t => {
-                const isFunding = !!t.funding;
-                const exh = (t.exhaustion != null)
-                    ? t.exhaustion.toFixed(1) + '%' : '—';
-                const exhColor = (t.exhaustion != null && t.exhaustion >= 85)
-                    ? '#f87171' : (t.exhaustion != null && t.exhaustion >= 66
-                        ? '#facc15' : '#cbd5e1');
-                // Funding-only coins get a uniform emerald wash across the row.
-                const rowStyle = isFunding ? 'background:rgba(16,185,129,0.13)' : '';
-                // Origin marker BEFORE the symbol — where the coin came from:
-                //   💰 Funding Rate Scanner · 📡 Tickr-FF · T Tickr-auto · M manual
-                let srcSym, srcTitle, srcColor;
-                if (isFunding) {
-                    srcSym = '💰'; srcColor = '#34d399';
-                    srcTitle = 'З 💰 Funding Rate Scanner (поза WATCHLIST)';
-                } else {
-                    const src = (typeof wlSources !== 'undefined' && wlSources[t.symbol]) || 'manual';
-                    if (src === 'tickr_ff') { srcSym = '📡'; srcColor = '#34d399'; srcTitle = 'FF-добірка із 📡 Tickr'; }
-                    else if (src === 'tickr') { srcSym = 'T'; srcColor = '#60a5fa'; srcTitle = 'Авто-список 📡 Tickr'; }
-                    else { srcSym = 'M'; srcColor = '#94a3b8'; srcTitle = 'Додано вручну у WATCHLIST'; }
-                }
-                const srcBadge = `<span title="${srcTitle}" style="display:inline-block;min-width:16px;text-align:center;font-size:0.66rem;font-weight:700;color:${srcColor};margin-right:5px;user-select:none;-webkit-user-select:none">${srcSym}</span>`;
-                const dirHtml = t.dir === 'LONG'
-                    ? '<span style="color:#22c55e">🟢 LONG</span>'
-                    : (t.dir === 'SHORT'
-                        ? '<span style="color:#ef4444">🔴 SHORT</span>'
-                        : '<span style="color:#8b93a7">⚪ —</span>');
-                // ММ (fuel) direction per coin + match with the signal side.
-                // ✓ = fuel matches the signal (ready to open on START),
-                // ✗ = fuel is against it, ⚪ = balanced (no ММ direction).
-                // ММ = fuel direction dot + strength 0..100% + mini-bar + trend.
-                const mmHtml = ffFuelCell(t.mm || null, t.mm_str, t.mm_str_prev);
-                const heldHtml = t.dir
-                    ? `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (t.held_sec||0)}">${fmtTimer(t.held_sec)}</span>`
-                    : '<span class="ff-timer">—</span>';
-                const symColor = isFunding ? ';color:#6ee7b7' : '';
-                // Current funding for 💰 funding-sourced coins.
-                const fundLbl = (isFunding && t.funding_rate != null)
-                    ? ` <span title="Поточний funding" style="font-size:0.66rem;font-weight:700;color:${t.funding_rate >= 0 ? '#4ade80' : '#f87171'}">${t.funding_rate >= 0 ? '+' : ''}${Number(t.funding_rate).toFixed(3)}%</span>`
-                    : '';
-                // Countdown to the next funding settlement (live-ticking).
-                const fundNext = (isFunding && t.funding_next_ms)
-                    ? ` <span class="ff-fundnext" data-next="${t.funding_next_ms}" title="До наступного нарахування funding" style="font-size:0.64rem;color:#9aa3b5">⏳ ${fmtFundLeft(t.funding_next_ms)}</span>`
-                    : '';
-                // SCORE — per-coin hold verdict (shared badge with the open
-                // positions tables).
-                const scoreHtml = ffScoreBadgeHTML(t.score);
-                return `<tr style="${rowStyle}">
-                    <td style="font-weight:600${symColor}">${srcBadge}${tvSym(t.symbol)}${fundLbl}${fundNext}</td>
-                    <td>${dirHtml}</td>
-                    <td style="white-space:nowrap;font-size:0.8rem">${mmHtml}</td>
-                    <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
-                    <td style="font-size:0.74rem;color:#cbd5e1">${heldHtml}</td>
-                    <td style="white-space:nowrap">${scoreHtml}</td>
-                    <td style="white-space:nowrap">
-                        <span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>
-                        <span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span>
-                    </td>
-                </tr>`;
-            }).join('');
-        }
+    if (document.getElementById('ff-timers-tbody')) {
+        window._ffTimersData = d.timers || [];
+        ffRenderQueue();
     }
 
     // ── 💰 Funding table (coins from the 💰 scanner currently holding ММ) ──
