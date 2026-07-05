@@ -7080,14 +7080,15 @@ function ffQueueRowHTML(t) {
         : '';
     // SCORE — per-coin hold verdict (shared badge with the open positions tables).
     const scoreHtml = ffScoreBadgeHTML(t.score);
-    // ⚠️ WHY the engine didn't open this coin (per-coin gate, or the global
-    // gate). Escape < > & so reasons like "ММ40%<60%" don't break the row.
+    // ⚠️ WHY the engine didn't open this coin — a compact triangle at the end
+    // of the symbol; CLICK it to reveal/hide the reason text inline (no second
+    // row). Escape < > & " so reasons like "ММ40%<60%" don't break the markup.
     let reasonHtml = '';
     if (t.engine_reason) {
         const _r = String(t.engine_reason)
             .replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        reasonHtml = `<div title="Чому двигун не відкрив цю монету: ${_r}" style="font-size:0.6rem;color:#f59e0b;font-weight:400;margin-top:2px;max-width:230px;white-space:normal;line-height:1.2">⚠️ ${_r}</div>`;
+        reasonHtml = ` <span onclick="event.stopPropagation();var n=this.nextElementSibling;n.style.display=(n.style.display==='none'?'inline':'none');" title="Чому двигун не відкрив цю монету — клік, щоб показати причину" style="cursor:pointer;color:#f59e0b;font-size:0.82rem;user-select:none;-webkit-user-select:none">⚠️</span><span class="ff-reason-txt" style="display:none;font-size:0.62rem;color:#f59e0b;font-weight:400;margin-left:5px;white-space:normal">${_r}</span>`;
     }
     return `<tr style="${rowStyle}">
         <td style="font-weight:600${symColor}">${srcBadge}${tvSym(t.symbol)}${fundLbl}${fundNext}${reasonHtml}</td>

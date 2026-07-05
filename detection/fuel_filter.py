@@ -1237,22 +1237,32 @@ class FuelFilterDaemon:
         self._bias_cache[symbol] = {'ts': now, 'data': data}
         return data
 
-    def _decision_verdict(self, symbol: str) -> Dict:
+    def _decision_verdict(self, symbol: str, price: Optional[float] = None) -> Dict:
         """Decision-Center snapshot for `symbol`: {'verdict': 'good'|'marginal'|
         'poor'|None, 'recommended': 'LONG'|'SHORT'|'NEUTRAL'|None}. Same object
-        the 🧠 badge shows. Cached BIAS_TTL sec (compute_bias is heavy) — call
-        only from the engine's final open gate, never in a per-coin loop."""
+        the 🧠 badge shows on the chart — sourced from TradeManager.compute_decision()
+        (→ decision_center.build_decision). Cached BIAS_TTL sec (it runs the entry
+        evaluator) — call only from the engine's final open gate, never per tick.
+
+        NB: earlier this read compute_bias(...)['decision'], but compute_bias has
+        NO 'decision' key → verdict was ALWAYS None, so the «Мін. якість рішення»
+        gate blocked EVERY coin whenever set to СЕРЕДНІЙ/СИЛЬНИЙ. Fixed to use the
+        same source as the chart badge."""
         now = time.time()
         c = self._decision_cache.get(symbol)
         if c and (now - c.get('ts', 0)) < BIAS_TTL:
             return c.get('v') or {}
         v = {}
         try:
-            from web.flask_app import compute_bias
-            d = compute_bias(self._db, symbol, None) or {}
-            dec = d.get('decision') or {}
-            v = {'verdict': dec.get('verdict'),
-                 'recommended': dec.get('recommended')}
+            tm = self._get_tm() if self._get_tm else None
+            if tm and hasattr(tm, 'compute_decision') and callable(tm.compute_decision):
+                px = price
+                if not px:
+                    f = self._fuel_dir_smoothed(symbol) or {}
+                    px = f.get('mark_price')
+                dec = tm.compute_decision(symbol, float(px or 0.0)) or {}
+                v = {'verdict': dec.get('verdict'),
+                     'recommended': dec.get('recommended')}
         except Exception as e:
             print(f"[FuelFilter] decision verdict err {symbol}: {e}")
         self._decision_cache[symbol] = {'ts': now, 'v': v}
@@ -2547,7 +2557,7 @@ class FuelFilterDaemon:
             # START event (never per-coin-per-tick). 'any' skips it entirely.
             _min_dec = str(s.get('engine_min_decision', 'any') or 'any').lower()
             if _min_dec in ('marginal', 'good'):
-                _dc = self._decision_verdict(sym)
+                _dc = self._decision_verdict(sym, fuel.get('mark_price'))
                 _vd = _dc.get('verdict')
                 _rec = _dc.get('recommended')
                 _rank = {'poor': 0, 'marginal': 1, 'good': 2}
