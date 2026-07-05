@@ -1344,18 +1344,35 @@ class FuelFilterDaemon:
         """
         symbol = (symbol or '').upper()
         settings = self.get_settings()
+        # Ensure the liq-map is tracking this coin so fuel data exists even for
+        # on-demand symbols (e.g. a TradingView userscript querying an arbitrary
+        # chart the bot isn't otherwise scanning). First call may be neutral
+        # until the next liq-map scan cycle fills the levels.
+        try:
+            self._register_with_liqmap([symbol])
+        except Exception:
+            pass
         out = {
             'enabled': bool(settings.get('enabled', False)),
             'in_scan_list': symbol in set(self.get_scan_list()),
             'skip_wait': bool(settings.get('skip_wait_coins', False)),
             'max_exhaustion': settings.get('max_exhaustion_pct', 75),
         }
-        # Fuel direction (timer trigger) — smoothed + hysteresis, read-only
+        # Fuel direction (timer trigger) — smoothed + hysteresis, read-only.
+        # Also expose the ММ STRENGTH (|fuel dir|×100, 0..100) + raw dir so
+        # external overlays can show the exact same ММ the bot uses.
         try:
             fuel_data = self._fuel_dir_smoothed(symbol)
             out['fuel_status'] = fuel_data.get('status') if fuel_data else None
+            _fd = float((fuel_data or {}).get('dir') or 0.0)
+            out['mm'] = fuel_data.get('status') if fuel_data else None
+            out['mm_dir'] = round(_fd, 3)
+            out['mm_str'] = round(abs(_fd) * 100.0, 1)
         except Exception:
             out['fuel_status'] = None
+            out['mm'] = None
+            out['mm_dir'] = 0.0
+            out['mm_str'] = 0.0
         # Exhaustion for the fuel-status side (entry gate input)
         exh = None
         try:
