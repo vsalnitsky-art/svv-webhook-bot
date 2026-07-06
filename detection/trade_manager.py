@@ -829,11 +829,28 @@ class TradeManager:
                     continue
             best = c   # keep the last (most recent) match
         if best is not None:
+            _hist = list(best.get('history') or [])
+            # Peak must never contradict the plotted samples. Derive it from the
+            # SAME series the chart draws, so already-closed records with a stale
+            # stored peak (0.00) display the true MFE. Max of stored / samples /
+            # final PnL.
+            _pcands = []
+            _sp = best.get('peak_pnl_pct')
+            if _sp is not None:
+                _pcands.append(_sp)
+            _fp = best.get('pnl_pct')
+            if _fp is not None:
+                _pcands.append(_fp)
+            for _h in _hist:
+                _hp = _h.get('pnl')
+                if _hp is not None:
+                    _pcands.append(_hp)
+            _eff_peak = round(max(_pcands), 4) if _pcands else _sp
             return {'ok': True, 'symbol': symbol, 'open': False,
                     'side': best.get('side'), 'entry_price': best.get('entry_price'),
                     'exit_price': best.get('exit_price'),
                     'pnl_pct': best.get('pnl_pct'),
-                    'peak_pnl_pct': best.get('peak_pnl_pct'),
+                    'peak_pnl_pct': _eff_peak,
                     'entry_decision': best.get('entry_score'),
                     'exit_decision': best.get('exit_decision'),
                     'opened_at': best.get('opened_at'),
@@ -2856,10 +2873,24 @@ class TradeManager:
     def _peak_pnl(self, symbol: str, pnl_pct: float, is_shadow: bool = False):
         """Best unrealised PnL% the trade reached (MFE), clamped to at least
         the final PnL so it never contradicts the result. Stored on close so
-        the trade-history modal can show peak / give-back."""
+        the trade-history modal can show peak / give-back.
+
+        Robust source: takes the MAX of the tracked peak, the recorded history
+        samples (the SAME series the chart plots) and the final PnL. The tracked
+        peak alone could drift to 0 (state reset on reconcile/restart) while the
+        chart clearly showed a higher peak — deriving from samples keeps the
+        header consistent with the plotted line."""
         state = (self._shadow_pos_state if is_shadow else self._pos_state).get(symbol, {})
+        pos = (self._shadow_positions if is_shadow else self._positions).get(symbol) or {}
+        cands = [pnl_pct]
         peak = state.get('peak_pnl_pct')
-        return round(max(peak if peak is not None else pnl_pct, pnl_pct), 4)
+        if peak is not None:
+            cands.append(peak)
+        for h in (pos.get('history') or []):
+            hp = h.get('pnl')
+            if hp is not None:
+                cands.append(hp)
+        return round(max(cands), 4)
 
     def _close_position(self, symbol: str, exit_price: float, reason: str):
         with self._lock:
