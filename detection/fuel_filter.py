@@ -2576,7 +2576,7 @@ class FuelFilterDaemon:
                 continue
             # GATE: fuel must be present AND match the signal direction.
             if fuel.get('status') != d:
-                trace.append(f"{sym}:паливо≠{d}({fuel.get('status')})")
+                trace.append(f"{sym}:паливо {fuel.get('status') or 'нейтр'} ≠ сигнал {d}")
                 continue
             # GATE: minimum ММ (fuel) STRENGTH — |fuel dir|×100 ≥ setting.
             # Separate threshold per direction (LONG / SHORT); legacy single
@@ -2606,9 +2606,14 @@ class FuelFilterDaemon:
             # SCORE gate: only open when the coin's SCORE is STRONG HOLD AND its
             # SCORE direction matches the candidate direction.
             if s.get('engine_require_strong_hold', False):
-                sc = self._timer_score_for(sym, d, held, exh, dur, tf)
+                # Use the SAME SCORE shown in the ❤️ queue (background cache) so
+                # the reason can NEVER contradict the badge the operator sees.
+                # (A fresh recompute here used a different held/exhaustion moment
+                # and could say WEAK while the row's badge showed STRONG HOLD.)
+                # Fall back to a fresh compute only if the cache has no entry yet.
+                sc = self._score_cache.get(sym) or self._timer_score_for(sym, d, held, exh, dur, tf)
                 if sc.get('label') != 'STRONG HOLD' or sc.get('dir') != d:
-                    trace.append(f"{sym}:score={sc.get('label')}/{sc.get('dir')}≠STRONG·{d}")
+                    trace.append(f"{sym}:SCORE {sc.get('label')}·{sc.get('dir')} ≠ треба STRONG HOLD·{d}")
                     continue
             # Decision-Center quality gate (LAST — heaviest). Only evaluated for
             # a candidate that already passed every cheap gate and is about to
@@ -2624,7 +2629,9 @@ class FuelFilterDaemon:
                 # BOTH must hold: quality tier ≥ selected AND Decision Center
                 # recommends the SAME direction as the candidate.
                 if _rank.get(_vd, 0) < _need or _rec != d:
-                    trace.append(f"{sym}:рішення={_vd or '—'}/{_rec or '—'}≠{_min_dec}·{d}")
+                    _UA = {'poor': 'СЛАБКИЙ', 'marginal': 'СЕРЕДНІЙ', 'good': 'СИЛЬНИЙ'}
+                    trace.append(f"{sym}:рішення {_UA.get(_vd, _vd or '—')}·{_rec or '—'} "
+                                 f"≠ треба {_UA.get(_min_dec, _min_dec)}·{d}")
                     continue
             try:
                 # _open routes through TM (bypass gates, like Alerts but ignoring
