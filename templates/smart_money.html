@@ -8199,6 +8199,12 @@ function renderTradeHistoryChart(h, meta) {
                   : `<span>Закрито: <b style="color:#cbd5e1">${_fmtDT(ca)}</b></span>`)
         + `</div>`;
 
+    // 🔖 Exit reason — shows WHAT closed the trade (e.g. 🤖 soft trailing-TP,
+    // stop-loss, reverse-SMC…). Key for judging how each exit rule performs.
+    const exitReasonLine = (!isOpen && (meta.exit_reason_detail || meta.exit_reason))
+        ? `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">🔖 Причина виходу: <b style="color:#e5e7eb">${meta.exit_reason_detail || meta.exit_reason}</b></div>`
+        : '';
+
     // 🧠 Decision Center — at ENTRY and at EXIT (or "as of now" for open trades).
     const V_UA = { good: 'СИЛЬНИЙ', marginal: 'СЕРЕДНІЙ', poor: 'СЛАБКИЙ' };
     const V_COL = { good: '#22c55e', marginal: '#fbbf24', poor: '#f87171' };
@@ -8246,7 +8252,7 @@ function renderTradeHistoryChart(h, meta) {
     ], { min: 0, max: 100, dec: 0 });
     const pricePanel = panel('Ціна', [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 4 });
 
-    return info + info2 + dcLine + pnlPanel + mmPanel + bannerStrip() + pricePanel;
+    return info + info2 + exitReasonLine + dcLine + pnlPanel + mmPanel + bannerStrip() + pricePanel;
 }
 
 // ── 📜 Funding-coin ARCHIVE (history of appear/flip/exit + metrics) ──────

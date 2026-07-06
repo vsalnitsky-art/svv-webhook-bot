@@ -353,12 +353,21 @@ class TradeManager:
         self._load_shadow_closed()
         
         # Initialize evaluator state for any positions we restored from DB.
-        # We don't have history for them, so peak = current PnL at first
-        # tick (will be patched in _monitor_position), counts start at 0.
-        for sym in self._positions:
-            self._pos_state[sym] = self._fresh_pos_state()
-        for sym in self._shadow_positions:
-            self._shadow_pos_state[sym] = self._fresh_pos_state()
+        # CRITICAL: seed the peak_pnl_pct from what the trade already reached
+        # BEFORE the restart — from the position's own persisted field and its
+        # recorded history samples. Otherwise a restart (Render sleep/wake) would
+        # reset the peak to 0, and the 🤖 soft trailing-TP would fail to
+        # re-activate for a trade that had already peaked (it would then fall all
+        # the way to the soft SL). This keeps the live trailing consistent with
+        # the chart across restarts.
+        for sym, pos in self._positions.items():
+            st = self._fresh_pos_state()
+            st['peak_pnl_pct'] = self._history_peak(pos)
+            self._pos_state[sym] = st
+        for sym, pos in self._shadow_positions.items():
+            st = self._fresh_pos_state()
+            st['peak_pnl_pct'] = self._history_peak(pos)
+            self._shadow_pos_state[sym] = st
         
         # Stats
         self._tick_count = 0
@@ -853,6 +862,10 @@ class TradeManager:
                     'peak_pnl_pct': _eff_peak,
                     'entry_decision': best.get('entry_score'),
                     'exit_decision': best.get('exit_decision'),
+                    # Why the trade was closed — lets the modal show whether the
+                    # 🤖 soft trailing-TP (bot_tp_trail) or something else exited.
+                    'exit_reason': best.get('reason'),
+                    'exit_reason_detail': best.get('reason_detail'),
                     'opened_at': best.get('opened_at'),
                     'closed_at': best.get('closed_at'),
                     'history': list(best.get('history') or [])}
@@ -924,7 +937,11 @@ class TradeManager:
             st = self._pos_state.get(symbol)
             if st is not None and current_pnl_pct > st.get('peak_pnl_pct', 0):
                 st['peak_pnl_pct'] = current_pnl_pct
-        
+            # Mirror the peak onto the persisted position dict so it survives a
+            # restart (the ephemeral _pos_state is rebuilt on load).
+            if current_pnl_pct > pos.get('peak_pnl_pct', 0):
+                pos['peak_pnl_pct'] = round(current_pnl_pct, 4)
+
         # === Manual SL/TP (per-position overrides set via UI) ===
         # These are user-entered absolute price levels (separate from the
         # position's automatic sl_price/tp_price). They fire FIRST so a
@@ -1063,6 +1080,9 @@ class TradeManager:
             sst = self._shadow_pos_state.get(symbol)
             if sst is not None and cur_pnl > sst.get('peak_pnl_pct', 0):
                 sst['peak_pnl_pct'] = cur_pnl
+            # Mirror onto the persisted shadow-position dict (survives restart).
+            if cur_pnl > pos.get('peak_pnl_pct', 0):
+                pos['peak_pnl_pct'] = round(cur_pnl, 4)
             _peak = sst.get('peak_pnl_pct') if sst else None
 
         manual_reason = self._check_manual_sl_tp(pos, current_price)
@@ -1583,6 +1603,27 @@ class TradeManager:
             'bos_against_count': 0,
             'last_choch_after_open': None,  # {dir, t, level} or None
         }
+
+    @staticmethod
+    def _history_peak(pos: Dict) -> float:
+        """Best PnL% the trade already reached, recovered from the position's
+        persisted field + recorded history samples. Used to seed peak_pnl_pct on
+        restart so the soft trailing-TP survives a bot restart (Render sleep)."""
+        cands = [0.0]
+        pp = (pos or {}).get('peak_pnl_pct')
+        if pp is not None:
+            try:
+                cands.append(float(pp))
+            except (TypeError, ValueError):
+                pass
+        for h in (pos or {}).get('history') or []:
+            hp = h.get('pnl')
+            if hp is not None:
+                try:
+                    cands.append(float(hp))
+                except (TypeError, ValueError):
+                    pass
+        return round(max(cands), 4)
     
     def _build_eval_config(self):
         """Construct an EvaluationConfig from current settings.
