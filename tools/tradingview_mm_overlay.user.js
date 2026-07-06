@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SVV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.0.0
-// @description  Показує реальний ММ (liquidation-fuel) із SVV WebHook BOT поверх графіка TradingView для поточної монети.
+// @version      1.1.0
+// @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із SVV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       SVV
 // @match        https://*.tradingview.com/chart/*
 // @match        https://tradingview.com/chart/*
@@ -102,7 +102,7 @@
     }
 
     // ── Badge UI ──────────────────────────────────────────────────────────
-    let badge, elSym, elMM, elDir, elSub, elFoot;
+    let badge, elSym, elMM, elDir, elBtc, elFund, elFoot;
     function buildBadge() {
         if (badge) return;
         badge = document.createElement('div');
@@ -117,20 +117,22 @@
         ].join(';');
         badge.innerHTML =
             '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">' +
-              '<span style="font-weight:800;letter-spacing:.3px">❤️ ММ</span>' +
+              '<span style="font-weight:800;letter-spacing:.3px">💰 ММ</span>' +
               '<span id="svv-mm-sym" style="font-weight:700;color:#cbd5e1;font-size:11px"></span>' +
             '</div>' +
             '<div style="display:flex;align-items:baseline;gap:8px">' +
               '<span id="svv-mm-val" style="font-weight:900;font-size:22px">—</span>' +
               '<span id="svv-mm-dir" style="font-weight:700;font-size:12px"></span>' +
             '</div>' +
-            '<div id="svv-mm-sub" style="font-size:10.5px;color:#9aa3b5;margin-top:2px"></div>' +
+            '<div id="svv-mm-btc" style="font-size:10.5px;color:#9aa3b5;margin-top:3px"></div>' +
+            '<div id="svv-mm-fund" style="font-size:10.5px;color:#34d399;margin-top:2px"></div>' +
             '<div id="svv-mm-foot" style="font-size:9.5px;color:#6b7280;margin-top:3px"></div>';
         document.body.appendChild(badge);
         elSym = badge.querySelector('#svv-mm-sym');
         elMM = badge.querySelector('#svv-mm-val');
         elDir = badge.querySelector('#svv-mm-dir');
-        elSub = badge.querySelector('#svv-mm-sub');
+        elBtc = badge.querySelector('#svv-mm-btc');
+        elFund = badge.querySelector('#svv-mm-fund');
         elFoot = badge.querySelector('#svv-mm-foot');
         badge.addEventListener('dblclick', setBotUrl);   // подвійний клік → налаштувати URL
         restorePos();
@@ -167,60 +169,103 @@
         });
     }
 
+    // Countdown "HH:MM:SS" until a future ms-timestamp (for funding settlement).
+    function fmtLeft(ms) {
+        if (ms == null) return '';
+        let s = Math.floor((Number(ms) - Date.now()) / 1000);
+        if (s < 0) s = 0;
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+        const pad = (n) => String(n).padStart(2, '0');
+        return (h > 0 ? h + ':' : '') + pad(m) + ':' + pad(ss);
+    }
+
     function render(sym, state) {
         buildBadge();
         elSym.textContent = sym || '—';
+        // Reset the extra lines each render.
+        elBtc.innerHTML = ''; elFund.innerHTML = '';
         if (state === 'noconfig') {
             elMM.textContent = '⚙'; elMM.style.color = '#f59e0b';
-            elDir.textContent = ''; elSub.textContent = 'Задай URL бота (2× клік по бейджу)';
+            elDir.textContent = ''; elBtc.textContent = 'Задай URL бота (2× клік по бейджу)';
             elFoot.textContent = '';
+            return;
+        }
+        if (state === 'waking') {
+            elMM.textContent = '⏳'; elMM.style.color = '#f59e0b';
+            elDir.textContent = ''; elBtc.textContent = 'Бот прокидається… (Render sleep)';
+            elFoot.textContent = getBotUrl() || '';
             return;
         }
         if (state === 'error') {
             elMM.textContent = '⚠'; elMM.style.color = '#f59e0b';
-            elDir.textContent = ''; elSub.textContent = 'Бот недоступний за URL';
+            elDir.textContent = ''; elBtc.textContent = 'Бот недоступний за URL';
             elFoot.textContent = getBotUrl() || '';
             return;
         }
         const d = state || {};
-        if (d.enabled === false) {
-            elSub.textContent = 'FF вимкнено в боті';
-        }
         const mm = (d.mm_str != null) ? Number(d.mm_str) : null;
         const dir = d.mm || d.fuel_status || null;
         elMM.textContent = (mm != null) ? (mm.toFixed(0) + '%') : '—';
         elMM.style.color = dirColor(dir);
         elDir.textContent = dirLabel(dir) + (mm != null ? ' · ' + band(mm).label : '');
         elDir.style.color = dirColor(dir);
-        const parts = [];
-        if (d.exhaustion != null) {
-            const ex = Number(d.exhaustion).toFixed(1);
-            const over = d.exhausted ? ' ⚠️>' + (d.max_exhaustion != null ? d.max_exhaustion + '%' : '') : '';
-            parts.push('Виснаж ' + ex + '%' + over);
+
+        // ── ₿ BTC state line ──
+        if (d.enabled === false) {
+            elBtc.style.color = '#9aa3b5';
+            elBtc.textContent = 'FF вимкнено в боті';
+        } else {
+            const b = d.btc || {};
+            if (b.dir === 'LONG' || b.dir === 'SHORT') {
+                const bc = dirColor(b.dir);
+                const st = b.paused ? '⏸ пауза'
+                    : (b.status === 'START' ? 'START'
+                        : (b.status === 'COUNTING' ? 'чекає START' : 'STOP'));
+                const strg = (b.strength != null) ? ` · ${b.strength}%` : '';
+                elBtc.innerHTML = `₿ BTC: <span style="color:${bc};font-weight:700">${dirLabel(b.dir)}</span> · ${st}${strg}`;
+            } else {
+                elBtc.style.color = '#9aa3b5';
+                elBtc.innerHTML = '₿ BTC: ⚪ — (WAIT/STOP)';
+            }
         }
-        if (d.verdict) parts.push('🧠 ' + d.verdict);
-        elSub.textContent = parts.join(' · ');
+
+        // ── 💰 Funding line — only for coins in the «💰 Funding — ММ» table ──
+        if (d.funding && d.funding_rate != null) {
+            const r = Number(d.funding_rate);
+            const rc = r >= 0 ? '#4ade80' : '#f87171';
+            const left = d.funding_next_ms ? ` · ⏳ ${fmtLeft(d.funding_next_ms)}` : '';
+            elFund.innerHTML = `💰 фандинг <span style="color:${rc};font-weight:700">${r >= 0 ? '+' : ''}${r.toFixed(4)}%</span>${left}`;
+        }
+
         const t = new Date();
         elFoot.textContent = 'оновлено ' + t.toLocaleTimeString();
     }
 
     // ── Fetch ─────────────────────────────────────────────────────────────
+    let _inFlight = false;   // avoid stacking requests during a slow wake-up
     function fetchPanel(sym) {
         const url = getBotUrl();
         if (!url) { render(sym, 'noconfig'); return; }
+        if (_inFlight) return;
+        _inFlight = true;
+        const done = () => { _inFlight = false; };
         GM_xmlhttpRequest({
             method: 'GET',
             url: url + '/api/fuel-filter/panel/' + encodeURIComponent(sym),
-            timeout: 8000,
+            // Render free tier spins the bot DOWN after ~15 min idle; the first
+            // request then triggers a cold start that can take 30-60s. Long
+            // timeout so we ride the wake-up instead of flashing an error.
+            timeout: 60000,
             onload: (r) => {
+                done();
                 try {
                     const j = JSON.parse(r.responseText);
                     if (j && j.ok !== false) render(sym, j);
                     else render(sym, 'error');
                 } catch (e) { render(sym, 'error'); }
             },
-            onerror: () => render(sym, 'error'),
-            ontimeout: () => render(sym, 'error'),
+            onerror: () => { done(); render(sym, 'error'); },
+            ontimeout: () => { done(); render(sym, 'waking'); },
         });
     }
 

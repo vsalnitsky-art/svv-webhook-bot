@@ -1405,6 +1405,32 @@ class FuelFilterDaemon:
                 timer = {'dir': t.get('dir'), 'held_sec': int(held)}
         out['holding'] = holding
         out['timer'] = timer
+        # ── ₿ BTC banner state (for the overlay's BTC line) ──
+        try:
+            bdir = self._btc_verdict_dir if self._btc_verdict_dir in ('LONG', 'SHORT') else None
+            bpaused = bool(self._btc_paused and bdir)
+            bstatus = 'STOP'
+            if bdir:
+                period = float(settings.get('start_signal_minutes', 5) or 5) * 60
+                held = time.time() - (self._btc_verdict_since or 0)
+                bstatus = 'START' if held >= period else 'COUNTING'
+            out['btc'] = {'dir': bdir, 'paused': bpaused, 'status': bstatus,
+                          'strength': int(self._btc_fuel_strength or 0)}
+        except Exception:
+            out['btc'] = {'dir': None, 'paused': False, 'status': 'STOP', 'strength': 0}
+        # ── 💰 Funding info — only when the coin is in the «💰 Funding — ММ по
+        # монетах» table (self._anomalies). Adds current funding rate + time to
+        # the next settlement so the overlay can show them for funding coins. ──
+        try:
+            with self._lock:
+                a = self._anomalies.get(symbol)
+            out['funding'] = bool(a)
+            out['funding_rate'] = a.get('rate') if a else None
+            out['funding_next_ms'] = a.get('next_funding') if a else None
+        except Exception:
+            out['funding'] = False
+            out['funding_rate'] = None
+            out['funding_next_ms'] = None
         return out
 
     def _exhaustion(self, symbol: str, side: str) -> Optional[float]:
