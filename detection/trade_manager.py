@@ -96,7 +96,18 @@ DEFAULT_SETTINGS = {
     
     'use_tp': True,                  # Take Profit
     'tp_pct': 5.0,                   # %
-    
+
+    # ── 🤖 Bot-side SOFT exit layer (independent of the exchange-native
+    # SL/TP/Trailing above). The exchange orders stay as a hard backstop; this
+    # layer has the BOT itself watch live PnL% per position and close on its own
+    # rules — identically for REAL and PAPER (virtual) trades. ──
+    'bot_exit_enabled': False,       # master toggle for the whole soft layer
+    'bot_sl_enabled': False,         # soft Stop Loss (bot-monitored, fixed %)
+    'bot_sl_pct': 0.8,               # close when pnl% <= -this
+    'bot_tp_enabled': False,         # soft trailing Take Profit (ladder)
+    'bot_tp_pct': 1.5,              # activation: start trailing once peak >= this
+    'bot_tp_giveback_pct': 0.5,      # close when pnl retraces this % below peak
+
     'use_reverse_smc': True,         # Close on opposite CHoCH
     'use_reverse_signal': False,     # Flip position on opposite QUALIFIED signal (off by default)
 
@@ -486,6 +497,7 @@ class TradeManager:
                       'sl_vob_buffer_pct',
                       'trailing_activate_pct', 'trailing_distance_pct', 'be_trigger_pct',
                       'be_commission_buffer_pct',
+                      'bot_sl_pct', 'bot_tp_pct', 'bot_tp_giveback_pct',
                       'bos_2_close_pct', 'bos_3_close_pct', 'bos_4_close_pct']:
                 try:
                     self._settings[k] = float(self._settings.get(k, DEFAULT_SETTINGS.get(k, 0)))
@@ -529,6 +541,7 @@ class TradeManager:
                       'telegram_alerts', 'test_telegram_alerts',
                       'use_bos_partials', 'trailing_after_bos_2',
                       'health_score_enabled',
+                      'bot_exit_enabled', 'bot_sl_enabled', 'bot_tp_enabled',
                       'entry_score_enabled']:
                 self._settings[k] = bool(self._settings.get(k, False))
             
@@ -839,6 +852,40 @@ class TradeManager:
                     'history': list(op.get('history') or [])}
         return {'ok': True, 'symbol': symbol, 'history': []}
 
+    def _bot_soft_exit(self, pnl_pct: float, peak_pct) -> Optional[str]:
+        """🤖 Bot-side SOFT exit layer — the bot watches live PnL% itself and
+        decides to close, INDEPENDENTLY of the exchange-native SL/TP/Trailing
+        (which stay as a hard backstop). Identical for REAL and PAPER trades.
+
+        Rules (all off by default):
+          • soft SL  — fixed: close when pnl% <= -bot_sl_pct.
+          • soft TP  — trailing ladder: once the peak reaches bot_tp_pct, start
+            trailing; close when pnl retraces bot_tp_giveback_pct below the peak
+            (peak 1.5%→stop 1.0%; peak 2.5%→stop 2.0%; …).
+        Returns a close reason ('bot_sl' | 'bot_tp_trail') or None."""
+        s = self._settings
+        if not s.get('bot_exit_enabled'):
+            return None
+        # Soft Stop Loss (fixed).
+        if s.get('bot_sl_enabled'):
+            try:
+                slp = float(s.get('bot_sl_pct', 0) or 0)
+            except (TypeError, ValueError):
+                slp = 0.0
+            if slp > 0 and pnl_pct <= -slp:
+                return 'bot_sl'
+        # Soft trailing Take Profit (ladder).
+        if s.get('bot_tp_enabled') and peak_pct is not None:
+            try:
+                tpp = float(s.get('bot_tp_pct', 0) or 0)
+                gb = float(s.get('bot_tp_giveback_pct', 0.5) or 0.5)
+            except (TypeError, ValueError):
+                tpp, gb = 0.0, 0.5
+            # Trailing is active only once the peak has reached the activation.
+            if tpp > 0 and peak_pct >= tpp and pnl_pct <= (peak_pct - gb):
+                return 'bot_tp_trail'
+        return None
+
     def _monitor_position(self, symbol: str):
         with self._lock:
             pos = self._positions.get(symbol)
@@ -878,7 +925,16 @@ class TradeManager:
         # The position lives or dies by the operator's hand.
         if pos.get('manual_mode'):
             return
-        
+
+        # === 🤖 Bot-side SOFT exit (independent of exchange SL/TP) ===
+        with self._lock:
+            _st = self._pos_state.get(symbol)
+            _peak = _st.get('peak_pnl_pct') if _st else None
+        soft_reason = self._bot_soft_exit(current_pnl_pct, _peak)
+        if soft_reason:
+            self._close_position(symbol, current_price, reason=soft_reason)
+            return
+
         # 1) Hard exits — Stop Loss / Take Profit
         s = self._settings
         if s.get('use_sl') and pos.get('sl_price'):
@@ -990,10 +1046,18 @@ class TradeManager:
             sst = self._shadow_pos_state.get(symbol)
             if sst is not None and cur_pnl > sst.get('peak_pnl_pct', 0):
                 sst['peak_pnl_pct'] = cur_pnl
-        
+            _peak = sst.get('peak_pnl_pct') if sst else None
+
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_shadow(symbol, current_price, reason=manual_reason)
+            return
+
+        # === 🤖 Bot-side SOFT exit (same rules as real; paper computes PnL) ===
+        if not pos.get('manual_mode'):
+            soft_reason = self._bot_soft_exit(cur_pnl, _peak)
+            if soft_reason:
+                self._close_shadow(symbol, current_price, reason=soft_reason)
     
     def _update_trailing(self, pos, current_price):
         s = self._settings
@@ -2760,6 +2824,8 @@ class TradeManager:
             'stop_loss': 'Спрацював стоп-лосс',
             'take_profit': 'Досягнуто тейк-профіт',
             'trailing_stop': 'Трейлінг-стоп від піку',
+            'bot_sl': '🤖 Бот-софт стоп-лосс (−%)',
+            'bot_tp_trail': '🤖 Бот-софт трейлінг тейк-профіт (відкат від піку)',
             'time_stop': 'Закрито за часом (time-stop)',
             'htf_flip': 'HTF bias розвернувся проти позиції',
             'reverse_smc': 'SMC-структура розвернулась (CHoCH проти)',
@@ -4391,6 +4457,8 @@ class TradeManager:
             'htf_flip': '📡 HTF Trend Flip',
             'time_stop': '⏱ Time Stop',
             'trailing_stop': '📈 Trailing Stop',
+            'bot_sl': '🤖🛡 Бот-софт SL',
+            'bot_tp_trail': '🤖📈 Бот-софт трейл-TP',
             'manual': '✋ Manual',
             'manual_sl': '✋🛡 Manual SL',
             'manual_tp': '✋🎯 Manual TP',

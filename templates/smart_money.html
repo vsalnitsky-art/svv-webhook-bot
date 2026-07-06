@@ -2274,7 +2274,40 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="tm-tp-pct" min="0.1" max="50" step="0.1" onchange="saveTMSettings()">
                             <span style="color:#888;font-size:0.75rem">%</span>
                         </div>
-                        
+
+                        <!-- 🤖 Bot-side SOFT exit layer — the bot itself watches
+                             live PnL% per trade and closes on its own rules,
+                             INDEPENDENTLY of the exchange-native SL/TP above (those
+                             stay as a hard backstop). Works for real AND paper. -->
+                        <div class="tm-row" style="margin-top:8px;border-top:1px dashed rgba(255,255,255,0.12);padding-top:10px">
+                            <label>
+                                <input type="checkbox" id="tm-bot-exit" onchange="saveTMSettings()">
+                                🤖 Бот-контроль виходу (софт)
+                                <span class="tm-help" title="Бот САМ стежить за PnL% кожної угоди й закриває власноруч — незалежно від біржового SL/TP вище (ті лишаються як хард-бекап на випадок, якщо бот ляже). Працює однаково для РЕАЛЬНИХ і ВІРТУАЛЬНИХ (paper) угод — для paper бот рахує PnL сам. Нижче — софт-SL і софт трейлінг-TP.">?</span>
+                            </label>
+                        </div>
+                        <div class="tm-row" style="padding-left:24px">
+                            <label>
+                                <input type="checkbox" id="tm-bot-sl" onchange="saveTMSettings()">
+                                🛡 Софт Stop Loss
+                                <span class="tm-help" title="Бот закриває угоду, коли збиток досягає −X% від ціни входу (фіксований). Незалежно від біржового SL.">?</span>
+                            </label>
+                            <input type="number" id="tm-bot-sl-pct" min="0.1" max="50" step="0.1" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.75rem">%</span>
+                        </div>
+                        <div class="tm-row" style="padding-left:24px">
+                            <label>
+                                <input type="checkbox" id="tm-bot-tp" onchange="saveTMSettings()">
+                                📈 Софт трейлінг Take Profit
+                                <span class="tm-help" title="Досягли активації (%) — НЕ закриваємо, а стежимо. Далі закриваємось, коли ціна відкотилась на «відкат %» нижче піку. Приклад: активація 1.5%, відкат 0.5% → пік 1.5% дає стоп 1.0%; пік 2.5% дає стоп 2.0%; і так далі.">?</span>
+                            </label>
+                            <input type="number" id="tm-bot-tp-pct" min="0.1" max="50" step="0.1" onchange="saveTMSettings()" title="Активація трейлінгу, %">
+                            <span style="color:#888;font-size:0.74rem">% актив.</span>
+                            <span style="color:#888;font-size:0.74rem;margin-left:8px">відкат</span>
+                            <input type="number" id="tm-bot-tp-giveback" min="0.1" max="20" step="0.1" style="width:64px" onchange="saveTMSettings()" title="Відкат від піку для закриття, %">
+                            <span style="color:#888;font-size:0.74rem">%</span>
+                        </div>
+
                         <div class="tm-row">
                             <label>
                                 <input type="checkbox" id="tm-use-reverse" onchange="saveTMSettings()">
@@ -5655,6 +5688,13 @@ async function loadTMSettings() {
         onTMSlModeChange();  // toggles buffer visibility
         document.getElementById('tm-use-tp').checked = !!s.use_tp;
         document.getElementById('tm-tp-pct').value = s.tp_pct;
+        // 🤖 Bot-side soft exit layer
+        document.getElementById('tm-bot-exit').checked = !!s.bot_exit_enabled;
+        document.getElementById('tm-bot-sl').checked = !!s.bot_sl_enabled;
+        document.getElementById('tm-bot-sl-pct').value = (s.bot_sl_pct != null ? s.bot_sl_pct : 0.8);
+        document.getElementById('tm-bot-tp').checked = !!s.bot_tp_enabled;
+        document.getElementById('tm-bot-tp-pct').value = (s.bot_tp_pct != null ? s.bot_tp_pct : 1.5);
+        document.getElementById('tm-bot-tp-giveback').value = (s.bot_tp_giveback_pct != null ? s.bot_tp_giveback_pct : 0.5);
         document.getElementById('tm-use-reverse').checked = !!s.use_reverse_smc;
         document.getElementById('tm-use-reverse-signal').checked = !!s.use_reverse_signal;
         document.getElementById('tm-use-forecast-close').checked = !!s.use_forecast_1h_close;
@@ -6017,6 +6057,13 @@ async function saveTMSettings() {
             sl_vob_buffer_pct: parseFloat(document.getElementById('tm-sl-vob-buffer').value) || 0.2,
             use_tp: document.getElementById('tm-use-tp').checked,
             tp_pct: parseFloat(document.getElementById('tm-tp-pct').value) || 5,
+            // 🤖 Bot-side soft exit layer
+            bot_exit_enabled: document.getElementById('tm-bot-exit').checked,
+            bot_sl_enabled: document.getElementById('tm-bot-sl').checked,
+            bot_sl_pct: parseFloat(document.getElementById('tm-bot-sl-pct').value) || 0.8,
+            bot_tp_enabled: document.getElementById('tm-bot-tp').checked,
+            bot_tp_pct: parseFloat(document.getElementById('tm-bot-tp-pct').value) || 1.5,
+            bot_tp_giveback_pct: parseFloat(document.getElementById('tm-bot-tp-giveback').value) || 0.5,
             use_reverse_smc: document.getElementById('tm-use-reverse').checked,
             use_reverse_signal: document.getElementById('tm-use-reverse-signal').checked,
             use_forecast_1h_close: document.getElementById('tm-use-forecast-close').checked,
