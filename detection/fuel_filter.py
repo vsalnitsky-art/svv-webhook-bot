@@ -267,6 +267,10 @@ class FuelFilterDaemon:
         # START / кнопки L/S вимкнені).  Both are purely informational.
         self._engine_skip: Dict[str, str] = {}
         self._engine_gate: str = ''
+        # Active engine mode: 'off' (FF disabled) | 'btc' (₿ START session) |
+        # 'buttons' (main-banner LONG/SHORT). Surfaced so the UI announces HOW
+        # the engine is working right now.
+        self._engine_mode: str = 'off'
         # Direction smoothing state (anti-twitch): EMA of the raw liq-fuel
         # imbalance per symbol, plus the hysteresis direction latch. Advanced
         # ONCE per scan cycle in _tick; everyone else reads it. Persisted so
@@ -2475,20 +2479,22 @@ class FuelFilterDaemon:
                 self._persist_state()
 
         # NEW STRATEGY: candidates come from the intercepted base (_pending),
-        # NOT from a watchlist scan. Two mutually-exclusive modes:
-        #   • BTC mode  (start_engine_enabled)     — only act while ₿ BTCUSDT is
-        #     START (its ММ held ≥ start_signal_minutes); the trigger, not a
-        #     direction filter.
-        #   • Indep mode(start_engine_independent) — act immediately, no BTC.
-        # In BOTH: which coins are eligible is decided by the MAIN LONG/SHORT
-        # buttons, and a coin opens only when its live fuel matches its OWN
-        # signal direction. Both OFF → engine idle.
+        # NOT from a watchlist scan. The engine is NEVER idle while FF is ON —
+        # the ₿ START toggle only picks HOW it triggers:
+        #   • ₿ START ON  (start_engine_enabled) — BTC-SESSION mode: open only
+        #     while the ₿ BTCUSDT session holds a direction ≥ threshold (START)
+        #     and is not paused.
+        #   • ₿ START OFF                         — MAIN-BUTTONS mode: open
+        #     immediately per the main LONG/SHORT buttons (the "головний банер"),
+        #     no BTC trigger — the bot keeps working instead of standing idle.
+        # In BOTH: eligible coins are decided by the MAIN LONG/SHORT buttons and
+        # a coin opens only when its live fuel matches its OWN signal direction.
         btc_mode = bool(s.get('start_engine_enabled'))
-        indep_mode = bool(s.get('start_engine_independent'))
-        if not s.get('enabled') or not (btc_mode or indep_mode):
-            self._engine_attempts.clear()   # engine off → reset counters
-            self._engine_gate = ('двигун вимкнено' if not s.get('enabled')
-                                 else 'режим двигуна вимкнено (ні ₿ START, ні незалежний)')
+        # engine_mode: 'off' (FF disabled) | 'btc' (₿ START) | 'buttons' (banner)
+        self._engine_mode = 'off' if not s.get('enabled') else ('btc' if btc_mode else 'buttons')
+        if not s.get('enabled'):
+            self._engine_attempts.clear()   # FF off → engine idle, reset counters
+            self._engine_gate = 'двигун вимкнено (Fuel Auto-Filter off)'
             self._engine_skip = {}
             _persist_attempts_if_changed()
             return
@@ -2533,12 +2539,15 @@ class FuelFilterDaemon:
                     continue
                 cand[sym] = (now - info.get('added_at', now), d)
 
-        mode_lbl = "BTC-START" if btc_mode else "НЕЗАЛЕЖНИЙ"
+        mode_lbl = "BTC-START" if btc_mode else "ЗА КНОПКАМИ"
+        # Mode prefix for the gate banner so the operator sees HOW we work now.
+        _mode_pfx = ('₿ START (за банером BTC)' if btc_mode
+                     else 'за кнопками головного банера')
         if not cand:
             self._engine_attempts.clear()
-            self._engine_gate = (f'0 кандидатів — головні кнопки ЛОНГ={allow_long} '
-                                 f'ШОРТ={allow_short}: монети в черзі не проходять за напрямком '
-                                 f'(увімкни потрібну кнопку)')
+            self._engine_gate = (f'{_mode_pfx}: 0 кандидатів — головні кнопки '
+                                 f'ЛОНГ={allow_long} ШОРТ={allow_short}: монети в черзі '
+                                 f'не проходять за напрямком (увімкни потрібну кнопку)')
             self._engine_skip = {}
             _persist_attempts_if_changed()
             print(f"[FF-Engine] {mode_lbl} · 0 кандидатів (кнопки L={allow_long} S={allow_short})")
@@ -2787,6 +2796,11 @@ class FuelFilterDaemon:
                     'paused': bool(a.get('sess_paused')),
                 })
             anomalies.sort(key=lambda x: -x['held_sec'])
+        # Live main-button gates (for engine_mode='buttons' UI + working dir).
+        try:
+            _eg_long, _eg_short = self._entry_gates()
+        except Exception:
+            _eg_long, _eg_short = True, True
         return {
             'ok': True,
             'settings': settings,
@@ -2806,6 +2820,12 @@ class FuelFilterDaemon:
             # instantly sees why NOTHING is opening (двигун вимкнено / BTC пауза
             # / чекає START / кнопки L/S).
             'engine_gate': self._engine_gate or '',
+            # HOW the engine works right now: 'off' | 'btc' (₿ START session) |
+            # 'buttons' (main-banner LONG/SHORT). Plus the live button gates so
+            # the UI can show the working direction in buttons mode.
+            'engine_mode': getattr(self, '_engine_mode', 'off'),
+            'allow_long': _eg_long,
+            'allow_short': _eg_short,
         }
 
     def active_symbols(self) -> List[str]:

@@ -1952,7 +1952,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </label>
                 <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
                     <span style="font-size:0.58rem;font-weight:700;color:#f7931a;line-height:1">₿ START</span>
-                    <label class="tm-toggle-switch" title="Автодвигун (BTC): на ₿ START скануємо чергу і відкриваємо монети, де ММ збігається з напрямком сигналу.">
+                    <label class="tm-toggle-switch" title="Тригер двигуна. УВІМК = режим ₿ START: відкриваємо лише коли ₿-сеанс тримає напрямок (не на паузі). ВИМК = режим «за кнопками головного банера»: двигун НЕ простоює, а відкриває одразу за станом кнопок ЛОНГ/ШОРТ (черга з тими ж параметрами). Повний стоп двигуна — вимкнути ❤️ Fuel Auto-Filter.">
                         <input type="checkbox" id="ff-engine-toggle" onchange="onEngineToggle(event)">
                         <span class="slider"></span>
                     </label>
@@ -7151,13 +7151,30 @@ function _ffUpdateQueueDirTabs() {
     });
     const wEl = document.getElementById('ff-queue-working');
     if (wEl) {
-        const wd = window._ffWorkingDir;
-        if (wd === 'LONG' || wd === 'SHORT') {
-            const paused = window._ffWorkingPaused ? ' · ⏸ пауза' : '';
-            wEl.style.color = window._ffWorkingPaused ? '#9aa3b5' : (wd === 'LONG' ? '#4ade80' : '#f87171');
-            wEl.innerHTML = `⚡ працюємо: ${wd === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}${paused}`;
+        const mode = window._ffEngineMode || 'off';
+        if (mode === 'btc') {
+            // ₿ START mode — working direction = ₿-session dir.
+            const wd = window._ffWorkingDir;
+            if (wd === 'LONG' || wd === 'SHORT') {
+                const paused = window._ffWorkingPaused ? ' · ⏸ пауза' : '';
+                wEl.style.color = window._ffWorkingPaused ? '#9aa3b5' : (wd === 'LONG' ? '#4ade80' : '#f87171');
+                wEl.innerHTML = `⚡ ₿ START · працюємо: ${wd === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}${paused}`;
+            } else {
+                wEl.style.color = '#9aa3b5';
+                wEl.innerHTML = '⚡ ₿ START · сеанс без напрямку';
+            }
+        } else if (mode === 'buttons') {
+            // Main-banner buttons mode — working direction = enabled buttons.
+            const L = window._ffAllowLong, S = window._ffAllowShort;
+            let txt, col;
+            if (L && S) { txt = '🟢🔴 LONG+SHORT'; col = '#e5e7eb'; }
+            else if (L) { txt = '🟢 LONG'; col = '#4ade80'; }
+            else if (S) { txt = '🔴 SHORT'; col = '#f87171'; }
+            else { txt = '⚪ кнопки OFF (не відкриваємо)'; col = '#9aa3b5'; }
+            wEl.style.color = col;
+            wEl.innerHTML = `⚡ за кнопками банера: ${txt}`;
         } else {
-            wEl.innerHTML = '';
+            wEl.innerHTML = '';   // FF off
         }
     }
 }
@@ -7317,10 +7334,15 @@ function renderFuelFilter(d) {
     // timers
     if (document.getElementById('ff-timers-tbody')) {
         window._ffTimersData = d.timers || [];
-        // Working direction = ₿-session dir (drives the ⚡ hint on the tabs).
+        // Working direction depends on the ENGINE MODE:
+        //   'btc'     → ₿-session dir (banner);
+        //   'buttons' → the main LONG/SHORT buttons (головний банер).
         const _bs = d.btc_start || {};
         window._ffWorkingDir = (_bs.dir === 'LONG' || _bs.dir === 'SHORT') ? _bs.dir : null;
         window._ffWorkingPaused = !!_bs.paused;
+        window._ffEngineMode = d.engine_mode || 'off';
+        window._ffAllowLong = !!d.allow_long;
+        window._ffAllowShort = !!d.allow_short;
         ffRenderQueue();
     }
     // GLOBAL engine gate banner — why the engine can't open ANYTHING now.
