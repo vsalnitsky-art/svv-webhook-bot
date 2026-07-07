@@ -6445,15 +6445,17 @@ function decisionRecap(es) {
 // Fuel Auto-Filter SCORE badge — IDENTICAL to the ⏱️ Active Timers SCORE cell.
 // sc = {score,label,color,dir,conflict}. Used by the timers table AND the open
 // positions tables (real + paper) so they all render the same verdict.
-// ⚡ CTR cell for the ❤️ queue: STC value colored by zone + zone tag + last
-// crossover (dir + age, muted when stale >6 bars).
+// ⚡ CTR cell for the ❤️ queues: reads as the badge does — «🟢 LONG-нахил X%» /
+// «🔴 SHORT-нахил X%» / «⚪ нейтрально X%» coloured, + small coloured crossover.
 function ffCtrCell(c) {
     if (!c || c.stc == null) return '<span style="color:#555">—</span>';
     const stc = Number(c.stc);
-    const zoneCol = stc >= 75 ? '#f87171' : (stc <= 25 ? '#4ade80' : '#9aa3b5');
-    const zoneTag = stc >= 75 ? '🔴OB' : (stc <= 25 ? '🟢OS' : '⚪');
-    let html = `<span style="color:${zoneCol};font-weight:700">${stc.toFixed(0)}</span>`
-        + ` <span style="font-size:0.6rem">${zoneTag}</span>`;
+    let revBias, col;
+    if (stc >= 75) { revBias = '🔴 SHORT-нахил'; col = '#f87171'; }
+    else if (stc <= 25) { revBias = '🟢 LONG-нахил'; col = '#4ade80'; }
+    else { revBias = '⚪ нейтрально'; col = '#9aa3b5'; }
+    const leanPct = Math.round(Math.abs(stc - 50) / 50 * 100);
+    let html = `<span title="STC ${stc.toFixed(0)}/100" style="color:${col};font-weight:700">${revBias} ${leanPct}%</span>`;
     if (c.last_dir) {
         const icon = c.last_dir === 'LONG' ? '🟢' : '🔴';
         const age = c.last_signal_age_bars;
