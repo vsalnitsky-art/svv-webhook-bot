@@ -1999,10 +1999,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Сила бабла (ММ) по монеті: 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне). Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Сила бабла (ММ) по монеті: 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне). Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
-                        <tr><td colspan="7" class="tm-empty-msg">Черга порожня</td></tr>
+                        <tr><td colspan="8" class="tm-empty-msg">Черга порожня</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -6373,6 +6373,26 @@ function decisionRecap(es) {
 // Fuel Auto-Filter SCORE badge — IDENTICAL to the ⏱️ Active Timers SCORE cell.
 // sc = {score,label,color,dir,conflict}. Used by the timers table AND the open
 // positions tables (real + paper) so they all render the same verdict.
+// ⚡ CTR cell for the ❤️ queue: STC value colored by zone + zone tag + last
+// crossover (dir + age, muted when stale >6 bars).
+function ffCtrCell(c) {
+    if (!c || c.stc == null) return '<span style="color:#555">—</span>';
+    const stc = Number(c.stc);
+    const zoneCol = stc >= 75 ? '#f87171' : (stc <= 25 ? '#4ade80' : '#9aa3b5');
+    const zoneTag = stc >= 75 ? '🔴OB' : (stc <= 25 ? '🟢OS' : '⚪');
+    let html = `<span style="color:${zoneCol};font-weight:700">${stc.toFixed(0)}</span>`
+        + ` <span style="font-size:0.6rem">${zoneTag}</span>`;
+    if (c.last_dir) {
+        const icon = c.last_dir === 'LONG' ? '🟢' : '🔴';
+        const age = c.last_signal_age_bars;
+        const stale = (age != null && age > 6);
+        const ageStr = age == null ? '' : (age === 0 ? 'now' : age + 'b');
+        html += ` <span title="Останній CTR-кросовер: ${c.last_dir} ${ageStr}${stale ? ' (застарілий)' : ''}" `
+            + `style="font-size:0.6rem;color:${stale ? '#6b7280' : '#cbd5e1'}">${icon}${ageStr}${stale ? '⚠️' : ''}</span>`;
+    }
+    return html;
+}
+
 function ffScoreBadgeHTML(sc) {
     if (!sc || !sc.label) return '<span style="color:#555">—</span>';
     const scd = sc.dir || null;
@@ -7124,6 +7144,7 @@ function _ffQueueSortVal(t, col) {
         case 'exh':    return (t.exhaustion != null) ? Number(t.exhaustion) : null;
         case 'held':   return (t.held_sec != null) ? Number(t.held_sec) : null;
         case 'score':  return (t.score != null) ? Number(t.score) : null;
+        case 'ctr':    return (t.ctr && t.ctr.stc != null) ? Number(t.ctr.stc) : null;
         default:       return null;
     }
 }
@@ -7189,6 +7210,7 @@ function ffQueueRowHTML(t) {
         <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
         <td style="font-size:0.74rem;color:#cbd5e1">${heldHtml}</td>
         <td style="white-space:nowrap">${scoreHtml}</td>
+        <td style="white-space:nowrap;font-size:0.74rem">${ffCtrCell(t.ctr)}</td>
         <td style="white-space:nowrap">
             <span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>
             <span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span>
@@ -7269,7 +7291,7 @@ function ffRenderQueue() {
     if (!rows.length) {
         const msg = (df === 'all') ? 'Черга порожня'
             : `Немає ${df === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}-монет у черзі`;
-        tb.innerHTML = `<tr><td colspan="7" class="tm-empty-msg">${msg}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="8" class="tm-empty-msg">${msg}</td></tr>`;
         _ffUpdateQueueHeaderArrows();
         return;
     }

@@ -2516,6 +2516,23 @@ class FuelFilterDaemon:
             return downs >= 2
         return False
 
+    def _ctr_snapshot(self, symbol: str) -> Optional[Dict]:
+        """Compact CTR state for the ❤️ queue's CTR column — read from the
+        forecast-engine cache (cheap, no compute). Returns {stc, last_dir,
+        last_signal_age_bars} or None when unavailable."""
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if fe:
+                c = (fe.get(symbol) or {}).get('ctr') or {}
+                if c.get('stc') is not None:
+                    return {'stc': c.get('stc'),
+                            'last_dir': c.get('last_dir'),
+                            'last_signal_age_bars': c.get('last_signal_age_bars')}
+        except Exception:
+            pass
+        return None
+
     def _ctr_gate_check(self, symbol: str, d: str, s: Dict) -> Optional[str]:
         """⚡ CTR OPEN gate. `d` = candidate dir 'LONG'/'SHORT'. Returns None if
         the trade may open, else a UA reason string. CTR is used as an ENTRY-
@@ -2847,6 +2864,8 @@ class FuelFilterDaemon:
                     # BTC пауза / кнопки) is surfaced separately in `engine_gate`
                     # so it isn't duplicated on every row. None = nothing blocking.
                     'engine_reason': self._engine_skip.get(sym) or None,
+                    # ⚡ CTR state (STC + last crossover) for the queue's CTR column.
+                    'ctr': self._ctr_snapshot(sym),
                 })
             all_timers = sorted(timers, key=lambda x: -x['held_sec'])
             bs = self._btc_state or {}
