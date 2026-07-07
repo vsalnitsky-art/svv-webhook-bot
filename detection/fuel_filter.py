@@ -168,7 +168,10 @@ DEFAULT_SETTINGS = {
     #                    (last_dir == dir AND age ≤ max_age_bars).
     #   'both'         — anti_extreme AND fresh_cross.
     'ctr_gate_mode': 'off',
-    'ctr_gate_stc_threshold': 75,         # overbought level (oversold = 100−this)
+    # «Не входити проти нахилу»: min reversal-lean % (|STC−50|/50·100, same as the
+    # CTR column) that blocks an opposite-side trade. 50 ≈ old STC-threshold 75.
+    'ctr_gate_lean_pct': 50,
+    'ctr_gate_stc_threshold': 75,         # (legacy) raw STC level — superseded by lean%
     'ctr_gate_max_age_bars': 3,           # fresh-crossover max age (bars)
     # ── Two independent entry queues ──
     #   Queue 1 «❤️ Черга на вхід» — CHoCH/BOS interception (existing).
@@ -431,6 +434,10 @@ class FuelFilterDaemon:
             s['ctr_gate_stc_threshold'] = max(50, min(99, int(s.get('ctr_gate_stc_threshold', 75) or 75)))
         except (TypeError, ValueError):
             s['ctr_gate_stc_threshold'] = 75
+        try:
+            s['ctr_gate_lean_pct'] = max(0, min(100, int(s.get('ctr_gate_lean_pct', 50) or 50)))
+        except (TypeError, ValueError):
+            s['ctr_gate_lean_pct'] = 50
         try:
             s['ctr_gate_max_age_bars'] = max(0, min(50, int(s.get('ctr_gate_max_age_bars', 3) or 3)))
         except (TypeError, ValueError):
@@ -2584,7 +2591,10 @@ class FuelFilterDaemon:
         """⚡ CTR OPEN gate. `d` = candidate dir 'LONG'/'SHORT'. Returns None if
         the trade may open, else a UA reason string. CTR is used as an ENTRY-
         TIMING filter for the momentum-continuation FF entry:
-          • anti_extreme — don't buy tops / sell bottoms (STC zone veto);
+          • anti_extreme («не входити проти нахилу») — block a trade that goes
+            AGAINST a reversal lean of ≥ ctr_gate_lean_pct %: block LONG when
+            SHORT-нахил ≥ X% (overbought), block SHORT when LONG-нахил ≥ X%
+            (oversold). Lean% = |STC−50|/50·100 (same as the CTR column).
           • fresh_cross  — require a fresh CTR crossover in `d` (strength-filtered
             last_dir == d AND age ≤ max).
         Fails OPEN (returns None) when CTR data is unavailable — the gate should
@@ -2606,17 +2616,19 @@ class FuelFilterDaemon:
             stc = float(ctr.get('stc'))
         except (TypeError, ValueError):
             return None
+        # Reversal lean strength (same % the CTR column shows) + its side.
+        lean = abs(stc - 50.0) / 50.0 * 100.0
+        lean_side = 'SHORT' if stc > 50 else ('LONG' if stc < 50 else None)
         try:
-            thr = float(s.get('ctr_gate_stc_threshold', 75) or 75)
+            lean_min = float(s.get('ctr_gate_lean_pct', 50) or 50)
         except (TypeError, ValueError):
-            thr = 75.0
-        lo = 100.0 - thr
-        # 1) Anti-extreme veto — don't open INTO the opposite cycle extreme.
+            lean_min = 50.0
+        # 1) «Не входити проти нахилу» — block a trade opposite to a strong lean.
         if mode in ('anti_extreme', 'both'):
-            if d == 'LONG' and stc >= thr:
-                return f'CTR: LONG проти перекупленості (stc {stc:.0f} ≥ {thr:.0f})'
-            if d == 'SHORT' and stc <= lo:
-                return f'CTR: SHORT проти перепроданості (stc {stc:.0f} ≤ {lo:.0f})'
+            if d == 'LONG' and lean_side == 'SHORT' and lean >= lean_min:
+                return f'CTR: LONG проти SHORT-нахилу {lean:.0f}% (≥ поріг {lean_min:.0f}%)'
+            if d == 'SHORT' and lean_side == 'LONG' and lean >= lean_min:
+                return f'CTR: SHORT проти LONG-нахилу {lean:.0f}% (≥ поріг {lean_min:.0f}%)'
         # 2) Fresh aligned crossover — require a recent CTR turn in our direction.
         if mode in ('fresh_cross', 'both'):
             try:

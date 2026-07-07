@@ -1953,17 +1953,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <!-- перенос: ⚡ CTR-гейт входу (таймінг) -->
                         <div style="flex-basis:100%;height:0;margin:0;padding:0;border:0"></div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="⚡ CTR (Schaff Trend Cycle) як фільтр ТАЙМІНГУ входу (FF уже дає напрямок — CTR каже «чи не запізно»). 🛡 Анти-екстремум: не відкривати LONG у перекупленості / SHORT у перепроданості (не купувати вершини/не продавати дна). ⚡ Свіжий кросовер: вимагати недавній розворот CTR у бік угоди (strength-фільтрований). 🔥 Обидва.">⚡ CTR-гейт входу</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="⚡ CTR як фільтр ТАЙМІНГУ входу (FF уже дає напрямок — CTR каже «чи не запізно»). 🛡 Не входити проти нахилу: блокувати LONG коли є сильний SHORT-нахил, і SHORT коли сильний LONG-нахил (поріг нахилу праворуч). ⚡ Свіжий кросовер: вимагати недавній розворот CTR у бік угоди. 🔥 Обидва.">⚡ CTR-гейт входу</label>
                             <select id="ff-ctr-mode" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(56,189,248,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="off">Вимкнено</option>
-                                <option value="anti_extreme">🛡 Анти-екстремум</option>
+                                <option value="anti_extreme">🛡 Не входити проти нахилу</option>
                                 <option value="fresh_cross">⚡ Свіжий кросовер</option>
                                 <option value="both">🔥 Обидва</option>
                             </select>
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Поріг перекупленості STC для анти-екстремуму. LONG блокується при stc ≥ порога; SHORT — при stc ≤ (100−поріг). Стандарт 75; 80 — мʼякше (менше блокувань).">CTR поріг STC</label>
-                            <input type="number" id="ff-ctr-threshold" min="50" max="99" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(56,189,248,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Поріг нахилу для «Не входити проти нахилу» — той самий % що в колонці CTR. Блокує LONG, коли SHORT-нахил ≥ цього %, і SHORT, коли LONG-нахил ≥ цього %. Стандарт 50% (≈ старий STC 75). Більше = мʼякше (блокує лише глибші нахили).">Проти нахилу ≥ %</label>
+                            <input type="number" id="ff-ctr-lean" min="0" max="100" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(56,189,248,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Макс. вік свіжого кросоверу CTR (у барах) для режимів «Свіжий кросовер»/«Обидва». Стандарт 3 (≈45 хв на 15m).">CTR вік кросов. (барів)</label>
@@ -7586,7 +7586,7 @@ function renderFuelFilter(d) {
     setIf('ff-min-mm-short', String(s.engine_min_mm_strength_short != null ? s.engine_min_mm_strength_short : (s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0)));
     setIf('ff-min-decision', s.engine_min_decision || 'any');
     setIf('ff-ctr-mode', s.ctr_gate_mode || 'off');
-    setIf('ff-ctr-threshold', String(s.ctr_gate_stc_threshold != null ? s.ctr_gate_stc_threshold : 75));
+    setIf('ff-ctr-lean', String(s.ctr_gate_lean_pct != null ? s.ctr_gate_lean_pct : 50));
     setIf('ff-ctr-max-age', String(s.ctr_gate_max_age_bars != null ? s.ctr_gate_max_age_bars : 3));
     setIf('ff-queue1-enabled', s.queue1_enabled !== false);   // default true
     setIf('ff-queue2-enabled', !!s.queue2_enabled);
@@ -8197,7 +8197,7 @@ async function saveFuelFilterSettings() {
         engine_min_mm_strength_short: parseInt(_v('ff-min-mm-short', '0') || '0', 10),
         engine_min_decision: _v('ff-min-decision', 'any') || 'any',
         ctr_gate_mode: _v('ff-ctr-mode', 'off') || 'off',
-        ctr_gate_stc_threshold: parseInt(_v('ff-ctr-threshold', '75') || '75', 10),
+        ctr_gate_lean_pct: parseInt(_v('ff-ctr-lean', '50') || '50', 10),
         ctr_gate_max_age_bars: parseInt(_v('ff-ctr-max-age', '3') || '3', 10),
         queue1_enabled: _c('ff-queue1-enabled'),
         queue2_enabled: _c('ff-queue2-enabled'),
