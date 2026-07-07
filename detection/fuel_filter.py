@@ -1277,23 +1277,15 @@ class FuelFilterDaemon:
                 self._persist_state()
             return
 
-        # OPPOSITE direction → NEW session: reset timer. The queue is now
-        # TWO-SIDED, so a flip must NOT wipe everything — it purges ONLY the
-        # entries that point AGAINST the new session direction (they can't open
-        # anymore), and KEEPS the coins that match the new side (they just became
-        # the actionable ones). This is the original OP-4 «purge opposite» intent.
+        # OPPOSITE direction → NEW session: reset the session timer/dir only.
+        # The queue is NO LONGER purged by direction on a flip — the actionable
+        # side is decided per-coin (fuel / smart direction), not by the session,
+        # so a session flip must not wipe coins. Queue cleanup is now handled
+        # SOLELY by the TTL (queue_ttl_hours) + open / manual / TM-holds.
+        # (OP-4 direction-purge retired.)
         self._btc_verdict_dir = live
         self._btc_verdict_since = now
         self._btc_paused = False
-        if _q_allowed(4):   # OP 4: session flip → purge OPPOSITE-direction entries
-            with self._lock:
-                opp = [s for s, i in self._pending.items() if i.get('dir') != live]
-                for s in opp:
-                    self._pending.pop(s, None)
-                    self._engine_attempts.pop(s, None)
-            if opp:
-                print(f"[FuelFilter] сеанс {sess}→{live}: прибрано {len(opp)} "
-                      f"монет протилежного напрямку (монети {live} лишились)")
         self._persist_state()
 
     def _bias(self, symbol: str) -> Dict:
