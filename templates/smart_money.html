@@ -5221,37 +5221,34 @@ async function loadChart() {
             
             // TF tag — which timeframe CTR is computed on (general setting).
             const _ctrTf = (ctr.tf && ctr.tf !== 'scanner') ? `·${String(ctr.tf).toUpperCase()}` : '';
-            // Build badge: reversal lean + conviction %
-            let badgeText = `⚡ CTR${_ctrTf} ${revBias} ${leanPct}%`;
+            // Build badge with PER-PART colours: the crossover keeps its own
+            // direction colour (green LONG / red SHORT, grey if stale), the lean
+            // keeps its zone colour — so the two don't blur into one hue.
+            const leanHtml = `<span style="color:${zoneColor}">${revBias} ${leanPct}%</span>`;
             let bgColor = 'rgba(100,100,100,0.12)';
-            let txtColor = zoneColor;
-            
+            let badgeHtml = `⚡ CTR${_ctrTf} ${leanHtml}`;
+
             if (ctr.last_dir) {
                 const ctrIcon = ctr.last_dir === 'LONG' ? '🟢' : '🔴';
                 const age = ctr.last_signal_age_bars;
                 const ageStr = age === null || age === undefined ? '' :
                     (age === 0 ? 'now' : age === 1 ? '1 bar ago' : `${age} bars ago`);
-                // Staleness: a crossover many bars ago is NOT actionable. Mark it
-                // and mute the colours so an old signal doesn't look live (the
-                // `last_dir` scan returns the last crossover in history, however
-                // old — this is the display-side guard for that).
+                // Staleness: a crossover many bars ago is NOT actionable → grey it.
                 const STALE_BARS = 6;
                 const stale = (age != null && age > STALE_BARS);
                 const staleTag = stale ? ' ⚠️застарілий' : '';
-                badgeText = `⚡ CTR${_ctrTf} ${ctrIcon} ${ctr.last_dir} (${ageStr}${staleTag}) · ${revBias} ${leanPct}%`;
-                if (stale) {
-                    bgColor = 'rgba(120,120,120,0.10)';
-                    txtColor = '#9aa3b5';
-                } else {
-                    bgColor = ctr.last_dir === 'LONG' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)';
-                    txtColor = ctr.last_dir === 'LONG' ? '#86efac' : '#fca5a5';
-                }
+                const crossColor = stale ? '#9aa3b5'
+                    : (ctr.last_dir === 'LONG' ? '#86efac' : '#fca5a5');
+                const crossHtml = `<span style="color:${crossColor}">${ctrIcon} ${ctr.last_dir} (${ageStr}${staleTag})</span>`;
+                badgeHtml = `⚡ CTR${_ctrTf} ${crossHtml} · ${leanHtml}`;
+                bgColor = stale ? 'rgba(120,120,120,0.10)'
+                    : (ctr.last_dir === 'LONG' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)');
             }
-            
-            ctrBadge.textContent = badgeText;
+
+            ctrBadge.innerHTML = badgeHtml;
             ctrBadge.className = 'sm-status-badge';
             ctrBadge.style.background = bgColor;
-            ctrBadge.style.color = txtColor;
+            ctrBadge.style.color = '#cbd5e1';   // neutral base; parts colour themselves
             ctrBadge.style.display = 'inline-block';
             
             // Detailed tooltip
@@ -6459,8 +6456,10 @@ function ffCtrCell(c) {
         const age = c.last_signal_age_bars;
         const stale = (age != null && age > 6);
         const ageStr = age == null ? '' : (age === 0 ? 'now' : age + 'b');
+        // Crossover coloured by its OWN direction (grey when stale).
+        const crossCol = stale ? '#6b7280' : (c.last_dir === 'LONG' ? '#4ade80' : '#f87171');
         html += ` <span title="Останній CTR-кросовер: ${c.last_dir} ${ageStr}${stale ? ' (застарілий)' : ''}" `
-            + `style="font-size:0.6rem;color:${stale ? '#6b7280' : '#cbd5e1'}">${icon}${ageStr}${stale ? '⚠️' : ''}</span>`;
+            + `style="font-size:0.6rem;color:${crossCol}">${icon}${ageStr}${stale ? '⚠️' : ''}</span>`;
     }
     return html;
 }
@@ -8505,7 +8504,9 @@ function renderTradeHistoryChart(h, meta) {
             const age = c.age_bars;
             const ageStr = age == null ? '' : (age === 0 ? ' now' : ' ' + age + 'b');
             const stale = (age != null && age > 6);
-            cross = ` · ${icon} ${c.last_dir}${ageStr}${stale ? '⚠️' : ''}`;
+            // Crossover coloured by its own direction (grey when stale).
+            const crossCol = stale ? '#6b7280' : (c.last_dir === 'LONG' ? '#4ade80' : '#f87171');
+            cross = ` · <span style="color:${crossCol}">${icon} ${c.last_dir}${ageStr}${stale ? '⚠️' : ''}</span>`;
         }
         return `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:4px">⚡ ${label}: `
             + `<b style="color:${col}">${stc.toFixed(0)}</b> <span style="font-size:0.66rem">${zone}</span>${cross}</div>`;
