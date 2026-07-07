@@ -8282,6 +8282,28 @@ function renderTradeHistoryChart(h, meta) {
                   : dcLineOf(meta.exit_decision, 'Decision Center на виході'));
     if (dcLine) dcLine = `<div style="margin-bottom:10px">${dcLine}</div>`;
 
+    // ⚡ CTR reading at open + at close (or "as of now" for an open trade).
+    function ctrLineOf(c, label) {
+        if (!c || c.stc == null) return '';
+        const stc = Number(c.stc);
+        const col = stc >= 75 ? '#f87171' : (stc <= 25 ? '#4ade80' : '#9aa3b5');
+        const zone = c.zone === 'OB' ? '🔴OB' : (c.zone === 'OS' ? '🟢OS' : '⚪MID');
+        let cross = '';
+        if (c.last_dir) {
+            const icon = c.last_dir === 'LONG' ? '🟢' : '🔴';
+            const age = c.age_bars;
+            const ageStr = age == null ? '' : (age === 0 ? ' now' : ' ' + age + 'b');
+            const stale = (age != null && age > 6);
+            cross = ` · ${icon} ${c.last_dir}${ageStr}${stale ? '⚠️' : ''}`;
+        }
+        return `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:4px">⚡ ${label}: `
+            + `<b style="color:${col}">${stc.toFixed(0)}</b> <span style="font-size:0.66rem">${zone}</span>${cross}</div>`;
+    }
+    let ctrLine = ctrLineOf(meta.ctr_open, 'CTR на вході')
+        + (isOpen ? ctrLineOf(meta.ctr_close, 'CTR зараз (перегляд)')
+                  : ctrLineOf(meta.ctr_close, 'CTR на виході'));
+    if (ctrLine) ctrLine = `<div style="margin-bottom:10px">${ctrLine}</div>`;
+
     // ₿ BTCUSDT banner state over time — colored strip (green=LONG, red=SHORT,
     // grey=WAIT/немає; напівпрозорий = ПАУЗА).
     function bannerStrip() {
@@ -8311,7 +8333,7 @@ function renderTradeHistoryChart(h, meta) {
     ], { min: 0, max: 100, dec: 0 });
     const pricePanel = panel('Ціна', [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 4 });
 
-    return info + info2 + exitReasonLine + dcLine + pnlPanel + mmPanel + bannerStrip() + pricePanel;
+    return info + info2 + exitReasonLine + dcLine + ctrLine + pnlPanel + mmPanel + bannerStrip() + pricePanel;
 }
 
 // ── 📜 Funding-coin ARCHIVE (history of appear/flip/exit + metrics) ──────

@@ -866,6 +866,9 @@ class TradeManager:
                     # 🤖 soft trailing-TP (bot_tp_trail) or something else exited.
                     'exit_reason': best.get('reason'),
                     'exit_reason_detail': best.get('reason_detail'),
+                    # ⚡ CTR reading at open + at close.
+                    'ctr_open': best.get('ctr_open'),
+                    'ctr_close': best.get('ctr_close'),
                     'opened_at': best.get('opened_at'),
                     'closed_at': best.get('closed_at'),
                     'history': list(best.get('history') or [])}
@@ -877,6 +880,8 @@ class TradeManager:
                     'entry_decision': op.get('entry_score'),
                     # live Decision Center as of THIS view (heavy — one call)
                     'decision_now': self._decision_snapshot(symbol),
+                    'ctr_open': op.get('ctr_open'),
+                    'ctr_close': self._ctr_snapshot(symbol),   # "as of now" for open
                     'opened_at': op.get('opened_at'),
                     'now_ts': time.time(),
                     'history': list(op.get('history') or [])}
@@ -2397,6 +2402,8 @@ class TradeManager:
         position['ff_exh_open'] = self._ff_exhaustion(symbol, side)
         # ММ (fuel) value at open — shown in the Reason detail.
         position['ff_mm_open'] = self._ff_mm_snapshot(symbol)
+        # ⚡ CTR entry-gate reading at open (for the хронологія modal).
+        position['ctr_open'] = self._ctr_snapshot(symbol)
 
         # Full pre-trade snapshot for the entry-quality backtest dataset.
         # Captured ONCE at open — decision + move-potential + hold score —
@@ -2453,6 +2460,8 @@ class TradeManager:
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=False),
             'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=False),
             'exit_decision': self._decision_snapshot(symbol),
+            'ctr_open': pos.get('ctr_open'),
+            'ctr_close': self._ctr_snapshot(symbol),
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             'entry_score': pos.get('entry_score'),
@@ -2663,6 +2672,7 @@ class TradeManager:
         pos['external'] = True
         pos['ff_score_open'] = self._ff_score_snapshot(symbol)
         pos['ff_mm_open'] = self._ff_mm_snapshot(symbol)
+        pos['ctr_open'] = self._ctr_snapshot(symbol)
 
         with self._lock:
             self._positions[symbol] = pos
@@ -2837,6 +2847,26 @@ class TradeManager:
             return None
 
     @staticmethod
+    def _ctr_snapshot(symbol: str) -> Optional[Dict]:
+        """⚡ CTR state snapshot for `symbol` right now: {'stc','last_dir',
+        'age_bars','zone'}. Stamped at OPEN and at CLOSE so the trade-history
+        modal can show the CTR entry-gate reading at both moments."""
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if not fe:
+                return None
+            c = (fe.get(symbol.upper()) or {}).get('ctr') or {}
+            stc = c.get('stc')
+            if stc is None:
+                return None
+            zone = 'OB' if stc >= 75 else ('OS' if stc <= 25 else 'MID')
+            return {'stc': stc, 'last_dir': c.get('last_dir'),
+                    'age_bars': c.get('last_signal_age_bars'), 'zone': zone}
+        except Exception:
+            return None
+
+    @staticmethod
     def _decision_snapshot(symbol: str):
         """Decision-Center snapshot dict for `symbol` right now (headline,
         recommended, verdict…). Stamped at close (exit_decision) and computed
@@ -2972,6 +3002,8 @@ class TradeManager:
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=False),
             'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=False),
             'exit_decision': self._decision_snapshot(symbol),
+            'ctr_open': pos.get('ctr_open'),
+            'ctr_close': self._ctr_snapshot(symbol),
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             # Carry the entry-side advisory snapshot into the closed record
@@ -3169,6 +3201,7 @@ class TradeManager:
         pos['ff_score_open'] = self._ff_score_snapshot(symbol)
         pos['ff_exh_open'] = self._ff_exhaustion(symbol, side)
         pos['ff_mm_open'] = self._ff_mm_snapshot(symbol)
+        pos['ctr_open'] = self._ctr_snapshot(symbol)
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
@@ -3365,6 +3398,8 @@ class TradeManager:
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=True),
             'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=True),
             'exit_decision': self._decision_snapshot(symbol),
+            'ctr_open': pos.get('ctr_open'),
+            'ctr_close': self._ctr_snapshot(symbol),
             'opened_by': pos.get('opened_by', ''),
             'shadow': True,
             # Same as real-position close — preserve the entry snapshot for
