@@ -153,6 +153,18 @@ DEFAULT_SETTINGS = {
     # 'marginal' = МЕЖОВИЙ або кращий; 'good' = лише ДОБРИЙ. Оцінюється
     # лениво лише для кандидата, що вже пройшов усі інші гейти.
     'engine_min_decision': 'any',
+    # ── ⚡ CTR (Schaff Trend Cycle) OPEN gate ──
+    # Uses CTR as an ENTRY-TIMING filter for the momentum-continuation FF entry.
+    #   'off'          — no CTR gate.
+    #   'anti_extreme' — block LONG when STC overbought (≥ threshold), block
+    #                    SHORT when STC oversold (≤ 100−threshold). Avoids
+    #                    buying tops / selling bottoms. (recommended base)
+    #   'fresh_cross'  — require a fresh CTR crossover in the trade direction
+    #                    (last_dir == dir AND age ≤ max_age_bars).
+    #   'both'         — anti_extreme AND fresh_cross.
+    'ctr_gate_mode': 'off',
+    'ctr_gate_stc_threshold': 75,         # overbought level (oversold = 100−this)
+    'ctr_gate_max_age_bars': 3,           # fresh-crossover max age (bars)
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -392,6 +404,17 @@ class FuelFilterDaemon:
             s['queue_ttl_hours'] = max(0, min(720, int(s.get('queue_ttl_hours', 24) or 0)))
         except (TypeError, ValueError):
             s['queue_ttl_hours'] = 24
+        # ⚡ CTR gate sanitize
+        if str(s.get('ctr_gate_mode', 'off')).lower() not in ('off', 'anti_extreme', 'fresh_cross', 'both'):
+            s['ctr_gate_mode'] = 'off'
+        try:
+            s['ctr_gate_stc_threshold'] = max(50, min(99, int(s.get('ctr_gate_stc_threshold', 75) or 75)))
+        except (TypeError, ValueError):
+            s['ctr_gate_stc_threshold'] = 75
+        try:
+            s['ctr_gate_max_age_bars'] = max(0, min(50, int(s.get('ctr_gate_max_age_bars', 3) or 3)))
+        except (TypeError, ValueError):
+            s['ctr_gate_max_age_bars'] = 3
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
         s['enabled'] = bool(s.get('enabled', False))
@@ -2493,6 +2516,57 @@ class FuelFilterDaemon:
             return downs >= 2
         return False
 
+    def _ctr_gate_check(self, symbol: str, d: str, s: Dict) -> Optional[str]:
+        """⚡ CTR OPEN gate. `d` = candidate dir 'LONG'/'SHORT'. Returns None if
+        the trade may open, else a UA reason string. CTR is used as an ENTRY-
+        TIMING filter for the momentum-continuation FF entry:
+          • anti_extreme — don't buy tops / sell bottoms (STC zone veto);
+          • fresh_cross  — require a fresh CTR crossover in `d` (strength-filtered
+            last_dir == d AND age ≤ max).
+        Fails OPEN (returns None) when CTR data is unavailable — the gate should
+        never silently freeze the engine on missing forecast data."""
+        mode = str(s.get('ctr_gate_mode', 'off') or 'off').lower()
+        if mode == 'off':
+            return None
+        ctr = None
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if fe:
+                ctr = (fe.get(symbol) or {}).get('ctr')
+        except Exception:
+            ctr = None
+        if not ctr or ctr.get('stc') is None:
+            return None   # no CTR data → don't block
+        try:
+            stc = float(ctr.get('stc'))
+        except (TypeError, ValueError):
+            return None
+        try:
+            thr = float(s.get('ctr_gate_stc_threshold', 75) or 75)
+        except (TypeError, ValueError):
+            thr = 75.0
+        lo = 100.0 - thr
+        # 1) Anti-extreme veto — don't open INTO the opposite cycle extreme.
+        if mode in ('anti_extreme', 'both'):
+            if d == 'LONG' and stc >= thr:
+                return f'CTR: LONG проти перекупленості (stc {stc:.0f} ≥ {thr:.0f})'
+            if d == 'SHORT' and stc <= lo:
+                return f'CTR: SHORT проти перепроданості (stc {stc:.0f} ≤ {lo:.0f})'
+        # 2) Fresh aligned crossover — require a recent CTR turn in our direction.
+        if mode in ('fresh_cross', 'both'):
+            try:
+                max_age = int(s.get('ctr_gate_max_age_bars', 3) or 3)
+            except (TypeError, ValueError):
+                max_age = 3
+            last_dir = ctr.get('last_dir')
+            age = ctr.get('last_signal_age_bars')
+            if last_dir != d:
+                return f'CTR: немає свіжого кросоверу {d} (останній {last_dir or "—"})'
+            if age is None or age > max_age:
+                return f'CTR: кросовер {d} застарілий (age {age if age is not None else "—"}>{max_age})'
+        return None
+
     def _engine_tick(self):
         s = self.get_settings()
         # Snapshot the attempt counters so we only hit the DB when they actually
@@ -2626,6 +2700,13 @@ class FuelFilterDaemon:
             exh = self._exhaustion(sym, d)
             if exh is not None and exh > max_exh:
                 trace.append(f"{sym}:виснаж{exh:.0f}%>{max_exh:.0f}%")
+                continue
+            # ⚡ CTR entry-timing gate (cheap — reads the cached forecast). Blocks
+            # bad-timed entries (into the opposite cycle extreme) and, in
+            # fresh_cross mode, requires a recent CTR turn in our direction.
+            _ctr_reason = self._ctr_gate_check(sym, d, s)
+            if _ctr_reason:
+                trace.append(f"{sym}:{_ctr_reason}")
                 continue
             # (Candle-confirmation gate retired — opens trigger on the fuel↔
             # direction match itself.)
