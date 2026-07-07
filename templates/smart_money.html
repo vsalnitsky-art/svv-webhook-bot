@@ -1415,9 +1415,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <label>Swings Points:</label>
                         <input type="number" id="sm-swings-input" value="50" disabled style="width:55px">
                     </div>
+                    <div class="sm-control-item"
+                         title="Таймфрейм для ⚡ CTR / STC (Cyclic Trend Reversal). ЗАГАЛЬНИЙ і НЕЗАЛЕЖНИЙ від фільтрів — задає, на яких свічках рахується CTR. Діє скрізь: бейдж на графіку, WATCHLIST і черги FF (усі читають один кеш). Стандарт 1H.">
+                        <label>⚡ CTR Timeframe:</label>
+                        <select id="sm-ctr-tf" onchange="updateCtrTf()">
+                            <option value="5m">5M</option>
+                            <option value="15m">15M</option>
+                            <option value="30m">30M</option>
+                            <option value="1h" selected>1H</option>
+                            <option value="2h">2H</option>
+                            <option value="4h">4H</option>
+                        </select>
+                    </div>
                 </div>
             </div>
-            
+
             <div class="sm-settings-section">
                 <h3>HTF Bias Filter</h3>
                 <div class="sm-controls">
@@ -1636,18 +1648,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                value="25" onchange="updatePDZoneFilter()"
                                style="width:60px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem">
                         <span style="font-size:0.78rem;color:#888">%</span>
-                    </div>
-                    <div class="sm-control-item"
-                         title="Таймфрейм для ⚡ CTR / STC (Cyclic Trend Reversal). ЗАГАЛЬНИЙ — діє скрізь: графік, WATCHLIST і черги FF (усі читають один кеш). Стандарт 1H.">
-                        <label>⚡ CTR TF:</label>
-                        <select id="sm-ctr-tf" onchange="updateCtrTf()">
-                            <option value="5m">5M</option>
-                            <option value="15m">15M</option>
-                            <option value="30m">30M</option>
-                            <option value="1h" selected>1H</option>
-                            <option value="2h">2H</option>
-                            <option value="4h">4H</option>
-                        </select>
                     </div>
                 </div>
             </div>
@@ -5214,8 +5214,10 @@ async function loadChart() {
             // point (stc=50) and dropped toward the zones.
             const leanPct = Math.round(Math.abs(ctr.stc - 50) / 50 * 100);
             
+            // TF tag — which timeframe CTR is computed on (general setting).
+            const _ctrTf = (ctr.tf && ctr.tf !== 'scanner') ? `·${String(ctr.tf).toUpperCase()}` : '';
             // Build badge: reversal lean + conviction %
-            let badgeText = `⚡ CTR ${revBias} ${leanPct}%`;
+            let badgeText = `⚡ CTR${_ctrTf} ${revBias} ${leanPct}%`;
             let bgColor = 'rgba(100,100,100,0.12)';
             let txtColor = zoneColor;
             
@@ -5231,7 +5233,7 @@ async function loadChart() {
                 const STALE_BARS = 6;
                 const stale = (age != null && age > STALE_BARS);
                 const staleTag = stale ? ' ⚠️застарілий' : '';
-                badgeText = `⚡ CTR ${ctrIcon} ${ctr.last_dir} (${ageStr}${staleTag}) · ${revBias} ${leanPct}%`;
+                badgeText = `⚡ CTR${_ctrTf} ${ctrIcon} ${ctr.last_dir} (${ageStr}${staleTag}) · ${revBias} ${leanPct}%`;
                 if (stale) {
                     bgColor = 'rgba(120,120,120,0.10)';
                     txtColor = '#9aa3b5';
