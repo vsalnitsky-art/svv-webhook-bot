@@ -5124,11 +5124,11 @@ async function loadChart() {
                 zoneColor = '#aaa';
                 revBias = '⚪ нейтрально';
             }
-            // Express STC as a "distance to reversal zone" percentage so it
-            // reads as conviction toward the lean, not a raw oscillator value.
-            const leanPct = ctr.stc >= 75 ? Math.round((ctr.stc - 75) / 25 * 100)
-                          : ctr.stc <= 25 ? Math.round((25 - ctr.stc) / 25 * 100)
-                          : Math.round((1 - Math.abs(ctr.stc - 50) / 25) * 100);
+            // Reversal conviction = how far STC is from the neutral 50 toward an
+            // extreme (0% at 50 → 100% at 0/100). MONOTONIC — fixes the old
+            // mid-zone formula that wrongly showed ~100% at the MOST neutral
+            // point (stc=50) and dropped toward the zones.
+            const leanPct = Math.round(Math.abs(ctr.stc - 50) / 50 * 100);
             
             // Build badge: reversal lean + conviction %
             let badgeText = `⚡ CTR ${revBias} ${leanPct}%`;
@@ -5140,9 +5140,21 @@ async function loadChart() {
                 const age = ctr.last_signal_age_bars;
                 const ageStr = age === null || age === undefined ? '' :
                     (age === 0 ? 'now' : age === 1 ? '1 bar ago' : `${age} bars ago`);
-                badgeText = `⚡ CTR ${ctrIcon} ${ctr.last_dir} (${ageStr}) · ${revBias} ${leanPct}%`;
-                bgColor = ctr.last_dir === 'LONG' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)';
-                txtColor = ctr.last_dir === 'LONG' ? '#86efac' : '#fca5a5';
+                // Staleness: a crossover many bars ago is NOT actionable. Mark it
+                // and mute the colours so an old signal doesn't look live (the
+                // `last_dir` scan returns the last crossover in history, however
+                // old — this is the display-side guard for that).
+                const STALE_BARS = 6;
+                const stale = (age != null && age > STALE_BARS);
+                const staleTag = stale ? ' ⚠️застарілий' : '';
+                badgeText = `⚡ CTR ${ctrIcon} ${ctr.last_dir} (${ageStr}${staleTag}) · ${revBias} ${leanPct}%`;
+                if (stale) {
+                    bgColor = 'rgba(120,120,120,0.10)';
+                    txtColor = '#9aa3b5';
+                } else {
+                    bgColor = ctr.last_dir === 'LONG' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)';
+                    txtColor = ctr.last_dir === 'LONG' ? '#86efac' : '#fca5a5';
+                }
             }
             
             ctrBadge.textContent = badgeText;
