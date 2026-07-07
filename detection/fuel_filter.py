@@ -177,6 +177,9 @@ DEFAULT_SETTINGS = {
     'queue1_enabled': True,               # интерцепт-черга (як було)
     'queue2_enabled': False,              # CTR-зони скан-черга
     'queue2_stc_threshold': 75,           # OB level; OS = 100−this (LONG≤OS, SHORT≥OB)
+    # Queue 2 confluence: also require the matching PD zone — LONG-нахил only in
+    # Discount, SHORT-нахил only in Premium (positions from the SMC scanner).
+    'queue2_require_pd': True,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -435,6 +438,7 @@ class FuelFilterDaemon:
         s['queue1_enabled'] = bool(s.get('queue1_enabled', True))
         s['queue2_enabled'] = bool(s.get('queue2_enabled', False))
         s['engine_smart_direction'] = bool(s.get('engine_smart_direction', False))
+        s['queue2_require_pd'] = bool(s.get('queue2_require_pd', True))
         try:
             s['queue2_stc_threshold'] = max(50, min(99, int(s.get('queue2_stc_threshold', 75) or 75)))
         except (TypeError, ValueError):
@@ -2629,10 +2633,16 @@ class FuelFilterDaemon:
 
     def _scan_ctr_queue(self, settings: Dict):
         """Queue 2 «⚡ CTR-зони» feeder. Scans the FF scan-list universe and
-        ENQUEUES coins by CTR zone: STC ≤ low → LONG, STC ≥ high → SHORT
-        (low = 100 − threshold). Same _pending2 machinery as Queue 1 — coins
-        stay until opened / TTL / manual removal (NOT removed on zone-exit, per
-        the chosen behaviour). Runs only when queue2_enabled."""
+        ENQUEUES coins by CTR нахил (STC зона): STC ≤ low → LONG-нахил → LONG,
+        STC ≥ high → SHORT-нахил → SHORT (low = 100 − threshold).
+
+        Confluence (queue2_require_pd, default on): also require the MATCHING PD
+        zone — LONG-нахил only in Discount (pos_pct ≤ discount_max), SHORT-нахил
+        only in Premium (pos_pct ≥ premium_min). PD positions come from the SMC
+        scanner (pd_zone_timeframe). No PD data → skip while the toggle is on.
+
+        Same _pending2 machinery as Queue 1 — coins stay until opened / TTL /
+        manual removal. Runs only when queue2_enabled."""
         if not settings.get('queue2_enabled'):
             return
         try:
@@ -2647,6 +2657,18 @@ class FuelFilterDaemon:
             fe = None
         if not fe:
             return
+        # PD-zone confluence (optional).
+        require_pd = bool(settings.get('queue2_require_pd', True))
+        sc = None
+        prem_min, disc_max = 75.0, 25.0
+        if require_pd:
+            try:
+                from detection.smc_scanner import get_smc_scanner
+                sc = get_smc_scanner()
+                if sc:
+                    prem_min, disc_max = sc.get_pd_thresholds()
+            except Exception:
+                sc = None
         now = time.time()
         changed = False
         for sym in self.get_scan_list():
@@ -2664,6 +2686,15 @@ class FuelFilterDaemon:
                 d = 'SHORT'
             else:
                 continue   # not in an extreme zone
+            # PD confluence: LONG needs Discount, SHORT needs Premium.
+            if require_pd:
+                pct = sc.get_pd_pct(sym) if sc else None
+                if pct is None:
+                    continue   # no PD data → skip while confluence is required
+                if d == 'LONG' and not (pct <= disc_max):
+                    continue   # LONG-нахил but not in Discount
+                if d == 'SHORT' and not (pct >= prem_min):
+                    continue   # SHORT-нахил but not in Premium
             with self._lock:
                 prev = self._pending2.get(sym) or {}
                 self._pending2[sym] = {

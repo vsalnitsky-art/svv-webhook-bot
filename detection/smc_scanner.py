@@ -1957,8 +1957,22 @@ class SMCScanner:
             print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} SHORT: "
                   f"price at {pct}% — too low (threshold ≤{short_min}%)")
             return False
-        
+
         return True
+
+    def get_pd_pct(self, symbol: str):
+        """Cached Premium/Discount position % (0=bottom/Discount .. 100=top/
+        Premium) for `symbol` on pd_zone_timeframe, or None if not computed.
+        Public accessor for other modules (e.g. FF Queue-2 confluence)."""
+        c = (self._pd_zone_cache.get((symbol or '').upper())
+             or self._pd_zone_cache.get(symbol))
+        return c.get('pct') if c else None
+
+    def get_pd_thresholds(self):
+        """(premium_min, discount_max) — pos_pct ≥ premium_min = Premium;
+        pos_pct ≤ discount_max = Discount; else Equilibrium."""
+        return (float(self._settings.get('pd_long_max_pct', 75.0)),
+                float(self._settings.get('pd_short_min_pct', 25.0)))
     
     def _forecast_filter_allows(self, symbol: str, side: str) -> bool:
         """Forecast 1H / 4H gate.

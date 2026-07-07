@@ -2043,6 +2043,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label style="display:flex;align-items:center;gap:4px;font-size:0.66rem;color:#8b93a7" title="Поріг STC для зон. SHORT якщо STC ≥ поріг; LONG якщо STC ≤ (100−поріг). Стандарт 75 → SHORT≥75 / LONG≤25.">поріг STC
                         <input type="number" id="ff-queue2-threshold" min="50" max="99" step="1" style="width:56px;padding:3px 6px;border-radius:5px;border:1px solid rgba(56,189,248,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                     </label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.66rem;color:#cbd5e1;cursor:pointer" title="Конфлюенція з PD-зоною: LONG-нахил бере лише в Discount, SHORT-нахил лише в Premium (позиції з SMC-сканера). Вимкнено — за самим STC-нахилом.">
+                        <input type="checkbox" id="ff-queue2-pd" onchange="saveFuelFilterSettings()"> у своїй PD-зоні
+                    </label>
                     <button onclick="clearAllTimers2()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-2">🗑️ Очистити всі</button>
                 </div>
             </div>
@@ -7586,6 +7589,7 @@ function renderFuelFilter(d) {
     setIf('ff-queue1-enabled', s.queue1_enabled !== false);   // default true
     setIf('ff-queue2-enabled', !!s.queue2_enabled);
     setIf('ff-queue2-threshold', String(s.queue2_stc_threshold != null ? s.queue2_stc_threshold : 75));
+    setIf('ff-queue2-pd', s.queue2_require_pd !== false);   // default true
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
@@ -8196,6 +8200,7 @@ async function saveFuelFilterSettings() {
         queue1_enabled: _c('ff-queue1-enabled'),
         queue2_enabled: _c('ff-queue2-enabled'),
         queue2_stc_threshold: parseInt(_v('ff-queue2-threshold', '75') || '75', 10),
+        queue2_require_pd: _c('ff-queue2-pd'),
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
