@@ -7976,6 +7976,9 @@ async function saveFuelFilterSettings() {
         manage_open_positions: _c('ff-manage-positions'),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
         close_on_btc_mode: _v('ff-close-btc-mode', 'off') || 'off',
+        // Keep the legacy boolean in sync so a stale close_on_btc_flip=true in
+        // the DB can't resurrect banner-flip closes when mode is «Вимкнено».
+        close_on_btc_flip: (_v('ff-close-btc-mode', 'off') === 'flip'),
         direction_smoothing_min: parseInt(_v('ff-smoothing-min', '0') || '0', 10),
         start_signal_minutes: parseInt(_v('ff-start-minutes', '5') || '5', 10),
         engine_candle_tf: _v('ff-engine-candle-tf', '5m') || '5m',

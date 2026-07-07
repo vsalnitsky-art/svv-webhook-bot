@@ -1136,8 +1136,14 @@ class FuelFilterDaemon:
                        side — i.e. it went to ПАУЗА/WAIT on that side OR flipped.
         """
         mode = str(settings.get('close_on_btc_mode', '') or '').lower()
+        if mode == 'off':
+            # EXPLICIT off (user picked «Вимкнено») — never close, and DO NOT
+            # fall back to the legacy boolean. A stale close_on_btc_flip=True in
+            # the DB used to fire btc_flip closes here even though the UI showed
+            # «Вимкнено» — that was the bug.
+            return
         if mode not in ('pause', 'flip'):
-            # legacy boolean toggle == 'flip'
+            # mode UNSET/unknown (old config without the key) → legacy fallback.
             if settings.get('close_on_btc_flip'):
                 mode = 'flip'
             else:
