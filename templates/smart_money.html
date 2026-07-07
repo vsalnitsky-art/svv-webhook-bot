@@ -1981,7 +1981,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <!-- ❤️ FF base: intercepted coins waiting for ₿ START + fuel -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
                 <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">❤️ Черга на вхід <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети, перехоплені з ЛОНГ/ШОРТ; чекають ₿ START + ММ у напрямку</span></div>
-                <button onclick="clearAllTimers()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всю чергу">🗑️ Очистити всі</button>
+                <div style="display:flex;align-items:center;gap:10px">
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1;cursor:pointer" title="Увімк/вимк Чергу 1 (інтерцепт). Вимкнена — двигун не бере з неї кандидатів.">
+                        <input type="checkbox" id="ff-queue1-enabled" onchange="saveFuelFilterSettings()"> увімкнено
+                    </label>
+                    <button onclick="clearAllTimers()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всю чергу">🗑️ Очистити всі</button>
+                </div>
             </div>
             <!-- Direction view filter — the queue is now TWO-SIDED (both LONG and
                  SHORT wait together). These tabs only FILTER the view; the engine
@@ -2009,6 +2014,39 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
             <div style="font-size:0.66rem;color:#6b7280;margin-top:12px">
                 💡 Таблиця наповнюється <b>перехопленням</b>: коли FF увімкнено, монети, які основні кнопки ЛОНГ/ШОРТ відправляють на відкриття, стають у чергу тут (а не відкриваються одразу). Показ фільтрується кнопками ЛОНГ/ШОРТ (обидві вимкнені → порожньо). На ₿ START скануємо «ММ» лише по цих монетах і відкриваємо ту, де ММ збігається з напрямком. Паливо рахується ЛИШЕ для монет цієї таблиці — WATCHLIST більше не сканується.
+            </div>
+
+            <!-- ⚡ Queue 2 «CTR-зони» — scan-fed by STC zone (OS→LONG, OB→SHORT) -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
+                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— скан: STC ≤ поріг_low → LONG, ≥ поріг_high → SHORT; ті самі ворота відкриття</span></div>
+                <div style="display:flex;align-items:center;gap:10px">
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1;cursor:pointer" title="Увімк/вимк Чергу 2 (CTR-зони). Незалежна від Черги 1.">
+                        <input type="checkbox" id="ff-queue2-enabled" onchange="saveFuelFilterSettings()"> увімкнено
+                    </label>
+                    <label style="display:flex;align-items:center;gap:4px;font-size:0.66rem;color:#8b93a7" title="Поріг STC для зон. SHORT якщо STC ≥ поріг; LONG якщо STC ≤ (100−поріг). Стандарт 75 → SHORT≥75 / LONG≤25.">поріг STC
+                        <input type="number" id="ff-queue2-threshold" min="50" max="99" step="1" style="width:56px;padding:3px 6px;border-radius:5px;border:1px solid rgba(56,189,248,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
+                    </label>
+                    <button onclick="clearAllTimers2()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-2">🗑️ Очистити всі</button>
+                </div>
+            </div>
+            <div id="ff-q2-dir-tabs" style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
+                <span style="color:#8b93a7">Показати:</span>
+                <button type="button" data-qdir="all" onclick="ffQueueDir2('all')" class="ff-qdir-btn">Всі <span class="ff-qdir-n"></span></button>
+                <button type="button" data-qdir="LONG" onclick="ffQueueDir2('LONG')" class="ff-qdir-btn">🟢 LONG <span class="ff-qdir-n"></span></button>
+                <button type="button" data-qdir="SHORT" onclick="ffQueueDir2('SHORT')" class="ff-qdir-btn">🔴 SHORT <span class="ff-qdir-n"></span></button>
+            </div>
+            <div class="ff-timers-scroll">
+                <table class="tm-table" id="ff-timers2-table">
+                    <thead>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue2('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue2('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue2('mm')" style="cursor:pointer;user-select:none">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue2('exh')" style="cursor:pointer;user-select:none">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue2('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue2('score')" style="cursor:pointer;user-select:none">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue2('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                    </thead>
+                    <tbody id="ff-timers2-tbody">
+                        <tr><td colspan="8" class="tm-empty-msg">Черга-2 порожня</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
+                💡 Друга черга набирає монети <b>сканом за зонами STC</b> (перепродано → LONG, перекуплено → SHORT), незалежно від Черги 1. Відкриття — за тими самими воротами (паливо-збіг, ММ, виснаженість, SCORE, CTR-гейт, ₿ START/кнопки). Вмикай/вимикай кожну чергу окремо.
             </div>
 
             <!-- 💰 Funding-fuel coins (own scan over the 💰 Funding Rate Scanner) -->
@@ -7150,7 +7188,9 @@ function _ffQueueSortVal(t, col) {
 }
 
 // Build the <tr> HTML for one queue row (extracted from the old inline map).
-function ffQueueRowHTML(t) {
+function ffQueueRowHTML(t, qnum) {
+    qnum = qnum || 1;
+    const _delFn = (qnum === 2) ? 'deleteTimer2' : 'deleteTimer';
     const isFunding = !!t.funding;
     const exh = (t.exhaustion != null)
         ? t.exhaustion.toFixed(1) + '%' : '—';
@@ -7213,7 +7253,7 @@ function ffQueueRowHTML(t) {
         <td style="white-space:nowrap;font-size:0.74rem">${ffCtrCell(t.ctr)}</td>
         <td style="white-space:nowrap">
             <span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>
-            <span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span>
+            <span onclick="${_delFn}('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити з черги">✕</span>
         </td>
     </tr>`;
 }
@@ -7338,6 +7378,95 @@ function _ffUpdateQueueHeaderArrows() {
     });
 }
 
+// ── ⚡ Queue 2 «CTR-зони» — same rendering, own state + table ids ──
+window._ff2QueueSort = window._ff2QueueSort || { col: 'ctr', dir: -1 };
+window._ff2QueueDirFilter = window._ff2QueueDirFilter || 'all';
+window._ff2TimersData = window._ff2TimersData || [];
+
+function ffQueueDir2(dir) {
+    window._ff2QueueDirFilter = (dir === 'LONG' || dir === 'SHORT') ? dir : 'all';
+    ffRenderQueue2();
+}
+function _ffUpdateQueue2DirTabs() {
+    const data = window._ff2TimersData || [];
+    const counts = { all: data.length,
+        LONG: data.filter(t => t.dir === 'LONG').length,
+        SHORT: data.filter(t => t.dir === 'SHORT').length };
+    const cur = window._ff2QueueDirFilter || 'all';
+    document.querySelectorAll('#ff-q2-dir-tabs .ff-qdir-btn').forEach(b => {
+        const k = b.getAttribute('data-qdir');
+        const on = (k === cur);
+        b.style.cssText = 'cursor:pointer;padding:3px 10px;border-radius:11px;font-size:0.68rem;font-weight:700;'
+            + 'border:1px solid ' + (on ? '#ffffff55' : '#ffffff18') + ';'
+            + 'background:' + (on ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.03)') + ';'
+            + 'color:' + (on ? '#e5e7eb' : '#9aa3b5') + ';';
+        const nEl = b.querySelector('.ff-qdir-n');
+        if (nEl) nEl.textContent = '(' + (counts[k] != null ? counts[k] : 0) + ')';
+    });
+}
+function ffRenderQueue2() {
+    const tb = document.getElementById('ff-timers2-tbody');
+    if (!tb) return;
+    _ffUpdateQueue2DirTabs();
+    let rows = (window._ff2TimersData || []).slice();
+    const df = window._ff2QueueDirFilter || 'all';
+    if (df === 'LONG' || df === 'SHORT') rows = rows.filter(t => t.dir === df);
+    if (!rows.length) {
+        const msg = (df === 'all') ? 'Черга-2 порожня (немає монет у зонах STC)'
+            : `Немає ${df === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}-монет у Черзі-2`;
+        tb.innerHTML = `<tr><td colspan="8" class="tm-empty-msg">${msg}</td></tr>`;
+        _ffUpdateQueue2HeaderArrows();
+        return;
+    }
+    const srt = window._ff2QueueSort || { col: 'ctr', dir: -1 };
+    rows.sort((a, b) => {
+        const va = _ffQueueSortVal(a, srt.col), vb = _ffQueueSortVal(b, srt.col);
+        const na = (va == null || va === ''), nb = (vb == null || vb === '');
+        if (na && nb) return 0;
+        if (na) return 1;
+        if (nb) return -1;
+        let cmp = (typeof va === 'number' && typeof vb === 'number')
+            ? va - vb : String(va).localeCompare(String(vb));
+        return cmp * srt.dir;
+    });
+    tb.innerHTML = rows.map(t => ffQueueRowHTML(t, 2)).join('');
+    _ffUpdateQueue2HeaderArrows();
+}
+function ffSortQueue2(col) {
+    const srt = window._ff2QueueSort || { col: 'ctr', dir: -1 };
+    if (srt.col === col) srt.dir = -srt.dir;
+    else { srt.col = col; srt.dir = (col === 'symbol' || col === 'dir') ? 1 : -1; }
+    window._ff2QueueSort = srt;
+    ffRenderQueue2();
+}
+function _ffUpdateQueue2HeaderArrows() {
+    const srt = window._ff2QueueSort || { col: 'ctr', dir: -1 };
+    document.querySelectorAll('#ff-timers2-table th[data-sortcol]').forEach(th => {
+        const arrow = th.querySelector('.ff-sort-arrow');
+        if (!arrow) return;
+        arrow.textContent = (th.getAttribute('data-sortcol') === srt.col)
+            ? (srt.dir < 0 ? ' ▼' : ' ▲') : '';
+    });
+}
+async function deleteTimer2(symbol) {
+    try {
+        await fetch('/api/fuel-filter/queue2/delete', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ symbol })
+        });
+        window._ff2TimersData = (window._ff2TimersData || []).filter(t => t.symbol !== symbol);
+        ffRenderQueue2();
+    } catch (e) { alert('Помилка видалення з Черги-2: ' + e); }
+}
+async function clearAllTimers2() {
+    if (!confirm('Очистити всю Чергу-2 (CTR-зони)?')) return;
+    try {
+        await fetch('/api/fuel-filter/queue2/clear', { method: 'POST' });
+        window._ff2TimersData = [];
+        ffRenderQueue2();
+    } catch (e) { alert('Помилка очищення Черги-2: ' + e); }
+}
+
 function renderFuelFilter(d) {
     const s = d.settings || {};
     // BTC START/STOP banner — refresh from state, then let the global ticker
@@ -7388,6 +7517,9 @@ function renderFuelFilter(d) {
     setIf('ff-ctr-mode', s.ctr_gate_mode || 'off');
     setIf('ff-ctr-threshold', String(s.ctr_gate_stc_threshold != null ? s.ctr_gate_stc_threshold : 75));
     setIf('ff-ctr-max-age', String(s.ctr_gate_max_age_bars != null ? s.ctr_gate_max_age_bars : 3));
+    setIf('ff-queue1-enabled', s.queue1_enabled !== false);   // default true
+    setIf('ff-queue2-enabled', !!s.queue2_enabled);
+    setIf('ff-queue2-threshold', String(s.queue2_stc_threshold != null ? s.queue2_stc_threshold : 75));
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
@@ -7447,6 +7579,11 @@ function renderFuelFilter(d) {
         window._ffAllowLong = !!d.allow_long;
         window._ffAllowShort = !!d.allow_short;
         ffRenderQueue();
+    }
+    // Queue 2 «⚡ CTR-зони»
+    if (document.getElementById('ff-timers2-tbody')) {
+        window._ff2TimersData = d.timers2 || [];
+        ffRenderQueue2();
     }
     // GLOBAL engine gate banner — why the engine can't open ANYTHING now.
     const gateEl = document.getElementById('ff-engine-gate');
@@ -7989,6 +8126,9 @@ async function saveFuelFilterSettings() {
         ctr_gate_mode: _v('ff-ctr-mode', 'off') || 'off',
         ctr_gate_stc_threshold: parseInt(_v('ff-ctr-threshold', '75') || '75', 10),
         ctr_gate_max_age_bars: parseInt(_v('ff-ctr-max-age', '3') || '3', 10),
+        queue1_enabled: _c('ff-queue1-enabled'),
+        queue2_enabled: _c('ff-queue2-enabled'),
+        queue2_stc_threshold: parseInt(_v('ff-queue2-threshold', '75') || '75', 10),
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),

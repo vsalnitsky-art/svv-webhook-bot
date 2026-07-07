@@ -165,6 +165,13 @@ DEFAULT_SETTINGS = {
     'ctr_gate_mode': 'off',
     'ctr_gate_stc_threshold': 75,         # overbought level (oversold = 100−this)
     'ctr_gate_max_age_bars': 3,           # fresh-crossover max age (bars)
+    # ── Two independent entry queues ──
+    #   Queue 1 «❤️ Черга на вхід» — CHoCH/BOS interception (existing).
+    #   Queue 2 «⚡ CTR-зони»       — CTR-zone scan (STC≤low→LONG, ≥high→SHORT).
+    # Same open machinery/gates; only the feeder differs. Toggle each on/off.
+    'queue1_enabled': True,               # интерцепт-черга (як було)
+    'queue2_enabled': False,              # CTR-зони скан-черга
+    'queue2_stc_threshold': 75,           # OB level; OS = 100−this (LONG≤OS, SHORT≥OB)
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -320,6 +327,11 @@ class FuelFilterDaemon:
         # On ₿ START the engine fuel-checks these and opens the matching ones.
         # {symbol: {dir, added_at}}. Persisted.
         self._pending: Dict[str, Dict] = {}
+        # ── Queue 2 «⚡ CTR-зони» (reversion): SAME machinery/gates as _pending,
+        # but coins ENTER by a CTR scan (STC ≤ low → LONG, STC ≥ high → SHORT)
+        # instead of CHoCH/BOS interception. Independent on/off toggle. {sym:
+        # {dir, added_at}}. Persisted.
+        self._pending2: Dict[str, Dict] = {}
         self._last_tick_ts = 0
         self._load_state()
 
@@ -415,6 +427,12 @@ class FuelFilterDaemon:
             s['ctr_gate_max_age_bars'] = max(0, min(50, int(s.get('ctr_gate_max_age_bars', 3) or 3)))
         except (TypeError, ValueError):
             s['ctr_gate_max_age_bars'] = 3
+        s['queue1_enabled'] = bool(s.get('queue1_enabled', True))
+        s['queue2_enabled'] = bool(s.get('queue2_enabled', False))
+        try:
+            s['queue2_stc_threshold'] = max(50, min(99, int(s.get('queue2_stc_threshold', 75) or 75)))
+        except (TypeError, ValueError):
+            s['queue2_stc_threshold'] = 75
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
         s['enabled'] = bool(s.get('enabled', False))
@@ -635,6 +653,10 @@ class FuelFilterDaemon:
             if isinstance(pend, dict):
                 self._pending = {str(k).upper(): v for k, v in pend.items()
                                  if isinstance(v, dict) and v.get('dir') in ('LONG', 'SHORT')}
+            pend2 = st.get('pending2', {}) or {}
+            if isinstance(pend2, dict):
+                self._pending2 = {str(k).upper(): v for k, v in pend2.items()
+                                  if isinstance(v, dict) and v.get('dir') in ('LONG', 'SHORT')}
             if (self._fuel_managed or self._anomalies or self._engine_attempts
                     or self._timers or self._pending):
                 print(f"[FuelFilter] restored {len(self._pending)} queued "
@@ -656,6 +678,7 @@ class FuelFilterDaemon:
                 'btc_verdict_dir': self._btc_verdict_dir,
                 'btc_verdict_since': self._btc_verdict_since,
                 'pending': self._pending,
+                'pending2': self._pending2,
                 'funding_muted': self._funding_muted,
             })
         except Exception as e:
@@ -1676,6 +1699,7 @@ class FuelFilterDaemon:
             self._timers.pop(symbol, None)
             if _q_allowed(1):   # OP 1: remove from queue on position close
                 self._pending.pop(symbol, None)
+                self._pending2.pop(symbol, None)
             self._persist_state()
         print(f"[FuelFilter] CLOSE trigger {symbol} reason={reason}")
 
@@ -1727,6 +1751,12 @@ class FuelFilterDaemon:
         except Exception as e:
             print(f"[FuelFilter] btc-flip close error: {e}")
 
+        # ⚡ Queue 2 «CTR-зони» feeder — scan & enqueue by STC zone (if enabled).
+        try:
+            self._scan_ctr_queue(settings)
+        except Exception as e:
+            print(f"[FuelFilter] CTR-queue scan error: {e}")
+
         # 💰 Funding scanner membership / rates — it has its OWN table now.
         funding_syms = self._get_funding_symbols()
         with self._lock:
@@ -1752,11 +1782,20 @@ class FuelFilterDaemon:
                 for s in _expired:
                     self._pending.pop(s, None)
                     self._engine_attempts.pop(s, None)
-                if _expired:
+                # Queue 2 shares the same TTL.
+                _expired2 = [s for s, i in self._pending2.items()
+                             if (now - i.get('added_at', now)) > _ttl]
+                for s in _expired2:
+                    self._pending2.pop(s, None)
+                    self._engine_attempts.pop(s, None)
+                if _expired or _expired2:
                     self._persist_state()
             if _expired:
-                print(f"[FuelFilter] TTL {_ttl_h:.0f}h: прибрано з черги "
-                      f"{len(_expired)} застарілих: {', '.join(_expired)}")
+                print(f"[FuelFilter] TTL {_ttl_h:.0f}h: прибрано з черги-1 "
+                      f"{len(_expired)}: {', '.join(_expired)}")
+            if _expired2:
+                print(f"[FuelFilter] TTL {_ttl_h:.0f}h: прибрано з черги-2 "
+                      f"{len(_expired2)}: {', '.join(_expired2)}")
 
         # Prune STALE managed markers (TM no longer holds the position) EVERY
         # tick — independent of the manage_open_positions toggle. Without this,
@@ -2590,6 +2629,54 @@ class FuelFilterDaemon:
                 return f'CTR: кросовер {d} застарілий (age {age if age is not None else "—"}>{max_age})'
         return None
 
+    def _scan_ctr_queue(self, settings: Dict):
+        """Queue 2 «⚡ CTR-зони» feeder. Scans the FF scan-list universe and
+        ENQUEUES coins by CTR zone: STC ≤ low → LONG, STC ≥ high → SHORT
+        (low = 100 − threshold). Same _pending2 machinery as Queue 1 — coins
+        stay until opened / TTL / manual removal (NOT removed on zone-exit, per
+        the chosen behaviour). Runs only when queue2_enabled."""
+        if not settings.get('queue2_enabled'):
+            return
+        try:
+            high = float(int(settings.get('queue2_stc_threshold', 75) or 75))
+        except (TypeError, ValueError):
+            high = 75.0
+        low = 100.0 - high
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+        except Exception:
+            fe = None
+        if not fe:
+            return
+        now = time.time()
+        changed = False
+        for sym in self.get_scan_list():
+            try:
+                ctr = (fe.get(sym) or {}).get('ctr') or {}
+                stc = ctr.get('stc')
+                if stc is None:
+                    continue
+                stc = float(stc)
+            except Exception:
+                continue
+            if stc <= low:
+                d = 'LONG'
+            elif stc >= high:
+                d = 'SHORT'
+            else:
+                continue   # not in an extreme zone
+            with self._lock:
+                prev = self._pending2.get(sym) or {}
+                self._pending2[sym] = {
+                    'dir': d,
+                    'added_at': prev.get('added_at') if (prev.get('dir') == d and prev.get('added_at'))
+                                else now,
+                }
+            changed = True
+        if changed:
+            self._persist_state()
+
     def _engine_tick(self):
         s = self.get_settings()
         # Snapshot the attempt counters so we only hit the DB when they actually
@@ -2648,19 +2735,32 @@ class FuelFilterDaemon:
                 _persist_attempts_if_changed()
                 return
 
-        # Candidates = waiting base, filtered by the MAIN LONG/SHORT buttons.
+        # Candidates = waiting base from BOTH queues (each gated by its own
+        # enable toggle), filtered by the MAIN LONG/SHORT buttons. Each candidate
+        # is tagged with its source queue (1 or 2) so opens pop from the right
+        # one. Queue 1 takes precedence on a symbol present in both.
         allow_long, allow_short = self._entry_gates()
-        cand = {}   # sym -> (waited_sec, signal_dir)
+        q1_on = bool(s.get('queue1_enabled', True))
+        q2_on = bool(s.get('queue2_enabled', False))
+        cand = {}   # sym -> (waited_sec, signal_dir, queue_num)
         with self._lock:
-            for sym, info in self._pending.items():
-                d = info.get('dir')
-                if d not in ('LONG', 'SHORT'):
-                    continue
-                if d == 'LONG' and not allow_long:
-                    continue
-                if d == 'SHORT' and not allow_short:
-                    continue
-                cand[sym] = (now - info.get('added_at', now), d)
+            _sources = []
+            if q1_on:
+                _sources.append((1, self._pending))
+            if q2_on:
+                _sources.append((2, self._pending2))
+            for qnum, book in _sources:
+                for sym, info in book.items():
+                    if sym in cand:
+                        continue   # queue 1 precedence
+                    d = info.get('dir')
+                    if d not in ('LONG', 'SHORT'):
+                        continue
+                    if d == 'LONG' and not allow_long:
+                        continue
+                    if d == 'SHORT' and not allow_short:
+                        continue
+                    cand[sym] = (now - info.get('added_at', now), d, qnum)
 
         mode_lbl = "BTC-START" if btc_mode else "ЗА КНОПКАМИ"
         # Mode prefix for the gate banner so the operator sees HOW we work now.
@@ -2681,8 +2781,10 @@ class FuelFilterDaemon:
         tf = s.get('engine_candle_tf', '5m')
         trace = []
 
-        # Open oldest-waiting first.
-        for sym, (held, d) in sorted(cand.items(), key=lambda kv: -kv[1][0]):
+        # Open oldest-waiting first. `qnum` = source queue (1 or 2).
+        def _pop_from_queue(_sym, _q):
+            (self._pending if _q == 1 else self._pending2).pop(_sym, None)
+        for sym, (held, d, qnum) in sorted(cand.items(), key=lambda kv: -kv[1][0]):
             if sym in self._fuel_managed:
                 trace.append(f"{sym}:managed")
                 continue   # already managed (no duplicate)
@@ -2691,7 +2793,7 @@ class FuelFilterDaemon:
                 trace.append(f"{sym}:вже-в-угодах")
                 if _q_allowed(3):   # OP 3: TM already holds the coin
                     with self._lock:
-                        self._pending.pop(sym, None)
+                        _pop_from_queue(sym, qnum)
                 continue
             fuel = self._fuel_dir_smoothed(sym)
             if not fuel or not fuel.get('mark_price'):
@@ -2782,7 +2884,7 @@ class FuelFilterDaemon:
                         self._timers[sym] = {'dir': d, 'since': now,
                                              'start_price': fuel.get('mark_price')}
                         if _q_allowed(2):   # OP 2: engine opened the trade
-                            self._pending.pop(sym, None)
+                            _pop_from_queue(sym, qnum)
                     self._engine_attempts.pop(sym, None)   # opened → reset
                     trace.append(f"{sym}:✅ВІДКРИТО {d}")
                     print(f"[FF-Engine] opened {d} {sym} ({mode_lbl}, exh="
@@ -2818,6 +2920,31 @@ class FuelFilterDaemon:
               f"{len(cand)} канд · паливо-гейт · "
               + ' '.join(trace))
 
+    def _queue_row(self, sym: str, info: Dict, now: float) -> Optional[Dict]:
+        """Build ONE queue-table row for `sym`. Shared by Queue 1 and Queue 2 so
+        both tables carry IDENTICAL columns. Returns None if the coin is already
+        an open FF position (hidden from the waiting list)."""
+        if sym in self._fuel_managed:
+            return None
+        d = info.get('dir')
+        waited = now - info.get('added_at', now)
+        return {
+            'symbol': sym, 'dir': d,
+            'held_sec': int(waited),
+            'waiting': True,
+            'exhaustion': (self._score_cache.get(sym) or {}).get('exh'),
+            'score': self._score_cache.get(sym),
+            'mm': (self._score_cache.get(sym) or {}).get('fuel_dir'),
+            'mm_str': self._fuel_str.get(sym),
+            'mm_str_prev': self._fuel_str_prev.get(sym),
+            'funding': False,
+            'funding_rate': None,
+            'funding_next_ms': None,
+            'engine_attempts': self._engine_attempts.get(sym, 0),
+            'engine_reason': self._engine_skip.get(sym) or None,
+            'ctr': self._ctr_snapshot(sym),
+        }
+
     def get_state(self) -> Dict:
         """Snapshot for the UI: settings + live timers + active tracking.
         NEW STRATEGY: shows only timers held >= duration_minutes (threshold).
@@ -2835,45 +2962,22 @@ class FuelFilterDaemon:
             # buttons to WAIT (both off), wiping coins that legitimately waited.
             # Buttons control OPENING (the engine), not visibility. The count
             # equals the rows shown.
-            visible_pending = 0
+            # Queue 1 «❤️ Черга на вхід» (interception) rows.
             timers = []
             for sym, info in self._pending.items():
-                if sym in self._fuel_managed:
-                    continue  # already opened
-                d = info.get('dir')
-                visible_pending += 1
-                waited = now - info.get('added_at', now)
-                timers.append({
-                    'symbol': sym, 'dir': d,
-                    # No timer while waiting — it starts at open. Show how long
-                    # the coin has been queued instead.
-                    'held_sec': int(waited),
-                    'waiting': True,
-                    # Real move-exhaustion for the coin (0 fresh → 100 exhausted).
-                    # NB: the score dict stores it under 'exh' — the old '_exh'
-                    # key never existed, so this column always showed "—".
-                    'exhaustion': (self._score_cache.get(sym) or {}).get('exh'),
-                    'score': self._score_cache.get(sym),
-                    # Per-coin ММ (liq-fuel) direction for the ММ column —
-                    # LONG / SHORT / None(=збалансований). The UI compares it
-                    # with `dir` (the signal side) to show ✓ збіг / ✗ проти.
-                    'mm': (self._score_cache.get(sym) or {}).get('fuel_dir'),
-                    # Fuel STRENGTH 0..100 (+ previous cycle for the trend arrow).
-                    'mm_str': self._fuel_str.get(sym),
-                    'mm_str_prev': self._fuel_str_prev.get(sym),
-                    'funding': False,
-                    'funding_rate': None,
-                    'funding_next_ms': None,
-                    'engine_attempts': self._engine_attempts.get(sym, 0),
-                    # Diagnostics: WHY the engine didn't open THIS coin last tick
-                    # (per-coin gate reason). The GLOBAL gate (двигун вимкнено /
-                    # BTC пауза / кнопки) is surfaced separately in `engine_gate`
-                    # so it isn't duplicated on every row. None = nothing blocking.
-                    'engine_reason': self._engine_skip.get(sym) or None,
-                    # ⚡ CTR state (STC + last crossover) for the queue's CTR column.
-                    'ctr': self._ctr_snapshot(sym),
-                })
+                row = self._queue_row(sym, info, now)
+                if row:
+                    timers.append(row)
+            visible_pending = len(timers)
             all_timers = sorted(timers, key=lambda x: -x['held_sec'])
+            # Queue 2 «⚡ CTR-зони» (scan) rows — identical columns.
+            timers2 = []
+            for sym, info in self._pending2.items():
+                row = self._queue_row(sym, info, now)
+                if row:
+                    timers2.append(row)
+            visible_pending2 = len(timers2)
+            all_timers2 = sorted(timers2, key=lambda x: -x['held_sec'])
             bs = self._btc_state or {}
             # BTC START/STOP signal: progress counts up while the MAIN-WINDOW
             # verdict (compute_bias) holds LONG/SHORT, reaching START at
@@ -2946,6 +3050,11 @@ class FuelFilterDaemon:
             'running': bool(self._thread and self._thread.is_alive()),
             'last_tick_ts': self._last_tick_ts,
             'timers': all_timers,
+            # Queue 2 «⚡ CTR-зони» rows (same shape as `timers`).
+            'timers2': all_timers2,
+            'pending2_visible': visible_pending2,
+            'queue1_enabled': bool(settings.get('queue1_enabled', True)),
+            'queue2_enabled': bool(settings.get('queue2_enabled', False)),
             'btc_start': btc_start,
             'anomalies': anomalies,
             'active_symbols': list(self._fuel_managed.keys()),
@@ -3045,7 +3154,7 @@ class FuelFilterDaemon:
 
         with self._lock:
             timer = self._timers.get(symbol)
-            pend = self._pending.get(symbol)
+            pend = self._pending.get(symbol) or self._pending2.get(symbol)
 
         # Check if already holding a position
         if symbol in self._fuel_managed:
@@ -3093,6 +3202,7 @@ class FuelFilterDaemon:
                                         'start_price': fuel.get('mark_price')}
                 if _q_allowed(9):   # OP 9: manual force-open
                     self._pending.pop(symbol, None)
+                    self._pending2.pop(symbol, None)
                 self._persist_state()
             return {'ok': True, 'reason': f'Позицію {side} відкрито вручну', 'opened': True}
         else:
@@ -3112,6 +3222,23 @@ class FuelFilterDaemon:
             self._persist_state()
             print(f"[FuelFilter] Cleared {count} timers")
             return count
+
+    def delete_timer2(self, symbol: str) -> bool:
+        """Remove ONE coin from Queue 2 «⚡ CTR-зони» (user ✕)."""
+        symbol = (symbol or '').upper()
+        with self._lock:
+            removed = self._pending2.pop(symbol, None) is not None
+            if removed:
+                self._persist_state()
+        return removed
+
+    def clear_all_timers2(self) -> int:
+        """Clear Queue 2 «⚡ CTR-зони» entirely (does NOT touch Queue 1)."""
+        with self._lock:
+            n = len(self._pending2)
+            self._pending2 = {}
+            self._persist_state()
+        return n
 
     def delete_anomaly(self, symbol: str) -> bool:
         """Remove ONE coin from the anomalies table (user action)."""
