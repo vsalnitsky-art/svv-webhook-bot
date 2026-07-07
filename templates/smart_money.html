@@ -1945,6 +1945,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <input type="checkbox" id="ff-engine-stronghold" onchange="saveFuelFilterSettings()"> 💪 Лише STRONG HOLD (SCORE = напрямок)
                             </label>
                         </div>
+                        <div>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🧭 Розумний напрямок: двигун бере напрямок угоди НЕ зі сторони сигналу входу, а з ЖИВОГО палива (ММ) монети, і застосовує всі решту FF-фільтрів до цього напрямку. Рятує монети, що зайшли «не тією» стороною, коли всі показники за протилежну. У черзі напрямок таких монет показується 🧭.">
+                                <input type="checkbox" id="ff-engine-smartdir" onchange="saveFuelFilterSettings()"> 🧭 Розумний напрямок (за паливом, не за сигналом)
+                            </label>
+                        </div>
                         <!-- перенос: ⚡ CTR-гейт входу (таймінг) -->
                         <div style="flex-basis:100%;height:0;margin:0;padding:0;border:0"></div>
                         <div>
@@ -7267,11 +7272,16 @@ function ffQueueRowHTML(t, qnum) {
         else { srcSym = 'M'; srcColor = '#94a3b8'; srcTitle = 'Додано вручну у WATCHLIST'; }
     }
     const srcBadge = `<span title="${srcTitle}" style="display:inline-block;min-width:16px;text-align:center;font-size:0.66rem;font-weight:700;color:${srcColor};margin-right:5px;user-select:none;-webkit-user-select:none">${srcSym}</span>`;
-    const dirHtml = t.dir === 'LONG'
+    // 🧭 marker when Smart-direction re-derived the side from fuel (differs from
+    // the entry signal). Tooltip shows the original signal side.
+    const smartMark = t.smart_dir
+        ? ` <span title="🧭 Розумний напрямок: визначено за паливом (сигнал входу був ${t.signal_dir || '—'})" style="font-size:0.7rem;cursor:help">🧭</span>`
+        : '';
+    const dirHtml = (t.dir === 'LONG'
         ? '<span style="color:#22c55e">🟢 LONG</span>'
         : (t.dir === 'SHORT'
             ? '<span style="color:#ef4444">🔴 SHORT</span>'
-            : '<span style="color:#8b93a7">⚪ —</span>');
+            : '<span style="color:#8b93a7">⚪ —</span>')) + smartMark;
     // ММ = fuel direction dot + strength 0..100% + mini-bar + trend.
     const mmHtml = ffFuelCell(t.mm || null, t.mm_str, t.mm_str_prev);
     const heldHtml = t.dir
@@ -7567,6 +7577,7 @@ function renderFuelFilter(d) {
     setIf('ff-engine-candle', s.engine_candle_confirm !== false);   // default true
     setIf('ff-engine-candle-tf', s.engine_candle_tf || '5m');
     setIf('ff-engine-stronghold', !!s.engine_require_strong_hold);
+    setIf('ff-engine-smartdir', !!s.engine_smart_direction);
     setIf('ff-min-mm-long', String(s.engine_min_mm_strength_long != null ? s.engine_min_mm_strength_long : (s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0)));
     setIf('ff-min-mm-short', String(s.engine_min_mm_strength_short != null ? s.engine_min_mm_strength_short : (s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0)));
     setIf('ff-min-decision', s.engine_min_decision || 'any');
@@ -8176,6 +8187,7 @@ async function saveFuelFilterSettings() {
         start_signal_minutes: parseInt(_v('ff-start-minutes', '5') || '5', 10),
         engine_candle_tf: _v('ff-engine-candle-tf', '5m') || '5m',
         engine_require_strong_hold: _c('ff-engine-stronghold'),
+        engine_smart_direction: _c('ff-engine-smartdir'),
         engine_min_mm_strength_long: parseInt(_v('ff-min-mm-long', '0') || '0', 10),
         engine_min_mm_strength_short: parseInt(_v('ff-min-mm-short', '0') || '0', 10),
         engine_min_decision: _v('ff-min-decision', 'any') || 'any',

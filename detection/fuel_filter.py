@@ -142,6 +142,11 @@ DEFAULT_SETTINGS = {
     'engine_candle_confirm': True,        # only open when candles confirm dir (2/2)
     'engine_candle_tf': '5m',             # timeframe for the candle confirmation
     'engine_require_strong_hold': False,  # only open when SCORE=STRONG HOLD & dir matches
+    # 🧭 Smart direction: ignore the queued signal side; derive each coin's
+    # direction from its LIVE fuel (ММ) instead, then apply ALL the usual FF
+    # gates for THAT direction. Rescues coins that entered on the "wrong" signal
+    # while every indicator favours the opposite side.
+    'engine_smart_direction': False,
     # Minimum ММ (fuel) STRENGTH % to OPEN a trade — SEPARATE per direction.
     # 0 = off, 30 = помірний (≥30%), 60 = сильне (≥60%). The engine skips a
     # candidate whose fuel strength (|fuel dir|×100) is below the threshold
@@ -429,6 +434,7 @@ class FuelFilterDaemon:
             s['ctr_gate_max_age_bars'] = 3
         s['queue1_enabled'] = bool(s.get('queue1_enabled', True))
         s['queue2_enabled'] = bool(s.get('queue2_enabled', False))
+        s['engine_smart_direction'] = bool(s.get('engine_smart_direction', False))
         try:
             s['queue2_stc_threshold'] = max(50, min(99, int(s.get('queue2_stc_threshold', 75) or 75)))
         except (TypeError, ValueError):
@@ -2742,6 +2748,11 @@ class FuelFilterDaemon:
         allow_long, allow_short = self._entry_gates()
         q1_on = bool(s.get('queue1_enabled', True))
         q2_on = bool(s.get('queue2_enabled', False))
+        # 🧭 Smart direction: derive the OPEN side from live fuel (not the queued
+        # signal side). When on, we DON'T pre-filter candidates by signal dir /
+        # buttons here — the direction is decided per-coin inside the loop from
+        # fuel, then all gates (incl. buttons) apply to THAT side.
+        smart = bool(s.get('engine_smart_direction', False))
         cand = {}   # sym -> (waited_sec, signal_dir, queue_num)
         with self._lock:
             _sources = []
@@ -2756,10 +2767,11 @@ class FuelFilterDaemon:
                     d = info.get('dir')
                     if d not in ('LONG', 'SHORT'):
                         continue
-                    if d == 'LONG' and not allow_long:
-                        continue
-                    if d == 'SHORT' and not allow_short:
-                        continue
+                    if not smart:
+                        if d == 'LONG' and not allow_long:
+                            continue
+                        if d == 'SHORT' and not allow_short:
+                            continue
                     cand[sym] = (now - info.get('added_at', now), d, qnum)
 
         mode_lbl = "BTC-START" if btc_mode else "ЗА КНОПКАМИ"
@@ -2799,7 +2811,20 @@ class FuelFilterDaemon:
             if not fuel or not fuel.get('mark_price'):
                 trace.append(f"{sym}:немає-ціни")
                 continue
-            # GATE: fuel must be present AND match the signal direction.
+            # 🧭 Smart direction: OPEN side = live fuel direction (not signal).
+            if smart:
+                fd = fuel.get('status')
+                if fd not in ('LONG', 'SHORT'):
+                    trace.append(f"{sym}:паливо нейтральне — напрямок не визначено")
+                    continue
+                d = fd   # override the queued signal side
+                # Button/banner gate for the DERIVED direction.
+                if (d == 'LONG' and not allow_long) or (d == 'SHORT' and not allow_short):
+                    trace.append(f"{sym}:кнопки: {d} вимкнено")
+                    continue
+            # GATE: fuel must match the (signal OR derived) direction. In smart
+            # mode d == fuel already, so this passes; in classic mode it enforces
+            # the queued signal side.
             if fuel.get('status') != d:
                 trace.append(f"{sym}:паливо {fuel.get('status') or 'нейтр'} ≠ сигнал {d}")
                 continue
@@ -2920,16 +2945,29 @@ class FuelFilterDaemon:
               f"{len(cand)} канд · паливо-гейт · "
               + ' '.join(trace))
 
-    def _queue_row(self, sym: str, info: Dict, now: float) -> Optional[Dict]:
+    def _queue_row(self, sym: str, info: Dict, now: float, smart: bool = False) -> Optional[Dict]:
         """Build ONE queue-table row for `sym`. Shared by Queue 1 and Queue 2 so
         both tables carry IDENTICAL columns. Returns None if the coin is already
-        an open FF position (hidden from the waiting list)."""
+        an open FF position (hidden from the waiting list).
+
+        smart=True (🧭 Smart direction): the DISPLAYED direction is the live fuel
+        (ММ) side, not the queued signal side — matching what will actually open.
+        `smart_dir` flags rows whose fuel side differs from the entry signal."""
         if sym in self._fuel_managed:
             return None
-        d = info.get('dir')
+        sig_d = info.get('dir')
+        fuel_dir = (self._score_cache.get(sym) or {}).get('fuel_dir')
+        if smart and fuel_dir in ('LONG', 'SHORT'):
+            d = fuel_dir
+            smart_flag = (fuel_dir != sig_d)
+        else:
+            d = sig_d
+            smart_flag = False
         waited = now - info.get('added_at', now)
         return {
             'symbol': sym, 'dir': d,
+            'signal_dir': sig_d,
+            'smart_dir': smart_flag,
             'held_sec': int(waited),
             'waiting': True,
             'exhaustion': (self._score_cache.get(sym) or {}).get('exh'),
@@ -2962,10 +3000,11 @@ class FuelFilterDaemon:
             # buttons to WAIT (both off), wiping coins that legitimately waited.
             # Buttons control OPENING (the engine), not visibility. The count
             # equals the rows shown.
+            _smart = bool(settings.get('engine_smart_direction', False))
             # Queue 1 «❤️ Черга на вхід» (interception) rows.
             timers = []
             for sym, info in self._pending.items():
-                row = self._queue_row(sym, info, now)
+                row = self._queue_row(sym, info, now, _smart)
                 if row:
                     timers.append(row)
             visible_pending = len(timers)
@@ -2973,7 +3012,7 @@ class FuelFilterDaemon:
             # Queue 2 «⚡ CTR-зони» (scan) rows — identical columns.
             timers2 = []
             for sym, info in self._pending2.items():
-                row = self._queue_row(sym, info, now)
+                row = self._queue_row(sym, info, now, _smart)
                 if row:
                     timers2.append(row)
             visible_pending2 = len(timers2)
