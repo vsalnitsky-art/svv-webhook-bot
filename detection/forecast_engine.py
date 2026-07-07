@@ -447,8 +447,14 @@ class ForecastEngine:
         self._lock = threading.RLock()
         self._cache: Dict[str, Dict] = {}
     
-    def update(self, symbol: str, ltf_klines: Optional[List[Dict]] = None) -> Dict:
-        """Compute fresh forecast + CTR. Always overwrites cache."""
+    def update(self, symbol: str, ltf_klines: Optional[List[Dict]] = None,
+               ctr_tf: Optional[str] = None) -> Dict:
+        """Compute fresh forecast + CTR. Always overwrites cache.
+
+        ctr_tf: timeframe to compute CTR/STC on (its OWN TF — general setting,
+        default 1h). When given, the engine fetches klines at this TF for the
+        STC pipeline instead of using the scanner's ltf_klines. Falls back to
+        ltf_klines if the fetch fails."""
         from detection.market_data import get_market_data
         
         result = {
@@ -489,16 +495,29 @@ class ForecastEngine:
         except Exception as e:
             result['forecast_4h'] = _empty_forecast(f'fetch error: {e}')
         
-        # ---- CTR — uses LTF klines from scanner ----
-        # We feed momStrengthRaw from the multi-TF momentum module so that
-        # only signals matching Pine's ctrLongFiltered/ctrShortFiltered
-        # propagate. Without strength filter the Python CTR shows raw STC
-        # crossovers — twice as many signals as TradingView, with the
-        # opposite direction sometimes "winning" between scan cycles.
-        if ltf_klines:
+        # ---- CTR — own timeframe (ctr_tf, general setting, default 1h) ----
+        # Fetch klines at ctr_tf and drop the forming bar so STC fires only on
+        # confirmed candles (Pine barclose). Fall back to the scanner's
+        # ltf_klines if the CTR-TF fetch fails. We feed momStrengthRaw from the
+        # multi-TF momentum module so only Pine-filtered signals propagate.
+        ctr_closes = None
+        ctr_tf_used = ctr_tf or None
+        if ctr_tf:
             try:
-                closes = [k['p'] for k in ltf_klines]
-                
+                md = get_market_data()
+                if md and hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames:
+                    _kl = md.fetch_klines(symbol, limit=FETCH_LIMIT_1H, interval=ctr_tf)
+                    if _kl and len(_kl) > 1:
+                        ctr_closes = [k['p'] for k in _kl[:-1]]   # drop forming bar
+            except Exception as e:
+                print(f"[ForecastEngine] CTR-TF fetch error {symbol}@{ctr_tf}: {e}")
+        if not ctr_closes and ltf_klines:
+            ctr_closes = [k['p'] for k in ltf_klines]
+            ctr_tf_used = 'scanner'
+        if ctr_closes:
+            try:
+                closes = ctr_closes
+
                 # Get momStrengthRaw — best-effort, falls through to raw STC
                 # if the strength module is unavailable or fetch failed.
                 strength_raw = None
@@ -513,6 +532,8 @@ class ForecastEngine:
                     print(f"[ForecastEngine] strength fetch error for {symbol}: {e}")
                 
                 result['ctr'] = calc_ctr(closes, strength_raw=strength_raw)
+                if isinstance(result['ctr'], dict):
+                    result['ctr']['tf'] = ctr_tf_used
             except Exception as e:
                 result['ctr'] = {'stc': None, 'last_dir': None,
                                   'reason': f'compute error: {e}'}

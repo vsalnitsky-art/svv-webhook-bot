@@ -149,6 +149,10 @@ DEFAULT_SETTINGS = {
     # zones than a 15m range that compresses every few hours.
     'use_pd_zone_filter': True,
     'pd_zone_timeframe': '1h',     # 15m / 30m / 1h / 4h
+    # Timeframe for CTR/STC (Cyclic Trend Reversal). GENERAL setting — drives
+    # CTR everywhere (chart badge, WATCHLIST, FF queues), since all consumers
+    # read the one forecast-engine cache. Default 1H.
+    'ctr_timeframe': '1h',         # 5m / 15m / 30m / 1h / 2h / 4h
     'pd_long_max_pct': 75.0,       # block LONG  if pos_pct >= this (0-100)
     'pd_short_min_pct': 25.0,      # block SHORT if pos_pct <= this (0-100)
     
@@ -983,6 +987,8 @@ class SMCScanner:
                        # PD Zone filter (threshold-based)
                        'use_pd_zone_filter', 'pd_zone_timeframe',
                        'pd_long_max_pct', 'pd_short_min_pct',
+                       # CTR/STC timeframe (general — drives CTR everywhere)
+                       'ctr_timeframe',
                        # Forecast filter (1H/4H multi-horizon prediction)
                        'forecast_1h_filter_enabled', 'forecast_4h_filter_enabled',
                        'forecast_combine_mode',
@@ -1102,6 +1108,10 @@ class SMCScanner:
             ALLOWED_PD_TFS = ('15m', '30m', '1h', '4h')
             if self._settings.get('pd_zone_timeframe') not in ALLOWED_PD_TFS:
                 self._settings['pd_zone_timeframe'] = '1h'
+
+            # CTR/STC timeframe (general setting).
+            if self._settings.get('ctr_timeframe') not in ('5m', '15m', '30m', '1h', '2h', '4h'):
+                self._settings['ctr_timeframe'] = '1h'
             
             # PD Zone thresholds — clamp to [0, 100] and ensure short ≤ long.
             # If the UI sends nonsense values (negative, >100, or short>long
@@ -1361,7 +1371,8 @@ class SMCScanner:
                     from detection.forecast_engine import get_forecast_engine
                     fe = get_forecast_engine()
                     if fe:
-                        fe.update(symbol, ltf_klines=klines_closed)
+                        fe.update(symbol, ltf_klines=klines_closed,
+                                  ctr_tf=self._settings.get('ctr_timeframe', '1h'))
                 except Exception as fe_err:
                     if self._errors <= 5:
                         print(f"[SMC] Forecast update error for {symbol}: {fe_err}")
