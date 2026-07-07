@@ -2616,19 +2616,14 @@ class FuelFilterDaemon:
             stc = float(ctr.get('stc'))
         except (TypeError, ValueError):
             return None
-        # Reversal lean strength (same % the CTR column shows) + its side.
-        lean = abs(stc - 50.0) / 50.0 * 100.0
+        # Reversal-lean side (50-split, same as the CTR column): stc>50 → SHORT-
+        # нахил, stc<50 → LONG-нахил. No thresholds — just the side.
         lean_side = 'SHORT' if stc > 50 else ('LONG' if stc < 50 else None)
-        try:
-            lean_min = float(s.get('ctr_gate_lean_pct', 50) or 50)
-        except (TypeError, ValueError):
-            lean_min = 50.0
-        # 1) «Не входити проти нахилу» — block a trade opposite to a strong lean.
+        lean = abs(stc - 50.0) / 50.0 * 100.0
+        # 1) «Нахил у бік угоди» — the CTR lean must point the trade's way.
         if mode in ('anti_extreme', 'both'):
-            if d == 'LONG' and lean_side == 'SHORT' and lean >= lean_min:
-                return f'CTR: LONG проти SHORT-нахилу {lean:.0f}% (≥ поріг {lean_min:.0f}%)'
-            if d == 'SHORT' and lean_side == 'LONG' and lean >= lean_min:
-                return f'CTR: SHORT проти LONG-нахилу {lean:.0f}% (≥ поріг {lean_min:.0f}%)'
+            if lean_side is not None and lean_side != d:
+                return f'CTR: нахил {lean_side} {lean:.0f}% не в бік {d}'
         # 2) Fresh aligned crossover — require a recent CTR turn in our direction.
         if mode in ('fresh_cross', 'both'):
             try:

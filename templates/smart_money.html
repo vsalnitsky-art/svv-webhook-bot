@@ -1953,17 +1953,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <!-- перенос: ⚡ CTR-гейт входу (таймінг) -->
                         <div style="flex-basis:100%;height:0;margin:0;padding:0;border:0"></div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="⚡ CTR як фільтр ТАЙМІНГУ входу (FF уже дає напрямок — CTR каже «чи не запізно»). 🛡 Не входити проти нахилу: блокувати LONG коли є сильний SHORT-нахил, і SHORT коли сильний LONG-нахил (поріг нахилу праворуч). ⚡ Свіжий кросовер: вимагати недавній розворот CTR у бік угоди. 🔥 Обидва.">⚡ CTR-гейт входу</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="⚡ CTR як фільтр ТАЙМІНГУ входу. 🧭 Нахил у бік угоди: відкривати LONG лише коли CTR-нахил LONG (STC<50), SHORT лише коли нахил SHORT (STC>50) — без порогів. ⚡ Свіжий кросовер: вимагати недавній розворот CTR у бік угоди. 🔥 Обидва.">⚡ CTR-гейт входу</label>
                             <select id="ff-ctr-mode" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(56,189,248,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="off">Вимкнено</option>
-                                <option value="anti_extreme">🛡 Не входити проти нахилу</option>
+                                <option value="anti_extreme">🧭 Нахил у бік угоди</option>
                                 <option value="fresh_cross">⚡ Свіжий кросовер</option>
                                 <option value="both">🔥 Обидва</option>
                             </select>
-                        </div>
-                        <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Поріг нахилу для «Не входити проти нахилу» — той самий % що в колонці CTR. Блокує LONG, коли SHORT-нахил ≥ цього %, і SHORT, коли LONG-нахил ≥ цього %. Стандарт 50% (≈ старий STC 75). Більше = мʼякше (блокує лише глибші нахили).">Проти нахилу ≥ %</label>
-                            <input type="number" id="ff-ctr-lean" min="0" max="100" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(56,189,248,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Макс. вік свіжого кросоверу CTR (у барах) для режимів «Свіжий кросовер»/«Обидва». Стандарт 3 (≈45 хв на 15m).">CTR вік кросов. (барів)</label>
@@ -5202,13 +5198,16 @@ async function loadChart() {
             // reversal more likely → SHORT bias); near 0 = cycle bottom
             // (upward reversal → LONG bias). We surface that lean directly
             // instead of a bare number, so the badge reads as a direction.
+            // 50-split lean (matches the CTR gate + queue column): stc>50 →
+            // SHORT-нахил, <50 → LONG-нахил. zoneLabel keeps the OB/OS/Mid words
+            // for the tooltip only.
             let zoneLabel, zoneColor, revBias;
-            if (ctr.stc >= 75) {
-                zoneLabel = 'Overbought';
+            if (ctr.stc > 50) {
+                zoneLabel = ctr.stc >= 75 ? 'Overbought' : 'Mid-high';
                 zoneColor = '#fca5a5';
                 revBias = '🔴 SHORT-нахил';
-            } else if (ctr.stc <= 25) {
-                zoneLabel = 'Oversold';
+            } else if (ctr.stc < 50) {
+                zoneLabel = ctr.stc <= 25 ? 'Oversold' : 'Mid-low';
                 zoneColor = '#86efac';
                 revBias = '🟢 LONG-нахил';
             } else {
@@ -6450,9 +6449,10 @@ function decisionRecap(es) {
 function ffCtrCell(c) {
     if (!c || c.stc == null) return '<span style="color:#555">—</span>';
     const stc = Number(c.stc);
+    // 50-split lean (matches the CTR gate): stc>50 → SHORT-нахил, <50 → LONG.
     let revBias, col;
-    if (stc >= 75) { revBias = '🔴 SHORT-нахил'; col = '#f87171'; }
-    else if (stc <= 25) { revBias = '🟢 LONG-нахил'; col = '#4ade80'; }
+    if (stc > 50) { revBias = '🔴 SHORT-нахил'; col = '#f87171'; }
+    else if (stc < 50) { revBias = '🟢 LONG-нахил'; col = '#4ade80'; }
     else { revBias = '⚪ нейтрально'; col = '#9aa3b5'; }
     const leanPct = Math.round(Math.abs(stc - 50) / 50 * 100);
     let html = `<span title="STC ${stc.toFixed(0)}/100" style="color:${col};font-weight:700">${revBias} ${leanPct}%</span>`;
@@ -7586,7 +7586,6 @@ function renderFuelFilter(d) {
     setIf('ff-min-mm-short', String(s.engine_min_mm_strength_short != null ? s.engine_min_mm_strength_short : (s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0)));
     setIf('ff-min-decision', s.engine_min_decision || 'any');
     setIf('ff-ctr-mode', s.ctr_gate_mode || 'off');
-    setIf('ff-ctr-lean', String(s.ctr_gate_lean_pct != null ? s.ctr_gate_lean_pct : 50));
     setIf('ff-ctr-max-age', String(s.ctr_gate_max_age_bars != null ? s.ctr_gate_max_age_bars : 3));
     setIf('ff-queue1-enabled', s.queue1_enabled !== false);   // default true
     setIf('ff-queue2-enabled', !!s.queue2_enabled);
@@ -8197,7 +8196,6 @@ async function saveFuelFilterSettings() {
         engine_min_mm_strength_short: parseInt(_v('ff-min-mm-short', '0') || '0', 10),
         engine_min_decision: _v('ff-min-decision', 'any') || 'any',
         ctr_gate_mode: _v('ff-ctr-mode', 'off') || 'off',
-        ctr_gate_lean_pct: parseInt(_v('ff-ctr-lean', '50') || '50', 10),
         ctr_gate_max_age_bars: parseInt(_v('ff-ctr-max-age', '3') || '3', 10),
         queue1_enabled: _c('ff-queue1-enabled'),
         queue2_enabled: _c('ff-queue2-enabled'),
