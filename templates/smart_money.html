@@ -7217,6 +7217,32 @@ function _ffQueueSortVal(t, col) {
 }
 
 // Build the <tr> HTML for one queue row (extracted from the old inline map).
+// Small floating popup showing a queue coin's full block reason. Opens near the
+// clicked ⚠️ triangle; does NOT expand inline (table stays put). Closes on any
+// outside click.
+function ffReasonPopup(ev, text) {
+    ev.stopPropagation();
+    let p = document.getElementById('ff-reason-popup');
+    if (!p) {
+        p = document.createElement('div');
+        p.id = 'ff-reason-popup';
+        p.style.cssText = 'position:fixed;z-index:2147483000;max-width:340px;padding:9px 12px;'
+            + 'border-radius:8px;background:rgba(17,20,28,0.98);border:1px solid rgba(245,158,11,0.55);'
+            + 'color:#fbbf24;font-size:0.72rem;line-height:1.4;box-shadow:0 8px 26px rgba(0,0,0,0.55);'
+            + 'white-space:normal;display:none';
+        document.body.appendChild(p);
+        document.addEventListener('click', function (e) {
+            if (p.style.display !== 'none' && !p.contains(e.target)) p.style.display = 'none';
+        });
+    }
+    p.textContent = '⚠️ ' + (text || '—');
+    p.style.display = 'block';
+    const x = Math.min((ev.clientX || 0) + 10, window.innerWidth - 352);
+    const y = Math.min((ev.clientY || 0) + 12, window.innerHeight - 80);
+    p.style.left = Math.max(6, x) + 'px';
+    p.style.top = Math.max(6, y) + 'px';
+}
+
 function ffQueueRowHTML(t, qnum) {
     qnum = qnum || 1;
     const _delFn = (qnum === 2) ? 'deleteTimer2' : 'deleteTimer';
@@ -7262,15 +7288,16 @@ function ffQueueRowHTML(t, qnum) {
         : '';
     // SCORE — per-coin hold verdict (shared badge with the open positions tables).
     const scoreHtml = ffScoreBadgeHTML(t.score);
-    // ⚠️ WHY the engine didn't open this coin — a compact triangle at the end
-    // of the symbol; CLICK it to reveal/hide the reason text inline (no second
-    // row). Escape < > & " so reasons like "ММ40%<60%" don't break the markup.
+    // ⚠️ WHY the engine didn't open this coin — a compact triangle at the end of
+    // the symbol; CLICK it to pop a small floating box with the reason (does NOT
+    // expand inline / move the table). The reason is stored escaped in a
+    // data-attr so quotes/< > can't break the markup.
     let reasonHtml = '';
     if (t.engine_reason) {
         const _r = String(t.engine_reason)
             .replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        reasonHtml = ` <span onclick="event.stopPropagation();var n=this.nextElementSibling;n.style.display=(n.style.display==='none'?'inline':'none');" title="Чому двигун не відкрив цю монету — клік, щоб показати причину" style="cursor:pointer;color:#f59e0b;font-size:0.82rem;user-select:none;-webkit-user-select:none">⚠️</span><span class="ff-reason-txt" style="display:none;font-size:0.62rem;color:#f59e0b;font-weight:400;margin-left:5px;white-space:normal">${_r}</span>`;
+        reasonHtml = ` <span class="ff-reason-warn" data-reason="${_r}" onclick="ffReasonPopup(event, this.getAttribute('data-reason'))" title="Причина, чому двигун не відкрив — клік" style="cursor:pointer;color:#f59e0b;font-size:0.82rem;user-select:none;-webkit-user-select:none">⚠️</span>`;
     }
     return `<tr style="${rowStyle}">
         <td style="font-weight:600${symColor}">${srcBadge}${tvSym(t.symbol)}${fundLbl}${fundNext}${reasonHtml}</td>
