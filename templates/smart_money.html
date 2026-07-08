@@ -1941,8 +1941,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </select>
                         </div>
                         <div>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли SCORE монети = STRONG HOLD і напрямок SCORE збігається з колонкою «Напрямок». Використовує «TF свічки» (ліворуч) для імпульсу.">
-                                <input type="checkbox" id="ff-engine-stronghold" onchange="saveFuelFilterSettings()"> 💪 Лише STRONG HOLD (SCORE = напрямок)
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли SCORE монети = СИЛЬНЕ УТРИМАННЯ і напрямок SCORE збігається з колонкою «Напрямок». Використовує «TF свічки» (ліворуч) для імпульсу.">
+                                <input type="checkbox" id="ff-engine-stronghold" onchange="saveFuelFilterSettings()"> 💪 Лише СИЛЬНЕ УТРИМАННЯ (SCORE = напрямок)
                             </label>
                         </div>
                         <div>
@@ -2018,7 +2018,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Сила бабла (ММ) по монеті: 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне). Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Сила бабла (ММ) по монеті: 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне). Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. СИЛЬНЕ УТРИМАННЯ = найкраще. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
                         <tr><td colspan="8" class="tm-empty-msg">Черга порожня</td></tr>
@@ -2035,9 +2035,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  dropped). Opens when SCORE == STRONG HOLD AND CTR align with the
                  signal side; opens independently of bars & main buttons. -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
-                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8;min-width:0">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS лише якщо CTR-нахил уже в бік сигналу (інакше сигнал ігнорується). Відкриває, коли SCORE = STRONG HOLD і CTR збігаються з напрямком; інакше тримає в черзі (незалежно від барів і кнопок)</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8;min-width:0">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS лише якщо CTR-нахил уже в бік сигналу (інакше сигнал ігнорується). Відкриває, коли SCORE = СИЛЬНЕ УТРИМАННЯ і CTR збігаються з напрямком; інакше тримає в черзі (незалежно від барів і кнопок)</span></div>
                 <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-2. Перехоплює CHoCH/CHoCH+BOS лише за CTR-нахилом у бік сигналу; відкриває на SCORE=STRONG HOLD + CTR. Незалежна від кнопок і ₿ START.">
+                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-2. Перехоплює CHoCH/CHoCH+BOS лише за CTR-нахилом у бік сигналу; відкриває на SCORE=СИЛЬНЕ УТРИМАННЯ + CTR. Незалежна від кнопок і ₿ START.">
                         <input type="checkbox" id="ff-queue2-enabled" onchange="saveFuelFilterSettings()">
                         <span class="slider"></span>
                     </label>
@@ -2089,7 +2089,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
-                💡 Друга черга перехоплює <b>CHoCH/CHoCH+BOS</b> незалежно від Черги 1 і кнопок/₿ START. Сигнал потрапляє в чергу <b>лише якщо CTR-нахил уже в бік сигналу</b> (інакше ігнорується). Відкриває, коли <b>SCORE = STRONG HOLD</b> у напрямку сигналу <b>і CTR</b> у той самий бік. Поки чекає — якщо CTR <b>розвертається на протилежний</b> бік раніше за цей збіг, монета одразу видаляється з черги. Вмикай/вимикай кожну чергу окремо.
+                💡 Друга черга перехоплює <b>CHoCH/CHoCH+BOS</b> незалежно від Черги 1 і кнопок/₿ START. Сигнал потрапляє в чергу <b>лише якщо CTR-нахил уже в бік сигналу</b> (інакше ігнорується). Відкриває, коли <b>SCORE = СИЛЬНЕ УТРИМАННЯ</b> у напрямку сигналу <b>і CTR</b> у той самий бік. Поки чекає — якщо CTR <b>розвертається на протилежний</b> бік раніше за цей збіг, монета одразу видаляється з черги. Вмикай/вимикай кожну чергу окремо.
             </div>
 
             <!-- 💰 Funding-fuel coins (own scan over the 💰 Funding Rate Scanner) -->
@@ -6500,6 +6500,16 @@ function ffCtrCell(c) {
     return html;
 }
 
+// SCORE label EN→UA (internal values stay English for logic; UI shows Ukrainian).
+const SCORE_LABEL_UA = {
+    'STRONG HOLD': 'СИЛЬНЕ УТРИМАННЯ',
+    'HOLD': 'УТРИМАННЯ',
+    'NEUTRAL': 'НЕЙТРАЛЬНО',
+    'WEAK': 'СЛАБКЕ',
+    'EXHAUSTED': 'ВИСНАЖЕНО',
+};
+function scoreLabelUA(lbl) { return SCORE_LABEL_UA[lbl] || lbl || ''; }
+
 function ffScoreBadgeHTML(sc) {
     if (!sc || !sc.label) return '<span style="color:#555">—</span>';
     const scd = sc.dir || null;
@@ -6509,7 +6519,7 @@ function ffScoreBadgeHTML(sc) {
     const scWarn = sc.conflict
         ? '<span title="Конфлікт: бабло й рух ціни в різні боки" style="margin-left:4px">⚠️</span>'
         : '';
-    return `${scDir}<span title="Оцінка утримання ${sc.score}/100 у напрямку ${sc.dir || '—'}${sc.conflict ? ' · ⚠ бабло проти ціни' : ''}" style="display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:6px;background:${sc.color}22;border:1px solid ${sc.color};font-weight:800;font-size:0.74rem;color:${sc.color}">${sc.score}<span style="font-size:0.6rem;letter-spacing:0.3px">${sc.label}</span></span>${scWarn}`;
+    return `${scDir}<span title="Оцінка утримання ${sc.score}/100 у напрямку ${sc.dir || '—'}${sc.conflict ? ' · ⚠ бабло проти ціни' : ''}" style="display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:6px;background:${sc.color}22;border:1px solid ${sc.color};font-weight:800;font-size:0.74rem;color:${sc.color}">${sc.score}<span style="font-size:0.6rem;letter-spacing:0.3px">${scoreLabelUA(sc.label)}</span></span>${scWarn}`;
 }
 
 // Combined Status badge — shows the position's Decision-Center headline

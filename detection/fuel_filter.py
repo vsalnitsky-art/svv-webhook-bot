@@ -932,7 +932,9 @@ class FuelFilterDaemon:
     # ------------------------------------------------------------------
     @staticmethod
     def _score_label(score: float):
-        """Map a 0..100 hold-score to a (label, color) verdict."""
+        """Map a 0..100 hold-score to a (label, color) verdict. The label stays
+        ENGLISH — it's an internal key compared across the code (== 'STRONG
+        HOLD'); use _score_label_ua() to display it in Ukrainian."""
         if score >= 72:
             return ('STRONG HOLD', '#16a34a')   # green
         if score >= 55:
@@ -942,6 +944,19 @@ class FuelFilterDaemon:
         if score >= 25:
             return ('WEAK', '#f97316')           # orange
         return ('EXHAUSTED', '#ef4444')          # red
+
+    # SCORE label EN→UA for DISPLAY only (internal keys stay English for logic).
+    _SCORE_LABEL_UA = {
+        'STRONG HOLD': 'СИЛЬНЕ УТРИМАННЯ',
+        'HOLD': 'УТРИМАННЯ',
+        'NEUTRAL': 'НЕЙТРАЛЬНО',
+        'WEAK': 'СЛАБКЕ',
+        'EXHAUSTED': 'ВИСНАЖЕНО',
+    }
+
+    @classmethod
+    def _score_label_ua(cls, label):
+        return cls._SCORE_LABEL_UA.get(label, label or '—')
 
     def _candle_momentum(self, symbol, tf='5m'):
         """LIVE price direction from the last 2 closed candles (close vs open).
@@ -1102,14 +1117,14 @@ class FuelFilterDaemon:
 
     def score_snapshot(self, symbol: str) -> Optional[str]:
         """Compact, human SCORE string for `symbol` RIGHT NOW, e.g.
-        'STRONG HOLD 🟢▲ 79'. Used to stamp a position at open and at close."""
+        'СИЛЬНЕ УТРИМАННЯ 🟢▲ 79'. Used to stamp a position at open and at close."""
         sc = self.score_dict(symbol)
         if not sc:
             return None
         arrow = '🟢▲' if sc.get('dir') == 'LONG' else (
             '🔴▼' if sc.get('dir') == 'SHORT' else '')
         warn = ' ⚠' if sc.get('conflict') else ''
-        return f"{sc['label']} {arrow} {sc['score']}{warn}".strip()
+        return f"{self._score_label_ua(sc['label'])} {arrow} {sc['score']}{warn}".strip()
 
     # ------------------------------------------------------------------
     # fuel / exhaustion measurement (cached sources only)
@@ -2790,8 +2805,8 @@ class FuelFilterDaemon:
             score_dir = sc.get('dir')
             score_label = sc.get('label')
             if score_label != 'STRONG HOLD' or score_dir != d:
-                self._engine_skip[sym] = (f'Черга-2: SCORE {score_label or "—"}·'
-                                          f'{score_dir or "—"} ≠ STRONG HOLD·{d}')
+                self._engine_skip[sym] = (f'Черга-2: SCORE {self._score_label_ua(score_label)}·'
+                                          f'{score_dir or "—"} ≠ СИЛЬНЕ УТРИМАННЯ·{d}')
                 continue
             if lean != d:
                 self._engine_skip[sym] = f'Черга-2: CTR-нахил нейтральний — чекаємо {d}'
@@ -3006,7 +3021,7 @@ class FuelFilterDaemon:
                 # Fall back to a fresh compute only if the cache has no entry yet.
                 sc = self._score_cache.get(sym) or self._timer_score_for(sym, d, held, exh, dur, tf)
                 if sc.get('label') != 'STRONG HOLD' or sc.get('dir') != d:
-                    trace.append(f"{sym}:SCORE {sc.get('label')}·{sc.get('dir')} ≠ треба STRONG HOLD·{d}")
+                    trace.append(f"{sym}:SCORE {self._score_label_ua(sc.get('label'))}·{sc.get('dir')} ≠ треба СИЛЬНЕ УТРИМАННЯ·{d}")
                     continue
             # Decision-Center quality gate (LAST — heaviest). Only evaluated for
             # a candidate that already passed every cheap gate and is about to
