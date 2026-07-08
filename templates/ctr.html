@@ -1350,6 +1350,18 @@
 </div>
 
 <script>
+// Localize the server-rendered last-scan time (UTC ISO) to the viewer's
+// COMPUTER local time. Server sends UTC; only the client knows the real tz.
+(function () {
+    var el = document.getElementById('last-scan-time');
+    if (!el) return;
+    var v = (el.textContent || '').trim();
+    if (!v || v === 'Never') return;
+    var iso = /[zZ]|[+-]\d\d:?\d\d$/.test(v) ? v : v + 'Z';
+    var d = new Date(iso);
+    if (!isNaN(d.getTime())) el.textContent = d.toLocaleTimeString([], { hour12: false });
+})();
+
 // ========================================
 // Module Quick Toggles
 // ========================================

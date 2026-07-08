@@ -3680,7 +3680,10 @@ async function loadVolradarState() {
         
         // Last scan info
         if (d.last_scan_at) {
-            const dt = new Date(d.last_scan_at);
+            // Server sends UTC without a tz marker → append 'Z' so the browser
+            // converts it to the viewer's LOCAL time (not treats it as local).
+            const _iso = /[zZ]|[+-]\d\d:?\d\d$/.test(d.last_scan_at) ? d.last_scan_at : d.last_scan_at + 'Z';
+            const dt = new Date(_iso);
             const lastEl = document.getElementById('volradar-last-scan');
             if (lastEl) lastEl.textContent = `Last scan: ${dt.toLocaleTimeString()}`;
         }
@@ -3787,7 +3790,8 @@ function renderVolradarSnapshots(snaps) {
         'error': '#ef4444',
     };
     el.innerHTML = snaps.map(s => {
-        const dt = new Date(s.scan_time).toLocaleTimeString();
+        const _st = (s.scan_time && !/[zZ]|[+-]\d\d:?\d\d$/.test(s.scan_time)) ? s.scan_time + 'Z' : s.scan_time;
+        const dt = new Date(_st).toLocaleTimeString();
         const color = actionColors[s.action] || '#888';
         const dirIcon = s.ob_direction === 'BULL' ? '🟢' : (s.ob_direction === 'BEAR' ? '🔴' : '');
         const pd = s.pd_zone_pct != null ? `P/D ${s.pd_zone_pct.toFixed(1)}%` : '';

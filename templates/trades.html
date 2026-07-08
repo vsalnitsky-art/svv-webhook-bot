@@ -1,4 +1,3 @@
-
 {% extends "base.html" %}
 {% block title %}Trades - SVV WebHook BOT{% endblock %}
 
@@ -95,8 +94,8 @@
                         {{ 'PAPER' if t.is_paper else 'LIVE' }}
                     </span>
                 </td>
-                <td class="datetime">{{ t.opened_at.strftime('%m/%d %H:%M') if t.opened_at else '-' }}</td>
-                <td class="datetime">{{ t.closed_at.strftime('%m/%d %H:%M') if t.closed_at else '-' }}</td>
+                <td class="datetime" data-utc="{{ t.opened_at.strftime('%Y-%m-%dT%H:%M:%SZ') if t.opened_at else '' }}">{{ t.opened_at.strftime('%m/%d %H:%M') if t.opened_at else '-' }}</td>
+                <td class="datetime" data-utc="{{ t.closed_at.strftime('%Y-%m-%dT%H:%M:%SZ') if t.closed_at else '' }}">{{ t.closed_at.strftime('%m/%d %H:%M') if t.closed_at else '-' }}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -125,4 +124,19 @@
     </div>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Localize server times (stored as UTC) to the viewer's COMPUTER local time.
+document.querySelectorAll('td.datetime[data-utc]').forEach(function (el) {
+    var iso = el.getAttribute('data-utc');
+    if (!iso) return;
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return;
+    el.textContent = d.toLocaleString([], {
+        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+    });
+});
+</script>
 {% endblock %}

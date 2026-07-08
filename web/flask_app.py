@@ -1689,10 +1689,12 @@ def register_api_routes(app):
             try:
                 from datetime import datetime
                 dt = datetime.fromisoformat(last_scan_time.replace('Z', '+00:00'))
-                last_scan_time = dt.strftime('%H:%M:%S')
+                # Emit UTC ISO — the CLIENT localizes to the viewer's computer tz
+                # (server-side strftime would freeze it in the server timezone).
+                last_scan_time = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
             except:
                 pass
-        
+
         # Count statuses
         oversold_count = sum(1 for r in scan_results if r.get('status') == 'Oversold')
         overbought_count = sum(1 for r in scan_results if r.get('status') == 'Overbought')
@@ -5191,7 +5193,8 @@ def register_api_routes(app):
             try:
                 from datetime import datetime
                 dt = datetime.fromisoformat(last_scan_time.replace('Z', '+00:00'))
-                last_scan_time = dt.strftime('%H:%M:%S')
+                # UTC ISO — client localizes (see qm.html).
+                last_scan_time = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
             except:
                 pass
         
@@ -5271,7 +5274,8 @@ def register_api_routes(app):
                 try:
                     from datetime import datetime
                     dt = datetime.fromisoformat(scan_time.replace('Z', '+00:00'))
-                    scan_time = dt.strftime('%H:%M:%S')
+                    # UTC ISO — client localizes.
+                    scan_time = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
                 except:
                     pass
             

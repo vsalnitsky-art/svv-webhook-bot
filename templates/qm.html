@@ -427,11 +427,25 @@ function clearAllSignalsQM() {
     });
 }
 
+// Format a UTC ISO timestamp into the viewer's COMPUTER local time (HH:MM:SS).
+// Falls back to the raw value if it isn't a parseable date.
+function qmLocalTime(v) {
+    if (!v) return v;
+    var iso = /[zZ]|[+-]\d\d:?\d\d$/.test(v) ? v : v + 'Z';
+    var d = new Date(iso);
+    return isNaN(d.getTime()) ? v : d.toLocaleTimeString([], { hour12: false });
+}
+// Localize the server-rendered initial value on load.
+(function () {
+    var el = document.getElementById('qm-scan-time');
+    if (el && el.textContent && el.textContent.trim() !== '—') el.textContent = qmLocalTime(el.textContent.trim());
+})();
+
 // Auto-refresh every 15s
 setInterval(() => {
     if (document.getElementById('qm-status-badge').textContent.includes('RUNNING')) {
         fetch('/api/qm/results').then(r => r.json()).then(data => {
-            if (data.scan_time) document.getElementById('qm-scan-time').textContent = data.scan_time;
+            if (data.scan_time) document.getElementById('qm-scan-time').textContent = qmLocalTime(data.scan_time);
             if (data.zones_active !== undefined) document.getElementById('zones-count').textContent = data.zones_active;
             if (data.signals_sent !== undefined) document.getElementById('signals-count').textContent = data.signals_sent;
             

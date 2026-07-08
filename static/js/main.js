@@ -1,14 +1,31 @@
 // Sleeper OB Bot - Main JavaScript
 
-// Update time every second
+// Update time every second — LOCAL time of the viewer's computer (NOT server
+// UTC). `new Date()` is already in the browser's timezone; we format its LOCAL
+// getters (previously this forced toISOString() → UTC, which is what made the
+// header clock always read UTC and "не відповідати дійсності").
 function updateTime() {
     const timeEl = document.getElementById('current-time');
-    if (timeEl) {
-        const now = new Date();
-        timeEl.textContent = now.toISOString().replace('T', ' ').substr(0, 19) + ' UTC';
+    if (!timeEl) return;
+    const now = new Date();
+    const p = n => String(n).padStart(2, '0');
+    const dt = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} `
+             + `${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}`;
+    // Local timezone abbreviation (e.g. EET, CET) — falls back to a GMT±HH offset.
+    let tz = '';
+    try {
+        const m = now.toLocaleTimeString('en-US', { timeZoneName: 'short' }).match(/[A-Za-z]{2,5}$/);
+        tz = m ? m[0] : '';
+    } catch (e) {}
+    if (!tz) {
+        const off = -now.getTimezoneOffset();
+        const s = off >= 0 ? '+' : '-';
+        tz = `GMT${s}${p(Math.floor(Math.abs(off) / 60))}:${p(Math.abs(off) % 60)}`;
     }
+    timeEl.textContent = `${dt} ${tz}`;
 }
 
+updateTime();
 setInterval(updateTime, 1000);
 
 // API Helper
