@@ -2049,29 +2049,26 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <summary class="sm-settings-summary">⚙️ Налаштування Черги-2
                     <span class="sm-settings-summary-right" style="color:#8b93a7">правила викидання з черги</span>
                 </summary>
-                <div style="padding:10px 12px;display:flex;flex-direction:column;gap:12px;border-top:1px solid rgba(255,255,255,0.06)">
-                    <!-- 1) Eject on opposite CTR (default OFF) + percent -->
-                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                        <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Викидати монету з Черги-2, якщо CTR-нахил розвернувся на ПРОТИЛЕЖНИЙ бік на заданий % або більше.">
-                            <input type="checkbox" id="ff-q2-eject-ctr" onchange="saveFuelFilterSettings()">
-                            <span class="slider"></span>
+                <div style="padding:10px 12px;display:flex;flex-direction:column;gap:10px;border-top:1px solid rgba(255,255,255,0.06)">
+                    <!-- Row 1: eject on opposite CTR (+ %) · open by main buttons -->
+                    <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Викидати монету з Черги-2, якщо CTR-нахил розвернувся на ПРОТИЛЕЖНИЙ бік на заданий % або більше.">
+                            <input type="checkbox" id="ff-q2-eject-ctr" onchange="saveFuelFilterSettings()"> Викидати за протилежним <b>CTR</b>
+                            <span style="display:inline-flex;align-items:center;gap:4px;color:#8b93a7">від
+                                <input type="number" id="ff-q2-eject-ctr-pct" min="0" max="100" step="1"
+                                       onclick="event.preventDefault();event.stopPropagation()" onchange="saveFuelFilterSettings()"
+                                       style="width:52px;padding:2px 5px;border-radius:5px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.25);color:#e5e7eb;font-size:0.72rem">% нахилу
+                            </span>
                         </label>
-                        <span style="font-size:0.74rem;color:#cbd5e1">Викидати за протилежним <b>CTR</b></span>
-                        <span style="display:inline-flex;align-items:center;gap:5px;font-size:0.72rem;color:#8b93a7">
-                            від
-                            <input type="number" id="ff-q2-eject-ctr-pct" min="0" max="100" step="1"
-                                   onchange="saveFuelFilterSettings()"
-                                   style="width:58px;padding:3px 6px;border-radius:5px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.25);color:#e5e7eb;font-size:0.72rem">
-                            % нахилу
-                        </span>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоди Черги-2 лише за напрямком, дозволеним основними кнопками LONG/SHORT (як у Черги-1). Вимкнено = Черга-2 відкриває незалежно від кнопок.">
+                            <input type="checkbox" id="ff-q2-use-buttons" onchange="saveFuelFilterSettings()"> Відкривати за основними кнопками <b>LONG/SHORT</b>
+                        </label>
                     </div>
-                    <!-- 2) Eject on opposite CHoCH (default ON) -->
-                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                        <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Викидати монету з Черги-2, якщо приходить та сама монета з ПРОТИЛЕЖНИМ CHoCH/CHoCH+BOS. Спрацьовує, навіть якщо новий сигнал сам не потрапив у чергу (пішов у угоду / відкинутий CTR-гейтом).">
-                            <input type="checkbox" id="ff-q2-eject-choch" onchange="saveFuelFilterSettings()">
-                            <span class="slider"></span>
+                    <!-- Row 2: eject on opposite CHoCH -->
+                    <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Викидати монету з Черги-2, якщо приходить та сама монета з ПРОТИЛЕЖНИМ CHoCH/CHoCH+BOS. Спрацьовує, навіть якщо новий сигнал сам не потрапив у чергу (пішов у угоду / відкинутий CTR-гейтом).">
+                            <input type="checkbox" id="ff-q2-eject-choch" onchange="saveFuelFilterSettings()"> Викидати за протилежним <b>CHoCH</b> <span style="color:#8b93a7;font-size:0.68rem">(та сама монета в інший бік — старий сигнал стирається)</span>
                         </label>
-                        <span style="font-size:0.74rem;color:#cbd5e1">Викидати за протилежним <b>CHoCH</b> <span style="color:#8b93a7;font-size:0.7rem">(та сама монета в інший бік — старий сигнал стирається)</span></span>
                     </div>
                 </div>
             </details>
@@ -7623,6 +7620,7 @@ function renderFuelFilter(d) {
     setIf('ff-q2-eject-ctr', !!s.queue2_eject_ctr);           // default false
     setIf('ff-q2-eject-ctr-pct', String(s.queue2_eject_ctr_pct != null ? s.queue2_eject_ctr_pct : 20));
     setIf('ff-q2-eject-choch', s.queue2_eject_choch !== false); // default true
+    setIf('ff-q2-use-buttons', !!s.queue2_use_buttons);        // default false
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
@@ -8234,6 +8232,7 @@ async function saveFuelFilterSettings() {
         queue2_eject_ctr: _c('ff-q2-eject-ctr'),
         queue2_eject_ctr_pct: parseInt(_v('ff-q2-eject-ctr-pct', '20') || '20', 10),
         queue2_eject_choch: _c('ff-q2-eject-choch'),
+        queue2_use_buttons: _c('ff-q2-use-buttons'),
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),

@@ -191,6 +191,10 @@ DEFAULT_SETTINGS = {
     'queue2_eject_ctr': False,
     'queue2_eject_ctr_pct': 20,
     'queue2_eject_choch': True,
+    #   queue2_use_buttons    — when ON, Queue 2 opens only for a direction that
+    #     the main LONG/SHORT buttons allow (like Queue 1). Default OFF → Queue 2
+    #     opens independently of the buttons.
+    'queue2_use_buttons': False,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -455,6 +459,7 @@ class FuelFilterDaemon:
         # ── Queue 2 eject rules ──
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
+        s['queue2_use_buttons'] = bool(s.get('queue2_use_buttons', False))
         try:
             s['queue2_eject_ctr_pct'] = max(0, min(100, int(s.get('queue2_eject_ctr_pct', 20) or 20)))
         except (TypeError, ValueError):
@@ -2791,7 +2796,14 @@ class FuelFilterDaemon:
             if lean != d:
                 self._engine_skip[sym] = f'Черга-2: CTR-нахил нейтральний — чекаємо {d}'
                 continue
-            # Both align → open (bypasses buttons/₿ START by design).
+            # Optional main-buttons gate (default OFF): when queue2_use_buttons is
+            # ON, Queue 2 opens only for a direction the LONG/SHORT buttons allow.
+            if s.get('queue2_use_buttons'):
+                allow_long, allow_short = self._entry_gates()
+                if (d == 'LONG' and not allow_long) or (d == 'SHORT' and not allow_short):
+                    self._engine_skip[sym] = f'Черга-2: кнопка {d} вимкнена — чекаємо'
+                    continue
+            # Both align → open (₿ START independent; buttons optional per setting).
             fuel = self._fuel_dir_smoothed(sym)
             if not fuel or not fuel.get('mark_price'):
                 self._engine_skip[sym] = 'Черга-2: немає ціни'
