@@ -8469,6 +8469,25 @@ function renderTradeHistoryChart(h, meta) {
             const pts = h.map(s => { const v = se.acc(s); if (v == null || !isFinite(v)) return null; return `${xOf(s, W).toFixed(1)},${yOf(v).toFixed(1)}`; }).filter(Boolean);
             if (pts.length) svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="${se.color}" stroke-width="1.8"/>`;
         });
+        // Optional numeric value labels on the FIRST series, coloured per-sample
+        // (opts.labelColor) — drawn only where the value changes (+ the last
+        // point) so the line isn't cluttered by identical consecutive samples.
+        if (opts.valueLabels) {
+            const se = series[0];
+            const fmt = opts.labelFmt || (v => String(Math.round(v)));
+            let prevV = null;
+            h.forEach((s, i) => {
+                const v = se.acc(s);
+                if (v == null || !isFinite(v)) return;
+                const isLast = (i === h.length - 1);
+                if (v === prevV && !isLast) return;
+                prevV = v;
+                const x = xOf(s, W), y = yOf(v);
+                const col = opts.labelColor ? opts.labelColor(s) : se.color;
+                svg += `<text x="${x.toFixed(1)}" y="${(y - 5).toFixed(1)}" fill="${col}" `
+                    + `font-size="9" font-weight="700" text-anchor="middle">${fmt(v)}</text>`;
+            });
+        }
         svg += `<text x="${PAD}" y="14" fill="#cbd5e1" font-size="11" font-weight="700">${title}</text>`;
         const legend = series.map(se => `<span style="color:${se.color}">■ ${se.name}</span>`).join(' &nbsp; ');
         svg += `</svg>`;
@@ -8590,8 +8609,13 @@ function renderTradeHistoryChart(h, meta) {
     // and the crossover age in bars — plotted so the whole reading history shows.
     const ctrStcPanel = panel('⚡ CTR · STC 0–100 (>50 SHORT-нахил · <50 LONG-нахил)',
         [{ name: 'STC', color: '#c084fc', acc: s => s.ctr_stc }], { min: 0, max: 100, dec: 0 });
+    // Colour value labels by the crossover DIRECTION at each sample
+    // (🟢 LONG / 🔴 SHORT / grey none) so the numbers read the trend at a glance.
+    const ctrDirColor = s => s.ctr_dir === 'LONG' ? '#4ade80'
+        : (s.ctr_dir === 'SHORT' ? '#f87171' : '#9aa3b5');
     const ctrAgePanel = panel('⚡ CTR · вік кросовера (барів)',
-        [{ name: 'вік кросов., барів', color: '#38bdf8', acc: s => s.ctr_age }], { min: 0, includeZero: true, dec: 0 });
+        [{ name: 'вік кросов., барів', color: '#38bdf8', acc: s => s.ctr_age }],
+        { min: 0, includeZero: true, dec: 0, valueLabels: true, labelColor: ctrDirColor });
 
     return info + info2 + exitReasonLine + dcLine + ctrLine + pnlPanel + mmPanel + ctrStcPanel + ctrAgePanel + bannerStrip() + pricePanel;
 }
