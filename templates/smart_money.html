@@ -8466,9 +8466,51 @@ function renderTradeHistoryChart(h, meta) {
             svg += `<line x1="${PAD}" y1="${yz.toFixed(1)}" x2="${W - PAD}" y2="${yz.toFixed(1)}" stroke="rgba(255,255,255,0.25)" stroke-dasharray="3 3"/>`;
         }
         series.forEach(se => {
-            const pts = h.map(s => { const v = se.acc(s); if (v == null || !isFinite(v)) return null; return `${xOf(s, W).toFixed(1)},${yOf(v).toFixed(1)}`; }).filter(Boolean);
-            if (pts.length) svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="${se.color}" stroke-width="1.8"/>`;
+            // Collect drawable points (x, y, sample).
+            const dp = [];
+            h.forEach(s => { const v = se.acc(s); if (v != null && isFinite(v)) dp.push({ x: xOf(s, W), y: yOf(v), s }); });
+            if (!dp.length) return;
+            if (opts.segmentColor || opts.step) {
+                // Per-segment drawing: opts.segmentColor(sample) colours each
+                // segment (e.g. green in profit / red in loss); opts.step draws a
+                // stepped line (flat then vertical) so a value RESET shows as a
+                // sharp vertical drop at the exact sample, not a misleading slope.
+                for (let i = 0; i < dp.length - 1; i++) {
+                    const a = dp[i], b = dp[i + 1];
+                    const col = opts.segmentColor ? opts.segmentColor(a.s) : se.color;
+                    const pts = opts.step
+                        ? `${a.x.toFixed(1)},${a.y.toFixed(1)} ${b.x.toFixed(1)},${a.y.toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`
+                        : `${a.x.toFixed(1)},${a.y.toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`;
+                    svg += `<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.8"/>`;
+                }
+                // Dots at each point too (helps read sparse coloured series).
+                if (opts.segmentColor) {
+                    dp.forEach(d => { svg += `<circle cx="${d.x.toFixed(1)}" cy="${d.y.toFixed(1)}" r="1.6" fill="${opts.segmentColor(d.s)}"/>`; });
+                }
+            } else {
+                const pts = dp.map(d => `${d.x.toFixed(1)},${d.y.toFixed(1)}`);
+                svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="${se.color}" stroke-width="1.8"/>`;
+            }
         });
+        // Optional RESET markers: a vertical line at each sample where the first
+        // series' value DROPS (e.g. CTR crossover age resets → a NEW crossover =
+        // the exact turn), coloured by opts.labelColor and tagged ↺.
+        if (opts.markResets) {
+            const acc = series[0].acc;
+            let prevV = null;
+            h.forEach(s => {
+                const v = acc(s);
+                if (v != null && isFinite(v)) {
+                    if (prevV != null && v < prevV) {
+                        const x = xOf(s, W);
+                        const col = opts.labelColor ? opts.labelColor(s) : '#38bdf8';
+                        svg += `<line x1="${x.toFixed(1)}" y1="${PAD}" x2="${x.toFixed(1)}" y2="${(H - PAD).toFixed(1)}" stroke="${col}" stroke-opacity="0.7" stroke-dasharray="3 3"/>`;
+                        svg += `<text x="${x.toFixed(1)}" y="${(PAD - 3).toFixed(1)}" fill="${col}" font-size="9" font-weight="700" text-anchor="middle">↺ розворот</text>`;
+                    }
+                    prevV = v;
+                }
+            });
+        }
         // Optional numeric value labels on the FIRST series, coloured per-sample
         // (opts.labelColor) — drawn only where the value changes (+ the last
         // point) so the line isn't cluttered by identical consecutive samples.
@@ -8598,13 +8640,18 @@ function renderTradeHistoryChart(h, meta) {
         return `<div style="margin-bottom:10px">${svg}<div style="font-size:0.66rem;color:#8b93a7;text-align:center">${legend}</div></div>`;
     }
 
-    const pnlPanel = panel('PnL, %', [{ name: 'PnL%', color: pnlCol, acc: s => s.pnl }], { includeZero: true, dec: 2 });
+    // Profit/loss colour by PnL sign at each sample (🟢 у прибутку / 🔴 у збитку).
+    const pnlColorAt = s => (s.pnl != null && s.pnl >= 0) ? '#22c55e' : '#ef4444';
+    const pnlPanel = panel('PnL, %', [{ name: 'PnL% (🟢 прибуток / 🔴 збиток)', color: pnlCol, acc: s => s.pnl }],
+        { includeZero: true, dec: 2, segmentColor: pnlColorAt });
     const mmPanel = panel('ММ монети / BTC ММ / Виснаженість, %', [
         { name: 'ММ монети', color: '#fbbf24', acc: s => s.mm },
         { name: 'BTC ММ', color: '#22d3ee', acc: s => s.btc_mm },
         { name: 'Виснаженість', color: '#f87171', acc: s => s.exh },
     ], { min: 0, max: 100, dec: 0 });
-    const pricePanel = panel('Ціна', [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 4 });
+    // Price line coloured by whether the trade was in profit/loss at that moment.
+    const pricePanel = panel('Ціна (🟢 у прибутку / 🔴 у збитку)',
+        [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 4, segmentColor: pnlColorAt });
     // ⚡ CTR chronology: STC (0–100, split at 50: <50 LONG-нахил, >50 SHORT-нахил)
     // and the crossover age in bars — plotted so the whole reading history shows.
     const ctrStcPanel = panel('⚡ CTR · STC 0–100 (>50 SHORT-нахил · <50 LONG-нахил)',
@@ -8613,9 +8660,10 @@ function renderTradeHistoryChart(h, meta) {
     // (🟢 LONG / 🔴 SHORT / grey none) so the numbers read the trend at a glance.
     const ctrDirColor = s => s.ctr_dir === 'LONG' ? '#4ade80'
         : (s.ctr_dir === 'SHORT' ? '#f87171' : '#9aa3b5');
-    const ctrAgePanel = panel('⚡ CTR · вік кросовера (барів)',
+    const ctrAgePanel = panel('⚡ CTR · вік кросовера (барів) — ↺ = момент розвороту',
         [{ name: 'вік кросов., барів', color: '#38bdf8', acc: s => s.ctr_age }],
-        { min: 0, includeZero: true, dec: 0, valueLabels: true, labelColor: ctrDirColor });
+        { min: 0, includeZero: true, dec: 0, valueLabels: true, labelColor: ctrDirColor,
+          step: true, markResets: true });
 
     return info + info2 + exitReasonLine + dcLine + ctrLine + pnlPanel + mmPanel + ctrStcPanel + ctrAgePanel + bannerStrip() + pricePanel;
 }

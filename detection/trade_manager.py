@@ -175,7 +175,10 @@ DEFAULT_SETTINGS = {
     # carried into the closed-trade record so its full history can be charted
     # by clicking the closed trade.
     'trade_log_enabled': False,
-    'trade_log_interval_sec': 60,
+    # 20s (not 60s) → denser samples so the trade chart pinpoints the turn (CTR
+    # crossover reset, price peak, profit↔loss flip) much more precisely. Monitor
+    # cadence is 10s, so 20s is safe; TRADE_LOG_MAX (5000) still covers ~27h.
+    'trade_log_interval_sec': 20,
 
     # === Fuel Auto-Filter confirmation gate ===
     # When ON, a trade is only opened if the SAME coin with the SAME direction
