@@ -8535,8 +8535,14 @@ function renderTradeHistoryChart(h, meta) {
         { name: 'Виснаженість', color: '#f87171', acc: s => s.exh },
     ], { min: 0, max: 100, dec: 0 });
     const pricePanel = panel('Ціна', [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 4 });
+    // ⚡ CTR chronology: STC (0–100, split at 50: <50 LONG-нахил, >50 SHORT-нахил)
+    // and the crossover age in bars — plotted so the whole reading history shows.
+    const ctrStcPanel = panel('⚡ CTR · STC 0–100 (>50 SHORT-нахил · <50 LONG-нахил)',
+        [{ name: 'STC', color: '#c084fc', acc: s => s.ctr_stc }], { min: 0, max: 100, dec: 0 });
+    const ctrAgePanel = panel('⚡ CTR · вік кросовера (барів)',
+        [{ name: 'вік кросов., барів', color: '#38bdf8', acc: s => s.ctr_age }], { min: 0, includeZero: true, dec: 0 });
 
-    return info + info2 + exitReasonLine + dcLine + ctrLine + pnlPanel + mmPanel + bannerStrip() + pricePanel;
+    return info + info2 + exitReasonLine + dcLine + ctrLine + pnlPanel + mmPanel + ctrStcPanel + ctrAgePanel + bannerStrip() + pricePanel;
 }
 
 // ── 📜 Funding-coin ARCHIVE (history of appear/flip/exit + metrics) ──────

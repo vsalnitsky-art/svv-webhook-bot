@@ -790,6 +790,10 @@ class TradeManager:
                 else:
                     pnl = 0.0
                 mm = mm_map.get(sym) or {}
+                # ⚡ CTR chronology: STC value, last crossover direction, and the
+                # crossover age in bars — recorded per sample so the trade chart
+                # can plot how the CTR reading (and its crossover age) evolved.
+                ctr = self._ctr_snapshot(sym) or {}
                 sample = {
                     't': int(now),
                     'price': price,
@@ -797,6 +801,10 @@ class TradeManager:
                     'mm': mm.get('now'),
                     'mm_dir': mm.get('dir'),
                     'exh': exh_map.get(sym),
+                    # ⚡ CTR at this moment.
+                    'ctr_stc': ctr.get('stc'),
+                    'ctr_dir': ctr.get('last_dir'),
+                    'ctr_age': ctr.get('last_signal_age_bars'),
                     # ₿ BTCUSDT banner state + BTC ММ at this moment.
                     'btc_dir': btc_dir,
                     'btc_paused': btc_paused,
