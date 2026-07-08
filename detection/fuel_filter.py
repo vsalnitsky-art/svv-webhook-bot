@@ -2274,6 +2274,21 @@ class FuelFilterDaemon:
                 pending2 = list(self._pending2.items())   # Queue 2 waiting base
                 timers = list(self._timers.items())       # open positions
                 anomalies = [(s, a.get('dir')) for s, a in self._anomalies.items()]
+            # ALL open TM positions (real + paper) — so the open-position tables'
+            # ММ / виснаженість columns are filled for EVERY trade, regardless of
+            # how it was opened (Черга-1, Черга-2 or a direct open). Read outside
+            # self._lock (separate lock on TM's side).
+            tm_positions = []   # (sym, side, opened_at)
+            try:
+                tm = self._get_tm() if self._get_tm else None
+                if tm is not None and hasattr(tm, '_lock'):
+                    with tm._lock:
+                        for _sym, _p in list(getattr(tm, '_positions', {}).items()):
+                            tm_positions.append((_sym, _p.get('side'), _p.get('opened_at')))
+                        for _sym, _p in list(getattr(tm, '_shadow_positions', {}).items()):
+                            tm_positions.append((_sym, _p.get('side'), _p.get('opened_at')))
+            except Exception:
+                pass
             # symbol -> (dir, held_sec)
             targets = {}
             for sym, info in pending:
@@ -2282,6 +2297,9 @@ class FuelFilterDaemon:
                 targets.setdefault(sym, (info.get('dir'), 0.0))
             for sym, t in timers:
                 targets[sym] = (t.get('dir'), now - t.get('since', now))
+            for sym, side, oa in tm_positions:
+                if sym and side in ('LONG', 'SHORT'):
+                    targets[sym] = (side, now - (oa or now))   # open position wins
             for sym, d in anomalies:
                 targets.setdefault(sym, (d, 0.0))
             cache = {}
@@ -3204,12 +3222,21 @@ class FuelFilterDaemon:
             return held >= duration_sec
 
     def get_exhaustion_map(self) -> Dict[str, float]:
-        """Get exhaustion values for all fuel-managed positions (for UI merge).
-        Returns {symbol: exhaustion_pct, ...}."""
+        """Get exhaustion values for the UI merge — for EVERY tracked symbol, not
+        just FF-managed ones. Base layer = the background score cache ('exh',
+        computed for all open TM positions + both queues); the live FF-manage
+        value (fresher) overrides it where present. Returns {symbol: exh_pct}."""
         with self._lock:
-            return {sym: track.get('exhaustion')
-                    for sym, track in self._fuel_managed.items()
-                    if track.get('exhaustion') is not None}
+            out = {}
+            for sym, sc in self._score_cache.items():
+                e = sc.get('exh')
+                if e is not None:
+                    out[sym] = e
+            for sym, track in self._fuel_managed.items():
+                e = track.get('exhaustion')
+                if e is not None:
+                    out[sym] = e   # live manage value takes precedence
+            return out
 
     def get_fuel_strength_map(self) -> Dict[str, Dict]:
         """Fuel STRENGTH (0..100) + previous-cycle value + direction, per symbol

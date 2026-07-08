@@ -947,6 +947,19 @@ class TradeManager:
             if current_pnl_pct > pos.get('peak_pnl_pct', 0):
                 pos['peak_pnl_pct'] = round(current_pnl_pct, 4)
 
+        # Backfill entry snapshots that were unavailable at the exact open moment
+        # (CTR / Decision data can lag the open by a tick). Filled ONCE — so the
+        # trade-history modal shows «на вході» for CTR and Decision Center on
+        # EVERY trade, not only those opened when the data was already warm.
+        if pos.get('ctr_open') is None:
+            _c = self._ctr_snapshot(symbol)
+            if _c:
+                pos['ctr_open'] = _c
+        if pos.get('entry_score') is None:
+            _d = self.compute_decision(symbol, current_price)
+            if _d:
+                pos['entry_score'] = _d
+
         # === Manual SL/TP (per-position overrides set via UI) ===
         # These are user-entered absolute price levels (separate from the
         # position's automatic sl_price/tp_price). They fire FIRST so a
@@ -1089,6 +1102,18 @@ class TradeManager:
             if cur_pnl > pos.get('peak_pnl_pct', 0):
                 pos['peak_pnl_pct'] = round(cur_pnl, 4)
             _peak = sst.get('peak_pnl_pct') if sst else None
+
+        # Backfill entry snapshots that were unavailable at the exact open moment
+        # (CTR / Decision data can lag the open by a tick) — filled ONCE so the
+        # trade-history modal shows «на вході» for CTR + Decision on paper trades.
+        if pos.get('ctr_open') is None:
+            _c = self._ctr_snapshot(symbol)
+            if _c:
+                pos['ctr_open'] = _c
+        if pos.get('entry_score') is None:
+            _d = self.compute_decision(symbol, current_price)
+            if _d:
+                pos['entry_score'] = _d
 
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
@@ -2863,22 +2888,28 @@ class TradeManager:
             if stc is None:
                 return None
             zone = 'OB' if stc >= 75 else ('OS' if stc <= 25 else 'MID')
+            _age = c.get('last_signal_age_bars')
             return {'stc': stc, 'last_dir': c.get('last_dir'),
-                    'age_bars': c.get('last_signal_age_bars'), 'zone': zone}
+                    # both keys so the modal (last_signal_age_bars, like the chart
+                    # badge / queue cell) and legacy readers (age_bars) both work.
+                    'age_bars': _age, 'last_signal_age_bars': _age,
+                    'tf': c.get('tf'), 'zone': zone}
         except Exception:
             return None
 
-    @staticmethod
-    def _decision_snapshot(symbol: str):
+    def _decision_snapshot(self, symbol: str):
         """Decision-Center snapshot dict for `symbol` right now (headline,
         recommended, verdict…). Stamped at close (exit_decision) and computed
-        live when viewing an open trade. Heavy (compute_bias) — call ONCE per
-        close / per view, never in a loop."""
+        live when viewing an open trade. Uses the SAME compute_decision as the
+        ENTRY snapshot (entry_score) so вхід/вихід read identically — the old
+        compute_bias(...)['decision'] path returned nothing (no such key), which
+        left the «на виході» line blank. Heavy — call ONCE per close / per view,
+        never in a loop."""
         try:
-            from web.flask_app import compute_bias
-            from storage.db_operations import get_db
-            d = compute_bias(get_db(), symbol, None) or {}
-            return d.get('decision')
+            price = self._get_current_price(symbol)
+            if not price:
+                return None
+            return self.compute_decision(symbol, price)
         except Exception:
             return None
 
