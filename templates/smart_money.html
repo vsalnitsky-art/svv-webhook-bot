@@ -2035,13 +2035,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  dropped). Opens when SCORE == STRONG HOLD AND CTR align with the
                  signal side; opens independently of bars & main buttons. -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
-                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS лише якщо CTR-нахил уже в бік сигналу (інакше сигнал ігнорується). Відкриває, коли SCORE = STRONG HOLD і CTR збігаються з напрямком; інакше тримає в черзі (незалежно від барів і кнопок)</span></div>
-                <div style="display:flex;align-items:center;gap:10px">
+                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8;min-width:0">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS лише якщо CTR-нахил уже в бік сигналу (інакше сигнал ігнорується). Відкриває, коли SCORE = STRONG HOLD і CTR збігаються з напрямком; інакше тримає в черзі (незалежно від барів і кнопок)</span></div>
+                <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
                     <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-2. Перехоплює CHoCH/CHoCH+BOS лише за CTR-нахилом у бік сигналу; відкриває на SCORE=STRONG HOLD + CTR. Незалежна від кнопок і ₿ START.">
                         <input type="checkbox" id="ff-queue2-enabled" onchange="saveFuelFilterSettings()">
                         <span class="slider"></span>
                     </label>
-                    <button onclick="clearAllTimers2()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-2">🗑️ Очистити всі</button>
+                    <button onclick="clearAllTimers2()" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;line-height:1;font-size:0.68rem;padding:6px 12px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-2">🗑️ Очистити всі</button>
                 </div>
             </div>
             <div id="ff-q2-dir-tabs" style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
@@ -2061,7 +2061,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
-                💡 Друга черга набирає монети <b>сканом за зонами STC</b> (перепродано → LONG, перекуплено → SHORT), незалежно від Черги 1. Відкриття — за тими самими воротами (паливо-збіг, ММ, виснаженість, SCORE, CTR-гейт, ₿ START/кнопки). Вмикай/вимикай кожну чергу окремо.
+                💡 Друга черга перехоплює <b>CHoCH/CHoCH+BOS</b> незалежно від Черги 1 і кнопок/₿ START. Сигнал потрапляє в чергу <b>лише якщо CTR-нахил уже в бік сигналу</b> (інакше ігнорується). Відкриває, коли <b>SCORE = STRONG HOLD</b> у напрямку сигналу <b>і CTR</b> у той самий бік. Поки чекає — якщо CTR <b>розвертається на протилежний</b> бік раніше за цей збіг, монета одразу видаляється з черги. Вмикай/вимикай кожну чергу окремо.
             </div>
 
             <!-- 💰 Funding-fuel coins (own scan over the 💰 Funding Rate Scanner) -->

@@ -2261,20 +2261,25 @@ class FuelFilterDaemon:
 
     def _refresh_score_cache(self, settings: Dict):
         """Background SCORE computation for the displayed rows — the waiting
-        base (_pending) + open FF positions (_timers) + funding-fuel coins —
-        off the request path so the UI never blocks on liq-map/kline work."""
+        base (_pending + _pending2) + open FF positions (_timers) + funding-fuel
+        coins — off the request path so the UI never blocks on liq-map/kline
+        work. Queue 2 MUST be included too, otherwise a coin that sits ONLY in
+        Queue 2 shows empty ММ / виснаженість / SCORE columns."""
         try:
             dur = float(settings.get('duration_minutes', 5) or 0) * 60
             tf = settings.get('engine_candle_tf', '5m')
             now = time.time()
             with self._lock:
-                pending = list(self._pending.items())   # (sym, {dir, added_at})
-                timers = list(self._timers.items())      # open positions
+                pending = list(self._pending.items())    # (sym, {dir, added_at})
+                pending2 = list(self._pending2.items())   # Queue 2 waiting base
+                timers = list(self._timers.items())       # open positions
                 anomalies = [(s, a.get('dir')) for s, a in self._anomalies.items()]
             # symbol -> (dir, held_sec)
             targets = {}
             for sym, info in pending:
                 targets[sym] = (info.get('dir'), 0.0)   # waiting → no fuel-hold
+            for sym, info in pending2:
+                targets.setdefault(sym, (info.get('dir'), 0.0))
             for sym, t in timers:
                 targets[sym] = (t.get('dir'), now - t.get('since', now))
             for sym, d in anomalies:
@@ -2680,7 +2685,9 @@ class FuelFilterDaemon:
           • SCORE == STRONG HOLD in the signal direction, AND
           • the CTR lean still points the signal's way,
         then it opens (real/test per TM). Otherwise it waits. If CTR ≠ signal at
-        signal time the signal was never queued (dropped in intercept)."""
+        signal time the signal was never queued (dropped in intercept). If, while
+        waiting, the CTR lean flips to the OPPOSITE side before that alignment
+        ever happened, the coin is removed from Queue 2 immediately."""
         s = self.get_settings()
         if not s.get('enabled') or not s.get('queue2_enabled'):
             return
@@ -2698,6 +2705,19 @@ class FuelFilterDaemon:
                     self._pending2.pop(sym, None)
                 self._engine_skip.pop(sym, None)
                 continue
+            # ⚡ CTR-flip removal: if the CTR lean turned to the OPPOSITE side
+            # BEFORE the STRONG HOLD+CTR alignment happened, drop the coin from
+            # Queue 2 immediately (checked FIRST — even before SCORE, so a flip
+            # is caught while SCORE is still weak). Neutral (None) keeps waiting.
+            lean = self._ctr_lean_side(sym)
+            opp = 'SHORT' if d == 'LONG' else 'LONG'
+            if lean == opp:
+                with self._lock:
+                    self._pending2.pop(sym, None)
+                    self._persist_state()
+                self._engine_skip.pop(sym, None)
+                print(f"[FF-Q2] видалено {sym}: CTR розвернувся на {lean} (проти {d})")
+                continue
             # Filter: SCORE == STRONG HOLD in `d` AND CTR lean == `d`.
             sc = self._score_cache.get(sym) or {}
             score_dir = sc.get('dir')
@@ -2706,9 +2726,8 @@ class FuelFilterDaemon:
                 self._engine_skip[sym] = (f'Черга-2: SCORE {score_label or "—"}·'
                                           f'{score_dir or "—"} ≠ STRONG HOLD·{d}')
                 continue
-            lean = self._ctr_lean_side(sym)
             if lean != d:
-                self._engine_skip[sym] = f'Черга-2: CTR-нахил {lean or "—"} ≠ {d}'
+                self._engine_skip[sym] = f'Черга-2: CTR-нахил нейтральний — чекаємо {d}'
                 continue
             # Both align → open (bypasses buttons/₿ START by design).
             fuel = self._fuel_dir_smoothed(sym)
