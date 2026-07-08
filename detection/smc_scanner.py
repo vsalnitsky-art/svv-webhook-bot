@@ -2236,7 +2236,16 @@ class SMCScanner:
                                            level=ev['level'], bar_t=to_t)
                 except Exception as e:
                     print(f"[SMC] TM CHoCH hook error: {e}")
-            
+                # Let Fuel Filter drop a Queue-2 coin on an OPPOSITE chart CHoCH
+                # (tracks the chart directly, independent of the signal pipeline).
+                try:
+                    from detection.fuel_filter import get_fuel_filter
+                    ff = get_fuel_filter()
+                    if ff:
+                        ff.queue2_on_choch(symbol, ev['dir'])
+                except Exception as e:
+                    print(f"[SMC] FF Q2 CHoCH hook error: {e}")
+
             if mode == 'choch':
                 # CHoCH-only mode — alerts must be on FRESH CHoCH
                 if tag == 'CHoCH' and is_recent:

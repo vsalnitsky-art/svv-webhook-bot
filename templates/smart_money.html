@@ -2066,8 +2066,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </div>
                     <!-- Row 2: eject on opposite CHoCH -->
                     <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Викидати монету з Черги-2, якщо приходить та сама монета з ПРОТИЛЕЖНИМ CHoCH/CHoCH+BOS. Спрацьовує, навіть якщо новий сигнал сам не потрапив у чергу (пішов у угоду / відкинутий CTR-гейтом).">
-                            <input type="checkbox" id="ff-q2-eject-choch" onchange="saveFuelFilterSettings()"> Викидати за протилежним <b>CHoCH</b> <span style="color:#8b93a7;font-size:0.68rem">(та сама монета в інший бік — старий сигнал стирається)</span>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Монета в Черзі-2 відстежує протилежний CHoCH НА ГРАФІКУ (через сканер, той самий, що малює графік) і одразу видаляється з черги при його появі. Працює незалежно від фільтрів сигналів (HTF/кнопки/дедуп) і навіть якщо новий сигнал пішов прямо в угоду.">
+                            <input type="checkbox" id="ff-q2-eject-choch" onchange="saveFuelFilterSettings()"> Відстежувати протилежний <b>CHoCH</b> на графіку <span style="color:#8b93a7;font-size:0.68rem">(при появі — видалити монету з черги)</span>
                         </label>
                     </div>
                 </div>

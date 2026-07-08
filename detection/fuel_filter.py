@@ -585,6 +585,38 @@ class FuelFilterDaemon:
         print(f"[FuelFilter] intercepted {sym} {side} → Q1={q1} Q2={'take' if q2_take else ('drop' if q2 else 'off')}")
         return True   # any enabled queue OWNS the signal (queued or dropped)
 
+    def queue2_on_choch(self, symbol: str, direction: str) -> bool:
+        """Called by the SMC scanner for EVERY fresh CHoCH (same source that
+        draws the chart) so a Queue-2 coin TRACKS the opposite CHoCH directly —
+        not only when an opposite signal happens to pass the intercept pipeline
+        (which HTF/dedup/button filters can swallow).
+
+        If Queue-2 'eject on opposite CHoCH' is ON and the coin waits in Queue 2
+        with the OPPOSITE direction, it is dropped — the setup that queued it is
+        invalidated by a fresh counter-CHoCH on the chart.
+        `direction`: 'bull'/'bear' (scanner) or 'LONG'/'SHORT'."""
+        sym = (symbol or '').upper().strip()
+        d = (direction or '').lower()
+        choch_side = ('LONG' if d in ('bull', 'long')
+                      else ('SHORT' if d in ('bear', 'short') else None))
+        if not sym or choch_side is None:
+            return False
+        s = self.get_settings()
+        if not s.get('queue2_enabled') or not s.get('queue2_eject_choch', True):
+            return False
+        opp = 'SHORT' if choch_side == 'LONG' else 'LONG'
+        removed = False
+        with self._lock:
+            cur = self._pending2.get(sym)
+            if cur and cur.get('dir') == opp:
+                self._pending2.pop(sym, None)
+                self._persist_state()
+                removed = True
+        if removed:
+            self._engine_skip.pop(sym, None)
+            print(f"[FF-Q2] видалено {sym}: протилежний CHoCH {choch_side} на графіку (був у черзі {opp})")
+        return removed
+
     def remove_pending(self, symbol: str) -> bool:
         """Drop a coin from the waiting base (user ✕)."""
         if not _q_allowed(7):   # OP 7: remove_pending
