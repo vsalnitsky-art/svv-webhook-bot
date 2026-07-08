@@ -1246,11 +1246,13 @@ class TradeManager:
             try:
                 from detection.fuel_filter import get_fuel_filter
                 ff = get_fuel_filter()
-                if ff and ff.is_enabled():
-                    ff.intercept(symbol, side)
+                # intercept() returns True only if a queue actually took the
+                # signal. If BOTH FF queues are OFF it returns False → we do NOT
+                # consume the signal and let it open directly below.
+                if ff and ff.is_enabled() and ff.intercept(symbol, side):
                     return {'status': 'queued', 'is_paper': False,
                             'reason': 'queued in ❤️ Fuel Auto-Filter '
-                                      '(waiting ₿ START + fuel)'}
+                                      '(waiting queue filter)'}
             except Exception as e:
                 print(f"[TM] FF intercept error for {symbol}: {e}")
 
@@ -4315,11 +4317,10 @@ class TradeManager:
             try:
                 from detection.fuel_filter import get_fuel_filter
                 ff = get_fuel_filter()
-                if ff and ff.is_enabled():
-                    ff.intercept(symbol, side)
+                if ff and ff.is_enabled() and ff.intercept(symbol, side):
                     return {'ok': True, 'queued': True,
                             'reason': f'{symbol} {side} → черга ❤️ Fuel Auto-Filter '
-                                      f'(чекає ₿ START + бабло)'}
+                                      f'(чекає фільтр черги)'}
             except Exception as e:
                 print(f"[TM] FF intercept error (manual) for {symbol}: {e}")
 

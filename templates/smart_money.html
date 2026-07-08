@@ -1995,8 +1995,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
                 <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">❤️ Черга на вхід <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети, перехоплені з ЛОНГ/ШОРТ; чекають ₿ START + ММ у напрямку</span></div>
                 <div style="display:flex;align-items:center;gap:10px">
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1;cursor:pointer" title="Увімк/вимк Чергу 1 (інтерцепт). Вимкнена — двигун не бере з неї кандидатів.">
-                        <input type="checkbox" id="ff-queue1-enabled" onchange="saveFuelFilterSettings()"> увімкнено
+                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-1 (класичний перехоплювач, ворота ₿ START/кнопки). Вимкнена — не перехоплює сигнали. Якщо обидві черги вимкнені — сигнали відкриваються напряму.">
+                        <input type="checkbox" id="ff-queue1-enabled" onchange="saveFuelFilterSettings()">
+                        <span class="slider"></span>
                     </label>
                     <button onclick="clearAllTimers()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всю чергу">🗑️ Очистити всі</button>
                 </div>
@@ -2029,18 +2030,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 💡 Таблиця наповнюється <b>перехопленням</b>: коли FF увімкнено, монети, які основні кнопки ЛОНГ/ШОРТ відправляють на відкриття, стають у чергу тут (а не відкриваються одразу). Показ фільтрується кнопками ЛОНГ/ШОРТ (обидві вимкнені → порожньо). На ₿ START скануємо «ММ» лише по цих монетах і відкриваємо ту, де ММ збігається з напрямком. Паливо рахується ЛИШЕ для монет цієї таблиці — WATCHLIST більше не сканується.
             </div>
 
-            <!-- ⚡ Queue 2 «CTR-зони» — scan-fed by STC zone (OS→LONG, OB→SHORT) -->
+            <!-- ⚡ Queue 2 «CTR-зони» — intercepts CHoCH/CHoCH+BOS; holds until
+                 SCORE + CTR align with the signal side; opens independently of
+                 bars & main buttons. -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
-                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— скан: STC ≤ поріг_low → LONG, ≥ поріг_high → SHORT; ті самі ворота відкриття</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS, тримає поки SCORE+CTR не збіжаться з напрямком сигналу, тоді відкриває (незалежно від барів і кнопок)</span></div>
                 <div style="display:flex;align-items:center;gap:10px">
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1;cursor:pointer" title="Увімк/вимк Чергу 2 (CTR-зони). Незалежна від Черги 1.">
-                        <input type="checkbox" id="ff-queue2-enabled" onchange="saveFuelFilterSettings()"> увімкнено
-                    </label>
-                    <label style="display:flex;align-items:center;gap:4px;font-size:0.66rem;color:#8b93a7" title="Поріг STC для зон. SHORT якщо STC ≥ поріг; LONG якщо STC ≤ (100−поріг). Стандарт 75 → SHORT≥75 / LONG≤25.">поріг STC
-                        <input type="number" id="ff-queue2-threshold" min="50" max="99" step="1" style="width:56px;padding:3px 6px;border-radius:5px;border:1px solid rgba(56,189,248,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.66rem;color:#cbd5e1;cursor:pointer" title="Конфлюенція з PD-зоною: LONG-нахил бере лише в Discount, SHORT-нахил лише в Premium (позиції з SMC-сканера). Вимкнено — за самим STC-нахилом.">
-                        <input type="checkbox" id="ff-queue2-pd" onchange="saveFuelFilterSettings()"> у своїй PD-зоні
+                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-2 (SCORE+CTR фільтр сигналів). Незалежна від кнопок і ₿ START.">
+                        <input type="checkbox" id="ff-queue2-enabled" onchange="saveFuelFilterSettings()">
+                        <span class="slider"></span>
                     </label>
                     <button onclick="clearAllTimers2()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-2">🗑️ Очистити всі</button>
                 </div>
@@ -7219,7 +7217,7 @@ function _ffQueueSortVal(t, col) {
         case 'mm':     return (t.mm_str != null) ? Number(t.mm_str) : null;
         case 'exh':    return (t.exhaustion != null) ? Number(t.exhaustion) : null;
         case 'held':   return (t.held_sec != null) ? Number(t.held_sec) : null;
-        case 'score':  return (t.score != null) ? Number(t.score) : null;
+        case 'score':  return (t.score && t.score.score != null) ? Number(t.score.score) : null;
         case 'ctr':    return (t.ctr && t.ctr.stc != null) ? Number(t.ctr.stc) : null;
         default:       return null;
     }
@@ -7449,7 +7447,7 @@ function _ffUpdateQueueHeaderArrows() {
 }
 
 // ── ⚡ Queue 2 «CTR-зони» — same rendering, own state + table ids ──
-window._ff2QueueSort = window._ff2QueueSort || { col: 'ctr', dir: -1 };
+window._ff2QueueSort = window._ff2QueueSort || { col: 'score', dir: -1 };
 window._ff2QueueDirFilter = window._ff2QueueDirFilter || 'all';
 window._ff2TimersData = window._ff2TimersData || [];
 
@@ -7488,7 +7486,7 @@ function ffRenderQueue2() {
         _ffUpdateQueue2HeaderArrows();
         return;
     }
-    const srt = window._ff2QueueSort || { col: 'ctr', dir: -1 };
+    const srt = window._ff2QueueSort || { col: 'score', dir: -1 };
     rows.sort((a, b) => {
         const va = _ffQueueSortVal(a, srt.col), vb = _ffQueueSortVal(b, srt.col);
         const na = (va == null || va === ''), nb = (vb == null || vb === '');
@@ -7503,14 +7501,14 @@ function ffRenderQueue2() {
     _ffUpdateQueue2HeaderArrows();
 }
 function ffSortQueue2(col) {
-    const srt = window._ff2QueueSort || { col: 'ctr', dir: -1 };
+    const srt = window._ff2QueueSort || { col: 'score', dir: -1 };
     if (srt.col === col) srt.dir = -srt.dir;
     else { srt.col = col; srt.dir = (col === 'symbol' || col === 'dir') ? 1 : -1; }
     window._ff2QueueSort = srt;
     ffRenderQueue2();
 }
 function _ffUpdateQueue2HeaderArrows() {
-    const srt = window._ff2QueueSort || { col: 'ctr', dir: -1 };
+    const srt = window._ff2QueueSort || { col: 'score', dir: -1 };
     document.querySelectorAll('#ff-timers2-table th[data-sortcol]').forEach(th => {
         const arrow = th.querySelector('.ff-sort-arrow');
         if (!arrow) return;
@@ -7589,8 +7587,6 @@ function renderFuelFilter(d) {
     setIf('ff-ctr-max-age', String(s.ctr_gate_max_age_bars != null ? s.ctr_gate_max_age_bars : 3));
     setIf('ff-queue1-enabled', s.queue1_enabled !== false);   // default true
     setIf('ff-queue2-enabled', !!s.queue2_enabled);
-    setIf('ff-queue2-threshold', String(s.queue2_stc_threshold != null ? s.queue2_stc_threshold : 75));
-    setIf('ff-queue2-pd', s.queue2_require_pd !== false);   // default true
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
@@ -8199,8 +8195,6 @@ async function saveFuelFilterSettings() {
         ctr_gate_max_age_bars: parseInt(_v('ff-ctr-max-age', '3') || '3', 10),
         queue1_enabled: _c('ff-queue1-enabled'),
         queue2_enabled: _c('ff-queue2-enabled'),
-        queue2_stc_threshold: parseInt(_v('ff-queue2-threshold', '75') || '75', 10),
-        queue2_require_pd: _c('ff-queue2-pd'),
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),

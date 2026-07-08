@@ -173,16 +173,13 @@ DEFAULT_SETTINGS = {
     'ctr_gate_lean_pct': 50,
     'ctr_gate_stc_threshold': 75,         # (legacy) raw STC level — superseded by lean%
     'ctr_gate_max_age_bars': 3,           # fresh-crossover max age (bars)
-    # ── Two independent entry queues ──
-    #   Queue 1 «❤️ Черга на вхід» — CHoCH/BOS interception (existing).
-    #   Queue 2 «⚡ CTR-зони»       — CTR-zone scan (STC≤low→LONG, ≥high→SHORT).
-    # Same open machinery/gates; only the feeder differs. Toggle each on/off.
-    'queue1_enabled': True,               # интерцепт-черга (як було)
-    'queue2_enabled': False,              # CTR-зони скан-черга
-    'queue2_stc_threshold': 75,           # OB level; OS = 100−this (LONG≤OS, SHORT≥OB)
-    # Queue 2 confluence: also require the matching PD zone — LONG-нахил only in
-    # Discount, SHORT-нахил only in Premium (positions from the SMC scanner).
-    'queue2_require_pd': True,
+    # ── Two independent entry queues (both fed by CHoCH/CHoCH+BOS signals) ──
+    #   Queue 1 «❤️ Черга на вхід» — classic interception (buttons/₿ START gated).
+    #   Queue 2 «⚡ CTR-зони»       — holds the signal until SCORE + CTR both align
+    #     with the signal direction, then opens — INDEPENDENT of bars & buttons.
+    # Both OFF → signals are NOT intercepted and open directly per their own flow.
+    'queue1_enabled': True,
+    'queue2_enabled': False,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -445,11 +442,6 @@ class FuelFilterDaemon:
         s['queue1_enabled'] = bool(s.get('queue1_enabled', True))
         s['queue2_enabled'] = bool(s.get('queue2_enabled', False))
         s['engine_smart_direction'] = bool(s.get('engine_smart_direction', False))
-        s['queue2_require_pd'] = bool(s.get('queue2_require_pd', True))
-        try:
-            s['queue2_stc_threshold'] = max(50, min(99, int(s.get('queue2_stc_threshold', 75) or 75)))
-        except (TypeError, ValueError):
-            s['queue2_stc_threshold'] = 75
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
         s['enabled'] = bool(s.get('enabled', False))
@@ -505,26 +497,41 @@ class FuelFilterDaemon:
     # ❤️ FF "база" — intercepted coins waiting to open
     # ------------------------------------------------------------------
     def intercept(self, symbol: str, side: str) -> bool:
-        """Catch a coin the main LONG/SHORT flow would have opened. We accumulate
-        EVERY fresh signal REGARDLESS of direction — the queue is now two-sided
-        (both LONG and SHORT wait together). The main LONG/SHORT buttons no longer
-        gate ENTRY; they gate OPENING only (the engine's _entry_gates decides which
-        side may actually open). Direction self-overwrites on re-entry. Returns
-        True if queued, False if the input was invalid."""
+        """Catch a fresh CHoCH/CHoCH+BOS signal and route it into the ENABLED
+        queue(s). Direction = the signal side. Returns True if it was queued into
+        at least one queue; False if BOTH queues are off (→ the caller lets the
+        signal open directly per its own flow) or the input was invalid."""
         sym = (symbol or '').upper().strip()
         side = (side or '').upper().strip()
         if not sym or side not in ('LONG', 'SHORT'):
             return False
+        s = self.get_settings()
+        q1 = bool(s.get('queue1_enabled', True))
+        q2 = bool(s.get('queue2_enabled', False))
+        if not (q1 or q2):
+            return False   # both queues OFF → do NOT intercept; open directly
+        now = time.time()
+        queued = False
         with self._lock:
-            prev = self._pending.get(sym) or {}
-            self._pending[sym] = {
-                'dir': side,
-                'added_at': prev.get('added_at') if (prev.get('dir') == side and prev.get('added_at'))
-                            else time.time(),
-            }
-            self._persist_state()
-        print(f"[FuelFilter] intercepted {sym} {side} → queued in ❤️ FF")
-        return True
+            if q1:
+                prev = self._pending.get(sym) or {}
+                self._pending[sym] = {
+                    'dir': side,
+                    'added_at': prev.get('added_at') if (prev.get('dir') == side and prev.get('added_at')) else now,
+                }
+                queued = True
+            if q2:
+                prev2 = self._pending2.get(sym) or {}
+                self._pending2[sym] = {
+                    'dir': side,
+                    'added_at': prev2.get('added_at') if (prev2.get('dir') == side and prev2.get('added_at')) else now,
+                }
+                queued = True
+            if queued:
+                self._persist_state()
+        if queued:
+            print(f"[FuelFilter] intercepted {sym} {side} → Q1={q1} Q2={q2}")
+        return queued
 
     def remove_pending(self, symbol: str) -> bool:
         """Drop a coin from the waiting base (user ✕)."""
@@ -1760,11 +1767,6 @@ class FuelFilterDaemon:
         except Exception as e:
             print(f"[FuelFilter] btc-flip close error: {e}")
 
-        # ⚡ Queue 2 «CTR-зони» feeder — scan & enqueue by STC zone (if enabled).
-        try:
-            self._scan_ctr_queue(settings)
-        except Exception as e:
-            print(f"[FuelFilter] CTR-queue scan error: {e}")
 
         # 💰 Funding scanner membership / rates — it has its OWN table now.
         funding_syms = self._get_funding_symbols()
@@ -2509,6 +2511,10 @@ class FuelFilterDaemon:
                 self._engine_tick()
             except Exception as e:
                 print(f"[FF-Engine] tick error: {e}")
+            try:
+                self._engine_tick_q2()   # ⚡ Queue 2 (independent SCORE+CTR)
+            except Exception as e:
+                print(f"[FF-Q2] tick error: {e}")
             secs = 15
             try:
                 secs = max(5, int(self.get_settings().get('start_engine_scan_secs', 15)))
@@ -2638,80 +2644,71 @@ class FuelFilterDaemon:
                 return f'CTR: кросовер {d} застарілий (age {age if age is not None else "—"}>{max_age})'
         return None
 
-    def _scan_ctr_queue(self, settings: Dict):
-        """Queue 2 «⚡ CTR-зони» feeder. Scans the FF scan-list universe and
-        ENQUEUES coins by CTR нахил (STC зона): STC ≤ low → LONG-нахил → LONG,
-        STC ≥ high → SHORT-нахил → SHORT (low = 100 − threshold).
-
-        Confluence (queue2_require_pd, default on): also require the MATCHING PD
-        zone — LONG-нахил only in Discount (pos_pct ≤ discount_max), SHORT-нахил
-        only in Premium (pos_pct ≥ premium_min). PD positions come from the SMC
-        scanner (pd_zone_timeframe). No PD data → skip while the toggle is on.
-
-        Same _pending2 machinery as Queue 1 — coins stay until opened / TTL /
-        manual removal. Runs only when queue2_enabled."""
-        if not settings.get('queue2_enabled'):
-            return
-        try:
-            high = float(int(settings.get('queue2_stc_threshold', 75) or 75))
-        except (TypeError, ValueError):
-            high = 75.0
-        low = 100.0 - high
+    def _ctr_lean_side(self, symbol: str) -> Optional[str]:
+        """CTR lean side (50-split, same as the UI): 'LONG' if STC<50, 'SHORT'
+        if STC>50, else None. Reads the cached forecast-engine CTR."""
         try:
             from detection.forecast_engine import get_forecast_engine
             fe = get_forecast_engine()
+            if not fe:
+                return None
+            stc = ((fe.get(symbol) or {}).get('ctr') or {}).get('stc')
+            if stc is None:
+                return None
+            stc = float(stc)
+            return 'SHORT' if stc > 50 else ('LONG' if stc < 50 else None)
         except Exception:
-            fe = None
-        if not fe:
+            return None
+
+    def _engine_tick_q2(self):
+        """⚡ Queue 2 «CTR-зони» engine — INDEPENDENT of ₿ START and the main
+        LONG/SHORT buttons. Each queued signal (dir = signal side) is HELD until
+        BOTH the coin's SCORE direction AND the CTR lean point the SAME way as
+        the signal; then it opens (real/test per TM). Otherwise it waits."""
+        s = self.get_settings()
+        if not s.get('enabled') or not s.get('queue2_enabled'):
             return
-        # PD-zone confluence (optional).
-        require_pd = bool(settings.get('queue2_require_pd', True))
-        sc = None
-        prem_min, disc_max = 75.0, 25.0
-        if require_pd:
-            try:
-                from detection.smc_scanner import get_smc_scanner
-                sc = get_smc_scanner()
-                if sc:
-                    prem_min, disc_max = sc.get_pd_thresholds()
-            except Exception:
-                sc = None
-        now = time.time()
-        changed = False
-        for sym in self.get_scan_list():
-            try:
-                ctr = (fe.get(sym) or {}).get('ctr') or {}
-                stc = ctr.get('stc')
-                if stc is None:
-                    continue
-                stc = float(stc)
-            except Exception:
+        with self._lock:
+            items = list(self._pending2.items())
+        for sym, info in items:
+            d = info.get('dir')
+            if d not in ('LONG', 'SHORT'):
                 continue
-            if stc <= low:
-                d = 'LONG'
-            elif stc >= high:
-                d = 'SHORT'
-            else:
-                continue   # not in an extreme zone
-            # PD confluence: LONG needs Discount, SHORT needs Premium.
-            if require_pd:
-                pct = sc.get_pd_pct(sym) if sc else None
-                if pct is None:
-                    continue   # no PD data → skip while confluence is required
-                if d == 'LONG' and not (pct <= disc_max):
-                    continue   # LONG-нахил but not in Discount
-                if d == 'SHORT' and not (pct >= prem_min):
-                    continue   # SHORT-нахил but not in Premium
-            with self._lock:
-                prev = self._pending2.get(sym) or {}
-                self._pending2[sym] = {
-                    'dir': d,
-                    'added_at': prev.get('added_at') if (prev.get('dir') == d and prev.get('added_at'))
-                                else now,
-                }
-            changed = True
-        if changed:
-            self._persist_state()
+            if sym in self._fuel_managed:
+                continue
+            # Dedup: TM already holds it (real or paper) → drop from queue.
+            if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+                with self._lock:
+                    self._pending2.pop(sym, None)
+                self._engine_skip.pop(sym, None)
+                continue
+            # Filter: SCORE side == signal side AND CTR lean == signal side.
+            sc = self._score_cache.get(sym) or {}
+            score_dir = sc.get('dir')
+            if score_dir != d:
+                self._engine_skip[sym] = f'Черга-2: SCORE {score_dir or "—"} ≠ {d}'
+                continue
+            lean = self._ctr_lean_side(sym)
+            if lean != d:
+                self._engine_skip[sym] = f'Черга-2: CTR-нахил {lean or "—"} ≠ {d}'
+                continue
+            # Both align → open (bypasses buttons/₿ START by design).
+            fuel = self._fuel_dir_smoothed(sym)
+            if not fuel or not fuel.get('mark_price'):
+                self._engine_skip[sym] = 'Черга-2: немає ціни'
+                continue
+            try:
+                opened = self._open(sym, d, fuel, s, opened_by='⚡ Q2 SCORE+CTR')
+            except Exception as e:
+                print(f"[FF-Q2] open error {sym}: {e}")
+                continue
+            if opened:
+                with self._lock:
+                    self._timers[sym] = {'dir': d, 'since': time.time(),
+                                         'start_price': fuel.get('mark_price')}
+                    self._pending2.pop(sym, None)
+                self._engine_skip.pop(sym, None)
+                print(f"[FF-Q2] opened {d} {sym} (SCORE+CTR aligned)")
 
     def _engine_tick(self):
         s = self.get_settings()
@@ -2775,9 +2772,15 @@ class FuelFilterDaemon:
         # enable toggle), filtered by the MAIN LONG/SHORT buttons. Each candidate
         # is tagged with its source queue (1 or 2) so opens pop from the right
         # one. Queue 1 takes precedence on a symbol present in both.
+        # This engine handles ONLY Queue 1 (buttons/₿ START gated). Queue 2 has
+        # its own independent engine (_engine_tick_q2, SCORE+CTR filter).
         allow_long, allow_short = self._entry_gates()
         q1_on = bool(s.get('queue1_enabled', True))
-        q2_on = bool(s.get('queue2_enabled', False))
+        if not q1_on:
+            self._engine_gate = 'Черга-1 вимкнена'
+            self._engine_attempts.clear()
+            _persist_attempts_if_changed()
+            return
         # 🧭 Smart direction: derive the OPEN side from live fuel (not the queued
         # signal side). When on, we DON'T pre-filter candidates by signal dir /
         # buttons here — the direction is decided per-coin inside the loop from
@@ -2785,24 +2788,16 @@ class FuelFilterDaemon:
         smart = bool(s.get('engine_smart_direction', False))
         cand = {}   # sym -> (waited_sec, signal_dir, queue_num)
         with self._lock:
-            _sources = []
-            if q1_on:
-                _sources.append((1, self._pending))
-            if q2_on:
-                _sources.append((2, self._pending2))
-            for qnum, book in _sources:
-                for sym, info in book.items():
-                    if sym in cand:
-                        continue   # queue 1 precedence
-                    d = info.get('dir')
-                    if d not in ('LONG', 'SHORT'):
+            for sym, info in self._pending.items():
+                d = info.get('dir')
+                if d not in ('LONG', 'SHORT'):
+                    continue
+                if not smart:
+                    if d == 'LONG' and not allow_long:
                         continue
-                    if not smart:
-                        if d == 'LONG' and not allow_long:
-                            continue
-                        if d == 'SHORT' and not allow_short:
-                            continue
-                    cand[sym] = (now - info.get('added_at', now), d, qnum)
+                    if d == 'SHORT' and not allow_short:
+                        continue
+                cand[sym] = (now - info.get('added_at', now), d, 1)
 
         mode_lbl = "BTC-START" if btc_mode else "ЗА КНОПКАМИ"
         # Mode prefix for the gate banner so the operator sees HOW we work now.
