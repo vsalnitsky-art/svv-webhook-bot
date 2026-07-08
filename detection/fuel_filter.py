@@ -180,6 +180,17 @@ DEFAULT_SETTINGS = {
     # Both OFF → signals are NOT intercepted and open directly per their own flow.
     'queue1_enabled': True,
     'queue2_enabled': False,
+    # ── Queue 2 eject rules (its own settings accordion in the UI) ──
+    #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
+    #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
+    #     Default OFF (the coin just waits on an opposite/neutral CTR otherwise).
+    #   queue2_eject_choch    — drop a QUEUED coin when an OPPOSITE-direction
+    #     CHoCH/CHoCH+BOS for the SAME coin arrives (the old signal is stale).
+    #     Default ON. Fires even when the new opposite signal itself isn't queued
+    #     (e.g. its CTR gate dropped it or it went straight to a trade).
+    'queue2_eject_ctr': False,
+    'queue2_eject_ctr_pct': 20,
+    'queue2_eject_choch': True,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -441,6 +452,13 @@ class FuelFilterDaemon:
             s['ctr_gate_max_age_bars'] = 3
         s['queue1_enabled'] = bool(s.get('queue1_enabled', True))
         s['queue2_enabled'] = bool(s.get('queue2_enabled', False))
+        # ── Queue 2 eject rules ──
+        s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
+        s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
+        try:
+            s['queue2_eject_ctr_pct'] = max(0, min(100, int(s.get('queue2_eject_ctr_pct', 20) or 20)))
+        except (TypeError, ValueError):
+            s['queue2_eject_ctr_pct'] = 20
         s['engine_smart_direction'] = bool(s.get('engine_smart_direction', False))
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
@@ -519,11 +537,25 @@ class FuelFilterDaemon:
         if not (q1 or q2):
             return False   # both queues OFF → do NOT intercept; open directly
         now = time.time()
+        opp = 'SHORT' if side == 'LONG' else 'LONG'
         # Q2 CTR lean at signal time (read the cached forecast OUTSIDE the lock).
         q2_lean = self._ctr_lean_side(sym) if q2 else None
         q2_take = bool(q2 and q2_lean == side)
+        # ⚡ Queue 2 opposite-CHoCH eject (default ON): the SAME coin arriving with
+        # the OPPOSITE direction invalidates any waiting Q2 entry — drop it even if
+        # THIS new signal isn't queued (its CTR gate may drop it, or it may go
+        # straight to a trade). Applies whether or not q2_take (a take overwrites
+        # the entry anyway; the eject matters when the new one isn't queued).
+        eject_choch = bool(q2 and s.get('queue2_eject_choch', True))
+        ejected_choch = False
         changed = False
         with self._lock:
+            if eject_choch:
+                _cur2 = self._pending2.get(sym)
+                if _cur2 and _cur2.get('dir') == opp:
+                    self._pending2.pop(sym, None)
+                    ejected_choch = True
+                    changed = True
             if q1:
                 prev = self._pending.get(sym) or {}
                 self._pending[sym] = {
@@ -540,6 +572,9 @@ class FuelFilterDaemon:
                 changed = True
             if changed:
                 self._persist_state()
+        if ejected_choch:
+            self._engine_skip.pop(sym, None)
+            print(f"[FF-Q2] видалено {sym}: протилежний CHoCH {side} (був у черзі {opp})")
         if q2 and not q2_take:
             print(f"[FF-Q2] ігнор {sym} {side}: CTR-нахил {q2_lean or '—'} ≠ {side} (сигнал відкинуто)")
         print(f"[FuelFilter] intercepted {sym} {side} → Q1={q1} Q2={'take' if q2_take else ('drop' if q2 else 'off')}")
@@ -2682,18 +2717,24 @@ class FuelFilterDaemon:
     def _ctr_lean_side(self, symbol: str) -> Optional[str]:
         """CTR lean side (50-split, same as the UI): 'LONG' if STC<50, 'SHORT'
         if STC>50, else None. Reads the cached forecast-engine CTR."""
+        return self._ctr_lean(symbol)[0]
+
+    def _ctr_lean(self, symbol: str):
+        """CTR lean as (side, pct): side is 'LONG'/'SHORT'/None (50-split), pct is
+        the lean strength |STC−50|/50·100 (0..100). (None, 0.0) when no CTR data."""
         try:
             from detection.forecast_engine import get_forecast_engine
             fe = get_forecast_engine()
             if not fe:
-                return None
+                return (None, 0.0)
             stc = ((fe.get(symbol) or {}).get('ctr') or {}).get('stc')
             if stc is None:
-                return None
+                return (None, 0.0)
             stc = float(stc)
-            return 'SHORT' if stc > 50 else ('LONG' if stc < 50 else None)
+            side = 'SHORT' if stc > 50 else ('LONG' if stc < 50 else None)
+            return (side, abs(stc - 50.0) / 50.0 * 100.0)
         except Exception:
-            return None
+            return (None, 0.0)
 
     def _engine_tick_q2(self):
         """⚡ Queue 2 engine — INDEPENDENT of ₿ START and the main LONG/SHORT
@@ -2703,9 +2744,10 @@ class FuelFilterDaemon:
           • SCORE == STRONG HOLD in the signal direction, AND
           • the CTR lean still points the signal's way,
         then it opens (real/test per TM). Otherwise it waits. If CTR ≠ signal at
-        signal time the signal was never queued (dropped in intercept). If, while
-        waiting, the CTR lean flips to the OPPOSITE side before that alignment
-        ever happened, the coin is removed from Queue 2 immediately."""
+        signal time the signal was never queued (dropped in intercept). Eject
+        rules (both opt-in via settings): queue2_eject_ctr drops a waiting coin
+        when the CTR lean flips OPPOSITE by ≥ queue2_eject_ctr_pct %;
+        queue2_eject_choch (handled in intercept) drops it on an opposite CHoCH."""
         s = self.get_settings()
         if not s.get('enabled') or not s.get('queue2_enabled'):
             return
@@ -2723,18 +2765,20 @@ class FuelFilterDaemon:
                     self._pending2.pop(sym, None)
                 self._engine_skip.pop(sym, None)
                 continue
-            # ⚡ CTR-flip removal: if the CTR lean turned to the OPPOSITE side
-            # BEFORE the STRONG HOLD+CTR alignment happened, drop the coin from
-            # Queue 2 immediately (checked FIRST — even before SCORE, so a flip
-            # is caught while SCORE is still weak). Neutral (None) keeps waiting.
-            lean = self._ctr_lean_side(sym)
+            # ⚡ CTR-flip removal (opt-in): if enabled, and the CTR lean turned to
+            # the OPPOSITE side by ≥ queue2_eject_ctr_pct %, drop the coin from
+            # Queue 2 (checked FIRST — even before SCORE, so a flip is caught
+            # while SCORE is still weak). OFF by default → an opposite/neutral
+            # CTR just makes the coin wait. Neutral (None) never ejects.
+            lean, lean_pct = self._ctr_lean(sym)
             opp = 'SHORT' if d == 'LONG' else 'LONG'
-            if lean == opp:
+            if s.get('queue2_eject_ctr') and lean == opp \
+                    and lean_pct >= float(s.get('queue2_eject_ctr_pct', 20) or 0):
                 with self._lock:
                     self._pending2.pop(sym, None)
                     self._persist_state()
                 self._engine_skip.pop(sym, None)
-                print(f"[FF-Q2] видалено {sym}: CTR розвернувся на {lean} (проти {d})")
+                print(f"[FF-Q2] видалено {sym}: CTR розвернувся на {lean} {lean_pct:.0f}% (проти {d})")
                 continue
             # Filter: SCORE == STRONG HOLD in `d` AND CTR lean == `d`.
             sc = self._score_cache.get(sym) or {}
