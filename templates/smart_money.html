@@ -2030,13 +2030,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 💡 Таблиця наповнюється <b>перехопленням</b>: коли FF увімкнено, монети, які основні кнопки ЛОНГ/ШОРТ відправляють на відкриття, стають у чергу тут (а не відкриваються одразу). Показ фільтрується кнопками ЛОНГ/ШОРТ (обидві вимкнені → порожньо). На ₿ START скануємо «ММ» лише по цих монетах і відкриваємо ту, де ММ збігається з напрямком. Паливо рахується ЛИШЕ для монет цієї таблиці — WATCHLIST більше не сканується.
             </div>
 
-            <!-- ⚡ Queue 2 «CTR-зони» — intercepts CHoCH/CHoCH+BOS; holds until
-                 SCORE + CTR align with the signal side; opens independently of
-                 bars & main buttons. -->
+            <!-- ⚡ Queue 2 «CTR-зони» — intercepts CHoCH/CHoCH+BOS ONLY when the
+                 CTR lean already matches the signal side (else the signal is
+                 dropped). Opens when SCORE == STRONG HOLD AND CTR align with the
+                 signal side; opens independently of bars & main buttons. -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
-                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS, тримає поки SCORE+CTR не збіжаться з напрямком сигналу, тоді відкриває (незалежно від барів і кнопок)</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS лише якщо CTR-нахил уже в бік сигналу (інакше сигнал ігнорується). Відкриває, коли SCORE = STRONG HOLD і CTR збігаються з напрямком; інакше тримає в черзі (незалежно від барів і кнопок)</span></div>
                 <div style="display:flex;align-items:center;gap:10px">
-                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-2 (SCORE+CTR фільтр сигналів). Незалежна від кнопок і ₿ START.">
+                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-2. Перехоплює CHoCH/CHoCH+BOS лише за CTR-нахилом у бік сигналу; відкриває на SCORE=STRONG HOLD + CTR. Незалежна від кнопок і ₿ START.">
                         <input type="checkbox" id="ff-queue2-enabled" onchange="saveFuelFilterSettings()">
                         <span class="slider"></span>
                     </label>

@@ -498,9 +498,17 @@ class FuelFilterDaemon:
     # ------------------------------------------------------------------
     def intercept(self, symbol: str, side: str) -> bool:
         """Catch a fresh CHoCH/CHoCH+BOS signal and route it into the ENABLED
-        queue(s). Direction = the signal side. Returns True if it was queued into
-        at least one queue; False if BOTH queues are off (→ the caller lets the
-        signal open directly per its own flow) or the input was invalid."""
+        queue(s). Direction = the signal side.
+
+        Returns True if the signal is OWNED by FF (queued OR intentionally
+        dropped by a queue's entry gate) — the caller must NOT open it directly.
+        Returns False only when BOTH queues are off (→ the caller lets the
+        signal open directly per its own flow) or the input was invalid.
+
+        ⚡ Queue 2 hard CTR gate (at SIGNAL time): the signal is queued into Q2
+        ONLY if the CTR lean already points the signal's way. If CTR ≠ side the
+        signal is IGNORED entirely (not queued, never opened) — but still owned
+        by FF, so it never falls through to a direct open."""
         sym = (symbol or '').upper().strip()
         side = (side or '').upper().strip()
         if not sym or side not in ('LONG', 'SHORT'):
@@ -511,7 +519,10 @@ class FuelFilterDaemon:
         if not (q1 or q2):
             return False   # both queues OFF → do NOT intercept; open directly
         now = time.time()
-        queued = False
+        # Q2 CTR lean at signal time (read the cached forecast OUTSIDE the lock).
+        q2_lean = self._ctr_lean_side(sym) if q2 else None
+        q2_take = bool(q2 and q2_lean == side)
+        changed = False
         with self._lock:
             if q1:
                 prev = self._pending.get(sym) or {}
@@ -519,19 +530,20 @@ class FuelFilterDaemon:
                     'dir': side,
                     'added_at': prev.get('added_at') if (prev.get('dir') == side and prev.get('added_at')) else now,
                 }
-                queued = True
-            if q2:
+                changed = True
+            if q2_take:
                 prev2 = self._pending2.get(sym) or {}
                 self._pending2[sym] = {
                     'dir': side,
                     'added_at': prev2.get('added_at') if (prev2.get('dir') == side and prev2.get('added_at')) else now,
                 }
-                queued = True
-            if queued:
+                changed = True
+            if changed:
                 self._persist_state()
-        if queued:
-            print(f"[FuelFilter] intercepted {sym} {side} → Q1={q1} Q2={q2}")
-        return queued
+        if q2 and not q2_take:
+            print(f"[FF-Q2] ігнор {sym} {side}: CTR-нахил {q2_lean or '—'} ≠ {side} (сигнал відкинуто)")
+        print(f"[FuelFilter] intercepted {sym} {side} → Q1={q1} Q2={'take' if q2_take else ('drop' if q2 else 'off')}")
+        return True   # any enabled queue OWNS the signal (queued or dropped)
 
     def remove_pending(self, symbol: str) -> bool:
         """Drop a coin from the waiting base (user ✕)."""
@@ -2661,10 +2673,14 @@ class FuelFilterDaemon:
             return None
 
     def _engine_tick_q2(self):
-        """⚡ Queue 2 «CTR-зони» engine — INDEPENDENT of ₿ START and the main
-        LONG/SHORT buttons. Each queued signal (dir = signal side) is HELD until
-        BOTH the coin's SCORE direction AND the CTR lean point the SAME way as
-        the signal; then it opens (real/test per TM). Otherwise it waits."""
+        """⚡ Queue 2 engine — INDEPENDENT of ₿ START and the main LONG/SHORT
+        buttons. A signal reaches Q2 only after the SIGNAL-time CTR gate in
+        intercept() (CTR lean == signal side). Here each queued signal (dir =
+        signal side) is HELD until BOTH:
+          • SCORE == STRONG HOLD in the signal direction, AND
+          • the CTR lean still points the signal's way,
+        then it opens (real/test per TM). Otherwise it waits. If CTR ≠ signal at
+        signal time the signal was never queued (dropped in intercept)."""
         s = self.get_settings()
         if not s.get('enabled') or not s.get('queue2_enabled'):
             return
@@ -2682,11 +2698,13 @@ class FuelFilterDaemon:
                     self._pending2.pop(sym, None)
                 self._engine_skip.pop(sym, None)
                 continue
-            # Filter: SCORE side == signal side AND CTR lean == signal side.
+            # Filter: SCORE == STRONG HOLD in `d` AND CTR lean == `d`.
             sc = self._score_cache.get(sym) or {}
             score_dir = sc.get('dir')
-            if score_dir != d:
-                self._engine_skip[sym] = f'Черга-2: SCORE {score_dir or "—"} ≠ {d}'
+            score_label = sc.get('label')
+            if score_label != 'STRONG HOLD' or score_dir != d:
+                self._engine_skip[sym] = (f'Черга-2: SCORE {score_label or "—"}·'
+                                          f'{score_dir or "—"} ≠ STRONG HOLD·{d}')
                 continue
             lean = self._ctr_lean_side(sym)
             if lean != d:
@@ -2698,7 +2716,7 @@ class FuelFilterDaemon:
                 self._engine_skip[sym] = 'Черга-2: немає ціни'
                 continue
             try:
-                opened = self._open(sym, d, fuel, s, opened_by='⚡ Q2 SCORE+CTR')
+                opened = self._open(sym, d, fuel, s, opened_by='⚡ Q2 STRONG+CTR')
             except Exception as e:
                 print(f"[FF-Q2] open error {sym}: {e}")
                 continue
@@ -2708,7 +2726,7 @@ class FuelFilterDaemon:
                                          'start_price': fuel.get('mark_price')}
                     self._pending2.pop(sym, None)
                 self._engine_skip.pop(sym, None)
-                print(f"[FF-Q2] opened {d} {sym} (SCORE+CTR aligned)")
+                print(f"[FF-Q2] opened {d} {sym} (STRONG HOLD+CTR aligned)")
 
     def _engine_tick(self):
         s = self.get_settings()
