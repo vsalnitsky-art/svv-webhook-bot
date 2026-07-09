@@ -536,10 +536,15 @@ class FuelFilterDaemon:
         side = (side or '').upper().strip()
         if not sym or side not in ('LONG', 'SHORT'):
             return False
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            log_activity = lambda *a, **k: None
         s = self.get_settings()
         q1 = bool(s.get('queue1_enabled', True))
         q2 = bool(s.get('queue2_enabled', False))
         if not (q1 or q2):
+            log_activity(sym, 'passthrough', 'Обидві черги вимкнені → сигнал іде у пряме відкриття', side=side, source='intercept')
             return False   # both queues OFF → do NOT intercept; open directly
         now = time.time()
         opp = 'SHORT' if side == 'LONG' else 'LONG'
@@ -580,8 +585,14 @@ class FuelFilterDaemon:
         if ejected_choch:
             self._engine_skip.pop(sym, None)
             print(f"[FF-Q2] видалено {sym}: протилежний CHoCH {side} (був у черзі {opp})")
-        if q2 and not q2_take:
+            log_activity(sym, 'ejected', f'Черга-2: протилежний CHoCH {side} стер запис {opp}', side=side, source='Q2')
+        if q1:
+            log_activity(sym, 'queued', 'Черга-1 (перехоплення)', side=side, source='Q1')
+        if q2_take:
+            log_activity(sym, 'queued', 'Черга-2 (CTR-нахил у бік сигналу)', side=side, source='Q2')
+        elif q2 and not q2_take:
             print(f"[FF-Q2] ігнор {sym} {side}: CTR-нахил {q2_lean or '—'} ≠ {side} (сигнал відкинуто)")
+            log_activity(sym, 'dropped', f'Черга-2: CTR-нахил {q2_lean or "—"} ≠ {side} — сигнал відкинуто', side=side, source='Q2')
         print(f"[FuelFilter] intercepted {sym} {side} → Q1={q1} Q2={'take' if q2_take else ('drop' if q2 else 'off')}")
         return True   # any enabled queue OWNS the signal (queued or dropped)
 
@@ -615,6 +626,11 @@ class FuelFilterDaemon:
         if removed:
             self._engine_skip.pop(sym, None)
             print(f"[FF-Q2] видалено {sym}: протилежний CHoCH {choch_side} на графіку (був у черзі {opp})")
+            try:
+                from detection.activity_log import log_activity
+                log_activity(sym, 'ejected', f'Черга-2: протилежний CHoCH {choch_side} на графіку (був {opp})', side=opp, source='Q2')
+            except Exception:
+                pass
         return removed
 
     def remove_pending(self, symbol: str) -> bool:
@@ -2831,6 +2847,11 @@ class FuelFilterDaemon:
                     self._persist_state()
                 self._engine_skip.pop(sym, None)
                 print(f"[FF-Q2] видалено {sym}: CTR розвернувся на {lean} {lean_pct:.0f}% (проти {d})")
+                try:
+                    from detection.activity_log import log_activity
+                    log_activity(sym, 'ejected', f'Черга-2: CTR розвернувся на {lean} {lean_pct:.0f}% (проти {d})', side=d, source='Q2')
+                except Exception:
+                    pass
                 continue
             # Filter: SCORE == STRONG HOLD in `d` AND CTR lean == `d`.
             sc = self._score_cache.get(sym) or {}
@@ -2867,6 +2888,11 @@ class FuelFilterDaemon:
                     self._pending2.pop(sym, None)
                 self._engine_skip.pop(sym, None)
                 print(f"[FF-Q2] opened {d} {sym} (STRONG HOLD+CTR aligned)")
+                try:
+                    from detection.activity_log import log_activity
+                    log_activity(sym, 'opened', 'Черга-2: SCORE=СИЛЬНЕ УТРИМАННЯ + CTR збіглись', side=d, source='Q2')
+                except Exception:
+                    pass
 
     def _engine_tick(self):
         s = self.get_settings()
@@ -3097,8 +3123,20 @@ class FuelFilterDaemon:
                     trace.append(f"{sym}:✅ВІДКРИТО {d}")
                     print(f"[FF-Engine] opened {d} {sym} ({mode_lbl}, exh="
                           f"{('%.1f%%' % exh) if exh is not None else '—'})")
+                    try:
+                        from detection.activity_log import log_activity
+                        log_activity(sym, 'opened', f'Черга-1 · {mode_lbl}'
+                                     + (f' · виснаж {exh:.0f}%' if exh is not None else ''),
+                                     side=d, source='Q1')
+                    except Exception:
+                        pass
                 else:
                     trace.append(f"{sym}:TM відхилив відкриття (Trade Manager / Test Mode вимкнені?)")
+                    try:
+                        from detection.activity_log import log_activity
+                        log_activity(sym, 'rejected', 'Черга-1: TM відхилив відкриття (TM/Test Mode вимкнені?)', side=d, source='Q1')
+                    except Exception:
+                        pass
             except Exception as e:
                 trace.append(f"{sym}:помилка відкриття")
                 print(f"[FF-Engine] open error {sym}: {e}")

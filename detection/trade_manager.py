@@ -1408,6 +1408,14 @@ class TradeManager:
         # of flipping it on the next opposite signal.
         allow_reverse = bool(s.get('use_reverse_signal', False))
 
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            log_activity = lambda *a, **k: None
+        # Raw arrival — the entry point of EVERY qualified signal into the bot.
+        log_activity(symbol, 'signal', f'Надійшов сигнал {opened_by} (TM {"ON" if enabled else "OFF"}, test={test_mode})',
+                     side=side, source='scanner')
+
         with self._lock:
             existing_real = self._positions.get(symbol)
             existing_shadow = self._shadow_positions.get(symbol)
@@ -1418,9 +1426,11 @@ class TradeManager:
         # reverse. The operator wants to manage this trade by hand.
         if existing_real and existing_real.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (real) — signal ignored")
+            log_activity(symbol, 'skipped', 'Ручний режим (real) — сигнал проігноровано', side=side, source='TM')
             return {'status': 'duplicate', 'reason': 'manual mode (real) — signal ignored'}
         if existing_shadow and existing_shadow.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (shadow) — signal ignored")
+            log_activity(symbol, 'skipped', 'Ручний режим (paper) — сигнал проігноровано', side=side, source='TM')
             return {'status': 'duplicate', 'reason': 'manual mode (shadow) — signal ignored'}
 
         # === Fuel Auto-Filter interception ===
@@ -3180,7 +3190,13 @@ class TradeManager:
             pnl_pct = (entry - exit_price) / entry * 100
         # Approximate USD PnL (qty is in coin units)
         pnl_usd = (exit_price - entry) * qty * (1 if pos['side'] == 'LONG' else -1)
-        
+        try:
+            from detection.activity_log import log_activity
+            log_activity(symbol, 'closed', f'{self._reason_label(reason)} · PnL {pnl_pct:+.2f}%',
+                         side=pos['side'], source='TM')
+        except Exception:
+            pass
+
         closed = {
             'symbol': symbol,
             'side': pos['side'],
@@ -3579,7 +3595,13 @@ class TradeManager:
             pnl_pct = (exit_price - entry) / entry * 100
         else:
             pnl_pct = (entry - exit_price) / entry * 100
-        
+        try:
+            from detection.activity_log import log_activity
+            log_activity(symbol, 'closed', f'{self._reason_label(reason)} · PnL {pnl_pct:+.2f}% (paper)',
+                         side=pos['side'], source='TM')
+        except Exception:
+            pass
+
         closed = {
             'symbol': symbol,
             'side': pos['side'],

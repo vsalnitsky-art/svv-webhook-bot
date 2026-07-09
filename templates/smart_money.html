@@ -3190,7 +3190,99 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </table>
             </details>
         </div>
+
+        <!-- ============ 🧾 Лог роботи бота (activity monitor) ============ -->
+        <div style="margin-top:18px;border-top:1px solid rgba(255,255,255,0.10);padding-top:14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px">
+                <h3 style="font-size:0.9rem;color:#a5b4fc;margin:0">🧾 Лог роботи бота
+                    <span style="color:#6b7280;font-weight:normal;font-size:0.72rem">— що бот зробив із кожним сигналом: у чергу / відкинув / викинув / відкрив / відхилив / закрив</span>
+                </h3>
+                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:0.74rem;color:#cbd5e1;cursor:pointer" title="Вмикає/вимикає моніторинг. Коли вимкнено — події не пишуться (нульове навантаження). Лог тримається в пам'яті й скидається при перезапуску.">
+                        <input type="checkbox" id="activity-log-enabled" onchange="toggleActivityLog()"> Моніторинг
+                    </label>
+                    <select id="activity-log-filter" onchange="loadActivityLog()" style="background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:4px;padding:3px 6px;font-size:0.74rem">
+                        <option value="">Усі події</option>
+                        <option value="signal">📨 Сигнал</option>
+                        <option value="queued">📥 У чергу</option>
+                        <option value="dropped">🚫 Відкинуто на вході</option>
+                        <option value="ejected">♻️ Викинуто з черги</option>
+                        <option value="opened">✅ Відкрито</option>
+                        <option value="rejected">⛔ Відхилено</option>
+                        <option value="skipped">⏭ Пропущено</option>
+                        <option value="closed">🔚 Закрито</option>
+                        <option value="passthrough">➡️ Пряме відкриття</option>
+                    </select>
+                    <button onclick="clearActivityLog()" style="white-space:nowrap;font-size:0.7rem;padding:5px 11px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer">🗑️ Очистити</button>
+                </div>
+            </div>
+            <div style="max-height:360px;overflow:auto">
+                <table class="tm-table" id="activity-log-table">
+                    <thead><tr><th>Час</th><th>Монета</th><th>Бік</th><th>Подія</th><th>Джерело</th><th>Деталі</th></tr></thead>
+                    <tbody id="activity-log-tbody">
+                        <tr><td colspan="6" class="tm-empty-msg">Моніторинг вимкнено або подій ще немає.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
+
+<script>
+// ── 🧾 Activity log (bot decisions on every signal) ──
+const _actMeta = {
+    signal: ['📨', 'Сигнал', '#93c5fd'], queued: ['📥', 'У чергу', '#4ade80'],
+    dropped: ['🚫', 'Відкинуто', '#f87171'], ejected: ['♻️', 'Викинуто', '#fb923c'],
+    opened: ['✅', 'Відкрито', '#22c55e'], rejected: ['⛔', 'Відхилено', '#f87171'],
+    skipped: ['⏭', 'Пропущено', '#9aa3b5'], closed: ['🔚', 'Закрито', '#a78bfa'],
+    passthrough: ['➡️', 'Пряме відкриття', '#fbbf24'],
+};
+async function toggleActivityLog() {
+    const on = document.getElementById('activity-log-enabled').checked;
+    try {
+        await fetch('/api/activity-log/toggle', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: on }) });
+    } catch (e) {}
+    loadActivityLog();
+}
+async function clearActivityLog() {
+    if (!confirm('Очистити лог роботи бота?')) return;
+    try { await fetch('/api/activity-log/clear', { method: 'POST' }); } catch (e) {}
+    loadActivityLog();
+}
+async function loadActivityLog() {
+    const tb = document.getElementById('activity-log-tbody');
+    if (!tb) return;
+    const f = document.getElementById('activity-log-filter');
+    const ev = f ? f.value : '';
+    try {
+        const d = await (await fetch('/api/activity-log?limit=400' + (ev ? ('&event=' + ev) : ''))).json();
+        const chk = document.getElementById('activity-log-enabled');
+        if (chk) chk.checked = !!d.enabled;
+        const evs = (d && d.events) || [];
+        if (!evs.length) {
+            tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">'
+                + (d.enabled ? 'Подій ще немає — чекаємо на сигнали.' : 'Моніторинг вимкнено.') + '</td></tr>';
+            return;
+        }
+        tb.innerHTML = evs.map(e => {
+            const m = _actMeta[e.event] || ['•', e.event, '#cbd5e1'];
+            const t = new Date(e.t * 1000).toLocaleTimeString([], { hour12: false });
+            const sideCol = e.side === 'LONG' ? '#22c55e' : (e.side === 'SHORT' ? '#ef4444' : '#888');
+            const det = (e.detail || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+            return `<tr>
+                <td style="color:#8b93a7;font-size:0.72rem;white-space:nowrap">${t}</td>
+                <td style="font-weight:700">${e.symbol || ''}</td>
+                <td style="color:${sideCol};font-weight:700;font-size:0.72rem">${e.side || '—'}</td>
+                <td style="color:${m[2]};font-weight:700;font-size:0.72rem;white-space:nowrap">${m[0]} ${m[1]}</td>
+                <td style="color:#8b93a7;font-size:0.7rem">${e.source || ''}</td>
+                <td style="color:#cbd5e1;font-size:0.72rem">${det}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) { /* ignore transient errors */ }
+}
+loadActivityLog();
+setInterval(() => { if (document.getElementById('activity-log-tbody')) loadActivityLog(); }, 5000);
+</script>
 
 <script>
 let chart = null;
