@@ -1446,12 +1446,17 @@ class TradeManager:
                 # signal. If BOTH FF queues are OFF it returns False → we do NOT
                 # consume the signal and let it open directly below.
                 if ff and ff.is_enabled():
-                    if ff.intercept(symbol, side, kind=opened_by):
+                    _disp = ff.intercept(symbol, side, kind=opened_by)
+                    if _disp == 'queued':
                         return {'status': 'queued', 'is_paper': False,
-                                'reason': 'queued in ❤️ Fuel Auto-Filter '
-                                          '(waiting queue filter)'}
-                    # returned False → both queues OFF → falls through to a direct
-                    # open below (which logs its own outcome).
+                                'reason': 'у Черзі ❤️ Fuel Auto-Filter (чекає фільтр)'}
+                    if _disp == 'dropped':
+                        # An enabled queue (Q2) OWNED but REJECTED it (CTR gate) —
+                        # NOT queued, NOT opened. The marker must say so, not lie
+                        # «queued». (Q1 off ≠ signal goes to Q1 — it never does.)
+                        return {'status': 'rejected', 'is_paper': False,
+                                'reason': 'Черга-2 відкинула: CTR-нахил не в бік сигналу'}
+                    # '' → both queues OFF → falls through to a direct open below.
                 else:
                     log_activity(symbol, 'skipped', 'Fuel Auto-Filter вимкнено — сигнал іде повз черги', side=side, source='TM')
             except Exception as e:
@@ -4550,10 +4555,17 @@ class TradeManager:
             try:
                 from detection.fuel_filter import get_fuel_filter
                 ff = get_fuel_filter()
-                if ff and ff.is_enabled() and ff.intercept(symbol, side):
-                    return {'ok': True, 'queued': True,
-                            'reason': f'{symbol} {side} → черга ❤️ Fuel Auto-Filter '
-                                      f'(чекає фільтр черги)'}
+                if ff and ff.is_enabled():
+                    _disp = ff.intercept(symbol, side)
+                    if _disp == 'queued':
+                        return {'ok': True, 'queued': True,
+                                'reason': f'{symbol} {side} → черга ❤️ Fuel Auto-Filter '
+                                          f'(чекає фільтр черги)'}
+                    if _disp == 'dropped':
+                        return {'ok': False,
+                                'reason': f'{symbol} {side} відкинуто Чергою-2 '
+                                          f'(CTR-нахил не в бік сигналу)'}
+                    # '' → both queues off → open directly below.
             except Exception as e:
                 print(f"[TM] FF intercept error (manual) for {symbol}: {e}")
 

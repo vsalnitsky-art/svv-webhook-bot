@@ -533,10 +533,15 @@ class FuelFilterDaemon:
         replaces the stale queued one (and restarts its wait), instead of being
         treated as a duplicate of the old.
 
-        Returns True if the signal is OWNED by FF (queued OR intentionally
-        dropped by a queue's entry gate) — the caller must NOT open it directly.
-        Returns False only when BOTH queues are off (→ the caller lets the
-        signal open directly per its own flow) or the input was invalid.
+        Returns the ACTUAL disposition so the caller (and the chart marker) can
+        tell the truth instead of a blanket «queued»:
+          'queued'  — added to Q1 and/or Q2 (waiting).
+          'dropped' — an enabled queue OWNED but REJECTED it (e.g. Q2 CTR gate).
+                      NOT queued, NOT opened; the caller must NOT open directly.
+          ''        — BOTH queues off (or invalid input) → the caller opens the
+                      signal directly per its own flow.
+        NOTE: when Queue-1 is OFF the signal is NEVER added to Queue-1; a disabled
+        queue simply doesn't participate (only enabled queues can own/queue it).
 
         ⚡ Queue 2 hard CTR gate (at SIGNAL time): the signal is queued into Q2
         ONLY if the CTR lean already points the signal's way. If CTR ≠ side the
@@ -546,7 +551,7 @@ class FuelFilterDaemon:
         side = (side or '').upper().strip()
         kind = (kind or '').lower().strip() or None
         if not sym or side not in ('LONG', 'SHORT'):
-            return False
+            return ''
         _kind_lbl = {'choch': 'CHoCH', 'choch_bos': 'CHoCH+BOS'}.get(kind, kind or '?')
         try:
             from detection.activity_log import log_activity
@@ -557,7 +562,7 @@ class FuelFilterDaemon:
         q2 = bool(s.get('queue2_enabled', False))
         if not (q1 or q2):
             log_activity(sym, 'passthrough', 'Обидві черги вимкнені → сигнал іде у пряме відкриття', side=side, source='intercept')
-            return False   # both queues OFF → do NOT intercept; open directly
+            return ''   # both queues OFF → do NOT intercept; open directly
         now = time.time()
         opp = 'SHORT' if side == 'LONG' else 'LONG'
         # Q2 CTR lean at signal time (read the cached forecast OUTSIDE the lock).
@@ -636,7 +641,12 @@ class FuelFilterDaemon:
             else:
                 log_activity(sym, 'dropped', f'Черга-2 · {_kind_lbl}: CTR-нахил {q2_lean or "—"} ≠ {side} — сигнал відкинуто', side=side, source='Q2')
         print(f"[FuelFilter] intercepted {sym} {side} → Q1={q1} Q2={'take' if q2_take else ('drop' if q2 else 'off')}")
-        return True   # any enabled queue OWNS the signal (queued or dropped)
+        # Return the ACTUAL disposition so the caller (and the chart marker) tell
+        # the truth: 'queued' — added to a queue; 'dropped' — an enabled queue
+        # OWNED it but rejected it (e.g. Q2 CTR gate) → NOT queued, not opened.
+        if q1 or q2_take:
+            return 'queued'
+        return 'dropped'   # q2 enabled but the signal didn't pass its gate
 
     def queue2_on_choch(self, symbol: str, direction: str) -> bool:
         """Called by the SMC scanner for EVERY fresh CHoCH (same source that
