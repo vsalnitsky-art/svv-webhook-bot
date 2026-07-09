@@ -195,6 +195,12 @@ DEFAULT_SETTINGS = {
     #     the main LONG/SHORT buttons allow (like Queue 1). Default OFF → Queue 2
     #     opens independently of the buttons.
     'queue2_use_buttons': False,
+    #   queue2_hold_unknown_ctr — when CTR data is NOT yet available at signal
+    #     time (lean = «—»), HOLD the signal in Queue 2 instead of dropping it,
+    #     and wait for CTR to appear (the engine opens/ejects once it does).
+    #     Default ON — «невідомо ≠ проти», щоб не втрачати сигнали на холодному
+    #     кеші CTR. OFF = old behaviour (unknown CTR → drop).
+    'queue2_hold_unknown_ctr': True,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -460,6 +466,7 @@ class FuelFilterDaemon:
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
         s['queue2_use_buttons'] = bool(s.get('queue2_use_buttons', False))
+        s['queue2_hold_unknown_ctr'] = bool(s.get('queue2_hold_unknown_ctr', True))
         try:
             s['queue2_eject_ctr_pct'] = max(0, min(100, int(s.get('queue2_eject_ctr_pct', 20) or 20)))
         except (TypeError, ValueError):
@@ -555,7 +562,12 @@ class FuelFilterDaemon:
         opp = 'SHORT' if side == 'LONG' else 'LONG'
         # Q2 CTR lean at signal time (read the cached forecast OUTSIDE the lock).
         q2_lean = self._ctr_lean_side(sym) if q2 else None
-        q2_take = bool(q2 and q2_lean == side)
+        # «Невідомо ≠ проти»: if CTR isn't computed yet (lean None) and the
+        # setting allows, HOLD the signal (queue it) instead of dropping — the
+        # engine will open/eject once CTR appears.
+        _q2_unknown = bool(q2 and q2_lean is None)
+        _hold_unknown = bool(s.get('queue2_hold_unknown_ctr', True))
+        q2_take = bool(q2 and (q2_lean == side or (_q2_unknown and _hold_unknown)))
         # ⚡ Queue 2 opposite-CHoCH eject (default ON): the SAME coin arriving with
         # the OPPOSITE direction invalidates any waiting Q2 entry — drop it even if
         # THIS new signal isn't queued (its CTR gate may drop it, or it may go
@@ -615,7 +627,8 @@ class FuelFilterDaemon:
             log_activity(sym, 'queued', f'Черга-1 · {_kind_lbl}{_r1}', side=side, source='Q1')
         if q2_take:
             _r2 = ' · новий тип замінив застарілий' if refreshed_q2 else ''
-            log_activity(sym, 'queued', f'Черга-2 · {_kind_lbl} (CTR у бік сигналу){_r2}', side=side, source='Q2')
+            _why = 'CTR ще невідомий — тримаємо, чекаємо CTR' if _q2_unknown else 'CTR-нахил у бік сигналу'
+            log_activity(sym, 'queued', f'Черга-2 · {_kind_lbl} ({_why}){_r2}', side=side, source='Q2')
         elif q2 and not q2_take:
             print(f"[FF-Q2] ігнор {sym} {side}: CTR-нахил {q2_lean or '—'} ≠ {side} (сигнал відкинуто)")
             if stale_removed_q2:

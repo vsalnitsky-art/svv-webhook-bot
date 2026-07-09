@@ -1463,6 +1463,7 @@ class TradeManager:
             if existing_real:
                 if existing_real['side'] == side:
                     # Same direction — already in this trend, no new trade.
+                    log_activity(symbol, 'skipped', 'Вже в угоді (real, той самий напрямок) — сигнал ігнорується', side=side, source='TM')
                     return {'real_opened': False, 'status': 'duplicate',
                             'reason': f'already holding {side} (real) — no new trade'}
                 else:
@@ -1470,6 +1471,7 @@ class TradeManager:
                     if not allow_reverse:
                         print(f"[TM] {symbol}: opposite signal but reverse-on-signal "
                               f"OFF — holding {existing_real['side']}")
+                        log_activity(symbol, 'skipped', f'Протилежний сигнал, але «Reverse on opposite signal» ВИМКНЕНО — тримаємо {existing_real["side"]} (real)', side=side, source='TM')
                         return {'status': 'duplicate', 'reason':
                                 f'opposite signal, but "Reverse on opposite signal" '
                                 f'is OFF — holding {existing_real["side"]} position'}
@@ -1519,10 +1521,12 @@ class TradeManager:
         if test_mode and not real_opened:
             if existing_shadow:
                 if existing_shadow['side'] == side:
+                    log_activity(symbol, 'skipped', 'Вже в угоді (paper, той самий напрямок) — сигнал ігнорується', side=side, source='TM')
                     return {'status': 'duplicate',
                             'reason': f'already holding {side} (paper) — no new trade'}
                 # OPPOSITE direction — flip only if auto-reverse is enabled.
                 if not allow_reverse:
+                    log_activity(symbol, 'skipped', f'Протилежний сигнал, але «Reverse on opposite signal» ВИМКНЕНО — тримаємо {existing_shadow["side"]} (paper)', side=side, source='TM')
                     return {'status': 'duplicate', 'reason':
                             f'opposite signal, but "Reverse on opposite signal" is '
                             f'OFF — holding {existing_shadow["side"]} paper position'}
@@ -1540,13 +1544,16 @@ class TradeManager:
                         'reason': res.get('reason', 'shadow reverse-open blocked')}
             res = self._open_shadow(symbol, side, entry_price, opened_by) or {}
             if res.get('ok'):
+                log_activity(symbol, 'opened', 'Пряме відкриття (paper) — черги не перехопили сигнал', side=side, source='TM')
                 return {'shadow_opened': True, 'status': 'opened', 'is_paper': True}
+            log_activity(symbol, 'rejected', f'Paper-відкриття відхилено: {res.get("reason", "shadow open blocked")}', side=side, source='TM')
             return {'shadow_opened': False, 'status': 'rejected', 'is_paper': True,
                     'reason': res.get('reason', 'shadow open blocked')}
 
         # Neither track acted — report why so the marker isn't "unknown".
         if not enabled and not test_mode:
             real_reason = real_reason or 'TM is disabled and Test Mode is off — nothing to open'
+        log_activity(symbol, 'skipped', real_reason or 'сигнал не оброблено (жоден трек не активний)', side=side, source='TM')
         return {'real_opened': False, 'shadow_opened': False, 'status': 'rejected',
                 'reason': real_reason or 'signal not actioned'}
     

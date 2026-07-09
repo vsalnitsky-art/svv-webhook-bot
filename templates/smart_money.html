@@ -2064,10 +2064,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="checkbox" id="ff-q2-use-buttons" onchange="saveFuelFilterSettings()"> Відкривати за основними кнопками <b>LONG/SHORT</b>
                         </label>
                     </div>
-                    <!-- Row 2: eject on opposite CHoCH -->
+                    <!-- Row 2: eject on opposite CHoCH · hold on unknown CTR -->
                     <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
                         <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Монета в Черзі-2 відстежує протилежний CHoCH НА ГРАФІКУ (через сканер, той самий, що малює графік) і одразу видаляється з черги при його появі. Працює незалежно від фільтрів сигналів (HTF/кнопки/дедуп) і навіть якщо новий сигнал пішов прямо в угоду.">
                             <input type="checkbox" id="ff-q2-eject-choch" onchange="saveFuelFilterSettings()"> Відстежувати протилежний <b>CHoCH</b> на графіку <span style="color:#8b93a7;font-size:0.68rem">(при появі — видалити монету з черги)</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Коли CTR ще НЕ порахований на момент сигналу (нахил «—»), тримати сигнал у Черзі-2 і чекати CTR, а не відкидати. «Невідомо ≠ проти» — щоб не втрачати сигнали на холодному кеші CTR.">
+                            <input type="checkbox" id="ff-q2-hold-unknown-ctr" onchange="saveFuelFilterSettings()"> Тримати, коли <b>CTR ще невідомий</b> <span style="color:#8b93a7;font-size:0.68rem">(«—» — чекати CTR, не відкидати)</span>
                         </label>
                     </div>
                 </div>
@@ -3216,6 +3219,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <option value="closed">🔚 Закрито</option>
                         <option value="passthrough">➡️ Пряме відкриття</option>
                     </select>
+                    <button onclick="exportActivityLog('csv')" style="white-space:nowrap;font-size:0.7rem;padding:5px 11px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#22c55e;cursor:pointer" title="Завантажити всі події логу як CSV (для Excel / аналізу)">📥 CSV</button>
+                    <button onclick="exportActivityLog('json')" style="white-space:nowrap;font-size:0.7rem;padding:5px 11px;border-radius:5px;border:1px solid rgba(96,165,250,0.4);background:rgba(96,165,250,0.1);color:#60a5fa;cursor:pointer" title="Завантажити всі події логу як JSON (повні дані)">📥 JSON</button>
                     <button onclick="clearActivityLog()" style="white-space:nowrap;font-size:0.7rem;padding:5px 11px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer">🗑️ Очистити</button>
                 </div>
             </div>
@@ -3250,6 +3255,35 @@ async function clearActivityLog() {
     if (!confirm('Очистити лог роботи бота?')) return;
     try { await fetch('/api/activity-log/clear', { method: 'POST' }); } catch (e) {}
     loadActivityLog();
+}
+async function exportActivityLog(fmt) {
+    // Download the FULL activity buffer for offline analysis (CSV or JSON).
+    let evs = [];
+    try {
+        const d = await (await fetch('/api/activity-log?limit=2000')).json();
+        evs = (d && d.events) || [];
+    } catch (e) { alert('Помилка експорту: ' + e); return; }
+    if (!evs.length) { alert('Лог порожній — нічого експортувати.'); return; }
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    let blob, name;
+    if (fmt === 'json') {
+        blob = new Blob([JSON.stringify(evs, null, 2)], { type: 'application/json' });
+        name = `activity_log_${stamp}.json`;
+    } else {
+        const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+        const iso = t => { try { return new Date(t * 1000).toISOString(); } catch (e) { return ''; } };
+        const rows = [['time_iso', 'ts', 'symbol', 'side', 'event', 'source', 'detail']];
+        // oldest-first for analysis
+        evs.slice().reverse().forEach(e => rows.push(
+            [iso(e.t), e.t, e.symbol, e.side, e.event, e.source, e.detail].map(q)));
+        const csv = '﻿' + rows.map(r => r.join(',')).join('\r\n');   // BOM → Excel UTF-8
+        blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        name = `activity_log_${stamp}.csv`;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 async function loadActivityLog() {
     const tb = document.getElementById('activity-log-tbody');
@@ -7813,6 +7847,7 @@ function renderFuelFilter(d) {
     setIf('ff-q2-eject-ctr-pct', String(s.queue2_eject_ctr_pct != null ? s.queue2_eject_ctr_pct : 20));
     setIf('ff-q2-eject-choch', s.queue2_eject_choch !== false); // default true
     setIf('ff-q2-use-buttons', !!s.queue2_use_buttons);        // default false
+    setIf('ff-q2-hold-unknown-ctr', s.queue2_hold_unknown_ctr !== false); // default true
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
@@ -8425,6 +8460,7 @@ async function saveFuelFilterSettings() {
         queue2_eject_ctr_pct: parseInt(_v('ff-q2-eject-ctr-pct', '20') || '20', 10),
         queue2_eject_choch: _c('ff-q2-eject-choch'),
         queue2_use_buttons: _c('ff-q2-use-buttons'),
+        queue2_hold_unknown_ctr: _c('ff-q2-hold-unknown-ctr'),
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
