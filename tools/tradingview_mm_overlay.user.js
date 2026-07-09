@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SVV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.1.0
+// @version      1.1.1
 // @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із SVV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       SVV
 // @match        https://*.tradingview.com/chart/*
@@ -210,22 +210,24 @@
         elDir.textContent = dirLabel(dir) + (mm != null ? ' · ' + band(mm).label : '');
         elDir.style.color = dirColor(dir);
 
-        // ── ₿ BTC state line ──
+        // ── ₿ BTC ММ line — the BTC liquidation-fuel state (напрямок + сила% +
+        // рівень), same widget style as the coin's ММ. NOT the session START/
+        // pause status. Mirrors the ₿ BTCUSDT banner ("LONG · 34% помірний"). ──
         if (d.enabled === false) {
             elBtc.style.color = '#9aa3b5';
             elBtc.textContent = 'FF вимкнено в боті';
         } else {
             const b = d.btc || {};
+            const bs = (b.strength != null) ? Number(b.strength) : null;
             if (b.dir === 'LONG' || b.dir === 'SHORT') {
                 const bc = dirColor(b.dir);
-                const st = b.paused ? '⏸ пауза'
-                    : (b.status === 'START' ? 'START'
-                        : (b.status === 'COUNTING' ? 'чекає START' : 'STOP'));
-                const strg = (b.strength != null) ? ` · ${b.strength}%` : '';
-                elBtc.innerHTML = `₿ BTC: <span style="color:${bc};font-weight:700">${dirLabel(b.dir)}</span> · ${st}${strg}`;
+                const tail = (bs != null) ? ` · ${bs}% · ${band(bs).label}` : '';
+                elBtc.innerHTML = `₿ BTC ММ: <span style="color:${bc};font-weight:700">${dirLabel(b.dir)}</span>${tail}`;
             } else {
                 elBtc.style.color = '#9aa3b5';
-                elBtc.innerHTML = '₿ BTC: ⚪ — (WAIT/STOP)';
+                elBtc.innerHTML = (bs != null)
+                    ? `₿ BTC ММ: ⚪ — · ${bs}% · ${band(bs).label}`
+                    : '₿ BTC ММ: ⚪ —';
             }
         }
 
@@ -237,8 +239,20 @@
             elFund.innerHTML = `💰 фандинг <span style="color:${rc};font-weight:700">${r >= 0 ? '+' : ''}${r.toFixed(4)}%</span>${left}`;
         }
 
-        const t = new Date();
-        elFoot.textContent = 'оновлено ' + t.toLocaleTimeString();
+        // ── ⚡ CTR line (замість «оновлено») — нахил STC по цій монеті ──
+        const c = d.ctr;
+        if (c && c.stc != null) {
+            const tf = c.tf ? ('·' + String(c.tf).toUpperCase()) : '';
+            const lean = c.lean;   // 'LONG' | 'SHORT' | null
+            const icon = lean === 'LONG' ? '🟢' : (lean === 'SHORT' ? '🔴' : '⚪');
+            const col = lean === 'LONG' ? '#4ade80' : (lean === 'SHORT' ? '#f87171' : '#9aa3b5');
+            const label = lean ? (lean + '-нахил') : 'нейтрально';
+            const pct = (c.lean_pct != null) ? c.lean_pct : 0;
+            elFoot.innerHTML = `⚡ CTR${tf} <span style="color:${col};font-weight:700">${icon} ${label} ${pct}%</span>`;
+        } else {
+            elFoot.style.color = '#9aa3b5';
+            elFoot.textContent = '⚡ CTR — (немає даних)';
+        }
     }
 
     // ── Fetch ─────────────────────────────────────────────────────────────

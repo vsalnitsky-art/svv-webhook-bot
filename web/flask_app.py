@@ -3000,6 +3000,17 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/activity-log/delete', methods=['POST'])
+    def api_activity_log_delete():
+        """Delete specific events by id. Body: {"ids": [1,2,3]}."""
+        try:
+            from detection.activity_log import get_activity_log
+            data = request.get_json(silent=True) or {}
+            n = get_activity_log().delete(data.get('ids') or [])
+            return jsonify({'ok': True, 'deleted': n})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/settings', methods=['POST'])
     def api_fuel_filter_settings():
         """Update settings. Body may include any of: enabled, duration_minutes,

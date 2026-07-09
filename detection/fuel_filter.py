@@ -1656,6 +1656,22 @@ class FuelFilterDaemon:
             out['funding'] = False
             out['funding_rate'] = None
             out['funding_next_ms'] = None
+        # ── ⚡ CTR (STC) for the overlay foot line («⚡ CTR·15M 🟢 LONG-нахил X%») ──
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            c = ((fe.get(symbol) or {}).get('ctr') if fe else None) or None
+            if c and c.get('stc') is not None:
+                stc = float(c.get('stc'))
+                lean = 'SHORT' if stc > 50 else ('LONG' if stc < 50 else None)
+                out['ctr'] = {'stc': round(stc, 1), 'lean': lean,
+                              'lean_pct': round(abs(stc - 50.0) / 50.0 * 100.0),
+                              'tf': c.get('tf'), 'last_dir': c.get('last_dir'),
+                              'age_bars': c.get('last_signal_age_bars')}
+            else:
+                out['ctr'] = None
+        except Exception:
+            out['ctr'] = None
         return out
 
     def _exhaustion(self, symbol: str, side: str) -> Optional[float]:

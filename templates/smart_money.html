@@ -3226,9 +3226,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             <div style="max-height:360px;overflow:auto">
                 <table class="tm-table" id="activity-log-table">
-                    <thead><tr><th>Час</th><th>Монета</th><th>Бік</th><th>Подія</th><th>Джерело</th><th>Деталі</th></tr></thead>
+                    <thead><tr><th>Час</th><th>Монета</th><th>Бік</th><th>Подія</th><th>Джерело</th><th>Деталі</th><th></th></tr></thead>
                     <tbody id="activity-log-tbody">
-                        <tr><td colspan="6" class="tm-empty-msg">Моніторинг вимкнено або подій ще немає.</td></tr>
+                        <tr><td colspan="7" class="tm-empty-msg">Моніторинг вимкнено або подій ще немає.</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -3296,7 +3296,7 @@ async function loadActivityLog() {
         if (chk) chk.checked = !!d.enabled;
         const evs = (d && d.events) || [];   // newest-first
         if (!evs.length) {
-            tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">'
+            tb.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">'
                 + (d.enabled ? 'Подій ще немає — чекаємо на сигнали.' : 'Моніторинг вимкнено.') + '</td></tr>';
             return;
         }
@@ -3338,6 +3338,7 @@ async function loadActivityLog() {
                     + `<span style="color:${m[2]};font-size:0.66rem;font-weight:700">${m[1]}:</span> `
                     + `<span style="color:#cbd5e1">${esc(s.detail)}</span></div>`;
             }).join('');
+            const ids = c.steps.map(s => s.id).filter(v => v != null);
             return `<tr>
                 <td style="color:#8b93a7;font-size:0.72rem;white-space:nowrap;vertical-align:top">${t}</td>
                 <td style="font-weight:700;vertical-align:top">${c.symbol || ''}</td>
@@ -3345,9 +3346,18 @@ async function loadActivityLog() {
                 <td style="font-size:0.72rem;vertical-align:top">${chips}</td>
                 <td style="color:#8b93a7;font-size:0.7rem;vertical-align:top">${srcs}</td>
                 <td style="font-size:0.72rem;vertical-align:top">${det}</td>
+                <td style="vertical-align:top;text-align:center"><button title="Видалити цей запис" onclick="deleteActivityLog([${ids.join(',')}])" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:0.85rem;padding:0 4px">✕</button></td>
             </tr>`;
         }).join('');
     } catch (e) { /* ignore transient errors */ }
+}
+async function deleteActivityLog(ids) {
+    if (!ids || !ids.length) return;
+    try {
+        await fetch('/api/activity-log/delete', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+    } catch (e) {}
+    loadActivityLog();
 }
 loadActivityLog();
 setInterval(() => { if (document.getElementById('activity-log-tbody')) loadActivityLog(); }, 5000);
@@ -4665,18 +4675,41 @@ function showSignalTooltip(param, sig) {
     }
     const isOpened = (sig.status || 'opened') === 'opened';
     const sideColor = sig.side === 'LONG' ? '#22c55e' : '#ef4444';
+    if (typeof window.uaSignalReason !== 'function') {
+        // UA reason for the «не відкрито» tooltip — same vocabulary as the
+        // 🧾 Лог роботи бота. Maps status + known English reason phrases to UA.
+        window.uaSignalReason = function (s) {
+            const st = s.status || '', r = String(s.reason || '');
+            const rules = [
+                [/queued in .*Fuel Auto-Filter|waiting queue filter/i, '📥 Поставлено в Чергу (Fuel Auto-Filter) — чекає фільтр черги'],
+                [/already holding .*(real)/i, '⏭ Вже в угоді (real, той самий напрямок) — сигнал ігнорується'],
+                [/already holding .*(paper|shadow)/i, '⏭ Вже в угоді (paper, той самий напрямок) — сигнал ігнорується'],
+                [/opposite signal.*(OFF|is off)/i, '⏭ Протилежний сигнал, «Reverse on opposite signal» вимкнено — тримаємо позицію'],
+                [/manual mode/i, '⏭ Ручний режим — сигнал ігнорується'],
+                [/not in tradeable/i, '⛔ Монета не в дозволеному списку (tradeable)'],
+                [/max open positions/i, '⛔ Досягнуто ліміт відкритих позицій'],
+                [/TM is disabled and Test Mode is off/i, '⛔ Trade Manager і Test Mode вимкнені — нема куди відкривати'],
+                [/blocked|reject/i, '⛔ Відкриття заблоковано'],
+            ];
+            for (const [re, ua] of rules) { if (re.test(r)) return ua; }
+            const byStatus = { queued: '📥 Поставлено в чергу (Fuel Auto-Filter)',
+                duplicate: '⏭ Пропущено (вже в угоді / дубль напрямку)',
+                rejected: '⛔ Відхилено' }[st];
+            return byStatus || ('⛔ ' + (r || 'невідомо'));
+        };
+    }
     const when = sig.time
         ? new Date(sig.time * 1000).toLocaleString() : '';
     let html = '';
     if (isOpened) {
         html = `<div style="font-weight:700;color:${sideColor};margin-bottom:4px">`
-             + `${sig.paper ? '📝 Paper ' : '✅ '}${sig.side} opened</div>`
-             + (sig.price ? `<div>Entry: ${sig.price}</div>` : '')
+             + `${sig.paper ? '📝 Paper ' : '✅ '}${sig.side} — відкрито</div>`
+             + (sig.price ? `<div>Вхід: ${sig.price}</div>` : '')
              + (when ? `<div style="color:#9ca3af;margin-top:4px">${when}</div>` : '');
     } else {
         html = `<div style="font-weight:700;color:#fbbf24;margin-bottom:4px">`
-             + `⊘ ${sig.side} signal — NOT opened</div>`
-             + `<div style="color:#fca5a5">Причина: ${sig.reason || 'unknown'}</div>`
+             + `⊘ Сигнал ${sig.side} — НЕ відкрито</div>`
+             + `<div style="color:#fca5a5">Причина: ${uaSignalReason(sig)}</div>`
              + (when ? `<div style="color:#9ca3af;margin-top:4px">${when}</div>` : '');
     }
     html += `<div style="text-align:right;margin-top:6px">`

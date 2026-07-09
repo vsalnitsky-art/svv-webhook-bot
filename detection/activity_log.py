@@ -30,6 +30,7 @@ class ActivityLog:
         self._loaded = False             # events restored from DB yet?
         self._dirty = False              # unsaved events since last flush?
         self._last_flush = 0.0
+        self._next_id = 1                # monotonic id per event (for delete)
 
     # ---- DB (lazy) ----
     def _get_db(self):
@@ -56,6 +57,9 @@ class ActivityLog:
                     for e in raw[-_MAX_EVENTS:]:
                         if isinstance(e, dict):
                             self._events.append(e)
+                    # Continue the id sequence past whatever was restored.
+                    self._next_id = max((int(e.get('id') or 0) for e in self._events),
+                                        default=0) + 1
         except Exception:
             pass
 
@@ -115,6 +119,7 @@ class ActivityLog:
         try:
             with self._lock:
                 self._events.append({
+                    'id': self._next_id,
                     't': ts if ts is not None else time.time(),
                     'symbol': (symbol or '').upper().strip(),
                     'side': side,
@@ -122,6 +127,7 @@ class ActivityLog:
                     'detail': str(detail or '')[:400],
                     'source': str(source or ''),
                 })
+                self._next_id += 1
                 self._dirty = True
             self._flush()   # throttled persist (survives restart)
         except Exception:
@@ -142,6 +148,26 @@ class ActivityLog:
         items = items[-int(limit or 400):]
         items.reverse()
         return items
+
+    def delete(self, ids) -> int:
+        """Remove events whose `id` is in `ids`. Returns how many were removed."""
+        try:
+            idset = {int(i) for i in (ids or [])}
+        except (TypeError, ValueError):
+            return 0
+        if not idset:
+            return 0
+        removed = 0
+        with self._lock:
+            kept = [e for e in self._events if int(e.get('id') or -1) not in idset]
+            removed = len(self._events) - len(kept)
+            if removed:
+                self._events.clear()
+                self._events.extend(kept)
+                self._dirty = True
+        if removed:
+            self._flush(force=True)
+        return removed
 
     def clear(self) -> int:
         with self._lock:
