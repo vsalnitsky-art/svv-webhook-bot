@@ -128,6 +128,11 @@ DEFAULT_SETTINGS = {
     'ctr_reversal_giveback_pct': 30,
     'ctr_reversal_exh_pct': 66,
     'ctr_reversal_confirmations': 2,
+    # Persistence guard (in BARS of the CTR timeframe): the reversal condition
+    # must hold continuously for ≥ this many closed bars before the trade is
+    # closed — so a tiny intrabar wobble can't exit and give back the potential.
+    # 0 = react instantly (old behaviour). 2 ≈ two CTR bars of confirmation.
+    'ctr_reversal_min_bars': 2,
 
     'use_htf_flip': True,            # Close when HTF trend flips against us
     
@@ -826,6 +831,8 @@ class TradeManager:
                     'ctr_stc': ctr.get('stc'),
                     'ctr_dir': ctr.get('last_dir'),
                     'ctr_age': ctr.get('last_signal_age_bars'),
+                    # 🔄 reversal-after-peak readiness % (stamped by the monitor).
+                    'rev': pos.get('ctr_rev_pct'),
                     # ₿ BTCUSDT banner state + BTC ММ at this moment.
                     'btc_dir': btc_dir,
                     'btc_paused': btc_paused,
@@ -950,12 +957,29 @@ class TradeManager:
                 return 'bot_tp_trail'
         return None
 
+    @staticmethod
+    def _tf_to_seconds(tf) -> int:
+        """Parse a timeframe string ('15m','1h','4h','1d') to seconds. 15m default."""
+        try:
+            t = str(tf).lower().strip()
+            if t.endswith('m'):
+                return max(60, int(t[:-1]) * 60)
+            if t.endswith('h'):
+                return int(t[:-1]) * 3600
+            if t.endswith('d'):
+                return int(t[:-1]) * 86400
+        except Exception:
+            pass
+        return 900
+
     def _ctr_reversal_eval(self, symbol: str, side: str, pnl_pct, peak_pct):
-        """🔄 CTR reversal-after-peak evaluator. Returns (rev_pct, should_exit):
+        """🔄 CTR reversal-after-peak evaluator. Returns (rev_pct, hard_ok, tf_sec):
           • rev_pct  0..100 — live readiness to close (for the open-positions
             column): blends CTR opposite-lean, PnL give-back, exhaustion, ММ;
-          • should_exit — the HARD rule fired: a real peak happened AND CTR is in
-            the opposite extreme AND ≥N of 3 confirmations of a decline.
+          • hard_ok — the HARD rule is TRUE right now: a real peak happened AND
+            CTR is in the opposite extreme AND ≥N of 3 confirmations of a decline.
+            (The caller adds a persistence-in-bars guard before closing.)
+          • tf_sec — the CTR timeframe in seconds (for the bars persistence guard).
         Uses only cheap cached reads (forecast CTR + FF maps)."""
         s = self._settings
         try:
@@ -1014,11 +1038,33 @@ class TradeManager:
                         + 0.15 * (float(exh) if exh is not None else 0.0)
                         + 0.10 * mm_against)
         rev_pct = max(0, min(100, rev_pct))
-        should_exit = bool(s.get('use_ctr_reversal_exit', True)
-                           and peak_pct is not None and peak_pct >= min_peak
-                           and ctr_against >= ctr_need
-                           and conf >= conf_need)
-        return rev_pct, should_exit
+        hard_ok = bool(s.get('use_ctr_reversal_exit', True)
+                       and peak_pct is not None and peak_pct >= min_peak
+                       and ctr_against >= ctr_need
+                       and conf >= conf_need)
+        tf_sec = self._tf_to_seconds(ctr.get('tf'))
+        return rev_pct, hard_ok, tf_sec
+
+    def _rev_persisted(self, pos: Dict, hard_ok: bool, tf_sec) -> bool:
+        """Persistence-in-bars guard for the 🔄 reversal exit. Returns True only
+        when `hard_ok` has held CONTINUOUSLY for ≥ ctr_reversal_min_bars bars of
+        the CTR timeframe. Any drop resets the timer, so a brief intrabar wobble
+        never accumulates toward a close (protects the trade's potential)."""
+        if not hard_ok:
+            pos.pop('_rev_ready_since', None)
+            return False
+        try:
+            min_bars = int(self._settings.get('ctr_reversal_min_bars', 2) or 0)
+        except (TypeError, ValueError):
+            min_bars = 2
+        now = time.time()
+        since = pos.get('_rev_ready_since')
+        if not since:
+            pos['_rev_ready_since'] = now
+            since = now
+        if min_bars <= 0:
+            return True
+        return (now - since) >= min_bars * max(60, int(tf_sec or 900))
 
     def _monitor_position(self, symbol: str):
         with self._lock:
@@ -1087,9 +1133,11 @@ class TradeManager:
             return
 
         # === 🔄 CTR reversal-after-peak: stamp readiness % + close if fired ===
-        _rev_pct, _rev_exit = self._ctr_reversal_eval(symbol, pos['side'], current_pnl_pct, _peak)
+        # Persistence-in-bars guard: the reversal must hold for ≥ N CTR bars
+        # before closing, so a tiny wobble can't exit and give back the move.
+        _rev_pct, _rev_hard, _tf_sec = self._ctr_reversal_eval(symbol, pos['side'], current_pnl_pct, _peak)
         pos['ctr_rev_pct'] = _rev_pct
-        if _rev_exit:
+        if self._rev_persisted(pos, _rev_hard, _tf_sec):
             self._close_position(symbol, current_price, reason='ctr_reversal_after_peak')
             return
 
@@ -1234,9 +1282,9 @@ class TradeManager:
                 return
 
         # === 🔄 CTR reversal-after-peak: stamp readiness % + close if fired ===
-        _rev_pct, _rev_exit = self._ctr_reversal_eval(symbol, pos['side'], cur_pnl, _peak)
+        _rev_pct, _rev_hard, _tf_sec = self._ctr_reversal_eval(symbol, pos['side'], cur_pnl, _peak)
         pos['ctr_rev_pct'] = _rev_pct
-        if _rev_exit and not pos.get('manual_mode'):
+        if not pos.get('manual_mode') and self._rev_persisted(pos, _rev_hard, _tf_sec):
             self._close_shadow(symbol, current_price, reason='ctr_reversal_after_peak')
 
     def _update_trailing(self, pos, current_price):
