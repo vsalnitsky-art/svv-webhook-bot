@@ -8512,22 +8512,35 @@ function renderTradeHistoryChart(h, meta) {
             });
         }
         // Optional numeric value labels on the FIRST series, coloured per-sample
-        // (opts.labelColor) — drawn only where the value changes (+ the last
-        // point) so the line isn't cluttered by identical consecutive samples.
+        // (opts.labelColor). Density is controlled by opts.labelMinDelta: a label
+        // is drawn only when the value moved ≥ that much from the last labelled
+        // one (default 0.5 → every integer step, for the age chart). For a dense
+        // continuous series (STC) set a bigger delta so it stays readable.
         if (opts.valueLabels) {
             const se = series[0];
             const fmt = opts.labelFmt || (v => String(Math.round(v)));
-            let prevV = null;
+            const minD = (opts.labelMinDelta != null) ? opts.labelMinDelta : 0.5;
+            let lastLabeled = null;
             h.forEach((s, i) => {
                 const v = se.acc(s);
                 if (v == null || !isFinite(v)) return;
                 const isLast = (i === h.length - 1);
-                if (v === prevV && !isLast) return;
-                prevV = v;
+                if (!isLast && lastLabeled != null && Math.abs(v - lastLabeled) < minD) return;
+                lastLabeled = v;
                 const x = xOf(s, W), y = yOf(v);
                 const col = opts.labelColor ? opts.labelColor(s) : se.color;
                 svg += `<text x="${x.toFixed(1)}" y="${(y - 5).toFixed(1)}" fill="${col}" `
                     + `font-size="9" font-weight="700" text-anchor="middle">${fmt(v)}</text>`;
+            });
+        }
+        // Optional labelled vertical reference lines (e.g. 🔺 the PnL peak) so the
+        // exact moment lines up across every stacked panel.
+        if (opts.vlines) {
+            opts.vlines.forEach(vl => {
+                if (vl.t == null) return;
+                const x = PAD + ((vl.t - t0) / span) * (W - 2 * PAD);
+                svg += `<line x1="${x.toFixed(1)}" y1="${PAD}" x2="${x.toFixed(1)}" y2="${(H - PAD).toFixed(1)}" stroke="${vl.color}" stroke-opacity="0.9" stroke-dasharray="4 2" stroke-width="1.5"/>`;
+                svg += `<text x="${x.toFixed(1)}" y="${(PAD + 10).toFixed(1)}" fill="${vl.color}" font-size="9.5" font-weight="700" text-anchor="middle">${vl.label}</text>`;
             });
         }
         svg += `<text x="${PAD}" y="14" fill="#cbd5e1" font-size="11" font-weight="700">${title}</text>`;
@@ -8552,6 +8565,15 @@ function renderTradeHistoryChart(h, meta) {
     const peakUp = (meta.peak_pnl_pct != null) ? meta.peak_pnl_pct
                  : (_pnls.length ? Math.max(..._pnls) : null);
     const peakDn = _pnls.length ? Math.min(..._pnls) : null;
+    // Sample where PnL topped out (the exact moment it started giving back).
+    // A 🔺 vertical marker at this time is drawn on the PnL / STC / age panels
+    // so the peak→decline moment lines up across all three.
+    let _peakIdx = -1, _peakV = -Infinity;
+    h.forEach((s, i) => { if (s.pnl != null && isFinite(s.pnl) && s.pnl > _peakV) { _peakV = s.pnl; _peakIdx = i; } });
+    const _peakT = (_peakIdx >= 0) ? h[_peakIdx].t : null;
+    const peakVlines = (_peakT != null)
+        ? [{ t: _peakT, label: `🔺 пік ${_peakV >= 0 ? '+' : ''}${_peakV.toFixed(2)}%`, color: '#f5c542' }]
+        : [];
     let peakSpan = '';
     if (peakUp != null) {
         const gb = (meta.pnl_pct != null) ? (peakUp - meta.pnl_pct) : null;
@@ -8643,7 +8665,7 @@ function renderTradeHistoryChart(h, meta) {
     // Profit/loss colour by PnL sign at each sample (🟢 у прибутку / 🔴 у збитку).
     const pnlColorAt = s => (s.pnl != null && s.pnl >= 0) ? '#22c55e' : '#ef4444';
     const pnlPanel = panel('PnL, %', [{ name: 'PnL% (🟢 прибуток / 🔴 збиток)', color: pnlCol, acc: s => s.pnl }],
-        { includeZero: true, dec: 2, segmentColor: pnlColorAt });
+        { includeZero: true, dec: 2, segmentColor: pnlColorAt, vlines: peakVlines });
     const mmPanel = panel('ММ монети / BTC ММ / Виснаженість, %', [
         { name: 'ММ монети', color: '#fbbf24', acc: s => s.mm },
         { name: 'BTC ММ', color: '#22d3ee', acc: s => s.btc_mm },
@@ -8651,11 +8673,19 @@ function renderTradeHistoryChart(h, meta) {
     ], { min: 0, max: 100, dec: 0 });
     // Price line coloured by whether the trade was in profit/loss at that moment.
     const pricePanel = panel('Ціна (🟢 у прибутку / 🔴 у збитку)',
-        [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 4, segmentColor: pnlColorAt });
+        [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }],
+        { dec: 4, segmentColor: pnlColorAt, vlines: peakVlines });
     // ⚡ CTR chronology: STC (0–100, split at 50: <50 LONG-нахил, >50 SHORT-нахил)
     // and the crossover age in bars — plotted so the whole reading history shows.
-    const ctrStcPanel = panel('⚡ CTR · STC 0–100 (>50 SHORT-нахил · <50 LONG-нахил)',
-        [{ name: 'STC', color: '#c084fc', acc: s => s.ctr_stc }], { min: 0, max: 100, dec: 0 });
+    // STC lean colour by the 50-split at each sample: >50 → SHORT (red), <50 →
+    // LONG (green). Applied to both the line segments and the value labels.
+    const stcLeanColor = s => (s.ctr_stc == null) ? '#9aa3b5'
+        : (s.ctr_stc > 50 ? '#f87171' : (s.ctr_stc < 50 ? '#4ade80' : '#9aa3b5'));
+    const ctrStcPanel = panel('⚡ CTR · STC 0–100 (🔴 >50 SHORT-нахил · 🟢 <50 LONG-нахил)',
+        [{ name: 'STC %', color: '#c084fc', acc: s => s.ctr_stc }],
+        { min: 0, max: 100, dec: 0, segmentColor: stcLeanColor,
+          valueLabels: true, labelColor: stcLeanColor, labelMinDelta: 10,
+          labelFmt: v => Math.round(v) + '%', vlines: peakVlines });
     // Colour value labels by the crossover DIRECTION at each sample
     // (🟢 LONG / 🔴 SHORT / grey none) so the numbers read the trend at a glance.
     const ctrDirColor = s => s.ctr_dir === 'LONG' ? '#4ade80'
@@ -8663,9 +8693,10 @@ function renderTradeHistoryChart(h, meta) {
     const ctrAgePanel = panel('⚡ CTR · вік кросовера (барів) — ↺ = момент розвороту',
         [{ name: 'вік кросов., барів', color: '#38bdf8', acc: s => s.ctr_age }],
         { min: 0, includeZero: true, dec: 0, valueLabels: true, labelColor: ctrDirColor,
-          step: true, markResets: true });
+          step: true, markResets: true, vlines: peakVlines });
 
-    return info + info2 + exitReasonLine + dcLine + ctrLine + pnlPanel + mmPanel + ctrStcPanel + ctrAgePanel + bannerStrip() + pricePanel;
+    // STC + вік кросовера — ODRAZU після PnL (щоб пік PnL і CTR читались поруч).
+    return info + info2 + exitReasonLine + dcLine + ctrLine + pnlPanel + ctrStcPanel + ctrAgePanel + mmPanel + bannerStrip() + pricePanel;
 }
 
 // ── 📜 Funding-coin ARCHIVE (history of appear/flip/exit + metrics) ──────
