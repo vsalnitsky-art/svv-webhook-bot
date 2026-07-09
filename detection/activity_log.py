@@ -17,6 +17,8 @@ from typing import Optional, List, Dict
 
 _MAX_EVENTS = 1500                       # ring-buffer cap (oldest dropped)
 _DB_ENABLED = 'activity_log_enabled'     # persisted on/off flag
+_DB_EVENTS = 'activity_log_events'       # persisted event buffer (survives restart)
+_FLUSH_EVERY_SEC = 30                    # throttle DB writes (bounded single row)
 
 
 class ActivityLog:
@@ -25,6 +27,9 @@ class ActivityLog:
         self._lock = threading.RLock()
         self._enabled = None             # lazy-loaded from DB on first touch
         self._db = None
+        self._loaded = False             # events restored from DB yet?
+        self._dirty = False              # unsaved events since last flush?
+        self._last_flush = 0.0
 
     # ---- DB (lazy) ----
     def _get_db(self):
@@ -36,6 +41,44 @@ class ActivityLog:
                 self._db = None
         return self._db
 
+    def _ensure_loaded(self):
+        """Restore the persisted event buffer ONCE (survives a redeploy)."""
+        if self._loaded:
+            return
+        self._loaded = True
+        db = self._get_db()
+        if not db:
+            return
+        try:
+            raw = db.get_setting(_DB_EVENTS, []) or []
+            if isinstance(raw, list):
+                with self._lock:
+                    for e in raw[-_MAX_EVENTS:]:
+                        if isinstance(e, dict):
+                            self._events.append(e)
+        except Exception:
+            pass
+
+    def _flush(self, force: bool = False):
+        """Persist the buffer to DB — throttled, and only when there are new
+        events (one bounded row; no unbounded growth)."""
+        if not (self._dirty or force):
+            return
+        now = time.time()
+        if not force and (now - self._last_flush) < _FLUSH_EVERY_SEC:
+            return
+        db = self._get_db()
+        if not db:
+            return
+        self._last_flush = now
+        self._dirty = False
+        try:
+            with self._lock:
+                snap = list(self._events)
+            db.set_setting(_DB_EVENTS, snap)
+        except Exception:
+            pass
+
     def is_enabled(self) -> bool:
         if self._enabled is None:
             db = self._get_db()
@@ -43,16 +86,19 @@ class ActivityLog:
                 self._enabled = bool(db.get_setting(_DB_ENABLED, False)) if db else False
             except Exception:
                 self._enabled = False
+            self._ensure_loaded()
         return bool(self._enabled)
 
     def set_enabled(self, on: bool) -> bool:
         self._enabled = bool(on)
+        self._ensure_loaded()
         db = self._get_db()
         if db:
             try:
                 db.set_setting(_DB_ENABLED, self._enabled)
             except Exception:
                 pass
+        self._flush(force=True)   # persist current buffer on any toggle
         return self._enabled
 
     # ---- write ----
@@ -76,6 +122,8 @@ class ActivityLog:
                     'detail': str(detail or '')[:400],
                     'source': str(source or ''),
                 })
+                self._dirty = True
+            self._flush()   # throttled persist (survives restart)
         except Exception:
             pass   # logging must NEVER break the trading path
 
@@ -83,6 +131,7 @@ class ActivityLog:
     def get(self, limit: int = 400, symbol: Optional[str] = None,
             event: Optional[str] = None) -> List[Dict]:
         """Newest-first list, optionally filtered by symbol / event."""
+        self._ensure_loaded()
         with self._lock:
             items = list(self._events)
         if symbol:
@@ -98,6 +147,13 @@ class ActivityLog:
         with self._lock:
             n = len(self._events)
             self._events.clear()
+            self._dirty = False
+        db = self._get_db()
+        if db:
+            try:
+                db.set_setting(_DB_EVENTS, [])
+            except Exception:
+                pass
         return n
 
     def count(self) -> int:

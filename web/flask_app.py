@@ -3235,6 +3235,24 @@ def register_api_routes(app):
                     ORDER BY pg_total_relation_size('public.'||tablename) DESC
                 """))
 
+                # Fast row-count ESTIMATES from the planner stats (reltuples).
+                # Exact COUNT(*) per table full-scans every huge service table
+                # and hangs the whole endpoint once the DB grows — the page then
+                # shows "—" for everything. reltuples is instant and accurate
+                # enough for a size dashboard. Fetched ONCE for all tables.
+                row_counts = {}
+                try:
+                    est = conn.execute(text("""
+                        SELECT c.relname, c.reltuples::bigint AS n
+                        FROM pg_class c
+                        JOIN pg_namespace ns ON ns.oid = c.relnamespace
+                        WHERE ns.nspname = 'public' AND c.relkind = 'r'
+                    """))
+                    for _rn, _n in est:
+                        row_counts[_rn] = max(0, int(_n or 0))
+                except Exception:
+                    row_counts = {}
+
                 bot_tables = []
                 foreign_tables = []
                 bot_total = 0
@@ -3247,12 +3265,8 @@ def register_api_routes(app):
                 for row in result:
                     table, size, size_bytes, table_size, table_size_bytes, index_size, index_size_bytes = row
 
-                    # Get row count
-                    try:
-                        count_res = conn.execute(text(f"SELECT COUNT(*) FROM {table}"))
-                        count = count_res.scalar()
-                    except:
-                        count = 0
+                    # Row count = fast planner estimate (see row_counts above).
+                    count = row_counts.get(table, 0)
 
                     table_info = {
                         'name': table,

@@ -2739,7 +2739,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     </div>
 
     <!-- ===== TRADE ARCHIVE (for training) ===== -->
-    <div class="tm-panel" id="trade-archive-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
+    <!-- 🗄️ Trade archive / 📡 TOP-100 / 📦 Volumized OB radars — прибрано з роботи (модулі відключені). -->
+    <div class="tm-panel" id="trade-archive-panel" style="display:none;margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px">
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
                 <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Постійний архів усіх закритих угод зі знімком входу. Накопичується для майбутнього навчання бота відбору угод. Ніколи не очищається автоматично.">🗄️ Архів угод (для навчання)</span>
@@ -2768,7 +2769,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
          every N minutes for newly-formed Order Blocks on the configured TF.
          Informational only — does NOT gate signals or trigger trades.
          User can opt-in per-symbol via "Add to SMC Watchlist" button. -->
-    <div class="tm-panel" id="top100-panel" style="margin-top:14px">
+    <div class="tm-panel" id="top100-panel" style="display:none;margin-top:14px">
         <div class="tm-header" id="top100-header">
             <h2><span id="top100-chevron" onclick="toggleRadarPanel('top100-body','top100-chevron')" style="cursor:pointer;margin-right:6px;user-select:none;font-size:0.85rem">▶</span>📡 TOP-100 OB Radar
                 <span id="top100-tf-label" style="color:#a5b4fc;font-size:0.78rem;font-weight:600;margin-left:6px">1H</span>
@@ -2943,7 +2944,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
      Volumized OB algorithm + P/D zone filter. Mode A only: auto-adds
      qualifying symbols to the SMC watchlist (TTL 24h) — Trade Manager
      fires only when SMC actually fires a signal on the symbol. -->
-    <div class="tm-panel" id="volradar-panel" style="margin-top:14px">
+    <div class="tm-panel" id="volradar-panel" style="display:none;margin-top:14px">
         <div class="tm-header" id="volradar-header">
             <h2><span id="volradar-chevron" onclick="toggleRadarPanel('volradar-body','volradar-chevron')" style="cursor:pointer;margin-right:6px;user-select:none;font-size:0.85rem">▶</span>📦 Volumized OB Radar
                 <span id="volradar-tf-label" style="color:#a5b4fc;font-size:0.78rem;font-weight:600;margin-left:6px">1H</span>
@@ -3255,27 +3256,60 @@ async function loadActivityLog() {
     const f = document.getElementById('activity-log-filter');
     const ev = f ? f.value : '';
     try {
-        const d = await (await fetch('/api/activity-log?limit=400' + (ev ? ('&event=' + ev) : ''))).json();
+        const d = await (await fetch('/api/activity-log?limit=600' + (ev ? ('&event=' + ev) : ''))).json();
         const chk = document.getElementById('activity-log-enabled');
         if (chk) chk.checked = !!d.enabled;
-        const evs = (d && d.events) || [];
+        const evs = (d && d.events) || [];   // newest-first
         if (!evs.length) {
             tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">'
                 + (d.enabled ? 'Подій ще немає — чекаємо на сигнали.' : 'Моніторинг вимкнено.') + '</td></tr>';
             return;
         }
-        tb.innerHTML = evs.map(e => {
-            const m = _actMeta[e.event] || ['•', e.event, '#cbd5e1'];
-            const t = new Date(e.t * 1000).toLocaleTimeString([], { hour12: false });
-            const sideCol = e.side === 'LONG' ? '#22c55e' : (e.side === 'SHORT' ? '#ef4444' : '#888');
-            const det = (e.detail || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        // Group ONE coin's lifecycle into a SINGLE row (не дублюємо монету):
+        // same symbol+side, consecutive steps within a time window → one row
+        // whose «Деталі» accumulate each step with its own COLOURED marker, so
+        // it's clear that each line is a NEW addition (signal → у чергу /
+        // відкинуто → відкрито / викинуто → закрито).
+        const GROUP_WINDOW = 180;   // sec between steps to still count as one chain
+        const chrono = evs.slice().reverse();   // oldest-first for chaining
+        const chains = []; const lastByKey = {};
+        chrono.forEach(e => {
+            const key = (e.symbol || '') + '|' + (e.side || '');
+            const prev = lastByKey[key];
+            if (prev && (e.t - prev.tLast) <= GROUP_WINDOW) {
+                prev.steps.push(e); prev.tLast = e.t;
+            } else {
+                const chain = { symbol: e.symbol, side: e.side, steps: [e], tLast: e.t };
+                chains.push(chain); lastByKey[key] = chain;
+            }
+        });
+        chains.sort((a, b) => b.tLast - a.tLast);   // newest chain on top
+        const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        tb.innerHTML = chains.map(c => {
+            const t = new Date(c.tLast * 1000).toLocaleTimeString([], { hour12: false });
+            const sideCol = c.side === 'LONG' ? '#22c55e' : (c.side === 'SHORT' ? '#ef4444' : '#888');
+            const chips = c.steps.map(s => {
+                const m = _actMeta[s.event] || ['•', s.event, '#cbd5e1'];
+                return `<span style="color:${m[2]};font-weight:700;white-space:nowrap">${m[0]} ${m[1]}</span>`;
+            }).join('<span style="color:#4b5563"> → </span>');
+            const srcs = [...new Set(c.steps.map(s => s.source).filter(Boolean))].join(' · ');
+            // Each step on its own line with a COLOURED dot = «інше доповнення».
+            const det = c.steps.map(s => {
+                const m = _actMeta[s.event] || ['•', s.event, '#cbd5e1'];
+                const tt = new Date(s.t * 1000).toLocaleTimeString([], { hour12: false });
+                return `<div style="line-height:1.4">`
+                    + `<span style="color:${m[2]};font-weight:900">●</span> `
+                    + `<span style="color:#6b7280;font-size:0.64rem">${tt}</span> `
+                    + `<span style="color:${m[2]};font-size:0.66rem;font-weight:700">${m[1]}:</span> `
+                    + `<span style="color:#cbd5e1">${esc(s.detail)}</span></div>`;
+            }).join('');
             return `<tr>
-                <td style="color:#8b93a7;font-size:0.72rem;white-space:nowrap">${t}</td>
-                <td style="font-weight:700">${e.symbol || ''}</td>
-                <td style="color:${sideCol};font-weight:700;font-size:0.72rem">${e.side || '—'}</td>
-                <td style="color:${m[2]};font-weight:700;font-size:0.72rem;white-space:nowrap">${m[0]} ${m[1]}</td>
-                <td style="color:#8b93a7;font-size:0.7rem">${e.source || ''}</td>
-                <td style="color:#cbd5e1;font-size:0.72rem">${det}</td>
+                <td style="color:#8b93a7;font-size:0.72rem;white-space:nowrap;vertical-align:top">${t}</td>
+                <td style="font-weight:700;vertical-align:top">${c.symbol || ''}</td>
+                <td style="color:${sideCol};font-weight:700;font-size:0.72rem;vertical-align:top">${c.side || '—'}</td>
+                <td style="font-size:0.72rem;vertical-align:top">${chips}</td>
+                <td style="color:#8b93a7;font-size:0.7rem;vertical-align:top">${srcs}</td>
+                <td style="font-size:0.72rem;vertical-align:top">${det}</td>
             </tr>`;
         }).join('');
     } catch (e) { /* ignore transient errors */ }
@@ -3723,6 +3757,8 @@ function tickVolradarCountdowns() {
 }
 
 async function loadVolradarState() {
+    const _vp = document.getElementById('volradar-panel');
+    if (!_vp || _vp.style.display === 'none') return;   // module removed/hidden
     try {
         const r = await fetch('/api/vol-radar/state');
         const d = await r.json();
@@ -7228,6 +7264,8 @@ async function loadSentimentFor(exchange, ids) {
 }
 
 async function loadTradeArchive() {
+    const _ap = document.getElementById('trade-archive-panel');
+    if (!_ap || _ap.style.display === 'none') return;   // module removed/hidden
     const totalEl = document.getElementById('ta-total');
     const brEl = document.getElementById('ta-breakdown');
     const hintEl = document.getElementById('ta-hint');
@@ -9700,6 +9738,7 @@ async function loadBybitSymbols() {
 }
 
 async function loadTop100State() {
+    { const _tp = document.getElementById('top100-panel'); if (!_tp || _tp.style.display === 'none') return; }   // module removed/hidden
     try {
         const r = await fetch('/api/top100-ob/state');
         const data = await r.json();
@@ -9888,6 +9927,7 @@ async function top100ClearAll() {
 }
 
 async function loadTop100Snapshots() {
+    { const _tp = document.getElementById('top100-panel'); if (!_tp || _tp.style.display === 'none') return; }   // module removed/hidden
     try {
         // We always pull only-with-ob and let the client filter further.
         // Snapshots without OB are not interesting for the table view.
@@ -10098,6 +10138,7 @@ async function top100AddToWatchlist(symbol, btn) {
 }
 
 async function loadTop100History() {
+    { const _tp = document.getElementById('top100-panel'); if (!_tp || _tp.style.display === 'none') return; }   // module removed/hidden
     const feedEl = document.getElementById('top100-history-feed');
     if (!feedEl) return;
     try {
