@@ -1663,8 +1663,14 @@ class FuelFilterDaemon:
             # On-demand warm so a chart/overlay coin the scanner hasn't reached
             # yet still gets CTR (not «— немає даних»).
             if fe:
+                # CTR TF from the SCANNER settings (smc_settings blob), so the
+                # on-demand warm uses the SAME TF the badge/scanner use.
+                _ctf = '1h'
                 try:
-                    _ctf = self._db.get_setting('ctr_timeframe', '1h')
+                    from detection.smc_scanner import get_smc_scanner
+                    _sc = get_smc_scanner()
+                    if _sc:
+                        _ctf = _sc.get_settings().get('ctr_timeframe', '1h')
                 except Exception:
                     _ctf = '1h'
                 fe.ensure_fresh(symbol, ctr_tf=_ctf)

@@ -6278,7 +6278,19 @@ def compute_bias(db, symbol, wl=None):
         # shows blank 1H/4H/CTR badges. Guarded by max_age so warm coins skip.
         if fe:
             try:
-                fe.ensure_fresh(symbol, ctr_tf=db.get_setting('ctr_timeframe', '1h'))
+                # CTR TF must match what the SCANNER uses (stored inside the
+                # 'smc_settings' blob, NOT a standalone key) — otherwise the
+                # on-demand warm recomputes CTR at the wrong TF (e.g. 1h) and
+                # the badge shows «CTR·1H» while the setting is 15m.
+                _ctf = '1h'
+                try:
+                    from detection.smc_scanner import get_smc_scanner
+                    _sc = get_smc_scanner()
+                    if _sc:
+                        _ctf = _sc.get_settings().get('ctr_timeframe', '1h')
+                except Exception:
+                    pass
+                fe.ensure_fresh(symbol, ctr_tf=_ctf)
             except Exception:
                 pass
         cached = fe.get(symbol) if fe else None

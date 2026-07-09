@@ -168,14 +168,15 @@ def _score_htf_alignment(side: str, htf_bias: str, weight: float) -> Tuple[float
     we get the full positive weight. If opposite — full negative. Neutral
     HTF returns 0 (no information either way)."""
     if not htf_bias or htf_bias == 'neutral':
-        return 0.0, 'HTF: neutral'
-    
+        return 0.0, 'HTF: нейтр.'
+
     sign = _signed_for_side(side, htf_bias)
     if sign == 0:
-        return 0.0, 'HTF: unknown'
-    
+        return 0.0, 'HTF: невідомо'
+
     score = weight * sign
-    label = f"HTF {htf_bias}: {'+' if sign > 0 else ''}{score:.0f}"
+    _htf_ua = {'bull': 'бичачий', 'bear': 'ведмежий'}.get(htf_bias, htf_bias)
+    label = f"HTF {_htf_ua}: {'+' if sign > 0 else ''}{score:.0f}"
     return score, label
 
 
@@ -187,20 +188,20 @@ def _score_forecast_tf(side: str, forecast: Optional[Dict], weight: float,
     component dict (e.g. 'f1_side'/'f1_conf' or 'f4_side'/'f4_conf').
     """
     if not forecast:
-        return 0.0, f'Forecast {tf_label}: —'
+        return 0.0, f'Прогноз {tf_label}: —'
 
     side_n = forecast.get(side_key, 0)        # +1 / 0 / -1
     conf = forecast.get(conf_key, 0) or 0
     if conf <= 0 or side_n == 0:
-        return 0.0, f'Forecast {tf_label}: нейтральний'
+        return 0.0, f'Прогноз {tf_label}: нейтральний'
 
     sign = _signed_for_side(side, side_n)
     if sign == 0:
-        return 0.0, f'Forecast {tf_label}: неясний'
+        return 0.0, f'Прогноз {tf_label}: неясний'
 
     score = weight * sign * (conf / 100.0)
     fc_side = 'LONG' if side_n > 0 else 'SHORT'
-    label = f"Forecast {tf_label} {fc_side} {conf}%: {'+' if score > 0 else ''}{score:.0f}"
+    label = f"Прогноз {tf_label} {fc_side} {conf}%: {'+' if score > 0 else ''}{score:.0f}"
     return score, label
 
 
@@ -281,11 +282,11 @@ def _score_ctr_alignment(side: str, ctr: Optional[Dict], weight: float) -> Tuple
     last_dir = ctr.get('last_dir')
     age = ctr.get('last_signal_age_bars')
     if not last_dir or age is None:
-        return 0.0, 'CTR: no signal'
-    
+        return 0.0, 'CTR: немає сигналу'
+
     sign = _signed_for_side(side, last_dir)
     if sign == 0:
-        return 0.0, 'CTR: unclear'
+        return 0.0, 'CTR: неясно'
     
     # Age decay
     if age <= 5:
@@ -295,10 +296,10 @@ def _score_ctr_alignment(side: str, ctr: Optional[Dict], weight: float) -> Tuple
     elif age <= 30:
         decay = 0.25
     else:
-        return 0.0, f'CTR: too stale ({age} bars)'
-    
+        return 0.0, f'CTR: застарілий ({age} барів)'
+
     score = weight * sign * decay
-    label = f"CTR {last_dir} ({age}b): {'+' if score > 0 else ''}{score:.0f}"
+    label = f"CTR {last_dir} ({age}б): {'+' if score > 0 else ''}{score:.0f}"
     return score, label
 
 
@@ -313,22 +314,22 @@ def _score_ctr_zone(side: str, ctr: Optional[Dict], weight: float) -> Tuple[floa
     The intensity scales linearly with how far past the threshold STC sits.
     """
     if not ctr:
-        return 0.0, 'CTR zone: —'
-    
+        return 0.0, 'CTR зона: —'
+
     stc = ctr.get('stc')
     if stc is None:
-        return 0.0, 'CTR zone: —'
-    
+        return 0.0, 'CTR зона: —'
+
     try:
         stc_v = float(stc)
     except Exception:
-        return 0.0, 'CTR zone: —'
-    
+        return 0.0, 'CTR зона: —'
+
     if stc_v >= 75:
         # Overbought — reversal risk to the downside
         intensity = (stc_v - 75) / 25.0  # 0 at 75, 1 at 100
         intensity = _clamp(intensity, 0.0, 1.0)
-        zone = 'Overbought'
+        zone = 'перекупленість'
         # If LONG: risk of reversal down = bad → negative
         # If SHORT: same risk = good → positive
         sign = -1 if side == 'LONG' else 1
@@ -336,12 +337,12 @@ def _score_ctr_zone(side: str, ctr: Optional[Dict], weight: float) -> Tuple[floa
     elif stc_v <= 25:
         intensity = (25 - stc_v) / 25.0  # 0 at 25, 1 at 0
         intensity = _clamp(intensity, 0.0, 1.0)
-        zone = 'Oversold'
+        zone = 'перепроданість'
         sign = 1 if side == 'LONG' else -1
         score = weight * intensity * sign
     else:
-        return 0.0, f'CTR zone: Mid ({stc_v:.0f})'
-    
+        return 0.0, f'CTR зона: середина ({stc_v:.0f})'
+
     label = f"CTR {zone} ({stc_v:.0f}): {'+' if score >= 0 else ''}{score:.0f}"
     return score, label
 
@@ -628,27 +629,27 @@ def _score_pivot_proximity(side: str, entry_price: float,
     we don't penalize).
     """
     if not atr or atr <= 0:
-        return 0.0, 'pivot: ATR unavailable'
-    
+        return 0.0, 'pivot: ATR недоступний'
+
     if side == 'LONG':
         if strong_low is None:
-            return 0.0, 'pivot: no Strong Low'
+            return 0.0, 'pivot: немає Strong Low'
         dist_atr = abs(entry_price - strong_low) / atr
         target = 'Strong Low'
     else:  # SHORT
         if weak_high is None:
-            return 0.0, 'pivot: no Weak High'
+            return 0.0, 'pivot: немає Weak High'
         dist_atr = abs(weak_high - entry_price) / atr
         target = 'Weak High'
-    
+
     if dist_atr <= 2:
-        score, lvl = weight, 'near'
+        score, lvl = weight, 'близько'
     elif dist_atr <= 5:
-        score, lvl = weight * 0.5, 'medium'
+        score, lvl = weight * 0.5, 'середньо'
     elif dist_atr <= 10:
-        score, lvl = weight * 0.25, 'far'
+        score, lvl = weight * 0.25, 'далеко'
     else:
-        return 0.0, f'pivot: too far ({dist_atr:.1f} ATR)'
+        return 0.0, f'pivot: надто далеко ({dist_atr:.1f} ATR)'
     return score, f'{target} {lvl} ({dist_atr:.1f} ATR): +{score:.0f}'
 
 
@@ -667,7 +668,7 @@ def _score_pd_zone(side: str, entry_price: float,
     For SHORT: mirror.
     """
     if range_high is None or range_low is None or range_high <= range_low:
-        return 0.0, 'PD: range unavailable'
+        return 0.0, 'PD: діапазон недоступний'
     
     rng = range_high - range_low
     pos = (entry_price - range_low) / rng  # 0 = bottom, 1 = top
@@ -689,7 +690,8 @@ def _score_pd_zone(side: str, entry_price: float,
     intensity = min(1.0, intensity)
     score = weight * sign * intensity if intensity > 0 else weight * 0.1 * (1 if zone == 'Equilibrium' else 0)
     pct = pos * 100
-    return score, f'PD {zone} ({pct:.0f}%): {"+" if score >= 0 else ""}{score:.0f}'
+    _pd_ua = {'Discount': 'дискаунт', 'Premium': 'премія', 'Equilibrium': 'рівновага'}.get(zone, zone)
+    return score, f'PD {_pd_ua} ({pct:.0f}%): {"+" if score >= 0 else ""}{score:.0f}'
 
 
 def _score_volume_confirmation(signal_volume: Optional[float],
@@ -702,22 +704,22 @@ def _score_volume_confirmation(signal_volume: Optional[float],
         <1.0×: weak, mild negative (low conviction signal)
     """
     if not signal_volume or not avg_volume or avg_volume <= 0:
-        return 0.0, 'volume: unavailable'
-    
+        return 0.0, 'Обʼєм: недоступно'
+
     ratio = signal_volume / avg_volume
     if ratio >= 2.0:
         score = weight
-        lvl = f'{ratio:.1f}× strong'
+        lvl = f'{ratio:.1f}× сильний'
     elif ratio >= 1.5:
         score = weight * 0.6
-        lvl = f'{ratio:.1f}× moderate'
+        lvl = f'{ratio:.1f}× помірний'
     elif ratio >= 1.0:
         score = weight * 0.2
-        lvl = f'{ratio:.1f}× average'
+        lvl = f'{ratio:.1f}× середній'
     else:
         score = -weight * 0.5
-        lvl = f'{ratio:.1f}× weak'
-    return score, f'Vol {lvl}: {"+" if score >= 0 else ""}{score:.0f}'
+        lvl = f'{ratio:.1f}× слабкий'
+    return score, f'Обʼєм {lvl}: {"+" if score >= 0 else ""}{score:.0f}'
 
 
 def _score_atr_health(atr: Optional[float], price: float,
@@ -729,24 +731,24 @@ def _score_atr_health(atr: Optional[float], price: float,
         <0.2% or >5.0%: extreme, negative
     """
     if not atr or not price or price <= 0:
-        return 0.0, 'ATR: unavailable'
-    
+        return 0.0, 'ATR: недоступно'
+
     atr_pct = (atr / price) * 100
     if 0.5 <= atr_pct <= 2.5:
         score = weight
-        lvl = 'healthy'
+        lvl = 'здоровий'
     elif 0.2 <= atr_pct < 0.5:
         score = weight * 0.5
-        lvl = 'low'
+        lvl = 'низький'
     elif 2.5 < atr_pct <= 5.0:
         score = weight * 0.5
-        lvl = 'elevated'
+        lvl = 'підвищений'
     elif atr_pct > 5.0:
         score = -weight * 0.5
-        lvl = 'extreme'
+        lvl = 'екстремальний'
     else:  # < 0.2%
         score = -weight * 0.3
-        lvl = 'flat'
+        lvl = 'плаский'
     return score, f'ATR {atr_pct:.2f}% ({lvl}): {"+" if score >= 0 else ""}{score:.0f}'
 
 

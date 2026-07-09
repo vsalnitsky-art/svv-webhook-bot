@@ -125,18 +125,19 @@ def _build_rationale(recommended: str,
     """
     if recommended == 'NEUTRAL':
         # No strong directional bias — describe the state plainly
+        _htf_ua = {'bull': 'бичачий', 'bear': 'ведмежий'}
         bits = []
         if htf_bias and htf_bias != 'neutral':
-            bits.append(f"HTF {htf_bias}ish")
+            bits.append(f"HTF {_htf_ua.get(htf_bias, htf_bias)}")
         if forecast and forecast.get('confidence', 0) > 0:
             side = forecast.get('side', 0)
-            side_lbl = 'LONG' if side > 0 else 'SHORT' if side < 0 else 'mixed'
-            bits.append(f"Forecast {side_lbl} {forecast.get('confidence')}%")
+            side_lbl = 'LONG' if side > 0 else 'SHORT' if side < 0 else 'змішаний'
+            bits.append(f"Прогноз {side_lbl} {forecast.get('confidence')}%")
         if ctr and ctr.get('last_dir'):
             bits.append(f"CTR {ctr['last_dir']} (STC {int(ctr.get('stc', 0))})")
         if not bits:
-            return "No strong directional signals — wait for confluence"
-        return "Mixed signals: " + ", ".join(bits) + " — no clear edge"
+            return "Немає сильних напрямкових сигналів — чекати збігу"
+        return "Змішані сигнали: " + ", ".join(bits) + " — чіткої переваги немає"
     
     # Pick top 2 positive contributors for the recommended side
     src = long_components if recommended == 'LONG' else short_components
@@ -153,7 +154,7 @@ def _build_rationale(recommended: str,
     
     if not pos_phrases:
         # Edge case: recommended side won by being LESS BAD
-        return f"All signals weak; {recommended} is the lesser-bad option"
+        return f"Усі сигнали слабкі; {recommended} — менш поганий варіант"
     
     # Top negative for SAME side — surface as a caveat ("…but X is concerning")
     sorted_neg = sorted([c for c in (src or []) if c.get('value', 0) < 0],
@@ -166,16 +167,16 @@ def _build_rationale(recommended: str,
             worst_lbl = worst_lbl.rsplit(':', 1)[0].strip()
         # Only mention if it's >= 30% of weight
         if abs(worst['value']) >= 8:
-            caveat = f" (despite {worst_lbl})"
-    
+            caveat = f" (попри {worst_lbl})"
+
     head = " + ".join(pos_phrases)
-    base = f"{head} confirm {recommended}{caveat}"
+    base = f"{head} → підтверджують {recommended}{caveat}"
     # When the score was capped for riding into a CTR cycle extreme, say so
     # plainly — this is the single most important caveat for the trader.
     if ctr_conflict:
         stc_v = int((ctr or {}).get('stc', 0))
-        zone = 'Oversold' if stc_v <= 50 else 'Overbought'
-        base += f" — ⚠ обмежено: вхід у зону розвороту CTR {zone} ({stc_v})"
+        zone = 'перепроданість' if stc_v <= 50 else 'перекупленість'
+        base += f" — ⚠ обмежено: вхід у зону розвороту CTR ({zone} {stc_v})"
     return base
 
 
