@@ -519,9 +519,12 @@ class FuelFilterDaemon:
     # ------------------------------------------------------------------
     # ❤️ FF "база" — intercepted coins waiting to open
     # ------------------------------------------------------------------
-    def intercept(self, symbol: str, side: str) -> bool:
+    def intercept(self, symbol: str, side: str, kind: Optional[str] = None) -> bool:
         """Catch a fresh CHoCH/CHoCH+BOS signal and route it into the ENABLED
-        queue(s). Direction = the signal side.
+        queue(s). Direction = the signal side. `kind` = signal type ('choch' |
+        'choch_bos') so a NEWER signal of the SAME direction but a DIFFERENT type
+        replaces the stale queued one (and restarts its wait), instead of being
+        treated as a duplicate of the old.
 
         Returns True if the signal is OWNED by FF (queued OR intentionally
         dropped by a queue's entry gate) — the caller must NOT open it directly.
@@ -534,8 +537,10 @@ class FuelFilterDaemon:
         by FF, so it never falls through to a direct open."""
         sym = (symbol or '').upper().strip()
         side = (side or '').upper().strip()
+        kind = (kind or '').lower().strip() or None
         if not sym or side not in ('LONG', 'SHORT'):
             return False
+        _kind_lbl = {'choch': 'CHoCH', 'choch_bos': 'CHoCH+BOS'}.get(kind, kind or '?')
         try:
             from detection.activity_log import log_activity
         except Exception:
@@ -558,7 +563,15 @@ class FuelFilterDaemon:
         # the entry anyway; the eject matters when the new one isn't queued).
         eject_choch = bool(q2 and s.get('queue2_eject_choch', True))
         ejected_choch = False
+        refreshed_q1 = refreshed_q2 = False   # same dir, NEWER type → replaced stale
+        stale_removed_q2 = False
         changed = False
+
+        def _is_stale(prev):
+            # Same direction but a DIFFERENT signal TYPE → the queued one is stale.
+            return bool(prev and prev.get('dir') == side
+                        and prev.get('kind') not in (None, kind))
+
         with self._lock:
             if eject_choch:
                 _cur2 = self._pending2.get(sym)
@@ -568,18 +581,29 @@ class FuelFilterDaemon:
                     changed = True
             if q1:
                 prev = self._pending.get(sym) or {}
-                self._pending[sym] = {
-                    'dir': side,
-                    'added_at': prev.get('added_at') if (prev.get('dir') == side and prev.get('added_at')) else now,
-                }
+                refreshed_q1 = _is_stale(prev)
+                # Keep the original wait ONLY for the very SAME signal (same dir
+                # AND same type). A different type (CHoCH↔CHoCH+BOS) restarts it.
+                _keep = (prev.get('dir') == side and prev.get('kind') == kind
+                         and prev.get('added_at'))
+                self._pending[sym] = {'dir': side, 'kind': kind,
+                                      'added_at': prev.get('added_at') if _keep else now}
                 changed = True
             if q2_take:
                 prev2 = self._pending2.get(sym) or {}
-                self._pending2[sym] = {
-                    'dir': side,
-                    'added_at': prev2.get('added_at') if (prev2.get('dir') == side and prev2.get('added_at')) else now,
-                }
+                refreshed_q2 = _is_stale(prev2)
+                _keep2 = (prev2.get('dir') == side and prev2.get('kind') == kind
+                          and prev2.get('added_at'))
+                self._pending2[sym] = {'dir': side, 'kind': kind,
+                                       'added_at': prev2.get('added_at') if _keep2 else now}
                 changed = True
+            elif q2:
+                # New same-dir signal of a DIFFERENT type that did NOT pass the
+                # CTR gate → drop the stale queued entry (the newer read wins).
+                if _is_stale(self._pending2.get(sym)):
+                    self._pending2.pop(sym, None)
+                    stale_removed_q2 = True
+                    changed = True
             if changed:
                 self._persist_state()
         if ejected_choch:
@@ -587,12 +611,17 @@ class FuelFilterDaemon:
             print(f"[FF-Q2] видалено {sym}: протилежний CHoCH {side} (був у черзі {opp})")
             log_activity(sym, 'ejected', f'Черга-2: протилежний CHoCH {side} стер запис {opp}', side=side, source='Q2')
         if q1:
-            log_activity(sym, 'queued', 'Черга-1 (перехоплення)', side=side, source='Q1')
+            _r1 = ' · новий тип замінив застарілий' if refreshed_q1 else ''
+            log_activity(sym, 'queued', f'Черга-1 · {_kind_lbl}{_r1}', side=side, source='Q1')
         if q2_take:
-            log_activity(sym, 'queued', 'Черга-2 (CTR-нахил у бік сигналу)', side=side, source='Q2')
+            _r2 = ' · новий тип замінив застарілий' if refreshed_q2 else ''
+            log_activity(sym, 'queued', f'Черга-2 · {_kind_lbl} (CTR у бік сигналу){_r2}', side=side, source='Q2')
         elif q2 and not q2_take:
             print(f"[FF-Q2] ігнор {sym} {side}: CTR-нахил {q2_lean or '—'} ≠ {side} (сигнал відкинуто)")
-            log_activity(sym, 'dropped', f'Черга-2: CTR-нахил {q2_lean or "—"} ≠ {side} — сигнал відкинуто', side=side, source='Q2')
+            if stale_removed_q2:
+                log_activity(sym, 'ejected', f'Черга-2: застарілий сигнал знято — новий {_kind_lbl} не пройшов CTR (нахил {q2_lean or "—"} ≠ {side})', side=side, source='Q2')
+            else:
+                log_activity(sym, 'dropped', f'Черга-2 · {_kind_lbl}: CTR-нахил {q2_lean or "—"} ≠ {side} — сигнал відкинуто', side=side, source='Q2')
         print(f"[FuelFilter] intercepted {sym} {side} → Q1={q1} Q2={'take' if q2_take else ('drop' if q2 else 'off')}")
         return True   # any enabled queue OWNS the signal (queued or dropped)
 

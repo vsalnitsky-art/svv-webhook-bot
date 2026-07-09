@@ -1445,7 +1445,7 @@ class TradeManager:
                 # intercept() returns True only if a queue actually took the
                 # signal. If BOTH FF queues are OFF it returns False → we do NOT
                 # consume the signal and let it open directly below.
-                if ff and ff.is_enabled() and ff.intercept(symbol, side):
+                if ff and ff.is_enabled() and ff.intercept(symbol, side, kind=opened_by):
                     return {'status': 'queued', 'is_paper': False,
                             'reason': 'queued in ❤️ Fuel Auto-Filter '
                                       '(waiting queue filter)'}
