@@ -2444,10 +2444,10 @@ class SMCScanner:
                     # Blocked — record a rejected marker so the user can see
                     # (and click for the reason) why no trade fired here.
                     print(f"[SMC] 🚫 OB Filter blocked {symbol} {side_label} signal")
+                    _r = 'OB-фільтр заблокував (Order Block проти напрямку)'
                     self._record_marker(symbol, event, side_label,
-                                        'rejected', 'OB Filter blocked',
-                                        entry_price=evt_level)
-                    log_activity(symbol, 'rejected', 'OB-фільтр заблокував (Order Block проти напрямку)', side=side_label, source='scanner')
+                                        'rejected', _r, entry_price=evt_level)
+                    log_activity(symbol, 'rejected', _r, side=side_label, source='scanner')
                     return
             
             # === PD Zone Filter (Premium/Discount) ===
@@ -2461,10 +2461,10 @@ class SMCScanner:
             # newbie mistake; default protection is more useful than
             # default permissiveness.
             if not self._pd_zone_filter_allows(symbol, side_label):
+                _r = 'PD-зона заблокувала (вхід проти Premium/Discount)'
                 self._record_marker(symbol, event, side_label,
-                                    'rejected', 'PD Zone filter blocked',
-                                    entry_price=evt_level)
-                log_activity(symbol, 'rejected', 'PD-зона заблокувала (вхід проти Premium/Discount)', side=side_label, source='scanner')
+                                    'rejected', _r, entry_price=evt_level)
+                log_activity(symbol, 'rejected', _r, side=side_label, source='scanner')
                 return  # Already logged inside the helper
             
             # === Forecast Filter (1H / 4H multi-horizon prediction) ===
@@ -2476,10 +2476,10 @@ class SMCScanner:
             if (self._settings.get('forecast_1h_filter_enabled', False)
                     or self._settings.get('forecast_4h_filter_enabled', False)):
                 if not self._forecast_filter_allows(symbol, side_label):
+                    _r = 'Forecast-фільтр заблокував (прогноз 1H/4H проти напрямку)'
                     self._record_marker(symbol, event, side_label,
-                                        'rejected', 'Forecast filter blocked',
-                                        entry_price=evt_level)
-                    log_activity(symbol, 'rejected', 'Forecast-фільтр заблокував (прогноз 1H/4H проти напрямку)', side=side_label, source='scanner')
+                                        'rejected', _r, entry_price=evt_level)
+                    log_activity(symbol, 'rejected', _r, side=side_label, source='scanner')
                     return  # Already logged inside the helper
             
             # Entry price = the structural break LEVEL of the event that fired

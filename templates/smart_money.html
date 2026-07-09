@@ -4680,6 +4680,10 @@ function showSignalTooltip(param, sig) {
         // 🧾 Лог роботи бота. Maps status + known English reason phrases to UA.
         window.uaSignalReason = function (s) {
             const st = s.status || '', r = String(s.reason || '');
+            // Reason already Ukrainian (from the bot's UA vocabulary / 🧾 лог) →
+            // show it AS-IS so the chart tooltip == the activity log, not a
+            // coarse status fallback.
+            if (/[а-яіїєґ]/i.test(r)) return r;
             const rules = [
                 [/queued in .*Fuel Auto-Filter|waiting queue filter/i, '📥 Поставлено в Чергу (Fuel Auto-Filter) — чекає фільтр черги'],
                 [/already holding .*(real)/i, '⏭ Вже в угоді (real, той самий напрямок) — сигнал ігнорується'],
