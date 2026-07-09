@@ -2416,6 +2416,26 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
 
+                        <div class="tm-row" style="flex-wrap:wrap;gap:8px">
+                            <label>
+                                <input type="checkbox" id="tm-use-ctr-reversal" onchange="saveTMSettings()">
+                                🔄 Закриття на розвороті після піку (CTR)
+                                <span class="tm-help" title="Закриває угоду (real+paper) коли: (1) був пік PnL ≥ «мін. пік», (2) CTR-нахил у ПРОТИЛЕЖНОМУ боці ≥ «CTR %», (3) ≥ «підтверджень» із 3: віддача PnL від піку ≥ «віддача %», виснаженість ≥ «виснаж. %», ММ проти/слабке. Умова має протриматись ≥ «барів» таймфрейму CTR, щоб дрібний рух не закривав. Готовність показана колонкою 🔄 у відкритих угодах.">?</span>
+                            </label>
+                            <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Мінімальний пік PnL, % — має бути досягнутий, щоб узагалі спрацював вихід">пік≥
+                                <input type="number" id="tm-ctr-rev-min-peak" min="0" max="50" step="0.1" style="width:56px" onchange="saveTMSettings()">%</span>
+                            <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Сила протилежного CTR-нахилу, % (|STC−50|/50·100), щоб вважати розворот">CTR≥
+                                <input type="number" id="tm-ctr-rev-ctr" min="0" max="100" step="1" style="width:52px" onchange="saveTMSettings()">%</span>
+                            <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Скільки % піку PnL має бути віддано (підтвердження)">віддача≥
+                                <input type="number" id="tm-ctr-rev-giveback" min="0" max="100" step="1" style="width:52px" onchange="saveTMSettings()">%</span>
+                            <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Поріг виснаженості (підтвердження)">виснаж≥
+                                <input type="number" id="tm-ctr-rev-exh" min="0" max="100" step="1" style="width:52px" onchange="saveTMSettings()">%</span>
+                            <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Скільки підтверджень із 3 треба (віддача / виснаженість / ММ)">підтв.
+                                <input type="number" id="tm-ctr-rev-conf" min="0" max="3" step="1" style="width:44px" onchange="saveTMSettings()">/3</span>
+                            <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Скільки барів таймфрейму CTR умова має триматись, перш ніж закрити (захист від дрібних рухів)">барів≥
+                                <input type="number" id="tm-ctr-rev-bars" min="0" max="20" step="1" style="width:44px" onchange="saveTMSettings()"></span>
+                        </div>
+
                         <div class="tm-row">
                             <label>
                                 <input type="checkbox" id="tm-use-reverse-signal" onchange="saveTMSettings()">
@@ -5831,6 +5851,16 @@ async function loadTMSettings() {
         document.getElementById('tm-bot-tp-pct').value = (s.bot_tp_pct != null ? s.bot_tp_pct : 1.5);
         document.getElementById('tm-bot-tp-giveback').value = (s.bot_tp_giveback_pct != null ? s.bot_tp_giveback_pct : 0.5);
         document.getElementById('tm-use-reverse').checked = !!s.use_reverse_smc;
+        // 🔄 CTR reversal-after-peak exit + its thresholds.
+        const _setV = (id, v, d) => { const el = document.getElementById(id); if (el) el.value = (v != null ? v : d); };
+        const _revChk = document.getElementById('tm-use-ctr-reversal');
+        if (_revChk) _revChk.checked = (s.use_ctr_reversal_exit !== false);   // default ON
+        _setV('tm-ctr-rev-min-peak', s.ctr_reversal_min_peak_pct, 1.0);
+        _setV('tm-ctr-rev-ctr', s.ctr_reversal_ctr_pct, 70);
+        _setV('tm-ctr-rev-giveback', s.ctr_reversal_giveback_pct, 30);
+        _setV('tm-ctr-rev-exh', s.ctr_reversal_exh_pct, 66);
+        _setV('tm-ctr-rev-conf', s.ctr_reversal_confirmations, 2);
+        _setV('tm-ctr-rev-bars', s.ctr_reversal_min_bars, 2);
         document.getElementById('tm-use-reverse-signal').checked = !!s.use_reverse_signal;
         document.getElementById('tm-use-forecast-close').checked = !!s.use_forecast_1h_close;
         document.getElementById('tm-use-opposite-ob-exit').checked = !!s.use_opposite_ob_exit;
@@ -6200,6 +6230,13 @@ async function saveTMSettings() {
             bot_tp_pct: parseFloat(document.getElementById('tm-bot-tp-pct').value) || 1.5,
             bot_tp_giveback_pct: parseFloat(document.getElementById('tm-bot-tp-giveback').value) || 0.5,
             use_reverse_smc: document.getElementById('tm-use-reverse').checked,
+            use_ctr_reversal_exit: document.getElementById('tm-use-ctr-reversal').checked,
+            ctr_reversal_min_peak_pct: parseFloat(document.getElementById('tm-ctr-rev-min-peak').value) || 1.0,
+            ctr_reversal_ctr_pct: parseInt(document.getElementById('tm-ctr-rev-ctr').value) || 70,
+            ctr_reversal_giveback_pct: parseInt(document.getElementById('tm-ctr-rev-giveback').value) || 30,
+            ctr_reversal_exh_pct: parseInt(document.getElementById('tm-ctr-rev-exh').value) || 66,
+            ctr_reversal_confirmations: parseInt(document.getElementById('tm-ctr-rev-conf').value) || 2,
+            ctr_reversal_min_bars: parseInt(document.getElementById('tm-ctr-rev-bars').value) || 0,
             use_reverse_signal: document.getElementById('tm-use-reverse-signal').checked,
             use_forecast_1h_close: document.getElementById('tm-use-forecast-close').checked,
             use_opposite_ob_exit: document.getElementById('tm-use-opposite-ob-exit').checked,
