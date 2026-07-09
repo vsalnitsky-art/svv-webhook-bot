@@ -1508,6 +1508,7 @@ class TradeManager:
             print(f"[TM] ℹ️ {real_reason}, {symbol} signal → Test Mode")
 
         if real_opened:
+            log_activity(symbol, 'opened', 'Відкрито реальну позицію (TM)', side=side, source='TM')
             return {'real_opened': True, 'status': 'opened', 'is_paper': False}
 
         # === Paper (shadow) track ===
@@ -1539,7 +1540,9 @@ class TradeManager:
                     return {'status': 'rejected', 'reason': f'[TEST] reverse-close failed: {e}'}
                 res = self._open_shadow(symbol, side, entry_price, opened_by) or {}
                 if res.get('ok'):
+                    log_activity(symbol, 'opened', f'Реверс (paper): {existing_shadow["side"]} → {side}', side=side, source='TM')
                     return {'shadow_opened': True, 'status': 'opened', 'is_paper': True}
+                log_activity(symbol, 'rejected', f'Реверс-відкриття (paper) відхилено: {res.get("reason", "blocked")}', side=side, source='TM')
                 return {'shadow_opened': False, 'status': 'rejected', 'is_paper': True,
                         'reason': res.get('reason', 'shadow reverse-open blocked')}
             res = self._open_shadow(symbol, side, entry_price, opened_by) or {}
