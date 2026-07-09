@@ -111,6 +111,24 @@ DEFAULT_SETTINGS = {
     'use_reverse_smc': True,         # Close on opposite CHoCH
     'use_reverse_signal': False,     # Flip position on opposite QUALIFIED signal (off by default)
 
+    # === 🔄 CTR reversal-after-peak exit ===
+    # Close a position once it TOPPED OUT and a reversal is confirmed by the
+    # CTR + supporting readings (the same series shown on the trade chart):
+    #   1. peak PnL reached ≥ ctr_reversal_min_peak_pct (there WAS a peak);
+    #   2. CTR lean turned to the OPPOSITE extreme ≥ ctr_reversal_ctr_pct
+    #      (LONG → SHORT-нахил, SHORT → LONG-нахил);
+    #   3. ≥ ctr_reversal_confirmations of 3 confirm a real decline:
+    #        (a) PnL gave back ≥ ctr_reversal_giveback_pct % of the peak,
+    #        (b) exhaustion ≥ ctr_reversal_exh_pct,
+    #        (c) ММ (fuel) turned against / went weak.
+    # Fires on real AND paper. The open-positions table shows a live readiness %.
+    'use_ctr_reversal_exit': True,
+    'ctr_reversal_min_peak_pct': 1.0,
+    'ctr_reversal_ctr_pct': 70,
+    'ctr_reversal_giveback_pct': 30,
+    'ctr_reversal_exh_pct': 66,
+    'ctr_reversal_confirmations': 2,
+
     'use_htf_flip': True,            # Close when HTF trend flips against us
     
     'use_time_stop': False,          # Close after N hours regardless
@@ -554,7 +572,7 @@ class TradeManager:
                       'use_bos_partials', 'trailing_after_bos_2',
                       'health_score_enabled',
                       'bot_exit_enabled', 'bot_sl_enabled', 'bot_tp_enabled',
-                      'entry_score_enabled']:
+                      'entry_score_enabled', 'use_ctr_reversal_exit']:
                 self._settings[k] = bool(self._settings.get(k, False))
             
             # opposite_ob_exit_timeframe — validated string, default '15m'
@@ -932,6 +950,76 @@ class TradeManager:
                 return 'bot_tp_trail'
         return None
 
+    def _ctr_reversal_eval(self, symbol: str, side: str, pnl_pct, peak_pct):
+        """🔄 CTR reversal-after-peak evaluator. Returns (rev_pct, should_exit):
+          • rev_pct  0..100 — live readiness to close (for the open-positions
+            column): blends CTR opposite-lean, PnL give-back, exhaustion, ММ;
+          • should_exit — the HARD rule fired: a real peak happened AND CTR is in
+            the opposite extreme AND ≥N of 3 confirmations of a decline.
+        Uses only cheap cached reads (forecast CTR + FF maps)."""
+        s = self._settings
+        try:
+            min_peak = float(s.get('ctr_reversal_min_peak_pct', 1.0) or 0)
+            ctr_need = float(s.get('ctr_reversal_ctr_pct', 70) or 0)
+            gb_need = float(s.get('ctr_reversal_giveback_pct', 30) or 0)
+            exh_need = float(s.get('ctr_reversal_exh_pct', 66) or 0)
+            conf_need = int(s.get('ctr_reversal_confirmations', 2) or 2)
+        except (TypeError, ValueError):
+            min_peak, ctr_need, gb_need, exh_need, conf_need = 1.0, 70.0, 30.0, 66.0, 2
+        opp = 'SHORT' if side == 'LONG' else 'LONG'
+        # 1) CTR opposite-extreme strength (0..100).
+        ctr_against = 0.0
+        ctr = self._ctr_snapshot(symbol) or {}
+        stc = ctr.get('stc')
+        if stc is not None:
+            try:
+                stc = float(stc)
+                lean = 'SHORT' if stc > 50 else ('LONG' if stc < 50 else None)
+                if lean == opp:
+                    ctr_against = abs(stc - 50.0) / 50.0 * 100.0
+            except (TypeError, ValueError):
+                pass
+        # 2) Confirmations.
+        conf = 0
+        # (a) give-back from peak.
+        gb_ratio = 0.0
+        if peak_pct and peak_pct > 0 and pnl_pct is not None and gb_need > 0:
+            given = peak_pct - pnl_pct
+            gb_ratio = max(0.0, min(1.0, given / (peak_pct * gb_need / 100.0)))
+            if given >= peak_pct * gb_need / 100.0:
+                conf += 1
+        # (b) exhaustion + (c) ММ against/weak — from the cheap FF maps.
+        exh, mm = None, None
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if ff:
+                exh = ff.get_exhaustion_map().get(symbol)
+                mm = ff.get_fuel_strength_map().get(symbol)
+        except Exception:
+            pass
+        if exh is not None and exh >= exh_need:
+            conf += 1
+        mm_against = 0.0
+        if mm:
+            if mm.get('dir') == opp:
+                mm_against = 100.0
+            elif mm.get('now') is not None and mm.get('now') < 20:
+                mm_against = 60.0
+            if mm_against >= 60:
+                conf += 1
+        # Readiness % (weighted) for the table.
+        rev_pct = round(0.55 * ctr_against
+                        + 0.20 * gb_ratio * 100.0
+                        + 0.15 * (float(exh) if exh is not None else 0.0)
+                        + 0.10 * mm_against)
+        rev_pct = max(0, min(100, rev_pct))
+        should_exit = bool(s.get('use_ctr_reversal_exit', True)
+                           and peak_pct is not None and peak_pct >= min_peak
+                           and ctr_against >= ctr_need
+                           and conf >= conf_need)
+        return rev_pct, should_exit
+
     def _monitor_position(self, symbol: str):
         with self._lock:
             pos = self._positions.get(symbol)
@@ -996,6 +1084,13 @@ class TradeManager:
         soft_reason = self._bot_soft_exit(current_pnl_pct, _peak)
         if soft_reason:
             self._close_position(symbol, current_price, reason=soft_reason)
+            return
+
+        # === 🔄 CTR reversal-after-peak: stamp readiness % + close if fired ===
+        _rev_pct, _rev_exit = self._ctr_reversal_eval(symbol, pos['side'], current_pnl_pct, _peak)
+        pos['ctr_rev_pct'] = _rev_pct
+        if _rev_exit:
+            self._close_position(symbol, current_price, reason='ctr_reversal_after_peak')
             return
 
         # 1) Hard exits — Stop Loss / Take Profit
@@ -1136,7 +1231,14 @@ class TradeManager:
             soft_reason = self._bot_soft_exit(cur_pnl, _peak)
             if soft_reason:
                 self._close_shadow(symbol, current_price, reason=soft_reason)
-    
+                return
+
+        # === 🔄 CTR reversal-after-peak: stamp readiness % + close if fired ===
+        _rev_pct, _rev_exit = self._ctr_reversal_eval(symbol, pos['side'], cur_pnl, _peak)
+        pos['ctr_rev_pct'] = _rev_pct
+        if _rev_exit and not pos.get('manual_mode'):
+            self._close_shadow(symbol, current_price, reason='ctr_reversal_after_peak')
+
     def _update_trailing(self, pos, current_price):
         s = self._settings
         # Two paths can activate trailing:
@@ -2961,6 +3063,7 @@ class TradeManager:
             'time_stop': 'Закрито за часом (time-stop)',
             'htf_flip': 'HTF bias розвернувся проти позиції',
             'reverse_smc': 'SMC-структура розвернулась (CHoCH проти)',
+            'ctr_reversal_after_peak': '🔄 Розворот після піку (CTR + підтвердження)',
             'reverse_signal': 'Протилежний сигнал входу',
             'forecast_1h_confluence': '1H прогноз проти позиції',
             'opposite_ob_exit': 'Ціна вдарилась у протилежний Order Block',
@@ -4609,6 +4712,7 @@ class TradeManager:
             'trailing_stop': '📈 Trailing Stop',
             'bot_sl': '🤖🛡 Бот-софт SL',
             'bot_tp_trail': '🤖📈 Бот-софт трейл-TP',
+            'ctr_reversal_after_peak': '🔄 Розворот після піку',
             'manual': '✋ Manual',
             'manual_sl': '✋🛡 Manual SL',
             'manual_tp': '✋🎯 Manual TP',

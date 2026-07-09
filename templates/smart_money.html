@@ -2626,6 +2626,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
                         <th title="Сила бабла (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
+                        <th title="🔄 Готовність до закриття на розвороті після піку (CTR проти + віддача PnL + виснаженість + слабке ММ). 100% ≈ момент закриття.">🔄 Розворот</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
@@ -2689,6 +2690,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
                         <th title="Сила бабла (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
+                        <th title="🔄 Готовність до закриття на розвороті після піку (CTR проти + віддача PnL + виснаженість + слабке ММ). 100% ≈ момент закриття.">🔄 Розворот</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
@@ -6510,6 +6512,14 @@ const SCORE_LABEL_UA = {
 };
 function scoreLabelUA(lbl) { return SCORE_LABEL_UA[lbl] || lbl || ''; }
 
+// 🔄 Reversal-after-peak readiness cell: coloured % (green low → red near close).
+function ffRevCell(pct) {
+    if (pct == null || !isFinite(pct)) return '<span style="color:#555">—</span>';
+    const v = Math.max(0, Math.min(100, Math.round(pct)));
+    const col = v >= 80 ? '#f87171' : (v >= 50 ? '#fbbf24' : '#4ade80');
+    return `<span title="Готовність до закриття на розвороті після піку (100% ≈ момент закриття)" style="color:${col};font-weight:700;font-size:0.72rem">🔄 ${v}%</span>`;
+}
+
 function ffScoreBadgeHTML(sc) {
     if (!sc || !sc.label) return '<span style="color:#555">—</span>';
     const scd = sc.dir || null;
@@ -8540,7 +8550,11 @@ function renderTradeHistoryChart(h, meta) {
                 if (vl.t == null) return;
                 const x = PAD + ((vl.t - t0) / span) * (W - 2 * PAD);
                 svg += `<line x1="${x.toFixed(1)}" y1="${PAD}" x2="${x.toFixed(1)}" y2="${(H - PAD).toFixed(1)}" stroke="${vl.color}" stroke-opacity="0.9" stroke-dasharray="4 2" stroke-width="1.5"/>`;
-                svg += `<text x="${x.toFixed(1)}" y="${(PAD + 10).toFixed(1)}" fill="${vl.color}" font-size="9.5" font-weight="700" text-anchor="middle">${vl.label}</text>`;
+                // Label at the very BOTTOM of the panel (was near the top, where it
+                // overlapped the series/value labels). Keep it inside the viewBox
+                // and nudge toward the side that has room so it isn't clipped.
+                const anchor = (x < PAD + 40) ? 'start' : (x > W - PAD - 40 ? 'end' : 'middle');
+                svg += `<text x="${x.toFixed(1)}" y="${(H - 4).toFixed(1)}" fill="${vl.color}" font-size="9.5" font-weight="700" text-anchor="${anchor}">${vl.label}</text>`;
             });
         }
         svg += `<text x="${PAD}" y="14" fill="#cbd5e1" font-size="11" font-weight="700">${title}</text>`;
@@ -8946,6 +8960,7 @@ async function loadTMState() {
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
                     <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
                     <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev)}</td>
+                    <td>${ffRevCell(p.ctr_rev_pct)}</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${manualModeCellHTML(p, false)}
@@ -9020,6 +9035,7 @@ async function loadTMState() {
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
                     <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
                     <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev)}</td>
+                    <td>${ffRevCell(p.ctr_rev_pct)}</td>
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}
