@@ -6273,6 +6273,14 @@ def compute_bias(db, symbol, wl=None):
     try:
         from detection.forecast_engine import get_forecast_engine
         fe = get_forecast_engine()
+        # Warm the forecast/CTR cache for THIS symbol on demand — otherwise a
+        # coin the background scanner hasn't reached yet (fresh watchlist coin)
+        # shows blank 1H/4H/CTR badges. Guarded by max_age so warm coins skip.
+        if fe:
+            try:
+                fe.ensure_fresh(symbol, ctr_tf=db.get_setting('ctr_timeframe', '1h'))
+            except Exception:
+                pass
         cached = fe.get(symbol) if fe else None
         if cached:
             f1 = cached.get('forecast_1h') or {}

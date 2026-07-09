@@ -1660,6 +1660,14 @@ class FuelFilterDaemon:
         try:
             from detection.forecast_engine import get_forecast_engine
             fe = get_forecast_engine()
+            # On-demand warm so a chart/overlay coin the scanner hasn't reached
+            # yet still gets CTR (not «— немає даних»).
+            if fe:
+                try:
+                    _ctf = self._db.get_setting('ctr_timeframe', '1h')
+                except Exception:
+                    _ctf = '1h'
+                fe.ensure_fresh(symbol, ctr_tf=_ctf)
             c = ((fe.get(symbol) or {}).get('ctr') if fe else None) or None
             if c and c.get('stc') is not None:
                 stc = float(c.get('stc'))

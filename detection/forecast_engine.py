@@ -546,6 +546,22 @@ class ForecastEngine:
         """Return cached forecast (may be stale)."""
         with self._lock:
             return dict(self._cache[symbol]) if symbol in self._cache else None
+
+    def ensure_fresh(self, symbol: str, ctr_tf: Optional[str] = None,
+                     max_age: float = 120.0) -> Optional[Dict]:
+        """Return the cached forecast if it's younger than `max_age`; otherwise
+        compute it NOW (on-demand). Fixes the case where a chart / overlay symbol
+        the BACKGROUND scanner hasn't reached yet (e.g. a fresh watchlist coin)
+        shows blank 1H/4H/CTR badges — the values live only in this cache, filled
+        by the scanner's round-robin. On-demand fetch guarantees the viewed coin
+        always has data. Guarded by max_age so repeated polls don't re-fetch."""
+        try:
+            c = self.get(symbol)
+            if c and (time.time() - float(c.get('computed_at') or 0)) < max_age:
+                return c
+            return self.update(symbol, ctr_tf=ctr_tf)
+        except Exception:
+            return self.get(symbol)
     
     def clear(self, symbol: Optional[str] = None):
         with self._lock:
