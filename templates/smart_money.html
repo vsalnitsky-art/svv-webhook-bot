@@ -2073,6 +2073,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="checkbox" id="ff-q2-hold-unknown-ctr" onchange="saveFuelFilterSettings()"> Тримати, коли <b>CTR ще невідомий</b> <span style="color:#8b93a7;font-size:0.68rem">(«—» — чекати CTR, не відкидати)</span>
                         </label>
                     </div>
+                    <!-- Row 3: queue ALL signals (hold even when CTR is opposite) -->
+                    <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Ставити в Чергу-2 ВСІ сигнали, навіть якщо CTR зараз ПРОТИ напрямку — і тримати, поки CTR не визначиться (двигун відкриє, коли SCORE=СИЛЬНЕ УТРИМАННЯ і CTR збіжаться). Ловить сигнали, чий CTR розвертається у їх бік за кілька хвилин. Вимкнено = відкидати одразу при протилежному CTR (як зараз). Порада: використовуй разом із TTL та «викид за протилежним CTR», щоб чистити ті, що так і не збіглись.">
+                            <input type="checkbox" id="ff-q2-queue-all" onchange="saveFuelFilterSettings()"> Ставити в чергу <b>ВСІ сигнали</b> <span style="color:#8b93a7;font-size:0.68rem">(навіть при протилежному CTR — тримати до вияснення, не відкидати)</span>
+                        </label>
+                    </div>
                 </div>
             </details>
             <div id="ff-q2-dir-tabs" style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
@@ -7885,6 +7891,7 @@ function renderFuelFilter(d) {
     setIf('ff-q2-eject-choch', s.queue2_eject_choch !== false); // default true
     setIf('ff-q2-use-buttons', !!s.queue2_use_buttons);        // default false
     setIf('ff-q2-hold-unknown-ctr', s.queue2_hold_unknown_ctr !== false); // default true
+    setIf('ff-q2-queue-all', !!s.queue2_queue_all);           // default false
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
@@ -8498,6 +8505,7 @@ async function saveFuelFilterSettings() {
         queue2_eject_choch: _c('ff-q2-eject-choch'),
         queue2_use_buttons: _c('ff-q2-use-buttons'),
         queue2_hold_unknown_ctr: _c('ff-q2-hold-unknown-ctr'),
+        queue2_queue_all: _c('ff-q2-queue-all'),
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
