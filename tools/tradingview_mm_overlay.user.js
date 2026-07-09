@@ -67,19 +67,49 @@
     try { GM_registerMenuCommand('SVV ММ: задати URL бота', setBotUrl); } catch (e) {}
 
     // ── Symbol detection ──────────────────────────────────────────────────
-    // TradingView symbol → base coin the bot knows (VELVETUSDT).
+    // TradingView symbol → base coin the bot knows (VANRYUSDT).
+    // ВАЖЛИВО: беремо символ з ЖИВОГО DOM (легенда/заголовок графіка), бо
+    // TradingView — SPA і НЕ оновлює ?symbol= в URL при зміні монети в застосунку.
+    // Раніше URL стояв першим → оверлей «залипав» на старій монеті (BTCUSDT).
+    function _cleanSym(raw) {
+        if (!raw) return '';
+        try { raw = decodeURIComponent(raw); } catch (e) {}
+        if (raw.indexOf(':') >= 0) raw = raw.split(':').pop();  // прибрати "BYBIT:"
+        raw = raw.trim().split(/[\s.·]/)[0];                    // до пробілу/крапки/·
+        return raw.toUpperCase().trim();
+    }
+    function _symFromDom() {
+        // Легенда графіка ("VANRYUSDT Perpetual Contract · 15 · Bybit") + кнопка
+        // символу у верхній панелі. Пробуємо кілька селекторів (версії TV різні).
+        const sels = [
+            '[data-name="legend-source-title"]',
+            '.js-button-text',
+            '#header-toolbar-symbol-search',
+            '[class*="symbolNameText"]',
+            '[class*="mainSourceWrapper"] [class*="title"]',
+        ];
+        for (const s of sels) {
+            try {
+                const el = document.querySelector(s);
+                const t = el && el.textContent ? el.textContent.trim() : '';
+                if (!t) continue;
+                const m = t.match(/[A-Z0-9]{2,20}USDT?(?:\.P)?/i) || t.match(/[A-Z0-9]{2,20}/);
+                if (m) return m[0];
+            } catch (e) {}
+        }
+        return '';
+    }
     function currentSymbol() {
-        let raw = '';
-        try { raw = new URLSearchParams(location.search).get('symbol') || ''; } catch (e) {}
+        // 1) DOM (оновлюється при зміні монети) → 2) заголовок вкладки → 3) URL.
+        let raw = _symFromDom();
         if (!raw) {
-            // Заголовок вкладки типу "VELVETUSDT.P · 15m — BYBIT"
             const m = (document.title || '').match(/[A-Z0-9]{2,20}(?:\.[A-Z]+)?/);
             raw = m ? m[0] : '';
         }
-        try { raw = decodeURIComponent(raw); } catch (e) {}
-        if (raw.indexOf(':') >= 0) raw = raw.split(':').pop();  // прибрати "BYBIT:"
-        raw = raw.split('.')[0];                                // прибрати ".P" тощо
-        return (raw || '').toUpperCase().trim();
+        if (!raw) {
+            try { raw = new URLSearchParams(location.search).get('symbol') || ''; } catch (e) {}
+        }
+        return _cleanSym(raw);
     }
 
     // ── ММ bands (той самий поділ, що в боті) ──────────────────────────────

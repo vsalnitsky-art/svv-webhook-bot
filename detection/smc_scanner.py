@@ -2418,7 +2418,16 @@ class SMCScanner:
         try:
             is_bull = event['dir'] == 'bull'
             side_label = 'LONG' if is_bull else 'SHORT'
-            
+
+            # 🧾 Activity log: record EVERY fresh qualified signal at the EARLIEST
+            # point (before the scanner's OB/PD/Forecast filters), so a signal a
+            # filter blocks below is never lost without a trace.
+            try:
+                from detection.activity_log import log_activity
+            except Exception:
+                log_activity = lambda *a, **k: None
+            log_activity(symbol, 'signal', f'Свіжий сигнал {mode}', side=side_label, source='scanner')
+
             # === OB Filter gate ===
             # When the user has enabled OB Filter, we require directional
             # agreement between the signal and the LAST VALID OB on the
@@ -2438,6 +2447,7 @@ class SMCScanner:
                     self._record_marker(symbol, event, side_label,
                                         'rejected', 'OB Filter blocked',
                                         entry_price=evt_level)
+                    log_activity(symbol, 'rejected', 'OB-фільтр заблокував (Order Block проти напрямку)', side=side_label, source='scanner')
                     return
             
             # === PD Zone Filter (Premium/Discount) ===
@@ -2454,6 +2464,7 @@ class SMCScanner:
                 self._record_marker(symbol, event, side_label,
                                     'rejected', 'PD Zone filter blocked',
                                     entry_price=evt_level)
+                log_activity(symbol, 'rejected', 'PD-зона заблокувала (вхід проти Premium/Discount)', side=side_label, source='scanner')
                 return  # Already logged inside the helper
             
             # === Forecast Filter (1H / 4H multi-horizon prediction) ===
@@ -2468,6 +2479,7 @@ class SMCScanner:
                     self._record_marker(symbol, event, side_label,
                                         'rejected', 'Forecast filter blocked',
                                         entry_price=evt_level)
+                    log_activity(symbol, 'rejected', 'Forecast-фільтр заблокував (прогноз 1H/4H проти напрямку)', side=side_label, source='scanner')
                     return  # Already logged inside the helper
             
             # Entry price = the structural break LEVEL of the event that fired

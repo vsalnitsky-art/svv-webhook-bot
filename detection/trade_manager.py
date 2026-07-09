@@ -1412,9 +1412,9 @@ class TradeManager:
             from detection.activity_log import log_activity
         except Exception:
             log_activity = lambda *a, **k: None
-        # Raw arrival — the entry point of EVERY qualified signal into the bot.
-        log_activity(symbol, 'signal', f'Надійшов сигнал {opened_by} (TM {"ON" if enabled else "OFF"}, test={test_mode})',
-                     side=side, source='scanner')
+        # NB: the 'signal' arrival event is logged EARLIER, in the scanner's
+        # _send_alert (before its OB/PD/Forecast filters), so it isn't repeated
+        # here. This method logs only the OUTCOME (queued/opened/skipped/…).
 
         with self._lock:
             existing_real = self._positions.get(symbol)
@@ -1445,12 +1445,20 @@ class TradeManager:
                 # intercept() returns True only if a queue actually took the
                 # signal. If BOTH FF queues are OFF it returns False → we do NOT
                 # consume the signal and let it open directly below.
-                if ff and ff.is_enabled() and ff.intercept(symbol, side, kind=opened_by):
-                    return {'status': 'queued', 'is_paper': False,
-                            'reason': 'queued in ❤️ Fuel Auto-Filter '
-                                      '(waiting queue filter)'}
+                if ff and ff.is_enabled():
+                    if ff.intercept(symbol, side, kind=opened_by):
+                        return {'status': 'queued', 'is_paper': False,
+                                'reason': 'queued in ❤️ Fuel Auto-Filter '
+                                          '(waiting queue filter)'}
+                    # returned False → both queues OFF → falls through to a direct
+                    # open below (which logs its own outcome).
+                else:
+                    log_activity(symbol, 'skipped', 'Fuel Auto-Filter вимкнено — сигнал іде повз черги', side=side, source='TM')
             except Exception as e:
+                # An intercept EXCEPTION was the silent «signal disappears» bug —
+                # now it's always recorded instead of vanishing.
                 print(f"[TM] FF intercept error for {symbol}: {e}")
+                log_activity(symbol, 'rejected', f'Помилка перехоплення Fuel-фільтром: {e}', side=side, source='TM')
 
         # === Real-money track ===
         # Runs whenever TM is enabled. Gated by the tradeable list AND max_open_positions.
