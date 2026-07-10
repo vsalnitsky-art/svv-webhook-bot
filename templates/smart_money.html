@@ -7735,11 +7735,11 @@ function ffQueueRowHTML(t, qnum) {
         const _r = String(t.engine_reason)
             .replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        reasonHtml = ` <span class="ff-reason-warn" data-reason="${_r}" onclick="ffReasonPopup(event, this.getAttribute('data-reason'))" title="Причина, чому двигун не відкрив — клік" style="cursor:pointer;color:#f59e0b;font-size:0.82rem;user-select:none;-webkit-user-select:none">⚠️</span>`;
+        reasonHtml = `<span class="ff-reason-warn" data-reason="${_r}" onclick="ffReasonPopup(event, this.getAttribute('data-reason'))" title="Причина, чому двигун не відкрив — клік" style="cursor:pointer;color:#f59e0b;font-size:0.82rem;user-select:none;-webkit-user-select:none;margin-right:5px">⚠️</span>`;
     }
     return `<tr style="${rowStyle}">
-        <td style="font-weight:600${symColor}">${srcBadge}${tvSym(t.symbol)}${fundLbl}${fundNext}${reasonHtml}</td>
-        <td>${dirHtml}</td>
+        <td style="font-weight:600${symColor}">${srcBadge}${tvSym(t.symbol)}${fundLbl}${fundNext}</td>
+        <td style="white-space:nowrap">${reasonHtml}${dirHtml}</td>
         <td style="white-space:nowrap;font-size:0.8rem">${mmHtml}</td>
         <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
         <td style="font-size:0.74rem;color:#cbd5e1">${heldHtml}</td>
