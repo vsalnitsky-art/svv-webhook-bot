@@ -1270,8 +1270,14 @@ class TradeManager:
         the wrong side of price) are logged too, throttled to once per 5 min per
         symbol so the log isn't flooded."""
         def _diag(reason: str):
-            """Throttled visibility for the «нічого не відбувається» case."""
+            """Throttled visibility for the «нічого не відбувається» case —
+            ONLY while NO auto-SL has been set yet. Once a level is in place the
+            per-tick «couldn't improve it» skips are silent (a set auto-SL is a
+            success, not a failure worth logging), so the log lists only coins
+            for which not a single auto-SL could ever be placed."""
             try:
+                if pos.get('_auto_ob_sl_val') is not None:
+                    return   # already have an auto-SL → not a «couldn't set» case
                 nowt = time.time()
                 if nowt - float(pos.get('_auto_ob_sl_diag_at') or 0) < 300:
                     return
@@ -1354,7 +1360,6 @@ class TradeManager:
         prev = auto_val
         pos['manual_sl'] = cand
         pos['_auto_ob_sl_val'] = cand
-        pos['_auto_ob_sl_diag_at'] = 0    # reset throttle so a later skip is shown
         try:
             from detection.activity_log import log_activity
             tag = 'підтягнуто' if prev is not None else 'встановлено'
