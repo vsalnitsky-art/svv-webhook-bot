@@ -1128,6 +1128,9 @@ class TradeManager:
         # position's automatic sl_price/tp_price). They fire FIRST so a
         # manually-set tight stop takes precedence over the strategy's
         # original SL. Empty / 0 / None → not active for that field.
+        # Auto-manage the Manual SL from the «Require OB Match» OB first (no-op
+        # unless q2_auto_ob_sl is on) so the breach check below sees the latest.
+        self._auto_ob_manual_sl(pos, current_price)
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_position(symbol, current_price, reason=manual_reason)
@@ -1239,9 +1242,102 @@ class TradeManager:
                    or (side == 'SHORT' and current_price <= manual_tp))
             if hit:
                 return 'manual_tp'
-        
+
         return None
-    
+
+    def _auto_ob_manual_sl(self, pos: Dict, current_price: float) -> None:
+        """Auto-manage this position's Manual SL from the nearest «Require OB
+        Match» Order Block (FF setting `q2_auto_ob_sl`). Runs every tick BEFORE
+        `_check_manual_sl_tp`, so once the level is written the existing manual-SL
+        breach logic closes the trade.
+
+            LONG  → SL = OB low  × (1 − buffer%)   sits BELOW price · ratchets UP
+            SHORT → SL = OB high × (1 + buffer%)   sits ABOVE price · ratchets DOWN
+
+        Rules:
+          • Only tightens — a new level is written only when it is CLOSER to price
+            (higher for LONG, lower for SHORT) than the current auto level, and
+            still on the safe side of price. Never loosens.
+          • The OB is the same «Require OB Match» row that gates entries
+            (`get_smc_ob_state(symbol, ob_filter_timeframe)`), matching direction
+            (LONG needs a BULLISH OB, SHORT a BEARISH one).
+          • Respects a manual SL the operator typed by hand: we only overwrite a
+            level we ourselves last wrote (tracked in `pos['_auto_ob_sl_val']`).
+            If `manual_sl` differs from that, the user set it → we back off.
+        """
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            s = get_fuel_filter().get_settings()
+        except Exception:
+            return
+        if not s.get('q2_auto_ob_sl'):
+            return
+        try:
+            buf = float(s.get('q2_auto_ob_sl_buffer_pct', 0.2) or 0.0) / 100.0
+        except (TypeError, ValueError):
+            buf = 0.002
+        buf = max(0.0, buf)
+
+        side = pos.get('side')
+        # Don't stomp on a manual SL the operator typed by hand.
+        try:
+            cur_sl = float(pos.get('manual_sl') or 0) or None
+        except (TypeError, ValueError):
+            cur_sl = None
+        auto_val = pos.get('_auto_ob_sl_val')
+        if cur_sl is not None and (auto_val is None or abs(cur_sl - float(auto_val)) > 1e-12):
+            return   # user-set stop present → leave it alone
+
+        # Read the same OB row that gates entries.
+        try:
+            from storage.db_operations import get_db
+            ob_tf = '1h'
+            if self.scanner is not None:
+                ob_tf = self.scanner._settings.get('ob_filter_timeframe', '1h')
+            row = get_db().get_smc_ob_state(symbol, ob_tf)
+        except Exception:
+            return
+        if not row or not row.get('bias'):
+            return
+        bias = row.get('bias')
+        try:
+            bar_low = float(row.get('bar_low'))
+            bar_high = float(row.get('bar_high'))
+        except (TypeError, ValueError):
+            return
+
+        if side == 'LONG':
+            if bias != 'BULLISH':
+                return
+            cand = bar_low * (1.0 - buf)
+            if cand >= current_price:
+                return   # OB not below price → wouldn't protect, skip
+            # ratchet UP: only accept a tighter (higher) stop than the current auto level
+            if auto_val is not None and cand <= float(auto_val):
+                return
+        elif side == 'SHORT':
+            if bias != 'BEARISH':
+                return
+            cand = bar_high * (1.0 + buf)
+            if cand <= current_price:
+                return   # OB not above price → wouldn't protect, skip
+            # ratchet DOWN: only accept a tighter (lower) stop than the current auto level
+            if auto_val is not None and cand >= float(auto_val):
+                return
+        else:
+            return
+
+        prev = auto_val
+        pos['manual_sl'] = cand
+        pos['_auto_ob_sl_val'] = cand
+        try:
+            tag = 'оновлено' if prev is not None else 'встановлено'
+            print(f"[TM] Авто-SL з OB {tag} для {symbol} {side}: "
+                  f"{self._fmt_price(cand)} (OB {ob_tf.upper()}, "
+                  f"буфер {s.get('q2_auto_ob_sl_buffer_pct', 0.2)}%)")
+        except Exception:
+            pass
+
     def _monitor_shadow_position(self, symbol: str):
         """Per-tick monitor for shadow positions — currently only enforces
         manual SL/TP overrides. The strategy's automatic SL/TP and other
@@ -1287,6 +1383,7 @@ class TradeManager:
             if _d:
                 pos['entry_score'] = _d
 
+        self._auto_ob_manual_sl(pos, current_price)
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_shadow(symbol, current_price, reason=manual_reason)

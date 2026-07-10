@@ -216,6 +216,12 @@ DEFAULT_SETTINGS = {
     #     it's ready to open. Also suppresses the raw-CHoCH reverse-close so the
     #     reversal is gated by Q2, not by the bare signal. Default ON.
     'queue2_reverse_via_queue': True,
+    #   q2_auto_ob_sl — auto-manage each open trade's Manual SL from the nearest
+    #     «Require OB Match» Order Block: LONG → OB low − buffer%, SHORT → OB high
+    #     + buffer%. Ratchets tighter as a BETTER (closer) OB forms; never loosens.
+    #     Default OFF. Applies to real + paper open positions.
+    'q2_auto_ob_sl': False,
+    'q2_auto_ob_sl_buffer_pct': 0.2,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -484,10 +490,15 @@ class FuelFilterDaemon:
         s['queue2_hold_unknown_ctr'] = bool(s.get('queue2_hold_unknown_ctr', True))
         s['queue2_queue_all'] = bool(s.get('queue2_queue_all', False))
         s['queue2_reverse_via_queue'] = bool(s.get('queue2_reverse_via_queue', True))
+        s['q2_auto_ob_sl'] = bool(s.get('q2_auto_ob_sl', False))
         try:
             s['queue2_eject_ctr_pct'] = max(0, min(100, int(s.get('queue2_eject_ctr_pct', 20) or 20)))
         except (TypeError, ValueError):
             s['queue2_eject_ctr_pct'] = 20
+        try:
+            s['q2_auto_ob_sl_buffer_pct'] = max(0.0, min(10.0, float(s.get('q2_auto_ob_sl_buffer_pct', 0.2) or 0.2)))
+        except (TypeError, ValueError):
+            s['q2_auto_ob_sl_buffer_pct'] = 0.2
         s['engine_smart_direction'] = bool(s.get('engine_smart_direction', False))
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))

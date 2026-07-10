@@ -2085,6 +2085,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="checkbox" id="ff-q2-reverse-via-queue" onchange="saveFuelFilterSettings()"> Реверс протилежної угоди <b>лише через Чергу-2</b> <span style="color:#8b93a7;font-size:0.68rem">(закривати стару й відкривати нову, тільки коли сигнал пройшов алгоритм)</span>
                         </label>
                     </div>
+                    <!-- Row 5: auto Manual SL from the «Require OB Match» Order Block -->
+                    <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-top:8px">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="У кожній ВІДКРИТІЙ угоді бот сам підставляє Manual SL із найближчого Order Block «Require OB Match» (той самий OB, що гейтить входи, TF = ob_filter_timeframe). LONG → нижня ціна OB − буфер%; SHORT → верхня ціна OB + буфер%. На протязі угоди SL постійно ПІДТЯГУЄТЬСЯ ближче до ціни, щойно з’являється кращий (ближчий) OB — і НІКОЛИ не послаблюється. Якщо ти вручну виставив Manual SL — авто-логіка його не чіпає. Діє на реальні й тестові угоди. Стоп спрацьовує через звичайну перевірку Manual SL.">
+                            <input type="checkbox" id="ff-q2-auto-ob-sl" onchange="saveFuelFilterSettings()"> Авто <b>Manual SL з OB</b> «Require OB Match» <span style="color:#8b93a7;font-size:0.68rem">(LONG: низ OB − буфер; SHORT: верх OB + буфер; підтягується, не послаблюється)</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1">
+                            Буфер, %
+                            <input type="number" id="ff-q2-auto-ob-sl-buf" step="0.05" min="0" max="10" style="width:64px" onchange="saveFuelFilterSettings()">
+                        </label>
+                    </div>
                 </div>
             </details>
             <div id="ff-q2-dir-tabs" style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
@@ -7903,6 +7913,8 @@ function renderFuelFilter(d) {
     setIf('ff-q2-hold-unknown-ctr', s.queue2_hold_unknown_ctr !== false); // default true
     setIf('ff-q2-queue-all', !!s.queue2_queue_all);           // default false
     setIf('ff-q2-reverse-via-queue', s.queue2_reverse_via_queue !== false); // default true
+    setIf('ff-q2-auto-ob-sl', !!s.q2_auto_ob_sl);             // default false
+    setIf('ff-q2-auto-ob-sl-buf', String(s.q2_auto_ob_sl_buffer_pct != null ? s.q2_auto_ob_sl_buffer_pct : 0.2));
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
@@ -8518,6 +8530,8 @@ async function saveFuelFilterSettings() {
         queue2_hold_unknown_ctr: _c('ff-q2-hold-unknown-ctr'),
         queue2_queue_all: _c('ff-q2-queue-all'),
         queue2_reverse_via_queue: _c('ff-q2-reverse-via-queue'),
+        q2_auto_ob_sl: _c('ff-q2-auto-ob-sl'),
+        q2_auto_ob_sl_buffer_pct: parseFloat(_v('ff-q2-auto-ob-sl-buf', '0.2') || '0.2'),
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
