@@ -3353,7 +3353,7 @@ async function loadActivityLog() {
             const ids = c.steps.map(s => s.id).filter(v => v != null);
             return `<tr>
                 <td style="color:#8b93a7;font-size:0.72rem;white-space:nowrap;vertical-align:top">${t}</td>
-                <td style="font-weight:700;vertical-align:top">${c.symbol || ''}</td>
+                <td style="font-weight:700;vertical-align:top">${c.symbol ? tvSym(c.symbol, c.symbol) : ''}</td>
                 <td style="color:${sideCol};font-weight:700;font-size:0.72rem;vertical-align:top">${c.side || '—'}</td>
                 <td style="font-size:0.72rem;vertical-align:top">${chips}</td>
                 <td style="color:#8b93a7;font-size:0.7rem;vertical-align:top">${srcs}</td>

@@ -840,6 +840,13 @@ class TradeManager:
                 }
                 with self._lock:
                     hist = pos.setdefault('history', [])
+                    # Baseline point at the EXACT open moment (PnL=0, price=entry)
+                    # so EVERY trade's chart starts cleanly at 0 — otherwise the
+                    # first plotted sample is taken a few seconds AFTER open, by
+                    # when price already drifted, so the line starts off-zero.
+                    if not hist and pos.get('opened_at') and entry:
+                        hist.append({'t': int(pos['opened_at']), 'price': float(entry),
+                                     'pnl': 0.0})
                     hist.append(sample)
                     if len(hist) > TRADE_LOG_MAX:
                         del hist[:len(hist) - TRADE_LOG_MAX]
