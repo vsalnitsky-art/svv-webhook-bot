@@ -2079,6 +2079,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="checkbox" id="ff-q2-queue-all" onchange="saveFuelFilterSettings()"> Ставити в чергу <b>ВСІ сигнали</b> <span style="color:#8b93a7;font-size:0.68rem">(навіть при протилежному CTR — тримати до вияснення, не відкидати)</span>
                         </label>
                     </div>
+                    <!-- Row 4: reverse an open opposite trade only via Queue-2 -->
+                    <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкриту ПРОТИЛЕЖНУ угоду може перевернути протилежний сигнал ЛИШЕ після того, як він повністю пройде Чергу-2 (SCORE=СИЛЬНЕ УТРИМАННЯ + CTR збіг). Такий сигнал спершу ставиться в Чергу-2 й чекає; коли готовий відкритись — Черга-2 закриває стару угоду і відкриває нову. «Голий» протилежний CHoCH (Reverse SMC) при цьому НЕ закриває — реверс керує Черга-2. Вимкнено = стара поведінка (реверс за сигналом/CHoCH).">
+                            <input type="checkbox" id="ff-q2-reverse-via-queue" onchange="saveFuelFilterSettings()"> Реверс протилежної угоди <b>лише через Чергу-2</b> <span style="color:#8b93a7;font-size:0.68rem">(закривати стару й відкривати нову, тільки коли сигнал пройшов алгоритм)</span>
+                        </label>
+                    </div>
                 </div>
             </details>
             <div id="ff-q2-dir-tabs" style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
@@ -7892,6 +7898,7 @@ function renderFuelFilter(d) {
     setIf('ff-q2-use-buttons', !!s.queue2_use_buttons);        // default false
     setIf('ff-q2-hold-unknown-ctr', s.queue2_hold_unknown_ctr !== false); // default true
     setIf('ff-q2-queue-all', !!s.queue2_queue_all);           // default false
+    setIf('ff-q2-reverse-via-queue', s.queue2_reverse_via_queue !== false); // default true
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
@@ -8506,6 +8513,7 @@ async function saveFuelFilterSettings() {
         queue2_use_buttons: _c('ff-q2-use-buttons'),
         queue2_hold_unknown_ctr: _c('ff-q2-hold-unknown-ctr'),
         queue2_queue_all: _c('ff-q2-queue-all'),
+        queue2_reverse_via_queue: _c('ff-q2-reverse-via-queue'),
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),

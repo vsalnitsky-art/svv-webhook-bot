@@ -209,6 +209,13 @@ DEFAULT_SETTINGS = {
     #     Pair with TTL / «викид за протилежним CTR» to clear ones that never come
     #     good.
     'queue2_queue_all': False,
+    #   queue2_reverse_via_queue — an OPEN OPPOSITE position may be reversed by an
+    #     opposite signal ONLY after that signal FULLY passes Queue 2 (SCORE=STRONG
+    #     HOLD + CTR aligned). Such a signal is QUEUED (not reversed on arrival);
+    #     the Q2 engine closes the opposite trade and opens the new one only when
+    #     it's ready to open. Also suppresses the raw-CHoCH reverse-close so the
+    #     reversal is gated by Q2, not by the bare signal. Default ON.
+    'queue2_reverse_via_queue': True,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -476,6 +483,7 @@ class FuelFilterDaemon:
         s['queue2_use_buttons'] = bool(s.get('queue2_use_buttons', False))
         s['queue2_hold_unknown_ctr'] = bool(s.get('queue2_hold_unknown_ctr', True))
         s['queue2_queue_all'] = bool(s.get('queue2_queue_all', False))
+        s['queue2_reverse_via_queue'] = bool(s.get('queue2_reverse_via_queue', True))
         try:
             s['queue2_eject_ctr_pct'] = max(0, min(100, int(s.get('queue2_eject_ctr_pct', 20) or 20)))
         except (TypeError, ValueError):
@@ -1877,6 +1885,42 @@ class FuelFilterDaemon:
         except Exception:
             return False
 
+    def _tm_position_side(self, symbol: str) -> Optional[str]:
+        """Side ('LONG'/'SHORT') of the TM position for `symbol` (real first,
+        then paper), or None if there is no open position."""
+        tm = self._get_tm() if self._get_tm else None
+        if not tm:
+            return None
+        try:
+            p = ((getattr(tm, '_positions', {}) or {}).get(symbol)
+                 or (getattr(tm, '_shadow_positions', {}) or {}).get(symbol))
+            return p.get('side') if p else None
+        except Exception:
+            return None
+
+    def _reverse_close_opposite(self, symbol: str) -> bool:
+        """Close whichever book (real/paper) holds a position for `symbol` — used
+        by the Q2 reverse (close opposite, then open the new). Returns True if a
+        close was issued."""
+        tm = self._get_tm() if self._get_tm else None
+        if not tm:
+            return False
+        done = False
+        try:
+            if symbol in (getattr(tm, '_positions', {}) or {}) and hasattr(tm, 'manual_close'):
+                tm.manual_close(symbol, reason='reverse_via_queue2')
+                done = True
+            if symbol in (getattr(tm, '_shadow_positions', {}) or {}) and hasattr(tm, 'manual_close_shadow'):
+                tm.manual_close_shadow(symbol, reason='reverse_via_queue2')
+                done = True
+        except Exception as e:
+            print(f"[FF-Q2] reverse-close error {symbol}: {e}")
+        if done:
+            with self._lock:
+                self._fuel_managed.pop(symbol, None)
+                self._timers.pop(symbol, None)
+        return done
+
     def _close(self, symbol: str, exit_price: float, reason: str, is_real: bool):
         """Trigger position close via TM. Removes fuel tracking.
 
@@ -2927,12 +2971,22 @@ class FuelFilterDaemon:
                 continue
             if sym in self._fuel_managed:
                 continue
-            # Dedup: TM already holds it (real or paper) → drop from queue.
+            # TM already holds this coin?
+            #   • SAME direction → drop (dedup, no duplicate).
+            #   • OPPOSITE direction → if «reverse via Queue 2» is ON, DON'T drop:
+            #     let it fall through and pass the full algorithm (SCORE+CTR); the
+            #     open step below closes the opposite trade first (reverse). If the
+            #     setting is OFF, keep the old behaviour (drop).
+            _reverse_on = bool(s.get('queue2_reverse_via_queue', True))
             if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
-                with self._lock:
-                    self._pending2.pop(sym, None)
-                self._engine_skip.pop(sym, None)
-                continue
+                _pside = self._tm_position_side(sym)
+                if _pside == d or not _reverse_on:
+                    with self._lock:
+                        self._pending2.pop(sym, None)
+                    self._engine_skip.pop(sym, None)
+                    continue
+                # opposite position + reverse enabled → keep waiting for the
+                # algorithm; the reverse-close happens at the open step.
             # ⚡ CTR-flip removal (opt-in): if enabled, and the CTR lean turned to
             # the OPPOSITE side by ≥ queue2_eject_ctr_pct %, drop the coin from
             # Queue 2 (checked FIRST — even before SCORE, so a flip is caught
@@ -2976,8 +3030,22 @@ class FuelFilterDaemon:
             if not fuel or not fuel.get('mark_price'):
                 self._engine_skip[sym] = 'Черга-2: немає ціни'
                 continue
+            # 🔄 REVERSE: an OPPOSITE position exists and the signal has FULLY
+            # passed Queue 2 → close the opposite trade FIRST, then open the new.
+            _did_reverse = False
+            _pside = self._tm_position_side(sym)
+            if _reverse_on and _pside and _pside != d:
+                _did_reverse = self._reverse_close_opposite(sym)
+                if _did_reverse:
+                    print(f"[FF-Q2] 🔄 реверс {sym}: закрито {_pside} → відкриваємо {d}")
+                    try:
+                        from detection.activity_log import log_activity
+                        log_activity(sym, 'closed', f'Черга-2 РЕВЕРС: закрито {_pside} (сигнал {d} пройшов Чергу-2)', side=_pside, source='Q2')
+                    except Exception:
+                        pass
+            _ob = '⚡ Q2 РЕВЕРС' if _did_reverse else '⚡ Q2 STRONG+CTR'
             try:
-                opened = self._open(sym, d, fuel, s, opened_by='⚡ Q2 STRONG+CTR')
+                opened = self._open(sym, d, fuel, s, opened_by=_ob)
             except Exception as e:
                 print(f"[FF-Q2] open error {sym}: {e}")
                 continue

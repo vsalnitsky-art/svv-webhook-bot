@@ -1435,25 +1435,43 @@ class TradeManager:
 
         # === Fuel Auto-Filter interception ===
         # While FF is ON, every coin the main flow would open is QUEUED in the
-        # ❤️ FF base instead of opening now. FF opens it later, on ₿ START, when
-        # its live fuel matches the signal direction. (FF's own opens use
-        # bypass_gates and never reach here.)
-        if not (existing_real or existing_shadow):
+        # ❤️ FF base instead of opening now. (FF's own opens use bypass_gates and
+        # never reach here.)
+        #
+        # Routing rule:
+        #   • no position                     → queue the signal.
+        #   • OPPOSITE position + «реверс через Чергу-2» ON → queue it too, so the
+        #     reversal is decided by Queue 2's FULL algorithm (SCORE+CTR). The Q2
+        #     engine closes the opposite trade only when the signal is ready to
+        #     open — NOT on the bare signal.
+        #   • SAME-dir position               → NOT queued → handled as duplicate.
+        _pos = existing_real or existing_shadow
+        _pos_side = _pos.get('side') if _pos else None
+        _route_ff = (_pos is None)
+        if _pos is not None and _pos_side and _pos_side != side:
+            try:
+                from detection.fuel_filter import get_fuel_filter
+                _ffx = get_fuel_filter()
+                if _ffx and _ffx.is_enabled():
+                    _fs = _ffx.get_settings()
+                    if _fs.get('queue2_enabled') and _fs.get('queue2_reverse_via_queue', True):
+                        _route_ff = True   # opposite → let Queue 2 gate the reverse
+            except Exception:
+                pass
+        if _route_ff:
             try:
                 from detection.fuel_filter import get_fuel_filter
                 ff = get_fuel_filter()
-                # intercept() returns True only if a queue actually took the
-                # signal. If BOTH FF queues are OFF it returns False → we do NOT
-                # consume the signal and let it open directly below.
                 if ff and ff.is_enabled():
                     _disp = ff.intercept(symbol, side, kind=opened_by)
                     if _disp == 'queued':
+                        _rev = ' (реверс — коли пройде Чергу-2)' if _pos is not None else ''
                         return {'status': 'queued', 'is_paper': False,
-                                'reason': 'у Черзі ❤️ Fuel Auto-Filter (чекає фільтр)'}
+                                'reason': f'у Черзі ❤️ Fuel Auto-Filter (чекає фільтр){_rev}'}
                     if _disp == 'dropped':
                         # An enabled queue (Q2) OWNED but REJECTED it (CTR gate) —
-                        # NOT queued, NOT opened. The marker must say so, not lie
-                        # «queued». (Q1 off ≠ signal goes to Q1 — it never does.)
+                        # NOT queued, NOT opened (and NOT reversed). The marker must
+                        # say so, not lie «queued». (Q1 off ≠ signal goes to Q1.)
                         return {'status': 'rejected', 'is_paper': False,
                                 'reason': 'Черга-2 відкинула: CTR-нахил не в бік сигналу'}
                     # '' → both queues OFF → falls through to a direct open below.
@@ -1617,7 +1635,21 @@ class TradeManager:
         pos_dir = 'bull' if pos['side'] == 'LONG' else 'bear'
         if direction == pos_dir:
             return  # same-direction CHoCH — not a reversal
-        
+
+        # 🔄 «Реверс через Чергу-2»: when ON, a bare opposite CHoCH must NOT close
+        # the position here — the reversal is owned by Queue 2, which closes the
+        # opposite trade only AFTER the opposite signal fully passes its algorithm
+        # (SCORE+CTR). Otherwise this raw-CHoCH close would bypass Queue 2.
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            _ffx = get_fuel_filter()
+            if _ffx and _ffx.is_enabled():
+                _fs = _ffx.get_settings()
+                if _fs.get('queue2_enabled') and _fs.get('queue2_reverse_via_queue', True):
+                    return
+        except Exception:
+            pass
+
         # === Forecast 1H Confluence Close ===
         # Highest priority: if both LTF reverse AND Forecast 1H opposite, close.
         if s.get('use_forecast_1h_close'):
