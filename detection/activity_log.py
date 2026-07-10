@@ -11,6 +11,7 @@ Design:
     monitor has ZERO cost when the operator turns it off.
 """
 import time
+import atexit
 import threading
 from collections import deque
 from typing import Optional, List, Dict
@@ -18,13 +19,14 @@ from typing import Optional, List, Dict
 _MAX_EVENTS = 1500                       # ring-buffer cap (oldest dropped)
 _DB_ENABLED = 'activity_log_enabled'     # persisted on/off flag
 _DB_EVENTS = 'activity_log_events'       # persisted event buffer (survives restart)
-_FLUSH_EVERY_SEC = 30                    # throttle DB writes (bounded single row)
+_FLUSH_EVERY_SEC = 8                     # throttle DB writes (bounded single row)
 
 
 class ActivityLog:
     def __init__(self):
         self._events = deque(maxlen=_MAX_EVENTS)
         self._lock = threading.RLock()
+        self._load_lock = threading.Lock()   # guards the one-time restore
         self._enabled = None             # lazy-loaded from DB on first touch
         self._db = None
         self._loaded = False             # events restored from DB yet?
@@ -43,23 +45,38 @@ class ActivityLog:
         return self._db
 
     def _ensure_loaded(self):
-        """Restore the persisted event buffer ONCE (survives a redeploy)."""
+        """Restore the persisted event buffer ONCE (survives a redeploy). Guarded
+        by a dedicated lock so two threads can't BOTH load and DOUBLE the events."""
         if self._loaded:
             return
-        self._loaded = True
-        db = self._get_db()
-        if not db:
-            return
+        with self._load_lock:
+            if self._loaded:
+                return
+            db = self._get_db()
+            try:
+                raw = db.get_setting(_DB_EVENTS, []) if db else []
+                raw = raw or []
+                if isinstance(raw, list):
+                    with self._lock:
+                        for e in raw[-_MAX_EVENTS:]:
+                            if isinstance(e, dict):
+                                self._events.append(e)
+                        # Continue the id sequence past whatever was restored.
+                        self._next_id = max((int(e.get('id') or 0) for e in self._events),
+                                            default=0) + 1
+            except Exception:
+                pass
+            # Flush on process exit so the LAST (still-throttled) events survive a
+            # graceful restart/redeploy — the cause of «записи зникали».
+            try:
+                atexit.register(self._flush_atexit)
+            except Exception:
+                pass
+            self._loaded = True
+
+    def _flush_atexit(self):
         try:
-            raw = db.get_setting(_DB_EVENTS, []) or []
-            if isinstance(raw, list):
-                with self._lock:
-                    for e in raw[-_MAX_EVENTS:]:
-                        if isinstance(e, dict):
-                            self._events.append(e)
-                    # Continue the id sequence past whatever was restored.
-                    self._next_id = max((int(e.get('id') or 0) for e in self._events),
-                                        default=0) + 1
+            self._flush(force=True)
         except Exception:
             pass
 
