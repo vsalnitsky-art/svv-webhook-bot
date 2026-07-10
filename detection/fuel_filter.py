@@ -222,6 +222,11 @@ DEFAULT_SETTINGS = {
     #     Default OFF. Applies to real + paper open positions.
     'q2_auto_ob_sl': False,
     'q2_auto_ob_sl_buffer_pct': 0.2,
+    #   q2_auto_ob_sl_tf — OB-таймфрейм САМЕ для авто-Manual-SL (незалежний від
+    #     ob_filter_timeframe сканера). За замовч. '15m' — головний скан-TF, для
+    #     якого OB рахується завжди. Інші TF працюють лише якщо сканер їх теж
+    #     обробляє (ob_filter / pd_zone / exit TF), інакше OB-рядка не буде.
+    'q2_auto_ob_sl_tf': '15m',
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -499,6 +504,8 @@ class FuelFilterDaemon:
             s['q2_auto_ob_sl_buffer_pct'] = max(0.0, min(10.0, float(s.get('q2_auto_ob_sl_buffer_pct', 0.2) or 0.2)))
         except (TypeError, ValueError):
             s['q2_auto_ob_sl_buffer_pct'] = 0.2
+        _tf = str(s.get('q2_auto_ob_sl_tf', '15m') or '15m').lower()
+        s['q2_auto_ob_sl_tf'] = _tf if _tf in ('15m', '30m', '1h', '4h') else '15m'
         s['engine_smart_direction'] = bool(s.get('engine_smart_direction', False))
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))

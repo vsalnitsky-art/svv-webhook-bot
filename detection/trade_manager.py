@@ -1306,12 +1306,11 @@ class TradeManager:
             _diag(f"ручний SL {self._fmt_price(cur_sl)} виставлено — авто не чіпає")
             return   # user-set stop present → leave it alone
 
-        # Read the same OB row that gates entries.
+        # OB timeframe is Queue-2-specific (its own setting, default 15m — the
+        # main scan TF, always computed). NOT the scanner's ob_filter_timeframe.
+        ob_tf = str(s.get('q2_auto_ob_sl_tf', '15m') or '15m').lower()
         try:
             from storage.db_operations import get_db
-            ob_tf = '1h'
-            if self.scanner is not None:
-                ob_tf = self.scanner._settings.get('ob_filter_timeframe', '1h')
             row = get_db().get_smc_ob_state(symbol, ob_tf)
         except Exception:
             return

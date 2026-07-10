@@ -2094,6 +2094,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             Буфер, %
                             <input type="number" id="ff-q2-auto-ob-sl-buf" step="0.05" min="0" max="10" style="width:64px" onchange="saveFuelFilterSettings()">
                         </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="OB-таймфрейм саме для авто-Manual-SL (окремий від фільтра сканера). 15хв — головний скан-TF, OB на ньому рахується завжди. Інші TF працюють, лише якщо сканер їх теж обробляє.">
+                            OB TF
+                            <select id="ff-q2-auto-ob-sl-tf" onchange="saveFuelFilterSettings()" style="font-size:0.72rem;padding:2px 4px">
+                                <option value="15m">15хв</option>
+                                <option value="30m">30хв</option>
+                                <option value="1h">1г</option>
+                                <option value="4h">4г</option>
+                            </select>
+                        </label>
                     </div>
                 </div>
             </details>
@@ -7917,6 +7926,7 @@ function renderFuelFilter(d) {
     setIf('ff-q2-reverse-via-queue', s.queue2_reverse_via_queue !== false); // default true
     setIf('ff-q2-auto-ob-sl', !!s.q2_auto_ob_sl);             // default false
     setIf('ff-q2-auto-ob-sl-buf', String(s.q2_auto_ob_sl_buffer_pct != null ? s.q2_auto_ob_sl_buffer_pct : 0.2));
+    setIf('ff-q2-auto-ob-sl-tf', s.q2_auto_ob_sl_tf || '15m');
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
@@ -8534,6 +8544,7 @@ async function saveFuelFilterSettings() {
         queue2_reverse_via_queue: _c('ff-q2-reverse-via-queue'),
         q2_auto_ob_sl: _c('ff-q2-auto-ob-sl'),
         q2_auto_ob_sl_buffer_pct: parseFloat(_v('ff-q2-auto-ob-sl-buf', '0.2') || '0.2'),
+        q2_auto_ob_sl_tf: (document.getElementById('ff-q2-auto-ob-sl-tf') || {}).value || '15m',
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
