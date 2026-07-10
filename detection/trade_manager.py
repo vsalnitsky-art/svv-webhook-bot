@@ -128,6 +128,9 @@ DEFAULT_SETTINGS = {
     'ctr_reversal_giveback_pct': 30,
     'ctr_reversal_exh_pct': 66,
     'ctr_reversal_confirmations': 2,
+    # Profit-lock floor: the reversal exit fires ONLY while current PnL ≥ this %
+    # (default 0 = never close at a loss — that's the SL's job, not this rule).
+    'ctr_reversal_min_lock_pct': 0.0,
     # Persistence guard (in BARS of the CTR timeframe): the reversal condition
     # must hold continuously for ≥ this many closed bars before the trade is
     # closed — so a tiny intrabar wobble can't exit and give back the potential.
@@ -995,8 +998,9 @@ class TradeManager:
             gb_need = float(s.get('ctr_reversal_giveback_pct', 30) or 0)
             exh_need = float(s.get('ctr_reversal_exh_pct', 66) or 0)
             conf_need = int(s.get('ctr_reversal_confirmations', 2) or 2)
+            min_lock = float(s.get('ctr_reversal_min_lock_pct', 0.0))
         except (TypeError, ValueError):
-            min_peak, ctr_need, gb_need, exh_need, conf_need = 1.0, 70.0, 30.0, 66.0, 2
+            min_peak, ctr_need, gb_need, exh_need, conf_need, min_lock = 1.0, 70.0, 30.0, 66.0, 2, 0.0
         opp = 'SHORT' if side == 'LONG' else 'LONG'
         # 1) CTR opposite-extreme strength (0..100).
         ctr_against = 0.0
@@ -1045,10 +1049,17 @@ class TradeManager:
                         + 0.15 * (float(exh) if exh is not None else 0.0)
                         + 0.10 * mm_against)
         rev_pct = max(0, min(100, rev_pct))
+        # 🔒 Profit-LOCK only: the reversal exit must NOT realise a loss (that is
+        # the SL's job). If price already gave the whole move back into the red,
+        # there's nothing to «lock» — closing then just sells the bottom (the
+        # SLXUSDT case: closed −2.55% right before it recovered +3.6%). So require
+        # the CURRENT PnL to still be ≥ min_lock (default 0 = never at a loss).
+        _in_lock = (pnl_pct is not None and pnl_pct >= min_lock)
         hard_ok = bool(s.get('use_ctr_reversal_exit', True)
                        and peak_pct is not None and peak_pct >= min_peak
                        and ctr_against >= ctr_need
-                       and conf >= conf_need)
+                       and conf >= conf_need
+                       and _in_lock)
         tf_sec = self._tf_to_seconds(ctr.get('tf'))
         return rev_pct, hard_ok, tf_sec
 

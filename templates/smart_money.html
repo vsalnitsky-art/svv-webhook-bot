@@ -2449,6 +2449,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <input type="number" id="tm-ctr-rev-conf" min="0" max="3" step="1" style="width:44px" onchange="saveTMSettings()">/3</span>
                             <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Скільки барів таймфрейму CTR умова має триматись, перш ніж закрити (захист від дрібних рухів)">барів≥
                                 <input type="number" id="tm-ctr-rev-bars" min="0" max="20" step="1" style="width:44px" onchange="saveTMSettings()"></span>
+                            <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#4ade80" title="🔒 ФІКСАЦІЯ ПРИБУТКУ: вихід спрацьовує ЛИШЕ поки поточний PnL ще ≥ цього %. 0 = не закривати в збиток (збитками керує SL). Це рятує від закриття на дні, коли ціна вже віддала весь рух у мінус.">🔒 лок PnL≥
+                                <input type="number" id="tm-ctr-rev-min-lock" min="-50" max="50" step="0.1" style="width:56px" onchange="saveTMSettings()">%</span>
                         </div>
 
                         <div class="tm-row">
@@ -6073,6 +6075,7 @@ async function loadTMSettings() {
         _setV('tm-ctr-rev-exh', s.ctr_reversal_exh_pct, 66);
         _setV('tm-ctr-rev-conf', s.ctr_reversal_confirmations, 2);
         _setV('tm-ctr-rev-bars', s.ctr_reversal_min_bars, 2);
+        _setV('tm-ctr-rev-min-lock', s.ctr_reversal_min_lock_pct != null ? s.ctr_reversal_min_lock_pct : 0, 0);
         document.getElementById('tm-use-reverse-signal').checked = !!s.use_reverse_signal;
         document.getElementById('tm-use-forecast-close').checked = !!s.use_forecast_1h_close;
         document.getElementById('tm-use-opposite-ob-exit').checked = !!s.use_opposite_ob_exit;
@@ -6449,6 +6452,7 @@ async function saveTMSettings() {
             ctr_reversal_exh_pct: parseInt(document.getElementById('tm-ctr-rev-exh').value) || 66,
             ctr_reversal_confirmations: parseInt(document.getElementById('tm-ctr-rev-conf').value) || 2,
             ctr_reversal_min_bars: parseInt(document.getElementById('tm-ctr-rev-bars').value) || 0,
+            ctr_reversal_min_lock_pct: parseFloat(document.getElementById('tm-ctr-rev-min-lock').value) || 0,
             use_reverse_signal: document.getElementById('tm-use-reverse-signal').checked,
             use_forecast_1h_close: document.getElementById('tm-use-forecast-close').checked,
             use_opposite_ob_exit: document.getElementById('tm-use-opposite-ob-exit').checked,
