@@ -2705,7 +2705,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <div class="tm-body" id="testmode-body">
             
             <div class="tm-row" style="background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px;color:#a5b4fc;font-size:0.78rem">
-                ℹ️ Створює віртуальні позиції на основі SMC сигналів і застосовує до них правила виходу (Reverse SMC, Forecast 1H Confluence). Реальні ордери на Bybit не виконуються. Працює незалежно від Trade Manager: відкриває тіні на ВСІ кваліфіковані сигнали (без фільтра tradeable) — крім монет, які Trade Manager уже тримає реально (щоб не дублювати). Так paper показує, як відпрацювала б уся стратегія, поки real торгує лише дозволені монети.
+                ℹ️ Створює віртуальні позиції на основі SMC сигналів і застосовує до них ТІ САМІ правила виходу, що й реальні: hard SL/TP, трейлінг, беззбиток (BE), time-stop, HTF-flip, Reverse SMC, Forecast 1H, бот-софт-вихід, CTR-розворот. Реальні ордери на Bybit не виконуються. Працює незалежно від Trade Manager: відкриває тіні на ВСІ кваліфіковані сигнали (без фільтра tradeable) — крім монет, які Trade Manager уже тримає реально (щоб не дублювати). Тепер paper — точне дзеркало real, тож показує, як відпрацювала б уся стратегія.
             </div>
             
             <div class="tm-row" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px;padding:8px 10px;margin-bottom:10px">

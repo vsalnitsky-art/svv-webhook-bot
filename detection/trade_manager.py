@@ -1293,9 +1293,51 @@ class TradeManager:
         pos['ctr_rev_pct'] = _rev_pct
         if not pos.get('manual_mode') and self._rev_persisted(pos, _rev_hard, _tf_sec):
             self._close_shadow(symbol, current_price, reason='ctr_reversal_after_peak')
+            return
 
-    def _update_trailing(self, pos, current_price):
+        # === Automatic exits — paper now MIRRORS the real book so paper PnL ===
+        # === reflects what a live trade would actually do (SL/TP/trailing/BE/  ===
+        # === time-stop/HTF-flip). Bypassed in manual mode, same as real.      ===
+        if pos.get('manual_mode'):
+            return
         s = self._settings
+        # 1) Hard Stop Loss / Take Profit.
+        if s.get('use_sl') and pos.get('sl_price'):
+            if (pos['side'] == 'LONG' and current_price <= pos['sl_price']) or \
+               (pos['side'] == 'SHORT' and current_price >= pos['sl_price']):
+                self._close_shadow(symbol, current_price, reason='stop_loss')
+                return
+        if s.get('use_tp') and pos.get('tp_price'):
+            if (pos['side'] == 'LONG' and current_price >= pos['tp_price']) or \
+               (pos['side'] == 'SHORT' and current_price <= pos['tp_price']):
+                self._close_shadow(symbol, current_price, reason='take_profit')
+                return
+        # 2) Time stop.
+        if s.get('use_time_stop'):
+            elapsed_h = (time.time() - pos['opened_at']) / 3600
+            if elapsed_h >= s.get('time_stop_hours', 4):
+                self._close_shadow(symbol, current_price, reason='time_stop')
+                return
+        # 3) HTF flip.
+        if s.get('use_htf_flip') and self.scanner:
+            try:
+                htf_settings = self.scanner.get_htf_settings()
+                if htf_settings.get('enabled'):
+                    htf_bias = self.scanner._htf_cache.get(symbol, {}).get('bias', 'neutral')
+                    pos_dir = 'bull' if pos['side'] == 'LONG' else 'bear'
+                    opposite = 'bear' if pos_dir == 'bull' else 'bull'
+                    if htf_bias == opposite:
+                        self._close_shadow(symbol, current_price, reason='htf_flip')
+                        return
+            except Exception:
+                pass
+        # 4) Trailing stop + Break-even (paper-aware — no exchange calls).
+        self._update_trailing(pos, current_price, is_shadow=True)
+        self._update_be(pos, current_price, is_shadow=True)
+
+    def _update_trailing(self, pos, current_price, is_shadow=False):
+        s = self._settings
+        _close = self._close_shadow if is_shadow else self._close_position
         # Two paths can activate trailing:
         #   (a) Global use_trailing=True with price reaching trailing_activate_pct
         #   (b) BOS-2 hook explicitly setting trailing_via_bos2=True
@@ -1337,17 +1379,17 @@ class TradeManager:
         if side == 'LONG':
             trail_stop = pos['trailing_peak'] * (1 - dist_pct)
             if current_price <= trail_stop:
-                self._close_position(pos['symbol'], current_price, reason='trailing_stop')
+                _close(pos['symbol'], current_price, reason='trailing_stop')
         else:
             trail_stop = pos['trailing_peak'] * (1 + dist_pct)
             if current_price >= trail_stop:
-                self._close_position(pos['symbol'], current_price, reason='trailing_stop')
+                _close(pos['symbol'], current_price, reason='trailing_stop')
     
-    def _update_be(self, pos, current_price):
+    def _update_be(self, pos, current_price, is_shadow=False):
         s = self._settings
         if not s.get('use_be') or pos.get('be_moved'):
             return
-        
+
         trigger = s.get('be_trigger_pct', 0.5) / 100
         # Commission buffer — SL is placed slightly past entry so when it
         # triggers, the close covers round-trip trading fees instead of
@@ -1361,21 +1403,23 @@ class TradeManager:
             new_sl = entry * (1 + buf)
             pos['sl_price'] = new_sl
             pos['be_moved'] = True
-            self._update_exchange_sl(pos['symbol'], new_sl)
+            if not is_shadow:
+                self._update_exchange_sl(pos['symbol'], new_sl)
             buf_note = f" (+{buf*100:.2f}% buffer)" if buf > 0 else ""
-            self._notify(f"⚖️ BE: SL → {self._fmt_price(new_sl)} for "
+            self._notify(f"⚖️ BE{' [paper]' if is_shadow else ''}: SL → {self._fmt_price(new_sl)} for "
                           f"{pos['symbol']}{buf_note}")
-            self._persist_positions()
+            (self._persist_shadow_positions if is_shadow else self._persist_positions)()
         elif pos['side'] == 'SHORT' and current_price <= entry * (1 - trigger):
             new_sl = entry * (1 - buf)
             pos['sl_price'] = new_sl
             pos['be_moved'] = True
-            self._update_exchange_sl(pos['symbol'], new_sl)
+            if not is_shadow:
+                self._update_exchange_sl(pos['symbol'], new_sl)
             buf_note = f" (−{buf*100:.2f}% buffer)" if buf > 0 else ""
-            self._notify(f"⚖️ BE: SL → {self._fmt_price(new_sl)} for "
+            self._notify(f"⚖️ BE{' [paper]' if is_shadow else ''}: SL → {self._fmt_price(new_sl)} for "
                           f"{pos['symbol']}{buf_note}")
-            self._persist_positions()
-    
+            (self._persist_shadow_positions if is_shadow else self._persist_positions)()
+
     # ============================================================
     # Signal hooks (called from SMC scanner)
     # ============================================================
@@ -3447,12 +3491,20 @@ class TradeManager:
             print(f"[TM] decision compute error on shadow open: {e}")
         opened_by_full = self._format_opened_by(opened_by, symbol,
                                                  entry_score=decision)
+        # SL/TP levels — same calc as the real book — so the paper monitor's
+        # hard SL/TP (now mirrored) actually has levels to check against.
+        s = self._settings
+        _sl = self._calc_sl_price(side, float(entry_price), symbol) if s.get('use_sl') else None
+        _tp = self._calc_tp_price(side, float(entry_price)) if s.get('use_tp') else None
         pos = {
             'symbol': symbol,
             'side': side,
             'entry_price': float(entry_price),
             'opened_at': time.time(),
             'opened_by': opened_by_full,
+            'sl_price': float(_sl) if _sl else None,
+            'tp_price': float(_tp) if _tp else None,
+            'be_moved': False,
             'shadow': True,
             # === Fields needed for BOS-N partial closes on shadow positions ===
             # We track qty as a unit (1.0) and remaining_qty as a fraction,
