@@ -1130,7 +1130,7 @@ class TradeManager:
         # original SL. Empty / 0 / None → not active for that field.
         # Auto-manage the Manual SL from the «Require OB Match» OB first (no-op
         # unless q2_auto_ob_sl is on) so the breach check below sees the latest.
-        self._auto_ob_manual_sl(pos, current_price)
+        self._auto_ob_manual_sl(symbol, pos, current_price)
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_position(symbol, current_price, reason=manual_reason)
@@ -1245,7 +1245,7 @@ class TradeManager:
 
         return None
 
-    def _auto_ob_manual_sl(self, pos: Dict, current_price: float) -> None:
+    def _auto_ob_manual_sl(self, symbol: str, pos: Dict, current_price: float) -> None:
         """Auto-manage this position's Manual SL from the nearest «Require OB
         Match» Order Block (FF setting `q2_auto_ob_sl`). Runs every tick BEFORE
         `_check_manual_sl_tp`, so once the level is written the existing manual-SL
@@ -1264,7 +1264,24 @@ class TradeManager:
           • Respects a manual SL the operator typed by hand: we only overwrite a
             level we ourselves last wrote (tracked in `pos['_auto_ob_sl_val']`).
             If `manual_sl` differs from that, the user set it → we back off.
-        """
+
+        Every state change (set / tighten) is written to the 🧾 activity log so
+        the operator can SEE it work; skip-reasons (no OB / opposite bias / OB on
+        the wrong side of price) are logged too, throttled to once per 5 min per
+        symbol so the log isn't flooded."""
+        def _diag(reason: str):
+            """Throttled visibility for the «нічого не відбувається» case."""
+            try:
+                nowt = time.time()
+                if nowt - float(pos.get('_auto_ob_sl_diag_at') or 0) < 300:
+                    return
+                pos['_auto_ob_sl_diag_at'] = nowt
+                from detection.activity_log import log_activity
+                log_activity(symbol, 'skipped', f"Авто-SL з OB: {reason}",
+                             side=pos.get('side'), source='TM')
+            except Exception:
+                pass
+
         try:
             from detection.fuel_filter import get_fuel_filter
             s = get_fuel_filter().get_settings()
@@ -1286,6 +1303,7 @@ class TradeManager:
             cur_sl = None
         auto_val = pos.get('_auto_ob_sl_val')
         if cur_sl is not None and (auto_val is None or abs(cur_sl - float(auto_val)) > 1e-12):
+            _diag(f"ручний SL {self._fmt_price(cur_sl)} виставлено — авто не чіпає")
             return   # user-set stop present → leave it alone
 
         # Read the same OB row that gates entries.
@@ -1298,6 +1316,7 @@ class TradeManager:
         except Exception:
             return
         if not row or not row.get('bias'):
+            _diag(f"немає готового OB на {ob_tf.upper()} (сканер ще не порахував)")
             return
         bias = row.get('bias')
         try:
@@ -1308,18 +1327,24 @@ class TradeManager:
 
         if side == 'LONG':
             if bias != 'BULLISH':
+                _diag(f"OB на {ob_tf.upper()} протилежний (BEARISH) — чекаю BULLISH")
                 return
             cand = bar_low * (1.0 - buf)
             if cand >= current_price:
+                _diag(f"низ OB {self._fmt_price(bar_low)} вище ціни "
+                      f"{self._fmt_price(current_price)} — SL там закрив би угоду")
                 return   # OB not below price → wouldn't protect, skip
             # ratchet UP: only accept a tighter (higher) stop than the current auto level
             if auto_val is not None and cand <= float(auto_val):
                 return
         elif side == 'SHORT':
             if bias != 'BEARISH':
+                _diag(f"OB на {ob_tf.upper()} протилежний (BULLISH) — чекаю BEARISH")
                 return
             cand = bar_high * (1.0 + buf)
             if cand <= current_price:
+                _diag(f"верх OB {self._fmt_price(bar_high)} нижче ціни "
+                      f"{self._fmt_price(current_price)} — SL там закрив би угоду")
                 return   # OB not above price → wouldn't protect, skip
             # ratchet DOWN: only accept a tighter (lower) stop than the current auto level
             if auto_val is not None and cand >= float(auto_val):
@@ -1330,11 +1355,14 @@ class TradeManager:
         prev = auto_val
         pos['manual_sl'] = cand
         pos['_auto_ob_sl_val'] = cand
+        pos['_auto_ob_sl_diag_at'] = 0    # reset throttle so a later skip is shown
         try:
-            tag = 'оновлено' if prev is not None else 'встановлено'
-            print(f"[TM] Авто-SL з OB {tag} для {symbol} {side}: "
-                  f"{self._fmt_price(cand)} (OB {ob_tf.upper()}, "
-                  f"буфер {s.get('q2_auto_ob_sl_buffer_pct', 0.2)}%)")
+            from detection.activity_log import log_activity
+            tag = 'підтягнуто' if prev is not None else 'встановлено'
+            log_activity(symbol, 'autosl',
+                         f"SL {tag} з OB {ob_tf.upper()} → {self._fmt_price(cand)} "
+                         f"(буфер {s.get('q2_auto_ob_sl_buffer_pct', 0.2)}%)",
+                         side=side, source='TM')
         except Exception:
             pass
 
@@ -1383,7 +1411,7 @@ class TradeManager:
             if _d:
                 pos['entry_score'] = _d
 
-        self._auto_ob_manual_sl(pos, current_price)
+        self._auto_ob_manual_sl(symbol, pos, current_price)
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_shadow(symbol, current_price, reason=manual_reason)

@@ -3242,6 +3242,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <option value="skipped">⏭ Пропущено</option>
                         <option value="closed">🔚 Закрито</option>
                         <option value="passthrough">➡️ Пряме відкриття</option>
+                        <option value="autosl">🎯 Авто-SL з OB</option>
                     </select>
                     <button onclick="exportActivityLog('csv')" style="white-space:nowrap;font-size:0.7rem;padding:5px 11px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#22c55e;cursor:pointer" title="Завантажити всі події логу як CSV (для Excel / аналізу)">📥 CSV</button>
                     <button onclick="exportActivityLog('json')" style="white-space:nowrap;font-size:0.7rem;padding:5px 11px;border-radius:5px;border:1px solid rgba(96,165,250,0.4);background:rgba(96,165,250,0.1);color:#60a5fa;cursor:pointer" title="Завантажити всі події логу як JSON (повні дані)">📥 JSON</button>
@@ -3266,6 +3267,7 @@ const _actMeta = {
     opened: ['✅', 'Відкрито', '#22c55e'], rejected: ['⛔', 'Відхилено', '#f87171'],
     skipped: ['⏭', 'Пропущено', '#9aa3b5'], closed: ['🔚', 'Закрито', '#a78bfa'],
     passthrough: ['➡️', 'Пряме відкриття', '#fbbf24'],
+    autosl: ['🎯', 'Авто-SL з OB', '#38bdf8'],
 };
 async function toggleActivityLog() {
     const on = document.getElementById('activity-log-enabled').checked;
