@@ -1265,29 +1265,13 @@ class TradeManager:
             level we ourselves last wrote (tracked in `pos['_auto_ob_sl_val']`).
             If `manual_sl` differs from that, the user set it → we back off.
 
-        Every state change (set / tighten) is written to the 🧾 activity log so
-        the operator can SEE it work; skip-reasons (no OB / opposite bias / OB on
-        the wrong side of price) are logged too, throttled to once per 5 min per
-        symbol so the log isn't flooded."""
-        def _diag(reason: str):
-            """Throttled visibility for the «нічого не відбувається» case —
-            ONLY while NO auto-SL has been set yet. Once a level is in place the
-            per-tick «couldn't improve it» skips are silent (a set auto-SL is a
-            success, not a failure worth logging), so the log lists only coins
-            for which not a single auto-SL could ever be placed."""
-            try:
-                if pos.get('_auto_ob_sl_val') is not None:
-                    return   # already have an auto-SL → not a «couldn't set» case
-                nowt = time.time()
-                if nowt - float(pos.get('_auto_ob_sl_diag_at') or 0) < 300:
-                    return
-                pos['_auto_ob_sl_diag_at'] = nowt
-                from detection.activity_log import log_activity
-                log_activity(symbol, 'skipped', f"Авто-SL з OB: {reason}",
-                             side=pos.get('side'), source='TM')
-            except Exception:
-                pass
-
+        Order of checks (per operator's rule):
+          1. No Manual SL yet → try to determine one from the OB.
+          2. Manual SL already present → try to find a BETTER (tighter) one; if
+             none is better, do NOTHING and write NOTHING.
+          3. A record is written to the 🧾 log ONLY when, after all checks, the
+             Manual SL field is STILL EMPTY (not a single level could be set) —
+             then we log the reason. Any SL in place ⇒ silence."""
         try:
             from detection.fuel_filter import get_fuel_filter
             s = get_fuel_filter().get_settings()
@@ -1302,15 +1286,34 @@ class TradeManager:
         buf = max(0.0, buf)
 
         side = pos.get('side')
-        # Don't stomp on a manual SL the operator typed by hand.
         try:
             cur_sl = float(pos.get('manual_sl') or 0) or None
         except (TypeError, ValueError):
             cur_sl = None
         auto_val = pos.get('_auto_ob_sl_val')
+
+        # A Manual SL the operator typed by hand → never touch, never log
+        # (the field is NOT empty, so there is nothing to report).
         if cur_sl is not None and (auto_val is None or abs(cur_sl - float(auto_val)) > 1e-12):
-            _diag(f"ручний SL {self._fmt_price(cur_sl)} виставлено — авто не чіпає")
-            return   # user-set stop present → leave it alone
+            return
+
+        def _diag(reason: str):
+            """Write a skip-reason to the 🧾 log ONLY when the Manual SL field is
+            left EMPTY after all checks (no user SL, no auto SL could be set). If
+            ANY level is already in place we make NO record — per the rule «запис
+            лише коли лишили пусте поле Manual SL». Throttled to once per 5 min."""
+            try:
+                if pos.get('manual_sl'):      # field NOT empty → make no record
+                    return
+                nowt = time.time()
+                if nowt - float(pos.get('_auto_ob_sl_diag_at') or 0) < 300:
+                    return
+                pos['_auto_ob_sl_diag_at'] = nowt
+                from detection.activity_log import log_activity
+                log_activity(symbol, 'skipped', f"Авто-SL з OB: {reason}",
+                             side=side, source='TM')
+            except Exception:
+                pass
 
         # OB timeframe is Queue-2-specific (its own setting, default 15m — the
         # main scan TF, always computed). NOT the scanner's ob_filter_timeframe.

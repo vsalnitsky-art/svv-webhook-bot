@@ -4701,7 +4701,8 @@ function showSignalTooltip(param, sig) {
         tip = document.createElement('div');
         tip.id = 'sm-signal-tooltip';
         tip.style.cssText =
-            'position:absolute;z-index:50;max-width:280px;padding:10px 12px;'
+            'position:absolute;z-index:50;width:340px;max-width:92%;max-height:340px;'
+          + 'overflow-y:auto;padding:10px 12px;'
           + 'border-radius:8px;font-size:0.8rem;line-height:1.4;pointer-events:auto;'
           + 'box-shadow:0 4px 18px rgba(0,0,0,0.5);background:#1a1f2e;'
           + 'border:1px solid rgba(255,255,255,0.15);color:#e5e7eb';
@@ -4751,10 +4752,21 @@ function showSignalTooltip(param, sig) {
              + `<div style="color:#fca5a5">Причина: ${uaSignalReason(sig)}</div>`
              + (when ? `<div style="color:#9ca3af;margin-top:4px">${when}</div>` : '');
     }
+    // Full activity-log timeline for THIS signal's session (loaded async).
+    // The static status line above is a stale snapshot from signal time; the
+    // session below reflects what ACTUALLY happened to this signal (queued →
+    // opened → closed …), scoped to the session that owns this chart marker.
+    html += `<div id="sm-sig-session" style="margin-top:8px;border-top:1px solid `
+          + `rgba(255,255,255,0.1);padding-top:6px;color:#9ca3af;font-size:0.72rem">`
+          + `⏳ Завантаження історії сигналу…</div>`;
     html += `<div style="text-align:right;margin-top:6px">`
           + `<span style="cursor:pointer;color:#60a5fa;font-size:0.72rem" `
           + `onclick="hideSignalTooltip()">закрити ✕</span></div>`;
     tip.innerHTML = html;
+    // Tag the request so a late fetch for a PREVIOUS marker can't overwrite a
+    // newer click (race guard).
+    tip._reqKey = String(sig.time) + '|' + String(currentSymbol || '');
+    loadSignalSession(sig);
     // Position near the click point
     const chartEl = document.getElementById('sm-chart');
     const rect = chartEl ? chartEl.getBoundingClientRect() : {left:0, top:0};
@@ -4773,6 +4785,91 @@ function showSignalTooltip(param, sig) {
 function hideSignalTooltip() {
     const tip = document.getElementById('sm-signal-tooltip');
     if (tip) tip.style.display = 'none';
+}
+
+// Fetch the 🧾 activity-log events for the marker's symbol and render ONLY the
+// session that owns this chart marker (see renderSignalSession for how a
+// «session» is delimited). Race-guarded via tip._reqKey so an older click's
+// response can't clobber a newer one.
+async function loadSignalSession(sig) {
+    const tip = document.getElementById('sm-signal-tooltip');
+    if (!tip) return;
+    const reqKey = tip._reqKey;
+    const sym = currentSymbol || sig.symbol || '';
+    if (!sym) return;
+    try {
+        const r = await fetch('/api/activity-log?limit=400&symbol='
+                              + encodeURIComponent(sym));
+        const d = await r.json();
+        if (!tip || tip._reqKey !== reqKey) return;   // superseded by newer click
+        const box = document.getElementById('sm-sig-session');
+        if (!box) return;
+        if (!d || !d.ok) {
+            box.innerHTML = (d && d.enabled === false)
+                ? '🧾 Лог роботи бота вимкнено — увімкни його, щоб бачити історію сигналу.'
+                : 'Не вдалося завантажити історію.';
+            return;
+        }
+        box.innerHTML = renderSignalSession(sig, d.events || []);
+    } catch (e) {
+        const box = document.getElementById('sm-sig-session');
+        if (box) box.innerHTML = 'Помилка завантаження історії.';
+    }
+}
+
+// Group a coin's activity-log events into SESSIONS and render the one that owns
+// this marker. A session = the run of events from one «signal» (a fresh CHoCH
+// the scanner logged) up to — but excluding — the NEXT «signal». The eventual
+// «opened»/«closed» of that signal fall inside its own window, so a session is
+// the full life of ONE signal. We pick the session whose «signal» time is
+// nearest the clicked marker time — that's how records stay tied to THIS
+// signal on the chart, not the coin's whole history.
+function renderSignalSession(sig, events) {
+    if (!events || !events.length) {
+        return 'Записів у 🧾 лозі для цього сигналу нема (лог міг бути вимкнений на той момент).';
+    }
+    // API returns newest-first → sort ascending by time for chronological read.
+    const evs = events.slice().sort((a, b) => (a.t || 0) - (b.t || 0));
+    // Split into sessions at every «signal» event.
+    const sessions = [];
+    let cur = null;
+    for (const e of evs) {
+        if (e.event === 'signal' || cur === null) {
+            cur = { start: e.t || 0, items: [] };
+            sessions.push(cur);
+        }
+        cur.items.push(e);
+    }
+    // Choose the session that OWNS this marker: the one containing the event
+    // closest to the marker time. Matching by nearest event (not just the
+    // session's «signal» start) is what ties an «opened» marker — which sits on
+    // the OPEN bar, possibly hours after the signal — to the right session.
+    const T = Number(sig.time) || 0;
+    let best = null, bestDiff = Infinity;
+    for (const s of sessions) {
+        let d = Infinity;
+        for (const e of s.items) { d = Math.min(d, Math.abs((e.t || 0) - T)); }
+        if (d < bestDiff) { bestDiff = d; best = s; }
+    }
+    // If nothing lands near the marker, fall back to the whole (single) run.
+    const chosen = best || sessions[sessions.length - 1];
+    const items = chosen ? chosen.items : evs;
+    const fmtT = t => { try { return new Date(t * 1000).toLocaleTimeString(); }
+                        catch (e) { return ''; } };
+    const meta = (typeof _actMeta !== 'undefined') ? _actMeta : {};
+    let out = '<div style="font-weight:600;color:#cbd5e1;margin-bottom:4px">'
+            + '🧾 Історія сигналу</div>';
+    for (const e of items) {
+        const m = meta[e.event] || ['•', e.event || '', '#cbd5e1'];
+        const t = fmtT(e.t);
+        const detail = e.detail ? (' — ' + String(e.detail)) : '';
+        out += `<div style="margin:2px 0;color:#d1d5db">`
+             + `<span style="color:#6b7280">${t}</span> `
+             + `<span>${m[0]}</span> `
+             + `<span style="color:${m[2]};font-weight:600">${m[1]}</span>`
+             + `<span style="color:#9ca3af">${detail}</span></div>`;
+    }
+    return out;
 }
 
 function clearChart() {
