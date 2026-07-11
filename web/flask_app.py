@@ -5,7 +5,7 @@ Main web server with routes and templates
 
 import os
 from datetime import datetime, timedelta
-from flask import Flask, render_template, jsonify, request, redirect, url_for
+from flask import Flask, render_template, jsonify, request, redirect, url_for, Response
 from functools import wraps
 
 # Add parent to path for imports
@@ -3010,6 +3010,170 @@ def register_api_routes(app):
             return jsonify({'ok': True, 'deleted': n})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/activity-log/export')
+    def api_activity_log_export():
+        """Analytical export that LINKS the 🧾 activity log to the closed-trade
+        tables (real + paper). Events are grouped into SESSIONS (one per «signal»
+        run of a coin), and each session is joined to the trade it produced,
+        including that trade's full chronology (price/PnL/ММ/exhaustion series).
+
+        format=json (default) → one self-contained object per session:
+            {symbol, session_start/end, events[], trades[{is_shadow, …,
+             chronology[]}]}  — nothing to cross-reference, no data confusion.
+        format=csv → a FLAT events table with trade-link columns (real/paper PnL
+            + exit reason + opened/closed times); the heavy chronology stays in
+            JSON, where it can't be mixed up with event rows."""
+        import time as _t
+        from collections import defaultdict
+
+        fmt = (request.args.get('format') or 'json').lower()
+        try:
+            from detection.activity_log import get_activity_log
+            events = get_activity_log().get(limit=100000)   # newest-first, all
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+        trades = {'real': [], 'shadow': []}
+        try:
+            from detection.trade_manager import get_trade_manager
+            tm = get_trade_manager()
+            if tm:
+                trades = tm.export_closed_trades()
+        except Exception:
+            pass
+
+        def _f(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        def _trade_export(c, is_shadow):
+            return {
+                'is_shadow': is_shadow,
+                'market': 'paper' if is_shadow else 'real',
+                'side': c.get('side'),
+                'entry_price': c.get('entry_price'),
+                'exit_price': c.get('exit_price'),
+                'opened_at': c.get('opened_at'),
+                'closed_at': c.get('closed_at'),
+                'pnl_pct': c.get('pnl_pct'),
+                'peak_pnl_pct': c.get('peak_pnl_pct'),
+                'exit_reason': c.get('reason'),
+                'exit_reason_detail': c.get('reason_detail'),
+                'ctr_open': c.get('ctr_open'),
+                'ctr_close': c.get('ctr_close'),
+                'entry_score': c.get('entry_score'),
+                'exit_decision': c.get('exit_decision'),
+                # The chronology the closed-trade tables store, renamed for clarity.
+                'chronology': list(c.get('history') or []),
+            }
+
+        # Index closed trades by symbol (both books).
+        tindex = defaultdict(list)
+        for is_shadow, key in ((False, 'real'), (True, 'shadow')):
+            for c in trades.get(key, []) or []:
+                tindex[str(c.get('symbol', '')).upper()].append((is_shadow, c))
+
+        # Group events by symbol, then split each symbol's stream into sessions
+        # at every «signal» event (same rule as the chart-marker tooltip).
+        by_sym = defaultdict(list)
+        for e in events:
+            by_sym[(e.get('symbol') or '').upper()].append(e)
+
+        sessions = []
+        sid = 0
+        for sym, evs in by_sym.items():
+            evs = sorted(evs, key=lambda e: e.get('t') or 0)
+            groups, cur = [], None
+            for e in evs:
+                if e.get('event') == 'signal' or cur is None:
+                    cur = []
+                    groups.append(cur)
+                cur.append(e)
+            for g in groups:
+                sid += 1
+                start = g[0].get('t')
+                end = g[-1].get('t')
+                opened_ev = next((e for e in g if e.get('event') == 'opened'), None)
+                anchor = _f((opened_ev or g[0]).get('t')) or 0.0
+                # Link trades whose lifetime overlaps the session, or whose open
+                # is within ~2h of the session's «opened» event. Keep the closest
+                # real + closest paper (paper mirrors real → up to two).
+                cand = []
+                for is_shadow, c in tindex.get(sym, []):
+                    oa = _f(c.get('opened_at'))
+                    if oa is None:
+                        continue
+                    ca = _f(c.get('closed_at')) or oa
+                    overlaps = (_f(start) is not None
+                                and (start - 3600) <= oa <= (end + 3600))
+                    near = abs(oa - anchor) <= 7200
+                    if overlaps or near:
+                        cand.append((abs(oa - anchor), is_shadow, c))
+                cand.sort(key=lambda x: x[0])
+                picked, seen = [], set()
+                for _, is_shadow, c in cand:
+                    if is_shadow in seen:
+                        continue
+                    seen.add(is_shadow)
+                    picked.append(_trade_export(c, is_shadow))
+                sessions.append({
+                    'session_id': sid,
+                    'symbol': sym,
+                    'session_start': start,
+                    'session_end': end,
+                    'events': g,
+                    'trades': picked,
+                })
+        sessions.sort(key=lambda s: s.get('session_start') or 0)
+
+        if fmt == 'csv':
+            import csv as _csv
+            import io as _io
+            buf = _io.StringIO()
+            w = _csv.writer(buf)
+            w.writerow(['session_id', 'time_iso', 'ts', 'symbol', 'side',
+                        'event', 'source', 'detail',
+                        'trade_opened_iso', 'trade_closed_iso',
+                        'real_pnl_pct', 'real_exit_reason',
+                        'paper_pnl_pct', 'paper_exit_reason', 'hist_points'])
+
+            def _iso(t):
+                try:
+                    return datetime.fromtimestamp(float(t)).isoformat()
+                except (TypeError, ValueError):
+                    return ''
+            for s in sessions:
+                real = next((t for t in s['trades'] if not t['is_shadow']), None)
+                paper = next((t for t in s['trades'] if t['is_shadow']), None)
+                any_tr = real or paper
+                oa = _iso(any_tr['opened_at']) if any_tr else ''
+                ca = _iso(any_tr['closed_at']) if any_tr else ''
+                hp = max((len(t['chronology']) for t in s['trades']), default=0)
+                for e in s['events']:
+                    w.writerow([
+                        s['session_id'], _iso(e.get('t')), e.get('t'),
+                        e.get('symbol'), e.get('side'), e.get('event'),
+                        e.get('source'), e.get('detail'),
+                        oa, ca,
+                        real.get('pnl_pct') if real else '',
+                        real.get('exit_reason') if real else '',
+                        paper.get('pnl_pct') if paper else '',
+                        paper.get('exit_reason') if paper else '',
+                        hp,
+                    ])
+            csv_text = '﻿' + buf.getvalue()   # BOM → Excel UTF-8
+            return Response(csv_text, mimetype='text/csv; charset=utf-8',
+                            headers={'Content-Disposition':
+                                     'attachment; filename=activity_log_linked.csv'})
+
+        return jsonify({'ok': True, 'exported_at': _t.time(),
+                        'session_count': len(sessions),
+                        'trade_counts': {'real': len(trades.get('real') or []),
+                                         'paper': len(trades.get('shadow') or [])},
+                        'sessions': sessions})
 
     @app.route('/api/fuel-filter/settings', methods=['POST'])
     def api_fuel_filter_settings():

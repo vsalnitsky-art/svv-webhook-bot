@@ -462,6 +462,16 @@ class TradeManager:
             except Exception as e:
                 print(f"[TM] Closed-trades persist error: {e}")
     
+    def export_closed_trades(self) -> Dict:
+        """Full closed-trade records (real + paper) WITH their per-trade history
+        (chronology) — for the 🧾 activity-log analytical export, which links each
+        log session to the trade it produced. Deep-ish copies under the lock so
+        the caller can serialise without racing the monitor thread."""
+        with self._lock:
+            real = [dict(c) for c in self._closed_trades]
+            shadow = [dict(c) for c in self._shadow_closed]
+        return {'real': real, 'shadow': shadow}
+
     def _load_shadow_positions(self):
         if not self.db:
             return

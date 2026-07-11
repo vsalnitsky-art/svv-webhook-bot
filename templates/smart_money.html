@@ -3292,29 +3292,29 @@ async function clearActivityLog() {
     loadActivityLog();
 }
 async function exportActivityLog(fmt) {
-    // Download the FULL activity buffer for offline analysis (CSV or JSON).
-    let evs = [];
-    try {
-        const d = await (await fetch('/api/activity-log?limit=2000')).json();
-        evs = (d && d.events) || [];
-    } catch (e) { alert('Помилка експорту: ' + e); return; }
-    if (!evs.length) { alert('Лог порожній — нічого експортувати.'); return; }
+    // Download the FULL activity buffer for offline analysis — now LINKED to the
+    // closed-trade tables server-side: events are grouped into sessions and each
+    // session carries the trade it produced (real + paper) with its chronology.
+    // JSON = structured sessions (the analytical format); CSV = flat events with
+    // trade-link columns.
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     let blob, name;
-    if (fmt === 'json') {
-        blob = new Blob([JSON.stringify(evs, null, 2)], { type: 'application/json' });
-        name = `activity_log_${stamp}.json`;
-    } else {
-        const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-        const iso = t => { try { return new Date(t * 1000).toISOString(); } catch (e) { return ''; } };
-        const rows = [['time_iso', 'ts', 'symbol', 'side', 'event', 'source', 'detail']];
-        // oldest-first for analysis
-        evs.slice().reverse().forEach(e => rows.push(
-            [iso(e.t), e.t, e.symbol, e.side, e.event, e.source, e.detail].map(q)));
-        const csv = '﻿' + rows.map(r => r.join(',')).join('\r\n');   // BOM → Excel UTF-8
-        blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-        name = `activity_log_${stamp}.csv`;
-    }
+    try {
+        if (fmt === 'json') {
+            const d = await (await fetch('/api/activity-log/export?format=json')).json();
+            if (!d || !d.ok) { alert('Помилка експорту: ' + ((d && d.reason) || '')); return; }
+            if (!d.session_count) { alert('Лог порожній — нічого експортувати.'); return; }
+            blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
+            name = `activity_log_linked_${stamp}.json`;
+        } else {
+            const csv = await (await fetch('/api/activity-log/export?format=csv')).text();
+            if (!csv || csv.trim().split('\n').length <= 1) {
+                alert('Лог порожній — нічого експортувати.'); return;
+            }
+            blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+            name = `activity_log_linked_${stamp}.csv`;
+        }
+    } catch (e) { alert('Помилка експорту: ' + e); return; }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name;
     document.body.appendChild(a); a.click();
