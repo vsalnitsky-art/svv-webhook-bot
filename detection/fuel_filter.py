@@ -762,6 +762,11 @@ class FuelFilterDaemon:
                 'price': _fd.get('mark_price'),
                 'comp': entry.get('components'),
             }
+            # Record the MATURE Decision Center verdict alongside — for the data-
+            # driven consolidation of the two entry models (see _decision_compact).
+            _dec = self._decision_compact(sym, _fd.get('mark_price'), side)
+            if _dec:
+                _x['dec'] = _dec
         if q2_take:
             _r2 = ' · новий тип замінив застарілий' if refreshed_q2 else ''
             if _ctr_state == side:
@@ -1293,6 +1298,33 @@ class FuelFilterDaemon:
         if stc < 50:
             return ('LONG', stc, pct)
         return ('neutral', stc, pct)
+
+    def _decision_compact(self, symbol: str, price, side=None) -> Optional[Dict]:
+        """Compact Decision Center snapshot (the MATURE evaluate_entry model in
+        trade_manager) for recording ALONGSIDE the FF ENTRY score, so we can
+        later prove on data which predicts PnL better and consolidate.
+
+        NOTE(calibration): once ≥ ~50 closed trades are collected, compare
+        `ff_entry_score` vs `dec.score`→PnL correlation; gate Queue-2 on whichever
+        wins, then retire the loser. Do NOT swap the live per-tick gate before
+        that evidence — evaluate_entry is heavier and its weights are unfitted."""
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            if not tm or not hasattr(tm, 'compute_decision') or not price:
+                return None
+            dec = tm.compute_decision(symbol, float(price))
+            if not dec:
+                return None
+            _score = (dec.get('long_score') if side == 'LONG'
+                      else dec.get('short_score') if side == 'SHORT' else None)
+            return {'reco': dec.get('recommended'), 'verdict': dec.get('verdict'),
+                    'prob_long': dec.get('prob_long'),
+                    'prob_short': dec.get('prob_short'),
+                    'score': _score,
+                    'long_score': dec.get('long_score'),
+                    'short_score': dec.get('short_score')}
+        except Exception:
+            return None
 
     def _entry_score_for(self, symbol: str, side: str, kind=None) -> Dict:
         """⭐ ENTRY score (0..100) — SETUP quality for a candidate entry, evaluated
@@ -3408,6 +3440,9 @@ class FuelFilterDaemon:
                 _wlbl = (f"{_wait/3600:.1f}год" if _wait >= 3600
                          else f"{int(_wait/60)}хв")
                 _ctr_lbl = (state if state in ('LONG', 'SHORT') else 'нейтральний')
+                # MATURE Decision Center at open — recorded for the calibration
+                # comparison (FF ENTRY score vs Decision Center → realised PnL).
+                _dec = self._decision_compact(sym, fuel.get('mark_price'), d)
                 # Stamp calibration fields onto the trade record (survives to close).
                 self._stamp_entry_meta(sym, {
                     'ff_entry_score': entry['score'],
@@ -3417,6 +3452,9 @@ class FuelFilterDaemon:
                     'ff_ctr_at_open': state,
                     'ff_ctr_stc_open': stc_v,
                     'ff_kind': info.get('kind'),
+                    'ff_dec_score': (_dec or {}).get('score'),
+                    'ff_dec_reco': (_dec or {}).get('reco'),
+                    'ff_dec_verdict': (_dec or {}).get('verdict'),
                 })
                 print(f"[FF-Q2] opened {d} {sym} (ENTRY {entry['score']}, CTR {state}, чекав {_wlbl})")
                 try:
@@ -3429,7 +3467,8 @@ class FuelFilterDaemon:
                                         'queue_wait_sec': int(_wait),
                                         'ctr_at_signal': info.get('ctr_signal'),
                                         'kind': info.get('kind'),
-                                        'price': fuel.get('mark_price')})
+                                        'price': fuel.get('mark_price'),
+                                        'dec': _dec})
                 except Exception:
                     pass
 

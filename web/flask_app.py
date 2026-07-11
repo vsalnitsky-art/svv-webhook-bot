@@ -3095,6 +3095,10 @@ def register_api_routes(app):
                 'ctr_at_signal': c.get('ff_ctr_at_signal'),
                 'ctr_at_open': c.get('ff_ctr_at_open'),
                 'kind': c.get('ff_kind'),
+                # Mature Decision Center at open — for FF-score vs Decision compare.
+                'dec_score': c.get('ff_dec_score'),
+                'dec_reco': c.get('ff_dec_reco'),
+                'dec_verdict': c.get('ff_dec_verdict'),
                 'time_in_trade_sec': tit,
                 'bars_to_peak': btp,
                 # The chronology the closed-trade tables store, renamed for clarity.
@@ -3200,7 +3204,8 @@ def register_api_routes(app):
                         'symbol', 'side', 'event', 'source', 'detail',
                         'entry_score', 'ctr_stc', 'ctr_state', 'fuel_str',
                         'trade_status', 'trade_opened_iso', 'trade_closed_iso',
-                        'ff_entry_score', 'queue_wait_sec', 'time_in_trade_sec',
+                        'ff_entry_score', 'dec_score', 'dec_verdict',
+                        'queue_wait_sec', 'time_in_trade_sec',
                         'real_pnl_pct', 'real_mae_pct', 'real_exit_reason',
                         'paper_pnl_pct', 'paper_mae_pct', 'paper_exit_reason',
                         'hist_points'])
@@ -3218,6 +3223,8 @@ def register_api_routes(app):
                 ca = _iso(any_tr['closed_at']) if any_tr else ''
                 st = any_tr['status'] if any_tr else ''
                 ff_es = (any_tr or {}).get('ff_entry_score', '') if any_tr else ''
+                dsc = (any_tr or {}).get('dec_score', '') if any_tr else ''
+                dvd = (any_tr or {}).get('dec_verdict', '') if any_tr else ''
                 qw = (any_tr or {}).get('queue_wait_sec', '') if any_tr else ''
                 tit = (any_tr or {}).get('time_in_trade_sec', '') if any_tr else ''
                 hp = max((len(t['chronology']) for t in s['trades']), default=0)
@@ -3231,7 +3238,7 @@ def register_api_routes(app):
                         x.get('entry_score', ''), x.get('ctr_stc', ''),
                         x.get('ctr_state', ''), x.get('fuel_str', ''),
                         st, oa, ca,
-                        ff_es, qw, tit,
+                        ff_es, dsc, dvd, qw, tit,
                         real.get('pnl_pct') if real else '',
                         real.get('mae_pnl_pct') if real else '',
                         real.get('exit_reason') if real else '',

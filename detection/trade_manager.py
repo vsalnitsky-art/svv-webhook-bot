@@ -205,6 +205,10 @@ DEFAULT_SETTINGS = {
     # crossover reset, price peak, profit↔loss flip) much more precisely. Monitor
     # cadence is 10s, so 20s is safe; TRADE_LOG_MAX (5000) still covers ~27h.
     'trade_log_interval_sec': 20,
+    # Decision Center TRAJECTORY sampling cadence (heavier than a price sample →
+    # coarser). Captured into the trade history so we can replay how the verdict
+    # evolved. Min 60s enforced in code.
+    'trade_log_decision_interval_sec': 180,
 
     # === Fuel Auto-Filter confirmation gate ===
     # When ON, a trade is only opened if the SAME coin with the SAME direction
@@ -848,6 +852,25 @@ class TradeManager:
                     hold_score = (_sc or {}).get('score')
                 except Exception:
                     hold_score = None
+                # 🧠 Decision Center TRAJECTORY — sampled at a COARSER cadence
+                # than price (heavy: LONG+SHORT eval + context) so we can see how
+                # the verdict evolved intra-trade without loading the -w1 worker.
+                dec_reco = dec_verdict = dec_prob = dec_score = None
+                try:
+                    if self._settings.get('entry_score_enabled', True):
+                        _dec_iv = int(self._settings.get('trade_log_decision_interval_sec', 180) or 180)
+                        if (now - float(pos.get('_last_dec_at', 0))) >= max(60, _dec_iv):
+                            _dec = self.compute_decision(sym, price)
+                            if _dec:
+                                dec_reco = _dec.get('recommended')
+                                dec_verdict = _dec.get('verdict')
+                                dec_prob = (_dec.get('prob_long') if side == 'LONG'
+                                            else _dec.get('prob_short'))
+                                dec_score = (_dec.get('long_score') if side == 'LONG'
+                                             else _dec.get('short_score'))
+                                pos['_last_dec_at'] = now
+                except Exception:
+                    pass
                 try:
                     _msl = float(pos.get('manual_sl') or 0) or None
                 except (TypeError, ValueError):
@@ -875,6 +898,11 @@ class TradeManager:
                     'hold_score': hold_score,
                     'manual_sl': _msl,
                     'dist_to_sl': dist_to_sl,
+                    # 🧠 Decision Center trajectory (coarse cadence; None between).
+                    'dec_reco': dec_reco,
+                    'dec_verdict': dec_verdict,
+                    'dec_prob': dec_prob,
+                    'dec_score': dec_score,
                     # 🔄 reversal-after-peak readiness % (stamped by the monitor).
                     'rev': pos.get('ctr_rev_pct'),
                     # ₿ BTCUSDT banner state + BTC ММ at this moment.
@@ -3525,6 +3553,10 @@ class TradeManager:
             'ff_ctr_at_signal': pos.get('ff_ctr_at_signal'),
             'ff_ctr_at_open': pos.get('ff_ctr_at_open'),
             'ff_kind': pos.get('ff_kind'),
+            # Mature Decision Center at open (for the entry-model comparison).
+            'ff_dec_score': pos.get('ff_dec_score'),
+            'ff_dec_reco': pos.get('ff_dec_reco'),
+            'ff_dec_verdict': pos.get('ff_dec_verdict'),
         }
 
         with self._lock:
@@ -3940,6 +3972,10 @@ class TradeManager:
             'ff_ctr_at_signal': pos.get('ff_ctr_at_signal'),
             'ff_ctr_at_open': pos.get('ff_ctr_at_open'),
             'ff_kind': pos.get('ff_kind'),
+            # Mature Decision Center at open (for the entry-model comparison).
+            'ff_dec_score': pos.get('ff_dec_score'),
+            'ff_dec_reco': pos.get('ff_dec_reco'),
+            'ff_dec_verdict': pos.get('ff_dec_verdict'),
         }
 
         with self._lock:

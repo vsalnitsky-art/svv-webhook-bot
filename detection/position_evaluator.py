@@ -540,14 +540,23 @@ def evaluate_position(
 @dataclass
 class EntryEvaluationConfig:
     """Weights for the Entry Score components.
-    
+
     Different from EvaluationConfig because the factor mix is different.
     Each weight = max points the component can contribute. Final score
     is clamped to [-100, +100].
-    
+
     Defaults below are tuned for the "Balanced" preset, which requires a
     moderate consensus of positives. Aggressive lowers the threshold
     (more signals pass), Conservative raises it.
+
+    NOTE(calibration — DO WHEN DATA READY, ~50+ closed trades):
+      These weights are HAND-SET expert-system coefficients, not fitted to
+      outcomes. Once the linked export has enough closed trades, fit them to
+      realised PnL — a logistic regression of the per-component contributions
+      (stored in `entry_score.components` on every closed trade) against the
+      win/loss label — and replace these magnitudes with the fitted ones.
+      Also compare THIS score vs the lighter FF `_entry_score_for`
+      (fuel_filter) → PnL to decide which gates Queue-2 (then retire the other).
     """
     # Macro confluence
     weight_htf_alignment: float = 25.0       # HTF Bias direction

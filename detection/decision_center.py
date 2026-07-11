@@ -71,6 +71,15 @@ import math
 #   |scoreΔ|=80  →  ~86/14  (strong, rarely higher in practice)
 # Previously 30.0, which inflated a Δ40 lean into 79% and Δ65 into 92% —
 # unjustified precision for what is advisory analysis over noisy inputs.
+#
+# NOTE(calibration — DO WHEN DATA READY, ~50+ closed trades):
+#   `prob_long`/`prob_short` are a monotone transform of the score, NOT a
+#   measured probability. Once the linked export has enough closed trades:
+#     1. Build a reliability curve (predicted prob vs realised win-rate) and
+#        FIT `TEMPERATURE` (Platt scaling) so "LONG 75%" actually wins ~75%.
+#     2. Until then treat these as a LEAN, not a probability, in any UI wording.
+#   The data to do this now flows into the export (dec_score/reco/verdict +
+#   realised pnl_pct per session).
 TEMPERATURE = 45.0
 
 # Confidence buckets based on the WIN side's probability
