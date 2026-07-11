@@ -3058,6 +3058,18 @@ def register_api_routes(app):
             mfe = c.get('peak_pnl_pct')
             if pnls:
                 mfe = max([mfe] + pnls) if mfe is not None else max(pnls)
+            # Derived calibration metrics.
+            tit = None
+            oa, ca = _f(c.get('opened_at')), _f(c.get('closed_at'))
+            if oa is not None and ca is not None:
+                tit = int(round(ca - oa))
+            btp = None
+            if hist and mfe is not None:
+                for idx, h in enumerate(hist):
+                    hp = h.get('pnl')
+                    if hp is not None and hp >= mfe - 1e-9:
+                        btp = idx
+                        break
             return {
                 'is_shadow': is_shadow,
                 'is_open': is_open,
@@ -3077,6 +3089,14 @@ def register_api_routes(app):
                 'ctr_close': c.get('ctr_close'),
                 'entry_score': c.get('entry_score'),
                 'exit_decision': c.get('exit_decision'),
+                # 🔬 FF calibration fields (setup quality → outcome correlation).
+                'ff_entry_score': c.get('ff_entry_score'),
+                'queue_wait_sec': c.get('ff_queue_wait_sec'),
+                'ctr_at_signal': c.get('ff_ctr_at_signal'),
+                'ctr_at_open': c.get('ff_ctr_at_open'),
+                'kind': c.get('ff_kind'),
+                'time_in_trade_sec': tit,
+                'bars_to_peak': btp,
                 # The chronology the closed-trade tables store, renamed for clarity.
                 'chronology': hist,
             }
@@ -3134,11 +3154,38 @@ def register_api_routes(app):
                         continue
                     seen.add(is_shadow)
                     picked.append(_trade_export(c, is_shadow, is_open))
+                # 🏁 Session outcome tag (funnel) + signal→open latency.
+                ev_types = [e.get('event') for e in g]
+                if 'opened' in ev_types:
+                    outcome = 'opened'
+                elif 'closed' in ev_types:
+                    outcome = 'closed'
+                elif 'ejected' in ev_types:
+                    outcome = 'ejected'
+                elif 'dropped' in ev_types:
+                    outcome = 'dropped'
+                elif 'queued' in ev_types:
+                    outcome = 'queued'
+                else:
+                    outcome = (ev_types[-1] if ev_types else 'signal')
+                sig_t = _f(start)
+                open_ev = next((e for e in g if e.get('event') == 'opened'), None)
+                latency = None
+                if open_ev is not None and sig_t is not None:
+                    _ot = _f(open_ev.get('t'))
+                    if _ot is not None:
+                        latency = int(round(_ot - sig_t))
+                real_t = next((t for t in picked if not t['is_shadow']), None)
+                paper_t = next((t for t in picked if t['is_shadow']), None)
                 sessions.append({
                     'session_id': sid,
                     'symbol': sym,
                     'session_start': start,
                     'session_end': end,
+                    'outcome': outcome,
+                    'latency_sec': latency,
+                    'real_pnl_pct': (real_t or {}).get('pnl_pct'),
+                    'paper_pnl_pct': (paper_t or {}).get('pnl_pct'),
                     'events': g,
                     'trades': picked,
                 })
@@ -3149,9 +3196,11 @@ def register_api_routes(app):
             import io as _io
             buf = _io.StringIO()
             w = _csv.writer(buf)
-            w.writerow(['session_id', 'time_iso', 'ts', 'symbol', 'side',
-                        'event', 'source', 'detail',
+            w.writerow(['session_id', 'outcome', 'latency_sec', 'time_iso', 'ts',
+                        'symbol', 'side', 'event', 'source', 'detail',
+                        'entry_score', 'ctr_stc', 'ctr_state', 'fuel_str',
                         'trade_status', 'trade_opened_iso', 'trade_closed_iso',
+                        'ff_entry_score', 'queue_wait_sec', 'time_in_trade_sec',
                         'real_pnl_pct', 'real_mae_pct', 'real_exit_reason',
                         'paper_pnl_pct', 'paper_mae_pct', 'paper_exit_reason',
                         'hist_points'])
@@ -3168,13 +3217,21 @@ def register_api_routes(app):
                 oa = _iso(any_tr['opened_at']) if any_tr else ''
                 ca = _iso(any_tr['closed_at']) if any_tr else ''
                 st = any_tr['status'] if any_tr else ''
+                ff_es = (any_tr or {}).get('ff_entry_score', '') if any_tr else ''
+                qw = (any_tr or {}).get('queue_wait_sec', '') if any_tr else ''
+                tit = (any_tr or {}).get('time_in_trade_sec', '') if any_tr else ''
                 hp = max((len(t['chronology']) for t in s['trades']), default=0)
                 for e in s['events']:
+                    x = e.get('x') or {}
                     w.writerow([
-                        s['session_id'], _iso(e.get('t')), e.get('t'),
+                        s['session_id'], s.get('outcome', ''), s.get('latency_sec', ''),
+                        _iso(e.get('t')), e.get('t'),
                         e.get('symbol'), e.get('side'), e.get('event'),
                         e.get('source'), e.get('detail'),
+                        x.get('entry_score', ''), x.get('ctr_stc', ''),
+                        x.get('ctr_state', ''), x.get('fuel_str', ''),
                         st, oa, ca,
+                        ff_es, qw, tit,
                         real.get('pnl_pct') if real else '',
                         real.get('mae_pnl_pct') if real else '',
                         real.get('exit_reason') if real else '',

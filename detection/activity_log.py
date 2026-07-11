@@ -125,25 +125,32 @@ class ActivityLog:
     # ---- write ----
     def log(self, symbol: str, event: str, detail: str = '',
             side: Optional[str] = None, source: str = '',
-            ts: Optional[float] = None) -> None:
+            ts: Optional[float] = None, extra: Optional[Dict] = None) -> None:
         """Append ONE activity event (no-op while disabled).
         event: short key — 'signal' | 'queued' | 'dropped' | 'ejected' |
                'opened' | 'skipped' | 'rejected' | 'closed' | 'passthrough'.
         source: which stage — 'scanner' | 'intercept' | 'Q1' | 'Q2' | 'engine'
-               | 'TM'. detail: human reason (UA)."""
+               | 'TM'. detail: human reason (UA).
+        extra: optional STRUCTURED fields (entry_score, ctr_stc, ctr_lean,
+               fuel_str, kind, price, …) stored under 'x' so analytics can pivot
+               WITHOUT parsing the Ukrainian detail text. Must be JSON-safe."""
         if not self.is_enabled():
             return
         try:
+            ev = {
+                'id': self._next_id,
+                't': ts if ts is not None else time.time(),
+                'symbol': (symbol or '').upper().strip(),
+                'side': side,
+                'event': str(event or ''),
+                'detail': str(detail or '')[:400],
+                'source': str(source or ''),
+            }
+            if isinstance(extra, dict) and extra:
+                # bounded + shallow-copied so a later mutation can't corrupt it
+                ev['x'] = {k: extra[k] for k in list(extra)[:24]}
             with self._lock:
-                self._events.append({
-                    'id': self._next_id,
-                    't': ts if ts is not None else time.time(),
-                    'symbol': (symbol or '').upper().strip(),
-                    'side': side,
-                    'event': str(event or ''),
-                    'detail': str(detail or '')[:400],
-                    'source': str(source or ''),
-                })
+                self._events.append(ev)
                 self._next_id += 1
                 self._dirty = True
             self._flush()   # throttled persist (survives restart)
@@ -215,9 +222,11 @@ def get_activity_log() -> ActivityLog:
 
 
 def log_activity(symbol: str, event: str, detail: str = '',
-                 side: Optional[str] = None, source: str = '') -> None:
+                 side: Optional[str] = None, source: str = '',
+                 extra: Optional[Dict] = None) -> None:
     """Module-level convenience wrapper (safe, never raises)."""
     try:
-        get_activity_log().log(symbol, event, detail, side=side, source=source)
+        get_activity_log().log(symbol, event, detail, side=side, source=source,
+                               extra=extra)
     except Exception:
         pass

@@ -708,7 +708,9 @@ class FuelFilterDaemon:
                           and prev2.get('added_at'))
                 self._pending2[sym] = {'dir': side, 'kind': kind,
                                        'added_at': prev2.get('added_at') if _keep2 else now,
-                                       'entry_score': _entry_score}
+                                       'entry_score': _entry_score,
+                                       'ctr_signal': _ctr_state,
+                                       'ctr_stc_signal': _ctr_stc}
                 changed = True
             elif q2:
                 # New same-dir signal of a DIFFERENT type that did NOT pass the
@@ -740,6 +742,26 @@ class FuelFilterDaemon:
         _entry_lbl = self._score_label_ua(entry['label']) if entry else '—'
         _q2_sfx = (f' | ENTRY {_entry_score} {_entry_lbl} | '
                    f'{_ctr_words(_ctr_state, _ctr_stc, _ctr_pct)}') if q2 else ''
+        # 🔬 STRUCTURED fields (pivotable, no text-parsing) — stamped on Q2 records.
+        _x = None
+        if q2 and entry:
+            _fd = self._fuel_dir_smoothed(sym) or {}
+            try:
+                _fstr = int(round(abs(float(_fd.get('dir') or 0)) * 100))
+            except (TypeError, ValueError):
+                _fstr = None
+            _x = {
+                'entry_score': _entry_score,
+                'entry_label': entry.get('label'),
+                'ctr_state': _ctr_state,
+                'ctr_stc': _ctr_stc,
+                'ctr_pct': round(_ctr_pct, 1),
+                'fuel_dir': _fd.get('status'),
+                'fuel_str': _fstr,
+                'kind': kind,
+                'price': _fd.get('mark_price'),
+                'comp': entry.get('components'),
+            }
         if q2_take:
             _r2 = ' · новий тип замінив застарілий' if refreshed_q2 else ''
             if _ctr_state == side:
@@ -750,7 +772,7 @@ class FuelFilterDaemon:
                 _why = 'CTR ще не порахований — чекаємо'
             else:   # opposite → held (hold-and-wait), waiting for CTR pullback
                 _why = 'CTR поки проти — тримаємо до розвороту CTR (hold&wait)'
-            log_activity(sym, 'queued', f'Черга-2 · {_kind_lbl} ({_why}){_r2}{_q2_sfx}', side=side, source='Q2')
+            log_activity(sym, 'queued', f'Черга-2 · {_kind_lbl} ({_why}){_r2}{_q2_sfx}', side=side, source='Q2', extra=_x)
         elif q2 and not q2_take:
             # Not queued → quality too low (hold&wait) or CTR gate (legacy).
             if _entry_score < _min_q:
@@ -759,9 +781,9 @@ class FuelFilterDaemon:
                 _drx = f'CTR {_ctr_state} ≠ {side}'
             print(f"[FF-Q2] відхилено {sym} {side}: {_drx}")
             if stale_removed_q2:
-                log_activity(sym, 'ejected', f'Черга-2: застарілий {_kind_lbl} знято — {_drx}{_q2_sfx}', side=side, source='Q2')
+                log_activity(sym, 'ejected', f'Черга-2: застарілий {_kind_lbl} знято — {_drx}{_q2_sfx}', side=side, source='Q2', extra=_x)
             else:
-                log_activity(sym, 'dropped', f'Черга-2 · {_kind_lbl}: {_drx} — відхилено{_q2_sfx}', side=side, source='Q2')
+                log_activity(sym, 'dropped', f'Черга-2 · {_kind_lbl}: {_drx} — відхилено{_q2_sfx}', side=side, source='Q2', extra=_x)
         print(f"[FuelFilter] intercepted {sym} {side} → Q1={q1} Q2={'take' if q2_take else ('drop' if q2 else 'off')}")
         # Return the ACTUAL disposition so the caller (and the chart marker) tell
         # the truth: 'queued' — added to a queue; 'dropped' — an enabled queue
@@ -1993,6 +2015,30 @@ class FuelFilterDaemon:
     # ------------------------------------------------------------------
     # open / close (pure delegation to TradeManager)
     # ------------------------------------------------------------------
+    def _stamp_entry_meta(self, symbol: str, meta: Dict) -> None:
+        """Stamp calibration fields (ff_entry_score, ff_queue_wait_sec,
+        ff_ctr_at_signal/open, …) onto whichever TM book holds `symbol`, right
+        after the Q2 engine opens it — so the CLOSED record carries them for
+        empirical calibration (does waiting help? does ENTRY score → PnL?)."""
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            if not tm:
+                return
+            sym = (symbol or '').upper()
+            for book, persist in (('_positions', '_persist_positions'),
+                                  ('_shadow_positions', '_persist_shadow_positions')):
+                d = getattr(tm, book, None)
+                if isinstance(d, dict) and sym in d and isinstance(d[sym], dict):
+                    d[sym].update(meta)
+                    fn = getattr(tm, persist, None)
+                    if callable(fn):
+                        try:
+                            fn()
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
     def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict,
               opened_by: Optional[str] = None):
         """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
@@ -3362,12 +3408,28 @@ class FuelFilterDaemon:
                 _wlbl = (f"{_wait/3600:.1f}год" if _wait >= 3600
                          else f"{int(_wait/60)}хв")
                 _ctr_lbl = (state if state in ('LONG', 'SHORT') else 'нейтральний')
+                # Stamp calibration fields onto the trade record (survives to close).
+                self._stamp_entry_meta(sym, {
+                    'ff_entry_score': entry['score'],
+                    'ff_queue_wait_sec': int(_wait),
+                    'ff_ctr_at_signal': info.get('ctr_signal'),
+                    'ff_ctr_stc_signal': info.get('ctr_stc_signal'),
+                    'ff_ctr_at_open': state,
+                    'ff_ctr_stc_open': stc_v,
+                    'ff_kind': info.get('kind'),
+                })
                 print(f"[FF-Q2] opened {d} {sym} (ENTRY {entry['score']}, CTR {state}, чекав {_wlbl})")
                 try:
                     from detection.activity_log import log_activity
                     log_activity(sym, 'opened',
                                  f'Черга-2 відкрито: ENTRY {entry["score"]}·{d} + CTR {_ctr_lbl} · чекав {_wlbl}',
-                                 side=d, source='Q2')
+                                 side=d, source='Q2',
+                                 extra={'entry_score': entry['score'],
+                                        'ctr_state': state, 'ctr_stc': stc_v,
+                                        'queue_wait_sec': int(_wait),
+                                        'ctr_at_signal': info.get('ctr_signal'),
+                                        'kind': info.get('kind'),
+                                        'price': fuel.get('mark_price')})
                 except Exception:
                     pass
 

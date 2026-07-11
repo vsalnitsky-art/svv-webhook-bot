@@ -837,6 +837,29 @@ class TradeManager:
                 # crossover age in bars — recorded per sample so the trade chart
                 # can plot how the CTR reading (and its crossover age) evolved.
                 ctr = self._ctr_snapshot(sym) or {}
+                # Live HOLD-score + Manual SL + distance-to-SL for richer replay.
+                hold_score = None
+                try:
+                    _sc = self._ff_score_dict(sym) if hasattr(self, '_ff_score_dict') else None
+                    if _sc is None:
+                        from detection.fuel_filter import get_fuel_filter
+                        _ff2 = get_fuel_filter()
+                        _sc = _ff2.score_dict(sym) if _ff2 else None
+                    hold_score = (_sc or {}).get('score')
+                except Exception:
+                    hold_score = None
+                try:
+                    _msl = float(pos.get('manual_sl') or 0) or None
+                except (TypeError, ValueError):
+                    _msl = None
+                dist_to_sl = None
+                if _msl and price:
+                    try:
+                        dist_to_sl = round((price - _msl) / price * 100.0
+                                           if side == 'LONG'
+                                           else (_msl - price) / price * 100.0, 3)
+                    except Exception:
+                        dist_to_sl = None
                 sample = {
                     't': int(now),
                     'price': price,
@@ -848,6 +871,10 @@ class TradeManager:
                     'ctr_stc': ctr.get('stc'),
                     'ctr_dir': ctr.get('last_dir'),
                     'ctr_age': ctr.get('last_signal_age_bars'),
+                    # ⭐ hold-score + Manual SL level + % distance price→SL.
+                    'hold_score': hold_score,
+                    'manual_sl': _msl,
+                    'dist_to_sl': dist_to_sl,
                     # 🔄 reversal-after-peak readiness % (stamped by the monitor).
                     'rev': pos.get('ctr_rev_pct'),
                     # ₿ BTCUSDT banner state + BTC ММ at this moment.
@@ -3491,8 +3518,15 @@ class TradeManager:
             # "how the trade actually went". Critical for tuning weights
             # and validating whether Entry Score has predictive value.
             'entry_score': pos.get('entry_score'),
+            # 🔬 Calibration fields (from the FF Q2 engine + monitors).
+            'mae_pnl_pct': pos.get('mae_pnl_pct'),
+            'ff_entry_score': pos.get('ff_entry_score'),
+            'ff_queue_wait_sec': pos.get('ff_queue_wait_sec'),
+            'ff_ctr_at_signal': pos.get('ff_ctr_at_signal'),
+            'ff_ctr_at_open': pos.get('ff_ctr_at_open'),
+            'ff_kind': pos.get('ff_kind'),
         }
-        
+
         with self._lock:
             self._positions.pop(symbol, None)
             self._pos_state.pop(symbol, None)
@@ -3899,8 +3933,15 @@ class TradeManager:
             # Same as real-position close — preserve the entry snapshot for
             # post-mortem analysis (was the entry score predictive?)
             'entry_score': pos.get('entry_score'),
+            # 🔬 Calibration fields (from the FF Q2 engine + monitors).
+            'mae_pnl_pct': pos.get('mae_pnl_pct'),
+            'ff_entry_score': pos.get('ff_entry_score'),
+            'ff_queue_wait_sec': pos.get('ff_queue_wait_sec'),
+            'ff_ctr_at_signal': pos.get('ff_ctr_at_signal'),
+            'ff_ctr_at_open': pos.get('ff_ctr_at_open'),
+            'ff_kind': pos.get('ff_kind'),
         }
-        
+
         with self._lock:
             self._shadow_positions.pop(symbol, None)
             self._shadow_pos_state.pop(symbol, None)
