@@ -666,9 +666,13 @@ class FuelFilterDaemon:
             self._engine_skip.pop(sym, None)
             print(f"[FF-Q2] видалено {sym}: протилежний CHoCH {side} (був у черзі {opp})")
             log_activity(sym, 'ejected', f'Черга-2: протилежний CHoCH {side} стер запис {opp}', side=side, source='Q2')
+        # SCORE + CTR readings at this moment — appended to queued/dropped/eject
+        # records so the 🧾 ДЕТАЛІ column shows WHY (per operator's request).
+        _sc_ctr = self._score_ctr_detail(sym)
+        _sc_ctr_sfx = f' | {_sc_ctr}' if _sc_ctr else ''
         if q1:
             _r1 = ' · новий тип замінив застарілий' if refreshed_q1 else ''
-            log_activity(sym, 'queued', f'Черга-1 · {_kind_lbl}{_r1}', side=side, source='Q1')
+            log_activity(sym, 'queued', f'Черга-1 · {_kind_lbl}{_r1}{_sc_ctr_sfx}', side=side, source='Q1')
         if q2_take:
             _r2 = ' · новий тип замінив застарілий' if refreshed_q2 else ''
             if q2_lean == side:
@@ -677,13 +681,13 @@ class FuelFilterDaemon:
                 _why = 'CTR ще невідомий — тримаємо, чекаємо CTR'
             else:   # queue-all: CTR opposite at signal time, held to clarify
                 _why = f'CTR проти ({q2_lean or "—"}) — тримаємо до вияснення (ставити всі)'
-            log_activity(sym, 'queued', f'Черга-2 · {_kind_lbl} ({_why}){_r2}', side=side, source='Q2')
+            log_activity(sym, 'queued', f'Черга-2 · {_kind_lbl} ({_why}){_r2}{_sc_ctr_sfx}', side=side, source='Q2')
         elif q2 and not q2_take:
             print(f"[FF-Q2] ігнор {sym} {side}: CTR-нахил {q2_lean or '—'} ≠ {side} (сигнал відкинуто)")
             if stale_removed_q2:
-                log_activity(sym, 'ejected', f'Черга-2: застарілий сигнал знято — новий {_kind_lbl} не пройшов CTR (нахил {q2_lean or "—"} ≠ {side})', side=side, source='Q2')
+                log_activity(sym, 'ejected', f'Черга-2: застарілий сигнал знято — новий {_kind_lbl} не пройшов CTR (нахил {q2_lean or "—"} ≠ {side}){_sc_ctr_sfx}', side=side, source='Q2')
             else:
-                log_activity(sym, 'dropped', f'Черга-2 · {_kind_lbl}: CTR-нахил {q2_lean or "—"} ≠ {side} — сигнал відкинуто', side=side, source='Q2')
+                log_activity(sym, 'dropped', f'Черга-2 · {_kind_lbl}: CTR-нахил {q2_lean or "—"} ≠ {side} — сигнал відкинуто{_sc_ctr_sfx}', side=side, source='Q2')
         print(f"[FuelFilter] intercepted {sym} {side} → Q1={q1} Q2={'take' if q2_take else ('drop' if q2 else 'off')}")
         # Return the ACTUAL disposition so the caller (and the chart marker) tell
         # the truth: 'queued' — added to a queue; 'dropped' — an enabled queue
@@ -2965,6 +2969,34 @@ class FuelFilterDaemon:
             return (side, abs(stc - 50.0) / 50.0 * 100.0)
         except Exception:
             return (None, 0.0)
+
+    def _score_ctr_detail(self, symbol: str) -> str:
+        """Compact «SCORE … | CTR …» string for the 🧾 log ДЕТАЛІ column, so a
+        queued/dropped record carries the exact SCORE + CTR readings at that
+        moment. Best-effort — returns '' on any failure (never breaks logging)."""
+        parts = []
+        try:
+            sc = self.score_dict(symbol) or {}
+            if sc.get('score') is not None:
+                lbl = self._score_label_ua(sc.get('label'))
+                sdir = sc.get('dir') or ''
+                parts.append(f"SCORE {int(sc['score'])} {lbl}"
+                             + (f"·{sdir}" if sdir else ''))
+        except Exception:
+            pass
+        try:
+            stc = (self._ctr_snapshot(symbol) or {}).get('stc')
+            lean_side, lean_pct = self._ctr_lean(symbol)
+            if stc is not None:
+                ctr_str = f"CTR STC {float(stc):.0f}"
+                ctr_str += (f" · нахил {lean_side} {lean_pct:.0f}%"
+                            if lean_side else " · нахил —")
+                parts.append(ctr_str)
+            else:
+                parts.append("CTR —")
+        except Exception:
+            pass
+        return ' | '.join(parts)
 
     def _engine_tick_q2(self):
         """⚡ Queue 2 engine — INDEPENDENT of ₿ START and the main LONG/SHORT
