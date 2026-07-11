@@ -2085,6 +2085,30 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="checkbox" id="ff-q2-reverse-via-queue" onchange="saveFuelFilterSettings()"> Реверс протилежної угоди <b>лише через Чергу-2</b> <span style="color:#8b93a7;font-size:0.68rem">(закривати стару й відкривати нову, тільки коли сигнал пройшов алгоритм)</span>
                         </label>
                     </div>
+                    <!-- Row 4b: PROFESSIONAL hold-and-wait entry algorithm -->
+                    <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-top:8px;border-top:1px dashed rgba(255,255,255,0.08);padding-top:8px">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Свіжий CHoCH за природою спрацьовує ПРОТИ CTR. Замість відкидати (open-rate ~2%), бот СТАВИТЬ у чергу кожен ЯКІСНИЙ сигнал (ENTRY score ≥ мін) незалежно від напрямку CTR і відкриває, коли CTR підтягнеться в бік сигналу (вхід на відкаті розвороту). Вимкнено = стара поведінка (відкидати на протилежному CTR).">
+                            <input type="checkbox" id="ff-q2-hold-and-wait" onchange="saveFuelFilterSettings()"> <b>Тримати+чекати</b> (проф. алгоритм) <span style="color:#8b93a7;font-size:0.68rem">(не відкидати на протилежному CTR — чекати підтягування)</span>
+                        </label>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:6px">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Мертва зона CTR: нахил зі силою < цього % рахується НЕЙТРАЛЬНИМ, а не «проти». Щоб дрібний 3% нахил не відкидав сильний сетап.">
+                            Нейтр. смуга CTR, %
+                            <input type="number" id="ff-q2-ctr-neutral" step="1" min="0" max="50" style="width:56px" onchange="saveFuelFilterSettings()">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Мінімальний ENTRY score (якість сетапу 0..100), щоб СТАТИ в Чергу-2. Відсіює ВИСНАЖЕНО/СЛАБКЕ.">
+                            Мін. ENTRY у чергу
+                            <input type="number" id="ff-q2-min-entry" step="1" min="0" max="100" style="width:56px" onchange="saveFuelFilterSettings()">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Мінімальний живий ENTRY score, щоб ВІДКРИТИ з Черги-2 (коли CTR у бік/нейтральний). Вищий за поріг постановки.">
+                            Мін. ENTRY на відкриття
+                            <input type="number" id="ff-q2-open-min-entry" step="1" min="0" max="100" style="width:56px" onchange="saveFuelFilterSettings()">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Сигнал у Черзі-2 протерміновується через стільки годин (з записом у лог), якщо так і не відкрився. 0 = без TTL.">
+                            TTL Черги-2, год
+                            <input type="number" id="ff-q2-ttl" step="0.5" min="0" max="72" style="width:56px" onchange="saveFuelFilterSettings()">
+                        </label>
+                    </div>
                     <!-- Row 5: auto Manual SL from the «Require OB Match» Order Block -->
                     <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-top:8px">
                         <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="У кожній ВІДКРИТІЙ угоді бот сам підставляє Manual SL із найближчого Order Block «Require OB Match» (той самий OB, що гейтить входи, TF = ob_filter_timeframe). LONG → нижня ціна OB − буфер%; SHORT → верхня ціна OB + буфер%. На протязі угоди SL постійно ПІДТЯГУЄТЬСЯ ближче до ціни, щойно з’являється кращий (ближчий) OB — і НІКОЛИ не послаблюється. Якщо ти вручну виставив Manual SL — авто-логіка його не чіпає. Діє на реальні й тестові угоди. Стоп спрацьовує через звичайну перевірку Manual SL.">
@@ -8021,6 +8045,11 @@ function renderFuelFilter(d) {
     setIf('ff-q2-hold-unknown-ctr', s.queue2_hold_unknown_ctr !== false); // default true
     setIf('ff-q2-queue-all', !!s.queue2_queue_all);           // default false
     setIf('ff-q2-reverse-via-queue', s.queue2_reverse_via_queue !== false); // default true
+    setIf('ff-q2-hold-and-wait', s.queue2_hold_and_wait !== false);      // default true
+    setIf('ff-q2-ctr-neutral', String(s.queue2_ctr_neutral_pct != null ? s.queue2_ctr_neutral_pct : 10));
+    setIf('ff-q2-min-entry', String(s.queue2_min_entry_score != null ? s.queue2_min_entry_score : 45));
+    setIf('ff-q2-open-min-entry', String(s.queue2_open_min_entry_score != null ? s.queue2_open_min_entry_score : 60));
+    setIf('ff-q2-ttl', String(s.queue2_ttl_hours != null ? s.queue2_ttl_hours : 6));
     setIf('ff-q2-auto-ob-sl', !!s.q2_auto_ob_sl);             // default false
     setIf('ff-q2-auto-ob-sl-buf', String(s.q2_auto_ob_sl_buffer_pct != null ? s.q2_auto_ob_sl_buffer_pct : 0.2));
     setIf('ff-q2-auto-ob-sl-tf', s.q2_auto_ob_sl_tf || '15m');
@@ -8639,6 +8668,11 @@ async function saveFuelFilterSettings() {
         queue2_hold_unknown_ctr: _c('ff-q2-hold-unknown-ctr'),
         queue2_queue_all: _c('ff-q2-queue-all'),
         queue2_reverse_via_queue: _c('ff-q2-reverse-via-queue'),
+        queue2_hold_and_wait: _c('ff-q2-hold-and-wait'),
+        queue2_ctr_neutral_pct: parseInt(_v('ff-q2-ctr-neutral', '10') || '10', 10),
+        queue2_min_entry_score: parseInt(_v('ff-q2-min-entry', '45') || '45', 10),
+        queue2_open_min_entry_score: parseInt(_v('ff-q2-open-min-entry', '60') || '60', 10),
+        queue2_ttl_hours: parseFloat(_v('ff-q2-ttl', '6') || '6'),
         q2_auto_ob_sl: _c('ff-q2-auto-ob-sl'),
         q2_auto_ob_sl_buffer_pct: parseFloat(_v('ff-q2-auto-ob-sl-buf', '0.2') || '0.2'),
         q2_auto_ob_sl_tf: (document.getElementById('ff-q2-auto-ob-sl-tf') || {}).value || '15m',

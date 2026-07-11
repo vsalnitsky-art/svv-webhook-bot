@@ -3049,17 +3049,28 @@ def register_api_routes(app):
             except (TypeError, ValueError):
                 return None
 
-        def _trade_export(c, is_shadow):
+        def _trade_export(c, is_shadow, is_open):
+            hist = list(c.get('history') or [])
+            # MAE (max adverse excursion) / MFE (peak) from the stored series +
+            # record fields — key for SL / risk calibration.
+            pnls = [h.get('pnl') for h in hist if h.get('pnl') is not None]
+            mae = min(pnls) if pnls else c.get('mae_pnl_pct')
+            mfe = c.get('peak_pnl_pct')
+            if pnls:
+                mfe = max([mfe] + pnls) if mfe is not None else max(pnls)
             return {
                 'is_shadow': is_shadow,
+                'is_open': is_open,
                 'market': 'paper' if is_shadow else 'real',
+                'status': 'open' if is_open else 'closed',
                 'side': c.get('side'),
                 'entry_price': c.get('entry_price'),
                 'exit_price': c.get('exit_price'),
                 'opened_at': c.get('opened_at'),
                 'closed_at': c.get('closed_at'),
                 'pnl_pct': c.get('pnl_pct'),
-                'peak_pnl_pct': c.get('peak_pnl_pct'),
+                'peak_pnl_pct': mfe,
+                'mae_pnl_pct': mae,
                 'exit_reason': c.get('reason'),
                 'exit_reason_detail': c.get('reason_detail'),
                 'ctr_open': c.get('ctr_open'),
@@ -3067,14 +3078,17 @@ def register_api_routes(app):
                 'entry_score': c.get('entry_score'),
                 'exit_decision': c.get('exit_decision'),
                 # The chronology the closed-trade tables store, renamed for clarity.
-                'chronology': list(c.get('history') or []),
+                'chronology': hist,
             }
 
-        # Index closed trades by symbol (both books).
+        # Index trades by symbol (both books, closed AND open).
         tindex = defaultdict(list)
         for is_shadow, key in ((False, 'real'), (True, 'shadow')):
             for c in trades.get(key, []) or []:
-                tindex[str(c.get('symbol', '')).upper()].append((is_shadow, c))
+                tindex[str(c.get('symbol', '')).upper()].append((is_shadow, False, c))
+        for is_shadow, key in ((False, 'open_real'), (True, 'open_shadow')):
+            for c in trades.get(key, []) or []:
+                tindex[str(c.get('symbol', '')).upper()].append((is_shadow, True, c))
 
         # Group events by symbol, then split each symbol's stream into sessions
         # at every «signal» event (same rule as the chart-marker tooltip).
@@ -3102,7 +3116,7 @@ def register_api_routes(app):
                 # is within ~2h of the session's «opened» event. Keep the closest
                 # real + closest paper (paper mirrors real → up to two).
                 cand = []
-                for is_shadow, c in tindex.get(sym, []):
+                for is_shadow, is_open, c in tindex.get(sym, []):
                     oa = _f(c.get('opened_at'))
                     if oa is None:
                         continue
@@ -3111,14 +3125,15 @@ def register_api_routes(app):
                                 and (start - 3600) <= oa <= (end + 3600))
                     near = abs(oa - anchor) <= 7200
                     if overlaps or near:
-                        cand.append((abs(oa - anchor), is_shadow, c))
+                        cand.append((abs(oa - anchor), is_shadow, is_open, c))
                 cand.sort(key=lambda x: x[0])
                 picked, seen = [], set()
-                for _, is_shadow, c in cand:
+                for _, is_shadow, is_open, c in cand:
+                    # Prefer whichever (closed/open) is closest per book; one per book.
                     if is_shadow in seen:
                         continue
                     seen.add(is_shadow)
-                    picked.append(_trade_export(c, is_shadow))
+                    picked.append(_trade_export(c, is_shadow, is_open))
                 sessions.append({
                     'session_id': sid,
                     'symbol': sym,
@@ -3136,9 +3151,10 @@ def register_api_routes(app):
             w = _csv.writer(buf)
             w.writerow(['session_id', 'time_iso', 'ts', 'symbol', 'side',
                         'event', 'source', 'detail',
-                        'trade_opened_iso', 'trade_closed_iso',
-                        'real_pnl_pct', 'real_exit_reason',
-                        'paper_pnl_pct', 'paper_exit_reason', 'hist_points'])
+                        'trade_status', 'trade_opened_iso', 'trade_closed_iso',
+                        'real_pnl_pct', 'real_mae_pct', 'real_exit_reason',
+                        'paper_pnl_pct', 'paper_mae_pct', 'paper_exit_reason',
+                        'hist_points'])
 
             def _iso(t):
                 try:
@@ -3151,16 +3167,19 @@ def register_api_routes(app):
                 any_tr = real or paper
                 oa = _iso(any_tr['opened_at']) if any_tr else ''
                 ca = _iso(any_tr['closed_at']) if any_tr else ''
+                st = any_tr['status'] if any_tr else ''
                 hp = max((len(t['chronology']) for t in s['trades']), default=0)
                 for e in s['events']:
                     w.writerow([
                         s['session_id'], _iso(e.get('t')), e.get('t'),
                         e.get('symbol'), e.get('side'), e.get('event'),
                         e.get('source'), e.get('detail'),
-                        oa, ca,
+                        st, oa, ca,
                         real.get('pnl_pct') if real else '',
+                        real.get('mae_pnl_pct') if real else '',
                         real.get('exit_reason') if real else '',
                         paper.get('pnl_pct') if paper else '',
+                        paper.get('mae_pnl_pct') if paper else '',
                         paper.get('exit_reason') if paper else '',
                         hp,
                     ])

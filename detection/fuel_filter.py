@@ -216,6 +216,31 @@ DEFAULT_SETTINGS = {
     #     it's ready to open. Also suppresses the raw-CHoCH reverse-close so the
     #     reversal is gated by Q2, not by the bare signal. Default ON.
     'queue2_reverse_via_queue': True,
+    # ── Queue 2 PROFESSIONAL entry algorithm (hold-and-wait) ──
+    #   queue2_hold_and_wait — a fresh CHoCH fires AGAINST the CTR lean by nature,
+    #     so dropping on opposite CTR at signal time throws away ~76% of setups
+    #     (open-rate ~2%). Instead: QUEUE every QUALITY signal (ENTRY score ≥
+    #     min), regardless of CTR direction, and open it once CTR pulls into
+    #     alignment (a reversal-pullback entry). Default ON — the professional
+    #     path. OFF = legacy drop-on-opposite-CTR.
+    'queue2_hold_and_wait': True,
+    #   queue2_ctr_neutral_pct — CTR dead-zone. A lean whose strength
+    #     (|STC−50|/50·100) is BELOW this counts as NEUTRAL, not «against». Stops
+    #     a trivial 3% lean from rejecting a strong setup. Matches the ±0.1 band
+    #     used for the ₿ verdict.
+    'queue2_ctr_neutral_pct': 10,
+    #   queue2_min_entry_score — minimum ENTRY score (0..100, setup quality — NOT
+    #     the hold score) required to ENTER Queue 2. Keeps ВИСНАЖЕНО/СЛАБКЕ trash
+    #     out of the queue.
+    'queue2_min_entry_score': 45,
+    #   queue2_open_min_entry_score — minimum live ENTRY score required to OPEN
+    #     from Queue 2 (with CTR aligned/neutral). Higher than the queue-in bar so
+    #     only setups that stayed strong actually fire.
+    'queue2_open_min_entry_score': 60,
+    #   queue2_ttl_hours — a queued signal expires after this many hours (logged
+    #     «протерміновано») instead of lingering for 4-7h until an opposite CHoCH
+    #     ejects it. 0 = no TTL.
+    'queue2_ttl_hours': 6,
     #   q2_auto_ob_sl — auto-manage each open trade's Manual SL from the nearest
     #     «Require OB Match» Order Block: LONG → OB low − buffer%, SHORT → OB high
     #     + buffer%. Ratchets tighter as a BETTER (closer) OB forms; never loosens.
@@ -495,6 +520,23 @@ class FuelFilterDaemon:
         s['queue2_hold_unknown_ctr'] = bool(s.get('queue2_hold_unknown_ctr', True))
         s['queue2_queue_all'] = bool(s.get('queue2_queue_all', False))
         s['queue2_reverse_via_queue'] = bool(s.get('queue2_reverse_via_queue', True))
+        s['queue2_hold_and_wait'] = bool(s.get('queue2_hold_and_wait', True))
+        try:
+            s['queue2_ctr_neutral_pct'] = max(0, min(50, int(s.get('queue2_ctr_neutral_pct', 10) or 0)))
+        except (TypeError, ValueError):
+            s['queue2_ctr_neutral_pct'] = 10
+        try:
+            s['queue2_min_entry_score'] = max(0, min(100, int(s.get('queue2_min_entry_score', 45) or 0)))
+        except (TypeError, ValueError):
+            s['queue2_min_entry_score'] = 45
+        try:
+            s['queue2_open_min_entry_score'] = max(0, min(100, int(s.get('queue2_open_min_entry_score', 60) or 0)))
+        except (TypeError, ValueError):
+            s['queue2_open_min_entry_score'] = 60
+        try:
+            s['queue2_ttl_hours'] = max(0.0, min(72.0, float(s.get('queue2_ttl_hours', 6) or 0)))
+        except (TypeError, ValueError):
+            s['queue2_ttl_hours'] = 6
         s['q2_auto_ob_sl'] = bool(s.get('q2_auto_ob_sl', False))
         try:
             s['queue2_eject_ctr_pct'] = max(0, min(100, int(s.get('queue2_eject_ctr_pct', 20) or 20)))
@@ -600,18 +642,32 @@ class FuelFilterDaemon:
             return ''   # both queues OFF → do NOT intercept; open directly
         now = time.time()
         opp = 'SHORT' if side == 'LONG' else 'LONG'
-        # Q2 CTR lean at signal time (read the cached forecast OUTSIDE the lock).
-        q2_lean = self._ctr_lean_side(sym) if q2 else None
-        # «Невідомо ≠ проти»: if CTR isn't computed yet (lean None) and the
-        # setting allows, HOLD the signal (queue it) instead of dropping — the
-        # engine will open/eject once CTR appears.
-        _q2_unknown = bool(q2 and q2_lean is None)
+        # ⭐ PROFESSIONAL Q2 entry decision (hold-and-wait). A fresh CHoCH fires
+        # AGAINST the CTR lean by nature, so we DON'T drop on opposite CTR — we
+        # queue every QUALITY setup (ENTRY score ≥ min) and let the engine open it
+        # once CTR pulls into alignment (reversal-pullback entry). ENTRY score is
+        # the SETUP metric (signal type + OB confluence + CTR timing + fuel +
+        # graded momentum), NOT the noisy hold-SCORE.
+        _band = float(s.get('queue2_ctr_neutral_pct', 10) or 0)
+        entry = self._entry_score_for(sym, side, kind) if q2 else None
+        _ctr_state, _ctr_stc, _ctr_pct = (self._ctr_state(sym, _band) if q2
+                                          else ('none', None, 0.0))
+        _hold_and_wait = bool(s.get('queue2_hold_and_wait', True))
         _hold_unknown = bool(s.get('queue2_hold_unknown_ctr', True))
-        # «Ставити в чергу ВСІ»: queue every signal regardless of CTR at signal
-        # time (even opposite) and let the engine sort it out — instead of drop.
         _queue_all = bool(s.get('queue2_queue_all', False))
-        q2_take = bool(q2 and (_queue_all or q2_lean == side
-                               or (_q2_unknown and _hold_unknown)))
+        _min_q = int(s.get('queue2_min_entry_score', 45) or 0)
+        _entry_score = int(entry['score']) if entry else 0
+        _quality_ok = bool(q2 and _entry_score >= _min_q)
+        if q2 and _hold_and_wait:
+            # Queue any quality signal regardless of CTR direction.
+            q2_take = _quality_ok
+        elif q2:
+            # Legacy gate: also require CTR aligned / neutral / unknown at signal.
+            _ctr_ok = (_ctr_state == side or _ctr_state == 'neutral'
+                       or (_ctr_state == 'none' and _hold_unknown) or _queue_all)
+            q2_take = bool(_quality_ok and _ctr_ok)
+        else:
+            q2_take = False
         # ⚡ Queue 2 opposite-CHoCH eject (default ON): the SAME coin arriving with
         # the OPPOSITE direction invalidates any waiting Q2 entry — drop it even if
         # THIS new signal isn't queued (its CTR gate may drop it, or it may go
@@ -651,7 +707,8 @@ class FuelFilterDaemon:
                 _keep2 = (prev2.get('dir') == side and prev2.get('kind') == kind
                           and prev2.get('added_at'))
                 self._pending2[sym] = {'dir': side, 'kind': kind,
-                                       'added_at': prev2.get('added_at') if _keep2 else now}
+                                       'added_at': prev2.get('added_at') if _keep2 else now,
+                                       'entry_score': _entry_score}
                 changed = True
             elif q2:
                 # New same-dir signal of a DIFFERENT type that did NOT pass the
@@ -673,21 +730,38 @@ class FuelFilterDaemon:
         if q1:
             _r1 = ' · новий тип замінив застарілий' if refreshed_q1 else ''
             log_activity(sym, 'queued', f'Черга-1 · {_kind_lbl}{_r1}{_sc_ctr_sfx}', side=side, source='Q1')
+        # ENTRY-score + CTR-state suffix for Q2 records (the SETUP metric).
+        def _ctr_words(state, stc, pct):
+            if state == 'none':
+                return 'CTR —'
+            if state == 'neutral':
+                return f'CTR нейтральний (STC {stc:.0f})'
+            return f'CTR нахил {state} {pct:.0f}%'
+        _entry_lbl = self._score_label_ua(entry['label']) if entry else '—'
+        _q2_sfx = (f' | ENTRY {_entry_score} {_entry_lbl} | '
+                   f'{_ctr_words(_ctr_state, _ctr_stc, _ctr_pct)}') if q2 else ''
         if q2_take:
             _r2 = ' · новий тип замінив застарілий' if refreshed_q2 else ''
-            if q2_lean == side:
-                _why = 'CTR-нахил у бік сигналу'
-            elif _q2_unknown:
-                _why = 'CTR ще невідомий — тримаємо, чекаємо CTR'
-            else:   # queue-all: CTR opposite at signal time, held to clarify
-                _why = f'CTR проти ({q2_lean or "—"}) — тримаємо до вияснення (ставити всі)'
-            log_activity(sym, 'queued', f'Черга-2 · {_kind_lbl} ({_why}){_r2}{_sc_ctr_sfx}', side=side, source='Q2')
+            if _ctr_state == side:
+                _why = 'CTR у бік сигналу'
+            elif _ctr_state == 'neutral':
+                _why = 'CTR нейтральний — чекаємо підтягування'
+            elif _ctr_state == 'none':
+                _why = 'CTR ще не порахований — чекаємо'
+            else:   # opposite → held (hold-and-wait), waiting for CTR pullback
+                _why = 'CTR поки проти — тримаємо до розвороту CTR (hold&wait)'
+            log_activity(sym, 'queued', f'Черга-2 · {_kind_lbl} ({_why}){_r2}{_q2_sfx}', side=side, source='Q2')
         elif q2 and not q2_take:
-            print(f"[FF-Q2] ігнор {sym} {side}: CTR-нахил {q2_lean or '—'} ≠ {side} (сигнал відкинуто)")
-            if stale_removed_q2:
-                log_activity(sym, 'ejected', f'Черга-2: застарілий сигнал знято — новий {_kind_lbl} не пройшов CTR (нахил {q2_lean or "—"} ≠ {side}){_sc_ctr_sfx}', side=side, source='Q2')
+            # Not queued → quality too low (hold&wait) or CTR gate (legacy).
+            if _entry_score < _min_q:
+                _drx = f'ENTRY {_entry_score} < мін {_min_q} — сетап заслабкий'
             else:
-                log_activity(sym, 'dropped', f'Черга-2 · {_kind_lbl}: CTR-нахил {q2_lean or "—"} ≠ {side} — сигнал відкинуто{_sc_ctr_sfx}', side=side, source='Q2')
+                _drx = f'CTR {_ctr_state} ≠ {side}'
+            print(f"[FF-Q2] відхилено {sym} {side}: {_drx}")
+            if stale_removed_q2:
+                log_activity(sym, 'ejected', f'Черга-2: застарілий {_kind_lbl} знято — {_drx}{_q2_sfx}', side=side, source='Q2')
+            else:
+                log_activity(sym, 'dropped', f'Черга-2 · {_kind_lbl}: {_drx} — відхилено{_q2_sfx}', side=side, source='Q2')
         print(f"[FuelFilter] intercepted {sym} {side} → Q1={q1} Q2={'take' if q2_take else ('drop' if q2 else 'off')}")
         # Return the ACTUAL disposition so the caller (and the chart marker) tell
         # the truth: 'queued' — added to a queue; 'dropped' — an enabled queue
@@ -1128,6 +1202,154 @@ class FuelFilterDaemon:
             return ('SHORT', 1.0)
         return (None, 0.0)
 
+    def _candle_momentum_graded(self, symbol, tf='5m', bars=3):
+        """GRADED price momentum (replaces the binary 2-candle vote in SCORE).
+        Signed net move over the last `bars` CLOSED candles, normalised by ATR so
+        it is comparable across coins, mapped to 0..1 magnitude. Returns
+        (dir, strength): dir ∈ {'LONG','SHORT',None}, strength 0..1 that SCALES
+        with the real size of the move — a big impulse scores far higher than a
+        pair of dojis (the old binary flaw). (None, 0.0) when data is thin."""
+        try:
+            kl = self._candle_klines(symbol, tf)
+        except Exception:
+            kl = None
+        if not kl or len(kl) < bars + 2:
+            return (None, 0.0)
+        closed = kl[:-1]                      # drop the still-forming bar
+        seg = closed[-bars:]
+        try:
+            net = float(seg[-1].get('p', 0)) - float(seg[0].get('o', 0))
+        except (TypeError, ValueError):
+            return (None, 0.0)
+        # ATR over up to the last 14 closed bars (Wilder-ish simple mean of TR).
+        trs = []
+        for i in range(1, len(closed)):
+            try:
+                h = float(closed[i].get('h', 0)); l = float(closed[i].get('l', 0))
+                pc = float(closed[i - 1].get('p', 0))
+            except (TypeError, ValueError):
+                continue
+            trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+        trs = trs[-14:]
+        atr = (sum(trs) / len(trs)) if trs else 0.0
+        if atr <= 0:
+            return (None, 0.0)
+        # Normalise: a move of ~1×(ATR·√bars) → strength ≈ 1.0 (full momentum).
+        z = net / (atr * (bars ** 0.5))
+        strength = max(0.0, min(1.0, abs(z)))
+        d = 'LONG' if net > 0 else ('SHORT' if net < 0 else None)
+        return (d, strength)
+
+    def _ctr_state(self, symbol: str, band_pct: float = 0.0):
+        """CTR reading as (state, stc, pct) with a NEUTRAL dead-zone:
+          state ∈ 'none'    — no CTR data (STC is None → truly unknown),
+                  'neutral' — STC present but |lean| < band_pct (incl. exactly 50),
+                  'LONG'/'SHORT' — a real lean of ≥ band_pct.
+        Fixes the old bug where STC==50 was reported as «CTR невідомий»: 50 is a
+        computed NEUTRAL value, not missing data. pct = |STC−50|/50·100."""
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            stc = ((fe.get(symbol) or {}).get('ctr') or {}).get('stc') if fe else None
+        except Exception:
+            stc = None
+        if stc is None:
+            return ('none', None, 0.0)
+        try:
+            stc = float(stc)
+        except (TypeError, ValueError):
+            return ('none', None, 0.0)
+        pct = abs(stc - 50.0) / 50.0 * 100.0
+        try:
+            band = float(band_pct or 0)
+        except (TypeError, ValueError):
+            band = 0.0
+        if pct < band:
+            return ('neutral', stc, pct)
+        if stc > 50:
+            return ('SHORT', stc, pct)
+        if stc < 50:
+            return ('LONG', stc, pct)
+        return ('neutral', stc, pct)
+
+    def _entry_score_for(self, symbol: str, side: str, kind=None) -> Dict:
+        """⭐ ENTRY score (0..100) — SETUP quality for a candidate entry, evaluated
+        STRICTLY in the SIGNAL direction (`side`). Separate from `_timer_score_for`
+        (which is HOLD quality of an already-open trade and lets price momentum
+        hijack the direction). Deterministic, professional weighting:
+
+          • signal (15%)   — CHoCH+BOS (confirmed) > bare CHoCH.
+          • ob     (25%)   — «Require OB Match» OB agrees with `side` (fresh CHoCH-
+                             created OB scores full; BOS-created less; none/opposite 0).
+          • ctr    (20%)   — CTR TIMING: lean in `side` scores by strength; NEUTRAL
+                             (dead-zone) is half credit (fine for a pullback entry);
+                             opposite lean scores 0 (but does NOT drop — hold&wait).
+          • fuel   (20%)   — liq-fuel imbalance aligned with `side`.
+          • mom    (20%)   — GRADED price momentum aligned with `side`.
+
+        Returns {score,label,color,dir(=side),components}."""
+        side = (side or '').upper()
+        s = self.get_settings()
+        comp = {}
+        # 1) Signal type.
+        k = (kind or '').lower()
+        comp['signal'] = 1.0 if k == 'choch_bos' else (0.7 if k == 'choch' else 0.5)
+        # 2) OB confluence (same «Require OB Match» row the gate/auto-SL use).
+        ob_c = 0.0
+        try:
+            from storage.db_operations import get_db
+            ob_tf = '1h'
+            tm = self._get_tm() if self._get_tm else None
+            scanner = getattr(tm, 'scanner', None) if tm else None
+            if scanner is not None:
+                ob_tf = scanner._settings.get('ob_filter_timeframe', '1h')
+            row = get_db().get_smc_ob_state(symbol, ob_tf)
+            if row and row.get('bias'):
+                wanted = 'BULLISH' if side == 'LONG' else 'BEARISH'
+                if row.get('bias') == wanted:
+                    ob_c = 1.0 if (row.get('created_by_tag') or '').upper() == 'CHOCH' else 0.6
+        except Exception:
+            ob_c = 0.0
+        comp['ob'] = ob_c
+        # 3) CTR timing (with neutral dead-zone).
+        band = float(s.get('queue2_ctr_neutral_pct', 10) or 0)
+        state, stc, pct = self._ctr_state(symbol, band)
+        if state == side:
+            comp['ctr'] = max(0.4, min(1.0, pct / 100.0))
+        elif state in ('neutral', 'none'):
+            comp['ctr'] = 0.5
+        else:
+            comp['ctr'] = 0.0        # opposite lean → 0 credit (still queued)
+        # 4) Fuel aligned with side.
+        fmag = 0.0
+        try:
+            fd = self._fuel_dir_smoothed(symbol)
+            signed = float(fd['dir']) if fd and fd.get('dir') is not None else None
+            if signed is not None:
+                aligned = signed if side == 'LONG' else -signed
+                fmag = max(0.0, min(1.0, aligned / 0.35))
+        except Exception:
+            fmag = 0.0
+        comp['fuel'] = fmag
+        # 5) Graded momentum aligned with side.
+        mom = 0.0
+        try:
+            tf = s.get('engine_candle_tf', '5m')
+            mdir, mstr = self._candle_momentum_graded(symbol, tf)
+            if mdir == side:
+                mom = mstr
+        except Exception:
+            mom = 0.0
+        comp['mom'] = mom
+        score = 100.0 * (0.15 * comp['signal'] + 0.25 * comp['ob']
+                         + 0.20 * comp['ctr'] + 0.20 * comp['fuel']
+                         + 0.20 * comp['mom'])
+        score = int(round(max(0.0, min(100.0, score))))
+        label, color = self._score_label(score)
+        return {'score': score, 'label': label, 'color': color,
+                'dir': side, 'components': comp,
+                'ctr_state': state, 'ctr_stc': stc, 'ctr_pct': round(pct, 1)}
+
     def _timer_score_for(self, symbol, direction, held_sec, exhaustion,
                          dur_sec, tf='5m'):
         """Per-coin hold quality + its OWN live direction.
@@ -1161,7 +1383,12 @@ class FuelFilterDaemon:
             pass
 
         # Price momentum (what the coin is actually doing now).
-        price_dir, pstrength = self._candle_momentum(symbol, tf)
+        # GRADED momentum (magnitude-scaled, not the old binary 2-candle vote).
+        # A tiny/mixed move (< 0.25) is treated as NO clear momentum so noise
+        # can't set the displayed direction — direction then falls to fuel/timer.
+        price_dir, pstrength = self._candle_momentum_graded(symbol, tf)
+        if pstrength < 0.25:
+            price_dir = None
 
         # Displayed direction: price action wins, then fuel, then timer.
         live_dir = price_dir or fuel_dir or direction
@@ -1214,10 +1441,11 @@ class FuelFilterDaemon:
             score = min(score, 38)        # → WEAK at best
         # Exhaustion override (FF exits on exhaustion).
         if exf is not None:
+            # Exhaustion already drives `room` (30% weight) — keep only a single
+            # HARD safety floor at ≥90 (avoid double-counting; the old ≥80→38 cap
+            # was removed as it double-penalised what `room` already handles).
             if exf >= 90:
-                score = min(score, 22)    # → EXHAUSTED
-            elif exf >= 80:
-                score = min(score, 38)    # → WEAK
+                score = min(score, 22)    # → EXHAUSTED (safety floor)
         label, color = self._score_label(score)
         # Fuel STRENGTH 0..100 = |fuel imbalance| × 100 (how lopsided the
         # liquidity is). |dir| ≤ 0.1 (≤10%) → no direction; higher = stronger.
@@ -2852,7 +3080,9 @@ class FuelFilterDaemon:
             from detection.market_data import get_market_data
             md = get_market_data()
             if md:
-                kl = md.fetch_klines(symbol, limit=6, interval=tf)
+                # 30 bars → enough history for a graded ATR-normalised momentum
+                # (needs ATR over ~14 bars), not just the last 2.
+                kl = md.fetch_klines(symbol, limit=30, interval=tf)
         except Exception:
             kl = None
         if kl:
@@ -2985,15 +3215,14 @@ class FuelFilterDaemon:
         except Exception:
             pass
         try:
-            stc = (self._ctr_snapshot(symbol) or {}).get('stc')
-            lean_side, lean_pct = self._ctr_lean(symbol)
-            if stc is not None:
-                ctr_str = f"CTR STC {float(stc):.0f}"
-                ctr_str += (f" · нахил {lean_side} {lean_pct:.0f}%"
-                            if lean_side else " · нахил —")
-                parts.append(ctr_str)
+            band = float(self.get_settings().get('queue2_ctr_neutral_pct', 10) or 0)
+            state, stc, pct = self._ctr_state(symbol, band)
+            if state == 'none':
+                parts.append("CTR —")            # truly no data (STC is None)
+            elif state == 'neutral':
+                parts.append(f"CTR STC {stc:.0f} · нейтральний")
             else:
-                parts.append("CTR —")
+                parts.append(f"CTR STC {stc:.0f} · нахил {state} {pct:.0f}%")
         except Exception:
             pass
         return ' | '.join(parts)
@@ -3021,6 +3250,25 @@ class FuelFilterDaemon:
                 continue
             if sym in self._fuel_managed:
                 continue
+            # ⏳ TTL — a queued signal that never opened expires (logged) instead
+            # of lingering for hours until an opposite CHoCH ejects it.
+            ttl_h = float(s.get('queue2_ttl_hours', 6) or 0)
+            if ttl_h > 0:
+                _added = float(info.get('added_at') or 0)
+                if _added and (time.time() - _added) > ttl_h * 3600:
+                    with self._lock:
+                        self._pending2.pop(sym, None)
+                        self._persist_state()
+                    self._engine_skip.pop(sym, None)
+                    print(f"[FF-Q2] протерміновано {sym} {d}: у черзі > {ttl_h:.0f}год")
+                    try:
+                        from detection.activity_log import log_activity
+                        log_activity(sym, 'ejected',
+                                     f'Черга-2: протерміновано (у черзі > {ttl_h:.0f}год без відкриття)',
+                                     side=d, source='Q2')
+                    except Exception:
+                        pass
+                    continue
             # TM already holds this coin?
             #   • SAME direction → drop (dedup, no duplicate).
             #   • OPPOSITE direction → if «reverse via Queue 2» is ON, DON'T drop:
@@ -3057,16 +3305,20 @@ class FuelFilterDaemon:
                 except Exception:
                     pass
                 continue
-            # Filter: SCORE == STRONG HOLD in `d` AND CTR lean == `d`.
-            sc = self._score_cache.get(sym) or {}
-            score_dir = sc.get('dir')
-            score_label = sc.get('label')
-            if score_label != 'STRONG HOLD' or score_dir != d:
-                self._engine_skip[sym] = (f'Черга-2: SCORE {self._score_label_ua(score_label)}·'
-                                          f'{score_dir or "—"} ≠ СИЛЬНЕ УТРИМАННЯ·{d}')
+            # ⭐ OPEN gate (professional, deterministic): live ENTRY score ≥ the
+            # open threshold AND CTR no longer OPPOSING (aligned, or neutral in
+            # the dead-zone = the pullback is done). Opposite CTR keeps waiting.
+            band = float(s.get('queue2_ctr_neutral_pct', 10) or 0)
+            state, stc_v, pct_v = self._ctr_state(sym, band)
+            entry = self._entry_score_for(sym, d, info.get('kind'))
+            open_min = int(s.get('queue2_open_min_entry_score', 60) or 0)
+            if entry['score'] < open_min:
+                self._engine_skip[sym] = (f'Черга-2: ENTRY {entry["score"]}·{d} < {open_min} '
+                                          f'— чекаємо кращий сетап')
                 continue
-            if lean != d:
-                self._engine_skip[sym] = f'Черга-2: CTR-нахил нейтральний — чекаємо {d}'
+            if state == opp:
+                self._engine_skip[sym] = (f'Черга-2: CTR ще проти ({state} {pct_v:.0f}%) '
+                                          f'— чекаємо розвороту CTR')
                 continue
             # Optional main-buttons gate (default OFF): when queue2_use_buttons is
             # ON, Queue 2 opens only for a direction the LONG/SHORT buttons allow.
@@ -3093,7 +3345,7 @@ class FuelFilterDaemon:
                         log_activity(sym, 'closed', f'Черга-2 РЕВЕРС: закрито {_pside} (сигнал {d} пройшов Чергу-2)', side=_pside, source='Q2')
                     except Exception:
                         pass
-            _ob = '⚡ Q2 РЕВЕРС' if _did_reverse else '⚡ Q2 STRONG+CTR'
+            _ob = '⚡ Q2 РЕВЕРС' if _did_reverse else '⚡ Q2 ENTRY+CTR'
             try:
                 opened = self._open(sym, d, fuel, s, opened_by=_ob)
             except Exception as e:
@@ -3105,10 +3357,17 @@ class FuelFilterDaemon:
                                          'start_price': fuel.get('mark_price')}
                     self._pending2.pop(sym, None)
                 self._engine_skip.pop(sym, None)
-                print(f"[FF-Q2] opened {d} {sym} (STRONG HOLD+CTR aligned)")
+                # Queue wait (signal→open latency) — a key calibration metric.
+                _wait = time.time() - float(info.get('added_at') or time.time())
+                _wlbl = (f"{_wait/3600:.1f}год" if _wait >= 3600
+                         else f"{int(_wait/60)}хв")
+                _ctr_lbl = (state if state in ('LONG', 'SHORT') else 'нейтральний')
+                print(f"[FF-Q2] opened {d} {sym} (ENTRY {entry['score']}, CTR {state}, чекав {_wlbl})")
                 try:
                     from detection.activity_log import log_activity
-                    log_activity(sym, 'opened', 'Черга-2: SCORE=СИЛЬНЕ УТРИМАННЯ + CTR збіглись', side=d, source='Q2')
+                    log_activity(sym, 'opened',
+                                 f'Черга-2 відкрито: ENTRY {entry["score"]}·{d} + CTR {_ctr_lbl} · чекав {_wlbl}',
+                                 side=d, source='Q2')
                 except Exception:
                     pass
 

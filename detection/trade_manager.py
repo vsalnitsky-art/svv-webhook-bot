@@ -463,14 +463,18 @@ class TradeManager:
                 print(f"[TM] Closed-trades persist error: {e}")
     
     def export_closed_trades(self) -> Dict:
-        """Full closed-trade records (real + paper) WITH their per-trade history
-        (chronology) — for the 🧾 activity-log analytical export, which links each
-        log session to the trade it produced. Deep-ish copies under the lock so
-        the caller can serialise without racing the monitor thread."""
+        """Full trade records (real + paper), CLOSED and currently-OPEN, WITH
+        their per-trade history (chronology) — for the 🧾 activity-log analytical
+        export, which links each log session to the trade it produced. Open trades
+        are included so a freshly-opened position (still running) is linked too,
+        not only after it closes. Deep-ish copies under the lock."""
         with self._lock:
             real = [dict(c) for c in self._closed_trades]
             shadow = [dict(c) for c in self._shadow_closed]
-        return {'real': real, 'shadow': shadow}
+            open_real = [dict(p) for p in self._positions.values()]
+            open_shadow = [dict(p) for p in self._shadow_positions.values()]
+        return {'real': real, 'shadow': shadow,
+                'open_real': open_real, 'open_shadow': open_shadow}
 
     def _load_shadow_positions(self):
         if not self.db:
@@ -1119,6 +1123,9 @@ class TradeManager:
             # restart (the ephemeral _pos_state is rebuilt on load).
             if current_pnl_pct > pos.get('peak_pnl_pct', 0):
                 pos['peak_pnl_pct'] = round(current_pnl_pct, 4)
+            # MAE — max adverse excursion (worst drawdown), for SL/risk analytics.
+            if current_pnl_pct < pos.get('mae_pnl_pct', 0):
+                pos['mae_pnl_pct'] = round(current_pnl_pct, 4)
 
         # Backfill entry snapshots that were unavailable at the exact open moment
         # (CTR / Decision data can lag the open by a tick). Filled ONCE — so the
@@ -1414,6 +1421,9 @@ class TradeManager:
             # Mirror onto the persisted shadow-position dict (survives restart).
             if cur_pnl > pos.get('peak_pnl_pct', 0):
                 pos['peak_pnl_pct'] = round(cur_pnl, 4)
+            # MAE — max adverse excursion (worst drawdown), for SL/risk analytics.
+            if cur_pnl < pos.get('mae_pnl_pct', 0):
+                pos['mae_pnl_pct'] = round(cur_pnl, 4)
             _peak = sst.get('peak_pnl_pct') if sst else None
 
         # Backfill entry snapshots that were unavailable at the exact open moment
