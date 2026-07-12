@@ -3501,6 +3501,14 @@ class FuelFilterDaemon:
                     continue
             # Optional ₿ BTCUSDT-banner gate (default OFF): open only in the
             # committed ₿ session direction; ₿ WAIT/ПАУЗА or no dir → hold.
+            # NOTE(calibration — DEFERRED, decide with data): today an opposite-
+            # side signal is still QUEUED and only BLOCKED here at open (it waits
+            # until TTL/eject). OPEN QUESTION for the analysis phase: should we
+            # instead DROP the opposite side at SIGNAL time (in intercept) when a
+            # directional gate (₿ / buttons) is active — no point filling the
+            # queue with a side that can't open? Buttons = manual intent (likely
+            # yes); ₿ can flip soon (maybe hold-until-flip). Resolve by looking at
+            # how the ₿ bar behaved during trades (chronology btc_dir/btc_paused).
             if s.get('queue2_use_btc'):
                 _sess = self.get_btc_session() or {}
                 _bdir, _bpaused = _sess.get('dir'), bool(_sess.get('paused'))

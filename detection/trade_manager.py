@@ -804,6 +804,14 @@ class TradeManager:
         interval = max(10, interval)
         # Cheap live maps (single call each), tolerant of FF being absent.
         mm_map, exh_map = {}, {}
+        # NOTE(calibration — DO WHEN DATA READY): the ₿ session (btc_dir/
+        # btc_paused/btc_mm) is sampled into every chronology point below. When the
+        # data is ready, ANALYSE how the ₿ bar behaved DURING each trade's life —
+        # did a ₿ flip / WAIT-pause against the position precede drawdowns/losses?
+        # did staying aligned with ₿ correlate with winners? This decides (a)
+        # whether to gate Queue-2 opens by ₿ (queue2_use_btc) and (b) the deferred
+        # question of DROPPING opposite-side signals at signal time when a
+        # directional gate (₿ / buttons) is active, instead of queuing them.
         btc_dir, btc_paused, btc_mm = None, None, None
         try:
             from detection.fuel_filter import get_fuel_filter
