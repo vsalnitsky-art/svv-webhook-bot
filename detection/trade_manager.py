@@ -856,10 +856,12 @@ class TradeManager:
                 # than price (heavy: LONG+SHORT eval + context) so we can see how
                 # the verdict evolved intra-trade without loading the -w1 worker.
                 dec_reco = dec_verdict = dec_prob = dec_score = None
+                mtf_align = mtf_trend = mtf_timing = None
                 try:
-                    if self._settings.get('entry_score_enabled', True):
-                        _dec_iv = int(self._settings.get('trade_log_decision_interval_sec', 180) or 180)
-                        if (now - float(pos.get('_last_dec_at', 0))) >= max(60, _dec_iv):
+                    _dec_iv = int(self._settings.get('trade_log_decision_interval_sec', 180) or 180)
+                    if (now - float(pos.get('_last_dec_at', 0))) >= max(60, _dec_iv):
+                        _due = True
+                        if self._settings.get('entry_score_enabled', True):
                             _dec = self.compute_decision(sym, price)
                             if _dec:
                                 dec_reco = _dec.get('recommended')
@@ -868,7 +870,18 @@ class TradeManager:
                                             else _dec.get('prob_short'))
                                 dec_score = (_dec.get('long_score') if side == 'LONG'
                                              else _dec.get('short_score'))
-                                pos['_last_dec_at'] = now
+                        # Multi-TF CTR confluence trajectory (same cadence).
+                        try:
+                            from detection.fuel_filter import get_fuel_filter
+                            _ff3 = get_fuel_filter()
+                            _mtf = _ff3._ctr_confluence(sym, side) if _ff3 else None
+                            if _mtf:
+                                mtf_align = _mtf.get('align')
+                                mtf_trend = _mtf.get('trend')
+                                mtf_timing = _mtf.get('timing')
+                        except Exception:
+                            pass
+                        pos['_last_dec_at'] = now
                 except Exception:
                     pass
                 try:
@@ -903,6 +916,10 @@ class TradeManager:
                     'dec_verdict': dec_verdict,
                     'dec_prob': dec_prob,
                     'dec_score': dec_score,
+                    # ⚡ Multi-TF CTR confluence trajectory (same cadence).
+                    'mtf_align': mtf_align,
+                    'mtf_trend': mtf_trend,
+                    'mtf_timing': mtf_timing,
                     # 🔄 reversal-after-peak readiness % (stamped by the monitor).
                     'rev': pos.get('ctr_rev_pct'),
                     # ₿ BTCUSDT banner state + BTC ММ at this moment.
@@ -3557,6 +3574,10 @@ class TradeManager:
             'ff_dec_score': pos.get('ff_dec_score'),
             'ff_dec_reco': pos.get('ff_dec_reco'),
             'ff_dec_verdict': pos.get('ff_dec_verdict'),
+            # Multi-TF CTR confluence at open (record-only, for validation).
+            'ff_ctr_mtf_align': pos.get('ff_ctr_mtf_align'),
+            'ff_ctr_mtf_trend': pos.get('ff_ctr_mtf_trend'),
+            'ff_ctr_mtf_timing': pos.get('ff_ctr_mtf_timing'),
         }
 
         with self._lock:
@@ -3976,6 +3997,10 @@ class TradeManager:
             'ff_dec_score': pos.get('ff_dec_score'),
             'ff_dec_reco': pos.get('ff_dec_reco'),
             'ff_dec_verdict': pos.get('ff_dec_verdict'),
+            # Multi-TF CTR confluence at open (record-only, for validation).
+            'ff_ctr_mtf_align': pos.get('ff_ctr_mtf_align'),
+            'ff_ctr_mtf_trend': pos.get('ff_ctr_mtf_trend'),
+            'ff_ctr_mtf_timing': pos.get('ff_ctr_mtf_timing'),
         }
 
         with self._lock:

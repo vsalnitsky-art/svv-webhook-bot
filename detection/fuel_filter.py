@@ -241,6 +241,13 @@ DEFAULT_SETTINGS = {
     #     «протерміновано») instead of lingering for 4-7h until an opposite CHoCH
     #     ejects it. 0 = no TTL.
     'queue2_ttl_hours': 6,
+    #   ctr_mtf — multi-timeframe CTR confluence (RECORD-ONLY for now, does NOT
+    #     gate). A fresh CHoCH is contrarian to the single 15m CTR by nature;
+    #     reading STC across TFs separates TREND context (1h/4h) from ENTRY timing
+    #     (5m/15m) so we can later prove whether multi-TF alignment predicts PnL
+    #     better than the single 15m CTR — then optionally gate on it.
+    'ctr_mtf_enabled': True,
+    'ctr_mtf_tfs': ['5m', '15m', '45m', '1h', '4h'],
     #   q2_auto_ob_sl — auto-manage each open trade's Manual SL from the nearest
     #     «Require OB Match» Order Block: LONG → OB low − buffer%, SHORT → OB high
     #     + buffer%. Ratchets tighter as a BETTER (closer) OB forms; never loosens.
@@ -537,6 +544,12 @@ class FuelFilterDaemon:
             s['queue2_ttl_hours'] = max(0.0, min(72.0, float(s.get('queue2_ttl_hours', 6) or 0)))
         except (TypeError, ValueError):
             s['queue2_ttl_hours'] = 6
+        s['ctr_mtf_enabled'] = bool(s.get('ctr_mtf_enabled', True))
+        _valid_tfs = ('5m', '15m', '30m', '45m', '1h', '2h', '4h')
+        _tfs = s.get('ctr_mtf_tfs') or ['5m', '15m', '45m', '1h', '4h']
+        if isinstance(_tfs, str):
+            _tfs = [t.strip().lower() for t in _tfs.split(',') if t.strip()]
+        s['ctr_mtf_tfs'] = [t for t in _tfs if t in _valid_tfs] or ['5m', '15m', '45m', '1h', '4h']
         s['q2_auto_ob_sl'] = bool(s.get('q2_auto_ob_sl', False))
         try:
             s['queue2_eject_ctr_pct'] = max(0, min(100, int(s.get('queue2_eject_ctr_pct', 20) or 20)))
@@ -767,6 +780,10 @@ class FuelFilterDaemon:
             _dec = self._decision_compact(sym, _fd.get('mark_price'), side)
             if _dec:
                 _x['dec'] = _dec
+            # Multi-TF CTR confluence (record-only) — trend vs timing across TFs.
+            _mtf = self._ctr_confluence(sym, side)
+            if _mtf:
+                _x['ctr_mtf'] = _mtf
         if q2_take:
             _r2 = ' · новий тип замінив застарілий' if refreshed_q2 else ''
             if _ctr_state == side:
@@ -1298,6 +1315,69 @@ class FuelFilterDaemon:
         if stc < 50:
             return ('LONG', stc, pct)
         return ('neutral', stc, pct)
+
+    def _ctr_confluence(self, symbol: str, side: Optional[str] = None) -> Optional[Dict]:
+        """⚡ Multi-timeframe CTR confluence — RECORD-ONLY (does not gate yet).
+        Reads STC on each configured TF and splits the picture into TREND context
+        (1h/4h) vs ENTRY timing (5m/15m), with the same neutral dead-zone as the
+        single-TF gate. Returns a compact dict for the 🧾 log + chronology so we
+        can later test whether multi-TF alignment predicts PnL better than the
+        lone 15m CTR (then optionally gate on it).
+
+        NOTE(calibration — DO WHEN DATA READY): validate `align` vs realised PnL;
+        if it beats the single-TF CTR, wire it into the Queue-2 open gate. The
+        trend/timing split and weights below are a PROVISIONAL first cut."""
+        try:
+            s = self.get_settings()
+            if not s.get('ctr_mtf_enabled', True):
+                return None
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if not fe or not hasattr(fe, 'get_ctr_multi_tf'):
+                return None
+            tfs = list(s.get('ctr_mtf_tfs') or ['5m', '15m', '45m', '1h', '4h'])
+            band = float(s.get('queue2_ctr_neutral_pct', 10) or 0)
+            m = fe.get_ctr_multi_tf(symbol, tfs)
+        except Exception:
+            return None
+
+        def _st(stc):
+            if stc is None:
+                return ('none', 0.0)
+            pct = abs(float(stc) - 50.0) / 50.0 * 100.0
+            if pct < band:
+                return ('neutral', pct)
+            return (('SHORT', pct) if stc > 50 else ('LONG', pct))
+
+        TREND_TFS = {'1h', '2h', '4h'}
+        TIMING_TFS = {'5m', '15m'}
+        per, trend_votes, timing_votes = {}, [], []
+        for tf in tfs:
+            stc = (m.get(tf) or {}).get('stc')
+            st, pct = _st(stc)
+            per[tf] = {'stc': stc, 'state': st, 'pct': round(pct, 1)}
+            if st in ('LONG', 'SHORT'):
+                if tf in TREND_TFS:
+                    trend_votes.append(st)
+                if tf in TIMING_TFS:
+                    timing_votes.append(st)
+
+        def _majority(votes):
+            if not votes:
+                return None
+            l, sh = votes.count('LONG'), votes.count('SHORT')
+            return 'LONG' if l > sh else ('SHORT' if sh > l else None)
+
+        trend = _majority(trend_votes)
+        timing = _majority(timing_votes)
+        align = None
+        if side in ('LONG', 'SHORT'):
+            score = 0.0
+            score += 60 if trend == side else (30 if trend is None else 0)
+            score += 40 if timing == side else (20 if timing is None else 0)
+            align = int(round(score))
+        return {'per_tf': per, 'trend': trend, 'timing': timing,
+                'align': align, 'side': side}
 
     def _decision_compact(self, symbol: str, price, side=None) -> Optional[Dict]:
         """Compact Decision Center snapshot (the MATURE evaluate_entry model in
@@ -3443,6 +3523,7 @@ class FuelFilterDaemon:
                 # MATURE Decision Center at open — recorded for the calibration
                 # comparison (FF ENTRY score vs Decision Center → realised PnL).
                 _dec = self._decision_compact(sym, fuel.get('mark_price'), d)
+                _mtf = self._ctr_confluence(sym, d)
                 # Stamp calibration fields onto the trade record (survives to close).
                 self._stamp_entry_meta(sym, {
                     'ff_entry_score': entry['score'],
@@ -3455,6 +3536,9 @@ class FuelFilterDaemon:
                     'ff_dec_score': (_dec or {}).get('score'),
                     'ff_dec_reco': (_dec or {}).get('reco'),
                     'ff_dec_verdict': (_dec or {}).get('verdict'),
+                    'ff_ctr_mtf_align': (_mtf or {}).get('align'),
+                    'ff_ctr_mtf_trend': (_mtf or {}).get('trend'),
+                    'ff_ctr_mtf_timing': (_mtf or {}).get('timing'),
                 })
                 print(f"[FF-Q2] opened {d} {sym} (ENTRY {entry['score']}, CTR {state}, чекав {_wlbl})")
                 try:
@@ -3468,7 +3552,7 @@ class FuelFilterDaemon:
                                         'ctr_at_signal': info.get('ctr_signal'),
                                         'kind': info.get('kind'),
                                         'price': fuel.get('mark_price'),
-                                        'dec': _dec})
+                                        'dec': _dec, 'ctr_mtf': _mtf})
                 except Exception:
                     pass
 

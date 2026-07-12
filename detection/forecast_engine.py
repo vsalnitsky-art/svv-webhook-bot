@@ -446,6 +446,51 @@ class ForecastEngine:
     def __init__(self):
         self._lock = threading.RLock()
         self._cache: Dict[str, Dict] = {}
+        # Per-(symbol, tf) STC cache for the multi-TF CTR confluence — separate
+        # from _cache (which holds one CTR per symbol on the configured ctr_tf).
+        self._ctr_mtf: Dict = {}
+
+    # Per-TF cache TTL — higher TFs change slowly, so refresh them less often.
+    # This is what STAGGERS the cost: a 5m STC refetches ~every 60s, a 4h every
+    # 15 min, so a repeated multi-TF read mostly hits cache. (Only called for the
+    # few coins in Queue-2 / open positions, not the whole scan universe.)
+    _CTR_MTF_TTL = {'5m': 60, '15m': 120, '30m': 180, '45m': 240,
+                    '1h': 300, '2h': 600, '4h': 900}
+
+    def get_ctr_tf(self, symbol: str, tf: str, max_age: Optional[float] = None) -> Dict:
+        """Cached STC reading for ONE timeframe: {stc, last_dir, age, tf}.
+        Recomputes (fetch klines → calc_ctr) only when older than the per-TF TTL.
+        Best-effort — returns {stc:None,...} on any failure (never raises)."""
+        from detection.market_data import get_market_data
+        sym = (symbol or '').upper()
+        tf = str(tf or '').lower()
+        now = time.time()
+        ttl = max_age if max_age is not None else self._CTR_MTF_TTL.get(tf, 300)
+        key = (sym, tf)
+        with self._lock:
+            c = self._ctr_mtf.get(key)
+        if c and (now - c[0]) < ttl:
+            return c[1]
+        res = {'stc': None, 'last_dir': None, 'age': None, 'tf': tf}
+        try:
+            md = get_market_data()
+            if (md and hasattr(md, 'fetch_klines')
+                    and 'interval' in md.fetch_klines.__code__.co_varnames):
+                kl = md.fetch_klines(sym, limit=200, interval=tf)
+                if kl and len(kl) > 1:
+                    closes = [k['p'] for k in kl[:-1]]     # drop forming bar
+                    r = calc_ctr(closes)
+                    res = {'stc': r.get('stc'), 'last_dir': r.get('last_dir'),
+                           'age': r.get('last_signal_age_bars'), 'tf': tf}
+        except Exception:
+            pass
+        with self._lock:
+            self._ctr_mtf[key] = (now, res)
+        return res
+
+    def get_ctr_multi_tf(self, symbol: str, tfs: List[str]) -> Dict:
+        """{tf: {stc,last_dir,age}} for each requested timeframe (cached)."""
+        return {tf: self.get_ctr_tf(symbol, tf) for tf in (tfs or [])}
     
     def update(self, symbol: str, ltf_klines: Optional[List[Dict]] = None,
                ctr_tf: Optional[str] = None) -> Dict:

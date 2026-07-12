@@ -3099,6 +3099,10 @@ def register_api_routes(app):
                 'dec_score': c.get('ff_dec_score'),
                 'dec_reco': c.get('ff_dec_reco'),
                 'dec_verdict': c.get('ff_dec_verdict'),
+                # Multi-TF CTR confluence at open (record-only, validation).
+                'ctr_mtf_align': c.get('ff_ctr_mtf_align'),
+                'ctr_mtf_trend': c.get('ff_ctr_mtf_trend'),
+                'ctr_mtf_timing': c.get('ff_ctr_mtf_timing'),
                 'time_in_trade_sec': tit,
                 'bars_to_peak': btp,
                 # The chronology the closed-trade tables store, renamed for clarity.
