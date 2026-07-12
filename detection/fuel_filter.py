@@ -1426,6 +1426,13 @@ class FuelFilterDaemon:
         s = self.get_settings()
         comp = {}
         # 1) Signal type.
+        # NOTE(calibration — DO WHEN DATA READY): the CHoCH+BOS > CHoCH ranking
+        # (1.0 vs 0.7) is an ASSUMPTION. When the monitoring + chronology sample
+        # is ready, SPLIT the closed trades by `ff_kind` (choch vs choch_bos) —
+        # both are exported per trade — and compare win-rate / avg PnL / MAE /
+        # MFE / time-to-peak. Determine which signal type is MAXIMALLY profitable
+        # (and whether the edge differs by direction / CTR-mtf alignment), then
+        # RE-SET these weights (or gate/queue only the winning type) from data.
         k = (kind or '').lower()
         comp['signal'] = 1.0 if k == 'choch_bos' else (0.7 if k == 'choch' else 0.5)
         # 2) OB confluence (same «Require OB Match» row the gate/auto-SL use).
