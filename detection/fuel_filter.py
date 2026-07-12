@@ -195,6 +195,12 @@ DEFAULT_SETTINGS = {
     #     the main LONG/SHORT buttons allow (like Queue 1). Default OFF → Queue 2
     #     opens independently of the buttons.
     'queue2_use_buttons': False,
+    #   queue2_use_btc        — when ON, Queue 2 opens ONLY in the committed ₿
+    #     BTCUSDT session direction (the banner): a LONG signal opens only while
+    #     the ₿ session is LONG (active, not paused), SHORT only while ₿ is SHORT.
+    #     ₿ WAIT/ПАУЗА or no direction → hold (don't open). Composes (AND) with
+    #     queue2_use_buttons. Default OFF → Queue 2 ignores the ₿ banner.
+    'queue2_use_btc': False,
     #   queue2_hold_unknown_ctr — when CTR data is NOT yet available at signal
     #     time (lean = «—»), HOLD the signal in Queue 2 instead of dropping it,
     #     and wait for CTR to appear (the engine opens/ejects once it does).
@@ -524,6 +530,7 @@ class FuelFilterDaemon:
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
         s['queue2_use_buttons'] = bool(s.get('queue2_use_buttons', False))
+        s['queue2_use_btc'] = bool(s.get('queue2_use_btc', False))
         s['queue2_hold_unknown_ctr'] = bool(s.get('queue2_hold_unknown_ctr', True))
         s['queue2_queue_all'] = bool(s.get('queue2_queue_all', False))
         s['queue2_reverse_via_queue'] = bool(s.get('queue2_reverse_via_queue', True))
@@ -3491,6 +3498,20 @@ class FuelFilterDaemon:
                 allow_long, allow_short = self._entry_gates()
                 if (d == 'LONG' and not allow_long) or (d == 'SHORT' and not allow_short):
                     self._engine_skip[sym] = f'Черга-2: кнопка {d} вимкнена — чекаємо'
+                    continue
+            # Optional ₿ BTCUSDT-banner gate (default OFF): open only in the
+            # committed ₿ session direction; ₿ WAIT/ПАУЗА or no dir → hold.
+            if s.get('queue2_use_btc'):
+                _sess = self.get_btc_session() or {}
+                _bdir, _bpaused = _sess.get('dir'), bool(_sess.get('paused'))
+                if not _bdir:
+                    self._engine_skip[sym] = 'Черга-2: ₿ сеанс без напрямку — чекаємо'
+                    continue
+                if _bpaused:
+                    self._engine_skip[sym] = f'Черга-2: ₿ {_bdir} · ПАУЗА — чекаємо'
+                    continue
+                if d != _bdir:
+                    self._engine_skip[sym] = f'Черга-2: ₿ сеанс {_bdir} ≠ {d} — чекаємо'
                     continue
             # Both align → open (₿ START independent; buttons optional per setting).
             fuel = self._fuel_dir_smoothed(sym)

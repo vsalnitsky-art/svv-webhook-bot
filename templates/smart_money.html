@@ -2063,6 +2063,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоди Черги-2 лише за напрямком, дозволеним основними кнопками LONG/SHORT (як у Черги-1). Вимкнено = Черга-2 відкриває незалежно від кнопок.">
                             <input type="checkbox" id="ff-q2-use-buttons" onchange="saveFuelFilterSettings()"> Відкривати за основними кнопками <b>LONG/SHORT</b>
                         </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоди Черги-2 ЛИШЕ за напрямком сеансу ₿ BTCUSDT (банер): LONG-сигнал відкривається лише коли ₿ = LONG (активний, не пауза), SHORT — лише коли ₿ = SHORT. ₿ WAIT/ПАУЗА або без напрямку → тримати. Комбінується (І) з кнопками LONG/SHORT. Вимкнено = Черга-2 ігнорує банер ₿.">
+                            <input type="checkbox" id="ff-q2-use-btc" onchange="saveFuelFilterSettings()"> Відкривати за <b>₿ BTCUSDT</b> баром
+                        </label>
                     </div>
                     <!-- Row 2: eject on opposite CHoCH · hold on unknown CTR -->
                     <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
@@ -8042,6 +8045,7 @@ function renderFuelFilter(d) {
     setIf('ff-q2-eject-ctr-pct', String(s.queue2_eject_ctr_pct != null ? s.queue2_eject_ctr_pct : 20));
     setIf('ff-q2-eject-choch', s.queue2_eject_choch !== false); // default true
     setIf('ff-q2-use-buttons', !!s.queue2_use_buttons);        // default false
+    setIf('ff-q2-use-btc', !!s.queue2_use_btc);                // default false
     setIf('ff-q2-hold-unknown-ctr', s.queue2_hold_unknown_ctr !== false); // default true
     setIf('ff-q2-queue-all', !!s.queue2_queue_all);           // default false
     setIf('ff-q2-reverse-via-queue', s.queue2_reverse_via_queue !== false); // default true
@@ -8665,6 +8669,7 @@ async function saveFuelFilterSettings() {
         queue2_eject_ctr_pct: parseInt(_v('ff-q2-eject-ctr-pct', '20') || '20', 10),
         queue2_eject_choch: _c('ff-q2-eject-choch'),
         queue2_use_buttons: _c('ff-q2-use-buttons'),
+        queue2_use_btc: _c('ff-q2-use-btc'),
         queue2_hold_unknown_ctr: _c('ff-q2-hold-unknown-ctr'),
         queue2_queue_all: _c('ff-q2-queue-all'),
         queue2_reverse_via_queue: _c('ff-q2-reverse-via-queue'),
