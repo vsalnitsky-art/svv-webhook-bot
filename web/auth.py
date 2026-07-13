@@ -647,7 +647,7 @@ def register_auth_routes(app):
         if not u.is_admin:
             return abort(403)
         return _page('Користувачі', _admin_users_body(), script=_admin_script(),
-                     width=880)
+                     width=1120)
 
     @app.route('/api/admin/users')
     def api_admin_users():
@@ -686,12 +686,41 @@ def register_auth_routes(app):
             if target.id == me.id:
                 return jsonify({'ok': False, 'error': 'не можна зняти себе'})
             _update_user(uid, is_admin=False)
+        elif action == 'set_password':
+            pw = d.get('password') or ''
+            if len(pw) < MIN_PASSWORD_LEN:
+                return jsonify({'ok': False, 'error': f'Мінімум {MIN_PASSWORD_LEN} символів'})
+            _update_user(uid, password_hash=generate_password_hash(pw))
+        elif action == 'resend':
+            token = _make_token(target.email, 'confirm')
+            link = f"{_base_url()}/confirm/{token}"
+            send_email(target.email, 'Підтвердження реєстрації',
+                       f'<p>Підтвердіть email для доступу до бота:</p>'
+                       f'<p><a href="{link}">{link}</a></p>', link=link)
         elif action == 'delete':
             if target.id == me.id:
                 return jsonify({'ok': False, 'error': 'не можна видалити себе'})
             _delete_user(uid)
         else:
             return jsonify({'ok': False, 'error': 'unknown action'})
+        return jsonify({'ok': True})
+
+    @app.route('/api/admin/users/create', methods=['POST'])
+    def api_admin_user_create():
+        if not current_user().is_admin:
+            return jsonify({'ok': False, 'error': 'forbidden'}), 403
+        d = request.get_json(silent=True) or {}
+        email = _norm_email(d.get('email'))
+        pw = d.get('password') or ''
+        if not _EMAIL_RE.match(email):
+            return jsonify({'ok': False, 'error': 'Невірний email'})
+        if len(pw) < MIN_PASSWORD_LEN:
+            return jsonify({'ok': False, 'error': f'Пароль мінімум {MIN_PASSWORD_LEN} символів'})
+        if get_user_by_email(email):
+            return jsonify({'ok': False, 'error': 'Такий email уже існує'})
+        # Admin-created accounts are ACTIVE immediately (email confirmed + approved).
+        create_user(email, pw, is_admin=bool(d.get('is_admin')),
+                    email_confirmed=True, approved=True)
         return jsonify({'ok': True})
 
 
@@ -763,60 +792,119 @@ def _reset_form(token, err=''):
 
 
 def _admin_users_body():
-    return ('<h1>🛡 Керування користувачами</h1>'
-            '<p class="sub">Новий акаунт активний лише після підтвердження email '
-            'ТА схвалення адміністратора</p>'
-            '<div id="smtp" class="msg" style="display:none"></div>'
-            '<div style="overflow-x:auto"><table id="tbl"><thead><tr>'
-            '<th>Email</th><th>Статус</th><th>Роль</th><th>Створено</th><th>Дії</th>'
-            '</tr></thead><tbody></tbody></table></div>'
-            '<div class="links"><a href="/cabinet">← Кабінет</a> · '
-            '<a href="/">Дашборд</a> · <a href="/logout">Вийти</a></div>')
+    return (
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">'
+        '<div><h1 style="margin:0">🛡 Керування користувачами</h1>'
+        '<p class="sub" style="margin:4px 0 0">Новий акаунт активний лише після '
+        'підтвердження email ТА схвалення адміністратора</p></div>'
+        '<div><a class="actbtn" href="/cabinet">👤 Кабінет</a> '
+        '<a class="actbtn" href="/">📊 Дашборд</a> '
+        '<a class="actbtn" href="/logout" style="color:#fca5a5">Вийти</a></div></div>'
+        # stat cards
+        '<div id="stats" style="display:flex;gap:10px;flex-wrap:wrap;margin:14px 0"></div>'
+        '<div id="smtp" class="msg" style="display:none"></div>'
+        # toolbar: search + create
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0 4px">'
+        '<input id="q" placeholder="🔎 пошук за email…" style="max-width:260px" oninput="render()">'
+        '<select id="flt" onchange="render()" style="max-width:200px">'
+        '<option value="all">Усі</option>'
+        '<option value="pending">Очікують схвалення</option>'
+        '<option value="active">Активні</option>'
+        '<option value="admin">Адміни</option>'
+        '<option value="disabled">Вимкнені</option></select>'
+        '<button class="actbtn" style="margin-left:auto" onclick="toggleCreate()">➕ Створити користувача</button>'
+        '</div>'
+        # create form (hidden)
+        '<div id="createbox" style="display:none;margin:6px 0;padding:12px;border:1px dashed #2a3140;border-radius:10px">'
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">'
+        '<div><label>Email</label><input id="c_email" type="email" style="width:220px"></div>'
+        '<div><label>Пароль (мін. 8)</label><input id="c_pw" type="text" style="width:180px"></div>'
+        '<label style="display:flex;align-items:center;gap:6px;margin:0"><input id="c_adm" type="checkbox" style="width:auto"> адмін</label>'
+        '<button class="actbtn" onclick="createUser()">Створити (одразу активний)</button>'
+        '</div><div id="c_msg" style="font-size:.75rem;margin-top:6px;color:#fca5a5"></div></div>'
+        # table
+        '<div style="overflow-x:auto"><table id="tbl"><thead><tr>'
+        '<th>#</th><th>Email</th><th>Роль</th><th>Email</th><th>Схвалення</th>'
+        '<th>Активність</th><th>Створено</th><th>Останній вхід</th><th>Дії</th>'
+        '</tr></thead><tbody></tbody></table></div>'
+        '<p id="empty" class="sub" style="display:none;text-align:center;margin:16px 0">Нічого не знайдено</p>')
 
 
 def _admin_script():
     return """
+    let USERS=[], LINKS={}, ME=null;
     async function load(){
       const d=await (await fetch('/api/admin/users')).json();
+      USERS=d.users||[]; LINKS=d.pending_links||{};
+      const s=document.getElementById('smtp');
+      if(!d.smtp){ s.style.display='block'; s.className='msg err';
+        s.innerHTML='⚠ SMTP не налаштований — листи не надсилаються. Посилання підтвердження показані в таблиці (dev-режим). Задайте SMTP_HOST/PORT/USER/PASS/FROM у env для авто-розсилки.'; }
+      else { s.style.display='none'; }
+      stats(); render();
+    }
+    function stats(){
+      const t=USERS.length, adm=USERS.filter(u=>u.is_admin).length,
+            act=USERS.filter(u=>u.active).length,
+            pend=USERS.filter(u=>!u.approved&&!u.is_admin).length,
+            dis=USERS.filter(u=>u.disabled).length;
+      const card=(n,l,c)=>`<div style="flex:1;min-width:120px;background:#0e1219;border:1px solid rgba(255,255,255,.07);border-radius:10px;padding:10px 14px"><div style="font-size:1.4rem;font-weight:800;color:${c}">${n}</div><div class="sub" style="margin:0">${l}</div></div>`;
+      document.getElementById('stats').innerHTML=
+        card(t,'усього','#e5e7eb')+card(pend,'очікують схвалення','#fbbf24')+
+        card(act,'активні','#4ade80')+card(adm,'адміни','#fde68a')+card(dis,'вимкнені','#9aa3b5');
+    }
+    function render(){
+      const q=(document.getElementById('q').value||'').toLowerCase();
+      const flt=document.getElementById('flt').value;
       const tb=document.querySelector('#tbl tbody'); tb.innerHTML='';
-      if(!d.smtp){
-        const s=document.getElementById('smtp'); s.style.display='block';
-        s.className='msg err';
-        s.innerHTML='⚠ SMTP не налаштований — листи не надсилаються. Посилання підтвердження нижче (dev). Задайте SMTP_HOST/PORT/USER/PASS/FROM у env.';
-      }
-      for(const u of d.users){
-        const st=[];
-        st.push(u.email_confirmed?'<span class="badge b-on">email ✓</span>':'<span class="badge b-off">email ✗</span>');
-        st.push(u.approved?'<span class="badge b-on">схвалено</span>':'<span class="badge b-off">очікує</span>');
-        if(u.disabled) st.push('<span class="badge b-off">вимкнено</span>');
-        if(u.active) st.push('<span class="badge b-on">активний</span>');
-        const role=u.is_admin?'<span class="badge b-adm">адмін</span>':'—';
-        const pl=(d.pending_links&&d.pending_links[u.email])?d.pending_links[u.email].link:null;
+      let list=USERS.filter(u=>u.email.toLowerCase().includes(q));
+      if(flt==='pending') list=list.filter(u=>!u.approved&&!u.is_admin);
+      else if(flt==='active') list=list.filter(u=>u.active);
+      else if(flt==='admin') list=list.filter(u=>u.is_admin);
+      else if(flt==='disabled') list=list.filter(u=>u.disabled);
+      document.getElementById('empty').style.display=list.length?'none':'block';
+      for(const u of list){
+        const pl=LINKS[u.email]?LINKS[u.email].link:null;
+        const role=u.is_admin?'<span class="badge b-adm">адмін</span>':'<span class="badge b-off">користувач</span>';
+        const em=u.email_confirmed?'<span class="badge b-on">✓ підтв.</span>':'<span class="badge b-off">✗ ні</span>';
+        const ap=u.approved?'<span class="badge b-on">✓ схвалено</span>':'<span class="badge b-off">очікує</span>';
+        const ac=u.disabled?'<span class="badge b-off">вимкнено</span>':(u.active?'<span class="badge b-on">активний</span>':'<span class="badge b-off">неактивний</span>');
         let act='';
-        if(!u.approved) act+=btn(u.id,'approve','✓ Схвалити');
-        else act+=btn(u.id,'revoke','⨯ Відкликати');
-        if(!u.email_confirmed) act+=btn(u.id,'confirm','✉ Підтвердити email');
-        act+= u.disabled?btn(u.id,'enable','Увімкнути'):btn(u.id,'disable','Вимкнути');
+        act+= u.approved?btn(u.id,'revoke','⨯ Відкликати'):btn(u.id,'approve','✓ Схвалити');
+        if(!u.email_confirmed){ act+=btn(u.id,'confirm','✉ Підтв. email'); act+=btn(u.id,'resend','↻ Лист'); }
+        act+= u.disabled?btn(u.id,'enable','▶ Увімкнути'):btn(u.id,'disable','⏸ Вимкнути');
         act+= u.is_admin?btn(u.id,'remove_admin','− Адмін'):btn(u.id,'make_admin','+ Адмін');
-        act+=btn(u.id,'delete','🗑');
+        act+=`<button class="actbtn" onclick="setpw(${u.id})">🔑 Пароль</button>`;
+        act+=`<button class="actbtn" style="color:#fca5a5" onclick="act(${u.id},'delete')">🗑</button>`;
         const tr=document.createElement('tr');
-        tr.innerHTML=`<td>${u.email}${pl?`<div style="font-size:.66rem;color:#60a5fa;word-break:break-all">🔗 ${pl}</div>`:''}</td>`+
-          `<td>${st.join(' ')}</td><td>${role}</td>`+
-          `<td style="font-size:.7rem;color:#9aa3b5">${(u.created_at||'').slice(0,16).replace('T',' ')}</td>`+
-          `<td>${act}</td>`;
+        tr.innerHTML=`<td style="color:#9aa3b5">${u.id}</td>`+
+          `<td>${u.email}${pl?`<div style="font-size:.64rem;color:#60a5fa;word-break:break-all">🔗 <a href="${pl}" style="color:#60a5fa">${pl}</a></div>`:''}</td>`+
+          `<td>${role}</td><td>${em}</td><td>${ap}</td><td>${ac}</td>`+
+          `<td style="font-size:.68rem;color:#9aa3b5;white-space:nowrap">${fmt(u.created_at)}</td>`+
+          `<td style="font-size:.68rem;color:#9aa3b5;white-space:nowrap">${fmt(u.last_login)||'—'}</td>`+
+          `<td style="white-space:nowrap">${act}</td>`;
         tb.appendChild(tr);
       }
     }
+    function fmt(s){return s?String(s).slice(0,16).replace('T',' '):'';}
     function btn(id,a,label){return `<button class="actbtn" onclick="act(${id},'${a}')">${label}</button>`}
-    async function act(id,a){
-      if(a==='delete'&&!confirm('Видалити користувача?'))return;
-      const r=await fetch('/api/admin/users/'+id,{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({action:a})});
-      const d=await r.json();
-      if(!d.ok)alert(d.error||'Помилка');
-      load();
+    async function act(id,a,extra){
+      if(a==='delete'&&!confirm('Видалити користувача назавжди?'))return;
+      const body=Object.assign({action:a},extra||{});
+      const r=await fetch('/api/admin/users/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json(); if(!d.ok)alert(d.error||'Помилка'); load();
     }
-    load();"""
+    function setpw(id){ const p=prompt('Новий пароль для користувача (мін. 8 символів):'); if(!p)return; act(id,'set_password',{password:p}); }
+    function toggleCreate(){ const b=document.getElementById('createbox'); b.style.display=b.style.display==='none'?'block':'none'; }
+    async function createUser(){
+      const email=document.getElementById('c_email').value, pw=document.getElementById('c_pw').value,
+            adm=document.getElementById('c_adm').checked, m=document.getElementById('c_msg');
+      const r=await fetch('/api/admin/users/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pw,is_admin:adm})});
+      const d=await r.json();
+      if(!d.ok){ m.textContent=d.error||'Помилка'; return; }
+      m.textContent=''; document.getElementById('c_email').value=''; document.getElementById('c_pw').value=''; document.getElementById('c_adm').checked=false;
+      toggleCreate(); load();
+    }
+    load(); setInterval(load, 15000);"""
 
 
 # ==================================================================
