@@ -4,20 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}VSV Bot{% endblock %}</title>
-    <link rel="icon" type="image/png" href="{{ url_for('static', filename='vsv-logo.png') }}">
-    <link rel="apple-touch-icon" href="{{ url_for('static', filename='vsv-logo.png') }}">
+    <link rel="icon" type="image/png" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/favicon.ico">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     {% block head %}{% endblock %}
 </head>
 <body>
     <nav class="navbar">
         <div class="nav-brand">
-            <img src="{{ url_for('static', filename='vsv-logo.png') }}" alt="VSV"
+            <img src="/favicon.ico" alt="VSV"
                  class="logo" style="width:30px;height:30px;border-radius:7px;object-fit:cover;vertical-align:middle"
                  onerror="this.style.display='none';this.nextElementSibling.style.display='inline'">
             <span class="logo" style="display:none">🪝</span>
             <span class="brand-text">VSV Bot</span>
         </div>
+        {% if auth_user %}
+        <div id="nav-user-chip" style="display:flex;align-items:center;gap:9px;font-size:0.78rem;color:#cbd5e1;margin-left:16px;white-space:nowrap">
+            <span>👤 {{ auth_user.email }}</span>
+            <span style="color:#9aa3b5">· {{ 'адмін' if auth_user.is_admin else 'перегляд' }}</span>
+            {% if auth_user.is_admin %}<a href="/admin/users" title="Керування користувачами" style="color:#fde68a;text-decoration:none">🛡</a>{% endif %}
+            <a href="/cabinet" style="color:#60a5fa;text-decoration:none">кабінет</a>
+            <a href="/logout" style="color:#fca5a5;text-decoration:none">вийти</a>
+        </div>
+        {% endif %}
         <div class="nav-links">
             <a href="{{ url_for('smart_money_page') }}" class="nav-link {% if request.endpoint == 'smart_money_page' %}active{% endif %}">🎯 Smart Money</a>
             <a href="{{ url_for('tickr_page') }}" class="nav-link {% if request.endpoint == 'tickr_page' %}active{% endif %}">📡 Tickr</a>
@@ -31,6 +40,8 @@
             <a href="{{ url_for('signals_page') }}" class="nav-link {% if request.endpoint == 'signals_page' %}active{% endif %}">Signals</a>
             <a href="{{ url_for('trades_page') }}" class="nav-link {% if request.endpoint == 'trades_page' %}active{% endif %}">Trades</a>
             #}
+            <a href="/cabinet" class="nav-link">👤 Кабінет</a>
+            {% if auth_user and auth_user.is_admin %}<a href="/admin/users" class="nav-link">🛡 Користувачі</a>{% endif %}
             <a href="{{ url_for('settings_page') }}" class="nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}">⚙️</a>
             <a href="{{ url_for('database_admin') }}" class="nav-link {% if request.endpoint == 'database_admin' %}active{% endif %}">🗄️ DB</a>
         </div>

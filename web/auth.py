@@ -351,10 +351,19 @@ def install_auth_gate(app):
                 return abort(403)
         return None
 
+    @app.context_processor
+    def _inject_auth_user():
+        # Expose the current user to Jinja templates (base.html nav chip).
+        try:
+            return {'auth_user': current_user()}
+        except Exception:
+            return {'auth_user': None}
+
     @app.after_request
     def _inject_user_chip(resp):
-        # Floating «кабінет · вийти» chip on full HTML pages (avoids editing every
-        # template). Skips auth pages, JSON, streamed and non-200 responses.
+        # Floating «кабінет · вийти» chip — ONLY for authenticated HTML pages that
+        # DON'T already render the top-nav account chip (id="nav-user-chip", added
+        # to base.html). Positioned TOP-LEFT. Skips auth pages / JSON / streamed.
         try:
             if (request.method != 'GET' or resp.is_streamed
                     or resp.status_code != 200
@@ -364,20 +373,21 @@ def install_auth_gate(app):
             u = current_user()
             if not u:
                 return resp
+            html = resp.get_data(as_text=True)
+            if 'id="nav-user-chip"' in html or '</body>' not in html:
+                return resp   # base.html already shows it in the top panel
             role = 'адмін' if u.is_admin else 'перегляд'
             adm = ('<a href="/admin/users" style="color:#fde68a;text-decoration:none">🛡</a> · '
                    if u.is_admin else '')
             chip = (
-                '<div id="__authchip" style="position:fixed;right:12px;bottom:12px;z-index:99999;'
+                '<div id="__authchip" style="position:fixed;left:12px;top:12px;z-index:99999;'
                 'font:600 12px system-ui,sans-serif;background:#141922;color:#e5e7eb;'
                 'border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:6px 12px;'
-                'box-shadow:0 4px 14px rgba(0,0,0,.5);opacity:.85">'
+                'box-shadow:0 4px 14px rgba(0,0,0,.5);opacity:.9">'
                 f'👤 {u.email} <span style="color:#9aa3b5">· {role}</span> · '
                 f'{adm}<a href="/cabinet" style="color:#60a5fa;text-decoration:none">кабінет</a> · '
                 '<a href="/logout" style="color:#fca5a5;text-decoration:none">вийти</a></div>')
-            html = resp.get_data(as_text=True)
-            if '</body>' in html:
-                resp.set_data(html.replace('</body>', chip + '</body>', 1))
+            resp.set_data(html.replace('</body>', chip + '</body>', 1))
         except Exception:
             pass
         return resp
@@ -389,8 +399,8 @@ def install_auth_gate(app):
 _SHELL = """<!doctype html><html lang="uk"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{title}} · VSV Bot</title>
-<link rel="icon" type="image/png" href="/static/vsv-logo.png">
-<link rel="apple-touch-icon" href="/static/vsv-logo.png"><style>
+<link rel="icon" type="image/png" href="/favicon.ico">
+<link rel="apple-touch-icon" href="/favicon.ico"><style>
 .brandlogo{display:block;width:76px;height:76px;margin:0 auto 14px;border-radius:16px;object-fit:cover}
 :root{color-scheme:dark}
 *{box-sizing:border-box}
@@ -418,7 +428,7 @@ table{width:100%;border-collapse:collapse;font-size:.8rem} th,td{padding:7px 9px
 .actbtn{padding:4px 9px;font-size:.72rem;border-radius:6px;border:1px solid #2a3140;background:#1a2130;
  color:#e5e7eb;cursor:pointer;margin:1px}
 </style></head><body><div class="card" style="max-width:{{width or 400}}px">
-<img class="brandlogo" src="/static/vsv-logo.png" alt="VSV" onerror="this.style.display='none'">
+<img class="brandlogo" src="/favicon.ico" alt="VSV" onerror="this.style.display='none'">
 {{body|safe}}</div>
 <script>{{script|safe}}</script></body></html>"""
 
@@ -578,9 +588,11 @@ def register_auth_routes(app):
     def favicon():
         from flask import send_from_directory, current_app
         sd = current_app.static_folder
-        if sd and os.path.exists(os.path.join(sd, 'vsv-logo.png')):
-            return send_from_directory(sd, 'vsv-logo.png',
-                                       mimetype='image/png')
+        # Tolerate both the clean name and the accidental double extension
+        # (a file uploaded as vsv-logo.png can land as vsv-logo.png.png).
+        for name in ('vsv-logo.png', 'vsv-logo.png.png'):
+            if sd and os.path.exists(os.path.join(sd, name)):
+                return send_from_directory(sd, name, mimetype='image/png')
         return ('', 404)
 
     @app.route('/pending')
