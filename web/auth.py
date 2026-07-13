@@ -295,6 +295,16 @@ def _wants_json(path):
 
 
 def install_auth_gate(app):
+    # Dedicated auth secret — its OWN env var (AUTH_SECRET_KEY), so it does NOT
+    # reuse FLASK_SECRET_KEY (which is used for other purposes). When set, it
+    # signs BOTH the login session AND the email tokens. Falls back to the
+    # app's existing secret_key when unset.
+    _auth_secret = os.getenv('AUTH_SECRET_KEY')
+    if _auth_secret:
+        app.secret_key = _auth_secret
+    elif not app.secret_key or app.secret_key == 'sleeper-ob-bot-secret-key-change-me':
+        print("[AUTH] ⚠ AUTH_SECRET_KEY not set and app secret is the default — "
+              "set AUTH_SECRET_KEY to a long random value for secure sessions/tokens.")
     # Cookie hardening.
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
