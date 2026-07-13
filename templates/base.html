@@ -3,27 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}SVV WebHook BOT{% endblock %}</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪝</text></svg>">
+    <title>{% block title %}VSV Bot{% endblock %}</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='vsv-logo.png') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='vsv-logo.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     {% block head %}{% endblock %}
 </head>
 <body>
     <nav class="navbar">
         <div class="nav-brand">
-            <span class="logo">🪝</span>
-            <span class="brand-text">SVV WebHook BOT</span>
+            <img src="{{ url_for('static', filename='vsv-logo.png') }}" alt="VSV"
+                 class="logo" style="width:30px;height:30px;border-radius:7px;object-fit:cover;vertical-align:middle"
+                 onerror="this.style.display='none';this.nextElementSibling.style.display='inline'">
+            <span class="logo" style="display:none">🪝</span>
+            <span class="brand-text">VSV Bot</span>
         </div>
         <div class="nav-links">
             <a href="{{ url_for('smart_money_page') }}" class="nav-link {% if request.endpoint == 'smart_money_page' %}active{% endif %}">🎯 Smart Money</a>
             <a href="{{ url_for('tickr_page') }}" class="nav-link {% if request.endpoint == 'tickr_page' %}active{% endif %}">📡 Tickr</a>
             <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">Dashboard</a>
+            {# --- Приховані сторінки (за проханням оператора). Роути лишаються
+                   робочими за прямою URL; повернути — розкоментувати. ---
             <a href="{{ url_for('sleepers_page') }}" class="nav-link {% if request.endpoint == 'sleepers_page' %}active{% endif %}">Sleepers</a>
             <a href="{{ url_for('ctr_page') }}" class="nav-link {% if request.endpoint == 'ctr_page' %}active{% endif %}">CTR</a>
             <a href="{{ url_for('qm_page') }}" class="nav-link {% if request.endpoint == 'qm_page' %}active{% endif %}">QM</a>
             <a href="{{ url_for('orderblocks_page') }}" class="nav-link {% if request.endpoint == 'orderblocks_page' %}active{% endif %}">Order Blocks</a>
             <a href="{{ url_for('signals_page') }}" class="nav-link {% if request.endpoint == 'signals_page' %}active{% endif %}">Signals</a>
             <a href="{{ url_for('trades_page') }}" class="nav-link {% if request.endpoint == 'trades_page' %}active{% endif %}">Trades</a>
+            #}
             <a href="{{ url_for('settings_page') }}" class="nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}">⚙️</a>
             <a href="{{ url_for('database_admin') }}" class="nav-link {% if request.endpoint == 'database_admin' %}active{% endif %}">🗄️ DB</a>
         </div>

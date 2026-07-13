@@ -388,7 +388,10 @@ def install_auth_gate(app):
 # ==================================================================
 _SHELL = """<!doctype html><html lang="uk"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{title}} · Bot</title><style>
+<title>{{title}} · VSV Bot</title>
+<link rel="icon" type="image/png" href="/static/vsv-logo.png">
+<link rel="apple-touch-icon" href="/static/vsv-logo.png"><style>
+.brandlogo{display:block;width:76px;height:76px;margin:0 auto 14px;border-radius:16px;object-fit:cover}
 :root{color-scheme:dark}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
@@ -414,7 +417,9 @@ table{width:100%;border-collapse:collapse;font-size:.8rem} th,td{padding:7px 9px
 .b-adm{background:rgba(250,204,21,.15);color:#fde68a}
 .actbtn{padding:4px 9px;font-size:.72rem;border-radius:6px;border:1px solid #2a3140;background:#1a2130;
  color:#e5e7eb;cursor:pointer;margin:1px}
-</style></head><body><div class="card" style="max-width:{{width or 400}}px">{{body|safe}}</div>
+</style></head><body><div class="card" style="max-width:{{width or 400}}px">
+<img class="brandlogo" src="/static/vsv-logo.png" alt="VSV" onerror="this.style.display='none'">
+{{body|safe}}</div>
 <script>{{script|safe}}</script></body></html>"""
 
 
@@ -568,6 +573,15 @@ def register_auth_routes(app):
     def auth_logout():
         logout_user()
         return redirect(url_for('auth_login'))
+
+    @app.route('/favicon.ico')
+    def favicon():
+        from flask import send_from_directory, current_app
+        sd = current_app.static_folder
+        if sd and os.path.exists(os.path.join(sd, 'vsv-logo.png')):
+            return send_from_directory(sd, 'vsv-logo.png',
+                                       mimetype='image/png')
+        return ('', 404)
 
     @app.route('/pending')
     def auth_pending():
