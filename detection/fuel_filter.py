@@ -242,11 +242,18 @@ DEFAULT_SETTINGS = {
     #   queue2_open_min_entry_score — minimum live ENTRY score required to OPEN
     #     from Queue 2 (with CTR aligned/neutral). Higher than the queue-in bar so
     #     only setups that stayed strong actually fire.
-    'queue2_open_min_entry_score': 60,
+    #   CALIBRATED 2026-07-13 (90 closed paper trades): 60→65. ENTRY buckets showed
+    #     [55,65)=-0.79%/20%win, [65,75)=+1.25%/31%, and filtering ff_entry≥65
+    #     lifted expectancy +0.216%→+0.700% (sum +19→+45). NOTE: ≥70 OVERSHOOTS
+    #     (turns NEGATIVE, -0.205%) — 65 is the sweet spot, do NOT raise further
+    #     without fresh data.
+    'queue2_open_min_entry_score': 65,
     #   queue2_ttl_hours — a queued signal expires after this many hours (logged
-    #     «протерміновано») instead of lingering for 4-7h until an opposite CHoCH
-    #     ejects it. 0 = no TTL.
-    'queue2_ttl_hours': 6,
+    #     «протерміновано») instead of lingering until an opposite CHoCH ejects it.
+    #   CALIBRATED 2026-07-13: 6→2. Trades that waited >2h in queue returned
+    #     -1.28% (vs +1.29% for <5min); capping wait≤2h lifted expectancy to
+    #     +0.927%. 0 = no TTL.
+    'queue2_ttl_hours': 2,
     #   ctr_mtf — multi-timeframe CTR confluence (RECORD-ONLY for now, does NOT
     #     gate). A fresh CHoCH is contrarian to the single 15m CTR by nature;
     #     reading STC across TFs separates TREND context (1h/4h) from ENTRY timing
