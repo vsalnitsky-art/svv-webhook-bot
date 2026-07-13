@@ -285,6 +285,67 @@ def _smtp_configured():
     return bool(os.getenv('SMTP_HOST'))
 
 
+def _mail_provider():
+    """Which mail transport is configured. HTTP APIs work on Render (port 443);
+    SMTP ports (25/465/587) are BLOCKED on Render — so an API is preferred."""
+    if os.getenv('RESEND_API_KEY'):
+        return 'resend'
+    if os.getenv('BREVO_API_KEY'):
+        return 'brevo'
+    if os.getenv('SENDGRID_API_KEY'):
+        return 'sendgrid'
+    if os.getenv('SMTP_HOST'):
+        return 'smtp'
+    return None
+
+
+def _mail_from():
+    return (os.getenv('MAIL_FROM') or os.getenv('SMTP_FROM')
+            or os.getenv('SMTP_USER') or 'no-reply@bot.local')
+
+
+def _http_post_json(url, headers, payload):
+    import urllib.request
+    import urllib.error
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        url, data=data, method='POST',
+        headers={**headers, 'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status, r.read().decode(errors='replace')
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode(errors='replace')
+
+
+def _send_via_http_api(to, subject, html):
+    """Send through an HTTP email API (works on Render — no SMTP ports needed).
+    Returns (ok, info, provider) if a provider is configured, else None."""
+    sender = _mail_from()
+    if os.getenv('RESEND_API_KEY'):
+        st, body = _http_post_json(
+            'https://api.resend.com/emails',
+            {'Authorization': 'Bearer ' + os.getenv('RESEND_API_KEY')},
+            {'from': sender, 'to': [to], 'subject': subject, 'html': html})
+        return (200 <= st < 300, f'resend HTTP {st}: {body[:200]}', 'resend')
+    if os.getenv('BREVO_API_KEY'):
+        st, body = _http_post_json(
+            'https://api.brevo.com/v3/smtp/email',
+            {'api-key': os.getenv('BREVO_API_KEY')},
+            {'sender': {'email': sender}, 'to': [{'email': to}],
+             'subject': subject, 'htmlContent': html})
+        return (200 <= st < 300, f'brevo HTTP {st}: {body[:200]}', 'brevo')
+    if os.getenv('SENDGRID_API_KEY'):
+        st, body = _http_post_json(
+            'https://api.sendgrid.com/v3/mail/send',
+            {'Authorization': 'Bearer ' + os.getenv('SENDGRID_API_KEY')},
+            {'personalizations': [{'to': [{'email': to}]}],
+             'from': {'email': sender}, 'subject': subject,
+             'content': [{'type': 'text/html', 'value': html}]})
+        return (200 <= st < 300, f'sendgrid HTTP {st}: {body[:200]}', 'sendgrid')
+    return None
+
+
 def _rec_smtp(ok, to, error=None, stage=None):
     with _lock:
         _smtp_last.update({'ok': ok, 'error': (str(error)[:400] if error else None),
@@ -293,12 +354,15 @@ def _rec_smtp(ok, to, error=None, stage=None):
 
 def smtp_status():
     """Diagnostic snapshot of the mailer for the admin panel."""
+    prov = _mail_provider()
     return {
-        'configured': _smtp_configured(),
+        'configured': prov is not None,
+        'provider': prov,                          # resend|brevo|sendgrid|smtp|None
+        'is_api': prov in ('resend', 'brevo', 'sendgrid'),
         'host': os.getenv('SMTP_HOST') or None,
         'port': os.getenv('SMTP_PORT', '587'),
         'user': os.getenv('SMTP_USER') or None,
-        'from': os.getenv('SMTP_FROM') or os.getenv('SMTP_USER') or None,
+        'from': _mail_from(),
         'tls': os.getenv('SMTP_TLS', '1'),
         'pass_set': bool(os.getenv('SMTP_PASS')),
         'last': dict(_smtp_last),
@@ -314,9 +378,21 @@ def send_email(to, subject, html, link=None):
         with _lock:
             _pending_links[_norm_email(to)] = {'link': link, 'subject': subject,
                                                'at': time.time()}
+    # 1) HTTP email API first — works on Render (SMTP ports are blocked there).
+    try:
+        api = _send_via_http_api(to, subject, html)
+    except Exception as e:
+        api = (False, f'API error: {e}', _mail_provider())
+    if api is not None:
+        ok, info, prov = api
+        _rec_smtp(ok, to, error=None if ok else info, stage=prov)
+        print(f"[AUTH][MAIL] {prov} -> {'OK' if ok else 'FAIL'} to {to}: {info if not ok else ''}")
+        return ok
+    # 2) SMTP fallback (won't work on Render — kept for other hosts).
     if not _smtp_configured():
         print(f"[AUTH][MAIL-DEV] to={to} · {subject}\n  LINK: {link}")
-        _rec_smtp(None, to, error='SMTP_HOST не заданий (dev-режим)', stage='config')
+        _rec_smtp(None, to, error='Пошта не налаштована (ні API-ключ, ні SMTP)',
+                  stage='config')
         return False
     stage = 'init'
     try:
@@ -1068,24 +1144,28 @@ def _admin_script():
       const s=document.getElementById('smtp'); s.style.display='block';
       const st=SMTP||{}; const last=st.last||{};
       const dot=(c)=>`<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:6px"></span>`;
+      const prov=(st.provider||'').toUpperCase();
       let state, col;
-      if(!st.configured){ state='SMTP НЕ налаштований (dev-режим — листи не йдуть, посилання показані в таблиці)'; col='#fbbf24'; s.className='msg';
+      if(!st.configured){ state='Пошта НЕ налаштована (dev-режим — листи не йдуть, посилання підтвердження показані в таблиці)'; col='#fbbf24'; s.className='msg';
         s.style.borderColor='rgba(250,204,21,.4)'; }
-      else if(last.ok===false){ state='SMTP налаштований, але ОСТАННЯ відправка НЕ вдалась'; col='#f87171'; s.className='msg err'; }
-      else if(last.ok===true){ state='SMTP працює (остання відправка успішна)'; col='#4ade80'; s.className='msg ok'; }
-      else { state='SMTP налаштований (відправок ще не було — натисніть «Тест»)'; col='#93c5fd'; s.className='msg'; s.style.borderColor='rgba(147,197,253,.4)'; }
+      else if(last.ok===false){ state=prov+': ОСТАННЯ відправка НЕ вдалась'; col='#f87171'; s.className='msg err'; }
+      else if(last.ok===true){ state=prov+': працює (остання відправка успішна)'; col='#4ade80'; s.className='msg ok'; }
+      else { state=prov+': налаштовано (відправок ще не було — натисніть «Тест»)'; col='#93c5fd'; s.className='msg'; s.style.borderColor='rgba(147,197,253,.4)'; }
       let rows=`<div style="font-weight:700;margin-bottom:6px">${dot(col)}${state}</div>`;
       if(st.configured){
-        rows+=`<div style="font-size:.72rem;color:#9aa3b5;line-height:1.6">`+
-          `host: <b style="color:#cbd5e1">${st.host||'—'}:${st.port||'—'}</b> · `+
-          `user: <b style="color:#cbd5e1">${st.user||'—'}</b> · `+
-          `from: <b style="color:#cbd5e1">${st.from||'—'}</b> · `+
-          `TLS: <b style="color:#cbd5e1">${st.tls}</b> · `+
-          `пароль: <b style="color:${st.pass_set?'#86efac':'#fca5a5'}">${st.pass_set?'заданий':'НЕ заданий'}</b></div>`;
-        if(last.ok===false){ rows+=`<div class="msg err" style="font-size:.72rem;margin:8px 0 0">✖ Помилка на етапі «${last.stage||'?'}»: <b>${last.error||'—'}</b></div>`; }
+        if(st.is_api){
+          rows+=`<div style="font-size:.72rem;color:#9aa3b5;line-height:1.6">транспорт: <b style="color:#86efac">${prov} (HTTP API, порт 443 — працює на Render)</b> · from: <b style="color:#cbd5e1">${st.from||'—'}</b></div>`;
+        } else {
+          rows+=`<div style="font-size:.72rem;color:#9aa3b5;line-height:1.6">`+
+            `SMTP host: <b style="color:#cbd5e1">${st.host||'—'}:${st.port||'—'}</b> · `+
+            `user: <b style="color:#cbd5e1">${st.user||'—'}</b> · from: <b style="color:#cbd5e1">${st.from||'—'}</b> · `+
+            `TLS: <b style="color:#cbd5e1">${st.tls}</b> · пароль: <b style="color:${st.pass_set?'#86efac':'#fca5a5'}">${st.pass_set?'заданий':'НЕ заданий'}</b></div>`;
+          rows+='<div class="msg" style="font-size:.72rem;margin:8px 0 0;border-color:rgba(250,204,21,.4)">⚠ Render БЛОКУЄ вихідні SMTP-порти (25/465/587). Якщо бачите «Network is unreachable» — SMTP на Render не працюватиме. Використайте HTTP-API: задайте <b>RESEND_API_KEY</b> (або BREVO_API_KEY / SENDGRID_API_KEY) — і листи підуть через порт 443.</div>';
+        }
+        if(last.ok===false){ rows+=`<div class="msg err" style="font-size:.72rem;margin:8px 0 0">✖ Помилка (${last.stage||'?'}): <b>${last.error||'—'}</b></div>`; }
         if(last.ok===true){ rows+=`<div style="font-size:.7rem;color:#86efac;margin-top:6px">✔ Останній лист: ${last.to||''} · ${last.at?new Date(last.at*1000).toLocaleString():''}</div>`; }
       } else {
-        rows+='<div style="font-size:.72rem;color:#9aa3b5;margin-top:4px">Задайте у Render env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_TLS.</div>';
+        rows+='<div style="font-size:.72rem;color:#9aa3b5;margin-top:4px">На Render SMTP заблокований — задайте HTTP-API ключ у env: <b style="color:#cbd5e1">RESEND_API_KEY</b> (реком.) або BREVO_API_KEY / SENDGRID_API_KEY, і <b style="color:#cbd5e1">MAIL_FROM</b> (верифікований відправник).</div>';
       }
       rows+=`<div style="margin-top:10px"><button class="actbtn" onclick="smtpTest()">🔌 Надіслати тестовий лист собі</button> <span id="smtptestmsg" style="font-size:.72rem"></span></div>`;
       s.innerHTML=rows;
