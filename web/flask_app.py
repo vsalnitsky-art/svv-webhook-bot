@@ -141,7 +141,20 @@ def create_app():
     
     # Register routes
     register_routes(app)
-    
+
+    # ── Authentication & access control ──────────────────────────────────
+    # Gate the ENTIRE app behind login (nothing reachable unauthenticated);
+    # new accounts need email confirmation AND admin approval; non-admins are
+    # read-only; first admin from ADMIN_EMAIL env. Must be installed AFTER the
+    # routes so its before_request gate covers them.
+    try:
+        from web.auth import init_auth
+        init_auth(app)
+        print("[APP] 🔐 Auth & access control installed.")
+    except Exception as e:
+        print(f"[APP] ⚠ Auth install FAILED: {e}")
+        raise
+
     # Register diagnostic blueprint
     from web.diagnostic import diagnostic_bp
     app.register_blueprint(diagnostic_bp)

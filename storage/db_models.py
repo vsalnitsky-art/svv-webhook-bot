@@ -388,10 +388,27 @@ class PerformanceStats(Base):
 class BotSetting(Base):
     """Bot settings storage"""
     __tablename__ = f'{TABLE_PREFIX}bot_settings'
-    
+
     key = Column(String(50), primary_key=True)
     value = Column(Text)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class User(Base):
+    """Authenticated user. Access requires BOTH email_confirmed AND approved
+    (admin approval), unless is_admin. `disabled` lets an admin revoke access."""
+    __tablename__ = f'{TABLE_PREFIX}users'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    is_admin = Column(Boolean, default=False, nullable=False)
+    email_confirmed = Column(Boolean, default=False, nullable=False)
+    approved = Column(Boolean, default=False, nullable=False)   # admin approval
+    disabled = Column(Boolean, default=False, nullable=False)   # admin revoke
+    prefs = Column(Text, default='{}')                          # per-user UI prefs (JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
 
 
 class TradeArchive(Base):
