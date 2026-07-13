@@ -30,6 +30,24 @@ _reply_map = {}
 _map_lock = threading.Lock()
 
 
+def _full_name(frm):
+    """Human name from a Telegram `from` object (first + last). Always present
+    even when the user has no @username set."""
+    parts = [(frm or {}).get('first_name'), (frm or {}).get('last_name')]
+    return ' '.join(p for p in parts if p).strip() or None
+
+
+def _who_label(frm, info=None):
+    """Best display label: «Ім'я (@handle)» / «@handle» / «Ім'я» / fallback.
+    `info` = optional dict from auth.get_user_by_chat (email/tg_name/tg_user)."""
+    info = info or {}
+    name = _full_name(frm) or info.get('tg_name')
+    uname = (frm or {}).get('username') or info.get('tg_user')
+    handle = f'@{uname}' if uname else ''
+    label = ' '.join(x for x in [name, handle] if x).strip()
+    return label or 'невідомий користувач'
+
+
 def _remember(admin_msg_id, user_chat):
     with _map_lock:
         _reply_map[int(admin_msg_id)] = str(user_chat)
@@ -99,7 +117,7 @@ def _edit(chat_id, msg_id, text):
 
 
 # ---- handlers -------------------------------------------------------------
-def _handle_start(chat_id, username=None):
+def _handle_start(chat_id, username=None, name=None):
     from web.auth import get_user_by_chat, _make_tg_token
     b = base_url()
     existing = get_user_by_chat(str(chat_id))
@@ -116,7 +134,7 @@ def _handle_start(chat_id, username=None):
         tg_send(chat_id, "⚠️ Сервіс тимчасово недоступний (не задано публічну "
                          "адресу). Зверніться до адміністратора.")
         return
-    tok = _make_tg_token(str(chat_id), username)
+    tok = _make_tg_token(str(chat_id), username, name)
     link = f"{b}/register?tg={tok}"
     tg_send(chat_id,
             "👋 <b>Вітаю у VSV Bot!</b>\n\n"
@@ -170,6 +188,7 @@ def _handle_message(m):
     cid_s = str(cid)
     frm = (m.get('from', {}) or {})
     uname = frm.get('username')
+    fname = _full_name(frm)
     admin = _admin_chat()
     is_admin_chat = bool(admin) and cid_s == str(admin)
 
@@ -194,13 +213,13 @@ def _handle_message(m):
                     else "⚠️ Не вдалося надіслати (можливо, користувач не почав чат).")
             return
         if text.startswith('/start'):
-            _handle_start(cid, uname)
+            _handle_start(cid, uname, fname)
             return
         return   # admin typed something that isn't a reply/command → ignore
 
     # ---- user side ----
     if text.startswith('/start'):
-        _handle_start(cid, uname)
+        _handle_start(cid, uname, fname)
         return
     if not text:
         return
@@ -213,9 +232,10 @@ def _handle_message(m):
         info = get_user_by_chat(cid_s) or {}
     except Exception:
         info = {}
-    who = info.get('email') or (('@' + uname) if uname else 'невідомий користувач')
-    uref = f" (@{uname})" if (uname and info.get('email')) else ""
-    header = (f"✉️ <b>Повідомлення від користувача</b>\n{who}{uref}\n"
+    # Friendly identity line: name/@handle (always) + email (if registered).
+    who = _who_label(frm, info)
+    email_line = f"\n✉️ {info['email']}" if info.get('email') else ""
+    header = (f"✉️ <b>Повідомлення від користувача</b>\n👤 {who}{email_line}\n"
               f"chat_id: <code>{cid_s}</code>\n\n{text}\n\n"
               f"<i>Відповісти: свайп-Reply на це повідомлення або "
               f"/reply {cid_s} текст</i>")

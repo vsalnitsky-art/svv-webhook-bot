@@ -421,6 +421,7 @@ class User(Base):
     login_log = Column(Text, default='[]')                      # recent logins [{t,ip}] JSON
     telegram_chat_id = Column(String(32), nullable=True)        # linked Telegram chat
     telegram_username = Column(String(64), nullable=True)       # @username (if any)
+    telegram_name = Column(String(128), nullable=True)          # first+last name (always present)
 
 
 class TradeArchive(Base):

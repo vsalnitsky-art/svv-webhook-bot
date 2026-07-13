@@ -80,20 +80,20 @@ def _tg_secret():
             or 'change-me')
 
 
-def _make_tg_token(chat_id, username=None):
+def _make_tg_token(chat_id, username=None, name=None):
     return URLSafeTimedSerializer(_tg_secret(), salt='tglink').dumps(
-        {'c': str(chat_id), 'u': username})
+        {'c': str(chat_id), 'u': username, 'n': name})
 
 
 def _read_tg_token(token, max_age=3600):
-    """Returns {'c': chat_id, 'u': username} or None. Tolerates legacy tokens
-    that were a bare chat_id string."""
+    """Returns {'c': chat_id, 'u': username, 'n': name} or None. Tolerates
+    legacy tokens (bare chat_id string, or dicts without 'n')."""
     try:
         v = URLSafeTimedSerializer(_tg_secret(), salt='tglink').loads(
             token, max_age=max_age)
         if isinstance(v, dict):
-            return {'c': v.get('c'), 'u': v.get('u')}
-        return {'c': str(v), 'u': None}
+            return {'c': v.get('c'), 'u': v.get('u'), 'n': v.get('n')}
+        return {'c': str(v), 'u': None, 'n': None}
     except Exception:
         return None
 
@@ -131,7 +131,9 @@ def get_user_by_chat(chat_id):
         if not u:
             return None
         return {'id': u.id, 'email': u.email, 'active': _is_active(u),
-                'approved': u.approved, 'is_admin': u.is_admin}
+                'approved': u.approved, 'is_admin': u.is_admin,
+                'tg_user': getattr(u, 'telegram_username', None),
+                'tg_name': getattr(u, 'telegram_name', None)}
     except Exception:
         return None
     finally:
@@ -147,9 +149,13 @@ def notify_new_user_to_admin(uid):
         if not u:
             return
         from web.tg_bot import tg_send
+        tg_bits = ' '.join(x for x in [
+            getattr(u, 'telegram_name', None),
+            (f'@{u.telegram_username}' if getattr(u, 'telegram_username', None) else '')
+        ] if x) or ('прив’язано' if u.telegram_chat_id else '—')
         tg_send(os.getenv('TELEGRAM_CHAT_ID'),
                 f"🆕 <b>Нова реєстрація</b>\nEmail: <code>{u.email}</code>\n"
-                f"Telegram: {'прив’язано' if u.telegram_chat_id else '—'}\n"
+                f"Telegram: {tg_bits}\n"
                 f"Схвалити доступ?",
                 buttons=[[{'text': '✓ Схвалити', 'callback_data': f'ap:{u.id}'},
                           {'text': '✗ Відхилити', 'callback_data': f'rj:{u.id}'}]])
@@ -190,7 +196,7 @@ def notify_user_approved(uid):
 
 def create_user(email, password, is_admin=False, email_confirmed=False,
                 approved=False, telegram_chat_id=None, telegram_username=None,
-                bot_access=False, access_days=None):
+                telegram_name=None, bot_access=False, access_days=None):
     s = get_session()
     try:
         au = None
@@ -206,6 +212,7 @@ def create_user(email, password, is_admin=False, email_confirmed=False,
                  access_until=au,
                  telegram_chat_id=(str(telegram_chat_id) if telegram_chat_id else None),
                  telegram_username=telegram_username,
+                 telegram_name=telegram_name,
                  created_at=datetime.utcnow())
         s.add(u)
         s.commit()
@@ -265,6 +272,7 @@ def list_users():
                 'login_count': len(log),
                 'tg_linked': bool(getattr(u, 'telegram_chat_id', None)),
                 'tg_user': getattr(u, 'telegram_username', None),
+                'tg_name': getattr(u, 'telegram_name', None),
                 'bot_access': bool(getattr(u, 'bot_access', False)) or u.is_admin,
             })
         return out
@@ -331,6 +339,7 @@ def _migrate_user_columns():
         ('login_log', 'TEXT'),
         ('telegram_chat_id', 'VARCHAR(32)'),
         ('telegram_username', 'VARCHAR(64)'),
+        ('telegram_name', 'VARCHAR(128)'),
         ('bot_access', 'BOOLEAN DEFAULT FALSE'),
     ]
     try:
@@ -895,6 +904,7 @@ def register_auth_routes(app):
         _tg = _read_tg_token(tg_raw) if tg_raw else None
         tg_chat = _tg.get('c') if _tg else None
         tg_user = _tg.get('u') if _tg else None
+        tg_name = _tg.get('n') if _tg else None
         if request.method == 'POST':
             email = _norm_email(request.form.get('email'))
             pw = request.form.get('password') or ''
@@ -913,7 +923,7 @@ def register_auth_routes(app):
                 # Telegram-verified signup: no email step; admin approval only.
                 uid = create_user(email, pw, is_admin=False, email_confirmed=True,
                                   approved=False, telegram_chat_id=tg_chat,
-                                  telegram_username=tg_user)
+                                  telegram_username=tg_user, telegram_name=tg_name)
                 notify_new_user_to_admin(uid)
                 try:
                     from web.tg_bot import tg_send
@@ -1053,10 +1063,13 @@ def register_auth_routes(app):
         u = current_user()
         role = 'Адміністратор' if u.is_admin else 'Користувач (перегляд)'
         tgu = getattr(u, 'telegram_username', None)
+        tgn = getattr(u, 'telegram_name', None)
         tgc = getattr(u, 'telegram_chat_id', None)
         tg_line = ''
-        if tgu:
-            tg_line = f'<p class="sub" style="margin-top:-8px">📨 Telegram: <b>@{tgu}</b></p>'
+        if tgu or tgn:
+            # Show the human name and/or @handle, whichever we have.
+            label = ' '.join(x for x in [tgn, (f'@{tgu}' if tgu else '')] if x)
+            tg_line = f'<p class="sub" style="margin-top:-8px">📨 Telegram: <b>{label}</b></p>'
         elif tgc:
             tg_line = f'<p class="sub" style="margin-top:-8px">📨 Telegram: <b>прив’язано</b></p>'
         _bot = 'так' if (u.is_admin or getattr(u, 'bot_access', False)) else 'ні (лише інфо-сайт)'
@@ -1472,7 +1485,7 @@ def _admin_script():
       const pl=LINKS[u.email]?LINKS[u.email].link:null;
       const b=[];
       b.push(`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-        <div><h1 style="margin:0">${u.email}</h1><p class="sub" style="margin:2px 0 0">№ ${u.seq} · ID ${u.id} · ${u.is_admin?'адмін':'користувач'}${u.tg_user?(' · 📨 @'+u.tg_user):''}</p></div>
+        <div><h1 style="margin:0">${u.email}</h1><p class="sub" style="margin:2px 0 0">№ ${u.seq} · ID ${u.id} · ${u.is_admin?'адмін':'користувач'}${(u.tg_name||u.tg_user)?(' · 📨 '+[u.tg_name,(u.tg_user?('@'+u.tg_user):'')].filter(Boolean).join(' ')):''}</p></div>
         <button class="actbtn" onclick="closeM()">✕</button></div>`);
       // status
       b.push('<div class="mrow" style="margin-top:10px">'+
