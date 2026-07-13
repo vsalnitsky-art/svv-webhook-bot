@@ -2103,9 +2103,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             Мін. ENTRY у чергу
                             <input type="number" id="ff-q2-min-entry" step="1" min="0" max="100" style="width:56px" onchange="saveFuelFilterSettings()">
                         </label>
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Мінімальний живий ENTRY score, щоб ВІДКРИТИ з Черги-2 (коли CTR у бік/нейтральний). Вищий за поріг постановки.">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Мінімальний живий ENTRY score, щоб ВІДКРИТИ з Черги-2 (коли CTR у бік/нейтральний). Вищий за поріг постановки. Калібровано на даних: 65 (≥70 вже гірше).">
                             Мін. ENTRY на відкриття
                             <input type="number" id="ff-q2-open-min-entry" step="1" min="0" max="100" style="width:56px" onchange="saveFuelFilterSettings()">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Мінімальний зрілий Decision-Center score (−100..100) на відкриття з Черги-2. Рахується останнім (лише для монет, що пройшли решту гейтів). Калібровано: прибуткова смуга dec≥40; дефолт 20 = збалансований поріг. 0 = вимкнено. Пусто/нема даних → пропускає (не блокує).">
+                            Мін. Decision на відкриття
+                            <input type="number" id="ff-q2-open-min-dec" step="5" min="0" max="100" style="width:56px" onchange="saveFuelFilterSettings()">
                         </label>
                         <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Сигнал у Черзі-2 протерміновується через стільки годин (з записом у лог), якщо так і не відкрився. 0 = без TTL.">
                             TTL Черги-2, год
@@ -8045,7 +8049,8 @@ function renderFuelFilter(d) {
     setIf('ff-q2-eject-ctr-pct', String(s.queue2_eject_ctr_pct != null ? s.queue2_eject_ctr_pct : 20));
     setIf('ff-q2-eject-choch', s.queue2_eject_choch !== false); // default true
     setIf('ff-q2-use-buttons', !!s.queue2_use_buttons);        // default false
-    setIf('ff-q2-use-btc', !!s.queue2_use_btc);                // default false
+    setIf('ff-q2-use-btc', s.queue2_use_btc !== false);        // default true (calibrated)
+    setIf('ff-q2-open-min-dec', String(s.queue2_open_min_dec_score != null ? s.queue2_open_min_dec_score : 20));
     setIf('ff-q2-hold-unknown-ctr', s.queue2_hold_unknown_ctr !== false); // default true
     setIf('ff-q2-queue-all', !!s.queue2_queue_all);           // default false
     setIf('ff-q2-reverse-via-queue', s.queue2_reverse_via_queue !== false); // default true
@@ -8670,6 +8675,7 @@ async function saveFuelFilterSettings() {
         queue2_eject_choch: _c('ff-q2-eject-choch'),
         queue2_use_buttons: _c('ff-q2-use-buttons'),
         queue2_use_btc: _c('ff-q2-use-btc'),
+        queue2_open_min_dec_score: parseInt(_v('ff-q2-open-min-dec', '20') || '20', 10),
         queue2_hold_unknown_ctr: _c('ff-q2-hold-unknown-ctr'),
         queue2_queue_all: _c('ff-q2-queue-all'),
         queue2_reverse_via_queue: _c('ff-q2-reverse-via-queue'),

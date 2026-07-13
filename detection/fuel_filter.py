@@ -199,8 +199,19 @@ DEFAULT_SETTINGS = {
     #     BTCUSDT session direction (the banner): a LONG signal opens only while
     #     the ₿ session is LONG (active, not paused), SHORT only while ₿ is SHORT.
     #     ₿ WAIT/ПАУЗА or no direction → hold (don't open). Composes (AND) with
-    #     queue2_use_buttons. Default OFF → Queue 2 ignores the ₿ banner.
-    'queue2_use_btc': False,
+    #     queue2_use_buttons.
+    #   CALIBRATED 2026-07-13: default OFF→ON. LONG trades returned -1.32%/20%win
+    #     vs SHORT +2.75%/50% in a down-trend — an ADAPTIVE ₿-direction gate
+    #     suppresses the losing counter-trend side (regime-adaptive, NOT a
+    #     hard-coded side). Turn OFF to open both sides regardless of ₿.
+    'queue2_use_btc': True,
+    #   queue2_open_min_dec_score — minimum mature Decision-Center score (side-
+    #     specific, −100..100) to OPEN from Queue 2. Runs LAST (after the cheap
+    #     gates) so compute_decision is rare. CALIBRATED 2026-07-13: profitable
+    #     band was dec ≥ 40 (+2.79%), below 40 flat-to-negative; default 20 is a
+    #     BALANCED floor (drops the losing [0,20) bucket, keeps enough trades
+    #     ≈ +1.44% exp). Raise toward 40 for the data-optimal. 0 = disabled.
+    'queue2_open_min_dec_score': 20,
     #   queue2_hold_unknown_ctr — when CTR data is NOT yet available at signal
     #     time (lean = «—»), HOLD the signal in Queue 2 instead of dropping it,
     #     and wait for CTR to appear (the engine opens/ejects once it does).
@@ -537,7 +548,11 @@ class FuelFilterDaemon:
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
         s['queue2_use_buttons'] = bool(s.get('queue2_use_buttons', False))
-        s['queue2_use_btc'] = bool(s.get('queue2_use_btc', False))
+        s['queue2_use_btc'] = bool(s.get('queue2_use_btc', True))
+        try:
+            s['queue2_open_min_dec_score'] = max(0, min(100, int(s.get('queue2_open_min_dec_score', 20) or 0)))
+        except (TypeError, ValueError):
+            s['queue2_open_min_dec_score'] = 20
         s['queue2_hold_unknown_ctr'] = bool(s.get('queue2_hold_unknown_ctr', True))
         s['queue2_queue_all'] = bool(s.get('queue2_queue_all', False))
         s['queue2_reverse_via_queue'] = bool(s.get('queue2_reverse_via_queue', True))
@@ -3533,6 +3548,19 @@ class FuelFilterDaemon:
             if not fuel or not fuel.get('mark_price'):
                 self._engine_skip[sym] = 'Черга-2: немає ціни'
                 continue
+            # ⭐ Decision-Center floor (data-driven, runs LAST — only for coins that
+            # already passed every cheaper gate, so the heavier compute_decision is
+            # rare). CALIBRATED 2026-07-13: dec_score band [40,60)=+2.79% vs
+            # [0,20)=-0.55% / [20,40)=-0.37% → require dec ≥ floor. Fails OPEN when
+            # Decision data is unavailable (never freeze on missing data).
+            _dec_floor = float(s.get('queue2_open_min_dec_score', 20) or 0)
+            if _dec_floor > 0:
+                _decc = self._decision_compact(sym, fuel.get('mark_price'), d)
+                _dscore = (_decc or {}).get('score')
+                if _dscore is not None and float(_dscore) < _dec_floor:
+                    self._engine_skip[sym] = (f'Черга-2: Decision {int(_dscore)}·{d} '
+                                              f'< {int(_dec_floor)} — чекаємо')
+                    continue
             # 🔄 REVERSE: an OPPOSITE position exists and the signal has FULLY
             # passed Queue 2 → close the opposite trade FIRST, then open the new.
             _did_reverse = False
