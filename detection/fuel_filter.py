@@ -3537,11 +3537,12 @@ class FuelFilterDaemon:
                 if not _bdir:
                     self._engine_skip[sym] = 'Черга-2: ₿ сеанс без напрямку — чекаємо'
                     continue
-                if _bpaused:
-                    self._engine_skip[sym] = f'Черга-2: ₿ {_bdir} · ПАУЗА — чекаємо'
-                    continue
+                # ПАУЗА (WAIT) does NOT stop Queue-2 (operator's choice): the
+                # session direction is HELD, and Q2 keeps opening in that held
+                # direction during the pause. Only the DIRECTION must match.
                 if d != _bdir:
-                    self._engine_skip[sym] = f'Черга-2: ₿ сеанс {_bdir} ≠ {d} — чекаємо'
+                    _pz = ' · ПАУЗА' if _bpaused else ''
+                    self._engine_skip[sym] = f'Черга-2: ₿ сеанс {_bdir}{_pz} ≠ {d} — чекаємо'
                     continue
             # Both align → open (₿ START independent; buttons optional per setting).
             fuel = self._fuel_dir_smoothed(sym)

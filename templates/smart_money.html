@@ -2137,6 +2137,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </div>
                 </div>
             </details>
+            <div id="ff-q2-btc-status" style="display:none;align-items:center;gap:8px;margin:0 0 6px;padding:5px 10px;border-radius:7px;font-size:0.7rem;font-weight:700;border:1px solid rgba(250,204,21,0.35);background:rgba(250,204,21,0.08)"></div>
             <div id="ff-q2-dir-tabs" style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
                 <span style="color:#8b93a7">Показати:</span>
                 <button type="button" data-qdir="all" onclick="ffQueueDir2('all')" class="ff-qdir-btn">Всі <span class="ff-qdir-n"></span></button>
@@ -7912,6 +7913,31 @@ function ffQueueDir2(dir) {
     window._ff2QueueDirFilter = (dir === 'LONG' || dir === 'SHORT') ? dir : 'all';
     ffRenderQueue2();
 }
+// ⚡ Queue-2 ₿-gate status banner. Visible only when «Відкривати за ₿ BTCUSDT
+// баром» is ON. Shows the committed ₿ session direction Q2 opens in; during a
+// ПАУЗА the direction is HELD and Q2 keeps opening in it (operator's setting).
+function updateQ2BtcBadge(bs) {
+    const el = document.getElementById('ff-q2-btc-status');
+    if (!el) return;
+    const cb = document.getElementById('ff-q2-use-btc');
+    const on = cb && cb.checked;
+    if (!on) { el.style.display = 'none'; return; }
+    const dir = (bs && (bs.dir === 'LONG' || bs.dir === 'SHORT')) ? bs.dir : null;
+    const paused = !!(bs && bs.paused);
+    el.style.display = 'flex';
+    if (!dir) {
+        el.style.color = '#9aa3b5';
+        el.innerHTML = '⚡ Працюємо через <b>₿ BTCUSDT</b> · сеанс без напрямку — Черга-2 чекає';
+        return;
+    }
+    const col = dir === 'LONG' ? '#4ade80' : '#f87171';
+    const icon = dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+    const pz = paused
+        ? ' · <span style="color:#facc15">⏸ ПАУЗА — тримаємо напрямок, відкриваємо далі</span>'
+        : '';
+    el.style.color = col;
+    el.innerHTML = `⚡ Черга-2 працює через <b>₿ BTCUSDT</b>: ${icon}${pz}`;
+}
 function _ffUpdateQueue2DirTabs() {
     const data = window._ff2TimersData || [];
     const counts = { all: data.length,
@@ -8122,6 +8148,9 @@ function renderFuelFilter(d) {
         window._ffAllowShort = !!d.allow_short;
         ffRenderQueue();
     }
+    // ⚡ Queue-2 ₿-gate status badge — shows when Q2 opens are gated by the ₿
+    // session direction, and the current working direction (pause HOLDS the dir).
+    updateQ2BtcBadge(d.btc_start || {});
     // Queue 2 «⚡ CTR-зони»
     if (document.getElementById('ff-timers2-tbody')) {
         window._ff2TimersData = d.timers2 || [];

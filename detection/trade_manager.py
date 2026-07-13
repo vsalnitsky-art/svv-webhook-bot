@@ -41,9 +41,14 @@ DB_KEY_TM_SHADOW = 'tm_shadow_positions'   # paper-trading positions
 DB_KEY_TM_SHADOW_CLOSED = 'tm_shadow_closed'
 
 MONITOR_INTERVAL_SECS = 10
-CLOSED_TRADES_LIMIT = 500   # in-memory cap for the UI list; the permanent
-                            # TradeArchive DB table keeps the FULL history
-                            # (never trimmed) for backtesting.
+CLOSED_TRADES_LIMIT = 1_000_000   # effectively UNLIMITED — keep EVERY closed
+                            # trade (per operator: «скільки було угод, всі
+                            # зберігаємо»). Stored as a JSON blob per book
+                            # (tm_closed_trades / tm_shadow_closed); each trade
+                            # carries its chronology. NOTE(scale): if this ever
+                            # grows into many MB the right move is a dedicated DB
+                            # table — but for realistic paper/real volumes the
+                            # blob is fine, and periodic 🧾 export offloads it.
 INITIAL_DELAY_SECS = 20      # wait at startup before first tick
 TRADE_LOG_MAX = 5000         # max per-trade time-series samples kept (safety cap)
 
