@@ -416,6 +416,7 @@ class User(Base):
     session_token = Column(String(64), nullable=True)
     last_ip = Column(String(64), nullable=True)
     login_log = Column(Text, default='[]')                      # recent logins [{t,ip}] JSON
+    telegram_chat_id = Column(String(32), nullable=True)        # linked Telegram chat
 
 
 class TradeArchive(Base):

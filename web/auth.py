@@ -72,6 +72,25 @@ def _read_token(token, salt, max_age):
         return None
 
 
+# --- Telegram-link tokens: env-based secret so they also work in the poller
+# thread (no Flask app context). AUTH_SECRET_KEY == app.secret_key here. ---
+def _tg_secret():
+    return (os.getenv('AUTH_SECRET_KEY') or os.getenv('FLASK_SECRET_KEY')
+            or 'change-me')
+
+
+def _make_tg_token(chat_id):
+    return URLSafeTimedSerializer(_tg_secret(), salt='tglink').dumps(str(chat_id))
+
+
+def _read_tg_token(token, max_age=3600):
+    try:
+        return URLSafeTimedSerializer(_tg_secret(), salt='tglink').loads(
+            token, max_age=max_age)
+    except Exception:
+        return None
+
+
 # ==================================================================
 # User store (thin, session-scoped)
 # ==================================================================
@@ -97,8 +116,58 @@ def get_user_by_id(uid):
         s.close()
 
 
+def get_user_by_chat(chat_id):
+    """Compact dict for the Telegram bot (avoids detached-instance issues)."""
+    s = get_session()
+    try:
+        u = s.query(User).filter_by(telegram_chat_id=str(chat_id)).first()
+        if not u:
+            return None
+        return {'id': u.id, 'email': u.email, 'active': _is_active(u),
+                'approved': u.approved, 'is_admin': u.is_admin}
+    except Exception:
+        return None
+    finally:
+        s.close()
+
+
+def notify_new_user_to_admin(uid):
+    """Ping the admin's Telegram with inline Approve/Reject for a new signup."""
+    try:
+        if not os.getenv('TELEGRAM_CHAT_ID'):
+            return
+        u = get_user_by_id(uid)
+        if not u:
+            return
+        from web.tg_bot import tg_send
+        tg_send(os.getenv('TELEGRAM_CHAT_ID'),
+                f"🆕 <b>Нова реєстрація</b>\nEmail: <code>{u.email}</code>\n"
+                f"Telegram: {'прив’язано' if u.telegram_chat_id else '—'}\n"
+                f"Схвалити доступ?",
+                buttons=[[{'text': '✓ Схвалити', 'callback_data': f'ap:{u.id}'},
+                          {'text': '✗ Відхилити', 'callback_data': f'rj:{u.id}'}]])
+    except Exception as e:
+        print(f"[AUTH][TG] notify admin error: {e}")
+
+
+def notify_user_approved(uid):
+    """Tell the user (via their linked Telegram) that access is granted."""
+    try:
+        u = get_user_by_id(uid)
+        if not u or not u.telegram_chat_id:
+            return
+        from web.tg_bot import tg_send, base_url
+        b = base_url()
+        tg_send(u.telegram_chat_id,
+                "✅ <b>Ваш акаунт активовано!</b>\nТепер увійдіть на сайті "
+                "своїм email і паролем.",
+                buttons=[[{'text': '🔐 Увійти', 'url': f"{b}/login"}]] if b else None)
+    except Exception as e:
+        print(f"[AUTH][TG] notify user error: {e}")
+
+
 def create_user(email, password, is_admin=False, email_confirmed=False,
-                approved=False):
+                approved=False, telegram_chat_id=None):
     s = get_session()
     try:
         u = User(email=_norm_email(email),
@@ -107,6 +176,7 @@ def create_user(email, password, is_admin=False, email_confirmed=False,
                  email_confirmed=bool(email_confirmed),
                  approved=bool(approved),
                  disabled=False, prefs='{}',
+                 telegram_chat_id=(str(telegram_chat_id) if telegram_chat_id else None),
                  created_at=datetime.utcnow())
         s.add(u)
         s.commit()
@@ -164,6 +234,7 @@ def list_users():
                 'distinct_ips': len(ips),
                 'recent_ips': ips[:8],
                 'login_count': len(log),
+                'tg_linked': bool(getattr(u, 'telegram_chat_id', None)),
             })
         return out
     finally:
@@ -227,6 +298,7 @@ def _migrate_user_columns():
             "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS session_token VARCHAR(64)",
             "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS last_ip VARCHAR(64)",
             "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS login_log TEXT DEFAULT '[]'",
+            "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(32)",
         ]
         with engine.begin() as conn:
             for st in stmts:
@@ -762,20 +834,44 @@ def register_auth_routes(app):
 
     @app.route('/register', methods=['GET', 'POST'])
     def auth_register():
+        # A `tg` token (from the Telegram bot's /start link) ties this signup to
+        # a Telegram chat → email is auto-confirmed (Telegram verified the user),
+        # and the admin is notified in Telegram with Approve/Reject buttons.
+        tg_raw = request.values.get('tg') or ''
+        tg_chat = _read_tg_token(tg_raw) if tg_raw else None
         if request.method == 'POST':
             email = _norm_email(request.form.get('email'))
             pw = request.form.get('password') or ''
             pw2 = request.form.get('password2') or ''
             if not _EMAIL_RE.match(email):
-                return _page('Реєстрація', _register_form(err='Невірний email.'))
+                return _page('Реєстрація', _register_form(err='Невірний email.', tg=tg_raw))
             if len(pw) < MIN_PASSWORD_LEN:
                 return _page('Реєстрація', _register_form(
-                    err=f'Пароль мінімум {MIN_PASSWORD_LEN} символів.'))
+                    err=f'Пароль мінімум {MIN_PASSWORD_LEN} символів.', tg=tg_raw))
             if pw != pw2:
-                return _page('Реєстрація', _register_form(err='Паролі не збігаються.'))
+                return _page('Реєстрація', _register_form(err='Паролі не збігаються.', tg=tg_raw))
             if get_user_by_email(email):
                 return _page('Реєстрація', _register_form(
-                    err='Такий email уже зареєстрований.'))
+                    err='Такий email уже зареєстрований.', tg=tg_raw))
+            if tg_chat:
+                # Telegram-verified signup: no email step; admin approval only.
+                uid = create_user(email, pw, is_admin=False, email_confirmed=True,
+                                  approved=False, telegram_chat_id=tg_chat)
+                notify_new_user_to_admin(uid)
+                try:
+                    from web.tg_bot import tg_send
+                    tg_send(tg_chat, f"✅ Акаунт <b>{email}</b> створено. "
+                                     "Очікуйте схвалення адміністратора — "
+                                     "я повідомлю тут.")
+                except Exception:
+                    pass
+                return _page('Реєстрація', _msg_box(
+                    'Готово ✓', 'ok',
+                    'Акаунт створено й прив’язано до вашого Telegram. '
+                    'Після схвалення адміністратором ви отримаєте сповіщення в '
+                    'Telegram і зможете увійти.',
+                    extra='<div class="links"><a href="/login">← До входу</a></div>'))
+            # Legacy web signup (no Telegram): email confirm + admin approval.
             create_user(email, pw, is_admin=False, email_confirmed=False,
                         approved=False)
             token = _make_token(email, 'confirm')
@@ -786,11 +882,10 @@ def register_auth_routes(app):
                        f'<p>Посилання дійсне 24 год.</p>', link=link)
             return _page('Реєстрація', _msg_box(
                 'Майже готово', 'ok',
-                'Ми надіслали лист із підтвердженням на вашу пошту. '
-                'Після підтвердження email акаунт має схвалити адміністратор — '
-                'тоді ви зможете увійти.',
+                'Ми надіслали лист із підтвердженням. Після підтвердження email '
+                'акаунт має схвалити адміністратор — тоді ви зможете увійти.',
                 extra='<div class="links"><a href="/login">← До входу</a></div>'))
-        return _page('Реєстрація', _register_form())
+        return _page('Реєстрація', _register_form(tg=tg_raw))
 
     @app.route('/confirm/<token>')
     def auth_confirm(token):
@@ -998,6 +1093,7 @@ def register_auth_routes(app):
             return jsonify({'ok': False, 'error': 'not found'})
         if action == 'approve':
             _update_user(uid, approved=True)
+            notify_user_approved(uid)   # ping the user's Telegram if linked
         elif action == 'revoke':
             _update_user(uid, approved=False)
         elif action == 'confirm':          # admin can confirm email manually
@@ -1028,6 +1124,7 @@ def register_auth_routes(app):
                 days = 0
             au = (datetime.utcnow() + timedelta(days=days)) if days > 0 else None
             _update_user(uid, access_until=au, approved=True, disabled=False)
+            notify_user_approved(uid)   # ping the user's Telegram if linked
         elif action == 'kick':
             # Invalidate all live sessions of this user (force re-login).
             _update_user(uid, session_token=None)
@@ -1101,11 +1198,15 @@ def _login_form(nxt='/', err=''):
             f'<a href="/register">Реєстрація</a></div>')
 
 
-def _register_form(err=''):
+def _register_form(err='', tg=''):
     e = f'<div class="msg err">{err}</div>' if err else ''
+    tg_hidden = f'<input type="hidden" name="tg" value="{tg}">' if tg else ''
+    tg_note = ('<div class="msg ok" style="font-size:.78rem">🔗 Прив’язка до '
+               'Telegram активна — email підтверджувати не треба, лише схвалення '
+               'адміністратора.</div>') if tg else ''
     return (f'<h1>📝 Реєстрація</h1><p class="sub">Доступ — після підтвердження '
-            f'email та схвалення адміністратора</p>{e}'
-            f'<form method="post">'
+            f'email та схвалення адміністратора</p>{e}{tg_note}'
+            f'<form method="post">{tg_hidden}'
             f'<label>Email</label><input name="email" type="email" required autofocus>'
             f'<label>Пароль (мін. 8)</label><input name="password" type="password" required>'
             f'<label>Повторіть пароль</label><input name="password2" type="password" required>'
@@ -1291,6 +1392,7 @@ def _admin_script():
         (u.email_confirmed?'<span class="badge b-on">email ✓</span>':'<span class="badge b-off">email ✗</span>')+
         (u.approved?'<span class="badge b-on">схвалено</span>':'<span class="badge b-off">очікує схвалення</span>')+
         (u.disabled?'<span class="badge b-off">вимкнено</span>':'')+
+        (u.tg_linked?'<span class="badge b-on">📨 Telegram</span>':'')+
         (u.active?'<span class="badge b-on">активний</span>':'<span class="badge b-off">неактивний</span>')+'</div>');
       if(pl) b.push(`<div class="msg" style="font-size:.7rem;word-break:break-all"><b>Посилання підтвердження (SMTP off):</b><br><a href="${pl}" style="color:#60a5fa">${pl}</a></div>`);
       // approval
@@ -1362,3 +1464,8 @@ def init_auth(app):
         ensure_admin()
     except Exception as e:
         print(f"[AUTH] ensure_admin error: {e}")
+    try:
+        from web.tg_bot import start_tg_bot
+        start_tg_bot()
+    except Exception as e:
+        print(f"[AUTH] tg-bot start error: {e}")
