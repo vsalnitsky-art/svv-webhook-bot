@@ -47,6 +47,8 @@ _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 # Dev fallback: last confirm/reset link per email (shown to admin when SMTP off)
 _pending_links = {}
 _login_fails = {}                # {(email,ip): [timestamps]}
+# Last SMTP attempt outcome — surfaced in the admin panel for diagnostics.
+_smtp_last = {'ok': None, 'error': None, 'at': None, 'to': None, 'stage': None}
 _lock = threading.Lock()
 
 
@@ -176,6 +178,19 @@ def user_count():
         s.close()
 
 
+def pending_attention_count():
+    """Users needing admin attention (new registrations awaiting approval)."""
+    s = get_session()
+    try:
+        return s.query(User).filter(User.approved == False,   # noqa: E712
+                                    User.is_admin == False,
+                                    User.disabled == False).count()
+    except Exception:
+        return 0
+    finally:
+        s.close()
+
+
 def _is_active(u):
     if u is None:
         return False
@@ -270,17 +285,40 @@ def _smtp_configured():
     return bool(os.getenv('SMTP_HOST'))
 
 
+def _rec_smtp(ok, to, error=None, stage=None):
+    with _lock:
+        _smtp_last.update({'ok': ok, 'error': (str(error)[:400] if error else None),
+                           'at': time.time(), 'to': to, 'stage': stage})
+
+
+def smtp_status():
+    """Diagnostic snapshot of the mailer for the admin panel."""
+    return {
+        'configured': _smtp_configured(),
+        'host': os.getenv('SMTP_HOST') or None,
+        'port': os.getenv('SMTP_PORT', '587'),
+        'user': os.getenv('SMTP_USER') or None,
+        'from': os.getenv('SMTP_FROM') or os.getenv('SMTP_USER') or None,
+        'tls': os.getenv('SMTP_TLS', '1'),
+        'pass_set': bool(os.getenv('SMTP_PASS')),
+        'last': dict(_smtp_last),
+    }
+
+
 def send_email(to, subject, html, link=None):
     """Send an email via SMTP env config. Returns True on send. When SMTP is
     NOT configured, stores the link for the admin panel + logs it (dev mode)
-    and returns False (caller still succeeds — the flow isn't blocked)."""
+    and returns False. Every attempt records its outcome into `_smtp_last` so
+    the admin panel can show EXACTLY why a mail failed (auth, connect, TLS…)."""
     if link:
         with _lock:
             _pending_links[_norm_email(to)] = {'link': link, 'subject': subject,
                                                'at': time.time()}
     if not _smtp_configured():
         print(f"[AUTH][MAIL-DEV] to={to} · {subject}\n  LINK: {link}")
+        _rec_smtp(None, to, error='SMTP_HOST не заданий (dev-режим)', stage='config')
         return False
+    stage = 'init'
     try:
         host = os.getenv('SMTP_HOST')
         port = int(os.getenv('SMTP_PORT', '587') or 587)
@@ -297,21 +335,31 @@ def send_email(to, subject, html, link=None):
         msg.set_content(re.sub('<[^<]+?>', '', html))   # plaintext fallback
         msg.add_alternative(html, subtype='html')
         if port == 465:
+            stage = 'connect(SSL 465)'
             ctx = ssl.create_default_context()
             with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as srv:
                 if user:
+                    stage = 'login'
                     srv.login(user, pwd)
+                stage = 'send'
                 srv.send_message(msg)
         else:
+            stage = f'connect({host}:{port})'
             with smtplib.SMTP(host, port, timeout=20) as srv:
                 if use_tls:
+                    stage = 'starttls'
                     srv.starttls(context=ssl.create_default_context())
                 if user:
+                    stage = 'login'
                     srv.login(user, pwd)
+                stage = 'send'
                 srv.send_message(msg)
+        _rec_smtp(True, to, stage='sent')
+        print(f"[AUTH][MAIL] sent to {to} · {subject}")
         return True
     except Exception as e:
-        print(f"[AUTH][MAIL] send error to {to}: {e}")
+        print(f"[AUTH][MAIL] send error to {to} @ stage={stage}: {e}")
+        _rec_smtp(False, to, error=e, stage=stage)
         return False
 
 
@@ -439,11 +487,18 @@ def install_auth_gate(app):
 
     @app.context_processor
     def _inject_auth_user():
-        # Expose the current user to Jinja templates (base.html nav chip).
+        # Expose the current user + pending-users count (admin badge) to templates.
         try:
-            return {'auth_user': current_user()}
+            u = current_user()
+            pend = 0
+            if u and u.is_admin:
+                try:
+                    pend = pending_attention_count()
+                except Exception:
+                    pend = 0
+            return {'auth_user': u, 'users_pending': pend}
         except Exception:
-            return {'auth_user': None}
+            return {'auth_user': None, 'users_pending': 0}
 
     @app.after_request
     def _inject_user_chip(resp):
@@ -792,7 +847,21 @@ def register_auth_routes(app):
         with _lock:
             links = {k: v for k, v in _pending_links.items()}
         return jsonify({'ok': True, 'users': list_users(),
-                        'smtp': _smtp_configured(), 'pending_links': links})
+                        'smtp': _smtp_configured(),
+                        'smtp_status': smtp_status(),
+                        'pending': pending_attention_count(),
+                        'pending_links': links})
+
+    @app.route('/api/admin/smtp-test', methods=['POST'])
+    def api_admin_smtp_test():
+        if not current_user().is_admin:
+            return jsonify({'ok': False, 'error': 'forbidden'}), 403
+        d = request.get_json(silent=True) or {}
+        to = _norm_email(d.get('to')) or current_user().email
+        ok = send_email(to, 'VSV Bot — тест SMTP',
+                        '<p>✅ Тестовий лист від VSV Bot. Якщо ви це бачите — '
+                        'SMTP налаштований правильно.</p>')
+        return jsonify({'ok': ok, 'to': to, 'status': smtp_status()})
 
     @app.route('/api/admin/users/<int:uid>', methods=['POST'])
     def api_admin_user_action(uid):
@@ -982,15 +1051,55 @@ def _admin_users_body():
 
 def _admin_script():
     return """
-    let USERS=[], LINKS={}, ME=null;
+    let USERS=[], LINKS={}, SMTP=null, PREVPEND=null;
     async function load(){
       const d=await (await fetch('/api/admin/users')).json();
-      USERS=d.users||[]; LINKS=d.pending_links||{};
-      const s=document.getElementById('smtp');
-      if(!d.smtp){ s.style.display='block'; s.className='msg err';
-        s.innerHTML='⚠ SMTP не налаштований — листи не надсилаються. Посилання підтвердження показані в таблиці (dev-режим). Задайте SMTP_HOST/PORT/USER/PASS/FROM у env для авто-розсилки.'; }
-      else { s.style.display='none'; }
+      USERS=d.users||[]; LINKS=d.pending_links||{}; SMTP=d.smtp_status||{};
+      renderSmtp();
+      // notify when a NEW user appears (pending count grows)
+      if(PREVPEND!=null && (d.pending||0)>PREVPEND){ notify('🆕 Новий користувач очікує схвалення'); }
+      PREVPEND=d.pending||0;
       stats(); render();
+    }
+    function renderSmtp(){
+      const s=document.getElementById('smtp'); s.style.display='block';
+      const st=SMTP||{}; const last=st.last||{};
+      const dot=(c)=>`<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:6px"></span>`;
+      let state, col;
+      if(!st.configured){ state='SMTP НЕ налаштований (dev-режим — листи не йдуть, посилання показані в таблиці)'; col='#fbbf24'; s.className='msg';
+        s.style.borderColor='rgba(250,204,21,.4)'; }
+      else if(last.ok===false){ state='SMTP налаштований, але ОСТАННЯ відправка НЕ вдалась'; col='#f87171'; s.className='msg err'; }
+      else if(last.ok===true){ state='SMTP працює (остання відправка успішна)'; col='#4ade80'; s.className='msg ok'; }
+      else { state='SMTP налаштований (відправок ще не було — натисніть «Тест»)'; col='#93c5fd'; s.className='msg'; s.style.borderColor='rgba(147,197,253,.4)'; }
+      let rows=`<div style="font-weight:700;margin-bottom:6px">${dot(col)}${state}</div>`;
+      if(st.configured){
+        rows+=`<div style="font-size:.72rem;color:#9aa3b5;line-height:1.6">`+
+          `host: <b style="color:#cbd5e1">${st.host||'—'}:${st.port||'—'}</b> · `+
+          `user: <b style="color:#cbd5e1">${st.user||'—'}</b> · `+
+          `from: <b style="color:#cbd5e1">${st.from||'—'}</b> · `+
+          `TLS: <b style="color:#cbd5e1">${st.tls}</b> · `+
+          `пароль: <b style="color:${st.pass_set?'#86efac':'#fca5a5'}">${st.pass_set?'заданий':'НЕ заданий'}</b></div>`;
+        if(last.ok===false){ rows+=`<div class="msg err" style="font-size:.72rem;margin:8px 0 0">✖ Помилка на етапі «${last.stage||'?'}»: <b>${last.error||'—'}</b></div>`; }
+        if(last.ok===true){ rows+=`<div style="font-size:.7rem;color:#86efac;margin-top:6px">✔ Останній лист: ${last.to||''} · ${last.at?new Date(last.at*1000).toLocaleString():''}</div>`; }
+      } else {
+        rows+='<div style="font-size:.72rem;color:#9aa3b5;margin-top:4px">Задайте у Render env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_TLS.</div>';
+      }
+      rows+=`<div style="margin-top:10px"><button class="actbtn" onclick="smtpTest()">🔌 Надіслати тестовий лист собі</button> <span id="smtptestmsg" style="font-size:.72rem"></span></div>`;
+      s.innerHTML=rows;
+    }
+    async function smtpTest(){
+      const m=document.getElementById('smtptestmsg'); m.textContent=' надсилаю…'; m.style.color='#9aa3b5';
+      const r=await fetch('/api/admin/smtp-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+      const d=await r.json(); SMTP=d.status||SMTP;
+      if(d.ok){ m.textContent=' ✔ надіслано на '+d.to+' — перевірте пошту (і Спам)'; m.style.color='#86efac'; }
+      else { const e=(d.status&&d.status.last)?d.status.last.error:''; m.textContent=' ✖ помилка: '+(e||'див. деталі'); m.style.color='#fca5a5'; }
+      renderSmtp();
+    }
+    function notify(text){
+      try{ if(window.Notification && Notification.permission==='granted'){ new Notification('VSV Bot',{body:text}); } }catch(e){}
+      const t=document.createElement('div'); t.textContent=text;
+      t.style.cssText='position:fixed;right:16px;top:16px;z-index:100001;background:#166534;color:#fff;padding:10px 14px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.5);font-size:.8rem';
+      document.body.appendChild(t); setTimeout(()=>t.remove(),5000);
     }
     function stats(){
       const t=USERS.length, adm=USERS.filter(u=>u.is_admin).length,
@@ -1099,6 +1208,7 @@ def _admin_script():
       m.textContent=''; document.getElementById('c_email').value=''; document.getElementById('c_pw').value=''; document.getElementById('c_adm').checked=false;
       toggleCreate(); load();
     }
+    try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission(); }catch(e){}
     load(); setInterval(load, 15000);"""
 
 
