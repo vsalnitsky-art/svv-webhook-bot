@@ -38,6 +38,7 @@ from storage.db_models import get_session, User
 
 # ---- policy constants ----
 MIN_PASSWORD_LEN = 8
+DEFAULT_ACCESS_DAYS = 30          # auto access window granted on approval
 CONFIRM_MAX_AGE = 24 * 3600      # email-confirm token valid 24h
 RESET_MAX_AGE = 3600             # password-reset token valid 1h
 LOGIN_MAX_FAILS = 8              # per email+ip within window
@@ -79,14 +80,20 @@ def _tg_secret():
             or 'change-me')
 
 
-def _make_tg_token(chat_id):
-    return URLSafeTimedSerializer(_tg_secret(), salt='tglink').dumps(str(chat_id))
+def _make_tg_token(chat_id, username=None):
+    return URLSafeTimedSerializer(_tg_secret(), salt='tglink').dumps(
+        {'c': str(chat_id), 'u': username})
 
 
 def _read_tg_token(token, max_age=3600):
+    """Returns {'c': chat_id, 'u': username} or None. Tolerates legacy tokens
+    that were a bare chat_id string."""
     try:
-        return URLSafeTimedSerializer(_tg_secret(), salt='tglink').loads(
+        v = URLSafeTimedSerializer(_tg_secret(), salt='tglink').loads(
             token, max_age=max_age)
+        if isinstance(v, dict):
+            return {'c': v.get('c'), 'u': v.get('u')}
+        return {'c': str(v), 'u': None}
     except Exception:
         return None
 
@@ -150,6 +157,21 @@ def notify_new_user_to_admin(uid):
         print(f"[AUTH][TG] notify admin error: {e}")
 
 
+def approve_user(uid, days=DEFAULT_ACCESS_DAYS):
+    """Approve + enable a user, auto-grant a `days`-long access window (unless
+    one is already set or the user is admin), then notify them via Telegram.
+    Shared by the web panel and the Telegram Approve button."""
+    u = get_user_by_id(uid)
+    if not u:
+        return False
+    fields = {'approved': True, 'disabled': False}
+    if not u.is_admin and days and not getattr(u, 'access_until', None):
+        fields['access_until'] = datetime.utcnow() + timedelta(days=int(days))
+    _update_user(uid, **fields)
+    notify_user_approved(uid)
+    return True
+
+
 def notify_user_approved(uid):
     """Tell the user (via their linked Telegram) that access is granted."""
     try:
@@ -167,16 +189,23 @@ def notify_user_approved(uid):
 
 
 def create_user(email, password, is_admin=False, email_confirmed=False,
-                approved=False, telegram_chat_id=None):
+                approved=False, telegram_chat_id=None, telegram_username=None,
+                bot_access=False, access_days=None):
     s = get_session()
     try:
+        au = None
+        if access_days and not is_admin:
+            au = datetime.utcnow() + timedelta(days=int(access_days))
         u = User(email=_norm_email(email),
                  password_hash=generate_password_hash(password),
                  is_admin=bool(is_admin),
                  email_confirmed=bool(email_confirmed),
                  approved=bool(approved),
                  disabled=False, prefs='{}',
+                 bot_access=bool(bot_access or is_admin),
+                 access_until=au,
                  telegram_chat_id=(str(telegram_chat_id) if telegram_chat_id else None),
+                 telegram_username=telegram_username,
                  created_at=datetime.utcnow())
         s.add(u)
         s.commit()
@@ -235,6 +264,8 @@ def list_users():
                 'recent_ips': ips[:8],
                 'login_count': len(log),
                 'tg_linked': bool(getattr(u, 'telegram_chat_id', None)),
+                'tg_user': getattr(u, 'telegram_username', None),
+                'bot_access': bool(getattr(u, 'bot_access', False)) or u.is_admin,
             })
         return out
     finally:
@@ -288,24 +319,37 @@ def _client_ip():
 
 
 def _migrate_user_columns():
-    """Add the new User columns to an EXISTING table (create_all won't ALTER).
-    Idempotent — Postgres ADD COLUMN IF NOT EXISTS."""
+    """Add any missing User columns to the EXISTING table (create_all won't
+    ALTER). Dialect-agnostic: inspect existing columns, then ADD only the
+    missing ones with a plain ADD COLUMN (works on Postgres AND sqlite; avoids
+    the non-portable «IF NOT EXISTS»). Each ADD in its OWN transaction so one
+    failure can't abort the rest."""
+    want = [
+        ('access_until', 'TIMESTAMP'),
+        ('session_token', 'VARCHAR(64)'),
+        ('last_ip', 'VARCHAR(64)'),
+        ('login_log', 'TEXT'),
+        ('telegram_chat_id', 'VARCHAR(32)'),
+        ('telegram_username', 'VARCHAR(64)'),
+        ('bot_access', 'BOOLEAN DEFAULT FALSE'),
+    ]
     try:
         from storage.db_models import engine
-        from sqlalchemy import text
-        stmts = [
-            "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS access_until TIMESTAMP",
-            "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS session_token VARCHAR(64)",
-            "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS last_ip VARCHAR(64)",
-            "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS login_log TEXT DEFAULT '[]'",
-            "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(32)",
-        ]
-        with engine.begin() as conn:
-            for st in stmts:
-                try:
-                    conn.execute(text(st))
-                except Exception as e:
-                    print(f"[AUTH] migrate skip: {e}")
+        from sqlalchemy import text, inspect
+        try:
+            existing = {c['name'] for c in inspect(engine).get_columns('sob_users')}
+        except Exception:
+            existing = set()
+        for col, ddl in want:
+            if col in existing:
+                continue
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE sob_users ADD COLUMN {col} {ddl}"))
+                print(f"[AUTH] migrated: added column {col}")
+            except Exception as e:
+                print(f"[AUTH] migrate skip {col}: {e}")
+        print("[AUTH] user-columns migration ensured")
     except Exception as e:
         print(f"[AUTH] migrate error: {e}")
 
@@ -588,6 +632,8 @@ _PUBLIC_EXACT = {'/login', '/register', '/forgot', '/logout', '/pending',
                  '/api/health', '/favicon.ico'}
 _PUBLIC_PREFIX = ('/static/', '/confirm/', '/reset/', '/auth/')
 _USER_MUTABLE_PREFIX = ('/api/me', '/logout', '/auth/')   # non-admin may POST here
+# Info-site-only users (no bot_access) may reach ONLY these in THIS (bot) app.
+_USER_NO_BOT_ALLOWED = ('/cabinet', '/logout', '/api/me', '/pending', '/api/health')
 
 
 def _is_public(path):
@@ -662,6 +708,14 @@ def install_auth_gate(app):
         # Active. Admins unrestricted.
         if u.is_admin:
             return None
+        # Two-site model: without bot_access the user may use only the info-site
+        # + their own cabinet — the BOT itself is off-limits until an admin grants
+        # bot access. (The separate info-site shares these accounts.)
+        if not getattr(u, 'bot_access', False):
+            if not any(path.startswith(p) for p in _USER_NO_BOT_ALLOWED):
+                if _wants_json(path):
+                    return jsonify({'ok': False, 'error': 'no_bot_access'}), 403
+                return _no_bot_access_page(u)
         # Non-admin: block mutating methods except own-profile endpoints.
         if request.method in ('POST', 'PUT', 'DELETE', 'PATCH'):
             if not any(path.startswith(p) for p in _USER_MUTABLE_PREFIX):
@@ -838,7 +892,9 @@ def register_auth_routes(app):
         # a Telegram chat → email is auto-confirmed (Telegram verified the user),
         # and the admin is notified in Telegram with Approve/Reject buttons.
         tg_raw = request.values.get('tg') or ''
-        tg_chat = _read_tg_token(tg_raw) if tg_raw else None
+        _tg = _read_tg_token(tg_raw) if tg_raw else None
+        tg_chat = _tg.get('c') if _tg else None
+        tg_user = _tg.get('u') if _tg else None
         if request.method == 'POST':
             email = _norm_email(request.form.get('email'))
             pw = request.form.get('password') or ''
@@ -856,7 +912,8 @@ def register_auth_routes(app):
             if tg_chat:
                 # Telegram-verified signup: no email step; admin approval only.
                 uid = create_user(email, pw, is_admin=False, email_confirmed=True,
-                                  approved=False, telegram_chat_id=tg_chat)
+                                  approved=False, telegram_chat_id=tg_chat,
+                                  telegram_username=tg_user)
                 notify_new_user_to_admin(uid)
                 try:
                     from web.tg_bot import tg_send
@@ -995,8 +1052,18 @@ def register_auth_routes(app):
     def auth_cabinet():
         u = current_user()
         role = 'Адміністратор' if u.is_admin else 'Користувач (перегляд)'
+        tgu = getattr(u, 'telegram_username', None)
+        tgc = getattr(u, 'telegram_chat_id', None)
+        tg_line = ''
+        if tgu:
+            tg_line = f'<p class="sub" style="margin-top:-8px">📨 Telegram: <b>@{tgu}</b></p>'
+        elif tgc:
+            tg_line = f'<p class="sub" style="margin-top:-8px">📨 Telegram: <b>прив’язано</b></p>'
+        _bot = 'так' if (u.is_admin or getattr(u, 'bot_access', False)) else 'ні (лише інфо-сайт)'
         body = (f'<h1>👤 Особистий кабінет</h1>'
                 f'<p class="sub">{u.email} · {role}</p>'
+                f'{tg_line}'
+                f'<p class="sub" style="margin-top:-8px">🤖 Доступ до бота: <b>{_bot}</b></p>'
                 f'<label>Змінити пароль</label>'
                 f'<input id="np" type="password" placeholder="Новий пароль (мін. 8)">'
                 f'<input id="np2" type="password" placeholder="Повторіть пароль" style="margin-top:8px">'
@@ -1092,10 +1159,13 @@ def register_auth_routes(app):
         if not target:
             return jsonify({'ok': False, 'error': 'not found'})
         if action == 'approve':
-            _update_user(uid, approved=True)
-            notify_user_approved(uid)   # ping the user's Telegram if linked
+            approve_user(uid)            # approve + 30-day access + notify
         elif action == 'revoke':
             _update_user(uid, approved=False)
+        elif action == 'grant_bot':
+            _update_user(uid, bot_access=True)
+        elif action == 'revoke_bot':
+            _update_user(uid, bot_access=False)
         elif action == 'confirm':          # admin can confirm email manually
             _update_user(uid, email_confirmed=True)
         elif action == 'disable':
@@ -1155,9 +1225,12 @@ def register_auth_routes(app):
             return jsonify({'ok': False, 'error': f'Пароль мінімум {MIN_PASSWORD_LEN} символів'})
         if get_user_by_email(email):
             return jsonify({'ok': False, 'error': 'Такий email уже існує'})
-        # Admin-created accounts are ACTIVE immediately (email confirmed + approved).
+        # Admin-created accounts are ACTIVE immediately (email confirmed + approved),
+        # get a 30-day window, and bot access per the checkbox (admins always full).
         create_user(email, pw, is_admin=bool(d.get('is_admin')),
-                    email_confirmed=True, approved=True)
+                    email_confirmed=True, approved=True,
+                    bot_access=bool(d.get('bot_access')),
+                    access_days=DEFAULT_ACCESS_DAYS)
         return jsonify({'ok': True})
 
 
@@ -1184,6 +1257,19 @@ def _load_prefs(u):
 # ---- form/body builders ----
 def _msg_box(title, cls, text, extra=''):
     return f'<h1>{title}</h1><div class="msg {cls}">{text}</div>{extra}'
+
+
+def _no_bot_access_page(u):
+    info = os.getenv('INFO_SITE_URL')
+    links = ''
+    if info:
+        links += f'<a href="{info}">↗ Інформаційний сайт</a> · '
+    links += '<a href="/cabinet">👤 Кабінет</a> · <a href="/logout">Вийти</a>'
+    return _page('Доступ', _msg_box(
+        '🔒 Доступ до бота не надано', 'ok',
+        f'{u.email} — ваш акаунт активний для <b>інформаційного сайту</b>. '
+        'Доступ до самого бота (торгова панель) надає адміністратор окремо.',
+        extra=f'<div class="links">{links}</div>'))
 
 
 def _login_form(nxt='/', err=''):
@@ -1261,7 +1347,8 @@ def _admin_users_body():
         '<div><label>Email</label><input id="c_email" type="email" style="width:230px"></div>'
         '<div><label>Пароль (мін. 8)</label><input id="c_pw" type="text" style="width:190px"></div>'
         '<label style="display:flex;align-items:center;gap:6px;margin:0"><input id="c_adm" type="checkbox" style="width:auto"> адмін</label>'
-        '<button class="actbtn" onclick="createUser()">Створити (одразу активний)</button>'
+        '<label style="display:flex;align-items:center;gap:6px;margin:0"><input id="c_bot" type="checkbox" style="width:auto"> 🤖 доступ до бота</label>'
+        '<button class="actbtn" onclick="createUser()">Створити (30 днів, одразу активний)</button>'
         '</div><div id="c_msg" style="font-size:.75rem;margin-top:6px;color:#fca5a5"></div></div>'
         '<div style="overflow-x:auto"><table id="tbl"><thead><tr>'
         '<th>#</th><th>Email</th><th>Роль</th><th>Статус</th><th>Доступ</th>'
@@ -1385,7 +1472,7 @@ def _admin_script():
       const pl=LINKS[u.email]?LINKS[u.email].link:null;
       const b=[];
       b.push(`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-        <div><h1 style="margin:0">${u.email}</h1><p class="sub" style="margin:2px 0 0">№ ${u.seq} · ID ${u.id} · ${u.is_admin?'адмін':'користувач'}</p></div>
+        <div><h1 style="margin:0">${u.email}</h1><p class="sub" style="margin:2px 0 0">№ ${u.seq} · ID ${u.id} · ${u.is_admin?'адмін':'користувач'}${u.tg_user?(' · 📨 @'+u.tg_user):''}</p></div>
         <button class="actbtn" onclick="closeM()">✕</button></div>`);
       // status
       b.push('<div class="mrow" style="margin-top:10px">'+
@@ -1393,6 +1480,7 @@ def _admin_script():
         (u.approved?'<span class="badge b-on">схвалено</span>':'<span class="badge b-off">очікує схвалення</span>')+
         (u.disabled?'<span class="badge b-off">вимкнено</span>':'')+
         (u.tg_linked?'<span class="badge b-on">📨 Telegram</span>':'')+
+        (u.bot_access?'<span class="badge b-adm">🤖 бот</span>':'<span class="badge b-off">лише інфо-сайт</span>')+
         (u.active?'<span class="badge b-on">активний</span>':'<span class="badge b-off">неактивний</span>')+'</div>');
       if(pl) b.push(`<div class="msg" style="font-size:.7rem;word-break:break-all"><b>Посилання підтвердження (SMTP off):</b><br><a href="${pl}" style="color:#60a5fa">${pl}</a></div>`);
       // approval
@@ -1405,6 +1493,16 @@ def _admin_script():
         A(u.id,'set_access','10 днів',{days:10})+A(u.id,'set_access','15 днів',{days:15})+
         A(u.id,'set_access','30 днів',{days:30})+A(u.id,'set_access','Необмежено',{days:0})+
         '<button class="actbtn" onclick="customDays('+u.id+')">Свій період…</button></div></div>');
+      // site access (two-site model)
+      if(!u.is_admin){
+        b.push('<div class="sect"><h3>🌐 Доступ до сайтів</h3>'+
+          '<div class="mrow"><span class="mlbl">Інфо-сайт</span><span class="badge b-on">завжди</span></div>'+
+          '<div class="mrow"><span class="mlbl">Бот (торгова панель)</span>'+
+          (u.bot_access?'<span class="badge b-adm">надано</span>':'<span class="badge b-off">нема</span>')+'</div>'+
+          '<div class="mrow">'+
+          (u.bot_access?A(u.id,'revoke_bot','🤖 Забрати доступ до бота'):A(u.id,'grant_bot','🤖 Надати доступ до бота'))+
+          '</div></div>');
+      }
       // role + state
       b.push('<div class="sect"><h3>Роль і стан</h3><div class="mrow">'+
         (u.is_admin?A(u.id,'remove_admin','− Зняти адміна'):A(u.id,'make_admin','+ Зробити адміном'))+
@@ -1438,8 +1536,9 @@ def _admin_script():
     function toggleCreate(){ const b=document.getElementById('createbox'); b.style.display=b.style.display==='none'?'block':'none'; }
     async function createUser(){
       const email=document.getElementById('c_email').value, pw=document.getElementById('c_pw').value,
-            adm=document.getElementById('c_adm').checked, m=document.getElementById('c_msg');
-      const r=await fetch('/api/admin/users/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pw,is_admin:adm})});
+            adm=document.getElementById('c_adm').checked, bot=document.getElementById('c_bot').checked,
+            m=document.getElementById('c_msg');
+      const r=await fetch('/api/admin/users/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pw,is_admin:adm,bot_access:bot})});
       const d=await r.json();
       if(!d.ok){ m.textContent=d.error||'Помилка'; return; }
       m.textContent=''; document.getElementById('c_email').value=''; document.getElementById('c_pw').value=''; document.getElementById('c_adm').checked=false;
