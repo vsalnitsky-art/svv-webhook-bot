@@ -3591,6 +3591,9 @@ class TradeManager:
             'ff_ctr_mtf_align': pos.get('ff_ctr_mtf_align'),
             'ff_ctr_mtf_trend': pos.get('ff_ctr_mtf_trend'),
             'ff_ctr_mtf_timing': pos.get('ff_ctr_mtf_timing'),
+            # ₿ session at open — to validate opening during a ₿ pause.
+            'ff_btc_at_open': pos.get('ff_btc_at_open'),
+            'ff_btc_paused_at_open': pos.get('ff_btc_paused_at_open'),
         }
 
         with self._lock:
@@ -4014,6 +4017,9 @@ class TradeManager:
             'ff_ctr_mtf_align': pos.get('ff_ctr_mtf_align'),
             'ff_ctr_mtf_trend': pos.get('ff_ctr_mtf_trend'),
             'ff_ctr_mtf_timing': pos.get('ff_ctr_mtf_timing'),
+            # ₿ session at open — to validate opening during a ₿ pause.
+            'ff_btc_at_open': pos.get('ff_btc_at_open'),
+            'ff_btc_paused_at_open': pos.get('ff_btc_paused_at_open'),
         }
 
         with self._lock:

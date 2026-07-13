@@ -3540,6 +3540,12 @@ class FuelFilterDaemon:
                 # ПАУЗА (WAIT) does NOT stop Queue-2 (operator's choice): the
                 # session direction is HELD, and Q2 keeps opening in that held
                 # direction during the pause. Only the DIRECTION must match.
+                # NOTE(calibration — DO WHEN DATA READY): decide whether opening
+                # DURING a ₿ pause helps or hurts. Split closed trades by
+                # `ff_btc_paused_at_open` (stamped at open below) and compare
+                # win-rate / avg PnL / MAE — if pause-opens underperform, revert
+                # to blocking on pause (or add a setting). ₿ WAIT = ML balanced =
+                # indecisive market, so pause-opens may be lower quality.
                 if d != _bdir:
                     _pz = ' · ПАУЗА' if _bpaused else ''
                     self._engine_skip[sym] = f'Черга-2: ₿ сеанс {_bdir}{_pz} ≠ {d} — чекаємо'
@@ -3596,6 +3602,9 @@ class FuelFilterDaemon:
                 # comparison (FF ENTRY score vs Decision Center → realised PnL).
                 _dec = self._decision_compact(sym, fuel.get('mark_price'), d)
                 _mtf = self._ctr_confluence(sym, d)
+                # ₿ session state AT OPEN — to later validate opening during a
+                # ₿ pause (see NOTE above). Cheap read.
+                _bsess = self.get_btc_session() or {}
                 # Stamp calibration fields onto the trade record (survives to close).
                 self._stamp_entry_meta(sym, {
                     'ff_entry_score': entry['score'],
@@ -3611,6 +3620,8 @@ class FuelFilterDaemon:
                     'ff_ctr_mtf_align': (_mtf or {}).get('align'),
                     'ff_ctr_mtf_trend': (_mtf or {}).get('trend'),
                     'ff_ctr_mtf_timing': (_mtf or {}).get('timing'),
+                    'ff_btc_at_open': _bsess.get('dir'),
+                    'ff_btc_paused_at_open': bool(_bsess.get('paused')),
                 })
                 print(f"[FF-Q2] opened {d} {sym} (ENTRY {entry['score']}, CTR {state}, чекав {_wlbl})")
                 try:
