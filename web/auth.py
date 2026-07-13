@@ -738,12 +738,16 @@ def register_auth_routes(app):
         if request.method == 'POST':
             email = _norm_email(request.form.get('email'))
             pw = request.form.get('password') or ''
-            if _throttled(email):
+            u = get_user_by_email(email)
+            _is_adm = bool(u and u.is_admin)
+            # Admins are EXEMPT from login throttling / IP-blocking — so an
+            # admin account can never lock itself out.
+            if not _is_adm and _throttled(email):
                 return _page('Вхід', _login_form(nxt,
                              err='Забагато спроб. Спробуйте за кілька хвилин.'))
-            u = get_user_by_email(email)
             if not u or not check_password_hash(u.password_hash, pw):
-                _record_fail(email)
+                if not _is_adm:
+                    _record_fail(email)
                 return _page('Вхід', _login_form(nxt, err='Невірний email або пароль.'))
             if u.disabled:
                 return _page('Вхід', _login_form(nxt, err='Акаунт вимкнено адміністратором.'))
