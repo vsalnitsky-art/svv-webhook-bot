@@ -406,6 +406,9 @@ class User(Base):
     email_confirmed = Column(Boolean, default=False, nullable=False)
     approved = Column(Boolean, default=False, nullable=False)   # admin approval
     disabled = Column(Boolean, default=False, nullable=False)   # admin revoke
+    # Two-site access: everyone gets the info-site by default; the BOT itself is
+    # granted only by an admin. Admins always have both.
+    bot_access = Column(Boolean, default=False, nullable=False)
     prefs = Column(Text, default='{}')                          # per-user UI prefs (JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
@@ -417,6 +420,7 @@ class User(Base):
     last_ip = Column(String(64), nullable=True)
     login_log = Column(Text, default='[]')                      # recent logins [{t,ip}] JSON
     telegram_chat_id = Column(String(32), nullable=True)        # linked Telegram chat
+    telegram_username = Column(String(64), nullable=True)       # @username (if any)
 
 
 class TradeArchive(Base):
