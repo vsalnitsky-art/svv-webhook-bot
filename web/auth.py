@@ -1055,6 +1055,9 @@ def _admin_script():
     async function load(){
       const d=await (await fetch('/api/admin/users')).json();
       USERS=d.users||[]; LINKS=d.pending_links||{}; SMTP=d.smtp_status||{};
+      // Sequential display numbering (1..N) — independent of DB id gaps left by
+      // deleted users. The real DB id stays available (shown in the modal).
+      USERS.forEach((u,i)=>{ u.seq=i+1; });
       renderSmtp();
       // notify when a NEW user appears (pending count grows)
       if(PREVPEND!=null && (d.pending||0)>PREVPEND){ notify('🆕 Новий користувач очікує схвалення'); }
@@ -1129,7 +1132,7 @@ def _admin_script():
         else access='<span class="badge b-off">безлім</span>';
         const ipwarn=u.distinct_ips>1?` <span class="badge b-off" title="Входи з різних IP — можливе поширення пароля" style="color:#fca5a5">⚠ ${u.distinct_ips} IP</span>`:'';
         const tr=document.createElement('tr'); tr.className='urow'; tr.onclick=()=>openM(u.id);
-        tr.innerHTML=`<td style="color:#9aa3b5">${u.id}</td>`+
+        tr.innerHTML=`<td style="color:#9aa3b5">${u.seq}</td>`+
           `<td><b>${u.email}</b></td>`+
           `<td>${role}</td><td>${ac}</td><td>${access}</td>`+
           `<td style="font-size:.68rem;color:#9aa3b5;white-space:nowrap">${fmt(u.last_login)||'—'}</td>`+
@@ -1149,7 +1152,7 @@ def _admin_script():
       const pl=LINKS[u.email]?LINKS[u.email].link:null;
       const b=[];
       b.push(`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-        <div><h1 style="margin:0">${u.email}</h1><p class="sub" style="margin:2px 0 0">ID ${u.id} · ${u.is_admin?'адмін':'користувач'}</p></div>
+        <div><h1 style="margin:0">${u.email}</h1><p class="sub" style="margin:2px 0 0">№ ${u.seq} · ID ${u.id} · ${u.is_admin?'адмін':'користувач'}</p></div>
         <button class="actbtn" onclick="closeM()">✕</button></div>`);
       // status
       b.push('<div class="mrow" style="margin-top:10px">'+

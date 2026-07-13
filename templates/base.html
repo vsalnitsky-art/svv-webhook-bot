@@ -18,16 +18,7 @@
             <span class="logo" style="display:none">🪝</span>
             <span class="brand-text">VSV Bot</span>
         </div>
-        {% if auth_user %}
-        <div id="nav-user-chip" style="display:flex;align-items:center;gap:9px;font-size:0.78rem;color:#cbd5e1;margin-left:16px;white-space:nowrap">
-            <span>👤 {{ auth_user.email }}</span>
-            <span style="color:#9aa3b5">· {{ 'адмін' if auth_user.is_admin else 'перегляд' }}</span>
-            {% if auth_user.is_admin %}<a href="/admin/users" title="Керування користувачами" style="color:#fde68a;text-decoration:none">🛡</a>{% endif %}
-            <a href="/cabinet" style="color:#60a5fa;text-decoration:none">кабінет</a>
-            <a href="/logout" style="color:#fca5a5;text-decoration:none">вийти</a>
-        </div>
-        {% endif %}
-        <div class="nav-links" style="margin-left:auto">
+        <div class="nav-links">
             <a href="{{ url_for('smart_money_page') }}" class="nav-link {% if request.endpoint == 'smart_money_page' %}active{% endif %}">🎯 Smart Money</a>
             <a href="{{ url_for('tickr_page') }}" class="nav-link {% if request.endpoint == 'tickr_page' %}active{% endif %}">📡 Tickr</a>
             <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">Dashboard</a>
@@ -45,7 +36,16 @@
             <a href="{{ url_for('settings_page') }}" class="nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}">⚙️</a>
             <a href="{{ url_for('database_admin') }}" class="nav-link {% if request.endpoint == 'database_admin' %}active{% endif %}">🗄️ DB</a>
         </div>
-        <div class="nav-status">
+        {% if auth_user %}
+        <div id="nav-user-chip" style="display:flex;align-items:center;gap:9px;font-size:0.78rem;color:#cbd5e1;margin-left:auto;white-space:nowrap">
+            <span>👤 {{ auth_user.email }}</span>
+            <span style="color:#9aa3b5">· {{ 'адмін' if auth_user.is_admin else 'перегляд' }}</span>
+            {% if auth_user.is_admin %}<a href="/admin/users" title="Керування користувачами" style="color:#fde68a;text-decoration:none">🛡</a>{% endif %}
+            <a href="/cabinet" style="color:#60a5fa;text-decoration:none">кабінет</a>
+            <a href="/logout" style="color:#fca5a5;text-decoration:none">вийти</a>
+        </div>
+        {% endif %}
+        <div class="nav-status" style="margin-left:14px">
             <span class="status-badge {% if paper_trading %}paper{% else %}live{% endif %}">
                 {{ 'PAPER' if paper_trading else 'LIVE' }}
             </span>
