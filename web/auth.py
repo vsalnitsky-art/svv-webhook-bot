@@ -294,6 +294,8 @@ def _mail_provider():
         return 'brevo'
     if os.getenv('SENDGRID_API_KEY'):
         return 'sendgrid'
+    if os.getenv('MAILJET_API_KEY') and os.getenv('MAILJET_SECRET_KEY'):
+        return 'mailjet'
     if os.getenv('SMTP_HOST'):
         return 'smtp'
     return None
@@ -343,7 +345,40 @@ def _send_via_http_api(to, subject, html):
              'from': {'email': sender}, 'subject': subject,
              'content': [{'type': 'text/html', 'value': html}]})
         return (200 <= st < 300, f'sendgrid HTTP {st}: {body[:200]}', 'sendgrid')
+    if os.getenv('MAILJET_API_KEY') and os.getenv('MAILJET_SECRET_KEY'):
+        import base64
+        auth = base64.b64encode(
+            f"{os.getenv('MAILJET_API_KEY')}:{os.getenv('MAILJET_SECRET_KEY')}".encode()
+        ).decode()
+        st, body = _http_post_json(
+            'https://api.mailjet.com/v3.1/send',
+            {'Authorization': 'Basic ' + auth},
+            {'Messages': [{'From': {'Email': sender}, 'To': [{'Email': to}],
+                           'Subject': subject, 'HTMLPart': html}]})
+        return (200 <= st < 300, f'mailjet HTTP {st}: {body[:200]}', 'mailjet')
     return None
+
+
+def _tg_notify_link(to, subject, link):
+    """Push a confirm/reset link to the admin's Telegram (uses the bot's existing
+    TELEGRAM_BOT_TOKEN — HTTPS 443, not blocked on Render). Zero external signup:
+    the admin gets every link and can forward it or just approve the user. OFF if
+    AUTH_TG_LINKS=0 or Telegram isn't configured."""
+    try:
+        if not link or not os.getenv('TELEGRAM_BOT_TOKEN'):
+            return False
+        if str(os.getenv('AUTH_TG_LINKS', '1')).lower() in ('0', 'false', 'no'):
+            return False
+        from alerts.telegram_notifier import get_notifier
+        n = get_notifier()
+        if not n:
+            return False
+        txt = (f"🔐 <b>VSV Bot</b> · {subject}\n"
+               f"Користувач: <code>{to}</code>\n{link}")
+        return n.send_message(txt)
+    except Exception as e:
+        print(f"[AUTH][TG] link notify error: {e}")
+        return False
 
 
 def _rec_smtp(ok, to, error=None, stage=None):
@@ -358,7 +393,7 @@ def smtp_status():
     return {
         'configured': prov is not None,
         'provider': prov,                          # resend|brevo|sendgrid|smtp|None
-        'is_api': prov in ('resend', 'brevo', 'sendgrid'),
+        'is_api': prov in ('resend', 'brevo', 'sendgrid', 'mailjet'),
         'host': os.getenv('SMTP_HOST') or None,
         'port': os.getenv('SMTP_PORT', '587'),
         'user': os.getenv('SMTP_USER') or None,
@@ -378,6 +413,9 @@ def send_email(to, subject, html, link=None):
         with _lock:
             _pending_links[_norm_email(to)] = {'link': link, 'subject': subject,
                                                'at': time.time()}
+        # Always mirror the link to the admin's Telegram (existing bot) — a
+        # zero-signup delivery channel independent of any email provider.
+        _tg_notify_link(to, subject, link)
     # 1) HTTP email API first — works on Render (SMTP ports are blocked there).
     try:
         api = _send_via_http_api(to, subject, html)
@@ -1165,7 +1203,10 @@ def _admin_script():
         if(last.ok===false){ rows+=`<div class="msg err" style="font-size:.72rem;margin:8px 0 0">✖ Помилка (${last.stage||'?'}): <b>${last.error||'—'}</b></div>`; }
         if(last.ok===true){ rows+=`<div style="font-size:.7rem;color:#86efac;margin-top:6px">✔ Останній лист: ${last.to||''} · ${last.at?new Date(last.at*1000).toLocaleString():''}</div>`; }
       } else {
-        rows+='<div style="font-size:.72rem;color:#9aa3b5;margin-top:4px">На Render SMTP заблокований — задайте HTTP-API ключ у env: <b style="color:#cbd5e1">RESEND_API_KEY</b> (реком.) або BREVO_API_KEY / SENDGRID_API_KEY, і <b style="color:#cbd5e1">MAIL_FROM</b> (верифікований відправник).</div>';
+        rows+='<div style="font-size:.72rem;color:#9aa3b5;margin-top:4px">На Render SMTP заблокований. Варіанти:<br>'+
+          '• HTTP-API ключ у env: <b style="color:#cbd5e1">MAILJET_API_KEY + MAILJET_SECRET_KEY</b> (легша реєстрація) або RESEND_API_KEY / BREVO_API_KEY / SENDGRID_API_KEY, + <b style="color:#cbd5e1">MAIL_FROM</b>.<br>'+
+          '• Без реєстрації: посилання підтвердження вже <b style="color:#86efac">дублюється у ваш Telegram</b> (бот налаштований) — можете переслати користувачу.<br>'+
+          '• Або взагалі без листів: підтверджуйте/схвалюйте користувачів вручну в цій панелі.</div>';
       }
       rows+=`<div style="margin-top:10px"><button class="actbtn" onclick="smtpTest()">🔌 Надіслати тестовий лист собі</button> <span id="smtptestmsg" style="font-size:.72rem"></span></div>`;
       s.innerHTML=rows;
