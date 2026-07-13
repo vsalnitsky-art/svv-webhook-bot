@@ -27,7 +27,7 @@
             <a href="/logout" style="color:#fca5a5;text-decoration:none">вийти</a>
         </div>
         {% endif %}
-        <div class="nav-links">
+        <div class="nav-links" style="margin-left:auto">
             <a href="{{ url_for('smart_money_page') }}" class="nav-link {% if request.endpoint == 'smart_money_page' %}active{% endif %}">🎯 Smart Money</a>
             <a href="{{ url_for('tickr_page') }}" class="nav-link {% if request.endpoint == 'tickr_page' %}active{% endif %}">📡 Tickr</a>
             <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">Dashboard</a>
@@ -41,7 +41,7 @@
             <a href="{{ url_for('trades_page') }}" class="nav-link {% if request.endpoint == 'trades_page' %}active{% endif %}">Trades</a>
             #}
             <a href="/cabinet" class="nav-link">👤 Кабінет</a>
-            {% if auth_user and auth_user.is_admin %}<a href="/admin/users" class="nav-link">🛡 Користувачі</a>{% endif %}
+            {% if auth_user and auth_user.is_admin %}<a href="/admin/users" class="nav-link">🛡 Користувачі{% if users_pending and users_pending > 0 %} <span title="Нові користувачі очікують схвалення" style="background:#dc2626;color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;font-weight:800">{{ users_pending }}</span>{% endif %}</a>{% endif %}
             <a href="{{ url_for('settings_page') }}" class="nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}">⚙️</a>
             <a href="{{ url_for('database_admin') }}" class="nav-link {% if request.endpoint == 'database_admin' %}active{% endif %}">🗄️ DB</a>
         </div>
