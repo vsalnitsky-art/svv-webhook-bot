@@ -972,10 +972,15 @@ def register_auth_routes(app):
             return jsonify({'ok': False, 'error': 'forbidden'}), 403
         d = request.get_json(silent=True) or {}
         to = _norm_email(d.get('to')) or current_user().email
-        ok = send_email(to, 'VSV Bot — тест SMTP',
+        ok = send_email(to, 'VSV Bot — тест пошти',
                         '<p>✅ Тестовий лист від VSV Bot. Якщо ви це бачите — '
-                        'SMTP налаштований правильно.</p>')
-        return jsonify({'ok': ok, 'to': to, 'status': smtp_status()})
+                        'пошта налаштована правильно.</p>')
+        # Also exercise the Telegram link channel so the admin can confirm it.
+        tg = _tg_notify_link(to, 'Тест Telegram (з панелі)',
+                             _base_url() + '/admin/users')
+        return jsonify({'ok': ok, 'to': to, 'tg': tg,
+                        'tg_configured': bool(os.getenv('TELEGRAM_BOT_TOKEN')),
+                        'status': smtp_status()})
 
     @app.route('/api/admin/users/<int:uid>', methods=['POST'])
     def api_admin_user_action(uid):
@@ -1215,8 +1220,10 @@ def _admin_script():
       const m=document.getElementById('smtptestmsg'); m.textContent=' надсилаю…'; m.style.color='#9aa3b5';
       const r=await fetch('/api/admin/smtp-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
       const d=await r.json(); SMTP=d.status||SMTP;
-      if(d.ok){ m.textContent=' ✔ надіслано на '+d.to+' — перевірте пошту (і Спам)'; m.style.color='#86efac'; }
-      else { const e=(d.status&&d.status.last)?d.status.last.error:''; m.textContent=' ✖ помилка: '+(e||'див. деталі'); m.style.color='#fca5a5'; }
+      let tgtxt='';
+      if(d.tg_configured){ tgtxt = d.tg?' · 📨 Telegram: надіслано ✔':' · 📨 Telegram: помилка ✖'; }
+      if(d.ok){ m.innerHTML=' ✔ лист надіслано на '+d.to+' — перевірте пошту (і Спам)'+tgtxt; m.style.color='#86efac'; }
+      else { const e=(d.status&&d.status.last)?d.status.last.error:''; m.innerHTML=' ✖ пошта: '+(e||'див. деталі')+(d.tg_configured?(d.tg?' · але 📨 Telegram працює ✔':' · 📨 Telegram ✖'):''); m.style.color=d.tg?'#fbbf24':'#fca5a5'; }
       renderSmtp();
     }
     function notify(text){
