@@ -23,9 +23,10 @@ import re
 import json
 import ssl
 import time
+import secrets
 import smtplib
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.message import EmailMessage
 
 from flask import (session, request, redirect, url_for, jsonify, g,
@@ -137,14 +138,32 @@ def _update_user(uid, **fields):
 def list_users():
     s = get_session()
     try:
-        return [{
-            'id': u.id, 'email': u.email, 'is_admin': u.is_admin,
-            'email_confirmed': u.email_confirmed, 'approved': u.approved,
-            'disabled': u.disabled,
-            'active': _is_active(u),
-            'created_at': u.created_at.isoformat() if u.created_at else None,
-            'last_login': u.last_login.isoformat() if u.last_login else None,
-        } for u in s.query(User).order_by(User.created_at.desc()).all()]
+        out = []
+        for u in s.query(User).order_by(User.id.asc()).all():   # top→bottom
+            try:
+                log = json.loads(u.login_log or '[]')
+            except Exception:
+                log = []
+            ips = sorted({e.get('ip') for e in log if isinstance(e, dict)})
+            au = getattr(u, 'access_until', None)
+            days_left = None
+            if au:
+                days_left = round((au - datetime.utcnow()).total_seconds() / 86400, 1)
+            out.append({
+                'id': u.id, 'email': u.email, 'is_admin': u.is_admin,
+                'email_confirmed': u.email_confirmed, 'approved': u.approved,
+                'disabled': u.disabled,
+                'active': _is_active(u),
+                'created_at': u.created_at.isoformat() if u.created_at else None,
+                'last_login': u.last_login.isoformat() if u.last_login else None,
+                'access_until': au.isoformat() if au else None,
+                'days_left': days_left,
+                'last_ip': getattr(u, 'last_ip', None),
+                'distinct_ips': len(ips),
+                'recent_ips': ips[:8],
+                'login_count': len(log),
+            })
+        return out
     finally:
         s.close()
 
@@ -163,8 +182,45 @@ def _is_active(u):
     if u.disabled:
         return False
     if u.is_admin:
-        return True
-    return bool(u.email_confirmed and u.approved)
+        return True                    # admins never expire / never disabled
+    if not (u.email_confirmed and u.approved):
+        return False
+    # Time-limited access: auto-block once the window has passed.
+    au = getattr(u, 'access_until', None)
+    if au:
+        try:
+            if au < datetime.utcnow():
+                return False
+        except Exception:
+            pass
+    return True
+
+
+def _client_ip():
+    fwd = (request.headers.get('X-Forwarded-For') or '').split(',')[0].strip()
+    return fwd or request.remote_addr or '?'
+
+
+def _migrate_user_columns():
+    """Add the new User columns to an EXISTING table (create_all won't ALTER).
+    Idempotent — Postgres ADD COLUMN IF NOT EXISTS."""
+    try:
+        from storage.db_models import engine
+        from sqlalchemy import text
+        stmts = [
+            "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS access_until TIMESTAMP",
+            "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS session_token VARCHAR(64)",
+            "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS last_ip VARCHAR(64)",
+            "ALTER TABLE sob_users ADD COLUMN IF NOT EXISTS login_log TEXT DEFAULT '[]'",
+        ]
+        with engine.begin() as conn:
+            for st in stmts:
+                try:
+                    conn.execute(text(st))
+                except Exception as e:
+                    print(f"[AUTH] migrate skip: {e}")
+    except Exception as e:
+        print(f"[AUTH] migrate error: {e}")
 
 
 # ==================================================================
@@ -174,7 +230,21 @@ def login_user(u):
     session.permanent = True
     session['uid'] = u.id
     session['is_admin'] = bool(u.is_admin)
-    _update_user(u.id, last_login=datetime.utcnow())
+    # Single-active-session (anti password-sharing): rotate the token so any
+    # OTHER live session for this account is invalidated on its next request.
+    tok = secrets.token_hex(16)
+    session['stok'] = tok
+    ip = _client_ip()
+    try:
+        log = json.loads(u.login_log or '[]')
+        if not isinstance(log, list):
+            log = []
+    except Exception:
+        log = []
+    log.append({'t': int(time.time()), 'ip': ip})
+    log = log[-15:]                      # keep last 15 logins
+    _update_user(u.id, last_login=datetime.utcnow(), session_token=tok,
+                 last_ip=ip, login_log=json.dumps(log))
 
 
 def logout_user():
@@ -215,7 +285,9 @@ def send_email(to, subject, html, link=None):
         host = os.getenv('SMTP_HOST')
         port = int(os.getenv('SMTP_PORT', '587') or 587)
         user = os.getenv('SMTP_USER', '')
-        pwd = os.getenv('SMTP_PASS', '')
+        # Gmail app passwords are shown as «xxxx xxxx xxxx xxxx» — the spaces are
+        # cosmetic; strip them so login doesn't fail on a pasted-with-spaces value.
+        pwd = (os.getenv('SMTP_PASS', '') or '').replace(' ', '')
         sender = os.getenv('SMTP_FROM', user or 'no-reply@bot.local')
         use_tls = str(os.getenv('SMTP_TLS', '1')).lower() in ('1', 'true', 'yes')
         msg = EmailMessage()
@@ -333,12 +405,26 @@ def install_auth_gate(app):
                 return jsonify({'ok': False, 'error': 'auth_required'}), 401
             return redirect(url_for('auth_login', next=path))
         if not _is_active(u):
-            # Logged in but pending confirm/approval → block everything else.
+            # Logged in but pending confirm/approval OR access expired → block.
+            _expired = bool(getattr(u, 'access_until', None)
+                            and not u.is_admin and u.email_confirmed and u.approved
+                            and not u.disabled)
             if _wants_json(path):
-                return jsonify({'ok': False, 'error': 'not_active',
+                return jsonify({'ok': False,
+                                'error': 'expired' if _expired else 'not_active',
                                 'email_confirmed': bool(u.email_confirmed),
                                 'approved': bool(u.approved)}), 403
             return redirect(url_for('auth_pending'))
+        # Single-active-session enforcement (non-admins): if this session's token
+        # no longer matches the account's current token, a newer login superseded
+        # it → invalidate. Admins are exempt (multi-device is normal for them).
+        if not u.is_admin:
+            st = getattr(u, 'session_token', None)
+            if st and session.get('stok') != st:
+                logout_user()
+                if _wants_json(path):
+                    return jsonify({'ok': False, 'error': 'session_superseded'}), 401
+                return redirect(url_for('auth_login', superseded='1'))
         # Active. Admins unrestricted.
         if u.is_admin:
             return None
@@ -426,16 +512,31 @@ table{width:100%;border-collapse:collapse;font-size:.8rem} th,td{padding:7px 9px
 .b-on{background:rgba(34,197,94,.15);color:#86efac} .b-off{background:rgba(148,163,184,.15);color:#cbd5e1}
 .b-adm{background:rgba(250,204,21,.15);color:#fde68a}
 .actbtn{padding:4px 9px;font-size:.72rem;border-radius:6px;border:1px solid #2a3140;background:#1a2130;
- color:#e5e7eb;cursor:pointer;margin:1px}
-</style></head><body><div class="card" style="max-width:{{width or 400}}px">
-<img class="brandlogo" src="/favicon.ico" alt="VSV" onerror="this.style.display='none'">
+ color:#e5e7eb;cursor:pointer;margin:1px;text-decoration:none;display:inline-block}
+.actbtn:hover{background:#232c3d}
+body.full{align-items:flex-start;justify-content:flex-start}
+.fullcard{max-width:1560px!important;width:calc(100vw - 32px);margin:16px auto!important}
+tr.urow:hover{background:rgba(255,255,255,.03);cursor:pointer}
+/* modal */
+.ovl{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;
+ justify-content:center;z-index:100000;padding:16px}
+.ovl.open{display:flex}
+.modal{width:100%;max-width:560px;max-height:90vh;overflow-y:auto;background:#141922;
+ border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.mrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0}
+.mlbl{font-size:.72rem;color:#9aa3b5;min-width:120px}
+.sect{border-top:1px solid rgba(255,255,255,.08);margin-top:14px;padding-top:10px}
+.sect h3{font-size:.82rem;margin:0 0 8px;color:#cbd5e1}
+</style></head><body class="{{ 'full' if full else '' }}">
+<div class="card {{ 'fullcard' if full else '' }}" style="max-width:{{width or 400}}px">
+{% if not full %}<img class="brandlogo" src="/favicon.ico" alt="VSV" onerror="this.style.display='none'">{% endif %}
 {{body|safe}}</div>
 <script>{{script|safe}}</script></body></html>"""
 
 
-def _page(title, body, script='', width=400):
+def _page(title, body, script='', width=400, full=False):
     return render_template_string(_SHELL, title=title, body=body, script=script,
-                                  width=width)
+                                  width=width, full=full)
 
 
 def _throttled(email):
@@ -481,7 +582,10 @@ def register_auth_routes(app):
             if not _is_active(u):
                 return redirect(url_for('auth_pending'))
             return redirect(nxt if nxt.startswith('/') else '/')
-        return _page('Вхід', _login_form(nxt))
+        _info = ''
+        if request.args.get('superseded'):
+            _info = 'Сесію завершено: у цей акаунт увійшли з іншого пристрою.'
+        return _page('Вхід', _login_form(nxt, err=_info))
 
     @app.route('/register', methods=['GET', 'POST'])
     def auth_register():
@@ -602,7 +706,13 @@ def register_auth_routes(app):
             return redirect(url_for('auth_login'))
         if _is_active(u):
             return redirect('/')
-        if not u.email_confirmed:
+        au = getattr(u, 'access_until', None)
+        if au and u.email_confirmed and u.approved and not u.disabled and au < datetime.utcnow():
+            txt = ('Термін вашого доступу завершився. Зверніться до адміністратора '
+                   'для продовження.')
+        elif u.disabled:
+            txt = 'Акаунт вимкнено адміністратором.'
+        elif not u.email_confirmed:
             txt = ('Підтвердіть свій email за посиланням із листа. '
                    'Після цього акаунт має схвалити адміністратор.')
         else:
@@ -673,7 +783,7 @@ def register_auth_routes(app):
         if not u.is_admin:
             return abort(403)
         return _page('Користувачі', _admin_users_body(), script=_admin_script(),
-                     width=1120)
+                     full=True)
 
     @app.route('/api/admin/users')
     def api_admin_users():
@@ -717,6 +827,18 @@ def register_auth_routes(app):
             if len(pw) < MIN_PASSWORD_LEN:
                 return jsonify({'ok': False, 'error': f'Мінімум {MIN_PASSWORD_LEN} символів'})
             _update_user(uid, password_hash=generate_password_hash(pw))
+        elif action == 'set_access':
+            # Time-limited access: days>0 → active for N days then auto-block;
+            # days==0 → unlimited. Also approves + enables the account.
+            try:
+                days = int(d.get('days') or 0)
+            except (TypeError, ValueError):
+                days = 0
+            au = (datetime.utcnow() + timedelta(days=days)) if days > 0 else None
+            _update_user(uid, access_until=au, approved=True, disabled=False)
+        elif action == 'kick':
+            # Invalidate all live sessions of this user (force re-login).
+            _update_user(uid, session_token=None)
         elif action == 'resend':
             token = _make_token(target.email, 'confirm')
             link = f"{_base_url()}/confirm/{token}"
@@ -819,20 +941,21 @@ def _reset_form(token, err=''):
 
 def _admin_users_body():
     return (
-        '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">'
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+        '<div style="display:flex;align-items:center;gap:14px">'
+        '<img src="/favicon.ico" alt="VSV" onerror="this.style.display=\'none\'"'
+        ' style="width:56px;height:56px;border-radius:12px;object-fit:cover;flex:none">'
         '<div><h1 style="margin:0">🛡 Керування користувачами</h1>'
         '<p class="sub" style="margin:4px 0 0">Новий акаунт активний лише після '
-        'підтвердження email ТА схвалення адміністратора</p></div>'
+        'підтвердження email ТА схвалення адміністратора</p></div></div>'
         '<div><a class="actbtn" href="/cabinet">👤 Кабінет</a> '
         '<a class="actbtn" href="/">📊 Дашборд</a> '
         '<a class="actbtn" href="/logout" style="color:#fca5a5">Вийти</a></div></div>'
-        # stat cards
-        '<div id="stats" style="display:flex;gap:10px;flex-wrap:wrap;margin:14px 0"></div>'
+        '<div id="stats" style="display:flex;gap:10px;flex-wrap:wrap;margin:16px 0"></div>'
         '<div id="smtp" class="msg" style="display:none"></div>'
-        # toolbar: search + create
         '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0 4px">'
-        '<input id="q" placeholder="🔎 пошук за email…" style="max-width:260px" oninput="render()">'
-        '<select id="flt" onchange="render()" style="max-width:200px">'
+        '<input id="q" placeholder="🔎 пошук за email…" style="max-width:280px" oninput="render()">'
+        '<select id="flt" onchange="render()" style="max-width:210px">'
         '<option value="all">Усі</option>'
         '<option value="pending">Очікують схвалення</option>'
         '<option value="active">Активні</option>'
@@ -840,20 +963,21 @@ def _admin_users_body():
         '<option value="disabled">Вимкнені</option></select>'
         '<button class="actbtn" style="margin-left:auto" onclick="toggleCreate()">➕ Створити користувача</button>'
         '</div>'
-        # create form (hidden)
         '<div id="createbox" style="display:none;margin:6px 0;padding:12px;border:1px dashed #2a3140;border-radius:10px">'
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">'
-        '<div><label>Email</label><input id="c_email" type="email" style="width:220px"></div>'
-        '<div><label>Пароль (мін. 8)</label><input id="c_pw" type="text" style="width:180px"></div>'
+        '<div><label>Email</label><input id="c_email" type="email" style="width:230px"></div>'
+        '<div><label>Пароль (мін. 8)</label><input id="c_pw" type="text" style="width:190px"></div>'
         '<label style="display:flex;align-items:center;gap:6px;margin:0"><input id="c_adm" type="checkbox" style="width:auto"> адмін</label>'
         '<button class="actbtn" onclick="createUser()">Створити (одразу активний)</button>'
         '</div><div id="c_msg" style="font-size:.75rem;margin-top:6px;color:#fca5a5"></div></div>'
-        # table
         '<div style="overflow-x:auto"><table id="tbl"><thead><tr>'
-        '<th>#</th><th>Email</th><th>Роль</th><th>Email</th><th>Схвалення</th>'
-        '<th>Активність</th><th>Створено</th><th>Останній вхід</th><th>Дії</th>'
+        '<th>#</th><th>Email</th><th>Роль</th><th>Статус</th><th>Доступ</th>'
+        '<th>Останній вхід</th><th>Входи / IP</th><th></th>'
         '</tr></thead><tbody></tbody></table></div>'
-        '<p id="empty" class="sub" style="display:none;text-align:center;margin:16px 0">Нічого не знайдено</p>')
+        '<p id="empty" class="sub" style="display:none;text-align:center;margin:16px 0">Нічого не знайдено</p>'
+        # ---- per-user modal ----
+        '<div id="ovl" class="ovl" onclick="if(event.target===this)closeM()">'
+        '<div class="modal" id="modal"></div></div>')
 
 
 def _admin_script():
@@ -889,35 +1013,80 @@ def _admin_script():
       else if(flt==='disabled') list=list.filter(u=>u.disabled);
       document.getElementById('empty').style.display=list.length?'none':'block';
       for(const u of list){
-        const pl=LINKS[u.email]?LINKS[u.email].link:null;
         const role=u.is_admin?'<span class="badge b-adm">адмін</span>':'<span class="badge b-off">користувач</span>';
-        const em=u.email_confirmed?'<span class="badge b-on">✓ підтв.</span>':'<span class="badge b-off">✗ ні</span>';
-        const ap=u.approved?'<span class="badge b-on">✓ схвалено</span>':'<span class="badge b-off">очікує</span>';
-        const ac=u.disabled?'<span class="badge b-off">вимкнено</span>':(u.active?'<span class="badge b-on">активний</span>':'<span class="badge b-off">неактивний</span>');
-        let act='';
-        act+= u.approved?btn(u.id,'revoke','⨯ Відкликати'):btn(u.id,'approve','✓ Схвалити');
-        if(!u.email_confirmed){ act+=btn(u.id,'confirm','✉ Підтв. email'); act+=btn(u.id,'resend','↻ Лист'); }
-        act+= u.disabled?btn(u.id,'enable','▶ Увімкнути'):btn(u.id,'disable','⏸ Вимкнути');
-        act+= u.is_admin?btn(u.id,'remove_admin','− Адмін'):btn(u.id,'make_admin','+ Адмін');
-        act+=`<button class="actbtn" onclick="setpw(${u.id})">🔑 Пароль</button>`;
-        act+=`<button class="actbtn" style="color:#fca5a5" onclick="act(${u.id},'delete')">🗑</button>`;
-        const tr=document.createElement('tr');
+        const ac=u.disabled?'<span class="badge b-off">вимкнено</span>':(u.active?'<span class="badge b-on">активний</span>':(u.approved&&u.email_confirmed?'<span class="badge b-off">неактивний</span>':'<span class="badge b-off">очікує</span>'));
+        let access='—';
+        if(u.days_left!=null) access= u.days_left>0?`<span class="badge b-on">${u.days_left} дн</span>`:'<span class="badge b-off">завершено</span>';
+        else access='<span class="badge b-off">безлім</span>';
+        const ipwarn=u.distinct_ips>1?` <span class="badge b-off" title="Входи з різних IP — можливе поширення пароля" style="color:#fca5a5">⚠ ${u.distinct_ips} IP</span>`:'';
+        const tr=document.createElement('tr'); tr.className='urow'; tr.onclick=()=>openM(u.id);
         tr.innerHTML=`<td style="color:#9aa3b5">${u.id}</td>`+
-          `<td>${u.email}${pl?`<div style="font-size:.64rem;color:#60a5fa;word-break:break-all">🔗 <a href="${pl}" style="color:#60a5fa">${pl}</a></div>`:''}</td>`+
-          `<td>${role}</td><td>${em}</td><td>${ap}</td><td>${ac}</td>`+
-          `<td style="font-size:.68rem;color:#9aa3b5;white-space:nowrap">${fmt(u.created_at)}</td>`+
+          `<td><b>${u.email}</b></td>`+
+          `<td>${role}</td><td>${ac}</td><td>${access}</td>`+
           `<td style="font-size:.68rem;color:#9aa3b5;white-space:nowrap">${fmt(u.last_login)||'—'}</td>`+
-          `<td style="white-space:nowrap">${act}</td>`;
+          `<td style="font-size:.68rem;color:#9aa3b5">${u.login_count||0}${ipwarn}</td>`+
+          `<td style="white-space:nowrap"><button class="actbtn" onclick="event.stopPropagation();openM(${u.id})">⚙ Керувати</button></td>`;
         tb.appendChild(tr);
       }
     }
     function fmt(s){return s?String(s).slice(0,16).replace('T',' '):'';}
-    function btn(id,a,label){return `<button class="actbtn" onclick="act(${id},'${a}')">${label}</button>`}
+
+    // ---- per-user modal ----
+    let CUR=null;
+    function openM(id){ CUR=id; drawM(); document.getElementById('ovl').classList.add('open'); }
+    function closeM(){ document.getElementById('ovl').classList.remove('open'); }
+    function drawM(){
+      const u=USERS.find(x=>x.id===CUR); if(!u)return closeM();
+      const pl=LINKS[u.email]?LINKS[u.email].link:null;
+      const b=[];
+      b.push(`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div><h1 style="margin:0">${u.email}</h1><p class="sub" style="margin:2px 0 0">ID ${u.id} · ${u.is_admin?'адмін':'користувач'}</p></div>
+        <button class="actbtn" onclick="closeM()">✕</button></div>`);
+      // status
+      b.push('<div class="mrow" style="margin-top:10px">'+
+        (u.email_confirmed?'<span class="badge b-on">email ✓</span>':'<span class="badge b-off">email ✗</span>')+
+        (u.approved?'<span class="badge b-on">схвалено</span>':'<span class="badge b-off">очікує схвалення</span>')+
+        (u.disabled?'<span class="badge b-off">вимкнено</span>':'')+
+        (u.active?'<span class="badge b-on">активний</span>':'<span class="badge b-off">неактивний</span>')+'</div>');
+      if(pl) b.push(`<div class="msg" style="font-size:.7rem;word-break:break-all"><b>Посилання підтвердження (SMTP off):</b><br><a href="${pl}" style="color:#60a5fa">${pl}</a></div>`);
+      // approval
+      b.push('<div class="sect"><h3>Схвалення та email</h3><div class="mrow">'+
+        (u.approved?A(u.id,'revoke','⨯ Відкликати схвалення'):A(u.id,'approve','✓ Схвалити'))+
+        (u.email_confirmed?'':A(u.id,'confirm','✉ Підтвердити email')+A(u.id,'resend','↻ Надіслати лист'))+'</div></div>');
+      // time-limited access
+      const dl=u.days_left; const cur = dl==null?'безлімітний':(dl>0?dl+' дн залишилось':'завершено');
+      b.push('<div class="sect"><h3>⏳ Термін доступу <span class="sub">('+cur+')</span></h3><div class="mrow">'+
+        A(u.id,'set_access','10 днів',{days:10})+A(u.id,'set_access','15 днів',{days:15})+
+        A(u.id,'set_access','30 днів',{days:30})+A(u.id,'set_access','Необмежено',{days:0})+
+        '<button class="actbtn" onclick="customDays('+u.id+')">Свій період…</button></div></div>');
+      // role + state
+      b.push('<div class="sect"><h3>Роль і стан</h3><div class="mrow">'+
+        (u.is_admin?A(u.id,'remove_admin','− Зняти адміна'):A(u.id,'make_admin','+ Зробити адміном'))+
+        (u.disabled?A(u.id,'enable','▶ Увімкнути'):A(u.id,'disable','⏸ Вимкнути'))+
+        A(u.id,'kick','🚪 Розлогінити (скинути сесії)')+'</div></div>');
+      // password
+      b.push('<div class="sect"><h3>Пароль</h3><div class="mrow">'+
+        '<button class="actbtn" onclick="setpw('+u.id+')">🔑 Задати новий пароль</button></div></div>');
+      // security / logins
+      const ips=(u.recent_ips||[]).join(', ')||'—';
+      const warn=u.distinct_ips>1?'<div class="msg err" style="font-size:.72rem">⚠ Входи з '+u.distinct_ips+' різних IP — можливе поширення пароля. Одна сесія на акаунт: новий вхід автоматично вимикає попередній.</div>':'';
+      b.push('<div class="sect"><h3>🔒 Безпека / входи</h3>'+warn+
+        '<div class="mrow"><span class="mlbl">Останній IP</span><span>'+(u.last_ip||'—')+'</span></div>'+
+        '<div class="mrow"><span class="mlbl">Усього входів</span><span>'+(u.login_count||0)+'</span></div>'+
+        '<div class="mrow"><span class="mlbl">Останні IP</span><span style="font-size:.72rem;color:#9aa3b5">'+ips+'</span></div></div>');
+      // danger
+      b.push('<div class="sect"><h3 style="color:#fca5a5">Небезпечно</h3><div class="mrow">'+
+        A(u.id,'delete','🗑 Видалити користувача')+'</div></div>');
+      document.getElementById('modal').innerHTML=b.join('');
+    }
+    function A(id,a,label,extra){ return `<button class="actbtn" onclick='act(${id},"${a}",${JSON.stringify(extra||{})})'>${label}</button>`; }
+    function customDays(id){ const n=prompt('На скільки днів надати доступ? (0 = без обмеження)'); if(n===null)return; act(id,'set_access',{days:parseInt(n)||0}); }
     async function act(id,a,extra){
       if(a==='delete'&&!confirm('Видалити користувача назавжди?'))return;
       const body=Object.assign({action:a},extra||{});
       const r=await fetch('/api/admin/users/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      const d=await r.json(); if(!d.ok)alert(d.error||'Помилка'); load();
+      const d=await r.json(); if(!d.ok){alert(d.error||'Помилка');return;}
+      await load(); if(document.getElementById('ovl').classList.contains('open')) drawM();
     }
     function setpw(id){ const p=prompt('Новий пароль для користувача (мін. 8 символів):'); if(!p)return; act(id,'set_password',{password:p}); }
     function toggleCreate(){ const b=document.getElementById('createbox'); b.style.display=b.style.display==='none'?'block':'none'; }
@@ -940,6 +1109,10 @@ def init_auth(app):
     """Wire auth into a Flask app: routes + gate + admin bootstrap."""
     register_auth_routes(app)
     install_auth_gate(app)
+    try:
+        _migrate_user_columns()
+    except Exception as e:
+        print(f"[AUTH] migrate error: {e}")
     try:
         ensure_admin()
     except Exception as e:

@@ -409,6 +409,13 @@ class User(Base):
     prefs = Column(Text, default='{}')                          # per-user UI prefs (JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
+    # Time-limited access: when set, the account auto-blocks after this UTC time.
+    access_until = Column(DateTime, nullable=True)
+    # Single-active-session control (anti password-sharing): the current valid
+    # session token; a new login rotates it, invalidating older sessions.
+    session_token = Column(String(64), nullable=True)
+    last_ip = Column(String(64), nullable=True)
+    login_log = Column(Text, default='[]')                      # recent logins [{t,ip}] JSON
 
 
 class TradeArchive(Base):
