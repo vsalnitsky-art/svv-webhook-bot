@@ -174,7 +174,7 @@ def notify_new_user_to_admin(uid):
             (f'@{u.telegram_username}' if getattr(u, 'telegram_username', None) else '')
         ] if x) or ('прив’язано' if u.telegram_chat_id else '—')
         notify_category('register',
-                f"🆕 <b>Нова реєстрація</b>\nEmail: <code>{u.email}</code>\n"
+                f"🆕 <b>Нова реєстрація</b>\nЛогін: <code>{u.email}</code>\n"
                 f"Telegram: {tg_bits}\n"
                 f"Схвалити доступ?",
                 buttons=[[{'text': '✓ Схвалити', 'callback_data': f'ap:{u.id}'},
@@ -208,7 +208,7 @@ def notify_user_approved(uid):
         b = base_url()
         tg_send(u.telegram_chat_id,
                 "✅ <b>Ваш акаунт активовано!</b>\nТепер увійдіть на сайті "
-                "своїм email і паролем.",
+                "своїм <b>логіном</b> і паролем.",
                 buttons=[[{'text': '🔐 Увійти', 'url': f"{b}/login"}]] if b else None)
     except Exception as e:
         print(f"[AUTH][TG] notify user error: {e}")
@@ -892,8 +892,24 @@ button:hover{filter:brightness(1.05)}
 .msg{margin:12px 0;padding:10px 12px;border-radius:9px;font-size:.82rem}
 .err{background:rgba(255,93,108,.12);border:1px solid rgba(255,93,108,.4);color:#ff9aa4}
 .ok{background:rgba(47,209,139,.12);border:1px solid rgba(47,209,139,.4);color:#6ee7b7}
-.links{margin-top:16px;font-size:.8rem;text-align:center;color:#8695ac}
+.links{margin-top:18px;font-size:.8rem;text-align:center;color:#8695ac}
 .links a{color:#f5a623;text-decoration:none;font-weight:600} .links a:hover{text-decoration:underline}
+/* cabinet rows + toggle switch */
+.sect2{border-top:1px solid #26324a;margin-top:18px;padding-top:14px}
+.seclbl{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:#8695ac;margin-bottom:8px}
+.idrow{display:flex;justify-content:space-between;gap:12px;padding:7px 0;font-size:.88rem}
+.idrow .k{color:#8695ac} .idrow .v{font-weight:700;text-align:right;word-break:break-all}
+.crow{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 0;
+ border-bottom:1px solid #1c2536} .crow:last-of-type{border-bottom:none}
+.crow .t{font-size:.9rem;font-weight:600}
+.sw{position:relative;width:48px;height:27px;flex:none;display:inline-block}
+.sw input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:2}
+.sw .tr{position:absolute;inset:0;border-radius:999px;background:#1a2333;border:1px solid #26324a;transition:.2s}
+.sw .tr:before{content:"";position:absolute;top:2px;left:2px;width:21px;height:21px;border-radius:50%;
+ background:#7d8ba1;transition:.2s}
+.sw input:checked ~ .tr{background:rgba(47,209,139,.35);border-color:#2fd18b}
+.sw input:checked ~ .tr:before{transform:translateX(21px);background:#2fd18b}
+.sw input:disabled{cursor:not-allowed} .sw input:disabled ~ .tr{opacity:.45}
 table{width:100%;border-collapse:collapse;font-size:.8rem} th,td{padding:7px 9px;text-align:left;
  border-bottom:1px solid rgba(255,255,255,.06)} th{color:#9aa3b5;font-weight:600}
 .badge{padding:2px 8px;border-radius:20px;font-size:.68rem;font-weight:700}
@@ -994,14 +1010,15 @@ def register_auth_routes(app):
         if not tg_chat:
             return _page('Реєстрація', _tg_register_prompt())
         if request.method == 'POST':
-            email = _norm_email(request.form.get('email'))
+            # The user picks a LOGIN (a display name for signing in) — NOT an
+            # email. It is stored in the account's login column.
+            login = _norm_email(request.form.get('login') or request.form.get('email'))
             pw = request.form.get('password') or ''
             pw2 = request.form.get('password2') or ''
-            # No email step — derive a stable placeholder login from the chat.
-            if not email:
-                email = f"tg{tg_chat}@telegram.local"
-            if not _EMAIL_RE.match(email):
-                return _page('Реєстрація', _register_form(err='Невірний email.', tg=tg_raw))
+            if not login or len(login) < 3:
+                return _page('Реєстрація', _register_form(
+                    err='Логін — мінімум 3 символи.', tg=tg_raw))
+            email = login   # stored in the login/email column
             if len(pw) < MIN_PASSWORD_LEN:
                 return _page('Реєстрація', _register_form(
                     err=f'Пароль мінімум {MIN_PASSWORD_LEN} символів.', tg=tg_raw))
@@ -1009,9 +1026,9 @@ def register_auth_routes(app):
                 return _page('Реєстрація', _register_form(err='Паролі не збігаються.', tg=tg_raw))
             if get_user_by_email(email):
                 return _page('Реєстрація', _register_form(
-                    err='Такий email уже зареєстрований.', tg=tg_raw))
+                    err='Такий логін уже зайнятий — виберіть інший.', tg=tg_raw))
             if tg_chat:
-                # Telegram-verified signup: no email step; admin approval only.
+                # Telegram-verified signup: login+password; admin approval only.
                 uid = create_user(email, pw, is_admin=False, email_confirmed=True,
                                   approved=False, telegram_chat_id=tg_chat,
                                   telegram_username=tg_user, telegram_name=tg_name)
@@ -1191,24 +1208,28 @@ def register_auth_routes(app):
                      '<p class="sub" style="color:#f5b544;margin-top:-4px">⚠️ Прив’яжіть '
                      'Telegram (напишіть боту <b>/start</b>), щоб отримувати сповіщення.</p>')
         _dis = '' if _tg_ok else 'disabled'
+        _tgv = (' '.join(x for x in [tgn, (f'@{tgu}' if tgu else '')] if x) or 'прив’язано') if tgc else '—'
         body = (f'<h1>👤 Особистий кабінет</h1>'
-                f'<p class="sub">{u.email} · {role}</p>'
-                f'{tg_line}'
-                f'<p class="sub" style="margin-top:-8px">🤖 Доступ до бота: <b>{_bot}</b></p>'
-                f'<label style="margin-top:14px">🔔 Сповіщення в Telegram</label>'
+                f'<p class="sub">{role}</p>'
+                f'<div class="sect2" style="border-top:none;margin-top:6px;padding-top:0">'
+                f'<div class="idrow"><span class="k">Логін</span><span class="v">{u.email}</span></div>'
+                f'<div class="idrow"><span class="k">📨 Telegram</span><span class="v">{_tgv}</span></div>'
+                f'<div class="idrow"><span class="k">🤖 Доступ до бота</span><span class="v">{_bot}</span></div>'
+                f'</div>'
+                f'<div class="sect2"><div class="seclbl">🔔 Сповіщення в Telegram</div>'
                 f'{_ntf_hint}'
-                f'<label style="display:flex;align-items:center;gap:9px;font-weight:400;cursor:pointer">'
-                f'<input type="checkbox" id="nbtc" {_btc_ck} {_dis} onchange="saventf()"> '
-                f'₿ BTCUSDT — СТАРТ / СТОП / ПАУЗА</label>'
-                f'<label style="display:flex;align-items:center;gap:9px;font-weight:400;cursor:pointer;margin-top:6px">'
-                f'<input type="checkbox" id="nfnd" {_fnd_ck} {_dis} onchange="saventf()"> '
-                f'💰 Funding — поява монети з ММ</label>'
-                f'<div id="nm" class="msg" style="display:none"></div>'
-                f'<label style="margin-top:14px">Змінити пароль</label>'
+                f'<div class="crow"><span class="t">₿ BTCUSDT — старт / стоп / пауза</span>'
+                f'<label class="sw"><input type="checkbox" id="nbtc" {_btc_ck} {_dis} onchange="saventf()">'
+                f'<span class="tr"></span></label></div>'
+                f'<div class="crow"><span class="t">💰 Funding — поява монети з ММ</span>'
+                f'<label class="sw"><input type="checkbox" id="nfnd" {_fnd_ck} {_dis} onchange="saventf()">'
+                f'<span class="tr"></span></label></div>'
+                f'<div id="nm" class="msg" style="display:none"></div></div>'
+                f'<div class="sect2"><div class="seclbl">🔑 Змінити пароль</div>'
                 f'<input id="np" type="password" placeholder="Новий пароль (мін. 8)">'
                 f'<input id="np2" type="password" placeholder="Повторіть пароль" style="margin-top:8px">'
                 f'<button onclick="chpw()">Змінити пароль</button>'
-                f'<div id="m" class="msg" style="display:none"></div>'
+                f'<div id="m" class="msg" style="display:none"></div></div>'
                 f'<div class="links">'
                 + ('<a href="/admin/users">🛡 Адмін-панель</a> · ' if u.is_admin else '')
                 + '<a href="/">← На дашборд</a> · <a href="/logout">Вийти</a></div>')
@@ -1231,7 +1252,7 @@ def register_auth_routes(app):
           const d=await r.json();
           nm.className='msg '+(d.ok?'ok':'err'); nm.textContent=d.ok?'Збережено.':(d.error||'Помилка');
         }"""
-        return _page('Кабінет', body, script=script, width=440)
+        return _page('Кабінет', body, script=script, width=500)
 
     @app.route('/api/me')
     def api_me():
@@ -1456,11 +1477,14 @@ def _login_form(nxt='/', err=''):
     bl = _bot_link()
     reg = (f'<a href="{bl}">Реєстрація через Telegram</a>' if bl
            else '<a href="/register">Реєстрація</a>')
-    return (f'<h1>🔐 Вхід</h1><p class="sub">Авторизуйтесь для доступу до бота</p>{e}'
+    return (f'<h1>🔐 Вхід</h1><p class="sub">Ваш логін та пароль, створені при реєстрації в Telegram</p>{e}'
             f'<form method="post">'
             f'<input type="hidden" name="next" value="{nxt}">'
-            f'<label>Email</label><input name="email" type="email" required autofocus>'
-            f'<label>Пароль</label><input name="password" type="password" required>'
+            f'<label>Логін (ваше ім’я для входу)</label>'
+            f'<input name="email" type="text" required autofocus autocomplete="username" '
+            f'placeholder="ім’я, яке ви задали при реєстрації">'
+            f'<label>Пароль</label><input name="password" type="password" required '
+            f'autocomplete="current-password">'
             f'<button type="submit">Увійти</button></form>'
             f'<div class="links">{reg}</div>')
 
@@ -1469,11 +1493,14 @@ def _register_form(err='', tg=''):
     # Only reached WITH a valid Telegram token → password-only, no email field.
     e = f'<div class="msg err">{err}</div>' if err else ''
     tg_hidden = f'<input type="hidden" name="tg" value="{tg}">' if tg else ''
-    tg_note = ('<div class="msg ok" style="font-size:.78rem">🔗 Telegram підтверджено — '
-               '<b>email не потрібен</b>. Задайте лише пароль; далі — схвалення адміністратора.</div>')
-    return (f'<h1>📝 Реєстрація</h1><p class="sub">Через Telegram — лише пароль</p>{e}{tg_note}'
+    tg_note = ('<div class="msg ok" style="font-size:.78rem">🔗 Telegram підтверджено. '
+               'Придумайте <b>логін</b> (ім’я для входу) і пароль — далі схвалення адміністратора.</div>')
+    return (f'<h1>📝 Реєстрація</h1><p class="sub">Через Telegram — логін і пароль</p>{e}{tg_note}'
             f'<form method="post">{tg_hidden}'
-            f'<label>Пароль (мін. 8)</label><input name="password" type="password" required autofocus>'
+            f'<label>Логін (ім’я для входу)</label>'
+            f'<input name="login" type="text" required autofocus placeholder="напр. myname" '
+            f'autocomplete="username">'
+            f'<label>Пароль (мін. 8)</label><input name="password" type="password" required>'
             f'<label>Повторіть пароль</label><input name="password2" type="password" required>'
             f'<button type="submit">Зареєструватися</button></form>'
             f'<div class="links"><a href="/login">← Вже маю акаунт</a></div>')
