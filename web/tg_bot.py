@@ -135,9 +135,25 @@ def _cat_chat(category):
     return chat, thread
 
 
+def _cat_enabled(category):
+    """Admin on/off switch per category (DB setting 'tg_cat_enabled'). Default
+    ON. Lets the admin silence a whole category (e.g. noisy 💰 Funding)."""
+    try:
+        from storage.db_operations import get_db
+        conf = get_db().get_setting('tg_cat_enabled', {}) or {}
+        if isinstance(conf, dict):
+            return bool(conf.get(category, True))
+    except Exception:
+        pass
+    return True
+
+
 def notify_category(category, text, buttons=None):
     """Send an ADMIN-facing message routed by category. When the category has no
-    dedicated chat/topic, prefixes a category header so one chat stays sorted."""
+    dedicated chat/topic, prefixes a category header so one chat stays sorted.
+    Skips entirely when the admin has switched this category off."""
+    if not _cat_enabled(category):
+        return False
     chat, thread = _cat_chat(category)
     if not chat:
         return False

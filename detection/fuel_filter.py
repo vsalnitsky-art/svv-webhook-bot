@@ -2896,10 +2896,11 @@ class FuelFilterDaemon:
                 if _r is None:
                     _a = self._anomalies.get(sym)
                     _r = _a.get('rate') if _a else None
-                _dt = '🟢 LONG' if d == 'LONG' else ('🔴 SHORT' if d == 'SHORT' else '⚪')
+                _emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
+                _side = d if d in ('LONG', 'SHORT') else ''
                 _rt = f"{_r:+.3f}%" if isinstance(_r, (int, float)) else '—'
                 self._broadcast_users('funding', 'notify_funding',
-                                      f"💰 <b>{sym}</b> {_dt} · funding {_rt}")
+                                      f"#{sym}{_emoji}{_side} направлення\nfunding {_rt}")
             except Exception:
                 pass
         if not notifier:
