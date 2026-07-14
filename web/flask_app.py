@@ -3000,6 +3000,16 @@ def register_api_routes(app):
             from detection.activity_log import get_activity_log
             data = request.get_json(silent=True) or {}
             on = get_activity_log().set_enabled(bool(data.get('enabled')))
+            # When turning the monitor ON, immediately stamp the CURRENT active
+            # lever set so the chronology starts with «що саме задіяно».
+            if on:
+                try:
+                    from detection.fuel_filter import get_fuel_filter
+                    ff = get_fuel_filter()
+                    if ff:
+                        ff.log_active_config('увімкнено монітор')
+                except Exception:
+                    pass
             return jsonify({'ok': True, 'enabled': on})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
@@ -3046,6 +3056,20 @@ def register_api_routes(app):
             events = get_activity_log().get(limit=100000)   # newest-first, all
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
+
+        # 📋 Pull CONFIG snapshots OUT of the per-coin stream: they aren't tied to
+        # a symbol, so they'd pollute the trade sessions. Kept as a top-level
+        # timeline of «which levers were active when» + the CURRENT snapshot.
+        config_changes = [e for e in events if e.get('event') == 'config']
+        events = [e for e in events if e.get('event') != 'config']
+        active_config = None
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            _ff = get_fuel_filter()
+            if _ff:
+                active_config = _ff.active_config_summary()
+        except Exception:
+            active_config = None
 
         trades = {'real': [], 'shadow': []}
         try:
@@ -3220,6 +3244,25 @@ def register_api_routes(app):
             import io as _io
             buf = _io.StringIO()
             w = _csv.writer(buf)
+
+            def _iso0(t):
+                try:
+                    return datetime.fromtimestamp(float(t)).isoformat()
+                except (TypeError, ValueError):
+                    return ''
+            # 📋 Leading section: the CURRENT active levers, then the timeline of
+            # config changes — so the export starts with «що саме задіяно».
+            if active_config:
+                w.writerow(['# АКТИВНІ ПАРАМЕТРИ (на момент експорту)'])
+                for grp in active_config.get('groups', []):
+                    for it in grp.get('items', []):
+                        w.writerow(['#', grp.get('title', ''), it.get('k', ''), it.get('v', '')])
+                w.writerow([])
+            if config_changes:
+                w.writerow(['# ІСТОРІЯ ЗМІН ПАРАМЕТРІВ'])
+                for e in sorted(config_changes, key=lambda x: x.get('t') or 0):
+                    w.writerow(['#', _iso0(e.get('t')), e.get('detail', '')])
+                w.writerow([])
             w.writerow(['session_id', 'outcome', 'latency_sec', 'time_iso', 'ts',
                         'symbol', 'side', 'event', 'source', 'detail',
                         'entry_score', 'ctr_stc', 'ctr_state', 'fuel_str',
@@ -3279,6 +3322,9 @@ def register_api_routes(app):
                         'session_count': len(sessions),
                         'trade_counts': {'real': len(trades.get('real') or []),
                                          'paper': len(trades.get('shadow') or [])},
+                        # 📋 Which levers/filters are active NOW + their timeline.
+                        'active_config': active_config,
+                        'config_changes': config_changes,
                         'sessions': sessions})
 
     @app.route('/api/fuel-filter/settings', methods=['POST'])

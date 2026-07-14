@@ -3262,6 +3262,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     </div>
     <!-- /volradar-panel (hidden) — log below must stay OUTSIDE it -->
 
+        <!-- ============ 📋 Активні параметри (що саме задіяно ЗАРАЗ) ======== -->
+        <div style="margin-top:18px;border-top:1px solid rgba(255,255,255,0.10);padding-top:14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer" onclick="toggleActiveConfig()">
+                <h3 style="font-size:0.9rem;color:#facc15;margin:0">📋 Активні параметри
+                    <span style="color:#6b7280;font-weight:normal;font-size:0.72rem">— які саме фільтри та важелі задіяні в даний момент</span>
+                </h3>
+                <span id="ff-config-caret" style="color:#8b93a7;font-size:0.8rem">▼</span>
+            </div>
+            <div id="ff-config-line" style="font-size:0.72rem;color:#cbd5e1;margin-top:6px;line-height:1.5;word-break:break-word">—</div>
+            <div id="ff-config-groups" style="display:none;margin-top:10px;gap:12px;flex-wrap:wrap"></div>
+        </div>
+
         <!-- ============ 🧾 Лог роботи бота (activity monitor) ============ -->
         <div style="margin-top:18px;border-top:1px solid rgba(255,255,255,0.10);padding-top:14px">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px">
@@ -3284,6 +3296,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <option value="closed">🔚 Закрито</option>
                         <option value="passthrough">➡️ Пряме відкриття</option>
                         <option value="autosl">🎯 Авто-SL з OB</option>
+                        <option value="config">📋 Параметри</option>
                     </select>
                     <button onclick="exportActivityLog('csv')" style="white-space:nowrap;font-size:0.7rem;padding:5px 11px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#22c55e;cursor:pointer" title="Завантажити всі події логу як CSV (для Excel / аналізу)">📥 CSV</button>
                     <button onclick="exportActivityLog('json')" style="white-space:nowrap;font-size:0.7rem;padding:5px 11px;border-radius:5px;border:1px solid rgba(96,165,250,0.4);background:rgba(96,165,250,0.1);color:#60a5fa;cursor:pointer" title="Завантажити всі події логу як JSON (повні дані)">📥 JSON</button>
@@ -3309,6 +3322,7 @@ const _actMeta = {
     skipped: ['⏭', 'Пропущено', '#9aa3b5'], closed: ['🔚', 'Закрито', '#a78bfa'],
     passthrough: ['➡️', 'Пряме відкриття', '#fbbf24'],
     autosl: ['🎯', 'Авто-SL з OB', '#38bdf8'],
+    config: ['📋', 'Параметри', '#facc15'],
 };
 async function toggleActivityLog() {
     const on = document.getElementById('activity-log-enabled').checked;
@@ -7656,9 +7670,43 @@ async function loadFuelFilterStatus() {
             sumEl.textContent = `(таймерів: ${nt})`;
         }
         renderFuelFilter(d);
+        renderActiveConfig(d.active_config);
         // Refresh the chart-panel FF status row for the open symbol
         loadFuelPanelStatus();
     } catch (e) { /* non-fatal */ }
+}
+
+// ── 📋 Активні параметри (знімок задіяних важелів) ──
+function toggleActiveConfig() {
+    const g = document.getElementById('ff-config-groups');
+    const c = document.getElementById('ff-config-caret');
+    if (!g) return;
+    const open = g.style.display === 'none';
+    g.style.display = open ? 'flex' : 'none';
+    if (c) c.textContent = open ? '▲' : '▼';
+}
+function renderActiveConfig(cfg) {
+    const line = document.getElementById('ff-config-line');
+    const box = document.getElementById('ff-config-groups');
+    if (!cfg || !line || !box) return;
+    line.textContent = cfg.text || '—';
+    const esc = s => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Highlight «вимк» in grey, everything else stays readable.
+    const val = v => {
+        const t = esc(v);
+        return /вимк|⛔|без ліміту|off/i.test(t)
+            ? `<span style="color:#6b7280">${t}</span>`
+            : `<span style="color:#e5e7eb">${t}</span>`;
+    };
+    box.innerHTML = (cfg.groups || []).map(g => `
+        <div style="flex:1;min-width:230px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.07);border-radius:7px;padding:9px 11px">
+            <div style="font-size:0.74rem;font-weight:700;color:#a5b4fc;margin-bottom:5px">${esc(g.title)}</div>
+            ${(g.items || []).map(it => `
+                <div style="display:flex;justify-content:space-between;gap:10px;font-size:0.71rem;padding:1px 0">
+                    <span style="color:#8b93a7">${esc(it.k)}</span>${val(it.v)}
+                </div>`).join('')}
+        </div>`).join('');
 }
 
 // ── ❤️ Черга на вхід: click-to-sort ──────────────────────────────────

@@ -628,6 +628,9 @@ class FuelFilterDaemon:
         s2 = self.get_settings()
         if s2.get('enabled'):
             self.start()
+        # 🧾 Record the new lever set into the chronology (only when the monitor
+        # is on — log_activity is a no-op otherwise, zero cost).
+        self.log_active_config('зміна налаштувань')
         return s2
 
     def is_enabled(self) -> bool:
@@ -3202,6 +3205,8 @@ class FuelFilterDaemon:
                                                   daemon=True, name='fuel-alerts')
             self._alert_thread.start()
         print("[FuelFilter] daemon started")
+        # Stamp the active lever set into the chronology at boot.
+        self.log_active_config('старт')
 
     def stop(self):
         self._stop.set()
@@ -3949,6 +3954,144 @@ class FuelFilterDaemon:
             'ctr': self._ctr_snapshot(sym),
         }
 
+    def active_config_summary(self) -> Dict:
+        """📋 Human-readable snapshot of ALL currently-active levers/filters —
+        so the operator (and the 🧾 log + export) can see WHAT is enabled and
+        WHICH thresholds are set RIGHT NOW, without reading the code.
+
+        Returns {'text': one-line UA summary, 'groups': [{title, items:[{k,v}]}],
+                 'fields': flat {key: value} for analytics}. Fully defensive."""
+        try:
+            s = self.get_settings()
+        except Exception:
+            s = dict(DEFAULT_SETTINGS)
+
+        def _on(v):
+            return 'УВІМК' if v else 'вимк'
+
+        # Live external state that shapes behaviour.
+        try:
+            eg_long, eg_short = self._entry_gates()
+        except Exception:
+            eg_long, eg_short = True, True
+        ob_enabled, ob_tf = False, '1h'
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            scanner = getattr(tm, 'scanner', None) if tm else None
+            if scanner is not None:
+                ob_enabled = bool(scanner._settings.get('ob_filter_enabled', False))
+                ob_tf = scanner._settings.get('ob_filter_timeframe', '1h')
+        except Exception:
+            pass
+        try:
+            scan_n = len(self.get_scan_list())
+        except Exception:
+            scan_n = None
+
+        ff_on = bool(s.get('enabled'))
+        q1 = bool(s.get('queue1_enabled', True))
+        q2 = bool(s.get('queue2_enabled', False))
+        btc_mode = bool(s.get('start_engine_enabled'))
+        indep = bool(s.get('start_engine_independent'))
+        eng_mode = ('₿ START (за сеансом BTC)' if btc_mode
+                    else ('НЕЗАЛЕЖНИЙ (власний напрямок)' if indep
+                          else 'ЗА КНОПКАМИ ЛОНГ/ШОРТ'))
+        buttons = ('обидва' if (eg_long and eg_short)
+                   else ('лише 🟢 LONG' if eg_long
+                         else ('лише 🔴 SHORT' if eg_short else '⛔ обидва вимкнені (WAIT)')))
+        dec_map = {'any': 'будь-який', 'marginal': 'МЕЖОВИЙ+', 'good': 'лише ДОБРИЙ'}
+
+        groups = [
+            {'title': '⚙️ Двигун', 'items': [
+                {'k': 'Fuel Auto-Filter', 'v': _on(ff_on)},
+                {'k': 'Режим відкриття', 'v': eng_mode},
+                {'k': 'Кнопки ЛОНГ/ШОРТ', 'v': buttons},
+                {'k': 'Підтвердж. свічками', 'v': f"{_on(s.get('engine_candle_confirm'))} ({s.get('engine_candle_tf','5m')})"},
+                {'k': 'Мін. сила ММ (L/S)', 'v': f"{s.get('engine_min_mm_strength_long',0)}% / {s.get('engine_min_mm_strength_short',0)}%"},
+                {'k': 'Мін. Decision-вердикт', 'v': dec_map.get(s.get('engine_min_decision','any'), s.get('engine_min_decision'))},
+                {'k': 'Розумний напрямок', 'v': _on(s.get('engine_smart_direction'))},
+                {'k': 'Лише STRONG HOLD', 'v': _on(s.get('engine_require_strong_hold'))},
+                {'k': 'Скан-ліст (монет)', 'v': (scan_n if scan_n is not None else '?')},
+            ]},
+            {'title': '🎯 Черги', 'items': [
+                {'k': 'Черга-1 (перехоплювач)', 'v': _on(q1)},
+                {'k': 'Черга-2 (CTR-зони)', 'v': _on(q2)},
+                {'k': 'Q2: hold-and-wait', 'v': _on(s.get('queue2_hold_and_wait', True))},
+                {'k': 'Q2: тримати при невід. CTR', 'v': _on(s.get('queue2_hold_unknown_ctr', True))},
+                {'k': 'Q2: черга всіх (ігнор CTR)', 'v': _on(s.get('queue2_queue_all', False))},
+                {'k': 'Q2: викид на протил. CHoCH', 'v': _on(s.get('queue2_eject_choch', True))},
+                {'k': 'Q2: викид на протил. CTR', 'v': (f"УВІМК (≥{s.get('queue2_eject_ctr_pct',20)}%)" if s.get('queue2_eject_ctr') else 'вимк')},
+                {'k': 'Q2: розворот через чергу', 'v': _on(s.get('queue2_reverse_via_queue', True))},
+                {'k': 'Q2: за кнопками', 'v': _on(s.get('queue2_use_buttons', False))},
+                {'k': 'Q2: за ₿-сеансом', 'v': _on(s.get('queue2_use_btc', True))},
+            ]},
+            {'title': '📊 Пороги Черги-2', 'items': [
+                {'k': 'ENTRY у чергу ≥', 'v': s.get('queue2_min_entry_score', 45)},
+                {'k': 'ENTRY на відкриття ≥', 'v': s.get('queue2_open_min_entry_score', 65)},
+                {'k': 'Decision на відкриття ≥', 'v': s.get('queue2_open_min_dec_score', 20)},
+                {'k': 'CTR нейтр. зона', 'v': f"{s.get('queue2_ctr_neutral_pct', 10)}%"},
+                {'k': 'TTL у черзі', 'v': (f"{s.get('queue2_ttl_hours', 2)} год" if s.get('queue2_ttl_hours') else 'без ліміту')},
+            ]},
+            {'title': '📐 CTR / OB', 'items': [
+                {'k': 'CTR-гейт', 'v': (f"{s.get('ctr_gate_mode')} (нахил ≥{s.get('ctr_gate_lean_pct',50)}%)" if s.get('ctr_gate_mode') != 'off' else 'вимк')},
+                {'k': 'CTR мульти-TF', 'v': (f"УВІМК ({', '.join(s.get('ctr_mtf_tfs', []))})" if s.get('ctr_mtf_enabled') else 'вимк')},
+                {'k': 'OB-фільтр (сканер)', 'v': (f"УВІМК ({ob_tf})" if ob_enabled else 'вимк')},
+                {'k': 'Авто Manual SL з OB', 'v': (f"УВІМК (буфер {s.get('q2_auto_ob_sl_buffer_pct',0.2)}%, {s.get('q2_auto_ob_sl_tf','15m')})" if s.get('q2_auto_ob_sl') else 'вимк')},
+            ]},
+            {'title': '🚪 Показ / закриття', 'items': [
+                {'k': 'Поріг показу в таблиці', 'v': f"{s.get('duration_minutes',5)} хв"},
+                {'k': 'Макс. виснаження (гейт)', 'v': f"{s.get('max_exhaustion_pct',75)}%"},
+                {'k': 'Керування позиціями (FF)', 'v': _on(s.get('manage_open_positions', True))},
+                {'k': 'Вихід за виснаженням', 'v': (f"УВІМК (≥{s.get('potential_threshold_pct',95)}%)" if s.get('use_potential_exit') else 'вимк')},
+                {'k': 'Закриття за ₿-баром', 'v': s.get('close_on_btc_mode', 'off')},
+                {'k': 'Закриття за силою ММ <', 'v': (f"{s.get('manage_close_min_mm')}%" if s.get('manage_close_min_mm') else 'вимк')},
+                {'k': '₿ START-сигнал (хв)', 'v': s.get('start_signal_minutes', 5)},
+            ]},
+        ]
+
+        # Compact one-line summary (the KEY active gates) for the log detail.
+        text = (f"FF {_on(ff_on)} · режим: {eng_mode} · кнопки: {buttons} · "
+                f"Q1 {_on(q1)} / Q2 {_on(q2)} · "
+                f"ENTRY≥{s.get('queue2_min_entry_score',45)}/відкр≥{s.get('queue2_open_min_entry_score',65)} · "
+                f"Dec≥{s.get('queue2_open_min_dec_score',20)} · CTR-зона {s.get('queue2_ctr_neutral_pct',10)}% · "
+                f"TTL {s.get('queue2_ttl_hours',2)}год · Q2₿-гейт {_on(s.get('queue2_use_btc'))} · "
+                f"OB {'УВІМК '+ob_tf if ob_enabled else 'вимк'} · "
+                f"автоSL {_on(s.get('q2_auto_ob_sl'))} · CTR-mtf {_on(s.get('ctr_mtf_enabled'))}")
+
+        fields = {
+            'ff_enabled': ff_on, 'engine_mode': ('btc' if btc_mode else ('indep' if indep else 'buttons')),
+            'allow_long': eg_long, 'allow_short': eg_short,
+            'q1': q1, 'q2': q2,
+            'q2_min_entry': s.get('queue2_min_entry_score', 45),
+            'q2_open_min_entry': s.get('queue2_open_min_entry_score', 65),
+            'q2_open_min_dec': s.get('queue2_open_min_dec_score', 20),
+            'q2_ctr_neutral_pct': s.get('queue2_ctr_neutral_pct', 10),
+            'q2_ttl_hours': s.get('queue2_ttl_hours', 2),
+            'q2_use_btc': bool(s.get('queue2_use_btc')),
+            'q2_use_buttons': bool(s.get('queue2_use_buttons')),
+            'q2_hold_and_wait': bool(s.get('queue2_hold_and_wait')),
+            'ob_filter': ob_enabled, 'ob_tf': ob_tf,
+            'auto_ob_sl': bool(s.get('q2_auto_ob_sl')),
+            'ctr_gate_mode': s.get('ctr_gate_mode'),
+            'ctr_mtf': bool(s.get('ctr_mtf_enabled')),
+            'min_decision': s.get('engine_min_decision'),
+            'scan_list_n': scan_n,
+        }
+        return {'text': text, 'groups': groups, 'fields': fields}
+
+    def log_active_config(self, reason: str = ''):
+        """Emit the current active-config snapshot into the 🧾 activity log so the
+        chronology records WHICH levers were set at that moment. `reason` = why
+        (e.g. 'зміна налаштувань' / 'старт' / 'увімкнено монітор')."""
+        try:
+            from detection.activity_log import log_activity
+            cfg = self.active_config_summary()
+            detail = cfg['text'] if not reason else f"[{reason}] {cfg['text']}"
+            log_activity('ALL', 'config', detail[:400], source='config',
+                         extra=cfg.get('fields'))
+        except Exception:
+            pass
+
     def get_state(self) -> Dict:
         """Snapshot for the UI: settings + live timers + active tracking.
         NEW STRATEGY: shows only timers held >= duration_minutes (threshold).
@@ -4079,6 +4222,9 @@ class FuelFilterDaemon:
             'engine_mode': getattr(self, '_engine_mode', 'off'),
             'allow_long': _eg_long,
             'allow_short': _eg_short,
+            # 📋 Active levers/filters snapshot — so the UI + інфо-сайт can show
+            # WHAT is enabled and WHICH thresholds are set right now.
+            'active_config': self.active_config_summary(),
         }
 
     def active_symbols(self) -> List[str]:
