@@ -98,6 +98,26 @@ def _read_tg_token(token, max_age=3600):
         return None
 
 
+# ── Info-site auth token ────────────────────────────────────────────────────
+# A signed, time-limited token that carries a user id. It lets the SEPARATELY
+# HOSTED info-site authenticate cross-origin WITHOUT cookies: after the user
+# logs in on the bot, the bot hands the site this token (URL hash); the site
+# then sends it as the «X-Info-Token» header and the bot recognises the user.
+_INFO_TOK_MAX_AGE = 7 * 24 * 3600     # 7 days
+
+
+def _make_info_token(uid):
+    return URLSafeTimedSerializer(_tg_secret(), salt='infotok').dumps({'u': int(uid)})
+
+
+def _read_info_token(token, max_age=_INFO_TOK_MAX_AGE):
+    try:
+        v = URLSafeTimedSerializer(_tg_secret(), salt='infotok').loads(token, max_age=max_age)
+        return int(v['u']) if isinstance(v, dict) and 'u' in v else None
+    except Exception:
+        return None
+
+
 # ==================================================================
 # User store (thin, session-scoped)
 # ==================================================================
@@ -416,13 +436,28 @@ def logout_user():
 
 
 def current_user():
-    """Cached-per-request current user object (or None)."""
-    if 'uid' not in session:
-        return None
-    if getattr(g, '_cur_user', None) is not None:
+    """Cached-per-request current user object (or None). Auth sources, in order:
+    the session cookie (same-origin) OR an «X-Info-Token» header (cross-origin
+    info-site). `g._via_token` marks token auth so the single-session guard is
+    skipped for it."""
+    if getattr(g, '_cur_user_set', False):
         return g._cur_user
-    u = get_user_by_id(session['uid'])
+    u = None
+    if 'uid' in session:
+        u = get_user_by_id(session['uid'])
+    else:
+        try:
+            tok = request.headers.get('X-Info-Token')
+        except Exception:
+            tok = None
+        if tok:
+            uid = _read_info_token(tok)
+            if uid:
+                u = get_user_by_id(uid)
+                if u:
+                    g._via_token = True
     g._cur_user = u
+    g._cur_user_set = True
     return u
 
 
@@ -743,8 +778,9 @@ def install_auth_gate(app):
             return redirect(url_for('auth_pending'))
         # Single-active-session enforcement (non-admins): if this session's token
         # no longer matches the account's current token, a newer login superseded
-        # it → invalidate. Admins are exempt (multi-device is normal for them).
-        if not u.is_admin:
+        # it → invalidate. Admins exempt; token-authed info-site requests exempt
+        # (they carry no session cookie / stok by design).
+        if not u.is_admin and not getattr(g, '_via_token', False):
             st = getattr(u, 'session_token', None)
             if st and session.get('stok') != st:
                 logout_user()
@@ -1092,6 +1128,22 @@ def register_auth_routes(app):
     def info_site_asset(fname):
         from flask import send_from_directory
         return send_from_directory(_INFOSITE_DIR, fname)
+
+    @app.route('/info-login')
+    def info_login_bounce():
+        """After a normal login, hand the SEPARATELY-HOSTED info-site a signed
+        token (URL hash) so it can authenticate cross-origin without cookies.
+        The «Вхід» button on that site points here via /login?next=/info-login."""
+        u = current_user()
+        if not u or not _is_active(u):
+            return redirect(url_for('auth_login', next='/info-login'))
+        site = os.getenv('INFO_SITE_URL')
+        tok = _make_info_token(u.id)
+        if site:
+            sep = '&' if '#' in site else '#'
+            return redirect(f"{site.rstrip('/')}{sep}it={tok}")
+        # No external site configured → bot-served info-site (same origin).
+        return redirect(f"/info/#it={tok}")
 
     @app.route('/pending')
     def auth_pending():
