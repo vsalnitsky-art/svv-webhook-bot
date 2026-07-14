@@ -664,8 +664,14 @@ _PUBLIC_EXACT = {'/login', '/register', '/forgot', '/logout', '/pending',
                  '/api/health', '/favicon.ico'}
 _PUBLIC_PREFIX = ('/static/', '/confirm/', '/reset/', '/auth/')
 _USER_MUTABLE_PREFIX = ('/api/me', '/logout', '/auth/')   # non-admin may POST here
-# Info-site-only users (no bot_access) may reach ONLY these in THIS (bot) app.
-_USER_NO_BOT_ALLOWED = ('/cabinet', '/logout', '/api/me', '/pending', '/api/health')
+# Info-site-only users (no bot_access) may reach ONLY these in THIS (bot) app:
+# their cabinet, the bot-served info-site (/info) and the READ-ONLY APIs the
+# info-site consumes. POSTs are still blocked by the mutating-method guard, so
+# these give GET access only (except /api/me* which is the user's own account).
+_USER_NO_BOT_ALLOWED = ('/cabinet', '/logout', '/api/me', '/pending',
+                        '/api/health', '/info',
+                        '/api/fuel-filter/state', '/api/stats',
+                        '/api/sm/bias', '/api/sm/auto-gate')
 
 
 def _is_public(path):
@@ -1062,6 +1068,23 @@ def register_auth_routes(app):
                 return send_from_directory(sd, name, mimetype='image/png')
         return ('', 404)
 
+    # ---- info-site served by the bot itself (same domain → auth + API work) ----
+    _INFOSITE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'infosite')
+
+    @app.route('/info')
+    def info_site_root():
+        return redirect('/info/')
+
+    @app.route('/info/')
+    def info_site_index():
+        from flask import send_from_directory
+        return send_from_directory(_INFOSITE_DIR, 'index.html')
+
+    @app.route('/info/<path:fname>')
+    def info_site_asset(fname):
+        from flask import send_from_directory
+        return send_from_directory(_INFOSITE_DIR, fname)
+
     @app.route('/pending')
     def auth_pending():
         u = current_user()
@@ -1320,16 +1343,9 @@ def _msg_box(title, cls, text, extra=''):
 
 
 def _no_bot_access_page(u):
-    info = os.getenv('INFO_SITE_URL')
-    links = ''
-    if info:
-        links += f'<a href="{info}">↗ Інформаційний сайт</a> · '
-    links += '<a href="/cabinet">👤 Кабінет</a> · <a href="/logout">Вийти</a>'
-    return _page('Доступ', _msg_box(
-        '🔒 Доступ до бота не надано', 'ok',
-        f'{u.email} — ваш акаунт активний для <b>інформаційного сайту</b>. '
-        'Доступ до самого бота (торгова панель) надає адміністратор окремо.',
-        extra=f'<div class="links">{links}</div>'))
+    # Info-only users land straight on the bot-served info-site (or an external
+    # one if INFO_SITE_URL is set). No dead-end "no access" page.
+    return redirect(os.getenv('INFO_SITE_URL') or '/info/')
 
 
 def _login_form(nxt='/', err=''):

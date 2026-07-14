@@ -21,6 +21,6 @@ window.INFOSITE_CONFIG = {
   // вердикту бота (sm_bias_symbol, дефолт BTCUSDT). Або вкажи явно, напр. "ETHUSDT".
   POTENTIAL_SYMBOL: "",
 
-  // Посилання на Telegram-бота (для прив'язки/реєстрації). Напр. "https://t.me/svv_bot".
+  // Посилання на Telegram-бота (для прив'язки/реєстрації). Напр. "https://t.me/vsv_bot".
   BOT_TELEGRAM_LINK: "",
 };

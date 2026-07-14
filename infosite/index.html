@@ -3,13 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SVV Bot — Інфо-панель</title>
+  <title>VSV Bot — Інфо-панель</title>
+  <link rel="icon" type="image/png" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/favicon.ico">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="dot"></span> SVV Bot · Інфо-панель</div>
-    <div style="display:flex;align-items:center;gap:10px">
+    <div class="brand">
+      <img class="logo" src="/favicon.ico" alt="VSV" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'">
+      <span class="dot" style="display:none"></span>
+      <span>VSV Bot · Інфо-панель</span>
+    </div>
+    <div class="top-actions">
+      <nav id="auth-links" class="auth-links"></nav>
       <button id="theme-btn" class="pill" style="cursor:pointer;background:var(--elev)" title="Змінити тему" aria-label="Змінити тему">🌗</button>
       <div id="conn" class="conn conn--wait">● підключення…</div>
     </div>
@@ -54,14 +61,6 @@
       </div>
     </section>
 
-    <!-- 🤖 Головна інфопанель -->
-    <section class="card">
-      <h2>🤖 Головна інфопанель</h2>
-      <div id="overview" class="stats-grid">
-        <div class="muted">завантаження…</div>
-      </div>
-    </section>
-
   </main>
 
   <footer class="foot">
@@ -72,7 +71,7 @@
   <script>
     // Theme toggle (persists locally). Default follows the OS preference.
     (function () {
-      var KEY = "svv-info-theme";
+      var KEY = "vsv-info-theme";
       var saved = null;
       try { saved = localStorage.getItem(KEY); } catch (e) {}
       if (saved) document.documentElement.setAttribute("data-theme", saved);

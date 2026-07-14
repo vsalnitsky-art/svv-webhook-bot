@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────
-//  SVV Bot — інфо-панель. ТІЛЬКИ читає JSON API бота й малює дані.
+//  VSV Bot — інфо-панель. ТІЛЬКИ читає JSON API бота й малює дані.
 //  Жодних дій, що змінюють стан бота (ніяких POST на керування).
 //
 //  API бота, які використовує сайт (усі — read-only GET):
@@ -316,36 +316,23 @@
     }).join("");
   }
 
-  // ── 🤖 головна інфопанель ────────────────────────────────────────────────────
-  function tile(label, valueHtml, cls) {
-    return '<div class="tile"><div class="tile-val ' + (cls || "") + '">' + valueHtml +
-      "</div><div class=\"tile-lbl\">" + esc(label) + "</div></div>";
+  // ── 👤 auth links (вхід / реєстрація / кабінет) ─────────────────────────────
+  function renderAuth(me) {
+    var el = $("#auth-links");
+    if (!el) return;
+    if (me && me.ok) {
+      el.innerHTML =
+        '<span class="who">👤 ' + esc(me.email || "") + (me.is_admin ? " · адмін" : "") + '</span>' +
+        '<a href="/cabinet">Кабінет</a>' +
+        (me.is_admin ? '<a href="/">Бот</a>' : "") +
+        '<a href="/logout">Вихід</a>';
+    } else {
+      el.innerHTML = '<a href="/login">Вхід</a><a href="/register">Реєстрація</a>';
+    }
   }
 
-  function renderOverview(stats, health, ffRunning, lastTick) {
-    var d = (stats && stats.data) || {};
-    var ts = d.trade_stats || {};
-    var alive = !!(health && health.status === "ok");
-    var pnl = ts.total_pnl;
-    var pnlCls = (pnl == null) ? "" : (Number(pnl) >= 0 ? "pnl-pos" : "pnl-neg");
-    var tickTxt = "—";
-    if (lastTick) {
-      var ago = Math.floor(Date.now() / 1000 - lastTick);
-      tickTxt = (ago >= 0 && ago < 86400) ? fmtDur(ago) + " тому" : "—";
-    }
-    $("#overview").innerHTML =
-      tile("Бот", alive ? '<span class="pnl-pos">● онлайн</span>' : '<span class="pnl-neg">● офлайн</span>') +
-      tile("Стратегія FF", ffRunning ? '<span class="pnl-pos">працює</span>' : '<span class="muted">стоп</span>') +
-      tile("Останній цикл", '<span class="small">' + esc(tickTxt) + "</span>") +
-      tile("Баланс (paper)", fmtUsd(d.paper_balance)) +
-      tile("Win rate", fmtPct(ts.win_rate)) +
-      tile("Total PnL", fmtUsd(pnl), pnlCls) +
-      tile("Profit factor", ts.profit_factor != null ? Number(ts.profit_factor).toFixed(2) : "—") +
-      tile("Угод (30д)", (ts.total_trades != null ? ts.total_trades : "—") +
-        ' <span class="small muted">(' + (ts.winning_trades || 0) + "W/" + (ts.losing_trades || 0) + "L)</span>") +
-      tile("Відкрито зараз", d.open_trades != null ? d.open_trades : "—") +
-      tile("Sleepers", (d.ready_sleepers != null ? d.ready_sleepers : "—") +
-        ' <span class="small muted">/ ' + (d.sleeper_count != null ? d.sleeper_count : "—") + " готових</span>");
+  function refreshAuth() {
+    api("/api/me").then(renderAuth).catch(function () { renderAuth(null); });
   }
 
   // ── poll loop ──────────────────────────────────────────────────────────────
@@ -367,15 +354,12 @@
 
   function refresh() {
     var ff = api("/api/fuel-filter/state").catch(function () { return null; });
-    var stats = api("/api/stats").catch(function () { return null; });
     var health = api("/api/health").catch(function () { return null; });
 
-    Promise.all([ff, stats, health]).then(function (res) {
-      var st = res[0], stat = res[1], hp = res[2];
+    Promise.all([ff, health]).then(function (res) {
+      var st = res[0], hp = res[1];
       if (st) { setBtc(st.btc_start); renderFunding(st.anomalies); }
-      renderOverview(stat, hp, st ? st.running : false, st ? st.last_tick_ts : null);
-      var anyOk = st || stat || hp;
-      if (anyOk) {
+      if (st || hp) {
         setConn("ok", "онлайн");
         $("#last-update").textContent = "оновлено: " + new Date().toLocaleTimeString("uk-UA");
       } else {
@@ -384,6 +368,7 @@
     });
     refreshPotential();
     refreshNotify();
+    refreshAuth();
   }
 
   setConn("wait", "підключення…");

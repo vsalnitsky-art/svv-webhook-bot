@@ -1011,7 +1011,7 @@ def register_api_routes(app):
 🧪 <b>TEST MESSAGE</b>
 
 ✅ Telegram integration working!
-📊 SVV Webhook Bot v4.2
+📊 VSV Webhook Bot v4.2
 ⏱ """ + datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
         
         result = notifier.send_sync(test_message.strip())

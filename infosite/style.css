@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   SVV Bot — інфо-панель · професійний «трейдинг-термінал»
+   VSV Bot — інфо-панель · професійний «трейдинг-термінал»
    Токенізована палітра, dark (дефолт) + light. Семантика (long/short)
    окремо від акценту (біткоїн-золото).
    ═══════════════════════════════════════════════════════════════════════ */
@@ -88,9 +88,17 @@ body {
   backdrop-filter: blur(14px) saturate(1.2);
   border-bottom: 1px solid var(--line);
 }
-.brand { font-weight: 800; font-size: 16px; letter-spacing: -.01em; display: flex; align-items: center; gap: 9px; }
+.brand { font-weight: 800; font-size: 16px; letter-spacing: -.01em; display: flex; align-items: center; gap: 10px; }
+.brand .logo { width: 30px; height: 30px; border-radius: 8px; object-fit: cover;
+  box-shadow: 0 0 0 1px var(--line), 0 2px 8px -3px rgba(0,0,0,.6); }
 .brand .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent);
   box-shadow: 0 0 0 4px rgba(245,166,35,.18); }
+
+.top-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.auth-links { display: flex; align-items: center; gap: 12px; font-size: 12.5px; }
+.auth-links a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.auth-links a:hover { text-decoration: underline; }
+.auth-links .who { color: var(--txt-dim); }
 
 .conn { font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 999px;
   display: inline-flex; align-items: center; gap: 6px; letter-spacing: .01em; }
