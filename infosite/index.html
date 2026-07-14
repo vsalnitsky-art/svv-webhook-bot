@@ -6,7 +6,7 @@
   <title>VSV Bot — Інфо-панель</title>
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=9">
+  <link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
   <header class="topbar">
@@ -38,26 +38,10 @@
       </div>
     </section>
 
-    <!-- 🎯 Вікно потенціалу (Smart Money Concepts) -->
-    <section class="card" id="potential-card">
-      <h2>🎯 Вікно потенціалу <span id="pot-symbol" class="pill">—</span></h2>
-      <div id="potential-body">
-        <div class="muted">завантаження…</div>
-      </div>
-    </section>
-
     <!-- ₿ BTC / двигун -->
     <section class="card" id="btc-card">
       <h2>₿ BTCUSDT — сеанс ММ</h2>
       <div id="btc-bar" class="btc-bar">
-        <div class="muted">завантаження…</div>
-      </div>
-    </section>
-
-    <!-- 🔔 Мої сповіщення (для авторизованого користувача) -->
-    <section class="card" id="notify-card" style="display:none">
-      <h2>🔔 Мої сповіщення в Telegram</h2>
-      <div id="notify-body">
         <div class="muted">завантаження…</div>
       </div>
     </section>
@@ -75,6 +59,35 @@
       </div>
     </section>
 
+    <!-- 💼 Відкриті угоди -->
+    <section class="card" id="trades-card">
+      <h2>💼 Відкриті угоди <span id="trades-count" class="pill">0</span></h2>
+      <div class="table-scroll">
+        <table id="trades-table">
+          <thead>
+            <tr><th>Символ</th><th>Напрямок</th><th>Ринок</th><th>Вхід</th><th>Поточна</th><th>PnL</th><th>ММ</th><th>Виснаж.</th></tr>
+          </thead>
+          <tbody><tr><td colspan="8" class="muted">завантаження…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 🎯 Вікно потенціалу (Smart Money Concepts) -->
+    <section class="card" id="potential-card">
+      <h2>🎯 Вікно потенціалу <span id="pot-symbol" class="pill">—</span></h2>
+      <div id="potential-body">
+        <div class="muted">завантаження…</div>
+      </div>
+    </section>
+
+    <!-- 🔔 Мої сповіщення (для авторизованого користувача) -->
+    <section class="card" id="notify-card" style="display:none">
+      <h2>🔔 Мої сповіщення в Telegram</h2>
+      <div id="notify-body">
+        <div class="muted">завантаження…</div>
+      </div>
+    </section>
+
   </main>
 
   <footer class="foot">
@@ -83,12 +96,11 @@
   </footer>
 
   <script>
-    // Theme toggle (persists locally). Default follows the OS preference.
+    // Theme toggle (persists locally). Default = DARK unless the user chose otherwise.
     (function () {
       var KEY = "vsv-info-theme";
       var saved = null;
       try { saved = localStorage.getItem(KEY); } catch (e) {}
-      // Default to the DARK theme unless the user has chosen otherwise.
       document.documentElement.setAttribute("data-theme", saved || "dark");
       document.addEventListener("click", function (e) {
         if (!e.target.closest || !e.target.closest("#theme-btn")) return;
@@ -100,7 +112,7 @@
       });
     })();
   </script>
-  <script src="config.js?v=9"></script>
-  <script src="app.js?v=9"></script>
+  <script src="config.js?v=10"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>

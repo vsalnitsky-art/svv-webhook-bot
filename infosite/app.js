@@ -379,6 +379,48 @@
     }).join("");
   }
 
+  // ── 💼 Відкриті угоди ────────────────────────────────────────────────────────
+  function pnlCell(p) {
+    if (p == null || isNaN(p)) return '<span class="muted">—</span>';
+    var cls = Number(p) >= 0 ? "pnl-pos" : "pnl-neg";
+    return '<span class="' + cls + '">' + (Number(p) >= 0 ? "+" : "") + Number(p).toFixed(2) + "%</span>";
+  }
+  function exhCell(e) {
+    if (e == null || isNaN(e)) return '<span class="muted">—</span>';
+    var v = Math.max(0, Math.min(100, Number(e)));
+    var cls = v >= 70 ? "exh-bad" : (v >= 40 ? "exh-mid" : "exh-good");
+    return '<span class="' + cls + '">' + v.toFixed(0) + "%</span>";
+  }
+  function renderTrades(state) {
+    var tb = $("#trades-table tbody");
+    var real = (state && state.positions) || [];
+    var paper = (state && state.shadow_positions) || [];
+    var rows = real.map(function (p) { return { p: p, m: "real" }; })
+      .concat(paper.map(function (p) { return { p: p, m: "paper" }; }));
+    $("#trades-count").textContent = rows.length;
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="8" class="muted">немає відкритих угод</td></tr>';
+      return;
+    }
+    tb.innerHTML = rows.map(function (r) {
+      var p = r.p;
+      var mk = r.m === "real"
+        ? '<span class="tag-real">● LIVE</span>'
+        : '<span class="tag-paper">◌ PAPER</span>';
+      var price = function (v) { return v != null ? fmtPrice(v) : "—"; };
+      return "<tr>" +
+        "<td><b>" + esc(p.symbol) + "</b></td>" +
+        "<td>" + dirCell(p.side) + "</td>" +
+        "<td>" + mk + "</td>" +
+        "<td class=\"mono\">" + price(p.entry_price) + "</td>" +
+        "<td class=\"mono\">" + price(p.current_price) + "</td>" +
+        "<td>" + pnlCell(p.pnl_pct) + "</td>" +
+        "<td>" + mmCell(p.fuel_dir || p.side, p.fuel_str) + "</td>" +
+        "<td>" + exhCell(p.exhaustion) + "</td>" +
+      "</tr>";
+    }).join("");
+  }
+
   // ── 👤 auth links (вхід / реєстрація / кабінет) ─────────────────────────────
   function renderAuth(me) {
     var el = $("#auth-links");
@@ -423,7 +465,7 @@
   function showData(ok) {
     var hero = $("#auth-hero");
     if (hero) hero.style.display = ok ? "none" : "";
-    ["potential-card", "btc-card", "funding-card"].forEach(function (id) {
+    ["potential-card", "btc-card", "funding-card", "trades-card"].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.style.display = ok ? "" : "none";
     });
@@ -440,6 +482,7 @@
       setConn("ok", "онлайн");
       $("#last-update").textContent = "оновлено: " + new Date().toLocaleTimeString("uk-UA");
       refreshPotential();
+      api("/api/tm/state").then(renderTrades).catch(function () { renderTrades(null); });
     }).catch(function (e) {
       if (!authed) {
         // A guest (no token) always gets the login/registration screen —

@@ -32,8 +32,9 @@
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.55);
   --ring: 0 0 0 3px rgba(245,166,35,.25);
 
-  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-  --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Roboto Mono", monospace;
+  /* Same stack as the bot (static/css/style.css) so both sites read identically */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: light) {

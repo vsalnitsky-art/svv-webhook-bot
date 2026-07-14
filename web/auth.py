@@ -731,7 +731,7 @@ _USER_MUTABLE_PREFIX = ('/api/me', '/logout', '/auth/')   # non-admin may POST h
 _USER_NO_BOT_ALLOWED = ('/cabinet', '/logout', '/api/me', '/pending',
                         '/api/health', '/info',
                         '/api/fuel-filter/state', '/api/stats',
-                        '/api/sm/bias', '/api/sm/auto-gate')
+                        '/api/sm/bias', '/api/sm/auto-gate', '/api/tm/state')
 
 
 def _is_public(path):
