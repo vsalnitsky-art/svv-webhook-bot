@@ -125,11 +125,19 @@ def create_app():
             if request.path.startswith('/api/') and request.method in ('GET', 'HEAD', 'OPTIONS'):
                 resp.headers['Access-Control-Allow-Origin'] = '*'
                 resp.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-                resp.headers['Access-Control-Allow-Headers'] = 'Accept, Content-Type'
+                # X-API-Key lets the separately-hosted info-site read state
+                # cross-origin (paired with the INFO_API_KEY gate bypass).
+                resp.headers['Access-Control-Allow-Headers'] = 'Accept, Content-Type, X-API-Key'
                 resp.headers['Access-Control-Max-Age'] = '86400'
         except Exception:
             pass
         return resp
+
+    # Answer CORS preflight (OPTIONS) for the API so cross-origin reads with a
+    # custom X-API-Key header aren't blocked by the browser.
+    @app.route('/api/<path:_any>', methods=['OPTIONS'])
+    def _api_cors_preflight(_any):
+        return ('', 204)
 
     # Context processor for templates
     @app.context_processor

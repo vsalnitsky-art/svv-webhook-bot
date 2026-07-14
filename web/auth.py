@@ -1126,11 +1126,28 @@ def register_auth_routes(app):
         elif tgc:
             tg_line = f'<p class="sub" style="margin-top:-8px">📨 Telegram: <b>прив’язано</b></p>'
         _bot = 'так' if (u.is_admin or getattr(u, 'bot_access', False)) else 'ні (лише інфо-сайт)'
+        _prefs = _load_prefs(u)
+        _btc_ck = 'checked' if _prefs.get('notify_btc') else ''
+        _fnd_ck = 'checked' if _prefs.get('notify_funding') else ''
+        _tg_ok = bool(tgc)
+        _ntf_hint = ('' if _tg_ok else
+                     '<p class="sub" style="color:#f5b544;margin-top:-4px">⚠️ Прив’яжіть '
+                     'Telegram (напишіть боту <b>/start</b>), щоб отримувати сповіщення.</p>')
+        _dis = '' if _tg_ok else 'disabled'
         body = (f'<h1>👤 Особистий кабінет</h1>'
                 f'<p class="sub">{u.email} · {role}</p>'
                 f'{tg_line}'
                 f'<p class="sub" style="margin-top:-8px">🤖 Доступ до бота: <b>{_bot}</b></p>'
-                f'<label>Змінити пароль</label>'
+                f'<label style="margin-top:14px">🔔 Сповіщення в Telegram</label>'
+                f'{_ntf_hint}'
+                f'<label style="display:flex;align-items:center;gap:9px;font-weight:400;cursor:pointer">'
+                f'<input type="checkbox" id="nbtc" {_btc_ck} {_dis} onchange="saventf()"> '
+                f'₿ BTCUSDT — СТАРТ / СТОП / ПАУЗА</label>'
+                f'<label style="display:flex;align-items:center;gap:9px;font-weight:400;cursor:pointer;margin-top:6px">'
+                f'<input type="checkbox" id="nfnd" {_fnd_ck} {_dis} onchange="saventf()"> '
+                f'💰 Funding — поява монети з ММ</label>'
+                f'<div id="nm" class="msg" style="display:none"></div>'
+                f'<label style="margin-top:14px">Змінити пароль</label>'
                 f'<input id="np" type="password" placeholder="Новий пароль (мін. 8)">'
                 f'<input id="np2" type="password" placeholder="Повторіть пароль" style="margin-top:8px">'
                 f'<button onclick="chpw()">Змінити пароль</button>'
@@ -1147,6 +1164,15 @@ def register_auth_routes(app):
           const d=await r.json();
           m.className='msg '+(d.ok?'ok':'err'); m.textContent=d.ok?'Пароль змінено.':(d.error||'Помилка');
           if(d.ok){document.getElementById('np').value='';document.getElementById('np2').value='';}
+        }
+        async function saventf(){
+          const nm=document.getElementById('nm'); nm.style.display='block';
+          const body={notify_btc:document.getElementById('nbtc').checked,
+                      notify_funding:document.getElementById('nfnd').checked};
+          const r=await fetch('/api/me/notify',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(body)});
+          const d=await r.json();
+          nm.className='msg '+(d.ok?'ok':'err'); nm.textContent=d.ok?'Збережено.':(d.error||'Помилка');
         }"""
         return _page('Кабінет', body, script=script, width=440)
 
