@@ -181,8 +181,8 @@
         metric("Розтяг від середн.", (mv.stretch_atr != null ? Number(mv.stretch_atr).toFixed(1) + " ATR" : "—")) +
         metric("Запас ходу", (mv.runway_pct != null ? fmtPct(mv.runway_pct, 2) : "—") +
           (mv.runway_atr != null ? ' <span class="muted">(' + Number(mv.runway_atr).toFixed(1) + " ATR)</span>" : "")) +
-        metric("Денний хід (ADR)", (mv.adr_used_pct != null ? Number(mv.adr_used_pct).toFixed(0) + "%" : "—") +
-          (mv.adr_pct != null ? ' <span class="muted">з ' + Number(mv.adr_pct).toFixed(2) + "%</span>" : "")) +
+        metric("Хід за день / середній", (mv.adr_used_pct != null ? Number(mv.adr_used_pct).toFixed(0) + "%" : "—") +
+          (mv.adr_pct != null ? ' <span class="muted">від сер. ' + Number(mv.adr_pct).toFixed(2) + "%/добу</span>" : "")) +
       '</div>' +
       '<div class="exh-row">' +
         '<span class="exh-lbl">Виснаженість</span>' +
@@ -259,7 +259,7 @@
       (BOT_LINK ? ' — <a href="' + esc(BOT_LINK) + '" target="_blank" rel="noopener">відкрити бота</a>' : "") +
       '.</div>';
     body.innerHTML = warn +
-      toggleRow("notify_btc", "₿ BTCUSDT — СТАРТ / СТОП / ПАУЗА", n.notify_btc, !linked) +
+      toggleRow("notify_btc", "₿ BTCUSDT — START / STOP / PAUSE", n.notify_btc, !linked) +
       toggleRow("notify_funding", "💰 Funding — поява монети з ММ", n.notify_funding, !linked);
   }
 
@@ -297,8 +297,8 @@
     var dirTxt = dirCell(b.dir);
     var statusCls, statusTxt;
     if (b.paused) { statusCls = "st-pause"; statusTxt = "⏸ ПАУЗА"; }
-    else if (b.status === "START") { statusCls = "st-start"; statusTxt = "🟢 СТАРТ"; }
-    else if (b.status === "STOP") { statusCls = "st-stop"; statusTxt = "⛔ СТОП"; }
+    else if (b.status === "START") { statusCls = "st-start"; statusTxt = "🟢 START TRADING"; }
+    else if (b.status === "STOP") { statusCls = "st-stop"; statusTxt = "⛔ STOP TRADING"; }
     else {
       var pct = b.period > 0 ? Math.min(100, Math.floor((nowHeld()) / b.period * 100)) : 0;
       statusCls = "st-count"; statusTxt = "⏳ " + pct + "%";

@@ -2900,7 +2900,7 @@ class FuelFilterDaemon:
                 _side = d if d in ('LONG', 'SHORT') else ''
                 _rt = f"{_r:+.3f}%" if isinstance(_r, (int, float)) else '—'
                 self._broadcast_users('funding', 'notify_funding',
-                                      f"#{sym}{_emoji}{_side} направлення\nfunding {_rt}")
+                                      f"#{sym} направлення\n{_emoji}{_side} - funding {_rt}")
             except Exception:
                 pass
         if not notifier:
@@ -3199,11 +3199,15 @@ class FuelFilterDaemon:
             return '🟢 LONG' if dd == 'LONG' else ('🔴 SHORT' if dd == 'SHORT' else '')
         if token.startswith('START'):
             _d = token.split('-', 1)[1]
-            _icon = '🟢' if _d == 'LONG' else '🔴'
-            msg = f"{_icon} <b>BTCUSDT СТАРТ</b> {_dtxt(_d)}"
+            _emoji = '🟢' if _d == 'LONG' else '🔴'
+            _side = _d if _d in ('LONG', 'SHORT') else ''
+            msg = f"#BTCUSDT направлення\n{_emoji}{_side} - START TRADING"
         else:
             # STOP — show the direction it was running in before stopping.
-            msg = f"⛔ <b>BTCUSDT СТОП</b> {_dtxt(self._btc_last_dir)}".rstrip()
+            _sd = self._btc_last_dir
+            _emoji = '🟢' if _sd == 'LONG' else ('🔴' if _sd == 'SHORT' else '⚪')
+            _side = _sd if _sd in ('LONG', 'SHORT') else ''
+            msg = f"#BTCUSDT направлення\n{_emoji}{_side} - STOP TRADING"
         try:
             notifier.send_message(msg)
             print(f"[FuelFilter] BTC TG alert sent: {token}")

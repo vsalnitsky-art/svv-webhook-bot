@@ -136,16 +136,17 @@ def _cat_chat(category):
 
 
 def _cat_enabled(category):
-    """Admin on/off switch per category (DB setting 'tg_cat_enabled'). Default
-    ON. Lets the admin silence a whole category (e.g. noisy 💰 Funding)."""
+    """Whether a GROUP category is on. 💰 Funding / ₿ BTCUSDT follow the admin's
+    OWN cabinet toggle (notify_funding/notify_btc) — turning it off there stops
+    the group too. Other categories default ON."""
+    key = {'funding': 'notify_funding', 'btc': 'notify_btc'}.get(category)
+    if not key:
+        return True
     try:
-        from storage.db_operations import get_db
-        conf = get_db().get_setting('tg_cat_enabled', {}) or {}
-        if isinstance(conf, dict):
-            return bool(conf.get(category, True))
+        from web.auth import admin_pref
+        return admin_pref(key, True)
     except Exception:
-        pass
-    return True
+        return True
 
 
 def notify_category(category, text, buttons=None):

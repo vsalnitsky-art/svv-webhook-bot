@@ -308,6 +308,29 @@ def user_count():
         s.close()
 
 
+def admin_pref(key, default=True):
+    """The main admin's personal notification pref (notify_btc/notify_funding).
+    Used to gate the Telegram GROUP topics: the admin's OWN cabinet toggle also
+    controls what goes to the group — off in the cabinet → off in the group.
+    Main admin = the account linked to TELEGRAM_CHAT_ID, else the first admin."""
+    s = get_session()
+    try:
+        u = None
+        adm_chat = os.getenv('TELEGRAM_CHAT_ID')
+        if adm_chat:
+            u = s.query(User).filter_by(telegram_chat_id=str(adm_chat)).first()
+        if u is None:
+            u = s.query(User).filter_by(is_admin=True).order_by(User.id.asc()).first()
+        if u is None:
+            return default
+        prefs = json.loads(u.prefs or '{}')
+        return bool(prefs.get(key, default))
+    except Exception:
+        return default
+    finally:
+        s.close()
+
+
 def subscriber_chats(pref_key):
     """Telegram chat_ids of every ACTIVE user who opted into `pref_key`
     (e.g. 'notify_btc' / 'notify_funding') in their personal settings. Used by
@@ -1204,10 +1227,13 @@ def register_auth_routes(app):
         _btc_ck = 'checked' if _prefs.get('notify_btc') else ''
         _fnd_ck = 'checked' if _prefs.get('notify_funding') else ''
         _tg_ok = bool(tgc)
-        _ntf_hint = ('' if _tg_ok else
+        _admin_note = ('<p class="sub" style="margin-top:-4px">Ці перемикачі керують '
+                       'і вашими особистими сповіщеннями, і <b>груповими темами</b> — '
+                       'вимкнено тут, значить не летить і в групу.</p>') if u.is_admin else ''
+        _ntf_hint = _admin_note + ('' if _tg_ok else
                      '<p class="sub" style="color:#f5b544;margin-top:-4px">⚠️ Прив’яжіть '
-                     'Telegram (напишіть боту <b>/start</b>), щоб отримувати сповіщення.</p>')
-        _dis = '' if _tg_ok else 'disabled'
+                     'Telegram (напишіть боту <b>/start</b>), щоб отримувати особисті сповіщення.</p>')
+        _dis = ''   # always toggle-able (pref is saved even before Telegram is linked)
         _tgv = (' '.join(x for x in [tgn, (f'@{tgu}' if tgu else '')] if x) or 'прив’язано') if tgc else '—'
         body = (f'<h1>👤 Особистий кабінет</h1>'
                 f'<p class="sub">{role}</p>'
@@ -1225,24 +1251,6 @@ def register_auth_routes(app):
                 f'<label class="sw"><input type="checkbox" id="nfnd" {_fnd_ck} {_dis} onchange="saventf()">'
                 f'<span class="tr"></span></label></div>'
                 f'<div id="nm" class="msg" style="display:none"></div></div>'
-                + (('<div class="sect2"><div class="seclbl">📣 Групові сповіщення в Telegram '
-                    '(теми) — адмін</div>'
-                    '<div class="crow"><span class="t">💰 Funding — поява монет</span>'
-                    '<label class="sw"><input type="checkbox" id="cfunding" onchange="savecat()">'
-                    '<span class="tr"></span></label></div>'
-                    '<div class="crow"><span class="t">₿ BTCUSDT — старт / стоп</span>'
-                    '<label class="sw"><input type="checkbox" id="cbtc" onchange="savecat()">'
-                    '<span class="tr"></span></label></div>'
-                    '<div class="crow"><span class="t">📝 Реєстрації</span>'
-                    '<label class="sw"><input type="checkbox" id="cregister" onchange="savecat()">'
-                    '<span class="tr"></span></label></div>'
-                    '<div class="crow"><span class="t">📈 Угоди</span>'
-                    '<label class="sw"><input type="checkbox" id="ctrades" onchange="savecat()">'
-                    '<span class="tr"></span></label></div>'
-                    '<div class="crow"><span class="t">💬 Підтримка</span>'
-                    '<label class="sw"><input type="checkbox" id="csupport" onchange="savecat()">'
-                    '<span class="tr"></span></label></div>'
-                    '<div id="cm" class="msg" style="display:none"></div></div>') if u.is_admin else '')
                 + f'<div class="sect2"><div class="seclbl">🔑 Змінити пароль</div>'
                 f'<input id="np" type="password" placeholder="Новий пароль (мін. 8)">'
                 f'<input id="np2" type="password" placeholder="Повторіть пароль" style="margin-top:8px">'
@@ -1269,24 +1277,7 @@ def register_auth_routes(app):
             body:JSON.stringify(body)});
           const d=await r.json();
           nm.className='msg '+(d.ok?'ok':'err'); nm.textContent=d.ok?'Збережено.':(d.error||'Помилка');
-        }
-        const _cats=['funding','btc','trades','register','support'];
-        async function loadcat(){
-          if(!document.getElementById('cfunding')) return;
-          try{
-            const d=await (await fetch('/api/admin/tg-categories')).json();
-            if(d.ok) _cats.forEach(c=>{const el=document.getElementById('c'+c); if(el) el.checked=!!d[c];});
-          }catch(e){}
-        }
-        async function savecat(){
-          const cm=document.getElementById('cm'); cm.style.display='block';
-          const body={}; _cats.forEach(c=>{const el=document.getElementById('c'+c); if(el) body[c]=el.checked;});
-          const r=await fetch('/api/admin/tg-categories',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify(body)});
-          const d=await r.json();
-          cm.className='msg '+(d.ok?'ok':'err'); cm.textContent=d.ok?'Збережено.':(d.error||'Помилка');
-        }
-        loadcat();"""
+        }"""
         return _page('Кабінет', body, script=script, width=500)
 
     @app.route('/api/me')
@@ -1294,27 +1285,6 @@ def register_auth_routes(app):
         u = current_user()
         return jsonify({'ok': True, 'email': u.email, 'is_admin': u.is_admin,
                         'prefs': _load_prefs(u)})
-
-    @app.route('/api/admin/tg-categories', methods=['GET', 'POST'])
-    def api_admin_tg_categories():
-        """Admin on/off switches for the Telegram GROUP notifications (topics):
-        💰 Funding, ₿ BTCUSDT, 📈 Угоди, 📝 Реєстрація, 💬 Підтримка."""
-        u = current_user()
-        if not u or not u.is_admin:
-            return jsonify({'ok': False, 'error': 'forbidden'}), 403
-        from storage.db_operations import get_db
-        db = get_db()
-        cats = ['funding', 'btc', 'trades', 'register', 'support']
-        conf = db.get_setting('tg_cat_enabled', {}) or {}
-        if not isinstance(conf, dict):
-            conf = {}
-        if request.method == 'POST':
-            d = request.get_json(silent=True) or {}
-            for c in cats:
-                if c in d:
-                    conf[c] = bool(d[c])
-            db.set_setting('tg_cat_enabled', conf)
-        return jsonify({'ok': True, **{c: bool(conf.get(c, True)) for c in cats}})
 
     @app.route('/api/me/password', methods=['POST'])
     def api_me_password():
