@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SVV Bot — Інфо-панель</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span> SVV Bot · Інфо-панель</div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button id="theme-btn" class="pill" style="cursor:pointer;background:var(--elev)" title="Змінити тему" aria-label="Змінити тему">🌗</button>
+      <div id="conn" class="conn conn--wait">● підключення…</div>
+    </div>
+  </header>
+
+  <main class="wrap">
+
+    <!-- 🎯 Вікно потенціалу (Smart Money Concepts) -->
+    <section class="card" id="potential-card">
+      <h2>🎯 Вікно потенціалу <span id="pot-symbol" class="pill">—</span></h2>
+      <div id="potential-body">
+        <div class="muted">завантаження…</div>
+      </div>
+    </section>
+
+    <!-- ₿ BTC / двигун -->
+    <section class="card" id="btc-card">
+      <h2>₿ BTCUSDT — сеанс ММ</h2>
+      <div id="btc-bar" class="btc-bar">
+        <div class="muted">завантаження…</div>
+      </div>
+    </section>
+
+    <!-- 🔔 Мої сповіщення (для авторизованого користувача) -->
+    <section class="card" id="notify-card" style="display:none">
+      <h2>🔔 Мої сповіщення в Telegram</h2>
+      <div id="notify-body">
+        <div class="muted">завантаження…</div>
+      </div>
+    </section>
+
+    <!-- 💰 Funding -->
+    <section class="card">
+      <h2>💰 Funding — ММ по монетах <span id="funding-count" class="pill">0</span></h2>
+      <div class="table-scroll">
+        <table id="funding-table">
+          <thead>
+            <tr><th>Символ</th><th>Напрямок</th><th>ММ</th><th>Тримається</th><th>Прогрес Funding</th><th>Funding · до виплати</th><th>Vol 24h</th></tr>
+          </thead>
+          <tbody><tr><td colspan="7" class="muted">завантаження…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 🤖 Головна інфопанель -->
+    <section class="card">
+      <h2>🤖 Головна інфопанель</h2>
+      <div id="overview" class="stats-grid">
+        <div class="muted">завантаження…</div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    <span id="last-update" class="muted">—</span>
+    <span class="muted">read-only · дані з API бота</span>
+  </footer>
+
+  <script>
+    // Theme toggle (persists locally). Default follows the OS preference.
+    (function () {
+      var KEY = "svv-info-theme";
+      var saved = null;
+      try { saved = localStorage.getItem(KEY); } catch (e) {}
+      if (saved) document.documentElement.setAttribute("data-theme", saved);
+      document.addEventListener("click", function (e) {
+        if (!e.target.closest || !e.target.closest("#theme-btn")) return;
+        var cur = document.documentElement.getAttribute("data-theme");
+        if (!cur) cur = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        var next = cur === "dark" ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", next);
+        try { localStorage.setItem(KEY, next); } catch (e) {}
+      });
+    })();
+  </script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

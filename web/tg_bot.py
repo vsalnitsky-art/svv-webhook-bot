@@ -64,6 +64,73 @@ def _admin_chat():
     return os.getenv('TELEGRAM_CHAT_ID')
 
 
+# ── Категорії повідомлень ──────────────────────────────────────────────────
+# Щоб не все валилось в одну групу: кожна категорія може мати власний чат/групу
+# (env TELEGRAM_CHAT_<CAT>) і/або тему форуму (env TELEGRAM_TOPIC_<CAT>). Якщо
+# власного чату немає — шле в головний чат адміна з категорійним заголовком.
+_CAT_LABEL = {
+    'funding':  '💰 Funding',
+    'btc':      '₿ BTCUSDT',
+    'trades':   '📈 Угоди',
+    'register': '📝 Реєстрація',
+    'support':  '💬 Підтримка',
+}
+_CAT_ENV = {
+    'funding':  ('TELEGRAM_CHAT_FUNDING',  'TELEGRAM_TOPIC_FUNDING'),
+    'btc':      ('TELEGRAM_CHAT_BTC',      'TELEGRAM_TOPIC_BTC'),
+    'trades':   ('TELEGRAM_CHAT_TRADES',   'TELEGRAM_TOPIC_TRADES'),
+    'register': ('TELEGRAM_CHAT_REGISTER', 'TELEGRAM_TOPIC_REGISTER'),
+    'support':  ('TELEGRAM_CHAT_SUPPORT',  'TELEGRAM_TOPIC_SUPPORT'),
+}
+
+
+def _cat_chat(category):
+    """(chat_id, thread_id) for a category — env override, else admin chat."""
+    cenv, tenv = _CAT_ENV.get(category, (None, None))
+    chat = (os.getenv(cenv) if cenv else None) or _admin_chat()
+    thread = os.getenv(tenv) if tenv else None
+    return chat, thread
+
+
+def notify_category(category, text, buttons=None):
+    """Send an ADMIN-facing message routed by category. When the category has no
+    dedicated chat/topic, prefixes a category header so one chat stays sorted."""
+    chat, thread = _cat_chat(category)
+    if not chat:
+        return False
+    dedicated = bool(thread) or (
+        os.getenv(_CAT_ENV.get(category, (None,))[0] or '') not in (None, ''))
+    lbl = _CAT_LABEL.get(category, '')
+    body = text if dedicated or not lbl else f"{lbl}\n{text}"
+    p = {'chat_id': chat, 'text': body, 'parse_mode': 'HTML'}
+    if thread:
+        try:
+            p['message_thread_id'] = int(thread)
+        except (TypeError, ValueError):
+            pass
+    if buttons:
+        p['reply_markup'] = {'inline_keyboard': buttons}
+    return bool(_api('sendMessage', p).get('ok'))
+
+
+def broadcast_to_subscribers(pref_key, text):
+    """Send `text` to every ACTIVE user who opted into `pref_key` (in their
+    personal Telegram chat). Best-effort; returns how many were reached."""
+    try:
+        from web.auth import subscriber_chats
+        chats = subscriber_chats(pref_key)
+    except Exception:
+        chats = []
+    n = 0
+    for cid in chats:
+        try:
+            if tg_send(cid, text):
+                n += 1
+        except Exception:
+            pass
+    return n
+
+
 def base_url():
     """Request-free public URL (poller has no Flask request context)."""
     return (os.getenv('RENDER_EXTERNAL_URL') or os.getenv('PUBLIC_URL')
@@ -139,12 +206,15 @@ def _handle_start(chat_id, username=None, name=None):
     tg_send(chat_id,
             "👋 <b>Вітаю у VSV Bot!</b>\n\n"
             "Щоб отримати доступ:\n"
-            "1️⃣ Натисніть «Реєстрація» і задайте email + пароль.\n"
+            "1️⃣ Натисніть «Реєстрація на сайті» і задайте <b>лише пароль</b> "
+            "(email не потрібен — вас підтверджує Telegram).\n"
             "2️⃣ Адміністратор схвалить ваш акаунт.\n"
             "3️⃣ Ви отримаєте сповіщення тут — і зможете увійти.\n\n"
+            "🔔 Після входу в кабінеті/на інфо-сайті можна ввімкнути сповіщення "
+            "₿ BTCUSDT і 💰 Funding — вони приходитимуть сюди.\n\n"
             "💬 Виникли труднощі? Просто напишіть повідомлення сюди — "
             "я передам його адміністратору, і він відповість тут.",
-            buttons=[[{'text': '📝 Реєстрація', 'url': link}]])
+            buttons=[[{'text': '📝 Реєстрація на сайті', 'url': link}]])
 
 
 def _handle_callback(cb):

@@ -2887,6 +2887,21 @@ class FuelFilterDaemon:
         score cache (self._fuel_str) usually has no entry yet at the exact
         moment a coin first appears — which is why {fuel} used to render «—».
         Falls back to the cache only when the caller could not supply it."""
+        # Per-user broadcast (💰 category + opted-in users) — fires on a coin's
+        # APPEARANCE, independent of the admin's own ff_tg_on_entry toggle, so
+        # each user gets exactly what they subscribed to.
+        if entered:
+            try:
+                _r = self._funding_rates.get(sym)
+                if _r is None:
+                    _a = self._anomalies.get(sym)
+                    _r = _a.get('rate') if _a else None
+                _dt = '🟢 LONG' if d == 'LONG' else ('🔴 SHORT' if d == 'SHORT' else '⚪')
+                _rt = f"{_r:+.3f}%" if isinstance(_r, (int, float)) else '—'
+                self._broadcast_users('funding', 'notify_funding',
+                                      f"💰 <b>{sym}</b> {_dt} · funding {_rt}")
+            except Exception:
+                pass
         if not notifier:
             return
         if entered and not settings.get('ff_tg_on_entry'):
@@ -2951,6 +2966,16 @@ class FuelFilterDaemon:
             notifier.send_message(msg)
         except Exception as e:
             print(f"[FuelFilter] funding TG error {sym}: {e}")
+
+    def _broadcast_users(self, category, pref_key, text):
+        """Mirror an alert to the category chat + every opted-in user's Telegram.
+        Best-effort, never raises into the trading path."""
+        try:
+            from web.tg_bot import notify_category, broadcast_to_subscribers
+            notify_category(category, text)
+            broadcast_to_subscribers(pref_key, text)
+        except Exception as e:
+            print(f"[FuelFilter] broadcast {category} error: {e}")
 
 
     def _refresh_score_cache(self, settings: Dict):
@@ -3183,6 +3208,8 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] BTC TG alert sent: {token}")
         except Exception as e:
             print(f"[FuelFilter] BTC TG send error: {e}")
+        # Category chat (₿ BTCUSDT) + per-user opt-in broadcast.
+        self._broadcast_users('btc', 'notify_btc', msg)
 
     # ------------------------------------------------------------------
     # public API for the dashboard

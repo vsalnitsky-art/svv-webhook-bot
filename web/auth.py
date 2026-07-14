@@ -148,12 +148,12 @@ def notify_new_user_to_admin(uid):
         u = get_user_by_id(uid)
         if not u:
             return
-        from web.tg_bot import tg_send
+        from web.tg_bot import notify_category
         tg_bits = ' '.join(x for x in [
             getattr(u, 'telegram_name', None),
             (f'@{u.telegram_username}' if getattr(u, 'telegram_username', None) else '')
         ] if x) or ('прив’язано' if u.telegram_chat_id else '—')
-        tg_send(os.getenv('TELEGRAM_CHAT_ID'),
+        notify_category('register',
                 f"🆕 <b>Нова реєстрація</b>\nEmail: <code>{u.email}</code>\n"
                 f"Telegram: {tg_bits}\n"
                 f"Схвалити доступ?",
@@ -284,6 +284,29 @@ def user_count():
     s = get_session()
     try:
         return s.query(User).count()
+    finally:
+        s.close()
+
+
+def subscriber_chats(pref_key):
+    """Telegram chat_ids of every ACTIVE user who opted into `pref_key`
+    (e.g. 'notify_btc' / 'notify_funding') in their personal settings. Used by
+    the bot to broadcast per-category alerts only to those who asked for them."""
+    s = get_session()
+    try:
+        out = []
+        for u in s.query(User).filter(User.telegram_chat_id.isnot(None)).all():
+            if not _is_active(u):
+                continue
+            try:
+                prefs = json.loads(u.prefs or '{}')
+            except Exception:
+                prefs = {}
+            if prefs.get(pref_key):
+                out.append(u.telegram_chat_id)
+        return out
+    except Exception:
+        return []
     finally:
         s.close()
 
@@ -909,6 +932,11 @@ def register_auth_routes(app):
             email = _norm_email(request.form.get('email'))
             pw = request.form.get('password') or ''
             pw2 = request.form.get('password2') or ''
+            # Telegram-only signup (info-site): email is OPTIONAL — no email, no
+            # confirmation. If left blank, derive a stable placeholder from the
+            # chat so the account still has a unique login handle.
+            if tg_chat and not email:
+                email = f"tg{tg_chat}@telegram.local"
             if not _EMAIL_RE.match(email):
                 return _page('Реєстрація', _register_form(err='Невірний email.', tg=tg_raw))
             if len(pw) < MIN_PASSWORD_LEN:
@@ -1124,6 +1152,25 @@ def register_auth_routes(app):
             return jsonify({'ok': True})
         return jsonify({'ok': True, 'prefs': _load_prefs(u)})
 
+    @app.route('/api/me/notify', methods=['GET', 'POST'])
+    def api_me_notify():
+        """Per-user Telegram notification opt-ins (₿ BTCUSDT, 💰 Funding).
+        MERGES into prefs (does not clobber other keys). Requires a linked
+        Telegram chat to actually receive anything."""
+        u = current_user()
+        prefs = _load_prefs(u)
+        keys = ('notify_btc', 'notify_funding')
+        if request.method == 'POST':
+            d = request.get_json(silent=True) or {}
+            for k in keys:
+                if k in d:
+                    prefs[k] = bool(d[k])
+            _update_user(u.id, prefs=json.dumps(prefs)[:20000])
+        return jsonify({'ok': True,
+                        'tg_linked': bool(getattr(u, 'telegram_chat_id', None)),
+                        'notify_btc': bool(prefs.get('notify_btc')),
+                        'notify_funding': bool(prefs.get('notify_funding'))})
+
     # ---- admin ----
     @app.route('/admin/users')
     def admin_users_page():
@@ -1301,13 +1348,17 @@ def _register_form(err='', tg=''):
     e = f'<div class="msg err">{err}</div>' if err else ''
     tg_hidden = f'<input type="hidden" name="tg" value="{tg}">' if tg else ''
     tg_note = ('<div class="msg ok" style="font-size:.78rem">🔗 Прив’язка до '
-               'Telegram активна — email підтверджувати не треба, лише схвалення '
-               'адміністратора.</div>') if tg else ''
-    return (f'<h1>📝 Реєстрація</h1><p class="sub">Доступ — після підтвердження '
-            f'email та схвалення адміністратора</p>{e}{tg_note}'
+               'Telegram активна — <b>email не потрібен</b> і підтверджувати нічого '
+               'не треба. Задайте лише пароль; далі — схвалення адміністратора.</div>') if tg else ''
+    email_lbl = 'Email <span style="opacity:.6">(необов’язково)</span>' if tg else 'Email'
+    email_req = '' if tg else 'required'
+    email_ph = 'placeholder="можна не вказувати"' if tg else ''
+    sub = ('Доступ через Telegram — лише пароль і схвалення адміністратора' if tg
+           else 'Доступ — після підтвердження email та схвалення адміністратора')
+    return (f'<h1>📝 Реєстрація</h1><p class="sub">{sub}</p>{e}{tg_note}'
             f'<form method="post">{tg_hidden}'
-            f'<label>Email</label><input name="email" type="email" required autofocus>'
-            f'<label>Пароль (мін. 8)</label><input name="password" type="password" required>'
+            f'<label>{email_lbl}</label><input name="email" type="email" {email_req} {email_ph}>'
+            f'<label>Пароль (мін. 8)</label><input name="password" type="password" required autofocus>'
             f'<label>Повторіть пароль</label><input name="password2" type="password" required>'
             f'<button type="submit">Зареєструватися</button></form>'
             f'<div class="links"><a href="/login">← Вже маю акаунт</a></div>')
