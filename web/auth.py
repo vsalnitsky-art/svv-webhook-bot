@@ -709,6 +709,12 @@ def install_auth_gate(app):
     @app.before_request
     def _auth_gate():
         path = request.path or '/'
+        # CORS preflight (OPTIONS) is NEVER auth-gated: it carries no credentials
+        # and, per spec, omits custom headers like X-API-Key — so the key bypass
+        # below can't see it. Blocking it with 401 makes the browser refuse the
+        # real cross-origin GET (→ «бот недоступний» on the info-site).
+        if request.method == 'OPTIONS':
+            return None
         if _is_public(path):
             return None
         # Controlled read-only bypass for the separate info-site: GET /api/* with
