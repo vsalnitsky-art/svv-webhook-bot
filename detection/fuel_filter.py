@@ -3171,10 +3171,10 @@ class FuelFilterDaemon:
         if token.startswith('START'):
             _d = token.split('-', 1)[1]
             _icon = '🟢' if _d == 'LONG' else '🔴'
-            msg = f"{_icon} <b>BTCUSDT START</b> {_dtxt(_d)}"
+            msg = f"{_icon} <b>BTCUSDT СТАРТ</b> {_dtxt(_d)}"
         else:
             # STOP — show the direction it was running in before stopping.
-            msg = f"⛔ <b>BTCUSDT STOP</b> {_dtxt(self._btc_last_dir)}".rstrip()
+            msg = f"⛔ <b>BTCUSDT СТОП</b> {_dtxt(self._btc_last_dir)}".rstrip()
         try:
             notifier.send_message(msg)
             print(f"[FuelFilter] BTC TG alert sent: {token}")
