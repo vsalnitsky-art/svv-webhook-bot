@@ -24,6 +24,20 @@
 
   <main class="wrap">
 
+    <!-- 🔐 Гостьовий блок входу/реєстрації (показується, коли не авторизовано) -->
+    <section class="card hero" id="auth-hero" style="display:none">
+      <div class="hero-inner">
+        <img class="hero-logo" src="/favicon.ico" alt="VSV" onerror="this.style.display='none'">
+        <h1 class="hero-title">VSV Bot — інформаційна панель</h1>
+        <p class="hero-sub">Вхід або реєстрація — щоб бачити потенціал, ₿-сеанс, funding і налаштувати сповіщення в Telegram.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="/login">🔐 Вхід</a>
+          <a class="btn btn-ghost" href="/register">📝 Реєстрація</a>
+        </div>
+        <p class="hero-note">Реєстрація — через Telegram, без email. Напишіть боту <b>/start</b>.</p>
+      </div>
+    </section>
+
     <!-- 🎯 Вікно потенціалу (Smart Money Concepts) -->
     <section class="card" id="potential-card">
       <h2>🎯 Вікно потенціалу <span id="pot-symbol" class="pill">—</span></h2>
@@ -49,7 +63,7 @@
     </section>
 
     <!-- 💰 Funding -->
-    <section class="card">
+    <section class="card" id="funding-card">
       <h2>💰 Funding — ММ по монетах <span id="funding-count" class="pill">0</span></h2>
       <div class="table-scroll">
         <table id="funding-table">

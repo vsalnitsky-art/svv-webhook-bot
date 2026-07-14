@@ -662,7 +662,9 @@ def ensure_admin():
 # ==================================================================
 _PUBLIC_EXACT = {'/login', '/register', '/forgot', '/logout', '/pending',
                  '/api/health', '/favicon.ico'}
-_PUBLIC_PREFIX = ('/static/', '/confirm/', '/reset/', '/auth/')
+# '/info' is public so GUESTS can open the info-site shell (login/registration
+# live ON it). The DATA APIs stay gated — a guest sees the auth hero, not state.
+_PUBLIC_PREFIX = ('/static/', '/confirm/', '/reset/', '/auth/', '/info')
 _USER_MUTABLE_PREFIX = ('/api/me', '/logout', '/auth/')   # non-admin may POST here
 # Info-site-only users (no bot_access) may reach ONLY these in THIS (bot) app:
 # their cabinet, the bot-served info-site (/info) and the READ-ONLY APIs the

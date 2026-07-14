@@ -253,6 +253,25 @@ td.mono, td .mono { font-family: var(--mono); }
 .tile-val { font-size: 21px; font-weight: 800; line-height: 1.15; letter-spacing: -.01em; }
 .tile-lbl { color: var(--muted); font-size: 11px; margin-top: 7px; text-transform: uppercase; letter-spacing: .04em; }
 
+/* ═══ 🔐 гостьовий hero (вхід/реєстрація) ═══ */
+.hero { text-align: center; }
+.hero-inner { max-width: 520px; margin: 0 auto; padding: 18px 6px 10px; display: grid; gap: 12px; justify-items: center; }
+.hero-logo { width: 76px; height: 76px; border-radius: 18px; object-fit: cover;
+  box-shadow: 0 0 0 1px var(--line), 0 10px 30px -12px rgba(0,0,0,.6); }
+.hero-title { margin: 4px 0 0; font-size: 22px; font-weight: 900; letter-spacing: -.02em; text-wrap: balance; }
+.hero-sub { margin: 0; color: var(--txt-dim); font-size: 14px; max-width: 44ch; }
+.hero-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+.btn { display: inline-flex; align-items: center; gap: 7px; padding: 11px 22px; border-radius: 10px;
+  font-weight: 700; font-size: 14px; text-decoration: none; cursor: pointer; border: 1px solid transparent;
+  transition: transform .12s, background .2s, border-color .2s; }
+.btn:active { transform: translateY(1px); }
+.btn-primary { background: linear-gradient(180deg, var(--accent-2), var(--accent)); color: #1a1204;
+  box-shadow: 0 6px 18px -8px rgba(245,166,35,.6); }
+.btn-primary:hover { filter: brightness(1.05); }
+.btn-ghost { background: var(--elev); color: var(--txt); border-color: var(--line); }
+.btn-ghost:hover { border-color: var(--accent); }
+.hero-note { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+
 /* ═══ 🔔 сповіщення (toggles) ═══ */
 .ntf-warn { background: color-mix(in srgb, var(--warn) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); color: var(--warn);

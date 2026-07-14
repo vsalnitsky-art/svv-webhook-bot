@@ -24,7 +24,10 @@
 
   function api(path) {
     return fetch(BASE + path, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
-      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
+      .then(function (r) {
+        if (!r.ok) { var e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
+        return r.json();
+      });
   }
 
   function apiPost(path, body) {
@@ -352,10 +355,20 @@
     });
   }
 
-  function refresh() {
+  // Toggle guest vs authorized view. Guest → show the auth hero, hide data.
+  function setGuest(isGuest) {
+    var hero = $("#auth-hero");
+    if (hero) hero.style.display = isGuest ? "" : "none";
+    ["potential-card", "btc-card", "funding-card"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.style.display = isGuest ? "none" : "";
+    });
+    if (isGuest) { var n = $("#notify-card"); if (n) n.style.display = "none"; }
+  }
+
+  function loadData() {
     var ff = api("/api/fuel-filter/state").catch(function () { return null; });
     var health = api("/api/health").catch(function () { return null; });
-
     Promise.all([ff, health]).then(function (res) {
       var st = res[0], hp = res[1];
       if (st) { setBtc(st.btc_start); renderFunding(st.anomalies); }
@@ -368,8 +381,32 @@
     });
     refreshPotential();
     refreshNotify();
-    refreshAuth();
   }
+
+  function refresh() {
+    // Decide auth state FIRST — a 401/403 means «not logged in» (a guest),
+    // NOT «bot down». Only a real network failure is «бот недоступний».
+    api("/api/me").then(function (me) {
+      renderAuth(me); setGuest(false); loadData();
+    }).catch(function (e) {
+      renderAuth(null);
+      if (e && (e.status === 401 || e.status === 403)) {
+        setGuest(true);
+        setConn("wait", "гостьовий режим — увійдіть");
+      } else {
+        setGuest(true);
+        setConn("err", "бот недоступний");
+      }
+    });
+  }
+
+  // Point logos at the BOT origin so they load whether the site is served by
+  // the bot (same domain) or hosted separately (BOT_API_BASE set).
+  (function fixLogos() {
+    var src = BASE + "/favicon.ico";
+    var imgs = document.querySelectorAll("img.logo, img.hero-logo");
+    for (var i = 0; i < imgs.length; i++) imgs[i].src = src;
+  })();
 
   setConn("wait", "підключення…");
   refresh();
