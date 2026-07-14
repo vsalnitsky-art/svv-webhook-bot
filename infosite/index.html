@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VSV Bot — Інфо-панель</title>
-  <link rel="icon" type="image/png" href="/favicon.ico">
-  <link rel="apple-touch-icon" href="/favicon.ico">
-  <link rel="stylesheet" href="style.css">
+  <link rel="icon" type="image/png" href="vsv-logo.png">
+  <link rel="apple-touch-icon" href="vsv-logo.png">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <img class="logo" src="/favicon.ico" alt="VSV" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'">
+      <img class="logo" src="vsv-logo.png" alt="VSV" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'">
       <span class="dot" style="display:none"></span>
       <span>VSV Bot · Інфо-панель</span>
     </div>
@@ -27,12 +27,13 @@
     <!-- 🔐 Гостьовий блок входу/реєстрації (показується, коли не авторизовано) -->
     <section class="card hero" id="auth-hero" style="display:none">
       <div class="hero-inner">
-        <img class="hero-logo" src="/favicon.ico" alt="VSV" onerror="this.style.display='none'">
+        <img class="hero-logo" src="vsv-logo.png" alt="VSV" onerror="this.style.display='none'">
         <h1 class="hero-title">VSV Bot — інформаційна панель</h1>
-        <p class="hero-sub">Вхід або реєстрація — щоб бачити потенціал, ₿-сеанс, funding і налаштувати сповіщення в Telegram.</p>
+        <p class="hero-sub">Вхід або реєстрація — щоб бачити потенціал,&nbsp;<span class="nowrap">₿-сеанс</span>, funding і налаштувати сповіщення в&nbsp;Telegram.</p>
         <div class="hero-actions">
-          <a class="btn btn-primary" href="/login">🔐 Вхід</a>
-          <a class="btn btn-ghost" href="/register">📝 Реєстрація</a>
+          <a id="hero-login" class="btn btn-primary" href="/login">🔐 Вхід</a>
+          <a id="hero-register" class="btn btn-ghost" href="/register">📝 Реєстрація</a>
+          <a id="hero-bot" class="btn btn-ghost" href="#" target="_blank" rel="noopener" style="display:none">📨 Telegram-бот</a>
         </div>
         <p class="hero-note">Реєстрація — через Telegram, без email. Напишіть боту <b>/start</b>.</p>
       </div>
@@ -88,7 +89,8 @@
       var KEY = "vsv-info-theme";
       var saved = null;
       try { saved = localStorage.getItem(KEY); } catch (e) {}
-      if (saved) document.documentElement.setAttribute("data-theme", saved);
+      // Default to the DARK theme unless the user has chosen otherwise.
+      document.documentElement.setAttribute("data-theme", saved || "dark");
       document.addEventListener("click", function (e) {
         if (!e.target.closest || !e.target.closest("#theme-btn")) return;
         var cur = document.documentElement.getAttribute("data-theme");
@@ -99,7 +101,7 @@
       });
     })();
   </script>
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+  <script src="config.js?v=6"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>

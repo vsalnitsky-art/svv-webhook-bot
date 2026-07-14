@@ -18,12 +18,47 @@
   var REFRESH = CFG.REFRESH_MS || 5000;
   var FORCED_SYMBOL = (CFG.POTENTIAL_SYMBOL || "").toUpperCase().trim();
   var BOT_LINK = (CFG.BOT_TELEGRAM_LINK || "").trim();
+  var API_KEY = (CFG.INFO_API_KEY || "").trim();
+  // Cross-origin when the bot lives on a different domain than this site.
+  var CROSS = BASE !== window.location.origin;
+
+  function botUrl(p) { return BASE + p; }   // absolute link to the bot domain
+
+  // ── Auth token (cross-origin, cookie-free) ─────────────────────────────────
+  var TOK_KEY = "vsv_info_token";
+  function getTok() { try { return localStorage.getItem(TOK_KEY) || ""; } catch (e) { return ""; } }
+  function setTok(t) { try { t ? localStorage.setItem(TOK_KEY, t) : localStorage.removeItem(TOK_KEY); } catch (e) {} }
+  // Capture the token handed back by the bot after login (URL hash «#it=…»).
+  (function captureToken() {
+    var h = window.location.hash || "";
+    var m = h.match(/[#&]it=([^&]+)/);
+    if (m) {
+      setTok(decodeURIComponent(m[1]));
+      // Clean the hash so the token isn't left in the address bar / history.
+      try { history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) {}
+    }
+  })();
+  function logout() { setTok(""); window.location.reload(); }
 
   // ── helpers ──────────────────────────────────────────────────────────────
   function $(sel) { return document.querySelector(sel); }
 
+  function _headers(extra) {
+    var h = { "Accept": "application/json" };
+    var t = getTok();
+    if (t) h["X-Info-Token"] = t;             // per-user cross-origin auth
+    if (API_KEY) h["X-API-Key"] = API_KEY;    // optional read-only public access
+    if (extra) for (var k in extra) h[k] = extra[k];
+    return h;
+  }
+
+  // Cross-origin reads use the API key (no cookies) — «omit» is REQUIRED because
+  // the bot returns Access-Control-Allow-Origin: * which the browser refuses to
+  // pair with credentials. Same-origin (bot-served) uses the session cookie.
+  var CREDS = CROSS ? "omit" : "same-origin";
+
   function api(path) {
-    return fetch(BASE + path, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
+    return fetch(BASE + path, { headers: _headers(), credentials: CREDS })
       .then(function (r) {
         if (!r.ok) { var e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
         return r.json();
@@ -32,8 +67,8 @@
 
   function apiPost(path, body) {
     return fetch(BASE + path, {
-      method: "POST", credentials: "same-origin",
-      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      method: "POST", credentials: CREDS,
+      headers: _headers({ "Content-Type": "application/json" }),
       body: JSON.stringify(body || {})
     }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
   }
@@ -91,6 +126,20 @@
     return (Number(v) >= 0 ? "" : "-") + "$" + Math.abs(Number(v)).toFixed(digits == null ? 2 : digits);
   }
 
+  // Compact money: $9.77M / $1.2K — for 24h volume etc.
+  function fmtUsdC(v) {
+    if (v == null || isNaN(v)) return "—";
+    return "$" + fmtNum(Math.abs(Number(v)));
+  }
+
+  // Price with thousands separators: $64,436.20
+  function fmtPrice(v) {
+    if (v == null || isNaN(v)) return "—";
+    return "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function sideOf(v) { return v > 0 ? "LONG" : (v < 0 ? "SHORT" : "WAIT"); }
+
   function setConn(state, text) {
     var el = $("#conn");
     el.className = "conn conn--" + state;
@@ -98,12 +147,13 @@
   }
 
   // ── 🎯 Вікно потенціалу ────────────────────────────────────────────────────
-  function fcLine(tf, fc) {
-    if (!fc || !fc.side) return '<div class="fc-line muted">Forecast ' + tf + ': —</div>';
-    var cls = fc.side === "LONG" ? "dir-long" : (fc.side === "SHORT" ? "dir-short" : "muted");
-    var conf = fc.confidence != null ? ' <span class="muted">(впевненість ' + Math.round(fc.confidence) + '%)</span>' : "";
-    return '<div class="fc-line">✓ Forecast ' + tf + ': <span class="' + cls + '">' +
-      esc(fc.side) + " " + Math.round(fc.pct || 0) + "%</span>" + conf + "</div>";
+  function fcLine(tf, side, conf) {
+    if (!side) return '<div class="fc-line muted">Forecast ' + tf + ': —</div>';
+    var cls = side === "LONG" ? "dir-long" : (side === "SHORT" ? "dir-short" : "muted");
+    var dot = side === "LONG" ? "🟢" : (side === "SHORT" ? "🔴" : "⚪");
+    var c = (conf != null && !isNaN(conf)) ? " · " + Math.round(conf) + "%" : "";
+    return '<div class="fc-line">Forecast ' + tf + ': <span class="' + cls + '">' +
+      dot + " " + esc(side) + c + "</span></div>";
   }
 
   function moveBlock(mv) {
@@ -114,7 +164,9 @@
       FRESH:     ["🟢 СВІЖИЙ — є запас ходу", "exh-good"]
     };
     var vd = vmap[mv.verdict] || ["—", "muted"];
-    var ex = mv.exhaustion != null ? Math.round(mv.exhaustion * 1000) / 10 : null;
+    // exhaustion comes back on a 0..100 scale already.
+    var ex = mv.exhaustion != null ? Math.max(0, Math.min(100, Number(mv.exhaustion))) : null;
+    var exTxt = ex != null ? ex.toFixed(0) + "%" : "—";
     var exCls = ex == null ? "exh-mid" : (ex >= 70 ? "exh-bad" : (ex >= 40 ? "exh-mid" : "exh-good"));
     var dirWord = mv.side === "LONG" ? "↑ ВГОРУ (LONG)" : "↓ ВНИЗ (SHORT)";
     var notes = (mv.notes || []).map(function (n) { return "<li>" + esc(n) + "</li>"; }).join("");
@@ -125,17 +177,17 @@
       '</div>' +
       '<div class="pot-dir">' + esc(dirWord) + '</div>' +
       '<div class="metrics">' +
-        metric("ATR / бар", fmtPct(mv.atr_pct, 3)) +
-        metric("Розтяг від середн.", (mv.stretch_atr != null ? mv.stretch_atr + " ATR" : "—")) +
-        metric("Запас ходу", (mv.runway_pct != null ? fmtPct(mv.runway_pct, 3) : "—") +
-          (mv.runway_atr != null ? ' <span class="muted">(' + mv.runway_atr + " ATR)</span>" : "")) +
-        metric("Денний хід (ADR)", (mv.adr_used_pct != null ? mv.adr_used_pct + "%" : "—") +
-          (mv.adr_pct != null ? ' <span class="muted">з ' + mv.adr_pct + "%</span>" : "")) +
+        metric("ATR / бар", fmtPct(mv.atr_pct, 2)) +
+        metric("Розтяг від середн.", (mv.stretch_atr != null ? Number(mv.stretch_atr).toFixed(1) + " ATR" : "—")) +
+        metric("Запас ходу", (mv.runway_pct != null ? fmtPct(mv.runway_pct, 2) : "—") +
+          (mv.runway_atr != null ? ' <span class="muted">(' + Number(mv.runway_atr).toFixed(1) + " ATR)</span>" : "")) +
+        metric("Денний хід (ADR)", (mv.adr_used_pct != null ? Number(mv.adr_used_pct).toFixed(0) + "%" : "—") +
+          (mv.adr_pct != null ? ' <span class="muted">з ' + Number(mv.adr_pct).toFixed(2) + "%</span>" : "")) +
       '</div>' +
       '<div class="exh-row">' +
         '<span class="exh-lbl">Виснаженість</span>' +
         '<div class="exh-bar"><i class="' + exCls + '" style="width:' + (ex || 0) + '%"></i></div>' +
-        '<span class="exh-val ' + exCls + '">' + (ex != null ? ex : "—") + '</span>' +
+        '<span class="exh-val ' + exCls + '">' + exTxt + '</span>' +
       '</div>' +
       (notes ? '<ul class="notes">' + notes + "</ul>" : "");
   }
@@ -156,12 +208,20 @@
     var vcls = verdict === "LONG" ? "dir-long" : (verdict === "SHORT" ? "dir-short" : "muted");
     var conf = Math.max(0, Math.min(100, Math.round(b.confidence || 0)));
     var comp = b.components || {};
-    var fc1 = b.forecast_1h || (comp.forecast && comp.forecast.f1) || comp.forecast_1h;
-    var fc4 = b.forecast_4h || (comp.forecast && comp.forecast.f4) || comp.forecast_4h;
-    // Fall back to reasons list for the ММ line if present.
-    var mmLine = "";
+    var fco = comp.forecast || {};
+    var fc1s = fco.f1_side != null ? sideOf(fco.f1_side) : null;
+    var fc4s = fco.f4_side != null ? sideOf(fco.f4_side) : null;
+    // ММ (sentiment) line.
     var sm = comp.sentiment;
-    if (verdict === "WAIT") mmLine = '<div class="fc-line accent">• ММ збалансований — напрямку немає</div>';
+    var mmLine = "";
+    if (sm && sm.long_pct != null) {
+      var mb = sm.bias === "LONG" ? "dir-long" : (sm.bias === "SHORT" ? "dir-short" : "muted");
+      mmLine = '<div class="fc-line">ММ: <span class="' + mb + '">' + esc(sm.bias || "—") +
+        '</span> <span class="muted">L ' + Number(sm.long_pct).toFixed(0) + '% / S ' +
+        Number(sm.short_pct).toFixed(0) + '%</span></div>';
+    } else if (verdict === "WAIT") {
+      mmLine = '<div class="fc-line accent">ММ збалансований — напрямку немає</div>';
+    }
     var mv = (b.move_long && b.verdict === "LONG") ? b.move_long
            : (b.move_short && b.verdict === "SHORT") ? b.move_short
            : (b.move || b.move_long || b.move_short);
@@ -173,8 +233,8 @@
           '<span class="conf-txt">впевненість ' + conf + '%</span></div>' +
       '</div>' +
       '<div class="price-row"><span>💲 Ціна ' + esc(b.symbol || "") + ' (ф’ючерс)</span><b>' +
-        (b.price != null ? fmtUsd(b.price, 2) : "—") + '</b></div>' +
-      '<div class="fc-list">' + fcLine("1H", fc1) + fcLine("4H", fc4) + mmLine + '</div>' +
+        fmtPrice(b.price) + '</b></div>' +
+      '<div class="fc-list">' + fcLine("1H", fc1s, fco.f1_conf) + fcLine("4H", fc4s, fco.f4_conf) + mmLine + '</div>' +
       moveBlock(mv);
   }
 
@@ -314,7 +374,7 @@
         "<td>" + fundingProgress(a.funding_rate, a.entry_threshold) + "</td>" +
         "<td><b class=\"dir-short\">" + (a.funding_rate != null ? fmtPct(a.funding_rate, 3) : "—") + "</b>" +
           ' <span class="muted">· ⏱ ' + fmtCountdown(a.funding_next_ms) + "</span>" + trend + "</td>" +
-        "<td>" + fmtUsd(a.vol24h, 1) + "</td>" +
+        "<td>" + fmtUsdC(a.vol24h) + "</td>" +
       "</tr>";
     }).join("");
   }
@@ -326,11 +386,13 @@
     if (me && me.ok) {
       el.innerHTML =
         '<span class="who">👤 ' + esc(me.email || "") + (me.is_admin ? " · адмін" : "") + '</span>' +
-        '<a href="/cabinet">Кабінет</a>' +
-        (me.is_admin ? '<a href="/">Бот</a>' : "") +
-        '<a href="/logout">Вихід</a>';
+        '<a href="' + botUrl("/cabinet") + '" target="_blank" rel="noopener">Кабінет</a>' +
+        '<a href="#" class="lo">Вихід</a>';
     } else {
-      el.innerHTML = '<a href="/login">Вхід</a><a href="/register">Реєстрація</a>';
+      var reg = BOT_LINK || botUrl("/register");
+      var ext = BOT_LINK ? ' target="_blank" rel="noopener"' : "";
+      el.innerHTML = '<a href="' + botUrl("/info-login") + '">Вхід</a>' +
+                     '<a href="' + reg + '"' + ext + '>Реєстрація</a>';
     }
   }
 
@@ -355,58 +417,76 @@
     });
   }
 
-  // Toggle guest vs authorized view. Guest → show the auth hero, hide data.
-  function setGuest(isGuest) {
+  // Show/hide the data cards + the "no access" hero. On the auth screen the
+  // top-bar labels (login/register links + connection pill) are hidden so the
+  // hero is the only call-to-action.
+  function showData(ok) {
     var hero = $("#auth-hero");
-    if (hero) hero.style.display = isGuest ? "" : "none";
+    if (hero) hero.style.display = ok ? "none" : "";
     ["potential-card", "btc-card", "funding-card"].forEach(function (id) {
       var el = document.getElementById(id);
-      if (el) el.style.display = isGuest ? "none" : "";
+      if (el) el.style.display = ok ? "" : "none";
     });
-    if (isGuest) { var n = $("#notify-card"); if (n) n.style.display = "none"; }
-  }
-
-  function loadData() {
-    var ff = api("/api/fuel-filter/state").catch(function () { return null; });
-    var health = api("/api/health").catch(function () { return null; });
-    Promise.all([ff, health]).then(function (res) {
-      var st = res[0], hp = res[1];
-      if (st) { setBtc(st.btc_start); renderFunding(st.anomalies); }
-      if (st || hp) {
-        setConn("ok", "онлайн");
-        $("#last-update").textContent = "оновлено: " + new Date().toLocaleTimeString("uk-UA");
-      } else {
-        setConn("err", "бот недоступний");
-      }
-    });
-    refreshPotential();
-    refreshNotify();
+    if (!ok) { var n = $("#notify-card"); if (n) n.style.display = "none"; }
+    // On the auth screen hide the whole top bar — the hero is the only UI.
+    var tb = $(".topbar"); if (tb) tb.style.display = ok ? "" : "none";
   }
 
   function refresh() {
-    // Decide auth state FIRST — a 401/403 means «not logged in» (a guest),
-    // NOT «bot down». Only a real network failure is «бот недоступний».
-    api("/api/me").then(function (me) {
-      renderAuth(me); setGuest(false); loadData();
+    var authed = !!getTok() || !!API_KEY;   // have a login token or a public key?
+    api("/api/fuel-filter/state").then(function (st) {
+      showData(true);
+      if (st) { setBtc(st.btc_start); renderFunding(st.anomalies); }
+      setConn("ok", "онлайн");
+      $("#last-update").textContent = "оновлено: " + new Date().toLocaleTimeString("uk-UA");
+      refreshPotential();
     }).catch(function (e) {
-      renderAuth(null);
-      if (e && (e.status === 401 || e.status === 403)) {
-        setGuest(true);
-        setConn("wait", "гостьовий режим — увійдіть");
+      if (!authed) {
+        // A guest (no token) always gets the login/registration screen —
+        // never a scary «бот недоступний».
+        showData(false);
+        setConn("wait", "потрібен вхід");
+      } else if (e && (e.status === 401 || e.status === 403)) {
+        // Token expired / invalid → drop it and show the login screen.
+        setTok("");
+        showData(false);
+        setConn("wait", "сесія завершена — увійдіть");
       } else {
-        setGuest(true);
-        setConn("err", "бот недоступний");
+        setConn("err", "бот недоступний");   // logged in, but bot/network down
       }
     });
+    refreshAuth();
+    refreshNotify();
   }
 
-  // Point logos at the BOT origin so they load whether the site is served by
-  // the bot (same domain) or hosted separately (BOT_API_BASE set).
-  (function fixLogos() {
-    var src = BASE + "/favicon.ico";
+  // Logos: try the LOCAL file first (vsv-logo.png next to index.html), then the
+  // bot's /favicon.ico, then the accent dot. Auth links point at the bot domain.
+  (function fixChrome() {
     var imgs = document.querySelectorAll("img.logo, img.hero-logo");
-    for (var i = 0; i < imgs.length; i++) imgs[i].src = src;
+    for (var i = 0; i < imgs.length; i++) {
+      (function (img) {
+        img.onerror = function () {
+          if (!img._triedBot && BASE) { img._triedBot = true; img.src = BASE + "/favicon.ico"; return; }
+          img.onerror = null; img.style.display = "none";
+          var d = img.nextElementSibling;
+          if (d && d.classList && d.classList.contains("dot")) d.style.display = "inline-block";
+        };
+        img.src = "vsv-logo.png";
+      })(imgs[i]);
+    }
+    var lg = $("#hero-login"); if (lg) lg.href = botUrl("/info-login");
+    // Registration is Telegram-only → point it at the bot chat (fallback: /register).
+    var rg = $("#hero-register");
+    if (rg) { rg.href = BOT_LINK || botUrl("/register"); if (BOT_LINK) { rg.target = "_blank"; rg.rel = "noopener"; } }
+    // The extra «Telegram-бот» button is redundant now — hide it.
+    var bl = $("#hero-bot"); if (bl) bl.style.display = "none";
   })();
+
+  // Logout link (clears the local token).
+  document.addEventListener("click", function (e) {
+    var lo = e.target.closest ? e.target.closest(".lo") : null;
+    if (lo) { e.preventDefault(); logout(); }
+  });
 
   setConn("wait", "підключення…");
   refresh();

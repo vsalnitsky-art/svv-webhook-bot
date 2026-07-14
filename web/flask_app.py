@@ -125,9 +125,9 @@ def create_app():
             if request.path.startswith('/api/') and request.method in ('GET', 'HEAD', 'OPTIONS'):
                 resp.headers['Access-Control-Allow-Origin'] = '*'
                 resp.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-                # X-API-Key lets the separately-hosted info-site read state
-                # cross-origin (paired with the INFO_API_KEY gate bypass).
-                resp.headers['Access-Control-Allow-Headers'] = 'Accept, Content-Type, X-API-Key'
+                # X-API-Key (public read) and X-Info-Token (per-user login) let
+                # the separately-hosted info-site authenticate cross-origin.
+                resp.headers['Access-Control-Allow-Headers'] = 'Accept, Content-Type, X-API-Key, X-Info-Token'
                 resp.headers['Access-Control-Max-Age'] = '86400'
         except Exception:
             pass
