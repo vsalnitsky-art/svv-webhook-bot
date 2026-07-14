@@ -864,25 +864,36 @@ _SHELL = """<!doctype html><html lang="uk"><head><meta charset="utf-8">
 <title>{{title}} · VSV Bot</title>
 <link rel="icon" type="image/png" href="/favicon.ico">
 <link rel="apple-touch-icon" href="/favicon.ico"><style>
-.brandlogo{display:block;width:76px;height:76px;margin:0 auto 14px;border-radius:16px;object-fit:cover}
+.brandlogo{display:block;width:76px;height:76px;margin:0 auto 16px;border-radius:18px;object-fit:cover;
+ box-shadow:0 0 0 1px #26324a,0 10px 30px -12px rgba(0,0,0,.6)}
 :root{color-scheme:dark}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
- background:#0b0e14;color:#e5e7eb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-.card{width:100%;max-width:400px;margin:20px;padding:26px 24px;border-radius:14px;
- background:#141922;border:1px solid rgba(255,255,255,0.08);box-shadow:0 10px 40px rgba(0,0,0,.5)}
-h1{font-size:1.15rem;margin:0 0 4px} .sub{color:#9aa3b5;font-size:.82rem;margin:0 0 18px}
-label{display:block;font-size:.75rem;color:#cbd5e1;margin:12px 0 5px}
-input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #2a3140;background:#0e1219;
- color:#e5e7eb;font-size:.9rem}
-button{width:100%;margin-top:18px;padding:11px;border:0;border-radius:8px;font-weight:700;
- font-size:.9rem;cursor:pointer;background:#2563eb;color:#fff}
-button:hover{background:#1d4ed8}
-.msg{margin:12px 0;padding:10px 12px;border-radius:8px;font-size:.82rem}
-.err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4);color:#fca5a5}
-.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.4);color:#86efac}
-.links{margin-top:16px;font-size:.8rem;text-align:center;color:#9aa3b5}
-.links a{color:#60a5fa;text-decoration:none} .links a:hover{text-decoration:underline}
+ background:radial-gradient(1200px 600px at 80% -10%,rgba(245,166,35,.06),transparent 60%),
+  radial-gradient(900px 500px at -10% 10%,rgba(47,209,139,.05),transparent 55%),#0a0e17;
+ color:#e8eef7;font-variant-numeric:tabular-nums;
+ font-family:"Inter",ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.card{width:100%;max-width:400px;margin:20px;padding:28px 26px;border-radius:14px;
+ background:linear-gradient(180deg,#131a26,#0d1220);border:1px solid #26324a;
+ box-shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.55)}
+h1{font-size:1.3rem;font-weight:900;letter-spacing:-.02em;margin:0 0 4px}
+.sub{color:#aab6c8;font-size:.82rem;margin:0 0 18px}
+label{display:block;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:#8695ac;margin:14px 0 5px}
+input{width:100%;padding:11px 13px;border-radius:9px;border:1px solid #26324a;background:#1a2333;
+ color:#e8eef7;font-size:.92rem}
+input:focus{outline:none;border-color:#f5a623;box-shadow:0 0 0 3px rgba(245,166,35,.2)}
+button{width:100%;margin-top:18px;padding:12px;border:0;border-radius:10px;font-weight:800;
+ font-size:.92rem;cursor:pointer;background:linear-gradient(180deg,#ffc960,#f5a623);color:#1a1204;
+ box-shadow:0 6px 18px -8px rgba(245,166,35,.6)}
+button:hover{filter:brightness(1.05)}
+.tgbtn{display:inline-block;padding:12px 22px;border-radius:10px;font-weight:800;text-decoration:none;
+ background:linear-gradient(180deg,#ffc960,#f5a623);color:#1a1204;box-shadow:0 6px 18px -8px rgba(245,166,35,.6)}
+.tgbtn:hover{filter:brightness(1.05)}
+.msg{margin:12px 0;padding:10px 12px;border-radius:9px;font-size:.82rem}
+.err{background:rgba(255,93,108,.12);border:1px solid rgba(255,93,108,.4);color:#ff9aa4}
+.ok{background:rgba(47,209,139,.12);border:1px solid rgba(47,209,139,.4);color:#6ee7b7}
+.links{margin-top:16px;font-size:.8rem;text-align:center;color:#8695ac}
+.links a{color:#f5a623;text-decoration:none;font-weight:600} .links a:hover{text-decoration:underline}
 table{width:100%;border-collapse:collapse;font-size:.8rem} th,td{padding:7px 9px;text-align:left;
  border-bottom:1px solid rgba(255,255,255,.06)} th{color:#9aa3b5;font-weight:600}
 .badge{padding:2px 8px;border-radius:20px;font-size:.68rem;font-weight:700}
@@ -978,14 +989,16 @@ def register_auth_routes(app):
         tg_chat = _tg.get('c') if _tg else None
         tg_user = _tg.get('u') if _tg else None
         tg_name = _tg.get('n') if _tg else None
+        # Registration is TELEGRAM-ONLY (no email anywhere). Without a valid tg
+        # token this page just points the user at the bot — never an email form.
+        if not tg_chat:
+            return _page('Реєстрація', _tg_register_prompt())
         if request.method == 'POST':
             email = _norm_email(request.form.get('email'))
             pw = request.form.get('password') or ''
             pw2 = request.form.get('password2') or ''
-            # Telegram-only signup (info-site): email is OPTIONAL — no email, no
-            # confirmation. If left blank, derive a stable placeholder from the
-            # chat so the account still has a unique login handle.
-            if tg_chat and not email:
+            # No email step — derive a stable placeholder login from the chat.
+            if not email:
                 email = f"tg{tg_chat}@telegram.local"
             if not _EMAIL_RE.match(email):
                 return _page('Реєстрація', _register_form(err='Невірний email.', tg=tg_raw))
@@ -1016,20 +1029,6 @@ def register_auth_routes(app):
                     'Після схвалення адміністратором ви отримаєте сповіщення в '
                     'Telegram і зможете увійти.',
                     extra='<div class="links"><a href="/login">← До входу</a></div>'))
-            # Legacy web signup (no Telegram): email confirm + admin approval.
-            create_user(email, pw, is_admin=False, email_confirmed=False,
-                        approved=False)
-            token = _make_token(email, 'confirm')
-            link = f"{_base_url()}/confirm/{token}"
-            send_email(email, 'Підтвердження реєстрації',
-                       f'<p>Підтвердіть email для доступу до бота:</p>'
-                       f'<p><a href="{link}">{link}</a></p>'
-                       f'<p>Посилання дійсне 24 год.</p>', link=link)
-            return _page('Реєстрація', _msg_box(
-                'Майже готово', 'ok',
-                'Ми надіслали лист із підтвердженням. Після підтвердження email '
-                'акаунт має схвалити адміністратор — тоді ви зможете увійти.',
-                extra='<div class="links"><a href="/login">← До входу</a></div>'))
         return _page('Реєстрація', _register_form(tg=tg_raw))
 
     @app.route('/confirm/<token>')
@@ -1434,32 +1433,46 @@ def _no_bot_access_page(u):
     return redirect(os.getenv('INFO_SITE_URL') or '/info/')
 
 
+def _bot_link():
+    return os.getenv('TELEGRAM_BOT_LINK') or ''
+
+
+def _tg_register_prompt():
+    """Registration is Telegram-only — no email form. Point the user at the bot."""
+    bl = _bot_link()
+    btn = (f'<a class="tgbtn" href="{bl}">📨 Відкрити Telegram-бота</a>' if bl else
+           '<div class="msg ok">Знайдіть нашого бота в Telegram і натисніть <b>/start</b>.</div>')
+    return (f'<h1>📝 Реєстрація</h1>'
+            f'<p class="sub">Реєстрація — лише через Telegram, без email.</p>'
+            f'<div style="text-align:center;margin:8px 0 4px">{btn}</div>'
+            f'<p class="sub" style="text-align:center;margin-top:14px">'
+            f'Натисніть <b>/start</b> у боті — він надішле персональне посилання '
+            f'для завершення реєстрації.</p>'
+            f'<div class="links"><a href="/login">← Вже маю акаунт</a></div>')
+
+
 def _login_form(nxt='/', err=''):
     e = f'<div class="msg err">{err}</div>' if err else ''
+    bl = _bot_link()
+    reg = (f'<a href="{bl}">Реєстрація через Telegram</a>' if bl
+           else '<a href="/register">Реєстрація</a>')
     return (f'<h1>🔐 Вхід</h1><p class="sub">Авторизуйтесь для доступу до бота</p>{e}'
             f'<form method="post">'
             f'<input type="hidden" name="next" value="{nxt}">'
             f'<label>Email</label><input name="email" type="email" required autofocus>'
             f'<label>Пароль</label><input name="password" type="password" required>'
             f'<button type="submit">Увійти</button></form>'
-            f'<div class="links"><a href="/forgot">Забули пароль?</a> · '
-            f'<a href="/register">Реєстрація</a></div>')
+            f'<div class="links">{reg}</div>')
 
 
 def _register_form(err='', tg=''):
+    # Only reached WITH a valid Telegram token → password-only, no email field.
     e = f'<div class="msg err">{err}</div>' if err else ''
     tg_hidden = f'<input type="hidden" name="tg" value="{tg}">' if tg else ''
-    tg_note = ('<div class="msg ok" style="font-size:.78rem">🔗 Прив’язка до '
-               'Telegram активна — <b>email не потрібен</b> і підтверджувати нічого '
-               'не треба. Задайте лише пароль; далі — схвалення адміністратора.</div>') if tg else ''
-    email_lbl = 'Email <span style="opacity:.6">(необов’язково)</span>' if tg else 'Email'
-    email_req = '' if tg else 'required'
-    email_ph = 'placeholder="можна не вказувати"' if tg else ''
-    sub = ('Доступ через Telegram — лише пароль і схвалення адміністратора' if tg
-           else 'Доступ — після підтвердження email та схвалення адміністратора')
-    return (f'<h1>📝 Реєстрація</h1><p class="sub">{sub}</p>{e}{tg_note}'
+    tg_note = ('<div class="msg ok" style="font-size:.78rem">🔗 Telegram підтверджено — '
+               '<b>email не потрібен</b>. Задайте лише пароль; далі — схвалення адміністратора.</div>')
+    return (f'<h1>📝 Реєстрація</h1><p class="sub">Через Telegram — лише пароль</p>{e}{tg_note}'
             f'<form method="post">{tg_hidden}'
-            f'<label>{email_lbl}</label><input name="email" type="email" {email_req} {email_ph}>'
             f'<label>Пароль (мін. 8)</label><input name="password" type="password" required autofocus>'
             f'<label>Повторіть пароль</label><input name="password2" type="password" required>'
             f'<button type="submit">Зареєструватися</button></form>'

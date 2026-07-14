@@ -84,8 +84,51 @@ _CAT_ENV = {
 }
 
 
+_forum_topics_cache = None    # {category: thread_id} for TELEGRAM_FORUM_CHAT
+
+
+def _forum_thread(category):
+    """Get/auto-create a forum TOPIC for `category` inside TELEGRAM_FORUM_CHAT —
+    one supergroup, a topic per category (💰/₿/📈/📝/💬). Thread ids persist in
+    DB so topics aren't recreated on restart. Returns (chat_id, thread_id) or
+    (None, None) when no forum is configured / creation failed (falls back)."""
+    chat = os.getenv('TELEGRAM_FORUM_CHAT')
+    if not chat:
+        return None, None
+    global _forum_topics_cache
+    if _forum_topics_cache is None:
+        try:
+            from storage.db_operations import get_db
+            saved = get_db().get_setting('tg_forum_topics', {}) or {}
+            _forum_topics_cache = saved.get(str(chat), {}) if isinstance(saved, dict) else {}
+        except Exception:
+            _forum_topics_cache = {}
+    tid = _forum_topics_cache.get(category)
+    if tid:
+        return chat, tid
+    res = _api('createForumTopic', {'chat_id': chat, 'name': _CAT_LABEL.get(category, category)})
+    tid = (res.get('result') or {}).get('message_thread_id') if res.get('ok') else None
+    if tid:
+        _forum_topics_cache[category] = tid
+        try:
+            from storage.db_operations import get_db
+            db = get_db()
+            saved = db.get_setting('tg_forum_topics', {}) or {}
+            if not isinstance(saved, dict):
+                saved = {}
+            saved.setdefault(str(chat), {})[category] = tid
+            db.set_setting('tg_forum_topics', saved)
+        except Exception:
+            pass
+    return chat, tid
+
+
 def _cat_chat(category):
-    """(chat_id, thread_id) for a category — env override, else admin chat."""
+    """(chat_id, thread_id) for a category. Priority: forum-topic supergroup →
+    per-category env chat/topic → main admin chat."""
+    fchat, fthread = _forum_thread(category)
+    if fchat and fthread:
+        return fchat, str(fthread)
     cenv, tenv = _CAT_ENV.get(category, (None, None))
     chat = (os.getenv(cenv) if cenv else None) or _admin_chat()
     thread = os.getenv(tenv) if tenv else None
@@ -184,18 +227,34 @@ def _edit(chat_id, msg_id, text):
 
 
 # ---- handlers -------------------------------------------------------------
+def _site_url():
+    """Where the info-site lives (for one-tap login links)."""
+    return (os.getenv('INFO_SITE_URL') or base_url() or '').rstrip('/')
+
+
 def _handle_start(chat_id, username=None, name=None):
     from web.auth import get_user_by_chat, _make_tg_token
     b = base_url()
     existing = get_user_by_chat(str(chat_id))
     if existing:
+        btns = None
+        if existing['active']:
+            # One-tap login: hand a signed token straight to the info-site.
+            try:
+                from web.auth import _make_info_token
+                site = _site_url()
+                if site:
+                    tok = _make_info_token(existing['id'])
+                    btns = [[{'text': '🔓 Увійти на сайт', 'url': f"{site}#it={tok}"}]]
+            except Exception:
+                btns = None
         tg_send(chat_id,
-                f"👋 Ви вже зареєстровані як <b>{existing['email']}</b>.\n"
-                + ("✅ Акаунт активний — входьте на сайті."
+                f"👋 Ви зареєстровані як <b>{existing['email']}</b>.\n"
+                + ("✅ Акаунт активний — тисніть «Увійти на сайт»."
                    if existing['active'] else
                    "⏳ Акаунт очікує схвалення адміністратора.")
                 + "\n\n💬 Питання чи труднощі? Напишіть сюди — адміністратор відповість.",
-                buttons=[[{'text': '🔐 Увійти', 'url': f"{b}/login"}]] if b else None)
+                buttons=btns)
         return
     if not b:
         tg_send(chat_id, "⚠️ Сервіс тимчасово недоступний (не задано публічну "
@@ -261,6 +320,18 @@ def _handle_message(m):
     fname = _full_name(frm)
     admin = _admin_chat()
     is_admin_chat = bool(admin) and cid_s == str(admin)
+
+    # /id — reply with this chat's id (+ topic thread id). Works in groups too
+    # (commands reach the bot even with privacy mode on). Used to configure
+    # TELEGRAM_FORUM_CHAT for the categorised topics.
+    if text.startswith('/id'):
+        thr = m.get('message_thread_id')
+        ctype = (m.get('chat', {}) or {}).get('type', '')
+        extra = f"\nthread_id: <code>{thr}</code>" if thr else ""
+        tg_send(cid, f"🆔 chat_id: <code>{cid_s}</code>\nтип: {ctype}{extra}\n\n"
+                     f"Для тем-груп додай на боті env "
+                     f"<code>TELEGRAM_FORUM_CHAT={cid_s}</code>")
+        return
 
     if is_admin_chat:
         # 1) Admin swipe-replies to a forwarded user message.
