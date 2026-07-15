@@ -3015,7 +3015,7 @@ def register_api_routes(app):
                     from detection.fuel_filter import get_fuel_filter
                     ff = get_fuel_filter()
                     if ff:
-                        ff.log_active_config('увімкнено монітор')
+                        ff.log_active_config('увімкнено монітор', force=True)
                 except Exception:
                     pass
             return jsonify({'ok': True, 'enabled': on})

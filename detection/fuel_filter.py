@@ -3255,8 +3255,10 @@ class FuelFilterDaemon:
                                                   daemon=True, name='fuel-alerts')
             self._alert_thread.start()
         print("[FuelFilter] daemon started")
-        # Stamp the active lever set into the chronology at boot.
-        self.log_active_config('старт')
+        # NOTE: no config snapshot on boot — the free-tier restart loop would
+        # spam the 🧾 log with identical «старт» entries. The live «Активні
+        # параметри» panel already shows the current levers; log_active_config
+        # (deduped) fires only on an actual settings change.
 
     def stop(self):
         self._stop.set()
@@ -4129,14 +4131,19 @@ class FuelFilterDaemon:
         }
         return {'text': text, 'groups': groups, 'fields': fields}
 
-    def log_active_config(self, reason: str = ''):
-        """Emit the current active-config snapshot into the 🧾 activity log so the
-        chronology records WHICH levers were set at that moment. `reason` = why
-        (e.g. 'зміна налаштувань' / 'старт' / 'увімкнено монітор')."""
+    def log_active_config(self, reason: str = '', force: bool = False):
+        """Emit the active-config snapshot into the 🧾 log — ONLY when the levers
+        actually CHANGED (deduped). Prevents restart/spin-down spam: identical
+        snapshots (e.g. every «старт» on the free-tier restart loop) are skipped.
+        `force=True` logs regardless (e.g. when the monitor is turned on)."""
         try:
             from detection.activity_log import log_activity
             cfg = self.active_config_summary()
-            detail = cfg['text'] if not reason else f"[{reason}] {cfg['text']}"
+            _sig = cfg.get('text') or ''
+            if not force and _sig == getattr(self, '_last_cfg_log_sig', None):
+                return   # nothing changed → don't spam the log
+            self._last_cfg_log_sig = _sig
+            detail = _sig if not reason else f"[{reason}] {_sig}"
             log_activity('ALL', 'config', detail[:400], source='config',
                          extra=cfg.get('fields'))
         except Exception:
