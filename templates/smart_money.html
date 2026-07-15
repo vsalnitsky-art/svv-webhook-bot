@@ -8398,13 +8398,15 @@ async function loadFuelPanelStatus() {
         // Fuel direction — THE timer trigger
         if (d.fuel_status === 'LONG') {
             parts.push(chip('⚡ ММ: 🟢 LONG', '#86efac', 'rgba(34,197,94,0.15)',
-                'ММ тягне вгору — таймер на LONG'));
+                'Тиск маркетмейкера тягне ціну ВГОРУ (лонг) — таймер на LONG'));
         } else if (d.fuel_status === 'SHORT') {
             parts.push(chip('⚡ ММ: 🔴 SHORT', '#fca5a5', 'rgba(239,68,68,0.15)',
-                'ММ тягне вниз — таймер на SHORT'));
+                'Тиск маркетмейкера тягне ціну ВНИЗ (шорт) — таймер на SHORT'));
         } else {
-            parts.push(chip('⚡ ММ: ⚪ нема', '#8b93a7', 'rgba(139,147,167,0.15)',
-                'ММ збалансований — напрямку немає, таймер не запускається'));
+            parts.push(chip('⚡ ММ: ⚪ рівновага', '#8b93a7', 'rgba(139,147,167,0.15)',
+                'ММ у рівновазі: тиск маркетмейкера збалансований (покупці й '
+                + 'продавці врівноважені) — чіткого напрямку немає, ціну нікуди '
+                + 'не тягне, тож таймер не запускається'));
         }
 
         // Exhaustion vs entry gate
@@ -8702,7 +8704,7 @@ function updateBtcStartBanner() {
     // ── Bar = BTC FUEL STRENGTH 0..100% (never empty), coloured by level ──
     const str = Math.max(0, Math.min(100, Number(s.strength || 0)));
     const scol = str >= 60 ? '#22c55e' : (str >= 30 ? '#84cc16'
-        : (str >= 10 ? '#eab308' : '#8b93a7'));
+        : (str >= 10 ? '#bef264' : '#8b93a7'));
     bar.style.width = str.toFixed(0) + '%';
     bar.style.background = scol;
     // Band word at the END of the bar (colour-coded), instead of a 'сила N%' label.
@@ -9000,7 +9002,7 @@ function fuelBand(now) {
     if (now == null) return { txt: '', col: '#8b93a7' };
     now = Number(now);
     if (now < 10) return { txt: 'рівновага', col: '#8b93a7' };
-    if (now < 30) return { txt: 'легкий тиск', col: '#eab308' };
+    if (now < 30) return { txt: 'легкий тиск', col: '#bef264' };
     if (now < 60) return { txt: 'помірний тиск', col: '#84cc16' };
     if (now < 85) return { txt: 'сильний тиск', col: '#22c55e' };
     return { txt: 'потужний тиск', col: '#16a34a' };
@@ -9032,7 +9034,7 @@ function ffFuelCell(dir, now, prev) {
     now = Number(now);
     // Strength colour: <10 none, 10-30 weak(amber), 30-60 mid(lime), 60+ strong(green)
     const col = now >= 60 ? '#22c55e' : (now >= 30 ? '#84cc16'
-        : (now >= 10 ? '#eab308' : '#8b93a7'));
+        : (now >= 10 ? '#bef264' : '#8b93a7'));
     // Trend vs previous cycle: ↑ strengthening (green) / ↓ weakening (red) / → flat.
     let arrowChar = '', arrowCol = '#8b93a7', arrowTitle = '';
     if (prev != null) {
