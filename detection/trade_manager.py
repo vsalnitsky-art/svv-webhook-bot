@@ -3819,7 +3819,7 @@ class TradeManager:
             f"{ob_line}"
             f"📋 Джерело: {src}"
         )
-        self._notify(msg, is_test=True)
+        self._notify(msg, is_test=True, category='trades')
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
         return {'ok': True}
 
@@ -4054,7 +4054,7 @@ class TradeManager:
             f"🔖 Причина: {self._reason_label(reason)}\n"
             f"{es_recap}"
         ).rstrip()
-        self._notify(msg, is_test=True)
+        self._notify(msg, is_test=True, category='trades')
         print(f"[TM] [TEST] Shadow close: {symbol} {pos['side']} @ {self._fmt_price(exit_price)} "
               f"({pnl_pct:+.2f}% reason={reason})")
     
@@ -5113,14 +5113,25 @@ class TradeManager:
     # Notifications
     # ============================================================
     
-    def _notify(self, msg: str, is_test: bool = False):
+    def _notify(self, msg: str, is_test: bool = False, category: Optional[str] = None):
         """Send Telegram notification, respecting the relevant toggle.
-        
+
         Args:
             msg: text to send
             is_test: True if from shadow/paper trade — gated by test_telegram_alerts.
                      False if from real position — gated by telegram_alerts.
+            category: when set (e.g. 'trades'), ALSO mirror the message to that
+                     Telegram GROUP category/topic via the bot's notify_category
+                     (📈 Угоди тема). Best-effort; never blocks the main send.
         """
+        # Mirror to the group category/topic first (independent of the private
+        # notifier toggle) so trade events land in the 📈 Угоди тема.
+        if category:
+            try:
+                from web.tg_bot import notify_category
+                notify_category(category, msg)
+            except Exception as e:
+                print(f"[TM] category notify error: {e}")
         if not self.notifier:
             return
         # Gate by toggle. Default both to True if missing (back-compat with
@@ -5156,8 +5167,8 @@ class TradeManager:
             f"{es_block}"
             f"{src_line}"
         ).rstrip()
-        self._notify(msg)
-    
+        self._notify(msg, category='trades')
+
     def _notify_close(self, closed):
         side = closed['side']
         pnl_pct = closed['pnl_pct']
@@ -5174,8 +5185,8 @@ class TradeManager:
             f"🔖 Причина: {self._reason_label(closed['reason'])}\n"
             f"{es_recap}"
         ).rstrip()
-        self._notify(msg)
-    
+        self._notify(msg, category='trades')
+
     @staticmethod
     def _reason_label(reason: str) -> str:
         return {
