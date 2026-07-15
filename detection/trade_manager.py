@@ -2130,7 +2130,7 @@ class TradeManager:
             return opened_by
         if entry_score:
             headline = entry_score.get('headline')
-            verdict = entry_score.get('verdict', '')
+            verdict = self._verdict_ua(entry_score.get('verdict', ''))
             if headline:
                 parts.append(f"🧠 {headline} ({verdict})" if verdict else f"🧠 {headline}")
             else:
@@ -3808,13 +3808,16 @@ class TradeManager:
         # the scanner's klines cache. Failure to compute is non-fatal — we
         # just skip the OB line in the message.
         ob_line = self._format_last_ob_telegram(symbol)
+        # Source WITHOUT the decision suffix (the 🧠 verdict is shown once,
+        # below in es_block — fixes the duplicated «LONG 83% (marginal)»).
+        src = self._base_opened_by(opened_by_full)
         msg = (
-            f"{icon} <b>[TEST] OPEN {side}</b>: #{symbol}\n"
-            f"📍 Entry: {self._fmt_price(entry_price)}\n"
-            f"📋 {opened_by_full}\n"
+            f"{icon} ▶️ <b>ВІДКРИТО {side}</b> · #{symbol}   🧪 ТЕСТ\n"
+            f"━━━━━━━━━━━━\n"
+            f"📍 Вхід: {self._fmt_price(entry_price)}\n"
             f"{es_block}"
             f"{ob_line}"
-            f"🧪 Paper trading (no real order)"
+            f"📋 Джерело: {src}"
         )
         self._notify(msg, is_test=True)
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
@@ -3938,16 +3941,13 @@ class TradeManager:
         """
         if not entry_score:
             return ''
-        # If entry_score already has a 'headline' (Decision Center shape),
-        # use it directly. Otherwise fall back to building one from raw
-        # score/verdict (legacy entry_score shape).
         headline = entry_score.get('headline')
-        verdict = entry_score.get('verdict', '?')
+        verdict = self._verdict_ua(entry_score.get('verdict', '?'))
         if headline:
-            return f"🧠 Decision: {headline} ({verdict})\n"
+            return f"🧠 Рішення: {headline} ({verdict})\n"
         score = entry_score.get('score', 0)
         sign = '+' if score >= 0 else ''
-        return f"🧠 Decision: {sign}{score:.0f} ({verdict})\n"
+        return f"🧠 Рішення: {sign}{score:.0f} ({verdict})\n"
     
     def _format_entry_score_recap(self, entry_score: Optional[Dict]) -> str:
         """Compact one-line recap of the Decision Center verdict for
@@ -3958,12 +3958,17 @@ class TradeManager:
         if not entry_score:
             return ''
         headline = entry_score.get('headline')
-        verdict = entry_score.get('verdict', '?')
+        verdict = self._verdict_ua(entry_score.get('verdict', '?'))
         if headline:
-            return f"🧠 Was: {headline} ({verdict})\n"
+            return f"🧠 Було: {headline} ({verdict})\n"
         score = entry_score.get('score', 0)
         sign = '+' if score >= 0 else ''
-        return f"🧠 Was: {sign}{score:.0f} ({verdict})\n"
+        return f"🧠 Було: {sign}{score:.0f} ({verdict})\n"
+
+    @staticmethod
+    def _verdict_ua(v):
+        return {'good': 'сильний', 'marginal': 'середній',
+                'poor': 'слабкий'}.get(str(v or '').lower(), v or '')
     
     def _close_shadow(self, symbol: str, exit_price: float, reason: str):
         """Close a paper position. No Bybit calls — Telegram only."""
@@ -4043,14 +4048,12 @@ class TradeManager:
         # 'good +50' — should I trust this score or down-weight it?"
         es_recap = self._format_entry_score_recap(pos.get('entry_score'))
         msg = (
-            f"{icon} <b>[TEST] CLOSE {pos['side']}</b>: #{symbol}\n"
-            f"📍 Entry: {self._fmt_price(entry)}\n"
-            f"📤 Exit: {self._fmt_price(exit_price)}\n"
-            f"💰 PnL: {pnl_pct:+.2f}%\n"
-            f"🔖 Reason: {self._reason_label(reason)}\n"
+            f"{icon} ⏹ <b>ЗАКРИТО {pos['side']}</b> {pnl_pct:+.2f}% · #{symbol}   🧪 ТЕСТ\n"
+            f"━━━━━━━━━━━━\n"
+            f"📍 Вхід → Вихід: {self._fmt_price(entry)} → {self._fmt_price(exit_price)}\n"
+            f"🔖 Причина: {self._reason_label(reason)}\n"
             f"{es_recap}"
-            f"🧪 Paper trade (no real close)"
-        )
+        ).rstrip()
         self._notify(msg, is_test=True)
         print(f"[TM] [TEST] Shadow close: {symbol} {pos['side']} @ {self._fmt_price(exit_price)} "
               f"({pnl_pct:+.2f}% reason={reason})")
@@ -5141,19 +5144,18 @@ class TradeManager:
         # Entry Score block — same renderer as shadow side for consistency
         es_block = self._format_entry_score_telegram(pos.get('entry_score'))
         # Full opened_by (Forecast 1H + CTR + Entry score snapshot)
-        opened_by_line = ''
+        src_line = ''
         if pos.get('opened_by'):
-            opened_by_line = f"📋 {pos['opened_by']}\n"
+            src_line = f"📋 Джерело: {self._base_opened_by(pos['opened_by'])}\n"
         msg = (
-            f"{icon} <b>OPEN {side}</b>: #{pos['symbol']}\n"
-            f"📍 Entry: {self._fmt_price(pos['entry_price'])}\n"
-            f"💼 Qty: {pos['qty']:.6g}\n"
-            f"🛡 SL: {sl_str}\n"
-            f"🎯 TP: {tp_str}\n"
-            f"⚙️ Lev: {self._settings.get('leverage', 10)}x\n"
-            f"{opened_by_line}"
+            f"{icon} ▶️ <b>ВІДКРИТО {side}</b> · #{pos['symbol']}\n"
+            f"━━━━━━━━━━━━\n"
+            f"📍 Вхід: {self._fmt_price(pos['entry_price'])}\n"
+            f"💼 К-ть: {pos['qty']:.6g} · ⚙️ Плече: {self._settings.get('leverage', 10)}x\n"
+            f"🛡 SL: {sl_str} · 🎯 TP: {tp_str}\n"
             f"{es_block}"
-        ).rstrip() + '\n'
+            f"{src_line}"
+        ).rstrip()
         self._notify(msg)
     
     def _notify_close(self, closed):
@@ -5166,11 +5168,10 @@ class TradeManager:
         # weight-tuning and spotting when the predictor was wrong.
         es_recap = self._format_entry_score_recap(closed.get('entry_score'))
         msg = (
-            f"{icon} <b>CLOSE {side}</b>: #{closed['symbol']}\n"
-            f"📍 Entry: {self._fmt_price(closed['entry_price'])}\n"
-            f"📤 Exit: {self._fmt_price(closed['exit_price'])}\n"
-            f"💰 PnL: {pnl_pct:+.2f}% ({pnl_usd:+.2f}$)\n"
-            f"🔖 Reason: {self._reason_label(closed['reason'])}\n"
+            f"{icon} ⏹ <b>ЗАКРИТО {side}</b> {pnl_pct:+.2f}% ({pnl_usd:+.2f}$) · #{closed['symbol']}\n"
+            f"━━━━━━━━━━━━\n"
+            f"📍 Вхід → Вихід: {self._fmt_price(closed['entry_price'])} → {self._fmt_price(closed['exit_price'])}\n"
+            f"🔖 Причина: {self._reason_label(closed['reason'])}\n"
             f"{es_recap}"
         ).rstrip()
         self._notify(msg)
