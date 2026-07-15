@@ -82,6 +82,17 @@ _CAT_ENV = {
     'register': ('TELEGRAM_CHAT_REGISTER', 'TELEGRAM_TOPIC_REGISTER'),
     'support':  ('TELEGRAM_CHAT_SUPPORT',  'TELEGRAM_TOPIC_SUPPORT'),
 }
+# Category hashtag — prepended to EVERY message so that even in ONE chat (the
+# private bot chat, where Telegram has no topics) you can tap the tag to filter
+# by category. Distinct from the per-symbol tags (#BTCUSDT) so they don't clash.
+_CAT_TAG = {
+    'funding':  '#Funding',
+    'btc':      '#BTC_сеанс',
+    'trades':   '#Угода',
+    'register': '#Реєстрація',
+    'support':  '#Підтримка',
+}
+_PREF_TAG = {'notify_funding': _CAT_TAG['funding'], 'notify_btc': _CAT_TAG['btc']}
 
 
 _forum_topics_cache = None    # {category: thread_id} for TELEGRAM_FORUM_CHAT
@@ -158,10 +169,8 @@ def notify_category(category, text, buttons=None):
     chat, thread = _cat_chat(category)
     if not chat:
         return False
-    dedicated = bool(thread) or (
-        os.getenv(_CAT_ENV.get(category, (None,))[0] or '') not in (None, ''))
-    lbl = _CAT_LABEL.get(category, '')
-    body = text if dedicated or not lbl else f"{lbl}\n{text}"
+    tag = _CAT_TAG.get(category, '')
+    body = f"{tag}\n{text}" if tag else text
     p = {'chat_id': chat, 'text': body, 'parse_mode': 'HTML'}
     if thread:
         try:
@@ -173,18 +182,26 @@ def notify_category(category, text, buttons=None):
     return bool(_api('sendMessage', p).get('ok'))
 
 
+def cat_tag(category):
+    """Category hashtag for a category key (for callers that send directly)."""
+    return _CAT_TAG.get(category, '')
+
+
 def broadcast_to_subscribers(pref_key, text):
     """Send `text` to every ACTIVE user who opted into `pref_key` (in their
-    personal Telegram chat). Best-effort; returns how many were reached."""
+    personal Telegram chat). Prepends the category hashtag so each user can
+    filter by category in their own bot chat. Best-effort; returns count sent."""
     try:
         from web.auth import subscriber_chats
         chats = subscriber_chats(pref_key)
     except Exception:
         chats = []
+    tag = _PREF_TAG.get(pref_key, '')
+    body = f"{tag}\n{text}" if tag else text
     n = 0
     for cid in chats:
         try:
-            if tg_send(cid, text):
+            if tg_send(cid, body):
                 n += 1
         except Exception:
             pass
@@ -393,7 +410,8 @@ def _handle_message(m):
     # Friendly identity line: name/@handle (always) + email (if registered).
     who = _who_label(frm, info)
     email_line = f"\n✉️ {info['email']}" if info.get('email') else ""
-    header = (f"✉️ <b>Повідомлення від користувача</b>\n👤 {who}{email_line}\n"
+    header = (f"{_CAT_TAG.get('support', '')}\n"
+              f"✉️ <b>Повідомлення від користувача</b>\n👤 {who}{email_line}\n"
               f"chat_id: <code>{cid_s}</code>\n\n{text}\n\n"
               f"<i>Відповісти: свайп-Reply на це повідомлення або "
               f"/reply {cid_s} текст</i>")

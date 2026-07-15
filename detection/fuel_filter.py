@@ -2964,6 +2964,13 @@ class FuelFilterDaemon:
                 msg = str(tpl).format_map(_Safe(ctx))
             except Exception:
                 msg = str(tpl)
+            try:
+                from web.tg_bot import cat_tag
+                _t = cat_tag('funding')
+                if _t:
+                    msg = f"{_t}\n{msg}"
+            except Exception:
+                pass
             notifier.send_message(msg)
         except Exception as e:
             print(f"[FuelFilter] funding TG error {sym}: {e}")
@@ -3208,8 +3215,18 @@ class FuelFilterDaemon:
             _emoji = '🟢' if _sd == 'LONG' else ('🔴' if _sd == 'SHORT' else '⚪')
             _side = _sd if _sd in ('LONG', 'SHORT') else ''
             msg = f"#BTCUSDT направлення\n{_emoji}{_side} - STOP TRADING"
+        # Tag ONLY the private admin copy (the shared `msg` goes untagged to
+        # _broadcast_users, where notify_category/broadcast add their own tag).
+        _pmsg = msg
         try:
-            notifier.send_message(msg)
+            from web.tg_bot import cat_tag
+            _t = cat_tag('btc')
+            if _t:
+                _pmsg = f"{_t}\n{msg}"
+        except Exception:
+            pass
+        try:
+            notifier.send_message(_pmsg)
             print(f"[FuelFilter] BTC TG alert sent: {token}")
         except Exception as e:
             print(f"[FuelFilter] BTC TG send error: {e}")

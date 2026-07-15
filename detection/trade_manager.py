@@ -5142,8 +5142,19 @@ class TradeManager:
         else:
             if not self._settings.get('telegram_alerts', True):
                 return
+        # Tag the PRIVATE copy too so the bot's private chat is filterable by
+        # category (a private chat has no topics — the hashtag is the category).
+        priv = msg
+        if category:
+            try:
+                from web.tg_bot import cat_tag
+                _t = cat_tag(category)
+                if _t:
+                    priv = f"{_t}\n{msg}"
+            except Exception:
+                pass
         try:
-            self.notifier.send_message(msg)
+            self.notifier.send_message(priv)
         except Exception as e:
             print(f"[TM] Notify error: {e}")
     
