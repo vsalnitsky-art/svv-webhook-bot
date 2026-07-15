@@ -4230,12 +4230,22 @@ class FuelFilterDaemon:
             anomalies = []
             for sym, a in self._anomalies.items():
                 held = int(now - a.get('started_at', now))
-                # «stale» = coin left the Funding Rate Scanner (funding normalised);
-                # it stays here ONLY on its ММ. Don't present frozen funding as live.
+                # HARD RULE: a coin must currently be in the 💰 Funding Rate
+                # Scanner to appear here. Once it leaves, there is no live
+                # funding source — don't show it at all (it stays only in the
+                # 📜 archive). Fail-open when the scanner set is momentarily
+                # unavailable (_fund_set is None) so the table doesn't blank out.
+                _in_scanner = True
+                if _fund_set is not None:
+                    _in_scanner = (sym.upper() in _fund_set)
+                if a.get('in_scanner') is False:
+                    _in_scanner = False
+                if not _in_scanner:
+                    continue   # not in the scanner → nothing to show
+                # Every displayed coin is in the scanner → it carries a LIVE rate,
+                # so it is never «stale». The countdown simply hides itself when
+                # there is no FUTURE settlement time (funding_next_ms below).
                 _nf = a.get('next_funding')
-                _not_tracked = (_fund_set is not None and sym.upper() not in _fund_set)
-                _stale = _not_tracked or (a.get('in_scanner') is False) \
-                    or (not _nf) or ((_nf / 1000.0) <= now)
                 anomalies.append({
                     'symbol': sym,
                     'dir': a.get('dir'),
@@ -4244,7 +4254,7 @@ class FuelFilterDaemon:
                     'start_price': a.get('start_price'),
                     'current_price': a.get('last_price'),
                     'funding': True,
-                    'funding_stale': bool(_stale),   # left scanner → held on ММ
+                    'funding_stale': False,   # in-scanner → live rate, never stale
                     'funding_rate': a.get('rate'),
                     'funding_prev_rate': a.get('prev_rate'),
                     # Only a FUTURE settlement time — never a past one («до виплати 0»).
@@ -4256,11 +4266,11 @@ class FuelFilterDaemon:
                     'mm': (self._score_cache.get(sym) or {}).get('fuel_dir') or a.get('dir'),
                     'mm_str': self._fuel_str.get(sym),
                     'mm_str_prev': self._fuel_str_prev.get(sym),
-                    # SCORE (hold quality) + CTR (reversal-zone lean) — identical
-                    # fields the ❤️ queue rows carry, so the funding table can draw
-                    # the SAME badges. Read from the background caches (cheap).
+                    # SCORE (hold quality) — same field the ❤️ queue rows carry,
+                    # so the funding table can draw the SAME badge. Read from the
+                    # background cache (cheap). CTR intentionally NOT included:
+                    # STC populates too slowly to be useful in this table.
                     'score': self._score_cache.get(sym),
-                    'ctr': self._ctr_snapshot(sym),
                     'paused': bool(a.get('sess_paused')),
                 })
             anomalies.sort(key=lambda x: -x['held_sec'])

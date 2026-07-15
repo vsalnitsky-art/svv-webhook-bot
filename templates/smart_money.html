@@ -2249,7 +2249,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th>Символ</th><th>Напрямок</th>
                             <th title="Сила бабла (ММ): 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне)">ММ</th>
                             <th title="Оцінка утримання 0–100 + напрямок руху (СИЛЬНЕ УТРИМАННЯ / УТРИМАННЯ / НЕЙТРАЛЬНО / СЛАБКЕ / ВИСНАЖЕНО)">SCORE</th>
-                            <th title="CTR — нахил у зону розвороту (STC): 🔴 SHORT-нахил / 🟢 LONG-нахил / ⚪ нейтрально">CTR</th>
                             <th>Тримається</th>
                             <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає)">Прогрес funding</th>
                             <th title="Поточний funding % і час до наступного нарахування">Funding · до виплати</th>
@@ -2258,12 +2257,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="ff-anomaly-tbody">
-                        <tr><td colspan="10" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>
+                        <tr><td colspan="9" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>
                     </tbody>
                 </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
-                💡 Монета сюди потрапляє, коли «ММ» тримається довше за поріг (нижче в налаштуваннях). Коли ММ зникає — монета НЕ видаляється автоматично (фіксується час і ціна завершення); прибираєш вручну (✕ або «Очистити всі»). Такі монети не дублюються в таблиці вище.
+                💡 Монета сюди потрапляє, коли «ММ» тримається довше за поріг (нижче в налаштуваннях). Показуються ЛИШЕ монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера (funding нормалізувався), вона зникає з таблиці (лишається в 📜 Архіві монет). Такі монети не дублюються в таблиці вище.
             </div>
         </div>
     </div>
@@ -8236,7 +8235,7 @@ function renderFuelFilter(d) {
     if (atb) {
         const arows = d.anomalies || [];
         if (!arows.length) {
-            atb.innerHTML = '<tr><td colspan="10" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
+            atb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
         } else {
             atb.innerHTML = arows.map(a => {
                 const dirHtml = a.dir === 'LONG'
@@ -8296,7 +8295,6 @@ function renderFuelFilter(d) {
                     <td>${dirHtml}</td>
                     <td style="font-size:0.72rem">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}${a.paused ? ' <span title="Сесія на паузі (WAIT) — тримається за напрямком" style="color:#fbbf24;font-weight:700">⏸</span>' : ''}</td>
                     <td style="white-space:nowrap">${ffScoreBadgeHTML(a.score)}</td>
-                    <td style="font-size:0.72rem;white-space:nowrap">${ffCtrCell(a.ctr)}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
                     <td style="min-width:160px">${progHtml}</td>
                     <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}</td>
