@@ -221,13 +221,17 @@
       ' <span style="color:' + col + '">' + revBias + " " + leanPct + "%</span></div>";
   }
 
-  // Colour the PD words by lean: Premium = дорого → SHORT (red), Discount =
-  // дешево → LONG (green), Equilibrium = neutral (grey).
+  // Colour attention/lean words in a rationale string:
+  //  Premium (дорого→SHORT) red · Discount (дешево→LONG) green · Equilibrium grey
+  //  ⚠ обмежено — warning amber · перекупленість red · перепроданість green.
   function colorizePD(s) {
     return String(s || "")
       .replace(/Premium/g, '<span style="color:#f87171;font-weight:800">Premium</span>')
       .replace(/Discount/g, '<span style="color:#4ade80;font-weight:800">Discount</span>')
-      .replace(/Equilibrium/g, '<span style="color:#9aa3b5;font-weight:800">Equilibrium</span>');
+      .replace(/Equilibrium/g, '<span style="color:#9aa3b5;font-weight:800">Equilibrium</span>')
+      .replace(/⚠ обмежено/g, '<span style="color:#fbbf24;font-weight:800">⚠ обмежено</span>')
+      .replace(/перекупленість/g, '<span style="color:#f87171;font-weight:700">перекупленість</span>')
+      .replace(/перепроданість/g, '<span style="color:#4ade80;font-weight:700">перепроданість</span>');
   }
 
   // 🧠 Decision Center line — same data/labels as the bot.

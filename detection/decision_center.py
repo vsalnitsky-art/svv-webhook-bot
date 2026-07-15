@@ -185,7 +185,7 @@ def _build_rationale(recommended: str,
     if ctr_conflict:
         stc_v = int((ctr or {}).get('stc', 0))
         zone = 'перепроданість' if stc_v <= 50 else 'перекупленість'
-        base += f" — ⚠ обмежено: вхід у зону розвороту CTR ({zone} {stc_v})"
+        base += f" — ⚠ обмежено: вхід у зону розвороту CTR ({zone} {stc_v}%)"
     return base
 
 

@@ -341,9 +341,10 @@ def _score_ctr_zone(side: str, ctr: Optional[Dict], weight: float) -> Tuple[floa
         sign = 1 if side == 'LONG' else -1
         score = weight * intensity * sign
     else:
-        return 0.0, f'CTR зона: середина ({stc_v:.0f})'
+        return 0.0, f'CTR зона: середина ({stc_v:.0f}%)'
 
-    label = f"CTR {zone} ({stc_v:.0f}): {'+' if score >= 0 else ''}{score:.0f}"
+    # STC is a 0..100 oscillator → show as % so the number reads clearly.
+    label = f"CTR {zone} ({stc_v:.0f}%): {'+' if score >= 0 else ''}{score:.0f}"
     return score, label
 
 
