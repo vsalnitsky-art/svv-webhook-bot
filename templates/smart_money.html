@@ -447,6 +447,45 @@
     50%      { transform: translateY(-50%) scale(1.7); opacity: 0.45; }
 }
 
+/* 💸 Money-rain — плей у момент активації (₿ START / сильний тиск ММ).
+   Гроші «сиплються» згори вниз із легким обертанням і гойданням. */
+#ff-money-rain {
+    position: fixed; inset: 0; overflow: hidden;
+    pointer-events: none; z-index: 9998;
+}
+.ff-money {
+    position: absolute; top: -8vh; will-change: transform, opacity;
+    font-size: 26px; line-height: 1; user-select: none;
+    animation: ff-money-fall 3s linear forwards;
+}
+@keyframes ff-money-fall {
+    0%   { transform: translateY(-10vh) rotate(0deg);    opacity: 0; }
+    8%   { opacity: 1; }
+    100% { transform: translateY(112vh) rotate(320deg);  opacity: 0.9; }
+}
+@keyframes ff-money-sway {   /* горизонтальне гойдання (окрема доріжка) */
+    0%, 100% { margin-left: -14px; }
+    50%      { margin-left:  14px; }
+}
+/* Спалах-банер «активність!» по центру верху */
+.ff-rain-flash {
+    position: fixed; left: 50%; top: 84px; transform: translateX(-50%);
+    z-index: 9999; pointer-events: none;
+    padding: 10px 22px; border-radius: 14px; font-weight: 900;
+    font-size: 1.05rem; letter-spacing: 0.5px; white-space: nowrap;
+    backdrop-filter: blur(4px);
+    animation: ff-rain-flash 2.6s ease-out forwards;
+}
+@keyframes ff-rain-flash {
+    0%   { opacity: 0; transform: translateX(-50%) translateY(-14px) scale(0.9); }
+    14%  { opacity: 1; transform: translateX(-50%) translateY(0) scale(1.04); }
+    75%  { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-8px) scale(0.98); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ff-money, .ff-rain-flash { animation-duration: 0.01ms !important; opacity: 0 !important; }
+}
+
 /* Accordion settings */
 .sm-settings-bar {
     margin-bottom: 12px;
@@ -8545,6 +8584,107 @@ function flipTimerHTML(sec) {
 // BTC START/STOP state, driven from FF state and ticked live.
 let btcStartState = { hasTimer: false, since: 0, period: 300 };
 
+// 💸 Money-rain: гроші «сиплються» в момент активності (₿ START / сильний тиск
+// ММ). dir → відтінок: LONG=зелений, SHORT=червоний, інакше золото.
+function spawnMoneyRain(dir, label) {
+    try {
+        if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        // Не накладати кілька злив одна на одну.
+        if (window._ffRainBusy) return;
+        window._ffRainBusy = true;
+        let host = document.getElementById('ff-money-rain');
+        if (!host) {
+            host = document.createElement('div');
+            host.id = 'ff-money-rain';
+            document.body.appendChild(host);
+        }
+        const glow = dir === 'LONG' ? 'rgba(34,255,136,0.9)'
+                   : (dir === 'SHORT' ? 'rgba(255,77,77,0.9)' : 'rgba(247,147,26,0.9)');
+        const emojis = dir === 'SHORT'
+            ? ['💸', '💵', '💰', '🪙', '📉']
+            : (dir === 'LONG' ? ['💸', '💵', '💰', '🪙', '📈'] : ['💸', '💵', '💰', '🪙', '🤑']);
+        const N = 34;
+        let maxLife = 0;
+        for (let i = 0; i < N; i++) {
+            const el = document.createElement('span');
+            el.className = 'ff-money';
+            el.textContent = emojis[(Math.random() * emojis.length) | 0];
+            const left = Math.random() * 100;                 // vw
+            const dur = 2.4 + Math.random() * 2.6;            // 2.4–5.0s
+            const delay = Math.random() * 0.9;               // 0–0.9s
+            const size = 18 + Math.random() * 20;            // 18–38px
+            el.style.left = left + 'vw';
+            el.style.fontSize = size.toFixed(0) + 'px';
+            el.style.animationDuration = dur.toFixed(2) + 's';
+            el.style.animationDelay = delay.toFixed(2) + 's';
+            el.style.filter = 'drop-shadow(0 0 6px ' + glow + ')';
+            // Легке горизонтальне гойдання на окремій вкладеній доріжці.
+            el.style.animationName = 'ff-money-fall, ff-money-sway';
+            el.style.animationTimingFunction = 'linear, ease-in-out';
+            el.style.animationIterationCount = '1, ' + (2 + ((Math.random() * 3) | 0));
+            el.style.animationDuration = dur.toFixed(2) + 's, ' + (0.8 + Math.random() * 0.7).toFixed(2) + 's';
+            host.appendChild(el);
+            maxLife = Math.max(maxLife, dur + delay);
+        }
+        // Спалах-банер по центру.
+        if (label) {
+            const fl = document.createElement('div');
+            fl.className = 'ff-rain-flash';
+            fl.textContent = label;
+            fl.style.color = dir === 'SHORT' ? '#ff4d4d' : (dir === 'LONG' ? '#22ff88' : '#f7931a');
+            fl.style.background = dir === 'SHORT' ? 'rgba(239,68,68,0.14)'
+                : (dir === 'LONG' ? 'rgba(34,197,94,0.14)' : 'rgba(247,147,26,0.14)');
+            fl.style.border = '1px solid ' + glow;
+            fl.style.boxShadow = '0 0 22px ' + glow;
+            document.body.appendChild(fl);
+            setTimeout(() => { try { fl.remove(); } catch (e) {} }, 2700);
+        }
+        // Прибрати після завершення падіння.
+        setTimeout(() => {
+            try { host.innerHTML = ''; } catch (e) {}
+            window._ffRainBusy = false;
+        }, (maxLife * 1000) + 400);
+    } catch (e) { window._ffRainBusy = false; }
+}
+
+// Edge-детектор: запускає зливу лише В МОМЕНТ появи активності (перехід у
+// START або перехід тиску ММ у «сильний»), а не щосекунди. Гістерезис на силі,
+// щоб не блимати біля порога.
+function ffCheckMoneyRain(isStart, dir, strength) {
+    // Перший виклик після завантаження сторінки — лише запамʼятати стан, НЕ
+    // запускати зливу (інакше вона грала б на кожному оновленні сторінки, коли
+    // сеанс уже активний). Злива — тільки на реальні переходи в межах сесії.
+    if (!window._ffRainPrimed) {
+        const strong0 = strength >= 60 && (dir === 'LONG' || dir === 'SHORT');
+        window._ffRainPrev = { start: !!isStart, strong: strong0, dir: dir || null };
+        window._ffRainPrimed = true;
+        return;
+    }
+    const prev = window._ffRainPrev || { start: false, strong: false, dir: null };
+    // (1) ₿ START щойно ввімкнувся (rising edge).
+    if (isStart && !prev.start) {
+        const d = dir || null;
+        const side = d === 'LONG' ? '🟢 LONG' : (d === 'SHORT' ? '🔴 SHORT' : 'сеанс');
+        spawnMoneyRain(d, '⚡ ₿ START TRADING · ' + side);
+    }
+    // (2) Тиск ММ щойно став СИЛЬНИМ (≥60) у якийсь бік — з гістерезисом (спад <45
+    //     скидає прапорець) + повторний тригер при зміні напрямку.
+    const strongNow = strength >= 60 && (dir === 'LONG' || dir === 'SHORT');
+    const dirChanged = prev.strong && dir && prev.dir && dir !== prev.dir;
+    if ((strongNow && !prev.strong) || (strongNow && dirChanged)) {
+        // Якщо щойно був START-спалах у той самий бік — не дублюємо.
+        if (!(isStart && !prev.start)) {
+            const pull = dir === 'SHORT' ? 'тягне ВНИЗ 🔴' : 'тягне ВГОРУ 🟢';
+            spawnMoneyRain(dir, '💰 ММ ' + pull + ' · сильний тиск ' + Math.round(strength) + '%');
+        }
+    }
+    window._ffRainPrev = {
+        start: isStart,
+        strong: strongNow ? true : (strength < 45 ? false : prev.strong),
+        dir: dir || prev.dir,
+    };
+}
+
 function updateBtcStartBanner() {
     const bar = document.getElementById('ff-btc-progress-bar');
     const lab = document.getElementById('ff-btc-progress-label');
@@ -8579,6 +8719,10 @@ function updateBtcStartBanner() {
     // badge since the bar now shows fuel strength, not the timer progress.
     const nowS = Math.floor(Date.now() / 1000);
     const elapsed = s.hasTimer ? Math.max(0, nowS - s.since) : 0;
+    // 💸 Money-rain edge-trigger — рахуємо START тут (до бейджів), щоб зловити
+    // саме момент активації, і передаємо силу тиску ММ для другого тригера.
+    const _pctNow = (s.hasTimer && s.period > 0) ? Math.min(100, elapsed / s.period * 100) : 0;
+    ffCheckMoneyRain(s.hasTimer && !s.paused && _pctNow >= 100, s.dir, str);
     if (flip) flip.innerHTML = flipTimerHTML(elapsed);
     if (!s.hasTimer) {
         st.textContent = '⛔ STOP TRADING';
