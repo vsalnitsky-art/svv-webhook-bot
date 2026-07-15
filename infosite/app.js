@@ -197,45 +197,100 @@
       '<div class="metric-val">' + valHtml + "</div></div>";
   }
 
+  // ⚡ CTR-15M line — same logic/look as the bot's CTR badge.
+  function ctrLine(ctr) {
+    if (!ctr || ctr.stc == null) return "";
+    var stc = Number(ctr.stc);
+    var revBias, col;
+    if (stc > 50) { revBias = "🔴 SHORT-нахил"; col = "#fca5a5"; }
+    else if (stc < 50) { revBias = "🟢 LONG-нахил"; col = "#86efac"; }
+    else { revBias = "⚪ нейтрально"; col = "#aaa"; }
+    var leanPct = Math.round(Math.abs(stc - 50) / 50 * 100);
+    var tf = (ctr.tf && ctr.tf !== "scanner") ? "·" + String(ctr.tf).toUpperCase() : "-15M";
+    var cross = "";
+    if (ctr.last_dir) {
+      var age = ctr.last_signal_age_bars;
+      var ageStr = age == null ? "" : (age === 0 ? "now" : age === 1 ? "1 bar ago" : age + " bars ago");
+      var stale = (age != null && age > 6);
+      var cc = stale ? "#9aa3b5" : (ctr.last_dir === "LONG" ? "#86efac" : "#fca5a5");
+      var ic = ctr.last_dir === "LONG" ? "🟢" : "🔴";
+      cross = ' <span style="color:' + cc + '">' + ic + " " + esc(ctr.last_dir) +
+        (ageStr ? " (" + ageStr + ")" : "") + (stale ? " ⚠️застарілий" : "") + "</span> ·";
+    }
+    return '<div class="banner-ctr">⚡ CTR' + tf + cross +
+      ' <span style="color:' + col + '">' + revBias + " " + leanPct + "%</span></div>";
+  }
+
+  // 🧠 Decision Center line — same data/labels as the bot.
+  function decisionLine(dec) {
+    if (!dec || !dec.headline) return "";
+    var rec = (dec.recommended || "NEUTRAL");
+    var vmap = { good: "СИЛЬНИЙ", marginal: "СЕРЕДНІЙ", poor: "СЛАБКИЙ" };
+    var vcol = { good: "#4ade80", marginal: "#facc15", poor: "#f87171" };
+    var vl = vmap[dec.verdict] || String(dec.verdict || "").toUpperCase();
+    var hcol = rec === "LONG" ? "#4ade80" : rec === "SHORT" ? "#f87171" : "#cbd5e1";
+    var pl = Math.round((dec.prob_long || 0) * 100), ps = Math.round((dec.prob_short || 0) * 100);
+    return '<div class="banner-dec">' +
+      '<div class="dec-head">' + (rec === "NEUTRAL" ? "⚖️" : "🧠") +
+        ' <b style="color:' + hcol + '">' + esc(dec.headline) + "</b>" +
+        ' <span class="dec-badge" style="color:' + (vcol[dec.verdict] || "#cbd5e1") + '">' + esc(vl) + "</span></div>" +
+      (dec.rationale ? '<div class="dec-rat">' + esc(dec.rationale) + "</div>" : "") +
+      '<div class="dec-bar"><i class="dl" style="width:' + pl + '%"></i><i class="ds" style="width:' + ps + '%"></i></div>' +
+      '<div class="dec-pct"><span class="dir-long">LONG ' + pl + '%</span>' +
+        '<span class="dir-short">' + ps + '% SHORT</span></div>' +
+    "</div>";
+  }
+
   function renderPotential(b) {
+    var banner = $("#banner-body");
     var body = $("#potential-body");
     if (!b || b.ok === false) {
-      body.innerHTML = '<div class="muted">дані потенціалу недоступні</div>';
+      if (banner) banner.innerHTML = '<div class="muted">дані недоступні</div>';
+      if (body) body.innerHTML = '<div class="muted">дані потенціалу недоступні</div>';
       return;
     }
-    $("#pot-symbol").textContent = b.symbol || "—";
+    if ($("#pot-symbol")) $("#pot-symbol").textContent = b.symbol || "—";
     var verdict = b.verdict || "WAIT";
     var vcls = verdict === "LONG" ? "dir-long" : (verdict === "SHORT" ? "dir-short" : "muted");
     var conf = Math.max(0, Math.min(100, Math.round(b.confidence || 0)));
-    var comp = b.components || {};
-    var fco = comp.forecast || {};
-    var fc1s = fco.f1_side != null ? sideOf(fco.f1_side) : null;
-    var fc4s = fco.f4_side != null ? sideOf(fco.f4_side) : null;
-    // ММ (sentiment) line.
-    var sm = comp.sentiment;
-    var mmLine = "";
-    if (sm && sm.long_pct != null) {
-      var mb = sm.bias === "LONG" ? "dir-long" : (sm.bias === "SHORT" ? "dir-short" : "muted");
-      mmLine = '<div class="fc-line">ММ: <span class="' + mb + '">' + esc(sm.bias || "—") +
-        '</span> <span class="muted">L ' + Number(sm.long_pct).toFixed(0) + '% / S ' +
-        Number(sm.short_pct).toFixed(0) + '%</span></div>';
-    } else if (verdict === "WAIT") {
-      mmLine = '<div class="fc-line accent">ММ збалансований — напрямку немає</div>';
+    var pcol = verdict === "LONG" ? "#4ade80" : verdict === "SHORT" ? "#f87171" : "#dbeafe";
+    // Reasons — EXACTLY as the bot: text is RAW HTML (contains coloured <span>),
+    // so it must NOT be escaped (the bot inserts it verbatim).
+    var icons = { ok: "✓", warn: "⚠", wait: "•" };
+    var wlWords = ["OB-фільтр", "Volumized", "Watchlist", "Статус монет"];
+    var isWl = function (t) { return wlWords.some(function (w) { return (t || "").indexOf(w) >= 0; }); };
+    var reasonsHtml = (b.reasons || []).filter(function (r) { return !isWl(r[1]); }).map(function (r) {
+      var kind = r[0], text = r[1], dir = r[2];
+      if ((text || "").indexOf("ММ") >= 0) {
+        var c = dir === "long" ? "#22ff88" : dir === "short" ? "#ff4d4d" : "#facc15";
+        return '<div class="rsn" style="color:' + c + ';font-weight:800;text-shadow:0 0 8px ' + c + '66">' +
+          (icons[kind] || "•") + " " + text + "</div>";
+      }
+      var st = dir === "long" ? ' style="color:#4ade80"' : dir === "short" ? ' style="color:#f87171"' : "";
+      return '<div class="rsn"' + st + ">" + (icons[kind] || "•") + " " + text + "</div>";
+    }).join("") || '<div class="rsn muted">• немає сигналів</div>';
+
+    // ── TOP BANNER: verdict + confidence + price + forecast + CTR + Decision ──
+    if (banner) {
+      banner.innerHTML =
+        '<div class="pot-head">' +
+          '<div class="pot-verdict ' + vcls + '">' + dirCell(verdict) + '</div>' +
+          '<div class="conf-wrap"><div class="conf-bar"><i style="width:' + conf + '%"></i></div>' +
+            '<span class="conf-txt">впевненість ' + conf + '%</span></div>' +
+          '<span class="pill" style="margin-left:auto">' + esc(b.symbol || "—") + '</span>' +
+        '</div>' +
+        '<div class="price-row"><span>💲 Ціна ' + esc(b.symbol || "") + ' (ф’ючерс)</span>' +
+          '<b style="color:' + pcol + '">' + fmtPrice(b.price) + '</b></div>' +
+        '<div class="reasons-list">' + reasonsHtml + '</div>' +
+        ctrLine(b.ctr) +
+        decisionLine(b.decision);
     }
+
+    // ── Потенціал (move-potential block) stays in its own card ──
     var mv = (b.move_long && b.verdict === "LONG") ? b.move_long
            : (b.move_short && b.verdict === "SHORT") ? b.move_short
            : (b.move || b.move_long || b.move_short);
-
-    body.innerHTML =
-      '<div class="pot-head">' +
-        '<div class="pot-verdict ' + vcls + '">' + dirCell(verdict) + '</div>' +
-        '<div class="conf-wrap"><div class="conf-bar"><i style="width:' + conf + '%"></i></div>' +
-          '<span class="conf-txt">впевненість ' + conf + '%</span></div>' +
-      '</div>' +
-      '<div class="price-row"><span>💲 Ціна ' + esc(b.symbol || "") + ' (ф’ючерс)</span><b>' +
-        fmtPrice(b.price) + '</b></div>' +
-      '<div class="fc-list">' + fcLine("1H", fc1s, fco.f1_conf) + fcLine("4H", fc4s, fco.f4_conf) + mmLine + '</div>' +
-      moveBlock(mv);
+    if (body) body.innerHTML = moveBlock(mv) || '<div class="muted">немає даних потенціалу</div>';
   }
 
   // ── 🔔 Мої сповіщення (per-user Telegram opt-in) ────────────────────────────
@@ -336,18 +391,39 @@
     if (c && (btcState.dir || btcState.status !== "STOP")) c.innerHTML = flipClock(nowHeld());
   }, 1000);
 
-  // ── 💰 Funding ───────────────────────────────────────────────────────────────
-  function mmCell(dir, str) {
-    var dot = dir === "LONG" ? "🟢" : (dir === "SHORT" ? "🔴" : "⚪");
-    var s = (str != null && !isNaN(str)) ? Math.round(str) + "%" : "—";
-    return dot + " " + s;
+  // ── 💰 Funding (1:1 з ботом) ─────────────────────────────────────────────────
+  function fuelBand(now) {
+    if (now == null) return { txt: "", col: "#8b93a7" };
+    now = Number(now);
+    if (now < 10) return { txt: "немає", col: "#8b93a7" };
+    if (now < 30) return { txt: "слабке", col: "#eab308" };
+    if (now < 60) return { txt: "помірний", col: "#84cc16" };
+    return { txt: "сильне", col: "#22c55e" };
   }
 
-  function fundingProgress(rate, threshold) {
-    if (rate == null) return '<span class="muted">—</span>';
-    var thr = threshold != null ? Math.abs(threshold) : 4;   // entry→-4% default
-    var pct = Math.max(0, Math.min(100, Math.abs(rate) / thr * 100));
-    return '<div class="fbar"><i style="width:' + pct.toFixed(0) + '%"></i></div>';
+  // ММ (fuel) strength cell — exact copy of the bot's ffFuelCell.
+  function ffFuelCell(dir, now, prev) {
+    var dot = dir === "LONG" ? "🟢" : (dir === "SHORT" ? "🔴" : "⚪");
+    var dotSeg = '<span style="display:inline-block;width:16px;text-align:center;flex:none">' + dot + "</span>";
+    if (now == null) {
+      return '<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">' + dotSeg +
+        '<span style="display:inline-block;width:40px;text-align:right;color:#8b93a7;flex:none">—</span></span>';
+    }
+    now = Number(now);
+    var col = now >= 60 ? "#22c55e" : (now >= 30 ? "#84cc16" : (now >= 10 ? "#eab308" : "#8b93a7"));
+    var arrowChar = "", arrowCol = "#8b93a7";
+    if (prev != null) {
+      if (now > prev + 1) { arrowChar = "↑"; arrowCol = "#4ade80"; }
+      else if (now < prev - 1) { arrowChar = "↓"; arrowCol = "#f87171"; }
+      else { arrowChar = "→"; arrowCol = "#8b93a7"; }
+    }
+    var w = Math.max(0, Math.min(100, now));
+    var b = fuelBand(now);
+    var pctSeg = '<b style="display:inline-block;width:40px;text-align:right;color:' + col + ';font-variant-numeric:tabular-nums;flex:none">' + Math.round(now) + "%</b>";
+    var arrowSeg = '<span style="display:inline-block;width:12px;text-align:center;color:' + arrowCol + ';flex:none">' + arrowChar + "</span>";
+    var barSeg = '<span style="display:inline-block;vertical-align:middle;height:6px;width:56px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;flex:none"><span style="display:block;height:100%;width:' + w + '%;background:' + col + '"></span></span>';
+    var bandSeg = '<span style="display:inline-block;width:56px;text-align:left;color:' + b.col + ';font-size:0.66rem;font-weight:600;flex:none">' + b.txt + "</span>";
+    return '<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">' + dotSeg + pctSeg + arrowSeg + barSeg + bandSeg + "</span>";
   }
 
   function renderFunding(rowsArr) {
@@ -355,26 +431,50 @@
     $("#funding-count").textContent = rowsArr.length;
     var tb = $("#funding-table tbody");
     if (!rowsArr.length) {
-      tb.innerHTML = '<tr><td colspan="7" class="muted">немає funding-монет</td></tr>';
+      tb.innerHTML = '<tr><td colspan="7" class="tm-empty-msg" style="color:#8b93a7">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
       return;
     }
     tb.innerHTML = rowsArr.map(function (a) {
-      var trend = "";
-      if (a.funding_rate != null && a.funding_prev_rate != null) {
-        trend = (Math.abs(a.funding_rate) >= Math.abs(a.funding_prev_rate))
-          ? ' <span class="dir-short small">→ збільш.</span>'
-          : ' <span class="dir-long small">← зменш.</span>';
+      var dirHtml = a.dir === "LONG"
+        ? '<span style="color:#22c55e">🟢 LONG</span>'
+        : (a.dir === "SHORT" ? '<span style="color:#ef4444">🔴 SHORT</span>'
+          : '<span style="color:#8b93a7">⚪ —</span>');
+      var heldCell = '<span class="mono" style="color:#cbd5e1;font-weight:600">' + hms(a.held_sec) + "</span>";
+      var entry = (a.entry_threshold != null) ? a.entry_threshold : -1;
+      var END = -4;
+      var cur = (a.funding_rate != null) ? a.funding_rate : entry;
+      var fill = (entry - END) !== 0 ? (cur - entry) / (END - entry) : 0;
+      fill = Math.max(0, Math.min(1, fill));
+      var prev = a.funding_prev_rate, arrow = "";
+      if (prev != null && a.funding_rate != null) {
+        if (a.funding_rate < prev - 0.0005) arrow = '<span style="color:#f87171">← зменшується</span>';
+        else if (a.funding_rate > prev + 0.0005) arrow = '<span style="color:#4ade80">→ збільшується</span>';
+        else arrow = '<span style="color:#8b93a7">— без змін</span>';
       }
-      var paused = a.paused ? ' <span class="pill small">⏸</span>' : "";
-      return "<tr>" +
-        "<td><b>" + esc(a.symbol) + "</b>" + paused + "</td>" +
-        "<td>" + dirCell(a.dir) + "</td>" +
-        "<td>" + mmCell(a.mm, a.mm_str) + "</td>" +
-        "<td class=\"mono\">" + hms(a.held_sec) + "</td>" +
-        "<td>" + fundingProgress(a.funding_rate, a.entry_threshold) + "</td>" +
-        "<td><b class=\"dir-short\">" + (a.funding_rate != null ? fmtPct(a.funding_rate, 3) : "—") + "</b>" +
-          ' <span class="muted">· ⏱ ' + fmtCountdown(a.funding_next_ms) + "</span>" + trend + "</td>" +
-        "<td>" + fmtUsdC(a.vol24h) + "</td>" +
+      var fillPct = (fill * 100).toFixed(1);
+      var progHtml = '<div style="display:flex;align-items:center;gap:6px">' +
+        '<div style="width:130px;flex:0 0 130px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative">' +
+        '<div style="height:100%;width:' + fillPct + '%;background:#34d399;border-radius:6px"></div>' +
+        '<span style="position:absolute;left:' + fillPct + '%;top:50%;width:9px;height:9px;margin-left:-5px;margin-top:-4px;border-radius:50%;background:#34d399;box-shadow:0 0 7px #34d399"></span>' +
+        '</div>' +
+        '<span style="font-size:0.6rem;color:#8b93a7;white-space:nowrap;width:64px;display:inline-block">' + entry + "%→" + END + "%</span>" +
+        (arrow ? '<span style="font-size:0.62rem;white-space:nowrap;width:80px;display:inline-block">' + arrow + "</span>" : '<span style="width:80px;display:inline-block"></span>') +
+        '</div>';
+      var rateTxt = (a.funding_rate != null)
+        ? '<span style="font-weight:700;color:' + (a.funding_rate < 0 ? "#f87171" : "#4ade80") + '">' + (a.funding_rate >= 0 ? "+" : "") + Number(a.funding_rate).toFixed(3) + "%</span>"
+        : '<span style="color:#667">—</span>';
+      var cdTxt = a.funding_next_ms ? '<span style="font-size:0.66rem;color:#9aa3b5">⏳ ' + fmtCountdown(a.funding_next_ms) + "</span>" : "";
+      var v = a.vol24h;
+      var volTxt = (v != null && v > 0) ? fmtUsdC(v) : '<span style="color:#667">—</span>';
+      var paused = a.paused ? ' <span title="Сесія на паузі (WAIT)" style="color:#fbbf24;font-weight:700">⏸</span>' : "";
+      return '<tr style="background:rgba(16,185,129,0.06)">' +
+        '<td style="font-weight:600"><span style="color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>' + esc(a.symbol) + "</td>" +
+        "<td>" + dirHtml + "</td>" +
+        '<td style="font-size:0.72rem">' + ffFuelCell(a.mm, a.mm_str, a.mm_str_prev) + paused + "</td>" +
+        '<td style="font-size:0.78rem">' + heldCell + "</td>" +
+        '<td style="min-width:160px">' + progHtml + "</td>" +
+        '<td style="font-size:0.72rem;white-space:nowrap">' + rateTxt + " " + cdTxt + "</td>" +
+        '<td style="font-size:0.72rem;color:#cbd5e1;white-space:nowrap">' + volTxt + "</td>" +
       "</tr>";
     }).join("");
   }
@@ -415,7 +515,7 @@
         "<td class=\"mono\">" + price(p.entry_price) + "</td>" +
         "<td class=\"mono\">" + price(p.current_price) + "</td>" +
         "<td>" + pnlCell(p.pnl_pct) + "</td>" +
-        "<td>" + mmCell(p.fuel_dir || p.side, p.fuel_str) + "</td>" +
+        '<td style="font-size:0.72rem">' + ffFuelCell(p.fuel_dir || p.side, p.fuel_str, p.fuel_str_prev) + "</td>" +
         "<td>" + exhCell(p.exhaustion) + "</td>" +
       "</tr>";
     }).join("");
@@ -465,7 +565,7 @@
   function showData(ok) {
     var hero = $("#auth-hero");
     if (hero) hero.style.display = ok ? "none" : "";
-    ["potential-card", "btc-card", "funding-card", "trades-card"].forEach(function (id) {
+    ["banner-card", "potential-card", "btc-card", "funding-card", "trades-card"].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.style.display = ok ? "" : "none";
     });

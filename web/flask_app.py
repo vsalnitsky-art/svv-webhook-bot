@@ -6932,10 +6932,34 @@ def compute_bias(db, symbol, wl=None):
         move_long = None
         move_short = None
 
+    # CTR-15M (cheap, from forecast cache) + Decision Center verdict — so the
+    # info-site banner shows the SAME data as the bot without polling the heavy
+    # /api/smc/chart. Both cached inside this result (short TTL) → no per-poll cost.
+    _ctr = None
+    try:
+        from detection.forecast_engine import get_forecast_engine
+        _fe = get_forecast_engine()
+        if _fe:
+            _fc = _fe.get(symbol)
+            if _fc:
+                _ctr = _fc.get('ctr')
+    except Exception:
+        _ctr = None
+    _decision = None
+    try:
+        if price and price > 0:
+            from detection.trade_manager import get_trade_manager
+            _tm = get_trade_manager()
+            if _tm:
+                _decision = _tm.compute_decision(symbol, price)
+    except Exception:
+        _decision = None
+
     _result = {'ok': True, 'symbol': symbol, 'verdict': verdict,
                'confidence': confidence, 'components': comp,
                'reasons': reasons, 'price': price, 'move': move,
                'move_long': move_long, 'move_short': move_short,
+               'ctr': _ctr, 'decision': _decision,
                'ts': _t.time()}
     _cache[_ck] = (_now, _result)
     return _result

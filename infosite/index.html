@@ -6,7 +6,7 @@
   <title>VSV Bot — Інфо-панель</title>
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=10">
+  <link rel="stylesheet" href="style.css?v=12">
 </head>
 <body>
   <header class="topbar">
@@ -38,6 +38,11 @@
       </div>
     </section>
 
+    <!-- 🎯 Головний банер: вердикт + впевненість + Forecast + CTR + Decision -->
+    <section class="card" id="banner-card">
+      <div id="banner-body"><div class="muted">завантаження…</div></div>
+    </section>
+
     <!-- ₿ BTC / двигун -->
     <section class="card" id="btc-card">
       <h2>₿ BTCUSDT — сеанс ММ</h2>
@@ -57,6 +62,7 @@
           <tbody><tr><td colspan="7" class="muted">завантаження…</td></tr></tbody>
         </table>
       </div>
+      <p class="card-note">💡 Монета потрапляє сюди, коли «ММ» тримається довше за поріг. Коли ММ зникає — монета лишається зафіксованою (не дублюється в таблиці вище).</p>
     </section>
 
     <!-- 💼 Відкриті угоди -->
@@ -112,7 +118,7 @@
       });
     })();
   </script>
-  <script src="config.js?v=10"></script>
-  <script src="app.js?v=10"></script>
+  <script src="config.js?v=12"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>
