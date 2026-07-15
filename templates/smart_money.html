@@ -7432,8 +7432,7 @@ async function loadBias() {
         document.getElementById('sm-bias-conf').textContent = 'впевненість ' + d.confidence + '%';
         const fill = document.getElementById('sm-bias-conffill');
         fill.style.width = d.confidence + '%';
-        fill.style.background = d.verdict === 'LONG' ? '#4ade80'
-            : d.verdict === 'SHORT' ? '#f87171' : '#6b7280';
+        fill.style.background = dirGrad(d.verdict);
         renderMovePanel(d.move_long, d.move_short, d.verdict);
         const icons = {ok: '✓', warn: '⚠', wait: '•'};
         // The watchlist-consensus reason line is rendered under the
@@ -8586,6 +8585,20 @@ function flipTimerHTML(sec) {
 // BTC START/STOP state, driven from FF state and ticked live.
 let btcStartState = { hasTimer: false, since: 0, period: 300 };
 
+// Directional progress-bar gradient — колір за напрямком, від СВІТЛОГО (зліва)
+// до ТЕМНОГО (справа): LONG=зелений, SHORT=червоний, WAIT=сірий.
+function dirGrad(dir) {
+    if (dir === 'LONG')  return 'linear-gradient(90deg,#86efac,#15803d)';
+    if (dir === 'SHORT') return 'linear-gradient(90deg,#fca5a5,#b91c1c)';
+    return 'linear-gradient(90deg,#cbd5e1,#475569)';
+}
+// Світлий відтінок напрямку — для підписів поверх/поруч зі смугою.
+function dirTint(dir) {
+    if (dir === 'LONG')  return '#86efac';
+    if (dir === 'SHORT') return '#fca5a5';
+    return '#cbd5e1';
+}
+
 // 💸 Money-rain: гроші «сиплються» в момент активності (₿ START / сильний тиск
 // ММ). dir → відтінок: LONG=зелений, SHORT=червоний, інакше золото.
 function spawnMoneyRain(dir, label) {
@@ -8701,17 +8714,16 @@ function updateBtcStartBanner() {
         else if (s.dir === 'SHORT') { dirEl.textContent = '🔴 SHORT'; dirEl.style.color = '#ff4d4d'; dirEl.style.textShadow = '0 0 9px rgba(255,77,77,0.6)'; }
         else { dirEl.textContent = '⚪ WAIT'; dirEl.style.color = '#9aa3b5'; dirEl.style.textShadow = 'none'; }
     }
-    // ── Bar = BTC FUEL STRENGTH 0..100% (never empty), coloured by level ──
+    // ── Bar width = BTC FUEL STRENGTH 0..100%; COLOUR = напрямок сеансу
+    // (LONG зелений / SHORT червоний / WAIT сірий), градієнт світле→темне ──
     const str = Math.max(0, Math.min(100, Number(s.strength || 0)));
-    const scol = str >= 60 ? '#22c55e' : (str >= 30 ? '#84cc16'
-        : (str >= 10 ? '#bef264' : '#8b93a7'));
     bar.style.width = str.toFixed(0) + '%';
-    bar.style.background = scol;
-    // Band word at the END of the bar (colour-coded), instead of a 'сила N%' label.
+    bar.style.background = dirGrad(s.dir);
+    // Band word at the END of the bar; підпис у світлому відтінку напрямку.
     if (lab) {
         const bnd = fuelBand(str);
         lab.textContent = Math.round(str) + '% ' + bnd.txt;
-        lab.style.color = bnd.col;
+        lab.style.color = dirTint(s.dir);
         lab.style.left = 'auto';
         lab.style.right = '10px';
         lab.style.transform = 'translateY(-50%)';
