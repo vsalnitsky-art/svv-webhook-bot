@@ -41,14 +41,13 @@ DB_KEY_TM_SHADOW = 'tm_shadow_positions'   # paper-trading positions
 DB_KEY_TM_SHADOW_CLOSED = 'tm_shadow_closed'
 
 MONITOR_INTERVAL_SECS = 10
-CLOSED_TRADES_LIMIT = 1_000_000   # effectively UNLIMITED — keep EVERY closed
-                            # trade (per operator: «скільки було угод, всі
-                            # зберігаємо»). Stored as a JSON blob per book
-                            # (tm_closed_trades / tm_shadow_closed); each trade
-                            # carries its chronology. NOTE(scale): if this ever
-                            # grows into many MB the right move is a dedicated DB
-                            # table — but for realistic paper/real volumes the
-                            # blob is fine, and periodic 🧾 export offloads it.
+CLOSED_TRADES_LIMIT = 2_000   # IN-MEMORY / UI rolling cap only. EVERY closed
+                            # trade is still kept FOREVER in the permanent DB
+                            # archive (TradeArchive, archive_trades=True) — «всі
+                            # зберігаємо». This cap just stops the in-RAM blob
+                            # (each trade carries its chronology) from growing
+                            # unbounded and OOM-killing the 512MB Render instance.
+                            # Raise only with more RAM; full history lives in DB.
 INITIAL_DELAY_SECS = 20      # wait at startup before first tick
 TRADE_LOG_MAX = 5000         # max per-trade time-series samples kept (safety cap)
 
@@ -246,7 +245,10 @@ DEFAULT_SETTINGS = {
     # Recent Closed list. Read in _finalize/close via settings['archive_trades'].
     # MUST live here so update_settings() whitelists it and it persists —
     # otherwise the /api/trade-archive/toggle write is silently dropped.
-    'archive_trades': False,
+    # Default ON: keeps EVERY closed trade permanently in the DB archive so the
+    # in-memory rolling list (CLOSED_TRADES_LIMIT) can stay small without losing
+    # history — «всі зберігаємо», але без роздування RAM.
+    'archive_trades': True,
 
     # === BOS-N partial closes (after CHoCH+BOS opening) ===
     # The opening trade counts the entry-BOS as #1.

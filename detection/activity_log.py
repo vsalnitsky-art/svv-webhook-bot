@@ -16,7 +16,10 @@ import threading
 from collections import deque
 from typing import Optional, List, Dict
 
-_MAX_EVENTS = 1500                       # ring-buffer cap (oldest dropped)
+_MAX_EVENTS = 500                        # ring-buffer cap (oldest dropped) —
+                                         # trimmed from 1500 to cut RAM on the
+                                         # 512MB Render instance (each event +
+                                         # the ?limit= fetch held in memory).
 _DB_ENABLED = 'activity_log_enabled'     # persisted on/off flag
 _DB_EVENTS = 'activity_log_events'       # persisted event buffer (survives restart)
 _FLUSH_EVERY_SEC = 8                     # throttle DB writes (bounded single row)
