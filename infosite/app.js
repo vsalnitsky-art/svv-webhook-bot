@@ -85,6 +85,17 @@
     return '<span class="muted">⚪ WAIT</span>';
   }
 
+  // Symbol → TradingView link (Bybit perpetual, .P) — same as the bot's tvSym.
+  // target="tvchart" reuses one tab across clicks.
+  function tvSym(sym) {
+    var s = String(sym || "").toUpperCase();
+    var url = "https://ru.tradingview.com/chart/?symbol=BYBIT:" + s + ".P";
+    return '<a href="' + url + '" target="tvchart" rel="noopener" ' +
+      'title="Відкрити BYBIT:' + s + '.P (ф’ючерс) у TradingView" ' +
+      'style="color:inherit;text-decoration:none;border-bottom:1px dotted rgba(255,255,255,0.4)">' +
+      esc(s) + "</a>";
+  }
+
   function fmtDur(sec) {
     sec = Math.max(0, Math.floor(sec || 0));
     var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
@@ -132,10 +143,16 @@
     return "$" + fmtNum(Math.abs(Number(v)));
   }
 
-  // Price with thousands separators: $64,436.20
-  function fmtPrice(v) {
-    if (v == null || isNaN(v)) return "—";
-    return "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Price with adaptive precision — 1:1 with the bot's fmtPriceJS so cheap
+  // coins (DOGE $0.07429) aren't flattened to $0.07.
+  function fmtPrice(p) {
+    if (p == null || isNaN(p) || Number(p) <= 0) return "—";
+    p = Number(p);
+    if (p < 0.0001) return "$" + p.toFixed(8);
+    if (p < 0.01) return "$" + p.toFixed(6);
+    if (p < 1) return "$" + p.toFixed(5);
+    if (p < 100) return "$" + p.toFixed(4);
+    return "$" + p.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
   function sideOf(v) { return v > 0 ? "LONG" : (v < 0 ? "SHORT" : "WAIT"); }
@@ -473,15 +490,19 @@
         '<span style="font-size:0.6rem;color:#8b93a7;white-space:nowrap;width:64px;display:inline-block">' + entry + "%→" + END + "%</span>" +
         (arrow ? '<span style="font-size:0.62rem;white-space:nowrap;width:80px;display:inline-block">' + arrow + "</span>" : '<span style="width:80px;display:inline-block"></span>') +
         '</div>';
-      var rateTxt = (a.funding_rate != null)
-        ? '<span style="font-weight:700;color:' + (a.funding_rate < 0 ? "#f87171" : "#4ade80") + '">' + (a.funding_rate >= 0 ? "+" : "") + Number(a.funding_rate).toFixed(3) + "%</span>"
-        : '<span style="color:#667">—</span>';
-      var cdTxt = a.funding_next_ms ? '<span style="font-size:0.66rem;color:#9aa3b5">⏳ ' + fmtCountdown(a.funding_next_ms) + "</span>" : "";
+      var rateTxt = (a.funding_stale || a.funding_rate == null)
+        ? '<span style="color:#667">—</span>'
+        : '<span style="font-weight:700;color:' + (a.funding_rate < 0 ? "#f87171" : "#4ade80") + '">' + (a.funding_rate >= 0 ? "+" : "") + Number(a.funding_rate).toFixed(3) + "%</span>";
+      var cdTxt = a.funding_next_ms
+        ? '<span style="font-size:0.66rem;color:#9aa3b5">⏳ ' + fmtCountdown(a.funding_next_ms) + "</span>"
+        : (a.funding_stale
+            ? '<span title="Вийшла з Funding Rate Scanner — тримається лише на ММ" style="font-size:0.62rem;color:#8b93a7">· норм. (на ММ)</span>'
+            : "");
       var v = a.vol24h;
       var volTxt = (v != null && v > 0) ? fmtUsdC(v) : '<span style="color:#667">—</span>';
       var paused = a.paused ? ' <span title="Сесія на паузі (WAIT)" style="color:#fbbf24;font-weight:700">⏸</span>' : "";
       return '<tr style="background:rgba(16,185,129,0.06)">' +
-        '<td style="font-weight:600"><span style="color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>' + esc(a.symbol) + "</td>" +
+        '<td style="font-weight:600"><span style="color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>' + tvSym(a.symbol) + "</td>" +
         "<td>" + dirHtml + "</td>" +
         '<td style="font-size:0.72rem">' + ffFuelCell(a.mm, a.mm_str, a.mm_str_prev) + paused + "</td>" +
         '<td style="font-size:0.78rem">' + heldCell + "</td>" +
@@ -533,7 +554,7 @@
         : '<span class="tag-paper">◌ PAPER</span>';
       var timer = p.opened_at ? '<span class="mono">' + hms(now - Math.floor(p.opened_at)) + "</span>" : '<span class="muted">—</span>';
       return "<tr>" +
-        "<td><b>" + esc(p.symbol) + "</b></td>" +
+        "<td><b>" + tvSym(p.symbol) + "</b></td>" +
         "<td>" + dirCell(p.side) + "</td>" +
         "<td>" + mk + "</td>" +
         "<td>" + priceCell(p.entry_price) + "</td>" +

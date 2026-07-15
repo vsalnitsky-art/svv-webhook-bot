@@ -2813,7 +2813,7 @@ class FuelFilterDaemon:
                             'last_price': mark, 'last_held_sec': 0,
                             'funding': True, 'rate': rate, 'prev_rate': rate,
                             'next_funding': nf, 'entry_threshold': thr,
-                            'vol24h': vol, 'mm_str': _mm,
+                            'vol24h': vol, 'mm_str': _mm, 'in_scanner': in_scanner,
                         }
                         # Cooldown: suppress the TG "appear" if this coin was
                         # announced < cooldown ago (row still shows in the table).
@@ -2836,6 +2836,7 @@ class FuelFilterDaemon:
                             a['vol24h'] = vol
                         a['funding'] = True
                         a['mm_str'] = _mm
+                        a['in_scanner'] = in_scanner
                 else:
                     # Leaves the table ONLY here: fuel gone or ММ below keep-thr.
                     if a is not None:
@@ -4215,6 +4216,13 @@ class FuelFilterDaemon:
             anomalies = []
             for sym, a in self._anomalies.items():
                 held = int(now - a.get('started_at', now))
+                # Funding is «stale» once the coin has left the 💰 Funding Rate
+                # Scanner (funding normalised) — it stays here ONLY on its ММ.
+                # Its saved rate / next-funding are frozen, so don't present them
+                # as live: flag stale, and drop the expired «до виплати» countdown.
+                _nf = a.get('next_funding')
+                _stale = (a.get('in_scanner') is False) or \
+                         (not _nf) or ((_nf / 1000.0) <= now)
                 anomalies.append({
                     'symbol': sym,
                     'dir': a.get('dir'),
@@ -4223,9 +4231,11 @@ class FuelFilterDaemon:
                     'start_price': a.get('start_price'),
                     'current_price': a.get('last_price'),
                     'funding': True,
+                    'funding_stale': bool(_stale),   # left scanner → held on ММ
                     'funding_rate': a.get('rate'),
                     'funding_prev_rate': a.get('prev_rate'),
-                    'funding_next_ms': a.get('next_funding'),
+                    # Only a FUTURE settlement time — never a past one («до виплати 0»).
+                    'funding_next_ms': (_nf if (_nf and (_nf / 1000.0) > now) else None),
                     'entry_threshold': a.get('entry_threshold'),
                     'vol24h': a.get('vol24h'),
                     # ММ (fuel) direction + strength for the funding table's ММ
