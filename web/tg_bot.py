@@ -94,6 +94,13 @@ _CAT_TAG = {
 }
 _PREF_TAG = {'notify_funding': _CAT_TAG['funding'], 'notify_btc': _CAT_TAG['btc']}
 
+# ── Аудиторія категорії ─────────────────────────────────────────────────────
+# PUBLIC  — ринкові сигнали, можна у спільну групу/тему (усі учасники бачать):
+#           funding, btc, trades.
+# ADMIN   — службово/персональне (реєстрації, звернення) → ЛИШЕ у приватний чат
+#           адміна (TELEGRAM_CHAT_ID), НІКОЛИ у спільну групу.
+_ADMIN_ONLY_CATS = {'register', 'support'}
+
 
 _forum_topics_cache = None    # {category: thread_id} for TELEGRAM_FORUM_CHAT
 
@@ -136,7 +143,11 @@ def _forum_thread(category):
 
 def _cat_chat(category):
     """(chat_id, thread_id) for a category. Priority: forum-topic supergroup →
-    per-category env chat/topic → main admin chat."""
+    per-category env chat/topic → main admin chat.
+    ADMIN-only categories (реєстрації/підтримка) ALWAYS go to the admin's
+    PRIVATE chat — never a shared group/topic — so other users can't see them."""
+    if category in _ADMIN_ONLY_CATS:
+        return _admin_chat(), None
     fchat, fthread = _forum_thread(category)
     if fchat and fthread:
         return fchat, str(fthread)
