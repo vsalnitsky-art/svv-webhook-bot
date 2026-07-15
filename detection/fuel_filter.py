@@ -4213,16 +4213,22 @@ class FuelFilterDaemon:
             # 💰 Funding table — only coins currently holding fuel. Carries the
             # live funding rate + next-funding time + trend (prev_rate) + the
             # entry threshold so the UI can draw the entry→−4% progress bar.
+            # LIVE set of coins currently tracked by the 💰 Funding Rate Scanner
+            # (authoritative — refreshed every scan). A coin NOT in it has no live
+            # funding source → its saved rate/next-funding are frozen (stale).
+            try:
+                _fund_set = {s.upper() for s in self._get_funding_symbols()}
+            except Exception:
+                _fund_set = None
             anomalies = []
             for sym, a in self._anomalies.items():
                 held = int(now - a.get('started_at', now))
-                # Funding is «stale» once the coin has left the 💰 Funding Rate
-                # Scanner (funding normalised) — it stays here ONLY on its ММ.
-                # Its saved rate / next-funding are frozen, so don't present them
-                # as live: flag stale, and drop the expired «до виплати» countdown.
+                # «stale» = coin left the Funding Rate Scanner (funding normalised);
+                # it stays here ONLY on its ММ. Don't present frozen funding as live.
                 _nf = a.get('next_funding')
-                _stale = (a.get('in_scanner') is False) or \
-                         (not _nf) or ((_nf / 1000.0) <= now)
+                _not_tracked = (_fund_set is not None and sym.upper() not in _fund_set)
+                _stale = _not_tracked or (a.get('in_scanner') is False) \
+                    or (not _nf) or ((_nf / 1000.0) <= now)
                 anomalies.append({
                     'symbol': sym,
                     'dir': a.get('dir'),
