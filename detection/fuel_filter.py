@@ -247,7 +247,7 @@ DEFAULT_SETTINGS = {
     #     used for the ₿ verdict.
     'queue2_ctr_neutral_pct': 10,
     #   queue2_min_entry_score — minimum ENTRY score (0..100, setup quality — NOT
-    #     the hold score) required to ENTER Queue 2. Keeps ВИСНАЖЕНО/СЛАБКЕ trash
+    #     the hold score) required to ENTER Queue 2. Keeps НЕ ВІДКРИВАТИ/НЕ ВАРТО trash
     #     out of the queue.
     'queue2_min_entry_score': 45,
     #   queue2_open_min_entry_score — minimum live ENTRY score required to OPEN
@@ -1244,12 +1244,13 @@ class FuelFilterDaemon:
         return ('EXHAUSTED', '#ef4444')          # red
 
     # SCORE label EN→UA for DISPLAY only (internal keys stay English for logic).
+    # Names are action-oriented: they answer «варто відкривати чи ще ні».
     _SCORE_LABEL_UA = {
-        'STRONG HOLD': 'СИЛЬНЕ УТРИМАННЯ',
-        'HOLD': 'УТРИМАННЯ',
-        'NEUTRAL': 'НЕЙТРАЛЬНО',
-        'WEAK': 'СЛАБКЕ',
-        'EXHAUSTED': 'ВИСНАЖЕНО',
+        'STRONG HOLD': 'ВАРТО ВІДКРИВАТИ',
+        'HOLD': 'МОЖНА ВІДКРИВАТИ',
+        'NEUTRAL': 'ЗАЧЕКАТИ',
+        'WEAK': 'НЕ ВАРТО',
+        'EXHAUSTED': 'НЕ ВІДКРИВАТИ',
     }
 
     @classmethod
@@ -1666,7 +1667,7 @@ class FuelFilterDaemon:
 
     def score_snapshot(self, symbol: str) -> Optional[str]:
         """Compact, human SCORE string for `symbol` RIGHT NOW, e.g.
-        'СИЛЬНЕ УТРИМАННЯ 🟢▲ 79'. Used to stamp a position at open and at close."""
+        'ВАРТО ВІДКРИВАТИ 🟢▲ 79'. Used to stamp a position at open and at close."""
         sc = self.score_dict(symbol)
         if not sc:
             return None
@@ -3881,7 +3882,7 @@ class FuelFilterDaemon:
                 # Fall back to a fresh compute only if the cache has no entry yet.
                 sc = self._score_cache.get(sym) or self._timer_score_for(sym, d, held, exh, dur, tf)
                 if sc.get('label') != 'STRONG HOLD' or sc.get('dir') != d:
-                    trace.append(f"{sym}:SCORE {self._score_label_ua(sc.get('label'))}·{sc.get('dir')} ≠ треба СИЛЬНЕ УТРИМАННЯ·{d}")
+                    trace.append(f"{sym}:SCORE {self._score_label_ua(sc.get('label'))}·{sc.get('dir')} ≠ треба ВАРТО ВІДКРИВАТИ·{d}")
                     continue
             # Decision-Center quality gate (LAST — heaviest). Only evaluated for
             # a candidate that already passed every cheap gate and is about to
