@@ -704,9 +704,9 @@ def _score_pd_zone(side: str, entry_price: float,
     # Discount = дешево (внизу). Shown identically in the bot AND the info-site
     # (both read the same decision rationale / component label).
     _pd_ua = {
-        'Discount':    f'PD дисконт {pct:.0f}% (дешево — внизу діапазону)',
-        'Premium':     f'PD премія {pct:.0f}% (дорого — вгорі діапазону)',
-        'Equilibrium': f'PD рівновага {pct:.0f}% (середина діапазону)',
+        'Discount':    f'PD Discount {pct:.0f}% (дешево — внизу діапазону)',
+        'Premium':     f'PD Premium {pct:.0f}% (дорого — вгорі діапазону)',
+        'Equilibrium': f'PD Equilibrium {pct:.0f}% (середина діапазону)',
     }.get(zone, f'PD {zone} {pct:.0f}%')
     return score, f'{_pd_ua}: {"+" if score >= 0 else ""}{score:.0f}'
 

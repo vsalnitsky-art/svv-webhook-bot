@@ -221,6 +221,15 @@
       ' <span style="color:' + col + '">' + revBias + " " + leanPct + "%</span></div>";
   }
 
+  // Colour the PD words by lean: Premium = дорого → SHORT (red), Discount =
+  // дешево → LONG (green), Equilibrium = neutral (grey).
+  function colorizePD(s) {
+    return String(s || "")
+      .replace(/Premium/g, '<span style="color:#f87171;font-weight:800">Premium</span>')
+      .replace(/Discount/g, '<span style="color:#4ade80;font-weight:800">Discount</span>')
+      .replace(/Equilibrium/g, '<span style="color:#9aa3b5;font-weight:800">Equilibrium</span>');
+  }
+
   // 🧠 Decision Center line — same data/labels as the bot.
   function decisionLine(dec) {
     if (!dec || !dec.headline) return "";
@@ -234,7 +243,7 @@
       '<div class="dec-head">' + (rec === "NEUTRAL" ? "⚖️" : "🧠") +
         ' <b style="color:' + hcol + '">' + esc(dec.headline) + "</b>" +
         ' <span class="dec-badge" style="color:' + (vcol[dec.verdict] || "#cbd5e1") + '">' + esc(vl) + "</span></div>" +
-      (dec.rationale ? '<div class="dec-rat">' + esc(dec.rationale) + "</div>" : "") +
+      (dec.rationale ? '<div class="dec-rat">' + colorizePD(esc(dec.rationale)) + "</div>" : "") +
       '<div class="dec-bar"><i class="dl" style="width:' + pl + '%"></i><i class="ds" style="width:' + ps + '%"></i></div>' +
       '<div class="dec-pct"><span class="dir-long">LONG ' + pl + '%</span>' +
         '<span class="dir-short">' + ps + '% SHORT</span></div>' +
@@ -491,6 +500,16 @@
     var cls = v >= 70 ? "exh-bad" : (v >= 40 ? "exh-mid" : "exh-good");
     return '<span class="' + cls + '">' + v.toFixed(0) + "%</span>";
   }
+  // 🔄 reversal-readiness cell — same look as the bot's ffRevCell.
+  function revCell(pct) {
+    if (pct == null || isNaN(pct)) return '<span class="muted">—</span>';
+    var v = Math.max(0, Math.min(100, Math.round(pct)));
+    var col = v >= 80 ? "#f87171" : (v >= 50 ? "#fbbf24" : "#4ade80");
+    return '<span style="color:' + col + ';font-weight:700">🔄 ' + v + "%</span>";
+  }
+  function priceCell(v) {
+    return (v != null && Number(v) > 0) ? '<span class="mono">' + fmtPrice(v) + "</span>" : '<span class="muted">—</span>';
+  }
   function renderTrades(state) {
     var tb = $("#trades-table tbody");
     var real = (state && state.positions) || [];
@@ -499,24 +518,29 @@
       .concat(paper.map(function (p) { return { p: p, m: "paper" }; }));
     $("#trades-count").textContent = rows.length;
     if (!rows.length) {
-      tb.innerHTML = '<tr><td colspan="8" class="muted">немає відкритих угод</td></tr>';
+      tb.innerHTML = '<tr><td colspan="12" class="muted">немає відкритих угод</td></tr>';
       return;
     }
+    var now = Math.floor(Date.now() / 1000);
     tb.innerHTML = rows.map(function (r) {
       var p = r.p;
       var mk = r.m === "real"
         ? '<span class="tag-real">● LIVE</span>'
         : '<span class="tag-paper">◌ PAPER</span>';
-      var price = function (v) { return v != null ? fmtPrice(v) : "—"; };
+      var timer = p.opened_at ? '<span class="mono">' + hms(now - Math.floor(p.opened_at)) + "</span>" : '<span class="muted">—</span>';
       return "<tr>" +
         "<td><b>" + esc(p.symbol) + "</b></td>" +
         "<td>" + dirCell(p.side) + "</td>" +
         "<td>" + mk + "</td>" +
-        "<td class=\"mono\">" + price(p.entry_price) + "</td>" +
-        "<td class=\"mono\">" + price(p.current_price) + "</td>" +
+        "<td>" + priceCell(p.entry_price) + "</td>" +
+        "<td>" + priceCell(p.current_price) + "</td>" +
         "<td>" + pnlCell(p.pnl_pct) + "</td>" +
         '<td style="font-size:0.72rem">' + ffFuelCell(p.fuel_dir || p.side, p.fuel_str, p.fuel_str_prev) + "</td>" +
         "<td>" + exhCell(p.exhaustion) + "</td>" +
+        "<td>" + revCell(p.ctr_rev_pct) + "</td>" +
+        "<td>" + priceCell(p.manual_sl) + "</td>" +
+        "<td>" + priceCell(p.manual_tp) + "</td>" +
+        "<td>" + timer + "</td>" +
       "</tr>";
     }).join("");
   }
