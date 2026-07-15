@@ -2248,6 +2248,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <tr>
                             <th>Символ</th><th>Напрямок</th>
                             <th title="Сила бабла (ММ): 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне)">ММ</th>
+                            <th title="Оцінка утримання 0–100 + напрямок руху (СИЛЬНЕ УТРИМАННЯ / УТРИМАННЯ / НЕЙТРАЛЬНО / СЛАБКЕ / ВИСНАЖЕНО)">SCORE</th>
+                            <th title="CTR — нахил у зону розвороту (STC): 🔴 SHORT-нахил / 🟢 LONG-нахил / ⚪ нейтрально">CTR</th>
                             <th>Тримається</th>
                             <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає)">Прогрес funding</th>
                             <th title="Поточний funding % і час до наступного нарахування">Funding · до виплати</th>
@@ -2256,7 +2258,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="ff-anomaly-tbody">
-                        <tr><td colspan="8" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>
+                        <tr><td colspan="10" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -8234,7 +8236,7 @@ function renderFuelFilter(d) {
     if (atb) {
         const arows = d.anomalies || [];
         if (!arows.length) {
-            atb.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
+            atb.innerHTML = '<tr><td colspan="10" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
         } else {
             atb.innerHTML = arows.map(a => {
                 const dirHtml = a.dir === 'LONG'
@@ -8293,6 +8295,8 @@ function renderFuelFilter(d) {
                     <td style="font-weight:600"><span onclick="showFundingHistory('${a.symbol}')" title="Історія монети (архів)" style="cursor:pointer;margin-right:4px">📜</span><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
                     <td>${dirHtml}</td>
                     <td style="font-size:0.72rem">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}${a.paused ? ' <span title="Сесія на паузі (WAIT) — тримається за напрямком" style="color:#fbbf24;font-weight:700">⏸</span>' : ''}</td>
+                    <td style="white-space:nowrap">${ffScoreBadgeHTML(a.score)}</td>
+                    <td style="font-size:0.72rem;white-space:nowrap">${ffCtrCell(a.ctr)}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
                     <td style="min-width:160px">${progHtml}</td>
                     <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}</td>

@@ -4256,6 +4256,11 @@ class FuelFilterDaemon:
                     'mm': (self._score_cache.get(sym) or {}).get('fuel_dir') or a.get('dir'),
                     'mm_str': self._fuel_str.get(sym),
                     'mm_str_prev': self._fuel_str_prev.get(sym),
+                    # SCORE (hold quality) + CTR (reversal-zone lean) — identical
+                    # fields the ❤️ queue rows carry, so the funding table can draw
+                    # the SAME badges. Read from the background caches (cheap).
+                    'score': self._score_cache.get(sym),
+                    'ctr': self._ctr_snapshot(sym),
                     'paused': bool(a.get('sess_paused')),
                 })
             anomalies.sort(key=lambda x: -x['held_sec'])
