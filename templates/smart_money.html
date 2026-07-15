@@ -5954,7 +5954,10 @@ function renderDecision(decision) {
         .replace(/Equilibrium/g, '<span style="color:#9aa3b5;font-weight:800">Equilibrium</span>')
         .replace(/⚠ обмежено/g, '<span style="color:#fbbf24;font-weight:800">⚠ обмежено</span>')
         .replace(/перекупленість/g, '<span style="color:#f87171;font-weight:700">перекупленість</span>')
-        .replace(/перепроданість/g, '<span style="color:#4ade80;font-weight:700">перепроданість</span>');
+        .replace(/перепроданість/g, '<span style="color:#4ade80;font-weight:700">перепроданість</span>')
+        // Напрямок: LONG зелений, SHORT червоний (як усюди в стратегії).
+        .replace(/\bLONG\b/g, '<span style="color:#4ade80;font-weight:800">LONG</span>')
+        .replace(/\bSHORT\b/g, '<span style="color:#f87171;font-weight:800">SHORT</span>');
       el.innerHTML = t;
     })();
 

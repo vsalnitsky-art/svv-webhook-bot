@@ -134,7 +134,7 @@ def _build_rationale(recommended: str,
     """
     if recommended == 'NEUTRAL':
         # No strong directional bias — describe the state plainly
-        _htf_ua = {'bull': 'бичачий', 'bear': 'ведмежий'}
+        _htf_ua = {'bull': 'LONG', 'bear': 'SHORT'}
         bits = []
         if htf_bias and htf_bias != 'neutral':
             bits.append(f"HTF {_htf_ua.get(htf_bias, htf_bias)}")

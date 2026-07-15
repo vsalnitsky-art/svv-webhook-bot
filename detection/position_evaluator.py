@@ -175,7 +175,7 @@ def _score_htf_alignment(side: str, htf_bias: str, weight: float) -> Tuple[float
         return 0.0, 'HTF: невідомо'
 
     score = weight * sign
-    _htf_ua = {'bull': 'бичачий', 'bear': 'ведмежий'}.get(htf_bias, htf_bias)
+    _htf_ua = {'bull': 'LONG', 'bear': 'SHORT'}.get(htf_bias, htf_bias)
     label = f"HTF {_htf_ua}: {'+' if sign > 0 else ''}{score:.0f}"
     return score, label
 
