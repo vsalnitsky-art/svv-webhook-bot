@@ -2018,7 +2018,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Сила бабла (ММ) по монеті: 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне). Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. ВАРТО ВІДКРИВАТИ = найкраще. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск. Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. ВАРТО ВІДКРИВАТИ = найкраще. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
                         <tr><td colspan="8" class="tm-empty-msg">Черга порожня</td></tr>
@@ -2247,7 +2247,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <thead>
                         <tr>
                             <th>Символ</th><th>Напрямок</th>
-                            <th title="Сила бабла (ММ): 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне)">ММ</th>
+                            <th title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">ММ</th>
                             <th title="Оцінка сетапу 0–100 + напрямок руху — варто відкривати чи ще ні: ВАРТО ВІДКРИВАТИ (≥72) / МОЖНА ВІДКРИВАТИ (≥55) / ЗАЧЕКАТИ (≥40) / НЕ ВАРТО (≥25) / НЕ ВІДКРИВАТИ (<25)">SCORE</th>
                             <th>Тримається</th>
                             <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає)">Прогрес funding</th>
@@ -8849,16 +8849,26 @@ async function loadSentiment() {
     });
 }
 
-// ММ (fuel) strength band → {txt, col}. 0-10 немає / 10-30 слабке /
-// 30-60 помірний / 60-100 сильне (colour-differentiated).
+// ММ (fuel) strength band → {txt, col}. Describes the MARKET-MAKER PRESSURE on
+// price (not an abstract «strength»): рівновага <10 / легкий 10-30 /
+// помірний 30-60 / сильний 60-85 / потужний 85+ (colour-differentiated).
 function fuelBand(now) {
     if (now == null) return { txt: '', col: '#8b93a7' };
     now = Number(now);
-    if (now < 10) return { txt: 'немає', col: '#8b93a7' };
-    if (now < 30) return { txt: 'слабке', col: '#eab308' };
-    if (now < 60) return { txt: 'помірний', col: '#84cc16' };
-    return { txt: 'сильне', col: '#22c55e' };
+    if (now < 10) return { txt: 'рівновага', col: '#8b93a7' };
+    if (now < 30) return { txt: 'легкий тиск', col: '#eab308' };
+    if (now < 60) return { txt: 'помірний тиск', col: '#84cc16' };
+    if (now < 85) return { txt: 'сильний тиск', col: '#22c55e' };
+    return { txt: 'потужний тиск', col: '#16a34a' };
 }
+
+// Shared human explanation of the ММ widget (hover on the cell). Says WHAT is
+// happening to price: which way the market maker pushes + how hard.
+const FUEL_TOOLTIP = "ММ — тиск маркетмейкера на ціну. Крапка = куди тисне: "
+    + "🟢 вгору (лонг) · 🔴 вниз (шорт) · ⚪ рівновага. 0–100% — сила тиску "
+    + "(наскільки односторонні ліквідації/паливо): рівновага <10 · легкий 10–30 · "
+    + "помірний 30–60 · сильний 60–85 · потужний 85+. Стрілка ↑/↓ — тиск "
+    + "міцніє/слабшає. Що сильніший тиск у бік крапки — то ймовірніший рух ціни туди.";
 
 // ММ (fuel) STRENGTH cell (shared by the ❤️ queue ММ column, the open-position
 // ММ columns and the 💰 funding table): coloured direction dot + strength
@@ -8871,7 +8881,7 @@ function ffFuelCell(dir, now, prev) {
     //   [dot 16] [pct 40, right-aligned] [arrow 12] [bar 56] [band 56]
     const dotSeg = `<span style="display:inline-block;width:16px;text-align:center;flex:none">${dot}</span>`;
     if (now == null) {
-        return `<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">`
+        return `<span title="${FUEL_TOOLTIP}" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">`
             + `${dotSeg}<span style="display:inline-block;width:40px;text-align:right;color:#8b93a7;flex:none">—</span>`
             + `</span>`;
     }
@@ -8891,8 +8901,8 @@ function ffFuelCell(dir, now, prev) {
     const pctSeg = `<b style="display:inline-block;width:40px;text-align:right;color:${col};font-variant-numeric:tabular-nums;flex:none">${Math.round(now)}%</b>`;
     const arrowSeg = `<span style="display:inline-block;width:12px;text-align:center;color:${arrowCol};flex:none" title="${arrowTitle}">${arrowChar}</span>`;
     const barSeg = `<span style="display:inline-block;vertical-align:middle;height:6px;width:56px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;flex:none"><span style="display:block;height:100%;width:${w}%;background:${col}"></span></span>`;
-    const bandSeg = `<span style="display:inline-block;width:56px;text-align:left;color:${b.col};font-size:0.66rem;font-weight:600;flex:none">${b.txt}</span>`;
-    return `<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">${dotSeg}${pctSeg}${arrowSeg}${barSeg}${bandSeg}</span>`;
+    const bandSeg = `<span style="display:inline-block;width:104px;text-align:left;color:${b.col};font-size:0.66rem;font-weight:600;flex:none">${b.txt}</span>`;
+    return `<span title="${FUEL_TOOLTIP}" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">${dotSeg}${pctSeg}${arrowSeg}${barSeg}${bandSeg}</span>`;
 }
 
 // ── 📈 Per-trade history chart (clicking a closed trade) ─────────────────

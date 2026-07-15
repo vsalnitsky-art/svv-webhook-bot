@@ -3442,19 +3442,22 @@ class TradeManager:
 
     @staticmethod
     def _mm_band_word(strength) -> str:
-        """ММ strength band label (same bands as the UI): 0–10 немає,
-        10–30 слабке, 30–60 помірний, 60–100 сильне."""
+        """ММ market-maker-pressure band label (same bands as the UI): 0–10
+        рівновага, 10–30 легкий, 30–60 помірний, 60–85 сильний, 85+ потужний
+        тиск."""
         try:
             s = float(strength)
         except (TypeError, ValueError):
             return ''
         if s < 10:
-            return 'немає'
+            return 'рівновага'
         if s < 30:
-            return 'слабке'
+            return 'легкий тиск'
         if s < 60:
-            return 'помірний'
-        return 'сильне'
+            return 'помірний тиск'
+        if s < 85:
+            return 'сильний тиск'
+        return 'потужний тиск'
 
     def _build_reason_detail(self, symbol: str, pos: Dict, reason: str,
                              pnl_pct: float, is_shadow: bool = False) -> str:
