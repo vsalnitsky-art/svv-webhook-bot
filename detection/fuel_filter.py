@@ -4411,6 +4411,55 @@ class FuelFilterDaemon:
                 if _vv is not None:
                     a['vol24h_min'] = _vv if a.get('vol24h_min') is None else min(a['vol24h_min'], _vv)
                     a['vol24h_max'] = _vv if a.get('vol24h_max') is None else max(a['vol24h_max'], _vv)
+                # 🎯 OPPORTUNITY — combine ALL table signals into ONE «best setup
+                # to open» score (0..100) + a `hot` flag for the 🎯 marker. The
+                # confluence: SCORE quality (ВАРТО ВІДКРИВАТИ) · no fuel/price
+                # conflict · strong ММ pressure aligned with SCORE · deep/deepening
+                # funding (squeeze fuel) · rising volume · 🚀 spike · session live.
+                _sc = self._score_cache.get(sym) or {}
+                _sc_label = _sc.get('label')
+                _sc_dir = _sc.get('dir')
+                _sc_conflict = bool(_sc.get('conflict'))
+                _mm_dir_o = _sc.get('fuel_dir') or a.get('dir')
+                _mm_strength = float(self._fuel_str.get(sym) or 0)
+                _ft_o = (self._funding_trends or {}).get(sym.upper())
+                _vol_up_o = bool(a.get('vol24h') and a.get('vol24h_prev')
+                                 and a['vol24h'] > a['vol24h_prev'] * 1.005)
+                _spk_o = bool(a.get('spike'))
+                _paused_o = bool(a.get('sess_paused'))
+                _fr_o = a.get('rate')
+                _opp = 0
+                _opp_reasons = []
+                if _sc_label == 'STRONG HOLD':
+                    _opp += 40; _opp_reasons.append('SCORE ВАРТО ВІДКРИВАТИ')
+                elif _sc_label == 'HOLD':
+                    _opp += 22; _opp_reasons.append('SCORE МОЖНА ВІДКРИВАТИ')
+                elif _sc_label == 'NEUTRAL':
+                    _opp += 6
+                if (not _sc_conflict) and _sc_label in ('STRONG HOLD', 'HOLD'):
+                    _opp += 8; _opp_reasons.append('без конфлікту (паливо=ціна)')
+                if _mm_strength >= 60:
+                    _opp += 16; _opp_reasons.append(f'сильний тиск ММ {int(_mm_strength)}%')
+                elif _mm_strength >= 30:
+                    _opp += 8
+                if _mm_dir_o in ('LONG', 'SHORT') and _sc_dir == _mm_dir_o:
+                    _opp += 8; _opp_reasons.append('ММ і SCORE в один бік')
+                if _fr_o is not None and _fr_o <= -0.5:
+                    _opp += 8; _opp_reasons.append('глибокий негативний funding')
+                if _ft_o is not None and _ft_o < 0:
+                    _opp += 8; _opp_reasons.append('funding поглиблюється (F-Trend)')
+                if _vol_up_o:
+                    _opp += 6; _opp_reasons.append('обсяг зростає')
+                if _spk_o:
+                    _opp += 6; _opp_reasons.append('🚀 аномальний ріст')
+                _opp = min(100, _opp)
+                # HOT = the BEST confluence: strong SCORE, no conflict, live session,
+                # ММ aligned & meaningful, plus ≥1 momentum/funding confirmation.
+                _opp_hot = bool(
+                    _sc_label == 'STRONG HOLD' and not _sc_conflict and not _paused_o
+                    and _mm_strength >= 30 and _sc_dir in ('LONG', 'SHORT')
+                    and _sc_dir == _mm_dir_o
+                    and (_vol_up_o or (_ft_o is not None and _ft_o < 0) or _spk_o))
                 anomalies.append({
                     'symbol': sym,
                     'dir': a.get('dir'),
@@ -4447,6 +4496,10 @@ class FuelFilterDaemon:
                     # background cache (cheap). CTR intentionally NOT included:
                     # STC populates too slowly to be useful in this table.
                     'score': self._score_cache.get(sym),
+                    # 🎯 Композитний аналіз «найкращий момент для входу».
+                    'opportunity': _opp,
+                    'opportunity_hot': _opp_hot,
+                    'opportunity_reasons': _opp_reasons,
                     'paused': bool(a.get('sess_paused')),
                 })
             anomalies.sort(key=lambda x: -x['held_sec'])
