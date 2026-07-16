@@ -3370,10 +3370,8 @@ class FuelFilterDaemon:
         side = d if d in ('LONG', 'SHORT') else ''
         rt = a.get('rate')
         rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
-        body = (f"🎯 #{sym} — НАЙКРАЩИЙ МОМЕНТ ДЛЯ ВХОДУ\n"
-                f"{emoji} {side} · Opportunity {opp}/100 · funding {rt_s}")
-        if reasons:
-            body += "\n✅ " + "\n✅ ".join(reasons)
+        body = (f"🎯 #{sym} — рекомендація бота\n"
+                f"{emoji} {side} · Opportunity {opp}% · funding {rt_s}")
         self._broadcast_users('funding', 'notify_funding', body)
 
     def _run_alerts(self):

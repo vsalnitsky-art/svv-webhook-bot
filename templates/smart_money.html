@@ -8364,29 +8364,23 @@ function renderFuelFilter(d) {
                         }
                     }
                 }
-                // Bar (current fill + pulse) + amber PEAK tick, then «пік» та
-                // «зараз» текстом — усе про funding в одній колонці (прибрано
-                // марний «entry%→-4%» і довгу стрілку, щоб таблиця вужча).
-                const fillPct = (fill * 100).toFixed(1);
+                // ONE bar spanning Entry ≤ (start) → пік (end); the CURRENT value
+                // is a bright tick between them. No duplicated «зараз» text — the
+                // number lives in the Funding column.
+                const entryThr = (a.entry_threshold != null) ? a.entry_threshold : -0.5;
                 const peakRate = (a.funding_rate_min != null) ? a.funding_rate_min : cur;
-                let peakFill = (entry - END) !== 0 ? (peakRate - entry) / (END - entry) : 0;
-                peakFill = Math.max(0, Math.min(1, peakFill));
-                const peakPct = (peakFill * 100).toFixed(1);
-                const peakTxt = (a.funding_rate_min != null)
-                    ? `<span title="Найглибший funding за час стеження" style="font-size:0.62rem;color:#fbbf24;white-space:nowrap">пік ${Number(peakRate).toFixed(3)}%</span>`
-                    : '';
-                const nowTxt = (a.funding_rate != null)
-                    ? `<span title="Поточний funding · ${_rateTip}" style="font-size:0.62rem;font-weight:700;white-space:nowrap;color:${_rateCol}${_rateExtra}">зараз ${_rateMark}${Number(a.funding_rate).toFixed(3)}%</span>`
-                    : '';
+                const _span = peakRate - entryThr;                 // negative (deeper)
+                let curPos = (_span !== 0) ? (cur - entryThr) / _span : 0;
+                curPos = Math.max(0, Math.min(1, curPos)) * 100;
+                const curPctS = curPos.toFixed(1);
                 const progHtml =
-                    `<div style="display:flex;align-items:center;gap:8px">`
+                    `<div style="display:flex;align-items:center;gap:7px">`
+                    + `<span title="Entry ≤ із 💰 Funding Rate Scanner" style="font-size:0.6rem;color:#8b93a7;white-space:nowrap">≤ ${Number(entryThr).toFixed(2)}%</span>`
                     + `<div style="width:120px;flex:0 0 120px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative">`
-                    + `<div style="height:100%;width:${fillPct}%;background:#34d399;border-radius:6px"></div>`
-                    + (a.funding_rate_min != null ? `<span title="пік ${Number(peakRate).toFixed(3)}%" style="position:absolute;left:${peakPct}%;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:#fbbf24;box-shadow:0 0 4px #fbbf24"></span>` : '')
-                    + `<span style="position:absolute;left:${fillPct}%;top:50%;width:9px;height:9px;margin-left:-5px;border-radius:50%;background:#34d399;box-shadow:0 0 7px #34d399;animation:ff-fund-pulse 1s ease-in-out infinite"></span>`
+                    + `<div style="height:100%;width:${curPctS}%;background:#34d399;border-radius:6px 0 0 6px"></div>`
+                    + `<span title="Поточний funding ${Number(cur).toFixed(3)}%" style="position:absolute;left:${curPctS}%;top:-3px;bottom:-3px;width:3px;margin-left:-1.5px;background:#e6ebf5;box-shadow:0 0 6px #fff;border-radius:2px"></span>`
                     + `</div>`
-                    + peakTxt
-                    + nowTxt
+                    + `<span title="Найглибший funding за час стеження" style="font-size:0.6rem;color:#fbbf24;white-space:nowrap">пік ${Number(peakRate).toFixed(3)}%</span>`
                     + `</div>`;
                 // No live funding source once the coin left the scanner → «—».
                 const rateTxt = (a.funding_stale || a.funding_rate == null)
