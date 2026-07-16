@@ -4137,9 +4137,13 @@ class FuelFilterDaemon:
             a['vol24h'] = vol
 
     def _price_spike(self, symbol: str, window_min: float, pct: float):
-        """🚀 Detect an ANOMALOUS price move: |Δprice| over ~window_min minutes
-        ≥ pct%. Uses the cached scanner klines (no extra fetch on a warm cache).
-        Returns (spiked: bool, move_pct: float, last_price: float|None)."""
+        """🚀 Detect an ANOMALOUS price move that brought price to its CURRENT
+        level within the last `window_min` minutes. Instead of comparing only the
+        two endpoints (which misses «flat → sudden move» when earlier bars offset
+        it), we scan EVERY bar in the window and take the LARGEST move from any of
+        them to the current price. So a coin that sat flat and then ran, or moved
+        ≥pct% in a shorter burst inside the window, is caught. Returns
+        (spiked: bool, move_pct: float, last_price: float|None)."""
         try:
             tm = self._get_tm() if self._get_tm else None
             scanner = getattr(tm, 'scanner', None) if tm else None
@@ -4151,14 +4155,19 @@ class FuelFilterDaemon:
             _tf_min = {'1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
                        '1h': 60, '2h': 120, '4h': 240}.get(str(tf).lower(), 15)
             bars = max(1, int(round(float(window_min) / _tf_min)))
-            if bars >= len(kl):
-                bars = len(kl) - 1
-            last = float(kl[-1].get('p', 0) or 0)
-            past = float(kl[-1 - bars].get('p', 0) or 0)
-            if past <= 0 or last <= 0:
+            # Window = last `bars` closed candles + the current one.
+            seg = kl[-(bars + 1):] if len(kl) > bars else kl[:]
+            last = float(seg[-1].get('p', 0) or 0)
+            if last <= 0 or len(seg) < 2:
                 return (False, 0.0, (last or None))
-            move = (last - past) / past * 100.0
-            return (abs(move) >= float(pct), move, last)
+            best = 0.0    # signed move (+ = rose to current, − = fell to current)
+            for k in seg[:-1]:
+                p = float(k.get('p', 0) or 0)
+                if p > 0:
+                    m = (last - p) / p * 100.0
+                    if abs(m) > abs(best):
+                        best = m
+            return (abs(best) >= float(pct), best, last)
         except Exception:
             return (False, 0.0, None)
 
