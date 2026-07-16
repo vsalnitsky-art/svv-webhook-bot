@@ -334,6 +334,12 @@ DEFAULT_SETTINGS = {
     # збігу показників для входу (edge-trigger + кулдаун, хв).
     'opportunity_tg': True,
     'opportunity_alert_cooldown_min': 30,
+    # 🎯 Вимагати вирівнювання з ₿ BTCUSDT сеансом (START + той самий бік), щоб
+    # монета стала 🎯 «рекомендована». True = «усі в один бік» (за замовч.).
+    'opportunity_require_btc': True,
+    # 🎯 Грейс (сек): не закривати епізод/не повторювати алерт на короткий провал
+    # у hot — таймер «продовжує тримати».
+    'opportunity_cold_grace_sec': 180,
     # 🚀 Аномальний ріст: слати в Telegram, коли монета робить різкий рух.
     'spike_tg': True,
 }
@@ -385,8 +391,10 @@ class FuelFilterDaemon:
         # that flickers around the ММ-strength threshold isn't re-announced.
         self._funding_notify_at: Dict[str, float] = {}
         # 🎯 Opportunity-alert edge state: {sym: was_hot} + {sym: last_alert_ts}.
+        # `_opp_cold_at` = when hot first dropped (grace timer against flicker).
         self._opp_hot_state: Dict[str, bool] = {}
         self._opp_alert_at: Dict[str, float] = {}
+        self._opp_cold_at: Dict[str, float] = {}
         # 🚀 Spike-alert edge state (anomalous growth Telegram).
         self._spike_alert_state: Dict[str, bool] = {}
         self._spike_alert_at: Dict[str, float] = {}
@@ -3444,6 +3452,10 @@ class FuelFilterDaemon:
             cool = max(60, int(s.get('opportunity_alert_cooldown_min', 30) or 30) * 60)
         except (TypeError, ValueError):
             cool = 1800
+        try:
+            grace = max(0, int(s.get('opportunity_cold_grace_sec', 180) or 0))
+        except (TypeError, ValueError):
+            grace = 180
         with self._lock:
             items = list(self._anomalies.items())
         live = set()
@@ -3452,21 +3464,37 @@ class FuelFilterDaemon:
             # 🎯 Opportunity — ALWAYS computed: episode stats are kept regardless
             # of the TG toggle; only the Telegram SEND is gated by opportunity_tg.
             try:
-                opp, hot, reasons = self._opportunity_for(sym, a)
+                opp, hot, reasons = self._opportunity_for(sym, a, s)
             except Exception:
                 opp, hot, reasons = 0, False, []
+            # `prev_hot` is the EFFECTIVE (grace-applied) state — the timer keeps
+            # «holding» through a brief dip, so no episode reopen and NO repeat TG.
             prev_hot = self._opp_hot_state.get(sym, False)
-            if hot and not prev_hot:
-                self._opp_episode_open(sym, a, opp, now)           # stats (DB)
-                if _opp_on and (now - self._opp_alert_at.get(sym, 0)) >= cool:
-                    try:
-                        self._send_opportunity_alert(sym, a, opp, reasons)
-                    except Exception as e:
-                        print(f"[FF-Opp] alert send error {sym}: {e}")
-                    self._opp_alert_at[sym] = now
-            elif prev_hot and not hot:
-                self._opp_episode_close(sym, a, opp, now)          # stats (DB)
-            self._opp_hot_state[sym] = hot
+            if hot:
+                self._opp_cold_at.pop(sym, None)   # any cold-grace cancelled
+                if not prev_hot:
+                    self._opp_episode_open(sym, a, opp, now)       # stats (DB)
+                    # ONE Telegram per episode: only on a fresh rising edge.
+                    if _opp_on and (now - self._opp_alert_at.get(sym, 0)) >= cool:
+                        try:
+                            self._send_opportunity_alert(sym, a, opp, reasons)
+                        except Exception as e:
+                            print(f"[FF-Opp] alert send error {sym}: {e}")
+                        self._opp_alert_at[sym] = now
+                    self._opp_hot_state[sym] = True
+            elif prev_hot:
+                # Not hot right now but WAS — hold through the grace window before
+                # closing the episode (kills flicker-induced repeat alerts).
+                _cold0 = self._opp_cold_at.get(sym)
+                if _cold0 is None:
+                    self._opp_cold_at[sym] = now
+                elif (now - _cold0) >= grace:
+                    self._opp_episode_close(sym, a, opp, now)      # stats (DB)
+                    self._opp_hot_state[sym] = False
+                    self._opp_cold_at.pop(sym, None)
+                # else: still «holding» within grace → keep episode + timer running.
+            else:
+                self._opp_hot_state[sym] = False
             # 🚀 Spike alert — rising edge to «anomalous growth».
             if _spike_on:
                 spk = bool(a.get('spike'))
@@ -4280,12 +4308,27 @@ class FuelFilterDaemon:
         except Exception:
             return (False, 0.0, None)
 
-    def _opportunity_for(self, sym: str, a: Dict):
+    def _btc_session(self, settings: Dict):
+        """(dir, is_start) of the ₿ BTCUSDT session RIGHT NOW. is_start = the
+        session held its direction ≥ start_signal_minutes AND is not paused."""
+        d = self._btc_verdict_dir
+        if d not in ('LONG', 'SHORT') or not self._btc_verdict_since:
+            return (None, False)
+        try:
+            period = float(settings.get('start_signal_minutes', 5) or 5) * 60
+        except (TypeError, ValueError):
+            period = 300.0
+        held = time.time() - self._btc_verdict_since
+        return (d, bool(held >= period and not self._btc_paused))
+
+    def _opportunity_for(self, sym: str, a: Dict, settings: Dict = None):
         """🎯 Composite «best setup to open» analysis for a 💰 funding coin —
         combines ALL table signals: SCORE quality (ВАРТО ВІДКРИВАТИ), fuel/price
         agreement, ММ strength + alignment with SCORE, funding depth/deepening
-        (squeeze fuel), rising volume and 🚀 spike. Returns (score 0..100,
-        hot: bool, reasons: list). Shared by get_state (UI) and the TG alert."""
+        (squeeze fuel), rising volume, 🚀 spike AND ₿ BTCUSDT session alignment
+        (₿ START у той самий бік). Returns (score 0..100, hot, reasons). Shared by
+        get_state (UI) and the TG alert."""
+        s = settings if settings is not None else self.get_settings()
         _sc = self._score_cache.get(sym) or {}
         _sc_label = _sc.get('label')
         _sc_dir = _sc.get('dir')
@@ -4322,12 +4365,24 @@ class FuelFilterDaemon:
             opp += 6; reasons.append('обсяг зростає')
         if _spk_o:
             opp += 6; reasons.append('🚀 аномальний ріст')
+        # ₿ BTCUSDT session alignment — alts follow BTC, so a coin whose side
+        # matches the ₿ START session is a much higher-probability entry.
+        _btc_dir, _btc_start = self._btc_session(s)
+        _btc_align = bool(_btc_start and _btc_dir in ('LONG', 'SHORT')
+                          and _sc_dir == _btc_dir)
+        if _btc_align:
+            opp += 14; reasons.append('₿ START у той самий бік')
         opp = min(100, opp)
+        # Base confluence.
         hot = bool(
             _sc_label == 'STRONG HOLD' and not _sc_conflict and not _paused_o
             and _mm_strength >= 30 and _sc_dir in ('LONG', 'SHORT')
             and _sc_dir == _mm_dir_o
             and (_vol_up_o or (_ft_o is not None and _ft_o < 0) or _spk_o))
+        # Require ₿ START alignment for the 🎯 marker (default ON) — «усі в один
+        # бік»: no 🎯 unless the ₿ session is START and points the same way.
+        if hot and bool(s.get('opportunity_require_btc', True)) and not _btc_align:
+            hot = False
         return opp, hot, reasons
 
     def _queue_row(self, sym: str, info: Dict, now: float, smart: bool = False) -> Optional[Dict]:
@@ -4674,7 +4729,11 @@ class FuelFilterDaemon:
                     a['vol24h_min'] = _vv if a.get('vol24h_min') is None else min(a['vol24h_min'], _vv)
                     a['vol24h_max'] = _vv if a.get('vol24h_max') is None else max(a['vol24h_max'], _vv)
                 # 🎯 OPPORTUNITY — composite «best setup to open» (shared helper).
-                _opp, _opp_hot, _opp_reasons = self._opportunity_for(sym, a)
+                _opp, _opp_hot_raw, _opp_reasons = self._opportunity_for(sym, a, settings)
+                _opp_stats = self._opp_stats_summary(sym)
+                # Effective hot = raw hot OR an ACTIVE episode still open (so the
+                # 🎯 row/timer holds through the grace window, no flicker).
+                _opp_hot = bool(_opp_hot_raw or (_opp_stats and _opp_stats.get('since')))
                 anomalies.append({
                     'symbol': sym,
                     'dir': a.get('dir'),
@@ -4716,7 +4775,7 @@ class FuelFilterDaemon:
                     'opportunity_hot': _opp_hot,
                     'opportunity_reasons': _opp_reasons,
                     # 🎯-епізоди: таймер активного + статистика (з БД).
-                    'opp_stats': self._opp_stats_summary(sym),
+                    'opp_stats': _opp_stats,
                     'paused': bool(a.get('sess_paused')),
                 })
             anomalies.sort(key=lambda x: -x['held_sec'])

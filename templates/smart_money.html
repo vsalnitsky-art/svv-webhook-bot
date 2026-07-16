@@ -2335,7 +2335,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
-                💡 Монета сюди потрапляє, коли «ММ» тримається довше за поріг (нижче в налаштуваннях). Показуються ЛИШЕ монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера (funding нормалізувався), вона зникає з таблиці (лишається в 📜 Архіві монет). Такі монети не дублюються в таблиці вище. <b>🚀</b> = аномальний ріст (різкий рух ціни + зростання обсягу) — варто розглянути, навіть коли ММ низький. <b>🎯</b> = найкращий збіг показників для входу (SCORE ВАРТО ВІДКРИВАТИ + сильний ММ у той бік + funding/обсяг підтверджують) — наведи, щоб побачити деталі.
+                💡 Монета сюди потрапляє, коли «ММ» тримається довше за поріг (нижче в налаштуваннях). Показуються ЛИШЕ монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера (funding нормалізувався), вона зникає з таблиці (лишається в 📜 Архіві монет). Такі монети не дублюються в таблиці вище. <b>🚀</b> = аномальний ріст (різкий рух ціни + зростання обсягу) — варто розглянути, навіть коли ММ низький. <b>🎯</b> = найкращий збіг показників для входу (SCORE ВАРТО ВІДКРИВАТИ + сильний ММ у той бік + ₿ BTCUSDT START у той самий бік + funding/обсяг підтверджують). Коли активна — під монетою зʼявляється рядок «рекомендована ботом» із таймером і статистикою.
             </div>
         </div>
     </div>
@@ -8404,14 +8404,11 @@ function renderFuelFilter(d) {
                 const volTxt = (v != null && v > 0)
                     ? `<span style="display:inline-flex;align-items:center;gap:5px"><b style="display:inline-block;width:52px;text-align:right;font-variant-numeric:tabular-nums">${fmtVolShort(v)}</b><span style="display:inline-block;width:12px;text-align:center">${volTrendArrow(v, a.vol24h_prev)}</span>${_volRange}</span>`
                     : '<span style="color:#667">—</span>';
-                const _hotMark = a.opportunity_hot
-                    ? `<span title="🎯 НАЙКРАЩІ ПОКАЗНИКИ ДЛЯ ВХОДУ (${a.opportunity}/100): ${(a.opportunity_reasons||[]).join(' · ')}" style="margin-right:4px;cursor:default;text-shadow:0 0 8px rgba(74,222,128,0.95)">🎯</span>`
-                    : '';
                 const _rowBg = a.opportunity_hot
                     ? 'background:rgba(74,222,128,0.13);box-shadow:inset 3px 0 0 #4ade80'
                     : 'background:rgba(16,185,129,0.06)';
                 return `<tr style="${_rowBg}">
-                    <td style="font-weight:600">${_hotMark}${a.spike ? `<span title="Аномальний ріст: різкий рух ціни ${a.spike_move != null ? (a.spike_move >= 0 ? '+' : '') + a.spike_move + '% ' : ''}+ зростання обсягу — варто розглянути" style="margin-right:4px;cursor:default">🚀</span>` : ''}<span onclick="showFundingHistory('${a.symbol}')" title="Історія монети (архів)" style="cursor:pointer;margin-right:4px">📜</span><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
+                    <td style="font-weight:600">${a.spike ? `<span title="Аномальний ріст: різкий рух ціни ${a.spike_move != null ? (a.spike_move >= 0 ? '+' : '') + a.spike_move + '% ' : ''}+ зростання обсягу — варто розглянути" style="margin-right:4px;cursor:default">🚀</span>` : ''}<span onclick="showFundingHistory('${a.symbol}')" title="Історія монети (архів)" style="cursor:pointer;margin-right:4px">📜</span><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
                     <td>${dirHtml}</td>
                     <td style="font-size:0.72rem">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}${a.paused ? ' <span title="Сесія на паузі (WAIT) — тримається за напрямком" style="color:#fbbf24;font-weight:700">⏸</span>' : ''}</td>
                     <td style="white-space:nowrap">${ffScoreBadgeHTML(a.score)}</td>
