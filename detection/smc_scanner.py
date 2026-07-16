@@ -97,6 +97,11 @@ DEFAULT_SETTINGS = {
     # same-direction signals are suppressed until direction flips.
     # User-requested default: True.
     'deduplicate_signals': True,
+    # 🔁 Re-fire on fresh structure (default OFF = classic Pine «1 per trend»).
+    # When ON, a NEW CHoCH+BOS of the SAME direction is allowed to fire AGAIN —
+    # the seen-set + high-water-mark still prevent the SAME bar firing twice, so
+    # this only lets the bot act on trend CONTINUATION instead of one-and-done.
+    'smc_refire_same_dir': False,
     
     # HTF Bias filter (Pine PRO HTF Bias group + Internal Structure addition)
     'htf_enabled': False,
@@ -978,7 +983,7 @@ class SMCScanner:
         with self._lock:
             allowed = ['enabled', 'alert_mode', 'recency_minutes', 'interval_secs', 'telegram_alerts',
                        'swing_size', 'timeframe', 'internal_size',
-                       'deduplicate_signals',
+                       'deduplicate_signals', 'smc_refire_same_dir',
                        'htf_enabled', 'htf_timeframe', 'htf_method',
                        'htf_ema_fast', 'htf_ema_slow', 'htf_ema_trend',
                        'htf_internal_size',
@@ -1053,6 +1058,7 @@ class SMCScanner:
             
             # deduplicate_signals — coerce to bool
             self._settings['deduplicate_signals'] = bool(self._settings.get('deduplicate_signals', True))
+            self._settings['smc_refire_same_dir'] = bool(self._settings.get('smc_refire_same_dir', False))
             
             # htf_timeframe — same allowed set + 1d
             allowed_htf_tfs = ALLOWED_TIMEFRAMES + ['1d']
@@ -2251,20 +2257,11 @@ class SMCScanner:
                 if tag == 'CHoCH' and is_recent:
                     if not self._htf_allows(symbol, ev['dir']):
                         print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
+                        self._log_signal_block(symbol, ev['dir'], 'CHoCH заблоковано HTF-фільтром (проти старшого тренду)')
                     elif not self._dedup_allows(symbol, ev['dir']):
-                        # _dedup_allows blocks for two possible reasons —
-                        # log which one fired so the user can debug "why
-                        # didn't this alert?" without reading the code.
-                        side_label = 'LONG' if ev['dir'] == 'bull' else 'SHORT'
-                        vt = (self._volumized_trend_cache.get(symbol, {})
-                              .get('trend'))
-                        if (self._settings.get('use_volumized_ob', True)
-                                and vt in ('LONG', 'SHORT')
-                                and vt != side_label):
-                            print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked: "
-                                  f"goes against Volumized direction (Vol={vt}, signal={side_label})")
-                        else:
-                            print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by dedup (already fired this direction)")
+                        _r = self._dedup_reason(symbol, ev['dir'])
+                        print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked: {_r}")
+                        self._log_signal_block(symbol, ev['dir'], f'CHoCH заблоковано: {_r}')
                     else:
                         self._send_alert(symbol, ev, mode='choch')
             
@@ -2282,8 +2279,11 @@ class SMCScanner:
                     if is_recent:
                         if not self._htf_allows(symbol, ev['dir']):
                             print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
+                            self._log_signal_block(symbol, ev['dir'], 'CHoCH заблоковано HTF-фільтром (проти старшого тренду)')
                         elif not self._dedup_allows(symbol, ev['dir']):
-                            print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by dedup")
+                            _r = self._dedup_reason(symbol, ev['dir'])
+                            print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked: {_r}")
+                            self._log_signal_block(symbol, ev['dir'], f'CHoCH заблоковано: {_r}')
                         else:
                             self._send_alert(symbol, ev, mode='choch')
                     # ...and seed pending so a later BOS can confirm (b)
@@ -2302,8 +2302,11 @@ class SMCScanner:
                         if ev.get('to_t', 0) > pending.get('to_t', 0):
                             if not self._htf_allows(symbol, ev['dir']):
                                 print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by HTF filter")
+                                self._log_signal_block(symbol, ev['dir'], 'CHoCH+BOS заблоковано HTF-фільтром (проти старшого тренду)')
                             elif not self._dedup_allows(symbol, ev['dir']):
-                                print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by dedup")
+                                _r = self._dedup_reason(symbol, ev['dir'])
+                                print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked: {_r}")
+                                self._log_signal_block(symbol, ev['dir'], f'CHoCH+BOS заблоковано: {_r}')
                                 self._pending_choch.pop(symbol, None)
                             else:
                                 self._send_alert(symbol, ev, mode='choch_bos',
@@ -2338,9 +2341,12 @@ class SMCScanner:
                         if ev.get('to_t', 0) > pending.get('to_t', 0):
                             if not self._htf_allows(symbol, ev['dir']):
                                 print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by HTF filter")
+                                self._log_signal_block(symbol, ev['dir'], 'CHoCH+BOS заблоковано HTF-фільтром (проти старшого тренду)')
                                 # Don't pop pending — let next BOS in same direction try again
                             elif not self._dedup_allows(symbol, ev['dir']):
-                                print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by dedup")
+                                _r = self._dedup_reason(symbol, ev['dir'])
+                                print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked: {_r}")
+                                self._log_signal_block(symbol, ev['dir'], f'CHoCH+BOS заблоковано: {_r}')
                                 self._pending_choch.pop(symbol, None)
                             else:
                                 self._send_alert(symbol, ev, mode='choch_bos',
@@ -2350,6 +2356,26 @@ class SMCScanner:
                         # Opposite-direction BOS invalidates pending CHoCH
                         self._pending_choch.pop(symbol, None)
     
+    def _log_signal_block(self, symbol: str, event_dir: str, reason: str):
+        """Write a BLOCKED-signal record to the 🧾 activity log so a signal a
+        gate suppresses is never lost without a trace (dedup/HTF/Volumized). This
+        is why «bot loses signals» — they were silently blocked; now they show."""
+        try:
+            from detection.activity_log import log_activity
+            side = 'LONG' if event_dir == 'bull' else 'SHORT'
+            log_activity(symbol, 'blocked', reason, side=side, source='scanner')
+        except Exception:
+            pass
+
+    def _dedup_reason(self, symbol: str, event_dir: str) -> str:
+        """Human reason for WHY dedup blocked — Volumized-against vs 1-per-trend."""
+        side_label = 'LONG' if event_dir == 'bull' else 'SHORT'
+        vt = (self._volumized_trend_cache.get(symbol, {}) or {}).get('trend')
+        if (self._settings.get('use_volumized_ob', True)
+                and vt in ('LONG', 'SHORT') and vt != side_label):
+            return f'проти Volumized-тренду (Vol={vt}, сигнал={side_label})'
+        return 'дедуплікація (1/тренд): цей напрямок уже спрацював'
+
     def _dedup_allows(self, symbol: str, event_dir: str) -> bool:
         """Check if signal deduplication permits an alert in this direction.
         
@@ -2389,6 +2415,11 @@ class SMCScanner:
         
         # === Layer 2: Pine `proDeduplicateInput` ===
         if not self._settings.get('deduplicate_signals', True):
+            return True
+        # 🔁 Re-fire on fresh structure: allow a NEW same-direction CHoCH+BOS to
+        # fire again (continuation). seen-set + high-water-mark already prevent
+        # the SAME bar from re-firing, so this doesn't cause per-scan spam.
+        if self._settings.get('smc_refire_same_dir', False):
             return True
         last_side = self._last_signal_dir.get(symbol)
         if last_side is None:

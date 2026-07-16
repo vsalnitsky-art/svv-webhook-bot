@@ -4193,6 +4193,7 @@ class FuelFilterDaemon:
                 {'k': 'Режим сигналу', 'v': alert_mode},
                 {'k': 'Свіжість сигналу', 'v': recency},
                 {'k': 'Дедуплікація (1/тренд)', 'v': _on(sc.get('deduplicate_signals', True))},
+                {'k': 'Пере-файр на свіжий CHoCH+BOS', 'v': _on(sc.get('smc_refire_same_dir', False))},
                 {'k': 'TF структури', 'v': sc.get('timeframe', '15m')},
                 {'k': 'Internal Size', 'v': sc.get('internal_size', 5)},
                 {'k': 'Swing Points', 'v': sc.get('swing_size', 50)},
@@ -4225,6 +4226,7 @@ class FuelFilterDaemon:
                 # зміни ФІКСУВАЛИСЬ у 🧾 лозі (дедуп рахується саме за text).
                 f"сигнал: {alert_mode} · свіжість {recency} · "
                 f"дедуп {_on(sc.get('deduplicate_signals', True))} · "
+                f"пере-файр {_on(sc.get('smc_refire_same_dir', False))} · "
                 f"структура {sc.get('timeframe','15m')}/IS{sc.get('internal_size',5)}/SW{sc.get('swing_size',50)} · "
                 f"CTR-TF {sc.get('ctr_timeframe','1h')} · "
                 f"HTF {('УВІМК '+str(sc.get('htf_timeframe','1h'))) if sc.get('htf_enabled') else 'вимк'} · "
@@ -4254,6 +4256,7 @@ class FuelFilterDaemon:
             'smc_alert_mode': sc.get('alert_mode'),
             'smc_recency_min': sc.get('recency_minutes'),
             'smc_deduplicate': bool(sc.get('deduplicate_signals', True)),
+            'smc_refire_same_dir': bool(sc.get('smc_refire_same_dir', False)),
             'smc_timeframe': sc.get('timeframe'),
             'smc_internal_size': sc.get('internal_size'),
             'smc_swing_size': sc.get('swing_size'),

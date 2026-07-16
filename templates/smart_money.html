@@ -1722,6 +1722,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-dedup" checked onchange="updateDedup()">
                         Deduplicate Signals (1 per trend)
                     </label>
+                    <label class="sm-checkbox" title="🔁 Коли УВІМК: кожен НОВИЙ CHoCH+BOS того самого напрямку файриться знову (ловить ПРОДОВЖЕННЯ тренду), а не глушиться правилом «1 на тренд». Захист від подвійного файру того ж бару лишається (seen-set + high-water-mark). Рекомендовано, якщо бот «губить» сигнали в стійкому тренді.">
+                        <input type="checkbox" id="sm-refire" onchange="updateRefire()">
+                        🔁 Пере-файрити на свіжий CHoCH+BOS (продовження тренду)
+                    </label>
                 </div>
             </div>
             
@@ -4369,6 +4373,8 @@ async function loadSettings() {
             document.getElementById('sm-timeframe').value = s.timeframe || '5m';
             document.getElementById('sm-internal-size').value = s.internal_size || 5;
             document.getElementById('sm-dedup').checked = s.deduplicate_signals !== false;
+            const _refireEl = document.getElementById('sm-refire');
+            if (_refireEl) _refireEl.checked = !!s.smc_refire_same_dir;
             document.getElementById('sm-htf-enabled').checked = !!s.htf_enabled;
             document.getElementById('sm-htf-timeframe').value = s.htf_timeframe || '15m';
             document.getElementById('sm-htf-method').value = s.htf_method || 'EMA Trend';
@@ -4505,6 +4511,18 @@ async function updateDedup() {
         });
         updateSettingsSummary();
     } catch (err) { alert('Dedup update error: ' + err); }
+}
+
+async function updateRefire() {
+    const enabled = document.getElementById('sm-refire').checked;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({smc_refire_same_dir: enabled}),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('Refire update error: ' + err); }
 }
 
 // OB Filter — single handler for both checkbox and dropdown change events.
