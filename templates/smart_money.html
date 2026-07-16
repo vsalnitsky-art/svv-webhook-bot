@@ -2248,6 +2248,23 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                     </div>
+                    <!-- 🚀 Аномальний ріст (spike) — різкий рух ціни поза логікою ММ -->
+                    <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
+                        <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">🚀 Аномальний ріст (монета зі сканера, що різко вистрілила)</div>
+                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Ловити монету з 💰 Funding Rate Scanner, що зробила різкий рух ЦІНИ ≥ порогу за вікно + зростання обсягу. Показується в таблиці з міткою 🚀 «варто розглянути» навіть при низькому ММ.">
+                                <input type="checkbox" id="ff-funding-spike" onchange="saveFuelFilterSettings()"> 🚀 Ловити аномальний ріст
+                            </label>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Мінімальний рух ціни (%), щоб вважати рух аномальним.">
+                                Рух ціни ≥
+                                <input type="number" id="ff-funding-spike-pct" min="1" max="100" step="0.5" onchange="saveFuelFilterSettings()" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(56,189,248,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace"> %
+                            </label>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Вікно спостереження (хв), за яке міряється рух ціни.">
+                                за
+                                <input type="number" id="ff-funding-spike-window" min="1" max="240" step="1" onchange="saveFuelFilterSettings()" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(56,189,248,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace"> хв
+                            </label>
+                        </div>
+                    </div>
                     <!-- 📨 Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
                         <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">📨 Telegram про 💰 funding-монети (поява / зникнення)</div>
@@ -2308,7 +2325,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
-                💡 Монета сюди потрапляє, коли «ММ» тримається довше за поріг (нижче в налаштуваннях). Показуються ЛИШЕ монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера (funding нормалізувався), вона зникає з таблиці (лишається в 📜 Архіві монет). Такі монети не дублюються в таблиці вище.
+                💡 Монета сюди потрапляє, коли «ММ» тримається довше за поріг (нижче в налаштуваннях). Показуються ЛИШЕ монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера (funding нормалізувався), вона зникає з таблиці (лишається в 📜 Архіві монет). Такі монети не дублюються в таблиці вище. <b>🚀</b> = аномальний ріст (різкий рух ціни + зростання обсягу) — варто розглянути, навіть коли ММ низький.
             </div>
         </div>
     </div>
@@ -8203,6 +8220,9 @@ function renderFuelFilter(d) {
     setIf('ff-funding-cooldown', String(s.funding_notify_cooldown_min != null ? s.funding_notify_cooldown_min : 30));
     setIf('ff-funding-hyst', String(s.funding_mm_hysteresis != null ? s.funding_mm_hysteresis : 10));
     setIf('ff-funding-session', !!s.funding_session_mode);
+    setIf('ff-funding-spike', s.funding_spike_enabled !== false);
+    setIf('ff-funding-spike-pct', String(s.funding_spike_pct != null ? s.funding_spike_pct : 8));
+    setIf('ff-funding-spike-window', String(s.funding_spike_window_min != null ? s.funding_spike_window_min : 15));
     setIf('ff-funding-duration', s.funding_duration_minutes != null ? s.funding_duration_minutes : 0);
     setIf('ff-tg-entry', !!s.ff_tg_on_entry);
     setIf('ff-funding-entry-dir', s.funding_tg_entry_dir || 'any');
@@ -8341,7 +8361,7 @@ function renderFuelFilter(d) {
                       + volTrendArrow(v, a.vol24h_prev)
                     : '<span style="color:#667">—</span>';
                 return `<tr style="background:rgba(16,185,129,0.06)">
-                    <td style="font-weight:600"><span onclick="showFundingHistory('${a.symbol}')" title="Історія монети (архів)" style="cursor:pointer;margin-right:4px">📜</span><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
+                    <td style="font-weight:600">${a.spike ? `<span title="Аномальний ріст: різкий рух ціни ${a.spike_move != null ? (a.spike_move >= 0 ? '+' : '') + a.spike_move + '% ' : ''}+ зростання обсягу — варто розглянути" style="margin-right:4px;cursor:default">🚀</span>` : ''}<span onclick="showFundingHistory('${a.symbol}')" title="Історія монети (архів)" style="cursor:pointer;margin-right:4px">📜</span><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
                     <td>${dirHtml}</td>
                     <td style="font-size:0.72rem">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}${a.paused ? ' <span title="Сесія на паузі (WAIT) — тримається за напрямком" style="color:#fbbf24;font-weight:700">⏸</span>' : ''}</td>
                     <td style="white-space:nowrap">${ffScoreBadgeHTML(a.score)}</td>
@@ -8968,6 +8988,9 @@ async function saveFuelFilterSettings() {
         funding_notify_cooldown_min: parseInt(_v('ff-funding-cooldown', '30') || '30', 10),
         funding_mm_hysteresis: parseInt(_v('ff-funding-hyst', '10') || '10', 10),
         funding_session_mode: _c('ff-funding-session'),
+        funding_spike_enabled: _c('ff-funding-spike'),
+        funding_spike_pct: parseFloat(_v('ff-funding-spike-pct', '8') || '8'),
+        funding_spike_window_min: parseInt(_v('ff-funding-spike-window', '15') || '15', 10),
         ff_tg_on_entry: _c('ff-tg-entry'),
         funding_tg_entry_dir: _v('ff-funding-entry-dir', 'any') || 'any',
         funding_tg_entry_min_mm: parseInt(_v('ff-funding-entry-minmm', '0') || '0', 10),

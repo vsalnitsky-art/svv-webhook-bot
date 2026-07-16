@@ -306,6 +306,15 @@ DEFAULT_SETTINGS = {
     # no re-announce), opposite flip = NEW session (single re-announce). Kills
     # spam far harder than cooldown/hysteresis. Off = classic behaviour.
     'funding_session_mode': False,
+    # ── 🚀 Аномальний ріст (spike) ──────────────────────────────────────────
+    # У межах монет із 💰 Funding Rate Scanner ловимо АНОМАЛЬНИЙ рух ЦІНИ:
+    # |Δціни| ≥ funding_spike_pct% за funding_spike_window_min хв ПРИ зростанні
+    # обсягу. Така монета показується в 💰 ММ-таблиці з міткою 🚀 «варто
+    # розглянути» НАВІТЬ якщо ММ (паливо) низький — ловить памп/дамп поза
+    # логікою ліквідацій.
+    'funding_spike_enabled': True,
+    'funding_spike_pct': 8.0,          # мін. рух ціни, %
+    'funding_spike_window_min': 15,    # вікно спостереження, хв
     # ── Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ ──
     # Replaces the old funding alert. Fires when a funding coin APPEARS
     # (ff_tg_on_entry) / DISAPPEARS (ff_tg_on_exit) from the 💰 ММ table.
@@ -2706,6 +2715,16 @@ class FuelFilterDaemon:
                 _cool_sec = 0
             _keep_mm = max(0, fmin_mm - _hyst)   # lower bar to STAY in table
             _sess_mode = bool(settings.get('funding_session_mode', False))
+            # 🚀 Anomalous-growth (spike) detector settings.
+            _spike_on = bool(settings.get('funding_spike_enabled', True))
+            try:
+                _spike_pct = float(settings.get('funding_spike_pct', 8) or 8)
+            except (TypeError, ValueError):
+                _spike_pct = 8.0
+            try:
+                _spike_win = float(settings.get('funding_spike_window_min', 15) or 15)
+            except (TypeError, ValueError):
+                _spike_win = 15.0
             # Evaluate BOTH coins currently in the funding scanner AND coins
             # already in the 💰 ММ table. A coin ENTERS only from the scanner,
             # but once in, it STAYS as long as it has fuel and meets the ММ
@@ -2802,13 +2821,28 @@ class FuelFilterDaemon:
                 # Enter needs full threshold; STAY only needs the (lower) keep
                 # threshold — that hysteresis stops boundary flicker.
                 _thr_now = _keep_mm if _was_holding else fmin_mm
-                _qualifies = status in ('LONG', 'SHORT') and _strength >= _thr_now
+                _mm_ok = status in ('LONG', 'SHORT') and _strength >= _thr_now
+                # 🚀 Anomalous-growth (spike): a SCANNER coin with a sharp price
+                # move AND rising volume qualifies even with low ММ. Volume-rising
+                # is required once a baseline exists; a brand-new coin may enter on
+                # the price move alone (its vol trend firms up on the next ticks).
+                _spiked, _move, _spx = ((self._price_spike(sym, _spike_win, _spike_pct))
+                                        if (_spike_on and in_scanner) else (False, 0.0, None))
+                _vol_up = bool(a and a.get('vol24h') and a.get('vol24h_prev')
+                               and a['vol24h'] > a['vol24h_prev'] * 1.005)
+                _spike_ok = bool(_spiked and in_scanner and (_vol_up or a is None))
+                if mark is None and _spx:
+                    mark = _spx                       # price for a pure-spike coin
+                # Displayed direction: ММ side if any, else the spike's move side.
+                _row_dir = (status if status in ('LONG', 'SHORT')
+                            else (('LONG' if _move > 0 else 'SHORT') if _spike_ok else status))
+                _qualifies = _mm_ok or _spike_ok
                 # A fresh coin can only appear if it is in the scanner right now;
                 # a holding coin stays on fuel alone.
                 if _qualifies and (in_scanner or _was_holding):
                     if not _was_holding:
                         self._anomalies[sym] = {
-                            'symbol': sym, 'dir': status, 'started_at': now,
+                            'symbol': sym, 'dir': _row_dir, 'started_at': now,
                             'start_price': mark, 'holding': True,
                             'last_price': mark, 'last_held_sec': 0,
                             'funding': True, 'rate': rate, 'prev_rate': rate,
@@ -2816,6 +2850,7 @@ class FuelFilterDaemon:
                             'vol24h': vol, 'vol24h_prev': vol,
                             'vol24h_base': vol, 'vol24h_base_at': now,
                             'mm_str': _mm, 'in_scanner': in_scanner,
+                            'spike': _spike_ok, 'spike_move': round(_move, 2),
                         }
                         # Cooldown: suppress the TG "appear" if this coin was
                         # announced < cooldown ago (row still shows in the table).
@@ -2826,7 +2861,7 @@ class FuelFilterDaemon:
                             self._funding_notify_at[sym] = now
                     else:
                         a['holding'] = True
-                        a['dir'] = status
+                        a['dir'] = _row_dir
                         if mark:
                             a['last_price'] = mark
                         a['last_held_sec'] = int(now - a.get('started_at', now))
@@ -2838,6 +2873,8 @@ class FuelFilterDaemon:
                         a['funding'] = True
                         a['mm_str'] = _mm
                         a['in_scanner'] = in_scanner
+                        a['spike'] = _spike_ok
+                        a['spike_move'] = round(_move, 2)
                 else:
                     # Leaves the table ONLY here: fuel gone or ММ below keep-thr.
                     if a is not None:
@@ -3990,6 +4027,32 @@ class FuelFilterDaemon:
         except Exception:
             a['vol24h'] = vol
 
+    def _price_spike(self, symbol: str, window_min: float, pct: float):
+        """🚀 Detect an ANOMALOUS price move: |Δprice| over ~window_min minutes
+        ≥ pct%. Uses the cached scanner klines (no extra fetch on a warm cache).
+        Returns (spiked: bool, move_pct: float, last_price: float|None)."""
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            scanner = getattr(tm, 'scanner', None) if tm else None
+            tf = (scanner.get_timeframe() if (scanner and hasattr(scanner, 'get_timeframe'))
+                  else '15m')
+            kl = self._candle_klines(symbol, tf)
+            if not kl or len(kl) < 2:
+                return (False, 0.0, None)
+            _tf_min = {'1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
+                       '1h': 60, '2h': 120, '4h': 240}.get(str(tf).lower(), 15)
+            bars = max(1, int(round(float(window_min) / _tf_min)))
+            if bars >= len(kl):
+                bars = len(kl) - 1
+            last = float(kl[-1].get('p', 0) or 0)
+            past = float(kl[-1 - bars].get('p', 0) or 0)
+            if past <= 0 or last <= 0:
+                return (False, 0.0, (last or None))
+            move = (last - past) / past * 100.0
+            return (abs(move) >= float(pct), move, last)
+        except Exception:
+            return (False, 0.0, None)
+
     def _queue_row(self, sym: str, info: Dict, now: float, smart: bool = False) -> Optional[Dict]:
         """Build ONE queue-table row for `sym`. Shared by Queue 1 and Queue 2 so
         both tables carry IDENTICAL columns. Returns None if the coin is already
@@ -4336,6 +4399,9 @@ class FuelFilterDaemon:
                     'vol24h': a.get('vol24h'),
                     # ~2-min rolling baseline → UI shows Vol 24h trend ↑/↓.
                     'vol24h_prev': a.get('vol24h_prev'),
+                    # 🚀 Аномальний ріст: різкий рух ціни + зростання обсягу.
+                    'spike': bool(a.get('spike')),
+                    'spike_move': a.get('spike_move'),
                     # ММ (fuel) direction + strength for the funding table's ММ
                     # column (same widget as the queue / open positions).
                     'mm': (self._score_cache.get(sym) or {}).get('fuel_dir') or a.get('dir'),
