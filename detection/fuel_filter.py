@@ -4400,6 +4400,17 @@ class FuelFilterDaemon:
                 # so it is never «stale». The countdown simply hides itself when
                 # there is no FUTURE settlement time (funding_next_ms below).
                 _nf = a.get('next_funding')
+                # Track the range since this coin appeared: deepest funding
+                # (rate_min = most negative) + Vol 24h min/max. Sampled here on
+                # every UI poll (faster than the scan), so it captures each value.
+                _r = a.get('rate')
+                if _r is not None:
+                    a['rate_min'] = _r if a.get('rate_min') is None else min(a['rate_min'], _r)
+                    a['rate_max'] = _r if a.get('rate_max') is None else max(a['rate_max'], _r)
+                _vv = a.get('vol24h')
+                if _vv is not None:
+                    a['vol24h_min'] = _vv if a.get('vol24h_min') is None else min(a['vol24h_min'], _vv)
+                    a['vol24h_max'] = _vv if a.get('vol24h_max') is None else max(a['vol24h_max'], _vv)
                 anomalies.append({
                     'symbol': sym,
                     'dir': a.get('dir'),
@@ -4411,6 +4422,10 @@ class FuelFilterDaemon:
                     'funding_stale': False,   # in-scanner → live rate, never stale
                     'funding_rate': a.get('rate'),
                     'funding_prev_rate': a.get('prev_rate'),
+                    # Range since appearance: deepest funding + Vol 24h min/max.
+                    'funding_rate_min': a.get('rate_min'),
+                    'vol24h_min': a.get('vol24h_min'),
+                    'vol24h_max': a.get('vol24h_max'),
                     # Only a FUTURE settlement time — never a past one («до виплати 0»).
                     'funding_next_ms': (_nf if (_nf and (_nf / 1000.0) > now) else None),
                     'entry_threshold': a.get('entry_threshold'),

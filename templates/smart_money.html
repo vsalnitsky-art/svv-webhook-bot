@@ -8356,13 +8356,24 @@ function renderFuelFilter(d) {
                 // FIXED-width bar so every coin's bar lines up in one column; a
                 // pulsing end-cap sits at the current fill level and jiggles.
                 const fillPct = (fill * 100).toFixed(1);
+                // Peak (deepest funding reached since appearance) → amber tick on
+                // the bar + «пік -X%» text, so you see MAX vs current at a glance.
+                const peakRate = (a.funding_rate_min != null) ? a.funding_rate_min : cur;
+                let peakFill = (entry - END) !== 0 ? (peakRate - entry) / (END - entry) : 0;
+                peakFill = Math.max(0, Math.min(1, peakFill));
+                const peakPct = (peakFill * 100).toFixed(1);
+                const peakTxt = (a.funding_rate_min != null)
+                    ? `<span title="Найглибший funding, досягнутий за час стеження" style="font-size:0.6rem;color:#fbbf24;white-space:nowrap;width:70px;display:inline-block">пік ${Number(peakRate).toFixed(3)}%</span>`
+                    : '<span style="width:70px;display:inline-block"></span>';
                 const progHtml =
                     `<div style="display:flex;align-items:center;gap:6px">`
                     + `<div style="width:130px;flex:0 0 130px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative">`
                     + `<div style="height:100%;width:${fillPct}%;background:#34d399;border-radius:6px"></div>`
+                    + (a.funding_rate_min != null ? `<span title="пік ${Number(peakRate).toFixed(3)}%" style="position:absolute;left:${peakPct}%;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:#fbbf24;box-shadow:0 0 4px #fbbf24"></span>` : '')
                     + `<span style="position:absolute;left:${fillPct}%;top:50%;width:9px;height:9px;margin-left:-5px;border-radius:50%;background:#34d399;box-shadow:0 0 7px #34d399;animation:ff-fund-pulse 1s ease-in-out infinite"></span>`
                     + `</div>`
                     + `<span style="font-size:0.6rem;color:#8b93a7;white-space:nowrap;width:64px;display:inline-block">${entry}%→${END}%</span>`
+                    + peakTxt
                     + (arrow ? `<span style="font-size:0.62rem;white-space:nowrap;width:60px;display:inline-block">${arrow}</span>` : '<span style="width:60px;display:inline-block"></span>')
                     + `</div>`;
                 // Funding % coloured by its TREND (change vs prev sample), not by
@@ -8401,11 +8412,11 @@ function renderFuelFilter(d) {
                 // 24h volume (USD), compact + trend arrow (↑ росте / ↓ спадає)
                 // vs the ~2-min rolling baseline (vol24h_prev). 0.5% dead-zone.
                 const v = a.vol24h;
+                const _volRange = (a.vol24h_min != null && a.vol24h_max != null)
+                    ? ` <span title="Діапазон 24h-обсягу за час стеження (мін–макс)" style="font-size:0.6rem;color:#8b93a7">(${fmtVolShort(a.vol24h_min)}–${fmtVolShort(a.vol24h_max)})</span>`
+                    : '';
                 const volTxt = (v != null && v > 0)
-                    ? (v >= 1e9 ? '$' + (v/1e9).toFixed(2) + 'B'
-                       : v >= 1e6 ? '$' + (v/1e6).toFixed(1) + 'M'
-                       : v >= 1e3 ? '$' + (v/1e3).toFixed(0) + 'K' : '$' + v.toFixed(0))
-                      + volTrendArrow(v, a.vol24h_prev)
+                    ? `<b>${fmtVolShort(v)}</b>${volTrendArrow(v, a.vol24h_prev)}${_volRange}`
                     : '<span style="color:#667">—</span>';
                 return `<tr style="background:rgba(16,185,129,0.06)">
                     <td style="font-weight:600">${a.spike ? `<span title="Аномальний ріст: різкий рух ціни ${a.spike_move != null ? (a.spike_move >= 0 ? '+' : '') + a.spike_move + '% ' : ''}+ зростання обсягу — варто розглянути" style="margin-right:4px;cursor:default">🚀</span>` : ''}<span onclick="showFundingHistory('${a.symbol}')" title="Історія монети (архів)" style="cursor:pointer;margin-right:4px">📜</span><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
@@ -8430,6 +8441,14 @@ function fTrendBadge(t) {
     if (t < 0) return ' <span title="F-Trend: funding поглиблюється (глибше в мінус) за ~30 хв" style="color:#ff5252;font-size:0.64rem;font-weight:700">F🔻</span>';
     if (t > 0) return ' <span title="F-Trend: funding послаблюється (до нуля) за ~30 хв" style="color:#4caf50;font-size:0.64rem;font-weight:700">F🔺</span>';
     return ' <span title="F-Trend: без чіткого тренду за ~30 хв" style="color:#888;font-size:0.64rem">F➖</span>';
+}
+
+// Compact USD volume: $9.77M / $1.2K / $980.
+function fmtVolShort(v) {
+    if (v == null || !(v > 0)) return '—';
+    return v >= 1e9 ? '$' + (v/1e9).toFixed(2) + 'B'
+         : v >= 1e6 ? '$' + (v/1e6).toFixed(1) + 'M'
+         : v >= 1e3 ? '$' + (v/1e3).toFixed(0) + 'K' : '$' + v.toFixed(0);
 }
 
 // Vol 24h trend arrow vs the ~2-min rolling baseline (0.5% dead-zone):
