@@ -8360,10 +8360,19 @@ function renderFuelFilter(d) {
                     + `<span style="font-size:0.6rem;color:#8b93a7;white-space:nowrap;width:64px;display:inline-block">${entry}%→${END}%</span>`
                     + (arrow ? `<span style="font-size:0.62rem;white-space:nowrap;width:60px;display:inline-block">${arrow}</span>` : '<span style="width:60px;display:inline-block"></span>')
                     + `</div>`;
+                // Funding % coloured by its TREND (change vs prev sample), not by
+                // sign: ← зменшується = red, → збільшується = green, без змін = grey.
+                // (Funding is almost always negative here, so sign-colour was useless.)
+                let _rateCol = '#cbd5e1', _rateTip = 'без даних тренду';
+                if (prev != null && a.funding_rate != null) {
+                    if (a.funding_rate < prev - 0.0005) { _rateCol = '#f87171'; _rateTip = 'зменшується (глибше в мінус)'; }
+                    else if (a.funding_rate > prev + 0.0005) { _rateCol = '#4ade80'; _rateTip = 'збільшується (до нуля)'; }
+                    else { _rateCol = '#8b93a7'; _rateTip = 'без змін'; }
+                }
                 // No live funding source once the coin left the scanner → «—».
                 const rateTxt = (a.funding_stale || a.funding_rate == null)
                     ? '<span style="color:#667">—</span>'
-                    : `<span style="font-weight:700;color:${a.funding_rate < 0 ? '#f87171' : '#4ade80'}">${a.funding_rate >= 0 ? '+' : ''}${Number(a.funding_rate).toFixed(3)}%</span>`;
+                    : `<span title="Funding ${_rateTip}" style="font-weight:700;color:${_rateCol}">${a.funding_rate >= 0 ? '+' : ''}${Number(a.funding_rate).toFixed(3)}%</span>`;
                 const cdTxt = a.funding_next_ms
                     ? `<span class="ff-fundnext" data-next="${a.funding_next_ms}" style="font-size:0.66rem;color:#9aa3b5">⏳ ${fmtFundLeft(a.funding_next_ms)}</span>`
                     : (a.funding_stale
