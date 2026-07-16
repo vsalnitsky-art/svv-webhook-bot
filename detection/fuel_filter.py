@@ -332,6 +332,8 @@ DEFAULT_SETTINGS = {
     # збігу показників для входу (edge-trigger + кулдаун, хв).
     'opportunity_tg': True,
     'opportunity_alert_cooldown_min': 30,
+    # 🚀 Аномальний ріст: слати в Telegram, коли монета робить різкий рух.
+    'spike_tg': True,
 }
 
 
@@ -383,6 +385,9 @@ class FuelFilterDaemon:
         # 🎯 Opportunity-alert edge state: {sym: was_hot} + {sym: last_alert_ts}.
         self._opp_hot_state: Dict[str, bool] = {}
         self._opp_alert_at: Dict[str, float] = {}
+        # 🚀 Spike-alert edge state (anomalous growth Telegram).
+        self._spike_alert_state: Dict[str, bool] = {}
+        self._spike_alert_at: Dict[str, float] = {}
         # Persistent per-coin funding archive: {sym: [ {t,ev,mm,mm_dir,funding,
         # price,vol24h,btc_dir,btc_paused} ]}. Re-appearing coins APPEND to the
         # existing series. _funding_prev_state tracks last snapshot for event
@@ -3332,7 +3337,9 @@ class FuelFilterDaemon:
         entry confluence (opportunity_hot). Edge-triggered per coin with a
         cooldown — this REPLACES the old funding appear/exit spam. Off when
         `opportunity_tg` is disabled."""
-        if not s.get('opportunity_tg', True):
+        _opp_on = bool(s.get('opportunity_tg', True))
+        _spike_on = bool(s.get('spike_tg', True))
+        if not (_opp_on or _spike_on):
             return
         try:
             cool = max(60, int(s.get('opportunity_alert_cooldown_min', 30) or 30) * 60)
@@ -3343,24 +3350,40 @@ class FuelFilterDaemon:
         live = set()
         for sym, a in items:
             live.add(sym)
-            try:
-                opp, hot, reasons = self._opportunity_for(sym, a)
-            except Exception:
-                continue
-            prev_hot = self._opp_hot_state.get(sym, False)
-            if hot and not prev_hot:
-                if (now - self._opp_alert_at.get(sym, 0)) >= cool:
+            # 🎯 Opportunity alert — rising edge to «best entry confluence».
+            if _opp_on:
+                try:
+                    opp, hot, reasons = self._opportunity_for(sym, a)
+                except Exception:
+                    opp, hot, reasons = 0, False, []
+                prev_hot = self._opp_hot_state.get(sym, False)
+                if hot and not prev_hot and (now - self._opp_alert_at.get(sym, 0)) >= cool:
                     try:
                         self._send_opportunity_alert(sym, a, opp, reasons)
                     except Exception as e:
                         print(f"[FF-Opp] alert send error {sym}: {e}")
                     self._opp_alert_at[sym] = now
-            self._opp_hot_state[sym] = hot
+                self._opp_hot_state[sym] = hot
+            # 🚀 Spike alert — rising edge to «anomalous growth».
+            if _spike_on:
+                spk = bool(a.get('spike'))
+                prev_spk = self._spike_alert_state.get(sym, False)
+                if spk and not prev_spk and (now - self._spike_alert_at.get(sym, 0)) >= cool:
+                    try:
+                        self._send_spike_alert(sym, a)
+                    except Exception as e:
+                        print(f"[FF-Spike] alert send error {sym}: {e}")
+                    self._spike_alert_at[sym] = now
+                self._spike_alert_state[sym] = spk
         # Prune state for coins that left the table.
         for k in list(self._opp_hot_state.keys()):
             if k not in live:
                 self._opp_hot_state.pop(k, None)
                 self._opp_alert_at.pop(k, None)
+        for k in list(self._spike_alert_state.keys()):
+            if k not in live:
+                self._spike_alert_state.pop(k, None)
+                self._spike_alert_at.pop(k, None)
 
     def _send_opportunity_alert(self, sym: str, a: Dict, opp: int, reasons: list):
         """Compose + broadcast the 🎯 «best moment to open» Telegram message to
@@ -3372,6 +3395,20 @@ class FuelFilterDaemon:
         rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
         body = (f"🎯 #{sym} — рекомендація бота\n"
                 f"{emoji} {side} · Opportunity {opp}% · funding {rt_s}")
+        self._broadcast_users('funding', 'notify_funding', body)
+
+    def _send_spike_alert(self, sym: str, a: Dict):
+        """🚀 Broadcast an «anomalous growth» Telegram message when a funding coin
+        makes a sharp price move + rising volume — to the 💰 funding subscribers."""
+        d = a.get('dir')
+        emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
+        side = d if d in ('LONG', 'SHORT') else ''
+        mv = a.get('spike_move')
+        mv_s = (f"{mv:+.2f}%" if isinstance(mv, (int, float)) else '')
+        rt = a.get('rate')
+        rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
+        body = (f"🚀 #{sym} — аномальний ріст\n"
+                f"{emoji} {side} · рух {mv_s} · funding {rt_s}")
         self._broadcast_users('funding', 'notify_funding', body)
 
     def _run_alerts(self):
