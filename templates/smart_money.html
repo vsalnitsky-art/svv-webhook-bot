@@ -8364,21 +8364,22 @@ function renderFuelFilter(d) {
                         }
                     }
                 }
-                // ONE bar spanning Entry ≤ (start) → пік (end); the CURRENT value
-                // is a bright tick between them. No duplicated «зараз» text — the
-                // number lives in the Funding column.
-                const entryThr = (a.entry_threshold != null) ? a.entry_threshold : -0.5;
+                // ABSOLUTE scale Entry ≤ (0%) → −4% (100%). Green FILL = current
+                // funding depth (so −0.9% is visibly longer than −0.1%); amber TICK
+                // = пік (deepest reached), like a «Goal» marker. Number of current
+                // lives in the Funding column, so no duplicate text here.
+                // (END = -4 already declared above.)
+                const entryThr = (a.entry_threshold != null) ? a.entry_threshold : -0.1;
                 const peakRate = (a.funding_rate_min != null) ? a.funding_rate_min : cur;
-                const _span = peakRate - entryThr;                 // negative (deeper)
-                let curPos = (_span !== 0) ? (cur - entryThr) / _span : 0;
-                curPos = Math.max(0, Math.min(1, curPos)) * 100;
-                const curPctS = curPos.toFixed(1);
+                const _rng = (END - entryThr) || 1;                 // full scale span
+                const fillS = (Math.max(0, Math.min(1, (cur - entryThr) / _rng)) * 100).toFixed(1);
+                const peakS = (Math.max(0, Math.min(1, (peakRate - entryThr) / _rng)) * 100).toFixed(1);
                 const progHtml =
                     `<div style="display:flex;align-items:center;gap:7px">`
-                    + `<span title="Entry ≤ із 💰 Funding Rate Scanner" style="font-size:0.6rem;color:#8b93a7;white-space:nowrap">≤ ${Number(entryThr).toFixed(2)}%</span>`
-                    + `<div style="width:120px;flex:0 0 120px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative">`
-                    + `<div style="height:100%;width:${curPctS}%;background:#34d399;border-radius:6px 0 0 6px"></div>`
-                    + `<span title="Поточний funding ${Number(cur).toFixed(3)}%" style="position:absolute;left:${curPctS}%;top:-3px;bottom:-3px;width:3px;margin-left:-1.5px;background:#e6ebf5;box-shadow:0 0 6px #fff;border-radius:2px"></span>`
+                    + `<span title="Entry ≤ із 💰 Funding Rate Scanner (старт шкали); кінець шкали −4%" style="font-size:0.6rem;color:#8b93a7;white-space:nowrap">≤ ${Number(entryThr).toFixed(2)}%</span>`
+                    + `<div style="width:150px;flex:0 0 150px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative">`
+                    + `<div title="Поточний funding ${Number(cur).toFixed(3)}%" style="height:100%;width:${fillS}%;background:linear-gradient(90deg,#34d399,#22c55e);border-radius:6px"></div>`
+                    + `<span title="пік ${Number(peakRate).toFixed(3)}% (найглибший)" style="position:absolute;left:${peakS}%;top:-3px;bottom:-3px;width:3px;margin-left:-1.5px;background:#fbbf24;box-shadow:0 0 5px #fbbf24;border-radius:2px"></span>`
                     + `</div>`
                     + `<span title="Найглибший funding за час стеження" style="font-size:0.6rem;color:#fbbf24;white-space:nowrap">пік ${Number(peakRate).toFixed(3)}%</span>`
                     + `</div>`;
