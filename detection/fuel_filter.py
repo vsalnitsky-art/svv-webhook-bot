@@ -342,6 +342,11 @@ DEFAULT_SETTINGS = {
     'opportunity_cold_grace_sec': 180,
     # 🚀 Аномальний ріст: слати в Telegram, коли монета робить різкий рух.
     'spike_tg': True,
+    # 🧪 ТЕСТ сигналів: відкривати угоду ПРЯМО по сигналу (без черги), щоб
+    # оцінити прибутковість. Режим (real/paper) — за станом Trade Manager
+    # (real TM вимкнено + Test Mode → paper-угоди). Вихід веде FF/TM.
+    'opportunity_auto_open': True,   # 🎯 відкривати по «рекомендації бота»
+    'spike_auto_open': True,         # 🚀 відкривати по аномальному росту
 }
 
 
@@ -3481,6 +3486,9 @@ class FuelFilterDaemon:
                         except Exception as e:
                             print(f"[FF-Opp] alert send error {sym}: {e}")
                         self._opp_alert_at[sym] = now
+                    # 🧪 TEST: open a trade directly on the 🎯 signal (no queue).
+                    if s.get('opportunity_auto_open', True):
+                        self._signal_open(sym, a, '🎯 Opportunity', s)
                     self._opp_hot_state[sym] = True
             elif prev_hot:
                 # Not hot right now but WAS — hold through the grace window before
@@ -3495,16 +3503,21 @@ class FuelFilterDaemon:
                 # else: still «holding» within grace → keep episode + timer running.
             else:
                 self._opp_hot_state[sym] = False
-            # 🚀 Spike alert — rising edge to «anomalous growth».
-            if _spike_on:
+            # 🚀 Spike — rising edge: Telegram (gated + cooldown) AND/OR test open.
+            _spk_open = bool(s.get('spike_auto_open', True))
+            if _spike_on or _spk_open:
                 spk = bool(a.get('spike'))
                 prev_spk = self._spike_alert_state.get(sym, False)
-                if spk and not prev_spk and (now - self._spike_alert_at.get(sym, 0)) >= cool:
-                    try:
-                        self._send_spike_alert(sym, a)
-                    except Exception as e:
-                        print(f"[FF-Spike] alert send error {sym}: {e}")
-                    self._spike_alert_at[sym] = now
+                if spk and not prev_spk:
+                    if _spike_on and (now - self._spike_alert_at.get(sym, 0)) >= cool:
+                        try:
+                            self._send_spike_alert(sym, a)
+                        except Exception as e:
+                            print(f"[FF-Spike] alert send error {sym}: {e}")
+                        self._spike_alert_at[sym] = now
+                    # 🧪 TEST: open a trade directly on the 🚀 signal (no queue).
+                    if _spk_open:
+                        self._signal_open(sym, a, '🚀 Spike', s)
                 self._spike_alert_state[sym] = spk
         # Prune state for coins that left the table — closing any 🎯 episode still
         # open (exit price unknown once the coin is gone).
@@ -3547,6 +3560,29 @@ class FuelFilterDaemon:
         body = (f"🚀 #{sym} — аномальний ріст\n"
                 f"{emoji} {side} · рух {mv_s} · funding {rt_s}")
         self._broadcast_users('funding', 'notify_funding', body)
+
+    def _signal_open(self, sym: str, a: Dict, tag: str, settings: Dict):
+        """🧪 Open a TEST trade DIRECTLY on a 🎯/🚀 signal (no queue). Direction =
+        the coin's side; entry = its last price. Reuses _open() → real if TM is
+        enabled, else paper (Test Mode). FF/TM then manage the exit. No double-open."""
+        try:
+            side = a.get('dir')
+            if side not in ('LONG', 'SHORT'):
+                return
+            if sym in self._fuel_managed:
+                return   # already opened/managed by FF — don't duplicate
+            try:
+                px = float(a.get('last_price') or a.get('start_price') or 0)
+            except (TypeError, ValueError):
+                px = 0.0
+            if px <= 0:
+                return
+            ok = self._open(sym, side, {'mark_price': px, 'dir': side},
+                            settings, opened_by=tag)
+            if ok:
+                print(f"[FF-Signal] {tag} → відкрито {side} {sym} @ {px}")
+        except Exception as e:
+            print(f"[FF-Signal] open error {sym}: {e}")
 
     def _run_alerts(self):
         """Fire BTC START/STOP and 🎯 opportunity Telegram alerts on a fast
