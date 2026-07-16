@@ -8368,16 +8368,31 @@ function renderFuelFilter(d) {
                 // Funding % coloured by its TREND (change vs prev sample), not by
                 // sign: ← зменшується = red, → збільшується = green, без змін = grey.
                 // (Funding is almost always negative here, so sign-colour was useless.)
-                let _rateCol = '#cbd5e1', _rateTip = 'без даних тренду';
+                let _rateCol = '#cbd5e1', _rateTip = 'без даних тренду', _rateExtra = '', _rateMark = '';
                 if (prev != null && a.funding_rate != null) {
                     if (a.funding_rate < prev - 0.0005) { _rateCol = '#f87171'; _rateTip = 'зменшується (глибше в мінус)'; }
                     else if (a.funding_rate > prev + 0.0005) { _rateCol = '#4ade80'; _rateTip = 'збільшується (до нуля)'; }
-                    else { _rateCol = '#8b93a7'; _rateTip = 'без змін'; }
+                    else {
+                        // БЕЗ ЗМІН — окремий колір «стабільно». Якщо значення сіло на
+                        // ЧІТКЕ півцілое число (0.5/1/1.5/…/4) → сигнальне золоте
+                        // виділення: funding «застряг» на круглому рівні — цікаво.
+                        const _av = Math.abs(a.funding_rate);
+                        const _step = Math.round(_av / 0.5) * 0.5;
+                        if (Math.abs(_av - _step) < 0.01 && _step >= 0.5 && _step <= 4) {
+                            _rateCol = '#fbbf24';
+                            _rateTip = `⚡ цікаве значення: стабільний funding ${_step}% (чітке число)`;
+                            _rateExtra = ';text-shadow:0 0 9px rgba(251,191,36,0.9);font-weight:800';
+                            _rateMark = '✦ ';
+                        } else {
+                            _rateCol = '#7dd3fc';
+                            _rateTip = 'без змін (стабільний)';
+                        }
+                    }
                 }
                 // No live funding source once the coin left the scanner → «—».
                 const rateTxt = (a.funding_stale || a.funding_rate == null)
                     ? '<span style="color:#667">—</span>'
-                    : `<span title="Funding ${_rateTip}" style="font-weight:700;color:${_rateCol}">${a.funding_rate >= 0 ? '+' : ''}${Number(a.funding_rate).toFixed(3)}%</span>`;
+                    : `<span title="Funding ${_rateTip}" style="font-weight:700;color:${_rateCol}${_rateExtra}">${_rateMark}${a.funding_rate >= 0 ? '+' : ''}${Number(a.funding_rate).toFixed(3)}%</span>`;
                 const cdTxt = a.funding_next_ms
                     ? `<span class="ff-fundnext" data-next="${a.funding_next_ms}" style="font-size:0.66rem;color:#9aa3b5">⏳ ${fmtFundLeft(a.funding_next_ms)}</span>`
                     : (a.funding_stale
