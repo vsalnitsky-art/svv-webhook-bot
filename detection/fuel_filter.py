@@ -4028,14 +4028,28 @@ class FuelFilterDaemon:
         except Exception:
             eg_long, eg_short = True, True
         ob_enabled, ob_tf = False, '1h'
+        sc = {}   # SMC-scanner settings (screen-2 levers: сигнал/структура/фільтри)
         try:
             tm = self._get_tm() if self._get_tm else None
             scanner = getattr(tm, 'scanner', None) if tm else None
             if scanner is not None:
-                ob_enabled = bool(scanner._settings.get('ob_filter_enabled', False))
-                ob_tf = scanner._settings.get('ob_filter_timeframe', '1h')
+                sc = dict(scanner._settings or {})
+                ob_enabled = bool(sc.get('ob_filter_enabled', False))
+                ob_tf = sc.get('ob_filter_timeframe', '1h')
         except Exception:
             pass
+        # SMC signal mode (CHoCH / CHoCH+BOS / CHoCH або BOS) + related levers.
+        _am_map = {'choch': 'CHoCH', 'choch_bos': 'CHoCH+BOS',
+                   'choch_or_bos': 'CHoCH або BOS'}
+        alert_mode = _am_map.get(sc.get('alert_mode', 'choch'),
+                                 sc.get('alert_mode', 'choch'))
+        _rec = sc.get('recency_minutes', 0) or 0
+        recency = (f"{_rec} хв" if _rec else 'без ліміту')
+        _f1 = bool(sc.get('forecast_1h_filter_enabled'))
+        _f4 = bool(sc.get('forecast_4h_filter_enabled'))
+        forecast_filter = ('вимк' if not (_f1 or _f4)
+                           else (f"1H+4H ({sc.get('forecast_combine_mode','AND')})" if (_f1 and _f4)
+                                 else ('лише 1H' if _f1 else 'лише 4H')))
         try:
             scan_n = len(self.get_scan_list())
         except Exception:
@@ -4091,6 +4105,19 @@ class FuelFilterDaemon:
                 {'k': 'OB-фільтр (сканер)', 'v': (f"УВІМК ({ob_tf})" if ob_enabled else 'вимк')},
                 {'k': 'Авто Manual SL з OB', 'v': (f"УВІМК (буфер {s.get('q2_auto_ob_sl_buffer_pct',0.2)}%, {s.get('q2_auto_ob_sl_tf','15m')})" if s.get('q2_auto_ob_sl') else 'вимк')},
             ]},
+            {'title': '🔍 SMC-сигнал (сканер)', 'items': [
+                {'k': 'Режим сигналу', 'v': alert_mode},
+                {'k': 'Свіжість сигналу', 'v': recency},
+                {'k': 'Дедуплікація (1/тренд)', 'v': _on(sc.get('deduplicate_signals', True))},
+                {'k': 'TF структури', 'v': sc.get('timeframe', '15m')},
+                {'k': 'Internal Size', 'v': sc.get('internal_size', 5)},
+                {'k': 'Swing Points', 'v': sc.get('swing_size', 50)},
+                {'k': 'CTR TF', 'v': sc.get('ctr_timeframe', '1h')},
+                {'k': 'HTF-Bias фільтр', 'v': (f"УВІМК ({sc.get('htf_timeframe','1h')} · {sc.get('htf_method','EMA Trend')})" if sc.get('htf_enabled') else 'вимк')},
+                {'k': 'Forecast-фільтр', 'v': forecast_filter},
+                {'k': 'Фільтр за ціною (PD)', 'v': (f"УВІМК ({sc.get('pd_zone_timeframe','1h')}: LONG≥{float(sc.get('pd_long_max_pct',75)):.0f}% / SHORT≤{float(sc.get('pd_short_min_pct',25)):.0f}%)" if sc.get('use_pd_zone_filter') else 'вимк')},
+                {'k': 'Volumized OB-тренд', 'v': (f"УВІМК ({sc.get('volumized_timeframe','1h')})" if sc.get('use_volumized_ob') else 'вимк')},
+            ]},
             {'title': '🚪 Показ / закриття', 'items': [
                 {'k': 'Поріг показу в таблиці', 'v': f"{s.get('duration_minutes',5)} хв"},
                 {'k': 'Макс. виснаження (гейт)', 'v': f"{s.get('max_exhaustion_pct',75)}%"},
@@ -4109,7 +4136,17 @@ class FuelFilterDaemon:
                 f"Dec≥{s.get('queue2_open_min_dec_score',20)} · CTR-зона {s.get('queue2_ctr_neutral_pct',10)}% · "
                 f"TTL {s.get('queue2_ttl_hours',2)}год · Q2₿-гейт {_on(s.get('queue2_use_btc'))} · "
                 f"OB {'УВІМК '+ob_tf if ob_enabled else 'вимк'} · "
-                f"автоSL {_on(s.get('q2_auto_ob_sl'))} · CTR-mtf {_on(s.get('ctr_mtf_enabled'))}")
+                f"автоSL {_on(s.get('q2_auto_ob_sl'))} · CTR-mtf {_on(s.get('ctr_mtf_enabled'))} · "
+                # SMC-scanner levers (screen-2) — включено в підпис, щоб їхні
+                # зміни ФІКСУВАЛИСЬ у 🧾 лозі (дедуп рахується саме за text).
+                f"сигнал: {alert_mode} · свіжість {recency} · "
+                f"дедуп {_on(sc.get('deduplicate_signals', True))} · "
+                f"структура {sc.get('timeframe','15m')}/IS{sc.get('internal_size',5)}/SW{sc.get('swing_size',50)} · "
+                f"CTR-TF {sc.get('ctr_timeframe','1h')} · "
+                f"HTF {('УВІМК '+str(sc.get('htf_timeframe','1h'))) if sc.get('htf_enabled') else 'вимк'} · "
+                f"Forecast {forecast_filter} · "
+                f"PD {'УВІМК' if sc.get('use_pd_zone_filter') else 'вимк'} · "
+                f"VolOB {_on(sc.get('use_volumized_ob'))}")
 
         fields = {
             'ff_enabled': ff_on, 'engine_mode': ('btc' if btc_mode else ('indep' if indep else 'buttons')),
@@ -4129,6 +4166,20 @@ class FuelFilterDaemon:
             'ctr_mtf': bool(s.get('ctr_mtf_enabled')),
             'min_decision': s.get('engine_min_decision'),
             'scan_list_n': scan_n,
+            # SMC-scanner (screen-2) levers.
+            'smc_alert_mode': sc.get('alert_mode'),
+            'smc_recency_min': sc.get('recency_minutes'),
+            'smc_deduplicate': bool(sc.get('deduplicate_signals', True)),
+            'smc_timeframe': sc.get('timeframe'),
+            'smc_internal_size': sc.get('internal_size'),
+            'smc_swing_size': sc.get('swing_size'),
+            'ctr_timeframe': sc.get('ctr_timeframe'),
+            'htf_enabled': bool(sc.get('htf_enabled')),
+            'htf_timeframe': sc.get('htf_timeframe'),
+            'htf_method': sc.get('htf_method'),
+            'forecast_1h_filter': _f1, 'forecast_4h_filter': _f4,
+            'pd_zone_filter': bool(sc.get('use_pd_zone_filter')),
+            'volumized_ob': bool(sc.get('use_volumized_ob')),
         }
         return {'text': text, 'groups': groups, 'fields': fields}
 
@@ -4145,7 +4196,7 @@ class FuelFilterDaemon:
                 return   # nothing changed → don't spam the log
             self._last_cfg_log_sig = _sig
             detail = _sig if not reason else f"[{reason}] {_sig}"
-            log_activity('ALL', 'config', detail[:400], source='config',
+            log_activity('ALL', 'config', detail[:700], source='config',
                          extra=cfg.get('fields'))
         except Exception:
             pass
