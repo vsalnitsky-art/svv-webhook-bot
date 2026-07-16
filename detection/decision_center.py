@@ -303,11 +303,11 @@ def build_decision(
 def telegram_one_liner(decision: Dict) -> str:
     """Compact one-line summary for Telegram OPEN/CLOSE messages.
     
-    Format: '🧠 Decision: LONG 78% (good)'
+    Format: '🤪 Decision: LONG 78% (good)'
     Returns empty string if the decision is empty or feature disabled.
     """
     if not decision or 'headline' not in decision:
         return ''
     headline = decision.get('headline', '?')
     verdict = decision.get('verdict', '')
-    return f"🧠 Decision: {headline} ({verdict})"
+    return f"🤪 Decision: {headline} ({verdict})"

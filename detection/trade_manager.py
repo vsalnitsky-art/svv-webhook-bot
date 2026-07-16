@@ -867,7 +867,7 @@ class TradeManager:
                     hold_score = (_sc or {}).get('score')
                 except Exception:
                     hold_score = None
-                # 🧠 Decision Center TRAJECTORY — sampled at a COARSER cadence
+                # 🤪 Decision Center TRAJECTORY — sampled at a COARSER cadence
                 # than price (heavy: LONG+SHORT eval + context) so we can see how
                 # the verdict evolved intra-trade without loading the -w1 worker.
                 dec_reco = dec_verdict = dec_prob = dec_score = None
@@ -926,7 +926,7 @@ class TradeManager:
                     'hold_score': hold_score,
                     'manual_sl': _msl,
                     'dist_to_sl': dist_to_sl,
-                    # 🧠 Decision Center trajectory (coarse cadence; None between).
+                    # 🤪 Decision Center trajectory (coarse cadence; None between).
                     'dec_reco': dec_reco,
                     'dec_verdict': dec_verdict,
                     'dec_prob': dec_prob,
@@ -2111,7 +2111,7 @@ class TradeManager:
                           entry_score: Optional[Dict] = None) -> str:
         """Build a compact opened_by label.
         
-        Format: '<base> · 🧠 LONG 78% (good)'
+        Format: '<base> · 🤪 LONG 78% (good)'
         
         Previously this surfaced Forecast/CTR/Entry as three separate
         chunks but the user feedback was that it was hard to read. Now
@@ -2124,7 +2124,7 @@ class TradeManager:
         """
         parts = [opened_by]
         # FF auto-engine trades label "Opened by" with their own tag (🔥 entry
-        # exhaustion, or legacy 🕯️) — keep it as-is, no 🧠 verdict suffix.
+        # exhaustion, or legacy 🕯️) — keep it as-is, no 🤪 verdict suffix.
         if opened_by and (str(opened_by).startswith('🔥')
                           or str(opened_by).startswith('🕯️')):
             return opened_by
@@ -2132,16 +2132,16 @@ class TradeManager:
             headline = entry_score.get('headline')
             verdict = self._verdict_ua(entry_score.get('verdict', ''))
             if headline:
-                parts.append(f"🧠 {headline} ({verdict})" if verdict else f"🧠 {headline}")
+                parts.append(f"🤪 {headline} ({verdict})" if verdict else f"🤪 {headline}")
             else:
                 # Legacy entry_score shape — score+verdict only
                 score = entry_score.get('score')
                 if score is not None:
                     sign = '+' if score >= 0 else ''
                     if verdict:
-                        parts.append(f"🧠 {sign}{score:.0f} ({verdict})")
+                        parts.append(f"🤪 {sign}{score:.0f} ({verdict})")
                     else:
-                        parts.append(f"🧠 {sign}{score:.0f}")
+                        parts.append(f"🤪 {sign}{score:.0f}")
         return ' · '.join(parts)
     
     def _base_opened_by(self, opened_by: str) -> str:
@@ -3811,7 +3811,7 @@ class TradeManager:
         # the scanner's klines cache. Failure to compute is non-fatal — we
         # just skip the OB line in the message.
         ob_line = self._format_last_ob_telegram(symbol)
-        # Source WITHOUT the decision suffix (the 🧠 verdict is shown once,
+        # Source WITHOUT the decision suffix (the 🤪 verdict is shown once,
         # below in es_block — fixes the duplicated «LONG 83% (marginal)»).
         src = self._base_opened_by(opened_by_full)
         msg = (
@@ -3936,7 +3936,7 @@ class TradeManager:
         one-liner per user feedback that the verbose form was confusing.
         Produces output like:
         
-            🧠 Decision: LONG 78% (good)
+            🤪 Decision: LONG 78% (good)
             
         Empty string when entry_score is missing/disabled. Despite the
         legacy method name, this now reads from the Decision Center
@@ -3947,26 +3947,26 @@ class TradeManager:
         headline = entry_score.get('headline')
         verdict = self._verdict_ua(entry_score.get('verdict', '?'))
         if headline:
-            return f"🧠 Рішення: {headline} ({verdict})\n"
+            return f"🤪 Рішення: {headline} ({verdict})\n"
         score = entry_score.get('score', 0)
         sign = '+' if score >= 0 else ''
-        return f"🧠 Рішення: {sign}{score:.0f} ({verdict})\n"
+        return f"🤪 Рішення: {sign}{score:.0f} ({verdict})\n"
     
     def _format_entry_score_recap(self, entry_score: Optional[Dict]) -> str:
         """Compact one-line recap of the Decision Center verdict for
         Telegram CLOSE messages. Format:
         
-            🧠 Was: LONG 78% (good)
+            🤪 Was: LONG 78% (good)
         """
         if not entry_score:
             return ''
         headline = entry_score.get('headline')
         verdict = self._verdict_ua(entry_score.get('verdict', '?'))
         if headline:
-            return f"🧠 Було: {headline} ({verdict})\n"
+            return f"🤪 Було: {headline} ({verdict})\n"
         score = entry_score.get('score', 0)
         sign = '+' if score >= 0 else ''
-        return f"🧠 Було: {sign}{score:.0f} ({verdict})\n"
+        return f"🤪 Було: {sign}{score:.0f} ({verdict})\n"
 
     @staticmethod
     def _verdict_ua(v):

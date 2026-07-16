@@ -1941,7 +1941,7 @@ class FuelFilterDaemon:
     def _decision_verdict(self, symbol: str, price: Optional[float] = None) -> Dict:
         """Decision-Center snapshot for `symbol`: {'verdict': 'good'|'marginal'|
         'poor'|None, 'recommended': 'LONG'|'SHORT'|'NEUTRAL'|None}. Same object
-        the 🧠 badge shows on the chart — sourced from TradeManager.compute_decision()
+        the 🤪 badge shows on the chart — sourced from TradeManager.compute_decision()
         (→ decision_center.build_decision). Cached BIAS_TTL sec (it runs the entry
         evaluator) — call only from the engine's final open gate, never per tick.
 

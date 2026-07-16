@@ -447,6 +447,9 @@
     50%      { transform: translateY(-50%) scale(1.7); opacity: 0.45; }
 }
 
+/* 🧑‍🔬 Ейнштейн-іконка (замість 🧠) — оригінальна карикатура, inline через <use> */
+.ein-icon { width: 1.15em; height: 1.15em; vertical-align: -0.22em; flex: none; }
+
 /* 💸 Money-rain — плей у момент активації (₿ START / сильний тиск ММ).
    Гроші «сиплються» згори вниз із легким обертанням і гойданням. */
 #ff-money-rain {
@@ -1321,7 +1324,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-bias-mini-s { background:linear-gradient(90deg,#f87171,#dc2626); height:100%; transition:width .4s; }
     .sm-bias-mini-val { font-family:monospace; font-size:0.74rem; color:#c6cbd8; }
     </style>
-    
+
+    <!-- 🧑‍🔬 Ейнштейн-іконка (оригінальна карикатура з язиком) — SVG-спрайт,
+         використовується скрізь через <svg class="ein-icon"><use href="#ein-icon"/></svg> -->
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true"><symbol id="ein-icon" viewBox="0 0 64 64"><path fill="#dfe5ee" stroke="#9aa3b5" stroke-width="0.7" d="M12 37 C2 33 5 20 12 18 C8 11 16 6 21 12 C21 3 33 3 35 12 C41 5 49 10 45 18 C53 19 57 30 49 35 C46 28 39 25 32 25 C24 25 16 30 12 37Z"/><circle cx="16" cy="35" r="3.2" fill="#f3cb9f"/><circle cx="48" cy="35" r="3.2" fill="#f3cb9f"/><circle cx="32" cy="34" r="15.5" fill="#f6cfa4"/><path d="M22 28 q4 -3 8 -0.5" stroke="#c3cad6" stroke-width="2.6" fill="none" stroke-linecap="round"/><path d="M34 27.5 q4 -2.5 8 0.5" stroke="#c3cad6" stroke-width="2.6" fill="none" stroke-linecap="round"/><circle cx="26" cy="32" r="2.1" fill="#2b303b"/><circle cx="38" cy="32" r="2.1" fill="#2b303b"/><path d="M27.5 42 q4.5 2 9 0 l0 5 q0 4.2 -4.5 4.7 q-4.5 -0.5 -4.5 -4.7Z" fill="#f2717f"/><line x1="32" y1="43.5" x2="32" y2="50.5" stroke="#d85e6c" stroke-width="1.1"/><path d="M21 40 q6 -2.5 11 0 q5 -2.5 11 0 q-4 4.6 -9 3 q-1.6 -0.6 -2 -1.8 q-0.4 1.2 -2 1.8 q-5 1.6 -9 -3Z" fill="#eef1f6" stroke="#c3cad6" stroke-width="0.5"/></symbol></svg>
+
     <div class="sm-bias" id="sm-bias">
         <div class="sm-bias-top">
             <div class="sm-bias-verdict sm-bias-WAIT" id="sm-bias-verdict">⏳ <span>—</span></div>
@@ -1812,7 +1819,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-decision" id="sm-decision" style="display:none">
                 <div class="sm-decision-main">
                     <div class="sm-decision-head" id="sm-decision-head">
-                        <span class="sm-decision-icon" id="sm-decision-icon">🧠</span>
+                        <span class="sm-decision-icon" id="sm-decision-icon"><svg class="ein-icon"><use href="#ein-icon"/></svg></span>
                         <span class="sm-decision-headline" id="sm-decision-headline">—</span>
                         <span class="sm-decision-verdict" id="sm-decision-verdict"></span>
                     </div>
@@ -1961,7 +1968,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </select>
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна якість вердикту 🧠 Decision Center, щоб двигун відкрив угоду. Оцінюється лише для монети, що вже пройшла всі інші фільтри (не навантажує систему).">Мін. якість рішення</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна якість вердикту 🤪 Decision Center, щоб двигун відкрив угоду. Оцінюється лише для монети, що вже пройшла всі інші фільтри (не навантажує систему).">Мін. якість рішення</label>
                             <select id="ff-min-decision" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="any">Будь-яке</option>
                                 <option value="marginal">СЕРЕДНІЙ/СИЛЬНИЙ</option>
@@ -2685,7 +2692,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          on the backend.
                          =================================================== -->
                     <div class="sm-settings-section">
-                        <h3>🧠 Decision Center
+                        <h3><svg class="ein-icon"><use href="#ein-icon"/></svg> Decision Center
                             <span style="color:#888;font-size:0.72rem;font-weight:normal">(advisory — never blocks trades)</span>
                         </h3>
                         <div class="tm-row" style="background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px;color:#a5b4fc;font-size:0.78rem">
@@ -2741,7 +2748,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  actually outperform "marginal" / "poor" picks. Hidden until
                  there's enough scored data to be meaningful. -->
             <div class="tm-entry-stats" id="tm-entry-stats" style="display:none">
-                <span style="color:#888;font-size:0.72rem">🧠 Decision validation:</span>
+                <span style="color:#888;font-size:0.72rem"><svg class="ein-icon"><use href="#ein-icon"/></svg> Decision validation:</span>
                 <span class="tm-es-cell" data-bucket="good"></span>
                 <span class="tm-es-cell" data-bucket="marginal"></span>
                 <span class="tm-es-cell" data-bucket="poor"></span>
@@ -5940,7 +5947,7 @@ function renderDecision(decision) {
     
     // Icon — brain for normal, scale for neutral
     const icon = document.getElementById('sm-decision-icon');
-    icon.textContent = recommended === 'NEUTRAL' ? '⚖️' : '🧠';
+    icon.innerHTML = recommended === 'NEUTRAL' ? '⚖️' : EINSTEIN_ICON;
     
     // Rationale — colour the PD words by lean (Premium=red/SHORT, Discount=
     // green/LONG, Equilibrium=grey). Text is server-generated (trusted); we
@@ -8601,6 +8608,8 @@ function dirTint(dir) {
     if (dir === 'SHORT') return '#fca5a5';
     return '#cbd5e1';
 }
+// 🧑‍🔬 Ейнштейн-іконка (замість 🧠) для JS-вставок — посилання на SVG-спрайт.
+const EINSTEIN_ICON = '<svg class="ein-icon"><use href="#ein-icon"/></svg>';
 
 // 💸 Money-rain: гроші «сиплються» в момент активності (₿ START / сильний тиск
 // ММ). dir → відтінок: LONG=зелений, SHORT=червоний, інакше золото.
@@ -9325,7 +9334,7 @@ function renderTradeHistoryChart(h, meta) {
         const vl = V_UA[dec.verdict] || (dec.verdict ? String(dec.verdict).toUpperCase() : '—');
         const vc = V_COL[dec.verdict] || '#cbd5e1';
         return `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:4px">`
-            + `🧠 ${label}: <b style="color:${vc}">${vl}</b>`
+            + `${EINSTEIN_ICON} ${label}: <b style="color:${vc}">${vl}</b>`
             + (dec.headline ? ` · <span style="color:#cbd5e1">${dec.headline}</span>` : '')
             + (dec.recommended && dec.recommended !== 'NEUTRAL' ? ` · ${dec.recommended}` : '')
             + `</div>`;
