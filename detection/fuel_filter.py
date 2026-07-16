@@ -2749,7 +2749,9 @@ class FuelFilterDaemon:
                                 'last_price': mark, 'last_held_sec': 0,
                                 'funding': True, 'rate': rate, 'prev_rate': rate,
                                 'next_funding': nf, 'entry_threshold': thr,
-                                'vol24h': vol, 'mm_str': _mm,
+                                'vol24h': vol, 'vol24h_prev': vol,
+                                'vol24h_base': vol, 'vol24h_base_at': now,
+                                'mm_str': _mm,
                             }
                             self._notify_funding(notifier, sym, status, mark, btc_line,
                                                  settings, now, entered=True, strength=_mm)
@@ -2762,8 +2764,7 @@ class FuelFilterDaemon:
                                   'mm_str': _mm, 'funding': True})
                         if mark:
                             a['last_price'] = mark
-                        if vol is not None:
-                            a['vol24h'] = vol
+                        self._set_vol(a, vol, now)
                         self._notify_funding(notifier, sym, status, mark, btc_line,
                                              settings, now, entered=True, strength=_mm)
                         self._funding_notify_at[sym] = now
@@ -2775,8 +2776,7 @@ class FuelFilterDaemon:
                                   'next_funding': nf, 'mm_str': _mm, 'funding': True})
                         if mark:
                             a['last_price'] = mark
-                        if vol is not None:
-                            a['vol24h'] = vol
+                        self._set_vol(a, vol, now)
                     elif in_scanner:
                         # WAIT while still in the funding scanner → PAUSE (keep,
                         # no announce) — the session holds its direction.
@@ -2785,8 +2785,7 @@ class FuelFilterDaemon:
                                   'mm_str': _mm, 'funding': True})
                         if mark:
                             a['last_price'] = mark
-                        if vol is not None:
-                            a['vol24h'] = vol
+                        self._set_vol(a, vol, now)
                     else:
                         # WAIT and gone from the scanner → session finished.
                         if a.get('holding'):
@@ -2814,7 +2813,9 @@ class FuelFilterDaemon:
                             'last_price': mark, 'last_held_sec': 0,
                             'funding': True, 'rate': rate, 'prev_rate': rate,
                             'next_funding': nf, 'entry_threshold': thr,
-                            'vol24h': vol, 'mm_str': _mm, 'in_scanner': in_scanner,
+                            'vol24h': vol, 'vol24h_prev': vol,
+                            'vol24h_base': vol, 'vol24h_base_at': now,
+                            'mm_str': _mm, 'in_scanner': in_scanner,
                         }
                         # Cooldown: suppress the TG "appear" if this coin was
                         # announced < cooldown ago (row still shows in the table).
@@ -2833,8 +2834,7 @@ class FuelFilterDaemon:
                         a['rate'] = rate
                         a['next_funding'] = nf
                         a['entry_threshold'] = thr
-                        if vol is not None:
-                            a['vol24h'] = vol
+                        self._set_vol(a, vol, now)
                         a['funding'] = True
                         a['mm_str'] = _mm
                         a['in_scanner'] = in_scanner
@@ -3969,6 +3969,27 @@ class FuelFilterDaemon:
               f"{len(cand)} канд · паливо-гейт · "
               + ' '.join(trace))
 
+    def _set_vol(self, a: Dict, vol, now: float):
+        """Update a coin's Vol 24h AND keep a ~2-min rolling baseline so the 💰
+        funding table can show whether 24h volume is TRENDING up or down. A raw
+        per-scan delta would be pure noise on a 24-hour rolling figure, so we
+        re-anchor the baseline every 120s and compare the live value to it."""
+        if vol is None:
+            return
+        try:
+            base_at = a.get('vol24h_base_at')
+            if base_at is None:
+                a['vol24h_base'] = vol
+                a['vol24h_base_at'] = now
+                a.setdefault('vol24h_prev', vol)   # seed → flat until first roll
+            elif (now - base_at) >= 120:
+                a['vol24h_prev'] = a.get('vol24h_base', vol)
+                a['vol24h_base'] = vol
+                a['vol24h_base_at'] = now
+            a['vol24h'] = vol
+        except Exception:
+            a['vol24h'] = vol
+
     def _queue_row(self, sym: str, info: Dict, now: float, smart: bool = False) -> Optional[Dict]:
         """Build ONE queue-table row for `sym`. Shared by Queue 1 and Queue 2 so
         both tables carry IDENTICAL columns. Returns None if the coin is already
@@ -4313,6 +4334,8 @@ class FuelFilterDaemon:
                     'funding_next_ms': (_nf if (_nf and (_nf / 1000.0) > now) else None),
                     'entry_threshold': a.get('entry_threshold'),
                     'vol24h': a.get('vol24h'),
+                    # ~2-min rolling baseline → UI shows Vol 24h trend ↑/↓.
+                    'vol24h_prev': a.get('vol24h_prev'),
                     # ММ (fuel) direction + strength for the funding table's ММ
                     # column (same widget as the queue / open positions).
                     'mm': (self._score_cache.get(sym) or {}).get('fuel_dir') or a.get('dir'),

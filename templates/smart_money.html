@@ -8331,12 +8331,14 @@ function renderFuelFilter(d) {
                     : (a.funding_stale
                         ? `<span title="Монета вийшла з Funding Rate Scanner (funding нормалізувався) — тримається лише на ММ" style="font-size:0.62rem;color:#8b93a7">· норм. (тримається на ММ)</span>`
                         : '');
-                // 24h volume (USD), compact.
+                // 24h volume (USD), compact + trend arrow (↑ росте / ↓ спадає)
+                // vs the ~2-min rolling baseline (vol24h_prev). 0.5% dead-zone.
                 const v = a.vol24h;
                 const volTxt = (v != null && v > 0)
                     ? (v >= 1e9 ? '$' + (v/1e9).toFixed(2) + 'B'
                        : v >= 1e6 ? '$' + (v/1e6).toFixed(1) + 'M'
                        : v >= 1e3 ? '$' + (v/1e3).toFixed(0) + 'K' : '$' + v.toFixed(0))
+                      + volTrendArrow(v, a.vol24h_prev)
                     : '<span style="color:#667">—</span>';
                 return `<tr style="background:rgba(16,185,129,0.06)">
                     <td style="font-weight:600"><span onclick="showFundingHistory('${a.symbol}')" title="Історія монети (архів)" style="cursor:pointer;margin-right:4px">📜</span><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
@@ -8352,6 +8354,15 @@ function renderFuelFilter(d) {
             }).join('');
         }
     }
+}
+
+// Vol 24h trend arrow vs the ~2-min rolling baseline (0.5% dead-zone):
+// ▲ зростає (зелений) / ▼ спадає (червоний) / → без змін (сірий).
+function volTrendArrow(v, prev) {
+    if (v == null || prev == null || !(prev > 0)) return '';
+    if (v > prev * 1.005) return ' <span title="Обсяг 24h зростає" style="color:#4ade80;font-size:0.72rem">▲</span>';
+    if (v < prev * 0.995) return ' <span title="Обсяг 24h спадає" style="color:#f87171;font-size:0.72rem">▼</span>';
+    return ' <span title="Обсяг 24h без змін" style="color:#8b93a7;font-size:0.72rem">→</span>';
 }
 
 // Full timestamp (date + time) from a unix-seconds value, for the anomalies
