@@ -8375,9 +8375,13 @@ function renderFuelFilter(d) {
                 const fillS = (Math.max(0, Math.min(1, (cur - entryThr) / _rng)) * 100).toFixed(1);
                 const peakS = (Math.max(0, Math.min(1, (peakRate - entryThr) / _rng)) * 100).toFixed(1);
                 const progHtml =
-                    `<div style="width:120px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative" title="Шкала Entry ≤ ${Number(entryThr).toFixed(2)}% → −4% · поточний ${Number(cur).toFixed(3)}% · пік ${Number(peakRate).toFixed(3)}%">`
+                    `<div style="display:flex;align-items:center;gap:6px">`
+                    + `<span title="Entry ≤ (старт шкали)" style="font-size:0.6rem;color:#8b93a7;white-space:nowrap">${Number(entryThr).toFixed(2)}%</span>`
+                    + `<div style="width:110px;flex:0 0 110px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative" title="Поточний ${Number(cur).toFixed(3)}% · шкала Entry ${Number(entryThr).toFixed(2)}% → −4%">`
                     + `<div style="height:100%;width:${fillS}%;background:linear-gradient(90deg,#34d399,#22c55e);border-radius:6px"></div>`
                     + `<span style="position:absolute;left:${peakS}%;top:-3px;bottom:-3px;width:3px;margin-left:-1.5px;background:#fbbf24;box-shadow:0 0 5px #fbbf24;border-radius:2px"></span>`
+                    + `</div>`
+                    + `<span title="пік (найглибший)" style="font-size:0.6rem;color:#fbbf24;white-space:nowrap">${Number(peakRate).toFixed(3)}%</span>`
                     + `</div>`;
                 // No live funding source once the coin left the scanner → «—».
                 const rateTxt = (a.funding_stale || a.funding_rate == null)
@@ -8409,7 +8413,7 @@ function renderFuelFilter(d) {
                     <td style="font-size:0.72rem">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}${a.paused ? ' <span title="Сесія на паузі (WAIT) — тримається за напрямком" style="color:#fbbf24;font-weight:700">⏸</span>' : ''}</td>
                     <td style="white-space:nowrap">${ffScoreBadgeHTML(a.score)}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
-                    <td style="width:130px">${progHtml}</td>
+                    <td>${progHtml}</td>
                     <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}${fTrendBadge(a.f_trend)}</td>
                     <td style="font-size:0.72rem;color:#cbd5e1;white-space:nowrap">${volTxt}</td>
                     <td style="white-space:nowrap"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.9rem;margin-right:8px" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Прибрати з таблиці">✕</span></td>
