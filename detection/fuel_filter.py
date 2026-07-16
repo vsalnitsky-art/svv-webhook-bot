@@ -73,6 +73,8 @@ _DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
 _DB_FUNDING_ARCHIVE = 'fuel_filter_funding_archive'  # per-coin funding history
 FUNDING_ARCH_MAX = 800          # max samples kept per coin
 FUNDING_ARCH_COINS_MAX = 400    # max distinct coins archived
+_DB_OPP_STATS = 'fuel_opportunity_stats'  # 🎯 per-coin recommendation episodes
+OPP_HIST_MAX = 1000             # max closed 🎯 episodes kept per coin (DB)
 FUNDING_ARCH_SAMPLE_SEC = 60    # periodic sample cadence while a coin is live
 
 # ─── queue (❤️ Черга на вхід) removal operations ───
@@ -388,6 +390,17 @@ class FuelFilterDaemon:
         # 🚀 Spike-alert edge state (anomalous growth Telegram).
         self._spike_alert_state: Dict[str, bool] = {}
         self._spike_alert_at: Dict[str, float] = {}
+        # 🎯 Per-coin 🎯-recommendation episodes (persisted to DB, survives restart):
+        #   {sym: {count, first_at, active:{start_at,start_price,opp_start}|None,
+        #          history:[ {start_at,end_at,dur_sec,start_price,end_price,
+        #                     opp_start,opp_end} ... ]}}
+        self._opp_episodes: Dict[str, Dict] = {}
+        self._opp_stats_dirty = False
+        self._opp_stats_saved_at = 0.0
+        try:
+            self._load_opp_stats()
+        except Exception as e:
+            print(f"[FuelFilter] opp-stats load error: {e}")
         # Persistent per-coin funding archive: {sym: [ {t,ev,mm,mm_dir,funding,
         # price,vol24h,btc_dir,btc_paused} ]}. Re-appearing coins APPEND to the
         # existing series. _funding_prev_state tracks last snapshot for event
@@ -3332,15 +3345,101 @@ class FuelFilterDaemon:
     def stop(self):
         self._stop.set()
 
+    # ------------------------------------------------------------------
+    # 🎯 Opportunity-episode statistics (persisted to DB, no data loss)
+    # ------------------------------------------------------------------
+    def _load_opp_stats(self):
+        raw = self._db.get_setting(_DB_OPP_STATS, {}) or {}
+        if isinstance(raw, dict):
+            self._opp_episodes = {str(k).upper(): v for k, v in raw.items()
+                                  if isinstance(v, dict)}
+
+    def _persist_opp_stats(self, force: bool = False):
+        """Save the 🎯 episode stats to DB. Throttled (≥5s) unless force."""
+        now = time.time()
+        if not force and not self._opp_stats_dirty:
+            return
+        if not force and (now - self._opp_stats_saved_at) < 5:
+            return
+        try:
+            self._db.set_setting(_DB_OPP_STATS, self._opp_episodes)
+            self._opp_stats_dirty = False
+            self._opp_stats_saved_at = now
+        except Exception as e:
+            print(f"[FuelFilter] opp-stats persist error: {e}")
+
+    def _opp_episode_open(self, sym: str, a: Dict, opp: int, now: float):
+        """Open a NEW 🎯 episode: stamp start time + entry price + opp score."""
+        rec = self._opp_episodes.setdefault(sym.upper(), {
+            'count': 0, 'first_at': now, 'active': None, 'history': []})
+        if rec.get('first_at') is None:
+            rec['first_at'] = now
+        rec['count'] = int(rec.get('count', 0)) + 1
+        try:
+            _px = float(a.get('last_price') or a.get('start_price') or 0) or None
+        except (TypeError, ValueError):
+            _px = None
+        rec['active'] = {'start_at': now, 'start_price': _px, 'opp_start': int(opp)}
+        self._opp_stats_dirty = True
+        self._persist_opp_stats(force=True)
+
+    def _opp_episode_close(self, sym: str, a: Dict, opp: int, now: float):
+        """Close the active 🎯 episode: stamp end time + exit price + duration."""
+        rec = self._opp_episodes.get(sym.upper())
+        if not rec or not rec.get('active'):
+            return
+        act = rec['active']
+        try:
+            _px = float(a.get('last_price') or a.get('start_price') or 0) or None
+        except (TypeError, ValueError):
+            _px = None
+        ep = {
+            'start_at': act.get('start_at'), 'end_at': now,
+            'dur_sec': int(max(0, now - (act.get('start_at') or now))),
+            'start_price': act.get('start_price'), 'end_price': _px,
+            'opp_start': act.get('opp_start'), 'opp_end': int(opp),
+        }
+        hist = rec.setdefault('history', [])
+        hist.append(ep)
+        if len(hist) > OPP_HIST_MAX:
+            del hist[:len(hist) - OPP_HIST_MAX]
+        rec['active'] = None
+        self._opp_stats_dirty = True
+        self._persist_opp_stats(force=True)
+
+    def _opp_stats_summary(self, sym: str) -> Optional[Dict]:
+        """Compact stats for the UI second row: since (active start), count,
+        first_at, avg/total closed duration."""
+        rec = self._opp_episodes.get((sym or '').upper())
+        if not rec:
+            return None
+        hist = rec.get('history') or []
+        durs = [int(e.get('dur_sec') or 0) for e in hist]
+        total = sum(durs)
+        avg = int(total / len(durs)) if durs else 0
+        act = rec.get('active') or {}
+        return {
+            'since': act.get('start_at'),
+            'start_price': act.get('start_price'),
+            'count': int(rec.get('count', 0)),
+            'first_at': rec.get('first_at'),
+            'closed': len(hist),
+            'avg_dur_sec': avg,
+            'total_dur_sec': total,
+            # Last 5 CLOSED episodes for the UI tooltip (ціни входу/виходу, тривалість).
+            'recent': [{'start_price': e.get('start_price'),
+                        'end_price': e.get('end_price'),
+                        'dur_sec': e.get('dur_sec'),
+                        'end_at': e.get('end_at')} for e in hist[-5:]],
+        }
+
     def _opportunity_alert(self, s: Dict, now: float):
         """🎯 Fire a Telegram alert the MOMENT a 💰 funding coin reaches the BEST
         entry confluence (opportunity_hot). Edge-triggered per coin with a
         cooldown — this REPLACES the old funding appear/exit spam. Off when
-        `opportunity_tg` is disabled."""
+        `opportunity_tg` is disabled. Also tracks 🎯-episode stats (DB-persisted)."""
         _opp_on = bool(s.get('opportunity_tg', True))
         _spike_on = bool(s.get('spike_tg', True))
-        if not (_opp_on or _spike_on):
-            return
         try:
             cool = max(60, int(s.get('opportunity_alert_cooldown_min', 30) or 30) * 60)
         except (TypeError, ValueError):
@@ -3350,20 +3449,24 @@ class FuelFilterDaemon:
         live = set()
         for sym, a in items:
             live.add(sym)
-            # 🎯 Opportunity alert — rising edge to «best entry confluence».
-            if _opp_on:
-                try:
-                    opp, hot, reasons = self._opportunity_for(sym, a)
-                except Exception:
-                    opp, hot, reasons = 0, False, []
-                prev_hot = self._opp_hot_state.get(sym, False)
-                if hot and not prev_hot and (now - self._opp_alert_at.get(sym, 0)) >= cool:
+            # 🎯 Opportunity — ALWAYS computed: episode stats are kept regardless
+            # of the TG toggle; only the Telegram SEND is gated by opportunity_tg.
+            try:
+                opp, hot, reasons = self._opportunity_for(sym, a)
+            except Exception:
+                opp, hot, reasons = 0, False, []
+            prev_hot = self._opp_hot_state.get(sym, False)
+            if hot and not prev_hot:
+                self._opp_episode_open(sym, a, opp, now)           # stats (DB)
+                if _opp_on and (now - self._opp_alert_at.get(sym, 0)) >= cool:
                     try:
                         self._send_opportunity_alert(sym, a, opp, reasons)
                     except Exception as e:
                         print(f"[FF-Opp] alert send error {sym}: {e}")
                     self._opp_alert_at[sym] = now
-                self._opp_hot_state[sym] = hot
+            elif prev_hot and not hot:
+                self._opp_episode_close(sym, a, opp, now)          # stats (DB)
+            self._opp_hot_state[sym] = hot
             # 🚀 Spike alert — rising edge to «anomalous growth».
             if _spike_on:
                 spk = bool(a.get('spike'))
@@ -3375,9 +3478,15 @@ class FuelFilterDaemon:
                         print(f"[FF-Spike] alert send error {sym}: {e}")
                     self._spike_alert_at[sym] = now
                 self._spike_alert_state[sym] = spk
-        # Prune state for coins that left the table.
+        # Prune state for coins that left the table — closing any 🎯 episode still
+        # open (exit price unknown once the coin is gone).
         for k in list(self._opp_hot_state.keys()):
             if k not in live:
+                if self._opp_hot_state.get(k):
+                    try:
+                        self._opp_episode_close(k, self._anomalies.get(k) or {}, 0, now)
+                    except Exception:
+                        pass
                 self._opp_hot_state.pop(k, None)
                 self._opp_alert_at.pop(k, None)
         for k in list(self._spike_alert_state.keys()):
@@ -4606,6 +4715,8 @@ class FuelFilterDaemon:
                     'opportunity': _opp,
                     'opportunity_hot': _opp_hot,
                     'opportunity_reasons': _opp_reasons,
+                    # 🎯-епізоди: таймер активного + статистика (з БД).
+                    'opp_stats': self._opp_stats_summary(sym),
                     'paused': bool(a.get('sess_paused')),
                 })
             anomalies.sort(key=lambda x: -x['held_sec'])

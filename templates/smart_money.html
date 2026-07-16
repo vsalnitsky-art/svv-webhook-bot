@@ -8420,10 +8420,37 @@ function renderFuelFilter(d) {
                     <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}${fTrendBadge(a.f_trend)}</td>
                     <td style="font-size:0.72rem;color:#cbd5e1;white-space:nowrap">${volTxt}</td>
                     <td style="white-space:nowrap"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.9rem;margin-right:8px" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Прибрати з таблиці">✕</span></td>
-                </tr>`;
+                </tr>${oppStatsRow(a)}`;
             }).join('');
         }
     }
+}
+
+// 🎯 Second row under a coin when it's «рекомендована ботом» (opportunity_hot):
+// live timer of the current episode + persisted stats (епізодів, вперше,
+// сер.тривалість, вхід@ціна). Empty when not hot.
+function oppStatsRow(a) {
+    if (!a.opportunity_hot) return '';
+    const st = a.opp_stats || {};
+    const nowS = Math.floor(Date.now() / 1000);
+    const timer = st.since
+        ? `<span class="ff-timer" data-since="${Math.floor(st.since)}">${fmtTimer(nowS - Math.floor(st.since))}</span>`
+        : '—';
+    const first = st.first_at ? fmtTimeFull(Math.floor(st.first_at)) : '—';
+    const avg = (st.avg_dur_sec != null && st.closed) ? fmtTimer(st.avg_dur_sec) : '—';
+    const entryPx = (st.start_price != null) ? fmtPriceJS(st.start_price) : '—';
+    // Tooltip: last closed episodes (вхід→вихід · тривалість).
+    const _rec = (st.recent || []).map(e =>
+        `${fmtPriceJS(e.start_price)}→${fmtPriceJS(e.end_price)} · ${fmtTimer(e.dur_sec)}`).join('\n');
+    const _tip = _rec ? `Останні епізоди (вхід→вихід · тривалість):\n${_rec}` : 'Ще не було завершених епізодів';
+    return `<tr style="background:rgba(74,222,128,0.07)"><td colspan="9" title="${_tip.replace(/"/g,'&quot;')}" style="padding:1px 8px 5px 34px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">`
+        + `🎯 <b style="color:#4ade80;text-shadow:0 0 6px rgba(74,222,128,0.6)">рекомендована ботом</b>`
+        + ` · у режимі <b>${timer}</b>`
+        + ` · вхід @ <b>${entryPx}</b>`
+        + ` · епізодів: <b>${st.count || 0}</b>`
+        + ` · вперше: ${first}`
+        + ` · сер. тривалість: ${avg}`
+        + `</td></tr>`;
 }
 
 // F-Trend badge — funding direction over ~30 min (Dashboard metric):
