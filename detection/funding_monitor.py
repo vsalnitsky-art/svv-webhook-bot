@@ -147,6 +147,18 @@ class FundingMonitor:
                     for sym, c in self._watchlist.items()
                     if c.get('next_funding')}
 
+    def get_trends(self) -> Dict[str, int]:
+        """{symbol: F-Trend} — funding-rate direction over the last ~30 scans
+        (≈30 min): -1 = глибше в мінус (🔻 deeper), +1 = послаблюється до нуля
+        (🔺 easing), 0 = без чіткого тренду. SAME metric as the Dashboard
+        'F-Trend' column, reused for the 💰 Funding — ММ table."""
+        with self._lock:
+            out = {}
+            for sym, c in self._watchlist.items():
+                rs = c.get('rates') or []
+                out[sym] = self._calc_trend(rs, 'r') if len(rs) >= 3 else 0
+            return out
+
     def trigger_rescan(self):
         """Run a scan immediately (background thread) so UI filter changes take
         effect within seconds instead of waiting for the next cycle."""

@@ -391,6 +391,8 @@ class FuelFilterDaemon:
         self._funding_next: Dict[str, int] = {}
         # {symbol: 24h volume USD} for funding-sourced coins (UI display).
         self._funding_vols: Dict[str, float] = {}
+        # {symbol: F-Trend -1/0/+1} — ~30-min funding direction (Dashboard metric).
+        self._funding_trends: Dict[str, int] = {}
         # Short-TTL klines cache for candle confirmation at a custom TF:
         # {(symbol, tf): (ts, klines)}.
         self._candle_cache: Dict = {}
@@ -499,6 +501,18 @@ class FuelFilterDaemon:
             fm = get_funding_monitor()
             if fm and hasattr(fm, 'get_volumes'):
                 return {str(k).upper(): float(v) for k, v in fm.get_volumes().items()}
+        except Exception:
+            pass
+        return {}
+
+    def _get_funding_trends(self) -> Dict[str, int]:
+        """{SYMBOL: F-Trend (-1/0/+1)} from the 💰 Funding Rate Scanner — the
+        ~30-min funding direction (🔻 deeper / 🔺 easing / ➖)."""
+        try:
+            from detection.funding_monitor import get_funding_monitor
+            fm = get_funding_monitor()
+            if fm and hasattr(fm, 'get_trends'):
+                return {str(k).upper(): int(v) for k, v in fm.get_trends().items()}
         except Exception:
             pass
         return {}
@@ -2491,6 +2505,7 @@ class FuelFilterDaemon:
             self._funding_rates = self._get_funding_rates()
             self._funding_next = self._get_funding_next()
             self._funding_vols = self._get_funding_volumes()
+            self._funding_trends = self._get_funding_trends()
             managed = list(self._fuel_managed.keys())
             pending = list(self._pending.keys())
 
@@ -4405,6 +4420,8 @@ class FuelFilterDaemon:
                     # 🚀 Аномальний ріст: різкий рух ціни + зростання обсягу.
                     'spike': bool(a.get('spike')),
                     'spike_move': a.get('spike_move'),
+                    # F-Trend: напрямок funding за ~30 хв (-1 глибше / +1 послаб. / 0).
+                    'f_trend': (self._funding_trends or {}).get(sym.upper()),
                     # ММ (fuel) direction + strength for the funding table's ММ
                     # column (same widget as the queue / open positions).
                     'mm': (self._score_cache.get(sym) or {}).get('fuel_dir') or a.get('dir'),

@@ -672,11 +672,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .ff-timers-scroll {
     max-height: 680px;
     overflow-y: auto;
+    overflow-x: auto;   /* wide rows scroll instead of wrapping to 2 lines */
     border: 1px solid rgba(255,255,255,0.06);
     border-radius: 8px;
     margin-top: 8px;
 }
 .ff-timers-scroll .tm-table { margin-top: 0; }
+/* 💰 Funding table: keep EVERY cell on ONE line (symbol never wraps under the
+   icons) and stretch the table to the full container width. */
+#ff-anomaly-table { width: 100%; }
+#ff-anomaly-table th, #ff-anomaly-table td { white-space: nowrap; }
 .ff-timers-scroll thead th {
     position: sticky;
     top: 0;
@@ -8394,13 +8399,22 @@ function renderFuelFilter(d) {
                     <td style="white-space:nowrap">${ffScoreBadgeHTML(a.score)}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
                     <td style="min-width:160px">${progHtml}</td>
-                    <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}</td>
+                    <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}${fTrendBadge(a.f_trend)}</td>
                     <td style="font-size:0.72rem;color:#cbd5e1;white-space:nowrap">${volTxt}</td>
                     <td style="white-space:nowrap"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.9rem;margin-right:8px" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Прибрати з таблиці">✕</span></td>
                 </tr>`;
             }).join('');
         }
     }
+}
+
+// F-Trend badge — funding direction over ~30 min (Dashboard metric):
+// 🔻 deeper (поглиблюється, red) / 🔺 easing (послаблюється, green) / ➖ (flat).
+function fTrendBadge(t) {
+    if (t == null) return '';
+    if (t < 0) return ' <span title="F-Trend: funding поглиблюється (глибше в мінус) за ~30 хв" style="color:#ff5252;font-size:0.64rem;font-weight:700">F🔻</span>';
+    if (t > 0) return ' <span title="F-Trend: funding послаблюється (до нуля) за ~30 хв" style="color:#4caf50;font-size:0.64rem;font-weight:700">F🔺</span>';
+    return ' <span title="F-Trend: без чіткого тренду за ~30 хв" style="color:#888;font-size:0.64rem">F➖</span>';
 }
 
 // Vol 24h trend arrow vs the ~2-min rolling baseline (0.5% dead-zone):
