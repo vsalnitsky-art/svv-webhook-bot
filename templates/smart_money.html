@@ -679,9 +679,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 }
 .ff-timers-scroll .tm-table { margin-top: 0; }
 /* 💰 Funding table: keep EVERY cell on ONE line (symbol never wraps under the
-   icons) and stretch the table to the full container width. */
-#ff-anomaly-table { width: 100%; }
-#ff-anomaly-table th, #ff-anomaly-table td { white-space: nowrap; }
+   icons), stretch to full container width, and stay COMPACT (smaller font +
+   tight padding) so all columns fit on screen without a scrollbar. */
+#ff-anomaly-table { width: 100%; font-size: 0.72rem; }
+#ff-anomaly-table th, #ff-anomaly-table td { white-space: nowrap; padding: 3px 6px; }
 .ff-timers-scroll thead th {
     position: sticky;
     top: 0;
@@ -8377,7 +8378,7 @@ function renderFuelFilter(d) {
                 const progHtml =
                     `<div style="display:flex;align-items:center;gap:6px">`
                     + `<span title="Entry ≤ (старт шкали)" style="font-size:0.6rem;color:#8b93a7;white-space:nowrap">${Number(entryThr).toFixed(2)}%</span>`
-                    + `<div style="width:110px;flex:0 0 110px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative" title="Поточний ${Number(cur).toFixed(3)}% · шкала Entry ${Number(entryThr).toFixed(2)}% → −4%">`
+                    + `<div style="width:90px;flex:0 0 90px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative" title="Поточний ${Number(cur).toFixed(3)}% · шкала Entry ${Number(entryThr).toFixed(2)}% → −4%">`
                     + `<div style="height:100%;width:${fillS}%;background:linear-gradient(90deg,#34d399,#22c55e);border-radius:6px"></div>`
                     + `<span style="position:absolute;left:${peakS}%;top:-3px;bottom:-3px;width:3px;margin-left:-1.5px;background:#fbbf24;box-shadow:0 0 5px #fbbf24;border-radius:2px"></span>`
                     + `</div>`
@@ -8395,11 +8396,13 @@ function renderFuelFilter(d) {
                 // 24h volume (USD), compact + trend arrow (↑ росте / ↓ спадає)
                 // vs the ~2-min rolling baseline (vol24h_prev). 0.5% dead-zone.
                 const v = a.vol24h;
+                // Fixed-width current value + arrow so the (мін–макс) range column
+                // lines up across ALL rows (no crooked edges).
                 const _volRange = (a.vol24h_min != null && a.vol24h_max != null)
-                    ? ` <span title="Діапазон 24h-обсягу за час стеження (мін–макс)" style="font-size:0.6rem;color:#8b93a7">(${fmtVolShort(a.vol24h_min)}–${fmtVolShort(a.vol24h_max)})</span>`
+                    ? `<span title="Діапазон 24h-обсягу за час стеження (мін–макс)" style="font-size:0.6rem;color:#8b93a7">(${fmtVolShort(a.vol24h_min)}–${fmtVolShort(a.vol24h_max)})</span>`
                     : '';
                 const volTxt = (v != null && v > 0)
-                    ? `<b>${fmtVolShort(v)}</b>${volTrendArrow(v, a.vol24h_prev)}${_volRange}`
+                    ? `<span style="display:inline-flex;align-items:center;gap:5px"><b style="display:inline-block;width:52px;text-align:right;font-variant-numeric:tabular-nums">${fmtVolShort(v)}</b><span style="display:inline-block;width:12px;text-align:center">${volTrendArrow(v, a.vol24h_prev)}</span>${_volRange}</span>`
                     : '<span style="color:#667">—</span>';
                 const _hotMark = a.opportunity_hot
                     ? `<span title="🎯 НАЙКРАЩІ ПОКАЗНИКИ ДЛЯ ВХОДУ (${a.opportunity}/100): ${(a.opportunity_reasons||[]).join(' · ')}" style="margin-right:4px;cursor:default;text-shadow:0 0 8px rgba(74,222,128,0.95)">🎯</span>`
@@ -9168,8 +9171,8 @@ function ffFuelCell(dir, now, prev) {
     const b = fuelBand(now);
     const pctSeg = `<b style="display:inline-block;width:40px;text-align:right;color:${col};font-variant-numeric:tabular-nums;flex:none">${Math.round(now)}%</b>`;
     const arrowSeg = `<span style="display:inline-block;width:12px;text-align:center;color:${arrowCol};flex:none" title="${arrowTitle}">${arrowChar}</span>`;
-    const barSeg = `<span style="display:inline-block;vertical-align:middle;height:6px;width:56px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;flex:none"><span style="display:block;height:100%;width:${w}%;background:${col}"></span></span>`;
-    const bandSeg = `<span style="display:inline-block;width:104px;text-align:left;color:${b.col};font-size:0.66rem;font-weight:600;flex:none">${b.txt}</span>`;
+    const barSeg = `<span style="display:inline-block;vertical-align:middle;height:6px;width:48px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;flex:none"><span style="display:block;height:100%;width:${w}%;background:${col}"></span></span>`;
+    const bandSeg = `<span style="display:inline-block;width:88px;text-align:left;color:${b.col};font-size:0.66rem;font-weight:600;flex:none">${b.txt}</span>`;
     return `<span title="${FUEL_TOOLTIP}" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">${dotSeg}${pctSeg}${arrowSeg}${barSeg}${bandSeg}</span>`;
 }
 
