@@ -325,6 +325,13 @@ DEFAULT_SETTINGS = {
     'ff_tg_on_exit': False,
     'ff_tg_entry_template': '🚀 FF вхід {side} {symbol} ·💲 {price} ·\nММ {fuel}% фандінг {funding}% · 🔄 {funding_in}',
     'ff_tg_exit_template': '☄️ {symbol} зникла з 📡 · {reason}\n💲 {price} · 📡 {fuel}%',
+    # 💰 «монета з'явилась» повідомлення (низькосигнальні) — ВИМКНЕНО за
+    # замовчуванням: замінені на 🎯 Opportunity-алерт нижче.
+    'funding_appear_tg': False,
+    # 🎯 Opportunity-алерт: слати в Telegram, коли монета досягає НАЙКРАЩОГО
+    # збігу показників для входу (edge-trigger + кулдаун, хв).
+    'opportunity_tg': True,
+    'opportunity_alert_cooldown_min': 30,
 }
 
 
@@ -373,6 +380,9 @@ class FuelFilterDaemon:
         # {symbol: ts of last funding "appear" TG} — anti-spam cooldown so a coin
         # that flickers around the ММ-strength threshold isn't re-announced.
         self._funding_notify_at: Dict[str, float] = {}
+        # 🎯 Opportunity-alert edge state: {sym: was_hot} + {sym: last_alert_ts}.
+        self._opp_hot_state: Dict[str, bool] = {}
+        self._opp_alert_at: Dict[str, float] = {}
         # Persistent per-coin funding archive: {sym: [ {t,ev,mm,mm_dir,funding,
         # price,vol24h,btc_dir,btc_paused} ]}. Re-appearing coins APPEND to the
         # existing series. _funding_prev_state tracks last snapshot for event
@@ -2942,9 +2952,10 @@ class FuelFilterDaemon:
         moment a coin first appears — which is why {fuel} used to render «—».
         Falls back to the cache only when the caller could not supply it."""
         # Per-user broadcast (💰 category + opted-in users) — fires on a coin's
-        # APPEARANCE, independent of the admin's own ff_tg_on_entry toggle, so
-        # each user gets exactly what they subscribed to.
-        if entered:
+        # APPEARANCE. DISABLED by default now (`funding_appear_tg`=False): these
+        # low-signal «coin appeared» messages were replaced by the 🎯 Opportunity
+        # alert (fired from _run_alerts when the BEST entry confluence is reached).
+        if entered and settings.get('funding_appear_tg', False):
             try:
                 _r = self._funding_rates.get(sym)
                 if _r is None:
@@ -3316,8 +3327,57 @@ class FuelFilterDaemon:
     def stop(self):
         self._stop.set()
 
+    def _opportunity_alert(self, s: Dict, now: float):
+        """🎯 Fire a Telegram alert the MOMENT a 💰 funding coin reaches the BEST
+        entry confluence (opportunity_hot). Edge-triggered per coin with a
+        cooldown — this REPLACES the old funding appear/exit spam. Off when
+        `opportunity_tg` is disabled."""
+        if not s.get('opportunity_tg', True):
+            return
+        try:
+            cool = max(60, int(s.get('opportunity_alert_cooldown_min', 30) or 30) * 60)
+        except (TypeError, ValueError):
+            cool = 1800
+        with self._lock:
+            items = list(self._anomalies.items())
+        live = set()
+        for sym, a in items:
+            live.add(sym)
+            try:
+                opp, hot, reasons = self._opportunity_for(sym, a)
+            except Exception:
+                continue
+            prev_hot = self._opp_hot_state.get(sym, False)
+            if hot and not prev_hot:
+                if (now - self._opp_alert_at.get(sym, 0)) >= cool:
+                    try:
+                        self._send_opportunity_alert(sym, a, opp, reasons)
+                    except Exception as e:
+                        print(f"[FF-Opp] alert send error {sym}: {e}")
+                    self._opp_alert_at[sym] = now
+            self._opp_hot_state[sym] = hot
+        # Prune state for coins that left the table.
+        for k in list(self._opp_hot_state.keys()):
+            if k not in live:
+                self._opp_hot_state.pop(k, None)
+                self._opp_alert_at.pop(k, None)
+
+    def _send_opportunity_alert(self, sym: str, a: Dict, opp: int, reasons: list):
+        """Compose + broadcast the 🎯 «best moment to open» Telegram message to
+        the 💰 funding subscribers (same audience as the retired appear alert)."""
+        d = a.get('dir')
+        emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
+        side = d if d in ('LONG', 'SHORT') else ''
+        rt = a.get('rate')
+        rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
+        body = (f"🎯 #{sym} — НАЙКРАЩИЙ МОМЕНТ ДЛЯ ВХОДУ\n"
+                f"{emoji} {side} · Opportunity {opp}/100 · funding {rt_s}")
+        if reasons:
+            body += "\n✅ " + "\n✅ ".join(reasons)
+        self._broadcast_users('funding', 'notify_funding', body)
+
     def _run_alerts(self):
-        """Fire BTC START/STOP and funding entry/exit Telegram alerts on a fast
+        """Fire BTC START/STOP and 🎯 opportunity Telegram alerts on a fast
         cadence (~3s) so they're near-instant — instead of waiting up to a full
         30s scan tick. Reads the live timer state (since is fixed; held grows),
         so threshold crossings are detected within seconds."""
@@ -3328,9 +3388,8 @@ class FuelFilterDaemon:
                 if s.get('enabled'):
                     now = time.time()
                     self._btc_start_alert(s, now)
-                    # Funding entry/exit TG now fires from _scan_funding on
-                    # transitions (the old _funding_alert membership-rescan is
-                    # retired together with the watchlist scan).
+                    # 🎯 Opportunity alert (replaces the old funding appear/exit TG).
+                    self._opportunity_alert(s, now)
             except Exception as e:
                 print(f"[FuelFilter] alert loop error: {e}")
             self._stop.wait(3)
@@ -4068,6 +4127,56 @@ class FuelFilterDaemon:
         except Exception:
             return (False, 0.0, None)
 
+    def _opportunity_for(self, sym: str, a: Dict):
+        """🎯 Composite «best setup to open» analysis for a 💰 funding coin —
+        combines ALL table signals: SCORE quality (ВАРТО ВІДКРИВАТИ), fuel/price
+        agreement, ММ strength + alignment with SCORE, funding depth/deepening
+        (squeeze fuel), rising volume and 🚀 spike. Returns (score 0..100,
+        hot: bool, reasons: list). Shared by get_state (UI) and the TG alert."""
+        _sc = self._score_cache.get(sym) or {}
+        _sc_label = _sc.get('label')
+        _sc_dir = _sc.get('dir')
+        _sc_conflict = bool(_sc.get('conflict'))
+        _mm_dir_o = _sc.get('fuel_dir') or a.get('dir')
+        _mm_strength = float(self._fuel_str.get(sym) or 0)
+        _ft_o = (self._funding_trends or {}).get(sym.upper())
+        _vol_up_o = bool(a.get('vol24h') and a.get('vol24h_prev')
+                         and a['vol24h'] > a['vol24h_prev'] * 1.005)
+        _spk_o = bool(a.get('spike'))
+        _paused_o = bool(a.get('sess_paused'))
+        _fr_o = a.get('rate')
+        opp = 0
+        reasons = []
+        if _sc_label == 'STRONG HOLD':
+            opp += 40; reasons.append('SCORE ВАРТО ВІДКРИВАТИ')
+        elif _sc_label == 'HOLD':
+            opp += 22; reasons.append('SCORE МОЖНА ВІДКРИВАТИ')
+        elif _sc_label == 'NEUTRAL':
+            opp += 6
+        if (not _sc_conflict) and _sc_label in ('STRONG HOLD', 'HOLD'):
+            opp += 8; reasons.append('без конфлікту (паливо=ціна)')
+        if _mm_strength >= 60:
+            opp += 16; reasons.append(f'сильний тиск ММ {int(_mm_strength)}%')
+        elif _mm_strength >= 30:
+            opp += 8
+        if _mm_dir_o in ('LONG', 'SHORT') and _sc_dir == _mm_dir_o:
+            opp += 8; reasons.append('ММ і SCORE в один бік')
+        if _fr_o is not None and _fr_o <= -0.5:
+            opp += 8; reasons.append('глибокий негативний funding')
+        if _ft_o is not None and _ft_o < 0:
+            opp += 8; reasons.append('funding поглиблюється (F-Trend)')
+        if _vol_up_o:
+            opp += 6; reasons.append('обсяг зростає')
+        if _spk_o:
+            opp += 6; reasons.append('🚀 аномальний ріст')
+        opp = min(100, opp)
+        hot = bool(
+            _sc_label == 'STRONG HOLD' and not _sc_conflict and not _paused_o
+            and _mm_strength >= 30 and _sc_dir in ('LONG', 'SHORT')
+            and _sc_dir == _mm_dir_o
+            and (_vol_up_o or (_ft_o is not None and _ft_o < 0) or _spk_o))
+        return opp, hot, reasons
+
     def _queue_row(self, sym: str, info: Dict, now: float, smart: bool = False) -> Optional[Dict]:
         """Build ONE queue-table row for `sym`. Shared by Queue 1 and Queue 2 so
         both tables carry IDENTICAL columns. Returns None if the coin is already
@@ -4411,55 +4520,8 @@ class FuelFilterDaemon:
                 if _vv is not None:
                     a['vol24h_min'] = _vv if a.get('vol24h_min') is None else min(a['vol24h_min'], _vv)
                     a['vol24h_max'] = _vv if a.get('vol24h_max') is None else max(a['vol24h_max'], _vv)
-                # 🎯 OPPORTUNITY — combine ALL table signals into ONE «best setup
-                # to open» score (0..100) + a `hot` flag for the 🎯 marker. The
-                # confluence: SCORE quality (ВАРТО ВІДКРИВАТИ) · no fuel/price
-                # conflict · strong ММ pressure aligned with SCORE · deep/deepening
-                # funding (squeeze fuel) · rising volume · 🚀 spike · session live.
-                _sc = self._score_cache.get(sym) or {}
-                _sc_label = _sc.get('label')
-                _sc_dir = _sc.get('dir')
-                _sc_conflict = bool(_sc.get('conflict'))
-                _mm_dir_o = _sc.get('fuel_dir') or a.get('dir')
-                _mm_strength = float(self._fuel_str.get(sym) or 0)
-                _ft_o = (self._funding_trends or {}).get(sym.upper())
-                _vol_up_o = bool(a.get('vol24h') and a.get('vol24h_prev')
-                                 and a['vol24h'] > a['vol24h_prev'] * 1.005)
-                _spk_o = bool(a.get('spike'))
-                _paused_o = bool(a.get('sess_paused'))
-                _fr_o = a.get('rate')
-                _opp = 0
-                _opp_reasons = []
-                if _sc_label == 'STRONG HOLD':
-                    _opp += 40; _opp_reasons.append('SCORE ВАРТО ВІДКРИВАТИ')
-                elif _sc_label == 'HOLD':
-                    _opp += 22; _opp_reasons.append('SCORE МОЖНА ВІДКРИВАТИ')
-                elif _sc_label == 'NEUTRAL':
-                    _opp += 6
-                if (not _sc_conflict) and _sc_label in ('STRONG HOLD', 'HOLD'):
-                    _opp += 8; _opp_reasons.append('без конфлікту (паливо=ціна)')
-                if _mm_strength >= 60:
-                    _opp += 16; _opp_reasons.append(f'сильний тиск ММ {int(_mm_strength)}%')
-                elif _mm_strength >= 30:
-                    _opp += 8
-                if _mm_dir_o in ('LONG', 'SHORT') and _sc_dir == _mm_dir_o:
-                    _opp += 8; _opp_reasons.append('ММ і SCORE в один бік')
-                if _fr_o is not None and _fr_o <= -0.5:
-                    _opp += 8; _opp_reasons.append('глибокий негативний funding')
-                if _ft_o is not None and _ft_o < 0:
-                    _opp += 8; _opp_reasons.append('funding поглиблюється (F-Trend)')
-                if _vol_up_o:
-                    _opp += 6; _opp_reasons.append('обсяг зростає')
-                if _spk_o:
-                    _opp += 6; _opp_reasons.append('🚀 аномальний ріст')
-                _opp = min(100, _opp)
-                # HOT = the BEST confluence: strong SCORE, no conflict, live session,
-                # ММ aligned & meaningful, plus ≥1 momentum/funding confirmation.
-                _opp_hot = bool(
-                    _sc_label == 'STRONG HOLD' and not _sc_conflict and not _paused_o
-                    and _mm_strength >= 30 and _sc_dir in ('LONG', 'SHORT')
-                    and _sc_dir == _mm_dir_o
-                    and (_vol_up_o or (_ft_o is not None and _ft_o < 0) or _spk_o))
+                # 🎯 OPPORTUNITY — composite «best setup to open» (shared helper).
+                _opp, _opp_hot, _opp_reasons = self._opportunity_for(sym, a)
                 anomalies.append({
                     'symbol': sym,
                     'dir': a.get('dir'),

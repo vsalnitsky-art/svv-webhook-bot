@@ -8343,50 +8343,14 @@ function renderFuelFilter(d) {
                 fill = Math.max(0, Math.min(1, fill));
                 // Trend vs previous sample.
                 const prev = a.funding_prev_rate;
-                let arrow = '';
-                if (prev != null && a.funding_rate != null) {
-                    // ← зменшується (funding more negative), → збільшується (less negative)
-                    if (a.funding_rate < prev - 0.0005) arrow = '<span style="color:#f87171">← зменшується</span>';
-                    else if (a.funding_rate > prev + 0.0005) arrow = '<span style="color:#4ade80">→ збільшується</span>';
-                    else arrow = '<span style="color:#8b93a7">— без змін</span>';
-                }
-                // FIXED-width bar so every coin's bar lines up in one column;
-                // the fill has a CSS transition so it visibly slides when the
-                // funding value changes.
-                // FIXED-width bar so every coin's bar lines up in one column; a
-                // pulsing end-cap sits at the current fill level and jiggles.
-                const fillPct = (fill * 100).toFixed(1);
-                // Peak (deepest funding reached since appearance) → amber tick on
-                // the bar + «пік -X%» text, so you see MAX vs current at a glance.
-                const peakRate = (a.funding_rate_min != null) ? a.funding_rate_min : cur;
-                let peakFill = (entry - END) !== 0 ? (peakRate - entry) / (END - entry) : 0;
-                peakFill = Math.max(0, Math.min(1, peakFill));
-                const peakPct = (peakFill * 100).toFixed(1);
-                const peakTxt = (a.funding_rate_min != null)
-                    ? `<span title="Найглибший funding, досягнутий за час стеження" style="font-size:0.6rem;color:#fbbf24;white-space:nowrap;width:70px;display:inline-block">пік ${Number(peakRate).toFixed(3)}%</span>`
-                    : '<span style="width:70px;display:inline-block"></span>';
-                const progHtml =
-                    `<div style="display:flex;align-items:center;gap:6px">`
-                    + `<div style="width:130px;flex:0 0 130px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative">`
-                    + `<div style="height:100%;width:${fillPct}%;background:#34d399;border-radius:6px"></div>`
-                    + (a.funding_rate_min != null ? `<span title="пік ${Number(peakRate).toFixed(3)}%" style="position:absolute;left:${peakPct}%;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:#fbbf24;box-shadow:0 0 4px #fbbf24"></span>` : '')
-                    + `<span style="position:absolute;left:${fillPct}%;top:50%;width:9px;height:9px;margin-left:-5px;border-radius:50%;background:#34d399;box-shadow:0 0 7px #34d399;animation:ff-fund-pulse 1s ease-in-out infinite"></span>`
-                    + `</div>`
-                    + `<span style="font-size:0.6rem;color:#8b93a7;white-space:nowrap;width:64px;display:inline-block">${entry}%→${END}%</span>`
-                    + peakTxt
-                    + (arrow ? `<span style="font-size:0.62rem;white-space:nowrap;width:60px;display:inline-block">${arrow}</span>` : '<span style="width:60px;display:inline-block"></span>')
-                    + `</div>`;
-                // Funding % coloured by its TREND (change vs prev sample), not by
-                // sign: ← зменшується = red, → збільшується = green, без змін = grey.
-                // (Funding is almost always negative here, so sign-colour was useless.)
+                // Funding % trend colour — used for BOTH the progress «зараз» value
+                // and the Funding column. ← зменшується=red, → збільшується=green,
+                // без змін=стабільний(cyan); чітке півцілое + без змін → ✦ золоте.
                 let _rateCol = '#cbd5e1', _rateTip = 'без даних тренду', _rateExtra = '', _rateMark = '';
                 if (prev != null && a.funding_rate != null) {
                     if (a.funding_rate < prev - 0.0005) { _rateCol = '#f87171'; _rateTip = 'зменшується (глибше в мінус)'; }
                     else if (a.funding_rate > prev + 0.0005) { _rateCol = '#4ade80'; _rateTip = 'збільшується (до нуля)'; }
                     else {
-                        // БЕЗ ЗМІН — окремий колір «стабільно». Якщо значення сіло на
-                        // ЧІТКЕ півцілое число (0.5/1/1.5/…/4) → сигнальне золоте
-                        // виділення: funding «застряг» на круглому рівні — цікаво.
                         const _av = Math.abs(a.funding_rate);
                         const _step = Math.round(_av / 0.5) * 0.5;
                         if (Math.abs(_av - _step) < 0.01 && _step >= 0.5 && _step <= 4) {
@@ -8400,6 +8364,30 @@ function renderFuelFilter(d) {
                         }
                     }
                 }
+                // Bar (current fill + pulse) + amber PEAK tick, then «пік» та
+                // «зараз» текстом — усе про funding в одній колонці (прибрано
+                // марний «entry%→-4%» і довгу стрілку, щоб таблиця вужча).
+                const fillPct = (fill * 100).toFixed(1);
+                const peakRate = (a.funding_rate_min != null) ? a.funding_rate_min : cur;
+                let peakFill = (entry - END) !== 0 ? (peakRate - entry) / (END - entry) : 0;
+                peakFill = Math.max(0, Math.min(1, peakFill));
+                const peakPct = (peakFill * 100).toFixed(1);
+                const peakTxt = (a.funding_rate_min != null)
+                    ? `<span title="Найглибший funding за час стеження" style="font-size:0.62rem;color:#fbbf24;white-space:nowrap">пік ${Number(peakRate).toFixed(3)}%</span>`
+                    : '';
+                const nowTxt = (a.funding_rate != null)
+                    ? `<span title="Поточний funding · ${_rateTip}" style="font-size:0.62rem;font-weight:700;white-space:nowrap;color:${_rateCol}${_rateExtra}">зараз ${_rateMark}${Number(a.funding_rate).toFixed(3)}%</span>`
+                    : '';
+                const progHtml =
+                    `<div style="display:flex;align-items:center;gap:8px">`
+                    + `<div style="width:120px;flex:0 0 120px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative">`
+                    + `<div style="height:100%;width:${fillPct}%;background:#34d399;border-radius:6px"></div>`
+                    + (a.funding_rate_min != null ? `<span title="пік ${Number(peakRate).toFixed(3)}%" style="position:absolute;left:${peakPct}%;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:#fbbf24;box-shadow:0 0 4px #fbbf24"></span>` : '')
+                    + `<span style="position:absolute;left:${fillPct}%;top:50%;width:9px;height:9px;margin-left:-5px;border-radius:50%;background:#34d399;box-shadow:0 0 7px #34d399;animation:ff-fund-pulse 1s ease-in-out infinite"></span>`
+                    + `</div>`
+                    + peakTxt
+                    + nowTxt
+                    + `</div>`;
                 // No live funding source once the coin left the scanner → «—».
                 const rateTxt = (a.funding_stale || a.funding_rate == null)
                     ? '<span style="color:#667">—</span>'
