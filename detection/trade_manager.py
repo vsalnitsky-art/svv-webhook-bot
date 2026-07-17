@@ -1470,6 +1470,7 @@ class TradeManager:
             return
 
         # First (and only) successful placement — set once, never ratcheted after.
+        cand = self._round_sltp_value(cand)   # clean value (no float tail)
         pos['manual_sl'] = cand
         pos['_auto_ob_sl_val'] = cand
         self._record_manual_hist(pos, 'sl', cand)
@@ -4785,9 +4786,9 @@ class TradeManager:
         sls = _seq('manual_sl_hist', 'manual_sl')
         tps = _seq('manual_tp_hist', 'manual_tp')
         if sls:
-            parts.append('Manual SL: ' + ' → '.join(self._fmt_price(v) for v in sls))
+            parts.append('Manual SL: ' + ' → '.join(self._fmt_sltp(v) for v in sls))
         if tps:
-            parts.append('Manual TP: ' + ' → '.join(self._fmt_price(v) for v in tps))
+            parts.append('Manual TP: ' + ' → '.join(self._fmt_sltp(v) for v in tps))
         return ' · '.join(parts)
 
     def update_manual_sl_tp(self, symbol: str, manual_sl=None,
@@ -4909,14 +4910,16 @@ class TradeManager:
                         'reason': f'No open {kind} position for {symbol}'}
             
             if sl_op[0] == 'set':
-                pos['manual_sl'] = sl_op[1]
-                self._record_manual_hist(pos, 'sl', sl_op[1])
+                _sv = self._round_sltp_value(sl_op[1])
+                pos['manual_sl'] = _sv
+                self._record_manual_hist(pos, 'sl', _sv)
             elif sl_op[0] == 'clear':
                 pos.pop('manual_sl', None)
 
             if tp_op[0] == 'set':
-                pos['manual_tp'] = tp_op[1]
-                self._record_manual_hist(pos, 'tp', tp_op[1])
+                _tv = self._round_sltp_value(tp_op[1])
+                pos['manual_tp'] = _tv
+                self._record_manual_hist(pos, 'tp', _tv)
             elif tp_op[0] == 'clear':
                 pos.pop('manual_tp', None)
 
@@ -5346,6 +5349,38 @@ class TradeManager:
         if price < 100:
             return f"${price:.4f}"
         return f"${price:,.2f}"
+
+    @staticmethod
+    def _fmt_sltp(price) -> str:
+        """Manual SL/TP price formatter: 2 decimals for ≥$1 (kills float tails
+        like 190.0836000…02), more precision for sub-$1 so the level survives
+        (trailing zeros stripped)."""
+        try:
+            n = float(price)
+        except (TypeError, ValueError):
+            return '—'
+        if n <= 0:
+            return '—'
+        if n >= 1:
+            return f"${n:,.2f}"
+        dp = 8 if n < 0.0001 else (6 if n < 0.01 else 5)
+        return '$' + (f"%.{dp}f" % n).rstrip('0').rstrip('.')
+
+    @staticmethod
+    def _round_sltp_value(price):
+        """Round a Manual SL/TP price to the stored precision (2dp for ≥$1, more
+        for sub-$1) — kills float tails (190.0836…02) at the SOURCE so every
+        consumer sees a clean value. Returns the input unchanged on bad input."""
+        try:
+            n = float(price)
+        except (TypeError, ValueError):
+            return price
+        if n <= 0:
+            return n
+        if n >= 1:
+            return round(n, 2)
+        dp = 8 if n < 0.0001 else (6 if n < 0.01 else 5)
+        return round(n, dp)
 
 
 # Singleton

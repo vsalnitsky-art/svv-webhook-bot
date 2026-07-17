@@ -6980,6 +6980,22 @@ function fmtPriceJS(p) {
     return '$' + p.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 }
 
+// Manual SL/TP rounding: 2 decimals for prices ≥ $1; for sub-$1 coins keep
+// enough precision so the level doesn't collapse (trailing zeros stripped).
+// Returns a bare number-string ('' for empty/invalid) for use in <input value>.
+function roundSlTp(v) {
+    const n = Number(v);
+    if (!isFinite(n) || n <= 0) return '';
+    if (n >= 1) return n.toFixed(2);
+    const dp = n < 0.0001 ? 8 : (n < 0.01 ? 6 : 5);
+    return String(Number(n.toFixed(dp)));
+}
+// Same rounding for read-only display (adds $, — for empty).
+function fmtSlTp(v) {
+    const r = roundSlTp(v);
+    return r === '' ? '—' : '$' + r;
+}
+
 function fmtTimeJS(unix) {
     if (!unix) return '—';
     const d = new Date(unix * 1000);
@@ -9554,8 +9570,8 @@ function renderTradeHistoryChart(h, meta) {
     let sltpLine = '';
     if (_sls.length || _tps.length) {
         const parts = [];
-        if (_sls.length) parts.push(`🛡 Manual SL: <b style="color:#fca5a5">${_sls.map(fmtPriceJS).join(' → ')}</b>`);
-        if (_tps.length) parts.push(`🎯 Manual TP: <b style="color:#86efac">${_tps.map(fmtPriceJS).join(' → ')}</b>`);
+        if (_sls.length) parts.push(`🛡 Manual SL: <b style="color:#fca5a5">${_sls.map(fmtSlTp).join(' → ')}</b>`);
+        if (_tps.length) parts.push(`🎯 Manual TP: <b style="color:#86efac">${_tps.map(fmtSlTp).join(' → ')}</b>`);
         sltpLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">${parts.join(' · ')}</div>`;
     }
 
@@ -10041,8 +10057,10 @@ function manualSlTpCellsHTML(p, isShadow) {
     // Render existing values raw — input handler does the parsing on
     // save. Showing the stored float as-is is good enough for now;
     // we can format later if precision becomes an issue.
-    const sl = (p.manual_sl !== undefined && p.manual_sl !== null) ? p.manual_sl : '';
-    const tp = (p.manual_tp !== undefined && p.manual_tp !== null) ? p.manual_tp : '';
+    // Round to 2 decimals for ≥$1 (more precision for sub-$1) so the fields
+    // stay clean — see roundSlTp.
+    const sl = (p.manual_sl !== undefined && p.manual_sl !== null) ? roundSlTp(p.manual_sl) : '';
+    const tp = (p.manual_tp !== undefined && p.manual_tp !== null) ? roundSlTp(p.manual_tp) : '';
     const inpStyle = "width:90px;padding:3px 5px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;font-size:0.75rem;font-family:monospace";
     return `
         <td>
