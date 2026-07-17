@@ -5496,37 +5496,47 @@ class TradeManager:
             return f"${price:.4f}"
         return f"${price:,.2f}"
 
-    @staticmethod
-    def _fmt_sltp(price) -> str:
-        """Manual SL/TP price formatter: 2 decimals for ≥$1 (kills float tails
-        like 190.0836000…02), more precision for sub-$1 so the level survives
-        (trailing zeros stripped)."""
+    @classmethod
+    def _fmt_sltp(cls, price) -> str:
+        """Manual SL/TP price formatter: magnitude-based precision (keeps 2.0804
+        on a ~$2 coin, 2dp on ≥$100), float tails killed, trailing zeros stripped."""
         try:
             n = float(price)
         except (TypeError, ValueError):
             return '—'
         if n <= 0:
             return '—'
-        if n >= 1:
-            return f"${n:,.2f}"
-        dp = 8 if n < 0.0001 else (6 if n < 0.01 else 5)
+        dp = cls._sltp_dp(n)
         return '$' + (f"%.{dp}f" % n).rstrip('0').rstrip('.')
 
     @staticmethod
-    def _round_sltp_value(price):
-        """Round a Manual SL/TP price to the stored precision (2dp for ≥$1, more
-        for sub-$1) — kills float tails (190.0836…02) at the SOURCE so every
-        consumer sees a clean value. Returns the input unchanged on bad input."""
+    def _sltp_dp(n: float) -> int:
+        """Decimal places for a Manual SL/TP price by magnitude — enough to keep
+        real precision (e.g. a ~$2 coin needs 4dp for 2.0804) while killing float
+        tails. Mirrors fmtPrice's tiers: ≥100→2, ≥1→4, <1→5/6/8."""
+        if n < 0.0001:
+            return 8
+        if n < 0.01:
+            return 6
+        if n < 1:
+            return 5
+        if n < 100:
+            return 4
+        return 2
+
+    @classmethod
+    def _round_sltp_value(cls, price):
+        """Round a Manual SL/TP price to its magnitude-based precision — kills
+        float tails (190.0836…02) at the SOURCE so every consumer sees a clean
+        value, WITHOUT truncating legitimate precision (2.0804 stays 2.0804).
+        Returns the input unchanged on bad input."""
         try:
             n = float(price)
         except (TypeError, ValueError):
             return price
         if n <= 0:
             return n
-        if n >= 1:
-            return round(n, 2)
-        dp = 8 if n < 0.0001 else (6 if n < 0.01 else 5)
-        return round(n, dp)
+        return round(n, cls._sltp_dp(n))
 
 
 # Singleton

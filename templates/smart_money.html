@@ -7023,15 +7023,20 @@ function fmtPriceJS(p) {
     return '$' + p.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 }
 
-// Manual SL/TP rounding: 2 decimals for prices ≥ $1; for sub-$1 coins keep
-// enough precision so the level doesn't collapse (trailing zeros stripped).
-// Returns a bare number-string ('' for empty/invalid) for use in <input value>.
+// Manual SL/TP rounding by magnitude — enough precision to keep real levels
+// (a ~$2 coin needs 4dp for 2.0804) while killing float tails; 2dp only for
+// ≥$100. Trailing zeros stripped. '' for empty/invalid (for <input value>).
+function _sltpDp(n) {
+    if (n < 0.0001) return 8;
+    if (n < 0.01) return 6;
+    if (n < 1) return 5;
+    if (n < 100) return 4;
+    return 2;
+}
 function roundSlTp(v) {
     const n = Number(v);
     if (!isFinite(n) || n <= 0) return '';
-    if (n >= 1) return n.toFixed(2);
-    const dp = n < 0.0001 ? 8 : (n < 0.01 ? 6 : 5);
-    return String(Number(n.toFixed(dp)));
+    return String(Number(n.toFixed(_sltpDp(n))));
 }
 // Same rounding for read-only display (adds $, — for empty).
 function fmtSlTp(v) {
