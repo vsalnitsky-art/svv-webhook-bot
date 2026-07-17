@@ -2290,6 +2290,25 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                     </div>
+                    <!-- 🔔 Всі Telegram-оповіщення по сигналах фандінгу (вмик/вимк) -->
+                    <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
+                        <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">🔔 Telegram-оповіщення про сигнали (кожне вмикається/вимикається окремо)</div>
+                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram, коли Черга-2 ВІДКРИВАЄ 🎯 «рекомендовану ботом» угоду (найкращий збіг показників, що пройшов алгоритм Черги-2).">
+                                <input type="checkbox" id="ff-opp-tg" onchange="saveFuelFilterSettings()"> 🎯 «Рекомендація бота» (відкриття Черги-2)
+                            </label>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram про 🚀 аномальний ріст (різкий рух ціни + зростання обсягу).">
+                                <input type="checkbox" id="ff-spike-tg" onchange="saveFuelFilterSettings()"> 🚀 «Аномальний ріст»
+                            </label>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram, коли ✦ золотий funding (чітке значення 0.5/1.0/…/4.0 %) тримається без змін довше за поріг праворуч.">
+                                <input type="checkbox" id="ff-gold-tg" onchange="saveFuelFilterSettings()"> ✦ «Золотий funding застиг»
+                            </label>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Скільки хвилин ✦ золотий funding має триматись на чіткому значенні БЕЗ змін, щоб надіслати оповіщення.">
+                                застиг ≥
+                                <input type="number" id="ff-gold-freeze" min="5" max="1440" step="5" onchange="saveFuelFilterSettings()" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(251,191,36,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace"> хв
+                            </label>
+                        </div>
+                    </div>
                     <!-- 📨 Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
                         <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">📨 Telegram про 💰 funding-монети (поява / зникнення)</div>
@@ -8271,6 +8290,10 @@ function renderFuelFilter(d) {
     setIf('ff-spike-auto-open', s.spike_auto_open !== false);
     setIf('ff-opp-require-ctr', s.opportunity_require_ctr !== false);
     setIf('ff-funding-duration', s.funding_duration_minutes != null ? s.funding_duration_minutes : 0);
+    setIf('ff-opp-tg', s.opportunity_tg !== false);
+    setIf('ff-spike-tg', s.spike_tg !== false);
+    setIf('ff-gold-tg', s.funding_gold_tg !== false);
+    setIf('ff-gold-freeze', String(s.funding_gold_freeze_min != null ? s.funding_gold_freeze_min : 60));
     setIf('ff-tg-entry', !!s.ff_tg_on_entry);
     setIf('ff-funding-entry-dir', s.funding_tg_entry_dir || 'any');
     setIf('ff-funding-entry-minmm', String(s.funding_tg_entry_min_mm != null ? s.funding_tg_entry_min_mm : 0));
@@ -8381,7 +8404,7 @@ function renderFuelFilter(d) {
                             _rateCol = '#fbbf24';
                             _rateTip = `⚡ цікаве значення: стабільний funding ${_step}% (чітке число)`;
                             _rateExtra = ';text-shadow:0 0 9px rgba(251,191,36,0.9);font-weight:800';
-                            _rateMark = '✦ ';
+                            _rateMark = '✦';
                         } else {
                             _rateCol = '#7dd3fc';
                             _rateTip = 'без змін (стабільний)';
@@ -8408,9 +8431,12 @@ function renderFuelFilter(d) {
                     + `<span title="пік (найглибший)" style="font-size:0.6rem;color:#fbbf24;white-space:nowrap">${Number(peakRate).toFixed(3)}%</span>`
                     + `</div>`;
                 // No live funding source once the coin left the scanner → «—».
+                // Fixed-width ✦ slot (ALWAYS present) so the gold mark never shifts
+                // the numbers — columns stay aligned across all rows.
+                const markSlot = `<span style="display:inline-block;width:0.95em;text-align:center;color:#fbbf24${_rateMark ? ';text-shadow:0 0 9px rgba(251,191,36,0.9)' : ''}">${_rateMark || ''}</span>`;
                 const rateTxt = (a.funding_stale || a.funding_rate == null)
-                    ? '<span style="color:#667">—</span>'
-                    : `<span title="Funding ${_rateTip}" style="font-weight:700;color:${_rateCol}${_rateExtra}">${_rateMark}${a.funding_rate >= 0 ? '+' : ''}${Number(a.funding_rate).toFixed(3)}%</span>`;
+                    ? `${markSlot}<span style="color:#667">—</span>`
+                    : `${markSlot}<span title="Funding ${_rateTip}" style="font-weight:700;font-variant-numeric:tabular-nums;color:${_rateCol}${_rateExtra}">${a.funding_rate >= 0 ? '+' : ''}${Number(a.funding_rate).toFixed(3)}%</span>`;
                 const cdTxt = a.funding_next_ms
                     ? `<span class="ff-fundnext" data-next="${a.funding_next_ms}" style="font-size:0.66rem;color:#9aa3b5">⏳ ${fmtFundLeft(a.funding_next_ms)}</span>`
                     : (a.funding_stale
@@ -9108,6 +9134,10 @@ async function saveFuelFilterSettings() {
         opportunity_auto_open: _c('ff-opp-auto-open'),
         spike_auto_open: _c('ff-spike-auto-open'),
         opportunity_require_ctr: _c('ff-opp-require-ctr'),
+        opportunity_tg: _c('ff-opp-tg'),
+        spike_tg: _c('ff-spike-tg'),
+        funding_gold_tg: _c('ff-gold-tg'),
+        funding_gold_freeze_min: parseInt(_v('ff-gold-freeze', '60') || '60', 10),
         ff_tg_on_entry: _c('ff-tg-entry'),
         funding_tg_entry_dir: _v('ff-funding-entry-dir', 'any') || 'any',
         funding_tg_entry_min_mm: parseInt(_v('ff-funding-entry-minmm', '0') || '0', 10),

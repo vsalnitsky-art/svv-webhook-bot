@@ -356,6 +356,10 @@ DEFAULT_SETTINGS = {
     #   spike_auto_open — 🚀 аномальний ріст відкривається ПРЯМО (без черги).
     'opportunity_auto_open': True,   # 🎯 «рекомендацію бота» → через Чергу-2
     'spike_auto_open': True,         # 🚀 відкривати по аномальному росту (прямо)
+    # ✦ «Золотий funding застиг»: слати TG, коли funding монети тримається на
+    # чіткому півцілому значенні (0.5/1.0/…/4.0 %) БЕЗ змін довше за поріг.
+    'funding_gold_tg': True,             # вмик/вимк оповіщення
+    'funding_gold_freeze_min': 60,       # скільки хв золотий funding має «застигнути»
 }
 
 
@@ -412,6 +416,11 @@ class FuelFilterDaemon:
         # 🚀 Spike-alert edge state (anomalous growth Telegram).
         self._spike_alert_state: Dict[str, bool] = {}
         self._spike_alert_at: Dict[str, float] = {}
+        # ✦ Gold-funding (stable clean value) freeze tracking: {sym: ts it first
+        # became gold (continuous)} + {sym: alerted this gold episode}. Fires a TG
+        # once a coin's funding stays «gold» ≥ funding_gold_freeze_min minutes.
+        self._gold_since: Dict[str, float] = {}
+        self._gold_alerted: set = set()
         # 🎯 Per-coin 🎯-recommendation episodes (persisted to DB, survives restart):
         #   {sym: {count, first_at, active:{start_at,start_price,opp_start}|None,
         #          history:[ {start_at,end_at,dur_sec,start_price,end_price,
@@ -3556,6 +3565,11 @@ class FuelFilterDaemon:
             cool = max(60, int(s.get('opportunity_alert_cooldown_min', 30) or 30) * 60)
         except (TypeError, ValueError):
             cool = 1800
+        _gold_on = bool(s.get('funding_gold_tg', True))
+        try:
+            _gold_freeze = max(60, int(s.get('funding_gold_freeze_min', 60) or 60) * 60)
+        except (TypeError, ValueError):
+            _gold_freeze = 3600
         with self._lock:
             items = list(self._anomalies.items())
         live = set()
@@ -3596,6 +3610,24 @@ class FuelFilterDaemon:
                     if _spk_open:
                         self._signal_open(sym, a, '🚀 Spike', s)
                 self._spike_alert_state[sym] = spk
+            # ✦ Gold funding «froze» — the rate is a stable clean value. Track how
+            # long it has stayed gold; once ≥ freeze threshold, fire ONE TG for
+            # this gold episode. Any change (loses gold) resets the timer + flag.
+            _step = self._gold_funding_step(a)
+            if _step is not None:
+                _since = self._gold_since.get(sym)
+                if _since is None:
+                    self._gold_since[sym] = _since = now
+                if (_gold_on and sym not in self._gold_alerted
+                        and (now - _since) >= _gold_freeze):
+                    try:
+                        self._send_gold_alert(sym, a, _step, int(now - _since))
+                    except Exception as e:
+                        print(f"[FF-Gold] alert send error {sym}: {e}")
+                    self._gold_alerted.add(sym)
+            else:
+                self._gold_since.pop(sym, None)
+                self._gold_alerted.discard(sym)
         # Prune edge-state for coins that left the table. Do NOT close the 🎯
         # episode here — it is tied to the OPEN TRADE now (closed by
         # _opp_episode_close_if_open when the position closes), not to the coin's
@@ -3609,6 +3641,10 @@ class FuelFilterDaemon:
             if k not in live:
                 self._spike_alert_state.pop(k, None)
                 self._spike_alert_at.pop(k, None)
+        for k in list(self._gold_since.keys()):
+            if k not in live:
+                self._gold_since.pop(k, None)
+                self._gold_alerted.discard(k)
 
     def _send_opportunity_alert(self, sym: str, a: Dict, opp: int, reasons: list):
         """Compose + broadcast the 🎯 «best moment to open» Telegram message to
@@ -3634,6 +3670,44 @@ class FuelFilterDaemon:
         rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
         body = (f"🚀 #{sym} — аномальний ріст\n"
                 f"{emoji} {side} · рух {mv_s} · funding {rt_s}")
+        self._broadcast_users('funding', 'notify_funding', body)
+
+    @staticmethod
+    def _gold_funding_step(a: Dict):
+        """✦ Return the clean half-integer step (0.5..4.0) if this coin's funding
+        is «gold» — a stable clean value: |rate| is a 0.5-multiple in [0.5,4] AND
+        it did NOT change vs the previous sample. Else None. Mirrors the UI gold
+        marker (templates/smart_money.html) so the alert and the ✦ badge agree."""
+        r = a.get('rate')
+        p = a.get('prev_rate')
+        if r is None or p is None:
+            return None
+        try:
+            r = float(r); p = float(p)
+        except (TypeError, ValueError):
+            return None
+        if abs(r - p) >= 0.0005:      # changed since last sample → not «frozen»
+            return None
+        av = abs(r)
+        step = round(av / 0.5) * 0.5
+        if abs(av - step) < 0.01 and 0.5 <= step <= 4:
+            return step
+        return None
+
+    def _send_gold_alert(self, sym: str, a: Dict, step: float, held_sec: int):
+        """✦ Broadcast a «gold funding froze» Telegram — a funding coin whose rate
+        stayed on a clean value (e.g. −2.000%) unchanged for a long time."""
+        d = a.get('dir')
+        emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
+        side = d if d in ('LONG', 'SHORT') else ''
+        rt = a.get('rate')
+        rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
+        if held_sec >= 3600:
+            dur = f"{held_sec/3600:.1f}год"
+        else:
+            dur = f"{int(held_sec/60)}хв"
+        body = (f"✦ #{sym} — золотий funding застиг\n"
+                f"{emoji} {side} · {rt_s} стабільно вже {dur} (чітке {step:g}%)")
         self._broadcast_users('funding', 'notify_funding', body)
 
     def _signal_open(self, sym: str, a: Dict, tag: str, settings: Dict):
