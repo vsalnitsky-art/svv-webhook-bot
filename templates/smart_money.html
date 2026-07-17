@@ -2275,12 +2275,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                     </div>
-                    <!-- 🧪 Тест сигналів: відкривати угоди прямо по 🎯/🚀 (без черги) -->
+                    <!-- 🧪 Тест сигналів: 🎯 → через Чергу-2, 🚀 → прямо (без черги) -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
-                        <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">🧪 Тест сигналів — відкривати угоди прямо по сигналу (без черги). Режим (real/paper) — за станом Trade Manager (real вимк + Test Mode → paper).</div>
+                        <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">🧪 Сигнали → угоди. 🎯 «рекомендація» проходить через <b>Чергу-2</b> (повний алгоритм), 🚀 — прямо. Режим (real/paper) — за станом Trade Manager (real вимк + Test Mode → paper).</div>
                         <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати тестову угоду в момент, коли монета стає 🎯 «рекомендована ботом». Напрямок = бік сигналу. Вихід веде FF/TM.">
-                                <input type="checkbox" id="ff-opp-auto-open" onchange="saveFuelFilterSettings()"> 🎯 Відкривати по «рекомендації бота»
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Коли монета досягає найкращого збігу (🎯), вона НЕ відкривається одразу, а ставиться в Чергу-2. Черга-2 проганяє її повним алгоритмом (ENTRY score, CTR, Decision) і лише якщо ВІДКРИВАЄ угоду — монета позначається «рекомендована ботом» (рядок + Telegram). ⚠️ Черга-2 має бути увімкнена.">
+                                <input type="checkbox" id="ff-opp-auto-open" onchange="saveFuelFilterSettings()"> 🎯 «Рекомендацію бота» — через Чергу-2
                             </label>
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати тестову угоду в момент 🚀 аномального росту. Напрямок = бік руху.">
                                 <input type="checkbox" id="ff-spike-auto-open" onchange="saveFuelFilterSettings()"> 🚀 Відкривати по аномальному росту
@@ -8441,9 +8441,9 @@ function renderFuelFilter(d) {
     }
 }
 
-// 🎯 Second row under a coin when it's «рекомендована ботом» (opportunity_hot):
-// live timer of the current episode + persisted stats (епізодів, вперше,
-// сер.тривалість, вхід@ціна). Empty when not hot.
+// 🎯 Second row under a coin when a recommended trade is OPEN («рекомендована
+// ботом» = Queue-2 opened it): live timer of the trade + persisted stats
+// (епізодів, вперше, сер.тривалість, вхід@ціна). Empty otherwise.
 function oppStatsRow(a) {
     if (!a.opportunity_hot) return '';
     const st = a.opp_stats || {};
@@ -8460,7 +8460,7 @@ function oppStatsRow(a) {
     const _tip = _rec ? `Останні епізоди (вхід→вихід · тривалість):\n${_rec}` : 'Ще не було завершених епізодів';
     return `<tr style="background:rgba(74,222,128,0.07)"><td colspan="9" title="${_tip.replace(/"/g,'&quot;')}" style="padding:1px 8px 5px 34px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">`
         + `🎯 <b style="color:#4ade80;text-shadow:0 0 6px rgba(74,222,128,0.6)">рекомендована ботом</b>`
-        + ` · у режимі <b>${timer}</b>`
+        + ` · в угоді <b>${timer}</b>`
         + ` · вхід @ <b>${entryPx}</b>`
         + ` · епізодів: <b>${st.count || 0}</b>`
         + ` · вперше: ${first}`

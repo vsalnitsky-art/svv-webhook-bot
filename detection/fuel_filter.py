@@ -348,11 +348,14 @@ DEFAULT_SETTINGS = {
     'opportunity_cold_grace_sec': 180,
     # 🚀 Аномальний ріст: слати в Telegram, коли монета робить різкий рух.
     'spike_tg': True,
-    # 🧪 ТЕСТ сигналів: відкривати угоду ПРЯМО по сигналу (без черги), щоб
-    # оцінити прибутковість. Режим (real/paper) — за станом Trade Manager
+    # 🧪 Сигнали → угоди. Режим (real/paper) — за станом Trade Manager
     # (real TM вимкнено + Test Mode → paper-угоди). Вихід веде FF/TM.
-    'opportunity_auto_open': True,   # 🎯 відкривати по «рекомендації бота»
-    'spike_auto_open': True,         # 🚀 відкривати по аномальному росту
+    #   opportunity_auto_open — 🎯 «рекомендація» проходить через ЧЕРГУ-2 (повний
+    #     алгоритм ENTRY/CTR/Decision); позначка «рекомендована ботом» + Telegram
+    #     ставляться лише коли Черга-2 ВІДКРИВАЄ угоду. Потребує queue2_enabled.
+    #   spike_auto_open — 🚀 аномальний ріст відкривається ПРЯМО (без черги).
+    'opportunity_auto_open': True,   # 🎯 «рекомендацію бота» → через Чергу-2
+    'spike_auto_open': True,         # 🚀 відкривати по аномальному росту (прямо)
 }
 
 
@@ -2502,6 +2505,9 @@ class FuelFilterDaemon:
                 self._pending.pop(symbol, None)
                 self._pending2.pop(symbol, None)
             self._persist_state()
+        # 🎯 Close the «рекомендована ботом» episode (no-op unless this was a
+        # recommended trade). Exit price = the close price we just used.
+        self._opp_episode_close_if_open(symbol, time.time(), price=exit_price)
         print(f"[FuelFilter] CLOSE trigger {symbol} reason={reason}")
 
     # ------------------------------------------------------------------
@@ -2610,6 +2616,9 @@ class FuelFilterDaemon:
                     with self._lock:
                         self._fuel_managed.pop(sym, None)
                         self._timers.pop(sym, None)
+                    # 🎯 position gone (SL/TP/manual) → close its recommendation
+                    # episode (no-op unless it was a recommended trade).
+                    self._opp_episode_close_if_open(sym, now)
                     _pruned = True
         if _pruned:
             with self._lock:
@@ -2695,6 +2704,8 @@ class FuelFilterDaemon:
             with self._lock:
                 self._fuel_managed.pop(symbol, None)
                 self._timers.pop(symbol, None)
+            # 🎯 close the «рекомендована ботом» episode (no-op if not opp).
+            self._opp_episode_close_if_open(symbol, now, price=mark)
             return
 
         exh = self._exhaustion(symbol, side)
@@ -3466,63 +3477,109 @@ class FuelFilterDaemon:
                         'end_at': e.get('end_at')} for e in hist[-5:]],
         }
 
+    def _opp_enqueue_q2(self, sym: str, a: Dict, opp: int, s: Dict, now: float):
+        """🎯 Route a «best confluence» opportunity INTO Queue 2 instead of opening
+        it directly. The Q2 engine then applies its FULL algorithm (ENTRY score ≥
+        open threshold, CTR not opposing, Decision floor, optional ₿/buttons); only
+        if it OPENS is the coin marked «рекомендована ботом» (episode + TG, in
+        _engine_tick_q2). Requires Queue 2 enabled. Does NOT overwrite an existing
+        (e.g. CHoCH) Q2 entry — a real structure signal already owns the slot."""
+        side = a.get('dir')
+        if side not in ('LONG', 'SHORT'):
+            return
+        if not bool(s.get('queue2_enabled')):
+            print(f"[FF-Opp] {sym}: Черга-2 вимкнена — 🎯 не поставлено в чергу")
+            return
+        if sym in self._fuel_managed:
+            return   # already open/managed by FF
+        band = float(s.get('queue2_ctr_neutral_pct', 10) or 0)
+        _ctr_state, _ctr_stc, _ctr_pct = self._ctr_state(sym, band)
+        entry = self._entry_score_for(sym, side, 'opp')
+        _es = int(entry['score']) if entry else 0
+        with self._lock:
+            if sym in self._pending2:
+                return   # respect an existing Q2 entry (CHoCH / prior opp)
+            self._pending2[sym] = {
+                'dir': side, 'kind': 'opp', 'opp': True,
+                'added_at': now,
+                'entry_score': _es,
+                'ctr_signal': _ctr_state, 'ctr_stc_signal': _ctr_stc,
+                'opp_at_queue': int(opp),
+            }
+            self._persist_state()
+        try:
+            from detection.activity_log import log_activity
+            log_activity(sym, 'queued',
+                         f'Черга-2 · 🎯 Opportunity {int(opp)}% — чекає відкриття по алгоритму Q2 '
+                         f'(ENTRY {_es})',
+                         side=side, source='Q2',
+                         extra={'opp': True, 'opp_score': int(opp), 'entry_score': _es})
+        except Exception:
+            pass
+        print(f"[FF-Opp] {sym} {side}: 🎯 → Черга-2 (opp {int(opp)}%, ENTRY {_es})")
+
+    def _opp_episode_close_if_open(self, sym: str, now: float, price=None):
+        """Close an ACTIVE 🎯 «рекомендована ботом» episode when its trade closes.
+        An active episode ⟺ a recommended (Q2-opened) trade is open, so this is a
+        no-op for non-opp positions. Best-effort exit price: explicit → funding
+        table → live ticker."""
+        u = (sym or '').upper()
+        rec = self._opp_episodes.get(u)
+        if not rec or not rec.get('active'):
+            return
+        if price is None:
+            _a = self._anomalies.get(sym) or self._anomalies.get(u) or {}
+            price = _a.get('last_price')
+        if price is None:
+            try:
+                from detection.market_data import get_market_data
+                md = get_market_data()
+                if md:
+                    tk = md.get_ticker(sym)
+                    price = tk.get('last') if tk else None
+            except Exception:
+                price = None
+        try:
+            self._opp_episode_close(sym, {'last_price': price}, 0, now)
+            print(f"[FF-Opp] {sym}: епізод «рекомендована ботом» закрито (угоду закрито)")
+        except Exception as e:
+            print(f"[FF-Opp] episode close error {sym}: {e}")
+
     def _opportunity_alert(self, s: Dict, now: float):
-        """🎯 Fire a Telegram alert the MOMENT a 💰 funding coin reaches the BEST
-        entry confluence (opportunity_hot). Edge-triggered per coin with a
-        cooldown — this REPLACES the old funding appear/exit spam. Off when
-        `opportunity_tg` is disabled. Also tracks 🎯-episode stats (DB-persisted)."""
-        _opp_on = bool(s.get('opportunity_tg', True))
+        """🎯 Detect the 💰 funding coins that reach the BEST entry confluence and
+        ROUTE them into Queue 2 (edge-triggered per coin). The «рекомендована
+        ботом» mark + Telegram happen later, at the Queue-2 OPEN (_engine_tick_q2)
+        — reaching the confluence only queues the coin. Also drives 🚀 spike
+        alerts/opens (a separate signal, still direct)."""
         _spike_on = bool(s.get('spike_tg', True))
         try:
             cool = max(60, int(s.get('opportunity_alert_cooldown_min', 30) or 30) * 60)
         except (TypeError, ValueError):
             cool = 1800
-        try:
-            grace = max(0, int(s.get('opportunity_cold_grace_sec', 180) or 0))
-        except (TypeError, ValueError):
-            grace = 180
         with self._lock:
             items = list(self._anomalies.items())
         live = set()
+        _route_q2 = bool(s.get('opportunity_auto_open', True))   # 🎯 → Черга-2
         for sym, a in items:
             live.add(sym)
-            # 🎯 Opportunity — ALWAYS computed: episode stats are kept regardless
-            # of the TG toggle; only the Telegram SEND is gated by opportunity_tg.
+            # 🎯 Opportunity — ALWAYS computed (candidate detection). Reaching the
+            # best confluence NO LONGER opens directly and NO LONGER opens an
+            # «рекомендована ботом» episode here. Instead the coin is ROUTED INTO
+            # Queue 2; it is marked «рекомендована ботом» (episode + TG) only once
+            # Queue 2 actually OPENS the trade (in _engine_tick_q2). The episode
+            # then closes when that trade closes (_opp_episode_close_if_open).
             try:
                 opp, hot, reasons = self._opportunity_for(sym, a, s)
             except Exception:
                 opp, hot, reasons = 0, False, []
-            # `prev_hot` is the EFFECTIVE (grace-applied) state — the timer keeps
-            # «holding» through a brief dip, so no episode reopen and NO repeat TG.
             prev_hot = self._opp_hot_state.get(sym, False)
-            if hot:
-                self._opp_cold_at.pop(sym, None)   # any cold-grace cancelled
-                if not prev_hot:
-                    self._opp_episode_open(sym, a, opp, now)       # stats (DB)
-                    # ONE Telegram per episode: only on a fresh rising edge.
-                    if _opp_on and (now - self._opp_alert_at.get(sym, 0)) >= cool:
-                        try:
-                            self._send_opportunity_alert(sym, a, opp, reasons)
-                        except Exception as e:
-                            print(f"[FF-Opp] alert send error {sym}: {e}")
-                        self._opp_alert_at[sym] = now
-                    # 🧪 TEST: open a trade directly on the 🎯 signal (no queue).
-                    if s.get('opportunity_auto_open', True):
-                        self._signal_open(sym, a, '🎯 Opportunity', s)
-                    self._opp_hot_state[sym] = True
-            elif prev_hot:
-                # Not hot right now but WAS — hold through the grace window before
-                # closing the episode (kills flicker-induced repeat alerts).
-                _cold0 = self._opp_cold_at.get(sym)
-                if _cold0 is None:
-                    self._opp_cold_at[sym] = now
-                elif (now - _cold0) >= grace:
-                    self._opp_episode_close(sym, a, opp, now)      # stats (DB)
-                    self._opp_hot_state[sym] = False
-                    self._opp_cold_at.pop(sym, None)
-                # else: still «holding» within grace → keep episode + timer running.
-            else:
-                self._opp_hot_state[sym] = False
+            if hot and not prev_hot and _route_q2:
+                # Rising edge → enqueue into Queue 2 (does NOT open here).
+                try:
+                    self._opp_enqueue_q2(sym, a, opp, s, now)
+                except Exception as e:
+                    print(f"[FF-Opp] Q2 enqueue error {sym}: {e}")
+            self._opp_hot_state[sym] = hot
             # 🚀 Spike — rising edge: Telegram (gated + cooldown) AND/OR test open.
             _spk_open = bool(s.get('spike_auto_open', True))
             if _spike_on or _spk_open:
@@ -3539,17 +3596,15 @@ class FuelFilterDaemon:
                     if _spk_open:
                         self._signal_open(sym, a, '🚀 Spike', s)
                 self._spike_alert_state[sym] = spk
-        # Prune state for coins that left the table — closing any 🎯 episode still
-        # open (exit price unknown once the coin is gone).
+        # Prune edge-state for coins that left the table. Do NOT close the 🎯
+        # episode here — it is tied to the OPEN TRADE now (closed by
+        # _opp_episode_close_if_open when the position closes), not to the coin's
+        # presence in the funding table.
         for k in list(self._opp_hot_state.keys()):
             if k not in live:
-                if self._opp_hot_state.get(k):
-                    try:
-                        self._opp_episode_close(k, self._anomalies.get(k) or {}, 0, now)
-                    except Exception:
-                        pass
                 self._opp_hot_state.pop(k, None)
                 self._opp_alert_at.pop(k, None)
+                self._opp_cold_at.pop(k, None)
         for k in list(self._spike_alert_state.keys()):
             if k not in live:
                 self._spike_alert_state.pop(k, None)
@@ -3978,18 +4033,43 @@ class FuelFilterDaemon:
                         log_activity(sym, 'closed', f'Черга-2 РЕВЕРС: закрито {_pside} (сигнал {d} пройшов Чергу-2)', side=_pside, source='Q2')
                     except Exception:
                         pass
-            _ob = '⚡ Q2 РЕВЕРС' if _did_reverse else '⚡ Q2 ENTRY+CTR'
+            _is_opp = bool(info.get('opp'))
+            if _is_opp:
+                _ob = '🎯 Рекомендовано ботом (реверс)' if _did_reverse else '🎯 Рекомендовано ботом'
+            else:
+                _ob = '⚡ Q2 РЕВЕРС' if _did_reverse else '⚡ Q2 ENTRY+CTR'
             try:
                 opened = self._open(sym, d, fuel, s, opened_by=_ob)
             except Exception as e:
                 print(f"[FF-Q2] open error {sym}: {e}")
                 continue
             if opened:
+                _now_open = time.time()
                 with self._lock:
-                    self._timers[sym] = {'dir': d, 'since': time.time(),
+                    self._timers[sym] = {'dir': d, 'since': _now_open,
                                          'start_price': fuel.get('mark_price')}
                     self._pending2.pop(sym, None)
                 self._engine_skip.pop(sym, None)
+                # 🎯 A 🎯-recommended entry that FULLY passed Queue 2 → NOW mark it
+                # «рекомендована ботом»: open the episode (real entry price/time)
+                # and send ONE Telegram. This is the ONLY place a recommendation is
+                # written — reaching the confluence merely queued it.
+                if _is_opp:
+                    _px_open = fuel.get('mark_price')
+                    try:
+                        _opp_now, _, _opp_reasons = self._opportunity_for(
+                            sym, self._anomalies.get(sym) or {'dir': d, 'last_price': _px_open}, s)
+                    except Exception:
+                        _opp_now, _opp_reasons = int(info.get('opp_at_queue') or 0), []
+                    self._opp_episode_open(sym, {'last_price': _px_open}, _opp_now, _now_open)
+                    if bool(s.get('opportunity_tg', True)):
+                        try:
+                            self._send_opportunity_alert(
+                                sym, {'dir': d, 'rate': (self._anomalies.get(sym) or {}).get('rate')},
+                                _opp_now, _opp_reasons)
+                        except Exception as e:
+                            print(f"[FF-Opp] alert send error {sym}: {e}")
+                        self._opp_alert_at[sym] = _now_open
                 # Queue wait (signal→open latency) — a key calibration metric.
                 _wait = time.time() - float(info.get('added_at') or time.time())
                 _wlbl = (f"{_wait/3600:.1f}год" if _wait >= 3600
@@ -4802,9 +4882,11 @@ class FuelFilterDaemon:
                 # 🎯 OPPORTUNITY — composite «best setup to open» (shared helper).
                 _opp, _opp_hot_raw, _opp_reasons = self._opportunity_for(sym, a, settings)
                 _opp_stats = self._opp_stats_summary(sym)
-                # Effective hot = raw hot OR an ACTIVE episode still open (so the
-                # 🎯 row/timer holds through the grace window, no flicker).
-                _opp_hot = bool(_opp_hot_raw or (_opp_stats and _opp_stats.get('since')))
+                # «Рекомендована ботом» row = an ACTIVE recommendation episode, i.e.
+                # a 🎯 trade that Queue 2 actually OPENED (episode opens at Q2 open,
+                # closes at trade close). Reaching the confluence (raw hot) only
+                # queues the coin into Q2 — it is NOT «рекомендована» until opened.
+                _opp_hot = bool(_opp_stats and _opp_stats.get('since'))
                 anomalies.append({
                     'symbol': sym,
                     'dir': a.get('dir'),
