@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SVV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.1.1
+// @version      1.2.0
 // @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із SVV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       SVV
 // @match        https://*.tradingview.com/chart/*
@@ -209,6 +209,14 @@
         return (h > 0 ? h + ':' : '') + pad(m) + ':' + pad(ss);
     }
 
+    // Compact USD volume: $9.77M / $1.2K / $980 (same as the Vol 24h column).
+    function fmtVol(v) {
+        if (v == null || !(v > 0)) return '—';
+        return v >= 1e9 ? '$' + (v / 1e9).toFixed(2) + 'B'
+             : v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M'
+             : v >= 1e3 ? '$' + (v / 1e3).toFixed(0) + 'K' : '$' + v.toFixed(0);
+    }
+
     function render(sym, state) {
         buildBadge();
         elSym.textContent = sym || '—';
@@ -261,12 +269,41 @@
             }
         }
 
-        // ── 💰 Funding line — only for coins in the «💰 Funding — ММ» table ──
+        // ── 💰 Funding line — only for coins in the «💰 Funding — ММ» table.
+        // Funding is coloured by TREND exactly like the table: 🔴 глибше в мінус /
+        // 🟢 до нуля / cyan стабільний / ✦ золоте (стабільне чітке 0.5-крокове
+        // значення). Vol 24h (+ ↑/↓ vs ~2-хв базою) додається тим самим значенням,
+        // що й у колонці Vol 24h таблиці. ──
         if (d.funding && d.funding_rate != null) {
             const r = Number(d.funding_rate);
-            const rc = r >= 0 ? '#4ade80' : '#f87171';
+            const prev = d.funding_prev_rate;
+            let rc = '#cbd5e1', mark = '', extra = '';
+            if (prev != null) {
+                if (r < prev - 0.0005) { rc = '#f87171'; }        // глибше в мінус
+                else if (r > prev + 0.0005) { rc = '#4ade80'; }   // до нуля
+                else {
+                    const av = Math.abs(r), step = Math.round(av / 0.5) * 0.5;
+                    if (Math.abs(av - step) < 0.01 && step >= 0.5 && step <= 4) {
+                        rc = '#fbbf24'; mark = '✦ ';
+                        extra = ';text-shadow:0 0 8px rgba(251,191,36,0.9)';
+                    } else { rc = '#7dd3fc'; }                     // стабільний
+                }
+            } else {
+                rc = r >= 0 ? '#4ade80' : '#f87171';              // без тренду → знак
+            }
             const left = d.funding_next_ms ? ` · ⏳ ${fmtLeft(d.funding_next_ms)}` : '';
-            elFund.innerHTML = `💰 фандинг <span style="color:${rc};font-weight:700">${r >= 0 ? '+' : ''}${r.toFixed(4)}%</span>${left}`;
+            // Vol 24h segment (only for funding coins — matches the table column).
+            let volSeg = '';
+            if (d.vol24h != null && d.vol24h > 0) {
+                let arr = '';
+                if (d.vol24h_prev != null && d.vol24h_prev > 0) {
+                    if (d.vol24h > d.vol24h_prev * 1.005) arr = ' <span style="color:#4ade80">▲</span>';
+                    else if (d.vol24h < d.vol24h_prev * 0.995) arr = ' <span style="color:#f87171">▼</span>';
+                    else arr = ' <span style="color:#9aa3b5">→</span>';
+                }
+                volSeg = ` · 📊 <span style="color:#cbd5e1;font-weight:700">${fmtVol(d.vol24h)}</span>${arr}`;
+            }
+            elFund.innerHTML = `💰 фандинг <span style="color:${rc};font-weight:700${extra}">${mark}${r >= 0 ? '+' : ''}${r.toFixed(4)}%</span>${left}${volSeg}`;
         }
 
         // ── ⚡ CTR line (замість «оновлено») — нахил STC по цій монеті ──

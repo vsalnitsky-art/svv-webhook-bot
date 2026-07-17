@@ -2201,11 +2201,21 @@ class FuelFilterDaemon:
                 a = self._anomalies.get(symbol)
             out['funding'] = bool(a)
             out['funding_rate'] = a.get('rate') if a else None
+            # prev rate → the overlay colours funding by TREND (deeper/easing/
+            # stable/✦ clean) EXACTLY like the 💰 Funding — ММ table.
+            out['funding_prev_rate'] = a.get('prev_rate') if a else None
             out['funding_next_ms'] = a.get('next_funding') if a else None
+            # 24h turnover (+ ~2-min baseline for the ↑/↓ arrow) — same value the
+            # Vol 24h column shows in the funding table.
+            out['vol24h'] = a.get('vol24h') if a else None
+            out['vol24h_prev'] = a.get('vol24h_prev') if a else None
         except Exception:
             out['funding'] = False
             out['funding_rate'] = None
+            out['funding_prev_rate'] = None
             out['funding_next_ms'] = None
+            out['vol24h'] = None
+            out['vol24h_prev'] = None
         # ── ⚡ CTR (STC) for the overlay foot line («⚡ CTR·15M 🟢 LONG-нахил X%») ──
         try:
             from detection.forecast_engine import get_forecast_engine
