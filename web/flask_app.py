@@ -6943,6 +6943,21 @@ def compute_bias(db, symbol, wl=None):
             _fc = _fe.get(symbol)
             if _fc:
                 _ctr = _fc.get('ctr')
+                # ⚡ 1H CTR alongside the primary TF — cheap (per-(sym,'1h') cache,
+                # TTL 5m). Copy the dict so we never mutate the forecast cache.
+                # Skipped when the primary TF is already 1h (no duplicate).
+                if isinstance(_ctr, dict) and str(_ctr.get('tf') or '').lower() != '1h':
+                    try:
+                        _h1 = _fe.get_ctr_tf(symbol, '1h')
+                        if _h1 and _h1.get('stc') is not None:
+                            _s1 = float(_h1['stc'])
+                            _ctr = dict(_ctr)
+                            _ctr['stc_1h'] = round(_s1, 1)
+                            _ctr['lean_1h'] = ('SHORT' if _s1 > 50
+                                               else ('LONG' if _s1 < 50 else None))
+                            _ctr['lean_pct_1h'] = round(abs(_s1 - 50.0) / 50.0 * 100.0)
+                    except Exception:
+                        pass
     except Exception:
         _ctr = None
     _decision = None

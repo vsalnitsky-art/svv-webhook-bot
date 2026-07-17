@@ -2242,6 +2242,19 @@ class FuelFilterDaemon:
                               'lean_pct': round(abs(stc - 50.0) / 50.0 * 100.0),
                               'tf': c.get('tf'), 'last_dir': c.get('last_dir'),
                               'age_bars': c.get('last_signal_age_bars')}
+                # ⚡ 1H CTR alongside (cheap per-(sym,'1h') cache, TTL 5m). Skip
+                # when the primary TF is already 1h — no duplicate.
+                if str(c.get('tf') or '').lower() != '1h':
+                    try:
+                        h1 = fe.get_ctr_tf(symbol, '1h')
+                        if h1 and h1.get('stc') is not None:
+                            s1 = float(h1['stc'])
+                            out['ctr']['stc_1h'] = round(s1, 1)
+                            out['ctr']['lean_1h'] = ('SHORT' if s1 > 50
+                                                     else ('LONG' if s1 < 50 else None))
+                            out['ctr']['lean_pct_1h'] = round(abs(s1 - 50.0) / 50.0 * 100.0)
+                    except Exception:
+                        pass
             else:
                 out['ctr'] = None
         except Exception:
@@ -3850,9 +3863,22 @@ class FuelFilterDaemon:
             if fe:
                 c = (fe.get(symbol) or {}).get('ctr') or {}
                 if c.get('stc') is not None:
-                    return {'stc': c.get('stc'),
+                    snap = {'stc': c.get('stc'),
                             'last_dir': c.get('last_dir'),
-                            'last_signal_age_bars': c.get('last_signal_age_bars')}
+                            'last_signal_age_bars': c.get('last_signal_age_bars'),
+                            'tf': c.get('tf')}
+                    # ⚡ 1H CTR alongside the primary TF — cheap: reads the
+                    # forecast-engine per-(sym,'1h') cache (TTL 5m). Skipped when
+                    # the primary TF is ALREADY 1h (no duplicate column).
+                    if str(c.get('tf') or '').lower() != '1h':
+                        try:
+                            h1 = fe.get_ctr_tf(symbol, '1h')
+                            if h1 and h1.get('stc') is not None:
+                                snap['stc_1h'] = h1.get('stc')
+                                snap['last_dir_1h'] = h1.get('last_dir')
+                        except Exception:
+                            pass
+                    return snap
         except Exception:
             pass
         return None

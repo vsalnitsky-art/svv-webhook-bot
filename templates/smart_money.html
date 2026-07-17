@@ -5800,6 +5800,16 @@ async function loadChart() {
                     : (ctr.last_dir === 'LONG' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)');
             }
 
+            // ⚡ 1H CTR alongside the primary TF (added by /api/sm/bias).
+            if (ctr.stc_1h != null) {
+                const s1 = Number(ctr.stc_1h);
+                let b1, c1;
+                if (s1 > 50) { b1 = '🔴'; c1 = '#fca5a5'; }
+                else if (s1 < 50) { b1 = '🟢'; c1 = '#86efac'; }
+                else { b1 = '⚪'; c1 = '#aaa'; }
+                const p1 = Math.round(Math.abs(s1 - 50) / 50 * 100);
+                badgeHtml += ` <span title="CTR 1H · STC ${s1.toFixed(0)}/100" style="color:${c1}">· 1H ${b1} ${p1}%</span>`;
+            }
             ctrBadge.innerHTML = badgeHtml;
             ctrBadge.className = 'sm-status-badge';
             ctrBadge.style.background = bgColor;
@@ -7042,7 +7052,10 @@ function ffCtrCell(c) {
     else if (stc < 50) { revBias = '🟢 LONG-нахил'; col = '#4ade80'; }
     else { revBias = '⚪ нейтрально'; col = '#9aa3b5'; }
     const leanPct = Math.round(Math.abs(stc - 50) / 50 * 100);
-    let html = `<span title="STC ${stc.toFixed(0)}/100" style="color:${col};font-weight:700">${revBias} ${leanPct}%</span>`;
+    // Label the primary TF only when a 1H reading is present alongside (so the two
+    // are distinguishable). Elsewhere (trade modal etc.) the TF stays as-is.
+    const tfPfx = (c.stc_1h != null && c.tf) ? `${String(c.tf).toUpperCase()} ` : '';
+    let html = `<span title="STC ${stc.toFixed(0)}/100" style="color:${col};font-weight:700">${tfPfx}${revBias} ${leanPct}%</span>`;
     if (c.last_dir) {
         const icon = c.last_dir === 'LONG' ? '🟢' : '🔴';
         const age = c.last_signal_age_bars;
@@ -7052,6 +7065,16 @@ function ffCtrCell(c) {
         const crossCol = stale ? '#6b7280' : (c.last_dir === 'LONG' ? '#4ade80' : '#f87171');
         html += ` <span title="Останній CTR-кросовер: ${c.last_dir} ${ageStr}${stale ? ' (застарілий)' : ''}" `
             + `style="font-size:0.6rem;color:${crossCol}">${icon}${ageStr}${stale ? '⚠️' : ''}</span>`;
+    }
+    // ⚡ 1H CTR segment alongside the primary TF (added by _ctr_snapshot).
+    if (c.stc_1h != null) {
+        const s1 = Number(c.stc_1h);
+        let b1, c1;
+        if (s1 > 50) { b1 = '🔴'; c1 = '#f87171'; }
+        else if (s1 < 50) { b1 = '🟢'; c1 = '#4ade80'; }
+        else { b1 = '⚪'; c1 = '#9aa3b5'; }
+        const p1 = Math.round(Math.abs(s1 - 50) / 50 * 100);
+        html += ` <span title="CTR 1H · STC ${s1.toFixed(0)}/100" style="color:${c1};font-size:0.62rem;font-weight:700">· 1H ${b1} ${p1}%</span>`;
     }
     return html;
 }

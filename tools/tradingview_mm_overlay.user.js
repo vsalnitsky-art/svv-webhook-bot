@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SVV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.2.0
+// @version      1.2.1
 // @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із SVV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       SVV
 // @match        https://*.tradingview.com/chart/*
@@ -315,7 +315,16 @@
             const col = lean === 'LONG' ? '#4ade80' : (lean === 'SHORT' ? '#f87171' : '#9aa3b5');
             const label = lean ? (lean + '-нахил') : 'нейтрально';
             const pct = (c.lean_pct != null) ? c.lean_pct : 0;
-            elFoot.innerHTML = `⚡ CTR${tf} <span style="color:${col};font-weight:700">${icon} ${label} ${pct}%</span>`;
+            let foot = `⚡ CTR${tf} <span style="color:${col};font-weight:700">${icon} ${label} ${pct}%</span>`;
+            // ⚡ 1H CTR alongside the primary TF (added by get_panel_status).
+            if (c.stc_1h != null) {
+                const l1 = c.lean_1h;
+                const i1 = l1 === 'LONG' ? '🟢' : (l1 === 'SHORT' ? '🔴' : '⚪');
+                const cc1 = l1 === 'LONG' ? '#4ade80' : (l1 === 'SHORT' ? '#f87171' : '#9aa3b5');
+                const p1 = (c.lean_pct_1h != null) ? c.lean_pct_1h : 0;
+                foot += ` <span style="color:${cc1};font-weight:700">· 1H ${i1} ${p1}%</span>`;
+            }
+            elFoot.innerHTML = foot;
         } else {
             elFoot.style.color = '#9aa3b5';
             elFoot.textContent = '⚡ CTR — (немає даних)';
