@@ -15,6 +15,9 @@ from typing import Dict, List, Optional
 SCAN_INTERVAL = 60          # 1 minute
 ENTRY_THRESHOLD = -1.0
 WATCH_DAYS = 5
+# Max rate-samples kept per coin (RAM/512MB cap: was 7200 = 5d). 2880 = last 2d
+# at 60s; F-Trend only needs TREND_WINDOW=30, the rest feeds the history chart.
+MAX_RATES = 2880
 DB_KEY = 'funding_watchlist'
 DB_KEY_THRESHOLD = 'funding_entry_threshold'  # user-tunable entry threshold (%)
 DB_KEY_MIN_VOLUME = 'funding_min_volume_usd'  # user-tunable min 24h turnover (USD)
@@ -179,6 +182,11 @@ class FundingMonitor:
                 for sym, data in self._watchlist.items():
                     if data.get('alerted'):
                         self._alerted.add(sym)
+                    # Trim rate-history on load so an old oversized DB blob
+                    # doesn't sit in RAM (512MB cap): keep the last MAX_RATES.
+                    _rs = data.get('rates')
+                    if isinstance(_rs, list) and len(_rs) > MAX_RATES:
+                        data['rates'] = _rs[-MAX_RATES:]
                 if self._watchlist:
                     print(f"[FUNDING] Restored {len(self._watchlist)} tracked coins")
         except Exception as e:
@@ -319,8 +327,8 @@ class FundingMonitor:
                             'r': round(r['rate'] * 100, 4),
                             'p': r['price'],
                         })
-                        if len(coin['rates']) > 7200:
-                            coin['rates'] = coin['rates'][-7200:]
+                        if len(coin['rates']) > MAX_RATES:
+                            coin['rates'] = coin['rates'][-MAX_RATES:]
 
                 for symbol, coin in self._watchlist.items():
                     if coin.get('alerted'):

@@ -71,10 +71,10 @@ _DB_SETTINGS = 'fuel_filter_settings'
 _DB_STATE = 'fuel_filter_state'
 _DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
 _DB_FUNDING_ARCHIVE = 'fuel_filter_funding_archive'  # per-coin funding history
-FUNDING_ARCH_MAX = 800          # max samples kept per coin
-FUNDING_ARCH_COINS_MAX = 400    # max distinct coins archived
+FUNDING_ARCH_MAX = 400          # max samples kept per coin (RAM/512MB: was 800)
+FUNDING_ARCH_COINS_MAX = 200    # max distinct coins archived (RAM/512MB: was 400)
 _DB_OPP_STATS = 'fuel_opportunity_stats'  # 🎯 per-coin recommendation episodes
-OPP_HIST_MAX = 1000             # max closed 🎯 episodes kept per coin (DB)
+OPP_HIST_MAX = 200              # max closed 🎯 episodes kept per coin (RAM: was 1000)
 FUNDING_ARCH_SAMPLE_SEC = 60    # periodic sample cadence while a coin is live
 
 # ─── queue (❤️ Черга на вхід) removal operations ───
@@ -1046,9 +1046,17 @@ class FuelFilterDaemon:
             try:
                 fa = self._db.get_setting(_DB_FUNDING_ARCHIVE, {}) or {}
                 if isinstance(fa, dict):
-                    self._funding_archive = {str(k).upper(): (v or [])
-                                             for k, v in fa.items()
-                                             if isinstance(v, list)}
+                    # Trim on load so an old oversized DB blob doesn't sit in RAM
+                    # (512MB cap): keep only the last FUNDING_ARCH_MAX samples per
+                    # coin, and only the FUNDING_ARCH_COINS_MAX most-recent coins.
+                    _fa = {str(k).upper(): (v[-FUNDING_ARCH_MAX:] if v else [])
+                           for k, v in fa.items() if isinstance(v, list)}
+                    if len(_fa) > FUNDING_ARCH_COINS_MAX:
+                        _fa = dict(sorted(
+                            _fa.items(),
+                            key=lambda kv: (kv[1][-1]['t'] if kv[1] else 0),
+                            reverse=True)[:FUNDING_ARCH_COINS_MAX])
+                    self._funding_archive = _fa
                     print(f"[FuelFilter] restored funding archive: "
                           f"{len(self._funding_archive)} coin(s)")
             except Exception as e:
@@ -3372,6 +3380,12 @@ class FuelFilterDaemon:
         if isinstance(raw, dict):
             self._opp_episodes = {str(k).upper(): v for k, v in raw.items()
                                   if isinstance(v, dict)}
+            # Trim history on load so an old oversized DB blob doesn't sit in RAM
+            # (512MB cap): keep only the last OPP_HIST_MAX closed episodes/coin.
+            for _rec in self._opp_episodes.values():
+                _h = _rec.get('history')
+                if isinstance(_h, list) and len(_h) > OPP_HIST_MAX:
+                    del _h[:len(_h) - OPP_HIST_MAX]
 
     def _persist_opp_stats(self, force: bool = False):
         """Save the 🎯 episode stats to DB. Throttled (≥5s) unless force."""
