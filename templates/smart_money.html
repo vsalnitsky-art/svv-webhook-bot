@@ -7052,10 +7052,7 @@ function ffCtrCell(c) {
     else if (stc < 50) { revBias = '🟢 LONG-нахил'; col = '#4ade80'; }
     else { revBias = '⚪ нейтрально'; col = '#9aa3b5'; }
     const leanPct = Math.round(Math.abs(stc - 50) / 50 * 100);
-    // Label the primary TF only when a 1H reading is present alongside (so the two
-    // are distinguishable). Elsewhere (trade modal etc.) the TF stays as-is.
-    const tfPfx = (c.stc_1h != null && c.tf) ? `${String(c.tf).toUpperCase()} ` : '';
-    let html = `<span title="STC ${stc.toFixed(0)}/100" style="color:${col};font-weight:700">${tfPfx}${revBias} ${leanPct}%</span>`;
+    let html = `<span title="STC ${stc.toFixed(0)}/100" style="color:${col};font-weight:700">${revBias} ${leanPct}%</span>`;
     if (c.last_dir) {
         const icon = c.last_dir === 'LONG' ? '🟢' : '🔴';
         const age = c.last_signal_age_bars;
@@ -9533,6 +9530,35 @@ function renderTradeHistoryChart(h, meta) {
         ? `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">🔖 Причина виходу: <b style="color:#e5e7eb">${meta.exit_reason_detail || meta.exit_reason}</b></div>`
         : '';
 
+    // 🛡🎯 Manual SL / TP — ALL levels that applied during the trade (in order).
+    // Falls back to the final value if only that is present.
+    const _mSeq = (hist, cur) => {
+        let seq = Array.isArray(hist) ? hist.slice() : [];
+        if (cur != null && cur > 0 && (!seq.length || seq[seq.length - 1] !== cur)) seq.push(cur);
+        return seq;
+    };
+    // Distinct-in-order levels reconstructed from the per-sample history — the
+    // fallback for trades opened before manual_sl_hist/manual_tp_hist existed.
+    const _fromHist = (field) => {
+        const out = [];
+        (h || []).forEach(s => {
+            const v = s && s[field];
+            if (v != null && v > 0 && (!out.length || out[out.length - 1] !== v)) out.push(v);
+        });
+        return out;
+    };
+    let _sls = _mSeq(meta.manual_sl_hist, meta.manual_sl);
+    let _tps = _mSeq(meta.manual_tp_hist, meta.manual_tp);
+    if (!_sls.length) _sls = _fromHist('manual_sl');
+    if (!_tps.length) _tps = _fromHist('manual_tp');
+    let sltpLine = '';
+    if (_sls.length || _tps.length) {
+        const parts = [];
+        if (_sls.length) parts.push(`🛡 Manual SL: <b style="color:#fca5a5">${_sls.map(fmtPriceJS).join(' → ')}</b>`);
+        if (_tps.length) parts.push(`🎯 Manual TP: <b style="color:#86efac">${_tps.map(fmtPriceJS).join(' → ')}</b>`);
+        sltpLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">${parts.join(' · ')}</div>`;
+    }
+
     // 🧠 Decision Center — at ENTRY and at EXIT (or "as of now" for open trades).
     const V_UA = { good: 'СИЛЬНИЙ', marginal: 'СЕРЕДНІЙ', poor: 'СЛАБКИЙ' };
     const V_COL = { good: '#22c55e', marginal: '#fbbf24', poor: '#f87171' };
@@ -9630,7 +9656,7 @@ function renderTradeHistoryChart(h, meta) {
           labelFmt: v => Math.round(v) + '%', vlines: peakVlines });
 
     // STC + вік кросовера + готовність виходу — ODRAZU після PnL.
-    return info + info2 + exitReasonLine + dcLine + ctrLine + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + pricePanel;
+    return info + info2 + exitReasonLine + sltpLine + dcLine + ctrLine + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + pricePanel;
 }
 
 // ── 📜 Funding-coin ARCHIVE (history of appear/flip/exit + metrics) ──────

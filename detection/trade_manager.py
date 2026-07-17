@@ -922,9 +922,10 @@ class TradeManager:
                     'ctr_stc': ctr.get('stc'),
                     'ctr_dir': ctr.get('last_dir'),
                     'ctr_age': ctr.get('last_signal_age_bars'),
-                    # ⭐ hold-score + Manual SL level + % distance price→SL.
+                    # ⭐ hold-score + Manual SL/TP levels + % distance price→SL.
                     'hold_score': hold_score,
                     'manual_sl': _msl,
+                    'manual_tp': pos.get('manual_tp'),
                     'dist_to_sl': dist_to_sl,
                     # 🤪 Decision Center trajectory (coarse cadence; None between).
                     'dec_reco': dec_reco,
@@ -3019,6 +3020,12 @@ class TradeManager:
             'exit_decision': self._decision_snapshot(symbol),
             'ctr_open': pos.get('ctr_open'),
             'ctr_close': self._ctr_snapshot(symbol),
+            # All Manual SL/TP levels that applied during the trade (+ final) —
+            # shown in the trade-history modal.
+            'manual_sl_hist': list(pos.get('manual_sl_hist') or []),
+            'manual_tp_hist': list(pos.get('manual_tp_hist') or []),
+            'manual_sl': pos.get('manual_sl'),
+            'manual_tp': pos.get('manual_tp'),
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             'entry_score': pos.get('entry_score'),
@@ -3582,6 +3589,12 @@ class TradeManager:
             'exit_decision': self._decision_snapshot(symbol),
             'ctr_open': pos.get('ctr_open'),
             'ctr_close': self._ctr_snapshot(symbol),
+            # All Manual SL/TP levels that applied during the trade (+ final) —
+            # shown in the trade-history modal.
+            'manual_sl_hist': list(pos.get('manual_sl_hist') or []),
+            'manual_tp_hist': list(pos.get('manual_tp_hist') or []),
+            'manual_sl': pos.get('manual_sl'),
+            'manual_tp': pos.get('manual_tp'),
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             # Carry the entry-side advisory snapshot into the closed record
@@ -4020,6 +4033,12 @@ class TradeManager:
             'exit_decision': self._decision_snapshot(symbol),
             'ctr_open': pos.get('ctr_open'),
             'ctr_close': self._ctr_snapshot(symbol),
+            # All Manual SL/TP levels that applied during the trade (+ final) —
+            # shown in the trade-history modal.
+            'manual_sl_hist': list(pos.get('manual_sl_hist') or []),
+            'manual_tp_hist': list(pos.get('manual_tp_hist') or []),
+            'manual_sl': pos.get('manual_sl'),
+            'manual_tp': pos.get('manual_tp'),
             'opened_by': pos.get('opened_by', ''),
             'shadow': True,
             # Same as real-position close — preserve the entry snapshot for
