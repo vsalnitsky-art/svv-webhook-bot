@@ -1469,6 +1469,7 @@ class TradeManager:
         prev = auto_val
         pos['manual_sl'] = cand
         pos['_auto_ob_sl_val'] = cand
+        self._record_manual_hist(pos, 'sl', cand)   # keep every auto-SL level
         try:
             from detection.activity_log import log_activity
             tag = 'підтягнуто' if prev is not None else 'встановлено'
@@ -3553,8 +3554,13 @@ class TradeManager:
         pnl_usd = (exit_price - entry) * qty * (1 if pos['side'] == 'LONG' else -1)
         try:
             from detection.activity_log import log_activity
-            log_activity(symbol, 'closed', f'{self._reason_label(reason)} · PnL {pnl_pct:+.2f}%',
-                         side=pos['side'], source='TM')
+            _mh = self._fmt_manual_hist(pos)
+            log_activity(symbol, 'closed',
+                         f'{self._reason_label(reason)} · PnL {pnl_pct:+.2f}%'
+                         + (f' · {_mh}' if _mh else ''),
+                         side=pos['side'], source='TM',
+                         extra={'manual_sl_hist': list(pos.get('manual_sl_hist') or []),
+                                'manual_tp_hist': list(pos.get('manual_tp_hist') or [])})
         except Exception:
             pass
 
@@ -3989,8 +3995,13 @@ class TradeManager:
             pnl_pct = (entry - exit_price) / entry * 100
         try:
             from detection.activity_log import log_activity
-            log_activity(symbol, 'closed', f'{self._reason_label(reason)} · PnL {pnl_pct:+.2f}% (paper)',
-                         side=pos['side'], source='TM')
+            _mh = self._fmt_manual_hist(pos)
+            log_activity(symbol, 'closed',
+                         f'{self._reason_label(reason)} · PnL {pnl_pct:+.2f}% (paper)'
+                         + (f' · {_mh}' if _mh else ''),
+                         side=pos['side'], source='TM',
+                         extra={'manual_sl_hist': list(pos.get('manual_sl_hist') or []),
+                                'manual_tp_hist': list(pos.get('manual_tp_hist') or [])})
         except Exception:
             pass
 
@@ -4052,11 +4063,13 @@ class TradeManager:
         # post-mortem analysis useful — "I closed at -2%, but Entry Score was
         # 'good +50' — should I trust this score or down-weight it?"
         es_recap = self._format_entry_score_recap(pos.get('entry_score'))
+        peak_line = self._fmt_peak_line(closed)
         msg = (
             f"{icon} ⏹ <b>ЗАКРИТО {pos['side']}</b> {pnl_pct:+.2f}% · #{symbol}   🧪 ТЕСТ\n"
             f"━━━━━━━━━━━━\n"
             f"📍 Вхід → Вихід: {self._fmt_price(entry)} → {self._fmt_price(exit_price)}\n"
             f"🔖 Причина: {self._reason_label(reason)}\n"
+            f"{peak_line}"
             f"{es_recap}"
         ).rstrip()
         self._notify(msg, is_test=True, category='trades')
@@ -4711,6 +4724,52 @@ class TradeManager:
                 'closed_shadow': closed_shadow, 'failed': failed,
                 'reason': reason}
     
+    @staticmethod
+    def _record_manual_hist(pos: Dict, field: str, value):
+        """Append a Manual SL/TP level to the position's change-history so the
+        chronology can show ALL levels that ever applied during the trade
+        (not just the last one). field='sl'|'tp'. Only real set-values are kept
+        (clears are simply not appended); consecutive duplicates are skipped."""
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        if v <= 0:
+            return
+        key = 'manual_sl_hist' if field == 'sl' else 'manual_tp_hist'
+        hist = pos.get(key)
+        if not isinstance(hist, list):
+            hist = []
+            pos[key] = hist
+        v = round(v, 10)
+        if not hist or hist[-1] != v:
+            hist.append(v)
+
+    def _fmt_manual_hist(self, pos: Dict) -> str:
+        """Compact «Manual SL: a → b · Manual TP: c» summary of ALL levels that
+        applied during the trade — for the close chronology entry. Ensures the
+        CURRENT value is included even if a setter path missed the history."""
+        def _seq(histkey, curkey):
+            seq = list(pos.get(histkey) or [])
+            cur = pos.get(curkey)
+            try:
+                cur = float(cur) if cur is not None else None
+            except (TypeError, ValueError):
+                cur = None
+            if cur and cur > 0:
+                cur = round(cur, 10)
+                if not seq or seq[-1] != cur:
+                    seq.append(cur)
+            return seq
+        parts = []
+        sls = _seq('manual_sl_hist', 'manual_sl')
+        tps = _seq('manual_tp_hist', 'manual_tp')
+        if sls:
+            parts.append('Manual SL: ' + ' → '.join(self._fmt_price(v) for v in sls))
+        if tps:
+            parts.append('Manual TP: ' + ' → '.join(self._fmt_price(v) for v in tps))
+        return ' · '.join(parts)
+
     def update_manual_sl_tp(self, symbol: str, manual_sl=None,
                               manual_tp=None, is_shadow: bool = False) -> Dict:
         """Set or clear the per-position manual SL/TP override.
@@ -4831,14 +4890,16 @@ class TradeManager:
             
             if sl_op[0] == 'set':
                 pos['manual_sl'] = sl_op[1]
+                self._record_manual_hist(pos, 'sl', sl_op[1])
             elif sl_op[0] == 'clear':
                 pos.pop('manual_sl', None)
-            
+
             if tp_op[0] == 'set':
                 pos['manual_tp'] = tp_op[1]
+                self._record_manual_hist(pos, 'tp', tp_op[1])
             elif tp_op[0] == 'clear':
                 pos.pop('manual_tp', None)
-            
+
             updated = dict(pos)
         
         # Persist outside the lock — DB call can be slow on Render with
@@ -5194,14 +5255,33 @@ class TradeManager:
         # Show what the entry score said when we opened — useful for
         # weight-tuning and spotting when the predictor was wrong.
         es_recap = self._format_entry_score_recap(closed.get('entry_score'))
+        peak_line = self._fmt_peak_line(closed)
         msg = (
             f"{icon} ⏹ <b>ЗАКРИТО {side}</b> {pnl_pct:+.2f}% ({pnl_usd:+.2f}$) · #{closed['symbol']}\n"
             f"━━━━━━━━━━━━\n"
             f"📍 Вхід → Вихід: {self._fmt_price(closed['entry_price'])} → {self._fmt_price(closed['exit_price'])}\n"
             f"🔖 Причина: {self._reason_label(closed['reason'])}\n"
+            f"{peak_line}"
             f"{es_recap}"
         ).rstrip()
         self._notify(msg, category='trades')
+
+    def _fmt_peak_line(self, closed) -> str:
+        """📈 «Пік» line for a close notification — the max favourable value the
+        trade reached (peak PnL % + the price at that peak). '' when unknown."""
+        peak = closed.get('peak_pnl_pct')
+        if not isinstance(peak, (int, float)):
+            return ''
+        pps = ''
+        try:
+            ep = float(closed.get('entry_price') or 0)
+            if ep > 0:
+                pp = ep * (1 + peak / 100.0) if closed.get('side') == 'LONG' \
+                    else ep * (1 - peak / 100.0)
+                pps = f" (@ {self._fmt_price(pp)})"
+        except Exception:
+            pps = ''
+        return f"📈 Пік: {peak:+.2f}%{pps}\n"
 
     @staticmethod
     def _reason_label(reason: str) -> str:
