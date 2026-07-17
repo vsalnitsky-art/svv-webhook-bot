@@ -4967,6 +4967,17 @@ class FuelFilterDaemon:
                 # closes at trade close). Reaching the confluence (raw hot) only
                 # queues the coin into Q2 — it is NOT «рекомендована» until opened.
                 _opp_hot = bool(_opp_stats and _opp_stats.get('since'))
+                # Live PnL % of the OPEN recommended trade (price move from the
+                # episode entry, in the trade direction) — shown in the row.
+                if _opp_hot and _opp_stats.get('start_price') and a.get('last_price'):
+                    try:
+                        _e = float(_opp_stats['start_price']); _c = float(a['last_price'])
+                        if _e > 0:
+                            _mv = (_c - _e) / _e * 100.0
+                            _opp_stats['pnl_pct'] = round(
+                                _mv if a.get('dir') == 'LONG' else -_mv, 3)
+                    except (TypeError, ValueError):
+                        pass
                 anomalies.append({
                     'symbol': sym,
                     'dir': a.get('dir'),

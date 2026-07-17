@@ -8483,8 +8483,11 @@ function oppStatsRow(a) {
         ? `<span class="ff-timer" data-since="${Math.floor(st.since)}">${fmtTimer(nowS - Math.floor(st.since))}</span>`
         : '—';
     const first = st.first_at ? fmtTimeFull(Math.floor(st.first_at)) : '—';
-    const avg = (st.avg_dur_sec != null && st.closed) ? fmtTimer(st.avg_dur_sec) : '—';
     const entryPx = (st.start_price != null) ? fmtPriceJS(st.start_price) : '—';
+    // Live PnL % of the open recommended trade (замість сер. тривалості).
+    const pnl = (st.pnl_pct != null)
+        ? `<b style="color:${st.pnl_pct >= 0 ? '#4ade80' : '#f87171'}">${st.pnl_pct >= 0 ? '+' : ''}${Number(st.pnl_pct).toFixed(2)}%</b>`
+        : '<b>—</b>';
     // Tooltip: last closed episodes (вхід→вихід · тривалість).
     const _rec = (st.recent || []).map(e =>
         `${fmtPriceJS(e.start_price)}→${fmtPriceJS(e.end_price)} · ${fmtTimer(e.dur_sec)}`).join('\n');
@@ -8493,9 +8496,9 @@ function oppStatsRow(a) {
         + `🎯 <b style="color:#4ade80;text-shadow:0 0 6px rgba(74,222,128,0.6)">рекомендована ботом</b>`
         + ` · в угоді <b>${timer}</b>`
         + ` · вхід @ <b>${entryPx}</b>`
+        + ` · PnL: ${pnl}`
         + ` · епізодів: <b>${st.count || 0}</b>`
         + ` · вперше: ${first}`
-        + ` · сер. тривалість: ${avg}`
         + `</td></tr>`;
 }
 
