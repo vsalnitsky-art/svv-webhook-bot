@@ -2143,21 +2143,28 @@ class SMCScanner:
             # any of this history (even after seen-set eviction).
             self._event_hwm[symbol] = max((ev_to_t(e) for e in events), default=0)
             self._first_scan_done[symbol] = True
-            # SEED pending from the LAST historical CHoCH (choch_bos / choch_or_bos)
-            # so a FRESH BOS after a (frequent) restart can still confirm CHoCH+BOS.
-            # Safe: the hwm guard blocks any HISTORICAL BOS from firing — only a
-            # genuinely NEW BOS (to_t > hwm) confirms this seeded CHoCH. Without
-            # this, every restart wiped the pending CHoCH and CHoCH+BOS почти
-            # ніколи не спрацьовував на restart-prone деплої.
+            # SEED pending from the last CHoCH so a FRESH BOS after a (frequent)
+            # restart can still confirm CHoCH+BOS — but ONLY if that CHoCH is the
+            # MOST RECENT structure (NO BOS after it yet), i.e. a reversal awaiting
+            # its FIRST BOS. If a BOS already followed the CHoCH, the confirmation
+            # already happened → do NOT seed (else a late CONTINUATION BOS — the
+            # 3rd/5th — would wrongly «confirm» the old top CHoCH). Fire = only the
+            # FIRST BOS after a CHoCH, never subsequent ones. hwm-guard still blocks
+            # any historical BOS from firing.
             _seeded = False
             _mode0 = self._settings.get('alert_mode', DEFAULT_ALERT_MODE)
             if _mode0 in ('choch_bos', 'choch_or_bos'):
                 _last_choch = None
+                _last_bos_t = 0
                 for _e in events:
-                    if _e.get('tag') == 'CHoCH':
-                        if _last_choch is None or (_e.get('to_t', 0) or 0) > (_last_choch.get('to_t', 0) or 0):
+                    _tg = _e.get('tag'); _tt = _e.get('to_t', 0) or 0
+                    if _tg == 'CHoCH':
+                        if _last_choch is None or _tt > (_last_choch.get('to_t', 0) or 0):
                             _last_choch = _e
-                if _last_choch:
+                    elif _tg == 'BOS' and _tt > _last_bos_t:
+                        _last_bos_t = _tt
+                if _last_choch and (_last_choch.get('to_t', 0) or 0) > _last_bos_t:
+                    # CHoCH is the newest structure → awaiting its first BOS.
                     self._pending_choch[symbol] = {
                         'from_t': _last_choch.get('from_t'), 'to_t': _last_choch.get('to_t'),
                         'level': _last_choch.get('level'), 'dir': _last_choch.get('dir'),
@@ -2165,7 +2172,7 @@ class SMCScanner:
                     }
                     _seeded = True
             print(f"[SMC] {symbol}: first scan recorded {len(events)} historical events "
-                  f"(no alerts; {'seeded last CHoCH for fresh-BOS confirm' if _seeded else 'no pending CHoCH'})")
+                  f"(no alerts; {'seeded pending CHoCH (awaiting 1st BOS)' if _seeded else 'no pending — CHoCH already confirmed / none'})")
             return
         
         # === High-water-mark guard (root fix for re-surfaced old events) ===
