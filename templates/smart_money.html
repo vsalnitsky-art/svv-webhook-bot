@@ -2285,6 +2285,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати тестову угоду в момент 🚀 аномального росту. Напрямок = бік руху.">
                                 <input type="checkbox" id="ff-spike-auto-open" onchange="saveFuelFilterSettings()"> 🚀 Відкривати по аномальному росту
                             </label>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="⚡ Перш ніж стати 🎯 «рекомендованою», монета перевіряється на CTR (Schaff Trend Cycle). Якщо CTR нахилений у ПРОТИЛЕЖНИЙ бік — рекомендації немає (решта алгоритму не рахується). Вирівняний / нейтральний / немає даних → пропуск.">
+                                <input type="checkbox" id="ff-opp-require-ctr" onchange="saveFuelFilterSettings()"> ⚡ Спершу перевіряти CTR для 🎯
+                            </label>
                         </div>
                     </div>
                     <!-- 📨 Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ -->
@@ -8261,6 +8264,7 @@ function renderFuelFilter(d) {
     setIf('ff-funding-spike-window', String(s.funding_spike_window_min != null ? s.funding_spike_window_min : 15));
     setIf('ff-opp-auto-open', s.opportunity_auto_open !== false);
     setIf('ff-spike-auto-open', s.spike_auto_open !== false);
+    setIf('ff-opp-require-ctr', s.opportunity_require_ctr !== false);
     setIf('ff-funding-duration', s.funding_duration_minutes != null ? s.funding_duration_minutes : 0);
     setIf('ff-tg-entry', !!s.ff_tg_on_entry);
     setIf('ff-funding-entry-dir', s.funding_tg_entry_dir || 'any');
@@ -9098,6 +9102,7 @@ async function saveFuelFilterSettings() {
         funding_spike_window_min: parseInt(_v('ff-funding-spike-window', '15') || '15', 10),
         opportunity_auto_open: _c('ff-opp-auto-open'),
         spike_auto_open: _c('ff-spike-auto-open'),
+        opportunity_require_ctr: _c('ff-opp-require-ctr'),
         ff_tg_on_entry: _c('ff-tg-entry'),
         funding_tg_entry_dir: _v('ff-funding-entry-dir', 'any') || 'any',
         funding_tg_entry_min_mm: parseInt(_v('ff-funding-entry-minmm', '0') || '0', 10),

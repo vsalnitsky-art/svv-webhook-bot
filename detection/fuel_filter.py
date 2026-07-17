@@ -337,6 +337,12 @@ DEFAULT_SETTINGS = {
     # 🎯 Вимагати вирівнювання з ₿ BTCUSDT сеансом (START + той самий бік), щоб
     # монета стала 🎯 «рекомендована». True = «усі в один бік» (за замовч.).
     'opportunity_require_btc': True,
+    # 🎯 CTR-перевірка ПЕРШИМ гейтом: монета стає 🎯 «рекомендованою» лише якщо
+    # CTR (Schaff Trend Cycle) НЕ проти напрямку сигналу. Нахил CTR у протилежний
+    # бік → рекомендації немає (решта алгоритму навіть не рахується). Вирівняний /
+    # нейтральний (у dead-zone `queue2_ctr_neutral_pct`) / немає даних → пропуск.
+    # True за замовч. — «спершу CTR, потім усе інше».
+    'opportunity_require_ctr': True,
     # 🎯 Грейс (сек): не закривати епізод/не повторювати алерт на короткий провал
     # у hot — таймер «продовжує тримати».
     'opportunity_cold_grace_sec': 180,
@@ -4409,9 +4415,24 @@ class FuelFilterDaemon:
         if _btc_align:
             opp += 14; reasons.append('₿ START у той самий бік')
         opp = min(100, opp)
-        # Base confluence.
+        # ⚡ CTR gate FIRST — a 🎯 recommendation must NOT fight the CTR (Schaff
+        # Trend Cycle) timing. We check CTR before anything else: only if CTR lets
+        # the coin through does the rest of the algorithm decide 🎯. Opposite lean
+        # → no recommendation; aligned / neutral (dead-zone) / no-data → pass.
+        _ctr_block = False
+        if bool(s.get('opportunity_require_ctr', True)) and _sc_dir in ('LONG', 'SHORT'):
+            try:
+                _band = float(s.get('queue2_ctr_neutral_pct', 10) or 0)
+            except (TypeError, ValueError):
+                _band = 0.0
+            _ctr_st, _ctr_stc_v, _ctr_pct_v = self._ctr_state(sym, _band)
+            if _ctr_st in ('LONG', 'SHORT') and _ctr_st != _sc_dir:
+                _ctr_block = True
+                reasons.append(f'⚡ CTR проти ({_ctr_st} {_ctr_pct_v:.0f}%) — не рекомендую')
+        # Base confluence — evaluated only after CTR lets the coin through.
         hot = bool(
-            _sc_label == 'STRONG HOLD' and not _sc_conflict and not _paused_o
+            not _ctr_block
+            and _sc_label == 'STRONG HOLD' and not _sc_conflict and not _paused_o
             and _mm_strength >= 30 and _sc_dir in ('LONG', 'SHORT')
             and _sc_dir == _mm_dir_o
             and (_vol_up_o or (_ft_o is not None and _ft_o < 0) or _spk_o))
