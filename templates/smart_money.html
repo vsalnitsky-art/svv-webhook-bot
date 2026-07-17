@@ -2175,7 +2175,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <!-- Row 5: auto Manual SL from the «Require OB Match» Order Block -->
                     <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-top:8px">
                         <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="У кожній ВІДКРИТІЙ угоді бот сам підставляє Manual SL із найближчого Order Block «Require OB Match» (той самий OB, що гейтить входи, TF = ob_filter_timeframe). LONG → нижня ціна OB − буфер%; SHORT → верхня ціна OB + буфер%. На протязі угоди SL постійно ПІДТЯГУЄТЬСЯ ближче до ціни, щойно з’являється кращий (ближчий) OB — і НІКОЛИ не послаблюється. Якщо ти вручну виставив Manual SL — авто-логіка його не чіпає. Діє на реальні й тестові угоди. Стоп спрацьовує через звичайну перевірку Manual SL.">
-                            <input type="checkbox" id="ff-q2-auto-ob-sl" onchange="saveFuelFilterSettings()"> Авто <b>Manual SL з OB</b> «Require OB Match» <span style="color:#8b93a7;font-size:0.68rem">(LONG: низ OB − буфер; SHORT: верх OB + буфер; підтягується, не послаблюється)</span>
+                            <input type="checkbox" id="ff-q2-auto-ob-sl" onchange="saveFuelFilterSettings()"> Авто <b>Manual SL з OB</b> «Require OB Match» <span style="color:#8b93a7;font-size:0.68rem">(LONG: низ OB − буфер; SHORT: верх OB + буфер; встановлюється ОДИН раз, далі не рухається; спроби тривають лише доки не встановиться)</span>
                         </label>
                         <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1">
                             Буфер, %

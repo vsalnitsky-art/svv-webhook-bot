@@ -1360,9 +1360,10 @@ class TradeManager:
             SHORT → SL = OB high × (1 + buffer%)   sits ABOVE price · ratchets DOWN
 
         Rules:
-          • Only tightens — a new level is written only when it is CLOSER to price
-            (higher for LONG, lower for SHORT) than the current auto level, and
-            still on the safe side of price. Never loosens.
+          • SET ONCE — the auto SL is written a SINGLE time (the first valid OB
+            level on the safe side of price). It is NEVER moved again afterwards
+            (NO ratchet on newer OBs). If the FIRST attempt can't set a level
+            yet, we KEEP RETRYING each tick until one valid level is placed.
           • The OB is the same «Require OB Match» row that gates entries
             (`get_smc_ob_state(symbol, ob_filter_timeframe)`), matching direction
             (LONG needs a BULLISH OB, SHORT a BEARISH one).
@@ -1371,9 +1372,9 @@ class TradeManager:
             If `manual_sl` differs from that, the user set it → we back off.
 
         Order of checks (per operator's rule):
-          1. No Manual SL yet → try to determine one from the OB.
-          2. Manual SL already present → try to find a BETTER (tighter) one; if
-             none is better, do NOTHING and write NOTHING.
+          1. An auto SL already placed (`_auto_ob_sl_val` set) → do NOTHING
+             (set once, no re-fire).
+          2. No auto SL yet → try to determine one from the OB and set it.
           3. A record is written to the 🧾 log ONLY when, after all checks, the
              Manual SL field is STILL EMPTY (not a single level could be set) —
              then we log the reason. Any SL in place ⇒ silence."""
@@ -1400,6 +1401,13 @@ class TradeManager:
         # A Manual SL the operator typed by hand → never touch, never log
         # (the field is NOT empty, so there is nothing to report).
         if cur_sl is not None and (auto_val is None or abs(cur_sl - float(auto_val)) > 1e-12):
+            return
+
+        # 🔒 SET ONCE: as soon as we've successfully placed an auto SL from an OB,
+        # we never move it again (no ratchet on newer OBs). Retries continue ONLY
+        # until the FIRST successful set — so a trade that couldn't get a level
+        # yet still gets one when a valid OB finally appears.
+        if auto_val is not None:
             return
 
         def _diag(reason: str):
@@ -1449,9 +1457,6 @@ class TradeManager:
                 _diag(f"низ OB {self._fmt_price(bar_low)} вище ціни "
                       f"{self._fmt_price(current_price)} — SL там закрив би угоду")
                 return   # OB not below price → wouldn't protect, skip
-            # ratchet UP: only accept a tighter (higher) stop than the current auto level
-            if auto_val is not None and cand <= float(auto_val):
-                return
         elif side == 'SHORT':
             if bias != 'BEARISH':
                 _diag(f"OB на {ob_tf.upper()} протилежний (BULLISH) — чекаю BEARISH")
@@ -1461,22 +1466,18 @@ class TradeManager:
                 _diag(f"верх OB {self._fmt_price(bar_high)} нижче ціни "
                       f"{self._fmt_price(current_price)} — SL там закрив би угоду")
                 return   # OB not above price → wouldn't protect, skip
-            # ratchet DOWN: only accept a tighter (lower) stop than the current auto level
-            if auto_val is not None and cand >= float(auto_val):
-                return
         else:
             return
 
-        prev = auto_val
+        # First (and only) successful placement — set once, never ratcheted after.
         pos['manual_sl'] = cand
         pos['_auto_ob_sl_val'] = cand
-        self._record_manual_hist(pos, 'sl', cand)   # keep every auto-SL level
+        self._record_manual_hist(pos, 'sl', cand)
         try:
             from detection.activity_log import log_activity
-            tag = 'підтягнуто' if prev is not None else 'встановлено'
             log_activity(symbol, 'autosl',
-                         f"SL {tag} з OB {ob_tf.upper()} → {self._fmt_price(cand)} "
-                         f"(буфер {s.get('q2_auto_ob_sl_buffer_pct', 0.2)}%)",
+                         f"SL встановлено з OB {ob_tf.upper()} → {self._fmt_price(cand)} "
+                         f"(буфер {s.get('q2_auto_ob_sl_buffer_pct', 0.2)}%, один раз)",
                          side=side, source='TM')
         except Exception:
             pass
