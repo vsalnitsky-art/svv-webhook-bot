@@ -7902,6 +7902,11 @@ function ffQueueRowHTML(t, qnum) {
     const smartMark = t.smart_dir
         ? ` <span title="🧭 Розумний напрямок: визначено за паливом (сигнал входу був ${t.signal_dir || '—'})" style="font-size:0.7rem;cursor:help">🧭</span>`
         : '';
+    // 🎯 marker for coins that entered Queue 2 from the 💰 Funding recommendation
+    // (not a chart CHoCH) — so it's clear this one «зайшла з фандінгу».
+    const oppMark = t.opp
+        ? ` <span title="🎯 Зайшла з 💰 Funding (рекомендація бота) — проходить Чергу-2 повним алгоритмом" style="font-size:0.74rem;cursor:help">🎯</span>`
+        : '';
     const dirHtml = (t.dir === 'LONG'
         ? '<span style="color:#22c55e">🟢 LONG</span>'
         : (t.dir === 'SHORT'
@@ -7935,7 +7940,7 @@ function ffQueueRowHTML(t, qnum) {
         reasonHtml = `<span class="ff-reason-warn" data-reason="${_r}" onclick="ffReasonPopup(event, this.getAttribute('data-reason'))" title="Причина, чому двигун не відкрив — клік" style="cursor:pointer;color:#f59e0b;font-size:0.82rem;user-select:none;-webkit-user-select:none;margin-right:5px">⚠️</span>`;
     }
     return `<tr style="${rowStyle}">
-        <td style="font-weight:600${symColor}">${srcBadge}${tvSym(t.symbol)}${fundLbl}${fundNext}</td>
+        <td style="font-weight:600${symColor}">${srcBadge}${tvSym(t.symbol)}${oppMark}${fundLbl}${fundNext}</td>
         <td style="white-space:nowrap">${reasonHtml}${dirHtml}</td>
         <td style="white-space:nowrap;font-size:0.8rem">${mmHtml}</td>
         <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>

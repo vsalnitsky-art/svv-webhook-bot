@@ -4561,6 +4561,12 @@ class FuelFilterDaemon:
             'smart_dir': smart_flag,
             'held_sec': int(waited),
             'waiting': True,
+            # Signal source/type: 'choch' / 'choch_bos' (structure) or 'opp'
+            # (🎯 funding recommendation routed into Queue 2). `opp` lets the UI
+            # tag «зайшла з фандінгу 🎯».
+            'kind': info.get('kind'),
+            'opp': bool(info.get('opp')),
+            'opp_at_queue': info.get('opp_at_queue'),
             'exhaustion': (self._score_cache.get(sym) or {}).get('exh'),
             'score': self._score_cache.get(sym),
             'mm': (self._score_cache.get(sym) or {}).get('fuel_dir'),
