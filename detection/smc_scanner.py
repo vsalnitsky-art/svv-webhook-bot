@@ -2138,15 +2138,34 @@ class SMCScanner:
             self._seen_events[symbol] = recent_ids
         
         if is_first_scan:
-            # First scan: just record existing events. NEVER seed pending_choch
-            # from history, because the BOS that "confirms" it would also be
-            # historical and is recorded as seen on this same scan.
-            # Set the high-water mark to the newest event so future scans can
-            # never re-fire any of this history (even after seen-set eviction).
+            # First scan: record existing events (NO alerts on history). Set the
+            # high-water mark to the newest event so future scans never re-fire
+            # any of this history (even after seen-set eviction).
             self._event_hwm[symbol] = max((ev_to_t(e) for e in events), default=0)
             self._first_scan_done[symbol] = True
+            # SEED pending from the LAST historical CHoCH (choch_bos / choch_or_bos)
+            # so a FRESH BOS after a (frequent) restart can still confirm CHoCH+BOS.
+            # Safe: the hwm guard blocks any HISTORICAL BOS from firing — only a
+            # genuinely NEW BOS (to_t > hwm) confirms this seeded CHoCH. Without
+            # this, every restart wiped the pending CHoCH and CHoCH+BOS почти
+            # ніколи не спрацьовував на restart-prone деплої.
+            _seeded = False
+            _mode0 = self._settings.get('alert_mode', DEFAULT_ALERT_MODE)
+            if _mode0 in ('choch_bos', 'choch_or_bos'):
+                _last_choch = None
+                for _e in events:
+                    if _e.get('tag') == 'CHoCH':
+                        if _last_choch is None or (_e.get('to_t', 0) or 0) > (_last_choch.get('to_t', 0) or 0):
+                            _last_choch = _e
+                if _last_choch:
+                    self._pending_choch[symbol] = {
+                        'from_t': _last_choch.get('from_t'), 'to_t': _last_choch.get('to_t'),
+                        'level': _last_choch.get('level'), 'dir': _last_choch.get('dir'),
+                        'choch_event': _last_choch,
+                    }
+                    _seeded = True
             print(f"[SMC] {symbol}: first scan recorded {len(events)} historical events "
-                  f"(no alerts, no pending CHoCH from history)")
+                  f"(no alerts; {'seeded last CHoCH for fresh-BOS confirm' if _seeded else 'no pending CHoCH'})")
             return
         
         # === High-water-mark guard (root fix for re-surfaced old events) ===

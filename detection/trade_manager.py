@@ -1410,7 +1410,9 @@ class TradeManager:
                 if pos.get('manual_sl'):      # field NOT empty → make no record
                     return
                 nowt = time.time()
-                if nowt - float(pos.get('_auto_ob_sl_diag_at') or 0) < 300:
+                # Throttle to once per 30 min/position — «OB не готовий» повторюється
+                # щоскан і забивав 🧾 лог (особливо коли SMC-сканер ще рахує OB).
+                if nowt - float(pos.get('_auto_ob_sl_diag_at') or 0) < 1800:
                     return
                 pos['_auto_ob_sl_diag_at'] = nowt
                 from detection.activity_log import log_activity
