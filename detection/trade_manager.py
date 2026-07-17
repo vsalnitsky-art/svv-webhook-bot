@@ -78,6 +78,16 @@ DEFAULT_SETTINGS = {
     'leverage': 10,                  # 1-50 typically
     'max_open_positions': 10,        # max REAL positions; if exceeded → Test Mode (if on)
 
+    # === 🧪 Paper (test) risk-based sizing + fees ===
+    # For PAPER trades ONLY (real orders are sized/charged by the exchange). Size
+    # each paper position so the loss at the strategic SL equals a fixed % of a
+    # fixed cash base, using `leverage`; account for commissions so the close
+    # shows the NET result. Margin is capped to the cash base (risk then < target).
+    'paper_risk_enabled': True,      # use the risk model for paper (else unit qty)
+    'paper_cash': 100.0,             # fixed cash base ($) risk is measured against
+    'paper_risk_pct': 3.0,           # loss at SL as % of paper_cash (e.g. 3% = $3)
+    'paper_fee_pct': 0.055,          # commission % PER SIDE (Bybit taker ≈ 0.055%)
+
     # === Exit Rules — each toggleable ===
     'use_sl': True,                  # Stop Loss
     'sl_pct': 2.0,                   # %
@@ -549,6 +559,21 @@ class TradeManager:
                 self._settings['leverage'] = max(1, min(50, int(self._settings.get('leverage', 10))))
             except:
                 self._settings['leverage'] = 10
+
+            # 🧪 Paper risk-based sizing + fees.
+            self._settings['paper_risk_enabled'] = bool(self._settings.get('paper_risk_enabled', True))
+            try:
+                self._settings['paper_cash'] = max(1.0, float(self._settings.get('paper_cash', 100.0) or 100.0))
+            except (TypeError, ValueError):
+                self._settings['paper_cash'] = 100.0
+            try:
+                self._settings['paper_risk_pct'] = max(0.01, min(100.0, float(self._settings.get('paper_risk_pct', 3.0) or 3.0)))
+            except (TypeError, ValueError):
+                self._settings['paper_risk_pct'] = 3.0
+            try:
+                self._settings['paper_fee_pct'] = max(0.0, min(1.0, float(self._settings.get('paper_fee_pct', 0.055) or 0.0)))
+            except (TypeError, ValueError):
+                self._settings['paper_fee_pct'] = 0.055
 
             try:
                 self._settings['max_open_positions'] = max(1, min(50, int(self._settings.get('max_open_positions', 10))))
@@ -3790,6 +3815,16 @@ class TradeManager:
         s = self._settings
         _sl = self._calc_sl_price(side, float(entry_price), symbol) if s.get('use_sl') else None
         _tp = self._calc_tp_price(side, float(entry_price)) if s.get('use_tp') else None
+        # 🧪 Risk-based paper sizing (needs the SL) — loss at SL == paper_risk_pct%
+        # of paper_cash, using leverage; commissions applied at close. None when
+        # disabled or no usable SL (then the unit model + %-only PnL stays).
+        _sz = self._paper_sizing(float(entry_price), _sl)
+        if _sz:
+            _cap = ' · ⚠️ маржу обмежено кешем' if _sz.get('capped') else ''
+            print(f"[TM] [TEST] 🧪 sizing {symbol} {side}: notional ${_sz['notional']:.2f} "
+                  f"(qty {_sz['qty']:.6g}) · маржа ${_sz['margin']:.2f} · плече {_sz['lev']}x · "
+                  f"ризик на SL ${_sz['risk_at_sl']:.2f} ({_sz['risk_pct']}% від ${_sz['cash']}) · "
+                  f"SL {self._fmt_sltp(_sz['sl_price'])} (dist {_sz['sl_dist_pct']:.2f}%){_cap}")
         pos = {
             'symbol': symbol,
             'side': side,
@@ -3798,6 +3833,7 @@ class TradeManager:
             'opened_by': opened_by_full,
             'sl_price': float(_sl) if _sl else None,
             'tp_price': float(_tp) if _tp else None,
+            'sz': _sz,          # 🧪 paper risk-sizing snapshot (None → unit model)
             'be_moved': False,
             'shadow': True,
             # === Fields needed for BOS-N partial closes on shadow positions ===
@@ -3837,10 +3873,12 @@ class TradeManager:
         # Source WITHOUT the decision suffix (the 🤪 verdict is shown once,
         # below in es_block — fixes the duplicated «LONG 83% (marginal)»).
         src = self._base_opened_by(opened_by_full)
+        sizing_line = self._fmt_paper_sizing_line(pos.get('sz'))
         msg = (
             f"{icon} ▶️ <b>ВІДКРИТО {side}</b> · #{symbol}   🧪 ТЕСТ\n"
             f"━━━━━━━━━━━━\n"
             f"📍 Вхід: {self._fmt_price(entry_price)}\n"
+            f"{sizing_line}"
             f"{es_block}"
             f"{ob_line}"
             f"📋 Джерело: {src}"
@@ -4020,6 +4058,8 @@ class TradeManager:
         except Exception:
             pass
 
+        # 🧪 Net paper result WITH commissions (from the open-time risk sizing).
+        _pp = self._paper_pnl(pos.get('sz'), entry, exit_price, pos['side'])
         closed = {
             'symbol': symbol,
             'side': pos['side'],
@@ -4035,6 +4075,9 @@ class TradeManager:
             'exit_decision': self._decision_snapshot(symbol),
             'ctr_open': pos.get('ctr_open'),
             'ctr_close': self._ctr_snapshot(symbol),
+            # 🧪 Risk-sizing snapshot (at open) + net $ result (with commissions).
+            'paper_sizing': pos.get('sz'),
+            'paper_result': _pp,
             # All Manual SL/TP levels that applied during the trade (+ final) —
             # shown in the trade-history modal.
             'manual_sl_hist': list(pos.get('manual_sl_hist') or []),
@@ -4085,12 +4128,14 @@ class TradeManager:
         # 'good +50' — should I trust this score or down-weight it?"
         es_recap = self._format_entry_score_recap(pos.get('entry_score'))
         peak_line = self._fmt_peak_line(closed)
+        paper_line = self._fmt_paper_result_line(pos.get('sz'), _pp)
         msg = (
             f"{icon} ⏹ <b>ЗАКРИТО {pos['side']}</b> {pnl_pct:+.2f}% · #{symbol}   🧪 ТЕСТ\n"
             f"━━━━━━━━━━━━\n"
             f"📍 Вхід → Вихід: {self._fmt_price(entry)} → {self._fmt_price(exit_price)}\n"
             f"🔖 Причина: {self._reason_label(reason)}\n"
             f"{peak_line}"
+            f"{paper_line}"
             f"{es_recap}"
         ).rstrip()
         self._notify(msg, is_test=True, category='trades')
@@ -4100,7 +4145,73 @@ class TradeManager:
     # ============================================================
     # Position sizing
     # ============================================================
-    
+
+    def _paper_sizing(self, entry: float, sl_price) -> Optional[Dict]:
+        """🧪 Risk-based PAPER sizing: size the position so the loss at the
+        strategic SL equals a fixed % (`paper_risk_pct`) of a fixed cash base
+        (`paper_cash`), opened with `leverage`. Margin is capped to the cash base
+        — if the SL is so tight that the needed margin > cash, we cap it and the
+        actual risk ends up SMALLER than target (flagged `capped`). Returns the
+        sizing dict, or None when disabled / no usable SL (caller keeps the unit
+        model). Real trades never use this — the exchange sizes/charges them."""
+        s = self._settings
+        if not s.get('paper_risk_enabled', True):
+            return None
+        try:
+            entry = float(entry); sl = float(sl_price)
+        except (TypeError, ValueError):
+            return None
+        if entry <= 0 or sl <= 0:
+            return None
+        d = abs(entry - sl) / entry
+        if d <= 0:
+            return None
+        cash = float(s.get('paper_cash', 100.0) or 100.0)
+        risk_pct = float(s.get('paper_risk_pct', 3.0) or 3.0)
+        lev = int(s.get('leverage', 10) or 10)
+        fee_pct = float(s.get('paper_fee_pct', 0.055) or 0.0)
+        risk_usd = cash * risk_pct / 100.0
+        notional = risk_usd / d
+        margin = notional / lev
+        capped = False
+        if margin > cash:                 # SL too tight for target risk → cap
+            margin = cash
+            notional = margin * lev
+            capped = True
+        qty = notional / entry
+        return {
+            'cash': round(cash, 2), 'risk_pct': risk_pct,
+            'risk_usd': round(risk_usd, 4), 'lev': lev, 'fee_pct': fee_pct,
+            'sl_price': round(sl, 10), 'sl_dist_pct': round(d * 100, 4),
+            'notional': round(notional, 4), 'margin': round(margin, 4),
+            'qty': qty, 'risk_at_sl': round(notional * d, 4), 'capped': capped,
+        }
+
+    @staticmethod
+    def _paper_pnl(sz: Optional[Dict], entry, exit_price, side: str) -> Optional[Dict]:
+        """🧪 Net paper result WITH commissions: gross $ − entry fee − exit fee.
+        Fee = paper_fee_pct % per side, on the traded notional. Returns
+        {gross_usd, fees_usd, net_usd, net_pct_cash, roi_margin_pct} or None."""
+        if not sz:
+            return None
+        try:
+            qty = float(sz['qty']); e = float(entry); x = float(exit_price)
+        except (TypeError, ValueError, KeyError):
+            return None
+        dirmul = 1.0 if side == 'LONG' else -1.0
+        gross = qty * (x - e) * dirmul
+        fee = float(sz.get('fee_pct', 0.0)) / 100.0
+        fees = qty * e * fee + qty * x * fee          # entry + exit commissions
+        net = gross - fees
+        cash = float(sz.get('cash') or 0) or None
+        margin = float(sz.get('margin') or 0) or None
+        return {
+            'gross_usd': round(gross, 4), 'fees_usd': round(fees, 4),
+            'net_usd': round(net, 4),
+            'net_pct_cash': round(net / cash * 100, 3) if cash else None,
+            'roi_margin_pct': round(net / margin * 100, 3) if margin else None,
+        }
+
     def _calculate_qty(self, symbol: str, entry_price: float) -> float:
         s = self._settings
         mode = s.get('sizing_mode', 'fixed_usd')
@@ -5305,6 +5416,41 @@ class TradeManager:
         except Exception:
             pps = ''
         return f"📈 Пік: {peak:+.2f}%{pps}\n"
+
+    def _fmt_paper_sizing_line(self, sz) -> str:
+        """🧪 One-line risk-sizing summary for the paper OPEN notification."""
+        if not sz:
+            return ''
+        try:
+            cap = ' ⚠️(маржу обмежено кешем)' if sz.get('capped') else ''
+            return (f"💵 Розмір: notional ${float(sz.get('notional', 0)):.2f} · "
+                    f"маржа ${float(sz.get('margin', 0)):.2f} · плече {sz.get('lev')}x · "
+                    f"ризик на SL ${float(sz.get('risk_at_sl', 0)):.2f} "
+                    f"({sz.get('risk_pct')}% від ${sz.get('cash')}) · "
+                    f"SL {self._fmt_sltp(sz.get('sl_price'))} (dist {sz.get('sl_dist_pct')}%){cap}\n")
+        except Exception:
+            return ''
+
+    def _fmt_paper_result_line(self, sz, pp) -> str:
+        """🧪 Two-line paper sizing + net-with-commissions block for the paper
+        close notification. '' when there is no risk-sizing snapshot."""
+        if not sz or not pp:
+            return ''
+        try:
+            cap = ' ⚠️(маржу обмежено кешем)' if sz.get('capped') else ''
+            extra = ''
+            if pp.get('net_pct_cash') is not None:
+                extra = f" ({pp['net_pct_cash']:+.2f}% кешу"
+                if pp.get('roi_margin_pct') is not None:
+                    extra += f" · ROI {pp['roi_margin_pct']:+.1f}%"
+                extra += ")"
+            return (f"💵 Кеш ${sz.get('cash')} · плече {sz.get('lev')}x · "
+                    f"маржа ${float(sz.get('margin', 0)):.2f} · "
+                    f"notional ${float(sz.get('notional', 0)):.2f}{cap}\n"
+                    f"🧮 Валово {pp['gross_usd']:+.2f}$ · комісії −{abs(pp['fees_usd']):.2f}$ → "
+                    f"чисто <b>{pp['net_usd']:+.2f}$</b>{extra}\n")
+        except Exception:
+            return ''
 
     @staticmethod
     def _reason_label(reason: str) -> str:

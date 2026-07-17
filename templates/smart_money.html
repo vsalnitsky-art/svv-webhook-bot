@@ -2494,6 +2494,35 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="tm-leverage" min="1" max="50" step="1" onchange="saveTMSettings()">
                             <span style="color:#888;font-size:0.75rem">x</span>
                         </div>
+                        <!-- 🧪 Paper (test) risk sizing + commissions. Real trades are
+                             sized/charged by the exchange — this applies to paper only. -->
+                        <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
+                            <label>
+                                <input type="checkbox" id="tm-paper-risk" onchange="saveTMSettings()">
+                                🧪 Paper risk-sizing
+                                <span class="tm-help" title="Лише для ТЕСТОВИХ угод. Розмір позиції рахується так, щоб втрата на стратегічному SL = вказаний % від фіксованого кешу, з обраним плечем. Комісії враховуються — при закритті показує чистий результат. Маржа обмежується кешем.">?</span>
+                            </label>
+                        </div>
+                        <div class="tm-row">
+                            <label>Кеш для тесту, $:
+                                <span class="tm-help" title="Фіксована сума кешу, від якої рахується ризик (напр. $100).">?</span>
+                            </label>
+                            <input type="number" id="tm-paper-cash" min="1" max="1000000" step="10" onchange="saveTMSettings()">
+                        </div>
+                        <div class="tm-row">
+                            <label>Ризик на SL, % кешу:
+                                <span class="tm-help" title="Скільки % від кешу втрачаємо, якщо ціна дійде до SL (напр. 3% від $100 = $3).">?</span>
+                            </label>
+                            <input type="number" id="tm-paper-risk-pct" min="0.01" max="100" step="0.1" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.75rem">%</span>
+                        </div>
+                        <div class="tm-row">
+                            <label>Комісія / сторону, %:
+                                <span class="tm-help" title="Комісія за одну сторону угоди (Bybit taker ≈ 0.055%). Застосовується на вхід і на вихід при розрахунку чистого результату paper-угоди.">?</span>
+                            </label>
+                            <input type="number" id="tm-paper-fee" min="0" max="1" step="0.005" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.75rem">%</span>
+                        </div>
                     </div>
 
                     <!-- Exit Rules -->
@@ -6355,6 +6384,15 @@ async function loadTMSettings() {
         document.getElementById('tm-leverage').value = s.leverage;
         document.getElementById('tm-max-positions').value = s.max_open_positions || 10;
         document.getElementById('tm-require-fuel-confirm').checked = (s.require_fuel_confirm !== false);  // default true
+        // 🧪 Paper risk-sizing + fees.
+        if (document.getElementById('tm-paper-risk'))
+            document.getElementById('tm-paper-risk').checked = (s.paper_risk_enabled !== false);
+        if (document.getElementById('tm-paper-cash'))
+            document.getElementById('tm-paper-cash').value = (s.paper_cash != null ? s.paper_cash : 100);
+        if (document.getElementById('tm-paper-risk-pct'))
+            document.getElementById('tm-paper-risk-pct').value = (s.paper_risk_pct != null ? s.paper_risk_pct : 3);
+        if (document.getElementById('tm-paper-fee'))
+            document.getElementById('tm-paper-fee').value = (s.paper_fee_pct != null ? s.paper_fee_pct : 0.055);
         onTMSizingChange();
 
         // Exit rules
@@ -6742,6 +6780,11 @@ async function saveTMSettings() {
             leverage: parseInt(document.getElementById('tm-leverage').value) || 10,
             max_open_positions: parseInt(document.getElementById('tm-max-positions').value) || 10,
             require_fuel_confirm: document.getElementById('tm-require-fuel-confirm').checked,
+            // 🧪 Paper risk-sizing + fees.
+            paper_risk_enabled: document.getElementById('tm-paper-risk') ? document.getElementById('tm-paper-risk').checked : true,
+            paper_cash: parseFloat((document.getElementById('tm-paper-cash') || {}).value) || 100,
+            paper_risk_pct: parseFloat((document.getElementById('tm-paper-risk-pct') || {}).value) || 3,
+            paper_fee_pct: (function () { const e = document.getElementById('tm-paper-fee'); const v = e ? e.value : ''; return (v === '' || isNaN(parseFloat(v))) ? 0.055 : parseFloat(v); })(),
             use_sl: document.getElementById('tm-use-sl').checked,
             sl_pct: parseFloat(document.getElementById('tm-sl-pct').value) || 2,
             sl_mode: document.getElementById('tm-sl-mode').value || 'pct',
@@ -9575,6 +9618,26 @@ function renderTradeHistoryChart(h, meta) {
         sltpLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">${parts.join(' · ')}</div>`;
     }
 
+    // 🧪 Paper risk-sizing + net result WITH commissions (paper trades only).
+    let paperLine = '';
+    const _pz = meta.paper_sizing, _pr = meta.paper_result;
+    if (_pz) {
+        const _cap = _pz.capped ? ' <span style="color:#fbbf24">⚠️ маржу обмежено кешем</span>' : '';
+        let l1 = `💵 Кеш $${_pz.cash} · плече ${_pz.lev}x · маржа $${Number(_pz.margin).toFixed(2)} · notional $${Number(_pz.notional).toFixed(2)}${_cap}`;
+        let l2 = '';
+        if (_pr) {
+            const nc = (_pr.net_usd >= 0) ? '#4ade80' : '#f87171';
+            let ex = '';
+            if (_pr.net_pct_cash != null) {
+                ex = ` (${_pr.net_pct_cash >= 0 ? '+' : ''}${_pr.net_pct_cash}% кешу`;
+                if (_pr.roi_margin_pct != null) ex += ` · ROI ${_pr.roi_margin_pct >= 0 ? '+' : ''}${_pr.roi_margin_pct}%`;
+                ex += ')';
+            }
+            l2 = `<br>🧮 Валово ${_pr.gross_usd >= 0 ? '+' : ''}${_pr.gross_usd}$ · комісії −${Math.abs(_pr.fees_usd)}$ → чисто <b style="color:${nc}">${_pr.net_usd >= 0 ? '+' : ''}${_pr.net_usd}$</b>${ex}`;
+        }
+        paperLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">${l1}${l2}</div>`;
+    }
+
     // 🧠 Decision Center — at ENTRY and at EXIT (or "as of now" for open trades).
     const V_UA = { good: 'СИЛЬНИЙ', marginal: 'СЕРЕДНІЙ', poor: 'СЛАБКИЙ' };
     const V_COL = { good: '#22c55e', marginal: '#fbbf24', poor: '#f87171' };
@@ -9672,7 +9735,7 @@ function renderTradeHistoryChart(h, meta) {
           labelFmt: v => Math.round(v) + '%', vlines: peakVlines });
 
     // STC + вік кросовера + готовність виходу — ODRAZU після PnL.
-    return info + info2 + exitReasonLine + sltpLine + dcLine + ctrLine + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + pricePanel;
+    return info + info2 + exitReasonLine + sltpLine + paperLine + dcLine + ctrLine + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + pricePanel;
 }
 
 // ── 📜 Funding-coin ARCHIVE (history of appear/flip/exit + metrics) ──────
