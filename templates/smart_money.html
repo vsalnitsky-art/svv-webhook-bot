@@ -9720,7 +9720,7 @@ function renderTradeHistoryChart(h, meta) {
         [{ name: 'STC %', color: '#c084fc', acc: s => s.ctr_stc }],
         { min: 0, max: 100, dec: 0, segmentColor: stcLeanColor,
           valueLabels: true, labelColor: stcLeanColor, labelMinDelta: 10,
-          labelFmt: v => Math.round(v) + '%', vlines: peakVlines });
+          labelFmt: v => Math.round(v) + '%' });
     // Colour value labels by the crossover DIRECTION at each sample
     // (🟢 LONG / 🔴 SHORT / grey none) so the numbers read the trend at a glance.
     const ctrDirColor = s => s.ctr_dir === 'LONG' ? '#4ade80'
@@ -9728,7 +9728,7 @@ function renderTradeHistoryChart(h, meta) {
     const ctrAgePanel = panel('⚡ CTR · вік кросовера (барів) — ↺ = момент розвороту',
         [{ name: 'вік кросов., барів', color: '#38bdf8', acc: s => s.ctr_age }],
         { min: 0, includeZero: true, dec: 0, valueLabels: true, labelColor: ctrDirColor,
-          step: true, markResets: true, vlines: peakVlines });
+          step: true, markResets: true });
     // 🔄 Reversal-exit readiness over the trade: 0..100. Colour per-sample by the
     // same thresholds as the table cell (🟢 <50 · 🟡 50–80 · 🔴 ≥80 ≈ close).
     const revColor = s => (s.rev == null) ? '#9aa3b5'
@@ -9737,7 +9737,7 @@ function renderTradeHistoryChart(h, meta) {
         [{ name: 'готовність %', color: '#f5c542', acc: s => s.rev }],
         { min: 0, max: 100, dec: 0, segmentColor: revColor,
           valueLabels: true, labelColor: revColor, labelMinDelta: 15,
-          labelFmt: v => Math.round(v) + '%', vlines: peakVlines });
+          labelFmt: v => Math.round(v) + '%' });
 
     // STC + вік кросовера + готовність виходу — ODRAZU після PnL.
     return info + info2 + exitReasonLine + sltpLine + paperLine + dcLine + ctrLine + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + pricePanel;

@@ -3668,6 +3668,24 @@ class FuelFilterDaemon:
             if k not in live:
                 self._gold_since.pop(k, None)
                 self._gold_alerted.discard(k)
+        # 🎯 Reconcile ORPHANED «рекомендована ботом» episodes: an active episode
+        # must have a LIVE recommended trade behind it. If the coin is neither
+        # FF-managed nor held by TM (real OR paper), the trade is already gone —
+        # close the episode so it stops «hanging» for hours/days. Self-heals
+        # episodes left over from an old close path or a pre-change build.
+        for k in list(self._opp_episodes.keys()):
+            rec = self._opp_episodes.get(k)
+            if not rec or not rec.get('active'):
+                continue
+            if k in self._fuel_managed:
+                continue
+            try:
+                if self._tm_has_position(k, True) or self._tm_has_position(k, False):
+                    continue
+            except Exception:
+                continue   # TM transiently unavailable → don't close on a fluke
+            self._opp_episode_close_if_open(k, now)
+            print(f"[FF-Opp] {k}: осиротілий епізод закрито (немає живої угоди)")
 
     def _send_opportunity_alert(self, sym: str, a: Dict, opp: int, reasons: list):
         """Compose + broadcast the 🎯 «best moment to open» Telegram message to
