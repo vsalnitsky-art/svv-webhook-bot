@@ -1226,6 +1226,9 @@ def register_auth_routes(app):
         _prefs = _load_prefs(u)
         _btc_ck = 'checked' if _prefs.get('notify_btc') else ''
         _fnd_ck = 'checked' if _prefs.get('notify_funding') else ''
+        _trd_ck = 'checked' if _prefs.get('notify_trades') else ''
+        _opp_ck = 'checked' if _prefs.get('notify_opportunity') else ''
+        _spk_ck = 'checked' if _prefs.get('notify_spike') else ''
         _tg_ok = bool(tgc)
         _admin_note = ('<p class="sub" style="margin-top:-4px">Ці перемикачі керують '
                        'і вашими особистими сповіщеннями, і <b>груповими темами</b> — '
@@ -1250,6 +1253,15 @@ def register_auth_routes(app):
                 f'<div class="crow"><span class="t">💰 Funding — поява монети з ММ</span>'
                 f'<label class="sw"><input type="checkbox" id="nfnd" {_fnd_ck} {_dis} onchange="saventf()">'
                 f'<span class="tr"></span></label></div>'
+                f'<div class="crow"><span class="t">🎯 Рекомендація бота (найкращий вхід)</span>'
+                f'<label class="sw"><input type="checkbox" id="nopp" {_opp_ck} {_dis} onchange="saventf()">'
+                f'<span class="tr"></span></label></div>'
+                f'<div class="crow"><span class="t">🚀 Аномальний ріст</span>'
+                f'<label class="sw"><input type="checkbox" id="nspk" {_spk_ck} {_dis} onchange="saventf()">'
+                f'<span class="tr"></span></label></div>'
+                f'<div class="crow"><span class="t">📈 Угоди — відкриття / закриття</span>'
+                f'<label class="sw"><input type="checkbox" id="ntrd" {_trd_ck} {_dis} onchange="saventf()">'
+                f'<span class="tr"></span></label></div>'
                 f'<div id="nm" class="msg" style="display:none"></div></div>'
                 + f'<div class="sect2"><div class="seclbl">🔑 Змінити пароль</div>'
                 f'<input id="np" type="password" placeholder="Новий пароль (мін. 8)">'
@@ -1272,7 +1284,10 @@ def register_auth_routes(app):
         async function saventf(){
           const nm=document.getElementById('nm'); nm.style.display='block';
           const body={notify_btc:document.getElementById('nbtc').checked,
-                      notify_funding:document.getElementById('nfnd').checked};
+                      notify_funding:document.getElementById('nfnd').checked,
+                      notify_opportunity:document.getElementById('nopp').checked,
+                      notify_spike:document.getElementById('nspk').checked,
+                      notify_trades:document.getElementById('ntrd').checked};
           const r=await fetch('/api/me/notify',{method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify(body)});
           const d=await r.json();
@@ -1314,17 +1329,18 @@ def register_auth_routes(app):
         Telegram chat to actually receive anything."""
         u = current_user()
         prefs = _load_prefs(u)
-        keys = ('notify_btc', 'notify_funding')
+        keys = ('notify_btc', 'notify_funding', 'notify_opportunity',
+                'notify_spike', 'notify_trades')
         if request.method == 'POST':
             d = request.get_json(silent=True) or {}
             for k in keys:
                 if k in d:
                     prefs[k] = bool(d[k])
             _update_user(u.id, prefs=json.dumps(prefs)[:20000])
-        return jsonify({'ok': True,
-                        'tg_linked': bool(getattr(u, 'telegram_chat_id', None)),
-                        'notify_btc': bool(prefs.get('notify_btc')),
-                        'notify_funding': bool(prefs.get('notify_funding'))})
+        out = {'ok': True, 'tg_linked': bool(getattr(u, 'telegram_chat_id', None))}
+        for k in keys:
+            out[k] = bool(prefs.get(k))
+        return jsonify(out)
 
     # ---- admin ----
     @app.route('/admin/users')

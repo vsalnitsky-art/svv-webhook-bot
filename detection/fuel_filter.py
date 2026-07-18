@@ -3697,7 +3697,7 @@ class FuelFilterDaemon:
         rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
         body = (f"🎯 #{sym} — рекомендація бота\n"
                 f"{emoji} {side} · Opportunity {opp}% · funding {rt_s}")
-        self._broadcast_users('funding', 'notify_funding', body)
+        self._broadcast_users('funding', 'notify_opportunity', body)
 
     def _send_spike_alert(self, sym: str, a: Dict):
         """🚀 Broadcast an «anomalous growth» Telegram message when a funding coin
@@ -3711,7 +3711,7 @@ class FuelFilterDaemon:
         rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
         body = (f"🚀 #{sym} — аномальний ріст\n"
                 f"{emoji} {side} · рух {mv_s} · funding {rt_s}")
-        self._broadcast_users('funding', 'notify_funding', body)
+        self._broadcast_users('funding', 'notify_spike', body)
 
     @staticmethod
     def _gold_funding_step(a: Dict):

@@ -5418,48 +5418,49 @@ class TradeManager:
     # Notifications
     # ============================================================
     
-    def _notify(self, msg: str, is_test: bool = False, category: Optional[str] = None):
-        """Send Telegram notification, respecting the relevant toggle.
+    # Group category → the per-USER opt-in pref that gates the private copy.
+    _CATEGORY_PREF = {'trades': 'notify_trades'}
 
-        Args:
-            msg: text to send
-            is_test: True if from shadow/paper trade — gated by test_telegram_alerts.
-                     False if from real position — gated by telegram_alerts.
-            category: when set (e.g. 'trades'), ALSO mirror the message to that
-                     Telegram GROUP category/topic via the bot's notify_category
-                     (📈 Угоди тема). Best-effort; never blocks the main send.
-        """
-        # Mirror to the group category/topic first (independent of the private
-        # notifier toggle) so trade events land in the 📈 Угоди тема.
-        if category:
-            try:
-                from web.tg_bot import notify_category
-                notify_category(category, msg)
-            except Exception as e:
-                print(f"[TM] category notify error: {e}")
-        if not self.notifier:
-            return
-        # Gate by toggle. Default both to True if missing (back-compat with
-        # earlier saved settings that don't have these keys).
+    def _notify(self, msg: str, is_test: bool = False, category: Optional[str] = None):
+        """Send a Telegram notification — professionally routed, NO duplication.
+
+        Routing:
+          • category set (a GROUP category, e.g. 'trades') → the shared GROUP
+            TOPIC once (notify_category) PLUS each USER who opted into that
+            category in their cabinet (broadcast_to_subscribers). It is NOT also
+            copied to the admin's private chat — the group message is never
+            duplicated into the bot. (The admin, like any user, can opt in to get
+            a personal copy.) Paper/test events go to the group topic only, not
+            to every subscriber (that would be noise).
+          • no category → a SERVICE / admin-only message → the admin's private
+            chat via self.notifier.
+
+        Gated by the master toggle: is_test → test_telegram_alerts, else
+        telegram_alerts. Best-effort; never blocks the trading path."""
+        # Master gate — off ⇒ nothing goes out at all.
         if is_test:
             if not self._settings.get('test_telegram_alerts', True):
                 return
         else:
             if not self._settings.get('telegram_alerts', True):
                 return
-        # Tag the PRIVATE copy too so the bot's private chat is filterable by
-        # category (a private chat has no topics — the hashtag is the category).
-        priv = msg
+
         if category:
             try:
-                from web.tg_bot import cat_tag
-                _t = cat_tag(category)
-                if _t:
-                    priv = f"{_t}\n{msg}"
-            except Exception:
-                pass
+                from web.tg_bot import notify_category, broadcast_to_subscribers
+                notify_category(category, msg)                 # → group topic (once)
+                pref = self._CATEGORY_PREF.get(category)
+                if pref and not is_test:                       # → opted-in users (real only)
+                    broadcast_to_subscribers(pref, msg)
+            except Exception as e:
+                print(f"[TM] category notify error: {e}")
+            return   # group categories are NEVER mirrored to the admin private chat
+
+        # No category → SERVICE / admin-only → admin's private chat.
+        if not self.notifier:
+            return
         try:
-            self.notifier.send_message(priv)
+            self.notifier.send_message(msg)
         except Exception as e:
             print(f"[TM] Notify error: {e}")
     

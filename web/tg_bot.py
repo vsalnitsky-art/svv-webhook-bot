@@ -92,7 +92,13 @@ _CAT_TAG = {
     'register': '#Реєстрація',
     'support':  '#Підтримка',
 }
-_PREF_TAG = {'notify_funding': _CAT_TAG['funding'], 'notify_btc': _CAT_TAG['btc']}
+_PREF_TAG = {
+    'notify_funding': _CAT_TAG['funding'],
+    'notify_btc': _CAT_TAG['btc'],
+    'notify_trades': _CAT_TAG['trades'],
+    'notify_opportunity': '#Рекомендація',
+    'notify_spike': '#Аномалія',
+}
 
 # ── Аудиторія категорії ─────────────────────────────────────────────────────
 # PUBLIC  — ринкові сигнали, можна у спільну групу/тему (усі учасники бачать):
