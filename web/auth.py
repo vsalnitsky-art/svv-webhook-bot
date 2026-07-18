@@ -80,20 +80,22 @@ def _tg_secret():
             or 'change-me')
 
 
-def _make_tg_token(chat_id, username=None, name=None):
+def _make_tg_token(chat_id, username=None, name=None, lang=None, premium=None):
     return URLSafeTimedSerializer(_tg_secret(), salt='tglink').dumps(
-        {'c': str(chat_id), 'u': username, 'n': name})
+        {'c': str(chat_id), 'u': username, 'n': name,
+         'l': lang, 'p': bool(premium) if premium is not None else None})
 
 
 def _read_tg_token(token, max_age=3600):
-    """Returns {'c': chat_id, 'u': username, 'n': name} or None. Tolerates
-    legacy tokens (bare chat_id string, or dicts without 'n')."""
+    """Returns {'c': chat_id, 'u': username, 'n': name, 'l': lang, 'p': premium}
+    or None. Tolerates legacy tokens (bare chat_id string, or dicts w/o extras)."""
     try:
         v = URLSafeTimedSerializer(_tg_secret(), salt='tglink').loads(
             token, max_age=max_age)
         if isinstance(v, dict):
-            return {'c': v.get('c'), 'u': v.get('u'), 'n': v.get('n')}
-        return {'c': str(v), 'u': None, 'n': None}
+            return {'c': v.get('c'), 'u': v.get('u'), 'n': v.get('n'),
+                    'l': v.get('l'), 'p': v.get('p')}
+        return {'c': str(v), 'u': None, 'n': None, 'l': None, 'p': None}
     except Exception:
         return None
 
@@ -173,9 +175,19 @@ def notify_new_user_to_admin(uid):
             getattr(u, 'telegram_name', None),
             (f'@{u.telegram_username}' if getattr(u, 'telegram_username', None) else '')
         ] if x) or ('прив’язано' if u.telegram_chat_id else '—')
+        # Richer Telegram profile captured at registration (lang / Premium / id).
+        _tg = (_load_prefs(u).get('tg') or {})
+        _extra = []
+        if _tg.get('lang'):
+            _extra.append(f"🌍 {_tg['lang']}")
+        if _tg.get('premium'):
+            _extra.append("⭐ Premium")
+        if u.telegram_chat_id:
+            _extra.append(f"id <code>{u.telegram_chat_id}</code>")
+        extra_line = ("\n" + " · ".join(_extra)) if _extra else ""
         notify_category('register',
                 f"🆕 <b>Нова реєстрація</b>\nЛогін: <code>{u.email}</code>\n"
-                f"Telegram: {tg_bits}\n"
+                f"Telegram: {tg_bits}{extra_line}\n"
                 f"Схвалити доступ?",
                 buttons=[[{'text': '✓ Схвалити', 'callback_data': f'ap:{u.id}'},
                           {'text': '✗ Відхилити', 'callback_data': f'rj:{u.id}'}]])
@@ -1103,6 +1115,8 @@ def register_auth_routes(app):
         tg_chat = _tg.get('c') if _tg else None
         tg_user = _tg.get('u') if _tg else None
         tg_name = _tg.get('n') if _tg else None
+        tg_lang = _tg.get('l') if _tg else None
+        tg_premium = _tg.get('p') if _tg else None
         # Registration is TELEGRAM-ONLY (no email anywhere). Without a valid tg
         # token this page just points the user at the bot — never an email form.
         if not tg_chat:
@@ -1130,6 +1144,20 @@ def register_auth_routes(app):
                 uid = create_user(email, pw, is_admin=False, email_confirmed=True,
                                   approved=False, telegram_chat_id=tg_chat,
                                   telegram_username=tg_user, telegram_name=tg_name)
+                # Save the richer Telegram profile (language, Premium, @handle,
+                # name, chat_id, when linked) into prefs so the admin can see it.
+                try:
+                    if uid:
+                        import time as _t
+                        _u = get_user_by_id(uid)
+                        _p = _load_prefs(_u) if _u else {}
+                        _p['tg'] = {'username': tg_user, 'name': tg_name,
+                                    'chat_id': str(tg_chat),
+                                    'lang': tg_lang, 'premium': bool(tg_premium),
+                                    'linked_at': _t.time()}
+                        _update_user(uid, prefs=json.dumps(_p)[:20000])
+                except Exception as _e:
+                    print(f"[AUTH] save tg profile error: {_e}")
                 notify_new_user_to_admin(uid)
                 try:
                     from web.tg_bot import tg_send
@@ -1464,33 +1492,69 @@ def register_auth_routes(app):
         target = get_user_by_id(uid)
         if not target:
             return jsonify({'ok': False, 'error': 'not found'})
+        # Notify BOTH sides about the change: the user (their Telegram) + the
+        # admin (audit line to the admin's private chat via the 'register' cat).
+        _tgc = getattr(target, 'telegram_chat_id', None)
+        _lbl = target.email
+
+        def _notify_change(user_text=None, admin_text=None):
+            from web.tg_bot import tg_send, notify_category
+            if user_text and _tgc:
+                try:
+                    tg_send(_tgc, user_text)
+                except Exception:
+                    pass
+            if admin_text:
+                try:
+                    notify_category('register', admin_text)
+                except Exception:
+                    pass
+
         if action == 'approve':
-            approve_user(uid)            # approve + 30-day access + notify
+            approve_user(uid)            # approve + 30-day access + notifies user
+            _notify_change(admin_text=f"✅ <b>{_lbl}</b> — схвалено (30 днів).")
         elif action == 'revoke':
             _update_user(uid, approved=False)
+            _notify_change("⚠️ Ваш доступ призупинено адміністратором.",
+                           f"⚠️ <b>{_lbl}</b> — схвалення знято.")
         elif action == 'grant_bot':
             _update_user(uid, bot_access=True)
+            _notify_change("🤖 Вам надано доступ до бота.",
+                           f"🤖 <b>{_lbl}</b> — надано доступ до бота.")
         elif action == 'revoke_bot':
             _update_user(uid, bot_access=False)
+            _notify_change("🤖 Доступ до бота вимкнено.",
+                           f"🤖 <b>{_lbl}</b> — доступ до бота знято.")
         elif action == 'confirm':          # admin can confirm email manually
             _update_user(uid, email_confirmed=True)
         elif action == 'disable':
             if target.id == me.id:
                 return jsonify({'ok': False, 'error': 'не можна вимкнути себе'})
-            _update_user(uid, disabled=True)
+            _update_user(uid, disabled=True, session_token=None)
+            _notify_change("⛔ Ваш акаунт вимкнено адміністратором.",
+                           f"⛔ <b>{_lbl}</b> — вимкнено.")
         elif action == 'enable':
             _update_user(uid, disabled=False)
+            _notify_change("✅ Ваш акаунт знову активний.",
+                           f"✅ <b>{_lbl}</b> — увімкнено.")
         elif action == 'make_admin':
             _update_user(uid, is_admin=True, approved=True, email_confirmed=True)
+            _notify_change("🛡 Вам надано права адміністратора.",
+                           f"🛡 <b>{_lbl}</b> → адміністратор.")
         elif action == 'remove_admin':
             if target.id == me.id:
                 return jsonify({'ok': False, 'error': 'не можна зняти себе'})
             _update_user(uid, is_admin=False)
+            _notify_change("🛡 Права адміністратора знято.",
+                           f"🛡 <b>{_lbl}</b> — знято адміна.")
         elif action == 'set_password':
             pw = d.get('password') or ''
             if len(pw) < MIN_PASSWORD_LEN:
                 return jsonify({'ok': False, 'error': f'Мінімум {MIN_PASSWORD_LEN} символів'})
             _update_user(uid, password_hash=generate_password_hash(pw))
+            _notify_change("🔑 Адміністратор змінив ваш пароль. "
+                           "Використовуйте новий пароль для входу.",
+                           f"🔑 <b>{_lbl}</b> — пароль змінено.")
         elif action == 'set_access':
             # Time-limited access: days>0 → active for N days then auto-block;
             # days==0 → unlimited. Also approves + enables the account.
@@ -1501,9 +1565,14 @@ def register_auth_routes(app):
             au = (datetime.utcnow() + timedelta(days=days)) if days > 0 else None
             _update_user(uid, access_until=au, approved=True, disabled=False)
             notify_user_approved(uid)   # ping the user's Telegram if linked
+            _dtxt = f"{days} дн." if days > 0 else "без обмеження"
+            _notify_change(f"⏳ Ваш доступ оновлено: <b>{_dtxt}</b>.",
+                           f"⏳ <b>{_lbl}</b> — доступ {_dtxt}.")
         elif action == 'kick':
             # Invalidate all live sessions of this user (force re-login).
             _update_user(uid, session_token=None)
+            _notify_change("🔒 Ваші сесії завершено — увійдіть знову.",
+                           f"🔒 <b>{_lbl}</b> — сесії скинуто.")
         elif action == 'resend':
             token = _make_token(target.email, 'confirm')
             link = f"{_base_url()}/confirm/{token}"
@@ -1513,6 +1582,9 @@ def register_auth_routes(app):
         elif action == 'delete':
             if target.id == me.id:
                 return jsonify({'ok': False, 'error': 'не можна видалити себе'})
+            # Notify the user BEFORE removing them (their chat link is gone after).
+            _notify_change("🗑 Ваш акаунт видалено адміністратором.",
+                           f"🗑 <b>{_lbl}</b> — акаунт видалено.")
             _delete_user(uid)
         else:
             return jsonify({'ok': False, 'error': 'unknown action'})
@@ -1523,20 +1595,31 @@ def register_auth_routes(app):
         if not current_user().is_admin:
             return jsonify({'ok': False, 'error': 'forbidden'}), 403
         d = request.get_json(silent=True) or {}
-        email = _norm_email(d.get('email'))
+        # Registration is Telegram-only (login + password, NO email) — the admin
+        # create form matches that: a LOGIN (display name ≥ 3 chars), not an email.
+        login = _norm_email(d.get('login') or d.get('email'))
         pw = d.get('password') or ''
-        if not _EMAIL_RE.match(email):
-            return jsonify({'ok': False, 'error': 'Невірний email'})
+        if not login or len(login) < 3:
+            return jsonify({'ok': False, 'error': 'Логін — мінімум 3 символи'})
         if len(pw) < MIN_PASSWORD_LEN:
             return jsonify({'ok': False, 'error': f'Пароль мінімум {MIN_PASSWORD_LEN} символів'})
-        if get_user_by_email(email):
-            return jsonify({'ok': False, 'error': 'Такий email уже існує'})
-        # Admin-created accounts are ACTIVE immediately (email confirmed + approved),
-        # get a 30-day window, and bot access per the checkbox (admins always full).
-        create_user(email, pw, is_admin=bool(d.get('is_admin')),
-                    email_confirmed=True, approved=True,
-                    bot_access=bool(d.get('bot_access')),
-                    access_days=DEFAULT_ACCESS_DAYS)
+        if get_user_by_email(login):
+            return jsonify({'ok': False, 'error': 'Такий логін уже існує'})
+        _tgc = (str(d.get('telegram_chat_id') or '').strip() or None)
+        _tgu = ((d.get('telegram_username') or '').lstrip('@').strip() or None)
+        # Admin-created accounts are ACTIVE immediately (approved), get a 30-day
+        # window, bot access per the checkbox, and optional Telegram linking.
+        uid = create_user(login, pw, is_admin=bool(d.get('is_admin')),
+                          email_confirmed=True, approved=True,
+                          bot_access=bool(d.get('bot_access')),
+                          access_days=DEFAULT_ACCESS_DAYS,
+                          telegram_chat_id=_tgc, telegram_username=_tgu)
+        # If linked to Telegram, tell the new user their account is ready.
+        if uid and _tgc:
+            try:
+                notify_user_approved(uid)
+            except Exception:
+                pass
         return jsonify({'ok': True})
 
 
@@ -1666,9 +1749,13 @@ def _admin_users_body():
         '<button class="actbtn" style="margin-left:auto" onclick="toggleCreate()">➕ Створити користувача</button>'
         '</div>'
         '<div id="createbox" style="display:none;margin:6px 0;padding:12px;border:1px dashed #2a3140;border-radius:10px">'
+        '<div style="font-size:.72rem;color:#9aa3b5;margin-bottom:8px">Реєстрація на сайті — через Telegram (логін + пароль, без email). '
+        'Тут можна створити акаунт вручну: <b>логін</b> + пароль; за бажанням привʼязати Telegram (chat_id / @юзернейм).</div>'
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">'
-        '<div><label>Email</label><input id="c_email" type="email" style="width:230px"></div>'
-        '<div><label>Пароль (мін. 8)</label><input id="c_pw" type="text" style="width:190px"></div>'
+        '<div><label>Логін (ім’я для входу)</label><input id="c_login" type="text" style="width:200px"></div>'
+        '<div><label>Пароль (мін. 8)</label><input id="c_pw" type="text" style="width:170px"></div>'
+        '<div><label>Telegram chat_id (необовʼязково)</label><input id="c_tgc" type="text" style="width:150px"></div>'
+        '<div><label>@Telegram (необовʼязково)</label><input id="c_tgu" type="text" style="width:150px"></div>'
         '<label style="display:flex;align-items:center;gap:6px;margin:0"><input id="c_adm" type="checkbox" style="width:auto"> адмін</label>'
         '<label style="display:flex;align-items:center;gap:6px;margin:0"><input id="c_bot" type="checkbox" style="width:auto"> 🤖 доступ до бота</label>'
         '<button class="actbtn" onclick="createUser()">Створити (30 днів, одразу активний)</button>'
@@ -1858,13 +1945,17 @@ def _admin_script():
     function setpw(id){ const p=prompt('Новий пароль для користувача (мін. 8 символів):'); if(!p)return; act(id,'set_password',{password:p}); }
     function toggleCreate(){ const b=document.getElementById('createbox'); b.style.display=b.style.display==='none'?'block':'none'; }
     async function createUser(){
-      const email=document.getElementById('c_email').value, pw=document.getElementById('c_pw').value,
+      const login=document.getElementById('c_login').value, pw=document.getElementById('c_pw').value,
             adm=document.getElementById('c_adm').checked, bot=document.getElementById('c_bot').checked,
+            tgc=document.getElementById('c_tgc').value, tgu=document.getElementById('c_tgu').value,
             m=document.getElementById('c_msg');
-      const r=await fetch('/api/admin/users/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pw,is_admin:adm,bot_access:bot})});
+      const r=await fetch('/api/admin/users/create',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({login,password:pw,is_admin:adm,bot_access:bot,telegram_chat_id:tgc,telegram_username:tgu})});
       const d=await r.json();
       if(!d.ok){ m.textContent=d.error||'Помилка'; return; }
-      m.textContent=''; document.getElementById('c_email').value=''; document.getElementById('c_pw').value=''; document.getElementById('c_adm').checked=false;
+      m.textContent=''; document.getElementById('c_login').value=''; document.getElementById('c_pw').value='';
+      document.getElementById('c_tgc').value=''; document.getElementById('c_tgu').value='';
+      document.getElementById('c_adm').checked=false; document.getElementById('c_bot').checked=false;
       toggleCreate(); load();
     }
     try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission(); }catch(e){}

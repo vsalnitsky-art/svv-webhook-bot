@@ -336,7 +336,7 @@ def _site_url():
     return (os.getenv('INFO_SITE_URL') or base_url() or '').rstrip('/')
 
 
-def _handle_start(chat_id, username=None, name=None):
+def _handle_start(chat_id, username=None, name=None, lang=None, premium=None):
     from web.auth import get_user_by_chat, _make_tg_token
     b = base_url()
     existing = get_user_by_chat(str(chat_id))
@@ -364,7 +364,7 @@ def _handle_start(chat_id, username=None, name=None):
         tg_send(chat_id, "⚠️ Сервіс тимчасово недоступний (не задано публічну "
                          "адресу). Зверніться до адміністратора.")
         return
-    tok = _make_tg_token(str(chat_id), username, name)
+    tok = _make_tg_token(str(chat_id), username, name, lang, premium)
     link = f"{b}/register?tg={tok}"
     tg_send(chat_id,
             "👋 <b>Вітаю у VSV Bot!</b>\n\n"
@@ -493,6 +493,8 @@ def _handle_message(m):
     frm = (m.get('from', {}) or {})
     uname = frm.get('username')
     fname = _full_name(frm)
+    flang = frm.get('language_code')      # richer Telegram profile (saved at reg)
+    fprem = frm.get('is_premium')
     admin = _admin_chat()
     is_admin_chat = bool(admin) and cid_s == str(admin)
 
@@ -570,7 +572,7 @@ def _handle_message(m):
                     else "⚠️ Не вдалося надіслати (можливо, користувач не почав чат).")
             return
         if text.startswith('/start'):
-            _handle_start(cid, uname, fname)
+            _handle_start(cid, uname, fname, flang, fprem)
             return
         # A plain admin message (not a reply, not a command) = an ANNOUNCEMENT —
         # broadcast it (text OR media) to EVERY bot subscriber, like a channel.
@@ -583,7 +585,7 @@ def _handle_message(m):
 
     # ---- user side ----
     if text.startswith('/start'):
-        _handle_start(cid, uname, fname)
+        _handle_start(cid, uname, fname, flang, fprem)
         return
     has_media = _has_media(m)
     if not text and not has_media:
