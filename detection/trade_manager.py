@@ -3925,15 +3925,14 @@ class TradeManager:
         # Source WITHOUT the decision suffix (the 🤪 verdict is shown once,
         # below in es_block — fixes the duplicated «LONG 83% (marginal)»).
         src = self._base_opened_by(opened_by_full)
-        sizing_line = self._fmt_paper_sizing_line(pos.get('sz'))
+        dot = self._dir_dot(side)
+        _sl_str = self._fmt_price(pos['sl_price']) if pos.get('sl_price') else '—'
+        _tp_str = self._fmt_price(pos['tp_price']) if pos.get('tp_price') else '—'
         msg = (
-            f"{icon} ▶️ <b>ВІДКРИТО {side}</b> · #{symbol}   🧪 ТЕСТ\n"
-            f"━━━━━━━━━━━━\n"
-            f"📍 Вхід: {self._fmt_price(entry_price)}\n"
-            f"{sizing_line}"
-            f"{es_block}"
-            f"{ob_line}"
-            f"📋 Джерело: {src}"
+            f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
+            f"<b>#{symbol}</b>   🧪 ТЕСТ\n"
+            f"📍 Вхід: <b>{self._fmt_price(entry_price)}</b>\n"
+            f"🛡 SL: <b>{_sl_str}</b> · 🎯 TP: <b>{_tp_str}</b>"
         )
         self._notify(msg, is_test=True, category='trades')
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
@@ -4179,17 +4178,14 @@ class TradeManager:
         # assessment correlates with the actual outcome. This is what makes
         # post-mortem analysis useful — "I closed at -2%, but Entry Score was
         # 'good +50' — should I trust this score or down-weight it?"
-        es_recap = self._format_entry_score_recap(pos.get('entry_score'))
+        dot = self._dir_dot(pos['side'])
         peak_line = self._fmt_peak_line(closed)
-        paper_line = self._fmt_paper_result_line(pos.get('sz'), _pp)
         msg = (
-            f"{icon} ⏹ <b>ЗАКРИТО {pos['side']}</b> {pnl_pct:+.2f}% · #{symbol}   🧪 ТЕСТ\n"
-            f"━━━━━━━━━━━━\n"
-            f"📍 Вхід → Вихід: {self._fmt_price(entry)} → {self._fmt_price(exit_price)}\n"
+            f"{icon} ⏹ ЗАКРИТО {dot}<b>{pos['side']}</b> <b>{pnl_pct:+.2f}%</b>\n"
+            f"<b>#{symbol}</b>   🧪 ТЕСТ\n"
+            f"📍 Вихід: <b>{self._fmt_price(exit_price)}</b>\n"
             f"🔖 Причина: {self._reason_label(reason)}\n"
             f"{peak_line}"
-            f"{paper_line}"
-            f"{es_recap}"
         ).rstrip()
         self._notify(msg, is_test=True, category='trades')
         print(f"[TM] [TEST] Shadow close: {symbol} {pos['side']} @ {self._fmt_price(exit_price)} "
@@ -5499,26 +5495,23 @@ class TradeManager:
         except Exception as e:
             print(f"[TM] Notify error: {e}")
     
+    @staticmethod
+    def _dir_dot(side):
+        """🟢/🔴 direction indicator (Telegram has NO text colour — emoji is the
+        only way to «colour» LONG/SHORT)."""
+        return '🟢' if side == 'LONG' else ('🔴' if side == 'SHORT' else '⚪')
+
     def _notify_open(self, pos):
         side = pos['side']
-        icon = '🟢' if side == 'LONG' else '🔴'
+        dot = self._dir_dot(side)
         sl_str = self._fmt_price(pos['sl_price']) if pos.get('sl_price') else '—'
         tp_str = self._fmt_price(pos['tp_price']) if pos.get('tp_price') else '—'
-        # Entry Score block — same renderer as shadow side for consistency
-        es_block = self._format_entry_score_telegram(pos.get('entry_score'))
-        # Full opened_by (Forecast 1H + CTR + Entry score snapshot)
-        src_line = ''
-        if pos.get('opened_by'):
-            src_line = f"📋 Джерело: {self._base_opened_by(pos['opened_by'])}\n"
         msg = (
-            f"{icon} ▶️ <b>ВІДКРИТО {side}</b> · #{pos['symbol']}\n"
-            f"━━━━━━━━━━━━\n"
-            f"📍 Вхід: {self._fmt_price(pos['entry_price'])}\n"
-            f"💼 К-ть: {pos['qty']:.6g} · ⚙️ Плече: {self._settings.get('leverage', 10)}x\n"
-            f"🛡 SL: {sl_str} · 🎯 TP: {tp_str}\n"
-            f"{es_block}"
-            f"{src_line}"
-        ).rstrip()
+            f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
+            f"<b>#{pos['symbol']}</b>\n"
+            f"📍 Вхід: <b>{self._fmt_price(pos['entry_price'])}</b>\n"
+            f"🛡 SL: <b>{sl_str}</b> · 🎯 TP: <b>{tp_str}</b>"
+        )
         self._notify(msg, category='trades')
 
     def _notify_close(self, closed):
@@ -5529,15 +5522,14 @@ class TradeManager:
         icon = '✅' if is_win else '❌'
         # Show what the entry score said when we opened — useful for
         # weight-tuning and spotting when the predictor was wrong.
-        es_recap = self._format_entry_score_recap(closed.get('entry_score'))
+        dot = self._dir_dot(side)
         peak_line = self._fmt_peak_line(closed)
         msg = (
-            f"{icon} ⏹ <b>ЗАКРИТО {side}</b> {pnl_pct:+.2f}% ({pnl_usd:+.2f}$) · #{closed['symbol']}\n"
-            f"━━━━━━━━━━━━\n"
-            f"📍 Вхід → Вихід: {self._fmt_price(closed['entry_price'])} → {self._fmt_price(closed['exit_price'])}\n"
+            f"{icon} ⏹ ЗАКРИТО {dot}<b>{side}</b> <b>{pnl_pct:+.2f}%</b>\n"
+            f"<b>#{closed['symbol']}</b>\n"
+            f"📍 Вихід: <b>{self._fmt_price(closed['exit_price'])}</b>\n"
             f"🔖 Причина: {self._reason_label(closed['reason'])}\n"
             f"{peak_line}"
-            f"{es_recap}"
         ).rstrip()
         self._notify(msg, category='trades')
 
@@ -5553,10 +5545,10 @@ class TradeManager:
             if ep > 0:
                 pp = ep * (1 + peak / 100.0) if closed.get('side') == 'LONG' \
                     else ep * (1 - peak / 100.0)
-                pps = f" (@ {self._fmt_price(pp)})"
+                pps = f" (@ <b>{self._fmt_price(pp)}</b>)"
         except Exception:
             pps = ''
-        return f"📈 Пік: {peak:+.2f}%{pps}\n"
+        return f"📈 Пік: <b>{peak:+.2f}%</b>{pps}\n"
 
     def _fmt_paper_sizing_line(self, sz) -> str:
         """🧪 One-line risk-sizing summary for the paper OPEN notification."""
