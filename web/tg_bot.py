@@ -254,9 +254,13 @@ def invite_user_to_group(chat_id):
         return False
     try:
         link = None
+        # creates_join_request=True → EVERY join via this link needs approval,
+        # and the bot auto-approves ONLY registered+active users
+        # (_handle_join_request). This enforces «group access via site
+        # registration only» even if the link leaks — nobody gets in unapproved.
         r = _api('createChatInviteLink', {'chat_id': group,
-                                          'name': f'auto {chat_id}',
-                                          'member_limit': 1})
+                                          'name': f'reg {chat_id}',
+                                          'creates_join_request': True})
         if r.get('ok'):
             link = (r.get('result') or {}).get('invite_link')
         if not link:   # fallback: the group's primary link
@@ -364,13 +368,15 @@ def _handle_start(chat_id, username=None, name=None):
     link = f"{b}/register?tg={tok}"
     tg_send(chat_id,
             "👋 <b>Вітаю у VSV Bot!</b>\n\n"
+            "Потрапити до групи можна <b>лише через реєстрацію на інфо-сайті</b> — "
+            "інакше доступу до групи немає (нікого не додають вручну).\n\n"
             "Щоб отримати доступ:\n"
             "1️⃣ Натисніть «Реєстрація на сайті» і задайте <b>лише пароль</b> "
             "(email не потрібен — вас підтверджує Telegram).\n"
-            "2️⃣ Адміністратор схвалить ваш акаунт.\n"
-            "3️⃣ Ви отримаєте сповіщення тут — і зможете увійти.\n\n"
-            "🔔 Після входу в кабінеті/на інфо-сайті можна ввімкнути сповіщення "
-            "₿ BTCUSDT і 💰 Funding — вони приходитимуть сюди.\n\n"
+            "2️⃣ Адміністратор підтвердить вашу реєстрацію.\n"
+            "3️⃣ Ринкові сигнали (угоди, ₿ BTCUSDT, 💰 Funding) приходитимуть "
+            "в <b>окрему групу</b> — посилання на вхід у групу надійде сюди "
+            "<b>автоматично, після підтвердження реєстрації адміністратором</b>.\n\n"
             "💬 Виникли труднощі? Просто напишіть повідомлення сюди — "
             "я передам його адміністратору, і він відповість тут.",
             buttons=[[{'text': '📝 Реєстрація на сайті', 'url': link}]])
@@ -409,25 +415,31 @@ def _handle_callback(cb):
 
 
 def _handle_join_request(jr):
-    """Auto-approve a group join request from a KNOWN user (linked account) — so
-    the personal invite link works even when the group has «approve new members»
-    on. Unknown requesters are left for the admin to review (never auto-declined)."""
+    """Group access is REGISTRATION-GATED: auto-approve a join request ONLY from a
+    user who registered on the info-site AND was approved by the admin (active).
+    Everyone else is LEFT PENDING for the admin/owner to decide — nobody gets in
+    without site registration; nobody is added by anyone but admin/owner."""
     chat = (jr.get('chat', {}) or {}).get('id')
     uid_chat = str(((jr.get('from', {}) or {}).get('id')) or '')
     if not chat or not uid_chat:
         return
     try:
         from web.auth import get_user_by_chat
-        known = bool(get_user_by_chat(uid_chat))
+        info = get_user_by_chat(uid_chat) or {}
+        active = bool(info.get('active'))
     except Exception:
-        known = False
-    if known:
+        active = False
+    if active:
         try:
             _api('approveChatJoinRequest', {'chat_id': chat,
                                             'user_id': int(uid_chat)})
-            print(f"[TG-BOT] auto-approved join request from {uid_chat}")
+            print(f"[TG-BOT] auto-approved join request from {uid_chat} (registered)")
         except Exception as e:
             print(f"[TG-BOT] approve join error: {e}")
+    else:
+        # Not a registered+approved user → leave the request PENDING for the
+        # admin/owner (do NOT auto-approve; do NOT auto-decline).
+        print(f"[TG-BOT] join request from {uid_chat} left pending (not registered)")
 
 
 # Any non-text content Telegram may carry — so the bot forwards photos, videos,
