@@ -600,10 +600,20 @@ def _handle_message(m):
     # Friendly identity line: name/@handle (always) + email (if registered).
     who = _who_label(frm, info)
     email_line = f"\n✉️ {info['email']}" if info.get('email') else ""
+    # 🌐 Registration status on the info-site — so the admin instantly knows who
+    # is writing: a registered (active / pending) account, or a stranger.
+    if not info:
+        reg_line = "\n🌐 Реєстрація: <b>❌ НЕ зареєстрований на сайті</b>"
+    elif info.get('active'):
+        reg_line = "\n🌐 Реєстрація: <b>✅ зареєстрований · активний</b>"
+    elif info.get('approved'):
+        reg_line = "\n🌐 Реєстрація: <b>⛔ вимкнено / протерміновано</b>"
+    else:
+        reg_line = "\n🌐 Реєстрація: <b>⏳ очікує схвалення</b>"
     # Header carries identity; the plain-text body is inlined only for text
     # messages. Media is copied AFTER (it keeps its own caption).
     header = (f"{_CAT_TAG.get('support', '')}\n"
-              f"✉️ <b>Повідомлення від користувача</b>\n👤 {who}{email_line}\n"
+              f"✉️ <b>Повідомлення від користувача</b>\n👤 {who}{email_line}{reg_line}\n"
               f"chat_id: <code>{cid_s}</code>"
               + (f"\n\n{text}" if (text and not has_media) else ""))
     mid = _send_get_id(admin, header)
