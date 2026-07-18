@@ -361,26 +361,72 @@ def subscriber_chats(pref_key):
         s.close()
 
 
+_DB_BOT_CONTACTS = 'tg_bot_contacts'   # {chat_id: {username, name, first_seen, last_seen}}
+_MAX_BOT_CONTACTS = 5000
+
+
+def record_bot_contact(chat_id, username=None, name=None):
+    """Remember EVERY chat that talks to the bot — even before (or without)
+    registration — so the admin can SEE and reach all bot users, not just
+    registered accounts. Upserts into a bounded DB setting."""
+    if not chat_id:
+        return
+    try:
+        from storage.db_operations import get_db
+        import time as _t
+        db = get_db()
+        data = db.get_setting(_DB_BOT_CONTACTS, {}) or {}
+        if not isinstance(data, dict):
+            data = {}
+        cid = str(chat_id)
+        rec = data.get(cid) or {}
+        rec.setdefault('first_seen', _t.time())
+        rec['last_seen'] = _t.time()
+        if username:
+            rec['username'] = username
+        if name:
+            rec['name'] = name
+        data[cid] = rec
+        if len(data) > _MAX_BOT_CONTACTS:      # keep the most-recent contacts
+            data = dict(sorted(data.items(),
+                               key=lambda kv: (kv[1] or {}).get('last_seen', 0),
+                               reverse=True)[:_MAX_BOT_CONTACTS])
+        db.set_setting(_DB_BOT_CONTACTS, data)
+    except Exception as e:
+        print(f"[AUTH] record_bot_contact error: {e}")
+
+
+def bot_contacts():
+    """{chat_id: {username, name, first_seen, last_seen}} — everyone who ever
+    used the bot (for the admin subscriber list)."""
+    try:
+        from storage.db_operations import get_db
+        d = get_db().get_setting(_DB_BOT_CONTACTS, {}) or {}
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
 def all_bot_chats(exclude_chat=None):
-    """Every ACTIVE user with a linked Telegram chat — the audience for an ADMIN
-    ANNOUNCEMENT sent through the main bot. `exclude_chat` (the admin's own chat)
-    is skipped to avoid an echo. Not pref-gated: an admin broadcast reaches all."""
+    """Audience for an ADMIN ANNOUNCEMENT = EVERYONE who uses the bot: all
+    recorded bot contacts + registered users with a linked chat, MINUS accounts
+    the admin explicitly disabled/rejected, minus `exclude_chat` (admin's own)."""
+    ex = str(exclude_chat) if exclude_chat else None
+    disabled, registered = set(), set()
     s = get_session()
     try:
-        out = []
-        ex = str(exclude_chat) if exclude_chat else None
         for u in s.query(User).filter(User.telegram_chat_id.isnot(None)).all():
-            if not _is_active(u):
-                continue
             c = str(u.telegram_chat_id)
-            if ex and c == ex:
-                continue
-            out.append(c)
-        return out
+            (disabled if getattr(u, 'disabled', False) else registered).add(c)
     except Exception:
-        return []
+        pass
     finally:
         s.close()
+    chats = {str(c) for c in bot_contacts().keys()} | registered
+    chats -= disabled
+    if ex:
+        chats.discard(ex)
+    return list(chats)
 
 
 def pending_attention_count():

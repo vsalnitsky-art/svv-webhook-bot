@@ -504,7 +504,35 @@ def _handle_message(m):
     if ctype and ctype != 'private':
         return
 
+    # Remember EVERY private chat as a bot contact — so the admin sees ALL bot
+    # users (even those who pressed /start but never registered) and can reach them.
+    try:
+        from web.auth import record_bot_contact
+        record_bot_contact(cid_s, uname, fname)
+    except Exception:
+        pass
+
     if is_admin_chat:
+        # 👥 /subs — list the bot's subscribers (admin only).
+        if text.startswith('/subs'):
+            try:
+                from web.auth import bot_contacts
+                c = bot_contacts()
+                top = sorted(c.items(), key=lambda kv: (kv[1] or {}).get('last_seen', 0),
+                             reverse=True)[:50]
+                lines = []
+                for cid_k, r in top:
+                    r = r or {}
+                    nm = r.get('name') or ''
+                    un = f"@{r['username']}" if r.get('username') else ''
+                    lines.append(f"• {(' '.join(x for x in [nm, un] if x)) or '—'} "
+                                 f"<code>{cid_k}</code>")
+                tg_send(cid, f"👥 Підписників бота: <b>{len(c)}</b>"
+                             + (("\n" + "\n".join(lines)) if lines else "")
+                             + ("\n…" if len(c) > 50 else ""))
+            except Exception as e:
+                tg_send(cid, f"⚠️ Помилка: {e}")
+            return
         # 1) Admin swipe-replies to a forwarded user message.
         target = None
         rt = m.get('reply_to_message') or {}
