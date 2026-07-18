@@ -9434,20 +9434,31 @@ async function showTradeHistory(symbol, closedAt, isShadow) {
 // queue → CTR/Decision → 🎯 recommendation → open → manage → close), oldest→
 // newest, each step with its metrics laid out as chips. `journey` = array of
 // {t, event, detail, side, source, x}.
-function journeyTree(journey) {
+function journeyTree(journey, meta) {
     if (!Array.isArray(journey) || !journey.length) return '';
+    meta = meta || {};
     const ICO = { signal:'⚡', queued:'📥', dropped:'⛔', ejected:'↩️',
-        opened:'▶️', closed:'⏹', autosl:'🛡', skipped:'⏳', rejected:'🚫',
-        passthrough:'➡️' };
+        opened:'▶️', closed:'⏹', autosl:'🛡', sltp:'✏️', skipped:'⏳',
+        rejected:'🚫', passthrough:'➡️' };
     const COL = { opened:'#4ade80', closed:'#f87171', queued:'#60a5fa',
-        dropped:'#f59e0b', ejected:'#f59e0b', autosl:'#fbbf24', skipped:'#8b93a7',
-        signal:'#c084fc', rejected:'#f87171', passthrough:'#8b93a7' };
+        dropped:'#f59e0b', ejected:'#f59e0b', autosl:'#fbbf24', sltp:'#38bdf8',
+        skipped:'#8b93a7', signal:'#c084fc', rejected:'#f87171', passthrough:'#8b93a7' };
     const NAME = { signal:'Сигнал', queued:'У черзі', dropped:'Відхилено',
         ejected:'Викинуто', opened:'Відкрито', closed:'Закрито',
-        autosl:'Авто-SL', skipped:'Пропуск', rejected:'Відмова',
-        passthrough:'Пряме' };
+        autosl:'Авто-SL', sltp:'SL/TP (користувач)', skipped:'Пропуск',
+        rejected:'Відмова', passthrough:'Пряме' };
     const esc = s => String(s == null ? '' : s)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    // Decision Center verdict → «СЕРЕДНІЙ · SHORT 79% · SHORT».
+    const V_UA = { good:'СИЛЬНИЙ', marginal:'СЕРЕДНІЙ', poor:'СЛАБКИЙ' };
+    const decStr = (dec) => {
+        if (!dec || !(dec.headline || dec.verdict)) return '';
+        const vl = V_UA[dec.verdict] || (dec.verdict ? String(dec.verdict).toUpperCase() : '—');
+        return vl + (dec.headline ? ' · ' + dec.headline : '')
+            + (dec.recommended && dec.recommended !== 'NEUTRAL' ? ' · ' + dec.recommended : '');
+    };
+    const sub = (label, val) => `<div style="font-size:0.66rem;color:#a7b0c0;margin-top:1px">${label}: <b>${esc(val)}</b></div>`;
+    let openDone = false, closeDone = false;
     const rows = journey.map(e => {
         const col = COL[e.event] || '#8b93a7';
         const ico = ICO[e.event] || '•';
@@ -9470,11 +9481,25 @@ function journeyTree(journey) {
             ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px">${chips.join('')}</div>` : '';
         const detail = e.detail
             ? `<div style="font-size:0.66rem;color:#9aa3b5;margin-top:1px">${esc(e.detail)}</div>` : '';
+        // 🧠 Decision Center + exit reason assigned to the OPEN / CLOSE nodes.
+        let dcSub = '';
+        if (e.event === 'opened' && !openDone) {
+            const d = decStr(meta.entry_decision);
+            if (d) dcSub += sub('🤪 Decision Center на вході', d);
+            openDone = true;
+        }
+        if (e.event === 'closed' && !closeDone) {
+            const d = decStr(meta.exit_decision);
+            if (d) dcSub += sub('🤪 Decision Center на виході', d);
+            const rsn = meta.exit_reason_detail || meta.exit_reason;
+            if (rsn) dcSub += sub('🔖 Причина виходу', rsn);
+            closeDone = true;
+        }
         return `<div style="position:relative;padding:0 0 10px 18px">`
             + `<span style="position:absolute;left:-5px;top:3px;width:9px;height:9px;border-radius:50%;background:${col};box-shadow:0 0 0 2px rgba(0,0,0,0.4)"></span>`
             + `<div style="font-size:0.72rem"><b style="color:${col}">${ico} ${esc(nm)}</b>${src}`
             + `<span style="color:#6b7280;font-size:0.62rem;margin-left:6px">${t}</span></div>`
-            + detail + chipsHtml + `</div>`;
+            + detail + dcSub + chipsHtml + `</div>`;
     }).join('');
     return `<div style="margin-bottom:12px">`
         + `<div style="font-size:0.75rem;color:#cbd5e1;font-weight:700;margin-bottom:6px">🌿 Шлях монети (з логу бота)</div>`
@@ -9803,8 +9828,14 @@ function renderTradeHistoryChart(h, meta) {
           labelFmt: v => Math.round(v) + '%' });
 
     // STC + вік кросовера + готовність виходу — ODRAZU після PnL.
-    const journeyPanel = journeyTree(meta.journey);
-    return info + info2 + exitReasonLine + sltpLine + paperLine + dcLine + ctrLine + journeyPanel + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + pricePanel;
+    const journeyPanel = journeyTree(meta.journey, meta);
+    // Decision Center (вхід/вихід) + exit reason are now shown INSIDE the journey
+    // tree on the open/close nodes — keep the top lines only as a fallback when
+    // there is no journey (empty activity log for this coin).
+    const _hasJourney = Array.isArray(meta.journey) && meta.journey.length;
+    const dcTop = _hasJourney ? '' : dcLine;
+    const exitTop = _hasJourney ? '' : exitReasonLine;
+    return info + info2 + exitTop + sltpLine + paperLine + dcTop + ctrLine + journeyPanel + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + pricePanel;
 }
 
 // ── 📜 Funding-coin ARCHIVE (history of appear/flip/exit + metrics) ──────

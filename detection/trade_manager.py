@@ -5100,6 +5100,29 @@ class TradeManager:
         tp_disp = f"{updated.get('manual_tp')}" if 'manual_tp' in updated else '—'
         print(f"[TM] Manual SL/TP updated for {symbol} ({kind}): "
               f"SL={sl_disp} TP={tp_disp}")
+        # 🧾 Activity log — a USER change to Manual SL/TP (distinct from the
+        # automatic auto-OB-SL which logs its own 'autosl' event). Shows up in
+        # the coin-journey tree as «✏️ SL/TP (користувач)».
+        try:
+            parts = []
+            if sl_op[0] == 'set':
+                parts.append(f"Manual SL → {self._fmt_sltp(updated.get('manual_sl'))}")
+            elif sl_op[0] == 'clear':
+                parts.append("Manual SL знято")
+            if tp_op[0] == 'set':
+                parts.append(f"Manual TP → {self._fmt_sltp(updated.get('manual_tp'))}")
+            elif tp_op[0] == 'clear':
+                parts.append("Manual TP знято")
+            if parts:
+                from detection.activity_log import log_activity
+                log_activity(symbol, 'sltp',
+                             'Користувач: ' + ' · '.join(parts)
+                             + (' (paper)' if is_shadow else ''),
+                             side=updated.get('side'), source='user',
+                             extra={'manual_sl': updated.get('manual_sl'),
+                                    'manual_tp': updated.get('manual_tp')})
+        except Exception:
+            pass
         return {'ok': True, 'position': updated}
     
     def update_manual_mode(self, symbol: str, enabled: bool,
