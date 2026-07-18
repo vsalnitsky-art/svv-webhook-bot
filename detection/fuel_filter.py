@@ -3129,12 +3129,14 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] funding TG error {sym}: {e}")
 
     def _broadcast_users(self, category, pref_key, text):
-        """Mirror an alert to the category chat + every opted-in user's Telegram.
+        """Send a market alert to the GROUP topic ONLY (funding/btc/…). It is NOT
+        duplicated into the private bot — the private bot is for administrative
+        messages only. `pref_key` is kept for signature compatibility (the
+        admin's cabinet toggle still gates the group via notify_category).
         Best-effort, never raises into the trading path."""
         try:
-            from web.tg_bot import notify_category, broadcast_to_subscribers
+            from web.tg_bot import notify_category
             notify_category(category, text)
-            broadcast_to_subscribers(pref_key, text)
         except Exception as e:
             print(f"[FuelFilter] broadcast {category} error: {e}")
 

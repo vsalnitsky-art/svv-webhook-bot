@@ -107,6 +107,12 @@ _PREF_TAG = {
 #           адміна (TELEGRAM_CHAT_ID), НІКОЛИ у спільну групу.
 _ADMIN_ONLY_CATS = {'register', 'support'}
 
+# Working market topics whose bot posts are PROTECTED: no forwarding / copying /
+# saving (protect_content). Members can still WRITE in the topic. NOTE: Telegram
+# cannot block screenshots in a normal group (only secret chats) — protect_content
+# is the strongest the Bot API offers and disables forward/copy/save.
+_PROTECTED_CATS = {'funding', 'btc', 'trades'}
+
 
 _forum_topics_cache = None    # {category: thread_id} for TELEGRAM_FORUM_CHAT
 
@@ -198,6 +204,9 @@ def notify_category(category, text, buttons=None):
             p['message_thread_id'] = int(thread)
         except (TypeError, ValueError):
             pass
+    # Protect the working market topics: no forward / copy / save of these posts.
+    if category in _PROTECTED_CATS:
+        p['protect_content'] = True
     if buttons:
         p['reply_markup'] = {'inline_keyboard': buttons}
     return bool(_api('sendMessage', p).get('ok'))
@@ -443,6 +452,24 @@ def _copy_message(to_chat, from_chat, message_id):
         return None
 
 
+def _admin_broadcast(m, admin_cid):
+    """📢 Admin ANNOUNCEMENT — copy the admin's message (text OR media, keeping
+    caption) to EVERY active bot subscriber. Reports the delivered count back."""
+    try:
+        from web.auth import all_bot_chats
+        chats = all_bot_chats(exclude_chat=admin_cid)
+    except Exception:
+        chats = []
+    n = 0
+    for c in chats:
+        try:
+            if _copy_message(c, admin_cid, m.get('message_id')):
+                n += 1
+        except Exception:
+            pass
+    tg_send(admin_cid, f"📢 Розіслано підписникам: <b>{n}</b>.")
+
+
 def _handle_message(m):
     """Route a message: user → admin (support), admin reply → user. Forwards ANY
     content type (text / photo / video / document / voice / sticker …)."""
@@ -505,7 +532,14 @@ def _handle_message(m):
         if text.startswith('/start'):
             _handle_start(cid, uname, fname)
             return
-        return   # admin typed something that isn't a reply/command → ignore
+        # A plain admin message (not a reply, not a command) = an ANNOUNCEMENT —
+        # broadcast it (text OR media) to EVERY bot subscriber, like a channel.
+        if text.startswith('/'):
+            return   # unknown command → ignore
+        if not text and not _has_media(m):
+            return
+        _admin_broadcast(m, cid_s)
+        return
 
     # ---- user side ----
     if text.startswith('/start'):

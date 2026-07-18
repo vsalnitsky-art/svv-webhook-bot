@@ -361,6 +361,28 @@ def subscriber_chats(pref_key):
         s.close()
 
 
+def all_bot_chats(exclude_chat=None):
+    """Every ACTIVE user with a linked Telegram chat — the audience for an ADMIN
+    ANNOUNCEMENT sent through the main bot. `exclude_chat` (the admin's own chat)
+    is skipped to avoid an echo. Not pref-gated: an admin broadcast reaches all."""
+    s = get_session()
+    try:
+        out = []
+        ex = str(exclude_chat) if exclude_chat else None
+        for u in s.query(User).filter(User.telegram_chat_id.isnot(None)).all():
+            if not _is_active(u):
+                continue
+            c = str(u.telegram_chat_id)
+            if ex and c == ex:
+                continue
+            out.append(c)
+        return out
+    except Exception:
+        return []
+    finally:
+        s.close()
+
+
 def pending_attention_count():
     """Users needing admin attention (new registrations awaiting approval)."""
     s = get_session()

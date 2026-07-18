@@ -5457,12 +5457,8 @@ class TradeManager:
 
         Routing:
           • category set (a GROUP category, e.g. 'trades') → the shared GROUP
-            TOPIC once (notify_category) PLUS each USER who opted into that
-            category in their cabinet (broadcast_to_subscribers). It is NOT also
-            copied to the admin's private chat — the group message is never
-            duplicated into the bot. (The admin, like any user, can opt in to get
-            a personal copy.) Paper/test events go to the group topic only, not
-            to every subscriber (that would be noise).
+            TOPIC only (notify_category). Market info is NEVER duplicated into the
+            private bot — the private bot is reserved for administrative messages.
           • no category → a SERVICE / admin-only message → the admin's private
             chat via self.notifier.
 
@@ -5477,15 +5473,15 @@ class TradeManager:
                 return
 
         if category:
+            # Market categories (trades/funding/…) go to the GROUP topic ONLY —
+            # never duplicated into the private bot. The private bot is reserved
+            # for administrative notifications.
             try:
-                from web.tg_bot import notify_category, broadcast_to_subscribers
-                notify_category(category, msg)                 # → group topic (once)
-                pref = self._CATEGORY_PREF.get(category)
-                if pref and not is_test:                       # → opted-in users (real only)
-                    broadcast_to_subscribers(pref, msg)
+                from web.tg_bot import notify_category
+                notify_category(category, msg)
             except Exception as e:
                 print(f"[TM] category notify error: {e}")
-            return   # group categories are NEVER mirrored to the admin private chat
+            return
 
         # No category → SERVICE / admin-only → admin's private chat.
         if not self.notifier:
