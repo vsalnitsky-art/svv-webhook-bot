@@ -87,6 +87,9 @@ DEFAULT_SETTINGS = {
     'paper_cash': 100.0,             # fixed cash base ($) risk is measured against
     'paper_risk_pct': 3.0,           # loss at SL as % of paper_cash (e.g. 3% = $3)
     'paper_fee_pct': 0.055,          # commission % PER SIDE (Bybit taker ≈ 0.055%)
+    # 🟰 Breakeven auto-close (🎯 БЗ, per-position toggle): round-trip fee buffer
+    # so «breakeven» covers entry+exit commissions (default 0.12% ≈ 2×0.06%).
+    'breakeven_fee_pct': 0.12,
 
     # === Exit Rules — each toggleable ===
     'use_sl': True,                  # Stop Loss
@@ -574,6 +577,10 @@ class TradeManager:
                 self._settings['paper_fee_pct'] = max(0.0, min(1.0, float(self._settings.get('paper_fee_pct', 0.055) or 0.0)))
             except (TypeError, ValueError):
                 self._settings['paper_fee_pct'] = 0.055
+            try:
+                self._settings['breakeven_fee_pct'] = max(0.0, min(5.0, float(self._settings.get('breakeven_fee_pct', 0.12) or 0.0)))
+            except (TypeError, ValueError):
+                self._settings['breakeven_fee_pct'] = 0.12
 
             try:
                 self._settings['max_open_positions'] = max(1, min(50, int(self._settings.get('max_open_positions', 10))))
@@ -1265,7 +1272,11 @@ class TradeManager:
         if manual_reason:
             self._close_position(symbol, current_price, reason=manual_reason)
             return
-        
+        # 🟰 Breakeven auto-close (fires even in manual mode, like Manual SL/TP).
+        if self._check_breakeven_close(pos, current_price):
+            self._close_position(symbol, current_price, reason='breakeven_close')
+            return
+
         # === Manual mode gate ===
         # When the user flipped this position into manual mode, ONLY the
         # manual SL/TP above and force-close from UI can close it. All
@@ -1560,6 +1571,10 @@ class TradeManager:
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_shadow(symbol, current_price, reason=manual_reason)
+            return
+        # 🟰 Breakeven auto-close (fires even in manual mode, like Manual SL/TP).
+        if self._check_breakeven_close(pos, current_price):
+            self._close_shadow(symbol, current_price, reason='breakeven_close')
             return
 
         # === 🤖 Bot-side SOFT exit (same rules as real; paper computes PnL) ===
@@ -5103,7 +5118,92 @@ class TradeManager:
         print(f"[TM] Manual mode {state} for {symbol} ({kind}): "
               f"new signals/auto-exits {'ignored' if enabled else 'active'}")
         return {'ok': True, 'position': updated, 'manual_mode': bool(enabled)}
-    
+
+    def update_breakeven_close(self, symbol: str, enabled: bool,
+                                is_shadow: bool = False) -> Dict:
+        """🟰 Arm/disarm per-position breakeven auto-close («🎯 БЗ»).
+
+        The breakeven LINE = entry ± the round-trip fee buffer (breakeven_fee_pct).
+        We remember which SIDE of that line the trade is on when armed, and close
+        it the moment price REACHES the line from that side — so the result is
+        never a loss («хоча б не в мінус»):
+          • armed while IN LOSS  → exit as soon as price recovers to breakeven.
+          • armed while IN PROFIT → floor: exit if price falls back to breakeven.
+        Can be armed in ANY PnL state (unlike a classic SL-at-entry, which a
+        losing trade can't accept). Fires even in manual mode."""
+        store = self._shadow_positions if is_shadow else self._positions
+        kind = 'shadow' if is_shadow else 'real'
+        with self._lock:
+            pos = store.get(symbol)
+            if not pos:
+                return {'ok': False, 'reason': f'No open {kind} position for {symbol}'}
+            if enabled:
+                try:
+                    entry = float(pos.get('entry_price') or 0)
+                except (TypeError, ValueError):
+                    entry = 0.0
+                if entry <= 0:
+                    return {'ok': False, 'reason': 'no entry price'}
+                fee = float(self._settings.get('breakeven_fee_pct', 0.12) or 0.0) / 100.0
+                is_long = pos.get('side') == 'LONG'
+                be = entry * (1 + fee) if is_long else entry * (1 - fee)
+                cp = self._live_price(symbol) or entry
+                # profit side: LONG price ≥ be, SHORT price ≤ be.
+                in_profit = (cp >= be) if is_long else (cp <= be)
+                pos['breakeven_close'] = True
+                pos['be_close_price'] = round(be, 10)
+                pos['be_close_side'] = 'profit' if in_profit else 'loss'
+            else:
+                pos.pop('breakeven_close', None)
+                pos.pop('be_close_price', None)
+                pos.pop('be_close_side', None)
+            updated = dict(pos)
+        try:
+            if is_shadow:
+                self._persist_shadow_positions()
+            else:
+                self._persist_positions()
+        except Exception as e:
+            print(f"[TM] breakeven-close persist warn for {symbol}: {e}")
+        if enabled:
+            print(f"[TM] Breakeven-close ON {symbol} ({kind}): line "
+                  f"{self._fmt_price(updated.get('be_close_price'))} "
+                  f"(armed {updated.get('be_close_side')})")
+        else:
+            print(f"[TM] Breakeven-close OFF {symbol} ({kind})")
+        return {'ok': True, 'position': updated, 'breakeven_close': bool(enabled)}
+
+    def _check_breakeven_close(self, pos: Dict, current_price) -> bool:
+        """True when an armed breakeven line is reached from the side it was armed
+        on (see update_breakeven_close). No-op when not armed / no data."""
+        if not pos.get('breakeven_close'):
+            return False
+        try:
+            be = float(pos.get('be_close_price') or 0)
+            cp = float(current_price or 0)
+        except (TypeError, ValueError):
+            return False
+        if be <= 0 or cp <= 0:
+            return False
+        is_long = pos.get('side') == 'LONG'
+        if pos.get('be_close_side') == 'loss':
+            # below breakeven when armed → exit on recovery TO breakeven.
+            return cp >= be if is_long else cp <= be
+        # armed in profit → floor: exit if price falls BACK to breakeven.
+        return cp <= be if is_long else cp >= be
+
+    def _live_price(self, symbol: str):
+        """Best-effort current price (market_data ticker). None on failure."""
+        try:
+            from detection.market_data import get_market_data
+            md = get_market_data()
+            if md:
+                tk = md.get_ticker(symbol)
+                return tk.get('last') if tk else None
+        except Exception:
+            pass
+        return None
+
     def manual_open(self, symbol: str, side: str, bypass_gates: bool = False,
                     opened_by: Optional[str] = None) -> Dict:
         """User-initiated position open from the Decision Center panel.
@@ -5475,6 +5575,7 @@ class TradeManager:
             'manual': '✋ Manual',
             'manual_sl': '✋🛡 Manual SL',
             'manual_tp': '✋🎯 Manual TP',
+            'breakeven_close': '🟰 Беззбиток (не в мінус)',
             'external_close': '🔄 External Close (off-bot)',
             'mm_below_min': '📉 ММ нижче порога',
             'btc_flip': '₿ Розворот банера',

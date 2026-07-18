@@ -2863,7 +2863,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply.">✋ Manual</th>
-                        <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
+                        <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
                         <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th>Action</th></tr>
                 </thead>
@@ -2926,7 +2926,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
-                        <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, paper позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
+                        <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
                         <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th></th></tr>
                 </thead>
@@ -9319,7 +9319,7 @@ const FUEL_TOOLTIP = "ММ — тиск маркетмейкера на ціну
 // ММ columns and the 💰 funding table): coloured direction dot + strength
 // 0..100% + trend arrow + mini-bar + a colour-coded band word at the END.
 //   dir: 'LONG'|'SHORT'|null(=balanced),  now/prev: 0..100 strength (or null)
-function ffFuelCell(dir, now, prev) {
+function ffFuelCell(dir, now, prev, hideBand) {
     const dot = dir === 'LONG' ? '🟢' : (dir === 'SHORT' ? '🔴' : '⚪');
     // Fixed-width segments (inline-flex) so EVERY row lines up in a rigid grid
     // and nothing shifts sideways when the numbers change:
@@ -9346,7 +9346,11 @@ function ffFuelCell(dir, now, prev) {
     const pctSeg = `<b style="display:inline-block;width:40px;text-align:right;color:${col};font-variant-numeric:tabular-nums;flex:none">${Math.round(now)}%</b>`;
     const arrowSeg = `<span style="display:inline-block;width:12px;text-align:center;color:${arrowCol};flex:none" title="${arrowTitle}">${arrowChar}</span>`;
     const barSeg = `<span style="display:inline-block;vertical-align:middle;height:6px;width:48px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;flex:none"><span style="display:block;height:100%;width:${w}%;background:${col}"></span></span>`;
-    const bandSeg = `<span style="display:inline-block;width:88px;text-align:left;color:${b.col};font-size:0.66rem;font-weight:600;flex:none">${b.txt}</span>`;
+    // Band word («легкий тиск» …) — omitted in tight tables (hideBand) to save
+    // width; the dot + % + bar already convey strength/direction. The colour of
+    // the % keeps the band info even without the word.
+    const bandSeg = hideBand ? ''
+        : `<span style="display:inline-block;width:88px;text-align:left;color:${b.col};font-size:0.66rem;font-weight:600;flex:none">${b.txt}</span>`;
     return `<span title="${FUEL_TOOLTIP}" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">${dotSeg}${pctSeg}${arrowSeg}${barSeg}${bandSeg}</span>`;
 }
 
@@ -9999,7 +10003,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
                     <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
-                    <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev)}</td>
+                    <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev, true)}</td>
                     <td>${ffRevCell(p.ctr_rev_pct)}</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
@@ -10079,7 +10083,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
                     <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
-                    <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev)}</td>
+                    <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev, true)}</td>
                     <td>${ffRevCell(p.ctr_rev_pct)}</td>
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
@@ -10213,7 +10217,7 @@ function breakevenCloseCellHTML(p, isShadow) {
     const checked = p.breakeven_close ? 'checked' : '';
     return `
         <td style="text-align:center">
-            <label class="tm-toggle-mini" title="${p.breakeven_close ? 'Беззбиток+комісія ON — позиція закриється автоматично при досягненні ціни входу + комісія' : 'Увімкніть для автоматичного закриття при беззбитку + комісія біржі'}">
+            <label class="tm-toggle-mini" title="${p.breakeven_close ? 'Беззбиток ON — закриє при досягненні беззбитку (вхід+комісії), щоб не вийти в мінус (у мінусі → на відновленні; у плюсі → підлога)' : 'Увімкнути закриття на беззбитку (вхід+комісії) — не в мінус. Працює в будь-якому стані угоди.'}">
                 <input type="checkbox" ${checked}
                        onchange="submitBreakevenClose('${sym}', this.checked, ${shFlag})">
                 <span class="slider"></span>
