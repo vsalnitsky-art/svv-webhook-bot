@@ -119,6 +119,10 @@ def _forum_thread(category):
     chat = os.getenv('TELEGRAM_FORUM_CHAT')
     if not chat:
         return None, None
+    # ADMIN-only categories (реєстрація/підтримка) must NEVER become a group
+    # topic that members can see — they always go to the admin's private chat.
+    if category in _ADMIN_ONLY_CATS:
+        return None, None
     global _forum_topics_cache
     if _forum_topics_cache is None:
         try:
@@ -384,6 +388,14 @@ def _handle_message(m):
                      f"<code>TELEGRAM_FORUM_CHAT={cid_s}</code>")
         return
 
+    # ── Only the PRIVATE bot chat is handled. The GROUP is a normal group: the
+    # bot does NOT forward group messages to the admin and posts NO confirmation
+    # there — members chat and react as usual. Support/forwarding happens ONLY
+    # when a user writes to the bot in their PRIVATE chat. ──
+    ctype = (m.get('chat', {}) or {}).get('type', '')
+    if ctype and ctype != 'private':
+        return
+
     if is_admin_chat:
         # 1) Admin swipe-replies to a forwarded user message.
         target = None
@@ -429,12 +441,10 @@ def _handle_message(m):
     email_line = f"\n✉️ {info['email']}" if info.get('email') else ""
     header = (f"{_CAT_TAG.get('support', '')}\n"
               f"✉️ <b>Повідомлення від користувача</b>\n👤 {who}{email_line}\n"
-              f"chat_id: <code>{cid_s}</code>\n\n{text}\n\n"
-              f"<i>Відповісти: свайп-Reply на це повідомлення або "
-              f"/reply {cid_s} текст</i>")
+              f"chat_id: <code>{cid_s}</code>\n\n{text}")
     mid = _send_get_id(admin, header)
     if mid:
-        _remember(mid, cid_s)
+        _remember(mid, cid_s)   # swipe-Reply still works, we just don't advertise it
     tg_send(cid, "✅ Ваше повідомлення надіслано адміністратору. "
                  "Відповідь прийде сюди.")
 
@@ -470,6 +480,41 @@ def _poll_loop():
             time.sleep(5)
 
 
+def _purge_admin_only_topics():
+    """One-shot on startup: delete any STALE admin-only forum topics
+    (📝 Реєстрація / 💬 Підтримка) left in the group by older builds, so members
+    never see them. Registration/support always go to the admin's private chat."""
+    chat = os.getenv('TELEGRAM_FORUM_CHAT')
+    if not chat:
+        return
+    try:
+        from storage.db_operations import get_db
+        db = get_db()
+        saved = db.get_setting('tg_forum_topics', {}) or {}
+        if not isinstance(saved, dict):
+            return
+        cmap = saved.get(str(chat), {}) or {}
+        changed = False
+        for cat in list(_ADMIN_ONLY_CATS):
+            tid = cmap.get(cat)
+            if tid:
+                try:
+                    _api('deleteForumTopic', {'chat_id': chat,
+                                              'message_thread_id': int(tid)})
+                    print(f"[TG-BOT] removed stale group topic '{cat}' (admin-only)")
+                except Exception:
+                    pass
+                cmap.pop(cat, None)
+                changed = True
+        if changed:
+            saved[str(chat)] = cmap
+            db.set_setting('tg_forum_topics', saved)
+            global _forum_topics_cache
+            _forum_topics_cache = None   # force reload without the purged ids
+    except Exception as e:
+        print(f"[TG-BOT] purge admin-only topics error: {e}")
+
+
 def start_tg_bot():
     """Launch the poller once, only if a bot token is configured."""
     global _started
@@ -480,4 +525,8 @@ def start_tg_bot():
             print("[TG-BOT] TELEGRAM_BOT_TOKEN not set — Telegram onboarding off.")
             return
         _started = True
+    try:
+        _purge_admin_only_topics()   # tidy stale 📝/💬 topics from the group
+    except Exception:
+        pass
     threading.Thread(target=_poll_loop, daemon=True, name='tg-bot-poll').start()
