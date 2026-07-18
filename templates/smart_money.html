@@ -9430,6 +9430,58 @@ async function showTradeHistory(symbol, closedAt, isShadow) {
 }
 
 // Build two stacked inline-SVG panels: PnL% and ММ/виснаженість over time.
+// 🌿 Coin journey tree — the whole path from the bot's activity log (scan →
+// queue → CTR/Decision → 🎯 recommendation → open → manage → close), oldest→
+// newest, each step with its metrics laid out as chips. `journey` = array of
+// {t, event, detail, side, source, x}.
+function journeyTree(journey) {
+    if (!Array.isArray(journey) || !journey.length) return '';
+    const ICO = { signal:'⚡', queued:'📥', dropped:'⛔', ejected:'↩️',
+        opened:'▶️', closed:'⏹', autosl:'🛡', skipped:'⏳', rejected:'🚫',
+        passthrough:'➡️' };
+    const COL = { opened:'#4ade80', closed:'#f87171', queued:'#60a5fa',
+        dropped:'#f59e0b', ejected:'#f59e0b', autosl:'#fbbf24', skipped:'#8b93a7',
+        signal:'#c084fc', rejected:'#f87171', passthrough:'#8b93a7' };
+    const NAME = { signal:'Сигнал', queued:'У черзі', dropped:'Відхилено',
+        ejected:'Викинуто', opened:'Відкрито', closed:'Закрито',
+        autosl:'Авто-SL', skipped:'Пропуск', rejected:'Відмова',
+        passthrough:'Пряме' };
+    const esc = s => String(s == null ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const rows = journey.map(e => {
+        const col = COL[e.event] || '#8b93a7';
+        const ico = ICO[e.event] || '•';
+        const nm = NAME[e.event] || e.event || '—';
+        const t = e.t ? new Date(e.t * 1000).toLocaleString('uk-UA') : '';
+        const src = e.source
+            ? `<span style="font-size:0.6rem;color:#8b93a7;border:1px solid rgba(255,255,255,0.12);border-radius:3px;padding:0 4px;margin-left:5px">${esc(e.source)}</span>` : '';
+        const x = e.x || {};
+        const chips = [];
+        const chip = (k, v) => chips.push(`<span style="font-size:0.6rem;color:#cbd5e1;background:rgba(255,255,255,0.05);border-radius:3px;padding:1px 5px">${k} <b>${esc(v)}</b></span>`);
+        if (x.opp_score != null) chip('🎯', x.opp_score + '%');
+        if (x.entry_score != null) chip('ENTRY', x.entry_score);
+        if (x.ctr_state) chip('CTR', x.ctr_state + (x.ctr_pct != null ? ` ${x.ctr_pct}%` : ''));
+        else if (x.ctr_stc != null) chip('STC', Math.round(x.ctr_stc));
+        if (x.fuel_str != null) chip('ММ', x.fuel_str + '%');
+        if (x.kind) chip('тип', x.kind);
+        if (x.dec && x.dec.score != null) chip('Dec', x.dec.score);
+        if (x.price != null) chip('ціна', fmtPriceJS(x.price));
+        const chipsHtml = chips.length
+            ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px">${chips.join('')}</div>` : '';
+        const detail = e.detail
+            ? `<div style="font-size:0.66rem;color:#9aa3b5;margin-top:1px">${esc(e.detail)}</div>` : '';
+        return `<div style="position:relative;padding:0 0 10px 18px">`
+            + `<span style="position:absolute;left:-5px;top:3px;width:9px;height:9px;border-radius:50%;background:${col};box-shadow:0 0 0 2px rgba(0,0,0,0.4)"></span>`
+            + `<div style="font-size:0.72rem"><b style="color:${col}">${ico} ${esc(nm)}</b>${src}`
+            + `<span style="color:#6b7280;font-size:0.62rem;margin-left:6px">${t}</span></div>`
+            + detail + chipsHtml + `</div>`;
+    }).join('');
+    return `<div style="margin-bottom:12px">`
+        + `<div style="font-size:0.75rem;color:#cbd5e1;font-weight:700;margin-bottom:6px">🌿 Шлях монети (з логу бота)</div>`
+        + `<div style="border-left:2px solid rgba(255,255,255,0.12);margin-left:5px;max-height:360px;overflow-y:auto">${rows}</div>`
+        + `</div>`;
+}
+
 function renderTradeHistoryChart(h, meta) {
     const t0 = h[0].t, tN = h[h.length - 1].t, span = Math.max(1, tN - t0);
     const W = 860, PAD = 34;
@@ -9751,7 +9803,8 @@ function renderTradeHistoryChart(h, meta) {
           labelFmt: v => Math.round(v) + '%' });
 
     // STC + вік кросовера + готовність виходу — ODRAZU після PnL.
-    return info + info2 + exitReasonLine + sltpLine + paperLine + dcLine + ctrLine + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + pricePanel;
+    const journeyPanel = journeyTree(meta.journey);
+    return info + info2 + exitReasonLine + sltpLine + paperLine + dcLine + ctrLine + journeyPanel + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + pricePanel;
 }
 
 // ── 📜 Funding-coin ARCHIVE (history of appear/flip/exit + metrics) ──────

@@ -995,6 +995,39 @@ class TradeManager:
             self._persist_positions()
             self._persist_shadow_positions()
 
+    def _trade_journey(self, symbol: str, opened_at=None, closed_at=None) -> list:
+        """The coin's JOURNEY for the trade modal — the chronological (oldest→
+        newest) activity-log events for `symbol` around the trade window: how it
+        entered the queue, CTR/Decision checks, the 🎯 recommendation, the open,
+        management and the close. Includes a lead-in BEFORE the open so the
+        scan/queue phase is visible. Best-effort; [] on any failure."""
+        try:
+            from detection.activity_log import get_activity_log
+            al = get_activity_log()
+            rows = al.get(limit=500, symbol=symbol) if al else []   # newest-first
+        except Exception:
+            return []
+        try:
+            start = (float(opened_at) - 6 * 3600) if opened_at else 0.0
+        except (TypeError, ValueError):
+            start = 0.0
+        try:
+            end = (float(closed_at) + 120) if closed_at else time.time()
+        except (TypeError, ValueError):
+            end = time.time()
+        out = []
+        for e in rows:
+            t = e.get('t') or 0
+            if start and t < start:
+                continue
+            if t > end:
+                continue
+            out.append({'t': t, 'event': e.get('event'), 'detail': e.get('detail'),
+                        'side': e.get('side'), 'source': e.get('source'),
+                        'x': e.get('x')})
+        out.reverse()          # oldest → newest for a top-down tree
+        return out
+
     def get_trade_history(self, symbol: str, closed_at=None,
                           is_shadow: bool = False) -> Dict:
         """Return the recorded time-series for a trade. Matches a CLOSED trade
@@ -1035,36 +1068,38 @@ class TradeManager:
                 if _hp is not None:
                     _pcands.append(_hp)
             _eff_peak = round(max(_pcands), 4) if _pcands else _sp
-            return {'ok': True, 'symbol': symbol, 'open': False,
-                    'side': best.get('side'), 'entry_price': best.get('entry_price'),
-                    'exit_price': best.get('exit_price'),
-                    'pnl_pct': best.get('pnl_pct'),
-                    'peak_pnl_pct': _eff_peak,
-                    'entry_decision': best.get('entry_score'),
-                    'exit_decision': best.get('exit_decision'),
-                    # Why the trade was closed — lets the modal show whether the
-                    # 🤖 soft trailing-TP (bot_tp_trail) or something else exited.
-                    'exit_reason': best.get('reason'),
-                    'exit_reason_detail': best.get('reason_detail'),
-                    # ⚡ CTR reading at open + at close.
-                    'ctr_open': best.get('ctr_open'),
-                    'ctr_close': best.get('ctr_close'),
-                    'opened_at': best.get('opened_at'),
-                    'closed_at': best.get('closed_at'),
-                    'history': list(best.get('history') or [])}
+            # Pass the WHOLE closed record through (manual_sl_hist, paper_sizing,
+            # was_manual, …) so the modal has everything, then override computed.
+            out = dict(best)
+            out.update({
+                'ok': True, 'symbol': symbol, 'open': False,
+                'peak_pnl_pct': _eff_peak,
+                'entry_decision': best.get('entry_score'),
+                # Why the trade was closed — lets the modal show whether the
+                # 🤖 soft trailing-TP (bot_tp_trail) or something else exited.
+                'exit_reason': best.get('reason'),
+                'exit_reason_detail': best.get('reason_detail'),
+                'history': _hist,
+                # 🌿 the coin's journey (activity log) for the tree view.
+                'journey': self._trade_journey(symbol, best.get('opened_at'),
+                                               best.get('closed_at')),
+            })
+            return out
         if op:
-            return {'ok': True, 'symbol': symbol, 'open': True,
-                    'side': op.get('side'), 'entry_price': op.get('entry_price'),
-                    'peak_pnl_pct': self._peak_pnl(
-                        symbol, op.get('pnl_pct') or 0.0, is_shadow=is_shadow),
-                    'entry_decision': op.get('entry_score'),
-                    # live Decision Center as of THIS view (heavy — one call)
-                    'decision_now': self._decision_snapshot(symbol),
-                    'ctr_open': op.get('ctr_open'),
-                    'ctr_close': self._ctr_snapshot(symbol),   # "as of now" for open
-                    'opened_at': op.get('opened_at'),
-                    'now_ts': time.time(),
-                    'history': list(op.get('history') or [])}
+            out = dict(op)
+            out.update({
+                'ok': True, 'symbol': symbol, 'open': True,
+                'peak_pnl_pct': self._peak_pnl(
+                    symbol, op.get('pnl_pct') or 0.0, is_shadow=is_shadow),
+                'entry_decision': op.get('entry_score'),
+                # live Decision Center as of THIS view (heavy — one call)
+                'decision_now': self._decision_snapshot(symbol),
+                'ctr_close': self._ctr_snapshot(symbol),   # "as of now" for open
+                'now_ts': time.time(),
+                'history': list(op.get('history') or []),
+                'journey': self._trade_journey(symbol, op.get('opened_at'), None),
+            })
+            return out
         return {'ok': True, 'symbol': symbol, 'history': []}
 
     def _bot_soft_exit(self, pnl_pct: float, peak_pct) -> Optional[str]:
