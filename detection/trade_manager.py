@@ -3926,8 +3926,8 @@ class TradeManager:
         # below in es_block — fixes the duplicated «LONG 83% (marginal)»).
         src = self._base_opened_by(opened_by_full)
         dot = self._dir_dot(side)
-        _sl_str = self._fmt_price(pos['sl_price']) if pos.get('sl_price') else '—'
-        _tp_str = self._fmt_price(pos['tp_price']) if pos.get('tp_price') else '—'
+        _sl_str = self._sltp_display(pos, 'sl')
+        _tp_str = self._sltp_display(pos, 'tp')
         msg = (
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
             f"<b>#{symbol}</b>   🧪 ТЕСТ\n"
@@ -5520,11 +5520,26 @@ class TradeManager:
         only way to «colour» LONG/SHORT)."""
         return '🟢' if side == 'LONG' else ('🔴' if side == 'SHORT' else '⚪')
 
+    def _sltp_display(self, pos, field):
+        """SL/TP value for a Telegram message: the MANUAL override if set, else
+        the strategy level (sl_price/tp_price). Writes 'null' when neither is
+        present (instead of an empty field)."""
+        man = pos.get('manual_sl' if field == 'sl' else 'manual_tp')
+        strat = pos.get('sl_price' if field == 'sl' else 'tp_price')
+        try:
+            if man is not None and float(man) > 0:
+                return self._fmt_price(man)
+            if strat is not None and float(strat) > 0:
+                return self._fmt_price(strat)
+        except (TypeError, ValueError):
+            pass
+        return 'null'
+
     def _notify_open(self, pos):
         side = pos['side']
         dot = self._dir_dot(side)
-        sl_str = self._fmt_price(pos['sl_price']) if pos.get('sl_price') else '—'
-        tp_str = self._fmt_price(pos['tp_price']) if pos.get('tp_price') else '—'
+        sl_str = self._sltp_display(pos, 'sl')
+        tp_str = self._sltp_display(pos, 'tp')
         msg = (
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
             f"<b>#{pos['symbol']}</b>\n"
