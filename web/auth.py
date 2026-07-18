@@ -210,6 +210,13 @@ def notify_user_approved(uid):
                 "✅ <b>Ваш акаунт активовано!</b>\nТепер увійдіть на сайті "
                 "своїм <b>логіном</b> і паролем.",
                 buttons=[[{'text': '🔐 Увійти', 'url': f"{b}/login"}]] if b else None)
+        # 🎉 Auto-onboard the approved user into the community group (personal
+        # one-time invite link — Bot API can't add a member directly).
+        try:
+            from web.tg_bot import invite_user_to_group
+            invite_user_to_group(u.telegram_chat_id)
+        except Exception as _e:
+            print(f"[AUTH][TG] group invite error: {_e}")
     except Exception as e:
         print(f"[AUTH][TG] notify user error: {e}")
 

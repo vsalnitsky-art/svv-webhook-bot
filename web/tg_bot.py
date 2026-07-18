@@ -229,6 +229,42 @@ def broadcast_to_subscribers(pref_key, text):
     return n
 
 
+def _group_chat():
+    """The community group id (forum supergroup, or a dedicated group env)."""
+    return os.getenv('TELEGRAM_FORUM_CHAT') or os.getenv('TELEGRAM_GROUP_CHAT')
+
+
+def invite_user_to_group(chat_id):
+    """Auto-onboard an approved user into the community group. The Telegram Bot
+    API CANNOT add a member directly, so we create a PERSONAL one-time invite
+    link and DM it — one tap and they're in. Also works if the group requires
+    join approval (see _handle_join_request auto-approve). Best-effort; needs the
+    bot to be a group admin with «invite users» rights. Returns True if sent."""
+    group = _group_chat()
+    if not group or not chat_id:
+        return False
+    try:
+        link = None
+        r = _api('createChatInviteLink', {'chat_id': group,
+                                          'name': f'auto {chat_id}',
+                                          'member_limit': 1})
+        if r.get('ok'):
+            link = (r.get('result') or {}).get('invite_link')
+        if not link:   # fallback: the group's primary link
+            r2 = _api('exportChatInviteLink', {'chat_id': group})
+            link = r2.get('result') if r2.get('ok') else None
+        if not link:
+            print(f"[TG-BOT] group invite: no link (bot admin + invite rights?)")
+            return False
+        return bool(tg_send(
+            chat_id,
+            "🎉 <b>Вас схвалено!</b>\nПриєднайтесь до нашої групи спільноти:",
+            buttons=[[{'text': '➡️ Приєднатися до групи', 'url': link}]]))
+    except Exception as e:
+        print(f"[TG-BOT] invite_user_to_group error: {e}")
+        return False
+
+
 def base_url():
     """Request-free public URL (poller has no Flask request context)."""
     return (os.getenv('RENDER_EXTERNAL_URL') or os.getenv('PUBLIC_URL')
@@ -363,8 +399,53 @@ def _handle_callback(cb):
         _answer_cb(cb_id)
 
 
+def _handle_join_request(jr):
+    """Auto-approve a group join request from a KNOWN user (linked account) — so
+    the personal invite link works even when the group has «approve new members»
+    on. Unknown requesters are left for the admin to review (never auto-declined)."""
+    chat = (jr.get('chat', {}) or {}).get('id')
+    uid_chat = str(((jr.get('from', {}) or {}).get('id')) or '')
+    if not chat or not uid_chat:
+        return
+    try:
+        from web.auth import get_user_by_chat
+        known = bool(get_user_by_chat(uid_chat))
+    except Exception:
+        known = False
+    if known:
+        try:
+            _api('approveChatJoinRequest', {'chat_id': chat,
+                                            'user_id': int(uid_chat)})
+            print(f"[TG-BOT] auto-approved join request from {uid_chat}")
+        except Exception as e:
+            print(f"[TG-BOT] approve join error: {e}")
+
+
+# Any non-text content Telegram may carry — so the bot forwards photos, videos,
+# documents, voice, stickers… exactly like a normal chat, not just text.
+_MEDIA_KEYS = ('photo', 'video', 'document', 'animation', 'voice', 'audio',
+               'video_note', 'sticker')
+
+
+def _has_media(m):
+    return any(k in m for k in _MEDIA_KEYS)
+
+
+def _copy_message(to_chat, from_chat, message_id):
+    """Copy ANY message (media incl. its caption) to another chat. Returns the
+    new message_id or None. `copyMessage` re-sends content with no «forwarded
+    from» header — clean for support relaying both ways."""
+    try:
+        r = _api('copyMessage', {'chat_id': to_chat, 'from_chat_id': from_chat,
+                                 'message_id': message_id})
+        return (r.get('result') or {}).get('message_id') if r.get('ok') else None
+    except Exception:
+        return None
+
+
 def _handle_message(m):
-    """Route a plain message: user → admin (support), admin reply → user."""
+    """Route a message: user → admin (support), admin reply → user. Forwards ANY
+    content type (text / photo / video / document / voice / sticker …)."""
     text = (m.get('text') or '').strip()
     cid = (m.get('chat', {}) or {}).get('id')
     if not cid:
@@ -412,7 +493,12 @@ def _handle_message(m):
                 tg_send(cid, "Формат: <code>/reply &lt;chat_id&gt; текст</code>")
                 return
         if target:
-            ok = tg_send(target, f"💬 <b>Відповідь адміністратора:</b>\n{text}")
+            if _has_media(m):
+                # Admin replied with media → label + copy it to the user.
+                tg_send(target, "💬 <b>Відповідь адміністратора:</b>")
+                ok = bool(_copy_message(target, cid, m.get('message_id')))
+            else:
+                ok = tg_send(target, f"💬 <b>Відповідь адміністратора:</b>\n{text}")
             tg_send(cid, "✅ Надіслано користувачу." if ok
                     else "⚠️ Не вдалося надіслати (можливо, користувач не почав чат).")
             return
@@ -425,12 +511,13 @@ def _handle_message(m):
     if text.startswith('/start'):
         _handle_start(cid, uname, fname)
         return
-    if not text:
-        return
+    has_media = _has_media(m)
+    if not text and not has_media:
+        return   # nothing forwardable (e.g. a service/system message)
     if not admin:
         tg_send(cid, "⚠️ Підтримка тимчасово недоступна.")
         return
-    # Any other text from a user = a support message → forward to the admin.
+    # A user message (text OR media) = a support message → forward to the admin.
     try:
         from web.auth import get_user_by_chat
         info = get_user_by_chat(cid_s) or {}
@@ -439,12 +526,22 @@ def _handle_message(m):
     # Friendly identity line: name/@handle (always) + email (if registered).
     who = _who_label(frm, info)
     email_line = f"\n✉️ {info['email']}" if info.get('email') else ""
+    # Header carries identity; the plain-text body is inlined only for text
+    # messages. Media is copied AFTER (it keeps its own caption).
     header = (f"{_CAT_TAG.get('support', '')}\n"
               f"✉️ <b>Повідомлення від користувача</b>\n👤 {who}{email_line}\n"
-              f"chat_id: <code>{cid_s}</code>\n\n{text}")
+              f"chat_id: <code>{cid_s}</code>"
+              + (f"\n\n{text}" if (text and not has_media) else ""))
     mid = _send_get_id(admin, header)
     if mid:
-        _remember(mid, cid_s)   # swipe-Reply still works, we just don't advertise it
+        _remember(mid, cid_s)   # swipe-Reply on the header routes back to the user
+    if has_media:
+        # Copy the actual photo/video/document/voice/… (with its caption) so the
+        # admin sees everything, exactly like a normal chat. Swipe-Reply on the
+        # media works too.
+        mid2 = _copy_message(admin, cid, m.get('message_id'))
+        if mid2:
+            _remember(mid2, cid_s)
     tg_send(cid, "✅ Ваше повідомлення надіслано адміністратору. "
                  "Відповідь прийде сюди.")
 
@@ -459,7 +556,9 @@ def _poll_loop():
     print("[TG-BOT] long-polling started")
     while True:
         try:
-            payload = {'timeout': 30, 'allowed_updates': ['message', 'callback_query']}
+            payload = {'timeout': 30,
+                       'allowed_updates': ['message', 'callback_query',
+                                           'chat_join_request']}
             if offset is not None:
                 payload['offset'] = offset
             res = _api('getUpdates', payload, timeout=40)
@@ -471,6 +570,8 @@ def _poll_loop():
                 try:
                     if 'callback_query' in upd:
                         _handle_callback(upd['callback_query'])
+                    elif 'chat_join_request' in upd:
+                        _handle_join_request(upd['chat_join_request'])
                     elif 'message' in upd:
                         _handle_message(upd['message'])
                 except Exception as e:
