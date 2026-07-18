@@ -19,6 +19,9 @@ from storage.db_models import init_db
 
 # ── СЛУЖБОВІ таблиці (логи / снапшоти / liquidation & heatmap кеші) — те, що
 # роздуває БД. (col, kind): 'dt' DateTime | 'sec' epoch-сек | 'ms' epoch-мс.
+# СЛУЖБОВІ (append-growing, derived/logs/snapshots) tables pruned by age. Every
+# table here has a time column (col, kind): kind 'dt'=DateTime, 'sec'=epoch s,
+# 'ms'=epoch ms. Strategy DATA tables (trades / trade_archive) are NEVER here.
 _SERVICE_TABLES_TIME = {
     'sob_event_logs': ('timestamp', 'dt'),
     'sob_liquidation_buckets': ('last_updated_ts', 'sec'),
@@ -28,6 +31,9 @@ _SERVICE_TABLES_TIME = {
     'sob_top100_ob_snapshots': ('created_at_t', 'ms'),
     'sob_top100_ob_history': ('created_at', 'dt'),
     'volumized_radar_snapshots': ('scan_time', 'dt'),
+    # ➕ detected Order Blocks — append-grows per scan (created_at). The scheduler
+    # deletes >7d, but include it here so DB-autoclean prunes it too (keep_days).
+    'sob_order_blocks': ('created_at', 'dt'),
 }
 
 
@@ -62,15 +68,37 @@ def _db_service_cleanup(keep_days=None, wipe_all=False):
 
 
 def _db_vacuum_full():
-    """VACUUM FULL ANALYZE — reclaims disk to the OS. Locks DB briefly."""
+    """Reclaim disk to the OS — PER TABLE, not whole-DB.
+
+    A whole-DB `VACUUM FULL` rewrites every table at once and needs peak free
+    space ≈ total live size — which FAILS on a nearly-full disk (DiskFull) even
+    when usage is «only» ~60%, because the rewrite copy doesn't fit. Doing it
+    table-by-table needs only ONE table's size free at a time, so the big
+    СЛУЖБОВІ tables get reclaimed even with tight headroom. A table that still
+    can't fit is skipped (logged) instead of aborting the whole run."""
     from storage.db_models import engine
     from sqlalchemy import create_engine, text
+    # Biggest space consumers first: the service tables (+ the OB-state cache).
+    tables = list(_SERVICE_TABLES_TIME.keys()) + ['sob_smc_ob_state']
     ve = create_engine(engine.url, isolation_level='AUTOCOMMIT')
+    ok, failed = 0, 0
     try:
         with ve.connect() as c:
-            c.execute(text("VACUUM FULL ANALYZE"))
+            for tbl in tables:
+                try:
+                    c.execute(text(f"VACUUM FULL ANALYZE {tbl}"))
+                    ok += 1
+                except Exception as _e:
+                    failed += 1
+                    print(f"[DB vacuum] {tbl} skip (no room / error): {_e}")
+            # Refresh planner stats even for tables we couldn't rewrite (cheap).
+            try:
+                c.execute(text("ANALYZE"))
+            except Exception:
+                pass
     finally:
         ve.dispose()
+    print(f"[DB vacuum] per-table VACUUM FULL done: {ok} reclaimed, {failed} skipped")
 
 
 def _db_autoclean_loop():
@@ -81,9 +109,9 @@ def _db_autoclean_loop():
     while True:
         try:
             db = get_db()
-            enabled = str(db.get_setting('db_autoclean_enabled', 'false')).lower() in ('true', '1')
+            enabled = str(db.get_setting('db_autoclean_enabled', 'true')).lower() in ('true', '1')
             if enabled:
-                interval_days = float(db.get_setting('db_autoclean_interval_days', 7) or 7)
+                interval_days = float(db.get_setting('db_autoclean_interval_days', 1) or 1)
                 keep_days = int(db.get_setting('db_autoclean_keep_days', 3) or 3)
                 do_vac = str(db.get_setting('db_autoclean_vacuum', 'true')).lower() in ('true', '1')
                 last = float(db.get_setting('db_autoclean_last_ts', 0) or 0)
@@ -3799,8 +3827,8 @@ def register_api_routes(app):
             last = 0
         return jsonify({
             'ok': True,
-            'enabled': str(db.get_setting('db_autoclean_enabled', 'false')).lower() in ('true', '1'),
-            'interval_days': int(db.get_setting('db_autoclean_interval_days', 7) or 7),
+            'enabled': str(db.get_setting('db_autoclean_enabled', 'true')).lower() in ('true', '1'),
+            'interval_days': int(db.get_setting('db_autoclean_interval_days', 1) or 1),
             'keep_days': int(db.get_setting('db_autoclean_keep_days', 3) or 3),
             'vacuum': str(db.get_setting('db_autoclean_vacuum', 'true')).lower() in ('true', '1'),
             'last_ts': last,
