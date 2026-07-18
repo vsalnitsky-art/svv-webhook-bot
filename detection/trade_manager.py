@@ -3053,6 +3053,7 @@ class TradeManager:
             'manual_tp_hist': list(pos.get('manual_tp_hist') or []),
             'manual_sl': pos.get('manual_sl'),
             'manual_tp': pos.get('manual_tp'),
+            'was_manual': bool(pos.get('was_manual')),   # trade was hand-managed
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             'entry_score': pos.get('entry_score'),
@@ -3622,6 +3623,7 @@ class TradeManager:
             'manual_tp_hist': list(pos.get('manual_tp_hist') or []),
             'manual_sl': pos.get('manual_sl'),
             'manual_tp': pos.get('manual_tp'),
+            'was_manual': bool(pos.get('was_manual')),   # trade was hand-managed
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             # Carry the entry-side advisory snapshot into the closed record
@@ -4084,6 +4086,7 @@ class TradeManager:
             'manual_tp_hist': list(pos.get('manual_tp_hist') or []),
             'manual_sl': pos.get('manual_sl'),
             'manual_tp': pos.get('manual_tp'),
+            'was_manual': bool(pos.get('was_manual')),   # trade was hand-managed
             'opened_by': pos.get('opened_by', ''),
             'shadow': True,
             # Same as real-position close — preserve the entry snapshot for
@@ -5083,6 +5086,8 @@ class TradeManager:
                 return {'ok': False,
                         'reason': f'No open {kind} position for {symbol}'}
             pos['manual_mode'] = bool(enabled)
+            if enabled:
+                pos['was_manual'] = True   # sticky — mark the CLOSED trade as hand-managed
             updated = dict(pos)
         
         # Persist outside the lock

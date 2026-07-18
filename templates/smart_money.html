@@ -667,6 +667,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     letter-spacing: 0.04em;
 }
 .tm-table tr:hover td { background: rgba(255,255,255,0.02); }
+/* Horizontal-scroll wrapper for the wide TM tables so they stay ON-SCREEN and
+   never push the page sideways (wide content scrolls inside the box). */
+.tm-hscroll { overflow-x: auto; max-width: 100%; }
+.tm-hscroll .tm-table { margin-top: 0; }
 /* ❤️ Fuel Auto-Filter timers: fixed-height scroll area with sticky header so
    rows coming/going don't make the whole panel jump. */
 .ff-timers-scroll {
@@ -809,19 +813,22 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     vertical-align: middle;
 }
 
-/* MANUAL badge inline next to symbol name in manual-mode rows */
-.tm-manual-badge {
+/* Compact ✋ manual-mode mark to the LEFT of the symbol. Fixed width and ALWAYS
+   present (empty when not manual) so the symbol column never shifts / jumps. */
+.tm-manual-mark {
     display: inline-block;
-    background: rgba(251, 191, 36, 0.15);
-    border: 1px solid rgba(251, 191, 36, 0.45);
+    width: 1.1em;
+    text-align: center;
     color: #fbbf24;
-    padding: 1px 6px;
-    border-radius: 3px;
-    font-size: 0.62rem;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    margin-left: 4px;
+    font-size: 0.8rem;
     vertical-align: middle;
+    user-select: none;
+}
+/* ✋ marker for CLOSED trades that were hand-managed (closed-trades tables). */
+.tm-manual-closed {
+    color: #fbbf24;
+    font-size: 0.8rem;
+    margin-right: 3px;
 }
 
 /* Subtle row tint so manual-mode positions are easy to scan at a glance */
@@ -2846,7 +2853,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             
             <!-- Open Positions -->
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0">📂 Open Positions <span id="tm-open-count" style="color:#666;font-weight:normal;font-size:0.75rem">(0)</span></h3>
-            <table class="tm-table" id="tm-open-table">
+            <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
@@ -2863,20 +2870,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <tbody id="tm-open-tbody">
                     <tr><td colspan="15" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
-            </table>
+            </table></div>
             
             <!-- Recent Closed -->
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">📜 Recent Closed Trades
                 <button class="tm-delete-btn" style="font-size:0.7rem;padding:2px 10px" title="Очистити весь список"
                         onclick="clearTMClosed()">🗑 Clear All</button></h3>
-            <table class="tm-table" id="tm-closed-table">
+            <div class="tm-hscroll"><table class="tm-table" id="tm-closed-table">
                 <thead>
                     <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th><th></th></tr>
                 </thead>
                 <tbody id="tm-closed-tbody">
                     <tr><td colspan="8" class="tm-empty-msg">No closed trades yet</td></tr>
                 </tbody>
-            </table>
+            </table></div>
             
         </div>
     </div>
@@ -2910,7 +2917,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 Open Paper Positions <span id="tm-shadow-open-count" style="color:#666;font-weight:normal">(0)</span>
                 <span id="tm-shadow-stats-inline" style="color:#888;font-weight:normal;font-size:0.72rem;margin-left:8px"></span>
             </h3>
-            <table class="tm-table" id="tm-shadow-open-table">
+            <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
@@ -2926,19 +2933,19 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <tbody id="tm-shadow-open-tbody">
                     <tr><td colspan="15" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
-            </table>
+            </table></div>
             
             <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">Recent Paper Closes
                 <button class="tm-delete-btn" style="font-size:0.7rem;padding:2px 10px" title="Очистити весь список"
                         onclick="clearTMShadowClosed()">🗑 Clear All</button></h3>
-            <table class="tm-table" id="tm-shadow-closed-table">
+            <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-closed-table">
                 <thead>
                     <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th>Reason</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-closed-tbody">
                     <tr><td colspan="8" class="tm-empty-msg">No paper closes yet</td></tr>
                 </tbody>
-            </table>
+            </table></div>
             
         </div>
     </div>
@@ -9977,13 +9984,16 @@ async function loadTMState() {
                 const syncMark = p.pnl_source === 'bybit'
                     ? ' <span title="Синхронізовано з Bybit (mark price + unrealised PnL біржі)" style="opacity:0.6">⇄</span>' : '';
                 const badges =
-                    (isExternal ? ' <span class="tm-ext-badge" title="Adopted from Bybit — opened outside TM. Full algorithm applies.">EXT</span>' : '') +
-                    (manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this position">MANUAL</span>' : '');
+                    (isExternal ? ' <span class="tm-ext-badge" title="Adopted from Bybit — opened outside TM. Full algorithm applies.">EXT</span>' : '');
+                // Compact ✋ manual mark on the LEFT (fixed-width slot → no shift).
+                const manualMark = manualOn
+                    ? '<span class="tm-manual-mark" title="Ручне керування (Manual mode ON)">✋</span>'
+                    : '<span class="tm-manual-mark"></span>';
                 // Exhaustion — simple % (only for fuel-filter positions).
                 const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(1) + '%' : '—';
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
-                    <td>${histSymOpen(p, false)}${badges}</td>
+                    <td>${manualMark}${histSymOpen(p, false)}${badges}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
@@ -10016,9 +10026,10 @@ async function loadTMState() {
                 const pnlClass = c.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
                 const pnlSign = c.pnl_pct >= 0 ? '+' : '';
                 const sideClass = c.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
+                const mMark = c.was_manual ? '<span class="tm-manual-closed" title="Угода керувалась вручну (Manual mode)">✋</span>' : '';
                 return `<tr>
                     <td>${fmtTimeJS(c.closed_at)}</td>
-                    <td>${histSymCell(c, false)}</td>
+                    <td>${mMark}${histSymCell(c, false)}</td>
                     <td class="${sideClass}">${c.side}</td>
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
@@ -10051,6 +10062,10 @@ async function loadTMState() {
                 const sideClass = p.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
                 const manualOn = !!p.manual_mode;
                 const rowClass = manualOn ? ' class="tm-row-manual"' : '';
+                // Compact ✋ manual mark on the LEFT (fixed-width slot → no shift).
+                const manualMark = manualOn
+                    ? '<span class="tm-manual-mark" title="Ручне керування (Manual mode ON)">✋</span>'
+                    : '<span class="tm-manual-mark"></span>';
                 // Realistic $ PnL for the paper trade (notional × price move).
                 const usd = (p.pnl_usd !== undefined && p.pnl_usd !== null)
                     ? `${pnlSign}$${Math.abs(p.pnl_usd).toFixed(2)}` : '';
@@ -10058,7 +10073,7 @@ async function loadTMState() {
                 const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(1) + '%' : '—';
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
-                    <td>${histSymOpen(p, true)}${manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this paper position">MANUAL</span>' : ''}</td>
+                    <td>${manualMark}${histSymOpen(p, true)}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
@@ -10086,9 +10101,10 @@ async function loadTMState() {
                 const pnlClass = c.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
                 const pnlSign = c.pnl_pct >= 0 ? '+' : '';
                 const sideClass = c.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
+                const mMark = c.was_manual ? '<span class="tm-manual-closed" title="Угода керувалась вручну (Manual mode)">✋</span>' : '';
                 return `<tr>
                     <td>${fmtTimeJS(c.closed_at)}</td>
-                    <td>${histSymCell(c, true)}</td>
+                    <td>${mMark}${histSymCell(c, true)}</td>
                     <td class="${sideClass}">${c.side}</td>
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
