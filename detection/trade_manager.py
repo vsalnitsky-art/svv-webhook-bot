@@ -3055,6 +3055,15 @@ class TradeManager:
             self._pos_state[symbol] = self._fresh_pos_state()
         self._persist_positions()
 
+        # 🎯 Авто-SL з OB: виставити SL із Order Block ОДРАЗУ при відкритті (та
+        # сама логіка, що й на моніторингових тіках), щоб повідомлення показало
+        # реальний рівень із OB, а не порожнє поле/null. No-op, якщо
+        # q2_auto_ob_sl вимкнено або валідного OB ще немає.
+        try:
+            self._auto_ob_manual_sl(symbol, position, entry_price)
+        except Exception:
+            pass
+
         self._notify_open(position)
         return {'ok': True}
 
@@ -3913,7 +3922,14 @@ class TradeManager:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
         self._persist_shadow_positions()
-        
+
+        # 🎯 Авто-SL з OB одразу при відкритті (див. реальний шлях) — щоб SL у
+        # повідомленні брався з Order Block, а не був порожнім/null.
+        try:
+            self._auto_ob_manual_sl(symbol, pos, float(entry_price))
+        except Exception:
+            pass
+
         # Use colored circle for direction (instead of 📊)
         icon = '🟢' if side == 'LONG' else '🔴'
         # Single-line decision summary instead of multi-line breakdown
