@@ -1329,18 +1329,40 @@ def register_auth_routes(app):
         _prefs = _load_prefs(u)
         _btc_ck = 'checked' if _prefs.get('notify_btc') else ''
         _fnd_ck = 'checked' if _prefs.get('notify_funding') else ''
-        _trd_ck = 'checked' if _prefs.get('notify_trades') else ''
-        _opp_ck = 'checked' if _prefs.get('notify_opportunity') else ''
-        _spk_ck = 'checked' if _prefs.get('notify_spike') else ''
         _tg_ok = bool(tgc)
-        _admin_note = ('<p class="sub" style="margin-top:-4px">Ці перемикачі керують '
-                       'і вашими особистими сповіщеннями, і <b>груповими темами</b> — '
-                       'вимкнено тут, значить не летить і в групу.</p>') if u.is_admin else ''
-        _ntf_hint = _admin_note + ('' if _tg_ok else
-                     '<p class="sub" style="color:#f5b544;margin-top:-4px">⚠️ Прив’яжіть '
-                     'Telegram (напишіть боту <b>/start</b>), щоб отримувати особисті сповіщення.</p>')
-        _dis = ''   # always toggle-able (pref is saved even before Telegram is linked)
         _tgv = (' '.join(x for x in [tgn, (f'@{tgu}' if tgu else '')] if x) or 'прив’язано') if tgc else '—'
+        # 🔔 Модель сповіщень: ринкові сигнали йдуть у ГРУПУ (не персонально).
+        # Для АДМІНА лишаємо 2 перемикачі груповими темами (₿/💰) — вони реально
+        # гейтять групу через notify_category(admin_pref). Для звичайного юзера
+        # перемикачі нічого не гейтили (per-user розсилки більше немає) → лише
+        # інфо про групу.
+        if u.is_admin:
+            _ntf_section = (
+                '<div class="sect2"><div class="seclbl">📢 Групові теми (керування)</div>'
+                '<p class="sub" style="margin-top:-4px">Ринкові сигнали йдуть у '
+                '<b>Telegram-групу</b>. Ці перемикачі вмикають / вимикають відповідну '
+                'тему в групі для всіх учасників.</p>'
+                f'<div class="crow"><span class="t">₿ BTCUSDT — старт / стоп / пауза</span>'
+                f'<label class="sw"><input type="checkbox" id="nbtc" {_btc_ck} onchange="saventf()">'
+                '<span class="tr"></span></label></div>'
+                f'<div class="crow"><span class="t">💰 Funding — поява монети з ММ</span>'
+                f'<label class="sw"><input type="checkbox" id="nfnd" {_fnd_ck} onchange="saventf()">'
+                '<span class="tr"></span></label></div>'
+                '<div id="nm" class="msg" style="display:none"></div></div>'
+            )
+        else:
+            _ntf_section = (
+                '<div class="sect2"><div class="seclbl">🔔 Сповіщення в Telegram</div>'
+                '<p class="sub" style="margin-top:-4px">Ринкові сигнали (₿ BTCUSDT, '
+                '💰 Funding, 🎯 рекомендації, 🚀 аномальний ріст, угоди) приходять у '
+                '<b>Telegram-групу</b>, а не в приватний чат. Доступ до групи — '
+                '<b>після реєстрації та схвалення адміністратором</b>; посилання на '
+                'вхід прийде автоматично.</p>'
+                + ('' if _tg_ok else
+                   '<p class="sub" style="color:#f5b544;margin-top:-4px">'
+                   '⚠️ Telegram ще не прив’язано — напишіть боту <b>/start</b>.</p>')
+                + '</div>'
+            )
         body = (f'<h1>👤 Особистий кабінет</h1>'
                 f'<p class="sub">{role}</p>'
                 f'<div class="sect2" style="border-top:none;margin-top:6px;padding-top:0">'
@@ -1348,24 +1370,7 @@ def register_auth_routes(app):
                 f'<div class="idrow"><span class="k">📨 Telegram</span><span class="v">{_tgv}</span></div>'
                 f'<div class="idrow"><span class="k">🤖 Доступ до бота</span><span class="v">{_bot}</span></div>'
                 f'</div>'
-                f'<div class="sect2"><div class="seclbl">🔔 Сповіщення в Telegram</div>'
-                f'{_ntf_hint}'
-                f'<div class="crow"><span class="t">₿ BTCUSDT — старт / стоп / пауза</span>'
-                f'<label class="sw"><input type="checkbox" id="nbtc" {_btc_ck} {_dis} onchange="saventf()">'
-                f'<span class="tr"></span></label></div>'
-                f'<div class="crow"><span class="t">💰 Funding — поява монети з ММ</span>'
-                f'<label class="sw"><input type="checkbox" id="nfnd" {_fnd_ck} {_dis} onchange="saventf()">'
-                f'<span class="tr"></span></label></div>'
-                f'<div class="crow"><span class="t">🎯 Рекомендація бота (найкращий вхід)</span>'
-                f'<label class="sw"><input type="checkbox" id="nopp" {_opp_ck} {_dis} onchange="saventf()">'
-                f'<span class="tr"></span></label></div>'
-                f'<div class="crow"><span class="t">🚀 Аномальний ріст</span>'
-                f'<label class="sw"><input type="checkbox" id="nspk" {_spk_ck} {_dis} onchange="saventf()">'
-                f'<span class="tr"></span></label></div>'
-                f'<div class="crow"><span class="t">📈 Угоди — відкриття / закриття</span>'
-                f'<label class="sw"><input type="checkbox" id="ntrd" {_trd_ck} {_dis} onchange="saventf()">'
-                f'<span class="tr"></span></label></div>'
-                f'<div id="nm" class="msg" style="display:none"></div></div>'
+                f'{_ntf_section}'
                 + f'<div class="sect2"><div class="seclbl">🔑 Змінити пароль</div>'
                 f'<input id="np" type="password" placeholder="Новий пароль (мін. 8)">'
                 f'<input id="np2" type="password" placeholder="Повторіть пароль" style="margin-top:8px">'
@@ -1385,16 +1390,14 @@ def register_auth_routes(app):
           if(d.ok){document.getElementById('np').value='';document.getElementById('np2').value='';}
         }
         async function saventf(){
-          const nm=document.getElementById('nm'); nm.style.display='block';
-          const body={notify_btc:document.getElementById('nbtc').checked,
-                      notify_funding:document.getElementById('nfnd').checked,
-                      notify_opportunity:document.getElementById('nopp').checked,
-                      notify_spike:document.getElementById('nspk').checked,
-                      notify_trades:document.getElementById('ntrd').checked};
+          const nb=document.getElementById('nbtc'), nf=document.getElementById('nfnd');
+          if(!nb||!nf) return;   // звичайний юзер: перемикачів немає
+          const nm=document.getElementById('nm'); if(nm) nm.style.display='block';
+          const body={notify_btc:nb.checked, notify_funding:nf.checked};
           const r=await fetch('/api/me/notify',{method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify(body)});
           const d=await r.json();
-          nm.className='msg '+(d.ok?'ok':'err'); nm.textContent=d.ok?'Збережено.':(d.error||'Помилка');
+          if(nm){nm.className='msg '+(d.ok?'ok':'err'); nm.textContent=d.ok?'Збережено.':(d.error||'Помилка');}
         }"""
         return _page('Кабінет', body, script=script, width=500)
 

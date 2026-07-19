@@ -6,9 +6,11 @@
   <title>VSV Bot — Інфо-панель</title>
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=19">
+  <link rel="stylesheet" href="style.css?v=52">
 </head>
 <body>
+  <!-- 🧑‍🔬 Ейнштейн-іконка (оригінальна карикатура з язиком, замість 🧠) — SVG-спрайт -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true"><symbol id="ein-icon" viewBox="0 0 64 64"><path fill="#dfe5ee" stroke="#9aa3b5" stroke-width="0.7" d="M12 37 C2 33 5 20 12 18 C8 11 16 6 21 12 C21 3 33 3 35 12 C41 5 49 10 45 18 C53 19 57 30 49 35 C46 28 39 25 32 25 C24 25 16 30 12 37Z"/><circle cx="16" cy="35" r="3.2" fill="#f3cb9f"/><circle cx="48" cy="35" r="3.2" fill="#f3cb9f"/><circle cx="32" cy="34" r="15.5" fill="#f6cfa4"/><path d="M22 28 q4 -3 8 -0.5" stroke="#c3cad6" stroke-width="2.6" fill="none" stroke-linecap="round"/><path d="M34 27.5 q4 -2.5 8 0.5" stroke="#c3cad6" stroke-width="2.6" fill="none" stroke-linecap="round"/><circle cx="26" cy="32" r="2.1" fill="#2b303b"/><circle cx="38" cy="32" r="2.1" fill="#2b303b"/><path d="M27.5 42 q4.5 2 9 0 l0 5 q0 4.2 -4.5 4.7 q-4.5 -0.5 -4.5 -4.7Z" fill="#f2717f"/><line x1="32" y1="43.5" x2="32" y2="50.5" stroke="#d85e6c" stroke-width="1.1"/><path d="M21 40 q6 -2.5 11 0 q5 -2.5 11 0 q-4 4.6 -9 3 q-1.6 -0.6 -2 -1.8 q-0.4 1.2 -2 1.8 q-5 1.6 -9 -3Z" fill="#eef1f6" stroke="#c3cad6" stroke-width="0.5"/></symbol></svg>
   <header class="topbar">
     <div class="brand">
       <img class="logo" src="vsv-logo.png" alt="VSV" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'">
@@ -57,12 +59,12 @@
       <div class="table-scroll">
         <table id="funding-table">
           <thead>
-            <tr><th>Символ</th><th>Напрямок</th><th>ММ</th><th>Тримається</th><th>Прогрес Funding</th><th>Funding · до виплати</th><th>Vol 24h</th></tr>
+            <tr><th>Символ</th><th>Напрямок</th><th title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">ММ</th><th title="Оцінка сетапу 0–100 — варто відкривати чи ще ні: ВАРТО ВІДКРИВАТИ (≥72) / МОЖНА ВІДКРИВАТИ (≥55) / ЗАЧЕКАТИ (≥40) / НЕ ВАРТО (≥25) / НЕ ВІДКРИВАТИ (<25)">SCORE</th><th>Тримається</th><th>Прогрес Funding</th><th>Funding · до виплати</th><th>Vol 24h</th></tr>
           </thead>
-          <tbody><tr><td colspan="7" class="muted">завантаження…</td></tr></tbody>
+          <tbody><tr><td colspan="8" class="muted">завантаження…</td></tr></tbody>
         </table>
       </div>
-      <p class="card-note">💡 Монета потрапляє сюди, коли «ММ» тримається довше за поріг. Коли ММ зникає — монета лишається зафіксованою (не дублюється в таблиці вище).</p>
+      <p class="card-note">💡 Монета потрапляє сюди, коли «ММ» тримається довше за поріг. Показуються лише монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера, вона зникає з таблиці. <b>🚀</b> = аномальний ріст (різкий рух ціни + зростання обсягу) — варто розглянути. <b>🎯</b> = найкращий збіг показників (SCORE + ММ + ₿ START — усі в один бік) проходить через Чергу-2; коли бот ВІДКРИВАЄ по ній угоду — під монетою зʼявляється рядок «рекомендована ботом» з таймером угоди.</p>
     </section>
 
     <!-- 💼 Відкриті угоди -->
@@ -88,7 +90,7 @@
 
     <!-- 🔔 Мої сповіщення (для авторизованого користувача) -->
     <section class="card" id="notify-card" style="display:none">
-      <h2>🔔 Мої сповіщення в Telegram</h2>
+      <h2>🔔 Сповіщення в Telegram</h2>
       <div id="notify-body">
         <div class="muted">завантаження…</div>
       </div>
@@ -118,7 +120,7 @@
       });
     })();
   </script>
-  <script src="config.js?v=19"></script>
-  <script src="app.js?v=19"></script>
+  <script src="config.js?v=52"></script>
+  <script src="app.js?v=52"></script>
 </body>
 </html>

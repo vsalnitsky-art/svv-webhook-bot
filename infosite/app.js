@@ -234,8 +234,18 @@
       cross = ' <span style="color:' + cc + '">' + ic + " " + esc(ctr.last_dir) +
         (ageStr ? " (" + ageStr + ")" : "") + (stale ? " ⚠️застарілий" : "") + "</span> ·";
     }
+    var h1 = "";
+    if (ctr.stc_1h != null) {
+      var s1 = Number(ctr.stc_1h);
+      var i1, c1;
+      if (s1 > 50) { i1 = "🔴"; c1 = "#fca5a5"; }
+      else if (s1 < 50) { i1 = "🟢"; c1 = "#86efac"; }
+      else { i1 = "⚪"; c1 = "#aaa"; }
+      var p1 = Math.round(Math.abs(s1 - 50) / 50 * 100);
+      h1 = ' <span title="CTR 1H · STC ' + s1.toFixed(0) + '/100" style="color:' + c1 + '">· 1H ' + i1 + " " + p1 + "%</span>";
+    }
     return '<div class="banner-ctr">⚡ CTR' + tf + cross +
-      ' <span style="color:' + col + '">' + revBias + " " + leanPct + "%</span></div>";
+      ' <span style="color:' + col + '">' + revBias + " " + leanPct + "%</span>" + h1 + "</div>";
   }
 
   // Colour attention/lean words in a rationale string:
@@ -248,7 +258,10 @@
       .replace(/Equilibrium/g, '<span style="color:#9aa3b5;font-weight:800">Equilibrium</span>')
       .replace(/⚠ обмежено/g, '<span style="color:#fbbf24;font-weight:800">⚠ обмежено</span>')
       .replace(/перекупленість/g, '<span style="color:#f87171;font-weight:700">перекупленість</span>')
-      .replace(/перепроданість/g, '<span style="color:#4ade80;font-weight:700">перепроданість</span>');
+      .replace(/перепроданість/g, '<span style="color:#4ade80;font-weight:700">перепроданість</span>')
+      // Напрямок: LONG зелений, SHORT червоний.
+      .replace(/\bLONG\b/g, '<span style="color:#4ade80;font-weight:800">LONG</span>')
+      .replace(/\bSHORT\b/g, '<span style="color:#f87171;font-weight:800">SHORT</span>');
   }
 
   // 🧠 Decision Center line — same data/labels as the bot.
@@ -261,7 +274,7 @@
     var hcol = rec === "LONG" ? "#4ade80" : rec === "SHORT" ? "#f87171" : "#cbd5e1";
     var pl = Math.round((dec.prob_long || 0) * 100), ps = Math.round((dec.prob_short || 0) * 100);
     return '<div class="banner-dec">' +
-      '<div class="dec-head">' + (rec === "NEUTRAL" ? "⚖️" : "🧠") +
+      '<div class="dec-head">' + (rec === "NEUTRAL" ? "⚖️" : EINSTEIN_ICON) +
         ' <b style="color:' + hcol + '">' + esc(dec.headline) + "</b>" +
         ' <span class="dec-badge" style="color:' + (vcol[dec.verdict] || "#cbd5e1") + '">' + esc(vl) + "</span></div>" +
       (dec.rationale ? '<div class="dec-rat">' + colorizePD(esc(dec.rationale)) + "</div>" : "") +
@@ -305,7 +318,7 @@
       banner.innerHTML =
         '<div class="pot-head">' +
           '<div class="pot-verdict ' + vcls + '">' + dirCell(verdict) + '</div>' +
-          '<div class="conf-wrap"><div class="conf-bar"><i style="width:' + conf + '%"></i></div>' +
+          '<div class="conf-wrap"><div class="conf-bar"><i style="width:' + conf + '%;background:' + dirGrad(verdict) + '"></i></div>' +
             '<span class="conf-txt">впевненість ' + conf + '%</span></div>' +
           '<span class="pill" style="margin-left:auto">' + esc(b.symbol || "—") + '</span>' +
         '</div>' +
@@ -335,17 +348,24 @@
 
   function renderNotify(n) {
     var card = $("#notify-card"), body = $("#notify-body");
+    if (!card || !body) return;
     if (!n || n.ok === false) { card.style.display = "none"; return; }
     card.style.display = "";
+    // Ринкові сигнали йдуть у Telegram-ГРУПУ (не персонально). Персональних
+    // опт-інів більше немає — тому показуємо пояснення, а не перемикачі.
     var linked = !!n.tg_linked;
+    var linkA = BOT_LINK
+      ? ' <a href="' + esc(BOT_LINK) + '" target="_blank" rel="noopener">відкрити бота</a>' : "";
     var warn = linked ? "" :
-      '<div class="ntf-warn">⚠️ Прив’яжіть Telegram (напишіть боту <b>/start</b>), ' +
-      'щоб отримувати сповіщення' +
-      (BOT_LINK ? ' — <a href="' + esc(BOT_LINK) + '" target="_blank" rel="noopener">відкрити бота</a>' : "") +
-      '.</div>';
-    body.innerHTML = warn +
-      toggleRow("notify_btc", "₿ BTCUSDT — START / STOP / PAUSE", n.notify_btc, !linked) +
-      toggleRow("notify_funding", "💰 Funding — поява монети з ММ", n.notify_funding, !linked);
+      '<p class="ntf-warn">⚠️ Telegram ще не прив’язано — напишіть боту <b>/start</b>' + linkA + '.</p>';
+    body.innerHTML =
+      '<div class="ntf-info">' +
+        '<p>Ринкові сигнали (₿ BTCUSDT, 💰 Funding, 🎯 рекомендації, 🚀 аномальний ріст, ' +
+        'угоди) приходять у <b>Telegram-групу</b>, а не в приватний чат.</p>' +
+        '<p>Доступ до групи — <b>після реєстрації та схвалення адміністратором</b>; ' +
+        'посилання на вхід прийде автоматично.</p>' +
+        warn +
+      '</div>';
   }
 
   document.addEventListener("click", function (e) {
@@ -368,6 +388,17 @@
   // ── ₿ BTCUSDT бар + перекидний годинник ─────────────────────────────────────
   var btcState = { held: 0, at: 0, period: 300, dir: null, status: "STOP", paused: false, strength: 0 };
 
+  // Directional progress-bar gradient — колір за напрямком, від СВІТЛОГО до
+  // ТЕМНОГО: LONG=зелений, SHORT=червоний, WAIT=сірий. 1:1 з ботом.
+  function dirGrad(dir) {
+    if (dir === "LONG")  return "linear-gradient(90deg,#86efac,#15803d)";
+    if (dir === "SHORT") return "linear-gradient(90deg,#fca5a5,#b91c1c)";
+    return "linear-gradient(90deg,#cbd5e1,#475569)";
+  }
+
+  // 🧑‍🔬 Ейнштейн-іконка (замість 🧠) — посилання на SVG-спрайт з index.html.
+  var EINSTEIN_ICON = '<svg class="ein-icon"><use href="#ein-icon"/></svg>';
+
   function flipClock(sec) {
     var str = hms(sec);
     return '<div class="flip">' + str.split("").map(function (ch) {
@@ -389,12 +420,11 @@
       statusCls = "st-count"; statusTxt = "⏳ " + pct + "%";
     }
     var str = Math.max(0, Math.min(100, Number(b.strength || 0)));
-    var scol = str >= 60 ? "band-strong" : (str >= 30 ? "band-mid" : (str >= 10 ? "band-weak" : "band-none"));
     box.innerHTML =
       '<div class="btc-left">' +
         '<span class="btc-sym">₿ BTCUSDT</span> ' + dirTxt +
       '</div>' +
-      '<div class="btc-strength"><div class="sbar"><i class="' + scol + '" style="width:' + str + '%"></i></div>' +
+      '<div class="btc-strength"><div class="sbar"><i style="width:' + str + '%;background:' + dirGrad(b.dir) + '"></i></div>' +
         '<span class="sbar-lbl">' + Math.round(str) + '% сила</span></div>' +
       '<div id="btc-clock">' + flipClock(nowHeld()) + '</div>' +
       '<div class="btc-status ' + statusCls + '">' + statusTxt + '</div>';
@@ -405,6 +435,73 @@
     return btcState.held + Math.floor((Date.now() - btcState.at) / 1000);
   }
 
+  // 💸 Money-rain: гроші «сиплються» в момент активності (₿ START / сильний
+  // тиск ММ). 1:1 з ботом. dir → відтінок: LONG=зелений, SHORT=червоний.
+  function spawnMoneyRain(dir, label) {
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      if (window._ffRainBusy) return;
+      window._ffRainBusy = true;
+      var host = document.getElementById("ff-money-rain");
+      if (!host) { host = document.createElement("div"); host.id = "ff-money-rain"; document.body.appendChild(host); }
+      var glow = dir === "LONG" ? "rgba(34,255,136,0.9)" : (dir === "SHORT" ? "rgba(255,77,77,0.9)" : "rgba(247,147,26,0.9)");
+      var emojis = dir === "SHORT" ? ["💸","💵","💰","🪙","📉"] : (dir === "LONG" ? ["💸","💵","💰","🪙","📈"] : ["💸","💵","💰","🪙","🤑"]);
+      var N = 34, maxLife = 0;
+      for (var i = 0; i < N; i++) {
+        var el = document.createElement("span");
+        el.className = "ff-money";
+        el.textContent = emojis[(Math.random() * emojis.length) | 0];
+        var dur = 2.4 + Math.random() * 2.6, delay = Math.random() * 0.9, size = 18 + Math.random() * 20;
+        el.style.left = (Math.random() * 100) + "vw";
+        el.style.fontSize = size.toFixed(0) + "px";
+        el.style.animationName = "ff-money-fall, ff-money-sway";
+        el.style.animationTimingFunction = "linear, ease-in-out";
+        el.style.animationIterationCount = "1, " + (2 + ((Math.random() * 3) | 0));
+        el.style.animationFillMode = "forwards";
+        el.style.animationDelay = delay.toFixed(2) + "s";
+        el.style.animationDuration = dur.toFixed(2) + "s, " + (0.8 + Math.random() * 0.7).toFixed(2) + "s";
+        el.style.filter = "drop-shadow(0 0 6px " + glow + ")";
+        host.appendChild(el);
+        maxLife = Math.max(maxLife, dur + delay);
+      }
+      if (label) {
+        var fl = document.createElement("div");
+        fl.className = "ff-rain-flash";
+        fl.textContent = label;
+        fl.style.color = dir === "SHORT" ? "#ff4d4d" : (dir === "LONG" ? "#22ff88" : "#f7931a");
+        fl.style.background = dir === "SHORT" ? "rgba(239,68,68,0.14)" : (dir === "LONG" ? "rgba(34,197,94,0.14)" : "rgba(247,147,26,0.14)");
+        fl.style.border = "1px solid " + glow;
+        fl.style.boxShadow = "0 0 22px " + glow;
+        document.body.appendChild(fl);
+        setTimeout(function () { try { fl.remove(); } catch (e) {} }, 2700);
+      }
+      setTimeout(function () { try { host.innerHTML = ""; } catch (e) {} window._ffRainBusy = false; }, (maxLife * 1000) + 400);
+    } catch (e) { window._ffRainBusy = false; }
+  }
+
+  function ffCheckMoneyRain(isStart, dir, strength) {
+    if (!window._ffRainPrimed) {
+      var s0 = strength >= 60 && (dir === "LONG" || dir === "SHORT");
+      window._ffRainPrev = { start: !!isStart, strong: s0, dir: dir || null };
+      window._ffRainPrimed = true;
+      return;
+    }
+    var prev = window._ffRainPrev || { start: false, strong: false, dir: null };
+    if (isStart && !prev.start) {
+      var side = dir === "LONG" ? "🟢 LONG" : (dir === "SHORT" ? "🔴 SHORT" : "сеанс");
+      spawnMoneyRain(dir || null, "⚡ ₿ START TRADING · " + side);
+    }
+    var strongNow = strength >= 60 && (dir === "LONG" || dir === "SHORT");
+    var dirChanged = prev.strong && dir && prev.dir && dir !== prev.dir;
+    if ((strongNow && !prev.strong) || (strongNow && dirChanged)) {
+      if (!(isStart && !prev.start)) {
+        var pull = dir === "SHORT" ? "тягне ВНИЗ 🔴" : "тягне ВГОРУ 🟢";
+        spawnMoneyRain(dir, "💰 ММ " + pull + " · сильний тиск " + Math.round(strength) + "%");
+      }
+    }
+    window._ffRainPrev = { start: isStart, strong: strongNow ? true : (strength < 45 ? false : prev.strong), dir: dir || prev.dir };
+  }
+
   function setBtc(b) {
     b = b || {};
     btcState = {
@@ -413,34 +510,51 @@
       status: b.status || "STOP", paused: !!b.paused, strength: b.strength || 0
     };
     renderBtcStatic();
+    ffCheckMoneyRain(btcState.status === "START" && !btcState.paused, btcState.dir, Number(btcState.strength || 0));
   }
 
   // Local 1s tick so the flip clock advances smoothly between polls.
   setInterval(function () {
     var c = $("#btc-clock");
     if (c && (btcState.dir || btcState.status !== "STOP")) c.innerHTML = flipClock(nowHeld());
+    // Живі таймери угод / «рекомендованої» — щосекунди, а не стрибками на 5с
+    // полінгу. Кожна клітинка тримає epoch у data-ts.
+    var nowT = Math.floor(Date.now() / 1000);
+    var els = document.querySelectorAll(".live-timer[data-ts]");
+    for (var i = 0; i < els.length; i++) {
+      var ts = parseInt(els[i].getAttribute("data-ts"), 10);
+      if (ts) els[i].textContent = hms(nowT - ts);
+    }
   }, 1000);
 
   // ── 💰 Funding (1:1 з ботом) ─────────────────────────────────────────────────
   function fuelBand(now) {
     if (now == null) return { txt: "", col: "#8b93a7" };
     now = Number(now);
-    if (now < 10) return { txt: "немає", col: "#8b93a7" };
-    if (now < 30) return { txt: "слабке", col: "#eab308" };
-    if (now < 60) return { txt: "помірний", col: "#84cc16" };
-    return { txt: "сильне", col: "#22c55e" };
+    if (now < 10) return { txt: "рівновага", col: "#8b93a7" };
+    if (now < 30) return { txt: "легкий тиск", col: "#bef264" };
+    if (now < 60) return { txt: "помірний тиск", col: "#84cc16" };
+    if (now < 85) return { txt: "сильний тиск", col: "#22c55e" };
+    return { txt: "потужний тиск", col: "#16a34a" };
   }
+
+  // Shared human explanation of the ММ widget (hover on the cell) — 1:1 з ботом.
+  var FUEL_TOOLTIP = "ММ — тиск маркетмейкера на ціну. Крапка = куди тисне: " +
+    "🟢 вгору (лонг) · 🔴 вниз (шорт) · ⚪ рівновага. 0–100% — сила тиску " +
+    "(наскільки односторонні ліквідації/паливо): рівновага <10 · легкий 10–30 · " +
+    "помірний 30–60 · сильний 60–85 · потужний 85+. Стрілка ↑/↓ — тиск " +
+    "міцніє/слабшає. Що сильніший тиск у бік крапки — то ймовірніший рух ціни туди.";
 
   // ММ (fuel) strength cell — exact copy of the bot's ffFuelCell.
   function ffFuelCell(dir, now, prev) {
     var dot = dir === "LONG" ? "🟢" : (dir === "SHORT" ? "🔴" : "⚪");
     var dotSeg = '<span style="display:inline-block;width:16px;text-align:center;flex:none">' + dot + "</span>";
     if (now == null) {
-      return '<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">' + dotSeg +
+      return '<span title="' + FUEL_TOOLTIP + '" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">' + dotSeg +
         '<span style="display:inline-block;width:40px;text-align:right;color:#8b93a7;flex:none">—</span></span>';
     }
     now = Number(now);
-    var col = now >= 60 ? "#22c55e" : (now >= 30 ? "#84cc16" : (now >= 10 ? "#eab308" : "#8b93a7"));
+    var col = now >= 60 ? "#22c55e" : (now >= 30 ? "#84cc16" : (now >= 10 ? "#bef264" : "#8b93a7"));
     var arrowChar = "", arrowCol = "#8b93a7";
     if (prev != null) {
       if (now > prev + 1) { arrowChar = "↑"; arrowCol = "#4ade80"; }
@@ -451,9 +565,51 @@
     var b = fuelBand(now);
     var pctSeg = '<b style="display:inline-block;width:40px;text-align:right;color:' + col + ';font-variant-numeric:tabular-nums;flex:none">' + Math.round(now) + "%</b>";
     var arrowSeg = '<span style="display:inline-block;width:12px;text-align:center;color:' + arrowCol + ';flex:none">' + arrowChar + "</span>";
-    var barSeg = '<span style="display:inline-block;vertical-align:middle;height:6px;width:56px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;flex:none"><span style="display:block;height:100%;width:' + w + '%;background:' + col + '"></span></span>';
-    var bandSeg = '<span style="display:inline-block;width:56px;text-align:left;color:' + b.col + ';font-size:0.66rem;font-weight:600;flex:none">' + b.txt + "</span>";
-    return '<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">' + dotSeg + pctSeg + arrowSeg + barSeg + bandSeg + "</span>";
+    var barSeg = '<span style="display:inline-block;vertical-align:middle;height:6px;width:48px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;flex:none"><span style="display:block;height:100%;width:' + w + '%;background:' + col + '"></span></span>';
+    var bandSeg = '<span style="display:inline-block;width:88px;text-align:left;color:' + b.col + ';font-size:0.66rem;font-weight:600;flex:none">' + b.txt + "</span>";
+    return '<span title="' + FUEL_TOOLTIP + '" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">' + dotSeg + pctSeg + arrowSeg + barSeg + bandSeg + "</span>";
+  }
+
+  // SCORE label EN→UA — exact copy of the bot's SCORE_LABEL_UA/scoreLabelUA.
+  var SCORE_LABEL_UA = {
+    "STRONG HOLD": "ВАРТО ВІДКРИВАТИ",
+    "HOLD": "МОЖНА ВІДКРИВАТИ",
+    "NEUTRAL": "ЗАЧЕКАТИ",
+    "WEAK": "НЕ ВАРТО",
+    "EXHAUSTED": "НЕ ВІДКРИВАТИ",
+  };
+  function scoreLabelUA(lbl) { return SCORE_LABEL_UA[lbl] || lbl || ""; }
+
+  // SCORE (hold quality) badge — exact copy of the bot's ffScoreBadgeHTML.
+  function ffScoreBadgeHTML(sc) {
+    if (!sc || !sc.label) return '<span style="color:#555">—</span>';
+    var scd = sc.dir || null;
+    var scDir = scd === "LONG"
+      ? '<span style="font-size:0.78rem;margin-right:5px">🟢<span style="color:#22c55e;font-weight:900">▲</span></span>'
+      : (scd === "SHORT" ? '<span style="font-size:0.78rem;margin-right:5px">🔴<span style="color:#ef4444;font-weight:900">▼</span></span>' : "");
+    var scWarn = sc.conflict
+      ? '<span title="Конфлікт: бабло й рух ціни в різні боки" style="margin-left:4px">⚠️</span>'
+      : "";
+    return scDir + '<span title="Оцінка утримання ' + sc.score + '/100 у напрямку ' + (sc.dir || "—") + (sc.conflict ? " · ⚠ бабло проти ціни" : "") +
+      '" style="display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:6px;background:' + sc.color + '22;border:1px solid ' + sc.color +
+      ';font-weight:800;font-size:0.74rem;color:' + sc.color + '">' + sc.score +
+      '<span style="font-size:0.6rem;letter-spacing:0.3px">' + scoreLabelUA(sc.label) + "</span></span>" + scWarn;
+  }
+
+  // F-Trend badge — funding напрямок за ~30 хв (Dashboard-метрика) — 1:1 з ботом.
+  function fTrendBadge(t) {
+    if (t == null) return "";
+    if (t < 0) return ' <span title="F-Trend: funding поглиблюється (глибше в мінус) за ~30 хв" style="color:#ff5252;font-size:0.64rem;font-weight:700">F🔻</span>';
+    if (t > 0) return ' <span title="F-Trend: funding послаблюється (до нуля) за ~30 хв" style="color:#4caf50;font-size:0.64rem;font-weight:700">F🔺</span>';
+    return ' <span title="F-Trend: без чіткого тренду за ~30 хв" style="color:#888;font-size:0.64rem">F➖</span>';
+  }
+
+  // Vol 24h trend arrow vs ~2-min baseline (0.5% dead-zone) — 1:1 з ботом.
+  function volTrendArrow(v, prev) {
+    if (v == null || prev == null || !(prev > 0)) return "";
+    if (v > prev * 1.005) return ' <span title="Обсяг 24h зростає" style="color:#4ade80;font-size:0.72rem">▲</span>';
+    if (v < prev * 0.995) return ' <span title="Обсяг 24h спадає" style="color:#f87171;font-size:0.72rem">▼</span>';
+    return ' <span title="Обсяг 24h без змін" style="color:#8b93a7;font-size:0.72rem">→</span>';
   }
 
   function renderFunding(rowsArr) {
@@ -461,7 +617,7 @@
     $("#funding-count").textContent = rowsArr.length;
     var tb = $("#funding-table tbody");
     if (!rowsArr.length) {
-      tb.innerHTML = '<tr><td colspan="7" class="tm-empty-msg" style="color:#8b93a7">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
+      tb.innerHTML = '<tr><td colspan="8" class="tm-empty-msg" style="color:#8b93a7">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
       return;
     }
     tb.innerHTML = rowsArr.map(function (a) {
@@ -475,42 +631,107 @@
       var cur = (a.funding_rate != null) ? a.funding_rate : entry;
       var fill = (entry - END) !== 0 ? (cur - entry) / (END - entry) : 0;
       fill = Math.max(0, Math.min(1, fill));
-      var prev = a.funding_prev_rate, arrow = "";
+      var prev = a.funding_prev_rate;
+      // Funding % trend colour — для «зараз» у прогресі + колонки Funding.
+      var _rateCol = "#cbd5e1", _rateTip = "без даних тренду", _rateExtra = "", _rateMark = "";
       if (prev != null && a.funding_rate != null) {
-        if (a.funding_rate < prev - 0.0005) arrow = '<span style="color:#f87171">← зменшується</span>';
-        else if (a.funding_rate > prev + 0.0005) arrow = '<span style="color:#4ade80">→ збільшується</span>';
-        else arrow = '<span style="color:#8b93a7">— без змін</span>';
+        if (a.funding_rate < prev - 0.0005) { _rateCol = "#f87171"; _rateTip = "зменшується (глибше в мінус)"; }
+        else if (a.funding_rate > prev + 0.0005) { _rateCol = "#4ade80"; _rateTip = "збільшується (до нуля)"; }
+        else {
+          var _av = Math.abs(a.funding_rate);
+          var _step = Math.round(_av / 0.5) * 0.5;
+          if (Math.abs(_av - _step) < 0.01 && _step >= 0.5 && _step <= 4) {
+            _rateCol = "#fbbf24";
+            _rateTip = "⚡ цікаве значення: стабільний funding " + _step + "% (чітке число)";
+            _rateExtra = ";text-shadow:0 0 9px rgba(251,191,36,0.9);font-weight:800";
+            _rateMark = "✦";
+          } else {
+            _rateCol = "#7dd3fc";
+            _rateTip = "без змін (стабільний)";
+          }
+        }
       }
-      var fillPct = (fill * 100).toFixed(1);
+      // ABSOLUTE scale Entry ≤ (0%) → −4% (100%): FILL = поточний рівень (−0.9%
+      // помітно довший за −0.1%), amber TICK = пік («Goal») — 1:1 з ботом.
+      // (END = -4 вже оголошено вище.)
+      var entryThr = (a.entry_threshold != null) ? a.entry_threshold : -0.1;
+      var peakRate = (a.funding_rate_min != null) ? a.funding_rate_min : cur;
+      var _rng = (END - entryThr) || 1;
+      var fillS = (Math.max(0, Math.min(1, (cur - entryThr) / _rng)) * 100).toFixed(1);
+      var peakS = (Math.max(0, Math.min(1, (peakRate - entryThr) / _rng)) * 100).toFixed(1);
       var progHtml = '<div style="display:flex;align-items:center;gap:6px">' +
-        '<div style="width:130px;flex:0 0 130px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative">' +
-        '<div style="height:100%;width:' + fillPct + '%;background:#34d399;border-radius:6px"></div>' +
-        '<span style="position:absolute;left:' + fillPct + '%;top:50%;width:9px;height:9px;margin-left:-5px;margin-top:-4px;border-radius:50%;background:#34d399;box-shadow:0 0 7px #34d399"></span>' +
+        '<span title="Entry ≤ (старт шкали)" style="font-size:0.6rem;color:#8b93a7;white-space:nowrap">' + Number(entryThr).toFixed(2) + "%</span>" +
+        '<div style="width:90px;flex:0 0 90px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative" title="Поточний ' + Number(cur).toFixed(3) + '% · шкала Entry ' + Number(entryThr).toFixed(2) + '% → −4%">' +
+        '<div style="height:100%;width:' + fillS + '%;background:linear-gradient(90deg,#34d399,#22c55e);border-radius:6px"></div>' +
+        '<span style="position:absolute;left:' + peakS + '%;top:-3px;bottom:-3px;width:3px;margin-left:-1.5px;background:#fbbf24;box-shadow:0 0 5px #fbbf24;border-radius:2px"></span>' +
         '</div>' +
-        '<span style="font-size:0.6rem;color:#8b93a7;white-space:nowrap;width:64px;display:inline-block">' + entry + "%→" + END + "%</span>" +
-        (arrow ? '<span style="font-size:0.62rem;white-space:nowrap;width:80px;display:inline-block">' + arrow + "</span>" : '<span style="width:80px;display:inline-block"></span>') +
+        '<span title="пік (найглибший)" style="font-size:0.6rem;color:#fbbf24;white-space:nowrap">' + Number(peakRate).toFixed(3) + "%</span>" +
         '</div>';
+      // Fixed-width ✦ slot (ALWAYS present) so the gold mark never shifts the
+      // numbers — Funding column stays aligned across rows (1:1 з ботом).
+      var markSlot = '<span style="display:inline-block;width:0.95em;text-align:center;color:#fbbf24' + (_rateMark ? ";text-shadow:0 0 9px rgba(251,191,36,0.9)" : "") + '">' + (_rateMark || "") + "</span>";
       var rateTxt = (a.funding_stale || a.funding_rate == null)
-        ? '<span style="color:#667">—</span>'
-        : '<span style="font-weight:700;color:' + (a.funding_rate < 0 ? "#f87171" : "#4ade80") + '">' + (a.funding_rate >= 0 ? "+" : "") + Number(a.funding_rate).toFixed(3) + "%</span>";
+        ? markSlot + '<span style="color:#667">—</span>'
+        : markSlot + '<span title="Funding ' + _rateTip + '" style="font-weight:700;font-variant-numeric:tabular-nums;color:' + _rateCol + _rateExtra + '">' + (a.funding_rate >= 0 ? "+" : "") + Number(a.funding_rate).toFixed(3) + "%</span>";
       var cdTxt = a.funding_next_ms
         ? '<span style="font-size:0.66rem;color:#9aa3b5">⏳ ' + fmtCountdown(a.funding_next_ms) + "</span>"
         : (a.funding_stale
             ? '<span title="Вийшла з Funding Rate Scanner — тримається лише на ММ" style="font-size:0.62rem;color:#8b93a7">· норм. (на ММ)</span>'
             : "");
       var v = a.vol24h;
-      var volTxt = (v != null && v > 0) ? fmtUsdC(v) : '<span style="color:#667">—</span>';
+      var _volRange = (a.vol24h_min != null && a.vol24h_max != null)
+        ? '<span title="Діапазон 24h-обсягу за час стеження (мін–макс)" style="font-size:0.6rem;color:#8b93a7">(' + fmtUsdC(a.vol24h_min) + "–" + fmtUsdC(a.vol24h_max) + ")</span>"
+        : "";
+      var volTxt = (v != null && v > 0)
+        ? ('<span style="display:inline-flex;align-items:center;gap:5px"><b style="display:inline-block;width:52px;text-align:right;font-variant-numeric:tabular-nums">' + fmtUsdC(v) + "</b><span style=\"display:inline-block;width:12px;text-align:center\">" + volTrendArrow(v, a.vol24h_prev) + "</span>" + _volRange + "</span>")
+        : '<span style="color:#667">—</span>';
       var paused = a.paused ? ' <span title="Сесія на паузі (WAIT)" style="color:#fbbf24;font-weight:700">⏸</span>' : "";
-      return '<tr style="background:rgba(16,185,129,0.06)">' +
-        '<td style="font-weight:600"><span style="color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>' + tvSym(a.symbol) + "</td>" +
+      var _rowBg = a.opportunity_hot
+        ? "background:rgba(74,222,128,0.13);box-shadow:inset 3px 0 0 #4ade80"
+        : "background:rgba(16,185,129,0.06)";
+      return '<tr style="' + _rowBg + '">' +
+        '<td style="font-weight:600">' + (a.spike ? '<span title="Аномальний ріст: різкий рух ціни ' + (a.spike_move != null ? ((a.spike_move >= 0 ? "+" : "") + a.spike_move + "% ") : "") + '+ зростання обсягу — варто розглянути" style="margin-right:4px">🚀</span>' : "") + '<span style="color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>' + tvSym(a.symbol) + "</td>" +
         "<td>" + dirHtml + "</td>" +
         '<td style="font-size:0.72rem">' + ffFuelCell(a.mm, a.mm_str, a.mm_str_prev) + paused + "</td>" +
+        '<td style="white-space:nowrap">' + ffScoreBadgeHTML(a.score) + "</td>" +
         '<td style="font-size:0.78rem">' + heldCell + "</td>" +
-        '<td style="min-width:160px">' + progHtml + "</td>" +
-        '<td style="font-size:0.72rem;white-space:nowrap">' + rateTxt + " " + cdTxt + "</td>" +
+        '<td>' + progHtml + "</td>" +
+        '<td style="font-size:0.72rem;white-space:nowrap">' + rateTxt + " " + cdTxt + fTrendBadge(a.f_trend) + "</td>" +
         '<td style="font-size:0.72rem;color:#cbd5e1;white-space:nowrap">' + volTxt + "</td>" +
-      "</tr>";
+      "</tr>" + oppStatsRow(a);
     }).join("");
+  }
+
+  // Compact дата-час.
+  function fmtDT(unix) {
+    if (!unix) return "—";
+    var d = new Date(unix * 1000);
+    var p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return p(d.getDate()) + "." + p(d.getMonth() + 1) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  // 🎯 Другий рядок «рекомендована ботом» = ВІДКРИТА рекомендована угода
+  // (Черга-2 її відкрила): таймер угоди + статистика (1:1 з ботом).
+  function oppStatsRow(a) {
+    if (!a.opportunity_hot) return "";
+    var st = a.opp_stats || {};
+    var nowS = Math.floor(Date.now() / 1000);
+    var timer = st.since
+      ? '<span class="live-timer" data-ts="' + Math.floor(st.since) + '">' + hms(nowS - Math.floor(st.since)) + '</span>'
+      : "—";
+    var first = st.first_at ? fmtDT(Math.floor(st.first_at)) : "—";
+    var entryPx = (st.start_price != null) ? fmtPrice(st.start_price) : "—";
+    // Live PnL % of the open recommended trade (замість сер. тривалості).
+    var pnl = (st.pnl_pct != null)
+      ? '<b style="color:' + (st.pnl_pct >= 0 ? "#4ade80" : "#f87171") + '">' + (st.pnl_pct >= 0 ? "+" : "") + Number(st.pnl_pct).toFixed(2) + "%</b>"
+      : "<b>—</b>";
+    var _rec = (st.recent || []).map(function (e) {
+      return fmtPrice(e.start_price) + "→" + fmtPrice(e.end_price) + " · " + hms(e.dur_sec);
+    }).join("\n");
+    var _tip = (_rec ? "Останні епізоди (вхід→вихід · тривалість):\n" + _rec : "Ще не було завершених епізодів").replace(/"/g, "&quot;");
+    return '<tr style="background:rgba(74,222,128,0.07)"><td colspan="8" title="' + _tip + '" style="padding:1px 8px 5px 30px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">' +
+      '🎯 <b style="color:#4ade80">рекомендована ботом</b> · в угоді <b>' + timer + "</b> · вхід @ <b>" + entryPx + "</b> · PnL: " + pnl + " · епізодів: <b>" + (st.count || 0) + "</b> · вперше: " + first +
+      "</td></tr>";
   }
 
   // ── 💼 Відкриті угоди ────────────────────────────────────────────────────────
@@ -535,6 +756,14 @@
   function priceCell(v) {
     return (v != null && Number(v) > 0) ? '<span class="mono">' + fmtPrice(v) + "</span>" : '<span class="muted">—</span>';
   }
+  // Manual SL/TP by magnitude: 2dp only for ≥$100, 4dp for $1–100 (keeps 2.0804),
+  // more for sub-$1; trailing zeros stripped — matches the bot's roundSlTp/fmtSlTp.
+  function sltpCell(v) {
+    if (v == null || isNaN(v) || Number(v) <= 0) return '<span class="muted">—</span>';
+    var n = Number(v);
+    var dp = n < 0.0001 ? 8 : (n < 0.01 ? 6 : (n < 1 ? 5 : (n < 100 ? 4 : 2)));
+    return '<span class="mono">$' + String(Number(n.toFixed(dp))) + "</span>";
+  }
   function renderTrades(state) {
     var tb = $("#trades-table tbody");
     var real = (state && state.positions) || [];
@@ -552,9 +781,10 @@
       var mk = r.m === "real"
         ? '<span class="tag-real">● LIVE</span>'
         : '<span class="tag-paper">◌ PAPER</span>';
-      var timer = p.opened_at ? '<span class="mono">' + hms(now - Math.floor(p.opened_at)) + "</span>" : '<span class="muted">—</span>';
+      var timer = p.opened_at ? '<span class="mono live-timer" data-ts="' + Math.floor(p.opened_at) + '">' + hms(now - Math.floor(p.opened_at)) + "</span>" : '<span class="muted">—</span>';
+      var mMark = p.manual_mode ? '<span title="Ручне керування (Manual mode ON)" style="color:#fbbf24;margin-right:3px">✋</span>' : '';
       return "<tr>" +
-        "<td><b>" + tvSym(p.symbol) + "</b></td>" +
+        "<td>" + mMark + "<b>" + tvSym(p.symbol) + "</b></td>" +
         "<td>" + dirCell(p.side) + "</td>" +
         "<td>" + mk + "</td>" +
         "<td>" + priceCell(p.entry_price) + "</td>" +
@@ -563,8 +793,8 @@
         '<td style="font-size:0.72rem">' + ffFuelCell(p.fuel_dir || p.side, p.fuel_str, p.fuel_str_prev) + "</td>" +
         "<td>" + exhCell(p.exhaustion) + "</td>" +
         "<td>" + revCell(p.ctr_rev_pct) + "</td>" +
-        "<td>" + priceCell(p.manual_sl) + "</td>" +
-        "<td>" + priceCell(p.manual_tp) + "</td>" +
+        "<td>" + sltpCell(p.manual_sl) + "</td>" +
+        "<td>" + sltpCell(p.manual_tp) + "</td>" +
         "<td>" + timer + "</td>" +
       "</tr>";
     }).join("");
