@@ -113,6 +113,41 @@ def _read_cgroup_cache_mb():
     return None
 
 
+def _proc_rss_table(top=6):
+    """Усі процеси cgroup за RSS (МБ) + сумарний RSS. КЛЮЧОВЕ: self-RSS може
+    бути малим (126 МБ), а сусідній процес — тримати сотні МБ. Це показує, ЯКИЙ
+    саме процес зʼїдає памʼять. Читає /proc/[pid]/status(VmRSS) + /proc/[pid]/comm.
+    Повертає (total_rss_mb, [(pid, rss_mb, name), ...top]). (None, []) якщо ні."""
+    rows = []
+    total = 0.0
+    try:
+        for pid in os.listdir('/proc'):
+            if not pid.isdigit():
+                continue
+            try:
+                rss = None
+                with open(f'/proc/{pid}/status') as f:
+                    for line in f:
+                        if line.startswith('VmRSS:'):
+                            rss = int(line.split()[1]) / 1024.0
+                            break
+                if rss is None:
+                    continue
+                try:
+                    with open(f'/proc/{pid}/comm') as f:
+                        name = f.read().strip()
+                except Exception:
+                    name = '?'
+                total += rss
+                rows.append((int(pid), rss, name))
+            except Exception:
+                continue
+    except Exception:
+        return (None, [])
+    rows.sort(key=lambda r: -r[1])
+    return (total, rows[:top])
+
+
 def _gc_summary():
     """Короткий стан gc: к-сть об'єктів + лічильники поколінь."""
     try:
@@ -212,6 +247,14 @@ def _monitor_loop(interval, warn_mb, trace, trace_every):
             _p(f"[MEM] RSS {rss:.1f} MB · Δ {d_last:+.1f} · Δstart {d_start:+.1f} · "
                f"rss-peak {win_peak_rss:.1f}{cg_txt} · "
                f"{_gc_summary()} · threads {threading.active_count()}{flag}")
+
+            # Хто тримає памʼять: перелік процесів cgroup за RSS. Показує, чи є
+            # інший процес (напр. другий gunicorn-worker/subprocess) на сотні МБ,
+            # якого self-RSS не бачить. Це закриває питання «де ті ~350 МБ».
+            tot, procs = _proc_rss_table()
+            if procs:
+                plist = ' · '.join(f"{nm}[{pid}] {r:.0f}" for pid, r, nm in procs)
+                _p(f"[MEM] procs: сума-RSS {tot:.1f} MB · {plist}")
 
             win_peak_rss = rss
             win_peak_cg = cg_usage or 0.0
