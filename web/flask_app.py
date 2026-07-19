@@ -677,6 +677,14 @@ def create_app():
         if _bootstrap_kicked['v']:
             return
         _bootstrap_kicked['v'] = True
+        # 🧠 Монітор памʼяті — запускаємо САМЕ ТУТ (worker-процес, post-fork), бо
+        # витік у робочому процесі, а не в майстрі. start_mem_monitor звіряє PID,
+        # тож стартує заново навіть якщо майстер уже стартував свій монітор.
+        try:
+            from detection.mem_monitor import start_mem_monitor
+            start_mem_monitor()
+        except Exception as e:
+            print(f"[APP] mem-monitor (worker) не стартував: {e}")
         try:
             import threading as _th
             _th.Thread(target=_bootstrap_daemons, daemon=True,

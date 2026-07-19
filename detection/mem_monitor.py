@@ -24,6 +24,7 @@ import time
 import threading
 
 _started = False
+_started_pid = None
 _lock = threading.Lock()
 
 
@@ -272,12 +273,20 @@ def _monitor_loop(interval, warn_mb, trace, trace_every):
 
 
 def start_mem_monitor():
-    """Запустити демон-монітор пам'яті (ідемпотентно). Викликати один раз на старті."""
-    global _started
+    """Запустити демон-монітор пам'яті (ідемпотентно ПО ПРОЦЕСУ). Викликати на
+    старті І з worker-процесу (напр. gunicorn post-fork / перший запит).
+
+    ВАЖЛИВО про fork: якщо майстер стартував монітор до fork, дочірній worker
+    успадкує `_started=True`, АЛЕ потік монітора у fork НЕ переноситься (живе
+    лише в майстрі). Тому звіряємось за PID: у новому процесі стартуємо заново —
+    інакше worker (де саме тече памʼять) лишався б без монітора."""
+    global _started, _started_pid
+    pid = os.getpid()
     with _lock:
-        if _started:
+        if _started and _started_pid == pid:
             return
         _started = True
+        _started_pid = pid
 
     try:
         interval = max(5, int(os.environ.get('MEM_LOG_INTERVAL', '60')))
