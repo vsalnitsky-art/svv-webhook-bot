@@ -22,6 +22,7 @@ On-demand symbol lifecycle:
   - BACKGROUND_SYMBOLS (BTC, ETH) never drop — they're always tracked
 """
 
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -48,9 +49,18 @@ DECAY_PROFILES = {
     'tori':    (4.0, 12.0),
 }
 SCAN_INTERVAL_SEC = 60
-ON_DEMAND_TTL_SEC = 1800           # 30 min
+# On-demand TTL — скільки символ лишається у скані після ОСТАННЬОГО запиту.
+# FF переофіксовує робочі монети (позиції/черга/funding/BTC) щотіка (~30с), тож
+# короткий TTL тримає у скані ЛИШЕ реально робочі монети, а переглянуті в UI
+# (get_panel) швидко випадають. Було 1800 (30 хв) — роздувало скан до десятків
+# зайвих символів і памʼять. Тепер 300с (5 хв), налаштовно env
+# LIQMAP_ONDEMAND_TTL_SEC. Мінімум 60с, щоб фонове сканування встигало.
+try:
+    ON_DEMAND_TTL_SEC = max(60, int(os.getenv('LIQMAP_ONDEMAND_TTL_SEC', '300')))
+except (TypeError, ValueError):
+    ON_DEMAND_TTL_SEC = 300
 PARALLEL_PROVIDERS = 4              # workers in fetch pool
-KLINES_LOOKBACK_BARS = 120          # bars to check for mitigation each tick (2h on 1m chart)
+KLINES_LOOKBACK_BARS = 3            # bars to check for mitigation each tick
 PRICE_WINDOW_PCT = 0.10             # ±10% from mark for UI bucket query
 RETENTION_DAYS = 30
 PRUNE_INTERVAL_SEC = 3600           # check for pruning once an hour
