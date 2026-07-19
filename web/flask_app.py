@@ -241,6 +241,20 @@ def create_app():
     _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False, 'top100ob': False, 'liqmap': False, 'apihealth': False, 'dbautoclean': False}
 
     def _bootstrap_daemons():
+        # 🪶 LEAN_MODE (за замовч. УВІМКНЕНО): пропускаємо СТАРІ демони, які НЕ
+        # потрібні для FF/Smart Money і лише їдять RAM у воркері (перевірено —
+        # fuel_filter/trade_manager/smc_scanner їх не викликають). Живлять старі
+        # сторінки (Dashboard/Tickr/старий сигнальний рушій). Повернути будь-який
+        # — env LEAN_MODE=0. Позначаємо як «вже стартовані», тож блоки нижче
+        # просто пропускаються.
+        _lean = os.getenv('LEAN_MODE', '1').lower() not in ('0', 'false', 'no', 'off')
+        if _lean:
+            for _k in ('exitmon', 'coinflow', 'orderbook', 'apihealth', 'tickr_opp', 'liqsig'):
+                _auto_started[_k] = True
+            print("[APP] 🪶 LEAN_MODE=on: пропущено старі демони — exit_monitor, "
+                  "coin_flow, orderbook, api_health, tickr_opp, liqmap_signal "
+                  "(повернути: LEAN_MODE=0)")
+
         # Volume Flow — always start
         if not _auto_started['volflow']:
             _auto_started['volflow'] = True
