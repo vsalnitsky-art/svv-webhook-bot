@@ -114,6 +114,24 @@ def _read_cgroup_cache_mb():
     return None
 
 
+def _dump_gunicorn_cmdlines():
+    """Разовий дамп командних рядків усіх процесів — щоб побачити, чи є десь
+    --preload і чим відрізняються майстер/воркер. Друкується раз на старті."""
+    try:
+        for pid in sorted((p for p in os.listdir('/proc') if p.isdigit()), key=int):
+            try:
+                with open(f'/proc/{pid}/cmdline', 'rb') as f:
+                    parts = f.read().split(b'\x00')
+                cmd = ' '.join(p.decode('utf-8', 'replace') for p in parts if p)
+                if 'gunicorn' in cmd or 'main_bot' in cmd:
+                    pre = ' ⚠️PRELOAD' if 'preload' in cmd else ''
+                    _p(f"[MEM] cmd[{pid}]{pre}: {cmd[:200]}")
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
 def _proc_rss_table(top=6):
     """Усі процеси cgroup за RSS (МБ) + сумарний RSS. КЛЮЧОВЕ: self-RSS може
     бути малим (126 МБ), а сусідній процес — тримати сотні МБ. Це показує, ЯКИЙ
@@ -191,6 +209,7 @@ def _monitor_loop(interval, warn_mb, trace, trace_every):
        else f"[MEM] monitor старт · RSS {start_rss} · cgroup {cg0}")
     _p(f"[MEM] інтервал {interval}s · під-семпл 5s (ловить сплески) · "
        f"поріг {warn_mb} MB · trace={'on' if trace else 'off'}")
+    _dump_gunicorn_cmdlines()   # разовий дамп аргументів gunicorn (шукаємо --preload)
 
     # Під-семплування: заміряємо часто (5s), щоб зловити КОРОТКИЙ сплеск, а
     # друкуємо раз на `interval`, показуючи МАКСИМУМ за вікно. Без цього
