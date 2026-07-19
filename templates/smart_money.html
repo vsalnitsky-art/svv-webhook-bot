@@ -10012,8 +10012,37 @@ function renderFundingHistoryChart(h, meta) {
     return info + svg + legend + evLog;
 }
 
-async function loadTMState() {
+// ⏸ Захист редагування таблиць позицій. Поки фокус усередині tbody (поле
+// Manual SL/TP чи тумблер) — або коротка пауза після blur — автоопитування НЕ
+// перемальовує цю таблицю. Без цього 5-с рендер знищував <input>, у який ти
+// друкуєш, і губив значення / збивав тумблер. Слухач вішається ОДИН раз на сам
+// tbody (він переживає заміну innerHTML дочірніх рядків).
+window._tmEditGrace = {};
+window._tmHover = {};
+function _tmSetupEditGuards() {
+    ['tm-open-tbody', 'tm-shadow-open-tbody'].forEach(id => {
+        const tb = document.getElementById(id);
+        if (!tb || tb._editGuard) return;
+        tb._editGuard = true;
+        // blur → коротка пауза (submit встигає), фокус → активне редагування,
+        // курсор над таблицею → не пересовувати елементи, поки цілишся клікнути.
+        tb.addEventListener('focusout', () => { window._tmEditGrace[id] = Date.now() + 2500; });
+        tb.addEventListener('mouseenter', () => { window._tmHover[id] = true; });
+        tb.addEventListener('mouseleave', () => { window._tmHover[id] = false; });
+    });
+}
+function _tmEditingIn(id) {
+    if (window._tmHover[id]) return true;                        // курсор над таблицею
+    const ae = document.activeElement;
+    if (ae && ae.closest && ae.closest('#' + id)) return true;   // фокус усередині таблиці
+    return Date.now() < (window._tmEditGrace[id] || 0);          // пауза після blur
+}
+
+// isPoll=true → виклик із 5-с автоопитування (поважає захист редагування).
+// Явні виклики (після дій користувача) йдуть без аргументу → рендерять завжди.
+async function loadTMState(isPoll) {
     try {
+        _tmSetupEditGuards();
         const res = await fetch('/api/tm/state');
         const d = await res.json();
         if (!d || d.ok === false) return;
@@ -10053,7 +10082,9 @@ async function loadTMState() {
         const positions = d.positions || [];
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
-        if (positions.length === 0) {
+        if (isPoll && _tmEditingIn('tm-open-tbody')) {
+            // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
+        } else if (positions.length === 0) {
             openTbody.innerHTML = '<tr><td colspan="15" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
@@ -10141,7 +10172,9 @@ async function loadTMState() {
         
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
-        if (shadowPositions.length === 0) {
+        if (isPoll && _tmEditingIn('tm-shadow-open-tbody')) {
+            // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
+        } else if (shadowPositions.length === 0) {
             shadowOpenTbody.innerHTML = '<tr><td colspan="15" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
@@ -10366,7 +10399,9 @@ async function submitManualSlTp(symbol, manualSl, manualTp, isShadow) {
         }
         // Refresh table so the persisted value is reflected (and any
         // immediate close fires if the entered level was already breached).
-        setTimeout(loadTMState, 200);
+        // isPoll=true → якщо користувач перейшов у СУСІДНЄ поле того ж рядка
+        // (Tab SL→TP), не знищуємо його; інакше рендеримо.
+        setTimeout(() => loadTMState(true), 200);
     } catch (err) {
         console.error('Manual SL/TP error:', err);
     }
@@ -10568,8 +10603,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     setInterval(() => {
         if (currentSymbol) loadChart();
     }, 30000);
-    // Refresh TM state every 5s when there are open positions, every 15s otherwise
-    setInterval(loadTMState, 5000);
+    // Refresh TM state every 5s. isPoll=true → поважає захист редагування:
+    // поки редагуєш Manual SL/TP чи тумблер, таблиця не перемальовується.
+    setInterval(() => loadTMState(true), 5000);
     // Trade-bias board + exchange sentiment + watchlist consensus — all
     // refresh TOGETHER on one 60s cycle (sentiment row lives inside the
     // board now; the Trade-Direction strip indicator is refreshed here too).
