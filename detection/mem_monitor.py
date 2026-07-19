@@ -62,6 +62,57 @@ def _read_rss_mb():
         return None
 
 
+def _read_cgroup_mem():
+    """Памʼять КОНТЕЙНЕРА (cgroup) у МБ: (usage, limit). Саме це міряє Render і
+    за цим вбиває OOM. ВАЖЛИВО: cgroup-usage включає page cache (файли, БД,
+    mmap) — те, чого VmRSS процесу НЕ показує. Тому RSS може бути 124 МБ, а
+    контейнер — 512 МБ. cgroup v2 → v1. None якщо недоступно."""
+    # cgroup v2 (сучасний Render)
+    try:
+        with open('/sys/fs/cgroup/memory.current') as f:
+            usage = int(f.read().strip())
+        limit = None
+        try:
+            with open('/sys/fs/cgroup/memory.max') as f:
+                v = f.read().strip()
+                limit = None if v == 'max' else int(v)
+        except Exception:
+            pass
+        return (usage / 1048576.0, (limit / 1048576.0 if limit else None))
+    except Exception:
+        pass
+    # cgroup v1
+    try:
+        with open('/sys/fs/cgroup/memory/memory.usage_in_bytes') as f:
+            usage = int(f.read().strip())
+        limit = None
+        try:
+            with open('/sys/fs/cgroup/memory/memory.limit_in_bytes') as f:
+                limit = int(f.read().strip())
+                if limit > (1 << 62):     # «безлімітний» sentinel
+                    limit = None
+        except Exception:
+            pass
+        return (usage / 1048576.0, (limit / 1048576.0 if limit else None))
+    except Exception:
+        return (None, None)
+
+
+def _read_cgroup_cache_mb():
+    """Скільки з cgroup-usage — це page cache (файли/БД). cgroup v2: memory.stat
+    'file'; v1: 'cache'. Допомагає відрізнити «БД у кеші» від «heap». None якщо ні."""
+    for path, key in (('/sys/fs/cgroup/memory.stat', 'file '),
+                      ('/sys/fs/cgroup/memory/memory.stat', 'cache ')):
+        try:
+            with open(path) as f:
+                for line in f:
+                    if line.startswith(key):
+                        return int(line.split()[1]) / 1048576.0
+        except Exception:
+            continue
+    return None
+
+
 def _gc_summary():
     """Короткий стан gc: к-сть об'єктів + лічильники поколінь."""
     try:
@@ -93,44 +144,88 @@ def _trace_top(limit=10):
 
 def _monitor_loop(interval, warn_mb, trace, trace_every):
     start_rss = _read_rss_mb()
-    peak = start_rss or 0.0
+    cg0, cg_limit = _read_cgroup_mem()
+    peak_rss = start_rss or 0.0
     last = start_rss
     tick = 0
-    _p(f"[MEM] monitor старт · RSS {start_rss:.1f} MB · інтервал {interval}s · "
-       f"поріг {warn_mb} MB · trace={'on' if trace else 'off'}"
-       if start_rss is not None else "[MEM] monitor старт · RSS невідомий")
+
+    lim_txt = f"{cg_limit:.0f} MB" if cg_limit else "?"
+    _p(f"[MEM] monitor старт · RSS {start_rss:.1f} MB · "
+       f"cgroup {cg0:.1f}/{lim_txt}" if (start_rss is not None and cg0 is not None)
+       else f"[MEM] monitor старт · RSS {start_rss} · cgroup {cg0}")
+    _p(f"[MEM] інтервал {interval}s · під-семпл 5s (ловить сплески) · "
+       f"поріг {warn_mb} MB · trace={'on' if trace else 'off'}")
+
+    # Під-семплування: заміряємо часто (5s), щоб зловити КОРОТКИЙ сплеск, а
+    # друкуємо раз на `interval`, показуючи МАКСИМУМ за вікно. Без цього
+    # 60-секундний знімок пропускав різкий стрибок памʼяті перед OOM.
+    sub = min(interval, 5)
+    win_peak_rss = start_rss or 0.0
+    win_peak_cg = cg0 or 0.0
+    elapsed = 0
 
     while True:
         try:
-            time.sleep(interval)
-            tick += 1
+            time.sleep(sub)
+            elapsed += sub
+
             rss = _read_rss_mb()
+            cg_usage, _cl = _read_cgroup_mem()
+            if _cl:
+                cg_limit = _cl
+            if rss is not None:
+                win_peak_rss = max(win_peak_rss, rss)
+                peak_rss = max(peak_rss, rss)
+            if cg_usage is not None:
+                win_peak_cg = max(win_peak_cg, cg_usage)
+
+            # Раннє попередження ще ДО планового друку — якщо в під-семплі
+            # cgroup підскочив до порога, друкуємо негайно (перед можливим кілом).
+            near = (cg_usage is not None and cg_limit
+                    and cg_usage >= 0.88 * cg_limit)
+            if elapsed < interval and not near:
+                continue
+            elapsed = 0
+
             if rss is None:
                 _p("[MEM] RSS недоступний (немає /proc, psutil, resource)")
                 continue
-            if rss > peak:
-                peak = rss
             d_last = (rss - last) if last is not None else 0.0
             d_start = (rss - start_rss) if start_rss is not None else 0.0
             last = rss
 
-            flag = ''
-            if rss >= warn_mb:
-                flag = '  ⚠️ БЛИЗЬКО ДО ЛІМІТУ 512 MB — імовірний OOM'
+            # cgroup — головна метрика (за нею вбиває Render)
+            cg_txt = ''
+            if cg_usage is not None:
+                lim_s = f"/{cg_limit:.0f}" if cg_limit else ""
+                cache = _read_cgroup_cache_mb()
+                cache_s = f" (cache {cache:.0f})" if cache is not None else ""
+                cg_txt = (f" · CGROUP {cg_usage:.1f}{lim_s} MB"
+                          f" · cg-peak {win_peak_cg:.1f}{cache_s}")
 
-            _p(f"[MEM] RSS {rss:.1f} MB · Δ{interval}s {d_last:+.1f} · "
-               f"Δstart {d_start:+.1f} · peak {peak:.1f} · "
+            flag = ''
+            watch = cg_usage if cg_usage is not None else rss
+            watch_lim = cg_limit if (cg_usage is not None and cg_limit) else 512
+            if watch >= 0.88 * watch_lim:
+                flag = f'  ⚠️ БЛИЗЬКО ДО ЛІМІТУ {watch_lim:.0f} MB — імовірний OOM'
+
+            _p(f"[MEM] RSS {rss:.1f} MB · Δ {d_last:+.1f} · Δstart {d_start:+.1f} · "
+               f"rss-peak {win_peak_rss:.1f}{cg_txt} · "
                f"{_gc_summary()} · threads {threading.active_count()}{flag}")
+
+            win_peak_rss = rss
+            win_peak_cg = cg_usage or 0.0
+            tick += 1
 
             if trace and (tick % trace_every == 0):
                 top = _trace_top()
                 if top:
-                    _p("[MEM] топ алокацій (tracemalloc):")
+                    _p("[MEM] топ алокацій Python-heap (tracemalloc):")
                     for ln in top:
                         _p(ln)
         except Exception as e:
             _p(f"[MEM] monitor помилка: {e}")
-            time.sleep(interval)
+            time.sleep(sub)
 
 
 def start_mem_monitor():
