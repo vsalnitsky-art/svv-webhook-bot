@@ -14,9 +14,16 @@ than a few seconds. Each endpoint is best-effort — if one fails we
 still return a usable OISnapshot built from whatever did succeed.
 """
 
+import os
 import time
 import requests
 from typing import Optional
+
+# Binance блокує IP дата-центрів Render (HTTP 418), тож на проді ці запити й так
+# падають у таймаут щотіка × кожен символ. За замовчуванням Binance ВИМКНЕНО —
+# OI рахується лише по Bybit (результат той самий, що й зараз, бо Binance і так
+# недоступний), але без марних 3 запитів на символ. Повернути: LIQMAP_USE_BINANCE=1.
+_USE_BINANCE = os.getenv('LIQMAP_USE_BINANCE', '0').lower() in ('1', 'true', 'yes', 'on')
 
 from detection.liquidation_map.providers.base import (
     LiquidationDataProvider, OISnapshot,
@@ -158,22 +165,27 @@ class OIEstimationProvider(LiquidationDataProvider):
         Returns None only when BOTH exchanges fail completely. As long as
         one source returns data we produce a partial snapshot."""
         ts = int(time.time())
-        
-        # Binance — fetch mark price first (we need it to convert contracts→USD)
-        bnb_price = self._binance_mark_price(symbol)
-        bnb_oi_contracts = self._binance_open_interest(symbol)
-        bnb_oi_usd = (bnb_oi_contracts * bnb_price
-                       if bnb_oi_contracts and bnb_price else 0)
-        
+
+        # Binance — вимкнено за замовчуванням (заблоковано на Render, і так падає).
+        # Повернути через env LIQMAP_USE_BINANCE=1. Без нього — 0 марних запитів.
+        if _USE_BINANCE:
+            bnb_price = self._binance_mark_price(symbol)
+            bnb_oi_contracts = self._binance_open_interest(symbol)
+            bnb_oi_usd = (bnb_oi_contracts * bnb_price
+                           if bnb_oi_contracts and bnb_price else 0)
+            # Long/short ratio — Binance only
+            long_ratio = self._binance_long_short_ratio(symbol)
+        else:
+            bnb_price = None
+            bnb_oi_usd = 0.0
+            long_ratio = None
+
         # Bybit — same approach
         bybit_data = self._bybit_open_interest(symbol)
         bybit_price = self._bybit_mark_price(symbol)
         bybit_oi_usd = 0.0
         if bybit_data and bybit_price:
             bybit_oi_usd = bybit_data['oi_contracts'] * bybit_price
-        
-        # Long/short ratio — Binance only
-        long_ratio = self._binance_long_short_ratio(symbol)
         
         total_oi_usd = bnb_oi_usd + bybit_oi_usd
         if total_oi_usd <= 0:
