@@ -7079,6 +7079,9 @@ function reasonLabel(r) {
         'bos_2_partial': '✂️ BOS-2',
         'bos_3_partial': '✂️ BOS-3',
         'bos_4_partial': '✂️ BOS-4',
+        'manual_sl': '🛡 Manual SL',
+        'manual_tp': '🎯 Manual TP',
+        'breakeven_close': '⚖️ Беззбиток',
     }[r] || r;
 }
 
@@ -7089,8 +7092,13 @@ function reasonCellHTML(c) {
     // The at-open entry-decision recap ("was NEUTRAL 50/50") was replaced by
     // the SCORE journey (open → close), which the backend now puts inside
     // reason_detail. So we no longer render decisionRecap here.
-    const detail = c.reason_detail
-        ? `<div style="color:#777;font-size:0.66rem;margin-top:1px;line-height:1.3">${c.reason_detail}</div>`
+    // Другий рядок показуємо ЛИШЕ якщо він несе щось нове (не дублює код/підпис).
+    // Раніше backend клав туди сирий reason ('manual_sl'), і виходило два
+    // однакові рядки, що розтягували таблицю.
+    const rd = (c.reason_detail || '').trim();
+    const showDetail = rd && rd !== c.reason && rd !== label;
+    const detail = showDetail
+        ? `<div style="color:#777;font-size:0.66rem;margin-top:1px;line-height:1.3">${rd}</div>`
         : '';
     return `<td style="color:#aaa;font-size:0.72rem">${label}${detail}</td>`;
 }
@@ -10145,7 +10153,9 @@ async function loadTMState(isPoll) {
                 const pnlClass = c.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
                 const pnlSign = c.pnl_pct >= 0 ? '+' : '';
                 const sideClass = c.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
-                const mMark = c.was_manual ? '<span class="tm-manual-closed" title="Угода керувалась вручну (Manual mode)">✋</span>' : '';
+                const mMark = c.was_manual
+                    ? '<span class="tm-manual-mark" title="Угода керувалась вручну (Manual mode)">✋</span>'
+                    : '<span class="tm-manual-mark"></span>';
                 return `<tr>
                     <td>${fmtTimeJS(c.closed_at)}</td>
                     <td>${mMark}${histSymCell(c, false)}</td>
@@ -10222,7 +10232,9 @@ async function loadTMState(isPoll) {
                 const pnlClass = c.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
                 const pnlSign = c.pnl_pct >= 0 ? '+' : '';
                 const sideClass = c.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
-                const mMark = c.was_manual ? '<span class="tm-manual-closed" title="Угода керувалась вручну (Manual mode)">✋</span>' : '';
+                const mMark = c.was_manual
+                    ? '<span class="tm-manual-mark" title="Угода керувалась вручну (Manual mode)">✋</span>'
+                    : '<span class="tm-manual-mark"></span>';
                 return `<tr>
                     <td>${fmtTimeJS(c.closed_at)}</td>
                     <td>${mMark}${histSymCell(c, true)}</td>
