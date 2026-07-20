@@ -3958,6 +3958,31 @@ def register_api_routes(app):
         exch = request.args.get('exchange', 'bybit')
         return jsonify(get_sentiment(exch))
     
+    @app.route('/api/exchange/ping')
+    def api_exchange_ping():
+        """Lightweight connectivity check to an exchange's public API. Used by the
+        Tickr page «Підключитися» button + status indicator. Returns
+        {ok, exchange, status, latency_ms} (ok=False + error on failure)."""
+        import time as _t
+        import requests as _rq
+        ex = (request.args.get('exchange') or 'binance').lower()
+        urls = {
+            'binance': 'https://fapi.binance.com/fapi/v1/ping',
+            'bybit':   'https://api.bybit.com/v5/market/time',
+            'mexc':    'https://contract.mexc.com/api/v1/contract/ping',
+            'bingx':   'https://open-api.bingx.com/openApi/swap/v2/server/time',
+        }
+        url = urls.get(ex, urls['binance'])
+        t0 = _t.time()
+        try:
+            r = _rq.get(url, timeout=6)
+            return jsonify({'ok': r.status_code == 200, 'exchange': ex,
+                            'status': r.status_code,
+                            'latency_ms': int((_t.time() - t0) * 1000)})
+        except Exception as e:
+            return jsonify({'ok': False, 'exchange': ex, 'error': str(e)[:140],
+                            'latency_ms': int((_t.time() - t0) * 1000)})
+
     @app.route('/api/tickr/fetch', methods=['POST'])
     def api_tickr_fetch():
         """Fetch+filter instruments for an exchange + categories.

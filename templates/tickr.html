@@ -58,12 +58,25 @@
     <div class="tk-row">
         <div class="tk-field">
             <label>БІРЖА</label>
-            <select id="tk-exchange">
+            <select id="tk-exchange" onchange="tkResetConn()">
                 <option value="binance">Binance</option>
                 <option value="bybit" selected>Bybit</option>
                 <option value="mexc">MEXC</option>
                 <option value="bingx">BingX</option>
             </select>
+        </div>
+        <div class="tk-field">
+            <label>ЗʼЄДНАННЯ</label>
+            <div style="display:flex;align-items:center;gap:10px">
+                <button id="tk-conn-btn" class="tk-btn" onclick="tkPingExchange()">🔌 Підключитися</button>
+                <span id="tk-conn-ind" title="Стан зʼєднання з біржею"
+                      style="display:inline-flex;align-items:center;gap:6px;font-size:0.8rem;
+                             padding:4px 10px;border-radius:20px;white-space:nowrap;
+                             border:1px solid rgba(255,255,255,0.12);color:#8b93a7">
+                    <span style="width:9px;height:9px;border-radius:50%;background:#6b7280;display:inline-block"></span>
+                    не перевірено
+                </span>
+            </div>
         </div>
         <div class="tk-field">
             <label>КАТЕГОРІЇ</label>
@@ -300,6 +313,45 @@
 
 <script>
 let tkTopRows = null;
+
+// ── Exchange connection indicator ──────────────────────────────────────────
+function tkSetConn(state, txt, title) {
+    // state: 'ok' | 'fail' | 'wait' | 'idle'
+    const ind = document.getElementById('tk-conn-ind');
+    if (!ind) return;
+    const col = { ok:'#22c55e', fail:'#ef4444', wait:'#fbbf24', idle:'#6b7280' }[state] || '#6b7280';
+    const fg  = { ok:'#86efac', fail:'#fca5a5', wait:'#fcd34d', idle:'#8b93a7' }[state] || '#8b93a7';
+    ind.style.color = fg;
+    ind.style.borderColor = state === 'idle' ? 'rgba(255,255,255,0.12)' : col + '66';
+    ind.innerHTML = '<span style="width:9px;height:9px;border-radius:50%;background:' + col +
+        ';display:inline-block"></span>' + txt;
+    if (title) ind.title = title;
+}
+function tkResetConn() {
+    tkSetConn('idle', 'не перевірено', 'Натисніть «Підключитися», щоб перевірити зʼєднання');
+}
+async function tkPingExchange() {
+    const ex = document.getElementById('tk-exchange').value;
+    const btn = document.getElementById('tk-conn-btn');
+    tkSetConn('wait', 'перевірка…');
+    if (btn) btn.disabled = true;
+    try {
+        const r = await fetch('/api/exchange/ping?exchange=' + encodeURIComponent(ex));
+        const d = await r.json();
+        if (d.ok) {
+            tkSetConn('ok', 'зʼєднано · ' + d.latency_ms + ' мс',
+                      ex.toUpperCase() + ' доступна (HTTP ' + d.status + ', ' + d.latency_ms + ' мс)');
+        } else {
+            tkSetConn('fail', 'немає зʼєднання',
+                      ex.toUpperCase() + ' недоступна: ' + (d.error || ('HTTP ' + d.status)) +
+                      ' (можливо, IP заблоковано біржею)');
+        }
+    } catch (e) {
+        tkSetConn('fail', 'помилка', String(e));
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
 
 function tkFmtUsd(v) {
     v = v || 0;

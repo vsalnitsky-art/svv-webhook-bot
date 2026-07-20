@@ -426,6 +426,7 @@ class FuelFilterDaemon:
         # once a coin's funding stays «gold» ≥ funding_gold_freeze_min minutes.
         self._gold_since: Dict[str, float] = {}
         self._gold_alerted: set = set()
+        self._gold_step: Dict[str, float] = {}   # sym → який рівень band (0.5/1.0/…)
         # 🎯 Per-coin 🎯-recommendation episodes (persisted to DB, survives restart):
         #   {sym: {count, first_at, active:{start_at,start_price,opp_start}|None,
         #          history:[ {start_at,end_at,dur_sec,start_price,end_price,
@@ -3651,9 +3652,15 @@ class FuelFilterDaemon:
             # this gold episode. Any change (loses gold) resets the timer + flag.
             _step = self._gold_funding_step(a)
             if _step is not None:
-                _since = self._gold_since.get(sym)
-                if _since is None:
-                    self._gold_since[sym] = _since = now
+                # Епізод привʼязаний до РІВНЯ (band). Дрібне дрижання в межах того
+                # самого рівня (−0.502↔−0.501) НЕ скидає таймер і не передзапускає
+                # алерт. Скид лише коли рівень реально змінився (перейшов на інший
+                # 0.5-multiple) або зовсім вийшов із золота (гілка else).
+                if self._gold_step.get(sym) != _step:
+                    self._gold_step[sym] = _step
+                    self._gold_since[sym] = now
+                    self._gold_alerted.discard(sym)
+                _since = self._gold_since.get(sym, now)
                 if (_gold_on and sym not in self._gold_alerted
                         and (now - _since) >= _gold_freeze):
                     try:
@@ -3663,6 +3670,7 @@ class FuelFilterDaemon:
                     self._gold_alerted.add(sym)
             else:
                 self._gold_since.pop(sym, None)
+                self._gold_step.pop(sym, None)
                 self._gold_alerted.discard(sym)
         # Prune edge-state for coins that left the table. Do NOT close the 🎯
         # episode here — it is tied to the OPEN TRADE now (closed by
@@ -3680,6 +3688,7 @@ class FuelFilterDaemon:
         for k in list(self._gold_since.keys()):
             if k not in live:
                 self._gold_since.pop(k, None)
+                self._gold_step.pop(k, None)
                 self._gold_alerted.discard(k)
         # 🎯 Reconcile ORPHANED «рекомендована ботом» episodes: an active episode
         # must have a LIVE recommended trade behind it. If the coin is neither
@@ -3728,19 +3737,20 @@ class FuelFilterDaemon:
 
     @staticmethod
     def _gold_funding_step(a: Dict):
-        """✦ Return the clean half-integer step (0.5..4.0) if this coin's funding
-        is «gold» — a stable clean value: |rate| is a 0.5-multiple in [0.5,4] AND
-        it did NOT change vs the previous sample. Else None. Mirrors the UI gold
-        marker (templates/smart_money.html) so the alert and the ✦ badge agree."""
+        """✦ Return the clean half-integer LEVEL (0.5..4.0) if this coin's funding
+        sits on a clean value band — |rate| ≈ a 0.5-multiple in [0.5,4] (tolerance
+        0.01). Else None.
+
+        ВАЖЛИВО: НЕ звіряємо зі змінами vs prev_rate. Дрібне дрижання (−0.502 ↔
+        −0.501) лишається в тій самій band-і рівня 0.5 → це той самий епізод.
+        «Застиг» = тримається на цьому рівні (епізод-таймер веде виклик), а не
+        «жодного разу не змінився» — інакше алерт передзапускався й дублювався."""
         r = a.get('rate')
-        p = a.get('prev_rate')
-        if r is None or p is None:
+        if r is None:
             return None
         try:
-            r = float(r); p = float(p)
+            r = float(r)
         except (TypeError, ValueError):
-            return None
-        if abs(r - p) >= 0.0005:      # changed since last sample → not «frozen»
             return None
         av = abs(r)
         step = round(av / 0.5) * 0.5
@@ -3752,16 +3762,20 @@ class FuelFilterDaemon:
         """✦ Broadcast a «gold funding froze» Telegram — a funding coin whose rate
         stayed on a clean value (e.g. −2.000%) unchanged for a long time."""
         d = a.get('dir')
-        emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
-        side = d if d in ('LONG', 'SHORT') else ''
+        dot = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
+        side = d if d in ('LONG', 'SHORT') else '—'
         rt = a.get('rate')
         rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
         if held_sec >= 3600:
-            dur = f"{held_sec/3600:.1f}год"
+            dur = f"{held_sec/3600:.1f} год"
         else:
-            dur = f"{int(held_sec/60)}хв"
-        body = (f"✦ #{sym} — золотий funding застиг\n"
-                f"{emoji} {side} · {rt_s} стабільно вже {dur} (чітке {step:g}%)")
+            dur = f"{int(held_sec/60)} хв"
+        # Загальний формат як усі інші повідомлення: заголовок + жирний #символ +
+        # структуровані рядки, HTML-жирний. «рівень», а не «чітке» (band ±0.01).
+        body = (f"✦ ЗОЛОТИЙ FUNDING {dot}<b>{side}</b>\n"
+                f"<b>#{sym}</b>\n"
+                f"💰 Funding: <b>{rt_s}</b> · рівень {step:g}%\n"
+                f"⏱ Тримається: <b>{dur}</b>")
         self._broadcast_users('funding', 'notify_funding', body)
 
     def _signal_open(self, sym: str, a: Dict, tag: str, settings: Dict):
