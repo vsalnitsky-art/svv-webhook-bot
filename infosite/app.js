@@ -106,9 +106,11 @@
 
   function hms(sec) {
     sec = Math.max(0, Math.floor(sec || 0));
-    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    var d = Math.floor(sec / 86400);
+    var h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
     var p = function (n) { return (n < 10 ? "0" : "") + n; };
-    return p(h) + ":" + p(m) + ":" + p(s);
+    var t = p(h) + ":" + p(m) + ":" + p(s);
+    return d > 0 ? d + "д " + t : t;   // >24 год → «1д 06:51:36», як у боті
   }
 
   function fmtCountdown(ms) {
