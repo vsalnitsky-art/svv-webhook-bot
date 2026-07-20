@@ -333,19 +333,7 @@ def _auto_start_keep_alive():
         print("[STARTUP] Keep-alive scheduled for Render environment")
 
 
-def _auto_start_mem_monitor():
-    """Періодичний лог RSS — діагностика OOM на Render (512 МБ free-tier).
-    Легкий (читає /proc), без нових залежностей. Керується env MEM_* —
-    див. detection/mem_monitor.py."""
-    try:
-        from detection.mem_monitor import start_mem_monitor
-        start_mem_monitor()
-    except Exception as e:
-        print(f"[STARTUP] mem-monitor не стартував: {e}")
-
-
 _auto_start_keep_alive()
-_auto_start_mem_monitor()
 
 
 if __name__ == '__main__':
