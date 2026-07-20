@@ -44,6 +44,7 @@ Execution modes:
   • If both are on, real TM takes precedence.
 """
 
+import os
 import time
 import threading
 from typing import Optional, Callable, Dict, List
@@ -655,7 +656,13 @@ class FuelFilterDaemon:
             s['queue2_ttl_hours'] = max(0.0, min(72.0, float(s.get('queue2_ttl_hours', 6) or 0)))
         except (TypeError, ValueError):
             s['queue2_ttl_hours'] = 6
-        s['ctr_mtf_enabled'] = bool(s.get('ctr_mtf_enabled', True))
+        # ⚠️ CTR-mtf рахує STC на 5 таймфреймах НА КОЖНУ монету, але це
+        # RECORD-ONLY (для майбутнього калібрування, нікуди не підключено). На
+        # 60 монетах × 5 ТФ це десятки зайвих fetch-ів клайнів щоцикл → CPU і
+        # сплески памʼяті. За замовчуванням ВИМКНЕНО, поки не вирішено вмикати
+        # (env CTR_MTF=1 повертає). Це не ламає торгівлю — mtf нічого не гейтить.
+        _mtf_env = os.getenv('CTR_MTF', '0').lower() in ('1', 'true', 'yes', 'on')
+        s['ctr_mtf_enabled'] = bool(s.get('ctr_mtf_enabled', True)) and _mtf_env
         _valid_tfs = ('5m', '15m', '30m', '45m', '1h', '2h', '4h')
         _tfs = s.get('ctr_mtf_tfs') or ['5m', '15m', '45m', '1h', '4h']
         if isinstance(_tfs, str):
