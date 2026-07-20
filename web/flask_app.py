@@ -3966,19 +3966,28 @@ def register_api_routes(app):
         import time as _t
         import requests as _rq
         ex = (request.args.get('exchange') or 'binance').lower()
+        # Бʼємо в РЕАЛЬНИЙ data-ендпоінт (той самий тип, що й Fetch), а не в
+        # тривіальний /ping — інакше індикатор бреше: /ping може віддавати 200,
+        # а data-ендпоінт — 418 (Binance блокує IP дата-центрів Render).
         urls = {
-            'binance': 'https://fapi.binance.com/fapi/v1/ping',
-            'bybit':   'https://api.bybit.com/v5/market/time',
-            'mexc':    'https://contract.mexc.com/api/v1/contract/ping',
-            'bingx':   'https://open-api.bingx.com/openApi/swap/v2/server/time',
+            'binance': 'https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=BTCUSDT',
+            'bybit':   'https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT',
+            'mexc':    'https://contract.mexc.com/api/v1/contract/ticker?symbol=BTC_USDT',
+            'bingx':   'https://open-api.bingx.com/openApi/swap/v2/quote/ticker?symbol=BTC-USDT',
         }
         url = urls.get(ex, urls['binance'])
         t0 = _t.time()
         try:
             r = _rq.get(url, timeout=6)
-            return jsonify({'ok': r.status_code == 200, 'exchange': ex,
-                            'status': r.status_code,
-                            'latency_ms': int((_t.time() - t0) * 1000)})
+            blocked = r.status_code in (418, 451, 403)
+            out = {'ok': r.status_code == 200, 'exchange': ex,
+                   'status': r.status_code,
+                   'latency_ms': int((_t.time() - t0) * 1000)}
+            if blocked:
+                out['error'] = f'HTTP {r.status_code} — біржа блокує IP сервера'
+            elif r.status_code != 200:
+                out['error'] = f'HTTP {r.status_code}'
+            return jsonify(out)
         except Exception as e:
             return jsonify({'ok': False, 'exchange': ex, 'error': str(e)[:140],
                             'latency_ms': int((_t.time() - t0) * 1000)})
