@@ -54,6 +54,10 @@ EXHAUSTION_TTL = 120            # cache exhaustion per symbol for 2 min
 BIAS_TTL = 10                   # cache compute_bias result per symbol (sec)
 FUEL_LONG_THR = 0.1            # fuel_dir > +0.1 → LONG bias
 FUEL_SHORT_THR = -0.1          # fuel_dir < -0.1 → SHORT bias
+# ⚡ 1H CTR «в усі місця» фетчить 200 клайнів на КОЖНУ монету (get_ctr_tf 1h) —
+# один із головних споживачів CPU/памʼяті на цикл. Вимкнено за замовч., щоб
+# розвантажити; код лишається. Повернути — env CTR_1H=1.
+_CTR_1H = os.getenv('CTR_1H', '0').lower() in ('1', 'true', 'yes', 'on')
 CLOSED_LIMIT = 100             # keep last N closes for the UI
 # Grace period before closing on FUEL FADE (status → neutral/None). Without
 # this, a single transient liq-map data gap or a brief dip into the ±0.1
@@ -2249,9 +2253,9 @@ class FuelFilterDaemon:
                               'lean_pct': round(abs(stc - 50.0) / 50.0 * 100.0),
                               'tf': c.get('tf'), 'last_dir': c.get('last_dir'),
                               'age_bars': c.get('last_signal_age_bars')}
-                # ⚡ 1H CTR alongside (cheap per-(sym,'1h') cache, TTL 5m). Skip
+                # ⚡ 1H CTR alongside (вимкнено за замовч. — env CTR_1H=1). Skip
                 # when the primary TF is already 1h — no duplicate.
-                if str(c.get('tf') or '').lower() != '1h':
+                if _CTR_1H and str(c.get('tf') or '').lower() != '1h':
                     try:
                         h1 = fe.get_ctr_tf(symbol, '1h')
                         if h1 and h1.get('stc') is not None:
@@ -3894,10 +3898,9 @@ class FuelFilterDaemon:
                             'last_dir': c.get('last_dir'),
                             'last_signal_age_bars': c.get('last_signal_age_bars'),
                             'tf': c.get('tf')}
-                    # ⚡ 1H CTR alongside the primary TF — cheap: reads the
-                    # forecast-engine per-(sym,'1h') cache (TTL 5m). Skipped when
-                    # the primary TF is ALREADY 1h (no duplicate column).
-                    if str(c.get('tf') or '').lower() != '1h':
+                    # ⚡ 1H CTR alongside (вимкнено за замовч. — env CTR_1H=1).
+                    # Skipped when the primary TF is ALREADY 1h (no duplicate).
+                    if _CTR_1H and str(c.get('tf') or '').lower() != '1h':
                         try:
                             h1 = fe.get_ctr_tf(symbol, '1h')
                             if h1 and h1.get('stc') is not None:
