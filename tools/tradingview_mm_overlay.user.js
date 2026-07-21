@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VSV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.3.0
+// @version      1.4.0
 // @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       VSV
 // @match        https://*.tradingview.com/chart/*
@@ -344,14 +344,22 @@
             const col = lean === 'LONG' ? '#4ade80' : (lean === 'SHORT' ? '#f87171' : '#9aa3b5');
             const label = lean ? (lean + '-нахил') : 'нейтрально';
             const pct = (c.lean_pct != null) ? c.lean_pct : 0;
-            let foot = `⚡ CTR${tf} <span style="color:${col};font-weight:700">${icon} ${label} ${pct}%</span>`;
-            // ⚡ 1H CTR alongside the primary TF (added by get_panel_status).
+            // Обидва числа: точний STC (реальне значення осцилятора) + % впевненості.
+            let foot = `⚡ CTR${tf} <span style="color:${col};font-weight:700">${icon} ${label} STC ${Math.round(c.stc)} · ${pct}%</span>`;
+            // ⚡ 1H / 4H CTR alongside the primary TF (added by get_panel_status).
             if (c.stc_1h != null) {
                 const l1 = c.lean_1h;
                 const i1 = l1 === 'LONG' ? '🟢' : (l1 === 'SHORT' ? '🔴' : '⚪');
                 const cc1 = l1 === 'LONG' ? '#4ade80' : (l1 === 'SHORT' ? '#f87171' : '#9aa3b5');
                 const p1 = (c.lean_pct_1h != null) ? c.lean_pct_1h : 0;
-                foot += ` <span style="color:${cc1};font-weight:700">· 1H ${i1} ${p1}%</span>`;
+                foot += ` <span style="color:${cc1};font-weight:700">· 1H ${i1} STC ${Math.round(c.stc_1h)} · ${p1}%</span>`;
+            }
+            if (c.stc_4h != null) {
+                const l4 = c.lean_4h;
+                const i4 = l4 === 'LONG' ? '🟢' : (l4 === 'SHORT' ? '🔴' : '⚪');
+                const cc4 = l4 === 'LONG' ? '#4ade80' : (l4 === 'SHORT' ? '#f87171' : '#9aa3b5');
+                const p4 = (c.lean_pct_4h != null) ? c.lean_pct_4h : 0;
+                foot += ` <span style="color:${cc4};font-weight:700">· 4H ${i4} STC ${Math.round(c.stc_4h)} · ${p4}%</span>`;
             }
             elFoot.innerHTML = foot;
         } else {

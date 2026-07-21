@@ -7034,6 +7034,19 @@ def compute_bias(db, symbol, wl=None):
                             _ctr['lean_pct_1h'] = round(abs(_s1 - 50.0) / 50.0 * 100.0)
                     except Exception:
                         pass
+                # ⚡ 4H CTR alongside (per-symbol, cheap — TTL 15m). Skip коли ТФ уже 4h.
+                if isinstance(_ctr, dict) and str(_ctr.get('tf') or '').lower() != '4h':
+                    try:
+                        _h4 = _fe.get_ctr_tf(symbol, '4h')
+                        if _h4 and _h4.get('stc') is not None:
+                            _s4 = float(_h4['stc'])
+                            _ctr = dict(_ctr)
+                            _ctr['stc_4h'] = round(_s4, 1)
+                            _ctr['lean_4h'] = ('SHORT' if _s4 > 50
+                                               else ('LONG' if _s4 < 50 else None))
+                            _ctr['lean_pct_4h'] = round(abs(_s4 - 50.0) / 50.0 * 100.0)
+                    except Exception:
+                        pass
     except Exception:
         _ctr = None
     _decision = None

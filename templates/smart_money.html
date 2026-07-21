@@ -5816,7 +5816,9 @@ async function loadChart() {
             // Build badge with PER-PART colours: the crossover keeps its own
             // direction colour (green LONG / red SHORT, grey if stale), the lean
             // keeps its zone colour — so the two don't blur into one hue.
-            const leanHtml = `<span style="color:${zoneColor}">${revBias} ${leanPct}%</span>`;
+            // Обидва числа: точний STC (реальне значення осцилятора 0–100) + %
+            // впевненості розвороту. STC — «точний відсоток», % — сила нахилу.
+            const leanHtml = `<span style="color:${zoneColor}">${revBias} STC ${Math.round(ctr.stc)} · ${leanPct}%</span>`;
             let bgColor = 'rgba(100,100,100,0.12)';
             let badgeHtml = `⚡ CTR${_ctrTf} ${leanHtml}`;
 
@@ -5837,7 +5839,7 @@ async function loadChart() {
                     : (ctr.last_dir === 'LONG' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)');
             }
 
-            // ⚡ 1H CTR alongside the primary TF (added by /api/sm/bias).
+            // ⚡ 1H / 4H CTR alongside the primary TF (STC + % впевненості кожен).
             if (ctr.stc_1h != null) {
                 const s1 = Number(ctr.stc_1h);
                 let b1, c1;
@@ -5845,7 +5847,16 @@ async function loadChart() {
                 else if (s1 < 50) { b1 = '🟢'; c1 = '#86efac'; }
                 else { b1 = '⚪'; c1 = '#aaa'; }
                 const p1 = Math.round(Math.abs(s1 - 50) / 50 * 100);
-                badgeHtml += ` <span title="CTR 1H · STC ${s1.toFixed(0)}/100" style="color:${c1}">· 1H ${b1} ${p1}%</span>`;
+                badgeHtml += ` <span title="CTR 1H · STC ${s1.toFixed(1)}/100 · впевненість ${p1}%" style="color:${c1}">· 1H ${b1} STC ${Math.round(s1)} · ${p1}%</span>`;
+            }
+            if (ctr.stc_4h != null) {
+                const s4 = Number(ctr.stc_4h);
+                let b4, c4;
+                if (s4 > 50) { b4 = '🔴'; c4 = '#fca5a5'; }
+                else if (s4 < 50) { b4 = '🟢'; c4 = '#86efac'; }
+                else { b4 = '⚪'; c4 = '#aaa'; }
+                const p4 = Math.round(Math.abs(s4 - 50) / 50 * 100);
+                badgeHtml += ` <span title="CTR 4H · STC ${s4.toFixed(1)}/100 · впевненість ${p4}%" style="color:${c4}">· 4H ${b4} STC ${Math.round(s4)} · ${p4}%</span>`;
             }
             ctrBadge.innerHTML = badgeHtml;
             ctrBadge.className = 'sm-status-badge';
@@ -7131,7 +7142,8 @@ function ffCtrCell(c) {
     else if (stc < 50) { revBias = '🟢 LONG-нахил'; col = '#4ade80'; }
     else { revBias = '⚪ нейтрально'; col = '#9aa3b5'; }
     const leanPct = Math.round(Math.abs(stc - 50) / 50 * 100);
-    let html = `<span title="STC ${stc.toFixed(0)}/100" style="color:${col};font-weight:700">${revBias} ${leanPct}%</span>`;
+    // Обидва числа: точний STC + % впевненості розвороту.
+    let html = `<span title="STC ${stc.toFixed(1)}/100 · впевненість ${leanPct}%" style="color:${col};font-weight:700">${revBias} STC ${Math.round(stc)} · ${leanPct}%</span>`;
     if (c.last_dir) {
         const icon = c.last_dir === 'LONG' ? '🟢' : '🔴';
         const age = c.last_signal_age_bars;
@@ -7142,7 +7154,7 @@ function ffCtrCell(c) {
         html += ` <span title="Останній CTR-кросовер: ${c.last_dir} ${ageStr}${stale ? ' (застарілий)' : ''}" `
             + `style="font-size:0.6rem;color:${crossCol}">${icon}${ageStr}${stale ? '⚠️' : ''}</span>`;
     }
-    // ⚡ 1H CTR segment alongside the primary TF (added by _ctr_snapshot).
+    // ⚡ 1H / 4H CTR segments alongside the primary TF (STC + % впевненості).
     if (c.stc_1h != null) {
         const s1 = Number(c.stc_1h);
         let b1, c1;
@@ -7150,7 +7162,16 @@ function ffCtrCell(c) {
         else if (s1 < 50) { b1 = '🟢'; c1 = '#4ade80'; }
         else { b1 = '⚪'; c1 = '#9aa3b5'; }
         const p1 = Math.round(Math.abs(s1 - 50) / 50 * 100);
-        html += ` <span title="CTR 1H · STC ${s1.toFixed(0)}/100" style="color:${c1};font-size:0.62rem;font-weight:700">· 1H ${b1} ${p1}%</span>`;
+        html += ` <span title="CTR 1H · STC ${s1.toFixed(1)}/100 · впевненість ${p1}%" style="color:${c1};font-size:0.62rem;font-weight:700">· 1H ${b1} STC ${Math.round(s1)} · ${p1}%</span>`;
+    }
+    if (c.stc_4h != null) {
+        const s4 = Number(c.stc_4h);
+        let b4, c4;
+        if (s4 > 50) { b4 = '🔴'; c4 = '#f87171'; }
+        else if (s4 < 50) { b4 = '🟢'; c4 = '#4ade80'; }
+        else { b4 = '⚪'; c4 = '#9aa3b5'; }
+        const p4 = Math.round(Math.abs(s4 - 50) / 50 * 100);
+        html += ` <span title="CTR 4H · STC ${s4.toFixed(1)}/100 · впевненість ${p4}%" style="color:${c4};font-size:0.62rem;font-weight:700">· 4H ${b4} STC ${Math.round(s4)} · ${p4}%</span>`;
     }
     return html;
 }

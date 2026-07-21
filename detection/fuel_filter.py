@@ -54,10 +54,12 @@ EXHAUSTION_TTL = 120            # cache exhaustion per symbol for 2 min
 BIAS_TTL = 10                   # cache compute_bias result per symbol (sec)
 FUEL_LONG_THR = 0.1            # fuel_dir > +0.1 → LONG bias
 FUEL_SHORT_THR = -0.1          # fuel_dir < -0.1 → SHORT bias
-# ⚡ 1H CTR «в усі місця» фетчить 200 клайнів на КОЖНУ монету (get_ctr_tf 1h) —
+# ⚡ 1H/4H CTR «в усі місця» фетчить 200 клайнів на КОЖНУ монету (get_ctr_tf) —
 # один із головних споживачів CPU/памʼяті на цикл. Вимкнено за замовч., щоб
-# розвантажити; код лишається. Повернути — env CTR_1H=1.
+# розвантажити; код лишається. Повернути — env CTR_1H=1 / CTR_4H=1. (4H кеш
+# живе 15 хв, тож фон легкий; на VDS обидва можна тримати ввімкненими.)
 _CTR_1H = os.getenv('CTR_1H', '0').lower() in ('1', 'true', 'yes', 'on')
+_CTR_4H = os.getenv('CTR_4H', '0').lower() in ('1', 'true', 'yes', 'on')
 CLOSED_LIMIT = 100             # keep last N closes for the UI
 # Grace period before closing on FUEL FADE (status → neutral/None). Without
 # this, a single transient liq-map data gap or a brief dip into the ±0.1
@@ -2267,6 +2269,18 @@ class FuelFilterDaemon:
                             out['ctr']['lean_pct_1h'] = round(abs(s1 - 50.0) / 50.0 * 100.0)
                     except Exception:
                         pass
+                # ⚡ 4H CTR поряд (гейт env CTR_4H). Skip коли основний ТФ уже 4h.
+                if _CTR_4H and str(c.get('tf') or '').lower() != '4h':
+                    try:
+                        h4 = fe.get_ctr_tf(symbol, '4h')
+                        if h4 and h4.get('stc') is not None:
+                            s4 = float(h4['stc'])
+                            out['ctr']['stc_4h'] = round(s4, 1)
+                            out['ctr']['lean_4h'] = ('SHORT' if s4 > 50
+                                                     else ('LONG' if s4 < 50 else None))
+                            out['ctr']['lean_pct_4h'] = round(abs(s4 - 50.0) / 50.0 * 100.0)
+                    except Exception:
+                        pass
             else:
                 out['ctr'] = None
         except Exception:
@@ -3920,6 +3934,15 @@ class FuelFilterDaemon:
                             if h1 and h1.get('stc') is not None:
                                 snap['stc_1h'] = h1.get('stc')
                                 snap['last_dir_1h'] = h1.get('last_dir')
+                        except Exception:
+                            pass
+                    # ⚡ 4H CTR alongside (env CTR_4H). Skip коли ТФ уже 4h.
+                    if _CTR_4H and str(c.get('tf') or '').lower() != '4h':
+                        try:
+                            h4 = fe.get_ctr_tf(symbol, '4h')
+                            if h4 and h4.get('stc') is not None:
+                                snap['stc_4h'] = h4.get('stc')
+                                snap['last_dir_4h'] = h4.get('last_dir')
                         except Exception:
                             pass
                     return snap

@@ -2873,6 +2873,18 @@ class SMCScanner:
                                 ctr['lean_1h'] = ('SHORT' if _s1 > 50
                                                   else ('LONG' if _s1 < 50 else None))
                                 ctr['lean_pct_1h'] = round(abs(_s1 - 50.0) / 50.0 * 100.0)
+                        # ⚡ 4H CTR поряд — гейт env CTR_4H (як 1H). Skip коли ТФ уже 4h.
+                        if (_os.getenv('CTR_4H', '0').lower() in ('1', 'true', 'yes', 'on')
+                                and isinstance(ctr, dict)
+                                and str(ctr.get('tf') or '').lower() != '4h'):
+                            _h4 = fe.get_ctr_tf(symbol, '4h')
+                            if _h4 and _h4.get('stc') is not None:
+                                _s4 = float(_h4['stc'])
+                                ctr = dict(ctr)
+                                ctr['stc_4h'] = round(_s4, 1)
+                                ctr['lean_4h'] = ('SHORT' if _s4 > 50
+                                                  else ('LONG' if _s4 < 50 else None))
+                                ctr['lean_pct_4h'] = round(abs(_s4 - 50.0) / 50.0 * 100.0)
                     except Exception:
                         pass
         except Exception:
