@@ -24,23 +24,22 @@ from typing import Dict, Optional
 
 # Дефолтні ваги/пороги (LIQMAP-домінантний мікс). Тюняться через налаштування FF.
 _DEFAULTS = {
-    'mm_liq_weight': 0.55,      # ядро — Liquidity Pull Vector
-    'mm_whale_weight': 0.20,    # реальний крупний капітал
-    'mm_book_weight': 0.15,     # ліміти стакана (MM)
-    'mm_pos_weight': 0.10,      # позиціювання (funding, контр)
+    # 💰 ЧИСТА БАБЛО-МОДЕЛЬ (без тренду): усе крутиться навколо ліквідності,
+    # ліквідацій, стопів і позиціювання капіталу. Напрямок = куди тягне «бабло».
+    'mm_liq_weight': 0.35,      # кластери ліквідацій/стопів (сторона + проксіміті)
+    'mm_pos_weight': 0.38,      # позиціювання: funding + long/short (max-pain, контр)
+    'mm_whale_weight': 0.15,    # реальний крупний капітал (whale-tape)
+    'mm_book_weight': 0.12,     # ліміти стакана (MM)
     'mm_prox_pct': 2.0,         # D0 — масштаб проксіміті-загасання, %
     'mm_threshold': 0.15,       # |score| поріг для LONG/SHORT
     'mm_funding_scale': 0.05,   # |funding %|, що дає повний контр-сигнал
     'mm_reach_pct': 15.0,       # далі за цю відстань кластер уже не магніт
-    # 🧭 Реконсиляція з РУХОМ ціни. Магніт-модель контртрендова — сама по собі
-    # показує, ДЕ ліквідність, а не куди ЙДЕ ціна. Тренд коригує напрямок:
-    'mm_trend_weight': 0.30,    # вага м'якого блендингу тренду у спокійному ринку
-    'mm_trend_override': 0.5,   # |імпульс| ≥ цього і проти магніту → тренд ВЕДЕ
 }
 
-# TTL-кеш funding, щоб не смикати біржу щоцикл на кожну монету.
+# TTL-кеші позиціювання, щоб не смикати біржу щоцикл на кожну монету.
 _funding_cache: Dict[str, tuple] = {}   # symbol -> (ts, rate)
-_FUNDING_TTL = 300.0
+_ls_cache: Dict[str, tuple] = {}        # symbol -> (ts, ls_long_pct)
+_POS_TTL = 300.0
 
 
 def get_mm_settings(db) -> Dict:
@@ -78,7 +77,15 @@ def _liq_pull(levels, mark: float, d0: float, reach: float):
             continue
         prox = math.exp(-dist / max(d0, 1e-6))
         wgt = usd * prox
-        s = 1.0 if price > mark else -1.0
+        # Сторона кластера: 'short'-позиції ліквідуються, коли ціна РОСТЕ (магніт
+        # угору, +), 'long' — коли ПАДАЄ (вниз, −). Фолбек на позицію відносно mark.
+        sd = str(lev.get('side') or '').lower()
+        if sd == 'short':
+            s = 1.0
+        elif sd == 'long':
+            s = -1.0
+        else:
+            s = 1.0 if price > mark else -1.0
         num += s * wgt
         den += wgt
         if best is None or wgt > best[0]:
@@ -180,13 +187,13 @@ def _book_term(symbol: str) -> Optional[float]:
         return None
 
 
-def _pos_term(symbol: str, fscale: float) -> Optional[float]:
-    """Позиціювання за funding → [-1..+1], КОНТР: сильно додатний funding =
-    переповнені лонги = ймовірна ціль знизу = ведмежий нахил (−). TTL-кеш."""
+def _funding_signed(symbol: str, fscale: float) -> Optional[float]:
+    """funding → [-1..+1] КОНТР: додатний funding = переповнені ЛОНГИ (платять) =
+    їх вичавлюють ВНИЗ (−); мінусовий = переповнені ШОРТИ = сквіз УГОРУ (+)."""
     try:
         now = time.time()
         c = _funding_cache.get(symbol)
-        if c and (now - c[0]) < _FUNDING_TTL:
+        if c and (now - c[0]) < _POS_TTL:
             rate = c[1]
         else:
             from detection.exchange_router import get_funding_rate
@@ -194,11 +201,46 @@ def _pos_term(symbol: str, fscale: float) -> Optional[float]:
             _funding_cache[symbol] = (now, rate)
         if rate is None:
             return None
-        # rate у частках (напр. 0.0001 = 0.01%). Переводимо у % і контр-знак.
         pct = float(rate) * 100.0
         return max(-1.0, min(1.0, -pct / max(fscale, 1e-6)))
     except Exception:
         return None
+
+
+def _ls_signed(symbol: str) -> Optional[float]:
+    """long/short-ratio → [-1..+1] КОНТР: натовп у ЛОНГАХ (ls_long>50) → ціль вниз
+    (−); натовп у ШОРТАХ (<50) → сквіз угору (+). TTL-кеш."""
+    try:
+        now = time.time()
+        c = _ls_cache.get(symbol)
+        if c and (now - c[0]) < _POS_TTL:
+            ls_long = c[1]
+        else:
+            from detection.market_data import get_market_data
+            md = get_market_data()
+            ls_long = None
+            if md and hasattr(md, 'fetch_ls_ratio'):
+                data, _src = md.fetch_ls_ratio(symbol)
+                if data and data.get('ls_long') is not None:
+                    ls_long = float(data['ls_long'])
+            _ls_cache[symbol] = (now, ls_long)
+        if ls_long is None:
+            return None
+        return max(-1.0, min(1.0, -(ls_long - 50.0) / 50.0))
+    except Exception:
+        return None
+
+
+def _pos_term(symbol: str, fscale: float):
+    """Позиціювання капіталу (max-pain, КОНТР): переповнений бік вичавлюють у
+    протилежний. Комбінує funding + long/short-ratio. → (value[-1..1], detail)
+    або (None, {}). detail — для логу/тултипа."""
+    f = _funding_signed(symbol, fscale)
+    ls = _ls_signed(symbol)
+    vals = [v for v in (f, ls) if v is not None]
+    if not vals:
+        return None, {}
+    return sum(vals) / len(vals), {'funding': f, 'ls': ls}
 
 
 def _dq_factor(dq) -> float:
@@ -214,16 +256,15 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
                with_confirmations: bool = True,
                with_funding: bool = False,
                momentum: Optional[float] = None) -> Optional[Dict]:
-    """Головна функція. `liq_state` можна передати готовим (щоб не фетчити двічі).
-    `with_confirmations=False` → лише LPV-ядро (дешево, для масового скану).
-    `with_funding` — чи робити funding-запит (єдиний мережевий; вмикати лише для
-    BTC / сфокусованої монети, щоб масовий скан не смикав біржу).
-    `momentum` — знаковий імпульс ЦІНИ [-1..+1] (+ вгору): передає викликач (у
-    нього є свічки). Магніт-модель контртрендова, тож імпульс КОРИГУЄ напрямок —
-    при сильному русі проти магніту тренд ВЕДЕ (див. mm_trend_override).
+    """ЧИСТА БАБЛО-МОДЕЛЬ напрямку ММ (без тренду). Напрямок визначає лише капітал:
+    кластери ліквідацій/стопів (сторона+проксіміті) + позиціювання (funding+L/S,
+    контр/max-pain) + whale-потік + ліміти стакана. `liq_state` можна передати
+    готовим. `with_confirmations=False` → лише магніт-ядро (для масового скану).
+    `with_funding`/`momentum` — застарілі, ігноруються (тренд прибрано з напрямку;
+    момент лишається лише як контекст у SCORE, не тут).
 
     Return: {dir, status, strength, mark_price, target, components, weights,
-             data_quality, trend_override} або None коли зовсім немає даних."""
+             data_quality, runway} або None коли зовсім немає даних."""
     try:
         st = get_mm_settings(db)
         lst = liq_state
@@ -252,13 +293,22 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
         pull, target, mass = _liq_pull((lst or {}).get('levels') or [], mark,
                                        st['mm_prox_pct'], st['mm_reach_pct'])
 
-        # Мікс: LIQMAP завжди (якщо є маса), решта — best-effort, ваги ренормуються.
+        # 💰 Бабло-мікс: кластери ліквідацій + позиціювання (funding+L/S) + whale +
+        # стакан. Ваги ренормуються за наявними сигналами. Тренд НЕ бере участі —
+        # напрямок визначає лише «бабло». Позиціювання рахується для ВСІХ монет.
         terms = []  # (name, weight, value)
         if mass > 0:
             terms.append(('liq', st['mm_liq_weight'], pull))
         comp = {'liq': round(pull, 3) if mass > 0 else None,
-                'whale': None, 'book': None, 'pos': None}
+                'pos': None, 'whale': None, 'book': None,
+                'funding': None, 'ls': None}
         if with_confirmations:
+            ps, pdet = _pos_term(symbol, st['mm_funding_scale'])
+            if ps is not None:
+                terms.append(('pos', st['mm_pos_weight'], ps))
+                comp['pos'] = round(ps, 3)
+                comp['funding'] = pdet.get('funding')
+                comp['ls'] = pdet.get('ls')
             wf = _whale_term(symbol)
             if wf is not None:
                 terms.append(('whale', st['mm_whale_weight'], wf))
@@ -267,50 +317,27 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
             if bi is not None:
                 terms.append(('book', st['mm_book_weight'], bi))
                 comp['book'] = round(bi, 3)
-            if with_funding:
-                ps = _pos_term(symbol, st['mm_funding_scale'])
-                if ps is not None:
-                    terms.append(('pos', st['mm_pos_weight'], ps))
-                    comp['pos'] = round(ps, 3)
 
         wsum = sum(w for _n, w, _v in terms)
         if wsum <= 0:
             return None
         score = sum(w * v for _n, w, v in terms) / wsum   # ренормовано → [-1..1]
         score = max(-1.0, min(1.0, score))
-        liq_score = score   # чистий магніт (до реконсиляції з трендом) — для логу
-
-        # 🧭 Реконсиляція з РУХОМ ціни. Магніт контртрендовий → сам показує, ДЕ
-        # ліквідність, а не куди ЙДЕ ціна. При сильному русі ПРОТИ магніту тренд
-        # веде напрямок (інакше «монета росте, а ММ = SHORT»); у спокійному ринку
-        # — м'який блендинг, магніт лишається основою.
-        trend_override = False
-        if momentum is not None:
-            m = max(-1.0, min(1.0, float(momentum)))
-            comp['trend'] = round(m, 3)
-            opposes = (m > 0) != (score > 0)
-            if abs(m) >= st['mm_trend_override'] and opposes and abs(score) > 0.05:
-                score = m                       # тренд ВЕДЕ напрямок
-                trend_override = True
-            else:
-                tw = st['mm_trend_weight']
-                score = (1.0 - tw) * score + tw * m
-            score = max(-1.0, min(1.0, score))
 
         thr = st['mm_threshold']
         status = ('LONG' if score > thr else ('SHORT' if score < -thr else None))
         dqf = _dq_factor((lst or {}).get('data_quality'))
         strength = int(round(min(1.0, abs(score)) * 100 * dqf))
 
-        # 🎯 «Запас ходу» — відстань до значущої ліквідності попереду руху. Напрямок
-        # руху: статус ММ, а якщо WAIT — знак імпульсу ціни.
+        # 🎯 «Запас ходу» — відстань до значущої ліквідності попереду руху. Напрямок:
+        # статус ММ, а якщо WAIT — знак магніт-пулу (чисто по баблу, без тренду).
         _mv = status
-        if _mv is None and momentum is not None:
-            _mv = ('LONG' if momentum > 0.1 else ('SHORT' if momentum < -0.1 else None))
+        if _mv is None and mass > 0:
+            _mv = ('LONG' if pull > 0.05 else ('SHORT' if pull < -0.05 else None))
         runway = _runway((lst or {}).get('levels') or [], mark, _mv, st['mm_reach_pct'])
 
         return {
-            'dir': round(score, 3),          # сумісно зі старим fuel_dir (після тренду)
+            'dir': round(score, 3),          # сумісно зі старим fuel_dir
             'status': status,
             'strength': strength,
             'mark_price': mark,
@@ -318,8 +345,6 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
             'components': comp,               # внесок кожного сигналу [-1..1]
             'weights': {n: round(w, 3) for n, w, _v in terms},
             'data_quality': dqf,
-            'liq_score': round(liq_score, 3),  # чистий магніт до реконсиляції (лог)
-            'trend_override': trend_override,  # тренд переважив магніт
             'runway': runway,                  # запас ходу до ліквідності попереду
         }
     except Exception as e:
