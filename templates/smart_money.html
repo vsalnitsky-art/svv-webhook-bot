@@ -7182,6 +7182,17 @@ function ffRevCell(pct) {
     return `<span title="Готовність до закриття на розвороті після піку (100% ≈ момент закриття)" style="color:${col};font-weight:700;font-size:0.72rem">🔄 ${v}%</span>`;
 }
 
+// Відтінок hex: amt>0 світлішає (до білого), amt<0 темнішає (до чорного).
+function scShade(hex, amt) {
+    try {
+        const h = String(hex || '#94a3b8').replace('#', '');
+        const ch = i => parseInt(h.substr(i, 2), 16);
+        const f = c => amt >= 0 ? c + (255 - c) * amt : c * (1 + amt);
+        const t = c => Math.max(0, Math.min(255, Math.round(f(c)))).toString(16).padStart(2, '0');
+        return '#' + t(ch(0)) + t(ch(2)) + t(ch(4));
+    } catch (e) { return hex; }
+}
+
 // Розгорнуте роз'яснення SCORE для тултипа (складники + шкала).
 function ffScoreTip(sc) {
     const c = sc.components || {};
@@ -7207,23 +7218,26 @@ function ffScoreBadgeHTML(sc) {
     const c = sc.color || '#94a3b8';
     const scd = sc.dir || null;
     const arrow = scd === 'LONG'
-        ? '<span style="color:#22c55e;font-weight:900;font-size:0.7rem">▲</span>'
-        : (scd === 'SHORT' ? '<span style="color:#ef4444;font-weight:900;font-size:0.7rem">▼</span>'
-                           : '<span style="color:#8b93a7;font-size:0.7rem">•</span>');
+        ? '<span style="color:#22c55e;font-weight:900">▲</span>'
+        : (scd === 'SHORT' ? '<span style="color:#ef4444;font-weight:900">▼</span>'
+                           : '<span style="color:#8b93a7">•</span>');
     const pct = Math.max(0, Math.min(100, Number(sc.score) || 0));
     const warn = sc.conflict
-        ? ' <span title="Конфлікт: тиск ММ і рух ціни в різні боки" style="font-size:0.66rem">⚠️</span>'
+        ? ' <span title="Конфлікт: тиск ММ і рух ціни в різні боки">⚠️</span>'
         : '';
+    // Шрифт як у колонці «ММ»: успадкований розмір клітинки + tabular-nums, без
+    // обводки (лише лёгкий фон-пілюля + тонкий 0–100 метр).
     return `<span title="${ffScoreTip(sc)}" style="display:inline-flex;flex-direction:column;gap:3px;`
-        + `min-width:120px;padding:4px 9px;border-radius:8px;background:${c}1f;border:1px solid ${c}59">`
-        + `<span style="display:flex;align-items:center;gap:6px;line-height:1">`
+        + `min-width:120px;padding:3px 8px;border-radius:8px;background:${c}1f">`
+        + `<span style="display:flex;align-items:center;gap:6px;line-height:1;white-space:nowrap">`
         +   arrow
-        +   `<b style="font-size:0.92rem;color:${c};font-weight:900">${sc.score}</b>`
-        +   `<span style="font-size:0.56rem;letter-spacing:0.4px;color:#cbd5e1;font-weight:700">${scoreLabelUA(sc.label)}</span>`
+        +   `<b style="color:${c};font-variant-numeric:tabular-nums">${sc.score}%</b>`
+        +   `<span style="font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600">${scoreLabelUA(sc.label)}</span>`
         +   warn
         + `</span>`
         + `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
-        +   `<span style="display:block;height:100%;width:${pct}%;background:${c};border-radius:2px"></span>`
+        +   `<span style="display:block;height:100%;width:${pct}%;border-radius:2px;`
+        +     `background:linear-gradient(90deg,${scShade(c, 0.5)},${scShade(c, -0.3)})"></span>`
         + `</span>`
         + `</span>`;
 }
