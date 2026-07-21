@@ -7558,8 +7558,8 @@ function renderDirReason(d) {
             const vcol = vd === 'LONG' ? DIRCOL.LONG : (vd === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
             const vic = vd === 'LONG' ? '🟢' : (vd === 'SHORT' ? '🔴' : '⚪');
             const pct = (cs.score_pct != null) ? cs.score_pct : Math.round((cs.score || 0) * 100);
-            // Підсумок — праворуч, стрілка з правого боку.
-            foot = `<div style="text-align:right;margin-top:4px;border-top:1px solid rgba(255,255,255,.12);padding-top:4px">`
+            // Підсумок — зліва (як таблиця), стрілка «→» у КІНЦІ речення.
+            foot = `<div style="margin-top:4px;border-top:1px solid rgba(255,255,255,.12);padding-top:4px">`
                  + `CTR_STC: <b style="color:${vcol}">${vic} ${vd}</b> `
                  + `<span style="color:#8b93a7">(бал ${pct >= 0 ? '+' : ''}${pct}%)</span> →</div>`;
         } else {
