@@ -1387,6 +1387,20 @@ class FuelFilterDaemon:
     def _score_label_ua(cls, label):
         return cls._SCORE_LABEL_UA.get(label, label or '—')
 
+    def _live_price(self, symbol: str) -> Optional[float]:
+        """Свіжа ціна з кешу свічок (форм-бар) — щоб % рахувались від ЖИВОЇ ціни,
+        а не від застарілої mark_price liq-map (яка лагає на швидких рухах)."""
+        try:
+            tf = self.get_settings().get('engine_candle_tf', '5m')
+            kl = self._candle_klines(symbol, tf)
+            if kl:
+                p = float(kl[-1].get('p') or 0)   # форм-бар close ≈ жива ціна
+                if p > 0:
+                    return p
+        except Exception:
+            pass
+        return None
+
     def _price_trend_signed(self, symbol: str, tf: str) -> Optional[float]:
         """Знаковий імпульс ЦІНИ [-1..+1] (+ вгору) для реконсиляції ММ — ШВИДШИЙ
         за SCORE-момент і розворото-чутливий:
@@ -1950,8 +1964,10 @@ class FuelFilterDaemon:
                     from detection.mm_model import compute_mm
                     # Чиста бабло-модель: напрямок з ліквідності/позиціювання, без
                     # тренду. Позиціювання (funding+L/S) рахується для всіх монет.
+                    # live_price — щоб % рахувались від живої ціни, не від стар. mark.
                     r = compute_mm(self._db, symbol, liq_state=lst,
-                                   with_confirmations=True)
+                                   with_confirmations=True,
+                                   live_price=self._live_price(symbol))
                     if r is not None:
                         return r
                 except Exception as _e:
@@ -2122,7 +2138,8 @@ class FuelFilterDaemon:
                 # 🎯 Професійна модель ММ: напрямок = Liquidity Pull Vector (LIQMAP)
                 # + whale/стакан/funding. Strength уже враховує data_quality.
                 from detection.mm_model import compute_mm
-                r = compute_mm(self._db, 'BTCUSDT', with_confirmations=True)
+                r = compute_mm(self._db, 'BTCUSDT', with_confirmations=True,
+                               live_price=self._live_price('BTCUSDT'))
                 if r is not None:
                     fdir = r.get('dir')
                     self._btc_fuel_strength = int(r.get('strength') or 0)

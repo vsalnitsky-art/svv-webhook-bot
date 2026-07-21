@@ -257,7 +257,8 @@ def _dq_factor(dq) -> float:
 def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
                with_confirmations: bool = True,
                with_funding: bool = False,
-               momentum: Optional[float] = None) -> Optional[Dict]:
+               momentum: Optional[float] = None,
+               live_price: Optional[float] = None) -> Optional[Dict]:
     """ЧИСТА БАБЛО-МОДЕЛЬ напрямку ММ (без тренду). Напрямок визначає лише капітал:
     кластери ліквідацій/стопів (сторона+проксіміті) + позиціювання (funding+L/S,
     контр/max-pain) + whale-потік + ліміти стакана. `liq_state` можна передати
@@ -279,7 +280,9 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
                 except Exception:
                     prof = 'tori'
                 lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
-        mark = (lst or {}).get('mark_price')
+        # Пріоритет ЖИВОЇ ціни: liq-map mark_price лагає на швидких рухах, і всі %
+        # (запас, відстані) виходили б від застарілої точки. Fallback: liq-map → ticker.
+        mark = live_price if (live_price and live_price > 0) else (lst or {}).get('mark_price')
         if not mark:
             try:
                 from detection.market_data import get_market_data
