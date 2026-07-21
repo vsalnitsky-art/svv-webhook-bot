@@ -1150,8 +1150,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <span style="font-size:0.72rem;color:#8b93a7">Аналітика:</span>
             <span id="sm-datasource-val" style="font-size:0.74rem;font-weight:700">—</span>
         </div>
-        <div class="sm-control-item" id="sm-api-health" title="Стан API біржі: 🟢 живий / 🔴 заблокований або недоступний" style="display:none;gap:10px">
+        <div class="sm-control-item" id="sm-api-health" title="Стан API бірж: 🟢 живий / 🔴 заблокований або недоступний. Binance наповнює ММ (OI + long/short), Bybit — основне джерело." style="display:none;gap:10px">
             <span id="sm-api-bybit" style="font-size:0.72rem;font-weight:600">Bybit —</span>
+            <span id="sm-api-binance" style="font-size:0.72rem;font-weight:600">Binance —</span>
         </div>
     </div>
     
@@ -9272,20 +9273,25 @@ async function loadDataSource() {
         const d = await (await fetch('/api/sm/data-source')).json();
         if (!d.ok) { wrap.style.display = 'none'; return; }
         wrap.style.display = '';
-        // Bybit only — Binance is dropped from the analysis entirely.
-        val.textContent = '📊 Bybit';
+        // Активне джерело аналітики + здоровʼя ОБОХ бірж. Binance повернуто
+        // (на VDS IP не заблокований) — він наповнює ММ (OI + long/short-ratio).
+        val.textContent = (d.binance_ok === true) ? '📊 Bybit + Binance' : '📊 Bybit';
         val.style.color = '#f7a600';
-        // Live API-health badge for Bybit only.
         const hWrap = document.getElementById('sm-api-health');
         const bb = document.getElementById('sm-api-bybit');
+        const bn = document.getElementById('sm-api-binance');
         if (hWrap && bb) {
             const fmt = (name, ok, reason) => {
                 if (ok === true)  return [`${name} 🟢 живий`, '#4ade80'];
                 if (ok === false) return [`${name} 🔴 ${reason && reason !== 'ok' ? reason : 'заблокований'}`, '#f87171'];
-                return [`${name} ⚪ —`, '#8b93a7'];  // not yet checked
+                return [`${name} ⚪ —`, '#8b93a7'];  // ще не перевірено
             };
             const [bbTxt, bbCol] = fmt('Bybit', d.bybit_ok, d.bybit_reason);
             bb.textContent = bbTxt; bb.style.color = bbCol;
+            if (bn) {
+                const [bnTxt, bnCol] = fmt('Binance', d.binance_ok, d.binance_reason);
+                bn.textContent = bnTxt; bn.style.color = bnCol;
+            }
             hWrap.style.display = 'flex';
         }
     } catch {
