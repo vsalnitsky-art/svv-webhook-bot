@@ -163,21 +163,21 @@ def compute_confluence(db, symbol: str, verdict_data: Optional[Dict] = None) -> 
         elif score <= -_THRESHOLD and agree_s >= 2:
             direction = 'SHORT'
 
-        # Гейт виснаження: не входимо в бік, що вже майже вичерпаний.
+        # Виснаження — ПОПЕРЕДЖЕННЯ, а не вето: коли конфлюенс чітко направлений,
+        # напрямок ідемо ЗА ТРЕНДОМ (по графіку), а виснаження лише позначаємо ⚠.
         exh = _exhaustion_for(verdict_data, direction)
-        if direction and exh is not None and exh >= _EXH_LATE:
-            out['exhausted'] = True
-            out['reason'] = f'{direction} {agree}/3, але виснажено {int(exh)}% → WAIT (пізно)'
-            return out
+        exhausted = bool(direction and exh is not None and exh >= _EXH_LATE)
+        out['exhausted'] = exhausted
+        _warn = f' · ⚠ виснажено {int(exh)}%' if exhausted else ''
 
         if direction == 'LONG':
             out['allow_long'] = True
             out['mode'] = 'LONG_ONLY'
-            out['reason'] = f'конфлюенс {agree}/3 → LONG ({out["score_pct"]:+d}%)'
+            out['reason'] = f'конфлюенс {agree}/3 → LONG ({out["score_pct"]:+d}%){_warn}'
         elif direction == 'SHORT':
             out['allow_short'] = True
             out['mode'] = 'SHORT_ONLY'
-            out['reason'] = f'конфлюенс {agree}/3 → SHORT ({out["score_pct"]:+d}%)'
+            out['reason'] = f'конфлюенс {agree}/3 → SHORT ({out["score_pct"]:+d}%){_warn}'
         else:
             out['reason'] = f'виміри незгодні ({out["score_pct"]:+d}%) → WAIT'
         return out
