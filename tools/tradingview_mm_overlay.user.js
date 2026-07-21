@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VSV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.5.0
+// @version      1.5.3
 // @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       VSV
 // @match        https://*.tradingview.com/chart/*
@@ -251,6 +251,17 @@
              : v >= 1e3 ? '$' + (v / 1e3).toFixed(0) + 'K' : '$' + v.toFixed(0);
     }
 
+    // Читабельна ціна за масштабом: 67 458 · 3.45 · 0.06572 (без зайвих цифр).
+    function fmtPrice(p) {
+        if (p == null || !isFinite(p)) return '';
+        const a = Math.abs(p);
+        if (a >= 1000) return Math.round(p).toLocaleString('en-US');
+        if (a >= 1) return p.toFixed(2);
+        if (a >= 0.1) return p.toFixed(4);
+        if (a >= 0.001) return p.toFixed(5);
+        return p.toPrecision(4);
+    }
+
     function render(sym, state) {
         buildBadge();
         elSym.textContent = sym || '—';
@@ -288,28 +299,32 @@
         elMM.textContent = (mm != null) ? (mm.toFixed(0) + '%') : '—';
         elMM.style.color = dirColor(dir);
         elMM.title = MM_HELP;
-        elDir.textContent = dirLabel(dir) + (mm != null ? ' · ' + band(mm).label : '');
+        // Слова про «тиск» мають сенс лише коли є БІК. Без напрямку (⚪) — завжди
+        // «рівновага», навіть якщо дрібний дисбаланс не дотягнув до порога.
+        const _bandLbl = (dir === 'LONG' || dir === 'SHORT') ? band(mm).label : 'рівновага';
+        elDir.textContent = dirLabel(dir) + (mm != null ? ' · ' + _bandLbl : '');
         elDir.style.color = dirColor(dir);
         elDir.title = MM_HELP;
 
         // 🎯 Запас ходу — відстань до значущої ліквідності попереду руху (ймовірна
         // ціль-магніт). Показує, скільки орієнтовно простору ще є до великого пулу.
-        if (elRun) {
+        if (elRun && d.runway) {
             const rw = d.runway;
-            if (rw && rw.room_pct != null) {
+            const rdir = rw.dir === 'LONG' ? '<span style="color:#22c55e;font-weight:700">↑ вгору</span>'
+                       : (rw.dir === 'SHORT' ? '<span style="color:#ef4444;font-weight:700">↓ вниз</span>' : '');
+            if (rw.room_pct != null) {
                 const m = rw.main || {};
-                const tail = (m.price != null) ? ` → ціль ${fmtVol(m.usd)} @ ${m.price}` : '';
-                elRun.style.color = '#9aa3b5';
-                elRun.innerHTML = `🎯 запас ходу <b style="color:#e5e7eb">${rw.room_pct}%</b> · ${rw.label}${tail}`;
-                elRun.style.display = '';
-                elRun.title = 'Скільки простору до значущої ліквідності попереду руху:\n'
-                    + 'room% — відстань до головного пулу-цілі; «ціль» — його розмір і ціна.\n'
-                    + 'Малий запас = рух близько до великого кластера (ймовірне сповільнення/розворот).';
-            } else if (rw && rw.label) {
-                elRun.style.color = '#9aa3b5';
-                elRun.textContent = '🎯 ' + rw.label;
-                elRun.style.display = '';
+                const tail = (m.price != null) ? ` → ціль ${fmtVol(m.usd)} @ ${fmtPrice(m.price)}` : '';
+                elRun.innerHTML = `🎯 запас ${rdir} <b style="color:#e5e7eb">${rw.room_pct}%</b> · ${rw.label}${tail}`;
+            } else {
+                elRun.innerHTML = `🎯 запас ${rdir}: ${rw.label}`;
             }
+            elRun.style.color = '#9aa3b5';
+            elRun.style.display = '';
+            elRun.title = 'Скільки простору до значущої ліквідності В БІК напрямку ММ (↑/↓):\n'
+                + 'room% — відстань до головного пулу-цілі; «ціль» — його розмір і ціна.\n'
+                + 'Малий запас = рух близько до великого кластера (ймовірне сповільнення/розворот).\n'
+                + 'Коли напрямку немає (⚪ рівновага) — запас не показується, бо «куди» невизначено.';
         }
 
         // ── ₿ BTC ММ line — напрямок СЕАНСУ + сила% + рівень. Коли сеанс НА ПАУЗІ
@@ -330,8 +345,9 @@
                 elBtc.innerHTML = `₿ BTC ММ: <span style="color:${bc};font-weight:700">${dirLabel(b.dir)}</span>${tail}${pausedTag}`;
             } else {
                 elBtc.style.color = '#9aa3b5';
+                // Без напрямку → «рівновага» (не «легкий тиск»).
                 elBtc.innerHTML = (bs != null)
-                    ? `₿ BTC ММ: ⚪ — · ${bs}% · ${band(bs).label}`
+                    ? `₿ BTC ММ: ⚪ — · ${bs}% · рівновага`
                     : '₿ BTC ММ: ⚪ —';
             }
             elBtc.title = MM_HELP;

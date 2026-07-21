@@ -122,7 +122,8 @@ def _runway(levels, mark: float, move_dir: Optional[str], reach: float,
             continue
         ahead.append((dist, price, usd))
     if not ahead:
-        return {'room_pct': None, 'label': 'простір відкритий (немає великих цілей попереду)',
+        return {'dir': move_dir, 'room_pct': None,
+                'label': 'простір відкритий (немає великих цілей попереду)',
                 'next': None, 'main': None}
     ahead.sort(key=lambda x: x[0])         # за відстанню
     nxt = ahead[0]
@@ -131,6 +132,7 @@ def _runway(levels, mark: float, move_dir: Optional[str], reach: float,
     label = ('малий запас' if room < 0.7 else
              ('помірний запас' if room < 2.5 else 'великий запас'))
     return {
+        'dir': move_dir,                   # у ЯКИЙ бік рахується запас (LONG/SHORT)
         'room_pct': round(room, 2),
         'label': label,
         'next': {'price': round(nxt[1], 10), 'dist_pct': round(nxt[0], 2), 'usd': round(nxt[2], 0)},
@@ -329,12 +331,11 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
         dqf = _dq_factor((lst or {}).get('data_quality'))
         strength = int(round(min(1.0, abs(score)) * 100 * dqf))
 
-        # 🎯 «Запас ходу» — відстань до значущої ліквідності попереду руху. Напрямок:
-        # статус ММ, а якщо WAIT — знак магніт-пулу (чисто по баблу, без тренду).
-        _mv = status
-        if _mv is None and mass > 0:
-            _mv = ('LONG' if pull > 0.05 else ('SHORT' if pull < -0.05 else None))
-        runway = _runway((lst or {}).get('levels') or [], mark, _mv, st['mm_reach_pct'])
+        # 🎯 «Запас ходу» — відстань до ліквідності попереду руху, СТРОГО в бік
+        # напрямку ММ. Якщо напрямку немає (⚪ рівновага) — запас невизначений (None),
+        # бо «куди» немає сенсу.
+        runway = _runway((lst or {}).get('levels') or [], mark, status,
+                         st['mm_reach_pct']) if status in ('LONG', 'SHORT') else None
 
         return {
             'dir': round(score, 3),          # сумісно зі старим fuel_dir

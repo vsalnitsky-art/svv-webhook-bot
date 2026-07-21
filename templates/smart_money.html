@@ -9419,8 +9419,12 @@ function ffFuelCell(dir, now, prev, hideBand) {
     // Band word («легкий тиск» …) — omitted in tight tables (hideBand) to save
     // width; the dot + % + bar already convey strength/direction. The colour of
     // the % keeps the band info even without the word.
+    // Слова про «тиск» — лише коли є БІК. Без напрямку (⚪) → «рівновага».
+    const _neutralDir = !(dir === 'LONG' || dir === 'SHORT');
+    const _bandTxt = _neutralDir ? 'рівновага' : b.txt;
+    const _bandCol = _neutralDir ? '#8b93a7' : b.col;
     const bandSeg = hideBand ? ''
-        : `<span style="display:inline-block;width:88px;text-align:left;color:${b.col};font-size:0.66rem;font-weight:600;flex:none">${b.txt}</span>`;
+        : `<span style="display:inline-block;width:88px;text-align:left;color:${_bandCol};font-size:0.66rem;font-weight:600;flex:none">${_bandTxt}</span>`;
     return `<span title="${FUEL_TOOLTIP}" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">${dotSeg}${pctSeg}${arrowSeg}${barSeg}${bandSeg}</span>`;
 }
 
