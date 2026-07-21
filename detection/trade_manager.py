@@ -866,6 +866,24 @@ class TradeManager:
                 btc_mm = (mm_map.get('BTCUSDT') or {}).get('now')
         except Exception:
             pass
+        # 🧭 Режим Smart Direction (головний банер) + режим відкриття Черги-2 — щоб
+        # у хронології було видно, ЗА ЯКИХ УМОВ угоду відкрито/закрито. Однакові для
+        # всіх sample цього тіку.
+        sd_mode = None
+        q2_mode = None
+        try:
+            from detection.auto_gate import get_auto_gate
+            _ag = get_auto_gate()
+            if _ag:
+                sd_mode = _ag.get_mode()
+        except Exception:
+            pass
+        try:
+            if ff:
+                _fs = ff.get_settings() or {}
+                q2_mode = 'banner' if _fs.get('queue2_use_btc', True) else 'buttons'
+        except Exception:
+            pass
         with self._lock:
             items = list(self._positions.items()) + list(self._shadow_positions.items())
         changed = False
@@ -974,6 +992,9 @@ class TradeManager:
                     'btc_dir': btc_dir,
                     'btc_paused': btc_paused,
                     'btc_mm': btc_mm,
+                    # 🧭 Режим Smart Direction + режим відкриття Черги-2 (умови угоди).
+                    'sd_mode': sd_mode,
+                    'q2_mode': q2_mode,
                 }
                 with self._lock:
                     hist = pos.setdefault('history', [])
