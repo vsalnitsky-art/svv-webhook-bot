@@ -32,6 +32,10 @@ _DEFAULTS = {
     'mm_threshold': 0.15,       # |score| поріг для LONG/SHORT
     'mm_funding_scale': 0.05,   # |funding %|, що дає повний контр-сигнал
     'mm_reach_pct': 15.0,       # далі за цю відстань кластер уже не магніт
+    # 🧭 Реконсиляція з РУХОМ ціни. Магніт-модель контртрендова — сама по собі
+    # показує, ДЕ ліквідність, а не куди ЙДЕ ціна. Тренд коригує напрямок:
+    'mm_trend_weight': 0.30,    # вага м'якого блендингу тренду у спокійному ринку
+    'mm_trend_override': 0.5,   # |імпульс| ≥ цього і проти магніту → тренд ВЕДЕ
 }
 
 # TTL-кеш funding, щоб не смикати біржу щоцикл на кожну монету.
@@ -166,14 +170,18 @@ def _dq_factor(dq) -> float:
 
 def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
                with_confirmations: bool = True,
-               with_funding: bool = False) -> Optional[Dict]:
+               with_funding: bool = False,
+               momentum: Optional[float] = None) -> Optional[Dict]:
     """Головна функція. `liq_state` можна передати готовим (щоб не фетчити двічі).
     `with_confirmations=False` → лише LPV-ядро (дешево, для масового скану).
     `with_funding` — чи робити funding-запит (єдиний мережевий; вмикати лише для
     BTC / сфокусованої монети, щоб масовий скан не смикав біржу).
+    `momentum` — знаковий імпульс ЦІНИ [-1..+1] (+ вгору): передає викликач (у
+    нього є свічки). Магніт-модель контртрендова, тож імпульс КОРИГУЄ напрямок —
+    при сильному русі проти магніту тренд ВЕДЕ (див. mm_trend_override).
 
     Return: {dir, status, strength, mark_price, target, components, weights,
-             data_quality} або None коли зовсім немає даних."""
+             data_quality, trend_override} або None коли зовсім немає даних."""
     try:
         st = get_mm_settings(db)
         lst = liq_state
@@ -228,6 +236,24 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
             return None
         score = sum(w * v for _n, w, v in terms) / wsum   # ренормовано → [-1..1]
         score = max(-1.0, min(1.0, score))
+        liq_score = score   # чистий магніт (до реконсиляції з трендом) — для логу
+
+        # 🧭 Реконсиляція з РУХОМ ціни. Магніт контртрендовий → сам показує, ДЕ
+        # ліквідність, а не куди ЙДЕ ціна. При сильному русі ПРОТИ магніту тренд
+        # веде напрямок (інакше «монета росте, а ММ = SHORT»); у спокійному ринку
+        # — м'який блендинг, магніт лишається основою.
+        trend_override = False
+        if momentum is not None:
+            m = max(-1.0, min(1.0, float(momentum)))
+            comp['trend'] = round(m, 3)
+            opposes = (m > 0) != (score > 0)
+            if abs(m) >= st['mm_trend_override'] and opposes and abs(score) > 0.05:
+                score = m                       # тренд ВЕДЕ напрямок
+                trend_override = True
+            else:
+                tw = st['mm_trend_weight']
+                score = (1.0 - tw) * score + tw * m
+            score = max(-1.0, min(1.0, score))
 
         thr = st['mm_threshold']
         status = ('LONG' if score > thr else ('SHORT' if score < -thr else None))
@@ -235,7 +261,7 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
         strength = int(round(min(1.0, abs(score)) * 100 * dqf))
 
         return {
-            'dir': round(score, 3),          # сумісно зі старим fuel_dir
+            'dir': round(score, 3),          # сумісно зі старим fuel_dir (після тренду)
             'status': status,
             'strength': strength,
             'mark_price': mark,
@@ -243,6 +269,8 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
             'components': comp,               # внесок кожного сигналу [-1..1]
             'weights': {n: round(w, 3) for n, w, _v in terms},
             'data_quality': dqf,
+            'liq_score': round(liq_score, 3),  # чистий магніт до реконсиляції (лог)
+            'trend_override': trend_override,  # тренд переважив магніт
         }
     except Exception as e:
         try:

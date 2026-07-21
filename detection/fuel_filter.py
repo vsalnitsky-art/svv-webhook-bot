@@ -1925,9 +1925,19 @@ class FuelFilterDaemon:
             if _MM_MODEL:
                 try:
                     from detection.mm_model import compute_mm
+                    # Імпульс ЦІНИ (тренд) — щоб ММ не показував проти явного руху.
+                    _mom = None
+                    try:
+                        _tf = self.get_settings().get('engine_candle_tf', '5m')
+                        _pd, _ps = self._candle_momentum_graded(symbol, _tf)
+                        _mom = (_ps if _pd == 'LONG'
+                                else (-_ps if _pd == 'SHORT' else 0.0))
+                    except Exception:
+                        _mom = None
                     r = compute_mm(self._db, symbol, liq_state=lst,
                                    with_confirmations=True,
-                                   with_funding=(symbol.upper() == 'BTCUSDT'))
+                                   with_funding=(symbol.upper() == 'BTCUSDT'),
+                                   momentum=_mom)
                     if r is not None:
                         return r
                 except Exception as _e:
@@ -2096,8 +2106,16 @@ class FuelFilterDaemon:
                 # 🎯 Професійна модель ММ: напрямок = Liquidity Pull Vector (LIQMAP)
                 # + whale/стакан/funding. Strength уже враховує data_quality.
                 from detection.mm_model import compute_mm
+                _bmom = None
+                try:
+                    _btf = self.get_settings().get('engine_candle_tf', '5m')
+                    _bpd, _bps = self._candle_momentum_graded('BTCUSDT', _btf)
+                    _bmom = (_bps if _bpd == 'LONG'
+                             else (-_bps if _bpd == 'SHORT' else 0.0))
+                except Exception:
+                    _bmom = None
                 r = compute_mm(self._db, 'BTCUSDT', with_confirmations=True,
-                               with_funding=True)
+                               with_funding=True, momentum=_bmom)
                 if r is not None:
                     fdir = r.get('dir')
                     self._btc_fuel_strength = int(r.get('strength') or 0)
@@ -2190,9 +2208,11 @@ class FuelFilterDaemon:
                      f"str={mm.get('strength', self._btc_fuel_strength)}",
                      f"sess={self._btc_verdict_dir or '—'}"]
             if comp:
-                parts.append("liq=%s whale=%s book=%s pos=%s" % (
+                parts.append("liq=%s whale=%s book=%s pos=%s trend=%s" % (
                     comp.get('liq'), comp.get('whale'),
-                    comp.get('book'), comp.get('pos')))
+                    comp.get('book'), comp.get('pos'), comp.get('trend')))
+            if mm.get('trend_override'):
+                parts.append(f"trend_override(liq={mm.get('liq_score')})")
             if tgt:
                 parts.append(f"target={tgt.get('side')}@{tgt.get('price')}")
             self._db.log_event(' · '.join(str(p) for p in parts),
