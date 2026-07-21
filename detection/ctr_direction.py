@@ -80,16 +80,18 @@ def compute_ctr_direction(symbol: str) -> Dict:
         out['score'] = round(score, 3)
         out['per_tf'] = per_tf
         out['ok'] = True
+        pct = round(score * 100)          # бал у відсотках (−100..+100)
+        out['score_pct'] = pct
         if score >= _THRESHOLD:
             out['allow_long'], out['allow_short'] = True, False
             out['mode'] = 'LONG_ONLY'
-            out['reason'] = f'CTR перепроданість (bal {score:+.2f}) → LONG'
+            out['reason'] = f'CTR перепроданість ({pct:+d}%) → LONG'
         elif score <= -_THRESHOLD:
             out['allow_long'], out['allow_short'] = False, True
             out['mode'] = 'SHORT_ONLY'
-            out['reason'] = f'CTR перекупленість (bal {score:+.2f}) → SHORT'
+            out['reason'] = f'CTR перекупленість ({pct:+d}%) → SHORT'
         else:
-            out['reason'] = f'CTR ТФ незгодні (bal {score:+.2f}) → WAIT'
+            out['reason'] = f'CTR ТФ незгодні ({pct:+d}%) → WAIT'
         return out
     except Exception as e:
         try:

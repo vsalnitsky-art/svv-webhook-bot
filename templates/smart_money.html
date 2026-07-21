@@ -7512,6 +7512,7 @@ function onSmartDirectionModeChange() {
     smartDirectionMode = sel.value || 'smart';
     try { localStorage.setItem('sm_smart_direction_mode', smartDirectionMode); } catch {}
     renderDirReason(window._lastBias);   // Forecast↔CTR_STC display swap
+    try { loadBias(); } catch (e) {}     // весь борд одразу під новий режим
     if (smartDirectionEnabled) {
         fetch('/api/sm/auto-gate', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -7531,41 +7532,50 @@ function renderDirReason(d) {
     const sel = document.getElementById('sm-bias-auto-mode');
     const mode = sel ? sel.value : 'smart';
     if (!d || (mode !== 'smart' && mode !== 'ctr_stc')) { el.style.display = 'none'; return; }
-    let html = '';
+    const DIRCOL = { LONG: '#4ade80', SHORT: '#f87171', NEU: '#8b93a7' };
+    const td = (s, extra) => `<td style="padding:2px 10px 2px 0;white-space:nowrap;${extra || ''}">${s}</td>`;
+    let rows = '', foot = '';
     if (mode === 'ctr_stc') {
         const cs = d.ctr_stc;
         if (cs && cs.per_tf && cs.per_tf.length) {
-            html = cs.per_tf.map(t => {
+            rows = cs.per_tf.map(t => {
+                const col = t.lean === 'LONG' ? DIRCOL.LONG : (t.lean === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
                 const ic = t.lean === 'LONG' ? '🟢' : (t.lean === 'SHORT' ? '🔴' : '⚪');
-                const col = t.lean === 'LONG' ? '#4ade80' : (t.lean === 'SHORT' ? '#f87171' : '#8b93a7');
                 const leanW = t.lean ? (t.lean + '-нахил') : 'нейтрально';
-                return `<div><b>${t.label}:</b> <span style="color:${col};font-weight:700">${ic} ${leanW} · впевненість ${t.conf}%</span>`
-                     + ` <span style="color:#8b93a7">— STC ${t.stc} (${t.zone})</span></div>`;
+                return '<tr>'
+                    + td(`<b style="color:#cbd5e1">${t.label}</b>`)
+                    + td(`${ic} ${leanW}`, `color:${col};font-weight:700`)
+                    + td(`впевненість ${t.conf}%`, `color:${col}`)
+                    + td(`STC ${t.stc} · ${t.zone}`, 'color:#8b93a7')
+                    + '</tr>';
             }).join('');
-            const vm = cs.mode === 'LONG_ONLY' ? '<span style="color:#4ade80">🟢 LONG</span>'
-                     : (cs.mode === 'SHORT_ONLY' ? '<span style="color:#f87171">🔴 SHORT</span>'
-                        : '<span style="color:#8b93a7">⚪ WAIT</span>');
-            html += `<div style="margin-top:3px;border-top:1px solid rgba(255,255,255,.1);padding-top:3px">`
-                  + `→ CTR_STC: <b>${vm}</b> <span style="color:#8b93a7">(${cs.reason || ''})</span></div>`;
+            const vd = cs.mode === 'LONG_ONLY' ? 'LONG' : (cs.mode === 'SHORT_ONLY' ? 'SHORT' : 'WAIT');
+            const vcol = vd === 'LONG' ? DIRCOL.LONG : (vd === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
+            const vic = vd === 'LONG' ? '🟢' : (vd === 'SHORT' ? '🔴' : '⚪');
+            const pct = (cs.score_pct != null) ? cs.score_pct : Math.round((cs.score || 0) * 100);
+            foot = `<div style="margin-top:4px;border-top:1px solid rgba(255,255,255,.12);padding-top:4px">`
+                 + `→ CTR_STC: <b style="color:${vcol}">${vic} ${vd}</b> `
+                 + `<span style="color:#8b93a7">(бал ${pct >= 0 ? '+' : ''}${pct}%)</span></div>`;
         } else {
-            html = '<span style="color:#8b93a7">CTR: немає даних</span>';
+            el.innerHTML = '<span style="color:#8b93a7">CTR: немає даних</span>';
+            el.style.display = ''; return;
         }
     } else {   // 'smart' → Forecast
-        const rows = [];
         const frow = (fc, lbl) => {
-            if (fc && fc.side !== undefined && fc.side !== 0) {
-                const dir = fc.side === 1 ? 'LONG' : 'SHORT';
-                const ic = fc.side === 1 ? '🟢' : '🔴';
-                const col = fc.side === 1 ? '#4ade80' : '#f87171';
-                rows.push(`<div>✓ <b>${lbl}:</b> <span style="color:${col};font-weight:700">${ic} ${dir}</span>`
-                        + ` <span style="color:#8b93a7">(впевненість ${fc.confidence}%)</span></div>`);
-            }
+            if (!fc || fc.side === undefined || fc.side === 0) return '';
+            const dir = fc.side === 1 ? 'LONG' : 'SHORT';
+            const col = fc.side === 1 ? DIRCOL.LONG : DIRCOL.SHORT;
+            const ic = fc.side === 1 ? '🟢' : '🔴';
+            return '<tr>'
+                + td(`<b style="color:#cbd5e1">${lbl}</b>`)
+                + td(`${ic} ${dir}`, `color:${col};font-weight:700`)
+                + td(`впевненість ${fc.confidence}%`, `color:${col}`)
+                + '</tr>';
         };
-        frow(d.forecast_1h, 'Forecast 1H');
-        frow(d.forecast_4h, 'Forecast 4H');
-        html = rows.length ? rows.join('') : '<span style="color:#8b93a7">Forecast: немає даних</span>';
+        rows = frow(d.forecast_1h, 'Forecast 1H') + frow(d.forecast_4h, 'Forecast 4H');
+        if (!rows) { el.innerHTML = '<span style="color:#8b93a7">Forecast: немає даних</span>'; el.style.display = ''; return; }
     }
-    el.innerHTML = html;
+    el.innerHTML = `<table style="border-collapse:collapse;font-size:0.76rem;line-height:1.5">${rows}</table>${foot}`;
     el.style.display = '';
 }
 
@@ -7720,14 +7730,24 @@ async function loadBias() {
         const res = await fetch('/api/sm/bias?symbol=' + encodeURIComponent(biasSymbol) + wlp);
         const d = await res.json();
         if (!d.ok) { vEl.innerHTML = '⏳ <span>—</span>'; return; }
-        const icon = d.verdict === 'LONG' ? '📈' : d.verdict === 'SHORT' ? '📉' : '⏸';
-        vEl.className = 'sm-bias-verdict sm-bias-' + d.verdict;
-        vEl.innerHTML = `${icon} <span>${d.verdict}</span>`;
-        document.getElementById('sm-bias-conf').textContent = 'впевненість ' + d.confidence + '%';
+        // У режимі CTR_STC ВЕСЬ борд (вердикт, впевненість, колір ціни, Потенціал)
+        // відображає рішення CTR_STC, а не forecast-вердикт.
+        let effVerdict = d.verdict, effConf = d.confidence;
+        const _agMode = ((document.getElementById('sm-bias-auto-mode') || {}).value) || 'smart';
+        if (_agMode === 'ctr_stc' && d.ctr_stc && d.ctr_stc.ok) {
+            const cs = d.ctr_stc;
+            effVerdict = cs.mode === 'LONG_ONLY' ? 'LONG' : (cs.mode === 'SHORT_ONLY' ? 'SHORT' : 'WAIT');
+            effConf = Math.abs((cs.score_pct != null) ? cs.score_pct : Math.round((cs.score || 0) * 100));
+        }
+        window._effVerdict = effVerdict;   // для фарбування ціни нижче
+        const icon = effVerdict === 'LONG' ? '📈' : effVerdict === 'SHORT' ? '📉' : '⏸';
+        vEl.className = 'sm-bias-verdict sm-bias-' + effVerdict;
+        vEl.innerHTML = `${icon} <span>${effVerdict}</span>`;
+        document.getElementById('sm-bias-conf').textContent = 'впевненість ' + effConf + '%';
         const fill = document.getElementById('sm-bias-conffill');
-        fill.style.width = d.confidence + '%';
-        fill.style.background = dirGrad(d.verdict);
-        renderMovePanel(d.move_long, d.move_short, d.verdict);
+        fill.style.width = effConf + '%';
+        fill.style.background = dirGrad(effVerdict);
+        renderMovePanel(d.move_long, d.move_short, effVerdict);
         window._lastBias = d;              // для перемикання Forecast↔CTR_STC
         renderDirReason(d);
         const icons = {ok: '✓', warn: '⚠', wait: '•'};
@@ -7748,7 +7768,8 @@ async function loadBias() {
                 const [kind, text, dir] = r;
                 // The ММ (liq-fuel) line drives the ₿ banner — highlight it bright.
                 if (text.includes('ММ')) {
-                    const c = dir === 'long' ? '#22ff88' : dir === 'short' ? '#ff4d4d' : '#facc15';
+                    // Збалансований ММ (без напрямку) — сірий «рівновага», НЕ жовтий.
+                    const c = dir === 'long' ? '#22ff88' : dir === 'short' ? '#ff4d4d' : '#94a3b8';
                     return `<div class="sm-bias-reason ${kind}" style="color:${c};font-weight:800;`
                          + `text-shadow:0 0 8px ${c}66">${icons[kind] || '•'} ${text}</div>`;
                 }
@@ -7766,9 +7787,10 @@ async function loadBias() {
                 const pv = document.getElementById('sm-bias-price-val');
                 pv.textContent = fmtPriceJS(d.price);
                 // Color the price by verdict direction: LONG green, SHORT red,
-                // WAIT/other neutral.
-                pv.style.color = d.verdict === 'LONG' ? '#4ade80'
-                    : d.verdict === 'SHORT' ? '#f87171' : '#dbeafe';
+                // WAIT/other neutral. У CTR_STC — колір за рішенням CTR_STC.
+                const _pvdir = window._effVerdict || d.verdict;
+                pv.style.color = _pvdir === 'LONG' ? '#4ade80'
+                    : _pvdir === 'SHORT' ? '#f87171' : '#dbeafe';
                 priceEl.style.display = '';
             } else {
                 priceEl.style.display = 'none';
