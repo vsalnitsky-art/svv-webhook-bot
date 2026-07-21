@@ -1,6 +1,6 @@
 """Volumized Order Blocks — Python port of the TradingView Pine indicator.
 
-Source: SVV Charts "Volumized Order Blocks | SVV Charts with Alerts" by vsalnitsky.
+Source: VSV Charts "Volumized Order Blocks | VSV Charts with Alerts" by vsalnitsky.
 Lines 247-334 of the source contain the core detection algorithm; this module is
 a one-to-one port (state machine over bars, identical swing/OB rules, same ATR
 filter and same invalidation/removal semantics).

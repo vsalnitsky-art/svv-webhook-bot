@@ -1,6 +1,6 @@
 """
 Order Block Scanner - Exact Pine Script Logic Implementation
-Based on "Volumized Order Blocks | SVV Charts" indicator
+Based on "Volumized Order Blocks | VSV Charts" indicator
 
 Detection Logic (from Pine Script):
 1. Find swing highs/lows using swingLength
@@ -47,7 +47,7 @@ class OBScanner:
     """
     Order Block Detector - Pine Script Logic
     
-    Exact implementation of "Volumized Order Blocks | SVV Charts"
+    Exact implementation of "Volumized Order Blocks | VSV Charts"
     
     Detection:
     1. Find swing high/low (swingLength bars)

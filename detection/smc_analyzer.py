@@ -8,7 +8,7 @@ SMC Analyzer - Smart Money Concepts Analysis Module
 - Fair Value Gaps (FVG)
 - EQH/EQL (Equal Highs/Lows)
 
-Автор: SVV Bot Team
+Автор: VSV Bot Team
 Версія: 1.0 (2026-02-02)
 """
 

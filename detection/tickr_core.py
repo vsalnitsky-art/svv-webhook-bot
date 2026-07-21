@@ -1,6 +1,6 @@
 """
 tickr_core — Python port of the Go `tickr` project, embedded as a module
-of the SVV bot. Fetches and NORMALIZES trading instruments from four
+of the VSV bot. Fetches and NORMALIZES trading instruments from four
 exchanges (Binance, MEXC, BingX, Bybit) into one common Symbol shape, so
 they can be filtered, compared (diff), and turned into TradingView
 watchlists.

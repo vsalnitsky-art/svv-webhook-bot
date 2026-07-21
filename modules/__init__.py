@@ -1,5 +1,5 @@
 """
-SVV Bot Modules
+VSV Bot Modules
 """
 
 __all__ = []

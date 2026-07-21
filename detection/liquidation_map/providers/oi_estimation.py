@@ -39,7 +39,7 @@ BYBIT_V5 = 'https://api.bybit.com'
 
 # Hard caps — providers must never block daemon for long
 HTTP_TIMEOUT_SEC = 6.0
-USER_AGENT = 'SVV-LiquidationMap/1.0'
+USER_AGENT = 'VSV-LiquidationMap/1.0'
 
 
 class OIEstimationProvider(LiquidationDataProvider):

@@ -9,7 +9,7 @@ Pine Script логіка:
 - Heikin Ashi для згладжування (опціонально)
 - Сигнали на перетині ціни та trailing stop
 
-Автор: SVV Bot Team
+Автор: VSV Bot Team
 Версія: 1.0 (2026-01-26)
 """
 

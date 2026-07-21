@@ -57,7 +57,7 @@ class LiquidityMap:
             'timestamp': '', 'scan_count': 0, 'errors': 0,
         }
         self._session = requests.Session()
-        self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
+        self._session.headers.update({'User-Agent': 'VSV-Bot/1.0'})
         
         # Rolling volume buffer for weighted bias (3 hours = persistent sentiment)
         self._vol_buffer: List[tuple] = []

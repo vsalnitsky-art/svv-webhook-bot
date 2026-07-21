@@ -19,7 +19,7 @@ Direction Engine v6.0 - Professional Direction System with Market Structure Anal
 - На ТОПІ → шукаємо SHORT (не long!)
 - В середині тренду → торгуємо з трендом
 
-Автор: SVV Bot Team
+Автор: VSV Bot Team
 Версія: 6.0 (2026-01-26)
 """
 

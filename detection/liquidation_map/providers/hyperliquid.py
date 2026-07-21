@@ -38,7 +38,7 @@ from detection.liquidation_map.providers.base import (
 
 HYPERLIQUID_INFO_URL = 'https://api.hyperliquid.xyz/info'
 HTTP_TIMEOUT_SEC = 6.0
-USER_AGENT = 'SVV-LiquidationMap/1.0'
+USER_AGENT = 'VSV-LiquidationMap/1.0'
 
 
 class HyperliquidProvider(LiquidationDataProvider):

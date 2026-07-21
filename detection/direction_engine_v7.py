@@ -4,7 +4,7 @@ Direction Engine v7.0 - Optimized for Sleeper Consolidation Analysis
 КЛЮЧОВА ВІДМІННІСТЬ: Працює ТІЛЬКИ для монет в консолідації (ADX < 25)
 Визначає напрямок "пробудження" - куди ймовірніше вийде ціна
 
-Автор: SVV Bot Team
+Автор: VSV Bot Team
 Версія: 7.0 (2026-01-26)
 """
 

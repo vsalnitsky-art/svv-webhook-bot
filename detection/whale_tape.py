@@ -49,7 +49,7 @@ class WhaleTape:
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.RLock()
         self._session = requests.Session()
-        self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
+        self._session.headers.update({'User-Agent': 'VSV-Bot/1.0'})
         
         # Rolling buffer of large trades
         self._trades: List[Dict] = []

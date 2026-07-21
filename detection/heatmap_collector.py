@@ -98,7 +98,7 @@ class HeatmapCollector:
         self._last_results: Dict[str, Dict] = {}   # symbol → {'price', 'bids_n', 'asks_n', 'ts'}
 
         self._session = requests.Session()
-        self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
+        self._session.headers.update({'User-Agent': 'VSV-Bot/1.0'})
 
     # ------------------------------------------------------------------
     # Lifecycle

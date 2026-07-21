@@ -67,7 +67,7 @@ class MarketData:
     
     def __init__(self):
         self._session = requests.Session()
-        self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
+        self._session.headers.update({'User-Agent': 'VSV-Bot/1.0'})
         
         # Track source per data type: {'klines': 'Binance', 'oi': 'OKX', ...}
         self._sources: Dict[str, str] = {}

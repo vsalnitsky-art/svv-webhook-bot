@@ -7,7 +7,7 @@ Direction Engine v8.0 - Smart Money Concepts Integration
 - Нова система балів з урахуванням інституційних патернів
 - Стратегія "Пробудження Сплячого" з SMC підтвердженням
 
-Автор: SVV Bot Team
+Автор: VSV Bot Team
 Версія: 8.0 (2026-02-02)
 """
 

@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         SVV ММ overlay for TradingView
+// @name         VSV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.2.1
-// @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із SVV WebHook BOT поверх графіка TradingView для поточної монети.
-// @author       SVV
+// @version      1.3.0
+// @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
+// @author       VSV
 // @match        https://*.tradingview.com/chart/*
 // @match        https://tradingview.com/chart/*
 // @run-at       document-idle
@@ -30,10 +30,15 @@
  ──────────────────
  1. Постав Tampermonkey (Chrome/Edge/Firefox) або Violentmonkey.
  2. Додай цей файл як новий userscript.
- 3. Задай URL свого бота: меню Tampermonkey → «SVV ММ: задати URL бота»
-    (напр. https://svv-webhook-bot.onrender.com  або  http://localhost:10000).
+ 3. Задай URL свого бота: меню Tampermonkey → «VSV ММ: задати URL бота»
+    (напр. http://31.131.21.224  або  http://localhost:10000).
     Без завершального «/».
- 4. Відкрий будь-який графік на tradingview.com/chart/… — бейдж зʼявиться
+ 4. Задай API-ключ: меню Tampermonkey → «VSV ММ: задати API-ключ».
+    Це значення змінної INFO_API_KEY з .env бота. БЕЗ нього бот віддає
+    401 auth_required, і бейдж показує «Потрібен API-ключ». Ендпоінт панелі
+    захищений авторизацією — скрипт не має cookie-сесії, тож ходить із
+    заголовком X-API-Key (той самий read-only обхід, що й інфо-сайт).
+ 5. Відкрий будь-який графік на tradingview.com/chart/… — бейдж зʼявиться
     праворуч зверху. Його можна перетягувати мишкою.
 
  Примітки
@@ -49,6 +54,7 @@
     // ── Config ────────────────────────────────────────────────────────────
     const POLL_MS = 4000;           // як часто оновлювати ММ
     const K_URL = 'svv_bot_url';    // ключ зберігання URL бота
+    const K_KEY = 'svv_bot_key';    // ключ зберігання API-ключа (INFO_API_KEY)
     const K_POS = 'svv_badge_pos';  // ключ позиції бейджа
 
     function getBotUrl() {
@@ -56,15 +62,31 @@
     }
     function setBotUrl() {
         const cur = getBotUrl();
-        const v = prompt('URL твого SVV-бота (без / в кінці):\n' +
-            'напр. https://svv-webhook-bot.onrender.com  або  http://localhost:10000', cur);
+        const v = prompt('URL твого VSV-бота (без / в кінці):\n' +
+            'напр. http://31.131.21.224  або  http://localhost:10000', cur);
         if (v != null) {
             GM_setValue(K_URL, v.trim().replace(/\/+$/, ''));
             lastSym = null;   // форс-оновлення
             tick();
         }
     }
-    try { GM_registerMenuCommand('SVV ММ: задати URL бота', setBotUrl); } catch (e) {}
+    // API-ключ = значення INFO_API_KEY з .env бота. Ендпоінт панелі захищений
+    // авторизацією; скрипт не має cookie-сесії, тож шле X-API-Key (read-only обхід).
+    function getBotKey() {
+        return (GM_getValue(K_KEY, '') || '').trim();
+    }
+    function setBotKey() {
+        const cur = getBotKey();
+        const v = prompt('API-ключ бота (значення INFO_API_KEY з .env):\n' +
+            'потрібен, бо ендпоінт панелі захищений авторизацією.', cur);
+        if (v != null) {
+            GM_setValue(K_KEY, v.trim());
+            lastSym = null;   // форс-оновлення
+            tick();
+        }
+    }
+    try { GM_registerMenuCommand('VSV ММ: задати URL бота', setBotUrl); } catch (e) {}
+    try { GM_registerMenuCommand('VSV ММ: задати API-ключ', setBotKey); } catch (e) {}
 
     // ── Symbol detection ──────────────────────────────────────────────────
     // TradingView symbol → base coin the bot knows (VANRYUSDT).
@@ -234,6 +256,13 @@
             elFoot.textContent = getBotUrl() || '';
             return;
         }
+        if (state === 'auth') {
+            elMM.textContent = '🔑'; elMM.style.color = '#f59e0b';
+            elDir.textContent = '';
+            elBtc.textContent = 'Потрібен API-ключ (меню TM → «задати API-ключ»)';
+            elFoot.textContent = getBotUrl() || '';
+            return;
+        }
         if (state === 'error') {
             elMM.textContent = '⚠'; elMM.style.color = '#f59e0b';
             elDir.textContent = ''; elBtc.textContent = 'Бот недоступний за URL';
@@ -339,18 +368,27 @@
         if (_inFlight) return;
         _inFlight = true;
         const done = () => { _inFlight = false; };
+        // Ендпоінт панелі за авторизацією → шлемо X-API-Key (значення INFO_API_KEY
+        // з .env бота). Без нього бот віддає 401 auth_required.
+        const key = getBotKey();
+        const headers = key ? { 'X-API-Key': key } : {};
         GM_xmlhttpRequest({
             method: 'GET',
             url: url + '/api/fuel-filter/panel/' + encodeURIComponent(sym),
+            headers: headers,
             // Render free tier spins the bot DOWN after ~15 min idle; the first
             // request then triggers a cold start that can take 30-60s. Long
             // timeout so we ride the wake-up instead of flashing an error.
             timeout: 60000,
             onload: (r) => {
                 done();
+                // 401/403 → авторизація. Розрізняємо, щоб показати «Потрібен ключ».
+                if (r.status === 401 || r.status === 403) { render(sym, 'auth'); return; }
                 try {
                     const j = JSON.parse(r.responseText);
                     if (j && j.ok !== false) render(sym, j);
+                    else if (j && (j.error === 'auth_required'
+                                   || j.error === 'no_bot_access')) render(sym, 'auth');
                     else render(sym, 'error');
                 } catch (e) { render(sym, 'error'); }
             },

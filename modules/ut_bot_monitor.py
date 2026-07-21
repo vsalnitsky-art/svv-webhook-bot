@@ -7,7 +7,7 @@ UT Bot Monitor Module - Integration Hub
 - UT Bot Filter (Bybit) → генерація сигналів
 - Paper Trading → тестові угоди
 
-Автор: SVV Bot Team
+Автор: VSV Bot Team
 Версія: 1.0 (2026-01-26)
 """
 

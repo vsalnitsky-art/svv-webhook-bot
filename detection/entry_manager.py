@@ -11,7 +11,7 @@ Entry Manager v1.0 - Smart Money Entry System
 2. Price touches OB → Стан ENTRY_FOUND (сигнал до входу)
 3. Entry executed → Стан POSITION
 
-Автор: SVV Bot Team
+Автор: VSV Bot Team
 Версія: 1.0 (2026-02-02)
 """
 
