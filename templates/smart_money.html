@@ -1382,9 +1382,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </label>
             <button class="sm-bias-refresh" onclick="loadBias()">🔄 Оновити</button>
         </div>
-        <!-- Обґрунтування Smart Direction: у режимі Forecast — Forecast 1H/4H;
-             у режимі CTR_STC — розклад CTR 15m/1H/4H (напрямок·нахил·впевненість). -->
-        <div id="sm-dir-reason" style="display:none;margin:2px 0 6px;font-size:0.76rem;line-height:1.7;padding:6px 10px;border-radius:6px;background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.25)"></div>
         <div class="sm-bias-body">
             <div class="sm-bias-left-col">
                 <div class="sm-bias-price" id="sm-bias-price" style="display:none">
@@ -1808,8 +1805,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          never become visible. The new Decision Center block
                          below replaces all of them. -->
                     <span class="sm-status-badge" id="sm-htf-badge" style="display:none !important"></span>
-                    <span class="sm-status-badge" id="sm-forecast-badge" style="display:none !important"></span>
-                    <span class="sm-status-badge" id="sm-forecast4h-badge" style="display:none !important"></span>
+                    <span class="sm-status-badge" id="sm-forecast-badge" style="display:none"></span>
+                    <span class="sm-status-badge" id="sm-forecast4h-badge" style="display:none"></span>
                     <span class="sm-status-badge" id="sm-bias-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-health-badge" style="display:none !important"></span>
                     <!-- ❤️ Fuel Auto-Filter status row — second line under the
@@ -5778,7 +5775,12 @@ async function loadChart() {
         } else {
             forecastBadge4h.style.display = 'none';
         }
-        
+        // Режим-гейт: Forecast на банері показуємо лише коли режим НЕ CTR_STC.
+        if (currentSmartMode() === 'ctr_stc') {
+            forecastBadge.style.display = 'none';
+            forecastBadge4h.style.display = 'none';
+        }
+
         // === CTR badge (informational) ===
         // STC ranges 0-100. Zones: <25 = Oversold, >75 = Overbought, mid otherwise.
         // Last signal direction comes from STC crossing back THROUGH these levels:
@@ -5889,7 +5891,11 @@ async function loadChart() {
         } else {
             ctrBadge.style.display = 'none';
         }
-        
+        // Режим-гейт: CTR на банері показуємо лише у режимі CTR_STC (замість Forecast).
+        if (currentSmartMode() !== 'ctr_stc') {
+            ctrBadge.style.display = 'none';
+        }
+
         // === Directional bias (Entry Score recommendation) ===
         // Single badge that says "if you opened now, the bot would suggest X
         // with Y% probability". Click/hover shows the full breakdown of
@@ -7506,13 +7512,33 @@ function toggleSmartDirection(on) {
     if (on) loadBias();
 }
 
+// Поточний режим Smart Direction (для перемикання банера Forecast↔CTR).
+function currentSmartMode() {
+    const sel = document.getElementById('sm-bias-auto-mode');
+    return (sel && sel.value) || window.smartDirectionMode || 'smart';
+}
+// Банер: у CTR_STC ховаємо бейджі Forecast (показуємо CTR), інакше — навпаки.
+// Дані відрендеряться наступним тіком чарта; гейт у самих рендерах тримає режим.
+function applyBannerModeSwap() {
+    const ctrStc = currentSmartMode() === 'ctr_stc';
+    const fb1 = document.getElementById('sm-forecast-badge');
+    const fb4 = document.getElementById('sm-forecast4h-badge');
+    const cb = document.getElementById('sm-ctr-badge');
+    if (ctrStc) {
+        if (fb1) fb1.style.display = 'none';
+        if (fb4) fb4.style.display = 'none';
+    } else if (cb) {
+        cb.style.display = 'none';
+    }
+}
+
 function onSmartDirectionModeChange() {
     const sel = document.getElementById('sm-bias-auto-mode');
     if (!sel) return;
     smartDirectionMode = sel.value || 'smart';
     try { localStorage.setItem('sm_smart_direction_mode', smartDirectionMode); } catch {}
-    renderDirReason(window._lastBias);   // Forecast↔CTR_STC display swap
-    try { loadBias(); } catch (e) {}     // весь борд одразу під новий режим
+    try { loadBias(); } catch (e) {}         // борд одразу під новий режим
+    try { applyBannerModeSwap(); } catch (e) {}   // Forecast↔CTR на банері
     if (smartDirectionEnabled) {
         fetch('/api/sm/auto-gate', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -7757,8 +7783,7 @@ async function loadBias() {
         fill.style.width = effConf + '%';
         fill.style.background = dirGrad(effVerdict);
         renderMovePanel(d.move_long, d.move_short, effVerdict);
-        window._lastBias = d;              // для перемикання Forecast↔CTR_STC
-        renderDirReason(d);
+        window._lastBias = d;
         const icons = {ok: '✓', warn: '⚠', wait: '•'};
         // The watchlist-consensus reason line is rendered under the
         // consensus bar in the RIGHT column (not in the left reasons list),
