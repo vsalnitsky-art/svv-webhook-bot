@@ -46,12 +46,12 @@ def _ctr_trend(symbol: str):
             fresh = 1.0 if (age is None or age <= 3) else max(0.4, 1.0 - (age - 3) * 0.1)
             num += w * sign * fresh
             wsum += w
-            parts.append(f"{tf.upper()}:{ld[0]}")
+            parts.append({'name': tf, 'dir': ld})
         if wsum <= 0:
-            return 0.0, 'немає кросоверів'
-        return max(-1.0, min(1.0, num / wsum)), ' '.join(parts)
+            return 0.0, []
+        return max(-1.0, min(1.0, num / wsum)), parts
     except Exception:
-        return 0.0, '—'
+        return 0.0, []
 
 
 def _forecast_vote(symbol: str, verdict_data: Optional[Dict]):
@@ -81,12 +81,13 @@ def _forecast_vote(symbol: str, verdict_data: Optional[Dict]):
             conf = float(fcx.get('confidence') or 0) / 100.0
             num += w * (1.0 if side == 1 else -1.0) * conf
             wsum += w
-            parts.append(f"{lbl}:{'L' if side == 1 else 'S'}{int((fcx.get('confidence') or 0))}")
+            parts.append({'name': lbl, 'dir': 'LONG' if side == 1 else 'SHORT',
+                          'val': f"{int(fcx.get('confidence') or 0)}%"})
         if wsum <= 0:
-            return 0.0, '—'
-        return max(-1.0, min(1.0, num / wsum)), ' '.join(parts)
+            return 0.0, []
+        return max(-1.0, min(1.0, num / wsum)), parts
     except Exception:
-        return 0.0, '—'
+        return 0.0, []
 
 
 def _bablo_vote(db, symbol: str):
@@ -98,13 +99,14 @@ def _bablo_vote(db, symbol: str):
             return 0.0, '—'
         st = r.get('status')
         strg = float(r.get('strength') or 0) / 100.0
+        vv = f"{r.get('strength')}%"
         if st == 'LONG':
-            return min(1.0, strg), f"LONG {r.get('strength')}%"
+            return min(1.0, strg), [{'name': 'ММ', 'dir': 'LONG', 'val': vv}]
         if st == 'SHORT':
-            return -min(1.0, strg), f"SHORT {r.get('strength')}%"
-        return 0.0, 'рівновага'
+            return -min(1.0, strg), [{'name': 'ММ', 'dir': 'SHORT', 'val': vv}]
+        return 0.0, [{'name': 'ММ', 'dir': None, 'val': 'рівновага'}]
     except Exception:
-        return 0.0, '—'
+        return 0.0, []
 
 
 def _exhaustion_for(verdict_data: Optional[Dict], direction: Optional[str]) -> Optional[float]:
