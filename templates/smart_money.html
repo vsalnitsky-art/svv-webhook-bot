@@ -7538,24 +7538,30 @@ function renderDirReason(d) {
     if (mode === 'ctr_stc') {
         const cs = d.ctr_stc;
         if (cs && cs.per_tf && cs.per_tf.length) {
+            // Зона своїм кольором: перекупленість=помаранч, перепроданість=блакить.
+            const zoneCol = z => z === 'перекупленість' ? '#fdba74'
+                             : (z === 'перепроданість' ? '#7dd3fc' : '#94a3b8');
             rows = cs.per_tf.map(t => {
                 const col = t.lean === 'LONG' ? DIRCOL.LONG : (t.lean === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
                 const ic = t.lean === 'LONG' ? '🟢' : (t.lean === 'SHORT' ? '🔴' : '⚪');
                 const leanW = t.lean ? (t.lean + '-нахил') : 'нейтрально';
                 return '<tr>'
-                    + td(`<b style="color:#cbd5e1">${t.label}</b>`)
-                    + td(`${ic} ${leanW}`, `color:${col};font-weight:700`)
-                    + td(`впевненість ${t.conf}%`, `color:${col}`)
-                    + td(`STC ${t.stc} · ${t.zone}`, 'color:#8b93a7')
+                    + td(t.label, 'color:#cbd5e1;font-weight:700')
+                    + td(ic, 'text-align:center;padding-right:4px')                 // круги — окремий стовпчик
+                    + td(leanW, `color:${col};font-weight:700`)                    // напрямок — своїм кольором
+                    + td(`впевненість ${t.conf}%`, `color:${col}`)                 // % — тим самим кольором
+                    + td(`STC ${t.stc}`, 'color:#8b93a7;text-align:right')         // роз'яснення — сірим
+                    + td(t.zone, `color:${zoneCol(t.zone)};font-weight:600`)       // зона — своїм кольором, свій стовпчик
                     + '</tr>';
             }).join('');
             const vd = cs.mode === 'LONG_ONLY' ? 'LONG' : (cs.mode === 'SHORT_ONLY' ? 'SHORT' : 'WAIT');
             const vcol = vd === 'LONG' ? DIRCOL.LONG : (vd === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
             const vic = vd === 'LONG' ? '🟢' : (vd === 'SHORT' ? '🔴' : '⚪');
             const pct = (cs.score_pct != null) ? cs.score_pct : Math.round((cs.score || 0) * 100);
-            foot = `<div style="margin-top:4px;border-top:1px solid rgba(255,255,255,.12);padding-top:4px">`
-                 + `→ CTR_STC: <b style="color:${vcol}">${vic} ${vd}</b> `
-                 + `<span style="color:#8b93a7">(бал ${pct >= 0 ? '+' : ''}${pct}%)</span></div>`;
+            // Підсумок — праворуч, стрілка з правого боку.
+            foot = `<div style="text-align:right;margin-top:4px;border-top:1px solid rgba(255,255,255,.12);padding-top:4px">`
+                 + `CTR_STC: <b style="color:${vcol}">${vic} ${vd}</b> `
+                 + `<span style="color:#8b93a7">(бал ${pct >= 0 ? '+' : ''}${pct}%)</span> →</div>`;
         } else {
             el.innerHTML = '<span style="color:#8b93a7">CTR: немає даних</span>';
             el.style.display = ''; return;
@@ -7566,16 +7572,19 @@ function renderDirReason(d) {
             const dir = fc.side === 1 ? 'LONG' : 'SHORT';
             const col = fc.side === 1 ? DIRCOL.LONG : DIRCOL.SHORT;
             const ic = fc.side === 1 ? '🟢' : '🔴';
+            const p = (fc.pct != null) ? `${fc.pct > 0 ? '+' : ''}${fc.pct}%` : '';
             return '<tr>'
-                + td(`<b style="color:#cbd5e1">${lbl}</b>`)
-                + td(`${ic} ${dir}`, `color:${col};font-weight:700`)
-                + td(`впевненість ${fc.confidence}%`, `color:${col}`)
+                + td('✓ ' + lbl, 'color:#cbd5e1;font-weight:700')
+                + td(ic, 'text-align:center;padding-right:4px')                    // круги — окремий стовпчик
+                + td(dir, `color:${col};font-weight:700`)                          // напрямок — своїм кольором
+                + td(p, `color:${col};text-align:right`)                           // % — тим самим кольором
+                + td(`впевненість ${fc.confidence}%`, 'color:#8b93a7')             // впевненість — сірим
                 + '</tr>';
         };
         rows = frow(d.forecast_1h, 'Forecast 1H') + frow(d.forecast_4h, 'Forecast 4H');
         if (!rows) { el.innerHTML = '<span style="color:#8b93a7">Forecast: немає даних</span>'; el.style.display = ''; return; }
     }
-    el.innerHTML = `<table style="border-collapse:collapse;font-size:0.76rem;line-height:1.5">${rows}</table>${foot}`;
+    el.innerHTML = `<table style="border-collapse:collapse;font-size:0.76rem;line-height:1.6">${rows}</table>${foot}`;
     el.style.display = '';
 }
 
