@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VSV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.4.0
+// @version      1.4.1
 // @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       VSV
 // @match        https://*.tradingview.com/chart/*
@@ -338,28 +338,30 @@
         // ── ⚡ CTR line (замість «оновлено») — нахил STC по цій монеті ──
         const c = d.ctr;
         if (c && c.stc != null) {
-            const tf = c.tf ? ('·' + String(c.tf).toUpperCase()) : '';
+            const tf = (c.tf && c.tf !== 'scanner') ? String(c.tf).toLowerCase() : '';
             const lean = c.lean;   // 'LONG' | 'SHORT' | null
             const icon = lean === 'LONG' ? '🟢' : (lean === 'SHORT' ? '🔴' : '⚪');
             const col = lean === 'LONG' ? '#4ade80' : (lean === 'SHORT' ? '#f87171' : '#9aa3b5');
-            const label = lean ? (lean + '-нахил') : 'нейтрально';
             const pct = (c.lean_pct != null) ? c.lean_pct : 0;
-            // Обидва числа: точний STC (реальне значення осцилятора) + % впевненості.
-            let foot = `⚡ CTR${tf} <span style="color:${col};font-weight:700">${icon} ${label} STC ${Math.round(c.stc)} · ${pct}%</span>`;
-            // ⚡ 1H / 4H CTR alongside the primary TF (added by get_panel_status).
+            // Компактно: сірий TF-тег = роздільник + КОЛЬОРОВІ цифри (STC + %),
+            // щоб сегменти ТФ не зливались. Без слів «нахил»/«STC».
+            let foot = `⚡ <span style="color:#8b93a7">${tf}</span>`
+                + `<span style="color:${col};font-weight:700">${icon} ${Math.round(c.stc)} · ${pct}%</span>`;
             if (c.stc_1h != null) {
                 const l1 = c.lean_1h;
                 const i1 = l1 === 'LONG' ? '🟢' : (l1 === 'SHORT' ? '🔴' : '⚪');
                 const cc1 = l1 === 'LONG' ? '#4ade80' : (l1 === 'SHORT' ? '#f87171' : '#9aa3b5');
                 const p1 = (c.lean_pct_1h != null) ? c.lean_pct_1h : 0;
-                foot += ` <span style="color:${cc1};font-weight:700">· 1H ${i1} STC ${Math.round(c.stc_1h)} · ${p1}%</span>`;
+                foot += ` <span style="color:#8b93a7">· 1H</span>`
+                    + `<span style="color:${cc1};font-weight:700"> ${i1} ${Math.round(c.stc_1h)} · ${p1}%</span>`;
             }
             if (c.stc_4h != null) {
                 const l4 = c.lean_4h;
                 const i4 = l4 === 'LONG' ? '🟢' : (l4 === 'SHORT' ? '🔴' : '⚪');
                 const cc4 = l4 === 'LONG' ? '#4ade80' : (l4 === 'SHORT' ? '#f87171' : '#9aa3b5');
                 const p4 = (c.lean_pct_4h != null) ? c.lean_pct_4h : 0;
-                foot += ` <span style="color:${cc4};font-weight:700">· 4H ${i4} STC ${Math.round(c.stc_4h)} · ${p4}%</span>`;
+                foot += ` <span style="color:#8b93a7">· 4H</span>`
+                    + `<span style="color:${cc4};font-weight:700"> ${i4} ${Math.round(c.stc_4h)} · ${p4}%</span>`;
             }
             elFoot.innerHTML = foot;
         } else {

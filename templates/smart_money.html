@@ -5811,52 +5811,43 @@ async function loadChart() {
             // point (stc=50) and dropped toward the zones.
             const leanPct = Math.round(Math.abs(ctr.stc - 50) / 50 * 100);
             
-            // TF tag — which timeframe CTR is computed on (general setting).
-            const _ctrTf = (ctr.tf && ctr.tf !== 'scanner') ? `·${String(ctr.tf).toUpperCase()}` : '';
-            // Build badge with PER-PART colours: the crossover keeps its own
-            // direction colour (green LONG / red SHORT, grey if stale), the lean
-            // keeps its zone colour — so the two don't blur into one hue.
-            // Обидва числа: точний STC (реальне значення осцилятора 0–100) + %
-            // впевненості розвороту. STC — «точний відсоток», % — сила нахилу.
-            const leanHtml = `<span style="color:${zoneColor}">${revBias} STC ${Math.round(ctr.stc)} · ${leanPct}%</span>`;
+            // Компактно: сірий TF-тег = роздільник, КОЛЬОРОВІ цифри за напрямком
+            // (🟢 LONG-нахил / 🔴 SHORT-нахил) — щоб сегменти ТФ не зливались.
+            // Формат: ⚡ 15m🟢 29 · 43% · 1H 🔴 100 · 100% · 4H 🔴 97 · 94%.
+            const _tf = (ctr.tf && ctr.tf !== 'scanner') ? String(ctr.tf).toLowerCase() : '';
+            const _icon0 = ctr.stc > 50 ? '🔴' : (ctr.stc < 50 ? '🟢' : '⚪');
             let bgColor = 'rgba(100,100,100,0.12)';
-            let badgeHtml = `⚡ CTR${_ctrTf} ${leanHtml}`;
-
+            let badgeHtml = `⚡ <span style="color:#8b93a7">${_tf}</span>`
+                + `<span style="color:${zoneColor};font-weight:700">${_icon0} ${Math.round(ctr.stc)} · ${leanPct}%</span>`;
             if (ctr.last_dir) {
-                const ctrIcon = ctr.last_dir === 'LONG' ? '🟢' : '🔴';
-                const age = ctr.last_signal_age_bars;
-                const ageStr = age === null || age === undefined ? '' :
-                    (age === 0 ? 'now' : age === 1 ? '1 bar ago' : `${age} bars ago`);
-                // Staleness: a crossover many bars ago is NOT actionable → grey it.
-                const STALE_BARS = 6;
-                const stale = (age != null && age > STALE_BARS);
-                const staleTag = stale ? ' ⚠️застарілий' : '';
-                const crossColor = stale ? '#9aa3b5'
-                    : (ctr.last_dir === 'LONG' ? '#86efac' : '#fca5a5');
-                const crossHtml = `<span style="color:${crossColor}">${ctrIcon} ${ctr.last_dir} (${ageStr}${staleTag})</span>`;
-                badgeHtml = `⚡ CTR${_ctrTf} ${crossHtml} · ${leanHtml}`;
-                bgColor = stale ? 'rgba(120,120,120,0.10)'
+                bgColor = (ctr.last_signal_age_bars != null && ctr.last_signal_age_bars > 6)
+                    ? 'rgba(120,120,120,0.10)'
                     : (ctr.last_dir === 'LONG' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)');
             }
-
-            // ⚡ 1H / 4H CTR alongside the primary TF (STC + % впевненості кожен).
             if (ctr.stc_1h != null) {
                 const s1 = Number(ctr.stc_1h);
-                let b1, c1;
-                if (s1 > 50) { b1 = '🔴'; c1 = '#fca5a5'; }
-                else if (s1 < 50) { b1 = '🟢'; c1 = '#86efac'; }
-                else { b1 = '⚪'; c1 = '#aaa'; }
+                const b1 = s1 > 50 ? '🔴' : (s1 < 50 ? '🟢' : '⚪');
+                const c1 = s1 > 50 ? '#fca5a5' : (s1 < 50 ? '#86efac' : '#aaa');
                 const p1 = Math.round(Math.abs(s1 - 50) / 50 * 100);
-                badgeHtml += ` <span title="CTR 1H · STC ${s1.toFixed(1)}/100 · впевненість ${p1}%" style="color:${c1}">· 1H ${b1} STC ${Math.round(s1)} · ${p1}%</span>`;
+                badgeHtml += ` <span style="color:#8b93a7">· 1H</span>`
+                    + `<span title="CTR 1H · STC ${s1.toFixed(1)}/100 · впевненість ${p1}%" style="color:${c1};font-weight:700"> ${b1} ${Math.round(s1)} · ${p1}%</span>`;
             }
             if (ctr.stc_4h != null) {
                 const s4 = Number(ctr.stc_4h);
-                let b4, c4;
-                if (s4 > 50) { b4 = '🔴'; c4 = '#fca5a5'; }
-                else if (s4 < 50) { b4 = '🟢'; c4 = '#86efac'; }
-                else { b4 = '⚪'; c4 = '#aaa'; }
+                const b4 = s4 > 50 ? '🔴' : (s4 < 50 ? '🟢' : '⚪');
+                const c4 = s4 > 50 ? '#fca5a5' : (s4 < 50 ? '#86efac' : '#aaa');
                 const p4 = Math.round(Math.abs(s4 - 50) / 50 * 100);
-                badgeHtml += ` <span title="CTR 4H · STC ${s4.toFixed(1)}/100 · впевненість ${p4}%" style="color:${c4}">· 4H ${b4} STC ${Math.round(s4)} · ${p4}%</span>`;
+                badgeHtml += ` <span style="color:#8b93a7">· 4H</span>`
+                    + `<span title="CTR 4H · STC ${s4.toFixed(1)}/100 · впевненість ${p4}%" style="color:${c4};font-weight:700"> ${b4} ${Math.round(s4)} · ${p4}%</span>`;
+            }
+            // Останній CTR-кросовер — компактний кольоровий хвіст (🔴2b), сірий якщо застарілий.
+            if (ctr.last_dir) {
+                const _age = ctr.last_signal_age_bars;
+                const _stale = (_age != null && _age > 6);
+                const _ageStr = _age == null ? '' : (_age === 0 ? 'now' : _age + 'b');
+                const _cc = _stale ? '#9aa3b5' : (ctr.last_dir === 'LONG' ? '#86efac' : '#fca5a5');
+                const _ic = ctr.last_dir === 'LONG' ? '🟢' : '🔴';
+                badgeHtml += ` <span title="Останній CTR-кросовер: ${ctr.last_dir} ${_ageStr}${_stale ? ' (застарілий)' : ''}" style="color:${_cc};font-size:0.85em">${_ic}${_ageStr}${_stale ? '⚠️' : ''}</span>`;
             }
             ctrBadge.innerHTML = badgeHtml;
             ctrBadge.className = 'sm-status-badge';
@@ -7136,42 +7127,39 @@ function decisionRecap(es) {
 function ffCtrCell(c) {
     if (!c || c.stc == null) return '<span style="color:#555">—</span>';
     const stc = Number(c.stc);
-    // 50-split lean (matches the CTR gate): stc>50 → SHORT-нахил, <50 → LONG.
-    let revBias, col;
-    if (stc > 50) { revBias = '🔴 SHORT-нахил'; col = '#f87171'; }
-    else if (stc < 50) { revBias = '🟢 LONG-нахил'; col = '#4ade80'; }
-    else { revBias = '⚪ нейтрально'; col = '#9aa3b5'; }
+    // 50-split lean: stc>50 → SHORT-нахил (🔴), <50 → LONG (🟢). Компактно —
+    // сірий TF-тег як роздільник + КОЛЬОРОВІ цифри за напрямком (щоб не зливались).
+    const col = stc > 50 ? '#f87171' : (stc < 50 ? '#4ade80' : '#9aa3b5');
+    const icon0 = stc > 50 ? '🔴' : (stc < 50 ? '🟢' : '⚪');
     const leanPct = Math.round(Math.abs(stc - 50) / 50 * 100);
-    // Обидва числа: точний STC + % впевненості розвороту.
-    let html = `<span title="STC ${stc.toFixed(1)}/100 · впевненість ${leanPct}%" style="color:${col};font-weight:700">${revBias} STC ${Math.round(stc)} · ${leanPct}%</span>`;
+    const tf0 = (c.tf && c.tf !== 'scanner') ? String(c.tf).toLowerCase() : '';
+    let html = `<span style="color:#8b93a7">${tf0}</span>`
+        + `<span title="STC ${stc.toFixed(1)}/100 · впевненість ${leanPct}%" style="color:${col};font-weight:700">${icon0} ${Math.round(stc)} · ${leanPct}%</span>`;
+    if (c.stc_1h != null) {
+        const s1 = Number(c.stc_1h);
+        const b1 = s1 > 50 ? '🔴' : (s1 < 50 ? '🟢' : '⚪');
+        const c1 = s1 > 50 ? '#f87171' : (s1 < 50 ? '#4ade80' : '#9aa3b5');
+        const p1 = Math.round(Math.abs(s1 - 50) / 50 * 100);
+        html += ` <span style="color:#8b93a7;font-size:0.62rem">· 1H</span>`
+            + `<span title="CTR 1H · STC ${s1.toFixed(1)}/100 · впевненість ${p1}%" style="color:${c1};font-size:0.62rem;font-weight:700"> ${b1} ${Math.round(s1)} · ${p1}%</span>`;
+    }
+    if (c.stc_4h != null) {
+        const s4 = Number(c.stc_4h);
+        const b4 = s4 > 50 ? '🔴' : (s4 < 50 ? '🟢' : '⚪');
+        const c4 = s4 > 50 ? '#f87171' : (s4 < 50 ? '#4ade80' : '#9aa3b5');
+        const p4 = Math.round(Math.abs(s4 - 50) / 50 * 100);
+        html += ` <span style="color:#8b93a7;font-size:0.62rem">· 4H</span>`
+            + `<span title="CTR 4H · STC ${s4.toFixed(1)}/100 · впевненість ${p4}%" style="color:${c4};font-size:0.62rem;font-weight:700"> ${b4} ${Math.round(s4)} · ${p4}%</span>`;
+    }
+    // Останній CTR-кросовер — компактний кольоровий хвіст (🔴2b), сірий якщо застарілий.
     if (c.last_dir) {
         const icon = c.last_dir === 'LONG' ? '🟢' : '🔴';
         const age = c.last_signal_age_bars;
         const stale = (age != null && age > 6);
         const ageStr = age == null ? '' : (age === 0 ? 'now' : age + 'b');
-        // Crossover coloured by its OWN direction (grey when stale).
         const crossCol = stale ? '#6b7280' : (c.last_dir === 'LONG' ? '#4ade80' : '#f87171');
         html += ` <span title="Останній CTR-кросовер: ${c.last_dir} ${ageStr}${stale ? ' (застарілий)' : ''}" `
             + `style="font-size:0.6rem;color:${crossCol}">${icon}${ageStr}${stale ? '⚠️' : ''}</span>`;
-    }
-    // ⚡ 1H / 4H CTR segments alongside the primary TF (STC + % впевненості).
-    if (c.stc_1h != null) {
-        const s1 = Number(c.stc_1h);
-        let b1, c1;
-        if (s1 > 50) { b1 = '🔴'; c1 = '#f87171'; }
-        else if (s1 < 50) { b1 = '🟢'; c1 = '#4ade80'; }
-        else { b1 = '⚪'; c1 = '#9aa3b5'; }
-        const p1 = Math.round(Math.abs(s1 - 50) / 50 * 100);
-        html += ` <span title="CTR 1H · STC ${s1.toFixed(1)}/100 · впевненість ${p1}%" style="color:${c1};font-size:0.62rem;font-weight:700">· 1H ${b1} STC ${Math.round(s1)} · ${p1}%</span>`;
-    }
-    if (c.stc_4h != null) {
-        const s4 = Number(c.stc_4h);
-        let b4, c4;
-        if (s4 > 50) { b4 = '🔴'; c4 = '#f87171'; }
-        else if (s4 < 50) { b4 = '🟢'; c4 = '#4ade80'; }
-        else { b4 = '⚪'; c4 = '#9aa3b5'; }
-        const p4 = Math.round(Math.abs(s4 - 50) / 50 * 100);
-        html += ` <span title="CTR 4H · STC ${s4.toFixed(1)}/100 · впевненість ${p4}%" style="color:${c4};font-size:0.62rem;font-weight:700">· 4H ${b4} STC ${Math.round(s4)} · ${p4}%</span>`;
     }
     return html;
 }
@@ -9789,9 +9777,9 @@ function renderTradeHistoryChart(h, meta) {
     // the CTR timeframe tag (·1H). Reuses ffCtrCell so all places stay identical.
     function ctrLineOf(c, label) {
         if (!c || c.stc == null) return '';
-        const tf = (c.tf && c.tf !== 'scanner') ? `·${String(c.tf).toUpperCase()}` : '';
+        // TF показує вже ffCtrCell (сірий тег) — тут його не дублюємо.
         return `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:4px">`
-            + `⚡ ${label}${tf}: ${ffCtrCell(c)}</div>`;
+            + `⚡ ${label}: ${ffCtrCell(c)}</div>`;
     }
     let ctrLine = ctrLineOf(meta.ctr_open, 'CTR на вході')
         + (isOpen ? ctrLineOf(meta.ctr_close, 'CTR зараз (перегляд)')
