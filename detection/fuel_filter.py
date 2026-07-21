@@ -1988,7 +1988,8 @@ class FuelFilterDaemon:
             # main window reads). This is the default.
             return {'dir': raw, 'mark_price': fd.get('mark_price'),
                     'status': fd.get('status'), 'raw_dir': raw,
-                    'raw_status': fd.get('status')}
+                    'raw_status': fd.get('status'),
+                    'runway': fd.get('runway'), 'target': fd.get('target')}
         if update:
             N = max(1.0, W * 60.0 / CYCLE_SECS)      # samples in the window
             alpha = 2.0 / (N + 1.0)                   # EMA smoothing factor
@@ -2013,7 +2014,8 @@ class FuelFilterDaemon:
             status = self._fuel_hyst.get(sym) if sym in self._fuel_hyst \
                 else fd.get('status')
         return {'dir': round(ema, 3), 'mark_price': fd.get('mark_price'),
-                'status': status, 'raw_dir': raw, 'raw_status': fd.get('status')}
+                'status': status, 'raw_dir': raw, 'raw_status': fd.get('status'),
+                'runway': fd.get('runway'), 'target': fd.get('target')}
 
     def get_btc_session(self) -> Dict:
         """The committed ₿ BTCUSDT session that the banner shows:
@@ -2377,11 +2379,16 @@ class FuelFilterDaemon:
             out['mm'] = fuel_data.get('status') if fuel_data else None
             out['mm_dir'] = round(_fd, 3)
             out['mm_str'] = round(abs(_fd) * 100.0, 1)
+            # 🎯 Запас ходу (до ліквідності попереду руху) + ціль-магніт.
+            out['runway'] = (fuel_data or {}).get('runway')
+            out['mm_target'] = (fuel_data or {}).get('target')
         except Exception:
             out['fuel_status'] = None
             out['mm'] = None
             out['mm_dir'] = 0.0
             out['mm_str'] = 0.0
+            out['runway'] = None
+            out['mm_target'] = None
         # Exhaustion for the fuel-status side (entry gate input)
         exh = None
         try:

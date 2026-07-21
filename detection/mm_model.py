@@ -89,6 +89,48 @@ def _liq_pull(levels, mark: float, d0: float, reach: float):
     return max(-1.0, min(1.0, num / den)), target, den
 
 
+def _runway(levels, mark: float, move_dir: Optional[str], reach: float,
+            min_usd: float = 100_000.0) -> Optional[Dict]:
+    """«Запас ходу» — скільки ще простору до значущої ліквідності ПОПЕРЕДУ руху.
+    move_dir: 'LONG'(ціль зверху)/'SHORT'(ціль знизу). Логіка: ціна тягнеться до
+    великих пулів ліквідації; найближчий великий кластер попереду — де рух може
+    сповільнитись, головний (найбільший) — ймовірна кінцева ціль.
+    → {room_pct, label, next:{price,dist_pct,usd}, main:{...}} або None."""
+    if move_dir not in ('LONG', 'SHORT') or not mark or mark <= 0:
+        return None
+    ahead = []
+    for lev in levels or []:
+        try:
+            price = float(lev['price'])
+            usd = float(lev.get('usd') or 0.0)
+        except Exception:
+            continue
+        if usd < min_usd:
+            continue
+        up = price > mark
+        if (move_dir == 'LONG' and not up) or (move_dir == 'SHORT' and up):
+            continue                      # не попереду руху
+        dist = abs(price - mark) / mark * 100.0
+        if dist <= 0 or dist > reach:
+            continue
+        ahead.append((dist, price, usd))
+    if not ahead:
+        return {'room_pct': None, 'label': 'простір відкритий (немає великих цілей попереду)',
+                'next': None, 'main': None}
+    ahead.sort(key=lambda x: x[0])         # за відстанню
+    nxt = ahead[0]
+    main = max(ahead, key=lambda x: x[2])  # найбільший пул попереду = ймовірна ціль
+    room = main[0]
+    label = ('малий запас' if room < 0.7 else
+             ('помірний запас' if room < 2.5 else 'великий запас'))
+    return {
+        'room_pct': round(room, 2),
+        'label': label,
+        'next': {'price': round(nxt[1], 10), 'dist_pct': round(nxt[0], 2), 'usd': round(nxt[2], 0)},
+        'main': {'price': round(main[1], 10), 'dist_pct': round(main[0], 2), 'usd': round(main[2], 0)},
+    }
+
+
 def _whale_term(symbol: str) -> Optional[float]:
     """Агресивний потік крупного капіталу → [-1..+1] (buy важче = +). None коли
     whale-tape не веде саме цей символ (він односимвольний, зазвичай BTC)."""
@@ -260,6 +302,13 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
         dqf = _dq_factor((lst or {}).get('data_quality'))
         strength = int(round(min(1.0, abs(score)) * 100 * dqf))
 
+        # 🎯 «Запас ходу» — відстань до значущої ліквідності попереду руху. Напрямок
+        # руху: статус ММ, а якщо WAIT — знак імпульсу ціни.
+        _mv = status
+        if _mv is None and momentum is not None:
+            _mv = ('LONG' if momentum > 0.1 else ('SHORT' if momentum < -0.1 else None))
+        runway = _runway((lst or {}).get('levels') or [], mark, _mv, st['mm_reach_pct'])
+
         return {
             'dir': round(score, 3),          # сумісно зі старим fuel_dir (після тренду)
             'status': status,
@@ -271,6 +320,7 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
             'data_quality': dqf,
             'liq_score': round(liq_score, 3),  # чистий магніт до реконсиляції (лог)
             'trend_override': trend_override,  # тренд переважив магніт
+            'runway': runway,                  # запас ходу до ліквідності попереду
         }
     except Exception as e:
         try:

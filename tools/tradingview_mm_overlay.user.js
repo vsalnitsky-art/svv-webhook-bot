@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VSV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.4.1
+// @version      1.5.0
 // @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       VSV
 // @match        https://*.tradingview.com/chart/*
@@ -20,8 +20,8 @@
  • Скрипт визначає монету, відкриту на графіку TradingView (з URL / заголовка).
  • Раз на кілька секунд запитує у твого бота ендпоінт
        GET <URL_бота>/api/fuel-filter/panel/<SYMBOL>
-   і показує СПРАВЖНІЙ ММ (|fuel dir|×100), напрямок, рівень (немає/слабке/
-   помірний/сильне), виснаженість і вердикт — ті самі числа, що в боті.
+   і показує СПРАВЖНІЙ ММ (|fuel dir|×100), напрямок, силу тиску (рівновага/
+   легкий/помірний/сильний/потужний), виснаженість — ті самі числа, що в боті.
  • Дані рахуються з карти ліквідацій бота, тож для монети, яку бот ще не
    сканував, перший запит може бути «немає даних», а за ~хвилину зʼявиться
    (ендпоінт реєструє монету в liq-map на вимогу).
@@ -134,14 +134,24 @@
         return _cleanSym(raw);
     }
 
-    // ── ММ bands (той самий поділ, що в боті) ──────────────────────────────
+    // ── ММ bands — сила ТИСКУ ММ (той самий 5-рівневий поділ, що в головному UI):
+    // рівновага <10 · легкий 10–30 · помірний 30–60 · сильний 60–85 · потужний 85+.
+    // «рівновага» (а не «немає») = тиск ММ незначний, ліквідації/паливо з обох
+    // боків збалансовані → напрямку немає. Це НЕ «немає даних».
     function band(mm) {
         if (mm == null) return { label: '—' };
-        if (mm < 10) return { label: 'немає' };
-        if (mm < 30) return { label: 'слабке' };
-        if (mm < 60) return { label: 'помірний' };
-        return { label: 'сильне' };
+        if (mm < 10) return { label: 'рівновага' };
+        if (mm < 30) return { label: 'легкий тиск' };
+        if (mm < 60) return { label: 'помірний тиск' };
+        if (mm < 85) return { label: 'сильний тиск' };
+        return { label: 'потужний тиск' };
     }
+    // Єдине пояснення показника ММ (тултип при наведенні на бейдж).
+    const MM_HELP =
+        'ММ — тиск маркетмейкера/ліквідності на ціну (куди тягне).\n' +
+        'Напрямок: 🟢 вгору (лонг) · 🔴 вниз (шорт) · ⚪ рівновага.\n' +
+        '% — сила тиску (наскільки односторонні ліквідації/паливо):\n' +
+        'рівновага <10 · легкий 10–30 · помірний 30–60 · сильний 60–85 · потужний 85+.';
     function dirColor(dir) {
         if (dir === 'LONG') return '#22c55e';
         if (dir === 'SHORT') return '#ef4444';
@@ -154,7 +164,7 @@
     }
 
     // ── Badge UI ──────────────────────────────────────────────────────────
-    let badge, elSym, elMM, elDir, elBtc, elFund, elFoot;
+    let badge, elSym, elMM, elDir, elRun, elBtc, elFund, elFoot;
     function buildBadge() {
         if (badge) return;
         badge = document.createElement('div');
@@ -176,6 +186,7 @@
               '<span id="svv-mm-val" style="font-weight:900;font-size:22px">—</span>' +
               '<span id="svv-mm-dir" style="font-weight:700;font-size:12px"></span>' +
             '</div>' +
+            '<div id="svv-mm-run" style="font-size:10.5px;color:#9aa3b5;margin-top:3px"></div>' +
             '<div id="svv-mm-btc" style="font-size:10.5px;color:#9aa3b5;margin-top:3px"></div>' +
             '<div id="svv-mm-fund" style="font-size:10.5px;color:#34d399;margin-top:2px"></div>' +
             '<div id="svv-mm-foot" style="font-size:9.5px;color:#6b7280;margin-top:3px"></div>';
@@ -183,6 +194,7 @@
         elSym = badge.querySelector('#svv-mm-sym');
         elMM = badge.querySelector('#svv-mm-val');
         elDir = badge.querySelector('#svv-mm-dir');
+        elRun = badge.querySelector('#svv-mm-run');
         elBtc = badge.querySelector('#svv-mm-btc');
         elFund = badge.querySelector('#svv-mm-fund');
         elFoot = badge.querySelector('#svv-mm-foot');
@@ -244,6 +256,7 @@
         elSym.textContent = sym || '—';
         // Reset the extra lines each render.
         elBtc.innerHTML = ''; elFund.innerHTML = '';
+        if (elRun) { elRun.innerHTML = ''; elRun.style.display = 'none'; }
         if (state === 'noconfig') {
             elMM.textContent = '⚙'; elMM.style.color = '#f59e0b';
             elDir.textContent = ''; elBtc.textContent = 'Задай URL бота (2× клік по бейджу)';
@@ -274,28 +287,54 @@
         const dir = d.mm || d.fuel_status || null;
         elMM.textContent = (mm != null) ? (mm.toFixed(0) + '%') : '—';
         elMM.style.color = dirColor(dir);
+        elMM.title = MM_HELP;
         elDir.textContent = dirLabel(dir) + (mm != null ? ' · ' + band(mm).label : '');
         elDir.style.color = dirColor(dir);
+        elDir.title = MM_HELP;
 
-        // ── ₿ BTC ММ line — the BTC liquidation-fuel state (напрямок + сила% +
-        // рівень), same widget style as the coin's ММ. NOT the session START/
-        // pause status. Mirrors the ₿ BTCUSDT banner ("LONG · 34% помірний"). ──
+        // 🎯 Запас ходу — відстань до значущої ліквідності попереду руху (ймовірна
+        // ціль-магніт). Показує, скільки орієнтовно простору ще є до великого пулу.
+        if (elRun) {
+            const rw = d.runway;
+            if (rw && rw.room_pct != null) {
+                const m = rw.main || {};
+                const tail = (m.price != null) ? ` → ціль ${fmtVol(m.usd)} @ ${m.price}` : '';
+                elRun.style.color = '#9aa3b5';
+                elRun.innerHTML = `🎯 запас ходу <b style="color:#e5e7eb">${rw.room_pct}%</b> · ${rw.label}${tail}`;
+                elRun.style.display = '';
+                elRun.title = 'Скільки простору до значущої ліквідності попереду руху:\n'
+                    + 'room% — відстань до головного пулу-цілі; «ціль» — його розмір і ціна.\n'
+                    + 'Малий запас = рух близько до великого кластера (ймовірне сповільнення/розворот).';
+            } else if (rw && rw.label) {
+                elRun.style.color = '#9aa3b5';
+                elRun.textContent = '🎯 ' + rw.label;
+                elRun.style.display = '';
+            }
+        }
+
+        // ── ₿ BTC ММ line — напрямок СЕАНСУ + сила% + рівень. Коли сеанс НА ПАУЗІ
+        // (живе ML у зоні WAIT, |dir| ≤ 0.1), напрямок — це стара, застояна сторона:
+        // приглушуємо колір і додаємо «⏸ ПАУЗА», щоб не читалось як активний сигнал
+        // (раніше оверлей ховав паузу → показував впевнений SHORT на нейтралі). ──
         if (d.enabled === false) {
             elBtc.style.color = '#9aa3b5';
             elBtc.textContent = 'FF вимкнено в боті';
         } else {
             const b = d.btc || {};
             const bs = (b.strength != null) ? Number(b.strength) : null;
+            const pausedTag = b.paused ? ' <span style="color:#9aa3b5;font-weight:700">· ⏸ ПАУЗА</span>' : '';
             if (b.dir === 'LONG' || b.dir === 'SHORT') {
-                const bc = dirColor(b.dir);
+                // На паузі — сірий (застояний сеанс); активний — колір напрямку.
+                const bc = b.paused ? '#9aa3b5' : dirColor(b.dir);
                 const tail = (bs != null) ? ` · ${bs}% · ${band(bs).label}` : '';
-                elBtc.innerHTML = `₿ BTC ММ: <span style="color:${bc};font-weight:700">${dirLabel(b.dir)}</span>${tail}`;
+                elBtc.innerHTML = `₿ BTC ММ: <span style="color:${bc};font-weight:700">${dirLabel(b.dir)}</span>${tail}${pausedTag}`;
             } else {
                 elBtc.style.color = '#9aa3b5';
                 elBtc.innerHTML = (bs != null)
                     ? `₿ BTC ММ: ⚪ — · ${bs}% · ${band(bs).label}`
                     : '₿ BTC ММ: ⚪ —';
             }
+            elBtc.title = MM_HELP;
         }
 
         // ── 💰 Funding line — only for coins in the «💰 Funding — ММ» table.
