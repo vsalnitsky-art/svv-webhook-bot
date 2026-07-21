@@ -2857,6 +2857,24 @@ class SMCScanner:
                     forecast_1h = cached_fc.get('forecast_1h')
                     forecast_4h = cached_fc.get('forecast_4h')
                     ctr = cached_fc.get('ctr')
+                    # ⚡ 1H CTR поряд із основним ТФ — щоб БАНЕР показував «· 1H»
+                    # так само, як черга/бекенд. Гейт env CTR_1H. Копіюємо dict,
+                    # щоб не мутувати кеш forecast-двигуна.
+                    try:
+                        import os as _os
+                        if (_os.getenv('CTR_1H', '0').lower() in ('1', 'true', 'yes', 'on')
+                                and isinstance(ctr, dict)
+                                and str(ctr.get('tf') or '').lower() != '1h'):
+                            _h1 = fe.get_ctr_tf(symbol, '1h')
+                            if _h1 and _h1.get('stc') is not None:
+                                _s1 = float(_h1['stc'])
+                                ctr = dict(ctr)
+                                ctr['stc_1h'] = round(_s1, 1)
+                                ctr['lean_1h'] = ('SHORT' if _s1 > 50
+                                                  else ('LONG' if _s1 < 50 else None))
+                                ctr['lean_pct_1h'] = round(abs(_s1 - 50.0) / 50.0 * 100.0)
+                    except Exception:
+                        pass
         except Exception:
             pass
         
