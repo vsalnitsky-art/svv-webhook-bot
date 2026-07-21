@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VSV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.5.3
+// @version      1.6.0
 // @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       VSV
 // @match        https://*.tradingview.com/chart/*
@@ -164,7 +164,12 @@
     }
 
     // ── Badge UI ──────────────────────────────────────────────────────────
-    let badge, elSym, elMM, elDir, elRun, elBtc, elFund, elFoot;
+    let badge, elSym, elMM, elDir, elScore, elOld, elRun, elBtc, elFund, elFoot;
+    // SCORE label EN→UA (той самий поділ, що в боті).
+    const SCORE_UA = {
+        'STRONG HOLD': 'ВАРТО ВІДКРИВАТИ', 'HOLD': 'МОЖНА ВІДКРИВАТИ',
+        'NEUTRAL': 'ЗАЧЕКАТИ', 'WEAK': 'НЕ ВАРТО', 'EXHAUSTED': 'НЕ ВІДКРИВАТИ'
+    };
     function buildBadge() {
         if (badge) return;
         badge = document.createElement('div');
@@ -186,6 +191,8 @@
               '<span id="svv-mm-val" style="font-weight:900;font-size:22px">—</span>' +
               '<span id="svv-mm-dir" style="font-weight:700;font-size:12px"></span>' +
             '</div>' +
+            '<div id="svv-mm-score" style="font-size:11px;margin-top:3px"></div>' +
+            '<div id="svv-mm-old" style="font-size:10px;color:#8b93a7;margin-top:2px"></div>' +
             '<div id="svv-mm-run" style="font-size:10.5px;color:#9aa3b5;margin-top:3px"></div>' +
             '<div id="svv-mm-btc" style="font-size:10.5px;color:#9aa3b5;margin-top:3px"></div>' +
             '<div id="svv-mm-fund" style="font-size:10.5px;color:#34d399;margin-top:2px"></div>' +
@@ -194,6 +201,8 @@
         elSym = badge.querySelector('#svv-mm-sym');
         elMM = badge.querySelector('#svv-mm-val');
         elDir = badge.querySelector('#svv-mm-dir');
+        elScore = badge.querySelector('#svv-mm-score');
+        elOld = badge.querySelector('#svv-mm-old');
         elRun = badge.querySelector('#svv-mm-run');
         elBtc = badge.querySelector('#svv-mm-btc');
         elFund = badge.querySelector('#svv-mm-fund');
@@ -268,6 +277,8 @@
         // Reset the extra lines each render.
         elBtc.innerHTML = ''; elFund.innerHTML = '';
         if (elRun) { elRun.innerHTML = ''; elRun.style.display = 'none'; }
+        if (elScore) { elScore.innerHTML = ''; elScore.style.display = 'none'; }
+        if (elOld) { elOld.innerHTML = ''; elOld.style.display = 'none'; }
         if (state === 'noconfig') {
             elMM.textContent = '⚙'; elMM.style.color = '#f59e0b';
             elDir.textContent = ''; elBtc.textContent = 'Задай URL бота (2× клік по бейджу)';
@@ -305,6 +316,31 @@
         elDir.textContent = dirLabel(dir) + (mm != null ? ' · ' + _bandLbl : '');
         elDir.style.color = dirColor(dir);
         elDir.title = MM_HELP;
+
+        // 📊 SCORE — та сама оцінка входу, що в черзі бота (0–100% + вердикт).
+        if (elScore && d.score && d.score.score != null) {
+            const sc = d.score;
+            const scol = sc.color || '#94a3b8';
+            const sic = sc.dir === 'LONG' ? '🟢' : (sc.dir === 'SHORT' ? '🔴' : '⚪');
+            const warn = sc.conflict ? ' <span title="Конфлікт: ціна проти ММ" style="color:#fbbf24">⚠️</span>' : '';
+            elScore.innerHTML = `SCORE <b style="color:${scol}">${sc.score}%</b> · `
+                + `<span style="color:${scol};font-weight:700">${sic} ${SCORE_UA[sc.label] || sc.label || ''}</span>${warn}`;
+            elScore.style.display = '';
+            elScore.title = 'SCORE — якість входу 0–100%: запас ходу + імпульс + тиск ММ '
+                + '(+CTR-тайминг, обсяг у v2). Вердикт: ВАРТО ≥72 · МОЖНА ≥55 · ЗАЧЕКАТИ ≥40 · '
+                + 'НЕ ВАРТО ≥25 · НЕ ВІДКРИВАТИ <25.';
+        }
+
+        // 🧮 Старий показник ММ (сирий (fa−fb)/den) — для порівняння з новою моделлю.
+        if (elOld && d.mm_old && d.mm_old.dir != null) {
+            const mo = d.mm_old, st = mo.status;
+            const dl = st === 'LONG' ? '🟢 LONG' : (st === 'SHORT' ? '🔴 SHORT' : '⚪ рівновага');
+            const col = st === 'LONG' ? '#4ade80' : (st === 'SHORT' ? '#f87171' : '#8b93a7');
+            elOld.innerHTML = `ММ старий: <span style="color:${col}">${dl}</span> · ${mo.strength}%`;
+            elOld.style.display = '';
+            elOld.title = 'Стара формула ММ: сире (fa−fb)/den по розташуванню кластерів '
+                + 'ліквідацій (без funding/L/S/сторони). Для порівняння з новою бабло-моделлю.';
+        }
 
         // 🎯 Запас ходу — відстань до значущої ліквідності попереду руху (ймовірна
         // ціль-магніт). Показує, скільки орієнтовно простору ще є до великого пулу.

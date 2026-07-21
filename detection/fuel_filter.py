@@ -1925,6 +1925,52 @@ class FuelFilterDaemon:
     # ------------------------------------------------------------------
     # fuel / exhaustion measurement (cached sources only)
     # ------------------------------------------------------------------
+    def _fuel_dir_legacy(self, symbol: str) -> Optional[Dict]:
+        """СТАРИЙ показник ММ: сирий (fa−fb)/den по liq-map (розташування кластерів
+        відносно ціни, дистанц-вага 1/(1+dist/2)) — для порівняння з бабло-моделлю.
+        Рахується від живої ціни (як і нова модель)."""
+        try:
+            from detection.liquidation_map.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            lst = None
+            mark = None
+            if lm:
+                try:
+                    prof = self._db.get_setting('liqmap_decay_profile', 'tori')
+                except Exception:
+                    prof = 'tori'
+                lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
+                mark = lst.get('mark_price') if lst else None
+            lp = self._live_price(symbol)
+            if lp and lp > 0:
+                mark = lp
+            if not mark or mark <= 0:
+                return None
+            fa = fb = 0.0
+            for lev in (lst.get('levels') or []) if lst else []:
+                dist = abs(lev['price'] - mark) / mark * 100.0
+                if dist > 15:
+                    continue
+                w = lev['usd'] / (1.0 + dist / 2.0)
+                if lev['price'] > mark:
+                    fa += w
+                else:
+                    fb += w
+            den = fa + fb
+            fd = (fa - fb) / den if den > 0 else 0.0
+            if den <= 0:
+                status = None
+            elif fd > FUEL_LONG_THR:
+                status = 'LONG'
+            elif fd < FUEL_SHORT_THR:
+                status = 'SHORT'
+            else:
+                status = None
+            return {'dir': round(fd, 3), 'status': status,
+                    'strength': int(round(abs(fd) * 100))}
+        except Exception:
+            return None
+
     def _fuel_dir(self, symbol: str) -> Optional[Dict]:
         """Replicate compute_bias()'s fuel-direction math off the CACHED
         liquidation-map state (no exchange calls). Returns
@@ -2402,6 +2448,8 @@ class FuelFilterDaemon:
             # 🎯 Запас ходу (до ліквідності попереду руху) + ціль-магніт.
             out['runway'] = (fuel_data or {}).get('runway')
             out['mm_target'] = (fuel_data or {}).get('target')
+            # Старий показник ММ (сирий (fa−fb)/den) — для порівняння в оверлеї.
+            out['mm_old'] = self._fuel_dir_legacy(symbol)
         except Exception:
             out['fuel_status'] = None
             out['mm'] = None
@@ -2409,6 +2457,12 @@ class FuelFilterDaemon:
             out['mm_str'] = 0.0
             out['runway'] = None
             out['mm_target'] = None
+            out['mm_old'] = None
+        # SCORE (та сама оцінка, що в черзі) — для оверлея.
+        try:
+            out['score'] = self.score_dict(symbol)
+        except Exception:
+            out['score'] = None
         # Exhaustion for the fuel-status side (entry gate input)
         exh = None
         try:
