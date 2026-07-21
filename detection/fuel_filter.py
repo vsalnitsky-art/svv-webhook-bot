@@ -60,6 +60,17 @@ FUEL_SHORT_THR = -0.1          # fuel_dir < -0.1 → SHORT bias
 # живе 15 хв, тож фон легкий; на VDS обидва можна тримати ввімкненими.)
 _CTR_1H = os.getenv('CTR_1H', '0').lower() in ('1', 'true', 'yes', 'on')
 _CTR_4H = os.getenv('CTR_4H', '0').lower() in ('1', 'true', 'yes', 'on')
+# 🎯 Професійна модель ММ (Liquidity Pull Vector на LIQMAP + whale/стакан/funding).
+# Коли ввімкнено — і per-coin ММ (_fuel_dir), і банер ₿ (_update_btc_verdict) беруть
+# напрямок із неї замість сирого (fa−fb)/den. Вимкнено = стара поведінка (0 ризику).
+_MM_MODEL = os.getenv('MM_MODEL', '0').lower() in ('1', 'true', 'yes', 'on')
+# Анти-залипання банера ₿: якщо сеанс тримається на паузі (WAIT/глибокий нейтрал)
+# довше за стільки хвилин — гасимо його у ⚪ WAIT, а не тримаємо стару сторону
+# вічно. Діє лише разом із _MM_MODEL. 0 = вимкнено.
+try:
+    _BTC_WAIT_RESET_MIN = float(os.getenv('BTC_WAIT_RESET_MIN', '45'))
+except Exception:
+    _BTC_WAIT_RESET_MIN = 45.0
 CLOSED_LIMIT = 100             # keep last N closes for the UI
 # Grace period before closing on FUEL FADE (status → neutral/None). Without
 # this, a single transient liq-map data gap or a brief dip into the ±0.1
@@ -504,6 +515,8 @@ class FuelFilterDaemon:
         self._btc_verdict_since: float = 0.0           # session start (persists through pause)
         self._btc_paused: bool = False                 # live ML is WAIT within the session
         self._btc_fuel_strength: int = 0               # BTC fuel strength 0..100 (banner bar)
+        self._btc_pause_since: float = 0.0             # коли почалась поточна пауза (анти-залипання)
+        self._btc_mm: Dict = {}                       # останній повний вихід моделі ММ для BTC
         # 💰 Funding fuel table (repurposed from the old anomalies storage):
         # coins from the 💰 Funding Rate Scanner that currently show fuel. Same
         # dict shape so the existing table/endpoints keep working. {symbol:
@@ -873,6 +886,8 @@ class FuelFilterDaemon:
         if q1:
             _r1 = ' · новий тип замінив застарілий' if refreshed_q1 else ''
             log_activity(sym, 'queued', f'Черга-1 · {_kind_lbl}{_r1}{_sc_ctr_sfx}', side=side, source='Q1')
+            if _MM_MODEL and not refreshed_q1:
+                self._log_coin_mm(sym, 'queued')   # ММ монети у «Лог роботи бота»
         # ENTRY-score + CTR-state suffix for Q2 records (the SETUP metric).
         def _ctr_words(state, stc, pct):
             if state == 'none':
@@ -1814,6 +1829,20 @@ class FuelFilterDaemon:
             if not mark or mark <= 0:
                 return None
 
+            # 🎯 Професійна модель ММ (LIQMAP Liquidity-Pull + whale/стакан/funding).
+            # Funding-запит лише для BTC, щоб масовий скан не смикав біржу. При будь-
+            # якій невдачі — падаємо у стару (fa−fb)/den нижче.
+            if _MM_MODEL:
+                try:
+                    from detection.mm_model import compute_mm
+                    r = compute_mm(self._db, symbol, liq_state=lst,
+                                   with_confirmations=True,
+                                   with_funding=(symbol.upper() == 'BTCUSDT'))
+                    if r is not None:
+                        return r
+                except Exception as _e:
+                    print(f"[FuelFilter] mm_model fallback {symbol}: {_e}")
+
             fa = fb = 0.0
             for lev in (lst.get('levels') or []) if lst else []:
                 dist = abs(lev['price'] - mark) / mark * 100.0
@@ -1973,13 +2002,26 @@ class FuelFilterDaemon:
         So the queue is cleared ONLY on a genuine session flip — never on a
         transient WAIT. Called once per cycle."""
         try:
-            from web.flask_app import compute_bias
-            d = compute_bias(self._db, 'BTCUSDT', None)
-            fuel = ((d or {}).get('components') or {}).get('fuel') or {}
-            fdir = fuel.get('dir')
-            # BTC fuel STRENGTH 0..100 (|imbalance|×100) — fills the ₿ banner bar.
-            if fdir is not None:
-                self._btc_fuel_strength = int(round(abs(fdir) * 100))
+            if _MM_MODEL:
+                # 🎯 Професійна модель ММ: напрямок = Liquidity Pull Vector (LIQMAP)
+                # + whale/стакан/funding. Strength уже враховує data_quality.
+                from detection.mm_model import compute_mm
+                r = compute_mm(self._db, 'BTCUSDT', with_confirmations=True,
+                               with_funding=True)
+                if r is not None:
+                    fdir = r.get('dir')
+                    self._btc_fuel_strength = int(r.get('strength') or 0)
+                    self._btc_mm = r
+                else:
+                    fdir = None
+            else:
+                from web.flask_app import compute_bias
+                d = compute_bias(self._db, 'BTCUSDT', None)
+                fuel = ((d or {}).get('components') or {}).get('fuel') or {}
+                fdir = fuel.get('dir')
+                # BTC fuel STRENGTH 0..100 (|imbalance|×100) — fills the ₿ banner bar.
+                if fdir is not None:
+                    self._btc_fuel_strength = int(round(abs(fdir) * 100))
             if fdir is None:
                 live = None                 # data gap → treat as WAIT (pause)
             elif fdir > FUEL_LONG_THR:      # > +0.1 → LONG (як головне вікно)
@@ -1998,6 +2040,19 @@ class FuelFilterDaemon:
         if live is None:
             if not self._btc_paused and sess:
                 self._btc_paused = True
+                self._btc_pause_since = now
+                self._log_btc_mm('pause', fdir)
+                self._persist_state()
+            elif (_MM_MODEL and sess and self._btc_paused
+                  and _BTC_WAIT_RESET_MIN > 0 and self._btc_pause_since
+                  and (now - self._btc_pause_since) >= _BTC_WAIT_RESET_MIN * 60.0):
+                # 🎯 Анти-залипання: глибокий нейтрал тримається задовго → гасимо
+                # сеанс у ⚪ WAIT замість вічно показувати стару сторону.
+                self._log_btc_mm('wait_reset', fdir)
+                self._btc_verdict_dir = None
+                self._btc_verdict_since = 0.0
+                self._btc_paused = False
+                self._btc_pause_since = 0.0
                 self._persist_state()
             return
 
@@ -2006,6 +2061,8 @@ class FuelFilterDaemon:
             self._btc_verdict_dir = live
             self._btc_verdict_since = now
             self._btc_paused = False
+            self._btc_pause_since = 0.0
+            self._log_btc_mm('start', fdir)
             self._persist_state()
             return
 
@@ -2013,6 +2070,8 @@ class FuelFilterDaemon:
         if live == sess:
             if self._btc_paused:
                 self._btc_paused = False
+                self._btc_pause_since = 0.0
+                self._log_btc_mm('resume', fdir)
                 self._persist_state()
             return
 
@@ -2025,7 +2084,54 @@ class FuelFilterDaemon:
         self._btc_verdict_dir = live
         self._btc_verdict_since = now
         self._btc_paused = False
+        self._btc_pause_since = 0.0
+        self._log_btc_mm('flip', fdir)
         self._persist_state()
+
+    def _log_btc_mm(self, event: str, fdir):
+        """Пише подію банера ₿ ММ у «Лог роботи бота» (category=MM) для аналізу
+        моделі: score, сила, сеанс, внесок кожного сигналу і ціль-магніт."""
+        try:
+            mm = getattr(self, '_btc_mm', None) or {}
+            comp = mm.get('components') or {}
+            tgt = mm.get('target') or {}
+            parts = [f"₿ ММ {event}",
+                     f"score={fdir if fdir is not None else '—'}",
+                     f"str={mm.get('strength', self._btc_fuel_strength)}",
+                     f"sess={self._btc_verdict_dir or '—'}"]
+            if comp:
+                parts.append("liq=%s whale=%s book=%s pos=%s" % (
+                    comp.get('liq'), comp.get('whale'),
+                    comp.get('book'), comp.get('pos')))
+            if tgt:
+                parts.append(f"target={tgt.get('side')}@{tgt.get('price')}")
+            self._db.log_event(' · '.join(str(p) for p in parts),
+                               level='INFO', category='MM', symbol='BTCUSDT')
+        except Exception:
+            pass
+
+    def _log_coin_mm(self, sym: str, event: str):
+        """Per-coin ММ у «Лог роботи бота» (category=MM) для аналізу: напрямок,
+        score, сила і внесок сигналів + ціль-магніт. Викликається на рідкісних
+        подіях (вхід у чергу), тож обсяг логу лишається обмеженим."""
+        try:
+            fd = self._fuel_dir(sym) or {}
+            comp = fd.get('components') or {}
+            tgt = fd.get('target') or {}
+            parts = [f"ММ {sym} {event}",
+                     f"dir={fd.get('status') or '—'}",
+                     f"score={fd.get('dir')}",
+                     f"str={fd.get('strength', '—')}"]
+            if comp:
+                parts.append("liq=%s whale=%s book=%s pos=%s" % (
+                    comp.get('liq'), comp.get('whale'),
+                    comp.get('book'), comp.get('pos')))
+            if tgt:
+                parts.append(f"target={tgt.get('side')}@{tgt.get('price')}")
+            self._db.log_event(' · '.join(str(p) for p in parts),
+                               level='INFO', category='MM', symbol=sym)
+        except Exception:
+            pass
 
     def _bias(self, symbol: str) -> Dict:
         """Cached FF-specific bias computation. Uses compute_bias_for_ff —
