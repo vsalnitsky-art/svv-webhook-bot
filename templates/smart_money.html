@@ -7562,26 +7562,44 @@ function confluenceHtml(cf) {
         return '<div class="sm-bias-reason wait">• Confluence: немає даних</div>';
     }
     const DIRCOL = { LONG: '#4ade80', SHORT: '#f87171', NEU: '#8b93a7' };
+    const dcol = d => d === 'LONG' ? DIRCOL.LONG : (d === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
     const td = (s, x) => `<td style="padding:2px 10px 2px 0;white-space:nowrap;${x || ''}">${s}</td>`;
-    // Детальна колонка: назва ТФ — сіра, значення — кольором за напрямком, з інтервалом.
-    const detHtml = (items) => {
-        if (!items || !items.length) return '<span style="color:#8b93a7">—</span>';
-        return items.map(it => {
-            const c = it.dir === 'LONG' ? DIRCOL.LONG : (it.dir === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
-            const v = [it.dir || '', it.val || ''].filter(Boolean).join(' ');
-            return `<span style="color:#8b93a7">${it.name}</span> `
-                 + `<b style="color:${c}">${v || '—'}</b>`;
-        }).join('<span style="color:#4b5563">&nbsp;&nbsp;·&nbsp;&nbsp;</span>');
+    // ТФ у СВОЇ стовпчики: 15m збоку, 1H напроти 1H, 4H напроти 4H (рівненько).
+    const TFCOLS = ['15M', '1H', '4H'];
+    const isTf = n => TFCOLS.includes(String(n).toUpperCase());
+    const tfCellFor = (it) => {
+        if (!it) return td('', 'text-align:center;color:#4b5563');
+        const v = [it.dir || '', it.val || ''].filter(Boolean).join(' ');
+        return td(`<b style="color:${dcol(it.dir)}">${v || '—'}</b>`, 'text-align:center');
     };
+    // Заголовок ТФ-стовпчиків (15m трохи підсвічений — «збоку»).
+    const head = '<tr>' + td('') + td('') + td('') + td('')
+        + td('15m', 'text-align:center;color:#cbd5e1;font-weight:700')
+        + td('1H', 'text-align:center;color:#8b93a7;font-weight:700')
+        + td('4H', 'text-align:center;color:#8b93a7;font-weight:700')
+        + '</tr>';
     const rows = cf.per_dim.map(t => {
-        const col = t.dir === 'LONG' ? DIRCOL.LONG : (t.dir === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
+        const col = dcol(t.dir);
         const ic = t.dir === 'LONG' ? '🟢' : (t.dir === 'SHORT' ? '🔴' : '⚪');
+        const items = t.detail || [];
+        let tfPart;
+        if (items.some(it => isTf(it.name))) {
+            const byTf = {};
+            items.forEach(it => { if (isTf(it.name)) byTf[String(it.name).toUpperCase()] = it; });
+            tfPart = TFCOLS.map(tf => tfCellFor(byTf[tf])).join('');
+        } else {
+            // Бабло (ММ/fuel) — не по ТФ: показуємо в рядок на всі 3 стовпчики.
+            const inl = items.map(it => `<span style="color:#8b93a7">${it.name}</span> `
+                + `<b style="color:${dcol(it.dir)}">${[it.dir || '', it.val || ''].filter(Boolean).join(' ') || '—'}</b>`
+            ).join('<span style="color:#4b5563">&nbsp;·&nbsp;</span>');
+            tfPart = `<td colspan="3" style="padding:2px 10px 2px 0">${inl}</td>`;
+        }
         return '<tr>'
             + td(t.name, 'color:#cbd5e1;font-weight:700')
             + td(ic, 'text-align:center;padding-right:4px')
             + td(t.dir || '—', `color:${col};font-weight:700`)
             + td(`${t.conf}%`, `color:${col}`)
-            + td(detHtml(t.detail))
+            + tfPart
             + '</tr>';
     }).join('');
     const vd = cf.mode === 'LONG_ONLY' ? 'LONG' : (cf.mode === 'SHORT_ONLY' ? 'SHORT' : 'WAIT');
@@ -7592,7 +7610,7 @@ function confluenceHtml(cf) {
     const foot = `<div style="margin-top:4px;border-top:1px solid rgba(255,255,255,.12);padding-top:4px">`
         + `Confluence: <b style="color:${vcol}">${vic} ${vd}</b> `
         + `<span style="color:#8b93a7">(${pct >= 0 ? '+' : ''}${pct}%)</span>${exhTag} →</div>`;
-    return `<table style="border-collapse:collapse;font-size:0.76rem;line-height:1.6">${rows}</table>${foot}`;
+    return `<table style="border-collapse:collapse;font-size:0.76rem;line-height:1.6">${head}${rows}</table>${foot}`;
 }
 
 function onSmartDirectionModeChange() {

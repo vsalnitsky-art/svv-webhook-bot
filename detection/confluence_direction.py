@@ -46,7 +46,10 @@ def _ctr_trend(symbol: str):
             fresh = 1.0 if (age is None or age <= 3) else max(0.4, 1.0 - (age - 3) * 0.1)
             num += w * sign * fresh
             wsum += w
-            parts.append({'name': tf, 'dir': ld})
+            # Точний % ТФ = сила STC-нахилу (|STC−50|/50·100).
+            stc = (r or {}).get('stc')
+            conf = round(abs(float(stc) - 50.0) / 50.0 * 100.0) if stc is not None else 0
+            parts.append({'name': tf, 'dir': ld, 'val': f"{conf}%"})
         if wsum <= 0:
             return 0.0, []
         return max(-1.0, min(1.0, num / wsum)), parts
@@ -90,23 +93,39 @@ def _forecast_vote(symbol: str, verdict_data: Optional[Dict]):
         return 0.0, []
 
 
-def _bablo_vote(db, symbol: str):
-    """ММ-модель (funding/L/S/кластери). → (vote[-1..1], detail)."""
+def _dir_word(v: float, thr: float = 0.1) -> Optional[str]:
+    return 'LONG' if v > thr else ('SHORT' if v < -thr else None)
+
+
+def _bablo_vote(db, symbol: str, verdict_data: Optional[Dict] = None):
+    """Позиціювання/ліквідність. Комбінує ММ-модель (funding/L/S/кластери) з
+    liq-fuel «ММ знизу/зверху» (fa−fb)/den із compute_bias (той самий, що в
+    причинах вердикту). → (vote[-1..1], detail)."""
+    votes = []
+    detail = []
     try:
         from detection.mm_model import compute_mm
         r = compute_mm(db, symbol, with_confirmations=True)
-        if not r:
-            return 0.0, '—'
-        st = r.get('status')
-        strg = float(r.get('strength') or 0) / 100.0
-        vv = f"{r.get('strength')}%"
-        if st == 'LONG':
-            return min(1.0, strg), [{'name': 'ММ', 'dir': 'LONG', 'val': vv}]
-        if st == 'SHORT':
-            return -min(1.0, strg), [{'name': 'ММ', 'dir': 'SHORT', 'val': vv}]
-        return 0.0, [{'name': 'ММ', 'dir': None, 'val': 'рівновага'}]
+        if r:
+            mmv = max(-1.0, min(1.0, float(r.get('dir') or 0.0)))
+            votes.append(mmv)
+            detail.append({'name': 'ММ', 'dir': _dir_word(mmv),
+                           'val': f"{int(r.get('strength') or 0)}%"})
     except Exception:
-        return 0.0, []
+        pass
+    try:
+        fd = ((verdict_data or {}).get('components') or {}).get('fuel') or {}
+        fdir = fd.get('dir')
+        if fdir is not None:
+            fv = max(-1.0, min(1.0, float(fdir)))
+            votes.append(fv)
+            detail.append({'name': 'fuel', 'dir': _dir_word(fv),
+                           'val': f"{int(round(abs(fv) * 100))}%"})
+    except Exception:
+        pass
+    if not votes:
+        return 0.0, [{'name': 'ММ', 'dir': None, 'val': 'рівновага'}]
+    return sum(votes) / len(votes), detail
 
 
 def _exhaustion_for(verdict_data: Optional[Dict], direction: Optional[str]) -> Optional[float]:
@@ -129,7 +148,7 @@ def compute_confluence(db, symbol: str, verdict_data: Optional[Dict] = None) -> 
     try:
         t_vote, t_det = _ctr_trend(symbol)
         f_vote, f_det = _forecast_vote(symbol, verdict_data)
-        b_vote, b_det = _bablo_vote(db, symbol)
+        b_vote, b_det = _bablo_vote(db, symbol, verdict_data)
         dims = [
             ('Тренд (CTR)', _DIM_W['trend'], t_vote, t_det),
             ('Forecast', _DIM_W['forecast'], f_vote, f_det),
@@ -163,21 +182,21 @@ def compute_confluence(db, symbol: str, verdict_data: Optional[Dict] = None) -> 
         elif score <= -_THRESHOLD and agree_s >= 2:
             direction = 'SHORT'
 
-        # Виснаження — ПОПЕРЕДЖЕННЯ, а не вето: коли конфлюенс чітко направлений,
-        # напрямок ідемо ЗА ТРЕНДОМ (по графіку), а виснаження лише позначаємо ⚠.
+        # Гейт виснаження: не входимо в бік, що вже майже вичерпаний → WAIT (пізно).
         exh = _exhaustion_for(verdict_data, direction)
-        exhausted = bool(direction and exh is not None and exh >= _EXH_LATE)
-        out['exhausted'] = exhausted
-        _warn = f' · ⚠ виснажено {int(exh)}%' if exhausted else ''
+        if direction and exh is not None and exh >= _EXH_LATE:
+            out['exhausted'] = True
+            out['reason'] = f'{direction} {agree}/3, але виснажено {int(exh)}% → WAIT (пізно)'
+            return out
 
         if direction == 'LONG':
             out['allow_long'] = True
             out['mode'] = 'LONG_ONLY'
-            out['reason'] = f'конфлюенс {agree}/3 → LONG ({out["score_pct"]:+d}%){_warn}'
+            out['reason'] = f'конфлюенс {agree}/3 → LONG ({out["score_pct"]:+d}%)'
         elif direction == 'SHORT':
             out['allow_short'] = True
             out['mode'] = 'SHORT_ONLY'
-            out['reason'] = f'конфлюенс {agree}/3 → SHORT ({out["score_pct"]:+d}%){_warn}'
+            out['reason'] = f'конфлюенс {agree}/3 → SHORT ({out["score_pct"]:+d}%)'
         else:
             out['reason'] = f'виміри незгодні ({out["score_pct"]:+d}%) → WAIT'
         return out
