@@ -71,6 +71,15 @@ try:
     _BTC_WAIT_RESET_MIN = float(os.getenv('BTC_WAIT_RESET_MIN', '45'))
 except Exception:
     _BTC_WAIT_RESET_MIN = 45.0
+# 📊 SCORE v2: додає у SCORE ще CTR-тайминг (STC у напрямку) + damp за обсягом
+# (тонкі/неліквідні монети менш надійні). Вимкнено = стара 4-складникова формула.
+_SCORE_V2 = os.getenv('SCORE_V2', '0').lower() in ('1', 'true', 'yes', 'on')
+# Поріг «здорового» 24h-обороту (USD): нижче — SCORE приглушується. Тюнінг через env.
+try:
+    _SCORE_VOL_FLOOR_USD = float(os.getenv('SCORE_VOL_FLOOR_USD', '5000000'))
+except Exception:
+    _SCORE_VOL_FLOOR_USD = 5_000_000.0
+_vol24h_cache: Dict[str, tuple] = {}   # symbol -> (ts, turnover_usd)
 CLOSED_LIMIT = 100             # keep last N closes for the UI
 # Grace period before closing on FUEL FADE (status → neutral/None). Without
 # this, a single transient liq-map data gap or a brief dip into the ±0.1
@@ -1378,6 +1387,62 @@ class FuelFilterDaemon:
     def _score_label_ua(cls, label):
         return cls._SCORE_LABEL_UA.get(label, label or '—')
 
+    def _ctr_timing_term(self, symbol: str, live_dir: Optional[str]) -> Optional[float]:
+        """SCORE v2: 0..1 — якість ТАЙМІНГУ входу за CTR (STC) у напрямку live_dir.
+        LONG хоче низький STC (перепроданість), SHORT — високий (перекупленість).
+        Свіжий кросовер у напрямку → бонус. None коли немає CTR/напрямку — тоді
+        складник просто випадає з формули (ваги ренормуються)."""
+        if live_dir not in ('LONG', 'SHORT'):
+            return None
+        try:
+            snap = self._ctr_snapshot(symbol)
+            if not snap or snap.get('stc') is None:
+                return None
+            stc = float(snap['stc'])
+            align = ((50.0 - stc) / 50.0) if live_dir == 'LONG' else ((stc - 50.0) / 50.0)
+            term = max(0.0, min(1.0, 0.5 + align / 2.0))
+            if snap.get('last_dir') == live_dir:
+                age = snap.get('last_signal_age_bars')
+                if age is not None and age <= 3:
+                    term = min(1.0, term + 0.15)   # свіжий кросовер у напрямку
+            return term
+        except Exception:
+            return None
+
+    def _vol24h_cached(self, symbol: str) -> Optional[float]:
+        """24h оборот (USD) з TTL-кешем (10 хв), щоб не смикати біржу щоцикл."""
+        try:
+            now = time.time()
+            c = _vol24h_cache.get(symbol)
+            if c and (now - c[0]) < 600.0:
+                return c[1]
+            from detection.market_data import get_market_data
+            md = get_market_data()
+            v = None
+            if md:
+                tk = md.get_ticker(symbol) or {}
+                for k in ('turnover24h', 'quoteVolume', 'quote_volume', 'turnover'):
+                    if tk.get(k) is not None:
+                        v = float(tk[k])
+                        break
+            _vol24h_cache[symbol] = (now, v)
+            return v
+        except Exception:
+            return None
+
+    def _vol_factor(self, symbol: str) -> float:
+        """SCORE v2 damp 0.8..1.0: тонка/неліквідна монета (оборот < порогу) менш
+        надійна. Немає даних → 1.0 (нейтрально, не караємо)."""
+        try:
+            v = self._vol24h_cached(symbol)
+            if v is None or v <= 0:
+                return 1.0
+            if v >= _SCORE_VOL_FLOOR_USD:
+                return 1.0
+            return max(0.8, 0.8 + 0.2 * (v / _SCORE_VOL_FLOOR_USD))
+        except Exception:
+            return 1.0
+
     def _candle_momentum(self, symbol, tf='5m'):
         """LIVE price direction from the last 2 closed candles (close vs open).
         Returns (dir, strength): dir ∈ {'LONG','SHORT',None}, strength ∈ {0,1}.
@@ -1725,11 +1790,28 @@ class FuelFilterDaemon:
         # SCORE down into WEAK/EXHAUSTED (capping the max at ~85). Redistribute
         # its weight across the live components so the queue SCORE uses the full
         # range and stays sensitive. Open positions (held>0) keep all four.
-        w_room, w_hold, w_fuel, w_mom = 0.30, 0.15, 0.25, 0.30
-        if not held_sec or held_sec <= 0:
-            _tw = w_room + w_fuel + w_mom
-            w_room, w_fuel, w_mom, w_hold = w_room / _tw, w_fuel / _tw, w_mom / _tw, 0.0
-        score = 100.0 * (w_room * room + w_hold * hold + w_fuel * fmag + w_mom * mom)
+        # CTR-тайминг (SCORE v2): якість моменту входу за STC у напрямку live_dir.
+        ctr_term = self._ctr_timing_term(symbol, live_dir) if _SCORE_V2 else None
+        if _SCORE_V2 and ctr_term is not None:
+            # 5 складників: запас 25 · утримання 10 · паливо/ММ 22 · імпульс 25 · CTR 18.
+            w_room, w_hold, w_fuel, w_mom, w_ctr = 0.25, 0.10, 0.22, 0.25, 0.18
+            if not held_sec or held_sec <= 0:
+                _tw = w_room + w_fuel + w_mom + w_ctr
+                w_room, w_fuel, w_mom, w_ctr, w_hold = (
+                    w_room / _tw, w_fuel / _tw, w_mom / _tw, w_ctr / _tw, 0.0)
+            score = 100.0 * (w_room * room + w_hold * hold + w_fuel * fmag
+                             + w_mom * mom + w_ctr * ctr_term)
+        else:
+            w_room, w_hold, w_fuel, w_mom = 0.30, 0.15, 0.25, 0.30
+            if not held_sec or held_sec <= 0:
+                _tw = w_room + w_fuel + w_mom
+                w_room, w_fuel, w_mom, w_hold = w_room / _tw, w_fuel / _tw, w_mom / _tw, 0.0
+            score = 100.0 * (w_room * room + w_hold * hold + w_fuel * fmag + w_mom * mom)
+
+        # Обсяг-damp (SCORE v2): тонка/неліквідна монета приглушує SCORE.
+        vol_factor = self._vol_factor(symbol) if _SCORE_V2 else 1.0
+        if vol_factor < 1.0:
+            score *= vol_factor
 
         # Conflict: price is fighting the fuel setup → not a healthy hold.
         if conflict:
@@ -1750,7 +1832,9 @@ class FuelFilterDaemon:
                 # Розклад складників (0..1, до вагування) — для тултипа-роз'яснення:
                 # запас ходу / імпульс свічок / тиск ММ / утримання.
                 'components': {'room': round(room, 2), 'mom': round(mom, 2),
-                               'fuel': round(fmag, 2), 'hold': round(hold, 2)},
+                               'fuel': round(fmag, 2), 'hold': round(hold, 2),
+                               'ctr': (round(ctr_term, 2) if ctr_term is not None else None),
+                               'vol': round(vol_factor, 2)},
                 # Per-coin ММ (liq-fuel) direction — shown in its own column in
                 # the ❤️ queue table. LONG / SHORT / None(=збалансований).
                 'fuel_dir': fuel_dir,
