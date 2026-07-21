@@ -81,7 +81,7 @@ class AutoGateDaemon:
     def set_mode(self, mode: str):
         """Set 'simple', 'smart' or 'banner'. Changes take effect on next tick."""
         m = (mode or 'simple').lower()
-        if m not in ('simple', 'smart', 'banner'):
+        if m not in ('simple', 'smart', 'banner', 'ctr_stc'):
             m = 'simple'
         self._db.set_setting(_DB_MODE, m)
         # Immediate apply if the gate is already running
@@ -181,6 +181,18 @@ class AutoGateDaemon:
                 log_msg = f"smart: {sd.get('mode')} ({reason})"
             except Exception as e:
                 print(f"[AutoGate] smart_direction error: {e} — falling back to simple")
+                mode = 'simple'
+
+        if mode == 'ctr_stc':
+            # Керування кнопками з CTR/STC 15m/1H/4H (розворотно). Працює 24/7.
+            try:
+                from detection.ctr_direction import compute_ctr_direction
+                cd = compute_ctr_direction(self.get_symbol())
+                allow_long = cd.get('allow_long', False)
+                allow_short = cd.get('allow_short', False)
+                log_msg = f"ctr_stc: {cd.get('mode')} ({cd.get('reason')})"
+            except Exception as e:
+                print(f"[AutoGate] ctr_direction error: {e} — falling back to simple")
                 mode = 'simple'
 
         if mode == 'simple':

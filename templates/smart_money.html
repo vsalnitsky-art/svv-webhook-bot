@@ -1363,7 +1363,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     style="display:none;padding:3px 6px;background:#1a1a1a;border:1px solid rgba(168,85,247,0.4);color:#c084fc;border-radius:4px;font-size:0.74rem;cursor:pointer"
                     title="Simple — дзеркалить сирий вердикт 1:1 (LONG/SHORT/WAIT). Smart — враховує 4H тренд + виснаження, дозволяє ранній розворот. За банером ₿ — кнопки повторюють напрямок сеансу з банера ₿ BTCUSDT (працює навіть коли головне вікно у WAIT).">
                 <option value="simple">Simple</option>
-                <option value="smart">Smart (recommended)</option>
+                <option value="smart">Forecast</option>
+                <option value="ctr_stc">CTR_STC</option>
                 <option value="banner">За банером ₿</option>
             </select>
             <label class="sm-bias-auto" id="sm-bias-cow-wrap"
@@ -1381,6 +1382,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </label>
             <button class="sm-bias-refresh" onclick="loadBias()">🔄 Оновити</button>
         </div>
+        <!-- Обґрунтування Smart Direction: у режимі Forecast — Forecast 1H/4H;
+             у режимі CTR_STC — розклад CTR 15m/1H/4H (напрямок·нахил·впевненість). -->
+        <div id="sm-dir-reason" style="display:none;margin:2px 0 6px;font-size:0.76rem;line-height:1.7;padding:6px 10px;border-radius:6px;background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.25)"></div>
         <div class="sm-bias-body">
             <div class="sm-bias-left-col">
                 <div class="sm-bias-price" id="sm-bias-price" style="display:none">
@@ -7507,6 +7511,7 @@ function onSmartDirectionModeChange() {
     if (!sel) return;
     smartDirectionMode = sel.value || 'smart';
     try { localStorage.setItem('sm_smart_direction_mode', smartDirectionMode); } catch {}
+    renderDirReason(window._lastBias);   // Forecast↔CTR_STC display swap
     if (smartDirectionEnabled) {
         fetch('/api/sm/auto-gate', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -7514,6 +7519,54 @@ function onSmartDirectionModeChange() {
         }).catch(() => {});
         toggleSmartDirection(true);  // refresh the note
     }
+}
+
+// Обґрунтування активного режиму Smart Direction:
+//   Forecast (smart) → Forecast 1H/4H (напрямок + впевненість);
+//   CTR_STC          → CTR 15m/1H/4H (напрямок · нахил · впевненість + STC/зона).
+// Simple / банер — розкладу немає (керують іншим джерелом).
+function renderDirReason(d) {
+    const el = document.getElementById('sm-dir-reason');
+    if (!el) return;
+    const sel = document.getElementById('sm-bias-auto-mode');
+    const mode = sel ? sel.value : 'smart';
+    if (!d || (mode !== 'smart' && mode !== 'ctr_stc')) { el.style.display = 'none'; return; }
+    let html = '';
+    if (mode === 'ctr_stc') {
+        const cs = d.ctr_stc;
+        if (cs && cs.per_tf && cs.per_tf.length) {
+            html = cs.per_tf.map(t => {
+                const ic = t.lean === 'LONG' ? '🟢' : (t.lean === 'SHORT' ? '🔴' : '⚪');
+                const col = t.lean === 'LONG' ? '#4ade80' : (t.lean === 'SHORT' ? '#f87171' : '#8b93a7');
+                const leanW = t.lean ? (t.lean + '-нахил') : 'нейтрально';
+                return `<div><b>${t.label}:</b> <span style="color:${col};font-weight:700">${ic} ${leanW} · впевненість ${t.conf}%</span>`
+                     + ` <span style="color:#8b93a7">— STC ${t.stc} (${t.zone})</span></div>`;
+            }).join('');
+            const vm = cs.mode === 'LONG_ONLY' ? '<span style="color:#4ade80">🟢 LONG</span>'
+                     : (cs.mode === 'SHORT_ONLY' ? '<span style="color:#f87171">🔴 SHORT</span>'
+                        : '<span style="color:#8b93a7">⚪ WAIT</span>');
+            html += `<div style="margin-top:3px;border-top:1px solid rgba(255,255,255,.1);padding-top:3px">`
+                  + `→ CTR_STC: <b>${vm}</b> <span style="color:#8b93a7">(${cs.reason || ''})</span></div>`;
+        } else {
+            html = '<span style="color:#8b93a7">CTR: немає даних</span>';
+        }
+    } else {   // 'smart' → Forecast
+        const rows = [];
+        const frow = (fc, lbl) => {
+            if (fc && fc.side !== undefined && fc.side !== 0) {
+                const dir = fc.side === 1 ? 'LONG' : 'SHORT';
+                const ic = fc.side === 1 ? '🟢' : '🔴';
+                const col = fc.side === 1 ? '#4ade80' : '#f87171';
+                rows.push(`<div>✓ <b>${lbl}:</b> <span style="color:${col};font-weight:700">${ic} ${dir}</span>`
+                        + ` <span style="color:#8b93a7">(впевненість ${fc.confidence}%)</span></div>`);
+            }
+        };
+        frow(d.forecast_1h, 'Forecast 1H');
+        frow(d.forecast_4h, 'Forecast 4H');
+        html = rows.length ? rows.join('') : '<span style="color:#8b93a7">Forecast: немає даних</span>';
+    }
+    el.innerHTML = html;
+    el.style.display = '';
 }
 
 // Side gates are driven ENTIRELY by the server-side AutoGate daemon (works
@@ -7675,6 +7728,8 @@ async function loadBias() {
         fill.style.width = d.confidence + '%';
         fill.style.background = dirGrad(d.verdict);
         renderMovePanel(d.move_long, d.move_short, d.verdict);
+        window._lastBias = d;              // для перемикання Forecast↔CTR_STC
+        renderDirReason(d);
         const icons = {ok: '✓', warn: '⚠', wait: '•'};
         // The watchlist-consensus reason line is rendered under the
         // consensus bar in the RIGHT column (not in the left reasons list),

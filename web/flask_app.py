@@ -7059,11 +7059,19 @@ def compute_bias(db, symbol, wl=None):
     except Exception:
         _decision = None
 
+    # ⚡ CTR_STC — розклад по 15m/1H/4H + напрямок для режиму Smart Direction «CTR_STC».
+    _ctr_stc = None
+    try:
+        from detection.ctr_direction import compute_ctr_direction
+        _ctr_stc = compute_ctr_direction(symbol)
+    except Exception:
+        _ctr_stc = None
+
     _result = {'ok': True, 'symbol': symbol, 'verdict': verdict,
                'confidence': confidence, 'components': comp,
                'reasons': reasons, 'price': price, 'move': move,
                'move_long': move_long, 'move_short': move_short,
-               'ctr': _ctr, 'decision': _decision,
+               'ctr': _ctr, 'ctr_stc': _ctr_stc, 'decision': _decision,
                'ts': _t.time()}
     _cache[_ck] = (_now, _result)
     return _result
