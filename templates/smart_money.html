@@ -1805,8 +1805,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          never become visible. The new Decision Center block
                          below replaces all of them. -->
                     <span class="sm-status-badge" id="sm-htf-badge" style="display:none !important"></span>
-                    <span class="sm-status-badge" id="sm-forecast-badge" style="display:none"></span>
-                    <span class="sm-status-badge" id="sm-forecast4h-badge" style="display:none"></span>
+                    <span class="sm-status-badge" id="sm-forecast-badge" style="display:none !important"></span>
+                    <span class="sm-status-badge" id="sm-forecast4h-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-bias-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-health-badge" style="display:none !important"></span>
                     <!-- ❤️ Fuel Auto-Filter status row — second line under the
@@ -5775,11 +5775,6 @@ async function loadChart() {
         } else {
             forecastBadge4h.style.display = 'none';
         }
-        // Режим-гейт: Forecast на банері показуємо лише коли режим НЕ CTR_STC.
-        if (currentSmartMode() === 'ctr_stc') {
-            forecastBadge.style.display = 'none';
-            forecastBadge4h.style.display = 'none';
-        }
 
         // === CTR badge (informational) ===
         // STC ranges 0-100. Zones: <25 = Oversold, >75 = Overbought, mid otherwise.
@@ -5889,10 +5884,6 @@ async function loadChart() {
             }
             ctrBadge.title = tooltipParts.join('\n');
         } else {
-            ctrBadge.style.display = 'none';
-        }
-        // Режим-гейт: CTR на банері показуємо лише у режимі CTR_STC (замість Forecast).
-        if (currentSmartMode() !== 'ctr_stc') {
             ctrBadge.style.display = 'none';
         }
 
@@ -7512,10 +7503,42 @@ function toggleSmartDirection(on) {
     if (on) loadBias();
 }
 
-// Поточний режим Smart Direction (для перемикання банера Forecast↔CTR).
+// Поточний режим Smart Direction.
 function currentSmartMode() {
     const sel = document.getElementById('sm-bias-auto-mode');
     return (sel && sel.value) || window.smartDirectionMode || 'smart';
+}
+
+// CTR_STC інформація для лівої колонки (вирівняна таблиця + підсумок).
+function ctrStcHtml(cs) {
+    if (!cs || !cs.per_tf || !cs.per_tf.length) {
+        return '<div class="sm-bias-reason wait">• CTR: немає даних</div>';
+    }
+    const DIRCOL = { LONG: '#4ade80', SHORT: '#f87171', NEU: '#8b93a7' };
+    const zoneCol = z => z === 'перекупленість' ? '#fdba74'
+                     : (z === 'перепроданість' ? '#7dd3fc' : '#94a3b8');
+    const td = (s, x) => `<td style="padding:2px 10px 2px 0;white-space:nowrap;${x || ''}">${s}</td>`;
+    const rows = cs.per_tf.map(t => {
+        const col = t.lean === 'LONG' ? DIRCOL.LONG : (t.lean === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
+        const ic = t.lean === 'LONG' ? '🟢' : (t.lean === 'SHORT' ? '🔴' : '⚪');
+        const leanW = t.lean ? (t.lean + '-нахил') : 'нейтрально';
+        return '<tr>'
+            + td(t.label, 'color:#cbd5e1;font-weight:700')
+            + td(ic, 'text-align:center;padding-right:4px')
+            + td(leanW, `color:${col};font-weight:700`)
+            + td(`впевненість ${t.conf}%`, `color:${col}`)
+            + td(`STC ${t.stc}`, 'color:#8b93a7;text-align:right')
+            + td(t.zone, `color:${zoneCol(t.zone)};font-weight:600`)
+            + '</tr>';
+    }).join('');
+    const vd = cs.mode === 'LONG_ONLY' ? 'LONG' : (cs.mode === 'SHORT_ONLY' ? 'SHORT' : 'WAIT');
+    const vcol = vd === 'LONG' ? DIRCOL.LONG : (vd === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
+    const vic = vd === 'LONG' ? '🟢' : (vd === 'SHORT' ? '🔴' : '⚪');
+    const pct = (cs.score_pct != null) ? cs.score_pct : Math.round((cs.score || 0) * 100);
+    const foot = `<div style="margin-top:4px;border-top:1px solid rgba(255,255,255,.12);padding-top:4px">`
+        + `CTR_STC: <b style="color:${vcol}">${vic} ${vd}</b> `
+        + `<span style="color:#8b93a7">(бал ${pct >= 0 ? '+' : ''}${pct}%)</span> →</div>`;
+    return `<table style="border-collapse:collapse;font-size:0.76rem;line-height:1.6">${rows}</table>${foot}`;
 }
 // Банер: у CTR_STC ховаємо бейджі Forecast (показуємо CTR), інакше — навпаки.
 // Дані відрендеряться наступним тіком чарта; гейт у самих рендерах тримає режим.
@@ -7537,8 +7560,7 @@ function onSmartDirectionModeChange() {
     if (!sel) return;
     smartDirectionMode = sel.value || 'smart';
     try { localStorage.setItem('sm_smart_direction_mode', smartDirectionMode); } catch {}
-    try { loadBias(); } catch (e) {}         // борд одразу під новий режим
-    try { applyBannerModeSwap(); } catch (e) {}   // Forecast↔CTR на банері
+    try { loadBias(); } catch (e) {}         // борд одразу під новий режим (своя інфо)
     if (smartDirectionEnabled) {
         fetch('/api/sm/auto-gate', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -7796,8 +7818,13 @@ async function loadBias() {
         // blends with a LONG verdict. Non-directional reasons keep kind color.
         const dirStyle = (dir) => dir === 'long' ? ' style="color:#4ade80"'
             : dir === 'short' ? ' style="color:#f87171"' : '';
-        reasonsEl.innerHTML = (d.reasons || [])
+        // Кожен режим — СВОЯ інформація в лівій колонці:
+        //   CTR_STC → CTR 15m/1H/4H (замість Forecast-рядків);
+        //   решта  → як є (Forecast + ММ тощо).
+        const _ctrMode = currentSmartMode() === 'ctr_stc';
+        let _reasonsHtml = (d.reasons || [])
             .filter(r => !isWlReason(r[1]))
+            .filter(r => !(_ctrMode && /Forecast/i.test(r[1])))   // у CTR_STC ховаємо Forecast
             .map(r => {
                 const [kind, text, dir] = r;
                 // The ММ (liq-fuel) line drives the ₿ banner — highlight it bright.
@@ -7808,7 +7835,9 @@ async function loadBias() {
                          + `text-shadow:0 0 8px ${c}66">${icons[kind] || '•'} ${text}</div>`;
                 }
                 return `<div class="sm-bias-reason ${kind}"${dirStyle(dir)}>${icons[kind] || '•'} ${text}</div>`;
-            }).join('') || '<div class="sm-bias-reason wait">• немає сигналів</div>';
+            }).join('');
+        if (_ctrMode) _reasonsHtml = ctrStcHtml(d.ctr_stc) + _reasonsHtml;   // CTR замість Forecast
+        reasonsEl.innerHTML = _reasonsHtml || '<div class="sm-bias-reason wait">• немає сигналів</div>';
 
         // Watchlist consensus (right column): the moved reason line shows
         // UNDER the bar as a verdict note.
