@@ -2082,7 +2082,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск. Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. ВАРТО ВІДКРИВАТИ = найкраще. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск. Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. Конфлікт (ціна проти ММ) або виснаженість обмежують оцінку. Шкала: ВАРТО ВІДКРИВАТИ ≥72 · МОЖНА ≥55 · ЗАЧЕКАТИ ≥40 · НЕ ВАРТО ≥25 · НЕ ВІДКРИВАТИ <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
                         <tr><td colspan="8" class="tm-empty-msg">Черга порожня</td></tr>
@@ -2211,7 +2211,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers2-table">
                     <thead>
-                        <tr><th data-sortcol="symbol" onclick="ffSortQueue2('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue2('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue2('mm')" style="cursor:pointer;user-select:none">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue2('exh')" style="cursor:pointer;user-select:none">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue2('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue2('score')" style="cursor:pointer;user-select:none">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue2('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue2('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue2('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue2('mm')" style="cursor:pointer;user-select:none">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue2('exh')" style="cursor:pointer;user-select:none">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue2('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue2('score')" style="cursor:pointer;user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. Шкала: ВАРТО ВІДКРИВАТИ ≥72 · МОЖНА ≥55 · ЗАЧЕКАТИ ≥40 · НЕ ВАРТО ≥25 · НЕ ВІДКРИВАТИ <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue2('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers2-tbody">
                         <tr><td colspan="8" class="tm-empty-msg">Черга-2 порожня</td></tr>
@@ -7182,16 +7182,43 @@ function ffRevCell(pct) {
     return `<span title="Готовність до закриття на розвороті після піку (100% ≈ момент закриття)" style="color:${col};font-weight:700;font-size:0.72rem">🔄 ${v}%</span>`;
 }
 
+// Розгорнуте роз'яснення SCORE для тултипа (складники + шкала).
+function ffScoreTip(sc) {
+    const c = sc.components || {};
+    const p = v => (v == null ? '—' : Math.round(v * 100) + '%');
+    let t = `SCORE ${sc.score}/100 — якість входу в напрямку ${sc.dir || '—'}.\n`
+        + `Складники (вагомість): запас ходу 30% · імпульс свічок 30% · тиск ММ 25% · утримання 15%.\n`
+        + `Зараз: запас ${p(c.room)} · імпульс ${p(c.mom)} · ММ ${p(c.fuel)} · утримання ${p(c.hold)}.`;
+    if (sc.conflict) t += `\n⚠ Конфлікт: рух ціни проти тиску ММ → оцінку обмежено.`;
+    if (sc.exh != null) t += `\nВиснаженість ходу: ${Math.round(sc.exh)}%${sc.exh >= 90 ? ' (майже вичерпано)' : ''}.`;
+    t += `\nШкала: ВАРТО ≥72 · МОЖНА ≥55 · ЗАЧЕКАТИ ≥40 · НЕ ВАРТО ≥25 · НЕ ВІДКРИВАТИ <25.`;
+    return t.replace(/"/g, '&quot;');
+}
+// SCORE-бейдж: акцент-колір + число + вердикт + тонкий 0–100 метр під ним.
 function ffScoreBadgeHTML(sc) {
     if (!sc || !sc.label) return '<span style="color:#555">—</span>';
+    const c = sc.color || '#94a3b8';
     const scd = sc.dir || null;
-    const scDir = scd === 'LONG'
-        ? '<span style="font-size:0.78rem;margin-right:5px">🟢<span style="color:#22c55e;font-weight:900">▲</span></span>'
-        : (scd === 'SHORT' ? '<span style="font-size:0.78rem;margin-right:5px">🔴<span style="color:#ef4444;font-weight:900">▼</span></span>' : '');
-    const scWarn = sc.conflict
-        ? '<span title="Конфлікт: бабло й рух ціни в різні боки" style="margin-left:4px">⚠️</span>'
+    const arrow = scd === 'LONG'
+        ? '<span style="color:#22c55e;font-weight:900;font-size:0.7rem">▲</span>'
+        : (scd === 'SHORT' ? '<span style="color:#ef4444;font-weight:900;font-size:0.7rem">▼</span>'
+                           : '<span style="color:#8b93a7;font-size:0.7rem">•</span>');
+    const pct = Math.max(0, Math.min(100, Number(sc.score) || 0));
+    const warn = sc.conflict
+        ? ' <span title="Конфлікт: тиск ММ і рух ціни в різні боки" style="font-size:0.66rem">⚠️</span>'
         : '';
-    return `${scDir}<span title="Оцінка утримання ${sc.score}/100 у напрямку ${sc.dir || '—'}${sc.conflict ? ' · ⚠ бабло проти ціни' : ''}" style="display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:6px;background:${sc.color}22;border:1px solid ${sc.color};font-weight:800;font-size:0.74rem;color:${sc.color}">${sc.score}<span style="font-size:0.6rem;letter-spacing:0.3px">${scoreLabelUA(sc.label)}</span></span>${scWarn}`;
+    return `<span title="${ffScoreTip(sc)}" style="display:inline-flex;flex-direction:column;gap:3px;`
+        + `min-width:120px;padding:4px 9px;border-radius:8px;background:${c}1f;border:1px solid ${c}59">`
+        + `<span style="display:flex;align-items:center;gap:6px;line-height:1">`
+        +   arrow
+        +   `<b style="font-size:0.92rem;color:${c};font-weight:900">${sc.score}</b>`
+        +   `<span style="font-size:0.56rem;letter-spacing:0.4px;color:#cbd5e1;font-weight:700">${scoreLabelUA(sc.label)}</span>`
+        +   warn
+        + `</span>`
+        + `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
+        +   `<span style="display:block;height:100%;width:${pct}%;background:${c};border-radius:2px"></span>`
+        + `</span>`
+        + `</span>`;
 }
 
 // Combined Status badge — shows the position's Decision-Center headline

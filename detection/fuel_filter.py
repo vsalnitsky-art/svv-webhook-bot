@@ -1352,15 +1352,17 @@ class FuelFilterDaemon:
         """Map a 0..100 hold-score to a (label, color) verdict. The label stays
         ENGLISH — it's an internal key compared across the code (== 'STRONG
         HOLD'); use _score_label_ua() to display it in Ukrainian."""
+        # Diverging-гама «вартість входу» (валідовано на темному фоні, контраст
+        # 6.4–10.1:1): teal → green → СІРИЙ нейтрал → orange → red.
         if score >= 72:
-            return ('STRONG HOLD', '#16a34a')   # green
+            return ('STRONG HOLD', '#2dd4bf')    # teal — найкраще
         if score >= 55:
-            return ('HOLD', '#84cc16')           # lime
+            return ('HOLD', '#4ade80')           # green
         if score >= 40:
-            return ('NEUTRAL', '#eab308')        # amber
+            return ('NEUTRAL', '#94a3b8')        # сірий нейтрал — зачекати
         if score >= 25:
-            return ('WEAK', '#f97316')           # orange
-        return ('EXHAUSTED', '#ef4444')          # red
+            return ('WEAK', '#fb923c')           # orange
+        return ('EXHAUSTED', '#f87171')          # red — не відкривати
 
     # SCORE label EN→UA for DISPLAY only (internal keys stay English for logic).
     # Names are action-oriented: they answer «варто відкривати чи ще ні».
@@ -1745,6 +1747,10 @@ class FuelFilterDaemon:
         fuel_strength = int(round(abs(signed) * 100)) if signed is not None else None
         return {'score': int(round(score)), 'label': label, 'color': color,
                 'dir': live_dir, 'conflict': conflict, 'exh': exf,
+                # Розклад складників (0..1, до вагування) — для тултипа-роз'яснення:
+                # запас ходу / імпульс свічок / тиск ММ / утримання.
+                'components': {'room': round(room, 2), 'mom': round(mom, 2),
+                               'fuel': round(fmag, 2), 'hold': round(hold, 2)},
                 # Per-coin ММ (liq-fuel) direction — shown in its own column in
                 # the ❤️ queue table. LONG / SHORT / None(=збалансований).
                 'fuel_dir': fuel_dir,
