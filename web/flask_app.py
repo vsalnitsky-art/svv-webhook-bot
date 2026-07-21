@@ -7067,12 +7067,22 @@ def compute_bias(db, symbol, wl=None):
     except Exception:
         _ctr_stc = None
 
+    # 🧩 Confluence — згода незалежних вимірів (тренд+forecast+бабло) + гейт виснаження.
+    _confluence = None
+    try:
+        from detection.confluence_direction import compute_confluence
+        _confluence = compute_confluence(get_db(), symbol, {
+            'components': comp, 'move_long': move_long, 'move_short': move_short,
+            'verdict': verdict})
+    except Exception:
+        _confluence = None
+
     _result = {'ok': True, 'symbol': symbol, 'verdict': verdict,
                'confidence': confidence, 'components': comp,
                'reasons': reasons, 'price': price, 'move': move,
                'move_long': move_long, 'move_short': move_short,
-               'ctr': _ctr, 'ctr_stc': _ctr_stc, 'decision': _decision,
-               'ts': _t.time()}
+               'ctr': _ctr, 'ctr_stc': _ctr_stc, 'confluence': _confluence,
+               'decision': _decision, 'ts': _t.time()}
     _cache[_ck] = (_now, _result)
     return _result
 

@@ -81,7 +81,7 @@ class AutoGateDaemon:
     def set_mode(self, mode: str):
         """Set 'simple', 'smart' or 'banner'. Changes take effect on next tick."""
         m = (mode or 'simple').lower()
-        if m not in ('simple', 'smart', 'banner', 'ctr_stc'):
+        if m not in ('simple', 'smart', 'banner', 'ctr_stc', 'confluence'):
             m = 'simple'
         self._db.set_setting(_DB_MODE, m)
         # Immediate apply if the gate is already running
@@ -193,6 +193,18 @@ class AutoGateDaemon:
                 log_msg = f"ctr_stc: {cd.get('mode')} ({cd.get('reason')})"
             except Exception as e:
                 print(f"[AutoGate] ctr_direction error: {e} — falling back to simple")
+                mode = 'simple'
+
+        if mode == 'confluence':
+            # Конфлюенс незалежних вимірів (тренд+forecast+бабло) + гейт виснаження.
+            try:
+                from detection.confluence_direction import compute_confluence
+                cf = compute_confluence(self._db, self.get_symbol(), verdict_data)
+                allow_long = cf.get('allow_long', False)
+                allow_short = cf.get('allow_short', False)
+                log_msg = f"confluence: {cf.get('mode')} ({cf.get('reason')})"
+            except Exception as e:
+                print(f"[AutoGate] confluence error: {e} — falling back to simple")
                 mode = 'simple'
 
         if mode == 'simple':

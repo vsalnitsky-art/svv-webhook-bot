@@ -1365,6 +1365,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <option value="simple">Simple</option>
                 <option value="smart">Forecast</option>
                 <option value="ctr_stc">CTR_STC</option>
+                <option value="confluence">Confluence</option>
                 <option value="banner">За банером ₿</option>
             </select>
             <label class="sm-bias-auto" id="sm-bias-cow-wrap"
@@ -7555,6 +7556,35 @@ function applyBannerModeSwap() {
     }
 }
 
+// Confluence інформація для лівої колонки: таблиця вимірів + підсумок.
+function confluenceHtml(cf) {
+    if (!cf || !cf.per_dim || !cf.per_dim.length) {
+        return '<div class="sm-bias-reason wait">• Confluence: немає даних</div>';
+    }
+    const DIRCOL = { LONG: '#4ade80', SHORT: '#f87171', NEU: '#8b93a7' };
+    const td = (s, x) => `<td style="padding:2px 10px 2px 0;white-space:nowrap;${x || ''}">${s}</td>`;
+    const rows = cf.per_dim.map(t => {
+        const col = t.dir === 'LONG' ? DIRCOL.LONG : (t.dir === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
+        const ic = t.dir === 'LONG' ? '🟢' : (t.dir === 'SHORT' ? '🔴' : '⚪');
+        return '<tr>'
+            + td(t.name, 'color:#cbd5e1;font-weight:700')
+            + td(ic, 'text-align:center;padding-right:4px')
+            + td(t.dir || '—', `color:${col};font-weight:700`)
+            + td(`${t.conf}%`, `color:${col}`)
+            + td(t.detail || '', 'color:#8b93a7')
+            + '</tr>';
+    }).join('');
+    const vd = cf.mode === 'LONG_ONLY' ? 'LONG' : (cf.mode === 'SHORT_ONLY' ? 'SHORT' : 'WAIT');
+    const vcol = vd === 'LONG' ? DIRCOL.LONG : (vd === 'SHORT' ? DIRCOL.SHORT : DIRCOL.NEU);
+    const vic = vd === 'LONG' ? '🟢' : (vd === 'SHORT' ? '🔴' : '⚪');
+    const pct = (cf.score_pct != null) ? cf.score_pct : 0;
+    const exhTag = cf.exhausted ? ' <span style="color:#fbbf24">⚠ виснажено (пізно)</span>' : '';
+    const foot = `<div style="margin-top:4px;border-top:1px solid rgba(255,255,255,.12);padding-top:4px">`
+        + `Confluence: <b style="color:${vcol}">${vic} ${vd}</b> `
+        + `<span style="color:#8b93a7">(${pct >= 0 ? '+' : ''}${pct}%)</span>${exhTag} →</div>`;
+    return `<table style="border-collapse:collapse;font-size:0.76rem;line-height:1.6">${rows}</table>${foot}`;
+}
+
 function onSmartDirectionModeChange() {
     const sel = document.getElementById('sm-bias-auto-mode');
     if (!sel) return;
@@ -7795,6 +7825,10 @@ async function loadBias() {
             const cs = d.ctr_stc;
             effVerdict = cs.mode === 'LONG_ONLY' ? 'LONG' : (cs.mode === 'SHORT_ONLY' ? 'SHORT' : 'WAIT');
             effConf = Math.abs((cs.score_pct != null) ? cs.score_pct : Math.round((cs.score || 0) * 100));
+        } else if (_agMode === 'confluence' && d.confluence && d.confluence.ok) {
+            const cf = d.confluence;
+            effVerdict = cf.mode === 'LONG_ONLY' ? 'LONG' : (cf.mode === 'SHORT_ONLY' ? 'SHORT' : 'WAIT');
+            effConf = Math.abs((cf.score_pct != null) ? cf.score_pct : Math.round((cf.score || 0) * 100));
         }
         window._effVerdict = effVerdict;   // для фарбування ціни нижче
         const icon = effVerdict === 'LONG' ? '📈' : effVerdict === 'SHORT' ? '📉' : '⏸';
@@ -7821,10 +7855,12 @@ async function loadBias() {
         // Кожен режим — СВОЯ інформація в лівій колонці:
         //   CTR_STC → CTR 15m/1H/4H (замість Forecast-рядків);
         //   решта  → як є (Forecast + ММ тощо).
-        const _ctrMode = currentSmartMode() === 'ctr_stc';
+        const _dirMode = currentSmartMode();
+        const _ctrMode = _dirMode === 'ctr_stc';
+        const _cfMode = _dirMode === 'confluence';
         let _reasonsHtml = (d.reasons || [])
             .filter(r => !isWlReason(r[1]))
-            .filter(r => !(_ctrMode && /Forecast/i.test(r[1])))   // у CTR_STC ховаємо Forecast
+            .filter(r => !((_ctrMode || _cfMode) && /Forecast/i.test(r[1])))   // CTR_STC/Confluence — свій набір
             .map(r => {
                 const [kind, text, dir] = r;
                 // The ММ (liq-fuel) line drives the ₿ banner — highlight it bright.
@@ -7836,7 +7872,8 @@ async function loadBias() {
                 }
                 return `<div class="sm-bias-reason ${kind}"${dirStyle(dir)}>${icons[kind] || '•'} ${text}</div>`;
             }).join('');
-        if (_ctrMode) _reasonsHtml = ctrStcHtml(d.ctr_stc) + _reasonsHtml;   // CTR замість Forecast
+        if (_ctrMode) _reasonsHtml = ctrStcHtml(d.ctr_stc) + _reasonsHtml;        // CTR замість Forecast
+        else if (_cfMode) _reasonsHtml = confluenceHtml(d.confluence) + _reasonsHtml;  // Confluence
         reasonsEl.innerHTML = _reasonsHtml || '<div class="sm-bias-reason wait">• немає сигналів</div>';
 
         // Watchlist consensus (right column): the moved reason line shows
