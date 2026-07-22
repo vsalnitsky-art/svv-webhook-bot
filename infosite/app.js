@@ -548,35 +548,50 @@
     "міцніє/слабшає. Що сильніший тиск у бік крапки — то ймовірніший рух ціни туди.";
 
   // ММ (fuel) strength cell — exact copy of the bot's ffFuelCell.
-  // ММ (fuel) cell — 1:1 з ботом: dir-dot + сила% + стрілка + міні-бар + смуга.
-  //   hideBand: у тісних таблицях (позиції) слово-смуга ховається;
-  //   без напрямку (⚪) смуга → «рівновага».
+  // ММ (fuel) cell — той самий дизайн, що й SCORE: пілюля 124px з тонованим фоном
+  // + метр 0–100 + фіксовані під-колонки [▲▼ / сила% / рівень], стрілка тренду
+  // (↑↓→) окремим слотом праворуч. hideBand → рівень ховається (тісні таблиці).
   function ffFuelCell(dir, now, prev, hideBand) {
-    var dot = dir === "LONG" ? "🟢" : (dir === "SHORT" ? "🔴" : "⚪");
-    var dotSeg = '<span style="display:inline-block;width:16px;text-align:center;flex:none">' + dot + "</span>";
+    var isLong = dir === "LONG", isShort = dir === "SHORT";
+    var arrow = isLong ? "▲" : (isShort ? "▼" : "•");
+    var acol = isLong ? "#22c55e" : (isShort ? "#ef4444" : "#8b93a7");
     if (now == null) {
-      return '<span title="' + FUEL_TOOLTIP + '" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">' + dotSeg +
-        '<span style="display:inline-block;width:40px;text-align:right;color:#8b93a7;flex:none">—</span></span>';
+      return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
+        '<span style="display:inline-flex;flex-direction:column;gap:3px;width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:#94a3b81f">' +
+        '<span style="display:flex;align-items:center;line-height:1">' +
+        '<span style="width:11px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
+        '<b style="width:37px;text-align:right;flex:none;color:#8b93a7">—</b><span style="flex:1"></span></span>' +
+        '<span style="height:3px;border-radius:2px;background:#ffffff14"></span></span>' +
+        '<span style="width:15px;flex:none"></span></span>';
     }
     now = Number(now);
     var col = now >= 60 ? "#22c55e" : (now >= 30 ? "#84cc16" : (now >= 10 ? "#bef264" : "#8b93a7"));
-    var arrowChar = "", arrowCol = "#8b93a7", arrowTitle = "";
+    var tr = "", trcol = "#8b93a7", trtitle = "";
     if (prev != null) {
-      if (now > prev + 1) { arrowChar = "↑"; arrowCol = "#4ade80"; arrowTitle = "сила росте"; }
-      else if (now < prev - 1) { arrowChar = "↓"; arrowCol = "#f87171"; arrowTitle = "сила падає"; }
-      else { arrowChar = "→"; arrowCol = "#8b93a7"; arrowTitle = "без змін"; }
+      if (now > prev + 1) { tr = "↑"; trcol = "#4ade80"; trtitle = "сила росте"; }
+      else if (now < prev - 1) { tr = "↓"; trcol = "#f87171"; trtitle = "сила падає"; }
+      else { tr = "→"; trcol = "#8b93a7"; trtitle = "без змін"; }
     }
     var w = Math.max(0, Math.min(100, now));
     var b = fuelBand(now);
-    var pctSeg = '<b style="display:inline-block;width:40px;text-align:right;color:' + col + ';font-variant-numeric:tabular-nums;flex:none">' + Math.round(now) + "%</b>";
-    var arrowSeg = '<span style="display:inline-block;width:12px;text-align:center;color:' + arrowCol + ';flex:none" title="' + arrowTitle + '">' + arrowChar + "</span>";
-    var barSeg = '<span style="display:inline-block;vertical-align:middle;height:6px;width:48px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;flex:none"><span style="display:block;height:100%;width:' + w + '%;background:' + col + '"></span></span>';
-    var neutralDir = !(dir === "LONG" || dir === "SHORT");
-    var bandTxt = neutralDir ? "рівновага" : b.txt;
+    var neutralDir = !(isLong || isShort);
+    var bandTxt = neutralDir ? "рівновага" : String(b.txt).replace(" тиск", "");
     var bandCol = neutralDir ? "#8b93a7" : b.col;
-    var bandSeg = hideBand ? "" :
-      '<span style="display:inline-block;width:88px;text-align:left;color:' + bandCol + ';font-size:0.66rem;font-weight:600;flex:none">' + bandTxt + "</span>";
-    return '<span title="' + FUEL_TOOLTIP + '" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">' + dotSeg + pctSeg + arrowSeg + barSeg + bandSeg + "</span>";
+    var labelSeg = hideBand ? '<span style="flex:1"></span>' :
+      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;color:' + bandCol + ';font-weight:600;overflow:hidden;text-overflow:ellipsis">' + bandTxt + "</span>";
+    return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
+      '<span title="' + FUEL_TOOLTIP + '" style="display:inline-flex;flex-direction:column;gap:3px;width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + col + '1f">' +
+      '<span style="display:flex;align-items:center;line-height:1">' +
+      '<span style="width:11px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
+      '<b style="width:37px;text-align:right;flex:none;color:' + col + ';font-variant-numeric:tabular-nums">' + Math.round(now) + "%</b>" +
+      labelSeg +
+      "</span>" +
+      '<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">' +
+      '<span style="display:block;height:100%;width:' + w + '%;border-radius:2px;background:linear-gradient(90deg,' + scShade(col, 0.5) + "," + scShade(col, -0.3) + ')"></span>' +
+      "</span>" +
+      "</span>" +
+      '<span style="width:15px;text-align:center;flex:none;color:' + trcol + '" title="' + trtitle + '">' + tr + "</span>" +
+      "</span>";
   }
 
   // SCORE label EN→UA — 1:1 з ботом. Це ОЦІНКА ЯКОСТІ сетапу, не команда «відкривай».
@@ -623,7 +638,7 @@
   // SCORE-бейдж — 1:1 з ботом: акцент-колір + число% + вердикт + 0–100 метр.
   // Фіксована ширина пілюлі + внутрішні фіксовані під-колонки, ⚠ окремим слотом.
   function ffScoreBadgeHTML(sc) {
-    if (!sc || !sc.label) return '<span style="display:inline-flex"><span style="width:150px"></span><span style="width:18px;text-align:center;color:#555">—</span></span>';
+    if (!sc || !sc.label) return '<span style="display:inline-flex"><span style="width:124px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>';
     var c = sc.color || "#94a3b8";
     var scd = sc.dir || null;
     var arrow = scd === "LONG" ? "▲" : (scd === "SHORT" ? "▼" : "•");
@@ -634,18 +649,18 @@
       : "";
     return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
       '<span title="' + ffScoreTip(sc) + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
-      'width:150px;box-sizing:border-box;padding:3px 8px;border-radius:8px;background:' + c + '1f">' +
+      'width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + c + '1f">' +
       '<span style="display:flex;align-items:center;line-height:1">' +
-      '<span style="width:12px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
-      '<b style="width:42px;text-align:right;flex:none;color:' + c + ';font-variant-numeric:tabular-nums">' + sc.score + '%</b>' +
-      '<span style="flex:1;min-width:0;text-align:left;padding-left:7px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">' + scoreLabelUA(sc.label) + "</span>" +
+      '<span style="width:11px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
+      '<b style="width:37px;text-align:right;flex:none;color:' + c + ';font-variant-numeric:tabular-nums">' + sc.score + '%</b>' +
+      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">' + scoreLabelUA(sc.label) + "</span>" +
       "</span>" +
       '<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">' +
       '<span style="display:block;height:100%;width:' + pct + '%;border-radius:2px;' +
       'background:linear-gradient(90deg,' + scShade(c, 0.5) + "," + scShade(c, -0.3) + ')"></span>' +
       "</span>" +
       "</span>" +
-      '<span style="width:18px;text-align:center;flex:none;font-size:0.8rem">' + warn + "</span>" +
+      '<span style="width:15px;text-align:center;flex:none;font-size:0.8rem">' + warn + "</span>" +
       "</span>";
   }
 
@@ -668,7 +683,7 @@
   // 🎯 SMC «Готовність сетапу» (1H) — 1:1 з ботом. Підказка (наскільки зійшовся
   // SMC-конфлюенс), не команда: реальний вхід ухвалює двигун/Черга-2.
   function ffSetupCell(su) {
-    if (!su || !su.ok) return '<span style="display:inline-flex"><span style="width:150px"></span><span style="width:18px;text-align:center;color:#555">—</span></span>';
+    if (!su || !su.ok) return '<span style="display:inline-flex"><span style="width:124px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>';
     var c = su.color || "#94a3b8";
     var scd = su.dir || null;
     var arrow = scd === "LONG" ? "▲" : (scd === "SHORT" ? "▼" : "•");
@@ -683,18 +698,18 @@
     var pct = Math.max(0, Math.min(100, Number(su.score) || 0));
     return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
       '<span title="' + tip.replace(/"/g, "&quot;") + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
-      'width:150px;box-sizing:border-box;padding:3px 8px;border-radius:8px;background:' + c + '1f">' +
+      'width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + c + '1f">' +
       '<span style="display:flex;align-items:center;line-height:1">' +
-      '<span style="width:12px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
-      '<b style="width:42px;text-align:right;flex:none;color:' + c + ';font-variant-numeric:tabular-nums">' + su.score + '%</b>' +
-      '<span style="flex:1;min-width:0;text-align:left;padding-left:7px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">' + su.grade + "</span>" +
+      '<span style="width:11px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
+      '<b style="width:37px;text-align:right;flex:none;color:' + c + ';font-variant-numeric:tabular-nums">' + su.score + '%</b>' +
+      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">' + su.grade + "</span>" +
       "</span>" +
       '<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">' +
       '<span style="display:block;height:100%;width:' + pct + '%;border-radius:2px;' +
       'background:linear-gradient(90deg,' + scShade(c, 0.5) + "," + scShade(c, -0.3) + ')"></span>' +
       "</span>" +
       "</span>" +
-      '<span style="width:18px;text-align:center;flex:none;font-size:0.8rem">' + flag + "</span>" +
+      '<span style="width:15px;text-align:center;flex:none;font-size:0.8rem">' + flag + "</span>" +
       "</span>";
   }
 

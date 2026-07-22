@@ -677,6 +677,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     max-height: 680px;
     overflow-y: auto;
     overflow-x: auto;   /* wide rows scroll instead of wrapping to 2 lines */
+    max-width: 100%;    /* НІКОЛИ не ширше за контейнер → сторінка не «вилазить» */
     border: 1px solid rgba(255,255,255,0.06);
     border-radius: 8px;
     margin-top: 8px;
@@ -7131,23 +7132,23 @@ function decisionRecap(es) {
 // фіксованим слотом, а ⚠ (застарілий кросовер) — ще окремим слотом-стовпчиком,
 // щоб по всіх рядках усе стояло рівно, без «петляння» кінця.
 function ffCtrCell(c) {
-    const W = 104;   // фіксована ширина сегмента одного TF
+    const W = 82;   // фіксована ширина сегмента одного TF (компактно, щоб влазило)
     if (!c || c.stc == null) {
         return `<span style="display:inline-flex;align-items:center;white-space:nowrap">`
-            + `<span style="display:inline-block;width:${W * 3 + 62}px;color:#555">—</span></span>`;
+            + `<span style="display:inline-block;width:${W * 3 + 48}px;color:#555">—</span></span>`;
     }
     function seg(tf, stc) {
         if (stc == null) {
-            return `<span style="display:inline-block;width:${W}px;font-size:0.68rem;color:#556">`
-                + `<span style="display:inline-block;width:26px;color:#8b93a7">${tf}</span>—</span>`;
+            return `<span style="display:inline-block;width:${W}px;font-size:0.66rem;color:#556">`
+                + `<span style="display:inline-block;width:22px;color:#8b93a7">${tf}</span>—</span>`;
         }
         const s = Number(stc);
         const dot = s > 50 ? '🔴' : (s < 50 ? '🟢' : '⚪');
         const col = s > 50 ? '#f87171' : (s < 50 ? '#4ade80' : '#9aa3b5');
         const p = Math.round(Math.abs(s - 50) / 50 * 100);
         return `<span title="CTR ${tf} · STC ${s.toFixed(1)}/100 · впевненість ${p}%" `
-            + `style="display:inline-block;width:${W}px;white-space:nowrap;font-size:0.68rem">`
-            + `<span style="display:inline-block;width:26px;color:#8b93a7">${tf}</span>`
+            + `style="display:inline-block;width:${W}px;white-space:nowrap;font-size:0.66rem">`
+            + `<span style="display:inline-block;width:22px;color:#8b93a7">${tf}</span>`
             + `${dot} <span style="color:${col};font-weight:700;font-variant-numeric:tabular-nums">${Math.round(s)}·${p}%</span></span>`;
     }
     let html = seg('15m', c.stc) + seg('1H', c.stc_1h) + seg('4H', c.stc_4h);
@@ -7164,8 +7165,8 @@ function ffCtrCell(c) {
         warn = stale ? '<span title="Кросовер застарілий (>6 барів)" style="color:#fbbf24">⚠️</span>' : '';
     }
     return `<span style="display:inline-flex;align-items:center;white-space:nowrap">${html}`
-        + `<span style="display:inline-block;width:46px;text-align:left">${cross}</span>`
-        + `<span style="display:inline-block;width:16px;text-align:center;font-size:0.72rem">${warn}</span></span>`;
+        + `<span style="display:inline-block;width:34px;text-align:left;font-size:0.66rem">${cross}</span>`
+        + `<span style="display:inline-block;width:14px;text-align:center;font-size:0.72rem">${warn}</span></span>`;
 }
 
 // SCORE label EN→UA (internal values stay English for logic; UI shows Ukrainian).
@@ -7221,7 +7222,7 @@ function ffScoreTip(sc) {
 // (стрілка / % / вердикт), а знак попередження (⚠) — ОКРЕМИМ фіксованим слотом
 // праворуч, щоб по всіх рядках усе стояло рівно в стовпчик.
 function ffScoreBadgeHTML(sc) {
-    if (!sc || !sc.label) return `<span style="display:inline-flex"><span style="width:150px"></span><span style="width:18px;text-align:center;color:#555">—</span></span>`;
+    if (!sc || !sc.label) return `<span style="display:inline-flex"><span style="width:124px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>`;
     const c = sc.color || '#94a3b8';
     const scd = sc.dir || null;
     const arrow = scd === 'LONG' ? '▲' : (scd === 'SHORT' ? '▼' : '•');
@@ -7232,18 +7233,18 @@ function ffScoreBadgeHTML(sc) {
         : '';
     return `<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">`
         + `<span title="${ffScoreTip(sc)}" style="display:inline-flex;flex-direction:column;gap:3px;`
-        +   `width:150px;box-sizing:border-box;padding:3px 8px;border-radius:8px;background:${c}1f">`
+        +   `width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:${c}1f">`
         +   `<span style="display:flex;align-items:center;line-height:1">`
-        +     `<span style="width:12px;text-align:center;flex:none;color:${acol};font-weight:900">${arrow}</span>`
-        +     `<b style="width:42px;text-align:right;flex:none;color:${c};font-variant-numeric:tabular-nums">${sc.score}%</b>`
-        +     `<span style="flex:1;min-width:0;text-align:left;padding-left:7px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">${scoreLabelUA(sc.label)}</span>`
+        +     `<span style="width:11px;text-align:center;flex:none;color:${acol};font-weight:900">${arrow}</span>`
+        +     `<b style="width:37px;text-align:right;flex:none;color:${c};font-variant-numeric:tabular-nums">${sc.score}%</b>`
+        +     `<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">${scoreLabelUA(sc.label)}</span>`
         +   `</span>`
         +   `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
         +     `<span style="display:block;height:100%;width:${pct}%;border-radius:2px;`
         +       `background:linear-gradient(90deg,${scShade(c, 0.5)},${scShade(c, -0.3)})"></span>`
         +   `</span>`
         + `</span>`
-        + `<span style="width:18px;text-align:center;flex:none;font-size:0.8rem">${warn}</span>`
+        + `<span style="width:15px;text-align:center;flex:none;font-size:0.8rem">${warn}</span>`
         + `</span>`;
 }
 
@@ -7251,7 +7252,7 @@ function ffScoreBadgeHTML(sc) {
 // (наскільки зійшовся SMC-конфлюенс для входу), а не команда: реальний вхід
 // ухвалює двигун/Черга-2. 🎯 = суворий збіг усіх ключових блоків.
 function ffSetupCell(su) {
-    if (!su || !su.ok) return `<span style="display:inline-flex"><span style="width:150px"></span><span style="width:18px;text-align:center;color:#555">—</span></span>`;
+    if (!su || !su.ok) return `<span style="display:inline-flex"><span style="width:124px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>`;
     const c = su.color || '#94a3b8';
     const scd = su.dir || null;
     const arrow = scd === 'LONG' ? '▲' : (scd === 'SHORT' ? '▼' : '•');
@@ -7268,18 +7269,18 @@ function ffSetupCell(su) {
     const pct = Math.max(0, Math.min(100, Number(su.score) || 0));
     return `<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">`
         + `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;flex-direction:column;gap:3px;`
-        +   `width:150px;box-sizing:border-box;padding:3px 8px;border-radius:8px;background:${c}1f">`
+        +   `width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:${c}1f">`
         +   `<span style="display:flex;align-items:center;line-height:1">`
-        +     `<span style="width:12px;text-align:center;flex:none;color:${acol};font-weight:900">${arrow}</span>`
-        +     `<b style="width:42px;text-align:right;flex:none;color:${c};font-variant-numeric:tabular-nums">${su.score}%</b>`
-        +     `<span style="flex:1;min-width:0;text-align:left;padding-left:7px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">${su.grade}</span>`
+        +     `<span style="width:11px;text-align:center;flex:none;color:${acol};font-weight:900">${arrow}</span>`
+        +     `<b style="width:37px;text-align:right;flex:none;color:${c};font-variant-numeric:tabular-nums">${su.score}%</b>`
+        +     `<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">${su.grade}</span>`
         +   `</span>`
         +   `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
         +     `<span style="display:block;height:100%;width:${pct}%;border-radius:2px;`
         +       `background:linear-gradient(90deg,${scShade(c, 0.5)},${scShade(c, -0.3)})"></span>`
         +   `</span>`
         + `</span>`
-        + `<span style="width:18px;text-align:center;flex:none;font-size:0.8rem">${flag}</span>`
+        + `<span style="width:15px;text-align:center;flex:none;font-size:0.8rem">${flag}</span>`
         + `</span>`;
 }
 
@@ -9636,42 +9637,51 @@ const FUEL_TOOLTIP = "ММ — тиск маркетмейкера на ціну
 // 0..100% + trend arrow + mini-bar + a colour-coded band word at the END.
 //   dir: 'LONG'|'SHORT'|null(=balanced),  now/prev: 0..100 strength (or null)
 function ffFuelCell(dir, now, prev, hideBand) {
-    const dot = dir === 'LONG' ? '🟢' : (dir === 'SHORT' ? '🔴' : '⚪');
-    // Fixed-width segments (inline-flex) so EVERY row lines up in a rigid grid
-    // and nothing shifts sideways when the numbers change:
-    //   [dot 16] [pct 40, right-aligned] [arrow 12] [bar 56] [band 56]
-    const dotSeg = `<span style="display:inline-block;width:16px;text-align:center;flex:none">${dot}</span>`;
+    // Той самий дизайн, що й SCORE: пілюля фіксованої ширини з тонованим фоном +
+    // метр 0–100 + фіксовані під-колонки [напрямок ▲▼ / сила% / рівень], а стрілка
+    // тренду (↑↓→) — ОКРЕМИМ слотом праворуч (як ⚠ у SCORE).
+    const isLong = dir === 'LONG', isShort = dir === 'SHORT';
+    const arrow = isLong ? '▲' : (isShort ? '▼' : '•');
+    const acol = isLong ? '#22c55e' : (isShort ? '#ef4444' : '#8b93a7');
     if (now == null) {
-        return `<span title="${FUEL_TOOLTIP}" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">`
-            + `${dotSeg}<span style="display:inline-block;width:40px;text-align:right;color:#8b93a7;flex:none">—</span>`
-            + `</span>`;
+        return `<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">`
+            + `<span style="display:inline-flex;flex-direction:column;gap:3px;width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:#94a3b81f">`
+            +   `<span style="display:flex;align-items:center;line-height:1">`
+            +     `<span style="width:11px;text-align:center;flex:none;color:${acol};font-weight:900">${arrow}</span>`
+            +     `<b style="width:37px;text-align:right;flex:none;color:#8b93a7">—</b><span style="flex:1"></span></span>`
+            +   `<span style="height:3px;border-radius:2px;background:#ffffff14"></span></span>`
+            + `<span style="width:15px;flex:none"></span></span>`;
     }
     now = Number(now);
-    // Strength colour: <10 none, 10-30 weak(amber), 30-60 mid(lime), 60+ strong(green)
     const col = now >= 60 ? '#22c55e' : (now >= 30 ? '#84cc16'
         : (now >= 10 ? '#bef264' : '#8b93a7'));
-    // Trend vs previous cycle: ↑ strengthening (green) / ↓ weakening (red) / → flat.
-    let arrowChar = '', arrowCol = '#8b93a7', arrowTitle = '';
+    let tr = '', trcol = '#8b93a7', trtitle = '';
     if (prev != null) {
-        if (now > prev + 1) { arrowChar = '↑'; arrowCol = '#4ade80'; arrowTitle = 'сила росте'; }
-        else if (now < prev - 1) { arrowChar = '↓'; arrowCol = '#f87171'; arrowTitle = 'сила падає'; }
-        else { arrowChar = '→'; arrowCol = '#8b93a7'; arrowTitle = 'без змін'; }
+        if (now > prev + 1) { tr = '↑'; trcol = '#4ade80'; trtitle = 'сила росте'; }
+        else if (now < prev - 1) { tr = '↓'; trcol = '#f87171'; trtitle = 'сила падає'; }
+        else { tr = '→'; trcol = '#8b93a7'; trtitle = 'без змін'; }
     }
     const w = Math.max(0, Math.min(100, now));
     const b = fuelBand(now);
-    const pctSeg = `<b style="display:inline-block;width:40px;text-align:right;color:${col};font-variant-numeric:tabular-nums;flex:none">${Math.round(now)}%</b>`;
-    const arrowSeg = `<span style="display:inline-block;width:12px;text-align:center;color:${arrowCol};flex:none" title="${arrowTitle}">${arrowChar}</span>`;
-    const barSeg = `<span style="display:inline-block;vertical-align:middle;height:6px;width:48px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;flex:none"><span style="display:block;height:100%;width:${w}%;background:${col}"></span></span>`;
-    // Band word («легкий тиск» …) — omitted in tight tables (hideBand) to save
-    // width; the dot + % + bar already convey strength/direction. The colour of
-    // the % keeps the band info even without the word.
-    // Слова про «тиск» — лише коли є БІК. Без напрямку (⚪) → «рівновага».
-    const _neutralDir = !(dir === 'LONG' || dir === 'SHORT');
-    const _bandTxt = _neutralDir ? 'рівновага' : b.txt;
+    const _neutralDir = !(isLong || isShort);
+    // Короткий рівень (без « тиск») — щоб влазило в ту саму ширину, що й SCORE.
+    const _bandTxt = _neutralDir ? 'рівновага' : String(b.txt).replace(' тиск', '');
     const _bandCol = _neutralDir ? '#8b93a7' : b.col;
-    const bandSeg = hideBand ? ''
-        : `<span style="display:inline-block;width:88px;text-align:left;color:${_bandCol};font-size:0.66rem;font-weight:600;flex:none">${_bandTxt}</span>`;
-    return `<span title="${FUEL_TOOLTIP}" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">${dotSeg}${pctSeg}${arrowSeg}${barSeg}${bandSeg}</span>`;
+    const labelSeg = hideBand ? `<span style="flex:1"></span>`
+        : `<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;color:${_bandCol};font-weight:600;overflow:hidden;text-overflow:ellipsis">${_bandTxt}</span>`;
+    return `<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">`
+        + `<span title="${FUEL_TOOLTIP}" style="display:inline-flex;flex-direction:column;gap:3px;width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:${col}1f">`
+        +   `<span style="display:flex;align-items:center;line-height:1">`
+        +     `<span style="width:11px;text-align:center;flex:none;color:${acol};font-weight:900">${arrow}</span>`
+        +     `<b style="width:37px;text-align:right;flex:none;color:${col};font-variant-numeric:tabular-nums">${Math.round(now)}%</b>`
+        +     labelSeg
+        +   `</span>`
+        +   `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
+        +     `<span style="display:block;height:100%;width:${w}%;border-radius:2px;background:linear-gradient(90deg,${scShade(col, 0.5)},${scShade(col, -0.3)})"></span>`
+        +   `</span>`
+        + `</span>`
+        + `<span style="width:15px;text-align:center;flex:none;color:${trcol}" title="${trtitle}">${tr}</span>`
+        + `</span>`;
 }
 
 // ── 📈 Per-trade history chart (clicking a closed trade) ─────────────────
