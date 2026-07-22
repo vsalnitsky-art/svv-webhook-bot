@@ -3693,23 +3693,10 @@ class FuelFilterDaemon:
             _emoji = '🟢' if _sd == 'LONG' else ('🔴' if _sd == 'SHORT' else '⚪')
             _side = _sd if _sd in ('LONG', 'SHORT') else ''
             msg = f"#BTCUSDT направлення\n{_emoji}{_side} - STOP TRADING"
-        # Tag ONLY the private admin copy (the shared `msg` goes untagged to
-        # _broadcast_users, where notify_category/broadcast add their own tag).
-        _pmsg = msg
-        try:
-            from web.tg_bot import cat_tag
-            _t = cat_tag('btc')
-            if _t:
-                _pmsg = f"{_t}\n{msg}"
-        except Exception:
-            pass
-        try:
-            notifier.send_message(_pmsg)
-            print(f"[FuelFilter] BTC TG alert sent: {token}")
-        except Exception as e:
-            print(f"[FuelFilter] BTC TG send error: {e}")
-        # Category chat (₿ BTCUSDT) + per-user opt-in broadcast.
+        # ✅ ЛИШЕ в ГРУПУ (категорія ₿ BTCUSDT) — БЕЗ приватної копії в головний
+        # бот (на прохання: ці повідомлення мають іти тільки в групу, у свою тему).
         self._broadcast_users('btc', 'notify_btc', msg)
+        print(f"[FuelFilter] BTC TG alert (group only): {token}")
 
     # ------------------------------------------------------------------
     # public API for the dashboard
@@ -4083,10 +4070,9 @@ class FuelFilterDaemon:
             dur = f"{int(held_sec/60)} хв"
         # Загальний формат як усі інші повідомлення: заголовок + жирний #символ +
         # структуровані рядки, HTML-жирний. «рівень», а не «чітке» (band ±0.01).
-        body = (f"✦ ЗОЛОТИЙ FUNDING {dot}<b>{side}</b>\n"
+        body = (f"✦ FUNDING {dot}<b>{side}</b>\n"
                 f"<b>#{sym}</b>\n"
-                f"💰 Funding: <b>{rt_s}</b> · рівень {step:g}%\n"
-                f"⏱ Тримається: <b>{dur}</b>")
+                f"💰 Funding: <b>{rt_s}</b>")
         self._broadcast_users('funding', 'notify_funding', body)
 
     def _signal_open(self, sym: str, a: Dict, tag: str, settings: Dict):

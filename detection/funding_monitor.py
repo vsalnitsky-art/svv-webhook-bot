@@ -408,6 +408,9 @@ class FundingMonitor:
         return funding_down >= min_signals and price_up >= min_signals
 
     def _send_alert(self, symbol: str, coin: Dict):
+        # ❌ Повідомлення «FUNDING ALERT … Short Squeeze risk» ВИМКНЕНО на прохання —
+        # більше не надсилаємо. Метод лишаємо, щоб виклики не падали.
+        return
         if not self.notifier:
             print(f"[FUNDING] PRIORITY (no TG): {symbol}")
             return
