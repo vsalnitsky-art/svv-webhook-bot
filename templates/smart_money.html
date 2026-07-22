@@ -10074,6 +10074,14 @@ function renderTradeHistoryChart(h, meta) {
                   : ctrLineOf(meta.ctr_close, 'CTR на виході'));
     if (ctrLine) ctrLine = `<div style="margin-bottom:10px">${ctrLine}</div>`;
 
+    // 🎯 SMC-«Готовність сетапу» НА ВХОДІ (grade_setup) — стамп при відкритті.
+    // Дає змогу зіставити «готовність на вході → результат угоди».
+    let setupLine = '';
+    if (meta.ff_setup_open) {
+        const _su = String(meta.ff_setup_open).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        setupLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">🎯 SMC-готовність на вході: <b style="color:#c9b8ff">${_su}</b></div>`;
+    }
+
     // ₿ BTCUSDT banner state over time — colored strip (green=LONG, red=SHORT,
     // grey=WAIT/немає; напівпрозорий = ПАУЗА).
     function bannerStrip() {
@@ -10175,7 +10183,7 @@ function renderTradeHistoryChart(h, meta) {
     const _hasJourney = Array.isArray(meta.journey) && meta.journey.length;
     const dcTop = _hasJourney ? '' : dcLine;
     const exitTop = _hasJourney ? '' : exitReasonLine;
-    return info + info2 + exitTop + sltpLine + paperLine + dcTop + ctrLine + journeyPanel + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + sdModeStrip() + q2ModeStrip() + pricePanel;
+    return info + info2 + exitTop + sltpLine + paperLine + dcTop + ctrLine + setupLine + journeyPanel + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + sdModeStrip() + q2ModeStrip() + pricePanel;
 }
 
 // ── 📜 Funding-coin ARCHIVE (history of appear/flip/exit + metrics) ──────

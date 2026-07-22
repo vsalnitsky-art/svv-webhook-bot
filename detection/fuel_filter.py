@@ -366,6 +366,12 @@ DEFAULT_SETTINGS = {
     'setup_grader_on': True,
     # Суворість 🎯 у грейдері: 'strict' (усі ключові блоки) / 'moderate' / 'soft'.
     'setup_strict': 'strict',
+    # 🛡 М'який запобіжник відкриття — блокує 3 «вбивці» (ММ<поріг / CTR
+    # нейтральний-чи-проти / виснажено). Це РЕАЛЬНО впливає на відкриття угод.
+    'safeguard_on': True,
+    'safeguard_mm_min': 30,     # мін. сила ММ, %
+    'safeguard_exh_max': 80,    # макс. виснаженість, %
+    'safeguard_ctr': True,      # вимагати CTR не нейтральний і не проти напрямку
     # 🎯 Вимагати вирівнювання з ₿ BTCUSDT сеансом (START + той самий бік), щоб
     # монета стала 🎯 «рекомендована». True = «усі в один бік» (за замовч.).
     'opportunity_require_btc': True,
@@ -1934,6 +1940,21 @@ class FuelFilterDaemon:
         warn = ' ⚠' if sc.get('conflict') else ''
         return f"{self._score_label_ua(sc['label'])} {arrow} {sc['score']}{warn}".strip()
 
+    def setup_snapshot(self, symbol: str) -> Optional[str]:
+        """Compact SMC-«Готовність» string for `symbol` RIGHT NOW, e.g.
+        'ХОРОШИЙ 58% 🎯 · ✓Структура ✓Зона ✓ММ ≈Таймінг · ⚠виснажено'. Stamped
+        on a position AT OPEN so the CLOSED record carries the entry setup —
+        зіставляємо «Готовність на вході → результат» для валідації грейдера."""
+        su = self._setup_cache.get((symbol or '').upper())
+        if not su or not su.get('ok'):
+            return None
+        ic = {'ok': '✓', 'warn': '≈', 'miss': '·'}
+        checks = ' '.join(f"{ic.get(ch.get('state'), '·')}{ch.get('label', '')}"
+                          for ch in su.get('checks', []))
+        hot = ' 🎯' if su.get('hot') else ''
+        vet = (' · ⚠' + '; '.join(su.get('vetoes', []))) if su.get('vetoes') else ''
+        return f"{su.get('grade', '')} {su.get('score', '')}%{hot} · {checks}{vet}".strip()
+
     # ------------------------------------------------------------------
     # fuel / exhaustion measurement (cached sources only)
     # ------------------------------------------------------------------
@@ -2639,6 +2660,44 @@ class FuelFilterDaemon:
         except Exception:
             pass
 
+    def _soft_safeguard(self, symbol: str, side: str, settings: Dict):
+        """🛡 М'який запобіжник відкриття — (ok, reason). Блокує 3 найгірші
+        входи, що системно давали збитки: слабкий тиск ММ, нейтральний або
+        протилежний CTR, виснажений хід. Це НЕ повний SMC-грейдер, а три
+        прості «вбивці» — щоб мінімально втручатись, але відсіяти мотлох.
+        Вимикається safeguard_on=False; пороги налаштовні."""
+        # 1) ММ (сила бабло-тиску) — має бути хоча б помірним.
+        try:
+            mm_min = float(settings.get('safeguard_mm_min', 30) or 0)
+        except (TypeError, ValueError):
+            mm_min = 30.0
+        mm_str = self._fuel_str.get(symbol)
+        if mm_str is None:
+            mm_str = (self._score_cache.get(symbol) or {}).get('fuel_strength')
+        if mm_min > 0 and (mm_str is None or float(mm_str) < mm_min):
+            return (False, f"ММ слабкий ({int(mm_str or 0)}%<{int(mm_min)}%)")
+        # 2) Виснаженість ходу — не входити у вже вичерпаний рух.
+        try:
+            exh_max = float(settings.get('safeguard_exh_max', 80) or 0)
+        except (TypeError, ValueError):
+            exh_max = 80.0
+        exh = self._exhaustion(symbol, side)
+        if exh_max > 0 and exh is not None and float(exh) > exh_max:
+            return (False, f"виснажено ({int(exh)}%>{int(exh_max)}%)")
+        # 3) CTR — не нейтральний і не проти напрямку (немає даних → не блокуємо).
+        if bool(settings.get('safeguard_ctr', True)):
+            try:
+                band = float(settings.get('queue2_ctr_neutral_pct', 10) or 0)
+            except (TypeError, ValueError):
+                band = 10.0
+            st, stc, _ = self._ctr_state(symbol, band)
+            stc_s = int(stc) if stc is not None else '—'
+            if st == 'neutral':
+                return (False, f"CTR нейтральний (STC {stc_s})")
+            if st in ('LONG', 'SHORT') and st != side:
+                return (False, f"CTR проти ({st})")
+        return (True, '')
+
     def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict,
               opened_by: Optional[str] = None):
         """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
@@ -2663,6 +2722,19 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% — "
                   f"rejecting open (too exhausted)")
             return False
+
+        # 🛡 М'який запобіжник: слабкий ММ / нейтральний(проти) CTR / виснажений
+        # хід — три «вбивці», що системно давали збиткові входи. Єдиний чок-пойнт
+        # усіх шляхів відкриття (Черга-1/2, сигнал). Причину — у per-row діагностику.
+        if settings.get('safeguard_on', True):
+            ok_sg, sg_reason = self._soft_safeguard(symbol, side, settings)
+            if not ok_sg:
+                print(f"[FuelFilter] {symbol}: 🛡 запобіжник — {sg_reason} → відмова у відкритті")
+                try:
+                    self._engine_skip[symbol] = f"🛡 запобіжник: {sg_reason}"
+                except Exception:
+                    pass
+                return False
 
         # CHECK WAIT VERDICT: if enabled, don't open coins in WAIT state
         if settings.get('skip_wait_coins', False):

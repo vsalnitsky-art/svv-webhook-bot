@@ -3060,6 +3060,7 @@ class TradeManager:
 
         # FF SCORE verdict + Exhaustion at open — kept for analytics/back-compat.
         position['ff_score_open'] = self._ff_score_snapshot(symbol)
+        position['ff_setup_open'] = self._ff_setup_snapshot(symbol)   # 🎯 SMC-готовність на вході
         position['ff_exh_open'] = self._ff_exhaustion(symbol, side)
         # ММ (fuel) value at open — shown in the Reason detail.
         position['ff_mm_open'] = self._ff_mm_snapshot(symbol)
@@ -3348,6 +3349,7 @@ class TradeManager:
         # distinguish this trade's outcome from TM-initiated trades.
         pos['external'] = True
         pos['ff_score_open'] = self._ff_score_snapshot(symbol)
+        pos['ff_setup_open'] = self._ff_setup_snapshot(symbol)   # 🎯 SMC-готовність на вході
         pos['ff_mm_open'] = self._ff_mm_snapshot(symbol)
         pos['ctr_open'] = self._ctr_snapshot(symbol)
 
@@ -3479,6 +3481,18 @@ class TradeManager:
             from detection.fuel_filter import get_fuel_filter
             ff = get_fuel_filter()
             return ff.score_snapshot(symbol) if ff else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _ff_setup_snapshot(symbol: str) -> Optional[str]:
+        """SMC-«Готовність сетапу» рядок для `symbol` ЗАРАЗ (grade_setup). Штампуємо
+        на позицію при відкритті, щоб закрита угода несла «Готовність на вході» —
+        для валідації грейдера (готовність ↔ результат)."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            return ff.setup_snapshot(symbol) if ff else None
         except Exception:
             return None
 
@@ -3941,6 +3955,7 @@ class TradeManager:
             pos['entry_score'] = decision
         # FF SCORE + Exhaustion at open (kept for analytics); ММ at open for Reason.
         pos['ff_score_open'] = self._ff_score_snapshot(symbol)
+        pos['ff_setup_open'] = self._ff_setup_snapshot(symbol)   # 🎯 SMC-готовність на вході
         pos['ff_exh_open'] = self._ff_exhaustion(symbol, side)
         pos['ff_mm_open'] = self._ff_mm_snapshot(symbol)
         pos['ctr_open'] = self._ctr_snapshot(symbol)
