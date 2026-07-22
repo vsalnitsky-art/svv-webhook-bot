@@ -664,12 +664,36 @@
     return ' <span title="Обсяг 24h без змін" style="color:#8b93a7;font-size:0.72rem">→</span>';
   }
 
+  // 🎯 SMC «Готовність сетапу» (1H) — 1:1 з ботом. Підказка (наскільки зійшовся
+  // SMC-конфлюенс), не команда: реальний вхід ухвалює двигун/Черга-2.
+  function ffSetupCell(su) {
+    if (!su || !su.ok) return '<span style="color:#555">—</span>';
+    var c = su.color || "#94a3b8";
+    var hot = su.hot ? " 🎯" : "";
+    var ic = { ok: "✓", warn: "≈", miss: "·" };
+    var tip = "SMC-готовність " + su.score + "/100 (" + su.grade + ") — напрямок " + su.dir + ".\n" +
+      "Сетап на 1H (4H — старший контекст). Це підказка, не команда: реальний вхід ухвалює двигун/Черга-2.\n";
+    (su.checks || []).forEach(function (ch) { tip += "\n" + (ic[ch.state] || "·") + " " + ch.label + ": " + ch.detail; });
+    (su.vetoes || []).forEach(function (v) { tip += "\n⚠ " + v; });
+    var pct = Math.max(0, Math.min(100, Number(su.score) || 0));
+    return '<span title="' + tip.replace(/"/g, "&quot;") + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
+      'min-width:118px;padding:3px 8px;border-radius:8px;background:' + c + '1f">' +
+      '<span style="display:flex;align-items:center;gap:6px;line-height:1;white-space:nowrap">' +
+      '<b style="color:' + c + ';font-variant-numeric:tabular-nums">' + su.score + '%</b>' +
+      '<span style="font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600">' + su.grade + hot + "</span>" +
+      "</span>" +
+      '<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">' +
+      '<span style="display:block;height:100%;width:' + pct + '%;border-radius:2px;' +
+      'background:linear-gradient(90deg,' + scShade(c, 0.5) + "," + scShade(c, -0.3) + ')"></span>' +
+      "</span></span>";
+  }
+
   function renderFunding(rowsArr) {
     rowsArr = rowsArr || [];
     $("#funding-count").textContent = rowsArr.length;
     var tb = $("#funding-table tbody");
     if (!rowsArr.length) {
-      tb.innerHTML = '<tr><td colspan="8" class="tm-empty-msg" style="color:#8b93a7">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
+      tb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg" style="color:#8b93a7">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
       return;
     }
     tb.innerHTML = rowsArr.map(function (a) {
@@ -746,6 +770,7 @@
         "<td>" + dirHtml + "</td>" +
         '<td style="font-size:0.72rem">' + ffFuelCell(a.mm, a.mm_str, a.mm_str_prev) + paused + "</td>" +
         '<td style="white-space:nowrap">' + ffScoreBadgeHTML(a.score) + "</td>" +
+        '<td style="white-space:nowrap">' + ffSetupCell(a.setup) + "</td>" +
         '<td style="font-size:0.78rem">' + heldCell + "</td>" +
         '<td>' + progHtml + "</td>" +
         '<td style="font-size:0.72rem;white-space:nowrap">' + rateTxt + " " + cdTxt + fTrendBadge(a.f_trend) + "</td>" +
@@ -781,7 +806,7 @@
       return fmtPrice(e.start_price) + "→" + fmtPrice(e.end_price) + " · " + hms(e.dur_sec);
     }).join("\n");
     var _tip = (_rec ? "Останні епізоди (вхід→вихід · тривалість):\n" + _rec : "Ще не було завершених епізодів").replace(/"/g, "&quot;");
-    return '<tr style="background:rgba(74,222,128,0.07)"><td colspan="8" title="' + _tip + '" style="padding:1px 8px 5px 30px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">' +
+    return '<tr style="background:rgba(74,222,128,0.07)"><td colspan="9" title="' + _tip + '" style="padding:1px 8px 5px 30px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">' +
       '🎯 <b style="color:#4ade80">рекомендована ботом</b> · в угоді <b>' + timer + "</b> · вхід @ <b>" + entryPx + "</b> · PnL: " + pnl + " · епізодів: <b>" + (st.count || 0) + "</b> · вперше: " + first +
       "</td></tr>";
   }

@@ -2084,10 +2084,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск. Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. Конфлікт (ціна проти ММ) або виснаженість обмежують оцінку. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск. Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. Конфлікт (ціна проти ММ) або виснаженість обмежують оцінку. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік ММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
-                        <tr><td colspan="8" class="tm-empty-msg">Черга порожня</td></tr>
+                        <tr><td colspan="9" class="tm-empty-msg">Черга порожня</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -2213,10 +2213,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers2-table">
                     <thead>
-                        <tr><th data-sortcol="symbol" onclick="ffSortQueue2('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue2('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue2('mm')" style="cursor:pointer;user-select:none">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue2('exh')" style="cursor:pointer;user-select:none">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue2('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue2('score')" style="cursor:pointer;user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue2('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue2('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue2('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue2('mm')" style="cursor:pointer;user-select:none">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue2('exh')" style="cursor:pointer;user-select:none">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue2('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue2('score')" style="cursor:pointer;user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік ММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue2('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers2-tbody">
-                        <tr><td colspan="8" class="tm-empty-msg">Черга-2 порожня</td></tr>
+                        <tr><td colspan="9" class="tm-empty-msg">Черга-2 порожня</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -2366,6 +2366,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th>Символ</th><th>Напрямок</th>
                             <th title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">ММ</th>
                             <th title="Оцінка ЯКОСТІ сетапу 0–100 + напрямок руху (не команда «відкривай»): ВІДМІННИЙ (≥72) / ХОРОШИЙ (≥55) / СЕРЕДНІЙ (≥40) / СЛАБКИЙ (≥25) / ВИЧЕРПАНО (<25)">SCORE</th>
+                            <th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік ММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th>
                             <th>Тримається</th>
                             <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає)">Прогрес funding</th>
                             <th title="Поточний funding % і час до наступного нарахування">Funding · до виплати</th>
@@ -2374,7 +2375,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="ff-anomaly-tbody">
-                        <tr><td colspan="9" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>
+                        <tr><td colspan="10" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -7245,6 +7246,33 @@ function ffScoreBadgeHTML(sc) {
         + `</span>`;
 }
 
+// 🎯 SMC «Готовність сетапу» (1H) — бейдж + чек-лист у тултипі. Це ПІДКАЗКА
+// (наскільки зійшовся SMC-конфлюенс для входу), а не команда: реальний вхід
+// ухвалює двигун/Черга-2. 🎯 = суворий збіг усіх ключових блоків.
+function ffSetupCell(su) {
+    if (!su || !su.ok) return '<span style="color:#555">—</span>';
+    const c = su.color || '#94a3b8';
+    const hot = su.hot ? ' 🎯' : '';
+    const ic = { ok: '✓', warn: '≈', miss: '·' };
+    let tip = `SMC-готовність ${su.score}/100 (${su.grade}) — напрямок ${su.dir}.\n`
+            + `Сетап на 1H (4H — старший контекст). Це підказка, не команда: `
+            + `реальний вхід ухвалює двигун/Черга-2.\n`;
+    (su.checks || []).forEach(ch => { tip += `\n${ic[ch.state] || '·'} ${ch.label}: ${ch.detail}`; });
+    (su.vetoes || []).forEach(v => { tip += `\n⚠ ${v}`; });
+    const pct = Math.max(0, Math.min(100, Number(su.score) || 0));
+    return `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;flex-direction:column;gap:3px;`
+        + `min-width:118px;padding:3px 8px;border-radius:8px;background:${c}1f">`
+        + `<span style="display:flex;align-items:center;gap:6px;line-height:1;white-space:nowrap">`
+        +   `<b style="color:${c};font-variant-numeric:tabular-nums">${su.score}%</b>`
+        +   `<span style="font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600">${su.grade}${hot}</span>`
+        + `</span>`
+        + `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
+        +   `<span style="display:block;height:100%;width:${pct}%;border-radius:2px;`
+        +     `background:linear-gradient(90deg,${scShade(c, 0.5)},${scShade(c, -0.3)})"></span>`
+        + `</span>`
+        + `</span>`;
+}
+
 // Combined Status badge — shows the position's Decision-Center headline
 // captured at open time (e.g. "LONG 78%") plus an indicator of live health.
 // Replaces the previous two-column setup (Entry Score badge + Health badge)
@@ -8327,6 +8355,7 @@ function ffQueueRowHTML(t, qnum) {
         <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
         <td style="font-size:0.74rem;color:#cbd5e1">${heldHtml}</td>
         <td style="white-space:nowrap">${scoreHtml}</td>
+        <td style="white-space:nowrap">${ffSetupCell(t.setup)}</td>
         <td style="white-space:nowrap;font-size:0.74rem">${ffCtrCell(t.ctr)}</td>
         <td style="white-space:nowrap">
             <span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>
@@ -8408,7 +8437,7 @@ function ffRenderQueue() {
     if (!rows.length) {
         const msg = (df === 'all') ? 'Черга порожня'
             : `Немає ${df === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}-монет у черзі`;
-        tb.innerHTML = `<tr><td colspan="8" class="tm-empty-msg">${msg}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="9" class="tm-empty-msg">${msg}</td></tr>`;
         _ffUpdateQueueHeaderArrows();
         return;
     }
@@ -8516,7 +8545,7 @@ function ffRenderQueue2() {
     if (!rows.length) {
         const msg = (df === 'all') ? 'Черга-2 порожня (немає монет у зонах STC)'
             : `Немає ${df === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}-монет у Черзі-2`;
-        tb.innerHTML = `<tr><td colspan="8" class="tm-empty-msg">${msg}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="9" class="tm-empty-msg">${msg}</td></tr>`;
         _ffUpdateQueue2HeaderArrows();
         return;
     }
@@ -8735,7 +8764,7 @@ function renderFuelFilter(d) {
     if (atb) {
         const arows = d.anomalies || [];
         if (!arows.length) {
-            atb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
+            atb.innerHTML = '<tr><td colspan="10" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
         } else {
             atb.innerHTML = arows.map(a => {
                 const dirHtml = a.dir === 'LONG'
@@ -8823,6 +8852,7 @@ function renderFuelFilter(d) {
                     <td>${dirHtml}</td>
                     <td style="font-size:0.72rem">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}${a.paused ? ' <span title="Сесія на паузі (WAIT) — тримається за напрямком" style="color:#fbbf24;font-weight:700">⏸</span>' : ''}</td>
                     <td style="white-space:nowrap">${ffScoreBadgeHTML(a.score)}</td>
+                    <td style="white-space:nowrap">${ffSetupCell(a.setup)}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
                     <td>${progHtml}</td>
                     <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}${fTrendBadge(a.f_trend)}</td>
@@ -8854,7 +8884,7 @@ function oppStatsRow(a) {
     const _rec = (st.recent || []).map(e =>
         `${fmtPriceJS(e.start_price)}→${fmtPriceJS(e.end_price)} · ${fmtTimer(e.dur_sec)}`).join('\n');
     const _tip = _rec ? `Останні епізоди (вхід→вихід · тривалість):\n${_rec}` : 'Ще не було завершених епізодів';
-    return `<tr style="background:rgba(74,222,128,0.07)"><td colspan="9" title="${_tip.replace(/"/g,'&quot;')}" style="padding:1px 8px 5px 34px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">`
+    return `<tr style="background:rgba(74,222,128,0.07)"><td colspan="10" title="${_tip.replace(/"/g,'&quot;')}" style="padding:1px 8px 5px 34px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">`
         + `🎯 <b style="color:#4ade80;text-shadow:0 0 6px rgba(74,222,128,0.6)">рекомендована ботом</b>`
         + ` · в угоді <b>${timer}</b>`
         + ` · вхід @ <b>${entryPx}</b>`

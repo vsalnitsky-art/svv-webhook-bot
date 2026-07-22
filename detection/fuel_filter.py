@@ -361,6 +361,11 @@ DEFAULT_SETTINGS = {
     # збігу показників для входу (edge-trigger + кулдаун, хв).
     'opportunity_tg': True,
     'opportunity_alert_cooldown_min': 30,
+    # 🎯 SMC «готовність сетапу» (grade_setup, 1H) — колонка «Готовність» у таблицях
+    # + чек-лист у Telegram. Це ПІДКАЗКА (радник), реального відкриття НЕ керує.
+    'setup_grader_on': True,
+    # Суворість 🎯 у грейдері: 'strict' (усі ключові блоки) / 'moderate' / 'soft'.
+    'setup_strict': 'strict',
     # 🎯 Вимагати вирівнювання з ₿ BTCUSDT сеансом (START + той самий бік), щоб
     # монета стала 🎯 «рекомендована». True = «усі в один бік» (за замовч.).
     'opportunity_require_btc': True,
@@ -423,6 +428,11 @@ class FuelFilterDaemon:
         # instead of doing per-row liq-map / kline-fetch work in the request
         # path (that made the page slow to open).
         self._score_cache: Dict[str, Dict] = {}
+        # 🎯 SMC «готовність сетапу» per symbol (1H-грейдер). Важчий за SCORE
+        # (свічки 1H/4H + smc_analyzer), тож окремий кеш із ДОВШИМ TTL —
+        # 1H-структура міняється повільно. {sym: grade_dict}, {sym: computed_at}.
+        self._setup_cache: Dict[str, Dict] = {}
+        self._setup_at: Dict[str, float] = {}
         # Fuel STRENGTH (0..100) per symbol — current cycle and previous cycle,
         # so the UI can show the value + a rising/falling trend. Refreshed once
         # per cycle in _refresh_score_cache (cheap; read by both tables).
@@ -3525,8 +3535,165 @@ class FuelFilterDaemon:
                 self._score_cache = cache
                 self._fuel_str_prev = self._fuel_str
                 self._fuel_str = new_str
+            # 🎯 SMC-грейдер для тих самих рядків (окремий, довший TTL).
+            self._refresh_setup_cache(settings, targets)
         except Exception as e:
             print(f"[FuelFilter] score cache error: {e}")
+
+    # ── 🎯 SMC «готовність сетапу» (1H) ──────────────────────────────────────
+    _SETUP_TTL = 90          # с — як часто перераховувати сетап на монету
+    _SETUP_MAX_PER_CYCLE = 6  # обмежувач навантаження: не більше N важких SMC/цикл
+
+    def _refresh_setup_cache(self, settings: Dict, targets: Dict):
+        """Оновлює self._setup_cache для видимих монет. SMC-аналіз важкий, тож:
+        (а) кожну монету рахуємо не частіше за _SETUP_TTL; (б) за один цикл —
+        не більше _SETUP_MAX_PER_CYCLE перерахунків (найстаріші першими), щоб не
+        навантажувати біржу/CPU. Вимикається налаштуванням setup_grader_on=False."""
+        if not bool(settings.get('setup_grader_on', True)):
+            return
+        now = time.time()
+        live = set(targets.keys())
+        # Кандидати на перерахунок: прострочені (за TTL), найстаріші першими.
+        due = sorted((s for s in live if (now - self._setup_at.get(s, 0)) >= self._SETUP_TTL),
+                     key=lambda s: self._setup_at.get(s, 0))
+        for sym in due[:self._SETUP_MAX_PER_CYCLE]:
+            d = (targets.get(sym) or (None,))[0]
+            try:
+                res = self._compute_setup(sym, d, settings)
+            except Exception as e:
+                res = None
+                print(f"[FF-Setup] {sym} compute error: {e}")
+            self._setup_at[sym] = now
+            if res is not None:
+                self._setup_cache[sym] = res
+        # Прибрати монети, що зникли з таблиць.
+        for k in list(self._setup_cache.keys()):
+            if k not in live:
+                self._setup_cache.pop(k, None)
+                self._setup_at.pop(k, None)
+
+    def _setup_klines(self, symbol: str, tf: str, limit: int):
+        """Свічки для SMC-аналізу з довшим кешем (окремо від _candle_cache, бо
+        тут потрібно значно більше барів). Повертає сирий формат {p,o,h,l,v}."""
+        now = time.time()
+        key = ('smc', symbol, tf)
+        c = self._candle_cache.get(key)
+        if c and (now - c[0]) < self._SETUP_TTL:
+            return c[1]
+        kl = None
+        try:
+            from detection.market_data import get_market_data
+            md = get_market_data()
+            if md:
+                kl = md.fetch_klines(symbol, limit=limit, interval=tf)
+        except Exception:
+            kl = None
+        if kl:
+            self._candle_cache[key] = (now, kl)
+        return kl
+
+    @staticmethod
+    def _norm_klines_smc(kl):
+        """{p,o,h,l,v} → {high,low,close,open} для smc_analyzer."""
+        out = []
+        for k in (kl or []):
+            try:
+                out.append({'high': float(k['h']), 'low': float(k['l']),
+                            'close': float(k['p']), 'open': float(k.get('o', k['p']))})
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out
+
+    def _compute_setup(self, symbol: str, d: str, settings: Dict) -> Optional[Dict]:
+        """Рахує SMC-«готовність» на 1H (4H — HTF-контекст) для напрямку d."""
+        if d not in ('LONG', 'SHORT'):
+            return None
+        kl1_raw = self._setup_klines(symbol, '1h', 150)
+        if not kl1_raw or len(kl1_raw) < 40:
+            return None
+        kl4_raw = self._setup_klines(symbol, '4h', 90)
+        kl1 = self._norm_klines_smc(kl1_raw)
+        kl4 = self._norm_klines_smc(kl4_raw)
+        # 1) SMC-структура 1H (з 4H як HTF).
+        smc = None
+        htf_bias = None
+        try:
+            from detection.smc_analyzer import get_smc_analyzer
+            an = get_smc_analyzer()
+            smc = an.analyze(kl1, kl4 if kl4 else None)
+            if kl4 and len(kl4) >= 25:
+                htf_bias = getattr(an.analyze(kl4).market_bias, 'value', None)
+        except Exception:
+            smc = None
+        # 2) Move-potential (runway / виснаженість) на 1H.
+        mp = {}
+        try:
+            from detection.move_potential import analyze_move_potential
+            liq_levels_mp = None
+            mp = analyze_move_potential(d, kl1_raw, liq_levels_mp) or {}
+        except Exception:
+            mp = {}
+        # 3) Ліквідність (levels) + mark.
+        liq_levels, mark = None, None
+        try:
+            from detection.liquidation_map.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            if lm:
+                try:
+                    prof = self._db.get_setting('liqmap_decay_profile', 'tori')
+                except Exception:
+                    prof = 'tori'
+                lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
+                if lst:
+                    liq_levels = lst.get('levels')
+                    mark = lst.get('mark_price')
+        except Exception:
+            pass
+        # 4) ММ (бабло) — з повної моделі; strength/conflict — з кешу SCORE.
+        mm = self._fuel_dir(symbol) or {}
+        sc = self._score_cache.get(symbol) or {}
+        mm_strength = self._fuel_str.get(symbol)
+        if mm_strength is None:
+            mm_strength = sc.get('fuel_strength') or 0
+        # 5) CTR 1H (таймінг).
+        ctr1h = None
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if fe and hasattr(fe, 'get_ctr_tf'):
+                ctr1h = fe.get_ctr_tf(symbol, '1h')
+        except Exception:
+            ctr1h = None
+        # 6) ₿-сесія + funding/обсяг-контекст.
+        btc_dir, btc_start = self._btc_session(settings)
+        a = self._anomalies.get(symbol) or {}
+        vol_up = bool(a.get('vol24h') and a.get('vol24h_prev')
+                      and a['vol24h'] > a['vol24h_prev'] * 1.005)
+        sig = {
+            'smc': smc,
+            'htf_bias': htf_bias,
+            'mp': mp,
+            'mm_dir': mm.get('dir'),
+            'mm_strength': mm_strength,
+            'mm_conflict': bool(sc.get('conflict')),
+            'mm_runway': mm.get('runway'),
+            'ctr1h': ctr1h,
+            'liq_levels': liq_levels,
+            'mark_price': mark or mm.get('mark_price'),
+            'btc_dir': btc_dir,
+            'btc_start': btc_start,
+            'funding_rate': a.get('rate'),
+            'funding_trend': (self._funding_trends or {}).get(symbol.upper()),
+            'vol_up': vol_up,
+            'spike': bool(a.get('spike')),
+        }
+        try:
+            from detection.setup_grader import grade_setup
+            strict = settings.get('setup_strict', 'strict')
+            return grade_setup(d, sig, {'strict': strict})
+        except Exception as e:
+            print(f"[FF-Setup] {symbol} grade error: {e}")
+            return None
 
     @staticmethod
     def _fmt_dur(sec) -> str:
@@ -4010,16 +4177,30 @@ class FuelFilterDaemon:
             print(f"[FF-Opp] {k}: осиротілий епізод закрито (немає живої угоди)")
 
     def _send_opportunity_alert(self, sym: str, a: Dict, opp: int, reasons: list):
-        """Compose + broadcast the 🎯 «best moment to open» Telegram message to
-        the 💰 funding subscribers (same audience as the retired appear alert)."""
+        """Compose + broadcast the 🎯 «best moment to open» Telegram message when
+        Queue 2 opens a recommended trade. Goes to the 📈 Угоди group topic
+        (це подія відкриття угоди), enriched with the SMC 1H setup checklist."""
         d = a.get('dir')
         emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
         side = d if d in ('LONG', 'SHORT') else ''
         rt = a.get('rate')
         rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
-        body = (f"🎯 #{sym} — рекомендація бота\n"
-                f"{emoji} {side} · Opportunity {opp}% · funding {rt_s}")
-        self._broadcast_users('funding', 'notify_opportunity', body)
+        lines = [f"🎯 #{sym} — відкрито угоду за рекомендацією",
+                 f"{emoji} <b>{side}</b> · SMC-сетап {opp}% · funding {rt_s}"]
+        # SMC-чек-лист 1H (grade_setup): що саме зійшлося.
+        st = self._setup_cache.get(sym)
+        if st and st.get('ok'):
+            lines.append(f"Готовність: <b>{st.get('grade', '')}</b> {st.get('score', '')}%")
+            icon = {'ok': '✓', 'warn': '≈', 'miss': '·'}
+            for ch in st.get('checks', []):
+                lines.append(f"{icon.get(ch.get('state'), '·')} {ch.get('label')}: "
+                             f"{ch.get('detail', '')}")
+            for v in st.get('vetoes', []):
+                lines.append(f"⚠ {v}")
+        elif reasons:
+            for r in reasons[:6]:
+                lines.append(f"• {r}")
+        self._broadcast_users('trades', 'notify_opportunity', '\n'.join(lines))
 
     def _send_spike_alert(self, sym: str, a: Dict):
         """🚀 Broadcast an «anomalous growth» Telegram message when a funding coin
@@ -5031,6 +5212,8 @@ class FuelFilterDaemon:
             'opp_at_queue': info.get('opp_at_queue'),
             'exhaustion': (self._score_cache.get(sym) or {}).get('exh'),
             'score': self._score_cache.get(sym),
+            # 🎯 SMC «готовність сетапу» 1H (grade_setup) — колонка «Готовність».
+            'setup': self._setup_cache.get(sym),
             'mm': (self._score_cache.get(sym) or {}).get('fuel_dir'),
             'mm_str': self._fuel_str.get(sym),
             'mm_str_prev': self._fuel_str_prev.get(sym),
@@ -5402,6 +5585,8 @@ class FuelFilterDaemon:
                     # background cache (cheap). CTR intentionally NOT included:
                     # STC populates too slowly to be useful in this table.
                     'score': self._score_cache.get(sym),
+                    # 🎯 SMC «готовність сетапу» 1H (grade_setup) — колонка «Готовність».
+                    'setup': self._setup_cache.get(sym),
                     # 🎯 Композитний аналіз «найкращий момент для входу».
                     'opportunity': _opp,
                     'opportunity_hot': _opp_hot,
