@@ -6,7 +6,7 @@
   <title>VSV Bot — Інфо-панель</title>
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=55">
+  <link rel="stylesheet" href="style.css?v=56">
   <!-- ⏳ Анти-блимання: доки JS не перевірив авторизацію (клас app-ready ще не
        додано на <body>), не показуємо ні дашборд, ні hero — інакше на секунду
        спалахує «бот-панель» перед екраном входу. Після перевірки showData()
@@ -73,7 +73,7 @@
       <div class="table-scroll">
         <table id="funding-table">
           <thead>
-            <tr><th>Символ</th><th>Напрямок</th><th title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">ММ</th><th title="Оцінка сетапу 0–100 — варто відкривати чи ще ні: ВАРТО ВІДКРИВАТИ (≥72) / МОЖНА ВІДКРИВАТИ (≥55) / ЗАЧЕКАТИ (≥40) / НЕ ВАРТО (≥25) / НЕ ВІДКРИВАТИ (<25)">SCORE</th><th>Тримається</th><th>Прогрес Funding</th><th>Funding · до виплати</th><th>Vol 24h</th></tr>
+            <tr><th>Символ</th><th>Напрямок</th><th title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">ММ</th><th title="Оцінка ЯКОСТІ сетапу 0–100 (не команда «відкривай»): ВІДМІННИЙ (≥72) / ХОРОШИЙ (≥55) / СЕРЕДНІЙ (≥40) / СЛАБКИЙ (≥25) / ВИЧЕРПАНО (<25)">SCORE</th><th>Тримається</th><th>Прогрес Funding</th><th>Funding · до виплати</th><th>Vol 24h</th></tr>
           </thead>
           <tbody><tr><td colspan="8" class="muted">завантаження…</td></tr></tbody>
         </table>
@@ -134,7 +134,7 @@
       });
     })();
   </script>
-  <script src="config.js?v=55"></script>
-  <script src="app.js?v=55"></script>
+  <script src="config.js?v=56"></script>
+  <script src="app.js?v=56"></script>
 </body>
 </html>

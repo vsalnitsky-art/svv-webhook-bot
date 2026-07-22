@@ -579,13 +579,13 @@
     return '<span title="' + FUEL_TOOLTIP + '" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">' + dotSeg + pctSeg + arrowSeg + barSeg + bandSeg + "</span>";
   }
 
-  // SCORE label EN→UA — exact copy of the bot's SCORE_LABEL_UA/scoreLabelUA.
+  // SCORE label EN→UA — 1:1 з ботом. Це ОЦІНКА ЯКОСТІ сетапу, не команда «відкривай».
   var SCORE_LABEL_UA = {
-    "STRONG HOLD": "ВАРТО ВІДКРИВАТИ",
-    "HOLD": "МОЖНА ВІДКРИВАТИ",
-    "NEUTRAL": "ЗАЧЕКАТИ",
-    "WEAK": "НЕ ВАРТО",
-    "EXHAUSTED": "НЕ ВІДКРИВАТИ",
+    "STRONG HOLD": "ВІДМІННИЙ",
+    "HOLD": "ХОРОШИЙ",
+    "NEUTRAL": "СЕРЕДНІЙ",
+    "WEAK": "СЛАБКИЙ",
+    "EXHAUSTED": "ВИЧЕРПАНО",
   };
   function scoreLabelUA(lbl) { return SCORE_LABEL_UA[lbl] || lbl || ""; }
 
@@ -605,7 +605,7 @@
     var c = sc.components || {};
     var p = function (v) { return (v == null ? "—" : Math.round(v * 100) + "%"); };
     var v2 = (c.ctr != null);
-    var t = "SCORE " + sc.score + "/100 — якість входу в напрямку " + (sc.dir || "—") + ".\n";
+    var t = "SCORE " + sc.score + "/100 — ЯКІСТЬ сетапу в напрямку " + (sc.dir || "—") + " (не сигнал на відкриття).\n";
     if (v2) {
       t += "Складники: запас 25% · імпульс 25% · тиск ММ 22% · CTR-тайминг 18% · утримання 10%.\n" +
         "Зараз: запас " + p(c.room) + " · імпульс " + p(c.mom) + " · ММ " + p(c.fuel) + " · CTR " + p(c.ctr) + " · утримання " + p(c.hold) + ".";
@@ -616,7 +616,7 @@
     }
     if (sc.conflict) t += "\n⚠ Конфлікт: рух ціни проти тиску ММ → оцінку обмежено.";
     if (sc.exh != null) t += "\nВиснаженість ходу: " + Math.round(sc.exh) + "%" + (sc.exh >= 90 ? " (майже вичерпано)" : "") + ".";
-    t += "\nШкала: ВАРТО ≥72 · МОЖНА ≥55 · ЗАЧЕКАТИ ≥40 · НЕ ВАРТО ≥25 · НЕ ВІДКРИВАТИ <25.";
+    t += "\nШкала якості: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25.";
     return t.replace(/"/g, "&quot;");
   }
 

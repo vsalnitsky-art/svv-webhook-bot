@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VSV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.6.0
+// @version      1.6.1
 // @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       VSV
 // @match        https://*.tradingview.com/chart/*
@@ -165,10 +165,10 @@
 
     // ── Badge UI ──────────────────────────────────────────────────────────
     let badge, elSym, elMM, elDir, elScore, elOld, elRun, elBtc, elFund, elFoot;
-    // SCORE label EN→UA (той самий поділ, що в боті).
+    // SCORE label EN→UA (той самий поділ, що в боті). Це ЯКІСТЬ сетапу, не команда.
     const SCORE_UA = {
-        'STRONG HOLD': 'ВАРТО ВІДКРИВАТИ', 'HOLD': 'МОЖНА ВІДКРИВАТИ',
-        'NEUTRAL': 'ЗАЧЕКАТИ', 'WEAK': 'НЕ ВАРТО', 'EXHAUSTED': 'НЕ ВІДКРИВАТИ'
+        'STRONG HOLD': 'ВІДМІННИЙ', 'HOLD': 'ХОРОШИЙ',
+        'NEUTRAL': 'СЕРЕДНІЙ', 'WEAK': 'СЛАБКИЙ', 'EXHAUSTED': 'ВИЧЕРПАНО'
     };
     function buildBadge() {
         if (badge) return;
@@ -317,29 +317,30 @@
         elDir.style.color = dirColor(dir);
         elDir.title = MM_HELP;
 
-        // 📊 SCORE — та сама оцінка входу, що в черзі бота (0–100% + вердикт).
-        if (elScore && d.score && d.score.score != null) {
-            const sc = d.score;
-            const scol = sc.color || '#94a3b8';
-            const sic = sc.dir === 'LONG' ? '🟢' : (sc.dir === 'SHORT' ? '🔴' : '⚪');
-            const warn = sc.conflict ? ' <span title="Конфлікт: ціна проти ММ" style="color:#fbbf24">⚠️</span>' : '';
-            elScore.innerHTML = `SCORE <b style="color:${scol}">${sc.score}%</b> · `
-                + `<span style="color:${scol};font-weight:700">${sic} ${SCORE_UA[sc.label] || sc.label || ''}</span>${warn}`;
-            elScore.style.display = '';
-            elScore.title = 'SCORE — якість входу 0–100%: запас ходу + імпульс + тиск ММ '
-                + '(+CTR-тайминг, обсяг у v2). Вердикт: ВАРТО ≥72 · МОЖНА ≥55 · ЗАЧЕКАТИ ≥40 · '
-                + 'НЕ ВАРТО ≥25 · НЕ ВІДКРИВАТИ <25.';
-        }
-
-        // 🧮 Старий показник ММ (сирий (fa−fb)/den) — для порівняння з новою моделлю.
-        if (elOld && d.mm_old && d.mm_old.dir != null) {
-            const mo = d.mm_old, st = mo.status;
-            const dl = st === 'LONG' ? '🟢 LONG' : (st === 'SHORT' ? '🔴 SHORT' : '⚪ рівновага');
-            const col = st === 'LONG' ? '#4ade80' : (st === 'SHORT' ? '#f87171' : '#8b93a7');
-            elOld.innerHTML = `ММ старий: <span style="color:${col}">${dl}</span> · ${mo.strength}%`;
-            elOld.style.display = '';
-            elOld.title = 'Стара формула ММ: сире (fa−fb)/den по розташуванню кластерів '
-                + 'ліквідацій (без funding/L/S/сторони). Для порівняння з новою бабло-моделлю.';
+        // 📊 SCORE + ММ — в ОДНОМУ рядку.
+        if (elScore) {
+            const parts = [];
+            if (d.score && d.score.score != null) {
+                const sc = d.score;
+                const scol = sc.color || '#94a3b8';
+                const sic = sc.dir === 'LONG' ? '🟢' : (sc.dir === 'SHORT' ? '🔴' : '⚪');
+                const warn = sc.conflict ? ' <span title="Конфлікт: ціна проти ММ" style="color:#fbbf24">⚠️</span>' : '';
+                parts.push(`SCORE <b style="color:${scol}">${sc.score}%</b> `
+                    + `<span style="color:${scol};font-weight:700">${sic} ${SCORE_UA[sc.label] || sc.label || ''}</span>${warn}`);
+            }
+            if (d.mm_old && d.mm_old.dir != null) {
+                const mo = d.mm_old, st = mo.status;
+                const dl = st === 'LONG' ? '🟢 LONG' : (st === 'SHORT' ? '🔴 SHORT' : '⚪');
+                const col = st === 'LONG' ? '#4ade80' : (st === 'SHORT' ? '#f87171' : '#8b93a7');
+                parts.push(`ММ <span style="color:${col}">${dl}</span> ${mo.strength}%`);
+            }
+            if (parts.length) {
+                elScore.innerHTML = parts.join(' <span style="color:#4b5563">·</span> ');
+                elScore.style.display = '';
+                elScore.title = 'SCORE — ЯКІСТЬ сетапу 0–100% (не команда «відкривай»): '
+                    + 'ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25.\n'
+                    + 'ММ поряд — показник за розташуванням кластерів ((fa−fb)/den).';
+            }
         }
 
         // 🎯 Запас ходу — відстань до значущої ліквідності попереду руху (ймовірна

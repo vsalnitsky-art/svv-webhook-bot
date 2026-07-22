@@ -2007,8 +2007,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </select>
                         </div>
                         <div>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли SCORE монети = ВАРТО ВІДКРИВАТИ і напрямок SCORE збігається з колонкою «Напрямок». Використовує «TF свічки» (ліворуч) для імпульсу.">
-                                <input type="checkbox" id="ff-engine-stronghold" onchange="saveFuelFilterSettings()"> 💪 Лише «ВАРТО ВІДКРИВАТИ» (SCORE = напрямок)
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли SCORE монети = ВІДМІННИЙ і напрямок SCORE збігається з колонкою «Напрямок». Використовує «TF свічки» (ліворуч) для імпульсу.">
+                                <input type="checkbox" id="ff-engine-stronghold" onchange="saveFuelFilterSettings()"> 💪 Лише «ВІДМІННИЙ» (SCORE = напрямок)
                             </label>
                         </div>
                         <div>
@@ -2084,7 +2084,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск. Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. Конфлікт (ціна проти ММ) або виснаженість обмежують оцінку. Шкала: ВАРТО ВІДКРИВАТИ ≥72 · МОЖНА ≥55 · ЗАЧЕКАТИ ≥40 · НЕ ВАРТО ≥25 · НЕ ВІДКРИВАТИ <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск. Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. Конфлікт (ціна проти ММ) або виснаженість обмежують оцінку. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
                         <tr><td colspan="8" class="tm-empty-msg">Черга порожня</td></tr>
@@ -2101,9 +2101,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  dropped). Opens when SCORE == STRONG HOLD AND CTR align with the
                  signal side; opens independently of bars & main buttons. -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
-                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8;min-width:0">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS лише якщо CTR-нахил уже в бік сигналу (інакше сигнал ігнорується). Відкриває, коли SCORE = ВАРТО ВІДКРИВАТИ і CTR збігаються з напрямком; інакше тримає в черзі (незалежно від барів і кнопок)</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8;min-width:0">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS лише якщо CTR-нахил уже в бік сигналу (інакше сигнал ігнорується). Відкриває, коли SCORE = ВІДМІННИЙ і CTR збігаються з напрямком; інакше тримає в черзі (незалежно від барів і кнопок)</span></div>
                 <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-2. Перехоплює CHoCH/CHoCH+BOS лише за CTR-нахилом у бік сигналу; відкриває на SCORE=ВАРТО ВІДКРИВАТИ + CTR. Незалежна від кнопок і ₿ START.">
+                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-2. Перехоплює CHoCH/CHoCH+BOS лише за CTR-нахилом у бік сигналу; відкриває на SCORE=ВІДМІННИЙ + CTR. Незалежна від кнопок і ₿ START.">
                         <input type="checkbox" id="ff-queue2-enabled" onchange="saveFuelFilterSettings()">
                         <span class="slider"></span>
                     </label>
@@ -2144,13 +2144,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </div>
                     <!-- Row 3: queue ALL signals (hold even when CTR is opposite) -->
                     <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Ставити в Чергу-2 ВСІ сигнали, навіть якщо CTR зараз ПРОТИ напрямку — і тримати, поки CTR не визначиться (двигун відкриє, коли SCORE=ВАРТО ВІДКРИВАТИ і CTR збіжаться). Ловить сигнали, чий CTR розвертається у їх бік за кілька хвилин. Вимкнено = відкидати одразу при протилежному CTR (як зараз). Порада: використовуй разом із TTL та «викид за протилежним CTR», щоб чистити ті, що так і не збіглись.">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Ставити в Чергу-2 ВСІ сигнали, навіть якщо CTR зараз ПРОТИ напрямку — і тримати, поки CTR не визначиться (двигун відкриє, коли SCORE=ВІДМІННИЙ і CTR збіжаться). Ловить сигнали, чий CTR розвертається у їх бік за кілька хвилин. Вимкнено = відкидати одразу при протилежному CTR (як зараз). Порада: використовуй разом із TTL та «викид за протилежним CTR», щоб чистити ті, що так і не збіглись.">
                             <input type="checkbox" id="ff-q2-queue-all" onchange="saveFuelFilterSettings()"> Ставити в чергу <b>ВСІ сигнали</b> <span style="color:#8b93a7;font-size:0.68rem">(навіть при протилежному CTR — тримати до вияснення, не відкидати)</span>
                         </label>
                     </div>
                     <!-- Row 4: reverse an open opposite trade only via Queue-2 -->
                     <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкриту ПРОТИЛЕЖНУ угоду може перевернути протилежний сигнал ЛИШЕ після того, як він повністю пройде Чергу-2 (SCORE=ВАРТО ВІДКРИВАТИ + CTR збіг). Такий сигнал спершу ставиться в Чергу-2 й чекає; коли готовий відкритись — Черга-2 закриває стару угоду і відкриває нову. «Голий» протилежний CHoCH (Reverse SMC) при цьому НЕ закриває — реверс керує Черга-2. Вимкнено = стара поведінка (реверс за сигналом/CHoCH).">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкриту ПРОТИЛЕЖНУ угоду може перевернути протилежний сигнал ЛИШЕ після того, як він повністю пройде Чергу-2 (SCORE=ВІДМІННИЙ + CTR збіг). Такий сигнал спершу ставиться в Чергу-2 й чекає; коли готовий відкритись — Черга-2 закриває стару угоду і відкриває нову. «Голий» протилежний CHoCH (Reverse SMC) при цьому НЕ закриває — реверс керує Черга-2. Вимкнено = стара поведінка (реверс за сигналом/CHoCH).">
                             <input type="checkbox" id="ff-q2-reverse-via-queue" onchange="saveFuelFilterSettings()"> Реверс протилежної угоди <b>лише через Чергу-2</b> <span style="color:#8b93a7;font-size:0.68rem">(закривати стару й відкривати нову, тільки коли сигнал пройшов алгоритм)</span>
                         </label>
                     </div>
@@ -2165,7 +2165,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             Нейтр. смуга CTR, %
                             <input type="number" id="ff-q2-ctr-neutral" step="1" min="0" max="50" style="width:56px" onchange="saveFuelFilterSettings()">
                         </label>
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Мінімальний ENTRY score (якість сетапу 0..100), щоб СТАТИ в Чергу-2. Відсіює «НЕ ВІДКРИВАТИ»/«НЕ ВАРТО».">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Мінімальний ENTRY score (якість сетапу 0..100), щоб СТАТИ в Чергу-2. Відсіює «ВИЧЕРПАНО»/«СЛАБКИЙ».">
                             Мін. ENTRY у чергу
                             <input type="number" id="ff-q2-min-entry" step="1" min="0" max="100" style="width:56px" onchange="saveFuelFilterSettings()">
                         </label>
@@ -2213,7 +2213,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers2-table">
                     <thead>
-                        <tr><th data-sortcol="symbol" onclick="ffSortQueue2('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue2('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue2('mm')" style="cursor:pointer;user-select:none">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue2('exh')" style="cursor:pointer;user-select:none">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue2('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue2('score')" style="cursor:pointer;user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. Шкала: ВАРТО ВІДКРИВАТИ ≥72 · МОЖНА ≥55 · ЗАЧЕКАТИ ≥40 · НЕ ВАРТО ≥25 · НЕ ВІДКРИВАТИ <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue2('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue2('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue2('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue2('mm')" style="cursor:pointer;user-select:none">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue2('exh')" style="cursor:pointer;user-select:none">Виснаженість<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue2('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue2('score')" style="cursor:pointer;user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th data-sortcol="ctr" onclick="ffSortQueue2('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers2-tbody">
                         <tr><td colspan="8" class="tm-empty-msg">Черга-2 порожня</td></tr>
@@ -2221,7 +2221,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
-                💡 Друга черга перехоплює <b>CHoCH/CHoCH+BOS</b> незалежно від Черги 1 і кнопок/₿ START. Сигнал потрапляє в чергу <b>лише якщо CTR-нахил уже в бік сигналу</b> (інакше ігнорується). Відкриває, коли <b>SCORE = ВАРТО ВІДКРИВАТИ</b> у напрямку сигналу <b>і CTR</b> у той самий бік. Поки чекає — якщо CTR <b>розвертається на протилежний</b> бік раніше за цей збіг, монета одразу видаляється з черги. Вмикай/вимикай кожну чергу окремо.
+                💡 Друга черга перехоплює <b>CHoCH/CHoCH+BOS</b> незалежно від Черги 1 і кнопок/₿ START. Сигнал потрапляє в чергу <b>лише якщо CTR-нахил уже в бік сигналу</b> (інакше ігнорується). Відкриває, коли <b>SCORE = ВІДМІННИЙ</b> у напрямку сигналу <b>і CTR</b> у той самий бік. Поки чекає — якщо CTR <b>розвертається на протилежний</b> бік раніше за цей збіг, монета одразу видаляється з черги. Вмикай/вимикай кожну чергу окремо.
             </div>
 
             <!-- 💰 Funding-fuel coins (own scan over the 💰 Funding Rate Scanner) -->
@@ -2365,7 +2365,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <tr>
                             <th>Символ</th><th>Напрямок</th>
                             <th title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">ММ</th>
-                            <th title="Оцінка сетапу 0–100 + напрямок руху — варто відкривати чи ще ні: ВАРТО ВІДКРИВАТИ (≥72) / МОЖНА ВІДКРИВАТИ (≥55) / ЗАЧЕКАТИ (≥40) / НЕ ВАРТО (≥25) / НЕ ВІДКРИВАТИ (<25)">SCORE</th>
+                            <th title="Оцінка ЯКОСТІ сетапу 0–100 + напрямок руху (не команда «відкривай»): ВІДМІННИЙ (≥72) / ХОРОШИЙ (≥55) / СЕРЕДНІЙ (≥40) / СЛАБКИЙ (≥25) / ВИЧЕРПАНО (<25)">SCORE</th>
                             <th>Тримається</th>
                             <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає)">Прогрес funding</th>
                             <th title="Поточний funding % і час до наступного нарахування">Funding · до виплати</th>
@@ -2379,7 +2379,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
-                💡 Монета сюди потрапляє, коли «ММ» тримається довше за поріг (нижче в налаштуваннях). Показуються ЛИШЕ монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера (funding нормалізувався), вона зникає з таблиці (лишається в 📜 Архіві монет). Такі монети не дублюються в таблиці вище. <b>🚀</b> = аномальний ріст (різкий рух ціни + зростання обсягу) — варто розглянути, навіть коли ММ низький. <b>🎯</b> = найкращий збіг показників для входу (SCORE ВАРТО ВІДКРИВАТИ + сильний ММ у той бік + ₿ BTCUSDT START у той самий бік + funding/обсяг підтверджують). Коли активна — під монетою зʼявляється рядок «рекомендована ботом» із таймером і статистикою.
+                💡 Монета сюди потрапляє, коли «ММ» тримається довше за поріг (нижче в налаштуваннях). Показуються ЛИШЕ монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера (funding нормалізувався), вона зникає з таблиці (лишається в 📜 Архіві монет). Такі монети не дублюються в таблиці вище. <b>🚀</b> = аномальний ріст (різкий рух ціни + зростання обсягу) — варто розглянути, навіть коли ММ низький. <b>🎯</b> = найкращий збіг показників для входу (SCORE ВІДМІННИЙ + сильний ММ у той бік + ₿ BTCUSDT START у той самий бік + funding/обсяг підтверджують). Коли активна — під монетою зʼявляється рядок «рекомендована ботом» із таймером і статистикою.
             </div>
         </div>
     </div>
@@ -7167,12 +7167,13 @@ function ffCtrCell(c) {
 }
 
 // SCORE label EN→UA (internal values stay English for logic; UI shows Ukrainian).
+// SCORE — це ОЦІНКА ЯКОСТІ сетапу (0–100), а НЕ команда «відкривай».
 const SCORE_LABEL_UA = {
-    'STRONG HOLD': 'ВАРТО ВІДКРИВАТИ',
-    'HOLD': 'МОЖНА ВІДКРИВАТИ',
-    'NEUTRAL': 'ЗАЧЕКАТИ',
-    'WEAK': 'НЕ ВАРТО',
-    'EXHAUSTED': 'НЕ ВІДКРИВАТИ',
+    'STRONG HOLD': 'ВІДМІННИЙ',
+    'HOLD': 'ХОРОШИЙ',
+    'NEUTRAL': 'СЕРЕДНІЙ',
+    'WEAK': 'СЛАБКИЙ',
+    'EXHAUSTED': 'ВИЧЕРПАНО',
 };
 function scoreLabelUA(lbl) { return SCORE_LABEL_UA[lbl] || lbl || ''; }
 
@@ -7200,7 +7201,7 @@ function ffScoreTip(sc) {
     const c = sc.components || {};
     const p = v => (v == null ? '—' : Math.round(v * 100) + '%');
     const v2 = (c.ctr != null);   // SCORE v2 активний → є CTR-тайминг
-    let t = `SCORE ${sc.score}/100 — якість входу в напрямку ${sc.dir || '—'}.\n`;
+    let t = `SCORE ${sc.score}/100 — ЯКІСТЬ сетапу в напрямку ${sc.dir || '—'} (не сигнал на відкриття).\n`;
     if (v2) {
         t += `Складники: запас 25% · імпульс 25% · тиск ММ 22% · CTR-тайминг 18% · утримання 10%.\n`
            + `Зараз: запас ${p(c.room)} · імпульс ${p(c.mom)} · ММ ${p(c.fuel)} · CTR ${p(c.ctr)} · утримання ${p(c.hold)}.`;
@@ -7211,7 +7212,7 @@ function ffScoreTip(sc) {
     }
     if (sc.conflict) t += `\n⚠ Конфлікт: рух ціни проти тиску ММ → оцінку обмежено.`;
     if (sc.exh != null) t += `\nВиснаженість ходу: ${Math.round(sc.exh)}%${sc.exh >= 90 ? ' (майже вичерпано)' : ''}.`;
-    t += `\nШкала: ВАРТО ≥72 · МОЖНА ≥55 · ЗАЧЕКАТИ ≥40 · НЕ ВАРТО ≥25 · НЕ ВІДКРИВАТИ <25.`;
+    t += `\nШкала якості: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25.`;
     return t.replace(/"/g, '&quot;');
 }
 // SCORE-бейдж: акцент-колір + число + вердикт + тонкий 0–100 метр під ним.

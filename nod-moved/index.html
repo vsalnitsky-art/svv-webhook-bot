@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VSV Bot — ми переїхали</title>
+  <meta name="robots" content="noindex">
+  <link rel="canonical" href="https://vsv-trade.com.ua/">
+  <style>
+    :root {
+      --bg: #0b0f17; --card: #121826; --line: #1f2937;
+      --txt: #e5e9f0; --dim: #94a3b8; --brand: #7c6cf5; --brand2: #c9b8ff;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+      background: radial-gradient(1200px 600px at 50% -10%, #1a2136 0%, var(--bg) 60%);
+      color: var(--txt); display: flex; align-items: center; justify-content: center;
+      padding: 24px; min-height: 100%;
+    }
+    .card {
+      max-width: 460px; width: 100%; text-align: center;
+      background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+      padding: 40px 30px; box-shadow: 0 20px 60px rgba(0,0,0,.45);
+    }
+    .logo { width: 150px; height: auto; max-width: 60%; margin: 0 auto 22px; display: block; }
+    h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: -.01em; }
+    .sub { color: var(--dim); font-size: 14.5px; line-height: 1.5; margin: 0 0 24px; }
+    .addr {
+      display: inline-block; font-weight: 800; font-size: 15px;
+      color: var(--brand2); background: rgba(124,108,245,.14);
+      border: 1px solid rgba(124,108,245,.35); border-radius: 10px;
+      padding: 6px 12px; margin: 0 0 24px;
+    }
+    .btn {
+      display: inline-block; text-decoration: none; font-weight: 800; font-size: 15px;
+      color: #fff; background: linear-gradient(180deg, #8a7bff, var(--brand));
+      border-radius: 12px; padding: 13px 26px; transition: transform .12s ease, filter .12s ease;
+    }
+    .btn:hover { transform: translateY(-1px); filter: brightness(1.08); }
+    .count { color: var(--dim); font-size: 12.5px; margin-top: 18px; }
+    .count b { color: var(--brand2); }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <!-- Лого бота (лежить у корені старого сайту nod.inf.ua) -->
+    <img class="logo" src="vsv-logo.png" alt="VSV Bot"
+         onerror="this.style.display='none'">
+
+    <h1>Ми переїхали 🚀</h1>
+    <p class="sub">Інформаційна панель <b>VSV Bot</b> тепер живе за новою адресою.
+       Ця сторінка більше не оновлюється.</p>
+
+    <div class="addr">vsv-trade.com.ua</div><br>
+
+    <a class="btn" href="https://vsv-trade.com.ua/">Перейти на новий сайт →</a>
+
+  </main>
+</body>
+</html>

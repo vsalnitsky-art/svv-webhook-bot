@@ -1374,13 +1374,15 @@ class FuelFilterDaemon:
         return ('EXHAUSTED', '#f87171')          # red — не відкривати
 
     # SCORE label EN→UA for DISPLAY only (internal keys stay English for logic).
-    # Names are action-oriented: they answer «варто відкривати чи ще ні».
+    # Назви — ОЦІНКА ЯКОСТІ сетапу (0–100), а НЕ команда на відкриття угоди.
+    # SCORE сам по собі не підтверджує, що угоду вже треба відкривати — це лише
+    # одна зі складових; рішення про вхід ухвалює двигун за сукупністю сигналів.
     _SCORE_LABEL_UA = {
-        'STRONG HOLD': 'ВАРТО ВІДКРИВАТИ',
-        'HOLD': 'МОЖНА ВІДКРИВАТИ',
-        'NEUTRAL': 'ЗАЧЕКАТИ',
-        'WEAK': 'НЕ ВАРТО',
-        'EXHAUSTED': 'НЕ ВІДКРИВАТИ',
+        'STRONG HOLD': 'ВІДМІННИЙ',
+        'HOLD': 'ХОРОШИЙ',
+        'NEUTRAL': 'СЕРЕДНІЙ',
+        'WEAK': 'СЛАБКИЙ',
+        'EXHAUSTED': 'ВИЧЕРПАНО',
     }
 
     @classmethod
@@ -1913,7 +1915,7 @@ class FuelFilterDaemon:
 
     def score_snapshot(self, symbol: str) -> Optional[str]:
         """Compact, human SCORE string for `symbol` RIGHT NOW, e.g.
-        'ВАРТО ВІДКРИВАТИ 🟢▲ 79'. Used to stamp a position at open and at close."""
+        'ВІДМІННИЙ 🟢▲ 79'. Used to stamp a position at open and at close."""
         sc = self.score_dict(symbol)
         if not sc:
             return None
@@ -4761,7 +4763,7 @@ class FuelFilterDaemon:
                 # Fall back to a fresh compute only if the cache has no entry yet.
                 sc = self._score_cache.get(sym) or self._timer_score_for(sym, d, held, exh, dur, tf)
                 if sc.get('label') != 'STRONG HOLD' or sc.get('dir') != d:
-                    trace.append(f"{sym}:SCORE {self._score_label_ua(sc.get('label'))}·{sc.get('dir')} ≠ треба ВАРТО ВІДКРИВАТИ·{d}")
+                    trace.append(f"{sym}:SCORE {self._score_label_ua(sc.get('label'))}·{sc.get('dir')} ≠ треба ВІДМІННИЙ·{d}")
                     continue
             # Decision-Center quality gate (LAST — heaviest). Only evaluated for
             # a candidate that already passed every cheap gate and is about to
@@ -4919,7 +4921,7 @@ class FuelFilterDaemon:
 
     def _opportunity_for(self, sym: str, a: Dict, settings: Dict = None):
         """🎯 Composite «best setup to open» analysis for a 💰 funding coin —
-        combines ALL table signals: SCORE quality (ВАРТО ВІДКРИВАТИ), fuel/price
+        combines ALL table signals: SCORE quality (ВІДМІННИЙ), fuel/price
         agreement, ММ strength + alignment with SCORE, funding depth/deepening
         (squeeze fuel), rising volume, 🚀 spike AND ₿ BTCUSDT session alignment
         (₿ START у той самий бік). Returns (score 0..100, hot, reasons). Shared by
@@ -4940,9 +4942,9 @@ class FuelFilterDaemon:
         opp = 0
         reasons = []
         if _sc_label == 'STRONG HOLD':
-            opp += 40; reasons.append('SCORE ВАРТО ВІДКРИВАТИ')
+            opp += 40; reasons.append('SCORE відмінний')
         elif _sc_label == 'HOLD':
-            opp += 22; reasons.append('SCORE МОЖНА ВІДКРИВАТИ')
+            opp += 22; reasons.append('SCORE хороший')
         elif _sc_label == 'NEUTRAL':
             opp += 6
         if (not _sc_conflict) and _sc_label in ('STRONG HOLD', 'HOLD'):
