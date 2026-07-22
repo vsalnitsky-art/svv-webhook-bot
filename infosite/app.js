@@ -713,6 +713,36 @@
       "</span>";
   }
 
+  // 🚪 SMC «Готовність виходу» для відкритої позиції — 1:1 з ботом (шкала виходу).
+  function ffExitCell(ex) {
+    if (!ex || !ex.ok) return '<span style="display:inline-flex"><span style="width:124px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>';
+    var c = ex.color || "#94a3b8";
+    var scd = ex.dir || null;
+    var arrow = scd === "LONG" ? "▲" : (scd === "SHORT" ? "▼" : "•");
+    var acol = scd === "LONG" ? "#22c55e" : (scd === "SHORT" ? "#ef4444" : "#8b93a7");
+    var ic = { ok: "✓", warn: "≈", miss: "·" };
+    var tip = "Готовність ВИХОДУ " + ex.score + "/100 (" + ex.grade + ") — позиція " + ex.dir + ".\n" +
+      "Наскільки SMC-картина розвернулась ПРОТИ позиції. Вище = час закривати. РАДНИК (не закриває сам).\n";
+    (ex.checks || []).forEach(function (ch) { tip += "\n" + (ic[ch.state] || "·") + " " + ch.label + ": " + ch.detail; });
+    var flag = ex.hot ? "🚪" : "";
+    var pct = Math.max(0, Math.min(100, Number(ex.score) || 0));
+    return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
+      '<span title="' + tip.replace(/"/g, "&quot;") + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
+      'width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + c + '1f">' +
+      '<span style="display:flex;align-items:center;line-height:1">' +
+      '<span style="width:11px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
+      '<b style="width:37px;text-align:right;flex:none;color:' + c + ';font-variant-numeric:tabular-nums">' + ex.score + '%</b>' +
+      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">' + ex.grade + "</span>" +
+      "</span>" +
+      '<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">' +
+      '<span style="display:block;height:100%;width:' + pct + '%;border-radius:2px;' +
+      'background:linear-gradient(90deg,' + scShade(c, 0.5) + "," + scShade(c, -0.3) + ')"></span>' +
+      "</span>" +
+      "</span>" +
+      '<span style="width:15px;text-align:center;flex:none;font-size:0.8rem">' + flag + "</span>" +
+      "</span>";
+  }
+
   function renderFunding(rowsArr) {
     rowsArr = rowsArr || [];
     $("#funding-count").textContent = rowsArr.length;
@@ -893,8 +923,8 @@
         "<td>" + priceCell(p.current_price) + "</td>" +
         "<td>" + pnlCell(p.pnl_pct) + "</td>" +
         '<td style="font-size:0.72rem">' + ffFuelCell(p.fuel_dir || p.side, p.fuel_str, p.fuel_str_prev, true) + "</td>" +
+        "<td>" + ffExitCell(p.exit_grade) + "</td>" +
         "<td>" + exhCell(p.exhaustion) + "</td>" +
-        "<td>" + revCell(p.ctr_rev_pct) + "</td>" +
         "<td>" + sltpCell(p.manual_sl) + "</td>" +
         "<td>" + sltpCell(p.manual_tp) + "</td>" +
         "<td>" + timer + "</td>" +

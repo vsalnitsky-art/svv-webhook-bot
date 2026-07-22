@@ -2863,7 +2863,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
                         <th title="Сила бабла (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
-                        <th title="🔄 Готовність до закриття на розвороті після піку (CTR проти + віддача PnL + виснаженість + слабке ММ). 100% ≈ момент закриття.">🔄 Розворот</th>
+                        <th title="🚪 SMC-готовність ВИХОДУ (grade_exit): наскільки картина розвернулась ПРОТИ позиції — структура/ММ/CTR проти + виснаженість + зона-фліп + ціль. Вище = час закривати. РАДНИК (не закриває сам).">Готовність виходу</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
@@ -2927,7 +2927,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
                         <th title="Сила бабла (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
-                        <th title="🔄 Готовність до закриття на розвороті після піку (CTR проти + віддача PnL + виснаженість + слабке ММ). 100% ≈ момент закриття.">🔄 Розворот</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
@@ -7284,6 +7283,38 @@ function ffSetupCell(su) {
         + `</span>`;
 }
 
+// 🚪 SMC «Готовність виходу» для ВІДКРИТОЇ позиції — той самий пілюль, що й
+// «Готовність», але шкала виходу (вище = закривати). РАДНИК, не закриває сам.
+function ffExitCell(ex) {
+    if (!ex || !ex.ok) return `<span style="display:inline-flex"><span style="width:124px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>`;
+    const c = ex.color || '#94a3b8';
+    const scd = ex.dir || null;
+    const arrow = scd === 'LONG' ? '▲' : (scd === 'SHORT' ? '▼' : '•');
+    const acol = scd === 'LONG' ? '#22c55e' : (scd === 'SHORT' ? '#ef4444' : '#8b93a7');
+    const ic = { ok: '✓', warn: '≈', miss: '·' };
+    let tip = `Готовність ВИХОДУ ${ex.score}/100 (${ex.grade}) — позиція ${ex.dir}.\n`
+            + `Наскільки SMC-картина розвернулась ПРОТИ позиції (структура/ММ/CTR проти + `
+            + `виснаженість + зона-фліп + ціль). Вище = час закривати. РАДНИК (не закриває сам).\n`;
+    (ex.checks || []).forEach(ch => { tip += `\n${ic[ch.state] || '·'} ${ch.label}: ${ch.detail}`; });
+    const flag = ex.hot ? '🚪' : '';
+    const pct = Math.max(0, Math.min(100, Number(ex.score) || 0));
+    return `<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">`
+        + `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;flex-direction:column;gap:3px;`
+        +   `width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:${c}1f">`
+        +   `<span style="display:flex;align-items:center;line-height:1">`
+        +     `<span style="width:11px;text-align:center;flex:none;color:${acol};font-weight:900">${arrow}</span>`
+        +     `<b style="width:37px;text-align:right;flex:none;color:${c};font-variant-numeric:tabular-nums">${ex.score}%</b>`
+        +     `<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">${ex.grade}</span>`
+        +   `</span>`
+        +   `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
+        +     `<span style="display:block;height:100%;width:${pct}%;border-radius:2px;`
+        +       `background:linear-gradient(90deg,${scShade(c, 0.5)},${scShade(c, -0.3)})"></span>`
+        +   `</span>`
+        + `</span>`
+        + `<span style="width:15px;text-align:center;flex:none;font-size:0.8rem">${flag}</span>`
+        + `</span>`;
+}
+
 // Combined Status badge — shows the position's Decision-Center headline
 // captured at open time (e.g. "LONG 78%") plus an indicator of live health.
 // Replaces the previous two-column setup (Entry Score badge + Health badge)
@@ -10101,6 +10132,19 @@ function renderTradeHistoryChart(h, meta) {
         const _su = String(meta.ff_setup_open).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         setupLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">🎯 SMC-готовність на вході: <b style="color:#c9b8ff">${_su}</b></div>`;
     }
+    // 🚪 Що радник ВИХОДУ пропонував НА ПІКУ PnL (найкращий момент виходу) і на
+    // закритті — щоб оцінити, чи спіймав би він розворот.
+    let exitLine = '';
+    {
+        const _esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const _p = [];
+        if (meta.ff_exit_at_peak) {
+            const _pk = (meta.ff_exit_peak_pnl != null) ? ` (пік ${meta.ff_exit_peak_pnl >= 0 ? '+' : ''}${meta.ff_exit_peak_pnl}%)` : '';
+            _p.push(`на піку${_pk}: <b style="color:#fbbf24">${_esc(meta.ff_exit_at_peak)}</b>`);
+        }
+        if (meta.ff_exit_close) _p.push(`на закритті: <b style="color:#f87171">${_esc(meta.ff_exit_close)}</b>`);
+        if (_p.length) exitLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">🚪 Готовність виходу — ${_p.join(' · ')}</div>`;
+    }
 
     // ₿ BTCUSDT banner state over time — colored strip (green=LONG, red=SHORT,
     // grey=WAIT/немає; напівпрозорий = ПАУЗА).
@@ -10185,14 +10229,15 @@ function renderTradeHistoryChart(h, meta) {
         [{ name: 'вік кросов., барів', color: '#38bdf8', acc: s => s.ctr_age }],
         { min: 0, includeZero: true, dec: 0, valueLabels: true, labelColor: ctrDirColor,
           step: true, markResets: true });
-    // 🔄 Reversal-exit readiness over the trade: 0..100. Colour per-sample by the
-    // same thresholds as the table cell (🟢 <50 · 🟡 50–80 · 🔴 ≥80 ≈ close).
-    const revColor = s => (s.rev == null) ? '#9aa3b5'
-        : (s.rev >= 80 ? '#f87171' : (s.rev >= 50 ? '#fbbf24' : '#4ade80'));
-    const revPanel = panel('🔄 Готовність виходу (розворот), % — 🔴 ≥80 ≈ закриття',
-        [{ name: 'готовність %', color: '#f5c542', acc: s => s.rev }],
+    // 🚪 SMC «Готовність виходу» over the trade: 0..100 (grade_exit, РАДНИК).
+    // Colour per-sample by the exit scale (🟢 спокійно · 🟡 увага · 🟠 ≥55 готується
+    // · 🔴 ≥72 закривати). Так видно, що радник пропонував НА ПІКУ і впродовж угоди.
+    const revColor = s => (s.exitg == null) ? '#9aa3b5'
+        : (s.exitg >= 72 ? '#f87171' : (s.exitg >= 55 ? '#fb923c' : (s.exitg >= 40 ? '#facc15' : '#4ade80')));
+    const revPanel = panel('🚪 Готовність виходу (SMC), % — 🔴 ≥72 закривати · 🟠 ≥55 готується',
+        [{ name: 'готовність виходу %', color: '#f5c542', acc: s => s.exitg }],
         { min: 0, max: 100, dec: 0, segmentColor: revColor,
-          valueLabels: true, labelColor: revColor, labelMinDelta: 15,
+          valueLabels: true, labelColor: revColor, labelMinDelta: 12,
           labelFmt: v => Math.round(v) + '%' });
 
     // STC + вік кросовера + готовність виходу — ODRAZU після PnL.
@@ -10203,7 +10248,7 @@ function renderTradeHistoryChart(h, meta) {
     const _hasJourney = Array.isArray(meta.journey) && meta.journey.length;
     const dcTop = _hasJourney ? '' : dcLine;
     const exitTop = _hasJourney ? '' : exitReasonLine;
-    return info + info2 + exitTop + sltpLine + paperLine + dcTop + ctrLine + setupLine + journeyPanel + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + sdModeStrip() + q2ModeStrip() + pricePanel;
+    return info + info2 + exitTop + sltpLine + paperLine + dcTop + ctrLine + setupLine + exitLine + journeyPanel + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + sdModeStrip() + q2ModeStrip() + pricePanel;
 }
 
 // ── 📜 Funding-coin ARCHIVE (history of appear/flip/exit + metrics) ──────
@@ -10487,7 +10532,7 @@ async function loadTMState(isPoll) {
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
                     <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
                     <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev, true)}</td>
-                    <td>${ffRevCell(p.ctr_rev_pct)}</td>
+                    <td style="line-height:1.15">${ffExitCell(p.exit_grade)}</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${manualModeCellHTML(p, false)}
@@ -10571,7 +10616,7 @@ async function loadTMState(isPoll) {
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
                     <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
                     <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev, true)}</td>
-                    <td>${ffRevCell(p.ctr_rev_pct)}</td>
+                    <td style="line-height:1.15">${ffExitCell(p.exit_grade)}</td>
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}

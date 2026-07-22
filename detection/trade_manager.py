@@ -988,6 +988,9 @@ class TradeManager:
                     'mtf_timing': mtf_timing,
                     # 🔄 reversal-after-peak readiness % (stamped by the monitor).
                     'rev': pos.get('ctr_rev_pct'),
+                    # 🚪 SMC «Готовність виходу» % у цей момент (grade_exit, РАДНИК) —
+                    # крива в модалці: видно, що радник пропонував на піку/впродовж угоди.
+                    'exitg': (pos.get('exit_grade') or {}).get('score'),
                     # ₿ BTCUSDT banner state + BTC ММ at this moment.
                     'btc_dir': btc_dir,
                     'btc_paused': btc_paused,
@@ -1360,6 +1363,15 @@ class TradeManager:
         # before closing, so a tiny wobble can't exit and give back the move.
         _rev_pct, _rev_hard, _tf_sec = self._ctr_reversal_eval(symbol, pos['side'], current_pnl_pct, _peak)
         pos['ctr_rev_pct'] = _rev_pct
+        # 🚪 SMC «Готовність виходу» (РАДНИК — не закриває): жива оцінка для колонки +
+        # фіксація того, що радник пропонував НА ПІКУ PnL (найкращий момент виходу),
+        # щоб потім зіставити «на піку радник казав X% ↔ реальний результат».
+        pos['exit_grade'] = self._ff_exit_grade(symbol)
+        if current_pnl_pct is not None and current_pnl_pct > (pos.get('ff_exit_peak_pnl') if pos.get('ff_exit_peak_pnl') is not None else -1e9):
+            pos['ff_exit_peak_pnl'] = round(current_pnl_pct, 3)
+            _exsnap = self._ff_exit_snapshot(symbol)
+            if _exsnap:
+                pos['ff_exit_at_peak'] = _exsnap
         if self._rev_persisted(pos, _rev_hard, _tf_sec):
             self._close_position(symbol, current_price, reason='ctr_reversal_after_peak')
             return
@@ -1648,6 +1660,13 @@ class TradeManager:
         # === 🔄 CTR reversal-after-peak: stamp readiness % + close if fired ===
         _rev_pct, _rev_hard, _tf_sec = self._ctr_reversal_eval(symbol, pos['side'], cur_pnl, _peak)
         pos['ctr_rev_pct'] = _rev_pct
+        # 🚪 SMC «Готовність виходу» (РАДНИК): жива оцінка + фіксація на піку PnL.
+        pos['exit_grade'] = self._ff_exit_grade(symbol)
+        if cur_pnl is not None and cur_pnl > (pos.get('ff_exit_peak_pnl') if pos.get('ff_exit_peak_pnl') is not None else -1e9):
+            pos['ff_exit_peak_pnl'] = round(cur_pnl, 3)
+            _exsnap = self._ff_exit_snapshot(symbol)
+            if _exsnap:
+                pos['ff_exit_at_peak'] = _exsnap
         if not pos.get('manual_mode') and self._rev_persisted(pos, _rev_hard, _tf_sec):
             self._close_shadow(symbol, current_price, reason='ctr_reversal_after_peak')
             return
@@ -3497,6 +3516,26 @@ class TradeManager:
             return None
 
     @staticmethod
+    def _ff_exit_grade(symbol: str):
+        """🚪 SMC «Готовність виходу» dict ЗАРАЗ (grade_exit) — для живої колонки."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            return ff.get_exit_grade(symbol) if ff else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _ff_exit_snapshot(symbol: str) -> Optional[str]:
+        """🚪 Компактний рядок «Готовності виходу» ЗАРАЗ — штамп на піку / закритті."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            return ff.exit_snapshot(symbol) if ff else None
+        except Exception:
+            return None
+
+    @staticmethod
     def _ff_exhaustion(symbol: str, side: str) -> Optional[float]:
         """Move-exhaustion % for `symbol`/`side` from the Fuel Auto-Filter
         (same value the panel shows). Used to stamp a position at open and at
@@ -3748,6 +3787,13 @@ class TradeManager:
             # ₿ session at open — to validate opening during a ₿ pause.
             'ff_btc_at_open': pos.get('ff_btc_at_open'),
             'ff_btc_paused_at_open': pos.get('ff_btc_paused_at_open'),
+            # 🎯 SMC entry «Готовність» at open + 🚪 exit «Готовність виходу»: at the
+            # PnL PEAK (що радник пропонував у найкращий момент виходу) і at close.
+            # Для діагностики: «на піку радник казав X% ↔ реальний результат».
+            'ff_setup_open': pos.get('ff_setup_open'),
+            'ff_exit_at_peak': pos.get('ff_exit_at_peak'),
+            'ff_exit_peak_pnl': pos.get('ff_exit_peak_pnl'),
+            'ff_exit_close': self._ff_exit_snapshot(symbol),
         }
 
         with self._lock:
@@ -4216,6 +4262,11 @@ class TradeManager:
             # ₿ session at open — to validate opening during a ₿ pause.
             'ff_btc_at_open': pos.get('ff_btc_at_open'),
             'ff_btc_paused_at_open': pos.get('ff_btc_paused_at_open'),
+            # 🎯/🚪 SMC «Готовність» входу + виходу (на піку PnL і на закритті).
+            'ff_setup_open': pos.get('ff_setup_open'),
+            'ff_exit_at_peak': pos.get('ff_exit_at_peak'),
+            'ff_exit_peak_pnl': pos.get('ff_exit_peak_pnl'),
+            'ff_exit_close': self._ff_exit_snapshot(symbol),
         }
 
         with self._lock:

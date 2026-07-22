@@ -6,7 +6,7 @@
   <title>VSV Bot — Інфо-панель</title>
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=59">
+  <link rel="stylesheet" href="style.css?v=61">
   <!-- ⏳ Анти-блимання: доки JS не перевірив авторизацію (клас app-ready ще не
        додано на <body>), не показуємо ні дашборд, ні hero — інакше на секунду
        спалахує «бот-панель» перед екраном входу. Після перевірки showData()
@@ -87,7 +87,7 @@
       <div class="table-scroll">
         <table id="trades-table">
           <thead>
-            <tr><th>Символ</th><th>Напрямок</th><th>Ринок</th><th>Вхід</th><th>Поточна</th><th>PnL</th><th>ММ</th><th>Виснаж.</th><th>🔄 Розворот</th><th>Manual SL</th><th>Manual TP</th><th>⏱ Таймер</th></tr>
+            <tr><th>Символ</th><th>Напрямок</th><th>Ринок</th><th>Вхід</th><th>Поточна</th><th>PnL</th><th>ММ</th><th title="🚪 SMC-готовність виходу: наскільки картина розвернулась проти позиції. Вище = час закривати. Радник.">Готовність виходу</th><th>Виснаж.</th><th>Manual SL</th><th>Manual TP</th><th>⏱ Таймер</th></tr>
           </thead>
           <tbody><tr><td colspan="12" class="muted">завантаження…</td></tr></tbody>
         </table>
@@ -134,7 +134,7 @@
       });
     })();
   </script>
-  <script src="config.js?v=59"></script>
-  <script src="app.js?v=59"></script>
+  <script src="config.js?v=61"></script>
+  <script src="app.js?v=61"></script>
 </body>
 </html>

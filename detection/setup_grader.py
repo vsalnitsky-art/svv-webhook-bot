@@ -375,3 +375,179 @@ def checklist_text(res: Dict, sep: str = ' · ') -> str:
     if res.get('vetoes'):
         out.append('⚠ ' + '; '.join(res['vetoes']))
     return sep.join(out)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  🚪 SMC EXIT Grader — «Готовність виходу» для ВІДКРИТОЇ позиції
+#  Дзеркало входу: оцінює 0..100, наскільки SMC-картина РОЗВЕРНУЛАСЬ ПРОТИ
+#  позиції (структура/ММ/CTR проти + виснаженість + зона-фліп + ціль-POI).
+#  Вище = час закривати. РАДНИК — реального закриття не виконує.
+# ═════════════════════════════════════════════════════════════════════════════
+_EXIT_WEIGHTS = {
+    'structure': 28,   # протилежний CHoCH/BOS на 1H + bias/HTF проти
+    'mm':        18,   # потік ММ розвернувся проти позиції
+    'ctr':       16,   # CTR-розворот (перекуплено/перепродано + кросовер проти)
+    'exhaustion':16,   # хід вичерпано / немає куди йти
+    'zone':      12,   # зона-фліп (LONG у Premium / SHORT у Discount)
+    'poi':       10,   # ціна дійшла до протилежного OB (ціль/спротив)
+}
+# Шкала виходу: вище = закривати (червоний бік).
+_EXIT_GRADE = [
+    (72, 'ЗАКРИВАТИ',   '#f87171'),
+    (55, 'СКОРО ВИХІД', '#fb923c'),
+    (40, 'УВАГА',       '#facc15'),
+    (25, 'ТРИМАТИ',     '#84cc16'),
+    (0,  'СПОКІЙНО',    '#4ade80'),
+]
+
+
+def _exit_grade_for(score):
+    for thr, word, col in _EXIT_GRADE:
+        if score >= thr:
+            return word, col
+    return 'СПОКІЙНО', '#4ade80'
+
+
+def grade_exit(direction: str, sig: Dict[str, Any], cfg: Optional[Dict] = None) -> Dict:
+    """Оцінює «готовність виходу» для ВІДКРИТОЇ позиції в бік `direction`.
+    Той самий `sig`, що й grade_setup (SMC 1H). Вище score = сильніший розворот
+    проти позиції = час закривати. Це РАДНИК (показ + лог), не закриває сам."""
+    c = dict(_DEFAULTS)
+    if cfg:
+        c.update(cfg)
+    d = (direction or '').upper()
+    if d not in ('LONG', 'SHORT'):
+        return {'ok': False, 'dir': d or None, 'score': 0, 'grade': '—',
+                'hot': False, 'checks': [], 'vetoes': []}
+    is_long = (d == 'LONG')
+    smc = sig.get('smc')
+    mp = sig.get('mp') or {}
+    against = 'BEARISH' if is_long else 'BULLISH'   # структура ПРОТИ позиції
+
+    blocks = {}
+    checks = []
+
+    def add(key, label, res):
+        frac, state, detail = res
+        blocks[key] = frac
+        checks.append({'key': key, 'label': label, 'state': state, 'detail': detail})
+        return frac
+
+    # 1) Структура проти позиції.
+    def _b_struct():
+        s = _enum_val(_g(smc, 'structure_signal')) or 'NONE'
+        bias = _enum_val(_g(smc, 'market_bias')) or 'NEUTRAL'
+        frac = 0.0
+        parts = []
+        if against in s:
+            if 'CHOCH' in s:
+                frac += 0.60; parts.append('CHoCH проти')
+            elif 'BOS' in s:
+                frac += 0.50; parts.append('BOS проти')
+        if bias == against:
+            frac += 0.25; parts.append('bias 1H проти')
+        hb = _enum_val(sig.get('htf_bias'))
+        if hb == against:
+            frac += 0.15; parts.append('HTF-4H проти')
+        return _clamp(frac), _state(_clamp(frac)), (' · '.join(parts) or 'структура ще за позицію')
+
+    # 2) ММ-фліп проти позиції.
+    def _b_mm():
+        try:
+            dd = float(sig.get('mm_dir'))
+        except (TypeError, ValueError):
+            dd = 0.0
+        flip = (dd < -0.05 and is_long) or (dd > 0.05 and not is_long)
+        strg = float(sig.get('mm_strength') or 0)
+        if flip:
+            return _clamp(strg / 100.0), _state(_clamp(strg / 100.0)), f'ММ розвернувся ({int(strg)}%)'
+        return 0.0, 'miss', 'ММ ще за позицію'
+
+    # 3) CTR-розворот.
+    def _b_ctr():
+        ctr = sig.get('ctr1h')
+        stc = _g(ctr, 'stc')
+        last = _g(ctr, 'last_dir')
+        if stc is None:
+            return 0.2, 'warn', 'CTR формується'
+        try:
+            stc = float(stc)
+        except (TypeError, ValueError):
+            return 0.2, 'warn', 'CTR формується'
+        frac = 0.0
+        parts = [f'STC {stc:.0f}']
+        if is_long:
+            if stc >= c['ctr_ob']:
+                frac += 0.6; parts.append('перекуплено')
+            elif stc > 50:
+                frac += _clamp((stc - 50) / (c['ctr_ob'] - 50)) * 0.4
+            if last in ('down', 'SHORT'):
+                frac += 0.3; parts.append('кросовер вниз')
+        else:
+            if stc <= c['ctr_os']:
+                frac += 0.6; parts.append('перепродано')
+            elif stc < 50:
+                frac += _clamp((50 - stc) / (50 - c['ctr_os'])) * 0.4
+            if last in ('up', 'LONG'):
+                frac += 0.3; parts.append('кросовер вгору')
+        return _clamp(frac), _state(_clamp(frac)), ' · '.join(parts)
+
+    # 4) Виснаженість ходу.
+    def _b_exh():
+        exh = mp.get('exhaustion')
+        if exh is None:
+            return 0.2, 'warn', 'виснаженість н/д'
+        frac = _clamp(float(exh) / 100.0)
+        return frac, _state(frac), f'виснаженість {int(exh)}%'
+
+    # 5) Зона-фліп (LONG у Premium / SHORT у Discount = час фіксувати).
+    def _b_zone():
+        lvl = _g(smc, 'zone_level', 0.5)
+        try:
+            lvl = float(lvl)
+        except (TypeError, ValueError):
+            lvl = 0.5
+        frac = _clamp(lvl if is_long else (1.0 - lvl))
+        word = ('Premium' if is_long else 'Discount')
+        return frac, _state(frac), f'{word} ({lvl:.2f})'
+
+    # 6) Ціль-POI: ціна на ПРОТИЛЕЖНОМУ OB (спротив/ціль).
+    def _b_poi():
+        at_opp = _g(smc, 'price_at_bearish_ob' if is_long else 'price_at_bullish_ob', False)
+        cnt = _g(smc, 'active_bearish_obs' if is_long else 'active_bullish_obs', 0) or 0
+        frac = 0.0
+        parts = []
+        if at_opp:
+            frac += 0.7; parts.append('ціна на протилежному OB')
+        elif cnt:
+            frac += 0.2; parts.append(f'протилежний OB поруч ({cnt})')
+        return _clamp(frac), _state(_clamp(frac)), (' · '.join(parts) or 'ціль не досягнута')
+
+    f_struct = add('structure', 'Структура проти', _b_struct())
+    f_mm = add('mm', 'ММ-фліп', _b_mm())
+    f_ctr = add('ctr', 'CTR-розворот', _b_ctr())
+    f_exh = add('exhaustion', 'Виснаженість', _b_exh())
+    add('zone', 'Зона-фліп', _b_zone())
+    add('poi', 'Ціль (POI)', _b_poi())
+
+    total_w = sum(_EXIT_WEIGHTS.values())
+    raw = sum(blocks[k] * _EXIT_WEIGHTS[k] for k in _EXIT_WEIGHTS) / total_w * 100.0
+    score = int(round(_clamp(raw, 0, 100)))
+    grade, color = _exit_grade_for(score)
+
+    # «Закривати зараз» (радник): сильний бал + або структура проти, або
+    # (виснажено + CTR-розворот). SL/TP лишаються окремим бекстопом.
+    hot = bool(score >= c.get('hot_min', 72)
+               and (f_struct >= 0.5 or (f_exh >= 0.6 and f_ctr >= 0.5)))
+
+    return {
+        'ok': True,
+        'dir': d,
+        'score': score,
+        'grade': grade,
+        'color': color,
+        'hot': bool(hot),
+        'checks': checks,
+        'vetoes': [],
+        'blocks': {k: round(v, 2) for k, v in blocks.items()},
+    }

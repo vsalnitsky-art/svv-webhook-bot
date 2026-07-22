@@ -441,6 +441,9 @@ class FuelFilterDaemon:
         # 1H-структура міняється повільно. {sym: grade_dict}, {sym: computed_at}.
         self._setup_cache: Dict[str, Dict] = {}
         self._setup_at: Dict[str, float] = {}
+        # 🚪 SMC «Готовність виходу» per symbol (grade_exit) — рахується поряд із
+        # setup з того самого sig, у бік ВІДКРИТОЇ позиції. РАДНИК (показ + лог).
+        self._exit_cache: Dict[str, Dict] = {}
         # Fuel STRENGTH (0..100) per symbol — current cycle and previous cycle,
         # so the UI can show the value + a rising/falling trend. Refreshed once
         # per cycle in _refresh_score_cache (cheap; read by both tables).
@@ -1960,6 +1963,23 @@ class FuelFilterDaemon:
         hot = ' 🎯' if su.get('hot') else ''
         vet = (' · ⚠' + '; '.join(su.get('vetoes', []))) if su.get('vetoes') else ''
         return f"{su.get('grade', '')} {su.get('score', '')}%{hot} · {checks}{vet}".strip()
+
+    def get_exit_grade(self, symbol: str) -> Optional[Dict]:
+        """🚪 SMC «Готовність виходу» dict для ВІДКРИТОЇ позиції (grade_exit) —
+        читає фоновий кеш. Використовується колонкою «Готовність виходу» та логом."""
+        return self._exit_cache.get((symbol or '').upper())
+
+    def exit_snapshot(self, symbol: str) -> Optional[str]:
+        """Компактний рядок «Готовності виходу» ЗАРАЗ — для штампу на піку/закритті
+        (зіставляємо: що радник пропонував у найкращий момент виходу ↔ результат)."""
+        ex = self._exit_cache.get((symbol or '').upper())
+        if not ex or not ex.get('ok'):
+            return None
+        ic = {'ok': '✓', 'warn': '≈', 'miss': '·'}
+        checks = ' '.join(f"{ic.get(ch.get('state'), '·')}{ch.get('label', '')}"
+                          for ch in ex.get('checks', []))
+        hot = ' 🚪' if ex.get('hot') else ''
+        return f"{ex.get('grade', '')} {ex.get('score', '')}%{hot} · {checks}".strip()
 
     # ------------------------------------------------------------------
     # fuel / exhaustion measurement (cached sources only)
@@ -3649,6 +3669,7 @@ class FuelFilterDaemon:
             if k not in live:
                 self._setup_cache.pop(k, None)
                 self._setup_at.pop(k, None)
+                self._exit_cache.pop(k, None)
 
     def _setup_klines(self, symbol: str, tf: str, limit: int):
         """Свічки для SMC-аналізу з довшим кешем (окремо від _candle_cache, бо
@@ -3766,8 +3787,14 @@ class FuelFilterDaemon:
             'spike': bool(a.get('spike')),
         }
         try:
-            from detection.setup_grader import grade_setup
+            from detection.setup_grader import grade_setup, grade_exit
             strict = settings.get('setup_strict', 'strict')
+            # 🚪 «Готовність виходу» з того самого sig — у бік ВІДКРИТОЇ позиції.
+            try:
+                self._exit_cache[symbol] = grade_exit(d, sig)
+            except Exception as _ee:
+                print(f"[FF-Exit] {symbol} grade error: {_ee}")
+                self._exit_cache.pop(symbol, None)
             return grade_setup(d, sig, {'strict': strict})
         except Exception as e:
             print(f"[FF-Setup] {symbol} grade error: {e}")
