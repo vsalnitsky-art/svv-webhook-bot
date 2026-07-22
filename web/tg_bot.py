@@ -279,9 +279,17 @@ def invite_user_to_group(chat_id):
 
 
 def base_url():
-    """Request-free public URL (poller has no Flask request context)."""
-    return (os.getenv('RENDER_EXTERNAL_URL') or os.getenv('PUBLIC_URL')
-            or os.getenv('BASE_URL') or '').rstrip('/')
+    """Request-free public URL (poller has no Flask request context).
+
+    Пріоритет: явні BASE_URL / PUBLIC_URL / BOT_PUBLIC_URL перебивають legacy
+    RENDER_EXTERNAL_URL. Це важливо після переїзду з Render на власний VDS:
+    якщо стара змінна RENDER_EXTERNAL_URL випадково лишилась у середовищі,
+    вона НЕ повинна тягнути Telegram-кнопки на старий домен. Задай на боті
+    BASE_URL=https://bot.vsv-trade.com.ua — і всі посилання будуть новими.
+    """
+    return (os.getenv('BASE_URL') or os.getenv('PUBLIC_URL')
+            or os.getenv('BOT_PUBLIC_URL') or os.getenv('RENDER_EXTERNAL_URL')
+            or '').rstrip('/')
 
 
 def _api(method, payload=None, timeout=35):

@@ -1315,6 +1315,15 @@ def register_auth_routes(app):
     def auth_cabinet():
         u = current_user()
         role = 'Адміністратор' if u.is_admin else 'Користувач (перегляд)'
+        # Куди веде «← Назад»: якщо в кабінет прийшли з інфо-сайту (?from=info),
+        # повертаємо на інфо-сайт (INFO_SITE_URL) — і робимо це в ТІЙ САМІЙ вкладці,
+        # щоб не плодити «осиротілі» вкладки. Інакше — на дашборд бота.
+        _from_info = (request.args.get('from') == 'info')
+        _info_url = (os.getenv('INFO_SITE_URL') or '').rstrip('/')
+        if _from_info and _info_url:
+            _back_href, _back_lbl = _info_url, '← На інфо-панель'
+        else:
+            _back_href, _back_lbl = '/', '← На дашборд'
         tgu = getattr(u, 'telegram_username', None)
         tgn = getattr(u, 'telegram_name', None)
         tgc = getattr(u, 'telegram_chat_id', None)
@@ -1378,7 +1387,7 @@ def register_auth_routes(app):
                 f'<div id="m" class="msg" style="display:none"></div></div>'
                 f'<div class="links">'
                 + ('<a href="/admin/users">🛡 Адмін-панель</a> · ' if u.is_admin else '')
-                + '<a href="/">← На дашборд</a> · <a href="/logout">Вийти</a></div>')
+                + f'<a href="{_back_href}">{_back_lbl}</a> · <a href="/logout">Вийти</a></div>')
         script = """
         async function chpw(){
           const p=document.getElementById('np').value, p2=document.getElementById('np2').value;

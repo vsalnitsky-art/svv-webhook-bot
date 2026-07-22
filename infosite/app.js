@@ -548,7 +548,10 @@
     "міцніє/слабшає. Що сильніший тиск у бік крапки — то ймовірніший рух ціни туди.";
 
   // ММ (fuel) strength cell — exact copy of the bot's ffFuelCell.
-  function ffFuelCell(dir, now, prev) {
+  // ММ (fuel) cell — 1:1 з ботом: dir-dot + сила% + стрілка + міні-бар + смуга.
+  //   hideBand: у тісних таблицях (позиції) слово-смуга ховається;
+  //   без напрямку (⚪) смуга → «рівновага».
+  function ffFuelCell(dir, now, prev, hideBand) {
     var dot = dir === "LONG" ? "🟢" : (dir === "SHORT" ? "🔴" : "⚪");
     var dotSeg = '<span style="display:inline-block;width:16px;text-align:center;flex:none">' + dot + "</span>";
     if (now == null) {
@@ -557,18 +560,22 @@
     }
     now = Number(now);
     var col = now >= 60 ? "#22c55e" : (now >= 30 ? "#84cc16" : (now >= 10 ? "#bef264" : "#8b93a7"));
-    var arrowChar = "", arrowCol = "#8b93a7";
+    var arrowChar = "", arrowCol = "#8b93a7", arrowTitle = "";
     if (prev != null) {
-      if (now > prev + 1) { arrowChar = "↑"; arrowCol = "#4ade80"; }
-      else if (now < prev - 1) { arrowChar = "↓"; arrowCol = "#f87171"; }
-      else { arrowChar = "→"; arrowCol = "#8b93a7"; }
+      if (now > prev + 1) { arrowChar = "↑"; arrowCol = "#4ade80"; arrowTitle = "сила росте"; }
+      else if (now < prev - 1) { arrowChar = "↓"; arrowCol = "#f87171"; arrowTitle = "сила падає"; }
+      else { arrowChar = "→"; arrowCol = "#8b93a7"; arrowTitle = "без змін"; }
     }
     var w = Math.max(0, Math.min(100, now));
     var b = fuelBand(now);
     var pctSeg = '<b style="display:inline-block;width:40px;text-align:right;color:' + col + ';font-variant-numeric:tabular-nums;flex:none">' + Math.round(now) + "%</b>";
-    var arrowSeg = '<span style="display:inline-block;width:12px;text-align:center;color:' + arrowCol + ';flex:none">' + arrowChar + "</span>";
+    var arrowSeg = '<span style="display:inline-block;width:12px;text-align:center;color:' + arrowCol + ';flex:none" title="' + arrowTitle + '">' + arrowChar + "</span>";
     var barSeg = '<span style="display:inline-block;vertical-align:middle;height:6px;width:48px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;flex:none"><span style="display:block;height:100%;width:' + w + '%;background:' + col + '"></span></span>';
-    var bandSeg = '<span style="display:inline-block;width:88px;text-align:left;color:' + b.col + ';font-size:0.66rem;font-weight:600;flex:none">' + b.txt + "</span>";
+    var neutralDir = !(dir === "LONG" || dir === "SHORT");
+    var bandTxt = neutralDir ? "рівновага" : b.txt;
+    var bandCol = neutralDir ? "#8b93a7" : b.col;
+    var bandSeg = hideBand ? "" :
+      '<span style="display:inline-block;width:88px;text-align:left;color:' + bandCol + ';font-size:0.66rem;font-weight:600;flex:none">' + bandTxt + "</span>";
     return '<span title="' + FUEL_TOOLTIP + '" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">' + dotSeg + pctSeg + arrowSeg + barSeg + bandSeg + "</span>";
   }
 
@@ -582,20 +589,63 @@
   };
   function scoreLabelUA(lbl) { return SCORE_LABEL_UA[lbl] || lbl || ""; }
 
-  // SCORE (hold quality) badge — exact copy of the bot's ffScoreBadgeHTML.
+  // Освітлення/затемнення hex — для градієнта 0–100 метра (копія бота scShade).
+  function scShade(hex, amt) {
+    try {
+      var h = String(hex || "#94a3b8").replace("#", "");
+      var ch = function (i) { return parseInt(h.substr(i, 2), 16); };
+      var f = function (c) { return amt >= 0 ? c + (255 - c) * amt : c * (1 + amt); };
+      var t = function (c) { return Math.max(0, Math.min(255, Math.round(f(c)))).toString(16).padStart(2, "0"); };
+      return "#" + t(ch(0)) + t(ch(2)) + t(ch(4));
+    } catch (e) { return hex; }
+  }
+
+  // Розгорнутий tooltip SCORE (складники + шкала) — копія бота ffScoreTip.
+  function ffScoreTip(sc) {
+    var c = sc.components || {};
+    var p = function (v) { return (v == null ? "—" : Math.round(v * 100) + "%"); };
+    var v2 = (c.ctr != null);
+    var t = "SCORE " + sc.score + "/100 — якість входу в напрямку " + (sc.dir || "—") + ".\n";
+    if (v2) {
+      t += "Складники: запас 25% · імпульс 25% · тиск ММ 22% · CTR-тайминг 18% · утримання 10%.\n" +
+        "Зараз: запас " + p(c.room) + " · імпульс " + p(c.mom) + " · ММ " + p(c.fuel) + " · CTR " + p(c.ctr) + " · утримання " + p(c.hold) + ".";
+      if (c.vol != null && c.vol < 1) t += "\nОбсяг: тонка монета → SCORE ×" + c.vol + " (приглушено).";
+    } else {
+      t += "Складники (вагомість): запас ходу 30% · імпульс свічок 30% · тиск ММ 25% · утримання 15%.\n" +
+        "Зараз: запас " + p(c.room) + " · імпульс " + p(c.mom) + " · ММ " + p(c.fuel) + " · утримання " + p(c.hold) + ".";
+    }
+    if (sc.conflict) t += "\n⚠ Конфлікт: рух ціни проти тиску ММ → оцінку обмежено.";
+    if (sc.exh != null) t += "\nВиснаженість ходу: " + Math.round(sc.exh) + "%" + (sc.exh >= 90 ? " (майже вичерпано)" : "") + ".";
+    t += "\nШкала: ВАРТО ≥72 · МОЖНА ≥55 · ЗАЧЕКАТИ ≥40 · НЕ ВАРТО ≥25 · НЕ ВІДКРИВАТИ <25.";
+    return t.replace(/"/g, "&quot;");
+  }
+
+  // SCORE-бейдж — 1:1 з ботом: акцент-колір + число% + вердикт + 0–100 метр.
   function ffScoreBadgeHTML(sc) {
     if (!sc || !sc.label) return '<span style="color:#555">—</span>';
+    var c = sc.color || "#94a3b8";
     var scd = sc.dir || null;
-    var scDir = scd === "LONG"
-      ? '<span style="font-size:0.78rem;margin-right:5px">🟢<span style="color:#22c55e;font-weight:900">▲</span></span>'
-      : (scd === "SHORT" ? '<span style="font-size:0.78rem;margin-right:5px">🔴<span style="color:#ef4444;font-weight:900">▼</span></span>' : "");
-    var scWarn = sc.conflict
-      ? '<span title="Конфлікт: бабло й рух ціни в різні боки" style="margin-left:4px">⚠️</span>'
+    var arrow = scd === "LONG"
+      ? '<span style="color:#22c55e;font-weight:900">▲</span>'
+      : (scd === "SHORT" ? '<span style="color:#ef4444;font-weight:900">▼</span>'
+        : '<span style="color:#8b93a7">•</span>');
+    var pct = Math.max(0, Math.min(100, Number(sc.score) || 0));
+    var warn = sc.conflict
+      ? ' <span title="Конфлікт: тиск ММ і рух ціни в різні боки">⚠️</span>'
       : "";
-    return scDir + '<span title="Оцінка утримання ' + sc.score + '/100 у напрямку ' + (sc.dir || "—") + (sc.conflict ? " · ⚠ бабло проти ціни" : "") +
-      '" style="display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:6px;background:' + sc.color + '22;border:1px solid ' + sc.color +
-      ';font-weight:800;font-size:0.74rem;color:' + sc.color + '">' + sc.score +
-      '<span style="font-size:0.6rem;letter-spacing:0.3px">' + scoreLabelUA(sc.label) + "</span></span>" + scWarn;
+    return '<span title="' + ffScoreTip(sc) + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
+      'min-width:120px;padding:3px 8px;border-radius:8px;background:' + c + '1f">' +
+      '<span style="display:flex;align-items:center;gap:6px;line-height:1;white-space:nowrap">' +
+      arrow +
+      '<b style="color:' + c + ';font-variant-numeric:tabular-nums">' + sc.score + '%</b>' +
+      '<span style="font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600">' + scoreLabelUA(sc.label) + "</span>" +
+      warn +
+      "</span>" +
+      '<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">' +
+      '<span style="display:block;height:100%;width:' + pct + '%;border-radius:2px;' +
+      'background:linear-gradient(90deg,' + scShade(c, 0.5) + "," + scShade(c, -0.3) + ')"></span>' +
+      "</span>" +
+      "</span>";
   }
 
   // F-Trend badge — funding напрямок за ~30 хв (Dashboard-метрика) — 1:1 з ботом.
@@ -753,7 +803,7 @@
     if (pct == null || isNaN(pct)) return '<span class="muted">—</span>';
     var v = Math.max(0, Math.min(100, Math.round(pct)));
     var col = v >= 80 ? "#f87171" : (v >= 50 ? "#fbbf24" : "#4ade80");
-    return '<span style="color:' + col + ';font-weight:700">🔄 ' + v + "%</span>";
+    return '<span title="Готовність до закриття на розвороті після піку (100% ≈ момент закриття)" style="color:' + col + ';font-weight:700;font-size:0.72rem">🔄 ' + v + "%</span>";
   }
   function priceCell(v) {
     return (v != null && Number(v) > 0) ? '<span class="mono">' + fmtPrice(v) + "</span>" : '<span class="muted">—</span>';
@@ -792,7 +842,7 @@
         "<td>" + priceCell(p.entry_price) + "</td>" +
         "<td>" + priceCell(p.current_price) + "</td>" +
         "<td>" + pnlCell(p.pnl_pct) + "</td>" +
-        '<td style="font-size:0.72rem">' + ffFuelCell(p.fuel_dir || p.side, p.fuel_str, p.fuel_str_prev) + "</td>" +
+        '<td style="font-size:0.72rem">' + ffFuelCell(p.fuel_dir || p.side, p.fuel_str, p.fuel_str_prev, true) + "</td>" +
         "<td>" + exhCell(p.exhaustion) + "</td>" +
         "<td>" + revCell(p.ctr_rev_pct) + "</td>" +
         "<td>" + sltpCell(p.manual_sl) + "</td>" +
@@ -809,7 +859,7 @@
     if (me && me.ok) {
       el.innerHTML =
         '<span class="who">👤 ' + esc(me.email || "") + (me.is_admin ? " · адмін" : "") + '</span>' +
-        '<a href="' + botUrl("/cabinet") + '" target="_blank" rel="noopener">Кабінет</a>' +
+        '<a href="' + botUrl("/cabinet?from=info") + '">Кабінет</a>' +
         '<a href="#" class="lo">Вихід</a>';
     } else {
       var reg = BOT_LINK || botUrl("/register");
