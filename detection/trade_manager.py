@@ -1071,6 +1071,11 @@ class TradeManager:
                 except (TypeError, ValueError):
                     continue
             best = c   # keep the last (most recent) match
+        # ВІДКРИТА угода (без closed_at) із живою позицією → чартимо САМЕ її власну
+        # історію, а не стару ЗАКРИТУ угоду тієї ж монети. Без цього хронологія
+        # відкритої угоди «підтягувала» попередню закриту по тому ж символу.
+        if closed_at is None and op:
+            best = None
         if best is not None:
             _hist = list(best.get('history') or [])
             # Peak must never contradict the plotted samples. Derive it from the
