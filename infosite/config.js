@@ -12,7 +12,7 @@ window.INFOSITE_CONFIG = {
   //
   // CORS для GET /api/* на боці бота вже увімкнено, тож крос-доменні запити
   // з цього сайту дозволені. Лиши "" якщо сайт і бот на одному домені.
-  BOT_API_BASE: "https://svv-webhook-bot-yb08.onrender.com",
+  BOT_API_BASE: "https://bot.vsv-trade.com.ua",
 
   // Як часто оновлювати дані (мілісекунди).
   REFRESH_MS: 5000,
