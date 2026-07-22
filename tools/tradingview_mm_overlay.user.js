@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VSV ММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.6.1
+// @version      1.7.0
 // @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       VSV
 // @match        https://*.tradingview.com/chart/*
@@ -317,16 +317,25 @@
         elDir.style.color = dirColor(dir);
         elDir.title = MM_HELP;
 
-        // 📊 SCORE + ММ — в ОДНОМУ рядку.
+        // 📊 Готовність (SMC-сетап) + 🚪 Готовність виходу (якщо є угода) + ММ — в ОДНОМУ рядку.
         if (elScore) {
             const parts = [];
-            if (d.score && d.score.score != null) {
-                const sc = d.score;
-                const scol = sc.color || '#94a3b8';
-                const sic = sc.dir === 'LONG' ? '🟢' : (sc.dir === 'SHORT' ? '🔴' : '⚪');
-                const warn = sc.conflict ? ' <span title="Конфлікт: ціна проти ММ" style="color:#fbbf24">⚠️</span>' : '';
-                parts.push(`SCORE <b style="color:${scol}">${sc.score}%</b> `
-                    + `<span style="color:${scol};font-weight:700">${sic} ${SCORE_UA[sc.label] || sc.label || ''}</span>${warn}`);
+            if (d.setup && d.setup.ok) {
+                const su = d.setup;
+                const scol = su.color || '#94a3b8';
+                const sic = su.dir === 'LONG' ? '🟢' : (su.dir === 'SHORT' ? '🔴' : '⚪');
+                const hot = su.hot ? ' 🎯' : '';
+                parts.push(`Готовність <b style="color:${scol}">${su.score}%</b> `
+                    + `<span style="color:${scol};font-weight:700">${sic} ${su.grade || ''}${hot}</span>`);
+            }
+            // 🚪 Показники ВИХОДУ — лише коли по монеті відкрита угода (d.exit).
+            if (d.exit && d.exit.ok) {
+                const ex = d.exit;
+                const ecol = ex.color || '#94a3b8';
+                const eic = ex.dir === 'LONG' ? '🟢' : (ex.dir === 'SHORT' ? '🔴' : '⚪');
+                const eflag = ex.hot ? ' 🚪' : '';
+                parts.push(`Вихід <b style="color:${ecol}">${ex.score}%</b> `
+                    + `<span style="color:${ecol};font-weight:700">${eic} ${ex.grade || ''}${eflag}</span>`);
             }
             if (d.mm_old && d.mm_old.dir != null) {
                 const mo = d.mm_old, st = mo.status;
@@ -337,9 +346,12 @@
             if (parts.length) {
                 elScore.innerHTML = parts.join(' <span style="color:#4b5563">·</span> ');
                 elScore.style.display = '';
-                elScore.title = 'SCORE — ЯКІСТЬ сетапу 0–100% (не команда «відкривай»): '
+                elScore.title = 'Готовність — SMC-якість сетапу для ВХОДУ (0–100): '
                     + 'ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25.\n'
-                    + 'ММ поряд — показник за розташуванням кластерів ((fa−fb)/den).';
+                    + 'Вихід (лише у відкритій угоді) — наскільки картина розвернулась ПРОТИ позиції: '
+                    + 'ЗАКРИВАТИ ≥72 · СКОРО ВИХІД ≥55 · УВАГА ≥40 · ТРИМАТИ. Це РАДНИК, не команда.';
+            } else {
+                elScore.innerHTML = ''; elScore.style.display = 'none';
             }
         }
 

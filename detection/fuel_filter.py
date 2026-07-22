@@ -2550,6 +2550,40 @@ class FuelFilterDaemon:
                 timer = {'dir': t.get('dir'), 'held_sec': int(held)}
         out['holding'] = holding
         out['timer'] = timer
+        # 🎯 Готовність (SMC setup) — для оверлея замість SCORE. На замовлення:
+        # для довільної монети з графіка кеш може бути порожній → рахуємо разово.
+        try:
+            _sc = self._score_cache.get(symbol) or {}
+            _dset = _sc.get('dir') or out.get('fuel_status')
+            setup = self._setup_cache.get(symbol)
+            if setup is None and _dset in ('LONG', 'SHORT'):
+                setup = self._compute_setup(symbol, _dset, settings)
+                if setup is not None:
+                    self._setup_cache[symbol] = setup
+            out['setup'] = setup
+        except Exception:
+            out['setup'] = None
+        # 🚪 Готовність виходу — ЛИШЕ коли на монеті є ВІДКРИТА позиція.
+        try:
+            _pside = timer.get('dir') if (timer and timer.get('dir') in ('LONG', 'SHORT')) else None
+            if _pside is None:
+                tm = self._get_tm() if self._get_tm else None
+                if tm is not None:
+                    for _book in ('_positions', '_shadow_positions'):
+                        _p = (getattr(tm, _book, None) or {}).get(symbol)
+                        if isinstance(_p, dict) and _p.get('side') in ('LONG', 'SHORT'):
+                            _pside = _p['side']
+                            break
+            if _pside in ('LONG', 'SHORT'):
+                ex = self._exit_cache.get(symbol)
+                if ex is None or ex.get('dir') != _pside:
+                    self._compute_setup(symbol, _pside, settings)   # side-effect: fills _exit_cache
+                    ex = self._exit_cache.get(symbol)
+                out['exit'] = ex
+            else:
+                out['exit'] = None
+        except Exception:
+            out['exit'] = None
         # ── ₿ BTC banner state (for the overlay's BTC line) ──
         try:
             bdir = self._btc_verdict_dir if self._btc_verdict_dir in ('LONG', 'SHORT') else None

@@ -2927,6 +2927,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
                         <th title="Сила бабла (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
+                        <th title="🚪 SMC-готовність ВИХОДУ (grade_exit): наскільки картина розвернулась ПРОТИ позиції — структура/ММ/CTR проти + виснаженість + зона-фліп + ціль. Вище = час закривати. РАДНИК (не закриває сам).">Готовність виходу</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
@@ -2935,7 +2936,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="15" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -10590,7 +10591,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-shadow-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="15" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
