@@ -7127,44 +7127,45 @@ function decisionRecap(es) {
 // positions tables (real + paper) so they all render the same verdict.
 // ⚡ CTR cell for the ❤️ queues: reads as the badge does — «🟢 LONG-нахил X%» /
 // «🔴 SHORT-нахил X%» / «⚪ нейтрально X%» coloured, + small coloured crossover.
+// CTR — кожен TF у ФІКСОВАНИЙ сегмент-колонку (15m / 1H / 4H), кросовер окремим
+// фіксованим слотом, а ⚠ (застарілий кросовер) — ще окремим слотом-стовпчиком,
+// щоб по всіх рядках усе стояло рівно, без «петляння» кінця.
 function ffCtrCell(c) {
-    if (!c || c.stc == null) return '<span style="color:#555">—</span>';
-    const stc = Number(c.stc);
-    // 50-split lean: stc>50 → SHORT-нахил (🔴), <50 → LONG (🟢). Компактно —
-    // сірий TF-тег як роздільник + КОЛЬОРОВІ цифри за напрямком (щоб не зливались).
-    const col = stc > 50 ? '#f87171' : (stc < 50 ? '#4ade80' : '#9aa3b5');
-    const icon0 = stc > 50 ? '🔴' : (stc < 50 ? '🟢' : '⚪');
-    const leanPct = Math.round(Math.abs(stc - 50) / 50 * 100);
-    const tf0 = (c.tf && c.tf !== 'scanner') ? String(c.tf).toLowerCase() : '';
-    let html = `<span style="color:#8b93a7">${tf0}</span>`
-        + `<span title="STC ${stc.toFixed(1)}/100 · впевненість ${leanPct}%" style="color:${col};font-weight:700">${icon0} ${Math.round(stc)} · ${leanPct}%</span>`;
-    if (c.stc_1h != null) {
-        const s1 = Number(c.stc_1h);
-        const b1 = s1 > 50 ? '🔴' : (s1 < 50 ? '🟢' : '⚪');
-        const c1 = s1 > 50 ? '#f87171' : (s1 < 50 ? '#4ade80' : '#9aa3b5');
-        const p1 = Math.round(Math.abs(s1 - 50) / 50 * 100);
-        html += ` <span style="color:#8b93a7;font-size:0.62rem">· 1H</span>`
-            + `<span title="CTR 1H · STC ${s1.toFixed(1)}/100 · впевненість ${p1}%" style="color:${c1};font-size:0.62rem;font-weight:700"> ${b1} ${Math.round(s1)} · ${p1}%</span>`;
+    const W = 104;   // фіксована ширина сегмента одного TF
+    if (!c || c.stc == null) {
+        return `<span style="display:inline-flex;align-items:center;white-space:nowrap">`
+            + `<span style="display:inline-block;width:${W * 3 + 62}px;color:#555">—</span></span>`;
     }
-    if (c.stc_4h != null) {
-        const s4 = Number(c.stc_4h);
-        const b4 = s4 > 50 ? '🔴' : (s4 < 50 ? '🟢' : '⚪');
-        const c4 = s4 > 50 ? '#f87171' : (s4 < 50 ? '#4ade80' : '#9aa3b5');
-        const p4 = Math.round(Math.abs(s4 - 50) / 50 * 100);
-        html += ` <span style="color:#8b93a7;font-size:0.62rem">· 4H</span>`
-            + `<span title="CTR 4H · STC ${s4.toFixed(1)}/100 · впевненість ${p4}%" style="color:${c4};font-size:0.62rem;font-weight:700"> ${b4} ${Math.round(s4)} · ${p4}%</span>`;
+    function seg(tf, stc) {
+        if (stc == null) {
+            return `<span style="display:inline-block;width:${W}px;font-size:0.68rem;color:#556">`
+                + `<span style="display:inline-block;width:26px;color:#8b93a7">${tf}</span>—</span>`;
+        }
+        const s = Number(stc);
+        const dot = s > 50 ? '🔴' : (s < 50 ? '🟢' : '⚪');
+        const col = s > 50 ? '#f87171' : (s < 50 ? '#4ade80' : '#9aa3b5');
+        const p = Math.round(Math.abs(s - 50) / 50 * 100);
+        return `<span title="CTR ${tf} · STC ${s.toFixed(1)}/100 · впевненість ${p}%" `
+            + `style="display:inline-block;width:${W}px;white-space:nowrap;font-size:0.68rem">`
+            + `<span style="display:inline-block;width:26px;color:#8b93a7">${tf}</span>`
+            + `${dot} <span style="color:${col};font-weight:700;font-variant-numeric:tabular-nums">${Math.round(s)}·${p}%</span></span>`;
     }
-    // Останній CTR-кросовер — компактний кольоровий хвіст (🔴2b), сірий якщо застарілий.
+    let html = seg('15m', c.stc) + seg('1H', c.stc_1h) + seg('4H', c.stc_4h);
+    // Кросовер — окремий фіксований слот; ⚠ (застарілий) — ще окремий слот.
+    let cross = '', warn = '';
     if (c.last_dir) {
         const icon = c.last_dir === 'LONG' ? '🟢' : '🔴';
         const age = c.last_signal_age_bars;
         const stale = (age != null && age > 6);
         const ageStr = age == null ? '' : (age === 0 ? 'now' : age + 'b');
         const crossCol = stale ? '#6b7280' : (c.last_dir === 'LONG' ? '#4ade80' : '#f87171');
-        html += ` <span title="Останній CTR-кросовер: ${c.last_dir} ${ageStr}${stale ? ' (застарілий)' : ''}" `
-            + `style="font-size:0.6rem;color:${crossCol}">${icon}${ageStr}${stale ? '⚠️' : ''}</span>`;
+        cross = `<span title="Останній CTR-кросовер: ${c.last_dir} ${ageStr}${stale ? ' (застарілий)' : ''}" `
+            + `style="color:${crossCol};font-size:0.66rem">${icon}${ageStr}</span>`;
+        warn = stale ? '<span title="Кросовер застарілий (>6 барів)" style="color:#fbbf24">⚠️</span>' : '';
     }
-    return html;
+    return `<span style="display:inline-flex;align-items:center;white-space:nowrap">${html}`
+        + `<span style="display:inline-block;width:46px;text-align:left">${cross}</span>`
+        + `<span style="display:inline-block;width:16px;text-align:center;font-size:0.72rem">${warn}</span></span>`;
 }
 
 // SCORE label EN→UA (internal values stay English for logic; UI shows Ukrainian).
@@ -7216,33 +7217,33 @@ function ffScoreTip(sc) {
     t += `\nШкала якості: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25.`;
     return t.replace(/"/g, '&quot;');
 }
-// SCORE-бейдж: акцент-колір + число + вердикт + тонкий 0–100 метр під ним.
+// SCORE-бейдж: ФІКСОВАНА ширина пілюлі + внутрішні фіксовані під-колонки
+// (стрілка / % / вердикт), а знак попередження (⚠) — ОКРЕМИМ фіксованим слотом
+// праворуч, щоб по всіх рядках усе стояло рівно в стовпчик.
 function ffScoreBadgeHTML(sc) {
-    if (!sc || !sc.label) return '<span style="color:#555">—</span>';
+    if (!sc || !sc.label) return `<span style="display:inline-flex"><span style="width:150px"></span><span style="width:18px;text-align:center;color:#555">—</span></span>`;
     const c = sc.color || '#94a3b8';
     const scd = sc.dir || null;
-    const arrow = scd === 'LONG'
-        ? '<span style="color:#22c55e;font-weight:900">▲</span>'
-        : (scd === 'SHORT' ? '<span style="color:#ef4444;font-weight:900">▼</span>'
-                           : '<span style="color:#8b93a7">•</span>');
+    const arrow = scd === 'LONG' ? '▲' : (scd === 'SHORT' ? '▼' : '•');
+    const acol = scd === 'LONG' ? '#22c55e' : (scd === 'SHORT' ? '#ef4444' : '#8b93a7');
     const pct = Math.max(0, Math.min(100, Number(sc.score) || 0));
     const warn = sc.conflict
-        ? ' <span title="Конфлікт: тиск ММ і рух ціни в різні боки">⚠️</span>'
+        ? '<span title="Конфлікт: тиск ММ і рух ціни в різні боки" style="color:#fbbf24">⚠️</span>'
         : '';
-    // Шрифт як у колонці «ММ»: успадкований розмір клітинки + tabular-nums, без
-    // обводки (лише лёгкий фон-пілюля + тонкий 0–100 метр).
-    return `<span title="${ffScoreTip(sc)}" style="display:inline-flex;flex-direction:column;gap:3px;`
-        + `min-width:120px;padding:3px 8px;border-radius:8px;background:${c}1f">`
-        + `<span style="display:flex;align-items:center;gap:6px;line-height:1;white-space:nowrap">`
-        +   arrow
-        +   `<b style="color:${c};font-variant-numeric:tabular-nums">${sc.score}%</b>`
-        +   `<span style="font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600">${scoreLabelUA(sc.label)}</span>`
-        +   warn
+    return `<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">`
+        + `<span title="${ffScoreTip(sc)}" style="display:inline-flex;flex-direction:column;gap:3px;`
+        +   `width:150px;box-sizing:border-box;padding:3px 8px;border-radius:8px;background:${c}1f">`
+        +   `<span style="display:flex;align-items:center;line-height:1">`
+        +     `<span style="width:12px;text-align:center;flex:none;color:${acol};font-weight:900">${arrow}</span>`
+        +     `<b style="width:42px;text-align:right;flex:none;color:${c};font-variant-numeric:tabular-nums">${sc.score}%</b>`
+        +     `<span style="flex:1;min-width:0;text-align:left;padding-left:7px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">${scoreLabelUA(sc.label)}</span>`
+        +   `</span>`
+        +   `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
+        +     `<span style="display:block;height:100%;width:${pct}%;border-radius:2px;`
+        +       `background:linear-gradient(90deg,${scShade(c, 0.5)},${scShade(c, -0.3)})"></span>`
+        +   `</span>`
         + `</span>`
-        + `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
-        +   `<span style="display:block;height:100%;width:${pct}%;border-radius:2px;`
-        +     `background:linear-gradient(90deg,${scShade(c, 0.5)},${scShade(c, -0.3)})"></span>`
-        + `</span>`
+        + `<span style="width:18px;text-align:center;flex:none;font-size:0.8rem">${warn}</span>`
         + `</span>`;
 }
 
@@ -7250,26 +7251,35 @@ function ffScoreBadgeHTML(sc) {
 // (наскільки зійшовся SMC-конфлюенс для входу), а не команда: реальний вхід
 // ухвалює двигун/Черга-2. 🎯 = суворий збіг усіх ключових блоків.
 function ffSetupCell(su) {
-    if (!su || !su.ok) return '<span style="color:#555">—</span>';
+    if (!su || !su.ok) return `<span style="display:inline-flex"><span style="width:150px"></span><span style="width:18px;text-align:center;color:#555">—</span></span>`;
     const c = su.color || '#94a3b8';
-    const hot = su.hot ? ' 🎯' : '';
+    const scd = su.dir || null;
+    const arrow = scd === 'LONG' ? '▲' : (scd === 'SHORT' ? '▼' : '•');
+    const acol = scd === 'LONG' ? '#22c55e' : (scd === 'SHORT' ? '#ef4444' : '#8b93a7');
     const ic = { ok: '✓', warn: '≈', miss: '·' };
     let tip = `SMC-готовність ${su.score}/100 (${su.grade}) — напрямок ${su.dir}.\n`
             + `Сетап на 1H (4H — старший контекст). Це підказка, не команда: `
             + `реальний вхід ухвалює двигун/Черга-2.\n`;
     (su.checks || []).forEach(ch => { tip += `\n${ic[ch.state] || '·'} ${ch.label}: ${ch.detail}`; });
     (su.vetoes || []).forEach(v => { tip += `\n⚠ ${v}`; });
+    // Прапорець-колонка праворуч: 🎯 (суворий збіг) або ⚠ (є вето) або порожньо.
+    const flag = su.hot ? '🎯' : ((su.vetoes && su.vetoes.length)
+        ? '<span title="Є обмеження (вето)" style="color:#fbbf24">⚠️</span>' : '');
     const pct = Math.max(0, Math.min(100, Number(su.score) || 0));
-    return `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;flex-direction:column;gap:3px;`
-        + `min-width:118px;padding:3px 8px;border-radius:8px;background:${c}1f">`
-        + `<span style="display:flex;align-items:center;gap:6px;line-height:1;white-space:nowrap">`
-        +   `<b style="color:${c};font-variant-numeric:tabular-nums">${su.score}%</b>`
-        +   `<span style="font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600">${su.grade}${hot}</span>`
+    return `<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">`
+        + `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;flex-direction:column;gap:3px;`
+        +   `width:150px;box-sizing:border-box;padding:3px 8px;border-radius:8px;background:${c}1f">`
+        +   `<span style="display:flex;align-items:center;line-height:1">`
+        +     `<span style="width:12px;text-align:center;flex:none;color:${acol};font-weight:900">${arrow}</span>`
+        +     `<b style="width:42px;text-align:right;flex:none;color:${c};font-variant-numeric:tabular-nums">${su.score}%</b>`
+        +     `<span style="flex:1;min-width:0;text-align:left;padding-left:7px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">${su.grade}</span>`
+        +   `</span>`
+        +   `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
+        +     `<span style="display:block;height:100%;width:${pct}%;border-radius:2px;`
+        +       `background:linear-gradient(90deg,${scShade(c, 0.5)},${scShade(c, -0.3)})"></span>`
+        +   `</span>`
         + `</span>`
-        + `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
-        +   `<span style="display:block;height:100%;width:${pct}%;border-radius:2px;`
-        +     `background:linear-gradient(90deg,${scShade(c, 0.5)},${scShade(c, -0.3)})"></span>`
-        + `</span>`
+        + `<span style="width:18px;text-align:center;flex:none;font-size:0.8rem">${flag}</span>`
         + `</span>`;
 }
 
@@ -8850,7 +8860,7 @@ function renderFuelFilter(d) {
                 return `<tr style="${_rowBg}">
                     <td style="font-weight:600">${a.spike ? `<span title="Аномальний ріст: різкий рух ціни ${a.spike_move != null ? (a.spike_move >= 0 ? '+' : '') + a.spike_move + '% ' : ''}+ зростання обсягу — варто розглянути" style="margin-right:4px;cursor:default">🚀</span>` : ''}<span onclick="showFundingHistory('${a.symbol}')" title="Історія монети (архів)" style="cursor:pointer;margin-right:4px">📜</span><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
                     <td>${dirHtml}</td>
-                    <td style="font-size:0.72rem">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}${a.paused ? ' <span title="Сесія на паузі (WAIT) — тримається за напрямком" style="color:#fbbf24;font-weight:700">⏸</span>' : ''}</td>
+                    <td style="font-size:0.72rem"><span style="display:inline-flex;align-items:center">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}<span style="width:18px;text-align:center;flex:none;color:#fbbf24;font-weight:700"${a.paused ? ' title="Сесія на паузі (WAIT) — тримається за напрямком"' : ''}>${a.paused ? '⏸' : ''}</span></span></td>
                     <td style="white-space:nowrap">${ffScoreBadgeHTML(a.score)}</td>
                     <td style="white-space:nowrap">${ffSetupCell(a.setup)}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>

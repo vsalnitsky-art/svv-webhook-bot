@@ -621,30 +621,31 @@
   }
 
   // SCORE-бейдж — 1:1 з ботом: акцент-колір + число% + вердикт + 0–100 метр.
+  // Фіксована ширина пілюлі + внутрішні фіксовані під-колонки, ⚠ окремим слотом.
   function ffScoreBadgeHTML(sc) {
-    if (!sc || !sc.label) return '<span style="color:#555">—</span>';
+    if (!sc || !sc.label) return '<span style="display:inline-flex"><span style="width:150px"></span><span style="width:18px;text-align:center;color:#555">—</span></span>';
     var c = sc.color || "#94a3b8";
     var scd = sc.dir || null;
-    var arrow = scd === "LONG"
-      ? '<span style="color:#22c55e;font-weight:900">▲</span>'
-      : (scd === "SHORT" ? '<span style="color:#ef4444;font-weight:900">▼</span>'
-        : '<span style="color:#8b93a7">•</span>');
+    var arrow = scd === "LONG" ? "▲" : (scd === "SHORT" ? "▼" : "•");
+    var acol = scd === "LONG" ? "#22c55e" : (scd === "SHORT" ? "#ef4444" : "#8b93a7");
     var pct = Math.max(0, Math.min(100, Number(sc.score) || 0));
     var warn = sc.conflict
-      ? ' <span title="Конфлікт: тиск ММ і рух ціни в різні боки">⚠️</span>'
+      ? '<span title="Конфлікт: тиск ММ і рух ціни в різні боки" style="color:#fbbf24">⚠️</span>'
       : "";
-    return '<span title="' + ffScoreTip(sc) + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
-      'min-width:120px;padding:3px 8px;border-radius:8px;background:' + c + '1f">' +
-      '<span style="display:flex;align-items:center;gap:6px;line-height:1;white-space:nowrap">' +
-      arrow +
-      '<b style="color:' + c + ';font-variant-numeric:tabular-nums">' + sc.score + '%</b>' +
-      '<span style="font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600">' + scoreLabelUA(sc.label) + "</span>" +
-      warn +
+    return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
+      '<span title="' + ffScoreTip(sc) + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
+      'width:150px;box-sizing:border-box;padding:3px 8px;border-radius:8px;background:' + c + '1f">' +
+      '<span style="display:flex;align-items:center;line-height:1">' +
+      '<span style="width:12px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
+      '<b style="width:42px;text-align:right;flex:none;color:' + c + ';font-variant-numeric:tabular-nums">' + sc.score + '%</b>' +
+      '<span style="flex:1;min-width:0;text-align:left;padding-left:7px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">' + scoreLabelUA(sc.label) + "</span>" +
       "</span>" +
       '<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">' +
       '<span style="display:block;height:100%;width:' + pct + '%;border-radius:2px;' +
       'background:linear-gradient(90deg,' + scShade(c, 0.5) + "," + scShade(c, -0.3) + ')"></span>' +
       "</span>" +
+      "</span>" +
+      '<span style="width:18px;text-align:center;flex:none;font-size:0.8rem">' + warn + "</span>" +
       "</span>";
   }
 
@@ -667,25 +668,34 @@
   // 🎯 SMC «Готовність сетапу» (1H) — 1:1 з ботом. Підказка (наскільки зійшовся
   // SMC-конфлюенс), не команда: реальний вхід ухвалює двигун/Черга-2.
   function ffSetupCell(su) {
-    if (!su || !su.ok) return '<span style="color:#555">—</span>';
+    if (!su || !su.ok) return '<span style="display:inline-flex"><span style="width:150px"></span><span style="width:18px;text-align:center;color:#555">—</span></span>';
     var c = su.color || "#94a3b8";
-    var hot = su.hot ? " 🎯" : "";
+    var scd = su.dir || null;
+    var arrow = scd === "LONG" ? "▲" : (scd === "SHORT" ? "▼" : "•");
+    var acol = scd === "LONG" ? "#22c55e" : (scd === "SHORT" ? "#ef4444" : "#8b93a7");
     var ic = { ok: "✓", warn: "≈", miss: "·" };
     var tip = "SMC-готовність " + su.score + "/100 (" + su.grade + ") — напрямок " + su.dir + ".\n" +
       "Сетап на 1H (4H — старший контекст). Це підказка, не команда: реальний вхід ухвалює двигун/Черга-2.\n";
     (su.checks || []).forEach(function (ch) { tip += "\n" + (ic[ch.state] || "·") + " " + ch.label + ": " + ch.detail; });
     (su.vetoes || []).forEach(function (v) { tip += "\n⚠ " + v; });
+    var flag = su.hot ? "🎯" : ((su.vetoes && su.vetoes.length)
+      ? '<span title="Є обмеження (вето)" style="color:#fbbf24">⚠️</span>' : "");
     var pct = Math.max(0, Math.min(100, Number(su.score) || 0));
-    return '<span title="' + tip.replace(/"/g, "&quot;") + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
-      'min-width:118px;padding:3px 8px;border-radius:8px;background:' + c + '1f">' +
-      '<span style="display:flex;align-items:center;gap:6px;line-height:1;white-space:nowrap">' +
-      '<b style="color:' + c + ';font-variant-numeric:tabular-nums">' + su.score + '%</b>' +
-      '<span style="font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600">' + su.grade + hot + "</span>" +
+    return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
+      '<span title="' + tip.replace(/"/g, "&quot;") + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
+      'width:150px;box-sizing:border-box;padding:3px 8px;border-radius:8px;background:' + c + '1f">' +
+      '<span style="display:flex;align-items:center;line-height:1">' +
+      '<span style="width:12px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
+      '<b style="width:42px;text-align:right;flex:none;color:' + c + ';font-variant-numeric:tabular-nums">' + su.score + '%</b>' +
+      '<span style="flex:1;min-width:0;text-align:left;padding-left:7px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">' + su.grade + "</span>" +
       "</span>" +
       '<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">' +
       '<span style="display:block;height:100%;width:' + pct + '%;border-radius:2px;' +
       'background:linear-gradient(90deg,' + scShade(c, 0.5) + "," + scShade(c, -0.3) + ')"></span>' +
-      "</span></span>";
+      "</span>" +
+      "</span>" +
+      '<span style="width:18px;text-align:center;flex:none;font-size:0.8rem">' + flag + "</span>" +
+      "</span>";
   }
 
   function renderFunding(rowsArr) {
