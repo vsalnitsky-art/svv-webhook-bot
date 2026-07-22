@@ -398,6 +398,8 @@ DEFAULT_SETTINGS = {
     # чіткому півцілому значенні (0.5/1.0/…/4.0 %) БЕЗ змін довше за поріг.
     'funding_gold_tg': True,             # вмик/вимк оповіщення
     'funding_gold_freeze_min': 60,       # скільки хв золотий funding має «застигнути»
+    'funding_gold_tol': 0.005,           # «чистота» рівня: |rate−0.5×N| < tol (−1.007% → НЕ чистий)
+    'funding_gold_cooldown_min': 240,    # той самий (монета+рівень) не частіше, ніж раз на N хв
 }
 
 
@@ -465,6 +467,10 @@ class FuelFilterDaemon:
         self._gold_since: Dict[str, float] = {}
         self._gold_alerted: set = set()
         self._gold_step: Dict[str, float] = {}   # sym → який рівень band (0.5/1.0/…)
+        # Крос-епізодний антиспам: {f"{sym}:{step}": ts_останнього_алерту}. Живе
+        # довше за епізод (переживає вихід монети зі сканера й повернення), тож
+        # той самий рівень не дублюється щопівгодини. Чиститься за TTL кулдауна.
+        self._gold_alert_at: Dict[str, float] = {}
         # 🎯 Per-coin 🎯-recommendation episodes (persisted to DB, survives restart):
         #   {sym: {count, first_at, active:{start_at,start_price,opp_start}|None,
         #          history:[ {start_at,end_at,dur_sec,start_price,end_price,
@@ -3927,13 +3933,21 @@ class FuelFilterDaemon:
             _d = token.split('-', 1)[1]
             _emoji = '🟢' if _d == 'LONG' else '🔴'
             _side = _d if _d in ('LONG', 'SHORT') else ''
-            msg = f"#BTCUSDT направлення\n{_emoji}{_side} - START TRADING"
+            # Запам'ятати старт сеансу, щоб STOP міг показати тривалість.
+            self._btc_session_started_at = now
+            # ▶️ START — зелений акцент дії + напрямок сеансу окремим рядком.
+            msg = (f"▶️ <b>START</b> — торгівля відкрита\n"
+                   f"#BTCUSDT · напрямок сеансу: {_emoji} <b>{_side}</b>")
         else:
-            # STOP — show the direction it was running in before stopping.
+            # STOP — інша дія-іконка (⏹) + тривалість сеансу, щоб не зливалось зі START.
             _sd = self._btc_last_dir
             _emoji = '🟢' if _sd == 'LONG' else ('🔴' if _sd == 'SHORT' else '⚪')
             _side = _sd if _sd in ('LONG', 'SHORT') else ''
-            msg = f"#BTCUSDT направлення\n{_emoji}{_side} - STOP TRADING"
+            _started = getattr(self, '_btc_session_started_at', None)
+            _dur = f" · тривав <b>{self._fmt_dur(now - _started)}</b>" if _started else ""
+            self._btc_session_started_at = None
+            msg = (f"⏹ <b>STOP</b> — торгівля на паузі\n"
+                   f"#BTCUSDT · сеанс {_emoji} <b>{_side}</b>{_dur}")
         # ✅ ЛИШЕ в ГРУПУ (категорія ₿ BTCUSDT) — БЕЗ приватної копії в головний
         # бот (на прохання: ці повідомлення мають іти тільки в групу, у свою тему).
         self._broadcast_users('btc', 'notify_btc', msg)
@@ -4146,6 +4160,18 @@ class FuelFilterDaemon:
             _gold_freeze = max(60, int(s.get('funding_gold_freeze_min', 60) or 60) * 60)
         except (TypeError, ValueError):
             _gold_freeze = 3600
+        try:
+            _gold_tol = float(s.get('funding_gold_tol', 0.005) or 0.005)
+        except (TypeError, ValueError):
+            _gold_tol = 0.005
+        try:
+            _gold_cool = max(0, int(s.get('funding_gold_cooldown_min', 240) or 240) * 60)
+        except (TypeError, ValueError):
+            _gold_cool = 14400
+        # Прибрати прострочені записи антиспаму (старші за кулдаун).
+        if _gold_cool > 0:
+            for _k in [k for k, t0 in self._gold_alert_at.items() if (now - t0) > _gold_cool]:
+                self._gold_alert_at.pop(_k, None)
         with self._lock:
             items = list(self._anomalies.items())
         live = set()
@@ -4189,7 +4215,7 @@ class FuelFilterDaemon:
             # ✦ Gold funding «froze» — the rate is a stable clean value. Track how
             # long it has stayed gold; once ≥ freeze threshold, fire ONE TG for
             # this gold episode. Any change (loses gold) resets the timer + flag.
-            _step = self._gold_funding_step(a)
+            _step = self._gold_funding_step(a, _gold_tol)
             if _step is not None:
                 # Епізод привʼязаний до РІВНЯ (band). Дрібне дрижання в межах того
                 # самого рівня (−0.502↔−0.501) НЕ скидає таймер і не передзапускає
@@ -4200,13 +4226,19 @@ class FuelFilterDaemon:
                     self._gold_since[sym] = now
                     self._gold_alerted.discard(sym)
                 _since = self._gold_since.get(sym, now)
-                if (_gold_on and sym not in self._gold_alerted
+                # Крос-епізодний кулдаун: той самий (монета+рівень) не частіше,
+                # ніж раз на _gold_cool — навіть якщо монета виходила зі сканера
+                # й повернулась (саме це давало 4× DEXEUSDT −2.500% за годину).
+                _ck = f"{sym}:{_step}"
+                _cooled = (now - self._gold_alert_at.get(_ck, 0)) >= _gold_cool
+                if (_gold_on and sym not in self._gold_alerted and _cooled
                         and (now - _since) >= _gold_freeze):
                     try:
                         self._send_gold_alert(sym, a, _step, int(now - _since))
                     except Exception as e:
                         print(f"[FF-Gold] alert send error {sym}: {e}")
                     self._gold_alerted.add(sym)
+                    self._gold_alert_at[_ck] = now
             else:
                 self._gold_since.pop(sym, None)
                 self._gold_step.pop(sym, None)
@@ -4289,10 +4321,10 @@ class FuelFilterDaemon:
         self._broadcast_users('funding', 'notify_spike', body)
 
     @staticmethod
-    def _gold_funding_step(a: Dict):
+    def _gold_funding_step(a: Dict, tol: float = 0.005):
         """✦ Return the clean half-integer LEVEL (0.5..4.0) if this coin's funding
         sits on a clean value band — |rate| ≈ a 0.5-multiple in [0.5,4] (tolerance
-        0.01). Else None.
+        `tol`, дефолт 0.005 → −1.007% вважається НЕ чистим і не тригерить). Else None.
 
         ВАЖЛИВО: НЕ звіряємо зі змінами vs prev_rate. Дрібне дрижання (−0.502 ↔
         −0.501) лишається в тій самій band-і рівня 0.5 → це той самий епізод.
@@ -4307,7 +4339,7 @@ class FuelFilterDaemon:
             return None
         av = abs(r)
         step = round(av / 0.5) * 0.5
-        if abs(av - step) < 0.01 and 0.5 <= step <= 4:
+        if abs(av - step) < tol and 0.5 <= step <= 4:
             return step
         return None
 
