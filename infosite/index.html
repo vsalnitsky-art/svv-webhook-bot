@@ -7,6 +7,20 @@
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
   <link rel="stylesheet" href="style.css?v=53">
+  <!-- ⏳ Анти-блимання: доки JS не перевірив авторизацію (клас app-ready ще не
+       додано на <body>), не показуємо ні дашборд, ні hero — інакше на секунду
+       спалахує «бот-панель» перед екраном входу. Після перевірки showData()
+       додає app-ready і сам вирішує, що показати. -->
+  <style>
+    body:not(.app-ready) .topbar,
+    body:not(.app-ready) .wrap > .card { display: none !important; }
+    body:not(.app-ready) .wrap::before {
+      content: ""; display: block; width: 34px; height: 34px; margin: 22vh auto 0;
+      border: 3px solid rgba(148,163,184,.3); border-top-color: #94a3b8;
+      border-radius: 50%; animation: vsvspin .8s linear infinite;
+    }
+    @keyframes vsvspin { to { transform: rotate(360deg); } }
+  </style>
 </head>
 <body>
   <!-- 🧑‍🔬 Ейнштейн-іконка (оригінальна карикатура з язиком, замість 🧠) — SVG-спрайт -->

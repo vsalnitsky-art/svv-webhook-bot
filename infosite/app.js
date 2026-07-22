@@ -844,6 +844,8 @@
   // top-bar labels (login/register links + connection pill) are hidden so the
   // hero is the only call-to-action.
   function showData(ok) {
+    // Перша перевірка авторизації завершена → знімаємо анти-блимання-заслінку.
+    document.body.classList.add("app-ready");
     var hero = $("#auth-hero");
     if (hero) hero.style.display = ok ? "none" : "";
     ["banner-card", "potential-card", "btc-card", "funding-card", "trades-card"].forEach(function (id) {
