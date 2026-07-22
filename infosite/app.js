@@ -557,7 +557,7 @@
     var acol = isLong ? "#22c55e" : (isShort ? "#ef4444" : "#8b93a7");
     if (now == null) {
       return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
-        '<span style="display:inline-flex;flex-direction:column;gap:3px;width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:#94a3b81f">' +
+        '<span style="display:inline-flex;flex-direction:column;gap:3px;width:144px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:#94a3b81f">' +
         '<span style="display:flex;align-items:center;line-height:1">' +
         '<span style="width:11px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
         '<b style="width:37px;text-align:right;flex:none;color:#8b93a7">—</b><span style="flex:1"></span></span>' +
@@ -578,9 +578,9 @@
     var bandTxt = neutralDir ? "рівновага" : String(b.txt).replace(" тиск", "");
     var bandCol = neutralDir ? "#8b93a7" : b.col;
     var labelSeg = hideBand ? '<span style="flex:1"></span>' :
-      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;color:' + bandCol + ';font-weight:600;overflow:hidden;text-overflow:ellipsis">' + bandTxt + "</span>";
+      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;color:' + bandCol + ';font-weight:600;white-space:nowrap">' + bandTxt + "</span>";
     return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
-      '<span title="' + FUEL_TOOLTIP + '" style="display:inline-flex;flex-direction:column;gap:3px;width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + col + '1f">' +
+      '<span title="' + FUEL_TOOLTIP + '" style="display:inline-flex;flex-direction:column;gap:3px;width:144px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + col + '1f">' +
       '<span style="display:flex;align-items:center;line-height:1">' +
       '<span style="width:11px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
       '<b style="width:37px;text-align:right;flex:none;color:' + col + ';font-variant-numeric:tabular-nums">' + Math.round(now) + "%</b>" +
@@ -638,7 +638,7 @@
   // SCORE-бейдж — 1:1 з ботом: акцент-колір + число% + вердикт + 0–100 метр.
   // Фіксована ширина пілюлі + внутрішні фіксовані під-колонки, ⚠ окремим слотом.
   function ffScoreBadgeHTML(sc) {
-    if (!sc || !sc.label) return '<span style="display:inline-flex"><span style="width:124px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>';
+    if (!sc || !sc.label) return '<span style="display:inline-flex"><span style="width:144px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>';
     var c = sc.color || "#94a3b8";
     var scd = sc.dir || null;
     var arrow = scd === "LONG" ? "▲" : (scd === "SHORT" ? "▼" : "•");
@@ -649,11 +649,11 @@
       : "";
     return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
       '<span title="' + ffScoreTip(sc) + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
-      'width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + c + '1f">' +
+      'width:144px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + c + '1f">' +
       '<span style="display:flex;align-items:center;line-height:1">' +
       '<span style="width:11px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
       '<b style="width:37px;text-align:right;flex:none;color:' + c + ';font-variant-numeric:tabular-nums">' + sc.score + '%</b>' +
-      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">' + scoreLabelUA(sc.label) + "</span>" +
+      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;white-space:nowrap">' + scoreLabelUA(sc.label) + "</span>" +
       "</span>" +
       '<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">' +
       '<span style="display:block;height:100%;width:' + pct + '%;border-radius:2px;' +
@@ -683,7 +683,7 @@
   // 🎯 SMC «Готовність сетапу» (1H) — 1:1 з ботом. Підказка (наскільки зійшовся
   // SMC-конфлюенс), не команда: реальний вхід ухвалює двигун/Черга-2.
   function ffSetupCell(su) {
-    if (!su || !su.ok) return '<span style="display:inline-flex"><span style="width:124px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>';
+    if (!su || !su.ok) return '<span style="display:inline-flex"><span style="width:144px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>';
     var c = su.color || "#94a3b8";
     var scd = su.dir || null;
     var arrow = scd === "LONG" ? "▲" : (scd === "SHORT" ? "▼" : "•");
@@ -698,11 +698,11 @@
     var pct = Math.max(0, Math.min(100, Number(su.score) || 0));
     return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
       '<span title="' + tip.replace(/"/g, "&quot;") + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
-      'width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + c + '1f">' +
+      'width:144px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + c + '1f">' +
       '<span style="display:flex;align-items:center;line-height:1">' +
       '<span style="width:11px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
       '<b style="width:37px;text-align:right;flex:none;color:' + c + ';font-variant-numeric:tabular-nums">' + su.score + '%</b>' +
-      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">' + su.grade + "</span>" +
+      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;white-space:nowrap">' + su.grade + "</span>" +
       "</span>" +
       '<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">' +
       '<span style="display:block;height:100%;width:' + pct + '%;border-radius:2px;' +
@@ -715,7 +715,7 @@
 
   // 🚪 SMC «Готовність виходу» для відкритої позиції — 1:1 з ботом (шкала виходу).
   function ffExitCell(ex) {
-    if (!ex || !ex.ok) return '<span style="display:inline-flex"><span style="width:124px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>';
+    if (!ex || !ex.ok) return '<span style="display:inline-flex"><span style="width:144px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>';
     var c = ex.color || "#94a3b8";
     var scd = ex.dir || null;
     var arrow = scd === "LONG" ? "▲" : (scd === "SHORT" ? "▼" : "•");
@@ -728,11 +728,11 @@
     var pct = Math.max(0, Math.min(100, Number(ex.score) || 0));
     return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
       '<span title="' + tip.replace(/"/g, "&quot;") + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
-      'width:124px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + c + '1f">' +
+      'width:144px;box-sizing:border-box;padding:3px 7px;border-radius:8px;background:' + c + '1f">' +
       '<span style="display:flex;align-items:center;line-height:1">' +
       '<span style="width:11px;text-align:center;flex:none;color:' + acol + ';font-weight:900">' + arrow + "</span>" +
       '<b style="width:37px;text-align:right;flex:none;color:' + c + ';font-variant-numeric:tabular-nums">' + ex.score + '%</b>' +
-      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;overflow:hidden;text-overflow:ellipsis">' + ex.grade + "</span>" +
+      '<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;white-space:nowrap">' + ex.grade + "</span>" +
       "</span>" +
       '<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">' +
       '<span style="display:block;height:100%;width:' + pct + '%;border-radius:2px;' +
