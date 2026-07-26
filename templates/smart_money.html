@@ -688,6 +688,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
    а не перенос. Компактніший паддинг, щоб більше колонок влазило без скролу. */
 #ff-timers-table th, #ff-timers-table td,
 #ff-timers2-table th, #ff-timers2-table td { white-space: nowrap; padding: 5px 6px; }
+/* Таблиці ВІДКРИТИХ угод (real + paper): теж кожен рядок в ОДНУ стрічку —
+   символ і клітинки не переносяться; надто широка → скрол контейнера. */
+#tm-open-table th, #tm-open-table td,
+#tm-shadow-open-table th, #tm-shadow-open-table td { white-space: nowrap; padding: 5px 6px; }
 /* 💰 Funding table: keep EVERY cell on ONE line (symbol never wraps under the
    icons), stretch to full container width, and stay COMPACT (smaller font +
    tight padding) so all columns fit on screen without a scrollbar. */
@@ -2866,7 +2870,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
                         <th title="Сила бабла (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
                         <th title="🚪 SMC-готовність ВИХОДУ (grade_exit): наскільки картина розвернулась ПРОТИ позиції — структура/ММ/CTR проти + виснаженість + зона-фліп + ціль. Вище = час закривати. РАДНИК (не закриває сам).">Готовність виходу</th>
                         <th>Qty</th>
@@ -2878,7 +2881,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="15" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -2930,7 +2933,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
                         <th title="Сила бабла (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
                         <th title="🚪 SMC-готовність ВИХОДУ (grade_exit): наскільки картина розвернулась ПРОТИ позиції — структура/ММ/CTR проти + виснаженість + зона-фліп + ціль. Вище = час закривати. РАДНИК (не закриває сам).">Готовність виходу</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
@@ -2941,7 +2943,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -10504,7 +10506,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="15" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -10536,7 +10538,6 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
-                    <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
                     <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev, true)}</td>
                     <td style="line-height:1.15">${ffExitCell(p.exit_grade)}</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
@@ -10596,7 +10597,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-shadow-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -10620,7 +10621,6 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
-                    <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
                     <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev, true)}</td>
                     <td style="line-height:1.15">${ffExitCell(p.exit_grade)}</td>
                     ${manualSlTpCellsHTML(p, true)}

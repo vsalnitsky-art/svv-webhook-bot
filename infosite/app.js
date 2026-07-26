@@ -904,7 +904,7 @@
       .concat(paper.map(function (p) { return { p: p, m: "paper" }; }));
     $("#trades-count").textContent = rows.length;
     if (!rows.length) {
-      tb.innerHTML = '<tr><td colspan="12" class="muted">немає відкритих угод</td></tr>';
+      tb.innerHTML = '<tr><td colspan="11" class="muted">немає відкритих угод</td></tr>';
       return;
     }
     var now = Math.floor(Date.now() / 1000);
@@ -924,7 +924,7 @@
         "<td>" + pnlCell(p.pnl_pct) + "</td>" +
         '<td style="font-size:0.72rem">' + ffFuelCell(p.fuel_dir || p.side, p.fuel_str, p.fuel_str_prev, true) + "</td>" +
         "<td>" + ffExitCell(p.exit_grade) + "</td>" +
-        "<td>" + exhCell(p.exhaustion) + "</td>" +
+
         "<td>" + sltpCell(p.manual_sl) + "</td>" +
         "<td>" + sltpCell(p.manual_tp) + "</td>" +
         "<td>" + timer + "</td>" +
