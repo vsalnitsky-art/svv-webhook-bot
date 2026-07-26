@@ -2738,17 +2738,26 @@ class SMCScanner:
                 )
                 lob = r.get('latest_ob')
                 if lob:
-                    v = float(lob.get('ob_volume') or 0)
+                    v = float(lob.get('ob_volume') or 0)     # quote (USD turnover) з клайнів
                     lo = float(lob.get('ob_low_volume') or 0)
                     hi = float(lob.get('ob_high_volume') or 0)
                     st = lob.get('start_time') or 0
+                    top = lob.get('top')
+                    bottom = lob.get('bottom')
+                    # 🔧 КАЛІБРУВАННЯ під TradingView: наші клайни несуть QUOTE-обсяг
+                    # (USD), а індикатор TV показує BASE (контракти). Переводимо
+                    # quote→base ≈ обсяг / середню ціну OB, щоб число збігалося з TV.
+                    _mid = ((float(top) + float(bottom)) / 2.0) if (top and bottom) else 0.0
+                    vol_base = (v / _mid) if _mid > 0 else v
+                    # % = дисбаланс між двома половинами OB (min/max), як у Pine.
+                    _pct = (round(min(lo, hi) / max(lo, hi) * 100) if max(lo, hi) > 0 else None)
                     vob = {
                         'type': lob.get('type'),                      # 'Bull' | 'Bear'
-                        'top': lob.get('top'),
-                        'bottom': lob.get('bottom'),
+                        'top': top,
+                        'bottom': bottom,
                         'start_time_sec': int(st // 1000) if st > 1e12 else int(st),
-                        'volume': round(v),
-                        'pct': (round(min(lo, hi) / v * 100) if v > 0 else None),
+                        'volume': round(vol_base),
+                        'pct': _pct,
                         'breaker': bool(lob.get('breaker')),
                         'tf': vtf,
                     }

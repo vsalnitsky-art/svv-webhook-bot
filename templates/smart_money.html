@@ -3647,11 +3647,28 @@ class VolOBPrimitive {
                         if (ob.dashed && ctx.setLineDash) ctx.setLineDash([6 * hr, 4 * hr]);
                         ctx.strokeRect(x1, yT, x2 - x1, h);
                         if (ctx.setLineDash) ctx.setLineDash([]);
-                        if (ob.label) {
-                            ctx.font = '700 ' + Math.round(11 * vr) + 'px -apple-system,Segoe UI,Roboto,sans-serif';
-                            ctx.textBaseline = 'top';
-                            ctx.fillStyle = ob.textColor;
-                            ctx.fillText(ob.label, x1 + 7 * hr, yT + 4 * vr);
+                        // Мітка — у середині OB по вертикалі, з ПРАВОГО боку (як у TradingView).
+                        if (ob.labelMain || ob.labelSub) {
+                            const fs = Math.round(11 * vr);
+                            const rx = x2 - 14 * hr;              // відступ від правого краю
+                            const cy = (yT + yBot) / 2;           // вертикальний центр боксу
+                            const lh = fs * 1.3;
+                            ctx.textAlign = 'right';
+                            ctx.textBaseline = 'middle';
+                            if (ob.labelMain && ob.labelSub) {
+                                ctx.font = '700 ' + fs + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+                                ctx.fillStyle = ob.textColor;
+                                ctx.fillText(ob.labelMain, rx, cy - lh / 2);
+                                ctx.font = Math.round(10 * vr) + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+                                ctx.fillStyle = ob.subColor || ob.textColor;
+                                ctx.fillText(ob.labelSub, rx, cy + lh / 2);
+                            } else {
+                                ctx.font = '700 ' + fs + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+                                ctx.fillStyle = ob.textColor;
+                                ctx.fillText(ob.labelMain || ob.labelSub, rx, cy);
+                            }
+                            ctx.textAlign = 'left';
+                            ctx.textBaseline = 'alphabetic';
                         }
                     });
                 },
@@ -5435,13 +5452,17 @@ async function loadChart() {
                     : String(vob.volume || 0);
                 const pctS = (vob.pct != null) ? ` (${vob.pct}%)` : '';
                 const tfS = (vob.tf || d.volumized_timeframe || '1h').toUpperCase();
+                const tfWord = tfS.replace('M', ' Min').replace(' MIN', ' Min')
+                    .replace('H', ' Hour').replace('D', ' Day');
                 volObPrim.setOB({
                     startSec: vob.start_time_sec,
                     top: vob.top, bottom: vob.bottom,
                     stroke: stroke, fill: fill,
-                    textColor: isBull ? '#4ade80' : '#f87171',
+                    textColor: isBull ? '#c7f9d4' : '#fcd0d0',
+                    subColor: isBull ? '#86efac' : '#fca5a5',
                     dashed: !!vob.breaker,
-                    label: `${volK}${pctS} · ${tfS} OB${vob.breaker ? ' ✕' : ''}`,
+                    labelMain: `${volK}${pctS}`,
+                    labelSub: `${tfWord} OB${vob.breaker ? ' ✕' : ''}`,
                 });
             } else {
                 volObPrim.setOB(null);   // немає OB → нічого не малюємо
@@ -5570,12 +5591,11 @@ async function loadChart() {
         // This is the user's primary "which way to trade" indicator
         // working alongside the configured CHoCH/BOS Alert mode.
         const volBadge = document.getElementById('sm-volumized-badge');
-        // NOTE: volEnabled and volMeta are already declared above in the
-        // "Volumized OB box on chart" block (same function scope). Pure
-        // `const` redeclaration in the same scope throws SyntaxError at
-        // parse time, which kills the entire script and leaves the UI
-        // empty (watchlist=0/50, no API calls fired). Reuse them.
-        const volTrend = d.volumized_trend;  // 'LONG'|'SHORT'|null
+        // Дані Volumized OB тепер приходять у d.volumized_ob (один останній OB).
+        const volEnabled = !!d.volumized_enabled;
+        const volMeta = d.volumized_ob || {};
+        const volTrend = d.volumized_ob
+            ? (d.volumized_ob.type === 'Bull' ? 'LONG' : 'SHORT') : null;
         const volTf = (d.volumized_timeframe || '1h').toUpperCase();
         if (volBadge && volEnabled && volTrend) {
             const icon = (volTrend === 'LONG') ? '🟢' : '🔴';
@@ -5591,7 +5611,7 @@ async function loadChart() {
             // Build tooltip with OB price range + volume
             const top = (typeof volMeta.top === 'number') ? volMeta.top.toFixed(8).replace(/\.?0+$/, '') : '?';
             const bottom = (typeof volMeta.bottom === 'number') ? volMeta.bottom.toFixed(8).replace(/\.?0+$/, '') : '?';
-            const vol = (typeof volMeta.ob_volume === 'number') ? volMeta.ob_volume.toLocaleString() : '?';
+            const vol = (typeof volMeta.volume === 'number') ? volMeta.volume.toLocaleString() : '?';
             const breakerNote = volMeta.breaker
                 ? '\n⚠ OB is in BREAKER state (price has invalidated it but it remains tracked until removal).'
                 : '';
@@ -5599,7 +5619,7 @@ async function loadChart() {
                 ? '\n(Combined from multiple overlapping OBs)' : '';
             volBadge.title = [
                 `Volumized OB Trend — ${volTrend}`,
-                `Latest OB type: ${volMeta.ob_type || '?'}`,
+                `Latest OB type: ${volMeta.type || '?'}`,
                 `OB range: ${bottom} — ${top}`,
                 `OB volume (3-bar impulse): ${vol}`,
                 `Timeframe: ${volTf}`,
