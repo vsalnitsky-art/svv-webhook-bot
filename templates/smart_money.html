@@ -1485,7 +1485,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </div>
                     <div class="sm-control-item">
                         <label>Swings Points:</label>
-                        <input type="number" id="sm-swings-input" value="50" disabled style="width:55px">
+                        <input type="number" id="sm-swings-input" value="50" min="10" max="200" style="width:55px" onchange="updateSwings()">
                     </div>
                     <div class="sm-control-item"
                          title="Таймфрейм для ⚡ CTR / STC (Cyclic Trend Reversal). ЗАГАЛЬНИЙ і НЕЗАЛЕЖНИЙ від фільтрів — задає, на яких свічках рахується CTR. Діє скрізь: бейдж на графіку, WATCHLIST і черги FF (усі читають один кеш). Стандарт 1H.">
@@ -4460,6 +4460,7 @@ async function loadSettings() {
             if (recEl) recEl.value = String(s.recency_minutes != null ? s.recency_minutes : 0);
             document.getElementById('sm-timeframe').value = s.timeframe || '5m';
             document.getElementById('sm-internal-size').value = s.internal_size || 5;
+            { const _sw = document.getElementById('sm-swings-input'); if (_sw && document.activeElement !== _sw) _sw.value = s.swing_size || 50; }
             document.getElementById('sm-dedup').checked = s.deduplicate_signals !== false;
             const _refireEl = document.getElementById('sm-refire');
             if (_refireEl) _refireEl.checked = !!s.smc_refire_same_dir;
@@ -4774,6 +4775,26 @@ async function updateTimeframe() {
         updateSettingsSummary();
         if (currentSymbol) loadChart();
     } catch (err) { alert('Timeframe update error: ' + err); }
+}
+
+async function updateSwings() {
+    const v = parseInt(document.getElementById('sm-swings-input').value);
+    if (isNaN(v) || v < 10 || v > 200) {
+        loadSettings();
+        return;
+    }
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({swing_size: v}),
+        });
+        lastChartSymbol = null;
+        lastOhlcLength = 0;
+        lastEventsKey = '';
+        updateSettingsSummary();
+        if (currentSymbol) loadChart();
+    } catch (err) { alert('Swings points update error: ' + err); }
 }
 
 async function updateInternalSize() {
