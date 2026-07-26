@@ -2706,6 +2706,57 @@ class SMCScanner:
     # Public API — Chart data
     # ========================================
     
+    def _latest_volumized_ob(self, symbol: str):
+        """🟦 Останній Volumized OB (Pine «Volumized Order Blocks») на
+        volumized_timeframe, порахований з ТОЧНИМИ параметрами користувача
+        (swing_length=5 → саме 5). 30с-кеш, щоб чарт-поллінг не смикав біржу.
+        Повертає {type, top, bottom, start_time_sec, volume, pct, breaker, tf} або None."""
+        if not self._settings.get('use_volumized_ob', True):
+            return None
+        now = time.time()
+        cache = getattr(self, '_vob_cache', None)
+        if cache is None:
+            self._vob_cache = cache = {}
+        hit = cache.get(symbol)
+        if hit and (now - hit[0]) < 30:
+            return hit[1]
+        vob = None
+        try:
+            from detection.market_data import get_market_data
+            from detection.volumized_ob import detect_volumized_obs
+            vtf = self._settings.get('volumized_timeframe', '1h')
+            md = get_market_data()
+            vk = md.fetch_klines(symbol, limit=400, interval=vtf) if md else None
+            if vk and len(vk) > 20:
+                r = detect_volumized_obs(
+                    vk,
+                    swing_length=int(self._settings.get('volumized_swing_length', 10)),
+                    ob_end_method=self._settings.get('volumized_ob_end_method', 'Wick'),
+                    max_atr_mult=float(self._settings.get('volumized_max_atr_mult', 3.5)),
+                    zone_count=self._settings.get('volumized_zone_count', 'Low'),
+                    combine_obs=bool(self._settings.get('volumized_combine_obs', True)),
+                )
+                lob = r.get('latest_ob')
+                if lob:
+                    v = float(lob.get('ob_volume') or 0)
+                    lo = float(lob.get('ob_low_volume') or 0)
+                    hi = float(lob.get('ob_high_volume') or 0)
+                    st = lob.get('start_time') or 0
+                    vob = {
+                        'type': lob.get('type'),                      # 'Bull' | 'Bear'
+                        'top': lob.get('top'),
+                        'bottom': lob.get('bottom'),
+                        'start_time_sec': int(st // 1000) if st > 1e12 else int(st),
+                        'volume': round(v),
+                        'pct': (round(min(lo, hi) / v * 100) if v > 0 else None),
+                        'breaker': bool(lob.get('breaker')),
+                        'tf': vtf,
+                    }
+        except Exception as e:
+            print(f"[SMC] volumized OB chart error {symbol}: {e}")
+        cache[symbol] = (now, vob)
+        return vob
+
     def get_chart_data(self, symbol: str) -> Dict:
         """Return klines + structure for chart rendering. Uses cache if fresh."""
         symbol = self._normalize_symbol(symbol)
@@ -3002,6 +3053,11 @@ class SMCScanner:
             # ob_filter_enabled=False we still publish last_ob for display.
             'ob_filter_enabled': bool(self._settings.get('ob_filter_enabled', False)),
             'ob_filter_timeframe': ob_tf_used,
+            # 🟦 Останній Volumized OB (для малювання ОДНОГО боксу на графіку,
+            # як у Pine «Volumized Order Blocks»). Порахований з ТОЧНИМИ параметрами.
+            'volumized_ob': self._latest_volumized_ob(symbol),
+            'volumized_enabled': bool(self._settings.get('use_volumized_ob', True)),
+            'volumized_timeframe': self._settings.get('volumized_timeframe', '1h'),
             # === PD Zone (Premium/Discount/Equilibrium) badge data ===
             # Where current price sits within the latest swing range on
             # the Structure Detection TF. UI renders as a badge in the

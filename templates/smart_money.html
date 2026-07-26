@@ -3611,6 +3611,54 @@ let activeLines = [];
 // only clears when structure events change. Without this separation
 // OB lines would accumulate on the chart every kline-only update.
 let volumizedObLines = [];
+// 🟦 Volumized OB — залитий прямокутник + мітка обсягу (LightweightCharts 4.1
+// primitive), як у Pine «Volumized Order Blocks». Малює ОДИН останній OB, що
+// тягнеться від свого бару до правого краю графіка.
+let volObPrim = null;
+class VolOBPrimitive {
+    constructor() { this._ob = null; this._chart = null; this._series = null; this._req = null; }
+    attached(p) { this._chart = p.chart; this._series = p.series; this._req = p.requestUpdate; }
+    detached() { this._chart = null; this._series = null; this._req = null; }
+    setOB(ob) { this._ob = ob; if (this._req) this._req(); }
+    paneViews() {
+        const self = this;
+        return [{
+            renderer: () => ({
+                draw: (target) => {
+                    const ob = self._ob;
+                    if (!ob || !self._series || !self._chart) return;
+                    const x1raw = self._chart.timeScale().timeToCoordinate(ob.startSec);
+                    const yA = self._series.priceToCoordinate(ob.top);
+                    const yB = self._series.priceToCoordinate(ob.bottom);
+                    if (x1raw == null || yA == null || yB == null) return;
+                    target.useBitmapCoordinateSpace((scope) => {
+                        const ctx = scope.context;
+                        const hr = scope.horizontalPixelRatio, vr = scope.verticalPixelRatio;
+                        const x1 = Math.max(0, x1raw * hr);
+                        const x2 = scope.bitmapSize.width;            // до правого краю
+                        const yT = Math.min(yA, yB) * vr;
+                        const yBot = Math.max(yA, yB) * vr;
+                        const h = yBot - yT;
+                        if (x2 <= x1 || h <= 0) return;
+                        ctx.fillStyle = ob.fill;
+                        ctx.fillRect(x1, yT, x2 - x1, h);
+                        ctx.strokeStyle = ob.stroke;
+                        ctx.lineWidth = Math.max(1, Math.round(1.2 * hr));
+                        if (ob.dashed && ctx.setLineDash) ctx.setLineDash([6 * hr, 4 * hr]);
+                        ctx.strokeRect(x1, yT, x2 - x1, h);
+                        if (ctx.setLineDash) ctx.setLineDash([]);
+                        if (ob.label) {
+                            ctx.font = '700 ' + Math.round(11 * vr) + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+                            ctx.textBaseline = 'top';
+                            ctx.fillStyle = ob.textColor;
+                            ctx.fillText(ob.label, x1 + 7 * hr, yT + 4 * vr);
+                        }
+                    });
+                },
+            }),
+        }];
+    }
+}
 let activeMarkers = [];
 let showPivots = false; // HH/HL/LH/LL toggle, default OFF
 let showStructure = true;  // BOS/CHoCH toggle, default ON
@@ -4888,7 +4936,14 @@ function ensureChart() {
         wickUpColor: '#bbbbbb',
         wickDownColor: '#7a7a7a',
     });
-    
+    // 🟦 Прикріпити Volumized OB primitive (залитий бокс). Один раз на створення.
+    try {
+        if (candleSeries.attachPrimitive) {
+            volObPrim = new VolOBPrimitive();
+            candleSeries.attachPrimitive(volObPrim);
+        }
+    } catch (e) { volObPrim = null; }
+
     // Resize handler
     new ResizeObserver(() => {
         chart.applyOptions({
@@ -5363,72 +5418,36 @@ async function loadChart() {
         }
         lastEventsKey = eventsKey;
         
-        // === Volumized OB box on chart ===
-        // Render the LATEST formed OB (Bull or Bear) as two horizontal
-        // lines (top + bottom of the OB box) spanning from the OB's
-        // start_time to the rightmost visible bar. LightweightCharts
-        // has no native rectangle primitive, but two thin lines give
-        // a clean visual ref without any custom canvas drawing.
-        //
-        // Color: green for Bull OB (LONG trend), red for Bear OB (SHORT).
-        // Style: solid for active OB, DASHED for breaker (still tracked
-        // but price has invalidated it). Wider line for emphasis.
-        //
-        // OB lines live in their own storage (volumizedObLines) — we
-        // clear and rebuild them on every render so the latest trend is
-        // always visible without accumulating stale lines across ticks.
-        volumizedObLines.forEach(s => {
-            try { chart.removeSeries(s); } catch (e) {}
-        });
-        volumizedObLines = [];
-        const volMeta = d.volumized_trend_meta || {};
-        const volEnabled = !!d.volumized_enabled;
-        if (volEnabled && volMeta.start_time_sec
-                && typeof volMeta.top === 'number'
-                && typeof volMeta.bottom === 'number'
-                && ohlc.length > 0) {
-            const startT = volMeta.start_time_sec;
-            const endT = ohlc[ohlc.length - 1].time;
-            // Guard against negative span (OB from "future" — shouldn't
-            // happen but if it does, skip rendering to avoid LightWeight
-            // throwing on out-of-order data).
-            if (endT > startT) {
-                const isBull = volMeta.ob_type === 'Bull';
-                const isBreaker = !!volMeta.breaker;
-                const obColor = isBull ? '#16a34a' : '#dc2626';   // green / red
-                const obStyle = isBreaker ? 2 : 0;                 // dashed if breaker
-                const obWidth = isBreaker ? 1 : 2;                 // thinner if breaker
-                // Top line
-                const topLine = chart.addLineSeries({
-                    color: obColor,
-                    lineWidth: obWidth,
-                    lineStyle: obStyle,
-                    priceLineVisible: false,
-                    lastValueVisible: false,
-                    crosshairMarkerVisible: false,
+        // === Volumized OB box on chart (ОДИН останній) ===
+        // Малюємо ОДИН найсвіжіший Volumized OB залитим прямокутником + мітка
+        // «обсяг (%) · <TF> OB» — точно як у Pine «Volumized Order Blocks».
+        // Дані з бекенду (d.volumized_ob) пораховані з ТОЧНИМИ параметрами.
+        if (volObPrim) {
+            const vob = d.volumized_ob;
+            if (d.volumized_enabled && vob
+                    && typeof vob.top === 'number' && typeof vob.bottom === 'number'
+                    && vob.start_time_sec) {
+                const isBull = vob.type === 'Bull';
+                const stroke = isBull ? '#16a34a' : '#dc2626';       // зелений / червоний
+                const fill = isBull ? 'rgba(22,163,74,0.14)' : 'rgba(220,38,38,0.14)';
+                const volK = (vob.volume >= 1000)
+                    ? (vob.volume / 1000).toFixed(vob.volume >= 100000 ? 0 : 1) + 'K'
+                    : String(vob.volume || 0);
+                const pctS = (vob.pct != null) ? ` (${vob.pct}%)` : '';
+                const tfS = (vob.tf || d.volumized_timeframe || '1h').toUpperCase();
+                volObPrim.setOB({
+                    startSec: vob.start_time_sec,
+                    top: vob.top, bottom: vob.bottom,
+                    stroke: stroke, fill: fill,
+                    textColor: isBull ? '#4ade80' : '#f87171',
+                    dashed: !!vob.breaker,
+                    label: `${volK}${pctS} · ${tfS} OB${vob.breaker ? ' ✕' : ''}`,
                 });
-                topLine.setData([
-                    { time: startT, value: volMeta.top },
-                    { time: endT,   value: volMeta.top },
-                ]);
-                volumizedObLines.push(topLine);
-                // Bottom line
-                const botLine = chart.addLineSeries({
-                    color: obColor,
-                    lineWidth: obWidth,
-                    lineStyle: obStyle,
-                    priceLineVisible: false,
-                    lastValueVisible: false,
-                    crosshairMarkerVisible: false,
-                });
-                botLine.setData([
-                    { time: startT, value: volMeta.bottom },
-                    { time: endT,   value: volMeta.bottom },
-                ]);
-                volumizedObLines.push(botLine);
+            } else {
+                volObPrim.setOB(null);   // немає OB → нічого не малюємо
             }
         }
-        
+
         // === Trend badge ===
         // When HTF filter is active, the trend reflects HTF direction
         // (this is what alerts use). Label changes accordingly.
