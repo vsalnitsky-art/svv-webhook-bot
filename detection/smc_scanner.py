@@ -377,6 +377,10 @@ class SMCScanner:
         # Seeded from the most recent persisted signal marker at startup, so
         # dedup state survives restarts.
         self._last_signal_dir: Dict[str, str] = {}
+        # 🎯 Останній напрямок 1H OB (МАСТЕР стратегії) per symbol — {sym: 'LONG'|'SHORT'}.
+        # Дедуп скидається САМЕ на фліпі 1H OB (не Volumized): напрямок задає
+        # старший ТФ (Require OB Match), а 15m Vol OB + перший CHoCH — підпорядковані.
+        self._last_ob_dir: Dict[str, str] = {}
 
         # Last-known trend dot per symbol — {symbol: 1|-1|0}. Persisted to DB
         # after every scan and reloaded at startup so the watchlist consensus
@@ -1583,33 +1587,15 @@ class SMCScanner:
                                     'updated_at': time.time(),
                                 }
                             
-                            # === Auto-reset dedup on Vol direction flip ===
-                            # User-requested behavior: dedup state should
-                            # always be aligned with the current Volumized
-                            # direction. When Vol flips (LONG ↔ SHORT) we
-                            # reset _last_signal_dir for the symbol so the
-                            # next signal in the new direction is allowed
-                            # to fire (gate goes OPEN). Without this, a
-                            # symbol can get stuck "waiting for SHORT"
-                            # even after Vol has flipped to SHORT and the
-                            # previous LONG alert is no longer aligned with
-                            # the current trend phase.
-                            #
-                            # Conditions: only reset on REAL direction flips
-                            # (LONG → SHORT or SHORT → LONG). Transitions
-                            # involving None (warmup or rejected by ATR) do
-                            # NOT trigger a reset, since "direction
-                            # unknown" isn't a true flip.
-                            if (old_vol_trend in ('LONG', 'SHORT')
-                                    and new_vol_trend in ('LONG', 'SHORT')
-                                    and old_vol_trend != new_vol_trend):
-                                with self._lock:
-                                    prev = self._last_signal_dir.pop(symbol, None)
-                                if prev is not None:
-                                    self._persist_dedup_state()
-                                    print(f"[SMC] {symbol} Vol flipped "
-                                          f"{old_vol_trend}→{new_vol_trend}, "
-                                          f"dedup reset (was locked={prev})")
+                            # === Дедуп БІЛЬШЕ НЕ скидається на фліпі Volumized ===
+                            # Майстер-напрямок стратегії = 1H OB (Require OB Match).
+                            # Тому скид дедупу перенесено на фліп 1H OB (у
+                            # _update_smc_ob). Дрижання 15m Volumized у той самий
+                            # бік НЕ має давати другий сигнал у ту саму фазу 1H OB.
+                            # Volumized лишається ПІДПОРЯДКОВАНИМ гейтом (Layer 1
+                            # у _dedup_allows) — сигнал мусить збігатися з ним,
+                            # але напрямок «ситуації» задає саме 1H OB.
+                            pass
                         else:
                             # No TF data — clear cache so stale entries
                             # don't linger (e.g., user changed TF and
@@ -1784,6 +1770,24 @@ class SMCScanner:
         except Exception as e:
             if self._errors <= 5:
                 print(f"[SMC] DB upsert OB error for {symbol}@{ob_tf}: {e}")
+        # 🎯 МАСТЕР-напрямок = 1H OB. Коли він фліпає (BULLISH↔BEARISH) — «ситуація»
+        # змінилась → скидаємо дедуп, щоб перший ПРОТИЛЕЖНИЙ CHoCH міг спрацювати
+        # (за наявності протилежного 15m Vol OB — це перевіряє Layer 1). Дрижання
+        # Volumized у той самий бік дедуп НЕ скидає — сигнал один на фазу 1H OB.
+        try:
+            _nb = (ob or {}).get('bias')
+            _nd = 'LONG' if _nb == 'BULLISH' else ('SHORT' if _nb == 'BEARISH' else None)
+            if _nd in ('LONG', 'SHORT'):
+                _pd = self._last_ob_dir.get(symbol)
+                if _pd in ('LONG', 'SHORT') and _pd != _nd:
+                    with self._lock:
+                        _p = self._last_signal_dir.pop(symbol, None)
+                    if _p is not None:
+                        self._persist_dedup_state()
+                        print(f"[SMC] {symbol} 1H OB flipped {_pd}→{_nd}, dedup reset (was {_p})")
+                self._last_ob_dir[symbol] = _nd
+        except Exception:
+            pass
     
     def _ob_filter_allows(self, symbol: str, side: str) -> bool:
         """OB Filter gate decision for a fresh signal.
@@ -2419,8 +2423,9 @@ class SMCScanner:
         
         Layer 2 — Pine `proDeduplicateInput` behavior (when
         deduplicate_signals is True). Blocks signals matching the last
-        fired direction. After a Vol flip, _last_signal_dir is reset
-        (in the scan loop), so the next aligned signal can fire.
+        fired direction. Скид _last_signal_dir відбувається на фліпі
+        1H OB (МАСТЕР-напрямок, у _update_smc_ob), тож новий протилежний
+        сигнал дозволяється лише коли перевернувся 1H OB.
         
         Returns False (blocked) if EITHER layer rejects. Returns True
         (allowed) if both layers pass or if both are disabled.
