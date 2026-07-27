@@ -226,6 +226,10 @@ DEFAULT_SETTINGS = {
     #     хороші угоди падали в «СЕРЕДНІЙ» (38–52) під порогом 53. 43 ловить цей
     #     діапазон. 0 = лише HOT (без порога).
     'queue3_open_min_score': 43,
+    #   queue3_ignore_ctr — Черга-3 (розворотна) НЕ застосовує CTR-перевірку
+    #     «м'якого запобіжника» у _open (свіжий CHoCH+BOS завжди проти CTR, тож
+    #     ця перевірка ріже кожен розворот). МММ/виснаженість лишаються. Дефолт ON.
+    'queue3_ignore_ctr': True,
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -383,6 +387,10 @@ DEFAULT_SETTINGS = {
     'setup_grader_on': True,
     # Суворість 🎯 у грейдері: 'strict' (усі ключові блоки) / 'moderate' / 'soft'.
     'setup_strict': 'strict',
+    # Як CTR впливає на бал grade_setup: 'soft' (дефолт — партіал, БЕЗ вето,
+    # щоб CTR не різав розворотні CHoCH+BOS) / 'normal' (старе: 0 + вето кап≤43)
+    # / 'off' (CTR нейтральний). Впливає на «Готовність» усюди (черги, funding).
+    'setup_ctr_mode': 'soft',
     # ⚡ Скальперська «Готовність» ЛИШЕ для монет таблиці «💰 Funding — МММ»:
     # окремий SMC-грейд на швидкому TF (той самий grade_setup, інші свічки).
     # Не змішується з 1H-«Готовністю» черг; показується окремою колонкою.
@@ -730,6 +738,9 @@ class FuelFilterDaemon:
         s['queue2_enabled'] = bool(s.get('queue2_enabled', False))
         s['queue3_enabled'] = bool(s.get('queue3_enabled', False))
         s['readiness_log_enabled'] = bool(s.get('readiness_log_enabled', True))
+        s['queue3_ignore_ctr'] = bool(s.get('queue3_ignore_ctr', True))
+        if s.get('setup_ctr_mode') not in ('soft', 'normal', 'off'):
+            s['setup_ctr_mode'] = 'soft'
         try:
             s['queue3_open_min_score'] = max(0, min(100, int(s.get('queue3_open_min_score', 43) or 0)))
         except (TypeError, ValueError):
@@ -2883,12 +2894,16 @@ class FuelFilterDaemon:
         except Exception:
             pass
 
-    def _soft_safeguard(self, symbol: str, side: str, settings: Dict):
+    def _soft_safeguard(self, symbol: str, side: str, settings: Dict,
+                        skip_ctr: bool = False):
         """🛡 М'який запобіжник відкриття — (ok, reason). Блокує 3 найгірші
         входи, що системно давали збитки: слабкий тиск МММ, нейтральний або
         протилежний CTR, виснажений хід. Це НЕ повний SMC-грейдер, а три
         прості «вбивці» — щоб мінімально втручатись, але відсіяти мотлох.
-        Вимикається safeguard_on=False; пороги налаштовні."""
+        Вимикається safeguard_on=False; пороги налаштовні.
+        skip_ctr=True — НЕ застосовувати CTR-перевірку (для РОЗВОРОТНОЇ Черги-3:
+        свіжий CHoCH+BOS за визначенням проти CTR, тож ця перевірка ріже кожен
+        розворот). МММ і виснаженість лишаються активними."""
         # 1) МММ (сила бабло-тиску) — має бути хоча б помірним.
         try:
             mm_min = float(settings.get('safeguard_mm_min', 30) or 0)
@@ -2908,7 +2923,8 @@ class FuelFilterDaemon:
         if exh_max > 0 and exh is not None and float(exh) > exh_max:
             return (False, f"виснажено ({int(exh)}%>{int(exh_max)}%)")
         # 3) CTR — не нейтральний і не проти напрямку (немає даних → не блокуємо).
-        if bool(settings.get('safeguard_ctr', True)):
+        #    skip_ctr → пропускаємо (розворотна Черга-3 завжди проти CTR).
+        if not skip_ctr and bool(settings.get('safeguard_ctr', True)):
             try:
                 band = float(settings.get('queue2_ctr_neutral_pct', 10) or 0)
             except (TypeError, ValueError):
@@ -2922,7 +2938,7 @@ class FuelFilterDaemon:
         return (True, '')
 
     def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict,
-              opened_by: Optional[str] = None):
+              opened_by: Optional[str] = None, skip_ctr_safeguard: bool = False):
         """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
         store position data — it only tracks which symbols it opened and delegates
         the actual position to TM. Positions appear in Trade Manager or Test Mode
@@ -2950,7 +2966,8 @@ class FuelFilterDaemon:
         # хід — три «вбивці», що системно давали збиткові входи. Єдиний чок-пойнт
         # усіх шляхів відкриття (Черга-1/2, сигнал). Причину — у per-row діагностику.
         if settings.get('safeguard_on', True):
-            ok_sg, sg_reason = self._soft_safeguard(symbol, side, settings)
+            ok_sg, sg_reason = self._soft_safeguard(symbol, side, settings,
+                                                    skip_ctr=skip_ctr_safeguard)
             if not ok_sg:
                 print(f"[FuelFilter] {symbol}: 🛡 запобіжник — {sg_reason} → відмова у відкритті")
                 try:
@@ -4037,7 +4054,8 @@ class FuelFilterDaemon:
         }
         try:
             from detection.setup_grader import grade_setup, grade_exit
-            strict = settings.get('setup_strict', 'strict')
+            _gcfg = {'strict': settings.get('setup_strict', 'strict'),
+                     'ctr_mode': settings.get('setup_ctr_mode', 'soft')}
             # 🚪 «Готовність виходу» з того самого sig — у бік ВІДКРИТОЇ позиції.
             # Рахуємо лише для основного (1H) грейду; скальп-варіант не чіпає її.
             if write_exit:
@@ -4046,7 +4064,7 @@ class FuelFilterDaemon:
                 except Exception as _ee:
                     print(f"[FF-Exit] {symbol} grade error: {_ee}")
                     self._exit_cache.pop(symbol, None)
-            return grade_setup(d, sig, {'strict': strict})
+            return grade_setup(d, sig, _gcfg)
         except Exception as e:
             print(f"[FF-Setup] {symbol} grade error: {e}")
             return None
@@ -4866,7 +4884,8 @@ class FuelFilterDaemon:
             try:
                 opened = self._open(
                     sym, d, fuel, s,
-                    opened_by=f"🎯 Готовність {su.get('score')} {su.get('grade')} ({_why})")
+                    opened_by=f"🎯 Готовність {su.get('score')} {su.get('grade')} ({_why})",
+                    skip_ctr_safeguard=bool(s.get('queue3_ignore_ctr', True)))
                 if opened:
                     with self._lock:
                         self._timers[sym] = {'dir': d, 'since': now,
@@ -5891,6 +5910,8 @@ class FuelFilterDaemon:
                 {'k': 'Черга-2 (CTR-зони)', 'v': _on(q2)},
                 {'k': 'Черга-3 (Готовність)', 'v': _on(s.get('queue3_enabled', False))},
                 {'k': 'Q3: відкриття SCORE ≥', 'v': (s.get('queue3_open_min_score', 43) if int(s.get('queue3_open_min_score', 43) or 0) > 0 else 'лише HOT')},
+                {'k': 'Q3: ігнор CTR-запобіжник', 'v': _on(s.get('queue3_ignore_ctr', True))},
+                {'k': 'CTR у Готовності', 'v': {'soft': 'мʼяко', 'normal': 'звичайно', 'off': 'вимк'}.get(s.get('setup_ctr_mode', 'soft'), 'мʼяко')},
                 {'k': 'Q3: лог рішень', 'v': _on(s.get('readiness_log_enabled', True))},
                 {'k': 'Q2: hold-and-wait', 'v': _on(s.get('queue2_hold_and_wait', True))},
                 {'k': 'Q2: тримати при невід. CTR', 'v': _on(s.get('queue2_hold_unknown_ctr', True))},

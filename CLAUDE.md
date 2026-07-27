@@ -87,6 +87,13 @@
   сеансів ММ** — весь контекст ₿/CTR/зона/ліквідність уже ВСЕРЕДИНІ `grade_setup`
   (див. `detection/setup_grader.py`). Санітарні ворота: кнопки LONG/SHORT, дедуп,
   вже-в-угодах, ціна; `_open` тримає власну стелю виснаженості.
+- **CTR більше НЕ ріже розвороти (2 ворота прибрано).** Було: (а) вето «CTR проти
+  входу» в `grade_setup` капало бал ≤43; (б) `safeguard_ctr` у `_open` давав хард-
+  відмову «CTR проти». Свіжий CHoCH+BOS за визначенням проти CTR → ці ворота
+  різали КОЖЕН розворот. Тепер: `setup_ctr_mode` (дефолт **soft**) — CTR у грейді
+  партіал (0.2) без вето; `queue3_ignore_ctr` (дефолт **True**) — Q3 пропускає
+  CTR-перевірку safeguard (МММ/виснаженість лишаються). `_soft_safeguard(...,
+  skip_ctr=)`, `_open(..., skip_ctr_safeguard=)`. Режими CTR: soft/normal/off.
 - Читає готовий кеш `self._setup_cache[sym]` (той самий, що й колонка
   «Готовність»); `_pending3` додано в `targets` для `_refresh_setup_cache`.
 - **Повне логування** кожного рішення (opened/hold/skipped + розклад блоків) →
@@ -94,7 +101,8 @@
   `Q3`). Тумблер `readiness_log_enabled` (дефолт ON). Анти-флуд: незмінний
   hold/skip пишеться не частіше ніж раз на `READINESS_LOG_MIN_GAP` (300с).
 - Налаштування: `queue3_enabled` (дефолт OFF), `queue3_open_min_score` (43),
-  `readiness_log_enabled`. Q3-лог у `activity_log` несе пласкі `su_*` блоки
+  `queue3_ignore_ctr` (True), `setup_ctr_mode` (soft), `readiness_log_enabled`.
+  Q3-лог у `activity_log` несе пласкі `su_*` блоки
   (structure/poi/zone/liq/mm/timing/context) — щоб CSV-експорт був аналізовним.
 - API: `GET /api/fuel-filter/readiness-log?limit&symbol&outcome`;
   `POST /api/fuel-filter/queue3/{delete,clear}`. UI: тумблер + таблиця «Черга-3»

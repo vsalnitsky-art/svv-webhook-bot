@@ -2265,6 +2265,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1" title="Поріг відкриття Черги-3: відкриває, коли grade_setup HOT АБО SCORE ≥ цього значення. Строгий HOT (≥70 + усі блоки) на реальному потоці майже не спрацьовує, тож поріг дає стратегії реальні угоди. 53 ≈ «ХОРОШИЙ». 0 = лише HOT.">
                         SCORE ≥ <input type="number" id="ff-queue3-min-score" min="0" max="100" step="1" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace" onchange="saveFuelFilterSettings()">
                     </label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1;cursor:pointer" title="Розворотна Черга-3 НЕ застосовує CTR-перевірку «м'якого запобіжника» у відкритті (свіжий CHoCH+BOS завжди проти CTR, тож вона різала кожен розворот). МММ і виснаженість у запобіжнику лишаються. Рекомендовано УВІМК для розворотної стратегії.">
+                        <input type="checkbox" id="ff-queue3-ignore-ctr" onchange="saveFuelFilterSettings()"> 🚫 Ігнор CTR-запобіжник
+                    </label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1" title="Як CTR впливає на бал «Готовність» (grade_setup) УСЮДИ: мʼяко — партіал замість 0, БЕЗ жорсткого вето (розвороти не ріжуться); звичайно — старе (0 + вето кап≤43); вимк — CTR нейтральний.">
+                        CTR: <select id="ff-setup-ctr-mode" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace">
+                            <option value="soft">мʼяко</option><option value="normal">звичайно</option><option value="off">вимк</option>
+                        </select>
+                    </label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1;cursor:pointer" title="Писати кожне рішення «Готовності» (opened/hold/skipped + розклад блоків) у БД (sob_readiness_log) та Лог роботи бота для аналізу.">
                         <input type="checkbox" id="ff-readiness-log" onchange="saveFuelFilterSettings()"> 📝 Лог
                     </label>
@@ -8921,6 +8929,8 @@ function renderFuelFilter(d) {
     setIf('ff-queue2-enabled', !!s.queue2_enabled);
     setIf('ff-queue3-enabled', !!s.queue3_enabled);
     setIf('ff-queue3-min-score', String(s.queue3_open_min_score != null ? s.queue3_open_min_score : 43));
+    setIf('ff-queue3-ignore-ctr', s.queue3_ignore_ctr !== false);   // default true
+    setIf('ff-setup-ctr-mode', s.setup_ctr_mode || 'soft');
     setIf('ff-readiness-log', s.readiness_log_enabled !== false);   // default true
     // Queue 2 eject rules
     setIf('ff-q2-eject-ctr', !!s.queue2_eject_ctr);           // default false
@@ -9799,6 +9809,8 @@ async function saveFuelFilterSettings() {
         queue2_enabled: _c('ff-queue2-enabled'),
         queue3_enabled: _c('ff-queue3-enabled'),
         queue3_open_min_score: parseInt(_v('ff-queue3-min-score', '43') || '43', 10),
+        queue3_ignore_ctr: _c('ff-queue3-ignore-ctr'),
+        setup_ctr_mode: _v('ff-setup-ctr-mode', 'soft') || 'soft',
         readiness_log_enabled: _c('ff-readiness-log'),
         queue2_eject_ctr: _c('ff-q2-eject-ctr'),
         queue2_eject_ctr_pct: parseInt(_v('ff-q2-eject-ctr-pct', '20') || '20', 10),

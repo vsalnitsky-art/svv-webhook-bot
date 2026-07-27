@@ -51,6 +51,11 @@ _DEFAULTS = {
     'ctr_ob':         75,     # STC ≥ → перекупленість (погано для LONG)
     'ctr_os':         25,     # STC ≤ → перепроданість (погано для SHORT)
     'strict':         'strict',  # 'strict' | 'moderate' | 'soft'
+    # Як CTR впливає на бал: 'normal' — старе (0 на екстремумі + жорстке вето
+    # «CTR проти входу» кап≤43); 'soft' — партіал 0.2 замість 0, БЕЗ вето (щоб
+    # CTR не різав розворотні CHoCH+BOS, які за визначенням проти CTR); 'off' —
+    # CTR нейтральний (0.35, не впливає). ДЕФОЛТ 'soft'.
+    'ctr_mode':       'soft',
 }
 
 
@@ -226,6 +231,9 @@ def _block_mm(is_long, mm_dir, mm_strength, mm_conflict):
 
 
 def _block_timing(is_long, ctr1h, cfg):
+    mode = cfg.get('ctr_mode', 'soft')
+    if mode == 'off':
+        return 0.35, 'warn', 'CTR вимкнено (не впливає на бал)'
     stc = _g(ctr1h, 'stc')
     last = _g(ctr1h, 'last_dir')
     age = _g(ctr1h, 'age')
@@ -239,14 +247,20 @@ def _block_timing(is_long, ctr1h, cfg):
     parts = []
     up = (last == 'up' or last == 'LONG')
     dn = (last == 'down' or last == 'SHORT')
+    # На екстремумі ПРОТИ входу: 'normal' — жорсткий 0 (+ вето в grade_setup);
+    # 'soft' — партіал 0.2 (щоб CTR не обнуляв розворот і не тригерив вето).
     if is_long:
         if stc >= cfg['ctr_ob']:
+            if mode == 'soft':
+                return 0.2, 'warn', f'CTR перекуплено ({stc:.0f}) · мʼяко'
             return 0.0, 'miss', f'CTR перекуплено ({stc:.0f})'
         frac += _clamp((cfg['ctr_ob'] - stc) / cfg['ctr_ob']) * 0.6
         if up:
             frac += 0.25; parts.append('CTR кросовер вгору')
     else:
         if stc <= cfg['ctr_os']:
+            if mode == 'soft':
+                return 0.2, 'warn', f'CTR перепродано ({stc:.0f}) · мʼяко'
             return 0.0, 'miss', f'CTR перепродано ({stc:.0f})'
         frac += _clamp((stc - cfg['ctr_os']) / (100 - cfg['ctr_os'])) * 0.6
         if dn:
@@ -346,10 +360,12 @@ def grade_setup(direction: str, sig: Dict[str, Any], cfg: Optional[Dict] = None)
     if sig.get('mm_conflict'):
         vetoes.append('конфлікт ціна↔ММ')
         raw = min(raw, 57)
-    # CTR жорстко проти — таймінг-блок віддав 'miss' через екстремум.
-    if f_time == 0.0 and blocks.get('timing', 0) == 0.0:
+    # CTR жорстко проти — таймінг-блок віддав 'miss' через екстремум. ЛИШЕ у
+    # режимі 'normal': у 'soft'/'off' таймінг не 0 (0.2/0.35), тож розворотні
+    # CHoCH+BOS (за визначенням проти CTR) більше НЕ ріжуться цим вето.
+    if c.get('ctr_mode', 'soft') == 'normal' and f_time == 0.0 and blocks.get('timing', 0) == 0.0:
         _ct = next((x for x in checks if x['key'] == 'timing'), None)
-        if _ct and 'перекуплено' in _ct['detail'] or (_ct and 'перепродано' in _ct['detail']):
+        if _ct and ('перекуплено' in _ct['detail'] or 'перепродано' in _ct['detail']):
             vetoes.append('CTR проти входу')
             raw = min(raw, 43)      # не вище «СЛАБКИЙ» (лагідніше: 39→43)
 

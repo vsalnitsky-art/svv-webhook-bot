@@ -54,7 +54,7 @@ def _ff(queue3=True):
     ff._fuel_dir_smoothed = lambda sym: {'status': 'LONG', 'dir': 0.5,
                                          'mark_price': 100.0}
     ff.opened = []
-    ff._open = lambda sym, d, fuel, s, opened_by=None: (
+    ff._open = lambda sym, d, fuel, s, opened_by=None, skip_ctr_safeguard=False: (
         ff.opened.append((sym, d, opened_by)) or True)
     return ff, db
 
@@ -245,6 +245,20 @@ def test_scalp_alert_dir_filter():
     ff._scalp_setup_alert(ff.get_settings(), 2_000_000.0)
     assert ff.sent == [], 'dir filter SHORT → LONG signal suppressed'
     print('✓ scalp TG → direction filter works')
+
+
+# --- CTR safeguard skip for Q3 (reversal) opens ---
+def test_safeguard_skips_ctr_for_q3():
+    ff, db = _ff()
+    s = ff.get_settings()   # safeguard_on + safeguard_ctr default True
+    ff._fuel_str = {'ENAUSDT': 50}            # MMM ok (≥30)
+    ff._exhaustion = lambda sym, side: 10.0   # not exhausted
+    ff._ctr_state = lambda sym, band: ('SHORT', 80, 0)   # CTR AGAINST the LONG
+    ok, reason = ff._soft_safeguard('ENAUSDT', 'LONG', s, skip_ctr=True)
+    assert ok, f'skip_ctr must bypass the CTR safeguard, got: {reason}'
+    ok2, reason2 = ff._soft_safeguard('ENAUSDT', 'LONG', s, skip_ctr=False)
+    assert not ok2 and 'CTR' in reason2, (ok2, reason2)
+    print('✓ safeguard: skip_ctr bypasses CTR (Q3 reversals), normal still blocks')
 
 
 if __name__ == '__main__':
