@@ -8,7 +8,7 @@ confluence_direction — режим «Confluence» для Smart Direction.
 Виміри (кожен голосує LONG/+1 · SHORT/−1 · нейтр/0, зі своєю вагою):
   • Тренд (CTR-кросовер STC 15m/1H/4H) — напрямок тренду (last_dir, не рівень);
   • Forecast (Fib 1H/4H)             — проєкція ціни × впевненість;
-  • Бабло (ММ-модель)                — де застряг капітал (funding/L/S/кластери).
+  • Бабло (МММ-модель)                — де застряг капітал (funding/L/S/кластери).
 Гейт ВИСНАЖЕННЯ (не голос, а стоп): якщо рух у бік сигналу вже виснажений
 (exhaustion ≥ поріг) → сигнал «пізно» → WAIT.
 
@@ -98,8 +98,8 @@ def _dir_word(v: float, thr: float = 0.1) -> Optional[str]:
 
 
 def _bablo_vote(db, symbol: str, verdict_data: Optional[Dict] = None):
-    """Позиціювання/ліквідність. Комбінує ММ-модель (funding/L/S/кластери) з
-    liq-fuel «ММ знизу/зверху» (fa−fb)/den із compute_bias (той самий, що в
+    """Позиціювання/ліквідність. Комбінує МММ-модель (funding/L/S/кластери) з
+    liq-fuel «МММ знизу/зверху» (fa−fb)/den із compute_bias (той самий, що в
     причинах вердикту). → (vote[-1..1], detail)."""
     votes = []
     detail = []
@@ -109,7 +109,7 @@ def _bablo_vote(db, symbol: str, verdict_data: Optional[Dict] = None):
         if r:
             mmv = max(-1.0, min(1.0, float(r.get('dir') or 0.0)))
             votes.append(mmv)
-            detail.append({'name': 'ММ', 'dir': _dir_word(mmv),
+            detail.append({'name': 'МММ', 'dir': _dir_word(mmv),
                            'val': f"{int(r.get('strength') or 0)}%"})
     except Exception:
         pass
@@ -124,7 +124,7 @@ def _bablo_vote(db, symbol: str, verdict_data: Optional[Dict] = None):
     except Exception:
         pass
     if not votes:
-        return 0.0, [{'name': 'ММ', 'dir': None, 'val': 'рівновага'}]
+        return 0.0, [{'name': 'МММ', 'dir': None, 'val': 'рівновага'}]
     return sum(votes) / len(votes), detail
 
 
@@ -152,7 +152,7 @@ def compute_confluence(db, symbol: str, verdict_data: Optional[Dict] = None) -> 
         dims = [
             ('Тренд (CTR)', _DIM_W['trend'], t_vote, t_det),
             ('Forecast', _DIM_W['forecast'], f_vote, f_det),
-            ('Бабло (ММ)', _DIM_W['bablo'], b_vote, b_det),
+            ('Бабло (МММ)', _DIM_W['bablo'], b_vote, b_det),
         ]
         per_dim = []
         num = wsum = 0.0

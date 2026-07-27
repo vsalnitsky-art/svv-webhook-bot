@@ -306,10 +306,15 @@
     var isWl = function (t) { return wlWords.some(function (w) { return (t || "").indexOf(w) >= 0; }); };
     var reasonsHtml = (b.reasons || []).filter(function (r) { return !isWl(r[1]); }).map(function (r) {
       var kind = r[0], text = r[1], dir = r[2];
-      if ((text || "").indexOf("ММ") >= 0) {
-        var c = dir === "long" ? "#22ff88" : dir === "short" ? "#ff4d4d" : "#facc15";
-        return '<div class="rsn" style="color:' + c + ';font-weight:800;text-shadow:0 0 8px ' + c + '66">' +
-          (icons[kind] || "•") + " " + text + "</div>";
+      if ((text || "").indexOf("МММ") >= 0) {
+        // МММ-бабло — помітний бейдж (пілюля + бордюр + стрілка), спільна схема.
+        var c = dir === "long" ? "#22c55e" : dir === "short" ? "#ef4444" : "#94a3b8";
+        var bg = dir === "long" ? "rgba(34,197,94,0.16)" : dir === "short" ? "rgba(239,68,68,0.16)" : "rgba(148,163,184,0.14)";
+        var arw = dir === "long" ? "▲" : dir === "short" ? "▼" : "•";
+        return '<div class="rsn" style="display:inline-flex;align-items:center;gap:7px;margin:3px 0;' +
+          'padding:4px 11px;border-radius:8px;background:' + bg + ';border:1px solid ' + c + '66;' +
+          'color:' + c + ';font-weight:800;letter-spacing:0.2px;text-shadow:0 0 8px ' + c + '55">' +
+          '<b style="font-size:0.95rem">' + arw + '</b> ' + text + "</div>";
       }
       var st = dir === "long" ? ' style="color:#4ade80"' : dir === "short" ? ' style="color:#f87171"' : "";
       return '<div class="rsn"' + st + ">" + (icons[kind] || "•") + " " + text + "</div>";
@@ -438,7 +443,7 @@
   }
 
   // 💸 Money-rain: гроші «сиплються» в момент активності (₿ START / сильний
-  // тиск ММ). 1:1 з ботом. dir → відтінок: LONG=зелений, SHORT=червоний.
+  // тиск МММ). 1:1 з ботом. dir → відтінок: LONG=зелений, SHORT=червоний.
   function spawnMoneyRain(dir, label) {
     try {
       if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -498,7 +503,7 @@
     if ((strongNow && !prev.strong) || (strongNow && dirChanged)) {
       if (!(isStart && !prev.start)) {
         var pull = dir === "SHORT" ? "тягне ВНИЗ 🔴" : "тягне ВГОРУ 🟢";
-        spawnMoneyRain(dir, "💰 ММ " + pull + " · сильний тиск " + Math.round(strength) + "%");
+        spawnMoneyRain(dir, "💰 МММ " + pull + " · сильний тиск " + Math.round(strength) + "%");
       }
     }
     window._ffRainPrev = { start: isStart, strong: strongNow ? true : (strength < 45 ? false : prev.strong), dir: dir || prev.dir };
@@ -540,15 +545,15 @@
     return { txt: "потужний тиск", col: "#16a34a" };
   }
 
-  // Shared human explanation of the ММ widget (hover on the cell) — 1:1 з ботом.
-  var FUEL_TOOLTIP = "ММ — тиск маркетмейкера на ціну. Крапка = куди тисне: " +
+  // Shared human explanation of the МММ widget (hover on the cell) — 1:1 з ботом.
+  var FUEL_TOOLTIP = "МММ — тиск маркетмейкера на ціну. Крапка = куди тисне: " +
     "🟢 вгору (лонг) · 🔴 вниз (шорт) · ⚪ рівновага. 0–100% — сила тиску " +
-    "(наскільки односторонні ліквідації/паливо): рівновага <10 · легкий 10–30 · " +
+    "(наскільки односторонні ліквідації/МММ): рівновага <10 · легкий 10–30 · " +
     "помірний 30–60 · сильний 60–85 · потужний 85+. Стрілка ↑/↓ — тиск " +
     "міцніє/слабшає. Що сильніший тиск у бік крапки — то ймовірніший рух ціни туди.";
 
-  // ММ (fuel) strength cell — exact copy of the bot's ffFuelCell.
-  // ММ (fuel) cell — той самий дизайн, що й SCORE: пілюля 124px з тонованим фоном
+  // МММ (fuel) strength cell — exact copy of the bot's ffFuelCell.
+  // МММ (fuel) cell — той самий дизайн, що й SCORE: пілюля 124px з тонованим фоном
   // + метр 0–100 + фіксовані під-колонки [▲▼ / сила% / рівень], стрілка тренду
   // (↑↓→) окремим слотом праворуч. hideBand → рівень ховається (тісні таблиці).
   function ffFuelCell(dir, now, prev, hideBand) {
@@ -622,14 +627,14 @@
     var v2 = (c.ctr != null);
     var t = "SCORE " + sc.score + "/100 — ЯКІСТЬ сетапу в напрямку " + (sc.dir || "—") + " (не сигнал на відкриття).\n";
     if (v2) {
-      t += "Складники: запас 25% · імпульс 25% · тиск ММ 22% · CTR-тайминг 18% · утримання 10%.\n" +
-        "Зараз: запас " + p(c.room) + " · імпульс " + p(c.mom) + " · ММ " + p(c.fuel) + " · CTR " + p(c.ctr) + " · утримання " + p(c.hold) + ".";
+      t += "Складники: запас 25% · імпульс 25% · тиск МММ 22% · CTR-тайминг 18% · утримання 10%.\n" +
+        "Зараз: запас " + p(c.room) + " · імпульс " + p(c.mom) + " · МММ " + p(c.fuel) + " · CTR " + p(c.ctr) + " · утримання " + p(c.hold) + ".";
       if (c.vol != null && c.vol < 1) t += "\nОбсяг: тонка монета → SCORE ×" + c.vol + " (приглушено).";
     } else {
-      t += "Складники (вагомість): запас ходу 30% · імпульс свічок 30% · тиск ММ 25% · утримання 15%.\n" +
-        "Зараз: запас " + p(c.room) + " · імпульс " + p(c.mom) + " · ММ " + p(c.fuel) + " · утримання " + p(c.hold) + ".";
+      t += "Складники (вагомість): запас ходу 30% · імпульс свічок 30% · тиск МММ 25% · утримання 15%.\n" +
+        "Зараз: запас " + p(c.room) + " · імпульс " + p(c.mom) + " · МММ " + p(c.fuel) + " · утримання " + p(c.hold) + ".";
     }
-    if (sc.conflict) t += "\n⚠ Конфлікт: рух ціни проти тиску ММ → оцінку обмежено.";
+    if (sc.conflict) t += "\n⚠ Конфлікт: рух ціни проти тиску МММ → оцінку обмежено.";
     if (sc.exh != null) t += "\nВиснаженість ходу: " + Math.round(sc.exh) + "%" + (sc.exh >= 90 ? " (майже вичерпано)" : "") + ".";
     t += "\nШкала якості: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25.";
     return t.replace(/"/g, "&quot;");
@@ -645,7 +650,7 @@
     var acol = scd === "LONG" ? "#22c55e" : (scd === "SHORT" ? "#ef4444" : "#8b93a7");
     var pct = Math.max(0, Math.min(100, Number(sc.score) || 0));
     var warn = sc.conflict
-      ? '<span title="Конфлікт: тиск ММ і рух ціни в різні боки" style="color:#fbbf24">⚠️</span>'
+      ? '<span title="Конфлікт: тиск МММ і рух ціни в різні боки" style="color:#fbbf24">⚠️</span>'
       : "";
     return '<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">' +
       '<span title="' + ffScoreTip(sc) + '" style="display:inline-flex;flex-direction:column;gap:3px;' +
@@ -748,7 +753,7 @@
     $("#funding-count").textContent = rowsArr.length;
     var tb = $("#funding-table tbody");
     if (!rowsArr.length) {
-      tb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg" style="color:#8b93a7">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
+      tb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg" style="color:#8b93a7">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>';
       return;
     }
     tb.innerHTML = rowsArr.map(function (a) {
@@ -807,7 +812,7 @@
       var cdTxt = a.funding_next_ms
         ? '<span style="font-size:0.66rem;color:#9aa3b5">⏳ ' + fmtCountdown(a.funding_next_ms) + "</span>"
         : (a.funding_stale
-            ? '<span title="Вийшла з Funding Rate Scanner — тримається лише на ММ" style="font-size:0.62rem;color:#8b93a7">· норм. (на ММ)</span>'
+            ? '<span title="Вийшла з Funding Rate Scanner — тримається лише на МММ" style="font-size:0.62rem;color:#8b93a7">· норм. (на МММ)</span>'
             : "");
       var v = a.vol24h;
       var _volRange = (a.vol24h_min != null && a.vol24h_max != null)

@@ -450,7 +450,7 @@
 /* 🧑‍🔬 Ейнштейн-іконка (замість 🧠) — оригінальна карикатура, inline через <use> */
 .ein-icon { width: 1.6em; height: 1.6em; vertical-align: -0.36em; flex: none; }
 
-/* 💸 Money-rain — плей у момент активації (₿ START / сильний тиск ММ).
+/* 💸 Money-rain — плей у момент активації (₿ START / сильний тиск МММ).
    Гроші «сиплються» згори вниз із легким обертанням і гойданням. */
 #ff-money-rain {
     position: fixed; inset: 0; overflow: hidden;
@@ -1160,7 +1160,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <span style="font-size:0.72rem;color:#8b93a7">Аналітика:</span>
             <span id="sm-datasource-val" style="font-size:0.74rem;font-weight:700">—</span>
         </div>
-        <div class="sm-control-item" id="sm-api-health" title="Стан API бірж: 🟢 живий / 🔴 заблокований або недоступний. Binance наповнює ММ (OI + long/short), Bybit — основне джерело." style="display:none;gap:10px">
+        <div class="sm-control-item" id="sm-api-health" title="Стан API бірж: 🟢 живий / 🔴 заблокований або недоступний. Binance наповнює МММ (OI + long/short), Bybit — основне джерело." style="display:none;gap:10px">
             <span id="sm-api-bybit" style="font-size:0.72rem;font-weight:600">Bybit —</span>
             <span id="sm-api-binance" style="font-size:0.72rem;font-weight:600">Binance —</span>
         </div>
@@ -1826,7 +1826,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          verdict WAIT (skip gate), timer/holding state, scan flag.
                          Populated by loadFuelPanelStatus() on symbol change +
                          every FF poll. Hidden until a symbol is selected. -->
-                    <!-- Second line: CTR badge + FF status (ММ / Виснаж / Вердикт
+                    <!-- Second line: CTR badge + FF status (МММ / Виснаж / Вердикт
                          / Таймер). One flex row with a stable min-height so it
                          never collapses and jerks the chart below. -->
                     <div style="margin-top:6px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:22px">
@@ -1926,7 +1926,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     <div class="tm-panel" id="fuel-filter-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Автофільтр: коли по монеті зі WATCHLIST статус «ММ зверху/знизу» тримається задану кількість хвилин — відкриває угоду в напрямку ММ. Закриває при зміні статусу або досягненні виснаженості. Позиції відображаються в Trade Manager або Test Mode.">❤️ Fuel Auto-Filter</span>
+                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Автофільтр: коли по монеті зі WATCHLIST статус «МММ зверху/знизу» тримається задану кількість хвилин — відкриває угоду в напрямку МММ. Закриває при зміні статусу або досягненні виснаженості. Позиції відображаються в Trade Manager або Test Mode.">❤️ Fuel Auto-Filter</span>
                 <span id="fuel-filter-status" style="font-size:0.8rem;font-family:monospace;font-weight:700;color:#8b93a7">—</span>
                 <span id="fuel-filter-summary" style="font-size:0.7rem;color:#8b93a7"></span>
             </div>
@@ -1947,11 +1947,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <div id="ff-settings-body" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015)">
                     <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Згладжування напрямку ММ для МОНЕТ (EMA+гістерезис, хв). 0 = ВИМКНЕНО (сире бабло, без затримки).">Згладжування напрямку монет (хв)</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Згладжування напрямку МММ для МОНЕТ (EMA+гістерезис, хв). 0 = ВИМКНЕНО (сире бабло, без затримки).">Згладжування напрямку монет (хв)</label>
                             <input type="number" id="ff-smoothing-min" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки хвилин ММ BTCUSDT має тривати, щоб зʼявився сигнал START (інакше STOP)">START-сигнал BTC (хв)</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки хвилин МММ BTCUSDT має тривати, щоб зʼявився сигнал START (інакше STOP)">START-сигнал BTC (хв)</label>
                             <input type="number" id="ff-start-minutes" min="1" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
@@ -1960,7 +1960,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Автозакриття відкритої угоди (реальної чи тестової), якщо сила ММ падає нижче цього %. 0 = вимкнено. Працює лише при увімкненому «Контроль відкритих угод».">Закрити при ММ &lt; %</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Автозакриття відкритої угоди (реальної чи тестової), якщо сила МММ падає нижче цього %. 0 = вимкнено. Працює лише при увімкненому «Контроль відкритих угод».">Закрити при МММ &lt; %</label>
                             <input type="number" id="ff-manage-close-mm" min="0" max="100" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(239,68,68,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
@@ -1979,10 +1979,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <option value="flip">На розвороті банера</option>
                             </select>
                         </div>
-                        <!-- перенос на другу стрічку: пороги ММ ЛОНГ/ШОРТ + якість рішення + SCORE (TF + STRONG HOLD) -->
+                        <!-- перенос на другу стрічку: пороги МММ ЛОНГ/ШОРТ + якість рішення + SCORE (TF + STRONG HOLD) -->
                         <div style="flex-basis:100%;height:0;margin:0;padding:0;border:0"></div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна сила ММ (бабла) для ЛОНГ-входу двигуна. Помітне ≥30%, Сильне ≥60%.">Мін. сила ММ · ЛОНГ</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна сила МММ (бабла) для ЛОНГ-входу двигуна. Помітне ≥30%, Сильне ≥60%.">Мін. сила МММ · ЛОНГ</label>
                             <select id="ff-min-mm-long" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(34,197,94,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="0">Без фільтра</option>
                                 <option value="30">≥ 30% (помірний)</option>
@@ -1990,7 +1990,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </select>
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна сила ММ (бабла) для ШОРТ-входу двигуна. Помітне ≥30%, Сильне ≥60%.">Мін. сила ММ · ШОРТ</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна сила МММ (бабла) для ШОРТ-входу двигуна. Помітне ≥30%, Сильне ≥60%.">Мін. сила МММ · ШОРТ</label>
                             <select id="ff-min-mm-short" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(239,68,68,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="0">Без фільтра</option>
                                 <option value="30">≥ 30% (помірний)</option>
@@ -2022,8 +2022,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                         <div>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🧭 Розумний напрямок: двигун бере напрямок угоди НЕ зі сторони сигналу входу, а з ЖИВОГО палива (ММ) монети, і застосовує всі решту FF-фільтрів до цього напрямку. Рятує монети, що зайшли «не тією» стороною, коли всі показники за протилежну. У черзі напрямок таких монет показується 🧭.">
-                                <input type="checkbox" id="ff-engine-smartdir" onchange="saveFuelFilterSettings()"> 🧭 Розумний напрямок (за паливом, не за сигналом)
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🧭 Розумний напрямок: двигун бере напрямок угоди НЕ зі сторони сигналу входу, а з ЖИВОГО палива (МММ) монети, і застосовує всі решту FF-фільтрів до цього напрямку. Рятує монети, що зайшли «не тією» стороною, коли всі показники за протилежну. У черзі напрямок таких монет показується 🧭.">
+                                <input type="checkbox" id="ff-engine-smartdir" onchange="saveFuelFilterSettings()"> 🧭 Розумний напрямок (за МММм, не за сигналом)
                             </label>
                         </div>
                         <!-- перенос: ⚡ CTR-гейт входу (таймінг) -->
@@ -2045,7 +2045,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </div>
             </div>
 
-            <!-- BTC START/STOP signal — counts up while BTC holds ММ -->
+            <!-- BTC START/STOP signal — counts up while BTC holds МММ -->
             <div id="ff-btc-start-banner" style="display:flex;align-items:center;gap:14px;margin:12px 0 4px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
                 <span style="font-weight:900;font-size:1.1rem;color:#ffb02e;text-shadow:0 0 9px rgba(247,147,26,0.6);white-space:nowrap">₿ BTCUSDT</span>
                 <span id="ff-btc-start-dir" style="font-weight:900;font-size:1.1rem;white-space:nowrap"></span>
@@ -2069,7 +2069,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
             <!-- ❤️ FF base: intercepted coins waiting for ₿ START + fuel -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
-                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">❤️ Черга на вхід <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети, перехоплені з ЛОНГ/ШОРТ; чекають ₿ START + ММ у напрямку</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">❤️ Черга на вхід <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети, перехоплені з ЛОНГ/ШОРТ; чекають ₿ START + МММ у напрямку</span></div>
                 <div style="display:flex;align-items:center;gap:10px">
                     <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-1 (класичний перехоплювач, ворота ₿ START/кнопки). Вимкнена — не перехоплює сигнали. Якщо обидві черги вимкнені — сигнали відкриваються напряму.">
                         <input type="checkbox" id="ff-queue1-enabled" onchange="saveFuelFilterSettings()">
@@ -2094,7 +2094,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск. Клік — сортувати.">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">🪫<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. Конфлікт (ціна проти ММ) або виснаженість обмежують оцінку. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік ММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Тиск маркетмейкера (МММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск. Клік — сортувати.">МММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">🪫<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск МММ 25% + утримання 15%. Конфлікт (ціна проти МММ) або виснаженість обмежують оцінку. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
                         <tr><td colspan="9" class="tm-empty-msg">Черга порожня</td></tr>
@@ -2103,7 +2103,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
 
             <div style="font-size:0.66rem;color:#6b7280;margin-top:12px">
-                💡 Таблиця наповнюється <b>перехопленням</b>: коли FF увімкнено, монети, які основні кнопки ЛОНГ/ШОРТ відправляють на відкриття, стають у чергу тут (а не відкриваються одразу). Показ фільтрується кнопками ЛОНГ/ШОРТ (обидві вимкнені → порожньо). На ₿ START скануємо «ММ» лише по цих монетах і відкриваємо ту, де ММ збігається з напрямком. Паливо рахується ЛИШЕ для монет цієї таблиці — WATCHLIST більше не сканується.
+                💡 Таблиця наповнюється <b>перехопленням</b>: коли FF увімкнено, монети, які основні кнопки ЛОНГ/ШОРТ відправляють на відкриття, стають у чергу тут (а не відкриваються одразу). Показ фільтрується кнопками ЛОНГ/ШОРТ (обидві вимкнені → порожньо). На ₿ START скануємо «МММ» лише по цих монетах і відкриваємо ту, де МММ збігається з напрямком. МММ рахується ЛИШЕ для монет цієї таблиці — WATCHLIST більше не сканується.
             </div>
 
             <!-- ⚡ Queue 2 «CTR-зони» — intercepts CHoCH/CHoCH+BOS ONLY when the
@@ -2223,7 +2223,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers2-table">
                     <thead>
-                        <tr><th data-sortcol="symbol" onclick="ffSortQueue2('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue2('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue2('mm')" style="cursor:pointer;user-select:none">ММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue2('exh')" style="cursor:pointer;user-select:none">🪫<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue2('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue2('score')" style="cursor:pointer;user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск ММ 25% + утримання 15%. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік ММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue2('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue2('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue2('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue2('mm')" style="cursor:pointer;user-select:none">МММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue2('exh')" style="cursor:pointer;user-select:none">🪫<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue2('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue2('score')" style="cursor:pointer;user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск МММ 25% + утримання 15%. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue2('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers2-tbody">
                         <tr><td colspan="9" class="tm-empty-msg">Черга-2 порожня</td></tr>
@@ -2237,8 +2237,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <!-- 💰 Funding-fuel coins (own scan over the 💰 Funding Rate Scanner) -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
                 <div style="font-size:0.78rem;font-weight:700;color:#34d399">
-                    💰 Funding — ММ по монетах
-                    <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— окремий скан монет із 💰 Funding Rate Scanner на появу «ММ»</span>
+                    💰 Funding — МММ по монетах
+                    <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— окремий скан монет із 💰 Funding Rate Scanner на появу «МММ»</span>
                 </div>
                 <div style="display:flex;gap:8px">
                     <button onclick="showFundingMuted()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(251,191,36,0.4);background:rgba(251,191,36,0.1);color:#fbbf24;cursor:pointer" title="Приглушені монети (на 24 год) — переглянути / увімкнути назад">🔕 Приглушені</button>
@@ -2247,16 +2247,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </div>
             </div>
 
-            <!-- ⚙️ Налаштування для таблиці 💰 Funding — ММ по монетах -->
+            <!-- ⚙️ Налаштування для таблиці 💰 Funding — МММ по монетах -->
             <div style="margin:6px 0 8px">
                 <div style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 10px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015)" onclick="toggleFundingSettings()">
                     <span id="ff-fund-settings-chevron" style="font-size:0.7rem;user-select:none">▶</span>
-                    <span style="font-size:0.75rem;font-weight:600;color:#34d399">⚙️ Налаштування (Funding — ММ)</span>
+                    <span style="font-size:0.75rem;font-weight:600;color:#34d399">⚙️ Налаштування (Funding — МММ)</span>
                 </div>
                 <div id="ff-fund-settings-body" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015)">
                     <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Показувати в таблиці лише монети, чия сила ММ (бабла) ≥ обраного порога. Помітне ≥30%, Сильне ≥60%.">Фільтр входу за силою ММ</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Показувати в таблиці лише монети, чия сила МММ (бабла) ≥ обраного порога. Помітне ≥30%, Сильне ≥60%.">Фільтр входу за силою МММ</label>
                             <select id="ff-funding-min-mm" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="0">Без фільтра</option>
                                 <option value="30">≥ 30% (помірний)</option>
@@ -2268,21 +2268,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="ff-funding-cooldown" min="0" max="720" step="5" onchange="saveFuelFilterSettings()" style="width:90px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Гістерезис: монета «зникає» лише коли сила ММ впаде на стільки % НИЖЧЕ порога входу. Прибирає тремтіння на межі. 0 = вимкнено.">Гістерезис ММ, %</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Гістерезис: монета «зникає» лише коли сила МММ впаде на стільки % НИЖЧЕ порога входу. Прибирає тремтіння на межі. 0 = вимкнено.">Гістерезис МММ, %</label>
                             <input type="number" id="ff-funding-hyst" min="0" max="50" step="5" onchange="saveFuelFilterSettings()" style="width:90px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                         </div>
                         <div style="flex-basis:100%;height:0"></div>
                         <div>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Режим сесій по кожній монеті (як банер ₿): напрямок ММ фіксується в сесію; WAIT = ПАУЗА (монета лишається, без повторних оповіщень), протилежний фліп = НОВА сесія (одне оповіщення). Найсильніший антиспам. Коли увімкнено — кулдаун/гістерезис вище не потрібні.">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Режим сесій по кожній монеті (як банер ₿): напрямок МММ фіксується в сесію; WAIT = ПАУЗА (монета лишається, без повторних оповіщень), протилежний фліп = НОВА сесія (одне оповіщення). Найсильніший антиспам. Коли увімкнено — кулдаун/гістерезис вище не потрібні.">
                                 <input type="checkbox" id="ff-funding-session" onchange="saveFuelFilterSettings()"> 🔄 Режим сесій по монеті (як ₿ банер)
                             </label>
                         </div>
                     </div>
-                    <!-- 🚀 Аномальний ріст (spike) — різкий рух ціни поза логікою ММ -->
+                    <!-- 🚀 Аномальний ріст (spike) — різкий рух ціни поза логікою МММ -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
                         <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">🚀 Аномальний ріст (монета зі сканера, що різко вистрілила)</div>
                         <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Ловити монету з 💰 Funding Rate Scanner, що зробила різкий рух ЦІНИ ≥ порогу за вікно + зростання обсягу. Показується в таблиці з міткою 🚀 «варто розглянути» навіть при низькому ММ.">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Ловити монету з 💰 Funding Rate Scanner, що зробила різкий рух ЦІНИ ≥ порогу за вікно + зростання обсягу. Показується в таблиці з міткою 🚀 «варто розглянути» навіть при низькому МММ.">
                                 <input type="checkbox" id="ff-funding-spike" onchange="saveFuelFilterSettings()"> 🚀 Ловити аномальний ріст
                             </label>
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Мінімальний рух ціни (%), щоб вважати рух аномальним.">
@@ -2329,14 +2329,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                     </div>
-                    <!-- 📨 Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ -->
+                    <!-- 📨 Telegram про 💰 funding-монети: поява/зникнення в таблиці МММ -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
                         <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">📨 Telegram про 💰 funding-монети (поява / зникнення)</div>
                         <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram, коли монета ЗʼЯВЛЯЄТЬСЯ у таблиці 💰 Funding — ММ по монетах">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram, коли монета ЗʼЯВЛЯЄТЬСЯ у таблиці 💰 Funding — МММ по монетах">
                                 <input type="checkbox" id="ff-tg-entry" onchange="saveFuelFilterSettings()"> ✅ TG на появу
                             </label>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram, коли монета ЗНИКАЄ з таблиці 💰 Funding — ММ по монетах">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram, коли монета ЗНИКАЄ з таблиці 💰 Funding — МММ по монетах">
                                 <input type="checkbox" id="ff-tg-exit" onchange="saveFuelFilterSettings()"> ⛔ TG на зникнення
                             </label>
                         </div>
@@ -2351,7 +2351,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 </select>
                             </div>
                             <div>
-                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Слати оповіщення про ПОЯВУ лише якщо сила ММ ≥ цього. 0 = вимкнено. На зникнення не впливає.">Появу слати: ММ ≥</label>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Слати оповіщення про ПОЯВУ лише якщо сила МММ ≥ цього. 0 = вимкнено. На зникнення не впливає.">Появу слати: МММ ≥</label>
                                 <input type="number" id="ff-funding-entry-minmm" min="0" max="100" step="5" onchange="saveFuelFilterSettings()" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                             </div>
                         </div>
@@ -2365,7 +2365,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <textarea id="ff-tg-exit-tpl" rows="2" onchange="saveFuelFilterSettings()" style="width:100%;padding:6px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace;font-size:0.72rem;resize:vertical;box-sizing:border-box"></textarea>
                             </div>
                         </div>
-                        <div style="font-size:0.62rem;color:#7a8395;margin-top:5px">Плейсхолдери: <code>{symbol} {side} {dir} {price} {funding} {funding_in} {fuel} {exhaustion} {reason}</code> · <code>{fuel}</code> = сила ММ %, <code>{funding}</code> = ставка %, <code>{funding_in}</code> = час до фандінгу · відсутні → «—»</div>
+                        <div style="font-size:0.62rem;color:#7a8395;margin-top:5px">Плейсхолдери: <code>{symbol} {side} {dir} {price} {funding} {funding_in} {fuel} {exhaustion} {reason}</code> · <code>{fuel}</code> = сила МММ %, <code>{funding}</code> = ставка %, <code>{funding_in}</code> = час до фандінгу · відсутні → «—»</div>
                     </div>
                 </div>
             </div>
@@ -2374,9 +2374,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <thead>
                         <tr>
                             <th>Символ</th><th>Напрямок</th>
-                            <th title="Тиск маркетмейкера (ММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">ММ</th>
+                            <th title="Тиск маркетмейкера (МММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">МММ</th>
                             <th title="Оцінка ЯКОСТІ сетапу 0–100 + напрямок руху (не команда «відкривай»): ВІДМІННИЙ (≥72) / ХОРОШИЙ (≥55) / СЕРЕДНІЙ (≥40) / СЛАБКИЙ (≥25) / ВИЧЕРПАНО (<25)">SCORE</th>
-                            <th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік ММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th>
+                            <th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th>
                             <th>Тримається</th>
                             <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає)">Прогрес funding</th>
                             <th title="Поточний funding % і час до наступного нарахування">Funding · до виплати</th>
@@ -2385,12 +2385,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="ff-anomaly-tbody">
-                        <tr><td colspan="10" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>
+                        <tr><td colspan="10" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>
                     </tbody>
                 </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
-                💡 Монета сюди потрапляє, коли «ММ» тримається довше за поріг (нижче в налаштуваннях). Показуються ЛИШЕ монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера (funding нормалізувався), вона зникає з таблиці (лишається в 📜 Архіві монет). Такі монети не дублюються в таблиці вище. <b>🚀</b> = аномальний ріст (різкий рух ціни + зростання обсягу) — варто розглянути, навіть коли ММ низький. <b>🎯</b> = найкращий збіг показників для входу (SCORE ВІДМІННИЙ + сильний ММ у той бік + ₿ BTCUSDT START у той самий бік + funding/обсяг підтверджують). Коли активна — під монетою зʼявляється рядок «рекомендована ботом» із таймером і статистикою.
+                💡 Монета сюди потрапляє, коли «МММ» тримається довше за поріг (нижче в налаштуваннях). Показуються ЛИШЕ монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера (funding нормалізувався), вона зникає з таблиці (лишається в 📜 Архіві монет). Такі монети не дублюються в таблиці вище. <b>🚀</b> = аномальний ріст (різкий рух ціни + зростання обсягу) — варто розглянути, навіть коли МММ низький. <b>🎯</b> = найкращий збіг показників для входу (SCORE ВІДМІННИЙ + сильний МММ у той бік + ₿ BTCUSDT START у той самий бік + funding/обсяг підтверджують). Коли активна — під монетою зʼявляється рядок «рекомендована ботом» із таймером і статистикою.
             </div>
         </div>
     </div>
@@ -2420,7 +2420,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <label style="display:flex;align-items:center;gap:6px;flex:1 1 auto">
                             <input type="checkbox" id="tm-require-fuel-confirm" onchange="saveTMSettings()">
                             <span>❤️ Підтвердження від Fuel Auto-Filter</span>
-                            <span class="tm-help" title="Коли увімкнено: угода відкривається ТІЛЬКИ якщо та сама монета з тим самим напрямком присутня в таблиці ❤️ Fuel Auto-Filter (тобто ММ тримається понад поріг). Якщо монети+напрямку немає в таблиці — відкриття ігнорується. Це робить FF обов'язковим підтвердженням для кожного входу. За замовчуванням УВІМКНЕНО.">?</span>
+                            <span class="tm-help" title="Коли увімкнено: угода відкривається ТІЛЬКИ якщо та сама монета з тим самим напрямком присутня в таблиці ❤️ Fuel Auto-Filter (тобто МММ тримається понад поріг). Якщо монети+напрямку немає в таблиці — відкриття ігнорується. Це робить FF обов'язковим підтвердженням для кожного входу. За замовчуванням УВІМКНЕНО.">?</span>
                         </label>
                         <label style="display:flex;align-items:center;gap:6px;flex:1 1 auto">
                             <input type="checkbox" id="tm-telegram-alerts" onchange="saveTMSettings()">
@@ -2458,7 +2458,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <label style="display:flex;align-items:center;gap:8px;flex:1 1 auto;cursor:pointer">
                             <input type="checkbox" id="tm-trade-log" onchange="saveTMSettings()">
                             <span>📈 Лог по угоді (хронологія)</span>
-                            <span class="tm-help" title="Записувати стан кожної відкритої угоди (ціна / PnL% / ММ / виснаженість) із заданим інтервалом. Після закриття угоди клік по ній у 📜 Recent Closed Trades покаже графік усієї хронології. Діє і для реальних, і для тестових угод.">?</span>
+                            <span class="tm-help" title="Записувати стан кожної відкритої угоди (ціна / PnL% / МММ / виснаженість) із заданим інтервалом. Після закриття угоди клік по ній у 📜 Recent Closed Trades покаже графік усієї хронології. Діє і для реальних, і для тестових угод.">?</span>
                         </label>
                         <label style="display:flex;align-items:center;gap:10px;flex:1 1 auto">
                             <span>⏱ Інтервал запису:</span>
@@ -2644,7 +2644,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label>
                                 <input type="checkbox" id="tm-use-ctr-reversal" onchange="saveTMSettings()">
                                 🔄 Закриття на розвороті після піку (CTR)
-                                <span class="tm-help" title="Закриває угоду (real+paper) коли: (1) був пік PnL ≥ «мін. пік», (2) CTR-нахил у ПРОТИЛЕЖНОМУ боці ≥ «CTR %», (3) ≥ «підтверджень» із 3: віддача PnL від піку ≥ «віддача %», виснаженість ≥ «виснаж. %», ММ проти/слабке. Умова має протриматись ≥ «барів» таймфрейму CTR, щоб дрібний рух не закривав. Готовність показана колонкою 🔄 у відкритих угодах.">?</span>
+                                <span class="tm-help" title="Закриває угоду (real+paper) коли: (1) був пік PnL ≥ «мін. пік», (2) CTR-нахил у ПРОТИЛЕЖНОМУ боці ≥ «CTR %», (3) ≥ «підтверджень» із 3: віддача PnL від піку ≥ «віддача %», виснаженість ≥ «виснаж. %», МММ проти/слабке. Умова має протриматись ≥ «барів» таймфрейму CTR, щоб дрібний рух не закривав. Готовність показана колонкою 🔄 у відкритих угодах.">?</span>
                             </label>
                             <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Мінімальний пік PnL, % — має бути досягнутий, щоб узагалі спрацював вихід">пік≥
                                 <input type="number" id="tm-ctr-rev-min-peak" min="0" max="50" step="0.1" style="width:56px" onchange="saveTMSettings()">%</span>
@@ -2654,7 +2654,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <input type="number" id="tm-ctr-rev-giveback" min="0" max="100" step="1" style="width:52px" onchange="saveTMSettings()">%</span>
                             <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Поріг виснаженості (підтвердження)">виснаж≥
                                 <input type="number" id="tm-ctr-rev-exh" min="0" max="100" step="1" style="width:52px" onchange="saveTMSettings()">%</span>
-                            <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Скільки підтверджень із 3 треба (віддача / виснаженість / ММ)">підтв.
+                            <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Скільки підтверджень із 3 треба (віддача / виснаженість / МММ)">підтв.
                                 <input type="number" id="tm-ctr-rev-conf" min="0" max="3" step="1" style="width:44px" onchange="saveTMSettings()">/3</span>
                             <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.72rem;color:#888" title="Скільки барів таймфрейму CTR умова має триматись, перш ніж закрити (захист від дрібних рухів)">барів≥
                                 <input type="number" id="tm-ctr-rev-bars" min="0" max="20" step="1" style="width:44px" onchange="saveTMSettings()"></span>
@@ -2870,8 +2870,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="Сила бабла (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
-                        <th title="🚪 SMC-готовність ВИХОДУ (grade_exit): наскільки картина розвернулась ПРОТИ позиції — структура/ММ/CTR проти + виснаженість + зона-фліп + ціль. Вище = час закривати. РАДНИК (не закриває сам).">Готовність виходу</th>
+                        <th title="Сила бабла (МММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">МММ</th>
+                        <th title="🚪 SMC-готовність ВИХОДУ (grade_exit): наскільки картина розвернулась ПРОТИ позиції — структура/МММ/CTR проти + виснаженість + зона-фліп + ціль. Вище = час закривати. РАДНИК (не закриває сам).">Готовність виходу</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
@@ -2933,8 +2933,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="Сила бабла (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
-                        <th title="🚪 SMC-готовність ВИХОДУ (grade_exit): наскільки картина розвернулась ПРОТИ позиції — структура/ММ/CTR проти + виснаженість + зона-фліп + ціль. Вище = час закривати. РАДНИК (не закриває сам).">Готовність виходу</th>
+                        <th title="Сила бабла (МММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">МММ</th>
+                        <th title="🚪 SMC-готовність ВИХОДУ (grade_exit): наскільки картина розвернулась ПРОТИ позиції — структура/МММ/CTR проти + виснаженість + зона-фліп + ціль. Вище = час закривати. РАДНИК (не закриває сам).">Готовність виходу</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
@@ -7273,14 +7273,14 @@ function ffScoreTip(sc) {
     const v2 = (c.ctr != null);   // SCORE v2 активний → є CTR-тайминг
     let t = `SCORE ${sc.score}/100 — ЯКІСТЬ сетапу в напрямку ${sc.dir || '—'} (не сигнал на відкриття).\n`;
     if (v2) {
-        t += `Складники: запас 25% · імпульс 25% · тиск ММ 22% · CTR-тайминг 18% · утримання 10%.\n`
-           + `Зараз: запас ${p(c.room)} · імпульс ${p(c.mom)} · ММ ${p(c.fuel)} · CTR ${p(c.ctr)} · утримання ${p(c.hold)}.`;
+        t += `Складники: запас 25% · імпульс 25% · тиск МММ 22% · CTR-тайминг 18% · утримання 10%.\n`
+           + `Зараз: запас ${p(c.room)} · імпульс ${p(c.mom)} · МММ ${p(c.fuel)} · CTR ${p(c.ctr)} · утримання ${p(c.hold)}.`;
         if (c.vol != null && c.vol < 1) t += `\nОбсяг: тонка монета → SCORE ×${c.vol} (приглушено).`;
     } else {
-        t += `Складники (вагомість): запас ходу 30% · імпульс свічок 30% · тиск ММ 25% · утримання 15%.\n`
-           + `Зараз: запас ${p(c.room)} · імпульс ${p(c.mom)} · ММ ${p(c.fuel)} · утримання ${p(c.hold)}.`;
+        t += `Складники (вагомість): запас ходу 30% · імпульс свічок 30% · тиск МММ 25% · утримання 15%.\n`
+           + `Зараз: запас ${p(c.room)} · імпульс ${p(c.mom)} · МММ ${p(c.fuel)} · утримання ${p(c.hold)}.`;
     }
-    if (sc.conflict) t += `\n⚠ Конфлікт: рух ціни проти тиску ММ → оцінку обмежено.`;
+    if (sc.conflict) t += `\n⚠ Конфлікт: рух ціни проти тиску МММ → оцінку обмежено.`;
     if (sc.exh != null) t += `\nВиснаженість ходу: ${Math.round(sc.exh)}%${sc.exh >= 90 ? ' (майже вичерпано)' : ''}.`;
     t += `\nШкала якості: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25.`;
     return t.replace(/"/g, '&quot;');
@@ -7296,7 +7296,7 @@ function ffScoreBadgeHTML(sc) {
     const acol = scd === 'LONG' ? '#22c55e' : (scd === 'SHORT' ? '#ef4444' : '#8b93a7');
     const pct = Math.max(0, Math.min(100, Number(sc.score) || 0));
     const warn = sc.conflict
-        ? '<span title="Конфлікт: тиск ММ і рух ціни в різні боки" style="color:#fbbf24">⚠️</span>'
+        ? '<span title="Конфлікт: тиск МММ і рух ціни в різні боки" style="color:#fbbf24">⚠️</span>'
         : '';
     return `<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">`
         + `<span title="${ffScoreTip(sc)}" style="display:inline-flex;flex-direction:column;gap:3px;`
@@ -7361,7 +7361,7 @@ function ffExitCell(ex) {
     const acol = scd === 'LONG' ? '#22c55e' : (scd === 'SHORT' ? '#ef4444' : '#8b93a7');
     const ic = { ok: '✓', warn: '≈', miss: '·' };
     let tip = `Готовність ВИХОДУ ${ex.score}/100 (${ex.grade}) — позиція ${ex.dir}.\n`
-            + `Наскільки SMC-картина розвернулась ПРОТИ позиції (структура/ММ/CTR проти + `
+            + `Наскільки SMC-картина розвернулась ПРОТИ позиції (структура/МММ/CTR проти + `
             + `виснаженість + зона-фліп + ціль). Вище = час закривати. РАДНИК (не закриває сам).\n`;
     (ex.checks || []).forEach(ch => { tip += `\n${ic[ch.state] || '·'} ${ch.label}: ${ch.detail}`; });
     const flag = ex.hot ? '🚪' : '';
@@ -7727,7 +7727,7 @@ function confluenceHtml(cf) {
             items.forEach(it => { if (isTf(it.name)) byTf[String(it.name).toUpperCase()] = it; });
             tfPart = TFCOLS.map(tf => tfCellFor(byTf[tf])).join('');
         } else {
-            // Бабло (ММ/fuel) — не по ТФ: показуємо в рядок на всі 3 стовпчики.
+            // Бабло (МММ/fuel) — не по ТФ: показуємо в рядок на всі 3 стовпчики.
             const inl = items.map(it => `<span style="color:#8b93a7">${it.name}</span> `
                 + `<b style="color:${dcol(it.dir)}">${[it.dir || '', it.val || ''].filter(Boolean).join(' ') || '—'}</b>`
             ).join('<span style="color:#4b5563">&nbsp;·&nbsp;</span>');
@@ -8021,7 +8021,7 @@ async function loadBias() {
             : dir === 'short' ? ' style="color:#f87171"' : '';
         // Кожен режим — СВОЯ інформація в лівій колонці:
         //   CTR_STC → CTR 15m/1H/4H (замість Forecast-рядків);
-        //   решта  → як є (Forecast + ММ тощо).
+        //   решта  → як є (Forecast + МММ тощо).
         const _dirMode = currentSmartMode();
         const _ctrMode = _dirMode === 'ctr_stc';
         const _cfMode = _dirMode === 'confluence';
@@ -8030,12 +8030,18 @@ async function loadBias() {
             .filter(r => !((_ctrMode || _cfMode) && /Forecast/i.test(r[1])))   // CTR_STC/Confluence — свій набір
             .map(r => {
                 const [kind, text, dir] = r;
-                // The ММ (liq-fuel) line drives the ₿ banner — highlight it bright.
-                if (text.includes('ММ')) {
-                    // Збалансований ММ (без напрямку) — сірий «рівновага», НЕ жовтий.
-                    const c = dir === 'long' ? '#22ff88' : dir === 'short' ? '#ff4d4d' : '#94a3b8';
-                    return `<div class="sm-bias-reason ${kind}" style="color:${c};font-weight:800;`
-                         + `text-shadow:0 0 8px ${c}66">${icons[kind] || '•'} ${text}</div>`;
+                // Рядок МММ-бабло — ПОМІТНИЙ бейдж (пілюля + бордюр + стрілка +
+                // світіння), спільна кольорова схема: LONG зелений / SHORT червоний
+                // / рівновага сіра. Це «куди тягне бабло», окремо від руху банера.
+                if (text.includes('МММ')) {
+                    const c = dir === 'long' ? '#22c55e' : dir === 'short' ? '#ef4444' : '#94a3b8';
+                    const bg = dir === 'long' ? 'rgba(34,197,94,0.16)'
+                             : dir === 'short' ? 'rgba(239,68,68,0.16)' : 'rgba(148,163,184,0.14)';
+                    const arw = dir === 'long' ? '▲' : dir === 'short' ? '▼' : '•';
+                    return `<div class="sm-bias-reason ${kind}" style="display:inline-flex;align-items:center;`
+                         + `gap:7px;margin:3px 0;padding:4px 11px;border-radius:8px;background:${bg};`
+                         + `border:1px solid ${c}66;color:${c};font-weight:800;letter-spacing:0.2px;`
+                         + `text-shadow:0 0 8px ${c}55"><b style="font-size:0.95rem">${arw}</b> ${text}</div>`;
                 }
                 return `<div class="sm-bias-reason ${kind}"${dirStyle(dir)}>${icons[kind] || '•'} ${text}</div>`;
             }).join('');
@@ -8346,7 +8352,7 @@ function renderActiveConfig(cfg) {
 }
 
 // ── ❤️ Черга на вхід: click-to-sort ──────────────────────────────────
-// Default sort: by ММ strength, descending (strongest fuel on top).
+// Default sort: by МММ strength, descending (strongest fuel on top).
 window._ffQueueSort = window._ffQueueSort || { col: 'mm', dir: -1 };
 window._ffTimersData = window._ffTimersData || [];
 
@@ -8419,7 +8425,7 @@ function ffQueueRowHTML(t, qnum) {
     // 🧭 marker when Smart-direction re-derived the side from fuel (differs from
     // the entry signal). Tooltip shows the original signal side.
     const smartMark = t.smart_dir
-        ? ` <span title="🧭 Розумний напрямок: визначено за паливом (сигнал входу був ${t.signal_dir || '—'})" style="font-size:0.7rem;cursor:help">🧭</span>`
+        ? ` <span title="🧭 Розумний напрямок: визначено за МММм (сигнал входу був ${t.signal_dir || '—'})" style="font-size:0.7rem;cursor:help">🧭</span>`
         : '';
     // 🎯 marker for coins that entered Queue 2 from the 💰 Funding recommendation
     // (not a chart CHoCH) — so it's clear this one «зайшла з фандінгу».
@@ -8431,7 +8437,7 @@ function ffQueueRowHTML(t, qnum) {
         : (t.dir === 'SHORT'
             ? '<span style="color:#ef4444">🔴 SHORT</span>'
             : '<span style="color:#8b93a7">⚪ —</span>')) + smartMark;
-    // ММ = fuel direction dot + strength 0..100% + mini-bar + trend.
+    // МММ = fuel direction dot + strength 0..100% + mini-bar + trend.
     const mmHtml = ffFuelCell(t.mm || null, t.mm_str, t.mm_str_prev);
     const heldHtml = t.dir
         ? `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (t.held_sec||0)}">${fmtTimer(t.held_sec)}</span>`
@@ -8869,12 +8875,12 @@ function renderFuelFilter(d) {
         }
     }
 
-    // ── 💰 Funding table (coins from the 💰 scanner currently holding ММ) ──
+    // ── 💰 Funding table (coins from the 💰 scanner currently holding МММ) ──
     const atb = document.getElementById('ff-anomaly-tbody');
     if (atb) {
         const arows = d.anomalies || [];
         if (!arows.length) {
-            atb.innerHTML = '<tr><td colspan="10" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
+            atb.innerHTML = '<tr><td colspan="10" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>';
         } else {
             atb.innerHTML = arows.map(a => {
                 const dirHtml = a.dir === 'LONG'
@@ -8941,7 +8947,7 @@ function renderFuelFilter(d) {
                 const cdTxt = a.funding_next_ms
                     ? `<span class="ff-fundnext" data-next="${a.funding_next_ms}" style="font-size:0.66rem;color:#9aa3b5">⏳ ${fmtFundLeft(a.funding_next_ms)}</span>`
                     : (a.funding_stale
-                        ? `<span title="Монета вийшла з Funding Rate Scanner (funding нормалізувався) — тримається лише на ММ" style="font-size:0.62rem;color:#8b93a7">· норм. (тримається на ММ)</span>`
+                        ? `<span title="Монета вийшла з Funding Rate Scanner (funding нормалізувався) — тримається лише на МММ" style="font-size:0.62rem;color:#8b93a7">· норм. (тримається на МММ)</span>`
                         : '');
                 // 24h volume (USD), compact + trend arrow (↑ росте / ↓ спадає)
                 // vs the ~2-min rolling baseline (vol24h_prev). 0.5% dead-zone.
@@ -9082,14 +9088,14 @@ async function loadFuelPanelStatus() {
 
         // Fuel direction — THE timer trigger
         if (d.fuel_status === 'LONG') {
-            parts.push(chip('⚡ ММ: 🟢 LONG', '#86efac', 'rgba(34,197,94,0.15)',
+            parts.push(chip('⚡ МММ: 🟢 LONG', '#86efac', 'rgba(34,197,94,0.15)',
                 'Тиск маркетмейкера тягне ціну ВГОРУ (лонг) — таймер на LONG'));
         } else if (d.fuel_status === 'SHORT') {
-            parts.push(chip('⚡ ММ: 🔴 SHORT', '#fca5a5', 'rgba(239,68,68,0.15)',
+            parts.push(chip('⚡ МММ: 🔴 SHORT', '#fca5a5', 'rgba(239,68,68,0.15)',
                 'Тиск маркетмейкера тягне ціну ВНИЗ (шорт) — таймер на SHORT'));
         } else {
-            parts.push(chip('⚡ ММ: ⚪ рівновага', '#8b93a7', 'rgba(139,147,167,0.15)',
-                'ММ у рівновазі: тиск маркетмейкера збалансований (покупці й '
+            parts.push(chip('⚡ МММ: ⚪ рівновага', '#8b93a7', 'rgba(139,147,167,0.15)',
+                'МММ у рівновазі: тиск маркетмейкера збалансований (покупці й '
                 + 'продавці врівноважені) — чіткого напрямку немає, ціну нікуди '
                 + 'не тягне, тож таймер не запускається'));
         }
@@ -9288,7 +9294,7 @@ function dirTint(dir) {
 const EINSTEIN_ICON = '<svg class="ein-icon"><use href="#ein-icon"/></svg>';
 
 // 💸 Money-rain: гроші «сиплються» в момент активності (₿ START / сильний тиск
-// ММ). dir → відтінок: LONG=зелений, SHORT=червоний, інакше золото.
+// МММ). dir → відтінок: LONG=зелений, SHORT=червоний, інакше золото.
 function spawnMoneyRain(dir, label) {
     try {
         if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -9351,7 +9357,7 @@ function spawnMoneyRain(dir, label) {
 }
 
 // Edge-детектор: запускає зливу лише В МОМЕНТ появи активності (перехід у
-// START або перехід тиску ММ у «сильний»), а не щосекунди. Гістерезис на силі,
+// START або перехід тиску МММ у «сильний»), а не щосекунди. Гістерезис на силі,
 // щоб не блимати біля порога.
 function ffCheckMoneyRain(isStart, dir, strength) {
     // Перший виклик після завантаження сторінки — лише запамʼятати стан, НЕ
@@ -9370,7 +9376,7 @@ function ffCheckMoneyRain(isStart, dir, strength) {
         const side = d === 'LONG' ? '🟢 LONG' : (d === 'SHORT' ? '🔴 SHORT' : 'сеанс');
         spawnMoneyRain(d, '⚡ ₿ START TRADING · ' + side);
     }
-    // (2) Тиск ММ щойно став СИЛЬНИМ (≥60) у якийсь бік — з гістерезисом (спад <45
+    // (2) Тиск МММ щойно став СИЛЬНИМ (≥60) у якийсь бік — з гістерезисом (спад <45
     //     скидає прапорець) + повторний тригер при зміні напрямку.
     const strongNow = strength >= 60 && (dir === 'LONG' || dir === 'SHORT');
     const dirChanged = prev.strong && dir && prev.dir && dir !== prev.dir;
@@ -9378,7 +9384,7 @@ function ffCheckMoneyRain(isStart, dir, strength) {
         // Якщо щойно був START-спалах у той самий бік — не дублюємо.
         if (!(isStart && !prev.start)) {
             const pull = dir === 'SHORT' ? 'тягне ВНИЗ 🔴' : 'тягне ВГОРУ 🟢';
-            spawnMoneyRain(dir, '💰 ММ ' + pull + ' · сильний тиск ' + Math.round(strength) + '%');
+            spawnMoneyRain(dir, '💰 МММ ' + pull + ' · сильний тиск ' + Math.round(strength) + '%');
         }
     }
     window._ffRainPrev = {
@@ -9422,7 +9428,7 @@ function updateBtcStartBanner() {
     const nowS = Math.floor(Date.now() / 1000);
     const elapsed = s.hasTimer ? Math.max(0, nowS - s.since) : 0;
     // 💸 Money-rain edge-trigger — рахуємо START тут (до бейджів), щоб зловити
-    // саме момент активації, і передаємо силу тиску ММ для другого тригера.
+    // саме момент активації, і передаємо силу тиску МММ для другого тригера.
     const _pctNow = (s.hasTimer && s.period > 0) ? Math.min(100, elapsed / s.period * 100) : 0;
     ffCheckMoneyRain(s.hasTimer && !s.paused && _pctNow >= 100, s.dir, str);
     if (flip) flip.innerHTML = flipTimerHTML(elapsed);
@@ -9498,7 +9504,7 @@ function toggleFundingSettings() {
 // The saved DB template overrides the code default, so this button lets the
 // user re-apply the current standard text in one click.
 const FF_TPL_DEFAULTS = {
-    entry: '🚀 FF вхід {side} {symbol} ·💲 {price} ·\nММ {fuel}% фандінг {funding}% · 🔄 {funding_in}',
+    entry: '🚀 FF вхід {side} {symbol} ·💲 {price} ·\nМММ {fuel}% фандінг {funding}% · 🔄 {funding_in}',
     exit:  '☄️ {symbol} зникла з 📡 · {reason}\n💲 {price} · 📡 {fuel}%',
 };
 function ffResetTpl(which) {
@@ -9677,7 +9683,7 @@ async function loadDataSource() {
         if (!d.ok) { wrap.style.display = 'none'; return; }
         wrap.style.display = '';
         // Активне джерело аналітики + здоровʼя ОБОХ бірж. Binance повернуто
-        // (на VDS IP не заблокований) — він наповнює ММ (OI + long/short-ratio).
+        // (на VDS IP не заблокований) — він наповнює МММ (OI + long/short-ratio).
         val.textContent = (d.binance_ok === true) ? '📊 Bybit + Binance' : '📊 Bybit';
         val.style.color = '#f7a600';
         const hWrap = document.getElementById('sm-api-health');
@@ -9710,7 +9716,7 @@ async function loadSentiment() {
     });
 }
 
-// ММ (fuel) strength band → {txt, col}. Describes the MARKET-MAKER PRESSURE on
+// МММ (fuel) strength band → {txt, col}. Describes the MARKET-MAKER PRESSURE on
 // price (not an abstract «strength»): рівновага <10 / легкий 10-30 /
 // помірний 30-60 / сильний 60-85 / потужний 85+ (colour-differentiated).
 function fuelBand(now) {
@@ -9723,16 +9729,16 @@ function fuelBand(now) {
     return { txt: 'потужний тиск', col: '#16a34a' };
 }
 
-// Shared human explanation of the ММ widget (hover on the cell). Says WHAT is
+// Shared human explanation of the МММ widget (hover on the cell). Says WHAT is
 // happening to price: which way the market maker pushes + how hard.
-const FUEL_TOOLTIP = "ММ — тиск маркетмейкера на ціну. Крапка = куди тисне: "
+const FUEL_TOOLTIP = "МММ — тиск маркетмейкера на ціну. Крапка = куди тисне: "
     + "🟢 вгору (лонг) · 🔴 вниз (шорт) · ⚪ рівновага. 0–100% — сила тиску "
-    + "(наскільки односторонні ліквідації/паливо): рівновага <10 · легкий 10–30 · "
+    + "(наскільки односторонні ліквідації/МММ): рівновага <10 · легкий 10–30 · "
     + "помірний 30–60 · сильний 60–85 · потужний 85+. Стрілка ↑/↓ — тиск "
     + "міцніє/слабшає. Що сильніший тиск у бік крапки — то ймовірніший рух ціни туди.";
 
-// ММ (fuel) STRENGTH cell (shared by the ❤️ queue ММ column, the open-position
-// ММ columns and the 💰 funding table): coloured direction dot + strength
+// МММ (fuel) STRENGTH cell (shared by the ❤️ queue МММ column, the open-position
+// МММ columns and the 💰 funding table): coloured direction dot + strength
 // 0..100% + trend arrow + mini-bar + a colour-coded band word at the END.
 //   dir: 'LONG'|'SHORT'|null(=balanced),  now/prev: 0..100 strength (or null)
 function ffFuelCell(dir, now, prev, hideBand) {
@@ -9858,7 +9864,7 @@ async function showTradeHistory(symbol, closedAt, isShadow) {
     }
 }
 
-// Build two stacked inline-SVG panels: PnL% and ММ/виснаженість over time.
+// Build two stacked inline-SVG panels: PnL% and МММ/виснаженість over time.
 // 🌿 Coin journey tree — the whole path from the bot's activity log (scan →
 // queue → CTR/Decision → 🎯 recommendation → open → manage → close), oldest→
 // newest, each step with its metrics laid out as chips. `journey` = array of
@@ -9902,7 +9908,7 @@ function journeyTree(journey, meta) {
         if (x.entry_score != null) chip('ENTRY', x.entry_score);
         if (x.ctr_state) chip('CTR', x.ctr_state + (x.ctr_pct != null ? ` ${x.ctr_pct}%` : ''));
         else if (x.ctr_stc != null) chip('STC', Math.round(x.ctr_stc));
-        if (x.fuel_str != null) chip('ММ', x.fuel_str + '%');
+        if (x.fuel_str != null) chip('МММ', x.fuel_str + '%');
         if (x.kind) chip('тип', x.kind);
         if (x.dec && x.dec.score != null) chip('Dec', x.dec.score);
         if (x.price != null) chip('ціна', fmtPriceJS(x.price));
@@ -10269,9 +10275,9 @@ function renderTradeHistoryChart(h, meta) {
     const pnlColorAt = s => (s.pnl != null && s.pnl >= 0) ? '#22c55e' : '#ef4444';
     const pnlPanel = panel('PnL, %', [{ name: 'PnL% (🟢 прибуток / 🔴 збиток)', color: pnlCol, acc: s => s.pnl }],
         { includeZero: true, dec: 2, segmentColor: pnlColorAt, vlines: peakVlines });
-    const mmPanel = panel('ММ монети / BTC ММ / Виснаженість, %', [
-        { name: 'ММ монети', color: '#fbbf24', acc: s => s.mm },
-        { name: 'BTC ММ', color: '#22d3ee', acc: s => s.btc_mm },
+    const mmPanel = panel('МММ монети / BTC МММ / Виснаженість, %', [
+        { name: 'МММ монети', color: '#fbbf24', acc: s => s.mm },
+        { name: 'BTC МММ', color: '#22d3ee', acc: s => s.btc_mm },
         { name: 'Виснаженість', color: '#f87171', acc: s => s.exh },
     ], { min: 0, max: 100, dec: 0 });
     // Price line coloured by whether the trade was in profit/loss at that moment.
@@ -10439,7 +10445,7 @@ function renderFundingHistoryChart(h, meta) {
 
     // series definitions (each normalised to its own min..max)
     const SERIES = [
-        { key: 'mm', name: 'ММ %', color: '#fbbf24', acc: s => s.mm, fmt: v => (v != null ? v + '%' : '—') },
+        { key: 'mm', name: 'МММ %', color: '#fbbf24', acc: s => s.mm, fmt: v => (v != null ? v + '%' : '—') },
         { key: 'funding', name: 'Фандінг %', color: '#a78bfa', acc: s => s.funding, fmt: v => (v != null ? (+v).toFixed(4) + '%' : '—') },
         { key: 'price', name: 'Ціна', color: '#60a5fa', acc: s => s.price, fmt: priceOf },
         { key: 'vol24h', name: 'Vol 24h', color: '#34d399', acc: s => s.vol24h, fmt: v => (v != null ? '$' + fmtBig(v) : '—') },
@@ -10481,7 +10487,7 @@ function renderFundingHistoryChart(h, meta) {
     const evName = e => e === 'appear' ? '🟢 поява' : (e === 'flip' ? '🔄 розворот' : (e === 'exit' ? '🔴 зникнення' : e));
     const evLog = events.length ? `<div style="max-height:150px;overflow:auto;font-size:0.72rem;color:#cbd5e1;border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px">`
         + `<div style="color:#8b93a7;margin-bottom:4px;font-weight:700">Лог подій</div>`
-        + events.map(s => `<div>${_fmtDT(s.t)} · ${evName(s.ev)} · <b>${s.mm_dir || '—'}</b> · ММ ${s.mm != null ? s.mm + '%' : '—'} · фандінг ${s.funding != null ? (+s.funding).toFixed(4) + '%' : '—'} · ₿ ${s.btc_dir || 'WAIT'}${s.btc_paused ? ' ⏸' : ''}</div>`).join('')
+        + events.map(s => `<div>${_fmtDT(s.t)} · ${evName(s.ev)} · <b>${s.mm_dir || '—'}</b> · МММ ${s.mm != null ? s.mm + '%' : '—'} · фандінг ${s.funding != null ? (+s.funding).toFixed(4) + '%' : '—'} · ₿ ${s.btc_dir || 'WAIT'}${s.btc_paused ? ' ⏸' : ''}</div>`).join('')
         + `</div>` : '';
 
     const info = `<div style="font-size:0.74rem;color:#cbd5e1;margin-bottom:8px;display:flex;gap:16px;flex-wrap:wrap">`

@@ -4,8 +4,8 @@ fuel_filter — server-side automated trading filter driven by liquidation
 
 Idea (operator spec):
   • Scan every WATCHLIST coin.
-  • When a coin shows "Паливо зверху (тягне в LONG)" (fuel_dir > +0.1) or
-    the opposite "Паливо знизу (тягне в SHORT)" (fuel_dir < -0.1) a per-coin
+  • When a coin shows "МММ зверху (тягне в LONG)" (fuel_dir > +0.1) or
+    the opposite "МММ знизу (тягне в SHORT)" (fuel_dir < -0.1) a per-coin
     TIMER starts.
   • If that same status holds continuously for ≥ duration_minutes
     (default 5) we OPEN a position in the fuel direction.
@@ -60,8 +60,8 @@ FUEL_SHORT_THR = -0.1          # fuel_dir < -0.1 → SHORT bias
 # живе 15 хв, тож фон легкий; на VDS обидва можна тримати ввімкненими.)
 _CTR_1H = os.getenv('CTR_1H', '0').lower() in ('1', 'true', 'yes', 'on')
 _CTR_4H = os.getenv('CTR_4H', '0').lower() in ('1', 'true', 'yes', 'on')
-# 🎯 Професійна модель ММ (Liquidity Pull Vector на LIQMAP + whale/стакан/funding).
-# Коли ввімкнено — і per-coin ММ (_fuel_dir), і банер ₿ (_update_btc_verdict) беруть
+# 🎯 Професійна модель МММ (Liquidity Pull Vector на LIQMAP + whale/стакан/funding).
+# Коли ввімкнено — і per-coin МММ (_fuel_dir), і банер ₿ (_update_btc_verdict) беруть
 # напрямок із неї замість сирого (fa−fb)/den. Вимкнено = стара поведінка (0 ризику).
 _MM_MODEL = os.getenv('MM_MODEL', '0').lower() in ('1', 'true', 'yes', 'on')
 # Анти-залипання банера ₿: якщо сеанс тримається на паузі (WAIT/глибокий нейтрал)
@@ -115,7 +115,7 @@ FUNDING_ARCH_SAMPLE_SEC = 60    # periodic sample cadence while a coin is live
 #   1 = position closed (_close)
 #   2 = engine opened the trade (_engine_tick success)
 #   3 = engine: TM already holds the coin (_engine_tick)
-#   4 = ММ-flip purge of opposite-direction entries (_update_btc_verdict)
+#   4 = МММ-flip purge of opposite-direction entries (_update_btc_verdict)
 #   5 = manual delete ✕ (delete_timer)
 #   6 = manual "Очистити всі" (clear_all_timers)
 #   7 = remove_pending()
@@ -146,7 +146,7 @@ DEFAULT_SETTINGS = {
     'queue_ttl_hours': 24,
     'skip_wait_coins': False,     # (legacy) not used for auto-open anymore
     'manage_open_positions': True,  # if True, FF closes positions it opened
-    # Auto-close an open (real OR test) position when its ММ (fuel) STRENGTH
+    # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
     # the position (manage_open_positions=True).
     'manage_close_min_mm': 0,
@@ -158,9 +158,9 @@ DEFAULT_SETTINGS = {
     # close_on_btc_flip лишено як legacy-фолбек (True == 'flip').
     'close_on_btc_mode': 'off',
     'close_on_btc_flip': False,
-    'direction_smoothing_min': 0,   # EMA window (min) for ММ direction; 0 = OFF (raw)
+    'direction_smoothing_min': 0,   # EMA window (min) for МММ direction; 0 = OFF (raw)
     'anomaly_hours': 10,            # fuel held longer than this → "anomaly" list
-    'start_signal_minutes': 5,      # BTC ММ held ≥ this → START signal (else STOP)
+    'start_signal_minutes': 5,      # BTC МММ held ≥ this → START signal (else STOP)
     # ── BTC-START auto-engine (banner toggle) ──
     'start_engine_enabled': False,        # master: auto-open basket on BTC START
     'start_engine_independent': False,    # auto-open independent of BTC (own dir)
@@ -172,11 +172,11 @@ DEFAULT_SETTINGS = {
     'engine_candle_tf': '5m',             # timeframe for the candle confirmation
     'engine_require_strong_hold': False,  # only open when SCORE=STRONG HOLD & dir matches
     # 🧭 Smart direction: ignore the queued signal side; derive each coin's
-    # direction from its LIVE fuel (ММ) instead, then apply ALL the usual FF
+    # direction from its LIVE fuel (МММ) instead, then apply ALL the usual FF
     # gates for THAT direction. Rescues coins that entered on the "wrong" signal
     # while every indicator favours the opposite side.
     'engine_smart_direction': False,
-    # Minimum ММ (fuel) STRENGTH % to OPEN a trade — SEPARATE per direction.
+    # Minimum МММ (fuel) STRENGTH % to OPEN a trade — SEPARATE per direction.
     # 0 = off, 30 = помірний (≥30%), 60 = сильне (≥60%). The engine skips a
     # candidate whose fuel strength (|fuel dir|×100) is below the threshold
     # for its direction. `engine_min_mm_strength` kept as legacy fallback.
@@ -315,44 +315,44 @@ DEFAULT_SETTINGS = {
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
-    # A funding coin appears in the 💰 ММ table only if its ММ (fuel) STRENGTH
+    # A funding coin appears in the 💰 МММ table only if its МММ (fuel) STRENGTH
     # (|fuel dir|×100) ≥ this. 0 = off, 30 = помірний (≥30%), 60 = сильне (≥60%).
     'funding_min_mm_strength': 0,
     # Extra filter for the ENTRY ("appear") Telegram message ONLY (does NOT
     # affect the table, and does NOT affect exit messages):
     #   funding_tg_entry_dir     — 'any' | 'LONG' | 'SHORT' (тільки цей напрямок)
-    #   funding_tg_entry_min_mm  — мін. сила ММ, щоб слати «появу» (0 = off)
+    #   funding_tg_entry_min_mm  — мін. сила МММ, щоб слати «появу» (0 = off)
     'funding_tg_entry_dir': 'any',
     'funding_tg_entry_min_mm': 0,
     # Anti-spam for funding-coin appear alerts:
     #  cooldown — не слати повторну «появу» по монеті стільки хвилин;
-    #  hysteresis — монета «зникає» лише коли сила ММ впаде на стільки % НИЖЧЕ
+    #  hysteresis — монета «зникає» лише коли сила МММ впаде на стільки % НИЖЧЕ
     #  порога входу (тремтіння рівно на межі не робить churn).
     'funding_notify_cooldown_min': 30,
     'funding_mm_hysteresis': 10,
     # Optional per-coin SESSION mode (like the ₿ banner). When ON, a funding
-    # coin's ММ direction commits into a session: WAIT = ПАУЗА (keeps the coin,
+    # coin's МММ direction commits into a session: WAIT = ПАУЗА (keeps the coin,
     # no re-announce), opposite flip = NEW session (single re-announce). Kills
     # spam far harder than cooldown/hysteresis. Off = classic behaviour.
     'funding_session_mode': False,
     # ── 🚀 Аномальний ріст (spike) ──────────────────────────────────────────
     # У межах монет із 💰 Funding Rate Scanner ловимо АНОМАЛЬНИЙ рух ЦІНИ:
     # |Δціни| ≥ funding_spike_pct% за funding_spike_window_min хв ПРИ зростанні
-    # обсягу. Така монета показується в 💰 ММ-таблиці з міткою 🚀 «варто
-    # розглянути» НАВІТЬ якщо ММ (паливо) низький — ловить памп/дамп поза
+    # обсягу. Така монета показується в 💰 МММ-таблиці з міткою 🚀 «варто
+    # розглянути» НАВІТЬ якщо МММ (МММ) низький — ловить памп/дамп поза
     # логікою ліквідацій.
     'funding_spike_enabled': True,
     'funding_spike_pct': 8.0,          # мін. рух ціни, %
     'funding_spike_window_min': 15,    # вікно спостереження, хв
-    # ── Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ ──
+    # ── Telegram про 💰 funding-монети: поява/зникнення в таблиці МММ ──
     # Replaces the old funding alert. Fires when a funding coin APPEARS
-    # (ff_tg_on_entry) / DISAPPEARS (ff_tg_on_exit) from the 💰 ММ table.
+    # (ff_tg_on_entry) / DISAPPEARS (ff_tg_on_exit) from the 💰 МММ table.
     # Templates support {symbol} {dir} {side} {price} {funding} {funding_in}
     # {fuel} {exhaustion} {reason} {btc}. Missing placeholders render as "—".
     # {funding} = ставка фандінгу у %, {funding_in} = час до наступного фандінгу.
     'ff_tg_on_entry': False,
     'ff_tg_on_exit': False,
-    'ff_tg_entry_template': '🚀 FF вхід {side} {symbol} ·💲 {price} ·\nММ {fuel}% фандінг {funding}% · 🔄 {funding_in}',
+    'ff_tg_entry_template': '🚀 FF вхід {side} {symbol} ·💲 {price} ·\nМММ {fuel}% фандінг {funding}% · 🔄 {funding_in}',
     'ff_tg_exit_template': '☄️ {symbol} зникла з 📡 · {reason}\n💲 {price} · 📡 {fuel}%',
     # 💰 «монета з'явилась» повідомлення (низькосигнальні) — ВИМКНЕНО за
     # замовчуванням: замінені на 🎯 Opportunity-алерт нижче.
@@ -366,10 +366,10 @@ DEFAULT_SETTINGS = {
     'setup_grader_on': True,
     # Суворість 🎯 у грейдері: 'strict' (усі ключові блоки) / 'moderate' / 'soft'.
     'setup_strict': 'strict',
-    # 🛡 М'який запобіжник відкриття — блокує 3 «вбивці» (ММ<поріг / CTR
+    # 🛡 М'який запобіжник відкриття — блокує 3 «вбивці» (МММ<поріг / CTR
     # нейтральний-чи-проти / виснажено). Це РЕАЛЬНО впливає на відкриття угод.
     'safeguard_on': True,
-    'safeguard_mm_min': 30,     # мін. сила ММ, %
+    'safeguard_mm_min': 30,     # мін. сила МММ, %
     'safeguard_exh_max': 80,    # макс. виснаженість, %
     'safeguard_ctr': True,      # вимагати CTR не нейтральний і не проти напрямку
     # 🎯 Вимагати вирівнювання з ₿ BTCUSDT сеансом (START + той самий бік), щоб
@@ -454,7 +454,7 @@ class FuelFilterDaemon:
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
         self._funding_syms: set = set()
         # {symbol: ts of last funding "appear" TG} — anti-spam cooldown so a coin
-        # that flickers around the ММ-strength threshold isn't re-announced.
+        # that flickers around the МММ-strength threshold isn't re-announced.
         self._funding_notify_at: Dict[str, float] = {}
         # 🎯 Opportunity-alert edge state: {sym: was_hot} + {sym: last_alert_ts}.
         # `_opp_cold_at` = when hot first dropped (grace timer against flicker).
@@ -495,7 +495,7 @@ class FuelFilterDaemon:
         self._funding_arch_dirty = False
         self._funding_arch_saved_at = 0.0
         # Per-coin MUTE: {sym: until_ts}. A muted coin is ignored entirely by
-        # the 💰 Funding — ММ scan (no table row, no TG, no archive) until then.
+        # the 💰 Funding — МММ scan (no table row, no TG, no archive) until then.
         self._funding_muted: Dict[str, float] = {}
         # {symbol: current funding %} for funding-sourced coins (UI display).
         self._funding_rates: Dict[str, float] = {}
@@ -513,7 +513,7 @@ class FuelFilterDaemon:
         self._engine_attempts: Dict[str, int] = {}
         # ── Diagnostics: WHY the engine didn't open a coin this tick ──
         # {symbol: human UA reason} — surfaced per-row in the ❤️ queue so the
-        # operator sees exactly which gate blocked each coin (e.g. «паливо не
+        # operator sees exactly which gate blocked each coin (e.g. «МММ не
         # SHORT», «виснаж 88%>75%», «рішення СЛАБКИЙ»). Cleared/refreshed each
         # engine tick.  _engine_gate = a GLOBAL reason when the engine as a whole
         # can't open anything right now (двигун вимкнено / BTC пауза / чекає
@@ -538,8 +538,8 @@ class FuelFilterDaemon:
         self._funding_alerted: set = set()
         # Latest BTC fuel snapshot — pinned permanently at the top of the table.
         self._btc_state: Dict = {}
-        # ── BTC ММ "session" ──────────────────────────────────────────────
-        # A session = a committed BTC ММ direction (LONG/SHORT). WAIT (ML
+        # ── BTC МММ "session" ──────────────────────────────────────────────
+        # A session = a committed BTC МММ direction (LONG/SHORT). WAIT (ML
         # балансований) is a PAUSE — it keeps the session, its start time and
         # the queue. Only an OPPOSITE flip (LONG↔SHORT) ends the session, resets
         # the timer and CLEARS the queue. `_btc_verdict_dir`/`_btc_verdict_since`
@@ -550,7 +550,7 @@ class FuelFilterDaemon:
         self._btc_paused: bool = False                 # live ML is WAIT within the session
         self._btc_fuel_strength: int = 0               # BTC fuel strength 0..100 (banner bar)
         self._btc_pause_since: float = 0.0             # коли почалась поточна пауза (анти-залипання)
-        self._btc_mm: Dict = {}                       # останній повний вихід моделі ММ для BTC
+        self._btc_mm: Dict = {}                       # останній повний вихід моделі МММ для BTC
         # 💰 Funding fuel table (repurposed from the old anomalies storage):
         # coins from the 💰 Funding Rate Scanner that currently show fuel. Same
         # dict shape so the existing table/endpoints keep working. {symbol:
@@ -921,7 +921,7 @@ class FuelFilterDaemon:
             _r1 = ' · новий тип замінив застарілий' if refreshed_q1 else ''
             log_activity(sym, 'queued', f'Черга-1 · {_kind_lbl}{_r1}{_sc_ctr_sfx}', side=side, source='Q1')
             if _MM_MODEL and not refreshed_q1:
-                self._log_coin_mm(sym, 'queued')   # ММ монети у «Лог роботи бота»
+                self._log_coin_mm(sym, 'queued')   # МММ монети у «Лог роботи бота»
         # ENTRY-score + CTR-state suffix for Q2 records (the SETUP metric).
         def _ctr_words(state, stc, pct):
             if state == 'none':
@@ -1181,7 +1181,7 @@ class FuelFilterDaemon:
             if isinstance(hy, dict):
                 self._fuel_hyst = {str(k).upper(): (v if v in ('LONG', 'SHORT') else None)
                                    for k, v in hy.items()}
-            # Restore the BTC ММ SESSION first (direction + start time).
+            # Restore the BTC МММ SESSION first (direction + start time).
             bvd = st.get('btc_verdict_dir')
             self._btc_verdict_dir = bvd if bvd in ('LONG', 'SHORT') else None
             try:
@@ -1192,7 +1192,7 @@ class FuelFilterDaemon:
             # Restore the entry queue PER SESSION. We persist the queue now and
             # bring it back on boot, tied to the session it belonged to. The
             # session-flip logic in _update_btc_verdict handles staleness: on the
-            # first tick, if the live ММ is OPPOSITE the restored session, the
+            # first tick, if the live МММ is OPPOSITE the restored session, the
             # queue is cleared (session mismatch → fresh start). If the ML is the
             # same direction (or WAIT/pause), the queued coins are still valid and
             # keep waiting. This replaces the old blanket-ephemeral behaviour.
@@ -1449,12 +1449,12 @@ class FuelFilterDaemon:
         return None
 
     def _price_trend_signed(self, symbol: str, tf: str) -> Optional[float]:
-        """Знаковий імпульс ЦІНИ [-1..+1] (+ вгору) для реконсиляції ММ — ШВИДШИЙ
+        """Знаковий імпульс ЦІНИ [-1..+1] (+ вгору) для реконсиляції МММ — ШВИДШИЙ
         за SCORE-момент і розворото-чутливий:
           • 2 останні бари (замість 3) → менше лагу на свіжому розвороті;
           • ШТРАФ, якщо остання ЗАКРИТА свічка йде ПРОТИ напрямку → стале LONG/SHORT
             швидко гасне, коли ціна щойно розвернулась (саме той випадок «вже
-            пішли вниз, а ММ ще LONG»)."""
+            пішли вниз, а МММ ще LONG»)."""
         try:
             pd2, ps2 = self._candle_momentum_graded(symbol, tf, bars=2)
             m = ps2 if pd2 == 'LONG' else (-ps2 if pd2 == 'SHORT' else 0.0)
@@ -1807,11 +1807,11 @@ class FuelFilterDaemon:
 
         Magnitude blends, all relative to that live direction:
           • room     (30%) — 1 − exhaustion (how much of the move is left)
-          • hold     (15%) — ММ hold duration vs the show threshold (~3× sat.)
+          • hold     (15%) — МММ hold duration vs the show threshold (~3× sat.)
           • fuel     (25%) — liq-fuel imbalance aligned with the direction
           • momentum (30%) — candle momentum aligned with the direction
         When fuel bias and price momentum DISAGREE the score is hard-capped
-        (→ WEAK at best) and `conflict` is set, because the ММ setup is being
+        (→ WEAK at best) and `conflict` is set, because the МММ setup is being
         violated by price. Returns {score,label,color,dir,conflict}."""
         # Fuel bias (where liquidity sits) — SMOOTHED + hysteresis, read-only.
         fuel_dir = None
@@ -1877,7 +1877,7 @@ class FuelFilterDaemon:
         # CTR-тайминг (SCORE v2): якість моменту входу за STC у напрямку live_dir.
         ctr_term = self._ctr_timing_term(symbol, live_dir) if _SCORE_V2 else None
         if _SCORE_V2 and ctr_term is not None:
-            # 5 складників: запас 25 · утримання 10 · паливо/ММ 22 · імпульс 25 · CTR 18.
+            # 5 складників: запас 25 · утримання 10 · МММ/МММ 22 · імпульс 25 · CTR 18.
             w_room, w_hold, w_fuel, w_mom, w_ctr = 0.25, 0.10, 0.22, 0.25, 0.18
             if not held_sec or held_sec <= 0:
                 _tw = w_room + w_fuel + w_mom + w_ctr
@@ -1914,12 +1914,12 @@ class FuelFilterDaemon:
         return {'score': int(round(score)), 'label': label, 'color': color,
                 'dir': live_dir, 'conflict': conflict, 'exh': exf,
                 # Розклад складників (0..1, до вагування) — для тултипа-роз'яснення:
-                # запас ходу / імпульс свічок / тиск ММ / утримання.
+                # запас ходу / імпульс свічок / тиск МММ / утримання.
                 'components': {'room': round(room, 2), 'mom': round(mom, 2),
                                'fuel': round(fmag, 2), 'hold': round(hold, 2),
                                'ctr': (round(ctr_term, 2) if ctr_term is not None else None),
                                'vol': round(vol_factor, 2)},
-                # Per-coin ММ (liq-fuel) direction — shown in its own column in
+                # Per-coin МММ (liq-fuel) direction — shown in its own column in
                 # the ❤️ queue table. LONG / SHORT / None(=збалансований).
                 'fuel_dir': fuel_dir,
                 'fuel_strength': fuel_strength}
@@ -1971,7 +1971,7 @@ class FuelFilterDaemon:
 
     def setup_snapshot(self, symbol: str) -> Optional[str]:
         """Compact SMC-«Готовність» string for `symbol` RIGHT NOW, e.g.
-        'ХОРОШИЙ 58% 🎯 · ✓Структура ✓Зона ✓ММ ≈Таймінг · ⚠виснажено'. Stamped
+        'ХОРОШИЙ 58% 🎯 · ✓Структура ✓Зона ✓МММ ≈Таймінг · ⚠виснажено'. Stamped
         on a position AT OPEN so the CLOSED record carries the entry setup —
         зіставляємо «Готовність на вході → результат» для валідації грейдера."""
         su = self._setup_cache.get((symbol or '').upper())
@@ -2005,7 +2005,7 @@ class FuelFilterDaemon:
     # fuel / exhaustion measurement (cached sources only)
     # ------------------------------------------------------------------
     def _fuel_dir_legacy(self, symbol: str) -> Optional[Dict]:
-        """СТАРИЙ показник ММ: сирий (fa−fb)/den по liq-map (розташування кластерів
+        """СТАРИЙ показник МММ: сирий (fa−fb)/den по liq-map (розташування кластерів
         відносно ціни, дистанц-вага 1/(1+dist/2)) — для порівняння з бабло-моделлю.
         Рахується від живої ціни (як і нова модель)."""
         try:
@@ -2081,7 +2081,7 @@ class FuelFilterDaemon:
             if not mark or mark <= 0:
                 return None
 
-            # 🎯 Професійна модель ММ (LIQMAP Liquidity-Pull + whale/стакан/funding).
+            # 🎯 Професійна модель МММ (LIQMAP Liquidity-Pull + whale/стакан/funding).
             # Funding-запит лише для BTC, щоб масовий скан не смикав біржу. При будь-
             # якій невдачі — падаємо у стару (fa−fb)/den нижче.
             if _MM_MODEL:
@@ -2293,9 +2293,9 @@ class FuelFilterDaemon:
             return None, 0
 
     def _update_btc_verdict(self):
-        """BTC ММ *session* tracker (drives the ₿ banner + START engine + queue).
+        """BTC МММ *session* tracker (drives the ₿ banner + START engine + queue).
 
-        A SESSION = a committed BTC ММ direction. The live ММ comes from the
+        A SESSION = a committed BTC МММ direction. The live МММ comes from the
         MAIN-WINDOW indicator (compute_bias fuel, ±0.1): dir > +0.1 → LONG,
         < −0.1 → SHORT, |dir| ≤ 0.1 → WAIT (ML збалансований).
 
@@ -2313,7 +2313,7 @@ class FuelFilterDaemon:
             # раніше на пампі банер показував SHORT — бабло контраріанське.
             fdir, _bstr = self._btc_trend_dir()
             self._btc_fuel_strength = int(_bstr or 0)
-            # Бабло-ММ (LIQMAP) лишаємо ЛИШЕ для деталей/тултипа банера — напрямок
+            # Бабло-МММ (LIQMAP) лишаємо ЛИШЕ для деталей/тултипа банера — напрямок
             # банера з неї БІЛЬШЕ не береться.
             if _MM_MODEL:
                 try:
@@ -2333,7 +2333,7 @@ class FuelFilterDaemon:
             else:
                 live = None                 # |dir| ≤ 0.1 → плоско → WAIT
         except Exception as e:
-            print(f"[FuelFilter] BTC ММ calc error: {e}")
+            print(f"[FuelFilter] BTC МММ calc error: {e}")
             return
         now = time.time()
         sess = self._btc_verdict_dir        # current session direction
@@ -2391,13 +2391,13 @@ class FuelFilterDaemon:
         self._persist_state()
 
     def _log_btc_mm(self, event: str, fdir):
-        """Пише подію банера ₿ ММ у «Лог роботи бота» (category=MM) для аналізу
+        """Пише подію банера ₿ МММ у «Лог роботи бота» (category=MM) для аналізу
         моделі: score, сила, сеанс, внесок кожного сигналу і ціль-магніт."""
         try:
             mm = getattr(self, '_btc_mm', None) or {}
             comp = mm.get('components') or {}
             tgt = mm.get('target') or {}
-            parts = [f"₿ ММ {event}",
+            parts = [f"₿ МММ {event}",
                      f"score={fdir if fdir is not None else '—'}",
                      f"str={mm.get('strength', self._btc_fuel_strength)}",
                      f"sess={self._btc_verdict_dir or '—'}"]
@@ -2413,14 +2413,14 @@ class FuelFilterDaemon:
             pass
 
     def _log_coin_mm(self, sym: str, event: str):
-        """Per-coin ММ у «Лог роботи бота» (category=MM) для аналізу: напрямок,
+        """Per-coin МММ у «Лог роботи бота» (category=MM) для аналізу: напрямок,
         score, сила і внесок сигналів + ціль-магніт. Викликається на рідкісних
         подіях (вхід у чергу), тож обсяг логу лишається обмеженим."""
         try:
             fd = self._fuel_dir(sym) or {}
             comp = fd.get('components') or {}
             tgt = fd.get('target') or {}
-            parts = [f"ММ {sym} {event}",
+            parts = [f"МММ {sym} {event}",
                      f"dir={fd.get('status') or '—'}",
                      f"score={fd.get('dir')}",
                      f"str={fd.get('strength', '—')}"]
@@ -2560,8 +2560,8 @@ class FuelFilterDaemon:
             'max_exhaustion': settings.get('max_exhaustion_pct', 75),
         }
         # Fuel direction (timer trigger) — smoothed + hysteresis, read-only.
-        # Also expose the ММ STRENGTH (|fuel dir|×100, 0..100) + raw dir so
-        # external overlays can show the exact same ММ the bot uses.
+        # Also expose the МММ STRENGTH (|fuel dir|×100, 0..100) + raw dir so
+        # external overlays can show the exact same МММ the bot uses.
         try:
             fuel_data = self._fuel_dir_smoothed(symbol)
             out['fuel_status'] = fuel_data.get('status') if fuel_data else None
@@ -2572,7 +2572,7 @@ class FuelFilterDaemon:
             # 🎯 Запас ходу (до ліквідності попереду руху) + ціль-магніт.
             out['runway'] = (fuel_data or {}).get('runway')
             out['mm_target'] = (fuel_data or {}).get('target')
-            # Старий показник ММ (сирий (fa−fb)/den) — для порівняння в оверлеї.
+            # Старий показник МММ (сирий (fa−fb)/den) — для порівняння в оверлеї.
             out['mm_old'] = self._fuel_dir_legacy(symbol)
         except Exception:
             out['fuel_status'] = None
@@ -2662,7 +2662,7 @@ class FuelFilterDaemon:
                           'strength': int(self._btc_fuel_strength or 0)}
         except Exception:
             out['btc'] = {'dir': None, 'paused': False, 'status': 'STOP', 'strength': 0}
-        # ── 💰 Funding info — only when the coin is in the «💰 Funding — ММ по
+        # ── 💰 Funding info — only when the coin is in the «💰 Funding — МММ по
         # монетах» table (self._anomalies). Adds current funding rate + time to
         # the next settlement so the overlay can show them for funding coins. ──
         try:
@@ -2671,7 +2671,7 @@ class FuelFilterDaemon:
             out['funding'] = bool(a)
             out['funding_rate'] = a.get('rate') if a else None
             # prev rate → the overlay colours funding by TREND (deeper/easing/
-            # stable/✦ clean) EXACTLY like the 💰 Funding — ММ table.
+            # stable/✦ clean) EXACTLY like the 💰 Funding — МММ table.
             out['funding_prev_rate'] = a.get('prev_rate') if a else None
             out['funding_next_ms'] = a.get('next_funding') if a else None
             # 24h turnover (+ ~2-min baseline for the ↑/↓ arrow) — same value the
@@ -2787,11 +2787,11 @@ class FuelFilterDaemon:
 
     def _soft_safeguard(self, symbol: str, side: str, settings: Dict):
         """🛡 М'який запобіжник відкриття — (ok, reason). Блокує 3 найгірші
-        входи, що системно давали збитки: слабкий тиск ММ, нейтральний або
+        входи, що системно давали збитки: слабкий тиск МММ, нейтральний або
         протилежний CTR, виснажений хід. Це НЕ повний SMC-грейдер, а три
         прості «вбивці» — щоб мінімально втручатись, але відсіяти мотлох.
         Вимикається safeguard_on=False; пороги налаштовні."""
-        # 1) ММ (сила бабло-тиску) — має бути хоча б помірним.
+        # 1) МММ (сила бабло-тиску) — має бути хоча б помірним.
         try:
             mm_min = float(settings.get('safeguard_mm_min', 30) or 0)
         except (TypeError, ValueError):
@@ -2800,7 +2800,7 @@ class FuelFilterDaemon:
         if mm_str is None:
             mm_str = (self._score_cache.get(symbol) or {}).get('fuel_strength')
         if mm_min > 0 and (mm_str is None or float(mm_str) < mm_min):
-            return (False, f"ММ слабкий ({int(mm_str or 0)}%<{int(mm_min)}%)")
+            return (False, f"МММ слабкий ({int(mm_str or 0)}%<{int(mm_min)}%)")
         # 2) Виснаженість ходу — не входити у вже вичерпаний рух.
         try:
             exh_max = float(settings.get('safeguard_exh_max', 80) or 0)
@@ -2848,7 +2848,7 @@ class FuelFilterDaemon:
                   f"rejecting open (too exhausted)")
             return False
 
-        # 🛡 М'який запобіжник: слабкий ММ / нейтральний(проти) CTR / виснажений
+        # 🛡 М'який запобіжник: слабкий МММ / нейтральний(проти) CTR / виснажений
         # хід — три «вбивці», що системно давали збиткові входи. Єдиний чок-пойнт
         # усіх шляхів відкриття (Черга-1/2, сигнал). Причину — у per-row діагностику.
         if settings.get('safeguard_on', True):
@@ -3112,7 +3112,7 @@ class FuelFilterDaemon:
         self._last_tick_ts = time.time()
         if not settings.get('enabled'):
             return
-        # BTC banner direction = main-window ММ indicator (compute_bias fuel).
+        # BTC banner direction = main-window МММ indicator (compute_bias fuel).
         self._update_btc_verdict()
         now = time.time()
 
@@ -3305,9 +3305,9 @@ class FuelFilterDaemon:
             if track.get('faded_since'):
                 with self._lock:
                     track.pop('faded_since', None)
-        # exit: ММ (fuel) strength fell below the configured minimum (optional).
+        # exit: МММ (fuel) strength fell below the configured minimum (optional).
         # Closes even while direction is unchanged — a fading-but-not-flipped
-        # position (e.g. ММ 80% → 15%) is no longer worth holding.
+        # position (e.g. МММ 80% → 15%) is no longer worth holding.
         try:
             _min_close_mm = int(settings.get('manage_close_min_mm', 0) or 0)
         except (TypeError, ValueError):
@@ -3342,7 +3342,7 @@ class FuelFilterDaemon:
             notifier = getattr(tm, 'notifier', None) if tm else None
         btc_line = self._btc_status_text(settings, now)
         with self._lock:
-            # ММ (fuel) strength filter: a coin enters the 💰 ММ table only if
+            # МММ (fuel) strength filter: a coin enters the 💰 МММ table only if
             # its strength (|fuel dir|×100) meets the selected minimum.
             try:
                 fmin_mm = int(settings.get('funding_min_mm_strength', 0) or 0)
@@ -3371,11 +3371,11 @@ class FuelFilterDaemon:
             except (TypeError, ValueError):
                 _spike_win = 15.0
             # Evaluate BOTH coins currently in the funding scanner AND coins
-            # already in the 💰 ММ table. A coin ENTERS only from the scanner,
-            # but once in, it STAYS as long as it has fuel and meets the ММ
+            # already in the 💰 МММ table. A coin ENTERS only from the scanner,
+            # but once in, it STAYS as long as it has fuel and meets the МММ
             # filter — even if it dropped out of the 💰 Funding Rate Scanner
-            # (funding normalised). It leaves ONLY when fuel is gone / ММ below
-            # the keep-threshold. This fixes "паливо зникло" firing at ММ 100%.
+            # (funding normalised). It leaves ONLY when fuel is gone / МММ below
+            # the keep-threshold. This fixes "МММ зникло" firing at МММ 100%.
             _in_table = {s for s, a in self._anomalies.items() if a.get('funding')}
             for sym in (funding | _in_table):
                 # Muted → ignore this coin entirely (no row, no TG, no archive).
@@ -3396,7 +3396,7 @@ class FuelFilterDaemon:
                 if nf is None and a is not None:
                     nf = a.get('next_funding')
                 vol = self._funding_vols.get(sym)
-                # Directional AND strong enough → in table; else treated as no-ММ.
+                # Directional AND strong enough → in table; else treated as no-МММ.
                 _strength = abs(float(fuel.get('dir') or 0.0)) * 100.0 if fuel else 0.0
                 _mm = int(round(_strength))
 
@@ -3468,7 +3468,7 @@ class FuelFilterDaemon:
                 _thr_now = _keep_mm if _was_holding else fmin_mm
                 _mm_ok = status in ('LONG', 'SHORT') and _strength >= _thr_now
                 # 🚀 Anomalous-growth (spike): a SCANNER coin with a sharp price
-                # move AND rising volume qualifies even with low ММ. Volume-rising
+                # move AND rising volume qualifies even with low МММ. Volume-rising
                 # is required once a baseline exists; a brand-new coin may enter on
                 # the price move alone (its vol trend firms up on the next ticks).
                 _spiked, _move, _spx = ((self._price_spike(sym, _spike_win, _spike_pct))
@@ -3478,7 +3478,7 @@ class FuelFilterDaemon:
                 _spike_ok = bool(_spiked and in_scanner and (_vol_up or a is None))
                 if mark is None and _spx:
                     mark = _spx                       # price for a pure-spike coin
-                # Displayed direction: ММ side if any, else the spike's move side.
+                # Displayed direction: МММ side if any, else the spike's move side.
                 _row_dir = (status if status in ('LONG', 'SHORT')
                             else (('LONG' if _move > 0 else 'SHORT') if _spike_ok else status))
                 _qualifies = _mm_ok or _spike_ok
@@ -3521,12 +3521,12 @@ class FuelFilterDaemon:
                         a['spike'] = _spike_ok
                         a['spike_move'] = round(_move, 2)
                 else:
-                    # Leaves the table ONLY here: fuel gone or ММ below keep-thr.
+                    # Leaves the table ONLY here: fuel gone or МММ below keep-thr.
                     if a is not None:
                         if a.get('holding'):
                             _reason = ('бабло зникло'
                                        if status not in ('LONG', 'SHORT')
-                                       else f'ММ {_mm}% нижче фільтра')
+                                       else f'МММ {_mm}% нижче фільтра')
                             self._notify_funding(
                                 notifier, sym, a.get('dir'),
                                 mark or a.get('last_price'), btc_line,
@@ -3561,12 +3561,12 @@ class FuelFilterDaemon:
     def _notify_funding(self, notifier, sym, d, price, btc_line, settings, now,
                         entered, strength=None, reason=None):
         """Telegram alert when a 💰 funding coin APPEARS (entered=True) or
-        DISAPPEARS (entered=False) from the 💰 ММ table. Gated by the user's
+        DISAPPEARS (entered=False) from the 💰 МММ table. Gated by the user's
         ff_tg_on_entry / ff_tg_on_exit toggles and rendered from the editable
         templates. Placeholders: {symbol} {dir} {side} {price} {funding}
         {fuel} {exhaustion} {reason} {btc} — missing → «—».
 
-        `strength` is the LIVE ММ strength (0..100) computed by the caller from
+        `strength` is the LIVE МММ strength (0..100) computed by the caller from
         the current fuel direction. It is passed in because the background
         score cache (self._fuel_str) usually has no entry yet at the exact
         moment a coin first appears — which is why {fuel} used to render «—».
@@ -3595,7 +3595,7 @@ class FuelFilterDaemon:
         if (not entered) and not settings.get('ff_tg_on_exit'):
             return
         # ENTRY-only extra filters (do NOT touch exit messages): direction and
-        # minimum ММ strength. E.g. «пропускати лише LONG і з ММ ≥ 90».
+        # minimum МММ strength. E.g. «пропускати лише LONG і з МММ ≥ 90».
         if entered:
             _edir = str(settings.get('funding_tg_entry_dir', 'any') or 'any').upper()
             if _edir in ('LONG', 'SHORT') and d != _edir:
@@ -3636,7 +3636,7 @@ class FuelFilterDaemon:
                 'fuel': (str(strength) if strength is not None else '—'),
                 'exhaustion': (f"{exh:.0f}" if exh is not None else '—'),
                 'reason': (reason if reason is not None
-                           else ('зʼявилась у ММ' if entered else 'бабло зникло')),
+                           else ('зʼявилась у МММ' if entered else 'бабло зникло')),
                 'btc': (btc_line or ''),
             }
             tpl = (settings.get('ff_tg_entry_template') if entered
@@ -3678,7 +3678,7 @@ class FuelFilterDaemon:
         base (_pending + _pending2) + open FF positions (_timers) + funding-fuel
         coins — off the request path so the UI never blocks on liq-map/kline
         work. Queue 2 MUST be included too, otherwise a coin that sits ONLY in
-        Queue 2 shows empty ММ / виснаженість / SCORE columns."""
+        Queue 2 shows empty МММ / виснаженість / SCORE columns."""
         try:
             dur = float(settings.get('duration_minutes', 5) or 0) * 60
             tf = settings.get('engine_candle_tf', '5m')
@@ -3689,7 +3689,7 @@ class FuelFilterDaemon:
                 timers = list(self._timers.items())       # open positions
                 anomalies = [(s, a.get('dir')) for s, a in self._anomalies.items()]
             # ALL open TM positions (real + paper) — so the open-position tables'
-            # ММ / виснаженість columns are filled for EVERY trade, regardless of
+            # МММ / виснаженість columns are filled for EVERY trade, regardless of
             # how it was opened (Черга-1, Черга-2 or a direct open). Read outside
             # self._lock (separate lock on TM's side).
             tm_positions = []   # (sym, side, opened_at)
@@ -3847,7 +3847,7 @@ class FuelFilterDaemon:
                     mark = lst.get('mark_price')
         except Exception:
             pass
-        # 4) ММ (бабло) — з повної моделі; strength/conflict — з кешу SCORE.
+        # 4) МММ (бабло) — з повної моделі; strength/conflict — з кешу SCORE.
         mm = self._fuel_dir(symbol) or {}
         sc = self._score_cache.get(symbol) or {}
         mm_strength = self._fuel_str.get(symbol)
@@ -3928,9 +3928,9 @@ class FuelFilterDaemon:
     def _funding_alert(self, s: Dict, now: float):
         """Telegram alerts for 💰 funding coins, evaluated LIVE so they fire
         within the fast alert cadence (not the 30s scan tick):
-          • ENTRY when a funding coin is in the table (timer ≥ threshold AND ММ
+          • ENTRY when a funding coin is in the table (timer ≥ threshold AND МММ
             still holds its direction) — with direction, price and funding %;
-          • EXIT when ММ no longer holds (live) and it leaves the table.
+          • EXIT when МММ no longer holds (live) and it leaves the table.
         Each fires once; re-armed on the opposite transition. Two-line layout."""
         if not s.get('funding_tg_alerts', False):
             self._funding_alerted.clear()
@@ -3951,11 +3951,11 @@ class FuelFilterDaemon:
                 candidates.append((sym, t.get('dir')))
             alerted = set(self._funding_alerted)
             managed_or_anom = set(self._fuel_managed) | set(self._anomalies)
-        # Live membership: in the table only if ММ still holds the direction.
+        # Live membership: in the table only if МММ still holds the direction.
         current, dir_of, price_of = set(), {}, {}
         for sym, d in candidates:
             fuel = self._fuel_dir_smoothed(sym)
-            # A clear opposite/neutral reading (with data) means ММ ended →
+            # A clear opposite/neutral reading (with data) means МММ ended →
             # not in the table. A data gap (fuel is None) keeps it (no flapping).
             if fuel is not None and fuel.get('status') != d:
                 continue
@@ -3963,7 +3963,7 @@ class FuelFilterDaemon:
             dir_of[sym] = d
             price_of[sym] = fuel.get('mark_price') if fuel else None
         new_entries = [sym for sym in current if sym not in alerted]
-        # Exit = was alerted, now out of the table for ММ reasons (not because it
+        # Exit = was alerted, now out of the table for МММ reasons (not because it
         # moved to a position / anomalies table).
         left = [sym for sym in (alerted - current) if sym not in managed_or_anom]
         with self._lock:
@@ -5119,7 +5119,7 @@ class FuelFilterDaemon:
             if smart:
                 fd = fuel.get('status')
                 if fd not in ('LONG', 'SHORT'):
-                    trace.append(f"{sym}:паливо нейтральне — напрямок не визначено")
+                    trace.append(f"{sym}:МММ нейтральне — напрямок не визначено")
                     continue
                 d = fd   # override the queued signal side
                 # Button/banner gate for the DERIVED direction.
@@ -5130,9 +5130,9 @@ class FuelFilterDaemon:
             # mode d == fuel already, so this passes; in classic mode it enforces
             # the queued signal side.
             if fuel.get('status') != d:
-                trace.append(f"{sym}:паливо {fuel.get('status') or 'нейтр'} ≠ сигнал {d}")
+                trace.append(f"{sym}:МММ {fuel.get('status') or 'нейтр'} ≠ сигнал {d}")
                 continue
-            # GATE: minimum ММ (fuel) STRENGTH — |fuel dir|×100 ≥ setting.
+            # GATE: minimum МММ (fuel) STRENGTH — |fuel dir|×100 ≥ setting.
             # Separate threshold per direction (LONG / SHORT); legacy single
             # key is the fallback when a per-direction one isn't set.
             _min_mm = 0
@@ -5146,7 +5146,7 @@ class FuelFilterDaemon:
             if _min_mm > 0:
                 _strength = abs(float(fuel.get('dir') or 0.0)) * 100.0
                 if _strength < _min_mm:
-                    trace.append(f"{sym}:ММ{_strength:.0f}%<{_min_mm}%")
+                    trace.append(f"{sym}:МММ{_strength:.0f}%<{_min_mm}%")
                     continue
             # Exhaustion gate (same as _open) — surfaced HERE so it's visible and
             # does NOT silently waste a candle check. Too-exhausted coins are
@@ -5200,7 +5200,7 @@ class FuelFilterDaemon:
                 # in _fuel_managed so exhaustion-exit + control manage it.
                 # The "Opened by" field records which candle-confirm attempt the
                 # engine opened on (failed checks bump _engine_attempts; opening
-                # on the first check is attempt #1) AND the coin's ММ timer value
+                # on the first check is attempt #1) AND the coin's МММ timer value
                 # at the moment of opening.
                 # "Opened by" records the EXHAUSTION at the moment of entry.
                 opened = self._open(
@@ -5258,7 +5258,7 @@ class FuelFilterDaemon:
         self._engine_gate = ''
 
         print(f"[FF-Engine] {mode_lbl} · кнопки L={allow_long} S={allow_short} · "
-              f"{len(cand)} канд · паливо-гейт · "
+              f"{len(cand)} канд · МММ-гейт · "
               + ' '.join(trace))
 
     def _set_vol(self, a: Dict, vol, now: float):
@@ -5333,7 +5333,7 @@ class FuelFilterDaemon:
     def _opportunity_for(self, sym: str, a: Dict, settings: Dict = None):
         """🎯 Composite «best setup to open» analysis for a 💰 funding coin —
         combines ALL table signals: SCORE quality (ВІДМІННИЙ), fuel/price
-        agreement, ММ strength + alignment with SCORE, funding depth/deepening
+        agreement, МММ strength + alignment with SCORE, funding depth/deepening
         (squeeze fuel), rising volume, 🚀 spike AND ₿ BTCUSDT session alignment
         (₿ START у той самий бік). Returns (score 0..100, hot, reasons). Shared by
         get_state (UI) and the TG alert."""
@@ -5359,13 +5359,13 @@ class FuelFilterDaemon:
         elif _sc_label == 'NEUTRAL':
             opp += 6
         if (not _sc_conflict) and _sc_label in ('STRONG HOLD', 'HOLD'):
-            opp += 8; reasons.append('без конфлікту (паливо=ціна)')
+            opp += 8; reasons.append('без конфлікту (МММ=ціна)')
         if _mm_strength >= 60:
-            opp += 16; reasons.append(f'сильний тиск ММ {int(_mm_strength)}%')
+            opp += 16; reasons.append(f'сильний тиск МММ {int(_mm_strength)}%')
         elif _mm_strength >= 30:
             opp += 8
         if _mm_dir_o in ('LONG', 'SHORT') and _sc_dir == _mm_dir_o:
-            opp += 8; reasons.append('ММ і SCORE в один бік')
+            opp += 8; reasons.append('МММ і SCORE в один бік')
         if _fr_o is not None and _fr_o <= -0.5:
             opp += 8; reasons.append('глибокий негативний funding')
         if _ft_o is not None and _ft_o < 0:
@@ -5415,7 +5415,7 @@ class FuelFilterDaemon:
         an open FF position (hidden from the waiting list).
 
         smart=True (🧭 Smart direction): the DISPLAYED direction is the live fuel
-        (ММ) side, not the queued signal side — matching what will actually open.
+        (МММ) side, not the queued signal side — matching what will actually open.
         `smart_dir` flags rows whose fuel side differs from the entry signal."""
         if sym in self._fuel_managed:
             return None
@@ -5522,7 +5522,7 @@ class FuelFilterDaemon:
                 {'k': 'Режим відкриття', 'v': eng_mode},
                 {'k': 'Кнопки ЛОНГ/ШОРТ', 'v': buttons},
                 {'k': 'Підтвердж. свічками', 'v': f"{_on(s.get('engine_candle_confirm'))} ({s.get('engine_candle_tf','5m')})"},
-                {'k': 'Мін. сила ММ (L/S)', 'v': f"{s.get('engine_min_mm_strength_long',0)}% / {s.get('engine_min_mm_strength_short',0)}%"},
+                {'k': 'Мін. сила МММ (L/S)', 'v': f"{s.get('engine_min_mm_strength_long',0)}% / {s.get('engine_min_mm_strength_short',0)}%"},
                 {'k': 'Мін. Decision-вердикт', 'v': dec_map.get(s.get('engine_min_decision','any'), s.get('engine_min_decision'))},
                 {'k': 'Розумний напрямок', 'v': _on(s.get('engine_smart_direction'))},
                 {'k': 'Лише STRONG HOLD', 'v': _on(s.get('engine_require_strong_hold'))},
@@ -5573,7 +5573,7 @@ class FuelFilterDaemon:
                 {'k': 'Керування позиціями (FF)', 'v': _on(s.get('manage_open_positions', True))},
                 {'k': 'Вихід за виснаженням', 'v': (f"УВІМК (≥{s.get('potential_threshold_pct',95)}%)" if s.get('use_potential_exit') else 'вимк')},
                 {'k': 'Закриття за ₿-баром', 'v': s.get('close_on_btc_mode', 'off')},
-                {'k': 'Закриття за силою ММ <', 'v': (f"{s.get('manage_close_min_mm')}%" if s.get('manage_close_min_mm') else 'вимк')},
+                {'k': 'Закриття за силою МММ <', 'v': (f"{s.get('manage_close_min_mm')}%" if s.get('manage_close_min_mm') else 'вимк')},
                 {'k': '₿ START-сигнал (хв)', 'v': s.get('start_signal_minutes', 5)},
             ]},
         ]
@@ -5805,7 +5805,7 @@ class FuelFilterDaemon:
                     'spike_move': a.get('spike_move'),
                     # F-Trend: напрямок funding за ~30 хв (-1 глибше / +1 послаб. / 0).
                     'f_trend': (self._funding_trends or {}).get(sym.upper()),
-                    # ММ (fuel) direction + strength for the funding table's ММ
+                    # МММ (fuel) direction + strength for the funding table's МММ
                     # column (same widget as the queue / open positions).
                     'mm': (self._score_cache.get(sym) or {}).get('fuel_dir') or a.get('dir'),
                     'mm_str': self._fuel_str.get(sym),
@@ -5912,7 +5912,7 @@ class FuelFilterDaemon:
     def get_fuel_strength_map(self) -> Dict[str, Dict]:
         """Fuel STRENGTH (0..100) + previous-cycle value + direction, per symbol
         we track (read from the pre-computed score cache — CHEAP, no per-request
-        compute). For the open-position tables' 'Паливо' column.
+        compute). For the open-position tables' 'МММ' column.
         Returns {symbol: {'now': int, 'prev': int|None, 'dir': 'LONG'|'SHORT'|None}}."""
         with self._lock:
             out = {}

@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         VSV ММ overlay for TradingView
+// @name         VSV МММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.7.0
-// @description  Показує реальний ММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
+// @version      1.7.2
+// @description  Показує реальний МММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       VSV
 // @match        https://*.tradingview.com/chart/*
 // @match        https://tradingview.com/chart/*
@@ -20,7 +20,7 @@
  • Скрипт визначає монету, відкриту на графіку TradingView (з URL / заголовка).
  • Раз на кілька секунд запитує у твого бота ендпоінт
        GET <URL_бота>/api/fuel-filter/panel/<SYMBOL>
-   і показує СПРАВЖНІЙ ММ (|fuel dir|×100), напрямок, силу тиску (рівновага/
+   і показує СПРАВЖНІЙ МММ (|fuel dir|×100), напрямок, силу тиску (рівновага/
    легкий/помірний/сильний/потужний), виснаженість — ті самі числа, що в боті.
  • Дані рахуються з карти ліквідацій бота, тож для монети, яку бот ще не
    сканував, перший запит може бути «немає даних», а за ~хвилину зʼявиться
@@ -30,10 +30,10 @@
  ──────────────────
  1. Постав Tampermonkey (Chrome/Edge/Firefox) або Violentmonkey.
  2. Додай цей файл як новий userscript.
- 3. Задай URL свого бота: меню Tampermonkey → «VSV ММ: задати URL бота»
+ 3. Задай URL свого бота: меню Tampermonkey → «VSV МММ: задати URL бота»
     (напр. http://31.131.21.224  або  http://localhost:10000).
     Без завершального «/».
- 4. Задай API-ключ: меню Tampermonkey → «VSV ММ: задати API-ключ».
+ 4. Задай API-ключ: меню Tampermonkey → «VSV МММ: задати API-ключ».
     Це значення змінної INFO_API_KEY з .env бота. БЕЗ нього бот віддає
     401 auth_required, і бейдж показує «Потрібен API-ключ». Ендпоінт панелі
     захищений авторизацією — скрипт не має cookie-сесії, тож ходить із
@@ -52,7 +52,7 @@
     'use strict';
 
     // ── Config ────────────────────────────────────────────────────────────
-    const POLL_MS = 4000;           // як часто оновлювати ММ
+    const POLL_MS = 4000;           // як часто оновлювати МММ
     const K_URL = 'svv_bot_url';    // ключ зберігання URL бота
     const K_KEY = 'svv_bot_key';    // ключ зберігання API-ключа (INFO_API_KEY)
     const K_POS = 'svv_badge_pos';  // ключ позиції бейджа
@@ -85,8 +85,8 @@
             tick();
         }
     }
-    try { GM_registerMenuCommand('VSV ММ: задати URL бота', setBotUrl); } catch (e) {}
-    try { GM_registerMenuCommand('VSV ММ: задати API-ключ', setBotKey); } catch (e) {}
+    try { GM_registerMenuCommand('VSV МММ: задати URL бота', setBotUrl); } catch (e) {}
+    try { GM_registerMenuCommand('VSV МММ: задати API-ключ', setBotKey); } catch (e) {}
 
     // ── Symbol detection ──────────────────────────────────────────────────
     // TradingView symbol → base coin the bot knows (VANRYUSDT).
@@ -134,9 +134,9 @@
         return _cleanSym(raw);
     }
 
-    // ── ММ bands — сила ТИСКУ ММ (той самий 5-рівневий поділ, що в головному UI):
+    // ── МММ bands — сила ТИСКУ МММ (той самий 5-рівневий поділ, що в головному UI):
     // рівновага <10 · легкий 10–30 · помірний 30–60 · сильний 60–85 · потужний 85+.
-    // «рівновага» (а не «немає») = тиск ММ незначний, ліквідації/паливо з обох
+    // «рівновага» (а не «немає») = тиск МММ незначний, ліквідації/МММ з обох
     // боків збалансовані → напрямку немає. Це НЕ «немає даних».
     function band(mm) {
         if (mm == null) return { label: '—' };
@@ -146,11 +146,11 @@
         if (mm < 85) return { label: 'сильний тиск' };
         return { label: 'потужний тиск' };
     }
-    // Єдине пояснення показника ММ (тултип при наведенні на бейдж).
+    // Єдине пояснення показника МММ (тултип при наведенні на бейдж).
     const MM_HELP =
-        'ММ — тиск маркетмейкера/ліквідності на ціну (куди тягне).\n' +
+        'МММ — тиск маркетмейкера/ліквідності на ціну (куди тягне).\n' +
         'Напрямок: 🟢 вгору (лонг) · 🔴 вниз (шорт) · ⚪ рівновага.\n' +
-        '% — сила тиску (наскільки односторонні ліквідації/паливо):\n' +
+        '% — сила тиску (наскільки односторонні ліквідації/МММ):\n' +
         'рівновага <10 · легкий 10–30 · помірний 30–60 · сильний 60–85 · потужний 85+.';
     function dirColor(dir) {
         if (dir === 'LONG') return '#22c55e';
@@ -184,15 +184,15 @@
         ].join(';');
         badge.innerHTML =
             '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">' +
-              '<span style="font-weight:800;letter-spacing:.3px">💰 ММ</span>' +
+              '<span style="font-weight:800;letter-spacing:.3px">💰 МММ</span>' +
               '<span id="svv-mm-sym" style="font-weight:700;color:#cbd5e1;font-size:11px"></span>' +
             '</div>' +
-            '<div style="display:flex;align-items:baseline;gap:8px">' +
+            '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">' +
               '<span id="svv-mm-val" style="font-weight:900;font-size:22px">—</span>' +
               '<span id="svv-mm-dir" style="font-weight:700;font-size:12px"></span>' +
+              '<span id="svv-mm-old" style="font-size:11px;color:#8b93a7"></span>' +
             '</div>' +
             '<div id="svv-mm-score" style="font-size:11px;margin-top:3px"></div>' +
-            '<div id="svv-mm-old" style="font-size:10px;color:#8b93a7;margin-top:2px"></div>' +
             '<div id="svv-mm-run" style="font-size:10.5px;color:#9aa3b5;margin-top:3px"></div>' +
             '<div id="svv-mm-btc" style="font-size:10.5px;color:#9aa3b5;margin-top:3px"></div>' +
             '<div id="svv-mm-fund" style="font-size:10.5px;color:#34d399;margin-top:2px"></div>' +
@@ -317,7 +317,22 @@
         elDir.style.color = dirColor(dir);
         elDir.title = MM_HELP;
 
-        // 📊 Готовність (SMC-сетап) + 🚪 Готовність виходу (якщо є угода) + ММ — в ОДНОМУ рядку.
+        // МММ старий — в ОДНОМУ ряду з головним «5% · рівновага» (розмір шрифту свій).
+        if (elOld) {
+            if (d.mm_old && d.mm_old.dir != null) {
+                const mo = d.mm_old, st = mo.status;
+                const dl = st === 'LONG' ? '🟢 LONG' : (st === 'SHORT' ? '🔴 SHORT' : '⚪');
+                const col = st === 'LONG' ? '#4ade80' : (st === 'SHORT' ? '#f87171' : '#8b93a7');
+                elOld.innerHTML = `<span style="color:#4b5563">·</span> МММ `
+                    + `<span style="color:${col}">${dl}</span> ${mo.strength}%`;
+                elOld.style.display = '';
+                elOld.title = 'МММ (старий показник) — за розташуванням кластерів ((fa−fb)/den).';
+            } else {
+                elOld.innerHTML = ''; elOld.style.display = 'none';
+            }
+        }
+
+        // 📊 Готовність (SMC-сетап) + 🚪 Готовність виходу (якщо є угода) + МММ — в ОДНОМУ рядку.
         if (elScore) {
             const parts = [];
             if (d.setup && d.setup.ok) {
@@ -336,12 +351,6 @@
                 const eflag = ex.hot ? ' 🚪' : '';
                 parts.push(`Вихід <b style="color:${ecol}">${ex.score}%</b> `
                     + `<span style="color:${ecol};font-weight:700">${eic} ${ex.grade || ''}${eflag}</span>`);
-            }
-            if (d.mm_old && d.mm_old.dir != null) {
-                const mo = d.mm_old, st = mo.status;
-                const dl = st === 'LONG' ? '🟢 LONG' : (st === 'SHORT' ? '🔴 SHORT' : '⚪');
-                const col = st === 'LONG' ? '#4ade80' : (st === 'SHORT' ? '#f87171' : '#8b93a7');
-                parts.push(`ММ <span style="color:${col}">${dl}</span> ${mo.strength}%`);
             }
             if (parts.length) {
                 elScore.innerHTML = parts.join(' <span style="color:#4b5563">·</span> ');
@@ -370,13 +379,13 @@
             }
             elRun.style.color = '#9aa3b5';
             elRun.style.display = '';
-            elRun.title = 'Скільки простору до значущої ліквідності В БІК напрямку ММ (↑/↓):\n'
+            elRun.title = 'Скільки простору до значущої ліквідності В БІК напрямку МММ (↑/↓):\n'
                 + 'room% — відстань до головного пулу-цілі; «ціль» — його розмір і ціна.\n'
                 + 'Малий запас = рух близько до великого кластера (ймовірне сповільнення/розворот).\n'
                 + 'Коли напрямку немає (⚪ рівновага) — запас не показується, бо «куди» невизначено.';
         }
 
-        // ── ₿ BTC ММ line — напрямок СЕАНСУ + сила% + рівень. Коли сеанс НА ПАУЗІ
+        // ── ₿ BTC МММ line — напрямок СЕАНСУ + сила% + рівень. Коли сеанс НА ПАУЗІ
         // (живе ML у зоні WAIT, |dir| ≤ 0.1), напрямок — це стара, застояна сторона:
         // приглушуємо колір і додаємо «⏸ ПАУЗА», щоб не читалось як активний сигнал
         // (раніше оверлей ховав паузу → показував впевнений SHORT на нейтралі). ──
@@ -391,18 +400,18 @@
                 // На паузі — сірий (застояний сеанс); активний — колір напрямку.
                 const bc = b.paused ? '#9aa3b5' : dirColor(b.dir);
                 const tail = (bs != null) ? ` · ${bs}% · ${band(bs).label}` : '';
-                elBtc.innerHTML = `₿ BTC ММ: <span style="color:${bc};font-weight:700">${dirLabel(b.dir)}</span>${tail}${pausedTag}`;
+                elBtc.innerHTML = `₿ BTC МММ: <span style="color:${bc};font-weight:700">${dirLabel(b.dir)}</span>${tail}${pausedTag}`;
             } else {
                 elBtc.style.color = '#9aa3b5';
                 // Без напрямку → «рівновага» (не «легкий тиск»).
                 elBtc.innerHTML = (bs != null)
-                    ? `₿ BTC ММ: ⚪ — · ${bs}% · рівновага`
-                    : '₿ BTC ММ: ⚪ —';
+                    ? `₿ BTC МММ: ⚪ — · ${bs}% · рівновага`
+                    : '₿ BTC МММ: ⚪ —';
             }
             elBtc.title = MM_HELP;
         }
 
-        // ── 💰 Funding line — only for coins in the «💰 Funding — ММ» table.
+        // ── 💰 Funding line — only for coins in the «💰 Funding — МММ» table.
         // Funding is coloured by TREND exactly like the table: 🔴 глибше в мінус /
         // 🟢 до нуля / cyan стабільний / ✦ золоте (стабільне чітке 0.5-крокове
         // значення). Vol 24h (+ ↑/↓ vs ~2-хв базою) додається тим самим значенням,

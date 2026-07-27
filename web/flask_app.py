@@ -2704,8 +2704,8 @@ def register_api_routes(app):
         if not fm:
             return jsonify({'running': False, 'coins': [], 'total_tracked': 0})
         data = fm.get_watchlist()
-        # Merge ММ (fuel) strength for coins FF currently tracks — CHEAP map
-        # from the score cache (no per-coin compute). Coins without ММ data
+        # Merge МММ (fuel) strength for coins FF currently tracks — CHEAP map
+        # from the score cache (no per-coin compute). Coins without МММ data
         # simply won't carry mm_* fields (UI shows «—»).
         try:
             from detection.fuel_filter import get_fuel_filter
@@ -2719,7 +2719,7 @@ def register_api_routes(app):
                         c['mm_str'] = fs.get('now')
                         c['mm_str_prev'] = fs.get('prev')
         except Exception as e:
-            print(f"[Flask] funding ММ merge error: {e}")
+            print(f"[Flask] funding МММ merge error: {e}")
         return jsonify(data)
     
     @app.route('/api/funding/remove/<symbol>', methods=['POST', 'DELETE'])
@@ -2940,7 +2940,7 @@ def register_api_routes(app):
 
     @app.route('/api/fuel-filter/funding-history')
     def api_ff_funding_history():
-        """Archived per-coin funding history (signals, ММ, funding, price, ₿,
+        """Archived per-coin funding history (signals, МММ, funding, price, ₿,
         Vol) for one symbol. Spans multiple appear→exit episodes."""
         try:
             from detection.fuel_filter import get_fuel_filter
@@ -3089,7 +3089,7 @@ def register_api_routes(app):
         """Analytical export that LINKS the 🧾 activity log to the closed-trade
         tables (real + paper). Events are grouped into SESSIONS (one per «signal»
         run of a coin), and each session is joined to the trade it produced,
-        including that trade's full chronology (price/PnL/ММ/exhaustion series).
+        including that trade's full chronology (price/PnL/МММ/exhaustion series).
 
         format=json (default) → one self-contained object per session:
             {symbol, session_start/end, events[], trades[{is_shadow, …,
@@ -3316,6 +3316,9 @@ def register_api_routes(app):
             w.writerow(['session_id', 'outcome', 'latency_sec', 'time_iso', 'ts',
                         'symbol', 'side', 'event', 'source', 'detail',
                         'entry_score', 'ctr_stc', 'ctr_state', 'fuel_str',
+                        'setup_score', 'setup_grade',
+                        'su_struct', 'su_poi', 'su_zone', 'su_liq', 'su_mm',
+                        'su_timing', 'su_context',
                         'trade_status', 'trade_opened_iso', 'trade_closed_iso',
                         'ff_entry_score', 'dec_score', 'dec_verdict',
                         'btc_at_open', 'btc_paused_open',
@@ -3353,6 +3356,10 @@ def register_api_routes(app):
                         e.get('source'), e.get('detail'),
                         x.get('entry_score', ''), x.get('ctr_stc', ''),
                         x.get('ctr_state', ''), x.get('fuel_str', ''),
+                        x.get('setup_score', ''), x.get('setup_grade', ''),
+                        x.get('su_struct', ''), x.get('su_poi', ''),
+                        x.get('su_zone', ''), x.get('su_liq', ''), x.get('su_mm', ''),
+                        x.get('su_timing', ''), x.get('su_context', ''),
                         st, oa, ca,
                         ff_es, dsc, dvd, bao, bpo, qw, tit,
                         real.get('pnl_pct') if real else '',
@@ -5295,7 +5302,7 @@ def register_api_routes(app):
     
     @app.route('/api/tm/trade-history')
     def api_tm_trade_history():
-        """Per-trade recorded time-series (price/PnL/ММ/exhaustion) for charting.
+        """Per-trade recorded time-series (price/PnL/МММ/exhaustion) for charting.
         Query: symbol=BTCUSDT&closed_at=<float>&shadow=0|1. Matches a closed
         trade (or the live open position as fallback)."""
         from detection.trade_manager import get_trade_manager
@@ -6778,12 +6785,12 @@ def compute_bias(db, symbol, wl=None):
             reasons.append(('wait', "Liq-палива немає даних"))
         elif fuel_dir > 0.1:
             fuel_side = 1
-            reasons.append(('ok', "ММ зверху (тягне в LONG)", 'long'))
+            reasons.append(('ok', "МММ-бабло ↑ зверху → тягне в LONG", 'long'))
         elif fuel_dir < -0.1:
             fuel_side = -1
-            reasons.append(('ok', "ММ знизу (тягне в SHORT)", 'short'))
+            reasons.append(('ok', "МММ-бабло ↓ знизу → тягне в SHORT", 'short'))
         else:
-            reasons.append(('wait', "ММ збалансований — напрямку немає"))
+            reasons.append(('wait', "МММ-бабло ⚖ рівновага — напрямку немає"))
     except Exception:
         comp['fuel'] = None
         reasons.append(('wait', "Squeeze/fuel недоступний"))
@@ -7193,12 +7200,12 @@ def compute_bias_for_ff(db, symbol):
             reasons.append(('wait', "Liq-палива немає даних"))
         elif fuel_dir > 0.1:
             fuel_side = 1
-            reasons.append(('ok', "ММ зверху (тягне в LONG)", 'long'))
+            reasons.append(('ok', "МММ-бабло ↑ зверху → тягне в LONG", 'long'))
         elif fuel_dir < -0.1:
             fuel_side = -1
-            reasons.append(('ok', "ММ знизу (тягне в SHORT)", 'short'))
+            reasons.append(('ok', "МММ-бабло ↓ знизу → тягне в SHORT", 'short'))
         else:
-            reasons.append(('wait', "ММ збалансований — напрямку немає"))
+            reasons.append(('wait', "МММ-бабло ⚖ рівновага — напрямку немає"))
     except Exception:
         comp['fuel'] = None
 
