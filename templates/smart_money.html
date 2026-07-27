@@ -2329,6 +2329,31 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                     </div>
+                    <!-- ⚡ Скальперська «Готовність» для funding-монет (окремий TF) -->
+                    <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#c9b8ff;cursor:pointer;margin-bottom:8px" title="Рахувати окрему SMC-«готовність» на швидкому TF (напр. 5m + 15m HTF) ЛИШЕ для монет цієї таблиці — для коротких рухів навколо funding. Показується в колонці «⚡ Скальп». Не впливає на 1H-«Готовність» черг. Навантаження мінімальне (кеш + тротл).">
+                            <input type="checkbox" id="ff-funding-setup-scalp" onchange="saveFuelFilterSettings()"> ⚡ Скальп-Готовність (окремий TF, лише ця таблиця)
+                        </label>
+                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Базовий (швидкий) таймфрейм скальп-грейду.">Скальп TF</label>
+                                <select id="ff-funding-setup-tf" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace">
+                                    <option value="1m">1m</option><option value="3m">3m</option><option value="5m">5m</option><option value="15m">15m</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Старший TF (контекст) скальп-грейду.">HTF-контекст</label>
+                                <select id="ff-funding-setup-htf" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace">
+                                    <option value="5m">5m</option><option value="15m">15m</option><option value="30m">30m</option><option value="1h">1h</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Як часто перераховувати скальп-грейд на монету (свіжість). Нижче = свіжіше, але більше навантаження.">TTL, с</label>
+                                <input type="number" id="ff-funding-setup-ttl" min="15" max="600" step="5" onchange="saveFuelFilterSettings()" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                            </div>
+                        </div>
+                        <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 grade_setup спроєктований під 1H-свінг; на швидких TF структура/зона шумніші — трактуй як окремий показник для коротких funding-рухів, не як 1:1 з 1H.</div>
+                    </div>
                     <!-- 🚀 Аномальний ріст (spike) — різкий рух ціни поза логікою МММ -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
                         <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">🚀 Аномальний ріст (монета зі сканера, що різко вистрілила)</div>
@@ -2428,6 +2453,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th title="Тиск маркетмейкера (МММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">МММ</th>
                             <th title="Оцінка ЯКОСТІ сетапу 0–100 + напрямок руху (не команда «відкривай»): ВІДМІННИЙ (≥72) / ХОРОШИЙ (≥55) / СЕРЕДНІЙ (≥40) / СЛАБКИЙ (≥25) / ВИЧЕРПАНО (<25)">SCORE</th>
                             <th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th>
+                            <th title="⚡ Скальперська SMC-«готовність» на швидкому TF (напр. 5m + 15m HTF) — ЛИШЕ для funding-монет. Той самий grade_setup, але на швидких свічках (короткі рухи навколо funding). Активна, коли увімкнено «⚡ Скальп-Готовність» у налаштуваннях таблиці. «—» = вимкнено або ще рахується.">⚡ Скальп</th>
                             <th>Тримається</th>
                             <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає)">Прогрес funding</th>
                             <th title="Поточний funding % і час до наступного нарахування">Funding · до виплати</th>
@@ -8900,6 +8926,10 @@ function renderFuelFilter(d) {
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
+    setIf('ff-funding-setup-scalp', !!s.funding_setup_scalp_on);
+    setIf('ff-funding-setup-tf', s.funding_setup_tf || '5m');
+    setIf('ff-funding-setup-htf', s.funding_setup_htf || '15m');
+    setIf('ff-funding-setup-ttl', String(s.funding_setup_ttl != null ? s.funding_setup_ttl : 45));
     setIf('ff-funding-cooldown', String(s.funding_notify_cooldown_min != null ? s.funding_notify_cooldown_min : 30));
     setIf('ff-funding-hyst', String(s.funding_mm_hysteresis != null ? s.funding_mm_hysteresis : 10));
     setIf('ff-funding-session', !!s.funding_session_mode);
@@ -8998,7 +9028,7 @@ function renderFuelFilter(d) {
     if (atb) {
         const arows = d.anomalies || [];
         if (!arows.length) {
-            atb.innerHTML = '<tr><td colspan="10" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>';
+            atb.innerHTML = '<tr><td colspan="11" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>';
         } else {
             atb.innerHTML = arows.map(a => {
                 const dirHtml = a.dir === 'LONG'
@@ -9087,6 +9117,7 @@ function renderFuelFilter(d) {
                     <td style="font-size:0.72rem"><span style="display:inline-flex;align-items:center">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}<span style="width:18px;text-align:center;flex:none;color:#fbbf24;font-weight:700"${a.paused ? ' title="Сесія на паузі (WAIT) — тримається за напрямком"' : ''}>${a.paused ? '⏸' : ''}</span></span></td>
                     <td style="white-space:nowrap">${ffScoreBadgeHTML(a.score)}</td>
                     <td style="white-space:nowrap">${ffSetupCell(a.setup)}</td>
+                    <td style="white-space:nowrap">${ffSetupCell(a.setup_scalp)}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
                     <td>${progHtml}</td>
                     <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}${fTrendBadge(a.f_trend)}</td>
@@ -9762,6 +9793,10 @@ async function saveFuelFilterSettings() {
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
+        funding_setup_scalp_on: _c('ff-funding-setup-scalp'),
+        funding_setup_tf: _v('ff-funding-setup-tf', '5m') || '5m',
+        funding_setup_htf: _v('ff-funding-setup-htf', '15m') || '15m',
+        funding_setup_ttl: parseInt(_v('ff-funding-setup-ttl', '45') || '45', 10),
         funding_notify_cooldown_min: parseInt(_v('ff-funding-cooldown', '30') || '30', 10),
         funding_mm_hysteresis: parseInt(_v('ff-funding-hyst', '10') || '10', 10),
         funding_session_mode: _c('ff-funding-session'),

@@ -158,6 +158,45 @@ def test_hold_log_throttled():
     print('✓ unchanged hold is throttled (logged once)')
 
 
+# --- ⚡ funding scalper «Готовність» cache ---
+def test_scalp_off_clears_cache():
+    ff, db = _ff()   # funding_setup_scalp_on default False
+    ff._setup_scalp_cache = {'X': {'ok': True}}
+    ff._setup_scalp_at = {'X': 1.0}
+    ff._refresh_setup_scalp_cache(ff.get_settings())
+    assert ff._setup_scalp_cache == {} and ff._setup_scalp_at == {}, 'must clear when off'
+    print('✓ scalp OFF → cache cleared')
+
+
+def test_scalp_on_grades_funding_on_tf():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'),
+        funding_setup_scalp_on=True, funding_setup_tf='5m', funding_setup_htf='15m'))
+    ff._anomalies = {'ENAUSDT': {'dir': 'LONG'}, 'SUIUSDT': {'dir': 'SHORT'}}
+    calls = []
+    ff._compute_setup = lambda sym, d, s, base_tf='1h', htf_tf='4h', write_exit=True: (
+        calls.append((sym, d, base_tf, htf_tf, write_exit)) or {'ok': True, 'score': 60, 'dir': d})
+    ff._refresh_setup_scalp_cache(ff.get_settings())
+    assert set(ff._setup_scalp_cache) == {'ENAUSDT', 'SUIUSDT'}, ff._setup_scalp_cache
+    assert all(c[2] == '5m' and c[3] == '15m' and c[4] is False for c in calls), calls
+    print('✓ scalp ON → grades funding coins on 5m/15m, write_exit=False (не чіпає exit)')
+
+
+def test_scalp_drops_left_coins():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'), funding_setup_scalp_on=True))
+    ff._setup_scalp_cache = {'GONEUSDT': {'ok': True}}
+    ff._setup_scalp_at = {'GONEUSDT': 1.0}
+    ff._anomalies = {'ENAUSDT': {'dir': 'LONG'}}
+    ff._compute_setup = lambda *a, **k: {'ok': True, 'score': 60, 'dir': 'LONG'}
+    ff._refresh_setup_scalp_cache(ff.get_settings())
+    assert 'GONEUSDT' not in ff._setup_scalp_cache, 'coin gone from funding table must drop'
+    assert 'ENAUSDT' in ff._setup_scalp_cache
+    print('✓ scalp → drops coins that left the funding table')
+
+
 if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for t in tests:

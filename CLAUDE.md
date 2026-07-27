@@ -99,6 +99,22 @@
   на `/smart-money`. get_state → `timers3`/`pending3_visible`/`queue3_enabled`.
 - Тести: `test_readiness_strategy.py`.
 
+## ⚡ Скальперська «Готовність» для funding-монет
+
+Окремий SMC-грейд ЛИШЕ для монет таблиці «💰 Funding — МММ» (`_anomalies`) на
+швидкому TF. `_compute_setup` параметризовано за TF (`base_tf`/`htf_tf`/
+`write_exit`); скальп-варіант зве його з `base_tf='5m'`, `htf_tf='15m'`,
+`write_exit=False` (не чіпає 1H-«Готовність виходу»). Окремий кеш
+`_setup_scalp_cache` + `_refresh_setup_scalp_cache` (власний TTL/cap, тільки
+funding-монети). Той самий `grade_setup` — інші свічки; на швидких TF
+структура/зона шумніші → трактувати як ОКРЕМИЙ показник, не 1:1 з 1H.
+- Налаштування: `funding_setup_scalp_on` (OFF), `funding_setup_tf` (5m),
+  `funding_setup_htf` (15m), `funding_setup_ttl` (45с), `funding_setup_max_per_cycle` (8).
+- get_state → funding-рядки несуть `setup_scalp`; UI — колонка «⚡ Скальп» у
+  funding-таблиці + блок налаштувань у акордеоні. Інфосайт дзеркалить колонку.
+- Навантаження мінімальне: klines кешуються (TTL), тротл cap/цикл; funding-
+  підмножина мала (одиниці–десятки монет).
+
 ## БД-ключі (storage)
 
 - `fuel_filter_settings` — налаштування FF (вкл. `queue3_enabled`,

@@ -380,6 +380,14 @@ DEFAULT_SETTINGS = {
     'setup_grader_on': True,
     # Суворість 🎯 у грейдері: 'strict' (усі ключові блоки) / 'moderate' / 'soft'.
     'setup_strict': 'strict',
+    # ⚡ Скальперська «Готовність» ЛИШЕ для монет таблиці «💰 Funding — МММ»:
+    # окремий SMC-грейд на швидкому TF (той самий grade_setup, інші свічки).
+    # Не змішується з 1H-«Готовністю» черг; показується окремою колонкою.
+    'funding_setup_scalp_on': False,       # вмик/вимк скальп-грейд для funding
+    'funding_setup_tf': '5m',              # базовий TF (1m/3m/5m/15m)
+    'funding_setup_htf': '15m',            # HTF-контекст скальп-грейду
+    'funding_setup_ttl': 45,               # с — TTL скальп-кешу (свіжіше за 1H=90с)
+    'funding_setup_max_per_cycle': 8,      # ліміт важких перерахунків за цикл
     # 🛡 М'який запобіжник відкриття — блокує 3 «вбивці» (МММ<поріг / CTR
     # нейтральний-чи-проти / виснажено). Це РЕАЛЬНО впливає на відкриття угод.
     'safeguard_on': True,
@@ -455,6 +463,11 @@ class FuelFilterDaemon:
         # 1H-структура міняється повільно. {sym: grade_dict}, {sym: computed_at}.
         self._setup_cache: Dict[str, Dict] = {}
         self._setup_at: Dict[str, float] = {}
+        # ⚡ Скальперська «Готовність» ЛИШЕ для funding-монет (окремий TF, напр.
+        # 5m+15m). Окремий кеш/TTL/лічильник — не змішується з 1H-грейдом і
+        # рахується тільки поки funding_setup_scalp_on. {sym: grade}, {sym: at}.
+        self._setup_scalp_cache: Dict[str, Dict] = {}
+        self._setup_scalp_at: Dict[str, float] = {}
         # 🚪 SMC «Готовність виходу» per symbol (grade_exit) — рахується поряд із
         # setup з того самого sig, у бік ВІДКРИТОЇ позиції. РАДНИК (показ + лог).
         self._exit_cache: Dict[str, Dict] = {}
@@ -709,6 +722,21 @@ class FuelFilterDaemon:
             s['queue3_open_min_score'] = max(0, min(100, int(s.get('queue3_open_min_score', 53) or 0)))
         except (TypeError, ValueError):
             s['queue3_open_min_score'] = 53
+        # ⚡ funding scalper «Готовність»
+        s['funding_setup_scalp_on'] = bool(s.get('funding_setup_scalp_on', False))
+        _valid_tf = ('1m', '3m', '5m', '15m', '30m', '1h')
+        if s.get('funding_setup_tf') not in _valid_tf:
+            s['funding_setup_tf'] = '5m'
+        if s.get('funding_setup_htf') not in _valid_tf:
+            s['funding_setup_htf'] = '15m'
+        try:
+            s['funding_setup_ttl'] = max(15, min(600, int(s.get('funding_setup_ttl', 45) or 45)))
+        except (TypeError, ValueError):
+            s['funding_setup_ttl'] = 45
+        try:
+            s['funding_setup_max_per_cycle'] = max(1, min(30, int(s.get('funding_setup_max_per_cycle', 8) or 8)))
+        except (TypeError, ValueError):
+            s['funding_setup_max_per_cycle'] = 8
         # ── Queue 2 eject rules ──
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
@@ -3782,6 +3810,8 @@ class FuelFilterDaemon:
                 self._fuel_str = new_str
             # 🎯 SMC-грейдер для тих самих рядків (окремий, довший TTL).
             self._refresh_setup_cache(settings, targets)
+            # ⚡ Скальп-«Готовність» лише для funding-монет (окремий швидкий TF).
+            self._refresh_setup_scalp_cache(settings)
         except Exception as e:
             print(f"[FuelFilter] score cache error: {e}")
 
@@ -3818,6 +3848,47 @@ class FuelFilterDaemon:
                 self._setup_at.pop(k, None)
                 self._exit_cache.pop(k, None)
 
+    def _refresh_setup_scalp_cache(self, settings: Dict):
+        """⚡ Скальперська «Готовність» ЛИШЕ для монет таблиці «💰 Funding — МММ»
+        (_anomalies) на швидкому TF. Той самий grade_setup, інші свічки; окремий
+        кеш/TTL/лічильник, не змішується з 1H-грейдом і не чіпає «Готовність
+        виходу». Вимкнено (funding_setup_scalp_on=False) → кеш очищується."""
+        if not bool(settings.get('funding_setup_scalp_on', False)):
+            if self._setup_scalp_cache:
+                self._setup_scalp_cache.clear()
+                self._setup_scalp_at.clear()
+            return
+        now = time.time()
+        base_tf = settings.get('funding_setup_tf', '5m')
+        htf_tf = settings.get('funding_setup_htf', '15m')
+        try:
+            ttl = float(settings.get('funding_setup_ttl', 45) or 45)
+            cap = int(settings.get('funding_setup_max_per_cycle', 8) or 8)
+        except (TypeError, ValueError):
+            ttl, cap = 45.0, 8
+        # Ціль — лише монети funding-таблиці з відомим напрямком.
+        with self._lock:
+            live = {s: a.get('dir') for s, a in self._anomalies.items()
+                    if a.get('dir') in ('LONG', 'SHORT')}
+        due = sorted((s for s in live if (now - self._setup_scalp_at.get(s, 0)) >= ttl),
+                     key=lambda s: self._setup_scalp_at.get(s, 0))
+        for sym in due[:cap]:
+            try:
+                res = self._compute_setup(sym, live.get(sym), settings,
+                                          base_tf=base_tf, htf_tf=htf_tf,
+                                          write_exit=False)
+            except Exception as e:
+                res = None
+                print(f"[FF-SetupScalp] {sym} compute error: {e}")
+            self._setup_scalp_at[sym] = now
+            if res is not None:
+                self._setup_scalp_cache[sym] = res
+        # Прибрати монети, що зникли з funding-таблиці.
+        for k in list(self._setup_scalp_cache.keys()):
+            if k not in live:
+                self._setup_scalp_cache.pop(k, None)
+                self._setup_scalp_at.pop(k, None)
+
     def _setup_klines(self, symbol: str, tf: str, limit: int):
         """Свічки для SMC-аналізу з довшим кешем (окремо від _candle_cache, бо
         тут потрібно значно більше барів). Повертає сирий формат {p,o,h,l,v}."""
@@ -3850,14 +3921,19 @@ class FuelFilterDaemon:
                 continue
         return out
 
-    def _compute_setup(self, symbol: str, d: str, settings: Dict) -> Optional[Dict]:
-        """Рахує SMC-«готовність» на 1H (4H — HTF-контекст) для напрямку d."""
+    def _compute_setup(self, symbol: str, d: str, settings: Dict,
+                       base_tf: str = '1h', htf_tf: str = '4h',
+                       write_exit: bool = True) -> Optional[Dict]:
+        """Рахує SMC-«готовність» на base_tf (htf_tf — HTF-контекст) для напрямку
+        d. За замовчуванням 1H+4H (свінг). Для funding-скальпу викликається з
+        base_tf='5m', htf_tf='15m' і write_exit=False (щоб не чіпати 1H-«Готовність
+        виходу»). CTR береться на base_tf."""
         if d not in ('LONG', 'SHORT'):
             return None
-        kl1_raw = self._setup_klines(symbol, '1h', 150)
+        kl1_raw = self._setup_klines(symbol, base_tf, 150)
         if not kl1_raw or len(kl1_raw) < 40:
             return None
-        kl4_raw = self._setup_klines(symbol, '4h', 90)
+        kl4_raw = self._setup_klines(symbol, htf_tf, 90)
         kl1 = self._norm_klines_smc(kl1_raw)
         kl4 = self._norm_klines_smc(kl4_raw)
         # 1) SMC-структура 1H (з 4H як HTF).
@@ -3907,7 +3983,7 @@ class FuelFilterDaemon:
             from detection.forecast_engine import get_forecast_engine
             fe = get_forecast_engine()
             if fe and hasattr(fe, 'get_ctr_tf'):
-                ctr1h = fe.get_ctr_tf(symbol, '1h')
+                ctr1h = fe.get_ctr_tf(symbol, base_tf)
         except Exception:
             ctr1h = None
         # 6) ₿-сесія + funding/обсяг-контекст.
@@ -3937,11 +4013,13 @@ class FuelFilterDaemon:
             from detection.setup_grader import grade_setup, grade_exit
             strict = settings.get('setup_strict', 'strict')
             # 🚪 «Готовність виходу» з того самого sig — у бік ВІДКРИТОЇ позиції.
-            try:
-                self._exit_cache[symbol] = grade_exit(d, sig)
-            except Exception as _ee:
-                print(f"[FF-Exit] {symbol} grade error: {_ee}")
-                self._exit_cache.pop(symbol, None)
+            # Рахуємо лише для основного (1H) грейду; скальп-варіант не чіпає її.
+            if write_exit:
+                try:
+                    self._exit_cache[symbol] = grade_exit(d, sig)
+                except Exception as _ee:
+                    print(f"[FF-Exit] {symbol} grade error: {_ee}")
+                    self._exit_cache.pop(symbol, None)
             return grade_setup(d, sig, {'strict': strict})
         except Exception as e:
             print(f"[FF-Setup] {symbol} grade error: {e}")
@@ -5745,6 +5823,11 @@ class FuelFilterDaemon:
                 {'k': 'OB-фільтр (сканер)', 'v': (f"УВІМК ({ob_tf})" if ob_enabled else 'вимк')},
                 {'k': 'Авто Manual SL з OB', 'v': (f"УВІМК (буфер {s.get('q2_auto_ob_sl_buffer_pct',0.2)}%, {s.get('q2_auto_ob_sl_tf','15m')})" if s.get('q2_auto_ob_sl') else 'вимк')},
             ]},
+            {'title': '⚡ Скальп-Готовність (funding)', 'items': [
+                {'k': 'Скальп-грейд для funding', 'v': _on(s.get('funding_setup_scalp_on', False))},
+                {'k': 'Скальп TF / HTF', 'v': f"{s.get('funding_setup_tf','5m')} / {s.get('funding_setup_htf','15m')}"},
+                {'k': 'Скальп TTL / cap', 'v': f"{s.get('funding_setup_ttl',45)}с / {s.get('funding_setup_max_per_cycle',8)} на цикл"},
+            ]},
             {'title': '🔍 SMC-сигнал (сканер)', 'items': [
                 {'k': 'Режим сигналу', 'v': alert_mode},
                 {'k': 'Свіжість сигналу', 'v': recency},
@@ -6018,6 +6101,8 @@ class FuelFilterDaemon:
                     'score': self._score_cache.get(sym),
                     # 🎯 SMC «готовність сетапу» 1H (grade_setup) — колонка «Готовність».
                     'setup': self._setup_cache.get(sym),
+                    # ⚡ Скальперська «Готовність» на швидкому TF (лише funding).
+                    'setup_scalp': self._setup_scalp_cache.get(sym),
                     # 🎯 Композитний аналіз «найкращий момент для входу».
                     'opportunity': _opp,
                     'opportunity_hot': _opp_hot,

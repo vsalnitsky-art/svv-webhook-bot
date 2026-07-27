@@ -756,7 +756,7 @@
     $("#funding-count").textContent = rowsArr.length;
     var tb = $("#funding-table tbody");
     if (!rowsArr.length) {
-      tb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg" style="color:#8b93a7">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>';
+      tb.innerHTML = '<tr><td colspan="10" class="tm-empty-msg" style="color:#8b93a7">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>';
       return;
     }
     tb.innerHTML = rowsArr.map(function (a) {
@@ -834,6 +834,7 @@
         '<td style="font-size:0.72rem">' + ffFuelCell(a.mm, a.mm_str, a.mm_str_prev) + paused + "</td>" +
         '<td style="white-space:nowrap">' + ffScoreBadgeHTML(a.score) + "</td>" +
         '<td style="white-space:nowrap">' + ffSetupCell(a.setup) + "</td>" +
+        '<td style="white-space:nowrap">' + ffSetupCell(a.setup_scalp) + "</td>" +
         '<td style="font-size:0.78rem">' + heldCell + "</td>" +
         '<td>' + progHtml + "</td>" +
         '<td style="font-size:0.72rem;white-space:nowrap">' + rateTxt + " " + cdTxt + fTrendBadge(a.f_trend) + "</td>" +
@@ -869,7 +870,7 @@
       return fmtPrice(e.start_price) + "→" + fmtPrice(e.end_price) + " · " + hms(e.dur_sec);
     }).join("\n");
     var _tip = (_rec ? "Останні епізоди (вхід→вихід · тривалість):\n" + _rec : "Ще не було завершених епізодів").replace(/"/g, "&quot;");
-    return '<tr style="background:rgba(74,222,128,0.07)"><td colspan="9" title="' + _tip + '" style="padding:1px 8px 5px 30px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">' +
+    return '<tr style="background:rgba(74,222,128,0.07)"><td colspan="10" title="' + _tip + '" style="padding:1px 8px 5px 30px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">' +
       '🎯 <b style="color:#4ade80">рекомендована ботом</b> · в угоді <b>' + timer + "</b> · вхід @ <b>" + entryPx + "</b> · PnL: " + pnl + " · епізодів: <b>" + (st.count || 0) + "</b> · вперше: " + first +
       "</td></tr>";
   }
