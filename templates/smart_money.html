@@ -2234,6 +2234,34 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 💡 Друга черга перехоплює <b>CHoCH/CHoCH+BOS</b> незалежно від Черги 1 і кнопок/₿ START. Сигнал потрапляє в чергу <b>лише якщо CTR-нахил уже в бік сигналу</b> (інакше ігнорується). Відкриває, коли <b>SCORE = ВІДМІННИЙ</b> у напрямку сигналу <b>і CTR</b> у той самий бік. Поки чекає — якщо CTR <b>розвертається на протилежний</b> бік раніше за цей збіг, монета одразу видаляється з черги. Вмикай/вимикай кожну чергу окремо.
             </div>
 
+            <!-- 🎯 Queue 3 «Готовність» — opens on SMC setup-grade HOT -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
+                <div style="font-size:0.74rem;font-weight:700;color:#c9b8ff;min-width:0">🎯 Черга-3 · Готовність <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS і відкриває, ЩОЙНО SMC-«готовність сетапу» (grade_setup) стає HOT у напрямку кнопки. Весь контекст ₿/CTR/зона/ліквідність уже всередині оцінки. БЕЗ ₿ START. Кожне рішення логується для аналізу.</span></div>
+                <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-3 «Готовність». Відкриває монету, коли grade_setup=HOT (score≥поріг + усі ключові блоки зійшлися, без вето) у напрямку кнопки. Щоб перемкнутися на цю стратегію — увімкни її та (за бажанням) вимкни Черги 1/2.">
+                        <input type="checkbox" id="ff-queue3-enabled" onchange="saveFuelFilterSettings()">
+                        <span class="slider"></span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1;cursor:pointer" title="Писати кожне рішення «Готовності» (opened/hold/skipped + розклад блоків) у БД (sob_readiness_log) та Лог роботи бота для аналізу.">
+                        <input type="checkbox" id="ff-readiness-log" onchange="saveFuelFilterSettings()"> 📝 Лог
+                    </label>
+                    <button onclick="clearAllTimers3()" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;line-height:1;font-size:0.68rem;padding:6px 12px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-3">🗑️ Очистити всі</button>
+                </div>
+            </div>
+            <div class="ff-timers-scroll">
+                <table class="tm-table" id="ff-timers3-table">
+                    <thead>
+                        <tr><th data-sortcol="symbol" onclick="ffSortQueue3('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue3('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue3('mm')" style="cursor:pointer;user-select:none">МММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue3('exh')" style="cursor:pointer;user-select:none">🪫<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue3('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue3('score')" style="cursor:pointer;user-select:none" title="SCORE — hold-якість (не тригер входу). Тригер Черги-3 — колонка «Готовність» (grade_setup HOT).">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу (grade_setup). Черга-3 відкриває, коли ця оцінка = HOT у напрямку кнопки.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue3('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
+                    </thead>
+                    <tbody id="ff-timers3-tbody">
+                        <tr><td colspan="9" class="tm-empty-msg">Черга-3 порожня</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
+                💡 Третя черга — стратегія <b>«Готовність»</b>: перехоплює ті самі сигнали, а відкриває монету, ЩОЙНО її SMC-<b>«готовність сетапу»</b> стає <b>HOT</b> (score ≥ поріг + усі ключові блоки конфлюенсу зійшлися, без вето) у напрямку кнопки. ₿-сесія/CTR/зона/ліквідність уже враховані ВСЕРЕДИНІ оцінки. Кожне рішення (opened/hold/skipped) пишеться в лог для аналізу.
+            </div>
+
             <!-- 💰 Funding-fuel coins (own scan over the 💰 Funding Rate Scanner) -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
                 <div style="font-size:0.78rem;font-weight:700;color:#34d399">
@@ -8400,7 +8428,7 @@ function ffReasonPopup(ev, text) {
 
 function ffQueueRowHTML(t, qnum) {
     qnum = qnum || 1;
-    const _delFn = (qnum === 2) ? 'deleteTimer2' : 'deleteTimer';
+    const _delFn = (qnum === 2) ? 'deleteTimer2' : (qnum === 3 ? 'deleteTimer3' : 'deleteTimer');
     const isFunding = !!t.funding;
     const exh = (t.exhaustion != null)
         ? t.exhaustion.toFixed(1) + '%' : '—';
@@ -8714,6 +8742,65 @@ async function clearAllTimers2() {
     } catch (e) { alert('Помилка очищення Черги-2: ' + e); }
 }
 
+// ── 🎯 Черга-3 «Готовність» ──────────────────────────────────────────────
+function ffRenderQueue3() {
+    const tb = document.getElementById('ff-timers3-tbody');
+    if (!tb) return;
+    let rows = (window._ff3TimersData || []).slice();
+    if (!rows.length) {
+        tb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Черга-3 порожня</td></tr>';
+        _ffUpdateQueue3HeaderArrows();
+        return;
+    }
+    const srt = window._ff3QueueSort || { col: 'score', dir: -1 };
+    rows.sort((a, b) => {
+        const va = _ffQueueSortVal(a, srt.col), vb = _ffQueueSortVal(b, srt.col);
+        const na = (va == null || va === ''), nb = (vb == null || vb === '');
+        if (na && nb) return 0;
+        if (na) return 1;
+        if (nb) return -1;
+        let cmp = (typeof va === 'number' && typeof vb === 'number')
+            ? va - vb : String(va).localeCompare(String(vb));
+        return cmp * srt.dir;
+    });
+    tb.innerHTML = rows.map(t => ffQueueRowHTML(t, 3)).join('');
+    _ffUpdateQueue3HeaderArrows();
+}
+function ffSortQueue3(col) {
+    const srt = window._ff3QueueSort || { col: 'score', dir: -1 };
+    if (srt.col === col) srt.dir = -srt.dir;
+    else { srt.col = col; srt.dir = (col === 'symbol' || col === 'dir') ? 1 : -1; }
+    window._ff3QueueSort = srt;
+    ffRenderQueue3();
+}
+function _ffUpdateQueue3HeaderArrows() {
+    const srt = window._ff3QueueSort || { col: 'score', dir: -1 };
+    document.querySelectorAll('#ff-timers3-table th[data-sortcol]').forEach(th => {
+        const arrow = th.querySelector('.ff-sort-arrow');
+        if (!arrow) return;
+        arrow.textContent = (th.getAttribute('data-sortcol') === srt.col)
+            ? (srt.dir < 0 ? ' ▼' : ' ▲') : '';
+    });
+}
+async function deleteTimer3(symbol) {
+    try {
+        await fetch('/api/fuel-filter/queue3/delete', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ symbol })
+        });
+        window._ff3TimersData = (window._ff3TimersData || []).filter(t => t.symbol !== symbol);
+        ffRenderQueue3();
+    } catch (e) { alert('Помилка видалення з Черги-3: ' + e); }
+}
+async function clearAllTimers3() {
+    if (!confirm('Очистити всю Чергу-3 («Готовність»)?')) return;
+    try {
+        await fetch('/api/fuel-filter/queue3/clear', { method: 'POST' });
+        window._ff3TimersData = [];
+        ffRenderQueue3();
+    } catch (e) { alert('Помилка очищення Черги-3: ' + e); }
+}
+
 function renderFuelFilter(d) {
     const s = d.settings || {};
     // BTC START/STOP banner — refresh from state, then let the global ticker
@@ -8766,6 +8853,8 @@ function renderFuelFilter(d) {
     setIf('ff-ctr-max-age', String(s.ctr_gate_max_age_bars != null ? s.ctr_gate_max_age_bars : 3));
     setIf('ff-queue1-enabled', s.queue1_enabled !== false);   // default true
     setIf('ff-queue2-enabled', !!s.queue2_enabled);
+    setIf('ff-queue3-enabled', !!s.queue3_enabled);
+    setIf('ff-readiness-log', s.readiness_log_enabled !== false);   // default true
     // Queue 2 eject rules
     setIf('ff-q2-eject-ctr', !!s.queue2_eject_ctr);           // default false
     setIf('ff-q2-eject-ctr-pct', String(s.queue2_eject_ctr_pct != null ? s.queue2_eject_ctr_pct : 20));
@@ -8861,6 +8950,11 @@ function renderFuelFilter(d) {
     if (document.getElementById('ff-timers2-tbody')) {
         window._ff2TimersData = d.timers2 || [];
         ffRenderQueue2();
+    }
+    // Queue 3 «🎯 Готовність»
+    if (document.getElementById('ff-timers3-tbody')) {
+        window._ff3TimersData = d.timers3 || [];
+        ffRenderQueue3();
     }
     // GLOBAL engine gate banner — why the engine can't open ANYTHING now.
     const gateEl = document.getElementById('ff-engine-gate');
@@ -9621,6 +9715,8 @@ async function saveFuelFilterSettings() {
         ctr_gate_max_age_bars: parseInt(_v('ff-ctr-max-age', '3') || '3', 10),
         queue1_enabled: _c('ff-queue1-enabled'),
         queue2_enabled: _c('ff-queue2-enabled'),
+        queue3_enabled: _c('ff-queue3-enabled'),
+        readiness_log_enabled: _c('ff-readiness-log'),
         queue2_eject_ctr: _c('ff-q2-eject-ctr'),
         queue2_eject_ctr_pct: parseInt(_v('ff-q2-eject-ctr-pct', '20') || '20', 10),
         queue2_eject_choch: _c('ff-q2-eject-choch'),

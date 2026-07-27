@@ -24,6 +24,10 @@ from storage.db_models import init_db
 # 'ms'=epoch ms. Strategy DATA tables (trades / trade_archive) are NEVER here.
 _SERVICE_TABLES_TIME = {
     'sob_event_logs': ('timestamp', 'dt'),
+    # 🎯 «Готовність» per-decision log — append-grows per engine tick; a service
+    # log, safe to prune. Included so both manual «Службові» cleanup AND the
+    # DB-autoclean loop keep it bounded automatically (keep_days).
+    'sob_readiness_log': ('timestamp', 'dt'),
     'sob_liquidation_buckets': ('last_updated_ts', 'sec'),
     'sob_liquidation_oi_snapshots': ('ts', 'sec'),
     'sob_liquidation_events': ('ts', 'sec'),
@@ -3384,6 +3388,24 @@ def register_api_routes(app):
                         'config_changes': config_changes,
                         'sessions': sessions})
 
+    @app.route('/api/fuel-filter/readiness-log')
+    def api_fuel_filter_readiness_log():
+        """Read-only: recent «Готовність» (Queue-3) strategy decisions for
+        analysis. Query params: limit (default 200), symbol, outcome
+        (opened/hold/skipped)."""
+        try:
+            limit = min(int(request.args.get('limit', 200)), 2000)
+        except (TypeError, ValueError):
+            limit = 200
+        symbol = request.args.get('symbol')
+        outcome = request.args.get('outcome')
+        try:
+            db = get_db()
+            rows = db.get_readiness_log(limit=limit, symbol=symbol, outcome=outcome)
+            return jsonify({'ok': True, 'rows': rows, 'count': len(rows)})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/settings', methods=['POST'])
     def api_fuel_filter_settings():
         """Update settings. Body may include any of: enabled, duration_minutes,
@@ -3505,6 +3527,34 @@ def register_api_routes(app):
             if not ff:
                 return jsonify({'ok': False, 'reason': 'not initialized'})
             count = ff.clear_all_timers2()
+            return jsonify({'ok': True, 'cleared': count})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/queue3/delete', methods=['POST'])
+    def api_fuel_filter_queue3_delete():
+        """Remove one coin from Queue 3 «🎯 Готовність». Body: {"symbol": "..."}."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            symbol = data.get('symbol', '')
+            deleted = ff.delete_timer3(symbol)
+            return jsonify({'ok': True, 'deleted': deleted, 'symbol': symbol.upper()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/queue3/clear', methods=['POST'])
+    def api_fuel_filter_queue3_clear():
+        """Clear Queue 3 «🎯 Готовність» entirely."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            count = ff.clear_all_timers3()
             return jsonify({'ok': True, 'cleared': count})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
@@ -3756,6 +3806,21 @@ def register_api_routes(app):
                 elif action == 'event_logs_all':
                     # Delete ALL event logs
                     result = conn.execute(text("DELETE FROM sob_event_logs"))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
+                elif action == 'readiness_log_old':
+                    # Delete old «Готовність» (Queue-3) decision rows (>14 days)
+                    result = conn.execute(text("""
+                        DELETE FROM sob_readiness_log
+                        WHERE timestamp < NOW() - INTERVAL '14 days'
+                    """))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
+                elif action == 'readiness_log_all':
+                    # Delete ALL «Готовність» decision rows
+                    result = conn.execute(text("DELETE FROM sob_readiness_log"))
                     deleted_rows = result.rowcount
                     conn.commit()
 

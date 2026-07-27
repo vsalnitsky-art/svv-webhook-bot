@@ -8,6 +8,7 @@ from sqlalchemy import desc, and_, or_
 from storage.db_models import (
     get_session, init_db,
     SleeperCandidate, OrderBlock, Trade, PerformanceStats, BotSetting, EventLog,
+    ReadinessLog,
     SymbolBlacklist, SMCOBState,
     Top100OBSnapshot, Top100OBHistory,
     VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot,
@@ -664,7 +665,66 @@ class DBOperations:
             return 0
         finally:
             session.close()
-    
+
+    # === READINESS STRATEGY LOG (Готовність) ===
+
+    def log_readiness(self, symbol: str, signal_dir: str = None,
+                      score: int = None, grade: str = None, hot: bool = False,
+                      score_dir: str = None, blocks: Dict = None,
+                      exhaustion: float = None, vetoes: str = None,
+                      outcome: str = None, reason: str = None) -> None:
+        """Insert one decision row for the «Готовність» strategy. Best-effort;
+        never raises into the engine loop."""
+        session = get_session()
+        try:
+            b = blocks or {}
+            row = ReadinessLog(
+                symbol=symbol, signal_dir=signal_dir, score=score, grade=grade,
+                hot=bool(hot), score_dir=score_dir,
+                b_structure=b.get('structure'), b_poi=b.get('poi'),
+                b_zone=b.get('zone'), b_liquidity=b.get('liquidity'),
+                b_mm=b.get('mm'), b_timing=b.get('timing'),
+                b_context=b.get('context'),
+                exhaustion=exhaustion, vetoes=(vetoes or None),
+                outcome=outcome, reason=reason)
+            session.add(row)
+            session.commit()
+        except Exception:
+            session.rollback()
+        finally:
+            session.close()
+
+    def get_readiness_log(self, limit: int = 200, symbol: str = None,
+                          outcome: str = None) -> List[Dict]:
+        """Recent «Готовність» decisions, newest first (for analysis / UI)."""
+        session = get_session()
+        try:
+            query = session.query(ReadinessLog)
+            if symbol:
+                query = query.filter(ReadinessLog.symbol == symbol.upper())
+            if outcome:
+                query = query.filter(ReadinessLog.outcome == outcome)
+            rows = query.order_by(desc(ReadinessLog.timestamp)).limit(limit).all()
+            return [r.to_dict() for r in rows]
+        finally:
+            session.close()
+
+    def clear_old_readiness(self, days: int = 14) -> int:
+        """Purge «Готовність» log rows older than `days`."""
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=days)
+            count = session.query(ReadinessLog).filter(
+                ReadinessLog.timestamp < cutoff
+            ).delete()
+            session.commit()
+            return count
+        except:
+            session.rollback()
+            return 0
+        finally:
+            session.close()
+
     # ==========================================
     # BLACKLIST OPERATIONS (v8.2.2)
     # ==========================================

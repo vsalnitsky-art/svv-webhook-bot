@@ -1,21 +1,19 @@
-"""«Готовність» (Readiness) strategy engine tests.
+"""🎯 «Готовність» (Queue-3) strategy engine tests.
 
-The readiness engine opens a queued coin the moment its SCORE = STRONG HOLD in
-the queued direction — no ₿ START / session gating — and logs EVERY decision to
-the readiness_log table + the event log. These tests pin that decision logic
-and the logging contract with light stubs (no DB / exchange).
+The readiness engine (_engine_tick_readiness) opens a queued coin the moment its
+SMC setup-grade (grade_setup, cached in _setup_cache) is HOT in the queued
+direction — no ₿ START / session gating — and logs EVERY decision. These tests
+pin that decision logic + logging with light stubs (no DB / exchange).
 """
 
 import sys, types, importlib.util
 sys.path.insert(0, '.')
 
-# Load fuel_filter.py directly, bypassing detection/__init__ (which pulls heavy
-# exchange deps not needed here). Mirror the pattern in test_toggle_strategy.py.
+# Load fuel_filter.py directly, bypassing detection/__init__ (heavy deps).
 if 'detection' not in sys.modules:
-    detection_pkg = types.ModuleType('detection')
-    detection_pkg.__path__ = ['./detection']
-    sys.modules['detection'] = detection_pkg
-
+    _pkg = types.ModuleType('detection')
+    _pkg.__path__ = ['./detection']
+    sys.modules['detection'] = _pkg
 _spec = importlib.util.spec_from_file_location(
     'detection.fuel_filter', 'detection/fuel_filter.py')
 _ff_mod = importlib.util.module_from_spec(_spec)
@@ -28,7 +26,6 @@ class _StubDB:
     def __init__(self):
         self.store = {}
         self.readiness_rows = []
-        self.events = []
 
     def get_setting(self, k, default=None):
         return self.store.get(k, default)
@@ -39,111 +36,100 @@ class _StubDB:
     def log_readiness(self, **fields):
         self.readiness_rows.append(fields)
 
-    def log_event(self, message, level='INFO', category='SYSTEM', symbol=None):
-        self.events.append({'message': message, 'level': level,
-                            'category': category, 'symbol': symbol})
 
-
-def _ff(strategy='readiness'):
+def _ff(queue3=True):
     db = _StubDB()
     ff = FuelFilterDaemon(db=db, get_trade_manager=lambda: None,
                           get_watchlist=lambda: [])
-    # Active strategy + FF on.
     db.set_setting('fuel_filter_settings', {
         'enabled': True,
-        'active_strategy': strategy,
+        'queue1_enabled': False,
+        'queue2_enabled': False,
+        'queue3_enabled': queue3,
         'readiness_log_enabled': True,
         'max_exhaustion_pct': 75,
     })
-    # Common stubs — both buttons ON, coin has price, no existing position.
     ff._entry_gates = lambda: (True, True)
     ff._tm_has_position = lambda sym, real: False
     ff._fuel_dir_smoothed = lambda sym: {'status': 'LONG', 'dir': 0.5,
                                          'mark_price': 100.0}
-    ff._exhaustion = lambda sym, d: 10.0
     ff.opened = []
-    ff._open = lambda sym, d, fuel, s, opened_by=None: (ff.opened.append((sym, d, opened_by)) or True)
+    ff._open = lambda sym, d, fuel, s, opened_by=None: (
+        ff.opened.append((sym, d, opened_by)) or True)
     return ff, db
 
 
-def _score(label, d='LONG', score=80):
-    return {'score': score, 'label': label, 'dir': d, 'exh': 10.0,
-            'conflict': False, 'fuel_strength': 50,
-            'components': {'room': 0.9, 'hold': 0.0, 'fuel': 0.8, 'mom': 1.0}}
+def _grade(hot, d='LONG', score=75, grade='ВІДМІННИЙ'):
+    return {'ok': True, 'dir': d, 'score': score, 'grade': grade, 'hot': hot,
+            'blocks': {'structure': 0.8, 'poi': 0.6, 'zone': 0.7,
+                       'liquidity': 0.6, 'mm': 0.5, 'timing': 0.6,
+                       'context': 0.4},
+            'vetoes': []}
 
 
 # --- OPEN path ---
-
-def test_strong_hold_opens_and_logs():
+def test_hot_opens_and_logs():
     ff, db = _ff()
-    ff._pending = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
-    ff._timer_score_for = lambda *a, **k: _score('STRONG HOLD')
-    ff._engine_tick()
+    ff._pending3 = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
+    ff._setup_cache = {'SOLUSDT': _grade(True)}
+    ff._engine_tick_readiness()
     assert ff.opened and ff.opened[0][0] == 'SOLUSDT', ff.opened
-    assert 'SOLUSDT' not in ff._pending, 'opened coin must leave the queue'
-    opened_rows = [r for r in db.readiness_rows if r['outcome'] == 'opened']
-    assert opened_rows, db.readiness_rows
-    assert any(e['category'] == 'READINESS' for e in db.events)
-    print('✓ STRONG HOLD → opens, leaves queue, logs opened (DB + event)')
+    assert 'SOLUSDT' not in ff._pending3, 'opened coin must leave Queue 3'
+    assert any(r['outcome'] == 'opened' for r in db.readiness_rows), db.readiness_rows
+    print('✓ HOT → opens, leaves Queue 3, logs opened')
 
 
-# --- HOLD path (wrong label) ---
-
-def test_weak_holds_no_open():
+# --- HOLD (not hot) ---
+def test_not_hot_holds():
     ff, db = _ff()
-    ff._pending = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
-    ff._timer_score_for = lambda *a, **k: _score('WEAK')
-    ff._engine_tick()
-    assert not ff.opened, 'WEAK must not open'
-    assert 'SOLUSDT' in ff._pending, 'held coin stays in queue'
+    ff._pending3 = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
+    ff._setup_cache = {'SOLUSDT': _grade(False, score=55, grade='ХОРОШИЙ')}
+    ff._engine_tick_readiness()
+    assert not ff.opened, 'not-HOT must not open'
+    assert 'SOLUSDT' in ff._pending3, 'held coin stays in Queue 3'
     assert any(r['outcome'] == 'hold' for r in db.readiness_rows), db.readiness_rows
-    print('✓ WEAK → holds, stays queued, logs hold')
+    print('✓ not HOT → holds, stays queued, logs hold')
 
 
-# --- HOLD path (label ok, direction mismatch) ---
-
+# --- HOLD (hot but direction mismatch) ---
 def test_dir_mismatch_holds():
     ff, db = _ff()
-    ff._pending = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
-    ff._timer_score_for = lambda *a, **k: _score('STRONG HOLD', d='SHORT')
-    ff._engine_tick()
-    assert not ff.opened, 'SCORE dir SHORT ≠ queue LONG must not open'
-    print('✓ STRONG HOLD but dir mismatch → holds')
+    ff._pending3 = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
+    ff._setup_cache = {'SOLUSDT': _grade(True, d='SHORT')}
+    ff._engine_tick_readiness()
+    assert not ff.opened, 'HOT but grade dir SHORT ≠ queue LONG must not open'
+    print('✓ HOT but dir mismatch → holds')
 
 
-# --- Exhaustion gate ---
-
-def test_exhaustion_gate_skips():
+# --- HOLD (setup not computed yet) ---
+def test_setup_missing_holds():
     ff, db = _ff()
-    ff._exhaustion = lambda sym, d: 90.0     # > max_exhaustion_pct (75)
-    ff._pending = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
-    ff._timer_score_for = lambda *a, **k: _score('STRONG HOLD')
-    ff._engine_tick()
-    assert not ff.opened, 'too-exhausted coin must be skipped'
-    assert any(r['outcome'] == 'skipped' for r in db.readiness_rows), db.readiness_rows
-    print('✓ exhaustion > max → skipped, logged')
+    ff._pending3 = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
+    ff._setup_cache = {}   # not graded yet
+    ff._engine_tick_readiness()
+    assert not ff.opened
+    assert any(r['outcome'] == 'hold' for r in db.readiness_rows), db.readiness_rows
+    print('✓ setup not computed → holds')
 
 
-# --- Strategy isolation: fuel strategy must NOT use the readiness path ---
+# --- Strategy isolation: queue3 OFF → engine no-op ---
+def test_queue3_off_noop():
+    ff, db = _ff(queue3=False)
+    ff._pending3 = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
+    ff._setup_cache = {'SOLUSDT': _grade(True)}
+    ff._engine_tick_readiness()
+    assert not ff.opened, 'queue3 OFF must not open'
+    assert not db.readiness_rows, 'queue3 OFF must not log'
+    print('✓ queue3 OFF → engine no-op')
 
-def test_fuel_strategy_ignores_readiness_engine():
-    ff, db = _ff(strategy='fuel')
-    ff._pending = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
-    ff._timer_score_for = lambda *a, **k: _score('STRONG HOLD')
-    # Fuel strategy with both engine modes OFF → engine idle, no readiness log.
-    ff._engine_tick()
-    assert not db.readiness_rows, 'fuel strategy must not write readiness log'
-    print('✓ fuel strategy does not touch the readiness engine/log')
 
-
-# --- Log throttle: unchanged hold not re-logged within the gap ---
-
+# --- Log throttle: unchanged hold logged once ---
 def test_hold_log_throttled():
     ff, db = _ff()
-    ff._pending = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
-    ff._timer_score_for = lambda *a, **k: _score('WEAK')
-    ff._engine_tick()
-    ff._engine_tick()   # same decision immediately → throttled
+    ff._pending3 = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
+    ff._setup_cache = {'SOLUSDT': _grade(False, score=55, grade='ХОРОШИЙ')}
+    ff._engine_tick_readiness()
+    ff._engine_tick_readiness()   # same decision immediately → throttled
     holds = [r for r in db.readiness_rows if r['outcome'] == 'hold']
     assert len(holds) == 1, f'unchanged hold should log once, got {len(holds)}'
     print('✓ unchanged hold is throttled (logged once)')
@@ -153,4 +139,4 @@ if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for t in tests:
         t()
-    print(f'\nAll readiness-strategy tests passed ✓ ({len(tests)} tests)')
+    print(f'\nAll «Готовність» strategy tests passed ✓ ({len(tests)} tests)')

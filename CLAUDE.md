@@ -72,13 +72,40 @@
   й у головному вікні: `> +0.1` → LONG, `< -0.1` → SHORT, `|dir| ≤ 0.1` → WAIT
   (пауза сеансу). НЕ додавати гістерезис/липку зону.
 
+## Черга-3 «🎯 Готовність» (стратегія на grade_setup)
+
+Третя, ОКРЕМА черга/двигун (поряд із Чергою-1 і Чергою-2, усі незалежні тумблери).
+Живиться тими самими CHoCH/CHoCH+BOS через `intercept()` (гілка `q3` → `_pending3`).
+
+- **Тригер входу:** двигун `_engine_tick_readiness` відкриває монету, ЩОЙНО її
+  SMC-«готовність сетапу» `grade_setup(...)['hot']` = True у напрямку кнопки
+  (`hot` у strict = score ≥ 70 + усі ключові блоки зійшлися, без вето). **БЕЗ
+  ₿ START / сеансів ММ** — весь контекст ₿/CTR/зона/ліквідність уже ВСЕРЕДИНІ
+  `grade_setup` (див. `detection/setup_grader.py`). Санітарні ворота: кнопки
+  LONG/SHORT, дедуп, вже-в-угодах, ціна; `_open` тримає власну стелю виснаженості.
+- Читає готовий кеш `self._setup_cache[sym]` (той самий, що й колонка
+  «Готовність»); `_pending3` додано в `targets` для `_refresh_setup_cache`.
+- **Повне логування** кожного рішення (opened/hold/skipped + розклад блоків) →
+  таблиця `sob_readiness_log` + рядок у Лог роботи бота (`activity_log`, source
+  `Q3`). Тумблер `readiness_log_enabled` (дефолт ON). Анти-флуд: незмінний
+  hold/skip пишеться не частіше ніж раз на `READINESS_LOG_MIN_GAP` (300с).
+- Налаштування: `queue3_enabled` (дефолт OFF), `readiness_log_enabled`.
+- API: `GET /api/fuel-filter/readiness-log?limit&symbol&outcome`;
+  `POST /api/fuel-filter/queue3/{delete,clear}`. UI: тумблер + таблиця «Черга-3»
+  на `/smart-money`. get_state → `timers3`/`pending3_visible`/`queue3_enabled`.
+- Тести: `test_readiness_strategy.py`.
+
 ## БД-ключі (storage)
 
-- `fuel_filter_settings` — налаштування FF.
+- `fuel_filter_settings` — налаштування FF (вкл. `queue3_enabled`,
+  `readiness_log_enabled`).
 - `fuel_filter_state` — JSON-блоб стану: timers, fuel_managed, anomalies(=funding),
-  engine_attempts, fuel_ema, fuel_hyst, btc_verdict_dir/since. (`pending` більше
-  НЕ відновлюється навіть якщо лежить у блобі.)
+  engine_attempts, fuel_ema, fuel_hyst, btc_verdict_dir/since, pending, pending2,
+  **pending3**.
 - `fuel_filter_scan_list` — дозволені для сканування символи.
+- Таблиця `sob_readiness_log` — пер-рішення лог Черги-3 «Готовність». Префікс
+  `sob_` → автоматично в аналізі Database Administration; входить у
+  `_SERVICE_TABLES_TIME` → її ЧИСТИТЬ і ручна «🗄️ Службові», і DB-autoclean.
 
 ## Основні JSON API (read-only — для інфо-сайту)
 

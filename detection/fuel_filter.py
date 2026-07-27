@@ -209,6 +209,15 @@ DEFAULT_SETTINGS = {
     # Both OFF → signals are NOT intercepted and open directly per their own flow.
     'queue1_enabled': True,
     'queue2_enabled': False,
+    # ── Queue 3 «🎯 Готовність» — SMC-setup-grade opener ──
+    #   Окрема стратегія: власна черга (_pending3), живиться тими самими
+    #   CHoCH/CHoCH+BOS через intercept(). Монета відкривається, ЩОЙНО її
+    #   SMC-«готовність» (grade_setup) стає HOT (score≥поріг + усі ключові
+    #   блоки зійшлися, без вето) у напрямку кнопки — БЕЗ ₿ START / сеансів
+    #   (весь контекст ₿/CTR/зона вже враховано ВСЕРЕДИНІ grade_setup).
+    #   Кожне рішення логується (sob_readiness_log + Лог роботи бота).
+    'queue3_enabled': False,
+    'readiness_log_enabled': True,   # писати рішення «Готовності» для аналізу
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -568,6 +577,14 @@ class FuelFilterDaemon:
         # instead of CHoCH/BOS interception. Independent on/off toggle. {sym:
         # {dir, added_at}}. Persisted.
         self._pending2: Dict[str, Dict] = {}
+        # ── Queue 3 «🎯 Готовність» (SMC-setup-grade opener): SAME intercept
+        # source as Queue 1, own queue, opened by grade_setup.hot. Persisted.
+        self._pending3: Dict[str, Dict] = {}
+        # Anti-flood for the per-coin «Готовність» decision log:
+        # {symbol: (outcome, hot, score_bucket, ts)} — a hold/skip is re-logged
+        # only when it meaningfully changes or after READINESS_LOG_MIN_GAP sec;
+        # an 'opened' outcome is always logged.
+        self._readiness_last_log: Dict[str, tuple] = {}
         self._last_tick_ts = 0
         self._load_state()
 
@@ -681,6 +698,8 @@ class FuelFilterDaemon:
             s['ctr_gate_max_age_bars'] = 3
         s['queue1_enabled'] = bool(s.get('queue1_enabled', True))
         s['queue2_enabled'] = bool(s.get('queue2_enabled', False))
+        s['queue3_enabled'] = bool(s.get('queue3_enabled', False))
+        s['readiness_log_enabled'] = bool(s.get('readiness_log_enabled', True))
         # ── Queue 2 eject rules ──
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
@@ -825,9 +844,10 @@ class FuelFilterDaemon:
         s = self.get_settings()
         q1 = bool(s.get('queue1_enabled', True))
         q2 = bool(s.get('queue2_enabled', False))
-        if not (q1 or q2):
-            log_activity(sym, 'passthrough', 'Обидві черги вимкнені → сигнал іде у пряме відкриття', side=side, source='intercept')
-            return ''   # both queues OFF → do NOT intercept; open directly
+        q3 = bool(s.get('queue3_enabled', False))   # 🎯 Готовність
+        if not (q1 or q2 or q3):
+            log_activity(sym, 'passthrough', 'Усі черги вимкнені → сигнал іде у пряме відкриття', side=side, source='intercept')
+            return ''   # all queues OFF → do NOT intercept; open directly
         now = time.time()
         opp = 'SHORT' if side == 'LONG' else 'LONG'
         # ⭐ PROFESSIONAL Q2 entry decision (hold-and-wait). A fresh CHoCH fires
@@ -889,6 +909,14 @@ class FuelFilterDaemon:
                 self._pending[sym] = {'dir': side, 'kind': kind,
                                       'added_at': prev.get('added_at') if _keep else now}
                 changed = True
+            if q3:
+                # 🎯 Готовність — own queue, same keep-wait rule as Queue 1.
+                prev3 = self._pending3.get(sym) or {}
+                _keep3 = (prev3.get('dir') == side and prev3.get('kind') == kind
+                          and prev3.get('added_at'))
+                self._pending3[sym] = {'dir': side, 'kind': kind,
+                                       'added_at': prev3.get('added_at') if _keep3 else now}
+                changed = True
             if q2_take:
                 prev2 = self._pending2.get(sym) or {}
                 refreshed_q2 = _is_stale(prev2)
@@ -922,6 +950,8 @@ class FuelFilterDaemon:
             log_activity(sym, 'queued', f'Черга-1 · {_kind_lbl}{_r1}{_sc_ctr_sfx}', side=side, source='Q1')
             if _MM_MODEL and not refreshed_q1:
                 self._log_coin_mm(sym, 'queued')   # МММ монети у «Лог роботи бота»
+        if q3:
+            log_activity(sym, 'queued', f'Черга-3 🎯 Готовність · {_kind_lbl}{_sc_ctr_sfx}', side=side, source='Q3')
         # ENTRY-score + CTR-state suffix for Q2 records (the SETUP metric).
         def _ctr_words(state, stc, pct):
             if state == 'none':
@@ -1007,7 +1037,7 @@ class FuelFilterDaemon:
         # Return the ACTUAL disposition so the caller (and the chart marker) tell
         # the truth: 'queued' — added to a queue; 'dropped' — an enabled queue
         # OWNED it but rejected it (e.g. Q2 CTR gate) → NOT queued, not opened.
-        if q1 or q2_take:
+        if q1 or q2_take or q3:
             return 'queued'
         return 'dropped'   # q2 enabled but the signal didn't pass its gate
 
@@ -1204,6 +1234,10 @@ class FuelFilterDaemon:
             if isinstance(pend2, dict):
                 self._pending2 = {str(k).upper(): v for k, v in pend2.items()
                                   if isinstance(v, dict) and v.get('dir') in ('LONG', 'SHORT')}
+            pend3 = st.get('pending3', {}) or {}
+            if isinstance(pend3, dict):
+                self._pending3 = {str(k).upper(): v for k, v in pend3.items()
+                                  if isinstance(v, dict) and v.get('dir') in ('LONG', 'SHORT')}
             if (self._fuel_managed or self._anomalies or self._engine_attempts
                     or self._timers or self._pending):
                 print(f"[FuelFilter] restored {len(self._pending)} queued "
@@ -1226,6 +1260,7 @@ class FuelFilterDaemon:
                 'btc_verdict_since': self._btc_verdict_since,
                 'pending': self._pending,
                 'pending2': self._pending2,
+                'pending3': self._pending3,
                 'funding_muted': self._funding_muted,
             })
         except Exception as e:
@@ -3068,6 +3103,7 @@ class FuelFilterDaemon:
             if _q_allowed(1):   # OP 1: remove from queue on position close
                 self._pending.pop(symbol, None)
                 self._pending2.pop(symbol, None)
+                self._pending3.pop(symbol, None)
             self._persist_state()
         # 🎯 Close the «рекомендована ботом» episode (no-op unless this was a
         # recommended trade). Exit price = the close price we just used.
@@ -3686,6 +3722,7 @@ class FuelFilterDaemon:
             with self._lock:
                 pending = list(self._pending.items())    # (sym, {dir, added_at})
                 pending2 = list(self._pending2.items())   # Queue 2 waiting base
+                pending3 = list(self._pending3.items())   # Queue 3 «Готовність»
                 timers = list(self._timers.items())       # open positions
                 anomalies = [(s, a.get('dir')) for s, a in self._anomalies.items()]
             # ALL open TM positions (real + paper) — so the open-position tables'
@@ -3708,6 +3745,8 @@ class FuelFilterDaemon:
             for sym, info in pending:
                 targets[sym] = (info.get('dir'), 0.0)   # waiting → no fuel-hold
             for sym, info in pending2:
+                targets.setdefault(sym, (info.get('dir'), 0.0))
+            for sym, info in pending3:
                 targets.setdefault(sym, (info.get('dir'), 0.0))
             for sym, t in timers:
                 targets[sym] = (t.get('dir'), now - t.get('since', now))
@@ -4534,6 +4573,127 @@ class FuelFilterDaemon:
     # of coins from the chosen tables (anomalies / active timers) in the BANNER
     # direction, via FF._open (→ _fuel_managed → exhaustion-exit + control).
     # ------------------------------------------------------------------
+    # Re-log an unchanged hold/skip «Готовність» decision at most this often (s).
+    READINESS_LOG_MIN_GAP = 300
+
+    def _log_readiness(self, symbol, signal_dir, su, outcome, reason, enabled):
+        """Persist ONE «Готовність» decision → sob_readiness_log + a concise line
+        into the activity log. hold/skip are throttled (unchanged outcome+hot+
+        score-bucket within READINESS_LOG_MIN_GAP is suppressed); 'opened' always
+        logs. Best-effort — never raises into the engine loop."""
+        if not enabled:
+            return
+        hot = bool((su or {}).get('hot'))
+        score = (su or {}).get('score')
+        bucket = None if score is None else int(score // 10)
+        if outcome != 'opened':
+            prev = self._readiness_last_log.get(symbol)
+            if prev and prev[0] == outcome and prev[1] == hot and prev[2] == bucket \
+                    and (time.time() - prev[3]) < self.READINESS_LOG_MIN_GAP:
+                return
+            self._readiness_last_log[symbol] = (outcome, hot, bucket, time.time())
+        else:
+            self._readiness_last_log.pop(symbol, None)
+        blocks = (su or {}).get('blocks') or {}
+        vetoes = (su or {}).get('vetoes') or []
+        try:
+            self._db.log_readiness(
+                symbol=symbol, signal_dir=signal_dir,
+                score=score, grade=(su or {}).get('grade'), hot=hot,
+                score_dir=(su or {}).get('dir'), blocks=blocks,
+                vetoes=('; '.join(vetoes) if vetoes else None),
+                outcome=outcome, reason=reason)
+        except Exception as e:
+            print(f"[FF-Readiness] readiness_log error {symbol}: {e}")
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            log_activity = lambda *a, **k: None
+        icon = {'opened': '✅', 'hold': '⏳', 'skipped': '⛔'}.get(outcome, '•')
+        _ev = 'opened' if outcome == 'opened' else 'skipped'
+        log_activity(
+            symbol, _ev,
+            f'Черга-3 🎯 Готовність {icon} SCORE '
+            f'{score if score is not None else "—"} {(su or {}).get("grade") or "—"}'
+            f'{" HOT" if hot else ""} · {reason}',
+            side=signal_dir, source='Q3',
+            extra={'setup_score': score, 'setup_grade': (su or {}).get('grade'),
+                   'hot': hot, 'outcome': outcome, 'blocks': blocks})
+
+    def _engine_tick_readiness(self):
+        """🎯 Queue 3 «Готовність» engine — opens a queued coin the MOMENT its SMC
+        setup-grade (grade_setup) is HOT in the queued direction. No ₿ START /
+        session gating: the entire ₿/CTR/zone/liquidity context already lives
+        INSIDE grade_setup. Same intercept source as Queue 1, own queue
+        (_pending3). Sanity gates only (buttons, dedup, price); `_open` still
+        enforces its own exhaustion ceiling. Every decision is logged."""
+        s = self.get_settings()
+        if not s.get('enabled') or not s.get('queue3_enabled'):
+            return
+        now = time.time()
+        log_on = bool(s.get('readiness_log_enabled', True))
+        allow_long, allow_short = self._entry_gates()
+        with self._lock:
+            items = list(self._pending3.items())
+        trace = []
+        for sym, info in items:
+            d = info.get('dir')
+            if d not in ('LONG', 'SHORT'):
+                continue
+            if (d == 'LONG' and not allow_long) or (d == 'SHORT' and not allow_short):
+                continue
+            if sym in self._fuel_managed:
+                continue
+            # dedup vs TM (real/paper) — drop if already held.
+            if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+                with self._lock:
+                    self._pending3.pop(sym, None)
+                    self._persist_state()
+                continue
+            fuel = self._fuel_dir_smoothed(sym)
+            mark = fuel.get('mark_price') if fuel else None
+            if not mark:
+                self._log_readiness(sym, d, None, 'skipped', 'немає ціни', log_on)
+                trace.append(f'{sym}:немає-ціни')
+                continue
+            su = self._setup_cache.get(sym)
+            if not su or not su.get('ok'):
+                self._log_readiness(sym, d, su, 'hold', 'сетап ще рахується', log_on)
+                trace.append(f'{sym}:сетап-н/д')
+                continue
+            # READINESS trigger: grade_setup HOT in the queued direction.
+            if not su.get('hot') or su.get('dir') != d:
+                self._log_readiness(
+                    sym, d, su, 'hold',
+                    f"не HOT (SCORE {su.get('score')} {su.get('grade')}, dir {su.get('dir')})",
+                    log_on)
+                trace.append(f"{sym}:{su.get('score')}/{su.get('grade')}")
+                continue
+            try:
+                opened = self._open(
+                    sym, d, fuel, s,
+                    opened_by=f"🎯 Готовність {su.get('score')} {su.get('grade')}")
+                if opened:
+                    with self._lock:
+                        self._timers[sym] = {'dir': d, 'since': now,
+                                             'start_price': mark}
+                        self._pending3.pop(sym, None)
+                        self._persist_state()
+                    self._log_readiness(sym, d, su, 'opened',
+                                        f"HOT SCORE {su.get('score')} {su.get('grade')}", log_on)
+                    trace.append(f'{sym}:✅ВІДКРИТО {d}')
+                    print(f"[FF-Readiness] opened {d} {sym} "
+                          f"(SCORE {su.get('score')} {su.get('grade')})")
+                else:
+                    self._log_readiness(sym, d, su, 'skipped', '_open відхилив', log_on)
+                    trace.append(f'{sym}:_open-відхилив')
+            except Exception as e:
+                trace.append(f'{sym}:помилка')
+                print(f"[FF-Readiness] open error {sym}: {e}")
+        if items:
+            print(f"[FF-Readiness] кнопки L={allow_long} S={allow_short} · "
+                  f"{len(items)} у черзі · " + ' '.join(trace))
+
     def _run_engine(self):
         self._stop.wait(15)
         while not self._stop.is_set():
@@ -4545,6 +4705,10 @@ class FuelFilterDaemon:
                 self._engine_tick_q2()   # ⚡ Queue 2 (independent SCORE+CTR)
             except Exception as e:
                 print(f"[FF-Q2] tick error: {e}")
+            try:
+                self._engine_tick_readiness()   # 🎯 Queue 3 «Готовність»
+            except Exception as e:
+                print(f"[FF-Readiness] tick error: {e}")
             secs = 15
             try:
                 secs = max(5, int(self.get_settings().get('start_engine_scan_secs', 15)))
@@ -5686,6 +5850,15 @@ class FuelFilterDaemon:
                     timers2.append(row)
             visible_pending2 = len(timers2)
             all_timers2 = sorted(timers2, key=lambda x: -x['held_sec'])
+            # Queue 3 «🎯 Готовність» rows — identical columns (SCORE/Готовність
+            # already shown per row; the engine opens on grade_setup HOT).
+            timers3 = []
+            for sym, info in self._pending3.items():
+                row = self._queue_row(sym, info, now, _smart)
+                if row:
+                    timers3.append(row)
+            visible_pending3 = len(timers3)
+            all_timers3 = sorted(timers3, key=lambda x: -x['held_sec'])
             bs = self._btc_state or {}
             # BTC START/STOP signal: progress counts up while the MAIN-WINDOW
             # verdict (compute_bias) holds LONG/SHORT, reaching START at
@@ -5840,8 +6013,13 @@ class FuelFilterDaemon:
             # Queue 2 «⚡ CTR-зони» rows (same shape as `timers`).
             'timers2': all_timers2,
             'pending2_visible': visible_pending2,
+            # Queue 3 «🎯 Готовність» rows (same shape as `timers`).
+            'timers3': all_timers3,
+            'pending3_visible': visible_pending3,
+            'pending3_count': len(self._pending3),
             'queue1_enabled': bool(settings.get('queue1_enabled', True)),
             'queue2_enabled': bool(settings.get('queue2_enabled', False)),
+            'queue3_enabled': bool(settings.get('queue3_enabled', False)),
             'btc_start': btc_start,
             'anomalies': anomalies,
             'active_symbols': list(self._fuel_managed.keys()),
@@ -6002,6 +6180,7 @@ class FuelFilterDaemon:
                 if _q_allowed(9):   # OP 9: manual force-open
                     self._pending.pop(symbol, None)
                     self._pending2.pop(symbol, None)
+                    self._pending3.pop(symbol, None)
                 self._persist_state()
             return {'ok': True, 'reason': f'Позицію {side} відкрито вручну', 'opened': True}
         else:
@@ -6036,6 +6215,23 @@ class FuelFilterDaemon:
         with self._lock:
             n = len(self._pending2)
             self._pending2 = {}
+            self._persist_state()
+        return n
+
+    def delete_timer3(self, symbol: str) -> bool:
+        """Remove ONE coin from Queue 3 «🎯 Готовність» (user ✕)."""
+        symbol = (symbol or '').upper()
+        with self._lock:
+            removed = self._pending3.pop(symbol, None) is not None
+            if removed:
+                self._persist_state()
+        return removed
+
+    def clear_all_timers3(self) -> int:
+        """Clear Queue 3 «🎯 Готовність» entirely (does NOT touch Queue 1/2)."""
+        with self._lock:
+            n = len(self._pending3)
+            self._pending3 = {}
             self._persist_state()
         return n
 

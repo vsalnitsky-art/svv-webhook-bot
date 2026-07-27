@@ -484,6 +484,67 @@ class EventLog(Base):
         }
 
 
+class ReadinessLog(Base):
+    """Per-decision log for the «Готовність» (Readiness) FF strategy.
+
+    One row per engine evaluation of a queued coin: the SMC setup-grade
+    (grade_setup) breakdown + the outcome (opened / hold / skipped) with a
+    reason. Raw dataset for post-hoc analysis while the strategy runs live.
+
+    Uses the `sob_` prefix so it is picked up automatically by the Database
+    Administration size analysis (/api/db/analyze). Purged via the
+    'readiness_log_old' / 'readiness_log_all' cleanup actions.
+    """
+    __tablename__ = f'{TABLE_PREFIX}readiness_log'
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    symbol = Column(String(20))
+    signal_dir = Column(String(5))       # queue direction: LONG / SHORT
+    score = Column(Integer)              # 0..100 setup grade
+    grade = Column(String(20))           # ВІДМІННИЙ / ХОРОШИЙ / ...
+    hot = Column(Boolean, default=False) # grade_setup «готовий заходити»
+    score_dir = Column(String(5))        # grade's own direction
+    # grade_setup confluence blocks (0..1 each)
+    b_structure = Column(Float)
+    b_poi = Column(Float)
+    b_zone = Column(Float)
+    b_liquidity = Column(Float)
+    b_mm = Column(Float)
+    b_timing = Column(Float)
+    b_context = Column(Float)
+    exhaustion = Column(Float)           # move exhaustion %
+    vetoes = Column(String(200))         # veto reasons, joined
+    outcome = Column(String(12))         # opened / hold / skipped
+    reason = Column(String(200))         # human-readable why
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'symbol': self.symbol,
+            'signal_dir': self.signal_dir,
+            'score': self.score,
+            'grade': self.grade,
+            'hot': self.hot,
+            'score_dir': self.score_dir,
+            'blocks': {
+                'structure': self.b_structure, 'poi': self.b_poi,
+                'zone': self.b_zone, 'liquidity': self.b_liquidity,
+                'mm': self.b_mm, 'timing': self.b_timing,
+                'context': self.b_context,
+            },
+            'exhaustion': self.exhaustion,
+            'vetoes': self.vetoes,
+            'outcome': self.outcome,
+            'reason': self.reason,
+        }
+
+    __table_args__ = (
+        Index(f'ix_{TABLE_PREFIX}rdl_sym_ts', 'symbol', 'timestamp'),
+    )
+
+
 class SymbolBlacklist(Base):
     """
     Blacklist - v8.2: Монети виключені з аналізу

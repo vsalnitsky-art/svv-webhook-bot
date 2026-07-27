@@ -334,7 +334,8 @@ function renderDBStats(data) {
     const botTbody = document.getElementById('bot-tbody');
     botTbody.innerHTML = data.bot_tables.map(t => {
         let category = 'Other';
-        if (t.name.includes('event_log')) category = 'Event Logs';
+        if (t.name.includes('readiness_log')) category = 'Readiness Log (Готовність)';
+        else if (t.name.includes('event_log')) category = 'Event Logs';
         else if (t.name.includes('trade_archive')) category = 'Trade Archive';
         else if (t.name.includes('order_block') || t.name.includes('ob_')) category = 'OB Cache';
         else if (t.name.includes('snapshot')) category = 'Snapshots';
