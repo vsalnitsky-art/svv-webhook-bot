@@ -197,6 +197,56 @@ def test_scalp_drops_left_coins():
     print('✓ scalp → drops coins that left the funding table')
 
 
+# --- ⚡ scalper «good signal» Telegram alert (edge-trigger + cooldown) ---
+def _scalp_ff():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'),
+        funding_setup_scalp_on=True, scalp_tg_on=True,
+        scalp_tg_min_score=60, scalp_tg_cooldown_min=30, scalp_tg_dir='any'))
+    ff.sent = []
+    ff._send_scalp_alert = lambda sym, a, su, s: ff.sent.append(sym)
+    ff._anomalies = {'ENAUSDT': {'dir': 'LONG', 'rate': -1.0}}
+    return ff, db
+
+
+def test_scalp_alert_edge_fires_once():
+    ff, db = _scalp_ff()
+    ff._setup_scalp_cache = {'ENAUSDT': {'ok': True, 'dir': 'LONG', 'hot': True, 'score': 75}}
+    ff._scalp_setup_alert(ff.get_settings(), 2_000_000.0)
+    ff._scalp_setup_alert(ff.get_settings(), 2_000_001.0)   # still good → edge already fired
+    assert ff.sent == ['ENAUSDT'], f'good signal must alert ONCE on rising edge, got {ff.sent}'
+    print('✓ scalp TG → fires once on rising edge (no re-spam while good)')
+
+
+def test_scalp_alert_below_threshold_silent():
+    ff, db = _scalp_ff()
+    ff._setup_scalp_cache = {'ENAUSDT': {'ok': True, 'dir': 'LONG', 'hot': False, 'score': 45}}
+    ff._scalp_setup_alert(ff.get_settings(), 2_000_000.0)
+    assert ff.sent == [], 'score 45 < 60 and not HOT → no alert'
+    print('✓ scalp TG → silent below threshold & not HOT')
+
+
+def test_scalp_alert_off_no_send():
+    ff, db = _scalp_ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'), scalp_tg_on=False))
+    ff._setup_scalp_cache = {'ENAUSDT': {'ok': True, 'dir': 'LONG', 'hot': True, 'score': 90}}
+    ff._scalp_setup_alert(ff.get_settings(), 2_000_000.0)
+    assert ff.sent == [], 'scalp_tg_on=False → no alert'
+    print('✓ scalp TG OFF → no send')
+
+
+def test_scalp_alert_dir_filter():
+    ff, db = _scalp_ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'), scalp_tg_dir='SHORT'))
+    ff._setup_scalp_cache = {'ENAUSDT': {'ok': True, 'dir': 'LONG', 'hot': True, 'score': 90}}
+    ff._scalp_setup_alert(ff.get_settings(), 2_000_000.0)
+    assert ff.sent == [], 'dir filter SHORT → LONG signal suppressed'
+    print('✓ scalp TG → direction filter works')
+
+
 if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for t in tests:

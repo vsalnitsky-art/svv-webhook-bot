@@ -2352,6 +2352,26 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <input type="number" id="ff-funding-setup-ttl" min="15" max="600" step="5" onchange="saveFuelFilterSettings()" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                             </div>
                         </div>
+                        <!-- ⚡ Telegram на «хороший сигнал» по колонці Скальп -->
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#34d399;cursor:pointer;margin:10px 0 6px" title="Слати в Telegram (топік 💰 funding) оповіщення, коли скальперська «Готовність» монети стає HOT або SCORE ≥ порога. Edge-trigger (один раз на появу) + кулдаун на монету.">
+                            <input type="checkbox" id="ff-scalp-tg" onchange="saveFuelFilterSettings()"> 📨 TG на скальп-сигнал
+                        </label>
+                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Поріг «хорошого» скальп-сигналу: слати, коли HOT АБО SCORE ≥ цього. 0 = лише HOT.">Поріг SCORE ≥</label>
+                                <input type="number" id="ff-scalp-tg-min" min="0" max="100" step="1" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(52,211,153,0.4);background:rgba(0,0,0,0.25);color:#a7f3d0;font-family:monospace" onchange="saveFuelFilterSettings()">
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Слати лише для цього напрямку скальп-«Готовності».">Напрямок</label>
+                                <select id="ff-scalp-tg-dir" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                                    <option value="any">Будь-який</option><option value="LONG">🟢 LONG</option><option value="SHORT">🔴 SHORT</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Антиспам: не слати повторно по тій самій монеті частіше, ніж раз на N хв.">Кулдаун, хв</label>
+                                <input type="number" id="ff-scalp-tg-cool" min="0" max="720" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
+                            </div>
+                        </div>
                         <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 grade_setup спроєктований під 1H-свінг; на швидких TF структура/зона шумніші — трактуй як окремий показник для коротких funding-рухів, не як 1:1 з 1H.</div>
                     </div>
                     <!-- 🚀 Аномальний ріст (spike) — різкий рух ціни поза логікою МММ -->
@@ -8930,6 +8950,10 @@ function renderFuelFilter(d) {
     setIf('ff-funding-setup-tf', s.funding_setup_tf || '5m');
     setIf('ff-funding-setup-htf', s.funding_setup_htf || '15m');
     setIf('ff-funding-setup-ttl', String(s.funding_setup_ttl != null ? s.funding_setup_ttl : 45));
+    setIf('ff-scalp-tg', !!s.scalp_tg_on);
+    setIf('ff-scalp-tg-min', String(s.scalp_tg_min_score != null ? s.scalp_tg_min_score : 60));
+    setIf('ff-scalp-tg-dir', s.scalp_tg_dir || 'any');
+    setIf('ff-scalp-tg-cool', String(s.scalp_tg_cooldown_min != null ? s.scalp_tg_cooldown_min : 30));
     setIf('ff-funding-cooldown', String(s.funding_notify_cooldown_min != null ? s.funding_notify_cooldown_min : 30));
     setIf('ff-funding-hyst', String(s.funding_mm_hysteresis != null ? s.funding_mm_hysteresis : 10));
     setIf('ff-funding-session', !!s.funding_session_mode);
@@ -9797,6 +9821,10 @@ async function saveFuelFilterSettings() {
         funding_setup_tf: _v('ff-funding-setup-tf', '5m') || '5m',
         funding_setup_htf: _v('ff-funding-setup-htf', '15m') || '15m',
         funding_setup_ttl: parseInt(_v('ff-funding-setup-ttl', '45') || '45', 10),
+        scalp_tg_on: _c('ff-scalp-tg'),
+        scalp_tg_min_score: parseInt(_v('ff-scalp-tg-min', '60') || '60', 10),
+        scalp_tg_dir: _v('ff-scalp-tg-dir', 'any') || 'any',
+        scalp_tg_cooldown_min: parseInt(_v('ff-scalp-tg-cool', '30') || '30', 10),
         funding_notify_cooldown_min: parseInt(_v('ff-funding-cooldown', '30') || '30', 10),
         funding_mm_hysteresis: parseInt(_v('ff-funding-hyst', '10') || '10', 10),
         funding_session_mode: _c('ff-funding-session'),

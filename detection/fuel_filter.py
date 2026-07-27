@@ -388,6 +388,12 @@ DEFAULT_SETTINGS = {
     'funding_setup_htf': '15m',            # HTF-контекст скальп-грейду
     'funding_setup_ttl': 45,               # с — TTL скальп-кешу (свіжіше за 1H=90с)
     'funding_setup_max_per_cycle': 8,      # ліміт важких перерахунків за цикл
+    # ⚡ Telegram на «хороший сигнал» у колонці Скальп (edge-trigger + кулдаун).
+    # Тригер: скальп-«Готовність» стала HOT АБО score ≥ scalp_tg_min_score.
+    'scalp_tg_on': False,                  # вмик/вимк оповіщення
+    'scalp_tg_min_score': 60,              # поріг «хорошого» (HOT завжди тригерить)
+    'scalp_tg_cooldown_min': 30,           # антиспам: не частіше разу на N хв/монету
+    'scalp_tg_dir': 'any',                 # 'any' | 'LONG' | 'SHORT'
     # 🛡 М'який запобіжник відкриття — блокує 3 «вбивці» (МММ<поріг / CTR
     # нейтральний-чи-проти / виснажено). Це РЕАЛЬНО впливає на відкриття угод.
     'safeguard_on': True,
@@ -468,6 +474,9 @@ class FuelFilterDaemon:
         # рахується тільки поки funding_setup_scalp_on. {sym: grade}, {sym: at}.
         self._setup_scalp_cache: Dict[str, Dict] = {}
         self._setup_scalp_at: Dict[str, float] = {}
+        # ⚡ TG на «хороший сигнал» у колонці Скальп: edge-trigger + cooldown.
+        self._scalp_alert_state: Dict[str, bool] = {}   # sym → був «good» минулого разу
+        self._scalp_alert_at: Dict[str, float] = {}     # sym → час останнього TG
         # 🚪 SMC «Готовність виходу» per symbol (grade_exit) — рахується поряд із
         # setup з того самого sig, у бік ВІДКРИТОЇ позиції. РАДНИК (показ + лог).
         self._exit_cache: Dict[str, Dict] = {}
@@ -737,6 +746,17 @@ class FuelFilterDaemon:
             s['funding_setup_max_per_cycle'] = max(1, min(30, int(s.get('funding_setup_max_per_cycle', 8) or 8)))
         except (TypeError, ValueError):
             s['funding_setup_max_per_cycle'] = 8
+        s['scalp_tg_on'] = bool(s.get('scalp_tg_on', False))
+        try:
+            s['scalp_tg_min_score'] = max(0, min(100, int(s.get('scalp_tg_min_score', 60) or 0)))
+        except (TypeError, ValueError):
+            s['scalp_tg_min_score'] = 60
+        try:
+            s['scalp_tg_cooldown_min'] = max(0, min(720, int(s.get('scalp_tg_cooldown_min', 30) or 0)))
+        except (TypeError, ValueError):
+            s['scalp_tg_cooldown_min'] = 30
+        if s.get('scalp_tg_dir') not in ('any', 'LONG', 'SHORT'):
+            s['scalp_tg_dir'] = 'any'
         # ── Queue 2 eject rules ──
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
@@ -4572,6 +4592,69 @@ class FuelFilterDaemon:
                 f"{emoji} {side} · рух {mv_s} · funding {rt_s}")
         self._broadcast_users('funding', 'notify_spike', body)
 
+    def _scalp_setup_alert(self, s: Dict, now: float):
+        """⚡ Telegram на «хороший сигнал» у колонці Скальп: funding-монета, чия
+        скальперська «Готовність» стала HOT АБО SCORE ≥ scalp_tg_min_score (у
+        напрямку scalp_tg_dir). Edge-trigger на монету (шлемо ОДИН раз на появу
+        «good») + кулдаун; re-arm коли падає нижче. Потрібні `scalp_tg_on` і
+        `funding_setup_scalp_on` (інакше скальп-грейд не рахується)."""
+        if not s.get('scalp_tg_on') or not s.get('funding_setup_scalp_on'):
+            if self._scalp_alert_state:
+                self._scalp_alert_state.clear()
+                self._scalp_alert_at.clear()
+            return
+        try:
+            cool = max(0, int(s.get('scalp_tg_cooldown_min', 30) or 0) * 60)
+        except (TypeError, ValueError):
+            cool = 1800
+        try:
+            min_sc = int(s.get('scalp_tg_min_score', 60) or 0)
+        except (TypeError, ValueError):
+            min_sc = 60
+        want_dir = str(s.get('scalp_tg_dir', 'any') or 'any').upper()
+        with self._lock:
+            anoms = dict(self._anomalies)
+            cache = dict(self._setup_scalp_cache)
+        live = set()
+        for sym in cache:
+            if sym not in anoms:      # лише монети, що ЗАРАЗ у funding-таблиці
+                continue
+            live.add(sym)
+            su = cache.get(sym) or {}
+            good = bool(su.get('ok') and su.get('dir') in ('LONG', 'SHORT')
+                        and (su.get('hot')
+                             or (min_sc > 0 and (su.get('score') or 0) >= min_sc)))
+            if good and want_dir in ('LONG', 'SHORT') and su.get('dir') != want_dir:
+                good = False
+            prev = self._scalp_alert_state.get(sym, False)
+            if good and not prev and (now - self._scalp_alert_at.get(sym, 0)) >= cool:
+                try:
+                    self._send_scalp_alert(sym, anoms.get(sym) or {}, su, s)
+                except Exception as e:
+                    print(f"[FF-Scalp] alert send error {sym}: {e}")
+                self._scalp_alert_at[sym] = now
+            self._scalp_alert_state[sym] = good
+        # Прибрати edge-стан монет, що зникли з таблиці/кешу.
+        for k in list(self._scalp_alert_state.keys()):
+            if k not in live:
+                self._scalp_alert_state.pop(k, None)
+                self._scalp_alert_at.pop(k, None)
+
+    def _send_scalp_alert(self, sym: str, a: Dict, su: Dict, s: Dict):
+        """⚡ Broadcast a «good scalper-readiness» Telegram to the 💰 funding topic."""
+        d = su.get('dir')
+        emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
+        tf = s.get('funding_setup_tf', '5m')
+        rt = a.get('rate')
+        rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
+        mm = self._fuel_str.get(sym)
+        mm_s = f"{int(mm)}%" if isinstance(mm, (int, float)) else '—'
+        hot = ' · 🎯HOT' if su.get('hot') else ''
+        body = (f"⚡ #{sym} — скальп-сигнал ({tf}){hot}\n"
+                f"{emoji} {d} · готовність {su.get('score')}/100 "
+                f"{su.get('grade') or ''} · МММ {mm_s} · funding {rt_s}")
+        self._broadcast_users('funding', 'notify_scalp', body)
+
     @staticmethod
     def _gold_funding_step(a: Dict, tol: float = 0.005):
         """✦ Return the clean half-integer LEVEL (0.5..4.0) if this coin's funding
@@ -4651,6 +4734,8 @@ class FuelFilterDaemon:
                     self._btc_start_alert(s, now)
                     # 🎯 Opportunity alert (replaces the old funding appear/exit TG).
                     self._opportunity_alert(s, now)
+                    # ⚡ TG на «хороший сигнал» у колонці Скальп (funding-монети).
+                    self._scalp_setup_alert(s, now)
             except Exception as e:
                 print(f"[FuelFilter] alert loop error: {e}")
             self._stop.wait(3)
@@ -5827,6 +5912,7 @@ class FuelFilterDaemon:
                 {'k': 'Скальп-грейд для funding', 'v': _on(s.get('funding_setup_scalp_on', False))},
                 {'k': 'Скальп TF / HTF', 'v': f"{s.get('funding_setup_tf','5m')} / {s.get('funding_setup_htf','15m')}"},
                 {'k': 'Скальп TTL / cap', 'v': f"{s.get('funding_setup_ttl',45)}с / {s.get('funding_setup_max_per_cycle',8)} на цикл"},
+                {'k': 'TG скальп-сигнал', 'v': (f"УВІМК (HOT/≥{s.get('scalp_tg_min_score',60)}, {s.get('scalp_tg_dir','any')}, кулдаун {s.get('scalp_tg_cooldown_min',30)}хв)" if s.get('scalp_tg_on') else 'вимк')},
             ]},
             {'title': '🔍 SMC-сигнал (сканер)', 'items': [
                 {'k': 'Режим сигналу', 'v': alert_mode},
