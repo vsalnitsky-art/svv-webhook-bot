@@ -2475,14 +2475,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th>
                             <th title="⚡ Скальперська SMC-«готовність» на швидкому TF (напр. 5m + 15m HTF) — ЛИШЕ для funding-монет. Той самий grade_setup, але на швидких свічках (короткі рухи навколо funding). Активна, коли увімкнено «⚡ Скальп-Готовність» у налаштуваннях таблиці. «—» = вимкнено або ще рахується.">⚡ Скальп</th>
                             <th>Тримається</th>
-                            <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає)">Прогрес funding</th>
-                            <th title="Поточний funding % і час до наступного нарахування">Funding · до виплати</th>
-                            <th title="24-годинний обсяг торгів (USD)">Vol 24h</th>
-                            <th>Дії</th>
+                            <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає). Нижче під монетою — другий рядок: Funding · до виплати, Vol 24h та дії.">Прогрес funding</th>
                         </tr>
                     </thead>
                     <tbody id="ff-anomaly-tbody">
-                        <tr><td colspan="10" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>
+                        <tr><td colspan="8" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -9052,7 +9049,7 @@ function renderFuelFilter(d) {
     if (atb) {
         const arows = d.anomalies || [];
         if (!arows.length) {
-            atb.innerHTML = '<tr><td colspan="11" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>';
+            atb.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>';
         } else {
             atb.innerHTML = arows.map(a => {
                 const dirHtml = a.dir === 'LONG'
@@ -9144,10 +9141,16 @@ function renderFuelFilter(d) {
                     <td style="white-space:nowrap">${ffSetupCell(a.setup_scalp)}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
                     <td>${progHtml}</td>
-                    <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}${fTrendBadge(a.f_trend)}</td>
-                    <td style="font-size:0.72rem;color:#cbd5e1;white-space:nowrap">${volTxt}</td>
-                    <td style="white-space:nowrap"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.9rem;margin-right:8px" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Прибрати з таблиці">✕</span></td>
-                </tr>${oppStatsRow(a)}`;
+                </tr>` +
+                // ── Другий рядок під монетою: винесені колонки (Funding · до
+                //    виплати · Vol 24h · Дії), щоб таблиця не була надто широкою.
+                `<tr style="${_rowBg}"><td colspan="8" style="padding:2px 8px 6px 34px;border-bottom:1px solid rgba(255,255,255,0.07)">
+                    <span style="display:inline-flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:0.72rem;color:#9aa3b5">
+                        <span title="Поточний funding % і час до наступного нарахування">💵 <b style="color:#cbd5e1;font-weight:600">${rateTxt} ${cdTxt}</b>${fTrendBadge(a.f_trend)}</span>
+                        <span title="24-годинний обсяг торгів (USD)">📊 Vol 24h: <b style="color:#cbd5e1;font-weight:600">${volTxt}</b></span>
+                        <span style="margin-left:auto"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.9rem;margin-right:12px" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕 Приглушити</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Прибрати з таблиці">✕ Прибрати</span></span>
+                    </span>
+                </td></tr>${oppStatsRow(a)}`;
             }).join('');
         }
     }
@@ -9173,7 +9176,7 @@ function oppStatsRow(a) {
     const _rec = (st.recent || []).map(e =>
         `${fmtPriceJS(e.start_price)}→${fmtPriceJS(e.end_price)} · ${fmtTimer(e.dur_sec)}`).join('\n');
     const _tip = _rec ? `Останні епізоди (вхід→вихід · тривалість):\n${_rec}` : 'Ще не було завершених епізодів';
-    return `<tr style="background:rgba(74,222,128,0.07)"><td colspan="10" title="${_tip.replace(/"/g,'&quot;')}" style="padding:1px 8px 5px 34px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">`
+    return `<tr style="background:rgba(74,222,128,0.07)"><td colspan="8" title="${_tip.replace(/"/g,'&quot;')}" style="padding:1px 8px 5px 34px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">`
         + `🎯 <b style="color:#4ade80;text-shadow:0 0 6px rgba(74,222,128,0.6)">рекомендована ботом</b>`
         + ` · в угоді <b>${timer}</b>`
         + ` · вхід @ <b>${entryPx}</b>`
