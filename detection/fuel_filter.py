@@ -952,6 +952,26 @@ class FuelFilterDaemon:
                 'price': _fd.get('mark_price'),
                 'comp': entry.get('components'),
             }
+            # 🎯 SMC «Готовність» (grade_setup) на момент сигналу + РОЗБИВКА по
+            # блоках — щоб у журналі було видно розподіл балів і які блоки
+            # хронічно = 0 (для калібрування: чесно слабко чи недо-детект).
+            try:
+                _su = self._setup_cache.get(sym)
+                if _su is None:
+                    _su = self._compute_setup(sym, side, self.get_settings())
+                if _su and _su.get('ok'):
+                    _x['setup_score'] = _su.get('score')
+                    _x['setup_grade'] = _su.get('grade')
+                    _sb = _su.get('blocks') or {}
+                    _x['su_struct'] = _sb.get('structure')
+                    _x['su_poi'] = _sb.get('poi')
+                    _x['su_zone'] = _sb.get('zone')
+                    _x['su_liq'] = _sb.get('liquidity')
+                    _x['su_mm'] = _sb.get('mm')
+                    _x['su_timing'] = _sb.get('timing')
+                    _x['su_context'] = _sb.get('context')
+            except Exception:
+                pass
             # Record the MATURE Decision Center verdict alongside — for the data-
             # driven consolidation of the two entry models (see _decision_compact).
             _dec = self._decision_compact(sym, _fd.get('mark_price'), side)
@@ -2223,6 +2243,55 @@ class FuelFilterDaemon:
         _close_book('_positions', True)
         _close_book('_shadow_positions', False)
 
+    def _btc_trend_dir(self):
+        """🎯 DIRECTIONAL напрямок BTC для банера — показує РЕАЛЬНИЙ РУХ (тренд +
+        момент), а НЕ контраріанську бабло-модель. Блендить на 1H:
+          • нахил ціни EMA20 vs EMA50 (вага 0.5) — головний тренд,
+          • 12-годинний моментум (0.3),
+          • CTR/STC 1H (0.2).
+        Повертає (score[-1..1] де + = LONG, strength 0..100) або (None, 0)."""
+        try:
+            kl = self._setup_klines('BTCUSDT', '1h', 140)
+            closes = [float(k.get('p')) for k in (kl or []) if k.get('p')]
+            if len(closes) < 55:
+                return None, 0
+
+            def _ema(vals, p):
+                k = 2.0 / (p + 1.0)
+                e = vals[0]
+                for v in vals[1:]:
+                    e = v * k + e * (1.0 - k)
+                return e
+
+            win = closes[-80:] if len(closes) >= 80 else closes
+            e20 = _ema(win, 20)
+            e50 = _ema(win, 50)
+            price = closes[-1]
+            # 1) Тренд: розбіжність EMA20/EMA50 (1% = повний бал).
+            trend = (e20 - e50) / e50 if e50 else 0.0
+            trend_s = max(-1.0, min(1.0, trend / 0.01))
+            # 2) Моментум: зміна ціни за ~12 год (1.5% = повний бал).
+            ref = closes[-13] if len(closes) >= 13 else closes[0]
+            mom = (price - ref) / ref if ref else 0.0
+            mom_s = max(-1.0, min(1.0, mom / 0.015))
+            # 3) CTR 1H (STC<50 = LONG-нахил, >50 = SHORT-нахил).
+            ctr_s = 0.0
+            try:
+                from detection.forecast_engine import get_forecast_engine
+                fe = get_forecast_engine()
+                h1 = fe.get_ctr_tf('BTCUSDT', '1h') if fe else None
+                stc = (h1 or {}).get('stc')
+                if stc is not None:
+                    ctr_s = max(-1.0, min(1.0, (50.0 - float(stc)) / 50.0))
+            except Exception:
+                pass
+            score = 0.5 * trend_s + 0.3 * mom_s + 0.2 * ctr_s
+            score = max(-1.0, min(1.0, score))
+            return score, int(round(abs(score) * 100))
+        except Exception as e:
+            print(f"[FuelFilter] BTC trend dir error: {e}")
+            return None, 0
+
     def _update_btc_verdict(self):
         """BTC ММ *session* tracker (drives the ₿ banner + START engine + queue).
 
@@ -2239,34 +2308,30 @@ class FuelFilterDaemon:
         So the queue is cleared ONLY on a genuine session flip — never on a
         transient WAIT. Called once per cycle."""
         try:
+            # 🎯 Банер ₿ = DIRECTIONAL: напрямок = РЕАЛЬНИЙ рух BTC (тренд EMA +
+            # моментум + CTR 1H), а НЕ контраріанська бабло-модель. Саме тому
+            # раніше на пампі банер показував SHORT — бабло контраріанське.
+            fdir, _bstr = self._btc_trend_dir()
+            self._btc_fuel_strength = int(_bstr or 0)
+            # Бабло-ММ (LIQMAP) лишаємо ЛИШЕ для деталей/тултипа банера — напрямок
+            # банера з неї БІЛЬШЕ не береться.
             if _MM_MODEL:
-                # 🎯 Професійна модель ММ: напрямок = Liquidity Pull Vector (LIQMAP)
-                # + whale/стакан/funding. Strength уже враховує data_quality.
-                from detection.mm_model import compute_mm
-                r = compute_mm(self._db, 'BTCUSDT', with_confirmations=True,
-                               live_price=self._live_price('BTCUSDT'))
-                if r is not None:
-                    fdir = r.get('dir')
-                    self._btc_fuel_strength = int(r.get('strength') or 0)
-                    self._btc_mm = r
-                else:
-                    fdir = None
-            else:
-                from web.flask_app import compute_bias
-                d = compute_bias(self._db, 'BTCUSDT', None)
-                fuel = ((d or {}).get('components') or {}).get('fuel') or {}
-                fdir = fuel.get('dir')
-                # BTC fuel STRENGTH 0..100 (|imbalance|×100) — fills the ₿ banner bar.
-                if fdir is not None:
-                    self._btc_fuel_strength = int(round(abs(fdir) * 100))
+                try:
+                    from detection.mm_model import compute_mm
+                    r = compute_mm(self._db, 'BTCUSDT', with_confirmations=True,
+                                   live_price=self._live_price('BTCUSDT'))
+                    if r is not None:
+                        self._btc_mm = r
+                except Exception:
+                    pass
             if fdir is None:
                 live = None                 # data gap → treat as WAIT (pause)
-            elif fdir > FUEL_LONG_THR:      # > +0.1 → LONG (як головне вікно)
+            elif fdir > FUEL_LONG_THR:      # > +0.1 → LONG (реальний ап-тренд)
                 live = 'LONG'
-            elif fdir < FUEL_SHORT_THR:     # < -0.1 → SHORT
+            elif fdir < FUEL_SHORT_THR:     # < -0.1 → SHORT (реальний даун-тренд)
                 live = 'SHORT'
             else:
-                live = None                 # |dir| ≤ 0.1 → збалансований → WAIT
+                live = None                 # |dir| ≤ 0.1 → плоско → WAIT
         except Exception as e:
             print(f"[FuelFilter] BTC ММ calc error: {e}")
             return
