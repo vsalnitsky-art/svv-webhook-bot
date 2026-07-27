@@ -114,6 +114,23 @@ funding-монети). Той самий `grade_setup` — інші свічки
   funding-таблиці + блок налаштувань у акордеоні. Інфосайт дзеркалить колонку.
 - Навантаження мінімальне: klines кешуються (TTL), тротл cap/цикл; funding-
   підмножина мала (одиниці–десятки монет).
+- TG на «хороший сигнал» по колонці Скальп: `scalp_tg_on`/`scalp_tg_min_score`
+  (HOT або score≥поріг) / `scalp_tg_cooldown_min` / `scalp_tg_dir`. Метод
+  `_scalp_setup_alert` (edge-trigger+кулдаун) у `_run_alerts` → топік 💰 funding.
+- Панель `/api/fuel-filter/panel/<sym>` віддає `setup_scalp`; TradingView-оверлей
+  (`tools/tradingview_mm_overlay.user.js`, v1.7.3) показує ⚡ Скальп-бейдж.
+
+## Telegram-бот (`web/tg_bot.py`) — БЕЗПЕКА розсилки
+
+Відповідь адміна юзеру НІКОЛИ не повинна ставати масовою розсилкою:
+- Свайп-Reply на шапку «Повідомлення від користувача» → лише тому юзеру. Звʼязок
+  `_reply_map` **персиститься в БД** (`tg_reply_map`, `_load_reply_map` на старті)
+  → переживає рестарти. Якщо звʼязок усе одно втрачено — `chat_id` парситься з
+  тексту шапки (`_chat_id_from_text`).
+- Reply без звʼязку → підказка `/reply <chat_id>`, **не розсилка**.
+- Масова розсилка ЛИШЕ за явним `/announce <текст>` (`_admin_broadcast`). Звичайне
+  повідомлення адміна → підказка, ніколи не broadcast.
+- Тести: `test_tg_reply.py`.
 
 ## БД-ключі (storage)
 

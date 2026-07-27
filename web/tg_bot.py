@@ -15,6 +15,7 @@ Flow (login stays password-based on the web; Telegram handles onboarding):
 Uses stdlib urllib only. Single poller (safe with gunicorn -w 1).
 """
 import os
+import re
 import json
 import time
 import threading
@@ -24,8 +25,10 @@ import urllib.error
 _started = False
 _lock = threading.Lock()
 # Maps a bot message shown in the ADMIN chat → the user chat it came from, so
-# the admin can just «Reply» to it and the bot routes the answer back. In-memory
-# (bounded); on restart, admins can still use «/reply <chat_id> <text>».
+# the admin can just «Reply» to it and the bot routes the answer back. Bounded
+# in-memory cache MIRRORED to DB (tg_reply_map) so it survives restarts; even if
+# the link is missing, the reply falls back to parsing the chat_id from the
+# forwarded header — and NEVER to a broadcast. Mass sends need explicit /announce.
 _reply_map = {}
 _map_lock = threading.Lock()
 
@@ -54,6 +57,48 @@ def _remember(admin_msg_id, user_chat):
         if len(_reply_map) > 1000:
             for k in list(_reply_map)[:200]:
                 _reply_map.pop(k, None)
+        _persist_reply_map()
+
+
+def _persist_reply_map():
+    """Persist _reply_map to DB so a swipe-Reply on a forwarded support message
+    still routes to the RIGHT user AFTER a restart/redeploy — instead of the link
+    being lost and the reply falling through to an accidental broadcast. Called
+    under _map_lock. Best-effort."""
+    try:
+        from storage.db_operations import get_db
+        get_db().set_setting('tg_reply_map',
+                             {str(k): v for k, v in _reply_map.items()})
+    except Exception:
+        pass
+
+
+def _load_reply_map():
+    """Restore _reply_map from DB on boot (survives redeploys)."""
+    try:
+        from storage.db_operations import get_db
+        saved = get_db().get_setting('tg_reply_map', {}) or {}
+    except Exception:
+        saved = {}
+    if not isinstance(saved, dict):
+        return
+    with _map_lock:
+        for k, v in saved.items():
+            try:
+                _reply_map[int(k)] = str(v)
+            except (TypeError, ValueError):
+                pass
+
+
+def _chat_id_from_text(text):
+    """Extract the user's chat_id from a forwarded support header
+    («chat_id: <code>7659029832</code>»). Robust fallback for a swipe-Reply when
+    the reply-map link is gone — so we NEVER misroute a reply into a broadcast.
+    Returns a str chat_id or None."""
+    if not text:
+        return None
+    mt = re.search(r'chat_id\D{0,16}(\d{5,})', str(text))
+    return mt.group(1) if mt else None
 
 
 def _token():
@@ -472,18 +517,25 @@ def _copy_message(to_chat, from_chat, message_id):
         return None
 
 
-def _admin_broadcast(m, admin_cid):
-    """📢 Admin ANNOUNCEMENT — copy the admin's message (text OR media, keeping
-    caption) to EVERY active bot subscriber. Reports the delivered count back."""
+def _admin_broadcast(m, admin_cid, body_override=None):
+    """📢 Admin ANNOUNCEMENT — deliver to EVERY active bot subscriber. Text goes
+    as `body_override` (the text after /announce); media is copied keeping its
+    caption. Reports the delivered count back. Triggered ONLY by an explicit
+    /announce|/broadcast — never by a plain message or a failed reply."""
     try:
         from web.auth import all_bot_chats
         chats = all_bot_chats(exclude_chat=admin_cid)
     except Exception:
         chats = []
+    has_media = _has_media(m)
     n = 0
     for c in chats:
         try:
-            if _copy_message(c, admin_cid, m.get('message_id')):
+            if not has_media and body_override:
+                ok = tg_send(c, f"📢 <b>Оголошення:</b>\n{body_override}")
+            else:
+                ok = _copy_message(c, admin_cid, m.get('message_id'))
+            if ok:
                 n += 1
         except Exception:
             pass
@@ -558,9 +610,15 @@ def _handle_message(m):
         # 1) Admin swipe-replies to a forwarded user message.
         target = None
         rt = m.get('reply_to_message') or {}
-        if rt.get('message_id') is not None:
+        is_reply = rt.get('message_id') is not None
+        if is_reply:
             with _map_lock:
                 target = _reply_map.get(int(rt['message_id']))
+            # Fallback: link gone (restart / eviction) → parse the user's chat_id
+            # straight from the forwarded header text. Keeps swipe-Reply reliable
+            # and, crucially, stops a reply ever leaking into a broadcast.
+            if not target:
+                target = _chat_id_from_text(rt.get('text') or rt.get('caption') or '')
         # 2) Or explicit «/reply <chat_id> <text>».
         if text.startswith('/reply'):
             parts = text.split(None, 2)
@@ -579,16 +637,35 @@ def _handle_message(m):
             tg_send(cid, "✅ Надіслано користувачу." if ok
                     else "⚠️ Не вдалося надіслати (можливо, користувач не почав чат).")
             return
+        # A swipe-Reply we could NOT link to a user → NEVER broadcast; ask for the
+        # explicit form instead (prevents an accidental mass send).
+        if is_reply:
+            tg_send(cid, "⚠️ Не вдалося визначити, кому відповісти (звʼязок втрачено). "
+                         "Відповідай через <code>/reply &lt;chat_id&gt; текст</code>.")
+            return
         if text.startswith('/start'):
             _handle_start(cid, uname, fname, flang, fprem)
             return
-        # A plain admin message (not a reply, not a command) = an ANNOUNCEMENT —
-        # broadcast it (text OR media) to EVERY bot subscriber, like a channel.
+        # 📢 ANNOUNCEMENT to ALL subscribers — ONLY via an EXPLICIT command, so a
+        # plain message or a failed reply can NEVER become an accidental mass send.
+        if text.startswith('/announce') or text.startswith('/broadcast'):
+            _body = text.split(None, 1)
+            _body = _body[1].strip() if len(_body) > 1 else ''
+            if not _body and not _has_media(m):
+                tg_send(cid, "Формат: <code>/announce текст</code> "
+                             "(або /announce у підписі до фото/відео).")
+                return
+            _admin_broadcast(m, cid_s, body_override=(_body or None))
+            return
         if text.startswith('/'):
             return   # unknown command → ignore
-        if not text and not _has_media(m):
-            return
-        _admin_broadcast(m, cid_s)
+        # Plain admin message that is neither a reply nor a command → a HINT, not a
+        # broadcast (this is the change that stops internal replies going to all).
+        tg_send(cid,
+                "ℹ️ <b>Кому це надіслати?</b>\n"
+                "• Відповісти користувачу — свайп-<i>Reply</i> на його повідомлення "
+                "або <code>/reply &lt;chat_id&gt; текст</code>.\n"
+                "• Оголошення ВСІМ підписникам — <code>/announce текст</code>.")
         return
 
     # ---- user side ----
@@ -720,6 +797,10 @@ def start_tg_bot():
             print("[TG-BOT] TELEGRAM_BOT_TOKEN not set — Telegram onboarding off.")
             return
         _started = True
+    try:
+        _load_reply_map()            # restore support-reply links (survive redeploys)
+    except Exception:
+        pass
     try:
         _purge_admin_only_topics()   # tidy stale 📝/💬 topics from the group
     except Exception:

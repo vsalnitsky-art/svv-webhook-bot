@@ -2718,8 +2718,11 @@ class FuelFilterDaemon:
                 if setup is not None:
                     self._setup_cache[symbol] = setup
             out['setup'] = setup
+            # ⚡ Скальперська «Готовність» (лише funding-монети; окремий кеш).
+            out['setup_scalp'] = self._setup_scalp_cache.get(symbol)
         except Exception:
             out['setup'] = None
+            out['setup_scalp'] = None
         # 🚪 Готовність виходу — ЛИШЕ коли на монеті є ВІДКРИТА позиція.
         try:
             _pside = timer.get('dir') if (timer and timer.get('dir') in ('LONG', 'SHORT')) else None

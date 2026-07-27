@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VSV МММ overlay for TradingView
 // @namespace    svv-webhook-bot
-// @version      1.7.2
-// @description  Показує реальний МММ (liquidation-fuel) + стан ₿ BTC (і фандинг для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
+// @version      1.7.3
+// @description  Показує реальний МММ (liquidation-fuel) + стан ₿ BTC (і фандинг + скальп-Готовність для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
 // @author       VSV
 // @match        https://*.tradingview.com/chart/*
 // @match        https://tradingview.com/chart/*
@@ -343,6 +343,17 @@
                 parts.push(`Готовність <b style="color:${scol}">${su.score}%</b> `
                     + `<span style="color:${scol};font-weight:700">${sic} ${su.grade || ''}${hot}</span>`);
             }
+            // ⚡ Скальперська «Готовність» (швидкий TF) — лише для funding-монет,
+            // коли ввімкнено «⚡ Скальп-Готовність» у боті. Окремий показник поряд
+            // із 1H-«Готовністю» (на швидких TF структура/зона шумніші).
+            if (d.setup_scalp && d.setup_scalp.ok) {
+                const ss = d.setup_scalp;
+                const sscol = ss.color || '#c9b8ff';
+                const ssic = ss.dir === 'LONG' ? '🟢' : (ss.dir === 'SHORT' ? '🔴' : '⚪');
+                const sshot = ss.hot ? ' 🎯' : '';
+                parts.push(`⚡ Скальп <b style="color:${sscol}">${ss.score}%</b> `
+                    + `<span style="color:${sscol};font-weight:700">${ssic} ${ss.grade || ''}${sshot}</span>`);
+            }
             // 🚪 Показники ВИХОДУ — лише коли по монеті відкрита угода (d.exit).
             if (d.exit && d.exit.ok) {
                 const ex = d.exit;
@@ -357,6 +368,9 @@
                 elScore.style.display = '';
                 elScore.title = 'Готовність — SMC-якість сетапу для ВХОДУ (0–100): '
                     + 'ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25.\n'
+                    + '⚡ Скальп — та сама SMC-«Готовність», але на швидкому TF (лише '
+                    + 'funding-монети, коли ввімкнено в боті). На швидких TF структура/зона '
+                    + 'шумніші — окремий показник, не 1:1 з 1H.\n'
                     + 'Вихід (лише у відкритій угоді) — наскільки картина розвернулась ПРОТИ позиції: '
                     + 'ЗАКРИВАТИ ≥72 · СКОРО ВИХІД ≥55 · УВАГА ≥40 · ТРИМАТИ. Це РАДНИК, не команда.';
             } else {
