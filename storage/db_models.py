@@ -388,10 +388,40 @@ class PerformanceStats(Base):
 class BotSetting(Base):
     """Bot settings storage"""
     __tablename__ = f'{TABLE_PREFIX}bot_settings'
-    
+
     key = Column(String(50), primary_key=True)
     value = Column(Text)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class User(Base):
+    """Authenticated user. Access requires BOTH email_confirmed AND approved
+    (admin approval), unless is_admin. `disabled` lets an admin revoke access."""
+    __tablename__ = f'{TABLE_PREFIX}users'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    is_admin = Column(Boolean, default=False, nullable=False)
+    email_confirmed = Column(Boolean, default=False, nullable=False)
+    approved = Column(Boolean, default=False, nullable=False)   # admin approval
+    disabled = Column(Boolean, default=False, nullable=False)   # admin revoke
+    # Two-site access: everyone gets the info-site by default; the BOT itself is
+    # granted only by an admin. Admins always have both.
+    bot_access = Column(Boolean, default=False, nullable=False)
+    prefs = Column(Text, default='{}')                          # per-user UI prefs (JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
+    # Time-limited access: when set, the account auto-blocks after this UTC time.
+    access_until = Column(DateTime, nullable=True)
+    # Single-active-session control (anti password-sharing): the current valid
+    # session token; a new login rotates it, invalidating older sessions.
+    session_token = Column(String(64), nullable=True)
+    last_ip = Column(String(64), nullable=True)
+    login_log = Column(Text, default='[]')                      # recent logins [{t,ip}] JSON
+    telegram_chat_id = Column(String(32), nullable=True)        # linked Telegram chat
+    telegram_username = Column(String(64), nullable=True)       # @username (if any)
+    telegram_name = Column(String(128), nullable=True)          # first+last name (always present)
 
 
 class TradeArchive(Base):
@@ -452,61 +482,6 @@ class EventLog(Base):
             'message': self.message,
             'symbol': self.symbol,
         }
-
-
-class ReadinessLog(Base):
-    """Per-decision log for the «Готовність» (Readiness) FF strategy.
-
-    One row per engine evaluation of a queued coin: the FULL SCORE factor
-    breakdown + the outcome (opened / hold / skipped) with a reason. This is
-    the raw dataset for post-hoc strategy analysis while it runs live.
-
-    Uses the `sob_` prefix so it is picked up automatically by the Database
-    Administration size analysis (/api/db/analyze). Old rows are purged via
-    the 'readiness_log_old' / 'readiness_log_all' cleanup actions.
-    """
-    __tablename__ = f'{TABLE_PREFIX}readiness_log'
-
-    id = Column(Integer, primary_key=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    symbol = Column(String(20))
-    signal_dir = Column(String(5))       # queue direction: LONG / SHORT
-    score = Column(Integer)              # 0..100 readiness SCORE
-    label = Column(String(20))           # STRONG HOLD / WEAK / EXHAUSTED / MODERATE
-    score_dir = Column(String(5))        # SCORE's own live direction
-    room = Column(Float)                 # component 0..1 (1 − exhaustion)
-    hold = Column(Float)                 # component 0..1 (hold conviction)
-    fuel = Column(Float)                 # component 0..1 (fuel aligned)
-    momentum = Column(Float)             # component 0..1 (candle momentum)
-    fuel_strength = Column(Integer)      # |fuel dir| × 100
-    exhaustion = Column(Float)           # move exhaustion %
-    conflict = Column(Boolean, default=False)  # price fights the fuel setup
-    outcome = Column(String(12))         # opened / hold / skipped
-    reason = Column(String(160))         # human-readable why
-
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
-            'symbol': self.symbol,
-            'signal_dir': self.signal_dir,
-            'score': self.score,
-            'label': self.label,
-            'score_dir': self.score_dir,
-            'room': self.room,
-            'hold': self.hold,
-            'fuel': self.fuel,
-            'momentum': self.momentum,
-            'fuel_strength': self.fuel_strength,
-            'exhaustion': self.exhaustion,
-            'conflict': self.conflict,
-            'outcome': self.outcome,
-            'reason': self.reason,
-        }
-
-    __table_args__ = (
-        Index(f'ix_{TABLE_PREFIX}rdl_sym_ts', 'symbol', 'timestamp'),
-    )
 
 
 class SymbolBlacklist(Base):

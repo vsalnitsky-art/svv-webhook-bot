@@ -8,7 +8,6 @@ from sqlalchemy import desc, and_, or_
 from storage.db_models import (
     get_session, init_db,
     SleeperCandidate, OrderBlock, Trade, PerformanceStats, BotSetting, EventLog,
-    ReadinessLog,
     SymbolBlacklist, SMCOBState,
     Top100OBSnapshot, Top100OBHistory,
     VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot,
@@ -665,63 +664,7 @@ class DBOperations:
             return 0
         finally:
             session.close()
-
-    # === READINESS STRATEGY LOG (Готовність) ===
-
-    def log_readiness(self, symbol: str, signal_dir: str = None,
-                      score: int = None, label: str = None, score_dir: str = None,
-                      room: float = None, hold: float = None, fuel: float = None,
-                      momentum: float = None, fuel_strength: int = None,
-                      exhaustion: float = None, conflict: bool = False,
-                      outcome: str = None, reason: str = None) -> None:
-        """Insert one decision row for the «Готовність» strategy. Best-effort;
-        never raises into the engine loop."""
-        session = get_session()
-        try:
-            row = ReadinessLog(
-                symbol=symbol, signal_dir=signal_dir, score=score, label=label,
-                score_dir=score_dir, room=room, hold=hold, fuel=fuel,
-                momentum=momentum, fuel_strength=fuel_strength,
-                exhaustion=exhaustion, conflict=bool(conflict),
-                outcome=outcome, reason=reason)
-            session.add(row)
-            session.commit()
-        except Exception:
-            session.rollback()
-        finally:
-            session.close()
-
-    def get_readiness_log(self, limit: int = 200, symbol: str = None,
-                          outcome: str = None) -> List[Dict]:
-        """Recent «Готовність» decisions, newest first (for analysis / UI)."""
-        session = get_session()
-        try:
-            query = session.query(ReadinessLog)
-            if symbol:
-                query = query.filter(ReadinessLog.symbol == symbol.upper())
-            if outcome:
-                query = query.filter(ReadinessLog.outcome == outcome)
-            rows = query.order_by(desc(ReadinessLog.timestamp)).limit(limit).all()
-            return [r.to_dict() for r in rows]
-        finally:
-            session.close()
-
-    def clear_old_readiness(self, days: int = 14) -> int:
-        """Purge «Готовність» log rows older than `days`."""
-        session = get_session()
-        try:
-            cutoff = datetime.utcnow() - timedelta(days=days)
-            count = session.query(ReadinessLog).filter(
-                ReadinessLog.timestamp < cutoff
-            ).delete()
-            session.commit()
-            return count
-        except:
-            session.rollback()
-            return 0
-        finally:
-            session.close()
-
+    
     # ==========================================
     # BLACKLIST OPERATIONS (v8.2.2)
     # ==========================================
@@ -1841,6 +1784,125 @@ class DBOperations:
         except Exception as e:
             session.rollback()
             print(f"[DB] cleanup_liq_heatmap_profiles error: {e}")
+            return 0
+        finally:
+            session.close()
+
+    # ================================================================
+    # === Blocked Trades (Quality Gate V2 rejections) ===
+    # ================================================================
+
+    def record_blocked_trade(self, symbol: str, side: str, entry_price: float,
+                             blocked_reason: str, is_paper: bool = True,
+                             snapshot: dict = None, health_score: int = None,
+                             entry_score: int = None):
+        """Record a trade blocked by Quality Gate V2.
+
+        Args:
+            symbol: trading pair
+            side: LONG/SHORT
+            entry_price: would-be entry
+            blocked_reason: 'quality_score_too_low' | 'exhaustion_kill_switch'
+            is_paper: True if test_mode was active
+            snapshot: dict with score/grade/breakdown/reason/metrics (JSON-encoded)
+            health_score: V2 overall score (0-100)
+            entry_score: reserved for future Entry scoring
+        """
+        import json
+        from storage.db_models import BlockedTrade
+        session = self.Session()
+        try:
+            snap_json = json.dumps(snapshot) if snapshot else '{}'
+            record = BlockedTrade(
+                symbol=symbol,
+                side=side,
+                entry_price=entry_price,
+                blocked_reason=blocked_reason,
+                is_paper=is_paper,
+                snapshot=snap_json,
+                health_score=health_score,
+                entry_score=entry_score,
+            )
+            session.add(record)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] record_blocked_trade error: {e}")
+            raise
+        finally:
+            session.close()
+
+    def get_blocked_trades(self, limit: int = 100, is_paper: bool = None,
+                           symbol: str = None) -> list:
+        """Get blocked trades with optional filters.
+
+        Args:
+            limit: max records
+            is_paper: filter by test_mode (None = all)
+            symbol: filter by symbol (None = all)
+
+        Returns:
+            List of dicts (to_dict() output)
+        """
+        from storage.db_models import BlockedTrade
+        session = self.Session()
+        try:
+            q = session.query(BlockedTrade)
+            if is_paper is not None:
+                q = q.filter(BlockedTrade.is_paper == is_paper)
+            if symbol:
+                q = q.filter(BlockedTrade.symbol == symbol.upper())
+            q = q.order_by(BlockedTrade.blocked_at.desc()).limit(limit)
+            return [r.to_dict() for r in q.all()]
+        except Exception as e:
+            print(f"[DB] get_blocked_trades error: {e}")
+            return []
+        finally:
+            session.close()
+
+    def get_blocked_trades_stats(self) -> dict:
+        """Get aggregate stats about blocked trades.
+
+        Returns:
+            {'ok': bool, 'total': int, 'real': int, 'paper': int}
+        """
+        from storage.db_models import BlockedTrade
+        from sqlalchemy import func
+        session = self.Session()
+        try:
+            total = session.query(func.count(BlockedTrade.id)).scalar() or 0
+            real = session.query(func.count(BlockedTrade.id)).filter(
+                BlockedTrade.is_paper == False).scalar() or 0
+            paper = session.query(func.count(BlockedTrade.id)).filter(
+                BlockedTrade.is_paper == True).scalar() or 0
+            return {'ok': True, 'total': total, 'real': real, 'paper': paper}
+        except Exception as e:
+            print(f"[DB] get_blocked_trades_stats error: {e}")
+            return {'ok': False, 'total': 0, 'real': 0, 'paper': 0}
+        finally:
+            session.close()
+
+    def clear_blocked_trades(self, is_paper: bool = None) -> int:
+        """Clear blocked trades (DESTRUCTIVE).
+
+        Args:
+            is_paper: None = all, True = paper only, False = real only
+
+        Returns:
+            Number of records deleted
+        """
+        from storage.db_models import BlockedTrade
+        session = self.Session()
+        try:
+            q = session.query(BlockedTrade)
+            if is_paper is not None:
+                q = q.filter(BlockedTrade.is_paper == is_paper)
+            removed = q.delete(synchronize_session=False)
+            session.commit()
+            return removed
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] clear_blocked_trades error: {e}")
             return 0
         finally:
             session.close()
