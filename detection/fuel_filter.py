@@ -218,6 +218,11 @@ DEFAULT_SETTINGS = {
     #   Кожне рішення логується (sob_readiness_log + Лог роботи бота).
     'queue3_enabled': False,
     'readiness_log_enabled': True,   # писати рішення «Готовності» для аналізу
+    #   queue3_open_min_score — Черга-3 відкриває, коли grade_setup HOT АБО коли
+    #     score ≥ цього порога (у напрямку кнопки). Строгий HOT (score≥70 + усі
+    #     блоки) на реальному потоці майже не спрацьовує, тож поріг дає стратегії
+    #     реальні угоди. 53 ≈ «ХОРОШИЙ». 0 = лише HOT (без порога).
+    'queue3_open_min_score': 53,
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -700,6 +705,10 @@ class FuelFilterDaemon:
         s['queue2_enabled'] = bool(s.get('queue2_enabled', False))
         s['queue3_enabled'] = bool(s.get('queue3_enabled', False))
         s['readiness_log_enabled'] = bool(s.get('readiness_log_enabled', True))
+        try:
+            s['queue3_open_min_score'] = max(0, min(100, int(s.get('queue3_open_min_score', 53) or 0)))
+        except (TypeError, ValueError):
+            s['queue3_open_min_score'] = 53
         # ── Queue 2 eject rules ──
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
@@ -4617,8 +4626,15 @@ class FuelFilterDaemon:
             f'{score if score is not None else "—"} {(su or {}).get("grade") or "—"}'
             f'{" HOT" if hot else ""} · {reason}',
             side=signal_dir, source='Q3',
+            # Flat su_* keys so the activity-log CSV export populates the
+            # per-block columns (structure/poi/zone/liquidity/mm/timing/context)
+            # — same field names the Q2 intercept stamps — for real analysis.
             extra={'setup_score': score, 'setup_grade': (su or {}).get('grade'),
-                   'hot': hot, 'outcome': outcome, 'blocks': blocks})
+                   'hot': hot, 'outcome': outcome,
+                   'su_struct': blocks.get('structure'), 'su_poi': blocks.get('poi'),
+                   'su_zone': blocks.get('zone'), 'su_liq': blocks.get('liquidity'),
+                   'su_mm': blocks.get('mm'), 'su_timing': blocks.get('timing'),
+                   'su_context': blocks.get('context')})
 
     def _engine_tick_readiness(self):
         """🎯 Queue 3 «Готовність» engine — opens a queued coin the MOMENT its SMC
@@ -4661,18 +4677,27 @@ class FuelFilterDaemon:
                 self._log_readiness(sym, d, su, 'hold', 'сетап ще рахується', log_on)
                 trace.append(f'{sym}:сетап-н/д')
                 continue
-            # READINESS trigger: grade_setup HOT in the queued direction.
-            if not su.get('hot') or su.get('dir') != d:
+            # READINESS trigger: direction must match AND either grade_setup is
+            # HOT or its score clears the Q3 open threshold. The strict HOT gate
+            # alone almost never fires on real flow (observed max ~66 < 70), so a
+            # tunable score floor lets quality setups actually trade.
+            _min_score = int(s.get('queue3_open_min_score', 53) or 0)
+            _score = su.get('score') or 0
+            _by_hot = bool(su.get('hot'))
+            _by_score = _min_score > 0 and _score >= _min_score
+            if su.get('dir') != d or not (_by_hot or _by_score):
                 self._log_readiness(
                     sym, d, su, 'hold',
-                    f"не HOT (SCORE {su.get('score')} {su.get('grade')}, dir {su.get('dir')})",
+                    f"не готовий (SCORE {su.get('score')} {su.get('grade')}, "
+                    f"HOT={_by_hot}, dir {su.get('dir')}; поріг ≥{_min_score})",
                     log_on)
                 trace.append(f"{sym}:{su.get('score')}/{su.get('grade')}")
                 continue
+            _why = 'HOT' if _by_hot else f'SCORE≥{_min_score}'
             try:
                 opened = self._open(
                     sym, d, fuel, s,
-                    opened_by=f"🎯 Готовність {su.get('score')} {su.get('grade')}")
+                    opened_by=f"🎯 Готовність {su.get('score')} {su.get('grade')} ({_why})")
                 if opened:
                     with self._lock:
                         self._timers[sym] = {'dir': d, 'since': now,
@@ -4680,7 +4705,7 @@ class FuelFilterDaemon:
                         self._pending3.pop(sym, None)
                         self._persist_state()
                     self._log_readiness(sym, d, su, 'opened',
-                                        f"HOT SCORE {su.get('score')} {su.get('grade')}", log_on)
+                                        f"{_why} · SCORE {su.get('score')} {su.get('grade')}", log_on)
                     trace.append(f'{sym}:✅ВІДКРИТО {d}')
                     print(f"[FF-Readiness] opened {d} {sym} "
                           f"(SCORE {su.get('score')} {su.get('grade')})")
@@ -5695,6 +5720,9 @@ class FuelFilterDaemon:
             {'title': '🎯 Черги', 'items': [
                 {'k': 'Черга-1 (перехоплювач)', 'v': _on(q1)},
                 {'k': 'Черга-2 (CTR-зони)', 'v': _on(q2)},
+                {'k': 'Черга-3 (Готовність)', 'v': _on(s.get('queue3_enabled', False))},
+                {'k': 'Q3: відкриття SCORE ≥', 'v': (s.get('queue3_open_min_score', 53) if int(s.get('queue3_open_min_score', 53) or 0) > 0 else 'лише HOT')},
+                {'k': 'Q3: лог рішень', 'v': _on(s.get('readiness_log_enabled', True))},
                 {'k': 'Q2: hold-and-wait', 'v': _on(s.get('queue2_hold_and_wait', True))},
                 {'k': 'Q2: тримати при невід. CTR', 'v': _on(s.get('queue2_hold_unknown_ctr', True))},
                 {'k': 'Q2: черга всіх (ігнор CTR)', 'v': _on(s.get('queue2_queue_all', False))},

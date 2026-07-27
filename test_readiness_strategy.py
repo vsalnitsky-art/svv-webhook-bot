@@ -79,16 +79,39 @@ def test_hot_opens_and_logs():
     print('✓ HOT → opens, leaves Queue 3, logs opened')
 
 
-# --- HOLD (not hot) ---
-def test_not_hot_holds():
-    ff, db = _ff()
+# --- HOLD (not hot AND below score threshold) ---
+def test_below_threshold_holds():
+    ff, db = _ff()   # default queue3_open_min_score = 53
     ff._pending3 = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
-    ff._setup_cache = {'SOLUSDT': _grade(False, score=55, grade='ХОРОШИЙ')}
+    ff._setup_cache = {'SOLUSDT': _grade(False, score=40, grade='СЕРЕДНІЙ')}
     ff._engine_tick_readiness()
-    assert not ff.opened, 'not-HOT must not open'
+    assert not ff.opened, 'not-HOT & score<threshold must not open'
     assert 'SOLUSDT' in ff._pending3, 'held coin stays in Queue 3'
     assert any(r['outcome'] == 'hold' for r in db.readiness_rows), db.readiness_rows
-    print('✓ not HOT → holds, stays queued, logs hold')
+    print('✓ not HOT & SCORE<53 → holds, stays queued, logs hold')
+
+
+# --- OPEN via score threshold (not hot, but SCORE >= threshold) ---
+def test_score_threshold_opens():
+    ff, db = _ff()   # default queue3_open_min_score = 53
+    ff._pending3 = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
+    ff._setup_cache = {'SOLUSDT': _grade(False, score=60, grade='ХОРОШИЙ')}
+    ff._engine_tick_readiness()
+    assert ff.opened and ff.opened[0][0] == 'SOLUSDT', 'SCORE 60 ≥ 53 must open'
+    assert any(r['outcome'] == 'opened' for r in db.readiness_rows), db.readiness_rows
+    print('✓ not HOT but SCORE 60 ≥ 53 → opens')
+
+
+# --- score threshold = 0 → only HOT opens ---
+def test_threshold_zero_only_hot():
+    ff, db = _ff()
+    ff._db.set_setting('fuel_filter_settings', dict(
+        ff._db.get_setting('fuel_filter_settings'), queue3_open_min_score=0))
+    ff._pending3 = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
+    ff._setup_cache = {'SOLUSDT': _grade(False, score=66, grade='ХОРОШИЙ')}
+    ff._engine_tick_readiness()
+    assert not ff.opened, 'threshold=0 → non-HOT must not open even at 66'
+    print('✓ threshold 0 → лише HOT (SCORE 66 не відкриває)')
 
 
 # --- HOLD (hot but direction mismatch) ---
@@ -127,7 +150,7 @@ def test_queue3_off_noop():
 def test_hold_log_throttled():
     ff, db = _ff()
     ff._pending3 = {'SOLUSDT': {'dir': 'LONG', 'added_at': 0}}
-    ff._setup_cache = {'SOLUSDT': _grade(False, score=55, grade='ХОРОШИЙ')}
+    ff._setup_cache = {'SOLUSDT': _grade(False, score=40, grade='СЕРЕДНІЙ')}
     ff._engine_tick_readiness()
     ff._engine_tick_readiness()   # same decision immediately → throttled
     holds = [r for r in db.readiness_rows if r['outcome'] == 'hold']

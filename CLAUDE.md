@@ -77,19 +77,23 @@
 Третя, ОКРЕМА черга/двигун (поряд із Чергою-1 і Чергою-2, усі незалежні тумблери).
 Живиться тими самими CHoCH/CHoCH+BOS через `intercept()` (гілка `q3` → `_pending3`).
 
-- **Тригер входу:** двигун `_engine_tick_readiness` відкриває монету, ЩОЙНО її
-  SMC-«готовність сетапу» `grade_setup(...)['hot']` = True у напрямку кнопки
-  (`hot` у strict = score ≥ 70 + усі ключові блоки зійшлися, без вето). **БЕЗ
-  ₿ START / сеансів ММ** — весь контекст ₿/CTR/зона/ліквідність уже ВСЕРЕДИНІ
-  `grade_setup` (див. `detection/setup_grader.py`). Санітарні ворота: кнопки
-  LONG/SHORT, дедуп, вже-в-угодах, ціна; `_open` тримає власну стелю виснаженості.
+- **Тригер входу:** двигун `_engine_tick_readiness` відкриває монету у напрямку
+  кнопки, коли її SMC-«готовність» `grade_setup(...)` **HOT АБО `score ≥
+  queue3_open_min_score`** (дефолт 53≈ХОРОШИЙ; 0 = лише HOT). Строгий HOT
+  (score ≥ 70 + усі блоки, без вето) на реальному потоці майже не спрацьовує
+  (спостережений max ~66), тож поріг дає стратегії реальні угоди. **БЕЗ ₿ START /
+  сеансів ММ** — весь контекст ₿/CTR/зона/ліквідність уже ВСЕРЕДИНІ `grade_setup`
+  (див. `detection/setup_grader.py`). Санітарні ворота: кнопки LONG/SHORT, дедуп,
+  вже-в-угодах, ціна; `_open` тримає власну стелю виснаженості.
 - Читає готовий кеш `self._setup_cache[sym]` (той самий, що й колонка
   «Готовність»); `_pending3` додано в `targets` для `_refresh_setup_cache`.
 - **Повне логування** кожного рішення (opened/hold/skipped + розклад блоків) →
   таблиця `sob_readiness_log` + рядок у Лог роботи бота (`activity_log`, source
   `Q3`). Тумблер `readiness_log_enabled` (дефолт ON). Анти-флуд: незмінний
   hold/skip пишеться не частіше ніж раз на `READINESS_LOG_MIN_GAP` (300с).
-- Налаштування: `queue3_enabled` (дефолт OFF), `readiness_log_enabled`.
+- Налаштування: `queue3_enabled` (дефолт OFF), `queue3_open_min_score` (53),
+  `readiness_log_enabled`. Q3-лог у `activity_log` несе пласкі `su_*` блоки
+  (structure/poi/zone/liq/mm/timing/context) — щоб CSV-експорт був аналізовним.
 - API: `GET /api/fuel-filter/readiness-log?limit&symbol&outcome`;
   `POST /api/fuel-filter/queue3/{delete,clear}`. UI: тумблер + таблиця «Черга-3»
   на `/smart-money`. get_state → `timers3`/`pending3_visible`/`queue3_enabled`.

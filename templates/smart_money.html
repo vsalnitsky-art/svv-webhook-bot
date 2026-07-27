@@ -2256,11 +2256,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
             <!-- 🎯 Queue 3 «Готовність» — opens on SMC setup-grade HOT -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
-                <div style="font-size:0.74rem;font-weight:700;color:#c9b8ff;min-width:0">🎯 Черга-3 · Готовність <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS і відкриває, ЩОЙНО SMC-«готовність сетапу» (grade_setup) стає HOT у напрямку кнопки. Весь контекст ₿/CTR/зона/ліквідність уже всередині оцінки. БЕЗ ₿ START. Кожне рішення логується для аналізу.</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#c9b8ff;min-width:0">🎯 Черга-3 · Готовність <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS і відкриває, коли SMC-«готовність сетапу» (grade_setup) стає HOT АБО коли її SCORE ≥ порога, у напрямку кнопки. Весь контекст ₿/CTR/зона/ліквідність уже всередині оцінки. БЕЗ ₿ START. Кожне рішення логується для аналізу.</span></div>
                 <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-3 «Готовність». Відкриває монету, коли grade_setup=HOT (score≥поріг + усі ключові блоки зійшлися, без вето) у напрямку кнопки. Щоб перемкнутися на цю стратегію — увімкни її та (за бажанням) вимкни Черги 1/2.">
+                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-3 «Готовність». Відкриває монету, коли grade_setup=HOT АБО score ≥ порога (нижче) у напрямку кнопки. Щоб перемкнутися на цю стратегію — увімкни її та (за бажанням) вимкни Черги 1/2.">
                         <input type="checkbox" id="ff-queue3-enabled" onchange="saveFuelFilterSettings()">
                         <span class="slider"></span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1" title="Поріг відкриття Черги-3: відкриває, коли grade_setup HOT АБО SCORE ≥ цього значення. Строгий HOT (≥70 + усі блоки) на реальному потоці майже не спрацьовує, тож поріг дає стратегії реальні угоди. 53 ≈ «ХОРОШИЙ». 0 = лише HOT.">
+                        SCORE ≥ <input type="number" id="ff-queue3-min-score" min="0" max="100" step="1" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace" onchange="saveFuelFilterSettings()">
                     </label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1;cursor:pointer" title="Писати кожне рішення «Готовності» (opened/hold/skipped + розклад блоків) у БД (sob_readiness_log) та Лог роботи бота для аналізу.">
                         <input type="checkbox" id="ff-readiness-log" onchange="saveFuelFilterSettings()"> 📝 Лог
@@ -8874,6 +8877,7 @@ function renderFuelFilter(d) {
     setIf('ff-queue1-enabled', s.queue1_enabled !== false);   // default true
     setIf('ff-queue2-enabled', !!s.queue2_enabled);
     setIf('ff-queue3-enabled', !!s.queue3_enabled);
+    setIf('ff-queue3-min-score', String(s.queue3_open_min_score != null ? s.queue3_open_min_score : 53));
     setIf('ff-readiness-log', s.readiness_log_enabled !== false);   // default true
     // Queue 2 eject rules
     setIf('ff-q2-eject-ctr', !!s.queue2_eject_ctr);           // default false
@@ -9736,6 +9740,7 @@ async function saveFuelFilterSettings() {
         queue1_enabled: _c('ff-queue1-enabled'),
         queue2_enabled: _c('ff-queue2-enabled'),
         queue3_enabled: _c('ff-queue3-enabled'),
+        queue3_open_min_score: parseInt(_v('ff-queue3-min-score', '53') || '53', 10),
         readiness_log_enabled: _c('ff-readiness-log'),
         queue2_eject_ctr: _c('ff-q2-eject-ctr'),
         queue2_eject_ctr_pct: parseInt(_v('ff-q2-eject-ctr-pct', '20') || '20', 10),
