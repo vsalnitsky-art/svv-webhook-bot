@@ -9409,12 +9409,13 @@ function updateBtcStartBanner() {
     // (LONG зелений / SHORT червоний / WAIT сірий), градієнт світле→темне ──
     const str = Math.max(0, Math.min(100, Number(s.strength || 0)));
     bar.style.width = str.toFixed(0) + '%';
-    bar.style.background = dirGrad(s.dir);
+    // FLAT (пауза) = без напрямку → сірий бар, щоб не читалось як «схил у LONG».
+    bar.style.background = s.paused ? 'linear-gradient(90deg,#6b7280,#9aa3b5)' : dirGrad(s.dir);
     // Band word at the END of the bar; підпис у світлому відтінку напрямку.
     if (lab) {
         const bnd = fuelBand(str);
         lab.textContent = Math.round(str) + '% ' + bnd.txt;
-        lab.style.color = dirTint(s.dir);
+        lab.style.color = s.paused ? '#cbd5e1' : dirTint(s.dir);
         lab.style.left = 'auto';
         lab.style.right = '10px';
         lab.style.transform = 'translateY(-50%)';

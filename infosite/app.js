@@ -434,7 +434,7 @@
       '<div class="btc-left">' +
         '<span class="btc-sym">₿ BTCUSDT</span>' +
       '</div>' +
-      '<div class="btc-strength"><div class="sbar"><i style="width:' + str + '%;background:' + dirGrad(b.dir) + '"></i></div>' +
+      '<div class="btc-strength"><div class="sbar"><i style="width:' + str + '%;background:' + (b.paused ? 'linear-gradient(90deg,#6b7280,#9aa3b5)' : dirGrad(b.dir)) + '"></i></div>' +
         '<span class="sbar-lbl">' + Math.round(str) + '% сила</span></div>' +
       '<div id="btc-clock">' + flipClock(nowHeld()) + '</div>' +
       '<div class="btc-status ' + statusCls + '">' + statusTxt + '</div>';

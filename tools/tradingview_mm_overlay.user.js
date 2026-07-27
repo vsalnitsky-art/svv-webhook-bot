@@ -385,22 +385,23 @@
                 + 'Коли напрямку немає (⚪ рівновага) — запас не показується, бо «куди» невизначено.';
         }
 
-        // ── ₿ BTC напрямок line — напрямок СЕАНСУ + сила% + рівень. Коли сеанс НА ПАУЗІ
-        // (живе ML у зоні WAIT, |dir| ≤ 0.1), напрямок — це стара, застояна сторона:
-        // приглушуємо колір і додаємо «⏸ ПАУЗА», щоб не читалось як активний сигнал
-        // (раніше оверлей ховав паузу → показував впевнений SHORT на нейтралі). ──
+        // ── ₿ BTC напрямок line — три взаємовиключні стани: LONG / SHORT / FLAT.
+        // LONG/SHORT показуємо ЛИШЕ коли сеанс активний (не на паузі). Коли живе ML
+        // у зоні WAIT (|dir| ≤ 0.1) — сеанс на паузі → показуємо ТІЛЬКИ «⏸ FLAT»
+        // (сірий, без стрілки напрямку), бо LONG+FLAT в одному рядку — суперечність. ──
         if (d.enabled === false) {
             elBtc.style.color = '#9aa3b5';
             elBtc.textContent = 'FF вимкнено в боті';
         } else {
             const b = d.btc || {};
             const bs = (b.strength != null) ? Number(b.strength) : null;
-            const pausedTag = b.paused ? ' <span style="color:#9aa3b5;font-weight:700">· ⏸ FLAT</span>' : '';
-            if (b.dir === 'LONG' || b.dir === 'SHORT') {
-                // На паузі — сірий (застояний сеанс); активний — колір напрямку.
-                const bc = b.paused ? '#9aa3b5' : dirColor(b.dir);
+            if (b.paused) {
+                // Пауза = FLAT: без напрямку, лише сірий бейдж.
+                elBtc.style.color = '#9aa3b5';
+                elBtc.innerHTML = `₿ BTC напрямок: <span style="color:#9aa3b5;font-weight:700">⏸ FLAT</span>`;
+            } else if (b.dir === 'LONG' || b.dir === 'SHORT') {
                 const tail = (bs != null) ? ` · ${bs}% · ${band(bs).label}` : '';
-                elBtc.innerHTML = `₿ BTC напрямок: <span style="color:${bc};font-weight:700">${dirLabel(b.dir)}</span>${tail}${pausedTag}`;
+                elBtc.innerHTML = `₿ BTC напрямок: <span style="color:${dirColor(b.dir)};font-weight:700">${dirLabel(b.dir)}</span>${tail}`;
             } else {
                 elBtc.style.color = '#9aa3b5';
                 // Без напрямку → «рівновага» (не «легкий тиск»).
