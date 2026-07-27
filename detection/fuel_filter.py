@@ -221,8 +221,11 @@ DEFAULT_SETTINGS = {
     #   queue3_open_min_score — Черга-3 відкриває, коли grade_setup HOT АБО коли
     #     score ≥ цього порога (у напрямку кнопки). Строгий HOT (score≥70 + усі
     #     блоки) на реальному потоці майже не спрацьовує, тож поріг дає стратегії
-    #     реальні угоди. 53 ≈ «ХОРОШИЙ». 0 = лише HOT (без порога).
-    'queue3_open_min_score': 53,
+    #     реальні угоди. КАЛІБРУВАННЯ: 53→43 — розворотні CHoCH+BOS системно
+    #     занижуються блоком таймінгу CTR (свіжий розворот б'є проти CTR), і
+    #     хороші угоди падали в «СЕРЕДНІЙ» (38–52) під порогом 53. 43 ловить цей
+    #     діапазон. 0 = лише HOT (без порога).
+    'queue3_open_min_score': 43,
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -728,9 +731,9 @@ class FuelFilterDaemon:
         s['queue3_enabled'] = bool(s.get('queue3_enabled', False))
         s['readiness_log_enabled'] = bool(s.get('readiness_log_enabled', True))
         try:
-            s['queue3_open_min_score'] = max(0, min(100, int(s.get('queue3_open_min_score', 53) or 0)))
+            s['queue3_open_min_score'] = max(0, min(100, int(s.get('queue3_open_min_score', 43) or 0)))
         except (TypeError, ValueError):
-            s['queue3_open_min_score'] = 53
+            s['queue3_open_min_score'] = 43
         # ⚡ funding scalper «Готовність»
         s['funding_setup_scalp_on'] = bool(s.get('funding_setup_scalp_on', False))
         _valid_tf = ('1m', '3m', '5m', '15m', '30m', '1h')
@@ -4847,7 +4850,7 @@ class FuelFilterDaemon:
             # HOT or its score clears the Q3 open threshold. The strict HOT gate
             # alone almost never fires on real flow (observed max ~66 < 70), so a
             # tunable score floor lets quality setups actually trade.
-            _min_score = int(s.get('queue3_open_min_score', 53) or 0)
+            _min_score = int(s.get('queue3_open_min_score', 43) or 0)
             _score = su.get('score') or 0
             _by_hot = bool(su.get('hot'))
             _by_score = _min_score > 0 and _score >= _min_score
@@ -5887,7 +5890,7 @@ class FuelFilterDaemon:
                 {'k': 'Черга-1 (перехоплювач)', 'v': _on(q1)},
                 {'k': 'Черга-2 (CTR-зони)', 'v': _on(q2)},
                 {'k': 'Черга-3 (Готовність)', 'v': _on(s.get('queue3_enabled', False))},
-                {'k': 'Q3: відкриття SCORE ≥', 'v': (s.get('queue3_open_min_score', 53) if int(s.get('queue3_open_min_score', 53) or 0) > 0 else 'лише HOT')},
+                {'k': 'Q3: відкриття SCORE ≥', 'v': (s.get('queue3_open_min_score', 43) if int(s.get('queue3_open_min_score', 43) or 0) > 0 else 'лише HOT')},
                 {'k': 'Q3: лог рішень', 'v': _on(s.get('readiness_log_enabled', True))},
                 {'k': 'Q2: hold-and-wait', 'v': _on(s.get('queue2_hold_and_wait', True))},
                 {'k': 'Q2: тримати при невід. CTR', 'v': _on(s.get('queue2_hold_unknown_ctr', True))},

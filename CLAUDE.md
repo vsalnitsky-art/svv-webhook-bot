@@ -79,9 +79,11 @@
 
 - **Тригер входу:** двигун `_engine_tick_readiness` відкриває монету у напрямку
   кнопки, коли її SMC-«готовність» `grade_setup(...)` **HOT АБО `score ≥
-  queue3_open_min_score`** (дефолт 53≈ХОРОШИЙ; 0 = лише HOT). Строгий HOT
+  queue3_open_min_score`** (дефолт **43**; 0 = лише HOT). Строгий HOT
   (score ≥ 70 + усі блоки, без вето) на реальному потоці майже не спрацьовує
-  (спостережений max ~66), тож поріг дає стратегії реальні угоди. **БЕЗ ₿ START /
+  (спостережений max ~66), тож поріг дає стратегії реальні угоди. КАЛІБРУВАННЯ
+  53→43: розворотні CHoCH+BOS системно занижуються блоком таймінгу CTR (свіжий
+  розворот б'є проти CTR), і хороші угоди падали в «СЕРЕДНІЙ» (38–52) під 53. **БЕЗ ₿ START /
   сеансів ММ** — весь контекст ₿/CTR/зона/ліквідність уже ВСЕРЕДИНІ `grade_setup`
   (див. `detection/setup_grader.py`). Санітарні ворота: кнопки LONG/SHORT, дедуп,
   вже-в-угодах, ціна; `_open` тримає власну стелю виснаженості.
@@ -91,7 +93,7 @@
   таблиця `sob_readiness_log` + рядок у Лог роботи бота (`activity_log`, source
   `Q3`). Тумблер `readiness_log_enabled` (дефолт ON). Анти-флуд: незмінний
   hold/skip пишеться не частіше ніж раз на `READINESS_LOG_MIN_GAP` (300с).
-- Налаштування: `queue3_enabled` (дефолт OFF), `queue3_open_min_score` (53),
+- Налаштування: `queue3_enabled` (дефолт OFF), `queue3_open_min_score` (43),
   `readiness_log_enabled`. Q3-лог у `activity_log` несе пласкі `su_*` блоки
   (structure/poi/zone/liq/mm/timing/context) — щоб CSV-експорт був аналізовним.
 - API: `GET /api/fuel-filter/readiness-log?limit&symbol&outcome`;

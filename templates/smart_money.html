@@ -8920,7 +8920,7 @@ function renderFuelFilter(d) {
     setIf('ff-queue1-enabled', s.queue1_enabled !== false);   // default true
     setIf('ff-queue2-enabled', !!s.queue2_enabled);
     setIf('ff-queue3-enabled', !!s.queue3_enabled);
-    setIf('ff-queue3-min-score', String(s.queue3_open_min_score != null ? s.queue3_open_min_score : 53));
+    setIf('ff-queue3-min-score', String(s.queue3_open_min_score != null ? s.queue3_open_min_score : 43));
     setIf('ff-readiness-log', s.readiness_log_enabled !== false);   // default true
     // Queue 2 eject rules
     setIf('ff-q2-eject-ctr', !!s.queue2_eject_ctr);           // default false
@@ -9798,7 +9798,7 @@ async function saveFuelFilterSettings() {
         queue1_enabled: _c('ff-queue1-enabled'),
         queue2_enabled: _c('ff-queue2-enabled'),
         queue3_enabled: _c('ff-queue3-enabled'),
-        queue3_open_min_score: parseInt(_v('ff-queue3-min-score', '53') || '53', 10),
+        queue3_open_min_score: parseInt(_v('ff-queue3-min-score', '43') || '43', 10),
         readiness_log_enabled: _c('ff-readiness-log'),
         queue2_eject_ctr: _c('ff-q2-eject-ctr'),
         queue2_eject_ctr_pct: parseInt(_v('ff-q2-eject-ctr-pct', '20') || '20', 10),
