@@ -10,14 +10,6 @@
 веб-застосунок Flask + кілька фонових daemon-потоків. Відповіді користувачу —
 **українською**.
 
-## ДИЗАЙН UI — ЗАВЖДИ ПРОФЕСІЙНО (правило назавжди)
-
-Будь-яка сторінка/блок/таблиця — тільки **професійний, охайний вигляд**: єдина
-система відступів і типографіки, стримані кольори з акцентами (не строкато),
-1px-бордери, вирівнювання в стовпчик, картки однакової висоти, без «стрибання»
-елементів, uppercase-підписи для метрик, monospace для чисел. Стат-картки —
-в один ряд (горизонтальний скрол на вузькому). НЕ аматорський підхід.
-
 ## Як запускати
 
 - Точка входу: `main_bot.py` (для gunicorn: `gunicorn main_bot:app`).
@@ -72,13 +64,42 @@
   й у головному вікні: `> +0.1` → LONG, `< -0.1` → SHORT, `|dir| ≤ 0.1` → WAIT
   (пауза сеансу). НЕ додавати гістерезис/липку зону.
 
+## Стратегії двигуна (селектор `active_strategy`)
+
+Двигун FF має ДВІ взаємовиключні стратегії; перемикач `active_strategy` у
+налаштуваннях FF (`fuel_filter_settings`), UI — селектор «🧭 Активна стратегія»
+на `/smart-money`. Обидві ділять спільну чергу (`intercept` → `_pending`) і
+кнопки LONG/SHORT.
+
+- **`fuel`** — уся стара логіка без змін: сеанси ММ + ₿ START + збіг
+  палива. Гейтиться `start_engine_enabled`/`start_engine_independent`.
+  Доступна через селектор у будь-який момент.
+- **`readiness` («Готовність») — ДЕФОЛТ/активна** — `_engine_tick_readiness`. Відкриває монету з
+  черги, ЩОЙНО її SCORE (`_timer_score_for`) = **STRONG HOLD** і напрямок SCORE =
+  напрямок кнопки. **БЕЗ ₿ START / сеансів ММ.** Лишаються санітарні ворота:
+  дедуп, вже-в-угодах, наявність ціни, виснаженість (`max_exhaustion_pct`).
+  Відкриття через той самий `_open` (→ `_fuel_managed`).
+  - **Повне логування:** кожне рішення (opened/hold/skipped) → таблиця
+    `sob_readiness_log` (структурований розклад: score, label, dir, room/hold/
+    fuel/momentum, fuel_strength, exhaustion, conflict, reason) + рядок у Лог
+    подій (category `READINESS`). Тумблер `readiness_log_enabled` (дефолт ON).
+    Анти-флуд: незмінний hold/skip повторно пишеться не частіше ніж раз на
+    `READINESS_LOG_MIN_GAP` (300с); `opened` — завжди.
+  - Читання логу: `GET /api/fuel-filter/readiness-log?limit&symbol&outcome`.
+  - Очистка: DB-admin дії `readiness_log_old` (>14 днів) / `readiness_log_all`.
+- Тести: `test_readiness_strategy.py` (правило входу, ворота, ізоляція, throttle).
+
 ## БД-ключі (storage)
 
-- `fuel_filter_settings` — налаштування FF.
+- `fuel_filter_settings` — налаштування FF (вкл. `active_strategy`,
+  `readiness_log_enabled`).
 - `fuel_filter_state` — JSON-блоб стану: timers, fuel_managed, anomalies(=funding),
   engine_attempts, fuel_ema, fuel_hyst, btc_verdict_dir/since. (`pending` більше
   НЕ відновлюється навіть якщо лежить у блобі.)
 - `fuel_filter_scan_list` — дозволені для сканування символи.
+- Таблиця `sob_readiness_log` — пер-рішення лог стратегії «Готовність» (для
+  аналізу). Префікс `sob_` → автоматично в аналізі Database Administration
+  (`/api/db/analyze`); очистка — дії `readiness_log_old`/`_all`.
 
 ## Основні JSON API (read-only — для інфо-сайту)
 
@@ -97,12 +118,8 @@
 - Робоча гілка: `claude/analyze-project-01Gopju9D7AHv4pgvetccBeB`. Розробляти й
   комітити сюди.
 - **PUSH ЗАБЛОКОВАНИЙ:** git-relay повертає 403 (egress-політика середовища). Це
-  НЕ мережевий збій — retry не допомагає, обходити заборонено.
-- **ФОРМАТ ВІДДАЧІ ЗМІН (завжди!):** віддавати користувачу САМІ ЗМІНЕНІ ФАЙЛИ
-  (не патч, не bundle) зі збереженням структури папок, запаковані в **ZIP**
-  архів. Тобто `detection/trade_manager.py` лежить у zip за шляхом
-  `detection/trade_manager.py`. Користувач розпаковує в корінь репозиторію й
-  пушить локально.
+  НЕ мережевий збій — retry не допомагає, обходити заборонено. Зміни віддаються
+  користувачу архівом (tar.gz) або через `git bundle`, він пушить локально.
 - Не створювати PR без явного прохання.
 
 ## Окрема сесія для інфо-сайту

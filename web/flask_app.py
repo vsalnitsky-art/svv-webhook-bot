@@ -5,7 +5,7 @@ Main web server with routes and templates
 
 import os
 from datetime import datetime, timedelta
-from flask import Flask, render_template, jsonify, request, redirect, url_for, Response
+from flask import Flask, render_template, jsonify, request, redirect, url_for
 from functools import wraps
 
 # Add parent to path for imports
@@ -15,120 +15,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.bot_settings import DEFAULT_SETTINGS, ExecutionMode
 from storage.db_operations import get_db
 from storage.db_models import init_db
-
-
-# ── СЛУЖБОВІ таблиці (логи / снапшоти / liquidation & heatmap кеші) — те, що
-# роздуває БД. (col, kind): 'dt' DateTime | 'sec' epoch-сек | 'ms' epoch-мс.
-# СЛУЖБОВІ (append-growing, derived/logs/snapshots) tables pruned by age. Every
-# table here has a time column (col, kind): kind 'dt'=DateTime, 'sec'=epoch s,
-# 'ms'=epoch ms. Strategy DATA tables (trades / trade_archive) are NEVER here.
-_SERVICE_TABLES_TIME = {
-    'sob_event_logs': ('timestamp', 'dt'),
-    'sob_liquidation_buckets': ('last_updated_ts', 'sec'),
-    'sob_liquidation_oi_snapshots': ('ts', 'sec'),
-    'sob_liquidation_events': ('ts', 'sec'),
-    'sob_liq_heatmap_profiles': ('ts', 'dt'),
-    'sob_top100_ob_snapshots': ('created_at_t', 'ms'),
-    'sob_top100_ob_history': ('created_at', 'dt'),
-    'volumized_radar_snapshots': ('scan_time', 'dt'),
-    # ➕ detected Order Blocks — append-grows per scan (created_at). The scheduler
-    # deletes >7d, but include it here so DB-autoclean prunes it too (keep_days).
-    'sob_order_blocks': ('created_at', 'dt'),
-}
-
-
-def _db_service_cleanup(keep_days=None, wipe_all=False):
-    """Delete СЛУЖБОВІ rows older than keep_days (or ALL if wipe_all).
-    Returns number of deleted rows. Never touches strategy DATA tables."""
-    from storage.db_models import engine
-    from sqlalchemy import text
-    deleted = 0
-    try:
-        kd = max(0, min(365, int(keep_days if keep_days is not None else 3)))
-    except (TypeError, ValueError):
-        kd = 3
-    with engine.connect() as conn:
-        for tbl, (col, kind) in _SERVICE_TABLES_TIME.items():
-            try:
-                if wipe_all:
-                    r = conn.execute(text(f"DELETE FROM {tbl}"))
-                elif kind == 'dt':
-                    r = conn.execute(text(f"DELETE FROM {tbl} WHERE {col} < NOW() - INTERVAL '{kd} days'"))
-                elif kind == 'sec':
-                    r = conn.execute(text(f"DELETE FROM {tbl} WHERE {col} < EXTRACT(EPOCH FROM NOW()) - {kd}*86400"))
-                elif kind == 'ms':
-                    r = conn.execute(text(f"DELETE FROM {tbl} WHERE {col} < (EXTRACT(EPOCH FROM NOW()) - {kd}*86400)*1000"))
-                else:
-                    continue
-                deleted += r.rowcount or 0
-            except Exception as _e:
-                print(f"[DB cleanup] {tbl} skip: {_e}")
-        conn.commit()
-    return deleted
-
-
-def _db_vacuum_full():
-    """Reclaim disk to the OS — PER TABLE, not whole-DB.
-
-    A whole-DB `VACUUM FULL` rewrites every table at once and needs peak free
-    space ≈ total live size — which FAILS on a nearly-full disk (DiskFull) even
-    when usage is «only» ~60%, because the rewrite copy doesn't fit. Doing it
-    table-by-table needs only ONE table's size free at a time, so the big
-    СЛУЖБОВІ tables get reclaimed even with tight headroom. A table that still
-    can't fit is skipped (logged) instead of aborting the whole run."""
-    from storage.db_models import engine
-    from sqlalchemy import create_engine, text
-    # Biggest space consumers first: the service tables (+ the OB-state cache).
-    tables = list(_SERVICE_TABLES_TIME.keys()) + ['sob_smc_ob_state']
-    ve = create_engine(engine.url, isolation_level='AUTOCOMMIT')
-    ok, failed = 0, 0
-    try:
-        with ve.connect() as c:
-            for tbl in tables:
-                try:
-                    c.execute(text(f"VACUUM FULL ANALYZE {tbl}"))
-                    ok += 1
-                except Exception as _e:
-                    failed += 1
-                    print(f"[DB vacuum] {tbl} skip (no room / error): {_e}")
-            # Refresh planner stats even for tables we couldn't rewrite (cheap).
-            try:
-                c.execute(text("ANALYZE"))
-            except Exception:
-                pass
-    finally:
-        ve.dispose()
-    print(f"[DB vacuum] per-table VACUUM FULL done: {ok} reclaimed, {failed} skipped")
-
-
-def _db_autoclean_loop():
-    """Periodic auto-cleanup of СЛУЖБОВІ data + optional VACUUM FULL, gated by
-    DB settings. Checks hourly; runs when interval elapsed since last run."""
-    import time as _t
-    _t.sleep(150)   # let the app finish booting
-    while True:
-        try:
-            db = get_db()
-            enabled = str(db.get_setting('db_autoclean_enabled', 'true')).lower() in ('true', '1')
-            if enabled:
-                interval_days = float(db.get_setting('db_autoclean_interval_days', 1) or 1)
-                keep_days = int(db.get_setting('db_autoclean_keep_days', 3) or 3)
-                do_vac = str(db.get_setting('db_autoclean_vacuum', 'true')).lower() in ('true', '1')
-                last = float(db.get_setting('db_autoclean_last_ts', 0) or 0)
-                now = _t.time()
-                if (now - last) >= interval_days * 86400:
-                    n = _db_service_cleanup(keep_days=keep_days)
-                    print(f"[DB autoclean] removed {n} service rows (keep {keep_days}d)")
-                    if do_vac:
-                        try:
-                            _db_vacuum_full()
-                            print("[DB autoclean] VACUUM FULL done")
-                        except Exception as _e:
-                            print(f"[DB autoclean] vacuum error: {_e}")
-                    db.set_setting('db_autoclean_last_ts', str(now))
-        except Exception as e:
-            print(f"[DB autoclean] loop error: {e}")
-        _t.sleep(3600)   # re-check hourly
 
 
 def create_app():
@@ -153,19 +39,11 @@ def create_app():
             if request.path.startswith('/api/') and request.method in ('GET', 'HEAD', 'OPTIONS'):
                 resp.headers['Access-Control-Allow-Origin'] = '*'
                 resp.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-                # X-API-Key (public read) and X-Info-Token (per-user login) let
-                # the separately-hosted info-site authenticate cross-origin.
-                resp.headers['Access-Control-Allow-Headers'] = 'Accept, Content-Type, X-API-Key, X-Info-Token'
+                resp.headers['Access-Control-Allow-Headers'] = 'Accept, Content-Type'
                 resp.headers['Access-Control-Max-Age'] = '86400'
         except Exception:
             pass
         return resp
-
-    # Answer CORS preflight (OPTIONS) for the API so cross-origin reads with a
-    # custom X-API-Key header aren't blocked by the browser.
-    @app.route('/api/<path:_any>', methods=['OPTIONS'])
-    def _api_cors_preflight(_any):
-        return ('', 204)
 
     # Context processor for templates
     @app.context_processor
@@ -177,20 +55,7 @@ def create_app():
     
     # Register routes
     register_routes(app)
-
-    # ── Authentication & access control ──────────────────────────────────
-    # Gate the ENTIRE app behind login (nothing reachable unauthenticated);
-    # new accounts need email confirmation AND admin approval; non-admins are
-    # read-only; first admin from ADMIN_EMAIL env. Must be installed AFTER the
-    # routes so its before_request gate covers them.
-    try:
-        from web.auth import init_auth
-        init_auth(app)
-        print("[APP] 🔐 Auth & access control installed.")
-    except Exception as e:
-        print(f"[APP] ⚠ Auth install FAILED: {e}")
-        raise
-
+    
     # Register diagnostic blueprint
     from web.diagnostic import diagnostic_bp
     app.register_blueprint(diagnostic_bp)
@@ -238,23 +103,9 @@ def create_app():
     # off on the first request (see _kick_bootstrap below) — NOT inline — so the
     # worker answers immediately and Render's port probe never blocks on the
     # ~12 daemons booting.
-    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False, 'top100ob': False, 'liqmap': False, 'apihealth': False, 'dbautoclean': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False, 'top100ob': False, 'liqmap': False, 'apihealth': False}
 
     def _bootstrap_daemons():
-        # 🪶 LEAN_MODE (за замовч. УВІМКНЕНО): пропускаємо СТАРІ демони, які НЕ
-        # потрібні для FF/Smart Money і лише їдять RAM у воркері (перевірено —
-        # fuel_filter/trade_manager/smc_scanner їх не викликають). Живлять старі
-        # сторінки (Dashboard/Tickr/старий сигнальний рушій). Повернути будь-який
-        # — env LEAN_MODE=0. Позначаємо як «вже стартовані», тож блоки нижче
-        # просто пропускаються.
-        _lean = os.getenv('LEAN_MODE', '1').lower() not in ('0', 'false', 'no', 'off')
-        if _lean:
-            for _k in ('exitmon', 'coinflow', 'orderbook', 'apihealth', 'tickr_opp', 'liqsig'):
-                _auto_started[_k] = True
-            print("[APP] 🪶 LEAN_MODE=on: пропущено старі демони — exit_monitor, "
-                  "coin_flow, orderbook, api_health, tickr_opp, liqmap_signal "
-                  "(повернути: LEAN_MODE=0)")
-
         # Volume Flow — always start
         if not _auto_started['volflow']:
             _auto_started['volflow'] = True
@@ -279,17 +130,6 @@ def create_app():
                 init_api_health_monitor().start()
             except Exception as e:
                 print(f"[APP] Failed to start API Health monitor: {e}")
-
-        # DB auto-clean loop — always start (no-op unless enabled in settings)
-        if not _auto_started['dbautoclean']:
-            _auto_started['dbautoclean'] = True
-            try:
-                import threading as _th
-                _th.Thread(target=_db_autoclean_loop, daemon=True,
-                           name='db-autoclean').start()
-                print("[APP] DB auto-clean loop started")
-            except Exception as e:
-                print(f"[APP] Failed to start DB auto-clean loop: {e}")
         
         # Liquidity Map
         if not _auto_started['liq']:
@@ -705,13 +545,8 @@ def register_routes(app):
     """Register all web routes"""
     
     @app.route('/')
-    def home():
-        """Start page → Smart Money Concepts (moved from Dashboard)."""
-        return redirect(url_for('smart_money_page'))
-
-    @app.route('/dashboard')
     def index():
-        """Main dashboard (now at /dashboard; '/' redirects to Smart Money)."""
+        """Main dashboard"""
         db = get_db()
         
         # Get statistics
@@ -1061,7 +896,7 @@ def register_api_routes(app):
 🧪 <b>TEST MESSAGE</b>
 
 ✅ Telegram integration working!
-📊 VSV Webhook Bot v4.2
+📊 SVV Webhook Bot v4.2
 ⏱ """ + datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
         
         result = notifier.send_sync(test_message.strip())
@@ -1752,12 +1587,10 @@ def register_api_routes(app):
             try:
                 from datetime import datetime
                 dt = datetime.fromisoformat(last_scan_time.replace('Z', '+00:00'))
-                # Emit UTC ISO — the CLIENT localizes to the viewer's computer tz
-                # (server-side strftime would freeze it in the server timezone).
-                last_scan_time = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+                last_scan_time = dt.strftime('%H:%M:%S')
             except:
                 pass
-
+        
         # Count statuses
         oversold_count = sum(1 for r in scan_results if r.get('status') == 'Oversold')
         overbought_count = sum(1 for r in scan_results if r.get('status') == 'Overbought')
@@ -2704,8 +2537,8 @@ def register_api_routes(app):
         if not fm:
             return jsonify({'running': False, 'coins': [], 'total_tracked': 0})
         data = fm.get_watchlist()
-        # Merge МММ (fuel) strength for coins FF currently tracks — CHEAP map
-        # from the score cache (no per-coin compute). Coins without МММ data
+        # Merge ММ (fuel) strength for coins FF currently tracks — CHEAP map
+        # from the score cache (no per-coin compute). Coins without ММ data
         # simply won't carry mm_* fields (UI shows «—»).
         try:
             from detection.fuel_filter import get_fuel_filter
@@ -2719,7 +2552,7 @@ def register_api_routes(app):
                         c['mm_str'] = fs.get('now')
                         c['mm_str_prev'] = fs.get('prev')
         except Exception as e:
-            print(f"[Flask] funding МММ merge error: {e}")
+            print(f"[Flask] funding ММ merge error: {e}")
         return jsonify(data)
     
     @app.route('/api/funding/remove/<symbol>', methods=['POST', 'DELETE'])
@@ -2938,451 +2771,21 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
-    @app.route('/api/fuel-filter/funding-history')
-    def api_ff_funding_history():
-        """Archived per-coin funding history (signals, МММ, funding, price, ₿,
-        Vol) for one symbol. Spans multiple appear→exit episodes."""
+    @app.route('/api/fuel-filter/readiness-log')
+    def api_fuel_filter_readiness_log():
+        """Read-only: recent «Готовність» strategy decisions for analysis.
+        Query params: limit (default 200), symbol, outcome (opened/hold/skipped)."""
         try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            return jsonify(ff.get_funding_history(request.args.get('symbol', '')))
+            limit = min(int(request.args.get('limit', 200)), 2000)
+        except (TypeError, ValueError):
+            limit = 200
+        symbol = request.args.get('symbol')
+        outcome = request.args.get('outcome')
+        try:
+            rows = db.get_readiness_log(limit=limit, symbol=symbol, outcome=outcome)
+            return jsonify({'ok': True, 'rows': rows, 'count': len(rows)})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/funding-archive')
-    def api_ff_funding_archive():
-        """Index of all archived funding coins (incl. ones off the radar now)."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            return jsonify({'ok': True, 'coins': ff.get_funding_archive_list()})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/funding-archive/delete', methods=['POST'])
-    def api_ff_funding_archive_delete():
-        """Delete one coin's funding archive."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            sym = (request.get_json() or {}).get('symbol', '')
-            return jsonify({'ok': True, 'deleted': ff.delete_funding_archive(sym)})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/funding-archive/clear', methods=['POST'])
-    def api_ff_funding_archive_clear():
-        """Wipe the whole funding archive."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            return jsonify({'ok': True, 'cleared': ff.clear_funding_archive()})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/funding-mute', methods=['POST'])
-    def api_ff_funding_mute():
-        """Mute a funding coin for N hours (default 24). Body: {symbol, hours?}."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            body = request.get_json() or {}
-            until = ff.mute_funding(body.get('symbol', ''),
-                                    hours=float(body.get('hours', 24) or 24))
-            return jsonify({'ok': True, 'until': until})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/funding-unmute', methods=['POST'])
-    def api_ff_funding_unmute():
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            sym = (request.get_json() or {}).get('symbol', '')
-            return jsonify({'ok': True, 'unmuted': ff.unmute_funding(sym)})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/funding-muted')
-    def api_ff_funding_muted():
-        """List currently-muted funding coins with remaining time."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            return jsonify({'ok': True, 'muted': ff.list_funding_muted()})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    # ── 🧾 Activity log (bot decisions on every signal) ──
-    @app.route('/api/activity-log', methods=['GET'])
-    def api_activity_log():
-        """Recent bot-activity events (newest first). Query: limit, symbol, event."""
-        try:
-            from detection.activity_log import get_activity_log
-            al = get_activity_log()
-            limit = int(request.args.get('limit', 400) or 400)
-            symbol = request.args.get('symbol') or None
-            event = request.args.get('event') or None
-            return jsonify({'ok': True, 'enabled': al.is_enabled(),
-                            'count': al.count(),
-                            'events': al.get(limit=limit, symbol=symbol, event=event)})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/activity-log/toggle', methods=['POST'])
-    def api_activity_log_toggle():
-        """Enable/disable the activity monitor. Body: {"enabled": true|false}."""
-        try:
-            from detection.activity_log import get_activity_log
-            data = request.get_json(silent=True) or {}
-            on = get_activity_log().set_enabled(bool(data.get('enabled')))
-            # When turning the monitor ON, immediately stamp the CURRENT active
-            # lever set so the chronology starts with «що саме задіяно».
-            if on:
-                try:
-                    from detection.fuel_filter import get_fuel_filter
-                    ff = get_fuel_filter()
-                    if ff:
-                        ff.log_active_config('увімкнено монітор', force=True)
-                except Exception:
-                    pass
-            return jsonify({'ok': True, 'enabled': on})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/activity-log/clear', methods=['POST'])
-    def api_activity_log_clear():
-        try:
-            from detection.activity_log import get_activity_log
-            n = get_activity_log().clear()
-            return jsonify({'ok': True, 'cleared': n})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/activity-log/delete', methods=['POST'])
-    def api_activity_log_delete():
-        """Delete specific events by id. Body: {"ids": [1,2,3]}."""
-        try:
-            from detection.activity_log import get_activity_log
-            data = request.get_json(silent=True) or {}
-            n = get_activity_log().delete(data.get('ids') or [])
-            return jsonify({'ok': True, 'deleted': n})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/activity-log/export')
-    def api_activity_log_export():
-        """Analytical export that LINKS the 🧾 activity log to the closed-trade
-        tables (real + paper). Events are grouped into SESSIONS (one per «signal»
-        run of a coin), and each session is joined to the trade it produced,
-        including that trade's full chronology (price/PnL/МММ/exhaustion series).
-
-        format=json (default) → one self-contained object per session:
-            {symbol, session_start/end, events[], trades[{is_shadow, …,
-             chronology[]}]}  — nothing to cross-reference, no data confusion.
-        format=csv → a FLAT events table with trade-link columns (real/paper PnL
-            + exit reason + opened/closed times); the heavy chronology stays in
-            JSON, where it can't be mixed up with event rows."""
-        import time as _t
-        from collections import defaultdict
-
-        fmt = (request.args.get('format') or 'json').lower()
-        try:
-            from detection.activity_log import get_activity_log
-            events = get_activity_log().get(limit=100000)   # newest-first, all
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-        # 📋 Pull CONFIG snapshots OUT of the per-coin stream: they aren't tied to
-        # a symbol, so they'd pollute the trade sessions. Kept as a top-level
-        # timeline of «which levers were active when» + the CURRENT snapshot.
-        config_changes = [e for e in events if e.get('event') == 'config']
-        events = [e for e in events if e.get('event') != 'config']
-        active_config = None
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            _ff = get_fuel_filter()
-            if _ff:
-                active_config = _ff.active_config_summary()
-        except Exception:
-            active_config = None
-
-        trades = {'real': [], 'shadow': []}
-        try:
-            from detection.trade_manager import get_trade_manager
-            tm = get_trade_manager()
-            if tm:
-                trades = tm.export_closed_trades()
-        except Exception:
-            pass
-
-        def _f(v):
-            try:
-                return float(v)
-            except (TypeError, ValueError):
-                return None
-
-        def _trade_export(c, is_shadow, is_open):
-            hist = list(c.get('history') or [])
-            # MAE (max adverse excursion) / MFE (peak) from the stored series +
-            # record fields — key for SL / risk calibration.
-            pnls = [h.get('pnl') for h in hist if h.get('pnl') is not None]
-            mae = min(pnls) if pnls else c.get('mae_pnl_pct')
-            mfe = c.get('peak_pnl_pct')
-            if pnls:
-                mfe = max([mfe] + pnls) if mfe is not None else max(pnls)
-            # Derived calibration metrics.
-            tit = None
-            oa, ca = _f(c.get('opened_at')), _f(c.get('closed_at'))
-            if oa is not None and ca is not None:
-                tit = int(round(ca - oa))
-            btp = None
-            if hist and mfe is not None:
-                for idx, h in enumerate(hist):
-                    hp = h.get('pnl')
-                    if hp is not None and hp >= mfe - 1e-9:
-                        btp = idx
-                        break
-            return {
-                'is_shadow': is_shadow,
-                'is_open': is_open,
-                'market': 'paper' if is_shadow else 'real',
-                'status': 'open' if is_open else 'closed',
-                'side': c.get('side'),
-                'entry_price': c.get('entry_price'),
-                'exit_price': c.get('exit_price'),
-                'opened_at': c.get('opened_at'),
-                'closed_at': c.get('closed_at'),
-                'pnl_pct': c.get('pnl_pct'),
-                'peak_pnl_pct': mfe,
-                'mae_pnl_pct': mae,
-                'exit_reason': c.get('reason'),
-                'exit_reason_detail': c.get('reason_detail'),
-                'ctr_open': c.get('ctr_open'),
-                'ctr_close': c.get('ctr_close'),
-                'entry_score': c.get('entry_score'),
-                'exit_decision': c.get('exit_decision'),
-                # 🔬 FF calibration fields (setup quality → outcome correlation).
-                'ff_entry_score': c.get('ff_entry_score'),
-                'queue_wait_sec': c.get('ff_queue_wait_sec'),
-                'ctr_at_signal': c.get('ff_ctr_at_signal'),
-                'ctr_at_open': c.get('ff_ctr_at_open'),
-                'kind': c.get('ff_kind'),
-                # Mature Decision Center at open — for FF-score vs Decision compare.
-                'dec_score': c.get('ff_dec_score'),
-                'dec_reco': c.get('ff_dec_reco'),
-                'dec_verdict': c.get('ff_dec_verdict'),
-                # Multi-TF CTR confluence at open (record-only, validation).
-                'ctr_mtf_align': c.get('ff_ctr_mtf_align'),
-                'ctr_mtf_trend': c.get('ff_ctr_mtf_trend'),
-                'ctr_mtf_timing': c.get('ff_ctr_mtf_timing'),
-                # ₿ session at open — to validate opening during a ₿ pause.
-                'btc_at_open': c.get('ff_btc_at_open'),
-                'btc_paused_at_open': c.get('ff_btc_paused_at_open'),
-                'time_in_trade_sec': tit,
-                'bars_to_peak': btp,
-                # The chronology the closed-trade tables store, renamed for clarity.
-                'chronology': hist,
-            }
-
-        # Index trades by symbol (both books, closed AND open).
-        tindex = defaultdict(list)
-        for is_shadow, key in ((False, 'real'), (True, 'shadow')):
-            for c in trades.get(key, []) or []:
-                tindex[str(c.get('symbol', '')).upper()].append((is_shadow, False, c))
-        for is_shadow, key in ((False, 'open_real'), (True, 'open_shadow')):
-            for c in trades.get(key, []) or []:
-                tindex[str(c.get('symbol', '')).upper()].append((is_shadow, True, c))
-
-        # Group events by symbol, then split each symbol's stream into sessions
-        # at every «signal» event (same rule as the chart-marker tooltip).
-        by_sym = defaultdict(list)
-        for e in events:
-            by_sym[(e.get('symbol') or '').upper()].append(e)
-
-        sessions = []
-        sid = 0
-        for sym, evs in by_sym.items():
-            evs = sorted(evs, key=lambda e: e.get('t') or 0)
-            groups, cur = [], None
-            for e in evs:
-                if e.get('event') == 'signal' or cur is None:
-                    cur = []
-                    groups.append(cur)
-                cur.append(e)
-            for g in groups:
-                sid += 1
-                start = g[0].get('t')
-                end = g[-1].get('t')
-                opened_ev = next((e for e in g if e.get('event') == 'opened'), None)
-                anchor = _f((opened_ev or g[0]).get('t')) or 0.0
-                # Link trades whose lifetime overlaps the session, or whose open
-                # is within ~2h of the session's «opened» event. Keep the closest
-                # real + closest paper (paper mirrors real → up to two).
-                cand = []
-                for is_shadow, is_open, c in tindex.get(sym, []):
-                    oa = _f(c.get('opened_at'))
-                    if oa is None:
-                        continue
-                    ca = _f(c.get('closed_at')) or oa
-                    overlaps = (_f(start) is not None
-                                and (start - 3600) <= oa <= (end + 3600))
-                    near = abs(oa - anchor) <= 7200
-                    if overlaps or near:
-                        cand.append((abs(oa - anchor), is_shadow, is_open, c))
-                cand.sort(key=lambda x: x[0])
-                picked, seen = [], set()
-                for _, is_shadow, is_open, c in cand:
-                    # Prefer whichever (closed/open) is closest per book; one per book.
-                    if is_shadow in seen:
-                        continue
-                    seen.add(is_shadow)
-                    picked.append(_trade_export(c, is_shadow, is_open))
-                # 🏁 Session outcome tag (funnel) + signal→open latency.
-                ev_types = [e.get('event') for e in g]
-                if 'opened' in ev_types:
-                    outcome = 'opened'
-                elif 'closed' in ev_types:
-                    outcome = 'closed'
-                elif 'ejected' in ev_types:
-                    outcome = 'ejected'
-                elif 'dropped' in ev_types:
-                    outcome = 'dropped'
-                elif 'queued' in ev_types:
-                    outcome = 'queued'
-                else:
-                    outcome = (ev_types[-1] if ev_types else 'signal')
-                sig_t = _f(start)
-                open_ev = next((e for e in g if e.get('event') == 'opened'), None)
-                latency = None
-                if open_ev is not None and sig_t is not None:
-                    _ot = _f(open_ev.get('t'))
-                    if _ot is not None:
-                        latency = int(round(_ot - sig_t))
-                real_t = next((t for t in picked if not t['is_shadow']), None)
-                paper_t = next((t for t in picked if t['is_shadow']), None)
-                sessions.append({
-                    'session_id': sid,
-                    'symbol': sym,
-                    'session_start': start,
-                    'session_end': end,
-                    'outcome': outcome,
-                    'latency_sec': latency,
-                    'real_pnl_pct': (real_t or {}).get('pnl_pct'),
-                    'paper_pnl_pct': (paper_t or {}).get('pnl_pct'),
-                    'events': g,
-                    'trades': picked,
-                })
-        sessions.sort(key=lambda s: s.get('session_start') or 0)
-
-        if fmt == 'csv':
-            import csv as _csv
-            import io as _io
-            buf = _io.StringIO()
-            w = _csv.writer(buf)
-
-            def _iso0(t):
-                try:
-                    return datetime.fromtimestamp(float(t)).isoformat()
-                except (TypeError, ValueError):
-                    return ''
-            # 📋 Leading section: the CURRENT active levers, then the timeline of
-            # config changes — so the export starts with «що саме задіяно».
-            if active_config:
-                w.writerow(['# АКТИВНІ ПАРАМЕТРИ (на момент експорту)'])
-                for grp in active_config.get('groups', []):
-                    for it in grp.get('items', []):
-                        w.writerow(['#', grp.get('title', ''), it.get('k', ''), it.get('v', '')])
-                w.writerow([])
-            if config_changes:
-                w.writerow(['# ІСТОРІЯ ЗМІН ПАРАМЕТРІВ'])
-                for e in sorted(config_changes, key=lambda x: x.get('t') or 0):
-                    w.writerow(['#', _iso0(e.get('t')), e.get('detail', '')])
-                w.writerow([])
-            w.writerow(['session_id', 'outcome', 'latency_sec', 'time_iso', 'ts',
-                        'symbol', 'side', 'event', 'source', 'detail',
-                        'entry_score', 'ctr_stc', 'ctr_state', 'fuel_str',
-                        'setup_score', 'setup_grade',
-                        'su_struct', 'su_poi', 'su_zone', 'su_liq', 'su_mm',
-                        'su_timing', 'su_context',
-                        'trade_status', 'trade_opened_iso', 'trade_closed_iso',
-                        'ff_entry_score', 'dec_score', 'dec_verdict',
-                        'btc_at_open', 'btc_paused_open',
-                        'queue_wait_sec', 'time_in_trade_sec',
-                        'real_pnl_pct', 'real_mae_pct', 'real_exit_reason',
-                        'paper_pnl_pct', 'paper_mae_pct', 'paper_exit_reason',
-                        'hist_points'])
-
-            def _iso(t):
-                try:
-                    return datetime.fromtimestamp(float(t)).isoformat()
-                except (TypeError, ValueError):
-                    return ''
-            for s in sessions:
-                real = next((t for t in s['trades'] if not t['is_shadow']), None)
-                paper = next((t for t in s['trades'] if t['is_shadow']), None)
-                any_tr = real or paper
-                oa = _iso(any_tr['opened_at']) if any_tr else ''
-                ca = _iso(any_tr['closed_at']) if any_tr else ''
-                st = any_tr['status'] if any_tr else ''
-                ff_es = (any_tr or {}).get('ff_entry_score', '') if any_tr else ''
-                dsc = (any_tr or {}).get('dec_score', '') if any_tr else ''
-                dvd = (any_tr or {}).get('dec_verdict', '') if any_tr else ''
-                bao = (any_tr or {}).get('btc_at_open', '') if any_tr else ''
-                bpo = (any_tr or {}).get('btc_paused_at_open', '') if any_tr else ''
-                qw = (any_tr or {}).get('queue_wait_sec', '') if any_tr else ''
-                tit = (any_tr or {}).get('time_in_trade_sec', '') if any_tr else ''
-                hp = max((len(t['chronology']) for t in s['trades']), default=0)
-                for e in s['events']:
-                    x = e.get('x') or {}
-                    w.writerow([
-                        s['session_id'], s.get('outcome', ''), s.get('latency_sec', ''),
-                        _iso(e.get('t')), e.get('t'),
-                        e.get('symbol'), e.get('side'), e.get('event'),
-                        e.get('source'), e.get('detail'),
-                        x.get('entry_score', ''), x.get('ctr_stc', ''),
-                        x.get('ctr_state', ''), x.get('fuel_str', ''),
-                        x.get('setup_score', ''), x.get('setup_grade', ''),
-                        x.get('su_struct', ''), x.get('su_poi', ''),
-                        x.get('su_zone', ''), x.get('su_liq', ''), x.get('su_mm', ''),
-                        x.get('su_timing', ''), x.get('su_context', ''),
-                        st, oa, ca,
-                        ff_es, dsc, dvd, bao, bpo, qw, tit,
-                        real.get('pnl_pct') if real else '',
-                        real.get('mae_pnl_pct') if real else '',
-                        real.get('exit_reason') if real else '',
-                        paper.get('pnl_pct') if paper else '',
-                        paper.get('mae_pnl_pct') if paper else '',
-                        paper.get('exit_reason') if paper else '',
-                        hp,
-                    ])
-            csv_text = '﻿' + buf.getvalue()   # BOM → Excel UTF-8
-            return Response(csv_text, mimetype='text/csv; charset=utf-8',
-                            headers={'Content-Disposition':
-                                     'attachment; filename=activity_log_linked.csv'})
-
-        return jsonify({'ok': True, 'exported_at': _t.time(),
-                        'session_count': len(sessions),
-                        'trade_counts': {'real': len(trades.get('real') or []),
-                                         'paper': len(trades.get('shadow') or [])},
-                        # 📋 Which levers/filters are active NOW + their timeline.
-                        'active_config': active_config,
-                        'config_changes': config_changes,
-                        'sessions': sessions})
 
     @app.route('/api/fuel-filter/settings', methods=['POST'])
     def api_fuel_filter_settings():
@@ -3481,34 +2884,6 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
-    @app.route('/api/fuel-filter/queue2/delete', methods=['POST'])
-    def api_fuel_filter_queue2_delete():
-        """Remove one coin from Queue 2 «⚡ CTR-зони». Body: {"symbol": "..."}."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            data = request.get_json(silent=True) or {}
-            symbol = data.get('symbol', '')
-            deleted = ff.delete_timer2(symbol)
-            return jsonify({'ok': True, 'deleted': deleted, 'symbol': symbol.upper()})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/queue2/clear', methods=['POST'])
-    def api_fuel_filter_queue2_clear():
-        """Clear Queue 2 «⚡ CTR-зони» entirely."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            count = ff.clear_all_timers2()
-            return jsonify({'ok': True, 'cleared': count})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
     @app.route('/api/fuel-filter/anomaly/delete', methods=['POST'])
     def api_fuel_filter_anomaly_delete():
         """Remove one coin from the anomalies table. Body: {"symbol": "..."}."""
@@ -3584,14 +2959,6 @@ def register_api_routes(app):
         def belongs_to_bot(table_name):
             return any(table_name.startswith(p) for p in BOT_PREFIXES)
 
-        # Within the bot's tables, split СЛУЖБОВІ (logs / market snapshots /
-        # liquidation & heatmap caches — high-volume, append-only telemetry)
-        # from ДАНІ РОБОТИ БОТА (trades, order blocks, settings, state).
-        SERVICE_HINTS = ['event_log', 'liquidation', 'heatmap', 'snapshot', 'history']
-
-        def is_service(table_name):
-            return any(h in table_name for h in SERVICE_HINTS)
-
         try:
             with engine.connect() as conn:
                 # Get actual database size
@@ -3619,38 +2986,22 @@ def register_api_routes(app):
                     ORDER BY pg_total_relation_size('public.'||tablename) DESC
                 """))
 
-                # Fast row-count ESTIMATES from the planner stats (reltuples).
-                # Exact COUNT(*) per table full-scans every huge service table
-                # and hangs the whole endpoint once the DB grows — the page then
-                # shows "—" for everything. reltuples is instant and accurate
-                # enough for a size dashboard. Fetched ONCE for all tables.
-                row_counts = {}
-                try:
-                    est = conn.execute(text("""
-                        SELECT c.relname, c.reltuples::bigint AS n
-                        FROM pg_class c
-                        JOIN pg_namespace ns ON ns.oid = c.relnamespace
-                        WHERE ns.nspname = 'public' AND c.relkind = 'r'
-                    """))
-                    for _rn, _n in est:
-                        row_counts[_rn] = max(0, int(_n or 0))
-                except Exception:
-                    row_counts = {}
-
                 bot_tables = []
                 foreign_tables = []
                 bot_total = 0
                 foreign_total = 0
                 bot_indexes = 0
                 foreign_indexes = 0
-                bot_data_total = 0      # робочі дані стратегії
-                bot_service_total = 0   # службові: логи/снапшоти/liq-кеші
 
                 for row in result:
                     table, size, size_bytes, table_size, table_size_bytes, index_size, index_size_bytes = row
 
-                    # Row count = fast planner estimate (see row_counts above).
-                    count = row_counts.get(table, 0)
+                    # Get row count
+                    try:
+                        count_res = conn.execute(text(f"SELECT COUNT(*) FROM {table}"))
+                        count = count_res.scalar()
+                    except:
+                        count = 0
 
                     table_info = {
                         'name': table,
@@ -3665,15 +3016,9 @@ def register_api_routes(app):
                     }
 
                     if belongs_to_bot(table):
-                        _svc = is_service(table)
-                        table_info['category'] = 'service' if _svc else 'data'
                         bot_tables.append(table_info)
                         bot_total += size_bytes
                         bot_indexes += index_size_bytes
-                        if _svc:
-                            bot_service_total += size_bytes
-                        else:
-                            bot_data_total += size_bytes
                     else:
                         foreign_tables.append(table_info)
                         foreign_total += size_bytes
@@ -3692,10 +3037,6 @@ def register_api_routes(app):
                         'actual_db_mb': round(actual_db_size_bytes / (1024**2), 2),
                         'total_mb': round(total_bytes / (1024**2), 2),
                         'bot_mb': round(bot_total / (1024**2), 2),
-                        'bot_data_mb': round(bot_data_total / (1024**2), 2),
-                        'bot_service_mb': round(bot_service_total / (1024**2), 2),
-                        'bot_data_pct': round(bot_data_total / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
-                        'bot_service_pct': round(bot_service_total / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
                         'foreign_mb': round(foreign_total / (1024**2), 2),
                         'bot_indexes_mb': round(bot_indexes / (1024**2), 2),
                         'foreign_indexes_mb': round(foreign_indexes / (1024**2), 2),
@@ -3715,7 +3056,7 @@ def register_api_routes(app):
         from sqlalchemy import text
 
         data = request.get_json() or {}
-        action = data.get('action')  # 'foreign_tables' | 'event_logs' | 'trade_archive' | 'old_cache'
+        action = data.get('action')  # 'foreign_tables' | 'event_logs' | 'readiness_log' | 'trade_archive' | 'old_cache'
         table_name = data.get('table')  # specific table for foreign cleanup
 
         if not action:
@@ -3759,6 +3100,21 @@ def register_api_routes(app):
                     deleted_rows = result.rowcount
                     conn.commit()
 
+                elif action == 'readiness_log_old':
+                    # Delete old «Готовність» decision log rows (>14 days)
+                    result = conn.execute(text("""
+                        DELETE FROM sob_readiness_log
+                        WHERE timestamp < NOW() - INTERVAL '14 days'
+                    """))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
+                elif action == 'readiness_log_all':
+                    # Delete ALL «Готовність» decision log rows
+                    result = conn.execute(text("DELETE FROM sob_readiness_log"))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
                 elif action == 'trade_archive':
                     # Clear trade archive
                     result = conn.execute(text("DELETE FROM sob_trade_archive"))
@@ -3778,16 +3134,6 @@ def register_api_routes(app):
                         except:
                             pass
                     conn.commit()
-
-                elif action in ('service_old', 'service_all'):
-                    # СЛУЖБОВІ дані (логи/снапшоти/liquidation/heatmap) — головне
-                    # джерело росту БД. Логіка спільна з авто-очисткою.
-                    try:
-                        days = int(data.get('days', 3) or 3)
-                    except (TypeError, ValueError):
-                        days = 3
-                    deleted_rows += _db_service_cleanup(
-                        keep_days=days, wipe_all=(action == 'service_all'))
 
                 elif action == 'vacuum_full':
                     # VACUUM FULL to actually reclaim disk space and return it to OS
@@ -3819,41 +3165,6 @@ def register_api_routes(app):
 
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/db/autoclean', methods=['GET', 'POST'])
-    def api_db_autoclean():
-        """Get/set the automatic service-data cleanup config."""
-        db = get_db()
-        if request.method == 'POST':
-            body = request.get_json() or {}
-            if 'enabled' in body:
-                db.set_setting('db_autoclean_enabled', 'true' if body['enabled'] else 'false')
-            if 'interval_days' in body:
-                try:
-                    db.set_setting('db_autoclean_interval_days',
-                                   str(max(1, min(90, int(body['interval_days'])))))
-                except (TypeError, ValueError):
-                    pass
-            if 'keep_days' in body:
-                try:
-                    db.set_setting('db_autoclean_keep_days',
-                                   str(max(1, min(90, int(body['keep_days'])))))
-                except (TypeError, ValueError):
-                    pass
-            if 'vacuum' in body:
-                db.set_setting('db_autoclean_vacuum', 'true' if body['vacuum'] else 'false')
-        try:
-            last = float(db.get_setting('db_autoclean_last_ts', 0) or 0)
-        except (TypeError, ValueError):
-            last = 0
-        return jsonify({
-            'ok': True,
-            'enabled': str(db.get_setting('db_autoclean_enabled', 'true')).lower() in ('true', '1'),
-            'interval_days': int(db.get_setting('db_autoclean_interval_days', 1) or 1),
-            'keep_days': int(db.get_setting('db_autoclean_keep_days', 3) or 3),
-            'vacuum': str(db.get_setting('db_autoclean_vacuum', 'true')).lower() in ('true', '1'),
-            'last_ts': last,
-        })
 
     @app.route('/api/sm/data-source')
     def api_sm_data_source():
@@ -3965,40 +3276,6 @@ def register_api_routes(app):
         exch = request.args.get('exchange', 'bybit')
         return jsonify(get_sentiment(exch))
     
-    @app.route('/api/exchange/ping')
-    def api_exchange_ping():
-        """Lightweight connectivity check to an exchange's public API. Used by the
-        Tickr page «Підключитися» button + status indicator. Returns
-        {ok, exchange, status, latency_ms} (ok=False + error on failure)."""
-        import time as _t
-        import requests as _rq
-        ex = (request.args.get('exchange') or 'binance').lower()
-        # Бʼємо в РЕАЛЬНИЙ data-ендпоінт (той самий тип, що й Fetch), а не в
-        # тривіальний /ping — інакше індикатор бреше: /ping може віддавати 200,
-        # а data-ендпоінт — 418 (Binance блокує IP дата-центрів Render).
-        urls = {
-            'binance': 'https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=BTCUSDT',
-            'bybit':   'https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT',
-            'mexc':    'https://contract.mexc.com/api/v1/contract/ticker?symbol=BTC_USDT',
-            'bingx':   'https://open-api.bingx.com/openApi/swap/v2/quote/ticker?symbol=BTC-USDT',
-        }
-        url = urls.get(ex, urls['binance'])
-        t0 = _t.time()
-        try:
-            r = _rq.get(url, timeout=6)
-            blocked = r.status_code in (418, 451, 403)
-            out = {'ok': r.status_code == 200, 'exchange': ex,
-                   'status': r.status_code,
-                   'latency_ms': int((_t.time() - t0) * 1000)}
-            if blocked:
-                out['error'] = f'HTTP {r.status_code} — біржа блокує IP сервера'
-            elif r.status_code != 200:
-                out['error'] = f'HTTP {r.status_code}'
-            return jsonify(out)
-        except Exception as e:
-            return jsonify({'ok': False, 'exchange': ex, 'error': str(e)[:140],
-                            'latency_ms': int((_t.time() - t0) * 1000)})
-
     @app.route('/api/tickr/fetch', methods=['POST'])
     def api_tickr_fetch():
         """Fetch+filter instruments for an exchange + categories.
@@ -4064,16 +3341,10 @@ def register_api_routes(app):
                     baseline = _json.loads(raw)
                 except Exception:
                     baseline = {}
-        # Min 24h volume filter — UI sends millions of USD.
-        try:
-            _min_vol_musd = float(data.get('min_vol_musd', 0) or 0)
-        except (TypeError, ValueError):
-            _min_vol_musd = 0.0
         res = tickr_core.top_active(
             exchange=exchange, categories=cats, sort_by=sort_by,
             top_n=int(data.get('top_n', 20)),
-            active_only=bool(data.get('active_only', True)),
-            min_vol_usd=_min_vol_musd * 1_000_000)
+            active_only=bool(data.get('active_only', True)))
         # merge baseline + re-sort if spike requested and baseline exists
         if sort_by == 'spike' and baseline and res.get('ok'):
             for r in res['symbols']:
@@ -5300,28 +4571,6 @@ def register_api_routes(app):
     
     # ===== Trade Manager =====
     
-    @app.route('/api/tm/trade-history')
-    def api_tm_trade_history():
-        """Per-trade recorded time-series (price/PnL/МММ/exhaustion) for charting.
-        Query: symbol=BTCUSDT&closed_at=<float>&shadow=0|1. Matches a closed
-        trade (or the live open position as fallback)."""
-        from detection.trade_manager import get_trade_manager
-        tm = get_trade_manager()
-        if not tm:
-            return jsonify({'ok': False, 'reason': 'Not initialized'})
-        symbol = request.args.get('symbol', '')
-        shadow = str(request.args.get('shadow', '0')).lower() in ('1', 'true')
-        closed_at = request.args.get('closed_at')
-        try:
-            closed_at = float(closed_at) if closed_at not in (None, '') else None
-        except (TypeError, ValueError):
-            closed_at = None
-        try:
-            return jsonify(tm.get_trade_history(symbol, closed_at=closed_at,
-                                                is_shadow=shadow))
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
     @app.route('/api/tm/state')
     def api_tm_state():
         """Return Trade Manager state: positions, closed trades, stats.
@@ -5661,8 +4910,7 @@ def register_api_routes(app):
             try:
                 from datetime import datetime
                 dt = datetime.fromisoformat(last_scan_time.replace('Z', '+00:00'))
-                # UTC ISO — client localizes (see qm.html).
-                last_scan_time = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+                last_scan_time = dt.strftime('%H:%M:%S')
             except:
                 pass
         
@@ -5742,8 +4990,7 @@ def register_api_routes(app):
                 try:
                     from datetime import datetime
                     dt = datetime.fromisoformat(scan_time.replace('Z', '+00:00'))
-                    # UTC ISO — client localizes.
-                    scan_time = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+                    scan_time = dt.strftime('%H:%M:%S')
                 except:
                     pass
             
@@ -6680,26 +5927,6 @@ def compute_bias(db, symbol, wl=None):
     try:
         from detection.forecast_engine import get_forecast_engine
         fe = get_forecast_engine()
-        # Warm the forecast/CTR cache for THIS symbol on demand — otherwise a
-        # coin the background scanner hasn't reached yet (fresh watchlist coin)
-        # shows blank 1H/4H/CTR badges. Guarded by max_age so warm coins skip.
-        if fe:
-            try:
-                # CTR TF must match what the SCANNER uses (stored inside the
-                # 'smc_settings' blob, NOT a standalone key) — otherwise the
-                # on-demand warm recomputes CTR at the wrong TF (e.g. 1h) and
-                # the badge shows «CTR·1H» while the setting is 15m.
-                _ctf = '1h'
-                try:
-                    from detection.smc_scanner import get_smc_scanner
-                    _sc = get_smc_scanner()
-                    if _sc:
-                        _ctf = _sc.get_settings().get('ctr_timeframe', '1h')
-                except Exception:
-                    pass
-                fe.ensure_fresh(symbol, ctr_tf=_ctf)
-            except Exception:
-                pass
         cached = fe.get(symbol) if fe else None
         if cached:
             f1 = cached.get('forecast_1h') or {}
@@ -6785,12 +6012,12 @@ def compute_bias(db, symbol, wl=None):
             reasons.append(('wait', "Liq-палива немає даних"))
         elif fuel_dir > 0.1:
             fuel_side = 1
-            reasons.append(('ok', "МММ-бабло ↑ зверху → тягне в LONG", 'long'))
+            reasons.append(('ok', "ММ зверху (тягне в LONG)", 'long'))
         elif fuel_dir < -0.1:
             fuel_side = -1
-            reasons.append(('ok', "МММ-бабло ↓ знизу → тягне в SHORT", 'short'))
+            reasons.append(('ok', "ММ знизу (тягне в SHORT)", 'short'))
         else:
-            reasons.append(('wait', "МММ-бабло ⚖ рівновага — напрямку немає"))
+            reasons.append(('wait', "ММ збалансований — напрямку немає"))
     except Exception:
         comp['fuel'] = None
         reasons.append(('wait', "Squeeze/fuel недоступний"))
@@ -7015,81 +6242,11 @@ def compute_bias(db, symbol, wl=None):
         move_long = None
         move_short = None
 
-    # CTR-15M (cheap, from forecast cache) + Decision Center verdict — so the
-    # info-site banner shows the SAME data as the bot without polling the heavy
-    # /api/smc/chart. Both cached inside this result (short TTL) → no per-poll cost.
-    _ctr = None
-    try:
-        from detection.forecast_engine import get_forecast_engine
-        _fe = get_forecast_engine()
-        if _fe:
-            _fc = _fe.get(symbol)
-            if _fc:
-                _ctr = _fc.get('ctr')
-                # ⚡ 1H CTR alongside the primary TF — cheap (per-(sym,'1h') cache,
-                # TTL 5m). Copy the dict so we never mutate the forecast cache.
-                # Skipped when the primary TF is already 1h (no duplicate).
-                if isinstance(_ctr, dict) and str(_ctr.get('tf') or '').lower() != '1h':
-                    try:
-                        _h1 = _fe.get_ctr_tf(symbol, '1h')
-                        if _h1 and _h1.get('stc') is not None:
-                            _s1 = float(_h1['stc'])
-                            _ctr = dict(_ctr)
-                            _ctr['stc_1h'] = round(_s1, 1)
-                            _ctr['lean_1h'] = ('SHORT' if _s1 > 50
-                                               else ('LONG' if _s1 < 50 else None))
-                            _ctr['lean_pct_1h'] = round(abs(_s1 - 50.0) / 50.0 * 100.0)
-                    except Exception:
-                        pass
-                # ⚡ 4H CTR alongside (per-symbol, cheap — TTL 15m). Skip коли ТФ уже 4h.
-                if isinstance(_ctr, dict) and str(_ctr.get('tf') or '').lower() != '4h':
-                    try:
-                        _h4 = _fe.get_ctr_tf(symbol, '4h')
-                        if _h4 and _h4.get('stc') is not None:
-                            _s4 = float(_h4['stc'])
-                            _ctr = dict(_ctr)
-                            _ctr['stc_4h'] = round(_s4, 1)
-                            _ctr['lean_4h'] = ('SHORT' if _s4 > 50
-                                               else ('LONG' if _s4 < 50 else None))
-                            _ctr['lean_pct_4h'] = round(abs(_s4 - 50.0) / 50.0 * 100.0)
-                    except Exception:
-                        pass
-    except Exception:
-        _ctr = None
-    _decision = None
-    try:
-        if price and price > 0:
-            from detection.trade_manager import get_trade_manager
-            _tm = get_trade_manager()
-            if _tm:
-                _decision = _tm.compute_decision(symbol, price)
-    except Exception:
-        _decision = None
-
-    # ⚡ CTR_STC — розклад по 15m/1H/4H + напрямок для режиму Smart Direction «CTR_STC».
-    _ctr_stc = None
-    try:
-        from detection.ctr_direction import compute_ctr_direction
-        _ctr_stc = compute_ctr_direction(symbol)
-    except Exception:
-        _ctr_stc = None
-
-    # 🧩 Confluence — згода незалежних вимірів (тренд+forecast+бабло) + гейт виснаження.
-    _confluence = None
-    try:
-        from detection.confluence_direction import compute_confluence
-        _confluence = compute_confluence(get_db(), symbol, {
-            'components': comp, 'move_long': move_long, 'move_short': move_short,
-            'verdict': verdict})
-    except Exception:
-        _confluence = None
-
     _result = {'ok': True, 'symbol': symbol, 'verdict': verdict,
                'confidence': confidence, 'components': comp,
                'reasons': reasons, 'price': price, 'move': move,
                'move_long': move_long, 'move_short': move_short,
-               'ctr': _ctr, 'ctr_stc': _ctr_stc, 'confluence': _confluence,
-               'decision': _decision, 'ts': _t.time()}
+               'ts': _t.time()}
     _cache[_ck] = (_now, _result)
     return _result
 
@@ -7200,12 +6357,12 @@ def compute_bias_for_ff(db, symbol):
             reasons.append(('wait', "Liq-палива немає даних"))
         elif fuel_dir > 0.1:
             fuel_side = 1
-            reasons.append(('ok', "МММ-бабло ↑ зверху → тягне в LONG", 'long'))
+            reasons.append(('ok', "ММ зверху (тягне в LONG)", 'long'))
         elif fuel_dir < -0.1:
             fuel_side = -1
-            reasons.append(('ok', "МММ-бабло ↓ знизу → тягне в SHORT", 'short'))
+            reasons.append(('ok', "ММ знизу (тягне в SHORT)", 'short'))
         else:
-            reasons.append(('wait', "МММ-бабло ⚖ рівновага — напрямку немає"))
+            reasons.append(('wait', "ММ збалансований — напрямку немає"))
     except Exception:
         comp['fuel'] = None
 
