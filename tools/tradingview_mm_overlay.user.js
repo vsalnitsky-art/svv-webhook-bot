@@ -385,7 +385,7 @@
                 + 'Коли напрямку немає (⚪ рівновага) — запас не показується, бо «куди» невизначено.';
         }
 
-        // ── ₿ BTC МММ line — напрямок СЕАНСУ + сила% + рівень. Коли сеанс НА ПАУЗІ
+        // ── ₿ BTC напрямок line — напрямок СЕАНСУ + сила% + рівень. Коли сеанс НА ПАУЗІ
         // (живе ML у зоні WAIT, |dir| ≤ 0.1), напрямок — це стара, застояна сторона:
         // приглушуємо колір і додаємо «⏸ ПАУЗА», щоб не читалось як активний сигнал
         // (раніше оверлей ховав паузу → показував впевнений SHORT на нейтралі). ──
@@ -395,18 +395,18 @@
         } else {
             const b = d.btc || {};
             const bs = (b.strength != null) ? Number(b.strength) : null;
-            const pausedTag = b.paused ? ' <span style="color:#9aa3b5;font-weight:700">· ⏸ ПАУЗА</span>' : '';
+            const pausedTag = b.paused ? ' <span style="color:#9aa3b5;font-weight:700">· ⏸ FLAT</span>' : '';
             if (b.dir === 'LONG' || b.dir === 'SHORT') {
                 // На паузі — сірий (застояний сеанс); активний — колір напрямку.
                 const bc = b.paused ? '#9aa3b5' : dirColor(b.dir);
                 const tail = (bs != null) ? ` · ${bs}% · ${band(bs).label}` : '';
-                elBtc.innerHTML = `₿ BTC МММ: <span style="color:${bc};font-weight:700">${dirLabel(b.dir)}</span>${tail}${pausedTag}`;
+                elBtc.innerHTML = `₿ BTC напрямок: <span style="color:${bc};font-weight:700">${dirLabel(b.dir)}</span>${tail}${pausedTag}`;
             } else {
                 elBtc.style.color = '#9aa3b5';
                 // Без напрямку → «рівновага» (не «легкий тиск»).
                 elBtc.innerHTML = (bs != null)
-                    ? `₿ BTC МММ: ⚪ — · ${bs}% · рівновага`
-                    : '₿ BTC МММ: ⚪ —';
+                    ? `₿ BTC напрямок: ⚪ — · ${bs}% · рівновага`
+                    : '₿ BTC напрямок: ⚪ —';
             }
             elBtc.title = MM_HELP;
         }

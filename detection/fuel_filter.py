@@ -4061,18 +4061,18 @@ class FuelFilterDaemon:
             _side = _d if _d in ('LONG', 'SHORT') else ''
             # Запам'ятати старт сеансу, щоб STOP міг показати тривалість.
             self._btc_session_started_at = now
-            # ▶️ START — зелений акцент дії + напрямок сеансу окремим рядком.
-            msg = (f"▶️ <b>START</b> — торгівля відкрита\n"
+            # ▶️ LONG/SHORT TRADING — дія + напрямок сеансу окремим рядком.
+            msg = (f"▶️ {_emoji} <b>{_side} TRADING</b> — торгівля відкрита\n"
                    f"#BTCUSDT · напрямок сеансу: {_emoji} <b>{_side}</b>")
         else:
-            # STOP — інша дія-іконка (⏹) + тривалість сеансу, щоб не зливалось зі START.
+            # FLAT — інша дія-іконка (⏹) + тривалість сеансу, щоб не зливалось зі стартом.
             _sd = self._btc_last_dir
             _emoji = '🟢' if _sd == 'LONG' else ('🔴' if _sd == 'SHORT' else '⚪')
             _side = _sd if _sd in ('LONG', 'SHORT') else ''
             _started = getattr(self, '_btc_session_started_at', None)
             _dur = f" · тривав <b>{self._fmt_dur(now - _started)}</b>" if _started else ""
             self._btc_session_started_at = None
-            msg = (f"⏹ <b>STOP</b> — торгівля на паузі\n"
+            msg = (f"⏹ <b>FLAT</b> — торгівля на паузі\n"
                    f"#BTCUSDT · сеанс {_emoji} <b>{_side}</b>{_dur}")
         # ✅ ЛИШЕ в ГРУПУ (категорія ₿ BTCUSDT) — БЕЗ приватної копії в головний
         # бот (на прохання: ці повідомлення мають іти тільки в групу, у свою тему).

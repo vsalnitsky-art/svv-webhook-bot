@@ -9402,12 +9402,9 @@ function updateBtcStartBanner() {
     const flip = document.getElementById('ff-btc-flip');
     if (!bar || !st) return;
     const s = btcStartState;
-    // Direction the BTC timer started in (coloured); neutral → WAIT.
-    if (dirEl) {
-        if (s.dir === 'LONG') { dirEl.textContent = '🟢 LONG'; dirEl.style.color = '#22ff88'; dirEl.style.textShadow = '0 0 9px rgba(34,255,136,0.6)'; }
-        else if (s.dir === 'SHORT') { dirEl.textContent = '🔴 SHORT'; dirEl.style.color = '#ff4d4d'; dirEl.style.textShadow = '0 0 9px rgba(255,77,77,0.6)'; }
-        else { dirEl.textContent = '⚪ WAIT'; dirEl.style.color = '#9aa3b5'; dirEl.style.textShadow = 'none'; }
-    }
+    // Лівий напис напрямку прибрано — напрямок тепер показує кнопка справа
+    // (🟢 LONG TRADING / 🔴 SHORT TRADING) + колір бара. Ховаємо, щоб не дублювати.
+    if (dirEl) { dirEl.textContent = ''; dirEl.style.display = 'none'; }
     // ── Bar width = BTC FUEL STRENGTH 0..100%; COLOUR = напрямок сеансу
     // (LONG зелений / SHORT червоний / WAIT сірий), градієнт світле→темне ──
     const str = Math.max(0, Math.min(100, Number(s.strength || 0)));
@@ -9439,16 +9436,23 @@ function updateBtcStartBanner() {
         return;
     }
     if (s.paused) {
-        st.textContent = '⏸ ПАУЗА';
+        st.textContent = '⏸ FLAT';
         st.style.background = 'rgba(148,163,184,0.14)'; st.style.color = '#cbd5e1';
         st.style.textShadow = 'none'; st.style.boxShadow = 'none';
         return;
     }
     const pct = s.period > 0 ? Math.min(100, elapsed / s.period * 100) : 0;
     if (pct >= 100) {
-        st.textContent = '🟢 START TRADING';
-        st.style.background = 'rgba(34,197,94,0.14)'; st.style.color = '#22ff88';
-        st.style.textShadow = '0 0 9px rgba(34,255,136,0.6)'; st.style.boxShadow = 'none';
+        // Кнопка = напрямок сеансу: 🟢 LONG TRADING (зелений) / 🔴 SHORT TRADING (червоний).
+        if (s.dir === 'SHORT') {
+            st.textContent = '🔴 SHORT TRADING';
+            st.style.background = 'rgba(239,68,68,0.14)'; st.style.color = '#ff4d4d';
+            st.style.textShadow = '0 0 9px rgba(255,77,77,0.6)'; st.style.boxShadow = 'none';
+        } else {
+            st.textContent = '🟢 LONG TRADING';
+            st.style.background = 'rgba(34,197,94,0.14)'; st.style.color = '#22ff88';
+            st.style.textShadow = '0 0 9px rgba(34,255,136,0.6)'; st.style.boxShadow = 'none';
+        }
     } else {
         st.textContent = '⏳ ' + Math.floor(pct) + '%';
         st.style.background = 'rgba(250,204,21,0.12)'; st.style.color = '#facc15';

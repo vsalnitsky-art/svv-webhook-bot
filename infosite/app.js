@@ -417,10 +417,13 @@
   function renderBtcStatic() {
     var b = btcState;
     var box = $("#btc-bar");
-    var dirTxt = dirCell(b.dir);
     var statusCls, statusTxt;
-    if (b.paused) { statusCls = "st-pause"; statusTxt = "⏸ ПАУЗА"; }
-    else if (b.status === "START") { statusCls = "st-start"; statusTxt = "🟢 START TRADING"; }
+    if (b.paused) { statusCls = "st-pause"; statusTxt = "⏸ FLAT"; }
+    else if (b.status === "START") {
+      // Кнопка = напрямок сеансу: 🟢 LONG TRADING / 🔴 SHORT TRADING.
+      if (b.dir === "SHORT") { statusCls = "st-stop"; statusTxt = "🔴 SHORT TRADING"; }
+      else { statusCls = "st-start"; statusTxt = "🟢 LONG TRADING"; }
+    }
     else if (b.status === "STOP") { statusCls = "st-stop"; statusTxt = "⛔ STOP TRADING"; }
     else {
       var pct = b.period > 0 ? Math.min(100, Math.floor((nowHeld()) / b.period * 100)) : 0;
@@ -429,7 +432,7 @@
     var str = Math.max(0, Math.min(100, Number(b.strength || 0)));
     box.innerHTML =
       '<div class="btc-left">' +
-        '<span class="btc-sym">₿ BTCUSDT</span> ' + dirTxt +
+        '<span class="btc-sym">₿ BTCUSDT</span>' +
       '</div>' +
       '<div class="btc-strength"><div class="sbar"><i style="width:' + str + '%;background:' + dirGrad(b.dir) + '"></i></div>' +
         '<span class="sbar-lbl">' + Math.round(str) + '% сила</span></div>' +
