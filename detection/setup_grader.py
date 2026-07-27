@@ -33,18 +33,20 @@ _WEIGHTS = {
     'context':    8,   # HTF-сесія ₿ + funding + обсяг
 }
 
-# ── Пороги якості (ті самі, що у SCORE) ──────────────────────────────────────
+# ── Пороги якості ────────────────────────────────────────────────────────────
+# Калібрування (лагідніше): ВІДМІННИЙ 72→70, ХОРОШИЙ 55→53 — щоб верхні оцінки
+# реально досягались, коли конфлюенс дійсно зійшовся (див. розрахунок блоків).
 _GRADE = [
-    (72, 'ВІДМІННИЙ', '#2dd4bf'),
-    (55, 'ХОРОШИЙ',   '#4ade80'),
-    (40, 'СЕРЕДНІЙ',  '#94a3b8'),
-    (25, 'СЛАБКИЙ',   '#fb923c'),
+    (70, 'ВІДМІННИЙ', '#2dd4bf'),
+    (53, 'ХОРОШИЙ',   '#4ade80'),
+    (38, 'СЕРЕДНІЙ',  '#94a3b8'),
+    (24, 'СЛАБКИЙ',   '#fb923c'),
     (0,  'ВИЧЕРПАНО', '#f87171'),
 ]
 
 _DEFAULTS = {
-    'hot_min':        72,     # 🎯 лише коли score ≥ цього
-    'exh_late':       85,     # виснаженість, що обмежує оцінку
+    'hot_min':        70,     # 🎯 лише коли score ≥ цього (синхронно з ВІДМІННИЙ)
+    'exh_late':       88,     # виснаженість, що обмежує оцінку
     'sweep_age_max':  120,    # хв — «свіжий» sweep ліквідності
     'ctr_ob':         75,     # STC ≥ → перекупленість (погано для LONG)
     'ctr_os':         25,     # STC ≤ → перепроданість (погано для SHORT)
@@ -106,11 +108,14 @@ def _block_structure(is_long, smc, htf_bias):
         frac += 0.25; parts.append('bias 1H збігається')
     elif bias == 'NEUTRAL':
         frac += 0.10
-    # 3) HTF-4H bias.
+    # 3) HTF-4H bias. Нейтральний 4H = не проти → дрібний кредит (лагідніше),
+    # а не нуль, бо строгий збіг 4H рідкісний і штучно тримав оцінку внизу.
     hb = _enum_val(htf_bias)
     if hb == want:
         frac += 0.15; parts.append('HTF-4H у бік')
-    elif hb and hb != 'NEUTRAL':
+    elif not hb or hb == 'NEUTRAL':
+        frac += 0.06
+    else:
         parts.append('HTF-4H проти')
     frac = _clamp(frac)
     return frac, _state(frac), (' · '.join(parts) or 'немає структури')
@@ -142,8 +147,9 @@ def _block_zone(is_long, smc):
     except (TypeError, ValueError):
         lvl = 0.5
     # LONG вигідно в Discount (низько), SHORT — у Premium (високо).
-    frac = (1.0 - lvl) if is_long else lvl
-    frac = _clamp(frac)
+    # Калібрування: м'який буст ×1.15 — помірна зона (lvl≈0.3) дає майже повний
+    # бал, а не лінійні 0.7; екстремум лишається стелею 1.0.
+    frac = _clamp(((1.0 - lvl) if is_long else lvl) * 1.15)
     if is_long:
         word = 'Discount' if zone == 'DISCOUNT' else ('Equilibrium' if zone == 'EQUILIBRIUM' else 'Premium (дорого)')
     else:
@@ -184,14 +190,19 @@ def _block_liquidity(is_long, liq_levels, mark_price, mm_runway, cfg):
                 if price < mp:
                     target = True
     if sweep:
-        frac += 0.50; parts.append('свіжий sweep ліквідності')
+        frac += 0.55; parts.append('свіжий sweep ліквідності')
     # Ціль-магніт: спершу з runway ММ (запас ходу), інакше — кластер попереду.
     room = _g(mm_runway, 'room_pct')
     if isinstance(room, (int, float)) and room > 0:
-        frac += _clamp(room / 3.0) * 0.5   # ~3% ходу = повний бал за «є куди йти»
+        frac += _clamp(room / 2.5) * 0.5   # ~2.5% ходу = повний бал за «є куди йти»
         parts.append(f'запас {room:.1f}%')
     elif target:
-        frac += 0.30; parts.append('ціль-магніт попереду')
+        frac += 0.35; parts.append('ціль-магніт попереду')
+    # Калібрування: коли даних по ліквідації немає взагалі — не обнуляємо блок,
+    # а даємо нейтральну базу (брак даних ≠ сигнал проти).
+    if not lv and not sweep and not target:
+        frac = max(frac, 0.25)
+        parts.append('ліквідність н/д')
     frac = _clamp(frac)
     return frac, _state(frac), (' · '.join(parts) or 'ліквідність не підтверджує')
 
@@ -207,7 +218,10 @@ def _block_mm(is_long, mm_dir, mm_strength, mm_conflict):
         return 0.0, 'miss', 'конфлікт ціна↔ММ'
     if not aligned:
         return 0.0, 'miss', 'ММ не в бік'
-    frac = _clamp(strg / 100.0)
+    # Калібрування: сила ММ у цій системі — мала (типово 10–35%), тож пряме
+    # strg/100 робило блок вічно порожнім (головний «якір» оцінки). Даємо базу
+    # 0.30 за сам факт вирівнювання напрямку + шкалу до повного балу на ~55%.
+    frac = _clamp(0.30 + strg / 55.0)
     return frac, _state(frac), f'ММ у бік ({int(strg)}%)'
 
 
@@ -262,6 +276,8 @@ def _block_context(is_long, btc_dir, btc_start, funding_rate, funding_trend, vol
         frac += 0.10; parts.append('funding поглиблюється')
     if vol_up or spike:
         frac += 0.20; parts.append('обсяг зростає' + (' · 🚀' if spike else ''))
+    # Калібрування: нейтральний контекст ≠ проти → дрібна база замість нуля.
+    frac = max(frac, 0.12)
     frac = _clamp(frac)
     return frac, _state(frac), (' · '.join(parts) or 'контекст нейтральний')
 
@@ -326,16 +342,16 @@ def grade_setup(direction: str, sig: Dict[str, Any], cfg: Optional[Dict] = None)
     exh = mp.get('exhaustion')
     if isinstance(exh, (int, float)) and exh >= c['exh_late']:
         vetoes.append(f'хід виснажено ({int(exh)}%)')
-        raw = min(raw, 54)          # не вище «СЕРЕДНІЙ»
+        raw = min(raw, 57)          # не вище «СЕРЕДНІЙ» (лагідніше: 54→57)
     if sig.get('mm_conflict'):
         vetoes.append('конфлікт ціна↔ММ')
-        raw = min(raw, 54)
+        raw = min(raw, 57)
     # CTR жорстко проти — таймінг-блок віддав 'miss' через екстремум.
     if f_time == 0.0 and blocks.get('timing', 0) == 0.0:
         _ct = next((x for x in checks if x['key'] == 'timing'), None)
         if _ct and 'перекуплено' in _ct['detail'] or (_ct and 'перепродано' in _ct['detail']):
             vetoes.append('CTR проти входу')
-            raw = min(raw, 39)      # не вище «СЛАБКИЙ»
+            raw = min(raw, 43)      # не вище «СЛАБКИЙ» (лагідніше: 39→43)
 
     score = int(round(_clamp(raw, 0, 100)))
     grade, color = _grade_for(score)
