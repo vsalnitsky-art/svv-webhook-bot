@@ -331,3 +331,22 @@ td.mono, td .mono { font-family: var(--mono); }
   .price-row b { font-size: 18px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* 📌 «жива» канцелярка для ручних угод — 1:1 з ботом: сидить нерухомо, раз на
+   ~4с короткий вибух-похитування (як анімований емодзі), швидша на hover. */
+@keyframes tmPinWobble {
+  0%, 86%, 100% { transform: rotate(0deg) scale(1); }
+  89%           { transform: rotate(-16deg) scale(1.22); }
+  92%           { transform: rotate(11deg)  scale(1.14); }
+  95%           { transform: rotate(-6deg)  scale(1.07); }
+  98%           { transform: rotate(3deg)   scale(1.03); }
+}
+.tm-pin-anim {
+  display: inline-block;
+  transform-origin: 50% 72%;
+  animation: tmPinWobble 4s ease-in-out infinite;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.35));
+  will-change: transform;
+}
+.tm-pin-anim:hover { animation-duration: 0.85s; }
+@media (prefers-reduced-motion: reduce) { .tm-pin-anim { animation: none; } }

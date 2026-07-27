@@ -922,7 +922,7 @@
         ? '<span class="tag-real">● LIVE</span>'
         : '<span class="tag-paper">◌ PAPER</span>';
       var timer = p.opened_at ? '<span class="mono live-timer" data-ts="' + Math.floor(p.opened_at) + '">' + hms(now - Math.floor(p.opened_at)) + "</span>" : '<span class="muted">—</span>';
-      var mMark = p.manual_mode ? '<span title="Ручне керування (Manual mode ON)" style="color:#fbbf24;margin-right:3px">✋</span>' : '';
+      var mMark = p.manual_mode ? '<span title="Ручне керування (Manual mode ON)" style="color:#fbbf24;margin-right:3px"><span class="tm-pin-anim">📌</span></span>' : '';
       return "<tr>" +
         "<td>" + mMark + "<b>" + tvSym(p.symbol) + "</b></td>" +
         "<td>" + dirCell(p.side) + "</td>" +
@@ -930,7 +930,7 @@
         "<td>" + priceCell(p.entry_price) + "</td>" +
         "<td>" + priceCell(p.current_price) + "</td>" +
         "<td>" + pnlCell(p.pnl_pct) + "</td>" +
-        '<td style="font-size:0.72rem">' + ffFuelCell(p.fuel_dir || p.side, p.fuel_str, p.fuel_str_prev, true) + "</td>" +
+        '<td style="font-size:0.72rem">' + ffFuelCell(p.fuel_dir || p.side, p.fuel_str, p.fuel_str_prev) + "</td>" +
         "<td>" + ffExitCell(p.exit_grade) + "</td>" +
 
         "<td>" + sltpCell(p.manual_sl) + "</td>" +
