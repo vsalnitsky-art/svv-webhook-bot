@@ -247,6 +247,19 @@ def test_scalp_alert_dir_filter():
     print('✓ scalp TG → direction filter works')
 
 
+# --- Queue-3 TTL ejects stale coins ---
+def test_queue3_ttl_ejects_stale():
+    ff, db = _ff()   # queue3_ttl_hours default 6
+    ff._pending3 = {'SOLUSDT': {'dir': 'LONG', 'added_at': 1.0}}   # ancient
+    ff._setup_cache = {'SOLUSDT': _grade(True)}
+    ff._engine_tick_readiness()
+    assert 'SOLUSDT' not in ff._pending3, 'stale coin must be ejected by TTL'
+    assert not ff.opened, 'ejected by TTL, not opened'
+    assert any(r['outcome'] == 'skipped' and 'протерміновано' in (r.get('reason') or '')
+               for r in db.readiness_rows), db.readiness_rows
+    print('✓ Черга-3 TTL: протерміновує застарілу монету (не тримає годинами)')
+
+
 # --- CTR safeguard skip for Q3 (reversal) opens ---
 def test_safeguard_skips_ctr_for_q3():
     ff, db = _ff()

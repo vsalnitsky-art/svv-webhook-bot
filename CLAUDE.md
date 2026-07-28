@@ -101,7 +101,8 @@
   `Q3`). Тумблер `readiness_log_enabled` (дефолт ON). Анти-флуд: незмінний
   hold/skip пишеться не частіше ніж раз на `READINESS_LOG_MIN_GAP` (300с).
 - Налаштування: `queue3_enabled` (дефолт OFF), `queue3_open_min_score` (43),
-  `queue3_ignore_ctr` (True), `setup_ctr_mode` (soft), `readiness_log_enabled`.
+  `queue3_ignore_ctr` (True), `queue3_ttl_hours` (6 — протермінування, щоб монети
+  не висіли годинами), `setup_ctr_mode` (soft), `readiness_log_enabled`.
   Q3-лог у `activity_log` несе пласкі `su_*` блоки
   (structure/poi/zone/liq/mm/timing/context) — щоб CSV-експорт був аналізовним.
 - API: `GET /api/fuel-filter/readiness-log?limit&symbol&outcome`;
@@ -137,11 +138,12 @@ funding-монети). Той самий `grade_setup` — інші свічки
 СЕРЕДНІЙ (≥40) · 3) Готовність(1H) ≥ СЕРЕДНІЙ (≥38) · 4) Скальп ≥ СЕРЕДНІЙ (≥38) ·
 **5) ЗАКЛЮЧНЕ підтвердження — НОВИЙ Volumized OB (1m)** у бік. Повертає {count,
 base4, layers[]}. get_state → funding-рядки несуть `layers`; UI — колонка «🎯 Шари».
-- **5-й шар особливий:** рахується ЛИШЕ коли зійшлись базові 1-4 (base4≥
-  layer_tg_min, cap 4). `_funding_vob(sym,d)` тягне 1m-свічки (кеш 8с) →
-  `detect_volumized_obs(swing=5, ob_end_method='Wick', max_atr_mult=3.5,
-  zone_count='Low')` → найновіший НЕ-breaker OB у бік. Стан у `_vob_state`,
-  анти-повтор за `formation_time` у `_vob_seen`.
+- **5-й шар = ГОЛОВНИЙ ТРИГЕР (естафета):** `_funding_vob(sym,d)` ПОСТІЙНО
+  моніторить 1m-OB для КОЖНОЇ funding-монети (кеш 8с) → `detect_volumized_obs
+  (swing=5, ob_end_method='Wick', max_atr_mult=3.5, zone_count='Low')` →
+  найновіший НЕ-breaker OB у бік. На НОВОМУ OB (`formation_time` ≠ `_vob_seen`)
+  перевіряємо базові шари 1-4 САМЕ ЗАРАЗ; сигнал лише якщо `base4 ≥ layer_tg_min`
+  (cap 4). Стан у `_vob_state` (для колонки), анти-повтор у `_vob_seen`.
 - На НОВОМУ OB (інший formation_time) + кулдаун → ОДИН TG «🎯 Рекомендація бота»
   (`_layer_signal_alert`/`_send_layer_alert`, топік 💰 funding). Це ЗАМІНЯЄ старе
   «рекомендована ботом» повідомлення.

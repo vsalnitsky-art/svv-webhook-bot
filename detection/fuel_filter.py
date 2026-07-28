@@ -230,6 +230,10 @@ DEFAULT_SETTINGS = {
     #     «м'якого запобіжника» у _open (свіжий CHoCH+BOS завжди проти CTR, тож
     #     ця перевірка ріже кожен розворот). МММ/виснаженість лишаються. Дефолт ON.
     'queue3_ignore_ctr': True,
+    #   queue3_ttl_hours — протермінувати монету в Черзі-3 після N год, щоб вона
+    #     не «висіла» нескінченно (без TTL монети накопичувались на годинник, бо
+    #     не проходили запобіжник МММ). 0 = без ліміту.
+    'queue3_ttl_hours': 6,
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -755,6 +759,10 @@ class FuelFilterDaemon:
         s['queue3_enabled'] = bool(s.get('queue3_enabled', False))
         s['readiness_log_enabled'] = bool(s.get('readiness_log_enabled', True))
         s['queue3_ignore_ctr'] = bool(s.get('queue3_ignore_ctr', True))
+        try:
+            s['queue3_ttl_hours'] = max(0, min(72, float(s.get('queue3_ttl_hours', 6) or 0)))
+        except (TypeError, ValueError):
+            s['queue3_ttl_hours'] = 6
         if s.get('setup_ctr_mode') not in ('soft', 'normal', 'off'):
             s['setup_ctr_mode'] = 'soft'
         try:
@@ -4823,11 +4831,10 @@ class FuelFilterDaemon:
         for sym, a in anoms.items():
             live.add(sym)
             d = a.get('dir')
-            base4 = self._funding_layers(sym, a).get('base4', 0)
-            if d not in ('LONG', 'SHORT') or base4 < need4:
-                self._vob_state.pop(sym, None)   # 5-й гасне, поки 1..4 не зійшлись
+            if d not in ('LONG', 'SHORT'):
+                self._vob_state.pop(sym, None)
                 continue
-            # Шари 1..4 зійшлись → шукаємо ЗАКЛЮЧНИЙ новий Volumized OB (1m).
+            # ПОСТІЙНО моніторимо новий Volumized OB (1m) — це головний тригер.
             ob = self._funding_vob(sym, d)
             if not ob:
                 self._vob_state[sym] = {'ok': False, 'dir': d}
@@ -4836,16 +4843,19 @@ class FuelFilterDaemon:
             self._vob_state[sym] = {'ok': True, 'dir': d, 'ftime': ft,
                                     'top': round(float(ob.get('top') or 0), 6),
                                     'bottom': round(float(ob.get('bottom') or 0), 6)}
-            # НОВИЙ OB (інший formation_time) + кулдаун → консолідований сигнал.
-            if ft and ft != self._vob_seen.get(sym) \
-                    and (now - self._layer_alert_at.get(sym, 0)) >= cool:
-                try:
-                    lay = self._funding_layers(sym, a)   # тепер із засвіченим 5-м
-                    self._send_layer_alert(sym, a, lay, ob, s)
-                except Exception as e:
-                    print(f"[FF-Layer] alert send error {sym}: {e}")
+            # НОВИЙ OB (інший formation_time) → перевіряємо базові шари 1..4 САМЕ
+            # ЗАРАЗ. Позначаємо OB як опрацьований незалежно (щоб не спрацювати
+            # пізніше на тому самому OB). Сигнал — лише якщо зараз усі 1..4 валідні.
+            if ft and ft != self._vob_seen.get(sym):
                 self._vob_seen[sym] = ft
-                self._layer_alert_at[sym] = now
+                lay = self._funding_layers(sym, a)
+                if lay.get('base4', 0) >= need4 \
+                        and (now - self._layer_alert_at.get(sym, 0)) >= cool:
+                    try:
+                        self._send_layer_alert(sym, a, lay, ob, s)
+                    except Exception as e:
+                        print(f"[FF-Layer] alert send error {sym}: {e}")
+                    self._layer_alert_at[sym] = now
         for k in list(self._vob_state.keys()):
             if k not in live:
                 self._vob_state.pop(k, None)
@@ -5037,6 +5047,10 @@ class FuelFilterDaemon:
             return
         now = time.time()
         log_on = bool(s.get('readiness_log_enabled', True))
+        try:
+            ttl_h = float(s.get('queue3_ttl_hours', 6) or 0)
+        except (TypeError, ValueError):
+            ttl_h = 6.0
         allow_long, allow_short = self._entry_gates()
         with self._lock:
             items = list(self._pending3.items())
@@ -5045,6 +5059,18 @@ class FuelFilterDaemon:
             d = info.get('dir')
             if d not in ('LONG', 'SHORT'):
                 continue
+            # ⏳ TTL — не тримати монету в черзі нескінченно (без цього монети
+            # накопичувались на годинник, бо не проходили запобіжник МММ).
+            if ttl_h > 0:
+                _added = float(info.get('added_at') or 0)
+                if _added and (now - _added) > ttl_h * 3600:
+                    with self._lock:
+                        self._pending3.pop(sym, None)
+                        self._persist_state()
+                    self._log_readiness(sym, d, None, 'skipped',
+                                        f'протерміновано (>{ttl_h:.0f}год у черзі без відкриття)', log_on)
+                    trace.append(f'{sym}:TTL')
+                    continue
             if (d == 'LONG' and not allow_long) or (d == 'SHORT' and not allow_short):
                 continue
             if sym in self._fuel_managed:
@@ -6124,6 +6150,7 @@ class FuelFilterDaemon:
                 {'k': 'Черга-3 (Готовність)', 'v': _on(s.get('queue3_enabled', False))},
                 {'k': 'Q3: відкриття SCORE ≥', 'v': (s.get('queue3_open_min_score', 43) if int(s.get('queue3_open_min_score', 43) or 0) > 0 else 'лише HOT')},
                 {'k': 'Q3: ігнор CTR-запобіжник', 'v': _on(s.get('queue3_ignore_ctr', True))},
+                {'k': 'Q3: TTL у черзі', 'v': (f"{s.get('queue3_ttl_hours',6)} год" if float(s.get('queue3_ttl_hours',6) or 0) > 0 else 'без ліміту')},
                 {'k': 'CTR у Готовності', 'v': {'soft': 'мʼяко', 'normal': 'звичайно', 'off': 'вимк'}.get(s.get('setup_ctr_mode', 'soft'), 'мʼяко')},
                 {'k': 'Q3: лог рішень', 'v': _on(s.get('readiness_log_enabled', True))},
                 {'k': 'Q2: hold-and-wait', 'v': _on(s.get('queue2_hold_and_wait', True))},
