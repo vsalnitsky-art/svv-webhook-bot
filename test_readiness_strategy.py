@@ -261,6 +261,51 @@ def test_safeguard_skips_ctr_for_q3():
     print('✓ safeguard: skip_ctr bypasses CTR (Q3 reversals), normal still blocks')
 
 
+# --- 🎯 funding 5-layer confluence ---
+def test_funding_layers_all_five():
+    ff, db = _ff()
+    sym = 'ENAUSDT'
+    ff._fuel_dir_smoothed = lambda s: {'status': 'LONG', 'mark_price': 1.0}
+    ff._fuel_str = {sym: 20}                                   # 1) МММ легкий у бік
+    ff._score_cache = {sym: {'dir': 'LONG', 'score': 45, 'label': 'СЕРЕДНІЙ'}}  # 2)
+    ff._setup_cache = {sym: {'ok': True, 'dir': 'LONG', 'score': 40, 'grade': 'СЕРЕДНІЙ'}}  # 3)
+    ff._setup_scalp_cache = {sym: {'ok': True, 'dir': 'LONG', 'score': 50, 'grade': 'ХОРОШИЙ'}}  # 4)
+    ff._funding_trends = {sym: -0.2}                           # 5) фандінг поглиблюється
+    lay = ff._funding_layers(sym, {'dir': 'LONG'})
+    assert lay['count'] == 5, [(l['key'], l['ok']) for l in lay['layers']]
+    print('✓ funding layers: усі 5 зійшлись')
+
+
+def test_funding_layers_direction_and_thresholds():
+    ff, db = _ff()
+    sym = 'SUIUSDT'
+    ff._fuel_dir_smoothed = lambda s: {'status': 'LONG', 'mark_price': 1.0}  # МММ ПРОТИ SHORT → fail
+    ff._fuel_str = {sym: 50}
+    ff._score_cache = {sym: {'dir': 'SHORT', 'score': 45}}     # у бік + ≥40 → ok
+    ff._setup_cache = {sym: {'ok': True, 'dir': 'SHORT', 'score': 20}}  # <38 → fail
+    ff._setup_scalp_cache = {}                                 # немає → fail
+    ff._funding_trends = {sym: 0.3}                            # не поглиблюється → fail
+    lay = ff._funding_layers(sym, {'dir': 'SHORT'})
+    assert lay['count'] == 1, [(l['key'], l['ok']) for l in lay['layers']]
+    print('✓ funding layers: рахує лише збіги в бік напрямку + пороги')
+
+
+def test_layer_alert_edge_fires_once():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'),
+        layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=30))
+    sym = 'ENAUSDT'
+    ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0}}
+    ff._funding_layers = lambda s, a: {'count': 5, 'layers': []}
+    ff.sent = []
+    ff._send_layer_alert = lambda sym, a, lay, s: ff.sent.append(sym)
+    ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
+    ff._layer_signal_alert(ff.get_settings(), 2_000_001.0)   # still good → edge already fired
+    assert ff.sent == [sym], ff.sent
+    print('✓ layer TG: fires once on rising edge (≥N/5)')
+
+
 if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for t in tests:

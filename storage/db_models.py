@@ -514,6 +514,7 @@ class ReadinessLog(Base):
     b_timing = Column(Float)
     b_context = Column(Float)
     exhaustion = Column(Float)           # move exhaustion %
+    move_pct = Column(Float)             # ціна від входу в чергу (+ = у наш бік)
     vetoes = Column(String(200))         # veto reasons, joined
     outcome = Column(String(12))         # opened / hold / skipped
     reason = Column(String(200))         # human-readable why
@@ -535,6 +536,7 @@ class ReadinessLog(Base):
                 'context': self.b_context,
             },
             'exhaustion': self.exhaustion,
+            'move_pct': self.move_pct,
             'vetoes': self.vetoes,
             'outcome': self.outcome,
             'reason': self.reason,

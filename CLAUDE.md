@@ -130,6 +130,25 @@ funding-монети). Той самий `grade_setup` — інші свічки
 - Панель `/api/fuel-filter/panel/<sym>` віддає `setup_scalp`; TradingView-оверлей
   (`tools/tradingview_mm_overlay.user.js`, v1.7.3) показує ⚡ Скальп-бейдж.
 
+## 🎯 Шаровий конфлюенс (1..5) для funding-монет + консолідований TG
+
+`_funding_layers(sym, a)` рахує 5 шарів У БІК напрямку монети: 1) МММ ≥ легкий
+(сила ≥10) · 2) SCORE ≥ СЕРЕДНІЙ (≥40) · 3) Готовність(1H) ≥ СЕРЕДНІЙ (≥38) ·
+4) Скальп ≥ СЕРЕДНІЙ (≥38) · 5) фандінг поглиблюється (f_trend<0). Повертає
+{count, layers[]}. get_state → funding-рядки несуть `layers`; UI — колонка «🎯 Шари»
+(●/○ + N/5, tooltip). Коли `count ≥ layer_tg_min` → ОДИН консолідований сигнал у
+Telegram (`_layer_signal_alert`/`_send_layer_alert`, топік 💰 funding, edge-trigger
++ кулдаун) — задум: замінити «зоопарк» дрібних алертів одним «повний збіг».
+- Налаштування: `layer_tg_on` (OFF), `layer_tg_min` (5), `layer_tg_cooldown_min` (30).
+- Тести: `test_readiness_strategy.py` (funding_layers + layer alert).
+
+## Лог Черги-3: рух у черзі + виснаженість
+
+`_log_readiness(..., move_pct=, exhaustion=)` — у `sob_readiness_log` і в UI-лозі
+несе **рух ціни від входу в чергу** (`move_pct`, + = у наш бік; `_pending3[sym]
+['added_price']`) і **виснаженість** — щоб було видно, що монета вже відпрацювала,
+поки стояла в черзі. У рядку логу: «… · рух +2.3% · вичерп 72% · …».
+
 ## Telegram-бот (`web/tg_bot.py`) — БЕЗПЕКА розсилки
 
 Відповідь адміна юзеру НІКОЛИ не повинна ставати масовою розсилкою:

@@ -405,6 +405,15 @@ DEFAULT_SETTINGS = {
     'scalp_tg_min_score': 60,              # поріг «хорошого» (HOT завжди тригерить)
     'scalp_tg_cooldown_min': 30,           # антиспам: не частіше разу на N хв/монету
     'scalp_tg_dir': 'any',                 # 'any' | 'LONG' | 'SHORT'
+    # ── 🎯 Шаровий конфлюенс для «💰 Funding — МММ» (1..5) + консолідований TG ──
+    # 5 шарів у бік напрямку монети: 1) МММ ≥ легкий · 2) SCORE ≥ СЕРЕДНІЙ ·
+    # 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · 5) фандінг поглиблюється.
+    # Коли зійшлось ≥ layer_tg_min шарів — ОДИН консолідований сигнал у Telegram
+    # (edge-trigger + кулдаун). Задум: замість купи розрізнених алертів — один
+    # «повний збіг».
+    'layer_tg_on': False,                  # вмик/вимк консолідований сигнал
+    'layer_tg_min': 5,                     # скільки шарів має зійтися (1..5)
+    'layer_tg_cooldown_min': 30,           # антиспам на монету, хв
     # 🛡 М'який запобіжник відкриття — блокує 3 «вбивці» (МММ<поріг / CTR
     # нейтральний-чи-проти / виснажено). Це РЕАЛЬНО впливає на відкриття угод.
     'safeguard_on': True,
@@ -488,6 +497,9 @@ class FuelFilterDaemon:
         # ⚡ TG на «хороший сигнал» у колонці Скальп: edge-trigger + cooldown.
         self._scalp_alert_state: Dict[str, bool] = {}   # sym → був «good» минулого разу
         self._scalp_alert_at: Dict[str, float] = {}     # sym → час останнього TG
+        # 🎯 Шаровий конфлюенс (1..5) → консолідований TG: edge-trigger + cooldown.
+        self._layer_alert_state: Dict[str, bool] = {}
+        self._layer_alert_at: Dict[str, float] = {}
         # 🚪 SMC «Готовність виходу» per symbol (grade_exit) — рахується поряд із
         # setup з того самого sig, у бік ВІДКРИТОЇ позиції. РАДНИК (показ + лог).
         self._exit_cache: Dict[str, Dict] = {}
@@ -771,6 +783,15 @@ class FuelFilterDaemon:
             s['scalp_tg_cooldown_min'] = 30
         if s.get('scalp_tg_dir') not in ('any', 'LONG', 'SHORT'):
             s['scalp_tg_dir'] = 'any'
+        s['layer_tg_on'] = bool(s.get('layer_tg_on', False))
+        try:
+            s['layer_tg_min'] = max(1, min(5, int(s.get('layer_tg_min', 5) or 5)))
+        except (TypeError, ValueError):
+            s['layer_tg_min'] = 5
+        try:
+            s['layer_tg_cooldown_min'] = max(0, min(720, int(s.get('layer_tg_cooldown_min', 30) or 0)))
+        except (TypeError, ValueError):
+            s['layer_tg_cooldown_min'] = 30
         # ── Queue 2 eject rules ──
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
@@ -985,8 +1006,13 @@ class FuelFilterDaemon:
                 prev3 = self._pending3.get(sym) or {}
                 _keep3 = (prev3.get('dir') == side and prev3.get('kind') == kind
                           and prev3.get('added_at'))
+                # Ціна на момент входу в чергу — щоб бачити рух монети, ПОКИ вона
+                # чекає (свіжий сетап часто відпрацьовує в наш бік ще в черзі).
+                _apx = (self._fuel_dir_smoothed(sym) or {}).get('mark_price')
                 self._pending3[sym] = {'dir': side, 'kind': kind,
-                                       'added_at': prev3.get('added_at') if _keep3 else now}
+                                       'added_at': prev3.get('added_at') if _keep3 else now,
+                                       'added_price': (prev3.get('added_price') if _keep3
+                                                       else _apx) or _apx}
                 changed = True
             if q2_take:
                 prev2 = self._pending2.get(sym) or {}
@@ -4679,6 +4705,92 @@ class FuelFilterDaemon:
                 f"{su.get('grade') or ''} · МММ {mm_s} · funding {rt_s}")
         self._broadcast_users('funding', 'notify_scalp', body)
 
+    def _funding_layers(self, sym: str, a: Dict) -> Dict:
+        """🎯 5-шаровий конфлюенс для funding-монети. Кожен шар = індикатор У БІК
+        напрямку монети (`a.dir`) + поріг якості. Повертає {count, layers:[{key,
+        label, ok, detail}]}. Використовується і для колонки «Шари», і для
+        консолідованого TG-сигналу."""
+        d = a.get('dir')
+        layers = []
+
+        def add(key, label, ok, detail=''):
+            layers.append({'key': key, 'label': label, 'ok': bool(ok), 'detail': detail})
+
+        if d not in ('LONG', 'SHORT'):
+            return {'count': 0, 'layers': []}
+        # 1) МММ у бік + ≥ легкий (сила ≥ 10%).
+        fd = self._fuel_dir_smoothed(sym) or {}
+        mm_dir = fd.get('status')
+        mm_str = self._fuel_str.get(sym)
+        if mm_str is None:
+            mm_str = (self._score_cache.get(sym) or {}).get('fuel_strength')
+        mm_str = mm_str or 0
+        add('mm', 'МММ', mm_dir == d and mm_str >= 10, f"{mm_dir or '—'} {int(mm_str)}%")
+        # 2) SCORE у бік + ≥ СЕРЕДНІЙ (≥ 40).
+        sc = self._score_cache.get(sym) or {}
+        add('score', 'SCORE', sc.get('dir') == d and (sc.get('score') or 0) >= 40,
+            f"{sc.get('label') or '—'} {sc.get('score') or 0}")
+        # 3) Готовність (1H grade_setup) у бік + ≥ СЕРЕДНІЙ (≥ 38).
+        su = self._setup_cache.get(sym) or {}
+        add('setup', 'Готовність', su.get('ok') and su.get('dir') == d and (su.get('score') or 0) >= 38,
+            f"{su.get('grade') or '—'} {su.get('score') or 0}")
+        # 4) Скальп (швидкий TF) у бік + ≥ СЕРЕДНІЙ (≥ 38). Порожньо, якщо вимкнено.
+        ss = self._setup_scalp_cache.get(sym) or {}
+        add('scalp', 'Скальп', ss.get('ok') and ss.get('dir') == d and (ss.get('score') or 0) >= 38,
+            f"{ss.get('grade') or '—'} {ss.get('score') or 0}" if ss.get('ok') else 'вимк/н-д')
+        # 5) Фандінг поглиблюється (|rate| росте) — f_trend < 0.
+        ft = (self._funding_trends or {}).get((sym or '').upper())
+        add('funding', 'Фандінг', isinstance(ft, (int, float)) and ft < 0,
+            'поглиблюється' if (isinstance(ft, (int, float)) and ft < 0) else 'без росту')
+        return {'count': sum(1 for l in layers if l['ok']), 'layers': layers}
+
+    def _layer_signal_alert(self, s: Dict, now: float):
+        """🎯 Консолідований TG: коли на funding-монеті зійшлось ≥ layer_tg_min
+        шарів — один сигнал (edge-trigger + кулдаун). Замінює «зоопарк» дрібних
+        алертів одним «повний збіг»."""
+        if not s.get('layer_tg_on'):
+            if self._layer_alert_state:
+                self._layer_alert_state.clear()
+                self._layer_alert_at.clear()
+            return
+        try:
+            need = max(1, min(5, int(s.get('layer_tg_min', 5) or 5)))
+            cool = max(0, int(s.get('layer_tg_cooldown_min', 30) or 0) * 60)
+        except (TypeError, ValueError):
+            need, cool = 5, 1800
+        with self._lock:
+            anoms = dict(self._anomalies)
+        live = set()
+        for sym, a in anoms.items():
+            live.add(sym)
+            lay = self._funding_layers(sym, a)
+            good = lay['count'] >= need
+            prev = self._layer_alert_state.get(sym, False)
+            if good and not prev and (now - self._layer_alert_at.get(sym, 0)) >= cool:
+                try:
+                    self._send_layer_alert(sym, a, lay, s)
+                except Exception as e:
+                    print(f"[FF-Layer] alert send error {sym}: {e}")
+                self._layer_alert_at[sym] = now
+            self._layer_alert_state[sym] = good
+        for k in list(self._layer_alert_state.keys()):
+            if k not in live:
+                self._layer_alert_state.pop(k, None)
+                self._layer_alert_at.pop(k, None)
+
+    def _send_layer_alert(self, sym: str, a: Dict, lay: Dict, s: Dict):
+        """🎯 Broadcast a consolidated «layered confluence» Telegram to 💰 funding."""
+        d = a.get('dir')
+        emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
+        rt = a.get('rate')
+        rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
+        cnt = lay.get('count', 0)
+        checks = '\n'.join(f"{'✅' if l['ok'] else '▫️'} {l['label']}: {l['detail']}"
+                           for l in lay.get('layers', []))
+        body = (f"🎯 #{sym} — повний збіг {cnt}/5 {emoji} {d}\n"
+                f"funding {rt_s}\n{checks}")
+        self._broadcast_users('funding', 'notify_layer', body)
+
     @staticmethod
     def _gold_funding_step(a: Dict, tol: float = 0.005):
         """✦ Return the clean half-integer LEVEL (0.5..4.0) if this coin's funding
@@ -4760,6 +4872,8 @@ class FuelFilterDaemon:
                     self._opportunity_alert(s, now)
                     # ⚡ TG на «хороший сигнал» у колонці Скальп (funding-монети).
                     self._scalp_setup_alert(s, now)
+                    # 🎯 Консолідований шаровий сигнал (funding, ≥N/5 шарів).
+                    self._layer_signal_alert(s, now)
             except Exception as e:
                 print(f"[FuelFilter] alert loop error: {e}")
             self._stop.wait(3)
@@ -4772,11 +4886,14 @@ class FuelFilterDaemon:
     # Re-log an unchanged hold/skip «Готовність» decision at most this often (s).
     READINESS_LOG_MIN_GAP = 300
 
-    def _log_readiness(self, symbol, signal_dir, su, outcome, reason, enabled):
+    def _log_readiness(self, symbol, signal_dir, su, outcome, reason, enabled,
+                       move_pct=None, exhaustion=None):
         """Persist ONE «Готовність» decision → sob_readiness_log + a concise line
         into the activity log. hold/skip are throttled (unchanged outcome+hot+
         score-bucket within READINESS_LOG_MIN_GAP is suppressed); 'opened' always
-        logs. Best-effort — never raises into the engine loop."""
+        logs. `move_pct` = рух ціни від входу в чергу (+ у наш бік), `exhaustion`
+        = виснаженість — щоб у логу було ВИДНО, що монета вже пішла в наш бік /
+        наскільки хід вичерпаний, поки вона стоїть у черзі. Best-effort."""
         if not enabled:
             return
         hot = bool((su or {}).get('hot'))
@@ -4792,11 +4909,14 @@ class FuelFilterDaemon:
             self._readiness_last_log.pop(symbol, None)
         blocks = (su or {}).get('blocks') or {}
         vetoes = (su or {}).get('vetoes') or []
+        _mv = round(move_pct, 3) if isinstance(move_pct, (int, float)) else None
+        _ex = round(exhaustion, 1) if isinstance(exhaustion, (int, float)) else None
         try:
             self._db.log_readiness(
                 symbol=symbol, signal_dir=signal_dir,
                 score=score, grade=(su or {}).get('grade'), hot=hot,
                 score_dir=(su or {}).get('dir'), blocks=blocks,
+                exhaustion=_ex, move_pct=_mv,
                 vetoes=('; '.join(vetoes) if vetoes else None),
                 outcome=outcome, reason=reason)
         except Exception as e:
@@ -4807,17 +4927,21 @@ class FuelFilterDaemon:
             log_activity = lambda *a, **k: None
         icon = {'opened': '✅', 'hold': '⏳', 'skipped': '⛔'}.get(outcome, '•')
         _ev = 'opened' if outcome == 'opened' else 'skipped'
+        # Хвіст рядка: рух у черзі (+ у наш бік) + виснаженість — одразу видно
+        # в UI-лозі, чи монета вже відпрацювала, поки чекала.
+        _mv_txt = f" · рух {_mv:+.2f}%" if _mv is not None else ''
+        _ex_txt = f" · вичерп {_ex:.0f}%" if _ex is not None else ''
         log_activity(
             symbol, _ev,
             f'Черга-3 🎯 Готовність {icon} SCORE '
             f'{score if score is not None else "—"} {(su or {}).get("grade") or "—"}'
-            f'{" HOT" if hot else ""} · {reason}',
+            f'{" HOT" if hot else ""}{_mv_txt}{_ex_txt} · {reason}',
             side=signal_dir, source='Q3',
             # Flat su_* keys so the activity-log CSV export populates the
             # per-block columns (structure/poi/zone/liquidity/mm/timing/context)
             # — same field names the Q2 intercept stamps — for real analysis.
             extra={'setup_score': score, 'setup_grade': (su or {}).get('grade'),
-                   'hot': hot, 'outcome': outcome,
+                   'hot': hot, 'outcome': outcome, 'move_pct': _mv, 'exhaustion': _ex,
                    'su_struct': blocks.get('structure'), 'su_poi': blocks.get('poi'),
                    'su_zone': blocks.get('zone'), 'su_liq': blocks.get('liquidity'),
                    'su_mm': blocks.get('mm'), 'su_timing': blocks.get('timing'),
@@ -4859,9 +4983,18 @@ class FuelFilterDaemon:
                 self._log_readiness(sym, d, None, 'skipped', 'немає ціни', log_on)
                 trace.append(f'{sym}:немає-ціни')
                 continue
+            # Рух ціни від входу в чергу (+ = у НАШ бік) + виснаженість — щоб у
+            # лозі було видно, що монета вже пішла в наш бік, поки чекала.
+            _apx = info.get('added_price')
+            _mv = None
+            if _apx and mark:
+                _raw = (float(mark) - float(_apx)) / float(_apx) * 100.0
+                _mv = _raw if d == 'LONG' else -_raw
+            _ex = (self._score_cache.get(sym) or {}).get('exh')
             su = self._setup_cache.get(sym)
             if not su or not su.get('ok'):
-                self._log_readiness(sym, d, su, 'hold', 'сетап ще рахується', log_on)
+                self._log_readiness(sym, d, su, 'hold', 'сетап ще рахується', log_on,
+                                    move_pct=_mv, exhaustion=_ex)
                 trace.append(f'{sym}:сетап-н/д')
                 continue
             # READINESS trigger: direction must match AND either grade_setup is
@@ -4877,7 +5010,7 @@ class FuelFilterDaemon:
                     sym, d, su, 'hold',
                     f"не готовий (SCORE {su.get('score')} {su.get('grade')}, "
                     f"HOT={_by_hot}, dir {su.get('dir')}; поріг ≥{_min_score})",
-                    log_on)
+                    log_on, move_pct=_mv, exhaustion=_ex)
                 trace.append(f"{sym}:{su.get('score')}/{su.get('grade')}")
                 continue
             _why = 'HOT' if _by_hot else f'SCORE≥{_min_score}'
@@ -4893,12 +5026,14 @@ class FuelFilterDaemon:
                         self._pending3.pop(sym, None)
                         self._persist_state()
                     self._log_readiness(sym, d, su, 'opened',
-                                        f"{_why} · SCORE {su.get('score')} {su.get('grade')}", log_on)
+                                        f"{_why} · SCORE {su.get('score')} {su.get('grade')}", log_on,
+                                        move_pct=_mv, exhaustion=_ex)
                     trace.append(f'{sym}:✅ВІДКРИТО {d}')
                     print(f"[FF-Readiness] opened {d} {sym} "
                           f"(SCORE {su.get('score')} {su.get('grade')})")
                 else:
-                    self._log_readiness(sym, d, su, 'skipped', '_open відхилив', log_on)
+                    self._log_readiness(sym, d, su, 'skipped', '_open відхилив', log_on,
+                                        move_pct=_mv, exhaustion=_ex)
                     trace.append(f'{sym}:_open-відхилив')
             except Exception as e:
                 trace.append(f'{sym}:помилка')
@@ -5940,6 +6075,7 @@ class FuelFilterDaemon:
                 {'k': 'Скальп TF / HTF', 'v': f"{s.get('funding_setup_tf','5m')} / {s.get('funding_setup_htf','15m')}"},
                 {'k': 'Скальп TTL / cap', 'v': f"{s.get('funding_setup_ttl',45)}с / {s.get('funding_setup_max_per_cycle',8)} на цикл"},
                 {'k': 'TG скальп-сигнал', 'v': (f"УВІМК (HOT/≥{s.get('scalp_tg_min_score',60)}, {s.get('scalp_tg_dir','any')}, кулдаун {s.get('scalp_tg_cooldown_min',30)}хв)" if s.get('scalp_tg_on') else 'вимк')},
+                {'k': 'TG шаровий сигнал', 'v': (f"УВІМК (≥{s.get('layer_tg_min',5)}/5, кулдаун {s.get('layer_tg_cooldown_min',30)}хв)" if s.get('layer_tg_on') else 'вимк')},
             ]},
             {'title': '🔍 SMC-сигнал (сканер)', 'items': [
                 {'k': 'Режим сигналу', 'v': alert_mode},
@@ -6216,6 +6352,8 @@ class FuelFilterDaemon:
                     'setup': self._setup_cache.get(sym),
                     # ⚡ Скальперська «Готовність» на швидкому TF (лише funding).
                     'setup_scalp': self._setup_scalp_cache.get(sym),
+                    # 🎯 5-шаровий конфлюенс (для колонки «Шари» + TG-сигналу).
+                    'layers': self._funding_layers(sym, a),
                     # 🎯 Композитний аналіз «найкращий момент для входу».
                     'opportunity': _opp,
                     'opportunity_hot': _opp_hot,

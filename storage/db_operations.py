@@ -671,7 +671,8 @@ class DBOperations:
     def log_readiness(self, symbol: str, signal_dir: str = None,
                       score: int = None, grade: str = None, hot: bool = False,
                       score_dir: str = None, blocks: Dict = None,
-                      exhaustion: float = None, vetoes: str = None,
+                      exhaustion: float = None, move_pct: float = None,
+                      vetoes: str = None,
                       outcome: str = None, reason: str = None) -> None:
         """Insert one decision row for the «Готовність» strategy. Best-effort;
         never raises into the engine loop."""
@@ -685,7 +686,7 @@ class DBOperations:
                 b_zone=b.get('zone'), b_liquidity=b.get('liquidity'),
                 b_mm=b.get('mm'), b_timing=b.get('timing'),
                 b_context=b.get('context'),
-                exhaustion=exhaustion, vetoes=(vetoes or None),
+                exhaustion=exhaustion, move_pct=move_pct, vetoes=(vetoes or None),
                 outcome=outcome, reason=reason)
             session.add(row)
             session.commit()

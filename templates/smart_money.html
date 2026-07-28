@@ -2382,6 +2382,25 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </div>
                         <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 grade_setup спроєктований під 1H-свінг; на швидких TF структура/зона шумніші — трактуй як окремий показник для коротких funding-рухів, не як 1:1 з 1H.</div>
                     </div>
+                    <!-- 🎯 Шаровий конфлюенс → консолідований TG-сигнал -->
+                    <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#c9b8ff;cursor:pointer;margin-bottom:8px" title="Один консолідований сигнал у Telegram (топік 💰 funding), коли на монеті зійшлось ≥ порога шарів (колонка «🎯 Шари»). Замість купи розрізнених алертів — «повний збіг». Edge-trigger + кулдаун.">
+                            <input type="checkbox" id="ff-layer-tg" onchange="saveFuelFilterSettings()"> 🎯 TG на шаровий збіг (консолідований сигнал)
+                        </label>
+                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки шарів (із 5) має зійтися, щоб надіслати сигнал. 5 = повний збіг.">Шарів ≥</label>
+                                <select id="ff-layer-tg-min" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace">
+                                    <option value="3">3/5</option><option value="4">4/5</option><option value="5">5/5</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Антиспам: не слати повторно по тій самій монеті частіше, ніж раз на N хв.">Кулдаун, хв</label>
+                                <input type="number" id="ff-layer-tg-cool" min="0" max="720" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
+                            </div>
+                        </div>
+                        <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 Шари: 1) МММ ≥ легкий · 2) SCORE ≥ СЕРЕДНІЙ · 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · 5) фандінг поглиблюється — усі в бік напрямку монети. Це заміна «зоопарку» дрібних TG-алертів одним якісним. Решту TG-оповіщень (поява/зникнення funding, gold, spike, скальп) можна вимкнути вище/в акордеонах.</div>
+                    </div>
                     <!-- 🚀 Аномальний ріст (spike) — різкий рух ціни поза логікою МММ -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
                         <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">🚀 Аномальний ріст (монета зі сканера, що різко вистрілила)</div>
@@ -2478,6 +2497,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <thead>
                         <tr>
                             <th>Символ</th><th>Напрямок</th>
+                            <th title="🎯 Шаровий конфлюенс 1..5 у бік монети: 1) МММ ≥ легкий · 2) SCORE ≥ СЕРЕДНІЙ · 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · 5) фандінг поглиблюється. ● = зійшовся. Коли ≥ порога — консолідований сигнал у Telegram.">🎯 Шари</th>
                             <th title="Тиск маркетмейкера (МММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">МММ</th>
                             <th title="Оцінка ЯКОСТІ сетапу 0–100 + напрямок руху (не команда «відкривай»): ВІДМІННИЙ (≥72) / ХОРОШИЙ (≥55) / СЕРЕДНІЙ (≥40) / СЛАБКИЙ (≥25) / ВИЧЕРПАНО (<25)">SCORE</th>
                             <th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th>
@@ -2487,7 +2507,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="ff-anomaly-tbody">
-                        <tr><td colspan="8" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>
+                        <tr><td colspan="9" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -7420,6 +7440,21 @@ function ffScoreBadgeHTML(sc) {
 // 🎯 SMC «Готовність сетапу» (1H) — бейдж + чек-лист у тултипі. Це ПІДКАЗКА
 // (наскільки зійшовся SMC-конфлюенс для входу), а не команда: реальний вхід
 // ухвалює двигун/Черга-2. 🎯 = суворий збіг усіх ключових блоків.
+// 🎯 Шаровий конфлюенс (1..5) — ● зійшовся / ○ ні + «N/5», колір за кількістю.
+// Tooltip перелічує кожен шар зі статусом і деталлю. 1:1 дані з бекенду (a.layers).
+function ffLayersCell(lay) {
+    if (!lay || !lay.layers || !lay.layers.length)
+        return '<span style="color:#555">—</span>';
+    const n = lay.count || 0;
+    const dots = lay.layers.map(l => l.ok
+        ? '<span style="color:#4ade80">●</span>'
+        : '<span style="color:#3a4152">○</span>').join('');
+    const col = n >= 5 ? '#4ade80' : (n >= 3 ? '#84cc16' : (n >= 1 ? '#fbbf24' : '#8b93a7'));
+    const tip = lay.layers.map(l => `${l.ok ? '✅' : '▫️'} ${l.label}: ${l.detail}`).join('\n');
+    return `<span title="${tip.replace(/"/g, '&quot;')}" style="white-space:nowrap;font-weight:700">`
+        + `${dots} <span style="color:${col}">${n}/5</span></span>`;
+}
+
 function ffSetupCell(su) {
     if (!su || !su.ok) return `<span style="display:inline-flex"><span style="width:144px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>`;
     const c = su.color || '#94a3b8';
@@ -8534,11 +8569,17 @@ function ffQueueRowHTML(t, qnum) {
     const oppMark = t.opp
         ? ` <span title="🎯 Зайшла з 💰 Funding (рекомендація бота) — проходить Чергу-2 повним алгоритмом" style="font-size:0.74rem;cursor:help">🎯</span>`
         : '';
-    const dirHtml = (t.dir === 'LONG'
-        ? '<span style="color:#22c55e">🟢 LONG</span>'
-        : (t.dir === 'SHORT'
-            ? '<span style="color:#ef4444">🔴 SHORT</span>'
-            : '<span style="color:#8b93a7">⚪ —</span>')) + smartMark;
+    // Напрямок як ФІКСОВАНИЙ трикутник (▲/▼) + текст у слотах постійної ширини —
+    // дані не «пригають» при оновленні, трикутник завжди на одному місці. Слот
+    // 🧭 зарезервовано (порожній, коли не smart-напрямок), щоб колонка не стрибала.
+    const _dTri = t.dir === 'LONG' ? '▲' : (t.dir === 'SHORT' ? '▼' : '•');
+    const _dTxt = t.dir === 'LONG' ? 'LONG' : (t.dir === 'SHORT' ? 'SHORT' : '—');
+    const _dCol = t.dir === 'LONG' ? '#22c55e' : (t.dir === 'SHORT' ? '#ef4444' : '#8b93a7');
+    const dirHtml = `<span style="display:inline-flex;align-items:center;white-space:nowrap">`
+        + `<span style="width:13px;text-align:center;flex:none;color:${_dCol};font-weight:900">${_dTri}</span>`
+        + `<b style="width:46px;flex:none;color:${_dCol};font-weight:700;padding-left:3px">${_dTxt}</b>`
+        + `<span style="width:18px;text-align:center;flex:none">${smartMark}</span>`
+        + `</span>`;
     // МММ = fuel direction dot + strength 0..100% + mini-bar + trend.
     const mmHtml = ffFuelCell(t.mm || null, t.mm_str, t.mm_str_prev);
     const heldHtml = t.dir
@@ -8961,6 +9002,9 @@ function renderFuelFilter(d) {
     setIf('ff-scalp-tg-min', String(s.scalp_tg_min_score != null ? s.scalp_tg_min_score : 60));
     setIf('ff-scalp-tg-dir', s.scalp_tg_dir || 'any');
     setIf('ff-scalp-tg-cool', String(s.scalp_tg_cooldown_min != null ? s.scalp_tg_cooldown_min : 30));
+    setIf('ff-layer-tg', !!s.layer_tg_on);
+    setIf('ff-layer-tg-min', String(s.layer_tg_min != null ? s.layer_tg_min : 5));
+    setIf('ff-layer-tg-cool', String(s.layer_tg_cooldown_min != null ? s.layer_tg_cooldown_min : 30));
     setIf('ff-funding-cooldown', String(s.funding_notify_cooldown_min != null ? s.funding_notify_cooldown_min : 30));
     setIf('ff-funding-hyst', String(s.funding_mm_hysteresis != null ? s.funding_mm_hysteresis : 10));
     setIf('ff-funding-session', !!s.funding_session_mode);
@@ -9059,7 +9103,7 @@ function renderFuelFilter(d) {
     if (atb) {
         const arows = d.anomalies || [];
         if (!arows.length) {
-            atb.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>';
+            atb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>';
         } else {
             atb.innerHTML = arows.map(a => {
                 const dirHtml = a.dir === 'LONG'
@@ -9145,6 +9189,7 @@ function renderFuelFilter(d) {
                 return `<tr style="${_rowBg}">
                     <td style="font-weight:600">${a.spike ? `<span title="Аномальний ріст: різкий рух ціни ${a.spike_move != null ? (a.spike_move >= 0 ? '+' : '') + a.spike_move + '% ' : ''}+ зростання обсягу — варто розглянути" style="margin-right:4px;cursor:default">🚀</span>` : ''}<span onclick="showFundingHistory('${a.symbol}')" title="Історія монети (архів)" style="cursor:pointer;margin-right:4px">📜</span><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
                     <td>${dirHtml}</td>
+                    <td style="white-space:nowrap">${ffLayersCell(a.layers)}</td>
                     <td style="font-size:0.72rem"><span style="display:inline-flex;align-items:center">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}<span style="width:18px;text-align:center;flex:none;color:#fbbf24;font-weight:700"${a.paused ? ' title="Сесія на паузі (WAIT) — тримається за напрямком"' : ''}>${a.paused ? '⏸' : ''}</span></span></td>
                     <td style="white-space:nowrap">${ffScoreBadgeHTML(a.score)}</td>
                     <td style="white-space:nowrap">${ffSetupCell(a.setup)}</td>
@@ -9154,7 +9199,7 @@ function renderFuelFilter(d) {
                 </tr>` +
                 // ── Другий рядок під монетою: винесені колонки (Funding · до
                 //    виплати · Vol 24h · Дії), щоб таблиця не була надто широкою.
-                `<tr style="${_rowBg}"><td colspan="8" style="padding:2px 8px 6px 34px;border-bottom:1px solid rgba(255,255,255,0.07)">
+                `<tr style="${_rowBg}"><td colspan="9" style="padding:2px 8px 6px 34px;border-bottom:1px solid rgba(255,255,255,0.07)">
                     <span style="display:inline-flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:0.72rem;color:#9aa3b5">
                         <span title="Поточний funding % і час до наступного нарахування">💵 <b style="color:#cbd5e1;font-weight:600">${rateTxt} ${cdTxt}</b>${fTrendBadge(a.f_trend)}</span>
                         <span title="24-годинний обсяг торгів (USD)">📊 Vol 24h: <b style="color:#cbd5e1;font-weight:600">${volTxt}</b></span>
@@ -9186,7 +9231,7 @@ function oppStatsRow(a) {
     const _rec = (st.recent || []).map(e =>
         `${fmtPriceJS(e.start_price)}→${fmtPriceJS(e.end_price)} · ${fmtTimer(e.dur_sec)}`).join('\n');
     const _tip = _rec ? `Останні епізоди (вхід→вихід · тривалість):\n${_rec}` : 'Ще не було завершених епізодів';
-    return `<tr style="background:rgba(74,222,128,0.07)"><td colspan="8" title="${_tip.replace(/"/g,'&quot;')}" style="padding:1px 8px 5px 34px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">`
+    return `<tr style="background:rgba(74,222,128,0.07)"><td colspan="9" title="${_tip.replace(/"/g,'&quot;')}" style="padding:1px 8px 5px 34px;font-size:0.68rem;color:#a7f3d0;white-space:nowrap;cursor:help">`
         + `🎯 <b style="color:#4ade80;text-shadow:0 0 6px rgba(74,222,128,0.6)">рекомендована ботом</b>`
         + ` · в угоді <b>${timer}</b>`
         + ` · вхід @ <b>${entryPx}</b>`
@@ -9840,6 +9885,9 @@ async function saveFuelFilterSettings() {
         scalp_tg_min_score: parseInt(_v('ff-scalp-tg-min', '60') || '60', 10),
         scalp_tg_dir: _v('ff-scalp-tg-dir', 'any') || 'any',
         scalp_tg_cooldown_min: parseInt(_v('ff-scalp-tg-cool', '30') || '30', 10),
+        layer_tg_on: _c('ff-layer-tg'),
+        layer_tg_min: parseInt(_v('ff-layer-tg-min', '5') || '5', 10),
+        layer_tg_cooldown_min: parseInt(_v('ff-layer-tg-cool', '30') || '30', 10),
         funding_notify_cooldown_min: parseInt(_v('ff-funding-cooldown', '30') || '30', 10),
         funding_mm_hysteresis: parseInt(_v('ff-funding-hyst', '10') || '10', 10),
         funding_session_mode: _c('ff-funding-session'),
