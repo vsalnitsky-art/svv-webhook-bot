@@ -2384,12 +2384,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </div>
                     <!-- 🎯 Шаровий конфлюенс → консолідований TG-сигнал -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#c9b8ff;cursor:pointer;margin-bottom:8px" title="Один консолідований сигнал у Telegram (топік 💰 funding), коли на монеті зійшлось ≥ порога шарів (колонка «🎯 Шари»). Замість купи розрізнених алертів — «повний збіг». Edge-trigger + кулдаун.">
-                            <input type="checkbox" id="ff-layer-tg" onchange="saveFuelFilterSettings()"> 🎯 TG на шаровий збіг (консолідований сигнал)
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#c9b8ff;cursor:pointer;margin-bottom:8px" title="«Рекомендація бота»: коли зійшлись базові шари 1-4 і зʼявляється НОВИЙ Volumized OB (1m) у бік напрямку — один сигнал у Telegram (топік 💰 funding). Замінює старе «рекомендована ботом». Edge на новому OB + кулдаун.">
+                            <input type="checkbox" id="ff-layer-tg" onchange="saveFuelFilterSettings()"> 🎯 TG «Рекомендація бота» (шари 1-4 + новий Volumized OB 1m)
                         </label>
                         <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
                             <div>
-                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки шарів (із 5) має зійтися, щоб надіслати сигнал. 5 = повний збіг.">Шарів ≥</label>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки з БАЗОВИХ шарів 1-4 має зійтися, перш ніж 5-й (новий Volumized OB 1m) підтвердить сигнал. 5 або 4 = усі базові.">Базових ≥</label>
                                 <select id="ff-layer-tg-min" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace">
                                     <option value="3">3/5</option><option value="4">4/5</option><option value="5">5/5</option>
                                 </select>
@@ -2399,7 +2399,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <input type="number" id="ff-layer-tg-cool" min="0" max="720" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                             </div>
                         </div>
-                        <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 Шари: 1) МММ ≥ легкий · 2) SCORE ≥ СЕРЕДНІЙ · 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · 5) фандінг поглиблюється — усі в бік напрямку монети. Це заміна «зоопарку» дрібних TG-алертів одним якісним. Решту TG-оповіщень (поява/зникнення funding, gold, spike, скальп) можна вимкнути вище/в акордеонах.</div>
+                        <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 Шари (усі в бік напрямку монети): 1) МММ ≥ легкий і РОСТЕ (↑) · 2) SCORE ≥ СЕРЕДНІЙ · 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · <b>5) ЗАКЛЮЧНЕ — новий Volumized OB (1m: Swing 5, Wick, ATR×3.5, Zone Low)</b>. 5-й спрацьовує ЛИШЕ коли зійшлись 1-4; на новому OB → один сигнал «Рекомендація бота» в Telegram (замінює старе повідомлення). Решту дрібних TG-оповіщень (funding/gold/spike/скальп) можна вимкнути.</div>
                     </div>
                     <!-- 🚀 Аномальний ріст (spike) — різкий рух ціни поза логікою МММ -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
@@ -2497,7 +2497,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <thead>
                         <tr>
                             <th>Символ</th><th>Напрямок</th>
-                            <th title="🎯 Шаровий конфлюенс 1..5 у бік монети: 1) МММ ≥ легкий · 2) SCORE ≥ СЕРЕДНІЙ · 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · 5) фандінг поглиблюється. ● = зійшовся. Коли ≥ порога — консолідований сигнал у Telegram.">🎯 Шари</th>
+                            <th title="🎯 Шаровий конфлюенс 1..5 у бік монети: 1) МММ ≥ легкий і РОСТЕ (стрілка ↑) · 2) SCORE ≥ СЕРЕДНІЙ · 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · 5) ЗАКЛЮЧНЕ підтвердження — НОВИЙ Volumized OB (1m) у бік. ● = зійшовся. 5-й вмикається лише коли зійшлись 1-4; на новому OB → «Рекомендація бота» в Telegram.">🎯 Шари</th>
                             <th title="Тиск маркетмейкера (МММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">МММ</th>
                             <th title="Оцінка ЯКОСТІ сетапу 0–100 + напрямок руху (не команда «відкривай»): ВІДМІННИЙ (≥72) / ХОРОШИЙ (≥55) / СЕРЕДНІЙ (≥40) / СЛАБКИЙ (≥25) / ВИЧЕРПАНО (<25)">SCORE</th>
                             <th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th>

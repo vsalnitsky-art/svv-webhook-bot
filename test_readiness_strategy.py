@@ -267,13 +267,14 @@ def test_funding_layers_all_five():
     sym = 'ENAUSDT'
     ff._fuel_dir_smoothed = lambda s: {'status': 'LONG', 'mark_price': 1.0}
     ff._fuel_str = {sym: 20}                                   # 1) МММ легкий у бік
+    ff._fuel_str_prev = {sym: 10}                              #    + сила РОСТЕ (↑)
     ff._score_cache = {sym: {'dir': 'LONG', 'score': 45, 'label': 'СЕРЕДНІЙ'}}  # 2)
     ff._setup_cache = {sym: {'ok': True, 'dir': 'LONG', 'score': 40, 'grade': 'СЕРЕДНІЙ'}}  # 3)
     ff._setup_scalp_cache = {sym: {'ok': True, 'dir': 'LONG', 'score': 50, 'grade': 'ХОРОШИЙ'}}  # 4)
-    ff._funding_trends = {sym: -0.2}                           # 5) фандінг поглиблюється
+    ff._vob_state = {sym: {'ok': True, 'dir': 'LONG', 'top': 1.2, 'bottom': 1.1}}  # 5) новий VOB
     lay = ff._funding_layers(sym, {'dir': 'LONG'})
-    assert lay['count'] == 5, [(l['key'], l['ok']) for l in lay['layers']]
-    print('✓ funding layers: усі 5 зійшлись')
+    assert lay['count'] == 5 and lay['base4'] == 4, [(l['key'], l['ok']) for l in lay['layers']]
+    print('✓ funding layers: усі 5 зійшлись (5-й = новий Volumized OB)')
 
 
 def test_funding_layers_direction_and_thresholds():
@@ -290,20 +291,40 @@ def test_funding_layers_direction_and_thresholds():
     print('✓ funding layers: рахує лише збіги в бік напрямку + пороги')
 
 
-def test_layer_alert_edge_fires_once():
+def test_layer_alert_vob_confirms_and_dedups():
     ff, db = _ff()
     db.set_setting('fuel_filter_settings', dict(
         db.get_setting('fuel_filter_settings'),
-        layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=30))
+        layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=0))
     sym = 'ENAUSDT'
     ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0}}
-    ff._funding_layers = lambda s, a: {'count': 5, 'layers': []}
+    ff._funding_layers = lambda s, a: {'base4': 4, 'count': 5, 'layers': []}
+    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 1.2, 'bottom': 1.1, 'breaker': False}
     ff.sent = []
-    ff._send_layer_alert = lambda sym, a, lay, s: ff.sent.append(sym)
+    ff._send_layer_alert = lambda sym, a, lay, ob, s: ff.sent.append((sym, ob['formation_time']))
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
-    ff._layer_signal_alert(ff.get_settings(), 2_000_001.0)   # still good → edge already fired
-    assert ff.sent == [sym], ff.sent
-    print('✓ layer TG: fires once on rising edge (≥N/5)')
+    ff._layer_signal_alert(ff.get_settings(), 2_000_010.0)   # same OB → no re-send
+    assert ff.sent == [(sym, 111)], ff.sent
+    ff._funding_vob = lambda sym, d: {'formation_time': 222, 'top': 1.3, 'bottom': 1.2, 'breaker': False}
+    ff._layer_signal_alert(ff.get_settings(), 2_000_020.0)   # NEW OB → new alert
+    assert ff.sent == [(sym, 111), (sym, 222)], ff.sent
+    print('✓ layer TG: спрацьовує на НОВИЙ Volumized OB (1m), не дублює той самий')
+
+
+def test_layer_alert_needs_base4():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'),
+        layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=0))
+    sym = 'ENAUSDT'
+    ff._anomalies = {sym: {'dir': 'LONG'}}
+    ff._funding_layers = lambda s, a: {'base4': 3, 'count': 3, 'layers': []}   # 1-4 не всі
+    ff.sent = []
+    ff._send_layer_alert = lambda *a, **k: ff.sent.append(1)
+    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 1, 'bottom': 1, 'breaker': False}
+    ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
+    assert ff.sent == [], 'без усіх базових шарів 1-4 — VOB не перевіряється, сигналу нема'
+    print('✓ layer TG: 5-й (новий VOB) лише ПІСЛЯ зходження шарів 1-4')
 
 
 if __name__ == '__main__':

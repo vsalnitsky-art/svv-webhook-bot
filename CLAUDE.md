@@ -133,14 +133,21 @@ funding-монети). Той самий `grade_setup` — інші свічки
 ## 🎯 Шаровий конфлюенс (1..5) для funding-монет + консолідований TG
 
 `_funding_layers(sym, a)` рахує 5 шарів У БІК напрямку монети: 1) МММ ≥ легкий
-(сила ≥10) · 2) SCORE ≥ СЕРЕДНІЙ (≥40) · 3) Готовність(1H) ≥ СЕРЕДНІЙ (≥38) ·
-4) Скальп ≥ СЕРЕДНІЙ (≥38) · 5) фандінг поглиблюється (f_trend<0). Повертає
-{count, layers[]}. get_state → funding-рядки несуть `layers`; UI — колонка «🎯 Шари»
-(●/○ + N/5, tooltip). Коли `count ≥ layer_tg_min` → ОДИН консолідований сигнал у
-Telegram (`_layer_signal_alert`/`_send_layer_alert`, топік 💰 funding, edge-trigger
-+ кулдаун) — задум: замінити «зоопарк» дрібних алертів одним «повний збіг».
-- Налаштування: `layer_tg_on` (OFF), `layer_tg_min` (5), `layer_tg_cooldown_min` (30).
-- Тести: `test_readiness_strategy.py` (funding_layers + layer alert).
+(сила ≥10) **і РОСТЕ** (тренд ↑: now>prev+1 з `_fuel_str_prev`) · 2) SCORE ≥
+СЕРЕДНІЙ (≥40) · 3) Готовність(1H) ≥ СЕРЕДНІЙ (≥38) · 4) Скальп ≥ СЕРЕДНІЙ (≥38) ·
+**5) ЗАКЛЮЧНЕ підтвердження — НОВИЙ Volumized OB (1m)** у бік. Повертає {count,
+base4, layers[]}. get_state → funding-рядки несуть `layers`; UI — колонка «🎯 Шари».
+- **5-й шар особливий:** рахується ЛИШЕ коли зійшлись базові 1-4 (base4≥
+  layer_tg_min, cap 4). `_funding_vob(sym,d)` тягне 1m-свічки (кеш 8с) →
+  `detect_volumized_obs(swing=5, ob_end_method='Wick', max_atr_mult=3.5,
+  zone_count='Low')` → найновіший НЕ-breaker OB у бік. Стан у `_vob_state`,
+  анти-повтор за `formation_time` у `_vob_seen`.
+- На НОВОМУ OB (інший formation_time) + кулдаун → ОДИН TG «🎯 Рекомендація бота»
+  (`_layer_signal_alert`/`_send_layer_alert`, топік 💰 funding). Це ЗАМІНЯЄ старе
+  «рекомендована ботом» повідомлення.
+- Налаштування: `layer_tg_on` (OFF), `layer_tg_min` (скільки з 1-4, дефолт 5→cap4),
+  `layer_tg_cooldown_min` (30). VOB-параметри — константи `_VOB_*` (1m/5/Wick/3.5/Low).
+- Тести: `test_readiness_strategy.py` (funding_layers + VOB-alert + base4-gate).
 
 ## Лог Черги-3: рух у черзі + виснаженість
 

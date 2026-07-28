@@ -500,6 +500,10 @@ class FuelFilterDaemon:
         # 🎯 Шаровий конфлюенс (1..5) → консолідований TG: edge-trigger + cooldown.
         self._layer_alert_state: Dict[str, bool] = {}
         self._layer_alert_at: Dict[str, float] = {}
+        # 5-й шар = НОВИЙ Volumized OB (1m). Стан + анти-повтор по formation_time.
+        self._vob_state: Dict[str, Dict] = {}    # sym → {ok, dir, ftime, top, bottom}
+        self._vob_seen: Dict[str, int] = {}      # sym → formation_time, по якому вже слали
+        self._vob_klines: Dict = {}              # (sym) → (ts, klines_1m) короткий кеш
         # 🚪 SMC «Готовність виходу» per symbol (grade_exit) — рахується поряд із
         # setup з того самого sig, у бік ВІДКРИТОЇ позиції. РАДНИК (показ + лог).
         self._exit_cache: Dict[str, Dict] = {}
@@ -4718,14 +4722,21 @@ class FuelFilterDaemon:
 
         if d not in ('LONG', 'SHORT'):
             return {'count': 0, 'layers': []}
-        # 1) МММ у бік + ≥ легкий (сила ≥ 10%).
+        # 1) МММ у бік + ≥ легкий (сила ≥ 10%) + сила РОСТЕ (↑ — та сама стрілка
+        #    тренду з правого слоту пілюлі МММ: now > prev+1, як у ffFuelCell).
         fd = self._fuel_dir_smoothed(sym) or {}
         mm_dir = fd.get('status')
         mm_str = self._fuel_str.get(sym)
         if mm_str is None:
             mm_str = (self._score_cache.get(sym) or {}).get('fuel_strength')
         mm_str = mm_str or 0
-        add('mm', 'МММ', mm_dir == d and mm_str >= 10, f"{mm_dir or '—'} {int(mm_str)}%")
+        mm_prev = self._fuel_str_prev.get(sym)
+        mm_rising = isinstance(mm_prev, (int, float)) and mm_str > mm_prev + 1
+        mm_arrow = ('↑' if mm_rising
+                    else ('↓' if (isinstance(mm_prev, (int, float)) and mm_str < mm_prev - 1)
+                          else '→'))
+        add('mm', 'МММ', mm_dir == d and mm_str >= 10 and mm_rising,
+            f"{mm_dir or '—'} {int(mm_str)}% {mm_arrow}")
         # 2) SCORE у бік + ≥ СЕРЕДНІЙ (≥ 40).
         sc = self._score_cache.get(sym) or {}
         add('score', 'SCORE', sc.get('dir') == d and (sc.get('score') or 0) >= 40,
@@ -4738,48 +4749,111 @@ class FuelFilterDaemon:
         ss = self._setup_scalp_cache.get(sym) or {}
         add('scalp', 'Скальп', ss.get('ok') and ss.get('dir') == d and (ss.get('score') or 0) >= 38,
             f"{ss.get('grade') or '—'} {ss.get('score') or 0}" if ss.get('ok') else 'вимк/н-д')
-        # 5) Фандінг поглиблюється (|rate| росте) — f_trend < 0.
-        ft = (self._funding_trends or {}).get((sym or '').upper())
-        add('funding', 'Фандінг', isinstance(ft, (int, float)) and ft < 0,
-            'поглиблюється' if (isinstance(ft, (int, float)) and ft < 0) else 'без росту')
-        return {'count': sum(1 for l in layers if l['ok']), 'layers': layers}
+        # 5) ЗАКЛЮЧНЕ підтвердження — НОВИЙ Volumized OB (1m) у бік напрямку.
+        #    Рахується ЛИШЕ коли шари 1..4 зійшлися (див. _layer_signal_alert),
+        #    інакше стан порожній → шар не світиться. Це фінальний тригер сигналу.
+        vob = self._vob_state.get(sym) or {}
+        vob_ok = bool(vob.get('ok') and vob.get('dir') == d)
+        add('vob', 'Volumized OB (1m)', vob_ok,
+            (f"новий OB {vob.get('top')}/{vob.get('bottom')}" if vob_ok else 'немає нового OB'))
+        return {'count': sum(1 for l in layers if l['ok']), 'layers': layers,
+                'base4': sum(1 for l in layers[:4] if l['ok'])}
+
+    # Volumized OB (1m) параметри — саме як задав користувач.
+    _VOB_SWING = 5
+    _VOB_END = 'Wick'
+    _VOB_ATR_MULT = 3.5
+    _VOB_ZONE = 'Low'
+    _VOB_TTL = 8   # с — короткий кеш 1m-свічок (майже без затримки)
+
+    def _funding_vob(self, sym: str, d: str) -> Optional[Dict]:
+        """Найновіший АКТИВНИЙ Volumized OB (1m) у напрямку d (swing=5, Wick,
+        ATR×3.5, zone=Low). Повертає OB-dict або None. Короткий кеш 1m-свічок для
+        мінімальної затримки. Викликається ЛИШЕ для монет, де шари 1..4 зійшлись."""
+        if d not in ('LONG', 'SHORT'):
+            return None
+        try:
+            now = time.time()
+            key = ('vob1m', sym)
+            c = self._vob_klines.get(key)
+            if c and (now - c[0]) < self._VOB_TTL:
+                kl = c[1]
+            else:
+                from detection.market_data import get_market_data
+                md = get_market_data()
+                kl = md.fetch_klines(sym, limit=200, interval='1m') if md else None
+                if kl:
+                    self._vob_klines[key] = (now, kl)
+            if not kl or len(kl) < 20:
+                return None
+            from detection.volumized_ob import detect_volumized_obs
+            res = detect_volumized_obs(kl, swing_length=self._VOB_SWING,
+                                       ob_end_method=self._VOB_END,
+                                       max_atr_mult=self._VOB_ATR_MULT,
+                                       zone_count=self._VOB_ZONE)
+            obs = res.get('bullish_obs' if d == 'LONG' else 'bearish_obs') or []
+            for ob in obs:                 # newest first
+                if not ob.get('breaker'):
+                    return ob
+            return None
+        except Exception as e:
+            print(f"[FF-VOB] {sym} error: {e}")
+            return None
 
     def _layer_signal_alert(self, s: Dict, now: float):
-        """🎯 Консолідований TG: коли на funding-монеті зійшлось ≥ layer_tg_min
-        шарів — один сигнал (edge-trigger + кулдаун). Замінює «зоопарк» дрібних
-        алертів одним «повний збіг»."""
+        """🎯 «Рекомендація бота» (консолідований сигнал). Спершу мають зійтись
+        шари 1..4 (МММ↑/SCORE/Готовність/Скальп у бік), і ЛИШЕ тоді 5-й —
+        ЗАКЛЮЧНЕ підтвердження: НОВИЙ Volumized OB (1m) у бік напрямку. Тільки на
+        новому OB (edge за formation_time) + кулдаун → один TG. Це і є заміна
+        старого «рекомендована ботом» повідомлення."""
         if not s.get('layer_tg_on'):
-            if self._layer_alert_state:
-                self._layer_alert_state.clear()
+            if self._vob_state or self._layer_alert_at:
+                self._vob_state.clear()
+                self._vob_seen.clear()
                 self._layer_alert_at.clear()
             return
         try:
-            need = max(1, min(5, int(s.get('layer_tg_min', 5) or 5)))
+            need4 = min(4, max(1, int(s.get('layer_tg_min', 5) or 5)))
             cool = max(0, int(s.get('layer_tg_cooldown_min', 30) or 0) * 60)
         except (TypeError, ValueError):
-            need, cool = 5, 1800
+            need4, cool = 4, 1800
         with self._lock:
             anoms = dict(self._anomalies)
         live = set()
         for sym, a in anoms.items():
             live.add(sym)
-            lay = self._funding_layers(sym, a)
-            good = lay['count'] >= need
-            prev = self._layer_alert_state.get(sym, False)
-            if good and not prev and (now - self._layer_alert_at.get(sym, 0)) >= cool:
+            d = a.get('dir')
+            base4 = self._funding_layers(sym, a).get('base4', 0)
+            if d not in ('LONG', 'SHORT') or base4 < need4:
+                self._vob_state.pop(sym, None)   # 5-й гасне, поки 1..4 не зійшлись
+                continue
+            # Шари 1..4 зійшлись → шукаємо ЗАКЛЮЧНИЙ новий Volumized OB (1m).
+            ob = self._funding_vob(sym, d)
+            if not ob:
+                self._vob_state[sym] = {'ok': False, 'dir': d}
+                continue
+            ft = int(ob.get('formation_time') or 0)
+            self._vob_state[sym] = {'ok': True, 'dir': d, 'ftime': ft,
+                                    'top': round(float(ob.get('top') or 0), 6),
+                                    'bottom': round(float(ob.get('bottom') or 0), 6)}
+            # НОВИЙ OB (інший formation_time) + кулдаун → консолідований сигнал.
+            if ft and ft != self._vob_seen.get(sym) \
+                    and (now - self._layer_alert_at.get(sym, 0)) >= cool:
                 try:
-                    self._send_layer_alert(sym, a, lay, s)
+                    lay = self._funding_layers(sym, a)   # тепер із засвіченим 5-м
+                    self._send_layer_alert(sym, a, lay, ob, s)
                 except Exception as e:
                     print(f"[FF-Layer] alert send error {sym}: {e}")
+                self._vob_seen[sym] = ft
                 self._layer_alert_at[sym] = now
-            self._layer_alert_state[sym] = good
-        for k in list(self._layer_alert_state.keys()):
+        for k in list(self._vob_state.keys()):
             if k not in live:
-                self._layer_alert_state.pop(k, None)
-                self._layer_alert_at.pop(k, None)
+                self._vob_state.pop(k, None)
+                self._vob_seen.pop(k, None)
 
-    def _send_layer_alert(self, sym: str, a: Dict, lay: Dict, s: Dict):
-        """🎯 Broadcast a consolidated «layered confluence» Telegram to 💰 funding."""
+    def _send_layer_alert(self, sym: str, a: Dict, lay: Dict, ob: Dict, s: Dict):
+        """🎯 Broadcast the consolidated «Рекомендація бота» Telegram (5-шаровий
+        збіг + заключний новий Volumized OB 1m) to the 💰 funding topic."""
         d = a.get('dir')
         emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
         rt = a.get('rate')
@@ -4787,8 +4861,12 @@ class FuelFilterDaemon:
         cnt = lay.get('count', 0)
         checks = '\n'.join(f"{'✅' if l['ok'] else '▫️'} {l['label']}: {l['detail']}"
                            for l in lay.get('layers', []))
-        body = (f"🎯 #{sym} — повний збіг {cnt}/5 {emoji} {d}\n"
-                f"funding {rt_s}\n{checks}")
+        _top = ob.get('top')
+        _btm = ob.get('bottom')
+        zone = (f"\n🧱 Новий Volumized OB (1m): {self._fmt_price(_top)} – "
+                f"{self._fmt_price(_btm)}") if (_top and _btm) else ''
+        body = (f"🎯 <b>Рекомендація бота</b> · #{sym} {emoji} {d}  ({cnt}/5)\n"
+                f"funding {rt_s}\n{checks}{zone}")
         self._broadcast_users('funding', 'notify_layer', body)
 
     @staticmethod
