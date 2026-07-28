@@ -2439,9 +2439,10 @@ class FuelFilterDaemon:
     def _update_btc_verdict(self):
         """BTC МММ *session* tracker (drives the ₿ banner + START engine + queue).
 
-        A SESSION = a committed BTC МММ direction. The live МММ comes from the
-        MAIN-WINDOW indicator (compute_bias fuel, ±0.1): dir > +0.1 → LONG,
-        < −0.1 → SHORT, |dir| ≤ 0.1 → WAIT (ML збалансований).
+        A SESSION = a committed BTC МММ direction. The live МММ = the МММ-БАБЛО
+        (liquidation-fuel) direction — the SAME `_fuel_dir_smoothed` status the
+        coins' «МММ» cell shows: LONG / SHORT / None (|dir| ≤ 0.1 → ⚖ рівновага,
+        «напрямку немає» → WAIT). Панель повністю повторює алгоритм МММ-бабло.
 
         Session rules (per user's "сеанси"):
           • WAIT / data gap → PAUSE: keep the session direction, keep its start
@@ -2452,13 +2453,17 @@ class FuelFilterDaemon:
         So the queue is cleared ONLY on a genuine session flip — never on a
         transient WAIT. Called once per cycle."""
         try:
-            # 🎯 Банер ₿ = DIRECTIONAL: напрямок = РЕАЛЬНИЙ рух BTC (тренд EMA +
-            # моментум + CTR 1H), а НЕ контраріанська бабло-модель. Саме тому
-            # раніше на пампі банер показував SHORT — бабло контраріанське.
-            fdir, _bstr = self._btc_trend_dir()
-            self._btc_fuel_strength = int(_bstr or 0)
-            # Бабло-МММ (LIQMAP) лишаємо ЛИШЕ для деталей/тултипа банера — напрямок
-            # банера з неї БІЛЬШЕ не береться.
+            # 🎯 Банер ₿ = МММ-БАБЛО: напрямок і поріг ТОЧНО як у комірці «МММ»
+            # монет (_fuel_dir_smoothed) — status LONG/SHORT, або None = ⚖ рівновага
+            # («напрямку немає» → WAIT/пауза сеансу). Це контраріанська liqmap-
+            # модель; панель повністю повторює алгоритм МММ-бабло (за запитом
+            # користувача). BTC-EMA вже прокручено у _tick, тож читаємо (update=False).
+            _mm = self._fuel_dir_smoothed('BTCUSDT') or {}
+            fdir = _mm.get('dir')
+            _st = _mm.get('status')
+            self._btc_fuel_strength = (int(round(abs(float(fdir)) * 100))
+                                       if isinstance(fdir, (int, float)) else 0)
+            # Бабло-модель для деталей/тултипа банера (напрямок беремо зі status).
             if _MM_MODEL:
                 try:
                     from detection.mm_model import compute_mm
@@ -2468,14 +2473,8 @@ class FuelFilterDaemon:
                         self._btc_mm = r
                 except Exception:
                     pass
-            if fdir is None:
-                live = None                 # data gap → treat as WAIT (pause)
-            elif fdir > FUEL_LONG_THR:      # > +0.1 → LONG (реальний ап-тренд)
-                live = 'LONG'
-            elif fdir < FUEL_SHORT_THR:     # < -0.1 → SHORT (реальний даун-тренд)
-                live = 'SHORT'
-            else:
-                live = None                 # |dir| ≤ 0.1 → плоско → WAIT
+            # status уже несе ±0.1-нейтраль: None = ⚖ рівновага → WAIT/пауза.
+            live = _st if _st in ('LONG', 'SHORT') else None
         except Exception as e:
             print(f"[FuelFilter] BTC МММ calc error: {e}")
             return
