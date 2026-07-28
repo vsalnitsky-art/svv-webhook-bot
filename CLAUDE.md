@@ -138,12 +138,13 @@ funding-монети). Той самий `grade_setup` — інші свічки
 СЕРЕДНІЙ (≥40) · 3) Готовність(1H) ≥ СЕРЕДНІЙ (≥38) · 4) Скальп ≥ СЕРЕДНІЙ (≥38) ·
 **5) ЗАКЛЮЧНЕ підтвердження — НОВИЙ Volumized OB (1m)** у бік. Повертає {count,
 base4, layers[]}. get_state → funding-рядки несуть `layers`; UI — колонка «🎯 Шари».
-- **5-й шар = ГОЛОВНИЙ ТРИГЕР (естафета):** `_funding_vob(sym,d)` ПОСТІЙНО
-  моніторить 1m-OB для КОЖНОЇ funding-монети (кеш 8с) → `detect_volumized_obs
-  (swing=5, ob_end_method='Wick', max_atr_mult=3.5, zone_count='Low')` →
-  найновіший НЕ-breaker OB у бік. На НОВОМУ OB (`formation_time` ≠ `_vob_seen`)
-  перевіряємо базові шари 1-4 САМЕ ЗАРАЗ; сигнал лише якщо `base4 ≥ layer_tg_min`
-  (cap 4). Стан у `_vob_state` (для колонки), анти-повтор у `_vob_seen`.
+- **5-й шар = ОДНОРАЗОВИЙ ТРИГЕР (у колонці ЗАВЖДИ off).** `_funding_vob(sym,d)`
+  ПОСТІЙНО моніторить 1m-OB для КОЖНОЇ funding-монети (кеш 8с) →
+  `detect_volumized_obs(swing=5, ob_end_method='Wick', max_atr_mult=3.5,
+  zone_count='Low')` → найновіший НЕ-breaker OB у бік. На НОВОМУ OB
+  (`formation_time` ≠ `_vob_seen`) перевіряємо базові шари 1-4 САМЕ ЗАРАЗ:
+  якщо `base4 ≥ layer_tg_min` (cap 4) → сигнал; інакше просто чекаємо наступний
+  OB. `_funding_layers` завжди повертає 5-й шар off (він не персистентний стан).
 - На НОВОМУ OB (інший formation_time) + кулдаун → ОДИН TG «🎯 Рекомендація бота»
   (`_layer_signal_alert`/`_send_layer_alert`, топік 💰 funding). Це ЗАМІНЯЄ старе
   «рекомендована ботом» повідомлення.

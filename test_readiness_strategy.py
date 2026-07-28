@@ -284,10 +284,12 @@ def test_funding_layers_all_five():
     ff._score_cache = {sym: {'dir': 'LONG', 'score': 45, 'label': 'СЕРЕДНІЙ'}}  # 2)
     ff._setup_cache = {sym: {'ok': True, 'dir': 'LONG', 'score': 40, 'grade': 'СЕРЕДНІЙ'}}  # 3)
     ff._setup_scalp_cache = {sym: {'ok': True, 'dir': 'LONG', 'score': 50, 'grade': 'ХОРОШИЙ'}}  # 4)
-    ff._vob_state = {sym: {'ok': True, 'dir': 'LONG', 'top': 1.2, 'bottom': 1.1}}  # 5) новий VOB
     lay = ff._funding_layers(sym, {'dir': 'LONG'})
-    assert lay['count'] == 5 and lay['base4'] == 4, [(l['key'], l['ok']) for l in lay['layers']]
-    print('✓ funding layers: усі 5 зійшлись (5-й = новий Volumized OB)')
+    vob = next(l for l in lay['layers'] if l['key'] == 'vob')
+    # 5-й (VOB) — одноразовий тригер: у колонці ЗАВЖДИ off. base4=4, count=4.
+    assert lay['base4'] == 4 and not vob['ok'] and lay['count'] == 4, \
+        [(l['key'], l['ok']) for l in lay['layers']]
+    print('✓ funding layers: 1-4 засвічені, 5-й (VOB) завжди off (одноразовий тригер)')
 
 
 def test_funding_layers_direction_and_thresholds():

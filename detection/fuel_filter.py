@@ -4757,13 +4757,11 @@ class FuelFilterDaemon:
         ss = self._setup_scalp_cache.get(sym) or {}
         add('scalp', 'Скальп', ss.get('ok') and ss.get('dir') == d and (ss.get('score') or 0) >= 38,
             f"{ss.get('grade') or '—'} {ss.get('score') or 0}" if ss.get('ok') else 'вимк/н-д')
-        # 5) ЗАКЛЮЧНЕ підтвердження — НОВИЙ Volumized OB (1m) у бік напрямку.
-        #    Рахується ЛИШЕ коли шари 1..4 зійшлися (див. _layer_signal_alert),
-        #    інакше стан порожній → шар не світиться. Це фінальний тригер сигналу.
-        vob = self._vob_state.get(sym) or {}
-        vob_ok = bool(vob.get('ok') and vob.get('dir') == d)
-        add('vob', 'Volumized OB (1m)', vob_ok,
-            (f"новий OB {vob.get('top')}/{vob.get('bottom')}" if vob_ok else 'немає нового OB'))
+        # 5) ЗАКЛЮЧНЕ підтвердження — НОВИЙ Volumized OB (1m). Це ОДНОРАЗОВИЙ
+        #    ТРИГЕР, а не постійний стан: у колонці ЗАВЖДИ off. Коли зʼявляється
+        #    новий OB — перевіряємо шари 1..4 (у _layer_signal_alert); якщо всі
+        #    засвічені → сигнал, і 5-й гасне; якщо ні → чекаємо наступний OB.
+        add('vob', 'Volumized OB (1m)', False, 'заключний тригер — новий OB (1m)')
         return {'count': sum(1 for l in layers if l['ok']), 'layers': layers,
                 'base4': sum(1 for l in layers[:4] if l['ok'])}
 
