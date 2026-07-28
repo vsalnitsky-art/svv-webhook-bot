@@ -9148,7 +9148,7 @@ function renderFuelFilter(d) {
                     <td style="font-size:0.72rem"><span style="display:inline-flex;align-items:center">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}<span style="width:18px;text-align:center;flex:none;color:#fbbf24;font-weight:700"${a.paused ? ' title="Сесія на паузі (WAIT) — тримається за напрямком"' : ''}>${a.paused ? '⏸' : ''}</span></span></td>
                     <td style="white-space:nowrap">${ffScoreBadgeHTML(a.score)}</td>
                     <td style="white-space:nowrap">${ffSetupCell(a.setup)}</td>
-                    <td style="white-space:nowrap">${ffSetupCell(a.setup_scalp)}</td>
+                    <td style="white-space:nowrap">${s.funding_setup_scalp_on ? ffSetupCell(a.setup_scalp) : '<span title="Скальп-Готовність вимкнена. Увімкни «⚡ Скальп-Готовність» у налаштуваннях (акордеон під таблицею), щоб рахувати SMC-грейд на швидкому TF." style="color:#6b7280;font-size:0.72rem">вимк</span>'}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
                     <td>${progHtml}</td>
                 </tr>` +
@@ -9158,7 +9158,7 @@ function renderFuelFilter(d) {
                     <span style="display:inline-flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:0.72rem;color:#9aa3b5">
                         <span title="Поточний funding % і час до наступного нарахування">💵 <b style="color:#cbd5e1;font-weight:600">${rateTxt} ${cdTxt}</b>${fTrendBadge(a.f_trend)}</span>
                         <span title="24-годинний обсяг торгів (USD)">📊 Vol 24h: <b style="color:#cbd5e1;font-weight:600">${volTxt}</b></span>
-                        <span style="margin-left:auto"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.9rem;margin-right:12px" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕 Приглушити</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Прибрати з таблиці">✕ Прибрати</span></span>
+                        <span style="margin-left:auto"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.72rem;margin-right:12px" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕 Приглушити</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.72rem" title="Прибрати з таблиці">✕ Прибрати</span></span>
                     </span>
                 </td></tr>${oppStatsRow(a)}`;
             }).join('');
