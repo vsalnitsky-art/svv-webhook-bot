@@ -574,6 +574,9 @@ class FuelFilterDaemon:
         self._funding_vols: Dict[str, float] = {}
         # {symbol: F-Trend -1/0/+1} — ~30-min funding direction (Dashboard metric).
         self._funding_trends: Dict[str, int] = {}
+        # {symbol: {'dir':'up'|'down'|'flat','chg':%}} — СВІЖИЙ рух ЦІНИ (~15 хв)
+        # з 💰 Funding Rate Scanner. Джерело 5-го шару «Ціна» у Шаровому конфлюенсі.
+        self._funding_price: Dict[str, Dict] = {}
         # Short-TTL klines cache for candle confirmation at a custom TF:
         # {(symbol, tf): (ts, klines)}.
         self._candle_cache: Dict = {}
@@ -704,6 +707,18 @@ class FuelFilterDaemon:
             fm = get_funding_monitor()
             if fm and hasattr(fm, 'get_trends'):
                 return {str(k).upper(): int(v) for k, v in fm.get_trends().items()}
+        except Exception:
+            pass
+        return {}
+
+    def _get_funding_price_dirs(self) -> Dict[str, Dict]:
+        """{SYMBOL: {'dir':'up'|'down'|'flat','chg':%}} — свіжий напрямок ЦІНИ
+        (≈15 хв) з 💰 Funding Rate Scanner. Живить 5-й шар «Ціна» конфлюенсу."""
+        try:
+            from detection.funding_monitor import get_funding_monitor
+            fm = get_funding_monitor()
+            if fm and hasattr(fm, 'get_price_dirs'):
+                return {str(k).upper(): v for k, v in fm.get_price_dirs().items()}
         except Exception:
             pass
         return {}
@@ -3286,6 +3301,7 @@ class FuelFilterDaemon:
             self._funding_next = self._get_funding_next()
             self._funding_vols = self._get_funding_volumes()
             self._funding_trends = self._get_funding_trends()
+            self._funding_price = self._get_funding_price_dirs()
             managed = list(self._fuel_managed.keys())
             pending = list(self._pending.keys())
 
@@ -4710,14 +4726,20 @@ class FuelFilterDaemon:
 
     def _funding_layers(self, sym: str, a: Dict) -> Dict:
         """🎯 5-шаровий конфлюенс для funding-монети. Кожен шар = індикатор У БІК
-        напрямку монети (`a.dir`) + поріг якості. Повертає {count, layers:[{key,
-        label, ok, detail}]}. Використовується і для колонки «Шари», і для
-        консолідованого TG-сигналу."""
+        напрямку монети (`a.dir`) + поріг якості: 1) МММ↑ · 2) SCORE · 3) Готовність ·
+        4) Скальп · 5) ЦІНА (свіжий рух ~15 хв: LONG=росте / SHORT=спадає). Кожен
+        шар несе `dir` (напрямок монети, коли засвічений) → у колонці кольори
+        відповідають напрямку: усі зелені (LONG) або всі червоні (SHORT). Повертає
+        {count, base(=усі 5), base4, layers:[{key,label,ok,dir,detail}]}. VOB (1m)
+        лишається ОКРЕМИМ одноразовим тригером TG-сигналу, не колонкою."""
         d = a.get('dir')
         layers = []
 
         def add(key, label, ok, detail=''):
-            layers.append({'key': key, 'label': label, 'ok': bool(ok), 'detail': detail})
+            # `dir` = напрямок монети, КОЛИ шар засвічений (для кольору в UI:
+            # LONG→зелений, SHORT→червоний). Погашений шар напрямку не має.
+            layers.append({'key': key, 'label': label, 'ok': bool(ok),
+                           'dir': (d if ok else None), 'detail': detail})
 
         if d not in ('LONG', 'SHORT'):
             return {'count': 0, 'layers': []}
@@ -4748,12 +4770,22 @@ class FuelFilterDaemon:
         ss = self._setup_scalp_cache.get(sym) or {}
         add('scalp', 'Скальп', ss.get('ok') and ss.get('dir') == d and (ss.get('score') or 0) >= 38,
             f"{ss.get('grade') or '—'} {ss.get('score') or 0}" if ss.get('ok') else 'вимк/н-д')
-        # 5) ЗАКЛЮЧНЕ підтвердження — НОВИЙ Volumized OB (1m). Це ОДНОРАЗОВИЙ
-        #    ТРИГЕР, а не постійний стан: у колонці ЗАВЖДИ off. Коли зʼявляється
-        #    новий OB — перевіряємо шари 1..4 (у _layer_signal_alert); якщо всі
-        #    засвічені → сигнал, і 5-й гасне; якщо ні → чекаємо наступний OB.
-        add('vob', 'Volumized OB (1m)', False, 'заключний тригер — новий OB (1m)')
-        return {'count': sum(1 for l in layers if l['ok']), 'layers': layers,
+        # 5) ЦІНА у бік монети — свіжий рух (~15 хв) з 💰 Funding Rate Scanner:
+        #    LONG → ціна РОСТЕ (up), SHORT → ціна СПАДАЄ (down). Це ПОСТІЙНИЙ шар
+        #    (світиться в колонці), на відміну від старого VOB-плейсхолдера.
+        pm = (self._funding_price or {}).get(sym.upper()) or {}
+        p_dir = pm.get('dir')            # 'up' / 'down' / 'flat'
+        p_chg = pm.get('chg')
+        price_ok = (d == 'LONG' and p_dir == 'up') or (d == 'SHORT' and p_dir == 'down')
+        _pw = {'up': 'росте', 'down': 'спадає', 'flat': 'рівно'}.get(p_dir, 'н/д')
+        add('price', 'Ціна', price_ok,
+            f"{_pw}{'' if p_chg is None else f' {p_chg:+.2f}%'}")
+        # VOB (1m) — ОКРЕМИЙ одноразовий ТРИГЕР сигналу (не колонка-шар): щойно
+        # зʼявляється новий Volumized OB у бік і всі 5 шарів валідні → «Рекомендація
+        # бота» в Telegram (див. _layer_signal_alert). У колонці його немає.
+        base5 = sum(1 for l in layers if l['ok'])
+        return {'count': base5, 'layers': layers,
+                'base': base5,
                 'base4': sum(1 for l in layers[:4] if l['ok'])}
 
     # Volumized OB (1m) параметри — саме як задав користувач.
@@ -4798,11 +4830,11 @@ class FuelFilterDaemon:
             return None
 
     def _layer_signal_alert(self, s: Dict, now: float):
-        """🎯 «Рекомендація бота» (консолідований сигнал). Спершу мають зійтись
-        шари 1..4 (МММ↑/SCORE/Готовність/Скальп у бік), і ЛИШЕ тоді 5-й —
-        ЗАКЛЮЧНЕ підтвердження: НОВИЙ Volumized OB (1m) у бік напрямку. Тільки на
-        новому OB (edge за formation_time) + кулдаун → один TG. Це і є заміна
-        старого «рекомендована ботом» повідомлення."""
+        """🎯 «Рекомендація бота» (консолідований сигнал). Мають зійтись шари 1..5
+        (МММ↑/SCORE/Готовність/Скальп/ЦІНА у бік), і на цьому тлі — НОВИЙ Volumized
+        OB (1m) у бік напрямку як ЗАКЛЮЧНИЙ ОДНОРАЗОВИЙ тригер. Тільки на новому OB
+        (edge за formation_time) + кулдаун → один TG. Це заміна старого
+        «рекомендована ботом» повідомлення."""
         if not s.get('layer_tg_on'):
             if self._vob_state or self._layer_alert_at:
                 self._vob_state.clear()
@@ -4810,10 +4842,10 @@ class FuelFilterDaemon:
                 self._layer_alert_at.clear()
             return
         try:
-            need4 = min(4, max(1, int(s.get('layer_tg_min', 5) or 5)))
+            need = min(5, max(1, int(s.get('layer_tg_min', 5) or 5)))
             cool = max(0, int(s.get('layer_tg_cooldown_min', 30) or 0) * 60)
         except (TypeError, ValueError):
-            need4, cool = 4, 1800
+            need, cool = 5, 1800
         with self._lock:
             anoms = dict(self._anomalies)
         live = set()
@@ -4838,7 +4870,7 @@ class FuelFilterDaemon:
             if ft and ft != self._vob_seen.get(sym):
                 self._vob_seen[sym] = ft
                 lay = self._funding_layers(sym, a)
-                if lay.get('base4', 0) >= need4 \
+                if lay.get('base', 0) >= need \
                         and (now - self._layer_alert_at.get(sym, 0)) >= cool:
                     try:
                         self._send_layer_alert(sym, a, lay, ob, s)
@@ -6461,7 +6493,10 @@ class FuelFilterDaemon:
                     'opp_stats': _opp_stats,
                     'paused': bool(a.get('sess_paused')),
                 })
-            anomalies.sort(key=lambda x: -x['held_sec'])
+            # Сортування ЗА ШАРАМИ: більше засвічених шарів (🎯 конфлюенс) — вище.
+            # Тайбрейк — довше тримається (held_sec).
+            anomalies.sort(key=lambda x: (-((x.get('layers') or {}).get('count') or 0),
+                                          -x['held_sec']))
         # Live main-button gates (for engine_mode='buttons' UI + working dir).
         try:
             _eg_long, _eg_short = self._entry_gates()

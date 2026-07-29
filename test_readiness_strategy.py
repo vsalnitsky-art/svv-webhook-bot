@@ -284,12 +284,37 @@ def test_funding_layers_all_five():
     ff._score_cache = {sym: {'dir': 'LONG', 'score': 45, 'label': 'СЕРЕДНІЙ'}}  # 2)
     ff._setup_cache = {sym: {'ok': True, 'dir': 'LONG', 'score': 40, 'grade': 'СЕРЕДНІЙ'}}  # 3)
     ff._setup_scalp_cache = {sym: {'ok': True, 'dir': 'LONG', 'score': 50, 'grade': 'ХОРОШИЙ'}}  # 4)
+    ff._funding_price = {sym: {'dir': 'up', 'chg': 1.4}}       # 5) ЦІНА росте (LONG)
     lay = ff._funding_layers(sym, {'dir': 'LONG'})
-    vob = next(l for l in lay['layers'] if l['key'] == 'vob')
-    # 5-й (VOB) — одноразовий тригер: у колонці ЗАВЖДИ off. base4=4, count=4.
-    assert lay['base4'] == 4 and not vob['ok'] and lay['count'] == 4, \
+    price = next(l for l in lay['layers'] if l['key'] == 'price')
+    # 5-й тепер = ЦІНА (постійний шар). Усі 5 світяться → base=count=5.
+    assert lay['base'] == 5 and lay['count'] == 5 and price['ok'], \
         [(l['key'], l['ok']) for l in lay['layers']]
-    print('✓ funding layers: 1-4 засвічені, 5-й (VOB) завжди off (одноразовий тригер)')
+    # Кожен засвічений шар несе dir=='LONG' → у колонці усі зелені.
+    assert all(l['dir'] == 'LONG' for l in lay['layers'] if l['ok']), \
+        [(l['key'], l['dir']) for l in lay['layers']]
+    assert lay['base4'] == 4          # сумісність: базові 1-4
+    print('✓ funding layers: 5 шарів (5-й=ЦІНА росте), усі dir=LONG (зелені)')
+
+
+def test_funding_layers_price_direction():
+    ff, db = _ff()
+    sym = 'WIFUSDT'
+    ff._fuel_dir_smoothed = lambda s: {'status': 'SHORT', 'mark_price': 1.0}
+    ff._fuel_str = {sym: 20}; ff._fuel_str_prev = {sym: 10}
+    ff._score_cache = {sym: {'dir': 'SHORT', 'score': 45}}
+    ff._setup_cache = {sym: {'ok': True, 'dir': 'SHORT', 'score': 40}}
+    ff._setup_scalp_cache = {sym: {'ok': True, 'dir': 'SHORT', 'score': 40}}
+    # SHORT: ЦІНА має СПАДАТИ (down) → шар світиться; up → гасне.
+    ff._funding_price = {sym: {'dir': 'down', 'chg': -1.2}}
+    lay = ff._funding_layers(sym, {'dir': 'SHORT'})
+    price = next(l for l in lay['layers'] if l['key'] == 'price')
+    assert price['ok'] and price['dir'] == 'SHORT' and lay['base'] == 5
+    ff._funding_price = {sym: {'dir': 'up', 'chg': 1.2}}       # росте проти SHORT
+    lay2 = ff._funding_layers(sym, {'dir': 'SHORT'})
+    price2 = next(l for l in lay2['layers'] if l['key'] == 'price')
+    assert not price2['ok'] and lay2['base'] == 4
+    print('✓ funding layers: 5-й ЦІНА — LONG=росте / SHORT=спадає')
 
 
 def test_funding_layers_direction_and_thresholds():
@@ -301,6 +326,7 @@ def test_funding_layers_direction_and_thresholds():
     ff._setup_cache = {sym: {'ok': True, 'dir': 'SHORT', 'score': 20}}  # <38 → fail
     ff._setup_scalp_cache = {}                                 # немає → fail
     ff._funding_trends = {sym: 0.3}                            # не поглиблюється → fail
+    ff._funding_price = {sym: {'dir': 'up', 'chg': 0.8}}       # росте (проти SHORT) → fail
     lay = ff._funding_layers(sym, {'dir': 'SHORT'})
     assert lay['count'] == 1, [(l['key'], l['ok']) for l in lay['layers']]
     print('✓ funding layers: рахує лише збіги в бік напрямку + пороги')
@@ -313,7 +339,7 @@ def test_layer_alert_vob_confirms_and_dedups():
         layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=0))
     sym = 'ENAUSDT'
     ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0}}
-    ff._funding_layers = lambda s, a: {'base4': 4, 'count': 5, 'layers': []}
+    ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
     ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 1.2, 'bottom': 1.1, 'breaker': False}
     ff.sent = []
     ff._send_layer_alert = lambda sym, a, lay, ob, s: ff.sent.append((sym, ob['formation_time']))
@@ -326,20 +352,20 @@ def test_layer_alert_vob_confirms_and_dedups():
     print('✓ layer TG: спрацьовує на НОВИЙ Volumized OB (1m), не дублює той самий')
 
 
-def test_layer_alert_needs_base4():
+def test_layer_alert_needs_all_layers():
     ff, db = _ff()
     db.set_setting('fuel_filter_settings', dict(
         db.get_setting('fuel_filter_settings'),
         layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=0))
     sym = 'ENAUSDT'
     ff._anomalies = {sym: {'dir': 'LONG'}}
-    ff._funding_layers = lambda s, a: {'base4': 3, 'count': 3, 'layers': []}   # 1-4 не всі
+    ff._funding_layers = lambda s, a: {'base': 4, 'base4': 4, 'count': 4, 'layers': []}  # 5 з 5 не всі
     ff.sent = []
     ff._send_layer_alert = lambda *a, **k: ff.sent.append(1)
     ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 1, 'bottom': 1, 'breaker': False}
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
-    assert ff.sent == [], 'без усіх базових шарів 1-4 — VOB не перевіряється, сигналу нема'
-    print('✓ layer TG: 5-й (новий VOB) лише ПІСЛЯ зходження шарів 1-4')
+    assert ff.sent == [], 'без усіх 5 шарів — новий VOB не дає сигналу'
+    print('✓ layer TG: новий VOB дає сигнал лише ПІСЛЯ зходження всіх 5 шарів')
 
 
 # --- ✦ Золотий funding: чисті рівні (цілі 1..4 + виняток 0.5) ---

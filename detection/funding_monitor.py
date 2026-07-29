@@ -23,6 +23,11 @@ DB_KEY_THRESHOLD = 'funding_entry_threshold'  # user-tunable entry threshold (%)
 DB_KEY_MIN_VOLUME = 'funding_min_volume_usd'  # user-tunable min 24h turnover (USD)
 MIN_VOLUME_USD = 0.0          # default: 0 = volume filter off
 TREND_WINDOW = 30           # 30 scans × 1min = 30 min trend
+# Вікно для «ЗАРАЗ ростемо чи спадаємо» по колонці Price — короткий проміжок,
+# щоб бачити СВІЖИЙ рух ціни (а не сумарний від старту стеження). 15 × 60с = 15 хв.
+PRICE_WINDOW = 15
+# Мертва зона у %: рух менший за це трактуємо як «рівно» (без чіткого напрямку).
+PRICE_DEADZONE = 0.10
 
 
 class FundingMonitor:
@@ -458,6 +463,10 @@ class FundingMonitor:
 
                 trig_price = data.get('price_at_trigger', 0)
                 pchg = round((cur_price - trig_price) / trig_price * 100, 2) if trig_price else 0
+                # СВІЖИЙ рух ціни (останні ~15 хв) — «ЗАРАЗ ростемо чи спадаємо»,
+                # окремо від сумарного pchg від старту стеження (той міг «застигти»
+                # у плюсі, поки монета вже розвертається вниз ЗАРАЗ).
+                _pm = self._recent_price_move(rates)
 
                 is_priority = data.get('alerted', False) or self._check_priority(data)
                 ft = self._calc_trend(rates, 'r') if len(rates) >= 3 else 0
@@ -470,7 +479,10 @@ class FundingMonitor:
                     'min_rate': min(rvals),
                     'max_rate': max(rvals),
                     'current_price': cur_price,
-                    'price_change': pchg,
+                    'price_change': pchg,           # сумарно від старту стеження
+                    'price_chg_recent': _pm['chg'], # свіжий рух за ~15 хв (ЗАРАЗ)
+                    'price_dir': _pm['dir'],        # 'up' / 'down' / 'flat'
+                    'price_window_min': PRICE_WINDOW,
                     'hours_tracked': round(hours_tracked, 1),
                     'hours_left': round(hours_left, 1),
                     'data_points': len(rates),
@@ -497,6 +509,34 @@ class FundingMonitor:
                 'min_volume': self._min_volume,
                 'watch_days': WATCH_DAYS,
             }
+
+    @staticmethod
+    def _recent_price_move(rates: List[Dict]) -> Dict:
+        """«ЗАРАЗ ростемо чи спадаємо» по ціні — свіжий рух за останнє вікно
+        PRICE_WINDOW (≈15 хв), а НЕ сумарний від старту стеження. Повертає
+        {'chg': %, 'dir': 'up'|'down'|'flat'}. Мертва зона PRICE_DEADZONE."""
+        if not rates or len(rates) < 2:
+            return {'chg': 0.0, 'dir': 'flat'}
+        window = rates[-min(PRICE_WINDOW + 1, len(rates)):]
+        p0 = window[0].get('p')
+        p1 = window[-1].get('p')
+        if not p0 or not p1:
+            return {'chg': 0.0, 'dir': 'flat'}
+        chg = round((p1 - p0) / p0 * 100, 2)
+        if chg > PRICE_DEADZONE:
+            d = 'up'
+        elif chg < -PRICE_DEADZONE:
+            d = 'down'
+        else:
+            d = 'flat'
+        return {'chg': chg, 'dir': d}
+
+    def get_price_dirs(self) -> Dict[str, Dict]:
+        """{symbol: {'dir': 'up'|'down'|'flat', 'chg': %}} — свіжий напрямок ЦІНИ
+        за вікно PRICE_WINDOW. Кросмодульно (💰 Funding — МММ, 5-й шар «Ціна»)."""
+        with self._lock:
+            return {sym: self._recent_price_move(c.get('rates') or [])
+                    for sym, c in self._watchlist.items()}
 
     def _calc_trend(self, rates: List[Dict], field: str) -> int:
         if len(rates) < 3:

@@ -2763,14 +2763,21 @@ async function loadFunding() {
                 const depthStr = depth > 0.01 ? `${depth.toFixed(2)}%↓` : 'flat';
                 const depthColor = depth >= 1.0 ? '#ff5252' : depth >= 0.5 ? '#ffa500' : '#888';
                 
-                // Price change from trigger + trend
+                // Price NOW: чіткий свіжий рух за ~15 хв — РОСТЕ / СПАДАЄ / РІВНО.
+                // (price_dir/price_chg_recent — окремо від сумарного price_change
+                //  від старту стеження, який показуємо дрібним у підказці.)
+                const pdir = c.price_dir || 'flat';
+                const prc = (c.price_chg_recent != null) ? c.price_chg_recent : 0;
+                const pArrow = pdir === 'up' ? '▲' : pdir === 'down' ? '▼' : '▬';
+                const pCol = pdir === 'up' ? '#4caf50' : pdir === 'down' ? '#ff5252' : '#8b93a7';
+                const pWord = pdir === 'up' ? 'росте' : pdir === 'down' ? 'спадає' : 'рівно';
+                const pwMin = c.price_window_min || 15;
+                // Сумарно від старту стеження — другорядне, у підказці.
                 const pSign = c.price_change >= 0 ? '+' : '';
-                const pClass = c.price_change >= 0 ? 'positive' : 'negative';
-                const pTrend = c.price_trend > 0 ? ' 📈' : c.price_trend < 0 ? ' 📉' : '';
-                
+
                 // Price: show current + change
-                const priceStr = c.current_price >= 1 
-                    ? `$${Number(c.current_price).toLocaleString(undefined, {maximumFractionDigits: 2})}` 
+                const priceStr = c.current_price >= 1
+                    ? `$${Number(c.current_price).toLocaleString(undefined, {maximumFractionDigits: 2})}`
                     : `$${c.current_price.toPrecision(4)}`;
                 
                 const tracked = c.hours_tracked >= 24 
@@ -2799,7 +2806,7 @@ async function loadFunding() {
                     <td class="fr-rate ${curClass}">${c.current_rate > 0 ? '+' : ''}${c.current_rate.toFixed(3)}%</td>
                     <td class="fr-rate negative" style="font-weight:700">${c.min_rate.toFixed(3)}%</td>
                     <td style="color:${depthColor};font-size:0.75rem;font-weight:600">${depthStr}</td>
-                    <td><span style="color:#aaa;font-size:0.75rem">${priceStr}</span> <span class="fr-rate ${pClass}" style="font-size:0.75rem">${pSign}${c.price_change.toFixed(2)}%${pTrend}</span></td>
+                    <td title="Свіжий рух ціни за останні ${pwMin} хв: ${pWord} ${prc>=0?'+':''}${prc.toFixed(2)}%. Від старту стеження: ${pSign}${c.price_change.toFixed(2)}%."><span style="color:#8b93a7;font-size:0.72rem">${priceStr}</span><br><span style="color:${pCol};font-weight:700;font-size:0.8rem;white-space:nowrap">${pArrow} ${prc>=0?'+':''}${prc.toFixed(2)}%</span> <span style="color:${pCol};font-size:0.66rem">${pWord}</span> <span style="color:#556;font-size:0.62rem" title="Сумарно від старту стеження">(${pSign}${c.price_change.toFixed(2)}%)</span></td>
                     <td style="font-size:0.75rem;color:${(c.volume||0) >= 100e6 ? '#4caf50' : (c.volume||0) >= 10e6 ? '#ffa500' : '#888'}">${fmtFundingVol(c.volume)}</td>
                     <td style="font-size:0.75rem;color:#9aa3b5">${c.next_funding ? `<span class="fr-fundnext" data-next="${c.next_funding}">⏳ ${fmtFundLeft(c.next_funding)}</span>` : '—'}</td>
                     <td>${sigHtml}</td>

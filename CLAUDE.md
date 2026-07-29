@@ -139,21 +139,40 @@ funding-монети). Той самий `grade_setup` — інші свічки
 `_funding_layers(sym, a)` рахує 5 шарів У БІК напрямку монети: 1) МММ ≥ легкий
 (сила ≥10) **і РОСТЕ** (тренд ↑: now>prev+1 з `_fuel_str_prev`) · 2) SCORE ≥
 СЕРЕДНІЙ (≥40) · 3) Готовність(1H) ≥ СЕРЕДНІЙ (≥38) · 4) Скальп ≥ СЕРЕДНІЙ (≥38) ·
-**5) ЗАКЛЮЧНЕ підтвердження — НОВИЙ Volumized OB (1m)** у бік. Повертає {count,
-base4, layers[]}. get_state → funding-рядки несуть `layers`; UI — колонка «🎯 Шари».
-- **5-й шар = ОДНОРАЗОВИЙ ТРИГЕР (у колонці ЗАВЖДИ off).** `_funding_vob(sym,d)`
-  ПОСТІЙНО моніторить 1m-OB для КОЖНОЇ funding-монети (кеш 8с) →
-  `detect_volumized_obs(swing=5, ob_end_method='Wick', max_atr_mult=3.5,
+**5) ЦІНА у бік — свіжий рух (~15 хв) з 💰 Funding Rate Scanner: LONG=РОСТЕ (up),
+SHORT=СПАДАЄ (down)**. Кожен шар несе `dir` (напрямок монети, КОЛИ засвічений) →
+у колонці кольори за напрямком: **усі зелені (LONG) або всі червоні (SHORT)**.
+Повертає {count, `base`(=усі 5), base4, layers[]}. get_state → funding-рядки несуть
+`layers`; UI — колонка «🎯 Шари» (`ffLayersCell` фарбує крапки за `l.dir`).
+- **5-й шар «Ціна» — ПОСТІЙНИЙ (світиться в колонці)**, живиться
+  `self._funding_price` (кеш з `_get_funding_price_dirs()` → `FundingMonitor.
+  get_price_dirs()`; оновлюється в тіку поряд з `_funding_trends`). Джерело —
+  вікно `PRICE_WINDOW`=15хв, мертва зона `PRICE_DEADZONE`=0.10% (funding_monitor).
+- **VOB (1m) = ОКРЕМИЙ ОДНОРАЗОВИЙ ТРИГЕР сигналу (не колонка-шар).**
+  `_funding_vob(sym,d)` ПОСТІЙНО моніторить 1m-OB для КОЖНОЇ funding-монети (кеш
+  8с) → `detect_volumized_obs(swing=5, ob_end_method='Wick', max_atr_mult=3.5,
   zone_count='Low')` → найновіший НЕ-breaker OB у бік. На НОВОМУ OB
-  (`formation_time` ≠ `_vob_seen`) перевіряємо базові шари 1-4 САМЕ ЗАРАЗ:
-  якщо `base4 ≥ layer_tg_min` (cap 4) → сигнал; інакше просто чекаємо наступний
-  OB. `_funding_layers` завжди повертає 5-й шар off (він не персистентний стан).
+  (`formation_time` ≠ `_vob_seen`) перевіряємо всі 5 шарів САМЕ ЗАРАЗ: якщо
+  `base ≥ layer_tg_min` (cap 5) → сигнал; інакше чекаємо наступний OB.
 - На НОВОМУ OB (інший formation_time) + кулдаун → ОДИН TG «🎯 Рекомендація бота»
   (`_layer_signal_alert`/`_send_layer_alert`, топік 💰 funding). Це ЗАМІНЯЄ старе
   «рекомендована ботом» повідомлення.
-- Налаштування: `layer_tg_on` (OFF), `layer_tg_min` (скільки з 1-4, дефолт 5→cap4),
+- Налаштування: `layer_tg_on` (OFF), `layer_tg_min` (скільки з 5, дефолт 5),
   `layer_tg_cooldown_min` (30). VOB-параметри — константи `_VOB_*` (1m/5/Wick/3.5/Low).
-- Тести: `test_readiness_strategy.py` (funding_layers + VOB-alert + base4-gate).
+- Тести: `test_readiness_strategy.py` (funding_layers 5-шарів + ЦІНА-напрямок +
+  VOB-alert + all-layers-gate).
+- **Сортування таблиці «💰 Funding — МММ» — ЗА ШАРАМИ** (get_state): більше
+  засвічених шарів вище; тайбрейк — довше тримається (`held_sec`).
+
+## 💰 Funding Rate Scanner — колонка «Price» (dashboard)
+
+Таблиця «💰 Funding Rate Scanner» (`templates/dashboard.html`, дані з
+`FundingMonitor.get_watchlist()`) у колонці **Price** показує ЧІТКИЙ свіжий
+напрямок ЦІНИ: `price_dir` (up/down/flat) + `price_chg_recent` (% за вікно
+`PRICE_WINDOW`≈15хв) — **▲ росте (зелений) / ▼ спадає (червоний) / ▬ рівно**.
+Це окремо від `price_change` (сумарно від старту стеження, тепер у підказці).
+`_recent_price_move(rates)` рахує рух по останніх ~15 семплах (мертва зона
+`PRICE_DEADZONE`=0.10%). Ту саму метрику віддає `get_price_dirs()` для 5-го шару.
 
 ## Лог Черги-3: рух у черзі + виснаженість
 
