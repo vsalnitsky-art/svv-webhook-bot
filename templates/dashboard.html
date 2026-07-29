@@ -2772,6 +2772,14 @@ async function loadFunding() {
                 const pCol = pdir === 'up' ? '#4caf50' : pdir === 'down' ? '#ff5252' : '#8b93a7';
                 const pWord = pdir === 'up' ? 'росте' : pdir === 'down' ? 'спадає' : 'рівно';
                 const pwMin = c.price_window_min || 15;
+                // ЗАГАЛЬНИЙ тренд монети (≈2 год) — «чи в загальному падає чи росте»
+                // (щоб не входити проти загального тренду).
+                const podir = c.price_dir_overall || 'flat';
+                const poc = (c.price_chg_overall != null) ? c.price_chg_overall : 0;
+                const poArrow = podir === 'up' ? '▲' : podir === 'down' ? '▼' : '▬';
+                const poCol = podir === 'up' ? '#4caf50' : podir === 'down' ? '#ff5252' : '#8b93a7';
+                const poWord = podir === 'up' ? 'росте' : podir === 'down' ? 'спадає' : 'в боці';
+                const poMin = c.price_window_long_min || 120;
                 // Сумарно від старту стеження — другорядне, у підказці.
                 const pSign = c.price_change >= 0 ? '+' : '';
 
@@ -2806,7 +2814,7 @@ async function loadFunding() {
                     <td class="fr-rate ${curClass}">${c.current_rate > 0 ? '+' : ''}${c.current_rate.toFixed(3)}%</td>
                     <td class="fr-rate negative" style="font-weight:700">${c.min_rate.toFixed(3)}%</td>
                     <td style="color:${depthColor};font-size:0.75rem;font-weight:600">${depthStr}</td>
-                    <td title="Свіжий рух ціни за останні ${pwMin} хв: ${pWord} ${prc>=0?'+':''}${prc.toFixed(2)}%. Від старту стеження: ${pSign}${c.price_change.toFixed(2)}%."><span style="color:#8b93a7;font-size:0.72rem">${priceStr}</span><br><span style="color:${pCol};font-weight:700;font-size:0.8rem;white-space:nowrap">${pArrow} ${prc>=0?'+':''}${prc.toFixed(2)}%</span> <span style="color:${pCol};font-size:0.66rem">${pWord}</span> <span style="color:#556;font-size:0.62rem" title="Сумарно від старту стеження">(${pSign}${c.price_change.toFixed(2)}%)</span></td>
+                    <td title="Свіжий рух за ${pwMin} хв: ${pWord} ${prc>=0?'+':''}${prc.toFixed(2)}%. Загальний тренд за ~${Math.round(poMin/60)} год: ${poWord} ${poc>=0?'+':''}${poc.toFixed(2)}%. Від старту стеження: ${pSign}${c.price_change.toFixed(2)}%."><span style="color:#8b93a7;font-size:0.72rem">${priceStr}</span><br><span style="color:${pCol};font-weight:700;font-size:0.8rem;white-space:nowrap">${pArrow} ${prc>=0?'+':''}${prc.toFixed(2)}%</span> <span style="color:${pCol};font-size:0.66rem">${pWord}</span> <span style="color:#556;font-size:0.62rem">·15хв</span><br><span style="color:${poCol};font-size:0.66rem;white-space:nowrap" title="Загальний тренд монети (~${Math.round(poMin/60)} год) — не входити проти нього">загалом ${poArrow} ${poc>=0?'+':''}${poc.toFixed(2)}% ${poWord}</span></td>
                     <td style="font-size:0.75rem;color:${(c.volume||0) >= 100e6 ? '#4caf50' : (c.volume||0) >= 10e6 ? '#ffa500' : '#888'}">${fmtFundingVol(c.volume)}</td>
                     <td style="font-size:0.75rem;color:#9aa3b5">${c.next_funding ? `<span class="fr-fundnext" data-next="${c.next_funding}">⏳ ${fmtFundLeft(c.next_funding)}</span>` : '—'}</td>
                     <td>${sigHtml}</td>

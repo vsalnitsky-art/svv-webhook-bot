@@ -751,8 +751,12 @@
       "</span>";
   }
 
+  // Множина монет із фандингу — для 💰-мітки у відкритих угодах (дзеркало бота).
+  var fundingSyms = {};
   function renderFunding(rowsArr) {
     rowsArr = rowsArr || [];
+    fundingSyms = {};
+    rowsArr.forEach(function (a) { if (a && a.symbol) fundingSyms[a.symbol] = 1; });
     $("#funding-count").textContent = rowsArr.length;
     var tb = $("#funding-table tbody");
     if (!rowsArr.length) {
@@ -924,8 +928,10 @@
         : '<span class="tag-paper">◌ PAPER</span>';
       var timer = p.opened_at ? '<span class="mono live-timer" data-ts="' + Math.floor(p.opened_at) + '">' + hms(now - Math.floor(p.opened_at)) + "</span>" : '<span class="muted">—</span>';
       var mMark = p.manual_mode ? '<span title="Ручне керування (Manual mode ON)" style="color:#fbbf24;margin-right:3px"><span class="tm-pin-anim">📌</span></span>' : '';
+      var fromFunding = fundingSyms[p.symbol] || (p.opened_by && /funding/i.test(p.opened_by));
+      var fMark = fromFunding ? '<span title="Монета з 💰 Funding" style="margin-right:3px;font-size:0.72rem">💰</span>' : '';
       return "<tr>" +
-        "<td>" + mMark + "<b>" + tvSym(p.symbol) + "</b></td>" +
+        "<td>" + mMark + fMark + "<b>" + tvSym(p.symbol) + "</b></td>" +
         "<td>" + dirCell(p.side) + "</td>" +
         "<td>" + mk + "</td>" +
         "<td>" + priceCell(p.entry_price) + "</td>" +

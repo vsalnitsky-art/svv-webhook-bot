@@ -2299,6 +2299,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Буфер для SL за межею блоку OB (% ціни): SHORT — над верхом блоку, LONG — під низом блоку. Наприклад 0.10% = стоп трохи далі за край блоку, щоб дрібний фітіль не вибивав.">
                             Буфер SL <input type="number" id="ff-queue3-vob-buffer" min="0" max="10" step="0.01" style="width:64px;padding:4px 6px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace" onchange="saveFuelFilterSettings()"> % за межею блоку
                         </label>
+                        <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="НЕ відкривати нову угоду ПРОТИ загального тренду монети (≈2 год з 💰 Funding Rate Scanner): LONG блокується коли монета в загальному спаді, SHORT — коли в загальному рості. Немає чіткого тренду (в боці) — дозволяємо. Пересув SL уже відкритої угоди — без цих воріт.">
+                            <input type="checkbox" id="ff-queue3-vob-trend" onchange="saveFuelFilterSettings()"> 🛡 Не входити проти загального тренду
+                        </label>
                     </div>
                     <div style="font-size:0.64rem;color:#6b7280">💡 «VOB + 5 шарів» — окрема експериментальна стратегія для монет із фандингу: тригер = НОВИЙ Volumized OB (1m: Swing 5, Wick, ATR×3.5, Zone Low) у бік, коли всі 5 шарів (МММ/SCORE/Готовність/Скальп/ЦІНА) зійшлись у той самий бік. Відкриває угоду за напрямком (real/paper — за режимом Trade Manager), ставить SL на межу блоку OB + буфер; кожен новий OB лише підтягує SL. Дедуп по монеті: доки угода відкрита — повторно не відкриваємо.</div>
                 </div>
@@ -9009,6 +9012,7 @@ function renderFuelFilter(d) {
     setIf('ff-readiness-log', s.readiness_log_enabled !== false);   // default true
     setIf('ff-queue3-vob-open', s.queue3_vob_open !== false);       // default true
     setIf('ff-queue3-vob-buffer', String(s.queue3_vob_sl_buffer_pct != null ? s.queue3_vob_sl_buffer_pct : 0.10));
+    setIf('ff-queue3-vob-trend', s.queue3_vob_block_against_trend !== false); // default true
     // Queue 2 eject rules
     setIf('ff-q2-eject-ctr', !!s.queue2_eject_ctr);           // default false
     setIf('ff-q2-eject-ctr-pct', String(s.queue2_eject_ctr_pct != null ? s.queue2_eject_ctr_pct : 20));
@@ -9136,6 +9140,9 @@ function renderFuelFilter(d) {
 
     // ── 💰 Funding table (coins from the 💰 scanner currently holding МММ) ──
     const atb = document.getElementById('ff-anomaly-tbody');
+    // Множина монет із фандингу — для 💰-мітки у відкритих угодах.
+    try { window.ffFundingSyms = new Set((d.anomalies || []).map(a => a.symbol)); }
+    catch (e) { window.ffFundingSyms = new Set(); }
     if (atb) {
         const arows = d.anomalies || [];
         if (!arows.length) {
@@ -9896,6 +9903,7 @@ async function saveFuelFilterSettings() {
         readiness_log_enabled: _c('ff-readiness-log'),
         queue3_vob_open: _c('ff-queue3-vob-open'),
         queue3_vob_sl_buffer_pct: parseFloat(_v('ff-queue3-vob-buffer', '0.10') || '0.10'),
+        queue3_vob_block_against_trend: _c('ff-queue3-vob-trend'),
         queue2_eject_ctr: _c('ff-q2-eject-ctr'),
         queue2_eject_ctr_pct: parseInt(_v('ff-q2-eject-ctr-pct', '20') || '20', 10),
         queue2_eject_choch: _c('ff-q2-eject-choch'),
@@ -10110,8 +10118,14 @@ function histSymCell(c, isShadow) {
 // Open-position cell: 📈 (left) = live history chart, NAME = TradingView link.
 function histSymOpen(p, isShadow) {
     const tv = tvSym(p.symbol);
-    if (!(p.hist_len > 0)) return `<b class="tm-sym-name">${tv}</b>`;
-    return `<b class="tm-sym-name"><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${p.hist_len} точок)"`
+    // 💰 — монета прийшла з фандингу (є в таблиці 💰 Funding — МММ АБО відкрита
+    // за funding-сигналом, напр. Q3-VOB(funding)).
+    const fromFunding = (window.ffFundingSyms && window.ffFundingSyms.has(p.symbol))
+        || (p.opened_by && /funding/i.test(p.opened_by));
+    const fund = fromFunding
+        ? '<span title="Монета з 💰 Funding" style="margin-right:3px;font-size:0.72rem">💰</span>' : '';
+    if (!(p.hist_len > 0)) return `${fund}<b class="tm-sym-name">${tv}</b>`;
+    return `${fund}<b class="tm-sym-name"><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${p.hist_len} точок)"`
         + ` onclick="event.stopPropagation();showTradeHistory('${p.symbol}', null, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`;
 }
 

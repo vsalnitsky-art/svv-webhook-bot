@@ -180,13 +180,34 @@ SHORT=СПАДАЄ (down)**. Кожен шар несе `dir` (напрямок 
 - **Повторний VOB** по вже відкритій ботом монеті → угоду НЕ відкриваємо, лише
   ПЕРЕСУВАЄМО SL на новий блок. Трекер `self._vob_trade` {sym→{side,sl,ftime,
   entry,mode}}; чиститься, коли монета зникла І позиції вже нема.
-- Усе (open / sl_moved) пишеться в 🧾 Лог роботи бота (`activity_log`, source
-  `Q3-VOB`) з міткою «монета з фандингу».
-- Налаштування: `queue3_vob_open` (True), `queue3_vob_sl_buffer_pct` (0.10).
-  UI — у гармошці **«⚙️ Налаштування (Черга-3)»** (`templates/smart_money.html`),
-  куди перенесено ВСІ параметри Черги-3 (SCORE≥/TTL/ignore-CTR/CTR-mode/Лог +
-  VOB-open/буфер). Заголовок колонки шарів — лише «🎯» (без слова «Шари»).
-- Тести: `test_vob_open_*` у `test_readiness_strategy.py`.
+- **Ворота «проти загального тренду»** (`queue3_vob_block_against_trend`, дефолт
+  **ON**): НОВУ угоду не відкриваємо, якщо напрямок проти ЗАГАЛЬНОГО тренду монети
+  (`dir_overall` ≈2 год з `_funding_price`): LONG у загальному ↓ / SHORT у ↑ →
+  skip (лог `Q3-VOB`). 'flat' — дозволяємо. Трейл SL — без цих воріт.
+- **TG «Рекомендація бота»** тепер надсилає `_vob_open_or_trail` (не окремий
+  alert-branch, щоб не дублювати), формат мінімальний (`_send_layer_alert(sym,a,
+  d,sl,mode)`): `🎯 Рекомендація бота · #SYM 🔴 SHORT` + `🛑 SL: <ціна>` (mode
+  'open') / `♻️ Угода вже відкрита — змінено лише SL: <ціна>` (mode 'trail').
+  Якщо `queue3_vob_open` OFF, а `layer_tg_on` ON — падає на просту «Рекомендацію»
+  (mode 'signal', без SL) за старим порогом `layer_tg_min`.
+- Усе (open / sl_moved / skipped) пишеться в 🧾 Лог роботи бота (`activity_log`,
+  source `Q3-VOB`) з міткою «монета з фандингу».
+- Налаштування: `queue3_vob_open` (True), `queue3_vob_sl_buffer_pct` (0.10),
+  `queue3_vob_block_against_trend` (True). UI — у гармошці **«⚙️ Налаштування
+  (Черга-3)»** (`templates/smart_money.html`), куди перенесено ВСІ параметри
+  Черги-3. Заголовок колонки шарів — лише «🎯».
+- **💰-мітка у відкритих угодах** (`histSymOpen` у smart_money + `renderTrades` в
+  infosite): монета з фандингу (є в `anomalies` АБО `opened_by` містить funding).
+- Тести: `test_vob_open_*` (+ ворота тренду) у `test_readiness_strategy.py`.
+
+## ✦ «Золотий funding» TG — формат + затримка-підтвердження
+
+`_send_gold_alert(sym,a,step)` формат (топік 💰 funding): `✦ FUNDING 🟢LONG /
+#SYM / 💰 Funding: -2.000%`. Показуємо СНЕПНУТЕ чисте значення (`step` зі знаком
+ставки) → завжди точне (−0.500/−1.500/−2.000%), а не сире (−0.495/−1.503%).
+Перед відправкою рівень має протриматись `funding_gold_confirm_sec` (дефолт 30с,
+«чітке визначення»); далі повтор раз на `funding_gold_cooldown_min` (60хв), поки
+той самий рівень тримається. Тест: `test_gold_funding_confirm_then_repeat`.
 
 ## 💰 Funding Rate Scanner — колонка «Price» (dashboard)
 
@@ -194,6 +215,9 @@ SHORT=СПАДАЄ (down)**. Кожен шар несе `dir` (напрямок 
 `FundingMonitor.get_watchlist()`) у колонці **Price** показує ЧІТКИЙ свіжий
 напрямок ЦІНИ: `price_dir` (up/down/flat) + `price_chg_recent` (% за вікно
 `PRICE_WINDOW`≈15хв) — **▲ росте (зелений) / ▼ спадає (червоний) / ▬ рівно**.
+Плюс ЗАГАЛЬНИЙ тренд монети (`price_dir_overall`/`price_chg_overall`,
+`PRICE_WINDOW_LONG`≈2год, deadzone 0.30%) — рядок «загалом ▲/▼ X%», щоб не входити
+проти загального тренду (той самий `dir_overall` живить ворота VOB-відкриття).
 Це окремо від `price_change` (сумарно від старту стеження, тепер у підказці).
 `_recent_price_move(rates)` рахує рух по останніх ~15 семплах (мертва зона
 `PRICE_DEADZONE`=0.10%). Ту саму метрику віддає `get_price_dirs()` для 5-го шару.

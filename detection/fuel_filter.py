@@ -426,6 +426,10 @@ DEFAULT_SETTINGS = {
     # Усе фіксується в 🧾 Лог роботи бота з міткою, що монета прийшла з фандингу.
     'queue3_vob_open': True,               # авто-відкриття за VOB+5 шарів (дефолт ON)
     'queue3_vob_sl_buffer_pct': 0.10,      # буфер SL за межі блоку OB, % ціни
+    # Не відкривати НОВУ угоду ПРОТИ загального тренду монети (≈2 год з 💰 Funding
+    # Rate Scanner): LONG блокується коли загальний тренд ↓, SHORT — коли ↑.
+    # 'flat' (немає чіткого тренду) — дозволяємо. Трейл SL уже відкритої — без воріт.
+    'queue3_vob_block_against_trend': True,
     # 🛡 М'який запобіжник відкриття — блокує 3 «вбивці» (МММ<поріг / CTR
     # нейтральний-чи-проти / виснажено). Це РЕАЛЬНО впливає на відкриття угод.
     'safeguard_on': True,
@@ -457,10 +461,15 @@ DEFAULT_SETTINGS = {
     # ✦ «Золотий funding застиг»: слати TG, коли funding монети тримається на
     # чіткому півцілому значенні (0.5/1.0/…/4.0 %) БЕЗ змін довше за поріг.
     'funding_gold_tg': True,             # вмик/вимк оповіщення
-    'funding_gold_freeze_min': 60,       # (LEGACY, не використовується — шлемо ВІДРАЗУ)
+    'funding_gold_freeze_min': 60,       # (LEGACY, не використовується)
     'funding_gold_tol': 0.005,           # «чистота» рівня: |rate−0.5×N| < tol (−1.007% → НЕ чистий)
-    # Таймінг МІЖ повідомленнями: шлемо ВІДРАЗУ на появі золотого funding, а поки
-    # той самий рівень тримається — ПОВТОРНО раз на N хв (дефолт 60 = 1 год).
+    # Невелика ЗАТРИМКА-підтвердження: рівень має протриматись ≥ N с, перш ніж
+    # слати TG — щоб значення було ЧІТКО визначене (не транзієнт на дотику до
+    # чистого рівня). У повідомленні показуємо СНЕПНУТЕ чисте значення (−1.500%),
+    # а не сире (−1.503%).
+    'funding_gold_confirm_sec': 30,
+    # Таймінг МІЖ повідомленнями: після підтвердження шлемо, а поки той самий
+    # рівень тримається — ПОВТОРНО раз на N хв (дефолт 60 = 1 год).
     'funding_gold_cooldown_min': 60,
 }
 
@@ -838,6 +847,7 @@ class FuelFilterDaemon:
             s['queue3_vob_sl_buffer_pct'] = max(0.0, min(10.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)))
         except (TypeError, ValueError):
             s['queue3_vob_sl_buffer_pct'] = 0.10
+        s['queue3_vob_block_against_trend'] = bool(s.get('queue3_vob_block_against_trend', True))
         # ── Queue 2 eject rules ──
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
@@ -4533,6 +4543,11 @@ class FuelFilterDaemon:
             _gold_cool = max(1, int(s.get('funding_gold_cooldown_min', 60) or 60)) * 60
         except (TypeError, ValueError):
             _gold_cool = 3600
+        try:
+            # Невелика затримка-підтвердження рівня перед відправкою (чітке визначення).
+            _gold_confirm = max(0, int(s.get('funding_gold_confirm_sec', 30) or 0))
+        except (TypeError, ValueError):
+            _gold_confirm = 30
         # Прибрати прострочені записи антиспаму (старші за кулдаун).
         if _gold_cool > 0:
             for _k in [k for k, t0 in self._gold_alert_at.items() if (now - t0) > _gold_cool]:
@@ -4589,12 +4604,13 @@ class FuelFilterDaemon:
                     self._gold_since[sym] = now
                 _since = self._gold_since.get(sym, now)
                 _ck = f"{sym}:{_step}"
-                # ✦ ВІДРАЗУ на появі золотого funding (last==0 → now−0 ≫ cool), а
-                # поки той самий рівень тримається — ПОВТОРНО раз на _gold_cool
-                # (дефолт 1 год). Кулдаун = таймінг МІЖ повідомленнями.
-                if _gold_on and (now - self._gold_alert_at.get(_ck, 0)) >= _gold_cool:
+                # Рівень має ПРОТРИМАТИСЬ ≥ _gold_confirm с (чітке визначення), а
+                # далі — поки той самий рівень тримається — ПОВТОРНО раз на
+                # _gold_cool (дефолт 1 год). Кулдаун = таймінг МІЖ повідомленнями.
+                if _gold_on and (now - _since) >= _gold_confirm \
+                        and (now - self._gold_alert_at.get(_ck, 0)) >= _gold_cool:
                     try:
-                        self._send_gold_alert(sym, a, _step, int(now - _since))
+                        self._send_gold_alert(sym, a, _step)
                     except Exception as e:
                         print(f"[FF-Gold] alert send error {sym}: {e}")
                     self._gold_alert_at[_ck] = now
@@ -4897,18 +4913,22 @@ class FuelFilterDaemon:
             if ft and ft != self._vob_seen.get(sym):
                 self._vob_seen[sym] = ft
                 lay = self._funding_layers(sym, a)
-                if tg_on and lay.get('base', 0) >= need \
-                        and (now - self._layer_alert_at.get(sym, 0)) >= cool:
-                    try:
-                        self._send_layer_alert(sym, a, lay, ob, s)
-                    except Exception as e:
-                        print(f"[FF-Layer] alert send error {sym}: {e}")
-                    self._layer_alert_at[sym] = now
+                # Авто-відкриття/трейл SL — саме воно шле «Рекомендацію бота» з SL.
                 if open_on:
                     try:
                         self._vob_open_or_trail(sym, a, d, ob, lay, s, now)
                     except Exception as e:
                         print(f"[FF-VOB-open] {sym} error: {e}")
+                # Якщо авто-відкриття ВИМКНЕНО — лишаємо просту «Рекомендацію бота»
+                # (без SL) за старим порогом шарів. Коли увімкнено — не дублюємо
+                # (повідомлення з SL надсилає _vob_open_or_trail).
+                elif tg_on and lay.get('base', 0) >= need \
+                        and (now - self._layer_alert_at.get(sym, 0)) >= cool:
+                    try:
+                        self._send_layer_alert(sym, a, d, mode='signal')
+                    except Exception as e:
+                        print(f"[FF-Layer] alert send error {sym}: {e}")
+                    self._layer_alert_at[sym] = now
         for k in list(self._vob_state.keys()):
             if k not in live:
                 self._vob_state.pop(k, None)
@@ -4967,12 +4987,30 @@ class FuelFilterDaemon:
                              f'Черга-3 (монета з фандингу): новий Volumized OB (1m) '
                              f'→ SL пересунуто на {self._fmt_price(sl)}',
                              side=d, source='Q3-VOB')
+                if s.get('layer_tg_on'):
+                    try:
+                        self._send_layer_alert(sym, a, d, sl=sl, mode='trail')
+                    except Exception as e:
+                        print(f"[FF-Layer] trail alert error {sym}: {e}")
             return
         if already and not tracked:
             return   # позиція є, але не ми її відкрили за цим сигналом — не чіпаємо
         # НОВА угода: потрібні УСІ 5 шарів.
         if (lay or {}).get('base', 0) < 5:
             return
+        # 🛡 Ворота «проти загального тренду»: НЕ відкриваємо LONG у загальному
+        # спаді / SHORT у загальному рості (≈2 год з 💰 Funding Rate Scanner).
+        # 'flat' (немає чіткого тренду) — дозволяємо. Трейл SL сюди не потрапляє.
+        if s.get('queue3_vob_block_against_trend', True):
+            _ov = (self._funding_price.get(sym.upper()) or {}).get('dir_overall')
+            if (d == 'LONG' and _ov == 'down') or (d == 'SHORT' and _ov == 'up'):
+                _ovc = (self._funding_price.get(sym.upper()) or {}).get('chg_overall')
+                log_activity(sym, 'skipped',
+                             f'Черга-3 (монета з фандингу): {d} проти ЗАГАЛЬНОГО '
+                             f'тренду ({_ov}{"" if _ovc is None else f" {_ovc:+.2f}%"}) '
+                             f'→ угоду НЕ відкрито',
+                             side=d, source='Q3-VOB')
+                return
         fd = self._fuel_dir_smoothed(sym) or {}
         entry = fd.get('mark_price') or a.get('last_price')
         fuel = {'mark_price': entry}
@@ -4995,23 +5033,29 @@ class FuelFilterDaemon:
                      f'Черга-3 (монета з фандингу): VOB (1m) + 5 шарів → відкрито {d}, '
                      f'{sl_note} (буфер {buf_pct}% за межею блоку OB)',
                      side=d, source='Q3-VOB')
+        if s.get('layer_tg_on'):
+            try:
+                self._send_layer_alert(sym, a, d, sl=sl, mode='open')
+            except Exception as e:
+                print(f"[FF-Layer] open alert error {sym}: {e}")
 
-    def _send_layer_alert(self, sym: str, a: Dict, lay: Dict, ob: Dict, s: Dict):
-        """🎯 Broadcast the consolidated «Рекомендація бота» Telegram (5-шаровий
-        збіг + заключний новий Volumized OB 1m) to the 💰 funding topic."""
-        d = a.get('dir')
+    def _send_layer_alert(self, sym: str, a: Dict, d: str,
+                          sl=None, mode: str = 'signal'):
+        """🎯 «Рекомендація бота» Telegram (топік 💰 funding). Мінімальний формат:
+            🎯 Рекомендація бота · #SYMBOL 🔴 SHORT
+            🛑 SL: <ціна>                      (mode='open' — відкрито угоду)
+        Повторний VOB по вже відкритій монеті (mode='trail'):
+            🎯 Рекомендація бота · #SYMBOL 🔴 SHORT
+            ♻️ Угода вже відкрита — змінено лише SL: <ціна>
+        mode='signal' (без авто-відкриття) — лише шапка + напрямок."""
         emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
-        rt = a.get('rate')
-        rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
-        cnt = lay.get('count', 0)
-        checks = '\n'.join(f"{'✅' if l['ok'] else '▫️'} {l['label']}: {l['detail']}"
-                           for l in lay.get('layers', []))
-        _top = ob.get('top')
-        _btm = ob.get('bottom')
-        zone = (f"\n🧱 Новий Volumized OB (1m): {self._fmt_price(_top)} – "
-                f"{self._fmt_price(_btm)}") if (_top and _btm) else ''
-        body = (f"🎯 <b>Рекомендація бота</b> · #{sym} {emoji} {d}  ({cnt}/5)\n"
-                f"funding {rt_s}\n{checks}{zone}")
+        head = f"🎯 <b>Рекомендація бота</b> · #{sym} {emoji} {d}"
+        if mode == 'open' and sl is not None:
+            body = f"{head}\n🛑 SL: <b>{self._fmt_price(sl)}</b>"
+        elif mode == 'trail' and sl is not None:
+            body = f"{head}\n♻️ Угода вже відкрита — змінено лише SL: <b>{self._fmt_price(sl)}</b>"
+        else:
+            body = head
         self._broadcast_users('funding', 'notify_layer', body)
 
     @staticmethod
@@ -5040,25 +5084,24 @@ class FuelFilterDaemon:
             return _half
         return None
 
-    def _send_gold_alert(self, sym: str, a: Dict, step: float, held_sec: int):
-        """✦ Broadcast a «gold funding froze» Telegram — a funding coin whose rate
-        stayed on a clean value (e.g. −2.000%) unchanged for a long time."""
+    def _send_gold_alert(self, sym: str, a: Dict, step: float):
+        """✦ Broadcast a «gold funding» Telegram — a funding coin sitting on a clean
+        0.5-step value. Формат як раніше (скрін):
+            ✦ FUNDING 🟢LONG
+            #SYMBOL
+            💰 Funding: -2.000%
+        Показуємо СНЕПНУТЕ чисте значення (`step` зі знаком ставки) → завжди точне
+        (−0.500% / −1.500% / −2.000%), а не сире (−0.495% / −1.503%)."""
         d = a.get('dir')
         dot = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
         side = d if d in ('LONG', 'SHORT') else '—'
         rt = a.get('rate')
-        rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
-        if held_sec < 60:
-            dur = 'щойно зʼявився'
-        elif held_sec >= 3600:
-            dur = f"тримається {held_sec/3600:.1f} год"
-        else:
-            dur = f"тримається {int(held_sec/60)} хв"
-        # Шлемо ВІДРАЗУ на появі золотого funding; повтор — раз на кулдаун, поки
-        # той самий рівень тримається. «тримається X» показує вік рівня.
-        body = (f"✦ <b>Золотий funding</b> {dot}<b>{side}</b>\n"
+        # Знак — від фактичної ставки (золотий funding зазвичай глибокий мінус).
+        sign = -1.0 if (isinstance(rt, (int, float)) and rt < 0) else 1.0
+        clean = f"{sign * float(step):+.3f}%"
+        body = (f"✦ <b>FUNDING</b> {dot}<b>{side}</b>\n"
                 f"<b>#{sym}</b>\n"
-                f"💰 Funding: <b>{rt_s}</b> · {dur}")
+                f"💰 Funding: <b>{clean}</b>")
         self._broadcast_users('funding', 'notify_funding', body)
 
     def _signal_open(self, sym: str, a: Dict, tag: str, settings: Dict):

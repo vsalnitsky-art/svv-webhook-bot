@@ -360,22 +360,24 @@ def test_funding_layers_direction_and_thresholds():
 
 
 def test_layer_alert_vob_confirms_and_dedups():
+    # Чиста «Рекомендація бота» (без авто-відкриття): queue3_vob_open=False.
     ff, db = _ff()
     db.set_setting('fuel_filter_settings', dict(
         db.get_setting('fuel_filter_settings'),
-        layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=0))
+        layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=0,
+        queue3_vob_open=False))
     sym = 'ENAUSDT'
     ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0}}
     ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
     ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 1.2, 'bottom': 1.1, 'breaker': False}
     ff.sent = []
-    ff._send_layer_alert = lambda sym, a, lay, ob, s: ff.sent.append((sym, ob['formation_time']))
+    ff._send_layer_alert = lambda sym, a, d, sl=None, mode='signal': ff.sent.append((sym, mode))
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     ff._layer_signal_alert(ff.get_settings(), 2_000_010.0)   # same OB → no re-send
-    assert ff.sent == [(sym, 111)], ff.sent
+    assert len(ff.sent) == 1, ff.sent
     ff._funding_vob = lambda sym, d: {'formation_time': 222, 'top': 1.3, 'bottom': 1.2, 'breaker': False}
     ff._layer_signal_alert(ff.get_settings(), 2_000_020.0)   # NEW OB → new alert
-    assert ff.sent == [(sym, 111), (sym, 222)], ff.sent
+    assert len(ff.sent) == 2, ff.sent
     print('✓ layer TG: спрацьовує на НОВИЙ Volumized OB (1m), не дублює той самий')
 
 
@@ -383,7 +385,8 @@ def test_layer_alert_needs_all_layers():
     ff, db = _ff()
     db.set_setting('fuel_filter_settings', dict(
         db.get_setting('fuel_filter_settings'),
-        layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=0))
+        layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=0,
+        queue3_vob_open=False))
     sym = 'ENAUSDT'
     ff._anomalies = {sym: {'dir': 'LONG'}}
     ff._funding_layers = lambda s, a: {'base': 4, 'base4': 4, 'count': 4, 'layers': []}  # 5 з 5 не всі
@@ -508,6 +511,29 @@ def test_vob_open_needs_all_five_layers():
     print('✓ VOB-open: нова угода лише коли всі 5 шарів зійшлись')
 
 
+def test_vob_open_blocked_against_overall_trend():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'),
+        queue3_vob_open=True, layer_tg_on=False,
+        queue3_vob_block_against_trend=True))
+    sym = 'ENAUSDT'
+    ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0, 'last_price': 100.0}}
+    tm = _FakeTM(); _wire_vob(ff, tm)
+    ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
+    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    # ЗАГАЛЬНИЙ тренд ВНИЗ → LONG проти нього → НЕ відкриваємо.
+    ff._funding_price = {sym: {'dir': 'up', 'chg': 1.0, 'dir_overall': 'down', 'chg_overall': -5.0}}
+    ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
+    assert ff.opened == [], 'LONG проти загального тренду ↓ — не відкриваємо'
+    # Загальний тренд ВГОРУ → LONG у бік → відкриваємо.
+    ff._funding_price = {sym: {'dir': 'up', 'chg': 1.0, 'dir_overall': 'up', 'chg_overall': 5.0}}
+    ff._funding_vob = lambda sym, d: {'formation_time': 222, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._layer_signal_alert(ff.get_settings(), 2_000_100.0)
+    assert ff.opened == [(sym, 'LONG', 'Q3-VOB(funding)')], ff.opened
+    print('✓ VOB-open: ворота «проти загального тренду» блокують контртренд, пропускають у бік')
+
+
 # --- ✦ Золотий funding: чисті рівні (цілі 1..4 + виняток 0.5) ---
 def test_gold_step_levels():
     ff, db = _ff()
@@ -534,25 +560,31 @@ def test_gold_step_levels():
 
 
 # --- ✦ Золотий funding: відразу на появі + повтор раз на кулдаун ---
-def test_gold_funding_immediate_then_repeat():
+def test_gold_funding_confirm_then_repeat():
     ff, db = _ff()
     db.set_setting('fuel_filter_settings', dict(
         db.get_setting('fuel_filter_settings'),
         funding_gold_tg=True, funding_gold_cooldown_min=60,
+        funding_gold_confirm_sec=30,
         spike_tg=False, spike_auto_open=False, opportunity_auto_open=False))
     sym = 'DEXEUSDT'
     ff._anomalies = {sym: {'dir': 'SHORT', 'rate': -2.0}}
     ff._opportunity_for = lambda sym, a, s: (0, False, [])
     ff._gold_funding_step = lambda a, tol: 2.0
     ff.gold_sent = []
-    ff._send_gold_alert = lambda sym, a, step, held: ff.gold_sent.append((sym, held))
+    ff._send_gold_alert = lambda sym, a, step: ff.gold_sent.append((sym, step))
     s = ff.get_settings()
-    ff._opportunity_alert(s, 1_000_000.0)               # зʼявився → ВІДРАЗУ
-    ff._opportunity_alert(s, 1_000_030.0)               # +30с (< 60хв) → без повтору
+    t0 = 1_000_000.0
+    ff._opportunity_alert(s, t0)                    # зʼявився → _since=t0, ще НЕ підтверджено
+    assert ff.gold_sent == [], 'до підтвердження (30с) не шлемо'
+    ff._opportunity_alert(s, t0 + 30)              # +30с → підтверджено → перше
     assert len(ff.gold_sent) == 1, ff.gold_sent
-    ff._opportunity_alert(s, 1_000_000.0 + 61 * 60)     # +61хв → повтор
+    ff._opportunity_alert(s, t0 + 60)             # <60хв від першого → без повтору
+    assert len(ff.gold_sent) == 1, ff.gold_sent
+    ff._opportunity_alert(s, t0 + 30 + 61 * 60)   # +61хв → повтор
     assert len(ff.gold_sent) == 2, ff.gold_sent
-    print('✓ gold funding: відразу на появі + повтор раз на кулдаун (60хв)')
+    assert ff.gold_sent[0][1] == 2.0, 'у повідомленні — снепнутий чистий крок'
+    print('✓ gold funding: затримка-підтвердження + повтор раз на кулдаун; чистий крок')
 
 
 if __name__ == '__main__':

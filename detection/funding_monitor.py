@@ -28,6 +28,10 @@ TREND_WINDOW = 30           # 30 scans × 1min = 30 min trend
 PRICE_WINDOW = 15
 # Мертва зона у %: рух менший за це трактуємо як «рівно» (без чіткого напрямку).
 PRICE_DEADZONE = 0.10
+# ЗАГАЛЬНИЙ тренд монети (довше вікно) — «чи в загальному падає чи росте», щоб
+# не відкривати угоду проти загального тренду. 120 × 60с = ~2 год.
+PRICE_WINDOW_LONG = 120
+PRICE_DEADZONE_LONG = 0.30
 
 
 class FundingMonitor:
@@ -467,6 +471,8 @@ class FundingMonitor:
                 # окремо від сумарного pchg від старту стеження (той міг «застигти»
                 # у плюсі, поки монета вже розвертається вниз ЗАРАЗ).
                 _pm = self._recent_price_move(rates)
+                # ЗАГАЛЬНИЙ тренд (≈2 год) — «чи в загальному падає чи росте».
+                _pmo = self._overall_price_move(rates)
 
                 is_priority = data.get('alerted', False) or self._check_priority(data)
                 ft = self._calc_trend(rates, 'r') if len(rates) >= 3 else 0
@@ -483,6 +489,9 @@ class FundingMonitor:
                     'price_chg_recent': _pm['chg'], # свіжий рух за ~15 хв (ЗАРАЗ)
                     'price_dir': _pm['dir'],        # 'up' / 'down' / 'flat'
                     'price_window_min': PRICE_WINDOW,
+                    'price_chg_overall': _pmo['chg'],   # загальний тренд (~2 год)
+                    'price_dir_overall': _pmo['dir'],   # 'up' / 'down' / 'flat'
+                    'price_window_long_min': PRICE_WINDOW_LONG,
                     'hours_tracked': round(hours_tracked, 1),
                     'hours_left': round(hours_left, 1),
                     'data_points': len(rates),
@@ -511,32 +520,44 @@ class FundingMonitor:
             }
 
     @staticmethod
-    def _recent_price_move(rates: List[Dict]) -> Dict:
-        """«ЗАРАЗ ростемо чи спадаємо» по ціні — свіжий рух за останнє вікно
-        PRICE_WINDOW (≈15 хв), а НЕ сумарний від старту стеження. Повертає
-        {'chg': %, 'dir': 'up'|'down'|'flat'}. Мертва зона PRICE_DEADZONE."""
+    def _price_move(rates: List[Dict], window: int, deadzone: float) -> Dict:
+        """Рух ЦІНИ за останні `window` семплів → {'chg': %, 'dir':
+        'up'|'down'|'flat'} з мертвою зоною `deadzone`."""
         if not rates or len(rates) < 2:
             return {'chg': 0.0, 'dir': 'flat'}
-        window = rates[-min(PRICE_WINDOW + 1, len(rates)):]
-        p0 = window[0].get('p')
-        p1 = window[-1].get('p')
+        w = rates[-min(window + 1, len(rates)):]
+        p0 = w[0].get('p')
+        p1 = w[-1].get('p')
         if not p0 or not p1:
             return {'chg': 0.0, 'dir': 'flat'}
         chg = round((p1 - p0) / p0 * 100, 2)
-        if chg > PRICE_DEADZONE:
-            d = 'up'
-        elif chg < -PRICE_DEADZONE:
-            d = 'down'
-        else:
-            d = 'flat'
+        d = 'up' if chg > deadzone else ('down' if chg < -deadzone else 'flat')
         return {'chg': chg, 'dir': d}
 
+    @classmethod
+    def _recent_price_move(cls, rates: List[Dict]) -> Dict:
+        """«ЗАРАЗ ростемо чи спадаємо» — свіжий рух за вікно PRICE_WINDOW (≈15 хв)."""
+        return cls._price_move(rates, PRICE_WINDOW, PRICE_DEADZONE)
+
+    @classmethod
+    def _overall_price_move(cls, rates: List[Dict]) -> Dict:
+        """ЗАГАЛЬНИЙ тренд монети — рух за довше вікно PRICE_WINDOW_LONG (≈2 год),
+        щоб не відкривати угоду проти загального тренду."""
+        return cls._price_move(rates, PRICE_WINDOW_LONG, PRICE_DEADZONE_LONG)
+
     def get_price_dirs(self) -> Dict[str, Dict]:
-        """{symbol: {'dir': 'up'|'down'|'flat', 'chg': %}} — свіжий напрямок ЦІНИ
-        за вікно PRICE_WINDOW. Кросмодульно (💰 Funding — МММ, 5-й шар «Ціна»)."""
+        """{symbol: {'dir','chg','dir_overall','chg_overall'}} — свіжий (15 хв) +
+        загальний (≈2 год) напрямок ЦІНИ. Кросмодульно (💰 Funding — МММ, 5-й шар
+        «Ціна» + ворота «проти загального тренду» у VOB-відкритті)."""
         with self._lock:
-            return {sym: self._recent_price_move(c.get('rates') or [])
-                    for sym, c in self._watchlist.items()}
+            out = {}
+            for sym, c in self._watchlist.items():
+                rs = c.get('rates') or []
+                r = self._recent_price_move(rs)
+                o = self._overall_price_move(rs)
+                out[sym] = {'dir': r['dir'], 'chg': r['chg'],
+                            'dir_overall': o['dir'], 'chg_overall': o['chg']}
+            return out
 
     def _calc_trend(self, rates: List[Dict], field: str) -> int:
         if len(rates) < 3:
