@@ -342,6 +342,31 @@ def test_layer_alert_needs_base4():
     print('✓ layer TG: 5-й (новий VOB) лише ПІСЛЯ зходження шарів 1-4')
 
 
+# --- ✦ Золотий funding: чисті рівні (цілі 1..4 + виняток 0.5) ---
+def test_gold_step_levels():
+    ff, db = _ff()
+    g = ff._gold_funding_step
+    # Чисті цілі → золото
+    assert g({'rate': -2.000}, 0.005) == 2.0
+    assert g({'rate': 3.000}, 0.005) == 3.0
+    assert g({'rate': -1.000}, 0.005) == 1.0
+    assert g({'rate': -4.000}, 0.005) == 4.0
+    # Чисті половинки (крок 0.5) → золото
+    assert g({'rate': -0.500}, 0.005) == 0.5
+    assert g({'rate': -1.500}, 0.005) == 1.5
+    assert g({'rate': -2.500}, 0.005) == 2.5
+    assert g({'rate': -3.500}, 0.005) == 3.5
+    # Не чисте / поза діапазоном
+    assert g({'rate': -1.007}, 0.005) is None
+    assert g({'rate': -0.520}, 0.005) is None   # поза допуском 0.5
+    assert g({'rate': -1.480}, 0.005) is None   # поза допуском 1.5
+    assert g({'rate': -5.000}, 0.005) is None   # поза діапазоном
+    assert g({'rate': -0.250}, 0.005) is None   # чверть — не крок 0.5
+    assert g({'rate': -0.502}, 0.005) == 0.5    # у межах допуску → чистий 0.5
+    assert g({'rate': -2.498}, 0.005) == 2.5    # у межах допуску → чистий 2.5
+    print('✓ gold levels: крок 0.5 у 0.5..4.0; проміжні й поза діапазоном — ні')
+
+
 # --- ✦ Золотий funding: відразу на появі + повтор раз на кулдаун ---
 def test_gold_funding_immediate_then_repeat():
     ff, db = _ff()

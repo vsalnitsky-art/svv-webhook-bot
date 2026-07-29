@@ -4870,12 +4870,13 @@ class FuelFilterDaemon:
 
     @staticmethod
     def _gold_funding_step(a: Dict, tol: float = 0.005):
-        """✦ Return the clean half-integer LEVEL (0.5..4.0) if this coin's funding
-        sits on a clean value band — |rate| ≈ a 0.5-multiple in [0.5,4] (tolerance
-        `tol`, дефолт 0.005 → −1.007% вважається НЕ чистим і не тригерить). Else None.
+        """✦ Return the clean LEVEL if this coin's funding sits on a clean value —
+        a clean 0.5-step у діапазоні 0.5..4.0: 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5,
+        4.0 (після коми лише 0 або рівно 5, напр. −2.000% чи −1.500%). Проміжні
+        (−1.007, −0.520) — НЕ золото. Tolerance `tol` (дефолт 0.005). Else None.
 
-        ВАЖЛИВО: НЕ звіряємо зі змінами vs prev_rate. Дрібне дрижання (−0.502 ↔
-        −0.501) лишається в тій самій band-і рівня 0.5 → це той самий епізод.
+        ВАЖЛИВО: НЕ звіряємо зі змінами vs prev_rate. Дрібне дрижання (−1.502 ↔
+        −1.501) лишається в тій самій band-і рівня 1.5 → це той самий епізод.
         «Застиг» = тримається на цьому рівні (епізод-таймер веде виклик), а не
         «жодного разу не змінився» — інакше алерт передзапускався й дублювався."""
         r = a.get('rate')
@@ -4886,9 +4887,11 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             return None
         av = abs(r)
-        step = round(av / 0.5) * 0.5
-        if abs(av - step) < tol and 0.5 <= step <= 4:
-            return step
+        # Чисте значення = крок 0.5 у діапазоні 0.5..4.0 (після коми лише 0 або 5):
+        # 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0. Проміжні — НЕ золото.
+        _half = round(av * 2) / 2.0
+        if abs(av - _half) < tol and 0.5 <= _half <= 4.0:
+            return _half
         return None
 
     def _send_gold_alert(self, sym: str, a: Dict, step: float, held_sec: int):
