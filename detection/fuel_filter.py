@@ -4772,12 +4772,14 @@ class FuelFilterDaemon:
         mm_rising = isinstance(mm_prev, (int, float)) and mm_str > mm_prev + 1
         mm_falling = isinstance(mm_prev, (int, float)) and mm_str < mm_prev - 1
         mm_arrow = ('↑' if mm_rising else ('↓' if mm_falling else '→'))
-        # Шар 1: напрямок МММ у бік монети + сила ≥ легкий (10) + НЕ слабшає
-        # (↑ або →). Раніше вимагалось СТРОГО РОСТЕ (↑): на вже встановленому
-        # сильному русі сила часто виходить на плато (→), тож шар МММ майже
-        # ніколи не світився (напр. GOOGLUSDT SHORT помірний 40% →). Тепер шар
-        # гасне ЛИШЕ коли МММ реально слабшає (↓) — тобто тиск у бік згасає.
-        add('mm', 'МММ', mm_dir == d and mm_str >= 10 and not mm_falling,
+        # Шар 1: напрямок МММ у бік монети + сила ≥ легкий (10) + тренд сили.
+        # АСИМЕТРІЯ за напрямком:
+        #  • SHORT — НЕ слабшає (↑ або →): на вже встановленому спаді сила часто
+        #    виходить на плато (→), тож строге ↑ гасило шар МММ майже завжди
+        #    (напр. GOOGLUSDT SHORT помірний 40% →). Гасне ЛИШЕ на ↓ (тиск згасає).
+        #  • LONG — як було РАНІШЕ: СТРОГО РОСТЕ (↑).
+        mm_trend_ok = (not mm_falling) if d == 'SHORT' else mm_rising
+        add('mm', 'МММ', mm_dir == d and mm_str >= 10 and mm_trend_ok,
             f"{mm_dir or '—'} {int(mm_str)}% {mm_arrow}")
         # 2) SCORE у бік + ≥ СЕРЕДНІЙ (≥ 40).
         sc = self._score_cache.get(sym) or {}

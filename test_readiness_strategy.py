@@ -317,6 +317,33 @@ def test_funding_layers_price_direction():
     print('✓ funding layers: 5-й ЦІНА — LONG=росте / SHORT=спадає')
 
 
+def test_funding_layers_mm_trend_asymmetry():
+    """Шар МММ: SHORT світиться на ↑ або → (не слабшає); LONG — лише на ↑."""
+    ff, db = _ff()
+    sym = 'ASYMUSDT'
+    # Плато сили (→): prev≈now → ані rising, ані falling.
+    ff._fuel_str = {sym: 40}
+    ff._fuel_str_prev = {sym: 40}
+    # SHORT + плато (→) → МММ СВІТИТЬСЯ.
+    ff._fuel_dir_smoothed = lambda s: {'status': 'SHORT', 'mark_price': 1.0}
+    ls = next(l for l in ff._funding_layers(sym, {'dir': 'SHORT'})['layers'] if l['key'] == 'mm')
+    assert ls['ok'], 'SHORT: плато (→) має світити шар МММ'
+    # LONG + плато (→) → МММ ГАСНЕ (потрібне строге ↑).
+    ff._fuel_dir_smoothed = lambda s: {'status': 'LONG', 'mark_price': 1.0}
+    ll = next(l for l in ff._funding_layers(sym, {'dir': 'LONG'})['layers'] if l['key'] == 'mm')
+    assert not ll['ok'], 'LONG: плато (→) НЕ світить шар МММ (як було раніше)'
+    # LONG + росте (↑) → МММ світиться.
+    ff._fuel_str_prev = {sym: 20}
+    ll2 = next(l for l in ff._funding_layers(sym, {'dir': 'LONG'})['layers'] if l['key'] == 'mm')
+    assert ll2['ok'], 'LONG: сила РОСТЕ (↑) → шар МММ світиться'
+    # SHORT + слабшає (↓) → МММ гасне (тиск згасає).
+    ff._fuel_dir_smoothed = lambda s: {'status': 'SHORT', 'mark_price': 1.0}
+    ff._fuel_str = {sym: 20}; ff._fuel_str_prev = {sym: 40}
+    ls2 = next(l for l in ff._funding_layers(sym, {'dir': 'SHORT'})['layers'] if l['key'] == 'mm')
+    assert not ls2['ok'], 'SHORT: сила СЛАБШАЄ (↓) → шар МММ гасне'
+    print('✓ funding layers: шар МММ — SHORT ↑/→, LONG лише ↑')
+
+
 def test_funding_layers_direction_and_thresholds():
     ff, db = _ff()
     sym = 'SUIUSDT'
