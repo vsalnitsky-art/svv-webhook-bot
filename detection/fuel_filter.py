@@ -6642,6 +6642,9 @@ class FuelFilterDaemon:
                     'setup_scalp': self._setup_scalp_cache.get(sym),
                     # 🎯 5-шаровий конфлюенс (для колонки «Шари» + TG-сигналу).
                     'layers': self._funding_layers(sym, a),
+                    # 💹 Напрямок ЦІНИ з 💰 Funding Rate Scanner: свіжий (~15 хв)
+                    # + загальний тренд (~2 год) — другий рядок у таблиці.
+                    'price': (self._funding_price or {}).get(sym.upper()),
                     # 🎯 Композитний аналіз «найкращий момент для входу».
                     'opportunity': _opp,
                     'opportunity_hot': _opp_hot,

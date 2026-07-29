@@ -832,6 +832,20 @@
       var _rowBg = a.opportunity_hot
         ? "background:rgba(74,222,128,0.13);box-shadow:inset 3px 0 0 #4ade80"
         : "background:rgba(16,185,129,0.06)";
+      // 💹 Ціна (з 💰 Funding Rate Scanner): свіжий рух (~15 хв) + загальний тренд.
+      var _pz = a.price || {};
+      var _pArr = function (x) { return x === "up" ? "▲" : (x === "down" ? "▼" : "▬"); };
+      var _pCol = function (x) { return x === "up" ? "#4ade80" : (x === "down" ? "#f87171" : "#8b93a7"); };
+      var _pWrd = function (x) { return x === "up" ? "росте" : (x === "down" ? "спадає" : "рівно"); };
+      var _pWrdO = function (x) { return x === "up" ? "росте" : (x === "down" ? "спадає" : "в боці"); };
+      var _pHas = (_pz.dir != null || _pz.chg != null);
+      var _pd = _pz.dir || "flat", _pc = (_pz.chg != null ? _pz.chg : 0);
+      var _pdo = _pz.dir_overall || "flat", _pco = (_pz.chg_overall != null ? _pz.chg_overall : 0);
+      var _priceCell = _pHas
+        ? ('<span title="Свіжий рух ціни за ~15 хв" style="display:inline-flex;align-items:center;gap:6px;width:250px;flex:none">💹 <span style="color:#8b93a7">Ціна:</span> <b style="color:' + _pCol(_pd) + ';font-variant-numeric:tabular-nums;display:inline-block;width:74px;text-align:right">' + _pArr(_pd) + " " + (_pc >= 0 ? "+" : "") + Number(_pc).toFixed(2) + '%</b> <span style="color:' + _pCol(_pd) + ';font-size:0.66rem;display:inline-block;width:44px">' + _pWrd(_pd) + '</span><span style="color:#556;font-size:0.62rem">15хв</span></span>'
+           + '<span title="Загальний тренд монети (~2 год)" style="display:inline-flex;align-items:center;gap:6px;width:300px;flex:none">📈 <span style="color:#8b93a7">Загалом:</span> <b style="color:' + _pCol(_pdo) + ';font-variant-numeric:tabular-nums;display:inline-block;width:74px;text-align:right">' + _pArr(_pdo) + " " + (_pco >= 0 ? "+" : "") + Number(_pco).toFixed(2) + '%</b> <span style="color:' + _pCol(_pdo) + ';font-size:0.66rem;display:inline-block;width:44px">' + _pWrdO(_pdo) + '</span><span style="color:#556;font-size:0.62rem">~2год</span></span>')
+        : '<span style="color:#667">💹 Ціна: — немає у сканері</span>';
+      var _priceRow = '<tr style="' + _rowBg + '"><td colspan="10" style="padding:2px 8px 6px 30px;border-bottom:1px solid rgba(255,255,255,0.07)"><span style="display:flex;align-items:center;font-size:0.72rem;color:#9aa3b5;width:100%">' + _priceCell + "</span></td></tr>";
       return '<tr style="' + _rowBg + '">' +
         '<td style="font-weight:600">' + (a.spike ? '<span title="Аномальний ріст: різкий рух ціни ' + (a.spike_move != null ? ((a.spike_move >= 0 ? "+" : "") + a.spike_move + "% ") : "") + '+ зростання обсягу — варто розглянути" style="margin-right:4px">🚀</span>' : "") + '<span style="color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>' + tvSym(a.symbol) + "</td>" +
         "<td>" + dirHtml + "</td>" +
@@ -843,7 +857,7 @@
         '<td>' + progHtml + "</td>" +
         '<td style="font-size:0.72rem;white-space:nowrap">' + rateTxt + " " + cdTxt + fTrendBadge(a.f_trend) + "</td>" +
         '<td style="font-size:0.72rem;color:#cbd5e1;white-space:nowrap">' + volTxt + "</td>" +
-      "</tr>" + oppStatsRow(a);
+      "</tr>" + _priceRow + oppStatsRow(a);
     }).join("");
   }
 

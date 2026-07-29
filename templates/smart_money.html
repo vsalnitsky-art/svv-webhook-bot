@@ -9229,6 +9229,20 @@ function renderFuelFilter(d) {
                 const _rowBg = a.opportunity_hot
                     ? 'background:rgba(74,222,128,0.13);box-shadow:inset 3px 0 0 #4ade80'
                     : 'background:rgba(16,185,129,0.06)';
+                // 💹 Ціна (з 💰 Funding Rate Scanner): свіжий рух (~15 хв) + загальний
+                // тренд (~2 год). Другий рядок; вирівняно в ті самі колонки.
+                const _pz = a.price || {};
+                const _pArr = x => x === 'up' ? '▲' : (x === 'down' ? '▼' : '▬');
+                const _pCol = x => x === 'up' ? '#4ade80' : (x === 'down' ? '#f87171' : '#8b93a7');
+                const _pWrd = x => x === 'up' ? 'росте' : (x === 'down' ? 'спадає' : 'рівно');
+                const _pWrdO = x => x === 'up' ? 'росте' : (x === 'down' ? 'спадає' : 'в боці');
+                const _pHas = (_pz.dir != null || _pz.chg != null);
+                const _pd = _pz.dir || 'flat', _pc = (_pz.chg != null ? _pz.chg : 0);
+                const _pdo = _pz.dir_overall || 'flat', _pco = (_pz.chg_overall != null ? _pz.chg_overall : 0);
+                const _priceCell = _pHas
+                    ? `<span title="Свіжий рух ціни за ~15 хв (з 💰 Funding Rate Scanner)" style="display:inline-flex;align-items:center;gap:6px;width:250px;flex:none">💹 <span style="color:#8b93a7">Ціна:</span> <b style="color:${_pCol(_pd)};font-variant-numeric:tabular-nums;display:inline-block;width:74px;text-align:right">${_pArr(_pd)} ${_pc>=0?'+':''}${Number(_pc).toFixed(2)}%</b> <span style="color:${_pCol(_pd)};font-size:0.66rem;display:inline-block;width:44px">${_pWrd(_pd)}</span><span style="color:#556;font-size:0.62rem">15хв</span></span>`
+                      + `<span title="Загальний тренд монети (~2 год) — щоб не входити проти нього" style="display:inline-flex;align-items:center;gap:6px;width:300px;flex:none">📈 <span style="color:#8b93a7">Загалом:</span> <b style="color:${_pCol(_pdo)};font-variant-numeric:tabular-nums;display:inline-block;width:74px;text-align:right">${_pArr(_pdo)} ${_pco>=0?'+':''}${Number(_pco).toFixed(2)}%</b> <span style="color:${_pCol(_pdo)};font-size:0.66rem;display:inline-block;width:44px">${_pWrdO(_pdo)}</span><span style="color:#556;font-size:0.62rem">~2год</span></span>`
+                    : `<span style="display:inline-flex;align-items:center;gap:6px;width:250px;flex:none">💹 <span style="color:#8b93a7">Ціна:</span> <span style="color:#667">— немає у сканері</span></span>`;
                 return `<tr style="${_rowBg}">
                     <td style="font-weight:600">${a.spike ? `<span title="Аномальний ріст: різкий рух ціни ${a.spike_move != null ? (a.spike_move >= 0 ? '+' : '') + a.spike_move + '% ' : ''}+ зростання обсягу — варто розглянути" style="margin-right:4px;cursor:default">🚀</span>` : ''}<span onclick="showFundingHistory('${a.symbol}')" title="Історія монети (архів)" style="cursor:pointer;margin-right:4px">📜</span><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>${tvSym(a.symbol)}</td>
                     <td>${dirHtml}</td>
@@ -9248,6 +9262,7 @@ function renderFuelFilter(d) {
                         <span title="24-годинний обсяг торгів (USD)" style="display:inline-flex;align-items:center;gap:6px;width:300px;flex:none">📊 <span style="color:#8b93a7">Vol 24h:</span> <b style="color:#cbd5e1;font-weight:600">${volTxt}</b></span>
                         <span style="margin-left:auto;display:inline-flex;align-items:center;gap:14px;flex:none"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.72rem" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕 Приглушити</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.72rem" title="Прибрати з таблиці">✕ Прибрати</span></span>
                     </span>
+                    <span style="display:flex;align-items:center;font-size:0.72rem;color:#9aa3b5;width:100%;margin-top:3px">${_priceCell}</span>
                 </td></tr>${oppStatsRow(a)}`;
             }).join('');
         }
