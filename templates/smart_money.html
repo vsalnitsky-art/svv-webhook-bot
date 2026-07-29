@@ -2446,12 +2446,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram про 🚀 аномальний ріст (різкий рух ціни + зростання обсягу).">
                                 <input type="checkbox" id="ff-spike-tg" onchange="saveFuelFilterSettings()"> 🚀 «Аномальний ріст»
                             </label>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram, коли ✦ золотий funding (чітке значення 0.5/1.0/…/4.0 %) тримається без змін довше за поріг праворуч.">
-                                <input type="checkbox" id="ff-gold-tg" onchange="saveFuelFilterSettings()"> ✦ «Золотий funding застиг»
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram ВІДРАЗУ, щойно зʼявляється ✦ золотий funding (чітке значення 0.5/1.0/…/4.0 %). Поки той самий рівень тримається — повторно раз на інтервал праворуч.">
+                                <input type="checkbox" id="ff-gold-tg" onchange="saveFuelFilterSettings()"> ✦ «Золотий funding»
                             </label>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Скільки хвилин ✦ золотий funding має триматись на чіткому значенні БЕЗ змін, щоб надіслати оповіщення.">
-                                застиг ≥
-                                <input type="number" id="ff-gold-freeze" min="5" max="1440" step="5" onchange="saveFuelFilterSettings()" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(251,191,36,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace"> хв
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Таймінг МІЖ повідомленнями: перше — відразу на появі золотого funding, далі повторно раз на стільки хвилин, поки той самий рівень тримається. Дефолт 60 (1 год).">
+                                повтор кожні
+                                <input type="number" id="ff-gold-cool" min="1" max="1440" step="5" onchange="saveFuelFilterSettings()" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(251,191,36,0.4);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace"> хв
                             </label>
                         </div>
                     </div>
@@ -9024,7 +9024,7 @@ function renderFuelFilter(d) {
     setIf('ff-opp-tg', s.opportunity_tg !== false);
     setIf('ff-spike-tg', s.spike_tg !== false);
     setIf('ff-gold-tg', s.funding_gold_tg !== false);
-    setIf('ff-gold-freeze', String(s.funding_gold_freeze_min != null ? s.funding_gold_freeze_min : 60));
+    setIf('ff-gold-cool', String(s.funding_gold_cooldown_min != null ? s.funding_gold_cooldown_min : 60));
     setIf('ff-tg-entry', !!s.ff_tg_on_entry);
     setIf('ff-funding-entry-dir', s.funding_tg_entry_dir || 'any');
     setIf('ff-funding-entry-minmm', String(s.funding_tg_entry_min_mm != null ? s.funding_tg_entry_min_mm : 0));
@@ -9907,7 +9907,7 @@ async function saveFuelFilterSettings() {
         opportunity_tg: _c('ff-opp-tg'),
         spike_tg: _c('ff-spike-tg'),
         funding_gold_tg: _c('ff-gold-tg'),
-        funding_gold_freeze_min: parseInt(_v('ff-gold-freeze', '60') || '60', 10),
+        funding_gold_cooldown_min: parseInt(_v('ff-gold-cool', '60') || '60', 10),
         ff_tg_on_entry: _c('ff-tg-entry'),
         funding_tg_entry_dir: _v('ff-funding-entry-dir', 'any') || 'any',
         funding_tg_entry_min_mm: parseInt(_v('ff-funding-entry-minmm', '0') || '0', 10),

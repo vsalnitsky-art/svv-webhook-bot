@@ -342,6 +342,28 @@ def test_layer_alert_needs_base4():
     print('✓ layer TG: 5-й (новий VOB) лише ПІСЛЯ зходження шарів 1-4')
 
 
+# --- ✦ Золотий funding: відразу на появі + повтор раз на кулдаун ---
+def test_gold_funding_immediate_then_repeat():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'),
+        funding_gold_tg=True, funding_gold_cooldown_min=60,
+        spike_tg=False, spike_auto_open=False, opportunity_auto_open=False))
+    sym = 'DEXEUSDT'
+    ff._anomalies = {sym: {'dir': 'SHORT', 'rate': -2.0}}
+    ff._opportunity_for = lambda sym, a, s: (0, False, [])
+    ff._gold_funding_step = lambda a, tol: 2.0
+    ff.gold_sent = []
+    ff._send_gold_alert = lambda sym, a, step, held: ff.gold_sent.append((sym, held))
+    s = ff.get_settings()
+    ff._opportunity_alert(s, 1_000_000.0)               # зʼявився → ВІДРАЗУ
+    ff._opportunity_alert(s, 1_000_030.0)               # +30с (< 60хв) → без повтору
+    assert len(ff.gold_sent) == 1, ff.gold_sent
+    ff._opportunity_alert(s, 1_000_000.0 + 61 * 60)     # +61хв → повтор
+    assert len(ff.gold_sent) == 2, ff.gold_sent
+    print('✓ gold funding: відразу на появі + повтор раз на кулдаун (60хв)')
+
+
 if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for t in tests:

@@ -449,9 +449,11 @@ DEFAULT_SETTINGS = {
     # ✦ «Золотий funding застиг»: слати TG, коли funding монети тримається на
     # чіткому півцілому значенні (0.5/1.0/…/4.0 %) БЕЗ змін довше за поріг.
     'funding_gold_tg': True,             # вмик/вимк оповіщення
-    'funding_gold_freeze_min': 60,       # скільки хв золотий funding має «застигнути»
+    'funding_gold_freeze_min': 60,       # (LEGACY, не використовується — шлемо ВІДРАЗУ)
     'funding_gold_tol': 0.005,           # «чистота» рівня: |rate−0.5×N| < tol (−1.007% → НЕ чистий)
-    'funding_gold_cooldown_min': 240,    # той самий (монета+рівень) не частіше, ніж раз на N хв
+    # Таймінг МІЖ повідомленнями: шлемо ВІДРАЗУ на появі золотого funding, а поки
+    # той самий рівень тримається — ПОВТОРНО раз на N хв (дефолт 60 = 1 год).
+    'funding_gold_cooldown_min': 60,
 }
 
 
@@ -4490,17 +4492,14 @@ class FuelFilterDaemon:
             cool = 1800
         _gold_on = bool(s.get('funding_gold_tg', True))
         try:
-            _gold_freeze = max(60, int(s.get('funding_gold_freeze_min', 60) or 60) * 60)
-        except (TypeError, ValueError):
-            _gold_freeze = 3600
-        try:
             _gold_tol = float(s.get('funding_gold_tol', 0.005) or 0.005)
         except (TypeError, ValueError):
             _gold_tol = 0.005
         try:
-            _gold_cool = max(0, int(s.get('funding_gold_cooldown_min', 240) or 240) * 60)
+            # Таймінг МІЖ повідомленнями (дефолт 60 хв). Мін. 1 хв — щоб не спамити.
+            _gold_cool = max(1, int(s.get('funding_gold_cooldown_min', 60) or 60)) * 60
         except (TypeError, ValueError):
-            _gold_cool = 14400
+            _gold_cool = 3600
         # Прибрати прострочені записи антиспаму (старші за кулдаун).
         if _gold_cool > 0:
             for _k in [k for k, t0 in self._gold_alert_at.items() if (now - t0) > _gold_cool]:
@@ -4550,32 +4549,25 @@ class FuelFilterDaemon:
             # this gold episode. Any change (loses gold) resets the timer + flag.
             _step = self._gold_funding_step(a, _gold_tol)
             if _step is not None:
-                # Епізод привʼязаний до РІВНЯ (band). Дрібне дрижання в межах того
-                # самого рівня (−0.502↔−0.501) НЕ скидає таймер і не передзапускає
-                # алерт. Скид лише коли рівень реально змінився (перейшов на інший
-                # 0.5-multiple) або зовсім вийшов із золота (гілка else).
+                # Епізод привʼязаний до РІВНЯ (band). Новий рівень (перехід на інший
+                # 0.5-multiple) → скид таймера появи (для тексту «тримається»).
                 if self._gold_step.get(sym) != _step:
                     self._gold_step[sym] = _step
                     self._gold_since[sym] = now
-                    self._gold_alerted.discard(sym)
                 _since = self._gold_since.get(sym, now)
-                # Крос-епізодний кулдаун: той самий (монета+рівень) не частіше,
-                # ніж раз на _gold_cool — навіть якщо монета виходила зі сканера
-                # й повернулась (саме це давало 4× DEXEUSDT −2.500% за годину).
                 _ck = f"{sym}:{_step}"
-                _cooled = (now - self._gold_alert_at.get(_ck, 0)) >= _gold_cool
-                if (_gold_on and sym not in self._gold_alerted and _cooled
-                        and (now - _since) >= _gold_freeze):
+                # ✦ ВІДРАЗУ на появі золотого funding (last==0 → now−0 ≫ cool), а
+                # поки той самий рівень тримається — ПОВТОРНО раз на _gold_cool
+                # (дефолт 1 год). Кулдаун = таймінг МІЖ повідомленнями.
+                if _gold_on and (now - self._gold_alert_at.get(_ck, 0)) >= _gold_cool:
                     try:
                         self._send_gold_alert(sym, a, _step, int(now - _since))
                     except Exception as e:
                         print(f"[FF-Gold] alert send error {sym}: {e}")
-                    self._gold_alerted.add(sym)
                     self._gold_alert_at[_ck] = now
             else:
                 self._gold_since.pop(sym, None)
                 self._gold_step.pop(sym, None)
-                self._gold_alerted.discard(sym)
         # Prune edge-state for coins that left the table. Do NOT close the 🎯
         # episode here — it is tied to the OPEN TRADE now (closed by
         # _opp_episode_close_if_open when the position closes), not to the coin's
@@ -4907,15 +4899,17 @@ class FuelFilterDaemon:
         side = d if d in ('LONG', 'SHORT') else '—'
         rt = a.get('rate')
         rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
-        if held_sec >= 3600:
-            dur = f"{held_sec/3600:.1f} год"
+        if held_sec < 60:
+            dur = 'щойно зʼявився'
+        elif held_sec >= 3600:
+            dur = f"тримається {held_sec/3600:.1f} год"
         else:
-            dur = f"{int(held_sec/60)} хв"
-        # Загальний формат як усі інші повідомлення: заголовок + жирний #символ +
-        # структуровані рядки, HTML-жирний. «рівень», а не «чітке» (band ±0.01).
-        body = (f"✦ FUNDING {dot}<b>{side}</b>\n"
+            dur = f"тримається {int(held_sec/60)} хв"
+        # Шлемо ВІДРАЗУ на появі золотого funding; повтор — раз на кулдаун, поки
+        # той самий рівень тримається. «тримається X» показує вік рівня.
+        body = (f"✦ <b>Золотий funding</b> {dot}<b>{side}</b>\n"
                 f"<b>#{sym}</b>\n"
-                f"💰 Funding: <b>{rt_s}</b>")
+                f"💰 Funding: <b>{rt_s}</b> · {dur}")
         self._broadcast_users('funding', 'notify_funding', body)
 
     def _signal_open(self, sym: str, a: Dict, tag: str, settings: Dict):
