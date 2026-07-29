@@ -2258,30 +2258,51 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
                 <div style="font-size:0.74rem;font-weight:700;color:#c9b8ff;min-width:0">🎯 Черга-3 · Готовність <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS і відкриває, коли SMC-«готовність сетапу» (grade_setup) стає HOT АБО коли її SCORE ≥ порога, у напрямку кнопки. Весь контекст ₿/CTR/зона/ліквідність уже всередині оцінки. БЕЗ ₿ START. Кожне рішення логується для аналізу.</span></div>
                 <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-3 «Готовність». Відкриває монету, коли grade_setup=HOT АБО score ≥ порога (нижче) у напрямку кнопки. Щоб перемкнутися на цю стратегію — увімкни її та (за бажанням) вимкни Черги 1/2.">
+                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-3 «Готовність». Відкриває монету, коли grade_setup=HOT АБО score ≥ порога у напрямку кнопки. Щоб перемкнутися на цю стратегію — увімкни її та (за бажанням) вимкни Черги 1/2.">
                         <input type="checkbox" id="ff-queue3-enabled" onchange="saveFuelFilterSettings()">
                         <span class="slider"></span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1" title="Поріг відкриття Черги-3: відкриває, коли grade_setup HOT АБО SCORE ≥ цього значення. Строгий HOT (≥70 + усі блоки) на реальному потоці майже не спрацьовує, тож поріг дає стратегії реальні угоди. 53 ≈ «ХОРОШИЙ». 0 = лише HOT.">
-                        SCORE ≥ <input type="number" id="ff-queue3-min-score" min="0" max="100" step="1" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace" onchange="saveFuelFilterSettings()">
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1" title="Скільки годин монета може висіти в Черзі-3 без відкриття, після чого протермінується (щоб не накопичувались годинами). 0 = без ліміту.">
-                        TTL <input type="number" id="ff-queue3-ttl" min="0" max="72" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace" onchange="saveFuelFilterSettings()"> год
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1;cursor:pointer" title="Розворотна Черга-3 НЕ застосовує CTR-перевірку «м'якого запобіжника» у відкритті (свіжий CHoCH+BOS завжди проти CTR, тож вона різала кожен розворот). МММ і виснаженість у запобіжнику лишаються. Рекомендовано УВІМК для розворотної стратегії.">
-                        <input type="checkbox" id="ff-queue3-ignore-ctr" onchange="saveFuelFilterSettings()"> 🚫 Ігнор CTR-запобіжник
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1" title="Як CTR впливає на бал «Готовність» (grade_setup) УСЮДИ: мʼяко — партіал замість 0, БЕЗ жорсткого вето (розвороти не ріжуться); звичайно — старе (0 + вето кап≤43); вимк — CTR нейтральний.">
-                        CTR: <select id="ff-setup-ctr-mode" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace">
-                            <option value="soft">мʼяко</option><option value="normal">звичайно</option><option value="off">вимк</option>
-                        </select>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#cbd5e1;cursor:pointer" title="Писати кожне рішення «Готовності» (opened/hold/skipped + розклад блоків) у БД (sob_readiness_log) та Лог роботи бота для аналізу.">
-                        <input type="checkbox" id="ff-readiness-log" onchange="saveFuelFilterSettings()"> 📝 Лог
                     </label>
                     <button onclick="clearAllTimers3()" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;line-height:1;font-size:0.68rem;padding:6px 12px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-3">🗑️ Очистити всі</button>
                 </div>
             </div>
+            <!-- ⚙️ Налаштування Черги-3 (гармошка) — усі параметри стратегії тут -->
+            <details class="sm-settings-bar" style="margin:0 0 8px">
+                <summary class="sm-settings-summary">⚙️ Налаштування (Черга-3)
+                    <span class="sm-settings-summary-right" style="color:#8b93a7">поріг · TTL · CTR · лог · авто-VOB</span>
+                </summary>
+                <div style="padding:10px 12px;display:flex;flex-direction:column;gap:12px;border-top:1px solid rgba(255,255,255,0.06)">
+                    <!-- Ряд 1: поріг входу / TTL / CTR / лог -->
+                    <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+                        <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Поріг відкриття Черги-3: відкриває, коли grade_setup HOT АБО SCORE ≥ цього значення. Строгий HOT (≥70 + усі блоки) на реальному потоці майже не спрацьовує, тож поріг дає стратегії реальні угоди. 43 ≈ «СЕРЕДНІЙ+». 0 = лише HOT.">
+                            SCORE ≥ <input type="number" id="ff-queue3-min-score" min="0" max="100" step="1" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace" onchange="saveFuelFilterSettings()">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Скільки годин монета може висіти в Черзі-3 без відкриття, після чого протермінується (щоб не накопичувались годинами). 0 = без ліміту.">
+                            TTL <input type="number" id="ff-queue3-ttl" min="0" max="72" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace" onchange="saveFuelFilterSettings()"> год
+                        </label>
+                        <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Розворотна Черга-3 НЕ застосовує CTR-перевірку «м'якого запобіжника» у відкритті (свіжий CHoCH+BOS завжди проти CTR, тож вона різала кожен розворот). МММ і виснаженість у запобіжнику лишаються. Рекомендовано УВІМК для розворотної стратегії.">
+                            <input type="checkbox" id="ff-queue3-ignore-ctr" onchange="saveFuelFilterSettings()"> 🚫 Ігнор CTR-запобіжник
+                        </label>
+                        <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Як CTR впливає на бал «Готовність» (grade_setup) УСЮДИ: мʼяко — партіал замість 0, БЕЗ жорсткого вето (розвороти не ріжуться); звичайно — старе (0 + вето кап≤43); вимк — CTR нейтральний.">
+                            CTR: <select id="ff-setup-ctr-mode" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace">
+                                <option value="soft">мʼяко</option><option value="normal">звичайно</option><option value="off">вимк</option>
+                            </select>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Писати кожне рішення «Готовності» (opened/hold/skipped + розклад блоків) у БД (sob_readiness_log) та Лог роботи бота для аналізу.">
+                            <input type="checkbox" id="ff-readiness-log" onchange="saveFuelFilterSettings()"> 📝 Лог
+                        </label>
+                    </div>
+                    <!-- Ряд 2: авто-відкриття за VOB + 5 шарів (funding-монети) -->
+                    <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,0.06);padding-top:10px">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#c9b8ff;cursor:pointer" title="Для монет таблиці «💰 Funding — МММ»: коли зійшлись УСІ 5 шарів у бік монети і зʼявляється НОВИЙ Volumized OB (1m) у той самий бік — бот ВІДКРИВАЄ угоду за напрямком. SL = верхнє (SHORT) / нижнє (LONG) значення блоку OB + буфер. Повторний VOB по вже відкритій монеті НЕ відкриває нову угоду, а лише пересуває SL на новий блок. Усе фіксується в 🧾 Лог роботи бота з міткою «монета з фандингу».">
+                            <input type="checkbox" id="ff-queue3-vob-open" onchange="saveFuelFilterSettings()"> 🎯 Авто-відкриття угоди за <b>VOB + 5 шарів</b>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Буфер для SL за межею блоку OB (% ціни): SHORT — над верхом блоку, LONG — під низом блоку. Наприклад 0.10% = стоп трохи далі за край блоку, щоб дрібний фітіль не вибивав.">
+                            Буфер SL <input type="number" id="ff-queue3-vob-buffer" min="0" max="10" step="0.01" style="width:64px;padding:4px 6px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace" onchange="saveFuelFilterSettings()"> % за межею блоку
+                        </label>
+                    </div>
+                    <div style="font-size:0.64rem;color:#6b7280">💡 «VOB + 5 шарів» — окрема експериментальна стратегія для монет із фандингу: тригер = НОВИЙ Volumized OB (1m: Swing 5, Wick, ATR×3.5, Zone Low) у бік, коли всі 5 шарів (МММ/SCORE/Готовність/Скальп/ЦІНА) зійшлись у той самий бік. Відкриває угоду за напрямком (real/paper — за режимом Trade Manager), ставить SL на межу блоку OB + буфер; кожен новий OB лише підтягує SL. Дедуп по монеті: доки угода відкрита — повторно не відкриваємо.</div>
+                </div>
+            </details>
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers3-table">
                     <thead>
@@ -2402,7 +2423,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <input type="number" id="ff-layer-tg-cool" min="0" max="720" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                             </div>
                         </div>
-                        <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 5 шарів у бік напрямку (кольори за напрямком: усі зелені LONG / усі червоні SHORT): 1) МММ ≥ легкий і РОСТЕ (↑) · 2) SCORE ≥ СЕРЕДНІЙ · 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · 5) ЦІНА у бік (свіжий рух ~15 хв: LONG=росте / SHORT=спадає). <b>Volumized OB (1m) — ОКРЕМИЙ одноразовий тригер</b> (не в колонці): щойно зʼявляється <b>новий Volumized OB (1m: Swing 5, Wick, ATR×3.5, Zone Low)</b> у бік і всі шари валідні → один сигнал «Рекомендація бота» в Telegram (замінює старе повідомлення), інакше чекаємо наступний OB. Решту дрібних TG (funding/gold/spike/скальп) можна вимкнути.</div>
+                        <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 5 шарів у бік напрямку (кольори за напрямком: усі зелені LONG / усі червоні SHORT): 1) МММ ≥ легкий і НЕ слабшає (↑/→) · 2) SCORE ≥ СЕРЕДНІЙ · 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · 5) ЦІНА у бік (свіжий рух ~15 хв: LONG=росте / SHORT=спадає). <b>Volumized OB (1m) — ОКРЕМИЙ одноразовий тригер</b> (не в колонці): щойно зʼявляється <b>новий Volumized OB (1m: Swing 5, Wick, ATR×3.5, Zone Low)</b> у бік і всі шари валідні → один сигнал «Рекомендація бота» в Telegram (замінює старе повідомлення), інакше чекаємо наступний OB. Решту дрібних TG (funding/gold/spike/скальп) можна вимкнути.</div>
                     </div>
                     <!-- 🚀 Аномальний ріст (spike) — різкий рух ціни поза логікою МММ -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
@@ -2500,7 +2521,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <thead>
                         <tr>
                             <th>Символ</th><th>Напрямок</th>
-                            <th title="🎯 Шаровий конфлюенс у бік монети (усі 5 у колонці). 1) МММ ≥ легкий і РОСТЕ (↑) · 2) SCORE ≥ СЕРЕДНІЙ · 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · 5) ЦІНА у бік (свіжий рух ~15 хв: LONG=росте / SHORT=спадає). Кольори шарів — за напрямком: усі зелені (LONG) або всі червоні (SHORT). Volumized OB (1m) — ОКРЕМИЙ одноразовий тригер: щойно новий OB у бік і всі шари валідні → «Рекомендація бота» в Telegram.">🎯 Шари</th>
+                            <th title="🎯 Шаровий конфлюенс у бік монети (усі 5 у колонці). 1) МММ ≥ легкий і НЕ слабшає (↑/→) · 2) SCORE ≥ СЕРЕДНІЙ · 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · 5) ЦІНА у бік (свіжий рух ~15 хв: LONG=росте / SHORT=спадає). Кольори шарів — за напрямком: усі зелені (LONG) або всі червоні (SHORT). Volumized OB (1m) — ОКРЕМИЙ одноразовий тригер: щойно новий OB у бік і всі шари валідні → «Рекомендація бота» в Telegram + (Черга-3) авто-відкриття угоди.">🎯</th>
                             <th title="Тиск маркетмейкера (МММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск">МММ</th>
                             <th title="Оцінка ЯКОСТІ сетапу 0–100 + напрямок руху (не команда «відкривай»): ВІДМІННИЙ (≥72) / ХОРОШИЙ (≥55) / СЕРЕДНІЙ (≥40) / СЛАБКИЙ (≥25) / ВИЧЕРПАНО (<25)">SCORE</th>
                             <th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th>
@@ -8986,6 +9007,8 @@ function renderFuelFilter(d) {
     setIf('ff-queue3-ignore-ctr', s.queue3_ignore_ctr !== false);   // default true
     setIf('ff-setup-ctr-mode', s.setup_ctr_mode || 'soft');
     setIf('ff-readiness-log', s.readiness_log_enabled !== false);   // default true
+    setIf('ff-queue3-vob-open', s.queue3_vob_open !== false);       // default true
+    setIf('ff-queue3-vob-buffer', String(s.queue3_vob_sl_buffer_pct != null ? s.queue3_vob_sl_buffer_pct : 0.10));
     // Queue 2 eject rules
     setIf('ff-q2-eject-ctr', !!s.queue2_eject_ctr);           // default false
     setIf('ff-q2-eject-ctr-pct', String(s.queue2_eject_ctr_pct != null ? s.queue2_eject_ctr_pct : 20));
@@ -9178,8 +9201,8 @@ function renderFuelFilter(d) {
                 // the numbers — columns stay aligned across all rows.
                 const markSlot = `<span style="display:inline-block;width:0.95em;text-align:center;color:#fbbf24${_rateMark ? ';text-shadow:0 0 9px rgba(251,191,36,0.9)' : ''}">${_rateMark || ''}</span>`;
                 const rateTxt = (a.funding_stale || a.funding_rate == null)
-                    ? `${markSlot}<span style="color:#667">—</span>`
-                    : `${markSlot}<span title="Funding ${_rateTip}" style="font-weight:700;font-variant-numeric:tabular-nums;color:${_rateCol}${_rateExtra}">${a.funding_rate >= 0 ? '+' : ''}${Number(a.funding_rate).toFixed(3)}%</span>`;
+                    ? `${markSlot}<span style="display:inline-block;width:66px;text-align:right;color:#667">—</span>`
+                    : `${markSlot}<span title="Funding ${_rateTip}" style="display:inline-block;width:66px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;color:${_rateCol}${_rateExtra}">${a.funding_rate >= 0 ? '+' : ''}${Number(a.funding_rate).toFixed(3)}%</span>`;
                 const cdTxt = a.funding_next_ms
                     ? `<span class="ff-fundnext" data-next="${a.funding_next_ms}" style="font-size:0.66rem;color:#9aa3b5">⏳ ${fmtFundLeft(a.funding_next_ms)}</span>`
                     : (a.funding_stale
@@ -9213,10 +9236,10 @@ function renderFuelFilter(d) {
                 // ── Другий рядок під монетою: винесені колонки (Funding · до
                 //    виплати · Vol 24h · Дії), щоб таблиця не була надто широкою.
                 `<tr style="${_rowBg}"><td colspan="9" style="padding:2px 8px 6px 34px;border-bottom:1px solid rgba(255,255,255,0.07)">
-                    <span style="display:inline-flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:0.72rem;color:#9aa3b5">
-                        <span title="Поточний funding % і час до наступного нарахування">💵 <b style="color:#cbd5e1;font-weight:600">${rateTxt} ${cdTxt}</b>${fTrendBadge(a.f_trend)}</span>
-                        <span title="24-годинний обсяг торгів (USD)">📊 Vol 24h: <b style="color:#cbd5e1;font-weight:600">${volTxt}</b></span>
-                        <span style="margin-left:auto"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.72rem;margin-right:12px" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕 Приглушити</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.72rem" title="Прибрати з таблиці">✕ Прибрати</span></span>
+                    <span style="display:flex;align-items:center;font-size:0.72rem;color:#9aa3b5;width:100%">
+                        <span title="Поточний funding % і час до наступного нарахування" style="display:inline-flex;align-items:center;gap:6px;width:250px;flex:none">💵 <b style="color:#cbd5e1;font-weight:600;display:inline-flex;align-items:center;gap:6px">${rateTxt}<span style="display:inline-block;width:96px">${cdTxt}</span></b><span style="display:inline-block;width:26px;text-align:center">${fTrendBadge(a.f_trend)}</span></span>
+                        <span title="24-годинний обсяг торгів (USD)" style="display:inline-flex;align-items:center;gap:6px;width:300px;flex:none">📊 <span style="color:#8b93a7">Vol 24h:</span> <b style="color:#cbd5e1;font-weight:600">${volTxt}</b></span>
+                        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:14px;flex:none"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.72rem" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕 Приглушити</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.72rem" title="Прибрати з таблиці">✕ Прибрати</span></span>
                     </span>
                 </td></tr>${oppStatsRow(a)}`;
             }).join('');
@@ -9871,6 +9894,8 @@ async function saveFuelFilterSettings() {
         queue3_ignore_ctr: _c('ff-queue3-ignore-ctr'),
         setup_ctr_mode: _v('ff-setup-ctr-mode', 'soft') || 'soft',
         readiness_log_enabled: _c('ff-readiness-log'),
+        queue3_vob_open: _c('ff-queue3-vob-open'),
+        queue3_vob_sl_buffer_pct: parseFloat(_v('ff-queue3-vob-buffer', '0.10') || '0.10'),
         queue2_eject_ctr: _c('ff-q2-eject-ctr'),
         queue2_eject_ctr_pct: parseInt(_v('ff-q2-eject-ctr-pct', '20') || '20', 10),
         queue2_eject_choch: _c('ff-q2-eject-choch'),

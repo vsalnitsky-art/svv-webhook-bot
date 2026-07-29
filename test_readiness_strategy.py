@@ -368,6 +368,119 @@ def test_layer_alert_needs_all_layers():
     print('✓ layer TG: новий VOB дає сигнал лише ПІСЛЯ зходження всіх 5 шарів')
 
 
+# --- 🎯 Черга-3: авто-відкриття за VOB + 5 шарів + SL з блоку OB ---
+class _FakeTM:
+    def __init__(self):
+        self._positions = {}
+        self._shadow_positions = {}
+        self.sl_calls = []
+
+    def update_manual_sl_tp(self, symbol, manual_sl=None, manual_tp=None, is_shadow=False):
+        self.sl_calls.append((symbol, manual_sl, is_shadow))
+        return {'ok': True}
+
+
+def _wire_vob(ff, tm, direction='LONG'):
+    """Спільна проводка: fake TM + справжній _tm_has_position + опен, що «створює»
+    реальну позицію в fake TM."""
+    ff._get_tm = lambda: tm
+    ff._tm_has_position = lambda s, real: (s in (tm._positions if real else tm._shadow_positions))
+    ff._fmt_price = lambda p: (f"{p:.4f}" if isinstance(p, (int, float)) else '—')
+
+    def _open(sym, d, fuel, s, opened_by=None, skip_ctr_safeguard=False):
+        tm._positions[sym] = {'side': d}
+        ff.opened.append((sym, d, opened_by))
+        return True
+    ff._open = _open
+
+
+def test_vob_open_opens_and_sets_sl():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'),
+        queue3_vob_open=True, queue3_vob_sl_buffer_pct=0.10, layer_tg_on=False))
+    sym = 'ENAUSDT'
+    ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0, 'last_price': 100.0}}
+    tm = _FakeTM(); _wire_vob(ff, tm)
+    ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
+    # bullish OB: bottom=98, top=99 → LONG SL = 98 * (1 - 0.001) = 97.902
+    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
+    assert ff.opened == [(sym, 'LONG', 'Q3-VOB(funding)')], ff.opened
+    assert tm.sl_calls and abs(tm.sl_calls[-1][1] - 97.902) < 1e-6, tm.sl_calls
+    assert tm.sl_calls[-1][2] is False                     # real book
+    assert ff._vob_trade.get(sym, {}).get('side') == 'LONG'
+    print('✓ VOB-open: 5 шарів + новий OB → відкрито LONG, SL під низом блоку + буфер')
+
+
+def test_vob_open_short_sl_above_block():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'),
+        queue3_vob_open=True, queue3_vob_sl_buffer_pct=0.10, layer_tg_on=False))
+    sym = 'WIFUSDT'
+    ff._anomalies = {sym: {'dir': 'SHORT', 'rate': -1.0, 'last_price': 50.0}}
+    tm = _FakeTM(); _wire_vob(ff, tm)
+    ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
+    # bearish OB: top=51, bottom=50 → SHORT SL = 51 * (1 + 0.001) = 51.051
+    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 51.0, 'bottom': 50.0, 'breaker': False}
+    ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
+    assert ff.opened == [(sym, 'SHORT', 'Q3-VOB(funding)')], ff.opened
+    assert abs(tm.sl_calls[-1][1] - 51.051) < 1e-6, tm.sl_calls
+    print('✓ VOB-open: SHORT → SL над верхом блоку + буфер')
+
+
+def test_vob_open_retrigger_moves_sl_no_reopen():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'),
+        queue3_vob_open=True, queue3_vob_sl_buffer_pct=0.10, layer_tg_on=False))
+    sym = 'ENAUSDT'
+    ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0, 'last_price': 100.0}}
+    tm = _FakeTM(); _wire_vob(ff, tm)
+    ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
+    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)     # 1) відкрили
+    ff.opened = []
+    # НОВИЙ OB (інший ft) по вже відкритій монеті → лише пересунути SL.
+    ff._funding_vob = lambda sym, d: {'formation_time': 222, 'top': 99.5, 'bottom': 98.5, 'breaker': False}
+    ff._layer_signal_alert(ff.get_settings(), 2_000_050.0)
+    assert ff.opened == [], 'повторний VOB НЕ відкриває нову угоду'
+    assert ff._vob_trade[sym]['ftime'] == 222
+    assert abs(tm.sl_calls[-1][1] - (98.5 * 0.999)) < 1e-6, tm.sl_calls  # SL пересунуто
+    print('✓ VOB-open: повторний OB → лише пересув SL, без нової угоди')
+
+
+def test_vob_open_disabled():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'),
+        queue3_vob_open=False, layer_tg_on=False))
+    sym = 'ENAUSDT'
+    ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0, 'last_price': 100.0}}
+    tm = _FakeTM(); _wire_vob(ff, tm)
+    ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
+    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
+    assert ff.opened == [] and not tm.sl_calls, 'вимкнено → нічого не відкриваємо'
+    print('✓ VOB-open: вимкнено (queue3_vob_open=False) → жодних дій')
+
+
+def test_vob_open_needs_all_five_layers():
+    ff, db = _ff()
+    db.set_setting('fuel_filter_settings', dict(
+        db.get_setting('fuel_filter_settings'),
+        queue3_vob_open=True, layer_tg_on=False))
+    sym = 'ENAUSDT'
+    ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0, 'last_price': 100.0}}
+    tm = _FakeTM(); _wire_vob(ff, tm)
+    ff._funding_layers = lambda s, a: {'base': 4, 'base4': 4, 'count': 4, 'layers': []}  # не всі 5
+    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
+    assert ff.opened == [], 'без усіх 5 шарів VOB-угоду не відкриваємо'
+    print('✓ VOB-open: нова угода лише коли всі 5 шарів зійшлись')
+
+
 # --- ✦ Золотий funding: чисті рівні (цілі 1..4 + виняток 0.5) ---
 def test_gold_step_levels():
     ff, db = _ff()

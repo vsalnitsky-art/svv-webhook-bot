@@ -418,6 +418,14 @@ DEFAULT_SETTINGS = {
     'layer_tg_on': False,                  # вмик/вимк консолідований сигнал
     'layer_tg_min': 5,                     # скільки шарів має зійтися (1..5)
     'layer_tg_cooldown_min': 30,           # антиспам на монету, хв
+    # ── 🎯 Черга-3: авто-відкриття угоди за сигналом «VOB + 5 шарів» ──
+    # Коли зійшлись УСІ 5 шарів у бік монети І зʼявляється НОВИЙ Volumized OB
+    # (1m) у той самий бік — відкриваємо угоду за напрямком. SL = верхнє/нижнє
+    # значення блоку OB (SHORT=верх, LONG=низ) + буфер. Повторний VOB по вже
+    # відкритій монеті НЕ відкриває нову угоду, а лише пересуває SL на новий OB.
+    # Усе фіксується в 🧾 Лог роботи бота з міткою, що монета прийшла з фандингу.
+    'queue3_vob_open': True,               # авто-відкриття за VOB+5 шарів (дефолт ON)
+    'queue3_vob_sl_buffer_pct': 0.10,      # буфер SL за межі блоку OB, % ціни
     # 🛡 М'який запобіжник відкриття — блокує 3 «вбивці» (МММ<поріг / CTR
     # нейтральний-чи-проти / виснажено). Це РЕАЛЬНО впливає на відкриття угод.
     'safeguard_on': True,
@@ -506,10 +514,14 @@ class FuelFilterDaemon:
         # 🎯 Шаровий конфлюенс (1..5) → консолідований TG: edge-trigger + cooldown.
         self._layer_alert_state: Dict[str, bool] = {}
         self._layer_alert_at: Dict[str, float] = {}
-        # 5-й шар = НОВИЙ Volumized OB (1m). Стан + анти-повтор по formation_time.
+        # Volumized OB (1m) — одноразовий тригер сигналу. Стан + анти-повтор по ft.
         self._vob_state: Dict[str, Dict] = {}    # sym → {ok, dir, ftime, top, bottom}
         self._vob_seen: Dict[str, int] = {}      # sym → formation_time, по якому вже слали
         self._vob_klines: Dict = {}              # (sym) → (ts, klines_1m) короткий кеш
+        # 🎯 Черга-3 авто-відкриття за VOB+5 шарів: відкриті ботом funding-угоди,
+        # щоб повторний VOB лише пересував SL, а не відкривав нову. {sym → {side,
+        # sl, ftime, entry, mode}}.
+        self._vob_trade: Dict[str, Dict] = {}
         # 🚪 SMC «Готовність виходу» per symbol (grade_exit) — рахується поряд із
         # setup з того самого sig, у бік ВІДКРИТОЇ позиції. РАДНИК (показ + лог).
         self._exit_cache: Dict[str, Dict] = {}
@@ -821,6 +833,11 @@ class FuelFilterDaemon:
             s['layer_tg_cooldown_min'] = max(0, min(720, int(s.get('layer_tg_cooldown_min', 30) or 0)))
         except (TypeError, ValueError):
             s['layer_tg_cooldown_min'] = 30
+        s['queue3_vob_open'] = bool(s.get('queue3_vob_open', True))
+        try:
+            s['queue3_vob_sl_buffer_pct'] = max(0.0, min(10.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)))
+        except (TypeError, ValueError):
+            s['queue3_vob_sl_buffer_pct'] = 0.10
         # ── Queue 2 eject rules ──
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
@@ -4753,10 +4770,14 @@ class FuelFilterDaemon:
         mm_str = mm_str or 0
         mm_prev = self._fuel_str_prev.get(sym)
         mm_rising = isinstance(mm_prev, (int, float)) and mm_str > mm_prev + 1
-        mm_arrow = ('↑' if mm_rising
-                    else ('↓' if (isinstance(mm_prev, (int, float)) and mm_str < mm_prev - 1)
-                          else '→'))
-        add('mm', 'МММ', mm_dir == d and mm_str >= 10 and mm_rising,
+        mm_falling = isinstance(mm_prev, (int, float)) and mm_str < mm_prev - 1
+        mm_arrow = ('↑' if mm_rising else ('↓' if mm_falling else '→'))
+        # Шар 1: напрямок МММ у бік монети + сила ≥ легкий (10) + НЕ слабшає
+        # (↑ або →). Раніше вимагалось СТРОГО РОСТЕ (↑): на вже встановленому
+        # сильному русі сила часто виходить на плато (→), тож шар МММ майже
+        # ніколи не світився (напр. GOOGLUSDT SHORT помірний 40% →). Тепер шар
+        # гасне ЛИШЕ коли МММ реально слабшає (↓) — тобто тиск у бік згасає.
+        add('mm', 'МММ', mm_dir == d and mm_str >= 10 and not mm_falling,
             f"{mm_dir or '—'} {int(mm_str)}% {mm_arrow}")
         # 2) SCORE у бік + ≥ СЕРЕДНІЙ (≥ 40).
         sc = self._score_cache.get(sym) or {}
@@ -4830,13 +4851,18 @@ class FuelFilterDaemon:
             return None
 
     def _layer_signal_alert(self, s: Dict, now: float):
-        """🎯 «Рекомендація бота» (консолідований сигнал). Мають зійтись шари 1..5
-        (МММ↑/SCORE/Готовність/Скальп/ЦІНА у бік), і на цьому тлі — НОВИЙ Volumized
-        OB (1m) у бік напрямку як ЗАКЛЮЧНИЙ ОДНОРАЗОВИЙ тригер. Тільки на новому OB
-        (edge за formation_time) + кулдаун → один TG. Це заміна старого
-        «рекомендована ботом» повідомлення."""
-        if not s.get('layer_tg_on'):
-            if self._vob_state or self._layer_alert_at:
+        """🎯 Один моніторинг VOB (1m) для КОЖНОЇ funding-монети, що живить ДВА
+        незалежні виходи на НОВОМУ Volumized OB (edge за formation_time):
+          1) TG «Рекомендація бота» (`layer_tg_on`) — коли зійшлись ≥ layer_tg_min
+             шарів (МММ/SCORE/Готовність/Скальп/ЦІНА у бік).
+          2) Черга-3 авто-відкриття (`queue3_vob_open`) — коли зійшлись УСІ 5
+             шарів: відкрити угоду за напрямком, SL = верх/низ блоку OB + буфер;
+             повторний VOB по вже відкритій монеті лише пересуває SL. Усе — в
+             🧾 Лог роботи бота з міткою «з фандингу»."""
+        tg_on = bool(s.get('layer_tg_on'))
+        open_on = bool(s.get('queue3_vob_open', True))
+        if not tg_on and not open_on:
+            if self._vob_state or self._layer_alert_at or self._vob_seen:
                 self._vob_state.clear()
                 self._vob_seen.clear()
                 self._layer_alert_at.clear()
@@ -4855,7 +4881,7 @@ class FuelFilterDaemon:
             if d not in ('LONG', 'SHORT'):
                 self._vob_state.pop(sym, None)
                 continue
-            # ПОСТІЙНО моніторимо новий Volumized OB (1m) — це головний тригер.
+            # ПОСТІЙНО моніторимо новий Volumized OB (1m) — головний одноразовий тригер.
             ob = self._funding_vob(sym, d)
             if not ob:
                 self._vob_state[sym] = {'ok': False, 'dir': d}
@@ -4864,23 +4890,109 @@ class FuelFilterDaemon:
             self._vob_state[sym] = {'ok': True, 'dir': d, 'ftime': ft,
                                     'top': round(float(ob.get('top') or 0), 6),
                                     'bottom': round(float(ob.get('bottom') or 0), 6)}
-            # НОВИЙ OB (інший formation_time) → перевіряємо базові шари 1..4 САМЕ
-            # ЗАРАЗ. Позначаємо OB як опрацьований незалежно (щоб не спрацювати
-            # пізніше на тому самому OB). Сигнал — лише якщо зараз усі 1..4 валідні.
+            # НОВИЙ OB (інший formation_time) → перевіряємо шари САМЕ ЗАРАЗ.
+            # Позначаємо OB опрацьованим (щоб не спрацювати двічі на тому самому).
             if ft and ft != self._vob_seen.get(sym):
                 self._vob_seen[sym] = ft
                 lay = self._funding_layers(sym, a)
-                if lay.get('base', 0) >= need \
+                if tg_on and lay.get('base', 0) >= need \
                         and (now - self._layer_alert_at.get(sym, 0)) >= cool:
                     try:
                         self._send_layer_alert(sym, a, lay, ob, s)
                     except Exception as e:
                         print(f"[FF-Layer] alert send error {sym}: {e}")
                     self._layer_alert_at[sym] = now
+                if open_on:
+                    try:
+                        self._vob_open_or_trail(sym, a, d, ob, lay, s, now)
+                    except Exception as e:
+                        print(f"[FF-VOB-open] {sym} error: {e}")
         for k in list(self._vob_state.keys()):
             if k not in live:
                 self._vob_state.pop(k, None)
                 self._vob_seen.pop(k, None)
+        # Скид трекера авто-угод для монет, що зникли І вже не мають позиції.
+        for k in list(self._vob_trade.keys()):
+            if k not in live and not (self._tm_has_position(k, True)
+                                      or self._tm_has_position(k, False)):
+                self._vob_trade.pop(k, None)
+
+    def _vob_open_or_trail(self, sym: str, a: Dict, d: str, ob: Dict,
+                           lay: Dict, s: Dict, now: float):
+        """🎯 Черга-3: на НОВОМУ Volumized OB (1m) у бік монети — або ВІДКРИТИ
+        угоду (усі 5 шарів + монети ще немає в угоді), або лише ПЕРЕСУНУТИ SL на
+        новий блок (угода вже відкрита ботом за цим сигналом). SL = верх блоку OB
+        (SHORT) / низ блоку OB (LONG) + буфер. Усе — в 🧾 Лог роботи бота."""
+        top = float(ob.get('top') or 0)
+        bottom = float(ob.get('bottom') or 0)
+        if top <= 0 or bottom <= 0:
+            return
+        try:
+            buf = max(0.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)) / 100.0
+        except (TypeError, ValueError):
+            buf = 0.001
+        buf_pct = round(buf * 100.0, 3)
+        # SL за межею блоку + буфер: SHORT → над ВЕРХОМ, LONG → під НИЗОМ.
+        sl = round(top * (1.0 + buf), 8) if d == 'SHORT' else round(bottom * (1.0 - buf), 8)
+        ft = int(ob.get('formation_time') or 0)
+        tm = self._get_tm() if self._get_tm else None
+        if not tm:
+            return
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            def log_activity(*_a, **_k):
+                pass
+        is_real = self._tm_has_position(sym, True)
+        is_shadow = self._tm_has_position(sym, False)
+        already = is_real or is_shadow
+        tracked = self._vob_trade.get(sym)
+        # Ми вважали монету відкритою, але позиції вже нема (закрилась) → скид.
+        if tracked and not already:
+            self._vob_trade.pop(sym, None)
+            tracked = None
+        if already and tracked:
+            # ПОВТОРНИЙ VOB → лише пересунути SL на новий блок (нову НЕ відкриваємо).
+            try:
+                res = tm.update_manual_sl_tp(sym, manual_sl=sl,
+                                             is_shadow=(is_shadow and not is_real))
+            except Exception as e:
+                print(f"[FF-VOB-open] {sym} SL update error: {e}")
+                return
+            if res and res.get('ok'):
+                self._vob_trade[sym] = {**tracked, 'sl': sl, 'ftime': ft}
+                log_activity(sym, 'sl_moved',
+                             f'Черга-3 (монета з фандингу): новий Volumized OB (1m) '
+                             f'→ SL пересунуто на {self._fmt_price(sl)}',
+                             side=d, source='Q3-VOB')
+            return
+        if already and not tracked:
+            return   # позиція є, але не ми її відкрили за цим сигналом — не чіпаємо
+        # НОВА угода: потрібні УСІ 5 шарів.
+        if (lay or {}).get('base', 0) < 5:
+            return
+        fd = self._fuel_dir_smoothed(sym) or {}
+        entry = fd.get('mark_price') or a.get('last_price')
+        fuel = {'mark_price': entry}
+        ok = self._open(sym, d, fuel, s, opened_by='Q3-VOB(funding)',
+                        skip_ctr_safeguard=True)
+        if not ok:
+            return
+        is_shadow2 = (self._tm_has_position(sym, False)
+                      and not self._tm_has_position(sym, True))
+        try:
+            res = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=is_shadow2)
+            sl_note = (f'SL={self._fmt_price(sl)}' if (res and res.get('ok'))
+                       else f'SL={self._fmt_price(sl)} (не прийнято: {(res or {}).get("reason", "—")})')
+        except Exception as e:
+            print(f"[FF-VOB-open] {sym} SL set error: {e}")
+            sl_note = f'SL={self._fmt_price(sl)} (помилка встановлення)'
+        self._vob_trade[sym] = {'side': d, 'sl': sl, 'ftime': ft,
+                                'entry': entry, 'mode': ('paper' if is_shadow2 else 'real')}
+        log_activity(sym, 'opened',
+                     f'Черга-3 (монета з фандингу): VOB (1m) + 5 шарів → відкрито {d}, '
+                     f'{sl_note} (буфер {buf_pct}% за межею блоку OB)',
+                     side=d, source='Q3-VOB')
 
     def _send_layer_alert(self, sym: str, a: Dict, lay: Dict, ob: Dict, s: Dict):
         """🎯 Broadcast the consolidated «Рекомендація бота» Telegram (5-шаровий
