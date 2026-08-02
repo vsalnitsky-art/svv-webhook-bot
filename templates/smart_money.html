@@ -671,6 +671,39 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
    never push the page sideways (wide content scrolls inside the box). */
 .tm-hscroll { overflow-x: auto; max-width: 100%; }
 .tm-hscroll .tm-table { margin-top: 0; }
+/* Vertical + horizontal scroll for the "Recent Closed" history lists: fixed-
+   height box with a sticky header so довгий список не розтягує сторінку. */
+.tm-vhscroll {
+    overflow: auto;
+    max-width: 100%;
+    max-height: 340px;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+    margin-top: 8px;
+}
+.tm-vhscroll .tm-table { margin-top: 0; }
+.tm-vhscroll thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: #141a24;
+}
+/* «Копіювати в буфер» — та сама база, що й Clear All, але нейтрально-синій hover. */
+.tm-copy-btn {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #9aa3b5;
+    padding: 1px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.7rem;
+    line-height: 1;
+}
+.tm-copy-btn:hover {
+    background: rgba(99,102,241,0.15);
+    border-color: rgba(99,102,241,0.35);
+    color: #c7d2fe;
+}
 /* ❤️ Fuel Auto-Filter timers: fixed-height scroll area with sticky header so
    rows coming/going don't make the whole panel jump. */
 .ff-timers-scroll {
@@ -3048,9 +3081,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             
             <!-- Recent Closed -->
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">📜 Recent Closed Trades
+                <button class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Скопіювати всю таблицю в буфер обміну (TSV — можна вставити в Excel/Sheets)"
+                        onclick="copyTableToClipboard('tm-closed-table', this)">📋 Копіювати</button>
                 <button class="tm-delete-btn" style="font-size:0.7rem;padding:2px 10px" title="Очистити весь список"
                         onclick="clearTMClosed()">🗑 Clear All</button></h3>
-            <div class="tm-hscroll"><table class="tm-table" id="tm-closed-table">
+            <div class="tm-vhscroll"><table class="tm-table" id="tm-closed-table">
                 <thead>
                     <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th><th></th></tr>
                 </thead>
@@ -3109,9 +3144,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </table></div>
             
             <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">Recent Paper Closes
+                <button class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Скопіювати всю таблицю в буфер обміну (TSV — можна вставити в Excel/Sheets)"
+                        onclick="copyTableToClipboard('tm-shadow-closed-table', this)">📋 Копіювати</button>
                 <button class="tm-delete-btn" style="font-size:0.7rem;padding:2px 10px" title="Очистити весь список"
                         onclick="clearTMShadowClosed()">🗑 Clear All</button></h3>
-            <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-closed-table">
+            <div class="tm-vhscroll"><table class="tm-table" id="tm-shadow-closed-table">
                 <thead>
                     <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th>Reason</th><th></th></tr>
                 </thead>
@@ -11307,6 +11344,59 @@ async function deleteTMShadowClosed(symbol, closedAt, exitPrice) {
         }
     } catch (err) {
         alert('Delete error: ' + err);
+    }
+}
+
+// 📋 Скопіювати всю таблицю в буфер обміну як TSV (табуляції між колонками —
+// вставляється рівними стовпцями в Excel/Google Sheets). Пропускаємо колонку
+// дій (порожній заголовок) і рядок-заглушку «No … yet».
+function copyTableToClipboard(tableId, btn) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const heads = Array.from(table.querySelectorAll('thead th'));
+    if (!heads.length) return;
+    // Остання колонка = дії (порожній <th>) → не копіюємо.
+    const lastIsAction = (heads[heads.length - 1].textContent || '').trim() === '';
+    const lim = lastIsAction ? heads.length - 1 : heads.length;
+    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+    const lines = [];
+    lines.push(heads.slice(0, lim).map(th => clean(th.textContent)).join('\t'));
+    let n = 0;
+    table.querySelectorAll('tbody tr').forEach(tr => {
+        if (tr.querySelector('.tm-empty-msg')) return;   // рядок-заглушка
+        const cells = Array.from(tr.children).slice(0, lim);
+        lines.push(cells.map(td => clean(td.innerText || td.textContent)).join('\t'));
+        n++;
+    });
+    const text = lines.join('\n');
+    const done = ok => {
+        if (!btn) return;
+        const orig = btn.textContent;
+        btn.textContent = ok ? `✓ Скопійовано (${n})` : '✕ Помилка';
+        btn.disabled = true;
+        setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1600);
+    };
+    if (n === 0) { done(false); return; }
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => done(true)).catch(() => _copyFallback(text, done));
+    } else {
+        _copyFallback(text, done);
+    }
+}
+function _copyFallback(text, cb) {
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.top = '-1000px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (cb) cb(ok);
+    } catch (e) {
+        if (cb) cb(false);
     }
 }
 
