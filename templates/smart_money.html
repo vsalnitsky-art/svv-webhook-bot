@@ -2291,6 +2291,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="checkbox" id="ff-readiness-log" onchange="saveFuelFilterSettings()"> 📝 Лог
                         </label>
                     </div>
+                    <!-- Ряд 1б: запобіжники Черги-3 (виснаженість / OB / МММ-ціна) -->
+                    <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,0.06);padding-top:10px">
+                        <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Черга-3 НЕ застосовує ЖОРСТКЕ вето «виснаженості» у відкритті. Виснаженість природно висока на тренді, що вже пішов у наш бік (SCORE ХОРОШИЙ + рух у плюс), і поріг 80% різав хороші сетапи. Виснаженість ЛИШАЄТЬСЯ у grade_setup (впливає на SCORE — м'яко). Рекомендовано УВІМК.">
+                            <input type="checkbox" id="ff-queue3-ignore-exh" onchange="saveFuelFilterSettings()"> 🪫 Ігнор вето виснаженості
+                        </label>
+                        <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="При увімкненому OB-фільтрі сканера («Require OB Match») Черга-3/Q3-VOB НЕ відкривають угоду ПРОТИ останнього OB на ob_filter_timeframe (OB міг фліпнути, поки монета чекала; Q3-VOB узагалі не проходить сканерний гейт). Ріже лише явний контр-OB; немає даних OB — дозволяємо. Рекомендовано УВІМК.">
+                            <input type="checkbox" id="ff-queue3-ob-match" onchange="saveFuelFilterSettings()"> 🧱 Не входити проти OB (Require OB Match)
+                        </label>
+                        <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Слабкий МММ (контраріанська liq-модель часто «мовчить» на чистому тренді) НЕ ріже вхід, якщо ЦІНА чітко йде в бік угоди (останні 2 свічки). Глобально для всіх черг. Рекомендовано УВІМК.">
+                            <input type="checkbox" id="ff-safeguard-mm-price" onchange="saveFuelFilterSettings()"> 💹 МММ не ріже, коли ціна в бік
+                        </label>
+                    </div>
                     <!-- Ряд 2: авто-відкриття за VOB + 5 шарів (funding-монети) -->
                     <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,0.06);padding-top:10px">
                         <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#c9b8ff;cursor:pointer" title="Для монет таблиці «💰 Funding — МММ»: коли зійшлись УСІ 5 шарів у бік монети і зʼявляється НОВИЙ Volumized OB (1m) у той самий бік — бот ВІДКРИВАЄ угоду за напрямком. SL = верхнє (SHORT) / нижнє (LONG) значення блоку OB + буфер. Повторний VOB по вже відкритій монеті НЕ відкриває нову угоду, а лише пересуває SL на новий блок. Усе фіксується в 🧾 Лог роботи бота з міткою «монета з фандингу».">
@@ -9013,6 +9025,9 @@ function renderFuelFilter(d) {
     setIf('ff-queue3-vob-open', s.queue3_vob_open !== false);       // default true
     setIf('ff-queue3-vob-buffer', String(s.queue3_vob_sl_buffer_pct != null ? s.queue3_vob_sl_buffer_pct : 0.10));
     setIf('ff-queue3-vob-trend', s.queue3_vob_block_against_trend !== false); // default true
+    setIf('ff-queue3-ignore-exh', s.queue3_ignore_exhaustion !== false);      // default true
+    setIf('ff-queue3-ob-match', s.queue3_require_ob_match !== false);         // default true
+    setIf('ff-safeguard-mm-price', s.safeguard_mm_price_override !== false);  // default true
     // Queue 2 eject rules
     setIf('ff-q2-eject-ctr', !!s.queue2_eject_ctr);           // default false
     setIf('ff-q2-eject-ctr-pct', String(s.queue2_eject_ctr_pct != null ? s.queue2_eject_ctr_pct : 20));
@@ -9260,9 +9275,9 @@ function renderFuelFilter(d) {
                     <span style="display:flex;align-items:center;font-size:0.72rem;color:#9aa3b5;width:100%">
                         <span title="Поточний funding % і час до наступного нарахування" style="display:inline-flex;align-items:center;gap:6px;width:250px;flex:none">💵 <b style="color:#cbd5e1;font-weight:600;display:inline-flex;align-items:center;gap:6px">${rateTxt}<span style="display:inline-block;width:96px">${cdTxt}</span></b><span style="display:inline-block;width:26px;text-align:center">${fTrendBadge(a.f_trend)}</span></span>
                         <span title="24-годинний обсяг торгів (USD)" style="display:inline-flex;align-items:center;gap:6px;width:300px;flex:none">📊 <span style="color:#8b93a7">Vol 24h:</span> <b style="color:#cbd5e1;font-weight:600">${volTxt}</b></span>
+                        ${_priceCell}
                         <span style="margin-left:auto;display:inline-flex;align-items:center;gap:14px;flex:none"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.72rem" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕 Приглушити</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.72rem" title="Прибрати з таблиці">✕ Прибрати</span></span>
                     </span>
-                    <span style="display:flex;align-items:center;font-size:0.72rem;color:#9aa3b5;width:100%;margin-top:3px">${_priceCell}</span>
                 </td></tr>${oppStatsRow(a)}`;
             }).join('');
         }
@@ -9919,6 +9934,9 @@ async function saveFuelFilterSettings() {
         queue3_vob_open: _c('ff-queue3-vob-open'),
         queue3_vob_sl_buffer_pct: parseFloat(_v('ff-queue3-vob-buffer', '0.10') || '0.10'),
         queue3_vob_block_against_trend: _c('ff-queue3-vob-trend'),
+        queue3_ignore_exhaustion: _c('ff-queue3-ignore-exh'),
+        queue3_require_ob_match: _c('ff-queue3-ob-match'),
+        safeguard_mm_price_override: _c('ff-safeguard-mm-price'),
         queue2_eject_ctr: _c('ff-q2-eject-ctr'),
         queue2_eject_ctr_pct: parseInt(_v('ff-q2-eject-ctr-pct', '20') || '20', 10),
         queue2_eject_choch: _c('ff-q2-eject-choch'),

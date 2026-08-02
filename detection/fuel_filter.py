@@ -230,6 +230,16 @@ DEFAULT_SETTINGS = {
     #     «м'якого запобіжника» у _open (свіжий CHoCH+BOS завжди проти CTR, тож
     #     ця перевірка ріже кожен розворот). МММ/виснаженість лишаються. Дефолт ON.
     'queue3_ignore_ctr': True,
+    #   queue3_ignore_exhaustion — Черга-3 НЕ застосовує ЖОРСТКЕ вето виснаженості
+    #     у _open. Виснаженість природно висока на тренді, що вже пішов у наш бік
+    #     (SCORE ХОРОШИЙ + рух у плюс), і жорсткий поріг 80% різав хороші сетапи.
+    #     Виснаженість ЛИШАЄТЬСЯ у grade_setup (впливає на SCORE — м'яко). Дефолт ON.
+    'queue3_ignore_exhaustion': True,
+    #   queue3_require_ob_match — при УВІМКненому OB-фільтрі сканера («Require OB
+    #     Match») Черга-3/Q3-VOB відкривають угоду ЛИШЕ якщо OB на ob_filter_timeframe
+    #     збігається з напрямком (щоб угода не йшла ПРОТИ фільтра — OB міг фліпнути,
+    #     поки монета чекала, а Q3-VOB узагалі не проходить сканерний гейт). Дефолт ON.
+    'queue3_require_ob_match': True,
     #   queue3_ttl_hours — протермінувати монету в Черзі-3 після N год, щоб вона
     #     не «висіла» нескінченно (без TTL монети накопичувались на годинник, бо
     #     не проходили запобіжник МММ). 0 = без ліміту.
@@ -436,6 +446,11 @@ DEFAULT_SETTINGS = {
     'safeguard_mm_min': 30,     # мін. сила МММ, %
     'safeguard_exh_max': 80,    # макс. виснаженість, %
     'safeguard_ctr': True,      # вимагати CTR не нейтральний і не проти напрямку
+    # 🎯 МММ-запобіжник НЕ ріже вхід, якщо ЦІНА чітко йде в бік угоди: слабкий МММ
+    # (контраріанська liq-модель) часто «мовчить» на чистому тренді. Коли останні
+    # 2 свічки (`safeguard_mm_price_tf`) підтверджують напрямок — дозволяємо.
+    'safeguard_mm_price_override': True,
+    'safeguard_mm_price_tf': '15m',
     # 🎯 Вимагати вирівнювання з ₿ BTCUSDT сеансом (START + той самий бік), щоб
     # монета стала 🎯 «рекомендована». True = «усі в один бік» (за замовч.).
     'opportunity_require_btc': True,
@@ -797,6 +812,11 @@ class FuelFilterDaemon:
         s['queue3_enabled'] = bool(s.get('queue3_enabled', False))
         s['readiness_log_enabled'] = bool(s.get('readiness_log_enabled', True))
         s['queue3_ignore_ctr'] = bool(s.get('queue3_ignore_ctr', True))
+        s['queue3_ignore_exhaustion'] = bool(s.get('queue3_ignore_exhaustion', True))
+        s['queue3_require_ob_match'] = bool(s.get('queue3_require_ob_match', True))
+        s['safeguard_mm_price_override'] = bool(s.get('safeguard_mm_price_override', True))
+        if s.get('safeguard_mm_price_tf') not in ('5m', '15m', '30m', '1h'):
+            s['safeguard_mm_price_tf'] = '15m'
         try:
             s['queue3_ttl_hours'] = max(0, min(72, float(s.get('queue3_ttl_hours', 6) or 0)))
         except (TypeError, ValueError):
@@ -2976,7 +2996,7 @@ class FuelFilterDaemon:
             pass
 
     def _soft_safeguard(self, symbol: str, side: str, settings: Dict,
-                        skip_ctr: bool = False):
+                        skip_ctr: bool = False, skip_exhaustion: bool = False):
         """🛡 М'який запобіжник відкриття — (ok, reason). Блокує 3 найгірші
         входи, що системно давали збитки: слабкий тиск МММ, нейтральний або
         протилежний CTR, виснажений хід. Це НЕ повний SMC-грейдер, а три
@@ -2984,8 +3004,14 @@ class FuelFilterDaemon:
         Вимикається safeguard_on=False; пороги налаштовні.
         skip_ctr=True — НЕ застосовувати CTR-перевірку (для РОЗВОРОТНОЇ Черги-3:
         свіжий CHoCH+BOS за визначенням проти CTR, тож ця перевірка ріже кожен
-        розворот). МММ і виснаженість лишаються активними."""
-        # 1) МММ (сила бабло-тиску) — має бути хоча б помірним.
+        розворот).
+        skip_exhaustion=True — НЕ застосовувати ЖОРСТКЕ вето виснаженості (для
+        Черги-3: виснаженість природно висока на тренді, що вже пішов у наш бік;
+        вона лишається у grade_setup → SCORE, тож не ігнорується зовсім)."""
+        # 1) МММ (сила бабло-тиску) — має бути хоча б помірним. АЛЕ: якщо ЦІНА
+        #    чітко йде в бік угоди (останні 2 свічки), слабкий МММ НЕ ріже вхід
+        #    (safeguard_mm_price_override) — контраріанський МММ часто «мовчить»
+        #    на чистому тренді, хоча ціна впевнено рухається в потрібний бік.
         try:
             mm_min = float(settings.get('safeguard_mm_min', 30) or 0)
         except (TypeError, ValueError):
@@ -2994,15 +3020,27 @@ class FuelFilterDaemon:
         if mm_str is None:
             mm_str = (self._score_cache.get(symbol) or {}).get('fuel_strength')
         if mm_min > 0 and (mm_str is None or float(mm_str) < mm_min):
-            return (False, f"МММ слабкий ({int(mm_str or 0)}%<{int(mm_min)}%)")
+            _price_ok = False
+            if bool(settings.get('safeguard_mm_price_override', True)):
+                try:
+                    _tf = settings.get('safeguard_mm_price_tf', '15m') or '15m'
+                    _pdir, _pstr = self._candle_momentum(symbol, _tf)
+                    _price_ok = (_pdir == side and _pstr and _pstr > 0)
+                except Exception:
+                    _price_ok = False
+            if not _price_ok:
+                return (False, f"МММ слабкий ({int(mm_str or 0)}%<{int(mm_min)}%)")
         # 2) Виснаженість ходу — не входити у вже вичерпаний рух.
-        try:
-            exh_max = float(settings.get('safeguard_exh_max', 80) or 0)
-        except (TypeError, ValueError):
-            exh_max = 80.0
-        exh = self._exhaustion(symbol, side)
-        if exh_max > 0 and exh is not None and float(exh) > exh_max:
-            return (False, f"виснажено ({int(exh)}%>{int(exh_max)}%)")
+        #    skip_exhaustion → пропускаємо жорстке вето (Черга-3: виснаженість
+        #    лишається м'яко в grade_setup/SCORE).
+        if not skip_exhaustion:
+            try:
+                exh_max = float(settings.get('safeguard_exh_max', 80) or 0)
+            except (TypeError, ValueError):
+                exh_max = 80.0
+            exh = self._exhaustion(symbol, side)
+            if exh_max > 0 and exh is not None and float(exh) > exh_max:
+                return (False, f"виснажено ({int(exh)}%>{int(exh_max)}%)")
         # 3) CTR — не нейтральний і не проти напрямку (немає даних → не блокуємо).
         #    skip_ctr → пропускаємо (розворотна Черга-3 завжди проти CTR).
         if not skip_ctr and bool(settings.get('safeguard_ctr', True)):
@@ -3018,8 +3056,38 @@ class FuelFilterDaemon:
                 return (False, f"CTR проти ({st})")
         return (True, '')
 
+    def _ob_match_ok(self, symbol: str, side: str, settings: Dict):
+        """🎯 «Require OB Match» — перевірка НА МОМЕНТ ВІДКРИТТЯ. Коли OB-фільтр
+        сканера увімкнено, НЕ даємо відкрити угоду ПРОТИ останнього валідного OB
+        на ob_filter_timeframe (LONG проти BEARISH-OB / SHORT проти BULLISH-OB).
+        Закриває дві діри: (1) Черга-3 відкриває через години після сигналу (OB
+        міг фліпнути на протилежний); (2) Q3-VOB (funding) узагалі не проходить
+        сканерний гейт _send_alert. Повертає (ok, reason).
+          • фільтр вимкнено (queue3_require_ob_match=False або ob_filter вимк) → ok
+          • OB ПРОТИ напрямку → блок
+          • OB у бік АБО немає даних OB → ok (не вбиваємо funding-VOB, коли OB на
+            цьому TF просто не порахований — ріжемо лише явний контр-OB)."""
+        if not bool(settings.get('queue3_require_ob_match', True)):
+            return (True, '')
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            scanner = getattr(tm, 'scanner', None) if tm else None
+            if scanner is None or not bool(scanner._settings.get('ob_filter_enabled', False)):
+                return (True, '')   # OB-фільтр сканера вимкнено → нічого не вимагаємо
+            ob_tf = scanner._settings.get('ob_filter_timeframe', '1h')
+            from storage.db_operations import get_db
+            row = get_db().get_smc_ob_state(symbol, ob_tf)
+            bias = (row or {}).get('bias')
+            opp = 'BEARISH' if side == 'LONG' else 'BULLISH'
+            if bias == opp:
+                return (False, f"OB-фільтр {ob_tf}: OB проти ({bias}) ≠ {side}")
+            return (True, '')
+        except Exception:
+            return (True, '')   # помилка читання OB → fail-open (не блокуємо)
+
     def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict,
-              opened_by: Optional[str] = None, skip_ctr_safeguard: bool = False):
+              opened_by: Optional[str] = None, skip_ctr_safeguard: bool = False,
+              skip_exhaustion: bool = False):
         """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
         store position data — it only tracks which symbols it opened and delegates
         the actual position to TM. Positions appear in Trade Manager or Test Mode
@@ -3035,20 +3103,25 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] {symbol}: no entry price — skip open")
             return False
 
-        # CHECK EXHAUSTION BEFORE OPENING: don't enter exhausted moves
-        max_exh = settings.get('max_exhaustion_pct', 75)
-        exh = self._exhaustion(symbol, side)
-        if exh is not None and exh > max_exh:
-            print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% — "
-                  f"rejecting open (too exhausted)")
-            return False
+        # CHECK EXHAUSTION BEFORE OPENING: don't enter exhausted moves.
+        # skip_exhaustion (Черга-3) → пропускаємо цей жорсткий гейт (виснаженість
+        # лишається м'яко в grade_setup/SCORE).
+        if not skip_exhaustion:
+            max_exh = settings.get('max_exhaustion_pct', 75)
+            exh = self._exhaustion(symbol, side)
+            if exh is not None and exh > max_exh:
+                print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% — "
+                      f"rejecting open (too exhausted)")
+                self._engine_skip[symbol] = f"🛡 виснажено ({int(exh)}%>{int(max_exh)}%)"
+                return False
 
         # 🛡 М'який запобіжник: слабкий МММ / нейтральний(проти) CTR / виснажений
         # хід — три «вбивці», що системно давали збиткові входи. Єдиний чок-пойнт
         # усіх шляхів відкриття (Черга-1/2, сигнал). Причину — у per-row діагностику.
         if settings.get('safeguard_on', True):
             ok_sg, sg_reason = self._soft_safeguard(symbol, side, settings,
-                                                    skip_ctr=skip_ctr_safeguard)
+                                                    skip_ctr=skip_ctr_safeguard,
+                                                    skip_exhaustion=skip_exhaustion)
             if not ok_sg:
                 print(f"[FuelFilter] {symbol}: 🛡 запобіжник — {sg_reason} → відмова у відкритті")
                 try:
@@ -5011,11 +5084,20 @@ class FuelFilterDaemon:
                              f'→ угоду НЕ відкрито',
                              side=d, source='Q3-VOB')
                 return
+        # 🎯 «Require OB Match»: Q3-VOB не проходить сканерний OB-гейт — тож не
+        # відкриваємо ПРОТИ OB на ob_filter_timeframe, коли фільтр сканера увімк.
+        _ob_ok, _ob_reason = self._ob_match_ok(sym, d, s)
+        if not _ob_ok:
+            log_activity(sym, 'skipped',
+                         f'Черга-3 (монета з фандингу): {_ob_reason} → угоду НЕ відкрито',
+                         side=d, source='Q3-VOB')
+            return
         fd = self._fuel_dir_smoothed(sym) or {}
         entry = fd.get('mark_price') or a.get('last_price')
         fuel = {'mark_price': entry}
         ok = self._open(sym, d, fuel, s, opened_by='Q3-VOB(funding)',
-                        skip_ctr_safeguard=True)
+                        skip_ctr_safeguard=True,
+                        skip_exhaustion=bool(s.get('queue3_ignore_exhaustion', True)))
         if not ok:
             return
         is_shadow2 = (self._tm_has_position(sym, False)
@@ -5301,11 +5383,20 @@ class FuelFilterDaemon:
                 trace.append(f"{sym}:{su.get('score')}/{su.get('grade')}")
                 continue
             _why = 'HOT' if _by_hot else f'SCORE≥{_min_score}'
+            # 🎯 «Require OB Match» на момент відкриття (OB міг фліпнути, поки монета
+            # чекала в черзі) — не відкриваємо ПРОТИ OB, коли фільтр сканера увімк.
+            _ob_ok, _ob_reason = self._ob_match_ok(sym, d, s)
+            if not _ob_ok:
+                self._log_readiness(sym, d, su, 'skipped', _ob_reason, log_on,
+                                    move_pct=_mv, exhaustion=_ex)
+                trace.append(f'{sym}:OB-проти')
+                continue
             try:
                 opened = self._open(
                     sym, d, fuel, s,
                     opened_by=f"🎯 Готовність {su.get('score')} {su.get('grade')} ({_why})",
-                    skip_ctr_safeguard=bool(s.get('queue3_ignore_ctr', True)))
+                    skip_ctr_safeguard=bool(s.get('queue3_ignore_ctr', True)),
+                    skip_exhaustion=bool(s.get('queue3_ignore_exhaustion', True)))
                 if opened:
                     with self._lock:
                         self._timers[sym] = {'dir': d, 'since': now,
@@ -5319,7 +5410,10 @@ class FuelFilterDaemon:
                     print(f"[FF-Readiness] opened {d} {sym} "
                           f"(SCORE {su.get('score')} {su.get('grade')})")
                 else:
-                    self._log_readiness(sym, d, su, 'skipped', '_open відхилив', log_on,
+                    # Показуємо КОНКРЕТНУ причину відмови (_open лишає її в
+                    # _engine_skip), а не глухе «_open відхилив».
+                    _rej = self._engine_skip.get(sym) or '_open відхилив'
+                    self._log_readiness(sym, d, su, 'skipped', _rej, log_on,
                                         move_pct=_mv, exhaustion=_ex)
                     trace.append(f'{sym}:_open-відхилив')
             except Exception as e:

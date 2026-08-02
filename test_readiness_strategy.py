@@ -54,7 +54,7 @@ def _ff(queue3=True):
     ff._fuel_dir_smoothed = lambda sym: {'status': 'LONG', 'dir': 0.5,
                                          'mark_price': 100.0}
     ff.opened = []
-    ff._open = lambda sym, d, fuel, s, opened_by=None, skip_ctr_safeguard=False: (
+    ff._open = lambda sym, d, fuel, s, opened_by=None, skip_ctr_safeguard=False, skip_exhaustion=False: (
         ff.opened.append((sym, d, opened_by)) or True)
     return ff, db
 
@@ -417,7 +417,7 @@ def _wire_vob(ff, tm, direction='LONG'):
     ff._tm_has_position = lambda s, real: (s in (tm._positions if real else tm._shadow_positions))
     ff._fmt_price = lambda p: (f"{p:.4f}" if isinstance(p, (int, float)) else '—')
 
-    def _open(sym, d, fuel, s, opened_by=None, skip_ctr_safeguard=False):
+    def _open(sym, d, fuel, s, opened_by=None, skip_ctr_safeguard=False, skip_exhaustion=False):
         tm._positions[sym] = {'side': d}
         ff.opened.append((sym, d, opened_by))
         return True
@@ -532,6 +532,75 @@ def test_vob_open_blocked_against_overall_trend():
     ff._layer_signal_alert(ff.get_settings(), 2_000_100.0)
     assert ff.opened == [(sym, 'LONG', 'Q3-VOB(funding)')], ff.opened
     print('✓ VOB-open: ворота «проти загального тренду» блокують контртренд, пропускають у бік')
+
+
+# --- 🛡 Запобіжник: виснаженість (skip) + МММ price-override + OB-match ---
+def test_soft_safeguard_skip_exhaustion():
+    ff, db = _ff()
+    s = ff.get_settings()
+    sym = 'NEARUSDT'
+    ff._fuel_str = {sym: 50}                       # МММ ok (≥30)
+    ff._exhaustion = lambda sym, side: 88.0        # виснажено > 80
+    ok, reason = ff._soft_safeguard(sym, 'SHORT', s, skip_ctr=True, skip_exhaustion=False)
+    assert not ok and 'виснажено' in reason, (ok, reason)
+    ok2, _ = ff._soft_safeguard(sym, 'SHORT', s, skip_ctr=True, skip_exhaustion=True)
+    assert ok2, 'skip_exhaustion → виснаженість не ріже'
+    print('✓ safeguard: skip_exhaustion знімає жорстке вето виснаженості (Черга-3)')
+
+
+def test_soft_safeguard_mm_price_override():
+    ff, db = _ff()
+    s = dict(ff.get_settings(), safeguard_mm_min=30, safeguard_mm_price_override=True)
+    sym = 'NEARUSDT'
+    ff._fuel_str = {sym: 5}                         # МММ слабкий (< 30)
+    ff._exhaustion = lambda sym, side: 0.0
+    ff._candle_momentum = lambda sym, tf: ('SHORT', 1.0)   # ціна чітко в бік SHORT
+    ok, reason = ff._soft_safeguard(sym, 'SHORT', s, skip_ctr=True)
+    assert ok, ('override має пропустити слабкий МММ, коли ціна в бік', reason)
+    ff._candle_momentum = lambda sym, tf: ('LONG', 1.0)    # ціна НЕ в бік
+    ok2, reason2 = ff._soft_safeguard(sym, 'SHORT', s, skip_ctr=True)
+    assert not ok2 and 'МММ слабкий' in reason2, (ok2, reason2)
+    s_off = dict(s, safeguard_mm_price_override=False)      # override вимкнено
+    ff._candle_momentum = lambda sym, tf: ('SHORT', 1.0)
+    ok3, _ = ff._soft_safeguard(sym, 'SHORT', s_off, skip_ctr=True)
+    assert not ok3, 'override off → слабкий МММ ріже навіть коли ціна в бік'
+    print('✓ safeguard: МММ-override пропускає слабкий МММ лише коли ціна чітко в бік')
+
+
+def test_ob_match_gate():
+    import types as _t, sys as _s
+    ff, db = _ff()
+    s = ff.get_settings()
+    sym = 'ENAUSDT'
+    # 1) queue3_require_ob_match=False → завжди ok
+    assert ff._ob_match_ok(sym, 'LONG', dict(s, queue3_require_ob_match=False))[0]
+    # 2) tm/scanner з увімкненим OB-фільтром + fake get_smc_ob_state
+    class _Scan:
+        _settings = {'ob_filter_enabled': True, 'ob_filter_timeframe': '1h'}
+    class _TM:
+        scanner = _Scan()
+    ff._get_tm = lambda: _TM()
+    _bias = {'v': 'BEARISH'}
+    fake = _t.ModuleType('storage.db_operations')
+    class _DB:
+        def get_smc_ob_state(self, sym, tf): return {'bias': _bias['v']}
+    fake.get_db = lambda: _DB()
+    _saved_pkg = _s.modules.get('storage')
+    _saved_mod = _s.modules.get('storage.db_operations')
+    _s.modules.setdefault('storage', _t.ModuleType('storage'))
+    _s.modules['storage.db_operations'] = fake
+    try:
+        ok_ag, r = ff._ob_match_ok(sym, 'LONG', s)      # OB BEARISH проти LONG → блок
+        assert not ok_ag and 'проти' in r, (ok_ag, r)
+        _bias['v'] = 'BULLISH'
+        assert ff._ob_match_ok(sym, 'LONG', s)[0]         # OB у бік → ok
+        _bias['v'] = None
+        assert ff._ob_match_ok(sym, 'LONG', s)[0]         # немає OB → не блокуємо
+    finally:
+        if _saved_mod is not None: _s.modules['storage.db_operations'] = _saved_mod
+        else: _s.modules.pop('storage.db_operations', None)
+        if _saved_pkg is not None: _s.modules['storage'] = _saved_pkg
+    print('✓ OB-match: блок лише на явний контр-OB; у бік/немає/вимк → ok')
 
 
 # --- ✦ Золотий funding: чисті рівні (цілі 1..4 + виняток 0.5) ---
