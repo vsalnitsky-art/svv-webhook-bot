@@ -242,6 +242,27 @@ SHORT=СПАДАЄ (down)**. Кожен шар несе `dir` (напрямок 
 `_recent_price_move(rates)` рахує рух по останніх ~15 семплах (мертва зона
 `PRICE_DEADZONE`=0.10%). Ту саму метрику віддає `get_price_dirs()` для 5-го шару.
 
+## Закриті угоди: постійний архів у БД + швидкість закриття
+
+- **Кожна закрита угода (real+paper) БЕЗУМОВНО пишеться в постійну таблицю
+  `sob_trade_archive`** (`_archive_closed` → `db.archive_trade`, гейт по
+  прихованому `archive_trades` ПРИБРАНО). Ролінг-блоб `tm_closed_trades` (кеп
+  `CLOSED_TRADES_LIMIT`=2000) лишається для живої стрічки. get_state віддає ВЕСЬ
+  блоб (не 50) — таблиці рендерять усе з захистом-сигнатурою (не «стрибають» під
+  час скролу).
+- **Таблиці «📜 Recent Closed» / «Recent Paper Closes» — прокрутка + копіювання +
+  «за весь час (БД)».** Клас `.tm-vhscroll` (max-height, sticky-заголовок);
+  `copyTableToClipboard()` → TSV у буфер; `toggleArchiveView('closed'|'shadow')`
+  тягне ВСЮ історію з `/api/trade-archive/export?is_paper=…` і показує read-only
+  (жива стрічка тоді не перемальовує — `window._tmArchiveMode`).
+- **Швидкість закриття:** цикл монітора виходів — налаштовний
+  `monitor_interval_secs` (дефолт **4с**, було жорстко 10с; clamp [2,30]).
+  Ціна береться з кешу сканера (без API-хіта), тож частіше = швидше закриття
+  без навантаження. Реконсіляція з Bybit — на власному `reconcile_interval_secs`
+  (n_ticks рахується від ефективного інтервалу монітора). Сам close-ордер
+  reduce-only шлеться синхронно, важке (real-PnL/архів/notify) — у фоні
+  (`_finalize_close_async`), тож не блокує монітор.
+
 ## Лог Черги-3: рух у черзі + виснаженість
 
 `_log_readiness(..., move_pct=, exhaustion=)` — у `sob_readiness_log` і в UI-лозі

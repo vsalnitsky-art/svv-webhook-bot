@@ -3081,6 +3081,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             
             <!-- Recent Closed -->
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">📜 Recent Closed Trades
+                <span id="tm-closed-src" style="font-size:0.66rem;font-weight:normal;color:#6b7280"></span>
+                <button class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Показати ВСЮ історію закритих угод із бази (таблиця sob_trade_archive), а не лише останні. Повторний клік — назад до живої стрічки."
+                        onclick="toggleArchiveView('closed', this)">📚 За весь час (БД)</button>
                 <button class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Скопіювати всю таблицю в буфер обміну (TSV — можна вставити в Excel/Sheets)"
                         onclick="copyTableToClipboard('tm-closed-table', this)">📋 Копіювати</button>
                 <button class="tm-delete-btn" style="font-size:0.7rem;padding:2px 10px" title="Очистити весь список"
@@ -3144,6 +3147,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </table></div>
             
             <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">Recent Paper Closes
+                <span id="tm-shadow-src" style="font-size:0.66rem;font-weight:normal;color:#6b7280"></span>
+                <button class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Показати ВСЮ історію paper-угод із бази (таблиця sob_trade_archive), а не лише останні. Повторний клік — назад до живої стрічки."
+                        onclick="toggleArchiveView('shadow', this)">📚 За весь час (БД)</button>
                 <button class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Скопіювати всю таблицю в буфер обміну (TSV — можна вставити в Excel/Sheets)"
                         onclick="copyTableToClipboard('tm-shadow-closed-table', this)">📋 Копіювати</button>
                 <button class="tm-delete-btn" style="font-size:0.7rem;padding:2px 10px" title="Очистити весь список"
@@ -10998,10 +11004,20 @@ async function loadTMState(isPoll) {
         const rawClosed = d.closed_trades || [];
         const closed = rawClosed.slice().reverse();
         const closedTbody = document.getElementById('tm-closed-tbody');
-        if (closed.length === 0) {
+        // Рендеримо ВСІ записи (у боксі з прокруткою). Захист: перебудовуємо
+        // tbody ЛИШЕ коли дані змінились — інакше скрол не «стрибає» на початок
+        // щополінгу і немає зайвого навантаження на великому списку.
+        const _cSig = closed.length
+            ? (closed.length + '|' + closed[0].closed_at + '|' + closed[closed.length - 1].closed_at)
+            : '0';
+        if (window._tmArchiveMode && window._tmArchiveMode.closed) {
+            // Таблиця показує повний архів із БД — жива стрічка її не чіпає.
+        } else if (closed.length === 0) {
             closedTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No closed trades yet</td></tr>';
-        } else {
-            closedTbody.innerHTML = closed.slice(0, 50).map((c, i) => {
+            window._tmClosedSig = _cSig;
+        } else if (window._tmClosedSig !== _cSig) {
+            window._tmClosedSig = _cSig;
+            closedTbody.innerHTML = closed.map((c, i) => {
                 const origIdx = rawClosed.length - 1 - i;
                 const pnlClass = c.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
                 const pnlSign = c.pnl_pct >= 0 ? '+' : '';
@@ -11076,10 +11092,18 @@ async function loadTMState(isPoll) {
         // Shadow closes (use original index for backend deletion)
         const rawShadowClosed = d.shadow_closed || [];
         const shadowClosedTbody = document.getElementById('tm-shadow-closed-tbody');
-        if (shadowClosed.length === 0) {
+        // Усі записи + захист від зайвої перебудови (як у реальних закритих).
+        const _scSig = shadowClosed.length
+            ? (shadowClosed.length + '|' + shadowClosed[0].closed_at + '|' + shadowClosed[shadowClosed.length - 1].closed_at)
+            : '0';
+        if (window._tmArchiveMode && window._tmArchiveMode.shadow) {
+            // Таблиця показує повний архів із БД — жива стрічка її не чіпає.
+        } else if (shadowClosed.length === 0) {
             shadowClosedTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No paper closes yet</td></tr>';
-        } else {
-            shadowClosedTbody.innerHTML = shadowClosed.slice(0, 50).map((c, i) => {
+            window._tmShadowClosedSig = _scSig;
+        } else if (window._tmShadowClosedSig !== _scSig) {
+            window._tmShadowClosedSig = _scSig;
+            shadowClosedTbody.innerHTML = shadowClosed.map((c, i) => {
                 const origIdx = rawShadowClosed.length - 1 - i;
                 const pnlClass = c.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
                 const pnlSign = c.pnl_pct >= 0 ? '+' : '';
@@ -11397,6 +11421,66 @@ function _copyFallback(text, cb) {
         if (cb) cb(ok);
     } catch (e) {
         if (cb) cb(false);
+    }
+}
+
+// 📚 Перемикач «за весь час (БД)»: показати ВСЮ історію закритих угод із
+// постійної таблиці бази (sob_trade_archive), а не лише живу стрічку (blob).
+// Повторний клік — назад. Поки активно — жива стрічка не перемальовує таблицю.
+window._tmArchiveMode = { closed: false, shadow: false };
+async function toggleArchiveView(which, btn) {
+    const cfg = which === 'closed'
+        ? { tbody: 'tm-closed-tbody', src: 'tm-closed-src', isPaper: 'false', cols: 8, usd: true }
+        : { tbody: 'tm-shadow-closed-tbody', src: 'tm-shadow-src', isPaper: 'true', cols: 8, usd: false };
+    const on = !window._tmArchiveMode[which];
+    const srcEl = document.getElementById(cfg.src);
+    if (!on) {
+        window._tmArchiveMode[which] = false;
+        if (btn) btn.textContent = '📚 За весь час (БД)';
+        if (srcEl) srcEl.textContent = '';
+        if (which === 'closed') window._tmClosedSig = null; else window._tmShadowClosedSig = null;
+        loadTMState();   // перемалювати живу стрічку
+        return;
+    }
+    if (btn) { btn.textContent = '⏳ Завантаження…'; btn.disabled = true; }
+    try {
+        const res = await fetch(`/api/trade-archive/export?is_paper=${cfg.isPaper}&limit=100000`);
+        const d = await res.json();
+        if (!d || !d.ok) throw new Error((d && d.reason) || 'archive error');
+        const trades = d.trades || [];   // newest-first (closed_at desc)
+        const tbody = document.getElementById(cfg.tbody);
+        if (!trades.length) {
+            tbody.innerHTML = `<tr><td colspan="${cfg.cols}" class="tm-empty-msg">Архів порожній — у БД ще немає закритих ${cfg.isPaper === 'true' ? 'paper-' : ''}угод</td></tr>`;
+        } else {
+            tbody.innerHTML = trades.map(c => {
+                const pnl = (c.pnl_pct != null) ? Number(c.pnl_pct) : 0;
+                const pnlClass = pnl >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
+                const sign = pnl >= 0 ? '+' : '';
+                const sideClass = c.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
+                const usd = (cfg.usd && c.pnl_usd != null) ? ` (${sign}$${Math.abs(Number(c.pnl_usd)).toFixed(2)})` : '';
+                const reason = c.reason || '';
+                const rDet = (c.reason_detail || '').replace(/"/g, '&quot;');
+                return `<tr>
+                    <td>${fmtTimeJS(c.closed_at)}</td>
+                    <td><b class="tm-sym-name">${tvSym(c.symbol)}</b></td>
+                    <td class="${sideClass}">${c.side || ''}</td>
+                    <td>${fmtPriceJS(c.entry_price)}</td>
+                    <td>${fmtPriceJS(c.exit_price)}</td>
+                    <td class="${pnlClass}">${sign}${pnl.toFixed(2)}%${usd}</td>
+                    <td title="${rDet}">${reason}</td>
+                    <td></td>
+                </tr>`;
+            }).join('');
+        }
+        window._tmArchiveMode[which] = true;
+        if (srcEl) srcEl.textContent = `· весь архів із БД: ${trades.length}`;
+        if (btn) btn.textContent = '↩ Жива стрічка';
+    } catch (e) {
+        window._tmArchiveMode[which] = false;
+        if (btn) btn.textContent = '📚 За весь час (БД)';
+        alert('Не вдалося завантажити архів із БД: ' + (e && e.message ? e.message : e));
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 
