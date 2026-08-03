@@ -3073,7 +3073,8 @@ class FuelFilterDaemon:
         return (True, '')
 
     def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict,
-              opened_by: Optional[str] = None, skip_ctr_safeguard: bool = False):
+              opened_by: Optional[str] = None, skip_ctr_safeguard: bool = False,
+              skip_safeguard: bool = False):
         """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
         store position data — it only tracks which symbols it opened and delegates
         the actual position to TM. Positions appear in Trade Manager or Test Mode
@@ -3089,18 +3090,20 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] {symbol}: no entry price — skip open")
             return False
 
-        # CHECK EXHAUSTION BEFORE OPENING: don't enter exhausted moves
-        max_exh = settings.get('max_exhaustion_pct', 75)
-        exh = self._exhaustion(symbol, side)
-        if exh is not None and exh > max_exh:
-            print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% — "
-                  f"rejecting open (too exhausted)")
-            return False
+        # CHECK EXHAUSTION BEFORE OPENING: don't enter exhausted moves.
+        # skip_safeguard (Черга-4: рішення ухвалює 4-шаровий конфлюенс) → пропускаємо.
+        if not skip_safeguard:
+            max_exh = settings.get('max_exhaustion_pct', 75)
+            exh = self._exhaustion(symbol, side)
+            if exh is not None and exh > max_exh:
+                print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% — "
+                      f"rejecting open (too exhausted)")
+                return False
 
         # 🛡 М'який запобіжник: слабкий МММ / нейтральний(проти) CTR / виснажений
         # хід — три «вбивці», що системно давали збиткові входи. Єдиний чок-пойнт
         # усіх шляхів відкриття (Черга-1/2, сигнал). Причину — у per-row діагностику.
-        if settings.get('safeguard_on', True):
+        if settings.get('safeguard_on', True) and not skip_safeguard:
             ok_sg, sg_reason = self._soft_safeguard(symbol, side, settings,
                                                     skip_ctr=skip_ctr_safeguard)
             if not ok_sg:
@@ -5353,7 +5356,8 @@ class FuelFilterDaemon:
             if lay.get('base', 0) < 4:
                 continue   # ще не всі 4 шари збіглись — чекаємо
             try:
-                opened = self._open(sym, d, fuel, s, opened_by='🎯 Черга-4 (усі 4 шари)')
+                opened = self._open(sym, d, fuel, s, opened_by='🎯 Черга-4 (усі 4 шари)',
+                                    skip_ctr_safeguard=True, skip_safeguard=True)
                 if opened:
                     with self._lock:
                         self._timers[sym] = {'dir': d, 'since': now, 'start_price': mark}

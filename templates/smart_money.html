@@ -2378,7 +2378,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers4-table">
                     <thead>
-                        <tr><th>Символ</th><th>Напрямок</th><th title="4-шаровий конфлюенс: Новий МММ · Старий МММ · Готовність · Запас. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди.">🎯 Шари</th><th title="Новий МММ (бабло-модель)">Новий МММ</th><th title="Старий МММ ((fa−fb)/den)">Старий МММ</th><th title="SMC-готовність (grade_setup)">Готовність</th><th title="Запас ходу (runway) — показник TradingView-скрипта">Запас</th><th>Очікує</th></tr>
+                        <tr><th>Символ</th><th>Напрямок</th><th title="4-шаровий конфлюенс: Новий МММ · Старий МММ · Готовність · Запас. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди.">🎯</th><th title="Новий МММ (бабло-модель)">Новий МММ</th><th title="Старий МММ ((fa−fb)/den)">Старий МММ</th><th title="SMC-готовність (grade_setup)">Готовність</th><th title="Запас ходу (runway) — показник TradingView-скрипта">Запас</th><th>Очікує</th></tr>
                     </thead>
                     <tbody id="ff-timers4-tbody">
                         <tr><td colspan="8" class="tm-empty-msg">Черга-4 порожня</td></tr>
@@ -7578,8 +7578,9 @@ function ffSetupCell(su) {
     (su.checks || []).forEach(ch => { tip += `\n${ic[ch.state] || '·'} ${ch.label}: ${ch.detail}`; });
     (su.vetoes || []).forEach(v => { tip += `\n⚠ ${v}`; });
     // Прапорець-колонка праворуч: 🎯 (суворий збіг) або ⚠ (є вето) або порожньо.
-    const flag = su.hot ? '🎯' : ((su.vetoes && su.vetoes.length)
-        ? '<span title="Є обмеження (вето)" style="color:#fbbf24">⚠️</span>' : '');
+    const _vt = (su.vetoes && su.vetoes.length) ? ('⚠ Обмеження (вето):\n• ' + su.vetoes.join('\n• ')) : '';
+    const flag = su.hot ? '🎯' : (_vt
+        ? `<span title="${_vt.replace(/"/g, '&quot;')}" style="color:#fbbf24">⚠️</span>` : '');
     const pct = Math.max(0, Math.min(100, Number(su.score) || 0));
     return `<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">`
         + `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;flex-direction:column;gap:3px;`
@@ -8983,7 +8984,7 @@ function ffLayers4Cell(q) {
     const dirCol = rowDir === 'LONG' ? '#4ade80' : (rowDir === 'SHORT' ? '#f87171' : '#8b93a7');
     const col = n >= 4 ? dirCol : (n >= 1 ? '#fbbf24' : '#8b93a7');
     const tip = layers.map(l => `${l.ok ? '✅' : '▫️'} ${l.label}: ${l.detail}`).join('\n');
-    return `<span title="${tip.replace(/"/g, '&quot;')}" style="white-space:nowrap;font-weight:700">${dots} <span style="color:${col}">${n}/4</span></span>`;
+    return `<span title="${tip.replace(/"/g, '&quot;')}" style="white-space:nowrap;font-weight:700;font-family:monospace;font-size:0.9rem;letter-spacing:2px">${dots}<span style="color:${col};margin-left:6px">${n}/4</span></span>`;
 }
 function ffRenderQueue4() {
     const tb = document.getElementById('ff-timers4-tbody');
@@ -8998,8 +8999,9 @@ function ffRenderQueue4() {
         const mmNew = q.mm_new || {}, mmOld = q.mm_old || {}, rw = q.runway || {};
         const rwArr = rw.dir === 'LONG' ? '▲' : (rw.dir === 'SHORT' ? '▼' : '•');
         const rwCol = rw.dir === 'LONG' ? '#4ade80' : (rw.dir === 'SHORT' ? '#f87171' : '#8b93a7');
+        const rwLbl = rw.label ? ` <span style="color:#9aa3b5;font-size:0.66rem">${rw.label}</span>` : '';
         const rwTxt = `<span style="color:${rwCol};font-weight:700">${rwArr} ${rw.dir || '—'}</span>` +
-            (rw.room_pct != null ? ` <span style="color:#8b93a7;font-size:0.66rem">${rw.room_pct}%</span>` : '');
+            (rw.room_pct != null ? ` <span style="color:#8b93a7;font-size:0.66rem">${rw.room_pct}%</span>` : '') + rwLbl;
         return `<tr>
             <td style="font-weight:600">${tvSym(t.symbol)}</td>
             <td>${dirHtml}</td>
