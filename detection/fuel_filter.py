@@ -5000,7 +5000,7 @@ class FuelFilterDaemon:
         route = bool(s.get('funding_route_q4', True))   # маршрут сигналу в Чергу-4
         ob_tf = s.get('funding_ob_tf', '1h') or '1h'    # напрямок за Require OB
         vob_tf = s.get('funding_vob_tf', '5m') or '5m'  # TF сигналу Volumized OB
-        if not tg_on and not open_on and not route:
+        if not tg_on and not route:
             if self._vob_state or self._layer_alert_at or self._vob_seen:
                 self._vob_state.clear()
                 self._vob_seen.clear()
@@ -5049,12 +5049,6 @@ class FuelFilterDaemon:
                                      side=d, source='FundingVOB')
                     except Exception:
                         pass
-                elif open_on:
-                    lay = self._funding_layers(sym, a)
-                    try:
-                        self._vob_open_or_trail(sym, a, d, ob, lay, s, now)
-                    except Exception as e:
-                        print(f"[FF-VOB-open] {sym} error: {e}")
                 if tg_on and (now - self._layer_alert_at.get(sym, 0)) >= cool:
                     try:
                         self._send_layer_alert(sym, a, d, mode='signal')
