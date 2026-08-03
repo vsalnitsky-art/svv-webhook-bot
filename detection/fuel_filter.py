@@ -244,6 +244,7 @@ DEFAULT_SETTINGS = {
     'queue4_mm_old_min': 10,     # Старий МММ: ті самі band-и
     'queue4_setup_min': 40,      # Готовність: 25 СЛАБК/40 СЕРЕД/55 ХОРОШ/72 ВІДМІН
     'queue4_require_runway': True,  # Запас (runway) має бути у бік напрямку
+    'queue4_ttl_hours': 3,          # протермінувати запис Черги-4 через N год (0=без ліміту)
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -435,6 +436,12 @@ DEFAULT_SETTINGS = {
     # відкритій монеті НЕ відкриває нову угоду, а лише пересуває SL на новий OB.
     # Усе фіксується в 🧾 Лог роботи бота з міткою, що монета прийшла з фандингу.
     'queue3_vob_open': True,               # авто-відкриття за VOB+5 шарів (дефолт ON)
+    # ── Funding-стратегія (редизайн): напрямок за Require OB (funding_ob_tf,
+    #   дефолт 1H), сигнал Volumized OB (funding_vob_tf, дефолт 5m), і МАРШРУТ
+    #   сигналу в Чергу-4 (funding_route_q4) для фільтрації 4-ма шарами.
+    'funding_ob_tf': '1h',
+    'funding_vob_tf': '5m',
+    'funding_route_q4': True,
     'queue3_vob_sl_buffer_pct': 0.10,      # буфер SL за межі блоку OB, % ціни
     # Не відкривати НОВУ угоду ПРОТИ загального тренду монети (≈2 год з 💰 Funding
     # Rate Scanner): LONG блокується коли загальний тренд ↓, SHORT — коли ↑.
@@ -825,6 +832,10 @@ class FuelFilterDaemon:
         s['queue4_enabled'] = bool(s.get('queue4_enabled', False))
         s['queue4_require_runway'] = bool(s.get('queue4_require_runway', True))
         try:
+            s['queue4_ttl_hours'] = max(0, min(72, float(s.get('queue4_ttl_hours', 3) or 0)))
+        except (TypeError, ValueError):
+            s['queue4_ttl_hours'] = 3
+        try:
             s['queue4_mm_new_min'] = max(0, min(100, int(s.get('queue4_mm_new_min', 30) or 0)))
         except (TypeError, ValueError):
             s['queue4_mm_new_min'] = 30
@@ -872,6 +883,12 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             s['layer_tg_cooldown_min'] = 30
         s['queue3_vob_open'] = bool(s.get('queue3_vob_open', True))
+        s['funding_route_q4'] = bool(s.get('funding_route_q4', True))
+        _ftf = ('1m', '3m', '5m', '15m', '30m', '1h', '4h')
+        if s.get('funding_ob_tf') not in _ftf:
+            s['funding_ob_tf'] = '1h'
+        if s.get('funding_vob_tf') not in _ftf:
+            s['funding_vob_tf'] = '5m'
         try:
             s['queue3_vob_sl_buffer_pct'] = max(0.0, min(10.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)))
         except (TypeError, ValueError):
@@ -4894,7 +4911,43 @@ class FuelFilterDaemon:
     _VOB_ZONE = 'Low'
     _VOB_TTL = 8   # с — короткий кеш 1m-свічок (майже без затримки)
 
-    def _funding_vob(self, sym: str, d: str) -> Optional[Dict]:
+    def _funding_ob_dir(self, sym: str, tf: str) -> Optional[str]:
+        """Напрямок за Require OB на `tf`: LONG якщо найновіший активний
+        (не-breaker) Volumized OB — бичачий, SHORT якщо ведмежий. None — немає."""
+        try:
+            now = time.time()
+            key = ('obdir', sym, tf)
+            c = self._vob_klines.get(key)
+            if c and (now - c[0]) < self._VOB_TTL * 6:   # OB-TF довший → довший кеш
+                kl = c[1]
+            else:
+                from detection.market_data import get_market_data
+                md = get_market_data()
+                kl = md.fetch_klines(sym, limit=200, interval=tf) if md else None
+                if kl:
+                    self._vob_klines[key] = (now, kl)
+            if not kl or len(kl) < 20:
+                return None
+            from detection.volumized_ob import detect_volumized_obs
+            res = detect_volumized_obs(kl, swing_length=self._VOB_SWING,
+                                       ob_end_method=self._VOB_END,
+                                       max_atr_mult=self._VOB_ATR_MULT,
+                                       zone_count=self._VOB_ZONE)
+            def _newest(obs):
+                for ob in (obs or []):        # newest first
+                    if not ob.get('breaker'):
+                        return int(ob.get('formation_time') or 0)
+                return -1
+            bt = _newest(res.get('bullish_obs'))
+            st = _newest(res.get('bearish_obs'))
+            if bt < 0 and st < 0:
+                return None
+            return 'LONG' if bt >= st else 'SHORT'
+        except Exception as e:
+            print(f"[FF-OBdir] {sym} error: {e}")
+            return None
+
+    def _funding_vob(self, sym: str, d: str, tf: str = '1m') -> Optional[Dict]:
         """Найновіший АКТИВНИЙ Volumized OB (1m) у напрямку d (swing=5, Wick,
         ATR×3.5, zone=Low). Повертає OB-dict або None. Короткий кеш 1m-свічок для
         мінімальної затримки. Викликається ЛИШЕ для монет, де шари 1..4 зійшлись."""
@@ -4902,14 +4955,14 @@ class FuelFilterDaemon:
             return None
         try:
             now = time.time()
-            key = ('vob1m', sym)
+            key = ('vob', sym, tf)
             c = self._vob_klines.get(key)
             if c and (now - c[0]) < self._VOB_TTL:
                 kl = c[1]
             else:
                 from detection.market_data import get_market_data
                 md = get_market_data()
-                kl = md.fetch_klines(sym, limit=200, interval='1m') if md else None
+                kl = md.fetch_klines(sym, limit=200, interval=tf) if md else None
                 if kl:
                     self._vob_klines[key] = (now, kl)
             if not kl or len(kl) < 20:
@@ -4939,7 +4992,10 @@ class FuelFilterDaemon:
              🧾 Лог роботи бота з міткою «з фандингу»."""
         tg_on = bool(s.get('layer_tg_on'))
         open_on = bool(s.get('queue3_vob_open', True))
-        if not tg_on and not open_on:
+        route = bool(s.get('funding_route_q4', True))   # маршрут сигналу в Чергу-4
+        ob_tf = s.get('funding_ob_tf', '1h') or '1h'    # напрямок за Require OB
+        vob_tf = s.get('funding_vob_tf', '5m') or '5m'  # TF сигналу Volumized OB
+        if not tg_on and not open_on and not route:
             if self._vob_state or self._layer_alert_at or self._vob_seen:
                 self._vob_state.clear()
                 self._vob_seen.clear()
@@ -4955,12 +5011,13 @@ class FuelFilterDaemon:
         live = set()
         for sym, a in anoms.items():
             live.add(sym)
-            d = a.get('dir')
+            # НАПРЯМОК: за Require OB на funding_ob_tf (нове), інакше — МММ dir (legacy).
+            d = self._funding_ob_dir(sym, ob_tf) if route else a.get('dir')
             if d not in ('LONG', 'SHORT'):
                 self._vob_state.pop(sym, None)
                 continue
-            # ПОСТІЙНО моніторимо новий Volumized OB (1m) — головний одноразовий тригер.
-            ob = self._funding_vob(sym, d)
+            # Volumized OB на funding_vob_tf (дефолт 5m) у бік OB-напрямку.
+            ob = self._funding_vob(sym, d, vob_tf)
             if not ob:
                 self._vob_state[sym] = {'ok': False, 'dir': d}
                 continue
@@ -4972,18 +5029,28 @@ class FuelFilterDaemon:
             # Позначаємо OB опрацьованим (щоб не спрацювати двічі на тому самому).
             if ft and ft != self._vob_seen.get(sym):
                 self._vob_seen[sym] = ft
-                lay = self._funding_layers(sym, a)
-                # Авто-відкриття/трейл SL — саме воно шле «Рекомендацію бота» з SL.
-                if open_on:
+                if route:
+                    # Маршрут сигналу в Чергу-4 (фільтрація 4-ма шарами + відкриття).
+                    try:
+                        _disp = self.intercept(sym, d, kind='vob')
+                    except Exception as e:
+                        _disp = ''
+                        print(f"[FF-Funding→Q4] {sym} intercept error: {e}")
+                    try:
+                        from detection.activity_log import log_activity
+                        log_activity(sym, 'signal',
+                                     f'Funding: VOB({vob_tf}) у бік OB({ob_tf}) {d} → Черга-4'
+                                     + (f' ({_disp})' if _disp else ' (черги вимкнені)'),
+                                     side=d, source='FundingVOB')
+                    except Exception:
+                        pass
+                elif open_on:
+                    lay = self._funding_layers(sym, a)
                     try:
                         self._vob_open_or_trail(sym, a, d, ob, lay, s, now)
                     except Exception as e:
                         print(f"[FF-VOB-open] {sym} error: {e}")
-                # Якщо авто-відкриття ВИМКНЕНО — лишаємо просту «Рекомендацію бота»
-                # (без SL) за старим порогом шарів. Коли увімкнено — не дублюємо
-                # (повідомлення з SL надсилає _vob_open_or_trail).
-                elif tg_on and lay.get('base', 0) >= need \
-                        and (now - self._layer_alert_at.get(sym, 0)) >= cool:
+                if tg_on and (now - self._layer_alert_at.get(sym, 0)) >= cool:
                     try:
                         self._send_layer_alert(sym, a, d, mode='signal')
                     except Exception as e:
@@ -5336,12 +5403,26 @@ class FuelFilterDaemon:
             from detection.activity_log import log_activity
         except Exception:
             log_activity = lambda *a, **k: None
+        try:
+            ttl_h = float(s.get('queue4_ttl_hours', 3) or 0)
+        except (TypeError, ValueError):
+            ttl_h = 3.0
         with self._lock:
             items = list(self._pending4.items())
         for sym, info in items:
             d = info.get('dir')
             if d not in ('LONG', 'SHORT'):
                 continue
+            # ⏳ TTL — не тримати запис у Черзі-4 нескінченно.
+            if ttl_h > 0:
+                _added = float(info.get('added_at') or 0)
+                if _added and (now - _added) > ttl_h * 3600:
+                    with self._lock:
+                        self._pending4.pop(sym, None); self._persist_state()
+                    log_activity(sym, 'skipped',
+                                 f'Черга-4: протерміновано (>{ttl_h:.0f}год у черзі без відкриття)',
+                                 side=d, source='Q4')
+                    continue
             if sym in self._fuel_managed:
                 continue
             if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
