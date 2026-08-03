@@ -4006,8 +4006,11 @@ class FuelFilterDaemon:
                 self._score_cache = cache
                 self._fuel_str_prev = self._fuel_str
                 self._fuel_str = new_str
-            # 🎯 SMC-грейдер для тих самих рядків (окремий, довший TTL).
-            self._refresh_setup_cache(settings, targets)
+            # 🎯 SMC-грейдер для тих самих рядків (окремий, довший TTL). ВІДКРИТІ
+            # позиції — у пріоритет (коротший TTL), щоб «Готовність виходу» не
+            # голодувала й швидко зʼявлялась на живих угодах.
+            _open_syms = {s for s, side, _oa in tm_positions if side in ('LONG', 'SHORT')}
+            self._refresh_setup_cache(settings, targets, priority=_open_syms)
             # ⚡ Скальп-«Готовність» лише для funding-монет (окремий швидкий TF).
             self._refresh_setup_scalp_cache(settings)
         except Exception as e:
@@ -4015,21 +4018,33 @@ class FuelFilterDaemon:
 
     # ── 🎯 SMC «готовність сетапу» (1H) ──────────────────────────────────────
     _SETUP_TTL = 90          # с — як часто перераховувати сетап на монету
+    _SETUP_TTL_PRIORITY = 25  # с — ВІДКРИТІ позиції: свіжіша «Готовність виходу»
     _SETUP_MAX_PER_CYCLE = 6  # обмежувач навантаження: не більше N важких SMC/цикл
 
-    def _refresh_setup_cache(self, settings: Dict, targets: Dict):
+    def _refresh_setup_cache(self, settings: Dict, targets: Dict, priority=None):
         """Оновлює self._setup_cache для видимих монет. SMC-аналіз важкий, тож:
         (а) кожну монету рахуємо не частіше за _SETUP_TTL; (б) за один цикл —
         не більше _SETUP_MAX_PER_CYCLE перерахунків (найстаріші першими), щоб не
-        навантажувати біржу/CPU. Вимикається налаштуванням setup_grader_on=False."""
+        навантажувати біржу/CPU. Вимикається налаштуванням setup_grader_on=False.
+        `priority` (ВІДКРИТІ позиції) — коротший TTL (_SETUP_TTL_PRIORITY) і
+        рахуються ПЕРШИМИ + ПОЗА лімітом циклу, щоб колонка «Готовність виходу»
+        не голодувала за десятків черг/аномалій (їх мало — ≤ max_open_positions)."""
         if not bool(settings.get('setup_grader_on', True)):
             return
         now = time.time()
         live = set(targets.keys())
-        # Кандидати на перерахунок: прострочені (за TTL), найстаріші першими.
-        due = sorted((s for s in live if (now - self._setup_at.get(s, 0)) >= self._SETUP_TTL),
-                     key=lambda s: self._setup_at.get(s, 0))
-        for sym in due[:self._SETUP_MAX_PER_CYCLE]:
+        prio = set(priority or ()) & live
+        # Пріоритетні (відкриті позиції): коротший TTL, найстаріші першими.
+        due_prio = sorted((s for s in prio
+                           if (now - self._setup_at.get(s, 0)) >= self._SETUP_TTL_PRIORITY),
+                          key=lambda s: self._setup_at.get(s, 0))
+        # Решта: звичайний TTL, найстаріші першими.
+        due_rest = sorted((s for s in (live - prio)
+                           if (now - self._setup_at.get(s, 0)) >= self._SETUP_TTL),
+                          key=lambda s: self._setup_at.get(s, 0))
+        # Пріоритетні — усі (їх мало); решта — до ліміту циклу.
+        todo = due_prio + due_rest[:max(0, self._SETUP_MAX_PER_CYCLE - len(due_prio))]
+        for sym in todo:
             d = (targets.get(sym) or (None,))[0]
             try:
                 res = self._compute_setup(sym, d, settings)

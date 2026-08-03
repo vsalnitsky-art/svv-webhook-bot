@@ -11467,6 +11467,31 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// 🔄 Плаваюча кнопка оновлення — ЗАВЖДИ видима (fixed, правий нижній кут), щоб
+// її неможливо було не помітити (кнопка в заголовку легко губилась). Клік = те
+// саме, що клавіша R/Alt+R: миттєвий форс-рендер таблиць угод + МММ/статусів.
+function _ensureRefreshFab() {
+    if (document.getElementById('tm-refresh-fab')) return;
+    const b = document.createElement('button');
+    b.id = 'tm-refresh-fab';
+    b.type = 'button';
+    b.title = 'Оновити таблиці угод + МММ/статуси зараз. Гаряча клавіша: R або Alt+R (коли фокус не в полі вводу).';
+    b.innerHTML = '🔄 Оновити <span style="opacity:0.7;font-weight:400">(R)</span>';
+    b.style.cssText = 'position:fixed;right:18px;bottom:56px;z-index:99998;'
+        + 'background:rgba(59,130,246,0.92);border:1px solid rgba(59,130,246,0.9);'
+        + 'color:#fff;padding:10px 16px;border-radius:24px;font-size:0.82rem;'
+        + 'font-weight:700;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,0.4)';
+    b.onmouseenter = () => { b.style.background = 'rgba(37,99,235,1)'; };
+    b.onmouseleave = () => { b.style.background = 'rgba(59,130,246,0.92)'; };
+    b.onclick = refreshTradeTables;
+    document.body.appendChild(b);
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _ensureRefreshFab);
+} else {
+    _ensureRefreshFab();
+}
+
 // 📚 Перемикач «за весь час (БД)»: показати ВСЮ історію закритих угод із
 // постійної таблиці бази (sob_trade_archive), а не лише живу стрічку (blob).
 // Повторний клік — назад. Поки активно — жива стрічка не перемальовує таблицю.
