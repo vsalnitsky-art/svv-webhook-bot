@@ -2374,8 +2374,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="ff-queue4-runway" onchange="saveFuelFilterSettings()"> 🎯 Запас у бік
                     </label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Протермінувати запис Черги-4 через N год, якщо не відкрилась. 0 = без ліміту.">TTL <input type="number" id="ff-queue4-ttl" min="0" max="72" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> год</label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Не відкривати угоду, якщо хід уже виснажений понад поріг. Єдиний запобіжник Черги-4.">
+                        <input type="checkbox" id="ff-queue4-exh-on" onchange="saveFuelFilterSettings()"> 🔥 Виснаженість ≤ <input type="number" id="ff-queue4-exh-pct" min="1" max="100" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> %</label>
                 </div>
-                <div style="font-size:0.64rem;color:#6b7280;padding:0 12px 10px">💡 Відкриває угоду, ЛИШЕ коли УСІ 4 шари збіглись за напрямком сигналу (кольори — усі зелені LONG / усі червоні SHORT). Параметри складності — від найменшого до найбільшого.</div>
+                <div style="font-size:0.64rem;color:#6b7280;padding:0 12px 10px">💡 Відкриває угоду, ЛИШЕ коли УСІ 4 шари збіглись за напрямком сигналу (кольори — усі зелені LONG / усі червоні SHORT). Параметри складності — від найменшого до найбільшого. 🔥 Виснаженість — єдиний запобіжник: вичерпаний понад поріг рух не відкривається.</div>
             </details>
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers4-table">
@@ -9187,6 +9189,8 @@ function renderFuelFilter(d) {
     setIf('ff-queue4-setup', String(s.queue4_setup_min != null ? s.queue4_setup_min : 40));
     setIf('ff-queue4-runway', s.queue4_require_runway !== false);
     setIf('ff-queue4-ttl', String(s.queue4_ttl_hours != null ? s.queue4_ttl_hours : 3));
+    setIf('ff-queue4-exh-on', s.queue4_exhaustion_on !== false);
+    setIf('ff-queue4-exh-pct', String(s.queue4_exhaustion_pct != null ? s.queue4_exhaustion_pct : 95));
     setIf('ff-queue3-vob-open', s.queue3_vob_open !== false);       // default true
     setIf('ff-queue3-vob-buffer', String(s.queue3_vob_sl_buffer_pct != null ? s.queue3_vob_sl_buffer_pct : 0.10));
     setIf('ff-queue3-vob-trend', s.queue3_vob_block_against_trend !== false); // default true
@@ -10107,6 +10111,8 @@ async function saveFuelFilterSettings() {
         queue4_setup_min: parseInt(_v('ff-queue4-setup', '40') || '40', 10),
         queue4_require_runway: _c('ff-queue4-runway'),
         queue4_ttl_hours: parseFloat(_v('ff-queue4-ttl', '3') || '3'),
+        queue4_exhaustion_on: _c('ff-queue4-exh-on'),
+        queue4_exhaustion_pct: parseInt(_v('ff-queue4-exh-pct', '95') || '95', 10),
         queue3_vob_open: _c('ff-queue3-vob-open'),
         queue3_vob_sl_buffer_pct: parseFloat(_v('ff-queue3-vob-buffer', '0.10') || '0.10'),
         queue3_vob_block_against_trend: _c('ff-queue3-vob-trend'),

@@ -245,6 +245,11 @@ DEFAULT_SETTINGS = {
     'queue4_setup_min': 40,      # Готовність: 25 СЛАБК/40 СЕРЕД/55 ХОРОШ/72 ВІДМІН
     'queue4_require_runway': True,  # Запас (runway) має бути у бік напрямку
     'queue4_ttl_hours': 3,          # протермінувати запис Черги-4 через N год (0=без ліміту)
+    # 🔥 Виснаженість Черги-4: НЕ відкривати угоду, якщо хід уже виснажений понад
+    #    поріг (0..100). Дефолт УВІМКНЕНО, поріг 95% (ріже лише зовсім вичерпані
+    #    рухи). Це ЄДИНИЙ запобіжник Q4 (решта safeguard-ів у Q4 вимкнені).
+    'queue4_exhaustion_on': True,
+    'queue4_exhaustion_pct': 95,
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -615,6 +620,10 @@ class FuelFilterDaemon:
         # {symbol: {'dir':'up'|'down'|'flat','chg':%}} — СВІЖИЙ рух ЦІНИ (~15 хв)
         # з 💰 Funding Rate Scanner. Джерело 5-го шару «Ціна» у Шаровому конфлюенсі.
         self._funding_price: Dict[str, Dict] = {}
+        # {symbol: 'LONG'|'SHORT'} — НАПРЯМОК funding-монети ЗА Require OB
+        # (funding_ob_tf). Заповнюється в _layer_signal_alert; get_state віддає
+        # його як 'dir' funding-рядка (нова стратегія: напрямок за OB, не МММ).
+        self._funding_ob_dir_cache: Dict[str, str] = {}
         # Short-TTL klines cache for candle confirmation at a custom TF:
         # {(symbol, tf): (ts, klines)}.
         self._candle_cache: Dict = {}
@@ -847,6 +856,11 @@ class FuelFilterDaemon:
             s['queue4_setup_min'] = max(0, min(100, int(s.get('queue4_setup_min', 40) or 0)))
         except (TypeError, ValueError):
             s['queue4_setup_min'] = 40
+        s['queue4_exhaustion_on'] = bool(s.get('queue4_exhaustion_on', True))
+        try:
+            s['queue4_exhaustion_pct'] = max(1, min(100, int(s.get('queue4_exhaustion_pct', 95) or 95)))
+        except (TypeError, ValueError):
+            s['queue4_exhaustion_pct'] = 95
         # ⚡ funding scalper «Готовність»
         s['funding_setup_scalp_on'] = bool(s.get('funding_setup_scalp_on', False))
         _valid_tf = ('1m', '3m', '5m', '15m', '30m', '1h')
@@ -5018,6 +5032,13 @@ class FuelFilterDaemon:
             live.add(sym)
             # НАПРЯМОК: за Require OB на funding_ob_tf (нове), інакше — МММ dir (legacy).
             d = self._funding_ob_dir(sym, ob_tf) if route else a.get('dir')
+            # Кешуємо напрямок за OB → get_state віддасть його як 'dir' рядка
+            # (нова стратегія: напрямок funding-монети за Require OB, не МММ).
+            if route:
+                if d in ('LONG', 'SHORT'):
+                    self._funding_ob_dir_cache[sym] = d
+                else:
+                    self._funding_ob_dir_cache.pop(sym, None)
             if d not in ('LONG', 'SHORT'):
                 self._vob_state.pop(sym, None)
                 continue
@@ -5059,6 +5080,9 @@ class FuelFilterDaemon:
             if k not in live:
                 self._vob_state.pop(k, None)
                 self._vob_seen.pop(k, None)
+        for k in list(self._funding_ob_dir_cache.keys()):
+            if k not in live:
+                self._funding_ob_dir_cache.pop(k, None)
         # Скид трекера авто-угод для монет, що зникли І вже не мають позиції.
         for k in list(self._vob_trade.keys()):
             if k not in live and not (self._tm_has_position(k, True)
@@ -5435,6 +5459,18 @@ class FuelFilterDaemon:
             lay = self._queue4_layers(sym, d, s)
             if lay.get('base', 0) < 4:
                 continue   # ще не всі 4 шари збіглись — чекаємо
+            # 🔥 Виснаженість — ЄДИНИЙ запобіжник Q4: не відкривати вичерпаний хід.
+            if s.get('queue4_exhaustion_on', True):
+                try:
+                    _exh_max = float(s.get('queue4_exhaustion_pct', 95) or 95)
+                except (TypeError, ValueError):
+                    _exh_max = 95.0
+                _exh = self._exhaustion(sym, d)
+                if _exh is not None and _exh > _exh_max:
+                    log_activity(sym, 'skipped',
+                                 f'Черга-4: хід виснажений {_exh:.0f}%>{_exh_max:.0f}% — '
+                                 'відкриття скасовано', side=d, source='Q4')
+                    continue
             try:
                 opened = self._open(sym, d, fuel, s, opened_by='🎯 Черга-4 (усі 4 шари)',
                                     skip_ctr_safeguard=True, skip_safeguard=True)
@@ -6853,9 +6889,15 @@ class FuelFilterDaemon:
                                 _mv if a.get('dir') == 'LONG' else -_mv, 3)
                     except (TypeError, ValueError):
                         pass
+                # НАПРЯМОК рядка: за Require OB (нова стратегія), якщо маршрут у
+                # Чергу-4 увімкнено; інакше — legacy МММ-напрямок. Кеш заповнює
+                # _layer_signal_alert; фолбек на МММ, поки OB ще не порахований.
+                _route_q4 = bool(settings.get('funding_route_q4', True))
+                _row_dir = (self._funding_ob_dir_cache.get(sym) or a.get('dir')) \
+                    if _route_q4 else a.get('dir')
                 anomalies.append({
                     'symbol': sym,
-                    'dir': a.get('dir'),
+                    'dir': _row_dir,
                     'holding': True,
                     'held_sec': held,
                     'start_price': a.get('start_price'),
@@ -6894,7 +6936,7 @@ class FuelFilterDaemon:
                     # ⚡ Скальперська «Готовність» на швидкому TF (лише funding).
                     'setup_scalp': self._setup_scalp_cache.get(sym),
                     # 🎯 5-шаровий конфлюенс (для колонки «Шари» + TG-сигналу).
-                    'layers': self._funding_layers(sym, a),
+                    'layers': self._funding_layers(sym, {**a, 'dir': _row_dir}),
                     # 💹 Напрямок ЦІНИ з 💰 Funding Rate Scanner: свіжий (~15 хв)
                     # + загальний тренд (~2 год) — другий рядок у таблиці.
                     'price': (self._funding_price or {}).get(sym.upper()),
