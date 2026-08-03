@@ -265,13 +265,14 @@ SHORT=СПАДАЄ (down)**. Кожен шар несе `dir` (напрямок 
 
 ## Оновлення таблиць угод (UI) + свіжість «Готовності виходу»
 
-- **Оновлення — по гарячій клавіші/кнопці, БЕЗ агресивного авто-полінгу.** Спроба
-  3с-полінгу + зняття hover-захисту гальмувала весь сайт і ховала МММ → відкочено.
-  Лишився штатний 5с-полінг з hover-захистом (`_tmEditingIn` блокує лише при
-  РЕАЛЬНОМУ фокусі в input/select/textarea, не на простому наведенні). Додано:
-  клавіша **R / Alt+R** і **плаваюча кнопка «🔄 Оновити (R)»** (`tm-refresh-fab`,
-  fixed) → `refreshTradeTables()` = `loadTMState()` (форс-рендер) +
-  `loadFuelFilterStatus()` + тост. Кнопка в заголовку «Open Positions» теж є.
+- **АВТО-ОНОВЛЕННЯ ПОВНІСТЮ ВИМКНЕНО (гальмувало) — лише вручну.** Прибрано ВСІ
+  періодичні полінги, що перемальовували важкі таблиці: `loadTMState` (5с),
+  `loadFuelFilterStatus` (30с + із refreshAll), `loadActivityLog` (5с). Оновлення
+  — ЛИШЕ клавішею **R / Alt+R** або **плаваючою кнопкою «🔄 Оновити (R)»**
+  (`tm-refresh-fab`, fixed, правий низ) → `refreshTradeTables()` = `loadTMState()`
+  + `loadFuelFilterStatus()` + `loadActivityLog()` + тост. Перший рендер — на
+  старті. Дії користувача (open/close/delete) далі роблять точковий `loadTMState`
+  для миттєвого фідбеку (це не полінг). `refreshAll` (bias/sentiment) лишився 60с.
 - **«Готовність виходу» (exit_grade) — backend-cadence-bound, НЕ refresh-bound.**
   Рахується у FF (`grade_exit` → `_exit_cache`) у `_refresh_setup_cache` і
   копіюється в позицію на TM-моніторі; get_state лише віддає збережене. Було:

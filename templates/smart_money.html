@@ -3802,7 +3802,8 @@ async function deleteActivityLog(ids) {
     loadActivityLog();
 }
 loadActivityLog();
-setInterval(() => { if (document.getElementById('activity-log-tbody')) loadActivityLog(); }, 5000);
+// ⛔ Авто-оновлення 🧾 Лог роботи бота ВИМКНЕНО (перемальовувалось щоп'ять секунд
+// → гальмувало). Оновлюється на старті + по кнопці «🔄 Оновити (R)» разом з рештою.
 </script>
 
 <script>
@@ -11430,8 +11431,11 @@ function _copyFallback(text, cb) {
 // (коли фокус НЕ в полі вводу). Форс-рендер: loadTMState() без isPoll малює
 // завжди (ігнорує захист наведення), + оновлює МММ/статуси (loadFuelFilterStatus).
 function refreshTradeTables() {
+    // Кнопка/клавіша = ЄДИНИЙ спосіб оновлення (авто-полінг вимкнено). Оновлюємо
+    // ВСЕ, що цікавить: угоди (TM), МММ/funding/черги (FF), і 🧾 Лог роботи бота.
     try { loadTMState(); } catch (e) {}
     try { if (typeof loadFuelFilterStatus === 'function') loadFuelFilterStatus(); } catch (e) {}
+    try { if (typeof loadActivityLog === 'function') loadActivityLog(); } catch (e) {}
     _flashRefreshHint();
 }
 function _flashRefreshHint() {
@@ -11672,9 +11676,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     setInterval(() => {
         if (currentSymbol) loadChart();
     }, 30000);
-    // Refresh TM state every 5s. isPoll=true → поважає захист редагування:
-    // поки редагуєш Manual SL/TP чи тумблер, таблиця не перемальовується.
-    setInterval(() => loadTMState(true), 5000);
+    // ⛔ АВТО-ОНОВЛЕННЯ таблиць угод ВИМКНЕНО (гальмувало сайт — важкі таблиці
+    // перемальовувались щоп'ять секунд). Оновлення — ЛИШЕ вручну: клавіша R/Alt+R
+    // або плаваюча кнопка «🔄 Оновити (R)» (refreshTradeTables). Перший рендер
+    // уже відбувся вище (await loadTMState()).
     // Trade-bias board + exchange sentiment + watchlist consensus — all
     // refresh TOGETHER on one 60s cycle (sentiment row lives inside the
     // board now; the Trade-Direction strip indicator is refreshed here too).
@@ -11739,11 +11744,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         loadBias();
     }).catch(() => {});
-    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadFuelFilterStatus(); };
+    // ⛔ Періодичний loadFuelFilterStatus ВИМКНЕНО (перемальовував важкі таблиці
+    // МММ/funding/черги → гальмувало). Bias/sentiment лишаємо на 60с (легкі);
+    // FF/МММ оновлюються на ПЕРШОМУ рендері + ЛИШЕ по кнопці «🔄 Оновити (R)».
+    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); };
     refreshAll();
+    loadFuelFilterStatus();   // одноразово на старті, далі — лише по кнопці
     setInterval(refreshAll, 60000);
-    // Fuel-filter refreshes faster (30s) so timers/positions feel live.
-    setInterval(loadFuelFilterStatus, 30000);
     // Refresh TOP-100 every 60s — scans only happen every 4h, but during
     // a scan we want fast updates so user sees rows appear progressively.
     // Snapshot endpoint is cheap (single DB query), no real cost.
