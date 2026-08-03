@@ -251,12 +251,6 @@ DEFAULT_SETTINGS = {
     # Bybit rate limit on get_positions is 5-10 req/s on UID; at 10s interval
     # we use ~0.1 req/s, very safe.
     'reconcile_interval_secs': 10,
-    # Як часто монітор перевіряє УМОВИ ВИХОДУ (SL/TP/трейл/soft/CTR/time/HTF)
-    # на кожній позиції. Було жорстко 10с → закриття «запізнювалось» до 10с після
-    # дотику рівня. Ціна береться з кешу сканера (без API-хіта), тож частіше =
-    # ШВИДШЕ закриття без навантаження на біржу. Дефолт 4с; clamp [2, 30].
-    # Реконсіляція з Bybit лишається на власному (рідшому) reconcile_interval_secs.
-    'monitor_interval_secs': 4,
 
     # === Trade archive (ML training dataset) ===
     # When ON, every closed trade is also written to the long-term trade
@@ -625,12 +619,6 @@ class TradeManager:
             except (TypeError, ValueError):
                 ri = 10
             self._settings['reconcile_interval_secs'] = max(5, min(300, ri))
-            # Monitor (exit-check) cadence — швидше закриття. Clamp [2, 30].
-            try:
-                mi = int(float(self._settings.get('monitor_interval_secs', 4)))
-            except (TypeError, ValueError):
-                mi = 4
-            self._settings['monitor_interval_secs'] = max(2, min(30, mi))
             # be_commission_buffer_pct — clamp to a sane band. 0 means no
             # buffer (legacy: SL exactly at entry). 1% is the upper bound;
             # anything bigger isn't "fee compensation" anymore, it's a
@@ -768,14 +756,6 @@ class TradeManager:
     def stop(self):
         self._running = False
     
-    def _monitor_interval(self) -> int:
-        """Ефективний інтервал перевірки виходів (с), налаштовний, clamp [2,30]."""
-        try:
-            mi = int(float(self._settings.get('monitor_interval_secs', 4)))
-        except (TypeError, ValueError):
-            mi = 4
-        return max(2, min(30, mi))
-
     def _loop(self):
         print("[TM] 🧵 Monitor thread started")
         time.sleep(INITIAL_DELAY_SECS)
@@ -786,7 +766,7 @@ class TradeManager:
                 self._errors += 1
                 if self._errors <= 5:
                     print(f"[TM] Tick error: {e}")
-            for _ in range(self._monitor_interval()):
+            for _ in range(MONITOR_INTERVAL_SECS):
                 if not self._running:
                     return
                 time.sleep(1)
@@ -808,11 +788,9 @@ class TradeManager:
                 interval = 10
         except (TypeError, ValueError):
             interval = 10
-        # Clamp to allowed range [5, 300] then round to nearest tick multiple.
-        # База — ЕФЕКТИВНИЙ інтервал монітора (тепер налаштовний), щоб реконсіляція
-        # лишалась на своєму (рідшому) розкладі навіть при швидкому циклі виходів.
+        # Clamp to allowed range [5, 300] then round to nearest tick multiple
         interval = max(5, min(300, interval))
-        n_ticks = max(1, round(interval / self._monitor_interval()))
+        n_ticks = max(1, round(interval / MONITOR_INTERVAL_SECS))
         if self._tick_count % n_ticks == 0:
             try:
                 self._reconcile_with_bybit()
@@ -2931,12 +2909,11 @@ class TradeManager:
     def _archive_closed(self, closed: Dict, pos: Dict, is_paper: bool):
         """Append a closed trade to the permanent DB archive (never trimmed).
         Carries the pre-trade snapshot captured at open. Guarded so it can
-        never disrupt the close flow.
-        БЕЗУМОВНО (раніше гейтилось прихованим тумблером archive_trades) — «пиши
-        ВСІ дані в базу»: таблиці Recent Closed/Paper Closes читають повну історію
-        саме з цієї таблиці (sob_trade_archive), тож запис має бути гарантований."""
+        never disrupt the close flow. Only archives if the archive toggle is ON."""
         if not self.db:
             return
+        # БЕЗУМОВНО (гейт по прихованому archive_trades прибрано) — «пиши ВСІ
+        # дані в базу»: таблиця «за весь час (БД)» читає повну історію звідси.
         try:
             snap = pos.get('entry_snapshot')
             self.db.archive_trade(closed, entry_snapshot=snap, is_paper=is_paper)
@@ -4856,7 +4833,7 @@ class TradeManager:
                     pos_dict['hold'] = hold
                 positions.append(_lite_trade(pos_dict))
             
-            # Віддаємо ВЕСЬ список закритих (обмежений CLOSED_TRADES_LIMIT=2000 у
+            # Віддаємо ВЕСЬ список закритих (обмежений CLOSED_TRADES_LIMIT у
             # памʼяті), а не лише останні 50 — щоб таблиця показувала стільки ж,
             # скільки й статистика (total_closed), і «Копіювати» брало все.
             closed = [_lite_trade(c) for c in self._closed_trades]
@@ -4888,7 +4865,7 @@ class TradeManager:
                 if hold is not None:
                     pos_dict['hold'] = hold
                 shadow_positions.append(_lite_trade(pos_dict))
-            shadow_closed = [_lite_trade(c) for c in self._shadow_closed]  # весь список (≤2000)
+            shadow_closed = [_lite_trade(c) for c in self._shadow_closed]  # весь список
             
             # Stats — shadow
             sh_total = len(self._shadow_closed)
