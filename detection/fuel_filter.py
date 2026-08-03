@@ -6668,6 +6668,12 @@ class FuelFilterDaemon:
                 d4 = info.get('dir')
                 if d4 not in ('LONG', 'SHORT'):
                     continue
+                # Якщо по монеті вже ВІДКРИТА угода (FF-managed або в TM) —
+                # не показуємо її в черзі (запис прибирає двигун наступним тіком).
+                if sym in self._fuel_managed:
+                    continue
+                if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+                    continue
                 q4 = self._queue4_layers(sym, d4, settings)
                 timers4.append({'symbol': sym, 'dir': d4,
                                 'held_sec': int(now - float(info.get('added_at') or now)),
@@ -7060,6 +7066,14 @@ class FuelFilterDaemon:
         with self._lock:
             n = len(self._pending3)
             self._pending3 = {}
+            self._persist_state()
+        return n
+
+    def clear_all_timers4(self) -> int:
+        """Clear Queue 4 «🎯 Усі шари» entirely (does NOT touch інші черги)."""
+        with self._lock:
+            n = len(self._pending4)
+            self._pending4 = {}
             self._persist_state()
         return n
 

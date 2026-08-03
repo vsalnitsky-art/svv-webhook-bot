@@ -3559,6 +3559,19 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/queue4/clear', methods=['POST'])
+    def api_fuel_filter_queue4_clear():
+        """Clear Queue 4 «🎯 Усі шари» entirely."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            count = ff.clear_all_timers4()
+            return jsonify({'ok': True, 'cleared': count})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/anomaly/delete', methods=['POST'])
     def api_fuel_filter_anomaly_delete():
         """Remove one coin from the anomalies table. Body: {"symbol": "..."}."""

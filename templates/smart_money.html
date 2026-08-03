@@ -2361,6 +2361,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="ff-queue4-enabled" onchange="saveFuelFilterSettings()">
                         <span class="slider"></span>
                     </label>
+                    <button onclick="clearAllTimers4()" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;line-height:1;font-size:0.68rem;padding:6px 12px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-4">🗑️ Очистити всі</button>
                 </div>
             </div>
             <details class="sm-settings-bar" style="margin:0 0 8px">
@@ -7601,7 +7602,7 @@ function ffSetupCell(su) {
 
 // 🚪 SMC «Готовність виходу» для ВІДКРИТОЇ позиції — той самий пілюль, що й
 // «Готовність», але шкала виходу (вище = закривати). РАДНИК, не закриває сам.
-function ffExitCell(ex) {
+function ffExitCell(ex, pnl) {
     if (!ex || !ex.ok) return `<span style="display:inline-flex"><span style="width:144px"></span><span style="width:15px;text-align:center;color:#555">—</span></span>`;
     const c = ex.color || '#94a3b8';
     const scd = ex.dir || null;
@@ -7612,6 +7613,29 @@ function ffExitCell(ex) {
             + `Наскільки SMC-картина розвернулась ПРОТИ позиції (структура/МММ/CTR проти + `
             + `виснаженість + зона-фліп + ціль). Вище = час закривати. РАДНИК (не закриває сам).\n`;
     (ex.checks || []).forEach(ch => { tip += `\n${ic[ch.state] || '·'} ${ch.label}: ${ch.detail}`; });
+    // 🎯 Дієва рекомендація «що робити» — залежить від сили розвороту (score)
+    // ТА поточного PnL (у плюсі чи в мінусі). Замість глухого «УВАГА».
+    const _pnl = (typeof pnl === 'number' && isFinite(pnl)) ? pnl : null;
+    const _inProfit = (_pnl != null) ? (_pnl >= 0) : null;
+    const _sc = Number(ex.score) || 0;
+    let act, actCol, actFull;
+    if (_sc >= 72) {
+        actCol = '#f87171';
+        if (_inProfit === false) { act = '✂️ Закрий −'; actFull = 'Ріж збиток — картина сильно проти позиції (розворот підтверджений).'; }
+        else { act = '🔒 Закрий +'; actFull = 'Закрий у плюсі — картина сильно проти позиції.'; }
+    } else if (_sc >= 55) {
+        actCol = '#fb923c';
+        if (_inProfit === false) { act = '⚠️ До SL'; actFull = 'Тиск проти — тримай до SL або закрий за сигналом.'; }
+        else { act = '🔒 Готуй вихід'; actFull = 'Підтягни SL у беззбиток/плюс і готуйся закрити.'; }
+    } else if (_sc >= 40) {
+        actCol = '#facc15';
+        if (_inProfit === false) { act = '⏳ Тримай до SL'; actFull = 'Тримай за планом до SL; якщо картина посилиться — виходь.'; }
+        else { act = '⚖️ SL→беззбиток'; actFull = 'Підтягни SL у беззбиток, зафіксуй частину — розворот назріває.'; }
+    } else {
+        actCol = '#4ade80'; act = '✅ Тримай'; actFull = 'Картина за позицією — тримай.';
+    }
+    tip += `\n\nPnL: ${_pnl != null ? ((_pnl >= 0 ? '+' : '') + _pnl.toFixed(2) + '%') : '—'}`;
+    tip += `\n➡️ ${actFull}`;
     const flag = ex.hot ? '🚪' : '';
     const pct = Math.max(0, Math.min(100, Number(ex.score) || 0));
     return `<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">`
@@ -7620,7 +7644,7 @@ function ffExitCell(ex) {
         +   `<span style="display:flex;align-items:center;line-height:1">`
         +     `<span style="width:11px;text-align:center;flex:none;color:${acol};font-weight:900">${arrow}</span>`
         +     `<b style="width:37px;text-align:right;flex:none;color:${c};font-variant-numeric:tabular-nums">${ex.score}%</b>`
-        +     `<span style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.66rem;letter-spacing:0.3px;color:#cbd5e1;font-weight:600;white-space:nowrap">${ex.grade}</span>`
+        +     `<span title="${actFull.replace(/"/g, '&quot;')}" style="flex:1;min-width:0;text-align:left;padding-left:6px;font-size:0.63rem;letter-spacing:0.2px;color:${actCol};font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${act}</span>`
         +   `</span>`
         +   `<span style="height:3px;border-radius:2px;background:#ffffff14;overflow:hidden">`
         +     `<span style="display:block;height:100%;width:${pct}%;border-radius:2px;`
@@ -8984,7 +9008,7 @@ function ffLayers4Cell(q) {
     const dirCol = rowDir === 'LONG' ? '#4ade80' : (rowDir === 'SHORT' ? '#f87171' : '#8b93a7');
     const col = n >= 4 ? dirCol : (n >= 1 ? '#fbbf24' : '#8b93a7');
     const tip = layers.map(l => `${l.ok ? '✅' : '▫️'} ${l.label}: ${l.detail}`).join('\n');
-    return `<span title="${tip.replace(/"/g, '&quot;')}" style="white-space:nowrap;font-weight:700;font-family:monospace;font-size:0.9rem;letter-spacing:2px">${dots}<span style="color:${col};margin-left:6px">${n}/4</span></span>`;
+    return `<span title="${tip.replace(/"/g, '&quot;')}" style="white-space:nowrap;font-weight:700">${dots} <span style="color:${col}">${n}/4</span></span>`;
 }
 function ffRenderQueue4() {
     const tb = document.getElementById('ff-timers4-tbody');
@@ -9070,6 +9094,14 @@ async function clearAllTimers3() {
         window._ff3TimersData = [];
         ffRenderQueue3();
     } catch (e) { alert('Помилка очищення Черги-3: ' + e); }
+}
+async function clearAllTimers4() {
+    if (!confirm('Очистити всю Чергу-4 («Усі шари»)?')) return;
+    try {
+        await fetch('/api/fuel-filter/queue4/clear', { method: 'POST' });
+        window._ff4TimersData = [];
+        ffRenderQueue4();
+    } catch (e) { alert('Помилка очищення Черги-4: ' + e); }
 }
 
 function renderFuelFilter(d) {
@@ -11060,7 +11092,7 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
                     <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev)}</td>
-                    <td style="line-height:1.15">${ffExitCell(p.exit_grade)}</td>
+                    <td style="line-height:1.15">${ffExitCell(p.exit_grade, p.pnl_pct)}</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${manualModeCellHTML(p, false)}
@@ -11153,7 +11185,7 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
                     <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev)}</td>
-                    <td style="line-height:1.15">${ffExitCell(p.exit_grade)}</td>
+                    <td style="line-height:1.15">${ffExitCell(p.exit_grade, p.pnl_pct)}</td>
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}
