@@ -6889,11 +6889,12 @@ class FuelFilterDaemon:
                                 _mv if a.get('dir') == 'LONG' else -_mv, 3)
                     except (TypeError, ValueError):
                         pass
-                # НАПРЯМОК рядка: за Require OB (нова стратегія), якщо маршрут у
-                # Чергу-4 увімкнено; інакше — legacy МММ-напрямок. Кеш заповнює
-                # _layer_signal_alert; фолбек на МММ, поки OB ще не порахований.
+                # НАПРЯМОК рядка: СТРОГО за Require OB (нова стратегія), якщо
+                # маршрут у Чергу-4 увімкнено; інакше — legacy МММ-напрямок. Кеш
+                # заповнює _layer_signal_alert. БЕЗ фолбеку на МММ: поки OB не
+                # визначений — напрямку немає (None), а не оманливий МММ-LONG.
                 _route_q4 = bool(settings.get('funding_route_q4', True))
-                _row_dir = (self._funding_ob_dir_cache.get(sym) or a.get('dir')) \
+                _row_dir = self._funding_ob_dir_cache.get(sym) \
                     if _route_q4 else a.get('dir')
                 anomalies.append({
                     'symbol': sym,
