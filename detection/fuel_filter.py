@@ -230,20 +230,20 @@ DEFAULT_SETTINGS = {
     #     «м'якого запобіжника» у _open (свіжий CHoCH+BOS завжди проти CTR, тож
     #     ця перевірка ріже кожен розворот). МММ/виснаженість лишаються. Дефолт ON.
     'queue3_ignore_ctr': True,
-    #   queue3_ignore_exhaustion — Черга-3 НЕ застосовує ЖОРСТКЕ вето виснаженості
-    #     у _open. Виснаженість природно висока на тренді, що вже пішов у наш бік
-    #     (SCORE ХОРОШИЙ + рух у плюс), і жорсткий поріг 80% різав хороші сетапи.
-    #     Виснаженість ЛИШАЄТЬСЯ у grade_setup (впливає на SCORE — м'яко). Дефолт ON.
-    'queue3_ignore_exhaustion': True,
-    #   queue3_require_ob_match — при УВІМКненому OB-фільтрі сканера («Require OB
-    #     Match») Черга-3/Q3-VOB відкривають угоду ЛИШЕ якщо OB на ob_filter_timeframe
-    #     збігається з напрямком (щоб угода не йшла ПРОТИ фільтра — OB міг фліпнути,
-    #     поки монета чекала, а Q3-VOB узагалі не проходить сканерний гейт). Дефолт ON.
-    'queue3_require_ob_match': True,
     #   queue3_ttl_hours — протермінувати монету в Черзі-3 після N год, щоб вона
     #     не «висіла» нескінченно (без TTL монети накопичувались на годинник, бо
     #     не проходили запобіжник МММ). 0 = без ліміту.
     'queue3_ttl_hours': 6,
+    # ── Черга-4 «🎯 Усі шари» (приймає ВСІ сигнали з Alert mode, обидва боки).
+    #   Відкриває угоду, коли ВСІ 4 шари збіглись за напрямком сигналу:
+    #   Новий МММ (сила ≥ queue4_mm_new_min), Старий МММ (≥ queue4_mm_old_min),
+    #   Готовність (score ≥ queue4_setup_min), Запас (runway у бік). Тумблер OFF
+    #   → черга повністю не працює. Протилежний сигнал стирає попередній запис.
+    'queue4_enabled': False,
+    'queue4_mm_new_min': 30,     # Новий МММ: 0 рівн/10 легк/30 помір/60 сильн/85 потуж
+    'queue4_mm_old_min': 10,     # Старий МММ: ті самі band-и
+    'queue4_setup_min': 40,      # Готовність: 25 СЛАБК/40 СЕРЕД/55 ХОРОШ/72 ВІДМІН
+    'queue4_require_runway': True,  # Запас (runway) має бути у бік напрямку
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -446,11 +446,6 @@ DEFAULT_SETTINGS = {
     'safeguard_mm_min': 30,     # мін. сила МММ, %
     'safeguard_exh_max': 80,    # макс. виснаженість, %
     'safeguard_ctr': True,      # вимагати CTR не нейтральний і не проти напрямку
-    # 🎯 МММ-запобіжник НЕ ріже вхід, якщо ЦІНА чітко йде в бік угоди: слабкий МММ
-    # (контраріанська liq-модель) часто «мовчить» на чистому тренді. Коли останні
-    # 2 свічки (`safeguard_mm_price_tf`) підтверджують напрямок — дозволяємо.
-    'safeguard_mm_price_override': True,
-    'safeguard_mm_price_tf': '15m',
     # 🎯 Вимагати вирівнювання з ₿ BTCUSDT сеансом (START + той самий бік), щоб
     # монета стала 🎯 «рекомендована». True = «усі в один бік» (за замовч.).
     'opportunity_require_btc': True,
@@ -679,6 +674,10 @@ class FuelFilterDaemon:
         # ── Queue 3 «🎯 Готовність» (SMC-setup-grade opener): SAME intercept
         # source as Queue 1, own queue, opened by grade_setup.hot. Persisted.
         self._pending3: Dict[str, Dict] = {}
+        # ── Черга-4 «🎯 Усі шари»: приймає ВСІ сигнали сканера (alert_mode),
+        #   обидва напрямки; відкриває, коли 4 шари (Новий/Старий МММ,
+        #   Готовність, Запас) збіглись за напрямком. Персистентна.
+        self._pending4: Dict[str, Dict] = {}
         # Anti-flood for the per-coin «Готовність» decision log:
         # {symbol: (outcome, hot, score_bucket, ts)} — a hold/skip is re-logged
         # only when it meaningfully changes or after READINESS_LOG_MIN_GAP sec;
@@ -812,11 +811,6 @@ class FuelFilterDaemon:
         s['queue3_enabled'] = bool(s.get('queue3_enabled', False))
         s['readiness_log_enabled'] = bool(s.get('readiness_log_enabled', True))
         s['queue3_ignore_ctr'] = bool(s.get('queue3_ignore_ctr', True))
-        s['queue3_ignore_exhaustion'] = bool(s.get('queue3_ignore_exhaustion', True))
-        s['queue3_require_ob_match'] = bool(s.get('queue3_require_ob_match', True))
-        s['safeguard_mm_price_override'] = bool(s.get('safeguard_mm_price_override', True))
-        if s.get('safeguard_mm_price_tf') not in ('5m', '15m', '30m', '1h'):
-            s['safeguard_mm_price_tf'] = '15m'
         try:
             s['queue3_ttl_hours'] = max(0, min(72, float(s.get('queue3_ttl_hours', 6) or 0)))
         except (TypeError, ValueError):
@@ -827,6 +821,21 @@ class FuelFilterDaemon:
             s['queue3_open_min_score'] = max(0, min(100, int(s.get('queue3_open_min_score', 43) or 0)))
         except (TypeError, ValueError):
             s['queue3_open_min_score'] = 43
+        # ── Черга-4 ──
+        s['queue4_enabled'] = bool(s.get('queue4_enabled', False))
+        s['queue4_require_runway'] = bool(s.get('queue4_require_runway', True))
+        try:
+            s['queue4_mm_new_min'] = max(0, min(100, int(s.get('queue4_mm_new_min', 30) or 0)))
+        except (TypeError, ValueError):
+            s['queue4_mm_new_min'] = 30
+        try:
+            s['queue4_mm_old_min'] = max(0, min(100, int(s.get('queue4_mm_old_min', 10) or 0)))
+        except (TypeError, ValueError):
+            s['queue4_mm_old_min'] = 10
+        try:
+            s['queue4_setup_min'] = max(0, min(100, int(s.get('queue4_setup_min', 40) or 0)))
+        except (TypeError, ValueError):
+            s['queue4_setup_min'] = 40
         # ⚡ funding scalper «Готовність»
         s['funding_setup_scalp_on'] = bool(s.get('funding_setup_scalp_on', False))
         _valid_tf = ('1m', '3m', '5m', '15m', '30m', '1h')
@@ -1013,7 +1022,8 @@ class FuelFilterDaemon:
         q1 = bool(s.get('queue1_enabled', True))
         q2 = bool(s.get('queue2_enabled', False))
         q3 = bool(s.get('queue3_enabled', False))   # 🎯 Готовність
-        if not (q1 or q2 or q3):
+        q4 = bool(s.get('queue4_enabled', False))   # 🎯 Усі шари
+        if not (q1 or q2 or q3 or q4):
             log_activity(sym, 'passthrough', 'Усі черги вимкнені → сигнал іде у пряме відкриття', side=side, source='intercept')
             return ''   # all queues OFF → do NOT intercept; open directly
         now = time.time()
@@ -1053,6 +1063,7 @@ class FuelFilterDaemon:
         ejected_choch = False
         refreshed_q1 = refreshed_q2 = False   # same dir, NEWER type → replaced stale
         stale_removed_q2 = False
+        q4_ejected = False
         changed = False
 
         def _is_stale(prev):
@@ -1090,6 +1101,21 @@ class FuelFilterDaemon:
                                        'added_price': (prev3.get('added_price') if _keep3
                                                        else _apx) or _apx}
                 changed = True
+            if q4:
+                # 🎯 Усі шари — приймаємо ВСІ сигнали (обидва боки), НЕ фільтруємо
+                # кнопками. Протилежний сигнал СТИРАЄ попередній запис (новий бере
+                # його місце). Ціна входу — щоб бачити рух, поки монета чекає.
+                prev4 = self._pending4.get(sym) or {}
+                if prev4 and prev4.get('dir') == opp:
+                    q4_ejected = True
+                _keep4 = (prev4.get('dir') == side and prev4.get('kind') == kind
+                          and prev4.get('added_at'))
+                _apx4 = (self._fuel_dir_smoothed(sym) or {}).get('mark_price')
+                self._pending4[sym] = {'dir': side, 'kind': kind,
+                                       'added_at': prev4.get('added_at') if _keep4 else now,
+                                       'added_price': (prev4.get('added_price') if _keep4
+                                                       else _apx4) or _apx4}
+                changed = True
             if q2_take:
                 prev2 = self._pending2.get(sym) or {}
                 refreshed_q2 = _is_stale(prev2)
@@ -1125,6 +1151,9 @@ class FuelFilterDaemon:
                 self._log_coin_mm(sym, 'queued')   # МММ монети у «Лог роботи бота»
         if q3:
             log_activity(sym, 'queued', f'Черга-3 🎯 Готовність · {_kind_lbl}{_sc_ctr_sfx}', side=side, source='Q3')
+        if q4:
+            _r4 = ' · протилежний сигнал стер попередній запис' if q4_ejected else ''
+            log_activity(sym, 'queued', f'Черга-4 🎯 Усі шари · {_kind_lbl}{_r4}{_sc_ctr_sfx}', side=side, source='Q4')
         # ENTRY-score + CTR-state suffix for Q2 records (the SETUP metric).
         def _ctr_words(state, stc, pct):
             if state == 'none':
@@ -1210,7 +1239,7 @@ class FuelFilterDaemon:
         # Return the ACTUAL disposition so the caller (and the chart marker) tell
         # the truth: 'queued' — added to a queue; 'dropped' — an enabled queue
         # OWNED it but rejected it (e.g. Q2 CTR gate) → NOT queued, not opened.
-        if q1 or q2_take or q3:
+        if q1 or q2_take or q3 or q4:
             return 'queued'
         return 'dropped'   # q2 enabled but the signal didn't pass its gate
 
@@ -1411,6 +1440,10 @@ class FuelFilterDaemon:
             if isinstance(pend3, dict):
                 self._pending3 = {str(k).upper(): v for k, v in pend3.items()
                                   if isinstance(v, dict) and v.get('dir') in ('LONG', 'SHORT')}
+            pend4 = st.get('pending4', {}) or {}
+            if isinstance(pend4, dict):
+                self._pending4 = {str(k).upper(): v for k, v in pend4.items()
+                                  if isinstance(v, dict) and v.get('dir') in ('LONG', 'SHORT')}
             if (self._fuel_managed or self._anomalies or self._engine_attempts
                     or self._timers or self._pending):
                 print(f"[FuelFilter] restored {len(self._pending)} queued "
@@ -1434,6 +1467,7 @@ class FuelFilterDaemon:
                 'pending': self._pending,
                 'pending2': self._pending2,
                 'pending3': self._pending3,
+                'pending4': self._pending4,
                 'funding_muted': self._funding_muted,
             })
         except Exception as e:
@@ -2996,7 +3030,7 @@ class FuelFilterDaemon:
             pass
 
     def _soft_safeguard(self, symbol: str, side: str, settings: Dict,
-                        skip_ctr: bool = False, skip_exhaustion: bool = False):
+                        skip_ctr: bool = False):
         """🛡 М'який запобіжник відкриття — (ok, reason). Блокує 3 найгірші
         входи, що системно давали збитки: слабкий тиск МММ, нейтральний або
         протилежний CTR, виснажений хід. Це НЕ повний SMC-грейдер, а три
@@ -3004,14 +3038,8 @@ class FuelFilterDaemon:
         Вимикається safeguard_on=False; пороги налаштовні.
         skip_ctr=True — НЕ застосовувати CTR-перевірку (для РОЗВОРОТНОЇ Черги-3:
         свіжий CHoCH+BOS за визначенням проти CTR, тож ця перевірка ріже кожен
-        розворот).
-        skip_exhaustion=True — НЕ застосовувати ЖОРСТКЕ вето виснаженості (для
-        Черги-3: виснаженість природно висока на тренді, що вже пішов у наш бік;
-        вона лишається у grade_setup → SCORE, тож не ігнорується зовсім)."""
-        # 1) МММ (сила бабло-тиску) — має бути хоча б помірним. АЛЕ: якщо ЦІНА
-        #    чітко йде в бік угоди (останні 2 свічки), слабкий МММ НЕ ріже вхід
-        #    (safeguard_mm_price_override) — контраріанський МММ часто «мовчить»
-        #    на чистому тренді, хоча ціна впевнено рухається в потрібний бік.
+        розворот). МММ і виснаженість лишаються активними."""
+        # 1) МММ (сила бабло-тиску) — має бути хоча б помірним.
         try:
             mm_min = float(settings.get('safeguard_mm_min', 30) or 0)
         except (TypeError, ValueError):
@@ -3020,27 +3048,15 @@ class FuelFilterDaemon:
         if mm_str is None:
             mm_str = (self._score_cache.get(symbol) or {}).get('fuel_strength')
         if mm_min > 0 and (mm_str is None or float(mm_str) < mm_min):
-            _price_ok = False
-            if bool(settings.get('safeguard_mm_price_override', True)):
-                try:
-                    _tf = settings.get('safeguard_mm_price_tf', '15m') or '15m'
-                    _pdir, _pstr = self._candle_momentum(symbol, _tf)
-                    _price_ok = (_pdir == side and _pstr and _pstr > 0)
-                except Exception:
-                    _price_ok = False
-            if not _price_ok:
-                return (False, f"МММ слабкий ({int(mm_str or 0)}%<{int(mm_min)}%)")
+            return (False, f"МММ слабкий ({int(mm_str or 0)}%<{int(mm_min)}%)")
         # 2) Виснаженість ходу — не входити у вже вичерпаний рух.
-        #    skip_exhaustion → пропускаємо жорстке вето (Черга-3: виснаженість
-        #    лишається м'яко в grade_setup/SCORE).
-        if not skip_exhaustion:
-            try:
-                exh_max = float(settings.get('safeguard_exh_max', 80) or 0)
-            except (TypeError, ValueError):
-                exh_max = 80.0
-            exh = self._exhaustion(symbol, side)
-            if exh_max > 0 and exh is not None and float(exh) > exh_max:
-                return (False, f"виснажено ({int(exh)}%>{int(exh_max)}%)")
+        try:
+            exh_max = float(settings.get('safeguard_exh_max', 80) or 0)
+        except (TypeError, ValueError):
+            exh_max = 80.0
+        exh = self._exhaustion(symbol, side)
+        if exh_max > 0 and exh is not None and float(exh) > exh_max:
+            return (False, f"виснажено ({int(exh)}%>{int(exh_max)}%)")
         # 3) CTR — не нейтральний і не проти напрямку (немає даних → не блокуємо).
         #    skip_ctr → пропускаємо (розворотна Черга-3 завжди проти CTR).
         if not skip_ctr and bool(settings.get('safeguard_ctr', True)):
@@ -3056,38 +3072,8 @@ class FuelFilterDaemon:
                 return (False, f"CTR проти ({st})")
         return (True, '')
 
-    def _ob_match_ok(self, symbol: str, side: str, settings: Dict):
-        """🎯 «Require OB Match» — перевірка НА МОМЕНТ ВІДКРИТТЯ. Коли OB-фільтр
-        сканера увімкнено, НЕ даємо відкрити угоду ПРОТИ останнього валідного OB
-        на ob_filter_timeframe (LONG проти BEARISH-OB / SHORT проти BULLISH-OB).
-        Закриває дві діри: (1) Черга-3 відкриває через години після сигналу (OB
-        міг фліпнути на протилежний); (2) Q3-VOB (funding) узагалі не проходить
-        сканерний гейт _send_alert. Повертає (ok, reason).
-          • фільтр вимкнено (queue3_require_ob_match=False або ob_filter вимк) → ok
-          • OB ПРОТИ напрямку → блок
-          • OB у бік АБО немає даних OB → ok (не вбиваємо funding-VOB, коли OB на
-            цьому TF просто не порахований — ріжемо лише явний контр-OB)."""
-        if not bool(settings.get('queue3_require_ob_match', True)):
-            return (True, '')
-        try:
-            tm = self._get_tm() if self._get_tm else None
-            scanner = getattr(tm, 'scanner', None) if tm else None
-            if scanner is None or not bool(scanner._settings.get('ob_filter_enabled', False)):
-                return (True, '')   # OB-фільтр сканера вимкнено → нічого не вимагаємо
-            ob_tf = scanner._settings.get('ob_filter_timeframe', '1h')
-            from storage.db_operations import get_db
-            row = get_db().get_smc_ob_state(symbol, ob_tf)
-            bias = (row or {}).get('bias')
-            opp = 'BEARISH' if side == 'LONG' else 'BULLISH'
-            if bias == opp:
-                return (False, f"OB-фільтр {ob_tf}: OB проти ({bias}) ≠ {side}")
-            return (True, '')
-        except Exception:
-            return (True, '')   # помилка читання OB → fail-open (не блокуємо)
-
     def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict,
-              opened_by: Optional[str] = None, skip_ctr_safeguard: bool = False,
-              skip_exhaustion: bool = False):
+              opened_by: Optional[str] = None, skip_ctr_safeguard: bool = False):
         """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
         store position data — it only tracks which symbols it opened and delegates
         the actual position to TM. Positions appear in Trade Manager or Test Mode
@@ -3103,25 +3089,20 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] {symbol}: no entry price — skip open")
             return False
 
-        # CHECK EXHAUSTION BEFORE OPENING: don't enter exhausted moves.
-        # skip_exhaustion (Черга-3) → пропускаємо цей жорсткий гейт (виснаженість
-        # лишається м'яко в grade_setup/SCORE).
-        if not skip_exhaustion:
-            max_exh = settings.get('max_exhaustion_pct', 75)
-            exh = self._exhaustion(symbol, side)
-            if exh is not None and exh > max_exh:
-                print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% — "
-                      f"rejecting open (too exhausted)")
-                self._engine_skip[symbol] = f"🛡 виснажено ({int(exh)}%>{int(max_exh)}%)"
-                return False
+        # CHECK EXHAUSTION BEFORE OPENING: don't enter exhausted moves
+        max_exh = settings.get('max_exhaustion_pct', 75)
+        exh = self._exhaustion(symbol, side)
+        if exh is not None and exh > max_exh:
+            print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% — "
+                  f"rejecting open (too exhausted)")
+            return False
 
         # 🛡 М'який запобіжник: слабкий МММ / нейтральний(проти) CTR / виснажений
         # хід — три «вбивці», що системно давали збиткові входи. Єдиний чок-пойнт
         # усіх шляхів відкриття (Черга-1/2, сигнал). Причину — у per-row діагностику.
         if settings.get('safeguard_on', True):
             ok_sg, sg_reason = self._soft_safeguard(symbol, side, settings,
-                                                    skip_ctr=skip_ctr_safeguard,
-                                                    skip_exhaustion=skip_exhaustion)
+                                                    skip_ctr=skip_ctr_safeguard)
             if not ok_sg:
                 print(f"[FuelFilter] {symbol}: 🛡 запобіжник — {sg_reason} → відмова у відкритті")
                 try:
@@ -3958,6 +3939,7 @@ class FuelFilterDaemon:
                 pending = list(self._pending.items())    # (sym, {dir, added_at})
                 pending2 = list(self._pending2.items())   # Queue 2 waiting base
                 pending3 = list(self._pending3.items())   # Queue 3 «Готовність»
+                pending4 = list(self._pending4.items())   # Queue 4 «Усі шари»
                 timers = list(self._timers.items())       # open positions
                 anomalies = [(s, a.get('dir')) for s, a in self._anomalies.items()]
             # ALL open TM positions (real + paper) — so the open-position tables'
@@ -3982,6 +3964,8 @@ class FuelFilterDaemon:
             for sym, info in pending2:
                 targets.setdefault(sym, (info.get('dir'), 0.0))
             for sym, info in pending3:
+                targets.setdefault(sym, (info.get('dir'), 0.0))
+            for sym, info in pending4:
                 targets.setdefault(sym, (info.get('dir'), 0.0))
             for sym, t in timers:
                 targets[sym] = (t.get('dir'), now - t.get('since', now))
@@ -5084,20 +5068,11 @@ class FuelFilterDaemon:
                              f'→ угоду НЕ відкрито',
                              side=d, source='Q3-VOB')
                 return
-        # 🎯 «Require OB Match»: Q3-VOB не проходить сканерний OB-гейт — тож не
-        # відкриваємо ПРОТИ OB на ob_filter_timeframe, коли фільтр сканера увімк.
-        _ob_ok, _ob_reason = self._ob_match_ok(sym, d, s)
-        if not _ob_ok:
-            log_activity(sym, 'skipped',
-                         f'Черга-3 (монета з фандингу): {_ob_reason} → угоду НЕ відкрито',
-                         side=d, source='Q3-VOB')
-            return
         fd = self._fuel_dir_smoothed(sym) or {}
         entry = fd.get('mark_price') or a.get('last_price')
         fuel = {'mark_price': entry}
         ok = self._open(sym, d, fuel, s, opened_by='Q3-VOB(funding)',
-                        skip_ctr_safeguard=True,
-                        skip_exhaustion=bool(s.get('queue3_ignore_exhaustion', True)))
+                        skip_ctr_safeguard=True)
         if not ok:
             return
         is_shadow2 = (self._tm_has_position(sym, False)
@@ -5300,6 +5275,96 @@ class FuelFilterDaemon:
                    'su_mm': blocks.get('mm'), 'su_timing': blocks.get('timing'),
                    'su_context': blocks.get('context')})
 
+    def _queue4_layers(self, sym: str, side: str, s: Dict) -> Dict:
+        """🎯 Черга-4: 4-шаровий конфлюенс за напрямком СИГНАЛУ `side`. Кожен шар
+        несе `dir` (=side, коли засвічений) → у колонці кольори за напрямком (усі
+        зелені LONG / усі червоні SHORT). Шари:
+          1) Новий МММ  — _fuel_dir_smoothed: напрямок у бік + сила ≥ queue4_mm_new_min
+          2) Старий МММ — _fuel_dir_legacy:  напрямок у бік + сила ≥ queue4_mm_old_min
+          3) Готовність — grade_setup (кеш):  напрямок у бік + score ≥ queue4_setup_min
+          4) Запас      — runway (TradingView-показник): напрямок у бік (якщо
+             queue4_require_runway). Повертає {count, base(=4), layers[], + сирі поля}."""
+        layers = []
+        def add(key, label, ok, detail):
+            layers.append({'key': key, 'label': label, 'ok': bool(ok),
+                           'dir': (side if ok else None), 'detail': detail})
+        try: mmn_min = float(s.get('queue4_mm_new_min', 30) or 0)
+        except (TypeError, ValueError): mmn_min = 30.0
+        try: mmo_min = float(s.get('queue4_mm_old_min', 10) or 0)
+        except (TypeError, ValueError): mmo_min = 10.0
+        try: su_min = float(s.get('queue4_setup_min', 40) or 0)
+        except (TypeError, ValueError): su_min = 40.0
+        req_rw = bool(s.get('queue4_require_runway', True))
+        # 1) Новий МММ
+        fn = self._fuel_dir_smoothed(sym) or {}
+        nd = fn.get('status'); ns = int(round(abs(float(fn.get('dir') or 0)) * 100))
+        add('mm_new', 'Новий МММ', nd == side and ns >= mmn_min, f"{nd or '—'} {ns}%")
+        # 2) Старий МММ
+        fo = self._fuel_dir_legacy(sym) or {}
+        od = fo.get('status'); os_ = int(fo.get('strength') or 0)
+        add('mm_old', 'Старий МММ', od == side and os_ >= mmo_min, f"{od or '—'} {os_}%")
+        # 3) Готовність (grade_setup кеш)
+        su = self._setup_cache.get(sym) or {}
+        sd = su.get('dir'); ss = su.get('score') or 0
+        add('setup', 'Готовність', bool(su.get('ok')) and sd == side and ss >= su_min,
+            f"{su.get('grade') or '—'} {ss}")
+        # 4) Запас (runway)
+        rw = (fn.get('runway') or {})
+        rd = rw.get('dir'); rr = rw.get('room_pct')
+        add('runway', 'Запас', (not req_rw) or (rd == side),
+            f"{rd or '—'}" + (f" {rr}%" if rr is not None else ''))
+        base = sum(1 for l in layers if l['ok'])
+        return {'count': base, 'base': base, 'layers': layers,
+                'mm_new': {'dir': nd, 'str': ns},
+                'mm_old': {'dir': od, 'str': os_},
+                'setup': (su if su.get('ok') else None),
+                'runway': {'dir': rd, 'room_pct': rr, 'label': rw.get('label')}}
+
+    def _engine_tick_queue4(self):
+        """🎯 Черга-4 «Усі шари» — відкриває угоду, коли ВСІ 4 шари збіглись за
+        напрямком сигналу. Приймає всі сигнали (обидва боки), НЕ фільтрує кнопками
+        LONG/SHORT (за задумом «приймаємо всі сигнали»). Дедуп/вже-в-угоді/ціна —
+        санітарні ворота; `_open` тримає власні запобіжники."""
+        s = self.get_settings()
+        if not s.get('enabled') or not s.get('queue4_enabled'):
+            return
+        now = time.time()
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            log_activity = lambda *a, **k: None
+        with self._lock:
+            items = list(self._pending4.items())
+        for sym, info in items:
+            d = info.get('dir')
+            if d not in ('LONG', 'SHORT'):
+                continue
+            if sym in self._fuel_managed:
+                continue
+            if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+                with self._lock:
+                    self._pending4.pop(sym, None); self._persist_state()
+                continue
+            fuel = self._fuel_dir_smoothed(sym)
+            mark = fuel.get('mark_price') if fuel else None
+            if not mark:
+                continue
+            lay = self._queue4_layers(sym, d, s)
+            if lay.get('base', 0) < 4:
+                continue   # ще не всі 4 шари збіглись — чекаємо
+            try:
+                opened = self._open(sym, d, fuel, s, opened_by='🎯 Черга-4 (усі 4 шари)')
+                if opened:
+                    with self._lock:
+                        self._timers[sym] = {'dir': d, 'since': now, 'start_price': mark}
+                        self._pending4.pop(sym, None); self._persist_state()
+                    log_activity(sym, 'opened',
+                                 'Черга-4: усі 4 шари збіглись → відкрито ' + d,
+                                 side=d, source='Q4')
+                    print(f"[FF-Q4] opened {d} {sym} (усі 4 шари)")
+            except Exception as e:
+                print(f"[FF-Q4] open error {sym}: {e}")
+
     def _engine_tick_readiness(self):
         """🎯 Queue 3 «Готовність» engine — opens a queued coin the MOMENT its SMC
         setup-grade (grade_setup) is HOT in the queued direction. No ₿ START /
@@ -5383,20 +5448,11 @@ class FuelFilterDaemon:
                 trace.append(f"{sym}:{su.get('score')}/{su.get('grade')}")
                 continue
             _why = 'HOT' if _by_hot else f'SCORE≥{_min_score}'
-            # 🎯 «Require OB Match» на момент відкриття (OB міг фліпнути, поки монета
-            # чекала в черзі) — не відкриваємо ПРОТИ OB, коли фільтр сканера увімк.
-            _ob_ok, _ob_reason = self._ob_match_ok(sym, d, s)
-            if not _ob_ok:
-                self._log_readiness(sym, d, su, 'skipped', _ob_reason, log_on,
-                                    move_pct=_mv, exhaustion=_ex)
-                trace.append(f'{sym}:OB-проти')
-                continue
             try:
                 opened = self._open(
                     sym, d, fuel, s,
                     opened_by=f"🎯 Готовність {su.get('score')} {su.get('grade')} ({_why})",
-                    skip_ctr_safeguard=bool(s.get('queue3_ignore_ctr', True)),
-                    skip_exhaustion=bool(s.get('queue3_ignore_exhaustion', True)))
+                    skip_ctr_safeguard=bool(s.get('queue3_ignore_ctr', True)))
                 if opened:
                     with self._lock:
                         self._timers[sym] = {'dir': d, 'since': now,
@@ -5410,10 +5466,7 @@ class FuelFilterDaemon:
                     print(f"[FF-Readiness] opened {d} {sym} "
                           f"(SCORE {su.get('score')} {su.get('grade')})")
                 else:
-                    # Показуємо КОНКРЕТНУ причину відмови (_open лишає її в
-                    # _engine_skip), а не глухе «_open відхилив».
-                    _rej = self._engine_skip.get(sym) or '_open відхилив'
-                    self._log_readiness(sym, d, su, 'skipped', _rej, log_on,
+                    self._log_readiness(sym, d, su, 'skipped', '_open відхилив', log_on,
                                         move_pct=_mv, exhaustion=_ex)
                     trace.append(f'{sym}:_open-відхилив')
             except Exception as e:
@@ -5438,6 +5491,10 @@ class FuelFilterDaemon:
                 self._engine_tick_readiness()   # 🎯 Queue 3 «Готовність»
             except Exception as e:
                 print(f"[FF-Readiness] tick error: {e}")
+            try:
+                self._engine_tick_queue4()   # 🎯 Queue 4 «Усі шари»
+            except Exception as e:
+                print(f"[FF-Q4] tick error: {e}")
             secs = 15
             try:
                 secs = max(5, int(self.get_settings().get('start_engine_scan_secs', 15)))
@@ -6601,6 +6658,18 @@ class FuelFilterDaemon:
                     timers3.append(row)
             visible_pending3 = len(timers3)
             all_timers3 = sorted(timers3, key=lambda x: -x['held_sec'])
+            # Черга-4 «🎯 Усі шари» — власні рядки з 4-шаровим конфлюенсом.
+            timers4 = []
+            for sym, info in self._pending4.items():
+                d4 = info.get('dir')
+                if d4 not in ('LONG', 'SHORT'):
+                    continue
+                q4 = self._queue4_layers(sym, d4, settings)
+                timers4.append({'symbol': sym, 'dir': d4,
+                                'held_sec': int(now - float(info.get('added_at') or now)),
+                                'q4': q4, 'layers': q4.get('layers')})
+            visible_pending4 = len(timers4)
+            all_timers4 = sorted(timers4, key=lambda x: -x['held_sec'])
             bs = self._btc_state or {}
             # BTC START/STOP signal: progress counts up while the MAIN-WINDOW
             # verdict (compute_bias) holds LONG/SHORT, reaching START at
@@ -6768,6 +6837,9 @@ class FuelFilterDaemon:
             # Queue 3 «🎯 Готовність» rows (same shape as `timers`).
             'timers3': all_timers3,
             'pending3_visible': visible_pending3,
+            'timers4': all_timers4,
+            'pending4_visible': visible_pending4,
+            'queue4_enabled': bool(settings.get('queue4_enabled', False)),
             'pending3_count': len(self._pending3),
             'queue1_enabled': bool(settings.get('queue1_enabled', True)),
             'queue2_enabled': bool(settings.get('queue2_enabled', False)),

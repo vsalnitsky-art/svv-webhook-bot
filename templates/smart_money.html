@@ -2353,6 +2353,39 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 💡 Третя черга — стратегія <b>«Готовність»</b>: перехоплює ті самі сигнали, а відкриває монету, ЩОЙНО її SMC-<b>«готовність сетапу»</b> стає <b>HOT</b> (score ≥ поріг + усі ключові блоки конфлюенсу зійшлися, без вето) у напрямку кнопки. ₿-сесія/CTR/зона/ліквідність уже враховані ВСЕРЕДИНІ оцінки. Кожне рішення (opened/hold/skipped) пишеться в лог для аналізу.
             </div>
 
+            <!-- 🎯 Queue 4 «Усі шари» -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
+                <div style="font-size:0.74rem;font-weight:700;color:#93c5fd;min-width:0">🎯 Черга-4 · Усі шари <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— приймає ВСІ сигнали (Alert mode), обидва боки. Відкриває, коли ВСІ 4 шари (Новий МММ · Старий МММ · Готовність · Запас) збіглись за напрямком сигналу. Протилежний сигнал стирає попередній запис. Тумблер OFF → черга не працює.</span></div>
+                <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-4 «Усі шари».">
+                        <input type="checkbox" id="ff-queue4-enabled" onchange="saveFuelFilterSettings()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+            <details class="sm-settings-bar" style="margin:0 0 8px">
+                <summary class="sm-settings-summary">⚙️ Налаштування (Черга-4) <span class="sm-settings-summary-right" style="color:#8b93a7">складність шарів</span></summary>
+                <div style="padding:10px 12px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,0.06)">
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна сила НОВОГО МММ у бік сигналу.">Новий МММ ≥ <select id="ff-queue4-mmnew" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна сила СТАРОГО МММ у бік сигналу.">Старий МММ ≥ <select id="ff-queue4-mmold" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна Готовність (grade_setup) у бік сигналу.">Готовність ≥ <select id="ff-queue4-setup" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="25">СЛАБКИЙ</option><option value="40">СЕРЕДНІЙ</option><option value="55">ХОРОШИЙ</option><option value="72">ВІДМІННИЙ</option></select></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Вимагати, щоб ЗАПАС (runway з TradingView-скрипта) був у бік сигналу.">
+                        <input type="checkbox" id="ff-queue4-runway" onchange="saveFuelFilterSettings()"> 🎯 Запас у бік
+                    </label>
+                </div>
+                <div style="font-size:0.64rem;color:#6b7280;padding:0 12px 10px">💡 Відкриває угоду, ЛИШЕ коли УСІ 4 шари збіглись за напрямком сигналу (кольори — усі зелені LONG / усі червоні SHORT). Параметри складності — від найменшого до найбільшого.</div>
+            </details>
+            <div class="ff-timers-scroll">
+                <table class="tm-table" id="ff-timers4-table">
+                    <thead>
+                        <tr><th>Символ</th><th>Напрямок</th><th title="4-шаровий конфлюенс: Новий МММ · Старий МММ · Готовність · Запас. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди.">🎯 Шари</th><th title="Новий МММ (бабло-модель)">Новий МММ</th><th title="Старий МММ ((fa−fb)/den)">Старий МММ</th><th title="SMC-готовність (grade_setup)">Готовність</th><th title="Запас ходу (runway) — показник TradingView-скрипта">Запас</th><th>Очікує</th></tr>
+                    </thead>
+                    <tbody id="ff-timers4-tbody">
+                        <tr><td colspan="8" class="tm-empty-msg">Черга-4 порожня</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
             <!-- 💰 Funding-fuel coins (own scan over the 💰 Funding Rate Scanner) -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
                 <div style="font-size:0.78rem;font-weight:700;color:#34d399">
@@ -8937,6 +8970,48 @@ async function clearAllTimers2() {
 }
 
 // ── 🎯 Черга-3 «Готовність» ──────────────────────────────────────────────
+function ffLayers4Cell(q) {
+    const layers = (q && q.layers) || [];
+    if (!layers.length) return '<span style="color:#555">—</span>';
+    const n = q.count || 0;
+    const dots = layers.map(l => {
+        if (!l.ok) return '<span style="color:#3a4152">○</span>';
+        const c = l.dir === 'LONG' ? '#4ade80' : (l.dir === 'SHORT' ? '#f87171' : '#4ade80');
+        return `<span style="color:${c}">●</span>`;
+    }).join('');
+    const rowDir = (layers.find(l => l.ok) || {}).dir;
+    const dirCol = rowDir === 'LONG' ? '#4ade80' : (rowDir === 'SHORT' ? '#f87171' : '#8b93a7');
+    const col = n >= 4 ? dirCol : (n >= 1 ? '#fbbf24' : '#8b93a7');
+    const tip = layers.map(l => `${l.ok ? '✅' : '▫️'} ${l.label}: ${l.detail}`).join('\n');
+    return `<span title="${tip.replace(/"/g, '&quot;')}" style="white-space:nowrap;font-weight:700">${dots} <span style="color:${col}">${n}/4</span></span>`;
+}
+function ffRenderQueue4() {
+    const tb = document.getElementById('ff-timers4-tbody');
+    if (!tb) return;
+    const rows = window._ff4TimersData || [];
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">Черга-4 порожня</td></tr>'; return; }
+    tb.innerHTML = rows.map(t => {
+        const q = t.q4 || {};
+        const dirHtml = t.dir === 'LONG' ? '<span style="color:#22c55e">🟢 LONG</span>'
+            : (t.dir === 'SHORT' ? '<span style="color:#ef4444">🔴 SHORT</span>' : '<span style="color:#8b93a7">⚪ —</span>');
+        const held = `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (t.held_sec||0)}">${fmtTimer(t.held_sec)}</span>`;
+        const mmNew = q.mm_new || {}, mmOld = q.mm_old || {}, rw = q.runway || {};
+        const rwArr = rw.dir === 'LONG' ? '▲' : (rw.dir === 'SHORT' ? '▼' : '•');
+        const rwCol = rw.dir === 'LONG' ? '#4ade80' : (rw.dir === 'SHORT' ? '#f87171' : '#8b93a7');
+        const rwTxt = `<span style="color:${rwCol};font-weight:700">${rwArr} ${rw.dir || '—'}</span>` +
+            (rw.room_pct != null ? ` <span style="color:#8b93a7;font-size:0.66rem">${rw.room_pct}%</span>` : '');
+        return `<tr>
+            <td style="font-weight:600">${tvSym(t.symbol)}</td>
+            <td>${dirHtml}</td>
+            <td style="white-space:nowrap">${ffLayers4Cell(q)}</td>
+            <td style="font-size:0.72rem">${ffFuelCell(mmNew.dir, mmNew.str)}</td>
+            <td style="font-size:0.72rem">${ffFuelCell(mmOld.dir, mmOld.str)}</td>
+            <td style="white-space:nowrap">${ffSetupCell(q.setup)}</td>
+            <td style="white-space:nowrap;font-size:0.72rem">${rwTxt}</td>
+            <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${held}</td>
+        </tr>`;
+    }).join('');
+}
 function ffRenderQueue3() {
     const tb = document.getElementById('ff-timers3-tbody');
     if (!tb) return;
@@ -9053,6 +9128,11 @@ function renderFuelFilter(d) {
     setIf('ff-queue3-ignore-ctr', s.queue3_ignore_ctr !== false);   // default true
     setIf('ff-setup-ctr-mode', s.setup_ctr_mode || 'soft');
     setIf('ff-readiness-log', s.readiness_log_enabled !== false);   // default true
+    setIf('ff-queue4-enabled', !!s.queue4_enabled);
+    setIf('ff-queue4-mmnew', String(s.queue4_mm_new_min != null ? s.queue4_mm_new_min : 30));
+    setIf('ff-queue4-mmold', String(s.queue4_mm_old_min != null ? s.queue4_mm_old_min : 10));
+    setIf('ff-queue4-setup', String(s.queue4_setup_min != null ? s.queue4_setup_min : 40));
+    setIf('ff-queue4-runway', s.queue4_require_runway !== false);
     setIf('ff-queue3-vob-open', s.queue3_vob_open !== false);       // default true
     setIf('ff-queue3-vob-buffer', String(s.queue3_vob_sl_buffer_pct != null ? s.queue3_vob_sl_buffer_pct : 0.10));
     setIf('ff-queue3-vob-trend', s.queue3_vob_block_against_trend !== false); // default true
@@ -9167,6 +9247,11 @@ function renderFuelFilter(d) {
     if (document.getElementById('ff-timers3-tbody')) {
         window._ff3TimersData = d.timers3 || [];
         ffRenderQueue3();
+    }
+    // Queue 4 «🎯 Усі шари»
+    if (document.getElementById('ff-timers4-tbody')) {
+        window._ff4TimersData = d.timers4 || [];
+        ffRenderQueue4();
     }
     // GLOBAL engine gate banner — why the engine can't open ANYTHING now.
     const gateEl = document.getElementById('ff-engine-gate');
@@ -9959,6 +10044,11 @@ async function saveFuelFilterSettings() {
         queue3_ignore_ctr: _c('ff-queue3-ignore-ctr'),
         setup_ctr_mode: _v('ff-setup-ctr-mode', 'soft') || 'soft',
         readiness_log_enabled: _c('ff-readiness-log'),
+        queue4_enabled: _c('ff-queue4-enabled'),
+        queue4_mm_new_min: parseInt(_v('ff-queue4-mmnew', '30') || '30', 10),
+        queue4_mm_old_min: parseInt(_v('ff-queue4-mmold', '10') || '10', 10),
+        queue4_setup_min: parseInt(_v('ff-queue4-setup', '40') || '40', 10),
+        queue4_require_runway: _c('ff-queue4-runway'),
         queue3_vob_open: _c('ff-queue3-vob-open'),
         queue3_vob_sl_buffer_pct: parseFloat(_v('ff-queue3-vob-buffer', '0.10') || '0.10'),
         queue3_vob_block_against_trend: _c('ff-queue3-vob-trend'),
