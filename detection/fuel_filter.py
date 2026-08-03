@@ -1082,6 +1082,11 @@ class FuelFilterDaemon:
         stale_removed_q2 = False
         q4_ejected = False
         changed = False
+        # Чи вже є ВІДКРИТА угода по монеті (real/paper/FF) — щоб НЕ ставити її
+        # знову в Чергу-4, поки угода відкрита (інакше запис «висить» і плутає).
+        _already_open = bool(sym in self._fuel_managed
+                             or self._tm_has_position(sym, True)
+                             or self._tm_has_position(sym, False))
 
         def _is_stale(prev):
             # Same direction but a DIFFERENT signal TYPE → the queued one is stale.
@@ -1118,7 +1123,7 @@ class FuelFilterDaemon:
                                        'added_price': (prev3.get('added_price') if _keep3
                                                        else _apx) or _apx}
                 changed = True
-            if q4:
+            if q4 and not _already_open:
                 # 🎯 Усі шари — приймаємо ВСІ сигнали (обидва боки), НЕ фільтруємо
                 # кнопками. Протилежний сигнал СТИРАЄ попередній запис (новий бере
                 # його місце). Ціна входу — щоб бачити рух, поки монета чекає.
@@ -1168,7 +1173,7 @@ class FuelFilterDaemon:
                 self._log_coin_mm(sym, 'queued')   # МММ монети у «Лог роботи бота»
         if q3:
             log_activity(sym, 'queued', f'Черга-3 🎯 Готовність · {_kind_lbl}{_sc_ctr_sfx}', side=side, source='Q3')
-        if q4:
+        if q4 and not _already_open:
             _r4 = ' · протилежний сигнал стер попередній запис' if q4_ejected else ''
             log_activity(sym, 'queued', f'Черга-4 🎯 Усі шари · {_kind_lbl}{_r4}{_sc_ctr_sfx}', side=side, source='Q4')
         # ENTRY-score + CTR-state suffix for Q2 records (the SETUP metric).

@@ -251,6 +251,10 @@ DEFAULT_SETTINGS = {
     # Bybit rate limit on get_positions is 5-10 req/s on UID; at 10s interval
     # we use ~0.1 req/s, very safe.
     'reconcile_interval_secs': 10,
+    # 🕒 Кулдаун повторного входу (хв): після закриття монети НЕ відкривати її
+    #   знову протягом N хв — щоб не було re-entry churn (монета «перевідкривається»
+    #   одразу після trail-TP і виглядає як «не закривається»). 0 = вимкнено.
+    'reentry_cooldown_min': 10,
 
     # === Trade archive (ML training dataset) ===
     # When ON, every closed trade is also written to the long-term trade
@@ -384,6 +388,8 @@ class TradeManager:
         # disabled. Used to validate exit rules without real Bybit orders.
         self._shadow_positions: Dict[str, Dict] = {}
         self._shadow_closed: List[Dict] = []
+        # 🕒 {symbol: ts останнього закриття} — для кулдауну повторного входу.
+        self._last_close_at: Dict[str, float] = {}
         
         # Per-position state for the Health Score evaluator. Keyed by symbol,
         # parallel to _positions / _shadow_positions. Tracks runtime stats
@@ -619,6 +625,11 @@ class TradeManager:
             except (TypeError, ValueError):
                 ri = 10
             self._settings['reconcile_interval_secs'] = max(5, min(300, ri))
+            try:
+                rc = float(self._settings.get('reentry_cooldown_min', 10))
+            except (TypeError, ValueError):
+                rc = 10.0
+            self._settings['reentry_cooldown_min'] = max(0, min(1440, rc))
             # be_commission_buffer_pct — clamp to a sane band. 0 means no
             # buffer (legacy: SL exactly at entry). 1% is the upper bound;
             # anything bigger isn't "fee compensation" anymore, it's a
@@ -3165,6 +3176,7 @@ class TradeManager:
         with self._lock:
             self._positions.pop(symbol, None)
             self._pos_state.pop(symbol, None)
+            self._last_close_at[symbol] = time.time()
             closed['history'] = list(pos.get('history') or [])
             self._closed_trades.append(closed)
             if len(self._closed_trades) > CLOSED_TRADES_LIMIT:
@@ -3797,6 +3809,7 @@ class TradeManager:
         with self._lock:
             self._positions.pop(symbol, None)
             self._pos_state.pop(symbol, None)
+            self._last_close_at[symbol] = time.time()
             closed['history'] = list(pos.get('history') or [])
             self._closed_trades.append(closed)
             if len(self._closed_trades) > CLOSED_TRADES_LIMIT:
@@ -4270,6 +4283,7 @@ class TradeManager:
         with self._lock:
             self._shadow_positions.pop(symbol, None)
             self._shadow_pos_state.pop(symbol, None)
+            self._last_close_at[symbol] = time.time()
             closed['history'] = list(pos.get('history') or [])
             self._shadow_closed.append(closed)
             if len(self._shadow_closed) > CLOSED_TRADES_LIMIT:
@@ -5367,6 +5381,18 @@ class TradeManager:
             pass
         return None
 
+    def _reentry_blocked(self, symbol: str) -> bool:
+        """True, якщо монета закрилась нещодавно (у межах reentry_cooldown_min) —
+        щоб не перевідкривати її одразу (re-entry churn)."""
+        try:
+            cd = float(self._settings.get('reentry_cooldown_min', 10) or 0)
+        except (TypeError, ValueError):
+            cd = 10.0
+        if cd <= 0:
+            return False
+        t0 = self._last_close_at.get((symbol or '').upper())
+        return bool(t0 and (time.time() - t0) < cd * 60.0)
+
     def manual_open(self, symbol: str, side: str, bypass_gates: bool = False,
                     opened_by: Optional[str] = None) -> Dict:
         """User-initiated position open from the Decision Center panel.
@@ -5395,6 +5421,10 @@ class TradeManager:
         side = (side or '').upper().strip()
         if side not in ('LONG', 'SHORT'):
             return {'ok': False, 'reason': f"side must be LONG or SHORT, got {side!r}"}
+        # 🕒 Кулдаун повторного входу — лише для АВТО-відкриттів FF (bypass_gates):
+        # не перевідкривати монету одразу після закриття (re-entry churn).
+        if bypass_gates and self._reentry_blocked(symbol):
+            return {'ok': False, 'reason': f'{symbol}: кулдаун повторного входу'}
 
         # === Fuel Auto-Filter interception ===
         # A manual LONG/SHORT click is also queued in the ❤️ FF base while FF is
