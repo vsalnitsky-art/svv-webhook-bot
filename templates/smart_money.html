@@ -3060,8 +3060,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             
             <!-- Open Positions -->
-            <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">📂 Open Positions <span id="tm-open-count" style="color:#666;font-weight:normal;font-size:0.75rem">(0)</span>
-                <button class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Оновити таблиці угод + МММ/статуси зараз. Гаряча клавіша: R або Alt+R (коли фокус не в полі вводу)." onclick="refreshTradeTables()">🔄 Оновити <span style="opacity:0.6">(R)</span></button></h3>
+            <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0">📂 Open Positions <span id="tm-open-count" style="color:#666;font-weight:normal;font-size:0.75rem">(0)</span></h3>
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
@@ -3802,8 +3801,7 @@ async function deleteActivityLog(ids) {
     loadActivityLog();
 }
 loadActivityLog();
-// ⛔ Авто-оновлення 🧾 Лог роботи бота ВИМКНЕНО (перемальовувалось щоп'ять секунд
-// → гальмувало). Оновлюється на старті + по кнопці «🔄 Оновити (R)» разом з рештою.
+setInterval(() => { if (document.getElementById('activity-log-tbody')) loadActivityLog(); }, 5000);
 </script>
 
 <script>
@@ -11426,76 +11424,6 @@ function _copyFallback(text, cb) {
     }
 }
 
-// ⌨ Оновлення таблиць по гарячій клавіші (без авто-полінгу, що гальмував сайт).
-// Alt+R АБО Ctrl+R-заборонено (це релоуд браузера) → тож Alt+R та клавіша «R»
-// (коли фокус НЕ в полі вводу). Форс-рендер: loadTMState() без isPoll малює
-// завжди (ігнорує захист наведення), + оновлює МММ/статуси (loadFuelFilterStatus).
-function refreshTradeTables() {
-    // Кнопка/клавіша = ЄДИНИЙ спосіб оновлення (авто-полінг вимкнено). Оновлюємо
-    // ВСЕ, що цікавить: угоди (TM), МММ/funding/черги (FF), і 🧾 Лог роботи бота.
-    try { loadTMState(); } catch (e) {}
-    try { if (typeof loadFuelFilterStatus === 'function') loadFuelFilterStatus(); } catch (e) {}
-    try { if (typeof loadActivityLog === 'function') loadActivityLog(); } catch (e) {}
-    _flashRefreshHint();
-}
-function _flashRefreshHint() {
-    let el = document.getElementById('tm-refresh-toast');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'tm-refresh-toast';
-        el.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:99999;'
-            + 'background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.4);'
-            + 'color:#86efac;padding:7px 14px;border-radius:8px;font-size:0.8rem;'
-            + 'font-weight:600;pointer-events:none;opacity:0;transition:opacity 0.15s';
-        document.body.appendChild(el);
-    }
-    el.textContent = '🔄 Таблиці оновлено';
-    el.style.opacity = '1';
-    clearTimeout(window._tmToastTimer);
-    window._tmToastTimer = setTimeout(() => { el.style.opacity = '0'; }, 1200);
-}
-document.addEventListener('keydown', (e) => {
-    // Не перехоплюємо, коли користувач друкує/редагує поле.
-    const ae = document.activeElement;
-    const tag = ae && ae.tagName ? ae.tagName.toLowerCase() : '';
-    if (tag === 'input' || tag === 'select' || tag === 'textarea'
-        || (ae && ae.isContentEditable)) return;
-    // Комбінація: Alt+R (надійно, не конфліктує з релоудом браузера Ctrl/Cmd+R).
-    // Плюс проста «R» — швидко, коли фокус поза полями (без модифікаторів,
-    // ігноруємо, якщо натиснуто Ctrl/Cmd/Meta, щоб не заважати браузеру).
-    const isR = (e.key === 'r' || e.key === 'R' || e.code === 'KeyR');
-    if (!isR) return;
-    if (e.altKey || (!e.ctrlKey && !e.metaKey && !e.shiftKey)) {
-        e.preventDefault();
-        refreshTradeTables();
-    }
-});
-
-// 🔄 Плаваюча кнопка оновлення — ЗАВЖДИ видима (fixed, правий нижній кут), щоб
-// її неможливо було не помітити (кнопка в заголовку легко губилась). Клік = те
-// саме, що клавіша R/Alt+R: миттєвий форс-рендер таблиць угод + МММ/статусів.
-function _ensureRefreshFab() {
-    if (document.getElementById('tm-refresh-fab')) return;
-    const b = document.createElement('button');
-    b.id = 'tm-refresh-fab';
-    b.type = 'button';
-    b.title = 'Оновити таблиці угод + МММ/статуси зараз. Гаряча клавіша: R або Alt+R (коли фокус не в полі вводу).';
-    b.innerHTML = '🔄 Оновити <span style="opacity:0.7;font-weight:400">(R)</span>';
-    b.style.cssText = 'position:fixed;right:18px;bottom:56px;z-index:99998;'
-        + 'background:rgba(59,130,246,0.92);border:1px solid rgba(59,130,246,0.9);'
-        + 'color:#fff;padding:10px 16px;border-radius:24px;font-size:0.82rem;'
-        + 'font-weight:700;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,0.4)';
-    b.onmouseenter = () => { b.style.background = 'rgba(37,99,235,1)'; };
-    b.onmouseleave = () => { b.style.background = 'rgba(59,130,246,0.92)'; };
-    b.onclick = refreshTradeTables;
-    document.body.appendChild(b);
-}
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _ensureRefreshFab);
-} else {
-    _ensureRefreshFab();
-}
-
 // 📚 Перемикач «за весь час (БД)»: показати ВСЮ історію закритих угод із
 // постійної таблиці бази (sob_trade_archive), а не лише живу стрічку (blob).
 // Повторний клік — назад. Поки активно — жива стрічка не перемальовує таблицю.
@@ -11676,10 +11604,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     setInterval(() => {
         if (currentSymbol) loadChart();
     }, 30000);
-    // ⛔ АВТО-ОНОВЛЕННЯ таблиць угод ВИМКНЕНО (гальмувало сайт — важкі таблиці
-    // перемальовувались щоп'ять секунд). Оновлення — ЛИШЕ вручну: клавіша R/Alt+R
-    // або плаваюча кнопка «🔄 Оновити (R)» (refreshTradeTables). Перший рендер
-    // уже відбувся вище (await loadTMState()).
+    // Refresh TM state every 5s. isPoll=true → поважає захист редагування:
+    // поки редагуєш Manual SL/TP чи тумблер, таблиця не перемальовується.
+    setInterval(() => loadTMState(true), 5000);
     // Trade-bias board + exchange sentiment + watchlist consensus — all
     // refresh TOGETHER on one 60s cycle (sentiment row lives inside the
     // board now; the Trade-Direction strip indicator is refreshed here too).
@@ -11744,13 +11671,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         loadBias();
     }).catch(() => {});
-    // ⛔ Періодичний loadFuelFilterStatus ВИМКНЕНО (перемальовував важкі таблиці
-    // МММ/funding/черги → гальмувало). Bias/sentiment лишаємо на 60с (легкі);
-    // FF/МММ оновлюються на ПЕРШОМУ рендері + ЛИШЕ по кнопці «🔄 Оновити (R)».
-    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); };
+    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadFuelFilterStatus(); };
     refreshAll();
-    loadFuelFilterStatus();   // одноразово на старті, далі — лише по кнопці
     setInterval(refreshAll, 60000);
+    // Fuel-filter refreshes faster (30s) so timers/positions feel live.
+    setInterval(loadFuelFilterStatus, 30000);
     // Refresh TOP-100 every 60s — scans only happen every 4h, but during
     // a scan we want fast updates so user sees rows appear progressively.
     // Snapshot endpoint is cheap (single DB query), no real cost.

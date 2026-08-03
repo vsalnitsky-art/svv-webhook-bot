@@ -263,23 +263,6 @@ SHORT=СПАДАЄ (down)**. Кожен шар несе `dir` (напрямок 
   reduce-only шлеться синхронно, важке (real-PnL/архів/notify) — у фоні
   (`_finalize_close_async`), тож не блокує монітор.
 
-## Оновлення таблиць угод (UI) + свіжість «Готовності виходу»
-
-- **АВТО-ОНОВЛЕННЯ ПОВНІСТЮ ВИМКНЕНО (гальмувало) — лише вручну.** Прибрано ВСІ
-  періодичні полінги, що перемальовували важкі таблиці: `loadTMState` (5с),
-  `loadFuelFilterStatus` (30с + із refreshAll), `loadActivityLog` (5с). Оновлення
-  — ЛИШЕ клавішею **R / Alt+R** або **плаваючою кнопкою «🔄 Оновити (R)»**
-  (`tm-refresh-fab`, fixed, правий низ) → `refreshTradeTables()` = `loadTMState()`
-  + `loadFuelFilterStatus()` + `loadActivityLog()` + тост. Перший рендер — на
-  старті. Дії користувача (open/close/delete) далі роблять точковий `loadTMState`
-  для миттєвого фідбеку (це не полінг). `refreshAll` (bias/sentiment) лишився 60с.
-- **«Готовність виходу» (exit_grade) — backend-cadence-bound, НЕ refresh-bound.**
-  Рахується у FF (`grade_exit` → `_exit_cache`) у `_refresh_setup_cache` і
-  копіюється в позицію на TM-моніторі; get_state лише віддає збережене. Було:
-  90с TTL + 6 важких/цикл → відкриті позиції голодували, колонка порожня/лагала.
-  Фікс: **ВІДКРИТІ позиції у пріоритеті** — `_refresh_setup_cache(..., priority=)`
-  з `_SETUP_TTL_PRIORITY`=25с, рахуються ПЕРШИМИ й ПОЗА лімітом циклу (їх мало).
-
 ## Лог Черги-3: рух у черзі + виснаженість
 
 `_log_readiness(..., move_pct=, exhaustion=)` — у `sob_readiness_log` і в UI-лозі
