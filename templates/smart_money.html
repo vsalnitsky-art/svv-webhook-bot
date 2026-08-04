@@ -2013,6 +2013,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                         <div>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🧮 Обмежений розрахунок МММ. УВІМКНЕНО (за замовч.): важкий МММ рахується ЛИШЕ для монет «у роботі» — відкриті угоди + усі черги (1..4) + фандинг-монети + монети WATCHLIST, ДОДАНІ ВРУЧНУ. ВИМКНЕНО (повний режим): додатково рахує ВЕСЬ WATCHLIST (у т.ч. bulk із Tickr-добірки). Мета — не ганяти важкий розрахунок по всьому списку.">
+                                <input type="checkbox" id="ff-mmm-limited" onchange="saveFuelFilterSettings()"> 🧮 Обмежений МММ (тільки «в роботі»)
+                            </label>
+                        </div>
+                        <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Автозакриття відкритої угоди (реальної чи тестової), якщо сила МММ падає нижче цього %. 0 = вимкнено. Працює лише при увімкненому «Контроль відкритих угод».">Закрити при МММ &lt; %</label>
                             <input type="number" id="ff-manage-close-mm" min="0" max="100" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(239,68,68,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
@@ -9154,6 +9159,7 @@ function renderFuelFilter(d) {
     setIf('ff-potential', s.potential_threshold_pct);
     setIf('ff-use-potential', s.use_potential_exit);
     setIf('ff-manage-positions', s.manage_open_positions !== false);  // default true
+    setIf('ff-mmm-limited', s.mmm_limited_mode !== false);  // default true
     setIf('ff-manage-close-mm', String(s.manage_close_min_mm != null ? s.manage_close_min_mm : 0));
     setIf('ff-close-btc-mode', s.close_on_btc_mode || (s.close_on_btc_flip ? 'flip' : 'off'));
     setIf('ff-smoothing-min', s.direction_smoothing_min != null ? s.direction_smoothing_min : 0);
@@ -10082,6 +10088,7 @@ async function saveFuelFilterSettings() {
     const _c = (id) => { const e = document.getElementById(id); return e ? e.checked : undefined; };
     const payload = {
         manage_open_positions: _c('ff-manage-positions'),
+        mmm_limited_mode: _c('ff-mmm-limited'),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
         close_on_btc_mode: _v('ff-close-btc-mode', 'off') || 'off',
         // Keep the legacy boolean in sync so a stale close_on_btc_flip=true in

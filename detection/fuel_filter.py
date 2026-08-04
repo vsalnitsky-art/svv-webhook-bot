@@ -145,6 +145,12 @@ DEFAULT_SETTINGS = {
     # queue from growing forever. 0 = off (only manual/flip removal).
     'queue_ttl_hours': 24,
     'skip_wait_coins': False,     # (legacy) not used for auto-open anymore
+    # 🧮 ОБМЕЖЕНИЙ розрахунок МММ (важкий liqmap-fuel). True (дефолт) → МММ
+    # рахується ЛИШЕ для монет «у роботі»: відкриті угоди + УСІ черги (1..4) +
+    # фандинг-монети + монети WATCHLIST, ДОДАНІ ВРУЧНУ. False → повний режим:
+    # додатково рахує ВЕСЬ WATCHLIST (у т.ч. bulk із Tickr-добірки). Мета —
+    # не ганяти важкий розрахунок по всьому списку.
+    'mmm_limited_mode': True,
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -963,6 +969,7 @@ class FuelFilterDaemon:
         s['engine_smart_direction'] = bool(s.get('engine_smart_direction', False))
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
+        s['mmm_limited_mode'] = bool(s.get('mmm_limited_mode', True))
         s['enabled'] = bool(s.get('enabled', False))
         try:
             s['direction_smoothing_min'] = max(0, min(600,
@@ -3424,6 +3431,10 @@ class FuelFilterDaemon:
             self._funding_price = self._get_funding_price_dirs()
             managed = list(self._fuel_managed.keys())
             pending = list(self._pending.keys())
+            # УСІ черги (1..4) — усі вони «в роботі», їм потрібен розрахунок МММ.
+            pending_all = list(dict.fromkeys(
+                list(self._pending.keys()) + list(self._pending2.keys())
+                + list(self._pending3.keys()) + list(self._pending4.keys())))
 
         # OP-10: drop queued coins that have waited longer than the TTL
         # (queue_ttl_hours) without ever opening. Bounds the now two-sided queue.
@@ -3480,11 +3491,26 @@ class FuelFilterDaemon:
                 managed = list(self._fuel_managed.keys())
             self._persist_state()
 
-        # NEW STRATEGY: fuel is computed ONLY for the few relevant coins —
-        # open FF positions + the waiting base (_pending) + funding-scanner
-        # coins + BTC. No more whole-WATCHLIST scan.
+        # 🧮 МММ target set. Coins «в роботі» рахуються ЗАВЖДИ: BTC + відкриті
+        # угоди (managed) + УСІ черги (1..4) + фандинг-монети + монети WATCHLIST,
+        # додані ВРУЧНУ. У ПОВНОМУ режимі (mmm_limited_mode=False) додається ще й
+        # ВЕСЬ WATCHLIST (у т.ч. bulk із Tickr-добірки). Обмежений режим (дефолт)
+        # не ганяє важкий liqmap по всьому списку.
+        _limited = bool(settings.get('mmm_limited_mode', True))
+        _wl = []
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            _sc = get_smc_scanner()
+            if _sc:
+                _wl = (_sc.symbols_by_source('manual') if _limited
+                       else _sc.get_watchlist())
+            elif self._get_watchlist:
+                _wl = self._get_watchlist()   # fallback: full list
+        except Exception as e:
+            print(f"[FuelFilter] МММ watchlist set error: {e}")
         relevant = list(dict.fromkeys(
-            ['BTCUSDT'] + managed + pending + list(funding_syms)))
+            ['BTCUSDT'] + managed + pending_all + list(funding_syms)
+            + [str(x).upper() for x in (_wl or [])]))
         self._register_with_liqmap(relevant)
 
         # Advance EMA + read fuel once per cycle for each relevant coin.
