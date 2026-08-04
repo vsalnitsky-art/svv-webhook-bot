@@ -2397,6 +2397,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="ff-queue4-exh-on" onchange="saveFuelFilterSettings()"> 🔥 Виснаженість ≤ <input type="number" id="ff-queue4-exh-pct" min="1" max="100" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> %</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="🚧 Фільтр ВХОДУ: перед допуском сигналу дочекатись ПОВНОГО визначення шарів і порахувати, скільки ПОКАЗНИКІВ реально дивляться в бік сигналу (сирий напрямок Новий/Старий МММ/Готовність/Запас — БЕЗ порогів сили й БЕЗ авто-ok «ігнору»). Якщо менше за поріг — сигнал у Чергу-4 НЕ пускати взагалі (і викидати, якщо після визначення не дотягнув). Поки шари ще рахуються — сигнал чекає, не ріжеться. За замовч.: увімкнено, ≥1 (має бути хоча б один показник у бік; інакше сенсу додавати немає).">
                         <input type="checkbox" id="ff-queue4-entry-gate" onchange="saveFuelFilterSettings(); _ffQueue4EntrySync()"> 🚧 Фільтр входу: показників у бік ≥ <select id="ff-queue4-entry-min" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="1">1 (хоч один)</option><option value="2">2</option><option value="3">3</option><option value="4">4 (усі)</option></select></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="⏳ Викидати монету з Черги-4, якщо за N хв ЖОДЕН показник ЖОДНОГО разу не засвітився в бік сигналу (весь час 0 показників у бік). Ловить «мертві» записи, що зайшли, поки шари ще рахувались, і так і не ожили. 0 = вимкнено. За замовч. 30 хв.">⏳ Викид, якщо 0 у бік <input type="number" id="ff-queue4-nolight" min="0" max="1440" step="5" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> хв</label>
                 </div>
                 <div style="font-size:0.64rem;color:#6b7280;padding:0 12px 10px">💡 Відкриває угоду, ЛИШЕ коли УСІ 4 шари збіглись за напрямком сигналу (кольори — усі зелені LONG / усі червоні SHORT). Параметри складності — від найменшого до найбільшого. 🔥 Виснаженість — єдиний запобіжник: вичерпаний понад поріг рух не відкривається. 🚧 Фільтр входу — не додавати сигнал у чергу, якщо після повного визначення шарів у бік сигналу дивиться менше за поріг показників (за замовч. — жоден = не додавати).</div>
             </details>
@@ -9258,6 +9259,7 @@ function renderFuelFilter(d) {
     _ffQueue4OldSync();
     setIf('ff-queue4-entry-gate', s.queue4_entry_gate !== false);  // default on
     setIf('ff-queue4-entry-min', String(s.queue4_entry_min_layers != null ? s.queue4_entry_min_layers : 1));
+    setIf('ff-queue4-nolight', String(s.queue4_no_light_min != null ? s.queue4_no_light_min : 30));
     _ffQueue4EntrySync();
     setIf('ff-queue4-setup', String(s.queue4_setup_min != null ? s.queue4_setup_min : 40));
     setIf('ff-queue4-runway', s.queue4_require_runway !== false);
@@ -10187,6 +10189,7 @@ async function saveFuelFilterSettings() {
         queue4_mm_old_mode: _v('ff-queue4-mmold-mode', 'ignore') || 'ignore',
         queue4_entry_gate: _c('ff-queue4-entry-gate'),
         queue4_entry_min_layers: parseInt(_v('ff-queue4-entry-min', '1') || '1', 10),
+        queue4_no_light_min: parseInt(_v('ff-queue4-nolight', '30') || '30', 10),
         queue4_setup_min: parseInt(_v('ff-queue4-setup', '40') || '40', 10),
         queue4_require_runway: _c('ff-queue4-runway'),
         queue4_ttl_hours: parseFloat(_v('ff-queue4-ttl', '3') || '3'),

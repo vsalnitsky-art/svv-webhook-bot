@@ -265,6 +265,10 @@ DEFAULT_SETTINGS = {
     #    Дефолт: увімкнено, поріг 1 (має бути ХОЧА Б ОДИН показник у бік сигналу).
     'queue4_entry_gate': True,
     'queue4_entry_min_layers': 1,
+    # ⏳ Викидати монету з Черги-4, якщо за N хв ЖОДЕН показник ЖОДНОГО разу не
+    #    засвітився в бік сигналу (aligned весь час = 0). Ловить «мертві» записи,
+    #    що зайшли, поки шари ще не визначились, і так і не ожили. 0 = вимкнено.
+    'queue4_no_light_min': 30,
     'queue4_require_runway': True,  # Запас (runway) має бути у бік напрямку
     'queue4_ttl_hours': 3,          # протермінувати запис Черги-4 через N год (0=без ліміту)
     # 🔥 Виснаженість Черги-4: НЕ відкривати угоду, якщо хід уже виснажений понад
@@ -875,6 +879,10 @@ class FuelFilterDaemon:
             s['queue4_entry_min_layers'] = max(1, min(4, int(s.get('queue4_entry_min_layers', 1) or 1)))
         except (TypeError, ValueError):
             s['queue4_entry_min_layers'] = 1
+        try:
+            s['queue4_no_light_min'] = max(0, min(1440, int(s.get('queue4_no_light_min', 30) or 0)))
+        except (TypeError, ValueError):
+            s['queue4_no_light_min'] = 30
         try:
             s['queue4_ttl_hours'] = max(0, min(72, float(s.get('queue4_ttl_hours', 3) or 0)))
         except (TypeError, ValueError):
@@ -5618,6 +5626,30 @@ class FuelFilterDaemon:
             if not mark:
                 continue
             lay = self._queue4_layers(sym, d, s)
+            _aligned_now = int(lay.get('aligned', 0))
+            # ⏳ Позначаємо, що показник ХОЧ РАЗ засвітився в бік (aligned≥1) —
+            # прапорець персиститься, тож переживає рестарт.
+            if _aligned_now >= 1 and not info.get('ever_lit'):
+                info['ever_lit'] = True
+                with self._lock:
+                    if sym in self._pending4:
+                        self._pending4[sym]['ever_lit'] = True
+                        self._persist_state()
+            # ⏳ Правило «жоден показник ЖОДНОГО разу не засвітився за N хв» → викид.
+            try:
+                _nl_min = float(s.get('queue4_no_light_min', 30) or 0)
+            except (TypeError, ValueError):
+                _nl_min = 30.0
+            if _nl_min > 0 and not info.get('ever_lit'):
+                _added0 = float(info.get('added_at') or 0)
+                if _added0 and (now - _added0) > _nl_min * 60:
+                    with self._lock:
+                        self._pending4.pop(sym, None); self._persist_state()
+                    log_activity(sym, 'skipped',
+                                 f'Черга-4 ⏳ {_nl_min:.0f}хв жоден показник жодного разу '
+                                 'не засвітився в бік — прибрано з черги',
+                                 side=d, source='Q4')
+                    continue
             # 🚧 Фільтр входу (пост-визначення): запис міг зайти, поки шари ще
             # рахувались. Коли всі шари ВИЗНАЧЕНІ, а збіг < порога — викидаємо з
             # черги (не тримаємо до TTL), як і задумано «якщо не відповідають — не
