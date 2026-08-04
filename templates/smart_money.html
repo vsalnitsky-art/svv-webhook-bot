@@ -651,12 +651,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .tm-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.78rem;
+    /* Єдиний компактний стиль для УСІХ таблиць — як у «💰 Funding — МММ»
+       (однакові шрифт/паддинг/вирівнювання → колонки виглядають рівно). */
+    font-size: 0.72rem;
     margin-top: 8px;
 }
 .tm-table th, .tm-table td {
-    padding: 5px 8px;
+    padding: 3px 6px;
     text-align: left;
+    vertical-align: middle;
     border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 .tm-table th {
@@ -720,11 +723,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
    переноситься), таблиця на всю ширину; якщо надто широка — скрол контейнера,
    а не перенос. Компактніший паддинг, щоб більше колонок влазило без скролу. */
 #ff-timers-table th, #ff-timers-table td,
-#ff-timers2-table th, #ff-timers2-table td { white-space: nowrap; padding: 5px 6px; }
+#ff-timers2-table th, #ff-timers2-table td,
+#ff-timers3-table th, #ff-timers3-table td,
+#ff-timers4-table th, #ff-timers4-table td { white-space: nowrap; padding: 3px 6px; }
 /* Таблиці ВІДКРИТИХ угод (real + paper): теж кожен рядок в ОДНУ стрічку —
    символ і клітинки не переносяться; надто широка → скрол контейнера. */
 #tm-open-table th, #tm-open-table td,
-#tm-shadow-open-table th, #tm-shadow-open-table td { white-space: nowrap; padding: 5px 6px; }
+#tm-shadow-open-table th, #tm-shadow-open-table td { white-space: nowrap; padding: 3px 6px; }
 /* 💰 Funding table: keep EVERY cell on ONE line (symbol never wraps under the
    icons), stretch to full container width, and stay COMPACT (smaller font +
    tight padding) so all columns fit on screen without a scrollbar. */
