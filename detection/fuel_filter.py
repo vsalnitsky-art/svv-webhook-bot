@@ -411,6 +411,12 @@ DEFAULT_SETTINGS = {
     # 🎯 SMC «готовність сетапу» (grade_setup, 1H) — колонка «Готовність» у таблицях
     # + чек-лист у Telegram. Це ПІДКАЗКА (радник), реального відкриття НЕ керує.
     'setup_grader_on': True,
+    # 🎯 Пропускна здатність «Готовності» (важкий SMC-грейд). За замовч. cap=6/цикл
+    # + TTL=90с не встигали на десятки монет (черги+фандинг+угоди) → «Готовність»
+    # висіла порожня/застаріла. Підняв cap і зробив налаштовним. Klines кешуються,
+    # тож основна ціна — CPU; за потреби зменш cap, якщо сервер слабкий.
+    'setup_max_per_cycle': 16,   # скільки монет перераховувати за один 30с-цикл
+    'setup_ttl': 90,             # с — як часто перераховувати «Готовність» монети
     # Суворість 🎯 у грейдері: 'strict' (усі ключові блоки) / 'moderate' / 'soft'.
     'setup_strict': 'strict',
     # Як CTR впливає на бал grade_setup: 'soft' (дефолт — партіал, БЕЗ вето,
@@ -867,6 +873,15 @@ class FuelFilterDaemon:
             s['queue4_exhaustion_pct'] = max(1, min(100, int(s.get('queue4_exhaustion_pct', 95) or 95)))
         except (TypeError, ValueError):
             s['queue4_exhaustion_pct'] = 95
+        # 🎯 Пропускна здатність «Готовності» (1H-грейд)
+        try:
+            s['setup_max_per_cycle'] = max(1, min(60, int(s.get('setup_max_per_cycle', 16) or 16)))
+        except (TypeError, ValueError):
+            s['setup_max_per_cycle'] = 16
+        try:
+            s['setup_ttl'] = max(20, min(600, int(s.get('setup_ttl', 90) or 90)))
+        except (TypeError, ValueError):
+            s['setup_ttl'] = 90
         # ⚡ funding scalper «Готовність»
         s['funding_setup_scalp_on'] = bool(s.get('funding_setup_scalp_on', False))
         _valid_tf = ('1m', '3m', '5m', '15m', '30m', '1h')
@@ -4074,11 +4089,21 @@ class FuelFilterDaemon:
         if not bool(settings.get('setup_grader_on', True)):
             return
         now = time.time()
+        # Пропускна здатність — з налаштувань (дефолти вищі за старі 6/90, щоб
+        # «Готовність» встигала на десятки монет). Fallback на константи.
+        try:
+            _ttl = float(settings.get('setup_ttl', self._SETUP_TTL) or self._SETUP_TTL)
+        except (TypeError, ValueError):
+            _ttl = self._SETUP_TTL
+        try:
+            _cap = int(settings.get('setup_max_per_cycle', self._SETUP_MAX_PER_CYCLE) or self._SETUP_MAX_PER_CYCLE)
+        except (TypeError, ValueError):
+            _cap = self._SETUP_MAX_PER_CYCLE
         live = set(targets.keys())
         # Кандидати на перерахунок: прострочені (за TTL), найстаріші першими.
-        due = sorted((s for s in live if (now - self._setup_at.get(s, 0)) >= self._SETUP_TTL),
+        due = sorted((s for s in live if (now - self._setup_at.get(s, 0)) >= _ttl),
                      key=lambda s: self._setup_at.get(s, 0))
-        for sym in due[:self._SETUP_MAX_PER_CYCLE]:
+        for sym in due[:_cap]:
             d = (targets.get(sym) or (None,))[0]
             try:
                 res = self._compute_setup(sym, d, settings)

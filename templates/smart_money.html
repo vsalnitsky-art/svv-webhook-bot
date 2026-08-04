@@ -2023,6 +2023,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                         <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="🎯 Скільки монет перераховувати «Готовність» (важкий SMC-грейд) за один цикл (~30с). Вище = «Готовність» швидше заповнюється й не застаріває на десятках монет (черги+фандинг+угоди), але більше CPU. За замовч. 16.">Готовність: монет/цикл</label>
+                            <input type="number" id="ff-setup-cap" min="1" max="60" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="🎯 Як часто (с) перераховувати «Готовність» кожної монети. Менше = свіжіше, але більше навантаження. За замовч. 90с.">Готовність: TTL, с</label>
+                            <input type="number" id="ff-setup-ttl" min="20" max="600" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()">
+                        </div>
+                        <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Автозакриття відкритої угоди (реальної чи тестової), якщо сила МММ падає нижче цього %. 0 = вимкнено. Працює лише при увімкненому «Контроль відкритих угод».">Закрити при МММ &lt; %</label>
                             <input type="number" id="ff-manage-close-mm" min="0" max="100" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(239,68,68,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
@@ -7580,23 +7588,26 @@ function ffScoreBadgeHTML(sc) {
 // 🎯 Шаровий конфлюенс (1..5) — ● зійшовся / ○ ні + «N/5», колір за кількістю.
 // Tooltip перелічує кожен шар зі статусом і деталлю. 1:1 дані з бекенду (a.layers).
 function ffLayersCell(lay) {
+    // Порожній стан у тій самій фіксованій сітці (5 крапок = 65px), щоб «—» був
+    // рівно в стовпчик.
     if (!lay || !lay.layers || !lay.layers.length)
-        return '<span style="color:#555">—</span>';
+        return `<span style="display:inline-flex;align-items:center;white-space:nowrap"><span style="display:inline-block;width:65px"></span><span style="display:inline-block;width:30px;text-align:right;color:#555">—</span></span>`;
     const n = lay.count || 0;
     // Кольори шарів ЗА НАПРЯМКОМ: засвічений шар LONG → зелений, SHORT → червоний;
-    // погашений — тьмяний. Повний збіг → усі зелені (LONG) або всі червоні (SHORT).
+    // погашений — тьмяний. Кожна крапка у фіксованому слоті (13px) → число N/5
+    // стоїть РІВНО в стовпчик у всіх рядках.
     const dots = lay.layers.map(l => {
-        if (!l.ok) return '<span style="color:#3a4152">○</span>';
-        const c = l.dir === 'LONG' ? '#4ade80' : (l.dir === 'SHORT' ? '#f87171' : '#4ade80');
-        return `<span style="color:${c}">●</span>`;
+        const c = !l.ok ? '#3a4152' : (l.dir === 'SHORT' ? '#f87171' : '#4ade80');
+        return `<span style="display:inline-block;width:13px;text-align:center;color:${c}">${l.ok ? '●' : '○'}</span>`;
     }).join('');
     // Колір лічильника N/5 теж за напрямком монети (перший засвічений шар несе dir).
     const rowDir = (lay.layers.find(l => l.ok) || {}).dir;
     const dirCol = rowDir === 'LONG' ? '#4ade80' : (rowDir === 'SHORT' ? '#f87171' : '#8b93a7');
     const col = n >= 5 ? dirCol : (n >= 1 ? '#fbbf24' : '#8b93a7');
     const tip = lay.layers.map(l => `${l.ok ? '✅' : '▫️'} ${l.label}: ${l.detail}`).join('\n');
-    return `<span title="${tip.replace(/"/g, '&quot;')}" style="white-space:nowrap;font-weight:700">`
-        + `${dots} <span style="color:${col}">${n}/5</span></span>`;
+    return `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;align-items:center;white-space:nowrap;font-weight:700">`
+        + `<span style="display:inline-flex">${dots}</span>`
+        + `<span style="display:inline-block;width:30px;text-align:right;color:${col};font-variant-numeric:tabular-nums">${n}/5</span></span>`;
 }
 
 function ffSetupCell(su) {
@@ -9030,18 +9041,23 @@ async function clearAllTimers2() {
 // ── 🎯 Черга-3 «Готовність» ──────────────────────────────────────────────
 function ffLayers4Cell(q) {
     const layers = (q && q.layers) || [];
-    if (!layers.length) return '<span style="color:#555">—</span>';
+    // Порожній стан ТЕЖ у фіксованій сітці, щоб «—» стояв рівно в стовпчик.
+    if (!layers.length)
+        return `<span style="display:inline-flex;align-items:center;white-space:nowrap"><span style="display:inline-block;width:52px"></span><span style="display:inline-block;width:30px;text-align:right;color:#555">—</span></span>`;
     const n = q.count || 0;
+    // Кожна крапка — у фіксованому слоті (12px), тож блок крапок завжди однакової
+    // ширини → число N/4 стоїть РІВНО в стовпчик у всіх рядках.
     const dots = layers.map(l => {
-        if (!l.ok) return '<span style="color:#3a4152">○</span>';
-        const c = l.dir === 'LONG' ? '#4ade80' : (l.dir === 'SHORT' ? '#f87171' : '#4ade80');
-        return `<span style="color:${c}">●</span>`;
+        const c = !l.ok ? '#3a4152' : (l.dir === 'SHORT' ? '#f87171' : '#4ade80');
+        return `<span style="display:inline-block;width:13px;text-align:center;color:${c}">${l.ok ? '●' : '○'}</span>`;
     }).join('');
     const rowDir = (layers.find(l => l.ok) || {}).dir;
     const dirCol = rowDir === 'LONG' ? '#4ade80' : (rowDir === 'SHORT' ? '#f87171' : '#8b93a7');
     const col = n >= 4 ? dirCol : (n >= 1 ? '#fbbf24' : '#8b93a7');
     const tip = layers.map(l => `${l.ok ? '✅' : '▫️'} ${l.label}: ${l.detail}`).join('\n');
-    return `<span title="${tip.replace(/"/g, '&quot;')}" style="white-space:nowrap;font-weight:700">${dots} <span style="color:${col}">${n}/4</span></span>`;
+    return `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;align-items:center;white-space:nowrap;font-weight:700">`
+        + `<span style="display:inline-flex">${dots}</span>`
+        + `<span style="display:inline-block;width:30px;text-align:right;color:${col};font-variant-numeric:tabular-nums">${n}/4</span></span>`;
 }
 function ffRenderQueue4() {
     const tb = document.getElementById('ff-timers4-tbody');
@@ -9183,6 +9199,8 @@ function renderFuelFilter(d) {
     setIf('ff-use-potential', s.use_potential_exit);
     setIf('ff-manage-positions', s.manage_open_positions !== false);  // default true
     setIf('ff-mmm-limited', s.mmm_limited_mode !== false);  // default true
+    setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
+    setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
     setIf('ff-manage-close-mm', String(s.manage_close_min_mm != null ? s.manage_close_min_mm : 0));
     setIf('ff-close-btc-mode', s.close_on_btc_mode || (s.close_on_btc_flip ? 'flip' : 'off'));
     setIf('ff-smoothing-min', s.direction_smoothing_min != null ? s.direction_smoothing_min : 0);
@@ -10112,6 +10130,8 @@ async function saveFuelFilterSettings() {
     const payload = {
         manage_open_positions: _c('ff-manage-positions'),
         mmm_limited_mode: _c('ff-mmm-limited'),
+        setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
+        setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
         close_on_btc_mode: _v('ff-close-btc-mode', 'off') || 'off',
         // Keep the legacy boolean in sync so a stale close_on_btc_flip=true in
