@@ -4678,6 +4678,10 @@ class FuelFilterDaemon:
             items = list(self._anomalies.items())
         live = set()
         _route_q2 = bool(s.get('opportunity_auto_open', True))   # 🎯 → Черга-2
+        # 🧹 «Рекомендацію бота» через Чергу-2 ВИМКНЕНО → прибрати залишкові
+        # 🎯-opp записи з Черги-2, щоб раніше заведені монети не відкривались.
+        if not _route_q2:
+            self._purge_queue_kind('opp')
         for sym, a in items:
             live.add(sym)
             # 🎯 Opportunity — ALWAYS computed (candidate detection). Reaching the
@@ -5026,6 +5030,35 @@ class FuelFilterDaemon:
             print(f"[FF-VOB] {sym} error: {e}")
             return None
 
+    def _purge_queue_kind(self, kind: str) -> int:
+        """Прибрати з УСІХ черг (1..4) записи вказаного джерела `kind`:
+          'vob' — монети, заведені стратегією фандингу (Маршрут у Чергу-4);
+          'opp' — монети, заведені 🎯 «Рекомендацією» у Чергу-2.
+        Викликається, коли відповідний funding-шлях ВИМКНЕНО, щоб залишкові
+        (persistent) записи більше НЕ відкривались. Повертає к-сть прибраних."""
+        kind = (kind or '').lower().strip()
+        if not kind:
+            return 0
+        removed = 0
+        with self._lock:
+            for q in (self._pending, self._pending2, self._pending3, self._pending4):
+                for sym in [s for s, i in q.items() if (i or {}).get('kind') == kind]:
+                    q.pop(sym, None)
+                    removed += 1
+            if removed:
+                self._persist_state()
+        if removed:
+            try:
+                from detection.activity_log import log_activity
+                log_activity('—', 'skipped',
+                             f'Funding-шлях "{kind}" вимкнено → прибрано {removed} '
+                             'залишкових записів із черг (не відкриваються)',
+                             source='Funding')
+            except Exception:
+                pass
+            print(f"[FF-Funding] purge kind='{kind}': прибрано {removed} записів із черг")
+        return removed
+
     def _layer_signal_alert(self, s: Dict, now: float):
         """🎯 Один моніторинг VOB (1m) для КОЖНОЇ funding-монети, що живить ДВА
         незалежні виходи на НОВОМУ Volumized OB (edge за formation_time):
@@ -5036,10 +5069,14 @@ class FuelFilterDaemon:
              повторний VOB по вже відкритій монеті лише пересуває SL. Усе — в
              🧾 Лог роботи бота з міткою «з фандингу»."""
         tg_on = bool(s.get('layer_tg_on'))
-        open_on = bool(s.get('queue3_vob_open', True))
         route = bool(s.get('funding_route_q4', True))   # маршрут сигналу в Чергу-4
         ob_tf = s.get('funding_ob_tf', '1h') or '1h'    # напрямок за Require OB
         vob_tf = s.get('funding_vob_tf', '5m') or '5m'  # TF сигналу Volumized OB
+        # 🧹 Маршрут у Чергу-4 ВИМКНЕНО → funding більше НЕ відкриває угод: чистимо
+        # залишкові funding-VOB записи (kind='vob') з усіх черг, щоб раніше заведені
+        # монети «з фандингу» не спрацьовували вже після вимкнення стратегії.
+        if not route:
+            self._purge_queue_kind('vob')
         if not tg_on and not route:
             if self._vob_state or self._layer_alert_at or self._vob_seen:
                 self._vob_state.clear()
@@ -7217,6 +7254,15 @@ class FuelFilterDaemon:
             self._pending3 = {}
             self._persist_state()
         return n
+
+    def delete_timer4(self, symbol: str) -> bool:
+        """Remove ONE coin from Queue 4 «🎯 Усі шари» (user ✕)."""
+        symbol = (symbol or '').upper()
+        with self._lock:
+            removed = self._pending4.pop(symbol, None) is not None
+            if removed:
+                self._persist_state()
+        return removed
 
     def clear_all_timers4(self) -> int:
         """Clear Queue 4 «🎯 Усі шари» entirely (does NOT touch інші черги)."""

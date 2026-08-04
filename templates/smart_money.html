@@ -2387,10 +2387,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers4-table">
                     <thead>
-                        <tr><th>Символ</th><th>Напрямок</th><th title="4-шаровий конфлюенс: Новий МММ · Старий МММ · Готовність · Запас. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди.">🎯</th><th title="Новий МММ (бабло-модель)">Новий МММ</th><th title="Старий МММ ((fa−fb)/den)">Старий МММ</th><th title="SMC-готовність (grade_setup)">Готовність</th><th title="Запас ходу (runway) — показник TradingView-скрипта">Запас</th><th>Очікує</th></tr>
+                        <tr><th>Символ</th><th>Напрямок</th><th title="4-шаровий конфлюенс: Новий МММ · Старий МММ · Готовність · Запас. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди.">🎯</th><th title="Новий МММ (бабло-модель)">Новий МММ</th><th title="Старий МММ ((fa−fb)/den)">Старий МММ</th><th title="SMC-готовність (grade_setup)">Готовність</th><th title="Запас ходу (runway) — показник TradingView-скрипта">Запас</th><th>Очікує</th><th>Дія</th></tr>
                     </thead>
                     <tbody id="ff-timers4-tbody">
-                        <tr><td colspan="8" class="tm-empty-msg">Черга-4 порожня</td></tr>
+                        <tr><td colspan="9" class="tm-empty-msg">Черга-4 порожня</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -2501,6 +2501,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                         <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 Напрямок = найновіший активний Order Block на «Напрямок OB, TF» (дефолт 1h). Сигнал = НОВИЙ Volumized OB на «Сигнал VOB, TF» (дефолт 5m) у той самий бік. Сигнал іде в <b>Чергу-4</b>, яка відкриває ЛИШЕ коли всі 4 шари (Новий/Старий МММ, Готовність, Запас) збіглись. Черга-4 має бути увімкнена.</div>
+                        <div style="font-size:0.64rem;color:#f0b866;margin-top:6px;padding:6px 8px;border:1px solid rgba(240,184,102,0.25);border-radius:5px;background:rgba(240,184,102,0.06)">🔑 <b>«Маршрут у Чергу-4»</b> — головний перемикач стратегії фандингу. Коли <b>ВИМКНЕНО</b>, фандинг більше НЕ заводить монети в чергу, а раніше заведені (з фандингу) <b>автоматично прибираються з усіх черг</b> і не відкриваються. Це НЕ єдиний шлях відкриття з фандингу — див. «Сигнали → угоди» нижче.</div>
                     </div>
                     <!-- 🎯 Шаровий конфлюенс → консолідований TG-сигнал -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
@@ -2541,6 +2542,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <!-- 🧪 Тест сигналів: 🎯 → через Чергу-2, 🚀 → прямо (без черги) -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
                         <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">🧪 Сигнали → угоди. 🎯 «рекомендація» проходить через <b>Чергу-2</b> (повний алгоритм), 🚀 — прямо. Режим (real/paper) — за станом Trade Manager (real вимк + Test Mode → paper).</div>
+                        <div style="font-size:0.64rem;color:#f0b866;margin-bottom:8px;padding:6px 8px;border:1px solid rgba(240,184,102,0.25);border-radius:5px;background:rgba(240,184,102,0.06)">⚠️ Це <b>ОКРЕМІ, незалежні</b> шляхи відкриття з фандингу (працюють ПОЗА «Маршрутом у Чергу-4»). Щоб фандинг НІЧОГО не відкривав — вимкни ВСІ три: «Маршрут у Чергу-4» (вгорі), «Рекомендацію бота — через Чергу-2» і «Відкривати по аномальному росту». При вимкненні кожен шлях сам прибирає свої залишкові монети з черг.</div>
                         <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Коли монета досягає найкращого збігу (🎯), вона НЕ відкривається одразу, а ставиться в Чергу-2. Черга-2 проганяє її повним алгоритмом (ENTRY score, CTR, Decision) і лише якщо ВІДКРИВАЄ угоду — монета позначається «рекомендована ботом» (рядок + Telegram). ⚠️ Черга-2 має бути увімкнена.">
                                 <input type="checkbox" id="ff-opp-auto-open" onchange="saveFuelFilterSettings()"> 🎯 «Рекомендацію бота» — через Чергу-2
@@ -9040,7 +9042,7 @@ function ffRenderQueue4() {
     const tb = document.getElementById('ff-timers4-tbody');
     if (!tb) return;
     const rows = window._ff4TimersData || [];
-    if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">Черга-4 порожня</td></tr>'; return; }
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Черга-4 порожня</td></tr>'; return; }
     tb.innerHTML = rows.map(t => {
         const q = t.q4 || {};
         const dirHtml = t.dir === 'LONG' ? '<span style="color:#22c55e">🟢 LONG</span>'
@@ -9061,6 +9063,7 @@ function ffRenderQueue4() {
             <td style="white-space:nowrap">${ffSetupCell(q.setup)}</td>
             <td style="white-space:nowrap;font-size:0.72rem">${rwTxt}</td>
             <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${held}</td>
+            <td style="text-align:center"><button onclick="deleteTimer4('${t.symbol}')" title="Прибрати ${t.symbol} з Черги-4" style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.4);color:#f87171;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:0.72rem;line-height:1">✕</button></td>
         </tr>`;
     }).join('');
 }
@@ -9120,6 +9123,16 @@ async function clearAllTimers3() {
         window._ff3TimersData = [];
         ffRenderQueue3();
     } catch (e) { alert('Помилка очищення Черги-3: ' + e); }
+}
+async function deleteTimer4(symbol) {
+    try {
+        await fetch('/api/fuel-filter/queue4/delete', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ symbol })
+        });
+        window._ff4TimersData = (window._ff4TimersData || []).filter(t => t.symbol !== symbol);
+        ffRenderQueue4();
+    } catch (e) { alert('Помилка видалення з Черги-4: ' + e); }
 }
 async function clearAllTimers4() {
     if (!confirm('Очистити всю Чергу-4 («Усі шари»)?')) return;
