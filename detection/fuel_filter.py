@@ -248,6 +248,13 @@ DEFAULT_SETTINGS = {
     'queue4_enabled': False,
     'queue4_mm_new_min': 30,     # Новий МММ: 0 рівн/10 легк/30 помір/60 сильн/85 потуж
     'queue4_mm_old_min': 10,     # Старий МММ: ті самі band-и
+    # 🧭 Режим шару «Старий МММ» у Черзі-4. Старий МММ = контраріанський магніт
+    #    ліквідності (fa−fb): на падаючій монеті зашкалює в LONG (магніт зверху) —
+    #    тобто СИСТЕМНО дивиться проти тренду й не давав збиратись 4/4.
+    #    'require'   — вимагати збіг за напрямком (стара поведінка);
+    #    'ignore'    — НЕ враховувати у ворота (дефолт) → Q4 фактично 3-шарова;
+    #    'contra_ok' — зараховувати, ЯКЩО Старий МММ НЕ сильно ПРОТИ напрямку.
+    'queue4_mm_old_mode': 'ignore',
     'queue4_setup_min': 40,      # Готовність: 25 СЛАБК/40 СЕРЕД/55 ХОРОШ/72 ВІДМІН
     'queue4_require_runway': True,  # Запас (runway) має бути у бік напрямку
     'queue4_ttl_hours': 3,          # протермінувати запис Черги-4 через N год (0=без ліміту)
@@ -852,6 +859,8 @@ class FuelFilterDaemon:
         # ── Черга-4 ──
         s['queue4_enabled'] = bool(s.get('queue4_enabled', False))
         s['queue4_require_runway'] = bool(s.get('queue4_require_runway', True))
+        if s.get('queue4_mm_old_mode') not in ('require', 'ignore', 'contra_ok'):
+            s['queue4_mm_old_mode'] = 'ignore'
         try:
             s['queue4_ttl_hours'] = max(0, min(72, float(s.get('queue4_ttl_hours', 3) or 0)))
         except (TypeError, ValueError):
@@ -5480,10 +5489,22 @@ class FuelFilterDaemon:
         fn = self._fuel_dir_smoothed(sym) or {}
         nd = fn.get('status'); ns = int(round(abs(float(fn.get('dir') or 0)) * 100))
         add('mm_new', 'Новий МММ', nd == side and ns >= mmn_min, f"{nd or '—'} {ns}%")
-        # 2) Старий МММ
+        # 2) Старий МММ — режим шару (контраріанський магніт ліквідності).
+        opp = 'SHORT' if side == 'LONG' else 'LONG'
+        _old_mode = str(s.get('queue4_mm_old_mode', 'ignore') or 'ignore').lower()
         fo = self._fuel_dir_legacy(sym) or {}
         od = fo.get('status'); os_ = int(fo.get('strength') or 0)
-        add('mm_old', 'Старий МММ', od == side and os_ >= mmo_min, f"{od or '—'} {os_}%")
+        if _old_mode == 'require':
+            _old_ok = (od == side and os_ >= mmo_min)
+            _old_detail = f"{od or '—'} {os_}%"
+        elif _old_mode == 'contra_ok':
+            _against = (od == opp and os_ >= mmo_min)   # сильно ПРОТИ напрямку
+            _old_ok = (not _against)
+            _old_detail = f"{od or '—'} {os_}% " + ('⛔ проти' if _against else '✓ не проти')
+        else:   # 'ignore' — не враховуємо у ворота (Q4 фактично 3-шарова)
+            _old_ok = True
+            _old_detail = f"{od or '—'} {os_}% (ігнор)"
+        add('mm_old', 'Старий МММ', _old_ok, _old_detail)
         # 3) Готовність (grade_setup кеш)
         su = self._setup_cache.get(sym) or {}
         sd = su.get('dir'); ss = su.get('score') or 0

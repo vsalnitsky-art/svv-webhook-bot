@@ -2386,7 +2386,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <summary class="sm-settings-summary">⚙️ Налаштування (Черга-4) <span class="sm-settings-summary-right" style="color:#8b93a7">складність шарів</span></summary>
                 <div style="padding:10px 12px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,0.06)">
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна сила НОВОГО МММ у бік сигналу.">Новий МММ ≥ <select id="ff-queue4-mmnew" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна сила СТАРОГО МММ у бік сигналу.">Старий МММ ≥ <select id="ff-queue4-mmold" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна сила СТАРОГО МММ у бік сигналу (діє лише в режимі «вимагати»).">Старий МММ ≥ <select id="ff-queue4-mmold" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Режим шару «Старий МММ». Старий МММ — контраріанський магніт ліквідності: на падаючій монеті зашкалює в LONG, тобто СИСТЕМНО проти тренду й не давав збиратись 4/4. • Вимагати — має збігтись за напрямком (стара поведінка). • Ігнорувати (рек.) — не враховувати у ворота, Черга-4 стає 3-шаровою. • Контр-OK — зараховувати, якщо Старий МММ НЕ сильно ПРОТИ напрямку.">Старий МММ у воротах <select id="ff-queue4-mmold-mode" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="require">вимагати</option><option value="ignore">ігнорувати</option><option value="contra_ok">контр-OK</option></select></label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна Готовність (grade_setup) у бік сигналу.">Готовність ≥ <select id="ff-queue4-setup" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="25">СЛАБКИЙ</option><option value="40">СЕРЕДНІЙ</option><option value="55">ХОРОШИЙ</option><option value="72">ВІДМІННИЙ</option></select></label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Вимагати, щоб ЗАПАС (runway з TradingView-скрипта) був у бік сигналу.">
                         <input type="checkbox" id="ff-queue4-runway" onchange="saveFuelFilterSettings()"> 🎯 Запас у бік
@@ -9233,6 +9234,7 @@ function renderFuelFilter(d) {
     setIf('ff-queue4-enabled', !!s.queue4_enabled);
     setIf('ff-queue4-mmnew', String(s.queue4_mm_new_min != null ? s.queue4_mm_new_min : 30));
     setIf('ff-queue4-mmold', String(s.queue4_mm_old_min != null ? s.queue4_mm_old_min : 10));
+    setIf('ff-queue4-mmold-mode', s.queue4_mm_old_mode || 'ignore');
     setIf('ff-queue4-setup', String(s.queue4_setup_min != null ? s.queue4_setup_min : 40));
     setIf('ff-queue4-runway', s.queue4_require_runway !== false);
     setIf('ff-queue4-ttl', String(s.queue4_ttl_hours != null ? s.queue4_ttl_hours : 3));
@@ -10158,6 +10160,7 @@ async function saveFuelFilterSettings() {
         queue4_enabled: _c('ff-queue4-enabled'),
         queue4_mm_new_min: parseInt(_v('ff-queue4-mmnew', '30') || '30', 10),
         queue4_mm_old_min: parseInt(_v('ff-queue4-mmold', '10') || '10', 10),
+        queue4_mm_old_mode: _v('ff-queue4-mmold-mode', 'ignore') || 'ignore',
         queue4_setup_min: parseInt(_v('ff-queue4-setup', '40') || '40', 10),
         queue4_require_runway: _c('ff-queue4-runway'),
         queue4_ttl_hours: parseFloat(_v('ff-queue4-ttl', '3') || '3'),
