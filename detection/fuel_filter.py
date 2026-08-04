@@ -256,6 +256,13 @@ DEFAULT_SETTINGS = {
     #    'contra_ok' — зараховувати, ЯКЩО Старий МММ НЕ сильно ПРОТИ напрямку.
     'queue4_mm_old_mode': 'ignore',
     'queue4_setup_min': 40,      # Готовність: 25 СЛАБК/40 СЕРЕД/55 ХОРОШ/72 ВІДМІН
+    # 🚧 Фільтр ВХОДУ в Чергу-4: перед допуском сигналу дочекатись ПОВНОГО
+    #    визначення всіх шарів і перевірити скільки з них збіглось за напрямком.
+    #    Якщо менше за queue4_entry_min_layers — сигнал НЕ пускати в чергу взагалі.
+    #    Поки шари ще не визначені (напр. Готовність рахується) — сигнал ЧЕКАЄ, не
+    #    ріжеться. Дефолт: увімкнено, поріг 4 (усі шари мають збігтись на вході).
+    'queue4_entry_gate': True,
+    'queue4_entry_min_layers': 4,
     'queue4_require_runway': True,  # Запас (runway) має бути у бік напрямку
     'queue4_ttl_hours': 3,          # протермінувати запис Черги-4 через N год (0=без ліміту)
     # 🔥 Виснаженість Черги-4: НЕ відкривати угоду, якщо хід уже виснажений понад
@@ -861,6 +868,11 @@ class FuelFilterDaemon:
         s['queue4_require_runway'] = bool(s.get('queue4_require_runway', True))
         if s.get('queue4_mm_old_mode') not in ('require', 'ignore', 'contra_ok'):
             s['queue4_mm_old_mode'] = 'ignore'
+        s['queue4_entry_gate'] = bool(s.get('queue4_entry_gate', True))
+        try:
+            s['queue4_entry_min_layers'] = max(1, min(4, int(s.get('queue4_entry_min_layers', 4) or 4)))
+        except (TypeError, ValueError):
+            s['queue4_entry_min_layers'] = 4
         try:
             s['queue4_ttl_hours'] = max(0, min(72, float(s.get('queue4_ttl_hours', 3) or 0)))
         except (TypeError, ValueError):
@@ -1133,6 +1145,22 @@ class FuelFilterDaemon:
                              or self._tm_has_position(sym, True)
                              or self._tm_has_position(sym, False))
 
+        # 🚧 ФІЛЬТР ВХОДУ в Чергу-4: рахуємо шари ПРЯМО ЗАРАЗ (поза локом — важкі
+        # читання liqmap/кешу). Якщо всі шари вже ВИЗНАЧЕНІ і збіг < порога —
+        # сигнал у Чергу-4 НЕ пускаємо. Поки шари ще не визначені (Готовність
+        # рахується) — не ріжемо, даємо запису зачекати (engine добере/викине).
+        _q4_gate_reject = False
+        if q4 and not _already_open and bool(s.get('queue4_entry_gate', True)):
+            try:
+                _lay0 = self._queue4_layers(sym, side, s)
+                _min_lay = int(s.get('queue4_entry_min_layers', 4) or 4)
+                if _lay0.get('determined') and int(_lay0.get('base', 0)) < _min_lay:
+                    _q4_gate_reject = True
+                    _q4_gate_have = int(_lay0.get('base', 0))
+                    _q4_gate_need = _min_lay
+            except Exception as _e:
+                _q4_gate_reject = False
+
         def _is_stale(prev):
             # Same direction but a DIFFERENT signal TYPE → the queued one is stale.
             return bool(prev and prev.get('dir') == side
@@ -1168,7 +1196,7 @@ class FuelFilterDaemon:
                                        'added_price': (prev3.get('added_price') if _keep3
                                                        else _apx) or _apx}
                 changed = True
-            if q4 and not _already_open:
+            if q4 and not _already_open and not _q4_gate_reject:
                 # 🎯 Усі шари — приймаємо ВСІ сигнали (обидва боки), НЕ фільтруємо
                 # кнопками. Протилежний сигнал СТИРАЄ попередній запис (новий бере
                 # його місце). Ціна входу — щоб бачити рух, поки монета чекає.
@@ -1218,7 +1246,12 @@ class FuelFilterDaemon:
                 self._log_coin_mm(sym, 'queued')   # МММ монети у «Лог роботи бота»
         if q3:
             log_activity(sym, 'queued', f'Черга-3 🎯 Готовність · {_kind_lbl}{_sc_ctr_sfx}', side=side, source='Q3')
-        if q4 and not _already_open:
+        if q4 and not _already_open and _q4_gate_reject:
+            log_activity(sym, 'skipped',
+                         f'Черга-4 🚧 фільтр входу: збіг {_q4_gate_have}/4 < {_q4_gate_need} '
+                         f'(усі шари визначені, напрямок не підтверджено) — не пропущено',
+                         side=side, source='Q4')
+        elif q4 and not _already_open:
             _r4 = ' · протилежний сигнал стер попередній запис' if q4_ejected else ''
             log_activity(sym, 'queued', f'Черга-4 🎯 Усі шари · {_kind_lbl}{_r4}{_sc_ctr_sfx}', side=side, source='Q4')
         # ENTRY-score + CTR-state suffix for Q2 records (the SETUP metric).
@@ -5475,9 +5508,13 @@ class FuelFilterDaemon:
           4) Запас      — runway (TradingView-показник): напрямок у бік (якщо
              queue4_require_runway). Повертає {count, base(=4), layers[], + сирі поля}."""
         layers = []
-        def add(key, label, ok, detail):
+        def add(key, label, ok, detail, det=True):
+            # `det` = чи шар ВЖЕ ВИЗНАЧЕНИЙ (порахований). Потрібно для фільтра
+            # входу: рішення про допуск у Чергу-4 ухвалюємо лише коли ВСІ шари
+            # визначені (Готовність рахується з тротлом → часто ще None на старті).
             layers.append({'key': key, 'label': label, 'ok': bool(ok),
-                           'dir': (side if ok else None), 'detail': detail})
+                           'dir': (side if ok else None), 'detail': detail,
+                           'det': bool(det)})
         try: mmn_min = float(s.get('queue4_mm_new_min', 30) or 0)
         except (TypeError, ValueError): mmn_min = 30.0
         try: mmo_min = float(s.get('queue4_mm_old_min', 10) or 0)
@@ -5488,7 +5525,8 @@ class FuelFilterDaemon:
         # 1) Новий МММ
         fn = self._fuel_dir_smoothed(sym) or {}
         nd = fn.get('status'); ns = int(round(abs(float(fn.get('dir') or 0)) * 100))
-        add('mm_new', 'Новий МММ', nd == side and ns >= mmn_min, f"{nd or '—'} {ns}%")
+        add('mm_new', 'Новий МММ', nd == side and ns >= mmn_min, f"{nd or '—'} {ns}%",
+            det=bool(fn))
         # 2) Старий МММ — режим шару (контраріанський магніт ліквідності).
         opp = 'SHORT' if side == 'LONG' else 'LONG'
         _old_mode = str(s.get('queue4_mm_old_mode', 'ignore') or 'ignore').lower()
@@ -5504,19 +5542,26 @@ class FuelFilterDaemon:
         else:   # 'ignore' — не враховуємо у ворота (Q4 фактично 3-шарова)
             _old_ok = True
             _old_detail = f"{od or '—'} {os_}% (ігнор)"
-        add('mm_old', 'Старий МММ', _old_ok, _old_detail)
-        # 3) Готовність (grade_setup кеш)
+        # У режимі «ігнорувати» шар завжди визначений; інакше — коли є дані legacy.
+        add('mm_old', 'Старий МММ', _old_ok, _old_detail,
+            det=(_old_mode == 'ignore') or bool(fo))
+        # 3) Готовність (grade_setup кеш). Визначений ЛИШЕ коли вже є в кеші —
+        # інакше «ще рахується» (тротл), і фільтр входу має ЧЕКАТИ, а не різати.
+        _setup_ready = (sym in self._setup_cache)
         su = self._setup_cache.get(sym) or {}
         sd = su.get('dir'); ss = su.get('score') or 0
         add('setup', 'Готовність', bool(su.get('ok')) and sd == side and ss >= su_min,
-            f"{su.get('grade') or '—'} {ss}")
-        # 4) Запас (runway)
+            f"{su.get('grade') or '—'} {ss}" + ('' if _setup_ready else ' (рахується…)'),
+            det=_setup_ready)
+        # 4) Запас (runway) — визначений, коли є дані МММ (runway приходить із них).
         rw = (fn.get('runway') or {})
         rd = rw.get('dir'); rr = rw.get('room_pct')
         add('runway', 'Запас', (not req_rw) or (rd == side),
-            f"{rd or '—'}" + (f" {rr}%" if rr is not None else ''))
+            f"{rd or '—'}" + (f" {rr}%" if rr is not None else ''),
+            det=(not req_rw) or bool(fn))
         base = sum(1 for l in layers if l['ok'])
         return {'count': base, 'base': base, 'layers': layers,
+                'determined': all(l['det'] for l in layers),
                 'mm_new': {'dir': nd, 'str': ns},
                 'mm_old': {'dir': od, 'str': os_},
                 'setup': (su if su.get('ok') else None),
@@ -5566,6 +5611,23 @@ class FuelFilterDaemon:
             if not mark:
                 continue
             lay = self._queue4_layers(sym, d, s)
+            # 🚧 Фільтр входу (пост-визначення): запис міг зайти, поки шари ще
+            # рахувались. Коли всі шари ВИЗНАЧЕНІ, а збіг < порога — викидаємо з
+            # черги (не тримаємо до TTL), як і задумано «якщо не відповідають — не
+            # пропускати». Поки не визначені — чекаємо.
+            if bool(s.get('queue4_entry_gate', True)):
+                try:
+                    _min_lay = int(s.get('queue4_entry_min_layers', 4) or 4)
+                except (TypeError, ValueError):
+                    _min_lay = 4
+                if lay.get('determined') and int(lay.get('base', 0)) < _min_lay:
+                    with self._lock:
+                        self._pending4.pop(sym, None); self._persist_state()
+                    log_activity(sym, 'skipped',
+                                 f'Черга-4 🚧 фільтр входу: збіг {int(lay.get("base",0))}/4 < '
+                                 f'{_min_lay} (шари визначені) — прибрано з черги',
+                                 side=d, source='Q4')
+                    continue
             if lay.get('base', 0) < 4:
                 continue   # ще не всі 4 шари збіглись — чекаємо
             # 🔥 Виснаженість — ЄДИНИЙ запобіжник Q4: не відкривати вичерпаний хід.
