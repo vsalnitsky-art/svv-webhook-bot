@@ -257,12 +257,14 @@ DEFAULT_SETTINGS = {
     'queue4_mm_old_mode': 'ignore',
     'queue4_setup_min': 40,      # Готовність: 25 СЛАБК/40 СЕРЕД/55 ХОРОШ/72 ВІДМІН
     # 🚧 Фільтр ВХОДУ в Чергу-4: перед допуском сигналу дочекатись ПОВНОГО
-    #    визначення всіх шарів і перевірити скільки з них збіглось за напрямком.
-    #    Якщо менше за queue4_entry_min_layers — сигнал НЕ пускати в чергу взагалі.
-    #    Поки шари ще не визначені (напр. Готовність рахується) — сигнал ЧЕКАЄ, не
-    #    ріжеться. Дефолт: увімкнено, поріг 4 (усі шари мають збігтись на вході).
+    #    визначення всіх шарів і перевірити, скільки ПОКАЗНИКІВ реально дивляться
+    #    в бік сигналу (сирий напрямок Новий/Старий МММ/Готовність/Запас, БЕЗ
+    #    порогів сили й БЕЗ авто-ok «ігнору»). Якщо менше за queue4_entry_min_layers
+    #    — сигнал у чергу НЕ пускати (немає сенсу: жоден показник не за напрямком).
+    #    Поки шари ще не визначені (Готовність рахується) — сигнал ЧЕКАЄ, не ріжеться.
+    #    Дефолт: увімкнено, поріг 1 (має бути ХОЧА Б ОДИН показник у бік сигналу).
     'queue4_entry_gate': True,
-    'queue4_entry_min_layers': 4,
+    'queue4_entry_min_layers': 1,
     'queue4_require_runway': True,  # Запас (runway) має бути у бік напрямку
     'queue4_ttl_hours': 3,          # протермінувати запис Черги-4 через N год (0=без ліміту)
     # 🔥 Виснаженість Черги-4: НЕ відкривати угоду, якщо хід уже виснажений понад
@@ -870,9 +872,9 @@ class FuelFilterDaemon:
             s['queue4_mm_old_mode'] = 'ignore'
         s['queue4_entry_gate'] = bool(s.get('queue4_entry_gate', True))
         try:
-            s['queue4_entry_min_layers'] = max(1, min(4, int(s.get('queue4_entry_min_layers', 4) or 4)))
+            s['queue4_entry_min_layers'] = max(1, min(4, int(s.get('queue4_entry_min_layers', 1) or 1)))
         except (TypeError, ValueError):
-            s['queue4_entry_min_layers'] = 4
+            s['queue4_entry_min_layers'] = 1
         try:
             s['queue4_ttl_hours'] = max(0, min(72, float(s.get('queue4_ttl_hours', 3) or 0)))
         except (TypeError, ValueError):
@@ -1153,10 +1155,11 @@ class FuelFilterDaemon:
         if q4 and not _already_open and bool(s.get('queue4_entry_gate', True)):
             try:
                 _lay0 = self._queue4_layers(sym, side, s)
-                _min_lay = int(s.get('queue4_entry_min_layers', 4) or 4)
-                if _lay0.get('determined') and int(_lay0.get('base', 0)) < _min_lay:
+                _min_lay = int(s.get('queue4_entry_min_layers', 1) or 1)
+                # Рахуємо ПОКАЗНИКИ у бік сигналу (aligned), а не «ok»-ворота.
+                if _lay0.get('determined') and int(_lay0.get('aligned', 0)) < _min_lay:
                     _q4_gate_reject = True
-                    _q4_gate_have = int(_lay0.get('base', 0))
+                    _q4_gate_have = int(_lay0.get('aligned', 0))
                     _q4_gate_need = _min_lay
             except Exception as _e:
                 _q4_gate_reject = False
@@ -1248,7 +1251,7 @@ class FuelFilterDaemon:
             log_activity(sym, 'queued', f'Черга-3 🎯 Готовність · {_kind_lbl}{_sc_ctr_sfx}', side=side, source='Q3')
         if q4 and not _already_open and _q4_gate_reject:
             log_activity(sym, 'skipped',
-                         f'Черга-4 🚧 фільтр входу: збіг {_q4_gate_have}/4 < {_q4_gate_need} '
+                         f'Черга-4 🚧 фільтр входу: {_q4_gate_have}/4 показників у бік < {_q4_gate_need} '
                          f'(усі шари визначені, напрямок не підтверджено) — не пропущено',
                          side=side, source='Q4')
         elif q4 and not _already_open:
@@ -5560,7 +5563,11 @@ class FuelFilterDaemon:
             f"{rd or '—'}" + (f" {rr}%" if rr is not None else ''),
             det=(not req_rw) or bool(fn))
         base = sum(1 for l in layers if l['ok'])
-        return {'count': base, 'base': base, 'layers': layers,
+        # 🚧 «aligned» = скільки ПОКАЗНИКІВ реально дивляться в бік сигналу (сирий
+        # напрямок, БЕЗ порогів сили й БЕЗ авто-ok режиму «ігнорувати»). Саме це
+        # рахує фільтр входу: якщо жоден показник не за напрямком — сигнал зайвий.
+        aligned = sum(1 for x in (nd, od, sd, rd) if x == side)
+        return {'count': base, 'base': base, 'aligned': aligned, 'layers': layers,
                 'determined': all(l['det'] for l in layers),
                 'mm_new': {'dir': nd, 'str': ns},
                 'mm_old': {'dir': od, 'str': os_},
@@ -5617,15 +5624,15 @@ class FuelFilterDaemon:
             # пропускати». Поки не визначені — чекаємо.
             if bool(s.get('queue4_entry_gate', True)):
                 try:
-                    _min_lay = int(s.get('queue4_entry_min_layers', 4) or 4)
+                    _min_lay = int(s.get('queue4_entry_min_layers', 1) or 1)
                 except (TypeError, ValueError):
-                    _min_lay = 4
-                if lay.get('determined') and int(lay.get('base', 0)) < _min_lay:
+                    _min_lay = 1
+                if lay.get('determined') and int(lay.get('aligned', 0)) < _min_lay:
                     with self._lock:
                         self._pending4.pop(sym, None); self._persist_state()
                     log_activity(sym, 'skipped',
-                                 f'Черга-4 🚧 фільтр входу: збіг {int(lay.get("base",0))}/4 < '
-                                 f'{_min_lay} (шари визначені) — прибрано з черги',
+                                 f'Черга-4 🚧 фільтр входу: {int(lay.get("aligned",0))}/4 показників '
+                                 f'у бік < {_min_lay} (шари визначені) — прибрано з черги',
                                  side=d, source='Q4')
                     continue
             if lay.get('base', 0) < 4:
