@@ -4292,10 +4292,15 @@ def register_api_routes(app):
         data = request.get_json() or {}
         symbols = [str(x).upper().strip() for x in (data.get('symbols') or []) if x]
         existing = set(s.get_watchlist())
-        added, already, skipped = [], [], []
+        # ✅ Наявність на Bybit (бот торгує лише там). None = не вдалось → fail-open.
+        bybit_set = _bybit_linear_symbols()
+        added, already, skipped, not_on_bybit = [], [], [], []
         for sym in symbols:
             if sym in existing:
                 already.append(sym)        # duplicate — do not load
+                continue
+            if bybit_set is not None and sym not in bybit_set:
+                not_on_bybit.append(sym)
                 continue
             r = s.add_symbol(sym, source='tickr_ff')
             if r.get('ok'):
@@ -4314,7 +4319,8 @@ def register_api_routes(app):
             else:
                 skipped.append(sym)
         return jsonify({'ok': True, 'added': added, 'already': already,
-                        'skipped': skipped, 'watchlist': s.get_watchlist()})
+                        'skipped': skipped, 'not_on_bybit': not_on_bybit,
+                        'watchlist': s.get_watchlist()})
 
     @app.route('/api/tickr/opportunity/ff-clear-watchlist', methods=['POST'])
     def api_tickr_opp_ff_clear_watchlist():
@@ -4353,6 +4359,48 @@ def register_api_routes(app):
         """Reject dated/delivery futures (e.g. ETHUSDT-03JUL26) — they carry a
         '-' suffix. Only standard perps belong in the FF-добірка."""
         return bool(sym) and '-' not in sym
+
+    # Cache of Bybit LINEAR perpetuals currently in 'Trading' status. The
+    # FF-добірка is built from a MULTI-exchange «Top Active» list, so some coins
+    # simply don't exist on Bybit — the bot trades ONLY Bybit, so those must be
+    # rejected before they pollute the WATCHLIST (klines/orders would fail).
+    _bybit_syms_cache = {'ts': 0.0, 'set': None}
+
+    def _bybit_linear_symbols(force=False):
+        """Set of Bybit linear symbols (e.g. {'BTCUSDT', ...}) that are LIVE
+        ('Trading'). Cached 10 min. Returns None if the fetch fails — callers
+        must FAIL-OPEN (don't block a transfer on a transient network error)."""
+        import time as _t
+        now = _t.time()
+        c = _bybit_syms_cache
+        if (not force) and c['set'] is not None and (now - c['ts']) < 600:
+            return c['set']
+        syms = set()
+        try:
+            from detection.tickr_core import _get_json
+            cursor = ''
+            for _ in range(20):   # paginate defensively (1000/page)
+                params = {'category': 'linear', 'limit': 1000}
+                if cursor:
+                    params['cursor'] = cursor
+                data = _get_json('https://api.bybit.com/v5/market/instruments-info', params)
+                result = (data.get('result') or {}) if isinstance(data, dict) else {}
+                for ins in (result.get('list') or []):
+                    if str(ins.get('status')) != 'Trading':
+                        continue
+                    nm = str(ins.get('symbol') or '').upper().strip()
+                    if nm:
+                        syms.add(nm)
+                cursor = result.get('nextPageCursor', '')
+                if not cursor:
+                    break
+        except Exception as e:
+            print(f"[FF-добірка→WL] Bybit symbol fetch error: {e}")
+            return None   # couldn't verify → fail-open
+        if syms:
+            c['ts'] = now
+            c['set'] = syms
+        return syms or None
 
     @app.route('/api/ff-dobirka', methods=['GET'])
     def api_ff_dobirka_get():
@@ -4426,10 +4474,18 @@ def register_api_routes(app):
         # with number-prefixed symbols (1000PEPE…) pushed to the bottom.
         to_move = sorted(to_move, key=lambda x: (x[:1].isdigit(), x))
         existing = set(s.get_watchlist())
-        added, already, skipped = [], [], []
+        # ✅ Перевірка НАЯВНОСТІ на Bybit: бот торгує ЛИШЕ на Bybit, тож монети з
+        # «Top Active», яких немає в лінійних перпах Bybit, у WATCHLIST не пускаємо
+        # (інакше klines/ордери по них просто падають). None = не вдалось перевірити
+        # (мережа) → fail-open, не блокуємо передачу.
+        bybit_set = _bybit_linear_symbols()
+        added, already, skipped, not_on_bybit = [], [], [], []
         for sym in to_move:
             if sym in existing:
                 already.append(sym)
+                continue
+            if bybit_set is not None and sym not in bybit_set:
+                not_on_bybit.append(sym)
                 continue
             r = s.add_symbol(sym, source='tickr_ff')
             if r.get('ok'):
@@ -4447,12 +4503,15 @@ def register_api_routes(app):
             else:
                 skipped.append(sym)
         # Remove the moved coins from staging (unless keep=true keeps everything).
+        # Coins NOT on Bybit stay in staging (not «moved») so the user sees which
+        # were rejected and can drop them manually.
         if not keep:
             moved = set(added) | set(already)   # already-present count as handled
             remaining = [s0 for s0 in staging if s0 not in moved]
             _ff_dobirka_save(remaining)
         return jsonify({'ok': True, 'added': added, 'already': already,
-                        'skipped': skipped, 'kept': keep,
+                        'skipped': skipped, 'not_on_bybit': not_on_bybit,
+                        'kept': keep,
                         'symbols': _ff_dobirka_load(),
                         'watchlist': s.get_watchlist()})
 

@@ -549,9 +549,15 @@ async function ffDobToWatchlist() {
         });
         const d = await res.json();
         if (d.ok) {
+            const nob = d.not_on_bybit || [];
             stat.textContent = `✅ У WATCHLIST: +${(d.added||[]).length} додано`
                 + ((d.already && d.already.length) ? `, вже було: ${d.already.length}` : '')
-                + ((d.skipped && d.skipped.length) ? `, пропущено: ${d.skipped.length}` : '');
+                + ((d.skipped && d.skipped.length) ? `, пропущено: ${d.skipped.length}` : '')
+                + (nob.length ? `, ❌ немає на Bybit: ${nob.length}` : '');
+            if (nob.length) {
+                alert('❌ Немає на Bybit (у WATCHLIST не додано, лишились у добірці):\n'
+                    + nob.join(', '));
+            }
             ffDobRender(d.symbols);
         } else {
             stat.textContent = '❌ ' + (d.reason || 'не вдалось');
@@ -841,9 +847,12 @@ async function ffOppLoad() {
     const d = await res.json();
     const stat = document.getElementById('ffopp-stat');
     if (!d.ok) { stat.textContent = '❌ ' + (d.reason || 'fail'); return; }
+    const nob = d.not_on_bybit || [];
     stat.textContent = `✅ Залито +${(d.added||[]).length} (📡 Tickr · FF+TRD)`
         + `, дублікатів пропущено: ${(d.already||[]).length}`
-        + ((d.skipped||[]).length ? `, не вдалось: ${d.skipped.length}` : '');
+        + ((d.skipped||[]).length ? `, не вдалось: ${d.skipped.length}` : '')
+        + (nob.length ? `, ❌ немає на Bybit: ${nob.length}` : '');
+    if (nob.length) alert('❌ Немає на Bybit (не залито):\n' + nob.join(', '));
 }
 
 async function ffOppClear() {
