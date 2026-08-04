@@ -48,6 +48,10 @@ CLOSED_TRADES_LIMIT = 2_000   # IN-MEMORY / UI rolling cap only. EVERY closed
                             # (each trade carries its chronology) from growing
                             # unbounded and OOM-killing the 512MB Render instance.
                             # Raise only with more RAM; full history lives in DB.
+STATE_CLOSED_LIMIT = 50      # /api/tm/state (щосекундний полінг) віддає ЛИШЕ
+                            # стільки останніх закритих у ЖИВІЙ стрічці — щоб не
+                            # серіалізувати тисячі рядків щополінгу (це гальмувало
+                            # сторінку). ВСЯ історія — через «📚 За весь час (БД)».
 INITIAL_DELAY_SECS = 20      # wait at startup before first tick
 TRADE_LOG_MAX = 5000         # max per-trade time-series samples kept (safety cap)
 
@@ -4847,10 +4851,11 @@ class TradeManager:
                     pos_dict['hold'] = hold
                 positions.append(_lite_trade(pos_dict))
             
-            # Віддаємо ВЕСЬ список закритих (обмежений CLOSED_TRADES_LIMIT у
-            # памʼяті), а не лише останні 50 — щоб таблиця показувала стільки ж,
-            # скільки й статистика (total_closed), і «Копіювати» брало все.
-            closed = [_lite_trade(c) for c in self._closed_trades]
+            # ⚡ Жива стрічка = ЛИШЕ останні STATE_CLOSED_LIMIT записів (легкий
+            # полінг). ВСЮ історію (total_closed) показує кнопка «📚 За весь час
+            # (БД)» окремим запитом /api/trade-archive/export — щоб щосекундний
+            # /api/tm/state НЕ серіалізував тисячі рядків (це й гальмувало сторінку).
+            closed = [_lite_trade(c) for c in self._closed_trades[-STATE_CLOSED_LIMIT:]]
 
             # Stats — real
             total_closed = len(self._closed_trades)
@@ -4879,7 +4884,7 @@ class TradeManager:
                 if hold is not None:
                     pos_dict['hold'] = hold
                 shadow_positions.append(_lite_trade(pos_dict))
-            shadow_closed = [_lite_trade(c) for c in self._shadow_closed]  # весь список
+            shadow_closed = [_lite_trade(c) for c in self._shadow_closed[-STATE_CLOSED_LIMIT:]]  # жива стрічка — останні N
             
             # Stats — shadow
             sh_total = len(self._shadow_closed)
