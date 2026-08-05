@@ -1858,6 +1858,24 @@ class TradeManager:
         # _send_alert (before its OB/PD/Forecast filters), so it isn't repeated
         # here. This method logs only the OUTCOME (queued/opened/skipped/…).
 
+        # 🟪 ДЖЕРЕЛО СИГНАЛУ: якщо FF-джерело = лише «vob» (Volumized OB Alerts),
+        # то CHoCH/CHoCH+BOS зі SMC-сканера ІГНОРУЄМО (не відкриваємо, не чергуємо).
+        # 'both' — CHoCH проходить; 'choch' (дефолт) — теж. Гейт лише коли FF увімк.
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            _ffsrc = get_fuel_filter()
+            if _ffsrc and _ffsrc.is_enabled():
+                _src = str(_ffsrc.get_settings().get('signal_source', 'choch') or 'choch').lower()
+                if opened_by in ('choch', 'choch_bos') and _src not in ('choch', 'both'):
+                    log_activity(symbol, 'skipped',
+                                 f'CHoCH-джерело вимкнено (сигнали = {_src}) — ігнор',
+                                 side=side, source='TM')
+                    return {'real_opened': False, 'shadow_opened': False,
+                            'status': 'rejected', 'is_paper': False,
+                            'reason': f'Джерело сигналу = {_src}: CHoCH ігнорується'}
+        except Exception:
+            pass
+
         with self._lock:
             existing_real = self._positions.get(symbol)
             existing_shadow = self._shadow_positions.get(symbol)

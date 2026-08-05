@@ -2003,6 +2003,41 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span style="font-size:0.74rem;font-weight:600;color:#cbd5e1">⚙️ Налаштування</span>
                 </div>
                 <div id="ff-settings-body" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015)">
+                    <!-- 🟪 Джерело сигналу + Volumized OB Alerts (новий тип сигналу) -->
+                    <div style="margin-bottom:12px;padding:10px 12px;border:1px solid rgba(168,85,247,0.25);border-radius:6px;background:rgba(168,85,247,0.05)">
+                        <div style="font-size:0.72rem;font-weight:700;color:#c9b8ff;margin-bottom:8px">🟪 Джерело сигналу · Volumized OB Alerts</div>
+                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Який тип сигналу живить черги: CHoCH/CHoCH+BOS (зі SMC-сканера, як зараз), Volumized OB (новий тип — сканер нижче), або Обидва. Обери потрібний, щоб чітко працював саме він.">Тип сигналу</label>
+                                <select id="ff-signal-source" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace"><option value="choch">CHoCH / CHoCH+BOS</option><option value="vob">Volumized OB</option><option value="both">Обидва</option></select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Таймфрейм детектора Volumized OB. За замовч. 15M. Інші TF працюють зі своїми свічками.">VOB · TF</label>
+                                <select id="ff-vob-tf" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace"><option value="1m">1m</option><option value="3m">3m</option><option value="5m">5m</option><option value="15m">15m</option><option value="30m">30m</option><option value="1h">1h</option><option value="4h">4h</option></select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Swing Length детектора (Pine swingLength). За замовч. 5.">Swing Length</label>
+                                <input type="number" id="ff-vob-swing" min="2" max="100" step="1" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace" onchange="saveFuelFilterSettings()">
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Zone Invalidation (Pine obEndMethod): Wick або Close.">Zone Invalidation</label>
+                                <select id="ff-vob-zinval" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace"><option value="Wick">Wick</option><option value="Close">Close</option></select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Max ATR Mult (Pine maxATRMult). За замовч. 3.5.">Max ATR Mult</label>
+                                <input type="number" id="ff-vob-atr" min="0.5" max="20" step="0.1" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace" onchange="saveFuelFilterSettings()">
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Zone Count (Pine zoneCount): One / Low(3) / Medium / High.">Zone Count</label>
+                                <select id="ff-vob-zcount" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace"><option value="One">One</option><option value="Low">Low (3)</option><option value="Medium">Medium</option><option value="High">High</option></select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Обмежувач навантаження: скільки монет зі скан-листа перевіряти на новий Volumized OB за один цикл (~30с), ротація по черзі. Вище = швидше покриття, більше запитів.">Монет/цикл</label>
+                                <input type="number" id="ff-vob-cap" min="1" max="200" step="1" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.4);background:rgba(0,0,0,0.25);color:#e9d5ff;font-family:monospace" onchange="saveFuelFilterSettings()">
+                            </div>
+                        </div>
+                        <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 Сигнал спрацьовує ОДНОРАЗОВО на КОЖНИЙ НОВИЙ Volumized OB (за formation_time) і одразу йде в ту саму обробку (черги), що й CHoCH — за напрямком OB (bullish=LONG / bearish=SHORT). Дефолт: 15M · Swing 5 · Wick · ATR×3.5 · Zone Low(3). Щоб працював саме цей тип — постав «Тип сигналу: Volumized OB».</div>
+                    </div>
                     <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
                         <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Згладжування напрямку МММ для МОНЕТ (EMA+гістерезис, хв). 0 = ВИМКНЕНО (сире бабло, без затримки).">Згладжування напрямку монет (хв)</label>
@@ -9221,6 +9256,13 @@ function renderFuelFilter(d) {
     setIf('ff-use-potential', s.use_potential_exit);
     setIf('ff-manage-positions', s.manage_open_positions !== false);  // default true
     setIf('ff-mmm-limited', s.mmm_limited_mode !== false);  // default true
+    setIf('ff-signal-source', s.signal_source || 'choch');
+    setIf('ff-vob-tf', s.vob_alerts_tf || '15m');
+    setIf('ff-vob-swing', String(s.vob_alert_swing != null ? s.vob_alert_swing : 5));
+    setIf('ff-vob-zinval', s.vob_alert_zone_inval || 'Wick');
+    setIf('ff-vob-atr', String(s.vob_alert_atr_mult != null ? s.vob_alert_atr_mult : 3.5));
+    setIf('ff-vob-zcount', s.vob_alert_zone_count || 'Low');
+    setIf('ff-vob-cap', String(s.vob_alert_max_per_cycle != null ? s.vob_alert_max_per_cycle : 25));
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
     setIf('ff-manage-close-mm', String(s.manage_close_min_mm != null ? s.manage_close_min_mm : 0));
@@ -10158,6 +10200,13 @@ async function saveFuelFilterSettings() {
     const payload = {
         manage_open_positions: _c('ff-manage-positions'),
         mmm_limited_mode: _c('ff-mmm-limited'),
+        signal_source: _v('ff-signal-source', 'choch') || 'choch',
+        vob_alerts_tf: _v('ff-vob-tf', '15m') || '15m',
+        vob_alert_swing: parseInt(_v('ff-vob-swing', '5') || '5', 10),
+        vob_alert_zone_inval: _v('ff-vob-zinval', 'Wick') || 'Wick',
+        vob_alert_atr_mult: parseFloat(_v('ff-vob-atr', '3.5') || '3.5'),
+        vob_alert_zone_count: _v('ff-vob-zcount', 'Low') || 'Low',
+        vob_alert_max_per_cycle: parseInt(_v('ff-vob-cap', '25') || '25', 10),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
