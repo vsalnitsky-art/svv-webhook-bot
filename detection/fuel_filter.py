@@ -1165,7 +1165,12 @@ class FuelFilterDaemon:
         # сигнал у Чергу-4 НЕ пускаємо. Поки шари ще не визначені (Готовність
         # рахується) — не ріжемо, даємо запису зачекати (engine добере/викине).
         _q4_gate_reject = False
-        if q4 and not _already_open and bool(s.get('queue4_entry_gate', True)):
+        # 🔁 ВИНЯТОК: якщо в Черзі-4 вже є ПРОТИЛЕЖНИЙ запис — новий сигнал МАЄ
+        # його замінити НЕЗАЛЕЖНО від фільтра входу (нестандартна ситуація). Далі
+        # цей замінений запис приберуть застій/TTL, якщо він стухне.
+        _q4_opp_replace = bool(q4 and not _already_open
+                               and (self._pending4.get(sym) or {}).get('dir') == opp)
+        if q4 and not _already_open and not _q4_opp_replace and bool(s.get('queue4_entry_gate', True)):
             try:
                 _lay0 = self._queue4_layers(sym, side, s)
                 _min_lay = int(s.get('queue4_entry_min_layers', 1) or 1)
@@ -1225,7 +1230,13 @@ class FuelFilterDaemon:
                 self._pending4[sym] = {'dir': side, 'kind': kind,
                                        'added_at': prev4.get('added_at') if _keep4 else now,
                                        'added_price': (prev4.get('added_price') if _keep4
-                                                       else _apx4) or _apx4}
+                                                       else _apx4) or _apx4,
+                                       # заміна протилежним обходить фільтр входу й у
+                                       # двигуні — далі керує лише застій/TTL.
+                                       'gate_exempt': bool(q4_ejected)}
+                if q4_ejected:
+                    # свіже вікно застою для щойно заміненого запису
+                    self._q4_lit_at.pop(sym, None)
                 changed = True
             if q2_take:
                 prev2 = self._pending2.get(sym) or {}
@@ -5656,7 +5667,7 @@ class FuelFilterDaemon:
             # рахувались. Коли всі шари ВИЗНАЧЕНІ, а збіг < порога — викидаємо з
             # черги (не тримаємо до TTL), як і задумано «якщо не відповідають — не
             # пропускати». Поки не визначені — чекаємо.
-            if bool(s.get('queue4_entry_gate', True)):
+            if bool(s.get('queue4_entry_gate', True)) and not info.get('gate_exempt'):
                 try:
                     _min_lay = int(s.get('queue4_entry_min_layers', 1) or 1)
                 except (TypeError, ValueError):
