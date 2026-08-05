@@ -1640,8 +1640,11 @@ class SMCScanner:
                                         from detection.trade_manager import get_trade_manager
                                         _tm = get_trade_manager()
                                         if _tm:
+                                            # ⚠️ opened_by='vob_alert' (НЕ 'vob'!) — щоб
+                                            # funding-очистка _purge_queue_kind('vob') НЕ
+                                            # видаляла VOB-Alert записи (різні джерела).
                                             _tm.on_signal(symbol=symbol, side=_lside,
-                                                          entry_price=_entry, opened_by='vob')
+                                                          entry_price=_entry, opened_by='vob_alert')
                                 except Exception as _ve:
                                     if self._errors <= 5:
                                         print(f"[SMC] VOB-alert error for {symbol}: {_ve}")
