@@ -5643,18 +5643,23 @@ class FuelFilterDaemon:
             mark = fuel.get('mark_price') if fuel else None
             if not mark:
                 continue
+            # Рахуємо шари для ОБОХ напрямків: сигнал зайшов як `d`, але показники
+            # в ході можуть чітко скластись у ПРОТИЛЕЖНИЙ бік — тоді відкриваємо
+            # саме за показниками (фліп). aligned/застій/фільтр — за КРАЩИМ боком.
+            _opp = 'SHORT' if d == 'LONG' else 'LONG'
             lay = self._queue4_layers(sym, d, s)
-            _aligned_now = int(lay.get('aligned', 0))
-            # ⏳ КОВЗНЕ вікно застою: таймер скидається ЩОРАЗУ, коли хоч один
-            # показник світиться в бік (aligned≥1). Якщо N хв ПОСПІЛЬ жоден не
-            # засвітився — викид (працює постійно, для кожної монети, незалежно
-            # чи світилась раніше). In-memory; після рестарту — свіже вікно.
+            lay_o = self._queue4_layers(sym, _opp, s)
+            _al_d = int(lay.get('aligned', 0))
+            _al_o = int(lay_o.get('aligned', 0))
+            _al_best = max(_al_d, _al_o)
+            # ⏳ КОВЗНЕ вікно застою: таймер скидається, коли хоч один показник
+            # світиться в БУДЬ-ЯКИЙ бік (щоб фліп-кандидат не викидало передчасно).
             try:
                 _nl_min = float(s.get('queue4_no_light_min', 30) or 0)
             except (TypeError, ValueError):
                 _nl_min = 30.0
             if _nl_min > 0:
-                if _aligned_now >= 1 or sym not in self._q4_lit_at:
+                if _al_best >= 1 or sym not in self._q4_lit_at:
                     self._q4_lit_at[sym] = now      # засвітився / перший показ → скид
                 if (now - self._q4_lit_at.get(sym, now)) > _nl_min * 60:
                     with self._lock:
@@ -5662,57 +5667,127 @@ class FuelFilterDaemon:
                     self._q4_lit_at.pop(sym, None)
                     log_activity(sym, 'skipped',
                                  f'Черга-4 ⏳ {_nl_min:.0f}хв поспіль жоден показник не '
-                                 'засвітився в бік — прибрано з черги (застій)',
+                                 'засвітився в жоден бік — прибрано з черги (застій)',
                                  side=d, source='Q4')
                     continue
-            # 🚧 Фільтр входу (пост-визначення): запис міг зайти, поки шари ще
-            # рахувались. Коли всі шари ВИЗНАЧЕНІ, а збіг < порога — викидаємо з
-            # черги (не тримаємо до TTL), як і задумано «якщо не відповідають — не
-            # пропускати». Поки не визначені — чекаємо.
+            # 🚧 Фільтр входу (пост-визначення): викид лише коли шари ВИЗНАЧЕНІ і
+            # в ЖОДЕН бік немає достатньо показників (з урахуванням можливого фліпу).
             if bool(s.get('queue4_entry_gate', True)) and not info.get('gate_exempt'):
                 try:
                     _min_lay = int(s.get('queue4_entry_min_layers', 1) or 1)
                 except (TypeError, ValueError):
                     _min_lay = 1
-                if lay.get('determined') and int(lay.get('aligned', 0)) < _min_lay:
+                if lay.get('determined') and _al_best < _min_lay:
                     with self._lock:
                         self._pending4.pop(sym, None); self._persist_state()
                     log_activity(sym, 'skipped',
-                                 f'Черга-4 🚧 фільтр входу: {int(lay.get("aligned",0))}/4 показників '
-                                 f'у бік < {_min_lay} (шари визначені) — прибрано з черги',
+                                 f'Черга-4 🚧 фільтр входу: {_al_best}/4 показників у жоден '
+                                 f'бік < {_min_lay} (шари визначені) — прибрано з черги',
                                  side=d, source='Q4')
                     continue
-            if lay.get('base', 0) < 4:
-                continue   # ще не всі 4 шари збіглись — чекаємо
-            # 🔥 Виснаженість — ЄДИНИЙ запобіжник Q4: не відкривати вичерпаний хід.
+            # 🎯 Напрямок ВІДКРИТТЯ = той бік, де зібрались ВСІ 4 шари. Пріоритет —
+            # напрямку сигналу; якщо ж повний збіг у ПРОТИЛЕЖНИЙ бік → фліп.
+            _open_dir = None
+            if lay.get('base', 0) >= 4:
+                _open_dir = d
+            elif lay_o.get('base', 0) >= 4:
+                _open_dir = _opp
+            if not _open_dir:
+                continue   # ще ніде не всі 4 шари — чекаємо
+            # 🔥 Виснаженість — ЄДИНИЙ запобіжник Q4 (за напрямком відкриття).
             if s.get('queue4_exhaustion_on', True):
                 try:
                     _exh_max = float(s.get('queue4_exhaustion_pct', 95) or 95)
                 except (TypeError, ValueError):
                     _exh_max = 95.0
-                _exh = self._exhaustion(sym, d)
+                _exh = self._exhaustion(sym, _open_dir)
                 if _exh is not None and _exh > _exh_max:
                     log_activity(sym, 'skipped',
                                  f'Черга-4: хід виснажений {_exh:.0f}%>{_exh_max:.0f}% — '
-                                 'відкриття скасовано', side=d, source='Q4')
+                                 'відкриття скасовано', side=_open_dir, source='Q4')
                     continue
             try:
-                opened = self._open(sym, d, fuel, s, opened_by='🎯 Черга-4 (усі 4 шари)',
+                _flip = '' if _open_dir == d else f' (ФЛІП: сигнал був {d}, показники — {_open_dir})'
+                opened = self._open(sym, _open_dir, {'mark_price': mark, 'dir': _open_dir},
+                                    s, opened_by='🎯 Черга-4 (усі 4 шари)',
                                     skip_ctr_safeguard=True, skip_safeguard=True)
                 if opened:
                     with self._lock:
-                        self._timers[sym] = {'dir': d, 'since': now, 'start_price': mark}
+                        self._timers[sym] = {'dir': _open_dir, 'since': now, 'start_price': mark}
                         self._pending4.pop(sym, None); self._persist_state()
                     log_activity(sym, 'opened',
-                                 'Черга-4: усі 4 шари збіглись → відкрито ' + d,
-                                 side=d, source='Q4')
-                    print(f"[FF-Q4] opened {d} {sym} (усі 4 шари)")
+                                 f'Черга-4: усі 4 шари збіглись → відкрито {_open_dir}{_flip}',
+                                 side=_open_dir, source='Q4')
+                    print(f"[FF-Q4] opened {_open_dir} {sym} (усі 4 шари){_flip}")
+                    # 🎯 SL з Volumized OB + буфер (за напрямком відкриття).
+                    self._q4_set_vob_sl(sym, _open_dir, s)
             except Exception as e:
                 print(f"[FF-Q4] open error {sym}: {e}")
         # ⏳ Прибрати таймери застою для монет, яких уже немає в Черзі-4.
         for k in list(self._q4_lit_at.keys()):
             if k not in self._pending4:
                 self._q4_lit_at.pop(k, None)
+
+    def _q4_set_vob_sl(self, sym: str, side: str, s: Dict):
+        """🎯 Черга-4: після відкриття ставить SL із Volumized OB + буфер. Бере
+        найновіший активний (не-breaker) Volumized OB у бік угоди за параметрами
+        сканера (volumized_timeframe/swing/end_method/atr/zone_count) → SL = межа
+        блоку + буфер: SHORT над ВЕРХОМ, LONG під НИЗОМ. Буфер = queue3_vob_sl_buffer_pct."""
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            ss = sc.get_settings() if sc else {}
+            tf = ss.get('volumized_timeframe', '15m') or '15m'
+            try:
+                swing = int(ss.get('volumized_swing_length', 10) or 10)
+            except (TypeError, ValueError):
+                swing = 10
+            endm = ss.get('volumized_ob_end_method', 'Wick') or 'Wick'
+            try:
+                atr = float(ss.get('volumized_max_atr_mult', 3.5) or 3.5)
+            except (TypeError, ValueError):
+                atr = 3.5
+            zc = ss.get('volumized_zone_count', 'Low') or 'Low'
+            comb = bool(ss.get('volumized_combine_obs', True))
+            from detection.market_data import get_market_data
+            md = get_market_data()
+            kl = md.fetch_klines(sym, limit=200, interval=tf) if md else None
+            if not kl or len(kl) < 20:
+                return
+            from detection.volumized_ob import detect_volumized_obs
+            res = detect_volumized_obs(kl, swing_length=swing, ob_end_method=endm,
+                                       max_atr_mult=atr, zone_count=zc, combine_obs=comb)
+            obs = res.get('bullish_obs' if side == 'LONG' else 'bearish_obs') or []
+            ob = None
+            for o in obs:                 # newest first
+                if not o.get('breaker'):
+                    ob = o
+                    break
+            if not ob:
+                return
+            top = float(ob.get('top') or 0)
+            bottom = float(ob.get('bottom') or 0)
+            if top <= 0 or bottom <= 0:
+                return
+            try:
+                buf = max(0.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)) / 100.0
+            except (TypeError, ValueError):
+                buf = 0.001
+            sl = round(top * (1.0 + buf), 8) if side == 'SHORT' else round(bottom * (1.0 - buf), 8)
+            tm = self._get_tm() if self._get_tm else None
+            if not tm or not hasattr(tm, 'update_manual_sl_tp'):
+                return
+            _is_shadow = (not self._tm_has_position(sym, True))   # real? інакше paper
+            tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=_is_shadow)
+            try:
+                from detection.activity_log import log_activity
+                log_activity(sym, 'sltp',
+                             f'Черга-4: SL з Volumized OB ({tf}) → {sl}',
+                             side=side, source='Q4')
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[FF-Q4] SL-from-VOB error {sym}: {e}")
 
     def _engine_tick_readiness(self):
         """🎯 Queue 3 «Готовність» engine — opens a queued coin the MOMENT its SMC

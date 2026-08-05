@@ -1624,8 +1624,19 @@ class SMCScanner:
                                     _ltype = _lob.get('type')
                                     _lside = ('LONG' if _ltype == 'Bull'
                                               else ('SHORT' if _ltype == 'Bear' else None))
-                                    if (_lft and _lside and not _lob.get('breaker')
-                                            and _lft != self._vob_alert_seen.get(symbol)):
+                                    _prev_seen = self._vob_alert_seen.get(symbol)
+                                    if _prev_seen is None:
+                                        # 🟪 БАЗОВА ЛІНІЯ: перший показ монети —
+                                        # лише ЗАПАМʼЯТАТИ поточний OB БЕЗ сигналу,
+                                        # щоб НЕ залити чергу вже НАЯВНИМИ (старими)
+                                        # Volumized OB. Сигнал — тільки на OB, що
+                                        # утвориться ПІЗНІШЕ за цю базову лінію.
+                                        self._vob_alert_seen[symbol] = _lft
+                                    elif (_lft and _lside and not _lob.get('breaker')
+                                            and _lft > _prev_seen):
+                                        # НОВИЙ, СВІЖІШИЙ OB (formation_time СТРОГО
+                                        # більший) → сигнал. Повернення до старішого
+                                        # OB (напр. після breaker) сигналу НЕ дає.
                                         self._vob_alert_seen[symbol] = _lft
                                         try:
                                             from detection.activity_log import log_activity
