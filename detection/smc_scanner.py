@@ -207,6 +207,15 @@ DEFAULT_SETTINGS = {
     'volumized_max_atr_mult': 3.5,
     'volumized_zone_count': 'Low',          # 'One' / 'Low' / 'Medium' / 'High'
     'volumized_combine_obs': True,
+    # === Типи сигналів (ALERTS) — незалежні тумблери ===
+    #   choch_alerts_enabled — CHoCH/CHoCH+BOS (керується Alert mode). Дефолт ON.
+    #   vob_alert_enabled    — 🟪 НОВИЙ тип «Volumized OB Alerts»: сигнал на КОЖЕН
+    #     НОВИЙ Volumized OB (за formation_time, edge) → у ту саму обробку, що й
+    #     CHoCH (on_signal → черги FF). Напрямок = напрямок OB (Bull=LONG/Bear=SHORT).
+    #     Параметри детектора беруться з блоку «Volumized OB Trend» вище
+    #     (volumized_timeframe/swing/end_method/atr/zone_count/combine). Дефолт OFF.
+    'choch_alerts_enabled': True,
+    'vob_alert_enabled': False,
 }
 
 
@@ -365,7 +374,11 @@ class SMCScanner:
         # same eviction path as _pd_zone_cache when a symbol falls out
         # of the watchlist.
         self._volumized_trend_cache: Dict[str, Dict] = {}
-        
+        # 🟪 Volumized OB Alerts: {symbol: formation_time останнього OB, по якому
+        # вже стрельнув сигнал} — щоб «Volumized OB Alert» спрацьовував ОДНОРАЗОВО
+        # на КОЖЕН НОВИЙ Volumized OB (edge за formation_time).
+        self._vob_alert_seen: Dict[str, int] = {}
+
         # Signal markers per symbol — points on the chart where Telegram alerts
         # actually fired. Used to display LONG/SHORT dots on the chart.
         # {symbol: [{'time': ts_sec, 'price': float, 'side': 'LONG'|'SHORT'}, ...]}
@@ -1005,7 +1018,9 @@ class SMCScanner:
                        'use_volumized_ob', 'volumized_timeframe',
                        'volumized_swing_length', 'volumized_ob_end_method',
                        'volumized_max_atr_mult', 'volumized_zone_count',
-                       'volumized_combine_obs']
+                       'volumized_combine_obs',
+                       # Типи сигналів (ALERTS)
+                       'choch_alerts_enabled', 'vob_alert_enabled']
             
             # Detect changes that require cache reset
             old_tf = self._settings.get('timeframe', DEFAULT_TIMEFRAME)
@@ -1021,6 +1036,10 @@ class SMCScanner:
             # Validate alert_mode
             if self._settings.get('alert_mode') not in ('choch', 'choch_bos', 'choch_or_bos'):
                 self._settings['alert_mode'] = DEFAULT_ALERT_MODE
+
+            # Типи сигналів — булеві тумблери
+            self._settings['choch_alerts_enabled'] = bool(self._settings.get('choch_alerts_enabled', True))
+            self._settings['vob_alert_enabled'] = bool(self._settings.get('vob_alert_enabled', False))
             
             # Validate recency_minutes (0=off, or 30/60/120)
             try:
@@ -1559,7 +1578,8 @@ class SMCScanner:
                 # idempotent on the unchanged closed bars; the only
                 # difference is the last entry now reflects the forming
                 # bar instead of being missing.
-                if self._settings.get('use_volumized_ob', True):
+                _vob_alert_on = bool(self._settings.get('vob_alert_enabled', False))
+                if self._settings.get('use_volumized_ob', True) or _vob_alert_on:
                     try:
                         vol_tf = self._settings.get('volumized_timeframe', '1h')
                         vol_data = _get_tf_data(vol_tf)
@@ -1575,27 +1595,56 @@ class SMCScanner:
                                 combine_obs=bool(self._settings.get('volumized_combine_obs', True)),
                             )
                             new_vol_trend = vol_result.get('trend')  # 'LONG'|'SHORT'|None
-                            with self._lock:
-                                old_vol_trend = (
-                                    self._volumized_trend_cache.get(symbol, {})
-                                    .get('trend')
-                                )
-                                self._volumized_trend_cache[symbol] = {
-                                    'trend': new_vol_trend,
-                                    'meta': vol_result.get('trend_meta', {}),
-                                    'tf': vol_tf,
-                                    'updated_at': time.time(),
-                                }
-                            
+                            if self._settings.get('use_volumized_ob', True):
+                                with self._lock:
+                                    old_vol_trend = (
+                                        self._volumized_trend_cache.get(symbol, {})
+                                        .get('trend')
+                                    )
+                                    self._volumized_trend_cache[symbol] = {
+                                        'trend': new_vol_trend,
+                                        'meta': vol_result.get('trend_meta', {}),
+                                        'tf': vol_tf,
+                                        'updated_at': time.time(),
+                                    }
                             # === Дедуп БІЛЬШЕ НЕ скидається на фліпі Volumized ===
                             # Майстер-напрямок стратегії = 1H OB (Require OB Match).
                             # Тому скид дедупу перенесено на фліп 1H OB (у
                             # _update_smc_ob). Дрижання 15m Volumized у той самий
                             # бік НЕ має давати другий сигнал у ту саму фазу 1H OB.
-                            # Volumized лишається ПІДПОРЯДКОВАНИМ гейтом (Layer 1
-                            # у _dedup_allows) — сигнал мусить збігатися з ним,
-                            # але напрямок «ситуації» задає саме 1H OB.
-                            pass
+
+                            # 🟪 VOLUMIZED OB ALERT — НОВИЙ тип сигналу. На КОЖЕН
+                            # НОВИЙ Volumized OB (edge за formation_time) ОДНОРАЗОВО
+                            # шлемо сигнал у ту саму обробку, що й CHoCH: on_signal →
+                            # черги FF. Напрямок = напрямок OB (Bull=LONG/Bear=SHORT).
+                            if _vob_alert_on:
+                                try:
+                                    _lob = vol_result.get('latest_ob') or {}
+                                    _lft = int(_lob.get('formation_time') or 0)
+                                    _ltype = _lob.get('type')
+                                    _lside = ('LONG' if _ltype == 'Bull'
+                                              else ('SHORT' if _ltype == 'Bear' else None))
+                                    if (_lft and _lside and not _lob.get('breaker')
+                                            and _lft != self._vob_alert_seen.get(symbol)):
+                                        self._vob_alert_seen[symbol] = _lft
+                                        try:
+                                            from detection.activity_log import log_activity
+                                        except Exception:
+                                            log_activity = lambda *a, **k: None
+                                        _entry = (self._get_live_price(symbol)
+                                                  or (_lob.get('top') if _lside == 'SHORT'
+                                                      else _lob.get('bottom')) or 0)
+                                        log_activity(symbol, 'signal',
+                                                     f'Свіжий Volumized OB ({vol_tf}) {_lside}',
+                                                     side=_lside, source='scanner')
+                                        from detection.trade_manager import get_trade_manager
+                                        _tm = get_trade_manager()
+                                        if _tm:
+                                            _tm.on_signal(symbol=symbol, side=_lside,
+                                                          entry_price=_entry, opened_by='vob')
+                                except Exception as _ve:
+                                    if self._errors <= 5:
+                                        print(f"[SMC] VOB-alert error for {symbol}: {_ve}")
                         else:
                             # No TF data — clear cache so stale entries
                             # don't linger (e.g., user changed TF and
@@ -2101,6 +2150,12 @@ class SMCScanner:
         # are independent of Telegram.
         events = result.get('internal', {}).get('events', [])
         if not events:
+            self._first_scan_done[symbol] = True
+            return
+        # 🟪 Тумблер CHoCH/CHoCH+BOS: якщо вимкнено — CHoCH-алерти НЕ спрацьовують
+        # (працює лише вибраний тип, напр. Volumized OB Alerts). VOB-алерти йдуть
+        # окремим шляхом у _scan і від цього тумблера не залежать.
+        if not self._settings.get('choch_alerts_enabled', True):
             self._first_scan_done[symbol] = True
             return
         

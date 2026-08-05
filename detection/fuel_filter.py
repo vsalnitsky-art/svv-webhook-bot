@@ -151,21 +151,6 @@ DEFAULT_SETTINGS = {
     # додатково рахує ВЕСЬ WATCHLIST (у т.ч. bulk із Tickr-добірки). Мета —
     # не ганяти важкий розрахунок по всьому списку.
     'mmm_limited_mode': True,
-    # 🟪 ДЖЕРЕЛО СИГНАЛУ для черг: який тип сигналу живить конвеєр (intercept →
-    #    черги). 'choch' (дефолт, як зараз) — CHoCH/CHoCH+BOS зі SMC-сканера;
-    #    'vob' — НОВИЙ тип «Volumized OB Alerts» (сканер нижче); 'both' — обидва.
-    #    CHoCH-джерело гейтиться у trade_manager.on_signal; VOB — власним сканером.
-    'signal_source': 'choch',
-    # 🟪 Volumized OB Alerts — параметри детектора (Pine-еквівалент). Дефолт 15M
-    #    Swing 5 / Wick / ATR×3.5 / Zone Low(3). TF змінний; сигнал спрацьовує
-    #    ОДНОРАЗОВО на КОЖНИЙ НОВИЙ Volumized OB (edge за formation_time) → миттєво
-    #    йде в intercept за напрямком OB (bullish=LONG / bearish=SHORT).
-    'vob_alerts_tf': '15m',
-    'vob_alert_swing': 5,
-    'vob_alert_zone_inval': 'Wick',    # 'Wick' | 'Close'
-    'vob_alert_atr_mult': 3.5,
-    'vob_alert_zone_count': 'Low',     # 'One' | 'Low' | 'Medium' | 'High'
-    'vob_alert_max_per_cycle': 25,     # обмежувач: скільки монет сканувати за цикл
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -746,11 +731,6 @@ class FuelFilterDaemon:
         # бік (aligned≥1)}. Ковзне вікно застою: якщо now−ts > queue4_no_light_min
         # хв → монету викидаємо з Черги-4. In-memory (після рестарту — свіже вікно).
         self._q4_lit_at: Dict[str, float] = {}
-        # 🟪 Volumized OB Alerts: {f"{sym}:{tf}": formation_time останнього OB, по
-        # якому вже стрельнув сигнал} — щоб сигнал спрацьовував ОДНОРАЗОВО на
-        # кожен НОВИЙ OB. + {sym: ts останнього скану} для ротації по scan-list.
-        self._vob_alert_seen: Dict[str, int] = {}
-        self._vob_alert_at: Dict[str, float] = {}
         # Anti-flood for the per-coin «Готовність» decision log:
         # {symbol: (outcome, hot, score_bucket, ts)} — a hold/skip is re-logged
         # only when it meaningfully changes or after READINESS_LOG_MIN_GAP sec;
@@ -1041,28 +1021,6 @@ class FuelFilterDaemon:
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
         s['mmm_limited_mode'] = bool(s.get('mmm_limited_mode', True))
-        # 🟪 Джерело сигналу + Volumized OB Alerts
-        if s.get('signal_source') not in ('choch', 'vob', 'both'):
-            s['signal_source'] = 'choch'
-        _vtf = ('1m', '3m', '5m', '15m', '30m', '1h', '4h')
-        if s.get('vob_alerts_tf') not in _vtf:
-            s['vob_alerts_tf'] = '15m'
-        if s.get('vob_alert_zone_inval') not in ('Wick', 'Close'):
-            s['vob_alert_zone_inval'] = 'Wick'
-        if s.get('vob_alert_zone_count') not in ('One', 'Low', 'Medium', 'High'):
-            s['vob_alert_zone_count'] = 'Low'
-        try:
-            s['vob_alert_swing'] = max(2, min(100, int(s.get('vob_alert_swing', 5) or 5)))
-        except (TypeError, ValueError):
-            s['vob_alert_swing'] = 5
-        try:
-            s['vob_alert_atr_mult'] = max(0.5, min(20.0, float(s.get('vob_alert_atr_mult', 3.5) or 3.5)))
-        except (TypeError, ValueError):
-            s['vob_alert_atr_mult'] = 3.5
-        try:
-            s['vob_alert_max_per_cycle'] = max(1, min(200, int(s.get('vob_alert_max_per_cycle', 25) or 25)))
-        except (TypeError, ValueError):
-            s['vob_alert_max_per_cycle'] = 25
         s['enabled'] = bool(s.get('enabled', False))
         try:
             s['direction_smoothing_min'] = max(0, min(600,
@@ -1145,7 +1103,7 @@ class FuelFilterDaemon:
         if not sym or side not in ('LONG', 'SHORT'):
             return ''
         _kind_lbl = {'choch': 'CHoCH', 'choch_bos': 'CHoCH+BOS',
-                     'vob_alert': 'Volumized OB', 'vob': 'Volumized OB'}.get(kind, kind or '?')
+                     'vob': 'Volumized OB'}.get(kind, kind or '?')
         try:
             from detection.activity_log import log_activity
         except Exception:
@@ -3671,11 +3629,6 @@ class FuelFilterDaemon:
         except Exception as e:
             print(f"[FuelFilter] funding scan error: {e}")
 
-        # 🟪 Volumized OB Alerts — новий тип сигналу (лише коли джерело = vob/both).
-        try:
-            self._scan_vob_alerts(settings, now)
-        except Exception as e:
-            print(f"[FuelFilter] VOB-alerts scan error: {e}")
 
         # Header stats (now only over the relevant set).
         with self._lock:
@@ -5172,102 +5125,6 @@ class FuelFilterDaemon:
         except Exception as e:
             print(f"[FF-VOB] {sym} error: {e}")
             return None
-
-    def _vob_alert_detect(self, sym: str, tf: str, swing: int, zinval: str,
-                          atr_mult: float, zcount: str):
-        """🟪 Знайти НАЙНОВІШИЙ активний (не-breaker) Volumized OB на `tf` за
-        заданими параметрами. Повертає (side, formation_time): bullish→LONG,
-        bearish→SHORT; None — OB немає. Свічки тягне свіжими (короткий кеш)."""
-        try:
-            now = time.time()
-            key = ('vobalert', sym, tf)
-            c = self._vob_klines.get(key)
-            if c and (now - c[0]) < self._VOB_TTL * 2:
-                kl = c[1]
-            else:
-                from detection.market_data import get_market_data
-                md = get_market_data()
-                kl = md.fetch_klines(sym, limit=200, interval=tf) if md else None
-                if kl:
-                    self._vob_klines[key] = (now, kl)
-            if not kl or len(kl) < 20:
-                return None
-            from detection.volumized_ob import detect_volumized_obs
-            res = detect_volumized_obs(kl, swing_length=swing, ob_end_method=zinval,
-                                       max_atr_mult=atr_mult, zone_count=zcount)
-
-            def _newest(obs):
-                for ob in (obs or []):        # newest first
-                    if not ob.get('breaker'):
-                        return int(ob.get('formation_time') or 0)
-                return -1
-            bt = _newest(res.get('bullish_obs'))
-            st = _newest(res.get('bearish_obs'))
-            if bt < 0 and st < 0:
-                return None
-            return ('LONG', bt) if bt >= st else ('SHORT', st)
-        except Exception as e:
-            print(f"[FF-VOBAlert] {sym} detect error: {e}")
-            return None
-
-    def _scan_vob_alerts(self, s: Dict, now: float):
-        """🟪 НОВИЙ тип сигналу «Volumized OB Alerts». Для кожної монети зі скан-
-        листа моніторить Volumized OB на обраному TF; на КОЖНОМУ НОВОМУ OB (edge за
-        formation_time) ОДНОРАЗОВО шле сигнал у intercept за напрямком OB — той
-        самий конвеєр черг, що й CHoCH. Обмежувач cap/цикл + ротація (найдавніше
-        скановані першими), щоб не перевантажувати. Живе лише коли джерело = vob/both."""
-        src = str(s.get('signal_source', 'choch') or 'choch').lower()
-        if src not in ('vob', 'both'):
-            return
-        tf = s.get('vob_alerts_tf', '15m') or '15m'
-        try:
-            swing = int(s.get('vob_alert_swing', 5) or 5)
-        except (TypeError, ValueError):
-            swing = 5
-        zinval = s.get('vob_alert_zone_inval', 'Wick') or 'Wick'
-        try:
-            atr_mult = float(s.get('vob_alert_atr_mult', 3.5) or 3.5)
-        except (TypeError, ValueError):
-            atr_mult = 3.5
-        zcount = s.get('vob_alert_zone_count', 'Low') or 'Low'
-        try:
-            cap = int(s.get('vob_alert_max_per_cycle', 25) or 25)
-        except (TypeError, ValueError):
-            cap = 25
-        scan = [x.upper() for x in (self.get_scan_list() or [])]
-        if not scan:
-            return
-        live = set(scan)
-        try:
-            from detection.activity_log import log_activity
-        except Exception:
-            log_activity = lambda *a, **k: None
-        # Ротація: найдавніше скановані першими → рівномірне покриття списку.
-        for sym in sorted(scan, key=lambda x: self._vob_alert_at.get(x, 0))[:cap]:
-            self._vob_alert_at[sym] = now
-            r = self._vob_alert_detect(sym, tf, swing, zinval, atr_mult, zcount)
-            if not r:
-                continue
-            side, ftime = r
-            k = f"{sym}:{tf}"
-            if ftime and ftime != self._vob_alert_seen.get(k):
-                self._vob_alert_seen[k] = ftime      # позначити OB опрацьованим
-                try:
-                    _disp = self.intercept(sym, side, kind='vob_alert')
-                except Exception as e:
-                    _disp = ''
-                    print(f"[FF-VOBAlert] {sym} intercept error: {e}")
-                log_activity(sym, 'signal',
-                             f'Свіжий Volumized OB ({tf}) {side} → черги'
-                             + (f' ({_disp})' if _disp else ' (черги вимкнені)'),
-                             side=side, source='VOB')
-        # Прибрати стан для монет, що зникли зі скан-листа.
-        for kk in list(self._vob_alert_at.keys()):
-            if kk not in live:
-                self._vob_alert_at.pop(kk, None)
-        for kk in list(self._vob_alert_seen.keys()):
-            if kk.split(':')[0] not in live:
-                self._vob_alert_seen.pop(kk, None)
 
     def _purge_queue_kind(self, kind: str) -> int:
         """Прибрати з УСІХ черг (1..4) записи вказаного джерела `kind`:
