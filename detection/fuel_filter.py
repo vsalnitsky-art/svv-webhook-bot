@@ -265,9 +265,10 @@ DEFAULT_SETTINGS = {
     #    Дефолт: увімкнено, поріг 1 (має бути ХОЧА Б ОДИН показник у бік сигналу).
     'queue4_entry_gate': True,
     'queue4_entry_min_layers': 1,
-    # ⏳ Викидати монету з Черги-4, якщо за N хв ЖОДЕН показник ЖОДНОГО разу не
-    #    засвітився в бік сигналу (aligned весь час = 0). Ловить «мертві» записи,
-    #    що зайшли, поки шари ще не визначились, і так і не ожили. 0 = вимкнено.
+    # ⏳ КОВЗНЕ вікно застою Черги-4: таймер по монеті скидається щоразу, коли хоч
+    #    один показник світиться в бік (aligned≥1). Якщо N хв ПОСПІЛЬ жоден не
+    #    засвітився — монету викидаємо (працює постійно для кожної монети). Ловить
+    #    застій незалежно від того, чи світилось раніше. 0 = вимкнено.
     'queue4_no_light_min': 30,
     'queue4_require_runway': True,  # Запас (runway) має бути у бік напрямку
     'queue4_ttl_hours': 3,          # протермінувати запис Черги-4 через N год (0=без ліміту)
@@ -726,6 +727,10 @@ class FuelFilterDaemon:
         #   обидва напрямки; відкриває, коли 4 шари (Новий/Старий МММ,
         #   Готовність, Запас) збіглись за напрямком. Персистентна.
         self._pending4: Dict[str, Dict] = {}
+        # ⏳ {symbol: ts останнього разу, коли ХОЧ ОДИН показник Черги-4 світився в
+        # бік (aligned≥1)}. Ковзне вікно застою: якщо now−ts > queue4_no_light_min
+        # хв → монету викидаємо з Черги-4. In-memory (після рестарту — свіже вікно).
+        self._q4_lit_at: Dict[str, float] = {}
         # Anti-flood for the per-coin «Готовність» decision log:
         # {symbol: (outcome, hot, score_bucket, ts)} — a hold/skip is re-logged
         # only when it meaningfully changes or after READINESS_LOG_MIN_GAP sec;
@@ -5627,27 +5632,24 @@ class FuelFilterDaemon:
                 continue
             lay = self._queue4_layers(sym, d, s)
             _aligned_now = int(lay.get('aligned', 0))
-            # ⏳ Позначаємо, що показник ХОЧ РАЗ засвітився в бік (aligned≥1) —
-            # прапорець персиститься, тож переживає рестарт.
-            if _aligned_now >= 1 and not info.get('ever_lit'):
-                info['ever_lit'] = True
-                with self._lock:
-                    if sym in self._pending4:
-                        self._pending4[sym]['ever_lit'] = True
-                        self._persist_state()
-            # ⏳ Правило «жоден показник ЖОДНОГО разу не засвітився за N хв» → викид.
+            # ⏳ КОВЗНЕ вікно застою: таймер скидається ЩОРАЗУ, коли хоч один
+            # показник світиться в бік (aligned≥1). Якщо N хв ПОСПІЛЬ жоден не
+            # засвітився — викид (працює постійно, для кожної монети, незалежно
+            # чи світилась раніше). In-memory; після рестарту — свіже вікно.
             try:
                 _nl_min = float(s.get('queue4_no_light_min', 30) or 0)
             except (TypeError, ValueError):
                 _nl_min = 30.0
-            if _nl_min > 0 and not info.get('ever_lit'):
-                _added0 = float(info.get('added_at') or 0)
-                if _added0 and (now - _added0) > _nl_min * 60:
+            if _nl_min > 0:
+                if _aligned_now >= 1 or sym not in self._q4_lit_at:
+                    self._q4_lit_at[sym] = now      # засвітився / перший показ → скид
+                if (now - self._q4_lit_at.get(sym, now)) > _nl_min * 60:
                     with self._lock:
                         self._pending4.pop(sym, None); self._persist_state()
+                    self._q4_lit_at.pop(sym, None)
                     log_activity(sym, 'skipped',
-                                 f'Черга-4 ⏳ {_nl_min:.0f}хв жоден показник жодного разу '
-                                 'не засвітився в бік — прибрано з черги',
+                                 f'Черга-4 ⏳ {_nl_min:.0f}хв поспіль жоден показник не '
+                                 'засвітився в бік — прибрано з черги (застій)',
                                  side=d, source='Q4')
                     continue
             # 🚧 Фільтр входу (пост-визначення): запис міг зайти, поки шари ще
@@ -5694,6 +5696,10 @@ class FuelFilterDaemon:
                     print(f"[FF-Q4] opened {d} {sym} (усі 4 шари)")
             except Exception as e:
                 print(f"[FF-Q4] open error {sym}: {e}")
+        # ⏳ Прибрати таймери застою для монет, яких уже немає в Черзі-4.
+        for k in list(self._q4_lit_at.keys()):
+            if k not in self._pending4:
+                self._q4_lit_at.pop(k, None)
 
     def _engine_tick_readiness(self):
         """🎯 Queue 3 «Готовність» engine — opens a queued coin the MOMENT its SMC
