@@ -3159,7 +3159,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <!-- Recent Closed -->
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">📜 Recent Closed Trades
                 <span id="tm-closed-src" style="font-size:0.66rem;font-weight:normal;color:#6b7280"></span>
-                <button class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Показати ВСЮ історію закритих угод із бази (таблиця sob_trade_archive), а не лише останні. Повторний клік — назад до живої стрічки."
+                <button id="tm-closed-archive-btn" class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Показати ВСЮ історію закритих угод із бази (таблиця sob_trade_archive), а не лише останні. Повторний клік — назад до живої стрічки."
                         onclick="toggleArchiveView('closed', this)">📚 За весь час (БД)</button>
                 <button class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Скопіювати всю таблицю в буфер обміну (TSV — можна вставити в Excel/Sheets)"
                         onclick="copyTableToClipboard('tm-closed-table', this)">📋 Копіювати</button>
@@ -3225,7 +3225,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             
             <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">Recent Paper Closes
                 <span id="tm-shadow-src" style="font-size:0.66rem;font-weight:normal;color:#6b7280"></span>
-                <button class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Показати ВСЮ історію paper-угод із бази (таблиця sob_trade_archive), а не лише останні. Повторний клік — назад до живої стрічки."
+                <button id="tm-shadow-archive-btn" class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Показати ВСЮ історію paper-угод із бази (таблиця sob_trade_archive), а не лише останні. Повторний клік — назад до живої стрічки."
                         onclick="toggleArchiveView('shadow', this)">📚 За весь час (БД)</button>
                 <button class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Скопіювати всю таблицю в буфер обміну (TSV — можна вставити в Excel/Sheets)"
                         onclick="copyTableToClipboard('tm-shadow-closed-table', this)">📋 Копіювати</button>
@@ -11739,31 +11739,44 @@ async function toggleArchiveView(which, btn) {
     }
 }
 
+// Скидання режиму «архів (БД)» назад на живу стрічку після очищення.
+function _tmResetArchiveView(which) {
+    if (window._tmArchiveMode) window._tmArchiveMode[which] = false;
+    if (which === 'closed') window._tmClosedSig = null; else window._tmShadowClosedSig = null;
+    const srcEl = document.getElementById(which === 'closed' ? 'tm-closed-src' : 'tm-shadow-src');
+    if (srcEl) srcEl.textContent = '';
+    const btn = document.getElementById(which === 'closed' ? 'tm-closed-archive-btn' : 'tm-shadow-archive-btn');
+    if (btn) btn.textContent = '📚 За весь час (БД)';
+}
 async function clearTMClosed() {
-    if (!confirm('Очистити ВЕСЬ список Recent Closed Trades? Це незворотньо, статистика обнулиться.')) return;
+    if (!confirm('Очистити ВЕСЬ Recent Closed Trades — І живу стрічку, І архів у БД (за весь час)? Незворотньо, статистика обнулиться.')) return;
     try {
-        const res = await fetch('/api/tm/closed/clear', {method: 'POST'});
+        await fetch('/api/tm/closed/clear', {method: 'POST'});
+        const res = await fetch('/api/trade-archive/clear', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({scope: 'real'}),
+        });
         const d = await res.json();
-        if (d.ok) {
-            setTimeout(loadTMState, 200);
-        } else {
-            alert('Clear failed: ' + (d.reason || 'unknown'));
-        }
+        if (!d.ok) { alert('Clear archive failed: ' + (d.reason || 'unknown')); return; }
+        _tmResetArchiveView('closed');
+        setTimeout(loadTMState, 200);
     } catch (err) {
         alert('Clear error: ' + err);
     }
 }
 
 async function clearTMShadowClosed() {
-    if (!confirm('Очистити ВЕСЬ список Recent Paper Closes? Це незворотньо, статистика обнулиться.')) return;
+    if (!confirm('Очистити ВЕСЬ Recent Paper Closes — І живу стрічку, І архів у БД (за весь час)? Незворотньо, статистика обнулиться.')) return;
     try {
-        const res = await fetch('/api/tm/shadow_closed/clear', {method: 'POST'});
+        await fetch('/api/tm/shadow_closed/clear', {method: 'POST'});
+        const res = await fetch('/api/trade-archive/clear', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({scope: 'paper'}),
+        });
         const d = await res.json();
-        if (d.ok) {
-            setTimeout(loadTMState, 200);
-        } else {
-            alert('Clear failed: ' + (d.reason || 'unknown'));
-        }
+        if (!d.ok) { alert('Clear archive failed: ' + (d.reason || 'unknown')); return; }
+        _tmResetArchiveView('shadow');
+        setTimeout(loadTMState, 200);
     } catch (err) {
         alert('Clear error: ' + err);
     }
