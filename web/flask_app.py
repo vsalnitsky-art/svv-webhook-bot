@@ -4727,7 +4727,35 @@ def register_api_routes(app):
             return jsonify({'error': 'Not initialized', 'ohlc': []})
         symbol = request.args.get('symbol', 'BTCUSDT')
         return jsonify(s.get_chart_data(symbol))
-    
+
+    @app.route('/api/volume-profile')
+    def api_volume_profile():
+        """Volume Profile POC (біла лінія як у MobChart) з Binance SPOT.
+        Параметри: symbol; діапазон — from/to (сек, видимий діапазон графіка)
+        АБО hours (фолбек-вікно); bins (роздільність); side + price → вердикт
+        «ціна↔POC» для напрямку сигналу (LONG ОК коли POC вище ціни, і навпаки)."""
+        from detection.volume_profile import compute_poc, price_vs_poc
+        symbol = request.args.get('symbol', 'BTCUSDT')
+
+        def _f(name):
+            v = request.args.get(name)
+            try:
+                return float(v) if v not in (None, '') else None
+            except (TypeError, ValueError):
+                return None
+        from_sec = _f('from')
+        to_sec = _f('to')
+        hours = _f('hours')
+        price = _f('price')
+        bins = _f('bins')
+        side = (request.args.get('side') or '').upper().strip() or None
+        market = (request.args.get('market') or 'spot').strip().lower()
+        res = compute_poc(symbol, from_sec=from_sec, to_sec=to_sec, hours=hours,
+                          bins=int(bins) if bins else 150, market=market)
+        if res.get('ok') and price is not None:
+            res['verdict'] = price_vs_poc(res.get('poc'), price, side)
+        return jsonify(res)
+
     @app.route('/api/smc/signals/clear', methods=['POST'])
     def api_smc_signals_clear():
         """Clear persisted signal markers. POST {} for all, {'symbol': X} for one."""

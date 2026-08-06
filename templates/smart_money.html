@@ -1932,6 +1932,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-chart-header">
                 <div>
                     <span class="sm-chart-title" id="sm-chart-title">Select a symbol</span>
+                    <!-- ⚪ POC (Volume Profile, Binance) — біла лінія як у
+                         MobChart + вердикт «ціна↔POC» для напрямку сигналу.
+                         Ринок на вибір: SPOT / FUTURES. -->
+                    <span class="sm-status-badge" id="sm-poc-badge" style="margin-left:10px;display:none;cursor:help"></span>
+                    <select id="sm-poc-market" onchange="onPocMarketChange()" title="Ринок Binance для розрахунку POC (біла лінія Volume Profile)."
+                            style="margin-left:6px;background:rgba(0,0,0,0.35);color:#cbd5e1;border:1px solid rgba(255,255,255,0.15);border-radius:4px;font-size:0.7rem;padding:2px 4px;cursor:pointer;vertical-align:middle">
+                        <option value="spot">POC: SPOT</option>
+                        <option value="futures">POC: FUTURES</option>
+                    </select>
                     <span class="sm-status-badge" id="sm-trend-badge" style="margin-left:10px;display:none"></span>
                     <!-- Last valid Order Block — informational badge.
                          Shows '🟢 OB Long' or '🔴 OB Short' for the most
@@ -3952,6 +3961,11 @@ let chart = null;
 let candleSeries = null;
 let currentSymbol = null;
 let activeLines = [];
+// ⚪ POC (Volume Profile, Binance SPOT) — біла горизонтальна лінія «як у MobChart».
+let pocPriceLine = null;          // хендл price-line POC на candleSeries
+let _pocLastClose = null;         // остання ціна закриття (для вердикту ціна↔POC)
+let _pocDebTimer = null;          // debounce для перерахунку при зумі/пані
+let _pocVRSubscribed = false;     // одноразова підписка на зміну видимого діапазону
 // Volumized OB lines — kept separate from `activeLines` because OB
 // rendering happens OUTSIDE the `if (structureChanged)` gate (so OB
 // box reflects latest cached trend on every tick), while activeLines
@@ -5569,6 +5583,9 @@ function clearChart() {
     if (candleSeries) candleSeries.setMarkers([]);
     document.getElementById('sm-empty').style.display = 'flex';
     document.getElementById('sm-chart-title').textContent = 'Select a symbol';
+    _removePocLine();
+    const _pocB = document.getElementById('sm-poc-badge');
+    if (_pocB) _pocB.style.display = 'none';
     document.getElementById('sm-trend-badge').style.display = 'none';
     const obBadge = document.getElementById('sm-ob-badge');
     if (obBadge) obBadge.style.display = 'none';
@@ -6507,11 +6524,111 @@ async function loadChart() {
         // the bot thinks. It replaces the old multi-badge mess in the
         // chart header.
         renderDecision(d.decision);
-        
+
+        // ⚪ POC (Volume Profile, Binance) — остання ціна для вердикту ціна↔POC.
+        try {
+            const _lastBar = ohlc[ohlc.length - 1];
+            _pocLastClose = _lastBar ? Number(_lastBar.close) : null;
+        } catch (e) { _pocLastClose = null; }
+        // Одноразова підписка на зміну видимого діапазону → перерахунок POC
+        // саме по ВИДИМОМУ діапазону (VPVR-стиль, як у MobChart), з debounce.
+        if (chart && !_pocVRSubscribed) {
+            try {
+                chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+                    clearTimeout(_pocDebTimer);
+                    _pocDebTimer = setTimeout(loadVolumeProfilePOC, 650);
+                });
+                _pocVRSubscribed = true;
+            } catch (e) { /* стара версія lib — лишаємо фолбек-вікно */ }
+        }
+        loadVolumeProfilePOC();
+
         lastChartSymbol = currentSymbol;
     } catch (err) {
         document.getElementById('sm-chart-meta').textContent = 'Error: ' + err.message;
         console.error('Chart load error:', err);
+    }
+}
+
+// ⚪ POC (Volume Profile) — біла лінія «як у MobChart».
+// Рахуємо на бекенді з Binance (SPOT/FUTURES на вибір) по ВИДИМОМУ діапазону
+// графіка (VPVR-стиль). Малюємо білу горизонтальну price-line + бейдж-вердикт
+// «ціна↔POC» для напрямку (LONG ОК коли POC вище ціни; SHORT — коли нижче).
+function pocMarket() {
+    const el = document.getElementById('sm-poc-market');
+    return (el && el.value) ? el.value : 'spot';
+}
+function onPocMarketChange() {
+    try { localStorage.setItem('sm_poc_market', pocMarket()); } catch {}
+    loadVolumeProfilePOC();
+}
+function _removePocLine() {
+    if (pocPriceLine && candleSeries) {
+        try { candleSeries.removePriceLine(pocPriceLine); } catch (e) {}
+    }
+    pocPriceLine = null;
+}
+async function loadVolumeProfilePOC() {
+    const badge = document.getElementById('sm-poc-badge');
+    if (!candleSeries || !currentSymbol) { if (badge) badge.style.display = 'none'; return; }
+    // Видимий діапазон (сек). Якщо недоступний — бекенд візьме фолбек-вікно.
+    let fromTo = '';
+    try {
+        const vr = chart.timeScale().getVisibleRange();
+        if (vr && vr.from && vr.to && vr.to > vr.from) {
+            fromTo = `&from=${Math.floor(vr.from)}&to=${Math.ceil(vr.to)}`;
+        }
+    } catch (e) { /* фолбек-вікно на бекенді */ }
+    const mkt = pocMarket();
+    const priceQ = (_pocLastClose != null) ? `&price=${_pocLastClose}` : '';
+    const reqSym = currentSymbol;
+    try {
+        const r = await fetch(`/api/volume-profile?symbol=${encodeURIComponent(reqSym)}&market=${mkt}${fromTo}${priceQ}`);
+        const d = await r.json();
+        // Символ міг змінитись, поки чекали — не малюємо чужий POC.
+        if (reqSym !== currentSymbol) return;
+        if (!d || !d.ok || d.poc == null) {
+            _removePocLine();
+            if (badge) { badge.style.display = 'none'; }
+            return;
+        }
+        // Біла горизонтальна лінія POC (як у MobChart).
+        _removePocLine();
+        const _solid = (window.LightweightCharts && LightweightCharts.LineStyle)
+            ? LightweightCharts.LineStyle.Solid : 0;
+        pocPriceLine = candleSeries.createPriceLine({
+            price: d.poc,
+            color: '#ffffff',
+            lineWidth: 2,
+            lineStyle: _solid,
+            axisLabelVisible: true,
+            title: 'POC',
+        });
+        // Бейдж: POC + де ціна відносно POC (для рішення на вході).
+        if (badge) {
+            const rel = (_pocLastClose != null && _pocLastClose < d.poc) ? 'below'
+                      : (_pocLastClose != null && _pocLastClose > d.poc) ? 'above' : 'at';
+            const relTxt = rel === 'below' ? 'ціна нижче POC' : rel === 'above' ? 'ціна вище POC' : 'ціна на POC';
+            const mktTxt = (d.market === 'futures') ? 'FUT' : 'SPOT';
+            badge.textContent = `⚪ POC ${fmtPriceJS(d.poc)} · ${relTxt}`;
+            badge.style.background = 'rgba(255,255,255,0.12)';
+            badge.style.color = '#e5e7eb';
+            badge.style.display = 'inline-block';
+            // Підказка: як читати для входу + межі зони вартості + діапазон.
+            const longOk = (_pocLastClose != null && _pocLastClose < d.poc);
+            const shortOk = (_pocLastClose != null && _pocLastClose > d.poc);
+            badge.title =
+                `POC (Point of Control) — рівень з НАЙБІЛЬШИМ обсягом.\n`
+                + `Binance ${mktTxt} · ${d.klines} × 1m · зона вартості ${d.value_area_pct}%\n`
+                + `POC: ${fmtPriceJS(d.poc)}\n`
+                + `VAH: ${fmtPriceJS(d.vah)}  ·  VAL: ${fmtPriceJS(d.val)}\n`
+                + `Діапазон: ${fmtPriceJS(d.price_low)} — ${fmtPriceJS(d.price_high)}\n\n`
+                + `Для входу: LONG доцільний, коли POC ВИЩЕ ціни; SHORT — коли НИЖЧЕ.\n`
+                + `Зараз: LONG ${longOk ? 'ОК ✓' : '—'} · SHORT ${shortOk ? 'ОК ✓' : '—'}`;
+        }
+    } catch (e) {
+        _removePocLine();
+        if (badge) badge.style.display = 'none';
     }
 }
 
@@ -12033,6 +12150,12 @@ async function toggleFuelScan(symbol) {
 
 // === Init ===
 document.addEventListener('DOMContentLoaded', async () => {
+    // ⚪ POC: відновити вибір ринку Binance (SPOT/FUTURES) з localStorage.
+    try {
+        const _pm = localStorage.getItem('sm_poc_market');
+        const _pmEl = document.getElementById('sm-poc-market');
+        if (_pm && _pmEl) _pmEl.value = _pm;
+    } catch {}
     await loadSettings();
     await loadTMSettings();
     await loadWatchlist();
