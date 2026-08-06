@@ -1455,25 +1455,20 @@ class SMCScanner:
                     """Lazy fetch+compute structure for a given TF, with
                     per-tick caching. Returns dict or None on failure.
                     
-                    Limit raised from 700 → 2000 to match (and slightly
-                    exceed) Pine's maxDistanceToLastBar=1750 from the
-                    Volumized Order Blocks indicator. Pine processes the
-                    last 1750 bars and accumulates state from up to 5000
-                    (max_bars_back). With only 700 we'd see different OB
-                    sequences than TradingView, especially on 4H where
-                    700 bars = ~117 days but bear OBs from older swing
-                    points could still be active. 2000 1H bars = ~83 days,
-                    2000 4H = ~333 days — plenty of history without
-                    runaway API cost (one fetch per scan tick, cached).
+                    Limit = 3000, щоб збігатися з кількістю барів, які TV
+                    вантажить на графік (3000). Pine детектує OB у останніх
+                    maxDistanceToLastBar=1750 барах і накопичує стан до 5000
+                    (max_bars_back), тож 3000 барів дають той самий контекст
+                    свінгів/ATR без runaway-вартості (один fetch на тік, кеш).
                     """
                     if tf in tf_data:
                         return tf_data[tf]
                     try:
                         if hasattr(md, 'fetch_klines') and \
                            'interval' in md.fetch_klines.__code__.co_varnames:
-                            kl = md.fetch_klines(symbol, limit=2000, interval=tf)
+                            kl = md.fetch_klines(symbol, limit=3000, interval=tf)
                         else:
-                            kl = md.fetch_klines(symbol, limit=2000)
+                            kl = md.fetch_klines(symbol, limit=3000)
                         if not kl or len(kl) < 220:
                             tf_data[tf] = None
                             return None
@@ -1618,47 +1613,50 @@ class SMCScanner:
                             # шлемо сигнал у ту саму обробку, що й CHoCH: on_signal →
                             # черги FF. Напрямок = напрямок OB (Bull=LONG/Bear=SHORT).
                             if _vob_alert_on:
+                                # 🟪 Як в оригіналі Pine — ОКРЕМО найновіший БИЧАЧИЙ
+                                # OB (→ LONG) і найновіший ВЕДМЕЖИЙ (→ SHORT). Кожен
+                                # дедуп за formation_time (момент детекції). Сид на
+                                # першому показі КОЖНОГО напрямку (щоб не залити чергу
+                                # вже наявними OB).
                                 try:
-                                    _lob = vol_result.get('latest_ob') or {}
-                                    _lft = int(_lob.get('formation_time') or 0)
-                                    _ltype = _lob.get('type')
-                                    _lside = ('LONG' if _ltype == 'Bull'
-                                              else ('SHORT' if _ltype == 'Bear' else None))
-                                    _prev_seen = self._vob_alert_seen.get(symbol)
-                                    if _prev_seen is None:
-                                        # 🟪 БАЗОВА ЛІНІЯ: перший показ монети —
-                                        # лише ЗАПАМʼЯТАТИ поточний OB БЕЗ сигналу,
-                                        # щоб НЕ залити чергу вже НАЯВНИМИ (старими)
-                                        # Volumized OB. Сигнал — тільки на OB, що
-                                        # утвориться ПІЗНІШЕ за цю базову лінію.
-                                        self._vob_alert_seen[symbol] = _lft
-                                    elif (_lft and _lside and not _lob.get('breaker')
-                                            and _lft > _prev_seen):
-                                        # НОВИЙ, СВІЖІШИЙ OB (formation_time СТРОГО
-                                        # більший) → сигнал. Повернення до старішого
-                                        # OB (напр. після breaker) сигналу НЕ дає.
-                                        self._vob_alert_seen[symbol] = _lft
-                                        try:
-                                            from detection.activity_log import log_activity
-                                        except Exception:
-                                            log_activity = lambda *a, **k: None
-                                        _entry = (self._get_live_price(symbol)
-                                                  or (_lob.get('top') if _lside == 'SHORT'
-                                                      else _lob.get('bottom')) or 0)
-                                        log_activity(symbol, 'signal',
-                                                     f'Свіжий Volumized OB ({vol_tf}) {_lside}',
-                                                     side=_lside, source='scanner')
-                                        from detection.trade_manager import get_trade_manager
-                                        _tm = get_trade_manager()
-                                        if _tm:
-                                            # ⚠️ opened_by='vob_alert' (НЕ 'vob'!) — щоб
-                                            # funding-очистка _purge_queue_kind('vob') НЕ
-                                            # видаляла VOB-Alert записи (різні джерела).
-                                            _tm.on_signal(symbol=symbol, side=_lside,
-                                                          entry_price=_entry, opened_by='vob_alert')
-                                except Exception as _ve:
-                                    if self._errors <= 5:
-                                        print(f"[SMC] VOB-alert error for {symbol}: {_ve}")
+                                    from detection.activity_log import log_activity
+                                except Exception:
+                                    log_activity = lambda *a, **k: None
+                                _tm = None
+                                try:
+                                    from detection.trade_manager import get_trade_manager
+                                    _tm = get_trade_manager()
+                                except Exception:
+                                    _tm = None
+                                for _side, _ob in (('LONG', vol_result.get('newest_bull')),
+                                                   ('SHORT', vol_result.get('newest_bear'))):
+                                    try:
+                                        if not _ob or _ob.get('breaker'):
+                                            continue
+                                        _ft = int(_ob.get('formation_time') or 0)
+                                        if _ft <= 0:
+                                            continue
+                                        _k = f"{symbol}:{_side}"
+                                        _prev = self._vob_alert_seen.get(_k)
+                                        if _prev is None:
+                                            # базова лінія цього напрямку — без сигналу
+                                            self._vob_alert_seen[_k] = _ft
+                                        elif _ft > _prev:
+                                            self._vob_alert_seen[_k] = _ft
+                                            _entry = (self._get_live_price(symbol)
+                                                      or (_ob.get('top') if _side == 'SHORT'
+                                                          else _ob.get('bottom')) or 0)
+                                            log_activity(symbol, 'signal',
+                                                         f'Свіжий Volumized OB ({vol_tf}) {_side}',
+                                                         side=_side, source='scanner')
+                                            if _tm:
+                                                # opened_by='vob_alert' (НЕ 'vob') — щоб
+                                                # funding-очистка не видаляла ці записи.
+                                                _tm.on_signal(symbol=symbol, side=_side,
+                                                              entry_price=_entry, opened_by='vob_alert')
+                                    except Exception as _ve:
+                                        if self._errors <= 5:
+                                            print(f"[SMC] VOB-alert error {symbol} {_side}: {_ve}")
                         else:
                             # No TF data — clear cache so stale entries
                             # don't linger (e.g., user changed TF and

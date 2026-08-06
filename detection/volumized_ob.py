@@ -529,8 +529,14 @@ def get_latest_ob_trend(klines: List[Dict], **settings) -> Dict[str, Any]:
     Returns: {'trend': 'LONG'|'SHORT'|None, 'trend_meta': {...}}.
     """
     result = detect_volumized_obs(klines, **settings)
+    _vb = result.get('bullish_obs') or []
+    _vs = result.get('bearish_obs') or []
     return {
         'trend': result['trend'],
         'trend_meta': result['trend_meta'],
         'latest_ob': result['latest_ob'],
+        # Найновіші OB кожного напрямку ОКРЕМО (як у Pine: lastBullishOBTime /
+        # lastBearishOBTime). Списки — newest-first, тож [0] = найсвіжіший.
+        'newest_bull': _vb[0] if _vb else None,
+        'newest_bear': _vs[0] if _vs else None,
     }
