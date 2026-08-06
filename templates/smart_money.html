@@ -2423,9 +2423,19 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
 
             <!-- 🎯 Черга-5 · SMC-модель входу (5 кроків, HTF=Forecast 1H:4H) -->
-            <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px;flex-wrap:wrap;gap:8px">
-                <div style="font-size:0.78rem;font-weight:700;color:#93c5fd;min-width:0">🎯 Черга-5 · SMC-модель входу <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— 5 кроків: HTF (Forecast 1H:4H) → тест POI + зняття ліквідності → CHoCH M15 → Entry (FVG/OB + Prem/Disc) → SL/TP, R:R ≥ мін. Відкриває Market у зоні POI. Тумблер OFF → не працює.</span></div>
-                <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap"><span style="font-size:0.7rem;color:#cbd5e1">Черга-5</span><input type="checkbox" id="ff-queue5-enabled" onchange="saveFuelFilterSettings()"></label>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
+                <div style="font-size:0.74rem;font-weight:700;color:#93c5fd;min-width:0">🎯 Черга-5 · SMC-модель входу <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— 5 кроків: HTF (Forecast 1H:4H) → тест POI + зняття ліквідності → CHoCH M15 → Entry (FVG/OB + Prem/Disc) → SL/TP, R:R ≥ мін. Відкриває Market у зоні POI. Тумблер OFF → не працює.</span></div>
+                <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-5 «SMC-модель входу».">
+                        <input type="checkbox" id="ff-queue5-enabled" onchange="saveFuelFilterSettings()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+            <!-- 🔄 Індикатор процесу пошуку Черги-5 -->
+            <div id="ff-q5-scan" style="display:none;align-items:center;gap:8px;font-size:0.68rem;color:#8b93a7;margin:0 0 6px;padding:5px 10px;border:1px solid rgba(147,197,253,0.18);border-radius:6px;background:rgba(147,197,253,0.05)">
+                <span id="ff-q5-scan-dot" style="width:8px;height:8px;border-radius:50%;background:#4ade80;display:inline-block"></span>
+                <span id="ff-q5-scan-txt">—</span>
             </div>
             <details class="sm-settings-bar" style="margin:0 0 8px">
                 <summary class="sm-settings-summary">⚙️ Налаштування (Черга-5) <span class="sm-settings-summary-right" style="color:#8b93a7">R:R / буфер / свіп</span></summary>
@@ -2434,6 +2444,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Буфер SL за екстремум, що знімав ліквідність (% ціни).">SL-буфер <input type="number" id="ff-queue5-buf" min="0" max="10" step="0.05" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> %</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Скільки останніх M15-барів дивитись на зняття ліквідності (свіп).">Свіп, барів <input type="number" id="ff-queue5-sweep" min="3" max="100" step="1" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"></label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Обмежувач навантаження: скільки монет оцінювати за цикл (важкий SMC-аналіз + свічки).">Монет/цикл <input type="number" id="ff-queue5-cap" min="1" max="50" step="1" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Наповнювати Чергу-5 монетами із сигналу CHoCH/CHoCH+BOS — пріоритетна оцінка саме цих монет (CHoCH і є тригером Кроку 3). Безперервний скан скан-листа лишається.">
+                        <input type="checkbox" id="ff-queue5-from-choch" onchange="saveFuelFilterSettings()"> 📐 Наповнення із CHoCH
+                    </label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Скільки годин тримати CHoCH-кандидата в Черзі-5, якщо він так і не дозрів до 5/5.">CHoCH TTL <input type="number" id="ff-queue5-ttl" min="0" max="72" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> год</label>
                 </div>
                 <div style="font-size:0.64rem;color:#6b7280;padding:0 12px 10px">💡 HTF-контекст = Forecast 1H:4H (мають збігтись). Крок 3 (CHoCH M15) і зони (Premium/Discount) — зі SMC-аналізу. Ліквідність = EQH/EQL + PDH/PDL. Відкриває Market, коли ціна вже в зоні POI і всі 5 кроків зійшлись; SL/TP ставляться автоматично.</div>
             </details>
@@ -9152,11 +9166,15 @@ function ffRenderQueue5() {
         const held = `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (t.held_sec||0)}">${fmtTimer(t.held_sec)}</span>`;
         const rr = (t.rr != null) ? t.rr : '—';
         const rrCol = (t.rr != null && t.rr >= 3) ? '#4ade80' : '#cbd5e1';
+        const srcBadge = (t.src === 'CHoCH')
+            ? '<span title="Зайшла в Чергу-5 із сигналу CHoCH" style="margin-right:4px;font-size:0.62rem;font-weight:700;color:#93c5fd">CHoCH</span>' : '';
+        const reason = t.reason
+            ? `<span style="color:#8b93a7;font-size:0.64rem;margin-left:6px">⏳ ${String(t.reason).replace(/</g,'&lt;')}</span>` : '';
         return `<tr>
-            <td style="font-weight:600">${tvSym(t.symbol)}</td>
+            <td style="font-weight:600">${srcBadge}${tvSym(t.symbol)}</td>
             <td style="white-space:nowrap">${dirHtml}</td>
             <td style="white-space:nowrap;font-weight:700;color:${nCol};font-variant-numeric:tabular-nums">${n}/5</td>
-            <td style="white-space:nowrap">${ffQ5StepsCell(t.steps)}</td>
+            <td style="white-space:nowrap">${ffQ5StepsCell(t.steps)}${reason}</td>
             <td style="font-size:0.72rem;color:#cbd5e1">${t.sl != null ? t.sl : '—'}</td>
             <td style="font-size:0.72rem;color:#cbd5e1">${t.tp != null ? t.tp : '—'}</td>
             <td style="font-size:0.74rem;font-weight:700;color:${rrCol}">${rr}</td>
@@ -9359,6 +9377,8 @@ function renderFuelFilter(d) {
     setIf('ff-queue5-buf', String(s.queue5_sl_buffer_pct != null ? s.queue5_sl_buffer_pct : 0.10));
     setIf('ff-queue5-sweep', String(s.queue5_sweep_lookback != null ? s.queue5_sweep_lookback : 12));
     setIf('ff-queue5-cap', String(s.queue5_max_per_cycle != null ? s.queue5_max_per_cycle : 6));
+    setIf('ff-queue5-from-choch', s.queue5_from_choch !== false);
+    setIf('ff-queue5-ttl', String(s.queue5_ttl_hours != null ? s.queue5_ttl_hours : 6));
     setIf('ff-queue4-mmnew', String(s.queue4_mm_new_min != null ? s.queue4_mm_new_min : 30));
     setIf('ff-queue4-mmold', String(s.queue4_mm_old_min != null ? s.queue4_mm_old_min : 10));
     setIf('ff-queue4-mmold-mode', s.queue4_mm_old_mode || 'ignore');
@@ -9500,6 +9520,28 @@ function renderFuelFilter(d) {
         window._ff5TimersData = d.timers5 || [];
         ffRenderQueue5();
     }
+    // 🔄 Індикатор процесу пошуку Черги-5 (щоб було видно, що йде підбір).
+    (function () {
+        const box = document.getElementById('ff-q5-scan');
+        if (!box) return;
+        const on = !!s.queue5_enabled;
+        box.style.display = on ? 'flex' : 'none';
+        if (!on) return;
+        const sc = d.queue5_scan || {};
+        const txt = document.getElementById('ff-q5-scan-txt');
+        const dot = document.getElementById('ff-q5-scan-dot');
+        const ago = sc.ts ? Math.max(0, Math.floor(Date.now() / 1000 - sc.ts)) : null;
+        if (txt) txt.textContent = `🔄 Пошук: оцінено ${sc.evaluated || 0} монет/цикл`
+            + ` · CHoCH-кандидатів ${sc.pending5 || 0} · у грі ${sc.in_play || 0}`
+            + ` · найкращий ${sc.best != null ? sc.best : 0}/5${sc.best_sym ? ' (' + sc.best_sym + ')' : ''}`
+            + (ago != null ? ` · оновлено ${ago}с тому` : '');
+        // «Тік» — блимнути точкою на кожному новому скані.
+        if (dot && sc.ts && window._q5LastTs !== sc.ts) {
+            window._q5LastTs = sc.ts;
+            dot.style.background = '#fbbf24';
+            setTimeout(() => { if (dot) dot.style.background = '#4ade80'; }, 350);
+        }
+    }());
     // GLOBAL engine gate banner — why the engine can't open ANYTHING now.
     const gateEl = document.getElementById('ff-engine-gate');
     if (gateEl) {
@@ -10300,6 +10342,8 @@ async function saveFuelFilterSettings() {
         queue5_sl_buffer_pct: parseFloat(_v('ff-queue5-buf', '0.10') || '0.10'),
         queue5_sweep_lookback: parseInt(_v('ff-queue5-sweep', '12') || '12', 10),
         queue5_max_per_cycle: parseInt(_v('ff-queue5-cap', '6') || '6', 10),
+        queue5_from_choch: _c('ff-queue5-from-choch'),
+        queue5_ttl_hours: parseFloat(_v('ff-queue5-ttl', '6') || '6'),
         queue4_mm_new_min: parseInt(_v('ff-queue4-mmnew', '30') || '30', 10),
         queue4_mm_old_min: parseInt(_v('ff-queue4-mmold', '10') || '10', 10),
         queue4_mm_old_mode: _v('ff-queue4-mmold-mode', 'ignore') || 'ignore',
@@ -10522,21 +10566,29 @@ function tvSym(sym, label) {
 // Closed-trade cell: 📈 (left) = history chart, the NAME = TradingView link.
 function histSymCell(c, isShadow) {
     const tv = tvSym(c.symbol);
-    if (!(c.hist_len > 0)) return `<b>${tv}</b>`;
+    const src = (typeof tradeSrcMark === 'function') ? tradeSrcMark(c) : '';
+    if (!(c.hist_len > 0)) return `${src}<b>${tv}</b>`;
     const ca = JSON.stringify(c.closed_at);
-    return `<b><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${c.hist_len} точок)"`
+    return `${src}<b><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${c.hist_len} точок)"`
         + ` onclick="event.stopPropagation();showTradeHistory('${c.symbol}', ${ca}, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`;
+}
+
+// Мітка джерела угоди перед символом: 💰 Funding / 🎯Q5 Черга-5.
+function tradeSrcMark(p) {
+    let m = '';
+    const fromFunding = (window.ffFundingSyms && window.ffFundingSyms.has(p.symbol))
+        || (p.opened_by && /funding/i.test(p.opened_by));
+    if (fromFunding)
+        m += '<span title="Монета з 💰 Funding" style="margin-right:3px;font-size:0.72rem">💰</span>';
+    if (p.opened_by && /Черга-5/i.test(p.opened_by))
+        m += '<span title="Відкрито Чергою-5 (SMC-модель входу, 5 кроків)" style="margin-right:3px;font-size:0.66rem;font-weight:700;color:#93c5fd">🎯Q5</span>';
+    return m;
 }
 
 // Open-position cell: 📈 (left) = live history chart, NAME = TradingView link.
 function histSymOpen(p, isShadow) {
     const tv = tvSym(p.symbol);
-    // 💰 — монета прийшла з фандингу (є в таблиці 💰 Funding — МММ АБО відкрита
-    // за funding-сигналом, напр. Q3-VOB(funding)).
-    const fromFunding = (window.ffFundingSyms && window.ffFundingSyms.has(p.symbol))
-        || (p.opened_by && /funding/i.test(p.opened_by));
-    const fund = fromFunding
-        ? '<span title="Монета з 💰 Funding" style="margin-right:3px;font-size:0.72rem">💰</span>' : '';
+    const fund = tradeSrcMark(p);
     if (!(p.hist_len > 0)) return `${fund}<b class="tm-sym-name">${tv}</b>`;
     return `${fund}<b class="tm-sym-name"><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${p.hist_len} точок)"`
         + ` onclick="event.stopPropagation();showTradeHistory('${p.symbol}', null, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`;

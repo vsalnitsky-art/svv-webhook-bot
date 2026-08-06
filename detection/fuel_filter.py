@@ -286,6 +286,10 @@ DEFAULT_SETTINGS = {
     'queue5_sl_buffer_pct': 0.10,  # буфер SL за екстремум зняття ліквідності, %
     'queue5_sweep_lookback': 12,   # скільки M15-барів дивитись на свіп ліквідності
     'queue5_max_per_cycle': 6,     # обмежувач: скільки монет оцінювати за цикл
+    # Наповнювати Черга-5 монетами із СИГНАЛУ CHoCH/CHoCH+BOS (пріоритетна оцінка
+    # саме цих монет — CHoCH і є тригером Кроку 3). True = так, + безперервний скан.
+    'queue5_from_choch': True,
+    'queue5_ttl_hours': 6,         # скільки тримати CHoCH-кандидата в Черзі-5
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -744,6 +748,10 @@ class FuelFilterDaemon:
         # + {symbol: ts останнього оцінювання} для ротації по скан-листу.
         self._q5_state: Dict[str, Dict] = {}
         self._q5_at: Dict[str, float] = {}
+        # Кандидати Черги-5, заведені із сигналу CHoCH (пріоритетна оцінка):
+        # {symbol: {dir, added_at, kind}}. + статистика скану для UI-індикатора.
+        self._pending5: Dict[str, Dict] = {}
+        self._q5_scan: Dict = {}
         # Anti-flood for the per-coin «Готовність» decision log:
         # {symbol: (outcome, hot, score_bucket, ts)} — a hold/skip is re-logged
         # only when it meaningfully changes or after READINESS_LOG_MIN_GAP sec;
@@ -919,6 +927,11 @@ class FuelFilterDaemon:
             s['queue5_max_per_cycle'] = max(1, min(50, int(s.get('queue5_max_per_cycle', 6) or 6)))
         except (TypeError, ValueError):
             s['queue5_max_per_cycle'] = 6
+        s['queue5_from_choch'] = bool(s.get('queue5_from_choch', True))
+        try:
+            s['queue5_ttl_hours'] = max(0, min(72, float(s.get('queue5_ttl_hours', 6) or 0)))
+        except (TypeError, ValueError):
+            s['queue5_ttl_hours'] = 6
         try:
             s['queue4_ttl_hours'] = max(0, min(72, float(s.get('queue4_ttl_hours', 3) or 0)))
         except (TypeError, ValueError):
@@ -1144,7 +1157,10 @@ class FuelFilterDaemon:
         q2 = bool(s.get('queue2_enabled', False))
         q3 = bool(s.get('queue3_enabled', False))   # 🎯 Готовність
         q4 = bool(s.get('queue4_enabled', False))   # 🎯 Усі шари
-        if not (q1 or q2 or q3 or q4):
+        # 🎯 Черга-5 приймає із сигналу ЛИШЕ CHoCH/CHoCH+BOS (тригер її Кроку 3).
+        q5 = bool(s.get('queue5_enabled', False) and s.get('queue5_from_choch', True)
+                  and kind in ('choch', 'choch_bos'))
+        if not (q1 or q2 or q3 or q4 or q5):
             log_activity(sym, 'passthrough', 'Усі черги вимкнені → сигнал іде у пряме відкриття', side=side, source='intercept')
             return ''   # all queues OFF → do NOT intercept; open directly
         now = time.time()
@@ -1269,6 +1285,15 @@ class FuelFilterDaemon:
                 if q4_ejected:
                     # свіже вікно застою для щойно заміненого запису
                     self._q4_lit_at.pop(sym, None)
+                changed = True
+            if q5:
+                # 🎯 Черга-5: CHoCH-сигнал → пріоритетний кандидат на 5-крокову
+                # оцінку. Протилежний напрямок оновлює запис. Двигун сам відкриє,
+                # коли всі 5 кроків зійдуться (або прибере за TTL).
+                prev5 = self._pending5.get(sym) or {}
+                _keep5 = (prev5.get('dir') == side and prev5.get('added_at'))
+                self._pending5[sym] = {'dir': side, 'kind': kind,
+                                       'added_at': prev5.get('added_at') if _keep5 else now}
                 changed = True
             if q2_take:
                 prev2 = self._pending2.get(sym) or {}
@@ -1398,7 +1423,7 @@ class FuelFilterDaemon:
         # Return the ACTUAL disposition so the caller (and the chart marker) tell
         # the truth: 'queued' — added to a queue; 'dropped' — an enabled queue
         # OWNED it but rejected it (e.g. Q2 CTR gate) → NOT queued, not opened.
-        if q1 or q2_take or q3 or q4:
+        if q1 or q2_take or q3 or q4 or q5:
             return 'queued'
         return 'dropped'   # q2 enabled but the signal didn't pass its gate
 
@@ -5839,19 +5864,44 @@ class FuelFilterDaemon:
             print(f"[FF-Q5] module import error: {e}")
             return
         cands = [x.upper() for x in (self.get_scan_list() or [])]
-        if not cands:
-            return
-        live = set(cands)
         try:
             cap = int(s.get('queue5_max_per_cycle', 6) or 6)
         except (TypeError, ValueError):
             cap = 6
-        for sym in sorted(cands, key=lambda x: self._q5_at.get(x, 0))[:cap]:
+        from_choch = bool(s.get('queue5_from_choch', True))
+        try:
+            ttl_h = float(s.get('queue5_ttl_hours', 6) or 0)
+        except (TypeError, ValueError):
+            ttl_h = 6.0
+        # TTL-прибирання CHoCH-кандидатів, що так і не дозріли.
+        if ttl_h > 0 and self._pending5:
+            with self._lock:
+                for _s in [k for k, v in self._pending5.items()
+                           if (now - float((v or {}).get('added_at') or 0)) > ttl_h * 3600]:
+                    self._pending5.pop(_s, None)
+        p5_syms = list(self._pending5.keys()) if from_choch else []
+        # Пріоритет: усі CHoCH-кандидати + до cap монет зі скан-листа (ротація).
+        to_eval = list(dict.fromkeys(p5_syms))
+        for sym in sorted(cands, key=lambda x: self._q5_at.get(x, 0)):
+            if len([x for x in to_eval if x not in p5_syms]) >= cap:
+                break
+            if sym not in to_eval:
+                to_eval.append(sym)
+        if not to_eval:
+            return
+        keep = set(cands) | set(p5_syms)
+        _best = 0
+        _best_sym = None
+        _evaluated = 0
+        for sym in to_eval:
             self._q5_at[sym] = now
+            _from_sig = sym in self._pending5
             # Уже відкрита / керована — не чіпаємо, чистимо стан.
             if (sym in self._fuel_managed or self._tm_has_position(sym, True)
                     or self._tm_has_position(sym, False)):
                 self._q5_state.pop(sym, None)
+                with self._lock:
+                    self._pending5.pop(sym, None)
                 continue
             try:
                 px = (self._fuel_dir_smoothed(sym) or {}).get('mark_price')
@@ -5859,9 +5909,16 @@ class FuelFilterDaemon:
             except Exception as e:
                 print(f"[FF-Q5] {sym} eval error: {e}")
                 continue
-            # У таблицю Черги-5 показуємо монети «в грі» (пройшли хоча б Крок 1).
-            if int(dec.get('count', 0)) >= 1:
-                self._q5_state[sym] = {**dec, 'ts': now}
+            _evaluated += 1
+            _cnt = int(dec.get('count', 0))
+            if _cnt > _best:
+                _best = _cnt
+                _best_sym = sym
+            # У таблицю Черги-5 показуємо монети «в грі» (пройшли хоча б Крок 1),
+            # а також УСІХ CHoCH-кандидатів (щоб було видно, що монета зайшла).
+            if _cnt >= 1 or _from_sig:
+                self._q5_state[sym] = {**dec, 'ts': now,
+                                       'src': 'CHoCH' if _from_sig else 'scan'}
             else:
                 self._q5_state.pop(sym, None)
             if not dec.get('ok'):
@@ -5880,6 +5937,7 @@ class FuelFilterDaemon:
                     with self._lock:
                         self._timers[sym] = {'dir': side, 'since': now, 'start_price': entry}
                         self._q5_state.pop(sym, None)
+                        self._pending5.pop(sym, None)
                     # SL + TP із алгоритму (Крок 5).
                     try:
                         tm = self._get_tm() if self._get_tm else None
@@ -5896,12 +5954,18 @@ class FuelFilterDaemon:
                     print(f"[FF-Q5] opened {side} {sym} (5/5, R:R {dec.get('rr')})")
             except Exception as e:
                 print(f"[FF-Q5] open error {sym}: {e}")
-        # Прибрати стан монет, яких уже немає в скан-листі.
+        # 📊 Статистика скану для UI-індикатора «йде пошук».
+        self._q5_scan = {
+            'ts': now, 'evaluated': _evaluated, 'scan_n': len(cands),
+            'pending5': len(self._pending5), 'in_play': len(self._q5_state),
+            'best': _best, 'best_sym': _best_sym, 'cap': cap,
+        }
+        # Прибрати стан монет, яких немає ні в скан-листі, ні серед CHoCH-кандидатів.
         for k in list(self._q5_state.keys()):
-            if k not in live:
+            if k not in keep:
                 self._q5_state.pop(k, None)
         for k in list(self._q5_at.keys()):
-            if k not in live:
+            if k not in keep:
                 self._q5_at.pop(k, None)
 
     def _engine_tick_readiness(self):
@@ -7230,6 +7294,7 @@ class FuelFilterDaemon:
                     'sl': dec.get('sl'), 'tp': dec.get('tp'), 'rr': dec.get('rr'),
                     'held_sec': int(now - float(dec.get('ts') or now)),
                     'reason': dec.get('reason', ''),
+                    'src': dec.get('src', 'scan'),
                 })
             all_timers5 = sorted(timers5, key=lambda x: -x['count'])
             bs = self._btc_state or {}
@@ -7409,6 +7474,7 @@ class FuelFilterDaemon:
             'timers4': all_timers4,
             'timers5': all_timers5,
             'queue5_enabled': bool(settings.get('queue5_enabled', False)),
+            'queue5_scan': dict(self._q5_scan or {}),
             'pending4_visible': visible_pending4,
             'queue4_enabled': bool(settings.get('queue4_enabled', False)),
             'pending3_count': len(self._pending3),
