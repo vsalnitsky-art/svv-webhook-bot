@@ -2003,6 +2003,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <option value="1h" selected>TF: 1H</option>
                             <option value="4h">TF: 4H</option>
                         </select>
+                        <select id="sm-poc-window" onchange="onPocMarketChange()" title="ФІКСОВАНЕ вікно розрахунку POC (НЕ залежить від зуму графіка). Це і є «остаточний» POC для рішення. За замовчуванням 3 дні."
+                                style="background:rgba(0,0,0,0.35);color:#cbd5e1;border:1px solid rgba(255,255,255,0.15);border-radius:4px;font-size:0.7rem;padding:2px 4px;cursor:pointer;vertical-align:middle">
+                            <option value="1">Вікно: 1д</option>
+                            <option value="3" selected>Вікно: 3д</option>
+                            <option value="7">Вікно: 7д</option>
+                            <option value="14">Вікно: 14д</option>
+                            <option value="30">Вікно: 30д</option>
+                        </select>
                     </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
@@ -6534,22 +6542,13 @@ async function loadChart() {
         // chart header.
         renderDecision(d.decision);
 
-        // ⚪ POC (Volume Profile, Binance) — остання ціна для вердикту ціна↔POC.
+        // ⚪ POC (Volume Profile) — остання ціна для вердикту ціна↔POC.
+        // POC рахується за ФІКСОВАНИМ вікном (див. селектор «Вікно»), тож
+        // НЕ перераховуємо його на зум/пан — значення стабільне («остаточне»).
         try {
             const _lastBar = ohlc[ohlc.length - 1];
             _pocLastClose = _lastBar ? Number(_lastBar.close) : null;
         } catch (e) { _pocLastClose = null; }
-        // Одноразова підписка на зміну видимого діапазону → перерахунок POC
-        // саме по ВИДИМОМУ діапазону (VPVR-стиль, як у MobChart), з debounce.
-        if (chart && !_pocVRSubscribed) {
-            try {
-                chart.timeScale().subscribeVisibleTimeRangeChange(() => {
-                    clearTimeout(_pocDebTimer);
-                    _pocDebTimer = setTimeout(loadVolumeProfilePOC, 650);
-                });
-                _pocVRSubscribed = true;
-            } catch (e) { /* стара версія lib — лишаємо фолбек-вікно */ }
-        }
         loadVolumeProfilePOC();
 
         lastChartSymbol = currentSymbol;
@@ -6571,10 +6570,16 @@ function pocTf() {
     const el = document.getElementById('sm-poc-tf');
     return (el && el.value) ? el.value : '1h';
 }
+function pocWindowDays() {
+    const el = document.getElementById('sm-poc-window');
+    const v = el ? parseInt(el.value, 10) : 3;
+    return (v && v > 0) ? v : 3;
+}
 function onPocMarketChange() {
     try {
         localStorage.setItem('sm_poc_market', pocMarket());
         localStorage.setItem('sm_poc_tf', pocTf());
+        localStorage.setItem('sm_poc_window', String(pocWindowDays()));
     } catch {}
     loadVolumeProfilePOC();
 }
@@ -6587,20 +6592,16 @@ function _removePocLine() {
 async function loadVolumeProfilePOC() {
     const badge = document.getElementById('sm-poc-badge');
     if (!candleSeries || !currentSymbol) { if (badge) badge.style.display = 'none'; return; }
-    // Видимий діапазон (сек). Якщо недоступний — бекенд візьме фолбек-вікно.
-    let fromTo = '';
-    try {
-        const vr = chart.timeScale().getVisibleRange();
-        if (vr && vr.from && vr.to && vr.to > vr.from) {
-            fromTo = `&from=${Math.floor(vr.from)}&to=${Math.ceil(vr.to)}`;
-        }
-    } catch (e) { /* фолбек-вікно на бекенді */ }
+    // ⚙️ ФІКСОВАНЕ вікно (не залежить від зуму!) — стабільний, «остаточний» POC.
+    // Раніше рахувалось по видимому діапазону → лінія «плавала» від зуму.
     const mkt = pocMarket();
     const tf = pocTf();
+    const days = pocWindowDays();
+    const hoursQ = `&hours=${days * 24}`;
     const priceQ = (_pocLastClose != null) ? `&price=${_pocLastClose}` : '';
     const reqSym = currentSymbol;
     try {
-        const r = await fetch(`/api/volume-profile/poc?symbol=${encodeURIComponent(reqSym)}&market=${mkt}&tf=${tf}${fromTo}${priceQ}`);
+        const r = await fetch(`/api/volume-profile/poc?symbol=${encodeURIComponent(reqSym)}&market=${mkt}&tf=${tf}${hoursQ}${priceQ}`);
         const d = await r.json();
         // Символ міг змінитись, поки чекали — не малюємо чужий POC.
         if (reqSym !== currentSymbol) return;
@@ -6621,34 +6622,61 @@ async function loadVolumeProfilePOC() {
             axisLabelVisible: true,
             title: 'POC',
         });
-        // Бейдж: POC + де ціна відносно POC (для рішення на вході).
+        // ── 🎨 Кольоровий бейдж: назва + значення + %-різниця + напрямок ──
         if (badge) {
-            const rel = (_pocLastClose != null && _pocLastClose < d.poc) ? 'below'
-                      : (_pocLastClose != null && _pocLastClose > d.poc) ? 'above' : 'at';
-            const relTxt = rel === 'below' ? 'ціна нижче POC' : rel === 'above' ? 'ціна вище POC' : 'ціна на POC';
+            const px = _pocLastClose;
+            const havePx = (px != null && px > 0);
+            const below = havePx && px < d.poc;      // ціна нижче POC → LONG доцільний
+            const above = havePx && px > d.poc;      // ціна вище POC → SHORT доцільний
+            const distPct = havePx ? ((px - d.poc) / d.poc * 100) : null;  // − нижче / + вище
+            // Напрямок, у який КРАЩЕ відкривати (POC = магніт «справедливої ціни»):
+            //   ціна нижче POC → LONG ✓ ; ціна вище POC → SHORT ✓.
+            const favDir = below ? 'LONG' : (above ? 'SHORT' : null);
+            const GREEN = '#4ade80', RED = '#f87171', GREY = '#9aa3b5', MUTE = '#8b93a7';
+            const favCol = favDir === 'LONG' ? GREEN : favDir === 'SHORT' ? RED : GREY;
+            const dot = favDir === 'LONG' ? '🟢' : favDir === 'SHORT' ? '🔴' : '⚪';
+            const distTxt = (distPct != null)
+                ? `${distPct >= 0 ? '+' : '−'}${Math.abs(distPct).toFixed(2)}%` : '—';
             const exTxt = (d.exchange === 'bybit') ? 'Bybit' : 'Binance';
             const mktTxt = (d.market === 'futures') ? 'FUT'
                          : (d.market === 'linear') ? 'LINEAR'
                          : (d.market === 'spot') ? 'SPOT' : String(d.market || '').toUpperCase();
             const tfTxt = tf.toUpperCase();
-            // Якщо спрацював фолбек на Bybit — позначаємо джерело в бейджі.
-            const srcTag = (d.exchange === 'bybit') ? ' · ⚠ Bybit' : '';
-            badge.textContent = `⚪ POC ${fmtPriceJS(d.poc)} · ${relTxt}${srcTag}`;
-            badge.style.background = 'rgba(255,255,255,0.12)';
-            badge.style.color = '#e5e7eb';
+            const bybitTag = (d.exchange === 'bybit')
+                ? ` <span style="color:#fbbf24;font-weight:700">⚠ Bybit</span>` : '';
+            // Значення POC — виділене (біле, monospace); %-різниця й напрямок — у кольорі.
+            badge.innerHTML =
+                `<span style="color:${MUTE};font-weight:600">⚪ POC</span> `
+                + `<b style="color:#ffffff;font-family:monospace">${fmtPriceJS(d.poc)}</b>`
+                + ` <span style="color:${MUTE}">·</span> `
+                + `<span style="color:${MUTE}">ціна↔POC</span> `
+                + `<b style="color:${favCol};font-family:monospace">${distTxt}</b>`
+                + ` <span style="color:${MUTE}">·</span> `
+                + (favDir
+                    ? `<b style="color:${favCol}">${dot} краще ${favDir}</b>`
+                    : `<b style="color:${GREY}">⚪ на POC</b>`)
+                + bybitTag;
+            // Тонована пілюля за напрямком + бордюр.
+            badge.style.background = favDir === 'LONG' ? 'rgba(34,197,94,0.14)'
+                                   : favDir === 'SHORT' ? 'rgba(239,68,68,0.14)'
+                                   : 'rgba(148,163,184,0.14)';
+            badge.style.border = `1px solid ${favCol}66`;
+            badge.style.padding = '2px 9px';
+            badge.style.borderRadius = '7px';
             badge.style.display = 'inline-block';
-            // Підказка: як читати для входу + межі зони вартості + діапазон.
-            const longOk = (_pocLastClose != null && _pocLastClose < d.poc);
-            const shortOk = (_pocLastClose != null && _pocLastClose > d.poc);
+            // Підказка: пояснення + межі зони вартості + діапазон + період.
             badge.title =
-                `POC (Point of Control) — рівень з НАЙБІЛЬШИМ обсягом.\n`
-                + `${exTxt} ${mktTxt} · ${d.klines} × ${tfTxt} · зона вартості ${d.value_area_pct}%\n`
+                `POC (Point of Control) — рівень з НАЙБІЛЬШИМ обсягом = «справедлива ціна».\n`
+                + `${exTxt} ${mktTxt} · ${d.klines} × ${tfTxt} · вікно ${days}д · зона вартості ${d.value_area_pct}%\n`
                 + ((d.exchange === 'bybit') ? `⚠ Монети немає на Binance — джерело Bybit (${mktTxt}).\n` : '')
                 + `POC: ${fmtPriceJS(d.poc)}\n`
                 + `VAH: ${fmtPriceJS(d.vah)}  ·  VAL: ${fmtPriceJS(d.val)}\n`
-                + `Діапазон: ${fmtPriceJS(d.price_low)} — ${fmtPriceJS(d.price_high)}\n\n`
-                + `Для входу: LONG доцільний, коли POC ВИЩЕ ціни; SHORT — коли НИЖЧЕ.\n`
-                + `Зараз: LONG ${longOk ? 'ОК ✓' : '—'} · SHORT ${shortOk ? 'ОК ✓' : '—'}`;
+                + `Діапазон: ${fmtPriceJS(d.price_low)} — ${fmtPriceJS(d.price_high)}\n`
+                + `Різниця ціна↔POC: ${distTxt}\n\n`
+                + `Правило входу (POC = магніт вартості):\n`
+                + `• ціна НИЖЧЕ POC → краще LONG (є куди рости до вартості)\n`
+                + `• ціна ВИЩЕ POC → краще SHORT\n`
+                + `Зараз: ${favDir ? ('краще ' + favDir) : 'ціна на POC — нейтрально'}`;
         }
     } catch (e) {
         _removePocLine();
@@ -12204,6 +12232,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const _pt = localStorage.getItem('sm_poc_tf');
         const _ptEl = document.getElementById('sm-poc-tf');
         if (_pt && _ptEl) _ptEl.value = _pt;   // інакше лишається дефолт 1H (selected)
+        const _pw = localStorage.getItem('sm_poc_window');
+        const _pwEl = document.getElementById('sm-poc-window');
+        if (_pw && _pwEl) _pwEl.value = _pw;   // інакше лишається дефолт 3д (selected)
     } catch {}
     await loadSettings();
     await loadTMSettings();
