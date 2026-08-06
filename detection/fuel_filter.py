@@ -290,6 +290,10 @@ DEFAULT_SETTINGS = {
     # саме цих монет — CHoCH і є тригером Кроку 3). True = так, + безперервний скан.
     'queue5_from_choch': True,
     'queue5_ttl_hours': 6,         # скільки тримати CHoCH-кандидата в Черзі-5
+    # Постійний скан УСЬОГО скан-листа. True (дефолт) → безперервно перебирає всі
+    # монети (сканер). False → оцінює ЛИШЕ CHoCH-кандидатів (скінченний набір із
+    # TTL) — монети не «крутяться» вічно, таблиця не засмічується 1/5-записами.
+    'queue5_scan_all': True,
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -928,6 +932,7 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             s['queue5_max_per_cycle'] = 6
         s['queue5_from_choch'] = bool(s.get('queue5_from_choch', True))
+        s['queue5_scan_all'] = bool(s.get('queue5_scan_all', True))
         try:
             s['queue5_ttl_hours'] = max(0, min(72, float(s.get('queue5_ttl_hours', 6) or 0)))
         except (TypeError, ValueError):
@@ -5863,7 +5868,10 @@ class FuelFilterDaemon:
         except Exception as e:
             print(f"[FF-Q5] module import error: {e}")
             return
-        cands = [x.upper() for x in (self.get_scan_list() or [])]
+        scan_all = bool(s.get('queue5_scan_all', True))
+        # Постійний скан скан-листа — лише коли увімкнено. Інакше оцінюємо ЛИШЕ
+        # CHoCH-кандидатів (скінченний набір), щоб монети не «крутились» вічно.
+        cands = [x.upper() for x in (self.get_scan_list() or [])] if scan_all else []
         try:
             cap = int(s.get('queue5_max_per_cycle', 6) or 6)
         except (TypeError, ValueError):
