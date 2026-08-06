@@ -3035,16 +3035,26 @@ class FuelFilterDaemon:
         except Exception:
             out['exit'] = None
         # ── ₿ BTC banner state (for the overlay's BTC line) ──
+        # Той самий контракт полів (dir/paused/status/strength), що й веб-банер,
+        # тож TradingView-оверлей НЕ треба міняти — він рендерить те, що прийде.
+        # Режим 'live' (дефолт) = ПОВНЕ ДУБЛЮВАННЯ без затримок: миттєвий напрямок
+        # МММ-бабло BTCUSDT, без сеансу/паузи/таймера. 'session' = стара механіка.
         try:
-            bdir = self._btc_verdict_dir if self._btc_verdict_dir in ('LONG', 'SHORT') else None
-            bpaused = bool(self._btc_paused and bdir)
-            bstatus = 'STOP'
-            if bdir:
-                period = float(settings.get('start_signal_minutes', 5) or 5) * 60
-                held = time.time() - (self._btc_verdict_since or 0)
-                bstatus = 'START' if held >= period else 'COUNTING'
-            out['btc'] = {'dir': bdir, 'paused': bpaused, 'status': bstatus,
-                          'strength': int(self._btc_fuel_strength or 0)}
+            if (settings.get('btc_banner_mode', 'live') or 'live') == 'live':
+                bdir = self._btc_live_dir if self._btc_live_dir in ('LONG', 'SHORT') else None
+                out['btc'] = {'dir': bdir, 'paused': False,
+                              'status': 'START' if bdir else 'STOP',
+                              'strength': int(self._btc_fuel_strength or 0)}
+            else:
+                bdir = self._btc_verdict_dir if self._btc_verdict_dir in ('LONG', 'SHORT') else None
+                bpaused = bool(self._btc_paused and bdir)
+                bstatus = 'STOP'
+                if bdir:
+                    period = float(settings.get('start_signal_minutes', 5) or 5) * 60
+                    held = time.time() - (self._btc_verdict_since or 0)
+                    bstatus = 'START' if held >= period else 'COUNTING'
+                out['btc'] = {'dir': bdir, 'paused': bpaused, 'status': bstatus,
+                              'strength': int(self._btc_fuel_strength or 0)}
         except Exception:
             out['btc'] = {'dir': None, 'paused': False, 'status': 'STOP', 'strength': 0}
         # ── 💰 Funding info — only when the coin is in the «💰 Funding — МММ по
