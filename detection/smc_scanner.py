@@ -1613,50 +1613,53 @@ class SMCScanner:
                             # шлемо сигнал у ту саму обробку, що й CHoCH: on_signal →
                             # черги FF. Напрямок = напрямок OB (Bull=LONG/Bear=SHORT).
                             if _vob_alert_on:
-                                # 🟪 Як в оригіналі Pine — ОКРЕМО найновіший БИЧАЧИЙ
-                                # OB (→ LONG) і найновіший ВЕДМЕЖИЙ (→ SHORT). Кожен
-                                # дедуп за formation_time (момент детекції). Сид на
-                                # першому показі КОЖНОГО напрямку (щоб не залити чергу
-                                # вже наявними OB).
+                                # 🟪 Сигнал = САМЕ ОСТАННІЙ Volumized OB, що утворився
+                                # на графіку: найбільший formation_time серед
+                                # найновішого бичачого й найновішого ведмежого →
+                                # беремо ОДИН, з пізнішим часом. Дедуп за
+                                # formation_time (момент детекції), сид на першому
+                                # показі (щоб не залити наявними OB), сигнал лише коли
+                                # зʼявився СТРОГО новіший OB.
                                 try:
-                                    from detection.activity_log import log_activity
-                                except Exception:
-                                    log_activity = lambda *a, **k: None
-                                _tm = None
-                                try:
-                                    from detection.trade_manager import get_trade_manager
-                                    _tm = get_trade_manager()
-                                except Exception:
-                                    _tm = None
-                                for _side, _ob in (('LONG', vol_result.get('newest_bull')),
-                                                   ('SHORT', vol_result.get('newest_bear'))):
-                                    try:
+                                    _cand = None
+                                    _cside = None
+                                    for _s, _ob in (('LONG', vol_result.get('newest_bull')),
+                                                    ('SHORT', vol_result.get('newest_bear'))):
                                         if not _ob or _ob.get('breaker'):
                                             continue
-                                        _ft = int(_ob.get('formation_time') or 0)
-                                        if _ft <= 0:
+                                        _oft = int(_ob.get('formation_time') or 0)
+                                        if _oft <= 0:
                                             continue
-                                        _k = f"{symbol}:{_side}"
-                                        _prev = self._vob_alert_seen.get(_k)
+                                        if _cand is None or _oft > int(_cand.get('formation_time') or 0):
+                                            _cand, _cside = _ob, _s
+                                    if _cand is not None:
+                                        _ft = int(_cand.get('formation_time') or 0)
+                                        _prev = self._vob_alert_seen.get(symbol)
                                         if _prev is None:
-                                            # базова лінія цього напрямку — без сигналу
-                                            self._vob_alert_seen[_k] = _ft
+                                            # базова лінія — без сигналу
+                                            self._vob_alert_seen[symbol] = _ft
                                         elif _ft > _prev:
-                                            self._vob_alert_seen[_k] = _ft
+                                            self._vob_alert_seen[symbol] = _ft
+                                            try:
+                                                from detection.activity_log import log_activity
+                                            except Exception:
+                                                log_activity = lambda *a, **k: None
                                             _entry = (self._get_live_price(symbol)
-                                                      or (_ob.get('top') if _side == 'SHORT'
-                                                          else _ob.get('bottom')) or 0)
+                                                      or (_cand.get('top') if _cside == 'SHORT'
+                                                          else _cand.get('bottom')) or 0)
                                             log_activity(symbol, 'signal',
-                                                         f'Свіжий Volumized OB ({vol_tf}) {_side}',
-                                                         side=_side, source='scanner')
+                                                         f'Свіжий Volumized OB ({vol_tf}) {_cside}',
+                                                         side=_cside, source='scanner')
+                                            from detection.trade_manager import get_trade_manager
+                                            _tm = get_trade_manager()
                                             if _tm:
                                                 # opened_by='vob_alert' (НЕ 'vob') — щоб
                                                 # funding-очистка не видаляла ці записи.
-                                                _tm.on_signal(symbol=symbol, side=_side,
+                                                _tm.on_signal(symbol=symbol, side=_cside,
                                                               entry_price=_entry, opened_by='vob_alert')
-                                    except Exception as _ve:
-                                        if self._errors <= 5:
-                                            print(f"[SMC] VOB-alert error {symbol} {_side}: {_ve}")
+                                except Exception as _ve:
+                                    if self._errors <= 5:
+                                        print(f"[SMC] VOB-alert error for {symbol}: {_ve}")
                         else:
                             # No TF data — clear cache so stale entries
                             # don't linger (e.g., user changed TF and
