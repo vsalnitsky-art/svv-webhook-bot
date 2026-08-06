@@ -2676,6 +2676,53 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] BTC trend dir error: {e}")
             return None, 0
 
+    def _btc_liqfuel_raw(self):
+        """RAW liq-fuel (fa−fb)/den для BTCUSDT — ТОЧНО той самий алгоритм, що й
+        рядок «МММ-бабло ↑/↓ → тягне в …» у compute_bias (Smart Direction):
+        та сама liq-map (lookback 24h, профіль liqmap_decay_profile), те саме
+        зважування usd/(1+dist/2) у межах 15% від марк-ціни, той самий поріг ±0.1.
+        Раніше банер брав _fuel_dir → compute_mm (ІНША модель) і РОЗХОДИВСЯ з
+        «МММ-бабло». Тепер джерело банера ЄДИНЕ з reason-рядком.
+        Повертає (dir_float, status|None, strength 0..100)."""
+        try:
+            from detection.liquidation_map.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            if not lm:
+                return 0.0, None, 0
+            try:
+                prof = self._db.get_setting('liqmap_decay_profile', 'tori')
+            except Exception:
+                prof = 'tori'
+            lst = lm.get_state('BTCUSDT', lookback_hours=24, profile=prof)
+            mark = lst.get('mark_price') if lst else None
+            if not mark:
+                try:
+                    mark = self._live_price('BTCUSDT')
+                except Exception:
+                    mark = None
+            if not mark or mark <= 0 or not lst:
+                return 0.0, None, 0
+            fa = fb = 0.0
+            for lev in (lst.get('levels') or []):
+                try:
+                    dist = abs(lev['price'] - mark) / mark * 100.0
+                except (KeyError, TypeError, ZeroDivisionError):
+                    continue
+                if dist > 15:
+                    continue
+                w = lev['usd'] / (1.0 + dist / 2.0)
+                if lev['price'] > mark:
+                    fa += w
+                else:
+                    fb += w
+            den = fa + fb
+            d = (fa - fb) / den if den > 0 else 0.0
+            st = 'LONG' if d > FUEL_LONG_THR else ('SHORT' if d < -FUEL_LONG_THR else None)
+            return d, st, int(round(abs(d) * 100.0))
+        except Exception as e:
+            print(f"[FuelFilter] BTC liqfuel raw error: {e}")
+            return 0.0, None, 0
+
     def _update_btc_verdict(self):
         """BTC МММ *session* tracker (drives the ₿ banner + START engine + queue).
 
@@ -2693,16 +2740,14 @@ class FuelFilterDaemon:
         So the queue is cleared ONLY on a genuine session flip — never on a
         transient WAIT. Called once per cycle."""
         try:
-            # 🎯 Банер ₿ = МММ-БАБЛО: напрямок і поріг ТОЧНО як у комірці «МММ»
-            # монет (_fuel_dir_smoothed) — status LONG/SHORT, або None = ⚖ рівновага
-            # («напрямку немає» → WAIT/пауза сеансу). Це контраріанська liqmap-
-            # модель; панель повністю повторює алгоритм МММ-бабло (за запитом
-            # користувача). BTC-EMA вже прокручено у _tick, тож читаємо (update=False).
-            _mm = self._fuel_dir_smoothed('BTCUSDT') or {}
-            fdir = _mm.get('dir')
-            _st = _mm.get('status')
-            self._btc_fuel_strength = (int(round(abs(float(fdir)) * 100))
-                                       if isinstance(fdir, (int, float)) else 0)
+            # 🎯 Банер ₿ = «МММ-бабло» ОДИН-В-ОДИН із reason-рядком Smart Direction.
+            # Джерело — RAW liq-fuel (fa−fb)/den (_btc_liqfuel_raw), ТОЧНО як у
+            # compute_bias. Раніше тут стояв _fuel_dir_smoothed → compute_mm (ІНША,
+            # «професійна» МММ-модель), через що банер показував рівновагу/іншу силу,
+            # поки reason казав SHORT. Тепер алгоритм ЄДИНИЙ — банер і «МММ-бабло»
+            # завжди збігаються.
+            fdir, _st, _bstr = self._btc_liqfuel_raw()
+            self._btc_fuel_strength = _bstr
             # Бабло-модель для деталей/тултипа банера (напрямок беремо зі status).
             if _MM_MODEL:
                 try:

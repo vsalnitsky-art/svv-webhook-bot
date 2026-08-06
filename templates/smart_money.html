@@ -1932,24 +1932,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-chart-header">
                 <div>
                     <span class="sm-chart-title" id="sm-chart-title">Select a symbol</span>
-                    <!-- ⚪ POC (Volume Profile, Binance) — біла лінія як у
-                         MobChart + вердикт «ціна↔POC» для напрямку сигналу.
-                         Ринок на вибір: SPOT / FUTURES. -->
-                    <span class="sm-status-badge" id="sm-poc-badge" style="margin-left:10px;display:none;cursor:help"></span>
-                    <select id="sm-poc-market" onchange="onPocMarketChange()" title="Ринок Binance для розрахунку POC (біла лінія Volume Profile)."
-                            style="margin-left:6px;background:rgba(0,0,0,0.35);color:#cbd5e1;border:1px solid rgba(255,255,255,0.15);border-radius:4px;font-size:0.7rem;padding:2px 4px;cursor:pointer;vertical-align:middle">
-                        <option value="spot">POC: SPOT</option>
-                        <option value="futures">POC: FUTURES</option>
-                    </select>
-                    <select id="sm-poc-tf" onchange="onPocMarketChange()" title="Таймфрейм свічок для розрахунку POC (Volume Profile). За замовчуванням 1H."
-                            style="margin-left:4px;background:rgba(0,0,0,0.35);color:#cbd5e1;border:1px solid rgba(255,255,255,0.15);border-radius:4px;font-size:0.7rem;padding:2px 4px;cursor:pointer;vertical-align:middle">
-                        <option value="1m">TF: 1m</option>
-                        <option value="5m">TF: 5m</option>
-                        <option value="15m">TF: 15m</option>
-                        <option value="30m">TF: 30m</option>
-                        <option value="1h" selected>TF: 1H</option>
-                        <option value="4h">TF: 4H</option>
-                    </select>
                     <span class="sm-status-badge" id="sm-trend-badge" style="margin-left:10px;display:none"></span>
                     <!-- Last valid Order Block — informational badge.
                          Shows '🟢 OB Long' or '🔴 OB Short' for the most
@@ -2003,6 +1985,24 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <div style="margin-top:6px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:22px">
                         <span class="sm-status-badge" id="sm-ctr-badge" style="display:none"></span>
                         <span id="sm-ff-status-row" style="font-size:0.72rem;line-height:1.5"></span>
+                        <!-- ⚪ POC (Volume Profile) — ДРУГА стрічка, у продовження CTR.
+                             Біла лінія «як у MobChart» + вердикт «ціна↔POC» + вибір
+                             ринку (SPOT/FUTURES; авто-фолбек на Bybit) і ТФ (дефолт 1H). -->
+                        <span class="sm-status-badge" id="sm-poc-badge" style="display:none;cursor:help"></span>
+                        <select id="sm-poc-market" onchange="onPocMarketChange()" title="Ринок Binance для розрахунку POC (біла лінія Volume Profile). Якщо монети немає на Binance — авто-фолбек на Bybit."
+                                style="background:rgba(0,0,0,0.35);color:#cbd5e1;border:1px solid rgba(255,255,255,0.15);border-radius:4px;font-size:0.7rem;padding:2px 4px;cursor:pointer;vertical-align:middle">
+                            <option value="spot">POC: SPOT</option>
+                            <option value="futures">POC: FUTURES</option>
+                        </select>
+                        <select id="sm-poc-tf" onchange="onPocMarketChange()" title="Таймфрейм свічок для розрахунку POC (Volume Profile). За замовчуванням 1H."
+                                style="background:rgba(0,0,0,0.35);color:#cbd5e1;border:1px solid rgba(255,255,255,0.15);border-radius:4px;font-size:0.7rem;padding:2px 4px;cursor:pointer;vertical-align:middle">
+                            <option value="1m">TF: 1m</option>
+                            <option value="5m">TF: 5m</option>
+                            <option value="15m">TF: 15m</option>
+                            <option value="30m">TF: 30m</option>
+                            <option value="1h" selected>TF: 1H</option>
+                            <option value="4h">TF: 4H</option>
+                        </select>
                     </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
@@ -6626,9 +6626,14 @@ async function loadVolumeProfilePOC() {
             const rel = (_pocLastClose != null && _pocLastClose < d.poc) ? 'below'
                       : (_pocLastClose != null && _pocLastClose > d.poc) ? 'above' : 'at';
             const relTxt = rel === 'below' ? 'ціна нижче POC' : rel === 'above' ? 'ціна вище POC' : 'ціна на POC';
-            const mktTxt = (d.market === 'futures') ? 'FUT' : 'SPOT';
+            const exTxt = (d.exchange === 'bybit') ? 'Bybit' : 'Binance';
+            const mktTxt = (d.market === 'futures') ? 'FUT'
+                         : (d.market === 'linear') ? 'LINEAR'
+                         : (d.market === 'spot') ? 'SPOT' : String(d.market || '').toUpperCase();
             const tfTxt = tf.toUpperCase();
-            badge.textContent = `⚪ POC ${fmtPriceJS(d.poc)} · ${relTxt}`;
+            // Якщо спрацював фолбек на Bybit — позначаємо джерело в бейджі.
+            const srcTag = (d.exchange === 'bybit') ? ' · ⚠ Bybit' : '';
+            badge.textContent = `⚪ POC ${fmtPriceJS(d.poc)} · ${relTxt}${srcTag}`;
             badge.style.background = 'rgba(255,255,255,0.12)';
             badge.style.color = '#e5e7eb';
             badge.style.display = 'inline-block';
@@ -6637,7 +6642,8 @@ async function loadVolumeProfilePOC() {
             const shortOk = (_pocLastClose != null && _pocLastClose > d.poc);
             badge.title =
                 `POC (Point of Control) — рівень з НАЙБІЛЬШИМ обсягом.\n`
-                + `Binance ${mktTxt} · ${d.klines} × ${tfTxt} · зона вартості ${d.value_area_pct}%\n`
+                + `${exTxt} ${mktTxt} · ${d.klines} × ${tfTxt} · зона вартості ${d.value_area_pct}%\n`
+                + ((d.exchange === 'bybit') ? `⚠ Монети немає на Binance — джерело Bybit (${mktTxt}).\n` : '')
                 + `POC: ${fmtPriceJS(d.poc)}\n`
                 + `VAH: ${fmtPriceJS(d.vah)}  ·  VAL: ${fmtPriceJS(d.val)}\n`
                 + `Діапазон: ${fmtPriceJS(d.price_low)} — ${fmtPriceJS(d.price_high)}\n\n`

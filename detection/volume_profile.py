@@ -336,6 +336,46 @@ def _poc_fetch_window(symbol, interval, start_ms, end_ms, market='spot'):
     return out
 
 
+# ── Bybit-фолбек: якщо монети немає на Binance — шукаємо на Bybit (v5 kline). ──
+_BYBIT_KLINE = 'https://api.bybit.com/v5/market/kline'
+_BYBIT_IV = {'1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
+             '1h': '60', '2h': '120', '4h': '240', '6h': '360', '12h': '720',
+             '1d': 'D', '1w': 'W'}
+
+
+def _poc_fetch_window_bybit(symbol, interval, start_ms, end_ms):
+    """(klines, category) з Bybit v5. Пробуємо linear (perp) → потім spot.
+    Формат рядка Bybit: [start, open, high, low, close, volume, turnover] —
+    індекси high[2]/low[3]/volume[5] ЗБІГАЮТЬСЯ з Binance, тож _poc_profile
+    приймає їх напряму. Відповідь newest-first; пагінація зсувом `end`."""
+    iv = _BYBIT_IV.get((interval or '1m').lower(), '60')
+    for category in ('linear', 'spot'):
+        rows = []
+        cur_end = int(end_ms)
+        try:
+            for _ in range(_MAX_REQUESTS):
+                params = {'category': category, 'symbol': symbol, 'interval': iv,
+                          'start': int(start_ms), 'end': int(cur_end), 'limit': 1000}
+                r = _vp_requests.get(_BYBIT_KLINE, params=params, timeout=12)
+                r.raise_for_status()
+                j = r.json()
+                lst = (((j or {}).get('result') or {}).get('list')) or []
+                if not lst:
+                    break
+                rows.extend(lst)
+                if len(lst) < 1000:
+                    break
+                oldest = int(lst[-1][0])   # newest-first → останній = найстаріший
+                if oldest <= start_ms:
+                    break
+                cur_end = oldest - 1
+        except Exception:
+            rows = []
+        if rows:
+            return rows, category
+    return [], None
+
+
 def _poc_profile(klines, bins):
     """(vol_by_bin, lo, hi, binw) — обсяг кожної свічки рівномірно по бінах [low..high]."""
     parsed, lows, highs = [], [], []
@@ -392,7 +432,8 @@ def compute_poc(symbol, from_sec=None, to_sec=None, hours=None,
     Вікно: [from_sec,to_sec] (видимий діапазон графіка) → інакше останні `hours`."""
     sym = _poc_norm_symbol(symbol)
     mkt = 'futures' if (market or 'spot').lower().startswith('fut') else 'spot'
-    out = {'ok': False, 'symbol': sym, 'market': mkt, 'poc': None, 'vah': None,
+    out = {'ok': False, 'symbol': sym, 'market': mkt, 'exchange': 'binance',
+           'poc': None, 'vah': None,
            'val': None, 'price_high': None, 'price_low': None, 'bins': int(bins),
            'klines': 0, 'src': f'binance_{mkt}_{interval}',
            'value_area_pct': int(_POC_VALUE_AREA * 100), 'computed_at': None, 'reason': ''}
@@ -411,12 +452,26 @@ def compute_poc(symbol, from_sec=None, to_sec=None, hours=None,
         hit = _poc_cache.get(ck)
         if hit and (_vp_time.time() - hit[0]) < _POC_TTL:
             return hit[1]
+    # 1) Основне джерело — Binance (SPOT/FUTURES за вибором).
+    klines = []
     try:
         klines = _poc_fetch_window(sym, interval, start_ms, end_ms, market=mkt)
-    except Exception as e:
-        out['reason'] = f'binance fetch error: {e}'; return out
+    except Exception:
+        klines = []
+    # 2) ФОЛБЕК: монети немає на Binance → автоматично шукаємо на Bybit
+    #    (linear perp → spot). Намагаємось визначити POC максимально.
     if not klines:
-        out['reason'] = f'no klines (symbol not on Binance {mkt}?)'; return out
+        try:
+            bkl, bcat = _poc_fetch_window_bybit(sym, interval, start_ms, end_ms)
+        except Exception:
+            bkl, bcat = [], None
+        if bkl:
+            klines = bkl
+            out['exchange'] = 'bybit'
+            out['market'] = bcat or 'linear'
+            out['src'] = f'bybit_{bcat or "linear"}_{interval}'
+    if not klines:
+        out['reason'] = 'no klines (немає ні на Binance, ні на Bybit)'; return out
     vol_by_bin, lo, hi, binw = _poc_profile(klines, bins)
     if not vol_by_bin or binw <= 0:
         out['reason'] = 'insufficient data'; return out
