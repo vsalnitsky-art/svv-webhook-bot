@@ -3952,6 +3952,10 @@ let volumizedObLines = [];
 // primitive), як у Pine «Volumized Order Blocks». Малює ОДИН останній OB, що
 // тягнеться від свого бару до правого краю графіка.
 let volObPrim = null;
+// 🟦 Require OB Match — окремий бокс OB зі СКАН-ФІЛЬТРА (ob_filter_timeframe).
+// Той самий VolOBPrimitive-механізм, але інші кольори (teal/orange + пунктир),
+// щоб НЕ плутати з зелено-червоними Volumized-блоками.
+let obMatchPrim = null;
 class VolOBPrimitive {
     constructor() { this._ob = null; this._chart = null; this._series = null; this._req = null; }
     attached(p) { this._chart = p.chart; this._series = p.series; this._req = p.requestUpdate; }
@@ -5319,8 +5323,11 @@ function ensureChart() {
         if (candleSeries.attachPrimitive) {
             volObPrim = new VolOBPrimitive();
             candleSeries.attachPrimitive(volObPrim);
+            // 🟦 Require OB Match — другий бокс (OB зі скан-фільтра), інші кольори.
+            obMatchPrim = new VolOBPrimitive();
+            candleSeries.attachPrimitive(obMatchPrim);
         }
-    } catch (e) { volObPrim = null; }
+    } catch (e) { volObPrim = null; obMatchPrim = null; }
 
     // Resize handler
     new ResizeObserver(() => {
@@ -5827,6 +5834,38 @@ async function loadChart() {
                 });
             } else {
                 volObPrim.setOB(null);   // немає OB → нічого не малюємо
+            }
+        }
+
+        // === Require OB Match box (OB зі СКАН-ФІЛЬТРА) ===
+        // Той самий блок-механізм, що й Volumized, але малює OB, проти якого
+        // «Require OB Match» НЕ дозволяє вхід (bar_high/bar_low на
+        // ob_filter_timeframe). Кольори teal (BULL) / orange (BEAR) + ПУНКТИРНА
+        // рамка — щоб чітко відрізнявся від зелено-червоних Volumized-блоків.
+        // Показуємо лише коли OB-фільтр увімкнено (як Volumized — за своїм тумблером).
+        if (obMatchPrim) {
+            const mob = d.last_ob;
+            if (d.ob_filter_enabled && mob && mob.bias
+                    && typeof mob.bar_high === 'number' && typeof mob.bar_low === 'number'
+                    && mob.bar_time) {
+                const isBull = mob.bias === 'BULLISH';
+                const stroke = isBull ? '#14b8a6' : '#f97316';       // teal / orange
+                const fill = isBull ? 'rgba(20,184,166,0.12)' : 'rgba(249,115,22,0.12)';
+                const obTfS = (d.ob_filter_timeframe || '1h').toUpperCase();
+                const tag = (mob.created_by_tag || '').toUpperCase();
+                const tagMark = tag === 'CHOCH' ? 'CHoCH ★' : (tag === 'BOS' ? 'BOS →' : 'OB');
+                obMatchPrim.setOB({
+                    startSec: (mob.bar_time || 0) / 1000,   // bar_time у мс → секунди
+                    top: mob.bar_high, bottom: mob.bar_low,
+                    stroke: stroke, fill: fill,
+                    textColor: isBull ? '#bff3ec' : '#ffe3c2',
+                    subColor: isBull ? '#5eead4' : '#fdba74',
+                    dashed: true,                            // пунктир — відрізнити від Volumized
+                    labelMain: tagMark,
+                    labelSub: `${obTfS} OB-фільтр`,
+                });
+            } else {
+                obMatchPrim.setOB(null);   // фільтр вимкнено / немає OB → не малюємо
             }
         }
 
