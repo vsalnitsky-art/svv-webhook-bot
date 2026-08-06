@@ -277,6 +277,15 @@ DEFAULT_SETTINGS = {
     #    рухи). Це ЄДИНИЙ запобіжник Q4 (решта safeguard-ів у Q4 вимкнені).
     'queue4_exhaustion_on': True,
     'queue4_exhaustion_pct': 95,
+    # ── 🎯 Черга-5 «SMC-модель входу» (5 кроків, HTF=Forecast 1H:4H) ──
+    #   Безперервно оцінює монети скан-листа за 5-кроковим алгоритмом
+    #   (detection/queue5_entry.py). Коли всі 5 кроків зійшлись і ціна в зоні
+    #   POI — відкриває Market за напрямком з готовими SL/TP (R:R ≥ min).
+    'queue5_enabled': False,
+    'queue5_min_rr': 3.0,          # мін. Risk:Reward (спец: ≥ 1:3)
+    'queue5_sl_buffer_pct': 0.10,  # буфер SL за екстремум зняття ліквідності, %
+    'queue5_sweep_lookback': 12,   # скільки M15-барів дивитись на свіп ліквідності
+    'queue5_max_per_cycle': 6,     # обмежувач: скільки монет оцінювати за цикл
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -731,6 +740,10 @@ class FuelFilterDaemon:
         # бік (aligned≥1)}. Ковзне вікно застою: якщо now−ts > queue4_no_light_min
         # хв → монету викидаємо з Черги-4. In-memory (після рестарту — свіже вікно).
         self._q4_lit_at: Dict[str, float] = {}
+        # 🎯 Черга-5 «SMC-модель входу»: {symbol: остання оцінка 5 кроків} (для UI)
+        # + {symbol: ts останнього оцінювання} для ротації по скан-листу.
+        self._q5_state: Dict[str, Dict] = {}
+        self._q5_at: Dict[str, float] = {}
         # Anti-flood for the per-coin «Готовність» decision log:
         # {symbol: (outcome, hot, score_bucket, ts)} — a hold/skip is re-logged
         # only when it meaningfully changes or after READINESS_LOG_MIN_GAP sec;
@@ -888,6 +901,24 @@ class FuelFilterDaemon:
             s['queue4_no_light_min'] = max(0, min(1440, int(s.get('queue4_no_light_min', 30) or 0)))
         except (TypeError, ValueError):
             s['queue4_no_light_min'] = 30
+        # ── Черга-5 ──
+        s['queue5_enabled'] = bool(s.get('queue5_enabled', False))
+        try:
+            s['queue5_min_rr'] = max(1.0, min(20.0, float(s.get('queue5_min_rr', 3.0) or 3.0)))
+        except (TypeError, ValueError):
+            s['queue5_min_rr'] = 3.0
+        try:
+            s['queue5_sl_buffer_pct'] = max(0.0, min(10.0, float(s.get('queue5_sl_buffer_pct', 0.10) or 0)))
+        except (TypeError, ValueError):
+            s['queue5_sl_buffer_pct'] = 0.10
+        try:
+            s['queue5_sweep_lookback'] = max(3, min(100, int(s.get('queue5_sweep_lookback', 12) or 12)))
+        except (TypeError, ValueError):
+            s['queue5_sweep_lookback'] = 12
+        try:
+            s['queue5_max_per_cycle'] = max(1, min(50, int(s.get('queue5_max_per_cycle', 6) or 6)))
+        except (TypeError, ValueError):
+            s['queue5_max_per_cycle'] = 6
         try:
             s['queue4_ttl_hours'] = max(0, min(72, float(s.get('queue4_ttl_hours', 3) or 0)))
         except (TypeError, ValueError):
@@ -5789,6 +5820,90 @@ class FuelFilterDaemon:
         except Exception as e:
             print(f"[FF-Q4] SL-from-VOB error {sym}: {e}")
 
+    def _engine_tick_queue5(self):
+        """🎯 Черга-5 «SMC-модель входу» — БЕЗПЕРЕРВНО оцінює монети скан-листа за
+        5-кроковим алгоритмом (detection/queue5_entry). Коли всі 5 кроків зійшлись
+        і ціна в зоні POI → відкриває Market за напрямком з готовими SL/TP
+        (R:R ≥ queue5_min_rr). Обмежувач cap/цикл + ротація (важкий SMC-аналіз)."""
+        s = self.get_settings()
+        if not s.get('enabled') or not s.get('queue5_enabled'):
+            return
+        now = time.time()
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            log_activity = lambda *a, **k: None
+        try:
+            from detection.queue5_entry import evaluate as _q5_eval
+        except Exception as e:
+            print(f"[FF-Q5] module import error: {e}")
+            return
+        cands = [x.upper() for x in (self.get_scan_list() or [])]
+        if not cands:
+            return
+        live = set(cands)
+        try:
+            cap = int(s.get('queue5_max_per_cycle', 6) or 6)
+        except (TypeError, ValueError):
+            cap = 6
+        for sym in sorted(cands, key=lambda x: self._q5_at.get(x, 0))[:cap]:
+            self._q5_at[sym] = now
+            # Уже відкрита / керована — не чіпаємо, чистимо стан.
+            if (sym in self._fuel_managed or self._tm_has_position(sym, True)
+                    or self._tm_has_position(sym, False)):
+                self._q5_state.pop(sym, None)
+                continue
+            try:
+                px = (self._fuel_dir_smoothed(sym) or {}).get('mark_price')
+                dec = _q5_eval(sym, s, live_price=px)
+            except Exception as e:
+                print(f"[FF-Q5] {sym} eval error: {e}")
+                continue
+            # У таблицю Черги-5 показуємо монети «в грі» (пройшли хоча б Крок 1).
+            if int(dec.get('count', 0)) >= 1:
+                self._q5_state[sym] = {**dec, 'ts': now}
+            else:
+                self._q5_state.pop(sym, None)
+            if not dec.get('ok'):
+                continue
+            side = dec.get('side')
+            if side not in ('LONG', 'SHORT'):
+                continue
+            entry = dec.get('entry') or px
+            if not entry:
+                continue
+            try:
+                opened = self._open(sym, side, {'mark_price': entry, 'dir': side}, s,
+                                    opened_by='🎯 Черга-5 (SMC 5 кроків)',
+                                    skip_ctr_safeguard=True, skip_safeguard=True)
+                if opened:
+                    with self._lock:
+                        self._timers[sym] = {'dir': side, 'since': now, 'start_price': entry}
+                        self._q5_state.pop(sym, None)
+                    # SL + TP із алгоритму (Крок 5).
+                    try:
+                        tm = self._get_tm() if self._get_tm else None
+                        if tm and hasattr(tm, 'update_manual_sl_tp'):
+                            _is_shadow = (not self._tm_has_position(sym, True))
+                            tm.update_manual_sl_tp(sym, manual_sl=dec.get('sl'),
+                                                   manual_tp=dec.get('tp'), is_shadow=_is_shadow)
+                    except Exception as e:
+                        print(f"[FF-Q5] SL/TP set error {sym}: {e}")
+                    log_activity(sym, 'opened',
+                                 f"Черга-5: 5/5 → {side} · SL {dec.get('sl')} · "
+                                 f"TP {dec.get('tp')} · R:R {dec.get('rr')}",
+                                 side=side, source='Q5')
+                    print(f"[FF-Q5] opened {side} {sym} (5/5, R:R {dec.get('rr')})")
+            except Exception as e:
+                print(f"[FF-Q5] open error {sym}: {e}")
+        # Прибрати стан монет, яких уже немає в скан-листі.
+        for k in list(self._q5_state.keys()):
+            if k not in live:
+                self._q5_state.pop(k, None)
+        for k in list(self._q5_at.keys()):
+            if k not in live:
+                self._q5_at.pop(k, None)
+
     def _engine_tick_readiness(self):
         """🎯 Queue 3 «Готовність» engine — opens a queued coin the MOMENT its SMC
         setup-grade (grade_setup) is HOT in the queued direction. No ₿ START /
@@ -5919,6 +6034,10 @@ class FuelFilterDaemon:
                 self._engine_tick_queue4()   # 🎯 Queue 4 «Усі шари»
             except Exception as e:
                 print(f"[FF-Q4] tick error: {e}")
+            try:
+                self._engine_tick_queue5()   # 🎯 Queue 5 «SMC-модель входу»
+            except Exception as e:
+                print(f"[FF-Q5] tick error: {e}")
             secs = 15
             try:
                 secs = max(5, int(self.get_settings().get('start_engine_scan_secs', 15)))
@@ -7100,6 +7219,19 @@ class FuelFilterDaemon:
                                 'q4': q4, 'layers': q4.get('layers')})
             visible_pending4 = len(timers4)
             all_timers4 = sorted(timers4, key=lambda x: -x['held_sec'])
+            # 🎯 Черга-5 «SMC-модель входу» — монети «в грі» (пройшли ≥1 крок).
+            timers5 = []
+            for sym, dec in (self._q5_state or {}).items():
+                timers5.append({
+                    'symbol': sym,
+                    'dir': dec.get('side'),
+                    'count': int(dec.get('count', 0)),
+                    'steps': dec.get('steps') or [],
+                    'sl': dec.get('sl'), 'tp': dec.get('tp'), 'rr': dec.get('rr'),
+                    'held_sec': int(now - float(dec.get('ts') or now)),
+                    'reason': dec.get('reason', ''),
+                })
+            all_timers5 = sorted(timers5, key=lambda x: -x['count'])
             bs = self._btc_state or {}
             # BTC START/STOP signal: progress counts up while the MAIN-WINDOW
             # verdict (compute_bias) holds LONG/SHORT, reaching START at
@@ -7275,6 +7407,8 @@ class FuelFilterDaemon:
             'timers3': all_timers3,
             'pending3_visible': visible_pending3,
             'timers4': all_timers4,
+            'timers5': all_timers5,
+            'queue5_enabled': bool(settings.get('queue5_enabled', False)),
             'pending4_visible': visible_pending4,
             'queue4_enabled': bool(settings.get('queue4_enabled', False)),
             'pending3_count': len(self._pending3),

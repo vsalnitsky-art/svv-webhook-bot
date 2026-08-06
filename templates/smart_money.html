@@ -2422,6 +2422,32 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </table>
             </div>
 
+            <!-- 🎯 Черга-5 · SMC-модель входу (5 кроків, HTF=Forecast 1H:4H) -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px;flex-wrap:wrap;gap:8px">
+                <div style="font-size:0.78rem;font-weight:700;color:#93c5fd;min-width:0">🎯 Черга-5 · SMC-модель входу <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— 5 кроків: HTF (Forecast 1H:4H) → тест POI + зняття ліквідності → CHoCH M15 → Entry (FVG/OB + Prem/Disc) → SL/TP, R:R ≥ мін. Відкриває Market у зоні POI. Тумблер OFF → не працює.</span></div>
+                <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap"><span style="font-size:0.7rem;color:#cbd5e1">Черга-5</span><input type="checkbox" id="ff-queue5-enabled" onchange="saveFuelFilterSettings()"></label>
+            </div>
+            <details class="sm-settings-bar" style="margin:0 0 8px">
+                <summary class="sm-settings-summary">⚙️ Налаштування (Черга-5) <span class="sm-settings-summary-right" style="color:#8b93a7">R:R / буфер / свіп</span></summary>
+                <div style="padding:10px 12px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,0.06)">
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальне співвідношення Risk:Reward. Угода відкривається, лише якщо R:R ≥ цього. Спец: ≥ 1:3.">R:R ≥ <input type="number" id="ff-queue5-rr" min="1" max="20" step="0.5" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Буфер SL за екстремум, що знімав ліквідність (% ціни).">SL-буфер <input type="number" id="ff-queue5-buf" min="0" max="10" step="0.05" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> %</label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Скільки останніх M15-барів дивитись на зняття ліквідності (свіп).">Свіп, барів <input type="number" id="ff-queue5-sweep" min="3" max="100" step="1" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Обмежувач навантаження: скільки монет оцінювати за цикл (важкий SMC-аналіз + свічки).">Монет/цикл <input type="number" id="ff-queue5-cap" min="1" max="50" step="1" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"></label>
+                </div>
+                <div style="font-size:0.64rem;color:#6b7280;padding:0 12px 10px">💡 HTF-контекст = Forecast 1H:4H (мають збігтись). Крок 3 (CHoCH M15) і зони (Premium/Discount) — зі SMC-аналізу. Ліквідність = EQH/EQL + PDH/PDL. Відкриває Market, коли ціна вже в зоні POI і всі 5 кроків зійшлись; SL/TP ставляться автоматично.</div>
+            </details>
+            <div class="ff-timers-scroll">
+                <table class="tm-table" id="ff-timers5-table">
+                    <thead>
+                        <tr><th>Символ</th><th>Напрямок</th><th title="Скільки з 5 кроків алгоритму зійшлось">Кроки</th><th title="1 HTF · 2 POI+ліквідність · 3 CHoCH M15 · 4 Entry (FVG/OB+зона) · 5 SL/TP/R:R">Деталі</th><th>SL</th><th>TP</th><th>R:R</th><th>Очікує</th></tr>
+                    </thead>
+                    <tbody id="ff-timers5-tbody">
+                        <tr><td colspan="8" class="tm-empty-msg">Черга-5 порожня</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
             <!-- 💰 Funding-fuel coins (own scan over the 💰 Funding Rate Scanner) -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
                 <div style="font-size:0.78rem;font-weight:700;color:#34d399">
@@ -9097,6 +9123,47 @@ function ffLayers4Cell(q) {
         + `<span style="display:inline-flex">${dots}</span>`
         + `<span style="display:inline-block;width:30px;text-align:right;color:${col};font-variant-numeric:tabular-nums">${n}/4</span></span>`;
 }
+// ── 🎯 Черга-5 «SMC-модель входу» ────────────────────────────────────────
+function ffQ5StepsCell(steps) {
+    const arr = steps || [];
+    let dots = '';
+    for (let n = 1; n <= 5; n++) {
+        const st = arr.find(x => x.n === n);
+        const ok = st && st.ok;
+        dots += `<span style="display:inline-block;width:13px;text-align:center;color:${ok ? '#4ade80' : '#3a4152'}">${ok ? '●' : '○'}</span>`;
+    }
+    const tip = arr.map(x => `${x.ok ? '✅' : '▫️'} ${x.n}. ${x.name}: ${x.detail}`).join('\n');
+    return `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;white-space:nowrap">${dots}</span>`;
+}
+function ffRenderQueue5() {
+    const tb = document.getElementById('ff-timers5-tbody');
+    if (!tb) return;
+    const rows = window._ff5TimersData || [];
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">Черга-5 порожня</td></tr>'; return; }
+    tb.innerHTML = rows.map(t => {
+        const _dTri = t.dir === 'LONG' ? '▲' : (t.dir === 'SHORT' ? '▼' : '•');
+        const _dTxt = t.dir === 'LONG' ? 'LONG' : (t.dir === 'SHORT' ? 'SHORT' : '—');
+        const _dCol = t.dir === 'LONG' ? '#22c55e' : (t.dir === 'SHORT' ? '#ef4444' : '#8b93a7');
+        const dirHtml = `<span style="display:inline-flex;align-items:center;white-space:nowrap">`
+            + `<span style="width:13px;text-align:center;flex:none;color:${_dCol};font-weight:900">${_dTri}</span>`
+            + `<b style="width:46px;flex:none;color:${_dCol};font-weight:700;padding-left:3px">${_dTxt}</b></span>`;
+        const n = t.count || 0;
+        const nCol = n >= 5 ? _dCol : (n >= 1 ? '#fbbf24' : '#8b93a7');
+        const held = `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (t.held_sec||0)}">${fmtTimer(t.held_sec)}</span>`;
+        const rr = (t.rr != null) ? t.rr : '—';
+        const rrCol = (t.rr != null && t.rr >= 3) ? '#4ade80' : '#cbd5e1';
+        return `<tr>
+            <td style="font-weight:600">${tvSym(t.symbol)}</td>
+            <td style="white-space:nowrap">${dirHtml}</td>
+            <td style="white-space:nowrap;font-weight:700;color:${nCol};font-variant-numeric:tabular-nums">${n}/5</td>
+            <td style="white-space:nowrap">${ffQ5StepsCell(t.steps)}</td>
+            <td style="font-size:0.72rem;color:#cbd5e1">${t.sl != null ? t.sl : '—'}</td>
+            <td style="font-size:0.72rem;color:#cbd5e1">${t.tp != null ? t.tp : '—'}</td>
+            <td style="font-size:0.74rem;font-weight:700;color:${rrCol}">${rr}</td>
+            <td style="font-size:0.74rem;color:#cbd5e1">${held}</td>
+        </tr>`;
+    }).join('');
+}
 function ffRenderQueue4() {
     const tb = document.getElementById('ff-timers4-tbody');
     if (!tb) return;
@@ -9287,6 +9354,11 @@ function renderFuelFilter(d) {
     setIf('ff-setup-ctr-mode', s.setup_ctr_mode || 'soft');
     setIf('ff-readiness-log', s.readiness_log_enabled !== false);   // default true
     setIf('ff-queue4-enabled', !!s.queue4_enabled);
+    setIf('ff-queue5-enabled', !!s.queue5_enabled);
+    setIf('ff-queue5-rr', String(s.queue5_min_rr != null ? s.queue5_min_rr : 3));
+    setIf('ff-queue5-buf', String(s.queue5_sl_buffer_pct != null ? s.queue5_sl_buffer_pct : 0.10));
+    setIf('ff-queue5-sweep', String(s.queue5_sweep_lookback != null ? s.queue5_sweep_lookback : 12));
+    setIf('ff-queue5-cap', String(s.queue5_max_per_cycle != null ? s.queue5_max_per_cycle : 6));
     setIf('ff-queue4-mmnew', String(s.queue4_mm_new_min != null ? s.queue4_mm_new_min : 30));
     setIf('ff-queue4-mmold', String(s.queue4_mm_old_min != null ? s.queue4_mm_old_min : 10));
     setIf('ff-queue4-mmold-mode', s.queue4_mm_old_mode || 'ignore');
@@ -9422,6 +9494,11 @@ function renderFuelFilter(d) {
     if (document.getElementById('ff-timers4-tbody')) {
         window._ff4TimersData = d.timers4 || [];
         ffRenderQueue4();
+    }
+    // Queue 5 «🎯 SMC-модель входу»
+    if (document.getElementById('ff-timers5-tbody')) {
+        window._ff5TimersData = d.timers5 || [];
+        ffRenderQueue5();
     }
     // GLOBAL engine gate banner — why the engine can't open ANYTHING now.
     const gateEl = document.getElementById('ff-engine-gate');
@@ -10218,6 +10295,11 @@ async function saveFuelFilterSettings() {
         setup_ctr_mode: _v('ff-setup-ctr-mode', 'soft') || 'soft',
         readiness_log_enabled: _c('ff-readiness-log'),
         queue4_enabled: _c('ff-queue4-enabled'),
+        queue5_enabled: _c('ff-queue5-enabled'),
+        queue5_min_rr: parseFloat(_v('ff-queue5-rr', '3') || '3'),
+        queue5_sl_buffer_pct: parseFloat(_v('ff-queue5-buf', '0.10') || '0.10'),
+        queue5_sweep_lookback: parseInt(_v('ff-queue5-sweep', '12') || '12', 10),
+        queue5_max_per_cycle: parseInt(_v('ff-queue5-cap', '6') || '6', 10),
         queue4_mm_new_min: parseInt(_v('ff-queue4-mmnew', '30') || '30', 10),
         queue4_mm_old_min: parseInt(_v('ff-queue4-mmold', '10') || '10', 10),
         queue4_mm_old_mode: _v('ff-queue4-mmold-mode', 'ignore') || 'ignore',
