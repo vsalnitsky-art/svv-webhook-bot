@@ -4728,12 +4728,13 @@ def register_api_routes(app):
         symbol = request.args.get('symbol', 'BTCUSDT')
         return jsonify(s.get_chart_data(symbol))
 
-    @app.route('/api/volume-profile')
-    def api_volume_profile():
-        """Volume Profile POC (біла лінія як у MobChart) з Binance SPOT.
-        Параметри: symbol; діапазон — from/to (сек, видимий діапазон графіка)
-        АБО hours (фолбек-вікно); bins (роздільність); side + price → вердикт
-        «ціна↔POC» для напрямку сигналу (LONG ОК коли POC вище ціни, і навпаки)."""
+    @app.route('/api/volume-profile/poc')
+    def api_volume_profile_poc():
+        """Volume Profile POC (біла лінія як у MobChart) з Binance SPOT/FUTURES.
+        ОКРЕМИЙ від /api/volume-profile (build_volume_profile) — свій легкий шлях.
+        Параметри: symbol; market=spot|futures; діапазон — from/to (сек, видимий
+        діапазон графіка) АБО hours (фолбек-вікно); bins (роздільність); side +
+        price → вердикт «ціна↔POC» (LONG ОК коли POC вище ціни, і навпаки)."""
         from detection.volume_profile import compute_poc, price_vs_poc
         symbol = request.args.get('symbol', 'BTCUSDT')
 

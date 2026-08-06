@@ -6583,7 +6583,7 @@ async function loadVolumeProfilePOC() {
     const priceQ = (_pocLastClose != null) ? `&price=${_pocLastClose}` : '';
     const reqSym = currentSymbol;
     try {
-        const r = await fetch(`/api/volume-profile?symbol=${encodeURIComponent(reqSym)}&market=${mkt}${fromTo}${priceQ}`);
+        const r = await fetch(`/api/volume-profile/poc?symbol=${encodeURIComponent(reqSym)}&market=${mkt}${fromTo}${priceQ}`);
         const d = await r.json();
         // Символ міг змінитись, поки чекали — не малюємо чужий POC.
         if (reqSym !== currentSymbol) return;
