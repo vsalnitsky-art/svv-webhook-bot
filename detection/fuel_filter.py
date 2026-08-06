@@ -712,6 +712,9 @@ class FuelFilterDaemon:
         # режиму банера 'live' (повне дублювання без затримок). Оновлюється
         # щотіку в _update_btc_verdict; get_state читає його дешево (без API).
         self._btc_live_dir: Optional[str] = None
+        # Коли поточний LIVE-напрямок став активним (для ЄДИНОГО таймера банера
+        # у режимі 'live' — «скільки триває сеанс/напрямок»).
+        self._btc_live_since: float = 0.0
         self._btc_pause_since: float = 0.0             # коли почалась поточна пауза (анти-залипання)
         self._btc_mm: Dict = {}                       # останній повний вихід моделі МММ для BTC
         # 💰 Funding fuel table (repurposed from the old anomalies storage):
@@ -2713,6 +2716,11 @@ class FuelFilterDaemon:
             # status уже несе ±0.1-нейтраль: None = ⚖ рівновага → WAIT/пауза.
             live = _st if _st in ('LONG', 'SHORT') else None
             # LIVE напрямок для банера-'live' (миттєве дублювання, без сеансу).
+            # Таймер: скидаємо відлік ЛИШЕ коли напрямок ЗМІНИВСЯ (у т.ч. на
+            # рівновагу й назад) — так один таймер чесно рахує тривалість поточного
+            # напрямку («сеансу»).
+            if live != self._btc_live_dir:
+                self._btc_live_since = time.time() if live else 0.0
             self._btc_live_dir = live
         except Exception as e:
             print(f"[FuelFilter] BTC МММ calc error: {e}")
@@ -7166,11 +7174,12 @@ class FuelFilterDaemon:
                 # НЕ викликаємо _fuel_dir під локом (жодних API-хітів у get_state).
                 _ld = self._btc_live_dir if self._btc_live_dir in ('LONG', 'SHORT') else None
                 _lstr = int(self._btc_fuel_strength or 0)
+                # ЄДИНИЙ таймер режиму 'live' = скільки триває поточний напрямок.
+                _lheld = int(now - self._btc_live_since) if (_ld and self._btc_live_since) else 0
                 btc_start = {
                     'status': 'START' if _ld else 'STOP',
                     'progress': 100 if _ld else 0,
-                    # held_sec == period_sec → фронт одразу показує TRADING (без таймера).
-                    'held_sec': int(period_sec),
+                    'held_sec': _lheld,          # реальна тривалість напрямку
                     'period_sec': int(period_sec),
                     'dir': _ld,
                     'paused': False,

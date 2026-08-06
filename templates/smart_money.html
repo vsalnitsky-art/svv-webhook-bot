@@ -1941,6 +1941,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <option value="spot">POC: SPOT</option>
                         <option value="futures">POC: FUTURES</option>
                     </select>
+                    <select id="sm-poc-tf" onchange="onPocMarketChange()" title="Таймфрейм свічок для розрахунку POC (Volume Profile). За замовчуванням 1H."
+                            style="margin-left:4px;background:rgba(0,0,0,0.35);color:#cbd5e1;border:1px solid rgba(255,255,255,0.15);border-radius:4px;font-size:0.7rem;padding:2px 4px;cursor:pointer;vertical-align:middle">
+                        <option value="1m">TF: 1m</option>
+                        <option value="5m">TF: 5m</option>
+                        <option value="15m">TF: 15m</option>
+                        <option value="30m">TF: 30m</option>
+                        <option value="1h" selected>TF: 1H</option>
+                        <option value="4h">TF: 4H</option>
+                    </select>
                     <span class="sm-status-badge" id="sm-trend-badge" style="margin-left:10px;display:none"></span>
                     <!-- Last valid Order Block — informational badge.
                          Shows '🟢 OB Long' or '🔴 OB Short' for the most
@@ -6558,8 +6567,15 @@ function pocMarket() {
     const el = document.getElementById('sm-poc-market');
     return (el && el.value) ? el.value : 'spot';
 }
+function pocTf() {
+    const el = document.getElementById('sm-poc-tf');
+    return (el && el.value) ? el.value : '1h';
+}
 function onPocMarketChange() {
-    try { localStorage.setItem('sm_poc_market', pocMarket()); } catch {}
+    try {
+        localStorage.setItem('sm_poc_market', pocMarket());
+        localStorage.setItem('sm_poc_tf', pocTf());
+    } catch {}
     loadVolumeProfilePOC();
 }
 function _removePocLine() {
@@ -6580,10 +6596,11 @@ async function loadVolumeProfilePOC() {
         }
     } catch (e) { /* фолбек-вікно на бекенді */ }
     const mkt = pocMarket();
+    const tf = pocTf();
     const priceQ = (_pocLastClose != null) ? `&price=${_pocLastClose}` : '';
     const reqSym = currentSymbol;
     try {
-        const r = await fetch(`/api/volume-profile/poc?symbol=${encodeURIComponent(reqSym)}&market=${mkt}${fromTo}${priceQ}`);
+        const r = await fetch(`/api/volume-profile/poc?symbol=${encodeURIComponent(reqSym)}&market=${mkt}&tf=${tf}${fromTo}${priceQ}`);
         const d = await r.json();
         // Символ міг змінитись, поки чекали — не малюємо чужий POC.
         if (reqSym !== currentSymbol) return;
@@ -6610,6 +6627,7 @@ async function loadVolumeProfilePOC() {
                       : (_pocLastClose != null && _pocLastClose > d.poc) ? 'above' : 'at';
             const relTxt = rel === 'below' ? 'ціна нижче POC' : rel === 'above' ? 'ціна вище POC' : 'ціна на POC';
             const mktTxt = (d.market === 'futures') ? 'FUT' : 'SPOT';
+            const tfTxt = tf.toUpperCase();
             badge.textContent = `⚪ POC ${fmtPriceJS(d.poc)} · ${relTxt}`;
             badge.style.background = 'rgba(255,255,255,0.12)';
             badge.style.color = '#e5e7eb';
@@ -6619,7 +6637,7 @@ async function loadVolumeProfilePOC() {
             const shortOk = (_pocLastClose != null && _pocLastClose > d.poc);
             badge.title =
                 `POC (Point of Control) — рівень з НАЙБІЛЬШИМ обсягом.\n`
-                + `Binance ${mktTxt} · ${d.klines} × 1m · зона вартості ${d.value_area_pct}%\n`
+                + `Binance ${mktTxt} · ${d.klines} × ${tfTxt} · зона вартості ${d.value_area_pct}%\n`
                 + `POC: ${fmtPriceJS(d.poc)}\n`
                 + `VAH: ${fmtPriceJS(d.vah)}  ·  VAL: ${fmtPriceJS(d.val)}\n`
                 + `Діапазон: ${fmtPriceJS(d.price_low)} — ${fmtPriceJS(d.price_high)}\n\n`
@@ -9529,6 +9547,7 @@ function renderFuelFilter(d) {
         dir: bsg.dir || null,
         paused: !!bsg.paused,   // ML тимчасово WAIT у межах сеансу
         strength: (bsg.strength != null ? bsg.strength : 0),  // BTC fuel strength 0..100
+        mode: bsg.mode || 'session',   // 'live' (дублювання) | 'session'
     };
     updateBtcStartBanner();
     // ₿ банер: тумблер режиму «🔁 Дублювання» (live) ↔ сеанс. Дефолт — live.
@@ -10308,14 +10327,35 @@ function updateBtcStartBanner() {
         lab.style.transform = 'translateY(-50%)';
     }
 
-    // Status badge (session state) + flip timer. The countdown % moved into the
-    // badge since the bar now shows fuel strength, not the timer progress.
+    // Status badge + timer.
     const nowS = Math.floor(Date.now() / 1000);
     const elapsed = s.hasTimer ? Math.max(0, nowS - s.since) : 0;
-    // 💸 Money-rain edge-trigger — рахуємо START тут (до бейджів), щоб зловити
-    // саме момент активації, і передаємо силу тиску МММ для другого тригера.
-    const _pctNow = (s.hasTimer && s.period > 0) ? Math.min(100, elapsed / s.period * 100) : 0;
-    ffCheckMoneyRain(s.hasTimer && !s.paused && _pctNow >= 100, s.dir, str);
+
+    // ── РЕЖИМ 'live' (🔁 Дублювання) — БЕЗ затримок/сеансу/паузи/зворотного
+    //    відліку. ЄДИНИЙ таймер = скільки триває поточний напрямок. Статус
+    //    миттєво повторює напрямок МММ-бабло. Без «дощу». ──
+    if (s.mode === 'live') {
+        if (flip) flip.innerHTML = s.hasTimer ? flipTimerHTML(elapsed) : '';
+        if (!s.hasTimer) {
+            // Немає напрямку (⚖ рівновага) — TRADING немає, таймер порожній.
+            st.textContent = '⚪ рівновага';
+            st.style.background = 'rgba(148,163,184,0.14)'; st.style.color = '#cbd5e1';
+            st.style.textShadow = 'none'; st.style.boxShadow = 'none';
+            return;
+        }
+        if (s.dir === 'SHORT') {
+            st.textContent = '🔴 SHORT TRADING';
+            st.style.background = 'rgba(239,68,68,0.14)'; st.style.color = '#ff4d4d';
+            st.style.textShadow = '0 0 9px rgba(255,77,77,0.6)'; st.style.boxShadow = 'none';
+        } else {
+            st.textContent = '🟢 LONG TRADING';
+            st.style.background = 'rgba(34,197,94,0.14)'; st.style.color = '#22ff88';
+            st.style.textShadow = '0 0 9px rgba(34,255,136,0.6)'; st.style.boxShadow = 'none';
+        }
+        return;
+    }
+
+    // ── РЕЖИМ 'session' (стара механіка): зворотний відлік START + пауза. ──
     if (flip) flip.innerHTML = flipTimerHTML(elapsed);
     if (!s.hasTimer) {
         st.textContent = '⛔ STOP TRADING';
@@ -12150,11 +12190,14 @@ async function toggleFuelScan(symbol) {
 
 // === Init ===
 document.addEventListener('DOMContentLoaded', async () => {
-    // ⚪ POC: відновити вибір ринку Binance (SPOT/FUTURES) з localStorage.
+    // ⚪ POC: відновити вибір ринку (SPOT/FUTURES) і таймфрейму (дефолт 1H).
     try {
         const _pm = localStorage.getItem('sm_poc_market');
         const _pmEl = document.getElementById('sm-poc-market');
         if (_pm && _pmEl) _pmEl.value = _pm;
+        const _pt = localStorage.getItem('sm_poc_tf');
+        const _ptEl = document.getElementById('sm-poc-tf');
+        if (_pt && _ptEl) _ptEl.value = _pt;   // інакше лишається дефолт 1H (selected)
     } catch {}
     await loadSettings();
     await loadTMSettings();

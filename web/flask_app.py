@@ -4751,8 +4751,10 @@ def register_api_routes(app):
         bins = _f('bins')
         side = (request.args.get('side') or '').upper().strip() or None
         market = (request.args.get('market') or 'spot').strip().lower()
+        # Таймфрейм klines для профілю (дефолт 1h — за замовч. у налаштуваннях).
+        tf = (request.args.get('tf') or '1h').strip().lower()
         res = compute_poc(symbol, from_sec=from_sec, to_sec=to_sec, hours=hours,
-                          bins=int(bins) if bins else 150, market=market)
+                          bins=int(bins) if bins else 150, market=market, interval=tf)
         if res.get('ok') and price is not None:
             res['verdict'] = price_vs_poc(res.get('poc'), price, side)
         return jsonify(res)
