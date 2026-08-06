@@ -117,6 +117,7 @@ _CAT_LABEL = {
     'funding':  '💰 Funding',
     'btc':      '₿ BTCUSDT',
     'trades':   '📈 Угоди',
+    'signal':   '🎯 Напрямок',
     'register': '📝 Реєстрація',
     'support':  '💬 Підтримка',
 }
@@ -124,6 +125,7 @@ _CAT_ENV = {
     'funding':  ('TELEGRAM_CHAT_FUNDING',  'TELEGRAM_TOPIC_FUNDING'),
     'btc':      ('TELEGRAM_CHAT_BTC',      'TELEGRAM_TOPIC_BTC'),
     'trades':   ('TELEGRAM_CHAT_TRADES',   'TELEGRAM_TOPIC_TRADES'),
+    'signal':   ('TELEGRAM_CHAT_SIGNAL',   'TELEGRAM_TOPIC_SIGNAL'),
     'register': ('TELEGRAM_CHAT_REGISTER', 'TELEGRAM_TOPIC_REGISTER'),
     'support':  ('TELEGRAM_CHAT_SUPPORT',  'TELEGRAM_TOPIC_SUPPORT'),
 }
@@ -134,6 +136,7 @@ _CAT_TAG = {
     'funding':  '#Funding',
     'btc':      '#BTC_сеанс',
     'trades':   '#Угода',
+    'signal':   '#Напрямок',
     'register': '#Реєстрація',
     'support':  '#Підтримка',
 }

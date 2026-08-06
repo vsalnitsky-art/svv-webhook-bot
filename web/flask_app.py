@@ -475,6 +475,14 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Auto-gate: {e}")
 
+        if not _auto_started.get('dir_alert'):
+            _auto_started['dir_alert'] = True
+            try:
+                from detection.dir_alert import init_dir_alert
+                init_dir_alert(db=get_db())
+            except Exception as e:
+                print(f"[APP] Failed to start Dir-alert: {e}")
+
         if not _auto_started.get('fuel_filter'):
             _auto_started['fuel_filter'] = True
             try:
@@ -4050,7 +4058,35 @@ def register_api_routes(app):
         status['use_watchlist_consensus'] = str(get_db().get_setting(
             'sm_use_watchlist_consensus', 'true')).lower() in ('true', '1')
         return jsonify({'ok': True, **status})
-    
+
+    @app.route('/api/sm/dir-alert', methods=['GET', 'POST'])
+    def api_sm_dir_alert():
+        """Пер-монетні TG-оповіщення про зміну напрямку (1H/4H).
+        GET  → {ok, enabled_coins, coins, running} (стан усіх увімкнених монет);
+               ?symbol=SYM → додає {symbol, enabled} для конкретної монети.
+        POST {symbol, enabled} → увімкнути/вимкнути для однієї монети."""
+        from detection.dir_alert import get_dir_alert
+        da = get_dir_alert()
+        if da is None:
+            return jsonify({'ok': False, 'reason': 'dir-alert not initialized'})
+        if request.method == 'POST':
+            body = request.get_json() or {}
+            sym = str(body.get('symbol') or '').upper().strip()
+            if not sym:
+                return jsonify({'ok': False, 'reason': 'no symbol'})
+            res = da.set_enabled(sym, bool(body.get('enabled')))
+            return jsonify({'ok': bool(res.get('ok')), **da.status(),
+                            'symbol': res.get('symbol'),
+                            'enabled': res.get('enabled')})
+        out = {'ok': True, **da.status()}
+        sym = str(request.args.get('symbol') or '').upper().strip()
+        if sym.endswith('.P'):
+            sym = sym[:-2]
+        if sym:
+            out['symbol'] = sym
+            out['enabled'] = da.is_enabled(sym)
+        return jsonify(out)
+
     @app.route('/api/sentiment')
     def api_sentiment():
         """Exchange-wide LONG vs SHORT mood (%). Default Bybit."""
@@ -7236,11 +7272,26 @@ def compute_bias(db, symbol, wl=None):
     except Exception:
         _confluence = None
 
+    # 🔮 Явний прогноз-напрямок 1H / 4H (той самий forecast-движок, що й бейджі
+    # на графіку) — щоб панель Smart Direction показувала ЧІТКЕ визначення у %
+    # та підпис сили окремо для 1Н і 4Н таймфреймів.
+    _forecast_1h = _forecast_4h = None
+    try:
+        from detection.forecast_engine import get_forecast_engine
+        _fe2 = get_forecast_engine()
+        if _fe2:
+            _fcx = _fe2.ensure_fresh(symbol, max_age=120.0) or _fe2.get(symbol) or {}
+            _forecast_1h = _fcx.get('forecast_1h')
+            _forecast_4h = _fcx.get('forecast_4h')
+    except Exception:
+        _forecast_1h = _forecast_4h = None
+
     _result = {'ok': True, 'symbol': symbol, 'verdict': verdict,
                'confidence': confidence, 'components': comp,
                'reasons': reasons, 'price': price, 'move': move,
                'move_long': move_long, 'move_short': move_short,
                'ctr': _ctr, 'ctr_stc': _ctr_stc, 'confluence': _confluence,
+               'forecast_1h': _forecast_1h, 'forecast_4h': _forecast_4h,
                'decision': _decision, 'ts': _t.time()}
     _cache[_ck] = (_now, _result)
     return _result

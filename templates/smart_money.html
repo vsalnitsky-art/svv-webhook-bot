@@ -1405,6 +1405,29 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-bias-mini-l { background:linear-gradient(90deg,#16a34a,#4ade80); height:100%; transition:width .4s; }
     .sm-bias-mini-s { background:linear-gradient(90deg,#f87171,#dc2626); height:100%; transition:width .4s; }
     .sm-bias-mini-val { font-family:monospace; font-size:0.74rem; color:#c6cbd8; }
+    /* 🔮 Напрямок за таймфреймами (1Н / 4Н) — чіткі визначення + TG-тумблер */
+    .sm-tfdir { margin-top:14px; padding:12px 14px; border-radius:10px;
+        background:rgba(13,16,24,0.55); border:1px solid rgba(255,255,255,0.08); }
+    .sm-tfdir-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+        margin-bottom:10px; }
+    .sm-tfdir-title { font-size:0.82rem; font-weight:700; color:#cbd5e1;
+        letter-spacing:0.3px; }
+    .sm-tfdir-sym { font-family:monospace; font-size:0.76rem; color:#93c5fd; }
+    .sm-tfdir-alert { margin-left:auto; }
+    .sm-tfdir-alert input:checked + .sm-bias-auto-slider { background:#22c55e; }
+    .sm-tfdir-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .sm-tfdir-cell { display:flex; align-items:center; gap:10px; padding:9px 12px;
+        border-radius:8px; background:rgba(0,0,0,0.28);
+        border:1px solid rgba(255,255,255,0.06); min-height:40px; }
+    .sm-tfdir-tf { font-size:0.78rem; font-weight:800; color:#8b93a7;
+        letter-spacing:1px; min-width:26px; }
+    .sm-tfdir-val { font-family:monospace; font-size:0.98rem; font-weight:800;
+        color:#dbeafe; }
+    .sm-tfdir-str { margin-left:auto; font-size:0.72rem; font-weight:700;
+        text-transform:uppercase; letter-spacing:0.5px; color:#94a3b8; }
+    .sm-tfdir-legend { margin-top:9px; font-size:0.7rem; color:#8b93a7;
+        line-height:1.5; }
+    @media (max-width:560px) { .sm-tfdir-grid { grid-template-columns:1fr; } }
     </style>
 
     <!-- 🧑‍🔬 Ейнштейн-іконка (оригінальна карикатура з язиком) — SVG-спрайт,
@@ -1461,6 +1484,39 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <div class="sm-bias-reasons" id="sm-bias-reasons"></div>
             </div>
             <div class="sm-bias-extra" id="sm-bias-extra"></div>
+        </div>
+        <!-- 🔮 Чітке визначення напрямку ОКРЕМО для 1Н і 4Н таймфреймів
+             (у відсотках + підпис сили) + пер-монетне TG-оповіщення про зміну
+             напрямку (за замовч. ВИМКНЕНО). -->
+        <div class="sm-tfdir" id="sm-tfdir">
+            <div class="sm-tfdir-head">
+                <span class="sm-tfdir-title">🔮 Напрямок за таймфреймами</span>
+                <span class="sm-tfdir-sym" id="sm-tfdir-sym">—</span>
+                <label class="sm-bias-auto sm-tfdir-alert" id="sm-tfdir-alert-wrap"
+                       title="Надіслати Telegram-повідомлення, коли напрямок 1Н АБО 4Н фліпнеться (LONG↔SHORT) для ЦІЄЇ монети. За замовчуванням вимкнено; налаштовується окремо для кожної монети.">
+                    <input type="checkbox" id="sm-tfdir-alert" onchange="toggleDirAlert(this.checked)">
+                    <span class="sm-bias-auto-slider"></span>
+                    <span class="sm-bias-auto-label">🔔 TG про зміну напрямку</span>
+                </label>
+            </div>
+            <div class="sm-tfdir-grid">
+                <div class="sm-tfdir-cell" id="sm-tfdir-1h">
+                    <span class="sm-tfdir-tf">1Н</span>
+                    <span class="sm-tfdir-val" id="sm-tfdir-1h-val">—</span>
+                    <span class="sm-tfdir-str" id="sm-tfdir-1h-str"></span>
+                </div>
+                <div class="sm-tfdir-cell" id="sm-tfdir-4h">
+                    <span class="sm-tfdir-tf">4Н</span>
+                    <span class="sm-tfdir-val" id="sm-tfdir-4h-val">—</span>
+                    <span class="sm-tfdir-str" id="sm-tfdir-4h-str"></span>
+                </div>
+            </div>
+            <div class="sm-tfdir-legend">
+                Визначення сили за впевненістю прогнозу:
+                <b style="color:#4ade80">сильний ≥ 66%</b> ·
+                <b style="color:#fbbf24">помірний 40–65%</b> ·
+                <b style="color:#94a3b8">слабкий &lt; 40%</b>
+            </div>
         </div>
         <!-- Row 1: Move-potential for BOTH directions side-by-side.
              The verdict direction is highlighted. Seeing LONG and SHORT
@@ -7876,6 +7932,73 @@ function applyBiasSymbol() {
         body: JSON.stringify({symbol: v}),
     }).catch(() => {});
     loadBias();
+    loadDirAlertState();
+}
+
+// 🔮 Сила напрямку за впевненістю прогнозу (ЄДИНЕ визначення — дзеркалить
+// backend detection/dir_alert.strength_word): ≥66 сильний / 40-65 помірний / <40 слабкий.
+function strengthWordJS(conf) {
+    const c = Number(conf) || 0;
+    if (c >= 66) return { w: 'сильний', col: '#4ade80' };
+    if (c >= 40) return { w: 'помірний', col: '#fbbf24' };
+    return { w: 'слабкий', col: '#94a3b8' };
+}
+
+// 🔮 Чітке визначення напрямку ОКРЕМО для 1Н і 4Н (у % + підпис сили).
+function renderTfDir(d) {
+    const symEl = document.getElementById('sm-tfdir-sym');
+    if (symEl) symEl.textContent = (d && d.symbol) ? d.symbol : (biasSymbol || '—');
+    const fill = (tf, fc) => {
+        const valEl = document.getElementById('sm-tfdir-' + tf + '-val');
+        const strEl = document.getElementById('sm-tfdir-' + tf + '-str');
+        if (!valEl || !strEl) return;
+        if (fc && (fc.side === 1 || fc.side === -1)) {
+            const dir = fc.side === 1 ? 'LONG' : 'SHORT';
+            const dot = fc.side === 1 ? '🟢' : '🔴';
+            const col = fc.side === 1 ? '#4ade80' : '#f87171';
+            const conf = Number(fc.confidence) || 0;
+            const sign = (Number(fc.pct) > 0 ? '+' : '');
+            const pctTxt = (fc.pct !== undefined && fc.pct !== null) ? ` ${sign}${fc.pct}%` : '';
+            valEl.innerHTML = `${dot} <b style="color:${col}">${dir} ${conf}%</b>`
+                + `<span style="color:#8b93a7;font-weight:600">${pctTxt}</span>`;
+            const s = strengthWordJS(conf);
+            strEl.textContent = s.w;
+            strEl.style.color = s.col;
+        } else {
+            valEl.innerHTML = '⚪ <span style="color:#8b93a7">немає напрямку</span>';
+            strEl.textContent = '';
+        }
+    };
+    fill('1h', d ? d.forecast_1h : null);
+    fill('4h', d ? d.forecast_4h : null);
+}
+
+// 🔔 Пер-монетне TG-оповіщення про зміну напрямку — стан для поточної монети.
+async function loadDirAlertState() {
+    const cb = document.getElementById('sm-tfdir-alert');
+    if (!cb) return;
+    try {
+        const r = await fetch('/api/sm/dir-alert?symbol=' + encodeURIComponent(biasSymbol));
+        const d = await r.json();
+        cb.checked = !!(d && d.ok && d.enabled);
+    } catch (e) { /* лишаємо як є */ }
+}
+
+async function toggleDirAlert(on) {
+    try {
+        const r = await fetch('/api/sm/dir-alert', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: biasSymbol, enabled: !!on}),
+        });
+        const d = await r.json();
+        if (!d || !d.ok) {
+            const cb = document.getElementById('sm-tfdir-alert');
+            if (cb) cb.checked = !on;   // відкотити чекбокс на невдачі
+        }
+    } catch (e) {
+        const cb = document.getElementById('sm-tfdir-alert');
+        if (cb) cb.checked = !on;
+    }
 }
 
 // Programmatically set a side gate ON/OFF via the same persisted path as
@@ -8360,6 +8483,7 @@ async function loadBias() {
         fill.style.width = effConf + '%';
         fill.style.background = dirGrad(effVerdict);
         renderMovePanel(d.move_long, d.move_short, effVerdict);
+        renderTfDir(d);   // 🔮 чіткі 1Н/4Н напрямки + %
         window._lastBias = d;
         const icons = {ok: '✓', warn: '⚠', wait: '•'};
         // The watchlist-consensus reason line is rendered under the
@@ -11938,8 +12062,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
         loadBias();
+        loadDirAlertState();
     }).catch(() => {});
-    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadFuelFilterStatus(); };
+    const refreshAll = () => { loadBias(); loadDirAlertState(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadFuelFilterStatus(); };
     refreshAll();
     setInterval(refreshAll, 60000);
     // Fuel-filter refreshes faster (30s) so timers/positions feel live.
