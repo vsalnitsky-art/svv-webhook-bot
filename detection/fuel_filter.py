@@ -167,6 +167,13 @@ DEFAULT_SETTINGS = {
     'direction_smoothing_min': 0,   # EMA window (min) for МММ direction; 0 = OFF (raw)
     'anomaly_hours': 10,            # fuel held longer than this → "anomaly" list
     'start_signal_minutes': 5,      # BTC МММ held ≥ this → START signal (else STOP)
+    # ── ₿ BTCUSDT banner mode ──
+    #   'live'    (default) — ПОВНЕ ДУБЛЮВАННЯ без затримок: банер миттєво
+    #             повторює напрямок МММ-бабло BTCUSDT (як сигнал), без сеансу/
+    #             паузи/таймера START.
+    #   'session' — стара сеанс-механіка (WAIT=пауза, фліп=новий сеанс,
+    #             START після start_signal_minutes).
+    'btc_banner_mode': 'live',
     # ── BTC-START auto-engine (banner toggle) ──
     'start_engine_enabled': False,        # master: auto-open basket on BTC START
     'start_engine_independent': False,    # auto-open independent of BTC (own dir)
@@ -701,6 +708,10 @@ class FuelFilterDaemon:
         self._btc_verdict_since: float = 0.0           # session start (persists through pause)
         self._btc_paused: bool = False                 # live ML is WAIT within the session
         self._btc_fuel_strength: int = 0               # BTC fuel strength 0..100 (banner bar)
+        # LIVE МММ-бабло напрямок BTCUSDT (миттєвий, БЕЗ сеанс-логіки) — для
+        # режиму банера 'live' (повне дублювання без затримок). Оновлюється
+        # щотіку в _update_btc_verdict; get_state читає його дешево (без API).
+        self._btc_live_dir: Optional[str] = None
         self._btc_pause_since: float = 0.0             # коли почалась поточна пауза (анти-залипання)
         self._btc_mm: Dict = {}                       # останній повний вихід моделі МММ для BTC
         # 💰 Funding fuel table (repurposed from the old anomalies storage):
@@ -2701,6 +2712,8 @@ class FuelFilterDaemon:
                     pass
             # status уже несе ±0.1-нейтраль: None = ⚖ рівновага → WAIT/пауза.
             live = _st if _st in ('LONG', 'SHORT') else None
+            # LIVE напрямок для банера-'live' (миттєве дублювання, без сеансу).
+            self._btc_live_dir = live
         except Exception as e:
             print(f"[FuelFilter] BTC МММ calc error: {e}")
             return
@@ -7133,7 +7146,27 @@ class FuelFilterDaemon:
                 'paused': bool(self._btc_paused and has_btc),
                 # BTC fuel strength 0..100 — fills the banner bar (never empty).
                 'strength': int(self._btc_fuel_strength or 0),
+                'mode': 'session',
             }
+            # ── ₿ БАНЕР: РЕЖИМ «LIVE» (повне дублювання без затримок) ──
+            # Банер миттєво повторює напрямок МММ-бабло BTCUSDT (як сигнал):
+            # START одразу за наявності напрямку, без сеансу/паузи/таймера.
+            if (settings.get('btc_banner_mode', 'live') or 'live') == 'live':
+                # Дешеві кеш-значення (оновлені у _update_btc_verdict щотіку) —
+                # НЕ викликаємо _fuel_dir під локом (жодних API-хітів у get_state).
+                _ld = self._btc_live_dir if self._btc_live_dir in ('LONG', 'SHORT') else None
+                _lstr = int(self._btc_fuel_strength or 0)
+                btc_start = {
+                    'status': 'START' if _ld else 'STOP',
+                    'progress': 100 if _ld else 0,
+                    # held_sec == period_sec → фронт одразу показує TRADING (без таймера).
+                    'held_sec': int(period_sec),
+                    'period_sec': int(period_sec),
+                    'dir': _ld,
+                    'paused': False,
+                    'strength': _lstr,
+                    'mode': 'live',
+                }
             # 💰 Funding table — only coins currently holding fuel. Carries the
             # live funding rate + next-funding time + trend (prev_rate) + the
             # entry threshold so the UI can draw the entry→−4% progress bar.

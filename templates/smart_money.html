@@ -1485,6 +1485,35 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             <div class="sm-bias-extra" id="sm-bias-extra"></div>
         </div>
+        <!-- ₿ BTCUSDT банер — ПЕРЕНЕСЕНО СЮДИ (над панеллю «Напрямок за
+             таймфреймами»). Показує напрямок ₿; режим перемикається тумблером
+             «🔁 Дублювання» (дефолт = миттєве дублювання МММ-бабло без затримок)
+             ↔ сеанс. Усі id збережені — рендер (updateBtcStartBanner) працює. -->
+        <div id="ff-btc-start-banner" style="display:flex;align-items:center;gap:14px;margin:14px 0 4px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
+            <span style="font-weight:900;font-size:1.1rem;color:#ffb02e;text-shadow:0 0 9px rgba(247,147,26,0.6);white-space:nowrap">₿ BTCUSDT</span>
+            <span id="ff-btc-start-dir" style="font-weight:900;font-size:1.1rem;white-space:nowrap"></span>
+            <div style="flex:1;min-width:120px;height:18px;border-radius:9px;background:rgba(255,255,255,0.07);overflow:hidden;position:relative">
+                <div id="ff-btc-progress-bar" style="height:100%;width:0%;border-radius:9px;background:#facc15;transition:width 0.4s linear,background 0.3s"></div>
+                <span id="ff-btc-progress-label" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
+            </div>
+            <span id="ff-btc-flip" class="ff-flip" style="white-space:nowrap"></span>
+            <span id="ff-btc-start-status" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap;background:transparent">—</span>
+            <!-- 🔁 Перемикач режиму банера: УВІМК (дефолт) = дублювання без затримок. -->
+            <label style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:#9aa3b5;cursor:pointer;white-space:nowrap" title="Режим банера ₿ BTCUSDT. УВІМК (за замовчуванням) = ДУБЛЮВАННЯ без затримок: банер миттєво повторює напрямок МММ-бабло BTCUSDT (як сигнал). ВИМК = режим СЕАНСУ: WAIT=пауза, протилежний фліп=новий сеанс, START лише після таймера start_signal_minutes.">
+                <input type="checkbox" id="ff-btc-banner-live" onchange="saveFuelFilterSettings()" style="cursor:pointer">
+                <span>🔁 Дублювання</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:0.7rem;color:#9aa3b5;cursor:pointer;white-space:nowrap" title="Сповіщення в Telegram при зміні стану START/STOP по BTCUSDT">
+                <input type="checkbox" id="ff-btc-tg-toggle" onchange="onBtcTgToggle(event)" style="cursor:pointer">📨
+            </label>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+                <span style="font-size:0.58rem;font-weight:700;color:#f7931a;line-height:1">₿ START TRADING</span>
+                <label class="tm-toggle-switch" title="Тригер двигуна. УВІМК = режим ₿ START: відкриваємо лише коли ₿-сеанс тримає напрямок (не на паузі). ВИМК = режим «за кнопками головного банера»: двигун НЕ простоює, а відкриває одразу за станом кнопок ЛОНГ/ШОРТ (черга з тими ж параметрами). Повний стоп двигуна — вимкнути ❤️ Fuel Auto-Filter.">
+                    <input type="checkbox" id="ff-engine-toggle" onchange="onEngineToggle(event)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
         <!-- 🔮 Чітке визначення напрямку ОКРЕМО для 1Н і 4Н таймфреймів
              (у відсотках + підпис сили) + пер-монетне TG-оповіщення про зміну
              напрямку (за замовч. ВИМКНЕНО). -->
@@ -2182,27 +2211,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </div>
             </div>
 
-            <!-- BTC START/STOP signal — counts up while BTC holds МММ -->
-            <div id="ff-btc-start-banner" style="display:flex;align-items:center;gap:14px;margin:12px 0 4px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
-                <span style="font-weight:900;font-size:1.1rem;color:#ffb02e;text-shadow:0 0 9px rgba(247,147,26,0.6);white-space:nowrap">₿ BTCUSDT</span>
-                <span id="ff-btc-start-dir" style="font-weight:900;font-size:1.1rem;white-space:nowrap"></span>
-                <div style="flex:1;min-width:120px;height:18px;border-radius:9px;background:rgba(255,255,255,0.07);overflow:hidden;position:relative">
-                    <div id="ff-btc-progress-bar" style="height:100%;width:0%;border-radius:9px;background:#facc15;transition:width 0.4s linear,background 0.3s"></div>
-                    <span id="ff-btc-progress-label" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
-                </div>
-                <span id="ff-btc-flip" class="ff-flip" style="white-space:nowrap"></span>
-                <span id="ff-btc-start-status" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap;background:transparent">—</span>
-                <label style="display:flex;align-items:center;gap:4px;font-size:0.7rem;color:#9aa3b5;cursor:pointer;white-space:nowrap" title="Сповіщення в Telegram при зміні стану START/STOP по BTCUSDT">
-                    <input type="checkbox" id="ff-btc-tg-toggle" onchange="onBtcTgToggle(event)" style="cursor:pointer">📨
-                </label>
-                <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
-                    <span style="font-size:0.58rem;font-weight:700;color:#f7931a;line-height:1">₿ START TRADING</span>
-                    <label class="tm-toggle-switch" title="Тригер двигуна. УВІМК = режим ₿ START: відкриваємо лише коли ₿-сеанс тримає напрямок (не на паузі). ВИМК = режим «за кнопками головного банера»: двигун НЕ простоює, а відкриває одразу за станом кнопок ЛОНГ/ШОРТ (черга з тими ж параметрами). Повний стоп двигуна — вимкнути ❤️ Fuel Auto-Filter.">
-                        <input type="checkbox" id="ff-engine-toggle" onchange="onEngineToggle(event)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-            </div>
+            <!-- ₿ BTCUSDT банер ПЕРЕНЕСЕНО вище — над панеллю «Напрямок за
+                 таймфреймами» (див. #ff-btc-start-banner у блоці Smart Direction). -->
 
             <!-- ❤️ FF base: intercepted coins waiting for ₿ START + fuel -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
@@ -7997,9 +8007,11 @@ function renderTfDir(d) {
             const col = fc.side === 1 ? '#4ade80' : '#f87171';
             const conf = Number(fc.confidence) || 0;
             const sign = (Number(fc.pct) > 0 ? '+' : '');
-            const pctTxt = (fc.pct !== undefined && fc.pct !== null) ? ` ${sign}${fc.pct}%` : '';
-            valEl.innerHTML = `${dot} <b style="color:${col}">${dir} ${conf}%</b>`
-                + `<span style="color:#8b93a7;font-weight:600">${pctTxt}</span>`;
+            const movePct = (fc.pct !== undefined && fc.pct !== null) ? `${sign}${fc.pct}%` : '';
+            // Порядок: спершу ПРОГНОЗ руху (+X%), потім ВПЕВНЕНІСТЬ (підписана явно —
+            // саме вона визначає силу «сильний/помірний/слабкий»).
+            valEl.innerHTML = `${dot} <b style="color:${col}">${dir}${movePct ? ' ' + movePct : ''}</b>`
+                + `<span style="color:#8b93a7;font-weight:600"> · впевненість ${conf}%</span>`;
             const s = strengthWordJS(conf);
             strEl.textContent = s.w;
             strEl.style.color = s.col;
@@ -9402,6 +9414,14 @@ function renderFuelFilter(d) {
         strength: (bsg.strength != null ? bsg.strength : 0),  // BTC fuel strength 0..100
     };
     updateBtcStartBanner();
+    // ₿ банер: тумблер режиму «🔁 Дублювання» (live) ↔ сеанс. Дефолт — live.
+    (function () {
+        const _bm = document.getElementById('ff-btc-banner-live');
+        const _justSavedBm = (Date.now() - (window._ffSettingsSavedAt || 0)) < 6000;
+        if (_bm && !_justSavedBm && document.activeElement !== _bm) {
+            _bm.checked = ((s.btc_banner_mode || 'live') === 'live');
+        }
+    })();
     // settings inputs — don't clobber while focused, and don't clobber for a
     // few seconds after a save (a stale in-flight GET must not revert a control
     // the user just changed — the #1 cause of "toggles don't stick").
@@ -10364,6 +10384,8 @@ async function saveFuelFilterSettings() {
         close_on_btc_flip: (_v('ff-close-btc-mode', 'off') === 'flip'),
         direction_smoothing_min: parseInt(_v('ff-smoothing-min', '0') || '0', 10),
         start_signal_minutes: parseInt(_v('ff-start-minutes', '5') || '5', 10),
+        // ₿ банер: увімкнено «🔁 Дублювання» → live (дефолт), інакше сеанс.
+        btc_banner_mode: (_c('ff-btc-banner-live') === false) ? 'session' : 'live',
         engine_candle_tf: _v('ff-engine-candle-tf', '5m') || '5m',
         engine_require_strong_hold: _c('ff-engine-stronghold'),
         engine_smart_direction: _c('ff-engine-smartdir'),
