@@ -1981,7 +1981,10 @@ class TradeManager:
             print(f"[TM] ℹ️ {real_reason}, {symbol} signal → Test Mode")
 
         if real_opened:
-            log_activity(symbol, 'opened', 'Відкрито реальну позицію (TM)', side=side, source='TM')
+            _info = self._entry_info_text(symbol, is_paper=False)
+            log_activity(symbol, 'opened',
+                         'Відкрито реальну позицію (TM)' + (f' · {_info}' if _info else ''),
+                         side=side, source='TM')
             return {'real_opened': True, 'status': 'opened', 'is_paper': False}
 
         # === Paper (shadow) track ===
@@ -2013,14 +2016,20 @@ class TradeManager:
                     return {'status': 'rejected', 'reason': f'[TEST] reverse-close failed: {e}'}
                 res = self._open_shadow(symbol, side, entry_price, opened_by) or {}
                 if res.get('ok'):
-                    log_activity(symbol, 'opened', f'Реверс (paper): {existing_shadow["side"]} → {side}', side=side, source='TM')
+                    _info = self._entry_info_text(symbol, is_paper=True)
+                    log_activity(symbol, 'opened',
+                                 f'Реверс (paper): {existing_shadow["side"]} → {side}' + (f' · {_info}' if _info else ''),
+                                 side=side, source='TM')
                     return {'shadow_opened': True, 'status': 'opened', 'is_paper': True}
                 log_activity(symbol, 'rejected', f'Реверс-відкриття (paper) відхилено: {res.get("reason", "blocked")}', side=side, source='TM')
                 return {'shadow_opened': False, 'status': 'rejected', 'is_paper': True,
                         'reason': res.get('reason', 'shadow reverse-open blocked')}
             res = self._open_shadow(symbol, side, entry_price, opened_by) or {}
             if res.get('ok'):
-                log_activity(symbol, 'opened', 'Пряме відкриття (paper) — черги не перехопили сигнал', side=side, source='TM')
+                _info = self._entry_info_text(symbol, is_paper=True)
+                log_activity(symbol, 'opened',
+                             'Пряме відкриття (paper) — черги не перехопили сигнал' + (f' · {_info}' if _info else ''),
+                             side=side, source='TM')
                 return {'shadow_opened': True, 'status': 'opened', 'is_paper': True}
             log_activity(symbol, 'rejected', f'Paper-відкриття відхилено: {res.get("reason", "shadow open blocked")}', side=side, source='TM')
             return {'shadow_opened': False, 'status': 'rejected', 'is_paper': True,
@@ -3098,6 +3107,8 @@ class TradeManager:
         position['ff_mm_open'] = self._ff_mm_snapshot(symbol)
         # ⚡ CTR entry-gate reading at open (for the хронологія modal).
         position['ctr_open'] = self._ctr_snapshot(symbol)
+        # ⚪ POC (Volume Profile) знімок на вході — фіксуємо як на панелі.
+        position['entry_poc'] = self._poc_snapshot(symbol, side, entry_price)
 
         # Full pre-trade snapshot for the entry-quality backtest dataset.
         # Captured ONCE at open — decision + move-potential + hold score —
@@ -3590,6 +3601,96 @@ class TradeManager:
         except Exception:
             return None
 
+    def _poc_snapshot(self, symbol: str, side: Optional[str],
+                      price: Optional[float]) -> Optional[Dict]:
+        """⚪ POC (Volume Profile) знімок НА МОМЕНТ ВХОДУ — те саме, що показує
+        панель POC: рівень POC, різниця ціна↔POC (%), доцільний напрямок,
+        межі зони вартості, джерело. Фіксоване вікно 3д, TF 1H, ринок SPOT
+        (авто-фолбек на Bybit). Стамп на позицію → зберігається в архів угоди."""
+        try:
+            from detection.volume_profile import compute_poc, price_vs_poc
+            r = compute_poc(symbol, hours=72, bins=150, interval='1h', market='spot')
+            if not r or not r.get('ok') or r.get('poc') is None:
+                return None
+            poc = float(r['poc'])
+            px = float(price) if price else None
+            v = price_vs_poc(poc, px, side) if px else {}
+            fav = None
+            if px:
+                fav = 'LONG' if px < poc else ('SHORT' if px > poc else None)
+            return {
+                'poc': poc, 'vah': r.get('vah'), 'val': r.get('val'),
+                'price': px, 'dist_pct': v.get('dist_pct'), 'fav_dir': fav,
+                'ok_for_side': (v.get('ok') if side else None),
+                'exchange': r.get('exchange'), 'market': r.get('market'),
+                'tf': '1h', 'window_days': 3,
+                'price_low': r.get('price_low'), 'price_high': r.get('price_high'),
+            }
+        except Exception as e:
+            print(f"[TM] POC snapshot error {symbol}: {e}")
+            return None
+
+    @staticmethod
+    def _decision_text(decision: Optional[Dict]) -> str:
+        """«SHORT 74% сильний» — компактний текст вердикту Decision Center
+        (той самий показник, що на панелі/скріні). Порожньо, якщо немає даних."""
+        if not decision:
+            return ''
+        rec = decision.get('recommended')
+        vw = {'good': 'сильний', 'marginal': 'помірний', 'poor': 'слабкий'}
+        word = vw.get(decision.get('verdict'), '')
+        try:
+            if rec == 'LONG':
+                pct = round(float(decision.get('prob_long') or 0) * 100)
+            elif rec == 'SHORT':
+                pct = round(float(decision.get('prob_short') or 0) * 100)
+            else:
+                pct = round(max(float(decision.get('prob_long') or 0),
+                                float(decision.get('prob_short') or 0)) * 100)
+        except (TypeError, ValueError):
+            pct = 0
+        icon = '🟢' if rec == 'LONG' else ('🔴' if rec == 'SHORT' else '⚖️')
+        rec_txt = rec if rec in ('LONG', 'SHORT') else 'WAIT'
+        return f"🧠 {icon} {rec_txt} {pct}%{(' ' + word) if word else ''}".strip()
+
+    def _poc_text(self, p: Optional[Dict]) -> str:
+        """«⚪ POC 0.69122 · ціна↔POC −2.33% → краще LONG» — компактний текст
+        знімка POC для хронології. Порожньо, якщо немає даних."""
+        if not p or p.get('poc') is None:
+            return ''
+        try:
+            poc_s = self._fmt_price(float(p['poc']))
+        except Exception:
+            poc_s = f"{p['poc']}"
+        dist = p.get('dist_pct')
+        if dist is not None:
+            dtxt = f"{'+' if dist >= 0 else '−'}{abs(dist):.2f}%"
+        else:
+            dtxt = '—'
+        fav = p.get('fav_dir')
+        favtxt = f" → краще {fav}" if fav in ('LONG', 'SHORT') else ''
+        ex = 'Bybit' if p.get('exchange') == 'bybit' else 'Binance'
+        return f"⚪ POC {poc_s} · ціна↔POC {dtxt}{favtxt} ({ex})"
+
+    def _entry_info_text(self, symbol: str, is_paper: bool = False) -> str:
+        """Зведений рядок «показників на вході» для ХРОНОЛОГІЇ (activity_log):
+        вердикт напрямку (Decision Center) + знімок POC. Читає вже застампленої
+        позиції (entry_score + entry_poc). Повертає '' якщо нема чого показати."""
+        try:
+            book = self._shadow_positions if is_paper else self._positions
+            with self._lock:
+                pos = dict(book.get(symbol) or {})
+            parts = []
+            dt = self._decision_text(pos.get('entry_score'))
+            if dt:
+                parts.append(dt)
+            pt = self._poc_text(pos.get('entry_poc'))
+            if pt:
+                parts.append(pt)
+            return ' · '.join(parts)
+        except Exception:
+            return ''
+
     @staticmethod
     def _ctr_snapshot(symbol: str) -> Optional[Dict]:
         """⚡ CTR state snapshot for `symbol` right now: {'stc','last_dir',
@@ -4020,10 +4121,25 @@ class TradeManager:
         pos['ff_exh_open'] = self._ff_exhaustion(symbol, side)
         pos['ff_mm_open'] = self._ff_mm_snapshot(symbol)
         pos['ctr_open'] = self._ctr_snapshot(symbol)
+        # ⚪ POC (Volume Profile) знімок на вході (paper) — як на панелі.
+        pos['entry_poc'] = self._poc_snapshot(symbol, side, entry_price)
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
         self._persist_shadow_positions()
+        # 🧾 Хронологія: FF відкриває paper НАПРЯМУ через _open_shadow (повз
+        # manual_open), тож саме тут пишемо рядок «показники на вході» для цього
+        # шляху (bypass_gates=True = виклик Fuel Auto-Filter). Для manual_open
+        # (bypass_gates=False) рядок пише сам manual_open — без дублювання.
+        if bypass_gates:
+            try:
+                from detection.activity_log import log_activity as _la
+                _info = self._entry_info_text(symbol, is_paper=True)
+                _la(symbol, 'opened',
+                    'Відкрито paper (Fuel Auto-Filter)' + (f' · {_info}' if _info else ''),
+                    side=side, source='FF')
+            except Exception:
+                pass
 
         # 🎯 Авто-SL з OB одразу при відкритті (див. реальний шлях) — щоб SL у
         # повідомленні брався з Order Block, а не був порожнім/null.
