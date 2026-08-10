@@ -2161,10 +2161,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </select>
                 </div>
                 <div>
-                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Require OB (L5)</label>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px" title="Менший ТФ Require OB: чекаємо НОВИЙ OB (edge). Використовується, якщо на старшому ТФ ще немає OB у наш бік.">Require OB · L5 (менший)</label>
                     <select id="poc-setup-ob-tf" onchange="savePocSetup()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
                         <option value="5m">5m</option><option value="15m" selected>15M</option>
                         <option value="30m">30m</option><option value="1h">1H</option><option value="4h">4H</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px" title="СТАРШИЙ ТФ Require OB: коли L1–L4 збіглись, СПОЧАТКУ перевіряємо останній OB на цьому ТФ у наш бік. Якщо він є — відкриваємо ОДРАЗУ (SL з нього), не чекаючи нового меншого OB. «—» = вимкнено (тоді лише менший ТФ).">Require OB · старший</label>
+                    <select id="poc-setup-ob-htf" onchange="savePocSetup()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
+                        <option value="">—</option>
+                        <option value="15m">15m</option><option value="30m">30m</option>
+                        <option value="1h" selected>1H</option><option value="2h">2H</option><option value="4h">4H</option>
                     </select>
                 </div>
                 <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Автоматично відкривати угоду, коли всі 5 шарів збіглись. Вимкнено — відкриваєш вручну кнопкою в таблиці.">
@@ -6880,6 +6888,7 @@ async function loadPocSetup() {
         setV('poc-setup-tf', s.tf);
         setV('poc-setup-window', s.window_days);
         setV('poc-setup-ob-tf', s.ob_tf);
+        setV('poc-setup-ob-htf', s.ob_htf);
         setV('poc-setup-auto', s.auto_open);
         renderPocSetup(d);
     } catch (e) { /* лишаємо як є */ }
@@ -6895,6 +6904,7 @@ async function savePocSetup() {
         tf: _v('poc-setup-tf') || '1h',
         window_days: parseInt(_v('poc-setup-window') || '7', 10) || 7,
         ob_tf: _v('poc-setup-ob-tf') || '15m',
+        ob_htf: (_v('poc-setup-ob-htf') || ''),
         auto_open: _c('poc-setup-auto'),
     };
     try {

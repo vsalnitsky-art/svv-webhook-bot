@@ -40,7 +40,10 @@ DEFAULTS = {
     'market': 'spot',           # spot | futures
     'tf': '1h',                 # ТФ POC
     'window_days': 7,           # вікно POC-сетапу (дні)
-    'ob_tf': '15m',             # Require OB таймфрейм (L5)
+    'ob_tf': '15m',             # Require OB таймфрейм (L5, менший — edge-тригер)
+    'ob_htf': '1h',             # Require OB СТАРШИЙ ТФ: якщо ОСТАННІЙ OB на ньому
+                                #   у наш бік — відкриваємо ОДРАЗУ (SL з нього),
+                                #   не чекаючи нового меншого. Порожньо = вимкнено.
     'auto_open': True,          # авто-відкриття коли всі 5 шарів
     'max_per_cycle': 5,         # тротл: монет за тік (безпечно для біржі)
     'ttl': 120,                 # TTL кешу пер-монета (с)
@@ -353,37 +356,50 @@ class PocSetupDaemon:
         # «озброюємось» і чекаємо НОВИЙ OB (bar_time новіший за момент озброєння)
         # у той самий бік. Якщо L1–L4 порушились — роззброюємось (новий цикл
         # → нове очікування нового OB). Спрацьовує РАЗ.
+        ob_htf = (s.get('ob_htf', '1h') or '').strip()
         now_ts = time.time()
         l5_dir, l5_lit, l5_val = None, False, 'чекає L1–L4'
         ob_box = None
         if not aligned4:
             self._armed.pop(sym, None)
         else:
-            info = self._ob_info(sym, ob_tf)
-            cur_t = (info or {}).get('bar_time')
-            ob_dir = (info or {}).get('dir')
-            armed = self._armed.get(sym)
-            if not armed or armed.get('dir') != setup_dir:
-                # (пере)озброєння: baseline = поточний OB, чекаємо НОВІШИЙ
-                self._armed[sym] = {'dir': setup_dir, 'baseline': cur_t,
-                                    'since': now_ts}
-                l5_val = f"озброєно · чекаємо новий OB {ob_tf.upper()}"
+            # 0) СПОЧАТКУ — СТАРШИЙ OB (HTF, дефолт 1H): якщо ОСТАННІЙ OB на ньому
+            #    вже у наш бік — відкриваємо ОДРАЗУ (SL з цього HTF-OB), НЕ чекаючи
+            #    нового меншого TF.
+            htf = self._ob_info(sym, ob_htf) if ob_htf else None
+            if htf and htf.get('dir') == setup_dir:
+                l5_dir, l5_lit = setup_dir, True
+                l5_val = f"OB {ob_htf.upper()} {setup_dir} ✓ (старший)"
+                ob_box = {'top': htf.get('top'), 'bottom': htf.get('bottom')}
+                self._armed.pop(sym, None)   # HTF-шлях — LTF-озброєння не потрібне
+                info = None
             else:
-                base_t = armed.get('baseline')
-                is_new = (cur_t is not None and (base_t is None or cur_t > base_t))
-                if is_new and ob_dir == setup_dir:
-                    l5_dir, l5_lit = ob_dir, True
-                    l5_val = f"OB {ob_tf.upper()} {ob_dir} ✓ (новий)"
-                    ob_box = {'top': (info or {}).get('top'),
-                              'bottom': (info or {}).get('bottom')}
-                    armed['ob_box'] = ob_box
-                elif is_new and ob_dir and ob_dir != setup_dir:
-                    # новий OB проти напрямку → переозброюємось на цей baseline
+                # 1) LTF-шлях: чекаємо НОВИЙ OB на меншому TF (edge-latch).
+                info = self._ob_info(sym, ob_tf)
+                cur_t = (info or {}).get('bar_time')
+                ob_dir = (info or {}).get('dir')
+                armed = self._armed.get(sym)
+                if not armed or armed.get('dir') != setup_dir:
+                    # (пере)озброєння: baseline = поточний OB, чекаємо НОВІШИЙ
                     self._armed[sym] = {'dir': setup_dir, 'baseline': cur_t,
                                         'since': now_ts}
-                    l5_val = f"новий OB проти — переозброєно"
-                else:
                     l5_val = f"озброєно · чекаємо новий OB {ob_tf.upper()}"
+                else:
+                    base_t = armed.get('baseline')
+                    is_new = (cur_t is not None and (base_t is None or cur_t > base_t))
+                    if is_new and ob_dir == setup_dir:
+                        l5_dir, l5_lit = ob_dir, True
+                        l5_val = f"OB {ob_tf.upper()} {ob_dir} ✓ (новий)"
+                        ob_box = {'top': (info or {}).get('top'),
+                                  'bottom': (info or {}).get('bottom')}
+                        armed['ob_box'] = ob_box
+                    elif is_new and ob_dir and ob_dir != setup_dir:
+                        # новий OB проти напрямку → переозброюємось на цей baseline
+                        self._armed[sym] = {'dir': setup_dir, 'baseline': cur_t,
+                                            'since': now_ts}
+                        l5_val = f"новий OB проти — переозброєно"
+                    else:
+                        l5_val = f"озброєно · чекаємо новий OB {ob_tf.upper()}"
         layers = [
             {'n': 1, 'lit': bool(l1_lit), 'dir': (base['dir'] if l1_lit else None), 'val': l1_val},
             {'n': 2, 'lit': bool(l2_dir and l2_dir == setup_dir), 'dir': l2_dir, 'val': l2_val},
@@ -523,7 +539,11 @@ class PocSetupDaemon:
             buf = 0.001
         box = row.get('ob_box')
         if not box or box.get('top') is None or box.get('bottom') is None:
-            info = self._ob_info(sym, s.get('ob_tf', '15m'))
+            # Пріоритет — старший OB (як у логіці відкриття), інакше менший TF.
+            htf_tf = (s.get('ob_htf', '1h') or '').strip()
+            info = (self._ob_info(sym, htf_tf) if htf_tf else None)
+            if not info:
+                info = self._ob_info(sym, s.get('ob_tf', '15m'))
             if info:
                 box = {'top': info.get('top'), 'bottom': info.get('bottom')}
         sl = None
