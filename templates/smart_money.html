@@ -2101,6 +2101,86 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
     </div>
 
+    <!-- ===== 🎯 POC-СЕТАП (незалежний рушій; над Fuel Auto-Filter) ===== -->
+    <div class="tm-panel" id="poc-setup-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(168,85,247,0.28);border-radius:8px;background:rgba(168,85,247,0.05)">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <span style="font-size:0.85rem;font-weight:700;color:#e9d5ff" title="Незалежний POC-сетап: аналізує WATCHLIST, будує 5-шаровий конфлюенс навколо POC (Volume Profile). Напрямок задає 1-й шар (POC). Коли всі 5 шарів збігаються кольором — угода відкривається і монета видаляється зі списку. Працює НЕЗАЛЕЖНО від Fuel Auto-Filter.">🎯 POC-сетап</span>
+                <span id="poc-setup-status" style="font-size:0.8rem;font-family:monospace;font-weight:700;color:#8b93a7">—</span>
+            </div>
+            <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімкнути/вимкнути POC-сетап (незалежно від FF)">
+                <input type="checkbox" id="poc-setup-toggle" onchange="onPocSetupToggle(event)">
+                <span class="slider"></span>
+            </label>
+        </div>
+
+        <!-- ⚙️ Гармошка налаштувань POC-сетапу -->
+        <details class="sm-settings-bar" style="margin:10px 0 6px">
+            <summary class="sm-settings-summary" style="cursor:pointer;font-size:0.75rem;color:#c084fc;font-weight:600">⚙️ Налаштування (POC-сетап)</summary>
+            <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-top:10px">
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">% POC (L1)</label>
+                    <input type="number" id="poc-setup-pct" step="0.1" min="0" value="1"
+                           onchange="savePocSetup()" style="width:70px;background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px;font-family:monospace">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Ринок POC</label>
+                    <select id="poc-setup-market" onchange="savePocSetup()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
+                        <option value="spot">SPOT</option>
+                        <option value="futures">FUTURES</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">ТФ POC</label>
+                    <select id="poc-setup-tf" onchange="savePocSetup()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
+                        <option value="1m">1m</option><option value="5m">5m</option>
+                        <option value="15m">15m</option><option value="30m">30m</option>
+                        <option value="1h" selected>1H</option><option value="4h">4H</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Вікно (дні)</label>
+                    <input type="number" id="poc-setup-window" step="1" min="1" value="7"
+                           onchange="savePocSetup()" style="width:64px;background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px;font-family:monospace">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Require OB (L5)</label>
+                    <select id="poc-setup-ob-tf" onchange="savePocSetup()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
+                        <option value="5m">5m</option><option value="15m" selected>15M</option>
+                        <option value="30m">30m</option><option value="1h">1H</option><option value="4h">4H</option>
+                    </select>
+                </div>
+                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Автоматично відкривати угоду, коли всі 5 шарів збіглись. Вимкнено — відкриваєш вручну кнопкою в таблиці.">
+                    <input type="checkbox" id="poc-setup-auto" onchange="savePocSetup()"> Авто-відкриття (5/5)
+                </label>
+            </div>
+            <div style="margin-top:8px;font-size:0.68rem;color:#8b93a7;line-height:1.5">
+                💡 Напрямок задає <b style="color:#c084fc">L1 (POC)</b>: ціна нижче POC → 🟢 LONG, вище → 🔴 SHORT.
+                Шари 2–4 дублюють показники монети (1H · 4H · Вердикт). L5 (Require OB) вмикається лише коли L1–L4 збіглись кольором.
+                Коли всі 5 збіглись — угода відкривається і монета зникає зі списку.
+            </div>
+        </details>
+
+        <div style="overflow-x:auto">
+        <table class="ff-table" style="width:100%;border-collapse:collapse;font-size:0.74rem;min-width:760px">
+            <thead>
+                <tr style="color:#8b93a7;text-transform:uppercase;font-size:0.64rem;letter-spacing:.5px">
+                    <th style="text-align:left;padding:6px 8px">Монета</th>
+                    <th style="text-align:left;padding:6px 8px">Шари (L1→L5)</th>
+                    <th style="text-align:right;padding:6px 8px">7D</th>
+                    <th style="text-align:right;padding:6px 8px">14D</th>
+                    <th style="text-align:right;padding:6px 8px">30D</th>
+                    <th style="text-align:left;padding:6px 8px">Показник</th>
+                    <th style="text-align:center;padding:6px 8px">Дія</th>
+                </tr>
+            </thead>
+            <tbody id="poc-setup-tbody">
+                <tr><td colspan="7" style="padding:10px;color:#667;text-align:center">POC-сетап вимкнено або немає монет.</td></tr>
+            </tbody>
+        </table>
+        </div>
+    </div>
+
     <!-- ===== FUEL AUTO-FILTER (liquidation-fuel timed entries) ===== -->
     <div class="tm-panel" id="fuel-filter-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
@@ -6682,6 +6762,132 @@ async function loadVolumeProfilePOC() {
         _removePocLine();
         if (badge) badge.style.display = 'none';
     }
+}
+
+// =================================================================
+// 🎯 POC-СЕТАП — незалежна моніторинг-таблиця (5-шаровий конфлюенс)
+// =================================================================
+let _pocSetupSaveTs = 0;
+function _pocDirColor(d) { return d === 'LONG' ? '#4ade80' : d === 'SHORT' ? '#f87171' : '#6b7280'; }
+function _pocDot(lit, dir) {
+    const col = lit ? _pocDirColor(dir) : 'transparent';
+    const br = lit ? _pocDirColor(dir) : '#4b5563';
+    return `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${col};border:1px solid ${br};flex:none"></span>`;
+}
+function pocLayersHtml(r) {
+    // Вертикальний стек 5 шарів, кожен у кольорі свого напрямку.
+    const names = ['POC', '1H', '4H', 'Вердикт', 'OB'];
+    return (r.layers || []).map((L, i) => {
+        const col = L.lit ? _pocDirColor(L.dir) : '#8b93a7';
+        return `<div style="display:flex;align-items:center;gap:6px;line-height:1.5">`
+            + _pocDot(L.lit, L.dir)
+            + `<span style="color:#6b7280;font-size:0.62rem;min-width:44px">L${L.n} ${names[i]}</span>`
+            + `<span style="color:${col};font-weight:${L.lit ? 700 : 400}">${L.val || '—'}</span>`
+            + `</div>`;
+    }).join('');
+}
+function pocWinCell(w) {
+    if (!w || w.poc == null) return `<span style="color:#4b5563">—</span>`;
+    const col = _pocDirColor(w.dir);
+    const dp = (w.dist_pct != null) ? `${w.dist_pct >= 0 ? '+' : ''}${w.dist_pct}%` : '—';
+    return `<div style="color:${col};font-family:monospace;font-weight:700">${dp}</div>`
+         + `<div style="color:#8b93a7;font-family:monospace;font-size:0.64rem">${fmtPriceJS(w.poc)}</div>`;
+}
+function renderPocSetup(d) {
+    const tb = document.getElementById('poc-setup-tbody');
+    const st = document.getElementById('poc-setup-status');
+    if (!tb) return;
+    const rows = (d && d.rows) || [];
+    if (st) {
+        st.textContent = d && d.enabled
+            ? `● активний · монет: ${d.count || 0}`
+            : '○ вимкнено';
+        st.style.color = d && d.enabled ? '#4ade80' : '#8b93a7';
+    }
+    if (!d || !d.enabled) {
+        tb.innerHTML = `<tr><td colspan="7" style="padding:10px;color:#667;text-align:center">POC-сетап вимкнено.</td></tr>`;
+        return;
+    }
+    if (!rows.length) {
+        tb.innerHTML = `<tr><td colspan="7" style="padding:10px;color:#667;text-align:center">Аналізуємо WATCHLIST… монет під критерій ще немає.</td></tr>`;
+        return;
+    }
+    tb.innerHTML = rows.map(r => {
+        const dcol = _pocDirColor(r.dir);
+        const dirTxt = r.dir ? `<span style="color:${dcol};font-weight:800">${r.dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}</span>` : '<span style="color:#8b93a7">—</span>';
+        const ready = r.all5;
+        const mc = `<span style="color:${r.match_count >= 5 ? '#4ade80' : r.match_count >= 4 ? '#fbbf24' : '#8b93a7'};font-weight:700">${r.match_count}/5</span>`;
+        const decCol = _pocDirColor(r.decision_dir);
+        const btn = `<button onclick="pocSetupOpen('${r.symbol}')" title="Відкрити угоду вручну (${r.dir || '—'}) і прибрати монету зі списку"
+            style="padding:4px 10px;border-radius:5px;cursor:pointer;font-size:0.7rem;font-weight:700;border:1px solid ${dcol}77;background:${dcol}22;color:${dcol}">▶ Відкрити</button>`;
+        return `<tr style="border-top:1px solid rgba(255,255,255,0.06);${ready ? 'background:rgba(74,222,128,0.06)' : ''}">
+            <td style="padding:6px 8px;white-space:nowrap">
+                <div style="font-weight:700;color:#e5e7eb;font-family:monospace">${r.symbol}</div>
+                <div style="font-size:0.64rem">${dirTxt} · ${mc}</div>
+                <div style="font-size:0.62rem;color:#8b93a7;font-family:monospace">${r.price != null ? fmtPriceJS(r.price) : ''}</div>
+            </td>
+            <td style="padding:6px 8px">${pocLayersHtml(r)}</td>
+            <td style="padding:6px 8px;text-align:right">${pocWinCell(r.poc7)}</td>
+            <td style="padding:6px 8px;text-align:right">${pocWinCell(r.poc14)}</td>
+            <td style="padding:6px 8px;text-align:right">${pocWinCell(r.poc30)}</td>
+            <td style="padding:6px 8px"><span style="color:${decCol};font-weight:700">${r.decision_text || '—'}</span></td>
+            <td style="padding:6px 8px;text-align:center">${btn}</td>
+        </tr>`;
+    }).join('');
+}
+async function loadPocSetup() {
+    try {
+        const d = await (await fetch('/api/poc-setup/state')).json();
+        window._pocSetupState = d;
+        // Не перетираємо поля, які користувач щойно змінював (6с).
+        const justSaved = (Date.now() - _pocSetupSaveTs) < 6000;
+        const s = d.settings || {};
+        const setV = (id, v) => { const e = document.getElementById(id); if (e && !justSaved && document.activeElement !== e) { if (e.type === 'checkbox') e.checked = !!v; else e.value = v; } };
+        setV('poc-setup-toggle', s.enabled);
+        setV('poc-setup-pct', s.pct);
+        setV('poc-setup-market', s.market);
+        setV('poc-setup-tf', s.tf);
+        setV('poc-setup-window', s.window_days);
+        setV('poc-setup-ob-tf', s.ob_tf);
+        setV('poc-setup-auto', s.auto_open);
+        renderPocSetup(d);
+    } catch (e) { /* лишаємо як є */ }
+}
+async function savePocSetup() {
+    _pocSetupSaveTs = Date.now();
+    const _v = (id) => { const e = document.getElementById(id); return e ? e.value : undefined; };
+    const _c = (id) => { const e = document.getElementById(id); return e ? e.checked : undefined; };
+    const body = {
+        enabled: _c('poc-setup-toggle'),
+        pct: parseFloat(_v('poc-setup-pct') || '1') || 1,
+        market: _v('poc-setup-market') || 'spot',
+        tf: _v('poc-setup-tf') || '1h',
+        window_days: parseInt(_v('poc-setup-window') || '7', 10) || 7,
+        ob_tf: _v('poc-setup-ob-tf') || '15m',
+        auto_open: _c('poc-setup-auto'),
+    };
+    try {
+        await fetch('/api/poc-setup/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        setTimeout(loadPocSetup, 300);
+    } catch (e) {}
+}
+function onPocSetupToggle(ev) {
+    if (ev) ev.stopPropagation();
+    savePocSetup();
+}
+async function pocSetupOpen(symbol) {
+    if (!confirm(`Відкрити угоду по ${symbol} за напрямком POC-сетапу і прибрати зі списку?`)) return;
+    try {
+        const d = await (await fetch('/api/poc-setup/open', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol}),
+        })).json();
+        if (!d || !d.ok) alert('Не вдалося відкрити: ' + ((d && d.reason) || 'невідомо'));
+        loadPocSetup();
+    } catch (e) { alert('Помилка: ' + e); }
 }
 
 // =================================================================
@@ -12328,11 +12534,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadBias();
         loadDirAlertState();
     }).catch(() => {});
-    const refreshAll = () => { loadBias(); loadDirAlertState(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadFuelFilterStatus(); };
+    const refreshAll = () => { loadBias(); loadDirAlertState(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadFuelFilterStatus(); loadPocSetup(); };
     refreshAll();
     setInterval(refreshAll, 60000);
     // Fuel-filter refreshes faster (30s) so timers/positions feel live.
     setInterval(loadFuelFilterStatus, 30000);
+    // 🎯 POC-сетап — окремий опитувач (15с), щоб таблиця/шари були живими.
+    setInterval(loadPocSetup, 15000);
     // Refresh TOP-100 every 60s — scans only happen every 4h, but during
     // a scan we want fast updates so user sees rows appear progressively.
     // Snapshot endpoint is cheap (single DB query), no real cost.

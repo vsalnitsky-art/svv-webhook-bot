@@ -1,0 +1,470 @@
+"""
+poc_setup — САМОСТІЙНИЙ моніторинг-рушій «POC-сетап» (НЕЗАЛЕЖНИЙ від Fuel
+Auto-Filter; працює навіть коли FF повністю вимкнено).
+
+Аналізує монети WATCHLIST і будує 5-шаровий конфлюенс навколо POC (Volume
+Profile). Напрямок сетапу задає ПЕРШИЙ шар (POC).
+
+Шари (кожен має колір напрямку: 🟢 LONG / 🔴 SHORT):
+  L1 POC     — |ціна↔POC| ≥ poc_setup_pct% на вікні `window_days` (ТФ `tf`,
+               ринок `market`). Задає НАПРЯМОК: ціна нижче POC → LONG, вище → SHORT.
+  L2 1H      — прогноз 1H (дублює бейдж «🔮 1H»).
+  L3 4H      — прогноз 4H (дублює бейдж «🔮 4H»).
+  L4 Вердикт — Decision Center «SHORT 88% сильний».
+  L5 OB      — Require OB на `ob_tf` (дефолт 15м). Активується ЛИШЕ коли L1..L4
+               збіглись кольором (одним напрямком). Коли всі 5 збіглись →
+               негайне відкриття угоди + видалення монети зі списку.
+
+Колонки 7D/14D/30D — POC-дистанція(%) + ціна POC на цих вікнах (колір за напрямком).
+
+Джерела: compute_poc (Binance SPOT/FUTURES, авто-фолбек Bybit) · forecast_engine
+(1H/4H) · TradeManager.compute_decision (вердикт) · smc_ob_state (OB) ·
+market_data (жива ціна). Відкриття — TradeManager.manual_open(bypass_gates=True),
+тож на вході стампляться показники (у т.ч. POC) у хронологію угоди.
+
+Тротлінг: за тік рахуємо `max_per_cycle` монет (round-robin), кеш пер-монета `ttl`.
+"""
+
+import time
+import json
+import threading
+from typing import Dict, List, Optional, Callable
+
+CYCLE_SECS = 12
+_DB_SETTINGS = 'poc_setup_settings'
+
+DEFAULTS = {
+    'enabled': False,          # майстер-тумблер
+    'pct': 1.0,                 # поріг |ціна↔POC|, % (редаговане)
+    'market': 'spot',           # spot | futures
+    'tf': '1h',                 # ТФ POC
+    'window_days': 7,           # вікно POC-сетапу (дні)
+    'ob_tf': '15m',             # Require OB таймфрейм (L5)
+    'auto_open': True,          # авто-відкриття коли всі 5 шарів
+    'max_per_cycle': 6,         # тротл: монет за тік
+    'ttl': 120,                 # TTL кешу пер-монета (с)
+}
+
+_WINDOWS = (7, 14, 30)          # колонки 7D/14D/30D
+_REOPEN_GUARD = 300.0           # анти-повтор авто-відкриття (с)
+
+
+def _strength_word(conf) -> str:
+    try:
+        c = float(conf or 0)
+    except (TypeError, ValueError):
+        c = 0.0
+    return 'сильний' if c >= 66 else ('помірний' if c >= 40 else 'слабкий')
+
+
+def _decision_text(dec: Optional[Dict]) -> (str, Optional[str]):
+    """(«🧠 🔴 SHORT 88% сильний», dir) з вердикту Decision Center."""
+    if not dec:
+        return '', None
+    rec = dec.get('recommended')
+    vw = {'good': 'сильний', 'marginal': 'помірний', 'poor': 'слабкий'}
+    word = vw.get(dec.get('verdict'), '')
+    try:
+        if rec == 'LONG':
+            pct = round(float(dec.get('prob_long') or 0) * 100)
+        elif rec == 'SHORT':
+            pct = round(float(dec.get('prob_short') or 0) * 100)
+        else:
+            pct = round(max(float(dec.get('prob_long') or 0),
+                            float(dec.get('prob_short') or 0)) * 100)
+    except (TypeError, ValueError):
+        pct = 0
+    d = rec if rec in ('LONG', 'SHORT') else None
+    icon = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚖️')
+    txt = f"{icon} {rec or 'WAIT'} {pct}%{(' ' + word) if word else ''}"
+    return txt, d
+
+
+class PocSetupDaemon:
+    def __init__(self, db, get_watchlist: Callable, get_trade_manager: Callable):
+        self._db = db
+        self._get_watchlist = get_watchlist
+        self._get_tm = get_trade_manager
+        self._thread: Optional[threading.Thread] = None
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._rows: Dict[str, Dict] = {}       # sym → row
+        self._at: Dict[str, float] = {}         # sym → last compute ts
+        self._rr: int = 0                       # round-robin cursor
+        self._opened: Dict[str, float] = {}     # sym → last auto-open ts
+
+    # ── settings ────────────────────────────────────────────────────────
+    def get_settings(self) -> Dict:
+        s = dict(DEFAULTS)
+        try:
+            raw = self._db.get_setting(_DB_SETTINGS, {}) or {}
+            if isinstance(raw, str):
+                raw = json.loads(raw or '{}')
+            if isinstance(raw, dict):
+                for k in DEFAULTS:
+                    if k in raw:
+                        s[k] = raw[k]
+        except Exception:
+            pass
+        return s
+
+    def update_settings(self, patch: Dict) -> Dict:
+        s = self.get_settings()
+        if isinstance(patch, dict):
+            for k in DEFAULTS:
+                if k in patch:
+                    s[k] = patch[k]
+        try:
+            self._db.set_setting(_DB_SETTINGS, s)
+        except Exception as e:
+            print(f"[POC-setup] settings persist error: {e}")
+        if s.get('enabled'):
+            self.start()
+        return s
+
+    def is_enabled(self) -> bool:
+        return bool(self.get_settings().get('enabled'))
+
+    def set_enabled(self, on: bool) -> Dict:
+        return self.update_settings({'enabled': bool(on)})
+
+    # ── helpers ─────────────────────────────────────────────────────────
+    def _watchlist(self) -> List[str]:
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            if sc:
+                return [s.upper() for s in (sc.get_watchlist() or [])]
+        except Exception:
+            pass
+        try:
+            return [s.upper() for s in (self._get_watchlist() or [])]
+        except Exception:
+            return []
+
+    def _price(self, symbol: str) -> Optional[float]:
+        # 1) TradeManager live price (кеш), 2) market_data ticker.
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            if tm and hasattr(tm, '_live_price'):
+                p = tm._live_price(symbol)
+                if p and p > 0:
+                    return float(p)
+        except Exception:
+            pass
+        try:
+            from detection.market_data import get_market_data
+            md = get_market_data()
+            if md:
+                t = md.get_ticker(symbol)
+                p = (t or {}).get('last')
+                if p and float(p) > 0:
+                    return float(p)
+        except Exception:
+            pass
+        return None
+
+    def _forecast(self, symbol: str):
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if not fe:
+                return {}, {}
+            fc = fe.ensure_fresh(symbol, max_age=300) or fe.get(symbol) or {}
+            return (fc.get('forecast_1h') or {}), (fc.get('forecast_4h') or {})
+        except Exception:
+            return {}, {}
+
+    def _ob_dir(self, sym: str, ob_tf: str) -> Optional[str]:
+        """Напрямок останнього валідного OB на `ob_tf` (LONG/SHORT/None).
+        ON-DEMAND (як сканер у _update_smc_ob), бо сканер тримає OB лише на
+        своєму ob_filter_timeframe. Fallback — DB smc_ob_state."""
+        try:
+            from detection.market_data import get_market_data
+            from detection.smc_structure import detect_smc_structure
+            from detection.ob_detector import detect_last_order_block
+            md = get_market_data()
+            kl = None
+            if md and hasattr(md, 'fetch_klines'):
+                try:
+                    kl = md.fetch_klines(sym, limit=700, interval=ob_tf)
+                except Exception:
+                    kl = md.fetch_klines(sym, limit=700)
+            if kl and len(kl) >= 220:
+                closed = kl[:-1] if len(kl) >= 2 else kl
+                isize, ssize = 5, 50
+                try:
+                    from detection.smc_scanner import get_smc_scanner
+                    sc = get_smc_scanner()
+                    if sc:
+                        isize = sc.get_internal_size()
+                        ssize = int(sc._settings.get('swing_size', 50))
+                except Exception:
+                    pass
+                res = detect_smc_structure(closed, internal_size=isize, swing_size=ssize)
+                internal = res.get('internal', {})
+                ob = detect_last_order_block(klines=closed,
+                                             pivots=internal.get('pivots', []),
+                                             events=internal.get('events', []))
+                bias = (ob or {}).get('bias')
+                if bias in ('BULLISH', 'BEARISH'):
+                    return 'LONG' if bias == 'BULLISH' else 'SHORT'
+                return None
+        except Exception:
+            pass
+        # Fallback — те, що встиг порахувати сканер у БД.
+        try:
+            from storage.db_operations import get_db as _gdb
+            row = _gdb().get_smc_ob_state(sym, ob_tf)
+            bias = (row or {}).get('bias')
+            if bias in ('BULLISH', 'BEARISH'):
+                return 'LONG' if bias == 'BULLISH' else 'SHORT'
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _fc_layer(fc: Dict):
+        """(dir, «SHORT -58% · 75%») з forecast-бейджа."""
+        if not fc or fc.get('side') not in (1, -1):
+            return None, '—'
+        d = 'LONG' if fc['side'] == 1 else 'SHORT'
+        pct = fc.get('pct')
+        conf = fc.get('confidence')
+        sign = '+' if (isinstance(pct, (int, float)) and pct > 0) else ''
+        if pct is not None:
+            return d, f"{d} {sign}{pct}% · {conf}%"
+        return d, f"{d} · {conf}%"
+
+    # ── per-coin compute ────────────────────────────────────────────────
+    def _compute_one(self, sym: str, s: Dict) -> Optional[Dict]:
+        from detection.volume_profile import compute_poc
+        market = s.get('market', 'spot')
+        tf = s.get('tf', '1h')
+        win = int(s.get('window_days', 7) or 7)
+        thr = float(s.get('pct', 1.0) or 1.0)
+        ob_tf = s.get('ob_tf', '15m')
+        price = self._price(sym)
+        if not price:
+            return None
+        # POC per window (setup window + 7/14/30 columns)
+        windows = sorted(set([win] + list(_WINDOWS)))
+        pocs: Dict[int, Optional[Dict]] = {}
+        for d in windows:
+            try:
+                r = compute_poc(sym, hours=d * 24, bins=150, interval=tf, market=market)
+            except Exception:
+                r = None
+            if r and r.get('ok') and r.get('poc'):
+                poc = float(r['poc'])
+                dist = (price - poc) / poc * 100.0
+                wdir = 'LONG' if price < poc else ('SHORT' if price > poc else None)
+                pocs[d] = {'poc': poc, 'dist_pct': round(dist, 2), 'dir': wdir,
+                           'exchange': r.get('exchange')}
+            else:
+                pocs[d] = None
+        base = pocs.get(win)
+        if not base:
+            return None
+        # L1 — POC (задає напрямок)
+        l1_lit = (base['dist_pct'] is not None and abs(base['dist_pct']) >= thr
+                  and base['dir'] in ('LONG', 'SHORT'))
+        setup_dir = base['dir'] if l1_lit else None
+        l1_val = (f"{base['dir']} {base['dist_pct']:+.2f}% ≥ {thr:g}%" if l1_lit
+                  else (f"{base['dist_pct']:+.2f}% < {thr:g}%"
+                        if base['dist_pct'] is not None else '—'))
+        # L2/L3 — forecast 1H/4H
+        f1, f4 = self._forecast(sym)
+        l2_dir, l2_val = self._fc_layer(f1)
+        l3_dir, l3_val = self._fc_layer(f4)
+        # L4 — Decision Center вердикт
+        l4_dir, l4_val = None, '—'
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            if tm and hasattr(tm, 'compute_decision'):
+                dec = tm.compute_decision(sym, price)
+                l4_val, l4_dir = _decision_text(dec)
+                if not l4_val:
+                    l4_val = '—'
+        except Exception:
+            pass
+        aligned4 = bool(setup_dir) and (l2_dir == setup_dir) and \
+            (l3_dir == setup_dir) and (l4_dir == setup_dir)
+        # L5 — Require OB (лише коли L1..L4 збіглись)
+        l5_dir, l5_lit, l5_val = None, False, 'чекає L1–L4'
+        if aligned4:
+            l5_dir = self._ob_dir(sym, ob_tf)
+            if l5_dir in ('LONG', 'SHORT'):
+                l5_lit = (l5_dir == setup_dir)
+                l5_val = f"OB {ob_tf.upper()} {l5_dir}"
+            else:
+                l5_val = f"немає OB {ob_tf.upper()}"
+        layers = [
+            {'n': 1, 'lit': bool(l1_lit), 'dir': (base['dir'] if l1_lit else None), 'val': l1_val},
+            {'n': 2, 'lit': bool(l2_dir and l2_dir == setup_dir), 'dir': l2_dir, 'val': l2_val},
+            {'n': 3, 'lit': bool(l3_dir and l3_dir == setup_dir), 'dir': l3_dir, 'val': l3_val},
+            {'n': 4, 'lit': bool(l4_dir and l4_dir == setup_dir), 'dir': l4_dir, 'val': l4_val},
+            {'n': 5, 'lit': bool(l5_lit), 'dir': l5_dir, 'val': l5_val},
+        ]
+        match_count = sum(1 for L in layers if L['lit'])
+        all5 = bool(aligned4 and l5_lit)
+        return {
+            'symbol': sym, 'dir': setup_dir, 'price': price,
+            'layers': layers, 'match_count': match_count,
+            'aligned4': aligned4, 'all5': all5,
+            'poc7': pocs.get(7), 'poc14': pocs.get(14), 'poc30': pocs.get(30),
+            'setup_win': win, 'poc_pct': thr,
+            'decision_text': l4_val, 'decision_dir': l4_dir,
+            'ts': time.time(),
+        }
+
+    # ── loop ────────────────────────────────────────────────────────────
+    def _run(self):
+        self._stop.wait(8)
+        while not self._stop.is_set():
+            try:
+                self._tick()
+            except Exception as e:
+                print(f"[POC-setup] tick error: {e}")
+            self._stop.wait(CYCLE_SECS)
+
+    def _tick(self):
+        s = self.get_settings()
+        if not s.get('enabled'):
+            with self._lock:
+                if self._rows:
+                    self._rows.clear()
+            return
+        wl = self._watchlist()
+        if not wl:
+            return
+        cap = max(1, int(s.get('max_per_cycle', 6) or 6))
+        ttl = float(s.get('ttl', 120) or 120)
+        now = time.time()
+        n = len(wl)
+        picked, scanned, i = [], 0, self._rr
+        while len(picked) < cap and scanned < n:
+            sym = wl[i % n]
+            i += 1
+            scanned += 1
+            if now - self._at.get(sym, 0) >= ttl:
+                picked.append(sym)
+        self._rr = i % n
+        for sym in picked:
+            try:
+                row = self._compute_one(sym, s)
+            except Exception as e:
+                print(f"[POC-setup] {sym} compute error: {e}")
+                row = None
+            self._at[sym] = now
+            with self._lock:
+                if row:
+                    self._rows[sym] = row
+                else:
+                    self._rows.pop(sym, None)
+        # drop coins no longer in WATCHLIST
+        wlset = set(wl)
+        with self._lock:
+            for k in list(self._rows.keys()):
+                if k not in wlset:
+                    self._rows.pop(k, None)
+        # auto-open
+        if s.get('auto_open', True):
+            self._auto_open(s, now)
+
+    def _auto_open(self, s: Dict, now: float):
+        with self._lock:
+            ready = [(sym, r['dir']) for sym, r in self._rows.items()
+                     if r.get('all5') and r.get('dir') in ('LONG', 'SHORT')]
+        for sym, side in ready:
+            if now - self._opened.get(sym, 0) < _REOPEN_GUARD:
+                continue
+            if self._open_symbol(sym, side, manual=False):
+                self._opened[sym] = now
+
+    def _open_symbol(self, sym: str, side: str, manual: bool = False) -> bool:
+        """Відкриваємо угоду через TradeManager (bypass_gates=True) і прибираємо
+        монету зі списку. Показники на вході стампляться в хронологію самим TM."""
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            if not tm or not hasattr(tm, 'manual_open'):
+                return False
+            tag = f"🎯 POC-сетап{' (ручне)' if manual else ''} 5/5 {side}"
+            res = tm.manual_open(sym, side, bypass_gates=True, opened_by=tag) or {}
+            ok = bool(res.get('real_opened') or res.get('shadow_opened')
+                      or res.get('status') == 'opened' or res.get('ok'))
+            if ok:
+                with self._lock:
+                    self._rows.pop(sym, None)
+                self._at[sym] = time.time()
+                try:
+                    from detection.activity_log import log_activity
+                    log_activity(sym, 'opened',
+                                 f'{tag} — {"ручне" if manual else "авто"} відкриття (усі 5 шарів POC-сетапу)',
+                                 side=side, source='POC')
+                except Exception:
+                    pass
+            return ok
+        except Exception as e:
+            print(f"[POC-setup] open error {sym}: {e}")
+            return False
+
+    def open_symbol(self, symbol: str) -> Dict:
+        """Ручне відкриття з кнопки таблиці."""
+        sym = (symbol or '').upper().strip()
+        if sym.endswith('.P'):
+            sym = sym[:-2]
+        with self._lock:
+            r = self._rows.get(sym)
+        side = (r or {}).get('dir')
+        if side not in ('LONG', 'SHORT'):
+            # напрямок задає L1 (POC); якщо його ще нема — не відкриваємо наосліп
+            return {'ok': False, 'reason': 'немає напрямку POC (L1) для монети'}
+        ok = self._open_symbol(sym, side, manual=True)
+        return {'ok': bool(ok), 'symbol': sym, 'side': side}
+
+    # ── state for UI ────────────────────────────────────────────────────
+    def get_state(self) -> Dict:
+        s = self.get_settings()
+        with self._lock:
+            rows = [dict(r) for r in self._rows.values()]
+        # Сортуємо за «найкращим» (найближчим до відкриття): більше збігів шарів
+        # вище; тайбрейк — aligned4, потім менша |дистанція 7D|.
+        def _key(r):
+            d7 = ((r.get('poc7') or {}).get('dist_pct'))
+            return (-int(r.get('match_count') or 0),
+                    0 if r.get('aligned4') else 1,
+                    abs(d7) if isinstance(d7, (int, float)) else 9e9)
+        rows.sort(key=_key)
+        return {'enabled': bool(s.get('enabled')), 'settings': s,
+                'rows': rows, 'count': len(rows),
+                'running': bool(self._thread and self._thread.is_alive())}
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name='poc-setup')
+        self._thread.start()
+        print("[POC-setup] daemon started")
+
+
+_instance: Optional[PocSetupDaemon] = None
+
+
+def init_poc_setup(db, get_watchlist, get_trade_manager) -> PocSetupDaemon:
+    global _instance
+    if _instance is None:
+        _instance = PocSetupDaemon(db, get_watchlist, get_trade_manager)
+        try:
+            if _instance.is_enabled():
+                _instance.start()
+                print("[POC-setup] restored ON state from DB — loop running")
+        except Exception:
+            pass
+    return _instance
+
+
+def get_poc_setup() -> Optional[PocSetupDaemon]:
+    return _instance

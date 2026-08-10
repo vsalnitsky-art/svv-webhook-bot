@@ -503,6 +503,25 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Fuel Filter: {e}")
 
+        if not _auto_started.get('poc_setup'):
+            _auto_started['poc_setup'] = True
+            try:
+                from detection.poc_setup import init_poc_setup
+                from detection.trade_manager import get_trade_manager
+                def _poc_watchlist():
+                    from detection.smc_scanner import get_smc_scanner
+                    smc = get_smc_scanner()
+                    if smc:
+                        return [s.upper() for s in smc.get_watchlist()]
+                    return []
+                init_poc_setup(
+                    db=get_db(),
+                    get_watchlist=_poc_watchlist,
+                    get_trade_manager=get_trade_manager,
+                )
+            except Exception as e:
+                print(f"[APP] Failed to start POC-setup: {e}")
+
         if not _auto_started.get('tickr_opp'):
             _auto_started['tickr_opp'] = True
             try:
@@ -4758,6 +4777,41 @@ def register_api_routes(app):
         if res.get('ok') and price is not None:
             res['verdict'] = price_vs_poc(res.get('poc'), price, side)
         return jsonify(res)
+
+    @app.route('/api/poc-setup/state')
+    def api_poc_setup_state():
+        """Стан POC-сетап моніторинг-таблиці (незалежний рушій)."""
+        from detection.poc_setup import get_poc_setup
+        ps = get_poc_setup()
+        if ps is None:
+            return jsonify({'enabled': False, 'settings': {}, 'rows': [],
+                            'count': 0, 'running': False})
+        return jsonify(ps.get_state())
+
+    @app.route('/api/poc-setup/settings', methods=['POST'])
+    def api_poc_setup_settings():
+        """Оновити налаштування POC-сетапу (гармошка). Приймає будь-які поля з
+        DEFAULTS (enabled/pct/market/tf/window_days/ob_tf/auto_open/…)."""
+        from detection.poc_setup import get_poc_setup
+        ps = get_poc_setup()
+        if ps is None:
+            return jsonify({'ok': False, 'reason': 'poc-setup not initialized'})
+        body = request.get_json() or {}
+        s = ps.update_settings(body)
+        return jsonify({'ok': True, 'settings': s})
+
+    @app.route('/api/poc-setup/open', methods=['POST'])
+    def api_poc_setup_open():
+        """Ручне відкриття угоди з таблиці POC-сетапу: {symbol}."""
+        from detection.poc_setup import get_poc_setup
+        ps = get_poc_setup()
+        if ps is None:
+            return jsonify({'ok': False, 'reason': 'poc-setup not initialized'})
+        body = request.get_json() or {}
+        sym = str(body.get('symbol') or '').strip()
+        if not sym:
+            return jsonify({'ok': False, 'reason': 'no symbol'})
+        return jsonify(ps.open_symbol(sym))
 
     @app.route('/api/smc/signals/clear', methods=['POST'])
     def api_smc_signals_clear():
