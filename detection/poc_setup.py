@@ -41,8 +41,9 @@ DEFAULTS = {
     'window_days': 7,           # вікно POC-сетапу (дні)
     'ob_tf': '15m',             # Require OB таймфрейм (L5)
     'auto_open': True,          # авто-відкриття коли всі 5 шарів
-    'max_per_cycle': 6,         # тротл: монет за тік
+    'max_per_cycle': 5,         # тротл: монет за тік (безпечно для біржі)
     'ttl': 120,                 # TTL кешу пер-монета (с)
+    'sl_buffer_pct': 0.10,      # буфер SL за межу OB-блоку, %
 }
 
 _WINDOWS = (7, 14, 30)          # колонки 7D/14D/30D
@@ -92,6 +93,9 @@ class PocSetupDaemon:
         self._at: Dict[str, float] = {}         # sym → last compute ts
         self._rr: int = 0                       # round-robin cursor
         self._opened: Dict[str, float] = {}     # sym → last auto-open ts
+        # L5 «озброєння»: коли L1–L4 збіглись — чекаємо РАЗОВОГО НОВОГО OB.
+        # {sym: {'dir','baseline'(ob bar_time на момент озброєння),'since','ob_box'}}
+        self._armed: Dict[str, Dict] = {}
 
     # ── settings ────────────────────────────────────────────────────────
     def get_settings(self) -> Dict:
@@ -160,6 +164,21 @@ class PocSetupDaemon:
             pass
         return None
 
+    def _has_position(self, symbol: str) -> bool:
+        """Чи вже є відкрита позиція (real/paper) по монеті — щоб не показувати
+        її в таблиці й не відкривати повторно."""
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            if not tm:
+                return False
+            for book in ('_positions', '_shadow_positions'):
+                d = getattr(tm, book, None)
+                if isinstance(d, dict) and symbol in d:
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _forecast(self, symbol: str):
         try:
             from detection.forecast_engine import get_forecast_engine
@@ -171,10 +190,10 @@ class PocSetupDaemon:
         except Exception:
             return {}, {}
 
-    def _ob_dir(self, sym: str, ob_tf: str) -> Optional[str]:
-        """Напрямок останнього валідного OB на `ob_tf` (LONG/SHORT/None).
-        ON-DEMAND (як сканер у _update_smc_ob), бо сканер тримає OB лише на
-        своєму ob_filter_timeframe. Fallback — DB smc_ob_state."""
+    def _ob_info(self, sym: str, ob_tf: str) -> Optional[Dict]:
+        """Останній валідний OB на `ob_tf`: {dir, top, bottom, bar_time} або None.
+        ON-DEMAND (як сканер у _update_smc_ob), бо сканер тримає OB лише на своєму
+        ob_filter_timeframe. Fallback — DB smc_ob_state (без точного bar_time-edge)."""
         try:
             from detection.market_data import get_market_data
             from detection.smc_structure import detect_smc_structure
@@ -204,7 +223,9 @@ class PocSetupDaemon:
                                              events=internal.get('events', []))
                 bias = (ob or {}).get('bias')
                 if bias in ('BULLISH', 'BEARISH'):
-                    return 'LONG' if bias == 'BULLISH' else 'SHORT'
+                    return {'dir': 'LONG' if bias == 'BULLISH' else 'SHORT',
+                            'top': ob.get('bar_high'), 'bottom': ob.get('bar_low'),
+                            'bar_time': ob.get('bar_time')}
                 return None
         except Exception:
             pass
@@ -214,7 +235,9 @@ class PocSetupDaemon:
             row = _gdb().get_smc_ob_state(sym, ob_tf)
             bias = (row or {}).get('bias')
             if bias in ('BULLISH', 'BEARISH'):
-                return 'LONG' if bias == 'BULLISH' else 'SHORT'
+                return {'dir': 'LONG' if bias == 'BULLISH' else 'SHORT',
+                        'top': row.get('bar_high'), 'bottom': row.get('bar_low'),
+                        'bar_time': row.get('bar_time')}
         except Exception:
             pass
         return None
@@ -240,6 +263,10 @@ class PocSetupDaemon:
         win = int(s.get('window_days', 7) or 7)
         thr = float(s.get('pct', 1.0) or 1.0)
         ob_tf = s.get('ob_tf', '15m')
+        # Монета вже в угоді → не показуємо (і не рахуємо зайве).
+        if self._has_position(sym):
+            self._armed.pop(sym, None)
+            return None
         # POC per window (setup window + 7/14/30 columns). Поточну ціну беремо з
         # last_close результату compute_poc (БЕЗ окремого ticker-API — його немає).
         windows = sorted(set([win] + list(_WINDOWS)))
@@ -295,15 +322,41 @@ class PocSetupDaemon:
             pass
         aligned4 = bool(setup_dir) and (l2_dir == setup_dir) and \
             (l3_dir == setup_dir) and (l4_dir == setup_dir)
-        # L5 — Require OB (лише коли L1..L4 збіглись)
+        # L5 — Require OB як РАЗОВИЙ (edge) тригер. Коли L1–L4 збіглись —
+        # «озброюємось» і чекаємо НОВИЙ OB (bar_time новіший за момент озброєння)
+        # у той самий бік. Якщо L1–L4 порушились — роззброюємось (новий цикл
+        # → нове очікування нового OB). Спрацьовує РАЗ.
+        now_ts = time.time()
         l5_dir, l5_lit, l5_val = None, False, 'чекає L1–L4'
-        if aligned4:
-            l5_dir = self._ob_dir(sym, ob_tf)
-            if l5_dir in ('LONG', 'SHORT'):
-                l5_lit = (l5_dir == setup_dir)
-                l5_val = f"OB {ob_tf.upper()} {l5_dir}"
+        ob_box = None
+        if not aligned4:
+            self._armed.pop(sym, None)
+        else:
+            info = self._ob_info(sym, ob_tf)
+            cur_t = (info or {}).get('bar_time')
+            ob_dir = (info or {}).get('dir')
+            armed = self._armed.get(sym)
+            if not armed or armed.get('dir') != setup_dir:
+                # (пере)озброєння: baseline = поточний OB, чекаємо НОВІШИЙ
+                self._armed[sym] = {'dir': setup_dir, 'baseline': cur_t,
+                                    'since': now_ts}
+                l5_val = f"озброєно · чекаємо новий OB {ob_tf.upper()}"
             else:
-                l5_val = f"немає OB {ob_tf.upper()}"
+                base_t = armed.get('baseline')
+                is_new = (cur_t is not None and (base_t is None or cur_t > base_t))
+                if is_new and ob_dir == setup_dir:
+                    l5_dir, l5_lit = ob_dir, True
+                    l5_val = f"OB {ob_tf.upper()} {ob_dir} ✓ (новий)"
+                    ob_box = {'top': (info or {}).get('top'),
+                              'bottom': (info or {}).get('bottom')}
+                    armed['ob_box'] = ob_box
+                elif is_new and ob_dir and ob_dir != setup_dir:
+                    # новий OB проти напрямку → переозброюємось на цей baseline
+                    self._armed[sym] = {'dir': setup_dir, 'baseline': cur_t,
+                                        'since': now_ts}
+                    l5_val = f"новий OB проти — переозброєно"
+                else:
+                    l5_val = f"озброєно · чекаємо новий OB {ob_tf.upper()}"
         layers = [
             {'n': 1, 'lit': bool(l1_lit), 'dir': (base['dir'] if l1_lit else None), 'val': l1_val},
             {'n': 2, 'lit': bool(l2_dir and l2_dir == setup_dir), 'dir': l2_dir, 'val': l2_val},
@@ -320,6 +373,8 @@ class PocSetupDaemon:
             'poc7': pocs.get(7), 'poc14': pocs.get(14), 'poc30': pocs.get(30),
             'setup_win': win, 'poc_pct': thr,
             'decision_text': l4_val, 'decision_dir': l4_dir,
+            # для відкриття: SL = межа OB-блоку + буфер; TP = ціна POC 7D.
+            'ob_box': ob_box, 'tp': (pocs.get(7) or {}).get('poc'),
             'ts': time.time(),
         }
 
@@ -388,31 +443,70 @@ class PocSetupDaemon:
                 self._opened[sym] = now
 
     def _open_symbol(self, sym: str, side: str, manual: bool = False) -> bool:
-        """Відкриваємо угоду через TradeManager (bypass_gates=True) і прибираємо
-        монету зі списку. Показники на вході стампляться в хронологію самим TM."""
+        """Відкриваємо угоду через TradeManager (bypass_gates=True), СТАВИМО
+        Manual SL (межа OB-блоку + буфер) і Manual TP (ціна POC 7D), прибираємо
+        монету зі списку. Мітка opened_by = «🎯 POC-сетап». Працює однаково для
+        авто- і ручного (кнопка) відкриття."""
         try:
             tm = self._get_tm() if self._get_tm else None
             if not tm or not hasattr(tm, 'manual_open'):
                 return False
-            tag = f"🎯 POC-сетап{' (ручне)' if manual else ''} 5/5 {side}"
+            s = self.get_settings()
+            with self._lock:
+                row = dict(self._rows.get(sym) or {})
+            tag = f"🎯 POC-сетап{' (ручне)' if manual else ''} {side}"
             res = tm.manual_open(sym, side, bypass_gates=True, opened_by=tag) or {}
             ok = bool(res.get('real_opened') or res.get('shadow_opened')
                       or res.get('status') == 'opened' or res.get('ok'))
-            if ok:
-                with self._lock:
-                    self._rows.pop(sym, None)
-                self._at[sym] = time.time()
-                try:
-                    from detection.activity_log import log_activity
-                    log_activity(sym, 'opened',
-                                 f'{tag} — {"ручне" if manual else "авто"} відкриття (усі 5 шарів POC-сетапу)',
-                                 side=side, source='POC')
-                except Exception:
-                    pass
-            return ok
+            if not ok:
+                return False
+            is_paper = bool(res.get('is_paper'))
+            # ── Manual SL = межа OB-блоку + буфер; Manual TP = ціна POC 7D ──
+            try:
+                self._apply_sl_tp(tm, sym, side, row, s, is_paper)
+            except Exception as e:
+                print(f"[POC-setup] SL/TP set warn {sym}: {e}")
+            with self._lock:
+                self._rows.pop(sym, None)
+                self._armed.pop(sym, None)
+            self._at[sym] = time.time()
+            try:
+                from detection.activity_log import log_activity
+                log_activity(sym, 'opened',
+                             f'{tag} — {"ручне" if manual else "авто"} відкриття (POC-сетап)',
+                             side=side, source='POC')
+            except Exception:
+                pass
+            return True
         except Exception as e:
             print(f"[POC-setup] open error {sym}: {e}")
             return False
+
+    def _apply_sl_tp(self, tm, sym: str, side: str, row: Dict, s: Dict, is_paper: bool):
+        """SL = межа OB-блоку ± буфер (SHORT→top×(1+buf), LONG→bottom×(1−buf)),
+        TP = ціна POC 7D (поле «7D»). OB-бокс беремо зі спрацьованого L5, інакше
+        рахуємо OB наживо (для ручної кнопки, коли L5 ще не спалахнув)."""
+        if not hasattr(tm, 'update_manual_sl_tp'):
+            return
+        try:
+            buf = float(s.get('sl_buffer_pct', 0.10) or 0.10) / 100.0
+        except (TypeError, ValueError):
+            buf = 0.001
+        box = row.get('ob_box')
+        if not box or box.get('top') is None or box.get('bottom') is None:
+            info = self._ob_info(sym, s.get('ob_tf', '15m'))
+            if info:
+                box = {'top': info.get('top'), 'bottom': info.get('bottom')}
+        sl = None
+        if box and box.get('top') and box.get('bottom'):
+            if side == 'SHORT':
+                sl = float(box['top']) * (1.0 + buf)
+            else:
+                sl = float(box['bottom']) * (1.0 - buf)
+        tp = row.get('tp')  # ціна POC 7D
+        if sl is None and tp is None:
+            return
+        tm.update_manual_sl_tp(sym, manual_sl=sl, manual_tp=tp, is_shadow=is_paper)
 
     def open_symbol(self, symbol: str) -> Dict:
         """Ручне відкриття з кнопки таблиці."""
