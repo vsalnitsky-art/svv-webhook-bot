@@ -32,6 +32,7 @@ from typing import Dict, List, Optional, Callable
 
 CYCLE_SECS = 12
 _DB_SETTINGS = 'poc_setup_settings'
+_DB_STATE = 'poc_setup_state'      # персист таблиці/озброєння між рестартами
 
 DEFAULTS = {
     'enabled': False,          # майстер-тумблер
@@ -125,6 +126,32 @@ class PocSetupDaemon:
         if s.get('enabled'):
             self.start()
         return s
+
+    # ── персист таблиці/стану (переживає рестарт) ───────────────────────
+    def _persist_state(self):
+        try:
+            with self._lock:
+                blob = {'rows': self._rows, 'armed': self._armed,
+                        'at': self._at, 'opened': self._opened}
+            self._db.set_setting(_DB_STATE, blob)
+        except Exception as e:
+            print(f"[POC-setup] persist error: {e}")
+
+    def _restore_state(self):
+        try:
+            raw = self._db.get_setting(_DB_STATE, {}) or {}
+            if isinstance(raw, str):
+                raw = json.loads(raw or '{}')
+            if not isinstance(raw, dict):
+                return
+            with self._lock:
+                self._rows = dict(raw.get('rows') or {})
+                self._armed = dict(raw.get('armed') or {})
+                self._at = {k: float(v) for k, v in (raw.get('at') or {}).items()}
+                self._opened = {k: float(v) for k, v in (raw.get('opened') or {}).items()}
+            print(f"[POC-setup] restored {len(self._rows)} rows from DB")
+        except Exception as e:
+            print(f"[POC-setup] restore error: {e}")
 
     def is_enabled(self) -> bool:
         return bool(self.get_settings().get('enabled'))
@@ -431,6 +458,8 @@ class PocSetupDaemon:
         # auto-open
         if s.get('auto_open', True):
             self._auto_open(s, now)
+        # Зберігаємо таблицю/стан — переживе рестарт (не рахуємо все з нуля).
+        self._persist_state()
 
     def _auto_open(self, s: Dict, now: float):
         with self._lock:
@@ -556,6 +585,10 @@ def init_poc_setup(db, get_watchlist, get_trade_manager) -> PocSetupDaemon:
     global _instance
     if _instance is None:
         _instance = PocSetupDaemon(db, get_watchlist, get_trade_manager)
+        try:
+            _instance._restore_state()   # відновити таблицю після рестарту
+        except Exception:
+            pass
         try:
             if _instance.is_enabled():
                 _instance.start()
