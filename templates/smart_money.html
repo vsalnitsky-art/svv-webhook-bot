@@ -2140,8 +2140,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </div>
                 <div>
                     <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Вікно (дні)</label>
-                    <input type="number" id="poc-setup-window" step="1" min="1" value="7"
-                           onchange="savePocSetup()" style="width:64px;background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px;font-family:monospace">
+                    <select id="poc-setup-window" onchange="savePocSetup()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
+                        <option value="1">1д</option>
+                        <option value="3">3д</option>
+                        <option value="7" selected>7д</option>
+                        <option value="14">14д</option>
+                        <option value="30">30д</option>
+                    </select>
                 </div>
                 <div>
                     <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Require OB (L5)</label>

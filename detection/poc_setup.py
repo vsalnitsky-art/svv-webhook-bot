@@ -143,23 +143,19 @@ class PocSetupDaemon:
             return []
 
     def _price(self, symbol: str) -> Optional[float]:
-        # 1) TradeManager live price (кеш), 2) market_data ticker.
-        try:
-            tm = self._get_tm() if self._get_tm else None
-            if tm and hasattr(tm, '_live_price'):
-                p = tm._live_price(symbol)
-                if p and p > 0:
-                    return float(p)
-        except Exception:
-            pass
+        """Запасне джерело ціни — ОСТАННІЙ close klines (MarketData НЕ має
+        get_ticker!). Основний шлях — last_close із compute_poc."""
         try:
             from detection.market_data import get_market_data
             md = get_market_data()
-            if md:
-                t = md.get_ticker(symbol)
-                p = (t or {}).get('last')
-                if p and float(p) > 0:
-                    return float(p)
+            if md and hasattr(md, 'fetch_klines'):
+                kl = md.fetch_klines(symbol, limit=2)
+                if kl:
+                    last = kl[-1]
+                    # market_data повертає dict {p,o,h,l,v}: p = close/price.
+                    p = last.get('p') if isinstance(last, dict) else None
+                    if p and float(p) > 0:
+                        return float(p)
         except Exception:
             pass
         return None
@@ -244,32 +240,41 @@ class PocSetupDaemon:
         win = int(s.get('window_days', 7) or 7)
         thr = float(s.get('pct', 1.0) or 1.0)
         ob_tf = s.get('ob_tf', '15m')
-        price = self._price(sym)
-        if not price:
-            return None
-        # POC per window (setup window + 7/14/30 columns)
+        # POC per window (setup window + 7/14/30 columns). Поточну ціну беремо з
+        # last_close результату compute_poc (БЕЗ окремого ticker-API — його немає).
         windows = sorted(set([win] + list(_WINDOWS)))
-        pocs: Dict[int, Optional[Dict]] = {}
+        raw: Dict[int, Dict] = {}
+        price = None
         for d in windows:
             try:
                 r = compute_poc(sym, hours=d * 24, bins=150, interval=tf, market=market)
             except Exception:
                 r = None
             if r and r.get('ok') and r.get('poc'):
-                poc = float(r['poc'])
-                dist = (price - poc) / poc * 100.0
-                wdir = 'LONG' if price < poc else ('SHORT' if price > poc else None)
-                pocs[d] = {'poc': poc, 'dist_pct': round(dist, 2), 'dir': wdir,
-                           'exchange': r.get('exchange')}
-            else:
-                pocs[d] = None
+                raw[d] = r
+                if price is None and r.get('last_close'):
+                    price = float(r['last_close'])
+        if price is None:
+            price = self._price(sym)   # запасний шлях (klines)
+        if price is None or win not in raw:
+            return None
+        pocs: Dict[int, Optional[Dict]] = {}
+        for d, r in raw.items():
+            poc = float(r['poc'])
+            dist = (price - poc) / poc * 100.0
+            wdir = 'LONG' if price < poc else ('SHORT' if price > poc else None)
+            pocs[d] = {'poc': poc, 'dist_pct': round(dist, 2), 'dir': wdir,
+                       'exchange': r.get('exchange')}
         base = pocs.get(win)
         if not base:
             return None
-        # L1 — POC (задає напрямок)
+        # L1 — POC (задає напрямок). ВІДБІР У ТАБЛИЦЮ: показуємо ЛИШЕ монети, що
+        # відповідають порогу % (|ціна↔POC| ≥ pct). Інакше монету не додаємо.
         l1_lit = (base['dist_pct'] is not None and abs(base['dist_pct']) >= thr
                   and base['dir'] in ('LONG', 'SHORT'))
-        setup_dir = base['dir'] if l1_lit else None
+        if not l1_lit:
+            return None
+        setup_dir = base['dir']
         l1_val = (f"{base['dir']} {base['dist_pct']:+.2f}% ≥ {thr:g}%" if l1_lit
                   else (f"{base['dist_pct']:+.2f}% < {thr:g}%"
                         if base['dist_pct'] is not None else '—'))
