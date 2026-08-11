@@ -1502,6 +1502,14 @@ class TradeManager:
           3. A record is written to the 🧾 log ONLY when, after all checks, the
              Manual SL field is STILL EMPTY (not a single level could be set) —
              then we log the reason. Any SL in place ⇒ silence."""
+        # 🎯 POC-сетап керує СВОЇМ Manual SL (межа OB старшого/меншого ТФ + буфер).
+        # Не втручаємось цим (15m) авто-SL — інакше дублює/перетирає і засмічує лог
+        # рядками «OB на 15M протилежний».
+        try:
+            if 'POC-сетап' in str(pos.get('opened_by') or ''):
+                return
+        except Exception:
+            pass
         try:
             from detection.fuel_filter import get_fuel_filter
             s = get_fuel_filter().get_settings()

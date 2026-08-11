@@ -478,12 +478,16 @@ def compute_poc(symbol, from_sec=None, to_sec=None, hours=None,
     poc_idx = max(range(len(vol_by_bin)), key=lambda i: vol_by_bin[i])
     poc = lo + (poc_idx + 0.5) * binw
     val_i, vah_i = _poc_value_area(vol_by_bin, poc_idx, _POC_VALUE_AREA)
-    # Поточна ціна = close ОСТАННЬОЇ свічки вікна (index 4 у Binance/Bybit
-    # klines). Віддаємо, щоб споживачі (POC-сетап) не залежали від окремого
-    # ticker-API (його немає в MarketData).
+    # Поточна ціна = close НАЙНОВІШОЇ свічки ЗА ЧАСОМ (index 0 = open-time,
+    # index 4 = close). ВАЖЛИВО: Binance віддає klines за ЗРОСТАННЯМ (останній =
+    # новий), а Bybit — NEWEST-FIRST (перший = новий). Тому беремо max за
+    # open-time, інакше для Bybit-монет ціна = найстаріша → знак «ціна↔POC»
+    # інвертується і L1 показує ПРОТИЛЕЖНИЙ напрямок. Віддаємо, щоб споживачі
+    # (POC-сетап) не залежали від окремого ticker-API (його немає в MarketData).
     last_close = None
     try:
-        last_close = round(float(klines[-1][4]), 10)
+        newest = max(klines, key=lambda k: float(k[0]))
+        last_close = round(float(newest[4]), 10)
     except (IndexError, TypeError, ValueError):
         last_close = None
     out.update({'ok': True, 'poc': round(poc, 10),
