@@ -2177,13 +2177,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <option value="1h" selected>1H</option><option value="2h">2H</option><option value="4h">4H</option>
                     </select>
                 </div>
-                <div>
-                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px" title="Дод. ворота відкриття: скільки з 4 вікон (3D/7D/14D/30D) мають бути у бік угоди. За замовч. 3 з 4. 0 = не вимагати.">Збіг вікон ≥ (з 4)</label>
-                    <select id="poc-setup-winmin" onchange="savePocSetup()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
-                        <option value="0">0 (вимк)</option>
-                        <option value="1">1</option><option value="2">2</option>
-                        <option value="3" selected>3</option><option value="4">4</option>
-                    </select>
+                <div title="Збіг вікон: кожне ПОЗНАЧЕНЕ вікно має бути у бік угоди (інакше монета не показується/не відкривається). Без позначок — без цих воріт.">
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Збіг вікон (обов'язкові)</label>
+                    <div style="display:flex;gap:10px;align-items:center;font-size:0.72rem;color:#cbd5e1">
+                        <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="poc-setup-req3" onchange="savePocSetup()"> 3D</label>
+                        <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="poc-setup-req7" onchange="savePocSetup()"> 7D</label>
+                        <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="poc-setup-req14" onchange="savePocSetup()"> 14D</label>
+                        <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="poc-setup-req30" onchange="savePocSetup()"> 30D</label>
+                    </div>
                 </div>
                 <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Автоматично відкривати угоду, коли всі 5 шарів збіглись І збіг вікон ≥ порога. Вимкнено — відкриваєш вручну кнопкою в таблиці.">
                     <input type="checkbox" id="poc-setup-auto" onchange="savePocSetup()"> Авто-відкриття
@@ -6909,8 +6910,11 @@ function renderPocSetup(d) {
     if (!tb) return;
     const rows = (d && d.rows) || [];
     if (st) {
-        st.textContent = (d && d.enabled) ? `● активний · монет: ${d.count || 0}` : '○ вимкнено';
-        st.style.color = (d && d.enabled) ? '#4ade80' : '#8b93a7';
+        const _pct = ((d && d.settings && d.settings.pct != null) ? d.settings.pct : 1);
+        st.innerHTML = (d && d.enabled)
+            ? `<span style="color:#4ade80">● активний · монет: ${d.count || 0}</span>`
+              + ` <span style="color:#8b93a7">· поріг POC ≥ <b style="color:#fbbf24">${_pct}%</b></span>`
+            : `<span style="color:#8b93a7">○ вимкнено</span>`;
     }
     // ⚠ Причина, чому 5/5-угоди не відкриваються.
     const warn = document.getElementById('poc-setup-warn');
@@ -6956,13 +6960,14 @@ function renderPocSetup(d) {
         // Другий рядок «Монета»: напрямок + біржа джерела POC (напр. «🔴 SHORT Binance»).
         const exTxt = (r.exchange === 'bybit') ? 'Bybit' : 'Binance';
         const dir2 = `${dirTxt} <span style="color:${POC_C.label}">${exTxt}</span>`;
-        // Збіг вікон (X/4) — зелений коли досягнуто порога, інакше приглушений.
-        const wa = r.win_agree || 0, wt = (r.win_total != null ? r.win_total : 4), wm = (r.win_min != null ? r.win_min : 3);
-        const waCol = (wm > 0 && wa >= wm) ? '#4ade80' : POC_C.label;
+        // Збіг вікон (X/Y обов'язкових) — показуємо лише коли є вимоги.
+        const wa = r.win_agree || 0, wt = (r.win_total != null ? r.win_total : 0);
+        const waCol = (wt > 0 && wa >= wt) ? '#4ade80' : POC_C.label;
         return `<tr class="${r.ready_open ? 'poc-ready' : ''}">`
             + `<td style="text-align:left">${symHtml}<div style="font-size:0.64rem;margin-top:2px">${dir2}</div></td>`
             + `<td style="text-align:center"><b style="color:${mcCol}">${r.match_count}/5</b>`
-            + `<div style="font-size:0.56rem;color:${waCol};margin-top:2px" title="Збіг вікон 3D/7D/14D/30D у бік угоди (поріг ${wm})">вікна ${wa}/${wt}</div></td>`
+            + (wt > 0 ? `<div style="font-size:0.56rem;color:${waCol};margin-top:2px" title="Збіг обов'язкових вікон у бік угоди">вікна ${wa}/${wt}</div>` : '')
+            + `</td>`
             + pocLayerCell(L[0], true) + pocLayerCell(L[1]) + pocLayerCell(L[2])
             + pocLayerCell(L[3]) + pocLayerCell(L[4])
             + pocWinCell(r.poc3) + pocWinCell(r.poc7) + pocWinCell(r.poc14) + pocWinCell(r.poc30)
@@ -6985,7 +6990,10 @@ async function loadPocSetup() {
         setV('poc-setup-window', s.window_days);
         setV('poc-setup-ob-tf', s.ob_tf);
         setV('poc-setup-ob-htf', s.ob_htf);
-        setV('poc-setup-winmin', (s.win_agree_min != null ? s.win_agree_min : 3));
+        setV('poc-setup-req3', s.win_req_3);
+        setV('poc-setup-req7', s.win_req_7);
+        setV('poc-setup-req14', s.win_req_14);
+        setV('poc-setup-req30', s.win_req_30);
         setV('poc-setup-auto', s.auto_open);
         renderPocSetup(d);
     } catch (e) { /* лишаємо як є */ }
@@ -7002,7 +7010,10 @@ async function savePocSetup() {
         window_days: parseInt(_v('poc-setup-window') || '7', 10) || 7,
         ob_tf: _v('poc-setup-ob-tf') || '15m',
         ob_htf: (_v('poc-setup-ob-htf') || ''),
-        win_agree_min: parseInt(_v('poc-setup-winmin') || '3', 10),
+        win_req_3: _c('poc-setup-req3'),
+        win_req_7: _c('poc-setup-req7'),
+        win_req_14: _c('poc-setup-req14'),
+        win_req_30: _c('poc-setup-req30'),
         auto_open: _c('poc-setup-auto'),
     };
     try {

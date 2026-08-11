@@ -45,8 +45,12 @@ DEFAULTS = {
                                 #   у наш бік — відкриваємо ОДРАЗУ (SL з нього),
                                 #   не чекаючи нового меншого. Порожньо = вимкнено.
     'auto_open': True,          # авто-відкриття коли всі 5 шарів
-    'win_agree_min': 3,         # вимагати ЗБІГ ≥ N із 4 вікон (3D/7D/14D/30D)
-                                #   у бік угоди (дод. ворота відкриття; 0 = вимк).
+    # ЗБІГ ВІКОН: індивідуальні прапорці — КОЖНЕ увімкнене вікно має бути у бік
+    # угоди (інакше монета НЕ показується/не відкривається). Дефолт: 7/14/30.
+    'win_req_3': False,
+    'win_req_7': True,
+    'win_req_14': True,
+    'win_req_30': True,
     'max_per_cycle': 5,         # тротл: монет за тік (безпечно для біржі)
     'ttl': 120,                 # TTL кешу пер-монета (с)
     'sl_buffer_pct': 0.10,      # буфер SL за межу OB-блоку, %
@@ -334,9 +338,8 @@ class PocSetupDaemon:
         if not l1_lit:
             return None
         setup_dir = base['dir']
-        l1_val = (f"{base['dir']} {base['dist_pct']:+.2f}% ≥ {thr:g}%" if l1_lit
-                  else (f"{base['dist_pct']:+.2f}% < {thr:g}%"
-                        if base['dist_pct'] is not None else '—'))
+        # Поріг «≥ X%» більше НЕ в комірці L1 — він у шапці панелі.
+        l1_val = f"{base['dir']} {base['dist_pct']:+.2f}%"
         # L2/L3 — forecast 1H/4H
         f1, f4 = self._forecast(sym)
         l2_dir, l2_val = self._fc_layer(f1)
@@ -411,25 +414,31 @@ class PocSetupDaemon:
         ]
         match_count = sum(1 for L in layers if L['lit'])
         all5 = bool(aligned4 and l5_lit)
-        # Збіг ВІКОН (3D/7D/14D/30D) у бік сетапу — дод. ворота відкриття.
-        _wins = [pocs.get(3), pocs.get(7), pocs.get(14), pocs.get(30)]
-        win_agree = sum(1 for w in _wins if w and w.get('dir') == setup_dir)
-        win_total = sum(1 for w in _wins if w)
-        try:
-            win_min = int(s.get('win_agree_min', 3) or 0)
-        except (TypeError, ValueError):
-            win_min = 3
-        # ВІДБІР У ТАБЛИЦЮ: монети, що не проходять поріг збігу вікон — НЕ показуємо.
-        if win_min > 0 and win_agree < win_min:
+        # ЗБІГ ВІКОН: набір ВИМОГ = увімкнені прапорці. КОЖНЕ вимагане вікно має
+        # бути у бік сетапу (і мати дані). Інакше монету НЕ показуємо.
+        req = []
+        if s.get('win_req_3'):
+            req.append(3)
+        if s.get('win_req_7'):
+            req.append(7)
+        if s.get('win_req_14'):
+            req.append(14)
+        if s.get('win_req_30'):
+            req.append(30)
+        win_total = len(req)
+        win_agree = sum(1 for d in req
+                        if (pocs.get(d) or {}).get('dir') == setup_dir)
+        if req and win_agree < win_total:
+            # хоч одне вимагане вікно не в бік (або без даних) → не показуємо
             self._armed.pop(sym, None)
             return None
-        ready_open = bool(all5 and win_agree >= win_min)
+        ready_open = bool(all5)   # вимоги вікон уже забезпечені фільтром вище
         return {
             'symbol': sym, 'dir': setup_dir, 'price': price,
             'layers': layers, 'match_count': match_count,
             'aligned4': aligned4, 'all5': all5,
             'win_agree': win_agree, 'win_total': win_total,
-            'win_min': win_min, 'ready_open': ready_open,
+            'ready_open': ready_open,
             'poc3': pocs.get(3), 'poc7': pocs.get(7),
             'poc14': pocs.get(14), 'poc30': pocs.get(30),
             'setup_win': win, 'poc_pct': thr,
