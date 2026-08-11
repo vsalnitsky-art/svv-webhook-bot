@@ -50,7 +50,7 @@ DEFAULTS = {
     'sl_buffer_pct': 0.10,      # буфер SL за межу OB-блоку, %
 }
 
-_WINDOWS = (7, 14, 30)          # колонки 7D/14D/30D
+_WINDOWS = (3, 7, 14, 30)       # колонки 3D/7D/14D/30D
 _REOPEN_GUARD = 300.0           # анти-повтор авто-відкриття (с)
 
 
@@ -413,7 +413,8 @@ class PocSetupDaemon:
             'symbol': sym, 'dir': setup_dir, 'price': price,
             'layers': layers, 'match_count': match_count,
             'aligned4': aligned4, 'all5': all5,
-            'poc7': pocs.get(7), 'poc14': pocs.get(14), 'poc30': pocs.get(30),
+            'poc3': pocs.get(3), 'poc7': pocs.get(7),
+            'poc14': pocs.get(14), 'poc30': pocs.get(30),
             'setup_win': win, 'poc_pct': thr,
             'exchange': base.get('exchange'),   # біржа джерела POC (L1)
             'decision_text': l4_val, 'decision_dir': l4_dir,

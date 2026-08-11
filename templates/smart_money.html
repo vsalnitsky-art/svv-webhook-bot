@@ -1429,10 +1429,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         line-height:1.5; }
     @media (max-width:560px) { .sm-tfdir-grid { grid-template-columns:1fr; } }
     /* 🎯 POC-сетап — професійна колонкова таблиця */
-    .poc-th { padding:6px 10px; color:#8b93a7; text-transform:uppercase;
-        font-size:0.6rem; letter-spacing:0.6px; font-weight:700;
+    .poc-th { padding:5px 6px; color:#8b93a7; text-transform:uppercase;
+        font-size:0.58rem; letter-spacing:0.4px; font-weight:700;
         border-bottom:1px solid rgba(255,255,255,0.10); white-space:nowrap; }
-    .poc-tbl td { padding:7px 10px; border-bottom:1px solid rgba(255,255,255,0.05);
+    .poc-tbl td { padding:5px 6px; border-bottom:1px solid rgba(255,255,255,0.05);
         vertical-align:middle; white-space:nowrap; }
     .poc-tbl tbody tr:hover td { background:rgba(255,255,255,0.03); }
     .poc-tbl tr.poc-ready td { background:rgba(34,197,94,0.07); }
@@ -2189,10 +2189,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <!-- ⚠ Банер-причина, чому 5/5-угоди не відкриваються (TM/Test / авто). -->
         <div id="poc-setup-warn" style="display:none;margin:6px 0;padding:8px 12px;border-radius:6px;font-size:0.74rem"></div>
 
-        <!-- Професійна колонкова таблиця: шари L1→L5 — окремі колонки (значення
-             у кольорі напрямку), далі вікна 7D/14D/30D, і кнопка відкриття. -->
-        <div style="overflow-x:auto;margin-top:6px">
-        <table class="poc-tbl" style="width:100%;border-collapse:collapse;font-size:0.72rem;min-width:1000px">
+        <!-- Колонкова таблиця по ширині сторінки (без прокрутки): шари L1→L5 +
+             вікна 3D/7D/14D/30D + кнопка. Компактні значення. -->
+        <table class="poc-tbl" style="width:100%;border-collapse:collapse;font-size:0.7rem;table-layout:auto">
             <thead>
                 <tr>
                     <th class="poc-th" style="text-align:left">Монета</th>
@@ -2202,6 +2201,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <th class="poc-th" style="text-align:left">L3 · 4H</th>
                     <th class="poc-th" style="text-align:left">L4 · Вердикт</th>
                     <th class="poc-th" style="text-align:left">L5 · OB</th>
+                    <th class="poc-th" style="text-align:right">3D</th>
                     <th class="poc-th" style="text-align:right">7D</th>
                     <th class="poc-th" style="text-align:right">14D</th>
                     <th class="poc-th" style="text-align:right">30D</th>
@@ -2209,10 +2209,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </tr>
             </thead>
             <tbody id="poc-setup-tbody">
-                <tr><td colspan="11" style="padding:12px;color:#667;text-align:center">POC-сетап вимкнено або немає монет.</td></tr>
+                <tr><td colspan="12" style="padding:12px;color:#667;text-align:center">POC-сетап вимкнено або немає монет.</td></tr>
             </tbody>
         </table>
-        </div>
     </div>
 
     <!-- ===== FUEL AUTO-FILTER (liquidation-fuel timed entries) ===== -->
@@ -6820,10 +6819,12 @@ function _pocDot(lit, dir) {
 // пояснення (POC/1H/сильний/OB/чекає…) — сталь; ціни — небесний.
 const POC_C = { pct: '#fbbf24', label: '#94a3b8', price: '#7dd3fc', muted: '#6b7280' };
 // Потокенне фарбування (напрямок→свій колір, %→бурштин, решта→сталь).
+// Провідні напрямок-емодзі (🔴🟢⚪⚖️) прибираємо — колір несе крапка/слово.
 function pocColorizeTokens(str, dir) {
     if (!str) return '';
     const dcol = _pocDirColor(dir);
-    return String(str).split(/(\s+)/).map(tok => {
+    str = String(str).replace(/[🔴🟢⚪]/g, '').replace(/⚖️/g, '').trim();
+    return str.split(/(\s+)/).map(tok => {
         if (/^\s+$/.test(tok)) return tok;
         const up = tok.toUpperCase();
         if (up === 'LONG' || up === 'SHORT') return `<b style="color:${dcol}">${tok}</b>`;
@@ -6831,55 +6832,27 @@ function pocColorizeTokens(str, dir) {
         return `<span style="color:${POC_C.label}">${tok}</span>`;
     }).join('');
 }
-// Розбір значення шару на РІВНІ підстовпчики: [напрямок][перший %][решта].
-function _pocParse(val) {
-    if (!val) return { dir: '', pct: '', rest: '' };
-    const toks = String(val).trim().split(/\s+/);
-    let dir = '', pct = '', rest = [], i = 0;
-    if (toks[0] && (toks[0].toUpperCase() === 'LONG' || toks[0].toUpperCase() === 'SHORT')) {
-        dir = toks[0]; i = 1;
-    }
-    for (; i < toks.length; i++) {
-        if (!pct && /^[+-]?\d+(?:\.\d+)?%$/.test(toks[i])) pct = toks[i];
-        else rest.push(toks[i]);
-    }
-    return { dir, pct, rest: rest.join(' ') };
-}
-// Комірка шару: дот + вирівняні підстовпчики (напрямок 46px · % 58px · решта).
-// subLine — необов'язковий 2-й рядок (напр. біржа для L1).
-function pocLayerCell(L, subLine) {
+// Комірка шару — КОМПАКТНО: дот + значення в один рядок (без розтягування).
+function pocLayerCell(L) {
     const lit = L && L.lit;
     const dir = L && L.dir;
     const dotCol = lit ? _pocDirColor(dir) : 'transparent';
     const dotBr = lit ? _pocDirColor(dir) : '#4b5563';
-    const dot = `<span class="poc-dot" style="background:${dotCol};border:1px solid ${dotBr}"></span>`;
-    const p = _pocParse(L && L.val);
-    let inner;
-    if (p.dir || p.pct) {
-        const dcol = _pocDirColor(dir);
-        inner = `<span style="display:inline-flex;align-items:baseline;gap:6px;white-space:nowrap">`
-            + dot
-            + `<span style="display:inline-block;min-width:46px;color:${dcol};font-weight:700">${p.dir || ''}</span>`
-            + `<span style="display:inline-block;min-width:58px;color:${POC_C.pct};font-weight:700">${p.pct || ''}</span>`
-            + `<span>${pocColorizeTokens(p.rest, dir)}</span>`
-            + `</span>`;
-    } else {
-        // Без напрямку/% (напр. L5 «чекає L1–L4» / «OB 1H SHORT ✓») — компактно.
-        inner = `<span style="display:inline-flex;align-items:baseline;gap:6px;white-space:nowrap">`
-            + dot + `<span>${pocColorizeTokens((L && L.val) || '—', dir)}</span></span>`;
-    }
-    const sub = subLine
-        ? `<div style="font-size:0.62rem;color:${POC_C.label};margin-left:20px;margin-top:2px">${subLine}</div>`
-        : '';
-    return `<td style="text-align:left">${inner}${sub}</td>`;
+    return `<td style="text-align:left">`
+        + `<span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap">`
+        + `<span class="poc-dot" style="background:${dotCol};border:1px solid ${dotBr}"></span>`
+        + `<span>${pocColorizeTokens((L && L.val) || '—', dir)}</span>`
+        + `</span></td>`;
 }
-// Комірка вікна 7D/14D/30D: % — бурштин, ціна — небесний.
+// Комірка вікна 3D/7D/14D/30D: % — КОЛІР ЗА НАПРЯМКОМ, ціна — небесний.
+// КОМПАКТНО: % і ціна одне біля одного в один рядок.
 function pocWinCell(w) {
     if (!w || w.poc == null) return `<td style="text-align:right;color:${POC_C.muted}">—</td>`;
+    const dcol = _pocDirColor(w.dir);
     const dp = (w.dist_pct != null) ? `${w.dist_pct >= 0 ? '+' : ''}${w.dist_pct}%` : '—';
-    return `<td style="text-align:right">`
-        + `<div class="poc-num" style="color:${POC_C.pct};font-weight:700">${dp}</div>`
-        + `<div class="poc-num" style="color:${POC_C.price};font-size:0.64rem">${fmtPriceJS(w.poc)}</div>`
+    return `<td style="text-align:right;white-space:nowrap">`
+        + `<b class="poc-num" style="color:${dcol}">${dp}</b>`
+        + ` <span class="poc-num" style="color:${POC_C.price};font-size:0.64rem">${fmtPriceJS(w.poc)}</span>`
         + `</td>`;
 }
 function renderPocSetup(d) {
@@ -6913,11 +6886,11 @@ function renderPocSetup(d) {
         }
     }
     if (!d || !d.enabled) {
-        tb.innerHTML = `<tr><td colspan="11" style="padding:12px;color:#667;text-align:center">POC-сетап вимкнено.</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="12" style="padding:12px;color:#667;text-align:center">POC-сетап вимкнено.</td></tr>`;
         return;
     }
     if (!rows.length) {
-        tb.innerHTML = `<tr><td colspan="11" style="padding:12px;color:#667;text-align:center">Аналізуємо WATCHLIST… монет під критерій ще немає.</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="12" style="padding:12px;color:#667;text-align:center">Аналізуємо WATCHLIST… монет під критерій ще немає.</td></tr>`;
         return;
     }
     tb.innerHTML = rows.map(r => {
@@ -6932,13 +6905,15 @@ function renderPocSetup(d) {
         const L = r.layers || [];
         const btn = `<button onclick="pocSetupOpen('${r.symbol}')" title="Відкрити угоду (${r.dir || '—'}): SL = межа OB + буфер, TP = ціна POC 7D. Монета зникне зі списку."
             style="padding:4px 12px;border-radius:5px;cursor:pointer;font-size:0.7rem;font-weight:700;border:1px solid ${dcol}77;background:${dcol}22;color:${dcol}">▶ Відкрити</button>`;
+        // Другий рядок «Монета»: напрямок + біржа джерела POC (напр. «🔴 SHORT Binance»).
+        const exTxt = (r.exchange === 'bybit') ? 'Bybit' : 'Binance';
+        const dir2 = `${dirTxt} <span style="color:${POC_C.label}">${exTxt}</span>`;
         return `<tr class="${r.all5 ? 'poc-ready' : ''}">`
-            + `<td style="text-align:left">${symHtml}<div style="font-size:0.64rem;margin-top:2px">${dirTxt}</div></td>`
+            + `<td style="text-align:left">${symHtml}<div style="font-size:0.64rem;margin-top:2px">${dir2}</div></td>`
             + `<td style="text-align:center"><b style="color:${mcCol}">${r.match_count}/5</b></td>`
-            + pocLayerCell(L[0], (r.exchange === 'bybit' ? 'Bybit' : 'Binance'))
-            + pocLayerCell(L[1]) + pocLayerCell(L[2])
+            + pocLayerCell(L[0]) + pocLayerCell(L[1]) + pocLayerCell(L[2])
             + pocLayerCell(L[3]) + pocLayerCell(L[4])
-            + pocWinCell(r.poc7) + pocWinCell(r.poc14) + pocWinCell(r.poc30)
+            + pocWinCell(r.poc3) + pocWinCell(r.poc7) + pocWinCell(r.poc14) + pocWinCell(r.poc30)
             + `<td style="text-align:center">${btn}</td>`
             + `</tr>`;
     }).join('');
