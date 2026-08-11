@@ -6832,28 +6832,56 @@ function pocColorizeTokens(str, dir) {
         return `<span style="color:${POC_C.label}">${tok}</span>`;
     }).join('');
 }
-// Комірка шару — КОМПАКТНО: дот + значення в один рядок (без розтягування).
+// Розбір значення шару на підстовпчики: [напрямок][перший %][решта].
+// Провідні напрямок-емодзі прибираємо (колір несе крапка/слово).
+function _pocParse(val) {
+    if (!val) return { dir: '', pct: '', rest: '' };
+    const s = String(val).replace(/[🔴🟢⚪]/g, '').replace(/⚖️/g, '').trim();
+    const toks = s.split(/\s+/);
+    let dir = '', pct = '', rest = [], i = 0;
+    if (toks[0] && (toks[0].toUpperCase() === 'LONG' || toks[0].toUpperCase() === 'SHORT')) {
+        dir = toks[0]; i = 1;
+    }
+    for (; i < toks.length; i++) {
+        if (!pct && /^[+-]?\d+(?:\.\d+)?%$/.test(toks[i])) pct = toks[i];
+        else rest.push(toks[i]);
+    }
+    return { dir, pct, rest: rest.join(' ') };
+}
+// Комірка шару: підстовпчики (напрямок · % · решта) з МАЛЕНЬКИМИ відступами.
 function pocLayerCell(L) {
     const lit = L && L.lit;
     const dir = L && L.dir;
     const dotCol = lit ? _pocDirColor(dir) : 'transparent';
     const dotBr = lit ? _pocDirColor(dir) : '#4b5563';
-    return `<td style="text-align:left">`
-        + `<span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap">`
-        + `<span class="poc-dot" style="background:${dotCol};border:1px solid ${dotBr}"></span>`
-        + `<span>${pocColorizeTokens((L && L.val) || '—', dir)}</span>`
-        + `</span></td>`;
+    const dot = `<span class="poc-dot" style="background:${dotCol};border:1px solid ${dotBr}"></span>`;
+    const p = _pocParse(L && L.val);
+    const dcol = _pocDirColor(dir);
+    let inner;
+    if (p.dir || p.pct) {
+        inner = `<span style="display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap">`
+            + dot
+            + `<span style="display:inline-block;min-width:38px;color:${dcol};font-weight:700">${p.dir || ''}</span>`
+            + `<span style="display:inline-block;min-width:50px;text-align:right;color:${POC_C.pct};font-weight:700">${p.pct || ''}</span>`
+            + (p.rest ? `<span>${pocColorizeTokens(p.rest, dir)}</span>` : '')
+            + `</span>`;
+    } else {
+        inner = `<span style="display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap">`
+            + dot + `<span>${pocColorizeTokens((L && L.val) || '—', dir)}</span></span>`;
+    }
+    return `<td style="text-align:left">${inner}</td>`;
 }
-// Комірка вікна 3D/7D/14D/30D: % — КОЛІР ЗА НАПРЯМКОМ, ціна — небесний.
-// КОМПАКТНО: % і ціна одне біля одного в один рядок.
+// Комірка вікна 3D/7D/14D/30D: ДВІ колонки — % (колір за напрямком) і ціна
+// (небесна), вирівняні, з невеликим відступом.
 function pocWinCell(w) {
     if (!w || w.poc == null) return `<td style="text-align:right;color:${POC_C.muted}">—</td>`;
     const dcol = _pocDirColor(w.dir);
     const dp = (w.dist_pct != null) ? `${w.dist_pct >= 0 ? '+' : ''}${w.dist_pct}%` : '—';
-    return `<td style="text-align:right;white-space:nowrap">`
-        + `<b class="poc-num" style="color:${dcol}">${dp}</b>`
-        + ` <span class="poc-num" style="color:${POC_C.price};font-size:0.64rem">${fmtPriceJS(w.poc)}</span>`
-        + `</td>`;
+    return `<td>`
+        + `<span style="display:inline-flex;align-items:baseline;gap:6px;justify-content:flex-end;width:100%;white-space:nowrap">`
+        + `<b class="poc-num" style="min-width:52px;text-align:right;color:${dcol}">${dp}</b>`
+        + `<span class="poc-num" style="min-width:56px;text-align:right;color:${POC_C.price};font-size:0.64rem">${fmtPriceJS(w.poc)}</span>`
+        + `</span></td>`;
 }
 function renderPocSetup(d) {
     const tb = document.getElementById('poc-setup-tbody');
