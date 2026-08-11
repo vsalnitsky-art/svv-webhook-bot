@@ -416,8 +416,10 @@ class PocSetupDaemon:
             'poc7': pocs.get(7), 'poc14': pocs.get(14), 'poc30': pocs.get(30),
             'setup_win': win, 'poc_pct': thr,
             'decision_text': l4_val, 'decision_dir': l4_dir,
-            # для відкриття: SL = межа OB-блоку + буфер; TP = ціна POC 7D.
-            'ob_box': ob_box, 'tp': (pocs.get(7) or {}).get('poc'),
+            # для відкриття: SL = межа OB-блоку + буфер; TP = POC СЕТАП-вікна
+            # (= напрямок L1 виводиться з неї, тож TP ГАРАНТОВАНО з правильного
+            # боку ціни; за замовч. вікно=7 → це і є поле «7D»).
+            'ob_box': ob_box, 'tp': base.get('poc'),
             'ts': time.time(),
         }
 
@@ -529,8 +531,12 @@ class PocSetupDaemon:
 
     def _apply_sl_tp(self, tm, sym: str, side: str, row: Dict, s: Dict, is_paper: bool):
         """SL = межа OB-блоку ± буфер (SHORT→top×(1+buf), LONG→bottom×(1−buf)),
-        TP = ціна POC 7D (поле «7D»). OB-бокс беремо зі спрацьованого L5, інакше
-        рахуємо OB наживо (для ручної кнопки, коли L5 ще не спалахнув)."""
+        TP = POC сетап-вікна. OB-бокс беремо зі спрацьованого L5; для ручної
+        кнопки (L5 ще не спалахнув) — рахуємо OB наживо, але ЛИШЕ у бік угоди.
+
+        ВАЖЛИВО: update_manual_sl_tp відхиляє ОБИДВА рівні атомарно, якщо хоч один
+        не з того боку ціни. Тому шлемо SL і TP ОКРЕМИМИ викликами (щоб один
+        невдалий не блокував інший) і логуємо причину відмови."""
         if not hasattr(tm, 'update_manual_sl_tp'):
             return
         try:
@@ -539,23 +545,51 @@ class PocSetupDaemon:
             buf = 0.001
         box = row.get('ob_box')
         if not box or box.get('top') is None or box.get('bottom') is None:
-            # Пріоритет — старший OB (як у логіці відкриття), інакше менший TF.
-            htf_tf = (s.get('ob_htf', '1h') or '').strip()
-            info = (self._ob_info(sym, htf_tf) if htf_tf else None)
-            if not info:
-                info = self._ob_info(sym, s.get('ob_tf', '15m'))
-            if info:
-                box = {'top': info.get('top'), 'bottom': info.get('bottom')}
+            # Фолбек: беремо ОСТАННІЙ OB у БІК угоди (старший → менший TF).
+            box = None
+            for tf in [(s.get('ob_htf', '1h') or '').strip(), s.get('ob_tf', '15m')]:
+                if not tf:
+                    continue
+                info = self._ob_info(sym, tf)
+                if info and info.get('dir') == side and info.get('top') and info.get('bottom'):
+                    box = {'top': info['top'], 'bottom': info['bottom']}
+                    break
         sl = None
         if box and box.get('top') and box.get('bottom'):
             if side == 'SHORT':
                 sl = float(box['top']) * (1.0 + buf)
             else:
                 sl = float(box['bottom']) * (1.0 - buf)
-        tp = row.get('tp')  # ціна POC 7D
-        if sl is None and tp is None:
-            return
-        tm.update_manual_sl_tp(sym, manual_sl=sl, manual_tp=tp, is_shadow=is_paper)
+        tp = row.get('tp')
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            log_activity = lambda *a, **k: None
+        # SL і TP — ОКРЕМИМИ викликами (анти-атомарна відмова).
+        if sl is not None and sl > 0:
+            r = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=is_paper) or {}
+            if r.get('ok'):
+                log_activity(sym, 'autosl', f"POC-сетап SL → {self._fmt(sl)} (OB+буфер {buf*100:g}%)",
+                             side=side, source='POC')
+            else:
+                log_activity(sym, 'skipped', f"POC-сетап SL не встановлено: {r.get('reason', '?')}",
+                             side=side, source='POC')
+        if tp is not None and tp > 0:
+            r = tm.update_manual_sl_tp(sym, manual_tp=tp, is_shadow=is_paper) or {}
+            if r.get('ok'):
+                log_activity(sym, 'autosl', f"POC-сетап TP → {self._fmt(tp)} (POC вікна)",
+                             side=side, source='POC')
+            else:
+                log_activity(sym, 'skipped', f"POC-сетап TP не встановлено: {r.get('reason', '?')}",
+                             side=side, source='POC')
+
+    @staticmethod
+    def _fmt(x):
+        try:
+            x = float(x)
+            return f"{x:.6g}"
+        except (TypeError, ValueError):
+            return str(x)
 
     def open_symbol(self, symbol: str) -> Dict:
         """Ручне відкриття з кнопки таблиці."""
@@ -571,6 +605,25 @@ class PocSetupDaemon:
         ok = self._open_symbol(sym, side, manual=True)
         return {'ok': bool(ok), 'symbol': sym, 'side': side}
 
+    def _tm_ready(self):
+        """(ready, reason) — чи здатний TradeManager відкрити угоду ЗАРАЗ:
+        увімкнено real (enabled) АБО paper (test_mode). Інакше POC-сетап нікуди
+        не відкриє — і це головна причина «5/5, а угоди немає»."""
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            if not tm:
+                return False, 'TradeManager недоступний'
+            st = tm.get_settings() if hasattr(tm, 'get_settings') else {}
+            real = bool(st.get('enabled'))
+            paper = bool(st.get('test_mode'))
+            if real:
+                return True, 'real'
+            if paper:
+                return True, 'paper'
+            return False, 'Trade Manager і Test Mode вимкнені'
+        except Exception:
+            return False, 'н/д'
+
     # ── state for UI ────────────────────────────────────────────────────
     def get_state(self) -> Dict:
         s = self.get_settings()
@@ -584,8 +637,12 @@ class PocSetupDaemon:
                     0 if r.get('aligned4') else 1,
                     abs(d7) if isinstance(d7, (int, float)) else 9e9)
         rows.sort(key=_key)
+        tm_ready, tm_reason = self._tm_ready()
         return {'enabled': bool(s.get('enabled')), 'settings': s,
                 'rows': rows, 'count': len(rows),
+                'auto_open': bool(s.get('auto_open', True)),
+                'tm_ready': tm_ready, 'tm_reason': tm_reason,
+                'ready5': sum(1 for r in rows if r.get('all5')),
                 'running': bool(self._thread and self._thread.is_alive())}
 
     def start(self):

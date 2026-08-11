@@ -2186,6 +2186,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
         </details>
 
+        <!-- ⚠ Банер-причина, чому 5/5-угоди не відкриваються (TM/Test / авто). -->
+        <div id="poc-setup-warn" style="display:none;margin:6px 0;padding:8px 12px;border-radius:6px;font-size:0.74rem"></div>
+
         <!-- Професійна колонкова таблиця: шари L1→L5 — окремі колонки (значення
              у кольорі напрямку), далі вікна 7D/14D/30D, і кнопка відкриття. -->
         <div style="overflow-x:auto;margin-top:6px">
@@ -6813,26 +6816,42 @@ function _pocDot(lit, dir) {
     const br = lit ? _pocDirColor(dir) : '#4b5563';
     return `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${col};border:1px solid ${br};flex:none"></span>`;
 }
-// Комірка шару в колонку: ●дот + значення у кольорі напрямку.
+// 🎨 Палітра: напрямок (LONG/SHORT) — зелений/червоний; відсотки — бурштин;
+// пояснення (POC/1H/сильний/OB/чекає…) — сталь; ціни — небесний.
+const POC_C = { pct: '#fbbf24', label: '#94a3b8', price: '#7dd3fc', muted: '#6b7280' };
+// Розфарбувати рядок-значення шару: напрямок у свій колір, %-числа — бурштин,
+// решта (пояснення) — сталь.
+function pocColorizeVal(val, dir) {
+    if (!val) return `<span style="color:${POC_C.muted}">—</span>`;
+    const dcol = _pocDirColor(dir);
+    return String(val).split(/(\s+)/).map(tok => {
+        if (/^\s+$/.test(tok)) return tok;
+        const up = tok.toUpperCase();
+        if (up === 'LONG' || up === 'SHORT')
+            return `<b style="color:${dcol}">${tok}</b>`;
+        if (/^[+-]?\d+(?:\.\d+)?%$/.test(tok))
+            return `<span style="color:${POC_C.pct};font-weight:700">${tok}</span>`;
+        return `<span style="color:${POC_C.label}">${tok}</span>`;
+    }).join('');
+}
+// Комірка шару в колонку: ●дот + розфарбоване значення.
 function pocLayerCell(L) {
     const lit = L && L.lit;
     const dir = L && L.dir;
-    const col = lit ? _pocDirColor(dir) : '#8b93a7';
     const dotCol = lit ? _pocDirColor(dir) : 'transparent';
     const dotBr = lit ? _pocDirColor(dir) : '#4b5563';
     return `<td style="text-align:left">`
         + `<span class="poc-dot" style="background:${dotCol};border:1px solid ${dotBr}"></span>`
-        + `<span style="color:${col};font-weight:${lit ? 700 : 400}">${(L && L.val) || '—'}</span>`
+        + pocColorizeVal(L && L.val, dir)
         + `</td>`;
 }
-// Комірка вікна 7D/14D/30D: %(колір) над ціною(muted), вирівняно праворуч.
+// Комірка вікна 7D/14D/30D: % — бурштин, ціна — небесний.
 function pocWinCell(w) {
-    if (!w || w.poc == null) return `<td style="text-align:right;color:#4b5563">—</td>`;
-    const col = _pocDirColor(w.dir);
+    if (!w || w.poc == null) return `<td style="text-align:right;color:${POC_C.muted}">—</td>`;
     const dp = (w.dist_pct != null) ? `${w.dist_pct >= 0 ? '+' : ''}${w.dist_pct}%` : '—';
     return `<td style="text-align:right">`
-        + `<div class="poc-num" style="color:${col};font-weight:700">${dp}</div>`
-        + `<div class="poc-num" style="color:#8b93a7;font-size:0.64rem">${fmtPriceJS(w.poc)}</div>`
+        + `<div class="poc-num" style="color:${POC_C.pct};font-weight:700">${dp}</div>`
+        + `<div class="poc-num" style="color:${POC_C.price};font-size:0.64rem">${fmtPriceJS(w.poc)}</div>`
         + `</td>`;
 }
 function renderPocSetup(d) {
@@ -6843,6 +6862,27 @@ function renderPocSetup(d) {
     if (st) {
         st.textContent = (d && d.enabled) ? `● активний · монет: ${d.count || 0}` : '○ вимкнено';
         st.style.color = (d && d.enabled) ? '#4ade80' : '#8b93a7';
+    }
+    // ⚠ Причина, чому 5/5-угоди не відкриваються.
+    const warn = document.getElementById('poc-setup-warn');
+    if (warn) {
+        let msg = '', bg = '', bd = '', fg = '';
+        if (d && d.enabled && d.tm_ready === false) {
+            msg = `⛔ Угоди НЕ відкриються: ${d.tm_reason || 'Trade Manager і Test Mode вимкнені'}. `
+                + `Увімкни <b>Trade Manager</b> (реал) або <b>Test Mode</b> (paper) у Trade Manager.`;
+            bg = 'rgba(239,68,68,0.12)'; bd = 'rgba(239,68,68,0.4)'; fg = '#fca5a5';
+        } else if (d && d.enabled && d.auto_open === false && (d.ready5 || 0) > 0) {
+            msg = `⚠ Є ${d.ready5} монет(и) 5/5, але <b>Авто-відкриття вимкнено</b> — `
+                + `відкрий кнопкою ▶ або увімкни «Авто-відкриття (5/5)» у налаштуваннях.`;
+            bg = 'rgba(251,191,36,0.12)'; bd = 'rgba(251,191,36,0.4)'; fg = '#fde68a';
+        }
+        if (msg) {
+            warn.innerHTML = msg;
+            warn.style.background = bg; warn.style.border = `1px solid ${bd}`;
+            warn.style.color = fg; warn.style.display = 'block';
+        } else {
+            warn.style.display = 'none';
+        }
     }
     if (!d || !d.enabled) {
         tb.innerHTML = `<tr><td colspan="11" style="padding:12px;color:#667;text-align:center">POC-сетап вимкнено.</td></tr>`;
