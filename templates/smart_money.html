@@ -2202,6 +2202,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <!-- Колонкова таблиця по ширині сторінки (без прокрутки): шари L1→L5 +
              вікна 3D/7D/14D/30D + кнопка. Компактні значення. -->
         <table class="poc-tbl" style="width:100%;border-collapse:collapse;font-size:0.68rem;table-layout:fixed">
+            <colgroup>
+                <col style="width:11%"><col style="width:5%">
+                <col style="width:12%"><col style="width:11%"><col style="width:11%">
+                <col style="width:12%"><col style="width:10%">
+                <col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:6%">
+                <col style="width:4%">
+            </colgroup>
             <thead>
                 <tr>
                     <th class="poc-th" style="text-align:left">Монета</th>
@@ -6858,8 +6865,11 @@ function _pocParse(val) {
     }
     return { dir, pct, rest: rest.join(' ') };
 }
-// Комірка шару: підстовпчики (напрямок · % · решта) з МАЛЕНЬКИМИ відступами.
-function pocLayerCell(L) {
+// Яскравий колір напрямку (для виділення % у L1 · POC).
+function _pocDirBright(d) { return d === 'LONG' ? '#22ff88' : d === 'SHORT' ? '#ff5b5b' : '#9aa3b5'; }
+// Комірка шару: підстовпчики (напрямок · % · решта) в ОДИН рядок (nowrap).
+// pctByDir=true → % фарбується ЯСКРАВИМ кольором напрямку (для L1 · POC).
+function pocLayerCell(L, pctByDir) {
     const lit = L && L.lit;
     const dir = L && L.dir;
     const dotCol = lit ? _pocDirColor(dir) : 'transparent';
@@ -6867,19 +6877,20 @@ function pocLayerCell(L) {
     const dot = `<span class="poc-dot" style="background:${dotCol};border:1px solid ${dotBr}"></span>`;
     const p = _pocParse(L && L.val);
     const dcol = _pocDirColor(dir);
+    const pctCol = pctByDir ? _pocDirBright(dir) : POC_C.pct;
     let inner;
     if (p.dir || p.pct) {
-        inner = `<span style="display:inline-flex;align-items:baseline;gap:3px;flex-wrap:wrap">`
+        inner = `<span style="display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;overflow:hidden">`
             + dot
-            + `<span style="display:inline-block;min-width:32px;color:${dcol};font-weight:700">${p.dir || ''}</span>`
-            + `<span style="display:inline-block;min-width:42px;text-align:right;color:${POC_C.pct};font-weight:700">${p.pct || ''}</span>`
-            + (p.rest ? `<span>${pocColorizeTokens(p.rest, dir)}</span>` : '')
+            + `<span style="color:${dcol};font-weight:700">${p.dir || ''}</span>`
+            + `<span style="color:${pctCol};font-weight:${pctByDir ? 800 : 700}">${p.pct || ''}</span>`
+            + (p.rest ? `<span style="color:${POC_C.label}">${pocColorizeTokens(p.rest, dir)}</span>` : '')
             + `</span>`;
     } else {
-        inner = `<span style="display:inline-flex;align-items:baseline;gap:3px;flex-wrap:wrap">`
+        inner = `<span style="display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;overflow:hidden">`
             + dot + `<span>${pocColorizeTokens((L && L.val) || '—', dir)}</span></span>`;
     }
-    return `<td style="text-align:left">${inner}</td>`;
+    return `<td style="text-align:left;overflow:hidden">${inner}</td>`;
 }
 // Комірка вікна 3D/7D/14D/30D: ДВА РЯДКИ — % (колір за напрямком) над ціною
 // (небесна). Компактно, вузько (щоб таблиця вміщалась по ширині).
@@ -6940,8 +6951,8 @@ function renderPocSetup(d) {
             ? tvSym(r.symbol, `<b class="poc-num" style="color:#e5e7eb">${r.symbol}</b>`)
             : `<b class="poc-num" style="color:#e5e7eb">${r.symbol}</b>`;
         const L = r.layers || [];
-        const btn = `<button onclick="pocSetupOpen('${r.symbol}')" title="Відкрити угоду (${r.dir || '—'}): SL = межа OB + буфер, TP = ціна POC 7D. Монета зникне зі списку."
-            style="padding:4px 12px;border-radius:5px;cursor:pointer;font-size:0.7rem;font-weight:700;border:1px solid ${dcol}77;background:${dcol}22;color:${dcol}">▶ Відкрити</button>`;
+        const btn = `<button onclick="pocSetupOpen('${r.symbol}')" title="Відкрити угоду (${r.dir || '—'}): SL = межа OB + буфер, TP = POC вікна. Монета зникне зі списку."
+            style="padding:4px 8px;border-radius:5px;cursor:pointer;font-size:0.85rem;font-weight:700;border:1px solid ${dcol}77;background:${dcol}22;color:${dcol}">▶</button>`;
         // Другий рядок «Монета»: напрямок + біржа джерела POC (напр. «🔴 SHORT Binance»).
         const exTxt = (r.exchange === 'bybit') ? 'Bybit' : 'Binance';
         const dir2 = `${dirTxt} <span style="color:${POC_C.label}">${exTxt}</span>`;
@@ -6952,7 +6963,7 @@ function renderPocSetup(d) {
             + `<td style="text-align:left">${symHtml}<div style="font-size:0.64rem;margin-top:2px">${dir2}</div></td>`
             + `<td style="text-align:center"><b style="color:${mcCol}">${r.match_count}/5</b>`
             + `<div style="font-size:0.56rem;color:${waCol};margin-top:2px" title="Збіг вікон 3D/7D/14D/30D у бік угоди (поріг ${wm})">вікна ${wa}/${wt}</div></td>`
-            + pocLayerCell(L[0]) + pocLayerCell(L[1]) + pocLayerCell(L[2])
+            + pocLayerCell(L[0], true) + pocLayerCell(L[1]) + pocLayerCell(L[2])
             + pocLayerCell(L[3]) + pocLayerCell(L[4])
             + pocWinCell(r.poc3) + pocWinCell(r.poc7) + pocWinCell(r.poc14) + pocWinCell(r.poc30)
             + `<td style="text-align:center">${btn}</td>`

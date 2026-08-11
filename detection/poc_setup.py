@@ -419,6 +419,10 @@ class PocSetupDaemon:
             win_min = int(s.get('win_agree_min', 3) or 0)
         except (TypeError, ValueError):
             win_min = 3
+        # ВІДБІР У ТАБЛИЦЮ: монети, що не проходять поріг збігу вікон — НЕ показуємо.
+        if win_min > 0 and win_agree < win_min:
+            self._armed.pop(sym, None)
+            return None
         ready_open = bool(all5 and win_agree >= win_min)
         return {
             'symbol': sym, 'dir': setup_dir, 'price': price,
