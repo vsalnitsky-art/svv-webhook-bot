@@ -535,8 +535,18 @@ class PocSetupDaemon:
                       or res.get('status') == 'opened' or res.get('ok'))
             if not ok:
                 return False
+            # НАДІЙНЕ визначення книги: дивимось, ДЕ реально опинилась позиція
+            # (manual_open інколи повертає is_paper невірно → «No open real
+            # position» і SL/TP не ставились). Real має пріоритет.
             is_paper = bool(res.get('is_paper'))
-            # ── Manual SL = межа OB-блоку + буфер; Manual TP = ціна POC 7D ──
+            try:
+                if sym in (getattr(tm, '_positions', {}) or {}):
+                    is_paper = False
+                elif sym in (getattr(tm, '_shadow_positions', {}) or {}):
+                    is_paper = True
+            except Exception:
+                pass
+            # ── Manual SL = межа OB-блоку (HTF/менший) + буфер; TP = POC вікна ──
             try:
                 self._apply_sl_tp(tm, sym, side, row, s, is_paper)
             except Exception as e:
