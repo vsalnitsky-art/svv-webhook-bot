@@ -1429,13 +1429,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         line-height:1.5; }
     @media (max-width:560px) { .sm-tfdir-grid { grid-template-columns:1fr; } }
     /* 🎯 POC-сетап — професійна колонкова таблиця */
-    .poc-th { padding:5px 6px; color:#8b93a7; text-transform:uppercase;
-        font-size:0.58rem; letter-spacing:0.4px; font-weight:700;
+    .poc-th { padding:5px 5px; color:#8b93a7; text-transform:uppercase;
+        font-size:0.56rem; letter-spacing:0.3px; font-weight:700;
         border-bottom:1px solid rgba(255,255,255,0.10); white-space:nowrap; }
-    .poc-tbl td { padding:5px 6px; border-bottom:1px solid rgba(255,255,255,0.05);
-        vertical-align:middle; white-space:nowrap; }
-    .poc-tbl tbody tr:hover td { background:rgba(255,255,255,0.03); }
-    .poc-tbl tr.poc-ready td { background:rgba(34,197,94,0.07); }
+    .poc-tbl td { padding:4px 5px; border-bottom:1px solid rgba(255,255,255,0.05);
+        vertical-align:middle; overflow:hidden; }
+    /* 🦓 Зебра: кожна монета-рядок — свій фон (щоб не зливались). */
+    .poc-tbl tbody tr:nth-child(even) td { background:rgba(255,255,255,0.035); }
+    .poc-tbl tbody tr:hover td { background:rgba(255,255,255,0.06); }
+    .poc-tbl tr.poc-ready td { background:rgba(34,197,94,0.10); }
     .poc-tbl tr.poc-ready td:first-child { box-shadow:inset 3px 0 0 #22c55e; }
     .poc-num { font-family:monospace; }
     .poc-dot { display:inline-block; width:8px; height:8px; border-radius:50%;
@@ -2175,8 +2177,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <option value="1h" selected>1H</option><option value="2h">2H</option><option value="4h">4H</option>
                     </select>
                 </div>
-                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Автоматично відкривати угоду, коли всі 5 шарів збіглись. Вимкнено — відкриваєш вручну кнопкою в таблиці.">
-                    <input type="checkbox" id="poc-setup-auto" onchange="savePocSetup()"> Авто-відкриття (5/5)
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px" title="Дод. ворота відкриття: скільки з 4 вікон (3D/7D/14D/30D) мають бути у бік угоди. За замовч. 3 з 4. 0 = не вимагати.">Збіг вікон ≥ (з 4)</label>
+                    <select id="poc-setup-winmin" onchange="savePocSetup()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
+                        <option value="0">0 (вимк)</option>
+                        <option value="1">1</option><option value="2">2</option>
+                        <option value="3" selected>3</option><option value="4">4</option>
+                    </select>
+                </div>
+                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Автоматично відкривати угоду, коли всі 5 шарів збіглись І збіг вікон ≥ порога. Вимкнено — відкриваєш вручну кнопкою в таблиці.">
+                    <input type="checkbox" id="poc-setup-auto" onchange="savePocSetup()"> Авто-відкриття
                 </label>
             </div>
             <div style="margin-top:8px;font-size:0.68rem;color:#8b93a7;line-height:1.5">
@@ -2191,7 +2201,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
         <!-- Колонкова таблиця по ширині сторінки (без прокрутки): шари L1→L5 +
              вікна 3D/7D/14D/30D + кнопка. Компактні значення. -->
-        <table class="poc-tbl" style="width:100%;border-collapse:collapse;font-size:0.7rem;table-layout:auto">
+        <table class="poc-tbl" style="width:100%;border-collapse:collapse;font-size:0.68rem;table-layout:fixed">
             <thead>
                 <tr>
                     <th class="poc-th" style="text-align:left">Монета</th>
@@ -6859,29 +6869,28 @@ function pocLayerCell(L) {
     const dcol = _pocDirColor(dir);
     let inner;
     if (p.dir || p.pct) {
-        inner = `<span style="display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap">`
+        inner = `<span style="display:inline-flex;align-items:baseline;gap:3px;flex-wrap:wrap">`
             + dot
-            + `<span style="display:inline-block;min-width:38px;color:${dcol};font-weight:700">${p.dir || ''}</span>`
-            + `<span style="display:inline-block;min-width:50px;text-align:right;color:${POC_C.pct};font-weight:700">${p.pct || ''}</span>`
+            + `<span style="display:inline-block;min-width:32px;color:${dcol};font-weight:700">${p.dir || ''}</span>`
+            + `<span style="display:inline-block;min-width:42px;text-align:right;color:${POC_C.pct};font-weight:700">${p.pct || ''}</span>`
             + (p.rest ? `<span>${pocColorizeTokens(p.rest, dir)}</span>` : '')
             + `</span>`;
     } else {
-        inner = `<span style="display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap">`
+        inner = `<span style="display:inline-flex;align-items:baseline;gap:3px;flex-wrap:wrap">`
             + dot + `<span>${pocColorizeTokens((L && L.val) || '—', dir)}</span></span>`;
     }
     return `<td style="text-align:left">${inner}</td>`;
 }
-// Комірка вікна 3D/7D/14D/30D: ДВІ колонки — % (колір за напрямком) і ціна
-// (небесна), вирівняні, з невеликим відступом.
+// Комірка вікна 3D/7D/14D/30D: ДВА РЯДКИ — % (колір за напрямком) над ціною
+// (небесна). Компактно, вузько (щоб таблиця вміщалась по ширині).
 function pocWinCell(w) {
     if (!w || w.poc == null) return `<td style="text-align:right;color:${POC_C.muted}">—</td>`;
     const dcol = _pocDirColor(w.dir);
     const dp = (w.dist_pct != null) ? `${w.dist_pct >= 0 ? '+' : ''}${w.dist_pct}%` : '—';
-    return `<td>`
-        + `<span style="display:inline-flex;align-items:baseline;gap:6px;justify-content:flex-end;width:100%;white-space:nowrap">`
-        + `<b class="poc-num" style="min-width:52px;text-align:right;color:${dcol}">${dp}</b>`
-        + `<span class="poc-num" style="min-width:56px;text-align:right;color:${POC_C.price};font-size:0.64rem">${fmtPriceJS(w.poc)}</span>`
-        + `</span></td>`;
+    return `<td style="text-align:right">`
+        + `<div class="poc-num" style="color:${dcol};font-weight:700">${dp}</div>`
+        + `<div class="poc-num" style="color:${POC_C.price};font-size:0.6rem">${fmtPriceJS(w.poc)}</div>`
+        + `</td>`;
 }
 function renderPocSetup(d) {
     const tb = document.getElementById('poc-setup-tbody');
@@ -6936,9 +6945,13 @@ function renderPocSetup(d) {
         // Другий рядок «Монета»: напрямок + біржа джерела POC (напр. «🔴 SHORT Binance»).
         const exTxt = (r.exchange === 'bybit') ? 'Bybit' : 'Binance';
         const dir2 = `${dirTxt} <span style="color:${POC_C.label}">${exTxt}</span>`;
-        return `<tr class="${r.all5 ? 'poc-ready' : ''}">`
+        // Збіг вікон (X/4) — зелений коли досягнуто порога, інакше приглушений.
+        const wa = r.win_agree || 0, wt = (r.win_total != null ? r.win_total : 4), wm = (r.win_min != null ? r.win_min : 3);
+        const waCol = (wm > 0 && wa >= wm) ? '#4ade80' : POC_C.label;
+        return `<tr class="${r.ready_open ? 'poc-ready' : ''}">`
             + `<td style="text-align:left">${symHtml}<div style="font-size:0.64rem;margin-top:2px">${dir2}</div></td>`
-            + `<td style="text-align:center"><b style="color:${mcCol}">${r.match_count}/5</b></td>`
+            + `<td style="text-align:center"><b style="color:${mcCol}">${r.match_count}/5</b>`
+            + `<div style="font-size:0.56rem;color:${waCol};margin-top:2px" title="Збіг вікон 3D/7D/14D/30D у бік угоди (поріг ${wm})">вікна ${wa}/${wt}</div></td>`
             + pocLayerCell(L[0]) + pocLayerCell(L[1]) + pocLayerCell(L[2])
             + pocLayerCell(L[3]) + pocLayerCell(L[4])
             + pocWinCell(r.poc3) + pocWinCell(r.poc7) + pocWinCell(r.poc14) + pocWinCell(r.poc30)
@@ -6961,6 +6974,7 @@ async function loadPocSetup() {
         setV('poc-setup-window', s.window_days);
         setV('poc-setup-ob-tf', s.ob_tf);
         setV('poc-setup-ob-htf', s.ob_htf);
+        setV('poc-setup-winmin', (s.win_agree_min != null ? s.win_agree_min : 3));
         setV('poc-setup-auto', s.auto_open);
         renderPocSetup(d);
     } catch (e) { /* лишаємо як є */ }
@@ -6977,6 +6991,7 @@ async function savePocSetup() {
         window_days: parseInt(_v('poc-setup-window') || '7', 10) || 7,
         ob_tf: _v('poc-setup-ob-tf') || '15m',
         ob_htf: (_v('poc-setup-ob-htf') || ''),
+        win_agree_min: parseInt(_v('poc-setup-winmin') || '3', 10),
         auto_open: _c('poc-setup-auto'),
     };
     try {

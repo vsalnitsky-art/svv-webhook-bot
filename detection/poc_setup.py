@@ -45,6 +45,8 @@ DEFAULTS = {
                                 #   у наш бік — відкриваємо ОДРАЗУ (SL з нього),
                                 #   не чекаючи нового меншого. Порожньо = вимкнено.
     'auto_open': True,          # авто-відкриття коли всі 5 шарів
+    'win_agree_min': 3,         # вимагати ЗБІГ ≥ N із 4 вікон (3D/7D/14D/30D)
+                                #   у бік угоди (дод. ворота відкриття; 0 = вимк).
     'max_per_cycle': 5,         # тротл: монет за тік (безпечно для біржі)
     'ttl': 120,                 # TTL кешу пер-монета (с)
     'sl_buffer_pct': 0.10,      # буфер SL за межу OB-блоку, %
@@ -409,10 +411,21 @@ class PocSetupDaemon:
         ]
         match_count = sum(1 for L in layers if L['lit'])
         all5 = bool(aligned4 and l5_lit)
+        # Збіг ВІКОН (3D/7D/14D/30D) у бік сетапу — дод. ворота відкриття.
+        _wins = [pocs.get(3), pocs.get(7), pocs.get(14), pocs.get(30)]
+        win_agree = sum(1 for w in _wins if w and w.get('dir') == setup_dir)
+        win_total = sum(1 for w in _wins if w)
+        try:
+            win_min = int(s.get('win_agree_min', 3) or 0)
+        except (TypeError, ValueError):
+            win_min = 3
+        ready_open = bool(all5 and win_agree >= win_min)
         return {
             'symbol': sym, 'dir': setup_dir, 'price': price,
             'layers': layers, 'match_count': match_count,
             'aligned4': aligned4, 'all5': all5,
+            'win_agree': win_agree, 'win_total': win_total,
+            'win_min': win_min, 'ready_open': ready_open,
             'poc3': pocs.get(3), 'poc7': pocs.get(7),
             'poc14': pocs.get(14), 'poc30': pocs.get(30),
             'setup_win': win, 'poc_pct': thr,
@@ -484,7 +497,7 @@ class PocSetupDaemon:
     def _auto_open(self, s: Dict, now: float):
         with self._lock:
             ready = [(sym, r['dir']) for sym, r in self._rows.items()
-                     if r.get('all5') and r.get('dir') in ('LONG', 'SHORT')]
+                     if r.get('ready_open') and r.get('dir') in ('LONG', 'SHORT')]
         for sym, side in ready:
             if now - self._opened.get(sym, 0) < _REOPEN_GUARD:
                 continue
@@ -644,7 +657,7 @@ class PocSetupDaemon:
                 'rows': rows, 'count': len(rows),
                 'auto_open': bool(s.get('auto_open', True)),
                 'tm_ready': tm_ready, 'tm_reason': tm_reason,
-                'ready5': sum(1 for r in rows if r.get('all5')),
+                'ready5': sum(1 for r in rows if r.get('ready_open')),
                 'running': bool(self._thread and self._thread.is_alive())}
 
     def start(self):
