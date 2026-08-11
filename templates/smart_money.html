@@ -6819,31 +6819,59 @@ function _pocDot(lit, dir) {
 // 🎨 Палітра: напрямок (LONG/SHORT) — зелений/червоний; відсотки — бурштин;
 // пояснення (POC/1H/сильний/OB/чекає…) — сталь; ціни — небесний.
 const POC_C = { pct: '#fbbf24', label: '#94a3b8', price: '#7dd3fc', muted: '#6b7280' };
-// Розфарбувати рядок-значення шару: напрямок у свій колір, %-числа — бурштин,
-// решта (пояснення) — сталь.
-function pocColorizeVal(val, dir) {
-    if (!val) return `<span style="color:${POC_C.muted}">—</span>`;
+// Потокенне фарбування (напрямок→свій колір, %→бурштин, решта→сталь).
+function pocColorizeTokens(str, dir) {
+    if (!str) return '';
     const dcol = _pocDirColor(dir);
-    return String(val).split(/(\s+)/).map(tok => {
+    return String(str).split(/(\s+)/).map(tok => {
         if (/^\s+$/.test(tok)) return tok;
         const up = tok.toUpperCase();
-        if (up === 'LONG' || up === 'SHORT')
-            return `<b style="color:${dcol}">${tok}</b>`;
-        if (/^[+-]?\d+(?:\.\d+)?%$/.test(tok))
-            return `<span style="color:${POC_C.pct};font-weight:700">${tok}</span>`;
+        if (up === 'LONG' || up === 'SHORT') return `<b style="color:${dcol}">${tok}</b>`;
+        if (/^[+-]?\d+(?:\.\d+)?%$/.test(tok)) return `<span style="color:${POC_C.pct};font-weight:700">${tok}</span>`;
         return `<span style="color:${POC_C.label}">${tok}</span>`;
     }).join('');
 }
-// Комірка шару в колонку: ●дот + розфарбоване значення.
-function pocLayerCell(L) {
+// Розбір значення шару на РІВНІ підстовпчики: [напрямок][перший %][решта].
+function _pocParse(val) {
+    if (!val) return { dir: '', pct: '', rest: '' };
+    const toks = String(val).trim().split(/\s+/);
+    let dir = '', pct = '', rest = [], i = 0;
+    if (toks[0] && (toks[0].toUpperCase() === 'LONG' || toks[0].toUpperCase() === 'SHORT')) {
+        dir = toks[0]; i = 1;
+    }
+    for (; i < toks.length; i++) {
+        if (!pct && /^[+-]?\d+(?:\.\d+)?%$/.test(toks[i])) pct = toks[i];
+        else rest.push(toks[i]);
+    }
+    return { dir, pct, rest: rest.join(' ') };
+}
+// Комірка шару: дот + вирівняні підстовпчики (напрямок 46px · % 58px · решта).
+// subLine — необов'язковий 2-й рядок (напр. біржа для L1).
+function pocLayerCell(L, subLine) {
     const lit = L && L.lit;
     const dir = L && L.dir;
     const dotCol = lit ? _pocDirColor(dir) : 'transparent';
     const dotBr = lit ? _pocDirColor(dir) : '#4b5563';
-    return `<td style="text-align:left">`
-        + `<span class="poc-dot" style="background:${dotCol};border:1px solid ${dotBr}"></span>`
-        + pocColorizeVal(L && L.val, dir)
-        + `</td>`;
+    const dot = `<span class="poc-dot" style="background:${dotCol};border:1px solid ${dotBr}"></span>`;
+    const p = _pocParse(L && L.val);
+    let inner;
+    if (p.dir || p.pct) {
+        const dcol = _pocDirColor(dir);
+        inner = `<span style="display:inline-flex;align-items:baseline;gap:6px;white-space:nowrap">`
+            + dot
+            + `<span style="display:inline-block;min-width:46px;color:${dcol};font-weight:700">${p.dir || ''}</span>`
+            + `<span style="display:inline-block;min-width:58px;color:${POC_C.pct};font-weight:700">${p.pct || ''}</span>`
+            + `<span>${pocColorizeTokens(p.rest, dir)}</span>`
+            + `</span>`;
+    } else {
+        // Без напрямку/% (напр. L5 «чекає L1–L4» / «OB 1H SHORT ✓») — компактно.
+        inner = `<span style="display:inline-flex;align-items:baseline;gap:6px;white-space:nowrap">`
+            + dot + `<span>${pocColorizeTokens((L && L.val) || '—', dir)}</span></span>`;
+    }
+    const sub = subLine
+        ? `<div style="font-size:0.62rem;color:${POC_C.label};margin-left:20px;margin-top:2px">${subLine}</div>`
+        : '';
+    return `<td style="text-align:left">${inner}${sub}</td>`;
 }
 // Комірка вікна 7D/14D/30D: % — бурштин, ціна — небесний.
 function pocWinCell(w) {
@@ -6907,7 +6935,8 @@ function renderPocSetup(d) {
         return `<tr class="${r.all5 ? 'poc-ready' : ''}">`
             + `<td style="text-align:left">${symHtml}<div style="font-size:0.64rem;margin-top:2px">${dirTxt}</div></td>`
             + `<td style="text-align:center"><b style="color:${mcCol}">${r.match_count}/5</b></td>`
-            + pocLayerCell(L[0]) + pocLayerCell(L[1]) + pocLayerCell(L[2])
+            + pocLayerCell(L[0], (r.exchange === 'bybit' ? 'Bybit' : 'Binance'))
+            + pocLayerCell(L[1]) + pocLayerCell(L[2])
             + pocLayerCell(L[3]) + pocLayerCell(L[4])
             + pocWinCell(r.poc7) + pocWinCell(r.poc14) + pocWinCell(r.poc30)
             + `<td style="text-align:center">${btn}</td>`

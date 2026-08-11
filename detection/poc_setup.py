@@ -415,6 +415,7 @@ class PocSetupDaemon:
             'aligned4': aligned4, 'all5': all5,
             'poc7': pocs.get(7), 'poc14': pocs.get(14), 'poc30': pocs.get(30),
             'setup_win': win, 'poc_pct': thr,
+            'exchange': base.get('exchange'),   # біржа джерела POC (L1)
             'decision_text': l4_val, 'decision_dir': l4_dir,
             # для відкриття: SL = межа OB-блоку + буфер; TP = POC СЕТАП-вікна
             # (= напрямок L1 виводиться з неї, тож TP ГАРАНТОВАНО з правильного
