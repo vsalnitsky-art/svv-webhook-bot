@@ -2427,7 +2427,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </div>
             </div>
             <!-- ⚡ Queue 2 settings accordion (eject rules) -->
-            <details class="sm-settings-bar" style="margin:0 0 8px">
+            <details class="sm-settings-bar" id="ff-q2-settings" style="margin:0 0 8px">
                 <summary class="sm-settings-summary">⚙️ Налаштування Черги-2
                     <span class="sm-settings-summary-right" style="color:#8b93a7">правила викидання з черги</span>
                 </summary>
@@ -2552,7 +2552,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </div>
             </div>
             <!-- ⚙️ Налаштування Черги-3 (гармошка) — усі параметри стратегії тут -->
-            <details class="sm-settings-bar" style="margin:0 0 8px">
+            <details class="sm-settings-bar" id="ff-q3-settings" style="margin:0 0 8px">
                 <summary class="sm-settings-summary">⚙️ Налаштування (Черга-3)
                     <span class="sm-settings-summary-right" style="color:#8b93a7">поріг · TTL · CTR · лог · авто-VOB</span>
                 </summary>
@@ -2617,7 +2617,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <button onclick="clearAllTimers4()" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;line-height:1;font-size:0.68rem;padding:6px 12px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-4">🗑️ Очистити всі</button>
                 </div>
             </div>
-            <details class="sm-settings-bar" style="margin:0 0 8px">
+            <details class="sm-settings-bar" id="ff-q4-settings" style="margin:0 0 8px">
                 <summary class="sm-settings-summary">⚙️ Налаштування (Черга-4) <span class="sm-settings-summary-right" style="color:#8b93a7">складність шарів</span></summary>
                 <div style="padding:10px 12px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,0.06)">
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна сила НОВОГО МММ у бік сигналу.">Новий МММ ≥ <select id="ff-queue4-mmnew" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
@@ -10807,6 +10807,7 @@ function toggleFuelFilterSettings() {
         body.style.display = 'none';
         chevron.textContent = '▶';
     }
+    ffAccSave('ff-settings-body', body.style.display !== 'none');
 }
 
 function toggleFundingSettings() {
@@ -10820,6 +10821,51 @@ function toggleFundingSettings() {
         body.style.display = 'none';
         chevron.textContent = '▶';
     }
+    ffAccSave('ff-fund-settings-body', body.style.display !== 'none');
+}
+
+// ── #4: памʼять стану гармошок блока ❤️ Fuel Auto-Filter (усі черги) ──
+// Стан (розгорнуто/згорнуто) зберігається у localStorage і відновлюється при
+// завантаженні сторінки — щоб не згортати вручну щоразу.
+const FF_ACC_DETAILS = ['ff-queues-accordion', 'ff-q2-settings',
+                        'ff-q3-settings', 'ff-q4-settings'];
+const FF_ACC_BODIES = [
+    {body: 'ff-settings-body', chevron: 'ff-settings-chevron'},
+    {body: 'ff-fund-settings-body', chevron: 'ff-fund-settings-chevron'},
+];
+
+function ffAccSave(key, isOpen) {
+    try { localStorage.setItem('ffAcc:' + key, isOpen ? '1' : '0'); } catch (e) {}
+}
+function ffAccGet(key) {
+    try { return localStorage.getItem('ffAcc:' + key); } catch (e) { return null; }
+}
+
+function ffAccRestore() {
+    // <details> черг: відновлюємо open + слухаємо toggle для збереження.
+    FF_ACC_DETAILS.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const v = ffAccGet(id);
+        if (v === '1') el.open = true;
+        else if (v === '0') el.open = false;
+        el.addEventListener('toggle', () => ffAccSave(id, el.open));
+    });
+    // JS-гармошки (display/chevron): відновлюємо у збережений стан.
+    FF_ACC_BODIES.forEach(({body, chevron}) => {
+        const b = document.getElementById(body);
+        const c = document.getElementById(chevron);
+        if (!b) return;
+        const v = ffAccGet(body);
+        if (v === '1') { b.style.display = ''; if (c) c.textContent = '▼'; }
+        else if (v === '0') { b.style.display = 'none'; if (c) c.textContent = '▶'; }
+    });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ffAccRestore);
+} else {
+    ffAccRestore();
 }
 
 // Default funding-TG templates (must match DEFAULT_SETTINGS in fuel_filter.py).

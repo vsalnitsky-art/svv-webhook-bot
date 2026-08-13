@@ -303,6 +303,12 @@ class PocSetupDaemon:
         if self._has_position(sym):
             self._armed.pop(sym, None)
             return None
+        # Монета вже пішла далі по алгоритму — стоїть у черзі ❤️ Fuel Auto-Filter
+        # (Q1..Q4) або нею вже керує FF. POC-сетап її більше НЕ обробляє (інакше
+        # затримувалась би в таблиці й спамила Лог щоцикл — п.2/3).
+        if self._in_ff_queue(sym):
+            self._armed.pop(sym, None)
+            return None
         # POC per window (setup window + 7/14/30 columns). Поточну ціну беремо з
         # last_close результату compute_poc (БЕЗ окремого ticker-API — його немає).
         windows = sorted(set([win] + list(_WINDOWS)))
@@ -501,13 +507,15 @@ class PocSetupDaemon:
             for k in list(self._rows.keys()):
                 if k not in wlset:
                     self._rows.pop(k, None)
-        # #1: монети, що вже у ВІДКРИТІЙ угоді (real/paper), прибираємо з таблиці —
-        # їх уже веде TradeManager; інакше вони «висіли б» на 5/5 без обробки
-        # (manual_open відмовляє «вже є позиція» → рядок ніколи не зникав).
+        # #1/#2: монети, що вже пішли далі по алгоритму — у ВІДКРИТІЙ угоді
+        # (real/paper) АБО у черзі ❤️ Fuel Auto-Filter (Q1..Q4) — прибираємо з
+        # таблиці. Їх уже веде TradeManager/FF; інакше вони «висіли б» у POC-
+        # таблиці й по них тривав би підбір сетапу + спам у Лог (п.2/3).
         for k in list(self._rows.keys()):
-            if self._has_position(k):
+            if self._has_position(k) or self._in_ff_queue(k):
                 with self._lock:
                     self._rows.pop(k, None)
+                    self._armed.pop(k, None)
         # auto-open
         if s.get('auto_open', True):
             self._auto_open(s, now)
@@ -523,6 +531,25 @@ class PocSetupDaemon:
                 continue
             if self._open_symbol(sym, side, manual=False):
                 self._opened[sym] = now
+
+    def _in_ff_queue(self, sym: str) -> bool:
+        """Чи монета ВЖЕ стоїть у якійсь черзі ❤️ Fuel Auto-Filter (Q1..Q4) або
+        нею вже керує FF (fuel_managed). Якщо так — POC-сетап її БІЛЬШЕ НЕ
+        чіпає: не показує в таблиці, не перераховує, не маршрутизує повторно
+        (інакше «висіла б» у POC-таблиці й спамила Лог щоцикл — див. п.2/3)."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return False
+            for attr in ('_pending', '_pending2', '_pending3', '_pending4',
+                         '_fuel_managed'):
+                d = getattr(ff, attr, None)
+                if isinstance(d, dict) and sym in d:
+                    return True
+        except Exception:
+            pass
+        return False
 
     def _route_to_ff(self, sym: str, side: str) -> str:
         """#2: якщо ❤️ Fuel Auto-Filter УВІМКНЕНИЙ і активна ХОЧ ОДНА черга —

@@ -432,71 +432,67 @@ def to_tv_list(symbols: List[Dict], separator: str = 'newline') -> str:
 # ----------------------------------------------------------------------
 
 # Sort keys the UI offers. 'spike' needs a baseline (see below).
-SORT_KEYS = ['vol_usd', 'spike', 'change_abs', 'trades', 'oi_usd', 'funding_abs']
+SORT_KEYS = ['vol_usd', 'spike', 'change_abs', 'trades', 'oi_usd', 'funding_abs',
+             'market_cap']
 
 
 # ----------------------------------------------------------------------
-# Market-cap filter — top-N coins by market capitalization (CoinGecko)
+# Market cap — top-N coins by market capitalization (CoinGecko)
 # ----------------------------------------------------------------------
-# Exchanges don't expose market cap, so we fetch the ranked list of base
-# assets from CoinGecko once and cache it (mcap moves slowly). The Top
-# Active table can then be restricted to only the largest-cap coins.
-_MCAP_CACHE: Dict[int, Dict] = {}          # bucket → {'at': ts, 'bases': set}
+# Exchanges don't expose market cap, so we fetch the ranked base assets
+# from CoinGecko once and cache it (mcap moves slowly). The «Капіталізація»
+# SORT option ranks the Top-Active table over exactly this top-100 universe.
+_MCAP_CACHE: Dict[int, Dict] = {}          # bucket → {'at': ts, 'ordered': [...]}
 _MCAP_TTL = 3600                            # 1h — capitalization is slow-moving
-_MCAP_BUCKETS = (50, 100, 200, 300)        # values the UI offers
+_MCAP_UNIVERSE = 100                        # «топ-100 за капіталізацією»
 
 
-def _mcap_bucket(n: int) -> int:
-    """Round the requested count UP to the nearest fetch bucket (so 100 and
-    300 share one API page each; we slice locally)."""
-    for b in _MCAP_BUCKETS:
-        if n <= b:
-            return b
-    return _MCAP_BUCKETS[-1]
-
-
-def top_mcap_bases(n: int) -> set:
-    """Return the set of BASE ASSETS (e.g. {'BTC','ETH',…}) for the top-`n`
+def top_mcap_map(n: int = _MCAP_UNIVERSE) -> Dict[str, Dict]:
+    """Return {BASE_ASSET: {'rank': int(1-based), 'mcap': float}} for the top-`n`
     coins by market capitalization, per CoinGecko. Cached for _MCAP_TTL.
-    Returns an empty set on any failure (caller then applies NO mcap filter)."""
+    Empty dict on any failure (caller then shows all / warns)."""
     try:
         n = int(n or 0)
     except (TypeError, ValueError):
         n = 0
     if n <= 0:
-        return set()
-    bucket = _mcap_bucket(n)
+        return {}
     now = time.time()
-    hit = _MCAP_CACHE.get(bucket)
+    hit = _MCAP_CACHE.get(n)
     if hit and (now - hit['at'] < _MCAP_TTL) and hit.get('ordered'):
-        return set(hit['ordered'][:n])
-    ordered: List[str] = []
+        return dict(hit['ordered'])
+    ordered: Dict[str, Dict] = {}
     try:
         r = _session.get(
             'https://api.coingecko.com/api/v3/coins/markets',
             params={'vs_currency': 'usd', 'order': 'market_cap_desc',
-                    'per_page': bucket, 'page': 1, 'sparkline': 'false'},
+                    'per_page': n, 'page': 1, 'sparkline': 'false'},
             timeout=HTTP_TIMEOUT)
         r.raise_for_status()
+        rank = 0
         for c in (r.json() or []):
             sym = str(c.get('symbol') or '').upper().strip()
-            if sym and sym not in ordered:
-                ordered.append(sym)
+            if not sym or sym in ordered:
+                continue
+            rank += 1
+            try:
+                cap = float(c.get('market_cap') or 0.0)
+            except (TypeError, ValueError):
+                cap = 0.0
+            ordered[sym] = {'rank': rank, 'mcap': cap}
     except Exception as e:
-        print(f"[tickr] mcap fetch error (bucket {bucket}): {e}")
-        # Serve a stale cache if we have one; else no filter.
+        print(f"[tickr] mcap fetch error (top {n}): {e}")
         if hit and hit.get('ordered'):
-            return set(hit['ordered'][:n])
-        return set()
+            return dict(hit['ordered'])   # serve stale cache
+        return {}
     if ordered:
-        _MCAP_CACHE[bucket] = {'at': now, 'ordered': ordered}
-    return set(ordered[:n])
+        _MCAP_CACHE[n] = {'at': now, 'ordered': ordered}
+    return dict(ordered)
 
 
 def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
                top_n: int = 20, active_only: bool = True,
-               baseline_key: str = '', min_vol_usd: float = 0.0,
-               mcap_top: int = 0) -> Dict:
+               baseline_key: str = '', min_vol_usd: float = 0.0) -> Dict:
     """Fetch instruments + 24h activity metrics, rank, return top N.
 
     sort_by:
@@ -538,15 +534,13 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
     except (TypeError, ValueError):
         min_vol_usd = 0.0
 
-    # 🏦 Market-cap gate — restrict to the top-N coins by capitalization
-    # (CoinGecko). Empty set = filter off (mcap_top=0 or fetch failed).
-    try:
-        mcap_top = int(mcap_top or 0)
-    except (TypeError, ValueError):
-        mcap_top = 0
-    mcap_bases = top_mcap_bases(mcap_top) if mcap_top > 0 else set()
-    if mcap_top > 0 and not mcap_bases:
-        warnings.append('капіталізацію не вдалося отримати (CoinGecko) — фільтр не застосовано')
+    # 🏦 «Капіталізація» sort = rank over the top-100-by-mcap universe
+    # (CoinGecko). When selected we keep ONLY coins whose base asset is in the
+    # top-100 and sort by market cap desc — i.e. "усі монети з ТОП-100".
+    want_mcap = (sort_by == 'market_cap')
+    mcap_map = top_mcap_map(_MCAP_UNIVERSE) if want_mcap else {}
+    if want_mcap and not mcap_map:
+        warnings.append('капіталізацію не вдалося отримати (CoinGecko)')
 
     enriched = []
     for s in symbols:
@@ -554,11 +548,13 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
         # they carry a '-' suffix and are not the perpetual/spot we want.
         if '-' in str(s.get('symbol', '')):
             continue
-        # 🏦 Market-cap filter: keep only coins whose base asset is in the
-        # top-N-by-mcap set (when the set is non-empty).
-        if mcap_bases:
+        # 🏦 Market-cap universe: keep only coins whose base asset is in the
+        # top-100-by-mcap set, and attach cap + rank for the sort/column.
+        _mc = None
+        if want_mcap and mcap_map:
             _base = str(s.get('base_asset') or '').upper().strip()
-            if _base not in mcap_bases:
+            _mc = mcap_map.get(_base)
+            if not _mc:
                 continue
         m = metrics.get((s['market_type'], _canon(s['symbol']))) or {}
         row = dict(s)
@@ -570,6 +566,9 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
         row['funding'] = m.get('funding', 0.0)
         row['funding_abs'] = abs(m.get('funding', 0.0))
         row['last'] = m.get('last', 0.0)
+        if _mc:
+            row['market_cap'] = _mc.get('mcap', 0.0)
+            row['mcap_rank'] = _mc.get('rank', 0)
         # Filter out illiquid coins (small 24h volume).
         if min_vol_usd > 0 and (row['vol_usd'] or 0) < min_vol_usd:
             continue

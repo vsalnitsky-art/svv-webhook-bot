@@ -127,29 +127,20 @@
     <div class="tk-row" style="margin-bottom:8px">
         <div class="tk-field">
             <label>СОРТУВАТИ ЗА</label>
-            <select id="tk-sort">
+            <select id="tk-sort" onchange="tkOnSortChange()">
                 <option value="vol_usd">Обсяг 24h ($)</option>
                 <option value="spike">Сплеск обсягу (×базовий)</option>
                 <option value="change_abs">Зміна 24h (|%|)</option>
                 <option value="trades">К-сть угод</option>
                 <option value="oi_usd">Open Interest (swap)</option>
                 <option value="funding_abs">Funding (|%|, swap)</option>
+                <option value="market_cap">🏦 Капіталізація (топ-100)</option>
             </select>
         </div>
         <div class="tk-field">
             <label>ТОП-N</label>
             <select id="tk-topn">
                 <option>10</option><option selected>20</option><option>30</option><option>50</option><option>75</option><option>100</option>
-            </select>
-        </div>
-        <div class="tk-field">
-            <label>КАПІТАЛІЗАЦІЯ</label>
-            <select id="tk-mcap" title="Обмежити перелік лише монетами з топ-N за ринковою капіталізацією (CoinGecko). «Усі» = без фільтра.">
-                <option value="0" selected>Усі</option>
-                <option value="50">Топ-50 за кап.</option>
-                <option value="100">Топ-100 за кап.</option>
-                <option value="200">Топ-200 за кап.</option>
-                <option value="300">Топ-300 за кап.</option>
             </select>
         </div>
         <div class="tk-field">
@@ -167,8 +158,9 @@
             <thead><tr>
                 <th>#</th><th>Symbol</th><th>Type</th><th>Vol 24h</th>
                 <th>Зміна%</th><th>Угоди</th><th>OI</th><th>Funding</th><th>Спл.</th>
+                <th title="Ринкова капіталізація (CoinGecko) — показується при сортуванні «🏦 Капіталізація»">🏦 Кап.</th>
             </tr></thead>
-            <tbody id="tk-top-tbody"><tr><td colspan="9" style="color:#667;padding:16px">— ще не завантажено —</td></tr></tbody>
+            <tbody id="tk-top-tbody"><tr><td colspan="10" style="color:#667;padding:16px">— ще не завантажено —</td></tr></tbody>
         </table>
     </div>
     <div style="margin-top:8px">
@@ -365,10 +357,21 @@ async function tkPingExchange() {
 
 function tkFmtUsd(v) {
     v = v || 0;
+    if (v >= 1e12) return '$' + (v/1e12).toFixed(2) + 'T';
     if (v >= 1e9) return '$' + (v/1e9).toFixed(2) + 'B';
     if (v >= 1e6) return '$' + (v/1e6).toFixed(2) + 'M';
     if (v >= 1e3) return '$' + (v/1e3).toFixed(1) + 'K';
     return '$' + v.toFixed(0);
+}
+
+// Коли обрано сортування «🏦 Капіталізація» — показуємо ВСІ монети з топ-100,
+// тож автоматично ставимо ТОП-N = 100 (користувач далі може змінити вручну).
+function tkOnSortChange() {
+    const sort = document.getElementById('tk-sort').value;
+    if (sort === 'market_cap') {
+        const topn = document.getElementById('tk-topn');
+        if (topn) topn.value = '100';
+    }
 }
 
 async function tkTopActive() {
@@ -387,7 +390,6 @@ async function tkTopActive() {
                 top_n: parseInt(document.getElementById('tk-topn').value),
                 active_only: document.getElementById('tk-active').checked,
                 min_vol_musd: parseFloat(document.getElementById('tk-min-vol').value) || 0,
-                mcap_top: parseInt(document.getElementById('tk-mcap').value) || 0,
             }),
         });
         const d = await res.json();
@@ -395,9 +397,8 @@ async function tkTopActive() {
         tkTopRows = d.symbols;
         tkRenderTop(d.symbols, d.sort_by);
         let warn = (d.warnings && d.warnings.length) ? ' ⚠ ' + d.warnings.join('; ') : '';
-        const mcapN = parseInt(document.getElementById('tk-mcap').value) || 0;
-        const mcapTxt = mcapN > 0 ? ` · 🏦 топ-${mcapN} за капіталізацією` : '';
-        stat.textContent = `🔥 ${d.exchange.toUpperCase()} · топ-${d.symbols.length} за ${d.sort_by}${mcapTxt}` + warn;
+        const sortLbl = d.sort_by === 'market_cap' ? '🏦 капіталізацією (топ-100)' : d.sort_by;
+        stat.textContent = `🔥 ${d.exchange.toUpperCase()} · топ-${d.symbols.length} за ${sortLbl}` + warn;
     } catch (e) {
         stat.textContent = '❌ ' + e;
     } finally {
@@ -408,7 +409,7 @@ async function tkTopActive() {
 function tkRenderTop(rows, sortBy) {
     const tb = document.getElementById('tk-top-tbody');
     if (!rows || !rows.length) {
-        tb.innerHTML = '<tr><td colspan="9" style="color:#667;padding:16px">— порожньо —</td></tr>';
+        tb.innerHTML = '<tr><td colspan="10" style="color:#667;padding:16px">— порожньо —</td></tr>';
         return;
     }
     tb.innerHTML = rows.map((s, i) => {
@@ -419,6 +420,9 @@ function tkRenderTop(rows, sortBy) {
         const fundCls = s.funding >= 0 ? 'tk-added' : 'tk-removed';
         const oi = s.oi_usd ? tkFmtUsd(s.oi_usd) : '—';
         const spike = s.spike ? '×' + s.spike.toFixed(1) : '—';
+        const cap = s.market_cap ? tkFmtUsd(s.market_cap)
+                    + (s.mcap_rank ? ` <span style="color:#8b93a7">#${s.mcap_rank}</span>` : '')
+                    : '—';
         return `<tr>
             <td>${i+1}</td>
             <td><b>${s.symbol}</b></td>
@@ -429,6 +433,7 @@ function tkRenderTop(rows, sortBy) {
             <td>${oi}</td>
             <td class="${s.is_swap ? fundCls : ''}">${fund}</td>
             <td style="color:#fbbf24">${spike}</td>
+            <td style="color:#a5b4fc">${cap}</td>
         </tr>`;
     }).join('');
 }
