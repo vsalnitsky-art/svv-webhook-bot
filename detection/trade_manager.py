@@ -3006,7 +3006,8 @@ class TradeManager:
             print(f"[TM] snapshot hold error: {e}")
         return snap
 
-    def _open_position(self, symbol: str, side: str, entry_price: float, opened_by: str, bypass_gates: bool = False):
+    def _open_position(self, symbol: str, side: str, entry_price: float, opened_by: str, bypass_gates: bool = False,
+                       manual_sl=None, manual_tp=None):
         """Open a real position. Returns a structured result so callers can
         surface the EXACT reason instead of a generic "order failed":
           {'ok': True}                      — position opened
@@ -3141,6 +3142,10 @@ class TradeManager:
             self._auto_ob_manual_sl(symbol, position, entry_price)
         except Exception:
             pass
+
+        # 🎯 Явні Manual SL/TP, передані відкривачем (напр. POC-сетап): виставити
+        # ПЕРЕД повідомленням, щоб TG показав рівні, а не null.
+        self._set_open_manual_levels(position, side, entry_price, manual_sl, manual_tp)
 
         self._notify_open(position)
         return {'ok': True}
@@ -4035,7 +4040,8 @@ class TradeManager:
     # Shadow (paper) positions — for test_mode
     # ============================================================
     
-    def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str, bypass_gates: bool = False):
+    def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str, bypass_gates: bool = False,
+                     manual_sl=None, manual_tp=None):
         """Open a paper-trading position. No Bybit calls.
 
         bypass_gates: If True, ignore LONG/SHORT entry gates (used by Fuel Auto-Filter).
@@ -4155,6 +4161,9 @@ class TradeManager:
             self._auto_ob_manual_sl(symbol, pos, float(entry_price))
         except Exception:
             pass
+
+        # 🎯 Явні Manual SL/TP від відкривача (POC-сетап) — ПЕРЕД повідомленням.
+        self._set_open_manual_levels(pos, side, float(entry_price), manual_sl, manual_tp)
 
         # Use colored circle for direction (instead of 📊)
         icon = '🟢' if side == 'LONG' else '🔴'
@@ -5523,7 +5532,8 @@ class TradeManager:
         return bool(t0 and (time.time() - t0) < cd * 60.0)
 
     def manual_open(self, symbol: str, side: str, bypass_gates: bool = False,
-                    opened_by: Optional[str] = None) -> Dict:
+                    opened_by: Optional[str] = None,
+                    manual_sl=None, manual_tp=None) -> Dict:
         """User-initiated position open from the Decision Center panel.
 
         Uses Position Sizing settings from TM (sizing_mode, fixed_usd_amount,
@@ -5617,7 +5627,8 @@ class TradeManager:
             try:
                 res = self._open_position(symbol, side, entry_price,
                                           opened_by=(opened_by or 'manual_ui'),
-                                          bypass_gates=bypass_gates)
+                                          bypass_gates=bypass_gates,
+                                          manual_sl=manual_sl, manual_tp=manual_tp)
             except Exception as e:
                 return {'ok': False, 'reason': f'Open error: {e}'}
             with self._lock:
@@ -5638,7 +5649,8 @@ class TradeManager:
             try:
                 self._open_shadow(symbol, side, entry_price,
                                   opened_by=(opened_by or 'manual_ui_overflow'),
-                                  bypass_gates=bypass_gates)
+                                  bypass_gates=bypass_gates,
+                                  manual_sl=manual_sl, manual_tp=manual_tp)
             except Exception as e:
                 return {'ok': False, 'reason': f'Shadow open error: {e}'}
             with self._lock:
@@ -5787,6 +5799,42 @@ class TradeManager:
         """🟢/🔴 direction indicator (Telegram has NO text colour — emoji is the
         only way to «colour» LONG/SHORT)."""
         return '🟢' if side == 'LONG' else ('🔴' if side == 'SHORT' else '⚪')
+
+    def _set_open_manual_levels(self, position, side, entry_price,
+                                 manual_sl=None, manual_tp=None):
+        """Виставити Manual SL/TP на позицію ОДРАЗУ при відкритті (валідація за
+        напрямком проти entry_price), щоб TG-повідомлення про відкриття показало
+        реальні рівні замість null. Записує історію як звичайне ручне виставлення.
+        Викликається з _open_position/_open_shadow ПЕРЕД _notify_open.
+        Невалідне/порожнє значення тихо ігнорується (кожне поле окремо — не
+        атомарно, щоб коректний SL не «падав» через невалідний TP)."""
+        try:
+            ep = float(entry_price or 0)
+        except (TypeError, ValueError):
+            return
+        if ep <= 0:
+            return
+
+        def _valid(kind, level):
+            if side == 'LONG':
+                return level < ep if kind == 'sl' else level > ep
+            return level > ep if kind == 'sl' else level < ep
+
+        for kind, val in (('sl', manual_sl), ('tp', manual_tp)):
+            if val is None:
+                continue
+            try:
+                f = float(val)
+            except (TypeError, ValueError):
+                continue
+            if f <= 0 or not _valid(kind, f):
+                continue
+            rv = self._round_sltp_value(f)
+            position['manual_' + kind] = rv
+            try:
+                self._record_manual_hist(position, kind, rv)
+            except Exception:
+                pass
 
     def _sltp_display(self, pos, field):
         """SL/TP value for a Telegram message: the MANUAL override if set, else

@@ -143,6 +143,16 @@
             </select>
         </div>
         <div class="tk-field">
+            <label>КАПІТАЛІЗАЦІЯ</label>
+            <select id="tk-mcap" title="Обмежити перелік лише монетами з топ-N за ринковою капіталізацією (CoinGecko). «Усі» = без фільтра.">
+                <option value="0" selected>Усі</option>
+                <option value="50">Топ-50 за кап.</option>
+                <option value="100">Топ-100 за кап.</option>
+                <option value="200">Топ-200 за кап.</option>
+                <option value="300">Топ-300 за кап.</option>
+            </select>
+        </div>
+        <div class="tk-field">
             <label>VOL 24H ≥ (M$)</label>
             <input type="number" id="tk-min-vol" min="0" step="1" placeholder="0"
                    title="Відсіювати монети з обсягом 24h нижче цього (у млн $). 0 = без фільтра."
@@ -377,6 +387,7 @@ async function tkTopActive() {
                 top_n: parseInt(document.getElementById('tk-topn').value),
                 active_only: document.getElementById('tk-active').checked,
                 min_vol_musd: parseFloat(document.getElementById('tk-min-vol').value) || 0,
+                mcap_top: parseInt(document.getElementById('tk-mcap').value) || 0,
             }),
         });
         const d = await res.json();
@@ -384,7 +395,9 @@ async function tkTopActive() {
         tkTopRows = d.symbols;
         tkRenderTop(d.symbols, d.sort_by);
         let warn = (d.warnings && d.warnings.length) ? ' ⚠ ' + d.warnings.join('; ') : '';
-        stat.textContent = `🔥 ${d.exchange.toUpperCase()} · топ-${d.symbols.length} за ${d.sort_by}` + warn;
+        const mcapN = parseInt(document.getElementById('tk-mcap').value) || 0;
+        const mcapTxt = mcapN > 0 ? ` · 🏦 топ-${mcapN} за капіталізацією` : '';
+        stat.textContent = `🔥 ${d.exchange.toUpperCase()} · топ-${d.symbols.length} за ${d.sort_by}${mcapTxt}` + warn;
     } catch (e) {
         stat.textContent = '❌ ' + e;
     } finally {

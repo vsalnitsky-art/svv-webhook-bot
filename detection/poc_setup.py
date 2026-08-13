@@ -501,6 +501,13 @@ class PocSetupDaemon:
             for k in list(self._rows.keys()):
                 if k not in wlset:
                     self._rows.pop(k, None)
+        # #1: монети, що вже у ВІДКРИТІЙ угоді (real/paper), прибираємо з таблиці —
+        # їх уже веде TradeManager; інакше вони «висіли б» на 5/5 без обробки
+        # (manual_open відмовляє «вже є позиція» → рядок ніколи не зникав).
+        for k in list(self._rows.keys()):
+            if self._has_position(k):
+                with self._lock:
+                    self._rows.pop(k, None)
         # auto-open
         if s.get('auto_open', True):
             self._auto_open(s, now)
@@ -517,11 +524,38 @@ class PocSetupDaemon:
             if self._open_symbol(sym, side, manual=False):
                 self._opened[sym] = now
 
+    def _route_to_ff(self, sym: str, side: str) -> str:
+        """#2: якщо ❤️ Fuel Auto-Filter УВІМКНЕНИЙ і активна ХОЧ ОДНА черга —
+        монета спершу ЙДЕ В ЧЕРГУ (intercept), а не відкривається напряму.
+        Повертає disposition intercept:
+          'queued'  — покладено у чергу(и), чекає фільтр;
+          'dropped' — черга володіє, але відхилила (напр. Q2 CTR-ворота);
+          ''        — FF off АБО всі черги off → пряме відкриття POC-сетапом."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff or not ff.is_enabled():
+                return ''
+            st = ff.get_settings() if hasattr(ff, 'get_settings') else {}
+            any_q = any(bool(st.get(k)) for k in
+                        ('queue1_enabled', 'queue2_enabled',
+                         'queue3_enabled', 'queue4_enabled'))
+            if not any_q:
+                return ''
+            disp = ff.intercept(sym, side, kind='choch')
+            return disp or ''
+        except Exception as e:
+            print(f"[POC-setup] FF route error {sym}: {e}")
+            return ''
+
     def _open_symbol(self, sym: str, side: str, manual: bool = False) -> bool:
         """Відкриваємо угоду через TradeManager (bypass_gates=True), СТАВИМО
-        Manual SL (межа OB-блоку + буфер) і Manual TP (ціна POC 7D), прибираємо
+        Manual SL (межа OB-блоку + буфер) і Manual TP (ціна POC вікна), прибираємо
         монету зі списку. Мітка opened_by = «🎯 POC-сетап». Працює однаково для
-        авто- і ручного (кнопка) відкриття."""
+        авто- і ручного (кнопка) відкриття.
+
+        #2: якщо увімкнена хоч одна черга ❤️ Fuel Auto-Filter — монета спершу
+        йде В ЧЕРГУ (intercept), а НЕ відкривається напряму (чергу далі веде FF)."""
         try:
             tm = self._get_tm() if self._get_tm else None
             if not tm or not hasattr(tm, 'manual_open'):
@@ -529,8 +563,37 @@ class PocSetupDaemon:
             s = self.get_settings()
             with self._lock:
                 row = dict(self._rows.get(sym) or {})
+
+            # === #2: маршрутизація в чергу ❤️ Fuel Auto-Filter ===
+            disp = self._route_to_ff(sym, side)
+            if disp in ('queued', 'dropped'):
+                with self._lock:
+                    self._rows.pop(sym, None)
+                    self._armed.pop(sym, None)
+                self._at[sym] = time.time()
+                try:
+                    from detection.activity_log import log_activity
+                    if disp == 'queued':
+                        log_activity(sym, 'queued',
+                                     '🎯 POC-сетап → черга ❤️ Fuel Auto-Filter '
+                                     '(чекає фільтр черги)',
+                                     side=side, source='POC')
+                    else:
+                        log_activity(sym, 'dropped',
+                                     '🎯 POC-сетап → чергу ❤️ Fuel Auto-Filter '
+                                     'відхилено (CTR-нахил не в бік сигналу)',
+                                     side=side, source='POC')
+                except Exception:
+                    pass
+                return True
+
+            # === Пряме відкриття (черг немає) ===
+            # #3: рахуємо SL/TP ДО відкриття і передаємо в manual_open, щоб
+            # TG-повідомлення показало рівні, а не null.
+            sl, tp = self._calc_sl_tp(tm, sym, side, row, s)
             tag = f"🎯 POC-сетап{' (ручне)' if manual else ''} {side}"
-            res = tm.manual_open(sym, side, bypass_gates=True, opened_by=tag) or {}
+            res = tm.manual_open(sym, side, bypass_gates=True, opened_by=tag,
+                                 manual_sl=sl, manual_tp=tp) or {}
             ok = bool(res.get('real_opened') or res.get('shadow_opened')
                       or res.get('status') == 'opened' or res.get('ok'))
             if not ok:
@@ -546,9 +609,10 @@ class PocSetupDaemon:
                     is_paper = True
             except Exception:
                 pass
-            # ── Manual SL = межа OB-блоку (HTF/менший) + буфер; TP = POC вікна ──
+            # ── Підтверджуємо Manual SL/TP на позиції (валідація за ПОТОЧНОЮ
+            # ціною — на випадок, якщо відкриття відхилило рівень за entry). ──
             try:
-                self._apply_sl_tp(tm, sym, side, row, s, is_paper)
+                self._apply_sl_tp(tm, sym, side, row, s, is_paper, sl=sl, tp=tp)
             except Exception as e:
                 print(f"[POC-setup] SL/TP set warn {sym}: {e}")
             with self._lock:
@@ -567,16 +631,14 @@ class PocSetupDaemon:
             print(f"[POC-setup] open error {sym}: {e}")
             return False
 
-    def _apply_sl_tp(self, tm, sym: str, side: str, row: Dict, s: Dict, is_paper: bool):
-        """SL = межа OB-блоку ± буфер (SHORT→top×(1+buf), LONG→bottom×(1−buf)),
-        TP = POC сетап-вікна. OB-бокс беремо зі спрацьованого L5; для ручної
-        кнопки (L5 ще не спалахнув) — рахуємо OB наживо, але ЛИШЕ у бік угоди.
-
-        ВАЖЛИВО: update_manual_sl_tp відхиляє ОБИДВА рівні атомарно, якщо хоч один
-        не з того боку ціни. Тому шлемо SL і TP ОКРЕМИМИ викликами (щоб один
-        невдалий не блокував інший) і логуємо причину відмови."""
-        if not hasattr(tm, 'update_manual_sl_tp'):
-            return
+    def _calc_sl_tp(self, tm, sym: str, side: str, row: Dict, s: Dict):
+        """Рахує (sl, tp) для POC-угоди БЕЗ виставлення (для передачі у
+        manual_open, щоб рівні потрапили у TG-повідомлення).
+        SL = межа OB-блоку ± буфер (SHORT→top×(1+buf), LONG→bottom×(1−buf)).
+        OB-бокс беремо зі спрацьованого L5 (`row['ob_box']`); якщо його нема
+        (ручна кнопка, L5 ще не спалахнув) — рахуємо OB наживо ЛИШЕ у бік угоди,
+        старший (`ob_htf`) → менший (`ob_tf`) TF.
+        TP = ціна POC сетап-вікна (`row['tp']`)."""
         try:
             buf = float(s.get('sl_buffer_pct', 0.10) or 0.10) / 100.0
         except (TypeError, ValueError):
@@ -599,6 +661,28 @@ class PocSetupDaemon:
             else:
                 sl = float(box['bottom']) * (1.0 - buf)
         tp = row.get('tp')
+        try:
+            tp = float(tp) if tp is not None else None
+        except (TypeError, ValueError):
+            tp = None
+        return sl, tp
+
+    def _apply_sl_tp(self, tm, sym: str, side: str, row: Dict, s: Dict, is_paper: bool,
+                     sl=None, tp=None):
+        """Виставляє Manual SL/TP на вже відкриту позицію. Значення або передані
+        (precomputed у _open_symbol), або рахуються тут через _calc_sl_tp.
+
+        ВАЖЛИВО: update_manual_sl_tp відхиляє ОБИДВА рівні атомарно, якщо хоч один
+        не з того боку ціни. Тому шлемо SL і TP ОКРЕМИМИ викликами (щоб один
+        невдалий не блокував інший) і логуємо причину відмови."""
+        if not hasattr(tm, 'update_manual_sl_tp'):
+            return
+        try:
+            buf = float(s.get('sl_buffer_pct', 0.10) or 0.10) / 100.0
+        except (TypeError, ValueError):
+            buf = 0.001
+        if sl is None and tp is None:
+            sl, tp = self._calc_sl_tp(tm, sym, side, row, s)
         try:
             from detection.activity_log import log_activity
         except Exception:

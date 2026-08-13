@@ -4217,11 +4217,16 @@ def register_api_routes(app):
             _min_vol_musd = float(data.get('min_vol_musd', 0) or 0)
         except (TypeError, ValueError):
             _min_vol_musd = 0.0
+        try:
+            _mcap_top = int(data.get('mcap_top', 0) or 0)
+        except (TypeError, ValueError):
+            _mcap_top = 0
         res = tickr_core.top_active(
             exchange=exchange, categories=cats, sort_by=sort_by,
             top_n=int(data.get('top_n', 20)),
             active_only=bool(data.get('active_only', True)),
-            min_vol_usd=_min_vol_musd * 1_000_000)
+            min_vol_usd=_min_vol_musd * 1_000_000,
+            mcap_top=_mcap_top)
         # merge baseline + re-sort if spike requested and baseline exists
         if sort_by == 'spike' and baseline and res.get('ok'):
             for r in res['symbols']:

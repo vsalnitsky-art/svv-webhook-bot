@@ -435,9 +435,68 @@ def to_tv_list(symbols: List[Dict], separator: str = 'newline') -> str:
 SORT_KEYS = ['vol_usd', 'spike', 'change_abs', 'trades', 'oi_usd', 'funding_abs']
 
 
+# ----------------------------------------------------------------------
+# Market-cap filter — top-N coins by market capitalization (CoinGecko)
+# ----------------------------------------------------------------------
+# Exchanges don't expose market cap, so we fetch the ranked list of base
+# assets from CoinGecko once and cache it (mcap moves slowly). The Top
+# Active table can then be restricted to only the largest-cap coins.
+_MCAP_CACHE: Dict[int, Dict] = {}          # bucket → {'at': ts, 'bases': set}
+_MCAP_TTL = 3600                            # 1h — capitalization is slow-moving
+_MCAP_BUCKETS = (50, 100, 200, 300)        # values the UI offers
+
+
+def _mcap_bucket(n: int) -> int:
+    """Round the requested count UP to the nearest fetch bucket (so 100 and
+    300 share one API page each; we slice locally)."""
+    for b in _MCAP_BUCKETS:
+        if n <= b:
+            return b
+    return _MCAP_BUCKETS[-1]
+
+
+def top_mcap_bases(n: int) -> set:
+    """Return the set of BASE ASSETS (e.g. {'BTC','ETH',…}) for the top-`n`
+    coins by market capitalization, per CoinGecko. Cached for _MCAP_TTL.
+    Returns an empty set on any failure (caller then applies NO mcap filter)."""
+    try:
+        n = int(n or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        return set()
+    bucket = _mcap_bucket(n)
+    now = time.time()
+    hit = _MCAP_CACHE.get(bucket)
+    if hit and (now - hit['at'] < _MCAP_TTL) and hit.get('ordered'):
+        return set(hit['ordered'][:n])
+    ordered: List[str] = []
+    try:
+        r = _session.get(
+            'https://api.coingecko.com/api/v3/coins/markets',
+            params={'vs_currency': 'usd', 'order': 'market_cap_desc',
+                    'per_page': bucket, 'page': 1, 'sparkline': 'false'},
+            timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        for c in (r.json() or []):
+            sym = str(c.get('symbol') or '').upper().strip()
+            if sym and sym not in ordered:
+                ordered.append(sym)
+    except Exception as e:
+        print(f"[tickr] mcap fetch error (bucket {bucket}): {e}")
+        # Serve a stale cache if we have one; else no filter.
+        if hit and hit.get('ordered'):
+            return set(hit['ordered'][:n])
+        return set()
+    if ordered:
+        _MCAP_CACHE[bucket] = {'at': now, 'ordered': ordered}
+    return set(ordered[:n])
+
+
 def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
                top_n: int = 20, active_only: bool = True,
-               baseline_key: str = '', min_vol_usd: float = 0.0) -> Dict:
+               baseline_key: str = '', min_vol_usd: float = 0.0,
+               mcap_top: int = 0) -> Dict:
     """Fetch instruments + 24h activity metrics, rank, return top N.
 
     sort_by:
@@ -479,12 +538,28 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
     except (TypeError, ValueError):
         min_vol_usd = 0.0
 
+    # 🏦 Market-cap gate — restrict to the top-N coins by capitalization
+    # (CoinGecko). Empty set = filter off (mcap_top=0 or fetch failed).
+    try:
+        mcap_top = int(mcap_top or 0)
+    except (TypeError, ValueError):
+        mcap_top = 0
+    mcap_bases = top_mcap_bases(mcap_top) if mcap_top > 0 else set()
+    if mcap_top > 0 and not mcap_bases:
+        warnings.append('капіталізацію не вдалося отримати (CoinGecko) — фільтр не застосовано')
+
     enriched = []
     for s in symbols:
         # Skip dated/delivery futures (ETHUSDT-26MAR27, BTCUSDT-31JUL26 …) —
         # they carry a '-' suffix and are not the perpetual/spot we want.
         if '-' in str(s.get('symbol', '')):
             continue
+        # 🏦 Market-cap filter: keep only coins whose base asset is in the
+        # top-N-by-mcap set (when the set is non-empty).
+        if mcap_bases:
+            _base = str(s.get('base_asset') or '').upper().strip()
+            if _base not in mcap_bases:
+                continue
         m = metrics.get((s['market_type'], _canon(s['symbol']))) or {}
         row = dict(s)
         row['vol_usd'] = m.get('vol_usd', 0.0)
