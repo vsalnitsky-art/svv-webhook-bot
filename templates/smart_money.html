@@ -1617,6 +1617,26 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-show-pivots" onchange="onShowPivotsChange()">
                         Show Pivots (HH/HL/LH/LL)
                     </label>
+                    <!-- 🏁 Strong High / Weak Low — останній непробитий swing-макс
+                         (Strong High) і swing-мін (Weak Low) на ОКРЕМОМУ TF
+                         (за замовч. 1H). Малюються горизонтальними лініями. -->
+                    <label class="sm-checkbox"
+                           title="Показати на графіку Strong High (останній swing-максимум) і Weak Low (останній swing-мінімум), пораховані на обраному TF (за замовч. 1H).">
+                        <input type="checkbox" id="sm-show-swinghl" onchange="updateSwingHL()">
+                        Show Strong/Weak High/Low
+                    </label>
+                    <div class="sm-control-item"
+                         title="Таймфрейм для розрахунку Strong High / Weak Low. За замовчуванням 1H — незалежно від основного TF структури.">
+                        <label>H/L TF:</label>
+                        <select id="sm-swinghl-tf" onchange="updateSwingHL()">
+                            <option value="5m">5M</option>
+                            <option value="15m">15M</option>
+                            <option value="30m">30M</option>
+                            <option value="1h" selected>1H</option>
+                            <option value="4h">4H</option>
+                            <option value="1d">1D</option>
+                        </select>
+                    </div>
                 </div>
             </div>
             
@@ -1763,9 +1783,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <option value="OR">OR (lenient)</option>
                         </select>
                     </div>
+                    <!-- 🔮 Min strength — додаткова умова СИЛИ прогнозу (впевненість)
+                         до УВІМКНЕНИХ 1H/4H-фільтрів напрямку. Збіг напрямку зі
+                         слабшою за поріг впевненістю → сигнал ріжеться. -->
+                    <div class="sm-control-item"
+                         title="Додаткова умова до фільтрів 1H/4H: прогноз має не лише збігатись напрямком, а й бути НЕ СЛАБШИМ за обраний рівень СИЛИ (впевненість прогнозу). сильний ≥66% · помірний ≥40%. «Будь-яка» = силу не враховувати.">
+                        <label>Мін. сила:</label>
+                        <select id="sm-forecast-min-strength" onchange="updateForecastFilter()">
+                            <option value="off" selected>Будь-яка</option>
+                            <option value="moderate">Помірний (≥40%)</option>
+                            <option value="strong">Сильний (≥66%)</option>
+                        </select>
+                    </div>
                 </div>
             </div>
-            
+
             <div class="sm-settings-section">
                 <h3>📦 Volumized OB Trend</h3>
                 <div class="sm-controls">
@@ -1790,6 +1822,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <div class="sm-control-item">
                         <label>TF:</label>
                         <select id="sm-volumized-tf" onchange="updateVolumizedSettings()">
+                            <option value="5m">5M</option>
                             <option value="15m">15M</option>
                             <option value="30m">30M</option>
                             <option value="1h" selected>1H</option>
@@ -4117,6 +4150,8 @@ let chart = null;
 let candleSeries = null;
 let currentSymbol = null;
 let activeLines = [];
+// 🏁 Strong High / Weak Low — горизонтальні лінії на candleSeries (Display-опція).
+let swingHighLine = null, weakLowLine = null, _swingHLKey = null;
 // ⚪ POC (Volume Profile, Binance SPOT) — біла горизонтальна лінія «як у MobChart».
 let pocPriceLine = null;          // хендл price-line POC на candleSeries
 let _pocLastClose = null;         // остання ціна закриття (для вердикту ціна↔POC)
@@ -5092,6 +5127,16 @@ async function loadSettings() {
             const fcWrap = document.getElementById('sm-forecast-combine-wrap');
             if (fcWrap) fcWrap.style.display =
                 (s.forecast_1h_filter_enabled && s.forecast_4h_filter_enabled) ? '' : 'none';
+            // 🔮 Min strength — додаткова умова сили прогнозу (off/moderate/strong).
+            const fcStr = document.getElementById('sm-forecast-min-strength');
+            if (fcStr) fcStr.value =
+                (['moderate', 'strong'].indexOf(s.forecast_min_strength) >= 0)
+                    ? s.forecast_min_strength : 'off';
+            // 🏁 Strong High / Weak Low (Display)
+            const shEn = document.getElementById('sm-show-swinghl');
+            if (shEn) shEn.checked = !!s.show_swing_hl_enabled;
+            const shTf = document.getElementById('sm-swinghl-tf');
+            if (shTf) shTf.value = s.swing_hl_timeframe || '1h';
             // === Volumized OB Trend — 7 inputs ===
             // Defaults from DEFAULT_SETTINGS — fallback to those values
             // when the field is missing from the response (older deploys).
@@ -5254,6 +5299,8 @@ async function updateForecastFilter() {
     const en1h = document.getElementById('sm-forecast-1h-enabled').checked;
     const en4h = document.getElementById('sm-forecast-4h-enabled').checked;
     const mode = document.getElementById('sm-forecast-combine-mode').value || 'AND';
+    const minStrEl = document.getElementById('sm-forecast-min-strength');
+    const minStr = minStrEl ? (minStrEl.value || 'off') : 'off';
     // Show combine selector only when both TFs are ON — otherwise it's
     // a no-op setting and just adds visual noise.
     const wrap = document.getElementById('sm-forecast-combine-wrap');
@@ -5266,10 +5313,34 @@ async function updateForecastFilter() {
                 forecast_1h_filter_enabled: en1h,
                 forecast_4h_filter_enabled: en4h,
                 forecast_combine_mode: mode,
+                forecast_min_strength: minStr,
             }),
         });
         updateSettingsSummary();
     } catch (err) { alert('Forecast Filter update error: ' + err); }
+}
+
+// 🏁 Strong High / Weak Low (Display) — зберігає прапорець + TF; одразу
+// перемальовує лінії на графіку для поточної монети.
+async function updateSwingHL() {
+    const enabled = document.getElementById('sm-show-swinghl').checked;
+    const tf = document.getElementById('sm-swinghl-tf').value || '1h';
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                show_swing_hl_enabled: enabled,
+                swing_hl_timeframe: tf,
+            }),
+        });
+        updateSettingsSummary();
+        if (!enabled) _removeSwingHLLines();
+        // Свіжий стан підтягне наступний чарт-поллінг; підштовхнемо одразу.
+        if (typeof loadChart === 'function' && currentSymbol) {
+            try { loadChart(); } catch (e) {}
+        }
+    } catch (err) { alert('Strong/Weak H/L update error: ' + err); }
 }
 
 // PD Zone Filter — threshold-based signal gate. Lives alongside the
@@ -5866,6 +5937,7 @@ async function loadChart() {
         if (isSymbolChange) {
             // New symbol — full reset and fit
             candleSeries.setData(ohlc);
+            _removeSwingHLLines();   // 🏁 скинути лінії H/L при зміні монети
         } else {
             // Same symbol — incremental update to preserve user's zoom/pan
             if (ohlc.length > lastOhlcLength) {
@@ -5878,7 +5950,11 @@ async function loadChart() {
             }
         }
         lastOhlcLength = ohlc.length;
-        
+
+        // 🏁 Strong High / Weak Low — перемалювати лінії з чарт-стану (кожен
+        // полінг: рівні можуть оновитись; при вимкненні бекенд шле show_swing_hl=false).
+        _drawSwingHLLines(d);
+
         // === Structure + signals (only redraw if changed) ===
         // Cache key includes both toggles and signal count so re-renders happen
         // when structure visibility toggles or new signals arrive.
@@ -6727,6 +6803,45 @@ function _removePocLine() {
         try { candleSeries.removePriceLine(pocPriceLine); } catch (e) {}
     }
     pocPriceLine = null;
+}
+
+// 🏁 Strong High / Weak Low — прибрати намальовані лінії.
+function _removeSwingHLLines() {
+    if (candleSeries) {
+        if (swingHighLine) { try { candleSeries.removePriceLine(swingHighLine); } catch (e) {} }
+        if (weakLowLine)  { try { candleSeries.removePriceLine(weakLowLine);  } catch (e) {} }
+    }
+    swingHighLine = weakLowLine = null;
+    _swingHLKey = null;
+}
+
+// 🏁 Strong High / Weak Low — намалювати горизонтальні лінії з даних чарт-стану
+// (d.strong_high / d.weak_low). Малюємо ЛИШЕ коли d.show_swing_hl === true.
+// Пропускаємо перемалювання, якщо рівні/TF не змінились (без флікеру на полінгу).
+function _drawSwingHLLines(d) {
+    if (!candleSeries || !d || !d.show_swing_hl) { _removeSwingHLLines(); return; }
+    const shP = (d.strong_high && d.strong_high.price) || 0;
+    const wlP = (d.weak_low && d.weak_low.price) || 0;
+    const key = `${d.swing_hl_tf || ''}|${shP}|${wlP}`;
+    if (key === _swingHLKey && (swingHighLine || weakLowLine)) return;
+    _removeSwingHLLines();
+    _swingHLKey = key;
+    const _solid = (window.LightweightCharts && LightweightCharts.LineStyle)
+        ? LightweightCharts.LineStyle.Solid : 0;
+    const tf = (d.swing_hl_tf || '1h').toUpperCase();
+    const sh = d.strong_high, wl = d.weak_low;
+    if (sh && sh.price != null && sh.price > 0) {
+        swingHighLine = candleSeries.createPriceLine({
+            price: sh.price, color: '#f87171', lineWidth: 1, lineStyle: _solid,
+            axisLabelVisible: true, title: `Strong High ${tf}`,
+        });
+    }
+    if (wl && wl.price != null && wl.price > 0) {
+        weakLowLine = candleSeries.createPriceLine({
+            price: wl.price, color: '#4ade80', lineWidth: 1, lineStyle: _solid,
+            axisLabelVisible: true, title: `Weak Low ${tf}`,
+        });
+    }
 }
 async function loadVolumeProfilePOC() {
     const badge = document.getElementById('sm-poc-badge');

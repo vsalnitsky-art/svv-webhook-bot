@@ -183,6 +183,13 @@ DEFAULT_SETTINGS = {
     'forecast_1h_filter_enabled': False,
     'forecast_4h_filter_enabled': False,
     'forecast_combine_mode': 'AND',  # 'AND' or 'OR' — only used when BOTH enabled
+    # 🔮 Мінімальна СИЛА прогнозу (впевненість, %) — додаткова умова до
+    # УВІМКНЕНИХ 1H/4H-фільтрів напрямку. Прогноз, що збігається напрямком, але
+    # СЛАБШИЙ за поріг, вважається НЕ-збігом (сигнал ріжеться). Значення:
+    #   'off'      — сила не враховується (як було);
+    #   'moderate' — вимагати ≥40% (помірний або сильний);
+    #   'strong'   — вимагати ≥66% (лише сильний).
+    'forecast_min_strength': 'off',
     
     # === Volumized Order Blocks (port of TradingView "Volumized OBs" indicator) ===
     # Informational trend detector: finds the latest formed OB (Bull/Bear)
@@ -216,6 +223,12 @@ DEFAULT_SETTINGS = {
     #     (volumized_timeframe/swing/end_method/atr/zone_count/combine). Дефолт OFF.
     'choch_alerts_enabled': True,
     'vob_alert_enabled': False,
+    # === Display: Strong High / Weak Low (swing extremes) ===
+    # Показ на графіку останнього НЕПРОБИТОГО swing-максимуму (Strong High) і
+    # swing-мінімуму (Weak Low), порахованих на ОКРЕМОМУ таймфреймі
+    # (за замовч. 1H — незалежно від основного TF структури). Дефолт OFF.
+    'show_swing_hl_enabled': False,
+    'swing_hl_timeframe': '1h',
 }
 
 
@@ -1013,7 +1026,9 @@ class SMCScanner:
                        'ctr_timeframe',
                        # Forecast filter (1H/4H multi-horizon prediction)
                        'forecast_1h_filter_enabled', 'forecast_4h_filter_enabled',
-                       'forecast_combine_mode',
+                       'forecast_combine_mode', 'forecast_min_strength',
+                       # Display: Strong High / Weak Low (swing extremes)
+                       'show_swing_hl_enabled', 'swing_hl_timeframe',
                        # Volumized OB Trend (Pine port)
                        'use_volumized_ob', 'volumized_timeframe',
                        'volumized_swing_length', 'volumized_ob_end_method',
@@ -1170,7 +1185,7 @@ class SMCScanner:
             # All 5 algorithm-affecting Pine parameters + the TF selector.
             # Each falls back to its DEFAULT_SETTINGS value on bad input,
             # never accepting silently corrupting values.
-            ALLOWED_VOL_TFS = ('15m', '30m', '1h', '4h')
+            ALLOWED_VOL_TFS = ('5m', '15m', '30m', '1h', '4h')
             if self._settings.get('volumized_timeframe') not in ALLOWED_VOL_TFS:
                 self._settings['volumized_timeframe'] = '1h'
             
@@ -1197,7 +1212,19 @@ class SMCScanner:
             
             self._settings['volumized_combine_obs'] = bool(
                 self._settings.get('volumized_combine_obs', True))
-            
+
+            # === Forecast min-strength validation ===
+            if str(self._settings.get('forecast_min_strength', 'off')).lower() \
+                    not in ('off', 'moderate', 'strong'):
+                self._settings['forecast_min_strength'] = 'off'
+
+            # === Strong High / Weak Low (Display) validation ===
+            self._settings['show_swing_hl_enabled'] = bool(
+                self._settings.get('show_swing_hl_enabled', False))
+            ALLOWED_SWINGHL_TFS = ('5m', '15m', '30m', '1h', '4h', '1d')
+            if self._settings.get('swing_hl_timeframe') not in ALLOWED_SWINGHL_TFS:
+                self._settings['swing_hl_timeframe'] = '1h'
+
             # Reset cache on relevant changes
             new_tf = self._settings['timeframe']
             new_isize = self._settings['internal_size']
@@ -2087,7 +2114,13 @@ class SMCScanner:
         
         # Map signal side label → forecast side value
         target = 1 if side == 'LONG' else -1
-        
+
+        # 🔮 Мінімальна СИЛА прогнозу (впевненість). Збіг напрямку зі слабшою за
+        # поріг впевненістю → трактуємо як 'weak' (не-збіг → ріже сигнал у single-
+        # режимі; у OR не блокує сильний збіг на іншому TF, як і 'neutral').
+        _ms = str(self._settings.get('forecast_min_strength', 'off')).lower()
+        min_conf = 66 if _ms == 'strong' else (40 if _ms == 'moderate' else 0)
+
         # Pull cached forecast for this symbol
         forecast_1h = None
         forecast_4h = None
@@ -2101,9 +2134,9 @@ class SMCScanner:
                     forecast_4h = cached.get('forecast_4h')
         except Exception:
             pass
-        
+
         def evaluate(fc, label):
-            """Return one of: 'match', 'opposite', 'neutral', 'nodata'."""
+            """Return one of: 'match', 'weak', 'opposite', 'neutral', 'nodata'."""
             if not fc or not isinstance(fc, dict):
                 return 'nodata'
             s = fc.get('side', None)
@@ -2111,7 +2144,17 @@ class SMCScanner:
                 return 'nodata'
             if s == 0:
                 return 'neutral'
-            return 'match' if s == target else 'opposite'
+            if s != target:
+                return 'opposite'
+            # Напрямок збігся — перевіряємо силу (впевненість), якщо задано поріг.
+            if min_conf > 0:
+                try:
+                    conf = float(fc.get('confidence') or 0)
+                except (TypeError, ValueError):
+                    conf = 0.0
+                if conf < min_conf:
+                    return 'weak'
+            return 'match'
         
         r1 = evaluate(forecast_1h, '1H') if want_1h else None
         r4 = evaluate(forecast_4h, '4H') if want_4h else None
@@ -2841,6 +2884,52 @@ class SMCScanner:
         cache[symbol] = (now, vob)
         return vob
 
+    def _swing_hl_for_tf(self, symbol: str, tf: str):
+        """🏁 Strong High / Weak Low на ОКРЕМОМУ TF (Display-опція). Останній
+        непробитий swing-максимум (HH/LH) і swing-мінімум (HL/LL), пораховані
+        ТОЧНО на `tf` (незалежно від основного TF структури). 30с-кеш.
+        Повертає {'strong_high': {...}|None, 'weak_low': {...}|None} або None."""
+        now = time.time()
+        cache = getattr(self, '_swinghl_cache', None)
+        if cache is None:
+            self._swinghl_cache = cache = {}
+        ckey = f"{symbol}|{tf}"
+        hit = cache.get(ckey)
+        if hit and (now - hit[0]) < 30:
+            return hit[1]
+        out = None
+        try:
+            from detection.market_data import get_market_data
+            from detection.smc_structure import detect_smc_structure
+            md = get_market_data()
+            kl = md.fetch_klines(symbol, limit=KLINES_LIMIT, interval=tf) if md else None
+            if kl and len(kl) >= 50:
+                analysis = detect_smc_structure(
+                    kl, internal_size=self.get_internal_size(),
+                    swing_size=int(self._settings.get('swing_size', 50)))
+                sw = analysis.get('swing', {}) or {}
+
+                def to_sec(t):
+                    if t is None:
+                        return 0
+                    return int(t // 1000) if t > 1e12 else int(t)
+
+                sh = wl = None
+                for p in reversed(sw.get('pivots', []) or []):
+                    if p.get('type') in ('HH', 'LH') and sh is None:
+                        sh = {'time': to_sec(p.get('t')), 'price': p.get('price'),
+                              'type': p.get('type')}
+                    if p.get('type') in ('HL', 'LL') and wl is None:
+                        wl = {'time': to_sec(p.get('t')), 'price': p.get('price'),
+                              'type': p.get('type')}
+                    if sh and wl:
+                        break
+                out = {'strong_high': sh, 'weak_low': wl}
+        except Exception as e:
+            print(f"[SMC] swing HL error {symbol} {tf}: {e}")
+        cache[ckey] = (now, out)
+        return out
+
     def get_chart_data(self, symbol: str) -> Dict:
         """Return klines + structure for chart rendering. Uses cache if fresh."""
         symbol = self._normalize_symbol(symbol)
@@ -2978,7 +3067,19 @@ class SMCScanner:
                     }
                 if strong_high and weak_low:
                     break
-        
+
+        # 🏁 Display: Strong High / Weak Low на ОКРЕМОМУ TF (за замовч. 1H).
+        # Коли увімкнено — перекриваємо значення, пораховані на основному TF,
+        # значеннями з обраного `swing_hl_timeframe`. Коли вимкнено — фронт
+        # взагалі не малює (show_swing_hl=False).
+        sh_enabled = bool(self._settings.get('show_swing_hl_enabled', False))
+        sh_tf = self._settings.get('swing_hl_timeframe', '1h')
+        if sh_enabled:
+            alt = self._swing_hl_for_tf(symbol, sh_tf)
+            if alt is not None:
+                strong_high = alt.get('strong_high')
+                weak_low = alt.get('weak_low')
+
         # === Forecast 1H + 4H + CTR (from forecast_engine cache) ===
         forecast_1h = None
         forecast_4h = None
@@ -3177,6 +3278,8 @@ class SMCScanner:
             'swing_trend': swing.get('trend', 0),
             'strong_high': strong_high,
             'weak_low': weak_low,
+            'show_swing_hl': sh_enabled,
+            'swing_hl_tf': sh_tf,
             'klines_count': len(ohlc),
             'updated_at': int(time.time()),
         }
