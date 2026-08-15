@@ -666,38 +666,63 @@ def _score_pivot_proximity(side: str, entry_price: float,
 def _score_pd_zone(side: str, entry_price: float,
                    range_high: Optional[float],
                    range_low: Optional[float],
-                   weight: float) -> Tuple[float, str]:
-    """Premium/Discount classifies where price sits in the active range:
-        > 61.8%: Premium (top of range — bad LONG entry, good SHORT)
-        < 38.2%: Discount (bottom of range — good LONG, bad SHORT)
-        38.2-61.8%: Equilibrium (mild signal either way)
-    
-    The 38.2 / 61.8 levels mirror Pine's PD zone convention exactly (Fib).
-    
-    For LONG: Discount = +full, Equilibrium = +0.3·, Premium = -full
+                   weight: float,
+                   pd_pct: Optional[float] = None,
+                   premium_min: Optional[float] = None,
+                   discount_max: Optional[float] = None) -> Tuple[float, str]:
+    """Premium/Discount classifies where price sits in the DEALING RANGE:
+        Premium  (top of range — bad LONG entry, good SHORT)
+        Discount (bottom of range — good LONG, bad SHORT)
+        Equilibrium (mild signal either way)
+
+    SINGLE SOURCE OF TRUTH. When `pd_pct` is supplied it is the authoritative
+    position % (0=bottom/Discount .. 100=top/Premium) computed by the SMC
+    scanner on the configured `pd_zone_timeframe` (default 1H) — the SAME value
+    the chart badge and the PD-zone filter use. We classify it with the SAME
+    configurable thresholds (`premium_min` / `discount_max`, defaults 75 / 25)
+    so the banner label can NEVER contradict the badge.
+
+    Only when `pd_pct` is absent (e.g. the Health path, which has no cached
+    dealing range) do we fall back to a locally-derived range_high/range_low
+    with the classic Fib 38.2 / 61.8 levels. This fallback is intentionally a
+    last resort: a short rolling window is NOT the SMC dealing range and must
+    never be presented as if it were the primary reading.
+
+    For LONG: Discount = +full, Equilibrium = +0.1·, Premium = -full
     For SHORT: mirror.
     """
-    if range_high is None or range_low is None or range_high <= range_low:
+    if pd_pct is not None:
+        # Authoritative dealing-range position (same as badge + filter).
+        pos = max(0.0, min(1.0, float(pd_pct) / 100.0))
+        hi = (float(premium_min) if premium_min is not None else 61.8) / 100.0
+        lo = (float(discount_max) if discount_max is not None else 38.2) / 100.0
+    elif range_high is None or range_low is None or range_high <= range_low:
         return 0.0, 'PD: діапазон недоступний'
-    
-    rng = range_high - range_low
-    pos = (entry_price - range_low) / rng  # 0 = bottom, 1 = top
-    pos = max(0.0, min(1.0, pos))
-    
-    if pos < 0.382:
-        zone, intensity = 'Discount', (0.382 - pos) / 0.382
+    else:
+        rng = range_high - range_low
+        pos = max(0.0, min(1.0, (entry_price - range_low) / rng))
+        hi, lo = 0.618, 0.382
+
+    # Guard against a degenerate threshold config (lo >= hi).
+    if lo >= hi:
+        lo, hi = 0.382, 0.618
+
+    if pos < lo:
+        zone = 'Discount'
+        intensity = (lo - pos) / lo if lo > 0 else 0.0
         # LONG good, SHORT bad
         sign = 1 if side == 'LONG' else -1
-    elif pos > 0.618:
-        zone, intensity = 'Premium', (pos - 0.618) / 0.382
+    elif pos > hi:
+        zone = 'Premium'
+        intensity = (pos - hi) / (1.0 - hi) if hi < 1.0 else 0.0
         # LONG bad, SHORT good
         sign = -1 if side == 'LONG' else 1
     else:
         # Equilibrium — mild bonus toward "fair" entry, negligible
         zone, intensity = 'Equilibrium', 0.0
         sign = 0
-    
-    intensity = min(1.0, intensity)
+
+    intensity = max(0.0, min(1.0, intensity))
     score = weight * sign * intensity if intensity > 0 else weight * 0.1 * (1 if zone == 'Equilibrium' else 0)
     pct = pos * 100
     # Self-explanatory Ukrainian label WITH the % position in the dealing range
@@ -785,6 +810,9 @@ def evaluate_entry(
     weak_high: Optional[float] = None,
     range_high: Optional[float] = None,
     range_low: Optional[float] = None,
+    pd_pct: Optional[float] = None,
+    pd_premium_min: Optional[float] = None,
+    pd_discount_max: Optional[float] = None,
     atr: Optional[float] = None,
     signal_volume: Optional[float] = None,
     avg_volume: Optional[float] = None,
@@ -801,7 +829,13 @@ def evaluate_entry(
         choch_age_bars: bars elapsed since the seeding CHoCH
         strong_low: highest HL pivot in current bullish leg, or None
         weak_high: highest LH pivot in current bearish leg, or None
-        range_high / range_low: bounds of the active swing range for PD calc
+        range_high / range_low: FALLBACK bounds for the PD calc, used only
+            when pd_pct is None (short rolling window — not the true range)
+        pd_pct: authoritative dealing-range position % from the SMC scanner
+            (get_pd_pct) — 0=Discount/bottom .. 100=Premium/top. When given it
+            OVERRIDES range_high/range_low so the banner matches the chart badge
+        pd_premium_min / pd_discount_max: PD thresholds (get_pd_thresholds) for
+            classifying pd_pct into Premium / Discount / Equilibrium
         atr: most recent ATR value (period 14)
         signal_volume: volume of the signal bar
         avg_volume: average volume over recent N bars (e.g. last 20)
@@ -843,7 +877,10 @@ def evaluate_entry(
                                               strong_low, weak_high, atr,
                                               cfg.weight_pivot_proximity))
     add('pd_zone', _score_pd_zone(side, entry_price,
-                                    range_high, range_low, cfg.weight_pd_zone))
+                                    range_high, range_low, cfg.weight_pd_zone,
+                                    pd_pct=pd_pct,
+                                    premium_min=pd_premium_min,
+                                    discount_max=pd_discount_max))
     add('volume', _score_volume_confirmation(signal_volume, avg_volume,
                                               cfg.weight_volume_confirmation))
     add('atr', _score_atr_health(atr, entry_price, cfg.weight_atr_health))

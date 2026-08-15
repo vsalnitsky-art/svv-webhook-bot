@@ -2413,6 +2413,7 @@ class TradeManager:
             'choch_age_bars': None,
             'strong_low': None, 'weak_high': None,
             'range_high': None, 'range_low': None,
+            'pd_pct': None, 'pd_premium_min': None, 'pd_discount_max': None,
             'atr': None,
             'signal_volume': None, 'avg_volume': None,
         }
@@ -2491,16 +2492,36 @@ class TradeManager:
                 if ctx['strong_low'] is not None and ctx['weak_high'] is not None:
                     break
             
-            # Range — high/low of last 20 bars as a robust proxy.
-            # (Pine PD zone uses swing high/low; for our advisory score this
-            # short-window range is good enough and always available.)
+            # Range — high/low of last 20 bars, kept ONLY as a last-resort
+            # fallback for the PD score when the authoritative dealing-range %
+            # (below) is unavailable. This short window is NOT the SMC dealing
+            # range and must never be the primary reading.
             if klines and len(klines) >= 20:
                 window = klines[-20:]
                 ctx['range_high'] = max(float(k.get('h', k.get('p', 0))) for k in window)
                 ctx['range_low'] = min(float(k.get('l', k.get('p', 0))) for k in window)
         except Exception:
             pass
-        
+
+        # ---- PD Zone — authoritative Premium/Discount % (SINGLE SOURCE OF
+        # TRUTH). Reuse the SMC scanner's cached position on the configured
+        # pd_zone_timeframe (default 1H) — the SAME value the chart badge and
+        # the PD-zone filter show. This is what stops the banner from ever
+        # saying "Premium" while the badge says "Discount": both now read one
+        # dealing range instead of the banner recomputing from a 20-bar 15m
+        # window. Falls back to range_high/range_low only when uncached.
+        try:
+            if hasattr(self.scanner, 'get_pd_pct'):
+                pd_pct = self.scanner.get_pd_pct(symbol)
+                if pd_pct is not None:
+                    ctx['pd_pct'] = float(pd_pct)
+            if hasattr(self.scanner, 'get_pd_thresholds'):
+                prem_min, disc_max = self.scanner.get_pd_thresholds()
+                ctx['pd_premium_min'] = float(prem_min)
+                ctx['pd_discount_max'] = float(disc_max)
+        except Exception:
+            pass
+
         return ctx
     
     def _compute_entry_score(self, symbol: str, side: str,
