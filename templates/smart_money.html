@@ -1617,13 +1617,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-show-pivots" onchange="onShowPivotsChange()">
                         Show Pivots (HH/HL/LH/LL)
                     </label>
-                    <!-- 🏁 Strong High / Weak Low — останній непробитий swing-макс
-                         (Strong High) і swing-мін (Weak Low) на ОКРЕМОМУ TF
-                         (за замовч. 1H). Малюються горизонтальними лініями. -->
+                    <!-- 🏁 Swing High/Low — swing-екстремуми дилінг-діапазону на
+                         ОКРЕМОМУ TF (за замовч. 1H). Назви як у TradingView:
+                         Weak High/Strong Low (бичачий) або Strong High/Weak Low
+                         (ведмежий). Малюються горизонтальними лініями. -->
                     <label class="sm-checkbox"
-                           title="Показати на графіку Strong High (останній swing-максимум) і Weak Low (останній swing-мінімум), пораховані на обраному TF (за замовч. 1H).">
+                           title="Показати на графіку swing High/Low (як у TradingView): у висхідному тренді — Weak High зверху + Strong Low знизу; у низхідному — Strong High + Weak Low. Рівні = swing-екстремуми дилінг-діапазону на обраному TF (за замовч. 1H).">
                         <input type="checkbox" id="sm-show-swinghl" onchange="updateSwingHL()">
-                        Show Strong/Weak High/Low
+                        Show Swing High/Low
                     </label>
                     <div class="sm-control-item"
                          title="Таймфрейм для розрахунку Strong High / Weak Low. За замовчуванням 1H — незалежно від основного TF структури.">
@@ -6815,31 +6816,36 @@ function _removeSwingHLLines() {
     _swingHLKey = null;
 }
 
-// 🏁 Strong High / Weak Low — намалювати горизонтальні лінії з даних чарт-стану
-// (d.strong_high / d.weak_low). Малюємо ЛИШЕ коли d.show_swing_hl === true.
-// Пропускаємо перемалювання, якщо рівні/TF не змінились (без флікеру на полінгу).
+// 🏁 Swing High / Low — намалювати 2 горизонтальні лінії з чарт-стану
+// (d.swing_levels: {high:{price,label}, low:{price,label}}). Назви й рівні —
+// ТОЧНО як у TradingView (Weak High/Strong Low або Strong High/Weak Low,
+// залежно від swing-тренду; рівні = swing-екстремуми дилінг-діапазону).
+// Малюємо ЛИШЕ коли d.show_swing_hl === true; пропускаємо перемалювання,
+// якщо рівні/назви/TF не змінились (без флікеру на полінгу).
 function _drawSwingHLLines(d) {
-    if (!candleSeries || !d || !d.show_swing_hl) { _removeSwingHLLines(); return; }
-    const shP = (d.strong_high && d.strong_high.price) || 0;
-    const wlP = (d.weak_low && d.weak_low.price) || 0;
-    const key = `${d.swing_hl_tf || ''}|${shP}|${wlP}`;
+    const lv = d && d.swing_levels;
+    if (!candleSeries || !d || !d.show_swing_hl || !lv) { _removeSwingHLLines(); return; }
+    const hi = lv.high, lo = lv.low;
+    const tf = (d.swing_hl_tf || '1h').toUpperCase();
+    const hiP = (hi && hi.price) || 0;
+    const loP = (lo && lo.price) || 0;
+    const key = `${tf}|${hiP}|${loP}|${(hi && hi.label) || ''}|${(lo && lo.label) || ''}`;
     if (key === _swingHLKey && (swingHighLine || weakLowLine)) return;
     _removeSwingHLLines();
     _swingHLKey = key;
     const _solid = (window.LightweightCharts && LightweightCharts.LineStyle)
         ? LightweightCharts.LineStyle.Solid : 0;
-    const tf = (d.swing_hl_tf || '1h').toUpperCase();
-    const sh = d.strong_high, wl = d.weak_low;
-    if (sh && sh.price != null && sh.price > 0) {
+    // High-лінія — червона (опір), Low-лінія — зелена (підтримка); підпис із бекенду.
+    if (hi && hi.price != null && hi.price > 0) {
         swingHighLine = candleSeries.createPriceLine({
-            price: sh.price, color: '#f87171', lineWidth: 1, lineStyle: _solid,
-            axisLabelVisible: true, title: `Strong High ${tf}`,
+            price: hi.price, color: '#f87171', lineWidth: 1, lineStyle: _solid,
+            axisLabelVisible: true, title: `${hi.label || 'High'} ${tf}`,
         });
     }
-    if (wl && wl.price != null && wl.price > 0) {
+    if (lo && lo.price != null && lo.price > 0) {
         weakLowLine = candleSeries.createPriceLine({
-            price: wl.price, color: '#4ade80', lineWidth: 1, lineStyle: _solid,
-            axisLabelVisible: true, title: `Weak Low ${tf}`,
+            price: lo.price, color: '#4ade80', lineWidth: 1, lineStyle: _solid,
+            axisLabelVisible: true, title: `${lo.label || 'Low'} ${tf}`,
         });
     }
 }

@@ -1964,10 +1964,49 @@ class SMCScanner:
         the raw pct against configurable thresholds (pd_long_max_pct /
         pd_short_min_pct) for the actual filter decision.
         """
-        if not swing_pivots or current_price is None or current_price <= 0:
+        if current_price is None or current_price <= 0:
             return None
-        
-        # Find latest swing high pivot AND latest swing low pivot.
+
+        trailing_top, trailing_bottom = SMCScanner._swing_trailing_range(
+            klines, swing_pivots)
+        if trailing_top is None or trailing_bottom is None:
+            return None
+
+        range_size = trailing_top - trailing_bottom
+        pos_pct = (current_price - trailing_bottom) / range_size * 100
+        return round(pos_pct, 1)
+
+    @staticmethod
+    def _swing_hl_labels(trend):
+        """TradingView / LuxAlgo naming for the swing extremes, by swing trend.
+        Returns (high_label, low_label):
+          • bull  (trend > 0) — ('Weak High', 'Strong Low')
+            (у висхідному тренді high зазвичай знімають → слабкий; low породив
+             BOS вгору → сильний)
+          • bear  (trend < 0) — ('Strong High', 'Weak Low')
+          • undefined (0)     — трактуємо як бичаче ('Weak High', 'Strong Low')
+        """
+        if (trend or 0) < 0:
+            return 'Strong High', 'Weak Low'
+        return 'Weak High', 'Strong Low'
+
+    @staticmethod
+    def _swing_trailing_range(klines: List[Dict],
+                              swing_pivots: List[Dict]):
+        """The DEALING RANGE — trailing swing extremes (top, bottom).
+
+        Pine-faithful (`updateTrailingExtremes`): start from the latest swing
+        high/low pivot price, then EXTEND with max(high)/min(low) of every bar
+        since that pivot (so a creep above the last swing high grows the range).
+
+        This is the SINGLE SOURCE OF TRUTH for the swing high/low: the PD-zone
+        %, the chart badge, AND the Strong/Weak High-Low lines all read this,
+        so they can never disagree. Returns (top, bottom) floats, or
+        (None, None) when it can't be determined (no pivots / inverted range).
+        """
+        if not swing_pivots:
+            return None, None
+
         latest_high_pivot = None
         latest_low_pivot = None
         for p in reversed(swing_pivots):
@@ -1978,17 +2017,16 @@ class SMCScanner:
                 latest_low_pivot = p
             if latest_high_pivot is not None and latest_low_pivot is not None:
                 break
-        
+
         if latest_high_pivot is None or latest_low_pivot is None:
-            return None
-        
-        # === Compute trailing extremes (Pine updateTrailingExtremes) ===
+            return None, None
+
         high_pivot_idx = latest_high_pivot.get('idx', 0) or 0
         low_pivot_idx = latest_low_pivot.get('idx', 0) or 0
-        
+
         trailing_top = float(latest_high_pivot.get('price', 0))
         trailing_bottom = float(latest_low_pivot.get('price', 0))
-        
+
         n = len(klines) if klines else 0
         if n > 0:
             for i in range(min(high_pivot_idx, n), n):
@@ -1999,15 +2037,10 @@ class SMCScanner:
                 l = klines[i].get('l', klines[i].get('p', 0))
                 if l < trailing_bottom:
                     trailing_bottom = l
-        
+
         if trailing_top <= trailing_bottom:
-            # Inverted or zero range — happens at start of series before
-            # pivots stabilize. Skip gracefully.
-            return None
-        
-        range_size = trailing_top - trailing_bottom
-        pos_pct = (current_price - trailing_bottom) / range_size * 100
-        return round(pos_pct, 1)
+            return None, None
+        return trailing_top, trailing_bottom
     
     def _pd_zone_filter_allows(self, symbol: str, side: str) -> bool:
         """PD Zone gate — threshold-based.
@@ -2885,10 +2918,20 @@ class SMCScanner:
         return vob
 
     def _swing_hl_for_tf(self, symbol: str, tf: str):
-        """🏁 Strong High / Weak Low на ОКРЕМОМУ TF (Display-опція). Останній
-        непробитий swing-максимум (HH/LH) і swing-мінімум (HL/LL), пораховані
-        ТОЧНО на `tf` (незалежно від основного TF структури). 30с-кеш.
-        Повертає {'strong_high': {...}|None, 'weak_low': {...}|None} або None."""
+        """🏁 Swing High / Low на ОКРЕМОМУ TF (Display-опція) — ТОЧНО як у
+        TradingView / LuxAlgo «Smart Money Concepts».
+
+        Рівні = trailing swing-екстремуми ДИЛІНГ-ДІАПАЗОНУ (той самий
+        `_swing_trailing_range`, що живить PD-зону) → high-лінія на реальному
+        swing-максимумі, low-лінія на swing-мінімумі (не на випадковому проміж-
+        ному півоті, як було). НАЗВИ залежать від swing-тренду:
+          • тренд БИЧАЧИЙ  → high = «Weak High»,  low = «Strong Low»
+          • тренд ВЕДМЕЖИЙ → high = «Strong High», low = «Weak Low»
+        (у висхідному ринку high слабкий — його зазвичай знімають; low сильний —
+        він породив BOS вгору; у низхідному — дзеркально.)
+
+        Повертає {'high': {'price','label'}, 'low': {'price','label'}} або None.
+        30с-кеш (свій, окремий від сканера)."""
         now = time.time()
         cache = getattr(self, '_swinghl_cache', None)
         if cache is None:
@@ -2908,23 +2951,14 @@ class SMCScanner:
                     kl, internal_size=self.get_internal_size(),
                     swing_size=int(self._settings.get('swing_size', 50)))
                 sw = analysis.get('swing', {}) or {}
-
-                def to_sec(t):
-                    if t is None:
-                        return 0
-                    return int(t // 1000) if t > 1e12 else int(t)
-
-                sh = wl = None
-                for p in reversed(sw.get('pivots', []) or []):
-                    if p.get('type') in ('HH', 'LH') and sh is None:
-                        sh = {'time': to_sec(p.get('t')), 'price': p.get('price'),
-                              'type': p.get('type')}
-                    if p.get('type') in ('HL', 'LL') and wl is None:
-                        wl = {'time': to_sec(p.get('t')), 'price': p.get('price'),
-                              'type': p.get('type')}
-                    if sh and wl:
-                        break
-                out = {'strong_high': sh, 'weak_low': wl}
+                top, bottom = self._swing_trailing_range(kl, sw.get('pivots', []) or [])
+                if top is not None and bottom is not None:
+                    # swing_trend: +1 бичачий, -1 ведмежий, 0 невизначений.
+                    high_label, low_label = self._swing_hl_labels(sw.get('trend', 0))
+                    out = {
+                        'high': {'price': float(top), 'label': high_label},
+                        'low':  {'price': float(bottom), 'label': low_label},
+                    }
         except Exception as e:
             print(f"[SMC] swing HL error {symbol} {tf}: {e}")
         cache[ckey] = (now, out)
@@ -3068,17 +3102,13 @@ class SMCScanner:
                 if strong_high and weak_low:
                     break
 
-        # 🏁 Display: Strong High / Weak Low на ОКРЕМОМУ TF (за замовч. 1H).
-        # Коли увімкнено — перекриваємо значення, пораховані на основному TF,
-        # значеннями з обраного `swing_hl_timeframe`. Коли вимкнено — фронт
-        # взагалі не малює (show_swing_hl=False).
+        # 🏁 Display: Swing High / Low на ОКРЕМОМУ TF (за замовч. 1H), назви й
+        # рівні — як у TradingView (див. _swing_hl_for_tf). Коли увімкнено —
+        # віддаємо `swing_levels` {high:{price,label}, low:{price,label}}; фронт
+        # малює 2 лінії з ЦИМИ підписами. Коли вимкнено — None → фронт не малює.
         sh_enabled = bool(self._settings.get('show_swing_hl_enabled', False))
         sh_tf = self._settings.get('swing_hl_timeframe', '1h')
-        if sh_enabled:
-            alt = self._swing_hl_for_tf(symbol, sh_tf)
-            if alt is not None:
-                strong_high = alt.get('strong_high')
-                weak_low = alt.get('weak_low')
+        swing_levels = self._swing_hl_for_tf(symbol, sh_tf) if sh_enabled else None
 
         # === Forecast 1H + 4H + CTR (from forecast_engine cache) ===
         forecast_1h = None
@@ -3276,8 +3306,10 @@ class SMCScanner:
             'swing_pivots': fmt_pivots(swing),
             'swing_events': fmt_events(swing),
             'swing_trend': swing.get('trend', 0),
-            'strong_high': strong_high,
-            'weak_low': weak_low,
+            'strong_high': strong_high,   # legacy (main-TF pivots) — не для UI
+            'weak_low': weak_low,         # legacy (main-TF pivots) — не для UI
+            # 🏁 Swing High/Low для UI: рівні + TradingView-назви, або None.
+            'swing_levels': swing_levels,
             'show_swing_hl': sh_enabled,
             'swing_hl_tf': sh_tf,
             'klines_count': len(ohlc),

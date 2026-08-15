@@ -35,6 +35,27 @@
 `get_pd_thresholds()`); ролінг-вікно лишилось лише як fallback для Health-шляху.
 Тест: `test_pd_zone_source.py`.
 
+## SMC-чарт (/smart-money): налаштування відображення
+
+Гармошка **⚙️ Settings** керує чартом. Ключові фічі:
+
+- **🏁 Swing High/Low (Display, `show_swing_hl_enabled`/`swing_hl_timeframe`,
+  дефолт OFF/1H).** Дві горизонтальні лінії — ТОЧНО як у TradingView/LuxAlgo.
+  Рівні = trailing swing-екстремуми ДИЛІНГ-ДІАПАЗОНУ (`SMCScanner.
+  _swing_trailing_range` — ЄДИНЕ ДЖЕРЕЛО з PD-зоною, тому лінії й бейдж
+  Premium/Discount ніколи не розходяться). Назви за swing-трендом
+  (`_swing_hl_labels`): бичачий → «Weak High»(зверху)+«Strong Low»(знизу);
+  ведмежий → «Strong High»+«Weak Low». НЕ брати «останній HH/LH та HL/LL півот»
+  — це давало проміжні хибні рівні (кейс ATOM: 1.3937/1.3252 замість 1.566/1.33).
+  Стан: `swing_levels`={high:{price,label},low:{price,label}}|None, `show_swing_hl`,
+  `swing_hl_tf`. Фронт малює з `swing_levels` (динамічні підписи).
+  Тест: `test_swing_hl_levels.py`.
+- **🔮 Forecast min-strength (`forecast_min_strength`: off/moderate/strong).**
+  Поріг СИЛИ (впевненості) прогнозу ДО увімкнених 1H/4H-фільтрів напрямку: збіг
+  напрямку зі слабшою за поріг впевненістю → 'weak' (не-збіг, ріже сигнал).
+  strong ≥66%, moderate ≥40%. У `_forecast_filter_allows` (smc_scanner).
+- **📦 Volumized OB TF** тепер включає **5m** (ALLOWED_VOL_TFS).
+
 ## Як запускати
 
 - Точка входу: `main_bot.py` (для gunicorn: `gunicorn main_bot:app`).
