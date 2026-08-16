@@ -1677,13 +1677,24 @@ class SMCScanner:
                                             log_activity(symbol, 'signal',
                                                          f'Свіжий Volumized OB ({vol_tf}) {_cside}',
                                                          side=_cside, source='scanner')
-                                            from detection.trade_manager import get_trade_manager
-                                            _tm = get_trade_manager()
-                                            if _tm:
-                                                # opened_by='vob_alert' (НЕ 'vob') — щоб
-                                                # funding-очистка не видаляла ці записи.
-                                                _tm.on_signal(symbol=symbol, side=_cside,
-                                                              entry_price=_entry, opened_by='vob_alert')
+                                            # 🚦 СПІЛЬНІ ВОРОТА фільтрів — ті самі, що й
+                                            # для CHoCH (OB/PD/Forecast, кожен за своїм
+                                            # тумблером). Раніше VOB-alert відкривав напряму
+                                            # й обходив усі фільтри → тепер НІ.
+                                            _vok, _vreason = self._signal_allowed(symbol, _cside)
+                                            if not _vok:
+                                                print(f"[SMC] 🚫 VOB {_cside} {symbol} "
+                                                      f"заблоковано: {_vreason}")
+                                                log_activity(symbol, 'rejected', _vreason,
+                                                             side=_cside, source='scanner')
+                                            else:
+                                                from detection.trade_manager import get_trade_manager
+                                                _tm = get_trade_manager()
+                                                if _tm:
+                                                    # opened_by='vob_alert' (НЕ 'vob') — щоб
+                                                    # funding-очистка не видаляла ці записи.
+                                                    _tm.on_signal(symbol=symbol, side=_cside,
+                                                                  entry_price=_entry, opened_by='vob_alert')
                                 except Exception as _ve:
                                     if self._errors <= 5:
                                         print(f"[SMC] VOB-alert error for {symbol}: {_ve}")
@@ -2622,6 +2633,40 @@ class SMCScanner:
         # event_dir = 'bull' | 'bear'; bias = 'bull' | 'bear'
         return bias == event_dir
     
+    def _signal_allowed(self, symbol: str, side_label: str):
+        """SPILNI VOROTA для БУДЬ-ЯКОГО входу сигналу (CHoCH/BOS ТА Volumized OB).
+
+        Раніше три фільтри (OB / PD / Forecast) жили лише всередині `_send_alert`
+        (шлях CHoCH). Volumized-OB-alert відкривав через `on_signal(...)` напряму
+        → ОБХОДИВ усі три (кейс ASTERUSDT SHORT попри Forecast LONG). Це зводило
+        нанівець налаштування користувача. Тепер ОБИДВА шляхи звертаються сюди —
+        якщо фільтр УВІМКНЕНИЙ, він відпрацьовує на кожному вході, без винятків.
+
+        Кожен фільтр поважає СВІЙ тумблер (як і в старому `_send_alert`):
+          • OB Filter        — лише коли `ob_filter_enabled`;
+          • PD Zone Filter   — сам перевіряє `use_pd_zone_filter` всередині;
+          • Forecast Filter  — лише коли увімкнено 1H або 4H.
+
+        Повертає (allowed: bool, reason: str). reason — готовий укр. текст для
+        rejected-маркера / activity-логу (порожній, коли allowed=True).
+        """
+        # === OB Filter (структурний) ===
+        if self._settings.get('ob_filter_enabled', False):
+            if not self._ob_filter_allows(symbol, side_label):
+                return False, 'OB-фільтр заблокував (Order Block проти напрямку)'
+
+        # === PD Zone Filter (Premium/Discount) — сам гейтить свій тумблер ===
+        if not self._pd_zone_filter_allows(symbol, side_label):
+            return False, 'PD-зона заблокувала (вхід проти Premium/Discount)'
+
+        # === Forecast Filter (1H / 4H + Мін. сила) ===
+        if (self._settings.get('forecast_1h_filter_enabled', False)
+                or self._settings.get('forecast_4h_filter_enabled', False)):
+            if not self._forecast_filter_allows(symbol, side_label):
+                return False, 'Forecast-фільтр заблокував (прогноз 1H/4H проти напрямку)'
+
+        return True, ''
+
     def _send_alert(self, symbol: str, event: Dict, mode: str, choch_event: Dict = None):
         try:
             is_bull = event['dir'] == 'bull'
@@ -2636,60 +2681,21 @@ class SMCScanner:
                 log_activity = lambda *a, **k: None
             log_activity(symbol, 'signal', f'Свіжий сигнал {mode}', side=side_label, source='scanner')
 
-            # === OB Filter gate ===
-            # When the user has enabled OB Filter, we require directional
-            # agreement between the signal and the LAST VALID OB on the
-            # configured OB timeframe (read from DB — same source the chart
-            # panel uses). Hard-block semantics: if OB is missing or
-            # opposite, the signal is dropped completely (no markers, no
-            # dedup state update, no TM hook). The user explicitly chose
-            # this behavior.
+            # === Фільтри входу (OB / PD / Forecast) — СПІЛЬНІ ВОРОТА ===
+            # Ті самі, що тепер гейтять і Volumized-OB-alert (див.
+            # _signal_allowed). Hard-block: заблокований сигнал лишає rejected-
+            # маркер (щоб було видно ЧОМУ не відкрилось) і не доходить до TM.
             # Level for rejected-marker placement (entry computed later).
             evt_level = event.get('level', 0) or 0
 
-            if self._settings.get('ob_filter_enabled', False):
-                if not self._ob_filter_allows(symbol, side_label):
-                    # Blocked — record a rejected marker so the user can see
-                    # (and click for the reason) why no trade fired here.
-                    print(f"[SMC] 🚫 OB Filter blocked {symbol} {side_label} signal")
-                    _r = 'OB-фільтр заблокував (Order Block проти напрямку)'
-                    self._record_marker(symbol, event, side_label,
-                                        'rejected', _r, entry_price=evt_level)
-                    log_activity(symbol, 'rejected', _r, side=side_label, source='scanner')
-                    return
-            
-            # === PD Zone Filter (Premium/Discount) ===
-            # Independent of OB Filter — this is a price-position filter,
-            # OB is a structure filter. Both can be on simultaneously
-            # for max selectivity. Same hard-block semantics as OB Filter:
-            # blocked signals leave no marker and don't reach TM.
-            #
-            # The toggle defaults ON because trading against the zone
-            # (e.g. LONG from Premium = high risk) is the most common
-            # newbie mistake; default protection is more useful than
-            # default permissiveness.
-            if not self._pd_zone_filter_allows(symbol, side_label):
-                _r = 'PD-зона заблокувала (вхід проти Premium/Discount)'
+            _allowed, _reason = self._signal_allowed(symbol, side_label)
+            if not _allowed:
+                print(f"[SMC] 🚫 {side_label} {symbol} заблоковано: {_reason}")
                 self._record_marker(symbol, event, side_label,
-                                    'rejected', _r, entry_price=evt_level)
-                log_activity(symbol, 'rejected', _r, side=side_label, source='scanner')
-                return  # Already logged inside the helper
-            
-            # === Forecast Filter (1H / 4H multi-horizon prediction) ===
-            # Per-TF enable, combine mode (AND/OR) when both ON. Reads the
-            # cached forecast computed by ForecastEngine on a separate
-            # schedule (so this gate is cheap — DB cache lookup only).
-            # Same hard-block semantics: blocked signal leaves no marker
-            # and never reaches TM.
-            if (self._settings.get('forecast_1h_filter_enabled', False)
-                    or self._settings.get('forecast_4h_filter_enabled', False)):
-                if not self._forecast_filter_allows(symbol, side_label):
-                    _r = 'Forecast-фільтр заблокував (прогноз 1H/4H проти напрямку)'
-                    self._record_marker(symbol, event, side_label,
-                                        'rejected', _r, entry_price=evt_level)
-                    log_activity(symbol, 'rejected', _r, side=side_label, source='scanner')
-                    return  # Already logged inside the helper
-            
+                                    'rejected', _reason, entry_price=evt_level)
+                log_activity(symbol, 'rejected', _reason, side=side_label, source='scanner')
+                return
+
             # Entry price = the structural break LEVEL of the event that fired
             # the signal: the BOS break level in CHoCH+BOS mode, or the CHoCH
             # break level in CHoCH mode. This is the exact price `close` crossed

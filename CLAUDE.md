@@ -56,6 +56,22 @@
   strong ≥66%, moderate ≥40%. У `_forecast_filter_allows` (smc_scanner).
 - **📦 Volumized OB TF** тепер включає **5m** (ALLOWED_VOL_TFS).
 
+## ФІЛЬТРИ ВХОДУ — СПІЛЬНІ ВОРОТА для ВСІХ сигналів (не зламати!)
+
+`SMCScanner._signal_allowed(symbol, side)` — ЄДИНІ ворота фільтрів OB / PD /
+Forecast (кожен за своїм тумблером). Викликаються з ОБОХ шляхів входу:
+1. **CHoCH/BOS** → `_send_alert` (як і було);
+2. **Volumized OB alert** (`vob_alert_enabled`) → перед `_tm.on_signal(...,
+   opened_by='vob_alert')` у скан-тіку (~рядок 1685).
+
+**НІКОЛИ не відкривати сигнал в обхід `_signal_allowed`.** Був дефект: VOB-alert
+кликав `on_signal` напряму й ОБХОДИВ усі фільтри — бот відкрив ASTERUSDT SHORT,
+попри `Require Forecast 1H+4H match · AND · Сильний` з прогнозом LONG (фільтри
+живуть лише у `_send_alert`, а VOB туди не заходив). Урок: КОЖЕН новий шлях
+відкриття мусить проходити ці спільні ворота, інакше налаштування користувача —
+фікція. Заблокований сигнал → `log_activity('rejected', reason)`.
+Тест: `test_signal_gate_unified.py`.
+
 ## Як запускати
 
 - Точка входу: `main_bot.py` (для gunicorn: `gunicorn main_bot:app`).
