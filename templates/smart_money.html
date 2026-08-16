@@ -4233,6 +4233,26 @@ class VolOBPrimitive {
         }];
     }
 }
+// 🕒 Прив'язати довільний час (напр. старт 5m-OB) до РЕАЛЬНОГО бару графіка.
+// Lightweight-Charts `timeToCoordinate()` повертає null для часу, якого немає
+// серед барів серії (час МІЖ барами). Тому OB на TF, дрібнішому за TF графіка
+// (напр. Volumized 5m на графіку 15m), не малювався — його старт не потрапляв
+// на сітку 15m. Тут беремо найбільший час бару ≤ sec (бінарний пошук по ohlc),
+// щоб координата завжди існувала й бокс МАЛЮВАВСЯ. Aligned-час (1H на 15m)
+// повертається без змін. Порожній ohlc → повертаємо як є.
+function _snapSecToChart(sec, ohlc) {
+    if (!Array.isArray(ohlc) || !ohlc.length || sec == null) return sec;
+    const first = ohlc[0].time, last = ohlc[ohlc.length - 1].time;
+    if (sec <= first) return first;
+    if (sec >= last) return last;
+    let lo = 0, hi = ohlc.length - 1, ans = first;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (ohlc[mid].time <= sec) { ans = ohlc[mid].time; lo = mid + 1; }
+        else hi = mid - 1;
+    }
+    return ans;
+}
 let activeMarkers = [];
 let showPivots = false; // HH/HL/LH/LL toggle, default OFF
 let showStructure = true;  // BOS/CHoCH toggle, default ON
@@ -6083,7 +6103,7 @@ async function loadChart() {
                 const tfWord = tfS.replace('M', ' Min').replace(' MIN', ' Min')
                     .replace('H', ' Hour').replace('D', ' Day');
                 volObPrim.setOB({
-                    startSec: vob.start_time_sec,
+                    startSec: _snapSecToChart(vob.start_time_sec, ohlc),
                     top: vob.top, bottom: vob.bottom,
                     stroke: stroke, fill: fill,
                     textColor: isBull ? '#c7f9d4' : '#fcd0d0',
@@ -6115,7 +6135,9 @@ async function loadChart() {
                 const tag = (mob.created_by_tag || '').toUpperCase();
                 const tagMark = tag === 'CHOCH' ? 'CHoCH ★' : (tag === 'BOS' ? 'BOS →' : 'OB');
                 obMatchPrim.setOB({
-                    startSec: (mob.bar_time || 0) / 1000,   // bar_time у мс → секунди
+                    // bar_time (мс)→с, потім прив'язка до бару графіка (на випадок
+                    // OB-TF, дрібнішого за TF графіка — щоб бокс не зникав).
+                    startSec: _snapSecToChart((mob.bar_time || 0) / 1000, ohlc),
                     top: mob.bar_high, bottom: mob.bar_low,
                     stroke: stroke, fill: fill,
                     textColor: isBull ? '#bff3ec' : '#ffe3c2',

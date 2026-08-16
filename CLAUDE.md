@@ -55,6 +55,12 @@
   напрямку зі слабшою за поріг впевненістю → 'weak' (не-збіг, ріже сигнал).
   strong ≥66%, moderate ≥40%. У `_forecast_filter_allows` (smc_scanner).
 - **📦 Volumized OB TF** тепер включає **5m** (ALLOWED_VOL_TFS).
+- **Два OB-бокси на графіку одночасно.** `volObPrim` (Volumized OB, зелений/
+  червоний суцільний) і `obMatchPrim` (Require OB Match, teal/orange пунктир) —
+  ДВА незалежні `VolOBPrimitive`, малюються обидва, коли увімкнені відповідні
+  тумблери. **Критично:** старт боксу прив'язувати через `_snapSecToChart(sec,
+  ohlc)` — `timeToCoordinate()` повертає null для часу МІЖ барами, тож OB на TF,
+  дрібнішому за TF графіка (Volumized 5m на графіку 15m), інакше НЕ малюється.
 
 ## ФІЛЬТРИ ВХОДУ — СПІЛЬНІ ВОРОТА для ВСІХ сигналів (не зламати!)
 
