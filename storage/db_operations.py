@@ -107,7 +107,7 @@ class DBOperations:
                 pnl_usd=trade.get('pnl_usd', 0) or 0,
                 reason=(trade.get('reason') or '')[:40],
                 reason_detail=trade.get('reason_detail'),
-                opened_by=(trade.get('opened_by') or '')[:40],
+                opened_by=(trade.get('opened_by') or '')[:80],
                 opened_at=opened,
                 closed_at=closed,
                 duration_secs=max(0, (closed - opened)) if (opened and closed) else 0,

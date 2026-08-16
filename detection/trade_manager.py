@@ -31,6 +31,8 @@ import time
 import threading
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
+# 🏷️ Канонічні мітки «Сигнал → Двигун» (єдине джерело — detection/signal_labels).
+from detection.signal_labels import pretty_opened_by as _pretty_ob, signal_code_of as _ob_code
 
 
 # ======== DB keys ========
@@ -1991,7 +1993,7 @@ class TradeManager:
         if real_opened:
             _info = self._entry_info_text(symbol, is_paper=False)
             log_activity(symbol, 'opened',
-                         'Відкрито реальну позицію (TM)' + (f' · {_info}' if _info else ''),
+                         f'Відкрито реальну позицію (TM) · {_pretty_ob(opened_by)}' + (f' · {_info}' if _info else ''),
                          side=side, source='TM')
             return {'real_opened': True, 'status': 'opened', 'is_paper': False}
 
@@ -2026,7 +2028,7 @@ class TradeManager:
                 if res.get('ok'):
                     _info = self._entry_info_text(symbol, is_paper=True)
                     log_activity(symbol, 'opened',
-                                 f'Реверс (paper): {existing_shadow["side"]} → {side}' + (f' · {_info}' if _info else ''),
+                                 f'Реверс (paper): {existing_shadow["side"]} → {side} · {_pretty_ob(opened_by)}' + (f' · {_info}' if _info else ''),
                                  side=side, source='TM')
                     return {'shadow_opened': True, 'status': 'opened', 'is_paper': True}
                 log_activity(symbol, 'rejected', f'Реверс-відкриття (paper) відхилено: {res.get("reason", "blocked")}', side=side, source='TM')
@@ -2036,7 +2038,7 @@ class TradeManager:
             if res.get('ok'):
                 _info = self._entry_info_text(symbol, is_paper=True)
                 log_activity(symbol, 'opened',
-                             'Пряме відкриття (paper) — черги не перехопили сигнал' + (f' · {_info}' if _info else ''),
+                             f'Пряме відкриття (paper) — черги не перехопили сигнал · {_pretty_ob(opened_by)}' + (f' · {_info}' if _info else ''),
                              side=side, source='TM')
                 return {'shadow_opened': True, 'status': 'opened', 'is_paper': True}
             log_activity(symbol, 'rejected', f'Paper-відкриття відхилено: {res.get("reason", "shadow open blocked")}', side=side, source='TM')
@@ -3877,8 +3879,10 @@ class TradeManager:
         try:
             from detection.activity_log import log_activity
             _mh = self._fmt_manual_hist(pos)
+            _obl = _pretty_ob(pos.get('opened_by') or '')
             log_activity(symbol, 'closed',
                          f'{self._reason_label(reason)} · PnL {pnl_pct:+.2f}%'
+                         + (f' · {_obl}' if _obl else '')
                          + (f' · {_mh}' if _mh else ''),
                          side=pos['side'], source='TM',
                          extra={'manual_sl_hist': list(pos.get('manual_sl_hist') or []),
@@ -4171,7 +4175,7 @@ class TradeManager:
                 from detection.activity_log import log_activity as _la
                 _info = self._entry_info_text(symbol, is_paper=True)
                 _la(symbol, 'opened',
-                    'Відкрито paper (Fuel Auto-Filter)' + (f' · {_info}' if _info else ''),
+                    f'Відкрито paper · {_pretty_ob(opened_by_full)}' + (f' · {_info}' if _info else ''),
                     side=side, source='FF')
             except Exception:
                 pass
@@ -4196,14 +4200,15 @@ class TradeManager:
         ob_line = self._format_last_ob_telegram(symbol)
         # Source WITHOUT the decision suffix (the 🤪 verdict is shown once,
         # below in es_block — fixes the duplicated «LONG 83% (marginal)»).
-        src = self._base_opened_by(opened_by_full)
+        src = _pretty_ob(opened_by_full)
         dot = self._dir_dot(side)
         _sl_str = self._sltp_display(pos, 'sl')
         _tp_str = self._sltp_display(pos, 'tp')
         msg = (
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
             f"<b>#{symbol}</b>   🧪 ТЕСТ\n"
-            f"📍 Вхід: <b>{self._fmt_price(entry_price)}</b>\n"
+            + (f"🏷 {src}\n" if src else '')
+            + f"📍 Вхід: <b>{self._fmt_price(entry_price)}</b>\n"
             f"🛡 SL: <b>{_sl_str}</b> · 🎯 TP: <b>{_tp_str}</b>"
         )
         self._notify(msg, is_test=True, category='trades')
@@ -4372,8 +4377,10 @@ class TradeManager:
         try:
             from detection.activity_log import log_activity
             _mh = self._fmt_manual_hist(pos)
+            _obl = _pretty_ob(pos.get('opened_by') or '')
             log_activity(symbol, 'closed',
                          f'{self._reason_label(reason)} · PnL {pnl_pct:+.2f}% (paper)'
+                         + (f' · {_obl}' if _obl else '')
                          + (f' · {_mh}' if _mh else ''),
                          side=pos['side'], source='TM',
                          extra={'manual_sl_hist': list(pos.get('manual_sl_hist') or []),
@@ -4458,10 +4465,12 @@ class TradeManager:
         # 'good +50' — should I trust this score or down-weight it?"
         dot = self._dir_dot(pos['side'])
         peak_line = self._fmt_peak_line(closed)
+        _obl = _pretty_ob(pos.get('opened_by') or '')
         msg = (
             f"{icon} ⏹ ЗАКРИТО {dot}<b>{pos['side']}</b> <b>{pnl_pct:+.2f}%</b>\n"
             f"<b>#{symbol}</b>   🧪 ТЕСТ\n"
-            f"📍 Вихід: <b>{self._fmt_price(exit_price)}</b>\n"
+            + (f"🏷 {_obl}\n" if _obl else '')
+            + f"📍 Вихід: <b>{self._fmt_price(exit_price)}</b>\n"
             f"🔖 Причина: {self._reason_label(reason)}\n"
             f"{peak_line}"
         ).rstrip()
@@ -5877,10 +5886,12 @@ class TradeManager:
         dot = self._dir_dot(side)
         sl_str = self._sltp_display(pos, 'sl')
         tp_str = self._sltp_display(pos, 'tp')
+        _obl = _pretty_ob(pos.get('opened_by') or '')
         msg = (
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
             f"<b>#{pos['symbol']}</b>\n"
-            f"📍 Вхід: <b>{self._fmt_price(pos['entry_price'])}</b>\n"
+            + (f"🏷 {_obl}\n" if _obl else '')
+            + f"📍 Вхід: <b>{self._fmt_price(pos['entry_price'])}</b>\n"
             f"🛡 SL: <b>{sl_str}</b> · 🎯 TP: <b>{tp_str}</b>"
         )
         self._notify(msg, category='trades')
@@ -5895,10 +5906,12 @@ class TradeManager:
         # weight-tuning and spotting when the predictor was wrong.
         dot = self._dir_dot(side)
         peak_line = self._fmt_peak_line(closed)
+        _obl = _pretty_ob(closed.get('opened_by') or '')
         msg = (
             f"{icon} ⏹ ЗАКРИТО {dot}<b>{side}</b> <b>{pnl_pct:+.2f}%</b>\n"
             f"<b>#{closed['symbol']}</b>\n"
-            f"📍 Вихід: <b>{self._fmt_price(closed['exit_price'])}</b>\n"
+            + (f"🏷 {_obl}\n" if _obl else '')
+            + f"📍 Вихід: <b>{self._fmt_price(closed['exit_price'])}</b>\n"
             f"🔖 Причина: {self._reason_label(closed['reason'])}\n"
             f"{peak_line}"
         ).rstrip()

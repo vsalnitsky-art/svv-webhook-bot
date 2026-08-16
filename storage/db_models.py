@@ -448,7 +448,7 @@ class TradeArchive(Base):
     pnl_usd = Column(Float, default=0)
     reason = Column(String(40), index=True)                 # close reason code
     reason_detail = Column(Text)                            # enriched reason
-    opened_by = Column(String(40))
+    opened_by = Column(String(80))   # «Сигнал → Двигун» мітка (SQLite не обмежує)
     opened_at = Column(Float)                               # unix ts
     closed_at = Column(Float, index=True)                   # unix ts
     duration_secs = Column(Float, default=0)

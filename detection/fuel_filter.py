@@ -48,6 +48,9 @@ import os
 import time
 import threading
 from typing import Optional, Callable, Dict, List
+# 🏷️ Канонічні мітки «Сигнал → Двигун» — щоб оригінальний сигнал НЕ губився,
+# коли двигун черги відкриває угоду (див. detection/signal_labels.py).
+from detection.signal_labels import compose as _ob_compose
 
 CYCLE_SECS = 30                 # scan cadence (twice per liq-map refresh)
 EXHAUSTION_TTL = 120            # cache exhaustion per symbol for 2 min
@@ -5399,7 +5402,8 @@ class FuelFilterDaemon:
         fd = self._fuel_dir_smoothed(sym) or {}
         entry = fd.get('mark_price') or a.get('last_price')
         fuel = {'mark_price': entry}
-        ok = self._open(sym, d, fuel, s, opened_by='Q3-VOB(funding)',
+        ok = self._open(sym, d, fuel, s,
+                        opened_by=_ob_compose('vob', 'Q3-VOB(funding)'),
                         skip_ctr_safeguard=True)
         if not ok:
             return
@@ -5785,7 +5789,7 @@ class FuelFilterDaemon:
             try:
                 _flip = '' if _open_dir == d else f' (ФЛІП: сигнал був {d}, показники — {_open_dir})'
                 opened = self._open(sym, _open_dir, {'mark_price': mark, 'dir': _open_dir},
-                                    s, opened_by='🎯 Черга-4 (усі 4 шари)',
+                                    s, opened_by=_ob_compose(info.get('kind'), 'Q4'),
                                     skip_ctr_safeguard=True, skip_safeguard=True)
                 if opened:
                     with self._lock:
@@ -5951,7 +5955,7 @@ class FuelFilterDaemon:
             try:
                 opened = self._open(
                     sym, d, fuel, s,
-                    opened_by=f"🎯 Готовність {su.get('score')} {su.get('grade')} ({_why})",
+                    opened_by=_ob_compose(info.get('kind'), 'Q3'),
                     skip_ctr_safeguard=bool(s.get('queue3_ignore_ctr', True)))
                 if opened:
                     with self._lock:
@@ -6356,11 +6360,8 @@ class FuelFilterDaemon:
                         log_activity(sym, 'closed', f'Черга-2 РЕВЕРС: закрито {_pside} (сигнал {d} пройшов Чергу-2)', side=_pside, source='Q2')
                     except Exception:
                         pass
-            _is_opp = bool(info.get('opp'))
-            if _is_opp:
-                _ob = '🎯 Рекомендовано ботом (реверс)' if _did_reverse else '🎯 Рекомендовано ботом'
-            else:
-                _ob = '⚡ Q2 РЕВЕРС' if _did_reverse else '⚡ Q2 ENTRY+CTR'
+            # Оригінальний сигнал (info['kind']) → двигун Q2; 'opp' → 🔄 Реверс.
+            _ob = _ob_compose(info.get('kind') or ('opp' if info.get('opp') else None), 'Q2')
             try:
                 opened = self._open(sym, d, fuel, s, opened_by=_ob)
             except Exception as e:
@@ -6653,9 +6654,13 @@ class FuelFilterDaemon:
                 # on the first check is attempt #1) AND the coin's МММ timer value
                 # at the moment of opening.
                 # "Opened by" records the EXHAUSTION at the moment of entry.
+                # Оригінальний сигнал (kind) із черги-джерела (qnum) → двигун
+                # «Виснаженість», щоб було видно, ВІД ЯКОГО сигналу пішла угода.
+                _kind = ((self._pending if qnum == 1 else self._pending2)
+                         .get(sym) or {}).get('kind')
                 opened = self._open(
                     sym, d, fuel, s,
-                    opened_by=(f"🔥 Exhaust {exh:.1f}%" if exh is not None else "🔥 FF"))
+                    opened_by=_ob_compose(_kind, 'EXH'))
                 if opened:
                     # Timer starts NOW (at open) and runs while the position is
                     # open; _close resets it. Coin leaves the waiting base.

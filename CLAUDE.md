@@ -78,6 +78,33 @@ Forecast (кожен за своїм тумблером). Викликаютьс
 фікція. Заблокований сигнал → `log_activity('rejected', reason)`.
 Тест: `test_signal_gate_unified.py`.
 
+## 🏷️ Мітки угод «Сигнал → Двигун» (не зламати!)
+
+Кожна угода несе мітку ПОХОДЖЕННЯ у форматі **"<signal> → <engine>"**, щоб було
+видно, ВІД ЯКОГО СИГНАЛУ вона пішла (раніше двигун черги штампував свою мітку, а
+оригінальний сигнал губився — напр. ASTER SHORT від Volumized-OB показувався як
+«Fuel Auto-Filter»).
+
+- **Єдине джерело правди:** `detection/signal_labels.py` — `compose(signal,
+  engine)`, `pretty_opened_by(raw)`, `signal_code_of(raw)`, мапи
+  `SIGNAL_BADGES`/`ENGINE_BADGES`. **JS-дзеркало** ОБОВʼЯЗКОВЕ і має бути
+  синхронним: у `templates/smart_money.html` та `infosite/app.js`
+  (`prettyOpenedBy`, `signalIconHtml`, `SIGNAL_ICON_JS`).
+- **Зберігаємо МАШИННІ коди** у `position['opened_by']` (напр. `vob_alert → Q4`),
+  а бейджі (🟪 Volumized OB → 🎯 Черга-4) робимо лише ПРИ ПОКАЗІ. Так підрядки
+  `funding`/`POC-сетап`/`external`/`choch` лишаються для логіки (substring-
+  перевірки, `signal_code_of` для порівнянь).
+- **Кожен двигун FF** тепер відкриває з `opened_by=_ob_compose(info.get('kind'),
+  '<ENGINE>')` (Q1='EXH', Q2, Q3, Q4, Q3-VOB(funding)); `kind` = оригінальний
+  сигнал із черги. Прямі опени (FF off) лишають сирий код сигналу (без двигуна).
+- **Показ СКРІЗЬ** (вимога користувача): іконка-«картинка» сигналу СТОЇТЬ ПОРЯД ІЗ
+  НАЗВОЮ МОНЕТИ (`signalIconHtml` у `histSymOpen`/`histSymCell`/архів/інфосайт) +
+  повна мітка у 🧾 Лозі (відкриття+закриття), у Telegram (рядок `🏷`), у модалці
+  історії («🏷 Джерело»). DB-колонка `opened_by` розширена 40→80.
+- Коди сигналів: `choch`/`choch_bos` (smc_scanner on_signal), `vob_alert`
+  (Volumized-OB alert), `vob` (funding-VOB), `opp` (реверс), `external`, `manual`.
+- Тести: `test_signal_labels.py`.
+
 ## Як запускати
 
 - Точка входу: `main_bot.py` (для gunicorn: `gunicorn main_bot:app`).

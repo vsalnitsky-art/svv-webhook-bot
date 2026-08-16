@@ -11361,23 +11361,72 @@ function tvSym(sym, label) {
 // Closed-trade cell: 📈 (left) = history chart, the NAME = TradingView link.
 function histSymCell(c, isShadow) {
     const tv = tvSym(c.symbol);
-    if (!(c.hist_len > 0)) return `<b>${tv}</b>`;
+    const sig = signalIconHtml(c.opened_by);   // 🏷 звідки угода — біля назви
+    if (!(c.hist_len > 0)) return `${sig}<b>${tv}</b>`;
     const ca = JSON.stringify(c.closed_at);
-    return `<b><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${c.hist_len} точок)"`
+    return `${sig}<b><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${c.hist_len} точок)"`
         + ` onclick="event.stopPropagation();showTradeHistory('${c.symbol}', ${ca}, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`;
+}
+
+// 🏷️ Мітки «Сигнал → Двигун» — JS-ДЗЕРКАЛО detection/signal_labels.py.
+// Тримати синхронно з бекендом. Формат збереженого opened_by — машинні коди
+// "signal → engine" (+ можливий хвіст " · verdict"); тут робимо людський вигляд
+// і компактну ІКОНКУ (картинку) для показу поряд із назвою монети.
+const SIGNAL_BADGES_JS = {
+    'choch': '🟦 CHoCH', 'choch_bos': '🟦 CHoCH+BOS',
+    'vob_alert': '🟪 Volumized OB', 'vob': '💰 Volumized OB',
+    'opp': '🔄 Реверс', 'external': '🔌 Зовнішня', 'manual': '✋ Ручний',
+    'manual_ui': '✋ Ручний', 'manual_ui_overflow': '✋ Ручний',
+};
+const ENGINE_BADGES_JS = {
+    'Q1': '🎯 Черга-1', 'Q2': '🎯 Черга-2', 'Q3': '🎯 Готовність', 'Q4': '🎯 Черга-4',
+    'Q3-VOB(funding)': '💰 VOB+Шари', 'POC-сетап': '🎯 POC-сетап',
+    'EXH': '🔥 Виснаженість', 'FF': '🔥 FF', 'direct': '⚡ Прямий',
+};
+const SIGNAL_ICON_JS = {
+    'choch': '🟦', 'choch_bos': '🟦', 'vob_alert': '🟪', 'vob': '💰',
+    'opp': '🔄', 'external': '🔌', 'manual': '✋',
+    'manual_ui': '✋', 'manual_ui_overflow': '✋',
+    'Q3-VOB(funding)': '💰', 'POC-сетап': '🎯', 'EXH': '🔥', 'FF': '🔥',
+};
+function signalCodeOf(raw) {
+    if (!raw) return '';
+    return String(raw).split(' · ')[0].split(' → ')[0].trim();
+}
+function prettyOpenedBy(raw) {
+    if (!raw) return '';
+    raw = String(raw);
+    let tail = '';
+    const ci = raw.indexOf(' · ');
+    if (ci >= 0) { tail = raw.slice(ci); raw = raw.slice(0, ci); }
+    const parts = raw.split(' → ').map(s => s.trim());
+    const out = parts.map((p, i) => i === 0
+        ? (SIGNAL_BADGES_JS[p] || ENGINE_BADGES_JS[p] || p)
+        : (ENGINE_BADGES_JS[p] || SIGNAL_BADGES_JS[p] || p));
+    return out.join(' → ') + tail;
+}
+// Компактна іконка-«картинка» сигналу + повна мітка у підказці (title).
+function signalIconHtml(raw) {
+    if (!raw) return '';
+    const code = signalCodeOf(raw);
+    const icon = SIGNAL_ICON_JS[code] || '🏷';
+    const full = prettyOpenedBy(raw).replace(/"/g, '&quot;');
+    return `<span class="tm-sigicon" title="${full}" style="margin-right:3px;font-size:0.8rem;cursor:help">${icon}</span>`;
 }
 
 // Open-position cell: 📈 (left) = live history chart, NAME = TradingView link.
 function histSymOpen(p, isShadow) {
     const tv = tvSym(p.symbol);
+    // 🏷 Іконка сигналу (звідки угода) — «картинка» поряд із назвою монети.
+    const sig = signalIconHtml(p.opened_by);
     // 💰 — монета прийшла з фандингу (є в таблиці 💰 Funding — МММ АБО відкрита
     // за funding-сигналом, напр. Q3-VOB(funding)).
     const fromFunding = (window.ffFundingSyms && window.ffFundingSyms.has(p.symbol))
         || (p.opened_by && /funding/i.test(p.opened_by));
     const fund = fromFunding
         ? '<span title="Монета з 💰 Funding" style="margin-right:3px;font-size:0.72rem">💰</span>' : '';
-    if (!(p.hist_len > 0)) return `${fund}<b class="tm-sym-name">${tv}</b>`;
-    return `${fund}<b class="tm-sym-name"><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${p.hist_len} точок)"`
+    if (!(p.hist_len > 0)) return `${sig}${fund}<b class="tm-sym-name">${tv}</b>`;
+    return `${sig}${fund}<b class="tm-sym-name"><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${p.hist_len} точок)"`
         + ` onclick="event.stopPropagation();showTradeHistory('${p.symbol}', null, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`;
 }
 
@@ -11652,8 +11701,10 @@ function renderTradeHistoryChart(h, meta) {
     if (peakDn != null && peakDn < -0.1) {
         troughSpan = `<span>Просадка ↓: <b style="color:#ef4444">${(+peakDn).toFixed(2)}%</b></span>`;
     }
+    const _obPretty = prettyOpenedBy(meta.opened_by);
     const info = `<div style="font-size:0.74rem;color:#cbd5e1;margin-bottom:6px;display:flex;gap:16px;flex-wrap:wrap">`
         + `<span>Сторона: <b>${meta.side || '—'}</b></span>`
+        + (_obPretty ? `<span>🏷 Джерело: <b>${_obPretty}</b></span>` : '')
         + `<span>Вхід: <b>${fmtPriceJS(meta.entry_price)}</b></span>`
         + (meta.exit_price != null ? `<span>Вихід: <b>${fmtPriceJS(meta.exit_price)}</b></span>` : '<span><b>ще відкрита</b></span>')
         + (meta.pnl_pct != null ? `<span>PnL: <b style="color:${pnlCol}">${meta.pnl_pct >= 0 ? '+' : ''}${meta.pnl_pct}%</b></span>` : '')
@@ -12136,7 +12187,7 @@ async function loadTMState(isPoll) {
                 const pnlSign = p.pnl_pct >= 0 ? '+' : '';
                 const sideClass = p.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
                 const manualOn = !!p.manual_mode;
-                const isExternal = !!p.external || p.opened_by === 'external';
+                const isExternal = !!p.external || signalCodeOf(p.opened_by) === 'external';
                 const rowClass = manualOn ? ' class="tm-row-manual"'
                                           : (isExternal ? ' class="tm-row-external"' : '');
                 // $ PnL — when source is 'bybit' it's the exchange's exact
@@ -12638,7 +12689,7 @@ async function toggleArchiveView(which, btn) {
                 const rDet = (c.reason_detail || '').replace(/"/g, '&quot;');
                 return `<tr>
                     <td>${fmtTimeJS(c.closed_at)}</td>
-                    <td><b class="tm-sym-name">${tvSym(c.symbol)}</b></td>
+                    <td>${signalIconHtml(c.opened_by)}<b class="tm-sym-name">${tvSym(c.symbol)}</b></td>
                     <td class="${sideClass}">${c.side || ''}</td>
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>

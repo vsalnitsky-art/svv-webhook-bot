@@ -96,6 +96,51 @@
       esc(s) + "</a>";
   }
 
+  // 🏷️ Мітки «Сигнал → Двигун» — JS-ДЗЕРКАЛО detection/signal_labels.py
+  // (тримати синхронно з бекендом і smart_money.html). Компактна іконка
+  // сигналу поряд із назвою монети + повна мітка у підказці.
+  var SIGNAL_BADGES_JS = {
+    "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS",
+    "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB",
+    "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний",
+    "manual_ui": "✋ Ручний", "manual_ui_overflow": "✋ Ручний"
+  };
+  var ENGINE_BADGES_JS = {
+    "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4",
+    "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап",
+    "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий"
+  };
+  var SIGNAL_ICON_JS = {
+    "choch": "🟦", "choch_bos": "🟦", "vob_alert": "🟪", "vob": "💰",
+    "opp": "🔄", "external": "🔌", "manual": "✋",
+    "manual_ui": "✋", "manual_ui_overflow": "✋",
+    "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥"
+  };
+  function signalCodeOf(raw) {
+    if (!raw) return "";
+    return String(raw).split(" · ")[0].split(" → ")[0].trim();
+  }
+  function prettyOpenedBy(raw) {
+    if (!raw) return "";
+    raw = String(raw);
+    var tail = "", ci = raw.indexOf(" · ");
+    if (ci >= 0) { tail = raw.slice(ci); raw = raw.slice(0, ci); }
+    var parts = raw.split(" → ");
+    var out = parts.map(function (p, i) {
+      p = p.trim();
+      return i === 0 ? (SIGNAL_BADGES_JS[p] || ENGINE_BADGES_JS[p] || p)
+                     : (ENGINE_BADGES_JS[p] || SIGNAL_BADGES_JS[p] || p);
+    });
+    return out.join(" → ") + tail;
+  }
+  function signalIconHtml(raw) {
+    if (!raw) return "";
+    var code = signalCodeOf(raw);
+    var icon = SIGNAL_ICON_JS[code] || "🏷";
+    var full = prettyOpenedBy(raw).replace(/"/g, "&quot;");
+    return '<span title="' + full + '" style="margin-right:3px;font-size:0.8rem;cursor:help">' + icon + "</span>";
+  }
+
   function fmtDur(sec) {
     sec = Math.max(0, Math.floor(sec || 0));
     var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
@@ -945,7 +990,7 @@
       var fromFunding = fundingSyms[p.symbol] || (p.opened_by && /funding/i.test(p.opened_by));
       var fMark = fromFunding ? '<span title="Монета з 💰 Funding" style="margin-right:3px;font-size:0.72rem">💰</span>' : '';
       return "<tr>" +
-        "<td>" + mMark + fMark + "<b>" + tvSym(p.symbol) + "</b></td>" +
+        "<td>" + mMark + fMark + signalIconHtml(p.opened_by) + "<b>" + tvSym(p.symbol) + "</b></td>" +
         "<td>" + dirCell(p.side) + "</td>" +
         "<td>" + mk + "</td>" +
         "<td>" + priceCell(p.entry_price) + "</td>" +
