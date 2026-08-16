@@ -7107,7 +7107,7 @@ function renderPocSetup(d) {
         const wa = r.win_agree || 0, wt = (r.win_total != null ? r.win_total : 0);
         const waCol = (wt > 0 && wa >= wt) ? '#4ade80' : POC_C.label;
         return `<tr class="${r.ready_open ? 'poc-ready' : ''}">`
-            + `<td style="text-align:left">${symHtml}<div style="font-size:0.64rem;margin-top:2px">${dir2}</div></td>`
+            + `<td style="text-align:left">${signalIconHtml('POC-сетап')}${symHtml}<div style="font-size:0.64rem;margin-top:2px">${dir2}</div></td>`
             + `<td style="text-align:center"><b style="color:${mcCol}">${r.match_count}/5</b>`
             + (wt > 0 ? `<div style="font-size:0.56rem;color:${waCol};margin-top:2px" title="Збіг обов'язкових вікон у бік угоди">вікна ${wa}/${wt}</div>` : '')
             + `</td>`
@@ -9670,7 +9670,7 @@ function ffQueueRowHTML(t, qnum) {
         reasonHtml = `<span class="ff-reason-warn" data-reason="${_r}" onclick="ffReasonPopup(event, this.getAttribute('data-reason'))" title="Причина, чому двигун не відкрив — клік" style="display:inline-block;width:1.2em;text-align:center;cursor:pointer;color:#f59e0b;font-size:0.82rem;user-select:none;-webkit-user-select:none">⚠️</span>`;
     }
     return `<tr style="${rowStyle}">
-        <td style="font-weight:600${symColor}">${srcBadge}${tvSym(t.symbol)}${oppMark}${fundLbl}${fundNext}</td>
+        <td style="font-weight:600${symColor}">${srcBadge}${signalIconHtml(t.kind)}${tvSym(t.symbol)}${oppMark}${fundLbl}${fundNext}</td>
         <td style="white-space:nowrap">${reasonHtml}${dirHtml}</td>
         <td style="white-space:nowrap;font-size:0.8rem">${mmHtml}</td>
         <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
@@ -9962,7 +9962,7 @@ function ffRenderQueue4() {
         const rwTxt = `<span style="color:${rwCol};font-weight:700">${rwArr} ${rw.dir || '—'}</span>` +
             (rw.room_pct != null ? ` <span style="color:#8b93a7;font-size:0.66rem">${rw.room_pct}%</span>` : '') + rwLbl;
         return `<tr>
-            <td style="font-weight:600">${tvSym(t.symbol)}</td>
+            <td style="font-weight:600">${signalIconHtml(t.kind)}${tvSym(t.symbol)}</td>
             <td style="white-space:nowrap">${dirHtml}</td>
             <td style="white-space:nowrap">${ffLayers4Cell(q)}</td>
             <td style="white-space:nowrap;font-size:0.8rem">${ffFuelCell(mmNew.dir, mmNew.str)}</td>

@@ -7178,6 +7178,9 @@ class FuelFilterDaemon:
                 q4 = self._queue4_layers(sym, d4, settings)
                 timers4.append({'symbol': sym, 'dir': d4,
                                 'held_sec': int(now - float(info.get('added_at') or now)),
+                                # 🏷 оригінальний сигнал, що завів монету в чергу
+                                # (щоб іконка «звідки» стояла й у таблиці Черги-4).
+                                'kind': info.get('kind'),
                                 'q4': q4, 'layers': q4.get('layers')})
             visible_pending4 = len(timers4)
             all_timers4 = sorted(timers4, key=lambda x: -x['held_sec'])
