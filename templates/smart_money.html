@@ -10038,19 +10038,22 @@ function ffLayers4Cell(q) {
     if (!layers.length)
         return `<span style="display:inline-flex;align-items:center;white-space:nowrap"><span style="display:inline-block;width:52px"></span><span style="display:inline-block;width:30px;text-align:right;color:#555">—</span></span>`;
     const n = q.count || 0;
-    // Кожна крапка — у фіксованому слоті (12px), тож блок крапок завжди однакової
-    // ширини → число N/4 стоїть РІВНО в стовпчик у всіх рядках.
+    // 🔢 Знаменник = к-сть УВІМКНЕНИХ шарів (`required`), а НЕ завжди 4 — щоб
+    // «N/2» показувалось відповідно до вибраних тумблерів. Fallback — к-сть крапок.
+    const req = (q.required != null ? q.required : layers.length) || layers.length;
+    // Кожна крапка — у фіксованому слоті (13px) → число N/req стоїть РІВНО в стовпчик.
     const dots = layers.map(l => {
         const c = !l.ok ? '#3a4152' : (l.dir === 'SHORT' ? '#f87171' : '#4ade80');
         return `<span style="display:inline-block;width:13px;text-align:center;color:${c}">${l.ok ? '●' : '○'}</span>`;
     }).join('');
     const rowDir = (layers.find(l => l.ok) || {}).dir;
     const dirCol = rowDir === 'LONG' ? '#4ade80' : (rowDir === 'SHORT' ? '#f87171' : '#8b93a7');
-    const col = n >= 4 ? dirCol : (n >= 1 ? '#fbbf24' : '#8b93a7');
+    // Зелений — коли зібрались УСІ увімкнені (n ≥ req); інакше бурштиновий/сірий.
+    const col = (req >= 1 && n >= req) ? dirCol : (n >= 1 ? '#fbbf24' : '#8b93a7');
     const tip = layers.map(l => `${l.ok ? '✅' : '▫️'} ${l.label}: ${l.detail}`).join('\n');
     return `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;align-items:center;white-space:nowrap;font-weight:700">`
         + `<span style="display:inline-flex">${dots}</span>`
-        + `<span style="display:inline-block;width:30px;text-align:right;color:${col};font-variant-numeric:tabular-nums">${n}/4</span></span>`;
+        + `<span style="display:inline-block;width:34px;text-align:right;color:${col};font-variant-numeric:tabular-nums">${n}/${req}</span></span>`;
 }
 // 🔘 Показ/приховування колонок Черги-4 за пер-шаровими тумблерами. Вішаємо
 // КЛАС НА ТАБЛИЦЮ (не inline на комірки) → CSS ховає і th, і свіжі td після
