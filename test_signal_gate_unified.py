@@ -26,12 +26,16 @@ _spec.loader.exec_module(_mod)
 gate = _mod.SMCScanner._signal_allowed  # unbound; call gate(self, symbol, side)
 
 
-def _self(settings, ob_ok=True, pd_ok=True, fc_ok=True):
+def _self(settings, ob_ok=True, pd_ok=True, fc_ok=True, str_ok=True, poc_ok=True):
     ns = types.SimpleNamespace()
     ns._settings = settings
     ns._ob_filter_allows = lambda sym, side: ob_ok
     ns._pd_zone_filter_allows = lambda sym, side: pd_ok
     ns._forecast_filter_allows = lambda sym, side: fc_ok
+    # Two new INDEPENDENT filters — stubbed (their own tests live in
+    # test_independent_filters.py); here they default to "pass".
+    ns._forecast_strength_allows = lambda sym, side: str_ok
+    ns._poc_filter_allows = lambda sym, side: poc_ok
     return ns
 
 

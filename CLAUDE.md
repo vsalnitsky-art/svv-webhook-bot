@@ -84,11 +84,26 @@ Volumized-OB-сигнал (`vob_alert_enabled`) фаєриться в `smc_scann
 
 ## ФІЛЬТРИ ВХОДУ — СПІЛЬНІ ВОРОТА для ВСІХ сигналів (не зламати!)
 
-`SMCScanner._signal_allowed(symbol, side)` — ЄДИНІ ворота фільтрів OB / PD /
-Forecast (кожен за своїм тумблером). Викликаються з ОБОХ шляхів входу:
+`SMCScanner._signal_allowed(symbol, side)` — ЄДИНІ ворота УСІХ фільтрів, кожен
+НЕЗАЛЕЖНИЙ зі своїм тумблером. Викликаються з ОБОХ шляхів входу:
 1. **CHoCH/BOS** → `_send_alert` (як і було);
 2. **Volumized OB alert** (`vob_alert_enabled`) → перед `_tm.on_signal(...,
-   opened_by='vob_alert')` у скан-тіку (~рядок 1685).
+   opened_by='vob_alert')` у скан-тіку.
+
+Ланцюг незалежних фільтрів (кожен за своїм тумблером):
+- **OB** (`ob_filter_enabled`) · **PD** (`use_pd_zone_filter`) ·
+- **Forecast НАПРЯМОК** (1H/4H match + AND/OR) — `_forecast_filter_allows`, ЛИШЕ
+  напрямок (силу НЕ враховує — `min_conf=0`);
+- **Forecast МІН.СИЛА** — ОКРЕМИЙ `forecast_strength_filter_enabled` +
+  `forecast_min_strength` (`_forecast_strength_allows`: пропускає лише якщо є
+  прогноз у бік сигналу з впевненістю ≥ поріг на 1H або 4H);
+- **POC «краще LONG/SHORT»** — `poc_filter_enabled` (`_poc_filter_allows`:
+  напрямковий — ціна нижче POC → LONG, вище → SHORT, на POC → нейтрально). Рахує
+  через ТОЙ САМИЙ `detection.volume_profile.compute_poc`/`price_vs_poc`, що й бейдж
+  чарту, з ТИМИ САМИМИ параметрами: `poc_filter_market`/`poc_filter_tf`/
+  `poc_filter_window_days` (дефолти FUTURES/1H/3д) → вердикт фільтра 1:1 з чартом.
+  `compute_poc` має власний TTL-кеш (не б'є біржу на кожен сигнал).
+Тести: `test_independent_filters.py`.
 
 **НІКОЛИ не відкривати сигнал в обхід `_signal_allowed`.** Був дефект: VOB-alert
 кликав `on_signal` напряму й ОБХОДИВ усі фільтри — бот відкрив ASTERUSDT SHORT,

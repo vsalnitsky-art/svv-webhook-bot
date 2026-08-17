@@ -172,7 +172,12 @@ DEFAULT_SETTINGS = {
     #   - `side` from each forecast: +1 = LONG, -1 = SHORT, 0 = neutral.
     #   - `side == 0` always blocks when the filter is ON ("no clear
     #     direction = no entry") regardless of combine mode.
-    #   - When both filters ON, `forecast_combine_mode` decides logic:
+    #   - Мін. СИЛА — ОКРЕМИЙ незалежний фільтр (`forecast_strength_filter_enabled`
+    #     + поріг `forecast_min_strength`): пропускає, лише якщо є прогноз у бік
+    #     сигналу з впевненістю ≥ порогу (1H або 4H). Не залежить від 1H/4H-match.
+    #   - POC-фільтр (`poc_filter_enabled`) — ОКРЕМИЙ незалежний: пропускає лише
+    #     сигнал у бік «краще за POC» (ціна нижче POC → LONG; вище → SHORT).
+    #   - When both direction filters ON, `forecast_combine_mode` decides logic:
     #       AND — signal passes only if BOTH 1H and 4H sides match
     #       OR  — signal passes if at LEAST ONE matches AND the other is
     #             not actively contradicting (side != opposite)
@@ -183,14 +188,22 @@ DEFAULT_SETTINGS = {
     'forecast_1h_filter_enabled': False,
     'forecast_4h_filter_enabled': False,
     'forecast_combine_mode': 'AND',  # 'AND' or 'OR' — only used when BOTH enabled
-    # 🔮 Мінімальна СИЛА прогнозу (впевненість, %) — додаткова умова до
-    # УВІМКНЕНИХ 1H/4H-фільтрів напрямку. Прогноз, що збігається напрямком, але
-    # СЛАБШИЙ за поріг, вважається НЕ-збігом (сигнал ріжеться). Значення:
-    #   'off'      — сила не враховується (як було);
-    #   'moderate' — вимагати ≥40% (помірний або сильний);
-    #   'strong'   — вимагати ≥66% (лише сильний).
-    'forecast_min_strength': 'off',
-    
+    # 🔮 НЕЗАЛЕЖНИЙ фільтр МІН. СИЛИ прогнозу (окремий тумблер, не залежить від
+    # 1H/4H-напрямкових). Увімк → пропускає лише якщо є прогноз у бік сигналу з
+    # впевненістю ≥ поріг (`forecast_min_strength`). Поріг: 'moderate'≥40% /
+    # 'strong'≥66% (('off' → фільтр ні на що не впливає).
+    'forecast_strength_filter_enabled': False,
+    'forecast_min_strength': 'strong',
+    # 🎯 НЕЗАЛЕЖНИЙ POC-фільтр («краще LONG / краще SHORT»). Увімк → пропускає лише
+    # сигнал у бік, «кращий» за POC: ціна НИЖЧЕ POC → LONG; ВИЩЕ POC → SHORT.
+    # Параметри — як на чарті (той самий compute_poc → вердикт 1:1 з бейджем):
+    #   poc_filter_market — 'futures'|'spot'; poc_filter_tf — TF профілю;
+    #   poc_filter_window_days — вікно (дні). Дефолти FUTURES / 1H / 3д.
+    'poc_filter_enabled': False,
+    'poc_filter_market': 'futures',
+    'poc_filter_tf': '1h',
+    'poc_filter_window_days': 3,
+
     # === Volumized Order Blocks (port of TradingView "Volumized OBs" indicator) ===
     # Informational trend detector: finds the latest formed OB (Bull/Bear)
     # on the configured timeframe, and exposes its direction as a "trend"
@@ -1034,6 +1047,10 @@ class SMCScanner:
                        # Forecast filter (1H/4H multi-horizon prediction)
                        'forecast_1h_filter_enabled', 'forecast_4h_filter_enabled',
                        'forecast_combine_mode', 'forecast_min_strength',
+                       'forecast_strength_filter_enabled',
+                       # POC filter («краще LONG/SHORT») + параметри (як на чарті)
+                       'poc_filter_enabled', 'poc_filter_market',
+                       'poc_filter_tf', 'poc_filter_window_days',
                        # Display: Strong High / Weak Low (swing extremes)
                        'show_swing_hl_enabled', 'swing_hl_timeframe',
                        # Volumized OB Trend (Pine port)
@@ -1222,9 +1239,24 @@ class SMCScanner:
                 self._settings.get('volumized_combine_obs', True))
 
             # === Forecast min-strength validation ===
-            if str(self._settings.get('forecast_min_strength', 'off')).lower() \
+            if str(self._settings.get('forecast_min_strength', 'strong')).lower() \
                     not in ('off', 'moderate', 'strong'):
-                self._settings['forecast_min_strength'] = 'off'
+                self._settings['forecast_min_strength'] = 'strong'
+            self._settings['forecast_strength_filter_enabled'] = bool(
+                self._settings.get('forecast_strength_filter_enabled', False))
+
+            # === POC filter validation (параметри як на чарті) ===
+            self._settings['poc_filter_enabled'] = bool(
+                self._settings.get('poc_filter_enabled', False))
+            _pm = str(self._settings.get('poc_filter_market', 'futures')).lower()
+            self._settings['poc_filter_market'] = 'spot' if _pm.startswith('sp') else 'futures'
+            if self._settings.get('poc_filter_tf') not in ('15m', '30m', '1h', '4h', '1d'):
+                self._settings['poc_filter_tf'] = '1h'
+            try:
+                _wd = float(self._settings.get('poc_filter_window_days', 3) or 3)
+                self._settings['poc_filter_window_days'] = max(1, min(30, _wd))
+            except (TypeError, ValueError):
+                self._settings['poc_filter_window_days'] = 3
 
             # === Strong High / Weak Low (Display) validation ===
             self._settings['show_swing_hl_enabled'] = bool(
@@ -2196,11 +2228,10 @@ class SMCScanner:
         # Map signal side label → forecast side value
         target = 1 if side == 'LONG' else -1
 
-        # 🔮 Мінімальна СИЛА прогнозу (впевненість). Збіг напрямку зі слабшою за
-        # поріг впевненістю → трактуємо як 'weak' (не-збіг → ріже сигнал у single-
-        # режимі; у OR не блокує сильний збіг на іншому TF, як і 'neutral').
-        _ms = str(self._settings.get('forecast_min_strength', 'off')).lower()
-        min_conf = 66 if _ms == 'strong' else (40 if _ms == 'moderate' else 0)
+        # 🔮 ЦЕЙ фільтр — ЛИШЕ НАПРЯМОК (1H/4H match + AND/OR). Мін. СИЛА винесена
+        # в ОКРЕМИЙ незалежний фільтр `_forecast_strength_allows`
+        # (`forecast_strength_filter_enabled`), тож тут силу НЕ враховуємо.
+        min_conf = 0
 
         # Pull cached forecast for this symbol
         forecast_1h = None
@@ -2679,10 +2710,12 @@ class SMCScanner:
         нанівець налаштування користувача. Тепер ОБИДВА шляхи звертаються сюди —
         якщо фільтр УВІМКНЕНИЙ, він відпрацьовує на кожному вході, без винятків.
 
-        Кожен фільтр поважає СВІЙ тумблер (як і в старому `_send_alert`):
-          • OB Filter        — лише коли `ob_filter_enabled`;
-          • PD Zone Filter   — сам перевіряє `use_pd_zone_filter` всередині;
-          • Forecast Filter  — лише коли увімкнено 1H або 4H.
+        Кожен фільтр — НЕЗАЛЕЖНИЙ, зі СВОЇМ тумблером:
+          • OB Filter            — `ob_filter_enabled`;
+          • PD Zone Filter       — `use_pd_zone_filter` (всередині);
+          • Forecast (напрямок)  — 1H/4H match (AND/OR);
+          • Forecast (Мін. сила) — `forecast_strength_filter_enabled` (ОКРЕМО!);
+          • POC (краще LONG/SHORT)— `poc_filter_enabled`.
 
         Повертає (allowed: bool, reason: str). reason — готовий укр. текст для
         rejected-маркера / activity-логу (порожній, коли allowed=True).
@@ -2696,13 +2729,94 @@ class SMCScanner:
         if not self._pd_zone_filter_allows(symbol, side_label):
             return False, 'PD-зона заблокувала (вхід проти Premium/Discount)'
 
-        # === Forecast Filter (1H / 4H + Мін. сила) ===
+        # === Forecast Filter — НАПРЯМОК (1H / 4H, AND/OR) ===
         if (self._settings.get('forecast_1h_filter_enabled', False)
                 or self._settings.get('forecast_4h_filter_enabled', False)):
             if not self._forecast_filter_allows(symbol, side_label):
                 return False, 'Forecast-фільтр заблокував (прогноз 1H/4H проти напрямку)'
 
+        # === Forecast Filter — МІН. СИЛА (окремий незалежний тумблер) ===
+        if not self._forecast_strength_allows(symbol, side_label):
+            return False, 'Мін. сила прогнозу: немає достатньо сильного прогнозу в бік сигналу'
+
+        # === POC Filter — «краще LONG / краще SHORT» (незалежний тумблер) ===
+        if not self._poc_filter_allows(symbol, side_label):
+            return False, 'POC-фільтр заблокував (сигнал проти «краще LONG/SHORT» за POC)'
+
         return True, ''
+
+    def _forecast_strength_allows(self, symbol: str, side: str) -> bool:
+        """🔮 НЕЗАЛЕЖНИЙ фільтр МІН. СИЛИ прогнозу (окремо від напрямкових 1H/4H).
+        Вимкнено → пропускає. Увімкнено → пропускає лише якщо ХОЧА Б ОДИН горизонт
+        (1H або 4H) дає прогноз У БІК СИГНАЛУ з впевненістю ≥ поріг
+        (`forecast_min_strength`: strong=66% / moderate=40%). Немає сильного
+        прогнозу в бік сигналу → блок (як інші фільтри — «немає даних = обережно»)."""
+        if not self._settings.get('forecast_strength_filter_enabled', False):
+            return True
+        _ms = str(self._settings.get('forecast_min_strength', 'strong')).lower()
+        min_conf = 66 if _ms == 'strong' else (40 if _ms == 'moderate' else 0)
+        if min_conf <= 0:
+            return True  # поріг не заданий → фільтр ні на що не впливає
+        target = 1 if side == 'LONG' else -1
+        f1 = f4 = None
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if fe is not None:
+                cached = fe.get(symbol)
+                if cached:
+                    f1 = cached.get('forecast_1h')
+                    f4 = cached.get('forecast_4h')
+        except Exception:
+            pass
+        for fc in (f1, f4):
+            if not fc or not isinstance(fc, dict):
+                continue
+            if fc.get('side') == target:
+                try:
+                    conf = float(fc.get('confidence') or 0)
+                except (TypeError, ValueError):
+                    conf = 0.0
+                if conf >= min_conf:
+                    return True
+        return False
+
+    def _poc_filter_allows(self, symbol: str, side: str) -> bool:
+        """🎯 НЕЗАЛЕЖНИЙ POC-фільтр («краще LONG / краще SHORT»).
+        Вимкнено → пропускає. Увімкнено → пропускає лише сигнал У БІК, «кращий»
+        за POC: ціна НИЖЧЕ POC → краще LONG; ВИЩЕ POC → краще SHORT.
+
+        Використовує ТОЙ САМИЙ `compute_poc`/`price_vs_poc`, що й бейдж чарту, з
+        ТИМИ САМИМИ налаштуваннями (`poc_filter_market`/`poc_filter_tf`/
+        `poc_filter_window_days`, дефолти FUTURES/1H/3д) → вердикт фільтра 1:1
+        збігається з тим, що бачить користувач на графіку. `compute_poc` має
+        власний TTL-кеш, тож повторні сигнали не б'ють біржу.
+
+        На POC (мертва зона price_vs_poc) — нейтрально, пропускаємо. Немає даних
+        POC → блок (обережно, як інші фільтри)."""
+        if not self._settings.get('poc_filter_enabled', False):
+            return True
+        market = str(self._settings.get('poc_filter_market', 'futures') or 'futures')
+        tf = str(self._settings.get('poc_filter_tf', '1h') or '1h')
+        try:
+            days = float(self._settings.get('poc_filter_window_days', 3) or 3)
+        except (TypeError, ValueError):
+            days = 3.0
+        try:
+            from detection.volume_profile import compute_poc, price_vs_poc
+            res = compute_poc(symbol, hours=days * 24.0, interval=tf, market=market)
+            if not res.get('ok'):
+                return False   # немає даних POC → блок
+            price = self._get_live_price(symbol) or res.get('last_close') or 0
+            v = price_vs_poc(res.get('poc'), price, side)
+        except Exception:
+            return False
+        rel = v.get('rel')
+        if rel == 'at':
+            return True        # на POC — нейтрально, пропускаємо
+        if rel is None:
+            return False       # немає даних → блок
+        return bool(v.get('ok'))
 
     def _send_alert(self, symbol: str, event: Dict, mode: str, choch_event: Dict = None):
         try:

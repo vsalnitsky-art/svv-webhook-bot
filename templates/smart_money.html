@@ -1784,16 +1784,57 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <option value="OR">OR (lenient)</option>
                         </select>
                     </div>
-                    <!-- 🔮 Min strength — додаткова умова СИЛИ прогнозу (впевненість)
-                         до УВІМКНЕНИХ 1H/4H-фільтрів напрямку. Збіг напрямку зі
-                         слабшою за поріг впевненістю → сигнал ріжеться. -->
+                    <!-- 🔮 Мін. сила — ОКРЕМИЙ НЕЗАЛЕЖНИЙ фільтр (власний тумблер,
+                         не залежить від 1H/4H-match). Пропускає лише якщо є прогноз
+                         у бік сигналу з впевненістю ≥ обраний поріг (1H або 4H). -->
+                    <label class="sm-checkbox"
+                           title="НЕЗАЛЕЖНИЙ фільтр: сигнал проходить, лише якщо є прогноз У БІК сигналу з впевненістю не нижче обраного порогу (на 1H АБО 4H). Не залежить від «Require Forecast 1H/4H match».">
+                        <input type="checkbox" id="sm-forecast-strength-enabled"
+                               onchange="updateForecastFilter()">
+                        Require Forecast strength (Мін. сила)
+                    </label>
                     <div class="sm-control-item"
-                         title="Додаткова умова до фільтрів 1H/4H: прогноз має не лише збігатись напрямком, а й бути НЕ СЛАБШИМ за обраний рівень СИЛИ (впевненість прогнозу). сильний ≥66% · помірний ≥40%. «Будь-яка» = силу не враховувати.">
-                        <label>Мін. сила:</label>
+                         title="Поріг сили (впевненості) прогнозу для фільтра «Мін. сила»: Сильний ≥66% · Помірний ≥40%.">
+                        <label>Поріг:</label>
                         <select id="sm-forecast-min-strength" onchange="updateForecastFilter()">
-                            <option value="off" selected>Будь-яка</option>
                             <option value="moderate">Помірний (≥40%)</option>
-                            <option value="strong">Сильний (≥66%)</option>
+                            <option value="strong" selected>Сильний (≥66%)</option>
+                        </select>
+                    </div>
+                    <!-- 🎯 POC-фільтр — ОКРЕМИЙ НЕЗАЛЕЖНИЙ (власний тумблер).
+                         Пропускає лише сигнал у бік «краще за POC»:
+                         ціна нижче POC → краще LONG; вище POC → краще SHORT. -->
+                    <label class="sm-checkbox"
+                           title="НЕЗАЛЕЖНИЙ POC-фільтр: сигнал проходить лише в бік, «кращий» за POC — ціна НИЖЧЕ POC → краще LONG; ціна ВИЩЕ POC → краще SHORT. Сигнал проти POC ріжеться. Параметри (Ринок/TF/Вікно) — ті самі, що й POC на графіку.">
+                        <input type="checkbox" id="sm-poc-filter-enabled"
+                               onchange="updatePocFilter()">
+                        Require POC match (краще LONG/SHORT)
+                    </label>
+                    <div class="sm-control-item" title="Ринок для розрахунку POC (як на графіку).">
+                        <label>POC:</label>
+                        <select id="sm-poc-filter-market" onchange="updatePocFilter()">
+                            <option value="futures" selected>FUTURES</option>
+                            <option value="spot">SPOT</option>
+                        </select>
+                    </div>
+                    <div class="sm-control-item" title="Таймфрейм профілю POC.">
+                        <label>TF:</label>
+                        <select id="sm-poc-filter-tf" onchange="updatePocFilter()">
+                            <option value="15m">15M</option>
+                            <option value="30m">30M</option>
+                            <option value="1h" selected>1H</option>
+                            <option value="4h">4H</option>
+                            <option value="1d">1D</option>
+                        </select>
+                    </div>
+                    <div class="sm-control-item" title="Вікно (дні) для розрахунку POC.">
+                        <label>Вікно:</label>
+                        <select id="sm-poc-filter-window" onchange="updatePocFilter()">
+                            <option value="1">1д</option>
+                            <option value="3" selected>3д</option>
+                            <option value="7">7д</option>
+                            <option value="14">14д</option>
+                            <option value="30">30д</option>
                         </select>
                     </div>
                 </div>
@@ -5148,11 +5189,21 @@ async function loadSettings() {
             const fcWrap = document.getElementById('sm-forecast-combine-wrap');
             if (fcWrap) fcWrap.style.display =
                 (s.forecast_1h_filter_enabled && s.forecast_4h_filter_enabled) ? '' : 'none';
-            // 🔮 Min strength — додаткова умова сили прогнозу (off/moderate/strong).
+            // 🔮 Мін. сила — НЕЗАЛЕЖНИЙ фільтр (тумблер) + поріг (moderate/strong).
+            const fcStrEn = document.getElementById('sm-forecast-strength-enabled');
+            if (fcStrEn) fcStrEn.checked = !!s.forecast_strength_filter_enabled;
             const fcStr = document.getElementById('sm-forecast-min-strength');
             if (fcStr) fcStr.value =
-                (['moderate', 'strong'].indexOf(s.forecast_min_strength) >= 0)
-                    ? s.forecast_min_strength : 'off';
+                (s.forecast_min_strength === 'moderate') ? 'moderate' : 'strong';
+            // 🎯 POC-фільтр — НЕЗАЛЕЖНИЙ (тумблер) + параметри (як на чарті).
+            const pocEn = document.getElementById('sm-poc-filter-enabled');
+            if (pocEn) pocEn.checked = !!s.poc_filter_enabled;
+            const pocMkt = document.getElementById('sm-poc-filter-market');
+            if (pocMkt) pocMkt.value = (s.poc_filter_market === 'spot') ? 'spot' : 'futures';
+            const pocTf = document.getElementById('sm-poc-filter-tf');
+            if (pocTf) pocTf.value = s.poc_filter_tf || '1h';
+            const pocWin = document.getElementById('sm-poc-filter-window');
+            if (pocWin) pocWin.value = String(s.poc_filter_window_days || 3);
             // 🏁 Strong High / Weak Low (Display)
             const shEn = document.getElementById('sm-show-swinghl');
             if (shEn) shEn.checked = !!s.show_swing_hl_enabled;
@@ -5321,7 +5372,9 @@ async function updateForecastFilter() {
     const en4h = document.getElementById('sm-forecast-4h-enabled').checked;
     const mode = document.getElementById('sm-forecast-combine-mode').value || 'AND';
     const minStrEl = document.getElementById('sm-forecast-min-strength');
-    const minStr = minStrEl ? (minStrEl.value || 'off') : 'off';
+    const minStr = minStrEl ? (minStrEl.value || 'strong') : 'strong';
+    const strEnEl = document.getElementById('sm-forecast-strength-enabled');
+    const strEn = strEnEl ? !!strEnEl.checked : false;
     // Show combine selector only when both TFs are ON — otherwise it's
     // a no-op setting and just adds visual noise.
     const wrap = document.getElementById('sm-forecast-combine-wrap');
@@ -5335,10 +5388,32 @@ async function updateForecastFilter() {
                 forecast_4h_filter_enabled: en4h,
                 forecast_combine_mode: mode,
                 forecast_min_strength: minStr,
+                forecast_strength_filter_enabled: strEn,
             }),
         });
         updateSettingsSummary();
     } catch (err) { alert('Forecast Filter update error: ' + err); }
+}
+
+// 🎯 POC-фільтр — НЕЗАЛЕЖНИЙ тумблер («краще LONG/SHORT») + параметри (як на чарті).
+async function updatePocFilter() {
+    const enabled = document.getElementById('sm-poc-filter-enabled').checked;
+    const mkt = (document.getElementById('sm-poc-filter-market') || {}).value || 'futures';
+    const tf = (document.getElementById('sm-poc-filter-tf') || {}).value || '1h';
+    const win = parseFloat((document.getElementById('sm-poc-filter-window') || {}).value) || 3;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                poc_filter_enabled: enabled,
+                poc_filter_market: mkt,
+                poc_filter_tf: tf,
+                poc_filter_window_days: win,
+            }),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('POC Filter update error: ' + err); }
 }
 
 // 🏁 Strong High / Weak Low (Display) — зберігає прапорець + TF; одразу
