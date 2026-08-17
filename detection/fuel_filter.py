@@ -3334,7 +3334,8 @@ class FuelFilterDaemon:
                 _scs = getattr(_sc, '_settings', {}) if _sc is not None else {}
                 if _sc is not None and (_scs.get('forecast_1h_filter_enabled')
                                         or _scs.get('forecast_4h_filter_enabled')
-                                        or _scs.get('forecast_strength_filter_enabled')):
+                                        or _scs.get('forecast_strength_filter_enabled')
+                                        or _scs.get('decision_filter_enabled')):
                     if not _sc._forecast_filter_allows(symbol, side):
                         self._engine_skip[symbol] = 'чекаю вердикт Forecast (немає/проти)'
                         print(f"[FuelFilter] {symbol}: чекаю вердикт Forecast — не відкриваю")
@@ -3342,6 +3343,10 @@ class FuelFilterDaemon:
                     if not _sc._forecast_strength_allows(symbol, side):
                         self._engine_skip[symbol] = 'чекаю Мін. силу Forecast'
                         print(f"[FuelFilter] {symbol}: чекаю Мін. силу Forecast — не відкриваю")
+                        return False
+                    if not _sc._decision_filter_allows(symbol, side):
+                        self._engine_skip[symbol] = 'чекаю Decision-вердикт (осн. напрямок)'
+                        print(f"[FuelFilter] {symbol}: чекаю Decision-вердикт — не відкриваю")
                         return False
             except Exception as _e:
                 print(f"[FuelFilter] {symbol}: forecast re-gate error: {_e}")

@@ -203,6 +203,11 @@ DEFAULT_SETTINGS = {
     'poc_filter_market': 'futures',
     'poc_filter_tf': '1h',
     'poc_filter_window_days': 3,
+    # 🧠 НЕЗАЛЕЖНИЙ фільтр «Мін. Decision-вердикт»: пропускає сигнал лише якщо
+    # банер Decision Center РЕКОМЕНДУЄ той самий напрямок (LONG/SHORT), що й
+    # сигнал (достатньо бути в основному напрямку). NEUTRAL/протилежний → блок.
+    # Дефолт OFF.
+    'decision_filter_enabled': False,
 
     # === Volumized Order Blocks (port of TradingView "Volumized OBs" indicator) ===
     # Informational trend detector: finds the latest formed OB (Bull/Bear)
@@ -1051,6 +1056,8 @@ class SMCScanner:
                        # POC filter («краще LONG/SHORT») + параметри (як на чарті)
                        'poc_filter_enabled', 'poc_filter_market',
                        'poc_filter_tf', 'poc_filter_window_days',
+                       # Decision-вердикт фільтр (осн. напрямок)
+                       'decision_filter_enabled',
                        # Display: Strong High / Weak Low (swing extremes)
                        'show_swing_hl_enabled', 'swing_hl_timeframe',
                        # Volumized OB Trend (Pine port)
@@ -1257,6 +1264,8 @@ class SMCScanner:
                 self._settings['poc_filter_window_days'] = max(1, min(30, _wd))
             except (TypeError, ValueError):
                 self._settings['poc_filter_window_days'] = 3
+            self._settings['decision_filter_enabled'] = bool(
+                self._settings.get('decision_filter_enabled', False))
 
             # === Strong High / Weak Low (Display) validation ===
             self._settings['show_swing_hl_enabled'] = bool(
@@ -2779,6 +2788,13 @@ class SMCScanner:
             if not ok and allowed:
                 allowed, reason = False, 'POC-фільтр заблокував (сигнал проти «краще LONG/SHORT» за POC)'
 
+        # Decision-вердикт — осн. напрямок (незалежний)
+        if self._settings.get('decision_filter_enabled', False):
+            ok, _dh = self._decision_gate(symbol, side_label, at_intake=at_intake)
+            parts.append(f"Decision({_dh}):{_m(ok)}")
+            if not ok and allowed:
+                allowed, reason = False, 'Decision-вердикт: основний напрямок не збігається з сигналом'
+
         detail = ' · '.join(parts) if parts else 'фільтри вимкнені'
         return allowed, reason, detail
 
@@ -2884,6 +2900,49 @@ class SMCScanner:
         if rel is None:
             return False       # немає даних → блок
         return bool(v.get('ok'))
+
+    def _decision_gate(self, symbol: str, side: str, at_intake: bool = False):
+        """🧠 Фільтр «Мін. Decision-вердикт» — банер Decision Center має
+        РЕКОМЕНДУВАТИ той самий напрямок (LONG/SHORT), що й сигнал (достатньо
+        бути в основному напрямку). Повертає (ok, headline_text) — text для 🧾
+        логу (напр. 'LONG 80%'). 10с-кеш, щоб не перераховувати щотіку в черзі.
+
+        at_intake=True: блокуємо ЛИШЕ явну ПРОТИЛЕЖНУ рекомендацію (nodata/
+        neutral → чекаємо в черзі); строго (reco == side) — при відкритті."""
+        now = time.time()
+        cache = getattr(self, '_decision_cache', None)
+        if cache is None:
+            self._decision_cache = cache = {}
+        hit = cache.get(symbol)
+        if hit and (now - hit[0]) < 10:
+            reco, headline = hit[1], hit[2]
+        else:
+            reco = None
+            headline = '—'
+            try:
+                from detection.trade_manager import get_trade_manager
+                tm = get_trade_manager()
+                if tm is not None and hasattr(tm, 'compute_decision'):
+                    price = self._get_live_price(symbol) or 0
+                    dec = tm.compute_decision(symbol, price) or {}
+                    reco = (dec.get('recommended') or '').upper()
+                    headline = dec.get('headline') or (reco or '—')
+            except Exception:
+                pass
+            cache[symbol] = (now, reco, headline)
+        target = (side or '').upper()
+        opp = 'SHORT' if target == 'LONG' else 'LONG'
+        if at_intake:
+            ok = (reco != opp)          # інтейк: блок лише на явну протилежність
+        else:
+            ok = (reco == target)       # відкриття: суворо в бік сигналу
+        return ok, headline
+
+    def _decision_filter_allows(self, symbol: str, side: str, at_intake: bool = False) -> bool:
+        """Bool-обгортка `_decision_gate` для re-gate у `fuel_filter._open`."""
+        if not self._settings.get('decision_filter_enabled', False):
+            return True
+        return self._decision_gate(symbol, side, at_intake=at_intake)[0]
 
     def _send_alert(self, symbol: str, event: Dict, mode: str, choch_event: Dict = None):
         try:

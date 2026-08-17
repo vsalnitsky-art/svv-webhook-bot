@@ -38,6 +38,7 @@ def _self(settings, ob_ok=True, pd_ok=True, fc_ok=True, str_ok=True, poc_ok=True
     # Value helpers used by the detail breakdown.
     ns._forecast_pair = lambda sym: ('—', '—')
     ns.get_pd_pct = lambda sym: None
+    ns._decision_gate = lambda sym, side, at_intake=False: (True, 'LONG 80%')
     return ns
 
 

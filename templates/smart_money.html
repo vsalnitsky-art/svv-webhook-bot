@@ -1837,6 +1837,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <option value="30">30д</option>
                         </select>
                     </div>
+                    <!-- 🧠 Decision-вердикт — ОКРЕМИЙ НЕЗАЛЕЖНИЙ фільтр (власний
+                         тумблер). Пропускає сигнал лише якщо банер Decision Center
+                         рекомендує ТОЙ САМИЙ напрямок (LONG/SHORT), що й сигнал. -->
+                    <label class="sm-checkbox"
+                           title="НЕЗАЛЕЖНИЙ фільтр: сигнал проходить лише якщо банер Decision Center (LONG/SHORT %) рекомендує ТОЙ САМИЙ основний напрямок, що й сигнал. NEUTRAL або протилежний → сигнал ріжеться.">
+                        <input type="checkbox" id="sm-decision-filter-enabled"
+                               onchange="updateDecisionFilter()">
+                        Require Decision match (осн. напрямок)
+                    </label>
                 </div>
             </div>
 
@@ -5204,6 +5213,9 @@ async function loadSettings() {
             if (pocTf) pocTf.value = s.poc_filter_tf || '1h';
             const pocWin = document.getElementById('sm-poc-filter-window');
             if (pocWin) pocWin.value = String(s.poc_filter_window_days || 3);
+            // 🧠 Decision-вердикт фільтр (осн. напрямок).
+            const decEn = document.getElementById('sm-decision-filter-enabled');
+            if (decEn) decEn.checked = !!s.decision_filter_enabled;
             // 🏁 Strong High / Weak Low (Display)
             const shEn = document.getElementById('sm-show-swinghl');
             if (shEn) shEn.checked = !!s.show_swing_hl_enabled;
@@ -5414,6 +5426,19 @@ async function updatePocFilter() {
         });
         updateSettingsSummary();
     } catch (err) { alert('POC Filter update error: ' + err); }
+}
+
+// 🧠 Decision-вердикт — НЕЗАЛЕЖНИЙ тумблер (осн. напрямок LONG/SHORT).
+async function updateDecisionFilter() {
+    const enabled = document.getElementById('sm-decision-filter-enabled').checked;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ decision_filter_enabled: enabled }),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('Decision Filter update error: ' + err); }
 }
 
 // 🏁 Strong High / Weak Low (Display) — зберігає прапорець + TF; одразу

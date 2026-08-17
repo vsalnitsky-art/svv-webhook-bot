@@ -143,6 +143,54 @@ def test_strength_blocks_opposite():
     assert S._forecast_strength_allows(st, 'BTCUSDT', 'LONG') is False
 
 
+# ---------------- Decision-verdict filter ----------------
+def _inject_tm(reco):
+    _ensure_detection_pkg()
+    tm_mod = types.ModuleType('detection.trade_manager')
+    tm_mod.get_trade_manager = lambda: types.SimpleNamespace(
+        compute_decision=lambda sym, price: {'recommended': reco, 'headline': f'{reco} 80%'})
+    sys.modules['detection.trade_manager'] = tm_mod
+
+
+def _dec_stub(settings):
+    ns = types.SimpleNamespace()
+    ns._settings = settings
+    ns._get_live_price = lambda sym: 100.0
+    # Bind the REAL _decision_gate so _decision_filter_allows exercises actual logic.
+    ns._decision_gate = types.MethodType(S._decision_gate, ns)
+    return ns
+
+
+def test_decision_disabled_passes():
+    _inject_tm('SHORT')
+    st = _dec_stub({'decision_filter_enabled': False})
+    assert S._decision_filter_allows(st, 'X', 'LONG') is True
+
+
+def test_decision_match_passes():
+    _inject_tm('LONG')
+    st = _dec_stub({'decision_filter_enabled': True})
+    assert S._decision_filter_allows(st, 'X', 'LONG') is True
+
+
+def test_decision_opposite_blocks():
+    _inject_tm('SHORT')
+    st = _dec_stub({'decision_filter_enabled': True})
+    assert S._decision_filter_allows(st, 'X', 'LONG') is False
+
+
+def test_decision_neutral_blocks_at_open():
+    _inject_tm('NEUTRAL')
+    st = _dec_stub({'decision_filter_enabled': True})
+    assert S._decision_filter_allows(st, 'X', 'LONG') is False   # strict at open
+
+
+def test_decision_neutral_waits_at_intake():
+    _inject_tm('NEUTRAL')
+    st = _dec_stub({'decision_filter_enabled': True})
+    assert S._decision_filter_allows(st, 'X', 'LONG', at_intake=True) is True  # wait
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in fns:

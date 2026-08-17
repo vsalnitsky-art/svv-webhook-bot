@@ -97,6 +97,12 @@ Volumized-OB-сигнал (`vob_alert_enabled`) фаєриться в `smc_scann
 - **Forecast МІН.СИЛА** — ОКРЕМИЙ `forecast_strength_filter_enabled` +
   `forecast_min_strength` (`_forecast_strength_allows`: пропускає лише якщо є
   прогноз у бік сигналу з впевненістю ≥ поріг на 1H або 4H);
+- **Decision-вердикт (осн. напрямок)** — `decision_filter_enabled`
+  (`_decision_gate`/`_decision_filter_allows`): банер Decision Center має
+  рекомендувати ТОЙ САМИЙ напрямок (LONG/SHORT), що й сигнал (достатньо бути в
+  осн. напрямку); NEUTRAL/протилежний → блок. 10с-кеш; at_intake — блок лише на
+  протилежний, строго при відкритті (`_open` re-gate). ЦЕ — про банер «LONG 80%
+  СИЛЬНИЙ», НЕ про Forecast-бейджі 1H/4H (їх гейтить Мін.сила).
 - **POC «краще LONG/SHORT»** — `poc_filter_enabled` (`_poc_filter_allows`:
   напрямковий — ціна нижче POC → LONG, вище → SHORT, на POC → нейтрально). Рахує
   через ТОЙ САМИЙ `detection.volume_profile.compute_poc`/`price_vs_poc`, що й бейдж
