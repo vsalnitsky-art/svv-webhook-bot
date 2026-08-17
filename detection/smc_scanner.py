@@ -1674,29 +1674,21 @@ class SMCScanner:
                                             # базова лінія — без сигналу
                                             self._vob_alert_seen[symbol] = _ft
                                         elif _ft > _prev:
-                                            # Базову лінію рухаємо ЗАВЖДИ (щоб той самий
-                                            # OB не фаєрив двічі), але сам сигнал — лише
-                                            # якщо OB СВІЖИЙ (щойно підтвердився).
-                                            self._vob_alert_seen[symbol] = _ft
-                                            # 🕒 ГЕЙТ СВІЖОСТІ = ВАЛІДНІСТЬ. Volumized OB
-                                            # валідний лише після підтвердження свінгу
-                                            # (~swing_length барів). Фаєримо ТІЛЬКИ якщо
-                                            # зловили його одразу (вік ≤ поріг), інакше це
-                                            # застарілий/фантомний — пропускаємо.
+                                            # Реагуємо ЛИШЕ на НОВИЙ, СВІЖОУТВОРЕНИЙ OB.
+                                            # Volumized OB валідний тільки після підтвердження
+                                            # свінгу (~swing_length барів). Якщо OB застарілий
+                                            # /фантомний (вік > поріг) — ПОВНИЙ no-op: НЕ рухаємо
+                                            # базу, НЕ логуємо, НЕ реагуємо, ці дані НЕ юзаємо.
                                             _sl = int(self._settings.get('volumized_swing_length', 10) or 10)
                                             _cfg_age = int(self._settings.get('vob_alert_max_age_bars', 0) or 0)
                                             _max_age = _cfg_age if _cfg_age > 0 else (_sl + 2)
-                                            _age = self._vob_age_bars(vol_klines, _ft)
-                                            try:
-                                                from detection.activity_log import log_activity
-                                            except Exception:
-                                                log_activity = lambda *a, **k: None
-                                            if _age > _max_age:
-                                                # застарілий OB — НЕ сигналимо (валідність!)
-                                                print(f"[SMC] ⏭ VOB {_cside} {symbol}: OB "
-                                                      f"застарілий (вік {_age}>{_max_age} барів) "
-                                                      f"— пропуск (без фантома)")
-                                            else:
+                                            if self._vob_age_bars(vol_klines, _ft) <= _max_age:
+                                                # свіжий OB → фіксуємо базу й ОДРАЗУ працюємо
+                                                self._vob_alert_seen[symbol] = _ft
+                                                try:
+                                                    from detection.activity_log import log_activity
+                                                except Exception:
+                                                    log_activity = lambda *a, **k: None
                                                 _entry = (self._get_live_price(symbol)
                                                           or (_cand.get('top') if _cside == 'SHORT'
                                                               else _cand.get('bottom')) or 0)
@@ -1705,12 +1697,9 @@ class SMCScanner:
                                                              side=_cside, source='scanner')
                                                 # 🚦 СПІЛЬНІ ВОРОТА фільтрів — ті самі, що й
                                                 # для CHoCH (OB/PD/Forecast, кожен за своїм
-                                                # тумблером). Раніше VOB-alert відкривав напряму
-                                                # й обходив усі фільтри → тепер НІ.
+                                                # тумблером).
                                                 _vok, _vreason = self._signal_allowed(symbol, _cside)
                                                 if not _vok:
-                                                    print(f"[SMC] 🚫 VOB {_cside} {symbol} "
-                                                          f"заблоковано: {_vreason}")
                                                     log_activity(symbol, 'rejected', _vreason,
                                                                  side=_cside, source='scanner')
                                                 else:
@@ -1721,6 +1710,7 @@ class SMCScanner:
                                                         # funding-очистка не видаляла ці записи.
                                                         _tm.on_signal(symbol=symbol, side=_cside,
                                                                       entry_price=_entry, opened_by='vob_alert')
+                                            # else: застарілий/фантомний OB — нічого не робимо
                                 except Exception as _ve:
                                     if self._errors <= 5:
                                         print(f"[SMC] VOB-alert error for {symbol}: {_ve}")
