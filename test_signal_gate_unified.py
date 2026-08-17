@@ -29,50 +29,52 @@ gate = _mod.SMCScanner._signal_allowed  # unbound; call gate(self, symbol, side)
 def _self(settings, ob_ok=True, pd_ok=True, fc_ok=True, str_ok=True, poc_ok=True):
     ns = types.SimpleNamespace()
     ns._settings = settings
-    ns._ob_filter_allows = lambda sym, side: ob_ok
-    ns._pd_zone_filter_allows = lambda sym, side: pd_ok
-    ns._forecast_filter_allows = lambda sym, side: fc_ok
-    # Two new INDEPENDENT filters — stubbed (their own tests live in
-    # test_independent_filters.py); here they default to "pass".
-    ns._forecast_strength_allows = lambda sym, side: str_ok
-    ns._poc_filter_allows = lambda sym, side: poc_ok
+    # Filter helpers accept **kw so the at_intake kwarg the gate passes is absorbed.
+    ns._ob_filter_allows = lambda sym, side, **kw: ob_ok
+    ns._pd_zone_filter_allows = lambda sym, side, **kw: pd_ok
+    ns._forecast_filter_allows = lambda sym, side, **kw: fc_ok
+    ns._forecast_strength_allows = lambda sym, side, **kw: str_ok
+    ns._poc_filter_allows = lambda sym, side, **kw: poc_ok
+    # Value helpers used by the detail breakdown.
+    ns._forecast_pair = lambda sym: ('—', '—')
+    ns.get_pd_pct = lambda sym: None
     return ns
 
 
 def test_all_filters_off_allows():
-    ok, reason = gate(_self({}), 'X', 'SHORT')
+    ok, reason, _ = gate(_self({}), 'X', 'SHORT')
     assert ok is True and reason == ''
 
 
 def test_forecast_blocks_short_against_long_forecast():
     # The ASTER case: forecast filter ON, forecast disagrees → block.
     s = {'forecast_1h_filter_enabled': True, 'forecast_4h_filter_enabled': True}
-    ok, reason = gate(_self(s, fc_ok=False), 'ASTERUSDT', 'SHORT')
+    ok, reason, _ = gate(_self(s, fc_ok=False), 'ASTERUSDT', 'SHORT')
     assert ok is False
     assert 'Forecast' in reason, reason
 
 
 def test_forecast_toggle_respected_when_off():
     # forecast helper would block, but neither TF enabled → filter skipped.
-    ok, reason = gate(_self({}, fc_ok=False), 'X', 'SHORT')
+    ok, reason, _ = gate(_self({}, fc_ok=False), 'X', 'SHORT')
     assert ok is True and reason == ''
 
 
 def test_ob_filter_blocks_when_enabled():
     s = {'ob_filter_enabled': True}
-    ok, reason = gate(_self(s, ob_ok=False), 'X', 'SHORT')
+    ok, reason, _ = gate(_self(s, ob_ok=False), 'X', 'SHORT')
     assert ok is False and 'OB' in reason, reason
 
 
 def test_ob_toggle_respected_when_off():
-    ok, reason = gate(_self({'ob_filter_enabled': False}, ob_ok=False), 'X', 'LONG')
+    ok, reason, _ = gate(_self({'ob_filter_enabled': False}, ob_ok=False), 'X', 'LONG')
     assert ok is True and reason == ''
 
 
 def test_pd_blocks_unconditionally_helper_owns_toggle():
     # PD helper is called every time (it checks use_pd_zone_filter internally);
     # here the stub says "blocked" → gate must block with the PD reason.
-    ok, reason = gate(_self({}, pd_ok=False), 'X', 'LONG')
+    ok, reason, _ = gate(_self({}, pd_ok=False), 'X', 'LONG')
     assert ok is False and 'PD' in reason, reason
 
 
@@ -80,13 +82,13 @@ def test_priority_ob_before_pd_before_forecast():
     # All three would block; OB is checked first → its reason wins.
     s = {'ob_filter_enabled': True,
          'forecast_1h_filter_enabled': True}
-    ok, reason = gate(_self(s, ob_ok=False, pd_ok=False, fc_ok=False), 'X', 'SHORT')
+    ok, reason, _ = gate(_self(s, ob_ok=False, pd_ok=False, fc_ok=False), 'X', 'SHORT')
     assert ok is False and 'OB' in reason, reason
 
 
 def test_all_enabled_and_passing_allows():
     s = {'ob_filter_enabled': True, 'forecast_1h_filter_enabled': True}
-    ok, reason = gate(_self(s, ob_ok=True, pd_ok=True, fc_ok=True), 'X', 'LONG')
+    ok, reason, _ = gate(_self(s, ob_ok=True, pd_ok=True, fc_ok=True), 'X', 'LONG')
     assert ok is True and reason == ''
 
 

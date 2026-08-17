@@ -4198,17 +4198,13 @@ class TradeManager:
         # the scanner's klines cache. Failure to compute is non-fatal — we
         # just skip the OB line in the message.
         ob_line = self._format_last_ob_telegram(symbol)
-        # Source WITHOUT the decision suffix (the 🤪 verdict is shown once,
-        # below in es_block — fixes the duplicated «LONG 83% (marginal)»).
-        src = _pretty_ob(opened_by_full)
         dot = self._dir_dot(side)
         _sl_str = self._sltp_display(pos, 'sl')
         _tp_str = self._sltp_display(pos, 'tp')
         msg = (
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
             f"<b>#{symbol}</b>   🧪 ТЕСТ\n"
-            + (f"🏷 {src}\n" if src else '')
-            + f"📍 Вхід: <b>{self._fmt_price(entry_price)}</b>\n"
+            f"📍 Вхід: <b>{self._fmt_price(entry_price)}</b>\n"
             f"🛡 SL: <b>{_sl_str}</b> · 🎯 TP: <b>{_tp_str}</b>"
         )
         self._notify(msg, is_test=True, category='trades')
@@ -4465,12 +4461,10 @@ class TradeManager:
         # 'good +50' — should I trust this score or down-weight it?"
         dot = self._dir_dot(pos['side'])
         peak_line = self._fmt_peak_line(closed)
-        _obl = _pretty_ob(pos.get('opened_by') or '')
         msg = (
             f"{icon} ⏹ ЗАКРИТО {dot}<b>{pos['side']}</b> <b>{pnl_pct:+.2f}%</b>\n"
             f"<b>#{symbol}</b>   🧪 ТЕСТ\n"
-            + (f"🏷 {_obl}\n" if _obl else '')
-            + f"📍 Вихід: <b>{self._fmt_price(exit_price)}</b>\n"
+            f"📍 Вихід: <b>{self._fmt_price(exit_price)}</b>\n"
             f"🔖 Причина: {self._reason_label(reason)}\n"
             f"{peak_line}"
         ).rstrip()
@@ -5886,12 +5880,10 @@ class TradeManager:
         dot = self._dir_dot(side)
         sl_str = self._sltp_display(pos, 'sl')
         tp_str = self._sltp_display(pos, 'tp')
-        _obl = _pretty_ob(pos.get('opened_by') or '')
         msg = (
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
             f"<b>#{pos['symbol']}</b>\n"
-            + (f"🏷 {_obl}\n" if _obl else '')
-            + f"📍 Вхід: <b>{self._fmt_price(pos['entry_price'])}</b>\n"
+            f"📍 Вхід: <b>{self._fmt_price(pos['entry_price'])}</b>\n"
             f"🛡 SL: <b>{sl_str}</b> · 🎯 TP: <b>{tp_str}</b>"
         )
         self._notify(msg, category='trades')
@@ -5906,12 +5898,10 @@ class TradeManager:
         # weight-tuning and spotting when the predictor was wrong.
         dot = self._dir_dot(side)
         peak_line = self._fmt_peak_line(closed)
-        _obl = _pretty_ob(closed.get('opened_by') or '')
         msg = (
             f"{icon} ⏹ ЗАКРИТО {dot}<b>{side}</b> <b>{pnl_pct:+.2f}%</b>\n"
             f"<b>#{closed['symbol']}</b>\n"
-            + (f"🏷 {_obl}\n" if _obl else '')
-            + f"📍 Вихід: <b>{self._fmt_price(closed['exit_price'])}</b>\n"
+            f"📍 Вихід: <b>{self._fmt_price(closed['exit_price'])}</b>\n"
             f"🔖 Причина: {self._reason_label(closed['reason'])}\n"
             f"{peak_line}"
         ).rstrip()

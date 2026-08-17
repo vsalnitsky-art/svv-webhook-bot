@@ -3322,6 +3322,30 @@ class FuelFilterDaemon:
                     pass
                 return False
 
+        # 🔮 RE-GATE прогноз-фільтрів ПРИ ВІДКРИТТІ («чекати вердикт»): сигнал,
+        # що зайшов у чергу, поки прогноз ще не порахувався, ВІДКРИЄТЬСЯ лише
+        # коли вердикт з'явиться і збіжиться. Повертаємо False (не відкрито) →
+        # монета лишається в черзі й ретраїться наступним тіком, поки вердикт не
+        # готовий/не збігся. Тільки для scanner-сигналів (не funding Q3-VOB).
+        if 'funding' not in str(opened_by or ''):
+            try:
+                from detection.smc_scanner import get_smc_scanner
+                _sc = get_smc_scanner()
+                _scs = getattr(_sc, '_settings', {}) if _sc is not None else {}
+                if _sc is not None and (_scs.get('forecast_1h_filter_enabled')
+                                        or _scs.get('forecast_4h_filter_enabled')
+                                        or _scs.get('forecast_strength_filter_enabled')):
+                    if not _sc._forecast_filter_allows(symbol, side):
+                        self._engine_skip[symbol] = 'чекаю вердикт Forecast (немає/проти)'
+                        print(f"[FuelFilter] {symbol}: чекаю вердикт Forecast — не відкриваю")
+                        return False
+                    if not _sc._forecast_strength_allows(symbol, side):
+                        self._engine_skip[symbol] = 'чекаю Мін. силу Forecast'
+                        print(f"[FuelFilter] {symbol}: чекаю Мін. силу Forecast — не відкриваю")
+                        return False
+            except Exception as _e:
+                print(f"[FuelFilter] {symbol}: forecast re-gate error: {_e}")
+
         # CHECK WAIT VERDICT: if enabled, don't open coins in WAIT state
         if settings.get('skip_wait_coins', False):
             if self._is_wait_verdict(symbol):

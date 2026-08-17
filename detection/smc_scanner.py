@@ -1724,13 +1724,13 @@ class SMCScanner:
                                                 _entry = (self._get_live_price(symbol)
                                                           or (_cand.get('top') if _cside == 'SHORT'
                                                               else _cand.get('bottom')) or 0)
+                                                # 🚦 СПІЛЬНІ ВОРОТА фільтрів (at_intake) + РОЗКЛАД
+                                                # ЗНАЧЕНЬ кожного фільтра у лог разом із сигналом.
+                                                _vok, _vreason, _vdetail = self._signal_allowed(
+                                                    symbol, _cside, at_intake=True)
                                                 log_activity(symbol, 'signal',
-                                                             f'Свіжий Volumized OB ({vol_tf}) {_cside}',
+                                                             f'Свіжий Volumized OB ({vol_tf}) {_cside} · {_vdetail}',
                                                              side=_cside, source='scanner')
-                                                # 🚦 СПІЛЬНІ ВОРОТА фільтрів — ті самі, що й
-                                                # для CHoCH (OB/PD/Forecast, кожен за своїм
-                                                # тумблером).
-                                                _vok, _vreason = self._signal_allowed(symbol, _cside)
                                                 if not _vok:
                                                     log_activity(symbol, 'rejected', _vreason,
                                                                  side=_cside, source='scanner')
@@ -2188,8 +2188,14 @@ class SMCScanner:
         return (float(self._settings.get('pd_long_max_pct', 75.0)),
                 float(self._settings.get('pd_short_min_pct', 25.0)))
     
-    def _forecast_filter_allows(self, symbol: str, side: str) -> bool:
+    def _forecast_filter_allows(self, symbol: str, side: str, at_intake: bool = False) -> bool:
         """Forecast 1H / 4H gate.
+
+        at_intake=True (момент appearance сигналу): блокуємо ЛИШЕ явну
+        ПРОТИЛЕЖНІСТЬ прогнозу; nodata/neutral → пропускаємо В ЧЕРГУ (сигнал
+        ЧЕКАЄ вердикту, а не викидається). Строга перевірка (потрібен match)
+        робиться при ВІДКРИТТІ з черги (`_open` re-gate) — коли вердикт уже є.
+        at_intake=False (дефолт, момент відкриття): строга логіка нижче.
         
         Settings consulted:
           forecast_1h_filter_enabled (bool)
@@ -2270,6 +2276,14 @@ class SMCScanner:
         
         r1 = evaluate(forecast_1h, '1H') if want_1h else None
         r4 = evaluate(forecast_4h, '4H') if want_4h else None
+
+        # 🕒 ІНТЕЙК: не викидаємо сигнал через відсутній вердикт — блокуємо ЛИШЕ
+        # явну протилежність; решту (nodata/neutral/match) пускаємо в чергу чекати.
+        if at_intake:
+            if r1 == 'opposite' or r4 == 'opposite':
+                print(f"[SMC] 🚫 Forecast (intake) blocked {symbol} {side}: opposite")
+                return False
+            return True
         
         # Single-filter mode — simple match check
         if want_1h and not want_4h:
@@ -2701,58 +2715,111 @@ class SMCScanner:
         # event_dir = 'bull' | 'bear'; bias = 'bull' | 'bear'
         return bias == event_dir
     
-    def _signal_allowed(self, symbol: str, side_label: str):
+    def _signal_allowed(self, symbol: str, side_label: str, at_intake: bool = False):
         """SPILNI VOROTA для БУДЬ-ЯКОГО входу сигналу (CHoCH/BOS ТА Volumized OB).
 
-        Раніше три фільтри (OB / PD / Forecast) жили лише всередині `_send_alert`
-        (шлях CHoCH). Volumized-OB-alert відкривав через `on_signal(...)` напряму
-        → ОБХОДИВ усі три (кейс ASTERUSDT SHORT попри Forecast LONG). Це зводило
-        нанівець налаштування користувача. Тепер ОБИДВА шляхи звертаються сюди —
-        якщо фільтр УВІМКНЕНИЙ, він відпрацьовує на кожному вході, без винятків.
+        Оцінює УСІ увімкнені фільтри (кожен — НЕЗАЛЕЖНИЙ, зі своїм тумблером) і
+        повертає **(allowed, reason, detail)**:
+          • allowed — чи пропустити сигнал;
+          • reason  — укр. причина ПЕРШОГО блокувальника (для rejected);
+          • detail  — розклад ЗНАЧЕНЬ КОЖНОГО увімкненого фільтра (для 🧾 логу),
+            щоб було ВИДНО, що кожен фільтр реально відпрацював (✓/✗ + числа).
 
-        Кожен фільтр — НЕЗАЛЕЖНИЙ, зі СВОЇМ тумблером:
-          • OB Filter            — `ob_filter_enabled`;
-          • PD Zone Filter       — `use_pd_zone_filter` (всередині);
-          • Forecast (напрямок)  — 1H/4H match (AND/OR);
-          • Forecast (Мін. сила) — `forecast_strength_filter_enabled` (ОКРЕМО!);
-          • POC (краще LONG/SHORT)— `poc_filter_enabled`.
+        at_intake=True (момент появи сигналу): Forecast-фільтри працюють м'яко
+        (блок лише на явну протилежність; nodata → чекаємо в черзі); строга
+        перевірка — при ВІДКРИТТІ з черги (`_open` re-gate). at_intake=False —
+        строго (потрібен match + сила).
 
-        Повертає (allowed: bool, reason: str). reason — готовий укр. текст для
-        rejected-маркера / activity-логу (порожній, коли allowed=True).
-        """
-        # === OB Filter (структурний) ===
+        Фільтри: OB (`ob_filter_enabled`) · PD (`use_pd_zone_filter`) · Forecast
+        напрямок (1H/4H+AND/OR) · Forecast Мін.сила (`forecast_strength_filter_
+        enabled`) · POC (`poc_filter_enabled`)."""
+        parts = []
+        allowed = True
+        reason = ''
+        _m = lambda ok: '✓' if ok else '✗'
+
+        # OB
         if self._settings.get('ob_filter_enabled', False):
-            if not self._ob_filter_allows(symbol, side_label):
-                return False, 'OB-фільтр заблокував (Order Block проти напрямку)'
+            ok = self._ob_filter_allows(symbol, side_label)
+            parts.append(f"OB({self._settings.get('ob_filter_timeframe', '1h')}):{_m(ok)}")
+            if not ok and allowed:
+                allowed, reason = False, 'OB-фільтр заблокував (Order Block проти напрямку)'
 
-        # === PD Zone Filter (Premium/Discount) — сам гейтить свій тумблер ===
-        if not self._pd_zone_filter_allows(symbol, side_label):
-            return False, 'PD-зона заблокувала (вхід проти Premium/Discount)'
+        # PD (сам гейтить свій тумблер; у розклад додаємо лише коли увімкнено)
+        if self._settings.get('use_pd_zone_filter', True):
+            ok = self._pd_zone_filter_allows(symbol, side_label)
+            _pct = self.get_pd_pct(symbol)
+            _ps = f"{_pct:.0f}%" if isinstance(_pct, (int, float)) else '—'
+            parts.append(f"PD({_ps}):{_m(ok)}")
+            if not ok and allowed:
+                allowed, reason = False, 'PD-зона заблокувала (вхід проти Premium/Discount)'
 
-        # === Forecast Filter — НАПРЯМОК (1H / 4H, AND/OR) ===
+        # Forecast — напрямок
         if (self._settings.get('forecast_1h_filter_enabled', False)
                 or self._settings.get('forecast_4h_filter_enabled', False)):
-            if not self._forecast_filter_allows(symbol, side_label):
-                return False, 'Forecast-фільтр заблокував (прогноз 1H/4H проти напрямку)'
+            ok = self._forecast_filter_allows(symbol, side_label, at_intake=at_intake)
+            _f1, _f4 = self._forecast_pair(symbol)
+            _mode = str(self._settings.get('forecast_combine_mode', 'AND')).upper()
+            parts.append(f"Прогноз[{_mode}] 1H:{_f1} 4H:{_f4}:{_m(ok)}")
+            if not ok and allowed:
+                allowed, reason = False, 'Forecast-фільтр заблокував (прогноз 1H/4H проти напрямку)'
 
-        # === Forecast Filter — МІН. СИЛА (окремий незалежний тумблер) ===
-        if not self._forecast_strength_allows(symbol, side_label):
-            return False, 'Мін. сила прогнозу: немає достатньо сильного прогнозу в бік сигналу'
+        # Forecast — Мін. сила (окремий незалежний)
+        if self._settings.get('forecast_strength_filter_enabled', False):
+            ok = self._forecast_strength_allows(symbol, side_label, at_intake=at_intake)
+            _th = str(self._settings.get('forecast_min_strength', 'strong'))
+            parts.append(f"Мін.сила({_th}):{_m(ok)}")
+            if not ok and allowed:
+                allowed, reason = False, 'Мін. сила прогнозу: немає достатньо сильного прогнозу в бік сигналу'
 
-        # === POC Filter — «краще LONG / краще SHORT» (незалежний тумблер) ===
-        if not self._poc_filter_allows(symbol, side_label):
-            return False, 'POC-фільтр заблокував (сигнал проти «краще LONG/SHORT» за POC)'
+        # POC — «краще LONG/SHORT» (незалежний)
+        if self._settings.get('poc_filter_enabled', False):
+            ok = self._poc_filter_allows(symbol, side_label)
+            parts.append(f"POC:{_m(ok)}")
+            if not ok and allowed:
+                allowed, reason = False, 'POC-фільтр заблокував (сигнал проти «краще LONG/SHORT» за POC)'
 
-        return True, ''
+        detail = ' · '.join(parts) if parts else 'фільтри вимкнені'
+        return allowed, reason, detail
 
-    def _forecast_strength_allows(self, symbol: str, side: str) -> bool:
+    def _forecast_pair(self, symbol: str):
+        """('1H SHORT 75%', '4H LONG 60%') — сирі значення прогнозу для 🧾 логу.
+        '—' коли немає даних. Використовується у розкладі фільтрів."""
+        f1 = f4 = None
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if fe is not None:
+                c = fe.get(symbol)
+                if c:
+                    f1 = c.get('forecast_1h'); f4 = c.get('forecast_4h')
+        except Exception:
+            pass
+
+        def _fmt(fc):
+            if not fc or not isinstance(fc, dict):
+                return '—'
+            s = fc.get('side')
+            sd = 'LONG' if s == 1 else ('SHORT' if s == -1 else 'ней')
+            try:
+                cf = int(float(fc.get('confidence') or 0))
+            except (TypeError, ValueError):
+                cf = 0
+            return f"{sd} {cf}%"
+        return _fmt(f1), _fmt(f4)
+
+    def _forecast_strength_allows(self, symbol: str, side: str, at_intake: bool = False) -> bool:
         """🔮 НЕЗАЛЕЖНИЙ фільтр МІН. СИЛИ прогнозу (окремо від напрямкових 1H/4H).
         Вимкнено → пропускає. Увімкнено → пропускає лише якщо ХОЧА Б ОДИН горизонт
         (1H або 4H) дає прогноз У БІК СИГНАЛУ з впевненістю ≥ поріг
         (`forecast_min_strength`: strong=66% / moderate=40%). Немає сильного
-        прогнозу в бік сигналу → блок (як інші фільтри — «немає даних = обережно»)."""
+        прогнозу в бік сигналу → блок (як інші фільтри — «немає даних = обережно»).
+        at_intake=True — відкладаємо (пропускаємо), щоб сигнал ЧЕКАВ вердикт у
+        черзі; строга перевірка сили — при ВІДКРИТТІ (`_open` re-gate)."""
         if not self._settings.get('forecast_strength_filter_enabled', False):
             return True
+        if at_intake:
+            return True  # інтейк: відкладаємо силу до відкриття (чекаємо вердикт)
         _ms = str(self._settings.get('forecast_min_strength', 'strong')).lower()
         min_conf = 66 if _ms == 'strong' else (40 if _ms == 'moderate' else 0)
         if min_conf <= 0:
@@ -2830,16 +2897,14 @@ class SMCScanner:
                 from detection.activity_log import log_activity
             except Exception:
                 log_activity = lambda *a, **k: None
-            log_activity(symbol, 'signal', f'Свіжий сигнал {mode}', side=side_label, source='scanner')
-
-            # === Фільтри входу (OB / PD / Forecast) — СПІЛЬНІ ВОРОТА ===
-            # Ті самі, що тепер гейтять і Volumized-OB-alert (див.
-            # _signal_allowed). Hard-block: заблокований сигнал лишає rejected-
-            # маркер (щоб було видно ЧОМУ не відкрилось) і не доходить до TM.
+            # === Фільтри входу — СПІЛЬНІ ВОРОТА (at_intake) ===
+            # Оцінюємо УСІ увімкнені фільтри й пишемо їхній РОЗКЛАД ЗНАЧЕНЬ у лог
+            # разом із сигналом — щоб було видно, що кожен фільтр відпрацював.
             # Level for rejected-marker placement (entry computed later).
             evt_level = event.get('level', 0) or 0
-
-            _allowed, _reason = self._signal_allowed(symbol, side_label)
+            _allowed, _reason, _detail = self._signal_allowed(symbol, side_label, at_intake=True)
+            log_activity(symbol, 'signal', f'Свіжий сигнал {mode} · {_detail}',
+                         side=side_label, source='scanner')
             if not _allowed:
                 print(f"[SMC] 🚫 {side_label} {symbol} заблоковано: {_reason}")
                 self._record_marker(symbol, event, side_label,

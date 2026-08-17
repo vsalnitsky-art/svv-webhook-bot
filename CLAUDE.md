@@ -105,6 +105,21 @@ Volumized-OB-сигнал (`vob_alert_enabled`) фаєриться в `smc_scann
   `compute_poc` має власний TTL-кеш (не б'є біржу на кожен сигнал).
 Тести: `test_independent_filters.py`.
 
+**Прозорість + «чекати вердикт»:**
+- `_signal_allowed` повертає **(allowed, reason, detail)**; `detail` — РОЗКЛАД
+  ЗНАЧЕНЬ кожного увімкненого фільтра (✓/✗ + числа: прогноз 1H/4H сторона%,
+  Мін.сила поріг, PD %, OB tf, POC). Пишеться у 🧾 Лог РАЗОМ із сигналом
+  (`Свіжий сигнал … · <detail>`) — щоб було видно, що КОЖЕН фільтр відпрацював
+  (`_forecast_pair` дає сирі значення прогнозу).
+- **Forecast «чекати вердикт», а не викидати:** `_signal_allowed(at_intake=True)`
+  на ІНТЕЙКУ по прогнозу блокує ЛИШЕ явну протилежність; nodata/neutral →
+  пускаємо в чергу (сигнал ЧЕКАЄ). Строга перевірка (match + Мін.сила) — при
+  ВІДКРИТТІ: `fuel_filter._open` re-gate кличе `_forecast_filter_allows`/
+  `_forecast_strength_allows` (строго) для scanner-опенів (не funding) → якщо
+  вердикту ще нема / проти → `return False` (монета лишається в черзі, ретрай).
+- Telegram open/close повідомлення БІЛЬШЕ не несуть рядок `🏷 opened_by` (прибрано
+  на прохання) — мітка лишається в таблицях/лозі/модалці, але не в TG.
+
 **НІКОЛИ не відкривати сигнал в обхід `_signal_allowed`.** Був дефект: VOB-alert
 кликав `on_signal` напряму й ОБХОДИВ усі фільтри — бот відкрив ASTERUSDT SHORT,
 попри `Require Forecast 1H+4H match · AND · Сильний` з прогнозом LONG (фільтри
