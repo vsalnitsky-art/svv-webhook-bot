@@ -569,7 +569,10 @@ class PocSetupDaemon:
                          'queue3_enabled', 'queue4_enabled'))
             if not any_q:
                 return ''
-            disp = ff.intercept(sym, side, kind='choch')
+            # kind='poc' — НЕ 'choch' (був хибний дефолт, через який запис POC у
+            # черзі показувався як «CHoCH», хоча CHoCH-алерти вимкнені). Реальне
+            # походження = 🎯 POC-сетап → так і мітимо (див. signal_labels).
+            disp = ff.intercept(sym, side, kind='poc')
             return disp or ''
         except Exception as e:
             print(f"[POC-setup] FF route error {sym}: {e}")

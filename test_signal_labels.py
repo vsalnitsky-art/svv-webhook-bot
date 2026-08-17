@@ -67,6 +67,15 @@ def test_external_stays_exact_code():
     assert sl.signal_code_of('external') == 'external'
 
 
+def test_poc_label_not_choch():
+    # Regression: POC-setup routed into the FF queue used to hard-code
+    # kind='choch' → showed as a phantom «CHoCH» while CHoCH alerts were OFF.
+    # Now kind='poc' → its own badge, никакого CHoCH.
+    assert sl.pretty_opened_by('poc') == '🎯 POC-сетап'
+    assert sl.pretty_opened_by('poc → Q4') == '🎯 POC-сетап → 🎯 Черга-4'
+    assert 'CHoCH' not in sl.pretty_opened_by('poc → Q4')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in fns:

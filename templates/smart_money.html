@@ -7094,9 +7094,11 @@ function renderPocSetup(d) {
             ? `<span style="color:${dcol};font-weight:800">${r.dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}</span>`
             : '<span style="color:#8b93a7">—</span>';
         const mcCol = r.match_count >= 5 ? '#4ade80' : r.match_count >= 4 ? '#fbbf24' : '#8b93a7';
+        // 🎯 Назва монети POC-сетапу — виділена (золотий колір + трохи більший
+        // шрифт), щоб візуально відрізнялась від інших таблиць.
+        const _pocNm = `<b class="poc-num" style="color:#fbbf24;font-size:0.98rem;font-weight:800">${r.symbol}</b>`;
         const symHtml = (typeof tvSym === 'function')
-            ? tvSym(r.symbol, `<b class="poc-num" style="color:#e5e7eb">${r.symbol}</b>`)
-            : `<b class="poc-num" style="color:#e5e7eb">${r.symbol}</b>`;
+            ? tvSym(r.symbol, _pocNm) : _pocNm;
         const L = r.layers || [];
         const btn = `<button onclick="pocSetupOpen('${r.symbol}')" title="Відкрити угоду (${r.dir || '—'}): SL = межа OB + буфер, TP = POC вікна. Монета зникне зі списку."
             style="padding:4px 8px;border-radius:5px;cursor:pointer;font-size:0.85rem;font-weight:700;border:1px solid ${dcol}77;background:${dcol}22;color:${dcol}">▶</button>`;
@@ -11375,6 +11377,7 @@ function histSymCell(c, isShadow) {
 const SIGNAL_BADGES_JS = {
     'choch': '🟦 CHoCH', 'choch_bos': '🟦 CHoCH+BOS',
     'vob_alert': '🟪 Volumized OB', 'vob': '💰 Volumized OB',
+    'poc': '🎯 POC-сетап',
     'opp': '🔄 Реверс', 'external': '🔌 Зовнішня', 'manual': '✋ Ручний',
     'manual_ui': '✋ Ручний', 'manual_ui_overflow': '✋ Ручний',
 };
@@ -11385,7 +11388,7 @@ const ENGINE_BADGES_JS = {
 };
 const SIGNAL_ICON_JS = {
     'choch': '🟦', 'choch_bos': '🟦', 'vob_alert': '🟪', 'vob': '💰',
-    'opp': '🔄', 'external': '🔌', 'manual': '✋',
+    'poc': '🎯', 'opp': '🔄', 'external': '🔌', 'manual': '✋',
     'manual_ui': '✋', 'manual_ui_overflow': '✋',
     'Q3-VOB(funding)': '💰', 'POC-сетап': '🎯', 'EXH': '🔥', 'FF': '🔥',
 };

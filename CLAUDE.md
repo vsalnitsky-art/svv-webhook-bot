@@ -35,6 +35,24 @@
 `get_pd_thresholds()`); ролінг-вікно лишилось лише як fallback для Health-шляху.
 Тест: `test_pd_zone_source.py`.
 
+## VOB-алерт: ВАЛІДНІСТЬ = СВІЖІСТЬ (не зламати!)
+
+Volumized-OB-сигнал (`vob_alert_enabled`) фаєриться в `smc_scanner._scan` на
+НОВОМУ OB (edge за `formation_time`). **Природа свінг-OB:** OB стає валідним лише
+через ~`volumized_swing_length` барів після своєї свічки (свінг мусить
+підтвердитись) — тому бокс на графіку стоїть «назад у часі», хоча сигнал свіжий.
+Це НЕ баг.
+
+- **Гейт свіжості** (`vob_alert_max_age_bars`, 0=авто=`swing_length+2`): фаєримо
+  ЛИШЕ якщо OB щойно підтвердився (вік `_vob_age_bars` ≤ поріг). Застарілий/
+  фантомний OB → базову лінію рухаємо, але сигнал НЕ шлемо. Це прибирає
+  «звідки взялись застарілі сигнали».
+- **Швидкість:** детекція лишається на ЖИВОМУ барі (`vol_data['klines']`) — НЕ
+  переходити на закриті бари (це додало б до 1 TF затримки). Сигнал іде в ту ж
+  мить, щойно OB став валідним.
+- Далі — `_signal_allowed` (OB/PD/Forecast) → `on_signal` → черга/угода.
+- Тест: `test_vob_freshness.py`.
+
 ## SMC-чарт (/smart-money): налаштування відображення
 
 Гармошка **⚙️ Settings** керує чартом. Ключові фічі:
@@ -109,7 +127,14 @@ Forecast (кожен за своїм тумблером). Викликаютьс
   ⚠️ Черги несуть СИРИЙ `kind` (сигнал), а не `opened_by` — двигуна ще нема
   (угоду ще не відкрито); `signalIconHtml` працює і на сирому коді.
 - Коди сигналів: `choch`/`choch_bos` (smc_scanner on_signal), `vob_alert`
-  (Volumized-OB alert), `vob` (funding-VOB), `opp` (реверс), `external`, `manual`.
+  (Volumized-OB alert), `vob` (funding-VOB), `poc` (POC-сетап → черга FF),
+  `opp` (реверс), `external`, `manual`.
+- **ФАНТОМНИЙ «CHoCH» — виправлено.** `poc_setup._route_to_ff` жорстко ставив
+  `intercept(kind='choch')` → запис POC-сетапу в черзі показувався як «CHoCH»,
+  хоча CHoCH-алерти вимкнені (`choch_alerts_enabled=False`; `_process_alerts`
+  чесно виходить рано — реальний CHoCH НЕ фаєриться). Тепер `kind='poc'` →
+  правильний бейдж 🎯 POC-сетап скрізь. `intercept._kind_lbl` теж знає 'poc'/'opp'.
+  Урок: НЕ використовувати чужий код сигналу як дефолт при маршрутизації в чергу.
 - Тести: `test_signal_labels.py`.
 
 ## Як запускати

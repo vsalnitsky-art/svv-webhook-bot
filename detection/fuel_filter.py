@@ -1120,7 +1120,8 @@ class FuelFilterDaemon:
         if not sym or side not in ('LONG', 'SHORT'):
             return ''
         _kind_lbl = {'choch': 'CHoCH', 'choch_bos': 'CHoCH+BOS',
-                     'vob': 'Volumized OB', 'vob_alert': 'Volumized OB'}.get(kind, kind or '?')
+                     'vob': 'Volumized OB', 'vob_alert': 'Volumized OB',
+                     'poc': '🎯 POC-сетап', 'opp': '🔄 Реверс'}.get(kind, kind or '?')
         try:
             from detection.activity_log import log_activity
         except Exception:

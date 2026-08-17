@@ -223,6 +223,13 @@ DEFAULT_SETTINGS = {
     #     (volumized_timeframe/swing/end_method/atr/zone_count/combine). Дефолт OFF.
     'choch_alerts_enabled': True,
     'vob_alert_enabled': False,
+    # 🕒 ВАЛІДНІСТЬ VOB-алерту = СВІЖІСТЬ. Volumized OB підтверджується лише
+    # через ~volumized_swing_length барів після своєї свічки (природа свінг-OB).
+    # Фаєримо сигнал ЛИШЕ коли OB ЩОЙНО підтвердився (не застарілий, не фантом):
+    # вік у барах (скільки барів утворилось після formation_time) ≤ поріг.
+    # 0 = авто (= volumized_swing_length + 2). Це НЕ додає затримки — детекція
+    # лишається на живому барі, сигнал іде в ту ж мить, щойно OB став валідним.
+    'vob_alert_max_age_bars': 0,
     # === Display: Strong High / Weak Low (swing extremes) ===
     # Показ на графіку останнього НЕПРОБИТОГО swing-максимуму (Strong High) і
     # swing-мінімуму (Weak Low), порахованих на ОКРЕМОМУ таймфреймі
@@ -1035,7 +1042,8 @@ class SMCScanner:
                        'volumized_max_atr_mult', 'volumized_zone_count',
                        'volumized_combine_obs',
                        # Типи сигналів (ALERTS)
-                       'choch_alerts_enabled', 'vob_alert_enabled']
+                       'choch_alerts_enabled', 'vob_alert_enabled',
+                       'vob_alert_max_age_bars']
             
             # Detect changes that require cache reset
             old_tf = self._settings.get('timeframe', DEFAULT_TIMEFRAME)
@@ -1666,35 +1674,53 @@ class SMCScanner:
                                             # базова лінія — без сигналу
                                             self._vob_alert_seen[symbol] = _ft
                                         elif _ft > _prev:
+                                            # Базову лінію рухаємо ЗАВЖДИ (щоб той самий
+                                            # OB не фаєрив двічі), але сам сигнал — лише
+                                            # якщо OB СВІЖИЙ (щойно підтвердився).
                                             self._vob_alert_seen[symbol] = _ft
+                                            # 🕒 ГЕЙТ СВІЖОСТІ = ВАЛІДНІСТЬ. Volumized OB
+                                            # валідний лише після підтвердження свінгу
+                                            # (~swing_length барів). Фаєримо ТІЛЬКИ якщо
+                                            # зловили його одразу (вік ≤ поріг), інакше це
+                                            # застарілий/фантомний — пропускаємо.
+                                            _sl = int(self._settings.get('volumized_swing_length', 10) or 10)
+                                            _cfg_age = int(self._settings.get('vob_alert_max_age_bars', 0) or 0)
+                                            _max_age = _cfg_age if _cfg_age > 0 else (_sl + 2)
+                                            _age = self._vob_age_bars(vol_klines, _ft)
                                             try:
                                                 from detection.activity_log import log_activity
                                             except Exception:
                                                 log_activity = lambda *a, **k: None
-                                            _entry = (self._get_live_price(symbol)
-                                                      or (_cand.get('top') if _cside == 'SHORT'
-                                                          else _cand.get('bottom')) or 0)
-                                            log_activity(symbol, 'signal',
-                                                         f'Свіжий Volumized OB ({vol_tf}) {_cside}',
-                                                         side=_cside, source='scanner')
-                                            # 🚦 СПІЛЬНІ ВОРОТА фільтрів — ті самі, що й
-                                            # для CHoCH (OB/PD/Forecast, кожен за своїм
-                                            # тумблером). Раніше VOB-alert відкривав напряму
-                                            # й обходив усі фільтри → тепер НІ.
-                                            _vok, _vreason = self._signal_allowed(symbol, _cside)
-                                            if not _vok:
-                                                print(f"[SMC] 🚫 VOB {_cside} {symbol} "
-                                                      f"заблоковано: {_vreason}")
-                                                log_activity(symbol, 'rejected', _vreason,
-                                                             side=_cside, source='scanner')
+                                            if _age > _max_age:
+                                                # застарілий OB — НЕ сигналимо (валідність!)
+                                                print(f"[SMC] ⏭ VOB {_cside} {symbol}: OB "
+                                                      f"застарілий (вік {_age}>{_max_age} барів) "
+                                                      f"— пропуск (без фантома)")
                                             else:
-                                                from detection.trade_manager import get_trade_manager
-                                                _tm = get_trade_manager()
-                                                if _tm:
-                                                    # opened_by='vob_alert' (НЕ 'vob') — щоб
-                                                    # funding-очистка не видаляла ці записи.
-                                                    _tm.on_signal(symbol=symbol, side=_cside,
-                                                                  entry_price=_entry, opened_by='vob_alert')
+                                                _entry = (self._get_live_price(symbol)
+                                                          or (_cand.get('top') if _cside == 'SHORT'
+                                                              else _cand.get('bottom')) or 0)
+                                                log_activity(symbol, 'signal',
+                                                             f'Свіжий Volumized OB ({vol_tf}) {_cside}',
+                                                             side=_cside, source='scanner')
+                                                # 🚦 СПІЛЬНІ ВОРОТА фільтрів — ті самі, що й
+                                                # для CHoCH (OB/PD/Forecast, кожен за своїм
+                                                # тумблером). Раніше VOB-alert відкривав напряму
+                                                # й обходив усі фільтри → тепер НІ.
+                                                _vok, _vreason = self._signal_allowed(symbol, _cside)
+                                                if not _vok:
+                                                    print(f"[SMC] 🚫 VOB {_cside} {symbol} "
+                                                          f"заблоковано: {_vreason}")
+                                                    log_activity(symbol, 'rejected', _vreason,
+                                                                 side=_cside, source='scanner')
+                                                else:
+                                                    from detection.trade_manager import get_trade_manager
+                                                    _tm = get_trade_manager()
+                                                    if _tm:
+                                                        # opened_by='vob_alert' (НЕ 'vob') — щоб
+                                                        # funding-очистка не видаляла ці записи.
+                                                        _tm.on_signal(symbol=symbol, side=_cside,
+                                                                      entry_price=_entry, opened_by='vob_alert')
                                 except Exception as _ve:
                                     if self._errors <= 5:
                                         print(f"[SMC] VOB-alert error for {symbol}: {_ve}")
@@ -1986,6 +2012,27 @@ class SMCScanner:
         range_size = trailing_top - trailing_bottom
         pos_pct = (current_price - trailing_bottom) / range_size * 100
         return round(pos_pct, 1)
+
+    @staticmethod
+    def _vob_age_bars(vol_klines, formation_time) -> int:
+        """Скільки барів утворилось ПІСЛЯ formation_time OB-а (його «вік»).
+        Використовується гейтом свіжості VOB-алерту: щойно-підтверджений OB
+        має малий вік (~volumized_swing_length), застарілий/фантомний — великий.
+        Юніт-агностично (порівнює 't' як є). Порожньо/некоректно → 0."""
+        try:
+            ft = int(formation_time or 0)
+        except (TypeError, ValueError):
+            return 0
+        if ft <= 0 or not vol_klines:
+            return 0
+        n = 0
+        for _k in vol_klines:
+            try:
+                if int(_k.get('t') or 0) > ft:
+                    n += 1
+            except (TypeError, ValueError):
+                continue
+        return n
 
     @staticmethod
     def _swing_hl_labels(trend):

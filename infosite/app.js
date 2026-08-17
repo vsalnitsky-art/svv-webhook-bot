@@ -102,6 +102,7 @@
   var SIGNAL_BADGES_JS = {
     "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS",
     "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB",
+    "poc": "🎯 POC-сетап",
     "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний",
     "manual_ui": "✋ Ручний", "manual_ui_overflow": "✋ Ручний"
   };
@@ -112,7 +113,7 @@
   };
   var SIGNAL_ICON_JS = {
     "choch": "🟦", "choch_bos": "🟦", "vob_alert": "🟪", "vob": "💰",
-    "opp": "🔄", "external": "🔌", "manual": "✋",
+    "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋",
     "manual_ui": "✋", "manual_ui_overflow": "✋",
     "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥"
   };
