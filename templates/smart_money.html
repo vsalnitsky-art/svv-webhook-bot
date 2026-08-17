@@ -2704,12 +2704,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <details class="sm-settings-bar" id="ff-q4-settings" style="margin:0 0 8px">
                 <summary class="sm-settings-summary">⚙️ Налаштування (Черга-4) <span class="sm-settings-summary-right" style="color:#8b93a7">складність шарів</span></summary>
                 <div style="padding:10px 12px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,0.06)">
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна сила НОВОГО МММ у бік сигналу.">Новий МММ ≥ <select id="ff-queue4-mmnew" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Режим шару «Старий МММ». Старий МММ — контраріанський магніт ліквідності: на падаючій монеті зашкалює в LONG, тобто СИСТЕМНО проти тренду й не давав збиратись 4/4. • Вимагати — має збігтись за напрямком + сила ≥ обраної складності. • Ігнорувати (рек.) — не враховувати у ворота, Черга-4 стає 3-шаровою (складність не діє). • Контр-OK — зараховувати, якщо Старий МММ НЕ сильно ПРОТИ (сила ПРОТИ ≥ складності = блок).">Старий МММ у воротах <select id="ff-queue4-mmold-mode" onchange="saveFuelFilterSettings(); _ffQueue4OldSync()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="require">вимагати</option><option value="ignore">ігнорувати</option><option value="contra_ok">контр-OK</option></select></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна сила НОВОГО МММ у бік сигналу. Тумблер зліва: вимкнено → шар НЕ рахується (не вантажимо сервер) і колонка ховається."><input type="checkbox" id="ff-queue4-new-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Новий МММ»">Новий МММ ≥ <select id="ff-queue4-mmnew" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Режим шару «Старий МММ». Старий МММ — контраріанський магніт ліквідності: на падаючій монеті зашкалює в LONG, тобто СИСТЕМНО проти тренду й не давав збиратись 4/4. • Вимагати — має збігтись за напрямком + сила ≥ обраної складності. • Ігнорувати (рек.) — не враховувати у ворота, Черга-4 стає 3-шаровою (складність не діє). • Контр-OK — зараховувати, якщо Старий МММ НЕ сильно ПРОТИ (сила ПРОТИ ≥ складності = блок)."><input type="checkbox" id="ff-queue4-old-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Старий МММ» (режим + Складність)">Старий МММ у воротах <select id="ff-queue4-mmold-mode" onchange="saveFuelFilterSettings(); _ffQueue4OldSync()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="require">вимагати</option><option value="ignore">ігнорувати</option><option value="contra_ok">контр-OK</option></select></label>
                     <label id="ff-queue4-mmold-band-lbl" style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Складність для режиму «вимагати»/«контр-OK»: яку МІНІМАЛЬНУ силу має тримати Старий МММ (у бік сигналу — для «вимагати»; проти сигналу — поріг блокування для «контр-OK»). У режимі «ігнорувати» не діє.">Складність (Старий МММ) ≥ <select id="ff-queue4-mmold" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна Готовність (grade_setup) у бік сигналу.">Готовність ≥ <select id="ff-queue4-setup" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="25">СЛАБКИЙ</option><option value="40">СЕРЕДНІЙ</option><option value="55">ХОРОШИЙ</option><option value="72">ВІДМІННИЙ</option></select></label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Вимагати, щоб ЗАПАС (runway з TradingView-скрипта) був у бік сигналу.">
-                        <input type="checkbox" id="ff-queue4-runway" onchange="saveFuelFilterSettings()"> 🎯 Запас у бік
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна Готовність (grade_setup) у бік сигналу."><input type="checkbox" id="ff-queue4-setup-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Готовність» (важкий SMC-грейд — вимкни, щоб не вантажити сервер)">Готовність ≥ <select id="ff-queue4-setup" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="25">СЛАБКИЙ</option><option value="40">СЕРЕДНІЙ</option><option value="55">ХОРОШИЙ</option><option value="72">ВІДМІННИЙ</option></select></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Тумблер шару «Запас» (runway). Вимкнено → шар НЕ рахується і колонка ховається. Права галочка — вимагати, щоб Запас був САМЕ у бік сигналу.">
+                        <input type="checkbox" id="ff-queue4-runway-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Запас»"> 🎯 Запас
+                        <span style="color:#6b7280">·</span>
+                        <input type="checkbox" id="ff-queue4-runway" onchange="saveFuelFilterSettings()" title="Вимагати напрямок Запасу у бік сигналу"> у бік
                     </label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Протермінувати запис Черги-4 через N год, якщо не відкрилась. 0 = без ліміту.">TTL <input type="number" id="ff-queue4-ttl" min="0" max="72" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> год</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Не відкривати угоду, якщо хід уже виснажений понад поріг. Єдиний запобіжник Черги-4.">
@@ -2723,7 +2725,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers4-table">
                     <thead>
-                        <tr><th>Символ</th><th>Напрямок</th><th title="4-шаровий конфлюенс: Новий МММ · Старий МММ · Готовність · Запас. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди.">🎯</th><th title="Новий МММ (бабло-модель)">Новий МММ</th><th title="Старий МММ ((fa−fb)/den)">Старий МММ</th><th title="SMC-готовність (grade_setup)">Готовність</th><th title="Запас ходу (runway) — показник TradingView-скрипта">Запас</th><th>Очікує</th><th>Дія</th></tr>
+                        <tr><th>Символ</th><th>Напрямок</th><th title="Конфлюенс увімкнених шарів. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди.">🎯</th><th class="q4c-new" title="Новий МММ (бабло-модель)">Новий МММ</th><th class="q4c-old" title="Старий МММ ((fa−fb)/den)">Старий МММ</th><th class="q4c-setup" title="SMC-готовність (grade_setup)">Готовність</th><th class="q4c-runway" title="Запас ходу (runway) — показник TradingView-скрипта">Запас</th><th>Очікує</th><th>Дія</th></tr>
                     </thead>
                     <tbody id="ff-timers4-tbody">
                         <tr><td colspan="9" class="tm-empty-msg">Черга-4 порожня</td></tr>
@@ -10042,9 +10044,21 @@ function ffLayers4Cell(q) {
         + `<span style="display:inline-flex">${dots}</span>`
         + `<span style="display:inline-block;width:30px;text-align:right;color:${col};font-variant-numeric:tabular-nums">${n}/4</span></span>`;
 }
+// 🔘 Показ/приховування колонок Черги-4 за пер-шаровими тумблерами. Вимкнений
+// шар → колонка (th+td) ховається (і на бекенді не рахується → менше load).
+function _ffApplyQ4Cols() {
+    const on = (id) => { const e = document.getElementById(id); return e ? !!e.checked : true; };
+    const setDisp = (cls, show) => document.querySelectorAll(cls)
+        .forEach(el => { el.style.display = show ? '' : 'none'; });
+    setDisp('.q4c-new', on('ff-queue4-new-on'));
+    setDisp('.q4c-old', on('ff-queue4-old-on'));
+    setDisp('.q4c-setup', on('ff-queue4-setup-on'));
+    setDisp('.q4c-runway', on('ff-queue4-runway-on'));
+}
 function ffRenderQueue4() {
     const tb = document.getElementById('ff-timers4-tbody');
     if (!tb) return;
+    _ffApplyQ4Cols();   // синхронізуємо видимість колонок із тумблерами
     const rows = window._ff4TimersData || [];
     if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Черга-4 порожня</td></tr>'; return; }
     tb.innerHTML = rows.map(t => {
@@ -10067,10 +10081,10 @@ function ffRenderQueue4() {
             <td style="font-weight:600">${signalIconHtml(t.kind)}${tvSym(t.symbol)}</td>
             <td style="white-space:nowrap">${dirHtml}</td>
             <td style="white-space:nowrap">${ffLayers4Cell(q)}</td>
-            <td style="white-space:nowrap;font-size:0.8rem">${ffFuelCell(mmNew.dir, mmNew.str)}</td>
-            <td style="white-space:nowrap;font-size:0.8rem">${ffFuelCell(mmOld.dir, mmOld.str)}</td>
-            <td style="white-space:nowrap">${ffSetupCell(q.setup)}</td>
-            <td style="white-space:nowrap;font-size:0.74rem">${rwTxt}</td>
+            <td class="q4c-new" style="white-space:nowrap;font-size:0.8rem">${ffFuelCell(mmNew.dir, mmNew.str)}</td>
+            <td class="q4c-old" style="white-space:nowrap;font-size:0.8rem">${ffFuelCell(mmOld.dir, mmOld.str)}</td>
+            <td class="q4c-setup" style="white-space:nowrap">${ffSetupCell(q.setup)}</td>
+            <td class="q4c-runway" style="white-space:nowrap;font-size:0.74rem">${rwTxt}</td>
             <td style="font-size:0.74rem;color:#cbd5e1">${held}</td>
             <td style="white-space:nowrap"><span onclick="deleteTimer4('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити з Черги-4">✕</span></td>
         </tr>`;
@@ -10241,6 +10255,11 @@ function renderFuelFilter(d) {
     setIf('ff-setup-ctr-mode', s.setup_ctr_mode || 'soft');
     setIf('ff-readiness-log', s.readiness_log_enabled !== false);   // default true
     setIf('ff-queue4-enabled', !!s.queue4_enabled);
+    // 🔘 Пер-шарові тумблери Черги-4 (default ON)
+    setIf('ff-queue4-new-on', s.queue4_new_mm_on !== false);
+    setIf('ff-queue4-old-on', s.queue4_old_mm_on !== false);
+    setIf('ff-queue4-setup-on', s.queue4_setup_on !== false);
+    setIf('ff-queue4-runway-on', s.queue4_runway_on !== false);
     setIf('ff-queue4-mmnew', String(s.queue4_mm_new_min != null ? s.queue4_mm_new_min : 30));
     setIf('ff-queue4-mmold', String(s.queue4_mm_old_min != null ? s.queue4_mm_old_min : 10));
     setIf('ff-queue4-mmold-mode', s.queue4_mm_old_mode || 'ignore');
@@ -10254,6 +10273,7 @@ function renderFuelFilter(d) {
     setIf('ff-queue4-ttl', String(s.queue4_ttl_hours != null ? s.queue4_ttl_hours : 3));
     setIf('ff-queue4-exh-on', s.queue4_exhaustion_on !== false);
     setIf('ff-queue4-exh-pct', String(s.queue4_exhaustion_pct != null ? s.queue4_exhaustion_pct : 95));
+    _ffApplyQ4Cols();   // синхронізувати видимість колонок Черги-4 з тумблерами
     setIf('ff-queue3-vob-open', s.queue3_vob_open !== false);       // default true
     setIf('ff-queue3-vob-buffer', String(s.queue3_vob_sl_buffer_pct != null ? s.queue3_vob_sl_buffer_pct : 0.10));
     setIf('ff-queue3-vob-trend', s.queue3_vob_block_against_trend !== false); // default true
@@ -11241,6 +11261,10 @@ async function saveFuelFilterSettings() {
         setup_ctr_mode: _v('ff-setup-ctr-mode', 'soft') || 'soft',
         readiness_log_enabled: _c('ff-readiness-log'),
         queue4_enabled: _c('ff-queue4-enabled'),
+        queue4_new_mm_on: _c('ff-queue4-new-on'),
+        queue4_old_mm_on: _c('ff-queue4-old-on'),
+        queue4_setup_on: _c('ff-queue4-setup-on'),
+        queue4_runway_on: _c('ff-queue4-runway-on'),
         queue4_mm_new_min: parseInt(_v('ff-queue4-mmnew', '30') || '30', 10),
         queue4_mm_old_min: parseInt(_v('ff-queue4-mmold', '10') || '10', 10),
         queue4_mm_old_mode: _v('ff-queue4-mmold-mode', 'ignore') || 'ignore',

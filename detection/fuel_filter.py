@@ -256,6 +256,13 @@ DEFAULT_SETTINGS = {
     #   Готовність (score ≥ queue4_setup_min), Запас (runway у бік). Тумблер OFF
     #   → черга повністю не працює. Протилежний сигнал стирає попередній запис.
     'queue4_enabled': False,
+    # 🔘 Пер-шарові тумблери Черги-4: ВИМКНЕНИЙ шар НЕ рахується (не вантажимо
+    #    сервер) і НЕ показується колонкою; `required` = к-сть УВІМКНЕНИХ (усі
+    #    мають збігтись). Дефолт — усі ON (стара поведінка = 4 шари).
+    'queue4_new_mm_on': True,    # Новий МММ (шар + колонка + підрахунок)
+    'queue4_old_mm_on': True,    # Старий МММ (у воротах + Складність)
+    'queue4_setup_on': True,     # Готовність
+    'queue4_runway_on': True,    # Запас (runway)
     'queue4_mm_new_min': 30,     # Новий МММ: 0 рівн/10 легк/30 помір/60 сильн/85 потуж
     'queue4_mm_old_min': 10,     # Старий МММ: ті самі band-и
     # 🧭 Режим шару «Старий МММ» у Черзі-4. Старий МММ = контраріанський магніт
@@ -897,6 +904,11 @@ class FuelFilterDaemon:
         if s.get('queue4_mm_old_mode') not in ('require', 'ignore', 'contra_ok'):
             s['queue4_mm_old_mode'] = 'ignore'
         s['queue4_entry_gate'] = bool(s.get('queue4_entry_gate', True))
+        # 🔘 Пер-шарові тумблери Черги-4
+        s['queue4_new_mm_on'] = bool(s.get('queue4_new_mm_on', True))
+        s['queue4_old_mm_on'] = bool(s.get('queue4_old_mm_on', True))
+        s['queue4_setup_on'] = bool(s.get('queue4_setup_on', True))
+        s['queue4_runway_on'] = bool(s.get('queue4_runway_on', True))
         try:
             s['queue4_entry_min_layers'] = max(1, min(4, int(s.get('queue4_entry_min_layers', 1) or 1)))
         except (TypeError, ValueError):
@@ -4225,8 +4237,11 @@ class FuelFilterDaemon:
                 targets.setdefault(sym, (info.get('dir'), 0.0))
             for sym, info in pending3:
                 targets.setdefault(sym, (info.get('dir'), 0.0))
-            for sym, info in pending4:
-                targets.setdefault(sym, (info.get('dir'), 0.0))
+            # Черга-4 монети додаємо у важкий SMC-грейд ЛИШЕ якщо шар «Готовність»
+            # увімкнено (queue4_setup_on) — інакше не вантажимо сервер даремно.
+            if settings.get('queue4_setup_on', True):
+                for sym, info in pending4:
+                    targets.setdefault(sym, (info.get('dir'), 0.0))
             for sym, t in timers:
                 targets[sym] = (t.get('dir'), now - t.get('since', now))
             for sym, side, oa in tm_positions:
@@ -5646,11 +5661,14 @@ class FuelFilterDaemon:
           3) Готовність — grade_setup (кеш):  напрямок у бік + score ≥ queue4_setup_min
           4) Запас      — runway (TradingView-показник): напрямок у бік (якщо
              queue4_require_runway). Повертає {count, base(=4), layers[], + сирі поля}."""
+        # 🔘 Пер-шарові тумблери: ВИМКНЕНИЙ шар НЕ рахуємо (не вантажимо сервер)
+        # і НЕ показуємо колонкою. `required` = к-сть УВІМКНЕНИХ (усі мають збігтись).
+        on_new = bool(s.get('queue4_new_mm_on', True))
+        on_old = bool(s.get('queue4_old_mm_on', True))
+        on_setup = bool(s.get('queue4_setup_on', True))
+        on_runway = bool(s.get('queue4_runway_on', True))
         layers = []
         def add(key, label, ok, detail, det=True):
-            # `det` = чи шар ВЖЕ ВИЗНАЧЕНИЙ (порахований). Потрібно для фільтра
-            # входу: рішення про допуск у Чергу-4 ухвалюємо лише коли ВСІ шари
-            # визначені (Готовність рахується з тротлом → часто ще None на старті).
             layers.append({'key': key, 'label': label, 'ok': bool(ok),
                            'dir': (side if ok else None), 'detail': detail,
                            'det': bool(det)})
@@ -5661,50 +5679,69 @@ class FuelFilterDaemon:
         try: su_min = float(s.get('queue4_setup_min', 40) or 0)
         except (TypeError, ValueError): su_min = 40.0
         req_rw = bool(s.get('queue4_require_runway', True))
-        # 1) Новий МММ
-        fn = self._fuel_dir_smoothed(sym) or {}
-        nd = fn.get('status'); ns = int(round(abs(float(fn.get('dir') or 0)) * 100))
-        add('mm_new', 'Новий МММ', nd == side and ns >= mmn_min, f"{nd or '—'} {ns}%",
-            det=bool(fn))
-        # 2) Старий МММ — режим шару (контраріанський магніт ліквідності).
         opp = 'SHORT' if side == 'LONG' else 'LONG'
-        _old_mode = str(s.get('queue4_mm_old_mode', 'ignore') or 'ignore').lower()
-        fo = self._fuel_dir_legacy(sym) or {}
-        od = fo.get('status'); os_ = int(fo.get('strength') or 0)
-        if _old_mode == 'require':
-            _old_ok = (od == side and os_ >= mmo_min)
-            _old_detail = f"{od or '—'} {os_}%"
-        elif _old_mode == 'contra_ok':
-            _against = (od == opp and os_ >= mmo_min)   # сильно ПРОТИ напрямку
-            _old_ok = (not _against)
-            _old_detail = f"{od or '—'} {os_}% " + ('⛔ проти' if _against else '✓ не проти')
-        else:   # 'ignore' — не враховуємо у ворота (Q4 фактично 3-шарова)
-            _old_ok = True
-            _old_detail = f"{od or '—'} {os_}% (ігнор)"
-        # У режимі «ігнорувати» шар завжди визначений; інакше — коли є дані legacy.
-        add('mm_old', 'Старий МММ', _old_ok, _old_detail,
-            det=(_old_mode == 'ignore') or bool(fo))
-        # 3) Готовність (grade_setup кеш). Визначений ЛИШЕ коли вже є в кеші —
-        # інакше «ще рахується» (тротл), і фільтр входу має ЧЕКАТИ, а не різати.
-        _setup_ready = (sym in self._setup_cache)
-        su = self._setup_cache.get(sym) or {}
-        sd = su.get('dir'); ss = su.get('score') or 0
-        add('setup', 'Готовність', bool(su.get('ok')) and sd == side and ss >= su_min,
-            f"{su.get('grade') or '—'} {ss}" + ('' if _setup_ready else ' (рахується…)'),
-            det=_setup_ready)
-        # 4) Запас (runway) — визначений, коли є дані МММ (runway приходить із них).
-        rw = (fn.get('runway') or {})
-        rd = rw.get('dir'); rr = rw.get('room_pct')
-        add('runway', 'Запас', (not req_rw) or (rd == side),
-            f"{rd or '—'}" + (f" {rr}%" if rr is not None else ''),
-            det=(not req_rw) or bool(fn))
+
+        # 1) Новий МММ (+ Запас — з тих самих даних `fn`). Рахуємо `fn` ЛИШЕ якщо
+        #    потрібен хоч один із них → інакше НЕ смикаємо liq-map (економія).
+        fn = {}
+        if on_new or on_runway:
+            fn = self._fuel_dir_smoothed(sym) or {}
+        nd = fn.get('status')
+        ns = int(round(abs(float(fn.get('dir') or 0)) * 100))
+        if on_new:
+            add('mm_new', 'Новий МММ', nd == side and ns >= mmn_min,
+                f"{nd or '—'} {ns}%", det=bool(fn))
+
+        # 2) Старий МММ — рахуємо legacy ЛИШЕ коли шар увімкнено.
+        od = None; os_ = 0
+        if on_old:
+            _old_mode = str(s.get('queue4_mm_old_mode', 'ignore') or 'ignore').lower()
+            fo = self._fuel_dir_legacy(sym) or {}
+            od = fo.get('status'); os_ = int(fo.get('strength') or 0)
+            if _old_mode == 'require':
+                _old_ok = (od == side and os_ >= mmo_min)
+                _old_detail = f"{od or '—'} {os_}%"
+            elif _old_mode == 'contra_ok':
+                _against = (od == opp and os_ >= mmo_min)
+                _old_ok = (not _against)
+                _old_detail = f"{od or '—'} {os_}% " + ('⛔ проти' if _against else '✓ не проти')
+            else:   # 'ignore'
+                _old_ok = True
+                _old_detail = f"{od or '—'} {os_}% (ігнор)"
+            add('mm_old', 'Старий МММ', _old_ok, _old_detail,
+                det=(_old_mode == 'ignore') or bool(fo))
+
+        # 3) Готовність (grade_setup кеш) — читаємо ЛИШЕ коли шар увімкнено.
+        sd = None; ss = 0; su = {}
+        if on_setup:
+            _setup_ready = (sym in self._setup_cache)
+            su = self._setup_cache.get(sym) or {}
+            sd = su.get('dir'); ss = su.get('score') or 0
+            add('setup', 'Готовність', bool(su.get('ok')) and sd == side and ss >= su_min,
+                f"{su.get('grade') or '—'} {ss}" + ('' if _setup_ready else ' (рахується…)'),
+                det=_setup_ready)
+
+        # 4) Запас (runway) — з даних Нового МММ (`fn`).
+        rd = None; rr = None; rw = {}
+        if on_runway:
+            rw = (fn.get('runway') or {})
+            rd = rw.get('dir'); rr = rw.get('room_pct')
+            add('runway', 'Запас', (not req_rw) or (rd == side),
+                f"{rd or '—'}" + (f" {rr}%" if rr is not None else ''),
+                det=(not req_rw) or bool(fn))
+
         base = sum(1 for l in layers if l['ok'])
-        # 🚧 «aligned» = скільки ПОКАЗНИКІВ реально дивляться в бік сигналу (сирий
-        # напрямок, БЕЗ порогів сили й БЕЗ авто-ok режиму «ігнорувати»). Саме це
-        # рахує фільтр входу: якщо жоден показник не за напрямком — сигнал зайвий.
-        aligned = sum(1 for x in (nd, od, sd, rd) if x == side)
-        return {'count': base, 'base': base, 'aligned': aligned, 'layers': layers,
-                'determined': all(l['det'] for l in layers),
+        required = len(layers)   # к-сть УВІМКНЕНИХ шарів — усі мають збігтись
+        # aligned — сирий напрямок УВІМКНЕНИХ шарів у бік сигналу (для фільтра входу).
+        aligned = 0
+        if on_new and nd == side: aligned += 1
+        if on_old and od == side: aligned += 1
+        if on_setup and sd == side: aligned += 1
+        if on_runway and rd == side: aligned += 1
+        return {'count': base, 'base': base, 'required': required,
+                'aligned': aligned, 'layers': layers,
+                'determined': (all(l['det'] for l in layers) if layers else True),
+                'cols': {'new': on_new, 'old': on_old, 'setup': on_setup, 'runway': on_runway},
                 'mm_new': {'dir': nd, 'str': ns},
                 'mm_old': {'dir': od, 'str': os_},
                 'setup': (su if su.get('ok') else None),
@@ -5787,23 +5824,31 @@ class FuelFilterDaemon:
                     _min_lay = int(s.get('queue4_entry_min_layers', 1) or 1)
                 except (TypeError, ValueError):
                     _min_lay = 1
-                if lay.get('determined') and _al_best < _min_lay:
+                # Не вимагати більше, ніж є УВІМКНЕНИХ шарів.
+                _req_now = max(int(lay.get('required', 4) or 0), int(lay_o.get('required', 4) or 0))
+                if _req_now >= 1:
+                    _min_lay = min(_min_lay, _req_now)
+                if _req_now >= 1 and lay.get('determined') and _al_best < _min_lay:
                     with self._lock:
                         self._pending4.pop(sym, None); self._persist_state()
                     log_activity(sym, 'skipped',
-                                 f'Черга-4 🚧 фільтр входу: {_al_best}/4 показників у жоден '
+                                 f'Черга-4 🚧 фільтр входу: {_al_best}/{_req_now} показників у жоден '
                                  f'бік < {_min_lay} (шари визначені) — прибрано з черги',
                                  side=d, source='Q4')
                     continue
-            # 🎯 Напрямок ВІДКРИТТЯ = той бік, де зібрались ВСІ 4 шари. Пріоритет —
-            # напрямку сигналу; якщо ж повний збіг у ПРОТИЛЕЖНИЙ бік → фліп.
+            # 🎯 Напрямок ВІДКРИТТЯ = той бік, де зібрались ВСІ УВІМКНЕНІ шари
+            # (`required` = к-сть увімкнених). Пріоритет — напрямку сигналу;
+            # повний збіг у ПРОТИЛЕЖНИЙ бік → фліп. Якщо всі шари вимкнені
+            # (required=0) — Q4 не відкриває (немає жодного критерію).
+            _req_d = int(lay.get('required', 4) or 0)
+            _req_o = int(lay_o.get('required', 4) or 0)
             _open_dir = None
-            if lay.get('base', 0) >= 4:
+            if _req_d >= 1 and lay.get('base', 0) >= _req_d:
                 _open_dir = d
-            elif lay_o.get('base', 0) >= 4:
+            elif _req_o >= 1 and lay_o.get('base', 0) >= _req_o:
                 _open_dir = _opp
             if not _open_dir:
-                continue   # ще ніде не всі 4 шари — чекаємо
+                continue   # ще не всі увімкнені шари збіглись — чекаємо
             # 🔥 Виснаженість — ЄДИНИЙ запобіжник Q4 (за напрямком відкриття).
             if s.get('queue4_exhaustion_on', True):
                 try:
