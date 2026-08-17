@@ -5689,8 +5689,17 @@ class FuelFilterDaemon:
         nd = fn.get('status')
         ns = int(round(abs(float(fn.get('dir') or 0)) * 100))
         if on_new:
-            add('mm_new', 'Новий МММ', nd == side and ns >= mmn_min,
-                f"{nd or '—'} {ns}%", det=bool(fn))
+            # Поріг «рівновага» (0): зараховуємо, якщо МММ НЕ ПРОТИ (нейтраль АБО
+            # в бік); блок лише коли явно ПРОТИ. Бо при силі ≤10% статусу напрямку
+            # немає — і суворе `nd==side` ніколи не збиралося при «рівновага».
+            # Інші пороги — як було: напрямок у бік + сила ≥ порогу.
+            if mmn_min <= 0:
+                _new_ok = (nd != opp)
+                _new_detail = f"{nd or 'рівновага'} {ns}% " + ('⛔ проти' if nd == opp else '✓ не проти')
+            else:
+                _new_ok = (nd == side and ns >= mmn_min)
+                _new_detail = f"{nd or '—'} {ns}%"
+            add('mm_new', 'Новий МММ', _new_ok, _new_detail, det=bool(fn))
 
         # 2) Старий МММ — рахуємо legacy ЛИШЕ коли шар увімкнено.
         od = None; os_ = 0
