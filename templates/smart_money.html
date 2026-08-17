@@ -726,6 +726,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 #ff-timers2-table th, #ff-timers2-table td,
 #ff-timers3-table th, #ff-timers3-table td,
 #ff-timers4-table th, #ff-timers4-table td { white-space: nowrap; padding: 3px 6px; }
+/* 🔘 Приховування колонок Черги-4 за пер-шаровими тумблерами. Клас вішається на
+   САМУ таблицю → правило застосовується і до заголовка, і до свіжих td після
+   кожного перемальовування рядків (inline display:none на td «зникав» при
+   innerHTML і ламав вирівнювання). */
+#ff-timers4-table.q4-hide-new .q4c-new,
+#ff-timers4-table.q4-hide-old .q4c-old,
+#ff-timers4-table.q4-hide-setup .q4c-setup,
+#ff-timers4-table.q4-hide-runway .q4c-runway { display: none; }
 /* Таблиці ВІДКРИТИХ угод (real + paper): теж кожен рядок в ОДНУ стрічку —
    символ і клітинки не переносяться; надто широка → скрол контейнера. */
 #tm-open-table th, #tm-open-table td,
@@ -10044,16 +10052,17 @@ function ffLayers4Cell(q) {
         + `<span style="display:inline-flex">${dots}</span>`
         + `<span style="display:inline-block;width:30px;text-align:right;color:${col};font-variant-numeric:tabular-nums">${n}/4</span></span>`;
 }
-// 🔘 Показ/приховування колонок Черги-4 за пер-шаровими тумблерами. Вимкнений
-// шар → колонка (th+td) ховається (і на бекенді не рахується → менше load).
+// 🔘 Показ/приховування колонок Черги-4 за пер-шаровими тумблерами. Вішаємо
+// КЛАС НА ТАБЛИЦЮ (не inline на комірки) → CSS ховає і th, і свіжі td після
+// кожного перемальовування рядків, тож заголовок і дані ЗАВЖДИ вирівняні.
 function _ffApplyQ4Cols() {
+    const tbl = document.getElementById('ff-timers4-table');
+    if (!tbl) return;
     const on = (id) => { const e = document.getElementById(id); return e ? !!e.checked : true; };
-    const setDisp = (cls, show) => document.querySelectorAll(cls)
-        .forEach(el => { el.style.display = show ? '' : 'none'; });
-    setDisp('.q4c-new', on('ff-queue4-new-on'));
-    setDisp('.q4c-old', on('ff-queue4-old-on'));
-    setDisp('.q4c-setup', on('ff-queue4-setup-on'));
-    setDisp('.q4c-runway', on('ff-queue4-runway-on'));
+    tbl.classList.toggle('q4-hide-new', !on('ff-queue4-new-on'));
+    tbl.classList.toggle('q4-hide-old', !on('ff-queue4-old-on'));
+    tbl.classList.toggle('q4-hide-setup', !on('ff-queue4-setup-on'));
+    tbl.classList.toggle('q4-hide-runway', !on('ff-queue4-runway-on'));
 }
 function ffRenderQueue4() {
     const tb = document.getElementById('ff-timers4-tbody');
