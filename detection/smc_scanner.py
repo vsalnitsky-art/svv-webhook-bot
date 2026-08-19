@@ -248,6 +248,11 @@ DEFAULT_SETTINGS = {
     # 0 = авто (= volumized_swing_length + 2). Це НЕ додає затримки — детекція
     # лишається на живому барі, сигнал іде в ту ж мить, щойно OB став валідним.
     'vob_alert_max_age_bars': 0,
+    # 🔒 «1 VOB на 1H OB» — на одну «епоху» 1H-OB (той самий bar_time на
+    # ob_filter_timeframe) фаєримо ЛИШЕ ОДИН VOB-сигнал (перший, що пройшов усі
+    # фільтри). Решта 5хв-VOB на цьому ж OB — тихо ігноруються, поки не з'явиться
+    # НОВИЙ 1H-OB (будь-який напрямок → інший bar_time). Дефолт OFF.
+    'vob_one_per_ob': False,
     # === Display: Strong High / Weak Low (swing extremes) ===
     # Показ на графіку останнього НЕПРОБИТОГО swing-максимуму (Strong High) і
     # swing-мінімуму (Weak Low), порахованих на ОКРЕМОМУ таймфреймі
@@ -416,6 +421,9 @@ class SMCScanner:
         # вже стрельнув сигнал} — щоб «Volumized OB Alert» спрацьовував ОДНОРАЗОВО
         # на КОЖЕН НОВИЙ Volumized OB (edge за formation_time).
         self._vob_alert_seen: Dict[str, int] = {}
+        # 🔒 vob_one_per_ob: {symbol → bar_time 1H-OB, на якому вже спрацював VOB}.
+        # Один VOB-сигнал на одну «епоху» 1H-OB; нова епоха = інший bar_time.
+        self._vob_ob_epoch: Dict[str, int] = {}
 
         # Signal markers per symbol — points on the chart where Telegram alerts
         # actually fired. Used to display LONG/SHORT dots on the chart.
@@ -1067,7 +1075,7 @@ class SMCScanner:
                        'volumized_combine_obs',
                        # Типи сигналів (ALERTS)
                        'choch_alerts_enabled', 'vob_alert_enabled',
-                       'vob_alert_max_age_bars']
+                       'vob_alert_max_age_bars', 'vob_one_per_ob']
             
             # Detect changes that require cache reset
             old_tf = self._settings.get('timeframe', DEFAULT_TIMEFRAME)
@@ -1087,6 +1095,7 @@ class SMCScanner:
             # Типи сигналів — булеві тумблери
             self._settings['choch_alerts_enabled'] = bool(self._settings.get('choch_alerts_enabled', True))
             self._settings['vob_alert_enabled'] = bool(self._settings.get('vob_alert_enabled', False))
+            self._settings['vob_one_per_ob'] = bool(self._settings.get('vob_one_per_ob', False))
             
             # Validate recency_minutes (0=off, or 30/60/120)
             try:
@@ -1737,13 +1746,23 @@ class SMCScanner:
                                                 # ЗНАЧЕНЬ кожного фільтра у лог разом із сигналом.
                                                 _vok, _vreason, _vdetail = self._signal_allowed(
                                                     symbol, _cside, at_intake=True)
-                                                log_activity(symbol, 'signal',
-                                                             f'Свіжий Volumized OB ({vol_tf}) {_cside} · {_vdetail}',
-                                                             side=_cside, source='scanner')
-                                                if not _vok:
-                                                    log_activity(symbol, 'rejected', _vreason,
+                                                # 🔒 «1 VOB на 1H OB» (vob_one_per_ob, варіант A):
+                                                # якщо цей 1H-OB уже дав сигнал (або валідного OB
+                                                # ще немає) — ТИХО ігноруємо цей VOB (без логу).
+                                                # Епоху позначаємо ЛИШЕ коли сигнал реально
+                                                # спрацював (пройшов усі фільтри).
+                                                _one = bool(self._settings.get('vob_one_per_ob', False))
+                                                _ob_bt = self._current_ob_bartime(symbol) if _one else None
+                                                _silent = False
+                                                if _one and _vok and not self._vob_epoch_fresh(symbol, _ob_bt):
+                                                    _vok = False
+                                                    _silent = True
+                                                if _vok:
+                                                    if _one and _ob_bt is not None:
+                                                        self._vob_ob_epoch[symbol] = _ob_bt
+                                                    log_activity(symbol, 'signal',
+                                                                 f'Свіжий Volumized OB ({vol_tf}) {_cside} · {_vdetail}',
                                                                  side=_cside, source='scanner')
-                                                else:
                                                     from detection.trade_manager import get_trade_manager
                                                     _tm = get_trade_manager()
                                                     if _tm:
@@ -1751,6 +1770,13 @@ class SMCScanner:
                                                         # funding-очистка не видаляла ці записи.
                                                         _tm.on_signal(symbol=symbol, side=_cside,
                                                                       entry_price=_entry, opened_by='vob_alert')
+                                                elif not _silent:
+                                                    # заблоковано ФІЛЬТРОМ (не епохою) → лог сигналу+причини
+                                                    log_activity(symbol, 'signal',
+                                                                 f'Свіжий Volumized OB ({vol_tf}) {_cside} · {_vdetail}',
+                                                                 side=_cside, source='scanner')
+                                                    log_activity(symbol, 'rejected', _vreason,
+                                                                 side=_cside, source='scanner')
                                             # else: застарілий/фантомний OB — нічого не робимо
                                 except Exception as _ve:
                                     if self._errors <= 5:
@@ -1948,6 +1974,28 @@ class SMCScanner:
         except Exception:
             pass
     
+    def _current_ob_bartime(self, symbol: str):
+        """bar_time поточного 1H-OB (з sob_smc_ob_state на ob_filter_timeframe) —
+        ідентифікатор «епохи» для `vob_one_per_ob`. None, коли валідного OB нема
+        (bias=None або рядка ще немає) → у цьому стані VOB не фаєримо (чекаємо OB)."""
+        try:
+            from storage.db_operations import get_db
+            ob_tf = self._settings.get('ob_filter_timeframe', '1h')
+            row = get_db().get_smc_ob_state(symbol, ob_tf)
+            if not row or row.get('bias') is None:
+                return None
+            return row.get('bar_time')
+        except Exception:
+            return None
+
+    def _vob_epoch_fresh(self, symbol: str, ob_bt) -> bool:
+        """True якщо на ЦЬОМУ 1H-OB (`ob_bt`) ще НЕ спрацював VOB-сигнал (нова
+        епоха). None → False (немає валідного OB → VOB не фаєримо). Використ.
+        `vob_one_per_ob`: «1 сигнал = 1×(1H OB) + 1×(5хв VOB)»."""
+        if ob_bt is None:
+            return False
+        return ob_bt != self._vob_ob_epoch.get(symbol)
+
     def _ob_filter_allows(self, symbol: str, side: str) -> bool:
         """OB Filter gate decision for a fresh signal.
         

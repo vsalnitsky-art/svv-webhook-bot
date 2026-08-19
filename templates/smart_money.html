@@ -2011,6 +2011,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-vob-alert" onchange="updateVobAlert()">
                         🟪 Volumized OB Alerts (новий тип сигналу)
                     </label>
+                    <label class="sm-checkbox" title="🔒 Один VOB-сигнал на один 1H-OB (Require OB Match TF). Перший 5хв-VOB, що пройшов усі увімкнені фільтри (OB/Forecast/Decision), дає ОДИН сигнал; решта 5хв-VOB на цьому ж 1H-OB тихо ігноруються, поки не з'явиться НОВИЙ 1H-OB (будь-який напрямок). Тобто 1 сигнал = 1×(1H OB) + 1×(5хв VOB).">
+                        <input type="checkbox" id="sm-vob-one-per-ob" onchange="updateVobOnePerOb()">
+                        🔒 1 VOB на 1H OB
+                    </label>
                 </div>
             </div>
             
@@ -5162,6 +5166,8 @@ async function loadSettings() {
             if (chAl) chAl.checked = s.choch_alerts_enabled !== false;   // default ON
             const vobAl = document.getElementById('sm-vob-alert');
             if (vobAl) vobAl.checked = !!s.vob_alert_enabled;            // default OFF
+            const vobOne = document.getElementById('sm-vob-one-per-ob');
+            if (vobOne) vobOne.checked = !!s.vob_one_per_ob;             // default OFF
             const recEl = document.getElementById('sm-recency');
             if (recEl) recEl.value = String(s.recency_minutes != null ? s.recency_minutes : 0);
             document.getElementById('sm-timeframe').value = s.timeframe || '5m';
@@ -5361,6 +5367,17 @@ async function updateVobAlert() {
         });
         updateSettingsSummary();
     } catch (err) { alert('VOB alerts update error: ' + err); }
+}
+// 🔒 «1 VOB на 1H OB» — один VOB-сигнал на одну епоху 1H-OB.
+async function updateVobOnePerOb() {
+    const enabled = document.getElementById('sm-vob-one-per-ob').checked;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({vob_one_per_ob: enabled}),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('VOB one-per-OB update error: ' + err); }
 }
 
 // OB Filter — single handler for both checkbox and dropdown change events.

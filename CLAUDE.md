@@ -54,6 +54,15 @@ Volumized-OB-сигнал (`vob_alert_enabled`) фаєриться в `smc_scann
   мить, щойно OB став валідним.
 - Далі — `_signal_allowed` (OB/PD/Forecast) → `on_signal` → черга/угода.
 - Тест: `test_vob_freshness.py`.
+- **«1 VOB на 1H OB»** (`vob_one_per_ob`, дефолт OFF): один VOB-сигнал на одну
+  «епоху» 1H-OB. Епоха = `bar_time` OB на `ob_filter_timeframe`
+  (`_current_ob_bartime`); `_vob_ob_epoch[sym]` = bar_time, на якому вже спрацював
+  VOB; `_vob_epoch_fresh(sym, bt)` = True, якщо на цьому OB ще не було сигналу
+  (None → False). Варіант **(A)**: епоху позначаємо спожитою ЛИШЕ коли сигнал
+  РЕАЛЬНО спрацював (пройшов OB/Forecast/Decision) — заблоковані фільтром VOB
+  епоху НЕ витрачають. Решта 5хв-VOB на цьому ж OB — ТИХО ігнор (без логу).
+  Новий 1H-OB (будь-який напрямок → інший bar_time) → знову один сигнал.
+  Тест: `test_vob_one_per_ob.py`.
 
 ## SMC-чарт (/smart-money): налаштування відображення
 
