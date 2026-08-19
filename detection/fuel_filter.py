@@ -755,6 +755,15 @@ class FuelFilterDaemon:
         # бік (aligned≥1)}. Ковзне вікно застою: якщо now−ts > queue4_no_light_min
         # хв → монету викидаємо з Черги-4. In-memory (після рестарту — свіже вікно).
         self._q4_lit_at: Dict[str, float] = {}
+        # 🔒 «1 VOB на 1H OB» на РІВНІ ВІДКРИТТЯ: {symbol → bar_time 1H-OB, на
+        # якому монета ВЖЕ була відкрита}. Тримається ПОПРИ закриття/видалення —
+        # скидається лише коли з'являється НОВИЙ 1H-OB (інший bar_time). Не дає
+        # монеті ре-відкритись на ТОМУ САМОМУ 1H-OB (через новий 5m VOB після
+        # закриття угоди). Активний ЛИШЕ коли scanner.vob_one_per_ob = ON.
+        # Персистентний (переживає рестарт). Це той самий «епохальний» принцип, що
+        # й `smc_scanner._vob_ob_epoch`, але забезпечений на ЄДИНОМУ вузлі
+        # відкриття (Черга-4), тому переживає close/delete, а не лише глушить алерт.
+        self._opened_ob_epoch: Dict[str, int] = {}
         # Anti-flood for the per-coin «Готовність» decision log:
         # {symbol: (outcome, hot, score_bucket, ts)} — a hold/skip is re-logged
         # only when it meaningfully changes or after READINESS_LOG_MIN_GAP sec;
@@ -1190,6 +1199,11 @@ class FuelFilterDaemon:
         _already_open = bool(sym in self._fuel_managed
                              or self._tm_has_position(sym, True)
                              or self._tm_has_position(sym, False))
+        # 🔒 «1 VOB на 1H OB»: монета вже відкривалась на ПОТОЧНОМУ 1H-OB → НЕ
+        # ставимо її знову в Чергу-4. Так новий 5m VOB на тому самому 1H-OB (напр.
+        # відразу після закриття угоди) не потрапляє в чергу й не ре-відкриває
+        # монету. Скид — лише на НОВОМУ 1H-OB. Активно, коли scanner.vob_one_per_ob=ON.
+        _ob_epoch_used = self._ob_epoch_already_opened(sym)
 
         # 🚧 ФІЛЬТР ВХОДУ в Чергу-4: рахуємо шари ПРЯМО ЗАРАЗ (поза локом — важкі
         # читання liqmap/кешу). Якщо всі шари вже ВИЗНАЧЕНІ і збіг < порога —
@@ -1248,7 +1262,7 @@ class FuelFilterDaemon:
                                        'added_price': (prev3.get('added_price') if _keep3
                                                        else _apx) or _apx}
                 changed = True
-            if q4 and not _already_open and not _q4_gate_reject:
+            if q4 and not _already_open and not _q4_gate_reject and not _ob_epoch_used:
                 # 🎯 Усі шари — приймаємо ВСІ сигнали (обидва боки), НЕ фільтруємо
                 # кнопками. Протилежний сигнал СТИРАЄ попередній запис (новий бере
                 # його місце). Ціна входу — щоб бачити рух, поки монета чекає.
@@ -1602,6 +1616,11 @@ class FuelFilterDaemon:
             if isinstance(pend4, dict):
                 self._pending4 = {str(k).upper(): v for k, v in pend4.items()
                                   if isinstance(v, dict) and v.get('dir') in ('LONG', 'SHORT')}
+            # 🔒 «1 VOB на 1H OB» на рівні відкриття — переживає рестарт.
+            oe = st.get('opened_ob_epoch', {}) or {}
+            if isinstance(oe, dict):
+                self._opened_ob_epoch = {str(k).upper(): v for k, v in oe.items()
+                                         if isinstance(v, (int, float)) and v}
             if (self._fuel_managed or self._anomalies or self._engine_attempts
                     or self._timers or self._pending):
                 print(f"[FuelFilter] restored {len(self._pending)} queued "
@@ -1626,6 +1645,7 @@ class FuelFilterDaemon:
                 'pending2': self._pending2,
                 'pending3': self._pending3,
                 'pending4': self._pending4,
+                'opened_ob_epoch': self._opened_ob_epoch,
                 'funding_muted': self._funding_muted,
             })
         except Exception as e:
@@ -5756,6 +5776,75 @@ class FuelFilterDaemon:
                 'setup': (su if su.get('ok') else None),
                 'runway': {'dir': rd, 'room_pct': rr, 'label': rw.get('label')}}
 
+    # ------------------------------------------------------------------
+    # 🔒 «1 VOB на 1H OB» — гейт на РІВНІ ВІДКРИТТЯ (переживає close/delete)
+    # ------------------------------------------------------------------
+    def _vob_one_per_ob_on(self) -> bool:
+        """Читає scanner-налаштування `vob_one_per_ob` (керує гейтом «1 угода на
+        один 1H-OB» на рівні відкриття Черги-4). OFF → стара поведінка."""
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            scanner = getattr(tm, 'scanner', None) if tm else None
+            if scanner is not None:
+                return bool(scanner._settings.get('vob_one_per_ob', False))
+        except Exception:
+            pass
+        return False
+
+    def _ob_epoch_now(self, sym: str):
+        """bar_time поточного 1H-OB — ТЕ САМЕ ДЖЕРЕЛО, що й
+        `smc_scanner._current_ob_bartime`: sob_smc_ob_state на ob_filter_timeframe.
+        None → валідного OB немає (bias=None або рядка немає)."""
+        try:
+            from storage.db_operations import get_db
+            ob_tf = '1h'
+            tm = self._get_tm() if self._get_tm else None
+            scanner = getattr(tm, 'scanner', None) if tm else None
+            if scanner is not None:
+                ob_tf = scanner._settings.get('ob_filter_timeframe', '1h')
+            row = get_db().get_smc_ob_state(sym, ob_tf)
+            if not row or row.get('bias') is None:
+                return None
+            return row.get('bar_time')
+        except Exception:
+            return None
+
+    def _ob_epoch_already_opened(self, sym: str) -> bool:
+        """True, якщо гейт увімкнено І монета ВЖЕ відкривалась на ПОТОЧНОМУ 1H-OB.
+        Побічно чистить застарілий запис, коли з'явився НОВИЙ 1H-OB (інший
+        bar_time) → монета знову може відкритись на новій «епосі»."""
+        if not self._vob_one_per_ob_on():
+            return False
+        bt = self._ob_epoch_now(sym)
+        if bt is None:
+            return False
+        seen = self._opened_ob_epoch.get(sym.upper())
+        if seen is None:
+            return False
+        if seen == bt:
+            return True
+        # З'явився НОВИЙ 1H-OB → скид позначки (епоха змінилась).
+        self._opened_ob_epoch.pop(sym.upper(), None)
+        try:
+            self._persist_state()
+        except Exception:
+            pass
+        return False
+
+    def _mark_ob_epoch_opened(self, sym: str):
+        """Позначити, що монета ВІДКРИТА на поточному 1H-OB (щоб новий 5m VOB на
+        тому самому 1H-OB не ре-відкривав її після закриття). No-op, коли гейт
+        вимкнено або валідного 1H-OB немає."""
+        if not self._vob_one_per_ob_on():
+            return
+        bt = self._ob_epoch_now(sym)
+        if bt is not None:
+            self._opened_ob_epoch[sym.upper()] = bt
+            try:
+                self._persist_state()
+            except Exception:
+                pass
+
     def _engine_tick_queue4(self):
         """🎯 Черга-4 «Усі шари» — відкриває угоду, коли ВСІ 4 шари збіглись за
         напрямком сигналу. Приймає всі сигнали (обидва боки), НЕ фільтрує кнопками
@@ -5794,6 +5883,19 @@ class FuelFilterDaemon:
             if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
                 with self._lock:
                     self._pending4.pop(sym, None); self._persist_state()
+                continue
+            # 🔒 «1 VOB на 1H OB» (scanner.vob_one_per_ob): якщо монета ВЖЕ
+            # відкривалась на ЦЬОМУ 1H-OB — не відкривати вдруге (навіть після
+            # закриття/видалення угоди). Це ЗАКРИВАЄ шлях «новий 5m VOB → re-queue
+            # → миттєве ре-відкриття» на тому самому 1H-OB. Прибираємо з черги, щоб
+            # не крутити перевірку щотіку; чекаємо НОВИЙ 1H-OB.
+            if self._ob_epoch_already_opened(sym):
+                with self._lock:
+                    self._pending4.pop(sym, None); self._persist_state()
+                log_activity(sym, 'skipped',
+                             'Черга-4 🔒 «1 VOB на 1H OB»: монета вже відкривалась '
+                             'на цьому 1H-OB — чекаємо НОВИЙ 1H-OB (не відкрито)',
+                             side=d, source='Q4')
                 continue
             fuel = self._fuel_dir_smoothed(sym)
             mark = fuel.get('mark_price') if fuel else None
@@ -5879,6 +5981,9 @@ class FuelFilterDaemon:
                     with self._lock:
                         self._timers[sym] = {'dir': _open_dir, 'since': now, 'start_price': mark}
                         self._pending4.pop(sym, None); self._persist_state()
+                    # 🔒 Позначити 1H-OB як «відкритий» — щоб новий 5m VOB на тому
+                    # самому 1H-OB не ре-відкривав монету після її закриття.
+                    self._mark_ob_epoch_opened(sym)
                     log_activity(sym, 'opened',
                                  f'Черга-4: усі 4 шари збіглись → відкрито {_open_dir}{_flip}',
                                  side=_open_dir, source='Q4')

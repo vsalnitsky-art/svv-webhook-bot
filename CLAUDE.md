@@ -64,6 +64,25 @@ Volumized-OB-сигнал (`vob_alert_enabled`) фаєриться в `smc_scann
   1h-барах) — тому re-open у межах години НЕ може бути «новим OB»; якщо угода
   re-open після видалення в межах бару — шукати ІНШИЙ шлях (черга Черга-4/
   reconcile), а не епоху. Тест: `test_vob_one_per_ob.py`.
+- **ГЕЙТ НА РІВНІ ВІДКРИТТЯ (переживає close/delete) — фікс «фантомного re-open»
+  GRAMUSDT.** Кейс: угоду закрили → за ~54с вона ВІДКРИЛАСЬ ЗНОВУ (мітка
+  `Volumized OB → Черга-4`), «хоча в черзі її не було». Причина: scanner-глушіння
+  `vob_one_per_ob` придушує лише АЛЕРТ, а `_vob_ob_epoch` — in-memory у сканері;
+  але шлях відкриття інший: НОВИЙ 5m VOB (інший `formation_time`, ТОЙ САМИЙ 1H-OB)
+  → `on_signal` → `intercept` → `_pending4` (бо після закриття `_fuel_managed`
+  звільнено reconcile-ом і `_already_open`=False) → `_engine_tick_queue4` знову
+  відкрив. Черга не показувала монету, бо `_pending4` попається ПРИ відкритті.
+  **Фікс (fuel_filter, гейт лише коли scanner.vob_one_per_ob=ON):**
+  `_opened_ob_epoch[sym]=bar_time` — позначка «вже відкривались на цьому 1H-OB»,
+  ПЕРСИСТЕНТНА (переживає рестарт), тримається ПОПРИ закриття/видалення,
+  скидається ЛИШЕ на НОВОМУ 1H-OB. Джерело bar_time — ТЕ САМЕ, що у сканера
+  (`_ob_epoch_now` = `get_smc_ob_state(sym, ob_filter_timeframe)`).
+  Перевірка `_ob_epoch_already_opened` стоїть у ДВОХ місцях: (1) `intercept` — НЕ
+  ставити монету в Чергу-4 (`... and not _ob_epoch_used`); (2)
+  `_engine_tick_queue4` — перед відкриттям (і прибрати з черги). Позначка
+  ставиться `_mark_ob_epoch_opened` після успішного Q4-відкриття. Тобто «1 угода
+  на 1 1H-OB» тепер гарантується на ЄДИНОМУ вузлі відкриття, а не лише глушінням
+  алерту. Дефолт OFF → стара поведінка без змін. Тест: `test_vob_open_epoch.py`.
 
 ## SMC-чарт (/smart-money): налаштування відображення
 
