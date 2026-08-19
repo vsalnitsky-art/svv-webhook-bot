@@ -1,83 +1,63 @@
 """«1 VOB на 1H OB» (vob_one_per_ob) — regression tests.
 
-Strategy (user): one signal = one 1H OB + one 5m VOB. The FIRST 5m VOB that
-passes all filters within a 1H-OB "epoch" (identified by its bar_time) fires
-ONE signal; every later 5m VOB on the SAME 1H OB is ignored until a NEW 1H OB
-appears (any direction → different bar_time). Variant (A): the epoch is marked
-used only when a signal actually fires.
-
-`_vob_epoch_fresh(symbol, ob_bt)` is the core gate: True iff no VOB signal has
-fired yet for this 1H-OB bar_time. Loaded via importlib (smc_scanner has only
-stdlib top-level imports).
+Strategy: one signal = one 1H OB + one 5m VOB. The 1H OB must be NEW (not the
+one already present when we started watching). `_vob_epoch_decision(seen, bt)`:
+  'skip'     — no valid 1H OB (bt None) → don't fire;
+  'baseline' — first sight (seen None): record the EXISTING OB, DON'T fire (it's
+               not "new"); counting starts from the NEXT OB;
+  'used'     — same OB already baselined/consumed → ignore;
+  'fire'     — a NEW 1H OB (different bar_time) → allowed to signal.
+Variant (A): the epoch is consumed only when a signal actually fires.
 """
 import importlib.util
 import os
-import types
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location(
     "smc_scanner_vob1_test", os.path.join(_HERE, "detection", "smc_scanner.py"))
 _m = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_m)
-S = _m.SMCScanner
+D = _m.SMCScanner._vob_epoch_decision
 
 
-def _stub():
-    ns = types.SimpleNamespace()
-    ns._vob_ob_epoch = {}
-    ns._vob_epoch_fresh = types.MethodType(S._vob_epoch_fresh, ns)
-    return ns
+def test_no_ob_skip():
+    assert D(None, None) == 'skip'
+    assert D(1000, None) == 'skip'
 
 
-def test_no_ob_never_fresh():
-    st = _stub()
-    assert st._vob_epoch_fresh('X', None) is False   # немає валідного OB → не фаєримо
+def test_first_sight_baselines_existing_ob():
+    # pre-existing OB must NOT fire — it's baselined
+    assert D(None, 1000) == 'baseline'
 
 
-def test_first_ob_is_fresh():
-    st = _stub()
-    assert st._vob_epoch_fresh('X', 1000) is True    # перший раз на цьому OB → сигнал
+def test_same_ob_used():
+    assert D(1000, 1000) == 'used'
 
 
-def test_same_ob_not_fresh_after_consumed():
-    st = _stub()
-    st._vob_ob_epoch['X'] = 1000                      # епоха вже спожита (сигнал був)
-    assert st._vob_epoch_fresh('X', 1000) is False   # той самий OB → ігнор
+def test_new_ob_fires():
+    assert D(1000, 2000) == 'fire'
 
 
-def test_new_ob_is_fresh_again():
-    st = _stub()
-    st._vob_ob_epoch['X'] = 1000
-    assert st._vob_epoch_fresh('X', 2000) is True     # НОВИЙ 1H-OB → знову один сигнал
+def test_new_ob_any_direction_fires():
+    # bar_time changes on ANY new OB (even same-direction) → fire
+    assert D(1000, 1500) == 'fire'
 
 
-def test_new_ob_same_direction_still_fresh():
-    # bar_time змінюється на БУДЬ-який новий OB (навіть той самий напрямок) → епоха нова
-    st = _stub()
-    st._vob_ob_epoch['X'] = 1000
-    assert st._vob_epoch_fresh('X', 1500) is True
-
-
-def test_per_symbol_independent():
-    st = _stub()
-    st._vob_ob_epoch['X'] = 1000
-    assert st._vob_epoch_fresh('Y', 1000) is True     # інша монета — своя епоха
-
-
-def test_epoch_flow_one_signal_per_ob():
-    """Проганяємо потік: OB=1000 → перший VOB fresh (фаєримо, споживаємо) →
-    решта VOB на 1000 ігнор → OB=2000 → знову один."""
-    st = _stub()
-    # OB 1000: перший VOB
-    assert st._vob_epoch_fresh('X', 1000) is True
-    st._vob_ob_epoch['X'] = 1000                      # сигнал спрацював → епоха спожита
-    # ще кілька VOB на тому ж OB — усі ігнор
-    assert st._vob_epoch_fresh('X', 1000) is False
-    assert st._vob_epoch_fresh('X', 1000) is False
-    # новий OB 2000 — знову один
-    assert st._vob_epoch_fresh('X', 2000) is True
-    st._vob_ob_epoch['X'] = 2000
-    assert st._vob_epoch_fresh('X', 2000) is False
+def test_flow_no_phantom_on_existing_then_one_per_new():
+    """Existing OB=1000 → baseline (no signal). New OB=2000 → fire (one).
+    Same OB 2000 → used (ignore). New OB=3000 → fire again."""
+    seen = None
+    # first sight of existing OB
+    assert D(seen, 1000) == 'baseline'
+    seen = 1000                                   # baselined
+    # more 5m VOBs on the SAME (existing) OB → still used, never fires
+    assert D(seen, 1000) == 'used'
+    # NEW OB appears → the ONE signal
+    assert D(seen, 2000) == 'fire'
+    seen = 2000                                   # consumed on fire
+    assert D(seen, 2000) == 'used'                # rest of this OB ignored
+    # next NEW OB → one more
+    assert D(seen, 3000) == 'fire'
 
 
 if __name__ == '__main__':

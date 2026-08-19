@@ -56,13 +56,14 @@ Volumized-OB-сигнал (`vob_alert_enabled`) фаєриться в `smc_scann
 - Тест: `test_vob_freshness.py`.
 - **«1 VOB на 1H OB»** (`vob_one_per_ob`, дефолт OFF): один VOB-сигнал на одну
   «епоху» 1H-OB. Епоха = `bar_time` OB на `ob_filter_timeframe`
-  (`_current_ob_bartime`); `_vob_ob_epoch[sym]` = bar_time, на якому вже спрацював
-  VOB; `_vob_epoch_fresh(sym, bt)` = True, якщо на цьому OB ще не було сигналу
-  (None → False). Варіант **(A)**: епоху позначаємо спожитою ЛИШЕ коли сигнал
-  РЕАЛЬНО спрацював (пройшов OB/Forecast/Decision) — заблоковані фільтром VOB
-  епоху НЕ витрачають. Решта 5хв-VOB на цьому ж OB — ТИХО ігнор (без логу).
-  Новий 1H-OB (будь-який напрямок → інший bar_time) → знову один сигнал.
-  Тест: `test_vob_one_per_ob.py`.
+  (`_current_ob_bartime`, None коли OB немає); `_vob_ob_epoch[sym]` = bar_time.
+  `_vob_epoch_decision(seen, bt)` → 'skip'(None)/'baseline'(перший показ —
+  запам'ятати ІСНУЮЧИЙ OB, НЕ фаєрити, бо він не «новий»)/'used'(той самий
+  OB)/'fire'(НОВИЙ OB). Варіант **(A)**: епоху витрачаємо ЛИШЕ на реальному
+  спрацюванні. **ВАЖЛИВО:** 1H-OB стабільний у межах бару (детекція на ЗАКРИТИХ
+  1h-барах) — тому re-open у межах години НЕ може бути «новим OB»; якщо угода
+  re-open після видалення в межах бару — шукати ІНШИЙ шлях (черга Черга-4/
+  reconcile), а не епоху. Тест: `test_vob_one_per_ob.py`.
 
 ## SMC-чарт (/smart-money): налаштування відображення
 

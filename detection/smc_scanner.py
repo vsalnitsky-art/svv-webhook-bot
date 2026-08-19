@@ -1754,9 +1754,16 @@ class SMCScanner:
                                                 _one = bool(self._settings.get('vob_one_per_ob', False))
                                                 _ob_bt = self._current_ob_bartime(symbol) if _one else None
                                                 _silent = False
-                                                if _one and _vok and not self._vob_epoch_fresh(symbol, _ob_bt):
-                                                    _vok = False
-                                                    _silent = True
+                                                if _one and _vok:
+                                                    _dec = self._vob_epoch_decision(
+                                                        self._vob_ob_epoch.get(symbol), _ob_bt)
+                                                    if _dec == 'baseline':
+                                                        # перший показ: запам'ятати ІСНУЮЧИЙ OB,
+                                                        # НЕ фаєрити (він не «новий»).
+                                                        self._vob_ob_epoch[symbol] = _ob_bt
+                                                    if _dec != 'fire':
+                                                        _vok = False
+                                                        _silent = True
                                                 if _vok:
                                                     if _one and _ob_bt is not None:
                                                         self._vob_ob_epoch[symbol] = _ob_bt
@@ -1988,13 +1995,23 @@ class SMCScanner:
         except Exception:
             return None
 
-    def _vob_epoch_fresh(self, symbol: str, ob_bt) -> bool:
-        """True якщо на ЦЬОМУ 1H-OB (`ob_bt`) ще НЕ спрацював VOB-сигнал (нова
-        епоха). None → False (немає валідного OB → VOB не фаєримо). Використ.
-        `vob_one_per_ob`: «1 сигнал = 1×(1H OB) + 1×(5хв VOB)»."""
+    @staticmethod
+    def _vob_epoch_decision(seen, ob_bt):
+        """Рішення для `vob_one_per_ob` (чиста функція, `seen`=запам'ятований
+        bar_time 1H-OB, `ob_bt`=поточний):
+          • 'skip'     — немає валідного 1H-OB (None) → VOB не фаєримо;
+          • 'baseline' — ПЕРШИЙ показ монети (`seen` None): запам'ятати ІСНУЮЧИЙ
+            OB і НЕ фаєрити — він НЕ «новий» (відлік починаємо з наступного OB);
+          • 'used'     — той самий OB, що вже базований/спожитий → ігнор;
+          • 'fire'     — з'явився НОВИЙ 1H-OB (інший bar_time) → можна сигнал.
+        Так прибираємо «фантом» на вже наявному OB: 1 сигнал лише на НОВИЙ OB."""
         if ob_bt is None:
-            return False
-        return ob_bt != self._vob_ob_epoch.get(symbol)
+            return 'skip'
+        if seen is None:
+            return 'baseline'
+        if ob_bt == seen:
+            return 'used'
+        return 'fire'
 
     def _ob_filter_allows(self, symbol: str, side: str) -> bool:
         """OB Filter gate decision for a fresh signal.
