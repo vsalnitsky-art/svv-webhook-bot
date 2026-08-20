@@ -2056,6 +2056,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          by ATR-size filter). Tooltip shows TF, OB price range
                          and volume — quick at-a-glance trend confirmation. -->
                     <span class="sm-status-badge" id="sm-volumized-badge" style="margin-left:6px;display:none"></span>
+                    <!-- 🔎 Стан VOB-алерту: ЧОМУ по цій монеті є/нема реакції на
+                         Volumized OB (fired / stale N/поріг / duplicate / filtered
+                         / first_sight). Джерело — get_state.vob_diag[symbol]. -->
+                    <span class="sm-status-badge" id="sm-vob-status-badge" style="margin-left:6px;display:none" title=""></span>
                     <!-- Dedup gate badge — shows the current state of the
                          "1 per trend" guard for the currently-selected symbol.
                          Visible only when dedup is enabled in settings. Three
@@ -4406,6 +4410,8 @@ async function loadWatchlist() {
         wlVolumizedEnabled = !!d.volumized_enabled;
         wlVolumizedTimeframe = d.volumized_timeframe || '1h';
         wlVolumizedTrends = d.volumized_trends || {};
+        wlVobDiag = d.vob_diag || {};
+        wlVobAlertEnabled = !!d.vob_alert_enabled;
         // Dedup state: map of symbol → 'LONG' | 'SHORT' (last-alerted direction).
         // Absence from the map means no signal has fired for that symbol yet,
         // so the next signal of either direction will alert.
@@ -4439,6 +4445,11 @@ let wlObStates = {};
 let wlVolumizedEnabled = false;
 let wlVolumizedTimeframe = '1h';
 let wlVolumizedTrends = {};
+// 🔎 Стан VOB-алерту по монеті (з get_state.vob_diag): {symbol→{outcome,label,
+// age,max_age,ft,tf,detail,ts}}. Джерело правди «чому по цій монеті є/нема
+// реакції на VOB» — показуємо бейджем на панелі поряд з «SHORT 5M».
+let wlVobDiag = {};
+let wlVobAlertEnabled = false;
 // Dedup state — Pine "1 per trend" guard. UI surfaces three pill states:
 //   not in wlDedupState   → "🔓 OPEN" — first signal will fire any direction
 //   wlDedupState[sym]=LONG → "🟢 ↑" — last fired LONG, waiting for SHORT
@@ -6439,7 +6450,51 @@ async function loadChart() {
         } else if (volBadge) {
             volBadge.style.display = 'none';
         }
-        
+
+        // === 🔎 Стан VOB-алерту (чому є/нема реакції) ===
+        // Показуємо останнє рішення по цій монеті з get_state.vob_diag:
+        //   ✅ fired — сигнал пішов; ⛔ filtered — відсіяно фільтром;
+        //   ⌛ stale (вік N/поріг) — блок не свіжий (сигналу нема, це НЕ баг);
+        //   ↺ duplicate — той самий блок уже опрацьований (реакція була раніше);
+        //   👁 first_sight — старий блок на першому показі (тиха база);
+        //   ∅ no_candidate — валідного VOB нема.
+        const vobStatusBadge = document.getElementById('sm-vob-status-badge');
+        if (vobStatusBadge) {
+            const rec = (wlVobDiag || {})[currentSymbol];
+            if (wlVobAlertEnabled && rec && rec.outcome) {
+                const styleMap = {
+                    fired:        ['rgba(34,197,94,0.15)',  '#86efac'],
+                    filtered:     ['rgba(239,68,68,0.15)',  '#fca5a5'],
+                    stale:        ['rgba(148,163,184,0.15)','#cbd5e1'],
+                    duplicate:    ['rgba(148,163,184,0.12)','#94a3b8'],
+                    first_sight:  ['rgba(148,163,184,0.12)','#94a3b8'],
+                    epoch:        ['rgba(250,204,21,0.15)', '#fde68a'],
+                    no_candidate: ['rgba(148,163,184,0.10)','#64748b'],
+                };
+                const [bg, color] = styleMap[rec.outcome] || ['rgba(148,163,184,0.12)', '#94a3b8'];
+                let txt = rec.label || rec.outcome;
+                if (rec.outcome === 'stale' && rec.age != null) {
+                    txt = `⌛ VOB stale ${rec.age}/${rec.max_age}`;
+                }
+                vobStatusBadge.textContent = txt;
+                vobStatusBadge.style.background = bg;
+                vobStatusBadge.style.color = color;
+                vobStatusBadge.style.display = 'inline-block';
+                vobStatusBadge.title = [
+                    'Стан VOB-алерту по монеті (чому є/нема реакції):',
+                    `Рішення: ${rec.label || rec.outcome}`,
+                    (rec.age != null) ? `Вік блоку: ${rec.age} барів (поріг свіжості ${rec.max_age})` : '',
+                    rec.detail ? rec.detail : '',
+                    '',
+                    'fired = сигнал пішов · filtered = відсіяно фільтром',
+                    'stale = блок не свіжий (сигналу нема, це не баг)',
+                    'duplicate = блок уже опрацьований раніше',
+                ].filter(Boolean).join('\n');
+            } else {
+                vobStatusBadge.style.display = 'none';
+            }
+        }
+
         // === Dedup gate badge ===
         // Vol-aligned readiness indicator (matches the watchlist pip).
         // After Vol-flip auto-reset, the gate is always either:
@@ -7634,6 +7689,8 @@ async function updateStatus() {
         wlVolumizedEnabled = newVolEnabled;
         wlVolumizedTimeframe = d.volumized_timeframe || '1h';
         wlVolumizedTrends = newVolTrends;
+        wlVobDiag = d.vob_diag || {};
+        wlVobAlertEnabled = !!d.vob_alert_enabled;
         if (newObEnabled || wasEnabled || newVolEnabled || wasVolEnabled) {
             renderWatchlist(d.watchlist || []);
         }

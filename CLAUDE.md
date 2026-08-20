@@ -66,6 +66,11 @@ Volumized-OB-сигнал (`vob_alert_enabled`) фаєриться в `smc_scann
   `get_state()['vob_diag']` = {symbol→{outcome,label,age,max_age,ft,tf,detail,ts}}
   (+`vob_alert_enabled`). Рішення edge/свіжості — ЧИСТА `_vob_edge_outcome(prev,
   ft,age,max_age)` (юніт-тест). Тест: `test_vob_transparency.py`.
+  **UI:** на панелі монети (`templates/smart_money.html`) поряд з бейджем «SHORT
+  5M» стоїть бейдж `sm-vob-status-badge` (глобали `wlVobDiag`/`wlVobAlertEnabled`
+  з get_state) → показує, ЧОМУ по монеті є/нема реакції: ✅fired/⛔filtered/
+  ⌛stale N/поріг/↺duplicate/👁first_sight. Так «бокс висить, а сигналу нема»
+  завжди пояснено прямо в UI (стале = блок не свіжий, це не баг).
 - **Швидкість:** детекція лишається на ЖИВОМУ барі (`vol_data['klines']`) — НЕ
   переходити на закриті бари (це додало б до 1 TF затримки). Сигнал іде в ту ж
   мить, щойно OB став валідним.
