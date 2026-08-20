@@ -66,6 +66,19 @@ Volumized-OB-сигнал (`vob_alert_enabled`) фаєриться в `smc_scann
   `get_state()['vob_diag']` = {symbol→{outcome,label,age,max_age,ft,tf,detail,ts}}
   (+`vob_alert_enabled`). Рішення edge/свіжості — ЧИСТА `_vob_edge_outcome(prev,
   ft,age,max_age)` (юніт-тест). Тест: `test_vob_transparency.py`.
+- **CATCH-ALL: обробляємо ОБИДВА напрямки за один цикл (жоден VOB не губиться).**
+  РАНІШЕ брався лише ОДИН кандидат — `max(newest_bull.ft, newest_bear.ft)`, тож
+  коли за цикл з'являлись і бичачий, і ведмежий OB, протилежний зникав «між
+  перевірками». ТЕПЕР `_vob_alert_seen[symbol]` — **ПЕР-НАПРЯМКОВИЙ dict**
+  `{'LONG':ft,'SHORT':ft}`, а `_vob_pick_candidates(newest_bull,newest_bear)`
+  повертає ОБИДВА (без breaker), відсортовані за часом (найновіший — останній,
+  тож його статус лишається у `vob_diag`). Кожен бік проходить свій
+  `_vob_edge_outcome` зі СВОЄЮ базою → протилежний новий VOB більше не
+  маскується. `vob_one_per_ob`-епоха лишається СПІЛЬНОЮ на 1H-OB (перший фреш її
+  витрачає). **Каденція:** VOB перевіряється раз на скан-цикл = повний прохід
+  watchlist + `interval_secs` (деф. 60с). Короткоживучі OB (утв.+мітигація в
+  проміжку) все одно можна недобачити → лік: менший `interval_secs`. Тести
+  `_vob_pick_candidates` + пер-напрямкова база: `test_vob_transparency.py`.
   **UI:** на панелі монети (`templates/smart_money.html`) поряд з бейджем «SHORT
   5M» стоїть бейдж `sm-vob-status-badge` (глобали `wlVobDiag`/`wlVobAlertEnabled`
   з get_state) → показує, ЧОМУ по монеті є/нема реакції: ✅fired/⛔filtered/

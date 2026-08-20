@@ -94,9 +94,46 @@ def test_log_decision_updates_diag():
     print('✓ діагностика оновлюється (джерело для UI-колонки «стан VOB»)')
 
 
+# ── 3. Catch-all: обидва напрямки за один цикл, жоден не губиться ────────────
+def test_pick_candidates_both_sides():
+    f = SC._vob_pick_candidates
+    bull = {'formation_time': 100}
+    bear = {'formation_time': 105}
+    out = f(bull, bear)
+    _check(len(out) == 2, 'обидва боки взято (не лише максимальний за часом)')
+    # відсортовано за часом: старіший (bull 100) першим, новіший (bear 105) останнім
+    _check(out[0][0] == 'LONG' and out[0][2] == 100, 'старіший (LONG 100) першим')
+    _check(out[1][0] == 'SHORT' and out[1][2] == 105, 'новіший (SHORT 105) останнім')
+    print('✓ обидва напрямки за один цикл (раніше брався лише один → інший губився)')
+
+
+def test_pick_candidates_skips_breaker_and_invalid():
+    f = SC._vob_pick_candidates
+    _check(f({'formation_time': 100, 'breaker': True}, None) == [], 'breaker пропущено')
+    _check(f({'formation_time': 0}, None) == [], 'ft<=0 пропущено')
+    _check(f(None, None) == [], 'немає OB → порожньо')
+    _check(len(f({'formation_time': 50}, None)) == 1, 'лише бичачий → один кандидат')
+    print('✓ breaker/невалідні пропускаються, один бік теж ок')
+
+
+def test_per_side_base_independent():
+    # Симуляція пер-напрямкової бази: рух бази SHORT НЕ маскує новий LONG.
+    seen = {'SHORT': 105}
+    # новий LONG ft=100: prev(LONG)=None → перший показ; свіжий → 'fresh' (сигнал!),
+    # хоча SHORT-база вже 105. Раніше єдина база=105 з'їла б цей LONG як duplicate.
+    out_long = SC._vob_edge_outcome(seen.get('LONG'), 100, 2, 7)
+    _check(out_long == 'fresh', 'новий LONG не маскується SHORT-базою → fresh')
+    out_short = SC._vob_edge_outcome(seen.get('SHORT'), 105, 2, 7)
+    _check(out_short == 'duplicate', 'той самий SHORT (105) → duplicate')
+    print('✓ бази LONG/SHORT незалежні — протилежний бік не з’їдається')
+
+
 if __name__ == '__main__':
     test_edge_outcome_fresh_first_sight_fires()
     test_edge_outcome_running()
     test_log_decision_never_writes_activity_log()
     test_log_decision_updates_diag()
-    print('\nУсі тести VOB (блок=сигнал + чистий лог) пройдено ✅')
+    test_pick_candidates_both_sides()
+    test_pick_candidates_skips_breaker_and_invalid()
+    test_per_side_base_independent()
+    print('\nУсі тести VOB (catch-all + блок=сигнал + чистий лог) пройдено ✅')
