@@ -424,6 +424,12 @@ class SMCScanner:
         # 🔒 vob_one_per_ob: {symbol → bar_time 1H-OB, на якому вже спрацював VOB}.
         # Один VOB-сигнал на одну «епоху» 1H-OB; нова епоха = інший bar_time.
         self._vob_ob_epoch: Dict[str, int] = {}
+        # 🔎 ПРОЗОРІСТЬ VOB: {symbol → останнє рішення по VOB-алерту}. Джерело
+        # правди «чому сигнал НЕ пішов»: кожен НОВИЙ OB лишає слід (fired/stale/
+        # epoch/filtered/first_sight/no_candidate/duplicate) з віком і деталями.
+        # Віддається в get_state (`vob_diag`) → видно в UI/інфосайті. Жодного
+        # тихого відкидання: раніше stale/epoch гинули без сліду — тепер ні.
+        self._vob_diag: Dict[str, Dict] = {}
 
         # Signal markers per symbol — points on the chart where Telegram alerts
         # actually fired. Used to display LONG/SHORT dots on the chart.
@@ -1706,6 +1712,10 @@ class SMCScanner:
                                 # показі (щоб не залити наявними OB), сигнал лише коли
                                 # зʼявився СТРОГО новіший OB.
                                 try:
+                                    from detection.activity_log import log_activity
+                                except Exception:
+                                    log_activity = lambda *a, **k: None
+                                try:
                                     _cand = None
                                     _cside = None
                                     for _s, _ob in (('LONG', vol_result.get('newest_bull')),
@@ -1717,74 +1727,103 @@ class SMCScanner:
                                             continue
                                         if _cand is None or _oft > int(_cand.get('formation_time') or 0):
                                             _cand, _cside = _ob, _s
-                                    if _cand is not None:
+                                    if _cand is None:
+                                        # Немає валідного (не-breaker) VOB — лише в діагностику,
+                                        # без логу (це стабільний «порожній» стан, не втрата).
+                                        self._vob_log_decision(symbol, None, 'no_candidate',
+                                                               vol_tf=vol_tf, log_it=False)
+                                    else:
                                         _ft = int(_cand.get('formation_time') or 0)
                                         _prev = self._vob_alert_seen.get(symbol)
-                                        if _prev is None:
-                                            # базова лінія — без сигналу
+                                        _sl = int(self._settings.get('volumized_swing_length', 10) or 10)
+                                        _cfg_age = int(self._settings.get('vob_alert_max_age_bars', 0) or 0)
+                                        _max_age = _cfg_age if _cfg_age > 0 else (_sl + 2)
+                                        _age = self._vob_age_bars(vol_klines, _ft)
+                                        _out = self._vob_edge_outcome(_prev, _ft, _age, _max_age)
+                                        if _out == 'first_sight':
+                                            # ПЕРШИЙ показ монети — базова лінія (без сигналу).
+                                            # ТЕПЕР із видимим слідом (раз на монету), щоб було
+                                            # зрозуміло, що бот «побачив» зону.
                                             self._vob_alert_seen[symbol] = _ft
-                                        elif _ft > _prev:
-                                            # Реагуємо ЛИШЕ на НОВИЙ, СВІЖОУТВОРЕНИЙ OB.
-                                            # Volumized OB валідний тільки після підтвердження
-                                            # свінгу (~swing_length барів). Якщо OB застарілий
-                                            # /фантомний (вік > поріг) — ПОВНИЙ no-op: НЕ рухаємо
-                                            # базу, НЕ логуємо, НЕ реагуємо, ці дані НЕ юзаємо.
-                                            _sl = int(self._settings.get('volumized_swing_length', 10) or 10)
-                                            _cfg_age = int(self._settings.get('vob_alert_max_age_bars', 0) or 0)
-                                            _max_age = _cfg_age if _cfg_age > 0 else (_sl + 2)
-                                            if self._vob_age_bars(vol_klines, _ft) <= _max_age:
-                                                # свіжий OB → фіксуємо базу й ОДРАЗУ працюємо
-                                                self._vob_alert_seen[symbol] = _ft
-                                                try:
-                                                    from detection.activity_log import log_activity
-                                                except Exception:
-                                                    log_activity = lambda *a, **k: None
-                                                _entry = (self._get_live_price(symbol)
-                                                          or (_cand.get('top') if _cside == 'SHORT'
-                                                              else _cand.get('bottom')) or 0)
-                                                # 🚦 СПІЛЬНІ ВОРОТА фільтрів (at_intake) + РОЗКЛАД
-                                                # ЗНАЧЕНЬ кожного фільтра у лог разом із сигналом.
-                                                _vok, _vreason, _vdetail = self._signal_allowed(
-                                                    symbol, _cside, at_intake=True)
-                                                # 🔒 «1 VOB на 1H OB» (vob_one_per_ob, варіант A):
-                                                # якщо цей 1H-OB уже дав сигнал (або валідного OB
-                                                # ще немає) — ТИХО ігноруємо цей VOB (без логу).
-                                                # Епоху позначаємо ЛИШЕ коли сигнал реально
-                                                # спрацював (пройшов усі фільтри).
-                                                _one = bool(self._settings.get('vob_one_per_ob', False))
-                                                _ob_bt = self._current_ob_bartime(symbol) if _one else None
-                                                _silent = False
-                                                if _one and _vok:
-                                                    _dec = self._vob_epoch_decision(
-                                                        self._vob_ob_epoch.get(symbol), _ob_bt)
-                                                    if _dec == 'baseline':
-                                                        # перший показ: запам'ятати ІСНУЮЧИЙ OB,
-                                                        # НЕ фаєрити (він не «новий»).
-                                                        self._vob_ob_epoch[symbol] = _ob_bt
-                                                    if _dec != 'fire':
-                                                        _vok = False
-                                                        _silent = True
-                                                if _vok:
-                                                    if _one and _ob_bt is not None:
-                                                        self._vob_ob_epoch[symbol] = _ob_bt
-                                                    log_activity(symbol, 'signal',
-                                                                 f'Свіжий Volumized OB ({vol_tf}) {_cside} · {_vdetail}',
-                                                                 side=_cside, source='scanner')
-                                                    from detection.trade_manager import get_trade_manager
-                                                    _tm = get_trade_manager()
-                                                    if _tm:
-                                                        # opened_by='vob_alert' (НЕ 'vob') — щоб
-                                                        # funding-очистка не видаляла ці записи.
-                                                        _tm.on_signal(symbol=symbol, side=_cside,
-                                                                      entry_price=_entry, opened_by='vob_alert')
-                                                elif not _silent:
-                                                    # заблоковано ФІЛЬТРОМ (не епохою) → лог сигналу+причини
-                                                    log_activity(symbol, 'signal',
-                                                                 f'Свіжий Volumized OB ({vol_tf}) {_cside} · {_vdetail}',
-                                                                 side=_cside, source='scanner')
-                                                    log_activity(symbol, 'rejected', _vreason,
-                                                                 side=_cside, source='scanner')
-                                            # else: застарілий/фантомний OB — нічого не робимо
+                                            self._vob_log_decision(symbol, _cside, 'first_sight',
+                                                                   age=_age, max_age=_max_age,
+                                                                   ft=_ft, vol_tf=vol_tf)
+                                        elif _out == 'duplicate':
+                                            # Той самий OB, що вже опрацьований → стабільний стан.
+                                            # НЕ засмічуємо лог; лише оновлюємо діагностику.
+                                            self._vob_log_decision(symbol, _cside, 'duplicate',
+                                                                   age=_age, max_age=_max_age,
+                                                                   ft=_ft, vol_tf=vol_tf, log_it=False)
+                                        elif _out == 'stale':
+                                            # 🟪 НОВИЙ OB, але ЗАСТАРІЛИЙ (вік > поріг свіжості).
+                                            # НЕ фаєримо і НЕ рухаємо базу (лишаємо шанс новішому
+                                            # OB), АЛЕ лишаємо ВИДИМИЙ слід (раз на цей OB) — щоб
+                                            # було ясно, ЧОМУ сигнал не пішов. Прозорість > тиша.
+                                            _last = self._vob_diag.get(symbol) or {}
+                                            _seen_stale = (_last.get('ft') == _ft
+                                                           and _last.get('outcome') == 'stale')
+                                            self._vob_log_decision(
+                                                symbol, _cside, 'stale', age=_age, max_age=_max_age,
+                                                ft=_ft, vol_tf=vol_tf,
+                                                detail=(f'OB утворився {_age} барів тому, '
+                                                        f'поріг свіжості {_max_age} '
+                                                        f'(підняти vob_alert_max_age_bars)'),
+                                                log_it=not _seen_stale)
+                                        else:
+                                            # 🟪 НОВИЙ, СВІЖИЙ OB → фіксуємо базу й ОДРАЗУ працюємо.
+                                            self._vob_alert_seen[symbol] = _ft
+                                            _entry = (self._get_live_price(symbol)
+                                                      or (_cand.get('top') if _cside == 'SHORT'
+                                                          else _cand.get('bottom')) or 0)
+                                            # 🚦 СПІЛЬНІ ВОРОТА фільтрів (at_intake) + РОЗКЛАД значень.
+                                            _vok, _vreason, _vdetail = self._signal_allowed(
+                                                symbol, _cside, at_intake=True)
+                                            # 🔒 «1 VOB на 1H OB» (vob_one_per_ob, варіант A).
+                                            _one = bool(self._settings.get('vob_one_per_ob', False))
+                                            _ob_bt = self._current_ob_bartime(symbol) if _one else None
+                                            _epoch_skip = False
+                                            if _one and _vok:
+                                                _dec = self._vob_epoch_decision(
+                                                    self._vob_ob_epoch.get(symbol), _ob_bt)
+                                                if _dec == 'baseline':
+                                                    self._vob_ob_epoch[symbol] = _ob_bt
+                                                if _dec != 'fire':
+                                                    _vok = False
+                                                    _epoch_skip = True
+                                            if _vok:
+                                                if _one and _ob_bt is not None:
+                                                    self._vob_ob_epoch[symbol] = _ob_bt
+                                                log_activity(symbol, 'signal',
+                                                             f'Свіжий Volumized OB ({vol_tf}) {_cside} · {_vdetail}',
+                                                             side=_cside, source='scanner')
+                                                self._vob_log_decision(symbol, _cside, 'fired',
+                                                                       age=_age, max_age=_max_age,
+                                                                       ft=_ft, vol_tf=vol_tf,
+                                                                       detail=_vdetail, log_it=False)
+                                                from detection.trade_manager import get_trade_manager
+                                                _tm = get_trade_manager()
+                                                if _tm:
+                                                    # opened_by='vob_alert' (НЕ 'vob') — щоб
+                                                    # funding-очистка не видаляла ці записи.
+                                                    _tm.on_signal(symbol=symbol, side=_cside,
+                                                                  entry_price=_entry, opened_by='vob_alert')
+                                            elif _epoch_skip:
+                                                # РАНІШЕ гинуло тихо — тепер видимий слід.
+                                                self._vob_log_decision(
+                                                    symbol, _cside, 'epoch', age=_age,
+                                                    max_age=_max_age, ft=_ft, vol_tf=vol_tf,
+                                                    detail='цей 1H-OB уже дав сигнал (чекаємо НОВИЙ 1H-OB)')
+                                            else:
+                                                # заблоковано ФІЛЬТРОМ → лог сигналу + причини.
+                                                log_activity(symbol, 'signal',
+                                                             f'Свіжий Volumized OB ({vol_tf}) {_cside} · {_vdetail}',
+                                                             side=_cside, source='scanner')
+                                                log_activity(symbol, 'rejected', _vreason,
+                                                             side=_cside, source='scanner')
+                                                self._vob_log_decision(symbol, _cside, 'filtered',
+                                                                       age=_age, max_age=_max_age,
+                                                                       ft=_ft, vol_tf=vol_tf,
+                                                                       detail=_vreason, log_it=False)
                                 except Exception as _ve:
                                     if self._errors <= 5:
                                         print(f"[SMC] VOB-alert error for {symbol}: {_ve}")
@@ -2129,6 +2168,68 @@ class SMCScanner:
             except (TypeError, ValueError):
                 continue
         return n
+
+    # Людські підписи рішень VOB-алерту (єдине джерело для логу й UI).
+    _VOB_OUTCOME_LABELS = {
+        'fired':        '✅ VOB СПРАЦЮВАВ',
+        'filtered':     '⛔ VOB відсіяно фільтром',
+        'stale':        '⌛ VOB застарілий (не свіжий)',
+        'epoch':        '🔒 VOB пропущено (1 VOB на 1H OB)',
+        'first_sight':  '👁 VOB базова лінія (перший показ)',
+        'no_candidate': '∅ немає валідного VOB',
+        'duplicate':    '↺ той самий VOB (вже опрацьований)',
+    }
+
+    @staticmethod
+    def _vob_edge_outcome(prev, ft, age, max_age):
+        """Чисте рішення по кандидату VOB (edge за formation_time + свіжість):
+          • 'first_sight' — перший показ монети (prev None) → базова лінія, без сигналу;
+          • 'duplicate'   — той самий/старіший OB (ft <= prev) → стабільний стан;
+          • 'stale'       — НОВИЙ OB, але вік > поріг свіжості → не фаєрити (видимо);
+          • 'fresh'       — НОВИЙ свіжий OB → далі у фільтри/сигнал.
+        Тестується юніт-тестом (жодного тихого відкидання: кожен вихід має слід)."""
+        if prev is None:
+            return 'first_sight'
+        try:
+            if int(ft) <= int(prev):
+                return 'duplicate'
+        except (TypeError, ValueError):
+            return 'duplicate'
+        if age is not None and max_age is not None and age > max_age:
+            return 'stale'
+        return 'fresh'
+
+    def _vob_log_decision(self, symbol, side, outcome, *, age=None, max_age=None,
+                          ft=None, vol_tf='', detail='', log_it=True):
+        """ЄДИНА точка прозорості VOB-алерту. На КОЖЕН новий OB лишає слід:
+          • оновлює in-memory діагностику `self._vob_diag[symbol]` (для get_state);
+          • якщо log_it — пише ОДИН рядок у 🧾 Лог роботи бота (source='VOB').
+        Так «чому сигнал не пішов» ЗАВЖДИ видно (застарілий/епоха/фільтр/…), а не
+        гине тихо. Стабільний стан (duplicate/no_candidate) — лише в діагностику
+        (log_it=False), щоб не засмічувати лог."""
+        try:
+            rec = {'ts': time.time(), 'side': side, 'outcome': outcome,
+                   'label': self._VOB_OUTCOME_LABELS.get(outcome, outcome),
+                   'age': age, 'max_age': max_age, 'ft': ft,
+                   'tf': vol_tf, 'detail': detail}
+            with self._lock:
+                self._vob_diag[symbol] = rec
+        except Exception:
+            pass
+        if not log_it:
+            return
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            return
+        _lbl = self._VOB_OUTCOME_LABELS.get(outcome, outcome)
+        _age = '' if age is None else f' · вік {age}/{max_age} барів'
+        _sfx = f' · {detail}' if detail else ''
+        _msg = f'{_lbl} ({vol_tf}) {side or ""}{_age}{_sfx}'.strip()
+        try:
+            log_activity(symbol, 'skipped', _msg, side=side, source='VOB')
+        except Exception:
+            pass
 
     @staticmethod
     def _swing_hl_labels(trend):
@@ -3768,6 +3869,12 @@ class SMCScanner:
                 },
                 'volumized_enabled': bool(self._settings.get('use_volumized_ob', True)),
                 'volumized_timeframe': self._settings.get('volumized_timeframe', '1h'),
+                # 🔎 ПРОЗОРІСТЬ VOB-алерту: останнє рішення по кожній монеті —
+                # ЧОМУ сигнал пішов чи НЕ пішов (fired/stale/epoch/filtered/
+                # first_sight/no_candidate/duplicate) з віком і деталями. Джерело
+                # правди для UI/інфосайту «де ми втрачаємо сигнали».
+                'vob_diag': {sym: dict(rec) for sym, rec in self._vob_diag.items()},
+                'vob_alert_enabled': bool(self._settings.get('vob_alert_enabled', False)),
                 'pending_choch': {k: {'dir': v['dir'], 'level': v['level']}
                                    for k, v in self._pending_choch.items()},
                 
