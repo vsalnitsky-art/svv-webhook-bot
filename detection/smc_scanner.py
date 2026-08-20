@@ -1741,36 +1741,30 @@ class SMCScanner:
                                         _age = self._vob_age_bars(vol_klines, _ft)
                                         _out = self._vob_edge_outcome(_prev, _ft, _age, _max_age)
                                         if _out == 'first_sight':
-                                            # ПЕРШИЙ показ монети — базова лінія (без сигналу).
-                                            # ТЕПЕР із видимим слідом (раз на монету), щоб було
-                                            # зрозуміло, що бот «побачив» зону.
+                                            # Перший показ, але блок СТАРИЙ → тиха базова лінія
+                                            # (старий блок не сигнал). Лише в діагностику, БЕЗ логу.
                                             self._vob_alert_seen[symbol] = _ft
                                             self._vob_log_decision(symbol, _cside, 'first_sight',
                                                                    age=_age, max_age=_max_age,
                                                                    ft=_ft, vol_tf=vol_tf)
                                         elif _out == 'duplicate':
                                             # Той самий OB, що вже опрацьований → стабільний стан.
-                                            # НЕ засмічуємо лог; лише оновлюємо діагностику.
+                                            # Лише діагностика (для UI), БЕЗ логу.
                                             self._vob_log_decision(symbol, _cside, 'duplicate',
                                                                    age=_age, max_age=_max_age,
-                                                                   ft=_ft, vol_tf=vol_tf, log_it=False)
+                                                                   ft=_ft, vol_tf=vol_tf)
                                         elif _out == 'stale':
-                                            # 🟪 НОВИЙ OB, але ЗАСТАРІЛИЙ (вік > поріг свіжості).
-                                            # НЕ фаєримо і НЕ рухаємо базу (лишаємо шанс новішому
-                                            # OB), АЛЕ лишаємо ВИДИМИЙ слід (раз на цей OB) — щоб
-                                            # було ясно, ЧОМУ сигнал не пішов. Прозорість > тиша.
-                                            _last = self._vob_diag.get(symbol) or {}
-                                            _seen_stale = (_last.get('ft') == _ft
-                                                           and _last.get('outcome') == 'stale')
+                                            # НОВИЙ OB (новіший за базу), але ЗАСТАРІЛИЙ (вік >
+                                            # поріг) → не сигнал. НЕ рухаємо базу (лишаємо шанс
+                                            # новішому OB). Лише діагностика (для UI), БЕЗ логу.
                                             self._vob_log_decision(
                                                 symbol, _cside, 'stale', age=_age, max_age=_max_age,
                                                 ft=_ft, vol_tf=vol_tf,
                                                 detail=(f'OB утворився {_age} барів тому, '
-                                                        f'поріг свіжості {_max_age} '
-                                                        f'(підняти vob_alert_max_age_bars)'),
-                                                log_it=not _seen_stale)
+                                                        f'поріг свіжості {_max_age}'))
                                         else:
-                                            # 🟪 НОВИЙ, СВІЖИЙ OB → фіксуємо базу й ОДРАЗУ працюємо.
+                                            # 🟪 СВІЖИЙ OB (у т.ч. на першому показі) → це СИГНАЛ:
+                                            # фіксуємо базу й ОДРАЗУ відпрацьовуємо фільтри.
                                             self._vob_alert_seen[symbol] = _ft
                                             _entry = (self._get_live_price(symbol)
                                                       or (_cand.get('top') if _cside == 'SHORT'
@@ -2183,30 +2177,33 @@ class SMCScanner:
     @staticmethod
     def _vob_edge_outcome(prev, ft, age, max_age):
         """Чисте рішення по кандидату VOB (edge за formation_time + свіжість):
-          • 'first_sight' — перший показ монети (prev None) → базова лінія, без сигналу;
+          • 'fresh'       — блок СВІЖИЙ → це СИГНАЛ, одразу у фільтри/обробку.
+                            Свіжий блок фаєримо і на ПЕРШОМУ показі монети (навіть
+                            після рестарту) — НЕ ковтаємо «поточний» блок як базу;
+          • 'first_sight' — перший показ, але блок СТАРИЙ → тиха базова лінія
+                            (старий блок не є сигналом, лише фіксуємо, що бачили);
           • 'duplicate'   — той самий/старіший OB (ft <= prev) → стабільний стан;
-          • 'stale'       — НОВИЙ OB, але вік > поріг свіжості → не фаєрити (видимо);
-          • 'fresh'       — НОВИЙ свіжий OB → далі у фільтри/сигнал.
-        Тестується юніт-тестом (жодного тихого відкидання: кожен вихід має слід)."""
+          • 'stale'       — НОВИЙ OB (новіший за базу), але вік > поріг → не сигнал.
+        Тестується юніт-тестом. Ключова зміна: «блок на графіку = сигнал» —
+        поточний свіжий блок обробляється, а не відкладається до наступного."""
+        _fresh = (age is None or max_age is None or age <= max_age)
         if prev is None:
-            return 'first_sight'
+            return 'fresh' if _fresh else 'first_sight'
         try:
             if int(ft) <= int(prev):
                 return 'duplicate'
         except (TypeError, ValueError):
             return 'duplicate'
-        if age is not None and max_age is not None and age > max_age:
-            return 'stale'
-        return 'fresh'
+        return 'fresh' if _fresh else 'stale'
 
     def _vob_log_decision(self, symbol, side, outcome, *, age=None, max_age=None,
-                          ft=None, vol_tf='', detail='', log_it=True):
-        """ЄДИНА точка прозорості VOB-алерту. На КОЖЕН новий OB лишає слід:
-          • оновлює in-memory діагностику `self._vob_diag[symbol]` (для get_state);
-          • якщо log_it — пише ОДИН рядок у 🧾 Лог роботи бота (source='VOB').
-        Так «чому сигнал не пішов» ЗАВЖДИ видно (застарілий/епоха/фільтр/…), а не
-        гине тихо. Стабільний стан (duplicate/no_candidate) — лише в діагностику
-        (log_it=False), щоб не засмічувати лог."""
+                          ft=None, vol_tf='', detail='', log_it=False):
+        """Оновлює in-memory діагностику VOB (`self._vob_diag[symbol]`) — СТРУКТУРО-
+        ВАНЕ джерело «стан VOB по монеті» для get_state/UI. У 🧾 Лог роботи бота
+        НЕ пише (щоб не засмічувати): у лог ідуть ЛИШЕ реальні сигнали (fired) та
+        їх вердикт фільтрів (rejected) з основного шляху. Тут — лише статус для UI:
+        outcome ∈ fired/filtered/stale/duplicate/first_sight/no_candidate/epoch.
+        `log_it` лишено для сумісності викликів, але навмисно ІГНОРУЄТЬСЯ."""
         try:
             rec = {'ts': time.time(), 'side': side, 'outcome': outcome,
                    'label': self._VOB_OUTCOME_LABELS.get(outcome, outcome),
@@ -2214,20 +2211,6 @@ class SMCScanner:
                    'tf': vol_tf, 'detail': detail}
             with self._lock:
                 self._vob_diag[symbol] = rec
-        except Exception:
-            pass
-        if not log_it:
-            return
-        try:
-            from detection.activity_log import log_activity
-        except Exception:
-            return
-        _lbl = self._VOB_OUTCOME_LABELS.get(outcome, outcome)
-        _age = '' if age is None else f' · вік {age}/{max_age} барів'
-        _sfx = f' · {detail}' if detail else ''
-        _msg = f'{_lbl} ({vol_tf}) {side or ""}{_age}{_sfx}'.strip()
-        try:
-            log_activity(symbol, 'skipped', _msg, side=side, source='VOB')
         except Exception:
             pass
 

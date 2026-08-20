@@ -1,10 +1,11 @@
-"""Тест: ПРОЗОРІСТЬ VOB-алерту (жодного тихого відкидання).
+"""Тест: VOB — «блок на графіку = сигнал» + чистий лог.
 
 Перевіряє:
-  • _vob_edge_outcome — чисте рішення first_sight/duplicate/stale/fresh;
-  • _vob_log_decision — оновлює self._vob_diag ЗАВЖДИ, а в 🧾 Лог пише лише коли
-    log_it=True (stale/epoch/first_sight видимі; duplicate/no_candidate/fired/
-    filtered — без дубля-логу, але в діагностиці є).
+  • _vob_edge_outcome — СВІЖИЙ блок фаєриться і на ПЕРШОМУ показі ('fresh'),
+    старий на першому показі → 'first_sight' (тиха база), duplicate, stale;
+  • _vob_log_decision — оновлює self._vob_diag (для get_state/UI) і НІКОЛИ не
+    пише в 🧾 Лог роботи бота (лог лишаємо чистим: туди йдуть лише реальні
+    сигнали fired + вердикт rejected з основного шляху).
 
 Модуль вантажиться ізольовано (без важкого detection/__init__).
 """
@@ -15,12 +16,11 @@ import importlib.util
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 
-# Порожній пакет-заглушка `detection`, щоб не тягнути важкий __init__.
 _pkg = types.ModuleType('detection')
 _pkg.__path__ = [os.path.join(_ROOT, 'detection')]
 sys.modules['detection'] = _pkg
 
-# Фейковий detection.activity_log — ловимо всі log_activity(...) виклики.
+# Фейковий detection.activity_log — щоб довести, що логер VOB туди НЕ пише.
 _LOGS = []
 _al = types.ModuleType('detection.activity_log')
 _al.log_activity = lambda *a, **k: _LOGS.append((a, k))
@@ -44,19 +44,27 @@ def _check(c, m):
         raise AssertionError(m)
 
 
-# ── 1. Чисте рішення edge/свіжості ──────────────────────────────────────────
-def test_edge_outcome():
+# ── 1. «Блок на графіку = сигнал»: свіжий фаєриться і на першому показі ──────
+def test_edge_outcome_fresh_first_sight_fires():
     f = SC._vob_edge_outcome
-    _check(f(None, 100, 0, 7) == 'first_sight', 'prev None → first_sight')
+    # ПЕРШИЙ показ + свіжий → 'fresh' (обробляємо поточний блок, НЕ ковтаємо).
+    _check(f(None, 200, 3, 7) == 'fresh', 'перший показ + свіжий → fresh (сигнал!)')
+    _check(f(None, 200, 7, 7) == 'fresh', 'перший показ + вік==поріг → fresh')
+    # ПЕРШИЙ показ + старий → 'first_sight' (старий блок не сигнал → тиха база).
+    _check(f(None, 200, 8, 7) == 'first_sight', 'перший показ + старий → first_sight')
+    print('✓ свіжий блок фаєриться і на першому показі; старий → тиха база')
+
+
+def test_edge_outcome_running():
+    f = SC._vob_edge_outcome
     _check(f(100, 100, 0, 7) == 'duplicate', 'ft==prev → duplicate')
-    _check(f(200, 100, 0, 7) == 'duplicate', 'ft<prev → duplicate')
+    _check(f(100, 90, 0, 7) == 'duplicate', 'ft<prev → duplicate')
     _check(f(100, 200, 3, 7) == 'fresh', 'новіший + свіжий → fresh')
-    _check(f(100, 200, 7, 7) == 'fresh', 'вік == поріг → fresh (межа включна)')
-    _check(f(100, 200, 8, 7) == 'stale', 'новіший але старий → stale')
-    print('✓ _vob_edge_outcome: first_sight/duplicate/fresh/stale — коректно')
+    _check(f(100, 200, 8, 7) == 'stale', 'новіший + старий → stale')
+    print('✓ у процесі роботи: duplicate/fresh/stale — коректно')
 
 
-# ── 2. Логер: діагностика ЗАВЖДИ, лог — керовано ────────────────────────────
+# ── 2. Логер НЕ засмічує лог; усе — лише в діагностику для UI ────────────────
 def _mk():
     obj = SC.__new__(SC)
     obj._vob_diag = {}
@@ -64,49 +72,31 @@ def _mk():
     return obj
 
 
-def test_log_decision_updates_diag_and_logs():
+def test_log_decision_never_writes_activity_log():
     _LOGS.clear()
     o = _mk()
-    # stale → має і оновити діагностику, і написати в лог
-    o._vob_log_decision('BTCUSDT', 'LONG', 'stale', age=25, max_age=7,
-                        ft=123, vol_tf='5m', detail='OB старий')
-    _check('BTCUSDT' in o._vob_diag, 'діагностику оновлено')
-    d = o._vob_diag['BTCUSDT']
-    _check(d['outcome'] == 'stale' and d['age'] == 25 and d['max_age'] == 7,
-           'поля діагностики збережено')
+    for oc in ('stale', 'first_sight', 'epoch', 'duplicate', 'no_candidate',
+               'fired', 'filtered'):
+        o._vob_log_decision('BTCUSDT', 'SHORT', oc, age=5, max_age=7, ft=1,
+                            vol_tf='5m', detail='x', log_it=True)  # log_it ІГНОРУЄТЬСЯ
+    _check(len(_LOGS) == 0, 'логер VOB НЕ пише в activity_log (лог чистий)')
+    print('✓ логер нічого не ліпить у лог (усе — лише в діагностику)')
+
+
+def test_log_decision_updates_diag():
+    o = _mk()
+    o._vob_log_decision('ETHUSDT', 'SHORT', 'stale', age=25, max_age=7, ft=99,
+                        vol_tf='5m', detail='старий')
+    d = o._vob_diag['ETHUSDT']
+    _check(d['outcome'] == 'stale' and d['age'] == 25 and d['ft'] == 99,
+           'діагностику збережено для get_state/UI')
     _check(d['label'].startswith('⌛'), 'людський підпис проставлено')
-    _check(len(_LOGS) == 1 and _LOGS[0][1].get('source') == 'VOB',
-           'stale пише ОДИН рядок у лог із source=VOB')
-    print('✓ stale: діагностика + видимий рядок у лозі (source=VOB)')
-
-
-def test_log_decision_silent_but_tracked():
-    _LOGS.clear()
-    o = _mk()
-    # duplicate / no_candidate / fired / filtered → log_it=False: у лог НЕ пишемо,
-    # але діагностику оновлюємо (видно в get_state).
-    o._vob_log_decision('ETHUSDT', 'SHORT', 'duplicate', age=2, max_age=7,
-                        ft=50, vol_tf='5m', log_it=False)
-    o._vob_log_decision('SOLUSDT', None, 'no_candidate', vol_tf='5m', log_it=False)
-    _check(len(_LOGS) == 0, 'log_it=False → у лог НЕ пишемо')
-    _check(o._vob_diag['ETHUSDT']['outcome'] == 'duplicate', 'duplicate у діагностиці')
-    _check(o._vob_diag['SOLUSDT']['outcome'] == 'no_candidate', 'no_candidate у діагностиці')
-    print('✓ duplicate/no_candidate: без дубля-логу, але в діагностиці є')
-
-
-def test_first_sight_and_epoch_are_visible():
-    _LOGS.clear()
-    o = _mk()
-    o._vob_log_decision('AAAUSDT', 'LONG', 'first_sight', age=1, max_age=7, ft=10, vol_tf='5m')
-    o._vob_log_decision('BBBUSDT', 'LONG', 'epoch', age=1, max_age=7, ft=10, vol_tf='5m',
-                        detail='цей 1H-OB уже дав сигнал')
-    _check(len(_LOGS) == 2, 'first_sight та epoch — обидва видимі в лозі')
-    print('✓ first_sight та epoch лишають видимий слід (раніше гинули тихо)')
+    print('✓ діагностика оновлюється (джерело для UI-колонки «стан VOB»)')
 
 
 if __name__ == '__main__':
-    test_edge_outcome()
-    test_log_decision_updates_diag_and_logs()
-    test_log_decision_silent_but_tracked()
-    test_first_sight_and_epoch_are_visible()
-    print('\nУсі тести VOB-прозорості пройдено ✅')
+    test_edge_outcome_fresh_first_sight_fires()
+    test_edge_outcome_running()
+    test_log_decision_never_writes_activity_log()
+    test_log_decision_updates_diag()
+    print('\nУсі тести VOB (блок=сигнал + чистий лог) пройдено ✅')
