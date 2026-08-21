@@ -1577,6 +1577,13 @@ class SMCScanner:
                             kl_closed,
                             internal_size=isize_v, swing_size=ssize_v)
                         tf_data[tf] = {
+                            # 🔴 'klines' = СИРІ бари ВКЛЮЧНО з живим (форміруючим).
+                            # РАНІШЕ цього ключа НЕ БУЛО → `vol_data.get('klines') or
+                            # klines_closed` мовчки падало на ЗАКРИТІ бари, попри
+                            # задокументовану вимогу «детекція на ЖИВОМУ барі».
+                            # Через це VOB-сигнал спізнювався до 1 TF (5хв) і
+                            # розходився з панеллю (яка рахує з живим баром).
+                            'klines': kl,
                             'klines_closed': kl_closed,
                             'structure': result,
                         }
@@ -1698,7 +1705,7 @@ class SMCScanner:
                                 # панелі зелений, у списку червоний». Тепер вони
                                 # ІДЕНТИЧНІ для всіх монет. (Сигнали VOB далі беруть
                                 # `vol_result.newest_bull/bear` — окремий швидкий шлях.)
-                                _disp = self._latest_volumized_ob(symbol)
+                                _disp = self._latest_volumized_ob(symbol, klines=vol_klines)
                                 _disp_trend = ('LONG' if (_disp and _disp.get('type') == 'Bull')
                                                else ('SHORT' if _disp else None))
                                 with self._lock:
@@ -1767,7 +1774,8 @@ class SMCScanner:
                                             _ob_bt = self._current_ob_bartime(symbol)
                                             if _ob_bt is None:
                                                 self._vob_log_decision(symbol, _cands[-1][0], 'no_1h_ob',
-                                                                       vol_tf=vol_tf)
+                                                                       vol_tf=vol_tf,
+                                                                       num=self._vob_counter.get(symbol, 0))
                                             else:
                                                 if self._vob_epoch_reset_needed(
                                                         self._vob_ob_epoch.get(symbol), _ob_bt):
@@ -1781,10 +1789,18 @@ class SMCScanner:
                                                     _prev = _seen.get(_cside)
                                                     _age = self._vob_age_bars(vol_klines, _ft)
                                                     if not (_prev is None or _ft > _prev):
-                                                        # не новий (наявний/старіший) → #0, діагностика
-                                                        self._vob_log_decision(symbol, _cside, 'duplicate',
-                                                                               age=_age, max_age=_max_age,
-                                                                               ft=_ft, vol_tf=vol_tf)
+                                                        # не новий (наявний/старіший) → лічильник НЕ
+                                                        # росте. Показуємо ПОТОЧНИЙ стан лічильника,
+                                                        # щоб у UI завжди було видно такт нумерації.
+                                                        _cn = self._vob_counter.get(symbol, 0)
+                                                        self._vob_log_decision(
+                                                            symbol, _cside, 'duplicate',
+                                                            age=_age, max_age=_max_age, ft=_ft,
+                                                            vol_tf=vol_tf, num=_cn,
+                                                            detail=(f'лічильник VOB={_cn} на цьому 1H-OB · '
+                                                                    f'чекаємо НОВИЙ VOB'
+                                                                    + (' #1 (сигнал)' if _cn == 0 else
+                                                                       f' #{_cn + 1} (не сигнал)')))
                                                         continue
                                                     # 🔢 НОВИЙ VOB → нумеруємо (жодного не пропускаємо)
                                                     _seen[_cside] = _ft
@@ -3387,10 +3403,22 @@ class SMCScanner:
     # Public API — Chart data
     # ========================================
     
-    def _latest_volumized_ob(self, symbol: str):
+    # Скільки барів беремо для Volumized-OB. 3000 = стільки ж, скільки вантажить
+    # графік і скан (`_get_tf_data`) → ОДНАКОВИЙ контекст свінгів/ATR, тож
+    # «останній OB» ІДЕНТИЧНИЙ у списку, на панелі й у намальованому боксі.
+    # РАНІШЕ тут було 400 → на коротких монетах OB у вікно не потрапляв
+    # (трикутник зникав), а на інших виходив ІНШИЙ останній OB, ніж у скані.
+    VOB_KLINES_LIMIT = 3000
+
+    def _latest_volumized_ob(self, symbol: str, klines=None):
         """🟦 Останній Volumized OB (Pine «Volumized Order Blocks») на
         volumized_timeframe, порахований з ТОЧНИМИ параметрами користувача
         (swing_length=5 → саме 5). 30с-кеш, щоб чарт-поллінг не смикав біржу.
+
+        ЄДИНЕ ДЖЕРЕЛО ПРАВДИ для: ▲/▼ у watchlist, бейджа «5M» на панелі та
+        намальованого боксу. `klines` — необов'язково: скан передає СВОЇ вже
+        завантажені бари (з живим баром), щоб НЕ робити зайвий мережевий запит
+        на кожну монету; панель викликає без них і тягне сама.
         Повертає {type, top, bottom, start_time_sec, volume, pct, breaker, tf} або None."""
         if not self._settings.get('use_volumized_ob', True):
             return None
@@ -3399,15 +3427,18 @@ class SMCScanner:
         if cache is None:
             self._vob_cache = cache = {}
         hit = cache.get(symbol)
-        if hit and (now - hit[0]) < 30:
+        if hit and (now - hit[0]) < 30 and klines is None:
             return hit[1]
         vob = None
         try:
             from detection.market_data import get_market_data
             from detection.volumized_ob import detect_volumized_obs
             vtf = self._settings.get('volumized_timeframe', '1h')
-            md = get_market_data()
-            vk = md.fetch_klines(symbol, limit=400, interval=vtf) if md else None
+            vk = klines
+            if not vk:
+                md = get_market_data()
+                vk = (md.fetch_klines(symbol, limit=self.VOB_KLINES_LIMIT, interval=vtf)
+                      if md else None)
             if vk and len(vk) > 20:
                 r = detect_volumized_obs(
                     vk,

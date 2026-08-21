@@ -6524,6 +6524,13 @@ async function loadChart() {
                     txt = `🔢 VOB #${rec.num} (не сигнал)`;
                 } else if (rec.outcome === 'fired' && rec.num != null) {
                     txt = `✅ VOB #${rec.num} → сигнал`;
+                } else if (rec.outcome === 'duplicate' && rec.num != null) {
+                    // Лічильник ЗАВЖДИ видно: скільки VOB уже пронумеровано на
+                    // цьому 1H-OB і на який номер чекаємо далі.
+                    txt = `🔢 VOB ${rec.num} · чекаємо #${rec.num + 1}`
+                        + (rec.num === 0 ? ' (сигнал)' : '');
+                } else if (rec.outcome === 'no_1h_ob') {
+                    txt = `⏳ немає 1H-OB · VOB ${rec.num != null ? rec.num : 0}`;
                 }
                 vobStatusBadge.textContent = txt;
                 vobStatusBadge.style.background = bg;
