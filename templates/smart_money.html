@@ -4445,6 +4445,21 @@ let wlObStates = {};
 let wlVolumizedEnabled = false;
 let wlVolumizedTimeframe = '1h';
 let wlVolumizedTrends = {};
+// 🔒 ОДНЕ ДЖЕРЕЛО ПРАВДИ для ▲/▼: живе значення Volumized-тренду поточної
+// монети, яке панель порахувала НАЖИВО (бейдж «5M»). Для монети, що ЗАРАЗ
+// відкрита, трикутник у watchlist береться ЗВІДСИ (а не зі стейт-знімка),
+// щоб «зелений на панелі = зелений у списку». Фоновий скан оновлює інші рядки.
+let wlVolTrendLive = {};
+// Спільний рендер трикутника ▲/▼ (щоб watchlist і панель малювали ІДЕНТИЧНО).
+function wlVolTriInner(vt, tf) {
+    if (vt !== 'LONG' && vt !== 'SHORT') return '';
+    const isLong = (vt === 'LONG');
+    const c  = isLong ? '#22c55e' : '#ef4444';
+    const ic = isLong ? '▲' : '▼';
+    const title = `Volumized OB Trend (${(tf || '').toUpperCase()}): ${vt}\n`
+        + 'Той самий напрямок, що й бейдж «5M» на панелі монети.';
+    return `<span title="${escapeHtml(title)}" style="color:${c};font-size:0.8rem;font-weight:bold">${ic}</span>`;
+}
 // 🔎 Стан VOB-алерту по монеті (з get_state.vob_diag): {symbol→{outcome,label,
 // age,max_age,ft,tf,detail,ts}}. Джерело правди «чому по цій монеті є/нема
 // реакції на VOB» — показуємо бейджем на панелі поряд з «SHORT 5M».
@@ -4506,18 +4521,17 @@ function renderWatchlist(list) {
         // volumized_timeframe. Renders only when Volumized is enabled
         // AND a trend has been computed for this symbol. Compact form:
         // ▲ (green) for LONG, ▼ (red) for SHORT. Tooltip explains.
+        // ▲/▼ Volumized-тренд. Для монети, що ЗАРАЗ відкрита, беремо ЖИВЕ значення
+        // (те саме, що бейдж «5M» на панелі) → «зелений на панелі = зелений у
+        // списку». Інші рядки — зі стейт-знімка (оновлюється щопол). Контейнер
+        // ЗАВЖДИ з id=vt-<sym>, щоб панель могла оновити трикутник МИТТЄВО.
         let volTrendHtml = '';
         if (wlVolumizedEnabled) {
-            const vt = wlVolumizedTrends[sym];
-            if (vt === 'LONG' || vt === 'SHORT') {
-                const isLong = (vt === 'LONG');
-                const pillColor = isLong ? '#22c55e' : '#ef4444';
-                const pillIcon = isLong ? '▲' : '▼';
-                const pillTitle = `Volumized OB Trend (${wlVolumizedTimeframe.toUpperCase()}): ${vt}\n`
-                    + 'Latest formed OB is ' + (isLong ? 'Bullish' : 'Bearish')
-                    + ' → wait for matching CHoCH/BOS alert.';
-                volTrendHtml = `<span title="${escapeHtml(pillTitle)}" style="color:${pillColor};margin-right:4px;font-size:0.8rem;font-weight:bold">${pillIcon}</span>`;
-            }
+            const vt = (sym === currentSymbol && (sym in wlVolTrendLive))
+                ? wlVolTrendLive[sym]
+                : wlVolumizedTrends[sym];
+            volTrendHtml = `<span class="wl-vt" id="vt-${sym}" style="margin-right:4px">`
+                + `${wlVolTriInner(vt, wlVolumizedTimeframe)}</span>`;
         }
         
         // Dedup pill — Pine "1 per trend" gate state, now Vol-aligned.
@@ -6417,6 +6431,14 @@ async function loadChart() {
         const volTrend = d.volumized_ob
             ? (d.volumized_ob.type === 'Bull' ? 'LONG' : 'SHORT') : null;
         const volTf = (d.volumized_timeframe || '1h').toUpperCase();
+        // 🔒 ОДНЕ ДЖЕРЕЛО ПРАВДИ: щойно панель порахувала живий тренд — НЕГАЙНО
+        // синхронізуємо трикутник ▲/▼ у рядку watchlist (те саме значення, що й
+        // бейдж «5M»). Оновлюємо на КОЖЕН перерахунок панелі, а не раз на скан.
+        if (currentSymbol && volEnabled) {
+            wlVolTrendLive[currentSymbol] = volTrend;   // 'LONG' | 'SHORT' | null
+            const _vtEl = document.getElementById('vt-' + currentSymbol);
+            if (_vtEl) _vtEl.innerHTML = wlVolTriInner(volTrend, volTf);
+        }
         if (volBadge && volEnabled && volTrend) {
             const icon = (volTrend === 'LONG') ? '🟢' : '🔴';
             const bg = (volTrend === 'LONG')
