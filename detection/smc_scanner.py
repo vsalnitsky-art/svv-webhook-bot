@@ -1705,7 +1705,19 @@ class SMCScanner:
                                 # панелі зелений, у списку червоний». Тепер вони
                                 # ІДЕНТИЧНІ для всіх монет. (Сигнали VOB далі беруть
                                 # `vol_result.newest_bull/bear` — окремий швидкий шлях.)
-                                _disp = self._latest_volumized_ob(symbol, klines=vol_klines)
+                                # Беремо ВЖЕ ПОРАХОВАНИЙ latest_ob із vol_result —
+                                # БЕЗ повторного detect_volumized_obs (він щойно
+                                # відпрацював на цих самих барах). Результат кладемо
+                                # у ТОЙ САМИЙ `_vob_cache`, який читає панель/бокс →
+                                # одне значення скрізь і половина CPU на монету.
+                                _disp = self._format_vob(vol_result.get('latest_ob'), vol_tf)
+                                try:
+                                    _c = getattr(self, '_vob_cache', None)
+                                    if _c is None:
+                                        self._vob_cache = _c = {}
+                                    _c[symbol] = (time.time(), _disp)
+                                except Exception:
+                                    pass
                                 _disp_trend = ('LONG' if (_disp and _disp.get('type') == 'Bull')
                                                else ('SHORT' if _disp else None))
                                 with self._lock:
@@ -3448,35 +3460,46 @@ class SMCScanner:
                     zone_count=self._settings.get('volumized_zone_count', 'Low'),
                     combine_obs=bool(self._settings.get('volumized_combine_obs', True)),
                 )
-                lob = r.get('latest_ob')
-                if lob:
-                    v = float(lob.get('ob_volume') or 0)     # quote (USD turnover) з клайнів
-                    lo = float(lob.get('ob_low_volume') or 0)
-                    hi = float(lob.get('ob_high_volume') or 0)
-                    st = lob.get('start_time') or 0
-                    top = lob.get('top')
-                    bottom = lob.get('bottom')
-                    # 🔧 КАЛІБРУВАННЯ під TradingView: наші клайни несуть QUOTE-обсяг
-                    # (USD), а індикатор TV показує BASE (контракти). Переводимо
-                    # quote→base ≈ обсяг / середню ціну OB, щоб число збігалося з TV.
-                    _mid = ((float(top) + float(bottom)) / 2.0) if (top and bottom) else 0.0
-                    vol_base = (v / _mid) if _mid > 0 else v
-                    # % = дисбаланс між двома половинами OB (min/max), як у Pine.
-                    _pct = (round(min(lo, hi) / max(lo, hi) * 100) if max(lo, hi) > 0 else None)
-                    vob = {
-                        'type': lob.get('type'),                      # 'Bull' | 'Bear'
-                        'top': top,
-                        'bottom': bottom,
-                        'start_time_sec': int(st // 1000) if st > 1e12 else int(st),
-                        'volume': round(vol_base),
-                        'pct': _pct,
-                        'breaker': bool(lob.get('breaker')),
-                        'tf': vtf,
-                    }
+                vob = self._format_vob(r.get('latest_ob'), vtf)
         except Exception as e:
             print(f"[SMC] volumized OB chart error {symbol}: {e}")
         cache[symbol] = (now, vob)
         return vob
+
+    def _format_vob(self, lob, vtf):
+        """Форматує сирий `latest_ob` (з `detect_volumized_obs`) у вигляд для
+        панелі/боксу/трикутника. Винесено окремо, щоб СКАН міг перевикористати
+        ВЖЕ ПОРАХОВАНИЙ `vol_result['latest_ob']` і НЕ ганяти детектор удруге
+        на тих самих 3000 барах (це подвоювало CPU на кожну монету)."""
+        if not lob:
+            return None
+        try:
+            v = float(lob.get('ob_volume') or 0)     # quote (USD turnover) з клайнів
+            lo = float(lob.get('ob_low_volume') or 0)
+            hi = float(lob.get('ob_high_volume') or 0)
+            st = lob.get('start_time') or 0
+            top = lob.get('top')
+            bottom = lob.get('bottom')
+            # 🔧 КАЛІБРУВАННЯ під TradingView: наші клайни несуть QUOTE-обсяг
+            # (USD), а індикатор TV показує BASE (контракти). Переводимо
+            # quote→base ≈ обсяг / середню ціну OB, щоб число збігалося з TV.
+            _mid = ((float(top) + float(bottom)) / 2.0) if (top and bottom) else 0.0
+            vol_base = (v / _mid) if _mid > 0 else v
+            # % = дисбаланс між двома половинами OB (min/max), як у Pine.
+            _pct = (round(min(lo, hi) / max(lo, hi) * 100) if max(lo, hi) > 0 else None)
+            return {
+                'type': lob.get('type'),                      # 'Bull' | 'Bear'
+                'top': top,
+                'bottom': bottom,
+                'start_time_sec': int(st // 1000) if st > 1e12 else int(st),
+                'volume': round(vol_base),
+                'pct': _pct,
+                'breaker': bool(lob.get('breaker')),
+                'tf': vtf,
+            }
+        except Exception as e:
+            print(f"[SMC] _format_vob error: {e}")
+            return None
 
     def _swing_hl_for_tf(self, symbol: str, tf: str):
         """🏁 Swing High / Low на ОКРЕМОМУ TF (Display-опція) — ТОЧНО як у
