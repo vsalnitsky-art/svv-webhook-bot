@@ -1689,16 +1689,22 @@ class SMCScanner:
                                 zone_count=self._settings.get('volumized_zone_count', 'Low'),
                                 combine_obs=bool(self._settings.get('volumized_combine_obs', True)),
                             )
-                            new_vol_trend = vol_result.get('trend')  # 'LONG'|'SHORT'|None
                             if self._settings.get('use_volumized_ob', True):
+                                # 🔒 ОДНЕ ДЖЕРЕЛО ПРАВДИ для ▲/▼ (watchlist), бейджа
+                                # «5M» і намальованого боксу: беремо ТУ САМУ функцію,
+                                # що й панель/чарт (`_latest_volumized_ob`, fetch 400,
+                                # 30с-кеш). Раніше фон рахував з `vol_data['klines']`
+                                # (живі бари) → інший «останній OB», ніж панель → «на
+                                # панелі зелений, у списку червоний». Тепер вони
+                                # ІДЕНТИЧНІ для всіх монет. (Сигнали VOB далі беруть
+                                # `vol_result.newest_bull/bear` — окремий швидкий шлях.)
+                                _disp = self._latest_volumized_ob(symbol)
+                                _disp_trend = ('LONG' if (_disp and _disp.get('type') == 'Bull')
+                                               else ('SHORT' if _disp else None))
                                 with self._lock:
-                                    old_vol_trend = (
-                                        self._volumized_trend_cache.get(symbol, {})
-                                        .get('trend')
-                                    )
                                     self._volumized_trend_cache[symbol] = {
-                                        'trend': new_vol_trend,
-                                        'meta': vol_result.get('trend_meta', {}),
+                                        'trend': _disp_trend,
+                                        'meta': (_disp or vol_result.get('trend_meta', {})),
                                         'tf': vol_tf,
                                         'updated_at': time.time(),
                                     }
