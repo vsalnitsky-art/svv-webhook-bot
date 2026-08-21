@@ -423,9 +423,12 @@ class SMCScanner:
         # OB, коли за один цикл з'явились обидва. Edge за formation_time окремо на
         # кожен бік. (Раніше — один int/symbol → протилежний VOB зникав.)
         self._vob_alert_seen: Dict[str, Dict[str, int]] = {}
-        # 🔒 vob_one_per_ob: {symbol → bar_time 1H-OB, на якому вже спрацював VOB}.
-        # Один VOB-сигнал на одну «епоху» 1H-OB; нова епоха = інший bar_time.
+        # 🔒 vob_one_per_ob: {symbol → bar_time 1H-OB, який ЗАРАЗ відстежуємо}.
+        # 1H-OB = ТАКТ: свіжий 1H-OB скидає 5m-базу й чекає новий 5m-VOB.
         self._vob_ob_epoch: Dict[str, int] = {}
+        # {symbol → bar_time 1H-OB, на якому ВЖЕ фактично спрацював сигнал} —
+        # «1 сигнал на 1 1H-OB» (варіант A: витрачаємо лише на реальному спрацюванні).
+        self._vob_epoch_fired: Dict[str, int] = {}
         # 🔎 ПРОЗОРІСТЬ VOB: {symbol → останнє рішення по VOB-алерту}. Джерело
         # правди «чому сигнал НЕ пішов»: кожен НОВИЙ OB лишає слід (fired/stale/
         # epoch/filtered/first_sight/no_candidate/duplicate) з віком і деталями.
@@ -1738,6 +1741,23 @@ class SMCScanner:
                                         _cfg_age = int(self._settings.get('vob_alert_max_age_bars', 0) or 0)
                                         _max_age = _cfg_age if _cfg_age > 0 else (_sl + 2)
                                         _one = bool(self._settings.get('vob_one_per_ob', False))
+                                        # 🔄 «1 VOB на 1H OB»: 1H-OB — це ТАКТ. Проста логіка
+                                        # користувача: СВІЖИЙ 1H-OB СКИДАЄ наявні 5m-VOB
+                                        # (базуємо їх → duplicate) і ЧЕКАЄ НОВИЙ 5m-VOB → один
+                                        # сигнал на цей 1H-OB. Без валідного 1H-OB сигналу нема.
+                                        _ob_bt = self._current_ob_bartime(symbol) if _one else None
+                                        if _one:
+                                            if _ob_bt is None:
+                                                self._vob_log_decision(symbol, _cands[-1][0], 'no_1h_ob',
+                                                                       vol_tf=vol_tf)
+                                                _cands = []     # немає 1H-OB → нічого не обробляємо
+                                            elif self._vob_epoch_reset_needed(
+                                                    self._vob_ob_epoch.get(symbol), _ob_bt):
+                                                # СВІЖИЙ 1H-OB → скидаємо наявні 5m-VOB (робимо їх
+                                                # базою) і чекаємо НОВИЙ 5m-VOB у цій епосі.
+                                                _seen = {_s: _f for (_s, _o, _f) in _cands}
+                                                self._vob_alert_seen[symbol] = _seen
+                                                self._vob_ob_epoch[symbol] = _ob_bt
                                         # Хронологічно (старіші першими): найновіший OB —
                                         # останнім, тож його статус лишається у vob_diag.
                                         for _cside, _cand, _ft in _cands:
@@ -1766,28 +1786,28 @@ class SMCScanner:
                                                     detail=(f'OB утворився {_age} барів тому, '
                                                             f'поріг свіжості {_max_age}'))
                                                 continue
-                                            # 🟪 СВІЖИЙ OB цього боку → СИГНАЛ: база + фільтри + обробка.
+                                            # 🟪 СВІЖИЙ 5m OB цього боку → СИГНАЛ.
                                             _seen[_cside] = _ft
+                                            # 🔒 «1 сигнал на 1 1H-OB»: якщо в ЦІЙ епосі 1H-OB
+                                            # уже фактично спрацював сигнал — чекаємо НОВИЙ 1H-OB.
+                                            if _one and self._vob_epoch_already_fired(
+                                                    self._vob_epoch_fired.get(symbol), _ob_bt):
+                                                self._vob_log_decision(
+                                                    symbol, _cside, 'epoch', age=_age,
+                                                    max_age=_max_age, ft=_ft, vol_tf=vol_tf,
+                                                    detail='цей 1H-OB уже дав сигнал (чекаємо НОВИЙ 1H-OB)')
+                                                continue
                                             _entry = (self._get_live_price(symbol)
                                                       or (_cand.get('top') if _cside == 'SHORT'
                                                           else _cand.get('bottom')) or 0)
                                             _vok, _vreason, _vdetail = self._signal_allowed(
                                                 symbol, _cside, at_intake=True)
-                                            # 🔒 «1 VOB на 1H OB» (vob_one_per_ob) — спільна епоха
-                                            # на 1H-OB для ОБОХ боків (перший фреш витрачає її).
-                                            _ob_bt = self._current_ob_bartime(symbol) if _one else None
-                                            _epoch_skip = False
-                                            if _one and _vok:
-                                                _dec = self._vob_epoch_decision(
-                                                    self._vob_ob_epoch.get(symbol), _ob_bt)
-                                                if _dec == 'baseline':
-                                                    self._vob_ob_epoch[symbol] = _ob_bt
-                                                if _dec != 'fire':
-                                                    _vok = False
-                                                    _epoch_skip = True
                                             if _vok:
+                                                # Варіант A: епоху 1H-OB витрачаємо ЛИШЕ на реальному
+                                                # спрацюванні (фільтр-відсів епоху не з'їдає — інший
+                                                # свіжий 5m-VOB у цій епосі ще може пройти).
                                                 if _one and _ob_bt is not None:
-                                                    self._vob_ob_epoch[symbol] = _ob_bt
+                                                    self._vob_epoch_fired[symbol] = _ob_bt
                                                 log_activity(symbol, 'signal',
                                                              f'Свіжий Volumized OB ({vol_tf}) {_cside} · {_vdetail}',
                                                              side=_cside, source='scanner')
@@ -1801,11 +1821,6 @@ class SMCScanner:
                                                     # funding-очистка не видаляла ці записи.
                                                     _tm.on_signal(symbol=symbol, side=_cside,
                                                                   entry_price=_entry, opened_by='vob_alert')
-                                            elif _epoch_skip:
-                                                self._vob_log_decision(
-                                                    symbol, _cside, 'epoch', age=_age,
-                                                    max_age=_max_age, ft=_ft, vol_tf=vol_tf,
-                                                    detail='цей 1H-OB уже дав сигнал (чекаємо НОВИЙ 1H-OB)')
                                             else:
                                                 # заблоковано ФІЛЬТРОМ → лог сигналу + причини.
                                                 log_activity(symbol, 'signal',
@@ -2170,6 +2185,7 @@ class SMCScanner:
         'first_sight':  '👁 VOB базова лінія (перший показ)',
         'no_candidate': '∅ немає валідного VOB',
         'duplicate':    '↺ той самий VOB (вже опрацьований)',
+        'no_1h_ob':     '⏳ немає 1H-OB (чекаємо новий 1H-OB)',
     }
 
     @staticmethod
@@ -2193,6 +2209,19 @@ class SMCScanner:
         except (TypeError, ValueError):
             return 'duplicate'
         return 'fresh' if _fresh else 'stale'
+
+    @staticmethod
+    def _vob_epoch_reset_needed(prev_epoch, ob_bt):
+        """«1 VOB на 1H OB»: True, якщо зʼявився СВІЖИЙ 1H-OB (інший bar_time) →
+        треба скинути 5m-базу свіжості й чекати НОВИЙ 5m-VOB. None-OB → False
+        (без валідного 1H-OB сигналу не буває)."""
+        return ob_bt is not None and ob_bt != prev_epoch
+
+    @staticmethod
+    def _vob_epoch_already_fired(fired_epoch, ob_bt):
+        """«1 сигнал на 1 1H-OB»: True, якщо в ЦІЙ епосі 1H-OB сигнал уже
+        фактично спрацював → чекаємо НОВИЙ 1H-OB."""
+        return ob_bt is not None and fired_epoch == ob_bt
 
     @staticmethod
     def _vob_pick_candidates(newest_bull, newest_bear):

@@ -128,6 +128,44 @@ def test_per_side_base_independent():
     print('✓ бази LONG/SHORT незалежні — протилежний бік не з’їдається')
 
 
+# ── 4. «1 VOB на 1H OB»: свіжий 1H-OB скидає 5m і чекає новий 5m-VOB ─────────
+def test_epoch_reset_needed():
+    f = SC._vob_epoch_reset_needed
+    _check(f(None, 1000) is True, 'перший 1H-OB (prev None) → reset')
+    _check(f(1000, 2000) is True, 'інший bar_time → СВІЖИЙ 1H-OB → reset')
+    _check(f(1000, 1000) is False, 'той самий 1H-OB → без reset')
+    _check(f(1000, None) is False, 'немає 1H-OB → без reset (сигналу нема)')
+    print('✓ свіжий 1H-OB (інший bar_time) скидає 5m-базу; той самий — ні')
+
+
+def test_epoch_already_fired():
+    f = SC._vob_epoch_already_fired
+    _check(f(1000, 1000) is True, 'у цій епосі вже фаєрили → чекаємо новий 1H-OB')
+    _check(f(1000, 2000) is False, 'нова епоха → можна фаєрити')
+    _check(f(None, 1000) is False, 'ще не фаєрили → можна')
+    _check(f(1000, None) is False, 'немає 1H-OB → не рахуємо як fired')
+    print('✓ «1 сигнал на 1 1H-OB»: повторний fire у тій самій епосі блокується')
+
+
+def test_epoch_flow_reset_then_new_5m():
+    # Симуляція повного такту користувача:
+    #   свіжий 1H-OB(A) скидає наявний 5m(100)→duplicate → чекаємо новий 5m
+    #   новий 5m(200) у епосі A → fresh (сигнал) → епоха A fired
+    #   свіжий 1H-OB(B) знову скидає → чекаємо новий 5m → новий 5m(400) → fresh
+    edge = SC._vob_edge_outcome
+    # epoch A: reset базує наявний 5m=100 → duplicate
+    seen = {'LONG': 100}
+    _check(edge(seen.get('LONG'), 100, 2, 7) == 'duplicate', 'наявний 5m після reset → duplicate')
+    # новий 5m=200 → fresh (сигнал)
+    _check(edge(seen.get('LONG'), 200, 2, 7) == 'fresh', 'новий 5m у епосі A → fresh (сигнал)')
+    # epoch B (новий 1H-OB): reset_needed True, базуємо наявний 5m=200
+    _check(SC._vob_epoch_reset_needed(1000, 2000) is True, 'новий 1H-OB → reset')
+    seen_b = {'LONG': 200}
+    _check(edge(seen_b.get('LONG'), 200, 2, 7) == 'duplicate', 'після reset епохи B наявний 5m → duplicate')
+    _check(edge(seen_b.get('LONG'), 400, 2, 7) == 'fresh', 'новий 5m у епосі B → fresh (сигнал)')
+    print('✓ такт: 1H-OB скидає 5m → чекає новий 5m → сигнал → новий 1H-OB → знову')
+
+
 if __name__ == '__main__':
     test_edge_outcome_fresh_first_sight_fires()
     test_edge_outcome_running()
@@ -136,4 +174,7 @@ if __name__ == '__main__':
     test_pick_candidates_both_sides()
     test_pick_candidates_skips_breaker_and_invalid()
     test_per_side_base_independent()
-    print('\nУсі тести VOB (catch-all + блок=сигнал + чистий лог) пройдено ✅')
+    test_epoch_reset_needed()
+    test_epoch_already_fired()
+    test_epoch_flow_reset_then_new_5m()
+    print('\nУсі тести VOB (1H-OB такт + catch-all + блок=сигнал + чистий лог) пройдено ✅')

@@ -89,13 +89,21 @@ Volumized-OB-сигнал (`vob_alert_enabled`) фаєриться в `smc_scann
   мить, щойно OB став валідним.
 - Далі — `_signal_allowed` (OB/PD/Forecast) → `on_signal` → черга/угода.
 - Тест: `test_vob_freshness.py`.
-- **«1 VOB на 1H OB»** (`vob_one_per_ob`, дефолт OFF): один VOB-сигнал на одну
-  «епоху» 1H-OB. Епоха = `bar_time` OB на `ob_filter_timeframe`
-  (`_current_ob_bartime`, None коли OB немає); `_vob_ob_epoch[sym]` = bar_time.
-  `_vob_epoch_decision(seen, bt)` → 'skip'(None)/'baseline'(перший показ —
-  запам'ятати ІСНУЮЧИЙ OB, НЕ фаєрити, бо він не «новий»)/'used'(той самий
-  OB)/'fire'(НОВИЙ OB). Варіант **(A)**: епоху витрачаємо ЛИШЕ на реальному
-  спрацюванні. **ВАЖЛИВО:** 1H-OB стабільний у межах бару (детекція на ЗАКРИТИХ
+- **«1 VOB на 1H OB»** (`vob_one_per_ob`, дефолт OFF): 1H-OB = **ТАКТ**. Проста
+  логіка користувача: **свіжий 1H-OB СКИДАЄ наявні 5m-VOB і чекає НОВИЙ 5m-VOB**
+  → один сигнал на цей 1H-OB, далі чекаємо наступний 1H-OB. Реалізація у скані:
+  • `_ob_bt = _current_ob_bartime(sym)` (bar_time OB на `ob_filter_timeframe`);
+    None → outcome `no_1h_ob` (без 1H-OB сигналу нема).
+  • `_vob_epoch_reset_needed(prev_epoch, ob_bt)` → на СВІЖОМУ 1H-OB (інший
+    bar_time) ре-базуємо per-side 5m-базу `_vob_alert_seen[sym]={side:ft}` до
+    ПОТОЧНИХ 5m-VOB (наявні → `duplicate`), оновлюємо `_vob_ob_epoch[sym]=ob_bt`
+    → наступний СТРОГО новіший 5m-VOB дасть `fresh` (сигнал).
+  • `_vob_epoch_already_fired(fired_epoch, ob_bt)` + `_vob_epoch_fired[sym]` —
+    «1 сигнал на 1 1H-OB»: після фактичного спрацювання (варіант **A** — епоху
+    витрачаємо ЛИШЕ на реальному fire, фільтр-відсів її НЕ їсть) подальші 5m у
+    цій епосі → `epoch`. Старий `_vob_epoch_decision(...)` лишився як юніт-тест-
+    хелпер (`test_vob_one_per_ob.py`), але у скані вже НЕ використовується —
+    його замінив reset-механізм (скидання 5m-бази на новий 1H-OB). **ВАЖЛИВО:** 1H-OB стабільний у межах бару (детекція на ЗАКРИТИХ
   1h-барах) — тому re-open у межах години НЕ може бути «новим OB»; якщо угода
   re-open після видалення в межах бару — шукати ІНШИЙ шлях (черга Черга-4/
   reconcile), а не епоху. Тест: `test_vob_one_per_ob.py`.
