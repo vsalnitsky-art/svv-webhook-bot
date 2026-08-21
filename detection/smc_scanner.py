@@ -3735,22 +3735,11 @@ class SMCScanner:
                     'created_at_t': row['created_at_t'],
                     'created_by_tag': row.get('created_by_tag', ''),
                 }
-            elif row is None:
-                # Fallback — scanner hasn't run yet for this (symbol, TF).
-                # Compute inline on the chart's main TF as a best-effort
-                # display so user doesn't see an empty badge for a long
-                # time after adding a symbol.
-                try:
-                    from detection.ob_detector import detect_last_order_block
-                    klines_closed = klines[:-1] if len(klines) >= 2 else klines
-                    last_ob = detect_last_order_block(
-                        klines=klines_closed,
-                        pivots=internal.get('pivots', []),
-                        events=internal.get('events', []),
-                    )
-                except Exception as e:
-                    print(f"[SMC] OB inline-fallback error for {symbol}: {e}")
-            # row exists with bias=None → last_ob stays None (no valid OB)
+            # row is None (сканер ще не рахував) АБО bias=None → last_ob=None.
+            # НЕ рахуємо інлайн на чарт-TF: раніше тут рахувався OB на TF ЧАРТА
+            # (напр. 5m), але бейдж підписувався «OB 1H» → мітка не відповідала
+            # дійсності («казна що»). Тепер бейдж 1H-OB з'являється ЛИШЕ коли є
+            # РЕАЛЬНИЙ рядок на ob_filter_timeframe (перший скан порахує його).
         except Exception as e:
             print(f"[SMC] chart_data OB-read error for {symbol}: {e}")
         

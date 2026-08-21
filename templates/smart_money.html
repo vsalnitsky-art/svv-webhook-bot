@@ -4427,14 +4427,16 @@ async function loadWatchlist() {
 // without an extra round-trip. Updated on every loadWatchlist call.
 let wlSymbols = [];   // current watchlist symbols (for filter-consensus)
 let wlSources = {};   // {symbol: 'manual'|'tickr'} — how each was added
-let wlTrends = (() => {   // {symbol: 1|-1|0} — trend dot per coin (the colored circles).
-                      // 1=LONG/green, -1=SHORT/red, 0=flat. Always available
-                      // from SMC state regardless of which filters are on.
-                      // Seeded from localStorage so the consensus has an instant
-                      // value on a fresh page load before the first poll lands.
-    try { return JSON.parse(localStorage.getItem('wlTrends') || '{}') || {}; }
-    catch (e) { return {}; }
-})();
+// {symbol: 1|-1|0} — trend dot per coin (● colored circle). 1=LONG/green,
+// -1=SHORT/red, 0=flat. НЕ сідимо з localStorage (раніше сід показував МИНУЛУ
+// сесію ~10с до першого поллу — «казна що»). Стартуємо порожньо → перший полл
+// заповнить РЕАЛЬНИМИ значеннями.
+let wlTrends = {};
+// 🔒 ОДНЕ ДЖЕРЕЛО ПРАВДИ для ВІДКРИТОЇ монети: панель рахує наживо → пише сюди,
+// і рядок watchlist для currentSymbol бере значення ЗВІДСИ (не зі стейт-знімка
+// ~60с). Так усі 3 значки відкритої монети = те, що на панелі, на кожну зміну.
+let wlObLive = {};      // {sym: 'BULLISH'|'BEARISH'|null} — 1H-OB бейдж панелі
+let wlTrendLive = {};   // {sym: 1|-1|0} — ● 15m-тренд панелі (d.trend)
 let wlObFilterEnabled = false;
 let wlObFilterTimeframe = '1h';
 let wlObStates = {};
@@ -4459,6 +4461,16 @@ function wlVolTriInner(vt, tf) {
     const title = `Volumized OB Trend (${(tf || '').toUpperCase()}): ${vt}\n`
         + 'Той самий напрямок, що й бейдж «5M» на панелі монети.';
     return `<span title="${escapeHtml(title)}" style="color:${c};font-size:0.8rem;font-weight:bold">${ic}</span>`;
+}
+// Спільний рендер ★ (1H-OB) — щоб рядок watchlist і бейдж «OB 1H» на панелі
+// показували ІДЕНТИЧНО (колір за напрямком). Порожньо, коли валідного OB нема.
+function wlObStarInner(bias, tf) {
+    if (bias !== 'BULLISH' && bias !== 'BEARISH') return '';
+    const isBull = (bias === 'BULLISH');
+    const c = isBull ? '#22c55e' : '#ef4444';
+    const title = `OB ${isBull ? 'Long' : 'Short'} ${(tf || '').toUpperCase()}\n`
+        + 'Те саме, що бейдж «OB 1H» на панелі монети.';
+    return `<span title="${escapeHtml(title)}" style="color:${c};font-size:0.85rem">★</span>`;
 }
 // 🔎 Стан VOB-алерту по монеті (з get_state.vob_diag): {symbol→{outcome,label,
 // age,max_age,ft,tf,detail,ts}}. Джерело правди «чому по цій монеті є/нема
@@ -4500,21 +4512,16 @@ function renderWatchlist(list) {
         // CHoCH vs BOS creation tag is no longer relevant to the gate —
         // both are valid OB sources. We still surface the tag in the
         // tooltip for transparency, but color is purely by direction.
+        // ★ 1H-OB. Для ВІДКРИТОЇ монети беремо живий bias з панелі (wlObLive),
+        // інакше — зі стейт-знімка. Контейнер ЗАВЖДИ з id=obst-<sym>, щоб панель
+        // могла оновити зірку МИТТЄВО. «Зелена на панелі = зелена у списку».
         let obStarHtml = '';
         if (wlObFilterEnabled) {
-            const ob = wlObStates[sym];
-            if (ob && ob.bias) {
-                const tag = (ob.created_by_tag || '').toUpperCase();
-                const isBull = ob.bias === 'BULLISH';
-                const starColor = isBull ? '#22c55e' : '#ef4444';
-                const tagLabel = tag === 'CHOCH' ? '★ CHoCH (fresh reversal)'
-                               : tag === 'BOS'   ? '→ BOS (continuation)'
-                               : 'unknown source';
-                const starTitle = `OB ${isBull ? 'Long' : 'Short'} ${wlObFilterTimeframe.toUpperCase()}\n`
-                                + `Source: ${tagLabel}\n`
-                                + `Signal of matching direction will pass gate.`;
-                obStarHtml = `<span class="wl-ob-star" title="${escapeHtml(starTitle)}" style="color:${starColor};margin-right:4px;font-size:0.85rem">★</span>`;
-            }
+            const obBias = (sym === currentSymbol && (sym in wlObLive))
+                ? wlObLive[sym]
+                : ((wlObStates[sym] || {}).bias);
+            obStarHtml = `<span class="wl-ob-star" id="obst-${sym}" style="margin-right:4px">`
+                + `${wlObStarInner(obBias, wlObFilterTimeframe)}</span>`;
         }
         
         // Volumized OB Trend pill — direction of latest formed OB on
@@ -4668,8 +4675,15 @@ function renderWatchlist(list) {
         // (❤️ FF scan-flag removed — FF no longer scans the WATCHLIST. The FF
         // table is now fed by intercepting the main LONG/SHORT open flow.)
 
+        // ● 15m-тренд. Для ВІДКРИТОЇ монети — живе значення панелі (wlTrendLive),
+        // інакше — зі стейт-знімка. Клас ставимо ОДРАЗУ на рендері (не порожній
+        // до наступного поллу), щоб колір відповідав дійсності негайно.
+        const _trendVal = (sym === currentSymbol && (sym in wlTrendLive))
+            ? wlTrendLive[sym] : (wlTrends[sym] || 0);
+        const _dotCls = _trendVal === 1 ? 'bull' : (_trendVal === -1 ? 'bear' : '');
+
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span><span style="color:${srcColor};font-weight:600">${tvSym(sym, short)}</span></span>
+            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot ${_dotCls}" id="dot-${sym}"></span><span style="color:${srcColor};font-weight:600">${tvSym(sym, short)}</span></span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
@@ -6417,7 +6431,14 @@ async function loadChart() {
                 obBadge.style.display = 'none';
             }
         }
-        
+        // 🔒 ОДНЕ ДЖЕРЕЛО ПРАВДИ: живий 1H-OB панелі → у рядок watchlist (★).
+        if (currentSymbol) {
+            wlObLive[currentSymbol] = (ob && ob.bias) ? ob.bias : null;
+            const _obEl = document.getElementById('obst-' + currentSymbol);
+            if (_obEl) _obEl.innerHTML = wlObFilterEnabled
+                ? wlObStarInner(wlObLive[currentSymbol], obTf) : '';
+        }
+
         // === Volumized OB Trend badge ===
         // Latest formed OB determines trend. 🟢 LONG = last OB was Bull,
         // 🔴 SHORT = last OB was Bear, hidden when none formed yet.
@@ -6958,6 +6979,9 @@ async function loadChart() {
             healthBadge.style.display = 'none';
         }
         
+        // 🔒 ОДНЕ ДЖЕРЕЛО ПРАВДИ: живий 15m-тренд панелі → у рядок watchlist (●).
+        // Пишемо в wlTrendLive, щоб 10с-полл НЕ перебивав його застарілим кешем.
+        if (currentSymbol) wlTrendLive[currentSymbol] = (d.trend | 0);
         const dot = document.getElementById('dot-' + currentSymbol);
         if (dot) {
             dot.className = 'trend-dot ' + (d.trend === 1 ? 'bull' : d.trend === -1 ? 'bear' : '');
@@ -7683,15 +7707,18 @@ async function updateStatus() {
             statusEl.textContent = 'Stopped';
         }
         
-        // Update trend dots for all watchlist items
+        // Update trend dots for all watchlist items. НЕ пишемо в localStorage
+        // (щоб не показувати минулу сесію на наступному завантаженні). Для
+        // ВІДКРИТОЇ монети НЕ перебиваємо живе значення панелі (wlTrendLive)
+        // застарілим знімком — панель авторитетна для currentSymbol.
         const trends = d.trends || {};
         wlTrends = trends;   // stash globally so the bias consensus can count
                              // the colored circles when no filter is active
-        try { localStorage.setItem('wlTrends', JSON.stringify(trends)); } catch (e) {}
         for (const sym of (d.watchlist || [])) {
             const dot = document.getElementById('dot-' + sym);
             if (dot) {
-                const t = trends[sym] || 0;
+                const t = (sym === currentSymbol && (sym in wlTrendLive))
+                    ? wlTrendLive[sym] : (trends[sym] || 0);
                 dot.className = 'trend-dot ' + (t === 1 ? 'bull' : t === -1 ? 'bear' : '');
             }
         }
