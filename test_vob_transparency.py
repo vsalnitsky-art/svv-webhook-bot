@@ -60,8 +60,18 @@ def test_edge_outcome_running():
     _check(f(100, 100, 0, 7) == 'duplicate', 'ft==prev → duplicate')
     _check(f(100, 90, 0, 7) == 'duplicate', 'ft<prev → duplicate')
     _check(f(100, 200, 3, 7) == 'fresh', 'новіший + свіжий → fresh')
-    _check(f(100, 200, 8, 7) == 'stale', 'новіший + старий → stale')
+    _check(f(100, 200, 8, 7) == 'stale', 'новіший + старий → stale (коли вікно задане)')
     print('✓ у процесі роботи: duplicate/fresh/stale — коректно')
+
+
+def test_no_age_gate_default_fires_any_new_vob():
+    # ДЕФОЛТ vob_alert_max_age_bars=0 → _max_age=None → БЕЗ вікна свіжості:
+    # блок будь-якого віку, що новий (edge за ft), фаєрить → «блок на графіку = сигнал».
+    f = SC._vob_edge_outcome
+    _check(f(None, 200, 9999, None) == 'fresh', 'перший показ, будь-який вік, БЕЗ вікна → fresh')
+    _check(f(100, 200, 9999, None) == 'fresh', 'новий ft, будь-який вік, БЕЗ вікна → fresh (не stale)')
+    _check(f(100, 100, 9999, None) == 'duplicate', 'той самий ft → duplicate (fire раз)')
+    print('✓ БЕЗ вікна свіжості (деф.): будь-який НОВИЙ VOB фаєрить, старий блок теж')
 
 
 # ── 2. Логер НЕ засмічує лог; усе — лише в діагностику для UI ────────────────
@@ -147,6 +157,44 @@ def test_epoch_already_fired():
     print('✓ «1 сигнал на 1 1H-OB»: повторний fire у тій самій епосі блокується')
 
 
+def test_vob_numbering():
+    # Нумерація VOB у межах 1H-OB: свіжий 1H-OB обнуляє лічильник; VOB #1 = сигнал,
+    # #2,3,… — лише номер; наявний блок при reset = #0 (чекаємо НОВИЙ = #1); усі
+    # нові VOB рахуються (жодного не пропускаємо).
+    is_sig = SC._vob_is_signal_number
+    _check(is_sig(1) is True, 'VOB #1 → сигнал')
+    _check(is_sig(2) is False, 'VOB #2 → не сигнал (лише номер)')
+    _check(is_sig(3) is False, 'VOB #3 → не сигнал')
+
+    # Симуляція лічильника як у скані (обидва боки рахуються в один лічильник):
+    reset = SC._vob_epoch_reset_needed
+    counter = 0
+    seen = {}
+    def new_vob(side, ft):
+        # правило скану: новий, якщо prev None або ft > prev
+        nonlocal counter
+        prev = seen.get(side)
+        if not (prev is None or ft > prev):
+            return None  # не новий → #0
+        seen[side] = ft
+        counter += 1
+        return counter
+    # Свіжий 1H-OB(A): reset → лічильник=0, наявні базуються (#0)
+    _check(reset(None, 1000) is True, 'новий 1H-OB → reset')
+    counter = 0; seen = {'LONG': 100, 'SHORT': 90}   # наявні при reset → #0
+    _check(new_vob('LONG', 100) is None, 'наявний LONG при reset → #0 (чекаємо новий)')
+    # Далі йдуть НОВІ VOB (обидва боки), рахуються всі:
+    _check(new_vob('SHORT', 110) == 1, 'перший НОВИЙ VOB → #1 (сигнал)')
+    _check(new_vob('LONG', 120) == 2, 'наступний НОВИЙ VOB → #2 (не сигнал)')
+    _check(new_vob('SHORT', 130) == 3, 'ще НОВИЙ → #3 (не сигнал)')
+    _check(is_sig(1) and not is_sig(2) and not is_sig(3), 'сигнал лише #1')
+    # Новий 1H-OB(B): reset → лічильник=0 знову
+    _check(reset(1000, 2000) is True, 'новий 1H-OB(B) → reset')
+    counter = 0; seen = {'SHORT': 130}
+    _check(new_vob('LONG', 200) == 1, 'у новій епосі перший НОВИЙ VOB → #1 (сигнал) знову')
+    print('✓ нумерація: reset на 1H-OB, #1=сигнал, #2,3=номер, усі рахуються')
+
+
 def test_epoch_flow_reset_then_new_5m():
     # Симуляція повного такту користувача:
     #   свіжий 1H-OB(A) скидає наявний 5m(100)→duplicate → чекаємо новий 5m
@@ -169,6 +217,7 @@ def test_epoch_flow_reset_then_new_5m():
 if __name__ == '__main__':
     test_edge_outcome_fresh_first_sight_fires()
     test_edge_outcome_running()
+    test_no_age_gate_default_fires_any_new_vob()
     test_log_decision_never_writes_activity_log()
     test_log_decision_updates_diag()
     test_pick_candidates_both_sides()
@@ -176,5 +225,6 @@ if __name__ == '__main__':
     test_per_side_base_independent()
     test_epoch_reset_needed()
     test_epoch_already_fired()
+    test_vob_numbering()
     test_epoch_flow_reset_then_new_5m()
     print('\nУсі тести VOB (1H-OB такт + catch-all + блок=сигнал + чистий лог) пройдено ✅')

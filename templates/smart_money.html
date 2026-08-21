@@ -6470,11 +6470,17 @@ async function loadChart() {
                     first_sight:  ['rgba(148,163,184,0.12)','#94a3b8'],
                     epoch:        ['rgba(250,204,21,0.15)', '#fde68a'],
                     no_candidate: ['rgba(148,163,184,0.10)','#64748b'],
+                    no_1h_ob:     ['rgba(148,163,184,0.10)','#64748b'],
+                    numbered:     ['rgba(148,163,184,0.14)','#cbd5e1'],
                 };
                 const [bg, color] = styleMap[rec.outcome] || ['rgba(148,163,184,0.12)', '#94a3b8'];
                 let txt = rec.label || rec.outcome;
                 if (rec.outcome === 'stale' && rec.age != null) {
                     txt = `⌛ VOB stale ${rec.age}/${rec.max_age}`;
+                } else if (rec.outcome === 'numbered' && rec.num != null) {
+                    txt = `🔢 VOB #${rec.num} (не сигнал)`;
+                } else if (rec.outcome === 'fired' && rec.num != null) {
+                    txt = `✅ VOB #${rec.num} → сигнал`;
                 }
                 vobStatusBadge.textContent = txt;
                 vobStatusBadge.style.background = bg;
