@@ -1821,49 +1821,61 @@ class SMCScanner:
                                                             symbol, _cside, 'duplicate',
                                                             age=_age, max_age=_max_age, ft=_ft,
                                                             vol_tf=vol_tf, num=_cn,
-                                                            detail=(f'лічильник VOB={_cn} на цьому 1H-OB · '
-                                                                    f'чекаємо НОВИЙ VOB'
-                                                                    + (' #1 (сигнал)' if _cn == 0 else
-                                                                       f' #{_cn + 1} (не сигнал)')))
+                                                            detail=(
+                                                                f'лічильник VOB={_cn} на цьому 1H-OB · '
+                                                                + ('результативний сигнал уже був — чекаємо НОВИЙ 1H-OB'
+                                                                   if self._vob_epoch_already_fired(
+                                                                       self._vob_epoch_fired.get(symbol), _ob_bt)
+                                                                   else f'чекаємо НОВИЙ VOB #{_cn + 1} (кандидат у сигнал)')))
                                                         continue
                                                     # 🔢 НОВИЙ VOB → нумеруємо (жодного не пропускаємо)
                                                     _seen[_cside] = _ft
                                                     self._vob_counter[symbol] = self._vob_counter.get(symbol, 0) + 1
                                                     _n = self._vob_counter[symbol]
-                                                    if not self._vob_is_signal_number(_n):
-                                                        # #2,3,… → лише номер, НЕ сигнал
+                                                    # 🎯 «1 РЕЗУЛЬТАТИВНИЙ сигнал на 1H-OB»: витрачає такт
+                                                    # ЛИШЕ той VOB, що ПРОЙШОВ УСІ ФІЛЬТРИ й пішов на
+                                                    # відкриття. Якщо цей 1H-OB уже дав такий сигнал —
+                                                    # решта VOB лише нумеруються (не сигнали).
+                                                    if self._vob_epoch_already_fired(
+                                                            self._vob_epoch_fired.get(symbol), _ob_bt):
                                                         self._vob_log_decision(
                                                             symbol, _cside, 'numbered', age=_age,
                                                             max_age=_max_age, ft=_ft, vol_tf=vol_tf, num=_n,
-                                                            detail=f'VOB #{_n} — не сигнал (сигнал лише #1 на 1H-OB)')
+                                                            detail=(f'VOB #{_n} — не сигнал: результативний '
+                                                                    f'сигнал на цьому 1H-OB уже був '
+                                                                    f'(чекаємо НОВИЙ 1H-OB)'))
                                                         continue
-                                                    # 🟪 VOB #1 → СИГНАЛ (крізь фільтри)
+                                                    # 🟪 Кандидат → крізь УСІ фільтри. Відсів фільтром
+                                                    # такт НЕ витрачає: наступний VOB спробує знову.
                                                     _entry = (self._get_live_price(symbol)
                                                               or (_cand.get('top') if _cside == 'SHORT'
                                                                   else _cand.get('bottom')) or 0)
                                                     _vok, _vreason, _vdetail = self._signal_allowed(
                                                         symbol, _cside, at_intake=True)
+                                                    log_activity(symbol, 'signal',
+                                                                 f'Свіжий Volumized OB ({vol_tf}) {_cside} · VOB #{_n} · {_vdetail}',
+                                                                 side=_cside, source='scanner')
                                                     if _vok:
-                                                        log_activity(symbol, 'signal',
-                                                                     f'Свіжий Volumized OB ({vol_tf}) {_cside} · VOB #1 · {_vdetail}',
-                                                                     side=_cside, source='scanner')
-                                                        self._vob_log_decision(symbol, _cside, 'fired',
-                                                                               age=_age, max_age=_max_age,
-                                                                               ft=_ft, vol_tf=vol_tf, detail=_vdetail, num=1)
+                                                        # ✅ РЕЗУЛЬТАТИВНИЙ — такт 1H-OB витрачено.
+                                                        self._vob_epoch_fired[symbol] = _ob_bt
+                                                        self._vob_log_decision(
+                                                            symbol, _cside, 'fired', age=_age,
+                                                            max_age=_max_age, ft=_ft, vol_tf=vol_tf,
+                                                            num=_n, detail=_vdetail)
                                                         from detection.trade_manager import get_trade_manager
                                                         _tm = get_trade_manager()
                                                         if _tm:
                                                             _tm.on_signal(symbol=symbol, side=_cside,
                                                                           entry_price=_entry, opened_by='vob_alert')
                                                     else:
-                                                        log_activity(symbol, 'signal',
-                                                                     f'Свіжий Volumized OB ({vol_tf}) {_cside} · VOB #1 · {_vdetail}',
-                                                                     side=_cside, source='scanner')
+                                                        # ⛔ Відсіяно — такт НЕ витрачено, чекаємо
+                                                        # наступний VOB на цьому ж 1H-OB.
                                                         log_activity(symbol, 'rejected', _vreason,
                                                                      side=_cside, source='scanner')
-                                                        self._vob_log_decision(symbol, _cside, 'filtered',
-                                                                               age=_age, max_age=_max_age,
-                                                                               ft=_ft, vol_tf=vol_tf, detail=_vreason, num=1)
+                                                        self._vob_log_decision(
+                                                            symbol, _cside, 'filtered', age=_age,
+                                                            max_age=_max_age, ft=_ft, vol_tf=vol_tf,
+                                                            num=_n, detail=_vreason)
                                         else:
                                             # ═══ OFF: catch-all по кожному боку (кожен новий свіжий
                                             # VOB фаєрить; вікно свіжості за _max_age, дефолт — без) ═══
@@ -2314,9 +2326,12 @@ class SMCScanner:
         return ob_bt is not None and ob_bt != prev_epoch
 
     @staticmethod
-    def _vob_is_signal_number(n):
-        """Нумерація VOB у межах 1H-OB: сигнал — ЛИШЕ VOB #1; #2,3,… — тільки номер."""
-        return n == 1
+    def _vob_is_signal_candidate(fired_epoch, ob_bt):
+        """«1 РЕЗУЛЬТАТИВНИЙ сигнал на 1H-OB»: КОЖЕН новий VOB — кандидат у сигнал,
+        доки на цьому 1H-OB ще НЕ було спрацювання, що пройшло всі фільтри.
+        Відсів фільтром такт НЕ витрачає (наступний VOB пробує знову); такт
+        витрачає ЛИШЕ реально відкритий сигнал. Нумерація — окремо, для показу."""
+        return not SMCScanner._vob_epoch_already_fired(fired_epoch, ob_bt)
 
     @staticmethod
     def _vob_epoch_already_fired(fired_epoch, ob_bt):

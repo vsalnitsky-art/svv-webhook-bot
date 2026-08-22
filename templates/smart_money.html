@@ -6521,9 +6521,13 @@ async function loadChart() {
                 if (rec.outcome === 'stale' && rec.age != null) {
                     txt = `⌛ VOB stale ${rec.age}/${rec.max_age}`;
                 } else if (rec.outcome === 'numbered' && rec.num != null) {
-                    txt = `🔢 VOB #${rec.num} (не сигнал)`;
+                    // Результативний сигнал на цьому 1H-OB уже був → решта лише номер.
+                    txt = `🔢 VOB #${rec.num} (такт уже використано)`;
                 } else if (rec.outcome === 'fired' && rec.num != null) {
-                    txt = `✅ VOB #${rec.num} → сигнал`;
+                    txt = `✅ VOB #${rec.num} → сигнал (результативний)`;
+                } else if (rec.outcome === 'filtered' && rec.num != null) {
+                    // Відсів фільтром такт НЕ витрачає — наступний VOB спробує знову.
+                    txt = `⛔ VOB #${rec.num} відсіяно · чекаємо #${rec.num + 1}`;
                 } else if (rec.outcome === 'duplicate' && rec.num != null) {
                     // Лічильник ЗАВЖДИ видно: скільки VOB уже пронумеровано на
                     // цьому 1H-OB і на який номер чекаємо далі.

@@ -145,8 +145,13 @@ Volumized-OB-сигнал (`vob_alert_enabled`) фаєриться в `smc_scann
     (рішення користувача, розвилка B).
   • Кожен НОВИЙ VOB (обидва боки, `prev None or ft>prev`, **БУДЬ-ЯКИЙ вік — без
     вікна свіжості**, жодного не пропускаємо) → `_vob_counter[sym]+=1`, номер `_n`.
-    `_vob_is_signal_number(_n)` (=`_n==1`): #1 → сигнал (крізь `_signal_allowed` →
-    fire/reject), #2,3,… → outcome `numbered` (тільки в діагностику/UI, `num=_n`).
+  • **«1 РЕЗУЛЬТАТИВНИЙ сигнал на 1H-OB» (вимога користувача).** Такт витрачає
+    ЛИШЕ той VOB, що **пройшов УСІ фільтри й пішов на відкриття**, а не «будь-який
+    перший». `_vob_is_signal_candidate(fired_epoch, ob_bt)` = кандидатом є КОЖЕН
+    новий VOB, доки `_vob_epoch_fired[sym] != ob_bt`. Відсів фільтром такт **НЕ**
+    витрачає → наступний VOB (#2, #3…) знову йде у фільтри. Після fire →
+    `_vob_epoch_fired[sym]=ob_bt`, решта VOB цього 1H-OB → outcome `numbered`.
+    У логах номер видно: «Свіжий Volumized OB (5m) LONG · VOB #3 · <розклад>».
   • Наступний свіжий 1H-OB → лічильник знову 0 → перший новий VOB знову #1.
   **OFF-гілка = catch-all** (`_vob_edge_outcome` по кожному боку, дефолт без вікна
   віку — кожен новий VOB фаєрить). Пуре-хелпери: `_vob_epoch_reset_needed`,

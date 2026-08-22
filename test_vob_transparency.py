@@ -161,10 +161,12 @@ def test_vob_numbering():
     # Нумерація VOB у межах 1H-OB: свіжий 1H-OB обнуляє лічильник; VOB #1 = сигнал,
     # #2,3,… — лише номер; наявний блок при reset = #0 (чекаємо НОВИЙ = #1); усі
     # нові VOB рахуються (жодного не пропускаємо).
-    is_sig = SC._vob_is_signal_number
-    _check(is_sig(1) is True, 'VOB #1 → сигнал')
-    _check(is_sig(2) is False, 'VOB #2 → не сигнал (лише номер)')
-    _check(is_sig(3) is False, 'VOB #3 → не сигнал')
+    # РЕЗУЛЬТАТИВНІСТЬ: кандидатом є КОЖЕН новий VOB, доки на цьому 1H-OB не
+    # було спрацювання, що пройшло фільтри. Відсів фільтром такт НЕ витрачає.
+    cand = SC._vob_is_signal_candidate
+    _check(cand(None, 1000) is True, 'ще не було результативного → кандидат')
+    _check(cand(1000, 1000) is False, 'результативний уже був на цьому 1H-OB → ні')
+    _check(cand(1000, 2000) is True, 'новий 1H-OB → знову кандидат')
 
     # Симуляція лічильника як у скані (обидва боки рахуються в один лічильник):
     reset = SC._vob_epoch_reset_needed
@@ -184,10 +186,16 @@ def test_vob_numbering():
     counter = 0; seen = {'LONG': 100, 'SHORT': 90}   # наявні при reset → #0
     _check(new_vob('LONG', 100) is None, 'наявний LONG при reset → #0 (чекаємо новий)')
     # Далі йдуть НОВІ VOB (обидва боки), рахуються всі:
-    _check(new_vob('SHORT', 110) == 1, 'перший НОВИЙ VOB → #1 (сигнал)')
-    _check(new_vob('LONG', 120) == 2, 'наступний НОВИЙ VOB → #2 (не сигнал)')
-    _check(new_vob('SHORT', 130) == 3, 'ще НОВИЙ → #3 (не сигнал)')
-    _check(is_sig(1) and not is_sig(2) and not is_sig(3), 'сигнал лише #1')
+    _check(new_vob('SHORT', 110) == 1, 'перший НОВИЙ VOB → #1 (кандидат)')
+    _check(new_vob('LONG', 120) == 2, 'наступний НОВИЙ VOB → #2')
+    _check(new_vob('SHORT', 130) == 3, 'ще НОВИЙ → #3')
+    # Сценарій «#1 і #2 зарубали фільтри, #3 пройшов»: такт витрачає ЛИШЕ #3.
+    fired = None                       # ще не було результативного
+    _check(cand(fired, 1000) is True, '#1 кандидат')
+    # #1 відсіяно фільтром → fired НЕ змінюється
+    _check(cand(fired, 1000) is True, '#2 знову кандидат (відсів такт не витратив)')
+    fired = 1000                       # #3 пройшов усі фільтри → такт витрачено
+    _check(cand(fired, 1000) is False, 'після результативного — більше не сигнал')
     # Новий 1H-OB(B): reset → лічильник=0 знову
     _check(reset(1000, 2000) is True, 'новий 1H-OB(B) → reset')
     counter = 0; seen = {'SHORT': 130}
