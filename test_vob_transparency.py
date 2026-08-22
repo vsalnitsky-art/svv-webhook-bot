@@ -222,6 +222,42 @@ def test_epoch_flow_reset_then_new_5m():
     print('✓ такт: 1H-OB скидає 5m → чекає новий 5m → сигнал → новий 1H-OB → знову')
 
 
+def test_vob_state_persist_roundtrip():
+    """Стан такту (лічильник/епоха/fired/база) мусить ПЕРЕЖИВАТИ рестарт —
+    інакше після кожного botupdate такт починався заново («VOB 0 · чекаємо #1»)
+    і бот міг відкрити ДРУГУ угоду на тому самому 1H-OB."""
+    store = {}
+
+    class _DB:
+        def set_setting(self, k, v): store[k] = v
+        def get_setting(self, k, d=None): return store.get(k, d)
+
+    a = SC.__new__(SC)
+    a.db = _DB()
+    a._vob_alert_seen = {'BTCUSDT': {'LONG': 111, 'SHORT': 222}}
+    a._vob_ob_epoch = {'BTCUSDT': 1000}
+    a._vob_epoch_fired = {'BTCUSDT': 1000}
+    a._vob_counter = {'BTCUSDT': 3}
+    a._persist_vob_state()
+    _check(scmod.DB_KEY_VOB_STATE in store, 'стан записано в БД')
+
+    # «рестарт»: новий інстанс читає той самий сховок
+    b = SC.__new__(SC)
+    b.db = _DB()
+    b._vob_alert_seen = {}; b._vob_ob_epoch = {}
+    b._vob_epoch_fired = {}; b._vob_counter = {}
+    b._load_vob_state()
+    _check(b._vob_counter.get('BTCUSDT') == 3, 'лічильник відновлено (не 0)')
+    _check(b._vob_epoch_fired.get('BTCUSDT') == 1000, 'fired-епоха відновлена')
+    _check(b._vob_ob_epoch.get('BTCUSDT') == 1000, 'такт 1H-OB відновлено')
+    _check(b._vob_alert_seen.get('BTCUSDT') == {'LONG': 111, 'SHORT': 222},
+           'пер-напрямкова база відновлена')
+    # і головне: після рестарту повторного сигналу на тому самому 1H-OB НЕ буде
+    _check(SC._vob_is_signal_candidate(b._vob_epoch_fired.get('BTCUSDT'), 1000) is False,
+           'після рестарту такт НЕ обнуляється → другої угоди на тому ж 1H-OB немає')
+    print('✓ стан VOB переживає рестарт (лічильник/епоха/fired/база)')
+
+
 if __name__ == '__main__':
     test_edge_outcome_fresh_first_sight_fires()
     test_edge_outcome_running()
@@ -235,4 +271,5 @@ if __name__ == '__main__':
     test_epoch_already_fired()
     test_vob_numbering()
     test_epoch_flow_reset_then_new_5m()
+    test_vob_state_persist_roundtrip()
     print('\nУсі тести VOB (1H-OB такт + catch-all + блок=сигнал + чистий лог) пройдено ✅')

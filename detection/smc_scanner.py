@@ -79,6 +79,10 @@ DB_KEY_SETTINGS = 'smc_settings'
 DB_KEY_STATE = 'smc_last_events'   # tracks last seen event per symbol
 DB_KEY_SIGNALS_PREFIX = 'smc_signals_'   # per-symbol: smc_signals_BTCUSDT, etc.
 DB_KEY_DEDUP_STATE = 'smc_dedup_state_v1'  # authoritative per-symbol dedup gate state
+# 🔢 Стан VOB-нумерації («1 результативний сигнал на 1H-OB»). БЕЗ персисту кожен
+# рестарт обнуляв лічильник і «епоху», тож бот міг ВДРУГЕ відкрити угоду на тому
+# самому 1H-OB, а UI завжди показував «VOB 0 · чекаємо #1».
+DB_KEY_VOB_STATE = 'smc_vob_state_v1'
 DB_KEY_TRENDS_STATE = 'smc_trends_state_v1'  # last-known trend dot per symbol (restart cache)
 SIGNALS_PERSIST_LIMIT = 50         # max signals stored per symbol
 
@@ -479,6 +483,9 @@ class SMCScanner:
         if not self._load_dedup_state():
             self._seed_dedup_from_markers()
             self._persist_dedup_state()
+        # 🔢 Стан VOB-нумерації (такт 1H-OB + «результативний сигнал уже був»)
+        # мусить пережити рестарт, інакше бот почне такт заново.
+        self._load_vob_state()
     
     # ========================================
     # Persistence
@@ -765,6 +772,55 @@ class SMCScanner:
         except Exception as e:
             print(f"[SMC] dedup state persist error: {e}")
     
+    def _persist_vob_state(self):
+        """💾 Зберегти стан VOB-нумерації, щоб він ПЕРЕЖИВАВ рестарт:
+          • `_vob_alert_seen`  — пер-напрямкова база (який VOB уже опрацьовано);
+          • `_vob_ob_epoch`    — на якому 1H-OB зараз такт;
+          • `_vob_epoch_fired` — на якому 1H-OB уже був РЕЗУЛЬТАТИВНИЙ сигнал;
+          • `_vob_counter`     — номер VOB у межах поточного 1H-OB.
+        Без цього кожен рестарт починав такт заново (ризик ДРУГОЇ угоди на тому
+        самому 1H-OB) і UI показував «VOB 0 · чекаємо #1»."""
+        if not self.db:
+            return
+        try:
+            self.db.set_setting(DB_KEY_VOB_STATE, {
+                'seen': {k: dict(v) for k, v in self._vob_alert_seen.items()
+                         if isinstance(v, dict)},
+                'epoch': dict(self._vob_ob_epoch),
+                'fired': dict(self._vob_epoch_fired),
+                'counter': dict(self._vob_counter),
+            })
+        except Exception as e:
+            print(f"[SMC] VOB state persist error: {e}")
+
+    def _load_vob_state(self):
+        """Відновити стан VOB-нумерації після рестарту (див. _persist_vob_state)."""
+        if not self.db:
+            return
+        try:
+            st = self.db.get_setting(DB_KEY_VOB_STATE, None)
+            if not isinstance(st, dict):
+                return
+            seen = st.get('seen') or {}
+            if isinstance(seen, dict):
+                self._vob_alert_seen = {
+                    str(k).upper(): {s: int(f) for s, f in v.items()
+                                     if s in ('LONG', 'SHORT')}
+                    for k, v in seen.items() if isinstance(v, dict)
+                }
+            for _key, _attr in (('epoch', '_vob_ob_epoch'),
+                                ('fired', '_vob_epoch_fired'),
+                                ('counter', '_vob_counter')):
+                _src = st.get(_key) or {}
+                if isinstance(_src, dict):
+                    setattr(self, _attr, {str(k).upper(): int(v)
+                                          for k, v in _src.items()
+                                          if isinstance(v, (int, float))})
+            print(f"[SMC] Restored VOB state: {len(self._vob_ob_epoch)} epoch(s), "
+                  f"{len(self._vob_epoch_fired)} fired, {len(self._vob_counter)} counter(s)")
+        except Exception as e:
+            print(f"[SMC] VOB state load error: {e}")
+
     def _load_dedup_state(self) -> bool:
         """Restore _last_signal_dir from the persisted authoritative blob.
         Returns True if a blob existed (so we should NOT re-seed from
@@ -1558,7 +1614,21 @@ class SMCScanner:
                     },
                 }
                 
-                def _get_tf_data(tf):
+                def _tf_secs(t):
+                    """Тривалість бару в секундах ('5m'→300, '1h'→3600)."""
+                    t = (t or '').lower().strip()
+                    try:
+                        if t.endswith('m'):
+                            return int(t[:-1]) * 60
+                        if t.endswith('h'):
+                            return int(t[:-1]) * 3600
+                        if t.endswith('d'):
+                            return int(t[:-1]) * 86400
+                    except (TypeError, ValueError):
+                        pass
+                    return 900
+
+                def _get_tf_data(tf, use_cache=True):
                     """Lazy fetch+compute structure for a given TF, with
                     per-tick caching. Returns dict or None on failure.
                     
@@ -1570,6 +1640,23 @@ class SMCScanner:
                     """
                     if tf in tf_data:
                         return tf_data[tf]
+                    # ♻️ КЕШ МІЖ ЦИКЛАМИ (ZERO зміни якості): дані цього TF
+                    # споживаються по ЗАКРИТИХ барах, тож вони НЕ змінюються,
+                    # доки не закриється наступний бар. Цикл ~4хв, а 1H-бар
+                    # закривається раз на годину → раніше ми даремно качали
+                    # 3000 барів ~15 разів на годину. Кеш дійсний РІВНО до
+                    # моменту закриття поточного (форміруючого) бару.
+                    # Для Volumized TF викликаємо з use_cache=False — там
+                    # потрібен ЖИВИЙ бар на кожному циклі.
+                    _ck = f"{symbol}|{tf}"
+                    _xc = getattr(self, '_tf_xcache', None)
+                    if _xc is None:
+                        self._tf_xcache = _xc = {}
+                    if use_cache:
+                        _hit = _xc.get(_ck)
+                        if _hit and time.time() < _hit[0]:
+                            tf_data[tf] = _hit[1]
+                            return _hit[1]
                     _tf_t0 = time.time()
                     try:
                         if hasattr(md, 'fetch_klines') and \
@@ -1596,6 +1683,14 @@ class SMCScanner:
                             'klines_closed': kl_closed,
                             'structure': result,
                         }
+                        if use_cache:
+                            # дійсний до моменту закриття ПОТОЧНОГО (останнього) бару
+                            try:
+                                _tl = int(kl[-1].get('t') or 0)
+                                _tl = _tl / 1000.0 if _tl > 1e12 else float(_tl)
+                                _xc[_ck] = (_tl + _tf_secs(tf), tf_data[tf])
+                            except (TypeError, ValueError, IndexError):
+                                pass
                         return tf_data[tf]
                     except Exception as e:
                         if self._errors <= 5:
@@ -1696,7 +1791,9 @@ class SMCScanner:
                     _vob_t0 = time.time()
                     try:
                         vol_tf = self._settings.get('volumized_timeframe', '1h')
-                        vol_data = _get_tf_data(vol_tf)
+                        # use_cache=False — Volumized детектується на ЖИВОМУ барі,
+                        # тож ці бари МУСЯТЬ бути свіжими на кожному циклі.
+                        vol_data = _get_tf_data(vol_tf, use_cache=False)
                         if vol_data:
                             from detection.volumized_ob import get_latest_ob_trend
                             vol_klines = vol_data.get('klines') or vol_data.get('klines_closed') or []
@@ -1809,6 +1906,7 @@ class SMCScanner:
                                                     _seen = {_s: _f for (_s, _o, _f) in _cands}
                                                     self._vob_alert_seen[symbol] = _seen
                                                     self._vob_ob_epoch[symbol] = _ob_bt
+                                                    self._persist_vob_state()   # новий такт → зберегти
                                                 for _cside, _cand, _ft in _cands:   # старіші → новіші
                                                     _prev = _seen.get(_cside)
                                                     _age = self._vob_age_bars(vol_klines, _ft)
@@ -1858,6 +1956,7 @@ class SMCScanner:
                                                     if _vok:
                                                         # ✅ РЕЗУЛЬТАТИВНИЙ — такт 1H-OB витрачено.
                                                         self._vob_epoch_fired[symbol] = _ob_bt
+                                                        self._persist_vob_state()   # переживе рестарт
                                                         self._vob_log_decision(
                                                             symbol, _cside, 'fired', age=_age,
                                                             max_age=_max_age, ft=_ft, vol_tf=vol_tf,
