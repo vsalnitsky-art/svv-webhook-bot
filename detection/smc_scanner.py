@@ -1432,16 +1432,23 @@ class SMCScanner:
             if self._errors <= 5:
                 print(f"[SMC] liqmap register error: {e}")
 
+        # ⏱ ПРОФІЛЮВАННЯ циклу: скільки часу з'їдає кожен етап на монету.
+        # Мережа (пагінація 3000 барів = ~3 запити на TF) — головний підозрюваний;
+        # без вимірів оптимізувати наосліп не можна.
+        _scan_t0 = time.time()
+        _tm = {'main': 0.0, 'tf': 0.0, 'ob': 0.0, 'vob': 0.0}
         for symbol in list(self._watchlist):
             if not self._running:
                 return
             try:
                 # Fetch klines at configured timeframe
                 tf = self.get_timeframe()
+                _t0 = time.time()
                 klines = md.fetch_klines(symbol, limit=KLINES_LIMIT, interval=tf) \
                     if hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames \
                     else md.fetch_klines(symbol, limit=KLINES_LIMIT)
-                
+                _tm['main'] += time.time() - _t0
+
                 if not klines or len(klines) < 50:
                     continue
                 
@@ -1563,12 +1570,14 @@ class SMCScanner:
                     """
                     if tf in tf_data:
                         return tf_data[tf]
+                    _tf_t0 = time.time()
                     try:
                         if hasattr(md, 'fetch_klines') and \
                            'interval' in md.fetch_klines.__code__.co_varnames:
                             kl = md.fetch_klines(symbol, limit=3000, interval=tf)
                         else:
                             kl = md.fetch_klines(symbol, limit=3000)
+                        _tm['tf'] += time.time() - _tf_t0
                         if not kl or len(kl) < 220:
                             tf_data[tf] = None
                             return None
@@ -1609,7 +1618,9 @@ class SMCScanner:
                 
                 # 2) ob_filter_tf — handled by _update_smc_ob below
                 try:
+                    _ob_t0 = time.time()
                     self._update_smc_ob(symbol, md)
+                    _tm['ob'] += time.time() - _ob_t0
                 except Exception as ob_err:
                     if self._errors <= 5:
                         print(f"[SMC] OB update error for {symbol}: {ob_err}")
@@ -1682,6 +1693,7 @@ class SMCScanner:
                 # bar instead of being missing.
                 _vob_alert_on = bool(self._settings.get('vob_alert_enabled', False))
                 if self._settings.get('use_volumized_ob', True) or _vob_alert_on:
+                    _vob_t0 = time.time()
                     try:
                         vol_tf = self._settings.get('volumized_timeframe', '1h')
                         vol_data = _get_tf_data(vol_tf)
@@ -1916,6 +1928,8 @@ class SMCScanner:
                     except Exception as vol_err:
                         if self._errors <= 5:
                             print(f"[SMC] Volumized OB error for {symbol}: {vol_err}")
+                    finally:
+                        _tm['vob'] += time.time() - _vob_t0
                 
                 # === Notify TM that OBs may have changed ===
                 # TM reads its own configured TF from DB internally —
@@ -1952,8 +1966,16 @@ class SMCScanner:
             if self._errors <= 5:
                 print(f"[SMC] trends snapshot error: {e}")
 
-        if self._scan_count <= 2 or self._scan_count % 30 == 0:
-            print(f"[SMC] Scan #{self._scan_count}: {len(self._watchlist)} symbols, errors={self._errors}")
+        # ⏱ ОДИН рядок на КОЖЕН цикл: скільки тривав прохід і на що пішов час.
+        # `tf` = довантаження TF-даних (Volumized/PD), `main` = основні 15m бари,
+        # `ob` = 1H OB-стан, `vob` = детекція Volumized. Так одразу видно, чи
+        # вузьке місце — мережа (пагінація 3000 барів) чи CPU-детектори.
+        _el = time.time() - _scan_t0
+        _n = max(1, len(self._watchlist))
+        print(f"[SMC] Scan #{self._scan_count}: {len(self._watchlist)} symbols in "
+              f"{_el:.1f}s ({_el / _n:.1f}s/coin) — main {_tm['main']:.1f}s · "
+              f"tf {_tm['tf']:.1f}s · ob {_tm['ob']:.1f}s · vob {_tm['vob']:.1f}s, "
+              f"errors={self._errors}")
     
     def _compute_htf_bias(self, symbol: str, md, htf_settings: Dict,
                             swing_trend: int = 0) -> Dict:
