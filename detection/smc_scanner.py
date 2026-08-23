@@ -1916,7 +1916,20 @@ class SMCScanner:
                                                     self._vob_counter[symbol] = 0
                                                     _seen = {}
                                                     for (_s0, _o0, _f0) in _cands:
-                                                        self._vob_seen_add(_seen, _s0, _f0)
+                                                        # ⚠️ БАЗУЄМО ЛИШЕ блоки, що утворились ДО
+                                                        # появи цього 1H-OB. Блок, який виник ПІСЛЯ
+                                                        # нього, — це і Є очікуваний «новий VOB»
+                                                        # такту, його базувати НЕ можна.
+                                                        # ЧОМУ це критично: 1H-OB детектується на
+                                                        # ЗАКРИТИХ 1h-барах, тож сканер бачить його
+                                                        # із запізненням до ГОДИНИ. За цей час 5m-
+                                                        # блоки встигають утворитись, і скидання
+                                                        # «за фактом побачення» тихо ковтало саме
+                                                        # той блок, який user бачить на графіку
+                                                        # (кейс NEARUSDT: 🟢 LONG 5M висить, а
+                                                        # фаєряться лише зустрічні SHORT).
+                                                        if self._vob_before_ob(_f0, _ob_bt):
+                                                            self._vob_seen_add(_seen, _s0, _f0)
                                                     self._vob_alert_seen[symbol] = _seen
                                                     self._vob_ob_epoch[symbol] = _ob_bt
                                                     self._persist_vob_state()   # новий такт → зберегти
@@ -2439,6 +2452,24 @@ class SMCScanner:
 
     # Скільки останніх formation_time тримаємо як «вже опрацьовані» на бік.
     VOB_SEEN_CAP = 12
+
+    @staticmethod
+    def _vob_before_ob(ft, ob_bt):
+        """Чи 5m-блок утворився ДО (або рівно на) барі 1H-OB.
+
+        Використовується при скиданні такту: базувати (тобто «вважати вже
+        врахованим») можна ЛИШЕ старі блоки. Блок, що виник ПІСЛЯ 1H-OB, — це
+        очікуваний «новий VOB» такту й мусить дати сигнал. Обидва значення —
+        епоха в мс (`kline['t']`). Якщо часу немає — вважаємо блок СТАРИМ
+        (безпечніше: не фаєрити зайве)."""
+        try:
+            _ft = int(ft)
+            _ob = int(ob_bt)
+        except (TypeError, ValueError):
+            return True
+        if _ft <= 0 or _ob <= 0:
+            return True
+        return _ft <= _ob
 
     @staticmethod
     def _vob_seen_list(seen, side):

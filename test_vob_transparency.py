@@ -246,6 +246,38 @@ def test_vob_outcome_breaker_trap():
     print('✓ пастку breaker усунено: будь-який НЕопрацьований блок = новий')
 
 
+def test_reset_does_not_swallow_block_formed_after_1h_ob():
+    """КЕЙС NEARUSDT: на графіку висить 🟢 LONG 5m-блок і бичачий 1H-OB, а бот
+    фаєрить лише зустрічні SHORT (їх ріже OB-фільтр), LONG — НІКОЛИ.
+
+    Причина: 1H-OB детектується на ЗАКРИТИХ 1h-барах, тож сканер бачить його із
+    запізненням до ГОДИНИ. Скидання такту базувало ВСІ наявні 5m-блоки — разом
+    із тим, що утворився ПІСЛЯ 1H-OB. Саме він і мав бути VOB #1.
+    Тепер базуємо ЛИШЕ блоки з `ft <= ob_bt`."""
+    f = SC._vob_before_ob
+    ob_bt = 1_000_000
+    _check(f(ob_bt - 5000, ob_bt) is True, 'блок ДО 1H-OB → базуємо (не сигнал)')
+    _check(f(ob_bt, ob_bt) is True, 'блок рівно на барі 1H-OB → базуємо')
+    _check(f(ob_bt + 5000, ob_bt) is False, 'блок ПІСЛЯ 1H-OB → НЕ базуємо (це #1)')
+    _check(f(None, ob_bt) is True, 'немає часу → вважаємо старим (безпечно)')
+    _check(f(ob_bt + 5000, None) is True, 'немає 1H-OB → базуємо (сигналу нема)')
+
+    # Повний такт: 1H-OB(anchor=1000), бичачий блок утворився ПІСЛЯ (1500),
+    # ведмежий — ДО (900). Після скидання фаєрити має САМЕ бичачий.
+    cands = [('SHORT', {}, 900), ('LONG', {}, 1500)]
+    seen = {}
+    for side, _o, ft in cands:
+        if SC._vob_before_ob(ft, 1000):
+            SC._vob_seen_add(seen, side, ft)
+    _check(SC._vob_seen_list(seen, 'SHORT') == [900], 'старий SHORT забазовано')
+    _check(SC._vob_seen_list(seen, 'LONG') == [], 'новий LONG НЕ забазовано')
+    _check(SC._vob_outcome(SC._vob_seen_list(seen, 'LONG'), 1500, 1, None) == 'fresh',
+           'LONG-блок після 1H-OB → fresh (стане VOB #1 і піде у фільтри)')
+    _check(SC._vob_outcome(SC._vob_seen_list(seen, 'SHORT'), 900, 1, None) == 'duplicate',
+           'старий SHORT → duplicate (не смітить сигналами)')
+    print('✓ скидання такту НЕ ковтає блок, що виник ПІСЛЯ 1H-OB (кейс NEARUSDT)')
+
+
 def test_vob_state_persist_roundtrip():
     """Стан такту (лічильник/епоха/fired/база) мусить ПЕРЕЖИВАТИ рестарт —
     інакше після кожного botupdate такт починався заново («VOB 0 · чекаємо #1»)
@@ -297,5 +329,6 @@ if __name__ == '__main__':
     test_vob_numbering()
     test_epoch_flow_reset_then_new_5m()
     test_vob_outcome_breaker_trap()
+    test_reset_does_not_swallow_block_formed_after_1h_ob()
     test_vob_state_persist_roundtrip()
     print('\nУсі тести VOB (1H-OB такт + catch-all + блок=сигнал + чистий лог) пройдено ✅')
