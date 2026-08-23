@@ -2733,7 +2733,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна сила НОВОГО МММ у бік сигналу. Тумблер зліва: вимкнено → шар НЕ рахується (не вантажимо сервер) і колонка ховається."><input type="checkbox" id="ff-queue4-new-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Новий МММ»">Новий МММ ≥ <select id="ff-queue4-mmnew" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Режим шару «Старий МММ». Старий МММ — контраріанський магніт ліквідності: на падаючій монеті зашкалює в LONG, тобто СИСТЕМНО проти тренду й не давав збиратись 4/4. • Вимагати — має збігтись за напрямком + сила ≥ обраної складності. • Ігнорувати (рек.) — не враховувати у ворота, Черга-4 стає 3-шаровою (складність не діє). • Контр-OK — зараховувати, якщо Старий МММ НЕ сильно ПРОТИ (сила ПРОТИ ≥ складності = блок)."><input type="checkbox" id="ff-queue4-old-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Старий МММ» (режим + Складність)">Старий МММ у воротах <select id="ff-queue4-mmold-mode" onchange="saveFuelFilterSettings(); _ffQueue4OldSync()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="require">вимагати</option><option value="ignore">ігнорувати</option><option value="contra_ok">контр-OK</option></select></label>
                     <label id="ff-queue4-mmold-band-lbl" style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Складність для режиму «вимагати»/«контр-OK»: яку МІНІМАЛЬНУ силу має тримати Старий МММ (у бік сигналу — для «вимагати»; проти сигналу — поріг блокування для «контр-OK»). У режимі «ігнорувати» не діє.">Складність (Старий МММ) ≥ <select id="ff-queue4-mmold" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна Готовність (grade_setup) у бік сигналу."><input type="checkbox" id="ff-queue4-setup-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Готовність» (важкий SMC-грейд — вимкни, щоб не вантажити сервер)">Готовність ≥ <select id="ff-queue4-setup" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="25">СЛАБКИЙ</option><option value="40">СЕРЕДНІЙ</option><option value="55">ХОРОШИЙ</option><option value="72">ВІДМІННИЙ</option></select></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна Готовність (grade_setup) у бік сигналу."><input type="checkbox" id="ff-queue4-setup-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Готовність» (важкий SMC-грейд — вимкни, щоб не вантажити сервер)">Готовність ≥ <select id="ff-queue4-setup" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="24">СЛАБКИЙ</option><option value="38">СЕРЕДНІЙ</option><option value="53">ХОРОШИЙ</option><option value="70">ВІДМІННИЙ</option></select></label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Тумблер шару «Запас» (runway). Вимкнено → шар НЕ рахується і колонка ховається. Права галочка — вимагати, щоб Запас був САМЕ у бік сигналу.">
                         <input type="checkbox" id="ff-queue4-runway-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Запас»"> 🎯 Запас
                         <span style="color:#6b7280">·</span>
@@ -10241,6 +10241,28 @@ function ffLayers4Cell(q) {
 // 🔘 Показ/приховування колонок Черги-4 за пер-шаровими тумблерами. Вішаємо
 // КЛАС НА ТАБЛИЦЮ (не inline на комірки) → CSS ховає і th, і свіжі td після
 // кожного перемальовування рядків, тож заголовок і дані ЗАВЖДИ вирівняні.
+// 🎚 Смуги грейда з БЕКЕНДУ (setup_grader) — ЄДИНЕ джерело правди.
+// Заповнюються з ff.get_state().grade_bands; поки не прийшли — null.
+let ffGradeBands = null;
+
+// Перебудовує випадайку «Готовність ≥» РЕАЛЬНИМИ порогами грейда, щоб слово в
+// налаштуваннях і слово в колонці означали ОДНЕ Й ТЕ САМЕ число. Раніше HTML
+// хардкодив 25/40/55/72, а грейди після перекалібрування стали 24/38/53/70 →
+// «38% СЕРЕДНІЙ» не проходив поріг «≥ СЕРЕДНІЙ».
+function _ffSyncGradeOptions() {
+    const sel = document.getElementById('ff-queue4-setup');
+    if (!sel || !Array.isArray(ffGradeBands) || !ffGradeBands.length) return;
+    const cur = sel.value;
+    // від найменшого до найбільшого — природний порядок для порога
+    const asc = ffGradeBands.slice().sort((a, b) => a.min - b.min);
+    const sig = asc.map(b => `${b.min}:${b.label}`).join('|');
+    if (sel.dataset.bandsSig === sig) return;     // уже актуально
+    sel.innerHTML = asc.map(b =>
+        `<option value="${b.min}">${b.label}</option>`).join('');
+    sel.dataset.bandsSig = sig;
+    if (cur && asc.some(b => String(b.min) === String(cur))) sel.value = cur;
+}
+
 function _ffApplyQ4Cols() {
     const tbl = document.getElementById('ff-timers4-table');
     if (!tbl) return;
@@ -10381,6 +10403,12 @@ async function clearAllTimers4() {
 
 function renderFuelFilter(d) {
     const s = d.settings || {};
+    // 🎚 Смуги грейда з бекенду (setup_grader) → випадайка «Готовність ≥»
+    // будується з НИХ, тому назва порога = назві в колонці «Готовність».
+    if (Array.isArray(d.grade_bands) && d.grade_bands.length) {
+        ffGradeBands = d.grade_bands;
+        _ffSyncGradeOptions();
+    }
     // BTC START/STOP banner — refresh from state, then let the global ticker
     // keep the progress filling smoothly.
     const bsg = d.btc_start || {};
@@ -10463,7 +10491,8 @@ function renderFuelFilter(d) {
     setIf('ff-queue4-entry-min', String(s.queue4_entry_min_layers != null ? s.queue4_entry_min_layers : 1));
     setIf('ff-queue4-nolight', String(s.queue4_no_light_min != null ? s.queue4_no_light_min : 30));
     _ffQueue4EntrySync();
-    setIf('ff-queue4-setup', String(s.queue4_setup_min != null ? s.queue4_setup_min : 40));
+    _ffSyncGradeOptions();   // спершу побудувати опції з реальних смуг грейда
+    setIf('ff-queue4-setup', String(s.queue4_setup_min != null ? s.queue4_setup_min : 38));
     setIf('ff-queue4-runway', s.queue4_require_runway !== false);
     setIf('ff-queue4-ttl', String(s.queue4_ttl_hours != null ? s.queue4_ttl_hours : 3));
     setIf('ff-queue4-exh-on', s.queue4_exhaustion_on !== false);

@@ -51,6 +51,7 @@ from typing import Optional, Callable, Dict, List
 # 🏷️ Канонічні мітки «Сигнал → Двигун» — щоб оригінальний сигнал НЕ губився,
 # коли двигун черги відкриває угоду (див. detection/signal_labels.py).
 from detection.signal_labels import compose as _ob_compose
+from detection.setup_grader import grade_min as _grade_min, grade_bands as _grade_bands
 
 CYCLE_SECS = 30                 # scan cadence (twice per liq-map refresh)
 EXHAUSTION_TTL = 120            # cache exhaustion per symbol for 2 min
@@ -272,7 +273,10 @@ DEFAULT_SETTINGS = {
     #    'ignore'    — НЕ враховувати у ворота (дефолт) → Q4 фактично 3-шарова;
     #    'contra_ok' — зараховувати, ЯКЩО Старий МММ НЕ сильно ПРОТИ напрямку.
     'queue4_mm_old_mode': 'ignore',
-    'queue4_setup_min': 40,      # Готовність: 25 СЛАБК/40 СЕРЕД/55 ХОРОШ/72 ВІДМІН
+    # Готовність: пороги = смуги грейда з setup_grader (24 СЛАБК / 38 СЕРЕД /
+    # 53 ХОРОШ / 70 ВІДМІН). НЕ хардкодити інші числа — інакше назва порога
+    # розійдеться з назвою в колонці «Готовність».
+    'queue4_setup_min': 38,
     # 🚧 Фільтр ВХОДУ в Чергу-4: перед допуском сигналу дочекатись ПОВНОГО
     #    визначення всіх шарів і перевірити, скільки ПОКАЗНИКІВ реально дивляться
     #    в бік сигналу (сирий напрямок Новий/Старий МММ/Готовність/Запас, БЕЗ
@@ -939,9 +943,9 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             s['queue4_mm_old_min'] = 10
         try:
-            s['queue4_setup_min'] = max(0, min(100, int(s.get('queue4_setup_min', 40) or 0)))
+            s['queue4_setup_min'] = max(0, min(100, int(s.get('queue4_setup_min', 38) or 0)))
         except (TypeError, ValueError):
-            s['queue4_setup_min'] = 40
+            s['queue4_setup_min'] = 38
         s['queue4_exhaustion_on'] = bool(s.get('queue4_exhaustion_on', True))
         try:
             s['queue4_exhaustion_pct'] = max(1, min(100, int(s.get('queue4_exhaustion_pct', 95) or 95)))
@@ -5163,17 +5167,18 @@ class FuelFilterDaemon:
         mm_trend_ok = (not mm_falling) if d == 'SHORT' else mm_rising
         add('mm', 'МММ', mm_dir == d and mm_str >= 10 and mm_trend_ok,
             f"{mm_dir or '—'} {int(mm_str)}% {mm_arrow}")
-        # 2) SCORE у бік + ≥ СЕРЕДНІЙ (≥ 40).
+        # 2-4) SCORE / Готовність / Скальп — поріг «СЕРЕДНІЙ» береться з ЄДИНОГО
+        # джерела (`setup_grader.grade_min`), а не хардкодиться числом. Раніше тут
+        # стояли 40 і 38 — тобто одне слово «СЕРЕДНІЙ» означало РІЗНІ числа.
+        _mid = _grade_min('СЕРЕДНІЙ')
         sc = self._score_cache.get(sym) or {}
-        add('score', 'SCORE', sc.get('dir') == d and (sc.get('score') or 0) >= 40,
+        add('score', 'SCORE', sc.get('dir') == d and (sc.get('score') or 0) >= _mid,
             f"{sc.get('label') or '—'} {sc.get('score') or 0}")
-        # 3) Готовність (1H grade_setup) у бік + ≥ СЕРЕДНІЙ (≥ 38).
         su = self._setup_cache.get(sym) or {}
-        add('setup', 'Готовність', su.get('ok') and su.get('dir') == d and (su.get('score') or 0) >= 38,
+        add('setup', 'Готовність', su.get('ok') and su.get('dir') == d and (su.get('score') or 0) >= _mid,
             f"{su.get('grade') or '—'} {su.get('score') or 0}")
-        # 4) Скальп (швидкий TF) у бік + ≥ СЕРЕДНІЙ (≥ 38). Порожньо, якщо вимкнено.
         ss = self._setup_scalp_cache.get(sym) or {}
-        add('scalp', 'Скальп', ss.get('ok') and ss.get('dir') == d and (ss.get('score') or 0) >= 38,
+        add('scalp', 'Скальп', ss.get('ok') and ss.get('dir') == d and (ss.get('score') or 0) >= _mid,
             f"{ss.get('grade') or '—'} {ss.get('score') or 0}" if ss.get('ok') else 'вимк/н-д')
         # 5) ЦІНА у бік монети — свіжий рух (~15 хв) з 💰 Funding Rate Scanner:
         #    LONG → ціна РОСТЕ (up), SHORT → ціна СПАДАЄ (down). Це ПОСТІЙНИЙ шар
@@ -7591,6 +7596,9 @@ class FuelFilterDaemon:
             'timers4': all_timers4,
             'pending4_visible': visible_pending4,
             'queue4_enabled': bool(settings.get('queue4_enabled', False)),
+            # 🎚 Смуги грейда (ЄДИНЕ джерело — setup_grader). UI будує випадайку
+            # «Готовність ≥» саме з них, щоб назва і число НЕ розходились.
+            'grade_bands': _grade_bands(),
             'pending3_count': len(self._pending3),
             'queue1_enabled': bool(settings.get('queue1_enabled', True)),
             'queue2_enabled': bool(settings.get('queue2_enabled', False)),
