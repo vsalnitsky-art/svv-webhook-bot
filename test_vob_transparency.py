@@ -278,6 +278,34 @@ def test_reset_does_not_swallow_block_formed_after_1h_ob():
     print('✓ скидання такту НЕ ковтає блок, що виник ПІСЛЯ 1H-OB (кейс NEARUSDT)')
 
 
+def test_tact_is_ob_direction_not_bartime():
+    """ТАКТ = НАПРЯМОК 1H-OB (не bar_time): одна ФАЗА напрямку = рівно ОДИН
+    результативний VOB. Новий 1H-OB ТОГО САМОГО напрямку такт НЕ поновлює —
+    лише ФЛІП напрямку."""
+    reset = SC._vob_epoch_reset_needed
+    fired = SC._vob_epoch_already_fired
+
+    # Фаза LONG: перший результативний витрачає такт
+    _check(reset(None, 'LONG') is True, 'перша фаза → новий такт')
+    _check(fired(None, 'LONG') is False, 'ще не фаєрили → кандидат')
+    _check(fired('LONG', 'LONG') is True, 'у фазі LONG уже був результативний → стоп')
+
+    # НОВИЙ 1H-OB того самого напрямку — такт НЕ поновлюється
+    _check(reset('LONG', 'LONG') is False,
+           'новий 1H-OB того самого напрямку → такт НЕ скидається')
+    _check(fired('LONG', 'LONG') is True, 'і сигнал НЕ дозволяється')
+
+    # ФЛІП напрямку → новий такт і новий дозвіл
+    _check(reset('LONG', 'SHORT') is True, 'фліп LONG→SHORT → новий такт')
+    _check(fired('LONG', 'SHORT') is False, 'у новій фазі знову можна')
+    _check(fired('SHORT', 'SHORT') is True, 'і вона теж витрачається одним сигналом')
+
+    # Немає 1H-OB → ні такту, ні сигналу
+    _check(reset('LONG', None) is False, 'немає OB → без скидання')
+    _check(fired('LONG', None) is False, 'немає OB → не рахуємо як витрачений')
+    print('✓ такт = напрямок 1H-OB: 1 результативний на фазу, поновлення на фліпі')
+
+
 def test_vob_state_persist_roundtrip():
     """Стан такту (лічильник/епоха/fired/база) мусить ПЕРЕЖИВАТИ рестарт —
     інакше після кожного botupdate такт починався заново («VOB 0 · чекаємо #1»)
@@ -291,8 +319,8 @@ def test_vob_state_persist_roundtrip():
     a = SC.__new__(SC)
     a.db = _DB()
     a._vob_alert_seen = {'BTCUSDT': {'LONG': 111, 'SHORT': 222}}
-    a._vob_ob_epoch = {'BTCUSDT': 1000}
-    a._vob_epoch_fired = {'BTCUSDT': 1000}
+    a._vob_ob_epoch = {'BTCUSDT': 'LONG'}
+    a._vob_epoch_fired = {'BTCUSDT': 'LONG'}
     a._vob_counter = {'BTCUSDT': 3}
     a._persist_vob_state()
     _check(scmod.DB_KEY_VOB_STATE in store, 'стан записано в БД')
@@ -304,13 +332,13 @@ def test_vob_state_persist_roundtrip():
     b._vob_epoch_fired = {}; b._vob_counter = {}
     b._load_vob_state()
     _check(b._vob_counter.get('BTCUSDT') == 3, 'лічильник відновлено (не 0)')
-    _check(b._vob_epoch_fired.get('BTCUSDT') == 1000, 'fired-епоха відновлена')
-    _check(b._vob_ob_epoch.get('BTCUSDT') == 1000, 'такт 1H-OB відновлено')
+    _check(b._vob_epoch_fired.get('BTCUSDT') == 'LONG', 'fired-такт (напрямок) відновлено')
+    _check(b._vob_ob_epoch.get('BTCUSDT') == 'LONG', 'такт 1H-OB (напрямок) відновлено')
     # Старий формат (int) МУСИТЬ мігрувати у список опрацьованих ft.
     _check(b._vob_alert_seen.get('BTCUSDT') == {'LONG': [111], 'SHORT': [222]},
            'пер-напрямкова база відновлена (int → список, міграція)')
     # і головне: після рестарту повторного сигналу на тому самому 1H-OB НЕ буде
-    _check(SC._vob_is_signal_candidate(b._vob_epoch_fired.get('BTCUSDT'), 1000) is False,
+    _check(SC._vob_is_signal_candidate(b._vob_epoch_fired.get('BTCUSDT'), 'LONG') is False,
            'після рестарту такт НЕ обнуляється → другої угоди на тому ж 1H-OB немає')
     print('✓ стан VOB переживає рестарт (лічильник/епоха/fired/база)')
 
@@ -330,5 +358,6 @@ if __name__ == '__main__':
     test_epoch_flow_reset_then_new_5m()
     test_vob_outcome_breaker_trap()
     test_reset_does_not_swallow_block_formed_after_1h_ob()
+    test_tact_is_ob_direction_not_bartime()
     test_vob_state_persist_roundtrip()
     print('\nУсі тести VOB (1H-OB такт + catch-all + блок=сигнал + чистий лог) пройдено ✅')
