@@ -784,7 +784,10 @@ class SMCScanner:
             return
         try:
             self.db.set_setting(DB_KEY_VOB_STATE, {
-                'seen': {k: dict(v) for k, v in self._vob_alert_seen.items()
+                # `seen` = {symbol: {side: [опрацьовані formation_time]}}
+                'seen': {k: {s: list(self._vob_seen_list(v, s))
+                             for s in ('LONG', 'SHORT') if self._vob_seen_list(v, s)}
+                         for k, v in self._vob_alert_seen.items()
                          if isinstance(v, dict)},
                 'epoch': dict(self._vob_ob_epoch),
                 'fired': dict(self._vob_epoch_fired),
@@ -803,11 +806,19 @@ class SMCScanner:
                 return
             seen = st.get('seen') or {}
             if isinstance(seen, dict):
-                self._vob_alert_seen = {
-                    str(k).upper(): {s: int(f) for s, f in v.items()
-                                     if s in ('LONG', 'SHORT')}
-                    for k, v in seen.items() if isinstance(v, dict)
-                }
+                # Приймаємо і НОВИЙ формат (список ft), і СТАРИЙ (одиночний int).
+                _out = {}
+                for k, v in seen.items():
+                    if not isinstance(v, dict):
+                        continue
+                    _side_map = {}
+                    for s in ('LONG', 'SHORT'):
+                        _lst = self._vob_seen_list(v, s)
+                        if _lst:
+                            _side_map[s] = [int(x) for x in _lst][-self.VOB_SEEN_CAP:]
+                    if _side_map:
+                        _out[str(k).upper()] = _side_map
+                self._vob_alert_seen = _out
             for _key, _attr in (('epoch', '_vob_ob_epoch'),
                                 ('fired', '_vob_epoch_fired'),
                                 ('counter', '_vob_counter')):
@@ -1903,14 +1914,16 @@ class SMCScanner:
                                                     # СВІЖИЙ 1H-OB → обнуляємо лічильник і скидаємо
                                                     # наявні 5m-VOB (базуємо їх → #0, чекаємо новий).
                                                     self._vob_counter[symbol] = 0
-                                                    _seen = {_s: _f for (_s, _o, _f) in _cands}
+                                                    _seen = {}
+                                                    for (_s0, _o0, _f0) in _cands:
+                                                        self._vob_seen_add(_seen, _s0, _f0)
                                                     self._vob_alert_seen[symbol] = _seen
                                                     self._vob_ob_epoch[symbol] = _ob_bt
                                                     self._persist_vob_state()   # новий такт → зберегти
                                                 for _cside, _cand, _ft in _cands:   # старіші → новіші
-                                                    _prev = _seen.get(_cside)
+                                                    _done = self._vob_seen_list(_seen, _cside)
                                                     _age = self._vob_age_bars(vol_klines, _ft)
-                                                    if not (_prev is None or _ft > _prev):
+                                                    if _ft in _done:
                                                         # не новий (наявний/старіший) → лічильник НЕ
                                                         # росте. Показуємо ПОТОЧНИЙ стан лічильника,
                                                         # щоб у UI завжди було видно такт нумерації.
@@ -1927,7 +1940,7 @@ class SMCScanner:
                                                                    else f'чекаємо НОВИЙ VOB #{_cn + 1} (кандидат у сигнал)')))
                                                         continue
                                                     # 🔢 НОВИЙ VOB → нумеруємо (жодного не пропускаємо)
-                                                    _seen[_cside] = _ft
+                                                    self._vob_seen_add(_seen, _cside, _ft)
                                                     self._vob_counter[symbol] = self._vob_counter.get(symbol, 0) + 1
                                                     _n = self._vob_counter[symbol]
                                                     # 🎯 «1 РЕЗУЛЬТАТИВНИЙ сигнал на 1H-OB»: витрачає такт
@@ -1979,11 +1992,11 @@ class SMCScanner:
                                             # ═══ OFF: catch-all по кожному боку (кожен новий свіжий
                                             # VOB фаєрить; вікно свіжості за _max_age, дефолт — без) ═══
                                             for _cside, _cand, _ft in _cands:
-                                                _prev = _seen.get(_cside)
+                                                _done = self._vob_seen_list(_seen, _cside)
                                                 _age = self._vob_age_bars(vol_klines, _ft)
-                                                _out = self._vob_edge_outcome(_prev, _ft, _age, _max_age)
+                                                _out = self._vob_outcome(_done, _ft, _age, _max_age)
                                                 if _out == 'first_sight':
-                                                    _seen[_cside] = _ft
+                                                    self._vob_seen_add(_seen, _cside, _ft)
                                                     self._vob_log_decision(symbol, _cside, 'first_sight',
                                                                            age=_age, max_age=_max_age,
                                                                            ft=_ft, vol_tf=vol_tf)
@@ -2000,7 +2013,7 @@ class SMCScanner:
                                                         detail=(f'OB утворився {_age} барів тому, '
                                                                 f'поріг свіжості {_max_age}'))
                                                     continue
-                                                _seen[_cside] = _ft
+                                                self._vob_seen_add(_seen, _cside, _ft)
                                                 _entry = (self._get_live_price(symbol)
                                                           or (_cand.get('top') if _cside == 'SHORT'
                                                               else _cand.get('bottom')) or 0)
@@ -2423,6 +2436,58 @@ class SMCScanner:
         треба скинути 5m-базу свіжості й чекати НОВИЙ 5m-VOB. None-OB → False
         (без валідного 1H-OB сигналу не буває)."""
         return ob_bt is not None and ob_bt != prev_epoch
+
+    # Скільки останніх formation_time тримаємо як «вже опрацьовані» на бік.
+    VOB_SEEN_CAP = 12
+
+    @staticmethod
+    def _vob_seen_list(seen, side):
+        """Список УЖЕ ОПРАЦЬОВАНИХ formation_time для боку (з міграцією зі
+        старого формату — одиночного int-«водяного знаку»)."""
+        v = (seen or {}).get(side)
+        if isinstance(v, list):
+            return v
+        if isinstance(v, (int, float)) and v:
+            return [int(v)]
+        return []
+
+    @staticmethod
+    def _vob_seen_add(seen, side, ft, cap=None):
+        """Позначити formation_time опрацьованим (з обмеженням довжини)."""
+        cap = cap or SMCScanner.VOB_SEEN_CAP
+        lst = SMCScanner._vob_seen_list(seen, side)
+        ft = int(ft)
+        if ft not in lst:
+            lst.append(ft)
+            if len(lst) > cap:
+                del lst[:-cap]
+        seen[side] = lst
+        return lst
+
+    @staticmethod
+    def _vob_outcome(done_list, ft, age, max_age):
+        """Рішення по кандидату VOB на основі НАБОРУ опрацьованих блоків.
+
+        РАНІШЕ був «водяний знак» (`ft > prev`), і це створювало ПАСТКУ: коли
+        поточний OB ставав breaker, він випадав зі списку, «найновішим» ставав
+        СТАРІШИЙ блок із МЕНШИМ formation_time → він назавжди лишався
+        'duplicate', і бот вічно «чекав #N+1», хоч на графіку блок змінився.
+        ТЕПЕР новим вважається БУДЬ-ЯКИЙ блок, якого ще НЕ опрацьовували:
+          • 'duplicate'   — цей formation_time уже опрацьовано;
+          • 'first_sight' — перший показ і блок СТАРИЙ (тиха база);
+          • 'stale'       — новий блок, але старший за поріг свіжості;
+          • 'fresh'       — новий блок у межах свіжості → кандидат у сигнал.
+        """
+        try:
+            ft = int(ft)
+        except (TypeError, ValueError):
+            return 'duplicate'
+        if ft in (done_list or []):
+            return 'duplicate'
+        _fresh = (age is None or max_age is None or age <= max_age)
+        if not done_list:
+            return 'fresh' if _fresh else 'first_sight'
+        return 'fresh' if _fresh else 'stale'
 
     @staticmethod
     def _vob_is_signal_candidate(fired_epoch, ob_bt):

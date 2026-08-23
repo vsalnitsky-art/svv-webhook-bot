@@ -4524,7 +4524,13 @@ function renderWatchlist(list) {
     _wlSyncSortBtn();
     if (wlSortAlpha) {
         // Сортуємо КОПІЮ (wlSymbols лишається у серверному порядку).
-        list = list.slice().sort((a, b) => String(a).localeCompare(String(b)));
+        // Монети, що починаються з ЦИФРИ (1000PEPE, 1INCH…) — у САМИЙ КІНЕЦЬ.
+        list = list.slice().sort((a, b) => {
+            const da = /^\d/.test(String(a)) ? 1 : 0;
+            const db = /^\d/.test(String(b)) ? 1 : 0;
+            if (da !== db) return da - db;
+            return String(a).localeCompare(String(b));
+        });
     }
     
     if (list.length === 0) {

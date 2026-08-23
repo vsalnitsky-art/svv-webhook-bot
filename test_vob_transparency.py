@@ -222,6 +222,30 @@ def test_epoch_flow_reset_then_new_5m():
     print('✓ такт: 1H-OB скидає 5m → чекає новий 5m → сигнал → новий 1H-OB → знову')
 
 
+def test_vob_outcome_breaker_trap():
+    """ПАСТКА BREAKER: коли поточний OB стає breaker, він випадає зі списку і
+    «найновішим» стає СТАРІШИЙ блок із МЕНШИМ formation_time. Зі старим правилом
+    «ft мусить бути БІЛЬШИМ» такий блок назавжди лишався 'duplicate' → бот вічно
+    «чекав #N+1». Тепер новим є БУДЬ-ЯКИЙ ще не опрацьований formation_time."""
+    f = SC._vob_outcome
+    done = [200]                       # опрацювали блок з ft=200
+    _check(f(done, 200, 1, 7) == 'duplicate', 'той самий ft → duplicate')
+    # breaker → «найновішим» став СТАРІШИЙ блок ft=150 (раніше зависало назавжди)
+    _check(f(done, 150, 1, 7) == 'fresh', 'старіший, але НЕ опрацьований → fresh')
+    _check(f([], 100, 1, 7) == 'fresh', 'перший показ + свіжий → fresh')
+    _check(f([], 100, 99, 7) == 'first_sight', 'перший показ + старий → база')
+    _check(f(done, 150, 99, 7) == 'stale', 'новий, але старий за віком → stale')
+    _check(f(done, 150, 99, None) == 'fresh', 'без вікна віку → fresh')
+
+    # список опрацьованих обмежений (не росте нескінченно)
+    seen = {}
+    for i in range(SC.VOB_SEEN_CAP + 5):
+        SC._vob_seen_add(seen, 'LONG', 1000 + i)
+    _check(len(seen['LONG']) == SC.VOB_SEEN_CAP, 'довжина набору обмежена CAP')
+    _check(seen['LONG'][-1] == 1000 + SC.VOB_SEEN_CAP + 4, 'останній збережено')
+    print('✓ пастку breaker усунено: будь-який НЕопрацьований блок = новий')
+
+
 def test_vob_state_persist_roundtrip():
     """Стан такту (лічильник/епоха/fired/база) мусить ПЕРЕЖИВАТИ рестарт —
     інакше після кожного botupdate такт починався заново («VOB 0 · чекаємо #1»)
@@ -250,8 +274,9 @@ def test_vob_state_persist_roundtrip():
     _check(b._vob_counter.get('BTCUSDT') == 3, 'лічильник відновлено (не 0)')
     _check(b._vob_epoch_fired.get('BTCUSDT') == 1000, 'fired-епоха відновлена')
     _check(b._vob_ob_epoch.get('BTCUSDT') == 1000, 'такт 1H-OB відновлено')
-    _check(b._vob_alert_seen.get('BTCUSDT') == {'LONG': 111, 'SHORT': 222},
-           'пер-напрямкова база відновлена')
+    # Старий формат (int) МУСИТЬ мігрувати у список опрацьованих ft.
+    _check(b._vob_alert_seen.get('BTCUSDT') == {'LONG': [111], 'SHORT': [222]},
+           'пер-напрямкова база відновлена (int → список, міграція)')
     # і головне: після рестарту повторного сигналу на тому самому 1H-OB НЕ буде
     _check(SC._vob_is_signal_candidate(b._vob_epoch_fired.get('BTCUSDT'), 1000) is False,
            'після рестарту такт НЕ обнуляється → другої угоди на тому ж 1H-OB немає')
@@ -271,5 +296,6 @@ if __name__ == '__main__':
     test_epoch_already_fired()
     test_vob_numbering()
     test_epoch_flow_reset_then_new_5m()
+    test_vob_outcome_breaker_trap()
     test_vob_state_persist_roundtrip()
     print('\nУсі тести VOB (1H-OB такт + catch-all + блок=сигнал + чистий лог) пройдено ✅')
