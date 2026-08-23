@@ -767,7 +767,7 @@ class FuelFilterDaemon:
         # Персистентний (переживає рестарт). Це той самий «епохальний» принцип, що
         # й `smc_scanner._vob_ob_epoch`, але забезпечений на ЄДИНОМУ вузлі
         # відкриття (Черга-4), тому переживає close/delete, а не лише глушить алерт.
-        self._opened_ob_epoch: Dict[str, str] = {}
+        self._opened_ob_epoch: Dict[str, int] = {}
         # Anti-flood for the per-coin «Готовність» decision log:
         # {symbol: (outcome, hot, score_bucket, ts)} — a hold/skip is re-logged
         # only when it meaningfully changes or after READINESS_LOG_MIN_GAP sec;
@@ -1623,10 +1623,8 @@ class FuelFilterDaemon:
             # 🔒 «1 VOB на 1H OB» на рівні відкриття — переживає рестарт.
             oe = st.get('opened_ob_epoch', {}) or {}
             if isinstance(oe, dict):
-                # ТАКТ = НАПРЯМОК 1H-OB ('LONG'/'SHORT'). Старий формат зберігав
-                # bar_time-int — такі записи ігноруємо (перший скан перевизначить).
                 self._opened_ob_epoch = {str(k).upper(): v for k, v in oe.items()
-                                         if v in ('LONG', 'SHORT')}
+                                         if isinstance(v, (int, float)) and v}
             if (self._fuel_managed or self._anomalies or self._engine_attempts
                     or self._timers or self._pending):
                 print(f"[FuelFilter] restored {len(self._pending)} queued "
@@ -5819,10 +5817,9 @@ class FuelFilterDaemon:
         return False
 
     def _ob_epoch_now(self, sym: str):
-        """ТАКТ поточного 1H-OB = його НАПРЯМОК ('LONG'/'SHORT') — те саме
-        джерело й та сама семантика, що у `smc_scanner._current_ob_state`:
-        одна ФАЗА напрямку 1H-OB = одна угода. Новий такт лише коли OB
-        ПЕРЕВЕРНУВСЯ. None → валідного OB немає (bias=None або рядка немає)."""
+        """bar_time поточного 1H-OB — ТЕ САМЕ ДЖЕРЕЛО, що й
+        `smc_scanner._current_ob_bartime`: sob_smc_ob_state на ob_filter_timeframe.
+        None → валідного OB немає (bias=None або рядка немає)."""
         try:
             from storage.db_operations import get_db
             ob_tf = '1h'
@@ -5833,8 +5830,7 @@ class FuelFilterDaemon:
             row = get_db().get_smc_ob_state(sym, ob_tf)
             if not row or row.get('bias') is None:
                 return None
-            _b = row.get('bias')
-            return 'LONG' if _b == 'BULLISH' else ('SHORT' if _b == 'BEARISH' else None)
+            return row.get('bar_time')
         except Exception:
             return None
 

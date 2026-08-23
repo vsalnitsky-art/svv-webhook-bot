@@ -822,21 +822,14 @@ class SMCScanner:
                     if _side_map:
                         _out[str(k).upper()] = _side_map
                 self._vob_alert_seen = _out
-            # epoch/fired — це ТАКТ = НАПРЯМОК 1H-OB ('LONG'/'SHORT'), а не число.
-            # (Старий формат зберігав bar_time-int — такі значення просто
-            #  ігноруємо: перший же скан перевизначить такт за напрямком.)
             for _key, _attr in (('epoch', '_vob_ob_epoch'),
-                                ('fired', '_vob_epoch_fired')):
+                                ('fired', '_vob_epoch_fired'),
+                                ('counter', '_vob_counter')):
                 _src = st.get(_key) or {}
                 if isinstance(_src, dict):
-                    setattr(self, _attr, {str(k).upper(): v
+                    setattr(self, _attr, {str(k).upper(): int(v)
                                           for k, v in _src.items()
-                                          if v in ('LONG', 'SHORT')})
-            _cnt = st.get('counter') or {}
-            if isinstance(_cnt, dict):
-                self._vob_counter = {str(k).upper(): int(v)
-                                     for k, v in _cnt.items()
-                                     if isinstance(v, (int, float))}
+                                          if isinstance(v, (int, float))})
             print(f"[SMC] Restored VOB state: {len(self._vob_ob_epoch)} epoch(s), "
                   f"{len(self._vob_epoch_fired)} fired, {len(self._vob_counter)} counter(s)")
         except Exception as e:
@@ -1936,18 +1929,14 @@ class SMCScanner:
                                             # боки, БУДЬ-ЯКИЙ вік — жодного не пропускаємо)
                                             # нумерується: **VOB #1 = СИГНАЛ**, #2,3,… — лише номер
                                             # (не сигнал). Без валідного 1H-OB — сигналу нема.
-                                            # 🎯 ТАКТ = НАПРЯМОК 1H-OB (не bar_time):
-                                            # одна ФАЗА напрямку = рівно ОДИН
-                                            # результативний VOB. Новий такт — лише
-                                            # коли 1H-OB ПЕРЕВЕРНУВСЯ.
-                                            _ob_dir, _ob_bt = self._current_ob_state(symbol)
-                                            if _ob_dir is None:
+                                            _ob_bt = self._current_ob_bartime(symbol)
+                                            if _ob_bt is None:
                                                 self._vob_log_decision(symbol, _cands[-1][0], 'no_1h_ob',
                                                                        vol_tf=vol_tf,
                                                                        num=self._vob_counter.get(symbol, 0))
                                             else:
                                                 if self._vob_epoch_reset_needed(
-                                                        self._vob_ob_epoch.get(symbol), _ob_dir):
+                                                        self._vob_ob_epoch.get(symbol), _ob_bt):
                                                     # СВІЖИЙ 1H-OB → обнуляємо лічильник і скидаємо
                                                     # наявні 5m-VOB (базуємо їх → #0, чекаємо новий).
                                                     self._vob_counter[symbol] = 0
@@ -1968,7 +1957,7 @@ class SMCScanner:
                                                         if self._vob_before_ob(_f0, _ob_bt):
                                                             self._vob_seen_add(_seen, _s0, _f0)
                                                     self._vob_alert_seen[symbol] = _seen
-                                                    self._vob_ob_epoch[symbol] = _ob_dir
+                                                    self._vob_ob_epoch[symbol] = _ob_bt
                                                     self._persist_vob_state()   # новий такт → зберегти
                                                 for _cside, _cand, _ft in _cands:   # старіші → новіші
                                                     _done = self._vob_seen_list(_seen, _cside)
@@ -1986,7 +1975,7 @@ class SMCScanner:
                                                                 f'лічильник VOB={_cn} на цьому 1H-OB · '
                                                                 + ('результативний сигнал уже був — чекаємо НОВИЙ 1H-OB'
                                                                    if self._vob_epoch_already_fired(
-                                                                       self._vob_epoch_fired.get(symbol), _ob_dir)
+                                                                       self._vob_epoch_fired.get(symbol), _ob_bt)
                                                                    else f'чекаємо НОВИЙ VOB #{_cn + 1} (кандидат у сигнал)')))
                                                         continue
                                                     # 🔢 НОВИЙ VOB → нумеруємо (жодного не пропускаємо)
@@ -1998,7 +1987,7 @@ class SMCScanner:
                                                     # відкриття. Якщо цей 1H-OB уже дав такий сигнал —
                                                     # решта VOB лише нумеруються (не сигнали).
                                                     if self._vob_epoch_already_fired(
-                                                            self._vob_epoch_fired.get(symbol), _ob_dir):
+                                                            self._vob_epoch_fired.get(symbol), _ob_bt):
                                                         self._vob_log_decision(
                                                             symbol, _cside, 'numbered', age=_age,
                                                             max_age=_max_age, ft=_ft, vol_tf=vol_tf, num=_n,
@@ -2018,7 +2007,7 @@ class SMCScanner:
                                                                  side=_cside, source='scanner')
                                                     if _vok:
                                                         # ✅ РЕЗУЛЬТАТИВНИЙ — такт 1H-OB витрачено.
-                                                        self._vob_epoch_fired[symbol] = _ob_dir
+                                                        self._vob_epoch_fired[symbol] = _ob_bt
                                                         self._persist_vob_state()   # переживе рестарт
                                                         self._vob_log_decision(
                                                             symbol, _cside, 'fired', age=_age,
@@ -2297,31 +2286,19 @@ class SMCScanner:
         except Exception:
             pass
     
-    def _current_ob_state(self, symbol: str):
-        """(напрямок, bar_time) поточного 1H-OB з `sob_smc_ob_state` на
-        `ob_filter_timeframe` — ОДНЕ читання БД для обох значень.
-
-        • напрямок ('LONG'/'SHORT') — це **ТАКТ** для `vob_one_per_ob`: один
-          результативний сигнал на одну ФАЗУ напрямку 1H-OB, новий такт лише
-          коли OB **перевернувся**;
-        • bar_time — потрібен ОКРЕМО, щоб на скиданні базувати тільки ті 5m-блоки,
-          які утворились ДО цього OB (`_vob_before_ob`).
-        (None, None) — валідного OB немає → сигналів не фаєримо."""
+    def _current_ob_bartime(self, symbol: str):
+        """bar_time поточного 1H-OB (з sob_smc_ob_state на ob_filter_timeframe) —
+        ідентифікатор «епохи» для `vob_one_per_ob`. None, коли валідного OB нема
+        (bias=None або рядка ще немає) → у цьому стані VOB не фаєримо (чекаємо OB)."""
         try:
             from storage.db_operations import get_db
             ob_tf = self._settings.get('ob_filter_timeframe', '1h')
             row = get_db().get_smc_ob_state(symbol, ob_tf)
             if not row or row.get('bias') is None:
-                return None, None
-            _bias = row.get('bias')
-            _dir = 'LONG' if _bias == 'BULLISH' else ('SHORT' if _bias == 'BEARISH' else None)
-            return _dir, row.get('bar_time')
+                return None
+            return row.get('bar_time')
         except Exception:
-            return None, None
-
-    def _current_ob_bartime(self, symbol: str):
-        """bar_time поточного 1H-OB (тонка обгортка над `_current_ob_state`)."""
-        return self._current_ob_state(symbol)[1]
+            return None
 
     @staticmethod
     def _vob_epoch_decision(seen, ob_bt):
