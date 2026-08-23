@@ -36,7 +36,10 @@ from typing import Dict, List, Optional
 
 
 # Defaults
-DEFAULT_INTERVAL_SECS = 60
+# Пауза МІЖ циклами. Сам цикл тепер швидкий (паралельний префетч),
+# тож тримаємо коротку паузу — щоб перевірка йшла майже безперервно
+# і жоден VOB не губився між проходами. Мінімум у валідації — 5с.
+DEFAULT_INTERVAL_SECS = 10
 DEFAULT_ALERT_MODE = 'choch'  # 'choch' or 'choch_bos'
 
 # Signal recency window (minutes). A CHoCH/BOS must be no older than this to
@@ -1193,7 +1196,16 @@ class SMCScanner:
             
             # Clamp interval
             try:
-                self._settings['interval_secs'] = max(30, min(600, int(self._settings.get('interval_secs', 60))))
+                # ⚡ ОДНОРАЗОВА МІГРАЦІЯ: у старих інсталяціях збережено 60с
+                # (тодішній дефолт), коли цикл був повільний. Тепер цикл швидкий
+                # (паралельний префетч), тож така пауза лише додає затримку
+                # сигналу. Переводимо на короткий інтервал ОДИН раз; після цього
+                # значення користувача поважається завжди.
+                if not self._settings.get('interval_migrated_v2'):
+                    if int(self._settings.get('interval_secs', 60) or 60) >= 60:
+                        self._settings['interval_secs'] = DEFAULT_INTERVAL_SECS
+                    self._settings['interval_migrated_v2'] = True
+                self._settings['interval_secs'] = max(5, min(600, int(self._settings.get('interval_secs', DEFAULT_INTERVAL_SECS))))
             except:
                 self._settings['interval_secs'] = DEFAULT_INTERVAL_SECS
             
@@ -1499,6 +1511,26 @@ class SMCScanner:
             if self._errors <= 5:
                 print(f"[SMC] liqmap register error: {e}")
 
+        # ⚡ ПАРАЛЕЛЬНИЙ ПРЕФЕТЧ БАРІВ — головний важіль швидкості циклу.
+        # Заміряно: мережа ≈53% часу циклу, бо на монету йде ~7 HTTP-запитів
+        # (3000 барів = 3 сторінки по 1000 на КОЖЕН TF). Обробка мусить лишатись
+        # ПОСЛІДОВНОЮ (спільний стан, сигнали, БД), а ось ЗАВАНТАЖЕННЯ — суто
+        # мережеве очікування, його безпечно робити паралельно: результат просто
+        # кладеться в кеш `self._prefetch`, який далі читає той самий цикл.
+        self._prefetch = {}
+        try:
+            _pf_specs = self._prefetch_specs()
+            if _pf_specs and len(self._watchlist) > 1:
+                _pf_t0 = time.time()
+                self._prefetch_klines(md, list(self._watchlist), _pf_specs)
+                _pf_el = time.time() - _pf_t0
+            else:
+                _pf_el = 0.0
+        except Exception as _pfe:
+            _pf_el = 0.0
+            if self._errors <= 5:
+                print(f"[SMC] prefetch error: {_pfe}")
+
         # ⏱ ПРОФІЛЮВАННЯ циклу: скільки часу з'їдає кожен етап на монету.
         # Мережа (пагінація 3000 барів = ~3 запити на TF) — головний підозрюваний;
         # без вимірів оптимізувати наосліп не можна.
@@ -1511,9 +1543,7 @@ class SMCScanner:
                 # Fetch klines at configured timeframe
                 tf = self.get_timeframe()
                 _t0 = time.time()
-                klines = md.fetch_klines(symbol, limit=KLINES_LIMIT, interval=tf) \
-                    if hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames \
-                    else md.fetch_klines(symbol, limit=KLINES_LIMIT)
+                klines = self._pf_klines(md, symbol, tf, KLINES_LIMIT)
                 _tm['main'] += time.time() - _t0
 
                 if not klines or len(klines) < 50:
@@ -1670,11 +1700,7 @@ class SMCScanner:
                             return _hit[1]
                     _tf_t0 = time.time()
                     try:
-                        if hasattr(md, 'fetch_klines') and \
-                           'interval' in md.fetch_klines.__code__.co_varnames:
-                            kl = md.fetch_klines(symbol, limit=3000, interval=tf)
-                        else:
-                            kl = md.fetch_klines(symbol, limit=3000)
+                        kl = self._pf_klines(md, symbol, tf, 3000)
                         _tm['tf'] += time.time() - _tf_t0
                         if not kl or len(kl) < 220:
                             tf_data[tf] = None
@@ -2086,8 +2112,11 @@ class SMCScanner:
                 # wicks that retract before close
                 self._process_alerts(symbol, result_closed)
                 
-                # 200ms between symbols to spread load
-                time.sleep(0.2)
+                # Пауза між монетами. З ПАРАЛЕЛЬНИМ ПРЕФЕТЧЕМ бари вже в
+                # пам'яті, тож у циклі майже немає мережі — тримати 200мс×N
+                # (напр. 6.6с на 33 монети) немає сенсу. Лишаємо мінімальну
+                # поступку планувальнику, щоб потік не монополізував CPU.
+                time.sleep(0.01)
             except Exception as e:
                 if self._errors <= 10:
                     print(f"[SMC] {symbol} scan error: {e}")
@@ -2110,7 +2139,7 @@ class SMCScanner:
         _el = time.time() - _scan_t0
         _n = max(1, len(self._watchlist))
         print(f"[SMC] Scan #{self._scan_count}: {len(self._watchlist)} symbols in "
-              f"{_el:.1f}s ({_el / _n:.1f}s/coin) — main {_tm['main']:.1f}s · "
+              f"{_el:.1f}s ({_el / _n:.1f}s/coin) — prefetch {_pf_el:.1f}s · main {_tm['main']:.1f}s · "
               f"tf {_tm['tf']:.1f}s · ob {_tm['ob']:.1f}s · vob {_tm['vob']:.1f}s, "
               f"errors={self._errors}")
     
@@ -2195,10 +2224,8 @@ class SMCScanner:
         # to work with on the rolling window.
         OB_KLINES_LIMIT = 700
         try:
-            if hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames:
-                klines = md.fetch_klines(symbol, limit=OB_KLINES_LIMIT, interval=ob_tf)
-            else:
-                klines = md.fetch_klines(symbol, limit=OB_KLINES_LIMIT)
+            # З паралельного префетчу (миттєво), інакше — звичайний запит.
+            klines = self._pf_klines(md, symbol, ob_tf, OB_KLINES_LIMIT)
         except Exception as e:
             # Network blip or rate-limit — don't crash, just skip this tick.
             return
@@ -2452,6 +2479,68 @@ class SMCScanner:
 
     # Скільки останніх formation_time тримаємо як «вже опрацьовані» на бік.
     VOB_SEEN_CAP = 12
+
+    # Скільки паралельних завантажень барів тримаємо. Це чисте мережеве
+    # очікування (GIL відпускається), тож пул дає майже лінійне прискорення.
+    # 8 — компроміс між швидкістю циклу і навантаженням на біржовий rate-limit.
+    PREFETCH_WORKERS = 8
+
+    def _prefetch_specs(self):
+        """(tf, limit) — які саме набори барів потрібні КОЖНІЙ монеті за цикл.
+        Рівно ті, що потім запитує сам скан: головний TF, Volumized TF, 1H для
+        OB-стану та TF PD-зони. Дублікати (той самий tf+limit) прибираємо."""
+        s = self._settings
+        specs = {(s.get('timeframe', '15m'), KLINES_LIMIT)}
+        if s.get('use_volumized_ob', True) or s.get('vob_alert_enabled', False):
+            specs.add((s.get('volumized_timeframe', '1h'), 3000))
+        specs.add((s.get('ob_filter_timeframe', '1h'), 700))
+        specs.add((s.get('pd_zone_timeframe', '1h'), 3000))
+        return [sp for sp in specs if sp[0]]
+
+    def _prefetch_klines(self, md, symbols, specs):
+        """Завантажує бари для (символ × spec) ПАРАЛЕЛЬНО в `self._prefetch`.
+        Помилка окремого запиту не валить цикл — просто не буде префетчу, і
+        скан довантажить сам (послідовно), як і раніше."""
+        if not md or not hasattr(md, 'fetch_klines'):
+            return
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+        except Exception:
+            return
+        _has_iv = 'interval' in md.fetch_klines.__code__.co_varnames
+
+        def _one(job):
+            sym, tf, lim = job
+            try:
+                kl = (md.fetch_klines(sym, limit=lim, interval=tf) if _has_iv
+                      else md.fetch_klines(sym, limit=lim))
+                if kl:
+                    self._prefetch[(sym, tf, lim)] = kl
+            except Exception:
+                pass
+
+        jobs = [(sym, tf, lim) for sym in symbols for (tf, lim) in specs]
+        if not jobs:
+            return
+        workers = max(2, min(self.PREFETCH_WORKERS, len(jobs)))
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix='smc-pf') as ex:
+            list(ex.map(_one, jobs))
+
+    def _pf_klines(self, md, symbol, tf, limit):
+        """Бари з префетчу (миттєво) або, якщо їх там немає, звичайний запит.
+        ЄДИНА точка отримання барів у скані — щоб префетч не розходився з тим,
+        що реально використовується."""
+        kl = (self._prefetch or {}).pop((symbol, tf, limit), None)
+        if kl:
+            return kl
+        try:
+            if hasattr(md, 'fetch_klines') and \
+               'interval' in md.fetch_klines.__code__.co_varnames:
+                return md.fetch_klines(symbol, limit=limit, interval=tf)
+            return md.fetch_klines(symbol, limit=limit)
+        except Exception:
+            return None
 
     @staticmethod
     def _vob_before_ob(ft, ob_bt):
