@@ -5374,11 +5374,22 @@ class FuelFilterDaemon:
                     except Exception:
                         pass
                 if tg_on and (now - self._layer_alert_at.get(sym, 0)) >= cool:
+                    # 🎯 TG-сигнал — ЛИШЕ коли зійшлося ≥ `layer_tg_min` шарів
+                    # (задокументована вимога). РАНІШЕ `need` рахувався, але НЕ
+                    # застосовувався → алерт летів на КОЖЕН новий VOB, а
+                    # налаштування «скільки з 5» було мертвим кодом.
                     try:
-                        self._send_layer_alert(sym, a, d, mode='signal')
+                        _lay_tg = self._funding_layers(sym, a) or {}
+                        _base_tg = int(_lay_tg.get('base') or 0)
                     except Exception as e:
-                        print(f"[FF-Layer] alert send error {sym}: {e}")
-                    self._layer_alert_at[sym] = now
+                        print(f"[FF-Layer] layers error {sym}: {e}")
+                        _base_tg = 0
+                    if _base_tg >= need:
+                        try:
+                            self._send_layer_alert(sym, a, d, mode='signal')
+                        except Exception as e:
+                            print(f"[FF-Layer] alert send error {sym}: {e}")
+                        self._layer_alert_at[sym] = now
         for k in list(self._vob_state.keys()):
             if k not in live:
                 self._vob_state.pop(k, None)
@@ -5728,8 +5739,17 @@ class FuelFilterDaemon:
             fo = self._fuel_dir_legacy(sym) or {}
             od = fo.get('status'); os_ = int(fo.get('strength') or 0)
             if _old_mode == 'require':
-                _old_ok = (od == side and os_ >= mmo_min)
-                _old_detail = f"{od or '—'} {os_}%"
+                # Поріг «рівновага» (0) — ТА САМА логіка, що й у «Новий МММ»:
+                # зараховуємо, якщо МММ НЕ ПРОТИ (нейтраль АБО в бік); блок лише
+                # коли явно ПРОТИ. Бо при слабкій силі статусу напрямку немає, і
+                # суворе `od == side` при «рівновага» не збиралося НІКОЛИ.
+                if mmo_min <= 0:
+                    _old_ok = (od != opp)
+                    _old_detail = (f"{od or 'рівновага'} {os_}% "
+                                   + ('⛔ проти' if od == opp else '✓ не проти'))
+                else:
+                    _old_ok = (od == side and os_ >= mmo_min)
+                    _old_detail = f"{od or '—'} {os_}%"
             elif _old_mode == 'contra_ok':
                 _against = (od == opp and os_ >= mmo_min)
                 _old_ok = (not _against)

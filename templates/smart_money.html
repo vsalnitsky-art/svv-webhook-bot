@@ -2026,7 +2026,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <div class="sm-watchlist">
             <div class="sm-wl-header">
                 <span>WATCHLIST</span>
-                <span id="sm-wl-count" style="color:#666;font-size:0.7rem;font-weight:normal">0 / 100</span>
+                <span style="display:flex;align-items:center;gap:6px">
+                    <!-- ⇅ Сортування списку за алфавітом. Це ЛИШЕ порядок показу —
+                         сам watchlist на сервері не змінюється. Стан кнопки
+                         запам'ятовується (це UI-налаштування, не дані). -->
+                    <button id="sm-wl-sort-btn" onclick="toggleWlSort()"
+                            title="Сортувати список за алфавітом (A→Z). Повторний клік — початковий порядок."
+                            style="background:transparent;border:1px solid #3a3f4b;color:#8b93a7;
+                                   border-radius:4px;padding:1px 6px;font-size:0.65rem;
+                                   cursor:pointer;line-height:1.4">⇅ A-Z</button>
+                    <span id="sm-wl-count" style="color:#666;font-size:0.7rem;font-weight:normal">0 / 100</span>
+                </span>
             </div>
             <div class="sm-add-form">
                 <input type="text" id="sm-add-input" placeholder="BTC, ETH..." onkeypress="if(event.key==='Enter')addSymbol()">
@@ -4485,10 +4495,37 @@ let wlVobAlertEnabled = false;
 let wlDedupEnabled = true;
 let wlDedupState = {};
 
+// ⇅ Сортування watchlist за алфавітом — ЛИШЕ порядок показу (серверний список
+// не змінюється). Стан кнопки — UI-налаштування, тому зберігати його безпечно.
+let wlSortAlpha = (() => {
+    try { return localStorage.getItem('wlSortAlpha') === '1'; } catch (e) { return false; }
+})();
+
+function toggleWlSort() {
+    wlSortAlpha = !wlSortAlpha;
+    try { localStorage.setItem('wlSortAlpha', wlSortAlpha ? '1' : '0'); } catch (e) {}
+    _wlSyncSortBtn();
+    renderWatchlist(wlSymbols || []);
+}
+
+function _wlSyncSortBtn() {
+    const b = document.getElementById('sm-wl-sort-btn');
+    if (!b) return;
+    b.textContent = wlSortAlpha ? '⇅ A-Z ✓' : '⇅ A-Z';
+    b.style.color = wlSortAlpha ? '#86efac' : '#8b93a7';
+    b.style.borderColor = wlSortAlpha ? 'rgba(34,197,94,0.45)' : '#3a3f4b';
+    b.style.background = wlSortAlpha ? 'rgba(34,197,94,0.10)' : 'transparent';
+}
+
 function renderWatchlist(list) {
     wlSymbols = list.slice();   // stash for filter-consensus (bias board)
     const el = document.getElementById('sm-wl-list');
     document.getElementById('sm-wl-count').textContent = `${list.length} / 100`;
+    _wlSyncSortBtn();
+    if (wlSortAlpha) {
+        // Сортуємо КОПІЮ (wlSymbols лишається у серверному порядку).
+        list = list.slice().sort((a, b) => String(a).localeCompare(String(b)));
+    }
     
     if (list.length === 0) {
         el.innerHTML = '<div style="text-align:center;color:#555;font-size:0.75rem;padding:20px">No symbols yet</div>';

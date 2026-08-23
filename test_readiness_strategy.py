@@ -364,18 +364,18 @@ def test_layer_alert_vob_confirms_and_dedups():
     ff, db = _ff()
     db.set_setting('fuel_filter_settings', dict(
         db.get_setting('fuel_filter_settings'),
-        layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=0,
+        layer_tg_on=True, funding_route_q4=False, layer_tg_min=5, layer_tg_cooldown_min=0,
         queue3_vob_open=False))
     sym = 'ENAUSDT'
     ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0}}
     ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
-    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 1.2, 'bottom': 1.1, 'breaker': False}
+    ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 1.2, 'bottom': 1.1, 'breaker': False}
     ff.sent = []
     ff._send_layer_alert = lambda sym, a, d, sl=None, mode='signal': ff.sent.append((sym, mode))
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     ff._layer_signal_alert(ff.get_settings(), 2_000_010.0)   # same OB → no re-send
     assert len(ff.sent) == 1, ff.sent
-    ff._funding_vob = lambda sym, d: {'formation_time': 222, 'top': 1.3, 'bottom': 1.2, 'breaker': False}
+    ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 222, 'top': 1.3, 'bottom': 1.2, 'breaker': False}
     ff._layer_signal_alert(ff.get_settings(), 2_000_020.0)   # NEW OB → new alert
     assert len(ff.sent) == 2, ff.sent
     print('✓ layer TG: спрацьовує на НОВИЙ Volumized OB (1m), не дублює той самий')
@@ -385,14 +385,14 @@ def test_layer_alert_needs_all_layers():
     ff, db = _ff()
     db.set_setting('fuel_filter_settings', dict(
         db.get_setting('fuel_filter_settings'),
-        layer_tg_on=True, layer_tg_min=5, layer_tg_cooldown_min=0,
+        layer_tg_on=True, funding_route_q4=False, layer_tg_min=5, layer_tg_cooldown_min=0,
         queue3_vob_open=False))
     sym = 'ENAUSDT'
     ff._anomalies = {sym: {'dir': 'LONG'}}
     ff._funding_layers = lambda s, a: {'base': 4, 'base4': 4, 'count': 4, 'layers': []}  # 5 з 5 не всі
     ff.sent = []
     ff._send_layer_alert = lambda *a, **k: ff.sent.append(1)
-    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 1, 'bottom': 1, 'breaker': False}
+    ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 1, 'bottom': 1, 'breaker': False}
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.sent == [], 'без усіх 5 шарів — новий VOB не дає сигналу'
     print('✓ layer TG: новий VOB дає сигнал лише ПІСЛЯ зходження всіх 5 шарів')
@@ -434,7 +434,7 @@ def test_vob_open_opens_and_sets_sl():
     tm = _FakeTM(); _wire_vob(ff, tm)
     ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
     # bullish OB: bottom=98, top=99 → LONG SL = 98 * (1 - 0.001) = 97.902
-    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.opened == [(sym, 'LONG', 'Q3-VOB(funding)')], ff.opened
     assert tm.sl_calls and abs(tm.sl_calls[-1][1] - 97.902) < 1e-6, tm.sl_calls
@@ -453,7 +453,7 @@ def test_vob_open_short_sl_above_block():
     tm = _FakeTM(); _wire_vob(ff, tm)
     ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
     # bearish OB: top=51, bottom=50 → SHORT SL = 51 * (1 + 0.001) = 51.051
-    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 51.0, 'bottom': 50.0, 'breaker': False}
+    ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 51.0, 'bottom': 50.0, 'breaker': False}
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.opened == [(sym, 'SHORT', 'Q3-VOB(funding)')], ff.opened
     assert abs(tm.sl_calls[-1][1] - 51.051) < 1e-6, tm.sl_calls
@@ -469,11 +469,11 @@ def test_vob_open_retrigger_moves_sl_no_reopen():
     ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0, 'last_price': 100.0}}
     tm = _FakeTM(); _wire_vob(ff, tm)
     ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
-    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)     # 1) відкрили
     ff.opened = []
     # НОВИЙ OB (інший ft) по вже відкритій монеті → лише пересунути SL.
-    ff._funding_vob = lambda sym, d: {'formation_time': 222, 'top': 99.5, 'bottom': 98.5, 'breaker': False}
+    ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 222, 'top': 99.5, 'bottom': 98.5, 'breaker': False}
     ff._layer_signal_alert(ff.get_settings(), 2_000_050.0)
     assert ff.opened == [], 'повторний VOB НЕ відкриває нову угоду'
     assert ff._vob_trade[sym]['ftime'] == 222
@@ -490,7 +490,7 @@ def test_vob_open_disabled():
     ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0, 'last_price': 100.0}}
     tm = _FakeTM(); _wire_vob(ff, tm)
     ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
-    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.opened == [] and not tm.sl_calls, 'вимкнено → нічого не відкриваємо'
     print('✓ VOB-open: вимкнено (queue3_vob_open=False) → жодних дій')
@@ -505,7 +505,7 @@ def test_vob_open_needs_all_five_layers():
     ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0, 'last_price': 100.0}}
     tm = _FakeTM(); _wire_vob(ff, tm)
     ff._funding_layers = lambda s, a: {'base': 4, 'base4': 4, 'count': 4, 'layers': []}  # не всі 5
-    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.opened == [], 'без усіх 5 шарів VOB-угоду не відкриваємо'
     print('✓ VOB-open: нова угода лише коли всі 5 шарів зійшлись')
@@ -521,14 +521,14 @@ def test_vob_open_blocked_against_overall_trend():
     ff._anomalies = {sym: {'dir': 'LONG', 'rate': -1.0, 'last_price': 100.0}}
     tm = _FakeTM(); _wire_vob(ff, tm)
     ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
-    ff._funding_vob = lambda sym, d: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
     # ЗАГАЛЬНИЙ тренд ВНИЗ → LONG проти нього → НЕ відкриваємо.
     ff._funding_price = {sym: {'dir': 'up', 'chg': 1.0, 'dir_overall': 'down', 'chg_overall': -5.0}}
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.opened == [], 'LONG проти загального тренду ↓ — не відкриваємо'
     # Загальний тренд ВГОРУ → LONG у бік → відкриваємо.
     ff._funding_price = {sym: {'dir': 'up', 'chg': 1.0, 'dir_overall': 'up', 'chg_overall': 5.0}}
-    ff._funding_vob = lambda sym, d: {'formation_time': 222, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 222, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
     ff._layer_signal_alert(ff.get_settings(), 2_000_100.0)
     assert ff.opened == [(sym, 'LONG', 'Q3-VOB(funding)')], ff.opened
     print('✓ VOB-open: ворота «проти загального тренду» блокують контртренд, пропускають у бік')
