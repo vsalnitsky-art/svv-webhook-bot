@@ -298,6 +298,13 @@ DEFAULT_SETTINGS = {
     #    рухи). Це ЄДИНИЙ запобіжник Q4 (решта safeguard-ів у Q4 вимкнені).
     'queue4_exhaustion_on': True,
     'queue4_exhaustion_pct': 95,
+    # 🔁 ПОВТОРНА ПЕРЕВІРКА ФІЛЬТРІВ НА ВИХОДІ З ЧЕРГИ-4 (дефолт УВІМК).
+    #    Монета могла простояти в черзі годинами — за цей час 1H-OB/прогноз/
+    #    Decision могли змінитись. Перед ВІДКРИТТЯМ ще раз проганяємо ТОЙ САМИЙ
+    #    ланцюг фільтрів сканера, що пускав її в чергу (`_signal_allowed`,
+    #    строго). Не пройшла — НЕ відкриваємо, монета лишається в черзі й
+    #    спробує на наступному тіку (доки не викине TTL/застій).
+    'queue4_recheck_filters': True,
     # ── Queue 2 eject rules (its own settings accordion in the UI) ──
     #   queue2_eject_ctr      — drop a QUEUED coin when the CTR lean turns to the
     #     OPPOSITE side by at least queue2_eject_ctr_pct % (|STC−50|/50·100).
@@ -927,6 +934,7 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             s['queue4_entry_min_layers'] = 1
         try:
+            s['queue4_recheck_filters'] = bool(s.get('queue4_recheck_filters', True))
             s['queue4_no_light_min'] = max(0, min(1440, int(s.get('queue4_no_light_min', 30) or 0)))
         except (TypeError, ValueError):
             s['queue4_no_light_min'] = 30
@@ -5870,6 +5878,37 @@ class FuelFilterDaemon:
             except Exception:
                 pass
 
+    def _q4_recheck_filters(self, sym: str, side: str):
+        """🔁 Повторний прогін СКАНЕРНОГО ланцюга фільтрів перед відкриттям із
+        Черги-4 (той самий `_signal_allowed`, що пускав монету в чергу).
+
+        Навіщо: монета може стояти в черзі годинами (TTL до 15+ год). За цей час
+        1H-OB може перевернутись, прогноз 1H/4H — змінитись, Decision — дати
+        протилежний вердикт. Відкривати за застарілим дозволом непрофесійно.
+
+        Перевірка СТРОГА (`at_intake=False`): на інтейку дозволялось «чекати
+        вердикт», а на ВІДКРИТТІ потрібен фактичний дозвіл.
+        Повертає (ok, причина). Якщо сканера немає — (True, '') (не блокуємо)."""
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            scanner = getattr(tm, 'scanner', None) if tm else None
+            if scanner is None or not hasattr(scanner, '_signal_allowed'):
+                return True, ''
+            res = scanner._signal_allowed(sym, side, at_intake=False)
+            if isinstance(res, tuple):
+                ok = bool(res[0])
+                reason = str(res[1]) if len(res) > 1 and res[1] else 'фільтр'
+                detail = str(res[2]) if len(res) > 2 and res[2] else ''
+            else:
+                ok, reason, detail = bool(res), 'фільтр', ''
+            if ok:
+                return True, ''
+            return False, (f'{reason} · {detail}' if detail else reason)
+        except Exception as e:
+            # Помилка перевірки НЕ повинна блокувати торгівлю — пропускаємо.
+            print(f"[FF-Q4] recheck error {sym}: {e}")
+            return True, ''
+
     def _engine_tick_queue4(self):
         """🎯 Черга-4 «Усі шари» — відкриває угоду, коли ВСІ 4 шари збіглись за
         напрямком сигналу. Приймає всі сигнали (обидва боки), НЕ фільтрує кнопками
@@ -5996,6 +6035,19 @@ class FuelFilterDaemon:
                     log_activity(sym, 'skipped',
                                  f'Черга-4: хід виснажений {_exh:.0f}%>{_exh_max:.0f}% — '
                                  'відкриття скасовано', side=_open_dir, source='Q4')
+                    continue
+            # 🔁 ПОВТОРНА ПЕРЕВІРКА ФІЛЬТРІВ (queue4_recheck_filters, деф. ON):
+            # монета могла чекати в черзі годинами — за цей час OB/прогноз/
+            # Decision могли перевернутись. Проганяємо ТОЙ САМИЙ ланцюг, що
+            # пускав її в чергу, але СТРОГО (at_intake=False). Не пройшла —
+            # НЕ відкриваємо; лишається в черзі до наступного тіку.
+            if s.get('queue4_recheck_filters', True):
+                _rc_ok, _rc_reason = self._q4_recheck_filters(sym, _open_dir)
+                if not _rc_ok:
+                    log_activity(sym, 'skipped',
+                                 f'Черга-4 🔁 повторна перевірка фільтрів не пройдена: '
+                                 f'{_rc_reason} — відкриття відкладено',
+                                 side=_open_dir, source='Q4')
                     continue
             try:
                 _flip = '' if _open_dir == d else f' (ФЛІП: сигнал був {d}, показники — {_open_dir})'

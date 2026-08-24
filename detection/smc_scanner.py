@@ -2647,19 +2647,54 @@ class SMCScanner:
 
     def _vob_log_decision(self, symbol, side, outcome, *, age=None, max_age=None,
                           ft=None, vol_tf='', detail='', num=None, log_it=False):
-        """Оновлює in-memory діагностику VOB (`self._vob_diag[symbol]`) — СТРУКТУРО-
-        ВАНЕ джерело «стан VOB по монеті» для get_state/UI. У 🧾 Лог роботи бота
-        НЕ пише (щоб не засмічувати): у лог ідуть ЛИШЕ реальні сигнали (fired) та
-        їх вердикт фільтрів (rejected) з основного шляху. Тут — лише статус для UI:
-        outcome ∈ fired/filtered/stale/duplicate/first_sight/no_candidate/epoch.
-        `log_it` лишено для сумісності викликів, але навмисно ІГНОРУЄТЬСЯ."""
+        """Оновлює діагностику VOB (`self._vob_diag[symbol]`, для get_state/UI) І
+        пише подію в 🧾 Лог роботи бота.
+
+        ВИМОГА КОРИСТУВАЧА: **жоден VOB не має бути мовчки проігнорований** — у
+        лозі мусить бути інформація про КОЖЕН блок і його вердикт
+        (fired/filtered/numbered/duplicate/stale/first_sight/no_1h_ob/no_candidate).
+
+        Анти-флуд (щоб лог лишався читабельним, а не 57 однакових рядків щоциклу):
+        пишемо ЛИШЕ коли стан РЕАЛЬНО змінився — тобто змінилась хоч одна з ознак
+        (outcome, formation_time, бік, номер). Той самий блок у тому самому стані
+        повторно НЕ дублюється. `log_it` лишено для сумісності викликів."""
         try:
             rec = {'ts': time.time(), 'side': side, 'outcome': outcome,
                    'label': self._VOB_OUTCOME_LABELS.get(outcome, outcome),
                    'age': age, 'max_age': max_age, 'ft': ft,
                    'tf': vol_tf, 'detail': detail, 'num': num}
             with self._lock:
+                _prev = self._vob_diag.get(symbol) or {}
                 self._vob_diag[symbol] = rec
+            # Ключ стану: якщо не змінився — не дублюємо рядок у лозі.
+            _key = (outcome, ft, side, num)
+            _prev_key = (_prev.get('outcome'), _prev.get('ft'),
+                         _prev.get('side'), _prev.get('num'))
+            if _key == _prev_key:
+                return
+        except Exception:
+            return
+        # 'fired'/'filtered' основний шлях уже пише власні рядки `signal`/`rejected`
+        # з повним розкладом фільтрів — тут їх не дублюємо.
+        if outcome in ('fired', 'filtered'):
+            return
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            return
+        _lbl = self._VOB_OUTCOME_LABELS.get(outcome, outcome)
+        _bits = [f'{_lbl} ({vol_tf})' + (f' {side}' if side else '')]
+        if num is not None:
+            _bits.append(f'VOB #{num}')
+        if age is not None:
+            _bits.append(f'вік {age}' + (f'/{max_age}' if max_age else '') + ' барів')
+        if ft:
+            _bits.append(f'ft={ft}')
+        if detail:
+            _bits.append(detail)
+        try:
+            log_activity(symbol, 'skipped', ' · '.join(_bits),
+                         side=side, source='VOB')
         except Exception:
             pass
 

@@ -2740,6 +2740,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="ff-queue4-runway" onchange="saveFuelFilterSettings()" title="Вимагати напрямок Запасу у бік сигналу"> у бік
                     </label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Протермінувати запис Черги-4 через N год, якщо не відкрилась. 0 = без ліміту.">TTL <input type="number" id="ff-queue4-ttl" min="0" max="72" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> год</label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="🔁 Перед ВІДКРИТТЯМ ще раз проганяємо монету через ТОЙ САМИЙ ланцюг фільтрів сканера (OB Match / Forecast 1H+4H / Decision / POC / PD), який пускав її в Чергу-4. Монета могла простояти в черзі годинами — за цей час OB чи прогноз могли перевернутись. Не пройшла повторну перевірку → НЕ відкриваємо, лишається в черзі до наступного тіку. За замовч. УВІМК."><input type="checkbox" id="ff-queue4-recheck" onchange="saveFuelFilterSettings()"> 🔁 Повторна перевірка фільтрів на виході</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Не відкривати угоду, якщо хід уже виснажений понад поріг. Єдиний запобіжник Черги-4.">
                         <input type="checkbox" id="ff-queue4-exh-on" onchange="saveFuelFilterSettings()"> 🔥 Виснаженість ≤ <input type="number" id="ff-queue4-exh-pct" min="1" max="100" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> %</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="🚧 Фільтр ВХОДУ: перед допуском сигналу дочекатись ПОВНОГО визначення шарів і порахувати, скільки ПОКАЗНИКІВ реально дивляться в бік сигналу (сирий напрямок Новий/Старий МММ/Готовність/Запас — БЕЗ порогів сили й БЕЗ авто-ok «ігнору»). Якщо менше за поріг — сигнал у Чергу-4 НЕ пускати взагалі (і викидати, якщо після визначення не дотягнув). Поки шари ще рахуються — сигнал чекає, не ріжеться. За замовч.: увімкнено, ≥1 (має бути хоча б один показник у бік; інакше сенсу додавати немає).">
@@ -10496,6 +10497,7 @@ function renderFuelFilter(d) {
     setIf('ff-queue4-runway', s.queue4_require_runway !== false);
     setIf('ff-queue4-ttl', String(s.queue4_ttl_hours != null ? s.queue4_ttl_hours : 3));
     setIf('ff-queue4-exh-on', s.queue4_exhaustion_on !== false);
+    setIf('ff-queue4-recheck', s.queue4_recheck_filters !== false);   // деф. ON
     setIf('ff-queue4-exh-pct', String(s.queue4_exhaustion_pct != null ? s.queue4_exhaustion_pct : 95));
     _ffApplyQ4Cols();   // синхронізувати видимість колонок Черги-4 з тумблерами
     setIf('ff-queue3-vob-open', s.queue3_vob_open !== false);       // default true
@@ -11499,6 +11501,7 @@ async function saveFuelFilterSettings() {
         queue4_require_runway: _c('ff-queue4-runway'),
         queue4_ttl_hours: parseFloat(_v('ff-queue4-ttl', '3') || '3'),
         queue4_exhaustion_on: _c('ff-queue4-exh-on'),
+        queue4_recheck_filters: _c('ff-queue4-recheck'),
         queue4_exhaustion_pct: parseInt(_v('ff-queue4-exh-pct', '95') || '95', 10),
         queue3_vob_open: _c('ff-queue3-vob-open'),
         queue3_vob_sl_buffer_pct: parseFloat(_v('ff-queue3-vob-buffer', '0.10') || '0.10'),

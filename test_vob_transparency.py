@@ -82,15 +82,37 @@ def _mk():
     return obj
 
 
-def test_log_decision_never_writes_activity_log():
+def test_log_decision_logs_every_vob_without_duplicates():
+    """ВИМОГА: жоден VOB не мовчить — кожен стан потрапляє в 🧾 Лог роботи бота.
+    Але той САМИЙ стан повторно НЕ дублюється (інакше лог засмічується щоциклу).
+    fired/filtered не дублюємо: основний шлях уже пише `signal`/`rejected`."""
     _LOGS.clear()
     o = _mk()
-    for oc in ('stale', 'first_sight', 'epoch', 'duplicate', 'no_candidate',
-               'fired', 'filtered'):
+    # Кожен «тихий» стан МУСИТЬ дати рядок у лозі
+    for oc in ('stale', 'first_sight', 'epoch', 'duplicate',
+               'no_candidate', 'no_1h_ob', 'numbered'):
         o._vob_log_decision('BTCUSDT', 'SHORT', oc, age=5, max_age=7, ft=1,
-                            vol_tf='5m', detail='x', log_it=True)  # log_it ІГНОРУЄТЬСЯ
-    _check(len(_LOGS) == 0, 'логер VOB НЕ пише в activity_log (лог чистий)')
-    print('✓ логер нічого не ліпить у лог (усе — лише в діагностику)')
+                            vol_tf='5m', detail='x', num=2)
+    _check(len(_LOGS) == 7, f'кожен стан залоговано (маємо {len(_LOGS)})')
+    _check(all(k.get('source') == 'VOB' for _a, k in _LOGS), 'source=VOB')
+
+    # Повтор ТОГО САМОГО стану — БЕЗ нового рядка
+    n = len(_LOGS)
+    o._vob_log_decision('BTCUSDT', 'SHORT', 'numbered', age=5, max_age=7, ft=1,
+                        vol_tf='5m', detail='x', num=2)
+    _check(len(_LOGS) == n, 'той самий стан не дублюється')
+
+    # Змінився номер → це нова подія, пишемо
+    o._vob_log_decision('BTCUSDT', 'SHORT', 'numbered', age=5, max_age=7, ft=1,
+                        vol_tf='5m', detail='x', num=3)
+    _check(len(_LOGS) == n + 1, 'зміна номера → новий рядок')
+
+    # fired/filtered не дублюємо (їх пише основний шлях)
+    n2 = len(_LOGS)
+    o._vob_log_decision('BTCUSDT', 'SHORT', 'fired', ft=9, vol_tf='5m', num=1)
+    o._vob_log_decision('BTCUSDT', 'SHORT', 'filtered', ft=10, vol_tf='5m', num=2)
+    _check(len(_LOGS) == n2, 'fired/filtered не дублюються в лозі')
+    print('✓ у лог іде КОЖЕН VOB-стан, без повторів; fired/filtered без дублів')
 
 
 def test_log_decision_updates_diag():
@@ -352,7 +374,7 @@ if __name__ == '__main__':
     test_edge_outcome_fresh_first_sight_fires()
     test_edge_outcome_running()
     test_no_age_gate_default_fires_any_new_vob()
-    test_log_decision_never_writes_activity_log()
+    test_log_decision_logs_every_vob_without_duplicates()
     test_log_decision_updates_diag()
     test_pick_candidates_both_sides()
     test_pick_candidates_skips_breaker_and_invalid()
