@@ -64,14 +64,32 @@ def test_edge_outcome_running():
     print('✓ у процесі роботи: duplicate/fresh/stale — коректно')
 
 
-def test_no_age_gate_default_fires_any_new_vob():
-    # ДЕФОЛТ vob_alert_max_age_bars=0 → _max_age=None → БЕЗ вікна свіжості:
-    # блок будь-якого віку, що новий (edge за ft), фаєрить → «блок на графіку = сигнал».
+def test_signal_only_at_moment_of_appearance():
+    """⏱ ВИМОГА КОРИСТУВАЧА: сигнал = МОМЕНТ ПОЯВИ блоку.
+
+    «З'явився на графіку VOB — ми його опрацювали і все, більше до нього не
+    повертаємось. Блок, що утворився пів дня тому, ми лише БАЧИМО на графіку;
+    сигналом він був тоді, а не тепер» (кейс SUIUSDT: блок утв. 03:55 НЕ має
+    фаєрити о 14:18 — це 125 барів = 10.4 год).
+
+    Дефолт вікна: `swing_length + 2` (при swing=5 → 7 барів ≈ 35 хв на 5m),
+    бо свінг-OB стає видимим лише через ~swing_length барів після своєї свічки."""
     f = SC._vob_edge_outcome
-    _check(f(None, 200, 9999, None) == 'fresh', 'перший показ, будь-який вік, БЕЗ вікна → fresh')
-    _check(f(100, 200, 9999, None) == 'fresh', 'новий ft, будь-який вік, БЕЗ вікна → fresh (не stale)')
-    _check(f(100, 100, 9999, None) == 'duplicate', 'той самий ft → duplicate (fire раз)')
-    print('✓ БЕЗ вікна свіжості (деф.): будь-який НОВИЙ VOB фаєрить, старий блок теж')
+    _sl, _win = 5, 5 + 2          # як рахує скан при vob_alert_max_age_bars=0
+
+    # Щойно зʼявився (вік у межах вікна) → СИГНАЛ
+    _check(f(None, 200, _sl, _win) == 'fresh', 'блок щойно став видимим → сигнал')
+    _check(f(100, 200, _win, _win) == 'fresh', 'вік рівно на порозі → ще сигнал')
+
+    # Старий блок → НЕ сигнал (кейс SUIUSDT)
+    _check(f(100, 200, 125, _win) == 'stale',
+           'блок віком 125 барів (10.4 год) → НЕ сигнал, лише видно на графіку')
+    _check(f(None, 200, 125, _win) == 'first_sight',
+           'старий блок на першому показі → тиха база, не сигнал')
+
+    # Вікно можна вимкнути явно (max_age=None) — тоді вік не важливий
+    _check(f(100, 200, 9999, None) == 'fresh', 'явно без вікна → вік ігнорується')
+    print('✓ сигнал лише в момент появи; старий блок — не сигнал')
 
 
 # ── 2. Логер НЕ засмічує лог; усе — лише в діагностику для UI ────────────────
@@ -113,6 +131,23 @@ def test_log_decision_logs_every_vob_without_duplicates():
     o._vob_log_decision('BTCUSDT', 'SHORT', 'filtered', ft=10, vol_tf='5m', num=2)
     _check(len(_LOGS) == n2, 'fired/filtered не дублюються в лозі')
     print('✓ у лог іде КОЖЕН VOB-стан, без повторів; fired/filtered без дублів')
+
+
+def test_age_label_is_honest_and_human():
+    """Лог не має брехати: блок віком 125 барів — це НЕ «свіжий». Пишемо вік у
+    барах + у годинах/хвилинах + ЧАС ФОРМУВАННЯ, щоб рядок можна було звірити
+    з боксом на графіку очима (раніше був голий ft=1787536500000)."""
+    f = SC._vob_age_label
+    out = f(1787536500000, 125, '5m')      # реальний кейс SUIUSDT із логу
+    _check('125 барів' in out, 'вік у барах')
+    _check('10.4 год' in out, f'переведено в години (маємо: {out})')
+    _check('24.08 01:55 UTC' in out, f'час формування читабельний (маємо: {out})')
+    _check('ft=' not in out, 'голої епохи в рядку більше немає')
+
+    _check('~5 хв' in f(1787571000000, 1, '5m'), 'малий вік — у хвилинах')
+    _check(f(None, None, '5m') == '', 'немає даних → порожньо (нічого не вигадуємо)')
+    _check('вік 3 барів' in f(0, 3, '1h'), 'без ft — лишається сам вік')
+    print('✓ підпис блоку чесний: вік у барах/годинах + час формування')
 
 
 def test_log_decision_updates_diag():
@@ -406,8 +441,9 @@ def test_vob_state_persist_roundtrip():
 if __name__ == '__main__':
     test_edge_outcome_fresh_first_sight_fires()
     test_edge_outcome_running()
-    test_no_age_gate_default_fires_any_new_vob()
+    test_signal_only_at_moment_of_appearance()
     test_log_decision_logs_every_vob_without_duplicates()
+    test_age_label_is_honest_and_human()
     test_log_decision_updates_diag()
     test_chart_candidate_is_the_drawn_block_only()
     test_pick_candidates_both_sides()

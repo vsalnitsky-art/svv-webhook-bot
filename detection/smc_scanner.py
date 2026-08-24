@@ -1912,13 +1912,16 @@ class SMCScanner:
                                             self._vob_alert_seen[symbol] = _seen
                                         _sl = int(self._settings.get('volumized_swing_length', 10) or 10)
                                         _cfg_age = int(self._settings.get('vob_alert_max_age_bars', 0) or 0)
-                                        # ⚡ ДЕФОЛТ (0) = БЕЗ ліміту віку: фаєримо на КОЖЕН новий
-                                        # VOB (edge за formation_time) НЕЗАЛЕЖНО від того, скільки
-                                        # блок «висить» на графіку. Тобто «блок на графіку = сигнал».
-                                        # Раніше 0=авто(swing+2≈7 барів≈35хв) тихо різало будь-який
-                                        # блок, старший за вікно (кейс ETH LONG). Хочеш вузьке вікно
-                                        # — постав vob_alert_max_age_bars > 0.
-                                        _max_age = _cfg_age if _cfg_age > 0 else None
+                                        # ⏱ ВІКНО СВІЖОСТІ (вимога користувача): сигнал = МОМЕНТ
+                                        # ПОЯВИ блоку. Блок, що утворився пів дня тому, ми лише
+                                        # БАЧИМО на графіку — сигналом він був тоді, а не тепер.
+                                        # Дефолт (0) = авто `swing_length + 2` (при swing=5 це
+                                        # 7 барів ≈ 35 хв на 5m): свінг-OB стає видимим лише через
+                                        # ~swing_length барів після своєї свічки, тож на момент
+                                        # ПЕРШОГО показу його вік уже ≈ swing_length — +2 бари дають
+                                        # запас на скан-цикл. Хочеш ширше/вужче — постав
+                                        # `vob_alert_max_age_bars` > 0 (у барах).
+                                        _max_age = _cfg_age if _cfg_age > 0 else (_sl + 2)
                                         _one = bool(self._settings.get('vob_one_per_ob', False))
                                         if _one:
                                             # ═══ НУМЕРАЦІЯ VOB у межах 1H-OB ═══════════════════
@@ -1976,7 +1979,25 @@ class SMCScanner:
                                                                        self._vob_epoch_fired.get(symbol), _ob_bt)
                                                                    else f'чекаємо НОВИЙ VOB #{_cn + 1} (кандидат у сигнал)')))
                                                         continue
-                                                    # 🔢 НОВИЙ VOB → нумеруємо (жодного не пропускаємо)
+                                                    # ⏱ МОМЕНТ ПОЯВИ: сигнал дає лише блок, який
+                                                    # ЩОЙНО зʼявився. Старий блок ми БАЧИМО на
+                                                    # графіку, але сигналом він був тоді, а не тепер
+                                                    # (кейс SUIUSDT: блок утв. 03:55 не має фаєрити
+                                                    # о 14:18). Позначаємо його ОПРАЦЬОВАНИМ, щоб
+                                                    # БІЛЬШЕ до нього не повертатись, лічильник НЕ
+                                                    # рухаємо — чекаємо НАСТУПНИЙ блок.
+                                                    if _max_age is not None and _age > _max_age:
+                                                        self._vob_seen_add(_seen, _cside, _ft)
+                                                        self._persist_vob_state()
+                                                        self._vob_log_decision(
+                                                            symbol, _cside, 'stale', age=_age,
+                                                            max_age=_max_age, ft=_ft, vol_tf=vol_tf,
+                                                            num=self._vob_counter.get(symbol, 0),
+                                                            detail=('сигнал був у момент появи блоку — '
+                                                                    'зараз лише видно на графіку; '
+                                                                    'чекаємо НАСТУПНИЙ VOB'))
+                                                        continue
+                                                    # 🔢 НОВИЙ СВІЖИЙ VOB → нумеруємо (опрацьовуємо РАЗ)
                                                     self._vob_seen_add(_seen, _cside, _ft)
                                                     self._vob_counter[symbol] = self._vob_counter.get(symbol, 0) + 1
                                                     _n = self._vob_counter[symbol]
@@ -2001,7 +2022,8 @@ class SMCScanner:
                                                     _vok, _vreason, _vdetail = self._signal_allowed(
                                                         symbol, _cside, at_intake=True)
                                                     log_activity(symbol, 'signal',
-                                                                 f'Свіжий Volumized OB ({vol_tf}) {_cside} · VOB #{_n} · {_vdetail}',
+                                                                 f'Volumized OB ({vol_tf}) {_cside} · VOB #{_n} · '
+                                                                 f'{self._vob_age_label(_ft, _age, vol_tf)} · {_vdetail}',
                                                                  side=_cside, source='scanner')
                                                     if _vok:
                                                         # ✅ РЕЗУЛЬТАТИВНИЙ — такт 1H-OB витрачено.
@@ -2058,7 +2080,8 @@ class SMCScanner:
                                                     symbol, _cside, at_intake=True)
                                                 if _vok:
                                                     log_activity(symbol, 'signal',
-                                                                 f'Свіжий Volumized OB ({vol_tf}) {_cside} · {_vdetail}',
+                                                                 f'Volumized OB ({vol_tf}) {_cside} · '
+                                                                 f'{self._vob_age_label(_ft, _age, vol_tf)} · {_vdetail}',
                                                                  side=_cside, source='scanner')
                                                     self._vob_log_decision(symbol, _cside, 'fired',
                                                                            age=_age, max_age=_max_age,
@@ -2070,7 +2093,8 @@ class SMCScanner:
                                                                       entry_price=_entry, opened_by='vob_alert')
                                                 else:
                                                     log_activity(symbol, 'signal',
-                                                                 f'Свіжий Volumized OB ({vol_tf}) {_cside} · {_vdetail}',
+                                                                 f'Volumized OB ({vol_tf}) {_cside} · '
+                                                                 f'{self._vob_age_label(_ft, _age, vol_tf)} · {_vdetail}',
                                                                  side=_cside, source='scanner')
                                                     log_activity(symbol, 'rejected', _vreason,
                                                                  side=_cside, source='scanner')
@@ -2622,6 +2646,40 @@ class SMCScanner:
         return ob_bt is not None and fired_epoch == ob_bt
 
     @staticmethod
+    def _vob_age_label(ft, age, tf=''):
+        """Людський підпис блоку для логу: вік у барах + скільки це годин/хвилин
+        + ЧАС ФОРМУВАННЯ у звичайному вигляді.
+
+        РАНІШЕ в лог ішло «Свіжий Volumized OB» навіть для блоку віком 125 барів
+        (10+ год) — слово «свіжий» брехало, бо вікно свіжості за замовчуванням
+        вимкнене (фаєрить будь-який ще НЕ опрацьований блок). Плюс писався голий
+        `ft=1787536500000`, який неможливо звірити з графіком очима."""
+        bits = []
+        if age is not None:
+            _m = 0
+            try:
+                _tf = (tf or '').lower().strip()
+                _per = (int(_tf[:-1]) if _tf[:-1].isdigit() else 0)
+                _m = _per * (60 if _tf.endswith('h') else 1) * int(age)
+            except (TypeError, ValueError):
+                _m = 0
+            _hum = ''
+            if _m >= 60:
+                _hum = f' (~{_m / 60:.1f} год)'
+            elif _m > 0:
+                _hum = f' (~{_m} хв)'
+            bits.append(f'вік {age} барів{_hum}')
+        try:
+            _ft = int(ft or 0)
+            if _ft > 0:
+                _sec = _ft / 1000.0 if _ft > 1e12 else float(_ft)
+                bits.append('утв. ' + datetime.fromtimestamp(
+                    _sec, tz=timezone.utc).strftime('%d.%m %H:%M UTC'))
+        except (TypeError, ValueError, OSError, OverflowError):
+            pass
+        return ' · '.join(bits)
+
+    @staticmethod
     def _vob_chart_candidates(vol_result):
         """🖼 ЄДИНИЙ кандидат = блок, який РЕАЛЬНО намальований на графіку.
 
@@ -2712,10 +2770,11 @@ class SMCScanner:
         _bits = [f'{_lbl} ({vol_tf})' + (f' {side}' if side else '')]
         if num is not None:
             _bits.append(f'VOB #{num}')
-        if age is not None:
-            _bits.append(f'вік {age}' + (f'/{max_age}' if max_age else '') + ' барів')
-        if ft:
-            _bits.append(f'ft={ft}')
+        # Вік + ЧАС ФОРМУВАННЯ у людському вигляді (замість голого ft=...),
+        # щоб рядок можна було звірити з боксом на графіку очима.
+        _al = self._vob_age_label(ft, age, vol_tf)
+        if _al:
+            _bits.append(_al + (f' · поріг {max_age}' if max_age else ''))
         if detail:
             _bits.append(detail)
         try:
