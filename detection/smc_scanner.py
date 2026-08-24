@@ -1896,14 +1896,12 @@ class SMCScanner:
                                 except Exception:
                                     log_activity = lambda *a, **k: None
                                 try:
-                                    # 🟪 ОБИДВА напрямки НЕЗАЛЕЖНО (per-side база свіжості) —
-                                    # щоб НЕ губити протилежний новий VOB, коли за один цикл
-                                    # з'явились і бичачий, і ведмежий OB. Раніше брався лише
-                                    # ОДИН (максимальний за часом) → інший зникав «між
-                                    # перевірками». Тепер обробляємо кожен бік своєю базою.
-                                    _cands = self._vob_pick_candidates(
-                                        vol_result.get('newest_bull'),
-                                        vol_result.get('newest_bear'))
+                                    # 🖼 ОБМЕЖЕНО ГРАФІКОМ: кандидат — САМЕ той блок,
+                                    # що намальований на графіку (`latest_ob`).
+                                    # «Що виводиться на графік, то і є VOB-сигнал».
+                                    # Так у лог/нумерацію/сигнали більше не лізуть
+                                    # невидимі блоки протилежного боку віком у дні.
+                                    _cands = self._vob_chart_candidates(vol_result)
                                     if not _cands:
                                         self._vob_log_decision(symbol, None, 'no_candidate',
                                                                vol_tf=vol_tf)
@@ -2622,6 +2620,34 @@ class SMCScanner:
         """«1 сигнал на 1 1H-OB»: True, якщо в ЦІЙ епосі 1H-OB сигнал уже
         фактично спрацював → чекаємо НОВИЙ 1H-OB."""
         return ob_bt is not None and fired_epoch == ob_bt
+
+    @staticmethod
+    def _vob_chart_candidates(vol_result):
+        """🖼 ЄДИНИЙ кандидат = блок, який РЕАЛЬНО намальований на графіку.
+
+        Вимога користувача: «що виводиться на графік, то і вважається VOB-
+        сигналом». Панель малює РІВНО ОДИН бокс — `d.volumized_ob`, тобто
+        `latest_ob` (найновіший серед обох боків, та сама функція й ті самі
+        бари). Тож і сигнал, і нумерація, і лог мусять іти САМЕ по ньому.
+
+        РАНІШЕ бралися найновіші блоки ОБОХ боків. Протилежний бік часто був
+        багатоденної давності (у лозі траплялись блоки віком 1500-2800 барів
+        5m = 5-10 діб) — на графіку його не видно, але він крутив лічильник
+        (ETH «VOB #8», LDO «#7») і навіть фаєрив сигнали.
+
+        `breaker` пропускаємо: такий бокс малюється пунктиром із «✕», тобто
+        зона ВЖЕ ЗНЕЦІНЕНА — вхід по ній був би помилкою.
+        Повертає [] або [(side, ob, formation_time)] — рівно один елемент."""
+        ob = (vol_result or {}).get('latest_ob')
+        if not ob or ob.get('breaker'):
+            return []
+        try:
+            ft = int(ob.get('formation_time') or 0)
+        except (TypeError, ValueError):
+            return []
+        if ft <= 0:
+            return []
+        return [('LONG' if ob.get('type') == 'Bull' else 'SHORT', ob, ft)]
 
     @staticmethod
     def _vob_pick_candidates(newest_bull, newest_bear):

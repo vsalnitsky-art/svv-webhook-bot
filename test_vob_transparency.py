@@ -127,6 +127,39 @@ def test_log_decision_updates_diag():
 
 
 # ── 3. Catch-all: обидва напрямки за один цикл, жоден не губиться ────────────
+def test_chart_candidate_is_the_drawn_block_only():
+    """🖼 ОБМЕЖЕНО ГРАФІКОМ (вимога користувача): кандидат = САМЕ той блок, що
+    намальований на графіку — `latest_ob` (панель малює РІВНО ОДИН бокс).
+
+    Раніше бралися найновіші блоки ОБОХ боків, і протилежний часто був
+    багатоденної давності (у проді траплялись блоки віком 1500-2800 барів 5m):
+    на графіку його не видно, але він крутив лічильник і фаєрив сигнали."""
+    f = SC._vob_chart_candidates
+
+    # Найновіший — ведмежий: саме він на графіку, бичачий (старий) — НЕ кандидат
+    res = f({'latest_ob': {'type': 'Bear', 'formation_time': 500},
+             'newest_bull': {'type': 'Bull', 'formation_time': 100},
+             'newest_bear': {'type': 'Bear', 'formation_time': 500}})
+    _check(len(res) == 1, 'рівно ОДИН кандидат (скільки боксів на графіку)')
+    _check(res[0][0] == 'SHORT' and res[0][2] == 500,
+           'кандидат = намальований блок (Bear 500), а не старий бичачий')
+
+    # Дзеркально: найновіший бичачий
+    res = f({'latest_ob': {'type': 'Bull', 'formation_time': 900},
+             'newest_bull': {'type': 'Bull', 'formation_time': 900},
+             'newest_bear': {'type': 'Bear', 'formation_time': 300}})
+    _check(res[0][0] == 'LONG' and res[0][2] == 900, 'бичачий блок → LONG')
+
+    # breaker малюється пунктиром із «✕» — зона знецінена, входу НЕ даємо
+    _check(f({'latest_ob': {'type': 'Bull', 'formation_time': 900, 'breaker': True}}) == [],
+           'breaker (знецінена зона) не є сигналом')
+    # немає блоку / немає часу
+    _check(f({'latest_ob': None}) == [], 'немає блоку → немає кандидата')
+    _check(f({}) == [], 'порожній результат детектора → немає кандидата')
+    _check(f({'latest_ob': {'type': 'Bull', 'formation_time': 0}}) == [], 'ft<=0 → ні')
+    print('✓ кандидат = блок з графіка (один), невидимі/знецінені не рахуються')
+
+
 def test_pick_candidates_both_sides():
     f = SC._vob_pick_candidates
     bull = {'formation_time': 100}
@@ -376,6 +409,7 @@ if __name__ == '__main__':
     test_no_age_gate_default_fires_any_new_vob()
     test_log_decision_logs_every_vob_without_duplicates()
     test_log_decision_updates_diag()
+    test_chart_candidate_is_the_drawn_block_only()
     test_pick_candidates_both_sides()
     test_pick_candidates_skips_breaker_and_invalid()
     test_per_side_base_independent()
