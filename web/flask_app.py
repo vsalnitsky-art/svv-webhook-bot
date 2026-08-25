@@ -2959,13 +2959,24 @@ def register_api_routes(app):
 
     @app.route('/api/fuel-filter/state')
     def api_fuel_filter_state():
-        """Live snapshot: settings + timers + open positions + recent closes."""
+        """Live snapshot: settings + timers + open positions + recent closes.
+
+        ⚡ `?sections=q4,fund` — ВАЖКІ секції, які реально потрібні викликачу.
+        Сторінка /smart-money надсилає лише РОЗГОРНУТІ гармошки, тож згорнута
+        Черга-4 / 💰 Funding більше не змушує сервер рахувати шари на кожен полл.
+        Параметр НЕОБОВʼЯЗКОВИЙ: без нього віддається все, як і раніше — інфо-сайт
+        та будь-який сторонній read-only споживач працюють без змін.
+        """
         try:
             from detection.fuel_filter import get_fuel_filter
             ff = get_fuel_filter()
             if not ff:
                 return jsonify({'ok': False, 'reason': 'not initialized'})
-            return jsonify(ff.get_state())
+            _raw = request.args.get('sections')
+            _sections = None
+            if _raw is not None:
+                _sections = {p.strip().lower() for p in _raw.split(',') if p.strip()}
+            return jsonify(ff.get_state(sections=_sections))
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 

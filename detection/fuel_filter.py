@@ -55,6 +55,14 @@ from detection.setup_grader import grade_min as _grade_min, grade_bands as _grad
 
 CYCLE_SECS = 30                 # scan cadence (twice per liq-map refresh)
 EXHAUSTION_TTL = 120            # cache exhaustion per symbol for 2 min
+# ⚡ TTL-кеш знімка liq-map на монету. `lm.get_state()` — НЕ безкоштовний:
+# `liqmap_get_events(limit=3000)` матеріалізує до 3000 ORM-рядків + кластеризація.
+# Джерело оновлює daemon liq-map раз на SCAN_INTERVAL_SEC=60с, тож у межах 20с
+# дані ФІЗИЧНО не змінюються — перераховувати їх по 7 разів на монету за такт
+# (див. коментар до `_liq_state`) було чистою втратою. 20с < CYCLE_SECS=30с →
+# КОЖЕН такт двигуна все одно читає свіжий знімок; UI-полл між тактами шерить.
+LIQ_STATE_TTL = 20.0
+LIQ_STATE_CAP = 400             # запобіжник памʼяті: скільки монет тримати в кеші
 BIAS_TTL = 10                   # cache compute_bias result per symbol (sec)
 FUEL_LONG_THR = 0.1            # fuel_dir > +0.1 → LONG bias
 FUEL_SHORT_THR = -0.1          # fuel_dir < -0.1 → SHORT bias
@@ -595,6 +603,15 @@ class FuelFilterDaemon:
         # 1H-структура міняється повільно. {sym: grade_dict}, {sym: computed_at}.
         self._setup_cache: Dict[str, Dict] = {}
         self._setup_at: Dict[str, float] = {}
+        # ⚡ Знімок liq-map на монету (TTL LIQ_STATE_TTL) — ЄДИНЕ джерело для
+        # `_fuel_dir` і `_fuel_dir_legacy`. {sym: (ts, state)}. Див. `_liq_state`.
+        self._liq_state_cache: Dict[str, tuple] = {}
+        self._liq_profile_at: float = 0.0     # коли востаннє читали liqmap_decay_profile
+        self._liq_profile: str = 'tori'
+        # 🎯 Черга-4: готові шари, пораховані ДВИГУНОМ (B2). get_state() лише
+        # ЧИТАЄ їх → UI не рахує нічого під глобальним локом і не може розійтись
+        # із рішенням двигуна. {sym: (ts, {side: layers})}.
+        self._q4_layers_cache: Dict[str, tuple] = {}
         # ⚡ Скальперська «Готовність» ЛИШЕ для funding-монет (окремий TF, напр.
         # 5m+15m). Окремий кеш/TTL/лічильник — не змішується з 1H-грейдом і
         # рахується тільки поки funding_setup_scalp_on. {sym: grade}, {sym: at}.
@@ -2439,22 +2456,74 @@ class FuelFilterDaemon:
     # ------------------------------------------------------------------
     # fuel / exhaustion measurement (cached sources only)
     # ------------------------------------------------------------------
+    def _liq_decay_profile(self) -> str:
+        """`liqmap_decay_profile` із БД із коротким кешем. Раніше цей `get_setting`
+        (окрема сесія SQLAlchemy!) робився на КОЖЕН виклик `_fuel_dir` та
+        `_fuel_dir_legacy` — тобто десятки разів на монету за такт."""
+        now = time.time()
+        if now - self._liq_profile_at > 60.0:
+            try:
+                self._liq_profile = self._db.get_setting('liqmap_decay_profile', 'tori')
+            except Exception:
+                self._liq_profile = 'tori'
+            self._liq_profile_at = now
+        return self._liq_profile
+
+    def _liq_state(self, symbol: str, force: bool = False) -> Optional[Dict]:
+        """⚡ ЄДИНА точка отримання знімка liq-map для МММ (A1+A2).
+
+        Раніше `_fuel_dir` і `_fuel_dir_legacy` кожен будував `lm.get_state()`
+        САМОСТІЙНО — тобто для однієї монети в одну й ту саму мить знімок
+        збирався ДВІЧІ. А `_queue4_layers` кличе обидві функції, і за один такт
+        по рядку Черги-4 виходило ~7 повних збірок (двигун: `_fuel_dir_smoothed`
+        + шари в обидва боки; UI-полл: ще одні шари). При 100 монетах у черзі це
+        ~700 збірок × до 3000 ORM-рядків за 30с — стеля масштабування.
+
+        Тепер знімок будується ОДИН раз на монету на `LIQ_STATE_TTL` і шериться
+        всіма споживачами. Якість НЕ страждає: джерело (daemon liq-map) оновлює
+        дані раз на 60с, а свіжість ЦІНИ забезпечує `_live_price`, який обидві
+        функції накладають поверх `mark_price` знімка.
+
+        `force=True` — обійти кеш (для разових діагностичних шляхів).
+        """
+        sym = (symbol or '').upper()
+        if not sym:
+            return None
+        now = time.time()
+        if not force:
+            hit = self._liq_state_cache.get(sym)
+            if hit and (now - hit[0]) < LIQ_STATE_TTL:
+                return hit[1]
+        try:
+            from detection.liquidation_map.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            lst = lm.get_state(sym, lookback_hours=24,
+                               profile=self._liq_decay_profile()) if lm else None
+        except Exception:
+            return None
+        if lst is None:
+            # НЕ кешуємо «немає джерела» (liq-map ще не піднявся після рестарту):
+            # інакше перший розрахунок відклався б на цілий TTL. Порожній, але
+            # СПРАВЖНІЙ знімок (dict без mark_price) кешується нормально.
+            return None
+        # Запобіжник памʼяті: при дуже широкому watchlist кеш не має рости вічно.
+        if len(self._liq_state_cache) >= LIQ_STATE_CAP:
+            _dead = [k for k, v in self._liq_state_cache.items()
+                     if (now - v[0]) > LIQ_STATE_TTL * 3]
+            for k in _dead:
+                self._liq_state_cache.pop(k, None)
+            if len(self._liq_state_cache) >= LIQ_STATE_CAP:
+                self._liq_state_cache.clear()
+        self._liq_state_cache[sym] = (now, lst)
+        return lst
+
     def _fuel_dir_legacy(self, symbol: str) -> Optional[Dict]:
         """СТАРИЙ показник МММ: сирий (fa−fb)/den по liq-map (розташування кластерів
         відносно ціни, дистанц-вага 1/(1+dist/2)) — для порівняння з бабло-моделлю.
         Рахується від живої ціни (як і нова модель)."""
         try:
-            from detection.liquidation_map.liquidation_map import get_liquidation_map
-            lm = get_liquidation_map()
-            lst = None
-            mark = None
-            if lm:
-                try:
-                    prof = self._db.get_setting('liqmap_decay_profile', 'tori')
-                except Exception:
-                    prof = 'tori'
-                lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
-                mark = lst.get('mark_price') if lst else None
+            lst = self._liq_state(symbol)
+            mark = lst.get('mark_price') if lst else None
             lp = self._live_price(symbol)
             if lp and lp > 0:
                 mark = lp
@@ -2490,17 +2559,10 @@ class FuelFilterDaemon:
         liquidation-map state (no exchange calls). Returns
         {dir, mark_price, status} or None when data is unavailable."""
         try:
-            from detection.liquidation_map.liquidation_map import get_liquidation_map
-            lm = get_liquidation_map()
-            mark = None
-            lst = None
-            if lm:
-                try:
-                    prof = self._db.get_setting('liqmap_decay_profile', 'tori')
-                except Exception:
-                    prof = 'tori'
-                lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
-                mark = lst.get('mark_price') if lst else None
+            # ⚡ ТОЙ САМИЙ знімок, що бачить `_fuel_dir_legacy` (A1) — і з TTL-кешем
+            # (A2). Раніше тут будувався власний `lm.get_state()`.
+            lst = self._liq_state(symbol)
+            mark = lst.get('mark_price') if lst else None
 
             # Fallback: if liquidation map doesn't have mark_price, get it from market_data
             if not mark:
@@ -2736,15 +2798,7 @@ class FuelFilterDaemon:
         «МММ-бабло». Тепер джерело банера ЄДИНЕ з reason-рядком.
         Повертає (dir_float, status|None, strength 0..100)."""
         try:
-            from detection.liquidation_map.liquidation_map import get_liquidation_map
-            lm = get_liquidation_map()
-            if not lm:
-                return 0.0, None, 0
-            try:
-                prof = self._db.get_setting('liqmap_decay_profile', 'tori')
-            except Exception:
-                prof = 'tori'
-            lst = lm.get_state('BTCUSDT', lookback_hours=24, profile=prof)
+            lst = self._liq_state('BTCUSDT')   # ⚡ спільний знімок (A1+A2)
             mark = lst.get('mark_price') if lst else None
             if not mark:
                 try:
@@ -4460,17 +4514,10 @@ class FuelFilterDaemon:
         # 3) Ліквідність (levels) + mark.
         liq_levels, mark = None, None
         try:
-            from detection.liquidation_map.liquidation_map import get_liquidation_map
-            lm = get_liquidation_map()
-            if lm:
-                try:
-                    prof = self._db.get_setting('liqmap_decay_profile', 'tori')
-                except Exception:
-                    prof = 'tori'
-                lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
-                if lst:
-                    liq_levels = lst.get('levels')
-                    mark = lst.get('mark_price')
+            lst = self._liq_state(symbol)   # ⚡ спільний знімок (A1+A2)
+            if lst:
+                liq_levels = lst.get('levels')
+                mark = lst.get('mark_price')
         except Exception:
             pass
         # 4) МММ (бабло) — з повної моделі; strength/conflict — з кешу SCORE.
@@ -5699,10 +5746,49 @@ class FuelFilterDaemon:
                    'su_mm': blocks.get('mm'), 'su_timing': blocks.get('timing'),
                    'su_context': blocks.get('context')})
 
-    def _queue4_layers(self, sym: str, side: str, s: Dict) -> Dict:
-        """🎯 Черга-4: 4-шаровий конфлюенс за напрямком СИГНАЛУ `side`. Кожен шар
-        несе `dir` (=side, коли засвічений) → у колонці кольори за напрямком (усі
-        зелені LONG / усі червоні SHORT). Шари:
+    def _q4_snapshot(self, sym: str, s: Dict) -> Dict:
+        """⚡ B1: ЄДИНЕ місце вводу-виводу для шарів Черги-4.
+
+        Раніше `_queue4_layers` змішував читання даних і арифметику, тож кожен
+        виклик заново смикав МММ. А двигун кличе його ДВІЧІ (свій бік + фліп-
+        кандидат) — тобто дані тягнулись двічі поспіль для тієї самої монети в
+        ту саму мить. Тепер знімок робиться ОДИН раз, а `_q4_layers_from` — чиста
+        функція над ним, тож ДРУГИЙ напрямок коштує НУЛЬ.
+
+        `on` кладемо У ЗНІМОК: далі арифметика бере тумблери ЗВІДСИ, а не з
+        налаштувань ще раз — інакше тумблер, перемкнутий між знімком і
+        розрахунком, дав би `det` (визначеність), що не відповідає даним.
+        """
+        on_new = bool(s.get('queue4_new_mm_on', True))
+        on_old = bool(s.get('queue4_old_mm_on', True))
+        on_setup = bool(s.get('queue4_setup_on', True))
+        on_runway = bool(s.get('queue4_runway_on', True))
+        # 1+4) Новий МММ і Запас живляться ОДНИМИ даними (`fn`) → тягнемо їх,
+        #      лише якщо потрібен хоч один із цих шарів (економія liq-map).
+        fn = {}
+        if on_new or on_runway:
+            fn = self._fuel_dir_smoothed(sym) or {}
+        # 2) Старий МММ — окремий показник; читаємо лише коли шар увімкнено.
+        fo = {}
+        if on_old:
+            fo = self._fuel_dir_legacy(sym) or {}
+        # 3) Готовність — готовий фоновий кеш grade_setup (без обчислень тут).
+        su = {}
+        setup_ready = False
+        if on_setup:
+            setup_ready = (sym in self._setup_cache)
+            su = self._setup_cache.get(sym) or {}
+        return {'fn': fn, 'fo': fo, 'su': su, 'setup_ready': setup_ready,
+                'on': {'new': on_new, 'old': on_old,
+                       'setup': on_setup, 'runway': on_runway}}
+
+    def _q4_layers_from(self, snap: Dict, side: str, s: Dict) -> Dict:
+        """🎯 Черга-4: 4-шаровий конфлюенс за напрямком СИГНАЛУ `side` — ЧИСТА
+        функція над знімком `_q4_snapshot` (ЖОДНОГО I/O: ні liq-map, ні БД, ні
+        біржі). Саме тому обидва напрямки рахуються безкоштовно.
+
+        Кожен шар несе `dir` (=side, коли засвічений) → у колонці кольори за
+        напрямком (усі зелені LONG / усі червоні SHORT). Шари:
           1) Новий МММ  — _fuel_dir_smoothed: напрямок у бік + сила ≥ queue4_mm_new_min
           2) Старий МММ — _fuel_dir_legacy:  напрямок у бік + сила ≥ queue4_mm_old_min
           3) Готовність — grade_setup (кеш):  напрямок у бік + score ≥ queue4_setup_min
@@ -5710,10 +5796,11 @@ class FuelFilterDaemon:
              queue4_require_runway). Повертає {count, base(=4), layers[], + сирі поля}."""
         # 🔘 Пер-шарові тумблери: ВИМКНЕНИЙ шар НЕ рахуємо (не вантажимо сервер)
         # і НЕ показуємо колонкою. `required` = к-сть УВІМКНЕНИХ (усі мають збігтись).
-        on_new = bool(s.get('queue4_new_mm_on', True))
-        on_old = bool(s.get('queue4_old_mm_on', True))
-        on_setup = bool(s.get('queue4_setup_on', True))
-        on_runway = bool(s.get('queue4_runway_on', True))
+        _on = snap.get('on') or {}
+        on_new = bool(_on.get('new', True))
+        on_old = bool(_on.get('old', True))
+        on_setup = bool(_on.get('setup', True))
+        on_runway = bool(_on.get('runway', True))
         layers = []
         def add(key, label, ok, detail, det=True):
             layers.append({'key': key, 'label': label, 'ok': bool(ok),
@@ -5728,11 +5815,8 @@ class FuelFilterDaemon:
         req_rw = bool(s.get('queue4_require_runway', True))
         opp = 'SHORT' if side == 'LONG' else 'LONG'
 
-        # 1) Новий МММ (+ Запас — з тих самих даних `fn`). Рахуємо `fn` ЛИШЕ якщо
-        #    потрібен хоч один із них → інакше НЕ смикаємо liq-map (економія).
-        fn = {}
-        if on_new or on_runway:
-            fn = self._fuel_dir_smoothed(sym) or {}
+        # 1) Новий МММ (+ Запас — з тих самих даних `fn`) — зі ЗНІМКА.
+        fn = snap.get('fn') or {}
         nd = fn.get('status')
         ns = int(round(abs(float(fn.get('dir') or 0)) * 100))
         if on_new:
@@ -5748,11 +5832,11 @@ class FuelFilterDaemon:
                 _new_detail = f"{nd or '—'} {ns}%"
             add('mm_new', 'Новий МММ', _new_ok, _new_detail, det=bool(fn))
 
-        # 2) Старий МММ — рахуємо legacy ЛИШЕ коли шар увімкнено.
+        # 2) Старий МММ — зі ЗНІМКА (legacy читається там лише коли шар увімкнено).
         od = None; os_ = 0
         if on_old:
             _old_mode = str(s.get('queue4_mm_old_mode', 'ignore') or 'ignore').lower()
-            fo = self._fuel_dir_legacy(sym) or {}
+            fo = snap.get('fo') or {}
             od = fo.get('status'); os_ = int(fo.get('strength') or 0)
             if _old_mode == 'require':
                 # Поріг «рівновага» (0) — ТА САМА логіка, що й у «Новий МММ»:
@@ -5776,11 +5860,11 @@ class FuelFilterDaemon:
             add('mm_old', 'Старий МММ', _old_ok, _old_detail,
                 det=(_old_mode == 'ignore') or bool(fo))
 
-        # 3) Готовність (grade_setup кеш) — читаємо ЛИШЕ коли шар увімкнено.
+        # 3) Готовність (grade_setup кеш) — зі ЗНІМКА.
         sd = None; ss = 0; su = {}
         if on_setup:
-            _setup_ready = (sym in self._setup_cache)
-            su = self._setup_cache.get(sym) or {}
+            _setup_ready = bool(snap.get('setup_ready'))
+            su = snap.get('su') or {}
             sd = su.get('dir'); ss = su.get('score') or 0
             add('setup', 'Готовність', bool(su.get('ok')) and sd == side and ss >= su_min,
                 f"{su.get('grade') or '—'} {ss}" + ('' if _setup_ready else ' (рахується…)'),
@@ -5811,6 +5895,43 @@ class FuelFilterDaemon:
                 'mm_old': {'dir': od, 'str': os_},
                 'setup': (su if su.get('ok') else None),
                 'runway': {'dir': rd, 'room_pct': rr, 'label': rw.get('label')}}
+
+    def _queue4_layers(self, sym: str, side: str, s: Dict) -> Dict:
+        """Сумісний фасад: знімок (I/O) + чиста арифметика. Лишений для
+        поодиноких викликів (фільтр входу в `intercept`) — там потрібен рівно
+        ОДИН напрямок, тож ділити нема чого. Гарячі шляхи (двигун, get_state)
+        мають брати `_q4_snapshot` + `_q4_layers_from` напряму."""
+        return self._q4_layers_from(self._q4_snapshot(sym, s), side, s)
+
+    def _q4_layers_cached(self, sym: str, side: str, s: Dict,
+                          max_age: float = 0.0) -> Dict:
+        """🎯 B2: шари з кешу, який наповнює ДВИГУН (`_engine_tick_queue4`).
+
+        Навіщо: `get_state()` рахував шари сам — під ГЛОБАЛЬНИМ локом і на
+        кожен полл сторінки. Тобто HTTP-запит UI блокував торговий daemon, а
+        таблиця показувала числа, ПОРАХОВАНІ ОКРЕМО від тих, за якими двигун
+        ухвалював рішення (класична розбіжність «в таблиці одне — вирішив інше»).
+        Тепер джерело ОДНЕ: що двигун порахував для рішення, те UI й показує.
+
+        Промах кешу (монета щойно в черзі; двигун ще не проходив) → рахуємо
+        на місці; це дешево, бо знімок liq-map уже теплий (`_liq_state`).
+        """
+        if max_age <= 0:
+            max_age = CYCLE_SECS * 3
+        hit = self._q4_layers_cache.get(sym)
+        if hit and (time.time() - hit[0]) <= max_age:
+            lay = (hit[1] or {}).get(side)
+            if lay is not None:
+                return lay
+        return self._queue4_layers(sym, side, s)
+
+    def _q4_cache_put(self, sym: str, by_side: Dict) -> None:
+        """Покласти пораховані двигуном шари (обидва напрямки) у кеш для UI."""
+        self._q4_layers_cache[sym] = (time.time(), by_side)
+
+    def _q4_cache_drop(self, sym: str) -> None:
+        """Прибрати монету з кешу шарів (вийшла з черги / відкрилась)."""
+        self._q4_layers_cache.pop(sym, None)
 
     # ------------------------------------------------------------------
     # 🔒 «1 VOB на 1H OB» — гейт на РІВНІ ВІДКРИТТЯ (переживає close/delete)
@@ -5934,6 +6055,10 @@ class FuelFilterDaemon:
             ttl_h = 3.0
         with self._lock:
             items = list(self._pending4.items())
+        # ⏱ Профіль такту — щоб приріст швидкості БУЛО ВИДНО в цифрах, а не «на
+        # відчуття» (той самий підхід, що в профілі скан-циклу сканера).
+        _t0 = time.time()
+        _q4_seen = 0
         for sym, info in items:
             d = info.get('dir')
             if d not in ('LONG', 'SHORT'):
@@ -5943,7 +6068,7 @@ class FuelFilterDaemon:
                 _added = float(info.get('added_at') or 0)
                 if _added and (now - _added) > ttl_h * 3600:
                     with self._lock:
-                        self._pending4.pop(sym, None); self._persist_state()
+                        self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
                     log_activity(sym, 'skipped',
                                  f'Черга-4: протерміновано (>{ttl_h:.0f}год у черзі без відкриття)',
                                  side=d, source='Q4')
@@ -5952,7 +6077,7 @@ class FuelFilterDaemon:
                 continue
             if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
                 with self._lock:
-                    self._pending4.pop(sym, None); self._persist_state()
+                    self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
                 continue
             # 🔒 «1 VOB на 1H OB» (scanner.vob_one_per_ob): якщо монета ВЖЕ
             # відкривалась на ЦЬОМУ 1H-OB — не відкривати вдруге (навіть після
@@ -5961,22 +6086,34 @@ class FuelFilterDaemon:
             # не крутити перевірку щотіку; чекаємо НОВИЙ 1H-OB.
             if self._ob_epoch_already_opened(sym):
                 with self._lock:
-                    self._pending4.pop(sym, None); self._persist_state()
+                    self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
                 log_activity(sym, 'skipped',
                              'Черга-4 🔒 «1 VOB на 1H OB»: монета вже відкривалась '
                              'на цьому 1H-OB — чекаємо НОВИЙ 1H-OB (не відкрито)',
                              side=d, source='Q4')
                 continue
-            fuel = self._fuel_dir_smoothed(sym)
+            # ⚡ B1: ОДИН знімок даних на монету за такт. `fuel` (Новий МММ) уже
+            # всередині нього — окремий `_fuel_dir_smoothed` тут був зайвим
+            # читанням тих самих даних.
+            # ⚠️ Фолбек: коли ОБИДВА шари «Новий МММ» і «Запас» вимкнені, знімок
+            # свідомо не тягне `fn` — але `mark` потрібен двигуну завжди, тож у
+            # цьому (і лише в цьому) разі читаємо як раніше. Кеш `_liq_state`
+            # робить це читання дешевим.
+            _snap = self._q4_snapshot(sym, s)
+            fuel = _snap.get('fn') or self._fuel_dir_smoothed(sym)
             mark = fuel.get('mark_price') if fuel else None
             if not mark:
                 continue
             # Рахуємо шари для ОБОХ напрямків: сигнал зайшов як `d`, але показники
             # в ході можуть чітко скластись у ПРОТИЛЕЖНИЙ бік — тоді відкриваємо
             # саме за показниками (фліп). aligned/застій/фільтр — за КРАЩИМ боком.
+            # Обидва напрямки — ЧИСТА арифметика над `_snap`, тож другий безкоштовний.
             _opp = 'SHORT' if d == 'LONG' else 'LONG'
-            lay = self._queue4_layers(sym, d, s)
-            lay_o = self._queue4_layers(sym, _opp, s)
+            lay = self._q4_layers_from(_snap, d, s)
+            lay_o = self._q4_layers_from(_snap, _opp, s)
+            # 🎯 B2: віддаємо UI РІВНО ті шари, за якими ухвалюємо рішення.
+            self._q4_cache_put(sym, {d: lay, _opp: lay_o})
+            _q4_seen += 1
             _al_d = int(lay.get('aligned', 0))
             _al_o = int(lay_o.get('aligned', 0))
             _al_best = max(_al_d, _al_o)
@@ -5991,7 +6128,7 @@ class FuelFilterDaemon:
                     self._q4_lit_at[sym] = now      # засвітився / перший показ → скид
                 if (now - self._q4_lit_at.get(sym, now)) > _nl_min * 60:
                     with self._lock:
-                        self._pending4.pop(sym, None); self._persist_state()
+                        self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
                     self._q4_lit_at.pop(sym, None)
                     log_activity(sym, 'skipped',
                                  f'Черга-4 ⏳ {_nl_min:.0f}хв поспіль жоден показник не '
@@ -6011,7 +6148,7 @@ class FuelFilterDaemon:
                     _min_lay = min(_min_lay, _req_now)
                 if _req_now >= 1 and lay.get('determined') and _al_best < _min_lay:
                     with self._lock:
-                        self._pending4.pop(sym, None); self._persist_state()
+                        self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
                     log_activity(sym, 'skipped',
                                  f'Черга-4 🚧 фільтр входу: {_al_best}/{_req_now} показників у жоден '
                                  f'бік < {_min_lay} (шари визначені) — прибрано з черги',
@@ -6072,7 +6209,7 @@ class FuelFilterDaemon:
                 if opened:
                     with self._lock:
                         self._timers[sym] = {'dir': _open_dir, 'since': now, 'start_price': mark}
-                        self._pending4.pop(sym, None); self._persist_state()
+                        self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
                     # 🔒 Позначити 1H-OB як «відкритий» — щоб новий 5m VOB на тому
                     # самому 1H-OB не ре-відкривав монету після її закриття.
                     self._mark_ob_epoch_opened(sym)
@@ -6088,6 +6225,16 @@ class FuelFilterDaemon:
         for k in list(self._q4_lit_at.keys()):
             if k not in self._pending4:
                 self._q4_lit_at.pop(k, None)
+        # 🧹 Кеш шарів не має пережити чергу (памʼять при широкому watchlist).
+        for k in list(self._q4_layers_cache.keys()):
+            if k not in self._pending4:
+                self._q4_layers_cache.pop(k, None)
+        # ⏱ Профіль: скільки монет опрацьовано і за скільки. Дає ЧИСЛО для
+        # порівняння «до/після» замість вражень.
+        if _q4_seen:
+            _el = time.time() - _t0
+            print(f"[FF-Q4] tick: {_q4_seen} coins in {_el:.2f}s "
+                  f"({_el / max(1, _q4_seen):.3f}s/coin)")
 
     def _q4_set_vob_sl(self, sym: str, side: str, s: Dict):
         """🎯 Черга-4: після відкриття ставить SL із Volumized OB + буфер. Бере
@@ -7401,10 +7548,21 @@ class FuelFilterDaemon:
         except Exception:
             pass
 
-    def get_state(self) -> Dict:
+    # ⚡ C2: важкі секції стану, які фронт може НЕ запитувати, коли їхня гармошка
+    # згорнута. Усе інше (банер, лічильники, налаштування, Черги-1..3) віддається
+    # завжди — воно дешеве. `None` = віддати ВСЕ (сумісність для інфо-сайту та
+    # будь-якого стороннього споживача API).
+    HEAVY_SECTIONS = ('q4', 'fund')
+
+    def get_state(self, sections: Optional[set] = None) -> Dict:
         """Snapshot for the UI: settings + live timers + active tracking.
+
+        `sections` — набір ІМЕН важких секцій, які реально потрібні викликачу
+        (див. HEAVY_SECTIONS). None → усе, як раніше.
         NEW STRATEGY: shows only timers held >= duration_minutes (threshold).
         No auto-open. Position management (close) is optional via setting."""
+        _want_q4 = (sections is None) or ('q4' in sections)
+        _want_fund = (sections is None) or ('fund' in sections)
         with self._lock:
             settings = self.get_settings()
             duration_sec = settings['duration_minutes'] * 60
@@ -7445,7 +7603,12 @@ class FuelFilterDaemon:
             visible_pending3 = len(timers3)
             all_timers3 = sorted(timers3, key=lambda x: -x['held_sec'])
             # Черга-4 «🎯 Усі шари» — власні рядки з 4-шаровим конфлюенсом.
+            # ⚡ C2: коли гармошку Черги-4 ЗГОРНУТО, фронт не просить секцію 'q4'
+            #    → рядки не будуємо взагалі (лічильник у шапці лишається чесним).
+            # ⚡ B2: шари беремо з кешу ДВИГУНА — get_state() більше нічого не
+            #    рахує під глобальним локом.
             timers4 = []
+            _q4_rows = 0
             for sym, info in self._pending4.items():
                 d4 = info.get('dir')
                 if d4 not in ('LONG', 'SHORT'):
@@ -7456,14 +7619,19 @@ class FuelFilterDaemon:
                     continue
                 if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
                     continue
-                q4 = self._queue4_layers(sym, d4, settings)
+                _q4_rows += 1
+                if not _want_q4:
+                    continue
+                q4 = self._q4_layers_cached(sym, d4, settings)
                 timers4.append({'symbol': sym, 'dir': d4,
                                 'held_sec': int(now - float(info.get('added_at') or now)),
                                 # 🏷 оригінальний сигнал, що завів монету в чергу
                                 # (щоб іконка «звідки» стояла й у таблиці Черги-4).
                                 'kind': info.get('kind'),
                                 'q4': q4, 'layers': q4.get('layers')})
-            visible_pending4 = len(timers4)
+            # Лічильник у шапці — ЗАВЖДИ реальна к-сть рядків, навіть коли
+            # секцію не запитували (гармошка згорнута).
+            visible_pending4 = _q4_rows
             all_timers4 = sorted(timers4, key=lambda x: -x['held_sec'])
             bs = self._btc_state or {}
             # BTC START/STOP signal: progress counts up while the MAIN-WINDOW
@@ -7627,7 +7795,13 @@ class FuelFilterDaemon:
                     # ⚡ Скальперська «Готовність» на швидкому TF (лише funding).
                     'setup_scalp': self._setup_scalp_cache.get(sym),
                     # 🎯 5-шаровий конфлюенс (для колонки «Шари» + TG-сигналу).
-                    'layers': self._funding_layers(sym, {**a, 'dir': _row_dir}),
+                    # ⚡ C2: чисто ВІДОБРАЖЕННЯ — коли гармошку 💰 Funding згорнуто,
+                    # фронт не просить секцію 'fund' і ми не рахуємо шари. Решта
+                    # рядка (і всі побічні ефекти циклу — rate_min/vol24h/епізоди)
+                    # лишається як було: TG-сигнали живуть у своєму `_run_alerts`,
+                    # а не тут, тож пропуск нічого не ламає.
+                    'layers': (self._funding_layers(sym, {**a, 'dir': _row_dir})
+                               if _want_fund else None),
                     # 💹 Напрямок ЦІНИ з 💰 Funding Rate Scanner: свіжий (~15 хв)
                     # + загальний тренд (~2 год) — другий рядок у таблиці.
                     'price': (self._funding_price or {}).get(sym.upper()),
@@ -7663,6 +7837,10 @@ class FuelFilterDaemon:
             'timers4': all_timers4,
             'pending4_visible': visible_pending4,
             'queue4_enabled': bool(settings.get('queue4_enabled', False)),
+            # ⚡ C2: які ВАЖКІ секції реально пораховано в цій відповіді. Фронт
+            # МУСИТЬ це читати: без прапорця він прийняв би `timers4: []` за
+            # «черга порожня» і стер би таблицю, хоча її просто не запитували.
+            'served': {'q4': _want_q4, 'fund': _want_fund},
             # 🎚 Смуги грейда (ЄДИНЕ джерело — setup_grader). UI будує випадайку
             # «Готовність ≥» саме з них, щоб назва і число НЕ розходились.
             'grade_bands': _grade_bands(),
@@ -7891,6 +8069,7 @@ class FuelFilterDaemon:
         with self._lock:
             removed = self._pending4.pop(symbol, None) is not None
             if removed:
+                self._q4_cache_drop(symbol)
                 self._persist_state()
         return removed
 
@@ -7899,6 +8078,7 @@ class FuelFilterDaemon:
         with self._lock:
             n = len(self._pending4)
             self._pending4 = {}
+            self._q4_layers_cache.clear()
             self._persist_state()
         return n
 

@@ -4301,6 +4301,12 @@ function togglePanel(pid) {
     body.style.display = open ? '' : 'none';
     if (car) car.textContent = open ? '▼' : '▶';
     try { localStorage.setItem('qPanel_' + pid, open ? '1' : '0'); } catch (e) {}
+    // ⚡ C2: важкі секції (Черга-4, 💰 Funding) сервер рахує ЛИШЕ на запит. Поки
+    // гармошка була згорнута, ми їх не просили — тож на РОЗГОРТАННІ тягнемо
+    // стан одразу, а не чекаємо до 30с наступного полла.
+    if (open && (pid === 'q4' || pid === 'fund')) {
+        try { loadFuelFilterStatus(); } catch (e) {}
+    }
 }
 // Історична назва (заголовки Черг) — та сама функція.
 const toggleQueuePanel = togglePanel;
@@ -9906,10 +9912,26 @@ async function clearTradeArchive() {
 // ========== Fuel Auto-Filter ==========
 let _ffActiveSymbols = [];
 
+// ⚡ C2: просимо в сервера ЛИШЕ ті важкі секції, чиї гармошки РОЗГОРНУТІ.
+// Згорнута Черга-4 / 💰 Funding → сервер не рахує їхні шари на кожен полл
+// (це найдорожча частина відповіді). Секції-«легковики» йдуть завжди.
+function _ffWantedSections() {
+    const vis = (id) => {
+        const e = document.getElementById(id);
+        return !!e && e.style.display !== 'none';
+    };
+    const want = [];
+    if (vis('q4-body')) want.push('q4');
+    if (vis('fund-body')) want.push('fund');
+    return want;
+}
+
 async function loadFuelFilterStatus() {
     // Refresh fuel filter status + render tables
     try {
-        const d = await fetch('/api/fuel-filter/state').then(r => r.json());
+        const _sec = _ffWantedSections();
+        const d = await fetch('/api/fuel-filter/state?sections=' + encodeURIComponent(_sec.join(',')))
+            .then(r => r.json());
         if (!d || !d.ok) return;
         const prevActive = _ffActiveSymbols.join(',');
         _ffActiveSymbols = d.active_symbols || [];
@@ -10403,11 +10425,30 @@ function _ffApplyQ4Cols() {
     tbl.classList.toggle('q4-hide-setup', !on('ff-queue4-setup-on'));
     tbl.classList.toggle('q4-hide-runway', !on('ff-queue4-runway-on'));
 }
+// ⚡ C1: сигнатура ВМІСТУ таблиці Черги-4. `held_sec` СВІДОМО не входить — його
+// малює `data-since` + глобальний 1с-тікер, тож секунди йдуть, а DOM не
+// перебудовується. Змінилось щось справжнє (шар, МММ, Готовність, Запас, склад
+// черги) → сигнатура інша → перемальовуємо.
+function _ffQ4Sig(rows) {
+    return rows.map(t => {
+        const q = t.q4 || {}, n = q.mm_new || {}, o = q.mm_old || {},
+              r = q.runway || {}, su = q.setup || {};
+        return [t.symbol, t.dir, t.kind || '', q.count, q.required,
+                n.dir, n.str, o.dir, o.str,
+                su.grade, su.score, su.dir,
+                r.dir, r.room_pct, r.label,
+                (q.layers || []).map(l => `${l.key}${l.ok ? 1 : 0}${l.det ? 1 : 0}${l.detail || ''}`).join('~')
+        ].join('|');
+    }).join(';');
+}
 function ffRenderQueue4() {
     const tb = document.getElementById('ff-timers4-tbody');
     if (!tb) return;
-    _ffApplyQ4Cols();   // синхронізуємо видимість колонок із тумблерами
+    _ffApplyQ4Cols();   // синхронізуємо видимість колонок із тумблерами (CSS-класи)
     const rows = window._ff4TimersData || [];
+    const _sig = _ffQ4Sig(rows);
+    if (tb.dataset.sig === _sig) return;   // нічого не змінилось → DOM не чіпаємо
+    tb.dataset.sig = _sig;
     if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Черга-4 порожня</td></tr>'; return; }
     tb.innerHTML = rows.map(t => {
         const q = t.q4 || {};
@@ -10540,6 +10581,10 @@ function renderFuelFilter(d) {
         ffGradeBands = d.grade_bands;
         _ffSyncGradeOptions();
     }
+    // ⚡ C2: які ВАЖКІ секції сервер реально порахував у цій відповіді.
+    // Без цього прапорця порожній `timers4` (секцію просто не запитували)
+    // помилково прочитався б як «черга порожня» і стер би таблицю.
+    const _served = d.served || { q4: true, fund: true };
     // BTC START/STOP banner — refresh from state, then let the global ticker
     // keep the progress filling smoothly.
     const bsg = d.btc_start || {};
@@ -10748,8 +10793,8 @@ function renderFuelFilter(d) {
         window._ff3TimersData = d.timers3 || [];
         ffRenderQueue3();
     }
-    // Queue 4 «🎯 Усі шари»
-    if (document.getElementById('ff-timers4-tbody')) {
+    // Queue 4 «🎯 Усі шари» — малюємо ЛИШЕ коли сервер порахував секцію.
+    if (_served.q4 && document.getElementById('ff-timers4-tbody')) {
         window._ff4TimersData = d.timers4 || [];
         ffRenderQueue4();
     }
@@ -10771,7 +10816,10 @@ function renderFuelFilter(d) {
     // Множина монет із фандингу — для 💰-мітки у відкритих угодах.
     try { window.ffFundingSyms = new Set((d.anomalies || []).map(a => a.symbol)); }
     catch (e) { window.ffFundingSyms = new Set(); }
-    if (atb) {
+    // ⚡ C2: 💰-мітку у відкритих угодах ставимо ЗАВЖДИ (рядки приходять завжди),
+    // а саму таблицю малюємо лише коли сервер порахував секцію 'fund' — інакше
+    // колонка «🎯 Шари» була б порожня, бо шари свідомо не рахувались.
+    if (atb && _served.fund) {
         const arows = d.anomalies || [];
         if (!arows.length) {
             atb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Немає монет з МММ із 💰 Funding Rate Scanner</td></tr>';

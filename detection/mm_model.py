@@ -42,8 +42,28 @@ _ls_cache: Dict[str, tuple] = {}        # symbol -> (ts, ls_long_pct)
 _POS_TTL = 300.0
 
 
+# ⚡ TTL-кеш ваг/порогів. `get_mm_settings` робить ОКРЕМУ сесію SQLAlchemy на
+# КОЖЕН із 8 ключів, а `compute_mm` кличеться на кожну монету по кілька разів за
+# такт → сотні зайвих DB-читань. Ваги міняються лише руками з UI, тож 60с TTL
+# нічого не спотворює. `invalidate_mm_settings()` — миттєвий скид після запису.
+_settings_cache: Dict[str, object] = {}
+_settings_at: float = 0.0
+_SETTINGS_TTL = 60.0
+
+
+def invalidate_mm_settings() -> None:
+    """Скинути кеш ваг МММ — кликати після збереження налаштувань з UI, щоб
+    зміна діяла миттєво, а не до 60с."""
+    global _settings_at
+    _settings_at = 0.0
+
+
 def get_mm_settings(db) -> Dict:
-    """Ваги/пороги з БД поверх дефолтів (усі числові, best-effort)."""
+    """Ваги/пороги з БД поверх дефолтів (усі числові, best-effort). TTL-кеш 60с."""
+    global _settings_cache, _settings_at
+    now = time.time()
+    if _settings_cache and (now - _settings_at) < _SETTINGS_TTL:
+        return dict(_settings_cache)
     out = dict(_DEFAULTS)
     try:
         for k in _DEFAULTS:
@@ -51,7 +71,11 @@ def get_mm_settings(db) -> Dict:
             if v is not None:
                 out[k] = float(v)
     except Exception:
-        pass
+        # Помилка читання → НЕ кешуємо дефолти надовго, щоб не «залипнути»
+        # на них, коли БД відповість наступного разу.
+        return out
+    _settings_cache = dict(out)
+    _settings_at = now
     return out
 
 
