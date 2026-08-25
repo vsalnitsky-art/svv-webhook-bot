@@ -92,18 +92,40 @@ def test_no_ttl_default_off():
 
 # ═════════════════════ 2. 🛑 Джерело Manual SL ══════════════════════════════
 class _TM:
-    def __init__(self): self.calls = []
+    def __init__(self, price=None, accept=True):
+        self.calls = []
+        self._price = price
+        self._accept = accept
+    def _get_current_price(self, sym):
+        return self._price
     def update_manual_sl_tp(self, sym, manual_sl=None, is_shadow=False):
         self.calls.append((sym, manual_sl, is_shadow))
+        if not self._accept:
+            return {'ok': False, 'reason': 'wrong side', 'validation': True}
+        return {'ok': True, 'position': {'entry_price': 100.0}}
 
 
-def _ff_sl(one_h=None, vob=None):
+class _Log:
+    """Перехоплює activity_log, щоб перевіряти, що саме бот НАПИСАВ."""
+    def __init__(self): self.lines = []
+    def install(self):
+        mod = types.ModuleType('detection.activity_log')
+        mod.log_activity = lambda sym, kind, text, **kw: self.lines.append(text)
+        sys.modules['detection.activity_log'] = mod
+        return self
+    @property
+    def text(self): return ' || '.join(self.lines)
+
+
+def _ff_sl(one_h=None, vob=None, price=None, accept=True,
+           real=True, shadow=False):
     """Демон із підміненими ДЖЕРЕЛАМИ блоків (без мережі й БД)."""
     o = FF.__new__(FF)
     o._q4_ob_bounds_1h = lambda sym: one_h
     o._q4_ob_bounds_vob = lambda sym, side, tf='15m': vob
-    o._tm_has_position = lambda sym, real: True      # real → is_shadow=False
-    tm = _TM()
+    o._tm_has_position = lambda sym, is_real: (real if is_real else shadow)
+    o._fuel_dir_smoothed = lambda sym: {'mark_price': price}
+    tm = _TM(price=price, accept=accept)
     o._get_tm = lambda: tm
     return o, tm
 
@@ -146,7 +168,9 @@ def test_sl_falls_back_when_chosen_source_missing():
     _check(len(tm.calls) == 1 and abs(tm.calls[0][1] - 95.0 * 0.999) < 1e-9,
            'немає 1H-OB → фолбек на 15m Volumized')
 
-    o2, tm2 = _ff_sl(one_h=(110.0, 90.0, '1h', 'BULLISH'), vob=None)
+    # bias мусить ВІДПОВІДАТИ напрямку: для SHORT — ведмежий блок (інакше його
+    # тепер свідомо пропускають, див. test_sl_rejects_1h_block_with_opposite_bias).
+    o2, tm2 = _ff_sl(one_h=(110.0, 90.0, '1h', 'BEARISH'), vob=None)
     o2._q4_set_vob_sl('BTCUSDT', 'SHORT', dict(_S, queue4_sl_source='15m'))
     _check(len(tm2.calls) == 1 and abs(tm2.calls[0][1] - 110.0 * 1.001) < 1e-9,
            'немає 15m Volumized → фолбек на 1H-OB')
@@ -166,6 +190,94 @@ def test_sl_bad_source_value_falls_back_to_1h():
     _check(abs(tm.calls[0][1] - 90.0 * 0.999) < 1e-9,
            'невідоме значення налаштування → дефолт 1H, а не збій')
     print('✓ некоректне значення джерела → дефолт 1H')
+
+
+def test_sl_rejects_1h_block_with_opposite_bias():
+    """🐞 ДЕФЕКТ: для SHORT брався `bar_high` БУДЬ-ЯКОГО 1H-блоку. Бичачий блок
+    лежить ПІД ціною → стоп нижче ціни → TM його відхиляє, і угода лишалась без
+    стопа. Черга-4 приймає обидва боки й фліпає, тож це не екзотика.
+    Тепер 1H-джерело з протилежним bias пропускається → фолбек на Volumized."""
+    lg = _Log().install()
+    # 1H-блок БИЧАЧИЙ (під ціною), угода SHORT; Volumized-блок нормальний.
+    o, tm = _ff_sl(one_h=(95.0, 90.0, '1h', 'BULLISH'),
+                   vob=(110.0, 105.0, '15m'), price=100.0)
+    o._q4_set_vob_sl('NEOUSDT', 'SHORT', dict(_S, queue4_sl_source='1h'))
+    _check(len(tm.calls) == 1, f'мав бути рівно один виклик TM: {tm.calls}')
+    _check(abs(tm.calls[0][1] - 110.0 * 1.001) < 1e-9,
+           f'мав узятись Volumized-блок (110·1.001), отримано {tm.calls[0][1]}')
+    _check('bias BULLISH проти SHORT' in lg.text,
+           f'причина пропуску 1H мала потрапити в лог: {lg.text}')
+    print('✓ 1H-блок із протилежним bias пропускається (не мовчазний зрив SL)')
+
+
+def test_sl_rejects_level_on_wrong_side_of_price():
+    """🐞 ДЕФЕКТ: рівень із неправильного боку від ЦІНИ віддавався в TM, той його
+    відхиляв — мовчки. Тепер перевіряємо БІК ще ДО виклику і беремо інше джерело."""
+    lg = _Log().install()
+    # Ведмежий 1H-блок, але ціна вже ВИЩЕ нього → верх блоку нижче ціни.
+    o, tm = _ff_sl(one_h=(98.0, 94.0, '1h', 'BEARISH'),
+                   vob=(112.0, 108.0, '15m'), price=100.0)
+    o._q4_set_vob_sl('NEOUSDT', 'SHORT', dict(_S, queue4_sl_source='1h'))
+    _check(abs(tm.calls[0][1] - 112.0 * 1.001) < 1e-9,
+           f'мав перейти на Volumized, отримано {tm.calls[0][1]}')
+    _check('неправильного боку' in lg.text, f'причина мала бути в лозі: {lg.text}')
+    print('✓ рівень із неправильного боку від ціни → інше джерело')
+
+
+def test_sl_side_ok_helper():
+    _check(FF._q4_sl_side_ok(110, 'SHORT', 100) is True, 'SHORT: стоп вище ціни — ок')
+    _check(FF._q4_sl_side_ok(90, 'SHORT', 100) is False, 'SHORT: стоп нижче ціни — ні')
+    _check(FF._q4_sl_side_ok(90, 'LONG', 100) is True, 'LONG: стоп нижче ціни — ок')
+    _check(FF._q4_sl_side_ok(110, 'LONG', 100) is False, 'LONG: стоп вище ціни — ні')
+    for bad in (None, 0, -1, 'x'):
+        _check(FF._q4_sl_side_ok(bad, 'SHORT', 100) is False, f'сміття {bad!r} → False')
+        _check(FF._q4_sl_side_ok(110, 'SHORT', bad) is False, f'сміття ціни {bad!r} → False')
+    print('✓ перевірка боку SL — те саме правило, що в Trade Manager')
+
+
+def test_sl_logs_rejection_instead_of_lying():
+    """🐞 ГОЛОВНИЙ ДЕФЕКТ: результат `update_manual_sl_tp` ІГНОРУВАВСЯ, і в лог
+    писалось «SL → X», хоча TM його відхилив і угода лишалась БЕЗ стопа."""
+    lg = _Log().install()
+    o, tm = _ff_sl(one_h=(110.0, 90.0, '1h', 'BEARISH'), price=100.0, accept=False)
+    o._q4_set_vob_sl('NEOUSDT', 'SHORT', dict(_S))
+    _check('ВІДХИЛЕНО' in lg.text and 'БЕЗ стопа' in lg.text,
+           f'лог мусить чесно сказати, що стопа немає: {lg.text}')
+    print('✓ відмову TM видно в лозі (лог більше не бреше)')
+
+
+def test_sl_reports_distance_from_entry():
+    """Ризик угоди має бути ВИДНИЙ одразу в лозі, а не вираховуватись очима."""
+    lg = _Log().install()
+    o, tm = _ff_sl(one_h=(110.0, 90.0, '1h', 'BEARISH'), price=100.0)
+    o._q4_set_vob_sl('NEOUSDT', 'SHORT', dict(_S))
+    _check('% від входу' in lg.text, f'лог мав нести відстань стопа: {lg.text}')
+    print('✓ у лозі видно відстань SL у % від входу')
+
+
+def test_sl_not_written_when_no_position():
+    """🐞 ДЕФЕКТ: `is_shadow` вгадувався («немає реальної → значить тіньова»).
+    Якщо позиції немає ЗОВСІМ — писали в тіньову книгу і мовчки нічого не робили."""
+    lg = _Log().install()
+    o, tm = _ff_sl(one_h=(110.0, 90.0, '1h', 'BEARISH'), price=100.0,
+                   real=False, shadow=False)
+    o._q4_set_vob_sl('NEOUSDT', 'SHORT', dict(_S))
+    _check(tm.calls == [], 'TM не мав викликатись, коли позиції немає')
+    _check('позиції по NEOUSDT немає' in lg.text, f'мало бути чесно в лозі: {lg.text}')
+    print('✓ немає позиції → не пишемо навмання, а кажемо про це')
+
+
+def test_sl_targets_shadow_book_only_when_shadow_exists():
+    lg = _Log().install()
+    o, tm = _ff_sl(one_h=(110.0, 90.0, '1h', 'BEARISH'), price=100.0,
+                   real=False, shadow=True)
+    o._q4_set_vob_sl('NEOUSDT', 'SHORT', dict(_S))
+    _check(tm.calls[0][2] is True, 'є лише paper-позиція → is_shadow=True')
+    o2, tm2 = _ff_sl(one_h=(110.0, 90.0, '1h', 'BEARISH'), price=100.0,
+                     real=True, shadow=True)
+    o2._q4_set_vob_sl('NEOUSDT', 'SHORT', dict(_S))
+    _check(tm2.calls[0][2] is False, 'є реальна → пишемо в реальну книгу')
+    print('✓ книга (real/paper) обирається за ФАКТОМ, а не припущенням')
 
 
 def test_sl_source_validated_in_settings():
@@ -299,6 +411,13 @@ if __name__ == '__main__':
     test_sl_falls_back_when_chosen_source_missing()
     test_sl_not_set_when_no_block_at_all()
     test_sl_bad_source_value_falls_back_to_1h()
+    test_sl_rejects_1h_block_with_opposite_bias()
+    test_sl_rejects_level_on_wrong_side_of_price()
+    test_sl_side_ok_helper()
+    test_sl_logs_rejection_instead_of_lying()
+    test_sl_reports_distance_from_entry()
+    test_sl_not_written_when_no_position()
+    test_sl_targets_shadow_book_only_when_shadow_exists()
     test_sl_source_validated_in_settings()
     test_manual_open_uses_queued_direction_and_label()
     test_manual_open_bypasses_queue_gates()

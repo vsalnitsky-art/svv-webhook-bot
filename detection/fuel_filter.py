@@ -6342,6 +6342,53 @@ class FuelFilterDaemon:
         except Exception:
             return None
 
+    @staticmethod
+    def _q4_sl_side_ok(sl: float, side: str, ref_price: float) -> bool:
+        """Чи рівень SL узагалі з ПРАВИЛЬНОГО боку від ціни. ЧИСТА функція.
+
+        ТЕ САМЕ правило, що застосовує `TradeManager.update_manual_sl_tp`:
+        SHORT → стоп мусить бути ВИЩЕ ціни, LONG → НИЖЧЕ. Перевіряємо ТУТ, ДО
+        виклику, щоб мати змогу взяти ІНШЕ джерело блоку, а не отримати мовчазну
+        відмову й лишити угоду без стопа."""
+        try:
+            sl = float(sl); ref = float(ref_price)
+        except (TypeError, ValueError):
+            return False
+        if sl <= 0 or ref <= 0:
+            return False
+        return (sl > ref) if side == 'SHORT' else (sl < ref)
+
+    def _q4_sl_candidates(self, sym: str, side: str, src: str):
+        """Джерела рівня SL у порядку пріоритету: обране користувачем → друге.
+
+        ⚠️ 1H-OB відкидається, якщо його BIAS СУПЕРЕЧИТЬ напрямку угоди: для
+        SHORT потрібен ВЕДМЕЖИЙ блок (беремо його верх), для LONG — БИЧАЧИЙ
+        (беремо низ). Бичачий блок лежить ПІД ціною, тож його `bar_high` дав би
+        для шорта стоп НИЖЧЕ ціни — тобто миттєвий вихід/відмова TM. Черга-4
+        приймає ОБИДВА боки і вміє фліпати за показниками, тож розбіжність
+        «напрямок угоди ≠ bias 1H-OB» тут звичайна річ, а не екзотика.
+        Volumized-джерело такої перевірки не потребує: воно за побудовою бере
+        блок ПОТРІБНОГО боку (`bullish_obs`/`bearish_obs`)."""
+        def _from_1h():
+            r = self._q4_ob_bounds_1h(sym)
+            if not r:
+                return None, '1H OB: немає блоку'
+            top, bottom, tf, bias = r
+            _want = 'BEARISH' if side == 'SHORT' else 'BULLISH'
+            if bias and bias != _want:
+                return None, f'1H OB ({tf}): bias {bias} проти {side}'
+            _b = {'BULLISH': ' 🟢', 'BEARISH': ' 🔴'}.get(bias or '', '')
+            return (top, bottom, f'1H OB ({tf}){_b}'), None
+
+        def _from_15m():
+            r = self._q4_ob_bounds_vob(sym, side, '15m')
+            if not r:
+                return None, '15m Volumized OB: немає блоку'
+            top, bottom, tf = r
+            return (top, bottom, f'Volumized OB ({tf})'), None
+
+        return [_from_1h, _from_15m] if src == '1h' else [_from_15m, _from_1h]
+
     def _q4_set_vob_sl(self, sym: str, side: str, s: Dict):
         """🛑 Черга-4: після відкриття ставить Manual SL на межу OB + буфер:
         SHORT → над ВЕРХОМ, LONG → під НИЗОМ. Буфер = `queue3_vob_sl_buffer_pct`.
@@ -6349,65 +6396,103 @@ class FuelFilterDaemon:
         Джерело блоку обирає користувач — `queue4_sl_source`:
           • '1h' (ДЕФОЛТ) — 1H Order Block (★-блок сканера на `ob_filter_timeframe`);
           • '15m'         — Volumized OB на 15m.
-        Якщо обране джерело блоку не дало — пробуємо ДРУГЕ, щоб угода не лишилась
-        зовсім без SL; у 🧾 Лог завжди пишеться, з ЯКОГО саме джерела взято рівень
-        (мовчазної підміни немає)."""
+
+        Джерело, яке НЕ дало придатного рівня (немає блоку / bias проти напрямку /
+        рівень з НЕПРАВИЛЬНОГО боку від поточної ціни), пропускається — беремо
+        наступне. Якщо жодне не підійшло — SL не вигадуємо і пишемо в лог ЧОМУ.
+
+        ⚠️ Результат `update_manual_sl_tp` ОБОВʼЯЗКОВО перевіряється: TM має власну
+        валідацію й може відхилити рівень. Раніше він ігнорувався, і в 🧾 Лозі
+        стояло «SL → X», хоча угода лишалась БЕЗ стопа."""
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            def log_activity(*_a, **_k):
+                pass
         try:
             src = str(s.get('queue4_sl_source', '1h') or '1h').lower()
             if src not in ('1h', '15m'):
                 src = '1h'
-
-            def _from_1h():
-                r = self._q4_ob_bounds_1h(sym)
-                if not r:
-                    return None
-                top, bottom, tf, bias = r
-                _b = {'BULLISH': ' 🟢', 'BEARISH': ' 🔴'}.get(bias or '', '')
-                return top, bottom, f'1H OB ({tf}){_b}'
-
-            def _from_15m():
-                r = self._q4_ob_bounds_vob(sym, side, '15m')
-                if not r:
-                    return None
-                top, bottom, tf = r
-                return top, bottom, f'Volumized OB ({tf})'
-
-            _primary, _backup = ((_from_1h, _from_15m) if src == '1h'
-                                 else (_from_15m, _from_1h))
-            got = _primary()
-            fallback = False
-            if not got:
-                got = _backup()
-                fallback = True
-            if not got:
-                try:
-                    from detection.activity_log import log_activity
-                    log_activity(sym, 'sltp',
-                                 'Черга-4: SL НЕ встановлено — немає ні 1H-OB, '
-                                 'ні 15m Volumized OB',
-                                 side=side, source='Q4')
-                except Exception:
-                    pass
-                return
-            top, bottom, label = got
             try:
                 buf = max(0.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)) / 100.0
             except (TypeError, ValueError):
                 buf = 0.001
-            sl = round(top * (1.0 + buf), 8) if side == 'SHORT' else round(bottom * (1.0 - buf), 8)
+
             tm = self._get_tm() if self._get_tm else None
             if not tm or not hasattr(tm, 'update_manual_sl_tp'):
                 return
-            _is_shadow = (not self._tm_has_position(sym, True))   # real? інакше paper
-            tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=_is_shadow)
+            # Орієнтир для перевірки боку — ТА САМА ціна, за якою валідує TM.
+            ref = None
             try:
-                from detection.activity_log import log_activity
-                _fb = f' (фолбек: обране «{src}» недоступне)' if fallback else ''
-                log_activity(sym, 'sltp',
-                             f'Черга-4: SL з {label} → {sl}{_fb}',
-                             side=side, source='Q4')
+                ref = tm._get_current_price(sym)
             except Exception:
-                pass
+                ref = None
+            if not ref or ref <= 0:
+                ref = (self._fuel_dir_smoothed(sym) or {}).get('mark_price')
+
+            chosen, skipped = None, []
+            for i, getter in enumerate(self._q4_sl_candidates(sym, side, src)):
+                got, why = getter()
+                if not got:
+                    skipped.append(why)
+                    continue
+                top, bottom, label = got
+                lvl = (round(top * (1.0 + buf), 8) if side == 'SHORT'
+                       else round(bottom * (1.0 - buf), 8))
+                if ref and not self._q4_sl_side_ok(lvl, side, ref):
+                    skipped.append(f'{label}: рівень {self._fmt_price(lvl)} з '
+                                   f'неправильного боку (ціна {self._fmt_price(ref)})')
+                    continue
+                chosen = (lvl, label, i > 0)
+                break
+
+            if not chosen:
+                log_activity(sym, 'sltp',
+                             'Черга-4: SL НЕ встановлено — '
+                             + '; '.join(skipped or ['немає придатного блоку']),
+                             side=side, source='Q4')
+                return
+
+            sl, label, fallback = chosen
+            # 📕 Куди писати — за ФАКТОМ наявності позиції, а не припущенням
+            # «немає реальної → значить тіньова» (Q3-VOB робить саме так).
+            _real = self._tm_has_position(sym, True)
+            _shadow = self._tm_has_position(sym, False)
+            if not _real and not _shadow:
+                log_activity(sym, 'sltp',
+                             f'Черга-4: SL НЕ встановлено — позиції по {sym} немає '
+                             '(закрилась одразу після відкриття?)',
+                             side=side, source='Q4')
+                return
+            _is_shadow = (_shadow and not _real)
+            try:
+                res = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=_is_shadow) or {}
+            except Exception as e:
+                log_activity(sym, 'sltp',
+                             f'Черга-4: SL з {label} → {self._fmt_price(sl)} '
+                             f'НЕ встановлено (помилка: {e})',
+                             side=side, source='Q4')
+                return
+            _fb = f' (фолбек: {"; ".join(skipped)})' if fallback and skipped else ''
+            if res.get('ok'):
+                # Відстань стопа — щоб ризик угоди був ВИДНИЙ одразу в лозі, а не
+                # вираховувався очима з таблиці.
+                _dist = ''
+                _ep = (res.get('position') or {}).get('entry_price')
+                try:
+                    if _ep:
+                        _dist = f' · {abs(sl - float(_ep)) / float(_ep) * 100:.2f}% від входу'
+                except (TypeError, ValueError, ZeroDivisionError):
+                    _dist = ''
+                log_activity(sym, 'sltp',
+                             f'Черга-4: SL з {label} → {self._fmt_price(sl)}{_dist}{_fb}',
+                             side=side, source='Q4')
+            else:
+                log_activity(sym, 'sltp',
+                             f'Черга-4: SL з {label} → {self._fmt_price(sl)} '
+                             f'ВІДХИЛЕНО Trade Manager: {res.get("reason", "—")}'
+                             f'{_fb} — угода БЕЗ стопа',
+                             side=side, source='Q4')
         except Exception as e:
             print(f"[FF-Q4] SL-from-OB error {sym}: {e}")
 
