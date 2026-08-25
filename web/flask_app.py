@@ -3612,6 +3612,25 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/queue4/open', methods=['POST'])
+    def api_fuel_filter_queue4_open():
+        """✋ РУЧНЕ відкриття монети з Черги-4 (кнопка в таблиці).
+        Body: {"symbol": "..."}. Напрямок береться із запису черги — відкриється
+        рівно те, що показано в рядку. Ворота Черги-4 (збіг шарів, 🔁 повторна
+        перевірка, «1 угода на 1H-OB») пропускаються: рішення ухвалює людина."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            symbol = (data.get('symbol') or '').strip().upper()
+            if not symbol:
+                return jsonify({'ok': False, 'reason': 'symbol required'})
+            return jsonify(ff.force_open_queue4(symbol))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/queue4/clear', methods=['POST'])
     def api_fuel_filter_queue4_clear():
         """Clear Queue 4 «🎯 Усі шари» entirely."""

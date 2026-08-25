@@ -301,6 +301,17 @@ DEFAULT_SETTINGS = {
     'queue4_no_light_min': 30,
     'queue4_require_runway': True,  # Запас (runway) має бути у бік напрямку
     'queue4_ttl_hours': 3,          # протермінувати запис Черги-4 через N год (0=без ліміту)
+    # ♾ БЕЗ ТЕРМІНУ: запис Черги-4 живе, доки його не ЗАМІНИТЬ ПРОТИЛЕЖНИЙ сигнал
+    #   (або поки не відкриється / не приберуть вручну). Вимикає ОБИДВА виселення
+    #   за часом — і TTL, і «викид при застої», бо інакше монета все одно зникала б.
+    #   Дефолт False = стара поведінка.
+    'queue4_no_ttl': False,
+    # 🛑 Джерело Manual SL після відкриття з Черги-4:
+    #   '1h'  (дефолт) — межа 1H Order Block (той самий ★-блок, що на графіку,
+    #                    рядок `sob_smc_ob_state` на `ob_filter_timeframe`);
+    #   '15m'          — межа Volumized OB на 15m.
+    #   SL = межа + буфер `queue3_vob_sl_buffer_pct`.
+    'queue4_sl_source': '1h',
     # 🔥 Виснаженість Черги-4: НЕ відкривати угоду, якщо хід уже виснажений понад
     #    поріг (0..100). Дефолт УВІМКНЕНО, поріг 95% (ріже лише зовсім вичерпані
     #    рухи). Це ЄДИНИЙ запобіжник Q4 (решта safeguard-ів у Q4 вимкнені).
@@ -962,6 +973,10 @@ class FuelFilterDaemon:
             s['queue4_ttl_hours'] = max(0, min(72, float(s.get('queue4_ttl_hours', 3) or 0)))
         except (TypeError, ValueError):
             s['queue4_ttl_hours'] = 3
+        s['queue4_no_ttl'] = bool(s.get('queue4_no_ttl', False))
+        # Джерело Manual SL — лише два допустимі значення; будь-що інше → дефолт.
+        _sls = str(s.get('queue4_sl_source', '1h') or '1h').lower()
+        s['queue4_sl_source'] = _sls if _sls in ('1h', '15m') else '1h'
         try:
             s['queue4_mm_new_min'] = max(0, min(100, int(s.get('queue4_mm_new_min', 30) or 0)))
         except (TypeError, ValueError):
@@ -5746,6 +5761,32 @@ class FuelFilterDaemon:
                    'su_mm': blocks.get('mm'), 'su_timing': blocks.get('timing'),
                    'su_context': blocks.get('context')})
 
+    @staticmethod
+    def _q4_ttl_expired(added_at, now: float, ttl_h: float, no_ttl: bool) -> bool:
+        """⏳ Чи протерміновано запис Черги-4 за TTL. ЧИСТА функція (юніт-тест).
+        `no_ttl=True` (♾ «Без терміну») → НІКОЛИ: запис чекає на заміну
+        протилежним сигналом. `ttl_h<=0` теж вимикає ліміт (як і раніше)."""
+        if no_ttl or ttl_h <= 0:
+            return False
+        try:
+            _a = float(added_at or 0)
+        except (TypeError, ValueError):
+            return False
+        return bool(_a) and (now - _a) > ttl_h * 3600
+
+    @staticmethod
+    def _q4_stagnant(lit_at, now: float, nl_min: float, no_ttl: bool) -> bool:
+        """⏳ Чи «застояний» запис (N хв поспіль жоден показник не в бік). ЧИСТА
+        функція. `no_ttl=True` вимикає й це виселення — інакше монета зникала б
+        через застій і заміняти протилежним сигналом було б нічого."""
+        if no_ttl or nl_min <= 0:
+            return False
+        try:
+            _l = float(lit_at)
+        except (TypeError, ValueError):
+            return False
+        return (now - _l) > nl_min * 60
+
     def _q4_snapshot(self, sym: str, s: Dict) -> Dict:
         """⚡ B1: ЄДИНЕ місце вводу-виводу для шарів Черги-4.
 
@@ -6053,6 +6094,12 @@ class FuelFilterDaemon:
             ttl_h = float(s.get('queue4_ttl_hours', 3) or 0)
         except (TypeError, ValueError):
             ttl_h = 3.0
+        # ♾ «Без терміну»: запис лишається, доки його не ЗАМІНИТЬ ПРОТИЛЕЖНИЙ
+        # сигнал (див. `_q4_opp_replace` в intercept), не відкриється або його не
+        # приберуть вручну. Вимикає ОБИДВА виселення за часом — TTL і застій;
+        # інакше монета все одно зникала б через 30 хв «застою» і заміняти було б
+        # нічого. Санітарні виходи (вже в угоді / 1H-OB вже відпрацьовано) лишаються.
+        no_ttl = bool(s.get('queue4_no_ttl', False))
         with self._lock:
             items = list(self._pending4.items())
         # ⏱ Профіль такту — щоб приріст швидкості БУЛО ВИДНО в цифрах, а не «на
@@ -6063,16 +6110,14 @@ class FuelFilterDaemon:
             d = info.get('dir')
             if d not in ('LONG', 'SHORT'):
                 continue
-            # ⏳ TTL — не тримати запис у Черзі-4 нескінченно.
-            if ttl_h > 0:
-                _added = float(info.get('added_at') or 0)
-                if _added and (now - _added) > ttl_h * 3600:
-                    with self._lock:
-                        self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
-                    log_activity(sym, 'skipped',
-                                 f'Черга-4: протерміновано (>{ttl_h:.0f}год у черзі без відкриття)',
-                                 side=d, source='Q4')
-                    continue
+            # ⏳ TTL — не тримати запис у Черзі-4 нескінченно (♾ вимикає).
+            if self._q4_ttl_expired(info.get('added_at'), now, ttl_h, no_ttl):
+                with self._lock:
+                    self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
+                log_activity(sym, 'skipped',
+                             f'Черга-4: протерміновано (>{ttl_h:.0f}год у черзі без відкриття)',
+                             side=d, source='Q4')
+                continue
             if sym in self._fuel_managed:
                 continue
             if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
@@ -6123,10 +6168,10 @@ class FuelFilterDaemon:
                 _nl_min = float(s.get('queue4_no_light_min', 30) or 0)
             except (TypeError, ValueError):
                 _nl_min = 30.0
-            if _nl_min > 0:
+            if _nl_min > 0 and not no_ttl:
                 if _al_best >= 1 or sym not in self._q4_lit_at:
                     self._q4_lit_at[sym] = now      # засвітився / перший показ → скид
-                if (now - self._q4_lit_at.get(sym, now)) > _nl_min * 60:
+                if self._q4_stagnant(self._q4_lit_at.get(sym, now), now, _nl_min, no_ttl):
                     with self._lock:
                         self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
                     self._q4_lit_at.pop(sym, None)
@@ -6236,16 +6281,36 @@ class FuelFilterDaemon:
             print(f"[FF-Q4] tick: {_q4_seen} coins in {_el:.2f}s "
                   f"({_el / max(1, _q4_seen):.3f}s/coin)")
 
-    def _q4_set_vob_sl(self, sym: str, side: str, s: Dict):
-        """🎯 Черга-4: після відкриття ставить SL із Volumized OB + буфер. Бере
-        найновіший активний (не-breaker) Volumized OB у бік угоди за параметрами
-        сканера (volumized_timeframe/swing/end_method/atr/zone_count) → SL = межа
-        блоку + буфер: SHORT над ВЕРХОМ, LONG під НИЗОМ. Буфер = queue3_vob_sl_buffer_pct."""
+    def _q4_ob_bounds_1h(self, sym: str):
+        """Межі 1H Order Block — ТОГО САМОГО ★-блоку, що видно на графіку.
+        Джерело ЄДИНЕ з OB-фільтром сканера: рядок `sob_smc_ob_state` на
+        `ob_filter_timeframe`. Повертає (top, bottom, tf, bias) або None.
+
+        ⚠️ НЕ рахувати OB інлайн — це вже давало розбіжність «мітка каже 1H, а
+        цифри з іншого TF» (див. кейс ★ у watchlist). Беремо лише те, що сканер
+        реально записав."""
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            tf = (sc.get_settings().get('ob_filter_timeframe', '1h') if sc else '1h') or '1h'
+            st = self._db.get_smc_ob_state(sym, tf) or {}
+            top = float(st.get('bar_high') or 0)
+            bottom = float(st.get('bar_low') or 0)
+            if top <= 0 or bottom <= 0:
+                return None
+            return top, bottom, tf, st.get('bias')
+        except Exception:
+            return None
+
+    def _q4_ob_bounds_vob(self, sym: str, side: str, tf: str = '15m'):
+        """Межі найновішого АКТИВНОГО (не-breaker) Volumized OB у бік угоди на
+        заданому TF. Форма блоку — за параметрами сканера (swing/end/atr/zone),
+        щоб бокс збігався з тим, що малюється на графіку.
+        Повертає (top, bottom, tf) або None."""
         try:
             from detection.smc_scanner import get_smc_scanner
             sc = get_smc_scanner()
             ss = sc.get_settings() if sc else {}
-            tf = ss.get('volumized_timeframe', '15m') or '15m'
             try:
                 swing = int(ss.get('volumized_swing_length', 10) or 10)
             except (TypeError, ValueError):
@@ -6261,22 +6326,70 @@ class FuelFilterDaemon:
             md = get_market_data()
             kl = md.fetch_klines(sym, limit=200, interval=tf) if md else None
             if not kl or len(kl) < 20:
-                return
+                return None
             from detection.volumized_ob import detect_volumized_obs
             res = detect_volumized_obs(kl, swing_length=swing, ob_end_method=endm,
                                        max_atr_mult=atr, zone_count=zc, combine_obs=comb)
             obs = res.get('bullish_obs' if side == 'LONG' else 'bearish_obs') or []
-            ob = None
             for o in obs:                 # newest first
-                if not o.get('breaker'):
-                    ob = o
-                    break
-            if not ob:
+                if o.get('breaker'):
+                    continue              # breaker = зона знецінена, не орієнтир
+                top = float(o.get('top') or 0)
+                bottom = float(o.get('bottom') or 0)
+                if top > 0 and bottom > 0:
+                    return top, bottom, tf
+            return None
+        except Exception:
+            return None
+
+    def _q4_set_vob_sl(self, sym: str, side: str, s: Dict):
+        """🛑 Черга-4: після відкриття ставить Manual SL на межу OB + буфер:
+        SHORT → над ВЕРХОМ, LONG → під НИЗОМ. Буфер = `queue3_vob_sl_buffer_pct`.
+
+        Джерело блоку обирає користувач — `queue4_sl_source`:
+          • '1h' (ДЕФОЛТ) — 1H Order Block (★-блок сканера на `ob_filter_timeframe`);
+          • '15m'         — Volumized OB на 15m.
+        Якщо обране джерело блоку не дало — пробуємо ДРУГЕ, щоб угода не лишилась
+        зовсім без SL; у 🧾 Лог завжди пишеться, з ЯКОГО саме джерела взято рівень
+        (мовчазної підміни немає)."""
+        try:
+            src = str(s.get('queue4_sl_source', '1h') or '1h').lower()
+            if src not in ('1h', '15m'):
+                src = '1h'
+
+            def _from_1h():
+                r = self._q4_ob_bounds_1h(sym)
+                if not r:
+                    return None
+                top, bottom, tf, bias = r
+                _b = {'BULLISH': ' 🟢', 'BEARISH': ' 🔴'}.get(bias or '', '')
+                return top, bottom, f'1H OB ({tf}){_b}'
+
+            def _from_15m():
+                r = self._q4_ob_bounds_vob(sym, side, '15m')
+                if not r:
+                    return None
+                top, bottom, tf = r
+                return top, bottom, f'Volumized OB ({tf})'
+
+            _primary, _backup = ((_from_1h, _from_15m) if src == '1h'
+                                 else (_from_15m, _from_1h))
+            got = _primary()
+            fallback = False
+            if not got:
+                got = _backup()
+                fallback = True
+            if not got:
+                try:
+                    from detection.activity_log import log_activity
+                    log_activity(sym, 'sltp',
+                                 'Черга-4: SL НЕ встановлено — немає ні 1H-OB, '
+                                 'ні 15m Volumized OB',
+                                 side=side, source='Q4')
+                except Exception:
+                    pass
                 return
-            top = float(ob.get('top') or 0)
-            bottom = float(ob.get('bottom') or 0)
-            if top <= 0 or bottom <= 0:
-                return
+            top, bottom, label = got
             try:
                 buf = max(0.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)) / 100.0
             except (TypeError, ValueError):
@@ -6289,13 +6402,14 @@ class FuelFilterDaemon:
             tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=_is_shadow)
             try:
                 from detection.activity_log import log_activity
+                _fb = f' (фолбек: обране «{src}» недоступне)' if fallback else ''
                 log_activity(sym, 'sltp',
-                             f'Черга-4: SL з Volumized OB ({tf}) → {sl}',
+                             f'Черга-4: SL з {label} → {sl}{_fb}',
                              side=side, source='Q4')
             except Exception:
                 pass
         except Exception as e:
-            print(f"[FF-Q4] SL-from-VOB error {sym}: {e}")
+            print(f"[FF-Q4] SL-from-OB error {sym}: {e}")
 
     def _engine_tick_readiness(self):
         """🎯 Queue 3 «Готовність» engine — opens a queued coin the MOMENT its SMC
@@ -8072,6 +8186,90 @@ class FuelFilterDaemon:
                 self._q4_cache_drop(symbol)
                 self._persist_state()
         return removed
+
+    def force_open_queue4(self, symbol: str) -> Dict:
+        """✋ РУЧНЕ відкриття монети з Черги-4 (кнопка в таблиці).
+
+        Рішення ухвалює ЛЮДИНА, тому ворота Черги-4 не діють: ні збіг шарів
+        (`base >= required`), ні 🔁 повторна перевірка фільтрів, ні гейт
+        «1 угода на 1H-OB». Запобіжники самого `_open` (розмір позиції, ціна)
+        лишаються — вони про виконуваність ордера, а не про стратегію.
+
+        Напрямок береться з ЗАПИСУ В ЧЕРЗІ (той, що показано в таблиці), щоб
+        відкрилось РІВНО те, що бачить користувач. Мітка — `manual → Q4`
+        (✋ Ручний → 🎯 Черга-4), щоб походження угоди не губилось.
+        Після відкриття ставиться той самий Manual SL, що й у авто-відкритті
+        (`queue4_sl_source`). Повертає {'ok', 'reason', 'opened'}.
+        """
+        symbol = (symbol or '').upper()
+        s = self.get_settings()
+        if not s.get('enabled'):
+            return {'ok': False, 'opened': False, 'reason': 'Fuel Auto-Filter вимкнено'}
+        with self._lock:
+            info = dict(self._pending4.get(symbol) or {})
+        side = info.get('dir')
+        if side not in ('LONG', 'SHORT'):
+            return {'ok': False, 'opened': False, 'reason': f'{symbol} немає в Черзі-4'}
+        if symbol in self._fuel_managed:
+            return {'ok': False, 'opened': False, 'reason': f'{symbol} уже в угоді (FF)'}
+        if self._tm_has_position(symbol, True) or self._tm_has_position(symbol, False):
+            return {'ok': False, 'opened': False, 'reason': f'{symbol} уже має відкриту позицію'}
+
+        # Ціна: той самий ланцюг, що й у `force_open_timer` — liq-map знімок, а
+        # якщо його немає, прямий тікер (пропуск liq-map не має блокувати дію,
+        # яку користувач явно попросив).
+        fuel = self._fuel_dir_smoothed(symbol) or {}
+        mark = fuel.get('mark_price')
+        if not mark or mark <= 0:
+            try:
+                from detection.market_data import get_market_data
+                md = get_market_data()
+                tk = md.get_ticker(symbol) if md else None
+                mark = (tk or {}).get('last')
+            except Exception:
+                mark = None
+        if not mark or mark <= 0:
+            return {'ok': False, 'opened': False,
+                    'reason': f'Не вдалося отримати ціну для {symbol}'}
+
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            log_activity = lambda *a, **k: None
+        try:
+            opened = self._open(symbol, side, {'mark_price': mark, 'dir': side}, s,
+                                opened_by=_ob_compose('manual', 'Q4'),
+                                skip_ctr_safeguard=True, skip_safeguard=True)
+        except Exception as e:
+            print(f"[FF-Q4] manual open error {symbol}: {e}")
+            return {'ok': False, 'opened': False, 'reason': f'Помилка: {e}'}
+
+        if not opened:
+            log_activity(symbol, 'skipped',
+                         '✋ Черга-4: РУЧНЕ відкриття відхилено на рівні `_open` '
+                         '(ціна/розмір позиції — див. лог)',
+                         side=side, source='Q4')
+            return {'ok': False, 'opened': False,
+                    'reason': 'Відкриття відхилено (ціна/розмір — див. 🧾 Лог)'}
+
+        now = time.time()
+        with self._lock:
+            self._timers[symbol] = {'dir': side, 'since': now, 'start_price': mark}
+            self._pending4.pop(symbol, None)
+            self._q4_cache_drop(symbol)
+            self._persist_state()
+        self._q4_lit_at.pop(symbol, None)
+        # Позначку «вже відкривались на цьому 1H-OB» ставимо і для ручного
+        # відкриття — інакше авто-двигун міг би відкрити ДРУГУ угоду на тому
+        # самому 1H-OB одразу після закриття цієї.
+        self._mark_ob_epoch_opened(symbol)
+        log_activity(symbol, 'opened',
+                     f'✋ Черга-4: РУЧНЕ відкриття {side} — ворота шарів і повторну '
+                     'перевірку фільтрів пропущено (рішення користувача)',
+                     side=side, source='Q4')
+        print(f"[FF-Q4] MANUAL opened {side} {symbol}")
+        self._q4_set_vob_sl(symbol, side, s)
+        return {'ok': True, 'opened': True, 'reason': f'Угоду {side} відкрито вручну'}
 
     def clear_all_timers4(self) -> int:
         """Clear Queue 4 «🎯 Усі шари» entirely (does NOT touch інші черги)."""

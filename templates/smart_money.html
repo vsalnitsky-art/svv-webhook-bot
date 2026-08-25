@@ -2760,6 +2760,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="ff-queue4-runway" onchange="saveFuelFilterSettings()" title="Вимагати напрямок Запасу у бік сигналу"> у бік
                     </label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Протермінувати запис Черги-4 через N год, якщо не відкрилась. 0 = без ліміту.">TTL <input type="number" id="ff-queue4-ttl" min="0" max="72" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> год</label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="♾ БЕЗ ТЕРМІНУ: запис Черги-4 живе, доки його не ЗАМІНИТЬ ПРОТИЛЕЖНИЙ сигнал по тій самій монеті (або поки не відкриється / не приберете вручну). Вимикає ОБИДВА виселення за часом — і TTL, і «викид при застої» (інакше монета все одно зникала б і заміняти було б нічого). Санітарні виходи (вже в угоді, 1H-OB уже відпрацьовано) лишаються."><input type="checkbox" id="ff-queue4-nottl" onchange="saveFuelFilterSettings(); _ffQueue4TtlSync()"> ♾ Без терміну (лише заміна протилежним)</label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="🛑 Звідки брати рівень для Manual SL після відкриття з Черги-4. SL = межа блоку + буфер (SHORT над верхом, LONG під низом); буфер — «SL буфер» у налаштуваннях Черги-3. • 1H OB — той самий ★-блок, що на графіку (рядок сканера на TF OB-фільтра). • 15m Volumized OB — межа Volumized-блоку на 15m. Якщо обраного блоку немає — береться другий, і в 🧾 Лозі буде видно, з якого саме джерела став SL.">🛑 SL з <select id="ff-queue4-sl-source" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="1h">1H OB</option><option value="15m">15m Volumized OB</option></select></label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="🔁 Перед ВІДКРИТТЯМ ще раз проганяємо монету через ТОЙ САМИЙ ланцюг фільтрів сканера (OB Match / Forecast 1H+4H / Decision / POC / PD), який пускав її в Чергу-4. Монета могла простояти в черзі годинами — за цей час OB чи прогноз могли перевернутись. Не пройшла повторну перевірку → НЕ відкриваємо, лишається в черзі до наступного тіку. За замовч. УВІМК."><input type="checkbox" id="ff-queue4-recheck" onchange="saveFuelFilterSettings()"> 🔁 Повторна перевірка фільтрів на виході</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Не відкривати угоду, якщо хід уже виснажений понад поріг. Єдиний запобіжник Черги-4.">
                         <input type="checkbox" id="ff-queue4-exh-on" onchange="saveFuelFilterSettings()"> 🔥 Виснаженість ≤ <input type="number" id="ff-queue4-exh-pct" min="1" max="100" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> %</label>
@@ -2772,7 +2774,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers4-table">
                     <thead>
-                        <tr><th>Символ</th><th>Напрямок</th><th title="Конфлюенс увімкнених шарів. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди.">🎯</th><th class="q4c-new" title="Новий МММ (бабло-модель)">Новий МММ</th><th class="q4c-old" title="Старий МММ ((fa−fb)/den)">Старий МММ</th><th class="q4c-setup" title="SMC-готовність (grade_setup)">Готовність</th><th class="q4c-runway" title="Запас ходу (runway) — показник TradingView-скрипта">Запас</th><th>Очікує</th><th>Дія</th></tr>
+                        <tr>
+                            <th data-sortcol="symbol" onclick="ffSortQueue4('symbol')" style="cursor:pointer" title="Сортувати за символом">Символ<span class="ff-sort-arrow"></span></th>
+                            <th data-sortcol="dir" onclick="ffSortQueue4('dir')" style="cursor:pointer" title="Сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th>
+                            <th data-sortcol="layers" onclick="ffSortQueue4('layers')" style="cursor:pointer" title="Конфлюенс увімкнених шарів. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди. Сортування за замовчуванням — саме за цією колонкою.">🎯<span class="ff-sort-arrow"></span></th>
+                            <th class="q4c-new" data-sortcol="mm_new" onclick="ffSortQueue4('mm_new')" style="cursor:pointer" title="Новий МММ (бабло-модель). Сортування: сила у бік сигналу.">Новий МММ<span class="ff-sort-arrow"></span></th>
+                            <th class="q4c-old" data-sortcol="mm_old" onclick="ffSortQueue4('mm_old')" style="cursor:pointer" title="Старий МММ ((fa−fb)/den). Сортування: сила у бік сигналу.">Старий МММ<span class="ff-sort-arrow"></span></th>
+                            <th class="q4c-setup" data-sortcol="setup" onclick="ffSortQueue4('setup')" style="cursor:pointer" title="SMC-готовність (grade_setup)">Готовність<span class="ff-sort-arrow"></span></th>
+                            <th class="q4c-runway" data-sortcol="runway" onclick="ffSortQueue4('runway')" style="cursor:pointer" title="Запас ходу (runway) — показник TradingView-скрипта">Запас<span class="ff-sort-arrow"></span></th>
+                            <th data-sortcol="held" onclick="ffSortQueue4('held')" style="cursor:pointer" title="Скільки часу монета в черзі">Очікує<span class="ff-sort-arrow"></span></th>
+                            <th>Дія</th>
+                        </tr>
                     </thead>
                     <tbody id="ff-timers4-tbody">
                         <tr><td colspan="9" class="tm-empty-msg">Черга-4 порожня</td></tr>
@@ -10441,12 +10453,61 @@ function _ffQ4Sig(rows) {
         ].join('|');
     }).join(';');
 }
+// ⇅ Сортування Черги-4. За замовчуванням — за колонкою «🎯 Шари» (спадання):
+// найзібраніші конфлюенси зверху, бо саме вони найближчі до відкриття.
+// Тайбрейк — довше в черзі (як у 💰 Funding).
+const _FF4_SORT_DEFAULT = { col: 'layers', dir: -1 };
+function _ffQ4SortVal(t, col) {
+    const q = t.q4 || {}, n = q.mm_new || {}, o = q.mm_old || {},
+          r = q.runway || {}, su = q.setup || {};
+    // Сила МММ зі ЗНАКОМ за напрямком запису: у бік сигналу = +, проти = −.
+    // Так «34% у бік» стоїть вище за «71% проти», а не навпаки.
+    const signed = (d, v) => (d === t.dir ? 1 : (d ? -1 : 0)) * (Number(v) || 0);
+    switch (col) {
+        case 'symbol': return t.symbol || '';
+        case 'dir': return t.dir || '';
+        case 'layers': return Number(q.count) || 0;
+        case 'mm_new': return signed(n.dir, n.str);
+        case 'mm_old': return signed(o.dir, o.str);
+        case 'setup': return (su.dir === t.dir ? 1 : -1) * (Number(su.score) || 0);
+        case 'runway': return signed(r.dir, r.room_pct);
+        case 'held': return Number(t.held_sec) || 0;
+        default: return 0;
+    }
+}
+function ffSortQueue4(col) {
+    const srt = window._ff4QueueSort || { ..._FF4_SORT_DEFAULT };
+    if (srt.col === col) srt.dir = -srt.dir;
+    else { srt.col = col; srt.dir = (col === 'symbol' || col === 'dir') ? 1 : -1; }
+    window._ff4QueueSort = srt;
+    const tb = document.getElementById('ff-timers4-tbody');
+    if (tb) delete tb.dataset.sig;   // порядок змінився → сигнатура має перемалювати
+    ffRenderQueue4();
+}
+function _ffUpdateQueue4HeaderArrows() {
+    const srt = window._ff4QueueSort || _FF4_SORT_DEFAULT;
+    document.querySelectorAll('#ff-timers4-table th[data-sortcol]').forEach(th => {
+        const arrow = th.querySelector('.ff-sort-arrow');
+        if (!arrow) return;
+        arrow.textContent = (th.getAttribute('data-sortcol') === srt.col)
+            ? (srt.dir < 0 ? ' ▼' : ' ▲') : '';
+    });
+}
 function ffRenderQueue4() {
     const tb = document.getElementById('ff-timers4-tbody');
     if (!tb) return;
     _ffApplyQ4Cols();   // синхронізуємо видимість колонок із тумблерами (CSS-класи)
-    const rows = window._ff4TimersData || [];
-    const _sig = _ffQ4Sig(rows);
+    const srt = window._ff4QueueSort || _FF4_SORT_DEFAULT;
+    const rows = (window._ff4TimersData || []).slice().sort((a, b) => {
+        const va = _ffQ4SortVal(a, srt.col), vb = _ffQ4SortVal(b, srt.col);
+        let cmp = (typeof va === 'number' && typeof vb === 'number')
+            ? va - vb : String(va).localeCompare(String(vb));
+        cmp *= srt.dir;
+        // Тайбрейк — довше в черзі зверху (стабільний, не «стрибає» між поллами).
+        return cmp || ((b.held_sec || 0) - (a.held_sec || 0));
+    });
+    _ffUpdateQueue4HeaderArrows();
+    const _sig = `${srt.col}:${srt.dir}|` + _ffQ4Sig(rows);
     if (tb.dataset.sig === _sig) return;   // нічого не змінилось → DOM не чіпаємо
     tb.dataset.sig = _sig;
     if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Черга-4 порожня</td></tr>'; return; }
@@ -10475,9 +10536,33 @@ function ffRenderQueue4() {
             <td class="q4c-setup" style="white-space:nowrap">${ffSetupCell(q.setup)}</td>
             <td class="q4c-runway" style="white-space:nowrap;font-size:0.74rem">${rwTxt}</td>
             <td style="font-size:0.74rem;color:#cbd5e1">${held}</td>
-            <td style="white-space:nowrap"><span onclick="deleteTimer4('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити з Черги-4">✕</span></td>
+            <td style="white-space:nowrap">
+                <span onclick="openTimer4('${t.symbol}','${t.dir}')" style="cursor:pointer;color:#4ade80;font-size:0.9rem;margin-right:8px" title="✋ Відкрити ${t.dir} вручну — ворота шарів і повторну перевірку фільтрів пропущено">✋</span>
+                <span onclick="deleteTimer4('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити з Черги-4">✕</span>
+            </td>
         </tr>`;
     }).join('');
+}
+// ✋ РУЧНЕ відкриття з Черги-4. Напрямок — той, що показано в рядку; фільтри й
+// ворота черги пропускаються (рішення користувача), тому підтвердження обовʼязкове.
+async function openTimer4(symbol, dir) {
+    if (!confirm(`Відкрити ${dir} по ${symbol} ВРУЧНУ?\n\n`
+        + 'Ворота Черги-4 (збіг шарів, 🔁 повторна перевірка фільтрів, «1 угода на 1H-OB») '
+        + 'будуть пропущені — рішення ваше.')) return;
+    try {
+        const r = await fetch('/api/fuel-filter/queue4/open', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol })
+        }).then(x => x.json());
+        if (r && r.ok) {
+            window._ff4TimersData = (window._ff4TimersData || []).filter(t => t.symbol !== symbol);
+            ffRenderQueue4();
+            loadFuelFilterStatus();
+            if (typeof loadTMState === 'function') loadTMState();
+        } else {
+            alert('Не відкрито: ' + ((r && r.reason) || 'невідома причина'));
+        }
+    } catch (e) { alert('Помилка ручного відкриття: ' + e); }
 }
 function ffRenderQueue3() {
     const tb = document.getElementById('ff-timers3-tbody');
@@ -10563,6 +10648,17 @@ function _ffQueue4EntrySync() {
     const on = (document.getElementById('ff-queue4-entry-gate') || {}).checked;
     const sel = document.getElementById('ff-queue4-entry-min');
     if (sel) { sel.disabled = !on; sel.style.opacity = on ? '1' : '0.4'; }
+}
+// ♾ «Без терміну» вимикає ОБИДВА виселення за часом — гасимо обидва поля, щоб
+// було ВИДНО, що вони не діють (а не «стоїть 3 год, але не спрацьовує»).
+function _ffQueue4TtlSync() {
+    const off = !!(document.getElementById('ff-queue4-nottl') || {}).checked;
+    ['ff-queue4-ttl', 'ff-queue4-nolight'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.disabled = off;
+        el.style.opacity = off ? '0.4' : '1';
+    });
 }
 async function clearAllTimers4() {
     if (!confirm('Очистити всю Чергу-4 («Усі шари»)?')) return;
@@ -10671,6 +10767,9 @@ function renderFuelFilter(d) {
     setIf('ff-queue4-setup', String(s.queue4_setup_min != null ? s.queue4_setup_min : 38));
     setIf('ff-queue4-runway', s.queue4_require_runway !== false);
     setIf('ff-queue4-ttl', String(s.queue4_ttl_hours != null ? s.queue4_ttl_hours : 3));
+    setIf('ff-queue4-nottl', s.queue4_no_ttl === true);            // деф. OFF
+    setIf('ff-queue4-sl-source', String(s.queue4_sl_source || '1h'));
+    _ffQueue4TtlSync();
     setIf('ff-queue4-exh-on', s.queue4_exhaustion_on !== false);
     setIf('ff-queue4-recheck', s.queue4_recheck_filters !== false);   // деф. ON
     setIf('ff-queue4-exh-pct', String(s.queue4_exhaustion_pct != null ? s.queue4_exhaustion_pct : 95));
@@ -11678,6 +11777,8 @@ async function saveFuelFilterSettings() {
         queue4_setup_min: parseInt(_v('ff-queue4-setup', '40') || '40', 10),
         queue4_require_runway: _c('ff-queue4-runway'),
         queue4_ttl_hours: parseFloat(_v('ff-queue4-ttl', '3') || '3'),
+        queue4_no_ttl: _c('ff-queue4-nottl'),
+        queue4_sl_source: _v('ff-queue4-sl-source', '1h') || '1h',
         queue4_exhaustion_on: _c('ff-queue4-exh-on'),
         queue4_recheck_filters: _c('ff-queue4-recheck'),
         queue4_exhaustion_pct: parseInt(_v('ff-queue4-exh-pct', '95') || '95', 10),
