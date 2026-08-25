@@ -4153,10 +4153,19 @@ async function loadActivityLog() {
     const f = document.getElementById('activity-log-filter');
     const ev = f ? f.value : '';
     try {
-        const d = await (await fetch('/api/activity-log?limit=600' + (ev ? ('&event=' + ev) : ''))).json();
+        // Ліміт 600 → 300: таблиця оновлюється часто, а 600 рядків — це зайві
+        // ~150КБ на кожен запит і повна перебудова DOM. Повна історія завжди
+        // доступна кнопками CSV/JSON (там ліміту немає).
+        const d = await (await fetch('/api/activity-log?limit=300' + (ev ? ('&event=' + ev) : ''))).json();
         const chk = document.getElementById('activity-log-enabled');
         if (chk) chk.checked = !!d.enabled;
         const evs = (d && d.events) || [];   // newest-first
+        // 🚦 Якщо НІЧОГО не змінилось — не чіпаємо DOM (інакше таблиця
+        // перебудовується щоразу і сторінка «важчає» на очах).
+        const _sig = String(d.count || 0) + '|' + evs.length + '|'
+            + (evs[0] ? (evs[0].t + ':' + evs[0].symbol + ':' + evs[0].event) : '');
+        if (tb.dataset.sig === _sig) return;
+        tb.dataset.sig = _sig;
         if (!evs.length) {
             tb.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">'
                 + (d.enabled ? 'Подій ще немає — чекаємо на сигнали.' : 'Моніторинг вимкнено.') + '</td></tr>';
@@ -4222,7 +4231,9 @@ async function deleteActivityLog(ids) {
     loadActivityLog();
 }
 loadActivityLog();
-setInterval(() => { if (document.getElementById('activity-log-tbody')) loadActivityLog(); }, 5000);
+// 15с замість 5с: лог — не realtime-панель, а часте опитування з повною
+// перебудовою таблиці помітно гальмувало сторінку.
+setInterval(() => { if (document.getElementById('activity-log-tbody')) loadActivityLog(); }, 15000);
 </script>
 
 <script>

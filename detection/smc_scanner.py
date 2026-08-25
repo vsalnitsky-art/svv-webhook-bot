@@ -2758,9 +2758,21 @@ class SMCScanner:
                 return
         except Exception:
             return
-        # 'fired'/'filtered' основний шлях уже пише власні рядки `signal`/`rejected`
-        # з повним розкладом фільтрів — тут їх не дублюємо.
-        if outcome in ('fired', 'filtered'):
+        # ── ЩО ЙДЕ В 🧾 ЛОГ, А ЩО ЛИШЕ В БЕЙДЖ ─────────────────────────────
+        # У лог — ЛИШЕ реальні події та реальні ПРОПУСКИ сигналу:
+        #   • stale     — блок з'явився, але вже застарів → сигнал втрачено;
+        #   • epoch     — такт 1H-OB уже витрачений результативним сигналом;
+        #   • no_1h_ob  — немає 1H-OB, тому сигналів не буде.
+        # НЕ в лог (це СТАБІЛЬНІ СТАНИ, а не події — вони видні в бейджі
+        # `vob_diag` на панелі в реальному часі; у проді давали 51% обсягу логу:
+        # duplicate 165 + numbered 93 + no_candidate 29 за 8.5 год):
+        #   • duplicate     — блок уже опрацьований, чекаємо наступний;
+        #   • numbered      — новий блок, але такт уже витрачено;
+        #   • no_candidate  — валідного VOB просто немає;
+        #   • first_sight   — тиха базова лінія.
+        # 'fired'/'filtered' теж не дублюємо — основний шлях уже пише
+        # `signal`/`rejected` з повним розкладом фільтрів.
+        if outcome not in ('stale', 'epoch', 'no_1h_ob'):
             return
         try:
             from detection.activity_log import log_activity

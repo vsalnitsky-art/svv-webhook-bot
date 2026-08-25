@@ -100,37 +100,40 @@ def _mk():
     return obj
 
 
-def test_log_decision_logs_every_vob_without_duplicates():
-    """ВИМОГА: жоден VOB не мовчить — кожен стан потрапляє в 🧾 Лог роботи бота.
-    Але той САМИЙ стан повторно НЕ дублюється (інакше лог засмічується щоциклу).
-    fired/filtered не дублюємо: основний шлях уже пише `signal`/`rejected`."""
+def test_log_only_real_misses_not_stable_states():
+    """🧹 ЧИСТКА ЛОГУ (за скаргою на обсяг): у 🧾 Лог ідуть ЛИШЕ реальні
+    ПРОПУСКИ сигналу — `stale` / `epoch` / `no_1h_ob`.
+
+    СТАБІЛЬНІ СТАНИ (duplicate / numbered / no_candidate / first_sight) у лог НЕ
+    пишемо: вони видні в бейджі `vob_diag` у реальному часі, а в проді давали
+    51% обсягу (duplicate 165 + numbered 93 + no_candidate 29 за 8.5 год).
+    `fired`/`filtered` теж не дублюємо — їх пише основний шлях."""
     _LOGS.clear()
     o = _mk()
-    # Кожен «тихий» стан МУСИТЬ дати рядок у лозі
-    for oc in ('stale', 'first_sight', 'epoch', 'duplicate',
-               'no_candidate', 'no_1h_ob', 'numbered'):
-        o._vob_log_decision('BTCUSDT', 'SHORT', oc, age=5, max_age=7, ft=1,
+    for oc in ('stale', 'epoch', 'no_1h_ob'):
+        o._vob_log_decision('BTCUSDT', 'SHORT', oc, age=99, max_age=7, ft=1,
                             vol_tf='5m', detail='x', num=2)
-    _check(len(_LOGS) == 7, f'кожен стан залоговано (маємо {len(_LOGS)})')
+    _check(len(_LOGS) == 3, f'реальні пропуски залоговані (маємо {len(_LOGS)})')
     _check(all(k.get('source') == 'VOB' for _a, k in _LOGS), 'source=VOB')
 
-    # Повтор ТОГО САМОГО стану — БЕЗ нового рядка
     n = len(_LOGS)
-    o._vob_log_decision('BTCUSDT', 'SHORT', 'numbered', age=5, max_age=7, ft=1,
-                        vol_tf='5m', detail='x', num=2)
-    _check(len(_LOGS) == n, 'той самий стан не дублюється')
+    for oc in ('duplicate', 'numbered', 'no_candidate', 'first_sight',
+               'fired', 'filtered'):
+        o._vob_log_decision('ETHUSDT', 'LONG', oc, age=3, max_age=7, ft=5,
+                            vol_tf='5m', detail='y', num=1)
+    _check(len(_LOGS) == n, 'стабільні стани та fired/filtered у лог НЕ йдуть')
+    # але в діагностику (бейдж) вони записані
+    _check(o._vob_diag['ETHUSDT']['outcome'] == 'filtered', 'бейдж має актуальний стан')
 
-    # Змінився номер → це нова подія, пишемо
-    o._vob_log_decision('BTCUSDT', 'SHORT', 'numbered', age=5, max_age=7, ft=1,
-                        vol_tf='5m', detail='x', num=3)
-    _check(len(_LOGS) == n + 1, 'зміна номера → новий рядок')
-
-    # fired/filtered не дублюємо (їх пише основний шлях)
+    # анти-дубль: той самий стан ПІДРЯД по одній монеті — лише один рядок
+    o._vob_log_decision('SOLUSDT', 'LONG', 'stale', age=99, max_age=7, ft=7,
+                        vol_tf='5m', detail='z', num=1)
     n2 = len(_LOGS)
-    o._vob_log_decision('BTCUSDT', 'SHORT', 'fired', ft=9, vol_tf='5m', num=1)
-    o._vob_log_decision('BTCUSDT', 'SHORT', 'filtered', ft=10, vol_tf='5m', num=2)
-    _check(len(_LOGS) == n2, 'fired/filtered не дублюються в лозі')
-    print('✓ у лог іде КОЖЕН VOB-стан, без повторів; fired/filtered без дублів')
+    _check(n2 == n + 1, 'перший stale по монеті — записано')
+    o._vob_log_decision('SOLUSDT', 'LONG', 'stale', age=99, max_age=7, ft=7,
+                        vol_tf='5m', detail='z', num=1)
+    _check(len(_LOGS) == n2, 'той самий стан ПІДРЯД не дублюється')
+    print('✓ у лозі лише реальні пропуски; стабільні стани — тільки в бейджі')
 
 
 def test_age_label_is_honest_and_human():
@@ -442,7 +445,7 @@ if __name__ == '__main__':
     test_edge_outcome_fresh_first_sight_fires()
     test_edge_outcome_running()
     test_signal_only_at_moment_of_appearance()
-    test_log_decision_logs_every_vob_without_duplicates()
+    test_log_only_real_misses_not_stable_states()
     test_age_label_is_honest_and_human()
     test_log_decision_updates_diag()
     test_chart_candidate_is_the_drawn_block_only()

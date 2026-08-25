@@ -775,6 +775,9 @@ class FuelFilterDaemon:
         # й `smc_scanner._vob_ob_epoch`, але забезпечений на ЄДИНОМУ вузлі
         # відкриття (Черга-4), тому переживає close/delete, а не лише глушить алерт.
         self._opened_ob_epoch: Dict[str, int] = {}
+        # 🔇 Анти-флуд для 🔁 повторної перевірки Черги-4:
+        # {symbol: ((напрямок, причина), ts останнього запису в лог)}.
+        self._q4_recheck_logged: Dict[str, tuple] = {}
         # Anti-flood for the per-coin «Готовність» decision log:
         # {symbol: (outcome, hot, score_bucket, ts)} — a hold/skip is re-logged
         # only when it meaningfully changes or after READINESS_LOG_MIN_GAP sec;
@@ -5878,6 +5881,9 @@ class FuelFilterDaemon:
             except Exception:
                 pass
 
+    # Як часто повторювати в лозі ОДНУ Й ТУ САМУ причину невдалої перевірки.
+    Q4_RECHECK_LOG_GAP = 900          # 15 хв
+
     def _q4_recheck_filters(self, sym: str, side: str):
         """🔁 Повторний прогін СКАНЕРНОГО ланцюга фільтрів перед відкриттям із
         Черги-4 (той самий `_signal_allowed`, що пускав монету в чергу).
@@ -6044,11 +6050,20 @@ class FuelFilterDaemon:
             if s.get('queue4_recheck_filters', True):
                 _rc_ok, _rc_reason = self._q4_recheck_filters(sym, _open_dir)
                 if not _rc_ok:
-                    log_activity(sym, 'skipped',
-                                 f'Черга-4 🔁 повторна перевірка фільтрів не пройдена: '
-                                 f'{_rc_reason} — відкриття відкладено',
-                                 side=_open_dir, source='Q4')
+                    # 🔇 АНТИ-ФЛУД: монета висить у черзі годинами, а перевірка
+                    # йде на КОЖЕН тік двигуна. Без цього один ZECUSDT дав 48
+                    # ОДНАКОВИХ рядків за 8.5 год. Пишемо лише коли ЗМІНИЛАСЬ
+                    # причина, або не частіше ніж раз на Q4_RECHECK_LOG_GAP.
+                    _rk = (_open_dir, _rc_reason)
+                    _prev_rk, _prev_ts = self._q4_recheck_logged.get(sym, (None, 0.0))
+                    if _rk != _prev_rk or (now - _prev_ts) >= self.Q4_RECHECK_LOG_GAP:
+                        self._q4_recheck_logged[sym] = (_rk, now)
+                        log_activity(sym, 'skipped',
+                                     f'Черга-4 🔁 повторна перевірка фільтрів не пройдена: '
+                                     f'{_rc_reason} — відкриття відкладено',
+                                     side=_open_dir, source='Q4')
                     continue
+                self._q4_recheck_logged.pop(sym, None)   # пройшла → скид анти-флуду
             try:
                 _flip = '' if _open_dir == d else f' (ФЛІП: сигнал був {d}, показники — {_open_dir})'
                 opened = self._open(sym, _open_dir, {'mark_price': mark, 'dir': _open_dir},
