@@ -2240,7 +2240,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     <div class="tm-panel" id="poc-setup-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(168,85,247,0.28);border-radius:8px;background:rgba(168,85,247,0.05)">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <span style="font-size:0.85rem;font-weight:700;color:#e9d5ff" title="Незалежний POC-сетап: аналізує WATCHLIST, будує 5-шаровий конфлюенс навколо POC (Volume Profile). Напрямок задає 1-й шар (POC). Коли всі 5 шарів збігаються кольором — угода відкривається і монета видаляється зі списку. Працює НЕЗАЛЕЖНО від Fuel Auto-Filter.">🎯 POC-сетап</span>
+                <span style="font-size:0.85rem;font-weight:700;color:#e9d5ff;cursor:pointer;user-select:none" onclick="togglePanel('poc')" title="Клік — згорнути/розгорнути. Незалежний POC-сетап: аналізує WATCHLIST, будує 5-шаровий конфлюенс навколо POC (Volume Profile). Напрямок задає 1-й шар (POC). Коли всі 5 шарів збігаються кольором — угода відкривається і монета видаляється зі списку. Працює НЕЗАЛЕЖНО від Fuel Auto-Filter."><span id="poc-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🎯 POC-сетап</span>
                 <span id="poc-setup-status" style="font-size:0.8rem;font-family:monospace;font-weight:700;color:#8b93a7">—</span>
             </div>
             <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімкнути/вимкнути POC-сетап (незалежно від FF)">
@@ -2248,6 +2248,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="slider"></span>
             </label>
         </div>
+        <div id="poc-body">
 
         <!-- ⚙️ Гармошка налаштувань POC-сетапу -->
         <details class="sm-settings-bar" style="margin:10px 0 6px">
@@ -2351,6 +2352,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <tr><td colspan="12" style="padding:12px;color:#667;text-align:center">POC-сетап вимкнено або немає монет.</td></tr>
             </tbody>
         </table>
+        </div><!-- /poc-body -->
     </div>
 
     <!-- ===== FUEL AUTO-FILTER (liquidation-fuel timed entries) ===== -->
@@ -2505,6 +2507,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <button onclick="clearAllTimers()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всю чергу">🗑️ Очистити всі</button>
                 </div>
             </div>
+            <div id="q1-body">
             <!-- Direction view filter — the queue is now TWO-SIDED (both LONG and
                  SHORT wait together). These tabs only FILTER the view; the engine
                  still opens per the main buttons. «⚡ працюємо» = ₿-session dir. -->
@@ -2518,7 +2521,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <!-- GLOBAL engine gate: why NOTHING opens right now (двигун вимкнено /
                  BTC пауза / чекає START / кнопки L·S). Hidden when engine active. -->
             <div id="ff-engine-gate" style="display:none;margin:0 0 8px;padding:7px 11px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:0.7rem;font-weight:600"></div>
-            <div class="ff-timers-scroll" id="q1-body">
+            <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
                         <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Тиск маркетмейкера (МММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск. Клік — сортувати.">МММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">🪫<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск МММ 25% + утримання 15%. Конфлікт (ціна проти МММ) або виснаженість обмежують оцінку. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
@@ -2533,6 +2536,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 💡 Таблиця наповнюється <b>перехопленням</b>: коли FF увімкнено, монети, які основні кнопки ЛОНГ/ШОРТ відправляють на відкриття, стають у чергу тут (а не відкриваються одразу). Показ фільтрується кнопками ЛОНГ/ШОРТ (обидві вимкнені → порожньо). На ₿ START скануємо «МММ» лише по цих монетах і відкриваємо ту, де МММ збігається з напрямком. МММ рахується ЛИШЕ для монет цієї таблиці — WATCHLIST більше не сканується.
             </div>
 
+            </div><!-- /q1-body -->
             <!-- ⚡ Queue 2 «CTR-зони» — intercepts CHoCH/CHoCH+BOS ONLY when the
                  CTR lean already matches the signal side (else the signal is
                  dropped). Opens when SCORE == STRONG HOLD AND CTR align with the
@@ -2547,6 +2551,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <button onclick="clearAllTimers2()" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;line-height:1;font-size:0.68rem;padding:6px 12px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-2">🗑️ Очистити всі</button>
                 </div>
             </div>
+            <div id="q2-body">
             <!-- ⚡ Queue 2 settings accordion (eject rules) -->
             <details class="sm-settings-bar" id="ff-q2-settings" style="margin:0 0 8px">
                 <summary class="sm-settings-summary">⚙️ Налаштування Черги-2
@@ -2647,7 +2652,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <button type="button" data-qdir="LONG" onclick="ffQueueDir2('LONG')" class="ff-qdir-btn">🟢 LONG <span class="ff-qdir-n"></span></button>
                 <button type="button" data-qdir="SHORT" onclick="ffQueueDir2('SHORT')" class="ff-qdir-btn">🔴 SHORT <span class="ff-qdir-n"></span></button>
             </div>
-            <div class="ff-timers-scroll" id="q2-body">
+            <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers2-table">
                     <thead>
                         <tr><th data-sortcol="symbol" onclick="ffSortQueue2('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue2('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue2('mm')" style="cursor:pointer;user-select:none">МММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue2('exh')" style="cursor:pointer;user-select:none">🪫<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue2('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue2('score')" style="cursor:pointer;user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск МММ 25% + утримання 15%. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue2('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
@@ -2661,6 +2666,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 💡 Друга черга перехоплює <b>CHoCH/CHoCH+BOS</b> незалежно від Черги 1 і кнопок/₿ START. Сигнал потрапляє в чергу <b>лише якщо CTR-нахил уже в бік сигналу</b> (інакше ігнорується). Відкриває, коли <b>SCORE = ВІДМІННИЙ</b> у напрямку сигналу <b>і CTR</b> у той самий бік. Поки чекає — якщо CTR <b>розвертається на протилежний</b> бік раніше за цей збіг, монета одразу видаляється з черги. Вмикай/вимикай кожну чергу окремо.
             </div>
 
+            </div><!-- /q2-body -->
             <!-- 🎯 Queue 3 «Готовність» — opens on SMC setup-grade HOT -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
                 <div style="font-size:0.74rem;font-weight:700;color:#c9b8ff;min-width:0;cursor:pointer;user-select:none" onclick="toggleQueuePanel('q3')" title="Клік — згорнути/розгорнути цю чергу"><span id="q3-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🎯 Черга-3 · Готовність <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS і відкриває, коли SMC-«готовність сетапу» (grade_setup) стає HOT АБО коли її SCORE ≥ порога, у напрямку кнопки. Весь контекст ₿/CTR/зона/ліквідність уже всередині оцінки. БЕЗ ₿ START. Кожне рішення логується для аналізу.</span></div>
@@ -2672,6 +2678,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <button onclick="clearAllTimers3()" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;line-height:1;font-size:0.68rem;padding:6px 12px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-3">🗑️ Очистити всі</button>
                 </div>
             </div>
+            <div id="q3-body">
             <!-- ⚙️ Налаштування Черги-3 (гармошка) — усі параметри стратегії тут -->
             <details class="sm-settings-bar" id="ff-q3-settings" style="margin:0 0 8px">
                 <summary class="sm-settings-summary">⚙️ Налаштування (Черга-3)
@@ -2713,7 +2720,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <div style="font-size:0.64rem;color:#6b7280">💡 «VOB + 5 шарів» — окрема експериментальна стратегія для монет із фандингу: тригер = НОВИЙ Volumized OB (1m: Swing 5, Wick, ATR×3.5, Zone Low) у бік, коли всі 5 шарів (МММ/SCORE/Готовність/Скальп/ЦІНА) зійшлись у той самий бік. Відкриває угоду за напрямком (real/paper — за режимом Trade Manager), ставить SL на межу блоку OB + буфер; кожен новий OB лише підтягує SL. Дедуп по монеті: доки угода відкрита — повторно не відкриваємо.</div>
                 </div>
             </details>
-            <div class="ff-timers-scroll" id="q3-body">
+            <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers3-table">
                     <thead>
                         <tr><th data-sortcol="symbol" onclick="ffSortQueue3('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue3('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue3('mm')" style="cursor:pointer;user-select:none">МММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue3('exh')" style="cursor:pointer;user-select:none">🪫<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue3('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue3('score')" style="cursor:pointer;user-select:none" title="SCORE — hold-якість (не тригер входу). Тригер Черги-3 — колонка «Готовність» (grade_setup HOT).">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу (grade_setup). Черга-3 відкриває, коли ця оцінка = HOT у напрямку кнопки.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue3('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
@@ -2727,6 +2734,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 💡 Третя черга — стратегія <b>«Готовність»</b>: перехоплює ті самі сигнали, а відкриває монету, ЩОЙНО її SMC-<b>«готовність сетапу»</b> стає <b>HOT</b> (score ≥ поріг + усі ключові блоки конфлюенсу зійшлися, без вето) у напрямку кнопки. ₿-сесія/CTR/зона/ліквідність уже враховані ВСЕРЕДИНІ оцінки. Кожне рішення (opened/hold/skipped) пишеться в лог для аналізу.
             </div>
 
+            </div><!-- /q3-body -->
             <!-- 🎯 Queue 4 «Усі шари» -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
                 <div style="font-size:0.74rem;font-weight:700;color:#93c5fd;min-width:0;cursor:pointer;user-select:none" onclick="toggleQueuePanel('q4')" title="Клік — згорнути/розгорнути цю чергу"><span id="q4-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🎯 Черга-4 · Усі шари <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— приймає ВСІ сигнали (Alert mode), обидва боки. Відкриває, коли ВСІ 4 шари (Новий МММ · Старий МММ · Готовність · Запас) збіглись за напрямком сигналу. Протилежний сигнал стирає попередній запис. Тумблер OFF → черга не працює.</span></div>
@@ -2738,6 +2746,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <button onclick="clearAllTimers4()" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;line-height:1;font-size:0.68rem;padding:6px 12px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити Чергу-4">🗑️ Очистити всі</button>
                 </div>
             </div>
+            <div id="q4-body">
             <details class="sm-settings-bar" id="ff-q4-settings" style="margin:0 0 8px">
                 <summary class="sm-settings-summary">⚙️ Налаштування (Черга-4) <span class="sm-settings-summary-right" style="color:#8b93a7">складність шарів</span></summary>
                 <div style="padding:10px 12px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,0.06)">
@@ -2760,7 +2769,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </div>
                 <div style="font-size:0.64rem;color:#6b7280;padding:0 12px 10px">💡 Відкриває угоду, ЛИШЕ коли УСІ 4 шари збіглись за напрямком сигналу (кольори — усі зелені LONG / усі червоні SHORT). Параметри складності — від найменшого до найбільшого. 🔥 Виснаженість — єдиний запобіжник: вичерпаний понад поріг рух не відкривається. 🚧 Фільтр входу — не додавати сигнал у чергу, якщо після повного визначення шарів у бік сигналу дивиться менше за поріг показників (за замовч. — жоден = не додавати).</div>
             </details>
-            <div class="ff-timers-scroll" id="q4-body">
+            <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers4-table">
                     <thead>
                         <tr><th>Символ</th><th>Напрямок</th><th title="Конфлюенс увімкнених шарів. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди.">🎯</th><th class="q4c-new" title="Новий МММ (бабло-модель)">Новий МММ</th><th class="q4c-old" title="Старий МММ ((fa−fb)/den)">Старий МММ</th><th class="q4c-setup" title="SMC-готовність (grade_setup)">Готовність</th><th class="q4c-runway" title="Запас ходу (runway) — показник TradingView-скрипта">Запас</th><th>Очікує</th><th>Дія</th></tr>
@@ -2770,6 +2779,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </tbody>
                 </table>
             </div>
+            </div><!-- /q4-body -->
 
             </details>
         </div>
@@ -2780,8 +2790,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     <div class="tm-panel" id="funding-mmm-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(52,211,153,0.25);border-radius:8px;background:rgba(52,211,153,0.04)">
             <!-- 💰 Funding-fuel coins (own scan over the 💰 Funding Rate Scanner) -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
-                <div style="font-size:0.78rem;font-weight:700;color:#34d399">
-                    💰 Funding — МММ по монетах
+                <div style="font-size:0.78rem;font-weight:700;color:#34d399;cursor:pointer;user-select:none"
+                     onclick="togglePanel('fund')" title="Клік — згорнути/розгорнути 💰 Funding — МММ. Згорнута секція не малює таблицю.">
+                    <span id="fund-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 💰 Funding — МММ по монетах
                     <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— окремий скан монет із 💰 Funding Rate Scanner на появу «МММ»</span>
                 </div>
                 <div style="display:flex;gap:8px">
@@ -2790,6 +2801,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <button onclick="clearAnomalies()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити таблицю Funding">🗑️ Очистити всі</button>
                 </div>
             </div>
+        <div id="fund-body">
 
             <!-- ⚙️ Налаштування для таблиці 💰 Funding — МММ по монетах -->
             <div style="margin:6px 0 8px">
@@ -3019,12 +3031,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
                 💡 Монета сюди потрапляє, коли «МММ» тримається довше за поріг (нижче в налаштуваннях). Показуються ЛИШЕ монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера (funding нормалізувався), вона зникає з таблиці (лишається в 📜 Архіві монет). Такі монети не дублюються в таблиці вище. <b>🚀</b> = аномальний ріст (різкий рух ціни + зростання обсягу) — варто розглянути, навіть коли МММ низький. <b>🎯</b> = найкращий збіг показників для входу (SCORE ВІДМІННИЙ + сильний МММ у той бік + ₿ BTCUSDT START у той самий бік + funding/обсяг підтверджують). Коли активна — під монетою зʼявляється рядок «рекомендована ботом» із таймером і статистикою.
             </div>
+        </div><!-- /fund-body -->
     </div>
 
     <!-- ====================== TRADE MANAGER ====================== -->
     <div class="tm-section">
         <div class="tm-header" id="tm-header">
-            <h2>💼 Trade Manager <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">(real Bybit positions)</span></h2>
+            <h2 style="cursor:pointer;user-select:none" onclick="togglePanel('tm')" title="Клік — згорнути/розгорнути 💼 Trade Manager"><span id="tm-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 💼 Trade Manager <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">(real Bybit positions)</span></h2>
             <div class="tm-master-toggle">
                 <span id="tm-status-label" style="font-size:0.8rem;color:#888">Disabled</span>
                 <label class="tm-toggle-switch">
@@ -3532,7 +3545,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
     <div class="tm-panel" id="testmode-panel" style="margin-top:14px">
         <div class="tm-header" id="testmode-header">
-            <h2>🧪 Test Mode <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">(paper trading — no real orders)</span></h2>
+            <h2 style="cursor:pointer;user-select:none" onclick="togglePanel('testmode')" title="Клік — згорнути/розгорнути 🧪 Test Mode"><span id="testmode-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🧪 Test Mode <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">(paper trading — no real orders)</span></h2>
             <div class="tm-master-toggle">
                 <span id="testmode-status-label" style="font-size:0.8rem;color:#888">Disabled</span>
                 <label class="tm-toggle-switch">
@@ -4280,24 +4293,29 @@ async function sendManualSignal() {
 // 🪗 ГАРМОШКА КОЖНОЇ ЧЕРГИ ОКРЕМО. Згорнута черга не малює свою таблицю —
 // це прибирає найважчі DOM-перебудови (черги оновлюються кожні 30с).
 // Стан кожної запам'ятовується окремо (UI-налаштування, не дані).
-function toggleQueuePanel(qid) {
-    const body = document.getElementById(qid + '-body');
-    const car = document.getElementById(qid + '-caret');
+function togglePanel(pid) {
+    const body = document.getElementById(pid + '-body');
+    const car = document.getElementById(pid + '-caret');
     if (!body) return;
     const open = body.style.display === 'none';
     body.style.display = open ? '' : 'none';
     if (car) car.textContent = open ? '▼' : '▶';
-    try { localStorage.setItem('qPanel_' + qid, open ? '1' : '0'); } catch (e) {}
+    try { localStorage.setItem('qPanel_' + pid, open ? '1' : '0'); } catch (e) {}
 }
+// Історична назва (заголовки Черг) — та сама функція.
+const toggleQueuePanel = togglePanel;
 // Чи згорнута черга (рендер її таблиці можна пропустити).
 function _qCollapsed(qid) {
     const b = document.getElementById(qid + '-body');
     return !!(b && b.style.display === 'none');
 }
+// Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
+// 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
+const _PANEL_IDS = ['q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
 (() => {
-    ['q1', 'q2', 'q3', 'q4'].forEach(qid => {
+    _PANEL_IDS.forEach(pid => {
         try {
-            if (localStorage.getItem('qPanel_' + qid) === '0') toggleQueuePanel(qid);
+            if (localStorage.getItem('qPanel_' + pid) === '0') togglePanel(pid);
         } catch (e) {}
     });
 })();
