@@ -50,6 +50,13 @@ CLOSED_TRADES_LIMIT = 2_000   # IN-MEMORY / UI rolling cap only. EVERY closed
                             # (each trade carries its chronology) from growing
                             # unbounded and OOM-killing the 512MB Render instance.
                             # Raise only with more RAM; full history lives in DB.
+# 🚪 Розрахунок «Готовність виходу» (grade_exit) для КОЛОНКИ в таблицях
+# відкритих угод. Він ВАЖКИЙ: повний SMC-грейд на КОЖНУ позицію на КОЖЕН тік
+# монітора (деф. 4с). Колонку прибрано з UI на прохання користувача — отже й
+# рахувати її не треба. Алгоритм НЕ видалено (`_ff_exit_grade`/`get_exit_grade`
+# лишились): щоб повернути колонку — постав True і поверни <th>/<td> у шаблоні.
+POSITIONS_EXIT_GRADE = False
+
 STATE_CLOSED_LIMIT = 50      # /api/tm/state (щосекундний полінг) віддає ЛИШЕ
                             # стільки останніх закритих у ЖИВІЙ стрічці — щоб не
                             # серіалізувати тисячі рядків щополінгу (це гальмувало
@@ -1383,8 +1390,9 @@ class TradeManager:
         # 🚪 SMC «Готовність виходу» (РАДНИК — не закриває): жива оцінка для колонки +
         # фіксація того, що радник пропонував НА ПІКУ PnL (найкращий момент виходу),
         # щоб потім зіставити «на піку радник казав X% ↔ реальний результат».
-        pos['exit_grade'] = self._ff_exit_grade(symbol)
-        if current_pnl_pct is not None and current_pnl_pct > (pos.get('ff_exit_peak_pnl') if pos.get('ff_exit_peak_pnl') is not None else -1e9):
+        if POSITIONS_EXIT_GRADE:
+            pos['exit_grade'] = self._ff_exit_grade(symbol)
+        if POSITIONS_EXIT_GRADE and current_pnl_pct is not None and current_pnl_pct > (pos.get('ff_exit_peak_pnl') if pos.get('ff_exit_peak_pnl') is not None else -1e9):
             pos['ff_exit_peak_pnl'] = round(current_pnl_pct, 3)
             _exsnap = self._ff_exit_snapshot(symbol)
             if _exsnap:
@@ -1686,8 +1694,9 @@ class TradeManager:
         _rev_pct, _rev_hard, _tf_sec = self._ctr_reversal_eval(symbol, pos['side'], cur_pnl, _peak)
         pos['ctr_rev_pct'] = _rev_pct
         # 🚪 SMC «Готовність виходу» (РАДНИК): жива оцінка + фіксація на піку PnL.
-        pos['exit_grade'] = self._ff_exit_grade(symbol)
-        if cur_pnl is not None and cur_pnl > (pos.get('ff_exit_peak_pnl') if pos.get('ff_exit_peak_pnl') is not None else -1e9):
+        if POSITIONS_EXIT_GRADE:
+            pos['exit_grade'] = self._ff_exit_grade(symbol)
+        if POSITIONS_EXIT_GRADE and cur_pnl is not None and cur_pnl > (pos.get('ff_exit_peak_pnl') if pos.get('ff_exit_peak_pnl') is not None else -1e9):
             pos['ff_exit_peak_pnl'] = round(cur_pnl, 3)
             _exsnap = self._ff_exit_snapshot(symbol)
             if _exsnap:

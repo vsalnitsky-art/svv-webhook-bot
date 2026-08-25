@@ -2186,6 +2186,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 title="Open SHORT using TM Position Sizing">
                             ⬇ SHORT
                         </button>
+                        <!-- ✋ РУЧНИЙ СИГНАЛ — не відкриває напряму, а створює
+                             СИГНАЛ, який іде ОДРАЗУ на обробку ПІСЛЯ фільтрів:
+                             черга → двигун → відкриття. Ворота сканера
+                             пропускаються (рішення користувача). Напрямок —
+                             з вердикту банера (LONG/SHORT). -->
+                        <button class="sm-decision-btn" id="sm-decision-btn-signal"
+                                onclick="sendManualSignal()"
+                                style="border:1px solid rgba(168,85,247,0.55);background:rgba(168,85,247,0.12);color:#d8b4fe"
+                                title="✋ Створити РУЧНИЙ сигнал у напрямку вердикту банера. Фільтри сканера (OB / Forecast / Decision / POC / PD) ПРОПУСКАЮТЬСЯ — рішення ваше. Далі сигнал іде ТИМ САМИМ алгоритмом: черга → двигун → відкриття. Мітка угоди — ✋ Ручний.">
+                            ✋ Сигнал
+                        </button>
                         <span class="sm-decision-actions-hint"
                               id="sm-decision-actions-hint"
                               style="color:#888;font-size:0.7rem"></span>
@@ -2485,7 +2496,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
             <!-- ❤️ FF base: intercepted coins waiting for ₿ START + fuel -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
-                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">❤️ Черга на вхід <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети, перехоплені з ЛОНГ/ШОРТ; чекають ₿ START + МММ у напрямку</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="toggleQueuePanel('q1')" title="Клік — згорнути/розгорнути цю чергу"><span id="q1-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> ❤️ Черга на вхід <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети, перехоплені з ЛОНГ/ШОРТ; чекають ₿ START + МММ у напрямку</span></div>
                 <div style="display:flex;align-items:center;gap:10px">
                     <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-1 (класичний перехоплювач, ворота ₿ START/кнопки). Вимкнена — не перехоплює сигнали. Якщо обидві черги вимкнені — сигнали відкриваються напряму.">
                         <input type="checkbox" id="ff-queue1-enabled" onchange="saveFuelFilterSettings()">
@@ -2507,7 +2518,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <!-- GLOBAL engine gate: why NOTHING opens right now (двигун вимкнено /
                  BTC пауза / чекає START / кнопки L·S). Hidden when engine active. -->
             <div id="ff-engine-gate" style="display:none;margin:0 0 8px;padding:7px 11px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:0.7rem;font-weight:600"></div>
-            <div class="ff-timers-scroll">
+            <div class="ff-timers-scroll" id="q1-body">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
                         <tr><th data-sortcol="symbol" onclick="ffSortQueue('symbol')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за символом">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue('dir')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Клік — сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue('mm')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Тиск маркетмейкера (МММ) на ціну: крапка = куди тисне (🟢 вгору / 🔴 вниз), 0–100% = сила тиску, стрілка = міцніє/слабшає. Рівні: рівновага / легкий / помірний / сильний / потужний тиск. Клік — сортувати.">МММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue('exh')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Клік — сортувати.">🪫<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue('held')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="Скільки часу монета вже чекає в черзі. Клік — сортувати.">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue('score')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск МММ 25% + утримання 15%. Конфлікт (ціна проти МММ) або виснаженість обмежують оцінку. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue('ctr')" style="cursor:pointer;user-select:none;-webkit-user-select:none" title="⚡ CTR (Schaff Trend Cycle): STC 0–100 + зона (🔴OB≥75 перекуплено / 🟢OS≤25 перепродано) + останній кросовер і його вік. Таймінг входу. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
@@ -2527,7 +2538,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  dropped). Opens when SCORE == STRONG HOLD AND CTR align with the
                  signal side; opens independently of bars & main buttons. -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
-                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8;min-width:0">⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS лише якщо CTR-нахил уже в бік сигналу (інакше сигнал ігнорується). Відкриває, коли SCORE = ВІДМІННИЙ і CTR збігаються з напрямком; інакше тримає в черзі (незалежно від барів і кнопок)</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#38bdf8;min-width:0;cursor:pointer;user-select:none" onclick="toggleQueuePanel('q2')" title="Клік — згорнути/розгорнути цю чергу"><span id="q2-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> ⚡ Черга-2 · CTR-зони <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS лише якщо CTR-нахил уже в бік сигналу (інакше сигнал ігнорується). Відкриває, коли SCORE = ВІДМІННИЙ і CTR збігаються з напрямком; інакше тримає в черзі (незалежно від барів і кнопок)</span></div>
                 <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
                     <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-2. Перехоплює CHoCH/CHoCH+BOS лише за CTR-нахилом у бік сигналу; відкриває на SCORE=ВІДМІННИЙ + CTR. Незалежна від кнопок і ₿ START.">
                         <input type="checkbox" id="ff-queue2-enabled" onchange="saveFuelFilterSettings()">
@@ -2636,7 +2647,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <button type="button" data-qdir="LONG" onclick="ffQueueDir2('LONG')" class="ff-qdir-btn">🟢 LONG <span class="ff-qdir-n"></span></button>
                 <button type="button" data-qdir="SHORT" onclick="ffQueueDir2('SHORT')" class="ff-qdir-btn">🔴 SHORT <span class="ff-qdir-n"></span></button>
             </div>
-            <div class="ff-timers-scroll">
+            <div class="ff-timers-scroll" id="q2-body">
                 <table class="tm-table" id="ff-timers2-table">
                     <thead>
                         <tr><th data-sortcol="symbol" onclick="ffSortQueue2('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue2('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue2('mm')" style="cursor:pointer;user-select:none">МММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue2('exh')" style="cursor:pointer;user-select:none">🪫<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue2('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue2('score')" style="cursor:pointer;user-select:none" title="SCORE — якість входу 0–100: запас ходу 30% + імпульс свічок 30% + тиск МММ 25% + утримання 15%. SCORE — це якість сетапу, не команда «відкривай». Шкала: ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25. Клік — сортувати.">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу на 1H (4H — контекст): наскільки зійшовся конфлюенс для входу — структура (CHoCH/BOS) · POI (OB/FVG) · зона (Premium/Discount) · зняття ліквідності · потік МММ · таймінг CTR. Це ПІДКАЗКА, не команда: реальний вхід ухвалює двигун/Черга-2.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue2('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
@@ -2652,7 +2663,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
             <!-- 🎯 Queue 3 «Готовність» — opens on SMC setup-grade HOT -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
-                <div style="font-size:0.74rem;font-weight:700;color:#c9b8ff;min-width:0">🎯 Черга-3 · Готовність <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS і відкриває, коли SMC-«готовність сетапу» (grade_setup) стає HOT АБО коли її SCORE ≥ порога, у напрямку кнопки. Весь контекст ₿/CTR/зона/ліквідність уже всередині оцінки. БЕЗ ₿ START. Кожне рішення логується для аналізу.</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#c9b8ff;min-width:0;cursor:pointer;user-select:none" onclick="toggleQueuePanel('q3')" title="Клік — згорнути/розгорнути цю чергу"><span id="q3-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🎯 Черга-3 · Готовність <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— перехоплює CHoCH/CHoCH+BOS і відкриває, коли SMC-«готовність сетапу» (grade_setup) стає HOT АБО коли її SCORE ≥ порога, у напрямку кнопки. Весь контекст ₿/CTR/зона/ліквідність уже всередині оцінки. БЕЗ ₿ START. Кожне рішення логується для аналізу.</span></div>
                 <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
                     <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-3 «Готовність». Відкриває монету, коли grade_setup=HOT АБО score ≥ порога у напрямку кнопки. Щоб перемкнутися на цю стратегію — увімкни її та (за бажанням) вимкни Черги 1/2.">
                         <input type="checkbox" id="ff-queue3-enabled" onchange="saveFuelFilterSettings()">
@@ -2702,7 +2713,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <div style="font-size:0.64rem;color:#6b7280">💡 «VOB + 5 шарів» — окрема експериментальна стратегія для монет із фандингу: тригер = НОВИЙ Volumized OB (1m: Swing 5, Wick, ATR×3.5, Zone Low) у бік, коли всі 5 шарів (МММ/SCORE/Готовність/Скальп/ЦІНА) зійшлись у той самий бік. Відкриває угоду за напрямком (real/paper — за режимом Trade Manager), ставить SL на межу блоку OB + буфер; кожен новий OB лише підтягує SL. Дедуп по монеті: доки угода відкрита — повторно не відкриваємо.</div>
                 </div>
             </details>
-            <div class="ff-timers-scroll">
+            <div class="ff-timers-scroll" id="q3-body">
                 <table class="tm-table" id="ff-timers3-table">
                     <thead>
                         <tr><th data-sortcol="symbol" onclick="ffSortQueue3('symbol')" style="cursor:pointer;user-select:none">Символ<span class="ff-sort-arrow"></span></th><th data-sortcol="dir" onclick="ffSortQueue3('dir')" style="cursor:pointer;user-select:none">Напрямок<span class="ff-sort-arrow"></span></th><th data-sortcol="mm" onclick="ffSortQueue3('mm')" style="cursor:pointer;user-select:none">МММ<span class="ff-sort-arrow"></span></th><th data-sortcol="exh" onclick="ffSortQueue3('exh')" style="cursor:pointer;user-select:none">🪫<span class="ff-sort-arrow"></span></th><th data-sortcol="held" onclick="ffSortQueue3('held')" style="cursor:pointer;user-select:none">Очікує<span class="ff-sort-arrow"></span></th><th data-sortcol="score" onclick="ffSortQueue3('score')" style="cursor:pointer;user-select:none" title="SCORE — hold-якість (не тригер входу). Тригер Черги-3 — колонка «Готовність» (grade_setup HOT).">SCORE<span class="ff-sort-arrow"></span></th><th title="🎯 SMC-готовність сетапу (grade_setup). Черга-3 відкриває, коли ця оцінка = HOT у напрямку кнопки.">Готовність</th><th data-sortcol="ctr" onclick="ffSortQueue3('ctr')" style="cursor:pointer;user-select:none" title="STC + зона. Клік — сортувати за STC.">CTR<span class="ff-sort-arrow"></span></th><th>Дії</th></tr>
@@ -2718,7 +2729,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
             <!-- 🎯 Queue 4 «Усі шари» -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
-                <div style="font-size:0.74rem;font-weight:700;color:#93c5fd;min-width:0">🎯 Черга-4 · Усі шари <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— приймає ВСІ сигнали (Alert mode), обидва боки. Відкриває, коли ВСІ 4 шари (Новий МММ · Старий МММ · Готовність · Запас) збіглись за напрямком сигналу. Протилежний сигнал стирає попередній запис. Тумблер OFF → черга не працює.</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#93c5fd;min-width:0;cursor:pointer;user-select:none" onclick="toggleQueuePanel('q4')" title="Клік — згорнути/розгорнути цю чергу"><span id="q4-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🎯 Черга-4 · Усі шари <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— приймає ВСІ сигнали (Alert mode), обидва боки. Відкриває, коли ВСІ 4 шари (Новий МММ · Старий МММ · Готовність · Запас) збіглись за напрямком сигналу. Протилежний сигнал стирає попередній запис. Тумблер OFF → черга не працює.</span></div>
                 <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
                     <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-4 «Усі шари».">
                         <input type="checkbox" id="ff-queue4-enabled" onchange="saveFuelFilterSettings()">
@@ -2749,7 +2760,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </div>
                 <div style="font-size:0.64rem;color:#6b7280;padding:0 12px 10px">💡 Відкриває угоду, ЛИШЕ коли УСІ 4 шари збіглись за напрямком сигналу (кольори — усі зелені LONG / усі червоні SHORT). Параметри складності — від найменшого до найбільшого. 🔥 Виснаженість — єдиний запобіжник: вичерпаний понад поріг рух не відкривається. 🚧 Фільтр входу — не додавати сигнал у чергу, якщо після повного визначення шарів у бік сигналу дивиться менше за поріг показників (за замовч. — жоден = не додавати).</div>
             </details>
-            <div class="ff-timers-scroll">
+            <div class="ff-timers-scroll" id="q4-body">
                 <table class="tm-table" id="ff-timers4-table">
                     <thead>
                         <tr><th>Символ</th><th>Напрямок</th><th title="Конфлюенс увімкнених шарів. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди.">🎯</th><th class="q4c-new" title="Новий МММ (бабло-модель)">Новий МММ</th><th class="q4c-old" title="Старий МММ ((fa−fb)/den)">Старий МММ</th><th class="q4c-setup" title="SMC-готовність (grade_setup)">Готовність</th><th class="q4c-runway" title="Запас ходу (runway) — показник TradingView-скрипта">Запас</th><th>Очікує</th><th>Дія</th></tr>
@@ -3485,8 +3496,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="Сила бабла (МММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">МММ</th>
-                        <th title="🚪 SMC-готовність ВИХОДУ (grade_exit): наскільки картина розвернулась ПРОТИ позиції — структура/МММ/CTR проти + виснаженість + зона-фліп + ціль. Вище = час закривати. РАДНИК (не закриває сам).">Готовність виходу</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
@@ -3496,7 +3505,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -3553,8 +3562,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="Сила бабла (МММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">МММ</th>
-                        <th title="🚪 SMC-готовність ВИХОДУ (grade_exit): наскільки картина розвернулась ПРОТИ позиції — структура/МММ/CTR проти + виснаженість + зона-фліп + ціль. Вище = час закривати. РАДНИК (не закриває сам).">Готовність виходу</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
@@ -3563,7 +3570,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="11" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -4058,10 +4065,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <!-- ============ 🧾 Лог роботи бота (activity monitor) ============ -->
         <div style="margin-top:18px;border-top:1px solid rgba(255,255,255,0.10);padding-top:14px">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px">
-                <h3 style="font-size:0.9rem;color:#a5b4fc;margin:0">🧾 Лог роботи бота
+                <h3 style="font-size:0.9rem;color:#a5b4fc;margin:0;cursor:pointer;user-select:none"
+                    onclick="toggleActivityLogPanel()"
+                    title="Згорнути / розгорнути лог. Коли згорнуто — таблиця НЕ опитується й НЕ малюється (менше навантаження на сторінку).">
+                    <span id="act-log-caret" style="display:inline-block;width:12px;color:#8b93a7">▶</span>
+                    🧾 Лог роботи бота
                     <span style="color:#6b7280;font-weight:normal;font-size:0.72rem">— що бот зробив із кожним сигналом: у чергу / відкинув / викинув / відкрив / відхилив / закрив</span>
                 </h3>
-                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <div id="act-log-controls" style="display:none;align-items:center;gap:12px;flex-wrap:wrap">
                     <label style="display:flex;align-items:center;gap:6px;font-size:0.74rem;color:#cbd5e1;cursor:pointer" title="Вмикає/вимикає моніторинг. Коли вимкнено — події не пишуться (нульове навантаження). Лог тримається в пам'яті й скидається при перезапуску.">
                         <input type="checkbox" id="activity-log-enabled" onchange="toggleActivityLog()"> Моніторинг
                     </label>
@@ -4084,7 +4095,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <button onclick="clearActivityLog()" style="white-space:nowrap;font-size:0.7rem;padding:5px 11px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer">🗑️ Очистити</button>
                 </div>
             </div>
-            <div style="max-height:360px;overflow:auto">
+            <div id="act-log-body" style="display:none;max-height:360px;overflow:auto">
                 <table class="tm-table" id="activity-log-table">
                     <thead><tr><th>Час</th><th>Монета</th><th>Бік</th><th>Подія</th><th>Джерело</th><th>Деталі</th><th></th></tr></thead>
                     <tbody id="activity-log-tbody">
@@ -4230,10 +4241,95 @@ async function deleteActivityLog(ids) {
     } catch (e) {}
     loadActivityLog();
 }
-loadActivityLog();
-// 15с замість 5с: лог — не realtime-панель, а часте опитування з повною
-// перебудовою таблиці помітно гальмувало сторінку.
-setInterval(() => { if (document.getElementById('activity-log-tbody')) loadActivityLog(); }, 15000);
+// ✋ РУЧНИЙ СИГНАЛ. Не відкриває угоду напряму — створює сигнал, який іде
+// ОДРАЗУ на обробку ПІСЛЯ фільтрів: `on_signal` → черги → двигун. Ворота
+// сканера (`_signal_allowed`) ПРОПУСКАЮТЬСЯ — рішення ухвалює користувач;
+// у 🧾 Лозі все одно видно розклад фільтрів (проти чого ви йдете).
+async function sendManualSignal() {
+    if (!currentSymbol) { alert('Спершу оберіть монету'); return; }
+    // Напрямок = вердикт банера (LONG/SHORT), як його бачить користувач.
+    const side = (window._smDecisionDir === 'SHORT') ? 'SHORT' : 'LONG';
+    const btn = document.getElementById('sm-decision-btn-signal');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ …'; }
+    try {
+        const r = await fetch('/api/smc/manual-signal', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol: currentSymbol, side: side })
+        });
+        const d = await r.json();
+        const hint = document.getElementById('sm-decision-actions-hint');
+        if (hint) {
+            hint.textContent = d.ok
+                ? `✋ Сигнал ${side} відправлено в обробку`
+                : `✋ Сигнал ${side}: ${d.reason || 'помилка'}`;
+            hint.style.color = d.ok ? '#86efac' : '#fca5a5';
+            setTimeout(() => { hint.textContent = ''; }, 8000);
+        }
+        if (typeof loadActivityLog === 'function'
+            && document.getElementById('act-log-body')
+            && document.getElementById('act-log-body').style.display !== 'none') {
+            loadActivityLog();
+        }
+    } catch (e) {
+        alert('Помилка ручного сигналу: ' + e);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '✋ Сигнал'; }
+    }
+}
+
+// 🪗 ГАРМОШКА КОЖНОЇ ЧЕРГИ ОКРЕМО. Згорнута черга не малює свою таблицю —
+// це прибирає найважчі DOM-перебудови (черги оновлюються кожні 30с).
+// Стан кожної запам'ятовується окремо (UI-налаштування, не дані).
+function toggleQueuePanel(qid) {
+    const body = document.getElementById(qid + '-body');
+    const car = document.getElementById(qid + '-caret');
+    if (!body) return;
+    const open = body.style.display === 'none';
+    body.style.display = open ? '' : 'none';
+    if (car) car.textContent = open ? '▼' : '▶';
+    try { localStorage.setItem('qPanel_' + qid, open ? '1' : '0'); } catch (e) {}
+}
+// Чи згорнута черга (рендер її таблиці можна пропустити).
+function _qCollapsed(qid) {
+    const b = document.getElementById(qid + '-body');
+    return !!(b && b.style.display === 'none');
+}
+(() => {
+    ['q1', 'q2', 'q3', 'q4'].forEach(qid => {
+        try {
+            if (localStorage.getItem('qPanel_' + qid) === '0') toggleQueuePanel(qid);
+        } catch (e) {}
+    });
+})();
+
+// 🪗 Гармошка логу. За замовчуванням ЗГОРНУТО: поки згорнуто — таблиця НЕ
+// опитується і НЕ малюється взагалі (нуль запитів і нуль роботи DOM).
+function toggleActivityLogPanel() {
+    const body = document.getElementById('act-log-body');
+    const ctrl = document.getElementById('act-log-controls');
+    const car = document.getElementById('act-log-caret');
+    if (!body) return;
+    const open = body.style.display === 'none';
+    body.style.display = open ? 'block' : 'none';
+    if (ctrl) ctrl.style.display = open ? 'flex' : 'none';
+    if (car) car.textContent = open ? '▼' : '▶';
+    try { localStorage.setItem('actLogOpen', open ? '1' : '0'); } catch (e) {}
+    if (open) loadActivityLog();          // розгорнули → одразу підтягнути
+}
+// Відновлюємо стан гармошки (це UI-налаштування, не дані).
+(() => {
+    try {
+        if (localStorage.getItem('actLogOpen') === '1') toggleActivityLogPanel();
+    } catch (e) {}
+})();
+// 15с замість 5с + пропуск, коли ЗГОРНУТО або вкладка неактивна: лог не
+// realtime-панель, а часте опитування з перебудовою таблиці гальмувало сторінку.
+setInterval(() => {
+    const body = document.getElementById('act-log-body');
+    if (!body || body.style.display === 'none') return;   // згорнуто → не чіпаємо
+    if (document.hidden) return;                          // вкладка неактивна
+    loadActivityLog();
+}, 15000);
 </script>
 
 <script>
@@ -7504,6 +7600,11 @@ function renderDecision(decision) {
     if (root) root.style.display = 'block';
     
     const recommended = decision.recommended || 'NEUTRAL';
+    // Напрямок вердикту банера — його бере кнопка «✋ Сигнал» (щоб ручний сигнал
+    // ішов у тому самому напрямку, який користувач бачить на екрані).
+    window._smDecisionDir = (recommended === 'SHORT') ? 'SHORT'
+        : (recommended === 'LONG') ? 'LONG'
+        : (((decision.prob_short || 0) > (decision.prob_long || 0)) ? 'SHORT' : 'LONG');
     const verdict = decision.verdict || 'marginal';
     const probLong = (decision.prob_long || 0) * 100;
     const probShort = (decision.prob_short || 0) * 100;
@@ -12545,7 +12646,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -12577,8 +12678,6 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
-                    <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev)}</td>
-                    <td style="line-height:1.15">${ffExitCell(p.exit_grade, p.pnl_pct)}</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${manualModeCellHTML(p, false)}
@@ -12646,7 +12745,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-shadow-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="11" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -12670,8 +12769,6 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
-                    <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev)}</td>
-                    <td style="line-height:1.15">${ffExitCell(p.exit_grade, p.pnl_pct)}</td>
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}

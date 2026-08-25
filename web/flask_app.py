@@ -4665,6 +4665,58 @@ def register_api_routes(app):
             state['fuel_active_symbols'] = []
         return jsonify(state)
     
+    @app.route('/api/smc/manual-signal', methods=['POST'])
+    def api_smc_manual_signal():
+        """✋ РУЧНИЙ СИГНАЛ — рішення ухвалює КОРИСТУВАЧ, тому фільтри НЕ діють.
+
+        Body: {"symbol": "BTCUSDT", "side": "LONG"}.
+        Сигнал іде ОДРАЗУ на обробку ПІСЛЯ фільтрів: `TradeManager.on_signal(
+        opened_by='manual')` → черги (intercept) → двигун → відкриття. Тобто
+        весь подальший алгоритм ТОЙ САМИЙ, що й для автоматичного сигналу, але
+        ворота `_signal_allowed` (OB / PD / Forecast / POC / Decision)
+        ПРОПУСКАЮТЬСЯ — ви натиснули кнопку свідомо.
+        ⚠️ Гейти ЧЕРГИ (шари Черги-4, ₿-сеанс тощо) лишаються — вони належать
+        до обробки ПІСЛЯ фільтрів, а не до фільтрів сканера.
+        """
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            from detection.trade_manager import get_trade_manager
+            from detection.activity_log import log_activity
+            data = request.get_json(silent=True) or {}
+            symbol = str(data.get('symbol') or '').upper().strip()
+            side = str(data.get('side') or '').upper().strip()
+            if not symbol or side not in ('LONG', 'SHORT'):
+                return jsonify({'ok': False, 'reason': 'потрібні symbol і side (LONG/SHORT)'})
+            sc = get_smc_scanner()
+            # 🚦 ФІЛЬТРИ НЕ ЗАСТОСОВУЄМО (рішення користувача). Але показуємо в
+            # лозі їх РОЗКЛАД — щоб було видно, ПРОТИ чого ви йдете (якщо проти).
+            detail = ''
+            try:
+                if sc is not None:
+                    _ok, _reason, detail = sc._signal_allowed(symbol, side, at_intake=True)
+                    if not _ok:
+                        detail = f'{detail} · (фільтри БУЛИ Б проти: {_reason} — пропущено, бо сигнал ручний)'
+            except Exception:
+                detail = ''
+            log_activity(symbol, 'signal',
+                         f'✋ РУЧНИЙ сигнал {side} — фільтри пропущено'
+                         + (f' · {detail}' if detail else ''),
+                         side=side, source='manual')
+            tm = get_trade_manager()
+            if not tm:
+                return jsonify({'ok': False, 'reason': 'Trade Manager недоступний'})
+            price = 0
+            try:
+                price = (sc._get_live_price(symbol) or 0) if sc is not None else 0
+            except Exception:
+                price = 0
+            tm.on_signal(symbol=symbol, side=side, entry_price=price,
+                         opened_by='manual')
+            return jsonify({'ok': True, 'symbol': symbol, 'side': side,
+                            'detail': detail})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/smc/dedup/reset', methods=['POST'])
     def api_smc_dedup_reset():
         """Reset dedup state for one symbol or all.
@@ -5626,11 +5678,15 @@ def register_api_routes(app):
                     sym = pos.get('symbol')
                     if sym in exh_map:
                         pos['exhaustion'] = exh_map[sym]
-                    fs = str_map.get(sym)
-                    if fs:
-                        pos['fuel_str'] = fs.get('now')
-                        pos['fuel_str_prev'] = fs.get('prev')
-                        pos['fuel_dir'] = fs.get('dir')
+                    # Колонку «МММ» прибрано з таблиць відкритих угод, тож
+                    # ці поля більше не потрібні в кожному поллі (легший payload).
+                    # Мапа лишається — її читають інші місця; щоб повернути
+                    # колонку, розкоментуй три рядки нижче й поверни <th>/<td>.
+                    # fs = str_map.get(sym)
+                    # if fs:
+                    #     pos['fuel_str'] = fs.get('now')
+                    #     pos['fuel_str_prev'] = fs.get('prev')
+                    #     pos['fuel_dir'] = fs.get('dir')
         except Exception as e:
             # Non-fatal — just log and continue without exhaustion data
             print(f"[Flask] fuel exhaustion merge error: {e}")
