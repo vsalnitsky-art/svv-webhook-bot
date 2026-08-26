@@ -199,7 +199,7 @@ def test_forecast_1h_opposite_closes():
     _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is True,
            'протилежний Forecast 1H мав закрити угоду')
     _check(t.closed == [('real', 'forecast_1h_exit')], f'{t.closed}')
-    _check(any('Forecast 1H став LONG' in x for x in _LOG), f'лог: {_LOG}')
+    _check(any('Forecast 1H LONG' in x for x in _LOG), f'лог: {_LOG}')
     print('✓ Forecast 1H проти позиції → закриття')
 
 
@@ -237,7 +237,7 @@ def test_decision_opposite_closes():
     _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is True,
            'протилежний Decision мав закрити угоду')
     _check(t.closed == [('real', 'decision_exit')], f'{t.closed}')
-    _check(any('Decision Center рекомендує LONG' in x for x in _LOG), f'лог: {_LOG}')
+    _check(any('Decision LONG' in x for x in _LOG), f'лог: {_LOG}')
     print('✓ Decision Center проти позиції → закриття')
 
 
@@ -286,6 +286,79 @@ def test_throttle_prevents_recompute_storm():
     print(f'✓ тротл {t.SIGNAL_EXIT_TTL:.0f}с: 5 тіків → 1 розрахунок')
 
 
+# ═════════════ 🔗 Режим комбінування AND / АБО ══════════════════════════════
+def test_or_mode_is_default_any_rule_closes():
+    """Дефолт 'or' — поведінка, яка була до появи режиму: спрацювало будь-яке."""
+    _check(tmmod.DEFAULT_SETTINGS.get('signal_exit_mode') == 'or',
+           "дефолт має бути 'or' (кожен окремо)")
+    t = _sig(use_forecast_1h_exit=True, use_forecast_4h_exit=True, use_decision_exit=True)
+    t._fc = {'f1_side': 1, 'f1_conf': 70, 'f4_side': 0}   # проти лише 1H
+    t._dc = {'recommended': 'NEUTRAL'}
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is True,
+           'у режимі АБО достатньо ОДНОГО правила')
+    _check(t.closed == [('real', 'forecast_1h_exit')], f'{t.closed}')
+    print('✓ АБО (дефолт): достатньо одного правила')
+
+
+def test_and_mode_needs_every_enabled_rule():
+    t = _sig(use_forecast_1h_exit=True, use_forecast_4h_exit=True,
+             use_decision_exit=True, signal_exit_mode='and')
+    # Лише 1H проти → у режимі AND угода ТРИМАЄТЬСЯ.
+    t._fc = {'f1_side': 1, 'f1_conf': 70, 'f4_side': 0}
+    t._dc = {'recommended': 'NEUTRAL'}
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is False,
+           'AND: одного правила замало')
+    # Тепер УСІ три проти.
+    t._signal_exit_at.clear()
+    t._fc = {'f1_side': 1, 'f1_conf': 70, 'f4_side': 1, 'f4_conf': 65}
+    t._dc = {'recommended': 'LONG', 'confidence': 80}
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is True,
+           'AND: усі три проти → вихід')
+    _check(t.closed == [('real', 'signal_exit_and')], f'{t.closed}')
+    _check(any('AND:' in x and 'усі проти' in x for x in _LOG),
+           f'у лозі має бути видно ВСІ вердикти: {_LOG}')
+    print('✓ AND: вихід лише коли ВСІ увімкнені правила проти')
+
+
+def test_and_mode_neutral_breaks_the_agreement():
+    """Нейтраль — це НЕ «проти». У режимі AND вона ламає збіг."""
+    t = _sig(use_forecast_1h_exit=True, use_decision_exit=True, signal_exit_mode='and')
+    t._fc = {'f1_side': 1, 'f1_conf': 70}      # проти
+    t._dc = {'recommended': 'NEUTRAL'}          # нейтраль → збігу немає
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is False,
+           'нейтраль має ламати AND-збіг, а не рахуватись як «проти»')
+    print('✓ AND: нейтраль ламає збіг (угода тримається)')
+
+
+def test_and_mode_ignores_disabled_rules():
+    """Вимкнене правило не бере участі — інакше AND ніколи б не зібрався."""
+    t = _sig(use_forecast_1h_exit=True, use_decision_exit=True, signal_exit_mode='and')
+    t._fc = {'f1_side': 1, 'f1_conf': 70, 'f4_side': 0}   # 4H нейтраль, але ВИМКНЕНИЙ
+    t._dc = {'recommended': 'LONG', 'confidence': 80}
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is True,
+           'вимкнений 4H не має блокувати AND-збіг увімкнених правил')
+    print('✓ AND враховує ЛИШЕ увімкнені правила')
+
+
+def test_and_with_single_rule_keeps_its_own_reason():
+    """Одне увімкнене правило → AND == АБО, і бейдж лишається ВЛАСНИЙ."""
+    t = _sig(use_decision_exit=True, signal_exit_mode='and')
+    t._dc = {'recommended': 'LONG', 'confidence': 80}
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is True,
+           'одне правило в AND має працювати як звичайно')
+    _check(t.closed == [('real', 'decision_exit')],
+           f'причина не має збіднюватись до загального AND: {t.closed}')
+    print('✓ одне правило: AND = АБО, власна причина збережена')
+
+
+def test_bad_mode_value_falls_back_to_or():
+    t = _sig(use_forecast_1h_exit=True, signal_exit_mode='казна-що')
+    t._fc = {'f1_side': 1, 'f1_conf': 70}
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is True,
+           'невідомий режим → дефолт АБО, а не збій')
+    print('✓ некоректне значення режиму → дефолт АБО')
+
+
 if __name__ == '__main__':
     test_mnt_case_preexisting_opposite_ob_must_not_close()
     test_new_opposite_ob_closes()
@@ -304,4 +377,10 @@ if __name__ == '__main__':
     test_all_three_off_by_default_and_no_work_done()
     test_paper_position_closed_into_shadow_book()
     test_throttle_prevents_recompute_storm()
+    test_or_mode_is_default_any_rule_closes()
+    test_and_mode_needs_every_enabled_rule()
+    test_and_mode_neutral_breaks_the_agreement()
+    test_and_mode_ignores_disabled_rules()
+    test_and_with_single_rule_keeps_its_own_reason()
+    test_bad_mode_value_falls_back_to_or()
     print('\nУсі тести правил виходу пройдено ✅')

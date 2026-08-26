@@ -2785,6 +2785,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Протермінувати запис Черги-4 через N год, якщо не відкрилась. 0 = без ліміту.">TTL <input type="number" id="ff-queue4-ttl" min="0" max="72" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> год</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="♾ БЕЗ ТЕРМІНУ: запис Черги-4 живе, доки його не ЗАМІНИТЬ ПРОТИЛЕЖНИЙ сигнал по тій самій монеті (або поки не відкриється / не приберете вручну). Вимикає ОБИДВА виселення за часом — і TTL, і «викид при застої» (інакше монета все одно зникала б і заміняти було б нічого). Санітарні виходи (вже в угоді, 1H-OB уже відпрацьовано) лишаються."><input type="checkbox" id="ff-queue4-nottl" onchange="saveFuelFilterSettings(); _ffQueue4TtlSync()"> ♾ Без терміну (лише заміна протилежним)</label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="🚨 ЖОРСТКА СТЕЛЯ ЗАСТРЯГАННЯ. Абсолютна межа життя запису в Черзі-4, яку ♾ «Без терміну» НЕ вимикає. ♾ означає «живе, доки не замінить протилежний сигнал», а не «живе вічно за будь-яких умов». Запис, що провисів довше — вже не актуальна ситуація, а джерело незрозумілих спрацювань: монету ПОВНІСТЮ прибирає з усіх черг. Повернення — лише через новий сигнал і всі фільтри. 0 = вимкнути запобіжник (не радимо).">🚨 Застряг ≥ <input type="number" id="ff-queue4-hardmax" min="0" max="720" step="1" style="width:52px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> год → викинути</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="🛑 Звідки брати рівень для Manual SL після відкриття з Черги-4. SL = межа блоку + буфер (SHORT над верхом, LONG під низом); буфер — «SL буфер» у налаштуваннях Черги-3. • 1H OB — той самий ★-блок, що на графіку (рядок сканера на TF OB-фільтра). • 15m Volumized OB — межа Volumized-блоку на 15m. Якщо обраного блоку немає — береться другий, і в 🧾 Лозі буде видно, з якого саме джерела став SL.">🛑 SL з <select id="ff-queue4-sl-source" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="1h">1H OB</option><option value="15m">15m Volumized OB</option></select></label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="🔁 Перед ВІДКРИТТЯМ ще раз проганяємо монету через ТОЙ САМИЙ ланцюг фільтрів сканера (OB Match / Forecast 1H+4H / Decision / POC / PD), який пускав її в Чергу-4. Монета могла простояти в черзі годинами — за цей час OB чи прогноз могли перевернутись. Не пройшла повторну перевірку → НЕ відкриваємо, лишається в черзі до наступного тіку. За замовч. УВІМК."><input type="checkbox" id="ff-queue4-recheck" onchange="saveFuelFilterSettings()"> 🔁 Повторна перевірка фільтрів на виході</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Не відкривати угоду, якщо хід уже виснажений понад поріг. Єдиний запобіжник Черги-4.">
@@ -3391,6 +3392,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 🧠 Decision Center Exit
                                 <span class="tm-help" title="САМОСТІЙНЕ правило: якщо банер Decision Center рекомендує НАПРЯМОК, ПРОТИЛЕЖНИЙ до відкритої угоди — закриваємо одразу. NEUTRAL позицію НЕ закриває. Це той самий вердикт, що показано в банері «SHORT 74% СИЛЬНИЙ». Перевірка не частіше ніж раз на 20с на монету. За замовчуванням ВИМКНЕНО.">?</span>
                             </label>
+                        </div>
+
+                        <div class="tm-row">
+                            <label>
+                                🔗 Комбінувати:
+                                <span class="tm-help" title="Як поєднати три правила вище (Forecast 1H / Forecast 4H / Decision). • Кожен окремо (АБО) — типова поведінка: спрацювало будь-яке увімкнене правило → вихід. Швидше реагує, але й частіше вибиває. • Усі разом (AND) — вихід ЛИШЕ коли ВСІ увімкнені правила одночасно проти позиції; нейтраль або відсутність даних ЛАМАЄ збіг і угода тримається. Строгіше: менше передчасних виходів. Якщо увімкнено лише ОДНЕ правило — різниці між режимами немає.">?</span>
+                            </label>
+                            <select id="tm-signal-exit-mode" onchange="saveTMSettings()"
+                                    style="background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px">
+                                <option value="or">кожен окремо (АБО)</option>
+                                <option value="and">усі разом (AND)</option>
+                            </select>
                         </div>
 
                         <div class="tm-row">
@@ -8161,6 +8174,8 @@ async function loadTMSettings() {
         document.getElementById('tm-use-forecast-1h-exit').checked = !!s.use_forecast_1h_exit;
         document.getElementById('tm-use-forecast-4h-exit').checked = !!s.use_forecast_4h_exit;
         document.getElementById('tm-use-decision-exit').checked = !!s.use_decision_exit;
+        document.getElementById('tm-signal-exit-mode').value =
+            (s.signal_exit_mode === 'and') ? 'and' : 'or';
         // Validate TF before assigning to <select> — fall back to 15m for
         // unknown values so the dropdown doesn't end up in a blank state.
         const oppExitTf = ['15m', '30m', '1h', '4h'].includes(s.opposite_ob_exit_timeframe)
@@ -8546,6 +8561,7 @@ async function saveTMSettings() {
             use_forecast_1h_exit: document.getElementById('tm-use-forecast-1h-exit').checked,
             use_forecast_4h_exit: document.getElementById('tm-use-forecast-4h-exit').checked,
             use_decision_exit: document.getElementById('tm-use-decision-exit').checked,
+            signal_exit_mode: document.getElementById('tm-signal-exit-mode').value || 'or',
             opposite_ob_exit_timeframe: document.getElementById('tm-opposite-ob-exit-tf').value || '15m',
             use_htf_flip: document.getElementById('tm-use-htf-flip').checked,
             use_time_stop: document.getElementById('tm-use-time-stop').checked,
@@ -8808,6 +8824,7 @@ function reasonLabel(r) {
         'forecast_1h_exit': '🔮 F1H проти',
         'forecast_4h_exit': '🔮 F4H проти',
         'decision_exit': '🧠 Decision проти',
+        'signal_exit_and': '🔗 AND (усі проти)',
         'bos_2_partial': '✂️ BOS-2',
         'bos_3_partial': '✂️ BOS-3',
         'bos_4_partial': '✂️ BOS-4',
@@ -10904,6 +10921,7 @@ function renderFuelFilter(d) {
     setIf('ff-queue4-runway', s.queue4_require_runway !== false);
     setIf('ff-queue4-ttl', String(s.queue4_ttl_hours != null ? s.queue4_ttl_hours : 3));
     setIf('ff-queue4-nottl', s.queue4_no_ttl === true);            // деф. OFF
+    setIf('ff-queue4-hardmax', String(s.queue4_hard_max_hours != null ? s.queue4_hard_max_hours : 24));
     setIf('ff-queue4-sl-source', String(s.queue4_sl_source || '1h'));
     _ffQueue4TtlSync();
     setIf('ff-queue4-exh-on', s.queue4_exhaustion_on !== false);
@@ -11920,6 +11938,7 @@ async function saveFuelFilterSettings() {
         queue4_require_runway: _c('ff-queue4-runway'),
         queue4_ttl_hours: parseFloat(_v('ff-queue4-ttl', '3') || '3'),
         queue4_no_ttl: _c('ff-queue4-nottl'),
+        queue4_hard_max_hours: parseFloat(_v('ff-queue4-hardmax', '24') || '24'),
         queue4_sl_source: _v('ff-queue4-sl-source', '1h') || '1h',
         queue4_exhaustion_on: _c('ff-queue4-exh-on'),
         queue4_recheck_filters: _c('ff-queue4-recheck'),

@@ -215,6 +215,11 @@ DEFAULT_SETTINGS = {
     'use_forecast_1h_exit': False,   # Forecast 1H проти позиції → вихід
     'use_forecast_4h_exit': False,   # Forecast 4H проти позиції → вихід
     'use_decision_exit': False,      # Decision Center проти позиції → вихід
+    # Як КОМБІНУВАТИ увімкнені правила вище:
+    #   'or'  (ДЕФОЛТ) — кожне САМОСТІЙНО: спрацювало будь-яке → вихід;
+    #   'and'          — вихід лише коли ВСІ увімкнені одночасно проти позиції.
+    # Одне увімкнене правило → різниці між режимами немає.
+    'signal_exit_mode': 'or',
     
     # === Test mode (paper trading for exit-rule validation) ===
     # When ON: signals create "shadow" positions tracked in memory only.
@@ -681,6 +686,9 @@ class TradeManager:
                       'entry_score_enabled', 'use_ctr_reversal_exit']:
                 self._settings[k] = bool(self._settings.get(k, False))
             
+            _sem = str(self._settings.get('signal_exit_mode', 'or') or 'or').lower()
+            self._settings['signal_exit_mode'] = _sem if _sem in ('or', 'and') else 'or'
+
             # opposite_ob_exit_timeframe — validated string, default '15m'
             ALLOWED_EXIT_TFS = ('15m', '30m', '1h', '4h')
             if self._settings.get('opposite_ob_exit_timeframe') not in ALLOWED_EXIT_TFS:
@@ -2416,18 +2424,27 @@ class TradeManager:
         return 'SHORT' if side == 'LONG' else 'LONG'
 
     def _signal_exit_reason(self, symbol: str, pos: Dict) -> Optional[tuple]:
-        """(reason_code, людський опис) якщо якесь із САМОСТІЙНИХ правил виходу
-        каже «закривай», інакше None.
+        """(reason_code, людський опис) якщо правила виходу кажуть «закривай»,
+        інакше None.
 
-        Три НЕЗАЛЕЖНІ правила, кожне зі своїм тумблером (усі дефолт OFF):
+        Три правила, кожне зі своїм тумблером (усі дефолт OFF):
           • `use_forecast_1h_exit` — Forecast 1H став ПРОТИЛЕЖНИЙ до позиції;
           • `use_forecast_4h_exit` — те саме для 4H;
           • `use_decision_exit`    — вердикт Decision Center протилежний.
+
+        **Режим комбінування** — `signal_exit_mode`:
+          • `'or'`  (ДЕФОЛТ) — КОЖНЕ працює САМОСТІЙНО: спрацювало будь-яке →
+                     вихід. Це поведінка, яка була до появи режиму.
+          • `'and'` — вихід ЛИШЕ коли ВСІ УВІМКНЕНІ правила одночасно проти
+                     позиції. Одне увімкнене правило → 'and' збігається з 'or'.
+                     Строгіший режим: менше передчасних виходів, але й довше
+                     тримаємо угоду проти першого попередження.
+
         НЕ плутати з `use_forecast_1h_close` — той «конфлюенс», йому потрібен ще
-        й розворот LTF. Тут достатньо самого протилежного вердикту.
+        й розворот LTF. Тут достатньо самих вердиктів.
         ⚠️ Протилежним вважається ЛИШЕ явний зустрічний бік. Нейтраль / «немає
         даних» позицію НЕ закривають — інакше кожна пауза в прогнозі вибивала б
-        з ринку."""
+        з ринку. У режимі 'and' нейтраль ще й ЛАМАЄ збіг (це не «проти»)."""
         s = self._settings
         side = pos.get('side')
         if side not in ('LONG', 'SHORT'):
@@ -2438,25 +2455,27 @@ class TradeManager:
         want_dc = bool(s.get('use_decision_exit'))
         if not (want_f1 or want_f4 or want_dc):
             return None
+        mode = str(s.get('signal_exit_mode', 'or') or 'or').lower()
+        if mode not in ('or', 'and'):
+            mode = 'or'
 
+        # Збираємо вердикти УВІМКНЕНИХ правил: (код, «проти?», опис).
+        checks = []
         if want_f1 or want_f4:
             fc = self._get_forecast_both(symbol) or {}
             _side_of = lambda v: ('LONG' if v == 1 else ('SHORT' if v == -1 else None))
             if want_f1:
                 f1 = _side_of(fc.get('f1_side'))
-                if f1 == opp:
-                    _c = fc.get('f1_conf')
-                    return ('forecast_1h_exit',
-                            f'Forecast 1H став {f1}'
-                            + (f' ({_c}%)' if _c else '') + f' — проти {side}')
+                _c = fc.get('f1_conf')
+                checks.append(('forecast_1h_exit', f1 == opp,
+                               f'Forecast 1H {f1 or "нейтраль"}'
+                               + (f' ({_c}%)' if (_c and f1) else '')))
             if want_f4:
                 f4 = _side_of(fc.get('f4_side'))
-                if f4 == opp:
-                    _c = fc.get('f4_conf')
-                    return ('forecast_4h_exit',
-                            f'Forecast 4H став {f4}'
-                            + (f' ({_c}%)' if _c else '') + f' — проти {side}')
-
+                _c = fc.get('f4_conf')
+                checks.append(('forecast_4h_exit', f4 == opp,
+                               f'Forecast 4H {f4 or "нейтраль"}'
+                               + (f' ({_c}%)' if (_c and f4) else '')))
         if want_dc:
             try:
                 px = self._get_current_price(symbol) or pos.get('entry_price')
@@ -2464,11 +2483,30 @@ class TradeManager:
             except Exception:
                 dc = {}
             rec = str(dc.get('recommended') or '').upper()
-            if rec == opp:
-                _conf = dc.get('confidence')
-                return ('decision_exit',
-                        f'Decision Center рекомендує {rec}'
-                        + (f' ({_conf}%)' if _conf else '') + f' — проти {side}')
+            _conf = dc.get('confidence')
+            checks.append(('decision_exit', rec == opp,
+                           f'Decision {rec or "немає"}'
+                           + (f' ({_conf}%)' if (_conf and rec) else '')))
+
+        if not checks:
+            return None
+
+        if mode == 'and':
+            # ВСІ увімкнені мусять бути проти. Одне «не проти» — тримаємо угоду.
+            if not all(hit for _c, hit, _d in checks):
+                return None
+            _all = ' + '.join(d for _c, _h, d in checks)
+            # Один увімкнений критерій — це не «комбінація»: лишаємо його ВЛАСНИЙ
+            # код причини, щоб бейдж у таблиці закритих не збіднювався до
+            # загального «AND».
+            if len(checks) == 1:
+                return (checks[0][0], f'{checks[0][2]} — проти {side}')
+            return ('signal_exit_and',
+                    f'AND: {_all} — усі проти {side}')
+
+        for code, hit, desc in checks:      # 'or' — перше ж спрацювання
+            if hit:
+                return (code, f'{desc} — проти {side}')
         return None
 
     def _check_signal_exits(self, symbol: str, pos: Dict,
@@ -4136,6 +4174,7 @@ class TradeManager:
             'forecast_1h_exit': '🔮 Forecast 1H розвернувся проти позиції',
             'forecast_4h_exit': '🔮 Forecast 4H розвернувся проти позиції',
             'decision_exit': '🧠 Decision Center рекомендує протилежне',
+            'signal_exit_and': '🔗 AND: усі увімкнені вердикти проти позиції',
         }
         base = detail_map.get(reason)
         if base is None and reason.startswith('bos_') and reason.endswith('_partial'):
@@ -6355,6 +6394,7 @@ class TradeManager:
             'forecast_1h_exit': '🔮 Forecast 1H Exit',
             'forecast_4h_exit': '🔮 Forecast 4H Exit',
             'decision_exit': '🧠 Decision Exit',
+            'signal_exit_and': '🔗 Signal Exit (AND)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',
             'htf_flip': '📡 HTF Trend Flip',
             'time_stop': '⏱ Time Stop',
