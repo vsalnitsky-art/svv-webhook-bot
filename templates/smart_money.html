@@ -2654,6 +2654,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="checkbox" id="ff-autosl-fallback" onchange="saveFuelFilterSettings()"> 🛡 Стоп ЗАВЖДИ: фолбек
                             <input type="number" id="ff-autosl-fallback-pct" min="0.1" max="50" step="0.1" style="width:52px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> % від входу
                         </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🧬 НОВА СИТУАЦІЯ ДЛЯ НОВОЇ УГОДИ. Наступна угода по монеті відкривається ЛИШЕ на сигналі, що з'явився ПІСЛЯ закриття попередньої. Запис, який стояв у черзі ще до тієї угоди, — це вже відпрацьована ситуація, і саме він давав «угоди з повітря» (з ♾ «Без терміну» запис живе вічно, тож ефект став постійним). Ручні кнопки ✋ правило не стосується. Вимкнення повертає стару поведінку.">
+                            <input type="checkbox" id="ff-require-new-situation" onchange="saveFuelFilterSettings()"> 🧬 Нова ситуація для нової угоди
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Максимальний вік сигналу на момент ВІДКРИТТЯ, хв. Сигнал, який пролежав у черзі довше, вже не вважається «ситуацією». 0 = без обмеження.">
+                            ⏳ Вік сигналу ≤ <input type="number" id="ff-open-max-signal-age" min="0" max="20160" step="5" style="width:58px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> хв (0=вимк)
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="✋ Після РУЧНОГО закриття не відкривати монету АВТОМАТИЧНО стільки хвилин. Черги при ручному закритті чистяться ЗАВЖДИ (незалежно від цього поля) — стоячий там запис відкрив би угоду наступним тіком. Ручні кнопки ✋ блокування не стосується. 0 = вимкнено.">
+                            ✋ Блок після ручного закриття <input type="number" id="ff-manual-close-lock" min="0" max="10080" step="5" style="width:58px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> хв (0=вимк)
+                        </label>
                         <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Стеля відстані стопа у % від входу. 0 = вимкнено. Блок може стояти дуже далеко — тоді ризик угоди стає непорівнянним з рештою (спостережено 1.4% проти 15.6% при однаковому розмірі позиції). Ненульове значення ПІДТЯГУЄ надто далекий рівень до стелі; сам вибір блоку не змінюється.">
                             🎚 Стеля SL ≤ <input type="number" id="ff-autosl-max-pct" min="0" max="50" step="0.1" style="width:52px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> % (0=вимк)
                         </label>
@@ -10892,6 +10901,9 @@ function renderFuelFilter(d) {
     setIf('ff-autosl-fallback', s.autosl_fallback_on !== false);   // деф. ON
     setIf('ff-autosl-fallback-pct', String(s.autosl_fallback_pct != null ? s.autosl_fallback_pct : 2.0));
     setIf('ff-autosl-max-pct', String(s.autosl_max_pct != null ? s.autosl_max_pct : 0));
+    setIf('ff-require-new-situation', s.require_new_situation !== false);   // деф. ON
+    setIf('ff-open-max-signal-age', String(s.open_max_signal_age_min != null ? s.open_max_signal_age_min : 0));
+    setIf('ff-manual-close-lock', String(s.manual_close_lock_min != null ? s.manual_close_lock_min : 0));
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
@@ -11902,6 +11914,9 @@ async function saveFuelFilterSettings() {
         autosl_fallback_on: _c('ff-autosl-fallback'),
         autosl_fallback_pct: parseFloat(_v('ff-autosl-fallback-pct', '2') || '2'),
         autosl_max_pct: parseFloat(_v('ff-autosl-max-pct', '0') || '0'),
+        require_new_situation: _c('ff-require-new-situation'),
+        open_max_signal_age_min: parseInt(_v('ff-open-max-signal-age', '0') || '0', 10),
+        manual_close_lock_min: parseInt(_v('ff-manual-close-lock', '0') || '0', 10),
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),

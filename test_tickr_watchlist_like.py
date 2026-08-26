@@ -139,6 +139,51 @@ def test_out_of_mcap_universe_dropped():
     print('✓ поза топ-150 капіталізації — не проходить')
 
 
+def test_binance_case_no_bulk_oi_must_not_wipe_everything():
+    """🐞 РЕАЛЬНИЙ БАГ: на BINANCE вибірка віддавала «залишилось 0».
+    `_activity_binance` не заповнює `oi_usd` (у Binance Futures немає bulk-
+    ендпоінта OI), тож гейт по OI викошував УСІХ, хто пройшов інші перевірки:
+    «мілкий OI 37 → залишилось 0». Тепер, коли біржа не дає OI ЖОДНІЙ монеті,
+    гейт вимикається, а в статусі про це прямо сказано."""
+    global _ACT
+    _saved = _ACT
+    try:
+        _ACT = {b: dict(v, oi_usd=0.0) for b, v in _saved.items()}   # біржа без OI
+        r = _run()
+        got = set(_bases(r))
+        _check(got == {'ETH', 'SOL', 'LINK', 'STRK', 'ZEC', 'NOOI'},
+               f'без OI-даних відбір має триматись на капіталізації+обігу: {sorted(got)}')
+        w = ' '.join(r.get('warnings') or [])
+        _check('фільтр по OI вимкнено' in w,
+               f'вимкнення гейта має бути ЯВНО написане в статусі: {w}')
+    finally:
+        _ACT = _saved
+    print('✓ біржа без bulk-OI (Binance) більше не дає порожній результат')
+
+
+def test_multiplied_ticker_matches_base_coin():
+    """1000PEPE/1000BONK — той самий актив, що PEPE/BONK у CoinGecko. Без
+    нормалізації вони вилітали як «поза топ-N», хоча 1000PEPE РЕАЛЬНО є в
+    робочому watchlist."""
+    _check(tk.wl_base_variants('1000PEPE') == ['1000PEPE', 'PEPE'],
+           f"очікували варіанти [1000PEPE, PEPE], отримано {tk.wl_base_variants('1000PEPE')}")
+    _check(tk.wl_base_variants('1MBABYDOGE')[-1] == 'BABYDOGE', 'множник 1M теж знімається')
+    _check(tk.wl_base_variants('ETH') == ['ETH'], 'звичайний тікер не чіпаємо')
+
+    global _UNIVERSE, _ACT
+    _u, _a = _UNIVERSE, _ACT
+    try:
+        _UNIVERSE = _u + [_sym('1000PEPE')]
+        _ACT = dict(_a, **{'1000PEPE': {'vol_usd': 7e8, 'oi_usd': 2e8,
+                                        'trades': 60_000, 'change_pct': 4.0}})
+        r = _run(ranks=dict(_RANKS, PEPE=25))     # у CoinGecko вона зветься PEPE
+        _check('1000PEPE' in set(_bases(r)),
+               f'помножений контракт мав знайтись за базовою монетою: {_bases(r)}')
+    finally:
+        _UNIVERSE, _ACT = _u, _a
+    print('✓ 1000PEPE знаходиться за базовим тікером PEPE')
+
+
 def test_illiquid_dropped_by_volume_and_oi():
     got = set(_bases(_run()))
     _check('THIN' not in got, 'малий обіг 24h → відсів')
@@ -203,6 +248,8 @@ if __name__ == '__main__':
     test_stables_and_wrapped_are_excluded()
     test_out_of_mcap_universe_dropped()
     test_illiquid_dropped_by_volume_and_oi()
+    test_binance_case_no_bulk_oi_must_not_wipe_everything()
+    test_multiplied_ticker_matches_base_coin()
     test_sorted_by_market_cap_rank()
     test_user_volume_threshold_overrides_default()
     test_default_volume_floor_applies_when_user_left_zero()

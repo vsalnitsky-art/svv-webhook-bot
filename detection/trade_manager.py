@@ -3989,6 +3989,21 @@ class TradeManager:
             pos = self._positions.get(symbol)
         if not pos:
             return
+
+        # 🧬 Позначити Fuel Filter, що по монеті ЗАКРИЛАСЬ угода. Це РИСКА в часі:
+        # усе, що було сигналом ДО неї, вважається відпрацьованим, і наступна
+        # угода вимагатиме НОВОЇ ситуації (див. `_is_new_situation`). Ручне
+        # закриття додатково чистить черги — стоячий там запис відкрив би угоду
+        # наступним тіком, і це виглядало б як «угода з повітря».
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            _ff = get_fuel_filter()
+            if _ff:
+                _ff.note_trade_closed(symbol)
+                if str(reason or '') == 'manual':
+                    _ff.note_manual_close(symbol)
+        except Exception as _e:
+            print(f"[TM] fuel-filter close notify warn for {symbol}: {_e}")
         
         bybit_side = 'Buy' if pos['side'] == 'LONG' else 'Sell'
         qty = pos.get('remaining_qty', pos['qty'])
@@ -4494,6 +4509,21 @@ class TradeManager:
             pos = self._shadow_positions.get(symbol)
         if not pos:
             return
+
+        # 🧬 Позначити Fuel Filter, що по монеті ЗАКРИЛАСЬ угода. Це РИСКА в часі:
+        # усе, що було сигналом ДО неї, вважається відпрацьованим, і наступна
+        # угода вимагатиме НОВОЇ ситуації (див. `_is_new_situation`). Ручне
+        # закриття додатково чистить черги — стоячий там запис відкрив би угоду
+        # наступним тіком, і це виглядало б як «угода з повітря».
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            _ff = get_fuel_filter()
+            if _ff:
+                _ff.note_trade_closed(symbol)
+                if str(reason or '') == 'manual':
+                    _ff.note_manual_close(symbol)
+        except Exception as _e:
+            print(f"[TM] fuel-filter close notify warn for {symbol}: {_e}")
         
         entry = pos['entry_price']
         if pos['side'] == 'LONG':

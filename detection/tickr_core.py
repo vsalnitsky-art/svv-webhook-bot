@@ -458,6 +458,26 @@ WL_LIKE = {
 # Стейбли й обгортки/лікв-стейкінг: ціна прив'язана до чогось іншого, тож
 # власної SMC-структури немає. Тримаємо СПИСКОМ (а не евристикою «USD у назві»),
 # щоб не викинути щось живе на кшталт USUAL чи USELESS.
+def wl_base_variants(base: str):
+    """Варіанти базового тікера для пошуку в мапі капіталізації.
+
+    Біржі лістять «помножені» контракти — `1000PEPE`, `1000BONK`, `1000SHIB`,
+    `1MBABYDOGE` — це ТА САМА монета, просто інший номінал контракту. У CoinGecko
+    вона зветься `PEPE`/`BONK`/`SHIB`. Без цієї нормалізації 1000PEPE (яка РЕАЛЬНО
+    є в робочому watchlist) вилітала б як «поза топ-N капіталізації».
+    Повертає варіанти в порядку пріоритету: спершу як є, потім без множника.
+    """
+    b = (base or '').upper().strip()
+    if not b:
+        return []
+    out = [b]
+    for pref in ('1000000', '100000', '10000', '1000', '1M', '1K'):
+        if b.startswith(pref) and len(b) > len(pref):
+            out.append(b[len(pref):])
+            break
+    return out
+
+
 WL_LIKE_EXCLUDE = {
     # стейблкоїни
     'USDT', 'USDC', 'DAI', 'FDUSD', 'TUSD', 'USDE', 'USDS', 'PYUSD', 'USDD',
@@ -590,6 +610,13 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
     if want_wl and min_vol_usd <= 0:
         min_vol_usd = float(WL_LIKE['min_vol_usd'])
     _wl_dropped = {'not_swap': 0, 'no_mcap': 0, 'excluded': 0, 'thin_oi': 0}
+    # ⚠️ НЕ кожна біржа віддає відкритий інтерес пачкою. Bybit кладе `openInterest`
+    # прямо в bulk-тікери, а Binance Futures такого поля НЕ має (там OI лише
+    # по-символьним запитом — 600 HTTP на прохід, це не варіант). Якщо в наборі
+    # немає ЖОДНОГО ненульового OI — гейт по OI ВИМИКАЄМО, інакше він викошував
+    # би геть усе (саме це й сталось: «мілкий OI 37 → залишилось 0» на BINANCE).
+    _oi_available = any((v or {}).get('oi_usd', 0) for v in metrics.values())
+    _wl_oi_gate = want_wl and _oi_available
 
     enriched = []
     for s in symbols:
@@ -616,8 +643,14 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
             if _base in WL_LIKE_EXCLUDE:
                 _wl_dropped['excluded'] += 1
                 continue
-            # (3) капіталізація в межах універсуму
-            _mc = mcap_map.get(_base) if mcap_map else None
+            # (3) капіталізація в межах універсуму. Шукаємо і «помножений»
+            #     тікер (1000PEPE), і базовий (PEPE) — це та сама монета.
+            _mc = None
+            if mcap_map:
+                for _v in wl_base_variants(_base):
+                    _mc = mcap_map.get(_v)
+                    if _mc:
+                        break
             if not _mc:
                 _wl_dropped['no_mcap'] += 1
                 continue
@@ -639,8 +672,9 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
             continue
         if want_wl:
             # (4) глибина перпа: обіг без відкритого інтересу — це «прокрутка»,
-            #     на якій SMC-структура ненадійна.
-            if (row.get('oi_usd') or 0) < WL_LIKE['min_oi_usd']:
+            #     на якій SMC-структура ненадійна. Гейт діє ЛИШЕ коли біржа
+            #     реально віддає OI (див. `_oi_available`).
+            if _wl_oi_gate and (row.get('oi_usd') or 0) < WL_LIKE['min_oi_usd']:
                 _wl_dropped['thin_oi'] += 1
                 continue
             # Сортуємо за РАНГОМ (менший = більша капіталізація), а ключ
@@ -662,9 +696,12 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
     if want_wl:
         # Прозорість відбору: скільки і ЧОМУ відсіяно — щоб «чому мало монет»
         # не було здогадкою.
+        _oi_part = (f"OI ≥ ${WL_LIKE['min_oi_usd']/1e6:.0f}M" if _wl_oi_gate
+                    else f"OI — {exchange.upper()} не віддає його пачкою, "
+                         "фільтр по OI вимкнено")
         warnings.append(
             f"🎯 Як у Watchlist: топ-{WL_LIKE['mcap_universe']} капіталізації · "
-            f"обіг ≥ ${min_vol_usd/1e6:.0f}M · OI ≥ ${WL_LIKE['min_oi_usd']/1e6:.0f}M. "
+            f"обіг ≥ ${min_vol_usd/1e6:.0f}M · {_oi_part}. "
             f"Відсіяно: не USDT-перп {_wl_dropped['not_swap']} · "
             f"поза топ-{WL_LIKE['mcap_universe']} {_wl_dropped['no_mcap']} · "
             f"стейбл/обгортка {_wl_dropped['excluded']} · "

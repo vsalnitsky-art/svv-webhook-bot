@@ -50,7 +50,8 @@ import threading
 from typing import Optional, Callable, Dict, List
 # 🏷️ Канонічні мітки «Сигнал → Двигун» — щоб оригінальний сигнал НЕ губився,
 # коли двигун черги відкриває угоду (див. detection/signal_labels.py).
-from detection.signal_labels import compose as _ob_compose
+from detection.signal_labels import (compose as _ob_compose,
+                                     signal_badge as _signal_badge)
 from detection.setup_grader import grade_min as _grade_min, grade_bands as _grade_bands
 
 CYCLE_SECS = 30                 # scan cadence (twice per liq-map refresh)
@@ -427,6 +428,26 @@ DEFAULT_SETTINGS = {
     #     якого OB рахується завжди. Інші TF працюють лише якщо сканер їх теж
     #     обробляє (ob_filter / pd_zone / exit TF), інакше OB-рядка не буде.
     'q2_auto_ob_sl_tf': '15m',
+    # ✋ БЛОКУВАННЯ ПІСЛЯ РУЧНОГО ЗАКРИТТЯ (хв). Оператор закрив угоду руками —
+    #   це ЯВНЕ рішення «я з цієї монети вийшов». Доти бот нічого про це не знав:
+    #   наступний же 5m-VOB ставив монету назад у Чергу-4 і відкривав знову
+    #   (кейс APTUSDT: закрито вручну 03:03 → відкрито знову 03:10). Тепер N
+    #   хвилин монета НЕ потрапляє в черги і НЕ відкривається АВТОМАТИЧНО.
+    #   Ручні шляхи (✋ Сигнал, ✋ відкриття з Черги-4) блокування НЕ стосується —
+    #   людина завжди може перекрити власне рішення.
+    #   ДЕФОЛТ 0 = ВИМКНЕНО — поведінку без явного запиту не міняємо; чистка черг
+    #   на ручному закритті працює ЗАВЖДИ (стоячий у черзі запис відкрився б
+    #   наступним тіком і без жодного блокування — це окремий баг, не політика).
+    'manual_close_lock_min': 0,
+    # 🧬 «НОВА СИТУАЦІЯ ДЛЯ НОВОЇ УГОДИ» (дефолт УВІМК). Наступна угода по монеті
+    #   відкривається ЛИШЕ на сигналі, що з'явився ПІСЛЯ закриття попередньої.
+    #   Запис, який стояв у черзі ще до тієї угоди, більше не відкриває нову —
+    #   саме він і давав «угоду з повітря» (з ♾ «Без терміну» запис живе вічно,
+    #   тож ефект став постійним). Вимкнення повертає стару поведінку.
+    'require_new_situation': True,
+    # Максимальний вік сигналу на момент ВІДКРИТТЯ, хв (0 = без обмеження).
+    #   Сигнал тижневої давності — це вже не «ситуація».
+    'open_max_signal_age_min': 0,
     # 🛡 ГАРАНТІЯ СТОПА. Раніше авто-SL мав ОДНЕ джерело (OB на q2_auto_ob_sl_tf)
     #   і при невдачі просто «чекав» — угода могла годинами висіти БЕЗ стопа
     #   (кейс MNTUSDT: 15m-OB бичачий при SHORT → «чекаю BEARISH», хоча ★1H-OB
@@ -819,6 +840,16 @@ class FuelFilterDaemon:
         # й `smc_scanner._vob_ob_epoch`, але забезпечений на ЄДИНОМУ вузлі
         # відкриття (Черга-4), тому переживає close/delete, а не лише глушить алерт.
         self._opened_ob_epoch: Dict[str, int] = {}
+        # ✋ РУЧНЕ ЗАКРИТТЯ = рішення ЛЮДИНИ. {symbol: ts закриття}, персистентно.
+        # Доки блокування діє, монету НЕ можна ні поставити в чергу, ні відкрити
+        # АВТОМАТИЧНО (ручні шляхи — ✋ кнопки — проходять). Без цього наступний
+        # же VOB ре-відкривав щойно закриту руками угоду («фантомна угода»).
+        self._manual_closed_at: Dict[str, float] = {}
+        # 🧬 «НОВА СИТУАЦІЯ»: {symbol: ts, коли по монеті ЗАКРИЛАСЬ остання угода}.
+        # Персистентно. Сигнал, що СТАРІШИЙ за це, більше не вважається приводом
+        # для входу — інакше запис, який лежав у черзі ще до попередньої угоди,
+        # відкриває наступну «з повітря».
+        self._last_trade_end: Dict[str, float] = {}
         # 🔇 Анти-флуд для 🔁 повторної перевірки Черги-4:
         # {symbol: ((напрямок, причина), ts останнього запису в лог)}.
         self._q4_recheck_logged: Dict[str, tuple] = {}
@@ -1118,6 +1149,15 @@ class FuelFilterDaemon:
             s['q2_auto_ob_sl_buffer_pct'] = 0.2
         _tf = str(s.get('q2_auto_ob_sl_tf', '15m') or '15m').lower()
         s['q2_auto_ob_sl_tf'] = _tf if _tf in ('15m', '30m', '1h', '4h') else '15m'
+        try:
+            s['manual_close_lock_min'] = max(0, min(10080, int(s.get('manual_close_lock_min', 0) or 0)))
+        except (TypeError, ValueError):
+            s['manual_close_lock_min'] = 0
+        s['require_new_situation'] = bool(s.get('require_new_situation', True))
+        try:
+            s['open_max_signal_age_min'] = max(0, min(20160, int(s.get('open_max_signal_age_min', 0) or 0)))
+        except (TypeError, ValueError):
+            s['open_max_signal_age_min'] = 0
         s['autosl_fallback_on'] = bool(s.get('autosl_fallback_on', True))
         try:
             s['autosl_fallback_pct'] = max(0.1, min(50.0, float(s.get('autosl_fallback_pct', 2.0) or 2.0)))
@@ -1693,6 +1733,18 @@ class FuelFilterDaemon:
             if isinstance(oe, dict):
                 self._opened_ob_epoch = {str(k).upper(): v for k, v in oe.items()
                                          if isinstance(v, (int, float)) and v}
+            # ✋ Блокування після ручного закриття — теж переживає рестарт,
+            # інакше `botupdate` знімав би рішення оператора.
+            mc = st.get('manual_closed_at', {}) or {}
+            if isinstance(mc, dict):
+                self._manual_closed_at = {str(k).upper(): float(v)
+                                          for k, v in mc.items()
+                                          if isinstance(v, (int, float)) and v}
+            lte = st.get('last_trade_end', {}) or {}
+            if isinstance(lte, dict):
+                self._last_trade_end = {str(k).upper(): float(v)
+                                        for k, v in lte.items()
+                                        if isinstance(v, (int, float)) and v}
             if (self._fuel_managed or self._anomalies or self._engine_attempts
                     or self._timers or self._pending):
                 print(f"[FuelFilter] restored {len(self._pending)} queued "
@@ -1718,6 +1770,8 @@ class FuelFilterDaemon:
                 'pending3': self._pending3,
                 'pending4': self._pending4,
                 'opened_ob_epoch': self._opened_ob_epoch,
+                'manual_closed_at': self._manual_closed_at,
+                'last_trade_end': self._last_trade_end,
                 'funding_muted': self._funding_muted,
             })
         except Exception as e:
@@ -3423,7 +3477,8 @@ class FuelFilterDaemon:
 
     def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict,
               opened_by: Optional[str] = None, skip_ctr_safeguard: bool = False,
-              skip_safeguard: bool = False):
+              skip_safeguard: bool = False, by_hand: bool = False,
+              signal_at: Optional[float] = None):
         """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
         store position data — it only tracks which symbols it opened and delegates
         the actual position to TM. Positions appear in Trade Manager or Test Mode
@@ -3447,6 +3502,42 @@ class FuelFilterDaemon:
             if exh is not None and exh > max_exh:
                 print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% — "
                       f"rejecting open (too exhausted)")
+                return False
+
+        # ✋ Блокування після РУЧНОГО закриття (якщо ввімкнено). Стоїть тут, бо
+        # `_open` — ЄДИНИЙ вузол, через який проходять УСІ автоматичні шляхи.
+        # `by_hand=True` (кнопки ✋) свідомо його обходить: людина перекриває
+        # власне ж рішення.
+        if not by_hand:
+            try:
+                _blk, _left = self.manual_close_block(symbol)
+            except Exception:
+                _blk, _left = False, 0.0
+            if _blk:
+                _msg = (f'✋ закрито вручну — авто-вхід заблоковано ще '
+                        f'{_left:.0f} хв')
+                self._engine_skip[symbol] = _msg
+                print(f"[FuelFilter] {symbol}: {_msg} → відмова у відкритті")
+                return False
+
+        # 🧬 «НОВА СИТУАЦІЯ ДЛЯ НОВОЇ УГОДИ» — головне правило проти «угод із
+        # повітря». Наступна угода по монеті має спиратись на сигнал, що виник
+        # ПІСЛЯ закриття попередньої. Запис, який лежав у черзі ще до тієї
+        # угоди, — це вже ВІДПРАЦЬОВАНА ситуація, а не привід входити знову.
+        # (`by_hand` — людина; для неї правило не діє.)
+        if not by_hand and signal_at:
+            _ok_new, _why_new = self._is_new_situation(symbol, signal_at, settings)
+            if not _ok_new:
+                self._engine_skip[symbol] = _why_new
+                print(f"[FuelFilter] {symbol}: {_why_new} → відмова у відкритті")
+                try:
+                    from detection.activity_log import log_activity
+                    log_activity(symbol, 'skipped',
+                                 f'🧬 {_why_new} — потрібна НОВА ситуація '
+                                 f'(новий сигнал після закриття попередньої угоди)',
+                                 side=side, source='FF')
+                except Exception:
+                    pass
                 return False
 
         # 🛡 М'який запобіжник: слабкий МММ / нейтральний(проти) CTR / виснажений
@@ -6018,6 +6109,183 @@ class FuelFilterDaemon:
             pass
         return False
 
+    # ------------------------------------------------------------------
+    # 🧬 «НОВА СИТУАЦІЯ» — угода не відкривається на відпрацьованому сигналі
+    # ------------------------------------------------------------------
+    def note_trade_closed(self, symbol: str) -> None:
+        """Позначити, що по монеті ЗАКРИЛАСЬ угода (будь-яка: SL/TP/ручна/авто).
+
+        Це РИСКА в часі: усе, що було сигналом ДО неї, вважається відпрацьованим.
+        Наступний вхід має спиратись на сигнал, що з'явився ПІСЛЯ."""
+        sym = (symbol or '').upper()
+        if not sym:
+            return
+        with self._lock:
+            self._last_trade_end[sym] = time.time()
+            self._persist_state()
+
+    def _is_new_situation(self, symbol: str, signal_at: float, settings: Dict):
+        """(це нова ситуація?, причина відмови). ЧИСТА логіка над двома мітками.
+
+        Дві незалежні перевірки:
+          1) сигнал мусить бути НОВІШИЙ за закриття попередньої угоди по монеті;
+          2) сигнал не має бути старішим за `open_max_signal_age_min` (0 = вимк).
+        """
+        sym = (symbol or '').upper()
+        try:
+            sig = float(signal_at or 0)
+        except (TypeError, ValueError):
+            return True, ''
+        if sig <= 0:
+            return True, ''          # часу сигналу немає — не вигадуємо відмову
+        now = time.time()
+        if settings.get('require_new_situation', True):
+            end = self._last_trade_end.get(sym)
+            if end and sig <= float(end):
+                _e = time.strftime('%d.%m %H:%M:%S', time.gmtime(float(end)))
+                _s = time.strftime('%d.%m %H:%M:%S', time.gmtime(sig))
+                return False, (f'сигнал від {_s} UTC СТАРІШИЙ за закриття '
+                               f'попередньої угоди ({_e} UTC)')
+        try:
+            _max = float(settings.get('open_max_signal_age_min', 0) or 0)
+        except (TypeError, ValueError):
+            _max = 0.0
+        if _max > 0 and (now - sig) > _max * 60.0:
+            return False, (f'сигналу вже {self._fmt_wait(now - sig)} '
+                           f'(ліміт {_max:.0f}хв)')
+        return True, ''
+
+    # ------------------------------------------------------------------
+    # 🧬 ПОХОДЖЕННЯ УГОДИ — відповідь на «звідки це взялось?»
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _fmt_wait(sec: float) -> str:
+        """«3г 12хв» / «47хв» / «40с» — читабельна тривалість очікування."""
+        try:
+            sec = max(0.0, float(sec))
+        except (TypeError, ValueError):
+            return '—'
+        if sec < 60:
+            return f'{sec:.0f}с'
+        m = int(sec // 60)
+        if m < 60:
+            return f'{m}хв'
+        return f'{m // 60}г {m % 60:02d}хв'
+
+    def _origin_trace(self, sym: str, info: Dict, lay: Dict, now: float) -> str:
+        """Компактний ЛАНЦЮГ ПОХОДЖЕННЯ для рядка відкриття.
+
+        Головна причина «фантомних» угод — не помилка входу, а РОЗРИВ У ЧАСІ:
+        сигнал і постановка в чергу могли статись години тому (а з ♾ «Без
+        терміну» — коли завгодно), тож у видимій частині 🧾 Логу лишалось саме
+        відкриття без жодного контексту. Тут ми складаємо контекст у сам рядок:
+        який СИГНАЛ завів монету, КОЛИ це було, СКІЛЬКИ вона чекала, з якою
+        ціною зайшла, скільки шарів зійшлось і на якому 1H-OB такті це сталось.
+        """
+        parts = []
+        try:
+            kind = info.get('kind') or '—'
+            parts.append(f'сигнал: {_signal_badge(kind)}')
+        except Exception:
+            pass
+        try:
+            _at = float(info.get('added_at') or 0)
+            if _at > 0:
+                _ts = time.strftime('%d.%m %H:%M:%S', time.gmtime(_at))
+                parts.append(f'у черзі з {_ts} UTC (чекала {self._fmt_wait(now - _at)})')
+            else:
+                parts.append('час постановки в чергу невідомий')
+        except Exception:
+            pass
+        try:
+            _ap = info.get('added_price')
+            if _ap:
+                parts.append(f'ціна на вході в чергу {self._fmt_price(_ap)}')
+        except Exception:
+            pass
+        try:
+            _n = int((lay or {}).get('count') or 0)
+            _r = int((lay or {}).get('required') or 0)
+            _det = '; '.join(f"{l.get('label')}: {l.get('detail')}"
+                             for l in (lay or {}).get('layers') or [])
+            parts.append(f'шари {_n}/{_r}' + (f' [{_det}]' if _det else ''))
+        except Exception:
+            pass
+        try:
+            _bt = self._ob_epoch_now(sym)
+            if _bt:
+                parts.append('такт 1H-OB '
+                             + time.strftime('%d.%m %H:%M', time.gmtime(_bt / 1000.0)))
+        except Exception:
+            pass
+        if info.get('gate_exempt'):
+            parts.append('запис замінив ПРОТИЛЕЖНИЙ сигнал (фільтр входу обійдено)')
+        return ' · '.join(parts) if parts else 'походження невідоме'
+
+    # ------------------------------------------------------------------
+    # ✋ РУЧНЕ ЗАКРИТТЯ — рішення людини, яке бот мусить поважати
+    # ------------------------------------------------------------------
+    def note_manual_close(self, symbol: str) -> None:
+        """Оператор закрив угоду РУКАМИ. Ставимо позначку часу і НЕГАЙНО чистимо
+        монету з УСІХ черг.
+
+        Навіщо чистити черги: запис, що вже лежить у `_pending*`, відкрився б
+        наступним тіком двигуна незалежно від будь-якого блокування — саме так
+        і виникали «фантомні» повторні входи. Позначка блокує НОВІ надходження,
+        чистка прибирає ті, що вже стоять."""
+        sym = (symbol or '').upper()
+        if not sym:
+            return
+        with self._lock:
+            self._manual_closed_at[sym] = time.time()
+            for q in (self._pending, self._pending2, self._pending3, self._pending4):
+                q.pop(sym, None)
+            self._q4_cache_drop(sym)
+            self._q4_lit_at.pop(sym, None)
+            self._persist_state()
+        try:
+            mins = int(self.get_settings().get('manual_close_lock_min', 0) or 0)
+        except (TypeError, ValueError):
+            mins = 0
+        if mins > 0:
+            try:
+                from detection.activity_log import log_activity
+                log_activity(sym, 'skipped',
+                             f'✋ Закрито ВРУЧНУ → автоматичний повторний вхід '
+                             f'заблоковано на {mins} хв (черги очищено). '
+                             f'Відкрити раніше можна лише вручну.',
+                             source='FF')
+            except Exception:
+                pass
+
+    def manual_close_block(self, symbol: str):
+        """(заблоковано?, скільки хвилин лишилось). Дивиться лише на позначку
+        ручного закриття — жодного I/O."""
+        try:
+            mins = float(self.get_settings().get('manual_close_lock_min', 0) or 0)
+        except (TypeError, ValueError):
+            mins = 0.0
+        if mins <= 0:
+            return False, 0.0
+        ts = self._manual_closed_at.get((symbol or '').upper())
+        if not ts:
+            return False, 0.0
+        left = mins * 60.0 - (time.time() - float(ts))
+        if left <= 0:
+            # Термін вийшов — прибираємо позначку, щоб словник не ріс.
+            self._manual_closed_at.pop((symbol or '').upper(), None)
+            return False, 0.0
+        return True, left / 60.0
+
+    def clear_manual_close_block(self, symbol: str) -> bool:
+        """Зняти блокування достроково (людина передумала)."""
+        sym = (symbol or '').upper()
+        with self._lock:
+            had = self._manual_closed_at.pop(sym, None) is not None
+            if had:
+                self._persist_state()
+        return had
+
     def _ob_epoch_now(self, sym: str):
         """bar_time поточного 1H-OB — ТЕ САМЕ ДЖЕРЕЛО, що й
         `smc_scanner._current_ob_bartime`: sob_smc_ob_state на ob_filter_timeframe.
@@ -6279,7 +6547,9 @@ class FuelFilterDaemon:
                 _flip = '' if _open_dir == d else f' (ФЛІП: сигнал був {d}, показники — {_open_dir})'
                 opened = self._open(sym, _open_dir, {'mark_price': mark, 'dir': _open_dir},
                                     s, opened_by=_ob_compose(info.get('kind'), 'Q4'),
-                                    skip_ctr_safeguard=True, skip_safeguard=True)
+                                    skip_ctr_safeguard=True, skip_safeguard=True,
+                                    # 🧬 час, коли монета зайшла в чергу = час сигналу
+                                    signal_at=info.get('added_at'))
                 if opened:
                     with self._lock:
                         self._timers[sym] = {'dir': _open_dir, 'since': now, 'start_price': mark}
@@ -6287,8 +6557,15 @@ class FuelFilterDaemon:
                     # 🔒 Позначити 1H-OB як «відкритий» — щоб новий 5m VOB на тому
                     # самому 1H-OB не ре-відкривав монету після її закриття.
                     self._mark_ob_epoch_opened(sym)
+                    # 🧬 ПОВНЕ ПОХОДЖЕННЯ в ОДНОМУ рядку. Раніше запис казав лише
+                    # «усі 4 шари збіглись», і коли монета простояла в черзі
+                    # години (а з ♾ «Без терміну» — скільки завгодно), угода
+                    # виглядала як «взялась невідомо звідки»: рядки «Сигнал» і
+                    # «У чергу» лишились далеко вгорі логу. Тепер відповідь на
+                    # «звідки це?» стоїть ПРЯМО в рядку відкриття.
                     log_activity(sym, 'opened',
-                                 f'Черга-4: усі 4 шари збіглись → відкрито {_open_dir}{_flip}',
+                                 f'Черга-4: усі шари збіглись → відкрито {_open_dir}{_flip}'
+                                 f' · {self._origin_trace(sym, info, lay, now)}',
                                  side=_open_dir, source='Q4')
                     print(f"[FF-Q4] opened {_open_dir} {sym} (усі 4 шари){_flip}")
                     # 🎯 SL з Volumized OB + буфер (за напрямком відкриття).
@@ -6614,7 +6891,8 @@ class FuelFilterDaemon:
                 opened = self._open(
                     sym, d, fuel, s,
                     opened_by=_ob_compose(info.get('kind'), 'Q3'),
-                    skip_ctr_safeguard=bool(s.get('queue3_ignore_ctr', True)))
+                    skip_ctr_safeguard=bool(s.get('queue3_ignore_ctr', True)),
+                    signal_at=info.get('added_at'))
                 if opened:
                     with self._lock:
                         self._timers[sym] = {'dir': d, 'since': now,
@@ -7021,7 +7299,8 @@ class FuelFilterDaemon:
             # Оригінальний сигнал (info['kind']) → двигун Q2; 'opp' → 🔄 Реверс.
             _ob = _ob_compose(info.get('kind') or ('opp' if info.get('opp') else None), 'Q2')
             try:
-                opened = self._open(sym, d, fuel, s, opened_by=_ob)
+                opened = self._open(sym, d, fuel, s, opened_by=_ob,
+                                    signal_at=info.get('added_at'))
             except Exception as e:
                 print(f"[FF-Q2] open error {sym}: {e}")
                 continue
@@ -7316,9 +7595,12 @@ class FuelFilterDaemon:
                 # «Виснаженість», щоб було видно, ВІД ЯКОГО сигналу пішла угода.
                 _kind = ((self._pending if qnum == 1 else self._pending2)
                          .get(sym) or {}).get('kind')
+                _src_rec = ((self._pending if qnum == 1 else self._pending2)
+                            .get(sym) or {})
                 opened = self._open(
                     sym, d, fuel, s,
-                    opened_by=_ob_compose(_kind, 'EXH'))
+                    opened_by=_ob_compose(_kind, 'EXH'),
+                    signal_at=_src_rec.get('added_at'))
                 if opened:
                     # Timer starts NOW (at open) and runs while the position is
                     # open; _close resets it. Coin leaves the waiting base.
@@ -8225,7 +8507,7 @@ class FuelFilterDaemon:
                     'status': (fuel.get('status') if fuel else None)}
 
         try:
-            opened = self._open(symbol, side, fuel, settings)
+            opened = self._open(symbol, side, fuel, settings, by_hand=True)
         except Exception as e:
             print(f"[FuelFilter] force_open_timer error for {symbol}: {e}")
             return {'ok': False, 'reason': f'Помилка: {str(e)}'}
@@ -8355,7 +8637,8 @@ class FuelFilterDaemon:
         try:
             opened = self._open(symbol, side, {'mark_price': mark, 'dir': side}, s,
                                 opened_by=_ob_compose('manual', 'Q4'),
-                                skip_ctr_safeguard=True, skip_safeguard=True)
+                                skip_ctr_safeguard=True, skip_safeguard=True,
+                                by_hand=True)
         except Exception as e:
             print(f"[FF-Q4] manual open error {symbol}: {e}")
             return {'ok': False, 'opened': False, 'reason': f'Помилка: {e}'}
