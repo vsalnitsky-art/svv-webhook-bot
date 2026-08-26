@@ -850,6 +850,8 @@ class FuelFilterDaemon:
         # для входу — інакше запис, який лежав у черзі ще до попередньої угоди,
         # відкриває наступну «з повітря».
         self._last_trade_end: Dict[str, float] = {}
+        # 🔇 Остання залогована відмова «нова ситуація» — (symbol, reason).
+        self._new_situation_logged = None
         # 🔇 Анти-флуд для 🔁 повторної перевірки Черги-4:
         # {symbol: ((напрямок, причина), ts останнього запису в лог)}.
         self._q4_recheck_logged: Dict[str, tuple] = {}
@@ -3530,14 +3532,21 @@ class FuelFilterDaemon:
             if not _ok_new:
                 self._engine_skip[symbol] = _why_new
                 print(f"[FuelFilter] {symbol}: {_why_new} → відмова у відкритті")
-                try:
-                    from detection.activity_log import log_activity
-                    log_activity(symbol, 'skipped',
-                                 f'🧬 {_why_new} — потрібна НОВА ситуація '
-                                 f'(новий сигнал після закриття попередньої угоди)',
-                                 side=side, source='FF')
-                except Exception:
-                    pass
+                # 🔇 Анти-флуд: причина НЕЗМІННА (обидві дати зафіксовані), тож
+                # без цього двигун писав той самий рядок кожні ~22с — по LDOUSDT
+                # набігло 30 однакових записів за 10 хвилин. Пишемо ОДИН раз на
+                # (монета, причина); запис усе одно приберуть двигуни черг.
+                _fk = (symbol, _why_new)
+                if self._new_situation_logged != _fk:
+                    self._new_situation_logged = _fk
+                    try:
+                        from detection.activity_log import log_activity
+                        log_activity(symbol, 'skipped',
+                                     f'🧬 {_why_new} — потрібна НОВА ситуація '
+                                     f'(новий сигнал після закриття попередньої угоди)',
+                                     side=side, source='FF')
+                    except Exception:
+                        pass
                 return False
 
         # 🛡 М'який запобіжник: слабкий МММ / нейтральний(проти) CTR / виснажений
@@ -6113,16 +6122,59 @@ class FuelFilterDaemon:
     # 🧬 «НОВА СИТУАЦІЯ» — угода не відкривається на відпрацьованому сигналі
     # ------------------------------------------------------------------
     def note_trade_closed(self, symbol: str) -> None:
-        """Позначити, що по монеті ЗАКРИЛАСЬ угода (будь-яка: SL/TP/ручна/авто).
+        """Позначити, що по монеті ЗАКРИЛАСЬ угода (будь-яка: SL/TP/ручна/авто),
+        і ОДРАЗУ прибрати з черг записи, які після цього вже НІКОЛИ не відкриються.
 
         Це РИСКА в часі: усе, що було сигналом ДО неї, вважається відпрацьованим.
-        Наступний вхід має спиратись на сигнал, що з'явився ПІСЛЯ."""
+
+        ⚠️ ЧОМУ ЧИСТКА ОБОВʼЯЗКОВА (кейс LDOUSDT, 26.08). Правило «нова ситуація»
+        саме по собі лише ВІДМОВЛЯЄ у відкритті — а запис лишався в Черзі-4.
+        Умова `signal_at <= last_trade_end` НЕЗМІННА: обидві дати зафіксовані,
+        тож запис не міг стати валідним НІКОЛИ. З ♾ «Без терміну» його не
+        виселяв ні TTL, ні застій — і він висів мертвим 11.5 годин, а двигун
+        кожні ~22с писав у лог ту саму відмову (30 однакових рядків).
+        Тому: закрилась угода → відпрацьовані записи ЗНИКАЮТЬ негайно.
+
+        Записи, що зʼявились ПІСЛЯ закриття, не чіпаємо — вони вже «нова
+        ситуація». (Під час відкритої угоди `intercept` у черги не додає, тож
+        на практиці тут прибирається все, що лишилось від попереднього циклу.)"""
         sym = (symbol or '').upper()
         if not sym:
             return
+        now = time.time()
+        dropped = []
         with self._lock:
-            self._last_trade_end[sym] = time.time()
+            self._last_trade_end[sym] = now
+            for name, q in (('Черга-1', self._pending), ('Черга-2', self._pending2),
+                            ('Черга-3', self._pending3), ('Черга-4', self._pending4)):
+                rec = q.get(sym)
+                if not rec:
+                    continue
+                try:
+                    _at = float(rec.get('added_at') or 0)
+                except (TypeError, ValueError):
+                    _at = 0.0
+                if _at and _at > now:
+                    continue          # запис новіший за закриття — лишаємо
+                q.pop(sym, None)
+                dropped.append((name, _at))
+            if dropped:
+                self._q4_cache_drop(sym)
+                self._q4_lit_at.pop(sym, None)
             self._persist_state()
+        if dropped:
+            try:
+                from detection.activity_log import log_activity
+                _d = ' · '.join(
+                    f"{n} (сигнал {time.strftime('%d.%m %H:%M', time.gmtime(a))} UTC, "
+                    f"чекав {self._fmt_wait(now - a)})" if a else n
+                    for n, a in dropped)
+                log_activity(sym, 'skipped',
+                             f'🧬 Угоду закрито → прибрано ВІДПРАЦЬОВАНІ записи з черг: '
+                             f'{_d}. Далі потрібен НОВИЙ сигнал.',
+                             source='FF')
+            except Exception:
+                pass
 
     def _is_new_situation(self, symbol: str, signal_at: float, settings: Dict):
         """(це нова ситуація?, причина відмови). ЧИСТА логіка над двома мітками.
@@ -6406,6 +6458,22 @@ class FuelFilterDaemon:
         for sym, info in items:
             d = info.get('dir')
             if d not in ('LONG', 'SHORT'):
+                continue
+            # 🧬 ВІДПРАЦЬОВАНИЙ запис (сигнал старіший за закриття попередньої
+            # угоди) НІКОЛИ не стане валідним — обидві дати зафіксовані. Тому
+            # прибираємо ОДРАЗУ, а не ретраїмо щотіку. Це запобіжник на випадок,
+            # коли `note_trade_closed` не спрацював (рестарт, стан із БД).
+            # ♾ «Без терміну» цей вихід НЕ вимикає — він не про час, а про те,
+            # що підстава вже відпрацьована.
+            _spent = self._is_new_situation(sym, info.get('added_at'), s)
+            if not _spent[0]:
+                with self._lock:
+                    self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
+                self._q4_lit_at.pop(sym, None)
+                log_activity(sym, 'skipped',
+                             f'Черга-4 🧬 запис ВІДПРАЦЬОВАНИЙ ({_spent[1]}) — '
+                             'прибрано з черги, чекаємо НОВИЙ сигнал',
+                             side=d, source='Q4')
                 continue
             # ⏳ TTL — не тримати запис у Черзі-4 нескінченно (♾ вимикає).
             if self._q4_ttl_expired(info.get('added_at'), now, ttl_h, no_ttl):
@@ -6840,6 +6908,17 @@ class FuelFilterDaemon:
                                         f'протерміновано (>{ttl_h:.0f}год у черзі без відкриття)', log_on)
                     trace.append(f'{sym}:TTL')
                     continue
+            # 🧬 Відпрацьований запис (сигнал старіший за закриття угоди) —
+            # прибираємо, а не тримаємо вічно (див. кейс LDOUSDT у Черзі-4).
+            _sp3 = self._is_new_situation(sym, info.get('added_at'), s)
+            if not _sp3[0]:
+                with self._lock:
+                    self._pending3.pop(sym, None)
+                    self._persist_state()
+                self._log_readiness(sym, d, None, 'skipped',
+                                    f'🧬 запис відпрацьований ({_sp3[1]}) — прибрано', log_on)
+                trace.append(f'{sym}:відпрацьований')
+                continue
             if (d == 'LONG' and not allow_long) or (d == 'SHORT' and not allow_short):
                 continue
             if sym in self._fuel_managed:
@@ -7158,6 +7237,23 @@ class FuelFilterDaemon:
             if d not in ('LONG', 'SHORT'):
                 continue
             if sym in self._fuel_managed:
+                continue
+            # 🧬 Відпрацьований запис (сигнал старіший за закриття угоди) —
+            # прибираємо одразу, інакше він висітиме й ретраїтиметься вічно.
+            _sp2 = self._is_new_situation(sym, info.get('added_at'), s)
+            if not _sp2[0]:
+                with self._lock:
+                    self._pending2.pop(sym, None)
+                    self._persist_state()
+                self._engine_skip.pop(sym, None)
+                try:
+                    from detection.activity_log import log_activity
+                    log_activity(sym, 'skipped',
+                                 f'Черга-2 🧬 запис ВІДПРАЦЬОВАНИЙ ({_sp2[1]}) — '
+                                 'прибрано з черги, чекаємо НОВИЙ сигнал',
+                                 side=d, source='Q2')
+                except Exception:
+                    pass
                 continue
             # ⏳ TTL — a queued signal that never opened expires (logged) instead
             # of lingering for hours until an opposite CHoCH ejects it.

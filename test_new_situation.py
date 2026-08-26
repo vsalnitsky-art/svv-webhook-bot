@@ -52,6 +52,7 @@ def _ff(**settings):
     o._pending = {}; o._pending2 = {}; o._pending3 = {}; o._pending4 = {}
     o._q4_layers_cache = {}; o._q4_lit_at = {}
     o._engine_skip = {}
+    o._new_situation_logged = None
     o._persist_state = lambda: None
     s = {'require_new_situation': True, 'open_max_signal_age_min': 0,
          'manual_close_lock_min': 0}
@@ -228,6 +229,74 @@ def test_wait_formatting():
     print('✓ тривалість очікування форматується читабельно')
 
 
+# ═════════════ 🧟 МЕРТВИЙ ЗАПИС У ЧЕРЗІ (кейс LDOUSDT) ══════════════════════
+def test_ldo_case_close_purges_spent_queue_records():
+    """🐞 КЕЙС LDOUSDT (26.08). Правило «нова ситуація» ВІДМОВЛЯЛО у відкритті,
+    але запис лишався в Черзі-4. Умова `signal_at <= last_trade_end` НЕЗМІННА —
+    запис не міг стати валідним НІКОЛИ, а з ♾ «Без терміну» його не виселяв ні
+    TTL, ні застій. Результат: висів 11.5 год, а двигун кожні ~22с писав ту саму
+    відмову (30 однакових рядків у лозі за 10 хвилин).
+    Тепер закриття угоди ПРИБИРАЄ відпрацьовані записи негайно."""
+    o, _ = _ff()
+    sig = time.time() - 11.5 * 3600          # сигнал 25.08 23:47
+    o._pending4['LDOUSDT'] = {'dir': 'SHORT', 'kind': 'vob_alert', 'added_at': sig}
+    o._q4_layers_cache['LDOUSDT'] = (time.time(), {'SHORT': {}})
+    o.note_trade_closed('LDOUSDT')           # угода закрилась о 10:29
+    _check('LDOUSDT' not in o._pending4,
+           'відпрацьований запис мав ЗНИКНУТИ з Черги-4, а не висіти 11 годин')
+    _check('LDOUSDT' not in o._q4_layers_cache, 'кеш шарів теж має піти')
+    _check(o._last_trade_end.get('LDOUSDT'), 'риска часу мала стати')
+    print('✓ LDOUSDT: закриття угоди прибирає відпрацьований запис із черги')
+
+
+def test_close_purges_every_queue():
+    o, _ = _ff()
+    sig = time.time() - 3600
+    for q in (o._pending, o._pending2, o._pending3, o._pending4):
+        q['LDOUSDT'] = {'dir': 'SHORT', 'added_at': sig}
+    o.note_trade_closed('LDOUSDT')
+    for name, q in (('Черга-1', o._pending), ('Черга-2', o._pending2),
+                    ('Черга-3', o._pending3), ('Черга-4', o._pending4)):
+        _check('LDOUSDT' not in q, f'{name}: запис мав бути прибраний')
+    print('✓ чистка стосується ВСІХ чотирьох черг')
+
+
+def test_close_keeps_record_created_after_it():
+    """Запис, що зʼявився ПІСЛЯ закриття, — це вже нова ситуація, не чіпаємо."""
+    o, _ = _ff()
+    o._pending4['LDOUSDT'] = {'dir': 'SHORT', 'added_at': time.time() + 5}
+    o.note_trade_closed('LDOUSDT')
+    _check('LDOUSDT' in o._pending4, 'новіший за закриття запис має лишитись')
+    print('✓ запис, новіший за закриття, не чіпаємо')
+
+
+def test_close_without_queue_records_is_quiet():
+    o, _ = _ff()
+    o.note_trade_closed('LDOUSDT')
+    _check(o._last_trade_end.get('LDOUSDT'), 'риска все одно ставиться')
+    print('✓ закриття без записів у чергах працює тихо')
+
+
+def test_refusal_is_logged_once_not_every_tick():
+    """30 однакових рядків за 10 хвилин — це не лог, це шум."""
+    o, s = _ff()
+    o._last_trade_end['LDOUSDT'] = time.time() - 60
+    logged = []
+    mod = types.ModuleType('detection.activity_log')
+    mod.log_activity = lambda sym, kind, text, **kw: logged.append(text)
+    sys.modules['detection.activity_log'] = mod
+    sig = time.time() - 3600
+    for _ in range(10):
+        ok, why = o._is_new_situation('LDOUSDT', sig, s)
+        _check(ok is False, 'відмова має лишатись стабільною')
+        _fk = ('LDOUSDT', why)
+        if o._new_situation_logged != _fk:
+            o._new_situation_logged = _fk
+            mod.log_activity('LDOUSDT', 'skipped', why)
+    _check(len(logged) == 1, f'очікували 1 запис у лог, отримано {len(logged)}')
+    print('✓ незмінна відмова пишеться в лог ОДИН раз, а не щотіку')
+
+
 if __name__ == '__main__':
     test_signal_older_than_last_close_is_refused()
     test_signal_after_close_is_accepted()
@@ -246,4 +315,9 @@ if __name__ == '__main__':
     test_origin_trace_marks_opposite_replacement()
     test_origin_trace_survives_missing_data()
     test_wait_formatting()
+    test_ldo_case_close_purges_spent_queue_records()
+    test_close_purges_every_queue()
+    test_close_keeps_record_created_after_it()
+    test_close_without_queue_records_is_quiet()
+    test_refusal_is_logged_once_not_every_tick()
     print('\nУсі тести «нової ситуації» пройдено ✅')
