@@ -1722,6 +1722,10 @@ class TradeManager:
         cand = self._round_sltp_value(cand)   # clean value (no float tail)
         pos['manual_sl'] = cand
         pos['_auto_ob_sl_val'] = cand
+        # 🏷 Рівень поставив БОТ — щоб поле в таблиці мало «автоматичний» колір,
+        # а не виглядало як введене руками.
+        pos['manual_sl_src'] = self.SRC_AUTO
+        pos['manual_sl_by'] = f'Авто-SL · {label}'
         self._record_manual_hist(pos, 'sl', cand)
         try:
             from detection.activity_log import log_activity
@@ -5362,10 +5366,27 @@ class TradeManager:
             parts.append('Manual TP: ' + ' → '.join(self._fmt_sltp(v) for v in tps))
         return ' · '.join(parts)
 
+    # 🏷 Походження рівня Manual SL/TP. Пишеться в `manual_sl_src`/`manual_tp_src`
+    # на позиції, щоб і UI (колір поля), і 🧾 Лог розрізняли «поставив БОТ» від
+    # «змінив КОРИСТУВАЧ». Раніше цього не було зовсім: `update_manual_sl_tp`
+    # ЗАВЖДИ логував «Користувач: Manual SL → …», навіть коли рівень виставив
+    # двигун Черги-4 чи авто-SL — і в таблиці два різні за природою рівні
+    # виглядали однаково.
+    SRC_AUTO = 'auto'
+    SRC_USER = 'user'
+
     def update_manual_sl_tp(self, symbol: str, manual_sl=None,
-                              manual_tp=None, is_shadow: bool = False) -> Dict:
+                              manual_tp=None, is_shadow: bool = False,
+                              origin: str = 'user',
+                              origin_label: str = None) -> Dict:
         """Set or clear the per-position manual SL/TP override.
-        
+
+        `origin` — ХТО ставить рівень: 'user' (руками з UI, дефолт — щоб усі
+        наявні виклики поводились як раніше) або 'auto' (двигун бота).
+        `origin_label` — людський підпис джерела для логу («Черга-4 · 1H OB»,
+        «Авто-SL з OB», «Q3-VOB»…). Записується в `manual_sl_src`/`manual_tp_src`
+        та `manual_sl_by`/`manual_tp_by` на позиції.
+
         `manual_sl` / `manual_tp` semantics:
           - None  → leave field unchanged (this is how the UI can update
                     one without touching the other)
@@ -5480,19 +5501,28 @@ class TradeManager:
                 return {'ok': False,
                         'reason': f'No open {kind} position for {symbol}'}
             
+            _src = self.SRC_AUTO if origin == self.SRC_AUTO else self.SRC_USER
             if sl_op[0] == 'set':
                 _sv = self._round_sltp_value(sl_op[1])
                 pos['manual_sl'] = _sv
+                pos['manual_sl_src'] = _src
+                pos['manual_sl_by'] = origin_label or ''
                 self._record_manual_hist(pos, 'sl', _sv)
             elif sl_op[0] == 'clear':
                 pos.pop('manual_sl', None)
+                pos.pop('manual_sl_src', None)
+                pos.pop('manual_sl_by', None)
 
             if tp_op[0] == 'set':
                 _tv = self._round_sltp_value(tp_op[1])
                 pos['manual_tp'] = _tv
+                pos['manual_tp_src'] = _src
+                pos['manual_tp_by'] = origin_label or ''
                 self._record_manual_hist(pos, 'tp', _tv)
             elif tp_op[0] == 'clear':
                 pos.pop('manual_tp', None)
+                pos.pop('manual_tp_src', None)
+                pos.pop('manual_tp_by', None)
 
             updated = dict(pos)
         
@@ -5511,9 +5541,9 @@ class TradeManager:
         tp_disp = f"{updated.get('manual_tp')}" if 'manual_tp' in updated else '—'
         print(f"[TM] Manual SL/TP updated for {symbol} ({kind}): "
               f"SL={sl_disp} TP={tp_disp}")
-        # 🧾 Activity log — a USER change to Manual SL/TP (distinct from the
-        # automatic auto-OB-SL which logs its own 'autosl' event). Shows up in
-        # the coin-journey tree as «✏️ SL/TP (користувач)».
+        # 🧾 Activity log — ХТО поставив рівень видно з першого слова рядка.
+        # Раніше тут ЗАВЖДИ стояло «Користувач:», навіть коли рівень виставив
+        # двигун (Черга-4 / Q3-VOB / POC-сетап) — і лог вводив в оману.
         try:
             parts = []
             if sl_op[0] == 'set':
@@ -5526,12 +5556,17 @@ class TradeManager:
                 parts.append("Manual TP знято")
             if parts:
                 from detection.activity_log import log_activity
+                _auto = (origin == self.SRC_AUTO)
+                _who = (f"🤖 Бот{f' ({origin_label})' if origin_label else ''}"
+                        if _auto else "✏️ Користувач")
                 log_activity(symbol, 'sltp',
-                             'Користувач: ' + ' · '.join(parts)
+                             f'{_who}: ' + ' · '.join(parts)
                              + (' (paper)' if is_shadow else ''),
-                             side=updated.get('side'), source='user',
+                             side=updated.get('side'),
+                             source=('TM' if _auto else 'user'),
                              extra={'manual_sl': updated.get('manual_sl'),
-                                    'manual_tp': updated.get('manual_tp')})
+                                    'manual_tp': updated.get('manual_tp'),
+                                    'origin': (self.SRC_AUTO if _auto else self.SRC_USER)})
         except Exception:
             pass
         return {'ok': True, 'position': updated}

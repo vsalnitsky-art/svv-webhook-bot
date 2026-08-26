@@ -5544,7 +5544,9 @@ class FuelFilterDaemon:
             # ПОВТОРНИЙ VOB → лише пересунути SL на новий блок (нову НЕ відкриваємо).
             try:
                 res = tm.update_manual_sl_tp(sym, manual_sl=sl,
-                                             is_shadow=(is_shadow and not is_real))
+                                             is_shadow=(is_shadow and not is_real),
+                                             origin='auto',
+                                             origin_label='Q3-VOB · трейл')
             except Exception as e:
                 print(f"[FF-VOB-open] {sym} SL update error: {e}")
                 return
@@ -5589,7 +5591,9 @@ class FuelFilterDaemon:
         is_shadow2 = (self._tm_has_position(sym, False)
                       and not self._tm_has_position(sym, True))
         try:
-            res = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=is_shadow2)
+            res = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=is_shadow2,
+                                         origin='auto',
+                                         origin_label='Q3-VOB · відкриття')
             sl_note = (f'SL={self._fmt_price(sl)}' if (res and res.get('ok'))
                        else f'SL={self._fmt_price(sl)} (не прийнято: {(res or {}).get("reason", "—")})')
         except Exception as e:
@@ -6491,7 +6495,9 @@ class FuelFilterDaemon:
                 return
             _is_shadow = (_shadow and not _real)
             try:
-                res = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=_is_shadow) or {}
+                res = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=_is_shadow,
+                                             origin='auto',
+                                             origin_label=f'Черга-4 · {label}') or {}
             except Exception as e:
                 log_activity(sym, 'sltp',
                              f'Черга-4: SL з {label} → {self._fmt_price(sl)} '

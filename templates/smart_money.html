@@ -2035,6 +2035,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             style="background:transparent;border:1px solid #3a3f4b;color:#8b93a7;
                                    border-radius:4px;padding:1px 6px;font-size:0.65rem;
                                    cursor:pointer;line-height:1.4">⇅ A-Z</button>
+                    <!-- 🏦 Сортування за ринковою капіталізацією (ранг CoinGecko).
+                         Ранги тягнуться ОКРЕМИМ запитом і лише коли режим увімкнено —
+                         вони міняються раз на добу, тож у 10с-полл їм місця немає. -->
+                    <button id="sm-wl-mcap-btn" onclick="toggleWlMcapSort()"
+                            title="Сортувати за ринковою капіталізацією (найбільші зверху, ранг CoinGecko). Монети без рангу — у кінці. Повторний клік — початковий порядок."
+                            style="background:transparent;border:1px solid #3a3f4b;color:#8b93a7;
+                                   border-radius:4px;padding:1px 6px;font-size:0.65rem;
+                                   cursor:pointer;line-height:1.4">🏦 Cap</button>
                     <span id="sm-wl-count" style="color:#666;font-size:0.7rem;font-weight:normal">0 / 100</span>
                 </span>
             </div>
@@ -3529,7 +3537,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th>Qty</th>
-                        <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
+                        <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span></span></th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
@@ -3594,7 +3602,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
+                        <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span></span></th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
@@ -4648,24 +4656,84 @@ let wlDedupState = {};
 
 // ⇅ Сортування watchlist за алфавітом — ЛИШЕ порядок показу (серверний список
 // не змінюється). Стан кнопки — UI-налаштування, тому зберігати його безпечно.
-let wlSortAlpha = (() => {
-    try { return localStorage.getItem('wlSortAlpha') === '1'; } catch (e) { return false; }
+// Режим сортування — ОДИН на список: 'none' | 'alpha' | 'mcap'. Два режими
+// одночасно не мають сенсу, тому кнопки взаємовиключні.
+let wlSortMode = (() => {
+    try {
+        const m = localStorage.getItem('wlSortMode');
+        if (m === 'alpha' || m === 'mcap' || m === 'none') return m;
+        // Міграція зі старого прапорця (кнопка A-Z існувала до появи 🏦 Cap).
+        return localStorage.getItem('wlSortAlpha') === '1' ? 'alpha' : 'none';
+    } catch (e) { return 'none'; }
 })();
+// Сумісність: інший код читає wlSortAlpha як булеве.
+let wlSortAlpha = (wlSortMode === 'alpha');
+// 🏦 Ранги капіталізації {SYMBOL: rank} + час завантаження (TTL 30 хв).
+let wlMcapRanks = {};
+let wlMcapAt = 0;
+let wlMcapNote = '';
 
-function toggleWlSort() {
-    wlSortAlpha = !wlSortAlpha;
-    try { localStorage.setItem('wlSortAlpha', wlSortAlpha ? '1' : '0'); } catch (e) {}
+function _wlSetSortMode(mode) {
+    wlSortMode = (wlSortMode === mode) ? 'none' : mode;   // повторний клік = скинути
+    wlSortAlpha = (wlSortMode === 'alpha');
+    try {
+        localStorage.setItem('wlSortMode', wlSortMode);
+        localStorage.setItem('wlSortAlpha', wlSortAlpha ? '1' : '0');
+    } catch (e) {}
+    _wlSyncSortBtn();
+    renderWatchlist(wlSymbols || []);
+}
+
+function toggleWlSort() { _wlSetSortMode('alpha'); }
+
+// Режим міг зберегтись із минулої сесії — тоді ранги потрібні одразу після
+// завантаження, інакше список показався б у серверному порядку.
+(() => { if (wlSortMode === 'mcap') setTimeout(() => _wlEnsureMcapRanks(true), 1200); })();
+
+function toggleWlMcapSort() {
+    _wlSetSortMode('mcap');
+    if (wlSortMode === 'mcap') _wlEnsureMcapRanks(true);
+}
+
+// Ранги тягнемо ЛИШЕ на вимогу і не частіше, ніж раз на 30 хв: капіталізація
+// змінюється повільно, а сам запит іде в CoinGecko.
+async function _wlEnsureMcapRanks(force) {
+    if (!force && (Date.now() - wlMcapAt) < 1800_000) return;
+    try {
+        const d = await fetch('/api/smc/mcap-ranks').then(r => r.json());
+        wlMcapAt = Date.now();
+        if (d && d.ok && d.available) {
+            wlMcapRanks = d.ranks || {};
+            const miss = (d.total || 0) - (d.ranked || 0);
+            wlMcapNote = miss > 0 ? `${miss} без рангу — в кінці списку` : '';
+        } else {
+            wlMcapRanks = {};
+            wlMcapNote = (d && d.reason) || 'ранги недоступні';
+        }
+    } catch (e) {
+        wlMcapRanks = {};
+        wlMcapNote = 'помилка завантаження рангів';
+    }
     _wlSyncSortBtn();
     renderWatchlist(wlSymbols || []);
 }
 
 function _wlSyncSortBtn() {
-    const b = document.getElementById('sm-wl-sort-btn');
-    if (!b) return;
-    b.textContent = wlSortAlpha ? '⇅ A-Z ✓' : '⇅ A-Z';
-    b.style.color = wlSortAlpha ? '#86efac' : '#8b93a7';
-    b.style.borderColor = wlSortAlpha ? 'rgba(34,197,94,0.45)' : '#3a3f4b';
-    b.style.background = wlSortAlpha ? 'rgba(34,197,94,0.10)' : 'transparent';
+    const paint = (b, on, txt, tip) => {
+        if (!b) return;
+        b.textContent = on ? txt + ' ✓' : txt;
+        b.style.color = on ? '#86efac' : '#8b93a7';
+        b.style.borderColor = on ? 'rgba(34,197,94,0.45)' : '#3a3f4b';
+        b.style.background = on ? 'rgba(34,197,94,0.10)' : 'transparent';
+        if (tip) b.title = tip;
+    };
+    paint(document.getElementById('sm-wl-sort-btn'), wlSortMode === 'alpha', '⇅ A-Z');
+    const nRanked = Object.keys(wlMcapRanks).length;
+    paint(document.getElementById('sm-wl-mcap-btn'), wlSortMode === 'mcap', '🏦 Cap',
+          wlSortMode === 'mcap'
+            ? `Сортування за капіталізацією (ранг CoinGecko), рангів: ${nRanked}`
+              + (wlMcapNote ? ` · ${wlMcapNote}` : '')
+            : 'Сортувати за ринковою капіталізацією (найбільші зверху, ранг CoinGecko). Монети без рангу — у кінці.');
 }
 
 function renderWatchlist(list) {
@@ -4673,14 +4741,26 @@ function renderWatchlist(list) {
     const el = document.getElementById('sm-wl-list');
     document.getElementById('sm-wl-count').textContent = `${list.length} / 100`;
     _wlSyncSortBtn();
-    if (wlSortAlpha) {
-        // Сортуємо КОПІЮ (wlSymbols лишається у серверному порядку).
+    // Сортуємо КОПІЮ (wlSymbols лишається у СЕРВЕРНОМУ порядку — це дані).
+    const _byAlpha = (a, b) => {
         // Монети, що починаються з ЦИФРИ (1000PEPE, 1INCH…) — у САМИЙ КІНЕЦЬ.
+        const da = /^\d/.test(String(a)) ? 1 : 0;
+        const db = /^\d/.test(String(b)) ? 1 : 0;
+        if (da !== db) return da - db;
+        return String(a).localeCompare(String(b));
+    };
+    if (wlSortMode === 'alpha') {
+        list = list.slice().sort(_byAlpha);
+    } else if (wlSortMode === 'mcap') {
+        // Найбільша капіталізація = НАЙМЕНШИЙ ранг → зверху. Монета без рангу
+        // (немає в топ-250 CoinGecko) йде в КІНЕЦЬ, а не вигадує собі місце;
+        // серед таких — за алфавітом, щоб порядок був стабільний.
         list = list.slice().sort((a, b) => {
-            const da = /^\d/.test(String(a)) ? 1 : 0;
-            const db = /^\d/.test(String(b)) ? 1 : 0;
-            if (da !== db) return da - db;
-            return String(a).localeCompare(String(b));
+            const ra = wlMcapRanks[a], rb = wlMcapRanks[b];
+            if (ra != null && rb != null) return ra - rb || _byAlpha(a, b);
+            if (ra != null) return -1;
+            if (rb != null) return 1;
+            return _byAlpha(a, b);
         });
     }
     
@@ -4876,8 +4956,15 @@ function renderWatchlist(list) {
             ? wlTrendLive[sym] : (wlTrends[sym] || 0);
         const _dotCls = _trendVal === 1 ? 'bull' : (_trendVal === -1 ? 'bear' : '');
 
+        // 🏦 Ранг капіталізації показуємо ЛИШЕ в режимі сортування за нею —
+        // інакше це зайвий шум у рядку. «—» = монети немає в топ-250 CoinGecko.
+        const _mcapHtml = (wlSortMode === 'mcap')
+            ? `<span style="color:#8b93a7;font-size:0.62rem;font-family:monospace;margin-right:4px"
+                     title="Ранг за ринковою капіталізацією (CoinGecko)">${
+                        wlMcapRanks[sym] != null ? '#' + wlMcapRanks[sym] : '#—'}</span>`
+            : '';
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot ${_dotCls}" id="dot-${sym}"></span><span style="color:${srcColor};font-weight:600">${tvSym(sym, short)}</span></span>
+            <span>${_mcapHtml}${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot ${_dotCls}" id="dot-${sym}"></span><span style="color:${srcColor};font-weight:600">${tvSym(sym, short)}</span></span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
@@ -13023,22 +13110,53 @@ function manualSlTpCellsHTML(p, isShadow) {
     // stay clean — see roundSlTp.
     const sl = (p.manual_sl !== undefined && p.manual_sl !== null) ? roundSlTp(p.manual_sl) : '';
     const tp = (p.manual_tp !== undefined && p.manual_tp !== null) ? roundSlTp(p.manual_tp) : '';
-    const inpStyle = "width:90px;padding:3px 5px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;font-size:0.75rem;font-family:monospace";
+    const slSk = _sltpSrcStyle(sl, p.manual_sl_src, p.manual_sl_by, 'SL');
+    const tpSk = _sltpSrcStyle(tp, p.manual_tp_src, p.manual_tp_by, 'TP');
     return `
         <td>
             <input type="number" step="any" min="0" placeholder="—"
-                   value="${sl}"
-                   style="${inpStyle}"
+                   value="${sl}" title="${slSk.title}"
+                   style="${slSk.style}"
                    onblur="submitManualSlTp('${sym}', this.value, null, ${shFlag})"
                    onkeydown="if(event.key==='Enter'){this.blur();}">
         </td>
         <td>
             <input type="number" step="any" min="0" placeholder="—"
-                   value="${tp}"
-                   style="${inpStyle}"
+                   value="${tp}" title="${tpSk.title}"
+                   style="${tpSk.style}"
                    onblur="submitManualSlTp('${sym}', null, this.value, ${shFlag})"
                    onkeydown="if(event.key==='Enter'){this.blur();}">
         </td>`;
+}
+
+// 🎨 Колір поля Manual SL/TP = ХТО поставив рівень. Два різні за природою рівні
+// («бот сам вирахував з OB» і «я вписав руками») раніше виглядали однаково —
+// не було видно, де втручання оператора, а де робота двигуна.
+//   🤖 БОТ        — блакитний (той самий #38bdf8, що й бейдж «Авто-SL з OB»)
+//   ✏️ КОРИСТУВАЧ — бурштиновий (колір ручного втручання)
+//   порожньо      — сірий, як було
+const _SLTP_SRC_STYLE = {
+    auto: { c: '#38bdf8', b: 'rgba(56,189,248,0.55)', bg: 'rgba(56,189,248,0.10)',
+            t: '🤖 Виставлено ботом автоматично' },
+    user: { c: '#fbbf24', b: 'rgba(251,191,36,0.55)', bg: 'rgba(251,191,36,0.10)',
+            t: '✏️ Змінено вручну' },
+};
+function _sltpSrcStyle(val, src, by, what) {
+    const base = 'width:90px;padding:3px 5px;border-radius:3px;font-size:0.75rem;font-family:monospace';
+    if (val === '' || val === null || val === undefined) {
+        return { style: `${base};background:#1a1a1a;border:1px solid #333;color:#ddd`,
+                 title: `${what} не встановлено` };
+    }
+    // Немає позначки походження (рівень із старої угоди, до появи цієї мітки)
+    // — не вигадуємо, показуємо нейтрально.
+    const k = _SLTP_SRC_STYLE[src];
+    if (!k) {
+        return { style: `${base};background:#1a1a1a;border:1px solid #333;color:#ddd`,
+                 title: `${what}: джерело невідоме (рівень поставлено до появи позначки)` };
+    }
+    const who = by ? `${k.t} — ${String(by).replace(/"/g, '')}` : k.t;
+    return { style: `${base};background:${k.bg};border:1px solid ${k.b};color:${k.c};font-weight:700`,
+             title: `${what}: ${who}. Впишіть своє значення — колір стане бурштиновим.` };
 }
 
 // Render a single <td> with the Manual Mode toggle for a position row.

@@ -4675,6 +4675,39 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
     
+    @app.route('/api/smc/mcap-ranks')
+    def api_smc_mcap_ranks():
+        """🏦 Ранги ринкової капіталізації (CoinGecko) для монет watchlist.
+
+        Окремий ендпоінт, а НЕ поле в `/api/smc/state`: `state` опитується що
+        10 секунд, а ранги міняються раз на добу — тягнути їх щополла було б
+        марним навантаженням. Фронт бере це один раз (і зрідка оновлює), лише
+        коли увімкнено сортування «за капіталізацією».
+
+        Повертає {'ok', 'ranks': {SYMBOL: rank}, 'available': bool}. Монети без
+        рангу (немає в топ-250 CoinGecko або невідомий тікер) просто відсутні —
+        фронт кладе їх у КІНЕЦЬ списку, а не вигадує їм місце.
+        """
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            from detection.coingecko_client import get_coingecko_client
+            s = get_smc_scanner()
+            syms = list(s.get_watchlist()) if s else []
+            cg = get_coingecko_client()
+            if not cg.is_available():
+                return jsonify({'ok': True, 'available': False, 'ranks': {},
+                                'reason': 'CoinGecko недоступний (немає ключа / ліміт)'})
+            ranks = {}
+            for sym in syms:
+                r = cg.get_rank(sym)
+                if r is not None:
+                    ranks[sym] = int(r)
+            return jsonify({'ok': True, 'available': True, 'ranks': ranks,
+                            'total': len(syms), 'ranked': len(ranks)})
+        except Exception as e:
+            return jsonify({'ok': False, 'available': False, 'ranks': {},
+                            'reason': str(e)})
+
     @app.route('/api/smc/state')
     def api_smc_state():
         from detection.smc_scanner import get_smc_scanner

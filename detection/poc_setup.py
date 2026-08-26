@@ -719,7 +719,8 @@ class PocSetupDaemon:
             log_activity = lambda *a, **k: None
         # SL і TP — ОКРЕМИМИ викликами (анти-атомарна відмова).
         if sl is not None and sl > 0:
-            r = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=is_paper) or {}
+            r = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=is_paper,
+                                       origin='auto', origin_label='POC-сетап · OB') or {}
             if r.get('ok'):
                 log_activity(sym, 'autosl', f"POC-сетап SL → {self._fmt(sl)} (OB+буфер {buf*100:g}%)",
                              side=side, source='POC')
@@ -727,7 +728,8 @@ class PocSetupDaemon:
                 log_activity(sym, 'skipped', f"POC-сетап SL не встановлено: {r.get('reason', '?')}",
                              side=side, source='POC')
         if tp is not None and tp > 0:
-            r = tm.update_manual_sl_tp(sym, manual_tp=tp, is_shadow=is_paper) or {}
+            r = tm.update_manual_sl_tp(sym, manual_tp=tp, is_shadow=is_paper,
+                                       origin='auto', origin_label='POC-сетап · POC вікна') or {}
             if r.get('ok'):
                 log_activity(sym, 'autosl', f"POC-сетап TP → {self._fmt(tp)} (POC вікна)",
                              side=side, source='POC')

@@ -277,6 +277,83 @@ def test_defaults_guarantee_a_stop():
     print('✓ дефолти: гарантія ON (2%), стеля OFF')
 
 
+# ═══════════ 🏷 ПОХОДЖЕННЯ Manual SL/TP (авто ↔ вручну) ════════════════════
+def test_autosl_marks_level_as_bot_origin():
+    """Рівень, який поставив авто-SL, має нести позначку 'auto' — інакше UI не
+    зможе пофарбувати поле, а лог не відрізнить бота від оператора."""
+    _reset()
+    _OB_ROWS['15m'] = {'bias': 'BEARISH', 'bar_high': 0.5200, 'bar_low': 0.5150}
+    p = _pos()
+    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
+    _check(p.get('manual_sl_src') == TM.SRC_AUTO,
+           f"очікували позначку '{TM.SRC_AUTO}', отримано {p.get('manual_sl_src')!r}")
+    _check('Авто-SL' in (p.get('manual_sl_by') or ''),
+           f'підпис джерела має бути людським: {p.get("manual_sl_by")!r}')
+    print('✓ авто-SL позначає рівень як поставлений ботом')
+
+
+class _StoreTM(TM):
+    """Мінімальний TM для перевірки `update_manual_sl_tp` без біржі й БД."""
+    def __init__(self, side='SHORT', price=100.0):
+        import threading
+        self._lock = threading.RLock()
+        self._positions = {'BTCUSDT': {'symbol': 'BTCUSDT', 'side': side,
+                                       'entry_price': 100.0}}
+        self._shadow_positions = {}
+        self._price = price
+    def _get_current_price(self, symbol): return self._price
+    def _persist_positions(self): pass
+    def _persist_shadow_positions(self): pass
+
+
+def test_user_edit_overrides_bot_origin():
+    """Оператор вписав своє значення → позначка стає 'user', колір поля в UI
+    міняється з блакитного на бурштиновий."""
+    _LOG.clear()
+    t = _StoreTM('SHORT', 100.0)
+    t.update_manual_sl_tp('BTCUSDT', manual_sl=110.0,
+                          origin='auto', origin_label='Черга-4 · 1H OB')
+    _check(t._positions['BTCUSDT']['manual_sl_src'] == TM.SRC_AUTO, 'спершу — бот')
+    _check('🤖 Бот' in _text() and 'Черга-4 · 1H OB' in _text(),
+           f'лог має назвати бота і джерело: {_text()}')
+    _LOG.clear()
+    t.update_manual_sl_tp('BTCUSDT', manual_sl=105.0)      # дефолт origin='user'
+    _check(t._positions['BTCUSDT']['manual_sl_src'] == TM.SRC_USER,
+           'після ручної правки позначка мусить стати user')
+    _check('✏️ Користувач' in _text(), f'лог має назвати користувача: {_text()}')
+    print('✓ ручна правка перекриває позначку бота (і це видно в лозі)')
+
+
+def test_clearing_removes_origin_mark():
+    t = _StoreTM('SHORT', 100.0)
+    t.update_manual_sl_tp('BTCUSDT', manual_sl=110.0, origin='auto')
+    t.update_manual_sl_tp('BTCUSDT', manual_sl=0)          # 0 = зняти
+    p = t._positions['BTCUSDT']
+    _check('manual_sl' not in p and 'manual_sl_src' not in p,
+           'знятий рівень не має лишати за собою позначку походження')
+    print('✓ зняття рівня прибирає й позначку')
+
+
+def test_tp_origin_tracked_separately():
+    t = _StoreTM('SHORT', 100.0)
+    t.update_manual_sl_tp('BTCUSDT', manual_sl=110.0, origin='auto', origin_label='бот')
+    t.update_manual_sl_tp('BTCUSDT', manual_tp=90.0)       # TP — руками
+    p = t._positions['BTCUSDT']
+    _check(p['manual_sl_src'] == TM.SRC_AUTO and p['manual_tp_src'] == TM.SRC_USER,
+           f"SL і TP мають мати НЕЗАЛЕЖНі позначки: {p.get('manual_sl_src')} / {p.get('manual_tp_src')}")
+    print('✓ SL і TP мають незалежні позначки походження')
+
+
+def test_rejected_level_leaves_no_mark():
+    """Відхилений рівень нічого не мутує — позначки теж не має з'явитись."""
+    t = _StoreTM('SHORT', 100.0)
+    r = t.update_manual_sl_tp('BTCUSDT', manual_sl=90.0, origin='auto')   # нижче ціни
+    _check(not r.get('ok'), 'SHORT зі стопом нижче ціни має бути відхилений')
+    _check('manual_sl_src' not in t._positions['BTCUSDT'],
+           'відхилений рівень не має лишати позначку')
+    print('✓ відхилений рівень не лишає позначки')
+
+
 if __name__ == '__main__':
     test_mnt_case_star_1h_block_is_used_instead_of_waiting()
     test_primary_tf_still_wins_when_valid()
@@ -292,4 +369,9 @@ if __name__ == '__main__':
     test_user_typed_sl_is_never_touched()
     test_disabled_feature_does_nothing()
     test_defaults_guarantee_a_stop()
-    print('\nУсі тести гарантії авто-SL пройдено ✅')
+    test_autosl_marks_level_as_bot_origin()
+    test_user_edit_overrides_bot_origin()
+    test_clearing_removes_origin_mark()
+    test_tp_origin_tracked_separately()
+    test_rejected_level_leaves_no_mark()
+    print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')

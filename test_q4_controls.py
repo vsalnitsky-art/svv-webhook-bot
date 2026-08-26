@@ -98,7 +98,11 @@ class _TM:
         self._accept = accept
     def _get_current_price(self, sym):
         return self._price
-    def update_manual_sl_tp(self, sym, manual_sl=None, is_shadow=False):
+    def update_manual_sl_tp(self, sym, manual_sl=None, is_shadow=False,
+                            origin='user', origin_label=None):
+        # Черга-4 тепер позначає рівень як поставлений БОТОМ — стаб мусить
+        # приймати ці аргументи, інакше виклик падає ще до валідації.
+        self.origin = (origin, origin_label)
         self.calls.append((sym, manual_sl, is_shadow))
         if not self._accept:
             return {'ok': False, 'reason': 'wrong side', 'validation': True}
