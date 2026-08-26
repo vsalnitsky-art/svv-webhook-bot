@@ -135,6 +135,10 @@
                 <option value="oi_usd">Open Interest (swap)</option>
                 <option value="funding_abs">Funding (|%|, swap)</option>
                 <option value="market_cap">🏦 Капіталізація (топ-100)</option>
+                <!-- 🎯 Той самий принцип, за яким зібрано робочий WATCHLIST:
+                     USDT-перпетуал + топ-150 капіталізації + реальна ліквідність
+                     (обіг 24h та відкритий інтерес), без стейблів і обгорток. -->
+                <option value="watchlist_like">🎯 Як у Watchlist (кап + ліквідність)</option>
             </select>
         </div>
         <div class="tk-field">
@@ -151,6 +155,19 @@
         </div>
         <button class="tk-btn warm" id="tk-top-btn" onclick="tkTopActive()">Показати</button>
         <button class="tk-btn alt" onclick="tkSaveActBaseline()" title="Зберегти поточні обсяги як базу для сплеску">📌 База для сплеску</button>
+    </div>
+    <!-- 🎯 Пояснення режиму «Як у Watchlist» — показується лише коли він обраний. -->
+    <div id="tk-sort-hint" style="display:none;margin:0 0 8px;padding:7px 10px;border-radius:6px;
+         border:1px solid rgba(52,211,153,0.35);background:rgba(52,211,153,0.07);
+         font-size:0.72rem;color:#a7f3d0;line-height:1.5">
+        🎯 <b>Той самий принцип, за яким зібрано робочий WATCHLIST.</b> Аудит показав, що ті 33 монети
+        об'єднує не сектор (там і L1, і L2, і DeFi, і меми), а три речі:
+        <b>USDT-перпетуал</b> (спот бот не торгує) ·
+        <b>топ-150 за капіталізацією</b> ·
+        <b>реальна ліквідність</b> — обіг 24h ≥ 50M$ і відкритий інтерес ≥ 10M$,
+        щоб SMC-структура (OB/CHoCH) була чистою, а не намальованою шумом.
+        Стейблкоїни та обгортки (WBTC, stETH, PAXG…) виключено — власної структури в них немає.
+        Поле «VOL 24H ≥» перекриває поріг обсягу. Скільки і чому відсіяно — у рядку статусу під кнопкою.
     </div>
     <div class="tk-stat" id="tk-top-stat">Спершу оберіть біржу/категорії вгорі, потім «Показати».</div>
     <div class="tk-scroll">
@@ -368,11 +385,19 @@ function tkFmtUsd(v) {
 // тож автоматично ставимо ТОП-N = 100 (користувач далі може змінити вручну).
 function tkOnSortChange() {
     const sort = document.getElementById('tk-sort').value;
-    if (sort === 'market_cap') {
-        const topn = document.getElementById('tk-topn');
+    const topn = document.getElementById('tk-topn');
+    const hint = document.getElementById('tk-sort-hint');
+    if (sort === 'market_cap' || sort === 'watchlist_like') {
+        // Обидва режими — це ВІДБІР універсуму, а не «топ-20 найактивніших»,
+        // тож показуємо весь відібраний список.
         if (topn) topn.value = '100';
     }
+    if (hint) {
+        hint.style.display = (sort === 'watchlist_like') ? '' : 'none';
+    }
 }
+
+document.addEventListener('DOMContentLoaded', () => { try { tkOnSortChange(); } catch (e) {} });
 
 async function tkTopActive() {
     const btn = document.getElementById('tk-top-btn');
@@ -397,7 +422,11 @@ async function tkTopActive() {
         tkTopRows = d.symbols;
         tkRenderTop(d.symbols, d.sort_by);
         let warn = (d.warnings && d.warnings.length) ? ' ⚠ ' + d.warnings.join('; ') : '';
-        const sortLbl = d.sort_by === 'market_cap' ? '🏦 капіталізацією (топ-100)' : d.sort_by;
+        const _SORT_LBL = {
+            market_cap: '🏦 капіталізацією (топ-100)',
+            watchlist_like: '🎯 принципом Watchlist (перп + топ-150 кап + ліквідність)',
+        };
+        const sortLbl = _SORT_LBL[d.sort_by] || d.sort_by;
         stat.textContent = `🔥 ${d.exchange.toUpperCase()} · топ-${d.symbols.length} за ${sortLbl}` + warn;
     } catch (e) {
         stat.textContent = '❌ ' + e;

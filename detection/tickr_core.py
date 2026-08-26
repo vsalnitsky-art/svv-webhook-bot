@@ -433,7 +433,42 @@ def to_tv_list(symbols: List[Dict], separator: str = 'newline') -> str:
 
 # Sort keys the UI offers. 'spike' needs a baseline (see below).
 SORT_KEYS = ['vol_usd', 'spike', 'change_abs', 'trades', 'oi_usd', 'funding_abs',
-             'market_cap']
+             'market_cap', 'watchlist_like']
+
+# ----------------------------------------------------------------------
+# 🎯 «Як у Watchlist» — той самий принцип відбору, що й у робочому списку
+# ----------------------------------------------------------------------
+# Аудит поточного watchlist (33 монети: ETH, XRP, BNB, SOL, DOGE, TRX, LINK,
+# AVAX, DOT, HYPE, LTC, SUI, NEAR, APT, ONDO, UNI, MNT, TAO, ENA, ALGO, INJ,
+# LDO, HBAR, OP, WIF, 1000PEPE, ORDI, NEO, STRK, ZEC, BTC…) показав, що їх
+# об'єднує НЕ сектор (там і L1, і L2, і DeFi, і меми, і приватність), а рівно
+# три речі:
+#   1) це USDT-ПЕРПЕТУАЛ (спот бот не торгує);
+#   2) велика/середня КАПІТАЛІЗАЦІЯ — приблизно топ-150 CoinGecko;
+#   3) реальна ЛІКВІДНІСТЬ — обсяг 24h і відкритий інтерес, достатні, щоб
+#      SMC-структура (OB/CHoCH) була чистою, а не намальованою шумом.
+# Плюс те, чого там НЕМАЄ: стейблкоїни й обгортки/деривативи на BTC-ETH —
+# у них немає власної структури, торгувати нічого.
+# Ці константи — ДЕФОЛТИ; поріг обсягу користувач задає полем «VOL 24H ≥».
+WL_LIKE = {
+    'mcap_universe': 150,        # топ-N за капіталізацією (watchlist сягає ~150)
+    'min_vol_usd': 50_000_000,   # обіг 24h — «є кому налити/злити»
+    'min_oi_usd': 10_000_000,    # відкритий інтерес — глибина перпа
+}
+# Стейбли й обгортки/лікв-стейкінг: ціна прив'язана до чогось іншого, тож
+# власної SMC-структури немає. Тримаємо СПИСКОМ (а не евристикою «USD у назві»),
+# щоб не викинути щось живе на кшталт USUAL чи USELESS.
+WL_LIKE_EXCLUDE = {
+    # стейблкоїни
+    'USDT', 'USDC', 'DAI', 'FDUSD', 'TUSD', 'USDE', 'USDS', 'PYUSD', 'USDD',
+    'BUSD', 'USD1', 'RLUSD', 'EURC', 'USDP', 'GUSD', 'LUSD', 'FRAX', 'SUSD',
+    # обгортки та ліквід-стейкінг (дзеркало базового активу)
+    'WBTC', 'WETH', 'WBETH', 'CBBTC', 'LBTC', 'TBTC', 'STETH', 'WSTETH',
+    'RETH', 'METH', 'WEETH', 'EZETH', 'RSETH', 'SOLVBTC', 'JITOSOL', 'MSOL',
+    'JUPSOL', 'BSOL', 'STSOL', 'BNSOL', 'WBNB', 'WSOL', 'BTCB',
+    # токенізоване золото — не крипто-структура
+    'PAXG', 'XAUT',
+}
 
 
 # ----------------------------------------------------------------------
@@ -538,9 +573,23 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
     # (CoinGecko). When selected we keep ONLY coins whose base asset is in the
     # top-100 and sort by market cap desc — i.e. "усі монети з ТОП-100".
     want_mcap = (sort_by == 'market_cap')
-    mcap_map = top_mcap_map(_MCAP_UNIVERSE) if want_mcap else {}
-    if want_mcap and not mcap_map:
-        warnings.append('капіталізацію не вдалося отримати (CoinGecko)')
+    # 🎯 «Як у Watchlist»: той самий принцип, що зібрав робочий список —
+    # перпетуал + топ-N капіталізації + ліквідність, без стейблів і обгорток.
+    want_wl = (sort_by == 'watchlist_like')
+    if want_wl:
+        mcap_map = top_mcap_map(WL_LIKE['mcap_universe'])
+        if not mcap_map:
+            warnings.append('капіталізацію не вдалося отримати (CoinGecko) — '
+                            'відбір «як у Watchlist» неможливий')
+    else:
+        mcap_map = top_mcap_map(_MCAP_UNIVERSE) if want_mcap else {}
+        if want_mcap and not mcap_map:
+            warnings.append('капіталізацію не вдалося отримати (CoinGecko)')
+    # Поріг обсягу: якщо користувач нічого не вписав у «VOL 24H ≥», для цього
+    # режиму беремо ДЕФОЛТ — інакше «як у Watchlist» пропустило б неліквід.
+    if want_wl and min_vol_usd <= 0:
+        min_vol_usd = float(WL_LIKE['min_vol_usd'])
+    _wl_dropped = {'not_swap': 0, 'no_mcap': 0, 'excluded': 0, 'thin_oi': 0}
 
     enriched = []
     for s in symbols:
@@ -555,6 +604,22 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
             _base = str(s.get('base_asset') or '').upper().strip()
             _mc = mcap_map.get(_base)
             if not _mc:
+                continue
+        if want_wl:
+            # (1) лише USDT-перпетуал — спот бот не торгує, а USDC-перпи дублюють
+            #     ту саму монету другим рядком.
+            if not (s.get('is_swap') and s.get('is_usdt')):
+                _wl_dropped['not_swap'] += 1
+                continue
+            _base = str(s.get('base_asset') or '').upper().strip()
+            # (2) стейбли / обгортки — власної структури немає
+            if _base in WL_LIKE_EXCLUDE:
+                _wl_dropped['excluded'] += 1
+                continue
+            # (3) капіталізація в межах універсуму
+            _mc = mcap_map.get(_base) if mcap_map else None
+            if not _mc:
+                _wl_dropped['no_mcap'] += 1
                 continue
         m = metrics.get((s['market_type'], _canon(s['symbol']))) or {}
         row = dict(s)
@@ -572,6 +637,15 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
         # Filter out illiquid coins (small 24h volume).
         if min_vol_usd > 0 and (row['vol_usd'] or 0) < min_vol_usd:
             continue
+        if want_wl:
+            # (4) глибина перпа: обіг без відкритого інтересу — це «прокрутка»,
+            #     на якій SMC-структура ненадійна.
+            if (row.get('oi_usd') or 0) < WL_LIKE['min_oi_usd']:
+                _wl_dropped['thin_oi'] += 1
+                continue
+            # Сортуємо за РАНГОМ (менший = більша капіталізація), а ключ
+            # сортування нижче спадний — тому кладемо інверсію.
+            row['watchlist_like'] = -float(row.get('mcap_rank') or 10_000)
         enriched.append(row)
 
     sort_by = sort_by if sort_by in SORT_KEYS else 'vol_usd'
@@ -585,6 +659,16 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
                 bv = r.get('baseline_vol') or 0
                 r['spike'] = (r['vol_usd'] / bv) if bv > 0 else 0.0
     enriched.sort(key=lambda r: r.get(sort_by, 0) or 0, reverse=True)
+    if want_wl:
+        # Прозорість відбору: скільки і ЧОМУ відсіяно — щоб «чому мало монет»
+        # не було здогадкою.
+        warnings.append(
+            f"🎯 Як у Watchlist: топ-{WL_LIKE['mcap_universe']} капіталізації · "
+            f"обіг ≥ ${min_vol_usd/1e6:.0f}M · OI ≥ ${WL_LIKE['min_oi_usd']/1e6:.0f}M. "
+            f"Відсіяно: не USDT-перп {_wl_dropped['not_swap']} · "
+            f"поза топ-{WL_LIKE['mcap_universe']} {_wl_dropped['no_mcap']} · "
+            f"стейбл/обгортка {_wl_dropped['excluded']} · "
+            f"мілкий OI {_wl_dropped['thin_oi']} → залишилось {len(enriched)}")
     return {'ok': True, 'exchange': exchange, 'categories': cats,
             'sort_by': sort_by, 'count': len(enriched),
             'symbols': enriched[:max(1, min(top_n, 100))],
