@@ -225,6 +225,22 @@ DEFAULT_SETTINGS = {
     # вердикт визначиться чітко. 0 = будь-який явний LONG/SHORT вважається чітким
     # (нейтраль і «немає даних» усе одно НЕ спрацьовують — це не залежить від порога).
     'signal_exit_min_conf': 0,
+
+    # === 🎯 АВТОПІЛОТ УГОДИ (detection/trade_pilot.py) — дефолт OFF ===
+    # Супроводжує ВІДКРИТУ позицію по РЕАЛЬНИХ обʼєктах графіка: тягне стоп за
+    # структурою (екстремум дилінг-діапазону) і фіксує результат на цілі —
+    # найдальшому змістовному пулі ліквідності / свінгу / POC попереду руху.
+    # Не таймер і не фіксований відсоток: рішення завжди можна звірити з тим,
+    # що видно на графіку, а причина пишеться в 🧾 Лог людською мовою.
+    'pilot_enabled': False,
+    'pilot_swing_tf': '',            # порожньо = swing_hl_timeframe сканера
+    'pilot_poc_hours': 72,
+    'pilot_min_target_dist_pct': 0.30,
+    'pilot_max_target_dist_pct': 15.0,
+    'pilot_target_tol_pct': 0.05,
+    'pilot_stop_buf_pct': 0.10,
+    'pilot_be_at_r': 1.0,
+    'pilot_be_lock_pct': 0.05,
     
     # === Test mode (paper trading for exit-rule validation) ===
     # When ON: signals create "shadow" positions tracked in memory only.
@@ -438,6 +454,9 @@ class TradeManager:
         self._opp_ob_base: Dict[str, Dict] = {}
         # 🔮/🧠 Анти-флуд перевірки прогнозу й Decision у моніторі: {symbol: ts}.
         self._signal_exit_at: Dict[str, float] = {}
+        # 🎯 Автопілот угоди: тротл перевірки + останнє рішення (для UI).
+        self._pilot_at: Dict[str, float] = {}
+        self._pilot_state: Dict[str, Dict] = {}
         self._shadow_pos_state: Dict[str, Dict] = {}
         # SMC Hold-Confidence cache: {symbol: (ts, result)}. Recomputed at
         # most once per HOLD_SCORE_TTL to keep /api/tm/state (polled ~5s)
@@ -681,6 +700,7 @@ class TradeManager:
                       'use_forecast_1h_close', 'use_opposite_ob_exit',
                       'use_forecast_1h_exit', 'use_forecast_4h_exit',
                       'use_decision_exit',
+                      'pilot_enabled',
                       'test_mode',
                       'allow_long_entries', 'allow_short_entries',
                       'require_fuel_confirm',
@@ -1396,6 +1416,8 @@ class TradeManager:
         # сенсу чекати, поки ціна дійде до стопа.
         if self._check_signal_exits(symbol, pos, current_price, False):
             return
+        if self._pilot_tick(symbol, pos, current_price, False):
+            return
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_position(symbol, current_price, reason=manual_reason)
@@ -1647,16 +1669,19 @@ class TradeManager:
             lvl = edge * ((1.0 - buf) if side == 'LONG' else (1.0 + buf))
             return (lvl, f"OB {tag}"), None
 
-        def _from_volumized():
+        def _from_volumized(force_tf=None):
             """Volumized OB у бік угоди — за побудовою потрібного боку
             (`bullish_obs` для LONG / `bearish_obs` для SHORT), тому bias
-            перевіряти не треба. TF і форма блоку — з налаштувань сканера, щоб
-            рівень збігався з боксом, який намальовано на графіку."""
+            перевіряти не треба. Форма блоку — з налаштувань сканера, щоб рівень
+            збігався з боксом на графіку. TF: за замовчуванням сканерний
+            `volumized_timeframe`, але `force_tf` дозволяє прибити його до
+            конкретного значення — коли в Черзі-4 обрано САМЕ «15m Volumized OB»,
+            це має бути 15m, а не «який зараз стоїть у сканері»."""
             try:
                 from detection.smc_scanner import get_smc_scanner
                 sc = get_smc_scanner()
                 ss = sc.get_settings() if sc else {}
-                vtf = ss.get('volumized_timeframe', '5m') or '5m'
+                vtf = force_tf or ss.get('volumized_timeframe', '5m') or '5m'
                 from detection.market_data import get_market_data
                 md = get_market_data()
                 kl = md.fetch_klines(symbol, limit=200, interval=vtf) if md else None
@@ -1713,10 +1738,43 @@ class TradeManager:
         except Exception:
             star_tf = '1h'
 
-        sources = [lambda: _from_ob(ob_tf, ob_tf.upper())]
-        if star_tf != ob_tf:      # ★-блок з графіка — друга спроба, якщо це інший TF
-            sources.append(lambda: _from_ob(star_tf, f"★{star_tf.upper()}"))
-        sources += [_from_volumized, _from_pct]
+        # 🎯 ДЖЕРЕЛО ЗА НАЛАШТУВАННЯМ УГОДИ, а не «як склалось».
+        # Була розбіжність: у Черзі-4 стоїть «SL з 1H OB», а в лозі — «SL з OB 15M».
+        # Причина: ДВА незалежні авто-SL зі СВОЇМИ таймфреймами. Черга-4 має
+        # `queue4_sl_source`, а цей (TM) мав власний `q2_auto_ob_sl_tf` (деф. 15m)
+        # і нічого не знав про вибір користувача. Коли SL ставив ВІН — виходив
+        # 15m, попри налаштування Черги-4.
+        # Тепер для угод, ВІДКРИТИХ Чергою-4, першим у ланцюгу стоїть САМЕ те
+        # джерело, яке обрано в її налаштуваннях. Решта — лише фолбек, і в лозі
+        # видно, чому обране джерело не спрацювало.
+        _from_q4 = 'Q4' in str(pos.get('opened_by') or '')
+        _q4_src = str(s.get('queue4_sl_source', '1h') or '1h').lower()
+        if _q4_src not in ('1h', '15m'):
+            _q4_src = '1h'
+
+        sources, _seen_tf = [], set()
+
+        def _add_ob(tf, tag):
+            if tf and tf not in _seen_tf:
+                _seen_tf.add(tf)
+                sources.append(lambda: _from_ob(tf, tag))
+
+        if _from_q4:
+            # Пріоритет — вибір користувача в Черзі-4.
+            if _q4_src == '1h':
+                _add_ob(star_tf, f'★{star_tf.upper()} (Черга-4: 1H OB)')
+            else:
+                # «15m Volumized OB» — саме 15m, як написано в налаштуванні.
+                sources.append(lambda: _from_volumized('15m'))
+            _add_ob(ob_tf, ob_tf.upper())
+            _add_ob(star_tf, f'★{star_tf.upper()}')
+        else:
+            _add_ob(ob_tf, ob_tf.upper())
+            _add_ob(star_tf, f'★{star_tf.upper()}')
+
+        if _from_volumized not in sources:
+            sources.append(_from_volumized)
+        sources.append(_from_pct)
 
         cand, label = None, ''
         for getter in sources:
@@ -1839,6 +1897,8 @@ class TradeManager:
         # Стоять ПЕРЕД перевіркою Manual SL/TP: якщо вердикт розвернувся, немає
         # сенсу чекати, поки ціна дійде до стопа.
         if self._check_signal_exits(symbol, pos, current_price, True):
+            return
+        if self._pilot_tick(symbol, pos, current_price, True):
             return
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
@@ -2638,6 +2698,159 @@ class TradeManager:
         except Exception:
             return None
     
+    # ------------------------------------------------------------------
+    # 🎯 АВТОПІЛОТ УГОДИ — супровід по ГРАФІКУ (detection/trade_pilot.py)
+    # ------------------------------------------------------------------
+    # Перевіряти графік на кожен тік монітора (деф. 4с) немає сенсу: свінги й
+    # пули ліквідності так швидко не змінюються, а збір контексту не безкоштовний.
+    PILOT_TTL = 20.0
+
+    def _pilot_context(self, symbol: str, side: str) -> Dict:
+        """Зібрати ОБ'ЄКТИ ГРАФІКА для автопілота. ЄДИНЕ місце з I/O — далі
+        працюють чисті функції `trade_pilot`.
+
+        Джерела ті самі, що малюють графік і живлять фільтри — тож рішення
+        автопілота завжди можна звірити очима з тим, що видно на екрані:
+          • swing high/low — `_swing_hl_for_tf` (той самий дилінг-діапазон, що
+            дає PD-зону й лінії Strong/Weak на графіку);
+          • runway — пули ліквідації попереду руху з МММ-моделі (liq-map);
+          • POC — `compute_poc` з тими самими параметрами, що й бейдж чарту.
+        """
+        ctx = {'swing': None, 'runway': None, 'poc': None}
+        s = self._settings
+        try:
+            sc = self.scanner
+        except Exception:
+            sc = None
+        # 1) Дилінг-діапазон (swing high/low).
+        try:
+            if sc is not None:
+                tf = str(s.get('pilot_swing_tf', '') or ''
+                         ) or sc.get_settings().get('swing_hl_timeframe', '1h') or '1h'
+                ctx['swing'] = sc._swing_hl_for_tf(symbol, tf)
+        except Exception as e:
+            print(f"[TM-Pilot] swing ctx warn {symbol}: {e}")
+        # 2) Пули ліквідності попереду руху — з тієї самої МММ-моделі.
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if ff:
+                fd = ff._fuel_dir_smoothed(symbol) or {}
+                rw = fd.get('runway') or {}
+                # `runway` рахується у бік МММ. Для автопілота потрібен бік
+                # НАШОЇ угоди — беремо його, лише якщо напрямки збігаються,
+                # інакше «ціль» вказувала б у протилежний бік.
+                ctx['runway'] = rw if rw.get('dir') == side else None
+        except Exception as e:
+            print(f"[TM-Pilot] runway ctx warn {symbol}: {e}")
+        # 3) POC — той самий розрахунок, що й бейдж на графіку (має свій кеш).
+        try:
+            from detection.volume_profile import compute_poc
+            _p = compute_poc(symbol,
+                             hours=int(s.get('pilot_poc_hours', 72) or 72),
+                             market=str(s.get('poc_filter_market', 'FUTURES') or 'FUTURES'))
+            ctx['poc'] = (_p or {}).get('poc') if isinstance(_p, dict) else _p
+        except Exception as e:
+            print(f"[TM-Pilot] poc ctx warn {symbol}: {e}")
+        return ctx
+
+    def _pilot_tick(self, symbol: str, pos: Dict, current_price: float,
+                    is_shadow: bool) -> bool:
+        """Один такт автопілота. True → позицію ЗАКРИТО (ціль досягнуто)."""
+        s = self._settings
+        if not s.get('pilot_enabled'):
+            return False
+        side = pos.get('side')
+        if side not in ('LONG', 'SHORT'):
+            return False
+        now = time.time()
+        if now - float(self._pilot_at.get(symbol) or 0) < self.PILOT_TTL:
+            return False
+        self._pilot_at[symbol] = now
+
+        try:
+            from detection import trade_pilot
+        except Exception as e:
+            print(f"[TM-Pilot] module import error: {e}")
+            return False
+        try:
+            ctx = self._pilot_context(symbol, side)
+            cfg = {k[6:]: s[k] for k in s
+                   if k.startswith('pilot_') and k[6:] in trade_pilot.DEFAULTS}
+            # 🔒 Ціль фіксується ОДИН раз на угоду і повертається в план
+            # наступного тіку — інакше вона «тікала б» щоразу, коли ціна до неї
+            # підходить (рухомі ворота: фіксація не настала б ніколи).
+            res = trade_pilot.plan(side, pos.get('entry_price'), current_price,
+                                   swing=ctx['swing'], runway=ctx['runway'],
+                                   poc=ctx['poc'],
+                                   prev_stop=pos.get('manual_sl'),
+                                   objective_lock=pos.get('pilot_objective'),
+                                   cfg=cfg)
+            _obj = res.get('objective')
+            if _obj and not pos.get('pilot_objective'):
+                pos['pilot_objective'] = dict(_obj)
+                try:
+                    from detection.activity_log import log_activity as _la
+                    _la(symbol, 'event',
+                        f"🎯 Автопілот: ціль угоди — {_obj.get('label')} "
+                        f"@ {self._fmt_price(_obj.get('price'))} "
+                        f"(+{_obj.get('dist_pct', 0):.2f}% від ціни)",
+                        side=side, source='PILOT')
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[TM-Pilot] plan error {symbol}: {e}")
+            return False
+
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            def log_activity(*_a, **_k):
+                pass
+
+        act = res.get('action')
+        _why = ' · '.join(res.get('reasons') or []) or '—'
+
+        if act == 'take':
+            log_activity(symbol, 'closed',
+                         f'🎯 Автопілот: {_why} → фіксуємо результат',
+                         side=side, source='PILOT')
+            px = current_price or pos.get('entry_price')
+            if is_shadow:
+                self._close_shadow(symbol, px, reason='pilot_target')
+            else:
+                self._close_position(symbol, px, reason='pilot_target')
+            return True
+
+        if act == 'trail' and res.get('stop'):
+            lvl = self._round_sltp_value(res['stop'])
+            r = self.update_manual_sl_tp(
+                symbol, manual_sl=lvl, is_shadow=is_shadow,
+                origin=self.SRC_AUTO, origin_label='Автопілот · структура') or {}
+            if r.get('ok'):
+                log_activity(symbol, 'sltp',
+                             f'🎯 Автопілот: SL → {self._fmt_price(lvl)} · {_why}',
+                             side=side, source='PILOT')
+            else:
+                log_activity(symbol, 'skipped',
+                             f'🎯 Автопілот: SL {self._fmt_price(lvl)} не прийнято '
+                             f'({r.get("reason", "—")}) · {_why}',
+                             side=side, source='PILOT')
+            return False
+
+        # 'hold' — рішення ТРИМАТИ. У лог не пишемо (це стан, а не подія), але
+        # тримаємо в памʼяті для показу в UI/діагностиці.
+        self._pilot_state[symbol] = {'at': now, 'action': act,
+                                     'objective': res.get('objective'),
+                                     'next': res.get('next_obstacle'),
+                                     'why': _why}
+        return False
+
+    def get_pilot_state(self, symbol: str) -> Optional[Dict]:
+        """Останнє рішення автопілота по монеті (для UI/діагностики)."""
+        return self._pilot_state.get((symbol or '').upper()) \
+            or self._pilot_state.get(symbol)
+
     def _get_ctr(self, symbol: str) -> Optional[Dict]:
         """Read the latest CTR (STC) for the symbol from forecast_engine cache."""
         try:
@@ -4210,6 +4423,7 @@ class TradeManager:
             'forecast_4h_exit': '🔮 Forecast 4H розвернувся проти позиції',
             'decision_exit': '🧠 Decision Center рекомендує протилежне',
             'signal_exit_and': '🔗 AND: усі увімкнені вердикти проти позиції',
+            'pilot_target': '🎯 Автопілот: ціль на графіку досягнута',
         }
         base = detail_map.get(reason)
         if base is None and reason.startswith('bos_') and reason.endswith('_partial'):
@@ -4268,6 +4482,8 @@ class TradeManager:
         # закриття вона більше не діє (нова угода зафіксує свою).
         self._opp_ob_base.pop(symbol, None)
         self._signal_exit_at.pop(symbol, None)
+        self._pilot_at.pop(symbol, None)
+        self._pilot_state.pop(symbol, None)
         
         bybit_side = 'Buy' if pos['side'] == 'LONG' else 'Sell'
         qty = pos.get('remaining_qty', pos['qty'])
@@ -4792,6 +5008,8 @@ class TradeManager:
         # закриття вона більше не діє (нова угода зафіксує свою).
         self._opp_ob_base.pop(symbol, None)
         self._signal_exit_at.pop(symbol, None)
+        self._pilot_at.pop(symbol, None)
+        self._pilot_state.pop(symbol, None)
         
         entry = pos['entry_price']
         if pos['side'] == 'LONG':
@@ -6430,6 +6648,7 @@ class TradeManager:
             'forecast_4h_exit': '🔮 Forecast 4H Exit',
             'decision_exit': '🧠 Decision Exit',
             'signal_exit_and': '🔗 Signal Exit (AND)',
+            'pilot_target': '🎯 Автопілот (ціль)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',
             'htf_flip': '📡 HTF Trend Flip',
             'time_stop': '⏱ Time Stop',

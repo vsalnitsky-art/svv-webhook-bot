@@ -354,6 +354,64 @@ def test_rejected_level_leaves_no_mark():
     print('✓ відхилений рівень не лишає позначки')
 
 
+# ═════ 🎯 ДЖЕРЕЛО SL МАЄ ВІДПОВІДАТИ НАЛАШТУВАННЮ ЧЕРГИ-4 ══════════════════
+def test_q4_trade_uses_the_configured_1h_source_first():
+    """🐞 Скарга: у Черзі-4 стоїть «SL з 1H OB», а в лозі — «SL з OB 15M».
+    Причина: ДВА незалежні авто-SL зі СВОЇМИ таймфреймами; TM нічого не знав про
+    вибір у Черзі-4 і брав власний `q2_auto_ob_sl_tf` (деф. 15m).
+    Тепер для угод, відкритих Чергою-4, першим іде САМЕ обране джерело."""
+    _reset(queue4_sl_source='1h')
+    _OB_ROWS['15m'] = {'bias': 'BEARISH', 'bar_high': 0.5200, 'bar_low': 0.5150}
+    _OB_ROWS['1h'] = {'bias': 'BEARISH', 'bar_high': 0.5285, 'bar_low': 0.5250}
+    p = _pos()
+    p['opened_by'] = 'vob_alert → Q4'
+    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
+    _check(_near(p['manual_sl'], 0.5285 * 1.002),
+           f'мав узятись 1H-OB (як обрано в Черзі-4), отримано {p.get("manual_sl")}')
+    _check('Черга-4: 1H OB' in _text(), f'джерело має бути назване в лозі: {_text()}')
+    print('✓ угода з Черги-4 бере САМЕ обране джерело (1H OB), а не 15m')
+
+
+def test_q4_trade_with_15m_choice_uses_volumized_15m():
+    _reset(queue4_sl_source='15m')
+    _OB_ROWS['15m'] = {'bias': 'BEARISH', 'bar_high': 0.5200, 'bar_low': 0.5150}
+    _OB_ROWS['1h'] = {'bias': 'BEARISH', 'bar_high': 0.5285, 'bar_low': 0.5250}
+    _VOB['bearish_obs'] = [{'top': 0.5240, 'bottom': 0.5210, 'breaker': False}]
+    p = _pos()
+    p['opened_by'] = 'vob_alert → Q4'
+    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
+    _check(_near(p['manual_sl'], 0.5240 * 1.002),
+           f'мав узятись Volumized OB 15m, отримано {p.get("manual_sl")}')
+    _check('Volumized OB 15m' in _text(), f'саме 15m, не сканерний TF: {_text()}')
+    print('✓ вибір «15m Volumized OB» бере рівно 15m')
+
+
+def test_non_q4_trade_keeps_its_own_tf():
+    """Угоди НЕ з Черги-4 і далі йдуть за власним `q2_auto_ob_sl_tf`."""
+    _reset(queue4_sl_source='1h', q2_auto_ob_sl_tf='15m')
+    _OB_ROWS['15m'] = {'bias': 'BEARISH', 'bar_high': 0.5200, 'bar_low': 0.5150}
+    _OB_ROWS['1h'] = {'bias': 'BEARISH', 'bar_high': 0.5285, 'bar_low': 0.5250}
+    p = _pos()
+    p['opened_by'] = 'choch → Q2'
+    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
+    _check(_near(p['manual_sl'], 0.5200 * 1.002),
+           f'не-Q4 угода лишається на своєму TF: {p.get("manual_sl")}')
+    print('✓ угоди не з Черги-4 поведінку не змінили')
+
+
+def test_q4_source_unavailable_falls_back_and_says_so():
+    _reset(queue4_sl_source='1h')
+    _OB_ROWS['1h'] = None                     # обраного джерела немає
+    _OB_ROWS['15m'] = {'bias': 'BEARISH', 'bar_high': 0.5200, 'bar_low': 0.5150}
+    p = _pos()
+    p['opened_by'] = 'vob_alert → Q4'
+    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
+    _check(_near(p['manual_sl'], 0.5200 * 1.002), 'фолбек на 15m спрацював')
+    _check('немає готового OB' in _text(),
+           f'причина, чому обране джерело не спрацювало, має бути в лозі: {_text()}')
+    print('✓ обране джерело недоступне → фолбек, і в лозі видно чому')
+
+
 if __name__ == '__main__':
     test_mnt_case_star_1h_block_is_used_instead_of_waiting()
     test_primary_tf_still_wins_when_valid()
@@ -374,4 +432,8 @@ if __name__ == '__main__':
     test_clearing_removes_origin_mark()
     test_tp_origin_tracked_separately()
     test_rejected_level_leaves_no_mark()
+    test_q4_trade_uses_the_configured_1h_source_first()
+    test_q4_trade_with_15m_choice_uses_volumized_15m()
+    test_non_q4_trade_keeps_its_own_tf()
+    test_q4_source_unavailable_falls_back_and_says_so()
     print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')

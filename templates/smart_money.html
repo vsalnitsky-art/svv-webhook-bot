@@ -3406,6 +3406,42 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </select>
                         </div>
 
+                        <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
+                            <label>
+                                <input type="checkbox" id="tm-pilot-enabled" onchange="saveTMSettings()">
+                                🎯 Автопілот угоди (супровід по графіку)
+                                <span class="tm-help" title="Супроводжує ВІДКРИТУ позицію по РЕАЛЬНИХ обʼєктах графіка, а не за таймером чи фіксованим відсотком. ЦІЛЬ — найдальший змістовний обʼєкт попереду руху: пул ліквідації (liq-map), екстремум дилінг-діапазону (той самий, що дає лінії Strong/Weak) або POC; вона ФІКСУЄТЬСЯ один раз і не «тікає». СТОП — за протилежним екстремумом діапазону + буфер, рухається ЛИШЕ в бік прибутку (ратчет), а після проходження 1R не гірший за беззбиток. Досягли цілі → фіксуємо результат. Кожне рішення пишеться в 🧾 Лог людською мовою. За замовчуванням ВИМКНЕНО.">?</span>
+                            </label>
+                        </div>
+                        <div class="tm-row">
+                            <label>
+                                🎯 Ціль: від
+                                <span class="tm-help" title="Вікно змістовних цілей у % від поточної ціни. Ближче за мінімум — це шум, а не ціль. Далі за максимум — уже не «ціль цієї угоди».">?</span>
+                            </label>
+                            <input type="number" id="tm-pilot-min-target" min="0" max="50" step="0.05"
+                                   style="width:58px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"
+                                   onchange="saveTMSettings()">
+                            <span style="margin:0 4px;font-size:0.78rem;color:#888">до</span>
+                            <input type="number" id="tm-pilot-max-target" min="0" max="100" step="0.5"
+                                   style="width:58px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem"
+                                   onchange="saveTMSettings()">
+                            <span style="margin-left:4px;font-size:0.78rem;color:#888">%</span>
+                        </div>
+                        <div class="tm-row">
+                            <label>
+                                🛡 Буфер стопа
+                                <span class="tm-help" title="Відступ ЗА структурним рівнем (екстремумом дилінг-діапазону), щоб стоп не збивало гнотом. Беззбиток вмикається після проходження вказаної кількості R (ризиків).">?</span>
+                            </label>
+                            <input type="number" id="tm-pilot-stop-buf" min="0" max="10" step="0.05"
+                                   style="width:58px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"
+                                   onchange="saveTMSettings()">
+                            <span style="margin:0 4px;font-size:0.78rem;color:#888">% · беззбиток після</span>
+                            <input type="number" id="tm-pilot-be-r" min="0" max="10" step="0.25"
+                                   style="width:52px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem"
+                                   onchange="saveTMSettings()">
+                            <span style="margin-left:4px;font-size:0.78rem;color:#888">R</span>
+                        </div>
+
                         <div class="tm-row">
                             <label>
                                 🎯 Чіткий вердикт ≥
@@ -8188,6 +8224,11 @@ async function loadTMSettings() {
         document.getElementById('tm-signal-exit-mode').value =
             (s.signal_exit_mode === 'and') ? 'and' : 'or';
         _setV('tm-signal-exit-min-conf', s.signal_exit_min_conf != null ? s.signal_exit_min_conf : 0, 0);
+        document.getElementById('tm-pilot-enabled').checked = !!s.pilot_enabled;
+        _setV('tm-pilot-min-target', s.pilot_min_target_dist_pct != null ? s.pilot_min_target_dist_pct : 0.3, 0.3);
+        _setV('tm-pilot-max-target', s.pilot_max_target_dist_pct != null ? s.pilot_max_target_dist_pct : 15, 15);
+        _setV('tm-pilot-stop-buf', s.pilot_stop_buf_pct != null ? s.pilot_stop_buf_pct : 0.1, 0.1);
+        _setV('tm-pilot-be-r', s.pilot_be_at_r != null ? s.pilot_be_at_r : 1, 1);
         // Validate TF before assigning to <select> — fall back to 15m for
         // unknown values so the dropdown doesn't end up in a blank state.
         const oppExitTf = ['15m', '30m', '1h', '4h'].includes(s.opposite_ob_exit_timeframe)
@@ -8575,6 +8616,11 @@ async function saveTMSettings() {
             use_decision_exit: document.getElementById('tm-use-decision-exit').checked,
             signal_exit_mode: document.getElementById('tm-signal-exit-mode').value || 'or',
             signal_exit_min_conf: parseInt(document.getElementById('tm-signal-exit-min-conf').value) || 0,
+            pilot_enabled: document.getElementById('tm-pilot-enabled').checked,
+            pilot_min_target_dist_pct: parseFloat(document.getElementById('tm-pilot-min-target').value) || 0.3,
+            pilot_max_target_dist_pct: parseFloat(document.getElementById('tm-pilot-max-target').value) || 15,
+            pilot_stop_buf_pct: parseFloat(document.getElementById('tm-pilot-stop-buf').value) || 0.1,
+            pilot_be_at_r: parseFloat(document.getElementById('tm-pilot-be-r').value) || 1,
             opposite_ob_exit_timeframe: document.getElementById('tm-opposite-ob-exit-tf').value || '15m',
             use_htf_flip: document.getElementById('tm-use-htf-flip').checked,
             use_time_stop: document.getElementById('tm-use-time-stop').checked,
@@ -8838,6 +8884,7 @@ function reasonLabel(r) {
         'forecast_4h_exit': '🔮 F4H проти',
         'decision_exit': '🧠 Decision проти',
         'signal_exit_and': '🔗 AND (усі проти)',
+        'pilot_target': '🎯 Автопілот (ціль)',
         'bos_2_partial': '✂️ BOS-2',
         'bos_3_partial': '✂️ BOS-3',
         'bos_4_partial': '✂️ BOS-4',
