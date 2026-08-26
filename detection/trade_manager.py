@@ -1572,44 +1572,151 @@ class TradeManager:
             except Exception:
                 pass
 
+        if side not in ('LONG', 'SHORT'):
+            return
+
+        # 🛡 ЛАНЦЮГ ДЖЕРЕЛ. Раніше джерело було ОДНЕ (OB на q2_auto_ob_sl_tf), і
+        # при невдачі авто-SL просто «чекав» — угода висіла БЕЗ стопа скільки
+        # завгодно. Реальний кейс MNTUSDT: 15m-OB виявився БИЧАЧИЙ при SHORT →
+        # «чекаю BEARISH», хоча ★1H-OB був ВЕДМЕЖИЙ і чудово годився на стоп.
+        # Тепер пробуємо по черзі, і останній крок — гарантія.
+        skipped = []
+
+        def _from_ob(tf: str, tag: str):
+            """Межа OB зі стану сканера (`sob_smc_ob_state`) на заданому TF.
+            Bias мусить ВІДПОВІДАТИ напрямку: LONG → BULLISH (беремо низ),
+            SHORT → BEARISH (беремо верх). Протилежний блок лежить не з того
+            боку ціни, тож стопом бути не може."""
+            try:
+                from storage.db_operations import get_db
+                row = get_db().get_smc_ob_state(symbol, tf)
+            except Exception:
+                return None, f"{tag}: помилка читання"
+            if not row or not row.get('bias'):
+                return None, f"{tag}: немає готового OB (сканер ще не порахував)"
+            bias = row.get('bias')
+            want = 'BULLISH' if side == 'LONG' else 'BEARISH'
+            if bias != want:
+                return None, f"{tag}: блок протилежний ({bias})"
+            try:
+                edge = float(row.get('bar_low') if side == 'LONG' else row.get('bar_high'))
+            except (TypeError, ValueError):
+                return None, f"{tag}: немає меж блоку"
+            if edge <= 0:
+                return None, f"{tag}: немає меж блоку"
+            lvl = edge * ((1.0 - buf) if side == 'LONG' else (1.0 + buf))
+            return (lvl, f"OB {tag}"), None
+
+        def _from_volumized():
+            """Volumized OB у бік угоди — за побудовою потрібного боку
+            (`bullish_obs` для LONG / `bearish_obs` для SHORT), тому bias
+            перевіряти не треба. TF і форма блоку — з налаштувань сканера, щоб
+            рівень збігався з боксом, який намальовано на графіку."""
+            try:
+                from detection.smc_scanner import get_smc_scanner
+                sc = get_smc_scanner()
+                ss = sc.get_settings() if sc else {}
+                vtf = ss.get('volumized_timeframe', '5m') or '5m'
+                from detection.market_data import get_market_data
+                md = get_market_data()
+                kl = md.fetch_klines(symbol, limit=200, interval=vtf) if md else None
+                if not kl or len(kl) < 20:
+                    return None, 'Volumized OB: замало барів'
+                from detection.volumized_ob import detect_volumized_obs
+                res = detect_volumized_obs(
+                    kl,
+                    swing_length=int(ss.get('volumized_swing_length', 10) or 10),
+                    ob_end_method=ss.get('volumized_ob_end_method', 'Wick') or 'Wick',
+                    max_atr_mult=float(ss.get('volumized_max_atr_mult', 3.5) or 3.5),
+                    zone_count=ss.get('volumized_zone_count', 'Low') or 'Low',
+                    combine_obs=bool(ss.get('volumized_combine_obs', True)))
+                obs = res.get('bullish_obs' if side == 'LONG' else 'bearish_obs') or []
+                for o in obs:                      # newest first
+                    if o.get('breaker'):
+                        continue                   # знецінена зона — не орієнтир
+                    edge = float(o.get('bottom' if side == 'LONG' else 'top') or 0)
+                    if edge <= 0:
+                        continue
+                    lvl = edge * ((1.0 - buf) if side == 'LONG' else (1.0 + buf))
+                    return (lvl, f"Volumized OB {vtf}"), None
+                return None, 'Volumized OB: немає активного блоку в бік угоди'
+            except Exception as e:
+                return None, f'Volumized OB: {e}'
+
+        def _from_pct():
+            """🛡 ГАРАНТІЯ: відсоток від ВХОДУ. Спрацьовує лише коли жоден блок
+            не дав придатного рівня — щоб угода не лишалась без стопа взагалі."""
+            if not s.get('autosl_fallback_on', True):
+                return None, 'відсотковий фолбек вимкнено'
+            try:
+                p = float(s.get('autosl_fallback_pct', 2.0) or 2.0)
+            except (TypeError, ValueError):
+                p = 2.0
+            try:
+                entry = float(pos.get('entry_price') or 0)
+            except (TypeError, ValueError):
+                entry = 0.0
+            base = entry if entry > 0 else current_price
+            if base <= 0:
+                return None, 'фолбек: немає ціни входу'
+            lvl = base * ((1.0 - p / 100.0) if side == 'LONG' else (1.0 + p / 100.0))
+            return (lvl, f"{p:g}% від входу"), None
+
         # OB timeframe is Queue-2-specific (its own setting, default 15m — the
         # main scan TF, always computed). NOT the scanner's ob_filter_timeframe.
         ob_tf = str(s.get('q2_auto_ob_sl_tf', '15m') or '15m').lower()
         try:
-            from storage.db_operations import get_db
-            row = get_db().get_smc_ob_state(symbol, ob_tf)
+            from detection.smc_scanner import get_smc_scanner
+            _sc = get_smc_scanner()
+            star_tf = str((_sc.get_settings().get('ob_filter_timeframe', '1h')
+                           if _sc else '1h') or '1h').lower()
         except Exception:
-            return
-        if not row or not row.get('bias'):
-            _diag(f"немає готового OB на {ob_tf.upper()} (сканер ще не порахував)")
-            return
-        bias = row.get('bias')
-        try:
-            bar_low = float(row.get('bar_low'))
-            bar_high = float(row.get('bar_high'))
-        except (TypeError, ValueError):
+            star_tf = '1h'
+
+        sources = [lambda: _from_ob(ob_tf, ob_tf.upper())]
+        if star_tf != ob_tf:      # ★-блок з графіка — друга спроба, якщо це інший TF
+            sources.append(lambda: _from_ob(star_tf, f"★{star_tf.upper()}"))
+        sources += [_from_volumized, _from_pct]
+
+        cand, label = None, ''
+        for getter in sources:
+            got, why = getter()
+            if not got:
+                skipped.append(why)
+                continue
+            lvl, lbl = got
+            # Рівень мусить бути з БЕЗПЕЧНОГО боку від поточної ціни, інакше
+            # наступний тік монітора закрив би угоду миттєво.
+            safe = (lvl < current_price) if side == 'LONG' else (lvl > current_price)
+            if not safe:
+                skipped.append(f"{lbl}: рівень {self._fmt_price(lvl)} з "
+                               f"неправильного боку (ціна {self._fmt_price(current_price)})")
+                continue
+            cand, label = lvl, lbl
+            break
+
+        if cand is None:
+            _diag('; '.join(skipped) or 'не вдалося визначити рівень')
             return
 
-        if side == 'LONG':
-            if bias != 'BULLISH':
-                _diag(f"OB на {ob_tf.upper()} протилежний (BEARISH) — чекаю BULLISH")
-                return
-            cand = bar_low * (1.0 - buf)
-            if cand >= current_price:
-                _diag(f"низ OB {self._fmt_price(bar_low)} вище ціни "
-                      f"{self._fmt_price(current_price)} — SL там закрив би угоду")
-                return   # OB not below price → wouldn't protect, skip
-        elif side == 'SHORT':
-            if bias != 'BEARISH':
-                _diag(f"OB на {ob_tf.upper()} протилежний (BULLISH) — чекаю BEARISH")
-                return
-            cand = bar_high * (1.0 + buf)
-            if cand <= current_price:
-                _diag(f"верх OB {self._fmt_price(bar_high)} нижче ціни "
-                      f"{self._fmt_price(current_price)} — SL там закрив би угоду")
-                return   # OB not above price → wouldn't protect, skip
-        else:
-            return
+        # Стеля відстані (0 = вимкнено): дуже далекий блок робить ризик угоди
+        # непорівнянним з рештою — підтягуємо рівень до стелі.
+        clamped = ''
+        try:
+            _max = float(s.get('autosl_max_pct', 0.0) or 0.0)
+        except (TypeError, ValueError):
+            _max = 0.0
+        if _max > 0:
+            try:
+                base = float(pos.get('entry_price') or 0) or current_price
+            except (TypeError, ValueError):
+                base = current_price
+            if base > 0:
+                dist = abs(cand - base) / base * 100.0
+                if dist > _max:
+                    cand = (base * (1.0 - _max / 100.0) if side == 'LONG'
+                            else base * (1.0 + _max / 100.0))
+                    clamped = f" · підтягнуто до стелі {_max:g}% (було {dist:.2f}%)"
 
         # First (and only) successful placement — set once, never ratcheted after.
         cand = self._round_sltp_value(cand)   # clean value (no float tail)
@@ -1618,9 +1725,19 @@ class TradeManager:
         self._record_manual_hist(pos, 'sl', cand)
         try:
             from detection.activity_log import log_activity
+            _entry = pos.get('entry_price')
+            _dist = ''
+            try:
+                if _entry:
+                    _dist = f" · {abs(cand - float(_entry)) / float(_entry) * 100:.2f}% від входу"
+            except (TypeError, ValueError, ZeroDivisionError):
+                _dist = ''
+            # Чому не спрацювали попередні джерела — видно одразу, без здогадок.
+            _why = f" · пропущено: {'; '.join(skipped)}" if skipped else ''
             log_activity(symbol, 'autosl',
-                         f"SL встановлено з OB {ob_tf.upper()} → {self._fmt_price(cand)} "
-                         f"(буфер {s.get('q2_auto_ob_sl_buffer_pct', 0.2)}%, один раз)",
+                         f"SL встановлено з {label} → {self._fmt_price(cand)}{_dist}"
+                         f"{clamped} (буфер {s.get('q2_auto_ob_sl_buffer_pct', 0.2)}%, "
+                         f"один раз){_why}",
                          side=side, source='TM')
         except Exception:
             pass

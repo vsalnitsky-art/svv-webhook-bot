@@ -427,6 +427,22 @@ DEFAULT_SETTINGS = {
     #     якого OB рахується завжди. Інші TF працюють лише якщо сканер їх теж
     #     обробляє (ob_filter / pd_zone / exit TF), інакше OB-рядка не буде.
     'q2_auto_ob_sl_tf': '15m',
+    # 🛡 ГАРАНТІЯ СТОПА. Раніше авто-SL мав ОДНЕ джерело (OB на q2_auto_ob_sl_tf)
+    #   і при невдачі просто «чекав» — угода могла годинами висіти БЕЗ стопа
+    #   (кейс MNTUSDT: 15m-OB бичачий при SHORT → «чекаю BEARISH», хоча ★1H-OB
+    #   був ведмежий і чудово підходив). Тепер джерела пробуються ЛАНЦЮГОМ:
+    #     1) OB на `q2_auto_ob_sl_tf`      (як було)
+    #     2) ★ OB на `ob_filter_timeframe` (той самий блок, що на графіку)
+    #     3) Volumized OB у бік угоди      (за побудовою потрібного боку)
+    #     4) відсоток від входу            ← гарантія: стоп буде ЗАВЖДИ
+    #   `autosl_fallback_on=False` повертає стару поведінку «краще без стопа».
+    'autosl_fallback_on': True,
+    'autosl_fallback_pct': 2.0,     # % від входу для п.4
+    # Стеля відстані стопа у % від входу (0 = вимкнено). Блок може стояти дуже
+    # далеко — тоді ризик угоди стає непорівнянним з іншими (спостережено 1.4%
+    # проти 15.6% на однакових розмірах позиції). Ненульове значення ПІДТЯГУЄ
+    # надто далекий рівень до стелі; сам вибір блоку не змінюється.
+    'autosl_max_pct': 0.0,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -1102,6 +1118,15 @@ class FuelFilterDaemon:
             s['q2_auto_ob_sl_buffer_pct'] = 0.2
         _tf = str(s.get('q2_auto_ob_sl_tf', '15m') or '15m').lower()
         s['q2_auto_ob_sl_tf'] = _tf if _tf in ('15m', '30m', '1h', '4h') else '15m'
+        s['autosl_fallback_on'] = bool(s.get('autosl_fallback_on', True))
+        try:
+            s['autosl_fallback_pct'] = max(0.1, min(50.0, float(s.get('autosl_fallback_pct', 2.0) or 2.0)))
+        except (TypeError, ValueError):
+            s['autosl_fallback_pct'] = 2.0
+        try:
+            s['autosl_max_pct'] = max(0.0, min(50.0, float(s.get('autosl_max_pct', 0.0) or 0.0)))
+        except (TypeError, ValueError):
+            s['autosl_max_pct'] = 0.0
         s['engine_smart_direction'] = bool(s.get('engine_smart_direction', False))
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))

@@ -2642,6 +2642,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <option value="4h">4г</option>
                             </select>
                         </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🛡 ГАРАНТІЯ СТОПА. Джерела рівня пробуються ЛАНЦЮГОМ: 1) OB на обраному TF → 2) ★ OB на TF фільтра сканера (той самий блок, що на графіку) → 3) Volumized OB у бік угоди → 4) відсоток від входу. Раніше джерело було ОДНЕ, і при невдачі авто-SL просто «чекав» — угода могла висіти БЕЗ стопа (кейс MNTUSDT: 15m-OB бичачий при SHORT, хоча ★1H-OB був ведмежий і годився). Вимкнути = стара поведінка «краще без стопа».">
+                            <input type="checkbox" id="ff-autosl-fallback" onchange="saveFuelFilterSettings()"> 🛡 Стоп ЗАВЖДИ: фолбек
+                            <input type="number" id="ff-autosl-fallback-pct" min="0.1" max="50" step="0.1" style="width:52px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> % від входу
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Стеля відстані стопа у % від входу. 0 = вимкнено. Блок може стояти дуже далеко — тоді ризик угоди стає непорівнянним з рештою (спостережено 1.4% проти 15.6% при однаковому розмірі позиції). Ненульове значення ПІДТЯГУЄ надто далекий рівень до стелі; сам вибір блоку не змінюється.">
+                            🎚 Стеля SL ≤ <input type="number" id="ff-autosl-max-pct" min="0" max="50" step="0.1" style="width:52px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> % (0=вимк)
+                        </label>
                     </div>
                 </div>
             </details>
@@ -10795,6 +10802,9 @@ function renderFuelFilter(d) {
     setIf('ff-q2-auto-ob-sl', !!s.q2_auto_ob_sl);             // default false
     setIf('ff-q2-auto-ob-sl-buf', String(s.q2_auto_ob_sl_buffer_pct != null ? s.q2_auto_ob_sl_buffer_pct : 0.2));
     setIf('ff-q2-auto-ob-sl-tf', s.q2_auto_ob_sl_tf || '15m');
+    setIf('ff-autosl-fallback', s.autosl_fallback_on !== false);   // деф. ON
+    setIf('ff-autosl-fallback-pct', String(s.autosl_fallback_pct != null ? s.autosl_fallback_pct : 2.0));
+    setIf('ff-autosl-max-pct', String(s.autosl_max_pct != null ? s.autosl_max_pct : 0));
     setIf('ff-max-exh', String(s.max_exhaustion_pct != null ? s.max_exhaustion_pct : 75));
     setIf('ff-queue-ttl', String(s.queue_ttl_hours != null ? s.queue_ttl_hours : 24));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
@@ -11802,6 +11812,9 @@ async function saveFuelFilterSettings() {
         q2_auto_ob_sl: _c('ff-q2-auto-ob-sl'),
         q2_auto_ob_sl_buffer_pct: parseFloat(_v('ff-q2-auto-ob-sl-buf', '0.2') || '0.2'),
         q2_auto_ob_sl_tf: (document.getElementById('ff-q2-auto-ob-sl-tf') || {}).value || '15m',
+        autosl_fallback_on: _c('ff-autosl-fallback'),
+        autosl_fallback_pct: parseFloat(_v('ff-autosl-fallback-pct', '2') || '2'),
+        autosl_max_pct: parseFloat(_v('ff-autosl-max-pct', '0') || '0'),
         max_exhaustion_pct: parseInt(_v('ff-max-exh', '75') || '75', 10),
         queue_ttl_hours: parseInt(_v('ff-queue-ttl', '24') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
