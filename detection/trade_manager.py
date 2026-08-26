@@ -206,6 +206,15 @@ DEFAULT_SETTINGS = {
     # Default OFF + 15m TF — opt-in for users who want the strict-bias-flip exit.
     'use_opposite_ob_exit': False,
     'opposite_ob_exit_timeframe': '15m',  # 15m / 30m / 1h / 4h
+
+    # === 🔮 Прогноз / 🧠 Decision як САМОСТІЙНІ правила виходу (усі дефолт OFF) ===
+    # Кожне працює НЕЗАЛЕЖНО від інших і НЕ потребує CHoCH-підтвердження (на
+    # відміну від `use_forecast_1h_close`, який є «конфлюенсом» і спрацьовує
+    # ЛИШЕ разом із розворотом LTF). Тут інша логіка: щойно по монеті з'явився
+    # ПРОТИЛЕЖНИЙ до відкритої угоди вердикт — закриваємо ОДРАЗУ.
+    'use_forecast_1h_exit': False,   # Forecast 1H проти позиції → вихід
+    'use_forecast_4h_exit': False,   # Forecast 4H проти позиції → вихід
+    'use_decision_exit': False,      # Decision Center проти позиції → вихід
     
     # === Test mode (paper trading for exit-rule validation) ===
     # When ON: signals create "shadow" positions tracked in memory only.
@@ -413,6 +422,12 @@ class TradeManager:
         #   last_choch_after_open: latest CHoCH event observed AFTER open
         # When a position closes, its entry is removed from these dicts.
         self._pos_state: Dict[str, Dict] = {}
+        # 🧱 Opposite OB Exit: {symbol: {'key','bar_time'}} — який OB стояв на
+        # ТФ виходу в момент ВІДКРИТТЯ угоди. Правило спрацьовує лише коли
+        # з'явився НОВІШИЙ протилежний блок, а не на блоці, що вже там висів.
+        self._opp_ob_base: Dict[str, Dict] = {}
+        # 🔮/🧠 Анти-флуд перевірки прогнозу й Decision у моніторі: {symbol: ts}.
+        self._signal_exit_at: Dict[str, float] = {}
         self._shadow_pos_state: Dict[str, Dict] = {}
         # SMC Hold-Confidence cache: {symbol: (ts, result)}. Recomputed at
         # most once per HOLD_SCORE_TTL to keep /api/tm/state (polled ~5s)
@@ -654,6 +669,8 @@ class TradeManager:
                       'use_htf_flip',
                       'use_time_stop', 'use_trailing', 'use_be',
                       'use_forecast_1h_close', 'use_opposite_ob_exit',
+                      'use_forecast_1h_exit', 'use_forecast_4h_exit',
+                      'use_decision_exit',
                       'test_mode',
                       'allow_long_entries', 'allow_short_entries',
                       'require_fuel_confirm',
@@ -1356,6 +1373,11 @@ class TradeManager:
         # Auto-manage the Manual SL from the «Require OB Match» OB first (no-op
         # unless q2_auto_ob_sl is on) so the breach check below sees the latest.
         self._auto_ob_manual_sl(symbol, pos, current_price)
+        # 🔮/🧠 Самостійні правила виходу (Forecast 1H / 4H / Decision).
+        # Стоять ПЕРЕД перевіркою Manual SL/TP: якщо вердикт розвернувся, немає
+        # сенсу чекати, поки ціна дійде до стопа.
+        if self._check_signal_exits(symbol, pos, current_price, False):
+            return
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_position(symbol, current_price, reason=manual_reason)
@@ -1795,6 +1817,11 @@ class TradeManager:
                 pos['entry_score'] = _d
 
         self._auto_ob_manual_sl(symbol, pos, current_price)
+        # 🔮/🧠 Самостійні правила виходу (Forecast 1H / 4H / Decision).
+        # Стоять ПЕРЕД перевіркою Manual SL/TP: якщо вердикт розвернувся, немає
+        # сенсу чекати, поки ціна дійде до стопа.
+        if self._check_signal_exits(symbol, pos, current_price, True):
+            return
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_shadow(symbol, current_price, reason=manual_reason)
@@ -2318,32 +2345,187 @@ class TradeManager:
             # Don't treat absence as opposite signal; OBs come and go on every
             # mitigation, and we'd churn closes.
             return
-        
+
         ob_bias = row['bias']
         pos_long = pos['side'] == 'LONG'
-        
+
+        # 🧱 ЛИШЕ НОВИЙ БЛОК. Раніше тут перевірявся лише БІАС поточного рядка —
+        # тобто СТАН, а не подія. Протилежний OB міг висіти на графіку ще ДО
+        # відкриття угоди, і найближчий скан одразу її закривав. Саме це й
+        # сталось із MNTUSDT: о 23:28:50 авто-SL писав «OB на 15M протилежний
+        # (BULLISH)» — блок уже був там, — а о 23:41 це ж правило закрило шорт.
+        # Правило користувача: закриваємо, коли протилежний OB САМЕ З'ЯВИВСЯ.
+        # Тому порівнюємо `bar_time` з тим, що стояв на момент ВІДКРИТТЯ угоди.
+        base = self._opp_ob_baseline(symbol, pos, exit_tf, row)
+        if base is None:
+            return    # базу щойно зафіксували — це стан на вході, не подія
+
+        cur_bt = row.get('bar_time')
+        is_new = bool(cur_bt) and (base.get('bar_time') is None
+                                   or int(cur_bt) > int(base['bar_time']))
+        if not is_new:
+            return    # той самий (або старіший) блок, що вже був — не подія
+
         # OB is opposite when:
         #   position LONG  and OB BEARISH   → close
         #   position SHORT and OB BULLISH   → close
         is_opposite = ((pos_long and ob_bias == 'BEARISH')
                        or (not pos_long and ob_bias == 'BULLISH'))
         if not is_opposite:
-            return  # Same-side OB — keep position; OB is supporting it
-        
+            # Новий блок, але В НАШ бік — він підтримує позицію. Зсуваємо базу,
+            # щоб наступний протилежний блок теж рахувався НОВИМ саме від нього.
+            base['bar_time'] = int(cur_bt)
+            return
+
         # === Close ===
         current_price = self._get_current_price(symbol) or pos['entry_price']
         ob_tag = (row.get('created_by_tag') or '').upper()
         # Diagnostic log so user can correlate exits with OB events
         print(f"[TM] 🔃 Opposite OB exit triggered for {symbol} "
-              f"({pos['side']} → opposite OB={ob_bias}/{ob_tag or '?'} "
-              f"@ {exit_tf})")
-        
+              f"({pos['side']} → NEW opposite OB={ob_bias}/{ob_tag or '?'} "
+              f"@ {exit_tf}, bar_time={cur_bt})")
+        try:
+            from detection.activity_log import log_activity
+            _bt = time.strftime('%d.%m %H:%M', time.gmtime(int(cur_bt) / 1000.0))
+            log_activity(symbol, 'closed',
+                         f'🧱 НОВИЙ протилежний OB на {exit_tf.upper()} '
+                         f'({ob_bias}{", " + ob_tag if ob_tag else ""}, '
+                         f'утв. {_bt} UTC) → закриття {pos["side"]}',
+                         side=pos['side'], source='TM')
+        except Exception:
+            pass
+
         if real:
             self._close_position(symbol, current_price,
                                   reason='opposite_ob_exit')
         elif shadow:
             self._close_shadow(symbol, current_price,
                                 reason='opposite_ob_exit')
+
+    # ------------------------------------------------------------------
+    # 🔮 Forecast 1H / 4H та 🧠 Decision Center як САМОСТІЙНІ правила виходу
+    # ------------------------------------------------------------------
+    # Перевіряти прогноз/Decision на КОЖЕН тік монітора (деф. 4с) немає сенсу:
+    # прогноз перераховується значно рідше, а Decision — важкий. Тому пер-монетний
+    # throttle. 20с < будь-якого реального темпу зміни вердикту, тож реакція
+    # лишається практично миттєвою.
+    SIGNAL_EXIT_TTL = 20.0
+
+    @staticmethod
+    def _opposite_of(side: str) -> str:
+        return 'SHORT' if side == 'LONG' else 'LONG'
+
+    def _signal_exit_reason(self, symbol: str, pos: Dict) -> Optional[tuple]:
+        """(reason_code, людський опис) якщо якесь із САМОСТІЙНИХ правил виходу
+        каже «закривай», інакше None.
+
+        Три НЕЗАЛЕЖНІ правила, кожне зі своїм тумблером (усі дефолт OFF):
+          • `use_forecast_1h_exit` — Forecast 1H став ПРОТИЛЕЖНИЙ до позиції;
+          • `use_forecast_4h_exit` — те саме для 4H;
+          • `use_decision_exit`    — вердикт Decision Center протилежний.
+        НЕ плутати з `use_forecast_1h_close` — той «конфлюенс», йому потрібен ще
+        й розворот LTF. Тут достатньо самого протилежного вердикту.
+        ⚠️ Протилежним вважається ЛИШЕ явний зустрічний бік. Нейтраль / «немає
+        даних» позицію НЕ закривають — інакше кожна пауза в прогнозі вибивала б
+        з ринку."""
+        s = self._settings
+        side = pos.get('side')
+        if side not in ('LONG', 'SHORT'):
+            return None
+        opp = self._opposite_of(side)
+        want_f1 = bool(s.get('use_forecast_1h_exit'))
+        want_f4 = bool(s.get('use_forecast_4h_exit'))
+        want_dc = bool(s.get('use_decision_exit'))
+        if not (want_f1 or want_f4 or want_dc):
+            return None
+
+        if want_f1 or want_f4:
+            fc = self._get_forecast_both(symbol) or {}
+            _side_of = lambda v: ('LONG' if v == 1 else ('SHORT' if v == -1 else None))
+            if want_f1:
+                f1 = _side_of(fc.get('f1_side'))
+                if f1 == opp:
+                    _c = fc.get('f1_conf')
+                    return ('forecast_1h_exit',
+                            f'Forecast 1H став {f1}'
+                            + (f' ({_c}%)' if _c else '') + f' — проти {side}')
+            if want_f4:
+                f4 = _side_of(fc.get('f4_side'))
+                if f4 == opp:
+                    _c = fc.get('f4_conf')
+                    return ('forecast_4h_exit',
+                            f'Forecast 4H став {f4}'
+                            + (f' ({_c}%)' if _c else '') + f' — проти {side}')
+
+        if want_dc:
+            try:
+                px = self._get_current_price(symbol) or pos.get('entry_price')
+                dc = self.compute_decision(symbol, px) or {}
+            except Exception:
+                dc = {}
+            rec = str(dc.get('recommended') or '').upper()
+            if rec == opp:
+                _conf = dc.get('confidence')
+                return ('decision_exit',
+                        f'Decision Center рекомендує {rec}'
+                        + (f' ({_conf}%)' if _conf else '') + f' — проти {side}')
+        return None
+
+    def _check_signal_exits(self, symbol: str, pos: Dict,
+                            current_price: float, is_shadow: bool) -> bool:
+        """Прогнати самостійні правила виходу. True → позицію ЗАКРИТО."""
+        s = self._settings
+        if not (s.get('use_forecast_1h_exit') or s.get('use_forecast_4h_exit')
+                or s.get('use_decision_exit')):
+            return False
+        now = time.time()
+        if now - float(self._signal_exit_at.get(symbol) or 0) < self.SIGNAL_EXIT_TTL:
+            return False
+        self._signal_exit_at[symbol] = now
+        try:
+            hit = self._signal_exit_reason(symbol, pos)
+        except Exception as e:
+            print(f"[TM] signal-exit check error {symbol}: {e}")
+            return False
+        if not hit:
+            return False
+        reason, why = hit
+        print(f"[TM] 🔻 {reason} for {symbol}: {why}")
+        try:
+            from detection.activity_log import log_activity
+            log_activity(symbol, 'closed', f'{why} → закриття позиції',
+                         side=pos.get('side'), source='TM')
+        except Exception:
+            pass
+        px = current_price or pos.get('entry_price')
+        if is_shadow:
+            self._close_shadow(symbol, px, reason=reason)
+        else:
+            self._close_position(symbol, px, reason=reason)
+        return True
+
+    def _opp_ob_baseline(self, symbol: str, pos: Dict, exit_tf: str,
+                         row: Dict) -> Optional[Dict]:
+        """База «який OB стояв на момент відкриття угоди» для правила
+        🧱 Opposite OB Exit.
+
+        Повертає dict бази, або None якщо базу ЩОЙНО зафіксовано (тоді викликач
+        нічого не робить — це стан на вході, а не подія «з'явився новий блок»).
+
+        База перезаписується, коли змінюється сама позиція (інший бік або інший
+        час відкриття) чи обраний TF — тож нова угода завжди починає з чистого
+        аркуша, а перемикання TF у налаштуваннях не тягне стару базу."""
+        key = f"{pos.get('side')}|{pos.get('opened_at')}|{exit_tf}"
+        cur = self._opp_ob_base.get(symbol)
+        if cur and cur.get('key') == key:
+            return cur
+        self._opp_ob_base[symbol] = {
+            'key': key,
+            # `bar_time` блоку, що вже стояв на вході. None → блоку не було
+            # зовсім, тоді БУДЬ-ЯКИЙ протилежний блок далі буде новим.
+            'bar_time': (int(row['bar_time']) if row.get('bar_time') else None),
+        }
+        return None
     
     def _get_forecast_1h(self, symbol: str) -> Optional[Dict]:
         """Read the latest Forecast 1H for the symbol from forecast_engine cache."""
@@ -3940,7 +4122,8 @@ class TradeManager:
             'ctr_reversal_after_peak': '🔄 Розворот після піку (CTR + підтвердження)',
             'reverse_signal': 'Протилежний сигнал входу',
             'forecast_1h_confluence': '1H прогноз проти позиції',
-            'opposite_ob_exit': 'Ціна вдарилась у протилежний Order Block',
+            'opposite_ob_exit': "З'явився НОВИЙ протилежний Order Block "
+                                "(новіший за той, що був на вході)",
             'external_close': 'Закрито поза ботом (на біржі)',
             'auto_gate_wait': 'Закрито авто-гейтом по WAIT (немає вирівнювання ТФ)',
             'mm_below_min': 'ММ впало нижче порога закриття',
@@ -3950,6 +4133,9 @@ class TradeManager:
             'potential_reached': 'Досягнуто виснаженість руху',
             'wait_verdict': 'Перехід у WAIT',
             'manual': 'Закрито вручну',
+            'forecast_1h_exit': '🔮 Forecast 1H розвернувся проти позиції',
+            'forecast_4h_exit': '🔮 Forecast 4H розвернувся проти позиції',
+            'decision_exit': '🧠 Decision Center рекомендує протилежне',
         }
         base = detail_map.get(reason)
         if base is None and reason.startswith('bos_') and reason.endswith('_partial'):
@@ -4004,6 +4190,10 @@ class TradeManager:
                     _ff.note_manual_close(symbol)
         except Exception as _e:
             print(f"[TM] fuel-filter close notify warn for {symbol}: {_e}")
+        # 🧱 База Opposite OB Exit прив'язана до КОНКРЕТНОЇ угоди — після
+        # закриття вона більше не діє (нова угода зафіксує свою).
+        self._opp_ob_base.pop(symbol, None)
+        self._signal_exit_at.pop(symbol, None)
         
         bybit_side = 'Buy' if pos['side'] == 'LONG' else 'Sell'
         qty = pos.get('remaining_qty', pos['qty'])
@@ -4524,6 +4714,10 @@ class TradeManager:
                     _ff.note_manual_close(symbol)
         except Exception as _e:
             print(f"[TM] fuel-filter close notify warn for {symbol}: {_e}")
+        # 🧱 База Opposite OB Exit прив'язана до КОНКРЕТНОЇ угоди — після
+        # закриття вона більше не діє (нова угода зафіксує свою).
+        self._opp_ob_base.pop(symbol, None)
+        self._signal_exit_at.pop(symbol, None)
         
         entry = pos['entry_price']
         if pos['side'] == 'LONG':
@@ -6158,6 +6352,9 @@ class TradeManager:
             'reverse_smc': '🔄 Reverse SMC (CHoCH)',
             'reverse_signal': '🔁 Reverse Signal (qualified)',
             'opposite_ob_exit': '🔃 Opposite OB Exit',
+            'forecast_1h_exit': '🔮 Forecast 1H Exit',
+            'forecast_4h_exit': '🔮 Forecast 4H Exit',
+            'decision_exit': '🧠 Decision Exit',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',
             'htf_flip': '📡 HTF Trend Flip',
             'time_stop': '⏱ Time Stop',
