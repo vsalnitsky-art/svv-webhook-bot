@@ -359,6 +359,84 @@ def test_bad_mode_value_falls_back_to_or():
     print('✓ некоректне значення режиму → дефолт АБО')
 
 
+# ═════ 🎯 «ЧІТКО ВИЗНАЧЕНЕ» значення — інакше ЧЕКАЄМО ══════════════════════
+def test_neutral_never_closes_in_either_mode():
+    """Правило користувача: значення має бути ЧІТКО LONG або SHORT; якщо
+    нейтральне — ЧЕКАЄМО, поки визначиться. Це має діяти в ОБОХ режимах."""
+    for mode in ('or', 'and'):
+        t = _sig(use_forecast_1h_exit=True, use_forecast_4h_exit=True,
+                 use_decision_exit=True, signal_exit_mode=mode)
+        t._fc = {'f1_side': 0, 'f4_side': 0}
+        t._dc = {'recommended': 'NEUTRAL'}
+        _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is False,
+               f'режим {mode}: суцільна нейтраль не має закривати')
+    print('✓ нейтраль → чекаємо (в обох режимах)')
+
+
+def test_no_data_is_treated_as_undetermined():
+    for mode in ('or', 'and'):
+        t = _sig(use_forecast_1h_exit=True, use_decision_exit=True,
+                 signal_exit_mode=mode)
+        t._fc = {}            # прогнозу немає взагалі
+        t._dc = {}            # Decision не порахувався
+        _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is False,
+               f'режим {mode}: «немає даних» — це не вердикт')
+    print('✓ «немає даних» = не визначено → чекаємо')
+
+
+def test_weak_confidence_counts_as_undetermined():
+    """Бік є, але впевненість нижча за поріг → це ще НЕ «чітке розуміння»."""
+    t = _sig(use_forecast_1h_exit=True, signal_exit_min_conf=60)
+    t._fc = {'f1_side': 1, 'f1_conf': 45}          # LONG, але лише 45%
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is False,
+           'слабкий вердикт не має закривати угоду')
+    # Визначився чітко → закриваємо.
+    t._signal_exit_at.clear()
+    t._fc = {'f1_side': 1, 'f1_conf': 72}
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is True,
+           'вердикт вище порога → вихід')
+    _check(t.closed == [('real', 'forecast_1h_exit')], f'{t.closed}')
+    print('✓ впевненість нижче порога = не чітко → чекаємо, вище → вихід')
+
+
+def test_missing_confidence_with_threshold_is_undetermined():
+    """Поріг заданий, а відсотка немає → перевірити чіткість неможливо → чекаємо."""
+    t = _sig(use_decision_exit=True, signal_exit_min_conf=50)
+    t._dc = {'recommended': 'LONG'}                # без confidence
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is False,
+           'немає чим підтвердити чіткість → не закриваємо')
+    print('✓ немає відсотка при заданому порозі → чекаємо')
+
+
+def test_threshold_zero_keeps_any_explicit_side_clear():
+    t = _sig(use_forecast_1h_exit=True, signal_exit_min_conf=0)
+    t._fc = {'f1_side': 1, 'f1_conf': 12}          # слабко, але поріг вимкнено
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is True,
+           'при порозі 0 будь-який явний бік вважається чітким')
+    print('✓ поріг 0 = будь-який явний LONG/SHORT чіткий (стара поведінка)')
+
+
+def test_and_waits_when_one_verdict_is_weak():
+    """У режимі AND слабкий вердикт ЛАМАЄ збіг так само, як нейтраль."""
+    t = _sig(use_forecast_1h_exit=True, use_decision_exit=True,
+             signal_exit_mode='and', signal_exit_min_conf=60)
+    t._fc = {'f1_side': 1, 'f1_conf': 80}          # чітко проти
+    t._dc = {'recommended': 'LONG', 'confidence': 40}   # проти, але слабко
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is False,
+           'AND: слабкий вердикт має ламати збіг')
+    t._signal_exit_at.clear()
+    t._dc = {'recommended': 'LONG', 'confidence': 75}   # визначився чітко
+    _check(t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5147, False) is True,
+           'AND: коли всі чіткі й проти → вихід')
+    print('✓ AND: чекаємо, доки КОЖЕН вердикт стане чітким')
+
+
+def test_min_conf_default_is_off():
+    _check(tmmod.DEFAULT_SETTINGS.get('signal_exit_min_conf') == 0,
+           'поріг чіткості за замовчуванням вимкнено (поведінку не міняємо)')
+    print('✓ дефолт порога чіткості — 0 (вимкнено)')
+
+
 if __name__ == '__main__':
     test_mnt_case_preexisting_opposite_ob_must_not_close()
     test_new_opposite_ob_closes()
@@ -383,4 +461,11 @@ if __name__ == '__main__':
     test_and_mode_ignores_disabled_rules()
     test_and_with_single_rule_keeps_its_own_reason()
     test_bad_mode_value_falls_back_to_or()
+    test_neutral_never_closes_in_either_mode()
+    test_no_data_is_treated_as_undetermined()
+    test_weak_confidence_counts_as_undetermined()
+    test_missing_confidence_with_threshold_is_undetermined()
+    test_threshold_zero_keeps_any_explicit_side_clear()
+    test_and_waits_when_one_verdict_is_weak()
+    test_min_conf_default_is_off()
     print('\nУсі тести правил виходу пройдено ✅')
