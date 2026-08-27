@@ -716,6 +716,13 @@ class TradeManager:
                     0, min(100, int(self._settings.get('signal_exit_min_conf', 0) or 0)))
             except (TypeError, ValueError):
                 self._settings['signal_exit_min_conf'] = 0
+            _pst = str(self._settings.get('pilot_swing_tf', '') or '').lower()
+            self._settings['pilot_swing_tf'] = _pst if _pst in ('15m', '30m', '1h', '4h') else ''
+            try:
+                self._settings['pilot_poc_hours'] = max(
+                    1, min(720, int(self._settings.get('pilot_poc_hours', 72) or 72)))
+            except (TypeError, ValueError):
+                self._settings['pilot_poc_hours'] = 72
             _sem = str(self._settings.get('signal_exit_mode', 'or') or 'or').lower()
             self._settings['signal_exit_mode'] = _sem if _sem in ('or', 'and') else 'or'
 
@@ -2716,7 +2723,8 @@ class TradeManager:
           • runway — пули ліквідації попереду руху з МММ-моделі (liq-map);
           • POC — `compute_poc` з тими самими параметрами, що й бейдж чарту.
         """
-        ctx = {'swing': None, 'runway': None, 'poc': None}
+        ctx = {'swing': None, 'runway': None, 'poc': None,
+               'swing_tf': None, 'poc_hours': None}
         s = self._settings
         try:
             sc = self.scanner
@@ -2728,6 +2736,7 @@ class TradeManager:
                 tf = str(s.get('pilot_swing_tf', '') or ''
                          ) or sc.get_settings().get('swing_hl_timeframe', '1h') or '1h'
                 ctx['swing'] = sc._swing_hl_for_tf(symbol, tf)
+                ctx['swing_tf'] = tf
         except Exception as e:
             print(f"[TM-Pilot] swing ctx warn {symbol}: {e}")
         # 2) Пули ліквідності попереду руху — з тієї самої МММ-моделі.
@@ -2746,8 +2755,9 @@ class TradeManager:
         # 3) POC — той самий розрахунок, що й бейдж на графіку (має свій кеш).
         try:
             from detection.volume_profile import compute_poc
+            ctx['poc_hours'] = int(s.get('pilot_poc_hours', 72) or 72)
             _p = compute_poc(symbol,
-                             hours=int(s.get('pilot_poc_hours', 72) or 72),
+                             hours=ctx['poc_hours'],
                              market=str(s.get('poc_filter_market', 'FUTURES') or 'FUTURES'))
             ctx['poc'] = (_p or {}).get('poc') if isinstance(_p, dict) else _p
         except Exception as e:
@@ -2811,6 +2821,32 @@ class TradeManager:
         act = res.get('action')
         _why = ' · '.join(res.get('reasons') or []) or '—'
 
+        # 📊 СТАН ДЛЯ ТАБЛИЦІ. Пишемо на КОЖНОМУ такті (не лише на 'hold'), щоб
+        # у колонці «🎯 Автопілот» було видно, що саме відбувається з угодою
+        # ПРОТЯГОМ усього її життя, а не лише в момент дії.
+        try:
+            _prog = trade_pilot.progress(side, pos.get('entry_price'),
+                                         current_price, res.get('objective'))
+        except Exception:
+            _prog = None
+        _st = self._pilot_state.get(symbol) or {}
+        self._pilot_state[symbol] = {
+            'at': now,
+            'action': act,
+            'objective': res.get('objective'),
+            'next': res.get('next_obstacle'),
+            'targets': res.get('targets') or [],
+            'progress': _prog,
+            'why': _why,
+            'swing_tf': ctx.get('swing_tf'),
+            'poc_hours': ctx.get('poc_hours'),
+            # Скільки разів підтягували стоп і коли востаннє — видно динаміку
+            # супроводу, а не лише поточний зріз.
+            'trails': int(_st.get('trails') or 0) + (1 if act == 'trail' else 0),
+            'last_trail_at': (now if act == 'trail' else _st.get('last_trail_at')),
+            'last_stop': (res.get('stop') if act == 'trail' else _st.get('last_stop')),
+        }
+
         if act == 'take':
             log_activity(symbol, 'closed',
                          f'🎯 Автопілот: {_why} → фіксуємо результат',
@@ -2838,12 +2874,8 @@ class TradeManager:
                              side=side, source='PILOT')
             return False
 
-        # 'hold' — рішення ТРИМАТИ. У лог не пишемо (це стан, а не подія), але
-        # тримаємо в памʼяті для показу в UI/діагностиці.
-        self._pilot_state[symbol] = {'at': now, 'action': act,
-                                     'objective': res.get('objective'),
-                                     'next': res.get('next_obstacle'),
-                                     'why': _why}
+        # 'hold' — рішення ТРИМАТИ. У 🧾 Лог не пишемо (це стан, а не подія):
+        # він уже відображений у колонці «🎯 Автопілот» таблиці угод.
         return False
 
     def get_pilot_state(self, symbol: str) -> Optional[Dict]:

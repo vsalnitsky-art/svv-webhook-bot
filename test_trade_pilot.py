@@ -222,6 +222,47 @@ def test_defaults_are_conservative_and_off():
     print('✓ дефолти консервативні, автопілот вимкнено')
 
 
+# ═════════ 📊 ВІЗУАЛІЗАЦІЯ: прогрес до цілі для таблиці угод ═══════════════
+def test_progress_measures_path_from_entry_to_objective():
+    """Смужка в таблиці = скільки шляху ВІД ВХОДУ до цілі вже пройдено."""
+    obj = {'price': 110.0, 'label': 'Weak High'}
+    p0 = tp.progress('LONG', 100.0, 100.0, obj)
+    _check(p0['pct'] == 0.0, f'на вході — 0%: {p0}')
+    p50 = tp.progress('LONG', 100.0, 105.0, obj)
+    _check(p50['pct'] == 50.0, f'півдороги — 50%: {p50}')
+    p100 = tp.progress('LONG', 100.0, 110.0, obj)
+    _check(p100['pct'] == 100.0, f'на цілі — 100%: {p100}')
+    _check(abs(p50['left_pct'] - 4.762) < 0.01, f'залишок у % ціни: {p50}')
+    print(f'✓ прогрес до цілі: 0% → {p50["pct"]}% → {p100["pct"]}%')
+
+
+def test_progress_for_short_mirrors():
+    obj = {'price': 90.0, 'label': 'Weak Low'}
+    r = tp.progress('SHORT', 100.0, 95.0, obj)
+    _check(r['pct'] == 50.0, f'SHORT: рух ВНИЗ — це прогрес: {r}')
+    _check(r['done_pct'] == 5.0, f'пройдено +5% у бік угоди: {r}')
+    print('✓ SHORT рахується дзеркально')
+
+
+def test_progress_is_clamped_but_keeps_raw_move():
+    """Смужка не має «вилітати», але СИРИЙ рух треба бачити — зокрема мінусовий."""
+    r = tp.progress('LONG', 100.0, 98.0, {'price': 110.0})
+    _check(r['pct'] == 0.0, f'ціна пішла проти → смужка 0%: {r}')
+    _check(r['done_pct'] == -2.0, f'але сирий рух показує −2%: {r}')
+    r2 = tp.progress('LONG', 100.0, 120.0, {'price': 110.0})
+    _check(r2['pct'] == 100.0, f'перелетіли ціль → смужка 100%: {r2}')
+    print('✓ смужка обрізана [0..100], сирий рух зберігається')
+
+
+def test_progress_safe_without_data():
+    for args in ((None, 100.0, {'price': 110.0}), (100.0, None, {'price': 110.0}),
+                 (100.0, 100.0, None), (100.0, 100.0, {}),
+                 (100.0, 100.0, {'price': 100.0})):
+        _check(tp.progress('LONG', *args) is None,
+               f'без достатніх даних прогрес не вигадуємо: {args}')
+    print('✓ немає даних → прогрес None (нічого не вигадуємо)')
+
+
 if __name__ == '__main__':
     test_targets_are_real_chart_objects_ahead_only()
     test_short_takes_levels_below_price()
@@ -240,4 +281,8 @@ if __name__ == '__main__':
     test_completely_blind_context_is_safe()
     test_garbage_input_never_raises()
     test_defaults_are_conservative_and_off()
+    test_progress_measures_path_from_entry_to_objective()
+    test_progress_for_short_mirrors()
+    test_progress_is_clamped_but_keeps_raw_move()
+    test_progress_safe_without_data()
     print('\nУсі тести автопілота угоди пройдено ✅')

@@ -3429,6 +3429,25 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </div>
                         <div class="tm-row">
                             <label>
+                                🕐 Структура (swing) на TF
+                                <span class="tm-help" title="На якому таймфреймі автопілот бере ДИЛІНГ-ДІАПАЗОН (swing high/low) — це джерело і структурного стопа, і однієї з цілей. «Як у графіка» = той самий TF, що обрано в 🏁 Swing High/Low сканера, тож рівні автопілота збігаються з лініями на екрані. Пули ліквідації беруться з liq-map (вікно 24 год), POC — з профілю обсягу (вікно нижче), вони від цього TF не залежать.">?</span>
+                            </label>
+                            <select id="tm-pilot-swing-tf" onchange="saveTMSettings()"
+                                    style="background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px">
+                                <option value="">як у графіка</option>
+                                <option value="15m">15M</option>
+                                <option value="30m">30M</option>
+                                <option value="1h">1H</option>
+                                <option value="4h">4H</option>
+                            </select>
+                            <span style="margin-left:8px;font-size:0.78rem;color:#888">· POC вікно</span>
+                            <input type="number" id="tm-pilot-poc-hours" min="1" max="720" step="1"
+                                   style="width:58px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"
+                                   onchange="saveTMSettings()">
+                            <span style="margin-left:4px;font-size:0.78rem;color:#888">год</span>
+                        </div>
+                        <div class="tm-row">
+                            <label>
                                 🛡 Буфер стопа
                                 <span class="tm-help" title="Відступ ЗА структурним рівнем (екстремумом дилінг-діапазону), щоб стоп не збивало гнотом. Беззбиток вмикається після проходження вказаної кількості R (ризиків).">?</span>
                             </label>
@@ -3632,13 +3651,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span></span></th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
+                        <th title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
                         <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -3697,13 +3717,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span></span></th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
+                        <th title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
                         <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="11" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -8229,6 +8250,8 @@ async function loadTMSettings() {
         _setV('tm-pilot-max-target', s.pilot_max_target_dist_pct != null ? s.pilot_max_target_dist_pct : 15, 15);
         _setV('tm-pilot-stop-buf', s.pilot_stop_buf_pct != null ? s.pilot_stop_buf_pct : 0.1, 0.1);
         _setV('tm-pilot-be-r', s.pilot_be_at_r != null ? s.pilot_be_at_r : 1, 1);
+        document.getElementById('tm-pilot-swing-tf').value = s.pilot_swing_tf || '';
+        _setV('tm-pilot-poc-hours', s.pilot_poc_hours != null ? s.pilot_poc_hours : 72, 72);
         // Validate TF before assigning to <select> — fall back to 15m for
         // unknown values so the dropdown doesn't end up in a blank state.
         const oppExitTf = ['15m', '30m', '1h', '4h'].includes(s.opposite_ob_exit_timeframe)
@@ -8621,6 +8644,8 @@ async function saveTMSettings() {
             pilot_max_target_dist_pct: parseFloat(document.getElementById('tm-pilot-max-target').value) || 15,
             pilot_stop_buf_pct: parseFloat(document.getElementById('tm-pilot-stop-buf').value) || 0.1,
             pilot_be_at_r: parseFloat(document.getElementById('tm-pilot-be-r').value) || 1,
+            pilot_swing_tf: document.getElementById('tm-pilot-swing-tf').value || '',
+            pilot_poc_hours: parseInt(document.getElementById('tm-pilot-poc-hours').value) || 72,
             opposite_ob_exit_timeframe: document.getElementById('tm-opposite-ob-exit-tf').value || '15m',
             use_htf_flip: document.getElementById('tm-use-htf-flip').checked,
             use_time_stop: document.getElementById('tm-use-time-stop').checked,
@@ -13040,7 +13065,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -13074,6 +13099,7 @@ async function loadTMState(isPoll) {
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
+                    ${pilotCellHTML(p)}
                     ${manualModeCellHTML(p, false)}
                     ${breakevenCloseCellHTML(p, false)}
                     <td style="font-size:0.74rem;color:#cbd5e1">${p.opened_at ? `<span class="ff-timer" data-since="${Math.floor(p.opened_at)}">${fmtTimer(Math.floor(Date.now()/1000) - Math.floor(p.opened_at))}</span>` : '—'}</td>
@@ -13139,7 +13165,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-shadow-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="11" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -13164,6 +13190,7 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
                     ${manualSlTpCellsHTML(p, true)}
+                    ${pilotCellHTML(p)}
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}
                     <td style="font-size:0.74rem;color:#cbd5e1">${p.opened_at ? `<span class="ff-timer" data-since="${Math.floor(p.opened_at)}">${fmtTimer(Math.floor(Date.now()/1000) - Math.floor(p.opened_at))}</span>` : '—'}</td>
@@ -13222,6 +13249,67 @@ async function loadTMState(isPoll) {
 // │ complexity for marginal value. Users edit, blur, the value     │
 // │ saves; next refresh shows the persisted state.                 │
 // └────────────────────────────────────────────────────────────────┘
+
+// ┌── 🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією ЗАРАЗ ─────────┐
+// Показує ВЕСЬ супровід в одній комірці: до якої цілі йдемо, скільки шляху
+// пройдено, що найближче попереду і яка остання дія бота. Дані — готовий
+// знімок із монітора (`pilot` у позиції), нічого не рахується у фронті.
+const _PILOT_ACT = {
+    hold:  ['⏳', 'тримаємо', '#93c5fd'],
+    trail: ['🛡', 'стоп підтягнуто', '#38bdf8'],
+    take:  ['🎯', 'фіксація', '#4ade80'],
+};
+const _PILOT_KIND = {
+    liq_next: '💧', liq_main: '🌊', swing: '🏁', poc: '⚪',
+};
+function pilotCellHTML(p) {
+    const pl = p.pilot;
+    if (!pl) {
+        return '<td style="font-size:0.7rem;color:#555" title="Автопілот вимкнено '
+             + 'або ще не зробив першого висновку по цій монеті">—</td>';
+    }
+    const [ic, lbl, col] = _PILOT_ACT[pl.action] || ['•', pl.action || '—', '#8b93a7'];
+    const obj = pl.objective || null;
+    const nxt = pl.next || null;
+    const pr = pl.progress || null;
+    const pct = pr && pr.pct != null ? pr.pct : 0;
+
+    // Смужка «скільки шляху до цілі пройдено» — головний візуальний елемент.
+    const bar = `<div style="height:5px;background:#20242e;border-radius:3px;overflow:hidden;margin:3px 0 2px">
+        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#38bdf8,#4ade80);
+                    transition:width .4s"></div></div>`;
+
+    const objTxt = obj
+        ? `${_PILOT_KIND[obj.kind] || '🎯'} ${fmtPriceJS(obj.price)}`
+        : '🎯 цілі не видно';
+    const leftTxt = (pr && pr.left_pct != null)
+        ? ` <span style="color:#8b93a7">· ще ${pr.left_pct.toFixed(2)}%</span>` : '';
+    const nxtTxt = (nxt && (!obj || nxt.price !== obj.price))
+        ? `<div style="font-size:0.62rem;color:#8b93a7">${_PILOT_KIND[nxt.kind] || '•'} `
+          + `перепона ${fmtPriceJS(nxt.price)} (+${(nxt.dist_pct || 0).toFixed(2)}%)</div>`
+        : '';
+    const trails = pl.trails
+        ? `<span style="color:#38bdf8" title="Скільки разів стоп підтягнуто за цю угоду">`
+          + `· 🛡×${pl.trails}</span>` : '';
+
+    // Повний розклад — у підказці, щоб рядок лишався компактним.
+    const tipParts = [];
+    if (obj) tipParts.push(`Ціль: ${obj.label} @ ${obj.price}`);
+    if (nxt) tipParts.push(`Найближча перепона: ${nxt.label} @ ${nxt.price}`);
+    if (pr) tipParts.push(`Пройдено ${pr.pct}% шляху до цілі (рух ${pr.done_pct >= 0 ? '+' : ''}${pr.done_pct}%)`);
+    if (pl.swing_tf) tipParts.push(`Структура: ${String(pl.swing_tf).toUpperCase()} (swing high/low дилінг-діапазону)`);
+    if (pl.poc_hours) tipParts.push(`POC: вікно ${pl.poc_hours} год`);
+    if (pl.trails) tipParts.push(`Стоп підтягнуто ${pl.trails} раз(и)`);
+    if (pl.why) tipParts.push('— ' + pl.why);
+    const tip = tipParts.join('\n').replace(/"/g, '');
+
+    return `<td style="min-width:150px;font-size:0.7rem;line-height:1.35" title="${tip}">
+        <span style="color:${col};font-weight:700">${ic} ${lbl}</span>${trails}
+        ${bar}
+        <div style="color:#cbd5e1">${objTxt}${leftTxt}</div>
+        ${nxtTxt}
+    </td>`;
+}
 
 // Render two <td> cells (Manual SL, Manual TP) for a position row.
 // Each cell is an editable number input; on blur OR Enter it POSTs

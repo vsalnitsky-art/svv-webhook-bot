@@ -5754,6 +5754,20 @@ def register_api_routes(app):
             # Non-fatal — just log and continue without exhaustion data
             print(f"[Flask] fuel exhaustion merge error: {e}")
 
+        # 🎯 Стан АВТОПІЛОТА по кожній позиції — для колонки «🎯 Автопілот».
+        # Це ЧИТАННЯ готового знімка (`_pilot_state`), який пише монітор раз на
+        # PILOT_TTL. Жодних розрахунків на цьому гарячому ендпоінті — інакше
+        # сторінка блокувала б бота (той самий урок, що з МММ-колонкою вище).
+        try:
+            if tm.get_settings().get('pilot_enabled'):
+                for pos in ((state.get('positions') or [])
+                            + (state.get('shadow_positions') or [])):
+                    _ps = tm.get_pilot_state(pos.get('symbol'))
+                    if _ps:
+                        pos['pilot'] = _ps
+        except Exception as e:
+            print(f"[Flask] pilot state merge error: {e}")
+
         return jsonify(state)
     
     @app.route('/api/tm/settings', methods=['GET', 'POST'])

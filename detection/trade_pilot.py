@@ -156,6 +156,29 @@ def breakeven_stop(side: str, entry: float, risk_pct: float,
     return e * (1.0 + lock) if side == 'LONG' else e * (1.0 - lock)
 
 
+def progress(side: str, entry, price, objective) -> Optional[Dict]:
+    """Скільки шляху до ЦІЛІ вже пройдено — для візуалізації в таблиці угод.
+
+    Рахуємо від ВХОДУ до цілі: 0% — щойно відкрились, 100% — ціль досягнута.
+    Повертає {pct, done_pct, left_pct, target} або None, коли рахувати нема з
+    чого. `pct` обрізаний у [0..100], щоб смужка прогресу не «вилітала»;
+    `done_pct`/`left_pct` — сирий рух і залишок у відсотках ЦІНИ (без обрізання),
+    бо саме вони показують реальний стан, коли ціна пішла проти."""
+    e, p = _f(entry), _f(price)
+    t = _f((objective or {}).get('price')) if objective else None
+    if e is None or p is None or t is None or e <= 0 or p <= 0 or t <= 0:
+        return None
+    span = abs(t - e)
+    if span <= 0:
+        return None
+    done = (p - e) if side == 'LONG' else (e - p)
+    pct = max(0.0, min(100.0, done / span * 100.0))
+    return {'pct': round(pct, 1),
+            'done_pct': round(done / e * 100.0, 3),
+            'left_pct': round(abs(t - p) / p * 100.0, 3),
+            'target': t}
+
+
 def plan(side: str, entry, price, *, swing=None, runway=None, poc=None,
          prev_stop=None, objective_lock: Optional[Dict] = None,
          cfg: Optional[Dict] = None) -> Dict:
