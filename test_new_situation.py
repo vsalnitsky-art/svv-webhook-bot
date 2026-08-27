@@ -53,6 +53,7 @@ def _ff(**settings):
     o._q4_layers_cache = {}; o._q4_lit_at = {}
     o._engine_skip = {}
     o._new_situation_logged = None
+    o._consumed_signal_at = {}
     o._persist_state = lambda: None
     s = {'require_new_situation': True, 'open_max_signal_age_min': 0,
          'manual_close_lock_min': 0}
@@ -297,6 +298,119 @@ def test_refusal_is_logged_once_not_every_tick():
     print('✓ незмінна відмова пишеться в лог ОДИН раз, а не щотіку')
 
 
+# ═════ 🔥 ВИГОРІЛИЙ СИГНАЛ + 🚨 ЗАСТРЯГ (вимоги користувача) ═══════════════
+def test_consumed_signal_never_accepted_again():
+    """«Запис пішов далі по алгоритму → назад у чергу він потрапити НЕ може».
+    Сигнал, за яким відкрилась угода, вигорає НАЗАВЖДИ — навіть поки та угода
+    ще ВІДКРИТА (тобто до будь-якого закриття)."""
+    o, s = _ff()
+    sig = time.time() - 3600
+    o._pending4['LDOUSDT'] = {'dir': 'SHORT', 'added_at': sig}
+    o.note_signal_consumed('LDOUSDT', sig)
+    _check('LDOUSDT' not in o._pending4, 'монета мала вийти з черги')
+    ok, why = o._is_new_situation('LDOUSDT', sig, s)
+    _check(ok is False and 'УЖЕ ВІДПРАЦЮВАВ' in why,
+           f'вигорілий сигнал не має прийматись знову: {why}')
+    print('✓ сигнал, за яким відкрилась угода, вигорає назавжди')
+
+
+def test_consumed_purges_every_queue_not_just_one():
+    """«З Черги має бути ПОВНІСТЮ видалена ця монета» — з усіх, не лише з тієї,
+    що відкрила."""
+    o, _ = _ff()
+    sig = time.time() - 600
+    for q in (o._pending, o._pending2, o._pending3, o._pending4):
+        q['LDOUSDT'] = {'dir': 'SHORT', 'added_at': sig}
+    o._q4_layers_cache['LDOUSDT'] = (time.time(), {})
+    o.note_signal_consumed('LDOUSDT', sig)
+    for name, q in (('Черга-1', o._pending), ('Черга-2', o._pending2),
+                    ('Черга-3', o._pending3), ('Черга-4', o._pending4)):
+        _check('LDOUSDT' not in q, f'{name}: монета мала бути прибрана ПОВНІСТЮ')
+    _check('LDOUSDT' not in o._q4_layers_cache, 'кеш шарів теж')
+    print('✓ відкриття прибирає монету з УСІХ черг, а не лише з однієї')
+
+
+def test_new_signal_after_burn_is_accepted():
+    """Повернення можливе — але ЛИШЕ з НОВИМ сигналом (новий added_at)."""
+    o, s = _ff()
+    burned = time.time() - 3600
+    o.note_signal_consumed('LDOUSDT', burned)
+    ok, _ = o._is_new_situation('LDOUSDT', time.time(), s)
+    _check(ok is True, 'НОВИЙ сигнал після вигоряння має проходити')
+    print('✓ новий сигнал (новий added_at) приймається — шлях відкритий')
+
+
+def test_startup_purge_drops_restored_zombies():
+    """Після рестарту стан приїжджає з БД — відпрацьований запис міг повернутись
+    у чергу і далі крутитись у СЕРЕДИНІ алгоритму. Чистимо ДО першого тіку."""
+    o, _ = _ff()
+    old = time.time() - 7200
+    o._pending4['LDOUSDT'] = {'dir': 'SHORT', 'added_at': old}
+    o._pending2['ETHUSDT'] = {'dir': 'LONG', 'added_at': old}
+    o._pending4['FRESHUSDT'] = {'dir': 'LONG', 'added_at': time.time()}
+    o._consumed_signal_at['LDOUSDT'] = old          # уже відпрацював
+    o._last_trade_end['ETHUSDT'] = old + 60         # угода закрилась після сигналу
+    n = o._purge_spent_queue_records()
+    _check(n == 2, f'мали прибрати 2 зомбі, прибрано {n}')
+    _check('LDOUSDT' not in o._pending4 and 'ETHUSDT' not in o._pending2, 'зомбі мали піти')
+    _check('FRESHUSDT' in o._pending4, 'свіжий запис чіпати не можна')
+    print('✓ стартова чистка прибирає відновлених зомбі, свіжі лишає')
+
+
+def test_stuck_record_is_evicted_even_with_no_ttl():
+    """«Якщо монета застрягає у Черга-4 — її також потрібно повністю викинути».
+    ♾ «Без терміну» цю межу НЕ вимикає."""
+    now = time.time()
+    _check(FF._q4_stuck(now - 25 * 3600, now, 24.0) is True,
+           '25 год при межі 24 → застряг')
+    _check(FF._q4_stuck(now - 5 * 3600, now, 24.0) is False,
+           '5 год — ще не застряг')
+    _check(FF._q4_stuck(now - 999 * 3600, now, 0.0) is False,
+           '0 = запобіжник вимкнено (свідомий вибір)')
+    for bad in (None, '', 'abc'):
+        _check(FF._q4_stuck(bad, now, 24.0) is False, f'сміття {bad!r} не виселяє')
+    print('✓ жорстка стеля застрягання працює незалежно від ♾')
+
+
+def test_hard_cap_default():
+    _check(ffmod.DEFAULT_SETTINGS.get('queue4_hard_max_hours') == 24,
+           'стеля застрягання за замовчуванням 24 год')
+    print('✓ дефолт стелі застрягання — 24 год')
+
+
+# ═════ 🧬 ПОХОДЖЕННЯ ЇДЕ РАЗОМ ІЗ ВІДКРИТТЯМ (кейс OPUSDT) ════════════════
+def test_origin_trace_is_handed_to_trade_manager_before_open():
+    """🐞 Кейс OPUSDT: Черга-4 писала походження ОКРЕМИМ рядком, і того рядка
+    в експортованому лозі не було ЗОВСІМ — лишалось «Відкрито paper …» без
+    жодного контексту. Тепер ланцюг передається в TM ДО відкриття і друкується
+    в ТОМУ САМОМУ рядку, тож загубитись не може."""
+    o, s = _ff()
+    o._fuel_managed = {}
+    o._engine_skip = {}
+    handed = {}
+
+    class _TM:
+        scanner = None
+        def set_origin_trace(self, sym, text): handed[sym] = text
+        def manual_open(self, *a, **k): return {'ok': False, 'reason': 'stub'}
+    o._get_tm = lambda: _TM()
+    o._tm_has_position = lambda sym, real: False
+    o._exhaustion = lambda sym, side: 0
+    o._soft_safeguard = lambda *a, **k: (True, '')
+    o._live_price = lambda sym: 100.0
+    try:
+        o._open('OPUSDT', 'SHORT', {'mark_price': 0.09714}, dict(s, enabled=True),
+                opened_by='vob_alert → Q4', skip_safeguard=True,
+                skip_ctr_safeguard=True,
+                origin_trace='Черга-4 · сигнал: 🟪 Volumized OB · шари 3/3')
+    except Exception:
+        pass          # відкриття тут не потрібне — важливо, що трасу передали
+    _check(handed.get('OPUSDT'),
+           f'ланцюг походження мав дійти до TM ДО відкриття: {handed}')
+    _check('шари 3/3' in handed['OPUSDT'], f'розклад шарів має бути в ньому: {handed}')
+    print('✓ походження передається в TM до відкриття (одним рядком, не окремим)')
+
+
 if __name__ == '__main__':
     test_signal_older_than_last_close_is_refused()
     test_signal_after_close_is_accepted()
@@ -320,4 +434,11 @@ if __name__ == '__main__':
     test_close_keeps_record_created_after_it()
     test_close_without_queue_records_is_quiet()
     test_refusal_is_logged_once_not_every_tick()
+    test_consumed_signal_never_accepted_again()
+    test_consumed_purges_every_queue_not_just_one()
+    test_new_signal_after_burn_is_accepted()
+    test_startup_purge_drops_restored_zombies()
+    test_stuck_record_is_evicted_even_with_no_ttl()
+    test_hard_cap_default()
+    test_origin_trace_is_handed_to_trade_manager_before_open()
     print('\nУсі тести «нової ситуації» пройдено ✅')

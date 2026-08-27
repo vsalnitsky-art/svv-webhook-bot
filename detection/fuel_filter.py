@@ -307,6 +307,12 @@ DEFAULT_SETTINGS = {
     #   за часом — і TTL, і «викид при застої», бо інакше монета все одно зникала б.
     #   Дефолт False = стара поведінка.
     'queue4_no_ttl': False,
+    # 🚨 ЖОРСТКА СТЕЛЯ ЗАСТРЯГАННЯ (год). Абсолютна межа життя запису в Черзі-4,
+    #   яку ♾ «Без терміну» НЕ вимикає. ♾ задумувалось як «живе, доки не замінить
+    #   протилежний сигнал» — а не «живе вічно, що б не сталось». Запис, який
+    #   провисів довше за цю межу, ЗАВЖДИ викидається: він уже не «ситуація», а
+    #   джерело незрозумілих спрацювань. 0 = вимкнути запобіжник (не радимо).
+    'queue4_hard_max_hours': 24,
     # 🛑 Джерело Manual SL після відкриття з Черги-4:
     #   '1h'  (дефолт) — межа 1H Order Block (той самий ★-блок, що на графіку,
     #                    рядок `sob_smc_ob_state` на `ob_filter_timeframe`);
@@ -850,11 +856,18 @@ class FuelFilterDaemon:
         # для входу — інакше запис, який лежав у черзі ще до попередньої угоди,
         # відкриває наступну «з повітря».
         self._last_trade_end: Dict[str, float] = {}
+        # 🔥 ВИГОРІЛИЙ СИГНАЛ: {symbol: added_at запису, за яким УЖЕ відкрилась
+        # угода}. Персистентно. Запис пішов далі по алгоритму — назад у чергу він
+        # потрапити НЕ може; повернення лише через ПОВНИЙ шлях: новий сигнал
+        # сканера → усі фільтри → on_signal → intercept (з НОВИМ added_at).
+        self._consumed_signal_at: Dict[str, float] = {}
         # 🔇 Остання залогована відмова «нова ситуація» — (symbol, reason).
         self._new_situation_logged = None
         # 🔇 Анти-флуд для 🔁 повторної перевірки Черги-4:
         # {symbol: ((напрямок, причина), ts останнього запису в лог)}.
         self._q4_recheck_logged: Dict[str, tuple] = {}
+        # Розклад ОСТАННЬОЇ ПРОЙДЕНОЇ 🔁 повторної перевірки {symbol: detail}.
+        self._q4_recheck_pass_detail: Dict[str, str] = {}
         # Anti-flood for the per-coin «Готовність» decision log:
         # {symbol: (outcome, hot, score_bucket, ts)} — a hold/skip is re-logged
         # only when it meaningfully changes or after READINESS_LOG_MIN_GAP sec;
@@ -1023,6 +1036,10 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             s['queue4_ttl_hours'] = 3
         s['queue4_no_ttl'] = bool(s.get('queue4_no_ttl', False))
+        try:
+            s['queue4_hard_max_hours'] = max(0, min(720, float(s.get('queue4_hard_max_hours', 24) or 0)))
+        except (TypeError, ValueError):
+            s['queue4_hard_max_hours'] = 24
         # Джерело Manual SL — лише два допустимі значення; будь-що інше → дефолт.
         _sls = str(s.get('queue4_sl_source', '1h') or '1h').lower()
         s['queue4_sl_source'] = _sls if _sls in ('1h', '15m') else '1h'
@@ -1747,6 +1764,11 @@ class FuelFilterDaemon:
                 self._last_trade_end = {str(k).upper(): float(v)
                                         for k, v in lte.items()
                                         if isinstance(v, (int, float)) and v}
+            csa = st.get('consumed_signal_at', {}) or {}
+            if isinstance(csa, dict):
+                self._consumed_signal_at = {str(k).upper(): float(v)
+                                            for k, v in csa.items()
+                                            if isinstance(v, (int, float)) and v}
             if (self._fuel_managed or self._anomalies or self._engine_attempts
                     or self._timers or self._pending):
                 print(f"[FuelFilter] restored {len(self._pending)} queued "
@@ -1774,6 +1796,7 @@ class FuelFilterDaemon:
                 'opened_ob_epoch': self._opened_ob_epoch,
                 'manual_closed_at': self._manual_closed_at,
                 'last_trade_end': self._last_trade_end,
+                'consumed_signal_at': self._consumed_signal_at,
                 'funding_muted': self._funding_muted,
             })
         except Exception as e:
@@ -3480,7 +3503,8 @@ class FuelFilterDaemon:
     def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict,
               opened_by: Optional[str] = None, skip_ctr_safeguard: bool = False,
               skip_safeguard: bool = False, by_hand: bool = False,
-              signal_at: Optional[float] = None):
+              signal_at: Optional[float] = None,
+              origin_trace: Optional[str] = None):
         """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
         store position data — it only tracks which symbols it opened and delegates
         the actual position to TM. Positions appear in Trade Manager or Test Mode
@@ -3626,6 +3650,14 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] {symbol}: TM already has a position — adopting into tracking")
         else:
             print(f"[FuelFilter] {symbol}: attempting to open {side} position via TM...")
+            # 🧬 Кладемо ланцюг походження в TM ДО відкриття — щоб він потрапив
+            # у ТОЙ САМИЙ рядок «Відкрито», а не окремим записом, який може
+            # загубитись (саме так і сталось: рядка Q4 у лозі не було).
+            try:
+                if origin_trace and hasattr(tm, 'set_origin_trace'):
+                    tm.set_origin_trace(symbol, origin_trace)
+            except Exception:
+                pass
             try:
                 if is_real:
                     # Real position via TM — bypass LONG/SHORT gates
@@ -4901,6 +4933,14 @@ class FuelFilterDaemon:
     def start(self):
         if self._thread and self._thread.is_alive():
             return
+        # 🧬 Стан приїхав із БД — серед відновлених записів може бути такий, що
+        # УЖЕ відпрацював (за ним відкривалась угода) або старіший за закриття.
+        # Прибираємо ДО першого тіку, інакше «зомбі» знову крутиться в середині
+        # алгоритму й дає незрозумілі спрацювання.
+        try:
+            self._purge_spent_queue_records()
+        except Exception as _e:
+            print(f"[FuelFilter] startup purge warn: {_e}")
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True,
                                         name='fuel-filter')
@@ -5904,6 +5944,22 @@ class FuelFilterDaemon:
         return bool(_a) and (now - _a) > ttl_h * 3600
 
     @staticmethod
+    def _q4_stuck(added_at, now: float, hard_h: float) -> bool:
+        """🚨 Чи запис ЗАСТРЯГ у черзі понад абсолютну межу. ЧИСТА функція.
+
+        На відміну від TTL і «застою», ♾ «Без терміну» цю межу НЕ вимикає:
+        ♾ означає «живе, доки не замінить протилежний сигнал», а не «живе вічно
+        за будь-яких умов». Запис, що провисів добу, вже не є актуальною
+        ситуацією — він лише створює незрозумілі спрацювання."""
+        if hard_h <= 0:
+            return False
+        try:
+            _a = float(added_at or 0)
+        except (TypeError, ValueError):
+            return False
+        return bool(_a) and (now - _a) > hard_h * 3600
+
+    @staticmethod
     def _q4_stagnant(lit_at, now: float, nl_min: float, no_ttl: bool) -> bool:
         """⏳ Чи «застояний» запис (N хв поспіль жоден показник не в бік). ЧИСТА
         функція. `no_ttl=True` вимикає й це виселення — інакше монета зникала б
@@ -6176,6 +6232,72 @@ class FuelFilterDaemon:
             except Exception:
                 pass
 
+    def note_signal_consumed(self, symbol: str, signal_at) -> None:
+        """🔥 Сигнал ВІДПРАЦЮВАВ: за цим записом відкрилась угода.
+
+        Вимога користувача: «запис вийшов із Черги — монета пішла далі по
+        алгоритму; потрапити сюди вона має ЛИШЕ відпрацювавши повністю новий
+        алгоритм, а не зʼявитись невідомо звідки й продовжити з середини».
+
+        Тому: (1) позначаємо `added_at` як ВИГОРІЛИЙ — будь-який запис із таким
+        або старішим часом більше ніколи не приймається; (2) прибираємо монету
+        з УСІХ черг, а не лише з тієї, що відкрила. Повернення — виключно через
+        `intercept` з НОВИМ `added_at` (тобто новий сигнал + усі фільтри)."""
+        sym = (symbol or '').upper()
+        if not sym:
+            return
+        try:
+            sig = float(signal_at or 0)
+        except (TypeError, ValueError):
+            sig = 0.0
+        with self._lock:
+            if sig > 0:
+                prev = self._consumed_signal_at.get(sym) or 0.0
+                self._consumed_signal_at[sym] = max(prev, sig)
+            for q in (self._pending, self._pending2, self._pending3, self._pending4):
+                q.pop(sym, None)
+            self._q4_cache_drop(sym)
+            self._q4_lit_at.pop(sym, None)
+            self._persist_state()
+
+    def _purge_spent_queue_records(self) -> int:
+        """Прибрати з УСІХ черг записи, чий сигнал уже ВИГОРІВ або старіший за
+        закриття останньої угоди. Кличеться ОДИН раз на старті — після рестарту
+        стан приїжджає з БД, і серед нього може бути запис, що вже відпрацював
+        (саме так «зомбі» повертався в чергу й далі крутився в середині
+        алгоритму). Повертає к-сть прибраних."""
+        n = 0
+        with self._lock:
+            for name, q in (('Черга-1', self._pending), ('Черга-2', self._pending2),
+                            ('Черга-3', self._pending3), ('Черга-4', self._pending4)):
+                for sym in list(q.keys()):
+                    rec = q.get(sym) or {}
+                    try:
+                        _at = float(rec.get('added_at') or 0)
+                    except (TypeError, ValueError):
+                        _at = 0.0
+                    if not _at:
+                        continue
+                    burned = float(self._consumed_signal_at.get(sym) or 0)
+                    ended = float(self._last_trade_end.get(sym) or 0)
+                    if (burned and _at <= burned) or (ended and _at <= ended):
+                        q.pop(sym, None)
+                        self._q4_cache_drop(sym)
+                        self._q4_lit_at.pop(sym, None)
+                        n += 1
+            if n:
+                self._persist_state()
+        if n:
+            try:
+                from detection.activity_log import log_activity
+                log_activity('ALL', 'skipped',
+                             f'🧬 Старт: прибрано {n} відпрацьованих записів із черг '
+                             '(сигнал уже використано або угода по ньому закрилась)',
+                             source='FF')
+            except Exception:
+                pass
+        return n
+
     def _is_new_situation(self, symbol: str, signal_at: float, settings: Dict):
         """(це нова ситуація?, причина відмови). ЧИСТА логіка над двома мітками.
 
@@ -6192,6 +6314,13 @@ class FuelFilterDaemon:
             return True, ''          # часу сигналу немає — не вигадуємо відмову
         now = time.time()
         if settings.get('require_new_situation', True):
+            # 🔥 Сигнал, за яким УЖЕ відкривалась угода, вигорів назавжди —
+            # незалежно від того, чи та угода вже закрилась.
+            burned = self._consumed_signal_at.get(sym)
+            if burned and sig <= float(burned):
+                _b = time.strftime('%d.%m %H:%M:%S', time.gmtime(float(burned)))
+                return False, (f'сигнал від {_b} UTC УЖЕ ВІДПРАЦЮВАВ '
+                               f'(за ним відкривалась угода) — потрібен НОВИЙ')
             end = self._last_trade_end.get(sym)
             if end and sig <= float(end):
                 _e = time.strftime('%d.%m %H:%M:%S', time.gmtime(float(end)))
@@ -6419,12 +6548,20 @@ class FuelFilterDaemon:
             else:
                 ok, reason, detail = bool(res), 'фільтр', ''
             if ok:
+                # Розклад ПРОЙДЕНОЇ перевірки теж потрібен: інакше в лозі видно
+                # лише відмови, а успіх виглядає як «відкрилось саме собою».
+                self._q4_recheck_pass_detail[sym] = detail
                 return True, ''
             return False, (f'{reason} · {detail}' if detail else reason)
         except Exception as e:
             # Помилка перевірки НЕ повинна блокувати торгівлю — пропускаємо.
             print(f"[FF-Q4] recheck error {sym}: {e}")
             return True, ''
+
+    def _q4_recheck_detail(self, sym: str, side: str) -> str:
+        """Розклад ОСТАННЬОЇ пройденої повторної перевірки (значення кожного
+        фільтра). Заповнює `_q4_recheck_filters`; тут лише читаємо й прибираємо."""
+        return self._q4_recheck_pass_detail.pop(sym, '') or ''
 
     def _engine_tick_queue4(self):
         """🎯 Черга-4 «Усі шари» — відкриває угоду, коли ВСІ 4 шари збіглись за
@@ -6449,6 +6586,10 @@ class FuelFilterDaemon:
         # інакше монета все одно зникала б через 30 хв «застою» і заміняти було б
         # нічого. Санітарні виходи (вже в угоді / 1H-OB вже відпрацьовано) лишаються.
         no_ttl = bool(s.get('queue4_no_ttl', False))
+        try:
+            hard_h = float(s.get('queue4_hard_max_hours', 24) or 0)
+        except (TypeError, ValueError):
+            hard_h = 24.0
         with self._lock:
             items = list(self._pending4.items())
         # ⏱ Профіль такту — щоб приріст швидкості БУЛО ВИДНО в цифрах, а не «на
@@ -6473,6 +6614,22 @@ class FuelFilterDaemon:
                 log_activity(sym, 'skipped',
                              f'Черга-4 🧬 запис ВІДПРАЦЬОВАНИЙ ({_spent[1]}) — '
                              'прибрано з черги, чекаємо НОВИЙ сигнал',
+                             side=d, source='Q4')
+                continue
+            # 🚨 ЗАСТРЯГ: абсолютна межа, яку ♾ «Без терміну» НЕ вимикає.
+            # Монета, що провисіла добу, вже не «ситуація» — викидаємо повністю
+            # (з УСІХ черг), щоб не створювала незрозумілих спрацювань.
+            if self._q4_stuck(info.get('added_at'), now, hard_h):
+                _waited = self._fmt_wait(now - float(info.get('added_at') or now))
+                with self._lock:
+                    for _q in (self._pending, self._pending2, self._pending3, self._pending4):
+                        _q.pop(sym, None)
+                    self._q4_cache_drop(sym); self._persist_state()
+                self._q4_lit_at.pop(sym, None)
+                log_activity(sym, 'skipped',
+                             f'Черга-4 🚨 ЗАСТРЯГ: {_waited} у черзі без відкриття '
+                             f'(межа {hard_h:.0f}год, ♾ її не вимикає) — монету '
+                             'ПОВНІСТЮ прибрано з усіх черг, чекаємо НОВИЙ сигнал',
                              side=d, source='Q4')
                 continue
             # ⏳ TTL — не тримати запис у Черзі-4 нескінченно (♾ вимикає).
@@ -6610,31 +6767,39 @@ class FuelFilterDaemon:
                                      f'{_rc_reason} — відкриття відкладено',
                                      side=_open_dir, source='Q4')
                     continue
-                self._q4_recheck_logged.pop(sym, None)   # пройшла → скид анти-флуду
+                # ✅ ПРОЙШЛА. Раніше це було мовчазно: у лозі лишались лише
+                # відмови, а потім угода відкривалась «сама» — не було видно, з
+                # ЯКИМИ значеннями фільтри нарешті склались (кейс OPUSDT: п'ять
+                # відмов «прогноз 1H проти», потім тихе відкриття).
+                if self._q4_recheck_logged.pop(sym, None):
+                    _rc2 = self._q4_recheck_detail(sym, _open_dir)
+                    log_activity(sym, 'passthrough',
+                                 f'Черга-4 🔁 повторна перевірка ПРОЙДЕНА'
+                                 + (f' · {_rc2}' if _rc2 else '')
+                                 + ' — відкриваємо',
+                                 side=_open_dir, source='Q4')
             try:
                 _flip = '' if _open_dir == d else f' (ФЛІП: сигнал був {d}, показники — {_open_dir})'
+                _trace = f'Черга-4{_flip} · ' + self._origin_trace(sym, info, lay, now)
                 opened = self._open(sym, _open_dir, {'mark_price': mark, 'dir': _open_dir},
                                     s, opened_by=_ob_compose(info.get('kind'), 'Q4'),
                                     skip_ctr_safeguard=True, skip_safeguard=True,
                                     # 🧬 час, коли монета зайшла в чергу = час сигналу
-                                    signal_at=info.get('added_at'))
+                                    signal_at=info.get('added_at'),
+                                    origin_trace=_trace)
                 if opened:
                     with self._lock:
                         self._timers[sym] = {'dir': _open_dir, 'since': now, 'start_price': mark}
-                        self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
+                    # 🔥 Запис ПІШОВ ДАЛІ по алгоритму → сигнал вигорає, а монета
+                    # прибирається з УСІХ черг. Назад — лише через новий сигнал
+                    # + усі фільтри (`intercept` з новим added_at).
+                    self.note_signal_consumed(sym, info.get('added_at'))
                     # 🔒 Позначити 1H-OB як «відкритий» — щоб новий 5m VOB на тому
                     # самому 1H-OB не ре-відкривав монету після її закриття.
                     self._mark_ob_epoch_opened(sym)
-                    # 🧬 ПОВНЕ ПОХОДЖЕННЯ в ОДНОМУ рядку. Раніше запис казав лише
-                    # «усі 4 шари збіглись», і коли монета простояла в черзі
-                    # години (а з ♾ «Без терміну» — скільки завгодно), угода
-                    # виглядала як «взялась невідомо звідки»: рядки «Сигнал» і
-                    # «У чергу» лишились далеко вгорі логу. Тепер відповідь на
-                    # «звідки це?» стоїть ПРЯМО в рядку відкриття.
-                    log_activity(sym, 'opened',
-                                 f'Черга-4: усі шари збіглись → відкрито {_open_dir}{_flip}'
-                                 f' · {self._origin_trace(sym, info, lay, now)}',
-                                 side=_open_dir, source='Q4')
+                    # 🧬 Походження вже поїхало разом із самим фактом відкриття
+                    # (`origin_trace` → рядок «Відкрито»), тож ОКРЕМОГО запису
+                    # тут більше немає: один рядок = одна подія, нічого не гине.
                     print(f"[FF-Q4] opened {_open_dir} {sym} (усі 4 шари){_flip}")
                     # 🎯 SL з Volumized OB + буфер (за напрямком відкриття).
                     self._q4_set_vob_sl(sym, _open_dir, s)
@@ -6976,7 +7141,8 @@ class FuelFilterDaemon:
                     with self._lock:
                         self._timers[sym] = {'dir': d, 'since': now,
                                              'start_price': mark}
-                        self._pending3.pop(sym, None)
+                    self.note_signal_consumed(sym, info.get('added_at'))
+                    with self._lock:
                         self._persist_state()
                     self._log_readiness(sym, d, su, 'opened',
                                         f"{_why} · SCORE {su.get('score')} {su.get('grade')}", log_on,
@@ -7405,7 +7571,7 @@ class FuelFilterDaemon:
                 with self._lock:
                     self._timers[sym] = {'dir': d, 'since': _now_open,
                                          'start_price': fuel.get('mark_price')}
-                    self._pending2.pop(sym, None)
+                self.note_signal_consumed(sym, info.get('added_at'))
                 self._engine_skip.pop(sym, None)
                 # 🎯 A 🎯-recommended entry that FULLY passed Queue 2 → NOW mark it
                 # «рекомендована ботом»: open the episode (real entry price/time)
@@ -7703,8 +7869,9 @@ class FuelFilterDaemon:
                     with self._lock:
                         self._timers[sym] = {'dir': d, 'since': now,
                                              'start_price': fuel.get('mark_price')}
-                        if _q_allowed(2):   # OP 2: engine opened the trade
-                            _pop_from_queue(sym, qnum)
+                    self.note_signal_consumed(sym, _src_rec.get('added_at'))
+                    if _q_allowed(2):   # OP 2: engine opened the trade
+                        _pop_from_queue(sym, qnum)
                     self._engine_attempts.pop(sym, None)   # opened → reset
                     trace.append(f"{sym}:✅ВІДКРИТО {d}")
                     print(f"[FF-Engine] opened {d} {sym} ({mode_lbl}, exh="
@@ -8750,10 +8917,9 @@ class FuelFilterDaemon:
         now = time.time()
         with self._lock:
             self._timers[symbol] = {'dir': side, 'since': now, 'start_price': mark}
-            self._pending4.pop(symbol, None)
-            self._q4_cache_drop(symbol)
-            self._persist_state()
-        self._q4_lit_at.pop(symbol, None)
+        # Ручне відкриття — теж «пішла далі по алгоритму»: сигнал вигорає,
+        # монета прибирається з УСІХ черг.
+        self.note_signal_consumed(symbol, info.get('added_at'))
         # Позначку «вже відкривались на цьому 1H-OB» ставимо і для ручного
         # відкриття — інакше авто-двигун міг би відкрити ДРУГУ угоду на тому
         # самому 1H-OB одразу після закриття цієї.

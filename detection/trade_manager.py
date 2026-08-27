@@ -456,6 +456,10 @@ class TradeManager:
         self._signal_exit_at: Dict[str, float] = {}
         # 🎯 Автопілот угоди: тротл перевірки + останнє рішення (для UI).
         self._pilot_at: Dict[str, float] = {}
+        # 🧬 Походження угоди, передане Fuel Filter-ом ПЕРЕД відкриттям.
+        # Кладеться на позицію і друкується в тому самому рядку «Відкрито», щоб
+        # відповідь «звідки взялась угода» не могла загубитись окремим записом.
+        self._pending_origin: Dict[str, str] = {}
         self._pilot_state: Dict[str, Dict] = {}
         self._shadow_pos_state: Dict[str, Dict] = {}
         # SMC Hold-Confidence cache: {symbol: (ts, result)}. Recomputed at
@@ -2234,8 +2238,18 @@ class TradeManager:
 
         if real_opened:
             _info = self._entry_info_text(symbol, is_paper=False)
+            # Реальна позиція вже у книзі — покласти на неї походження ДО логу.
+            try:
+                _rp = self._positions.get(symbol)
+                if _rp is not None and not _rp.get('origin_trace'):
+                    _rp['origin_trace'] = self._take_origin_trace(symbol)
+                pos = _rp or {}
+            except Exception:
+                pos = {}
             log_activity(symbol, 'opened',
-                         f'Відкрито реальну позицію (TM) · {_pretty_ob(opened_by)}' + (f' · {_info}' if _info else ''),
+                         f'Відкрито реальну позицію (TM) · {_pretty_ob(opened_by)}'
+                         + (f' · {_info}' if _info else '')
+                         + (f" · 🧬 {pos.get('origin_trace')}" if pos.get('origin_trace') else ''),
                          side=side, source='TM')
             return {'real_opened': True, 'status': 'opened', 'is_paper': False}
 
@@ -2882,6 +2896,16 @@ class TradeManager:
         """Останнє рішення автопілота по монеті (для UI/діагностики)."""
         return self._pilot_state.get((symbol or '').upper()) \
             or self._pilot_state.get(symbol)
+
+    def set_origin_trace(self, symbol: str, text: str) -> None:
+        """Fuel Filter кладе сюди ланцюг походження ПЕРЕД відкриттям; позиція
+        забирає його при створенні. Одноразово — щоб не «прилипло» до наступної."""
+        sym = (symbol or '').upper()
+        if sym and text:
+            self._pending_origin[sym] = str(text)[:500]
+
+    def _take_origin_trace(self, symbol: str) -> Optional[str]:
+        return self._pending_origin.pop((symbol or '').upper(), None)
 
     def _get_ctr(self, symbol: str) -> Optional[Dict]:
         """Read the latest CTR (STC) for the symbol from forecast_engine cache."""
@@ -4819,6 +4843,7 @@ class TradeManager:
         pos['ctr_open'] = self._ctr_snapshot(symbol)
         # ⚪ POC (Volume Profile) знімок на вході (paper) — як на панелі.
         pos['entry_poc'] = self._poc_snapshot(symbol, side, entry_price)
+        pos['origin_trace'] = self._take_origin_trace(symbol)
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
@@ -4831,8 +4856,15 @@ class TradeManager:
             try:
                 from detection.activity_log import log_activity as _la
                 _info = self._entry_info_text(symbol, is_paper=True)
+                # 🧬 ПОХОДЖЕННЯ — у ТОМУ САМОМУ рядку. Раніше Черга-4 писала
+                # його ОКРЕМИМ записом, і той рядок міг не дійти до логу; тепер
+                # відповідь «звідки взялась угода» їде разом із самим фактом
+                # відкриття, тобто не може загубитись.
+                _org = str(pos.get('origin_trace') or '')
                 _la(symbol, 'opened',
-                    f'Відкрито paper · {_pretty_ob(opened_by_full)}' + (f' · {_info}' if _info else ''),
+                    f'Відкрито paper · {_pretty_ob(opened_by_full)}'
+                    + (f' · {_info}' if _info else '')
+                    + (f' · 🧬 {_org}' if _org else ''),
                     side=side, source='FF')
             except Exception:
                 pass
