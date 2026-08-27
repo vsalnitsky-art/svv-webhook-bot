@@ -38,6 +38,10 @@ DEFAULTS = {
     'stop_buf_pct': 0.10,          # буфер за структурним рівнем
     'be_at_r': 1.0,                # з якого R підтягувати стоп щонайменше в БЗ
     'be_lock_pct': 0.05,           # скільки лишати «в плюсі» на беззбитку
+    # 🎯 Мінімальний зазор для поділу на TP-1/TP-2, % ціни. Захищає від двох
+    # безглуздих ситуацій: TP впритул до входу (комісія зʼїсть частковий вихід)
+    # і два TP на тому самому місці (поділ без сенсу).
+    'tp_min_gap_pct': 0.40,
 }
 
 
@@ -177,6 +181,90 @@ def progress(side: str, entry, price, objective) -> Optional[Dict]:
             'done_pct': round(done / e * 100.0, 3),
             'left_pct': round(abs(t - p) / p * 100.0, 3),
             'target': t}
+
+
+def plan_targets(side: str, entry, price, targets: List[Dict],
+                 *, objective: Optional[Dict] = None, stop=None,
+                 cfg: Optional[Dict] = None) -> Dict:
+    """🎯 Розкласти цілі на ДВА рівні фіксації: TP-1 (частковий) і TP-2 (повний).
+
+    АНАЛІТИКА (чому саме так):
+      • **TP-2 = ГОЛОВНА ціль** — найдальший змістовний обʼєкт попереду. Це те,
+        заради чого угода тримається; на ньому виходимо ПОВНІСТЮ.
+      • **TP-1 = найближча ЗМІСТОВНА перепона** між входом і TP-2. Саме там рух
+        статистично найчастіше сповільнюється (пул ліквідності / POC / межа
+        діапазону), тож зафіксувати там частину — це забрати гроші в
+        найімовірнішій точці реакції, лишивши «безкоштовний» хвіст до TP-2.
+
+    ЖОРСТКІ ПЕРЕВІРКИ (без них поділ безглуздий):
+      1. обидва рівні — СТРОГО попереду руху від ВХОДУ;
+      2. TP-1 суворо МІЖ входом і TP-2;
+      3. TP-1 віддалений від ВХОДУ щонайменше на `tp_min_gap_pct` — інакше
+         комісія зʼїсть частковий вихід;
+      4. TP-2 віддалений від TP-1 щонайменше на `tp_min_gap_pct` — два рівні
+         впритул не мають сенсу, тоді лишається лише TP-2;
+      5. якщо придатної проміжної цілі немає — TP-1 НЕ вигадуємо (None).
+
+    Повертає {'tp1', 'tp2', 'reasons'}, де tp1/tp2 = {price, label, kind,
+    from_entry_pct, r} або None. `r` — кратність ризику (R), коли відомий стоп:
+    саме вона дає зрозуміти, чи вартий рівень того, щоб на ньому виходити.
+    """
+    c = {**DEFAULTS, **(cfg or {})}
+    reasons: List[str] = []
+    e, p = _f(entry), _f(price)
+    if side not in ('LONG', 'SHORT') or e is None or e <= 0:
+        return {'tp1': None, 'tp2': None, 'reasons': ['немає входу або напрямку']}
+
+    gap = max(0.0, float(c.get('tp_min_gap_pct', DEFAULTS['tp_min_gap_pct'])))
+    _st = _f(stop)
+    risk = (abs(e - _st) / e * 100.0) if (_st and _st > 0) else None
+
+    def _pack(t: Dict) -> Dict:
+        lvl = _f(t.get('price'))
+        d = abs(lvl - e) / e * 100.0
+        return {'price': lvl, 'label': t.get('label') or 'ціль',
+                'kind': t.get('kind'), 'from_entry_pct': round(d, 3),
+                'r': (round(d / risk, 2) if risk and risk > 0 else None)}
+
+    # TP-2 — головна ціль (зафіксована для угоди, якщо вже обрана).
+    _obj = objective or pick_objective(targets or [])
+    if not _obj or not _f(_obj.get('price')):
+        return {'tp1': None, 'tp2': None,
+                'reasons': ['змістовної цілі попереду немає — TP не виставляємо']}
+    tp2 = _pack(_obj)
+    if not _ahead(side, e, tp2['price']):
+        return {'tp1': None, 'tp2': None,
+                'reasons': ['ціль опинилась позаду входу — TP не виставляємо']}
+    if tp2['from_entry_pct'] < gap:
+        return {'tp1': None, 'tp2': None,
+                'reasons': [f"ціль ближче за {gap:g}% від входу — це шум, не ціль"]}
+    reasons.append(f"TP-2 (повний вихід): {tp2['label']} @ {tp2['price']:.8g} "
+                   f"(+{tp2['from_entry_pct']:.2f}% від входу"
+                   + (f", {tp2['r']}R)" if tp2['r'] else ')'))
+
+    # TP-1 — найближчий придатний обʼєкт МІЖ входом і TP-2.
+    tp1 = None
+    for t in (targets or []):
+        lvl = _f(t.get('price'))
+        if lvl is None or not _ahead(side, e, lvl):
+            continue
+        cand = _pack(t)
+        if cand['from_entry_pct'] < gap:
+            continue                                  # надто близько до входу
+        # строго МІЖ входом і TP-2, і не впритул до TP-2
+        if not _ahead(side, lvl, tp2['price']):
+            continue
+        if abs(tp2['price'] - lvl) / lvl * 100.0 < gap:
+            continue
+        tp1 = cand
+        break
+    if tp1:
+        reasons.append(f"TP-1 (частковий): {tp1['label']} @ {tp1['price']:.8g} "
+                       f"(+{tp1['from_entry_pct']:.2f}% від входу"
+                       + (f", {tp1['r']}R)" if tp1['r'] else ')'))
+    else:
+        reasons.append('проміжної цілі немає — працюємо одним TP-2')
+    return {'tp1': tp1, 'tp2': tp2, 'reasons': reasons}
 
 
 def plan(side: str, entry, price, *, swing=None, runway=None, poc=None,

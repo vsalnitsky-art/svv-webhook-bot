@@ -263,6 +263,101 @@ def test_progress_safe_without_data():
     print('✓ немає даних → прогрес None (нічого не вигадуємо)')
 
 
+# ═════════ 🎯 TP-1 / TP-2 — аналітика поділу фіксації ══════════════════════
+def _tg(price=100.0):
+    return tp.collect_targets('LONG', price, swing=SWING_LONG,
+                              runway=RUNWAY_UP, poc=105.0)
+
+
+def test_tp2_is_the_main_objective_tp1_is_the_nearest_obstacle():
+    """TP-2 — головна ціль (найдальша), TP-1 — найближча змістовна перепона
+    МІЖ входом і нею. Саме там рух статистично найчастіше сповільнюється."""
+    r = tp.plan_targets('LONG', 100.0, 100.0, _tg(), stop=98.0)
+    _check(r['tp2']['price'] == 110.0, f"TP-2 = головна ціль: {r['tp2']}")
+    _check(r['tp1']['price'] == 103.0, f"TP-1 = найближча перепона: {r['tp1']}")
+    _check(r['tp1']['from_entry_pct'] == 3.0, f"відстань від входу: {r['tp1']}")
+    _check(r['tp1']['r'] == 1.5 and r['tp2']['r'] == 5.0,
+           f"R-кратність має рахуватись від стопа: {r['tp1']['r']} / {r['tp2']['r']}")
+    print(f"✓ TP-1 {r['tp1']['price']} ({r['tp1']['r']}R) → "
+          f"TP-2 {r['tp2']['price']} ({r['tp2']['r']}R)")
+
+
+def test_tp_levels_are_strictly_ordered():
+    r = tp.plan_targets('LONG', 100.0, 100.0, _tg())
+    _check(100.0 < r['tp1']['price'] < r['tp2']['price'],
+           f"порядок вхід < TP-1 < TP-2 обовʼязковий: {r}")
+    rs = tp.plan_targets('SHORT', 100.0, 100.0,
+                         tp.collect_targets('SHORT', 100.0,
+                                            swing={'low': {'price': 90.0}},
+                                            runway={'dir': 'SHORT',
+                                                    'next': {'price': 97.0},
+                                                    'main': {'price': 93.0}}))
+    _check(100.0 > rs['tp1']['price'] > rs['tp2']['price'],
+           f"для SHORT порядок дзеркальний: {rs}")
+    print('✓ рівні строго впорядковані (і для SHORT дзеркально)')
+
+
+def test_no_intermediate_target_means_no_tp1():
+    """Проміжної цілі немає → TP-1 НЕ вигадуємо, працює лише TP-2."""
+    only_far = [{'price': 110.0, 'kind': 'swing', 'label': 'Weak High'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, only_far)
+    _check(r['tp2'] and r['tp1'] is None, f'має бути лише TP-2: {r}')
+    _check(any('проміжної цілі немає' in x for x in r['reasons']), f"{r['reasons']}")
+    print('✓ немає проміжної цілі → лише TP-2, нічого не вигадуємо')
+
+
+def test_levels_too_close_are_not_split():
+    """Два TP впритул — поділ без сенсу: комісія зʼїсть частковий вихід."""
+    tight = [{'price': 100.2, 'kind': 'poc', 'label': 'POC'},
+             {'price': 100.5, 'kind': 'swing', 'label': 'Weak High'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, tight, cfg={'tp_min_gap_pct': 0.4})
+    _check(r['tp1'] is None, f'TP-1 не має зʼявитись впритул до TP-2: {r}')
+    print('✓ рівні впритул не діляться (мін. зазор поважається)')
+
+
+def test_target_closer_than_gap_gives_nothing():
+    near = [{'price': 100.1, 'kind': 'poc', 'label': 'POC'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, near, cfg={'tp_min_gap_pct': 0.4})
+    _check(r['tp1'] is None and r['tp2'] is None,
+           f'ціль ближче за зазор — це шум, TP не виставляємо: {r}')
+    print('✓ ціль ближче за мін. зазор → TP не виставляються')
+
+
+def test_objective_lock_is_respected_for_tp2():
+    """TP-2 має відповідати ЗАФІКСОВАНІЙ цілі угоди, а не перераховуватись."""
+    lock = {'price': 108.0, 'kind': 'liq_main', 'label': 'головний пул'}
+    r = tp.plan_targets('LONG', 100.0, 104.0, _tg(104.0), objective=lock)
+    _check(r['tp2']['price'] == 108.0, f'TP-2 = зафіксована ціль: {r["tp2"]}')
+    print('✓ TP-2 бере зафіксовану ціль угоди')
+
+
+def test_r_is_absent_without_a_stop():
+    r = tp.plan_targets('LONG', 100.0, 100.0, _tg(), stop=None)
+    _check(r['tp2']['r'] is None and r['tp1']['r'] is None,
+           'без стопа R порахувати нема з чого — не вигадуємо')
+    print('✓ без стопа R = None (не вигадуємо кратність)')
+
+
+def test_plan_targets_safe_on_garbage():
+    for bad_entry in (None, 0, -1, 'abc'):
+        r = tp.plan_targets('LONG', bad_entry, 100.0, _tg())
+        _check(r['tp1'] is None and r['tp2'] is None, f'сміття {bad_entry!r}')
+    r2 = tp.plan_targets('WHAT', 100.0, 100.0, _tg())
+    _check(r2['tp2'] is None, 'невідомий напрямок → нічого')
+    r3 = tp.plan_targets('LONG', 100.0, 100.0, [])
+    _check(r3['tp2'] is None, 'порожній список цілей → нічого')
+    print('✓ сміттєві дані не ламають розкладку TP')
+
+
+def test_tp_defaults_are_off():
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    _check("'pilot_autofill_tp': False" in src,
+           'автозаповнення TP має бути ВИМКНЕНЕ за замовчуванням')
+    _check("'pilot_tp1_close_pct': 50" in src, 'TP-1 закриває 50% за замовчуванням')
+    _check(tp.DEFAULTS['tp_min_gap_pct'] > 0, 'мін. зазор має бути ненульовий')
+    print('✓ дефолти: автозаповнення OFF, TP-1 = 50%, зазор > 0')
+
+
 if __name__ == '__main__':
     test_targets_are_real_chart_objects_ahead_only()
     test_short_takes_levels_below_price()
@@ -285,4 +380,13 @@ if __name__ == '__main__':
     test_progress_for_short_mirrors()
     test_progress_is_clamped_but_keeps_raw_move()
     test_progress_safe_without_data()
+    test_tp2_is_the_main_objective_tp1_is_the_nearest_obstacle()
+    test_tp_levels_are_strictly_ordered()
+    test_no_intermediate_target_means_no_tp1()
+    test_levels_too_close_are_not_split()
+    test_target_closer_than_gap_gives_nothing()
+    test_objective_lock_is_respected_for_tp2()
+    test_r_is_absent_without_a_stop()
+    test_plan_targets_safe_on_garbage()
+    test_tp_defaults_are_off()
     print('\nУсі тести автопілота угоди пройдено ✅')

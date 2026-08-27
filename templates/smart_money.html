@@ -3429,6 +3429,22 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </div>
                         <div class="tm-row">
                             <label>
+                                <input type="checkbox" id="tm-pilot-autofill-tp" onchange="saveTMSettings()">
+                                🎯 Автозаповнення TP-1 / TP-2
+                                <span class="tm-help" title="Автопілот сам виставляє два рівні фіксації з обʼєктів графіка. TP-1 — НАЙБЛИЖЧА змістовна перепона між входом і головною ціллю (там рух статистично найчастіше сповільнюється): закриває вказану частку позиції. TP-2 — ГОЛОВНА ціль: повний вихід. Рівні рахуються ОДИН раз на угоду і прибиті до плану входу, а не «пливуть» за ціною. Рівень, який ви вписали руками, автопілот НЕ чіпає. Якщо придатної проміжної цілі немає — TP-1 не вигадується, працює лише TP-2.">?</span>
+                            </label>
+                            <span style="margin-left:8px;font-size:0.78rem;color:#888">TP-1 закриває</span>
+                            <input type="number" id="tm-pilot-tp1-pct" min="1" max="100" step="5"
+                                   style="width:52px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"
+                                   onchange="saveTMSettings()">
+                            <span style="margin-left:4px;font-size:0.78rem;color:#888">% · мін. зазор</span>
+                            <input type="number" id="tm-pilot-tp-gap" min="0" max="20" step="0.05"
+                                   style="width:56px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"
+                                   onchange="saveTMSettings()">
+                            <span style="margin-left:4px;font-size:0.78rem;color:#888">%</span>
+                        </div>
+                        <div class="tm-row">
+                            <label>
                                 🕐 Структура (swing) на TF
                                 <span class="tm-help" title="На якому таймфреймі автопілот бере ДИЛІНГ-ДІАПАЗОН (swing high/low) — це джерело і структурного стопа, і однієї з цілей. «Як у графіка» = той самий TF, що обрано в 🏁 Swing High/Low сканера, тож рівні автопілота збігаються з лініями на екрані. Пули ліквідації беруться з liq-map (вікно 24 год), POC — з профілю обсягу (вікно нижче), вони від цього TF не залежать.">?</span>
                             </label>
@@ -3650,7 +3666,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span></span></th>
-                        <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
+                        <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
+                        <th title="Manual TP — leave empty for none. Bot closes when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
                         <th title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
@@ -3658,7 +3675,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -3716,7 +3733,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span></span></th>
-                        <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
+                        <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
+                        <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
                         <th title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
@@ -3724,7 +3742,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -8251,6 +8269,9 @@ async function loadTMSettings() {
         _setV('tm-pilot-stop-buf', s.pilot_stop_buf_pct != null ? s.pilot_stop_buf_pct : 0.1, 0.1);
         _setV('tm-pilot-be-r', s.pilot_be_at_r != null ? s.pilot_be_at_r : 1, 1);
         document.getElementById('tm-pilot-swing-tf').value = s.pilot_swing_tf || '';
+        document.getElementById('tm-pilot-autofill-tp').checked = !!s.pilot_autofill_tp;
+        _setV('tm-pilot-tp1-pct', s.pilot_tp1_close_pct != null ? s.pilot_tp1_close_pct : 50, 50);
+        _setV('tm-pilot-tp-gap', s.pilot_tp_min_gap_pct != null ? s.pilot_tp_min_gap_pct : 0.4, 0.4);
         _setV('tm-pilot-poc-hours', s.pilot_poc_hours != null ? s.pilot_poc_hours : 72, 72);
         // Validate TF before assigning to <select> — fall back to 15m for
         // unknown values so the dropdown doesn't end up in a blank state.
@@ -8645,6 +8666,9 @@ async function saveTMSettings() {
             pilot_stop_buf_pct: parseFloat(document.getElementById('tm-pilot-stop-buf').value) || 0.1,
             pilot_be_at_r: parseFloat(document.getElementById('tm-pilot-be-r').value) || 1,
             pilot_swing_tf: document.getElementById('tm-pilot-swing-tf').value || '',
+            pilot_autofill_tp: document.getElementById('tm-pilot-autofill-tp').checked,
+            pilot_tp1_close_pct: parseInt(document.getElementById('tm-pilot-tp1-pct').value) || 50,
+            pilot_tp_min_gap_pct: parseFloat(document.getElementById('tm-pilot-tp-gap').value) || 0.4,
             pilot_poc_hours: parseInt(document.getElementById('tm-pilot-poc-hours').value) || 72,
             opposite_ob_exit_timeframe: document.getElementById('tm-opposite-ob-exit-tf').value || '15m',
             use_htf_flip: document.getElementById('tm-use-htf-flip').checked,
@@ -13065,7 +13089,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -13165,7 +13189,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-shadow-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -13265,8 +13289,8 @@ const _PILOT_KIND = {
 function pilotCellHTML(p) {
     const pl = p.pilot;
     if (!pl) {
-        return '<td style="font-size:0.7rem;color:#555" title="Автопілот вимкнено '
-             + 'або ще не зробив першого висновку по цій монеті">—</td>';
+        return '<td style="font-size:0.7rem;color:#555;white-space:nowrap" '
+             + 'title="Автопілот вимкнено або ще не зробив висновку по цій монеті">—</td>';
     }
     const [ic, lbl, col] = _PILOT_ACT[pl.action] || ['•', pl.action || '—', '#8b93a7'];
     const obj = pl.objective || null;
@@ -13274,41 +13298,31 @@ function pilotCellHTML(p) {
     const pr = pl.progress || null;
     const pct = pr && pr.pct != null ? pr.pct : 0;
 
-    // Смужка «скільки шляху до цілі пройдено» — головний візуальний елемент.
-    const bar = `<div style="height:5px;background:#20242e;border-radius:3px;overflow:hidden;margin:3px 0 2px">
-        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#38bdf8,#4ade80);
-                    transition:width .4s"></div></div>`;
-
+    // 📏 ОДИН РЯДОК: значок дії · мінісмужка · ціль · залишок. Усе решта —
+    // у підказці, щоб таблиця лишалась щільною і рядки не «стрибали».
+    const bar = `<span style="display:inline-block;width:34px;height:5px;background:#20242e;
+        border-radius:3px;overflow:hidden;vertical-align:middle;margin:0 4px"><span
+        style="display:block;height:100%;width:${pct}%;background:linear-gradient(90deg,#38bdf8,#4ade80)"></span></span>`;
     const objTxt = obj
-        ? `${_PILOT_KIND[obj.kind] || '🎯'} ${fmtPriceJS(obj.price)}`
-        : '🎯 цілі не видно';
+        ? `${_PILOT_KIND[obj.kind] || '🎯'}${fmtPriceJS(obj.price)}`
+        : '🎯—';
     const leftTxt = (pr && pr.left_pct != null)
-        ? ` <span style="color:#8b93a7">· ще ${pr.left_pct.toFixed(2)}%</span>` : '';
-    const nxtTxt = (nxt && (!obj || nxt.price !== obj.price))
-        ? `<div style="font-size:0.62rem;color:#8b93a7">${_PILOT_KIND[nxt.kind] || '•'} `
-          + `перепона ${fmtPriceJS(nxt.price)} (+${(nxt.dist_pct || 0).toFixed(2)}%)</div>`
-        : '';
-    const trails = pl.trails
-        ? `<span style="color:#38bdf8" title="Скільки разів стоп підтягнуто за цю угоду">`
-          + `· 🛡×${pl.trails}</span>` : '';
+        ? `<span style="color:#8b93a7"> ${pr.left_pct.toFixed(1)}%</span>` : '';
+    const trails = pl.trails ? `<span style="color:#38bdf8">🛡${pl.trails}</span>` : '';
 
-    // Повний розклад — у підказці, щоб рядок лишався компактним.
-    const tipParts = [];
-    if (obj) tipParts.push(`Ціль: ${obj.label} @ ${obj.price}`);
-    if (nxt) tipParts.push(`Найближча перепона: ${nxt.label} @ ${nxt.price}`);
-    if (pr) tipParts.push(`Пройдено ${pr.pct}% шляху до цілі (рух ${pr.done_pct >= 0 ? '+' : ''}${pr.done_pct}%)`);
-    if (pl.swing_tf) tipParts.push(`Структура: ${String(pl.swing_tf).toUpperCase()} (swing high/low дилінг-діапазону)`);
-    if (pl.poc_hours) tipParts.push(`POC: вікно ${pl.poc_hours} год`);
-    if (pl.trails) tipParts.push(`Стоп підтягнуто ${pl.trails} раз(и)`);
-    if (pl.why) tipParts.push('— ' + pl.why);
-    const tip = tipParts.join('\n').replace(/"/g, '');
+    const tip = [
+        obj ? `Ціль (TP-2): ${obj.label} @ ${obj.price}` : 'Цілі попереду не видно',
+        nxt ? `Найближча перепона: ${nxt.label} @ ${nxt.price}` : null,
+        pr ? `Пройдено ${pr.pct}% шляху до цілі (рух ${pr.done_pct >= 0 ? '+' : ''}${pr.done_pct}%, лишилось ${pr.left_pct}%)` : null,
+        pl.swing_tf ? `Структура: ${String(pl.swing_tf).toUpperCase()} (дилінг-діапазон)` : null,
+        pl.poc_hours ? `POC: вікно ${pl.poc_hours} год` : null,
+        pl.trails ? `Стоп підтягнуто ${pl.trails} раз(и)` : null,
+        pl.why ? '— ' + pl.why : null,
+    ].filter(Boolean).join('\n').replace(/"/g, '');
 
-    return `<td style="min-width:150px;font-size:0.7rem;line-height:1.35" title="${tip}">
-        <span style="color:${col};font-weight:700">${ic} ${lbl}</span>${trails}
-        ${bar}
-        <div style="color:#cbd5e1">${objTxt}${leftTxt}</div>
-        ${nxtTxt}
-    </td>`;
+    return `<td style="font-size:0.7rem;white-space:nowrap" title="${tip}">`
+        + `<span style="color:${col};font-weight:700">${ic}</span>${bar}`
+        + `<span style="color:#cbd5e1">${objTxt}</span>${leftTxt} ${trails}</td>`;
 }
 
 // Render two <td> cells (Manual SL, Manual TP) for a position row.
@@ -13325,8 +13339,15 @@ function manualSlTpCellsHTML(p, isShadow) {
     // stay clean — see roundSlTp.
     const sl = (p.manual_sl !== undefined && p.manual_sl !== null) ? roundSlTp(p.manual_sl) : '';
     const tp = (p.manual_tp !== undefined && p.manual_tp !== null) ? roundSlTp(p.manual_tp) : '';
+    const tp1 = (p.manual_tp1 !== undefined && p.manual_tp1 !== null) ? roundSlTp(p.manual_tp1) : '';
     const slSk = _sltpSrcStyle(sl, p.manual_sl_src, p.manual_sl_by, 'SL');
-    const tpSk = _sltpSrcStyle(tp, p.manual_tp_src, p.manual_tp_by, 'TP');
+    const tpSk = _sltpSrcStyle(tp, p.manual_tp_src, p.manual_tp_by, 'TP-2');
+    const t1Sk = _sltpSrcStyle(tp1, p.manual_tp1_src, p.manual_tp1_by, 'TP-1');
+    // ✅ TP-1 уже спрацював — рівень лишається видимим (де саме зафіксували),
+    // але більше не діє: позначаємо галочкою, щоб не було ілюзії активного TP.
+    const t1Done = p.tp1_done
+        ? '<span style="color:#4ade80;font-size:0.62rem" title="TP-1 уже спрацював — частину зафіксовано">✓</span>'
+        : '';
     return `
         <td>
             <input type="number" step="any" min="0" placeholder="—"
@@ -13335,6 +13356,13 @@ function manualSlTpCellsHTML(p, isShadow) {
                    onblur="submitManualSlTp('${sym}', this.value, null, ${shFlag})"
                    onkeydown="if(event.key==='Enter'){this.blur();}">
         </td>
+        <td style="white-space:nowrap">
+            <input type="number" step="any" min="0" placeholder="—"
+                   value="${tp1}" title="${t1Sk.title}"
+                   style="${t1Sk.style}"
+                   onblur="submitManualTp1('${sym}', this.value, ${shFlag})"
+                   onkeydown="if(event.key==='Enter'){this.blur();}">${t1Done}
+        </td>
         <td>
             <input type="number" step="any" min="0" placeholder="—"
                    value="${tp}" title="${tpSk.title}"
@@ -13342,6 +13370,21 @@ function manualSlTpCellsHTML(p, isShadow) {
                    onblur="submitManualSlTp('${sym}', null, this.value, ${shFlag})"
                    onkeydown="if(event.key==='Enter'){this.blur();}">
         </td>`;
+}
+
+// 🎯 TP-1 — частковий вихід. Окремий сабміт: у бекенді це окреме поле
+// (`manual_tp1`), бо спрацювання РІЗНЕ — TP-1 ріже частину, TP-2 закриває все.
+async function submitManualTp1(symbol, value, isShadow) {
+    try {
+        const body = { symbol, is_shadow: !!isShadow,
+                       manual_tp1: (value === '' ? 0 : parseFloat(value)) };
+        const r = await fetch('/api/tm/positions/manual-sltp', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        }).then(x => x.json());
+        if (r && !r.ok && r.validation) alert('TP-1: ' + (r.reason || 'відхилено'));
+        loadTMState();
+    } catch (e) { console.error('TP-1 save error', e); }
 }
 
 // 🎨 Колір поля Manual SL/TP = ХТО поставив рівень. Два різні за природою рівні

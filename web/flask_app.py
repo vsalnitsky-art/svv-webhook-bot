@@ -5860,6 +5860,7 @@ def register_api_routes(app):
             symbol=symbol,
             manual_sl=data.get('manual_sl'),
             manual_tp=data.get('manual_tp'),
+            manual_tp1=data.get('manual_tp1'),
             is_shadow=bool(data.get('is_shadow')),
         ))
     

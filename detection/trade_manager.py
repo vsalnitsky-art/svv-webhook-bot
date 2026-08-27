@@ -241,6 +241,12 @@ DEFAULT_SETTINGS = {
     'pilot_stop_buf_pct': 0.10,
     'pilot_be_at_r': 1.0,
     'pilot_be_lock_pct': 0.05,
+    # 🎯 Автозаповнення TP-1/TP-2 з обʼєктів графіка (дефолт OFF, як і сам пілот).
+    #   TP-1 — найближча змістовна перепона: закриває `pilot_tp1_close_pct`% позиції.
+    #   TP-2 — головна ціль: повний вихід.
+    'pilot_autofill_tp': False,
+    'pilot_tp1_close_pct': 50,
+    'pilot_tp_min_gap_pct': 0.40,
     
     # === Test mode (paper trading for exit-rule validation) ===
     # When ON: signals create "shadow" positions tracked in memory only.
@@ -705,6 +711,7 @@ class TradeManager:
                       'use_forecast_1h_exit', 'use_forecast_4h_exit',
                       'use_decision_exit',
                       'pilot_enabled',
+                      'pilot_autofill_tp',
                       'test_mode',
                       'allow_long_entries', 'allow_short_entries',
                       'require_fuel_confirm',
@@ -722,6 +729,16 @@ class TradeManager:
                 self._settings['signal_exit_min_conf'] = 0
             _pst = str(self._settings.get('pilot_swing_tf', '') or '').lower()
             self._settings['pilot_swing_tf'] = _pst if _pst in ('15m', '30m', '1h', '4h') else ''
+            try:
+                self._settings['pilot_tp1_close_pct'] = max(
+                    1, min(100, int(self._settings.get('pilot_tp1_close_pct', 50) or 50)))
+            except (TypeError, ValueError):
+                self._settings['pilot_tp1_close_pct'] = 50
+            try:
+                self._settings['pilot_tp_min_gap_pct'] = max(
+                    0.0, min(20.0, float(self._settings.get('pilot_tp_min_gap_pct', 0.4) or 0.4)))
+            except (TypeError, ValueError):
+                self._settings['pilot_tp_min_gap_pct'] = 0.4
             try:
                 self._settings['pilot_poc_hours'] = max(
                     1, min(720, int(self._settings.get('pilot_poc_hours', 72) or 72)))
@@ -1429,6 +1446,9 @@ class TradeManager:
             return
         if self._pilot_tick(symbol, pos, current_price, False):
             return
+        # 🎯 TP-1 — ЧАСТКОВА фіксація. Стоїть ПЕРЕД повним TP: інакше рівень
+        # TP-2, який лежить далі, ніколи не дав би частковому спрацювати.
+        self._check_manual_tp1(symbol, pos, current_price, False)
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_position(symbol, current_price, reason=manual_reason)
@@ -1513,6 +1533,56 @@ class TradeManager:
         self._update_trailing(pos, current_price)
         self._update_be(pos, current_price)
     
+    def _check_manual_tp1(self, symbol: str, pos: Dict, current_price: float,
+                          is_shadow: bool) -> bool:
+        """🎯 TP-1 — ЧАСТКОВА фіксація. True → частину закрито.
+
+        Спрацьовує РІВНО ОДИН раз на угоду (`tp1_done`), інакше кожен наступний
+        тік монітора різав би позицію далі. Після спрацювання рівень лишається
+        видимим у таблиці (щоб було зрозуміло, де саме зафіксували), але вже не
+        діє. Повний вихід далі веде TP-2 (`manual_tp`) або автопілот."""
+        try:
+            lvl = float(pos.get('manual_tp1') or 0)
+        except (TypeError, ValueError):
+            return False
+        if lvl <= 0 or pos.get('tp1_done'):
+            return False
+        side = pos.get('side')
+        hit = ((side == 'LONG' and current_price >= lvl)
+               or (side == 'SHORT' and current_price <= lvl))
+        if not hit:
+            return False
+        try:
+            pct = float(self._settings.get('pilot_tp1_close_pct', 50) or 50)
+        except (TypeError, ValueError):
+            pct = 50.0
+        pct = max(1.0, min(100.0, pct))
+        pos['tp1_done'] = True
+        pos['tp1_done_at'] = time.time()
+        pos['tp1_done_price'] = current_price
+        try:
+            if is_shadow:
+                self._partial_close_shadow(symbol, pct, current_price, 'manual_tp1')
+            else:
+                self._partial_close(symbol, pct, current_price, 'manual_tp1')
+        except Exception as e:
+            print(f"[TM] TP-1 partial close error {symbol}: {e}")
+            return False
+        try:
+            from detection.activity_log import log_activity
+            _e = float(pos.get('entry_price') or 0)
+            _pnl = (((current_price - _e) / _e * 100.0) if side == 'LONG'
+                    else ((_e - current_price) / _e * 100.0)) if _e > 0 else 0.0
+            log_activity(symbol, 'closed',
+                         f'🎯 TP-1: зафіксовано {pct:g}% позиції @ '
+                         f'{self._fmt_price(current_price)} ({_pnl:+.2f}%) — '
+                         f'решта йде до TP-2',
+                         side=side, source='PILOT')
+        except Exception:
+            pass
+        self._persist_shadow_positions() if is_shadow else self._persist_positions()
+        return True
+
     def _check_manual_sl_tp(self, pos: Dict,
                               current_price: float) -> Optional[str]:
         """Return 'manual_sl' / 'manual_tp' / None depending on whether the
@@ -1911,6 +1981,9 @@ class TradeManager:
             return
         if self._pilot_tick(symbol, pos, current_price, True):
             return
+        # 🎯 TP-1 — ЧАСТКОВА фіксація. Стоїть ПЕРЕД повним TP: інакше рівень
+        # TP-2, який лежить далі, ніколи не дав би частковому спрацювати.
+        self._check_manual_tp1(symbol, pos, current_price, True)
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_shadow(symbol, current_price, reason=manual_reason)
@@ -2810,6 +2883,21 @@ class TradeManager:
                                    prev_stop=pos.get('manual_sl'),
                                    objective_lock=pos.get('pilot_objective'),
                                    cfg=cfg)
+            # 🎯 АВТОЗАПОВНЕННЯ TP-1 / TP-2 з обʼєктів графіка. Рахуємо ОДИН
+            # раз на угоду: рівні мають бути прибиті до плану входу, а не
+            # «пливти» за ціною. Не чіпаємо, якщо оператор уже вписав своє.
+            if (s.get('pilot_autofill_tp') and not pos.get('pilot_tp_set')
+                    and res.get('targets')):
+                try:
+                    _tps = trade_pilot.plan_targets(
+                        side, pos.get('entry_price'), current_price,
+                        res.get('targets') or [],
+                        objective=res.get('objective'),
+                        stop=pos.get('manual_sl'), cfg=cfg)
+                    self._pilot_apply_tp(symbol, pos, _tps, is_shadow)
+                except Exception as e:
+                    print(f"[TM-Pilot] TP autofill error {symbol}: {e}")
+
             _obj = res.get('objective')
             if _obj and not pos.get('pilot_objective'):
                 pos['pilot_objective'] = dict(_obj)
@@ -2891,6 +2979,67 @@ class TradeManager:
         # 'hold' — рішення ТРИМАТИ. У 🧾 Лог не пишемо (це стан, а не подія):
         # він уже відображений у колонці «🎯 Автопілот» таблиці угод.
         return False
+
+    def _pilot_apply_tp(self, symbol: str, pos: Dict, tps: Dict,
+                        is_shadow: bool) -> None:
+        """Виставити TP-1/TP-2, які порахував автопілот.
+
+        ⚠️ Три правила, без яких автозаповнення шкодило б:
+          1. рівень, ВЖЕ введений оператором вручну, не чіпаємо взагалі —
+             автопілот не має перекривати рішення людини;
+          2. TP-2 йде через `update_manual_sl_tp`, тобто проходить ту саму
+             валідацію боку, що й будь-який інший рівень (і логується як 🤖 бот);
+          3. позначка `pilot_tp_set` ставиться НЕЗАЛЕЖНО від успіху — інакше
+             автопілот перераховував би рівні щотіку, а вони мають бути прибиті
+             до плану входу.
+        """
+        tp1, tp2 = (tps or {}).get('tp1'), (tps or {}).get('tp2')
+        pos['pilot_tp_set'] = True
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            def log_activity(*_a, **_k):
+                pass
+        _why = ' · '.join((tps or {}).get('reasons') or []) or '—'
+
+        # TP-1 — частковий. Живе прямо на позиції (окремий від manual_tp рівень).
+        if tp1 and not pos.get('manual_tp1'):
+            pos['manual_tp1'] = self._round_sltp_value(tp1['price'])
+            pos['manual_tp1_src'] = self.SRC_AUTO
+            pos['manual_tp1_by'] = f"Автопілот · {tp1.get('label')}"
+            try:
+                _pct = float(self._settings.get('pilot_tp1_close_pct', 50) or 50)
+            except (TypeError, ValueError):
+                _pct = 50.0
+            log_activity(symbol, 'sltp',
+                         f"🎯 Автопілот: TP-1 → {self._fmt_price(pos['manual_tp1'])} "
+                         f"(закриє {_pct:g}% позиції) · {tp1.get('label')} "
+                         f"+{tp1.get('from_entry_pct'):.2f}% від входу"
+                         + (f" · {tp1.get('r')}R" if tp1.get('r') else ''),
+                         side=pos.get('side'), source='PILOT')
+
+        # TP-2 — повний вихід, через звичайний шлях (валідація + позначка бота).
+        if tp2 and not pos.get('manual_tp'):
+            r = self.update_manual_sl_tp(
+                symbol, manual_tp=self._round_sltp_value(tp2['price']),
+                is_shadow=is_shadow, origin=self.SRC_AUTO,
+                origin_label=f"Автопілот · {tp2.get('label')}") or {}
+            if r.get('ok'):
+                log_activity(symbol, 'sltp',
+                             f"🎯 Автопілот: TP-2 → {self._fmt_price(tp2['price'])} "
+                             f"(повний вихід) · {tp2.get('label')} "
+                             f"+{tp2.get('from_entry_pct'):.2f}% від входу"
+                             + (f" · {tp2.get('r')}R" if tp2.get('r') else ''),
+                             side=pos.get('side'), source='PILOT')
+            else:
+                log_activity(symbol, 'skipped',
+                             f"🎯 Автопілот: TP-2 {self._fmt_price(tp2['price'])} "
+                             f"не прийнято ({r.get('reason', '—')}) · {_why}",
+                             side=pos.get('side'), source='PILOT')
+        if is_shadow:
+            self._persist_shadow_positions()
+        else:
+            self._persist_positions()
 
     def get_pilot_state(self, symbol: str) -> Optional[Dict]:
         """Останнє рішення автопілота по монеті (для UI/діагностики)."""
@@ -5958,7 +6107,8 @@ class TradeManager:
     def update_manual_sl_tp(self, symbol: str, manual_sl=None,
                               manual_tp=None, is_shadow: bool = False,
                               origin: str = 'user',
-                              origin_label: str = None) -> Dict:
+                              origin_label: str = None,
+                              manual_tp1=None) -> Dict:
         """Set or clear the per-position manual SL/TP override.
 
         `origin` — ХТО ставить рівень: 'user' (руками з UI, дефолт — щоб усі
@@ -6011,6 +6161,10 @@ class TradeManager:
         
         sl_op = _parse(manual_sl)
         tp_op = _parse(manual_tp)
+        # 🎯 TP-1 — ЧАСТКОВА фіксація. Той самий бік, що й TP-2 (обидва «в
+        # прибуток»), тож і валідація та сама; різниця лише в тому, ЩО робить
+        # спрацювання: TP-1 ріже частину, TP-2 закриває повністю.
+        tp1_op = _parse(manual_tp1)
         
         store = self._shadow_positions if is_shadow else self._positions
         kind = 'shadow' if is_shadow else 'real'
@@ -6030,7 +6184,7 @@ class TradeManager:
             side = pos.get('side')
             entry_price = pos.get('entry_price') or 0.0
         
-        need_validation = (sl_op[0] == 'set') or (tp_op[0] == 'set')
+        need_validation = (sl_op[0] == 'set') or (tp_op[0] == 'set') or (tp1_op[0] == 'set')
         if need_validation:
             # Use the live monitor's price source; fall back to entry if
             # market data isn't available right this instant. Falling back
@@ -6064,6 +6218,16 @@ class TradeManager:
                         f"TP ${level} must be BELOW current price ${current_price:.6g} "
                         f"for SHORT (take fires when price drops)")
             
+            if tp1_op[0] == 'set':
+                level = tp1_op[1]
+                if side == 'LONG' and not (level > current_price):
+                    errors.append(
+                        f"TP-1 ${level} must be ABOVE current price "
+                        f"${current_price:.6g} for LONG")
+                elif side == 'SHORT' and not (level < current_price):
+                    errors.append(
+                        f"TP-1 ${level} must be BELOW current price "
+                        f"${current_price:.6g} for SHORT")
             if errors:
                 # Reject atomically — nothing gets applied. User must
                 # correct the input. This is the fix that prevents the
@@ -6092,6 +6256,18 @@ class TradeManager:
                 pos.pop('manual_sl', None)
                 pos.pop('manual_sl_src', None)
                 pos.pop('manual_sl_by', None)
+
+            if tp1_op[0] == 'set':
+                _t1 = self._round_sltp_value(tp1_op[1])
+                pos['manual_tp1'] = _t1
+                pos['manual_tp1_src'] = _src
+                pos['manual_tp1_by'] = origin_label or ''
+                # Новий рівень TP-1 знімає позначку «вже спрацював»: оператор
+                # свідомо ставить наступну ціль часткової фіксації.
+                pos.pop('tp1_done', None)
+            elif tp1_op[0] == 'clear':
+                for _k in ('manual_tp1', 'manual_tp1_src', 'manual_tp1_by', 'tp1_done'):
+                    pos.pop(_k, None)
 
             if tp_op[0] == 'set':
                 _tv = self._round_sltp_value(tp_op[1])
@@ -6130,10 +6306,14 @@ class TradeManager:
                 parts.append(f"Manual SL → {self._fmt_sltp(updated.get('manual_sl'))}")
             elif sl_op[0] == 'clear':
                 parts.append("Manual SL знято")
+            if tp1_op[0] == 'set':
+                parts.append(f"Manual TP-1 → {self._fmt_sltp(updated.get('manual_tp1'))}")
+            elif tp1_op[0] == 'clear':
+                parts.append("Manual TP-1 знято")
             if tp_op[0] == 'set':
-                parts.append(f"Manual TP → {self._fmt_sltp(updated.get('manual_tp'))}")
+                parts.append(f"Manual TP-2 → {self._fmt_sltp(updated.get('manual_tp'))}")
             elif tp_op[0] == 'clear':
-                parts.append("Manual TP знято")
+                parts.append("Manual TP-2 знято")
             if parts:
                 from detection.activity_log import log_activity
                 _auto = (origin == self.SRC_AUTO)
