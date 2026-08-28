@@ -54,7 +54,11 @@ def _ff(queue3=True):
     ff._fuel_dir_smoothed = lambda sym: {'status': 'LONG', 'dir': 0.5,
                                          'mark_price': 100.0}
     ff.opened = []
-    ff._open = lambda sym, d, fuel, s, opened_by=None, skip_ctr_safeguard=False, skip_exhaustion=False: (
+    # ⚠️ Стаб мусить приймати ВСІ kwargs справжнього `_open` — інакше двигун
+    # ловить TypeError, мовчки нічого не відкриває, і тест падає «на рівному
+    # місці» (саме так він і відстав після появи signal_at/origin_trace).
+    ff._open = lambda sym, d, fuel, s, opened_by=None, skip_ctr_safeguard=False, \
+        skip_exhaustion=False, by_hand=False, signal_at=None, origin_trace=None, **_kw: (
         ff.opened.append((sym, d, opened_by)) or True)
     return ff, db
 

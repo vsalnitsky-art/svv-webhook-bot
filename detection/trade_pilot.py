@@ -42,6 +42,13 @@ DEFAULTS = {
     # безглуздих ситуацій: TP впритул до входу (комісія зʼїсть частковий вихід)
     # і два TP на тому самому місці (поділ без сенсу).
     'tp_min_gap_pct': 0.40,
+    # 🎯 МІНІМАЛЬНА КРАТНІСТЬ РИЗИКУ (R) для TP-2 = повного виходу.
+    # Ціль, до якої ближче, ніж до стопа (R < 1), — це збиткова математика:
+    # при R=0.4 угода мусить вигравати >70% разів, щоб не втрачати гроші.
+    # Тому рівень, який НЕ окупає власний стоп, автопілот НЕ виставляє —
+    # і чесно пише в лог, чому саме (найчастіше причина не в цілі, а в
+    # надто широкому стопі від OB).
+    'tp_min_r': 1.5,
 }
 
 
@@ -183,6 +190,22 @@ def progress(side: str, entry, price, objective) -> Optional[Dict]:
             'target': t}
 
 
+def risk_reward(entry, stop, objective) -> Optional[float]:
+    """R = (відстань ВХІД→ЦІЛЬ) / (відстань ВХІД→СТОП).
+
+    Головне число угоди: R < 1 означає, що ціль ближча за стоп, тобто угода
+    ризикує більшим заради меншого. Показуємо його в таблиці, щоб якість
+    угоди була видна ОДРАЗУ, а не після закриття. Немає стопа або цілі —
+    повертаємо None (вигадувати «умовний R» не можна)."""
+    e, s, t = _f(entry), _f(stop), _f((objective or {}).get('price'))
+    if not e or not s or not t or e <= 0 or s <= 0 or t <= 0:
+        return None
+    risk = abs(e - s)
+    if risk <= 0:
+        return None
+    return round(abs(t - e) / risk, 2)
+
+
 def plan_targets(side: str, entry, price, targets: List[Dict],
                  *, objective: Optional[Dict] = None, stop=None,
                  cfg: Optional[Dict] = None) -> Dict:
@@ -203,7 +226,11 @@ def plan_targets(side: str, entry, price, targets: List[Dict],
          комісія зʼїсть частковий вихід;
       4. TP-2 віддалений від TP-1 щонайменше на `tp_min_gap_pct` — два рівні
          впритул не мають сенсу, тоді лишається лише TP-2;
-      5. якщо придатної проміжної цілі немає — TP-1 НЕ вигадуємо (None).
+      5. якщо придатної проміжної цілі немає — TP-1 НЕ вигадуємо (None);
+      6. **TP-2 мусить окупати власний стоп**: `r ≥ tp_min_r`. Ціль ближча за
+         стоп (R < 1) — це відʼємне матсподівання, і виставляти на ній повний
+         вихід означало б зафіксувати завідомо гіршу за ризик угоду. Стоп
+         невідомий → R порахувати нічим, гейт НЕ застосовуємо (не вигадуємо).
 
     Повертає {'tp1', 'tp2', 'reasons'}, де tp1/tp2 = {price, label, kind,
     from_entry_pct, r} або None. `r` — кратність ризику (R), коли відомий стоп:
@@ -238,6 +265,16 @@ def plan_targets(side: str, entry, price, targets: List[Dict],
     if tp2['from_entry_pct'] < gap:
         return {'tp1': None, 'tp2': None,
                 'reasons': [f"ціль ближче за {gap:g}% від входу — це шум, не ціль"]}
+    # 6. Ціль мусить окупати стоп. Це головна перевірка ЯКОСТІ угоди: без неї
+    #    автопілот виставив би повний вихід там, де виграш менший за ризик.
+    min_r = max(0.0, float(c.get('tp_min_r', DEFAULTS['tp_min_r']) or 0.0))
+    if min_r > 0 and risk and tp2['r'] is not None and tp2['r'] < min_r:
+        return {'tp1': None, 'tp2': None, 'r': tp2['r'], 'min_r': min_r,
+                'reasons': [
+                    f"ціль {tp2['label']} дає лише {tp2['r']}R "
+                    f"(+{tp2['from_entry_pct']:.2f}% при стопі {risk:.2f}%) — "
+                    f"менше за поріг {min_r:g}R: TP не виставляємо, "
+                    f"стоп задалеко для такої цілі"]}
     reasons.append(f"TP-2 (повний вихід): {tp2['label']} @ {tp2['price']:.8g} "
                    f"(+{tp2['from_entry_pct']:.2f}% від входу"
                    + (f", {tp2['r']}R)" if tp2['r'] else ')'))
@@ -264,7 +301,8 @@ def plan_targets(side: str, entry, price, targets: List[Dict],
                        + (f", {tp1['r']}R)" if tp1['r'] else ')'))
     else:
         reasons.append('проміжної цілі немає — працюємо одним TP-2')
-    return {'tp1': tp1, 'tp2': tp2, 'reasons': reasons}
+    return {'tp1': tp1, 'tp2': tp2, 'r': tp2['r'], 'min_r': min_r,
+            'reasons': reasons}
 
 
 def plan(side: str, entry, price, *, swing=None, runway=None, poc=None,

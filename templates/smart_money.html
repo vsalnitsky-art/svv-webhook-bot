@@ -3441,7 +3441,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="tm-pilot-tp-gap" min="0" max="20" step="0.05"
                                    style="width:56px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"
                                    onchange="saveTMSettings()">
-                            <span style="margin-left:4px;font-size:0.78rem;color:#888">%</span>
+                            <span style="margin-left:4px;font-size:0.78rem;color:#888">% · TP-2 ≥</span>
+                            <input type="number" id="tm-pilot-tp-min-r" min="0" max="10" step="0.1"
+                                   style="width:52px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"
+                                   onchange="saveTMSettings()">
+                            <span style="margin-left:4px;font-size:0.78rem;color:#888">R
+                                <span class="tm-help" title="Мінімальна кратність ризику для TP-2 (повного виходу). R = відстань вхід→ціль поділена на відстань вхід→стоп. R менше 1 означає, що ціль ближча за стоп: угода ризикує більшим заради меншого і мусить вигравати понад 70% разів, щоб не втрачати гроші. Такий рівень автопілот НЕ виставляє і пише в лог причину. Щойно стоп підтягнеться (ризик зменшиться), R зросте і рівень зʼявиться сам. 0 = вимкнути перевірку.">?</span>
+                            </span>
                         </div>
                         <div class="tm-row">
                             <label>
@@ -8272,6 +8278,7 @@ async function loadTMSettings() {
         document.getElementById('tm-pilot-autofill-tp').checked = !!s.pilot_autofill_tp;
         _setV('tm-pilot-tp1-pct', s.pilot_tp1_close_pct != null ? s.pilot_tp1_close_pct : 50, 50);
         _setV('tm-pilot-tp-gap', s.pilot_tp_min_gap_pct != null ? s.pilot_tp_min_gap_pct : 0.4, 0.4);
+        _setV('tm-pilot-tp-min-r', s.pilot_tp_min_r != null ? s.pilot_tp_min_r : 1.5, 1.5);
         _setV('tm-pilot-poc-hours', s.pilot_poc_hours != null ? s.pilot_poc_hours : 72, 72);
         // Validate TF before assigning to <select> — fall back to 15m for
         // unknown values so the dropdown doesn't end up in a blank state.
@@ -8669,6 +8676,11 @@ async function saveTMSettings() {
             pilot_autofill_tp: document.getElementById('tm-pilot-autofill-tp').checked,
             pilot_tp1_close_pct: parseInt(document.getElementById('tm-pilot-tp1-pct').value) || 50,
             pilot_tp_min_gap_pct: parseFloat(document.getElementById('tm-pilot-tp-gap').value) || 0.4,
+            // 0 = свідомо вимкнути перевірку R, тому НЕ через `|| 1.5`.
+            pilot_tp_min_r: (function () {
+                const v = parseFloat(document.getElementById('tm-pilot-tp-min-r').value);
+                return isNaN(v) ? 1.5 : v;
+            })(),
             pilot_poc_hours: parseInt(document.getElementById('tm-pilot-poc-hours').value) || 72,
             opposite_ob_exit_timeframe: document.getElementById('tm-opposite-ob-exit-tf').value || '15m',
             use_htf_flip: document.getElementById('tm-use-htf-flip').checked,
@@ -13309,9 +13321,19 @@ function pilotCellHTML(p) {
     const leftTxt = (pr && pr.left_pct != null)
         ? `<span style="color:#8b93a7"> ${pr.left_pct.toFixed(1)}%</span>` : '';
     const trails = pl.trails ? `<span style="color:#38bdf8">🛡${pl.trails}</span>` : '';
+    // 📐 R = (вхід→ціль)/(вхід→стоп). R<1 — ціль ближча за стоп, тобто угода
+    // ризикує більшим заради меншого: фарбуємо червоним, щоб було видно ОДРАЗУ.
+    const rTxt = (pl.r != null)
+        ? `<span style="color:${pl.r < 1 ? '#f87171' : (pl.r < 1.5 ? '#fbbf24' : '#4ade80')};font-weight:600"> ${pl.r}R</span>`
+        : '';
+    // ⚠️ Пілот свідомо НЕ виставив TP (найчастіше — ціль не окупає стоп).
+    const skTxt = pl.tp_skip
+        ? '<span style="color:#fbbf24" title="TP не виставлено — див. підказку">⚠</span>' : '';
 
     const tip = [
         obj ? `Ціль (TP-2): ${obj.label} @ ${obj.price}` : 'Цілі попереду не видно',
+        (pl.r != null) ? `R = ${pl.r} (відстань до цілі / відстань до стопа)` : null,
+        pl.tp_skip ? `TP не виставлено: ${pl.tp_skip}` : null,
         nxt ? `Найближча перепона: ${nxt.label} @ ${nxt.price}` : null,
         pr ? `Пройдено ${pr.pct}% шляху до цілі (рух ${pr.done_pct >= 0 ? '+' : ''}${pr.done_pct}%, лишилось ${pr.left_pct}%)` : null,
         pl.swing_tf ? `Структура: ${String(pl.swing_tf).toUpperCase()} (дилінг-діапазон)` : null,
@@ -13322,7 +13344,7 @@ function pilotCellHTML(p) {
 
     return `<td style="font-size:0.7rem;white-space:nowrap" title="${tip}">`
         + `<span style="color:${col};font-weight:700">${ic}</span>${bar}`
-        + `<span style="color:#cbd5e1">${objTxt}</span>${leftTxt} ${trails}</td>`;
+        + `<span style="color:#cbd5e1">${objTxt}</span>${leftTxt}${rTxt} ${skTxt}${trails}</td>`;
 }
 
 // Render two <td> cells (Manual SL, Manual TP) for a position row.

@@ -241,12 +241,17 @@ DEFAULT_SETTINGS = {
     'pilot_stop_buf_pct': 0.10,
     'pilot_be_at_r': 1.0,
     'pilot_be_lock_pct': 0.05,
-    # 🎯 Автозаповнення TP-1/TP-2 з обʼєктів графіка (дефолт OFF, як і сам пілот).
+    # 🎯 Автозаповнення TP-1/TP-2 з обʼєктів графіка. УВІМКНЕНО разом із самим
+    # пілотом: пілот без TP — це половина роботи (він рахує ціль, але не
+    # виставляє рівень, і поля лишаються порожні).
     #   TP-1 — найближча змістовна перепона: закриває `pilot_tp1_close_pct`% позиції.
     #   TP-2 — головна ціль: повний вихід.
-    'pilot_autofill_tp': False,
+    'pilot_autofill_tp': True,
     'pilot_tp1_close_pct': 50,
     'pilot_tp_min_gap_pct': 0.40,
+    # 🎯 Мінімальний R для TP-2. Ціль, ближча за власний стоп (R<1), — відʼємне
+    # матсподівання; такий рівень не виставляємо взагалі (див. trade_pilot).
+    'pilot_tp_min_r': 1.5,
     
     # === Test mode (paper trading for exit-rule validation) ===
     # When ON: signals create "shadow" positions tracked in memory only.
@@ -739,6 +744,11 @@ class TradeManager:
                     0.0, min(20.0, float(self._settings.get('pilot_tp_min_gap_pct', 0.4) or 0.4)))
             except (TypeError, ValueError):
                 self._settings['pilot_tp_min_gap_pct'] = 0.4
+            try:
+                self._settings['pilot_tp_min_r'] = max(
+                    0.0, min(10.0, float(self._settings.get('pilot_tp_min_r', 1.5) or 0.0)))
+            except (TypeError, ValueError):
+                self._settings['pilot_tp_min_r'] = 1.5
             try:
                 self._settings['pilot_poc_hours'] = max(
                     1, min(720, int(self._settings.get('pilot_poc_hours', 72) or 72)))
@@ -2887,7 +2897,7 @@ class TradeManager:
             # раз на угоду: рівні мають бути прибиті до плану входу, а не
             # «пливти» за ціною. Не чіпаємо, якщо оператор уже вписав своє.
             if (s.get('pilot_autofill_tp') and not pos.get('pilot_tp_set')
-                    and res.get('targets')):
+                    and (res.get('targets') or res.get('objective'))):
                 try:
                     _tps = trade_pilot.plan_targets(
                         side, pos.get('entry_price'), current_price,
@@ -2931,10 +2941,21 @@ class TradeManager:
                                          current_price, res.get('objective'))
         except Exception:
             _prog = None
+        # 📐 R угоди = (вхід→ціль) / (вхід→стоп). Головне число якості: R<1
+        # означає, що ризикуємо більшим заради меншого. Хай воно стоїть у
+        # таблиці ОДРАЗУ, а не зʼясовується після закриття.
+        try:
+            _rr = trade_pilot.risk_reward(pos.get('entry_price'),
+                                          pos.get('manual_sl'),
+                                          res.get('objective'))
+        except Exception:
+            _rr = None
         _st = self._pilot_state.get(symbol) or {}
         self._pilot_state[symbol] = {
             'at': now,
             'action': act,
+            'r': _rr,
+            'tp_skip': pos.get('pilot_tp_skip') or '',
             'objective': res.get('objective'),
             'next': res.get('next_obstacle'),
             'targets': res.get('targets') or [],
@@ -2989,18 +3010,34 @@ class TradeManager:
              автопілот не має перекривати рішення людини;
           2. TP-2 йде через `update_manual_sl_tp`, тобто проходить ту саму
              валідацію боку, що й будь-який інший рівень (і логується як 🤖 бот);
-          3. позначка `pilot_tp_set` ставиться НЕЗАЛЕЖНО від успіху — інакше
-             автопілот перераховував би рівні щотіку, а вони мають бути прибиті
-             до плану входу.
+          3. позначка `pilot_tp_set` ставиться, ЛИШЕ коли рівень справді
+             виставлено — тоді він прибитий до плану входу і більше не
+             «пливе». Якщо ж не виставлено НІЧОГО (напр. ціль не окупає стоп),
+             позначку НЕ ставимо: щойно пілот підтягне стоп, ризик зменшиться,
+             R зросте — і рівень зʼявиться сам. Інакше угода лишилась би без
+             TP до самого кінця через один невдалий перший розрахунок.
         """
         tp1, tp2 = (tps or {}).get('tp1'), (tps or {}).get('tp2')
-        pos['pilot_tp_set'] = True
         try:
             from detection.activity_log import log_activity
         except Exception:
             def log_activity(*_a, **_k):
                 pass
         _why = ' · '.join((tps or {}).get('reasons') or []) or '—'
+
+        # Нічого виставляти — пишемо ЧОМУ (один раз на кожну нову причину,
+        # а не щотіку), лишаємо позицію відкритою для наступного розрахунку.
+        if not tp1 and not tp2:
+            if pos.get('pilot_tp_skip') != _why:
+                pos['pilot_tp_skip'] = _why
+                log_activity(symbol, 'skipped',
+                             f'🎯 Автопілот: TP не виставлено — {_why}',
+                             side=pos.get('side'), source='PILOT')
+                if is_shadow:
+                    self._persist_shadow_positions()
+            return
+        pos['pilot_tp_set'] = True
+        pos.pop('pilot_tp_skip', None)
 
         # TP-1 — частковий. Живе прямо на позиції (окремий від manual_tp рівень).
         if tp1 and not pos.get('manual_tp1'):

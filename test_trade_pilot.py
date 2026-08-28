@@ -351,11 +351,78 @@ def test_plan_targets_safe_on_garbage():
 
 def test_tp_defaults_are_off():
     src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
-    _check("'pilot_autofill_tp': False" in src,
-           'автозаповнення TP має бути ВИМКНЕНЕ за замовчуванням')
+    _check("'pilot_autofill_tp': True" in src,
+           'автозаповнення TP має бути УВІМКНЕНЕ разом із пілотом — інакше '
+           'пілот рахує ціль, але поля TP лишаються порожні')
     _check("'pilot_tp1_close_pct': 50" in src, 'TP-1 закриває 50% за замовчуванням')
     _check(tp.DEFAULTS['tp_min_gap_pct'] > 0, 'мін. зазор має бути ненульовий')
-    print('✓ дефолти: автозаповнення OFF, TP-1 = 50%, зазор > 0')
+    _check(tp.DEFAULTS['tp_min_r'] >= 1.0,
+           'поріг R за замовчуванням не має дозволяти ціль ближчу за стоп')
+    print('✓ дефолти: автозаповнення ON, TP-1 = 50%, зазор > 0, поріг R ≥ 1')
+
+
+# ═════════ 📐 R: ціль мусить окупати власний стоп ═══════════════════════════
+def test_target_closer_than_the_stop_is_refused():
+    """Кейс зі скріна (ARBUSDT): стоп 5.2%, ціль 2.0% → R=0.39. Виставити на
+    такій цілі повний вихід означало б зафіксувати завідомо гіршу за ризик
+    угоду — рівень НЕ виставляємо і кажемо, ЧОМУ."""
+    far = [{'price': 102.0, 'kind': 'liq_main', 'label': 'головний пул'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, far, stop=94.8)   # ризик 5.2%
+    _check(r['tp2'] is None and r['tp1'] is None,
+           f'ціль ближча за стоп не має давати TP: {r}')
+    _check(r.get('r') is not None and r['r'] < 1.0, f"R має бути в результаті: {r}")
+    _check(any('менше за поріг' in x for x in r['reasons']),
+           f'причина мусить бути в тексті: {r["reasons"]}')
+    print(f"✓ R={r['r']} < порогу → TP не виставляється, причина в лозі")
+
+
+def test_good_r_passes_the_gate():
+    """Дзеркальна перевірка: та сама ціль при вужчому стопі проходить."""
+    far = [{'price': 102.0, 'kind': 'liq_main', 'label': 'головний пул'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, far, stop=99.0)   # ризик 1% → 2R
+    _check(r['tp2'] and r['tp2']['r'] == 2.0, f'2R має пройти поріг 1.5: {r}')
+    print('✓ та сама ціль при вужчому стопі (2R) — проходить')
+
+
+def test_r_gate_is_not_applied_without_a_stop():
+    """Стопа немає → R рахувати нічим. Гейт НЕ вигадуємо і не блокуємо ним."""
+    far = [{'price': 102.0, 'kind': 'liq_main', 'label': 'головний пул'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, far, stop=None)
+    _check(r['tp2'] is not None, f'без стопа гейт R не має блокувати: {r}')
+    print('✓ без стопа гейт R не застосовується (нічого не вигадуємо)')
+
+
+def test_r_gate_can_be_switched_off():
+    far = [{'price': 102.0, 'kind': 'liq_main', 'label': 'головний пул'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, far, stop=94.8, cfg={'tp_min_r': 0})
+    _check(r['tp2'] is not None, f'0 = вимкнено, рівень має зʼявитись: {r}')
+    print('✓ поріг 0 вимикає перевірку R')
+
+
+def test_risk_reward_is_entry_based_and_honest():
+    """R = (вхід→ціль)/(вхід→стоп) — рахується від ВХОДУ, а не від ціни."""
+    _check(tp.risk_reward(100.0, 98.0, {'price': 106.0}) == 3.0, 'LONG 3R')
+    _check(tp.risk_reward(100.0, 102.0, {'price': 94.0}) == 3.0, 'SHORT дзеркально')
+    for bad in ((None, 98.0, {'price': 106.0}), (100.0, None, {'price': 106.0}),
+                (100.0, 98.0, None), (100.0, 100.0, {'price': 106.0}),
+                (100.0, 98.0, {'price': 0})):
+        _check(tp.risk_reward(*bad) is None, f'немає даних → None: {bad}')
+    print('✓ risk_reward рахується від входу; без даних — None')
+
+
+def test_pilot_retries_tp_after_the_stop_improves():
+    """Замок логіки: коли TP не виставлено, позначка `pilot_tp_set` НЕ
+    ставиться — щойно стоп підтягнеться, R зросте і рівень зʼявиться."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index('def _pilot_apply_tp')
+    body = src[i:i + 3000]
+    _check('if not tp1 and not tp2:' in body,
+           'має бути окрема гілка «нічого не виставили»')
+    _check(body.index('if not tp1 and not tp2:') < body.index("pos['pilot_tp_set'] = True"),
+           'позначка має ставитись ПІСЛЯ перевірки, а не безумовно')
+    _check("pos.get('pilot_tp_skip') != _why" in body,
+           'причина відмови має логуватись один раз, а не щотіку')
+    print('✓ невдалий розрахунок не «замуровує» угоду без TP')
 
 
 if __name__ == '__main__':
@@ -389,4 +456,10 @@ if __name__ == '__main__':
     test_r_is_absent_without_a_stop()
     test_plan_targets_safe_on_garbage()
     test_tp_defaults_are_off()
+    test_target_closer_than_the_stop_is_refused()
+    test_good_r_passes_the_gate()
+    test_r_gate_is_not_applied_without_a_stop()
+    test_r_gate_can_be_switched_off()
+    test_risk_reward_is_entry_based_and_honest()
+    test_pilot_retries_tp_after_the_stop_improves()
     print('\nУсі тести автопілота угоди пройдено ✅')
