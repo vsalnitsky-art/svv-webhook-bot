@@ -252,6 +252,9 @@ DEFAULT_SETTINGS = {
     # 🎯 Мінімальний R для TP-2. Ціль, ближча за власний стоп (R<1), — відʼємне
     # матсподівання; такий рівень не виставляємо взагалі (див. trade_pilot).
     'pilot_tp_min_r': 1.5,
+    # Службова позначка одноразової міграції тумблера автозаповнення (див.
+    # `_load_settings`). НЕ показується в UI, лише щоб міграція спрацювала раз.
+    'pilot_autofill_migrated_v1': False,
     
     # === Test mode (paper trading for exit-rule validation) ===
     # When ON: signals create "shadow" positions tracked in memory only.
@@ -508,18 +511,40 @@ class TradeManager:
     # Persistence
     # ============================================================
     
+    def _fresh_settings(self) -> Dict:
+        """Дефолти для ЧИСТОЇ установки: мігрувати нічого, позначку одразу
+        ставимо — інакше міграція нижче спрацювала б на другому старті й
+        перекрила б вибір, який користувач уже встиг зробити."""
+        cfg = DEFAULT_SETTINGS.copy()
+        cfg['pilot_autofill_migrated_v1'] = True
+        return cfg
+
     def _load_settings(self) -> Dict:
         if not self.db:
-            return DEFAULT_SETTINGS.copy()
+            return self._fresh_settings()
         try:
             stored = self.db.get_setting(DB_KEY_TM_SETTINGS, None)
             if isinstance(stored, dict):
                 merged = DEFAULT_SETTINGS.copy()
                 merged.update(stored)
+                # ⚠️ ЗМІНА ДЕФОЛТУ САМА ПО СОБІ НІЧОГО НЕ РОБИТЬ: збережений
+                # блоб перекриває його (`merged.update(stored)`). Сторінка
+                # налаштувань шле УСІ ключі разом, тож `pilot_autofill_tp:false`
+                # осів у БД ще з часів, коли тумблер був вимкнений дефолтом — і
+                # автозаповнення TP лишалось мертвим попри новий дефолт.
+                # ОДНОРАЗОВА міграція вмикає його один раз; далі поважаємо вибір
+                # користувача. (Той самий прийом, що `interval_migrated_v2`.)
+                if not merged.get('pilot_autofill_migrated_v1'):
+                    merged['pilot_autofill_tp'] = True
+                    merged['pilot_autofill_migrated_v1'] = True
+                    try:
+                        self.db.set_setting(DB_KEY_TM_SETTINGS, merged)
+                    except Exception:
+                        pass
                 return merged
         except:
             pass
-        return DEFAULT_SETTINGS.copy()
+        return self._fresh_settings()
     
     def _persist_settings(self):
         if self.db:
@@ -2896,7 +2921,7 @@ class TradeManager:
             # 🎯 АВТОЗАПОВНЕННЯ TP-1 / TP-2 з обʼєктів графіка. Рахуємо ОДИН
             # раз на угоду: рівні мають бути прибиті до плану входу, а не
             # «пливти» за ціною. Не чіпаємо, якщо оператор уже вписав своє.
-            if (s.get('pilot_autofill_tp') and not pos.get('pilot_tp_set')
+            if (s.get('pilot_autofill_tp') and not self._pilot_tp_done(pos)
                     and (res.get('targets') or res.get('objective'))):
                 try:
                     _tps = trade_pilot.plan_targets(
@@ -3000,6 +3025,25 @@ class TradeManager:
         # 'hold' — рішення ТРИМАТИ. У 🧾 Лог не пишемо (це стан, а не подія):
         # він уже відображений у колонці «🎯 Автопілот» таблиці угод.
         return False
+
+    @staticmethod
+    def _pilot_tp_done(pos: Dict) -> bool:
+        """Чи вже відпрацював автопілот по TP для ЦІЄЇ угоди.
+
+        Позначка `pilot_tp_set` сама по собі не є доказом: попередня версія
+        ставила її БЕЗУМОВНО, навіть коли не виставила жодного рівня, — і такі
+        угоди лишались без TP до самого кінця, бо повторний розрахунок більше
+        не запускався. Тому вважаємо роботу зробленою, ЛИШЕ коли рівень
+        реально стоїть (або TP-1 уже спрацював).
+
+        ⚠️ Виняток — `pilot_tp_cleared`: якщо рівень зняв ОПЕРАТОР, автопілот
+        його не відновлює. Рішення людини має пріоритет над самолікуванням.
+        """
+        if not pos.get('pilot_tp_set'):
+            return False
+        if pos.get('manual_tp') or pos.get('manual_tp1') or pos.get('tp1_done'):
+            return True
+        return bool(pos.get('pilot_tp_cleared'))
 
     def _pilot_apply_tp(self, symbol: str, pos: Dict, tps: Dict,
                         is_shadow: bool) -> None:
@@ -6316,6 +6360,13 @@ class TradeManager:
                 pos.pop('manual_tp', None)
                 pos.pop('manual_tp_src', None)
                 pos.pop('manual_tp_by', None)
+
+            # ✏️ Оператор ЗНЯВ рівень руками → автопілот більше не має його
+            # відновлювати. Без цієї позначки самолікування нижче
+            # (`_pilot_tp_done`) прийняло б порожнє поле за «старий блоб» і
+            # виставило рівень назад — тобто сперечалося б із людиною.
+            if _src == self.SRC_USER and (tp_op[0] == 'clear' or tp1_op[0] == 'clear'):
+                pos['pilot_tp_cleared'] = True
 
             updated = dict(pos)
         

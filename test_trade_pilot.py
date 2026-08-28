@@ -410,6 +410,63 @@ def test_risk_reward_is_entry_based_and_honest():
     print('✓ risk_reward рахується від входу; без даних — None')
 
 
+def test_changed_default_is_migrated_into_a_saved_settings_blob():
+    """⚠️ Урок: змінити ДЕФОЛТ мало. `_load_settings` робить
+    `merged.update(stored)`, тож збережений у БД `pilot_autofill_tp:false`
+    перекриває новий дефолт — саме тому поля TP лишались порожні навіть після
+    правки. Мусить бути ОДНОРАЗОВА міграція, як `interval_migrated_v2`."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index('def _load_settings')
+    body = src[i:i + 1800]
+    _check("if not merged.get('pilot_autofill_migrated_v1')" in body,
+           'потрібна одноразова міграція збереженого блоба')
+    _check("merged['pilot_autofill_tp'] = True" in body,
+           'міграція має вмикати автозаповнення один раз')
+    _check('def _fresh_settings' in src and
+           "cfg['pilot_autofill_migrated_v1'] = True" in src,
+           'чиста установка мусить одразу нести позначку — інакше міграція '
+           'спрацює на другому старті й перекриє вибір користувача')
+    print('✓ новий дефолт доїжджає до вже збереженого блоба (міграція один раз)')
+
+
+def test_stale_mark_without_levels_does_not_lock_the_trade_out():
+    """Стара версія ставила `pilot_tp_set` навіть коли нічого не виставила.
+    Такий блоб не має «замуровувати» угоду без TP назавжди."""
+    tm_src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    _check('def _pilot_tp_done' in tm_src, 'потрібен явний предикат «TP зроблено»')
+    _check('not self._pilot_tp_done(pos)' in tm_src,
+           'гейт автозаповнення має питати предикат, а не сиру позначку')
+
+    ns = {}
+    i = tm_src.index('    def _pilot_tp_done')
+    j = tm_src.index('    def _pilot_apply_tp')
+    fn = ('from typing import Dict\n\n\nclass _P:\n'
+          + tm_src[i:j]).replace('@staticmethod\n', '')
+    exec(fn, ns)
+    done = ns['_P'].__dict__['_pilot_tp_done'].__get__(None, ns['_P'])
+
+    _check(done({}) is False, 'позначки нема → працюємо')
+    _check(done({'pilot_tp_set': True}) is False,
+           'позначка без рівнів = старий блоб → мусить перерахуватись')
+    _check(done({'pilot_tp_set': True, 'manual_tp': 1.0}) is True,
+           'рівень реально стоїть → більше не чіпаємо')
+    _check(done({'pilot_tp_set': True, 'manual_tp1': 1.0}) is True, 'TP-1 теж рахується')
+    _check(done({'pilot_tp_set': True, 'tp1_done': True}) is True,
+           'TP-1 уже спрацював → робота зроблена')
+    _check(done({'pilot_tp_set': True, 'pilot_tp_cleared': True}) is True,
+           'оператор зняв рівень руками → НЕ відновлюємо')
+    print('✓ стара позначка не блокує TP, але рішення оператора поважається')
+
+
+def test_operator_clearing_a_level_is_remembered():
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    _check("pos['pilot_tp_cleared'] = True" in src,
+           'зняття рівня руками має лишати позначку')
+    _check('_src == self.SRC_USER and (tp_op[0]' in src,
+           'позначку ставить лише РУЧНЕ зняття, не автоматичне')
+    print('✓ ручне зняття TP запамʼятовується (автопілот не сперечається)')
+
+
 def test_pilot_retries_tp_after_the_stop_improves():
     """Замок логіки: коли TP не виставлено, позначка `pilot_tp_set` НЕ
     ставиться — щойно стоп підтягнеться, R зросте і рівень зʼявиться."""
@@ -461,5 +518,8 @@ if __name__ == '__main__':
     test_r_gate_is_not_applied_without_a_stop()
     test_r_gate_can_be_switched_off()
     test_risk_reward_is_entry_based_and_honest()
+    test_changed_default_is_migrated_into_a_saved_settings_blob()
+    test_stale_mark_without_levels_does_not_lock_the_trade_out()
+    test_operator_clearing_a_level_is_remembered()
     test_pilot_retries_tp_after_the_stop_improves()
     print('\nУсі тести автопілота угоди пройдено ✅')
