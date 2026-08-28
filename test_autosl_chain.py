@@ -519,45 +519,47 @@ def test_tg_open_carries_both_tp_levels():
     o._notify_open(pos)
     m = o.sent[0]
     _check('TP-1' in m and 'TP-2' in m, f'обидва рівні мають бути в TG: {m}')
-    _check('0.69313' in m.replace(',', '.') and '0.6096' in m.replace(',', '.'),
+    _check('0.69313' in m and '0.6096' in m,
            f'у повідомленні мусять бути САМІ ЧИСЛА: {m}')
+    _check('(+1.50%)' in m and '(+13.37%)' in m,
+           f'відсоток має стояти ОДРАЗУ після ціни кожного рівня: {m}')
     _check('(50%)' in m, f'частка часткової фіксації має бути видна: {m}')
-    print('✓ TG-відкриття несе TP-1 і TP-2 з числами')
+    print('✓ TG-відкриття: TP-1/TP-2 з ціною і % одразу за нею')
 
 
-def test_tg_never_shows_an_empty_tp():
-    """⚠️ Рівнів на момент відкриття ЩЕ немає (автопілот рахує з монітора).
-    Порожнього місця в повідомленні бути не повинно — має стояти чесний
-    статус, а числа прилітають окремим повідомленням, коли реально стануть."""
+def test_tg_says_nothing_about_tp_when_there_is_nothing_to_say():
+    """Вимога користувача: якщо рівнів ще немає — про них НЕ пишемо ЖОДНОГО
+    слова (не «рахується», не прочерк). Повідомлення має лишатись коротким."""
     o = _tm_msg()
     pos = {'symbol': 'FILUSDT', 'side': 'SHORT', 'entry_price': 0.70370,
            'manual_sl': 0.73032}
     o._notify_open(pos)
     m = o.sent[0]
-    _check('рахується' in m, f'має бути статус замість порожнечі: {m}')
-    _check('<b></b>' not in m and 'null' not in m,
-           f'ані порожнього тега, ані «null»: {m}')
-    print('✓ рівнів ще немає → «⏳ рахується», а не порожньо')
+    _check('TP' not in m, f'жодної згадки про TP бути не повинно: {m}')
+    _check('рахується' not in m and 'null' not in m, f'ні статусу, ні null: {m}')
+    _check(m.count('\n') == 3, f'рівно 4 рядки: напрямок, монета, вхід, SL: {m!r}')
+    print('✓ рівнів немає → у повідомленні про них ні слова')
 
 
-def test_tg_shows_dash_when_pilot_is_off():
-    o = _tm_msg(pilot_enabled=False, pilot_autofill_tp=False)
-    pos = {'symbol': 'X', 'side': 'LONG', 'entry_price': 100.0}
-    o._notify_open(pos)
-    _check('—' in o.sent[0] and 'рахується' not in o.sent[0],
-           f'автопілот вимкнено → чесний прочерк, а не обіцянка: {o.sent[0]}')
-    print('✓ автопілот вимкнено → прочерк, без хибної обіцянки')
-
-
-def test_levels_message_reports_distance_from_entry():
+def test_levels_message_has_no_service_tail():
+    """Друге повідомлення — це САМІ рівні. Підсумкового рядка «вхід … · TP-1 …»
+    користувач попросив прибрати: відсотки стоять біля цін."""
     o = _tm_msg()
     pos = {'side': 'SHORT', 'entry_price': 100.0,
            'manual_tp1': 98.0, 'manual_tp': 95.0}
     o._notify_pilot_levels('XUSDT', pos, False)
     m = o.sent[0]
-    _check('TP-1 (+2.00%)' in m and 'TP-2 (+5.00%)' in m,
-           f'відстань кожного рівня від входу має бути видна: {m}')
-    print('✓ повідомлення про рівні показує % від входу')
+    _check('(+2.00%)' in m and '(+5.00%)' in m, f'% біля кожної ціни: {m}')
+    _check('вхід' not in m, f'службового рядка з входом бути не повинно: {m}')
+    _check(m.count('\n') == 2, f'заголовок + два рівні, і все: {m!r}')
+    print('✓ повідомлення про рівні = лише рівні з відсотками')
+
+
+def test_levels_message_skipped_when_empty():
+    o = _tm_msg()
+    o._notify_pilot_levels('XUSDT', {'side': 'LONG', 'entry_price': 100.0}, False)
+    _check(o.sent == [], 'нема чого показувати → повідомлення не шлемо взагалі')
+    print('✓ порожніх повідомлень про рівні не буває')
 
 
 def test_levels_message_is_sent_when_pilot_fills_them():
@@ -600,8 +602,8 @@ if __name__ == '__main__':
     test_rejected_breakeven_is_reported_not_faked()
     test_tp1_calls_breakeven()
     test_tg_open_carries_both_tp_levels()
-    test_tg_never_shows_an_empty_tp()
-    test_tg_shows_dash_when_pilot_is_off()
-    test_levels_message_reports_distance_from_entry()
+    test_tg_says_nothing_about_tp_when_there_is_nothing_to_say()
+    test_levels_message_has_no_service_tail()
+    test_levels_message_skipped_when_empty()
     test_levels_message_is_sent_when_pilot_fills_them()
     print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')

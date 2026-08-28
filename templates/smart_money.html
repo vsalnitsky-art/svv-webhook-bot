@@ -13315,23 +13315,29 @@ function pilotCellHTML(p) {
     const pr = pl.progress || null;
     const pct = pr && pr.pct != null ? pr.pct : 0;
 
-    // 📏 ОДИН РЯДОК: значок дії · мінісмужка · ціль · залишок. Усе решта —
-    // у підказці, щоб таблиця лишалась щільною і рядки не «стрибали».
+    // 📏 ОДИН РЯДОК, АЛЕ РІВНИМИ СТОВПЧИКАМИ. Раніше сегменти йшли підряд
+    // і «плавали»: ціна $2,411.95 і $0.07561 різної довжини зсували все
+    // наступне, тож %, R і значки не вишиковувались по вертикалі. Тепер
+    // КОЖЕН сегмент — inline-block фіксованої ширини зі своїм вирівнюванням,
+    // і колонка читається як таблиця, а не як суцільний рядок.
+    const seg = (w, align, html, extra) =>
+        `<span style="display:inline-block;width:${w}px;text-align:${align};`
+        + `vertical-align:middle;overflow:hidden;${extra || ''}">${html}</span>`;
+
     const bar = `<span style="display:inline-block;width:34px;height:5px;background:#20242e;
-        border-radius:3px;overflow:hidden;vertical-align:middle;margin:0 4px"><span
+        border-radius:3px;overflow:hidden;vertical-align:middle"><span
         style="display:block;height:100%;width:${pct}%;background:linear-gradient(90deg,#38bdf8,#4ade80)"></span></span>`;
     const objTxt = obj
-        ? `${_PILOT_KIND[obj.kind] || '🎯'}${fmtPriceJS(obj.price)}`
-        : '🎯—';
-    const leftTxt = (pr && pr.left_pct != null)
-        ? `<span style="color:#8b93a7"> ${pr.left_pct.toFixed(1)}%</span>` : '';
+        ? `${_PILOT_KIND[obj.kind] || '🎯'} ${fmtPriceJS(obj.price)}`
+        : '🎯 —';
+    const leftTxt = (pr && pr.left_pct != null) ? `${pr.left_pct.toFixed(1)}%` : '';
     const trails = pl.trails ? `<span style="color:#38bdf8">🛡${pl.trails}</span>` : '';
     // 📐 R = (вхід→ціль)/(вхід→стоп). R<1 — ціль ближча за стоп, тобто угода
     // ризикує більшим заради меншого: фарбуємо червоним, щоб було видно ОДРАЗУ.
     const rTxt = (pl.r != null)
-        ? `<span style="color:${pl.r < 1 ? '#f87171' : (pl.r < 1.5 ? '#fbbf24' : '#4ade80')};font-weight:600"> ${pl.r}R</span>`
+        ? `<span style="color:${pl.r < 1 ? '#f87171' : (pl.r < 1.5 ? '#fbbf24' : '#4ade80')};font-weight:600">${pl.r}R</span>`
         : '';
-    // ⚠️ Пілот свідомо НЕ виставив TP (найчастіше — ціль не окупає стоп).
+    // ⚠️ Пілот свідомо НЕ виставив TP (найчастіше — обʼєкта у вікні немає).
     const skTxt = pl.tp_skip
         ? '<span style="color:#fbbf24" title="TP не виставлено — див. підказку">⚠</span>' : '';
 
@@ -13347,9 +13353,16 @@ function pilotCellHTML(p) {
         pl.why ? '— ' + pl.why : null,
     ].filter(Boolean).join('\n').replace(/"/g, '');
 
-    return `<td style="font-size:0.7rem;white-space:nowrap" title="${tip}">`
-        + `<span style="color:${col};font-weight:700">${ic}</span>${bar}`
-        + `<span style="color:#cbd5e1">${objTxt}</span>${leftTxt}${rTxt} ${skTxt}${trails}</td>`;
+    // Ширини підібрані під найдовші реальні значення (ціна «$2,411.95»,
+    // залишок «13.9%», «3.53R») — саме вони й тримають стовпчик рівним.
+    return `<td style="font-size:0.7rem;white-space:nowrap;font-family:monospace" title="${tip}">`
+        + seg(14, 'center', `<span style="color:${col};font-weight:700">${ic}</span>`)
+        + seg(40, 'left', bar)
+        + seg(86, 'left', `<span style="color:#cbd5e1">${objTxt}</span>`)
+        + seg(44, 'right', `<span style="color:#8b93a7">${leftTxt}</span>`)
+        + seg(50, 'right', rTxt)
+        + seg(30, 'right', `${skTxt}${trails}`)
+        + `</td>`;
 }
 
 // Render two <td> cells (Manual SL, Manual TP) for a position row.
@@ -13436,9 +13449,13 @@ const _SLTP_SRC_STYLE = {
 };
 function _sltpSrcStyle(val, src, by, what) {
     const base = 'width:90px;padding:3px 5px;border-radius:3px;font-size:0.75rem;font-family:monospace';
+    // ⌨️ ПОРОЖНЄ ПОЛЕ МУСИТЬ ЧИТАТИСЬ ЯК ПОЛЕ. Раніше воно мало ледь помітну
+    // рамку #333, і поряд із заповненими (яскраво обведеними) виглядало як
+    // звичайний прочерк — складалось враження, що рівень узагалі не вписати
+    // руками. Тепер порожнє поле має видиму рамку й підказку.
     if (val === '' || val === null || val === undefined) {
-        return { style: `${base};background:#1a1a1a;border:1px solid #333;color:#ddd`,
-                 title: `${what} не встановлено` };
+        return { style: `${base};background:#12161f;border:1px dashed #4b5563;color:#9ca3af`,
+                 title: `${what} не встановлено — клікніть і впишіть рівень (Enter або клік поза полем зберігає)` };
     }
     // Немає позначки походження (рівень із старої угоди, до появи цієї мітки)
     // — не вигадуємо, показуємо нейтрально.
@@ -13449,7 +13466,7 @@ function _sltpSrcStyle(val, src, by, what) {
     }
     const who = by ? `${k.t} — ${String(by).replace(/"/g, '')}` : k.t;
     return { style: `${base};background:${k.bg};border:1px solid ${k.b};color:${k.c};font-weight:700`,
-             title: `${what}: ${who}. Впишіть своє значення — колір стане бурштиновим.` };
+             title: `${what}: ${who}. Клікніть і впишіть своє значення — колір стане бурштиновим. Порожнє поле = рівень знято.` };
 }
 
 // Render a single <td> with the Manual Mode toggle for a position row.

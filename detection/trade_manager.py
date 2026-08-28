@@ -5235,9 +5235,11 @@ class TradeManager:
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
             f"<b>#{symbol}</b>   🧪 ТЕСТ\n"
             f"📍 Вхід: <b>{self._fmt_price(entry_price)}</b>\n"
-            f"🛡 SL: <b>{_sl_str}</b>\n"
-            f"{self._tp_lines(pos)}"
+            f"🛡 SL: <b>{_sl_str}</b>"
         )
+        _tp = self._tp_lines(pos)
+        if _tp:
+            msg += "\n" + _tp
         self._notify(msg, is_test=True, category='trades')
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
         return {'ok': True}
@@ -7002,31 +7004,43 @@ class TradeManager:
         return 'null'
 
     def _tp_lines(self, pos) -> str:
-        """Рядок рівнів фіксації для Telegram: TP-1 (частковий) + TP-2 (повний).
+        """Рядки рівнів фіксації для Telegram: TP-1 (частковий) + TP-2 (повний).
 
-        ⚠️ ПОРОЖНІХ ЗНАЧЕНЬ БУТИ НЕ МАЄ. На момент ВІДКРИТТЯ автопілот ще не
-        рахував рівні (він працює з монітора, перший тік — за секунди), тому
-        замість голого прочерку пишемо «⏳ рахується», а коли рівні реально
-        стануть — прилітає окреме коротке повідомлення `_notify_pilot_levels`.
-        Так у Telegram завжди видно або число, або чесний статус.
+        ⚠️ Рівнів ЩЕ немає (автопілот рахує з монітора, за секунди після
+        відкриття) → повертаємо ПОРОЖНІЙ рядок і не пишемо про них ЖОДНОГО
+        слова. Повідомлення про відкриття має лишатись коротким; числа
+        прилітають окремим `_notify_pilot_levels`, коли реально стануть.
         """
-        tp2 = self._sltp_display(pos, 'tp')
-        t1 = pos.get('manual_tp1')
         try:
-            tp1 = self._fmt_price(t1) if (t1 is not None and float(t1) > 0) else None
+            e = float(pos.get('entry_price') or 0)
         except (TypeError, ValueError):
-            tp1 = None
-        if tp2 == 'null':
-            tp2 = None
-        pending = bool(self._settings.get('pilot_enabled')
-                       and self._settings.get('pilot_autofill_tp'))
-        _wait = '⏳ рахується' if pending else '—'
+            e = 0.0
+        side = pos.get('side')
+
+        def _one(v, label):
+            try:
+                v = float(v or 0)
+            except (TypeError, ValueError):
+                return None
+            if v <= 0:
+                return None
+            d = ''
+            if e > 0:
+                _p = ((v - e) / e * 100.0) if side == 'LONG' else ((e - v) / e * 100.0)
+                d = f" ({_p:+.2f}%)"
+            return f"🎯 {label}: <b>{self._fmt_price(v)}</b>{d}"
+
         try:
             pct = float(self._settings.get('pilot_tp1_close_pct', 50) or 50)
         except (TypeError, ValueError):
             pct = 50.0
-        return (f"🎯 TP-1 ({pct:g}%): <b>{tp1 or _wait}</b>\n"
-                f"🎯 TP-2 (повний): <b>{tp2 or _wait}</b>")
+        tp2 = pos.get('manual_tp')
+        if not tp2 or float(tp2 or 0) <= 0:
+            _st = pos.get('tp_price')
+            tp2 = _st if (_st and float(_st) > 0) else None
+        lines = [x for x in (_one(pos.get('manual_tp1'), f'TP-1 ({pct:g}%)'),
+                             _one(tp2, 'TP-2 (повний)')) if x]
+        return '\n'.join(lines)
 
     def _notify_open(self, pos):
         side = pos['side']
@@ -7036,43 +7050,26 @@ class TradeManager:
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
             f"<b>#{pos['symbol']}</b>\n"
             f"📍 Вхід: <b>{self._fmt_price(pos['entry_price'])}</b>\n"
-            f"🛡 SL: <b>{sl_str}</b>\n"
-            f"{self._tp_lines(pos)}"
+            f"🛡 SL: <b>{sl_str}</b>"
         )
+        _tp = self._tp_lines(pos)
+        if _tp:
+            msg += "\n" + _tp
         self._notify(msg, category='trades')
 
     def _notify_pilot_levels(self, symbol: str, pos: Dict,
                              is_shadow: bool = False):
         """🎯 Рівні виставлено — окреме коротке повідомлення.
 
-        Потрібне саме тому, що при відкритті рівнів ще немає: без цього в
-        Telegram назавжди лишалось би «⏳ рахується», і користувач не дізнався
-        б реальних чисел, доки не відкриє таблицю."""
-        try:
-            e = float(pos.get('entry_price') or 0)
-        except (TypeError, ValueError):
-            e = 0.0
-
-        def _d(v):
-            try:
-                v = float(v)
-            except (TypeError, ValueError):
-                return ''
-            if not (e > 0 and v > 0):
-                return ''
-            d = (v - e) / e * 100.0 if pos.get('side') == 'LONG' else (e - v) / e * 100.0
-            return f" ({d:+.2f}%)"
-
-        tail = [f"вхід {self._fmt_price(pos.get('entry_price'))}"]
-        for _lbl, _v in (('TP-1', pos.get('manual_tp1')), ('TP-2', pos.get('manual_tp'))):
-            _dd = _d(_v)
-            if _dd:
-                tail.append(f"{_lbl}{_dd}")
+        Потрібне саме тому, що при ВІДКРИТТІ рівнів ще немає: без цього про
+        них у Telegram не було б ЖОДНОЇ згадки. Формат мінімальний — самі
+        рівні з відсотком від входу біля кожного, без службових рядків."""
+        body = self._tp_lines(pos)
+        if not body:
+            return
         self._notify(
             f"🎯 Рівні фіксації · <b>#{symbol}</b>"
-            + ('   🧪 ТЕСТ' if is_shadow else '') + "\n"
-            f"{self._tp_lines(pos)}\n"
-            f"<i>{' · '.join(tail)}</i>",
+            + ('   🧪 ТЕСТ' if is_shadow else '') + "\n" + body,
             is_test=is_shadow, category='trades')
 
     def _notify_close(self, closed):
