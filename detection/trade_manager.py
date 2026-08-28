@@ -79,6 +79,36 @@ def _lite_trade(d: Dict) -> Dict:
 # At each monitor tick we read the setting and compute N_TICKS dynamically,
 # so users can change it without restart. Min 5s (rounded to 10s), Max 300s.
 
+def clamp_sl_distance(side, entry, sl, max_pct):
+    """🛡 Стеля відстані стопа від ВХОДУ — ЄДИНЕ джерело для ВСІХ авто-SL.
+
+    Навіщо: рівні від Order Block стоять там, де стоїть блок, а не там, де
+    прийнятний ризик. На проді це давало розкид **1.40% … 15.56%** при
+    однаковому розмірі позиції — тобто одна угода ризикувала в 11 разів
+    більшим за іншу, і ціль часто виявлялась ближчою за власний стоп (R < 1).
+
+    ⚠️ Функція лише ПІДТЯГУЄ задалекий рівень до стелі; ближчий стоп ніколи не
+    відсувається далі. Вибір самого блоку не змінюється — змінюється тільки
+    максимальна відстань.
+
+    Повертає `(рівень, була_відстань_%)`; друге — None, якщо нічого не
+    міняли (стеля вимкнена, немає даних або рівень уже в межах).
+    """
+    try:
+        _max = float(max_pct or 0.0)
+        e, lvl = float(entry or 0.0), float(sl or 0.0)
+    except (TypeError, ValueError):
+        return sl, None
+    if _max <= 0 or e <= 0 or lvl <= 0 or side not in ('LONG', 'SHORT'):
+        return sl, None
+    dist = abs(lvl - e) / e * 100.0
+    if dist <= _max:
+        return sl, None
+    capped = (e * (1.0 - _max / 100.0) if side == 'LONG'
+              else e * (1.0 + _max / 100.0))
+    return capped, dist
+
+
 DEFAULT_SETTINGS = {
     # Master toggle — DEFAULT OFF for safety
     'enabled': False,
@@ -249,9 +279,6 @@ DEFAULT_SETTINGS = {
     'pilot_autofill_tp': True,
     'pilot_tp1_close_pct': 50,
     'pilot_tp_min_gap_pct': 0.40,
-    # 🎯 Мінімальний R для TP-2. Ціль, ближча за власний стоп (R<1), — відʼємне
-    # матсподівання; такий рівень не виставляємо взагалі (див. trade_pilot).
-    'pilot_tp_min_r': 1.5,
     # Службова позначка одноразової міграції тумблера автозаповнення (див.
     # `_load_settings`). НЕ показується в UI, лише щоб міграція спрацювала раз.
     'pilot_autofill_migrated_v1': False,
@@ -769,11 +796,6 @@ class TradeManager:
                     0.0, min(20.0, float(self._settings.get('pilot_tp_min_gap_pct', 0.4) or 0.4)))
             except (TypeError, ValueError):
                 self._settings['pilot_tp_min_gap_pct'] = 0.4
-            try:
-                self._settings['pilot_tp_min_r'] = max(
-                    0.0, min(10.0, float(self._settings.get('pilot_tp_min_r', 1.5) or 0.0)))
-            except (TypeError, ValueError):
-                self._settings['pilot_tp_min_r'] = 1.5
             try:
                 self._settings['pilot_poc_hours'] = max(
                     1, min(720, int(self._settings.get('pilot_poc_hours', 72) or 72)))
@@ -1915,22 +1937,13 @@ class TradeManager:
 
         # Стеля відстані (0 = вимкнено): дуже далекий блок робить ризик угоди
         # непорівнянним з рештою — підтягуємо рівень до стелі.
-        clamped = ''
         try:
-            _max = float(s.get('autosl_max_pct', 0.0) or 0.0)
+            base = float(pos.get('entry_price') or 0) or current_price
         except (TypeError, ValueError):
-            _max = 0.0
-        if _max > 0:
-            try:
-                base = float(pos.get('entry_price') or 0) or current_price
-            except (TypeError, ValueError):
-                base = current_price
-            if base > 0:
-                dist = abs(cand - base) / base * 100.0
-                if dist > _max:
-                    cand = (base * (1.0 - _max / 100.0) if side == 'LONG'
-                            else base * (1.0 + _max / 100.0))
-                    clamped = f" · підтягнуто до стелі {_max:g}% (було {dist:.2f}%)"
+            base = current_price
+        cand, _was = clamp_sl_distance(side, base, cand, s.get('autosl_max_pct'))
+        clamped = (f" · підтягнуто до стелі {float(s.get('autosl_max_pct')):g}% "
+                   f"(було {_was:.2f}%)") if _was else ''
 
         # First (and only) successful placement — set once, never ratcheted after.
         cand = self._round_sltp_value(cand)   # clean value (no float tail)

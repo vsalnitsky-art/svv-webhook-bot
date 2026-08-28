@@ -315,12 +315,16 @@ def test_levels_too_close_are_not_split():
     print('✓ рівні впритул не діляться (мін. зазор поважається)')
 
 
-def test_target_closer_than_gap_gives_nothing():
+def test_gap_only_governs_the_split_not_tp2():
+    """Зазор — про ПОДІЛ на два рівні, а не про право цілі існувати. TP-2
+    виставляється завжди, коли ціль є попереду входу (вимога користувача:
+    нічого не відсікати)."""
     near = [{'price': 100.1, 'kind': 'poc', 'label': 'POC'}]
     r = tp.plan_targets('LONG', 100.0, 100.0, near, cfg={'tp_min_gap_pct': 0.4})
-    _check(r['tp1'] is None and r['tp2'] is None,
-           f'ціль ближче за зазор — це шум, TP не виставляємо: {r}')
-    print('✓ ціль ближче за мін. зазор → TP не виставляються')
+    _check(r['tp2'] and abs(r['tp2']['price'] - 100.1) < 1e-9,
+           f'TP-2 має виставитись навіть на близькій цілі: {r}')
+    _check(r['tp1'] is None, f'а от ПОДІЛ на такій дистанції безглуздий: {r}')
+    print('✓ зазор керує лише поділом; TP-2 виставляється завжди')
 
 
 def test_objective_lock_is_respected_for_tp2():
@@ -356,47 +360,39 @@ def test_tp_defaults_are_off():
            'пілот рахує ціль, але поля TP лишаються порожні')
     _check("'pilot_tp1_close_pct': 50" in src, 'TP-1 закриває 50% за замовчуванням')
     _check(tp.DEFAULTS['tp_min_gap_pct'] > 0, 'мін. зазор має бути ненульовий')
-    _check(tp.DEFAULTS['tp_min_r'] >= 1.0,
-           'поріг R за замовчуванням не має дозволяти ціль ближчу за стоп')
-    print('✓ дефолти: автозаповнення ON, TP-1 = 50%, зазор > 0, поріг R ≥ 1')
+    print('✓ дефолти: автозаповнення ON, TP-1 = 50%, зазор > 0')
 
 
 # ═════════ 📐 R: ціль мусить окупати власний стоп ═══════════════════════════
-def test_target_closer_than_the_stop_is_refused():
-    """Кейс зі скріна (ARBUSDT): стоп 5.2%, ціль 2.0% → R=0.39. Виставити на
-    такій цілі повний вихід означало б зафіксувати завідомо гіршу за ризик
-    угоду — рівень НЕ виставляємо і кажемо, ЧОМУ."""
+def test_low_r_target_is_still_set():
+    """⚠️ ЗАМОК ВІД ПОВТОРУ. Була спроба відсікати цілі, ближчі за стоп
+    (R < порогу) — користувач це СКАСУВАВ: «не потрібно відсікати ніякі угоди».
+    Пілот РАХУЄ рівні з обʼєктів графіка і виставляє їх; судити угоду за R —
+    не його справа. R лишається ДОВІДКОВИМ числом у колонці й лозі."""
     far = [{'price': 102.0, 'kind': 'liq_main', 'label': 'головний пул'}]
-    r = tp.plan_targets('LONG', 100.0, 100.0, far, stop=94.8)   # ризик 5.2%
-    _check(r['tp2'] is None and r['tp1'] is None,
-           f'ціль ближча за стоп не має давати TP: {r}')
-    _check(r.get('r') is not None and r['r'] < 1.0, f"R має бути в результаті: {r}")
-    _check(any('менше за поріг' in x for x in r['reasons']),
-           f'причина мусить бути в тексті: {r["reasons"]}')
-    print(f"✓ R={r['r']} < порогу → TP не виставляється, причина в лозі")
+    r = tp.plan_targets('LONG', 100.0, 100.0, far, stop=94.8)   # 0.38R
+    _check(r['tp2'] and abs(r['tp2']['price'] - 102.0) < 1e-9,
+           f'рівень мусить виставитись попри малий R: {r}')
+    _check(r['tp2']['r'] is not None and r['tp2']['r'] < 1.0,
+           f'R показуємо як довідку, але він нічого не блокує: {r["tp2"]}')
+    _check('tp_min_r' not in tp.DEFAULTS, 'порогу R у дефолтах бути не повинно')
+    print(f"✓ ціль {r['tp2']['r']}R все одно виставлена (нічого не відсікаємо)")
 
 
-def test_good_r_passes_the_gate():
-    """Дзеркальна перевірка: та сама ціль при вужчому стопі проходить."""
+def test_r_is_reported_for_a_good_setup():
+    """Довідковий R рахується й на нормальному сетапі."""
     far = [{'price': 102.0, 'kind': 'liq_main', 'label': 'головний пул'}]
     r = tp.plan_targets('LONG', 100.0, 100.0, far, stop=99.0)   # ризик 1% → 2R
-    _check(r['tp2'] and r['tp2']['r'] == 2.0, f'2R має пройти поріг 1.5: {r}')
-    print('✓ та сама ціль при вужчому стопі (2R) — проходить')
+    _check(r['tp2'] and r['tp2']['r'] == 2.0, f'R мав порахуватись як 2.0: {r}')
+    print('✓ R рахується правильно й показується')
 
 
-def test_r_gate_is_not_applied_without_a_stop():
-    """Стопа немає → R рахувати нічим. Гейт НЕ вигадуємо і не блокуємо ним."""
+def test_levels_do_not_depend_on_the_stop():
+    """Рівні беруться з ГРАФІКА. Стоп потрібен лише щоб показати R."""
     far = [{'price': 102.0, 'kind': 'liq_main', 'label': 'головний пул'}]
     r = tp.plan_targets('LONG', 100.0, 100.0, far, stop=None)
-    _check(r['tp2'] is not None, f'без стопа гейт R не має блокувати: {r}')
-    print('✓ без стопа гейт R не застосовується (нічого не вигадуємо)')
-
-
-def test_r_gate_can_be_switched_off():
-    far = [{'price': 102.0, 'kind': 'liq_main', 'label': 'головний пул'}]
-    r = tp.plan_targets('LONG', 100.0, 100.0, far, stop=94.8, cfg={'tp_min_r': 0})
-    _check(r['tp2'] is not None, f'0 = вимкнено, рівень має зʼявитись: {r}')
-    print('✓ поріг 0 вимикає перевірку R')
+    _check(r['tp2'] is not None, f'без стопа рівень все одно виставляється: {r}')
+    print('✓ рівні не залежать від стопа (він лише дає довідковий R)')
 
 
 def test_risk_reward_is_entry_based_and_honest():
@@ -508,15 +504,14 @@ if __name__ == '__main__':
     test_tp_levels_are_strictly_ordered()
     test_no_intermediate_target_means_no_tp1()
     test_levels_too_close_are_not_split()
-    test_target_closer_than_gap_gives_nothing()
+    test_gap_only_governs_the_split_not_tp2()
     test_objective_lock_is_respected_for_tp2()
     test_r_is_absent_without_a_stop()
     test_plan_targets_safe_on_garbage()
     test_tp_defaults_are_off()
-    test_target_closer_than_the_stop_is_refused()
-    test_good_r_passes_the_gate()
-    test_r_gate_is_not_applied_without_a_stop()
-    test_r_gate_can_be_switched_off()
+    test_low_r_target_is_still_set()
+    test_r_is_reported_for_a_good_setup()
+    test_levels_do_not_depend_on_the_stop()
     test_risk_reward_is_entry_based_and_honest()
     test_changed_default_is_migrated_into_a_saved_settings_blob()
     test_stale_mark_without_levels_does_not_lock_the_trade_out()

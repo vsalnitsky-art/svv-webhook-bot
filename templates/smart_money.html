@@ -2504,6 +2504,55 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <!-- ₿ BTCUSDT банер ПЕРЕНЕСЕНО вище — над панеллю «Напрямок за
                  таймфреймами» (див. #ff-btc-start-banner у блоці Smart Direction). -->
 
+            <!-- 🛡 ГЛОБАЛЬНІ ворота відкриття та авто-SL (не належать жодній черзі) -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
+                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('autosl')" title="Клік — згорнути/розгорнути"><span id="autosl-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🛡 Авто-SL та ворота відкриття <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— діють на ВСІ черги (1/2/3/4) і на ручні відкриття, незалежно від того, яка черга увімкнена</span></div>
+            </div>
+            <div id="autosl-body">
+            <!-- Усі ці параметри ГЛОБАЛЬНІ: діють на кожне автоматичне відкриття
+                 і на кожну відкриту угоду, незалежно від того, яка черга
+                 увімкнена. Раніше вони лежали в гармошці Черги-2 і виглядали як
+                 ЇЇ налаштування — при вимкненій Черзі-2 це прямо вводило в оману.
+                 ⚠️ Ключі (`q2_auto_ob_sl*`) НЕ перейменовані: це зламало б уже
+                 збережені налаштування. Історична назва ключа ≠ область дії. -->
+            <div style="border:1px solid rgba(148,163,184,0.18);border-radius:8px;padding:10px 12px;background:rgba(15,23,42,0.35);margin-bottom:4px">
+            <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
+                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="У кожній ВІДКРИТІЙ угоді бот сам підставляє Manual SL із найближчого Order Block «Require OB Match» (той самий OB, що гейтить входи, TF = ob_filter_timeframe). LONG → нижня ціна OB − буфер%; SHORT → верхня ціна OB + буфер%. На протязі угоди SL постійно ПІДТЯГУЄТЬСЯ ближче до ціни, щойно з’являється кращий (ближчий) OB — і НІКОЛИ не послаблюється. Якщо ти вручну виставив Manual SL — авто-логіка його не чіпає. Діє на реальні й тестові угоди. Стоп спрацьовує через звичайну перевірку Manual SL.">
+                    <input type="checkbox" id="ff-q2-auto-ob-sl" onchange="saveFuelFilterSettings()"> Авто <b>Manual SL з OB</b> «Require OB Match» <span style="color:#8b93a7;font-size:0.68rem">(LONG: низ OB − буфер; SHORT: верх OB + буфер; встановлюється ОДИН раз, далі не рухається; спроби тривають лише доки не встановиться)</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1">
+                    Буфер, %
+                    <input type="number" id="ff-q2-auto-ob-sl-buf" step="0.05" min="0" max="10" style="width:64px" onchange="saveFuelFilterSettings()">
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="OB-таймфрейм саме для авто-Manual-SL (окремий від фільтра сканера). 15хв — головний скан-TF, OB на ньому рахується завжди. Інші TF працюють, лише якщо сканер їх теж обробляє.">
+                    OB TF
+                    <select id="ff-q2-auto-ob-sl-tf" onchange="saveFuelFilterSettings()" style="font-size:0.72rem;padding:2px 4px">
+                        <option value="15m">15хв</option>
+                        <option value="30m">30хв</option>
+                        <option value="1h">1г</option>
+                        <option value="4h">4г</option>
+                    </select>
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🛡 ГАРАНТІЯ СТОПА. Джерела рівня пробуються ЛАНЦЮГОМ: 1) OB на обраному TF → 2) ★ OB на TF фільтра сканера (той самий блок, що на графіку) → 3) Volumized OB у бік угоди → 4) відсоток від входу. Раніше джерело було ОДНЕ, і при невдачі авто-SL просто «чекав» — угода могла висіти БЕЗ стопа (кейс MNTUSDT: 15m-OB бичачий при SHORT, хоча ★1H-OB був ведмежий і годився). Вимкнути = стара поведінка «краще без стопа».">
+                    <input type="checkbox" id="ff-autosl-fallback" onchange="saveFuelFilterSettings()"> 🛡 Стоп ЗАВЖДИ: фолбек
+                    <input type="number" id="ff-autosl-fallback-pct" min="0.1" max="50" step="0.1" style="width:52px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> % від входу
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🧬 НОВА СИТУАЦІЯ ДЛЯ НОВОЇ УГОДИ. Наступна угода по монеті відкривається ЛИШЕ на сигналі, що з'явився ПІСЛЯ закриття попередньої. Запис, який стояв у черзі ще до тієї угоди, — це вже відпрацьована ситуація, і саме він давав «угоди з повітря» (з ♾ «Без терміну» запис живе вічно, тож ефект став постійним). Ручні кнопки ✋ правило не стосується. Вимкнення повертає стару поведінку.">
+                    <input type="checkbox" id="ff-require-new-situation" onchange="saveFuelFilterSettings()"> 🧬 Нова ситуація для нової угоди
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Максимальний вік сигналу на момент ВІДКРИТТЯ, хв. Сигнал, який пролежав у черзі довше, вже не вважається «ситуацією». 0 = без обмеження.">
+                    ⏳ Вік сигналу ≤ <input type="number" id="ff-open-max-signal-age" min="0" max="20160" step="5" style="width:58px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> хв (0=вимк)
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="✋ Після РУЧНОГО закриття не відкривати монету АВТОМАТИЧНО стільки хвилин. Черги при ручному закритті чистяться ЗАВЖДИ (незалежно від цього поля) — стоячий там запис відкрив би угоду наступним тіком. Ручні кнопки ✋ блокування не стосується. 0 = вимкнено.">
+                    ✋ Блок після ручного закриття <input type="number" id="ff-manual-close-lock" min="0" max="10080" step="5" style="width:58px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> хв (0=вимк)
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Стеля відстані стопа у % від входу. 0 = вимкнено. Блок може стояти дуже далеко — тоді ризик угоди стає непорівнянним з рештою (спостережено 1.4% проти 15.6% при однаковому розмірі позиції). Ненульове значення ПІДТЯГУЄ надто далекий рівень до стелі; сам вибір блоку не змінюється.">
+                    🎚 Стеля SL ≤ <input type="number" id="ff-autosl-max-pct" min="0" max="50" step="0.1" style="width:52px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> % (0=вимк)
+                </label>
+            </div>
+            </div>
+            </div>
+
             <!-- ❤️ FF base: intercepted coins waiting for ₿ START + fuel -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
                 <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="toggleQueuePanel('q1')" title="Клік — згорнути/розгорнути цю чергу"><span id="q1-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> ❤️ Черга на вхід <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети, перехоплені з ЛОНГ/ШОРТ; чекають ₿ START + МММ у напрямку</span></div>
@@ -2630,41 +2679,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Сигнал у Черзі-2 протерміновується через стільки годин (з записом у лог), якщо так і не відкрився. 0 = без TTL.">
                             TTL Черги-2, год
                             <input type="number" id="ff-q2-ttl" step="0.5" min="0" max="72" style="width:56px" onchange="saveFuelFilterSettings()">
-                        </label>
-                    </div>
-                    <!-- Row 5: auto Manual SL from the «Require OB Match» Order Block -->
-                    <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-top:8px">
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="У кожній ВІДКРИТІЙ угоді бот сам підставляє Manual SL із найближчого Order Block «Require OB Match» (той самий OB, що гейтить входи, TF = ob_filter_timeframe). LONG → нижня ціна OB − буфер%; SHORT → верхня ціна OB + буфер%. На протязі угоди SL постійно ПІДТЯГУЄТЬСЯ ближче до ціни, щойно з’являється кращий (ближчий) OB — і НІКОЛИ не послаблюється. Якщо ти вручну виставив Manual SL — авто-логіка його не чіпає. Діє на реальні й тестові угоди. Стоп спрацьовує через звичайну перевірку Manual SL.">
-                            <input type="checkbox" id="ff-q2-auto-ob-sl" onchange="saveFuelFilterSettings()"> Авто <b>Manual SL з OB</b> «Require OB Match» <span style="color:#8b93a7;font-size:0.68rem">(LONG: низ OB − буфер; SHORT: верх OB + буфер; встановлюється ОДИН раз, далі не рухається; спроби тривають лише доки не встановиться)</span>
-                        </label>
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1">
-                            Буфер, %
-                            <input type="number" id="ff-q2-auto-ob-sl-buf" step="0.05" min="0" max="10" style="width:64px" onchange="saveFuelFilterSettings()">
-                        </label>
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="OB-таймфрейм саме для авто-Manual-SL (окремий від фільтра сканера). 15хв — головний скан-TF, OB на ньому рахується завжди. Інші TF працюють, лише якщо сканер їх теж обробляє.">
-                            OB TF
-                            <select id="ff-q2-auto-ob-sl-tf" onchange="saveFuelFilterSettings()" style="font-size:0.72rem;padding:2px 4px">
-                                <option value="15m">15хв</option>
-                                <option value="30m">30хв</option>
-                                <option value="1h">1г</option>
-                                <option value="4h">4г</option>
-                            </select>
-                        </label>
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🛡 ГАРАНТІЯ СТОПА. Джерела рівня пробуються ЛАНЦЮГОМ: 1) OB на обраному TF → 2) ★ OB на TF фільтра сканера (той самий блок, що на графіку) → 3) Volumized OB у бік угоди → 4) відсоток від входу. Раніше джерело було ОДНЕ, і при невдачі авто-SL просто «чекав» — угода могла висіти БЕЗ стопа (кейс MNTUSDT: 15m-OB бичачий при SHORT, хоча ★1H-OB був ведмежий і годився). Вимкнути = стара поведінка «краще без стопа».">
-                            <input type="checkbox" id="ff-autosl-fallback" onchange="saveFuelFilterSettings()"> 🛡 Стоп ЗАВЖДИ: фолбек
-                            <input type="number" id="ff-autosl-fallback-pct" min="0.1" max="50" step="0.1" style="width:52px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> % від входу
-                        </label>
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🧬 НОВА СИТУАЦІЯ ДЛЯ НОВОЇ УГОДИ. Наступна угода по монеті відкривається ЛИШЕ на сигналі, що з'явився ПІСЛЯ закриття попередньої. Запис, який стояв у черзі ще до тієї угоди, — це вже відпрацьована ситуація, і саме він давав «угоди з повітря» (з ♾ «Без терміну» запис живе вічно, тож ефект став постійним). Ручні кнопки ✋ правило не стосується. Вимкнення повертає стару поведінку.">
-                            <input type="checkbox" id="ff-require-new-situation" onchange="saveFuelFilterSettings()"> 🧬 Нова ситуація для нової угоди
-                        </label>
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Максимальний вік сигналу на момент ВІДКРИТТЯ, хв. Сигнал, який пролежав у черзі довше, вже не вважається «ситуацією». 0 = без обмеження.">
-                            ⏳ Вік сигналу ≤ <input type="number" id="ff-open-max-signal-age" min="0" max="20160" step="5" style="width:58px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> хв (0=вимк)
-                        </label>
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="✋ Після РУЧНОГО закриття не відкривати монету АВТОМАТИЧНО стільки хвилин. Черги при ручному закритті чистяться ЗАВЖДИ (незалежно від цього поля) — стоячий там запис відкрив би угоду наступним тіком. Ручні кнопки ✋ блокування не стосується. 0 = вимкнено.">
-                            ✋ Блок після ручного закриття <input type="number" id="ff-manual-close-lock" min="0" max="10080" step="5" style="width:58px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> хв (0=вимк)
-                        </label>
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Стеля відстані стопа у % від входу. 0 = вимкнено. Блок може стояти дуже далеко — тоді ризик угоди стає непорівнянним з рештою (спостережено 1.4% проти 15.6% при однаковому розмірі позиції). Ненульове значення ПІДТЯГУЄ надто далекий рівень до стелі; сам вибір блоку не змінюється.">
-                            🎚 Стеля SL ≤ <input type="number" id="ff-autosl-max-pct" min="0" max="50" step="0.1" style="width:52px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> % (0=вимк)
                         </label>
                     </div>
                 </div>
@@ -3441,13 +3455,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="tm-pilot-tp-gap" min="0" max="20" step="0.05"
                                    style="width:56px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"
                                    onchange="saveTMSettings()">
-                            <span style="margin-left:4px;font-size:0.78rem;color:#888">% · TP-2 ≥</span>
-                            <input type="number" id="tm-pilot-tp-min-r" min="0" max="10" step="0.1"
-                                   style="width:52px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"
-                                   onchange="saveTMSettings()">
-                            <span style="margin-left:4px;font-size:0.78rem;color:#888">R
-                                <span class="tm-help" title="Мінімальна кратність ризику для TP-2 (повного виходу). R = відстань вхід→ціль поділена на відстань вхід→стоп. R менше 1 означає, що ціль ближча за стоп: угода ризикує більшим заради меншого і мусить вигравати понад 70% разів, щоб не втрачати гроші. Такий рівень автопілот НЕ виставляє і пише в лог причину. Щойно стоп підтягнеться (ризик зменшиться), R зросте і рівень зʼявиться сам. 0 = вимкнути перевірку.">?</span>
-                            </span>
+                            <span style="margin-left:4px;font-size:0.78rem;color:#888">%</span>
                         </div>
                         <div class="tm-row">
                             <label>
@@ -4482,7 +4490,7 @@ function _qCollapsed(qid) {
 }
 // Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
 // 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
-const _PANEL_IDS = ['q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
+const _PANEL_IDS = ['autosl', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
 (() => {
     _PANEL_IDS.forEach(pid => {
         try {
@@ -8278,7 +8286,6 @@ async function loadTMSettings() {
         document.getElementById('tm-pilot-autofill-tp').checked = !!s.pilot_autofill_tp;
         _setV('tm-pilot-tp1-pct', s.pilot_tp1_close_pct != null ? s.pilot_tp1_close_pct : 50, 50);
         _setV('tm-pilot-tp-gap', s.pilot_tp_min_gap_pct != null ? s.pilot_tp_min_gap_pct : 0.4, 0.4);
-        _setV('tm-pilot-tp-min-r', s.pilot_tp_min_r != null ? s.pilot_tp_min_r : 1.5, 1.5);
         _setV('tm-pilot-poc-hours', s.pilot_poc_hours != null ? s.pilot_poc_hours : 72, 72);
         // Validate TF before assigning to <select> — fall back to 15m for
         // unknown values so the dropdown doesn't end up in a blank state.
@@ -8676,11 +8683,6 @@ async function saveTMSettings() {
             pilot_autofill_tp: document.getElementById('tm-pilot-autofill-tp').checked,
             pilot_tp1_close_pct: parseInt(document.getElementById('tm-pilot-tp1-pct').value) || 50,
             pilot_tp_min_gap_pct: parseFloat(document.getElementById('tm-pilot-tp-gap').value) || 0.4,
-            // 0 = свідомо вимкнути перевірку R, тому НЕ через `|| 1.5`.
-            pilot_tp_min_r: (function () {
-                const v = parseFloat(document.getElementById('tm-pilot-tp-min-r').value);
-                return isNaN(v) ? 1.5 : v;
-            })(),
             pilot_poc_hours: parseInt(document.getElementById('tm-pilot-poc-hours').value) || 72,
             opposite_ob_exit_timeframe: document.getElementById('tm-opposite-ob-exit-tf').value || '15m',
             use_htf_flip: document.getElementById('tm-use-htf-flip').checked,
