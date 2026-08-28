@@ -3679,7 +3679,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th>Qty</th>
-                        <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span></span></th>
+                        <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
                         <th title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
@@ -3746,7 +3746,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span></span></th>
+                        <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
                         <th title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
@@ -13364,7 +13364,10 @@ function manualSlTpCellsHTML(p, isShadow) {
     const sl = (p.manual_sl !== undefined && p.manual_sl !== null) ? roundSlTp(p.manual_sl) : '';
     const tp = (p.manual_tp !== undefined && p.manual_tp !== null) ? roundSlTp(p.manual_tp) : '';
     const tp1 = (p.manual_tp1 !== undefined && p.manual_tp1 !== null) ? roundSlTp(p.manual_tp1) : '';
-    const slSk = _sltpSrcStyle(sl, p.manual_sl_src, p.manual_sl_by, 'SL');
+    // Беззбиток після TP-1 перекриває звичайну позначку «бот» — стан угоди
+    // важливіший за походження рівня.
+    const slSrc = p.sl_breakeven ? 'be' : p.manual_sl_src;
+    const slSk = _sltpSrcStyle(sl, slSrc, p.manual_sl_by, 'SL');
     const tpSk = _sltpSrcStyle(tp, p.manual_tp_src, p.manual_tp_by, 'TP-2');
     const t1Sk = _sltpSrcStyle(tp1, p.manual_tp1_src, p.manual_tp1_by, 'TP-1');
     // ✅ TP-1 уже спрацював — рівень лишається видимим (де саме зафіксували),
@@ -13422,6 +13425,11 @@ const _SLTP_SRC_STYLE = {
             t: '🤖 Виставлено ботом автоматично' },
     user: { c: '#fbbf24', b: 'rgba(251,191,36,0.55)', bg: 'rgba(251,191,36,0.10)',
             t: '✏️ Змінено вручну' },
+    // ⚖️ Стоп переведено в беззбиток після TP-1: решта позиції вже не ризикує.
+    // Окремий (зелений) колір, бо це не «просто автоматичний рівень», а зміна
+    // СТАНУ УГОДИ — її має бути видно з першого погляду на таблицю.
+    be:   { c: '#4ade80', b: 'rgba(74,222,128,0.55)', bg: 'rgba(74,222,128,0.10)',
+            t: '⚖️ Беззбиток після TP-1 — угода без ризику' },
 };
 function _sltpSrcStyle(val, src, by, what) {
     const base = 'width:90px;padding:3px 5px;border-radius:3px;font-size:0.75rem;font-family:monospace';

@@ -412,6 +412,95 @@ def test_q4_source_unavailable_falls_back_and_says_so():
     print('✓ обране джерело недоступне → фолбек, і в лозі видно чому')
 
 
+# ═════════ ⚖️ БЕЗЗБИТОК ПІСЛЯ TP-1 ═════════════════════════════════════════
+def _tm_be(cur_sl=None, accept=True, buf=0.12):
+    """TM з підміненим `update_manual_sl_tp` — перевіряємо САМЕ рішення."""
+    o = _tm()
+    o._settings = {'be_commission_buffer_pct': buf}
+    o.calls = []
+
+    def _upd(sym, manual_sl=None, is_shadow=False, origin='user',
+             origin_label=None, **kw):
+        o.calls.append((manual_sl, origin, origin_label))
+        return ({'ok': True} if accept
+                else {'ok': False, 'reason': 'wrong side', 'validation': True})
+    o.update_manual_sl_tp = _upd
+    pos = {'side': 'LONG', 'entry_price': 100.0}
+    if cur_sl:
+        pos['manual_sl'] = cur_sl
+    return o, pos
+
+
+def test_breakeven_level_covers_round_trip_fees():
+    """Стоп РІВНО на вході — ще не беззбиток: комісії зроблять із нього мінус."""
+    _check(_near(tmmod.breakeven_with_fees('LONG', 100.0, 0.12), 100.12),
+           'LONG → трохи ВИЩЕ входу')
+    _check(_near(tmmod.breakeven_with_fees('SHORT', 100.0, 0.12), 99.88),
+           'SHORT → трохи НИЖЧЕ входу (дзеркально)')
+    _check(_near(tmmod.breakeven_with_fees('LONG', 100.0, 0), 100.0),
+           'буфер 0 = рівно вхід (стара поведінка)')
+    for bad in (('LONG', 0, 0.12), ('LONG', None, 0.12), ('X', 100.0, 0.12),
+                ('LONG', 'abc', 0.12)):
+        _check(tmmod.breakeven_with_fees(*bad) is None, f'сміття {bad} → None')
+    print('✓ рівень беззбитку = вхід + запас на комісії (обидва боки)')
+
+
+def test_tp1_moves_stop_to_breakeven():
+    o, pos = _tm_be()
+    _LOG.clear()
+    o._tp1_move_to_breakeven('BTCUSDT', pos, 103.0, False)
+    _check(len(o.calls) == 1 and _near(o.calls[0][0], 100.12),
+           f'SL мав переїхати в беззбиток: {o.calls}')
+    _check(o.calls[0][1] == 'auto' and 'Беззбиток після TP-1' in (o.calls[0][2] or ''),
+           f'рівень має бути позначений як БОТІВ і підписаний: {o.calls}')
+    _check(pos.get('sl_breakeven') is True,
+           'позиція має нести позначку — інакше поле не позеленіє')
+    _check('БЕЗЗБИТОК' in _text(), f'подія мусить бути в лозі: {_text()}')
+    print('✓ TP-1 → SL у беззбиток, позначка й запис у лозі є')
+
+
+def test_breakeven_never_loosens_a_better_stop():
+    """🔒 Головне правило: «захист» не має відсувати стоп НАЗАД. Якщо автопілот
+    уже підтягнув стоп вище за беззбиток — лишаємо кращий рівень."""
+    o, pos = _tm_be(cur_sl=101.5)          # уже краще за 100.12
+    _LOG.clear()
+    o._tp1_move_to_breakeven('BTCUSDT', pos, 103.0, False)
+    _check(o.calls == [], f'кращий стоп чіпати не можна: {o.calls}')
+    _check(pos.get('manual_sl') == 101.5, 'рівень лишився недоторканим')
+    _check('уже кращий' in _text(), f'причина має бути в лозі: {_text()}')
+    print('✓ беззбиток НЕ послаблює вже кращий стоп')
+
+
+def test_breakeven_improves_a_worse_stop():
+    o, pos = _tm_be(cur_sl=97.0)           # гірший за беззбиток
+    o._tp1_move_to_breakeven('BTCUSDT', pos, 103.0, False)
+    _check(len(o.calls) == 1 and _near(o.calls[0][0], 100.12),
+           f'гірший стоп мусить підтягнутись: {o.calls}')
+    print('✓ гірший стоп підтягується до беззбитку')
+
+
+def test_rejected_breakeven_is_reported_not_faked():
+    """Ціна встигла повернутись до входу → TM відхилить рівень. Лог мусить
+    сказати правду (у проєкті вже був дефект «лог каже, що поставив»)."""
+    o, pos = _tm_be(accept=False)
+    _LOG.clear()
+    o._tp1_move_to_breakeven('BTCUSDT', pos, 100.05, False)
+    _check(pos.get('sl_breakeven') is not True,
+           'відхилений рівень НЕ має лишати зелену позначку')
+    _check('НЕ прийнято' in _text(), f'відмову треба показати: {_text()}')
+    print('✓ відхилений беззбиток не вдає, що спрацював')
+
+
+def test_tp1_calls_breakeven():
+    """Замок звʼязку: частковий вихід і переведення в БЗ — одна дія."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index('def _check_manual_tp1')
+    j = src.index('def _tp1_move_to_breakeven')
+    _check('self._tp1_move_to_breakeven(' in src[i:j],
+           'TP-1 мусить кликати переведення в беззбиток')
+    print('✓ TP-1 і беззбиток звʼязані в коді')
+
+
 if __name__ == '__main__':
     test_mnt_case_star_1h_block_is_used_instead_of_waiting()
     test_primary_tf_still_wins_when_valid()
@@ -436,4 +525,10 @@ if __name__ == '__main__':
     test_q4_trade_with_15m_choice_uses_volumized_15m()
     test_non_q4_trade_keeps_its_own_tf()
     test_q4_source_unavailable_falls_back_and_says_so()
+    test_breakeven_level_covers_round_trip_fees()
+    test_tp1_moves_stop_to_breakeven()
+    test_breakeven_never_loosens_a_better_stop()
+    test_breakeven_improves_a_worse_stop()
+    test_rejected_breakeven_is_reported_not_faked()
+    test_tp1_calls_breakeven()
     print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')

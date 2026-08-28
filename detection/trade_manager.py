@@ -79,6 +79,25 @@ def _lite_trade(d: Dict) -> Dict:
 # At each monitor tick we read the setting and compute N_TICKS dynamically,
 # so users can change it without restart. Min 5s (rounded to 10s), Max 300s.
 
+def breakeven_with_fees(side, entry, buf_pct):
+    """⚖️ Рівень БЕЗЗБИТКУ з запасом на біржові комісії.
+
+    Стоп РІВНО на вході — це ще не беззбиток: раунд-трип комісії (на Bybit
+    перпи ≈0.06% відкриття + 0.06% закриття) зробили б із нього маленький
+    мінус. Тому рівень зсувається за вхід на `buf_pct`% У БІК ПРИБУТКУ:
+    LONG → трохи вище входу, SHORT → трохи нижче.
+
+    Повертає None, коли рахувати нема з чого (не вигадуємо рівень).
+    """
+    try:
+        e, b = float(entry or 0.0), max(0.0, float(buf_pct or 0.0))
+    except (TypeError, ValueError):
+        return None
+    if e <= 0 or side not in ('LONG', 'SHORT'):
+        return None
+    return e * (1.0 + b / 100.0) if side == 'LONG' else e * (1.0 - b / 100.0)
+
+
 def clamp_sl_distance(side, entry, sl, max_pct):
     """🛡 Стеля відстані стопа від ВХОДУ — ЄДИНЕ джерело для ВСІХ авто-SL.
 
@@ -1637,8 +1656,75 @@ class TradeManager:
                          side=side, source='PILOT')
         except Exception:
             pass
+        self._tp1_move_to_breakeven(symbol, pos, current_price, is_shadow)
         self._persist_shadow_positions() if is_shadow else self._persist_positions()
         return True
+
+    def _tp1_move_to_breakeven(self, symbol: str, pos: Dict,
+                               current_price: float, is_shadow: bool) -> None:
+        """⚖️ Після TP-1 угода має стати БЕЗРИЗИКОВОЮ.
+
+        Частину прибутку вже забрано, тож решту немає сенсу тримати під ризиком
+        втрати: Manual SL переїжджає на вхід + запас на КОМІСІЇ
+        (`be_commission_buffer_pct`, деф. 0.12% ≈ раунд-трип Bybit).
+
+        Три правила:
+          1. **НІКОЛИ не послаблюємо стоп.** Якщо чинний рівень уже кращий за
+             беззбиток (автопілот встиг підтягнути), лишаємо його — інакше
+             «захист» відсунув би стоп назад під збиток. Це стосується і
+             рівня, введеного ОПЕРАТОРОМ: його теж лише покращуємо.
+          2. Рівень мусить бути з безпечного боку від поточної ціни — це
+             перевіряє сам `update_manual_sl_tp`, і його ВІДПОВІДЬ ми читаємо
+             (у проєкті вже був дефект «лог каже, що поставив, а стопа немає»).
+          3. Позначка `sl_breakeven` — щоб поле в таблиці стало ЗЕЛЕНИМ: угода
+             більше не ризикує, і це має бути видно з першого погляду.
+        """
+        try:
+            from detection import trade_pilot
+        except Exception:
+            return
+        side = pos.get('side')
+        s = self._settings
+        try:
+            buf = float(s.get('be_commission_buffer_pct', 0.12) or 0.0)
+        except (TypeError, ValueError):
+            buf = 0.12
+        be = breakeven_with_fees(side, pos.get('entry_price'), buf)
+        if be is None:
+            return
+        be = self._round_sltp_value(be)
+
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            def log_activity(*_a, **_k):
+                pass
+
+        cur = pos.get('manual_sl')
+        if cur and not trade_pilot.better_stop(side, be, cur):
+            log_activity(symbol, 'sltp',
+                         f'⚖️ TP-1: беззбиток {self._fmt_price(be)} НЕ потрібен — '
+                         f'чинний SL {self._fmt_price(cur)} уже кращий',
+                         side=side, source='PILOT')
+            return
+
+        r = self.update_manual_sl_tp(
+            symbol, manual_sl=be, is_shadow=is_shadow,
+            origin=self.SRC_AUTO,
+            origin_label=f'Беззбиток після TP-1 (+{buf:g}% комісії)') or {}
+        if r.get('ok'):
+            pos['sl_breakeven'] = True
+            log_activity(symbol, 'sltp',
+                         f'⚖️ TP-1 → БЕЗЗБИТОК: SL {self._fmt_price(be)} '
+                         f'(вхід {self._fmt_price(pos.get("entry_price"))} '
+                         f'+{buf:g}% на комісії) — решта позиції без ризику',
+                         side=side, source='PILOT')
+        else:
+            log_activity(symbol, 'skipped',
+                         f'⚖️ TP-1: беззбиток {self._fmt_price(be)} НЕ прийнято '
+                         f'({r.get("reason", "—")}) — ціна вже повернулась '
+                         f'до входу, стоп лишився де був',
+                         side=side, source='PILOT')
 
     def _check_manual_sl_tp(self, pos: Dict,
                               current_price: float) -> Optional[str]:
@@ -6350,6 +6436,11 @@ class TradeManager:
                 pos.pop('manual_sl', None)
                 pos.pop('manual_sl_src', None)
                 pos.pop('manual_sl_by', None)
+            # ⚖️ Позначка «стоп у беззбитку» належить рівню, а не угоді: щойно
+            # ОПЕРАТОР вписав/зняв свій SL, зелений колір більше не чесний.
+            # Автоматичний трейл позначку зберігає — угода й далі без ризику.
+            if sl_op[0] in ('set', 'clear') and _src == self.SRC_USER:
+                pos.pop('sl_breakeven', None)
 
             if tp1_op[0] == 'set':
                 _t1 = self._round_sltp_value(tp1_op[1])
