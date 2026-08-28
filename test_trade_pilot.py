@@ -43,8 +43,8 @@ RUNWAY_UP = {'dir': 'LONG',
 def test_targets_are_real_chart_objects_ahead_only():
     t = tp.collect_targets('LONG', 100.0, swing=SWING_LONG, runway=RUNWAY_UP, poc=105.0)
     kinds = [x['kind'] for x in t]
-    _check(set(kinds) == {'liq_next', 'liq_main', 'swing', 'poc'},
-           f'мають зібратись усі 4 типи обʼєктів: {kinds}')
+    _check(set(kinds) == {'liq_next', 'liq_main', 'swing', 'poc', 'eq'},
+           f'мають зібратись усі типи обʼєктів (з рівновагою діапазону): {kinds}')
     _check(all(x['price'] > 100.0 for x in t),
            'для LONG беруться ЛИШЕ рівні ВИЩЕ ціни')
     _check(t == sorted(t, key=lambda x: x['dist_pct']),
@@ -298,12 +298,13 @@ def test_tp_levels_are_strictly_ordered():
 
 
 def test_no_intermediate_target_means_no_tp1():
-    """Проміжної цілі немає → TP-1 НЕ вигадуємо, працює лише TP-2."""
+    """Обʼєкта графіка немає І похідний рівень вимкнено → TP-1 не вигадуємо."""
     only_far = [{'price': 110.0, 'kind': 'swing', 'label': 'Weak High'}]
-    r = tp.plan_targets('LONG', 100.0, 100.0, only_far)
+    r = tp.plan_targets('LONG', 100.0, 100.0, only_far,
+                        cfg={'tp1_fallback_path_pct': 0})
     _check(r['tp2'] and r['tp1'] is None, f'має бути лише TP-2: {r}')
-    _check(any('проміжної цілі немає' in x for x in r['reasons']), f"{r['reasons']}")
-    print('✓ немає проміжної цілі → лише TP-2, нічого не вигадуємо')
+    _check(any('проміжного рівня немає' in x for x in r['reasons']), f"{r['reasons']}")
+    print('✓ немає обʼєкта і фолбек вимкнено → лише TP-2')
 
 
 def test_levels_too_close_are_not_split():
@@ -364,6 +365,92 @@ def test_tp_defaults_are_off():
 
 
 # ═════════ 📐 R: ціль мусить окупати власний стоп ═══════════════════════════
+# ═════════ 🎯 TP-1: інвентар, вікно шляху, сила обʼєкта ════════════════════
+def test_value_area_and_equilibrium_are_targets():
+    """VAH/VAL приходять тим самим `compute_poc`, EQ — з того самого діапазону.
+    Обидва додано саме заради TP-1: на проді 8 із 14 позицій не мали ЖОДНОГО
+    обʼєкта між входом і ціллю."""
+    t = tp.collect_targets('LONG', 100.0, swing=SWING_LONG, runway=None,
+                           poc=None, vah=104.0, val=95.0)
+    kinds = {x['kind'] for x in t}
+    _check('va' in kinds, f'VAH попереду має стати ціллю: {t}')
+    _check('eq' in kinds, f'EQ (103.0 = середина 96/110) має бути в списку: {t}')
+    eq = [x for x in t if x['kind'] == 'eq'][0]
+    _check(abs(eq['price'] - 103.0) < 1e-9, f'EQ = (110+96)/2: {eq}')
+    _check(not any(x['price'] < 100.0 for x in t), 'VAL позаду — не ціль для LONG')
+    print('✓ інвентар цілей розширено: VAH/VAL + рівновага діапазону')
+
+
+def test_tp1_sits_in_a_meaningful_part_of_the_path():
+    """🐞 Кейс FIL зі скріна: TP-1 стояв на 1.5% при цілі 13.4% — половина
+    позиції закривалась через 11% шляху. Тепер рівень мусить бути у вікні
+    30-75% шляху до цілі."""
+    far = [{'price': 101.0, 'kind': 'poc', 'label': 'POC'},          # 8% шляху
+           {'price': 106.0, 'kind': 'liq_next', 'label': 'пул'},      # 48% шляху
+           {'price': 112.5, 'kind': 'swing', 'label': 'Weak High'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, far)
+    _check(r['tp2']['price'] == 112.5, f'TP-2 = найдальша ціль: {r["tp2"]}')
+    _check(r['tp1']['price'] == 106.0,
+           f'TP-1 мусить бути в середині шляху, а не на 8%: {r["tp1"]}')
+    _check(40 <= r['tp1']['path_pct'] <= 50, f'частка шляху: {r["tp1"]}')
+    print(f"✓ TP-1 на {r['tp1']['path_pct']:.0f}% шляху (а не на найближчому обʼєкті)")
+
+
+def test_stronger_object_wins_over_a_nearer_one():
+    """У вікні кілька кандидатів → беремо НАЙЗМІСТОВНІШИЙ (пул ліквідності
+    сильніший за рівновагу діапазону), а не просто найближчий."""
+    cands = [{'price': 104.0, 'kind': 'eq', 'label': 'рівновага'},
+             {'price': 106.0, 'kind': 'liq_next', 'label': 'пул'},
+             {'price': 112.5, 'kind': 'swing', 'label': 'Weak High'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, cands)
+    _check(r['tp1']['kind'] == 'liq_next', f'пул мусить виграти: {r["tp1"]}')
+    print('✓ серед кандидатів виграє сильніший обʼєкт, не найближчий')
+
+
+def test_tp1_falls_back_to_a_share_of_the_path():
+    """🐞 ГОЛОВНЕ: 8 із 14 позицій не мали проміжного обʼєкта і лишались без
+    TP-1. Тепер рівень ПОХІДНИЙ від власної цілі автопілота — і підписаний
+    саме так, щоб не видавати його за обʼєкт графіка."""
+    only_far = [{'price': 110.0, 'kind': 'swing', 'label': 'Weak High'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, only_far)
+    _check(r['tp1'] is not None, f'TP-1 мусить зʼявитись: {r}')
+    _check(abs(r['tp1']['price'] - 105.0) < 1e-9,
+           f'50% шляху від 100 до 110 = 105: {r["tp1"]}')
+    _check(r['tp1']['kind'] == 'path', f'тип має бути «похідний»: {r["tp1"]}')
+    _check(any('похідний' in x for x in r['reasons']), f'{r["reasons"]}')
+    print('✓ немає обʼєкта → TP-1 = частка шляху до цілі (чесно підписана)')
+
+
+def test_fallback_mirrors_for_short():
+    only_far = [{'price': 90.0, 'kind': 'swing', 'label': 'Weak Low'}]
+    r = tp.plan_targets('SHORT', 100.0, 100.0, only_far)
+    _check(abs(r['tp1']['price'] - 95.0) < 1e-9,
+           f'для SHORT 50% шляху = 95: {r["tp1"]}')
+    print('✓ похідний TP-1 дзеркальний для SHORT')
+
+
+def test_fallback_can_be_disabled():
+    only_far = [{'price': 110.0, 'kind': 'swing', 'label': 'Weak High'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, only_far,
+                        cfg={'tp1_fallback_path_pct': 0})
+    _check(r['tp1'] is None and r['tp2'] is not None,
+           f'0 = не вигадувати рівень, лишити лише TP-2: {r}')
+    print('✓ похідний рівень можна вимкнути (0)')
+
+
+def test_tp1_never_passes_tp2():
+    """Замок: хоч би що сталось із вікном, TP-1 лишається СТРОГО перед TP-2."""
+    for cfg in ({}, {'tp1_max_path_pct': 200}, {'tp1_fallback_path_pct': 300}):
+        r = tp.plan_targets('LONG', 100.0, 100.0,
+                            [{'price': 108.0, 'kind': 'poc', 'label': 'POC'},
+                             {'price': 110.0, 'kind': 'swing', 'label': 'HH'}],
+                            cfg=cfg)
+        if r['tp1']:
+            _check(100.0 < r['tp1']['price'] < r['tp2']['price'],
+                   f'порядок порушено при cfg={cfg}: {r}')
+    print('✓ TP-1 ніколи не перестрибує TP-2')
+
+
 def test_low_r_target_is_still_set():
     """⚠️ ЗАМОК ВІД ПОВТОРУ. Була спроба відсікати цілі, ближчі за стоп
     (R < порогу) — користувач це СКАСУВАВ: «не потрібно відсікати ніякі угоди».
@@ -509,6 +596,13 @@ if __name__ == '__main__':
     test_r_is_absent_without_a_stop()
     test_plan_targets_safe_on_garbage()
     test_tp_defaults_are_off()
+    test_value_area_and_equilibrium_are_targets()
+    test_tp1_sits_in_a_meaningful_part_of_the_path()
+    test_stronger_object_wins_over_a_nearer_one()
+    test_tp1_falls_back_to_a_share_of_the_path()
+    test_fallback_mirrors_for_short()
+    test_fallback_can_be_disabled()
+    test_tp1_never_passes_tp2()
     test_low_r_target_is_still_set()
     test_r_is_reported_for_a_good_setup()
     test_levels_do_not_depend_on_the_stop()

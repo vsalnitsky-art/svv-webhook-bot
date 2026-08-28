@@ -501,6 +501,74 @@ def test_tp1_calls_breakeven():
     print('✓ TP-1 і беззбиток звʼязані в коді')
 
 
+# ═════════ 📨 TELEGRAM: TP-1 / TP-2 не бувають порожні ══════════════════════
+def _tm_msg(**st):
+    o = _tm()
+    o._settings = {'pilot_enabled': True, 'pilot_autofill_tp': True,
+                   'pilot_tp1_close_pct': 50}
+    o._settings.update(st)
+    o.sent = []
+    o._notify = lambda m, is_test=False, category=None: o.sent.append(m)
+    return o
+
+
+def test_tg_open_carries_both_tp_levels():
+    o = _tm_msg()
+    pos = {'symbol': 'FILUSDT', 'side': 'SHORT', 'entry_price': 0.70370,
+           'manual_sl': 0.73032, 'manual_tp1': 0.69313, 'manual_tp': 0.6096}
+    o._notify_open(pos)
+    m = o.sent[0]
+    _check('TP-1' in m and 'TP-2' in m, f'обидва рівні мають бути в TG: {m}')
+    _check('0.69313' in m.replace(',', '.') and '0.6096' in m.replace(',', '.'),
+           f'у повідомленні мусять бути САМІ ЧИСЛА: {m}')
+    _check('(50%)' in m, f'частка часткової фіксації має бути видна: {m}')
+    print('✓ TG-відкриття несе TP-1 і TP-2 з числами')
+
+
+def test_tg_never_shows_an_empty_tp():
+    """⚠️ Рівнів на момент відкриття ЩЕ немає (автопілот рахує з монітора).
+    Порожнього місця в повідомленні бути не повинно — має стояти чесний
+    статус, а числа прилітають окремим повідомленням, коли реально стануть."""
+    o = _tm_msg()
+    pos = {'symbol': 'FILUSDT', 'side': 'SHORT', 'entry_price': 0.70370,
+           'manual_sl': 0.73032}
+    o._notify_open(pos)
+    m = o.sent[0]
+    _check('рахується' in m, f'має бути статус замість порожнечі: {m}')
+    _check('<b></b>' not in m and 'null' not in m,
+           f'ані порожнього тега, ані «null»: {m}')
+    print('✓ рівнів ще немає → «⏳ рахується», а не порожньо')
+
+
+def test_tg_shows_dash_when_pilot_is_off():
+    o = _tm_msg(pilot_enabled=False, pilot_autofill_tp=False)
+    pos = {'symbol': 'X', 'side': 'LONG', 'entry_price': 100.0}
+    o._notify_open(pos)
+    _check('—' in o.sent[0] and 'рахується' not in o.sent[0],
+           f'автопілот вимкнено → чесний прочерк, а не обіцянка: {o.sent[0]}')
+    print('✓ автопілот вимкнено → прочерк, без хибної обіцянки')
+
+
+def test_levels_message_reports_distance_from_entry():
+    o = _tm_msg()
+    pos = {'side': 'SHORT', 'entry_price': 100.0,
+           'manual_tp1': 98.0, 'manual_tp': 95.0}
+    o._notify_pilot_levels('XUSDT', pos, False)
+    m = o.sent[0]
+    _check('TP-1 (+2.00%)' in m and 'TP-2 (+5.00%)' in m,
+           f'відстань кожного рівня від входу має бути видна: {m}')
+    print('✓ повідомлення про рівні показує % від входу')
+
+
+def test_levels_message_is_sent_when_pilot_fills_them():
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index('def _pilot_apply_tp')
+    j = src.index('def get_pilot_state')
+    _check('_notify_pilot_levels(symbol, pos, is_shadow)' in src[i:j],
+           'після виставлення рівнів має піти повідомлення')
+    print('✓ виставлення рівнів → повідомлення в Telegram')
+
+
 if __name__ == '__main__':
     test_mnt_case_star_1h_block_is_used_instead_of_waiting()
     test_primary_tf_still_wins_when_valid()
@@ -531,4 +599,9 @@ if __name__ == '__main__':
     test_breakeven_improves_a_worse_stop()
     test_rejected_breakeven_is_reported_not_faked()
     test_tp1_calls_breakeven()
+    test_tg_open_carries_both_tp_levels()
+    test_tg_never_shows_an_empty_tp()
+    test_tg_shows_dash_when_pilot_is_off()
+    test_levels_message_reports_distance_from_entry()
+    test_levels_message_is_sent_when_pilot_fills_them()
     print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')

@@ -42,7 +42,22 @@ DEFAULTS = {
     # безглуздих ситуацій: TP впритул до входу (комісія зʼїсть частковий вихід)
     # і два TP на тому самому місці (поділ без сенсу).
     'tp_min_gap_pct': 0.40,
+    # 🎯 ВІКНО ДЛЯ TP-1, у % ШЛЯХУ від входу до TP-2 (а не у % ціни!).
+    # Заміряно на проді: TP-1 ставився на НАЙБЛИЖЧОМУ обʼєкті, і на FIL це
+    # означало закрити половину позиції через 1.5% руху при цілі 13.4% —
+    # тобто 11% шляху. Половину позиції треба знімати там, де вже забрано
+    # відчутну частину руху, але ще далеко до кінця.
+    'tp1_min_path_pct': 30.0,
+    'tp1_max_path_pct': 75.0,
+    # Якщо у вікні НЕМАЄ жодного обʼєкта графіка — ставимо TP-1 на цій частці
+    # шляху до цілі. Це не «рівень із повітря»: він ПОХІДНИЙ від власної цілі
+    # автопілота, і в підписі так і сказано. 0 = не ставити (лишити порожнім).
+    'tp1_fallback_path_pct': 50.0,
 }
+
+# Сила обʼєкта як місця ЙМОВІРНОЇ РЕАКЦІЇ ціни — щоб серед кількох придатних
+# кандидатів TP-1 брати НАЙЗМІСТОВНІШИЙ, а не просто найближчий.
+_TP1_WEIGHT = {'liq_next': 5, 'liq_main': 4, 'poc': 3, 'va': 3, 'eq': 2, 'swing': 1}
 
 
 def _f(v):
@@ -60,11 +75,22 @@ def _ahead(side: str, price: float, level: float) -> bool:
 
 def collect_targets(side: str, price: float, *, swing: Optional[Dict] = None,
                     runway: Optional[Dict] = None, poc=None,
+                    vah=None, val=None,
                     cfg: Optional[Dict] = None) -> List[Dict]:
     """Усі ЗМІСТОВНІ об'єкти графіка ПОПЕРЕДУ руху, від найближчого до дальшого.
 
     Кожен елемент: {price, dist_pct, kind, label}. `kind` — щоб рішення можна
-    було пояснити людською мовою, а не «бот вирішив»."""
+    було пояснити людською мовою, а не «бот вирішив».
+
+    ⚠️ ІНВЕНТАР НАВМИСНО ШИРОКИЙ — це головне для TP-1. Заміряно на проді:
+    8 із 14 позицій не мали ЖОДНОГО обʼєкта між входом і ціллю, тож частковій
+    фіксації просто не було де стати. Додано два джерела, які НЕ коштують
+    жодного зайвого запиту:
+      • **VAH/VAL** — межі зони вартості; `compute_poc` уже їх повертає разом
+        із POC, ми їх просто не брали;
+      • **EQ (рівновага)** — середина дилінг-діапазону (`(high+low)/2`). Це
+        канонічний SMC-рівень, на якому PD-зона перемикається з премії на
+        дисконт, і найчастіша точка реакції всередині діапазону."""
     c = {**DEFAULTS, **(cfg or {})}
     price = _f(price) or 0.0
     if side not in ('LONG', 'SHORT') or price <= 0:
@@ -98,6 +124,16 @@ def collect_targets(side: str, price: float, *, swing: Optional[Dict] = None,
 
     # 3) POC — ціна тяжіє до нього; попереду руху він і магніт, і перепона.
     _add(poc, 'poc', 'POC (максимум обсягу)')
+
+    # 4) Межі зони вартості — приходять із того самого `compute_poc`.
+    _add(vah, 'va', 'VAH (верх зони вартості)')
+    _add(val, 'va', 'VAL (низ зони вартості)')
+
+    # 5) EQ — рівновага дилінг-діапазону (50%). Саме тут PD-зона перемикається
+    #    між премією і дисконтом, тож рух через неї регулярно сповільнюється.
+    _hi_p, _lo_p = _f((sw.get('high') or {}).get('price')), _f((sw.get('low') or {}).get('price'))
+    if _hi_p and _lo_p and _hi_p > _lo_p:
+        _add((_hi_p + _lo_p) / 2.0, 'eq', 'рівновага діапазону (50%)')
 
     out.sort(key=lambda x: x['dist_pct'])
     return out
@@ -261,33 +297,71 @@ def plan_targets(side: str, entry, price, targets: List[Dict],
                    f"(+{tp2['from_entry_pct']:.2f}% від входу"
                    + (f", {tp2['r']}R)" if tp2['r'] else ')'))
 
-    # TP-1 — найближчий придатний обʼєкт МІЖ входом і TP-2.
-    tp1 = None
+    # ── TP-1 ──────────────────────────────────────────────────────────────
+    # Не «найближчий обʼєкт», а НАЙЗМІСТОВНІШИЙ у розумній частині шляху.
+    span = tp2['from_entry_pct']
+    lo_p = max(0.0, float(c.get('tp1_min_path_pct', DEFAULTS['tp1_min_path_pct'])))
+    hi_p = max(lo_p, float(c.get('tp1_max_path_pct', DEFAULTS['tp1_max_path_pct'])))
+    mid_p = (lo_p + hi_p) / 2.0
+
+    cands = []
     for t in (targets or []):
         lvl = _f(t.get('price'))
         if lvl is None or not _ahead(side, e, lvl):
             continue
         cand = _pack(t)
         if cand['from_entry_pct'] < gap:
-            continue                                  # надто близько до входу
-        # строго МІЖ входом і TP-2, і не впритул до TP-2
+            continue                                   # надто близько до входу
         if not _ahead(side, lvl, tp2['price']):
-            continue
+            continue                                   # мусить бути ДО TP-2
         if abs(tp2['price'] - lvl) / lvl * 100.0 < gap:
-            continue
-        tp1 = cand
-        break
-    if tp1:
+            continue                                   # впритул до TP-2
+        path = cand['from_entry_pct'] / span * 100.0 if span > 0 else 0.0
+        if path < lo_p or path > hi_p:
+            continue                                   # поза вікном шляху
+        cand['path_pct'] = round(path, 1)
+        cands.append(cand)
+
+    tp1 = None
+    if cands:
+        # Сильніший обʼєкт виграє; за рівної сили — ближчий до середини вікна
+        # (там частковий вихід найзбалансованіший).
+        cands.sort(key=lambda x: (-_TP1_WEIGHT.get(x.get('kind'), 0),
+                                  abs(x['path_pct'] - mid_p)))
+        tp1 = cands[0]
         reasons.append(f"TP-1 (частковий): {tp1['label']} @ {tp1['price']:.8g} "
-                       f"(+{tp1['from_entry_pct']:.2f}% від входу"
+                       f"(+{tp1['from_entry_pct']:.2f}% від входу, "
+                       f"{tp1['path_pct']:.0f}% шляху до цілі"
                        + (f", {tp1['r']}R)" if tp1['r'] else ')'))
     else:
-        reasons.append('проміжної цілі немає — працюємо одним TP-2')
+        # Обʼєкта у вікні немає — беремо ПОХІДНИЙ рівень від власної цілі.
+        fb = max(0.0, float(c.get('tp1_fallback_path_pct',
+                                  DEFAULTS['tp1_fallback_path_pct'])))
+        lvl = None
+        if fb > 0 and span > 0:
+            lvl = (e * (1.0 + span * fb / 100.0 / 100.0) if side == 'LONG'
+                   else e * (1.0 - span * fb / 100.0 / 100.0))
+        # ⚠️ Похідний рівень теж мусить лежати СТРОГО перед TP-2 — інакше
+        # «частковий» вихід опинився б ДАЛІ за повний (частка шляху > 100%).
+        if lvl and _ahead(side, e, lvl) and _ahead(side, lvl, tp2['price']) \
+                and abs(lvl - e) / e * 100.0 >= gap \
+                and abs(tp2['price'] - lvl) / lvl * 100.0 >= gap:
+            tp1 = _pack({'price': lvl, 'kind': 'path',
+                         'label': f'{fb:g}% шляху до цілі'})
+            tp1['path_pct'] = round(fb, 1)
+            reasons.append(f"TP-1 (частковий, похідний): {fb:g}% шляху до цілі "
+                           f"@ {tp1['price']:.8g} (+{tp1['from_entry_pct']:.2f}% "
+                           f"від входу) — обʼєкта графіка у вікні "
+                           f"{lo_p:g}-{hi_p:g}% немає"
+                           + (f", {tp1['r']}R" if tp1['r'] else ''))
+        else:
+            reasons.append('проміжного рівня немає — працюємо одним TP-2')
     return {'tp1': tp1, 'tp2': tp2, 'r': tp2['r'], 'reasons': reasons}
 
 
 def plan(side: str, entry, price, *, swing=None, runway=None, poc=None,
-         prev_stop=None, objective_lock: Optional[Dict] = None,
+         vah=None, val=None, prev_stop=None,
+         objective_lock: Optional[Dict] = None,
          cfg: Optional[Dict] = None) -> Dict:
     """Рішення автопілота на поточний момент.
 
@@ -314,7 +388,8 @@ def plan(side: str, entry, price, *, swing=None, runway=None, poc=None,
                 'next_obstacle': None, 'targets': [],
                 'reasons': ['немає ціни або напрямку']}
 
-    targets = collect_targets(side, p, swing=swing, runway=runway, poc=poc, cfg=c)
+    targets = collect_targets(side, p, swing=swing, runway=runway, poc=poc,
+                              vah=vah, val=val, cfg=c)
     nearest = targets[0] if targets else None
 
     # 🔒 ЦІЛЬ ФІКСУЄТЬСЯ ОДИН РАЗ і далі не «тікає». Без цього була б класична

@@ -2945,6 +2945,7 @@ class TradeManager:
           • POC — `compute_poc` з тими самими параметрами, що й бейдж чарту.
         """
         ctx = {'swing': None, 'runway': None, 'poc': None,
+               'vah': None, 'val': None,
                'swing_tf': None, 'poc_hours': None}
         s = self._settings
         try:
@@ -2981,6 +2982,10 @@ class TradeManager:
                              hours=ctx['poc_hours'],
                              market=str(s.get('poc_filter_market', 'FUTURES') or 'FUTURES'))
             ctx['poc'] = (_p or {}).get('poc') if isinstance(_p, dict) else _p
+            # VAH/VAL приходять ТИМ САМИМ викликом — беремо їх як додаткові
+            # цілі безкоштовно (жодного зайвого запиту до біржі).
+            if isinstance(_p, dict):
+                ctx['vah'], ctx['val'] = _p.get('vah'), _p.get('val')
         except Exception as e:
             print(f"[TM-Pilot] poc ctx warn {symbol}: {e}")
         return ctx
@@ -3014,6 +3019,7 @@ class TradeManager:
             res = trade_pilot.plan(side, pos.get('entry_price'), current_price,
                                    swing=ctx['swing'], runway=ctx['runway'],
                                    poc=ctx['poc'],
+                                   vah=ctx.get('vah'), val=ctx.get('val'),
                                    prev_stop=pos.get('manual_sl'),
                                    objective_lock=pos.get('pilot_objective'),
                                    cfg=cfg)
@@ -3216,6 +3222,13 @@ class TradeManager:
                              f"🎯 Автопілот: TP-2 {self._fmt_price(tp2['price'])} "
                              f"не прийнято ({r.get('reason', '—')}) · {_why}",
                              side=pos.get('side'), source='PILOT')
+        # 📨 Рівні реально стали — повідомляємо в Telegram (в момент відкриття
+        # їх ще не було, там стояло «⏳ рахується»).
+        if pos.get('manual_tp1') or pos.get('manual_tp'):
+            try:
+                self._notify_pilot_levels(symbol, pos, is_shadow)
+            except Exception as e:
+                print(f"[TM-Pilot] TP notify warn {symbol}: {e}")
         if is_shadow:
             self._persist_shadow_positions()
         else:
@@ -5218,12 +5231,12 @@ class TradeManager:
         ob_line = self._format_last_ob_telegram(symbol)
         dot = self._dir_dot(side)
         _sl_str = self._sltp_display(pos, 'sl')
-        _tp_str = self._sltp_display(pos, 'tp')
         msg = (
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
             f"<b>#{symbol}</b>   🧪 ТЕСТ\n"
             f"📍 Вхід: <b>{self._fmt_price(entry_price)}</b>\n"
-            f"🛡 SL: <b>{_sl_str}</b> · 🎯 TP: <b>{_tp_str}</b>"
+            f"🛡 SL: <b>{_sl_str}</b>\n"
+            f"{self._tp_lines(pos)}"
         )
         self._notify(msg, is_test=True, category='trades')
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
@@ -6988,18 +7001,79 @@ class TradeManager:
             pass
         return 'null'
 
+    def _tp_lines(self, pos) -> str:
+        """Рядок рівнів фіксації для Telegram: TP-1 (частковий) + TP-2 (повний).
+
+        ⚠️ ПОРОЖНІХ ЗНАЧЕНЬ БУТИ НЕ МАЄ. На момент ВІДКРИТТЯ автопілот ще не
+        рахував рівні (він працює з монітора, перший тік — за секунди), тому
+        замість голого прочерку пишемо «⏳ рахується», а коли рівні реально
+        стануть — прилітає окреме коротке повідомлення `_notify_pilot_levels`.
+        Так у Telegram завжди видно або число, або чесний статус.
+        """
+        tp2 = self._sltp_display(pos, 'tp')
+        t1 = pos.get('manual_tp1')
+        try:
+            tp1 = self._fmt_price(t1) if (t1 is not None and float(t1) > 0) else None
+        except (TypeError, ValueError):
+            tp1 = None
+        if tp2 == 'null':
+            tp2 = None
+        pending = bool(self._settings.get('pilot_enabled')
+                       and self._settings.get('pilot_autofill_tp'))
+        _wait = '⏳ рахується' if pending else '—'
+        try:
+            pct = float(self._settings.get('pilot_tp1_close_pct', 50) or 50)
+        except (TypeError, ValueError):
+            pct = 50.0
+        return (f"🎯 TP-1 ({pct:g}%): <b>{tp1 or _wait}</b>\n"
+                f"🎯 TP-2 (повний): <b>{tp2 or _wait}</b>")
+
     def _notify_open(self, pos):
         side = pos['side']
         dot = self._dir_dot(side)
         sl_str = self._sltp_display(pos, 'sl')
-        tp_str = self._sltp_display(pos, 'tp')
         msg = (
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
             f"<b>#{pos['symbol']}</b>\n"
             f"📍 Вхід: <b>{self._fmt_price(pos['entry_price'])}</b>\n"
-            f"🛡 SL: <b>{sl_str}</b> · 🎯 TP: <b>{tp_str}</b>"
+            f"🛡 SL: <b>{sl_str}</b>\n"
+            f"{self._tp_lines(pos)}"
         )
         self._notify(msg, category='trades')
+
+    def _notify_pilot_levels(self, symbol: str, pos: Dict,
+                             is_shadow: bool = False):
+        """🎯 Рівні виставлено — окреме коротке повідомлення.
+
+        Потрібне саме тому, що при відкритті рівнів ще немає: без цього в
+        Telegram назавжди лишалось би «⏳ рахується», і користувач не дізнався
+        б реальних чисел, доки не відкриє таблицю."""
+        try:
+            e = float(pos.get('entry_price') or 0)
+        except (TypeError, ValueError):
+            e = 0.0
+
+        def _d(v):
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return ''
+            if not (e > 0 and v > 0):
+                return ''
+            d = (v - e) / e * 100.0 if pos.get('side') == 'LONG' else (e - v) / e * 100.0
+            return f" ({d:+.2f}%)"
+
+        tail = [f"вхід {self._fmt_price(pos.get('entry_price'))}"]
+        for _lbl, _v in (('TP-1', pos.get('manual_tp1')), ('TP-2', pos.get('manual_tp'))):
+            _dd = _d(_v)
+            if _dd:
+                tail.append(f"{_lbl}{_dd}")
+        self._notify(
+            f"🎯 Рівні фіксації · <b>#{symbol}</b>"
+            + ('   🧪 ТЕСТ' if is_shadow else '') + "\n"
+            f"{self._tp_lines(pos)}\n"
+            f"<i>{' · '.join(tail)}</i>",
+            is_test=is_shadow, category='trades')
 
     def _notify_close(self, closed):
         side = closed['side']
