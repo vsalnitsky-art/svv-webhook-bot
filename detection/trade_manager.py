@@ -297,6 +297,11 @@ DEFAULT_SETTINGS = {
     #   TP-2 — головна ціль: повний вихід.
     'pilot_autofill_tp': True,
     'pilot_tp1_close_pct': 50,
+    # ⚖️ Переводити SL у беззбиток (+ комісії) при спрацюванні TP-1.
+    # ВИМКНЕНО за замовчуванням: рішення про ризик — за користувачем, а
+    # беззбитковий стоп після часткової фіксації нерідко вибиває позицію
+    # на звичайному відкаті до входу.
+    'tp1_move_to_be': False,
     'pilot_tp_min_gap_pct': 0.40,
     # Службова позначка одноразової міграції тумблера автозаповнення (див.
     # `_load_settings`). НЕ показується в UI, лише щоб міграція спрацювала раз.
@@ -788,6 +793,7 @@ class TradeManager:
                       'use_decision_exit',
                       'pilot_enabled',
                       'pilot_autofill_tp',
+                      'tp1_move_to_be',
                       'test_mode',
                       'allow_long_entries', 'allow_short_entries',
                       'require_fuel_confirm',
@@ -1679,12 +1685,16 @@ class TradeManager:
           3. Позначка `sl_breakeven` — щоб поле в таблиці стало ЗЕЛЕНИМ: угода
              більше не ризикує, і це має бути видно з першого погляду.
         """
+        s = self._settings
+        # 🔌 Тумблер (дефолт OFF). Вимкнено → стоп лишається там, де стояв:
+        # часткова фіксація сама по собі стоп не рухає.
+        if not s.get('tp1_move_to_be'):
+            return
         try:
             from detection import trade_pilot
         except Exception:
             return
         side = pos.get('side')
-        s = self._settings
         try:
             buf = float(s.get('be_commission_buffer_pct', 0.12) or 0.0)
         except (TypeError, ValueError):

@@ -416,7 +416,7 @@ def test_q4_source_unavailable_falls_back_and_says_so():
 def _tm_be(cur_sl=None, accept=True, buf=0.12):
     """TM з підміненим `update_manual_sl_tp` — перевіряємо САМЕ рішення."""
     o = _tm()
-    o._settings = {'be_commission_buffer_pct': buf}
+    o._settings = {'be_commission_buffer_pct': buf, 'tp1_move_to_be': True}
     o.calls = []
 
     def _upd(sym, manual_sl=None, is_shadow=False, origin='user',
@@ -489,6 +489,37 @@ def test_rejected_breakeven_is_reported_not_faked():
            'відхилений рівень НЕ має лишати зелену позначку')
     _check('НЕ прийнято' in _text(), f'відмову треба показати: {_text()}')
     print('✓ відхилений беззбиток не вдає, що спрацював')
+
+
+def test_every_frontend_position_route_exists():
+    """🐞 КЛАС ПОМИЛКИ, який коштував мовчазної втрати рівня: `submitManualTp1`
+    стукав у `/api/tm/positions/manual-sltp`, а маршрут зареєстровано як
+    `manual-sl-tp`. 404 глушився в catch → поле «зберігалось» і зникало на
+    наступному поллі. Тепер КОЖЕН фронтовий fetch звіряється з реальними
+    маршрутами Flask — здогадуватись про URL більше не можна."""
+    import re as _re
+    html = open(os.path.join(_ROOT, 'templates/smart_money.html')).read()
+    flask = open(os.path.join(_ROOT, 'web/flask_app.py')).read()
+    used = set(_re.findall(r"['\"`](/api/tm/positions/[a-z0-9_-]+)", html))
+    known = set(_re.findall(r"@app\.route\('(/api/tm/positions/[a-z0-9_-]+)'", flask))
+    missing = used - known
+    _check(not missing, f'фронт кличе неіснуючі маршрути: {sorted(missing)} '
+                        f'(зареєстровані: {sorted(known)})')
+    print(f'✓ усі {len(used)} фронтових маршрути позицій існують у Flask')
+
+
+def test_breakeven_is_off_by_default():
+    """Рішення про ризик — за користувачем. Дефолт: TP-1 стоп НЕ рухає."""
+    _check(tmmod.DEFAULT_SETTINGS.get('tp1_move_to_be') is False,
+           'переведення в беззбиток має бути ВИМКНЕНЕ за замовчуванням')
+    o, pos = _tm_be()
+    o._settings['tp1_move_to_be'] = False
+    _LOG.clear()
+    o._tp1_move_to_breakeven('BTCUSDT', pos, 103.0, False)
+    _check(o.calls == [], f'тумблер OFF → стоп не чіпаємо взагалі: {o.calls}')
+    _check(pos.get('sl_breakeven') is not True, 'і позначки не ставимо')
+    _check(_text() == '', f'і в лог нічого не пишемо: {_text()}')
+    print('✓ дефолт OFF: TP-1 не переводить стоп у беззбиток')
 
 
 def test_tp1_calls_breakeven():
@@ -600,6 +631,8 @@ if __name__ == '__main__':
     test_breakeven_never_loosens_a_better_stop()
     test_breakeven_improves_a_worse_stop()
     test_rejected_breakeven_is_reported_not_faked()
+    test_every_frontend_position_route_exists()
+    test_breakeven_is_off_by_default()
     test_tp1_calls_breakeven()
     test_tg_open_carries_both_tp_levels()
     test_tg_says_nothing_about_tp_when_there_is_nothing_to_say()

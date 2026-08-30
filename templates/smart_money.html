@@ -3459,6 +3459,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </div>
                         <div class="tm-row">
                             <label>
+                                <input type="checkbox" id="tm-tp1-move-be" onchange="saveTMSettings()">
+                                ⚖️ TP-1 переводить SL у беззбиток
+                                <span class="tm-help" title="Коли спрацював TP-1 (частина позиції зафіксована), перенести Manual SL на вхід + запас на біржові комісії (береться з «BE fee buffer», деф. 0.12% ≈ раунд-трип Bybit). Поле Manual SL стає ЗЕЛЕНИМ — решта позиції без ризику. Стоп при цьому НІКОЛИ не послаблюється: якщо чинний рівень уже кращий за беззбиток, він лишається. ВИМКНЕНО за замовчуванням — беззбитковий стоп нерідко вибиває позицію на звичайному відкаті до входу; це рішення про ризик, тому за вами.">?</span>
+                            </label>
+                        </div>
+                        <div class="tm-row">
+                            <label>
                                 🕐 Структура (swing) на TF
                                 <span class="tm-help" title="На якому таймфреймі автопілот бере ДИЛІНГ-ДІАПАЗОН (swing high/low) — це джерело і структурного стопа, і однієї з цілей. «Як у графіка» = той самий TF, що обрано в 🏁 Swing High/Low сканера, тож рівні автопілота збігаються з лініями на екрані. Пули ліквідації беруться з liq-map (вікно 24 год), POC — з профілю обсягу (вікно нижче), вони від цього TF не залежать.">?</span>
                             </label>
@@ -8286,6 +8293,7 @@ async function loadTMSettings() {
         document.getElementById('tm-pilot-autofill-tp').checked = !!s.pilot_autofill_tp;
         _setV('tm-pilot-tp1-pct', s.pilot_tp1_close_pct != null ? s.pilot_tp1_close_pct : 50, 50);
         _setV('tm-pilot-tp-gap', s.pilot_tp_min_gap_pct != null ? s.pilot_tp_min_gap_pct : 0.4, 0.4);
+        document.getElementById('tm-tp1-move-be').checked = !!s.tp1_move_to_be;
         _setV('tm-pilot-poc-hours', s.pilot_poc_hours != null ? s.pilot_poc_hours : 72, 72);
         // Validate TF before assigning to <select> — fall back to 15m for
         // unknown values so the dropdown doesn't end up in a blank state.
@@ -8683,6 +8691,7 @@ async function saveTMSettings() {
             pilot_autofill_tp: document.getElementById('tm-pilot-autofill-tp').checked,
             pilot_tp1_close_pct: parseInt(document.getElementById('tm-pilot-tp1-pct').value) || 50,
             pilot_tp_min_gap_pct: parseFloat(document.getElementById('tm-pilot-tp-gap').value) || 0.4,
+            tp1_move_to_be: document.getElementById('tm-tp1-move-be').checked,
             pilot_poc_hours: parseInt(document.getElementById('tm-pilot-poc-hours').value) || 72,
             opposite_ob_exit_timeframe: document.getElementById('tm-opposite-ob-exit-tf').value || '15m',
             use_htf_flip: document.getElementById('tm-use-htf-flip').checked,
@@ -13421,13 +13430,27 @@ async function submitManualTp1(symbol, value, isShadow) {
     try {
         const body = { symbol, is_shadow: !!isShadow,
                        manual_tp1: (value === '' ? 0 : parseFloat(value)) };
-        const r = await fetch('/api/tm/positions/manual-sltp', {
+        // ⚠️ URL той самий, що й у submitManualSlTp — ЛИТЕРАЛ НЕ ДУБЛЮВАТИ
+        // навмання: раніше тут стояло `manual-sltp` (без дефіса), маршрут
+        // віддавав 404, помилка глушилась у catch — і рівень, який щойно
+        // ввели руками, мовчки зникав на наступному 5-с поллі.
+        const res = await fetch('/api/tm/positions/manual-sl-tp', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
-        }).then(x => x.json());
+        });
+        // HTTP-статус перевіряємо ОКРЕМО: без цього будь-який 404/500 виглядав
+        // як «зберегли», бо тіло просто не парсилось у JSON.
+        if (!res.ok) {
+            alert(`TP-1: сервер відповів ${res.status} — рівень НЕ збережено`);
+            return;
+        }
+        const r = await res.json();
         if (r && !r.ok && r.validation) alert('TP-1: ' + (r.reason || 'відхилено'));
         loadTMState();
-    } catch (e) { console.error('TP-1 save error', e); }
+    } catch (e) {
+        console.error('TP-1 save error', e);
+        alert('TP-1: не вдалося зберегти рівень — ' + e);
+    }
 }
 
 // 🎨 Колір поля Manual SL/TP = ХТО поставив рівень. Два різні за природою рівні
