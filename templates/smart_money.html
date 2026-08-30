@@ -1260,8 +1260,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </button>
         </div>
         <div class="sm-side-gates-right">
-            <div class="sm-sentiment" id="sm-sentiment" title="Настрій біржі: частка акаунтів у LONG vs SHORT по ліквідних монетах (Bybit account ratio, 1h)">
-                <span class="sm-sentiment-label">Bybit</span>
+            <div class="sm-sentiment" id="sm-sentiment" title="Настрій біржі: частка акаунтів у LONG vs SHORT по ліквідних монетах (account ratio, 1h)">
+                <span class="sm-sentiment-label" id="sm-sentiment-src">Binance</span>
                 <div class="sm-sentiment-bar">
                     <div class="sm-sentiment-long" id="sm-sentiment-long" style="width:50%"></div>
                     <div class="sm-sentiment-short" id="sm-sentiment-short" style="width:50%"></div>
@@ -1269,6 +1269,28 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="sm-sentiment-val" id="sm-sentiment-val">⏳</span>
             </div>
             <div class="sm-sentiment-note" id="sm-sentiment-note"></div>
+            <!-- 💧 ДРАБИНА ЛІКВІДНОСТІ BTC — той самий зріз, що публікують у
+                 каналах («на $82k стільки-то стопів»), але у ВІДСОТКАХ від
+                 усієї ліквідності у вікні. Чому не «кількість стопів»: жодна
+                 централізована біржа їх не публікує, тож будь-яке число —
+                 чужа оцінка з двох припущень. Частка ж рахується з наших
+                 власних даних (приріст OI → плечі → ціни ліквідації). -->
+            <div class="sm-liq" id="sm-liq" style="display:none">
+                <div class="sm-liq-head">
+                    <span class="sm-liq-title">💧 Ліквідність BTC</span>
+                    <span class="sm-liq-meta" id="sm-liq-meta"></span>
+                </div>
+                <div class="sm-sentiment" style="min-width:0">
+                    <span class="sm-sentiment-label" id="sm-liq-side-lbl">⬆ / ⬇</span>
+                    <div class="sm-sentiment-bar">
+                        <div id="sm-liq-up" style="background:linear-gradient(90deg,#dc2626,#f87171);height:100%;transition:width .4s"></div>
+                        <div id="sm-liq-down" style="background:linear-gradient(90deg,#16a34a,#4ade80);height:100%;transition:width .4s"></div>
+                    </div>
+                    <span class="sm-sentiment-val" id="sm-liq-split">⏳</span>
+                </div>
+                <div class="sm-liq-rows" id="sm-liq-rows"></div>
+                <div class="sm-liq-note" id="sm-liq-note"></div>
+            </div>
         </div>
     </div>
     
@@ -1297,6 +1319,27 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-sentiment-short { background:linear-gradient(90deg,#f87171,#dc2626); height:100%; transition:width .4s; }
     .sm-sentiment-val { font-family:monospace; font-size:0.78rem; font-weight:700;
         white-space:nowrap; color:#c6cbd8; }
+    /* 💧 Драбина ліквідності — та сама типографіка, що в банері настрою:
+       monospace для чисел, 1px-бордер, вирівнювання в стовпчик. */
+    .sm-liq { margin-top:10px; padding:8px 10px; border-radius:8px;
+        border:1px solid rgba(255,255,255,0.08); background:rgba(13,16,24,0.55); }
+    .sm-liq-head { display:flex; align-items:baseline; justify-content:space-between;
+        gap:8px; margin-bottom:6px; }
+    .sm-liq-title { font-size:0.72rem; font-weight:700; color:#c6cbd8;
+        letter-spacing:0.02em; }
+    .sm-liq-meta { font-size:0.66rem; color:#6b7280; font-family:monospace;
+        white-space:nowrap; }
+    .sm-liq-rows { margin-top:6px; display:flex; flex-direction:column; gap:2px; }
+    .sm-liq-row { display:flex; align-items:center; gap:6px; font-family:monospace;
+        font-size:0.7rem; white-space:nowrap; }
+    .sm-liq-row .lp { width:78px; text-align:right; color:#c6cbd8; }
+    .sm-liq-row .ld { width:52px; text-align:right; color:#6b7280; }
+    .sm-liq-row .lb { flex:1; height:8px; min-width:40px; border-radius:4px;
+        background:rgba(255,255,255,0.06); overflow:hidden; }
+    .sm-liq-row .lb > i { display:block; height:100%; }
+    .sm-liq-row .lv { width:44px; text-align:right; font-weight:700; }
+    .sm-liq-note { margin-top:6px; font-size:0.64rem; color:#6b7280;
+        font-family:monospace; }
     /* Bias board */
     .sm-bias { background:rgba(13,16,24,0.7); border:1px solid rgba(255,255,255,0.08);
         border-radius:14px; padding:16px 18px; margin:0 0 16px; }
@@ -10038,7 +10081,8 @@ async function loadSentimentFor(exchange, ids) {
     if (!val || !longBar || !shortBar) return;
     const note = document.getElementById(ids.note);
     try {
-        const res = await fetch('/api/sentiment?exchange=' + exchange);
+        const res = await fetch('/api/sentiment?exchange=' + exchange
+                                + '&fallback=bybit');
         const d = await res.json();
         if (!d.ok) {
             val.textContent = '—';
@@ -10051,6 +10095,18 @@ async function loadSentimentFor(exchange, ids) {
                 note.textContent = `Дані недоступні (${d.reason || 'no data'})`;
             }
             return;
+        }
+        // Джерело малюємо з ВІДПОВІДІ: якщо Binance заблокував IP і бекенд
+        // мовчки взяв Bybit, підпис мусить показати саме Bybit — інакше банер
+        // брехав би про походження цифр.
+        const srcEl = document.getElementById('sm-sentiment-src');
+        if (srcEl) {
+            const nm = String(d.exchange || '').toUpperCase();
+            srcEl.textContent = nm ? nm[0] + nm.slice(1).toLowerCase() : '—';
+            srcEl.style.color = d.fallback_from ? '#fbbf24' : '#8b93a7';
+            srcEl.title = d.fallback_from
+                ? `${d.fallback_from.toUpperCase()} не віддав дані — показано ${nm}`
+                : '';
         }
         longBar.style.width = d.long_pct + '%';
         shortBar.style.width = d.short_pct + '%';
@@ -10080,6 +10136,75 @@ async function loadSentimentFor(exchange, ids) {
         val.textContent = '—';
         val.style.color = '#9aa3b5';
         val.title = String(e);
+    }
+}
+
+// 💧 ДРАБИНА ЛІКВІДНОСТІ BTC — у відсотках від усієї ліквідності у вікні.
+// Джерело те саме, що й у чарта liq-map (приріст OI → плечі → ціни
+// ліквідації), тож цифри тут і на карті ніколи не розходяться.
+function _liqFmtUsd(v) {
+    const n = Number(v) || 0;
+    if (n >= 1e9) return '$' + (n / 1e9).toFixed(1) + 'B';
+    if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return '$' + (n / 1e3).toFixed(0) + 'K';
+    return '$' + n.toFixed(0);
+}
+async function loadLiquidityLadder() {
+    const box = document.getElementById('sm-liq');
+    if (!box) return;
+    try {
+        const d = await (await fetch('/api/liquidity-ladder?symbol=BTCUSDT')).json();
+        const rowsEl = document.getElementById('sm-liq-rows');
+        const noteEl = document.getElementById('sm-liq-note');
+        const metaEl = document.getElementById('sm-liq-meta');
+        if (!d || !d.ok) {
+            box.style.display = 'block';
+            if (rowsEl) rowsEl.innerHTML = '';
+            if (metaEl) metaEl.textContent = '';
+            if (noteEl) noteEl.textContent = 'Дані ще не набрані'
+                + (d && d.reason ? ` (${d.reason})` : '');
+            return;
+        }
+        box.style.display = 'block';
+        const up = d.above || {}, dn = d.below || {};
+        document.getElementById('sm-liq-up').style.width = (up.pct || 0) + '%';
+        document.getElementById('sm-liq-down').style.width = (dn.pct || 0) + '%';
+        const split = document.getElementById('sm-liq-split');
+        // Куди переважує маса: вище ціни — притягує вгору, нижче — вниз.
+        const pullCol = d.pull === 'up' ? '#f87171'
+                      : d.pull === 'down' ? '#4ade80' : '#9aa3b5';
+        split.style.color = pullCol;
+        split.textContent = `⬆ ${up.pct}% / ⬇ ${dn.pct}%`;
+        const lbl = document.getElementById('sm-liq-side-lbl');
+        if (lbl) lbl.textContent = d.pull === 'up' ? 'тягне ↑'
+                                 : d.pull === 'down' ? 'тягне ↓' : 'рівновага';
+        if (metaEl) {
+            metaEl.textContent = `крок $${(d.step || 0).toLocaleString('en-US')}`
+                + ` · всього ${_liqFmtUsd(d.total_usd)}`;
+        }
+        if (rowsEl) {
+            rowsEl.innerHTML = (d.rows || []).map(r => {
+                const col = r.dir === 'up' ? '#f87171' : '#4ade80';
+                const arrow = r.dir === 'up' ? '↑' : '↓';
+                const w = Math.max(2, Math.min(100, r.pct));
+                const tip = `${r.side === 'long' ? 'Ліквідації ЛОНГІВ' : 'Ліквідації ШОРТІВ'}`
+                    + ` у смузі $${r.price.toLocaleString('en-US')}–$${r.price_hi.toLocaleString('en-US')}`
+                    + ` · ${_liqFmtUsd(r.usd)} · ${r.pct}% усієї ліквідності`
+                    + ` · ${arrow} ${r.dist_pct}% від ціни`;
+                return `<div class="sm-liq-row" title="${tip}">`
+                    + `<span class="lp">$${Math.round(r.price).toLocaleString('en-US')}</span>`
+                    + `<span class="ld" style="color:${col}">${arrow}${r.dist_pct}%</span>`
+                    + `<span class="lb"><i style="width:${w}%;background:${col}"></i></span>`
+                    + `<span class="lv" style="color:${col}">${r.pct}%</span>`
+                    + `</div>`;
+            }).join('');
+        }
+        if (noteEl) {
+            noteEl.textContent = 'Оцінка з відкритого інтересу (плечі 25×/50×/100×), '
+                + 'не реальні стоп-накази — біржі їх не публікують.';
+        }
+    } catch (e) {
+        console.error('liquidity ladder', e);
     }
 }
 
@@ -12192,10 +12317,14 @@ async function loadDataSource() {
 
 async function loadSentiment() {
     // Bybit only — the bot trades Bybit.
-    await loadSentimentFor('bybit', {
+    await loadSentimentFor('binance', {
         val: 'sm-sentiment-val', long: 'sm-sentiment-long',
         short: 'sm-sentiment-short', note: 'sm-sentiment-note'
     });
+    // 💧 Драбина ліквідності живе поряд із банером і оновлюється тим самим
+    // тактом. Запит дешевий: liq-map віддає готовий стан із БД, нічого не
+    // рахується наново і біржу ми не смикаємо.
+    loadLiquidityLadder();
 }
 
 // МММ (fuel) strength band → {txt, col}. Describes the MARKET-MAKER PRESSURE on

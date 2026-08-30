@@ -4138,10 +4138,23 @@ def register_api_routes(app):
 
     @app.route('/api/sentiment')
     def api_sentiment():
-        """Exchange-wide LONG vs SHORT mood (%). Default Bybit."""
+        """Exchange-wide LONG vs SHORT mood (%). Default Binance.
+
+        ⚠️ ФОЛБЕК: Binance регулярно блокує IP дата-центрів (418/451), і тоді
+        банер просто гас із «Дані недоступні». Тому за потреби мовчки беремо
+        другу біржу, а ВІДДАЄМО реальне джерело в полі `exchange` — підпис на
+        сторінці малюється з нього, тож ніколи не бреше про походження цифр.
+        """
         from detection.market_sentiment import get_sentiment
-        exch = request.args.get('exchange', 'bybit')
-        return jsonify(get_sentiment(exch))
+        exch = (request.args.get('exchange') or 'binance').lower()
+        fb = (request.args.get('fallback') or '').lower()
+        out = get_sentiment(exch)
+        if not out.get('ok') and fb and fb != exch:
+            alt = get_sentiment(fb)
+            if alt.get('ok'):
+                alt['fallback_from'] = exch
+                return jsonify(alt)
+        return jsonify(out)
     
     @app.route('/api/exchange/ping')
     def api_exchange_ping():
@@ -6376,6 +6389,47 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
     
+    @app.route('/api/liquidity-ladder')
+    def api_liquidity_ladder():
+        """💧 Драбина ліквідності у ВІДСОТКАХ — компактний зріз для банера.
+
+        Ті самі дані, що й /api/liquidation-map/state (приріст OI → плечі →
+        ціни ліквідації), але згорнуті в кроки по $N і переведені в частки
+        від усієї ліквідності у вікні. Чому частки, а не «кількість стопів»
+        — див. docstring `liquidation_map/ladder.py`.
+
+        Параметри: symbol (BTCUSDT), step (0 = авто), lookback (год), top.
+        """
+        try:
+            from detection.liquidation_map import get_liquidation_map
+            from detection.liquidation_map import ladder as _ladder
+            lm = get_liquidation_map()
+            if lm is None:
+                return jsonify({'ok': False, 'reason': 'Модуль liq-map не піднято'})
+            symbol = (request.args.get('symbol') or 'BTCUSDT').upper()
+            def _num(name, dflt):
+                try:
+                    return float(request.args.get(name, dflt))
+                except (TypeError, ValueError):
+                    return dflt
+            lookback = int(_num('lookback', 24))
+            step = _num('step', 0)
+            top = int(_num('top', _ladder.DEFAULT_TOP_N))
+            try:
+                profile = get_db().get_setting('liqmap_decay_profile', 'tori')
+            except Exception:
+                profile = 'tori'
+            st = lm.get_state(symbol=symbol, lookback_hours=lookback,
+                              profile=profile) or {}
+            out = _ladder.build_ladder(st.get('levels') or [],
+                                       st.get('mark_price'),
+                                       step_usd=(step or None), top_n=top)
+            out['symbol'] = symbol
+            out['last_update'] = st.get('last_update')
+            return jsonify(out)
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/liquidation-map/decay-profile', methods=['GET', 'POST'])
     def api_liqmap_decay_profile():
         """Get/set the ladder decay profile (full | fresh4h | win12h |
