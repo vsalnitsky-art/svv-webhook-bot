@@ -66,40 +66,65 @@ def _strength_word(diff_pp: float) -> str:
     return 'сильно'
 
 
+def _fmt_price_ua(v) -> str:
+    """$76 000 — нерозривний пробіл замість коми: так число читається одразу."""
+    try:
+        return f"${int(round(float(v))):,}".replace(',', ' ')
+    except (TypeError, ValueError):
+        return str(v)
+
+
 def make_verdict(pull: str, pull_pct: float, above_pct: float,
                  below_pct: float, top_row: Optional[Dict]) -> Dict:
     """ВЕРДИКТ по драбині — висновок, а не опис даних.
 
     Змінюється РАЗОМ із даними: напрямок бере з `pull`, силу — з перекосу
     часток, а «магніт» — з найбільшої сходинки (саме до неї ціну тягне
-    найдужче). Повертає {text, tone, strength}.
+    найдужче).
+
+    Повертає {text, tone, strength, parts}:
+      • `text`  — суцільний рядок (фолбек, лог, Telegram);
+      • `parts` — ті самі дані ПО ШМАТКАХ, щоб UI розфарбував ЧИСЛА окремо
+        від тексту і виніс магніт у ДРУГИЙ рядок. Розмітку тут не робимо:
+        модуль лишається чистим, а кольори — справа фронта.
 
     ⚠️ Вердикт не радить входити — він каже, ДЕ лежить маса. При рівновазі
     так і пишемо, а не витискаємо напрямок із 52/48.
     """
     word = _strength_word(pull_pct)
-    magnet = ''
+    magnet = None
+    magnet_txt = ''
     if top_row:
-        _p = top_row.get('price')
+        _pstr = _fmt_price_ua(top_row.get('price'))
         _arrow = '↑' if top_row.get('dir') == 'up' else '↓'
-        try:
-            _pstr = f"${int(round(float(_p))):,}".replace(',', ' ')
-        except (TypeError, ValueError):
-            _pstr = str(_p)
-        magnet = (f" · найбільший магніт {_pstr} "
-                  f"({top_row.get('pct')}%, {_arrow}{top_row.get('dist_pct')}%)")
+        magnet = {'price': _pstr,
+                  'pct': f"{top_row.get('pct')}%",
+                  'dist': f"{_arrow}{top_row.get('dist_pct')}%",
+                  'dir': top_row.get('dir')}
+        magnet_txt = (f" · найбільший магніт {_pstr} "
+                      f"({magnet['pct']}, {magnet['dist']})")
 
     if pull == 'down':
-        return {'tone': 'down', 'strength': word,
+        parts = {'icon': '▼', 'lead': 'Маса ліквідності НИЖЧЕ ціни',
+                 'lead_val': f'{below_pct}%', 'action': 'тягне ВНИЗ',
+                 'strength': word, 'skew': f'+{pull_pct} п.п.', 'magnet': magnet}
+        return {'tone': 'down', 'strength': word, 'parts': parts,
                 'text': f"▼ Маса ліквідності НИЖЧЕ ціни ({below_pct}%) — "
-                        f"тягне ВНИЗ, {word} (+{pull_pct} п.п.){magnet}"}
+                        f"тягне ВНИЗ, {word} (+{pull_pct} п.п.){magnet_txt}"}
     if pull == 'up':
-        return {'tone': 'up', 'strength': word,
+        parts = {'icon': '▲', 'lead': 'Маса ліквідності ВИЩЕ ціни',
+                 'lead_val': f'{above_pct}%', 'action': 'тягне ВГОРУ',
+                 'strength': word, 'skew': f'+{pull_pct} п.п.', 'magnet': magnet}
+        return {'tone': 'up', 'strength': word, 'parts': parts,
                 'text': f"▲ Маса ліквідності ВИЩЕ ціни ({above_pct}%) — "
-                        f"тягне ВГОРУ, {word} (+{pull_pct} п.п.){magnet}"}
-    return {'tone': 'flat', 'strength': word,
+                        f"тягне ВГОРУ, {word} (+{pull_pct} п.п.){magnet_txt}"}
+    parts = {'icon': '⚖', 'lead': 'Рівновага',
+             'lead_val': f'{above_pct}% зверху / {below_pct}% знизу',
+             'action': 'вираженого перекосу немає',
+             'strength': word, 'skew': '', 'magnet': magnet}
+    return {'tone': 'flat', 'strength': word, 'parts': parts,
             'text': f"⚖ Рівновага: {above_pct}% зверху / {below_pct}% знизу — "
-                    f"вираженого перекосу немає{magnet}"}
+                    f"вираженого перекосу немає{magnet_txt}"}
 
 
 def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
@@ -119,7 +144,8 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
        pull: 'up'|'down'|'flat', # куди переважує маса
        pull_pct,                 # наскільки переважує (різниця часток)
        rows: [...],              # сходинки, найбільша частка першою
-       verdict: {text, tone, strength}}   # висновок по цих даних
+       verdict: {text, tone, strength, parts}}  # висновок по цих даних
+                                 # `parts` — по шматках, для розфарбування в UI
 
     Кожен рядок: {price, price_hi, side, usd, pct, dist_pct, dir}
       • `price`    — нижня межа сходинки (те, що показуємо як «$82 000»);
@@ -128,7 +154,10 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
       • `dir`      — 'up' | 'down' щодо ціни.
     """
     _empty_verdict = {'tone': 'none', 'strength': 'немає даних',
-                      'text': '— даних ще немає'}
+                      'text': '— даних ще немає',
+                      'parts': {'icon': '—', 'lead': 'Даних ще немає',
+                                'lead_val': '', 'action': '', 'strength': '',
+                                'skew': '', 'magnet': None}}
     mp = _f(mark_price)
     if not mp or mp <= 0:
         return {'ok': False, 'reason': 'немає ціни', 'rows': [],

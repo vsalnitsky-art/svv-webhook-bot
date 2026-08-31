@@ -1303,8 +1303,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         background:rgba(255,255,255,0.06); overflow:hidden; }
     .sm-liq-row .lb > i { display:block; height:100%; }
     .sm-liq-row .lv { width:56px; text-align:right; font-weight:700; }
-    .sm-liq-note { margin-top:7px; font-size:0.68rem; color:#8b93a7;
-        font-family:monospace; line-height:1.35; }
+    .sm-liq-note { margin-top:8px; padding-top:7px; font-size:0.68rem;
+        font-family:monospace; line-height:1.5;
+        border-top:1px solid rgba(255,255,255,0.07); }
+    .sm-liq-vline { white-space:normal; }
+    .sm-liq-vline2 { margin-top:2px; }
     /* Bias board */
     .sm-bias { background:rgba(13,16,24,0.7); border:1px solid rgba(255,255,255,0.08);
         border-radius:14px; padding:16px 18px; margin:0 0 16px; }
@@ -1611,8 +1614,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-sentiment" style="min-width:0">
                 <span class="sm-sentiment-label" id="sm-liq-side-lbl">⬆ / ⬇</span>
                 <div class="sm-sentiment-bar">
-                    <div id="sm-liq-up" style="background:linear-gradient(90deg,#dc2626,#f87171);height:100%;transition:width .4s"></div>
-                    <div id="sm-liq-down" style="background:linear-gradient(90deg,#16a34a,#4ade80);height:100%;transition:width .4s"></div>
+                    <!-- 🎨 КОЛІР = КУДИ ТЯГНЕ ЦІНУ, а не чиї позиції ліквідують.
+                         Ліквідність ВИЩЕ ціни тягне вгору → ЗЕЛЕНИЙ; нижче →
+                         ЧЕРВОНИЙ. Так само, як усюди в боті (LONG зелений,
+                         SHORT червоний). Спершу було навпаки — фарбувалось за
+                         СТОРОНОЮ ПОЗИЦІЙ (шорти зверху = червоні), і банер
+                         читався протилежно до решти інтерфейсу. -->
+                    <div id="sm-liq-up" style="background:linear-gradient(90deg,#16a34a,#4ade80);height:100%;transition:width .4s"></div>
+                    <div id="sm-liq-down" style="background:linear-gradient(90deg,#dc2626,#f87171);height:100%;transition:width .4s"></div>
                 </div>
                 <span class="sm-sentiment-val" id="sm-liq-split">⏳</span>
             </div>
@@ -10199,8 +10208,10 @@ async function loadLiquidityLadder() {
         document.getElementById('sm-liq-down').style.width = (dn.pct || 0) + '%';
         const split = document.getElementById('sm-liq-split');
         // Куди переважує маса: вище ціни — притягує вгору, нижче — вниз.
-        const pullCol = d.pull === 'up' ? '#f87171'
-                      : d.pull === 'down' ? '#4ade80' : '#9aa3b5';
+        // Колір за НАПРЯМКОМ ТЯГИ (вгору зелений, вниз червоний) — єдина
+        // конвенція з рештою інтерфейсу.
+        const pullCol = d.pull === 'up' ? '#4ade80'
+                      : d.pull === 'down' ? '#f87171' : '#9aa3b5';
         split.style.color = pullCol;
         split.textContent = `⬆ ${up.pct}% / ⬇ ${dn.pct}%`;
         const lbl = document.getElementById('sm-liq-side-lbl');
@@ -10212,7 +10223,7 @@ async function loadLiquidityLadder() {
         }
         if (rowsEl) {
             rowsEl.innerHTML = (d.rows || []).map(r => {
-                const col = r.dir === 'up' ? '#f87171' : '#4ade80';
+                const col = r.dir === 'up' ? '#4ade80' : '#f87171';
                 const arrow = r.dir === 'up' ? '↑' : '↓';
                 const w = Math.max(2, Math.min(100, r.pct));
                 const tip = `${r.side === 'long' ? 'Ліквідації ЛОНГІВ' : 'Ліквідації ШОРТІВ'}`
@@ -10231,19 +10242,49 @@ async function loadLiquidityLadder() {
                     + `</div>`;
             }).join('');
         }
-        // 🧭 ВЕРДИКТ — висновок ПО ЦИХ ДАНИХ, а не опис методики. Рахується
-        // на бекенді (`ladder.make_verdict`), тож змінюється разом із самими
-        // цифрами: напрямок від перекосу часток, сила від його величини,
-        // «магніт» — найбільша сходинка. Пояснення методики перенесено в
-        // тултип заголовка, щоб не займати рядок постійно.
+        // 🧭 ВЕРДИКТ — висновок ПО ЦИХ ДАНИХ (рахує `ladder.make_verdict`,
+        // тож змінюється разом із цифрами). Бекенд віддає його ШМАТКАМИ
+        // (`parts`), а не суцільним рядком — саме тому тут можна:
+        //   • винести «найбільший магніт» у ДРУГИЙ рядок;
+        //   • пофарбувати ЧИСЛА окремо від тексту (раніше все зливалось в
+        //     один зелений абзац і не читалось).
+        // Текстові слова — приглушені, цифри — кольором напрямку.
         if (noteEl) {
             const v = d.verdict || {};
-            const tone = v.tone === 'up' ? '#f87171'
-                       : v.tone === 'down' ? '#4ade80'
+            const pt = v.parts || null;
+            const tone = v.tone === 'up' ? '#4ade80'
+                       : v.tone === 'down' ? '#f87171'
                        : v.tone === 'flat' ? '#9aa3b5' : '#6b7280';
-            noteEl.textContent = v.text || '';
-            noteEl.style.color = tone;
-            noteEl.style.fontWeight = (v.tone === 'up' || v.tone === 'down') ? '700' : '400';
+            if (!pt) { noteEl.textContent = v.text || ''; noteEl.style.color = tone; }
+            else {
+                const dim = '#8b93a7';            // пояснювальні слова
+                const num = tone;                 // числа = колір напрямку
+                const seg = [];
+                seg.push(`<span style="color:${tone};font-weight:700">${pt.icon}</span>`);
+                if (pt.lead) seg.push(`<span style="color:${dim}">${pt.lead}</span>`);
+                if (pt.lead_val) seg.push(`<b style="color:${num}">${pt.lead_val}</b>`);
+                if (pt.action) seg.push(`<span style="color:${dim}">·</span>`
+                    + ` <b style="color:${tone}">${pt.action}</b>`);
+                if (pt.strength) seg.push(`<span style="color:#fbbf24">${pt.strength}</span>`);
+                if (pt.skew) seg.push(`<span style="color:${dim}">(</span>`
+                    + `<b style="color:${num}">${pt.skew}</b><span style="color:${dim}">)</span>`);
+                let html = `<div class="sm-liq-vline">${seg.join(' ')}</div>`;
+                const m = pt.magnet;
+                if (m) {
+                    const mc = m.dir === 'up' ? '#4ade80' : '#f87171';
+                    html += `<div class="sm-liq-vline sm-liq-vline2">`
+                        + `<span style="color:${dim}">🧲 найбільший магніт</span> `
+                        + `<b style="color:#e2e8f0">${m.price}</b> `
+                        + `<span style="color:${dim}">·</span> `
+                        + `<b style="color:${mc}">${m.pct}</b> `
+                        + `<span style="color:${dim}">·</span> `
+                        + `<b style="color:${mc}">${m.dist}</b>`
+                        + `</div>`;
+                }
+                noteEl.innerHTML = html;
+                noteEl.style.color = '';
+                noteEl.style.fontWeight = '';
+            }
         }
     } catch (e) {
         console.error('liquidity ladder', e);

@@ -179,6 +179,45 @@ def test_verdict_strength_scales_with_the_skew():
     print('✓ сила перекосу описується словом, а не лише числом')
 
 
+def test_verdict_is_broken_into_parts_for_colouring():
+    """Вердикт віддається ШМАТКАМИ, щоб UI пофарбував числа окремо від тексту
+    і виніс магніт у другий рядок. Раніше це був один суцільний рядок, який
+    зливався в суцільний зелений абзац."""
+    v = L.build_ladder(LEVELS, MARK, step_usd=1000)['verdict']
+    pt = v['parts']
+    for k in ('icon', 'lead', 'lead_val', 'action', 'strength', 'skew', 'magnet'):
+        _check(k in pt, f'бракує шматка «{k}»: {pt}')
+    _check(pt['icon'] == '▼' and pt['action'] == 'тягне ВНИЗ', pt)
+    _check(pt['lead_val'] == '80.0%' and pt['skew'] == '+60.0 п.п.', pt)
+    _check(pt['strength'] == 'виразно', pt)
+    m = pt['magnet']
+    _check(m and m['price'] == '$78 000' and m['pct'] == '80.0%'
+           and m['dist'].startswith('↓'), f'магніт має бути окремим блоком: {m}')
+    # ⚠️ Розмітку модуль НЕ робить — кольори лишаються справою фронта.
+    _check('<' not in v['text'] and all('<' not in str(x) for x in pt.values()
+                                        if isinstance(x, str)),
+           'у чистому модулі не має бути HTML')
+    print('✓ вердикт розбитий на шматки; магніт — окремим блоком')
+
+
+def test_verdict_parts_mirror_the_text():
+    """Шматки і суцільний рядок мусять казати ОДНЕ Й ТЕ САМЕ — інакше UI і
+    лог розійшлись би у показаннях."""
+    for data in (LEVELS,
+                 [{'price': 82_000.0, 'usd': 9e6, 'side': 'short'}],
+                 [{'price': 81_000.0, 'usd': 1_040_000, 'side': 'short'},
+                  {'price': 79_000.0, 'usd': 960_000, 'side': 'long'}]):
+        v = L.build_ladder(data, MARK, step_usd=1000)['verdict']
+        pt = v['parts']
+        for key in ('lead', 'action'):
+            if pt[key]:
+                _check(pt[key] in v['text'], f'{key} «{pt[key]}» немає в тексті')
+        if pt['magnet']:
+            _check(pt['magnet']['price'] in v['text'],
+                   f"ціна магніта має збігатись: {pt['magnet']} vs {v['text']}")
+    print('✓ шматки і суцільний текст не розходяться')
+
+
 def test_verdict_exists_even_without_data():
     v = L.build_ladder([], MARK)['verdict']
     _check(v and v['tone'] == 'none', f'вердикт мусить бути завжди: {v}')
@@ -215,6 +254,8 @@ if __name__ == '__main__':
     test_verdict_flips_with_the_data()
     test_verdict_says_balance_when_there_is_no_skew()
     test_verdict_strength_scales_with_the_skew()
+    test_verdict_is_broken_into_parts_for_colouring()
+    test_verdict_parts_mirror_the_text()
     test_verdict_exists_even_without_data()
     test_module_does_not_promise_stop_counts()
     print('\nУсі тести драбини ліквідності пройдено ✅')
