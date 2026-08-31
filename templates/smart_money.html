@@ -1303,6 +1303,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         background:rgba(255,255,255,0.06); overflow:hidden; }
     .sm-liq-row .lb > i { display:block; height:100%; }
     .sm-liq-row .lv { width:56px; text-align:right; font-weight:700; }
+    /* 📍 Лінія поточної ціни — візуальний нуль драбини: усе вище неї над
+       ціною, усе нижче — під ціною. */
+    .sm-liq-price { display:flex; align-items:center; gap:6px; font-family:monospace;
+        font-size:0.7rem; white-space:nowrap; margin:3px 0;
+        border-top:1px dashed rgba(226,232,240,0.45);
+        border-bottom:1px dashed rgba(226,232,240,0.45); padding:2px 0; }
+    .sm-liq-price .lp { width:78px; text-align:right; color:#e2e8f0; font-weight:700; }
+    .sm-liq-price .ld { width:52px; text-align:right; color:#94a3b8;
+        text-transform:uppercase; font-size:0.6rem; letter-spacing:0.04em; }
+    .sm-liq-price .lb { flex:1; min-width:40px; }
+    .sm-liq-price .lv { width:56px; }
     .sm-liq-note { margin-top:8px; padding-top:7px; font-size:0.68rem;
         font-family:monospace; line-height:1.5;
         border-top:1px solid rgba(255,255,255,0.07); }
@@ -10186,6 +10197,10 @@ function _liqFmtUsd(v) {
     if (n >= 1e3) return '$' + (n / 1e3).toFixed(0) + 'K';
     return '$' + n.toFixed(0);
 }
+function _liqFmtPrice(v) {
+    const n = Number(v) || 0;
+    return '$' + Math.round(n).toLocaleString('en-US');
+}
 async function loadLiquidityLadder() {
     const box = document.getElementById('sm-liq');
     if (!box) return;
@@ -10222,12 +10237,24 @@ async function loadLiquidityLadder() {
                 + ` · всього ${_liqFmtUsd(d.total_usd)}`;
         }
         if (rowsEl) {
-            rowsEl.innerHTML = (d.rows || []).map(r => {
+            // 📍 ЛІНІЯ ПОТОЧНОЇ ЦІНИ. Рядки приходять уже впорядкованими за
+            // ціною (згори вниз), тож лінію ставимо РІВНО між останнім рядком
+            // «вище ціни» і першим «нижче». Так драбина читається як стакан:
+            // видно, що лежить над ціною, а що під нею, і на якій відстані.
+            const _rows = d.rows || [];
+            const _firstDown = _rows.findIndex(r => r.dir === 'down');
+            const priceLine = `<div class="sm-liq-price" title="Поточна ціна ${d.symbol || 'BTCUSDT'}">`
+                + `<span class="lp">${_liqFmtPrice(d.mark_price)}</span>`
+                + `<span class="ld">ціна</span>`
+                + `<span class="lb"></span>`
+                + `<span class="lv"></span></div>`;
+            const html = _rows.map(r => {
                 const col = r.dir === 'up' ? '#4ade80' : '#f87171';
                 const arrow = r.dir === 'up' ? '↑' : '↓';
                 const w = Math.max(2, Math.min(100, r.pct));
                 const tip = `${r.side === 'long' ? 'Ліквідації ЛОНГІВ' : 'Ліквідації ШОРТІВ'}`
-                    + ` у смузі $${r.price.toLocaleString('en-US')}–$${r.price_hi.toLocaleString('en-US')}`
+                    + ` у смузі $${Math.round(r.price).toLocaleString('en-US')}–$${Math.round(r.price_hi).toLocaleString('en-US')}`
+                    + (r.at_price ? ' (впритул до поточної ціни)' : '')
                     + ` · ${_liqFmtUsd(r.usd)} · ${r.pct}% усієї ліквідності`
                     + ` · ${arrow} ${r.dist_pct}% від ціни`;
                 // Праворуч — СУМА в доларах: частку вже показує довжина
@@ -10240,7 +10267,11 @@ async function loadLiquidityLadder() {
                     + `<span class="lb"><i style="width:${w}%;background:${col}"></i></span>`
                     + `<span class="lv" style="color:${col}">${_liqFmtUsd(r.usd)}</span>`
                     + `</div>`;
-            }).join('');
+            });
+            // Немає жодного рядка нижче ціни → лінія йде в самий низ.
+            const at = _firstDown < 0 ? html.length : _firstDown;
+            html.splice(at, 0, priceLine);
+            rowsEl.innerHTML = html.join('');
         }
         // 🧭 ВЕРДИКТ — висновок ПО ЦИХ ДАНИХ (рахує `ladder.make_verdict`,
         // тож змінюється разом із цифрами). Бекенд віддає його ШМАТКАМИ

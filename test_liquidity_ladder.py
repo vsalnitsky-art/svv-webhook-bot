@@ -97,14 +97,43 @@ def test_noise_rows_are_dropped():
     print('✓ дрібні рівні не забивають список')
 
 
-def test_rows_sorted_by_share_and_capped():
-    many = [{'price': 70_000.0 + i * 1000, 'usd': (i + 1) * 100_000,
-             'side': 'long' if i < 10 else 'short'} for i in range(20)]
-    r = L.build_ladder(many, MARK, step_usd=1000, top_n=5)
-    _check(len(r['rows']) == 5, f'top_n має обмежувати: {len(r["rows"])}')
-    pcts = [x['pct'] for x in r['rows']]
-    _check(pcts == sorted(pcts, reverse=True), f'найбільша частка перша: {pcts}')
-    print('✓ сортування за часткою + обмеження top_n')
+def test_selection_by_share_display_by_price():
+    """ДВА РІЗНІ ПОРЯДКИ, не плутати: ВІДБІР рядків — за значущістю (найбільші
+    частки), а ПОКАЗ — за ЦІНОЮ згори вниз, щоб драбина читалась як стакан.
+    Дані навмисно такі, де ці два порядки НЕ збігаються."""
+    lv = [{'price': 71_500.0, 'usd': 9e6, 'side': 'long'},    # найбільший, найнижчий
+          {'price': 88_500.0, 'usd': 5e6, 'side': 'short'},   # найвищий
+          {'price': 79_500.0, 'usd': 7e6, 'side': 'long'},
+          {'price': 84_500.0, 'usd': 1e5, 'side': 'short'}]   # шум, має відсіятись
+    r = L.build_ladder(lv, MARK, step_usd=1000, top_n=3)
+    prices = [x['price'] for x in r['rows']]
+    _check(prices == sorted(prices, reverse=True),
+           f'показ мусить іти за ЦІНОЮ, згори вниз: {prices}')
+    _check(88_000.0 in prices and 71_000.0 in prices and 79_000.0 in prices,
+           f'відібратись мали три НАЙБІЛЬШІ за часткою: {prices}')
+    _check(84_000.0 not in prices, f'шумний рівень мав відсіятись: {prices}')
+    # ⚠️ Магніт у вердикті — НАЙБІЛЬШИЙ рядок, а не найвищий за ціною.
+    _check(r['verdict']['parts']['magnet']['price'] == '$71 000',
+           f"магніт мусить лишитись найбільшим: {r['verdict']['parts']['magnet']}")
+    print(f'✓ відбір за часткою, показ за ціною: {[int(p) for p in prices]}')
+
+
+def test_rows_touching_the_price_are_flagged():
+    """Сходинка, розділена по ціні, позначається `at_price` — UI ставить її
+    впритул до лінії ціни і не дублює число в підписі."""
+    mp = 78_709.0
+    lv = [{'price': 78_300.0, 'usd': 5e6, 'side': 'long'},
+          {'price': 78_900.0, 'usd': 5e6, 'side': 'short'},
+          {'price': 76_500.0, 'usd': 5e6, 'side': 'long'}]
+    r = L.build_ladder(lv, mp, step_usd=1000)
+    at = [x for x in r['rows'] if x['at_price']]
+    far = [x for x in r['rows'] if not x['at_price']]
+    _check(len(at) == 2, f'обидві половини розділеної сходинки: {r["rows"]}')
+    _check(all(abs(x['price'] - mp) < 1e-6 or abs(x['price_hi'] - mp) < 1e-6
+               for x in at), f'їхня межа — сама ціна: {at}')
+    _check(far and all(not x['at_price'] for x in far),
+           f'віддалені сходинки прапорця не мають: {far}')
+    print('✓ сходинки впритул до ціни позначені `at_price`')
 
 
 def test_auto_step_scales_with_price():
@@ -300,7 +329,8 @@ if __name__ == '__main__':
     test_balanced_market_is_not_called_a_direction()
     test_distance_is_measured_from_the_step_middle()
     test_noise_rows_are_dropped()
-    test_rows_sorted_by_share_and_capped()
+    test_selection_by_share_display_by_price()
+    test_rows_touching_the_price_are_flagged()
     test_auto_step_scales_with_price()
     test_no_data_is_reported_not_faked()
     test_garbage_levels_never_raise()

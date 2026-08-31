@@ -143,7 +143,8 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
        below: {pct, usd},        # НИЖЧЕ ціни (переважно лонги)
        pull: 'up'|'down'|'flat', # куди переважує маса
        pull_pct,                 # наскільки переважує (різниця часток)
-       rows: [...],              # сходинки, найбільша частка першою
+       rows: [...],              # сходинки ЗА ЦІНОЮ, згори вниз
+                                 # (відбір — за часткою, порядок — за ціною)
        verdict: {text, tone, strength, parts}}  # висновок по цих даних
                                  # `parts` — по шматках, для розфарбування в UI
 
@@ -242,9 +243,19 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
             'pct': round(pct, 1),
             'dist_pct': round(abs(mid - mp) / mp * 100.0, 2),
             'dir': 'up' if mid >= mp else 'down',
+            # Сходинка впритул до ціни (одна з її меж — сама ціна): UI ставить
+            # її поруч із лінією ціни і не дублює число в підписі.
+            'at_price': abs(rec['price'] - mp) < 1e-9
+                        or abs(rec['price_hi'] - mp) < 1e-9,
         })
+    # ВІДБІР — за значущістю (найбільші частки), а ПОРЯДОК ПОКАЗУ — за ЦІНОЮ,
+    # згори вниз: так драбина читається як стакан, і видно, що лежить над
+    # ціною, а що під нею. «Магніт» для вердикту беремо ДО пересортування —
+    # інакше в нього потрапив би просто найвищий за ціною рядок.
     rows.sort(key=lambda r: (-r['pct'], r['dist_pct']))
     rows = rows[:max(1, int(top_n or DEFAULT_TOP_N))]
+    top_row = rows[0] if rows else None
+    rows.sort(key=lambda r: -r['price'])
 
     up_pct = round(up_usd / total * 100.0, 1)
     down_pct = round(100.0 - up_pct, 1)
@@ -259,4 +270,4 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
             'below': {'pct': down_pct, 'usd': round(down_usd, 0)},
             'pull': pull, 'pull_pct': abs(diff), 'rows': rows,
             'verdict': make_verdict(pull, abs(diff), up_pct, down_pct,
-                                    rows[0] if rows else None)}
+                                    top_row)}
