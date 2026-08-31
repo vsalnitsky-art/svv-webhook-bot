@@ -139,6 +139,53 @@ def test_garbage_levels_never_raise():
     print('✓ сміттєві рівні ігноруються, підсумок лишається чесним')
 
 
+# ═════════ 🧭 ВЕРДИКТ — висновок, що змінюється разом із даними ════════════
+def test_verdict_follows_the_data_down():
+    r = L.build_ladder(LEVELS, MARK, step_usd=1000)
+    v = r['verdict']
+    _check(v['tone'] == 'down', f'80% знизу → вниз: {v}')
+    _check('ВНИЗ' in v['text'] and '80.0%' in v['text'], v['text'])
+    _check('магніт' in v['text'] and '78 000' in v['text'],
+           f'вердикт має називати найбільшу сходинку: {v["text"]}')
+    print(f"✓ {v['text']}")
+
+
+def test_verdict_flips_with_the_data():
+    """Головна вимога: вердикт МІНЯЄТЬСЯ, коли міняються дані. Дзеркалимо
+    той самий набір — висновок мусить перевернутись."""
+    mirrored = [{'price': 2 * MARK - x['price'], 'usd': x['usd'],
+                 'side': 'short' if x['side'] == 'long' else 'long'}
+                for x in LEVELS]
+    v = L.build_ladder(mirrored, MARK, step_usd=1000)['verdict']
+    _check(v['tone'] == 'up' and 'ВГОРУ' in v['text'], f'мало перевернутись: {v}')
+    print(f"✓ дзеркальні дані → {v['text'][:48]}…")
+
+
+def test_verdict_says_balance_when_there_is_no_skew():
+    even = [{'price': 81_000.0, 'usd': 1_040_000, 'side': 'short'},
+            {'price': 79_000.0, 'usd': 960_000, 'side': 'long'}]
+    v = L.build_ladder(even, MARK, step_usd=1000)['verdict']
+    _check(v['tone'] == 'flat' and 'Рівновага' in v['text'], v)
+    _check('ВНИЗ' not in v['text'] and 'ВГОРУ' not in v['text'],
+           f'з 52/48 напрямок не витискаємо: {v["text"]}')
+    print('✓ рівновага названа рівновагою, а не слабким напрямком')
+
+
+def test_verdict_strength_scales_with_the_skew():
+    _check(L._strength_word(5) == 'рівновага', 'до 10 п.п. — не напрямок')
+    _check(L._strength_word(20) == 'помірно', '10-30')
+    _check(L._strength_word(45) == 'виразно', '30-60')
+    _check(L._strength_word(80) == 'сильно', '>60')
+    print('✓ сила перекосу описується словом, а не лише числом')
+
+
+def test_verdict_exists_even_without_data():
+    v = L.build_ladder([], MARK)['verdict']
+    _check(v and v['tone'] == 'none', f'вердикт мусить бути завжди: {v}')
+    _check('немає' in v['text'], f'і чесно казати, що даних нема: {v}')
+    print('✓ без даних вердикт каже «даних немає», а не мовчить')
+
+
 def test_module_does_not_promise_stop_counts():
     """Замок від спокуси: у драбині НЕ має зʼявитись поле «кількість стопів».
     Це чужа оцінка з двох припущень, і видавати її за наші дані не можна."""
@@ -164,5 +211,10 @@ if __name__ == '__main__':
     test_auto_step_scales_with_price()
     test_no_data_is_reported_not_faked()
     test_garbage_levels_never_raise()
+    test_verdict_follows_the_data_down()
+    test_verdict_flips_with_the_data()
+    test_verdict_says_balance_when_there_is_no_skew()
+    test_verdict_strength_scales_with_the_skew()
+    test_verdict_exists_even_without_data()
     test_module_does_not_promise_stop_counts()
     print('\nУсі тести драбини ліквідності пройдено ✅')

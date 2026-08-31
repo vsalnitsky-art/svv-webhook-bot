@@ -53,6 +53,55 @@ def step_for(mark_price, step_usd=None) -> float:
     return 10000.0
 
 
+# Словесна сила перекосу. Пороги ті самі, що вирішують `pull`: до 10 п.п. —
+# рівновага (не напрямок), далі — за зростанням.
+def _strength_word(diff_pp: float) -> str:
+    d = abs(diff_pp)
+    if d <= 10:
+        return 'рівновага'
+    if d <= 30:
+        return 'помірно'
+    if d <= 60:
+        return 'виразно'
+    return 'сильно'
+
+
+def make_verdict(pull: str, pull_pct: float, above_pct: float,
+                 below_pct: float, top_row: Optional[Dict]) -> Dict:
+    """ВЕРДИКТ по драбині — висновок, а не опис даних.
+
+    Змінюється РАЗОМ із даними: напрямок бере з `pull`, силу — з перекосу
+    часток, а «магніт» — з найбільшої сходинки (саме до неї ціну тягне
+    найдужче). Повертає {text, tone, strength}.
+
+    ⚠️ Вердикт не радить входити — він каже, ДЕ лежить маса. При рівновазі
+    так і пишемо, а не витискаємо напрямок із 52/48.
+    """
+    word = _strength_word(pull_pct)
+    magnet = ''
+    if top_row:
+        _p = top_row.get('price')
+        _arrow = '↑' if top_row.get('dir') == 'up' else '↓'
+        try:
+            _pstr = f"${int(round(float(_p))):,}".replace(',', ' ')
+        except (TypeError, ValueError):
+            _pstr = str(_p)
+        magnet = (f" · найбільший магніт {_pstr} "
+                  f"({top_row.get('pct')}%, {_arrow}{top_row.get('dist_pct')}%)")
+
+    if pull == 'down':
+        return {'tone': 'down', 'strength': word,
+                'text': f"▼ Маса ліквідності НИЖЧЕ ціни ({below_pct}%) — "
+                        f"тягне ВНИЗ, {word} (+{pull_pct} п.п.){magnet}"}
+    if pull == 'up':
+        return {'tone': 'up', 'strength': word,
+                'text': f"▲ Маса ліквідності ВИЩЕ ціни ({above_pct}%) — "
+                        f"тягне ВГОРУ, {word} (+{pull_pct} п.п.){magnet}"}
+    return {'tone': 'flat', 'strength': word,
+            'text': f"⚖ Рівновага: {above_pct}% зверху / {below_pct}% знизу — "
+                    f"вираженого перекосу немає{magnet}"}
+
+
 def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
                  top_n: int = DEFAULT_TOP_N,
                  min_row_pct: float = MIN_ROW_PCT) -> Dict:
@@ -69,7 +118,8 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
        below: {pct, usd},        # НИЖЧЕ ціни (переважно лонги)
        pull: 'up'|'down'|'flat', # куди переважує маса
        pull_pct,                 # наскільки переважує (різниця часток)
-       rows: [...]}              # сходинки, найбільша частка першою
+       rows: [...],              # сходинки, найбільша частка першою
+       verdict: {text, tone, strength}}   # висновок по цих даних
 
     Кожен рядок: {price, price_hi, side, usd, pct, dist_pct, dir}
       • `price`    — нижня межа сходинки (те, що показуємо як «$82 000»);
@@ -77,12 +127,15 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
       • `dist_pct` — відстань від поточної ціни у % (завжди додатна);
       • `dir`      — 'up' | 'down' щодо ціни.
     """
+    _empty_verdict = {'tone': 'none', 'strength': 'немає даних',
+                      'text': '— даних ще немає'}
     mp = _f(mark_price)
     if not mp or mp <= 0:
         return {'ok': False, 'reason': 'немає ціни', 'rows': [],
                 'above': {'pct': 0.0, 'usd': 0.0},
                 'below': {'pct': 0.0, 'usd': 0.0},
-                'pull': 'flat', 'pull_pct': 0.0, 'total_usd': 0.0}
+                'pull': 'flat', 'pull_pct': 0.0, 'total_usd': 0.0,
+                'verdict': _empty_verdict}
 
     step = step_for(mp, step_usd)
     buckets: Dict[tuple, Dict] = {}
@@ -120,7 +173,8 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
                 'above': {'pct': 0.0, 'usd': 0.0},
                 'below': {'pct': 0.0, 'usd': 0.0},
                 'pull': 'flat', 'pull_pct': 0.0,
-                'mark_price': mp, 'step': step, 'total_usd': 0.0}
+                'mark_price': mp, 'step': step, 'total_usd': 0.0,
+                'verdict': _empty_verdict}
 
     rows = []
     for rec in buckets.values():
@@ -153,4 +207,6 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
             'total_usd': round(total, 0),
             'above': {'pct': up_pct, 'usd': round(up_usd, 0)},
             'below': {'pct': down_pct, 'usd': round(down_usd, 0)},
-            'pull': pull, 'pull_pct': abs(diff), 'rows': rows}
+            'pull': pull, 'pull_pct': abs(diff), 'rows': rows,
+            'verdict': make_verdict(pull, abs(diff), up_pct, down_pct,
+                                    rows[0] if rows else None)}

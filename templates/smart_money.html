@@ -1127,7 +1127,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
    greyed out with crossed-out look. Clicking flips state instantly. */
 .sm-side-gates {
     display: flex;
-    align-items: center;
+    /* Верх, а не центр: ліворуч тепер цілий банер рішення, і центрування
+       відривало б його від колонки настрою праворуч. */
+    align-items: flex-start;
     justify-content: space-between;
     gap: 18px;
     flex-wrap: wrap;
@@ -1241,6 +1243,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     -->
     <div class="sm-side-gates">
         <div class="sm-side-gates-left">
+            <div class="sm-side-gates-dir">
             <div class="sm-side-gates-label">Trade Direction (real + test):</div>
             <button type="button" id="sm-allow-long-btn"
                     class="sm-side-toggle sm-side-long active"
@@ -1258,6 +1261,64 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="sm-side-text">SHORT</span>
                 <span class="sm-side-state" id="sm-allow-short-state">ON</span>
             </button>
+            </div>
+            <!-- 🧠 БАНЕР РІШЕННЯ — перенесено СЮДИ з окремого блоку над
+                 сторінкою. Раніше він займав повну ширину вгорі, а ліва
+                 частина цього рядка стояла порожня; тепер уся аналітика
+                 (вердикт, впевненість, ціна, Forecast 1H/4H, МММ-бабло,
+                 Watchlist-консенсус) і настрій+ліквідність стоять поруч, в
+                 одному екрані. ⚠️ УСІ id збережені — рендери
+                 (`loadBias`, `renderBiasExtra`…) працюють без змін. -->
+            <div class="sm-bias-top">
+                <div class="sm-bias-verdict sm-bias-WAIT" id="sm-bias-verdict">⏳ <span>—</span></div>
+                <input type="text" id="sm-bias-sym-input" class="sm-bias-sym-input"
+                       placeholder="BTCUSDT" value="BTCUSDT"
+                       onkeydown="if(event.key==='Enter'){applyBiasSymbol();}"
+                       title="Монета для розрахунку табло. За замовчуванням BTCUSDT. Enter — застосувати.">
+                <button class="sm-bias-refresh" onclick="applyBiasSymbol()">▶</button>
+                <div class="sm-bias-confbar"><div class="sm-bias-conffill" id="sm-bias-conffill" style="width:0%"></div></div>
+                <span class="sm-bias-conf" id="sm-bias-conf">—</span>
+                <label class="sm-bias-auto" id="sm-bias-auto-wrap"
+                       title="Smart Direction: автоматично керує кнопками LONG/SHORT 24/7 (навіть без браузера), враховуючи вердикт, 4H тренд і виснаження. Розумніше за сирий вердикт.">
+                    <input type="checkbox" id="sm-bias-auto" onchange="toggleSmartDirection(this.checked)">
+                    <span class="sm-bias-auto-slider"></span>
+                    <span class="sm-bias-auto-label">Smart Direction</span>
+                </label>
+                <select id="sm-bias-auto-mode" onchange="onSmartDirectionModeChange()"
+                        style="display:none;padding:3px 6px;background:#1a1a1a;border:1px solid rgba(168,85,247,0.4);color:#c084fc;border-radius:4px;font-size:0.74rem;cursor:pointer"
+                        title="Simple — дзеркалить сирий вердикт 1:1 (LONG/SHORT/WAIT). Smart — враховує 4H тренд + виснаження, дозволяє ранній розворот. За банером ₿ — кнопки повторюють напрямок сеансу з банера ₿ BTCUSDT (працює навіть коли головне вікно у WAIT).">
+                    <option value="simple">Simple</option>
+                    <option value="smart">Forecast</option>
+                    <option value="ctr_stc">CTR_STC</option>
+                    <option value="confluence">Confluence</option>
+                    <option value="banner">За банером ₿</option>
+                </select>
+                <label class="sm-bias-auto" id="sm-bias-cow-wrap"
+                       title="Закривати всі відкриті угоди при переході в WAIT (потрібен увімкнений Smart Direction).">
+                    <input type="checkbox" id="sm-bias-cow" onchange="toggleCloseOnWait(this.checked)">
+                    <span class="sm-bias-auto-slider" style="--ag-on:#f87171"></span>
+                    <span class="sm-bias-auto-label" style="color:#f87171">Close on WAIT</span>
+                </label>
+                <button class="sm-bias-help" onclick="showCloseOnWaitHelp()" title="Що це?">?</button>
+                <label class="sm-bias-hyst" id="sm-bias-hyst-wrap"
+                       title="Гістерезис: скільки циклів (хвилин) поспіль вердикт має бути WAIT, перш ніж Close on WAIT спрацює. Захищає від коротких провалів LONG→WAIT→LONG. 1 = закривати одразу.">
+                    <span>WAIT ×</span>
+                    <input type="number" id="sm-bias-hyst" min="1" max="20" value="3"
+                           onchange="setWaitHysteresis(this.value)">
+                </label>
+                <button class="sm-bias-refresh" onclick="loadBias()">🔄 Оновити</button>
+            </div>
+            <div class="sm-bias-body">
+                <div class="sm-bias-left-col">
+                    <div class="sm-bias-price" id="sm-bias-price" style="display:none">
+                        <span class="sm-bias-price-icon">●</span>
+                        <span class="sm-bias-price-label">Ціна <span id="sm-bias-price-sym">—</span> (ф'ючерс)</span>
+                        <span class="sm-bias-price-val" id="sm-bias-price-val">—</span>
+                    </div>
+                    <div class="sm-bias-reasons" id="sm-bias-reasons"></div>
+                </div>
+                <div class="sm-bias-extra" id="sm-bias-extra"></div>
+            </div>
         </div>
         <div class="sm-side-gates-right">
             <div class="sm-sentiment" id="sm-sentiment" title="Настрій біржі: частка акаунтів у LONG vs SHORT по ліквідних монетах (account ratio, 1h)">
@@ -1277,7 +1338,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  власних даних (приріст OI → плечі → ціни ліквідації). -->
             <div class="sm-liq" id="sm-liq" style="display:none">
                 <div class="sm-liq-head">
-                    <span class="sm-liq-title">💧 Ліквідність BTC</span>
+                    <span class="sm-liq-title" title="Оцінка з відкритого інтересу: приріст OI між тиками розкладається за плечима 25×/50×/100×, для кожної частки рахується реальна ціна ліквідації, і все це згортається у кроки по $1000. Це НЕ реальні стоп-накази — жодна централізована біржа їх не публікує. Відсоток у підказці рядка = частка від усієї ліквідності у вікні.">💧 Ліквідність BTC</span>
                     <span class="sm-liq-meta" id="sm-liq-meta"></span>
                 </div>
                 <div class="sm-sentiment" style="min-width:0">
@@ -1319,6 +1380,28 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-sentiment-short { background:linear-gradient(90deg,#f87171,#dc2626); height:100%; transition:width .4s; }
     .sm-sentiment-val { font-family:monospace; font-size:0.78rem; font-weight:700;
         white-space:nowrap; color:#c6cbd8; }
+    /* 🧠 Ліва колонка = кнопки напрямку + КОМПАКТНИЙ банер рішення.
+       Раніше банер займав повну ширину окремим блоком угорі, а тут
+       залишалась порожнеча. Стискаємо його типографіку, але НЕ ховаємо
+       жодного показника — усе зі старого банера лишається на місці. */
+    .sm-side-gates-left { flex:1 1 520px; min-width:0; flex-direction:column;
+        align-items:stretch; gap:10px; }
+    .sm-side-gates-dir { display:flex; align-items:center; gap:10px;
+        flex-wrap:wrap; }
+    .sm-side-gates-left .sm-bias { margin:0; padding:8px 10px; }
+    .sm-side-gates-left .sm-bias-top { gap:6px; flex-wrap:wrap;
+        font-size:0.92em; }
+    .sm-side-gates-left .sm-bias-verdict { font-size:1.15rem; padding:2px 8px; }
+    .sm-side-gates-left .sm-bias-body { gap:10px; margin-top:6px; }
+    .sm-side-gates-left .sm-bias-price { padding:5px 8px; }
+    .sm-side-gates-left .sm-bias-price-val { font-size:0.95rem; }
+    .sm-side-gates-left .sm-bias-reasons { font-size:0.7rem; gap:3px; }
+    .sm-side-gates-left .sm-bias-extra { font-size:0.7rem; }
+    .sm-side-gates-left .sm-bias-sym-input { width:96px; font-size:0.72rem; }
+    .sm-side-gates-left .sm-bias-confbar { min-width:60px; }
+    @media (max-width:1100px) {
+        .sm-side-gates-left { flex:1 1 100%; }
+    }
     /* 💧 Драбина ліквідності — та сама типографіка, що в банері настрою:
        monospace для чисел, 1px-бордер, вирівнювання в стовпчик. */
     .sm-liq { margin-top:10px; padding:8px 10px; border-radius:8px;
@@ -1337,9 +1420,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-liq-row .lb { flex:1; height:8px; min-width:40px; border-radius:4px;
         background:rgba(255,255,255,0.06); overflow:hidden; }
     .sm-liq-row .lb > i { display:block; height:100%; }
-    .sm-liq-row .lv { width:44px; text-align:right; font-weight:700; }
-    .sm-liq-note { margin-top:6px; font-size:0.64rem; color:#6b7280;
-        font-family:monospace; }
+    .sm-liq-row .lv { width:56px; text-align:right; font-weight:700; }
+    .sm-liq-note { margin-top:7px; font-size:0.68rem; color:#8b93a7;
+        font-family:monospace; line-height:1.35; }
     /* Bias board */
     .sm-bias { background:rgba(13,16,24,0.7); border:1px solid rgba(255,255,255,0.08);
         border-radius:14px; padding:16px 18px; margin:0 0 16px; }
@@ -1500,56 +1583,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true"><symbol id="ein-icon" viewBox="0 0 64 64"><defs><linearGradient id="ffBrainG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c9b8ff"/><stop offset="1" stop-color="#7c6cf5"/></linearGradient></defs><g stroke="#5a49d8" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path fill="url(#ffBrainG)" d="M32 15 C29 11 22 11 20 16 C14 15 11 21 15 25 C10 27 10 34 16 36 C15 41 20 46 25 43 C27 47 32 46 32 42 Z"/><path fill="url(#ffBrainG)" d="M32 15 C35 11 42 11 44 16 C50 15 53 21 49 25 C54 27 54 34 48 36 C49 41 44 46 39 43 C37 47 32 46 32 42 Z"/><path fill="none" stroke="#493ad0" stroke-width="1.1" d="M32 15 V44 M23 20 q5 3 2 8 M41 20 q-5 3 -2 8 M17 30 q6 0 8 4 M47 30 q-6 0 -8 4"/></g><path fill="#ffd23f" stroke="#e0930b" stroke-width="0.9" stroke-linejoin="round" d="M46 6 L38 18 H43 L39 27 L52 13 H46 Z"/></symbol></svg>
 
     <div class="sm-bias" id="sm-bias">
-        <div class="sm-bias-top">
-            <div class="sm-bias-verdict sm-bias-WAIT" id="sm-bias-verdict">⏳ <span>—</span></div>
-            <input type="text" id="sm-bias-sym-input" class="sm-bias-sym-input"
-                   placeholder="BTCUSDT" value="BTCUSDT"
-                   onkeydown="if(event.key==='Enter'){applyBiasSymbol();}"
-                   title="Монета для розрахунку табло. За замовчуванням BTCUSDT. Enter — застосувати.">
-            <button class="sm-bias-refresh" onclick="applyBiasSymbol()">▶</button>
-            <div class="sm-bias-confbar"><div class="sm-bias-conffill" id="sm-bias-conffill" style="width:0%"></div></div>
-            <span class="sm-bias-conf" id="sm-bias-conf">—</span>
-            <label class="sm-bias-auto" id="sm-bias-auto-wrap"
-                   title="Smart Direction: автоматично керує кнопками LONG/SHORT 24/7 (навіть без браузера), враховуючи вердикт, 4H тренд і виснаження. Розумніше за сирий вердикт.">
-                <input type="checkbox" id="sm-bias-auto" onchange="toggleSmartDirection(this.checked)">
-                <span class="sm-bias-auto-slider"></span>
-                <span class="sm-bias-auto-label">Smart Direction</span>
-            </label>
-            <select id="sm-bias-auto-mode" onchange="onSmartDirectionModeChange()"
-                    style="display:none;padding:3px 6px;background:#1a1a1a;border:1px solid rgba(168,85,247,0.4);color:#c084fc;border-radius:4px;font-size:0.74rem;cursor:pointer"
-                    title="Simple — дзеркалить сирий вердикт 1:1 (LONG/SHORT/WAIT). Smart — враховує 4H тренд + виснаження, дозволяє ранній розворот. За банером ₿ — кнопки повторюють напрямок сеансу з банера ₿ BTCUSDT (працює навіть коли головне вікно у WAIT).">
-                <option value="simple">Simple</option>
-                <option value="smart">Forecast</option>
-                <option value="ctr_stc">CTR_STC</option>
-                <option value="confluence">Confluence</option>
-                <option value="banner">За банером ₿</option>
-            </select>
-            <label class="sm-bias-auto" id="sm-bias-cow-wrap"
-                   title="Закривати всі відкриті угоди при переході в WAIT (потрібен увімкнений Smart Direction).">
-                <input type="checkbox" id="sm-bias-cow" onchange="toggleCloseOnWait(this.checked)">
-                <span class="sm-bias-auto-slider" style="--ag-on:#f87171"></span>
-                <span class="sm-bias-auto-label" style="color:#f87171">Close on WAIT</span>
-            </label>
-            <button class="sm-bias-help" onclick="showCloseOnWaitHelp()" title="Що це?">?</button>
-            <label class="sm-bias-hyst" id="sm-bias-hyst-wrap"
-                   title="Гістерезис: скільки циклів (хвилин) поспіль вердикт має бути WAIT, перш ніж Close on WAIT спрацює. Захищає від коротких провалів LONG→WAIT→LONG. 1 = закривати одразу.">
-                <span>WAIT ×</span>
-                <input type="number" id="sm-bias-hyst" min="1" max="20" value="3"
-                       onchange="setWaitHysteresis(this.value)">
-            </label>
-            <button class="sm-bias-refresh" onclick="loadBias()">🔄 Оновити</button>
-        </div>
-        <div class="sm-bias-body">
-            <div class="sm-bias-left-col">
-                <div class="sm-bias-price" id="sm-bias-price" style="display:none">
-                    <span class="sm-bias-price-icon">●</span>
-                    <span class="sm-bias-price-label">Ціна <span id="sm-bias-price-sym">—</span> (ф'ючерс)</span>
-                    <span class="sm-bias-price-val" id="sm-bias-price-val">—</span>
-                </div>
-                <div class="sm-bias-reasons" id="sm-bias-reasons"></div>
-            </div>
-            <div class="sm-bias-extra" id="sm-bias-extra"></div>
-        </div>
         <!-- ₿ BTCUSDT банер — ПЕРЕНЕСЕНО СЮДИ (над панеллю «Напрямок за
              таймфреймами»). Показує напрямок ₿; режим перемикається тумблером
              «🔁 Дублювання» (дефолт = миттєве дублювання МММ-бабло без затримок)
@@ -10191,17 +10224,31 @@ async function loadLiquidityLadder() {
                     + ` у смузі $${r.price.toLocaleString('en-US')}–$${r.price_hi.toLocaleString('en-US')}`
                     + ` · ${_liqFmtUsd(r.usd)} · ${r.pct}% усієї ліквідності`
                     + ` · ${arrow} ${r.dist_pct}% від ціни`;
+                // Праворуч — СУМА в доларах: частку вже показує довжина
+                // смужки, а гроші дають відчуття масштабу («$95M проти $12M»
+                // читається краще, ніж «29% проти 4%»). Відсоток лишається
+                // в підказці, щоб нічого не загубилось.
                 return `<div class="sm-liq-row" title="${tip}">`
                     + `<span class="lp">$${Math.round(r.price).toLocaleString('en-US')}</span>`
                     + `<span class="ld" style="color:${col}">${arrow}${r.dist_pct}%</span>`
                     + `<span class="lb"><i style="width:${w}%;background:${col}"></i></span>`
-                    + `<span class="lv" style="color:${col}">${r.pct}%</span>`
+                    + `<span class="lv" style="color:${col}">${_liqFmtUsd(r.usd)}</span>`
                     + `</div>`;
             }).join('');
         }
+        // 🧭 ВЕРДИКТ — висновок ПО ЦИХ ДАНИХ, а не опис методики. Рахується
+        // на бекенді (`ladder.make_verdict`), тож змінюється разом із самими
+        // цифрами: напрямок від перекосу часток, сила від його величини,
+        // «магніт» — найбільша сходинка. Пояснення методики перенесено в
+        // тултип заголовка, щоб не займати рядок постійно.
         if (noteEl) {
-            noteEl.textContent = 'Оцінка з відкритого інтересу (плечі 25×/50×/100×), '
-                + 'не реальні стоп-накази — біржі їх не публікують.';
+            const v = d.verdict || {};
+            const tone = v.tone === 'up' ? '#f87171'
+                       : v.tone === 'down' ? '#4ade80'
+                       : v.tone === 'flat' ? '#9aa3b5' : '#6b7280';
+            noteEl.textContent = v.text || '';
+            noteEl.style.color = tone;
+            noteEl.style.fontWeight = (v.tone === 'up' || v.tone === 'down') ? '700' : '400';
         }
     } catch (e) {
         console.error('liquidity ladder', e);
