@@ -185,12 +185,29 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
         if side not in ('long', 'short'):
             continue
         lo = (int(price / step)) * step
-        key = (lo, side)
+        hi = lo + step
+        # ⚠️ СХОДИНКА, ЩО НАКРИВАЄ ПОТОЧНУ ЦІНУ, ДІЛИТЬСЯ САМЕ ПО НІЙ.
+        # Без цього вона діставала ОДИН напрямок (за своєю серединою), хоча
+        # половина її обсягу лежить по інший бік ціни. На проді це дало пряме
+        # протиріччя: підсумок «⬆50.5% / ⬇49.5%» (рахується по РІВНЯХ) проти
+        # рядків, які сумарно давали 32%/68% — бо 16% усієї ліквідності сиділо
+        # в сходинці $78 000, підписаній «↓», при ціні $78 563 усередині неї.
+        if lo <= mp < hi:
+            if price < mp:
+                hi = mp
+            else:
+                lo = mp
+        # Ключ — САМЕ ДІАПАЗОН, без сторони: після поділу по ціні кожен рядок
+        # і так однорідний (вище ціни — ліквідації шортів, нижче — лонгів), а
+        # ключ зі стороною давав ДВА рядки з однаковим підписом «$78 000».
+        key = (lo, hi)
         rec = buckets.get(key)
         if rec is None:
-            rec = {'price': lo, 'price_hi': lo + step, 'side': side, 'usd': 0.0}
+            rec = {'price': lo, 'price_hi': hi, 'usd': 0.0,
+                   'by_side': {'long': 0.0, 'short': 0.0}}
             buckets[key] = rec
         rec['usd'] += usd
+        rec['by_side'][side] += usd
         total += usd
         if price >= mp:
             up_usd += usd
@@ -211,12 +228,16 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
         if pct < min_row_pct:
             continue
         # Відстань міряємо від СЕРЕДИНИ сходинки — так «$82 000» при ціні
-        # $80 100 чесно дає ~2.4%, а не 2.37% від випадкової межі.
-        mid = rec['price'] + step / 2.0
+        # $80 100 чесно дає ~2.4%, а не 2.37% від випадкової межі. Для
+        # розділеної сходинки середина рахується від її РЕАЛЬНИХ меж.
+        mid = (rec['price'] + rec['price_hi']) / 2.0
+        _bs = rec['by_side']
         rows.append({
             'price': round(rec['price'], 8),
             'price_hi': round(rec['price_hi'], 8),
-            'side': rec['side'],
+            # Переважна сторона — для підказки. Після поділу по ціні вона
+            # практично завжди одна (шорти зверху, лонги знизу).
+            'side': 'long' if _bs['long'] >= _bs['short'] else 'short',
             'usd': round(rec['usd'], 0),
             'pct': round(pct, 1),
             'dist_pct': round(abs(mid - mp) / mp * 100.0, 2),

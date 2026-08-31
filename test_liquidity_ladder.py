@@ -139,6 +139,60 @@ def test_garbage_levels_never_raise():
     print('✓ сміттєві рівні ігноруються, підсумок лишається чесним')
 
 
+def test_step_containing_price_is_split_at_it():
+    """🐞 ЗНАЙДЕНО НА ПРОДІ. Сходинка $78 000 (=[78000..79000]) накривала ціну
+    $78 563 і цілком підписувалась «↓ нижче ціни» — за своєю серединою. У ній
+    сиділо 16% усієї ліквідності, половина якої насправді ВИЩЕ ціни. Через це
+    рядки сумарно давали 32%/68%, а підсумок банера — 50.5%/49.5%."""
+    mp = 78_563.20
+    lv = [{'price': 78_300.0, 'usd': 68.5e6, 'side': 'long'},    # нижче ціни
+          {'price': 78_800.0, 'usd': 28.5e6, 'side': 'short'}]   # вище ціни
+    r = L.build_ladder(lv, mp, step_usd=1000)
+    _check(len(r['rows']) == 2, f'сходинка мала розділитись надвоє: {r["rows"]}')
+    lo_row = [x for x in r['rows'] if x['dir'] == 'down'][0]
+    hi_row = [x for x in r['rows'] if x['dir'] == 'up'][0]
+    _check(abs(lo_row['price_hi'] - mp) < 1e-6,
+           f'нижня половина мусить закінчуватись НА ЦІНІ: {lo_row}')
+    _check(abs(hi_row['price'] - mp) < 1e-6,
+           f'верхня половина мусить починатись НА ЦІНІ: {hi_row}')
+    _check(lo_row['usd'] == 68.5e6 and hi_row['usd'] == 28.5e6, r['rows'])
+    print('✓ сходинка, що накриває ціну, ділиться саме по ній')
+
+
+def test_rows_never_contradict_the_summary():
+    """ЗАМОК: напрямок рядків і підсумок ⬆/⬇ рахуються з одного поділу, тож
+    сумарні частки рядків мусять збігатися з `above`/`below`."""
+    mp = 78_563.20
+    lv = [{'price': 76_500.0, 'usd': 205.4e6, 'side': 'long'},
+          {'price': 80_500.0, 'usd': 99.6e6, 'side': 'short'},
+          {'price': 77_500.0, 'usd': 96.1e6, 'side': 'long'},
+          {'price': 79_500.0, 'usd': 86.0e6, 'side': 'short'},
+          {'price': 78_300.0, 'usd': 68.5e6, 'side': 'long'},
+          {'price': 78_800.0, 'usd': 28.5e6, 'side': 'short'}]
+    r = L.build_ladder(lv, mp, step_usd=1000, top_n=20)
+    tot = r['total_usd']
+    up = sum(x['usd'] for x in r['rows'] if x['dir'] == 'up')
+    dn = sum(x['usd'] for x in r['rows'] if x['dir'] == 'down')
+    _check(abs(up / tot * 100 - r['above']['pct']) < 0.2,
+           f"рядки ⬆{up/tot*100:.1f}% vs підсумок ⬆{r['above']['pct']}%")
+    _check(abs(dn / tot * 100 - r['below']['pct']) < 0.2,
+           f"рядки ⬇{dn/tot*100:.1f}% vs підсумок ⬇{r['below']['pct']}%")
+    print(f"✓ рядки і підсумок збігаються: ⬆{r['above']['pct']}% / ⬇{r['below']['pct']}%")
+
+
+def test_no_duplicate_price_labels():
+    """Ключ зі СТОРОНОЮ давав два рядки з однаковим підписом «$78 000» —
+    користувач не міг їх розрізнити. Тепер ключ — діапазон."""
+    lv = [{'price': 78_200.0, 'usd': 5e6, 'side': 'long'},
+          {'price': 78_400.0, 'usd': 3e6, 'side': 'short'}]
+    r = L.build_ladder(lv, 80_000.0, step_usd=1000)
+    prices = [x['price'] for x in r['rows']]
+    _check(len(prices) == len(set(prices)), f'підписи мусять бути різні: {prices}')
+    _check(len(r['rows']) == 1 and r['rows'][0]['usd'] == 8e6,
+           f'обидві сторони в одній сходинці складаються: {r["rows"]}')
+    print('✓ однакових підписів у драбині більше немає')
+
+
 # ═════════ 🧭 ВЕРДИКТ — висновок, що змінюється разом із даними ════════════
 def test_verdict_follows_the_data_down():
     r = L.build_ladder(LEVELS, MARK, step_usd=1000)
@@ -250,6 +304,9 @@ if __name__ == '__main__':
     test_auto_step_scales_with_price()
     test_no_data_is_reported_not_faked()
     test_garbage_levels_never_raise()
+    test_step_containing_price_is_split_at_it()
+    test_rows_never_contradict_the_summary()
+    test_no_duplicate_price_labels()
     test_verdict_follows_the_data_down()
     test_verdict_flips_with_the_data()
     test_verdict_says_balance_when_there_is_no_skew()
