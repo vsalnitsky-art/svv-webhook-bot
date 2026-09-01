@@ -872,6 +872,9 @@ class FuelFilterDaemon:
         self._q4_recheck_logged: Dict[str, tuple] = {}
         # Анти-флуд для гейта за R — той самий принцип, що й вище.
         self._q4_rr_logged: Dict[str, tuple] = {}
+        # Ціль, за якою гейт за R пропустив монету — передається в TM,
+        # щоб автопілот узяв САМЕ ЇЇ (див. set_pending_objective).
+        self._q4_rr_objective: Dict[str, Dict] = {}
         # Розклад ОСТАННЬОЇ ПРОЙДЕНОЇ 🔁 повторної перевірки {symbol: detail}.
         self._q4_recheck_pass_detail: Dict[str, str] = {}
         # Anti-flood for the per-coin «Готовність» decision log:
@@ -6859,6 +6862,16 @@ class FuelFilterDaemon:
                                  f'Черга-4 📐 R достатній: {_rr_detail} '
                                  f'(поріг {_min_rr:g}R) — відкриваємо',
                                  side=_open_dir, source='Q4')
+                # 🎯 Ціль, за якою пройшов гейт, ФІКСУЄМО в угоді: автопілот
+                # візьме саме її, і R у колонці дорівнюватиме R рішення.
+                _obj = self._q4_rr_objective.pop(sym, None)
+                if _obj:
+                    try:
+                        _tmx = self._get_tm() if self._get_tm else None
+                        if _tmx and hasattr(_tmx, 'set_pending_objective'):
+                            _tmx.set_pending_objective(sym, _obj)
+                    except Exception:
+                        pass
             try:
                 _flip = '' if _open_dir == d else f' (ФЛІП: сигнал був {d}, показники — {_open_dir})'
                 _trace = f'Черга-4{_flip} · ' + self._origin_trace(sym, info, lay, now)
@@ -7091,6 +7104,11 @@ class FuelFilterDaemon:
             return None, 'R не порахувався'
         _risk = abs(ref - sl) / ref * 100.0
         _rew = abs(float(obj.get('price')) - ref) / ref * 100.0
+        # 🎯 Ціль ЗАПАМʼЯТОВУЄМО: за нею гейт ухвалює рішення, тож саме вона
+        # має стати ціллю угоди. Інакше R, за яким пропустили, і R, який потім
+        # стоїть у колонці, — різні числа (кейс VETUSDT: 1.0R на вході → 0.43R
+        # через 90 секунд, бо пул ліквідності зник із контексту).
+        self._q4_rr_objective[sym] = dict(obj)
         return r, (f"{r}R · ціль {obj.get('label')} +{_rew:.2f}% / "
                    f"стоп {chosen[1]} −{_risk:.2f}%")
 

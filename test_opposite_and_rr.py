@@ -159,6 +159,7 @@ class _TM:
 
 def _ff_rr(price, sl_bounds, ctx):
     o = FF.__new__(FF)
+    o._q4_rr_objective = {}
     o._get_tm = lambda: _TM(price, ctx)
     o._fuel_dir_smoothed = lambda s: {'mark_price': price}
     o._q4_ob_bounds_1h = lambda s: sl_bounds
@@ -251,6 +252,40 @@ def test_r_and_real_sl_come_from_one_source():
     print('✓ R і реальний стоп рахуються з одного джерела')
 
 
+def test_gate_objective_is_locked_into_the_trade():
+    """🐞 ЗНАЙДЕНО НА ПРОДІ (VETUSDT 01.09). Гейт пропустив шорт із вердиктом
+    «1.0R · ціль головний пул ліквідності +2.75%», а через 90 секунд автопілот
+    обрав ІНШУ ціль — Strong Low +1.25% — і угода стала 0.43R. Тобто число, ЗА
+    ЯКИМ пропустили, не було числом, яке потім реально стоїть в угоді.
+
+    Причина: ціль спирається на `runway`, а він береться лише коли напрямок
+    МММ збігається з боком угоди. МММ фліпнув — пул зник із контексту.
+
+    Замок: ціль, за якою гейт ухвалив рішення, мусить доїхати до угоди."""
+    vet_ctx = {'swing': {'high': {'price': 0.006900, 'label': 'Weak High'},
+                         'low': {'price': 0.006551, 'label': 'Strong Low'}},
+               'runway': None, 'poc': None, 'vah': None, 'val': None}
+    o = _ff_rr(0.006634, (0.006809, 0.006500, '1h', 'BEARISH'), vet_ctx)
+    r, _d = o._q4_expected_r('VETUSDT', 'SHORT',
+                             {'queue4_sl_source': '1h',
+                              'queue3_vob_sl_buffer_pct': 0.25})
+    _check(r is not None, 'R мав порахуватись')
+    _check('VETUSDT' in o._q4_rr_objective,
+           'ціль рішення мусить зберігатись, а не губитись')
+
+    src = open(os.path.join(_ROOT, 'detection/fuel_filter.py')).read()
+    i = src.index('# 📐 ГЕЙТ ЗА R')
+    j = src.index('opened = self._open(sym, _open_dir', i)
+    _check('set_pending_objective' in src[i:j],
+           'ціль мусить передаватись у Trade Manager перед відкриттям')
+
+    tm_src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    _check('def set_pending_objective' in tm_src, 'TM має приймати ціль')
+    _check(tm_src.count("pilot_objective'] = _obj0") >= 2,
+           'ціль має лягати на позицію в ОБОХ шляхах відкриття (real + paper)')
+    print('✓ ціль гейта фіксується в угоді — R рішення = R у колонці')
+
+
 def test_gate_defaults_and_placement():
     src = open(os.path.join(_ROOT, 'detection/fuel_filter.py')).read()
     _check("'queue4_min_rr': 1.0," in src, 'поріг за замовчуванням 1.0R')
@@ -275,5 +310,6 @@ if __name__ == '__main__':
     test_stop_ceiling_changes_the_r()
     test_no_target_means_no_verdict_not_a_refusal()
     test_r_and_real_sl_come_from_one_source()
+    test_gate_objective_is_locked_into_the_trade()
     test_gate_defaults_and_placement()
     print('\nУсі тести протилежного сигналу + гейта за R пройдено ✅')

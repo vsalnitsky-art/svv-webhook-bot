@@ -532,6 +532,8 @@ class TradeManager:
         # Кладеться на позицію і друкується в тому самому рядку «Відкрито», щоб
         # відповідь «звідки взялась угода» не могла загубитись окремим записом.
         self._pending_origin: Dict[str, str] = {}
+        # 🎯 Ціль, за якою гейт за R пропустив угоду (див. set_pending_objective).
+        self._pending_objective: Dict[str, Dict] = {}
         self._pilot_state: Dict[str, Dict] = {}
         self._shadow_pos_state: Dict[str, Dict] = {}
         # SMC Hold-Confidence cache: {symbol: (ts, result)}. Recomputed at
@@ -2483,6 +2485,9 @@ class TradeManager:
                 _rp = self._positions.get(symbol)
                 if _rp is not None and not _rp.get('origin_trace'):
                     _rp['origin_trace'] = self._take_origin_trace(symbol)
+                    _obj0 = self._take_pending_objective(symbol)
+                    if _obj0:
+                        _rp['pilot_objective'] = _obj0
                 pos = _rp or {}
             except Exception:
                 pos = {}
@@ -3281,6 +3286,28 @@ class TradeManager:
 
     def _take_origin_trace(self, symbol: str) -> Optional[str]:
         return self._pending_origin.pop((symbol or '').upper(), None)
+
+    def set_pending_objective(self, symbol: str, obj: Optional[Dict]) -> None:
+        """🎯 ЦІЛЬ, ЗА ЯКОЮ ГЕЙТ ЗА R ПРОПУСТИВ УГОДУ — передається сюди ПЕРЕД
+        відкриттям і стає зафіксованою ціллю автопілота.
+
+        ⚠️ НАВІЩО (кейс VETUSDT 01.09, знайдено в лозі). Гейт пропустив шорт із
+        вердиктом «1.0R · ціль головний пул ліквідності +2.75%», а через 90
+        секунд автопілот обрав ІНШУ ціль — Strong Low +1.25% — і та сама угода
+        стала **0.43R**. Причина: ціль спирається на `runway`, який береться
+        лише коли напрямок МММ збігається з боком угоди; МММ фліпнув — пул
+        зник із контексту, і найдальшою стала інша ціль. Тобто число, ЗА ЯКИМ
+        пропустили, не було числом, яке потім реально стоїть в угоді.
+
+        Фіксуємо ціль у момент рішення — тоді R у колонці «🎯 Автопілот»
+        дорівнює R, за яким гейт пропустив. Одноразово, як `origin_trace`.
+        """
+        sym = (symbol or '').upper()
+        if sym and isinstance(obj, dict) and obj.get('price'):
+            self._pending_objective[sym] = dict(obj)
+
+    def _take_pending_objective(self, symbol: str) -> Optional[Dict]:
+        return self._pending_objective.pop((symbol or '').upper(), None)
 
     def _get_ctr(self, symbol: str) -> Optional[Dict]:
         """Read the latest CTR (STC) for the symbol from forecast_engine cache."""
@@ -5219,6 +5246,10 @@ class TradeManager:
         # ⚪ POC (Volume Profile) знімок на вході (paper) — як на панелі.
         pos['entry_poc'] = self._poc_snapshot(symbol, side, entry_price)
         pos['origin_trace'] = self._take_origin_trace(symbol)
+        # 🎯 Ціль, зафіксована гейтом за R — автопілот бере саме її.
+        _obj0 = self._take_pending_objective(symbol)
+        if _obj0:
+            pos['pilot_objective'] = _obj0
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
