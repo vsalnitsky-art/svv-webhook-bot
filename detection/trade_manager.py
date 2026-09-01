@@ -3150,6 +3150,28 @@ class TradeManager:
             return True
 
         if act == 'trail' and res.get('stop'):
+            # ✏️ РІВЕНЬ, ВСТАВЛЕНИЙ РУКАМИ, АВТОПІЛОТ НЕ ЧІПАЄ.
+            # 🐞 Кейс SOLUSDT (01.09): користувач тричі ставив Manual SL
+            # $96.82, і щоразу через ~20с (PILOT_TTL) трейл перезаписував його
+            # на $99.9094. Причина: `plan()` отримує ручний рівень просто як
+            # `prev_stop`, ратчет бачить структурний стоп «кращим» (для LONG
+            # вище = ближче до прибутку) і застосовує його. Виглядало так,
+            # ніби ручний SL «не зберігається», хоча він зберігався і його
+            # одразу затирали.
+            # Для Manual TP таке правило вже діяло — тепер SL поводиться так
+            # само. Скинути замок: очистити поле SL, тоді автопілот знову веде
+            # стоп сам.
+            if pos.get('manual_sl_src') == self.SRC_USER:
+                if not pos.get('_pilot_sl_user_lock'):
+                    pos['_pilot_sl_user_lock'] = True
+                    log_activity(symbol, 'skipped',
+                                 f'🎯 Автопілот: SL веде ОПЕРАТОР '
+                                 f'({self._fmt_price(pos.get("manual_sl"))}) — '
+                                 f'структурний трейл '
+                                 f'{self._fmt_price(res["stop"])} не застосовано. '
+                                 f'Очистіть поле SL, щоб повернути автопілоту.',
+                                 side=side, source='PILOT')
+                return False
             lvl = self._round_sltp_value(res['stop'])
             r = self.update_manual_sl_tp(
                 symbol, manual_sl=lvl, is_shadow=is_shadow,
@@ -6511,10 +6533,15 @@ class TradeManager:
                 pos['manual_sl_src'] = _src
                 pos['manual_sl_by'] = origin_label or ''
                 self._record_manual_hist(pos, 'sl', _sv)
+                # Нове значення — знімаємо позначку «про замок уже сказано»,
+                # щоб пояснення зʼявилось у лозі й для цього рівня.
+                pos.pop('_pilot_sl_user_lock', None)
             elif sl_op[0] == 'clear':
                 pos.pop('manual_sl', None)
                 pos.pop('manual_sl_src', None)
                 pos.pop('manual_sl_by', None)
+                # Поле очищено → автопілот знову веде стоп сам.
+                pos.pop('_pilot_sl_user_lock', None)
             # ⚖️ Позначка «стоп у беззбитку» належить рівню, а не угоді: щойно
             # ОПЕРАТОР вписав/зняв свій SL, зелений колір більше не чесний.
             # Автоматичний трейл позначку зберігає — угода й далі без ризику.

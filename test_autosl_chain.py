@@ -602,6 +602,62 @@ def test_levels_message_is_sent_when_pilot_fills_them():
     print('✓ виставлення рівнів → повідомлення в Telegram')
 
 
+# ═════════ ✏️ РУЧНИЙ SL: АВТОПІЛОТ НЕ ЧІПАЄ ════════════════════════════════
+def test_pilot_does_not_overwrite_a_hand_set_stop():
+    """🐞 КЕЙС SOLUSDT (01.09, знайдено в лозі). Користувач ТРИЧІ ставив
+    Manual SL $96.82 — і щоразу через ~20 секунд трейл автопілота
+    перезаписував його на $99.9094:
+
+        16:58:14 ✏️ Користувач: Manual SL → $96.82
+        16:58:38 🤖 Бот (Автопілот · структура): Manual SL → $99.9094
+        16:59:09 ✏️ Користувач: Manual SL → $96.82
+        16:59:31 🤖 Бот (Автопілот · структура): Manual SL → $99.9094
+
+    Виглядало як «ручний SL не зберігається», хоча він зберігався і його
+    одразу затирали: `plan()` отримує ручний рівень просто як `prev_stop`,
+    ратчет вважає структурний стоп кращим (для LONG вище = ближче до
+    прибутку) і застосовує його. Для Manual TP правило «оператора не чіпаємо»
+    вже діяло — SL мусить поводитись так само."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index("if act == 'trail' and res.get('stop'):")
+    j = src.index('lvl = self._round_sltp_value(res[', i)
+    guard = src[i:j]
+    _check("pos.get('manual_sl_src') == self.SRC_USER" in guard,
+           'перед трейлом має стояти перевірка на ручний рівень')
+    _check('return False' in guard,
+           'ручний рівень → трейл НЕ застосовується')
+    _check('Очистіть поле SL' in guard,
+           'у лозі має бути сказано, ЯК повернути автопілоту керування')
+    print('✓ автопілот не перезаписує стоп, виставлений руками')
+
+
+def test_clearing_the_stop_returns_control_to_the_pilot():
+    """Замок не вічний: очистив поле SL → автопілот знову веде стоп."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index("elif sl_op[0] == 'clear':")
+    body = src[i:i + 700]
+    _check("pos.pop('_pilot_sl_user_lock', None)" in body,
+           'очищення рівня має знімати замок')
+    # А нове ручне значення — заново дозволяє пояснення в лозі.
+    # ⚠️ Якорити треба на ГІЛЦІ МУТАЦІЇ (`pos['manual_sl'] = ...`), а не на
+    # першому `sl_op[0] == 'set'` у файлі — той належить ВАЛІДАЦІЇ.
+    k = src.index("pos['manual_sl'] = _sv")
+    _check("pos.pop('_pilot_sl_user_lock', None)" in src[k:k + 700],
+           'нове ручне значення теж має скидати позначку «уже пояснили»')
+    print('✓ очищення SL повертає керування автопілоту')
+
+
+def test_the_lock_is_logged_once_not_every_tick():
+    """Монітор тікає раз на 4с, автопілот — раз на 20с. Без анти-флуду
+    пояснення сипалось би в лог сотнями рядків."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index("if act == 'trail' and res.get('stop'):")
+    guard = src[i:i + 1600]
+    _check("if not pos.get('_pilot_sl_user_lock'):" in guard,
+           'рядок у лог має писатись ОДИН раз на рівень')
+    print('✓ пояснення пишеться раз, а не щотіку')
+
+
 if __name__ == '__main__':
     test_mnt_case_star_1h_block_is_used_instead_of_waiting()
     test_primary_tf_still_wins_when_valid()
@@ -639,4 +695,7 @@ if __name__ == '__main__':
     test_levels_message_has_no_service_tail()
     test_levels_message_skipped_when_empty()
     test_levels_message_is_sent_when_pilot_fills_them()
+    test_pilot_does_not_overwrite_a_hand_set_stop()
+    test_clearing_the_stop_returns_control_to_the_pilot()
+    test_the_lock_is_logged_once_not_every_tick()
     print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')
