@@ -259,6 +259,43 @@ def test_sl_reports_distance_from_entry():
     print('✓ у лозі видно відстань SL у % від входу')
 
 
+def test_sl_ceiling_applies_to_queue4_too():
+    """🎚 `autosl_max_pct` жила ЛИШЕ в авто-SL Trade Manager, а угоди Черги-4
+    ставлять стоп СВОЇМ шляхом — тож стеля їх не бачила, і стоп стояв там, де
+    стоїть блок (на проді 2.4-5.9% від входу при цілях 2-13%, тобто R < 1).
+    Одне налаштування мусить керувати ВСІМА авто-SL."""
+    lg = _Log().install()
+    o, tm = _ff_sl(one_h=(110.0, 90.0, '1h', 'BEARISH'), price=100.0)
+    o._tm_entry_price = lambda sym: 100.0
+    o._q4_set_vob_sl('NEOUSDT', 'SHORT', dict(_S, autosl_max_pct=2.5))
+    # блок дав би 110·1.001 = 10.11% від входу → стеля тягне до 102.5
+    _check(abs(tm.calls[0][1] - 102.5) < 1e-6,
+           f'рівень мав підтягнутись до стелі 2.5%, отримано {tm.calls[0][1]}')
+    _check('стелі 2.5%' in lg.text and 'було 10.11%' in lg.text,
+           f'у лозі має бути видно, що рівень підтягнуто і з якої відстані: {lg.text}')
+    print('✓ стеля SL діє і на Чергу-4 (одне налаштування — усі авто-SL)')
+
+
+def test_sl_ceiling_off_keeps_the_block_level():
+    """0 = вимкнено → поведінка Черги-4 не змінюється ні на йоту."""
+    o, tm = _ff_sl(one_h=(110.0, 90.0, '1h', 'BEARISH'), price=100.0)
+    o._tm_entry_price = lambda sym: 100.0
+    o._q4_set_vob_sl('NEOUSDT', 'SHORT', dict(_S, autosl_max_pct=0))
+    _check(abs(tm.calls[0][1] - 110.0 * 1.001) < 1e-9,
+           f'без стелі рівень лишається на межі блоку: {tm.calls[0][1]}')
+    print('✓ стеля 0 → рівень блоку без змін (стара поведінка)')
+
+
+def test_sl_ceiling_never_widens_a_close_stop():
+    """Стеля лише ПІДТЯГУЄ задалекий рівень; ближчий стоп не відсувається."""
+    o, tm = _ff_sl(one_h=(101.0, 99.0, '1h', 'BEARISH'), price=100.0)
+    o._tm_entry_price = lambda sym: 100.0
+    o._q4_set_vob_sl('NEOUSDT', 'SHORT', dict(_S, autosl_max_pct=5.0))
+    _check(abs(tm.calls[0][1] - 101.0 * 1.001) < 1e-9,
+           f'стоп у межах стелі має лишитись як є: {tm.calls[0][1]}')
+    print('✓ стеля не робить близький стоп дальшим')
+
+
 def test_sl_not_written_when_no_position():
     """🐞 ДЕФЕКТ: `is_shadow` вгадувався («немає реальної → значить тіньова»).
     Якщо позиції немає ЗОВСІМ — писали в тіньову книгу і мовчки нічого не робили."""
@@ -402,6 +439,52 @@ def test_manual_open_requires_ff_enabled():
     print('✓ вимкнений Fuel Filter → відмова')
 
 
+# ═════════ 🐞 UnboundLocalError у `_open` (ручне відкриття з Черги-4) ═══════
+def test_open_never_leaves_exh_unbound():
+    """🐞 ЗНАЙДЕНО ЗІ СКРІНА: «cannot access local variable 'exh' where it is
+    not associated with a value» при ✋ ручному відкритті з Черги-4.
+
+    `exh` присвоювався ЛИШЕ всередині `if not skip_safeguard:`, а читався в
+    кінці `_open` беззастережно. ОБИДВА шляхи Черги-4 передають
+    `skip_safeguard=True`, тож падало ЗАВЖДИ — і то на ОСТАННЬОМУ рядку, коли
+    угода вже відкрита й записана в `_fuel_managed`. Двигун ловив виняток у
+    `except` і мовчки пропускав усе подальше: таймер, вигоряння сигналу,
+    позначку «1 угода на 1H-OB» і `_q4_set_vob_sl`."""
+    import ast
+    src = open(os.path.join(_ROOT, 'detection/fuel_filter.py')).read()
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == '_open')
+    writes = [n.lineno for n in ast.walk(fn)
+              if isinstance(n, ast.Name) and n.id == 'exh'
+              and isinstance(n.ctx, ast.Store)]
+    reads = [n.lineno for n in ast.walk(fn)
+             if isinstance(n, ast.Name) and n.id == 'exh'
+             and isinstance(n.ctx, ast.Load)]
+    _check(writes and reads, 'у `_open` мають бути і запис, і читання exh')
+    _check(min(writes) < min(reads),
+           f'exh мусить ініціалізуватись ДО першого читання: '
+           f'запис {min(writes)}, читання {min(reads)}')
+    # І саме ця ініціалізація має стояти ПОЗА умовою skip_safeguard.
+    i = src.index('exh = None')
+    j = src.index('if not skip_safeguard:', i)
+    _check(j > i, 'ініціалізація має передувати умові, а не бути в ній')
+    print('✓ `_open` більше не падає з UnboundLocalError на exh')
+
+
+def test_q4_open_crash_is_logged_not_swallowed():
+    """Збій ПІСЛЯ відкриття був невидимий: лише `print` у stdout. Разом із ним
+    тихо зникали таймер, вигоряння сигналу і виставлення SL."""
+    src = open(os.path.join(_ROOT, 'detection/fuel_filter.py')).read()
+    i = src.index('[FF-Q4] open error')
+    body = src[i - 300:i + 600]
+    _check('log_activity' in body,
+           'збій після відкриття мусить потрапляти в 🧾 Лог, а не лише в консоль')
+    _check('перевірте позицію' in body,
+           'і прямо казати, що позиція могла лишитись напівобробленою')
+    print('✓ збій після відкриття тепер видно в лозі')
+
+
 if __name__ == '__main__':
     test_ttl_expires_by_default()
     test_no_ttl_disables_expiry()
@@ -420,6 +503,9 @@ if __name__ == '__main__':
     test_sl_side_ok_helper()
     test_sl_logs_rejection_instead_of_lying()
     test_sl_reports_distance_from_entry()
+    test_sl_ceiling_applies_to_queue4_too()
+    test_sl_ceiling_off_keeps_the_block_level()
+    test_sl_ceiling_never_widens_a_close_stop()
     test_sl_not_written_when_no_position()
     test_sl_targets_shadow_book_only_when_shadow_exists()
     test_sl_source_validated_in_settings()
@@ -430,4 +516,6 @@ if __name__ == '__main__':
     test_manual_open_refuses_when_already_in_trade()
     test_manual_open_keeps_queue_when_open_rejected()
     test_manual_open_requires_ff_enabled()
+    test_open_never_leaves_exh_unbound()
+    test_q4_open_crash_is_logged_not_swallowed()
     print('\nУсі тести керувань Черги-4 пройдено ✅')

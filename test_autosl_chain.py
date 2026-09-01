@@ -554,8 +554,9 @@ def test_tg_open_carries_both_tp_levels():
            f'у повідомленні мусять бути САМІ ЧИСЛА: {m}')
     _check('(+1.50%)' in m and '(+13.37%)' in m,
            f'відсоток має стояти ОДРАЗУ після ціни кожного рівня: {m}')
-    _check('(50%)' in m, f'частка часткової фіксації має бути видна: {m}')
-    print('✓ TG-відкриття: TP-1/TP-2 з ціною і % одразу за нею')
+    _check('(50%)' not in m and 'повний' not in m,
+           f'підписи «(50%)» і «(повний)» прибрано на прохання: {m}')
+    print('✓ TG-відкриття: TP-1/TP-2 з ціною і % одразу за нею, без підписів')
 
 
 def test_tg_says_nothing_about_tp_when_there_is_nothing_to_say():
@@ -658,6 +659,53 @@ def test_the_lock_is_logged_once_not_every_tick():
     print('✓ пояснення пишеться раз, а не щотіку')
 
 
+# ═════════ 📨 ЧАСТКОВЕ ЗАКРИТТЯ: у ГРУПУ і КОРОТКО ═════════════════════════
+def test_partial_close_goes_to_the_group_topic():
+    """🐞 Повідомлення про часткове закриття йшли в ОСОБИСТИЙ бот: `_notify`
+    без `category` шле адміну в приват, який зарезервований під службові
+    повідомлення. Ринкові події мають іти в груповий топік."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    for fn in ('_partial_close', '_partial_close_shadow'):
+        i = src.index(f'def {fn}(')
+        j = src.index('def ', i + 10)
+        body = src[i:j]
+        k = body.index('self._notify(')
+        call = body[k:k + 400]
+        _check("category='trades'" in call,
+               f'{fn}: повідомлення мусить іти в груповий топік, а не в приват')
+    print('✓ часткове закриття йде в групу, не в особистий бот')
+
+
+def test_partial_close_message_is_one_line():
+    """Було шість рядків на рутинну подію. Має бути один."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    for fn in ('_partial_close', '_partial_close_shadow'):
+        i = src.index(f'def {fn}(')
+        j = src.index('def ', i + 10)
+        body = src[i:j]
+        k = body.index('self._notify(')
+        call = body[k:k + 400]
+        _check(call.count('\\n') <= 1,
+               f'{fn}: повідомлення має бути компактним, а не багаторядковим')
+        for gone in ('Reason:', 'Remaining:', 'Paper trade (no real close)',
+                     'of position closed', 'of paper position closed'):
+            _check(gone not in call, f'{fn}: «{gone}» мало зникнути')
+    print('✓ повідомлення про часткове закриття — один рядок')
+
+
+def test_tp_lines_have_no_labels():
+    """Пункт 2: «(50%)» і «(повний)» прибрано з рядків рівнів."""
+    o = _tm_msg()
+    pos = {'side': 'SHORT', 'entry_price': 100.0,
+           'manual_tp1': 98.0, 'manual_tp': 95.0}
+    txt = o._tp_lines(pos)
+    _check('TP-1' in txt and 'TP-2' in txt, f'самі рівні лишаються: {txt}')
+    _check('(50%)' not in txt and '%)' in txt,
+           f'частка прибрана, а відсоток від входу лишився: {txt}')
+    _check('повний' not in txt, f'«(повний)» мало зникнути: {txt}')
+    print(f'✓ рядки рівнів без підписів: {txt.splitlines()[0]}')
+
+
 if __name__ == '__main__':
     test_mnt_case_star_1h_block_is_used_instead_of_waiting()
     test_primary_tf_still_wins_when_valid()
@@ -698,4 +746,7 @@ if __name__ == '__main__':
     test_pilot_does_not_overwrite_a_hand_set_stop()
     test_clearing_the_stop_returns_control_to_the_pilot()
     test_the_lock_is_logged_once_not_every_tick()
+    test_partial_close_goes_to_the_group_topic()
+    test_partial_close_message_is_one_line()
+    test_tp_lines_have_no_labels()
     print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')

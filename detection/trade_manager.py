@@ -5101,14 +5101,13 @@ class TradeManager:
             pnl_pct = (entry - exit_price) / entry * 100
         
         side_icon = '🟢' if pos['side'] == 'LONG' else '🔴'
+        # 📨 У ГРУПОВИЙ ТОПІК, а не в особистий бот: без `category` `_notify`
+        # шле адміну в приват, який зарезервований під службові повідомлення.
+        # І КОРОТКО — це рутинна подія, розписувати її на шість рядків нема за що.
         self._notify(
-            f"{side_icon} <b>Partial close</b>: #{symbol}\n"
-            f"📤 {pct:.0f}% of position closed\n"
-            f"📍 Exit: {self._fmt_price(exit_price)}\n"
-            f"💰 PnL: {pnl_pct:+.2f}%\n"
-            f"🔖 Reason: {self._reason_label(reason)}\n"
-            f"💼 Remaining: {new_remaining:.6g}"
-        )
+            f"✂️ {side_icon} <b>#{symbol}</b> −{pct:.0f}% · "
+            f"{self._fmt_price(exit_price)} · {pnl_pct:+.2f}%",
+            category='trades')
     
     def _partial_close_shadow(self, symbol: str, pct: float,
                               exit_price: float, reason: str):
@@ -5153,16 +5152,12 @@ class TradeManager:
             pnl_pct = (entry - exit_price) / entry * 100
         
         side_icon = '🟢' if pos['side'] == 'LONG' else '🔴'
+        # Так само: груповий топік + один рядок (мітка 🧪 замість цілого рядка
+        # «Paper trade (no real close)»).
         self._notify(
-            f"{side_icon} <b>[TEST] Partial close</b>: #{symbol}\n"
-            f"📤 {pct:.0f}% of paper position closed\n"
-            f"📍 Exit: {self._fmt_price(exit_price)}\n"
-            f"💰 PnL: {pnl_pct:+.2f}%\n"
-            f"🔖 Reason: {self._reason_label(reason)}\n"
-            f"💼 Remaining: {new_remaining * 100:.0f}%\n"
-            f"🧪 Paper trade (no real close)",
-            is_test=True,
-        )
+            f"✂️ {side_icon} <b>#{symbol}</b> 🧪 −{pct:.0f}% · "
+            f"{self._fmt_price(exit_price)} · {pnl_pct:+.2f}%",
+            is_test=True, category='trades')
         print(f"[TM] [TEST] Shadow partial close: {symbol} {pos['side']} "
               f"{pct:.0f}% → remaining {new_remaining * 100:.0f}%")
     
@@ -7121,16 +7116,14 @@ class TradeManager:
                 d = f" ({_p:+.2f}%)"
             return f"🎯 {label}: <b>{self._fmt_price(v)}</b>{d}"
 
-        try:
-            pct = float(self._settings.get('pilot_tp1_close_pct', 50) or 50)
-        except (TypeError, ValueError):
-            pct = 50.0
         tp2 = pos.get('manual_tp')
         if not tp2 or float(tp2 or 0) <= 0:
             _st = pos.get('tp_price')
             tp2 = _st if (_st and float(_st) > 0) else None
-        lines = [x for x in (_one(pos.get('manual_tp1'), f'TP-1 ({pct:g}%)'),
-                             _one(tp2, 'TP-2 (повний)')) if x]
+        # ⚠️ Без «(50%)» і «(повний)» — користувач попросив прибрати: частку
+        # він і так знає з налаштувань, а в повідомленні це зайвий шум.
+        lines = [x for x in (_one(pos.get('manual_tp1'), 'TP-1'),
+                             _one(tp2, 'TP-2')) if x]
         return '\n'.join(lines)
 
     def _notify_opposite_queued(self, symbol: str, side: str,

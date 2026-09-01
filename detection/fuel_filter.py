@@ -3550,6 +3550,18 @@ class FuelFilterDaemon:
 
         # CHECK EXHAUSTION BEFORE OPENING: don't enter exhausted moves.
         # skip_safeguard (Черга-4: рішення ухвалює 4-шаровий конфлюенс) → пропускаємо.
+        # ⚠️ ІНІЦІАЛІЗУЄМО ЗАЗДАЛЕГІДЬ. `exh` читається в кінці функції (рядок
+        # підсумку), а присвоювався ЛИШЕ всередині цього `if`. При
+        # `skip_safeguard=True` — а це ОБИДВА шляхи Черги-4, і авто, і ручний —
+        # виходив UnboundLocalError НА ОСТАННЬОМУ рядку `_open`: угода вже
+        # відкрита й записана в `_fuel_managed`, а функція падає. Двигун ловив
+        # виняток у `except` і мовчки ПРОПУСКАВ усе, що йде після відкриття:
+        # таймер, `note_signal_consumed` (сигнал не вигорав), позначку
+        # «1 угода на 1H-OB» і `_q4_set_vob_sl` (стоп ставила вже інша,
+        # незалежна гілка TM — саме тому джерело SL не слухалось налаштування
+        # Черги-4). У ручному відкритті це ще й показувало «Не відкрито:
+        # Помилка…», хоча угода реально відкривалась.
+        exh = None
         if not skip_safeguard:
             max_exh = settings.get('max_exhaustion_pct', 75)
             exh = self._exhaustion(symbol, side)
@@ -6901,7 +6913,18 @@ class FuelFilterDaemon:
                     # 🎯 SL з Volumized OB + буфер (за напрямком відкриття).
                     self._q4_set_vob_sl(sym, _open_dir, s)
             except Exception as e:
+                # ⚠️ Раніше це йшло ЛИШЕ в stdout — збій після відкриття був
+                # невидимий у 🧾 Лозі, а разом із ним тихо зникали таймер,
+                # вигоряння сигналу і виставлення SL. Тепер видно.
                 print(f"[FF-Q4] open error {sym}: {e}")
+                try:
+                    log_activity(sym, 'rejected',
+                                 f'Черга-4 ⚠️ збій після відкриття: {e} — '
+                                 f'таймер/вигоряння сигналу/SL могли не '
+                                 f'застосуватись, перевірте позицію',
+                                 side=_open_dir, source='Q4')
+                except Exception:
+                    pass
         # ⏳ Прибрати таймери застою для монет, яких уже немає в Черзі-4.
         for k in list(self._q4_lit_at.keys()):
             if k not in self._pending4:
