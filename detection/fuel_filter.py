@@ -470,6 +470,10 @@ DEFAULT_SETTINGS = {
     # проти 15.6% на однакових розмірах позиції). Ненульове значення ПІДТЯГУЄ
     # надто далекий рівень до стелі; сам вибір блоку не змінюється.
     'autosl_max_pct': 0.0,
+    # 📐 Мінімальний очікуваний R для відкриття з Черги-4 (0 = вимкнено).
+    # R = відстань до цілі / відстань до стопа; рахується ДО входу з тих
+    # самих джерел, що дадуть реальний SL і реальний TP-2 автопілота.
+    'queue4_min_rr': 1.0,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -866,6 +870,8 @@ class FuelFilterDaemon:
         # 🔇 Анти-флуд для 🔁 повторної перевірки Черги-4:
         # {symbol: ((напрямок, причина), ts останнього запису в лог)}.
         self._q4_recheck_logged: Dict[str, tuple] = {}
+        # Анти-флуд для гейта за R — той самий принцип, що й вище.
+        self._q4_rr_logged: Dict[str, tuple] = {}
         # Розклад ОСТАННЬОЇ ПРОЙДЕНОЇ 🔁 повторної перевірки {symbol: detail}.
         self._q4_recheck_pass_detail: Dict[str, str] = {}
         # Anti-flood for the per-coin «Готовність» decision log:
@@ -1186,6 +1192,10 @@ class FuelFilterDaemon:
             s['autosl_max_pct'] = max(0.0, min(50.0, float(s.get('autosl_max_pct', 0.0) or 0.0)))
         except (TypeError, ValueError):
             s['autosl_max_pct'] = 0.0
+        try:
+            s['queue4_min_rr'] = max(0.0, min(20.0, float(s.get('queue4_min_rr', 1.0) or 0.0)))
+        except (TypeError, ValueError):
+            s['queue4_min_rr'] = 1.0
         s['engine_smart_direction'] = bool(s.get('engine_smart_direction', False))
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
@@ -1245,7 +1255,8 @@ class FuelFilterDaemon:
     # ------------------------------------------------------------------
     # ❤️ FF "база" — intercepted coins waiting to open
     # ------------------------------------------------------------------
-    def intercept(self, symbol: str, side: str, kind: Optional[str] = None) -> bool:
+    def intercept(self, symbol: str, side: str, kind: Optional[str] = None,
+                  opp_wait: bool = False) -> bool:
         """Catch a fresh CHoCH/CHoCH+BOS signal and route it into the ENABLED
         queue(s). Direction = the signal side. `kind` = signal type ('choch' |
         'choch_bos') so a NEWER signal of the SAME direction but a DIFFERENT type
@@ -1330,6 +1341,15 @@ class FuelFilterDaemon:
         _already_open = bool(sym in self._fuel_managed
                              or self._tm_has_position(sym, True)
                              or self._tm_has_position(sym, False))
+        # 🔄 ПРОТИЛЕЖНИЙ СИГНАЛ ПРИ ВІДКРИТІЙ УГОДІ (кейс ARBUSDT 31.08).
+        # Раніше він просто ЗНИКАВ: «Reverse on opposite signal» вимкнено →
+        # TM писав «тримаємо» і сигнал не зберігався НІДЕ. По ARB це коштувало
+        # ідеального LONG о 15:02 (усі фільтри ✓, Decision 82%) — бот досидів
+        # у шорті до стопа −8.58%. Тепер такий сигнал СТАЄ В ЧЕРГУ і чекає
+        # закриття позиції. `_already_open` для нього не перешкода — саме в
+        # цьому й сенс.
+        if opp_wait:
+            _already_open = False
         # 🔒 «1 VOB на 1H OB»: монета вже відкривалась на ПОТОЧНОМУ 1H-OB → НЕ
         # ставимо її знову в Чергу-4. Так новий 5m VOB на тому самому 1H-OB (напр.
         # відразу після закриття угоди) не потрапляє в чергу й не ре-відкриває
@@ -1409,7 +1429,11 @@ class FuelFilterDaemon:
                                                        else _apx4) or _apx4,
                                        # заміна протилежним обходить фільтр входу й у
                                        # двигуні — далі керує лише застій/TTL.
-                                       'gate_exempt': bool(q4_ejected)}
+                                       'gate_exempt': bool(q4_ejected),
+                                       # 🔄 запис створено ПРОТИ відкритої угоди:
+                                       # він чекає її закриття, тож чистка
+                                       # `note_trade_closed` його НЕ прибирає.
+                                       'opp_wait': bool(opp_wait)}
                 if q4_ejected:
                     # свіже вікно застою для щойно заміненого запису
                     self._q4_lit_at.pop(sym, None)
@@ -3504,7 +3528,8 @@ class FuelFilterDaemon:
               opened_by: Optional[str] = None, skip_ctr_safeguard: bool = False,
               skip_safeguard: bool = False, by_hand: bool = False,
               signal_at: Optional[float] = None,
-              origin_trace: Optional[str] = None):
+              origin_trace: Optional[str] = None,
+              opp_wait: bool = False):
         """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
         store position data — it only tracks which symbols it opened and delegates
         the actual position to TM. Positions appear in Trade Manager or Test Mode
@@ -3552,7 +3577,8 @@ class FuelFilterDaemon:
         # угоди, — це вже ВІДПРАЦЬОВАНА ситуація, а не привід входити знову.
         # (`by_hand` — людина; для неї правило не діє.)
         if not by_hand and signal_at:
-            _ok_new, _why_new = self._is_new_situation(symbol, signal_at, settings)
+            _ok_new, _why_new = self._is_new_situation(symbol, signal_at, settings,
+                                                       opp_wait=opp_wait)
             if not _ok_new:
                 self._engine_skip[symbol] = _why_new
                 print(f"[FuelFilter] {symbol}: {_why_new} → відмова у відкритті")
@@ -3752,6 +3778,19 @@ class FuelFilterDaemon:
                  or (getattr(tm, '_shadow_positions', {}) or {}).get(symbol))
             return p.get('side') if p else None
         except Exception:
+            return None
+
+    def _tm_entry_price(self, symbol: str) -> Optional[float]:
+        """Ціна ВХОДУ відкритої позиції (real → paper) — база для стелі стопа.
+        Немає позиції або ціни → None: стеля тоді просто не застосовується."""
+        tm = self._get_tm() if self._get_tm else None
+        if not tm:
+            return None
+        try:
+            p = ((getattr(tm, '_positions', {}) or {}).get(symbol)
+                 or (getattr(tm, '_shadow_positions', {}) or {}).get(symbol))
+            return float(p.get('entry_price')) if p and p.get('entry_price') else None
+        except (TypeError, ValueError, AttributeError):
             return None
 
     def _reverse_close_opposite(self, symbol: str) -> bool:
@@ -6212,6 +6251,11 @@ class FuelFilterDaemon:
                     _at = 0.0
                 if _at and _at > now:
                     continue          # запис новіший за закриття — лишаємо
+                # 🔄 Запис, який СВІДОМО чекав закриття цієї угоди (протилежний
+                # сигнал), прибирати НЕ можна — інакше ми знову викидали б саме
+                # той сигнал, заради якого все й робилось.
+                if rec.get('opp_wait'):
+                    continue
                 q.pop(sym, None)
                 dropped.append((name, _at))
             if dropped:
@@ -6298,12 +6342,18 @@ class FuelFilterDaemon:
                 pass
         return n
 
-    def _is_new_situation(self, symbol: str, signal_at: float, settings: Dict):
+    def _is_new_situation(self, symbol: str, signal_at: float, settings: Dict,
+                          opp_wait: bool = False):
         """(це нова ситуація?, причина відмови). ЧИСТА логіка над двома мітками.
 
         Дві незалежні перевірки:
           1) сигнал мусить бути НОВІШИЙ за закриття попередньої угоди по монеті;
           2) сигнал не має бути старішим за `open_max_signal_age_min` (0 = вимк).
+
+        ⚠️ `opp_wait=True` — запис створено ПРОТИЛЕЖНИМ сигналом, поки угода
+        була ВІДКРИТА. Він за визначенням старіший за її закриття, і саме
+        цього закриття він і чекав, тож перевірку (1) для нього не робимо.
+        Гейт «сигнал уже ВІДПРАЦЮВАВ» (burned) лишається — він про інше.
         """
         sym = (symbol or '').upper()
         try:
@@ -6322,7 +6372,7 @@ class FuelFilterDaemon:
                 return False, (f'сигнал від {_b} UTC УЖЕ ВІДПРАЦЮВАВ '
                                f'(за ним відкривалась угода) — потрібен НОВИЙ')
             end = self._last_trade_end.get(sym)
-            if end and sig <= float(end):
+            if end and sig <= float(end) and not opp_wait:
                 _e = time.strftime('%d.%m %H:%M:%S', time.gmtime(float(end)))
                 _s = time.strftime('%d.%m %H:%M:%S', time.gmtime(sig))
                 return False, (f'сигнал від {_s} UTC СТАРІШИЙ за закриття '
@@ -6606,7 +6656,8 @@ class FuelFilterDaemon:
             # коли `note_trade_closed` не спрацював (рестарт, стан із БД).
             # ♾ «Без терміну» цей вихід НЕ вимикає — він не про час, а про те,
             # що підстава вже відпрацьована.
-            _spent = self._is_new_situation(sym, info.get('added_at'), s)
+            _spent = self._is_new_situation(sym, info.get('added_at'), s,
+                                            opp_wait=bool(info.get('opp_wait')))
             if not _spent[0]:
                 with self._lock:
                     self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
@@ -6778,6 +6829,36 @@ class FuelFilterDaemon:
                                  + (f' · {_rc2}' if _rc2 else '')
                                  + ' — відкриваємо',
                                  side=_open_dir, source='Q4')
+            # 📐 ГЕЙТ ЗА R (queue4_min_rr, деф. 1.0; 0 = вимкнено).
+            # Останній крок перед відкриттям: рахуємо ОЧІКУВАНИЙ R із тих самих
+            # джерел, що дадуть реальний стоп і реальну ціль. Кейс ARBUSDT
+            # (31.08): стоп 8.23%, ціль 1.60% → 0.19R, збиток −8.58%. Угода з
+            # R<1 ризикує більшим заради меншого — такі не відкриваємо.
+            # ⚠️ Не виселяємо запис: R РУХОМИЙ (ціна підійде до стопа — ризик
+            # зменшиться, зʼявиться дальша ціль — виросте виграш), тож монета
+            # лишається в черзі й пробує на наступному тіку.
+            try:
+                _min_rr = float(s.get('queue4_min_rr', 1.0) or 0.0)
+            except (TypeError, ValueError):
+                _min_rr = 0.0
+            if _min_rr > 0:
+                _rr, _rr_detail = self._q4_expected_r(sym, _open_dir, s)
+                if _rr is not None and _rr < _min_rr:
+                    # 🔇 Анти-флуд той самий, що й у повторної перевірки.
+                    _rk2 = (_open_dir, f'rr<{_min_rr}')
+                    _pv, _pts = self._q4_rr_logged.get(sym, (None, 0.0))
+                    if _rk2 != _pv or (now - _pts) >= self.Q4_RECHECK_LOG_GAP:
+                        self._q4_rr_logged[sym] = (_rk2, now)
+                        log_activity(sym, 'skipped',
+                                     f'Черга-4 📐 R замалий: {_rr_detail} — '
+                                     f'потрібно ≥{_min_rr:g}R, відкриття відкладено',
+                                     side=_open_dir, source='Q4')
+                    continue
+                if self._q4_rr_logged.pop(sym, None) and _rr is not None:
+                    log_activity(sym, 'passthrough',
+                                 f'Черга-4 📐 R достатній: {_rr_detail} '
+                                 f'(поріг {_min_rr:g}R) — відкриваємо',
+                                 side=_open_dir, source='Q4')
             try:
                 _flip = '' if _open_dir == d else f' (ФЛІП: сигнал був {d}, показники — {_open_dir})'
                 _trace = f'Черга-4{_flip} · ' + self._origin_trace(sym, info, lay, now)
@@ -6786,6 +6867,9 @@ class FuelFilterDaemon:
                                     skip_ctr_safeguard=True, skip_safeguard=True,
                                     # 🧬 час, коли монета зайшла в чергу = час сигналу
                                     signal_at=info.get('added_at'),
+                                    # 🔄 запис чекав закриття протилежної угоди —
+                                    # правило «нова ситуація» його не стосується
+                                    opp_wait=bool(info.get('opp_wait')),
                                     origin_trace=_trace)
                 if opened:
                     with self._lock:
@@ -6928,6 +7012,117 @@ class FuelFilterDaemon:
 
         return [_from_1h, _from_15m] if src == '1h' else [_from_15m, _from_1h]
 
+    def _q4_expected_r(self, sym: str, side: str, s: Dict):
+        """📐 ОЧІКУВАНИЙ R угоди ЩЕ ДО ВІДКРИТТЯ → `(r, detail)`.
+
+        R = (відстань до ЦІЛІ) / (відстань до СТОПА). Те саме число, що потім
+        стоїть у колонці «🎯 Автопілот» — і рахується з ТИХ САМИХ джерел:
+          • стоп — `_q4_pick_sl` (той самий ланцюг, що реально виставить SL,
+            з тим самим буфером і тією ж стелею `autosl_max_pct`);
+          • ціль — `trade_pilot.pick_objective` над обʼєктами графіка з
+            `TradeManager._pilot_context` (пули ліквідації, екстремум
+            дилінг-діапазону, POC, VAH/VAL, рівновага).
+
+        ⚠️ Це НЕ повернення скасованого гейта на TP. Той різав ВИСТАВЛЕННЯ
+        рівнів уже відкритій угоді — користувач це скасував. Цей рахує R ДО
+        входу і вирішує, чи взагалі варто відкривати: ARBUSDT 31.08 зайшов у
+        шорт зі стопом 8.23% і ціллю 1.60%, тобто 0.19R, і втратив −8.58%.
+
+        `(None, причина)` — коли R порахувати НЕМА З ЧОГО (немає стопа або
+        цілі). Тоді гейт не блокує: вигадану відмову не даємо.
+        """
+        try:
+            from detection import trade_pilot
+        except Exception as e:
+            return None, f'модуль автопілота недоступний ({e})'
+        tm = self._get_tm() if self._get_tm else None
+        if tm is None:
+            return None, 'Trade Manager недоступний'
+
+        ref = None
+        try:
+            ref = tm._get_current_price(sym)
+        except Exception:
+            ref = None
+        if not ref or ref <= 0:
+            ref = (self._fuel_dir_smoothed(sym) or {}).get('mark_price')
+        try:
+            ref = float(ref or 0)
+        except (TypeError, ValueError):
+            ref = 0.0
+        if ref <= 0:
+            return None, 'немає ціни'
+
+        # 1) СТОП — рівно той, що виставиться при відкритті.
+        src = str(s.get('queue4_sl_source', '1h') or '1h').lower()
+        if src not in ('1h', '15m'):
+            src = '1h'
+        try:
+            buf = max(0.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)) / 100.0
+        except (TypeError, ValueError):
+            buf = 0.001
+        chosen, skipped = self._q4_pick_sl(sym, side, src, buf, ref)
+        if not chosen:
+            return None, 'стоп не визначено: ' + '; '.join(skipped or ['немає блоку'])
+        sl = chosen[0]
+        try:
+            from detection.trade_manager import clamp_sl_distance
+            sl, _was = clamp_sl_distance(side, ref, sl, s.get('autosl_max_pct'))
+        except Exception:
+            pass
+
+        # 2) ЦІЛЬ — та сама, що потім стане TP-2 автопілота.
+        try:
+            ctx = tm._pilot_context(sym, side) or {}
+        except Exception as e:
+            return None, f'контекст цілей недоступний ({e})'
+        try:
+            targets = trade_pilot.collect_targets(
+                side, ref, swing=ctx.get('swing'), runway=ctx.get('runway'),
+                poc=ctx.get('poc'), vah=ctx.get('vah'), val=ctx.get('val'))
+            obj = trade_pilot.pick_objective(targets)
+        except Exception as e:
+            return None, f'цілі не порахувались ({e})'
+        if not obj:
+            return None, 'змістовної цілі попереду немає'
+
+        r = trade_pilot.risk_reward(ref, sl, obj)
+        if r is None:
+            return None, 'R не порахувався'
+        _risk = abs(ref - sl) / ref * 100.0
+        _rew = abs(float(obj.get('price')) - ref) / ref * 100.0
+        return r, (f"{r}R · ціль {obj.get('label')} +{_rew:.2f}% / "
+                   f"стоп {chosen[1]} −{_risk:.2f}%")
+
+    def _q4_pick_sl(self, sym: str, side: str, src: str, buf: float, ref):
+        """Обрати рівень SL із ланцюга джерел — ЄДИНЕ місце цього вибору.
+
+        Повертає `(chosen, skipped)`, де `chosen = (рівень, підпис, це_фолбек)`
+        або None, а `skipped` — причини, чому кожне джерело не підійшло.
+
+        ⚠️ Винесено окремо НАВМИСНО: цей самий розрахунок потрібен ДВІЧІ —
+        коли стоп реально виставляється (`_q4_set_vob_sl`) і коли ще ДО
+        відкриття рахується очікуваний R (`_q4_expected_r`). Якби R рахувався
+        зі свого «приблизного» стопа, гейт відсіював би угоди за одним числом,
+        а стоп потім ставав би за іншим — класична розбіжність двох джерел.
+        """
+        chosen, skipped = None, []
+        for i, getter in enumerate(self._q4_sl_candidates(sym, side, src)):
+            got, why = getter()
+            if not got:
+                skipped.append(why)
+                continue
+            top, bottom, label = got
+            lvl = (round(top * (1.0 + buf), 8) if side == 'SHORT'
+                   else round(bottom * (1.0 - buf), 8))
+            if ref and not self._q4_sl_side_ok(lvl, side, ref):
+                skipped.append(f'{label}: рівень {self._fmt_price(lvl)} з '
+                               f'неправильного боку (ціна {self._fmt_price(ref)})')
+                continue
+            chosen = (lvl, label, i > 0)
+            break
+        return chosen, skipped
+
     def _q4_set_vob_sl(self, sym: str, side: str, s: Dict):
         """🛑 Черга-4: після відкриття ставить Manual SL на межу OB + буфер:
         SHORT → над ВЕРХОМ, LONG → під НИЗОМ. Буфер = `queue3_vob_sl_buffer_pct`.
@@ -6969,21 +7164,7 @@ class FuelFilterDaemon:
             if not ref or ref <= 0:
                 ref = (self._fuel_dir_smoothed(sym) or {}).get('mark_price')
 
-            chosen, skipped = None, []
-            for i, getter in enumerate(self._q4_sl_candidates(sym, side, src)):
-                got, why = getter()
-                if not got:
-                    skipped.append(why)
-                    continue
-                top, bottom, label = got
-                lvl = (round(top * (1.0 + buf), 8) if side == 'SHORT'
-                       else round(bottom * (1.0 - buf), 8))
-                if ref and not self._q4_sl_side_ok(lvl, side, ref):
-                    skipped.append(f'{label}: рівень {self._fmt_price(lvl)} з '
-                                   f'неправильного боку (ціна {self._fmt_price(ref)})')
-                    continue
-                chosen = (lvl, label, i > 0)
-                break
+            chosen, skipped = self._q4_pick_sl(sym, side, src, buf, ref)
 
             if not chosen:
                 log_activity(sym, 'sltp',
@@ -6993,6 +7174,22 @@ class FuelFilterDaemon:
                 return
 
             sl, label, fallback = chosen
+            # 🛡 СТЕЛЯ ВІДСТАНІ — та сама, що й у авто-SL Trade Manager
+            # (`autosl_max_pct`). Без цього налаштування діяло лише на одному з
+            # двох шляхів: угоди Черги-4 ставили стоп там, де стоїть блок
+            # (2.4-5.9% від входу), стеля їх не бачила, і ціль виявлялась
+            # ближчою за власний стоп. Одне налаштування — усі авто-SL.
+            _cap_note = ''
+            try:
+                from detection.trade_manager import clamp_sl_distance as _clamp
+                _ep_now = self._tm_entry_price(sym)
+                sl, _was = _clamp(side, _ep_now, sl, s.get('autosl_max_pct'))
+                if _was:
+                    _cap_note = (f" · підтягнуто до стелі "
+                                 f"{float(s.get('autosl_max_pct')):g}% "
+                                 f"(було {_was:.2f}%)")
+            except Exception:
+                pass
             # 📕 Куди писати — за ФАКТОМ наявності позиції, а не припущенням
             # «немає реальної → значить тіньова» (Q3-VOB робить саме так).
             _real = self._tm_has_position(sym, True)
@@ -7026,7 +7223,8 @@ class FuelFilterDaemon:
                 except (TypeError, ValueError, ZeroDivisionError):
                     _dist = ''
                 log_activity(sym, 'sltp',
-                             f'Черга-4: SL з {label} → {self._fmt_price(sl)}{_dist}{_fb}',
+                             f'Черга-4: SL з {label} → {self._fmt_price(sl)}'
+                             f'{_dist}{_cap_note}{_fb}',
                              side=side, source='Q4')
             else:
                 log_activity(sym, 'sltp',

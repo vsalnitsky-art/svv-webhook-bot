@@ -302,6 +302,13 @@ DEFAULT_SETTINGS = {
     # беззбитковий стоп після часткової фіксації нерідко вибиває позицію
     # на звичайному відкаті до входу.
     'tp1_move_to_be': False,
+    # 🔄 ПРОТИЛЕЖНИЙ СИГНАЛ ПРИ ВІДКРИТІЙ УГОДІ — ставити в чергу, а не губити.
+    # Кейс ARBUSDT (31.08): о 15:02 прийшов LONG, який пройшов УСІ фільтри
+    # (OB✓ · Прогноз 1H+4H✓ · Decision 82%✓), але бот тримав збитковий SHORT і
+    # «Reverse on opposite signal» був вимкнений — сигнал просто ЗНИК. Бот
+    # досидів у шорті до стопа −8.58%, а рух пішов у бік того LONG.
+    # УВІМКНЕНО: такий сигнал іде в Чергу-4 і чекає закриття позиції.
+    'queue_opposite_signal': True,
     'pilot_tp_min_gap_pct': 0.40,
     # Службова позначка одноразової міграції тумблера автозаповнення (див.
     # `_load_settings`). НЕ показується в UI, лише щоб міграція спрацювала раз.
@@ -794,6 +801,7 @@ class TradeManager:
                       'pilot_enabled',
                       'pilot_autofill_tp',
                       'tp1_move_to_be',
+                      'queue_opposite_signal',
                       'test_mode',
                       'allow_long_entries', 'allow_short_entries',
                       'require_fuel_confirm',
@@ -2363,6 +2371,7 @@ class TradeManager:
         _pos = existing_real or existing_shadow
         _pos_side = _pos.get('side') if _pos else None
         _route_ff = (_pos is None)
+        _opp_wait = False
         if _pos is not None and _pos_side and _pos_side != side:
             try:
                 from detection.fuel_filter import get_fuel_filter
@@ -2371,6 +2380,14 @@ class TradeManager:
                     _fs = _ffx.get_settings()
                     if _fs.get('queue2_enabled') and _fs.get('queue2_reverse_via_queue', True):
                         _route_ff = True   # opposite → let Queue 2 gate the reverse
+                    # 🔄 ПРОТИЛЕЖНИЙ СИГНАЛ НЕ МАЄ ЗНИКАТИ. Раніше, коли реверс
+                    # вимкнено, TM писав «тримаємо» — і сигнал губився назавжди
+                    # (кейс ARBUSDT: ідеальний LONG о 15:02 випарувався, бот
+                    # досидів у шорті до −8.58%). Тепер він СТАЄ В ЧЕРГУ і чекає
+                    # закриття позиції; відкриє його двигун Черги-4.
+                    elif self._settings.get('queue_opposite_signal', True):
+                        _route_ff = True
+                        _opp_wait = True
             except Exception:
                 pass
         if _route_ff:
@@ -2378,8 +2395,14 @@ class TradeManager:
                 from detection.fuel_filter import get_fuel_filter
                 ff = get_fuel_filter()
                 if ff and ff.is_enabled():
-                    _disp = ff.intercept(symbol, side, kind=opened_by)
+                    _disp = ff.intercept(symbol, side, kind=opened_by,
+                                         opp_wait=_opp_wait)
                     if _disp == 'queued':
+                        if _opp_wait:
+                            self._notify_opposite_queued(symbol, side, _pos_side, _pos)
+                            return {'status': 'queued', 'is_paper': False,
+                                    'reason': (f'ПРОТИЛЕЖНИЙ сигнал у Черзі-4 — '
+                                               f'чекає закриття {_pos_side}')}
                         _rev = ' (реверс — коли пройде Чергу-2)' if _pos is not None else ''
                         return {'status': 'queued', 'is_paper': False,
                                 'reason': f'у Черзі ❤️ Fuel Auto-Filter (чекає фільтр){_rev}'}
@@ -7051,6 +7074,36 @@ class TradeManager:
         lines = [x for x in (_one(pos.get('manual_tp1'), f'TP-1 ({pct:g}%)'),
                              _one(tp2, 'TP-2 (повний)')) if x]
         return '\n'.join(lines)
+
+    def _notify_opposite_queued(self, symbol: str, side: str,
+                                held_side: str, pos: Dict):
+        """📨 ПРОТИЛЕЖНИЙ СИГНАЛ при відкритій угоді — окреме сповіщення.
+
+        Це момент, який раніше проходив НЕПОМІЧЕНИМ: сигнал зникав, а оператор
+        дізнавався про це вже з логу постфактум. Тепер бот одразу каже: «є
+        сигнал проти твоєї позиції, він у черзі». Далі рішення за людиною —
+        закрити руками зараз чи дати боту відкрити після закриття.
+        """
+        try:
+            e = float((pos or {}).get('entry_price') or 0)
+        except (TypeError, ValueError):
+            e = 0.0
+        cur = self._get_current_price(symbol) or e
+        pnl = ''
+        if e > 0 and cur > 0:
+            _p = ((cur - e) / e * 100.0) if held_side == 'LONG' else ((e - cur) / e * 100.0)
+            pnl = f" ({_p:+.2f}%)"
+        dot_new, dot_old = self._dir_dot(side), self._dir_dot(held_side)
+        is_shadow = symbol not in self._positions
+        self._notify(
+            f"🔄 ПРОТИЛЕЖНИЙ СИГНАЛ · <b>#{symbol}</b>"
+            + ('   🧪 ТЕСТ' if is_shadow else '') + "\n"
+            f"У позиції {dot_old}<b>{held_side}</b> @ "
+            f"{self._fmt_price(e)}{pnl}\n"
+            f"Новий сигнал {dot_new}<b>{side}</b> — поставлено в 🎯 Чергу-4, "
+            f"чекає закриття поточної\n"
+            f"<i>автореверс вимкнено — позицію не перевертаємо</i>",
+            is_test=is_shadow, category='trades')
 
     def _notify_open(self, pos):
         side = pos['side']
