@@ -4292,6 +4292,36 @@ def register_api_routes(app):
                              _json.dumps(vols))
         return jsonify({'ok': True, 'saved': len(vols)})
     
+    @app.route('/api/tickr/liquidity-scan', methods=['POST'])
+    def api_tickr_liquidity_scan():
+        """💧 Разовий скан ліквідності по списку монет обраної біржі.
+
+        Повертає монети, відсортовані за ПЕРЕКОСОМ ліквідності: куди тягне
+        маса рівнів ліквідації і де магніти. Це МОМЕНТАЛЬНИЙ ЗРІЗ із
+        поточного OI (див. `detection/liq_scan.py`), а не жива liq-map —
+        вона будується на приросту OI і є лише для монет, які демон веде.
+
+        Body: {exchange, top_n, min_vol_usd, min_oi_usd, bars, sort_by}
+        """
+        from detection import liq_scan
+        d = request.get_json() or {}
+
+        def _num(k, dflt):
+            try:
+                return float(d.get(k, dflt))
+            except (TypeError, ValueError):
+                return dflt
+        try:
+            return jsonify(liq_scan.scan_liquidity(
+                exchange=(d.get('exchange') or 'bybit'),
+                top_n=int(_num('top_n', 40)),
+                min_vol_usd=_num('min_vol_usd', 20_000_000),
+                min_oi_usd=_num('min_oi_usd', 5_000_000),
+                bars=int(_num('bars', liq_scan.DEFAULT_BARS)),
+                sort_by=(d.get('sort_by') or 'pull')))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/tickr/opportunity', methods=['POST'])
     def api_tickr_opportunity():
         """Coiled-spring opportunity scan (Bybit swap-USDT). Body may

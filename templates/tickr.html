@@ -208,6 +208,65 @@
     </div>
 </div>
 
+<!-- 💧 Скан ліквідності по біржі -->
+<div class="tk-section" style="border:1px solid rgba(56,189,248,0.35)">
+    <h3 style="font-size:0.9rem;color:#38bdf8;margin:0 0 4px">💧 Ліквідність по біржі — куди тягне ринок</h3>
+    <div class="tk-stat">
+        Рівні ліквідації по КОЖНІЙ монеті: перекіс маси (вище/нижче ціни),
+        найбільший магніт і найближчий. Список сортується за силою перекосу —
+        зверху те, де ринок тягне найдужче.
+        <span style="color:#6b7280">Моментальний зріз із поточного відкритого
+        інтересу: напрямок і розташування магнітів надійні, абсолютні суми
+        грубіші за живу liq-map. Не реальні стоп-накази — біржі їх не публікують.</span>
+    </div>
+    <div class="tk-row" style="margin-bottom:8px;margin-top:8px">
+        <div class="tk-field">
+            <label>БІРЖА</label>
+            <select id="liq-exch">
+                <option value="bybit" selected>Bybit</option>
+                <option value="mexc">MEXC</option>
+                <option value="binance">Binance</option>
+                <option value="bingx">BingX</option>
+            </select>
+        </div>
+        <div class="tk-field">
+            <label>МОНЕТ</label>
+            <select id="liq-topn">
+                <option>20</option><option selected>40</option>
+                <option>60</option><option>100</option>
+            </select>
+        </div>
+        <div class="tk-field">
+            <label>СОРТУВАННЯ</label>
+            <select id="liq-sort">
+                <option value="pull" selected>за перекосом</option>
+                <option value="magnet">за розміром магніту</option>
+                <option value="near">за близькістю магніту</option>
+            </select>
+        </div>
+        <div class="tk-field">
+            <label>ОБІГ 24H ≥, $M</label>
+            <input type="number" id="liq-minvol" value="20" min="0" step="5" style="width:70px">
+        </div>
+        <div class="tk-field">
+            <label>OI ≥, $M</label>
+            <input type="number" id="liq-minoi" value="5" min="0" step="1" style="width:70px">
+        </div>
+        <button class="tk-btn warm" id="liq-scan-btn" onclick="liqScan()">💧 Сканувати</button>
+    </div>
+    <div class="tk-stat" id="liq-stat">Натисни «Сканувати». Один bulk-запит на біржу + по одному запиту свічок на монету.</div>
+    <div class="tk-scroll">
+        <table class="tk-table">
+            <thead><tr>
+                <th>#</th><th>Symbol</th><th>Ціна</th><th>Тягне</th>
+                <th>⬆ / ⬇</th><th>Перекіс</th>
+                <th>Найбільший магніт</th><th>Найближчий</th><th>OI</th>
+            </tr></thead>
+            <tbody id="liq-tbody"><tr><td colspan="9" style="color:#667;padding:16px">— ще не скановано —</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
 <!-- Opportunity Scanner -->
 <div class="tk-section" style="border:1px solid rgba(168,85,247,0.3)">
     <h3 style="font-size:0.9rem;color:#c084fc;margin:0 0 4px">🎯 Opportunity Scanner — відбір у Watchlist</h3>
@@ -743,6 +802,90 @@ async function tkAlert() {
         : '❌ ' + (d.reason || 'alert failed');
 }
 let oppRows = null;
+
+// 💧 СКАН ЛІКВІДНОСТІ ПО БІРЖІ. Один bulk-запит тікерів + по одному запиту
+// свічок на монету, що пройшла відсів. Розрахунок і вердикт — ті самі
+// `build_ladder`/`make_verdict`, що й у блоці на сторінці Smart Money.
+function _lqUsd(v) {
+    const n = Number(v) || 0;
+    if (n >= 1e9) return '$' + (n / 1e9).toFixed(1) + 'B';
+    if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return '$' + (n / 1e3).toFixed(0) + 'K';
+    return '$' + n.toFixed(0);
+}
+async function liqScan() {
+    const btn = document.getElementById('liq-scan-btn');
+    const stat = document.getElementById('liq-stat');
+    const tb = document.getElementById('liq-tbody');
+    const exch = document.getElementById('liq-exch').value;
+    btn.disabled = true;
+    stat.textContent = `Сканую ${exch}… перший запит — уся біржа, далі свічки по монетах.`;
+    try {
+        const body = {
+            exchange: exch,
+            top_n: parseInt(document.getElementById('liq-topn').value, 10) || 40,
+            sort_by: document.getElementById('liq-sort').value,
+            min_vol_usd: (parseFloat(document.getElementById('liq-minvol').value) || 0) * 1e6,
+            min_oi_usd: (parseFloat(document.getElementById('liq-minoi').value) || 0) * 1e6,
+        };
+        const res = await fetch('/api/tickr/liquidity-scan', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        });
+        if (!res.ok) { stat.textContent = `Сервер відповів ${res.status}`; return; }
+        const d = await res.json();
+        if (!d || !d.ok) {
+            // ⚠️ Причину показуємо ДОСЛІВНО: для Binance/BingX скан фізично
+            // неможливий (немає bulk-OI), і це має бути видно, а не «0 монет».
+            stat.textContent = '⚠ ' + ((d && d.reason) || 'скан не вдався');
+            tb.innerHTML = '<tr><td colspan="9" style="color:#667;padding:16px">— немає даних —</td></tr>';
+            return;
+        }
+        stat.textContent = `${d.exchange.toUpperCase()}: проскановано ${d.scanned} монет, `
+            + `з даними ${d.with_data} · відсіяно за обігом ${d.dropped_vol}, за OI ${d.dropped_oi}`
+            + ` · ${d.took_sec}с`;
+        const rows = d.rows || [];
+        if (!rows.length) {
+            tb.innerHTML = '<tr><td colspan="9" style="color:#667;padding:16px">— порожньо —</td></tr>';
+            return;
+        }
+        tb.innerHTML = rows.map((r, i) => {
+            if (!r.ok) {
+                return `<tr><td>${i + 1}</td><td>${r.symbol}</td>`
+                     + `<td colspan="7" style="color:#6b7280">${r.reason || 'немає рівнів'}</td></tr>`;
+            }
+            // Колір = напрямок тяги (вгору зелений, вниз червоний) — та сама
+            // конвенція, що в блоці ліквідності на Smart Money.
+            const col = r.pull === 'up' ? '#4ade80' : r.pull === 'down' ? '#f87171' : '#9aa3b5';
+            const arrow = r.pull === 'up' ? '↑ ВГОРУ' : r.pull === 'down' ? '↓ ВНИЗ' : '⚖ рівновага';
+            const mCol = r.magnet_dir === 'up' ? '#4ade80' : '#f87171';
+            const nCol = r.near_dir === 'up' ? '#4ade80' : '#f87171';
+            const nArr = r.near_dir === 'up' ? '↑' : '↓';
+            return `<tr title="${(r.verdict || '').replace(/"/g, '')}">`
+                + `<td>${i + 1}</td>`
+                + `<td style="font-weight:700">${r.symbol}</td>`
+                + `<td style="font-family:monospace">${r.price}</td>`
+                + `<td style="color:${col};font-weight:700">${arrow}</td>`
+                + `<td style="font-family:monospace"><span style="color:#4ade80">${r.above_pct}%</span>`
+                + ` / <span style="color:#f87171">${r.below_pct}%</span></td>`
+                + `<td style="color:${col};font-family:monospace">${r.pull_pct} п.п.`
+                + `<span style="color:#8b93a7"> ${r.strength || ''}</span></td>`
+                + `<td style="font-family:monospace">${r.magnet_price || '—'}`
+                + ` <span style="color:${mCol}">${r.magnet_pct || ''} ${r.magnet_dist || ''}</span></td>`
+                + `<td style="font-family:monospace">`
+                + (r.near_price != null
+                    ? `${r.near_price} <span style="color:${nCol}">${nArr}${r.near_dist}%</span>`
+                    : '—')
+                + `</td>`
+                + `<td style="font-family:monospace;color:#8b93a7">${_lqUsd(r.oi_usd)}</td>`
+                + `</tr>`;
+        }).join('');
+    } catch (e) {
+        stat.textContent = 'Помилка скану: ' + e;
+    } finally {
+        btn.disabled = false;
+    }
+}
 
 async function oppScan() {
     const btn = document.getElementById('opp-scan-btn');
