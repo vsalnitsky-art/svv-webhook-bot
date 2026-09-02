@@ -51,6 +51,41 @@
 .tk-diff-col h4 { margin: 0 0 8px; font-size: 0.78rem; }
 .tk-diff-col .row { font-family: monospace; font-size: 0.76rem; color: #c6cbd8; padding: 2px 0; }
 @media (max-width: 900px) { .tk-diff-box { grid-template-columns: 1fr; } }
+/* 💧 ДРАБИНА ОДНІЄЇ МОНЕТИ. Ті самі пропорції, що в блоці на Smart Money —
+   щоб та сама драбина виглядала однаково на обох сторінках. */
+.lq1 { margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+    background: rgba(0,0,0,0.28); border: 1px solid rgba(56,189,248,0.22); }
+.lq1-head { display: flex; align-items: baseline; justify-content: space-between;
+    gap: 10px; flex-wrap: wrap; }
+.lq1-title { font-size: 0.8rem; font-weight: 700; color: #c6cbd8;
+    letter-spacing: 0.3px; }
+.lq1-meta { font-size: 0.7rem; color: #6b7280; font-family: monospace; }
+.lq1-split { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.lq1-bar { flex: 1; height: 8px; border-radius: 4px; overflow: hidden;
+    display: flex; background: rgba(255,255,255,0.06); }
+.lq1-bar > div { height: 100%; transition: width .4s; }
+.lq1-val { font-family: monospace; font-size: 0.76rem; font-weight: 700;
+    min-width: 130px; text-align: right; }
+.lq1-rows { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+.lq1-row { display: flex; align-items: center; gap: 8px; font-family: monospace;
+    font-size: 0.74rem; }
+.lq1-row .lp { width: 96px; text-align: right; color: #c6cbd8; }
+.lq1-row .ld { width: 58px; text-align: right; color: #6b7280; }
+.lq1-row .lb { flex: 1; height: 8px; min-width: 40px; border-radius: 4px;
+    background: rgba(255,255,255,0.05); overflow: hidden; }
+.lq1-row .lb > i { display: block; height: 100%; }
+.lq1-row .lv { width: 64px; text-align: right; font-weight: 700; }
+.lq1-price { display: flex; align-items: center; gap: 8px; font-family: monospace;
+    font-size: 0.74rem; margin: 3px 0; padding: 2px 0;
+    border-top: 1px dashed rgba(226,232,240,0.35);
+    border-bottom: 1px dashed rgba(226,232,240,0.35); }
+.lq1-price .lp { width: 96px; text-align: right; color: #e2e8f0; font-weight: 700; }
+.lq1-price .ld { width: 58px; text-align: right; color: #94a3b8;
+    font-size: 0.68rem; letter-spacing: 0.5px; }
+.lq1-price .lb { flex: 1; min-width: 40px; } .lq1-price .lv { width: 64px; }
+.lq1-note { margin-top: 9px; padding-top: 8px; font-size: 0.74rem;
+    border-top: 1px solid rgba(255,255,255,0.07); line-height: 1.5; }
+.lq1-note .l2 { margin-top: 2px; }
 </style>
 
 <!-- Fetch -->
@@ -215,17 +250,20 @@
         Рівні ліквідації по КОЖНІЙ монеті: перекіс маси (вище/нижче ціни),
         найбільший магніт і найближчий. Список сортується за силою перекосу —
         зверху те, де ринок тягне найдужче.
+        Нижче — окремий аналіз ОДНІЄЇ монети з повною драбиною рівнів.
         <span style="color:#6b7280">Моментальний зріз із поточного відкритого
         інтересу: напрямок і розташування магнітів надійні, абсолютні суми
-        грубіші за живу liq-map. Не реальні стоп-накази — біржі їх не публікують.</span>
+        грубіші за живу liq-map. Не реальні стоп-накази — біржі їх не публікують.
+        Binance і BingX не віддають OI пачкою, тож там він береться по одному
+        запиту на монету: список сканується довше, одна монета — миттєво.</span>
     </div>
     <div class="tk-row" style="margin-bottom:8px;margin-top:8px">
         <div class="tk-field">
             <label>БІРЖА</label>
             <select id="liq-exch">
-                <option value="bybit" selected>Bybit</option>
+                <option value="binance" selected>Binance</option>
+                <option value="bybit">Bybit</option>
                 <option value="mexc">MEXC</option>
-                <option value="binance">Binance</option>
                 <option value="bingx">BingX</option>
             </select>
         </div>
@@ -254,8 +292,46 @@
         </div>
         <button class="tk-btn warm" id="liq-scan-btn" onclick="liqScan()">💧 Сканувати</button>
     </div>
-    <div class="tk-stat" id="liq-stat">Натисни «Сканувати». Один bulk-запит на біржу + по одному запиту свічок на монету.</div>
-    <div class="tk-scroll">
+    <div class="tk-stat" id="liq-stat">Натисни «Сканувати». Один запит тікерів на біржу + по одному запиту свічок на монету (на Binance/BingX — ще й OI поштучно).</div>
+
+    <!-- 💧 ОДНА МОНЕТА. Питання bulk-OI тут не стоїть: 2-3 запити разом зі
+         свічками, тож режим працює на ВСІХ біржах, зокрема на Binance. -->
+    <div class="tk-row" style="margin:12px 0 0;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07)">
+        <div class="tk-field">
+            <label>МОНЕТА</label>
+            <input type="text" id="liq1-sym" value="BTC" placeholder="BTC"
+                   style="width:110px;text-transform:uppercase"
+                   onkeydown="if(event.key==='Enter')liqOne()">
+        </div>
+        <div class="tk-field">
+            <label>ІСТОРІЯ, ГОД</label>
+            <select id="liq1-bars">
+                <option value="72">72</option>
+                <option value="168" selected>168 (7 діб)</option>
+                <option value="336">336 (14 діб)</option>
+            </select>
+        </div>
+        <button class="tk-btn" id="liq1-btn" onclick="liqOne()">💧 Аналіз монети</button>
+        <span class="tk-stat" id="liq1-stat" style="margin:0">Біржа береться з поля вище.</span>
+    </div>
+    <div class="lq1" id="liq1-box" style="display:none">
+        <div class="lq1-head">
+            <span class="lq1-title" id="liq1-title">💧 Ліквідність</span>
+            <span class="lq1-meta" id="liq1-meta"></span>
+        </div>
+        <div class="lq1-split">
+            <span class="lq1-meta" id="liq1-lbl">⬆ / ⬇</span>
+            <span class="lq1-bar">
+                <div id="liq1-up" style="background:linear-gradient(90deg,#16a34a,#4ade80)"></div>
+                <div id="liq1-down" style="background:linear-gradient(90deg,#dc2626,#f87171)"></div>
+            </span>
+            <span class="lq1-val" id="liq1-val">⏳</span>
+        </div>
+        <div class="lq1-rows" id="liq1-rows"></div>
+        <div class="lq1-note" id="liq1-note"></div>
+    </div>
+
+    <div class="tk-scroll" style="margin-top:12px">
         <table class="tk-table">
             <thead><tr>
                 <th>#</th><th>Symbol</th><th>Ціна</th><th>Тягне</th>
@@ -813,6 +889,120 @@ function _lqUsd(v) {
     if (n >= 1e3) return '$' + (n / 1e3).toFixed(0) + 'K';
     return '$' + n.toFixed(0);
 }
+function _lqPrice(v) {
+    const n = Number(v) || 0;
+    // Дрібні монети не можна округляти до цілого — від $0.00042 лишився б $0.
+    const dec = n >= 1000 ? 0 : n >= 10 ? 2 : n >= 1 ? 3 : n >= 0.01 ? 5 : 7;
+    return '$' + n.toLocaleString('en-US', {minimumFractionDigits: dec,
+                                            maximumFractionDigits: dec});
+}
+
+// 💧 ЛІКВІДНІСТЬ ОДНІЄЇ МОНЕТИ. Та сама драбина й той самий вердикт, що в
+// блоці на Smart Money і в рядках списку вище — інакше та сама монета
+// показувала б різні числа в різних місцях.
+async function liqOne() {
+    const btn = document.getElementById('liq1-btn');
+    const stat = document.getElementById('liq1-stat');
+    const box = document.getElementById('liq1-box');
+    const exch = document.getElementById('liq-exch').value;
+    const sym = (document.getElementById('liq1-sym').value || 'BTC').trim().toUpperCase();
+    btn.disabled = true;
+    stat.textContent = `Рахую ${sym} на ${exch}…`;
+    try {
+        const res = await fetch('/api/tickr/liquidity-one', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                exchange: exch, symbol: sym,
+                bars: parseInt(document.getElementById('liq1-bars').value, 10) || 168,
+                rows: 12,
+            })
+        });
+        if (!res.ok) { stat.textContent = `Сервер відповів ${res.status}`; return; }
+        const d = await res.json();
+        if (!d || !d.ok) {
+            box.style.display = 'none';
+            stat.textContent = '⚠ ' + ((d && d.reason) || 'не вдалось порахувати');
+            return;
+        }
+        box.style.display = 'block';
+        stat.textContent = `${d.exchange.toUpperCase()} · OI ${_lqUsd(d.oi_usd)} `
+            + `· ${d.bars} год історії · ${d.took_sec}с`;
+        document.getElementById('liq1-title').textContent = `💧 Ліквідність ${d.symbol}`;
+        document.getElementById('liq1-meta').textContent =
+            `крок $${(d.step || 0).toLocaleString('en-US')} · всього ${_lqUsd(d.total_usd)}`;
+        const up = Number(d.above_pct) || 0, dn = Number(d.below_pct) || 0;
+        document.getElementById('liq1-up').style.width = up + '%';
+        document.getElementById('liq1-down').style.width = dn + '%';
+        // Колір = напрямок ТЯГИ (вгору зелений, вниз червоний) — єдина
+        // конвенція з усім інтерфейсом.
+        const pullCol = d.pull === 'up' ? '#4ade80' : d.pull === 'down' ? '#f87171' : '#9aa3b5';
+        const val = document.getElementById('liq1-val');
+        val.style.color = pullCol;
+        val.textContent = `⬆ ${up}% / ⬇ ${dn}%`;
+        document.getElementById('liq1-lbl').textContent =
+            d.pull === 'up' ? 'тягне ↑' : d.pull === 'down' ? 'тягне ↓' : 'рівновага';
+
+        // 📍 Лінія поточної ціни: рядки вже впорядковані за ціною згори вниз,
+        // тож ставимо її рівно між останнім «вище» і першим «нижче».
+        const rows = d.rows || [];
+        const firstDown = rows.findIndex(r => r.dir === 'down');
+        const html = rows.map(r => {
+            const col = r.dir === 'up' ? '#4ade80' : '#f87171';
+            const arrow = r.dir === 'up' ? '↑' : '↓';
+            const w = Math.max(2, Math.min(100, r.pct));
+            const tip = (r.side === 'long' ? 'Ліквідації ЛОНГІВ' : 'Ліквідації ШОРТІВ')
+                + ` у смузі ${_lqPrice(r.price)}–${_lqPrice(r.price_hi)}`
+                + (r.at_price ? ' (впритул до поточної ціни)' : '')
+                + ` · ${_lqUsd(r.usd)} · ${r.pct}% усієї ліквідності`
+                + ` · ${arrow} ${r.dist_pct}% від ціни`;
+            return `<div class="lq1-row" title="${tip}">`
+                + `<span class="lp">${_lqPrice(r.price)}</span>`
+                + `<span class="ld" style="color:${col}">${arrow}${r.dist_pct}%</span>`
+                + `<span class="lb"><i style="width:${w}%;background:${col}"></i></span>`
+                + `<span class="lv" style="color:${col}">${_lqUsd(r.usd)}</span>`
+                + `</div>`;
+        });
+        html.splice(firstDown < 0 ? html.length : firstDown, 0,
+            `<div class="lq1-price" title="Поточна ціна ${d.symbol}">`
+            + `<span class="lp">${_lqPrice(d.price)}</span>`
+            + `<span class="ld">ціна</span><span class="lb"></span><span class="lv"></span></div>`);
+        document.getElementById('liq1-rows').innerHTML = html.join('');
+
+        // 🧭 Вердикт ШМАТКАМИ: числа фарбуємо окремо від пояснювальних слів,
+        // магніт — другим рядком (як у блоці на Smart Money).
+        const noteEl = document.getElementById('liq1-note');
+        const pt = d.verdict_parts || null;
+        const tone = d.verdict_tone === 'up' ? '#4ade80'
+                   : d.verdict_tone === 'down' ? '#f87171'
+                   : d.verdict_tone === 'flat' ? '#9aa3b5' : '#6b7280';
+        if (!pt) { noteEl.textContent = d.verdict || ''; noteEl.style.color = tone; }
+        else {
+            const dim = '#8b93a7';
+            const seg = [`<span style="color:${tone};font-weight:700">${pt.icon}</span>`];
+            if (pt.lead) seg.push(`<span style="color:${dim}">${pt.lead}</span>`);
+            if (pt.lead_val) seg.push(`<b style="color:${tone}">${pt.lead_val}</b>`);
+            if (pt.action) seg.push(`<span style="color:${dim}">·</span> <b style="color:${tone}">${pt.action}</b>`);
+            if (pt.strength) seg.push(`<span style="color:#fbbf24">${pt.strength}</span>`);
+            if (pt.skew) seg.push(`<span style="color:${dim}">(</span><b style="color:${tone}">${pt.skew}</b><span style="color:${dim}">)</span>`);
+            let h = `<div>${seg.join(' ')}</div>`;
+            const m = pt.magnet;
+            if (m) {
+                const mc = m.dir === 'up' ? '#4ade80' : '#f87171';
+                h += `<div class="l2"><span style="color:${dim}">🧲 найбільший магніт</span> `
+                   + `<b style="color:#e2e8f0">${m.price}</b> <span style="color:${dim}">·</span> `
+                   + `<b style="color:${mc}">${m.pct}</b> <span style="color:${dim}">·</span> `
+                   + `<b style="color:${mc}">${m.dist}</b></div>`;
+            }
+            noteEl.innerHTML = h;
+            noteEl.style.color = '';
+        }
+    } catch (e) {
+        stat.textContent = 'Помилка: ' + e;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 async function liqScan() {
     const btn = document.getElementById('liq-scan-btn');
     const stat = document.getElementById('liq-stat');
@@ -835,15 +1025,17 @@ async function liqScan() {
         if (!res.ok) { stat.textContent = `Сервер відповів ${res.status}`; return; }
         const d = await res.json();
         if (!d || !d.ok) {
-            // ⚠️ Причину показуємо ДОСЛІВНО: для Binance/BingX скан фізично
-            // неможливий (немає bulk-OI), і це має бути видно, а не «0 монет».
+            // ⚠️ Причину показуємо ДОСЛІВНО — «0 монет» нічого не пояснює.
             stat.textContent = '⚠ ' + ((d && d.reason) || 'скан не вдався');
             tb.innerHTML = '<tr><td colspan="9" style="color:#667;padding:16px">— немає даних —</td></tr>';
             return;
         }
         stat.textContent = `${d.exchange.toUpperCase()}: проскановано ${d.scanned} монет, `
             + `з даними ${d.with_data} · відсіяно за обігом ${d.dropped_vol}, за OI ${d.dropped_oi}`
-            + ` · ${d.took_sec}с`;
+            + ` · ${d.took_sec}с`
+            // Біржа без bulk-OI тягне його поштучно — кажемо це прямо, щоб
+            // довший скан і стеля монет не виглядали як збій.
+            + ((d.warnings || []).length ? ` · ⚠ ${d.warnings.join('; ')}` : '');
         const rows = d.rows || [];
         if (!rows.length) {
             tb.innerHTML = '<tr><td colspan="9" style="color:#667;padding:16px">— порожньо —</td></tr>';
@@ -864,7 +1056,7 @@ async function liqScan() {
             return `<tr title="${(r.verdict || '').replace(/"/g, '')}">`
                 + `<td>${i + 1}</td>`
                 + `<td style="font-weight:700">${r.symbol}</td>`
-                + `<td style="font-family:monospace">${r.price}</td>`
+                + `<td style="font-family:monospace">${_lqPrice(r.price)}</td>`
                 + `<td style="color:${col};font-weight:700">${arrow}</td>`
                 + `<td style="font-family:monospace"><span style="color:#4ade80">${r.above_pct}%</span>`
                 + ` / <span style="color:#f87171">${r.below_pct}%</span></td>`
@@ -874,7 +1066,7 @@ async function liqScan() {
                 + ` <span style="color:${mCol}">${r.magnet_pct || ''} ${r.magnet_dist || ''}</span></td>`
                 + `<td style="font-family:monospace">`
                 + (r.near_price != null
-                    ? `${r.near_price} <span style="color:${nCol}">${nArr}${r.near_dist}%</span>`
+                    ? `${_lqPrice(r.near_price)} <span style="color:${nCol}">${nArr}${r.near_dist}%</span>`
                     : '—')
                 + `</td>`
                 + `<td style="font-family:monospace;color:#8b93a7">${_lqUsd(r.oi_usd)}</td>`

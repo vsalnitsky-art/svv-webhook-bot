@@ -16,6 +16,7 @@
 Модуль — ЧИСТІ функції без I/O: дані дає `liquidation_map.get_state()`.
 """
 
+import math
 from typing import Dict, List, Optional
 
 
@@ -44,13 +45,20 @@ def step_for(mark_price, step_usd=None) -> float:
     p = _f(mark_price) or 0.0
     if p <= 0:
         return DEFAULT_STEP_USD
-    # ~1.25% ціни, округлено до «людського» кроку.
+    # ~1.25% ціни, округлено до «людського» кроку 1/2/5 × 10^k.
+    # ⚠️ Раніше тут був СПИСОК готових кроків від $1 — і для дешевих монет
+    # він давав $1 на монету за $0.47, тобто ВСЯ драбина сходилась в одну-дві
+    # сходинки, а магніт підписувався «$0». Відколи драбина рахується не лише
+    # по BTC (скан біржі, режим однієї монети), крок мусить масштабуватись
+    # униз так само вільно, як і вгору.
     raw = p * 0.0125
-    for nice in (1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0,
-                 1000.0, 2500.0, 5000.0):
-        if raw <= nice:
-            return nice
-    return 10000.0
+    if raw <= 0:
+        return DEFAULT_STEP_USD
+    mag = 10.0 ** math.floor(math.log10(raw))
+    for m in (1.0, 2.0, 5.0):
+        if raw <= mag * m:
+            return mag * m
+    return mag * 10.0
 
 
 # Словесна сила перекосу. Пороги ті самі, що вирішують `pull`: до 10 п.п. —
@@ -67,11 +75,21 @@ def _strength_word(diff_pp: float) -> str:
 
 
 def _fmt_price_ua(v) -> str:
-    """$76 000 — нерозривний пробіл замість коми: так число читається одразу."""
+    """$76 000 — пробіл замість коми: так число читається одразу.
+
+    ⚠️ Дешеві монети округляти до цілого НЕ МОЖНА: драбина тепер рахується не
+    лише по BTC (скан біржі, режим однієї монети), і `int(round(0.42))` дав би
+    магніт «$0». Тому нижче $10 показуємо знаки після коми — рівно стільки,
+    скільки треба, щоб рівень лишався розрізненним."""
     try:
-        return f"${int(round(float(v))):,}".replace(',', ' ')
+        f = float(v)
     except (TypeError, ValueError):
         return str(v)
+    a = abs(f)
+    if a >= 10:
+        return f"${int(round(f)):,}".replace(',', ' ')
+    dec = 3 if a >= 1 else (5 if a >= 0.01 else 7)
+    return f"${f:.{dec}f}"
 
 
 def make_verdict(pull: str, pull_pct: float, above_pct: float,

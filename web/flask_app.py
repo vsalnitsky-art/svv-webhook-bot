@@ -4313,12 +4313,33 @@ def register_api_routes(app):
                 return dflt
         try:
             return jsonify(liq_scan.scan_liquidity(
-                exchange=(d.get('exchange') or 'bybit'),
+                exchange=(d.get('exchange') or 'binance'),
                 top_n=int(_num('top_n', 40)),
                 min_vol_usd=_num('min_vol_usd', 20_000_000),
                 min_oi_usd=_num('min_oi_usd', 5_000_000),
                 bars=int(_num('bars', liq_scan.DEFAULT_BARS)),
                 sort_by=(d.get('sort_by') or 'pull')))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/tickr/liquidity-one', methods=['POST'])
+    def api_tickr_liquidity_one():
+        """💧 Ліквідність ОДНІЄЇ монети — повна драбина + вердикт.
+
+        Питання bulk-OI тут не стоїть: на одну монету потрібні 2-3 запити,
+        тож режим працює на ВСІХ біржах, зокрема на Binance і BingX, які не
+        віддають відкритий інтерес пачкою.
+
+        Body: {exchange, symbol, bars, rows}
+        """
+        from detection import liq_scan
+        d = request.get_json() or {}
+        try:
+            return jsonify(liq_scan.scan_one(
+                exchange=(d.get('exchange') or 'binance'),
+                symbol=(d.get('symbol') or 'BTCUSDT'),
+                bars=int(d.get('bars') or liq_scan.DEFAULT_BARS),
+                rows=int(d.get('rows') or 12)))
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 

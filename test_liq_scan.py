@@ -7,7 +7,12 @@
 ⚠️ ГОЛОВНЕ, ЩО ПЕРЕВІРЯЄМО: скан — це МОМЕНТАЛЬНИЙ ЗРІЗ із поточного OI, а не
 жива liq-map (та будується на приросту OI і існує лише для монет, які демон
 веде). Обидва подання мусять користуватись ОДНІЄЮ драбиною і ОДНИМ вердиктом,
-а біржі без bulk-OI мають чесно відмовляти, а не показувати нулі.
+а «немає даних» має казатись прямо, а не показуватись нулями.
+
+⚠️ Тут же замки на BULK-OI: обмеження було в МАСШТАБІ, а не в біржі. Binance і
+BingX не віддають відкритий інтерес пачкою, але поштучно — віддають, тож
+режим ОДНІЄЇ монети мусить працювати на них, а скан списку — добирати OI по
+одному запиту на монету зі стелею.
 """
 import os, sys, types, importlib.util
 
@@ -177,18 +182,182 @@ def test_sorting_modes():
     print('✓ три режими сортування + рядки без даних не губляться')
 
 
-def test_exchanges_without_bulk_oi_refuse_honestly():
-    """⚠️ Binance і BingX не віддають відкритий інтерес пачкою. Порахувати
-    рівні ліквідації без OI НЕМОЖЛИВО — маємо сказати це прямо, а не
-    показати порожній список чи, гірше, нулі."""
-    for ex in ('binance', 'bingx'):
-        r = S.scan_liquidity(exchange=ex)
-        _check(r['ok'] is False, f'{ex} мав відмовити')
-        _check('відкритий інтерес' in r['reason'],
-               f'причина мусить пояснювати, ЧОМУ: {r["reason"]}')
-    r2 = S.scan_liquidity(exchange='казна-що')
-    _check(r2['ok'] is False, 'невідома біржа → відмова, а не виняток')
-    print('✓ біржі без bulk-OI відмовляють із поясненням')
+def test_unknown_exchange_refuses_instead_of_raising():
+    for r in (S.scan_liquidity(exchange='казна-що'),
+              S.scan_one(exchange='казна-що', symbol='BTC')):
+        _check(r['ok'] is False, 'невідома біржа → відмова, а не виняток')
+        _check('не підтримується' in r['reason'], r['reason'])
+    print('✓ невідома біржа відмовляє чесно')
+
+
+# ── 🐞 BULK-OI: обмеження було в МАСШТАБІ, а не в біржі ────────────────────
+def test_symbol_is_normalised_for_each_exchange():
+    """Користувач вводить «btc», «BTC-USDT», «btc_usdt» — і все це та сама
+    монета. Формат же в кожної біржі свій, і плутати їх не можна."""
+    for raw in ('btc', 'BTC', 'BTCUSDT', 'btc-usdt', 'BTC_USDT', ' btc '):
+        _check(S.norm_symbol(raw) == 'BTCUSDT', f'{raw!r} → {S.norm_symbol(raw)}')
+    _check(S.norm_symbol('') == 'BTCUSDT', 'порожнє поле → BTC за домовленістю')
+    _check(S.norm_symbol('1000pepe') == '1000PEPEUSDT', 'множники не ламаються')
+    _check(S._ex_symbol('binance', 'btc') == 'BTCUSDT', 'binance')
+    _check(S._ex_symbol('bybit', 'btc') == 'BTCUSDT', 'bybit')
+    _check(S._ex_symbol('mexc', 'btc') == 'BTC_USDT', 'mexc')
+    _check(S._ex_symbol('bingx', 'btc') == 'BTC-USDT', 'bingx')
+    print('✓ назва монети зводиться до формату кожної біржі')
+
+
+def _stub_one(mod, exchange, price=100.0, oi=100e6, bars=30):
+    """Підміняємо мережу: OI по монеті + свічки. Розрахунок лишається живий."""
+    calls = {'oi': 0, 'kl': 0}
+
+    def _oi(session, symbol):
+        calls['oi'] += 1
+        return price, oi
+
+    def _kl(session, symbol, interval, limit):
+        calls['kl'] += 1
+        return _bars((price * 0.97, bars, 1000))
+
+    mod._OI_ONE[exchange] = _oi
+    mod._KLINES[exchange] = _kl
+    return calls
+
+
+def test_single_coin_works_on_exchange_without_bulk_oi():
+    """⚠️ ГОЛОВНЕ ПО ЦІЙ ПРАВЦІ. «Немає bulk-OI» заважає лише тоді, коли монет
+    сотні. На ОДНУ монету потрібні 2-3 запити — тож Binance і BingX мусять
+    працювати, а не відмовляти."""
+    orig_oi, orig_kl = dict(S._OI_ONE), dict(S._KLINES)
+    try:
+        for ex in ('binance', 'bingx'):
+            calls = _stub_one(S, ex)
+            r = S.scan_one(exchange=ex, symbol='btc')
+            _check(r['ok'], f'{ex}: {r.get("reason")}')
+            _check(r['symbol'] == 'BTCUSDT', r['symbol'])
+            _check(calls['oi'] == 1 and calls['kl'] == 1,
+                   f'мало бути по одному запиту OI і свічок: {calls}')
+            _check(r['rows'], 'драбина мусить мати сходинки')
+            # Вердикт ШМАТКАМИ — без нього фронт не розфарбує числа.
+            _check(r.get('verdict_parts') and r.get('verdict_tone'),
+                   f'бракує розібраного вердикту: {sorted(r)}')
+            _check(r['oi_usd'] > 0 and r['price'] > 0, 'ціна й OI мають бути')
+    finally:
+        S._OI_ONE.clear(); S._OI_ONE.update(orig_oi)
+        S._KLINES.clear(); S._KLINES.update(orig_kl)
+    print('✓ одна монета рахується на біржі БЕЗ bulk-OI (Binance/BingX)')
+
+
+def test_single_coin_refuses_honestly_when_there_is_no_data():
+    """Відмова мусить казати ПРИЧИНУ. Нулі й порожня драбина — заборонені."""
+    orig_oi, orig_kl = dict(S._OI_ONE), dict(S._KLINES)
+    try:
+        _stub_one(S, 'binance', price=0.0, oi=0.0)
+        r = S.scan_one(exchange='binance', symbol='НЕМАЄТАКОЇ')
+        _check(r['ok'] is False and 'не знайдено' in r['reason'], r)
+        _stub_one(S, 'binance', price=100.0, oi=0.0)
+        r2 = S.scan_one(exchange='binance', symbol='btc')
+        _check(r2['ok'] is False and 'відкритий інтерес' in r2['reason'], r2)
+    finally:
+        S._OI_ONE.clear(); S._OI_ONE.update(orig_oi)
+        S._KLINES.clear(); S._KLINES.update(orig_kl)
+    print('✓ немає даних — чесна причина, а не нулі')
+
+
+def test_list_scan_falls_back_to_per_symbol_oi():
+    """Скан СПИСКУ на біржі без bulk-OI: кандидатів відбираємо за ОБІГОМ
+    (він у тікерах є завжди), а OI питаємо поштучно — і лише ПІСЛЯ цього
+    застосовуємо поріг по OI."""
+    fake = types.ModuleType('detection.tickr_core')
+    fake.MARKET_SWAP = 'swap'
+    fake._ACTIVITY = {'binance': lambda m: {
+        'BIGUSDT': {'vol_usd': 500e6, 'last': 100.0},
+        'MIDUSDT': {'vol_usd': 100e6, 'last': 50.0},
+        'THINUSDT': {'vol_usd': 1e6, 'last': 1.0},      # відсіється за обігом
+    }}
+    # ⚠️ Підміняти ТІЛЬКИ sys.modules мало: `from detection import tickr_core`
+    # бере АТРИБУТ пакета, якщо він уже виставлений (а він виставляється
+    # першим же викликом `scan_liquidity`, бо імпорт стоїть до перевірок).
+    _real_tc = getattr(sys.modules['detection'], 'tickr_core', None)
+    sys.modules['detection.tickr_core'] = fake
+    sys.modules['detection'].tickr_core = fake
+    orig_oi, orig_kl = dict(S._OI_ONE), dict(S._KLINES)
+    try:
+        seen = []
+
+        def _oi(session, symbol):
+            seen.append(symbol)
+            # MIDUSDT — з мізерним OI: має відсіятись уже ПІСЛЯ запиту.
+            return (100.0, 80e6) if symbol == 'BIGUSDT' else (50.0, 1e6)
+
+        S._OI_ONE['binance'] = _oi
+        S._KLINES['binance'] = lambda s, sym, i, l: _bars((97.0, 30, 1000))
+        r = S.scan_liquidity(exchange='binance', min_vol_usd=20e6,
+                             min_oi_usd=5e6)
+        _check(r['ok'], r)
+        _check(sorted(seen) == ['BIGUSDT', 'MIDUSDT'],
+               f'OI мали спитати лише в тих, хто пройшов обіг: {seen}')
+        _check([x['symbol'] for x in r['rows']] == ['BIGUSDT'],
+               f'монета з мізерним OI мала відсіятись: {r["rows"]}')
+        _check(r['bulk_oi'] is False and r['warnings'],
+               'UI мусить бачити, що OI брався поштучно')
+        _check('відкритий інтерес' in ' '.join(r['warnings']), r['warnings'])
+    finally:
+        S._OI_ONE.clear(); S._OI_ONE.update(orig_oi)
+        S._KLINES.clear(); S._KLINES.update(orig_kl)
+        sys.modules.pop('detection.tickr_core', None)
+        if _real_tc is not None:
+            sys.modules['detection'].tickr_core = _real_tc
+        else:
+            sys.modules['detection'].__dict__.pop('tickr_core', None)
+    print('✓ список без bulk-OI: OI поштучно, поріг застосовано після нього')
+
+
+def test_per_symbol_oi_has_a_ceiling():
+    """Поштучний OI подвоює вартість скану, тож на таких біржах діє стеля —
+    інакше «100 монет» перетворяться на 200 запитів."""
+    fake = types.ModuleType('detection.tickr_core')
+    fake.MARKET_SWAP = 'swap'
+    fake._ACTIVITY = {'binance': lambda m: {
+        f'C{i}USDT': {'vol_usd': 100e6 + i, 'last': 10.0} for i in range(200)}}
+    # ⚠️ Підміняти ТІЛЬКИ sys.modules мало: `from detection import tickr_core`
+    # бере АТРИБУТ пакета, якщо він уже виставлений (а він виставляється
+    # першим же викликом `scan_liquidity`, бо імпорт стоїть до перевірок).
+    _real_tc = getattr(sys.modules['detection'], 'tickr_core', None)
+    sys.modules['detection.tickr_core'] = fake
+    sys.modules['detection'].tickr_core = fake
+    orig_oi, orig_kl = dict(S._OI_ONE), dict(S._KLINES)
+    try:
+        seen = []
+        S._OI_ONE['binance'] = lambda s, sym: (seen.append(sym), (10.0, 50e6))[1]
+        S._KLINES['binance'] = lambda s, sym, i, l: _bars((9.7, 30, 1000))
+        S.scan_liquidity(exchange='binance', top_n=200, min_vol_usd=1e6,
+                         min_oi_usd=1e6)
+        _check(len(seen) == S.PER_SYMBOL_OI_CAP,
+               f'стеля {S.PER_SYMBOL_OI_CAP}, а спитали {len(seen)}')
+    finally:
+        S._OI_ONE.clear(); S._OI_ONE.update(orig_oi)
+        S._KLINES.clear(); S._KLINES.update(orig_kl)
+        sys.modules.pop('detection.tickr_core', None)
+        if _real_tc is not None:
+            sys.modules['detection'].tickr_core = _real_tc
+        else:
+            sys.modules['detection'].__dict__.pop('tickr_core', None)
+    print(f'✓ стеля поштучного OI ({S.PER_SYMBOL_OI_CAP} монет) діє')
+
+
+def test_cheap_coin_magnet_is_not_rounded_to_zero():
+    """🐞 Драбина рахується вже не лише по BTC. `int(round(0.42))` перетворив
+    би магніт дешевої монети на «$0» — і рівень став би нечитабельним."""
+    lv = [{'price': 0.42, 'usd': 50e6, 'side': 'long'},
+          {'price': 0.51, 'usd': 5e6, 'side': 'short'}]
+    row = S.summarise(lv, 0.47, 'CHEAPUSDT')
+    _check(row['ok'], row)
+    _check(row['magnet_price'] not in ('$0', '$0 '),
+           f'магніт дешевої монети згорнувся в нуль: {row["magnet_price"]}')
+    _check('0.4' in row['magnet_price'] or '0.5' in row['magnet_price'],
+           f'ціна має лишитись розрізненною: {row["magnet_price"]}')
+    # А на BTC-масштабі формат не змінився.
+    _check(LAD._fmt_price_ua(76000) == '$76 000', LAD._fmt_price_ua(76000))
+    print(f'✓ дешеві монети не округляються до нуля ({row["magnet_price"]})')
 
 
 def test_module_says_it_is_a_snapshot_not_the_live_map():
@@ -213,6 +382,12 @@ if __name__ == '__main__':
     test_summary_uses_the_same_ladder_and_verdict()
     test_nearest_magnet_is_not_the_biggest()
     test_sorting_modes()
-    test_exchanges_without_bulk_oi_refuse_honestly()
+    test_unknown_exchange_refuses_instead_of_raising()
+    test_symbol_is_normalised_for_each_exchange()
+    test_single_coin_works_on_exchange_without_bulk_oi()
+    test_single_coin_refuses_honestly_when_there_is_no_data()
+    test_list_scan_falls_back_to_per_symbol_oi()
+    test_per_symbol_oi_has_a_ceiling()
+    test_cheap_coin_magnet_is_not_rounded_to_zero()
     test_module_says_it_is_a_snapshot_not_the_live_map()
     print('\nУсі тести скану ліквідності пройдено ✅')
