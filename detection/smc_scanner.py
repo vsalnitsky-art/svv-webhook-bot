@@ -135,7 +135,20 @@ DEFAULT_SETTINGS = {
     # the same source of truth.
     'ob_filter_enabled': False,
     'ob_filter_timeframe': '1h',  # 15m / 30m / 1h / 4h
-    
+    # 📐 «1H OB ЛИШЕ З CHoCH» — детектор створює Order Block на ОБИДВІ події
+    # структури (`storeOrdeBlock` фаєриться і на BOS, і на CHoCH — це точна
+    # Pine-семантика). Різниця змістова:
+    #   CHoCH-блок = точка РОЗВОРОТУ (перший блок нової структури);
+    #   BOS-блок   = ПРОДОВЖЕННЯ (тренд уже йде і пробиває черговий свінг).
+    # Коли УВІМК (дефолт), ворота входу приймають лише CHoCH-створений блок —
+    # вхід у точці зміни структури, а не в уже розтягнутому русі.
+    # ⚠️ Перевіряється ОСТАННІЙ немітигований блок (детектор зберігає саме
+    # його). Тобто «лише з CHoCH» = «поточний блок мусить бути CHoCH-створений»;
+    # якщо після нього встиг сформуватись BOS-блок, вхід блокується.
+    # ⚠️ Діє ЛИШЕ разом з `ob_filter_enabled` — це уточнення воріт, а не
+    # окремий фільтр. На малюнок блоку, SL і такт `vob_one_per_ob` НЕ впливає.
+    'ob_filter_choch_only': True,
+
     # === PD Zone Filter (threshold-based) ===
     # Gates signals based on CURRENT PRICE position within the trailing
     # range. Two configurable thresholds:
@@ -1137,6 +1150,7 @@ class SMCScanner:
                        'htf_internal_size',
                        # OB filter
                        'ob_filter_enabled', 'ob_filter_timeframe',
+                       'ob_filter_choch_only',
                        # PD Zone filter (threshold-based)
                        'use_pd_zone_filter', 'pd_zone_timeframe',
                        'pd_long_max_pct', 'pd_short_min_pct',
@@ -1271,6 +1285,9 @@ class SMCScanner:
             ALLOWED_OB_TFS = ('15m', '30m', '1h', '4h')
             if self._settings.get('ob_filter_timeframe') not in ALLOWED_OB_TFS:
                 self._settings['ob_filter_timeframe'] = '1h'
+            # «Лише з CHoCH» — булевий тумблер, дефолт УВІМК.
+            self._settings['ob_filter_choch_only'] = bool(
+                self._settings.get('ob_filter_choch_only', True))
             
             # === PD Zone Filter validation ===
             # Boolean toggle. Default True (set in DEFAULT_SETTINGS), but
@@ -2346,23 +2363,24 @@ class SMCScanner:
         Returns True only when ALL of these hold:
           1) DB has a computed row for this (symbol, ob_timeframe)
           2) Row has a non-null bias matching the signal side
-          3) The OB was created by a CHoCH event (not BOS)
-        
-        Condition (3) is the strict-mode addition: Pine fires
-        storeOrdeBlock on BOTH BOS and CHoCH events. CHoCH-created OBs
-        mark fresh trend reversals — the entry pivot of a new trend.
-        BOS-created OBs are continuation OBs, fired when an already-going
-        trend pushes through another swing point. Both CHoCH-created and
-        BOS-created OBs are valid filter sources — the gate cares only that
-        an OB exists at this TF with a matching direction. The signal
-        itself (CHoCH or BOS on the main TF) is what triggers entry; the
-        OB filter just confirms we're not entering against an established
-        institutional zone on the higher TF.
-        
-        Note that since obs[] is ordered newest-first in the detector and
-        any new event (BOS or CHoCH) creates a fresh OB on top, checking
-        only the latest OB is sufficient.
-        
+          3) `ob_filter_choch_only` (дефолт УВІМК) → блок мусить бути
+             створений подією CHoCH, а не BOS.
+
+        ⚠️ Пункт (3) — ОКРЕМИЙ тумблер, а не завжди-правило. Детектор фаєрить
+        `storeOrdeBlock` на ОБИДВІ події (точна Pine-семантика), і тег осідає
+        в `created_by_tag`:
+          • CHoCH-блок — точка РОЗВОРОТУ, перший блок нової структури;
+          • BOS-блок   — ПРОДОВЖЕННЯ, тренд уже йде і пробиває черговий свінг.
+        Вхід по CHoCH-блоку — суттєво тісніший сетап (входимо у точці зміни
+        структури, а не в розтягнутому русі), тому дефолт УВІМК. Вимкнено →
+        стара поведінка: годиться БУДЬ-ЯКИЙ блок потрібного напрямку.
+
+        Перевіряється ОСТАННІЙ блок і цього достатньо: obs[] у детекторі
+        впорядкований найновішим уперед, і кожна нова подія (BOS або CHoCH)
+        кладе свіжий блок згори. Тобто «лише з CHoCH» означає саме «ПОТОЧНИЙ
+        блок мусить бути CHoCH-створений» — якщо після нього вже сформувався
+        BOS-блок, вхід блокується (рух пішов у продовження).
+
         We err on the side of blocking: any uncertainty = block.
         """
         try:
@@ -2385,17 +2403,40 @@ class SMCScanner:
             # Computed, but no valid OB exists at this timeframe right now.
             return False
         
-        # Direction match — the only thing that matters now.
-        # CHoCH-vs-BOS distinction was removed: both are valid OB sources,
-        # the main-TF signal (CHoCH or BOS in candles) does the triggering,
-        # the OB filter just confirms HTF direction is aligned.
+        # Direction match.
         if side == 'LONG' and bias != 'BULLISH':
             return False
         if side == 'SHORT' and bias != 'BEARISH':
             return False
-        
+
+        # 📐 «Лише з CHoCH» — окремий тумблер (див. docstring).
+        if self._settings.get('ob_filter_choch_only', True):
+            if (row.get('created_by_tag') or '').upper() != 'CHOCH':
+                return False
+
         return True
-    
+
+    def _ob_state_label(self, symbol: str) -> str:
+        """Стан 1H-OB словами — ЛИШЕ для розкладу у 🧾 Лозі.
+
+        Рішення ухвалює `_ob_filter_allows`; тут ми показуємо ЧОМУ воно таке:
+        «BEARISH/BOS» одразу пояснює відмову при увімкненому «лише з CHoCH»,
+        інакше в лозі стояло б голе «OB(1h):✗»."""
+        try:
+            from storage.db_operations import get_db
+            row = get_db().get_smc_ob_state(
+                symbol, self._settings.get('ob_filter_timeframe', '1h'))
+        except Exception:
+            return '?'
+        if not row:
+            return 'не рахувався'
+        bias = row.get('bias')
+        if not bias:
+            return 'нема блоку'
+        tag = (row.get('created_by_tag') or '?').upper()
+        return f"{bias}/{'CHoCH' if tag == 'CHOCH' else tag}"
+
+
     @staticmethod
     def _compute_pd_pct(klines: List[Dict], swing_pivots: List[Dict],
                          current_price: float) -> Optional[float]:
@@ -3480,9 +3521,25 @@ class SMCScanner:
         # OB
         if self._settings.get('ob_filter_enabled', False):
             ok = self._ob_filter_allows(symbol, side_label)
-            parts.append(f"OB({self._settings.get('ob_filter_timeframe', '1h')}):{_m(ok)}")
+            _choch_only = bool(self._settings.get('ob_filter_choch_only', True))
+            # Стан блоку в розкладі: «BEARISH/BOS» одразу пояснює відмову,
+            # коли увімкнено «лише з CHoCH» (інакше було б голе ✗).
+            _st = self._ob_state_label(symbol)
+            parts.append(f"OB({self._settings.get('ob_filter_timeframe', '1h')}"
+                         f"{' лише CHoCH' if _choch_only else ''}"
+                         f" {_st}):{_m(ok)}")
             if not ok and allowed:
-                allowed, reason = False, 'OB-фільтр заблокував (Order Block проти напрямку)'
+                # Причину розрізняємо: «немає блоку», «не той напрямок» і
+                # «не той тип події» — це ТРИ РІЗНІ відмови, зливати не можна.
+                _want = 'BULLISH' if side_label == 'LONG' else 'BEARISH'
+                if '/' not in _st:
+                    _why = f'OB-фільтр заблокував ({_st} на {self._settings.get("ob_filter_timeframe", "1h")})'
+                elif not _st.startswith(_want):
+                    _why = 'OB-фільтр заблокував (Order Block проти напрямку)'
+                else:
+                    _why = ('OB-фільтр заблокував (блок створено BOS — '
+                            'продовження, а не CHoCH)')
+                allowed, reason = False, _why
 
         # PD (сам гейтить свій тумблер; у розклад додаємо лише коли увімкнено)
         if self._settings.get('use_pd_zone_filter', True):

@@ -2081,6 +2081,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-vob-one-per-ob" onchange="updateVobOnePerOb()">
                         🔒 1 VOB на 1H OB
                     </label>
+                    <label class="sm-checkbox" title="📐 Order Block створюється ОБОМА подіями структури: CHoCH (точка РОЗВОРОТУ — перший блок нової структури) і BOS (ПРОДОВЖЕННЯ — тренд уже йде і пробиває черговий свінг). Коли УВІМК, ворота входу приймають ЛИШЕ CHoCH-створений блок: вхід у точці зміни структури, а не в уже розтягнутому русі. Перевіряється ПОТОЧНИЙ (останній немітигований) блок — якщо після CHoCH встиг сформуватись BOS-блок, вхід блокується. ⚠️ Діє лише разом із «Require OB Match» (OB-фільтром); на малюнок блоку на графіку, на Manual SL і на такт «1 VOB на 1H OB» НЕ впливає.">
+                        <input type="checkbox" id="sm-ob-choch-only" checked onchange="updateObChochOnly()">
+                        📐 1H OB лише з CHoCH
+                    </label>
                 </div>
             </div>
             
@@ -5708,6 +5712,8 @@ async function loadSettings() {
             if (vobAl) vobAl.checked = !!s.vob_alert_enabled;            // default OFF
             const vobOne = document.getElementById('sm-vob-one-per-ob');
             if (vobOne) vobOne.checked = !!s.vob_one_per_ob;             // default OFF
+            const obChoch = document.getElementById('sm-ob-choch-only');
+            if (obChoch) obChoch.checked = s.ob_filter_choch_only !== false;  // default ON
             const recEl = document.getElementById('sm-recency');
             if (recEl) recEl.value = String(s.recency_minutes != null ? s.recency_minutes : 0);
             document.getElementById('sm-timeframe').value = s.timeframe || '5m';
@@ -5847,6 +5853,10 @@ function updateSettingsSummary() {
     if (htfOn) summary += ` · HTF ${htfTf} (${htfMethod})`;
     if (obOn && obOn.checked && obTf) {
         summary += ` · OB ${obTf.value.toUpperCase()}`;
+        // «лише CHoCH» помітно звужує потік — має бути видно в шапці, а не
+        // лише в розгорнутій гармошці.
+        const obCh = document.getElementById('sm-ob-choch-only');
+        if (obCh && obCh.checked) summary += ' (лише CHoCH)';
     }
     if (pdOn && pdOn.checked) {
         const pdTf = document.getElementById('sm-pd-zone-tf');
@@ -5918,6 +5928,18 @@ async function updateVobOnePerOb() {
         });
         updateSettingsSummary();
     } catch (err) { alert('VOB one-per-OB update error: ' + err); }
+}
+// 📐 «1H OB лише з CHoCH» — ворота входу приймають лише блок, створений
+// подією CHoCH (розворот), а не BOS (продовження). Дефолт УВІМК.
+async function updateObChochOnly() {
+    const enabled = document.getElementById('sm-ob-choch-only').checked;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ob_filter_choch_only: enabled}),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('OB CHoCH-only update error: ' + err); }
 }
 
 // OB Filter — single handler for both checkbox and dropdown change events.

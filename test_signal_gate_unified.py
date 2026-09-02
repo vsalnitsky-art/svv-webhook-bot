@@ -36,6 +36,9 @@ def _self(settings, ob_ok=True, pd_ok=True, fc_ok=True, str_ok=True, poc_ok=True
     ns._forecast_strength_allows = lambda sym, side, **kw: str_ok
     ns._poc_filter_allows = lambda sym, side, **kw: poc_ok
     # Value helpers used by the detail breakdown.
+    # `_ob_state_label` живить розклад «OB(1h лише CHoCH BEARISH/BOS):✗» —
+    # рішення воно НЕ ухвалює, тому тут порожній стан.
+    ns._ob_state_label = lambda sym: 'BULLISH/CHoCH'
     ns._forecast_pair = lambda sym: ('—', '—')
     ns.get_pd_pct = lambda sym: None
     ns._decision_gate = lambda sym, side, at_intake=False: (True, 'LONG 80%')
