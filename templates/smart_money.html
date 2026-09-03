@@ -1596,7 +1596,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
              The verdict direction is highlighted. Seeing LONG and SHORT
              at once makes verdict flips understandable: when SHORT is
              EXHAUSTED and LONG is FRESH, the LONG tilt is obvious. -->
-        <div class="sm-analysis-row">
+        <!-- 🚫 ВИМКНЕНО ДЛЯ ПОКАЗУ (`SM_ANALYSIS_ROW_ON`, див. початок
+             скрипта). Розмітку СВІДОМО лишено на місці з усіма id: повернути
+             рядок = поставити константу в `true`, більше нічого не міняти.
+             Ховаємо саме ОБГОРТКУ — окремі панелі й так мають display:none,
+             але порожній flex-рядок лишав би відступ і gap на екрані. -->
+        <div class="sm-analysis-row" id="sm-analysis-row" style="display:none">
         <!-- 💧 ЛІВА ПОЛОВИНА рядка аналізу: настрій біржі + драбина
              ліквідності BTC. Перенесено сюди з рядка Trade Direction —
              праворуч тепер стоїть РІВНО ОДИН «Потенціал» (той, що несе
@@ -4608,6 +4613,27 @@ setInterval(() => {
 </script>
 
 <script>
+// ═══════════════════════════════════════════════════════════════════════
+// 🚫 РЯДОК АНАЛІЗУ — ВИМКНЕНО ДЛЯ ПОКАЗУ (рішення користувача, щоб не
+// навантажувати сторінку). Стосується ТРЬОХ банерів разом:
+//   • 🏦 настрій біржі Binance (L/S %)      → `/api/sentiment`
+//   • 💧 драбина ліквідності BTC            → `/api/liquidity-ladder`
+//   • 📈/📉 Потенціал LONG/SHORT + виснаженість (панелі `sm-move-panel-*`)
+//
+// ⚠️ АЛГОРИТМИ І РОЗРАХУНОК НЕ ВИДАЛЕНО — вимкнено САМЕ ПОКАЗ:
+//   • `loadSentiment`/`loadLiquidityLadder` виходять одразу → сторінка
+//     БІЛЬШЕ НЕ РОБИТЬ цих двох запитів (це і мережа, і серверний рахунок);
+//   • `renderMovePanel` виходить одразу → жодного DOM-малювання.
+// ⚠️ `move_long`/`move_short` рахує БЕКЕНД у `compute_bias`, і їх читає
+//    ТОРГОВА логіка (`fuel_filter._exhaustion` → колонка «Виснаженість» і
+//    ворота відкриття, `confluence_direction`). Прибрати їх звідти НЕ можна
+//    — саме тому цей банер економить лише малювання, а не розрахунок; два
+//    інші економлять і запит, і розрахунок.
+//
+// ПОВЕРНУТИ: поставити `true` — і рядок, і обидва запити оживають, більше
+// нічого міняти не треба (розмітка на місці, id збережені).
+const SM_ANALYSIS_ROW_ON = false;
+// ═══════════════════════════════════════════════════════════════════════
 let chart = null;
 let candleSeries = null;
 let currentSymbol = null;
@@ -10014,6 +10040,10 @@ function _movePickActive(moveLong, moveShort, verdict) {
 // (раніше вона просто пригасала і забирала половину рядка без користі); її
 // місце зайняв блок настрою + ліквідності.
 function renderMovePanel(moveLong, moveShort, verdict) {
+    // 🚫 Рядок аналізу вимкнено для показу — не малюємо нічого.
+    // Дані (`move_long`/`move_short`) далі приходять у payload і далі
+    // живлять торгову логіку; ми лише не витрачаємось на DOM.
+    if (!SM_ANALYSIS_ROW_ON) return;
     const act = _movePickActive(moveLong, moveShort, verdict);
     renderMoveSide(act === 'LONG' ? moveLong : null, 'LONG', '-long', act === 'LONG');
     renderMoveSide(act === 'SHORT' ? moveShort : null, 'SHORT', '-short', act === 'SHORT');
@@ -10231,6 +10261,8 @@ function _liqFmtPrice(v) {
     return '$' + Math.round(n).toLocaleString('en-US');
 }
 async function loadLiquidityLadder() {
+    // 🚫 Вимкнено для показу → жодного запиту `/api/liquidity-ladder`.
+    if (!SM_ANALYSIS_ROW_ON) return;
     const box = document.getElementById('sm-liq');
     if (!box) return;
     try {
@@ -12465,6 +12497,9 @@ async function loadDataSource() {
 }
 
 async function loadSentiment() {
+    // 🚫 Вимкнено для показу → жодного запиту `/api/sentiment`. Виходимо ДО
+    // виклику, а не всередині нього: інакше запит усе одно пішов би.
+    if (!SM_ANALYSIS_ROW_ON) return;
     // Bybit only — the bot trades Bybit.
     await loadSentimentFor('binance', {
         val: 'sm-sentiment-val', long: 'sm-sentiment-long',
@@ -14305,6 +14340,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadBias();
         loadDirAlertState();
     }).catch(() => {});
+    // 🚫 Рядок аналізу прихований інлайном у розмітці, тож ПОВЕРНЕННЯ теж
+    // керується ОДНІЄЮ константою — правити HTML не треба.
+    if (SM_ANALYSIS_ROW_ON) {
+        const _arow = document.getElementById('sm-analysis-row');
+        if (_arow) _arow.style.display = 'flex';
+    }
+    // `loadSentiment` лишається у списку СВІДОМО: вона сама виходить за
+    // константою. Так вимикач один, а не розмазаний по місцях виклику.
     const refreshAll = () => { loadBias(); loadDirAlertState(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadFuelFilterStatus(); loadPocSetup(); };
     refreshAll();
     setInterval(refreshAll, 60000);
