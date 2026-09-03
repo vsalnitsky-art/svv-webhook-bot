@@ -4916,6 +4916,26 @@ def register_api_routes(app):
         new_settings = s.update_settings(data)
         return jsonify({'ok': True, 'settings': new_settings})
     
+    @app.route('/api/smc/liq-exchange-check')
+    def api_smc_liq_exchange_check():
+        """💧 Доступність біржі для фільтра ліквідності — для індикатора в UI.
+
+        `?exchange=binance` — перевірити конкретну; без параметра — ту, що
+        стоїть у налаштуваннях. `?cached=1` — віддати ОСТАННІЙ відомий стан
+        без нового запиту (ним користується автополл, щоб не бити біржу).
+
+        Проба робить РІВНО той виклик, який робить фільтр (поштучний OI по
+        BTC), тож зелений індикатор означає «фільтр працюватиме».
+        """
+        from detection.smc_scanner import get_smc_scanner
+        sc = get_smc_scanner()
+        if not sc:
+            return jsonify({'ok': False, 'reason': 'Scanner not initialized'})
+        if request.args.get('cached') in ('1', 'true', 'yes'):
+            st = sc.get_liq_exchange_state()
+            return jsonify(st or {'ok': None, 'reason': 'ще не перевірялось'})
+        return jsonify(sc.check_liq_exchange(request.args.get('exchange')))
+
     @app.route('/api/smc/chart')
     def api_smc_chart():
         """Return klines + structure for a symbol. ?symbol=BTCUSDT"""

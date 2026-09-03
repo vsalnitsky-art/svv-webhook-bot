@@ -149,6 +149,24 @@ DEFAULT_SETTINGS = {
     # окремий фільтр. На малюнок блоку, SL і такт `vob_one_per_ob` НЕ впливає.
     'ob_filter_choch_only': True,
 
+    # === 💧 Liquidity Filter (окремий незалежний фільтр) ===
+    # Пропускає сигнал ЛИШЕ якщо ліквідність У БІК УГОДИ ≥ порогу.
+    # Джерело — ТОЙ САМИЙ `liq_scan.scan_one`, що живить сторінку 📡 Tickr:
+    # поточний OI розкладається по історії цін → ціни ліквідації → драбина.
+    # «У бік угоди» = частка маси, яка ТЯГНЕ ціну туди, куди ми входимо:
+    #   LONG  → `above_pct` (маса ВИЩЕ ціни тягне вгору);
+    #   SHORT → `below_pct` (маса НИЖЧЕ ціни тягне вниз).
+    # 75 означає «щонайменше 75% усієї ліквідності у вікні лежить у наш бік».
+    'liq_filter_enabled': False,
+    'liq_filter_exchange': 'binance',   # binance / bybit / mexc / bingx
+    'liq_filter_bars': 336,             # годин історії (336 = 14 діб)
+    'liq_filter_min_pct': 75.0,         # поріг частки у бік угоди
+    # ⚠️ Кожна перевірка — 2-3 HTTP до біржі, а ворота кличуться і на сигнал,
+    # і на КОЖЕН тік Q4-recheck. Без кешу це сотні запитів за хвилину.
+    # Драбина будується з годинних барів і поточного OI, тож 5 хв застарілості
+    # ФІЗИЧНО нічого не міняють.
+    'liq_filter_ttl_sec': 300,
+
     # === PD Zone Filter (threshold-based) ===
     # Gates signals based on CURRENT PRICE position within the trailing
     # range. Two configurable thresholds:
@@ -429,6 +447,13 @@ class SMCScanner:
         # is on) and the chart-header badge.
         # {symbol: {'zone': str|None, 'pct': float|None, 'updated_at': float}}
         self._pd_zone_cache: Dict[str, Dict] = {}
+        # 💧 Кеш фільтра ліквідності: {(symbol, exchange, bars): (ts, зріз)}.
+        # ОБОВʼЯЗКОВИЙ — див. `liq_filter_ttl_sec`: без нього ворота били б
+        # у біржу на кожен тік Q4-recheck по КОЖНІЙ монеті черги.
+        self._liq_filter_cache: Dict[tuple, tuple] = {}
+        # Стан доступності біржі для фільтра (для індикатора в UI):
+        # {'exchange','ok','reason','checked_at','took_ms'}
+        self._liq_exchange_state: Dict = {}
         # Volumized OB Trend cache — keyed by symbol. Each entry holds
         # {'trend': 'LONG'|'SHORT'|None, 'meta': {...}, 'tf': '1h',
         #  'updated_at': float}. Populated per-scan-tick, consumed by
@@ -1151,6 +1176,10 @@ class SMCScanner:
                        # OB filter
                        'ob_filter_enabled', 'ob_filter_timeframe',
                        'ob_filter_choch_only',
+                       # 💧 Фільтр ліквідності за напрямком
+                       'liq_filter_enabled', 'liq_filter_exchange',
+                       'liq_filter_bars', 'liq_filter_min_pct',
+                       'liq_filter_ttl_sec',
                        # PD Zone filter (threshold-based)
                        'use_pd_zone_filter', 'pd_zone_timeframe',
                        'pd_long_max_pct', 'pd_short_min_pct',
@@ -1288,6 +1317,39 @@ class SMCScanner:
             # «Лише з CHoCH» — булевий тумблер, дефолт УВІМК.
             self._settings['ob_filter_choch_only'] = bool(
                 self._settings.get('ob_filter_choch_only', True))
+
+            # === 💧 Фільтр ліквідності: валідація ===
+            self._settings['liq_filter_enabled'] = bool(
+                self._settings.get('liq_filter_enabled', False))
+            # Біржа — лише ті, для яких є поштучний OI (`liq_scan._OI_ONE`).
+            if self._settings.get('liq_filter_exchange') not in (
+                    'binance', 'bybit', 'mexc', 'bingx'):
+                self._settings['liq_filter_exchange'] = 'binance'
+            # Історія: 24 год … 1000 барів (стеля самого liq_scan).
+            try:
+                _lb = int(float(self._settings.get('liq_filter_bars', 336)))
+            except (TypeError, ValueError):
+                _lb = 336
+            self._settings['liq_filter_bars'] = max(24, min(_lb, 1000))
+            # Поріг 0..100. ⚠️ 0 НЕ вимикає фільтр — для цього є тумблер;
+            # 0 означає «будь-яка ліквідність підходить» (усе проходить).
+            try:
+                _lp = float(self._settings.get('liq_filter_min_pct', 75.0))
+            except (TypeError, ValueError):
+                _lp = 75.0
+            self._settings['liq_filter_min_pct'] = max(0.0, min(_lp, 100.0))
+            try:
+                _lt = float(self._settings.get('liq_filter_ttl_sec', 300))
+            except (TypeError, ValueError):
+                _lt = 300.0
+            self._settings['liq_filter_ttl_sec'] = max(30.0, min(_lt, 3600.0))
+            # Параметри змінились → старий зріз більше не описує те, що
+            # питає користувач. Кеш скидаємо, інакше фільтр ще 5 хв відповідав
+            # би за СТАРОЮ біржею/глибиною.
+            try:
+                self._liq_filter_cache.clear()
+            except Exception:
+                pass
             
             # === PD Zone Filter validation ===
             # Boolean toggle. Default True (set in DEFAULT_SETTINGS), but
@@ -3575,6 +3637,18 @@ class SMCScanner:
             if not ok and allowed:
                 allowed, reason = False, 'POC-фільтр заблокував (сигнал проти «краще LONG/SHORT» за POC)'
 
+        # 💧 Ліквідність за напрямком (незалежний)
+        if self._settings.get('liq_filter_enabled', False):
+            ok = self._liq_filter_allows(symbol, side_label)
+            _need = self._settings.get('liq_filter_min_pct', 75.0)
+            _ex = str(self._settings.get('liq_filter_exchange', 'binance')).upper()
+            _ls = self._liq_state_label(symbol, side_label)
+            parts.append(f"Ліквідність[{_ex}≥{_need}%]({_ls}):{_m(ok)}")
+            if not ok and allowed:
+                allowed, reason = False, (
+                    f'Ліквідність за напрямком нижча за поріг '
+                    f'({_ls} < {_need}%)')
+
         # Decision-вердикт — осн. напрямок (незалежний)
         if self._settings.get('decision_filter_enabled', False):
             ok, _dh = self._decision_gate(symbol, side_label, at_intake=at_intake)
@@ -3584,6 +3658,138 @@ class SMCScanner:
 
         detail = ' · '.join(parts) if parts else 'фільтри вимкнені'
         return allowed, reason, detail
+
+    # ── 💧 ФІЛЬТР ЛІКВІДНОСТІ ЗА НАПРЯМКОМ ──────────────────────────────────
+    LIQ_SIDE_KEY = {'LONG': 'above_pct', 'SHORT': 'below_pct'}
+
+    def _liq_snapshot(self, symbol: str) -> Dict:
+        """Зріз драбини ліквідності по монеті (з кешем).
+
+        ⚠️ Рахує ТА САМА `liq_scan.scan_one`, що живить сторінку 📡 Tickr —
+        щоб «68% вниз» у фільтрі й на сторінці означало ОДНЕ І ТЕ САМЕ число.
+        Дублювати розрахунок тут не можна: розійдуться (урок PD-зони).
+
+        Повертає `{ok, above_pct, below_pct, price, reason}`; `ok=False` —
+        дані НЕ отримані (біржа не відповіла / немає OI / немає рівнів)."""
+        s = self._settings
+        ex = str(s.get('liq_filter_exchange', 'binance')).lower()
+        try:
+            bars = int(s.get('liq_filter_bars', 336) or 336)
+        except (TypeError, ValueError):
+            bars = 336
+        try:
+            ttl = float(s.get('liq_filter_ttl_sec', 300) or 300)
+        except (TypeError, ValueError):
+            ttl = 300.0
+
+        key = (symbol.upper(), ex, bars)
+        now = time.time()
+        hit = self._liq_filter_cache.get(key)
+        if hit and (now - hit[0]) < ttl:
+            return hit[1]
+
+        try:
+            from detection import liq_scan
+            r = liq_scan.scan_one(exchange=ex, symbol=symbol, bars=bars, rows=6)
+        except Exception as e:
+            r = {'ok': False, 'reason': f'збій розрахунку: {str(e)[:60]}'}
+        snap = {
+            'ok': bool(r.get('ok')),
+            'above_pct': r.get('above_pct'),
+            'below_pct': r.get('below_pct'),
+            'price': r.get('price'),
+            'reason': r.get('reason') or '',
+            'exchange': ex, 'bars': bars,
+        }
+        # Кешуємо і ВДАЧУ, і НЕВДАЧУ: коли біржа лежить (Binance регулярно
+        # блокує IP дата-центрів), безкешна відмова означала б повторний
+        # запит на КОЖЕН тік — тобто найбільший тиск саме тоді, коли гірше
+        # за все. Стеля памʼяті — щоб словник не ріс безкінечно.
+        if len(self._liq_filter_cache) > 500:
+            self._liq_filter_cache.clear()
+        self._liq_filter_cache[key] = (now, snap)
+        # Побічно оновлюємо індикатор доступності біржі — «фільтр працює,
+        # але дані не приходять» має бути ВИДНО, а не здогадуватись.
+        self._liq_exchange_state = {
+            'exchange': ex, 'ok': snap['ok'],
+            'reason': '' if snap['ok'] else snap['reason'],
+            'checked_at': now, 'source': 'filter'}
+        return snap
+
+    def _liq_filter_allows(self, symbol: str, side: str) -> bool:
+        """💧 Пропустити, якщо ліквідність У БІК УГОДИ ≥ `liq_filter_min_pct`.
+
+        «У бік угоди» = частка маси, що ТЯГНЕ ціну туди, куди ми входимо:
+        LONG → `above_pct`, SHORT → `below_pct` (та сама конвенція, що фарбує
+        драбину: вище ціни зелений/вгору, нижче червоний/вниз).
+
+        ⚠️ **FAIL-OPEN, коли даних немає.** Джерело — ЗОВНІШНЯ біржа, яка
+        періодично блокує IP дата-центрів (Binance 418/451 — це вже задокумен-
+        товано для банера настрою). Якби ми блокували на недоступності, одна
+        відмова біржі тихо зупинила б ТОРГІВЛЮ цілком. Тому пропускаємо, але
+        стан «біржа недоступна» видно і в UI-індикаторі, і в розкладі 🧾 логу.
+        Це СВІДОМО інакше, ніж в OB-фільтрі: там дані наші власні (БД) і
+        зʼявляться наступним тіком скану, тут — чужі й можуть не зʼявитись."""
+        s = self._settings
+        try:
+            need = float(s.get('liq_filter_min_pct', 75.0) or 0)
+        except (TypeError, ValueError):
+            need = 75.0
+        snap = self._liq_snapshot(symbol)
+        if not snap.get('ok'):
+            return True                      # fail-open, див. docstring
+        val = snap.get(self.LIQ_SIDE_KEY.get(side, ''))
+        if val is None:
+            return True
+        try:
+            return float(val) >= need
+        except (TypeError, ValueError):
+            return True
+
+    def _liq_state_label(self, symbol: str, side: str) -> str:
+        """Стан для розкладу у 🧾 Лозі: «68.4% вниз» / «біржа недоступна».
+        Голе «Ліквідність:✗» не пояснює НІЧОГО — має бути видно число."""
+        snap = self._liq_snapshot(symbol)
+        if not snap.get('ok'):
+            return f"немає даних: {snap.get('reason') or 'біржа не відповіла'}"
+        val = snap.get(self.LIQ_SIDE_KEY.get(side, ''))
+        if val is None:
+            return 'немає рівнів'
+        arrow = 'вгору' if side == 'LONG' else 'вниз'
+        return f"{val}% {arrow}"
+
+    def check_liq_exchange(self, exchange: Optional[str] = None) -> Dict:
+        """Разова ПЕРЕВІРКА ДОСТУПНОСТІ біржі для фільтра (для індикатора).
+
+        Пробуємо найдешевше, що взагалі потрібно фільтру — відкритий інтерес
+        по BTC (`_OI_ONE`). Це саме той виклик, який фільтр робить першим,
+        тож зелений індикатор означає «фільтр реально працюватиме», а не
+        «сайт біржі пінгується»."""
+        ex = str(exchange or self._settings.get('liq_filter_exchange', 'binance')).lower()
+        t0 = time.time()
+        try:
+            import requests
+            from detection import liq_scan
+            fn = liq_scan._OI_ONE.get(ex)
+            if fn is None:
+                out = {'ok': False, 'reason': f'біржа {ex} не підтримується'}
+            else:
+                px, oi = fn(requests.Session(), 'BTCUSDT')
+                if px and px > 0 and oi and oi > 0:
+                    out = {'ok': True, 'reason': ''}
+                else:
+                    out = {'ok': False,
+                           'reason': 'біржа відповіла, але без відкритого інтересу'}
+        except Exception as e:
+            out = {'ok': False, 'reason': str(e)[:120]}
+        out.update({'exchange': ex, 'checked_at': time.time(),
+                    'took_ms': int((time.time() - t0) * 1000), 'source': 'probe'})
+        self._liq_exchange_state = dict(out)
+        return out
+
+    def get_liq_exchange_state(self) -> Dict:
+        """Останній відомий стан біржі (з проби АБО з роботи фільтра)."""
+        return dict(self._liq_exchange_state or {})
 
     def _forecast_pair(self, symbol: str):
         """('1H SHORT 75%', '4H LONG 60%') — сирі значення прогнозу для 🧾 логу.

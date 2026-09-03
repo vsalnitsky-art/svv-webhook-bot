@@ -1370,6 +1370,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-move-bar-val { font-family:monospace; font-size:0.82rem; font-weight:700; min-width:38px;
         text-align:right; }
     .sm-move-notes { display:flex; flex-wrap:wrap; gap:4px 16px; }
+    /* 🚦 Індикатор доступності біржі для фільтра ліквідності. Три стани —
+       перевіряю / доступна / недоступна — щоб «фільтр мовчить» ніколи не
+       був здогадкою. Клікабельний: перевірити зараз. */
+    .sm-liq-ex-badge { font-size:0.72rem; font-family:monospace; padding:3px 9px;
+        border-radius:5px; cursor:pointer; user-select:none; white-space:nowrap;
+        border:1px solid transparent; }
+    .sm-liq-ex-badge.ok { color:#4ade80; background:rgba(34,197,94,0.12);
+        border-color:rgba(34,197,94,0.35); }
+    .sm-liq-ex-badge.bad { color:#f87171; background:rgba(248,113,113,0.12);
+        border-color:rgba(248,113,113,0.4); }
+    .sm-liq-ex-badge.wait { color:#8b93a7; background:rgba(255,255,255,0.05);
+        border-color:rgba(255,255,255,0.12); }
     .sm-analysis-row { display:flex; gap:14px; margin-top:14px; align-items:stretch; }
     .sm-analysis-row > .sm-move-panel { flex:1; margin-top:0; min-width:0; }
     .sm-analysis-row > .sm-analysis-side { margin-top:14px; }
@@ -1834,7 +1846,52 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </div>
                 </div>
             </div>
-            
+
+            <!-- 💧 ФІЛЬТР ЛІКВІДНОСТІ — ОКРЕМИЙ НЕЗАЛЕЖНИЙ (власний тумблер).
+                 Рахує ТА САМА `liq_scan.scan_one`, що живить сторінку 📡 Tickr,
+                 тож число тут і там ЗАВЖДИ однакове. -->
+            <div class="sm-settings-section">
+                <h3>💧 Liquidity Filter</h3>
+                <div class="sm-controls">
+                    <label class="sm-checkbox"
+                           title="НЕЗАЛЕЖНИЙ фільтр: сигнал проходить лише коли ліквідність У БІК УГОДИ не менша за поріг. LONG → частка маси ВИЩЕ ціни (тягне вгору); SHORT → частка НИЖЧЕ ціни (тягне вниз). Джерело — та сама драбина, що на сторінці 📡 Tickr: поточний відкритий інтерес розкладається по історії цін → ціни ліквідації → кроки. ⚠️ Якщо біржа не відповіла, фільтр НЕ блокує (інакше одна відмова біржі зупинила б торгівлю) — стан видно в індикаторі поруч.">
+                        <input type="checkbox" id="sm-liq-filter-enabled"
+                               onchange="updateLiqFilter()">
+                        Require Liquidity (за напрямком)
+                    </label>
+                    <div class="sm-control-item" title="Біржа, з якої беремо відкритий інтерес і свічки для драбини.">
+                        <label>Біржа:</label>
+                        <select id="sm-liq-filter-exchange" onchange="updateLiqFilter()">
+                            <option value="binance" selected>Binance</option>
+                            <option value="bybit">Bybit</option>
+                            <option value="mexc">MEXC</option>
+                            <option value="bingx">BingX</option>
+                        </select>
+                    </div>
+                    <div class="sm-control-item" title="Скільки годин історії розкладаємо (годинні бари).">
+                        <label>Історія, год:</label>
+                        <select id="sm-liq-filter-bars" onchange="updateLiqFilter()">
+                            <option value="72">72 (3 доби)</option>
+                            <option value="168">168 (7 діб)</option>
+                            <option value="336" selected>336 (14 діб)</option>
+                            <option value="720">720 (30 діб)</option>
+                        </select>
+                    </div>
+                    <div class="sm-control-item" title="Мінімальна частка ліквідності у бік угоди, %. 75 = «щонайменше 75% усієї маси у вікні лежить у наш бік».">
+                        <label>Ліквідність ≥</label>
+                        <input type="number" id="sm-liq-filter-min" min="0" max="100"
+                               step="1" value="75" style="width:64px"
+                               onchange="updateLiqFilter()">
+                        <span style="color:#8b93a7">%</span>
+                    </div>
+                    <!-- 🚦 Індикатор доступності біржі. Показуємо ЛИШЕ коли
+                         фільтр увімкнено: інакше це шум про те, що не діє. -->
+                    <span class="sm-liq-ex-badge" id="sm-liq-ex-badge"
+                          style="display:none" onclick="checkLiqExchange(true)"
+                          title="Клікніть, щоб перевірити зараз">⏳ перевіряю…</span>
+                </div>
+            </div>
+
             <div class="sm-settings-section">
                 <h3>🔮 Forecast Filter</h3>
                 <div class="sm-controls">
@@ -5760,6 +5817,19 @@ async function loadSettings() {
             if (obEnabled) obEnabled.checked = !!s.ob_filter_enabled;
             const obTf = document.getElementById('sm-ob-filter-tf');
             if (obTf) obTf.value = s.ob_filter_timeframe || '1h';
+            // 💧 Фільтр ліквідності за напрямком
+            const lqEn = document.getElementById('sm-liq-filter-enabled');
+            if (lqEn) lqEn.checked = !!s.liq_filter_enabled;      // дефолт OFF
+            const lqEx = document.getElementById('sm-liq-filter-exchange');
+            if (lqEx) lqEx.value = s.liq_filter_exchange || 'binance';
+            const lqBars = document.getElementById('sm-liq-filter-bars');
+            if (lqBars) lqBars.value = String(s.liq_filter_bars || 336);
+            const lqMin = document.getElementById('sm-liq-filter-min');
+            if (lqMin && document.activeElement !== lqMin) {
+                lqMin.value = (s.liq_filter_min_pct != null) ? s.liq_filter_min_pct : 75;
+            }
+            _liqSyncBadge(!!s.liq_filter_enabled);
+            if (s.liq_filter_enabled) checkLiqExchange(false);
             // PD Zone Filter — restored alongside Volumized OB Trend.
             // Defaults TRUE when missing from response (older deploys
             // without the setting). Backend already had the data path.
@@ -5884,6 +5954,13 @@ function updateSettingsSummary() {
         const obCh = document.getElementById('sm-ob-choch-only');
         if (obCh && obCh.checked) summary += ' (лише CHoCH)';
     }
+    // 💧 Фільтр ліквідності помітно звужує потік — має бути видно в шапці.
+    const lqOn = document.getElementById('sm-liq-filter-enabled');
+    if (lqOn && lqOn.checked) {
+        const _mn = (document.getElementById('sm-liq-filter-min') || {}).value || '75';
+        const _ex = ((document.getElementById('sm-liq-filter-exchange') || {}).value || '').toUpperCase();
+        summary += ` · 💧 ${_mn}% ${_ex}`;
+    }
     if (pdOn && pdOn.checked) {
         const pdTf = document.getElementById('sm-pd-zone-tf');
         const pdTfStr = pdTf ? pdTf.value.toUpperCase() : '1H';
@@ -5989,6 +6066,79 @@ async function updateOBFilter() {
         // user toggles the filter and sees no visible feedback for 10s.
         loadWatchlist();
     } catch (err) { alert('OB Filter update error: ' + err); }
+}
+
+// 💧 ФІЛЬТР ЛІКВІДНОСТІ. Усі чотири ключі шлемо РАЗОМ — інакше на бекенд
+// доїхав би частковий стан (напр. увімкнено, але біржа ще стара).
+async function updateLiqFilter() {
+    const en = document.getElementById('sm-liq-filter-enabled').checked;
+    const ex = document.getElementById('sm-liq-filter-exchange').value || 'binance';
+    const bars = parseInt(document.getElementById('sm-liq-filter-bars').value, 10) || 336;
+    const minEl = document.getElementById('sm-liq-filter-min');
+    let mn = parseFloat(minEl.value);
+    if (!isFinite(mn)) mn = 75;
+    mn = Math.max(0, Math.min(100, mn));
+    minEl.value = mn;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                liq_filter_enabled: en, liq_filter_exchange: ex,
+                liq_filter_bars: bars, liq_filter_min_pct: mn,
+            }),
+        });
+        updateSettingsSummary();
+        // Параметри змінились → стара перевірка вже не про ту біржу.
+        _liqSyncBadge(en);
+        if (en) checkLiqExchange(true);
+    } catch (err) { alert('Liquidity filter update error: ' + err); }
+}
+
+// 🚦 Індикатор біржі показуємо ЛИШЕ коли фільтр увімкнено — вимкнений
+// фільтр не має повідомляти про стан того, чим не користується.
+function _liqSyncBadge(enabled) {
+    const b = document.getElementById('sm-liq-ex-badge');
+    if (!b) return;
+    b.style.display = enabled ? '' : 'none';
+    if (!enabled) { b.className = 'sm-liq-ex-badge'; b.textContent = ''; }
+}
+
+function _liqBadgePaint(d) {
+    const b = document.getElementById('sm-liq-ex-badge');
+    if (!b) return;
+    const ex = String((d && d.exchange) || '').toUpperCase();
+    if (!d || d.ok == null) {
+        b.className = 'sm-liq-ex-badge wait';
+        b.textContent = '⏳ ще не перевірялось';
+        b.title = 'Клікніть, щоб перевірити зараз';
+        return;
+    }
+    if (d.ok) {
+        b.className = 'sm-liq-ex-badge ok';
+        b.textContent = `🟢 ${ex} доступна${d.took_ms ? ' · ' + d.took_ms + 'мс' : ''}`;
+        b.title = 'Біржа віддає відкритий інтерес — фільтр працюватиме.\nКлікніть, щоб перевірити ще раз.';
+    } else {
+        b.className = 'sm-liq-ex-badge bad';
+        b.textContent = `🔴 ${ex} недоступна`;
+        // ⚠️ Прямо кажемо, що це означає для торгівлі: фільтр НЕ блокує.
+        b.title = (d.reason || 'біржа не відповіла')
+            + '\n\n⚠️ Поки даних немає, фільтр НЕ блокує сигнали (інакше одна '
+            + 'відмова біржі зупинила б торгівлю). Клікніть, щоб перевірити ще раз.';
+    }
+}
+
+async function checkLiqExchange(force) {
+    const b = document.getElementById('sm-liq-ex-badge');
+    if (!b || b.style.display === 'none') return;
+    if (force) { b.className = 'sm-liq-ex-badge wait'; b.textContent = '⏳ перевіряю…'; }
+    try {
+        // Без `force` беремо ОСТАННІЙ відомий стан — автополл не має бити
+        // біржу кожні 60 секунд лише заради значка.
+        const url = '/api/smc/liq-exchange-check' + (force ? '' : '?cached=1');
+        _liqBadgePaint(await (await fetch(url)).json());
+    } catch (e) {
+        _liqBadgePaint({ok: false, reason: String(e)});
+    }
 }
 
 // Forecast Filter — toggleable per TF (1H, 4H). Combine selector is only
