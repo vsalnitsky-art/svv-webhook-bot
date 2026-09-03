@@ -9008,7 +9008,13 @@ function _sltpDp(n) {
 function roundSlTp(v) {
     const n = Number(v);
     if (!isFinite(n) || n <= 0) return '';
-    return String(Number(n.toFixed(_sltpDp(n))));
+    // ⚠️ БЕЗ `Number(...)` навколо: він обрізав кінцеві нулі, і поля ставали
+    // рваними — 0.3205 / 0.33274 / 0.3422 в одному рядку (4/5/4 знаки), а той
+    // самий TP-2 у колонці «🎯 Автопілот» показувався як $0.34220 (5 знаків
+    // через fmtPriceJS). Одне число — два написання. Кількість знаків у
+    // `_sltpDp` і `fmtPriceJS` збігається, тож фіксована точність зводить їх
+    // до одного вигляду.
+    return n.toFixed(_sltpDp(n));
 }
 // Same rounding for read-only display (adds $, — for empty).
 function fmtSlTp(v) {
@@ -13578,6 +13584,10 @@ const _PILOT_ACT = {
     trail: ['🛡', 'стоп підтягнуто', '#38bdf8'],
     take:  ['🎯', 'фіксація', '#4ade80'],
 };
+// 🔒 План хотів трейл, але його НЕ застосовано (SL веде оператор або рівень
+// відхилив Trade Manager). Показувати тут 🛡 «стоп підтягнуто» — брехня:
+// стоп не зрушив. Окремий значок і колір, причина — у тултипі.
+const _PILOT_BLOCKED = ['🔒', 'трейл заблоковано', '#fbbf24'];
 const _PILOT_KIND = {
     liq_next: '💧', liq_main: '🌊', swing: '🏁', poc: '⚪',
     // Нові типи цілей: межа зони вартості, рівновага діапазону та ПОХІДНИЙ
@@ -13590,7 +13600,11 @@ function pilotCellHTML(p) {
         return '<td style="font-size:0.7rem;color:#555;white-space:nowrap" '
              + 'title="Автопілот вимкнено або ще не зробив висновку по цій монеті">—</td>';
     }
-    const [ic, lbl, col] = _PILOT_ACT[pl.action] || ['•', pl.action || '—', '#8b93a7'];
+    // Заблокований трейл перекриває значок дії — стан УГОДИ важливіший за
+    // намір плану (той самий принцип, що ⚖️ БЗ перекриває «бот» у полі SL).
+    const [ic, lbl, col] = pl.trail_block
+        ? _PILOT_BLOCKED
+        : (_PILOT_ACT[pl.action] || ['•', pl.action || '—', '#8b93a7']);
     const obj = pl.objective || null;
     const nxt = pl.next || null;
     const pr = pl.progress || null;
@@ -13623,6 +13637,7 @@ function pilotCellHTML(p) {
         ? '<span style="color:#fbbf24" title="TP не виставлено — див. підказку">⚠</span>' : '';
 
     const tip = [
+        `${lbl}${pl.trail_block ? ': ' + pl.trail_block : ''}`,
         obj ? `Ціль (TP-2): ${obj.label} @ ${obj.price}` : 'Цілі попереду не видно',
         (pl.r != null) ? `R = ${pl.r} (відстань до цілі / відстань до стопа)` : null,
         pl.tp_skip ? `TP не виставлено: ${pl.tp_skip}` : null,
@@ -13630,7 +13645,8 @@ function pilotCellHTML(p) {
         pr ? `Пройдено ${pr.pct}% шляху до цілі (рух ${pr.done_pct >= 0 ? '+' : ''}${pr.done_pct}%, лишилось ${pr.left_pct}%)` : null,
         pl.swing_tf ? `Структура: ${String(pl.swing_tf).toUpperCase()} (дилінг-діапазон)` : null,
         pl.poc_hours ? `POC: вікно ${pl.poc_hours} год` : null,
-        pl.trails ? `Стоп підтягнуто ${pl.trails} раз(и)` : null,
+        // «Стоп підтягнуто N раз(и)» = скільки разів рівень РЕАЛЬНО переїхав.
+        pl.trails ? `Стоп підтягнуто ${pl.trails} раз(и)` : 'Стоп ще не підтягувався',
         pl.why ? '— ' + pl.why : null,
     ].filter(Boolean).join('\n').replace(/"/g, '');
 
@@ -13674,21 +13690,21 @@ function manualSlTpCellsHTML(p, isShadow) {
         : '';
     return `
         <td>
-            <input type="number" step="any" min="0" placeholder="—"
+            <input type="number" step="any" min="0" placeholder="—" lang="en"
                    value="${sl}" title="${slSk.title}"
                    style="${slSk.style}"
                    onblur="submitManualSlTp('${sym}', this.value, null, ${shFlag})"
                    onkeydown="if(event.key==='Enter'){this.blur();}">
         </td>
         <td style="white-space:nowrap">
-            <input type="number" step="any" min="0" placeholder="—"
+            <input type="number" step="any" min="0" placeholder="—" lang="en"
                    value="${tp1}" title="${t1Sk.title}"
                    style="${t1Sk.style}"
                    onblur="submitManualTp1('${sym}', this.value, ${shFlag})"
                    onkeydown="if(event.key==='Enter'){this.blur();}">${t1Done}
         </td>
         <td>
-            <input type="number" step="any" min="0" placeholder="—"
+            <input type="number" step="any" min="0" placeholder="—" lang="en"
                    value="${tp}" title="${tpSk.title}"
                    style="${tpSk.style}"
                    onblur="submitManualSlTp('${sym}', null, this.value, ${shFlag})"

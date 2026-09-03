@@ -3028,6 +3028,24 @@ class TradeManager:
             print(f"[TM-Pilot] poc ctx warn {symbol}: {e}")
         return ctx
 
+    @staticmethod
+    def _pilot_key(symbol: str, is_shadow: bool) -> str:
+        """Ключ стану автопілота — символ **І КНИГА**.
+
+        🐞 Кейс TRXUSDT (03.09). `_pilot_state` і `_pilot_at` були ключовані
+        ЛИШЕ символом, а по одній монеті можуть одночасно стояти РЕАЛЬНА і
+        ПАПЕРОВА позиції з РІЗНИМИ входом, стопом і ціллю. Наслідки:
+          • `/api/tm/state` підмішував ОДИН знімок в ОБИДВІ таблиці — у
+            paper-рядку показувалось R реальної угоди (на скріні «114.38R»
+            при фактичних 3.72R: у другої позиції стоп стояв майже в
+            беззбитку);
+          • спільний троттл `_pilot_at` означав, що монітор, який встиг
+            першим, БЛОКУЄ пілот другої книги на цілий `PILOT_TTL` — одна з
+            позицій фактично лишалась без супроводу;
+          • закриття реальної позиції стирало стан паперової.
+        """
+        return f"{(symbol or '').upper()}|{'S' if is_shadow else 'R'}"
+
     def _pilot_tick(self, symbol: str, pos: Dict, current_price: float,
                     is_shadow: bool) -> bool:
         """Один такт автопілота. True → позицію ЗАКРИТО (ціль досягнуто)."""
@@ -3038,9 +3056,10 @@ class TradeManager:
         if side not in ('LONG', 'SHORT'):
             return False
         now = time.time()
-        if now - float(self._pilot_at.get(symbol) or 0) < self.PILOT_TTL:
+        pkey = self._pilot_key(symbol, is_shadow)
+        if now - float(self._pilot_at.get(pkey) or 0) < self.PILOT_TTL:
             return False
-        self._pilot_at[symbol] = now
+        self._pilot_at[pkey] = now
 
         try:
             from detection import trade_pilot
@@ -3118,10 +3137,11 @@ class TradeManager:
                                           res.get('objective'))
         except Exception:
             _rr = None
-        _st = self._pilot_state.get(symbol) or {}
-        self._pilot_state[symbol] = {
+        _st = self._pilot_state.get(pkey) or {}
+        self._pilot_state[pkey] = {
             'at': now,
             'action': act,
+            'is_shadow': bool(is_shadow),
             'r': _rr,
             'tp_skip': pos.get('pilot_tp_skip') or '',
             'objective': res.get('objective'),
@@ -3131,11 +3151,19 @@ class TradeManager:
             'why': _why,
             'swing_tf': ctx.get('swing_tf'),
             'poc_hours': ctx.get('poc_hours'),
-            # Скільки разів підтягували стоп і коли востаннє — видно динаміку
-            # супроводу, а не лише поточний зріз.
-            'trails': int(_st.get('trails') or 0) + (1 if act == 'trail' else 0),
-            'last_trail_at': (now if act == 'trail' else _st.get('last_trail_at')),
-            'last_stop': (res.get('stop') if act == 'trail' else _st.get('last_stop')),
+            # Скільки разів РЕАЛЬНО підтягнули стоп і коли востаннє.
+            # 🐞 Кейс TRXUSDT (03.09): лічильник рахувався ТУТ, за наміром
+            # плану (`act == 'trail'`), а сам трейл нижче міг не застосуватись
+            # — операторський замок або відмова `update_manual_sl_tp`. На
+            # проді це дало «🛡432» (2.4 год × такт 20с) при стопі, який не
+            # зрушив ЖОДНОГО разу, і тултип «Стоп підтягнуто 432 раз(и)».
+            # Тепер приріст робить САМ трейл — за фактом успіху.
+            'trails': int(_st.get('trails') or 0),
+            'last_trail_at': _st.get('last_trail_at'),
+            'last_stop': _st.get('last_stop'),
+            # Чому трейл не застосовано (для чесної іконки в таблиці).
+            # Порожньо = або трейлу не було, або він пройшов.
+            'trail_block': '',
         }
 
         if act == 'take':
@@ -3162,6 +3190,9 @@ class TradeManager:
             # само. Скинути замок: очистити поле SL, тоді автопілот знову веде
             # стоп сам.
             if pos.get('manual_sl_src') == self.SRC_USER:
+                # Стан каже ПРАВДУ: план хотів трейл, але його заблоковано.
+                # Без цього в таблиці світився 🛡 «стоп підтягнуто» щотакту.
+                self._pilot_mark(pkey, trail_block='оператор веде SL сам')
                 if not pos.get('_pilot_sl_user_lock'):
                     pos['_pilot_sl_user_lock'] = True
                     log_activity(symbol, 'skipped',
@@ -3177,10 +3208,17 @@ class TradeManager:
                 symbol, manual_sl=lvl, is_shadow=is_shadow,
                 origin=self.SRC_AUTO, origin_label='Автопілот · структура') or {}
             if r.get('ok'):
+                # ⬆️ Лічильник росте САМЕ ТУТ — стоп реально переїхав.
+                _prev = (self._pilot_state.get(pkey) or {})
+                self._pilot_mark(pkey,
+                                 trails=int(_prev.get('trails') or 0) + 1,
+                                 last_trail_at=now, last_stop=lvl)
                 log_activity(symbol, 'sltp',
                              f'🎯 Автопілот: SL → {self._fmt_price(lvl)} · {_why}',
                              side=side, source='PILOT')
             else:
+                self._pilot_mark(
+                    pkey, trail_block=f'не прийнято: {r.get("reason", "—")}')
                 log_activity(symbol, 'skipped',
                              f'🎯 Автопілот: SL {self._fmt_price(lvl)} не прийнято '
                              f'({r.get("reason", "—")}) · {_why}',
@@ -3294,10 +3332,25 @@ class TradeManager:
         else:
             self._persist_positions()
 
-    def get_pilot_state(self, symbol: str) -> Optional[Dict]:
-        """Останнє рішення автопілота по монеті (для UI/діагностики)."""
-        return self._pilot_state.get((symbol or '').upper()) \
-            or self._pilot_state.get(symbol)
+    def _pilot_mark(self, pkey: str, **fields) -> None:
+        """Дописати результат дії у ВЖЕ записаний знімок стану.
+
+        Знімок пишеться ДО виконання дії (щоб колонка не «замерзала», навіть
+        якщо дія впаде), а факт її виконання відомий лише ПІСЛЯ. Тому
+        `trails`/`trail_block` доповнюються тут, а не вгадуються наперед."""
+        st = self._pilot_state.get(pkey)
+        if isinstance(st, dict):
+            st.update(fields)
+
+    def get_pilot_state(self, symbol: str,
+                        is_shadow: bool = False) -> Optional[Dict]:
+        """Останнє рішення автопілота по монеті (для UI/діагностики).
+
+        ⚠️ `is_shadow` ОБОВʼЯЗКОВИЙ за змістом: реальна й паперова позиції по
+        одній монеті ведуться незалежно й мають РІЗНІ вхід, стоп, ціль і R.
+        Дефолт `False` лишено, щоб старі виклики не падали, але вони отримають
+        саме РЕАЛЬНУ книгу — не «якусь»."""
+        return self._pilot_state.get(self._pilot_key(symbol, is_shadow))
 
     def set_origin_trace(self, symbol: str, text: str) -> None:
         """Fuel Filter кладе сюди ланцюг походження ПЕРЕД відкриттям; позиція
@@ -4962,8 +5015,10 @@ class TradeManager:
         # закриття вона більше не діє (нова угода зафіксує свою).
         self._opp_ob_base.pop(symbol, None)
         self._signal_exit_at.pop(symbol, None)
-        self._pilot_at.pop(symbol, None)
-        self._pilot_state.pop(symbol, None)
+        # ⚠️ Чистимо стан САМЕ СВОЄЇ книги: паперова позиція по цій монеті
+        # може лишатись відкритою, і її супровід стирати не можна.
+        self._pilot_at.pop(self._pilot_key(symbol, False), None)
+        self._pilot_state.pop(self._pilot_key(symbol, False), None)
         
         bybit_side = 'Buy' if pos['side'] == 'LONG' else 'Sell'
         qty = pos.get('remaining_qty', pos['qty'])
@@ -5497,8 +5552,9 @@ class TradeManager:
         # закриття вона більше не діє (нова угода зафіксує свою).
         self._opp_ob_base.pop(symbol, None)
         self._signal_exit_at.pop(symbol, None)
-        self._pilot_at.pop(symbol, None)
-        self._pilot_state.pop(symbol, None)
+        # ⚠️ Лише ПАПЕРОВА книга — реальна позиція по цій монеті живе далі.
+        self._pilot_at.pop(self._pilot_key(symbol, True), None)
+        self._pilot_state.pop(self._pilot_key(symbol, True), None)
         
         entry = pos['entry_price']
         if pos['side'] == 'LONG':

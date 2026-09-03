@@ -5824,11 +5824,17 @@ def register_api_routes(app):
         # сторінка блокувала б бота (той самий урок, що з МММ-колонкою вище).
         try:
             if tm.get_settings().get('pilot_enabled'):
-                for pos in ((state.get('positions') or [])
-                            + (state.get('shadow_positions') or [])):
-                    _ps = tm.get_pilot_state(pos.get('symbol'))
-                    if _ps:
-                        pos['pilot'] = _ps
+                # ⚠️ КОЖНА КНИГА — СВІЙ ЗНІМОК. Раніше обидва списки читали
+                # `get_pilot_state(symbol)` без ознаки книги, і по монеті, де
+                # відкрита і реальна, і паперова позиція, в обидва рядки
+                # потрапляв ОДИН стан: у paper-рядку світилось R реальної
+                # угоди (кейс TRXUSDT: «114.38R» при фактичних 3.72R).
+                for _shadow, _lst in ((False, state.get('positions') or []),
+                                      (True, state.get('shadow_positions') or [])):
+                    for pos in _lst:
+                        _ps = tm.get_pilot_state(pos.get('symbol'), _shadow)
+                        if _ps:
+                            pos['pilot'] = _ps
         except Exception as e:
             print(f"[Flask] pilot state merge error: {e}")
 
