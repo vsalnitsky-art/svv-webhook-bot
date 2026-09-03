@@ -195,6 +195,10 @@ def summarise(levels: List[Dict], price: float, symbol: str,
         # Найбільший за масою магніт (те саме, що у вердикті блоку).
         'magnet_price': m.get('price'), 'magnet_pct': m.get('pct'),
         'magnet_dist': m.get('dist'), 'magnet_dir': m.get('dir'),
+        # ⚠️ І ТА САМА сходинка СИРИМИ ЧИСЛАМИ — для логіки (напр. TP-2 від
+        # магніту). `magnet_price` вище — ФОРМАТОВАНИЙ рядок для показу;
+        # парсити його заради числа не можна.
+        'magnet_row': lad.get('magnet_row'),
         # І найближчий за відстанню — перша перепона на шляху ціни.
         'near_price': nearest['price'] if nearest else None,
         'near_pct': nearest['pct'] if nearest else None,

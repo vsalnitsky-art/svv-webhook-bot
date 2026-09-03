@@ -284,6 +284,11 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
 
     return {'ok': True, 'mark_price': mp, 'step': step,
             'total_usd': round(total, 0),
+            # 🧲 САМА СХОДИНКА-МАГНІТ, сирими числами. Вердикт форматує її для
+            # показу (`$78 000`), а споживачам логіки потрібне ЧИСЛО — інакше
+            # довелось би парсити підпис або повторювати правило вибору
+            # («найбільша частка, тайбрейк — ближча») і ризикувати розійтись.
+            'magnet_row': (dict(top_row) if top_row else None),
             'above': {'pct': up_pct, 'usd': round(up_usd, 0)},
             'below': {'pct': down_pct, 'usd': round(down_usd, 0)},
             'pull': pull, 'pull_pct': abs(diff), 'rows': rows,

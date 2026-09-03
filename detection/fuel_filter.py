@@ -6605,7 +6605,17 @@ class FuelFilterDaemon:
             scanner = getattr(tm, 'scanner', None) if tm else None
             if scanner is None or not hasattr(scanner, '_signal_allowed'):
                 return True, ''
-            res = scanner._signal_allowed(sym, side, at_intake=False)
+            # ⚠️ `skip_liq=True` — Черга-4 СВІДОМО не перевіряє 💧 фільтр
+            # ліквідності (рішення користувача: не смикати біржу на кожному
+            # тіку двигуна по кожній монеті черги). Монета вже пройшла його
+            # НА ІНТЕЙКУ, коли ставала в чергу; решта ланцюга — наші власні
+            # дані, тож перевіряється строго, як і було.
+            try:
+                res = scanner._signal_allowed(sym, side, at_intake=False,
+                                              skip_liq=True)
+            except TypeError:
+                # Старіший сканер без параметра — не ламаємось.
+                res = scanner._signal_allowed(sym, side, at_intake=False)
             if isinstance(res, tuple):
                 ok = bool(res[0])
                 reason = str(res[1]) if len(res) > 1 and res[1] else 'фільтр'

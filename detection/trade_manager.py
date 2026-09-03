@@ -297,6 +297,16 @@ DEFAULT_SETTINGS = {
     #   TP-2 — головна ціль: повний вихід.
     'pilot_autofill_tp': True,
     'pilot_tp1_close_pct': 50,
+    # 🧲 TP-2 = НАЙБІЛЬШИЙ МАГНІТ драбини ліквідності (вимога користувача).
+    # Магніт стає ЦІЛЛЮ УГОДИ, а не просто рівнем: інакше автопілот закрив би
+    # позицію на СВОЇЙ (ближчій) цілі і TP-2 ніколи б не спрацював —
+    # декоративний рівень. TP-1 лишається тим, що рахує автопілот
+    # (найсильніший обʼєкт у вікні шляху між входом і TP-2).
+    # Біржа/глибина історії беруться з налаштувань сканера
+    # (`liq_filter_exchange`/`liq_filter_bars`) — одне місце налаштування.
+    # Магніт недоступний/не годиться → мовчки лишається стара поведінка
+    # (ціль автопілота), угода НЕ лишається без рівнів.
+    'pilot_tp2_from_magnet': True,
     # ⚖️ Переводити SL у беззбиток (+ комісії) при спрацюванні TP-1.
     # ВИМКНЕНО за замовчуванням: рішення про ризик — за користувачем, а
     # беззбитковий стоп після часткової фіксації нерідко вибиває позицію
@@ -801,7 +811,7 @@ class TradeManager:
                       'use_forecast_1h_exit', 'use_forecast_4h_exit',
                       'use_decision_exit',
                       'pilot_enabled',
-                      'pilot_autofill_tp',
+                      'pilot_autofill_tp', 'pilot_tp2_from_magnet',
                       'tp1_move_to_be',
                       'queue_opposite_signal',
                       'test_mode',
@@ -3046,6 +3056,80 @@ class TradeManager:
         """
         return f"{(symbol or '').upper()}|{'S' if is_shadow else 'R'}"
 
+    def _magnet_objective(self, symbol: str, side: str, entry) -> Optional[Dict]:
+        """🧲 ЦІЛЬ УГОДИ З НАЙБІЛЬШОГО МАГНІТУ драбини ліквідності.
+
+        Повертає обʼєкт у форматі цілі автопілота (`{price,dist_pct,kind,label}`)
+        або None із причиною в лозі.
+
+        ⚠️ **БЕРЕМО БЛИЖНЮ МЕЖУ сходинки, а не її підпис.** Магніт — це СМУГА
+        `[price .. price_hi]`, і ціна доходить до неї з одного боку: LONG
+        зустрічає НИЖНЮ межу, SHORT — ВЕРХНЮ. Виходити треба на першому дотику
+        до кластера, а не сподіватись, що ціна прошиє його наскрізь. Для LONG
+        це збігається з підписом у банері (там показується `price`), для SHORT
+        — ні, і це навмисно.
+
+        ⚠️ Три перевірки, без яких рівень безглуздий:
+          1. магніт мусить бути ПОПЕРЕДУ ВХОДУ (драбина симетрична навколо
+             ціни, тож найбільша сходинка легко може лежати ПОЗАДУ);
+          2. відстань ≥ `tp_min_gap_pct` — інакше комісія зʼїсть вихід;
+          3. дані взагалі є (біржа могла не відповісти).
+        """
+        # ⚠️ ДВА РІЗНІ «ні»: (а) біржа не відповіла — треба спробувати ще;
+        # (б) відповіла, але магніт не годиться — питати вдруге немає сенсу.
+        # Розрізняємо ПРАПОРЦЕМ, а не текстом причини: розбирати рядок, щоб
+        # ухвалити рішення, — саме той спосіб, який тихо ламається від однієї
+        # правки формулювання.
+        self._magnet_data_ok = False
+        try:
+            e = float(entry)
+        except (TypeError, ValueError):
+            return None
+        if not e or e <= 0 or side not in ('LONG', 'SHORT'):
+            return None
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            mg = sc.get_liq_magnet(symbol) if sc else None
+        except Exception as ex:
+            self._magnet_skip = f'збій запиту: {str(ex)[:60]}'
+            return None
+        if not mg or not mg.get('ok'):
+            self._magnet_skip = (mg or {}).get('reason') or 'немає даних'
+            return None
+        self._magnet_data_ok = True      # відповідь є — далі рішення остаточне
+        row = mg.get('row') or {}
+        try:
+            lo = float(row.get('price'))
+            hi = float(row.get('price_hi', lo))
+        except (TypeError, ValueError):
+            self._magnet_skip = 'сходинка без цін'
+            return None
+        edge = lo if side == 'LONG' else hi
+        if edge <= 0:
+            self._magnet_skip = 'нульова ціна магніту'
+            return None
+        ahead = (edge > e) if side == 'LONG' else (edge < e)
+        if not ahead:
+            self._magnet_skip = (f'магніт {self._fmt_price(edge)} ПОЗАДУ входу '
+                                 f'{self._fmt_price(e)} — ціллю бути не може')
+            return None
+        dist = abs(edge - e) / e * 100.0
+        try:
+            gap = float(self._settings.get('pilot_tp_min_gap_pct', 0) or 0)
+        except (TypeError, ValueError):
+            gap = 0.0
+        if gap > 0 and dist < gap:
+            self._magnet_skip = (f'магніт лише за {dist:.2f}% від входу '
+                                 f'(мін. зазор {gap}%)')
+            return None
+        self._magnet_skip = ''
+        _pct = mg.get('pct') or ''
+        return {'price': edge, 'dist_pct': round(dist, 3), 'kind': 'magnet',
+                'label': f'магніт ліквідності {_pct}'.strip(),
+                'magnet_lo': lo, 'magnet_hi': hi,
+                'exchange': mg.get('exchange')}
+
     def _pilot_tick(self, symbol: str, pos: Dict, current_price: float,
                     is_shadow: bool) -> bool:
         """Один такт автопілота. True → позицію ЗАКРИТО (ціль досягнуто)."""
@@ -3070,6 +3154,47 @@ class TradeManager:
             ctx = self._pilot_context(symbol, side)
             cfg = {k[6:]: s[k] for k in s
                    if k.startswith('pilot_') and k[6:] in trade_pilot.DEFAULTS}
+            # 🧲 ЦІЛЬ УГОДИ З МАГНІТУ ЛІКВІДНОСТІ (вимога користувача).
+            # Пробуємо РІВНО ОДИН раз на угоду і ДО `plan()`, щоб магніт став
+            # `objective_lock` — тоді ВСЕ узгоджено з нього: ціль у колонці, R,
+            # автозакриття `take` і Manual TP-2. Якби ми поставили лише рівень
+            # TP-2, автопілот закрив би позицію на СВОЇЙ ближчій цілі і TP-2
+            # не спрацював би ніколи.
+            # ⚠️ Позначку ставимо, лише коли біржа ВІДПОВІЛА: інакше угода,
+            # відкрита під час недоступності біржі, назавжди лишилась би без
+            # магніту. Повтор дешевий — зріз кешується на `liq_filter_ttl_sec`.
+            if (s.get('pilot_tp2_from_magnet') and not pos.get('pilot_magnet_done')
+                    and not pos.get('pilot_objective')):
+                self._magnet_skip = ''
+                _mag = self._magnet_objective(symbol, side, pos.get('entry_price'))
+                if _mag:
+                    pos['pilot_magnet_done'] = True
+                    pos['pilot_objective'] = dict(_mag)
+                    try:
+                        from detection.activity_log import log_activity as _la
+                        _la(symbol, 'event',
+                            f"🧲 Ціль угоди — МАГНІТ ліквідності "
+                            f"{self._fmt_price(_mag['price'])} "
+                            f"({_mag.get('label')}, +{_mag['dist_pct']:.2f}% від "
+                            f"входу) · смуга {self._fmt_price(_mag['magnet_lo'])}"
+                            f"–{self._fmt_price(_mag['magnet_hi'])} · "
+                            f"{str(_mag.get('exchange') or '').upper()} → Manual TP-2",
+                            side=side, source='PILOT')
+                    except Exception:
+                        pass
+                elif getattr(self, '_magnet_data_ok', False):
+                    # Відповідь БУЛА, але магніт не годиться → більше не питаємо.
+                    # Біржа не відповіла → позначку НЕ ставимо, спробуємо ще
+                    # (зріз кешується, тож повтор нічого не коштує).
+                    pos['pilot_magnet_done'] = True
+                    try:
+                        from detection.activity_log import log_activity as _la
+                        _la(symbol, 'skipped',
+                            f"🧲 Магніт ліквідності не став ціллю: "
+                            f"{self._magnet_skip} — ціль рахує автопілот",
+                            side=side, source='PILOT')
+                    except Exception:
+                        pass
             # 🔒 Ціль фіксується ОДИН раз на угоду і повертається в план
             # наступного тіку — інакше вона «тікала б» щоразу, коли ціна до неї
             # підходить (рухомі ворота: фіксація не настала б ніколи).

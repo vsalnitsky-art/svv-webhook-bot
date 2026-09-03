@@ -3557,7 +3557,8 @@ class SMCScanner:
         # event_dir = 'bull' | 'bear'; bias = 'bull' | 'bear'
         return bias == event_dir
     
-    def _signal_allowed(self, symbol: str, side_label: str, at_intake: bool = False):
+    def _signal_allowed(self, symbol: str, side_label: str, at_intake: bool = False,
+                        skip_liq: bool = False):
         """SPILNI VOROTA для БУДЬ-ЯКОГО входу сигналу (CHoCH/BOS ТА Volumized OB).
 
         Оцінює УСІ увімкнені фільтри (кожен — НЕЗАЛЕЖНИЙ, зі своїм тумблером) і
@@ -3664,7 +3665,13 @@ class SMCScanner:
         if self._settings.get('liq_filter_enabled', False):
             _need = self._settings.get('liq_filter_min_pct', 75.0)
             _ex = str(self._settings.get('liq_filter_exchange', 'binance')).upper()
-            if not allowed:
+            if skip_liq:
+                # ⚠️ Черга-4 фільтр ліквідності НЕ перевіряє (рішення
+                # користувача — не смикати біржу на кожному тіку двигуна).
+                # Монета вже пройшла його НА ІНТЕЙКУ, коли ставала в чергу.
+                parts.append(f"Ліквідність[{_ex}≥{_need}%]:⏭ Черга-4 не "
+                             f"перевіряє (пройдено на інтейку)")
+            elif not allowed:
                 # Чесно кажемо, що фільтр УВІМКНЕНИЙ, але не виконувався —
                 # інакше в лозі виглядало б, ніби він мовчки пропустив.
                 parts.append(f"Ліквідність[{_ex}≥{_need}%]:⏭ не перевірялась "
@@ -3720,6 +3727,10 @@ class SMCScanner:
             'above_pct': r.get('above_pct'),
             'below_pct': r.get('below_pct'),
             'price': r.get('price'),
+            # 🧲 Сходинка-магніт СИРИМИ числами — з неї Trade Manager робить
+            # ціль угоди / Manual TP-2. Формат для показу лишається окремо.
+            'magnet_row': r.get('magnet_row'),
+            'magnet_pct': r.get('magnet_pct'),
             'reason': r.get('reason') or '',
             'exchange': ex, 'bars': bars,
         }
@@ -3808,6 +3819,26 @@ class SMCScanner:
                     'took_ms': int((time.time() - t0) * 1000), 'source': 'probe'})
         self._liq_exchange_state = dict(out)
         return out
+
+    def get_liq_magnet(self, symbol: str) -> Dict:
+        """🧲 НАЙБІЛЬШИЙ МАГНІТ драбини ліквідності по монеті — сирими числами.
+
+        Публічний доступ для Trade Manager: із цієї сходинки він робить ціль
+        угоди і Manual TP-2. Бере ТОЙ САМИЙ зріз (`_liq_snapshot`) із тим самим
+        кешем і тими самими налаштуваннями біржі/історії, що й фільтр входу —
+        щоб «магніт $78 000» у фільтрі, на 📡 Tickr і в TP-2 був ОДНИМ числом.
+
+        ⚠️ Працює НЕЗАЛЕЖНО від `liq_filter_enabled`: фільтр вирішує, ЧИ пускати
+        сигнал, а це — ЗВІДКИ брати ціль. Два різні питання.
+        """
+        snap = self._liq_snapshot(symbol)
+        row = snap.get('magnet_row') if snap.get('ok') else None
+        return {'ok': bool(snap.get('ok') and row),
+                'row': dict(row) if row else None,
+                'pct': snap.get('magnet_pct'),
+                'price_now': snap.get('price'),
+                'exchange': snap.get('exchange'), 'bars': snap.get('bars'),
+                'reason': snap.get('reason') or ('' if row else 'немає магніту')}
 
     def get_liq_exchange_state(self) -> Dict:
         """Останній відомий стан біржі (з проби АБО з роботи фільтра)."""
