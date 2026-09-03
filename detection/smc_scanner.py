@@ -3574,7 +3574,13 @@ class SMCScanner:
 
         Фільтри: OB (`ob_filter_enabled`) · PD (`use_pd_zone_filter`) · Forecast
         напрямок (1H/4H+AND/OR) · Forecast Мін.сила (`forecast_strength_filter_
-        enabled`) · POC (`poc_filter_enabled`)."""
+        enabled`) · POC (`poc_filter_enabled`) · Decision · 💧 Ліквідність.
+
+        ⚠️ ПОРЯДОК НЕ ДОВІЛЬНИЙ: **💧 Ліквідність стоїть ОСТАННЬОЮ і рахується
+        ЛИШЕ якщо решта вже пропустила**. Це єдиний фільтр, що ходить у
+        ЗОВНІШНЮ біржу (2-3 HTTP на монету); решта читає власну БД/кеші, тому
+        вони рахуються завжди — розклад має показувати всі увімкнені фільтри.
+        Додаючи новий фільтр із мережевим запитом, ставити його ТУДИ Ж."""
         parts = []
         allowed = True
         reason = ''
@@ -3637,24 +3643,40 @@ class SMCScanner:
             if not ok and allowed:
                 allowed, reason = False, 'POC-фільтр заблокував (сигнал проти «краще LONG/SHORT» за POC)'
 
-        # 💧 Ліквідність за напрямком (незалежний)
-        if self._settings.get('liq_filter_enabled', False):
-            ok = self._liq_filter_allows(symbol, side_label)
-            _need = self._settings.get('liq_filter_min_pct', 75.0)
-            _ex = str(self._settings.get('liq_filter_exchange', 'binance')).upper()
-            _ls = self._liq_state_label(symbol, side_label)
-            parts.append(f"Ліквідність[{_ex}≥{_need}%]({_ls}):{_m(ok)}")
-            if not ok and allowed:
-                allowed, reason = False, (
-                    f'Ліквідність за напрямком нижча за поріг '
-                    f'({_ls} < {_need}%)')
-
         # Decision-вердикт — осн. напрямок (незалежний)
         if self._settings.get('decision_filter_enabled', False):
             ok, _dh = self._decision_gate(symbol, side_label, at_intake=at_intake)
             parts.append(f"Decision({_dh}):{_m(ok)}")
             if not ok and allowed:
                 allowed, reason = False, 'Decision-вердикт: основний напрямок не збігається з сигналом'
+
+        # ═══ 💧 ЛІКВІДНІСТЬ — ОСТАННЬОЮ І ЛИШЕ ЯКЩО РЕШТА ПРОПУСТИЛА ═══
+        # ⚠️ Вимога користувача: «щоб не навантажувати біржу лишніми
+        # зверненнями». Це ЄДИНИЙ фільтр ланцюга, що ходить у ЗОВНІШНЮ біржу
+        # (2-3 HTTP на монету) — решта читає власну БД або кеші, тому вони
+        # рахуються завжди (розклад мусить показувати ВСІ увімкнені фільтри).
+        # Тут інакше: якщо сигнал уже зарізаний, питати біржу немає сенсу —
+        # відповідь однаково нічого не змінить.
+        # ⚠️ Мало ПЕРЕСУНУТИ блок у кінець — треба ще й пропускати виклик:
+        # раніше кожен фільтр рахувався незалежно від `allowed`, тож саме
+        # перевірка `if allowed` дає економію, а порядок лише робить її
+        # можливою.
+        if self._settings.get('liq_filter_enabled', False):
+            _need = self._settings.get('liq_filter_min_pct', 75.0)
+            _ex = str(self._settings.get('liq_filter_exchange', 'binance')).upper()
+            if not allowed:
+                # Чесно кажемо, що фільтр УВІМКНЕНИЙ, але не виконувався —
+                # інакше в лозі виглядало б, ніби він мовчки пропустив.
+                parts.append(f"Ліквідність[{_ex}≥{_need}%]:⏭ не перевірялась "
+                             f"(сигнал уже зарізано раніше)")
+            else:
+                ok = self._liq_filter_allows(symbol, side_label)
+                _ls = self._liq_state_label(symbol, side_label)
+                parts.append(f"Ліквідність[{_ex}≥{_need}%]({_ls}):{_m(ok)}")
+                if not ok:
+                    allowed, reason = False, (
+                        f'Ліквідність за напрямком нижча за поріг '
+                        f'({_ls} < {_need}%)')
 
         detail = ' · '.join(parts) if parts else 'фільтри вимкнені'
         return allowed, reason, detail

@@ -21,6 +21,7 @@
     Q4-recheck по кожній монеті черги. Без кешу це сотні HTTP за хвилину.
 """
 import importlib.util
+import inspect
 import os
 import sys
 import types
@@ -226,12 +227,13 @@ def test_settings_reach_scan_one():
 
 
 # ═══════════ 4. ВБУДОВАНО У ВОРОТА ═════════════════════════════════════════
-def _gate_ns(**over):
+def _gate_ns(decision_ok=True, **over):
     o = _sc(**over)
     o._settings.setdefault('use_pd_zone_filter', False)
     o._forecast_pair = lambda sym: ('—', '—')
     o.get_pd_pct = lambda sym: None
-    o._decision_gate = lambda sym, side, at_intake=False: (True, '')
+    o._decision_gate = lambda sym, side, at_intake=False: (
+        decision_ok, 'LONG 80%' if decision_ok else 'NEUTRAL')
     return o
 
 
@@ -341,6 +343,60 @@ def test_badge_hidden_while_filter_is_off():
     print('✓ індикатор показується лише при увімкненому фільтрі')
 
 
+# ═══════════ 7. ОСТАННІЙ У ЛАНЦЮГУ (економія звернень до біржі) ════════════
+def test_liquidity_is_skipped_when_an_earlier_filter_already_blocked():
+    """⚠️ Вимога користувача: «щоб не навантажувати біржу лишніми зверненнями».
+    Це ЄДИНИЙ фільтр, що ходить у зовнішню біржу, тож коли сигнал уже зарізано,
+    питати її немає сенсу — відповідь нічого не змінить.
+
+    ⚠️ Мало ПЕРЕСУНУТИ блок у кінець: раніше КОЖЕН фільтр рахувався незалежно
+    від `allowed`. Економію дає саме перевірка «чи ще дозволено»."""
+    _install_liq(_lad(above=90.0, below=10.0))   # ліквідність ЗА нас
+    ns = _gate_ns(decision_ok=False, decision_filter_enabled=True)
+    ok, reason, detail = S._signal_allowed(ns, 'X', 'LONG')
+    _check(ok is False, 'ріже Decision')
+    _check('Decision' in reason, f'причина мусить лишитись від Decision: {reason}')
+    _check(_CALLS == [],
+           f'біржу НЕ смикаємо, коли сигнал уже зарізано: {_CALLS}')
+    _check('не перевірялась' in detail,
+           f'у розкладі мусить бути чесно сказано, що фільтр не виконувався: {detail}')
+    print('✓ сигнал уже зарізано → до біржі не звертаємось узагалі')
+
+
+def test_liquidity_runs_when_everything_else_passed():
+    """Зворотний бік того самого правила: якщо решта пропустила — фільтр
+    ОБОВʼЯЗКОВО відпрацьовує (інакше він став би декоративним)."""
+    _install_liq(_lad(above=90.0, below=10.0))
+    ok, _, detail = S._signal_allowed(
+        _gate_ns(decision_ok=True, decision_filter_enabled=True), 'X', 'LONG')
+    _check(ok is True, 'усі пропустили')
+    _check(len(_CALLS) == 1, f'фільтр мусив спитати біржу рівно раз: {_CALLS}')
+    _check('90.0% вгору' in detail, detail)
+    print('✓ решта пропустила → ліквідність рахується')
+
+
+def test_liquidity_is_the_last_part_of_the_breakdown():
+    """Порядок у розкладі = порядок перевірок. Ліквідність мусить стояти
+    ОСТАННЬОЮ — і коли пройшла, і коли її пропустили."""
+    _install_liq(_lad(above=90.0, below=10.0))
+    _, _, d1 = S._signal_allowed(
+        _gate_ns(decision_ok=True, decision_filter_enabled=True), 'X', 'LONG')
+    _check(d1.split(' · ')[-1].startswith('Ліквідність'), f'пройшла: {d1}')
+    _, _, d2 = S._signal_allowed(
+        _gate_ns(decision_ok=False, decision_filter_enabled=True), 'X', 'LONG')
+    _check(d2.split(' · ')[-1].startswith('Ліквідність'), f'пропущено: {d2}')
+    # І порядок у САМОМУ КОДІ воріт теж зафіксуємо. ⚠️ Шукаємо В ТІЛІ
+    # `_signal_allowed`, а не по всьому файлу: `liq_filter_enabled`
+    # зустрічається ще й у валідації налаштувань набагато вище, і глобальний
+    # `.index()` порівнював би не ті входження.
+    body = inspect.getsource(S._signal_allowed)
+    _check(body.index("liq_filter_enabled") > body.index("decision_filter_enabled"),
+           'у ланцюгу блок ліквідності мусить стояти ПІСЛЯ Decision')
+    _check('if not allowed:' in body,
+           'мусить бути пропуск виклику, а не лише перестановка блоку')
+    print('✓ ліквідність — останній сегмент розкладу і останній блок у коді')
+
+
 if __name__ == '__main__':
     test_defaults_match_the_request()
     test_key_is_whitelisted_and_validated()
@@ -360,4 +416,7 @@ if __name__ == '__main__':
     test_api_endpoint_exists()
     test_ui_is_wired_end_to_end()
     test_badge_hidden_while_filter_is_off()
+    test_liquidity_is_skipped_when_an_earlier_filter_already_blocked()
+    test_liquidity_runs_when_everything_else_passed()
+    test_liquidity_is_the_last_part_of_the_breakdown()
     print('\nУсі тести фільтра ліквідності пройдено ✅')
