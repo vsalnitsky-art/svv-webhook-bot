@@ -51,8 +51,14 @@ _CALLS = []
 _RESULT = {}
 
 
+_BY_EX = {}
+
+
 def _fake_scan_one(exchange='binance', symbol='BTCUSDT', bars=336, rows=12):
     _CALLS.append((exchange, symbol, bars))
+    if _BY_EX:
+        return dict(_BY_EX.get(exchange) or
+                    {'ok': False, 'reason': f'{symbol} не знайдено на {exchange}'})
     return dict(_RESULT)
 
 
@@ -62,6 +68,7 @@ def _install_liq(result):
     sys.modules замало — інакше тест мовчки піде в мережу."""
     global _RESULT
     _RESULT = dict(result)
+    _BY_EX.clear()
     _CALLS.clear()
     fake = types.ModuleType('detection.liq_scan')
     fake.scan_one = _fake_scan_one
@@ -202,7 +209,10 @@ def test_failure_is_cached_too():
     o = _sc()
     for _ in range(8):
         o._liq_filter_allows('X', 'LONG')
-    _check(len(_CALLS) == 1, f'відмова теж кешується: {len(_CALLS)} запитів')
+    # ⚠️ Невдача коштує ДВІ спроби (обрана біржа + фолбек на Bybit) — і саме
+    # тому кеш тут ще важливіший: без нього 8 перевірок дали б 16 запитів.
+    _check(len(_CALLS) == 2,
+           f'обрана + фолбек ОДИН раз, далі кеш: {len(_CALLS)} запитів')
     print('✓ невдалий зріз кешується (не добиваємо биржу, що лежить)')
 
 
@@ -397,6 +407,124 @@ def test_liquidity_is_the_last_part_of_the_breakdown():
     print('✓ ліквідність — останній сегмент розкладу і останній блок у коді')
 
 
+# ═══════════ 8. 🔁 ФОЛБЕК НА BYBIT (кейс MNTUSDT) ══════════════════════════
+def _install_by_exchange(mapping):
+    """Різні відповіді для різних бірж — саме так виглядає реальність, коли
+    монета є на Bybit, але не лістована на Binance Futures."""
+    _install_liq({})
+    _BY_EX.update(mapping)
+    _CALLS.clear()
+
+
+def test_coin_missing_on_binance_falls_back_to_bybit():
+    """🐞 КЕЙС ЗІ СКРІНА (04.09): `Ліквідність[BINANCE≥70.0%](немає даних:
+    MNTUSDT не знайдено на binance (перевір назву)):✓` — монета просто НЕ
+    лістована на Binance Futures, і фільтр проходив «порожняком».
+
+    ⚠️ Bybit — біржа, на якій бот ТОРГУЄ, отже кожна монета watchlist там є
+    ЗА ВИЗНАЧЕННЯМ. Тож фолбек не «вгадує», а бере єдине надійне джерело."""
+    _install_by_exchange({
+        'binance': {'ok': False, 'reason': 'MNTUSDT не знайдено на binance'},
+        'bybit': _lad(above=82.0, below=18.0),
+    })
+    o = _sc(liq_filter_min_pct=70.0)
+    _check(o._liq_filter_allows('MNTUSDT', 'LONG') is True,
+           '82% вгору з Bybit ≥ 70 → LONG проходить ПО ДАНИХ, а не fail-open')
+    _check(o._liq_filter_allows('MNTUSDT', 'SHORT') is False,
+           'і, головне, тепер фільтр реально РІЖЕ протилежний бік')
+    snap = o._liq_snapshot('MNTUSDT')
+    _check(snap['ok'] and snap['exchange'] == 'bybit', snap)
+    _check(snap['requested_exchange'] == 'binance', snap)
+    _check(snap['fallback'] is True, snap)
+    print('✓ монети немає на Binance → числа беруться з Bybit')
+
+
+def test_fallback_is_visible_in_the_log_line():
+    """Фолбек НЕ мовчазний: біля числа мусить стояти, з якої біржі воно.
+    Інакше в лозі був би поріг «BINANCE≥70%» поруч із числом Bybit."""
+    _install_by_exchange({
+        'binance': {'ok': False, 'reason': 'не знайдено'},
+        'bybit': _lad(above=82.0, below=18.0),
+    })
+    lbl = _sc()._liq_state_label('MNTUSDT', 'LONG')
+    _check('82.0% вгору' in lbl and 'BYBIT' in lbl and 'фолбек' in lbl, lbl)
+    _, _, detail = S._signal_allowed(_gate_ns(liq_filter_min_pct=70.0),
+                                     'MNTUSDT', 'LONG')
+    _check('через BYBIT (фолбек)' in detail, detail)
+    print(f'✓ у розкладі видно джерело: {lbl}')
+
+
+def test_magnet_for_tp2_uses_the_fallback_too():
+    """Той самий зріз живить 🧲 магніт → Manual TP-2. Одна правка мусить
+    покрити і сигнал, і відкриття (авто й ручне) — бо джерело ОДНЕ."""
+    _install_by_exchange({
+        'binance': {'ok': False, 'reason': 'не знайдено'},
+        'bybit': dict(_lad(above=82.0, below=18.0), magnet_pct='41.0%',
+                      magnet_row={'price': 110.0, 'price_hi': 112.0,
+                                  'pct': 41.0, 'dist_pct': 4.0, 'dir': 'up'}),
+    })
+    mg = _sc().get_liq_magnet('MNTUSDT')
+    _check(mg['ok'] and mg['exchange'] == 'bybit', mg)
+    _check((mg['row'] or {}).get('price') == 110.0, mg)
+    print('✓ магніт для TP-2 теж бере фолбек-біржу')
+
+
+def test_both_exchanges_down_stays_fail_open_and_says_both():
+    _install_by_exchange({
+        'binance': {'ok': False, 'reason': 'HTTP 451'},
+        'bybit': {'ok': False, 'reason': 'timeout'},
+    })
+    o = _sc()
+    _check(o._liq_filter_allows('X', 'LONG') is True,
+           'обидві мовчать → fail-open (торгівля не зупиняється)')
+    r = o._liq_snapshot('X')['reason']
+    _check('451' in r and 'bybit' in r and 'timeout' in r,
+           f'причина мусить назвати ОБИДВІ спроби: {r}')
+    print('✓ обидві біржі мовчать → fail-open + причина по обох')
+
+
+def test_no_double_request_when_bybit_is_the_choice():
+    """Фолбек на самого себе — марна робота."""
+    _install_by_exchange({'bybit': {'ok': False, 'reason': 'timeout'}})
+    _sc(liq_filter_exchange='bybit')._liq_filter_allows('X', 'LONG')
+    _check(len(_CALLS) == 1, f'обрано bybit → рівно один запит: {_CALLS}')
+    print('✓ обрано Bybit → фолбеку на себе немає')
+
+
+def test_fallback_result_is_cached():
+    """Інакше монета, якої немає на Binance, коштувала б ДВА запити на кожен
+    тік — тобто фолбек зробив би гірше, ніж було."""
+    _install_by_exchange({
+        'binance': {'ok': False, 'reason': 'не знайдено'},
+        'bybit': _lad(above=82.0, below=18.0),
+    })
+    o = _sc()
+    for _ in range(6):
+        o._liq_filter_allows('MNTUSDT', 'LONG')
+    _check(len(_CALLS) == 2,
+           f'дві спроби ОДИН раз, далі кеш: {len(_CALLS)} запитів')
+    print('✓ фолбек-зріз кешується (2 запити на 6 перевірок)')
+
+
+def test_tickr_page_does_not_silently_switch_exchange():
+    """⚠️ На 📡 Tickr користувач ОБИРАЄ біржу свідомо — там мовчазна підміна
+    була б брехнею. Фолбек живе САМЕ у воротах/магніті, не в ендпоінті."""
+    i = _FLASK.index('liquidity-one')
+    body = _FLASK[i:i + 1200]
+    _check('LIQ_FALLBACK' not in body and 'fallback' not in body.lower(),
+           'ендпоінт однієї монети не має підмінювати біржу')
+    print('✓ сторінка Tickr біржу не підміняє (там вибір користувача)')
+
+
+def test_badge_has_the_fallback_state():
+    _check('fallback_ok' in _HTML, 'бейдж мусить знати про фолбек')
+    _check('sm-liq-ex-badge.warn' in _HTML, 'потрібен окремий (жовтий) стан')
+    i = _HTML.index('d.fallback_ok')
+    _check('мовчить →' in _HTML[i:i + 400],
+           'бейдж мусить казати, що працюємо через іншу біржу')
+    print('✓ індикатор розрізняє «недоступна» і «працюємо через фолбек»')
+
+
 if __name__ == '__main__':
     test_defaults_match_the_request()
     test_key_is_whitelisted_and_validated()
@@ -419,4 +547,12 @@ if __name__ == '__main__':
     test_liquidity_is_skipped_when_an_earlier_filter_already_blocked()
     test_liquidity_runs_when_everything_else_passed()
     test_liquidity_is_the_last_part_of_the_breakdown()
+    test_coin_missing_on_binance_falls_back_to_bybit()
+    test_fallback_is_visible_in_the_log_line()
+    test_magnet_for_tp2_uses_the_fallback_too()
+    test_both_exchanges_down_stays_fail_open_and_says_both()
+    test_no_double_request_when_bybit_is_the_choice()
+    test_fallback_result_is_cached()
+    test_tickr_page_does_not_silently_switch_exchange()
+    test_badge_has_the_fallback_state()
     print('\nУсі тести фільтра ліквідності пройдено ✅')

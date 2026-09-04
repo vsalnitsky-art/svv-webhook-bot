@@ -1380,6 +1380,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         border-color:rgba(34,197,94,0.35); }
     .sm-liq-ex-badge.bad { color:#f87171; background:rgba(248,113,113,0.12);
         border-color:rgba(248,113,113,0.4); }
+    /* 🟡 Обрана біржа мовчить, але фолбек (Bybit) працює — фільтр живий. */
+    .sm-liq-ex-badge.warn { color:#fbbf24; background:rgba(251,191,36,0.12);
+        border-color:rgba(251,191,36,0.4); }
     .sm-liq-ex-badge.wait { color:#8b93a7; background:rgba(255,255,255,0.05);
         border-color:rgba(255,255,255,0.12); }
     .sm-analysis-row { display:flex; gap:14px; margin-top:14px; align-items:stretch; }
@@ -6117,6 +6120,17 @@ function _liqBadgePaint(d) {
         b.className = 'sm-liq-ex-badge ok';
         b.textContent = `🟢 ${ex} доступна${d.took_ms ? ' · ' + d.took_ms + 'мс' : ''}`;
         b.title = 'Біржа віддає відкритий інтерес — фільтр працюватиме.\nКлікніть, щоб перевірити ще раз.';
+    } else if (d.fallback_ok) {
+        // 🔁 Обрана біржа мовчить, але ФОЛБЕК працює — фільтр і магніт
+        // рахуватимуться, просто з іншої біржі. Це НЕ «все погано».
+        const fb = String(d.fallback || 'bybit').toUpperCase();
+        b.className = 'sm-liq-ex-badge warn';
+        b.textContent = `🟡 ${ex} мовчить → ${fb}`;
+        b.title = (d.reason || 'біржа не відповіла')
+            + `\n\n🔁 Дані беруться з ${fb} — це біржа, на якій бот торгує, `
+            + 'тож кожна монета watchlist там є. Фільтр і 🧲 магніт працюють, '
+            + 'у логу біля числа стоїть позначка «(фолбек)».'
+            + '\nКлікніть, щоб перевірити ще раз.';
     } else {
         b.className = 'sm-liq-ex-badge bad';
         b.textContent = `🔴 ${ex} недоступна`;

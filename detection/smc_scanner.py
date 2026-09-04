@@ -3690,6 +3690,9 @@ class SMCScanner:
 
     # ── 💧 ФІЛЬТР ЛІКВІДНОСТІ ЗА НАПРЯМКОМ ──────────────────────────────────
     LIQ_SIDE_KEY = {'LONG': 'above_pct', 'SHORT': 'below_pct'}
+    # 🔁 Куди падати, коли обрана біржа не дала даних по монеті. Саме BYBIT:
+    # це біржа, на якій бот ТОРГУЄ, отже кожна монета watchlist там є.
+    LIQ_FALLBACK_EXCHANGE = 'bybit'
 
     def _liq_snapshot(self, symbol: str) -> Dict:
         """Зріз драбини ліквідності по монеті (з кешем).
@@ -3717,11 +3720,35 @@ class SMCScanner:
         if hit and (now - hit[0]) < ttl:
             return hit[1]
 
-        try:
-            from detection import liq_scan
-            r = liq_scan.scan_one(exchange=ex, symbol=symbol, bars=bars, rows=6)
-        except Exception as e:
-            r = {'ok': False, 'reason': f'збій розрахунку: {str(e)[:60]}'}
+        # 🔁 ФОЛБЕК НА BYBIT (кейс MNTUSDT — не зламати!).
+        # На проді: `Ліквідність[BINANCE≥70%](немає даних: MNTUSDT не знайдено
+        # на binance)` — монета просто НЕ ЛІСТОВАНА на Binance Futures, тож
+        # фільтр проходив «порожняком» (fail-open), а магніт не рахувався.
+        # ⚠️ Bybit — БІРЖА, НА ЯКІЙ БОТ ТОРГУЄ, отже КОЖНА монета з watchlist
+        # там є ЗА ВИЗНАЧЕННЯМ. Тому будь-яка невдача обраної біржі (немає
+        # монети / немає OI / біржа лягла) → пробуємо Bybit і беремо його
+        # числа. Фолбек НЕ мовчазний: `exchange` у зрізі — та біржа, що
+        # РЕАЛЬНО дала дані, і саме вона потрапляє в лог, у магніт і в бейдж.
+        def _try(_ex):
+            try:
+                from detection import liq_scan
+                return liq_scan.scan_one(exchange=_ex, symbol=symbol,
+                                         bars=bars, rows=6)
+            except Exception as e:
+                return {'ok': False, 'reason': f'збій розрахунку: {str(e)[:60]}'}
+
+        r = _try(ex)
+        used_ex, fell_back, first_reason = ex, False, (r.get('reason') or '')
+        if not r.get('ok') and ex != self.LIQ_FALLBACK_EXCHANGE:
+            fb = _try(self.LIQ_FALLBACK_EXCHANGE)
+            if fb.get('ok'):
+                r, used_ex, fell_back = fb, self.LIQ_FALLBACK_EXCHANGE, True
+            else:
+                # Обидві не дали — причину лишаємо ПЕРШУ (за обраною біржею),
+                # але дописуємо, що фолбек теж пробували і теж не вийшло.
+                r = dict(fb)
+                r['reason'] = (f"{first_reason}; {self.LIQ_FALLBACK_EXCHANGE}: "
+                               f"{fb.get('reason') or 'немає даних'}")
         snap = {
             'ok': bool(r.get('ok')),
             'above_pct': r.get('above_pct'),
@@ -3732,7 +3759,11 @@ class SMCScanner:
             'magnet_row': r.get('magnet_row'),
             'magnet_pct': r.get('magnet_pct'),
             'reason': r.get('reason') or '',
-            'exchange': ex, 'bars': bars,
+            # ⚠️ `exchange` = хто РЕАЛЬНО дав числа (може бути фолбек);
+            # `requested_exchange` — що обрано в налаштуваннях. Плутати не
+            # можна: перше йде в підписи, друге — в UI-налаштування.
+            'exchange': used_ex, 'requested_exchange': ex,
+            'fallback': fell_back, 'bars': bars,
         }
         # Кешуємо і ВДАЧУ, і НЕВДАЧУ: коли біржа лежить (Binance регулярно
         # блокує IP дата-центрів), безкешна відмова означала б повторний
@@ -3745,6 +3776,7 @@ class SMCScanner:
         # але дані не приходять» має бути ВИДНО, а не здогадуватись.
         self._liq_exchange_state = {
             'exchange': ex, 'ok': snap['ok'],
+            'used_exchange': used_ex, 'fallback': fell_back,
             'reason': '' if snap['ok'] else snap['reason'],
             'checked_at': now, 'source': 'filter'}
         return snap
@@ -3789,6 +3821,12 @@ class SMCScanner:
         if val is None:
             return 'немає рівнів'
         arrow = 'вгору' if side == 'LONG' else 'вниз'
+        # 🔁 Спрацював фолбек → кажемо це ПРЯМО в тому самому рядку. Інакше
+        # в лозі стояв би поріг «BINANCE≥70%» біля числа, порахованого на
+        # Bybit, і звірити його з біржею було б неможливо.
+        if snap.get('fallback'):
+            return (f"{val}% {arrow} · через "
+                    f"{str(snap.get('exchange') or '').upper()} (фолбек)")
         return f"{val}% {arrow}"
 
     def check_liq_exchange(self, exchange: Optional[str] = None) -> Dict:
@@ -3815,6 +3853,19 @@ class SMCScanner:
                            'reason': 'біржа відповіла, але без відкритого інтересу'}
         except Exception as e:
             out = {'ok': False, 'reason': str(e)[:120]}
+        # 🔁 Обрана біржа не відповіла — перевіряємо ФОЛБЕК, щоб індикатор
+        # казав не просто «недоступна», а чи працюватиме фільтр узагалі.
+        if not out.get('ok') and ex != self.LIQ_FALLBACK_EXCHANGE:
+            try:
+                import requests as _rq
+                from detection import liq_scan as _ls
+                _fn = _ls._OI_ONE.get(self.LIQ_FALLBACK_EXCHANGE)
+                if _fn:
+                    _px, _oi = _fn(_rq.Session(), 'BTCUSDT')
+                    out['fallback_ok'] = bool(_px and _px > 0 and _oi and _oi > 0)
+            except Exception:
+                out['fallback_ok'] = False
+            out['fallback'] = self.LIQ_FALLBACK_EXCHANGE
         out.update({'exchange': ex, 'checked_at': time.time(),
                     'took_ms': int((time.time() - t0) * 1000), 'source': 'probe'})
         self._liq_exchange_state = dict(out)
