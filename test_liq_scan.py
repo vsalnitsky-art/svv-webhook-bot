@@ -375,6 +375,61 @@ def test_module_says_it_is_a_snapshot_not_the_live_map():
     print('✓ різниця з живою liq-map зафіксована в коді')
 
 
+def test_history_dropdown_offers_only_depths_the_backend_honours():
+    """Кожна опція «ІСТОРІЯ, ГОД» мусить дійти до біржі БЕЗ обрізання.
+
+    ⚠️ `scan_one` робить `bars = max(24, min(bars, 1000))`, а свічки тягне
+    ОДНИМ запитом без пагінації — найтісніший ліміт серед чотирьох бірж
+    (Bybit, 1000 барів) і задає стелю. Опція поза цим діапазоном мовчки
+    перетворилась би на інше число: користувач обрав «2000», а порахувалось
+    би 1000, і ніде б це не було видно.
+    """
+    import re
+    html = open(os.path.join(_ROOT, 'templates', 'tickr.html')).read()
+    i = html.index('id="liq1-bars"')
+    block = html[i:html.index('</select>', i)]
+    vals = [int(v) for v in re.findall(r'<option value="(\d+)"', block)]
+    _check(len(vals) >= 8, f'мало варіантів глибини: {vals}')
+    _check(vals == sorted(vals), f'список мусить зростати: {vals}')
+    _check(len(set(vals)) == len(vals), f'дублікати: {vals}')
+    for v in vals:
+        clamped = max(24, min(v, 1000))
+        _check(clamped == v, f'{v} год бекенд обріже до {clamped}')
+    _check('selected' in block, 'мусить бути обране значення за замовчуванням')
+    print(f'✓ глибина історії: {len(vals)} варіантів, усі проходять бекенд '
+          f'({vals[0]}…{vals[-1]} год)')
+
+
+def test_dropdown_list_is_readable_on_dark_page():
+    """Скарга «нічого не видно»: САМ список малює браузер, і напівпрозоре тло
+    лягало на БІЛЕ системне меню. Потрібні `color-scheme: dark` + СУЦІЛЬНІ
+    кольори на `option` (напівпрозорість тут не працює — під меню немає
+    нашого тла)."""
+    import re
+    html = open(os.path.join(_ROOT, 'templates', 'tickr.html')).read()
+    _check('color-scheme: dark' in html, 'нативне меню мусить бути темним')
+    i = html.index('.tk-field select option')
+    rule = html[i:i + 200]
+    _check('#' in rule and 'rgba' not in rule.split('}')[0],
+           f'кольори option мусять бути СУЦІЛЬНІ, а не напівпрозорі: {rule[:80]}')
+    # Правило спільне для ВСІХ випадайок сторінки — окремих не заводимо.
+    # Тому кожен <select> мусить лежати в контейнері `.tk-field`, інакше він
+    # лишиться зі світлим системним меню, а помітять це лише очима.
+    # Коментарі прибираємо: пояснення перед тегом не мусить «відсувати»
+    # контейнер за межі вікна пошуку.
+    clean = re.sub(r'<!--.*?-->', '', html, flags=re.S)
+    pos, uncovered = 0, []
+    while True:
+        m = clean.find('<select', pos)
+        if m < 0:
+            break
+        if 'tk-field' not in clean[max(0, m - 400):m]:
+            uncovered.append(clean[m:m + 60])
+        pos = m + 1
+    _check(not uncovered, f'select поза .tk-field (правило їх не покриє): {uncovered}')
+    print('✓ випадайка читабельна на темній сторінці')
+
+
 if __name__ == '__main__':
     test_levels_are_built_from_oi_and_history()
     test_mass_follows_where_positions_were_opened()
@@ -394,4 +449,6 @@ if __name__ == '__main__':
     test_per_symbol_oi_has_a_ceiling()
     test_cheap_coin_magnet_is_not_rounded_to_zero()
     test_module_says_it_is_a_snapshot_not_the_live_map()
+    test_history_dropdown_offers_only_depths_the_backend_honours()
+    test_dropdown_list_is_readable_on_dark_page()
     print('\nУсі тести скану ліквідності пройдено ✅')

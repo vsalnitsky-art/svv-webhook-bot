@@ -20,6 +20,18 @@
 .tk-field select, .tk-field input { background: rgba(255,255,255,0.06);
     border: 1px solid rgba(255,255,255,0.14); border-radius: 6px; color: #ddd;
     padding: 6px 10px; font-size: 0.85rem; font-family: monospace; }
+/* 🎨 РОЗГОРНУТИЙ СПИСОК. Саму кнопку `select` ми стилізували, а СПИСОК
+   малює браузер — і він брав напівпрозорий `rgba(255,255,255,0.06)` на
+   БІЛОМУ тлі системного меню, тож світло-сірий текст ставав нечитабельним
+   (видно було лише підсвічений рядок). `color-scheme: dark` перемикає саме
+   НАТИВНЕ меню в темну тему (Chrome/Edge/Firefox), а явні кольори на
+   `option` — фолбек для рушіїв, які його не слухають. Напівпрозорість тут
+   НЕ годиться: під меню немає нашого тла, потрібен суцільний колір. */
+.tk-field select { color-scheme: dark; }
+.tk-field select option { background: #141821; color: #dde3ee; padding: 4px 8px; }
+.tk-field select option:checked,
+.tk-field select option:hover { background: #1e2a3d; color: #93c5fd; }
+.tk-field select:focus { outline: none; border-color: rgba(59,130,246,0.55); }
 .tk-cats { display: flex; gap: 14px; align-items: center; }
 .tk-cats label { color: #c6cbd8; font-size: 0.82rem; display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .tk-btn { background: rgba(59,130,246,0.18); border: 1px solid rgba(59,130,246,0.5);
@@ -306,10 +318,25 @@
         </div>
         <div class="tk-field">
             <label>ІСТОРІЯ, ГОД</label>
-            <select id="liq1-bars">
-                <option value="72">72</option>
+            <!-- ⚠️ СТЕЛЯ 1000 год — це НЕ довільне число. Свічки тягнуться
+                 ОДНИМ запитом без пагінації, а найтісніший ліміт серед чотирьох
+                 бірж — Bybit (1000 барів на запит). Дати більше означало б, що
+                 на Bybit глибина МОВЧКИ обріжеться, і те саме налаштування
+                 давало б різні дані на різних біржах. `scan_one` тримає той
+                 самий clamp [24 … 1000]. -->
+            <select id="liq1-bars" title="Глибина історії, з якої розкладається
+поточний OI. Довша історія = більше рівнів, але далекі все одно відсікає
+вікно ±12% і мітигація. Стеля 1000 год — ліміт свічок на один запит.">
+                <option value="24">24 (1 доба)</option>
+                <option value="48">48 (2 доби)</option>
+                <option value="72">72 (3 доби)</option>
+                <option value="120">120 (5 діб)</option>
                 <option value="168" selected>168 (7 діб)</option>
+                <option value="240">240 (10 діб)</option>
                 <option value="336">336 (14 діб)</option>
+                <option value="504">504 (21 доба)</option>
+                <option value="720">720 (30 діб)</option>
+                <option value="1000">1000 (~42 доби · максимум)</option>
             </select>
         </div>
         <button class="tk-btn" id="liq1-btn" onclick="liqOne()">💧 Аналіз монети</button>
