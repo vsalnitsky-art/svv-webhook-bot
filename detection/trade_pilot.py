@@ -235,6 +235,19 @@ def risk_reward(entry, stop, objective) -> Optional[float]:
     return round(abs(t - e) / risk, 2)
 
 
+def is_risk_free(side: str, entry, stop) -> bool:
+    """Чи стоп уже ПРИБРАВ ризик (стоїть на вході або краще)?
+
+    LONG — стоп на рівні входу або ВИЩЕ; SHORT — на рівні входу або НИЖЧЕ.
+    Саме такий стан робить «класичний» R беззмістовним: знаменник (вхід→стоп)
+    прямує до нуля, і будь-яка ціль дає трьохзначне число.
+    """
+    e, s = _f(entry), _f(stop)
+    if not e or not s or e <= 0 or s <= 0:
+        return False
+    return (s >= e) if str(side).upper() == 'LONG' else (s <= e)
+
+
 def plan_targets(side: str, entry, price, targets: List[Dict],
                  *, objective: Optional[Dict] = None, stop=None,
                  cfg: Optional[Dict] = None) -> Dict:

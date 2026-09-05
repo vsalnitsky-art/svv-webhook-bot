@@ -13828,11 +13828,17 @@ function pilotCellHTML(p) {
         : '🎯 —';
     const leftTxt = (pr && pr.left_pct != null) ? `${pr.left_pct.toFixed(1)}%` : '';
     const trails = pl.trails ? `<span style="color:#38bdf8">🛡${pl.trails}</span>` : '';
-    // 📐 R = (вхід→ціль)/(вхід→стоп). R<1 — ціль ближча за стоп, тобто угода
-    // ризикує більшим заради меншого: фарбуємо червоним, щоб було видно ОДРАЗУ.
+    // 📐 R = (вхід→ціль)/(вхід→ПОЧАТКОВИЙ стоп). R<1 — ціль ближча за стоп,
+    // тобто угода ризикує більшим заради меншого: фарбуємо червоним.
+    // ⚠️ Від ПОЧАТКОВОГО, а не поточного: після переїзду стопа в беззбиток
+    // знаменник прямує до нуля і R давав «168.53R» (кейс VIRTUALUSDT) —
+    // число правильне, але читалось як «геніальний сетап» замість «ризику
+    // вже немає». Сам факт прибраного ризику показує ⚖️ поруч.
     const rTxt = (pl.r != null)
         ? `<span style="color:${pl.r < 1 ? '#f87171' : (pl.r < 1.5 ? '#fbbf24' : '#4ade80')};font-weight:600">${pl.r}R</span>`
         : '';
+    const rfTxt = pl.risk_free
+        ? '<span style="color:#4ade80" title="Стоп на вході або краще — ризику вже немає">⚖</span>' : '';
     // ⚠️ Пілот свідомо НЕ виставив TP (найчастіше — обʼєкта у вікні немає).
     const skTxt = pl.tp_skip
         ? '<span style="color:#fbbf24" title="TP не виставлено — див. підказку">⚠</span>' : '';
@@ -13840,7 +13846,13 @@ function pilotCellHTML(p) {
     const tip = [
         `${lbl}${pl.trail_block ? ': ' + pl.trail_block : ''}`,
         obj ? `Ціль (TP-2): ${obj.label} @ ${obj.price}` : 'Цілі попереду не видно',
-        (pl.r != null) ? `R = ${pl.r} (відстань до цілі / відстань до стопа)` : null,
+        (pl.r != null)
+            ? `R = ${pl.r} — плановий: (вхід→ціль) / (вхід→ПОЧАТКОВИЙ стоп${pl.r_stop ? ' ' + pl.r_stop : ''}). Трейл і беззбиток його НЕ роздувають.`
+            : null,
+        pl.risk_free ? '⚖ Ризик прибрано: стоп стоїть на вході або краще' : null,
+        (pl.r == null && pl.risk_free)
+            ? 'R не показуємо: стоп уже в беззбитку, а початкового рівня в цієї угоди не збереглось (відкрита до появи якоря)'
+            : null,
         pl.tp_skip ? `TP не виставлено: ${pl.tp_skip}` : null,
         nxt ? `Найближча перепона: ${nxt.label} @ ${nxt.price}` : null,
         pr ? `Пройдено ${pr.pct}% шляху до цілі (рух ${pr.done_pct >= 0 ? '+' : ''}${pr.done_pct}%, лишилось ${pr.left_pct}%)` : null,
@@ -13858,7 +13870,7 @@ function pilotCellHTML(p) {
         + seg(40, 'left', bar)
         + seg(86, 'left', `<span style="color:#cbd5e1">${objTxt}</span>`)
         + seg(44, 'right', `<span style="color:#8b93a7">${leftTxt}</span>`)
-        + seg(50, 'right', rTxt)
+        + seg(50, 'right', `${rfTxt}${rTxt}`)
         + seg(30, 'right', `${skTxt}${trails}`)
         + `</td>`;
 }

@@ -324,6 +324,95 @@ def test_level_fields_keep_trailing_zeros():
     print('✓ поля рівнів: фіксована точність + крапка незалежно від локалі')
 
 
+# ═══════════ 4. R = ПЛАНОВИЙ (від ПОЧАТКОВОГО стопа) ══════════════════════
+# Кейс VIRTUALUSDT (05.09): вхід $0.67160 · ціль $0.72890 · стоп після TP-1
+# переїхав у БЕЗЗБИТОК $0.67194 → колонка показала «168.53R». Число було
+# арифметично правильне і при цьому беззмістовне: воно каже «ризику немає»,
+# а читається як «геніальний сетап».
+VOBJ = {'price': 0.72890, 'label': 'магніт ліквідності', 'kind': 'magnet',
+        'dist_pct': 8.53}
+
+
+def test_breakeven_stop_does_not_inflate_r():
+    """ГОЛОВНИЙ ЗАМОК. Стоп переїхав у беззбиток — R мусить лишитись
+    ПЛАНОВИМ (від початкового стопа), а не вибухнути."""
+    global _PLAN
+    _PLAN = {'action': 'hold', 'objective': VOBJ, 'reasons': ['тримаємо']}
+    o = _tm()
+    pos = _pos(side='LONG', entry=0.67160, sl=0.65800)   # початковий стоп
+    o._pilot_tick('VIRTUALUSDT', pos, 0.68000, True)
+    planned = o.get_pilot_state('VIRTUALUSDT', True)['r']
+    _check(abs(planned - 4.21) < 0.02, f'плановий R ≈ 4.21, отримали {planned}')
+
+    # TP-1 спрацював → SL у беззбиток (+ комісії). R НЕ мусить змінитись.
+    pos['manual_sl'] = 0.67194
+    o._pilot_tick('VIRTUALUSDT', pos, 0.68970, True)
+    st = o.get_pilot_state('VIRTUALUSDT', True)
+    _check(st['r'] == planned,
+           f'R мусить лишитись {planned}, а не стати {st["r"]} (той самий 168.53R)')
+    _check(st['risk_free'] is True, 'стан «ризик прибрано» мусить бути видно')
+    _check(st['r_stop'] == 0.65800, f'якір = ПОЧАТКОВИЙ стоп, а не {st["r_stop"]}')
+    print(f'✓ беззбитковий стоп не роздуває R (лишився {planned}R + ⚖)')
+
+
+def test_trailed_stop_does_not_inflate_r_either():
+    """Звичайний трейл (стоп ще в ризику, але ближче) теж НЕ перераховує R:
+    інакше число повзло б угору просто від супроводу."""
+    global _PLAN
+    _PLAN = {'action': 'hold', 'objective': VOBJ, 'reasons': ['тримаємо']}
+    o = _tm()
+    pos = _pos(side='LONG', entry=0.67160, sl=0.65800)
+    o._pilot_tick('VIRTUALUSDT', pos, 0.68000, False)
+    r0 = o.get_pilot_state('VIRTUALUSDT', False)['r']
+    pos['manual_sl'] = 0.66900          # підтягнули, ризик ще є
+    o._pilot_tick('VIRTUALUSDT', pos, 0.68500, False)
+    st = o.get_pilot_state('VIRTUALUSDT', False)
+    _check(st['r'] == r0, f'R мусить лишитись {r0}, а не {st["r"]}')
+    _check(st['risk_free'] is False, 'ризик ще Є — значка бути не повинно')
+    print('✓ трейл не роздуває R')
+
+
+def test_legacy_trade_without_anchor_shows_no_r():
+    """Угода, відкрита ДО появи якоря, приходить уже з беззбитковим стопом.
+    Початковий ризик відновити нізвідки → чесно БЕЗ R, а не 168.53R."""
+    global _PLAN
+    _PLAN = {'action': 'hold', 'objective': VOBJ, 'reasons': ['тримаємо']}
+    o = _tm()
+    pos = _pos(side='LONG', entry=0.67160, sl=0.67194)    # одразу беззбиток
+    o._pilot_tick('VIRTUALUSDT', pos, 0.68970, True)
+    st = o.get_pilot_state('VIRTUALUSDT', True)
+    _check(st['r'] is None, f'R мусить бути None, а не {st["r"]}')
+    _check(st['risk_free'] is True, 'але «ризик прибрано» показуємо')
+    _check(not pos.get('pilot_r_stop'),
+           'беззбитковий рівень НЕ можна записувати як «початковий стоп»')
+    print('✓ стара угода без якоря: без R, а не з роздутим')
+
+
+def test_is_risk_free_both_sides():
+    """Чиста функція: LONG — стоп на вході або ВИЩЕ; SHORT — навпаки."""
+    f = _REAL.is_risk_free
+    _check(f('LONG', 100.0, 100.0) is True, 'рівно вхід — ризику вже немає')
+    _check(f('LONG', 100.0, 101.0) is True, 'вище входу')
+    _check(f('LONG', 100.0, 99.0) is False, 'нижче входу — ризик є')
+    _check(f('SHORT', 100.0, 99.0) is True, 'SHORT: нижче входу')
+    _check(f('SHORT', 100.0, 101.0) is False, 'SHORT: вище входу — ризик є')
+    _check(f('LONG', 100.0, None) is False, 'немає стопа → не «ризик-фрі»')
+    print('✓ is_risk_free правильний на обох боках')
+
+
+def test_ui_separates_r_from_risk_free():
+    """У колонці це РІЗНІ речі: R — якість сетапу, ⚖ — стан ризику."""
+    html = open(os.path.join(_ROOT, 'templates', 'smart_money.html')).read()
+    i = html.index('function pilotCellHTML')
+    body = html[i:html.index('function manualSlTpCellsHTML', i)]
+    _check('pl.risk_free' in body, 'колонка мусить читати risk_free')
+    _check('rfTxt' in body and '${rfTxt}${rTxt}' in body,
+           'значок ⚖ стоїть поруч із R, а не замість нього')
+    _check('ПОЧАТКОВИЙ стоп' in body,
+           'тултип мусить казати, від ЧОГО рахується R')
+    print('✓ UI розділяє «плановий R» і «ризик прибрано»')
+
+
 if __name__ == '__main__':
     test_real_and_paper_keep_separate_state()
     test_throttle_is_per_book_not_per_symbol()
@@ -337,4 +426,9 @@ if __name__ == '__main__':
     test_hold_never_touches_the_counter()
     test_ui_shows_blocked_trail_separately()
     test_level_fields_keep_trailing_zeros()
+    test_breakeven_stop_does_not_inflate_r()
+    test_trailed_stop_does_not_inflate_r_either()
+    test_legacy_trade_without_anchor_shows_no_r()
+    test_is_risk_free_both_sides()
+    test_ui_separates_r_from_risk_free()
     print('\nУсі тести автопілота (книги + лічильник трейлів) пройдено ✅')
