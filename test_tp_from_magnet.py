@@ -71,8 +71,8 @@ _SC_CALLS = []
 
 
 def _fake_scanner():
-    def _get(sym):
-        _SC_CALLS.append(sym)
+    def _get(sym, side=None, price_ref=None):
+        _SC_CALLS.append((sym, side, price_ref))
         return dict(_MAGNET)
     return types.SimpleNamespace(get_liq_magnet=_get, get_settings=lambda: {})
 
@@ -372,6 +372,118 @@ def test_final_guard_exists_in_code():
     print('✓ фінальний замок «TP-1 перед TP-2» стоїть у коді')
 
 
+# ═══════════ 6. МАГНІТ ЗА НАПРЯМКОМ УГОДИ ══════════════════════════════════
+# Кейс зі скріна: «▲ Маса ліквідності ВИЩЕ ціни 66.2% · тягне ВГОРУ виразно»,
+# а «🧲 найбільший магніт $0.64000 · 14.2% · ↓5.58%» — ЗНИЗУ. Тобто ліквідність
+# підтримує LONG, а найтовща ОКРЕМА сходинка лежить під ціною. Раніше LONG у
+# такій ситуації лишався БЕЗ магнітного TP-2 — ті самі дані давали протилежні
+# висновки у фільтрі й у цілі угоди.
+_LADDER = _load('_ladder_pick', 'detection/liquidation_map/ladder.py')
+
+
+def _rows_from_the_screenshot():
+    """Драбина, що відтворює скрін: ціна ≈$0.683, найтовща сходинка внизу
+    ($0.640–0.650, 14.2%), а зверху маса розсіяна по кількох тонших."""
+    return [
+        {'price': 0.72, 'price_hi': 0.73, 'pct': 9.1},
+        {'price': 0.71, 'price_hi': 0.72, 'pct': 11.4},
+        {'price': 0.70, 'price_hi': 0.71, 'pct': 8.3},
+        {'price': 0.64, 'price_hi': 0.65, 'pct': 14.2},
+    ]
+
+
+def test_pick_ahead_finds_a_target_where_the_global_magnet_is_behind():
+    rows = _rows_from_the_screenshot()
+    up = _LADDER.pick_magnet_ahead(rows, 0.683, 'LONG')
+    _check(up is not None, 'для LONG попереду Є сходинки — магніт мусить бути')
+    _check(up['pct'] == 11.4, f'найбільша ПОПЕРЕДУ = 11.4%, а не {up}')
+    dn = _LADDER.pick_magnet_ahead(rows, 0.683, 'SHORT')
+    _check(dn is not None and dn['pct'] == 14.2, f'для SHORT — та сама 14.2%: {dn}')
+    print('✓ LONG отримує магніт попереду (11.4%), SHORT — глобальний (14.2%)')
+
+
+def test_pick_ahead_uses_the_near_edge_not_the_label():
+    """«Попереду» міряється по БЛИЖНІЙ межі смуги: LONG — нижня, SHORT —
+    верхня. Сходинка, ВСЕРЕДИНІ якої стоїть вхід, ціллю не є (ми вже в
+    кластері, «перший дотик» відбувся)."""
+    rows = [{'price': 100.0, 'price_hi': 110.0, 'pct': 50.0}]
+    _check(_LADDER.magnet_edge(rows[0], 'LONG') == 100.0, 'LONG → нижня межа')
+    _check(_LADDER.magnet_edge(rows[0], 'SHORT') == 110.0, 'SHORT → верхня')
+    _check(_LADDER.pick_magnet_ahead(rows, 105.0, 'LONG') is None,
+           'вхід ВСЕРЕДИНІ смуги → не ціль')
+    _check(_LADDER.pick_magnet_ahead(rows, 105.0, 'SHORT') is None,
+           'те саме для SHORT')
+    _check(_LADDER.pick_magnet_ahead(rows, 99.0, 'LONG') is not None,
+           'вхід під смугою → для LONG це ціль')
+    print('✓ «попереду» рахується по ближній межі, вхід усередині смуги не ціль')
+
+
+def test_pick_ahead_tiebreak_is_the_nearer_step():
+    """Однакові частки → виграє БЛИЖЧА (спрацює першою). Той самий порядок,
+    що в самій драбині."""
+    rows = [{'price': 130.0, 'price_hi': 131.0, 'pct': 20.0},
+            {'price': 110.0, 'price_hi': 111.0, 'pct': 20.0}]
+    r = _LADDER.pick_magnet_ahead(rows, 100.0, 'LONG')
+    _check(r['price'] == 110.0, f'ближча за однакової частки: {r}')
+    print('✓ тайбрейк — ближча сходинка')
+
+
+def test_pick_ahead_returns_none_when_nothing_is_ahead():
+    rows = [{'price': 0.64, 'price_hi': 0.65, 'pct': 14.2}]
+    _check(_LADDER.pick_magnet_ahead(rows, 0.60, 'SHORT') is None,
+           'усе позаду → None, вигаданого рівня не даємо')
+    print('✓ немає нічого попереду → None (ціль рахує автопілот)')
+
+
+def test_tm_asks_the_scanner_by_direction():
+    """Trade Manager мусить питати магніт ЗА НАПРЯМКОМ і передавати ВХІД —
+    інакше сканер не має від чого рахувати «попереду»."""
+    _magnet(lo=110.0, hi=112.0)
+    o = _tm()
+    o._magnet_objective('X', 'LONG', 100.0)
+    _check(_SC_CALLS == [('X', 'LONG', 100.0)],
+           f'очікували (symbol, side, entry), отримали {_SC_CALLS}')
+    print('✓ TM питає магніт за напрямком і від ціни ВХОДУ')
+
+
+def test_tm_survives_an_older_scanner():
+    """Файли можуть оновлюватись у різному порядку. Старий сканер без
+    `side`/`price_ref` не має класти автопілот — беремо глобальний магніт,
+    а перевірка «попереду входу» відсіє непридатний."""
+    _magnet(lo=110.0, hi=112.0)
+    calls = []
+
+    def _old(sym):
+        calls.append(sym)
+        return dict(_MAGNET)
+
+    _sc_mod.get_smc_scanner = lambda: types.SimpleNamespace(
+        get_liq_magnet=_old, get_settings=lambda: {})
+    try:
+        o = _tm()
+        m = o._magnet_objective('X', 'LONG', 100.0)
+        _check(m is not None and m['price'] == 110.0, f'фолбек мусить дати ціль: {m}')
+        _check(calls == ['X'], f'старий сканер кличеться без kwargs: {calls}')
+    finally:
+        _sc_mod.get_smc_scanner = _fake_scanner
+    print('✓ старіший сканер без вибору за напрямком не ламає магніт')
+
+
+def test_scanner_exposes_the_rows_the_pick_needs():
+    """Замок на джерело: зріз мусить нести САМ СПИСОК сходинок і просити їх
+    із запасом — із шести найбільших може не знайтись жодної попереду."""
+    i = _SCAN_SRC.index('def _liq_snapshot')
+    j = _SCAN_SRC.index('def _liq_filter_allows', i)
+    body = _SCAN_SRC[i:j]
+    _check("'rows': r.get('rows')" in body, 'зріз мусить нести rows')
+    _check('rows=12' in body, 'просимо 12 сходинок, а не 6')
+    k = _SCAN_SRC.index('def get_liq_magnet')
+    gm = _SCAN_SRC[k:_SCAN_SRC.index('def get_liq_exchange_state', k)]
+    _check('pick_magnet_ahead' in gm, 'вибір за напрямком — через чисту функцію')
+    _check('global_row' in gm, 'магніт банера мусить лишитись видимим окремо')
+    print('✓ сканер віддає сходинки і обирає магніт чистою функцією')
+
+
 if __name__ == '__main__':
     test_long_takes_the_lower_edge_short_the_upper()
     test_magnet_behind_entry_is_rejected()
@@ -388,4 +500,11 @@ if __name__ == '__main__':
     test_intake_still_checks_liquidity()
     test_tp1_never_exceeds_tp2_or_stays_empty()
     test_final_guard_exists_in_code()
+    test_pick_ahead_finds_a_target_where_the_global_magnet_is_behind()
+    test_pick_ahead_uses_the_near_edge_not_the_label()
+    test_pick_ahead_tiebreak_is_the_nearer_step()
+    test_pick_ahead_returns_none_when_nothing_is_ahead()
+    test_tm_asks_the_scanner_by_direction()
+    test_tm_survives_an_older_scanner()
+    test_scanner_exposes_the_rows_the_pick_needs()
     print('\nУсі тести «TP-2 з магніту» пройдено ✅')

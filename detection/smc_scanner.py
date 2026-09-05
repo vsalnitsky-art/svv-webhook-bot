@@ -3732,8 +3732,14 @@ class SMCScanner:
         def _try(_ex):
             try:
                 from detection import liq_scan
+                # ⚠️ `rows=12`, а не 6: із цих сходинок Trade Manager обирає
+                # магніт ЗА НАПРЯМКОМ угоди (`ladder.pick_magnet_ahead`), і
+                # шести найбільших може не вистачити, щоб серед них узагалі
+                # знайшлась хоч одна ПОПЕРЕДУ входу. Мережі це не коштує
+                # НІЧОГО — драбина рахується з тих самих уже завантажених
+                # рівнів, змінюється лише глибина зрізу.
                 return liq_scan.scan_one(exchange=_ex, symbol=symbol,
-                                         bars=bars, rows=6)
+                                         bars=bars, rows=12)
             except Exception as e:
                 return {'ok': False, 'reason': f'збій розрахунку: {str(e)[:60]}'}
 
@@ -3758,6 +3764,11 @@ class SMCScanner:
             # ціль угоди / Manual TP-2. Формат для показу лишається окремо.
             'magnet_row': r.get('magnet_row'),
             'magnet_pct': r.get('magnet_pct'),
+            # ⚠️ УСІ значущі сходинки, а не лише найбільша: ціль угоди мусить
+            # бути ПОПЕРЕДУ входу, а найбільша сходинка драбини легко лежить
+            # позаду (драбина симетрична навколо ціни). Без цього списку
+            # вибрати магніт за напрямком просто НЕМА З ЧОГО.
+            'rows': r.get('rows') or [],
             'reason': r.get('reason') or '',
             # ⚠️ `exchange` = хто РЕАЛЬНО дав числа (може бути фолбек);
             # `requested_exchange` — що обрано в налаштуваннях. Плутати не
@@ -3871,25 +3882,79 @@ class SMCScanner:
         self._liq_exchange_state = dict(out)
         return out
 
-    def get_liq_magnet(self, symbol: str) -> Dict:
-        """🧲 НАЙБІЛЬШИЙ МАГНІТ драбини ліквідності по монеті — сирими числами.
+    def get_liq_magnet(self, symbol: str, side: str = None,
+                       price_ref=None) -> Dict:
+        """🧲 МАГНІТ драбини ліквідності по монеті — сирими числами.
 
         Публічний доступ для Trade Manager: із цієї сходинки він робить ціль
         угоди і Manual TP-2. Бере ТОЙ САМИЙ зріз (`_liq_snapshot`) із тим самим
         кешем і тими самими налаштуваннями біржі/історії, що й фільтр входу —
         щоб «магніт $78 000» у фільтрі, на 📡 Tickr і в TP-2 був ОДНИМ числом.
 
+        ⚠️ ДВА РІЗНІ ПИТАННЯ — ДВІ РІЗНІ ВІДПОВІДІ (не плутати!):
+          • **без `side`** → найбільша сходинка драбини ВЗАГАЛІ. Це відповідь
+            на «куди тягне ціну», і саме її показує банер 💧.
+          • **із `side` + `price_ref`** → найбільша сходинка ПОПЕРЕДУ входу в
+            бік угоди (`ladder.pick_magnet_ahead`). Ціль за визначенням
+            попереду, тож для TP-2 годиться лише вона.
+
+        Навіщо розділення: драбина симетрична навколо ціни, і найтовща
+        сходинка часто лежить ПОЗАДУ. Реальний кейс — маса зверху 66.2%
+        (ліквідність підтримує LONG), а найбільша ОКРЕМА сходинка (14.2%)
+        знизу: LONG лишався БЕЗ магнітного TP-2 саме в тому напрямку, який
+        фільтр ліквідності щойно схвалив. Ті самі дані давали протилежні
+        висновки у двох місцях.
+
+        Повертає ще й `global_row` (магніт банера) і `directional` — щоб у
+        лозі було видно, ЯКУ сходинку взято і чому вона не та, що в банері.
+
         ⚠️ Працює НЕЗАЛЕЖНО від `liq_filter_enabled`: фільтр вирішує, ЧИ пускати
         сигнал, а це — ЗВІДКИ брати ціль. Два різні питання.
         """
         snap = self._liq_snapshot(symbol)
-        row = snap.get('magnet_row') if snap.get('ok') else None
-        return {'ok': bool(snap.get('ok') and row),
+        ok_snap = bool(snap.get('ok'))
+        g_row = snap.get('magnet_row') if ok_snap else None
+        sd = str(side or '').upper()
+
+        row, directional, note = g_row, False, ''
+        if ok_snap and sd in ('LONG', 'SHORT'):
+            ref = price_ref if price_ref is not None else snap.get('price')
+            try:
+                from detection.liquidation_map import ladder as _lad
+                row = _lad.pick_magnet_ahead(snap.get('rows') or [], ref, sd)
+            except Exception:
+                row = None
+            directional = bool(row)
+            if row and g_row and (row.get('price') != g_row.get('price')
+                                  or row.get('price_hi') != g_row.get('price_hi')):
+                note = (f"найбільший магніт драбини "
+                        f"{g_row.get('pct')}% лежить ПОЗАДУ входу — взято "
+                        f"найбільшу сходинку ПОПЕРЕДУ ({row.get('pct')}%)")
+
+        if row and row.get('pct') is not None:
+            pct = f"{row.get('pct')}%"
+        else:
+            pct = snap.get('magnet_pct')
+
+        if not ok_snap:
+            reason = snap.get('reason') or 'немає даних'
+        elif row:
+            reason = ''
+        elif sd in ('LONG', 'SHORT'):
+            reason = (f'жодної сходинки ліквідності ПОПЕРЕДУ входу в бік {sd}')
+        else:
+            reason = 'немає магніту'
+
+        return {'ok': bool(ok_snap and row),
                 'row': dict(row) if row else None,
-                'pct': snap.get('magnet_pct'),
+                'pct': pct,
+                'directional': directional,
+                'global_row': dict(g_row) if g_row else None,
+                'global_pct': snap.get('magnet_pct'),
+                'note': note,
                 'price_now': snap.get('price'),
                 'exchange': snap.get('exchange'), 'bars': snap.get('bars'),
-                'reason': snap.get('reason') or ('' if row else 'немає магніту')}
+                'reason': reason}
 
     def get_liq_exchange_state(self) -> Dict:
         """Останній відомий стан біржі (з проби АБО з роботи фільтра)."""

@@ -3069,9 +3069,21 @@ class TradeManager:
         це збігається з підписом у банері (там показується `price`), для SHORT
         — ні, і це навмисно.
 
+        ⚠️ **МАГНІТ ПИТАЄМО ЗА НАПРЯМКОМ УГОДИ** (`side` + `price_ref`), а не
+        «найбільший узагалі». Драбина симетрична навколо ціни, тож найтовща
+        сходинка часто лежить ПОЗАДУ входу — і раніше ми в такому разі
+        відмовлялись від магніту ЗОВСІМ, хоча попереду стояли інші кластери.
+        Реальний кейс: маса зверху 66.2% (💧 фільтр саме тому й пускав LONG),
+        а найбільша ОКРЕМА сходинка 14.2% — знизу; LONG лишався без магнітного
+        TP-2 у напрямку, який ліквідність підтримує. Ті самі дані давали
+        протилежні висновки у двох місцях — та сама помилка, що з PD-зоною.
+        Тепер сканер віддає найбільшу сходинку ПОПЕРЕДУ, а «магніт банера»
+        приходить окремо (`global_row`) — щоб у лозі було видно розбіжність.
+
         ⚠️ Три перевірки, без яких рівень безглуздий:
-          1. магніт мусить бути ПОПЕРЕДУ ВХОДУ (драбина симетрична навколо
-             ціни, тож найбільша сходинка легко може лежати ПОЗАДУ);
+          1. магніт мусить бути ПОПЕРЕДУ ВХОДУ — вибір це вже гарантує, але
+             перевірка лишається: вона страхує старіший сканер (фолбек нижче)
+             і робить правило видимим у ЦЬОМУ файлі;
           2. відстань ≥ `tp_min_gap_pct` — інакше комісія зʼїсть вихід;
           3. дані взагалі є (біржа могла не відповісти).
         """
@@ -3090,7 +3102,16 @@ class TradeManager:
         try:
             from detection.smc_scanner import get_smc_scanner
             sc = get_smc_scanner()
-            mg = sc.get_liq_magnet(symbol) if sc else None
+            if sc is None:
+                mg = None
+            else:
+                try:
+                    mg = sc.get_liq_magnet(symbol, side=side, price_ref=e)
+                except TypeError:
+                    # Старіший сканер без вибору за напрямком (файли можуть
+                    # оновлюватись у різному порядку) — беремо глобальний
+                    # магніт, перевірка «попереду входу» нижче його відсіє.
+                    mg = sc.get_liq_magnet(symbol)
         except Exception as ex:
             self._magnet_skip = f'збій запиту: {str(ex)[:60]}'
             return None
@@ -3114,6 +3135,7 @@ class TradeManager:
             self._magnet_skip = (f'магніт {self._fmt_price(edge)} ПОЗАДУ входу '
                                  f'{self._fmt_price(e)} — ціллю бути не може')
             return None
+        _note = mg.get('note') or ''
         dist = abs(edge - e) / e * 100.0
         try:
             gap = float(self._settings.get('pilot_tp_min_gap_pct', 0) or 0)
@@ -3127,7 +3149,7 @@ class TradeManager:
         _pct = mg.get('pct') or ''
         return {'price': edge, 'dist_pct': round(dist, 3), 'kind': 'magnet',
                 'label': f'магніт ліквідності {_pct}'.strip(),
-                'magnet_lo': lo, 'magnet_hi': hi,
+                'magnet_lo': lo, 'magnet_hi': hi, 'note': _note,
                 'exchange': mg.get('exchange')}
 
     def _pilot_tick(self, symbol: str, pos: Dict, current_price: float,
@@ -3178,7 +3200,8 @@ class TradeManager:
                             f"({_mag.get('label')}, +{_mag['dist_pct']:.2f}% від "
                             f"входу) · смуга {self._fmt_price(_mag['magnet_lo'])}"
                             f"–{self._fmt_price(_mag['magnet_hi'])} · "
-                            f"{str(_mag.get('exchange') or '').upper()} → Manual TP-2",
+                            f"{str(_mag.get('exchange') or '').upper()} → Manual TP-2"
+                            + (f" · ⚠️ {_mag['note']}" if _mag.get('note') else ''),
                             side=side, source='PILOT')
                     except Exception:
                         pass

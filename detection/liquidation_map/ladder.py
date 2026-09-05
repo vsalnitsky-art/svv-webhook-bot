@@ -92,6 +92,71 @@ def _fmt_price_ua(v) -> str:
     return f"${f:.{dec}f}"
 
 
+def magnet_edge(row: Dict, side: str) -> Optional[float]:
+    """Ближня межа сходинки для напрямку угоди.
+
+    Сходинка — це СМУГА `[price .. price_hi]`, і ціна доходить до неї з одного
+    боку: LONG зустрічає НИЖНЮ межу, SHORT — ВЕРХНЮ. Виходимо на ПЕРШОМУ дотику
+    до кластера, а не сподіваємось, що ціна прошиє його наскрізь.
+    """
+    if not isinstance(row, dict):
+        return None
+    lo = _f(row.get('price'))
+    if lo is None:
+        return None
+    hi = _f(row.get('price_hi'))
+    if hi is None:
+        hi = lo
+    return lo if str(side).upper() == 'LONG' else hi
+
+
+def pick_magnet_ahead(rows: List[Dict], ref_price, side: str,
+                      min_pct: float = 0.0) -> Optional[Dict]:
+    """🧲 НАЙБІЛЬША сходинка ПОПЕРЕДУ `ref_price` у бік `side`.
+
+    ⚠️ НАВІЩО ОКРЕМЕ ПРАВИЛО, а не «найбільша сходинка драбини».
+    Драбина симетрична навколо ціни й описує ВЕСЬ ринок: найтовща сходинка
+    цілком може лежати ПОЗАДУ входу. Для БАНЕРА це правильна відповідь
+    («куди тягне ціну взагалі»), для ЦІЛІ УГОДИ — ні: ціль за визначенням
+    попереду. Реальний кейс: маса зверху 66.2%, а найбільша ОКРЕМА сходинка
+    (14.2%) — знизу. Глобальний магніт для LONG опинявся позаду, і угода в
+    напрямку, який ліквідність саме ПІДТРИМУЄ, лишалась без магнітного TP-2.
+
+    Порядок вибору той самий, що в самій драбині: більша частка виграє,
+    тайбрейк — ближча до `ref_price` (спрацює першою).
+
+    `min_pct` — підлога частки (0 = будь-яка значуща сходинка; у драбині вони
+    вже відфільтровані за `MIN_ROW_PCT`).
+    Повертає САМ рядок (сирі числа) або None.
+    """
+    ref = _f(ref_price)
+    sd = str(side).upper()
+    if ref is None or ref <= 0 or sd not in ('LONG', 'SHORT'):
+        return None
+    try:
+        floor_pct = float(min_pct or 0.0)
+    except (TypeError, ValueError):
+        floor_pct = 0.0
+
+    best = None
+    best_key = None
+    for row in (rows or []):
+        edge = magnet_edge(row, sd)
+        if edge is None or edge <= 0:
+            continue
+        # Сходинка, ВСЕРЕДИНІ якої стоїть вхід, ціллю не є: ми вже в кластері,
+        # «перший дотик» відбувся. Тому порівнюємо саме ближню межу.
+        if not ((edge > ref) if sd == 'LONG' else (edge < ref)):
+            continue
+        pct = _f(row.get('pct')) or 0.0
+        if pct < floor_pct:
+            continue
+        key = (-pct, abs(edge - ref))
+        if best_key is None or key < best_key:
+            best, best_key = row, key
+    return dict(best) if best else None
+
+
 def make_verdict(pull: str, pull_pct: float, above_pct: float,
                  below_pct: float, top_row: Optional[Dict]) -> Dict:
     """ВЕРДИКТ по драбині — висновок, а не опис даних.
