@@ -69,7 +69,8 @@
 .lq1-rows { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
 .lq1-row { display: flex; align-items: center; gap: 8px; font-family: monospace;
     font-size: 0.74rem; }
-.lq1-row .lp { width: 96px; text-align: right; color: #c6cbd8; }
+/* 150px, бо підпис — СМУГА «$74,000–76,000», а не одна межа. */
+.lq1-row .lp { width: 150px; text-align: right; color: #c6cbd8; }
 .lq1-row .ld { width: 58px; text-align: right; color: #6b7280; }
 .lq1-row .lb { flex: 1; height: 8px; min-width: 40px; border-radius: 4px;
     background: rgba(255,255,255,0.05); overflow: hidden; }
@@ -79,7 +80,7 @@
     font-size: 0.74rem; margin: 3px 0; padding: 2px 0;
     border-top: 1px dashed rgba(226,232,240,0.35);
     border-bottom: 1px dashed rgba(226,232,240,0.35); }
-.lq1-price .lp { width: 96px; text-align: right; color: #e2e8f0; font-weight: 700; }
+.lq1-price .lp { width: 150px; text-align: right; color: #e2e8f0; font-weight: 700; }
 .lq1-price .ld { width: 58px; text-align: right; color: #94a3b8;
     font-size: 0.68rem; letter-spacing: 0.5px; }
 .lq1-price .lb { flex: 1; min-width: 40px; } .lq1-price .lv { width: 64px; }
@@ -897,6 +898,19 @@ function _lqPrice(v) {
                                             maximumFractionDigits: dec});
 }
 
+// «$76,000–78,000» — сходинка це СМУГА, а не точка. Дзеркало
+// `ladder.fmt_band_ua`: підпис МУСИТЬ описувати обʼєкт, бо відсоток поруч
+// міряється від СЕРЕДИНИ смуги. Підпис однією межею вказував на іншу точку,
+// ніж відсоток («$76 000 · ↓3.8%» при реальних 5.05% до $76 000), а сходинка,
+// РОЗРІЗАНА поточною ціною, взагалі підписувалась САМИМ ЧИСЛОМ ЦІНИ — поруч
+// із лінією ціни стояв рядок «ціна за 1.23% від ціни».
+function _lqBand(lo, hi) {
+    const a = Number(lo), b = Number(hi);
+    if (!isFinite(a)) return '—';
+    if (!isFinite(b) || Math.abs(b - a) < 1e-12) return _lqPrice(a);
+    return _lqPrice(a) + '–' + _lqPrice(b).replace('$', '');
+}
+
 // 💧 ЛІКВІДНІСТЬ ОДНІЄЇ МОНЕТИ. Та сама драбина й той самий вердикт, що в
 // блоці на Smart Money і в рядках списку вище — інакше та сама монета
 // показувала б різні числа в різних місцях.
@@ -956,7 +970,7 @@ async function liqOne() {
                 + ` · ${_lqUsd(r.usd)} · ${r.pct}% усієї ліквідності`
                 + ` · ${arrow} ${r.dist_pct}% від ціни`;
             return `<div class="lq1-row" title="${tip}">`
-                + `<span class="lp">${_lqPrice(r.price)}</span>`
+                + `<span class="lp">${_lqBand(r.price, r.price_hi)}</span>`
                 + `<span class="ld" style="color:${col}">${arrow}${r.dist_pct}%</span>`
                 + `<span class="lb"><i style="width:${w}%;background:${col}"></i></span>`
                 + `<span class="lv" style="color:${col}">${_lqUsd(r.usd)}</span>`
@@ -1066,7 +1080,7 @@ async function liqScan() {
                 + ` <span style="color:${mCol}">${r.magnet_pct || ''} ${r.magnet_dist || ''}</span></td>`
                 + `<td style="font-family:monospace">`
                 + (r.near_price != null
-                    ? `${_lqPrice(r.near_price)} <span style="color:${nCol}">${nArr}${r.near_dist}%</span>`
+                    ? `${_lqBand(r.near_price, r.near_price_hi)} <span style="color:${nCol}">${nArr}${r.near_dist}%</span>`
                     : '—')
                 + `</td>`
                 + `<td style="font-family:monospace;color:#8b93a7">${_lqUsd(r.oi_usd)}</td>`

@@ -113,7 +113,7 @@ def test_selection_by_share_display_by_price():
            f'відібратись мали три НАЙБІЛЬШІ за часткою: {prices}')
     _check(84_000.0 not in prices, f'шумний рівень мав відсіятись: {prices}')
     # ⚠️ Магніт у вердикті — НАЙБІЛЬШИЙ рядок, а не найвищий за ціною.
-    _check(r['verdict']['parts']['magnet']['price'] == '$71 000',
+    _check(r['verdict']['parts']['magnet']['price'] == '$71 000–72 000',
            f"магніт мусить лишитись найбільшим: {r['verdict']['parts']['magnet']}")
     print(f'✓ відбір за часткою, показ за ціною: {[int(p) for p in prices]}')
 
@@ -274,7 +274,9 @@ def test_verdict_is_broken_into_parts_for_colouring():
     _check(pt['lead_val'] == '80.0%' and pt['skew'] == '+60.0 п.п.', pt)
     _check(pt['strength'] == 'виразно', pt)
     m = pt['magnet']
-    _check(m and m['price'] == '$78 000' and m['pct'] == '80.0%'
+    # Підпис — СМУГА: `dist` міряється від середини, тож одна межа суперечила б
+    # відсотку поруч (див. розділ «ПІДПИС = СМУГА» нижче).
+    _check(m and m['price'] == '$78 000–79 000' and m['pct'] == '80.0%'
            and m['dist'].startswith('↓'), f'магніт має бути окремим блоком: {m}')
     # ⚠️ Розмітку модуль НЕ робить — кольори лишаються справою фронта.
     _check('<' not in v['text'] and all('<' not in str(x) for x in pt.values()
@@ -322,6 +324,79 @@ def test_module_does_not_promise_stop_counts():
     print('✓ драбина не вигадує «кількість стоп-наказів»')
 
 
+# ═══════════ ПІДПИС = СМУГА, а не одна межа ═══════════════════════════════
+# Кейс BTC (05.09), скрін 📡 Tickr: ціна $80 038, крок $2 000. На екрані
+# стояло `$80,038 · ↑1.23%` — тобто сходинка, РОЗРІЗАНА поточною ціною,
+# підписувалась САМИМ ЧИСЛОМ ЦІНИ, і поруч із лінією ціни виходив рядок
+# «ціна за 1.23% від ціни». І `🧲 магніт $76 000 · ↓3.8%`, хоча $76 000
+# лежить за 5.05% — 3.8% це $77 000 (середина смуги).
+def test_band_label_names_the_object_not_one_edge():
+    _check(L.fmt_band_ua(76_000, 78_000) == '$76 000–78 000',
+           L.fmt_band_ua(76_000, 78_000))
+    # Долар лише на початку — інакше читається як два окремі числа.
+    _check(L.fmt_band_ua(76_000, 78_000).count('$') == 1,
+           'долар лише на початку — інакше читається як два окремі числа')
+    # Дешева монета не втрачає знаків після коми.
+    _check(L.fmt_band_ua(0.64, 0.65) == '$0.64000–0.65000',
+           L.fmt_band_ua(0.64, 0.65))
+    # Вироджені випадки не ламаються і не малюють «–».
+    _check(L.fmt_band_ua(100, 100) == '$100', L.fmt_band_ua(100, 100))
+    _check(L.fmt_band_ua(100, None) == '$100', L.fmt_band_ua(100, None))
+    _check(L.fmt_band_ua(None, 100) == '', L.fmt_band_ua(None, 100))
+    print('✓ смуга підписується як обʼєкт «від–до»')
+
+
+def test_step_split_by_price_is_not_labelled_with_the_price_alone():
+    """ГОЛОВНИЙ ЗАМОК КЕЙСУ. Сходинка, яку ріже поточна ціна, НЕ має
+    підписуватись самим числом ціни — інакше в драбині стоять два однакові
+    рядки і жоден не пояснює, що це за рівень."""
+    mp = 80_038.0
+    lad = L.build_ladder(
+        [{'price': 81_500.0, 'usd': 5e6, 'side': 'short'},
+         {'price': 83_000.0, 'usd': 4e6, 'side': 'short'},
+         {'price': 77_000.0, 'usd': 9e6, 'side': 'long'}],
+        mp, step_usd=2000)
+    split = [r for r in lad['rows'] if r.get('at_price')]
+    _check(split, 'сходинка, розрізана ціною, мусить бути у драбині')
+    r = split[0]
+    _check(abs(r['price'] - mp) < 1e-9, f'нижня межа = ціна: {r}')
+    band = L.fmt_band_ua(r['price'], r['price_hi'])
+    _check('–' in band, f'підпис мусить бути смугою, а не точкою: {band}')
+    _check(band != L._fmt_price_ua(mp),
+           f'підпис не сміє дорівнювати самій ціні: {band}')
+    print(f'✓ розрізана ціною сходинка підписана смугою ({band})')
+
+
+def test_magnet_label_and_distance_point_at_the_same_object():
+    """Підпис і відсоток мусять описувати ОДИН обʼєкт. Перевіряємо буквально:
+    точка, що стоїть на заявленій відстані, лежить УСЕРЕДИНІ підписаної
+    смуги."""
+    mp = 80_038.0
+    lad = L.build_ladder([{'price': 77_000.0, 'usd': 9e6, 'side': 'long'},
+                          {'price': 81_500.0, 'usd': 2e6, 'side': 'short'}],
+                         mp, step_usd=2000)
+    row = lad['magnet_row']
+    d = float(lad['verdict']['parts']['magnet']['dist'].strip('↑↓%'))
+    point = mp * (1 - d / 100) if row['dir'] == 'down' else mp * (1 + d / 100)
+    _check(row['price'] <= point <= row['price_hi'],
+           f"{point} мусить лежати у смузі {row['price']}–{row['price_hi']}")
+    _check(L.fmt_band_ua(row['price'], row['price_hi'])
+           in lad['verdict']['text'], 'у тексті вердикту мусить бути смуга')
+    print('✓ підпис магніта і його відсоток вказують на один обʼєкт')
+
+
+def test_both_pages_mirror_the_band_helper():
+    """JS-дзеркала мусять існувати в ОБОХ шаблонах — інакше та сама драбина
+    підписувалась би по-різному на /tickr і на /smart-money."""
+    for f, fn in (('templates/tickr.html', '_lqBand'),
+                  ('templates/smart_money.html', '_liqFmtBand')):
+        src = open(os.path.join(_ROOT, f)).read()
+        _check(f'function {fn}(' in src, f'{f}: немає {fn}')
+        _check(f'{fn}(r.price, r.price_hi)' in src,
+               f'{f}: рядок драбини мусить малюватись смугою')
+    print('✓ обидві сторінки малюють смугу з одного правила')
+
+
 if __name__ == '__main__':
     test_levels_collapse_into_steps()
     test_percentages_are_shares_of_total()
@@ -345,4 +420,8 @@ if __name__ == '__main__':
     test_verdict_parts_mirror_the_text()
     test_verdict_exists_even_without_data()
     test_module_does_not_promise_stop_counts()
+    test_band_label_names_the_object_not_one_edge()
+    test_step_split_by_price_is_not_labelled_with_the_price_alone()
+    test_magnet_label_and_distance_point_at_the_same_object()
+    test_both_pages_mirror_the_band_helper()
     print('\nУсі тести драбини ліквідності пройдено ✅')

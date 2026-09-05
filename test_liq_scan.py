@@ -158,8 +158,12 @@ def test_nearest_magnet_is_not_the_biggest():
     lv = [{'price': 90.0, 'usd': 50e6, 'side': 'long'},    # великий, далеко
           {'price': 99.0, 'usd': 5e6, 'side': 'long'}]      # малий, поруч
     row = S.summarise(lv, 100.0, 'TESTUSDT', step_usd=1.0)
-    _check(row['magnet_price'] == '$90', f'найбільший: {row["magnet_price"]}')
+    # Підпис — СМУГА: `magnet_dist` міряється від СЕРЕДИНИ сходинки, тож одна
+    # межа вказувала б на іншу точку, ніж відсоток поруч.
+    _check(row['magnet_price'] == '$90–91', f'найбільший: {row["magnet_price"]}')
     _check(abs(row['near_price'] - 99.0) < 1e-6, f'найближчий: {row["near_price"]}')
+    _check(abs(row['near_price_hi'] - 100.0) < 1e-6,
+           f'верхня межа найближчого потрібна UI для смуги: {row}')
     _check(row['near_dist'] < 2.0, f'відстань найближчого: {row["near_dist"]}')
     print('✓ найбільший і найближчий магніти рахуються окремо')
 

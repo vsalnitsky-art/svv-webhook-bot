@@ -201,6 +201,10 @@ def summarise(levels: List[Dict], price: float, symbol: str,
         'magnet_row': lad.get('magnet_row'),
         # І найближчий за відстанню — перша перепона на шляху ціни.
         'near_price': nearest['price'] if nearest else None,
+        # ⚠️ Верхня межа теж — щоб UI підписав СМУГУ, а не одну межу: `near_dist`
+        # (як і `magnet_dist`) міряється від СЕРЕДИНИ сходинки, тож підпис
+        # однією межею вказував би на іншу точку, ніж відсоток поруч.
+        'near_price_hi': nearest.get('price_hi') if nearest else None,
         'near_pct': nearest['pct'] if nearest else None,
         'near_dist': nearest['dist_pct'] if nearest else None,
         'near_dir': nearest['dir'] if nearest else None,

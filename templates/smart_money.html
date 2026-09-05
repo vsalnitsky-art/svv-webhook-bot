@@ -1297,7 +1297,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-liq-rows { margin-top:6px; display:flex; flex-direction:column; gap:2px; }
     .sm-liq-row { display:flex; align-items:center; gap:6px; font-family:monospace;
         font-size:0.7rem; white-space:nowrap; }
-    .sm-liq-row .lp { width:78px; text-align:right; color:#c6cbd8; }
+    /* 132px, бо підпис — СМУГА «$74,000–76,000», а не одна межа. */
+    .sm-liq-row .lp { width:132px; text-align:right; color:#c6cbd8; }
     .sm-liq-row .ld { width:52px; text-align:right; color:#6b7280; }
     .sm-liq-row .lb { flex:1; height:8px; min-width:40px; border-radius:4px;
         background:rgba(255,255,255,0.06); overflow:hidden; }
@@ -1309,7 +1310,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         font-size:0.7rem; white-space:nowrap; margin:3px 0;
         border-top:1px dashed rgba(226,232,240,0.45);
         border-bottom:1px dashed rgba(226,232,240,0.45); padding:2px 0; }
-    .sm-liq-price .lp { width:78px; text-align:right; color:#e2e8f0; font-weight:700; }
+    .sm-liq-price .lp { width:132px; text-align:right; color:#e2e8f0; font-weight:700; }
     .sm-liq-price .ld { width:52px; text-align:right; color:#94a3b8;
         text-transform:uppercase; font-size:0.6rem; letter-spacing:0.04em; }
     .sm-liq-price .lb { flex:1; min-width:40px; }
@@ -10424,6 +10425,18 @@ function _liqFmtPrice(v) {
     const n = Number(v) || 0;
     return '$' + Math.round(n).toLocaleString('en-US');
 }
+// «$76,000–78,000» — сходинка це СМУГА, а не точка. Дзеркало
+// `ladder.fmt_band_ua` і `_lqBand` у tickr.html: підпис МУСИТЬ описувати
+// обʼєкт, бо відсоток поруч міряється від СЕРЕДИНИ смуги. Підпис однією межею
+// вказував на іншу точку, ніж відсоток, а сходинка, РОЗРІЗАНА поточною ціною,
+// підписувалась САМИМ ЧИСЛОМ ЦІНИ — поруч із лінією ціни стояв рядок «ціна за
+// 1.23% від ціни».
+function _liqFmtBand(lo, hi) {
+    const a = Number(lo), b = Number(hi);
+    if (!isFinite(a)) return '—';
+    if (!isFinite(b) || Math.abs(b - a) < 1e-12) return _liqFmtPrice(a);
+    return _liqFmtPrice(a) + '–' + _liqFmtPrice(b).replace('$', '');
+}
 async function loadLiquidityLadder() {
     // 🚫 Вимкнено для показу → жодного запиту `/api/liquidity-ladder`.
     if (!SM_ANALYSIS_ROW_ON) return;
@@ -10487,7 +10500,7 @@ async function loadLiquidityLadder() {
                 // читається краще, ніж «29% проти 4%»). Відсоток лишається
                 // в підказці, щоб нічого не загубилось.
                 return `<div class="sm-liq-row" title="${tip}">`
-                    + `<span class="lp">$${Math.round(r.price).toLocaleString('en-US')}</span>`
+                    + `<span class="lp">${_liqFmtBand(r.price, r.price_hi)}</span>`
                     + `<span class="ld" style="color:${col}">${arrow}${r.dist_pct}%</span>`
                     + `<span class="lb"><i style="width:${w}%;background:${col}"></i></span>`
                     + `<span class="lv" style="color:${col}">${_liqFmtUsd(r.usd)}</span>`
