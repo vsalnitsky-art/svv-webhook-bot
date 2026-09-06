@@ -54,11 +54,15 @@ from detection.liquidation_map import ladder as _ladder
 DEFAULT_INTERVAL = '60'
 DEFAULT_BARS = 168
 # Стеля кандидатів у скані — щоб разовий запуск не перетворився на годинний.
-MAX_SYMBOLS = 120
+MAX_SYMBOLS = 200
 PARALLEL = 8
 # Стеля для бірж БЕЗ bulk-OI: там на кожну монету йде ЩЕ ОДИН запит (OI),
-# тобто скан коштує вдвічі. Десятки монет — нормально, сотні — вже ні.
-PER_SYMBOL_OI_CAP = 60
+# тобто скан коштує вдвічі.
+# ⚠️ Була 60 і МОВЧКИ різала вибір користувача: на Binance (біржа за
+# замовчуванням!) «200 монет» перетворювалось на 60, і зрозуміти чому було
+# ніяк. Тепер стеля СПІЛЬНА з `MAX_SYMBOLS`, а якщо якийсь clamp усе-таки
+# спрацював — про це пишеться в `warnings` ЯВНО (див. `scan_liquidity`).
+PER_SYMBOL_OI_CAP = MAX_SYMBOLS
 # Рівні далі за це від ціни в драбину не потрапляють: вони не «магніти».
 WINDOW_PCT = 12.0
 
@@ -451,11 +455,18 @@ def scan_liquidity(exchange: str = 'binance', top_n: int = 40,
     session = requests.Session()
     bulk_oi = exchange in BULK_OI
     warnings = []
-    n = max(1, min(int(top_n or 40), MAX_SYMBOLS))
+    # ⚠️ CLAMP МУСИТЬ БУТИ ВИДИМИМ. Раніше «200 монет» на Binance тихо ставало
+    # 60, і в статусі просто стояло «проскановано 60» — без жодного натяку, що
+    # це НЕ те, що обрав користувач. Той самий урок, що з глибиною історії:
+    # налаштування або виконується, або про його обрізання сказано вголос.
+    _asked = max(1, int(top_n or 40))
+    n = min(_asked, MAX_SYMBOLS)
     if not bulk_oi:
         n = min(n, PER_SYMBOL_OI_CAP)
         warnings.append(NO_BULK_OI.get(
             exchange, 'відкритий інтерес береться по одному запиту на монету'))
+    if n < _asked:
+        warnings.append(f'обрано {_asked} монет, але стеля скану — {n}')
 
     # Відсів: ліквідні монети з реальним OI. Без цього в списку буде сміття,
     # у якому «перекіс 90%» побудований на трьох доларах.

@@ -375,6 +375,81 @@ def test_module_says_it_is_a_snapshot_not_the_live_map():
     print('✓ різниця з живою liq-map зафіксована в коді')
 
 
+def test_clamped_coin_count_is_said_out_loud():
+    """⚠️ CLAMP МУСИТЬ БУТИ ВИДИМИМ. Раніше «200 монет» на Binance тихо ставало
+    60 (`PER_SYMBOL_OI_CAP`), а в статусі стояло просто «проскановано 60» — без
+    натяку, що це НЕ вибір користувача. Той самий урок, що з глибиною історії."""
+    fake = types.ModuleType('detection.tickr_core')
+    fake.MARKET_SWAP = 'swap'
+    fake._ACTIVITY = {'bybit': lambda m: {
+        f'C{i}USDT': {'vol_usd': 100e6 + i, 'oi_usd': 50e6, 'last': 10.0}
+        for i in range(400)}}
+    _real_tc = getattr(sys.modules['detection'], 'tickr_core', None)
+    sys.modules['detection.tickr_core'] = fake
+    sys.modules['detection'].tickr_core = fake
+    orig_kl = dict(S._KLINES)
+    try:
+        S._KLINES['bybit'] = lambda s, sym, i, l: _bars((9.7, 30, 1000))
+        # Просимо ВДВІЧІ більше за стелю.
+        over = S.MAX_SYMBOLS * 2
+        r = S.scan_liquidity(exchange='bybit', top_n=over,
+                             min_vol_usd=1e6, min_oi_usd=1e6)
+        _check(r['ok'], r)
+        _check(r['scanned'] == S.MAX_SYMBOLS,
+               f"стеля {S.MAX_SYMBOLS}, проскановано {r['scanned']}")
+        w = ' '.join(r.get('warnings') or [])
+        _check(str(over) in w and str(S.MAX_SYMBOLS) in w,
+               f'обрізання мусить бути НАЗВАНЕ вголос, а не мовчазне: «{w}»')
+        # А в межах стелі — жодного зайвого попередження про обрізання.
+        r2 = S.scan_liquidity(exchange='bybit', top_n=10,
+                              min_vol_usd=1e6, min_oi_usd=1e6)
+        _check(not any('стеля скану' in x for x in (r2.get('warnings') or [])),
+               f'вибір у межах стелі не мусить нічого попереджати: {r2.get("warnings")}')
+    finally:
+        S._KLINES.clear(); S._KLINES.update(orig_kl)
+        sys.modules.pop('detection.tickr_core', None)
+        if _real_tc is not None:
+            sys.modules['detection'].tickr_core = _real_tc
+        else:
+            sys.modules['detection'].__dict__.pop('tickr_core', None)
+    print(f'✓ обрізання до стелі {S.MAX_SYMBOLS} монет пишеться в warnings')
+
+
+def test_coin_count_dropdown_matches_the_backend_ceiling():
+    """Випадайка «МОНЕТ» не сміє пропонувати більше, ніж бекенд просканує —
+    інакше вибір мовчки перетвориться на інше число (тепер, щоправда, з
+    попередженням, але сам список має бути чесним ЗРАЗУ)."""
+    import re
+    html = open(os.path.join(_ROOT, 'templates', 'tickr.html')).read()
+    i = html.index('id="liq-topn"')
+    block = html[i:html.index('</select>', i)]
+    vals = [int(v) for v in re.findall(r'<option[^>]*>(\d+)</option>', block)]
+    _check(vals, f'не знайшов варіантів: {block[:120]}')
+    _check(max(vals) == S.MAX_SYMBOLS,
+           f'верх списку {max(vals)} ≠ стеля бекенда {S.MAX_SYMBOLS}')
+    _check(vals == sorted(vals), f'список мусить зростати: {vals}')
+    # На Binance/BingX OI береться поштучно — та сама стеля, інакше дефолтна
+    # біржа різала б вибір удвічі раніше за решту.
+    _check(S.PER_SYMBOL_OI_CAP == S.MAX_SYMBOLS,
+           f'стелі розійшлись: {S.PER_SYMBOL_OI_CAP} vs {S.MAX_SYMBOLS}')
+    print(f'✓ «МОНЕТ» до {max(vals)} — рівно стільки, скільки бекенд просканує')
+
+
+def test_scan_sends_the_chosen_history_depth():
+    """Поле «ІСТОРІЯ, ГОД» у скані списку має РЕАЛЬНО доїжджати до бекенда.
+    Раніше `bars` не передавався взагалі, тож глибина завжди була дефолтна."""
+    html = open(os.path.join(_ROOT, 'templates', 'tickr.html')).read()
+    i = html.index('async function liqScan')
+    body = html[i:html.index('const res = await fetch', i)]
+    _check("getElementById('liq-bars')" in body,
+           'liqScan мусить читати обрану глибину')
+    _check('bars:' in body, 'і класти її в тіло запиту')
+    # І показувати, на чому саме порахували, — інакше глибину не звірити.
+    tail = html[i:i + 4000]
+    _check('${d.bars}' in tail, 'у підсумку мусить стояти глибина з ВІДПОВІДІ')
+    print('✓ обрана глибина йде в запит і видно її у підсумку')
+
+
 def test_history_dropdown_offers_only_depths_the_backend_honours():
     """Кожна опція «ІСТОРІЯ, ГОД» мусить дійти до біржі БЕЗ обрізання.
 
@@ -386,18 +461,26 @@ def test_history_dropdown_offers_only_depths_the_backend_honours():
     """
     import re
     html = open(os.path.join(_ROOT, 'templates', 'tickr.html')).read()
-    i = html.index('id="liq1-bars"')
-    block = html[i:html.index('</select>', i)]
-    vals = [int(v) for v in re.findall(r'<option value="(\d+)"', block)]
-    _check(len(vals) >= 8, f'мало варіантів глибини: {vals}')
-    _check(vals == sorted(vals), f'список мусить зростати: {vals}')
-    _check(len(set(vals)) == len(vals), f'дублікати: {vals}')
-    for v in vals:
-        clamped = max(24, min(v, 1000))
-        _check(clamped == v, f'{v} год бекенд обріже до {clamped}')
-    _check('selected' in block, 'мусить бути обране значення за замовчуванням')
-    print(f'✓ глибина історії: {len(vals)} варіантів, усі проходять бекенд '
-          f'({vals[0]}…{vals[-1]} год)')
+    seen = {}
+    # ⚠️ ОБИДВІ випадайки: список монет (`liq-bars`) і одна монета
+    # (`liq1-bars`). Це той самий параметр `bars` того самого `build_levels`,
+    # тож розійтись вони не мають права.
+    for el in ('liq-bars', 'liq1-bars'):
+        i = html.index(f'id="{el}"')
+        block = html[i:html.index('</select>', i)]
+        vals = [int(v) for v in re.findall(r'<option value="(\d+)"', block)]
+        _check(len(vals) >= 8, f'{el}: мало варіантів глибини: {vals}')
+        _check(vals == sorted(vals), f'{el}: список мусить зростати: {vals}')
+        _check(len(set(vals)) == len(vals), f'{el}: дублікати: {vals}')
+        for v in vals:
+            clamped = max(24, min(v, 1000))
+            _check(clamped == v, f'{el}: {v} год бекенд обріже до {clamped}')
+        _check('selected' in block, f'{el}: потрібне значення за замовчуванням')
+        seen[el] = vals
+    _check(seen['liq-bars'] == seen['liq1-bars'],
+           f'списки глибини розійшлись: {seen}')
+    print(f"✓ глибина історії: {len(seen['liq-bars'])} варіантів в ОБОХ блоках, "
+          f"усі проходять бекенд ({seen['liq-bars'][0]}…{seen['liq-bars'][-1]} год)")
 
 
 def test_dropdown_list_is_readable_on_dark_page():
@@ -449,6 +532,9 @@ if __name__ == '__main__':
     test_per_symbol_oi_has_a_ceiling()
     test_cheap_coin_magnet_is_not_rounded_to_zero()
     test_module_says_it_is_a_snapshot_not_the_live_map()
+    test_clamped_coin_count_is_said_out_loud()
+    test_coin_count_dropdown_matches_the_backend_ceiling()
+    test_scan_sends_the_chosen_history_depth()
     test_history_dropdown_offers_only_depths_the_backend_honours()
     test_dropdown_list_is_readable_on_dark_page()
     print('\nУсі тести скану ліквідності пройдено ✅')

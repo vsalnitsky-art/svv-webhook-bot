@@ -273,7 +273,7 @@
     <div class="tk-row" style="margin-bottom:8px;margin-top:8px">
         <div class="tk-field">
             <label>БІРЖА</label>
-            <select id="liq-exch">
+            <select id="liq-exch" onchange="_liqCostHint()">
                 <option value="binance" selected>Binance</option>
                 <option value="bybit">Bybit</option>
                 <option value="mexc">MEXC</option>
@@ -282,9 +282,31 @@
         </div>
         <div class="tk-field">
             <label>МОНЕТ</label>
-            <select id="liq-topn">
+            <!-- Стеля 200 = `liq_scan.MAX_SYMBOLS` (і `PER_SYMBOL_OI_CAP`, щоб
+                 на Binance/BingX вибір не різався мовчки). -->
+            <select id="liq-topn" onchange="_liqCostHint()">
                 <option>20</option><option selected>40</option>
                 <option>60</option><option>100</option>
+                <option>150</option><option>200</option>
+            </select>
+        </div>
+        <div class="tk-field">
+            <label>ІСТОРІЯ, ГОД</label>
+            <!-- ТІ САМІ варіанти, що в режимі однієї монети: глибина історії —
+                 це той самий параметр `bars` того самого `build_levels`, і
+                 різні списки в двох місцях розійшлись би. -->
+            <select id="liq-bars" onchange="_liqCostHint()" title="Глибина історії,
+з якої розкладається поточний OI. Стеля 1000 год — ліміт свічок на один запит.">
+                <option value="24">24 (1 доба)</option>
+                <option value="48">48 (2 доби)</option>
+                <option value="72">72 (3 доби)</option>
+                <option value="120">120 (5 діб)</option>
+                <option value="168" selected>168 (7 діб)</option>
+                <option value="240">240 (10 діб)</option>
+                <option value="336">336 (14 діб)</option>
+                <option value="504">504 (21 доба)</option>
+                <option value="720">720 (30 діб)</option>
+                <option value="1000">1000 (~42 доби · максимум)</option>
             </select>
         </div>
         <div class="tk-field">
@@ -561,6 +583,8 @@ function tkOnSortChange() {
 }
 
 document.addEventListener('DOMContentLoaded', () => { try { tkOnSortChange(); } catch (e) {} });
+// Ціна запуску мусить стояти ВІДРАЗУ, а не лише після зміни поля.
+document.addEventListener('DOMContentLoaded', () => { try { _liqCostHint(); } catch (e) {} });
 
 async function tkTopActive() {
     const btn = document.getElementById('tk-top-btn');
@@ -1044,17 +1068,48 @@ async function liqOne() {
     }
 }
 
+// 💸 ЦІНА ЗАПУСКУ — ЖИВИМ РЯДКОМ, а не статичним написом.
+// Відколи можна обрати 200 монет × 1000 год, «один запит на монету» перестало
+// бути дрібницею: на Binance це 200 свічок + 200 OI, а вага запиту свічок
+// РОСТЕ з глибиною (168 барів ≈ 2, 1000 барів ≈ 10 при ліміті 2400/хв на IP).
+// Тому показуємо, СКІЛЬКИ це коштує, ДО натискання — і попереджаємо, коли
+// комбінація підходить до ліміту біржі.
+function _liqCostHint() {
+    const el = document.getElementById('liq-stat');
+    if (!el || window._liqScanning) return;
+    const ex = (document.getElementById('liq-exch') || {}).value || 'binance';
+    const n = parseInt((document.getElementById('liq-topn') || {}).value, 10) || 40;
+    const bars = parseInt((document.getElementById('liq-bars') || {}).value, 10) || 168;
+    const perSym = (ex === 'binance' || ex === 'bingx') ? 2 : 1;   // свічки + OI
+    const reqs = 1 + n * perSym;
+    const secs = Math.max(3, Math.round(reqs / 8 * 0.4));
+    // Вага свічок у Binance зростає сходинками за лімітом бару.
+    const w = bars > 500 ? 10 : bars >= 100 ? 2 : 1;
+    const weight = n * w + (perSym === 2 ? n : 0);
+    let txt = `Натисни «Сканувати». ${n} монет × ${bars} год ≈ ${reqs} запитів `
+            + `(~${secs}с у 8 потоків)`;
+    if (perSym === 2) txt += ' — OI на цій біржі береться поштучно';
+    if (ex === 'binance' && weight > 1500) {
+        txt += ` · ⚠️ вага ≈${weight}/2400 за хвилину — близько до ліміту `
+             + `Binance, зменш глибину або кількість монет`;
+    }
+    el.textContent = txt + '.';
+}
+
 async function liqScan() {
     const btn = document.getElementById('liq-scan-btn');
     const stat = document.getElementById('liq-stat');
     const tb = document.getElementById('liq-tbody');
     const exch = document.getElementById('liq-exch').value;
     btn.disabled = true;
+    window._liqScanning = true;
     stat.textContent = `Сканую ${exch}… перший запит — уся біржа, далі свічки по монетах.`;
     try {
         const body = {
             exchange: exch,
             top_n: parseInt(document.getElementById('liq-topn').value, 10) || 40,
+            // Глибина історії — той самий `bars`, що в режимі однієї монети.
+            bars: parseInt(document.getElementById('liq-bars').value, 10) || 168,
             sort_by: document.getElementById('liq-sort').value,
             min_vol_usd: (parseFloat(document.getElementById('liq-minvol').value) || 0) * 1e6,
             min_oi_usd: (parseFloat(document.getElementById('liq-minoi').value) || 0) * 1e6,
@@ -1073,7 +1128,7 @@ async function liqScan() {
         }
         stat.textContent = `${d.exchange.toUpperCase()}: проскановано ${d.scanned} монет, `
             + `з даними ${d.with_data} · відсіяно за обігом ${d.dropped_vol}, за OI ${d.dropped_oi}`
-            + ` · ${d.took_sec}с`
+            + ` · глибина ${d.bars} год · ${d.took_sec}с`
             // Біржа без bulk-OI тягне його поштучно — кажемо це прямо, щоб
             // довший скан і стеля монет не виглядали як збій.
             + ((d.warnings || []).length ? ` · ⚠ ${d.warnings.join('; ')}` : '');
@@ -1117,6 +1172,7 @@ async function liqScan() {
         stat.textContent = 'Помилка скану: ' + e;
     } finally {
         btn.disabled = false;
+        window._liqScanning = false;
     }
 }
 
