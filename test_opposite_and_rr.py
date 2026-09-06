@@ -286,6 +286,131 @@ def test_gate_objective_is_locked_into_the_trade():
     print('✓ ціль гейта фіксується в угоді — R рішення = R у колонці')
 
 
+# ═════════ 🧲 МАГНІТ ЛІКВІДНОСТІ — У ПРІОРИТЕТІ ДЛЯ TP-2 ═══════════════════
+# Кейс STXUSDT (06.09). Угода LONG @0.26660 відкрилась із Черги-4, і в лозі:
+# «R достатній: 1.44R · ціль Weak High +5.55% / стоп 1H OB −3.85%» → Manual
+# TP-2 = $0.28140. Магніт ліквідності НЕ використовувався взагалі, бо
+# `_pilot_tick` бере його ЛИШЕ коли `pilot_objective` порожня, а R-гейт її
+# уже заповнив. Тепер вибір цілі стоїть У ГЕЙТІ, і магніт має пріоритет.
+STX_CTX = {'swing': {'high': {'price': 0.28140, 'label': 'Weak High'},
+                     'low': {'price': 0.25200, 'label': 'Strong Low'}},
+           'runway': None, 'poc': None, 'vah': None, 'val': None}
+
+
+class _TMMag(_TM):
+    """TM зі справжнім набором методів, які тепер кличе гейт."""
+    def __init__(self, price, ctx, magnet=None, on=True, skip=''):
+        super().__init__(price, ctx)
+        self._magnet, self._on, self._magnet_skip = magnet, on, skip
+        self.asked = []
+
+    def get_settings(self):
+        return {'pilot_tp2_from_magnet': self._on}
+
+    def _magnet_objective(self, sym, side, entry):
+        self.asked.append((sym, side, entry))
+        return dict(self._magnet) if self._magnet else None
+
+
+def _ff_mag(price, sl_bounds, ctx, tm):
+    o = _ff_rr(price, sl_bounds, ctx)
+    o._get_tm = lambda: tm
+    return o
+
+
+# Магніт зі скріна: для LONG найбільша сходинка ПОПЕРЕДУ входу —
+# $0.28000–0.28500 ($26K); ближня межа для LONG = НИЖНЯ = $0.28000.
+STX_MAGNET = {'price': 0.28000, 'dist_pct': 5.03, 'kind': 'magnet',
+              'label': 'магніт ліквідності 12.8%'}
+STX_SL = (0.26800, 0.25698, '1h', 'BULLISH')   # 1H OB → SL ≈ 0.25634
+
+
+def test_magnet_wins_over_the_autopilot_target():
+    """ГОЛОВНИЙ ЗАМОК КЕЙСУ. Ціль угоди = 🧲 магніт, а не Weak High."""
+    tm = _TMMag(0.26660, STX_CTX, magnet=STX_MAGNET)
+    o = _ff_mag(0.26660, STX_SL, STX_CTX, tm)
+    r, detail = o._q4_expected_r('STXUSDT', 'LONG',
+                                 {'queue4_sl_source': '1h',
+                                  'queue3_vob_sl_buffer_pct': 0.25})
+    obj = o._q4_rr_objective.get('STXUSDT') or {}
+    _check(obj.get('kind') == 'magnet', f'ціллю мусить стати магніт: {obj}')
+    _check(abs(obj.get('price') - 0.28000) < 1e-9, obj)
+    _check('магніт' in detail, f'у розкладі має бути видно джерело: {detail}')
+    # Магніт питається САМЕ за напрямком угоди і від ціни входу.
+    _check(tm.asked == [('STXUSDT', 'LONG', 0.26660)], tm.asked)
+    print(f'✓ ціль угоди = магніт $0.28000, а не Weak High $0.28140 ({detail})')
+
+
+def test_gate_judges_the_trade_by_the_magnet_r():
+    """⚠️ НАЙВАЖЛИВІШЕ. Якщо магніт стає TP-2, то й R-гейт мусить судити
+    угоду САМЕ за ним — інакше повертається баг VETUSDT: пропустили за одним
+    числом, а в угоді стоїть інше. Магніт ($0.28000) ближчий за Weak High
+    ($0.28140), тож R мусить бути МЕНШИЙ."""
+    sett = {'queue4_sl_source': '1h', 'queue3_vob_sl_buffer_pct': 0.25}
+    r_mag, _ = _ff_mag(0.26660, STX_SL, STX_CTX,
+                       _TMMag(0.26660, STX_CTX, magnet=STX_MAGNET)
+                       )._q4_expected_r('STXUSDT', 'LONG', sett)
+    r_auto, _ = _ff_mag(0.26660, STX_SL, STX_CTX,
+                        _TMMag(0.26660, STX_CTX, magnet=None)
+                        )._q4_expected_r('STXUSDT', 'LONG', sett)
+    _check(r_mag is not None and r_auto is not None, (r_mag, r_auto))
+    _check(r_mag < r_auto,
+           f'ближча ціль → менший R: магніт {r_mag} мусить бути < {r_auto}')
+    print(f'✓ гейт судить угоду за магнітом: {r_mag}R (замість {r_auto}R)')
+
+
+def test_no_magnet_falls_back_and_says_so():
+    """Біржа мовчить / попереду нічого → ціль рахує автопілот, але в розкладі
+    ЧЕСНО написано, що це фолбек. Інакше «ціль Weak High» виглядала б як
+    вибір, хоча насправді це запасний варіант."""
+    tm = _TMMag(0.26660, STX_CTX, magnet=None, skip='немає даних: біржа мовчить')
+    o = _ff_mag(0.26660, STX_SL, STX_CTX, tm)
+    r, detail = o._q4_expected_r('STXUSDT', 'LONG',
+                                 {'queue4_sl_source': '1h',
+                                  'queue3_vob_sl_buffer_pct': 0.25})
+    _check(r is not None, f'угода без магніту НЕ лишається без цілі: {detail}')
+    obj = o._q4_rr_objective.get('STXUSDT') or {}
+    _check(obj.get('kind') != 'magnet', obj)
+    _check('фолбек' in detail and 'біржа мовчить' in detail,
+           f'причина фолбеку мусить бути названа: {detail}')
+    print('✓ немає магніту → ціль автопілота + чесна причина в розкладі')
+
+
+def test_toggle_off_returns_the_old_behaviour():
+    """`pilot_tp2_from_magnet=False` → магніт не питається ВЗАГАЛІ (це той
+    самий тумблер, що керує TP-2 з магніту; другого не заводимо)."""
+    tm = _TMMag(0.26660, STX_CTX, magnet=STX_MAGNET, on=False)
+    o = _ff_mag(0.26660, STX_SL, STX_CTX, tm)
+    o._q4_expected_r('STXUSDT', 'LONG', {'queue4_sl_source': '1h',
+                                         'queue3_vob_sl_buffer_pct': 0.25})
+    _check(tm.asked == [], f'вимкнено → біржу не смикаємо: {tm.asked}')
+    obj = o._q4_rr_objective.get('STXUSDT') or {}
+    _check(obj.get('kind') != 'magnet', obj)
+    print('✓ тумблер вимкнено → стара поведінка, зайвого запиту немає')
+
+
+def test_objective_is_fixed_even_when_the_r_gate_is_off():
+    """⚠️ Вибір цілі НЕ має залежати від того, чи судимо ми угоду за R.
+    Раніше весь блок стояв під `if _min_rr > 0`, тож при вимкненому гейті
+    (`queue4_min_rr=0`) ціль не фіксувалась і TP-2 обирався пізніше, іншим
+    шляхом — тобто те саме налаштування давало РІЗНІ TP-2."""
+    src = open(os.path.join(_ROOT, 'detection/fuel_filter.py')).read()
+    i = src.index('# 📐 ГЕЙТ ЗА R')
+    j = src.index('opened = self._open(sym, _open_dir', i)
+    body = src[i:j]
+    k_call = body.index('self._q4_expected_r(')
+    k_if = body.index('if _min_rr > 0:')
+    _check(k_call < k_if,
+           'R мусить рахуватись ДО перевірки порогу, а не всередині неї')
+    # `set_pending_objective` стоїть на нульовому відступі блоку (поза `if`).
+    for ln in body.splitlines():
+        if 'set_pending_objective' in ln:
+            break
+    _check('\n            _obj = self._q4_rr_objective.pop(sym, None)' in body,
+           'фіксація цілі мусить стояти ПОЗА гейтом (12 пробілів відступу)')
+    print('✓ ціль фіксується і при вимкненому R-гейті')
+
+
 def test_gate_defaults_and_placement():
     src = open(os.path.join(_ROOT, 'detection/fuel_filter.py')).read()
     _check("'queue4_min_rr': 1.0," in src, 'поріг за замовчуванням 1.0R')
@@ -311,5 +436,10 @@ if __name__ == '__main__':
     test_no_target_means_no_verdict_not_a_refusal()
     test_r_and_real_sl_come_from_one_source()
     test_gate_objective_is_locked_into_the_trade()
+    test_magnet_wins_over_the_autopilot_target()
+    test_gate_judges_the_trade_by_the_magnet_r()
+    test_no_magnet_falls_back_and_says_so()
+    test_toggle_off_returns_the_old_behaviour()
+    test_objective_is_fixed_even_when_the_r_gate_is_off()
     test_gate_defaults_and_placement()
     print('\nУсі тести протилежного сигналу + гейта за R пройдено ✅')

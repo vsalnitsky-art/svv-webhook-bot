@@ -6866,8 +6866,13 @@ class FuelFilterDaemon:
                 _min_rr = float(s.get('queue4_min_rr', 1.0) or 0.0)
             except (TypeError, ValueError):
                 _min_rr = 0.0
+            # ⚠️ Рахуємо ЗАВЖДИ, а поріг застосовуємо лише коли гейт увімкнено.
+            # Раніше весь блок стояв під `if _min_rr > 0`, тож при ВИМКНЕНОМУ
+            # гейті ціль угоди не фіксувалась — і TP-2 обирався пізніше, іншим
+            # шляхом (`_pilot_tick`). Вибір цілі не має залежати від того, чи
+            # судимо ми угоду за R: правило одне (🧲 магніт → фолбек автопілот).
+            _rr, _rr_detail = self._q4_expected_r(sym, _open_dir, s)
             if _min_rr > 0:
-                _rr, _rr_detail = self._q4_expected_r(sym, _open_dir, s)
                 if _rr is not None and _rr < _min_rr:
                     # 🔇 Анти-флуд той самий, що й у повторної перевірки.
                     _rk2 = (_open_dir, f'rr<{_min_rr}')
@@ -6884,16 +6889,17 @@ class FuelFilterDaemon:
                                  f'Черга-4 📐 R достатній: {_rr_detail} '
                                  f'(поріг {_min_rr:g}R) — відкриваємо',
                                  side=_open_dir, source='Q4')
-                # 🎯 Ціль, за якою пройшов гейт, ФІКСУЄМО в угоді: автопілот
-                # візьме саме її, і R у колонці дорівнюватиме R рішення.
-                _obj = self._q4_rr_objective.pop(sym, None)
-                if _obj:
-                    try:
-                        _tmx = self._get_tm() if self._get_tm else None
-                        if _tmx and hasattr(_tmx, 'set_pending_objective'):
-                            _tmx.set_pending_objective(sym, _obj)
-                    except Exception:
-                        pass
+            # 🎯 ЦІЛЬ ФІКСУЄМО В УГОДІ — ПОЗА гейтом (він може бути вимкнений).
+            # Автопілот візьме саме її: R у колонці дорівнюватиме R рішення, а
+            # Manual TP-2 стане тим самим 🧲 магнітом, який обрано вище.
+            _obj = self._q4_rr_objective.pop(sym, None)
+            if _obj:
+                try:
+                    _tmx = self._get_tm() if self._get_tm else None
+                    if _tmx and hasattr(_tmx, 'set_pending_objective'):
+                        _tmx.set_pending_objective(sym, _obj)
+                except Exception:
+                    pass
             try:
                 _flip = '' if _open_dir == d else f' (ФЛІП: сигнал був {d}, показники — {_open_dir})'
                 _trace = f'Черга-4{_flip} · ' + self._origin_trace(sym, info, lay, now)
@@ -7118,6 +7124,71 @@ class FuelFilterDaemon:
             pass
 
         # 2) ЦІЛЬ — та сама, що потім стане TP-2 автопілота.
+        obj, obj_note = self._q4_pick_objective(sym, side, ref, tm, trade_pilot)
+        if not obj:
+            return None, obj_note or 'змістовної цілі попереду немає'
+
+        r = trade_pilot.risk_reward(ref, sl, obj)
+        if r is None:
+            return None, 'R не порахувався'
+        _risk = abs(ref - sl) / ref * 100.0
+        _rew = abs(float(obj.get('price')) - ref) / ref * 100.0
+        # 🎯 Ціль ЗАПАМʼЯТОВУЄМО: за нею гейт ухвалює рішення, тож саме вона
+        # має стати ціллю угоди. Інакше R, за яким пропустили, і R, який потім
+        # стоїть у колонці, — різні числа (кейс VETUSDT: 1.0R на вході → 0.43R
+        # через 90 секунд, бо пул ліквідності зник із контексту).
+        self._q4_rr_objective[sym] = dict(obj)
+        return r, (f"{r}R · ціль {obj.get('label')} +{_rew:.2f}% / "
+                   f"стоп {chosen[1]} −{_risk:.2f}%"
+                   + (f" · {obj_note}" if obj_note else ''))
+
+    def _q4_pick_objective(self, sym: str, side: str, ref: float, tm,
+                           trade_pilot):
+        """🎯 ЦІЛЬ УГОДИ (= Manual TP-2) → `(obj, note)`. ЄДИНЕ місце вибору.
+
+        **🧲 МАГНІТ ЛІКВІДНОСТІ — У ПРІОРИТЕТІ** (вимога користувача, кейс
+        STXUSDT 06.09). Порядок:
+          1. `tm._magnet_objective(sym, side, ref)` — найбільша сходинка
+             драбини **ПОПЕРЕДУ входу в бік угоди** (`pick_magnet_ahead`),
+             ближня межа смуги, ≥ `pilot_tp_min_gap_pct`;
+          2. немає магніту (біржа мовчить / попереду нічого / надто близько)
+             → ціль автопілота з обʼєктів графіка (як було).
+
+        ⚠️ **ЧОМУ ВИБІР СТОЇТЬ САМЕ ТУТ, А НЕ В `_pilot_tick`.** Магніт у
+        `_pilot_tick` застосовується, ЛИШЕ якщо `pilot_objective` ще порожня —
+        а на Q4-угодах її вже заповнив R-гейт (`set_pending_objective`), тож
+        магніт не мав шансу. Саме це показав STXUSDT: у лозі
+        «R достатній: 1.44R · ціль Weak High +5.55%», а магніт $0.28000–0.28500
+        (найбільший ПОПЕРЕДУ для LONG) не брався взагалі.
+        Перенести вибір у гейт було ОБОВʼЯЗКОВО: інакше R, за яким гейт
+        пропустив, і R реальної угоди — знову різні числа (кейс VETUSDT).
+        Тепер гейт судить угоду САМЕ за магнітом.
+
+        ⚠️ Тумблер той самий — `pilot_tp2_from_magnet` (деф. ON). Другого
+        налаштування «магніт у пріоритеті» НЕ заводимо: одна річ — один
+        вимикач, інакше два прапорці описували б одне рішення.
+        """
+        note = ''
+        use_magnet = True
+        try:
+            use_magnet = bool((tm.get_settings() or {}).get(
+                'pilot_tp2_from_magnet', True))
+        except Exception:
+            pass
+
+        if use_magnet:
+            try:
+                mag = tm._magnet_objective(sym, side, ref)
+            except Exception as e:
+                mag, note = None, f'магніт недоступний ({str(e)[:40]})'
+            if mag and mag.get('price'):
+                return dict(mag), '🧲 ціль із магніту ліквідності'
+            if not note:
+                # Чому магніту немає — пишемо ЧЕСНО, інакше «ціль Weak High»
+                # виглядала б як вибір, хоча це фолбек.
+                _why = getattr(tm, '_magnet_skip', '') or 'магніта попереду немає'
+                note = f'🧲 фолбек на ціль автопілота ({_why})'
+
         try:
             ctx = tm._pilot_context(sym, side) or {}
         except Exception as e:
@@ -7131,19 +7202,7 @@ class FuelFilterDaemon:
             return None, f'цілі не порахувались ({e})'
         if not obj:
             return None, 'змістовної цілі попереду немає'
-
-        r = trade_pilot.risk_reward(ref, sl, obj)
-        if r is None:
-            return None, 'R не порахувався'
-        _risk = abs(ref - sl) / ref * 100.0
-        _rew = abs(float(obj.get('price')) - ref) / ref * 100.0
-        # 🎯 Ціль ЗАПАМʼЯТОВУЄМО: за нею гейт ухвалює рішення, тож саме вона
-        # має стати ціллю угоди. Інакше R, за яким пропустили, і R, який потім
-        # стоїть у колонці, — різні числа (кейс VETUSDT: 1.0R на вході → 0.43R
-        # через 90 секунд, бо пул ліквідності зник із контексту).
-        self._q4_rr_objective[sym] = dict(obj)
-        return r, (f"{r}R · ціль {obj.get('label')} +{_rew:.2f}% / "
-                   f"стоп {chosen[1]} −{_risk:.2f}%")
+        return obj, note
 
     def _q4_pick_sl(self, sym: str, side: str, src: str, buf: float, ref):
         """Обрати рівень SL із ланцюга джерел — ЄДИНЕ місце цього вибору.
