@@ -40,10 +40,18 @@ Algorithm summary:
   
   Mirror for BEARISH events: slice parsedHighs, find max instead.
 
-User requirement: only the LAST valid (unmitigated) OB matters for display.
-That is internalOrderBlocks[0] after all delete-mitigation passes have run
-through to the latest bar. Returns None if every detected OB has been
-mitigated, which is normal — strong trends mitigate counter-trend OBs.
+⚠️ ДВІ ФУНКЦІЇ, ДВА РІЗНІ ПРИЗНАЧЕННЯ (не плутати!):
+
+  • `detect_last_order_block(...)` → ОДИН блок = `internalOrderBlocks[0]`,
+    найновіший НЕмітигований. Це **ворота входу**: `Require OB Match` питає
+    «яка структура ПРЯМО ЗАРАЗ». Поведінка НЕ змінювалась.
+
+  • `detect_order_blocks(...)` → **УВЕСЬ список живих блоків** (обидва боки,
+    найновіший першим). Це **показ**: TradingView/LuxAlgo малює всі живі
+    блоки одночасно, і поки бот віддавав лише `obs[0]`, його графік фізично
+    не міг збігтися з TV — протилежний живий блок обчислювався і викидався
+    на `return`. Кейс BTCUSDT 07.09: на TV висів ведмежий 1H-OB, у боті
+    стояв «🟢 OB Long 1H ★», бо ведмежий лежав у списку під індексом 1.
 """
 
 from typing import Dict, List, Optional
@@ -92,11 +100,31 @@ def detect_last_order_block(
                 'created_at_t': int,    # timestamp of that triggering event
             }
     """
+    obs = _live_blocks(klines, pivots, events, atr_period,
+                       filter_method, mitigation_method)
+    return _serialize_ob(obs[0]) if obs else None
+
+
+def _live_blocks(
+    klines: List[Dict],
+    pivots: List[Dict],
+    events: List[Dict],
+    atr_period: int = 200,
+    filter_method: str = 'ATR',
+    mitigation_method: str = 'HIGHLOW',
+) -> List[Dict]:
+    """Повний прохід Pine → СИРИЙ список живих блоків (найновіший ПЕРШИМ).
+
+    ЄДИНЕ місце самого обчислення: і ворота (`detect_last_order_block`), і
+    показ (`detect_order_blocks`) беруть результат ЗВІДСИ. Інакше два різні
+    проходи рано чи пізно розійшлись би — і на графіку стояло б не те, за чим
+    ухвалено рішення.
+    """
     n = len(klines)
     if n < atr_period + 2:
         # Not enough history for ATR-based filter; without a stable ATR
         # the parsedHigh/Low classification flips wildly.
-        return None
+        return []
     
     # === Pre-compute ATR(200) (Wilder smoothing — Pine ta.atr semantics) ===
     # ta.atr(N) in Pine: TR_i = max(high-low, |high-prev_close|, |low-prev_close|)
@@ -261,25 +289,53 @@ def detect_last_order_block(
             elif ob['bias'] == BULLISH and bull_src < ob['bar_low']:
                 obs.pop(ob_idx)
     
-    # User wants only the latest valid OB. After the full pass, if the list
-    # is non-empty, index 0 is the most recently stored AND not yet mitigated
-    # (because mitigation removes from the list, not just marks).
-    if not obs:
-        return None
-    
-    last_ob = obs[0]
-    # Convert Pine-internal ints to readable strings for the JSON layer
+    # Після повного проходу в `obs` лишились ЛИШЕ немітиговані блоки
+    # (мітигація ВИДАЛЯЄ зі списку, а не позначає). Індекс 0 — найновіший.
+    return obs
+
+
+def _serialize_ob(ob: Dict) -> Dict:
+    """Pine-внутрішні int-и → читабельний dict для JSON-шару."""
     return {
-        'bias': 'BULLISH' if last_ob['bias'] == BULLISH else 'BEARISH',
-        'bar_high': float(last_ob['bar_high']),
-        'bar_low': float(last_ob['bar_low']),
-        'bar_time': int(last_ob['bar_time']),
-        'bar_idx': int(last_ob['bar_idx']),
-        'created_at_idx': int(last_ob['created_at_idx']),
-        'created_at_t': int(last_ob['created_at_t']),
+        'bias': 'BULLISH' if ob['bias'] == BULLISH else 'BEARISH',
+        'bar_high': float(ob['bar_high']),
+        'bar_low': float(ob['bar_low']),
+        'bar_time': int(ob['bar_time']),
+        'bar_idx': int(ob['bar_idx']),
+        'created_at_idx': int(ob['created_at_idx']),
+        'created_at_t': int(ob['created_at_t']),
         # 'CHoCH' or 'BOS' — used downstream to gate "fresh-only" trades
-        'created_by_tag': str(last_ob.get('created_by_tag', '')),
+        'created_by_tag': str(ob.get('created_by_tag', '')),
     }
+
+
+def detect_order_blocks(
+    klines: List[Dict],
+    pivots: List[Dict],
+    events: List[Dict],
+    atr_period: int = 200,
+    filter_method: str = 'ATR',
+    mitigation_method: str = 'HIGHLOW',
+    limit: int = 8,
+) -> List[Dict]:
+    """🖼 УСІ живі (немітиговані) блоки, найновіший ПЕРШИМ — для ПОКАЗУ.
+
+    Той самий прохід Pine, що й у `detect_last_order_block`; різниця лише в
+    тому, що ми НЕ викидаємо решту списку.
+
+    ⚠️ **Навіщо окрема функція, а не зміна старої.** `detect_last_order_block`
+    живить ВОРОТА ВХОДУ (`Require OB Match` + «лише з CHoCH»), а там правило
+    задокументоване й навмисне: перевіряється ПОТОЧНИЙ (останній) блок. Якби
+    я змінив її повернення, показ і торгівля поїхали б разом — а треба, щоб
+    поїхав ЛИШЕ показ.
+
+    `limit` — стеля, щоб на довгій історії не віддавати десятки боксів
+    (LuxAlgo так само має ліміт показу).
+    """
+    obs = _live_blocks(klines, pivots, events, atr_period,
+                       filter_method, mitigation_method)
+    n = max(1, int(limit or 8))
+    return [_serialize_ob(o) for o in obs[:n]]
 
 
 def _compute_atr_wilder(klines: List[Dict], period: int) -> List[Optional[float]]:

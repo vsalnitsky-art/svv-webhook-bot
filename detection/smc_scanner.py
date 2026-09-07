@@ -485,6 +485,16 @@ class SMCScanner:
         # тихого відкидання: раніше stale/epoch гинули без сліду — тепер ні.
         self._vob_diag: Dict[str, Dict] = {}
 
+        # 🖼 УСІ ЖИВІ 1H-БЛОКИ обох сімей (internal + swing) — ЛИШЕ ДЛЯ ПОКАЗУ,
+        # щоб графік бота збігався з LuxAlgo. Пишеться в `_update_smc_ob` (той
+        # самий скан-тік, ті самі бари), читається в `get_chart_data`.
+        # {symbol: {'tf', 'ts', 'internal': [ob,…], 'swing': [ob,…]}}
+        # ⚠️ IN-MEMORY, а НЕ в БД — свідомо: це похідні від скану дані, після
+        # рестарту вони відновляться першим же циклом (як `_vob_diag`), і БД не
+        # треба мігрувати. ⚠️ І НЕ рахувати їх інлайн у `get_chart_data`: саме
+        # так колись зʼявився баг «бейдж каже 1H, а числа з чарт-TF».
+        self._ob_zones: Dict[str, Dict] = {}
+
         # Signal markers per symbol — points on the chart where Telegram alerts
         # actually fired. Used to display LONG/SHORT dots on the chart.
         # {symbol: [{'time': ts_sec, 'price': float, 'side': 'LONG'|'SHORT'}, ...]}
@@ -2354,13 +2364,54 @@ class SMCScanner:
                                        internal_size=isize,
                                        swing_size=ssize)
         internal = result.get('internal', {})
-        
+
         ob = detect_last_order_block(
             klines=klines_closed,
             pivots=internal.get('pivots', []),
             events=internal.get('events', []),
         )
-        
+
+        # 🖼 УСІ ЖИВІ БЛОКИ — ДЛЯ ПОКАЗУ (щоб графік збігався з TradingView).
+        #
+        # ⚠️ ДВІ ПРИЧИНИ, чому бот НЕ малював те, що видно в LuxAlgo (кейс
+        # BTCUSDT 07.09: на TV ведмежий 1H-OB, у боті «🟢 OB Long 1H ★»):
+        #  1) `detect_last_order_block` віддає РІВНО ОДИН блок — `obs[0]`.
+        #     Живий блок протилежного боку рахувався і викидався на `return`.
+        #  2) `result['swing']` рахувався ТУТ ЖЕ (один прохід із internal) —
+        #     і не використовувався взагалі. Тобто **Swing Order Blocks**
+        #     (`swing_size`, LuxAlgo «Swing Order Blocks») бот не мав у
+        #     принципі, а в LuxAlgo це ОКРЕМА сім'я блоків зі своїм тумблером.
+        #
+        # Тепер віддаємо ОБИДВІ сім'ї повністю. Мережі це не коштує НІЧОГО:
+        # ті самі `klines_closed` і той самий `result`, лише ще один прохід
+        # Pine по вже завантажених барах.
+        #
+        # ⚠️ ВОРОТА ВХОДУ НЕ ЧІПАЄМО: `sob_smc_ob_state` (рядок для
+        # `Require OB Match` / «лише з CHoCH» / такту `vob_one_per_ob`) і далі
+        # пише РІВНО `ob` — поточний internal-блок. Зміна суто показова.
+        try:
+            from detection.ob_detector import detect_order_blocks
+            _swing = result.get('swing', {})
+            self._ob_zones[symbol] = {
+                'tf': ob_tf,
+                'ts': time.time(),
+                'internal': detect_order_blocks(
+                    klines=klines_closed,
+                    pivots=internal.get('pivots', []),
+                    events=internal.get('events', []),
+                    limit=self.OB_ZONES_SHOW),
+                'swing': detect_order_blocks(
+                    klines=klines_closed,
+                    pivots=_swing.get('pivots', []),
+                    events=_swing.get('events', []),
+                    limit=self.OB_ZONES_SHOW),
+            }
+            if len(self._ob_zones) > self.OB_ZONES_CAP:
+                self._ob_zones.clear()      # проста стеля памʼяті
+        except Exception as e:
+            if self._errors <= 5:
+                print(f"[SMC] OB zones error for {symbol}@{ob_tf}: {e}")
+
         # Persist (None ob means "computed but no valid OB" — explicit clear)
         try:
             db = get_db()
@@ -2604,6 +2655,10 @@ class SMCScanner:
 
     # Скільки останніх formation_time тримаємо як «вже опрацьовані» на бік.
     VOB_SEEN_CAP = 12
+    # Скільки живих блоків віддавати на показ (LuxAlgo теж має ліміт показу)
+    # і стеля памʼяті на кількість монет у `_ob_zones`.
+    OB_ZONES_SHOW = 8
+    OB_ZONES_CAP = 300
 
     # Скільки паралельних завантажень барів тримаємо. Це чисте мережеве
     # очікування (GIL відпускається), тож пул дає майже лінійне прискорення.
@@ -4726,6 +4781,13 @@ class SMCScanner:
             # ob_filter_enabled=False we still publish last_ob for display.
             'ob_filter_enabled': bool(self._settings.get('ob_filter_enabled', False)),
             'ob_filter_timeframe': ob_tf_used,
+            # 🖼 УСІ ЖИВІ 1H-БЛОКИ обох сімей — щоб графік збігався з LuxAlgo.
+            # `last_ob` вище лишається ОДНИМ поточним блоком (його читають
+            # бейдж і ворота); тут — повна картина: {'internal': [...],
+            # 'swing': [...]}. Готовий знімок зі скану, БЕЗ розрахунку тут:
+            # інлайн-обчислення на цьому ендпоінті вже давало «мітка 1H, а
+            # числа з чарт-TF» — не повторюємо.
+            'ob_zones': dict(self._ob_zones.get(symbol) or {}),
             # 🟦 Останній Volumized OB (для малювання ОДНОГО боксу на графіку,
             # як у Pine «Volumized Order Blocks»). Порахований з ТОЧНИМИ параметрами.
             'volumized_ob': self._latest_volumized_ob(symbol),

@@ -4721,21 +4721,30 @@ let volObPrim = null;
 // щоб НЕ плутати з зелено-червоними Volumized-блоками.
 let obMatchPrim = null;
 class VolOBPrimitive {
-    constructor() { this._ob = null; this._chart = null; this._series = null; this._req = null; }
+    // ⚠️ Тримає СПИСОК боксів, а не один. Причина: LuxAlgo малює ВСІ живі
+    // блоки одночасно, і поки примітив умів лише один, графік бота фізично
+    // не міг збігтися з TradingView (кейс BTCUSDT 07.09).
+    // `setOB(one)` лишено для сумісності — це просто список з одного.
+    constructor() { this._obs = []; this._chart = null; this._series = null; this._req = null; }
     attached(p) { this._chart = p.chart; this._series = p.series; this._req = p.requestUpdate; }
     detached() { this._chart = null; this._series = null; this._req = null; }
-    setOB(ob) { this._ob = ob; if (this._req) this._req(); }
+    setOB(ob) { this.setOBs(ob ? [ob] : []); }
+    setOBs(list) { this._obs = Array.isArray(list) ? list.filter(Boolean) : []; if (this._req) this._req(); }
     paneViews() {
         const self = this;
         return [{
             renderer: () => ({
                 draw: (target) => {
-                    const ob = self._ob;
-                    if (!ob || !self._series || !self._chart) return;
+                    if (!self._series || !self._chart) return;
+                    // Малюємо ЗАДОМ НАПЕРЕД: найновіший блок (індекс 0) лягає
+                    // ЗВЕРХУ, щоб його рамку й підпис не перекрили старіші.
+                    for (let _i = self._obs.length - 1; _i >= 0; _i--) {
+                    const ob = self._obs[_i];
+                    if (!ob) continue;
                     const x1raw = self._chart.timeScale().timeToCoordinate(ob.startSec);
                     const yA = self._series.priceToCoordinate(ob.top);
                     const yB = self._series.priceToCoordinate(ob.bottom);
-                    if (x1raw == null || yA == null || yB == null) return;
+                    if (x1raw == null || yA == null || yB == null) continue;
                     target.useBitmapCoordinateSpace((scope) => {
                         const ctx = scope.context;
                         const hr = scope.horizontalPixelRatio, vr = scope.verticalPixelRatio;
@@ -4776,6 +4785,7 @@ class VolOBPrimitive {
                             ctx.textBaseline = 'alphabetic';
                         }
                     });
+                    }   // ← кінець циклу по боксах
                 },
             }),
         }];
@@ -7002,33 +7012,60 @@ async function loadChart() {
         // «Require OB Match» НЕ дозволяє вхід (bar_high/bar_low на
         // ob_filter_timeframe). Кольори teal (BULL) / orange (BEAR) + ПУНКТИРНА
         // рамка — щоб чітко відрізнявся від зелено-червоних Volumized-блоків.
-        // Показуємо лише коли OB-фільтр увімкнено (як Volumized — за своїм тумблером).
+        //
+        // 🖼 ЯК У TRADINGVIEW: малюємо ВСІ живі блоки ОБОХ сімей.
+        //
+        // ⚠️ Прибрано умову `d.ob_filter_enabled`: блоки малюються ЗАВЖДИ.
+        // У LuxAlgo вони теж не залежать від того, чи хтось за ними торгує —
+        // це ПОКАЗ структури, а тумблер `Require OB Match` керує ВОРОТАМИ
+        // ВХОДУ. Прив'язка показу до воріт означала, що при вимкненому
+        // фільтрі графік просто мовчав про структуру, яка на ньому є.
+        //
+        // Було: рівно ОДИН бокс із `d.last_ob`. Через це графік бота фізично не
+        // міг збігтися з LuxAlgo — там одночасно висять і бичачі, і ведмежі
+        // блоки, ще й ДВІ окремі сім'ї (Internal size=5 / Swing size=50).
+        // Кейс BTCUSDT 07.09: на TV ведмежий 1H-OB, у боті «🟢 OB Long 1H ★».
+        //
+        // Джерело — `d.ob_zones` (готовий знімок зі СКАНУ, не рахується тут).
+        // Фолбек на `d.last_ob` — коли скан ще не встиг заповнити зони.
         if (obMatchPrim) {
-            const mob = d.last_ob;
-            if (d.ob_filter_enabled && mob && mob.bias
-                    && typeof mob.bar_high === 'number' && typeof mob.bar_low === 'number'
-                    && mob.bar_time) {
-                const isBull = mob.bias === 'BULLISH';
-                const stroke = isBull ? '#14b8a6' : '#f97316';       // teal / orange
-                const fill = isBull ? 'rgba(20,184,166,0.12)' : 'rgba(249,115,22,0.12)';
-                const obTfS = (d.ob_filter_timeframe || '1h').toUpperCase();
-                const tag = (mob.created_by_tag || '').toUpperCase();
+            const zones = d.ob_zones || {};
+            const obTfS = (d.ob_filter_timeframe || '1h').toUpperCase();
+            const seen = new Set();
+            const boxes = [];
+            const push = (o, fam) => {
+                if (!o || !o.bias || typeof o.bar_high !== 'number'
+                        || typeof o.bar_low !== 'number' || !o.bar_time) return;
+                // Той самий блок може бути і в internal, і в swing — не дублюємо.
+                const key = `${o.bar_time}|${o.bar_high}|${o.bar_low}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                const isBull = o.bias === 'BULLISH';
+                const isSwing = fam === 'swing';
+                const tag = (o.created_by_tag || '').toUpperCase();
                 const tagMark = tag === 'CHOCH' ? 'CHoCH ★' : (tag === 'BOS' ? 'BOS →' : 'OB');
-                obMatchPrim.setOB({
-                    // bar_time (мс)→с, потім прив'язка до бару графіка (на випадок
-                    // OB-TF, дрібнішого за TF графіка — щоб бокс не зникав).
-                    startSec: _snapSecToChart((mob.bar_time || 0) / 1000, ohlc),
-                    top: mob.bar_high, bottom: mob.bar_low,
-                    stroke: stroke, fill: fill,
+                // Кольори — teal/orange (як було). Свінг-блоки густіші й
+                // яскравіші: у LuxAlgo це «старша» сім'я, вона важливіша.
+                boxes.push({
+                    startSec: _snapSecToChart((o.bar_time || 0) / 1000, ohlc),
+                    top: o.bar_high, bottom: o.bar_low,
+                    stroke: isBull ? '#14b8a6' : '#f97316',
+                    fill: isBull
+                        ? (isSwing ? 'rgba(20,184,166,0.16)' : 'rgba(20,184,166,0.08)')
+                        : (isSwing ? 'rgba(249,115,22,0.16)' : 'rgba(249,115,22,0.08)'),
                     textColor: isBull ? '#bff3ec' : '#ffe3c2',
                     subColor: isBull ? '#5eead4' : '#fdba74',
-                    dashed: true,                            // пунктир — відрізнити від Volumized
+                    dashed: true,                    // пунктир — відрізнити від Volumized
                     labelMain: tagMark,
-                    labelSub: `${obTfS} OB-фільтр`,
+                    labelSub: `${obTfS} ${isSwing ? 'swing' : 'internal'} OB`,
                 });
-            } else {
-                obMatchPrim.setOB(null);   // фільтр вимкнено / немає OB → не малюємо
-            }
+            };
+            // Порядок важливий: internal іде ПЕРШИМ, бо саме його блок [0]
+            // читають ворота й бейдж — він має лежати зверху.
+            (zones.internal || []).forEach(o => push(o, 'internal'));
+            (zones.swing || []).forEach(o => push(o, 'swing'));
+            if (!boxes.length) push(d.last_ob, 'internal');   // фолбек до першого скану
+            obMatchPrim.setOBs(boxes);
         }
 
         // === Trend badge ===
@@ -7117,6 +7154,17 @@ async function loadChart() {
             const filterStatus = obFilterOn
                 ? '🔒 FILTER ACTIVE — gates new signals'
                 : '📊 Informational only (filter OFF)';
+            // 🖼 СКІЛЬКИ ЖИВИХ БЛОКІВ БАЧИТЬ БОТ — щоб «чому на TV є, а тут
+            // нема» перевірялось наведенням, а не звіркою з кодом. Бейдж і
+            // ворота показують ОДИН (поточний internal), на графіку — усі.
+            const _z = d.ob_zones || {};
+            const _cnt = (arr) => {
+                const a = arr || [];
+                const b = a.filter(x => x && x.bias === 'BULLISH').length;
+                return a.length ? `${a.length} (🟢${b} / 🔴${a.length - b})` : '—';
+            };
+            const zonesLine = `Живих блоків на ${obTf}: internal ${_cnt(_z.internal)}`
+                + ` · swing ${_cnt(_z.swing)}`;
             const tip = [
                 `Last valid Order Block · ${ob.bias} · ${obTf}`,
                 filterStatus,
@@ -7124,6 +7172,10 @@ async function loadChart() {
                 '',
                 `Zone: ${fmtPriceJS(ob.bar_low)} — ${fmtPriceJS(ob.bar_high)}`,
                 `Created: ${ageStr}`,
+                '',
+                zonesLine,
+                'Бейдж = ПОТОЧНИЙ блок (за ним працюють ворота).',
+                'На графіку намальовані ВСІ живі блоки обох сімей — як у LuxAlgo.',
                 '',
                 'Pine SMC_PRO_BOT__47_ algorithm:',
                 '• parsedHigh/Low volatility filter (ATR 200)',
