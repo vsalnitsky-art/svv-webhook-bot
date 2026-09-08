@@ -117,8 +117,14 @@ def _text():
 # ═══════════════════════════════ ТЕСТИ ══════════════════════════════════════
 def test_mnt_case_star_1h_block_is_used_instead_of_waiting():
     """MNTUSDT: 15m-OB БИЧАЧИЙ при SHORT. Раніше — «чекаю BEARISH» і жодного
-    стопа. Тепер має підхопитись ★1H-OB (ВЕДМЕЖИЙ), як на графіку."""
-    _reset()
+    стопа. Ланцюг мусить ПРОВАЛИТИСЬ далі й узяти ★1H-OB (ВЕДМЕЖИЙ).
+
+    ⚠️ Обране джерело («🛑 SL з») тепер ПЕРШЕ для будь-якої угоди, тож щоб
+    перевірити САМЕ прохід крізь непридатний 15m-OB, ставимо джерелом
+    «15m Volumized» і не даємо жодного Volumized-блоку: ланцюг іде
+    Volumized(порожньо) → 15m OB(протилежний) → ★1H OB(придатний).
+    """
+    _reset(queue4_sl_source='15m')
     _OB_ROWS['15m'] = {'bias': 'BULLISH', 'bar_high': 0.5150, 'bar_low': 0.5100}
     _OB_ROWS['1h'] = {'bias': 'BEARISH', 'bar_high': 0.5285, 'bar_low': 0.5250}
     p = _pos()
@@ -132,16 +138,37 @@ def test_mnt_case_star_1h_block_is_used_instead_of_waiting():
     print('✓ MNTUSDT: замість «чекаю BEARISH» узято ★1H-OB → SL поставлено')
 
 
-def test_primary_tf_still_wins_when_valid():
-    """Стара поведінка збережена: придатний OB на обраному TF — перший у черзі."""
-    _reset()
+def test_chosen_source_wins_for_every_trade():
+    """🛑 «SL з» — ГЛОБАЛЬНЕ джерело (виправлено 08.09).
+
+    РАНІШЕ вибір застосовувався ЛИШЕ до угод Черги-4 (`'Q4' in opened_by`), а
+    на прямому відкритті мовчки бралося «OB TF» (деф. 15m) — те саме поле
+    давало РІЗНИЙ стоп залежно від того, хто відкрив угоду. Тут позиція БЕЗ
+    `opened_by`, тобто найзвичайніше пряме відкриття.
+    """
+    _reset()                       # queue4_sl_source за замовчуванням = '1h'
     _OB_ROWS['15m'] = {'bias': 'BEARISH', 'bar_high': 0.5200, 'bar_low': 0.5150}
     _OB_ROWS['1h'] = {'bias': 'BEARISH', 'bar_high': 0.5285, 'bar_low': 0.5250}
     p = _pos()
+    _check('opened_by' not in p, 'позиція навмисно БЕЗ походження — прямий шлях')
+    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
+    _check(_near(p['manual_sl'], 0.5285 * 1.002),
+           f'мав узятись ★1H (обране джерело), отримано {p["manual_sl"]}')
+    _check('обране джерело' in _text(), f'у лозі має бути видно, що це вибір: {_text()}')
+    print('✓ обране «🛑 SL з» діє на КОЖНУ угоду, не лише на Q4')
+
+
+def test_ob_tf_is_the_fallback_when_chosen_source_has_nothing():
+    """«OB TF» (`q2_auto_ob_sl_tf`) не зник — він став ФОЛБЕКОМ: спрацьовує,
+    коли обране джерело нічого не дало."""
+    _reset()                       # обране = '1h', але ★1H-рядка немає
+    _OB_ROWS['1h'] = None
+    _OB_ROWS['15m'] = {'bias': 'BEARISH', 'bar_high': 0.5200, 'bar_low': 0.5150}
+    p = _pos()
     _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
     _check(_near(p['manual_sl'], 0.5200 * 1.002),
-           f'мав узятись 15m (обраний TF), отримано {p["manual_sl"]}')
-    print('✓ придатний OB на обраному TF і далі має пріоритет')
+           f'мав узятись фолбек 15m, отримано {p.get("manual_sl")}')
+    print('✓ «OB TF» лишився робочим фолбеком')
 
 
 def test_volumized_used_when_both_ob_rows_unusable():
@@ -203,13 +230,14 @@ def test_fallback_can_be_turned_off():
 def test_wrong_side_level_is_skipped_not_applied():
     """Рівень з неправильного боку закрив би угоду наступним тіком монітора."""
     _reset()
-    # Ведмежий 15m-блок, але ціна вже ВИЩЕ його верху → стоп нижче ціни.
-    _OB_ROWS['15m'] = {'bias': 'BEARISH', 'bar_high': 0.5100, 'bar_low': 0.5050}
-    _OB_ROWS['1h'] = {'bias': 'BEARISH', 'bar_high': 0.5285, 'bar_low': 0.5250}
+    # Ведмежий ★1H-блок (ОБРАНЕ джерело, іде першим), але ціна вже ВИЩЕ його
+    # верху → стоп опинився б НИЖЧЕ ціни. Придатний рівень дає фолбек 15m.
+    _OB_ROWS['1h'] = {'bias': 'BEARISH', 'bar_high': 0.5100, 'bar_low': 0.5050}
+    _OB_ROWS['15m'] = {'bias': 'BEARISH', 'bar_high': 0.5285, 'bar_low': 0.5250}
     p = _pos()
     _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
     _check(_near(p['manual_sl'], 0.5285 * 1.002),
-           f'мав перейти на ★1H, отримано {p.get("manual_sl")}')
+           f'мав перейти на фолбек 15m, отримано {p.get("manual_sl")}')
     _check('неправильного боку' in _text(), f'причина в лозі: {_text()}')
     print('✓ рівень із неправильного боку пропускається, а не ставиться')
 
@@ -354,7 +382,7 @@ def test_rejected_level_leaves_no_mark():
     print('✓ відхилений рівень не лишає позначки')
 
 
-# ═════ 🎯 ДЖЕРЕЛО SL МАЄ ВІДПОВІДАТИ НАЛАШТУВАННЮ ЧЕРГИ-4 ══════════════════
+# ═════ 🎯 ДЖЕРЕЛО SL = НАЛАШТУВАННЯ «🛑 SL з» (ГЛОБАЛЬНО, не лише Черга-4) ═
 def test_q4_trade_uses_the_configured_1h_source_first():
     """🐞 Скарга: у Черзі-4 стоїть «SL з 1H OB», а в лозі — «SL з OB 15M».
     Причина: ДВА незалежні авто-SL зі СВОЇМИ таймфреймами; TM нічого не знав про
@@ -368,7 +396,8 @@ def test_q4_trade_uses_the_configured_1h_source_first():
     _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
     _check(_near(p['manual_sl'], 0.5285 * 1.002),
            f'мав узятись 1H-OB (як обрано в Черзі-4), отримано {p.get("manual_sl")}')
-    _check('Черга-4: 1H OB' in _text(), f'джерело має бути назване в лозі: {_text()}')
+    _check('обране джерело: 1H OB' in _text(),
+           f'джерело має бути назване в лозі: {_text()}')
     print('✓ угода з Черги-4 бере САМЕ обране джерело (1H OB), а не 15m')
 
 
@@ -386,17 +415,29 @@ def test_q4_trade_with_15m_choice_uses_volumized_15m():
     print('✓ вибір «15m Volumized OB» бере рівно 15m')
 
 
-def test_non_q4_trade_keeps_its_own_tf():
-    """Угоди НЕ з Черги-4 і далі йдуть за власним `q2_auto_ob_sl_tf`."""
+def test_every_trade_now_uses_the_chosen_source():
+    """⚠️ ЗМІНА КОНТРАКТУ (08.09). Раніше цей тест звався
+    `test_non_q4_trade_keeps_its_own_tf` і фіксував, що угоди НЕ з Черги-4
+    йдуть за власним `q2_auto_ob_sl_tf`. Саме це й було дефектом: те саме
+    поле «🛑 SL з» давало РІЗНИЙ стоп залежно від того, хто відкрив угоду, а
+    при вимкнених чергах не діяло взагалі. Тепер обране джерело — глобальне.
+    ⚠️ Стеля ризику від цього ЗМІНИЛАСЬ: не-Q4 угоди беруть 1H-блок замість
+    15m, тобто стоп зазвичай ДАЛІ. Регулюється «🎚 Стеля SL» або вибором
+    «15m Volumized OB»."""
     _reset(queue4_sl_source='1h', q2_auto_ob_sl_tf='15m')
     _OB_ROWS['15m'] = {'bias': 'BEARISH', 'bar_high': 0.5200, 'bar_low': 0.5150}
     _OB_ROWS['1h'] = {'bias': 'BEARISH', 'bar_high': 0.5285, 'bar_low': 0.5250}
-    p = _pos()
-    p['opened_by'] = 'choch → Q2'
-    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
-    _check(_near(p['manual_sl'], 0.5200 * 1.002),
-           f'не-Q4 угода лишається на своєму TF: {p.get("manual_sl")}')
-    print('✓ угоди не з Черги-4 поведінку не змінили')
+    for _origin in ('choch → Q2', 'manual', None):
+        _reset(queue4_sl_source='1h', q2_auto_ob_sl_tf='15m')
+        _OB_ROWS['15m'] = {'bias': 'BEARISH', 'bar_high': 0.5200, 'bar_low': 0.5150}
+        _OB_ROWS['1h'] = {'bias': 'BEARISH', 'bar_high': 0.5285, 'bar_low': 0.5250}
+        p = _pos()
+        if _origin:
+            p['opened_by'] = _origin
+        _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
+        _check(_near(p['manual_sl'], 0.5285 * 1.002),
+               f'{_origin!r}: мав узятись ★1H (обране), отримано {p.get("manual_sl")}')
+    print('✓ обране джерело діє на угоди БУДЬ-ЯКОГО походження')
 
 
 def test_q4_source_unavailable_falls_back_and_says_so():
@@ -708,7 +749,8 @@ def test_tp_lines_have_no_labels():
 
 if __name__ == '__main__':
     test_mnt_case_star_1h_block_is_used_instead_of_waiting()
-    test_primary_tf_still_wins_when_valid()
+    test_chosen_source_wins_for_every_trade()
+    test_ob_tf_is_the_fallback_when_chosen_source_has_nothing()
     test_volumized_used_when_both_ob_rows_unusable()
     test_volumized_skips_breaker()
     test_percent_fallback_guarantees_a_stop()
@@ -728,7 +770,7 @@ if __name__ == '__main__':
     test_rejected_level_leaves_no_mark()
     test_q4_trade_uses_the_configured_1h_source_first()
     test_q4_trade_with_15m_choice_uses_volumized_15m()
-    test_non_q4_trade_keeps_its_own_tf()
+    test_every_trade_now_uses_the_chosen_source()
     test_q4_source_unavailable_falls_back_and_says_so()
     test_breakeven_level_covers_round_trip_fees()
     test_tp1_moves_stop_to_breakeven()

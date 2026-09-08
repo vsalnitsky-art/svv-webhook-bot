@@ -7152,6 +7152,47 @@ class FuelFilterDaemon:
 
         return [_from_1h, _from_15m] if src == '1h' else [_from_15m, _from_1h]
 
+    # ══════════════════════════════════════════════════════════════════════
+    # 🎯 ГЛОБАЛЬНІ РІВНІ УГОДИ (SL · ціль=TP-2 · R) — ПОЗА ЧЕРГАМИ
+    # ══════════════════════════════════════════════════════════════════════
+    # Вимога користувача (08.09): «Винеси за межі Черга-4 автоматичний SL і TP…
+    # Це має спрацьовувати навіть, коли всі черги вимкнені. Сигнал відразу
+    # летів на відкриття угоди і присвоювались йому автоматично SL і TP.»
+    #
+    # Розрахунок і раніше був НЕ Q4-специфічний — він просто ЖИВ у двигуні
+    # Черги-4, тож при вимкнених чергах сигнал ішов повз нього прямо у
+    # відкриття: R ніхто не рахував, ціль (🧲 магніт) не фіксувалась, а стоп
+    # ставила інша гілка (`trade_manager._auto_ob_manual_sl`) зі СВОЇМ TF.
+    # Тепер це ПУБЛІЧНІ двері до ТОГО САМОГО розрахунку — і Черга-4, і прямий
+    # шлях TM ходять сюди. Другої реалізації НЕ заводимо (урок PD-зони).
+    # ⚠️ Працює НЕЗАЛЕЖНО від `enabled`: налаштування рівнів зберігаються у
+    # FF, але самі рівні до черг стосунку не мають.
+
+    def open_plan(self, symbol: str, side: str, s: Optional[Dict] = None):
+        """(r, detail, objective) — очікуваний R, людський розклад і ЦІЛЬ угоди.
+
+        `objective` — та сама ціль, що стане `pilot_objective` і Manual TP-2
+        (🧲 магніт ліквідності, інакше ціль автопілота). Викликач МУСИТЬ
+        покласти її на позицію через `TradeManager.set_pending_objective`,
+        інакше R рішення і R угоди розійдуться (кейс VETUSDT).
+        ⚠️ Ціль ЗАБИРАЄТЬСЯ (pop): це разова передача, а не кеш.
+        """
+        s = s or self.get_settings()
+        r, detail = self._q4_expected_r(symbol, side, s)
+        return r, detail, self._q4_rr_objective.pop(symbol, None)
+
+    def min_open_r(self, s: Optional[Dict] = None) -> float:
+        """📐 Поріг «Мін. R на відкриття». 0 = гейт вимкнено.
+
+        ⚠️ Ключ лишився `queue4_min_rr` — перейменування зламало б збережені
+        налаштування. Історична назва ключа ≠ область дії (той самий
+        прецедент, що з `q2_auto_ob_sl*`).
+        """
+        try:
+            return max(0.0, float((s or self.get_settings()).get('queue4_min_rr', 1.0) or 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
     def _q4_expected_r(self, sym: str, side: str, s: Dict):
         """📐 ОЧІКУВАНИЙ R угоди ЩЕ ДО ВІДКРИТТЯ → `(r, detail)`.
 
@@ -7322,10 +7363,12 @@ class FuelFilterDaemon:
         return chosen, skipped
 
     def _q4_set_vob_sl(self, sym: str, side: str, s: Dict):
-        """🛑 Черга-4: після відкриття ставить Manual SL на межу OB + буфер:
-        SHORT → над ВЕРХОМ, LONG → під НИЗОМ. Буфер = `queue3_vob_sl_buffer_pct`.
+        """🛑 Ставить Manual SL на межу OB + буфер ОДРАЗУ після відкриття:
 
-        Джерело блоку обирає користувач — `queue4_sl_source`:
+        SHORT → над ВЕРХОМ, LONG → під НИЗОМ. Буфер = `queue3_vob_sl_buffer_pct`.
+        Повертає True, якщо рівень ПРИЙНЯТО Trade Manager-ом.
+
+        Джерело блоку обирає користувач — `queue4_sl_source` («🛑 SL з»):
           • '1h' (ДЕФОЛТ) — 1H Order Block (★-блок сканера на `ob_filter_timeframe`);
           • '15m'         — Volumized OB на 15m.
 
@@ -7341,6 +7384,7 @@ class FuelFilterDaemon:
         except Exception:
             def log_activity(*_a, **_k):
                 pass
+        _tag, _src_name = 'Черга-4', 'Q4'
         try:
             src = str(s.get('queue4_sl_source', '1h') or '1h').lower()
             if src not in ('1h', '15m'):
@@ -7352,7 +7396,7 @@ class FuelFilterDaemon:
 
             tm = self._get_tm() if self._get_tm else None
             if not tm or not hasattr(tm, 'update_manual_sl_tp'):
-                return
+                return False
             # Орієнтир для перевірки боку — ТА САМА ціна, за якою валідує TM.
             ref = None
             try:
@@ -7366,10 +7410,10 @@ class FuelFilterDaemon:
 
             if not chosen:
                 log_activity(sym, 'sltp',
-                             'Черга-4: SL НЕ встановлено — '
+                             f'{_tag}: SL НЕ встановлено — '
                              + '; '.join(skipped or ['немає придатного блоку']),
-                             side=side, source='Q4')
-                return
+                             side=side, source=_src_name)
+                return False
 
             sl, label, fallback = chosen
             # 🛡 СТЕЛЯ ВІДСТАНІ — та сама, що й у авто-SL Trade Manager
@@ -7394,21 +7438,21 @@ class FuelFilterDaemon:
             _shadow = self._tm_has_position(sym, False)
             if not _real and not _shadow:
                 log_activity(sym, 'sltp',
-                             f'Черга-4: SL НЕ встановлено — позиції по {sym} немає '
+                             f'{_tag}: SL НЕ встановлено — позиції по {sym} немає '
                              '(закрилась одразу після відкриття?)',
-                             side=side, source='Q4')
-                return
+                             side=side, source=_src_name)
+                return False
             _is_shadow = (_shadow and not _real)
             try:
                 res = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=_is_shadow,
                                              origin='auto',
-                                             origin_label=f'Черга-4 · {label}') or {}
+                                             origin_label=f'{_tag} · {label}') or {}
             except Exception as e:
                 log_activity(sym, 'sltp',
-                             f'Черга-4: SL з {label} → {self._fmt_price(sl)} '
+                             f'{_tag}: SL з {label} → {self._fmt_price(sl)} '
                              f'НЕ встановлено (помилка: {e})',
-                             side=side, source='Q4')
-                return
+                             side=side, source=_src_name)
+                return False
             _fb = f' (фолбек: {"; ".join(skipped)})' if fallback and skipped else ''
             if res.get('ok'):
                 # Відстань стопа — щоб ризик угоди був ВИДНИЙ одразу в лозі, а не
@@ -7421,17 +7465,19 @@ class FuelFilterDaemon:
                 except (TypeError, ValueError, ZeroDivisionError):
                     _dist = ''
                 log_activity(sym, 'sltp',
-                             f'Черга-4: SL з {label} → {self._fmt_price(sl)}'
+                             f'{_tag}: SL з {label} → {self._fmt_price(sl)}'
                              f'{_dist}{_cap_note}{_fb}',
-                             side=side, source='Q4')
+                             side=side, source=_src_name)
+                return True
             else:
                 log_activity(sym, 'sltp',
-                             f'Черга-4: SL з {label} → {self._fmt_price(sl)} '
+                             f'{_tag}: SL з {label} → {self._fmt_price(sl)} '
                              f'ВІДХИЛЕНО Trade Manager: {res.get("reason", "—")}'
                              f'{_fb} — угода БЕЗ стопа',
-                             side=side, source='Q4')
+                             side=side, source=_src_name)
         except Exception as e:
-            print(f"[FF-Q4] SL-from-OB error {sym}: {e}")
+            print(f"[FF] SL-from-OB error {sym}: {e}")
+        return False
 
     def _engine_tick_readiness(self):
         """🎯 Queue 3 «Готовність» engine — opens a queued coin the MOMENT its SMC

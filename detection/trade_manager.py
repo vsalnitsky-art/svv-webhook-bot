@@ -320,6 +320,18 @@ DEFAULT_SETTINGS = {
     # УВІМКНЕНО: такий сигнал іде в Чергу-4 і чекає закриття позиції.
     'queue_opposite_signal': True,
     'pilot_tp_min_gap_pct': 0.40,
+    # 🎯 ДЕ ШУКАТИ TP-1 — вікно у % ШЛЯХУ від входу до TP-2 (не у % ціни!).
+    # ⚠️ Ці три параметри ІСНУВАЛИ в алгоритмі (`trade_pilot.DEFAULTS`), але не
+    # мали ключа в налаштуваннях — `cfg` збирається з `pilot_*`-ключів, яких тут
+    # не було, тож вікно було ЗАМУРОВАНЕ на 30/75/50 і змінити його з UI було
+    # неможливо. Кейс WIFUSDT (08.09): ціль +2.23%, вікно 30-75% = смуга шириною
+    # ~1% — жоден обʼєкт графіка туди не потрапив, і TP-1 щоразу ставав
+    # похідним «50% шляху». Тепер вікно і фолбек — налаштовні.
+    'pilot_tp1_min_path_pct': 30.0,
+    'pilot_tp1_max_path_pct': 75.0,
+    # Похідний рівень, коли обʼєкта у вікні немає. 0 = НЕ ставити TP-1 узагалі
+    # (працюємо одним TP-2) — це коректний стан, а не помилка.
+    'pilot_tp1_fallback_path_pct': 50.0,
     # Службова позначка одноразової міграції тумблера автозаповнення (див.
     # `_load_settings`). НЕ показується в UI, лише щоб міграція спрацювала раз.
     'pilot_autofill_migrated_v1': False,
@@ -846,6 +858,20 @@ class TradeManager:
                     1, min(720, int(self._settings.get('pilot_poc_hours', 72) or 72)))
             except (TypeError, ValueError):
                 self._settings['pilot_poc_hours'] = 72
+            # 🎯 Вікно пошуку TP-1 (% ШЛЯХУ до TP-2) + похідний фолбек.
+            # ⚠️ `max` не може бути меншим за `min` — інакше вікно порожнє і
+            # TP-1 не знайдеться НІКОЛИ, мовчки (виглядало б як «алгоритм не
+            # працює»). Зводимо до коректного порядку замість тихої поломки.
+            for _k, _d, _hi in (('pilot_tp1_min_path_pct', 30.0, 100.0),
+                                ('pilot_tp1_max_path_pct', 75.0, 100.0),
+                                ('pilot_tp1_fallback_path_pct', 50.0, 99.0)):
+                try:
+                    self._settings[_k] = max(0.0, min(_hi, float(
+                        self._settings.get(_k, _d) if self._settings.get(_k) is not None else _d)))
+                except (TypeError, ValueError):
+                    self._settings[_k] = _d
+            if self._settings['pilot_tp1_max_path_pct'] < self._settings['pilot_tp1_min_path_pct']:
+                self._settings['pilot_tp1_max_path_pct'] = self._settings['pilot_tp1_min_path_pct']
             _sem = str(self._settings.get('signal_exit_mode', 'or') or 'or').lower()
             self._settings['signal_exit_mode'] = _sem if _sem in ('or', 'and') else 'or'
 
@@ -1996,13 +2022,16 @@ class TradeManager:
         # `queue4_sl_source`, а цей (TM) мав власний `q2_auto_ob_sl_tf` (деф. 15m)
         # і нічого не знав про вибір користувача. Коли SL ставив ВІН — виходив
         # 15m, попри налаштування Черги-4.
-        # Тепер для угод, ВІДКРИТИХ Чергою-4, першим у ланцюгу стоїть САМЕ те
-        # джерело, яке обрано в її налаштуваннях. Решта — лише фолбек, і в лозі
-        # видно, чому обране джерело не спрацювало.
-        _from_q4 = 'Q4' in str(pos.get('opened_by') or '')
-        _q4_src = str(s.get('queue4_sl_source', '1h') or '1h').lower()
-        if _q4_src not in ('1h', '15m'):
-            _q4_src = '1h'
+        # 🛑 ДЖЕРЕЛО — ГЛОБАЛЬНЕ, ДЛЯ КОЖНОЇ УГОДИ (виправлено 08.09).
+        # РАНІШЕ вибір користувача застосовувався ЛИШЕ коли `opened_by` містив
+        # 'Q4' — тобто на прямому відкритті (усі черги вимкнені) налаштування
+        # «🛑 SL з» мовчки не діяло, і стоп брався з `q2_auto_ob_sl_tf` (деф.
+        # 15m). Те саме поле давало РІЗНИЙ стоп залежно від того, яка черга
+        # відкрила угоду. Тепер обране джерело йде ПЕРШИМ завжди; решта —
+        # фолбек, і в лозі видно, чому обране не спрацювало.
+        _sl_src = str(s.get('queue4_sl_source', '1h') or '1h').lower()
+        if _sl_src not in ('1h', '15m'):
+            _sl_src = '1h'
 
         sources, _seen_tf = [], set()
 
@@ -2011,18 +2040,13 @@ class TradeManager:
                 _seen_tf.add(tf)
                 sources.append(lambda: _from_ob(tf, tag))
 
-        if _from_q4:
-            # Пріоритет — вибір користувача в Черзі-4.
-            if _q4_src == '1h':
-                _add_ob(star_tf, f'★{star_tf.upper()} (Черга-4: 1H OB)')
-            else:
-                # «15m Volumized OB» — саме 15m, як написано в налаштуванні.
-                sources.append(lambda: _from_volumized('15m'))
-            _add_ob(ob_tf, ob_tf.upper())
-            _add_ob(star_tf, f'★{star_tf.upper()}')
+        if _sl_src == '1h':
+            _add_ob(star_tf, f'★{star_tf.upper()} (обране джерело: 1H OB)')
         else:
-            _add_ob(ob_tf, ob_tf.upper())
-            _add_ob(star_tf, f'★{star_tf.upper()}')
+            # «15m Volumized OB» — саме 15m, як написано в налаштуванні.
+            sources.append(lambda: _from_volumized('15m'))
+        _add_ob(ob_tf, ob_tf.upper())
+        _add_ob(star_tf, f'★{star_tf.upper()}')
 
         if _from_volumized not in sources:
             sources.append(_from_volumized)
@@ -2439,6 +2463,42 @@ class TradeManager:
                 # now it's always recorded instead of vanishing.
                 print(f"[TM] FF intercept error for {symbol}: {e}")
                 log_activity(symbol, 'rejected', f'Помилка перехоплення Fuel-фільтром: {e}', side=side, source='TM')
+
+        # === 📐 ГЛОБАЛЬНІ ВОРОТА РІВНІВ: Мін. R + ЦІЛЬ УГОДИ (=TP-2) ===
+        # Сюди доходять ЛИШЕ прямі відкриття — сигнал, який не взяла жодна
+        # черга (усі вимкнені / FF вимкнено). Раніше на цьому шляху не
+        # рахувалось НІЧОГО: R не перевірявся, а 🧲 магніт не ставав ціллю
+        # угоди — його потім, можливо, підхоплював `_pilot_tick`, і то лише
+        # якщо автопілот увімкнений. Тобто «Мін. R» і «TP-2 з магніту»
+        # фактично були налаштуваннями ОДНІЄЇ черги, а не бота.
+        # ⚠️ Розрахунок ТОЙ САМИЙ (`ff.open_plan` → `_q4_expected_r`), другої
+        # реалізації немає — інакше гейт і угода судились би різними числами.
+        # ⚠️ Ціль кладемо ЗАВЖДИ (навіть коли поріг вимкнено): вибір цілі не
+        # має залежати від того, чи судимо ми угоду за R.
+        # ⚠️ Рахуємо, ЛИШЕ коли реально збираємось відкривати: якщо по монеті вже
+        # стоїть позиція ТОГО САМОГО боку, нижче буде 'duplicate', і магніт із
+        # контекстом цілей рахувались би даремно (це запит до біржі + важкий
+        # `_pilot_context`).
+        _held = (existing_real or existing_shadow) or None
+        _same_side = bool(_held and _held.get('side') == side)
+        try:
+            from detection.fuel_filter import get_fuel_filter as _gff
+            _ff2 = None if _same_side else _gff()
+            if _ff2 is not None and hasattr(_ff2, 'open_plan'):
+                _r, _rdet, _robj = _ff2.open_plan(symbol, side)
+                _min_r = _ff2.min_open_r()
+                if _min_r > 0 and _r is not None and _r < _min_r:
+                    log_activity(symbol, 'skipped',
+                                 f'📐 R замалий: {_rdet} — потрібно ≥{_min_r:g}R, '
+                                 f'угоду не відкриваємо',
+                                 side=side, source='TM')
+                    return {'status': 'rejected', 'is_paper': False,
+                            'reason': f'очікуваний R {_r} < порогу {_min_r:g}R'}
+                if _robj:
+                    self.set_pending_objective(symbol, _robj)
+        except Exception as e:
+            # Гейт НЕ блокує на своїй же помилці: вигаданої відмови не даємо.
+            print(f"[TM] open-plan gate error for {symbol}: {e}")
 
         # === Real-money track ===
         # Runs whenever TM is enabled. Gated by the tradeable list AND max_open_positions.
