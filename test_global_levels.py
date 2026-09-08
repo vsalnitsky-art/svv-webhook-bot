@@ -226,17 +226,36 @@ def test_controls_left_the_queue4_accordion():
     print('✓ контроли пішли з гармошки Черги-4')
 
 
-def test_controls_are_in_the_global_accordion():
+def test_controls_are_in_their_own_top_level_section():
+    """⚠️ Спершу блок лежав УСЕРЕДИНІ гармошки «🛡 Авто-SL та ворота відкриття»
+    — і його все одно не було видно: він опинявся ПІД довгим рядом інших полів
+    («Де ці параметри?»). Тепер це ВЛАСНА секція верхнього рівня."""
     html = _src('templates/smart_money.html')
-    g = html[html.index('<div id="autosl-body">'):html.index('❤️ FF base')]
+    g = html[html.index('<div id="levels-body">'):html.index('❤️ FF base')]
     for cid in ('ff-queue4-sl-source', 'ff-queue4-min-rr', 'tm-pilot-tp2-magnet',
                 'ff-mag-exchange', 'ff-mag-bars', 'tm-pilot-tp1-min-path',
                 'tm-pilot-tp1-max-path', 'tm-pilot-tp1-fallback'):
-        _check(cid in g, f'{cid} мусить бути у ГЛОБАЛЬНІЙ гармошці')
-    _check('🎯 Рівні угоди' in g, 'блок мусить бути підписаний і помітний')
-    _check('коли ВСІ черги вимкнені' in g,
-           'підпис мусить прямо казати, що це працює без черг')
-    print('✓ усі параметри рівнів — в одному видимому глобальному блоці')
+        _check(cid in g, f'{cid} мусить бути в секції «🎯 Рівні угоди»')
+    _check("togglePanel('levels')" in html, 'секція мусить мати власну гармошку')
+    _check("'levels'" in html[html.index('const _PANEL_IDS'):][:200],
+           'секція мусить бути в _PANEL_IDS, інакше стан не памʼятається')
+    hdr = html[html.index("togglePanel('levels')") - 200:html.index('<div id="levels-body">')]
+    _check('коли ВСІ черги вимкнені' in hdr,
+           'заголовок секції мусить прямо казати, що це працює без черг')
+    print('✓ рівні — власна секція верхнього рівня, усі параметри в ній')
+
+
+def test_levels_section_comes_first():
+    """«Винеси на самий верх параметрів» — секція мусить стояти ПЕРЕД
+    «🛡 Авто-SL та ворота відкриття» і перед усіма чергами."""
+    html = _src('templates/smart_money.html')
+    i = html.index("togglePanel('levels')")
+    for later, name in ((html.index("togglePanel('autosl')"), '🛡 Авто-SL'),
+                        (html.index("toggleQueuePanel('q1')"), 'Черга-1')):
+        _check(i < later, f'секція рівнів мусить стояти ПЕРЕД {name}')
+    _check(html.index("const _PANEL_IDS = ['levels'") > 0,
+           'і бути ПЕРШОЮ у списку секцій')
+    print('✓ секція рівнів — найперша серед параметрів')
 
 
 def test_keys_were_not_renamed():
@@ -265,7 +284,8 @@ if __name__ == '__main__':
         test_tp2_magnet_toggle_finally_has_ui,
         test_magnet_source_is_one_key_shown_in_two_places,
         test_controls_left_the_queue4_accordion,
-        test_controls_are_in_the_global_accordion,
+        test_controls_are_in_their_own_top_level_section,
+        test_levels_section_comes_first,
         test_keys_were_not_renamed,
     ]
     _all = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
