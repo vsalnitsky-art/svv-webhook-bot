@@ -1292,6 +1292,24 @@ class FuelFilterDaemon:
             from detection.activity_log import log_activity
         except Exception:
             log_activity = lambda *a, **k: None
+        # 🚦 ГОЛОВНІ КНОПКИ НАПРЯМКУ — ДО будь-якої черги (виправлено 08.09).
+        # Питання користувача було саме про це: «сигнали, перш ніж потрапити на
+        # перевірку Черг, реагують на кнопки?» — не реагували. Сигнал вимкненого
+        # напрямку сідав у чергу і чекав там, доки кнопку не увімкнуть (а в
+        # Черзі-4 ще й відкривався, бо її двигун кнопки не дивився).
+        # Тепер такий сигнал у чергу НЕ потрапляє взагалі.
+        # ⚠️ Повертаємо ОКРЕМЕ 'blocked_dir', а НЕ '': порожній рядок означає
+        # «жодна черга не взяла — відкривай напряму», тобто сигнал пішов би повз
+        # кнопки прямісінько у відкриття. І НЕ 'dropped': той код у двох місцях
+        # TM підписаний жорстко «Черга-2 відкинула: CTR-нахил» — довелося б
+        # брехати про причину.
+        from detection import direction_gate as _dg
+        _dg_s = _dg.live_settings()
+        if _dg_s is not None and not _dg.allows(_dg_s, side):
+            log_activity(sym, 'rejected', _dg.reason(_dg_s, side),
+                         side=side, source='intercept')
+            return 'blocked_dir'
+
         s = self.get_settings()
         q1 = bool(s.get('queue1_enabled', True))
         q2 = bool(s.get('queue2_enabled', False))
@@ -1631,15 +1649,35 @@ class FuelFilterDaemon:
         return n
 
     def _entry_gates(self) -> tuple:
-        """(allow_long, allow_short) from TM's main directional buttons — used
-        both to FILTER the FF table display and to select open candidates."""
+        """🚦 (allow_long, allow_short) — ГОЛОВНІ кнопки напрямку.
+
+        ⚠️ Ключі більше НЕ набираються тут руками: розбір і дефолти живуть у
+        `detection/direction_gate.py` (ЄДИНЕ джерело). Раніше ті самі два ключі
+        читались у чотирьох файлах по-різному — і кнопки фактично не діяли.
+        Свій `_get_tm` лишаємо як перше джерело (FF має власне посилання на TM),
+        синглтон — фолбек.
+        """
+        from detection import direction_gate as _dg
         try:
             tm = self._get_tm() if self._get_tm else None
-            ts = tm.get_settings() if tm and hasattr(tm, 'get_settings') else {}
-            return (bool(ts.get('allow_long_entries', True)),
-                    bool(ts.get('allow_short_entries', True)))
+            ts = tm.get_settings() if tm and hasattr(tm, 'get_settings') else None
+            if ts is not None:
+                return _dg.gates_from(ts)
         except Exception:
-            return (True, True)
+            pass
+        return _dg.live_gates()
+
+    def _entry_settings(self) -> dict:
+        """Налаштування TM для воріт напрямку (щоб причина й прапорці бралися
+        з ОДНОГО знімка, а не з двох різних читань)."""
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            if tm and hasattr(tm, 'get_settings'):
+                return tm.get_settings() or {}
+        except Exception:
+            pass
+        from detection import direction_gate as _dg
+        return _dg.live_settings() or {}
 
     # ------------------------------------------------------------------
     # scan-list (whitelist) — which WATCHLIST coins FF is allowed to scan.
@@ -3542,6 +3580,35 @@ class FuelFilterDaemon:
         (e.g. the candle-confirm attempt the auto-engine opened on). When None,
         TM uses its default ('manual_ui')."""
         print(f"[FuelFilter] _open CALLED for {symbol} {side} (timer reached 100%)")
+
+        # 🚦 ГОЛОВНІ КНОПКИ НАПРЯМКУ — ПЕРШИМ ділом, ДО всього іншого.
+        # `_open` — ЄДИНИЙ вузол, через який відкривають УСІ черги (1/2/3/4),
+        # реверс і ✋ ручні кнопки. Ворота стоять саме тут, бо запис міг лягти в
+        # чергу ЩЕ ДО того, як кнопку вимкнули: `intercept` його вже не побачить,
+        # а двигун Черги-4 кнопок не дивиться взагалі.
+        # ⚠️ `by_hand` цих воріт НЕ обходить — на відміну від «нової ситуації» і
+        # блокування після ручного закриття. Це рішення користувача: кнопки
+        # ГОЛОВНІ («якщо вимкнені — бот не працює в цей бік»), і саме так
+        # написано в підказці самої кнопки: «будь-який LONG-сигнал (включно з
+        # ручним відкриттям) — блокується». Щоб відкрити руками — увімкни кнопку.
+        try:
+            from detection import direction_gate as _dg
+            _dg_s = _dg.live_settings()
+            if _dg_s is not None and not _dg.allows(_dg_s, side):
+                _why = _dg.reason(_dg_s, side)
+                self._engine_skip[symbol] = _why
+                print(f"[FuelFilter] {symbol}: {_why} → відмова у відкритті")
+                try:
+                    from detection.activity_log import log_activity
+                    log_activity(symbol, 'rejected', _why, side=side, source='FF')
+                except Exception:
+                    pass
+                return False
+        except Exception as _e:
+            # Стан невідомий → НЕ блокуємо (fail-open): ці ворота вміють
+            # зупинити торгівлю повністю, тож збій читання не має ставати
+            # тихою зупинкою бота.
+            print(f"[FuelFilter] {symbol}: direction gate error: {_e} — пропускаю")
 
         entry_price = fuel.get('mark_price')
         if not entry_price or entry_price <= 0:
@@ -6640,11 +6707,24 @@ class FuelFilterDaemon:
 
     def _engine_tick_queue4(self):
         """🎯 Черга-4 «Усі шари» — відкриває угоду, коли ВСІ 4 шари збіглись за
-        напрямком сигналу. Приймає всі сигнали (обидва боки), НЕ фільтрує кнопками
-        LONG/SHORT (за задумом «приймаємо всі сигнали»). Дедуп/вже-в-угоді/ціна —
-        санітарні ворота; `_open` тримає власні запобіжники."""
+        напрямком сигналу. Дедуп/вже-в-угоді/ціна — санітарні ворота; `_open`
+        тримає власні запобіжники.
+
+        🚦 **ГОЛОВНІ КНОПКИ напрямку тепер ДІЮТЬ і тут** (виправлено 08.09).
+        Раніше цей двигун свідомо їх не дивився (мовляв, «приймаємо всі
+        сигнали»), і разом із `bypass_gates=True` на відкритті це робило кнопки
+        декоративними на робочій установці: з вимкненим LONG бот однаково
+        відкривав LONG. Кнопки — ГОЛОВНИЙ ВИМИКАЧ бота, а не ще один фільтр
+        черги, тож «приймаємо всі сигнали» стосується ШАРІВ, а не напрямку."""
         s = self.get_settings()
         if not s.get('enabled') or not s.get('queue4_enabled'):
+            return
+        # 🚦 Головні кнопки: вимкнений бік — пропускаємо запис (він лишається в
+        # черзі й піде, щойно кнопку увімкнуть). Обидві вимкнені → двигун стоїть.
+        _allow_long, _allow_short = self._entry_gates()
+        if not _allow_long and not _allow_short:
+            self._engine_gate = ('🚦 Обидва напрямки вимкнені (Trade Direction) — '
+                                 'нових угод немає')
             return
         now = time.time()
         try:
@@ -6674,6 +6754,14 @@ class FuelFilterDaemon:
         for sym, info in items:
             d = info.get('dir')
             if d not in ('LONG', 'SHORT'):
+                continue
+            # 🚦 Головна кнопка цього напрямку вимкнена → НЕ відкриваємо.
+            # ⚠️ Запис із черги НЕ виселяємо: на відміну від «відпрацьованого»
+            # (там обидві дати зафіксовані й запис не стане валідним НІКОЛИ),
+            # кнопку можна увімкнути назад, і тоді сигнал ще актуальний. Його
+            # приберуть звичайні виходи — TTL / застій / 🚨 hard-max.
+            if (d == 'LONG' and not _allow_long) or (d == 'SHORT' and not _allow_short):
+                self._engine_skip[sym] = f'🚦 кнопка {d} вимкнена — чекаємо'
                 continue
             # 🧬 ВІДПРАЦЬОВАНИЙ запис (сигнал старіший за закриття попередньої
             # угоди) НІКОЛИ не стане валідним — обидві дати зафіксовані. Тому

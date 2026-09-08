@@ -1245,7 +1245,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <button type="button" id="sm-allow-long-btn"
                     class="sm-side-toggle sm-side-long active"
                     onclick="toggleSideGate('LONG')"
-                    title="ЗА УВІМКНЕННЯ: бот відкриває нові LONG позиції (реальні і тестові).&#10;ВИМКНУТИ: будь-який LONG-сигнал (включно з ручним відкриттям) — блокується.&#10;Закриття існуючих LONG-позицій працює як зазвичай.">
+                    title="🚦 ГОЛОВНИЙ ВИМИКАЧ напрямку (не фільтр).&#10;УВІМК: бот приймає LONG-сигнали і відкриває LONG (реальні і тестові).&#10;ВИМК: LONG-сигнал не проходить фільтри, не сідає в чергу і не відкривається — включно з ✋ ручним сигналом і ✋ відкриттям із черги.&#10;Обидві кнопки вимкнені = бот не приймає жодних сигналів.&#10;Закриття/супровід існуючих LONG-позицій працює як зазвичай.">
                 <span class="sm-side-icon">📈</span>
                 <span class="sm-side-text">LONG</span>
                 <span class="sm-side-state" id="sm-allow-long-state">ON</span>
@@ -1253,16 +1253,29 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <button type="button" id="sm-allow-short-btn"
                     class="sm-side-toggle sm-side-short active"
                     onclick="toggleSideGate('SHORT')"
-                    title="ЗА УВІМКНЕННЯ: бот відкриває нові SHORT позиції (реальні і тестові).&#10;ВИМКНУТИ: будь-який SHORT-сигнал (включно з ручним відкриттям) — блокується.&#10;Закриття існуючих SHORT-позицій працює як зазвичай.">
+                    title="🚦 ГОЛОВНИЙ ВИМИКАЧ напрямку (не фільтр).&#10;УВІМК: бот приймає SHORT-сигнали і відкриває SHORT (реальні і тестові).&#10;ВИМК: SHORT-сигнал не проходить фільтри, не сідає в чергу і не відкривається — включно з ✋ ручним сигналом і ✋ відкриттям із черги.&#10;Обидві кнопки вимкнені = бот не приймає жодних сигналів.&#10;Закриття/супровід існуючих SHORT-позицій працює як зазвичай.">
                 <span class="sm-side-icon">📉</span>
                 <span class="sm-side-text">SHORT</span>
                 <span class="sm-side-state" id="sm-allow-short-state">ON</span>
             </button>
+            <!-- 🚦 Стан головного вимикача словами. Порожній і прихований,
+                 коли обидва напрямки увімкнені (тоді вимикач нічого не робить
+                 і підпис був би шумом) — заповнює syncSideGateButtons(). -->
+            <span class="sm-side-gates-state" id="sm-side-gates-state"
+                  style="display:none"></span>
         </div>
     </div>
-    
+
     <style>
     .sm-side-gates-left { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    /* Підпис стану головного вимикача: бурштин = працює половина напрямків,
+       червоний = бот стоїть. Та сама типографіка, що в решті бейджів. */
+    .sm-side-gates-state { font-family:monospace; font-size:0.74rem; font-weight:600;
+        padding:4px 10px; border-radius:6px; white-space:nowrap;
+        color:#fbbf24; border:1px solid rgba(251,191,36,0.35);
+        background:rgba(251,191,36,0.08); }
+    .sm-side-gates-state.paused { color:#f87171;
+        border-color:rgba(248,113,113,0.40); background:rgba(248,113,113,0.10); }
     /* Ліва половина рядка аналізу — настрій + ліквідність. Ширина РІВНА
        панелі «Потенціал» праворуч (обидві flex:1), щоб блоки не «стрибали»
        один відносно одного. */
@@ -8909,6 +8922,24 @@ function syncSideGateButtons(s) {
         shortBtn.classList.toggle('active', shortOn);
         const st = document.getElementById('sm-allow-short-state');
         if (st) st.textContent = shortOn ? 'ON' : 'OFF';
+    }
+    // 🚦 Стан ГОЛОВНОГО вимикача — словами, поряд із кнопками. Обидві вимкнені
+    // = бот не приймає ЖОДНИХ сигналів; це надто важливо, щоб читатись лише як
+    // два сірих «OFF». Один бік вимкнено — теж пишемо, бо саме тоді половина
+    // сигналів мовчки зникає, і це має бути видно без відкриття логу.
+    const badge = document.getElementById('sm-side-gates-state');
+    if (badge) {
+        if (longOn && shortOn) {
+            badge.textContent = '';
+            badge.style.display = 'none';
+        } else {
+            const off = !longOn && !shortOn;
+            badge.textContent = off
+                ? '⏸ ПАУЗА — сигнали не приймаються в жодному напрямку'
+                : `🚦 лише ${longOn ? 'LONG' : 'SHORT'} — сигнали ${longOn ? 'SHORT' : 'LONG'} відхиляються`;
+            badge.className = 'sm-side-gates-state' + (off ? ' paused' : '');
+            badge.style.display = 'inline-block';
+        }
     }
 }
 

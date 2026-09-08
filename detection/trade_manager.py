@@ -929,18 +929,16 @@ class TradeManager:
         return self._settings.get('enabled', False)
     
     def _side_allowed(self, side: str) -> bool:
-        """Global directional gate. Returns False when the configured
-        master toggle for that direction is OFF. Used by both _open_position
-        (real) and _open_shadow (paper) to enforce the same rule everywhere.
-        Defaults to True for both sides so old deploys without the keys keep
-        their current behavior.
+        """🚦 ГОЛОВНІ КНОПКИ напрямку (Trade Direction). False → цей напрямок
+        вимкнено і НІЯКИХ нових входів по ньому немає.
+
+        ⚠️ Читання і самі ключі — ЛИШЕ через `detection/direction_gate.py`
+        (ЄДИНЕ джерело). Раніше ті самі два ключі набирались руками в чотирьох
+        файлах, і кожне місце перевіряло їх по-своєму — саме так вийшло, що на
+        робочій установці кнопки не діяли зовсім.
         """
-        s = self._settings
-        if side == 'LONG':
-            return bool(s.get('allow_long_entries', True))
-        if side == 'SHORT':
-            return bool(s.get('allow_short_entries', True))
-        return True
+        from detection import direction_gate as _dg
+        return _dg.allows(self._settings, side)
     
     # ============================================================
     # Lifecycle
@@ -2418,6 +2416,15 @@ class TradeManager:
                         _rev = ' (реверс — коли пройде Чергу-2)' if _pos is not None else ''
                         return {'status': 'queued', 'is_paper': False,
                                 'reason': f'у Черзі ❤️ Fuel Auto-Filter (чекає фільтр){_rev}'}
+                    if _disp == 'blocked_dir':
+                        # 🚦 ГОЛОВНА КНОПКА напрямку вимкнена — у чергу не взяли.
+                        # ⚠️ Окремий рядок ОБОВ'ЯЗКОВИЙ: без нього значення
+                        # провалилось би повз обидва `if` прямо у ПРЯМЕ
+                        # ВІДКРИТТЯ нижче (там немає перевірки на '').
+                        from detection import direction_gate as _dgm
+                        return {'status': 'rejected', 'is_paper': False,
+                                'reason': _dgm.live_reason(side) or
+                                          f'Напрямок {side} вимкнено'}
                     if _disp == 'dropped':
                         # An enabled queue (Q2) OWNED but REJECTED it (CTR gate) —
                         # NOT queued, NOT opened (and NOT reversed). The marker must
@@ -4351,14 +4358,19 @@ class TradeManager:
         """
         s = self._settings
 
-        # === Global directional gate ===
-        # Master toggle ON by default for both sides. When the user flips
-        # off LONG (or SHORT), NO real opens go through for that side —
-        # regardless of who called us (SMC signal, manual UI, future
-        # webhook). Closures and reverses still close existing positions
-        # normally; only the open step is blocked.
-        # EXCEPT: when bypass_gates=True (Fuel Auto-Filter), always allow.
-        if not bypass_gates and not self._side_allowed(side):
+        # === 🚦 ГОЛОВНІ КНОПКИ напрямку — НЕ ОБХОДЯТЬСЯ (виправлено 08.09) ===
+        # Вимкнули LONG (або SHORT) → ЖОДНОГО реального входу в цей бік, ким би
+        # виклик не був: SMC-сигнал, черга Fuel Filter, ручне відкриття, вебхук.
+        # Закриття й реверси існуючих позицій працюють як завжди — блокується
+        # ЛИШЕ крок відкриття.
+        #
+        # ⚠️ РАНІШЕ ТУТ СТОЯЛО `if not bypass_gates and ...` — і саме це робило
+        # кнопки декоративними: Fuel Filter відкриває через
+        # `manual_open(..., bypass_gates=True)`, тобто КОЖНА угода з будь-якої
+        # черги проходила повз головний вимикач. `bypass_gates` лишається для
+        # решти воріт (FF-підтвердження тощо), але ГОЛОВНІ КНОПКИ він більше
+        # НЕ знімає — вони головні саме тому, що їх не обходить ніхто.
+        if not self._side_allowed(side):
             print(f"[TM] 🚫 REAL {side} entries disabled — {symbol} not opened")
             return {'ok': False, 'reason':
                     f'{side} entries are disabled (master {side} toggle is OFF). '
@@ -5409,12 +5421,12 @@ class TradeManager:
           {'ok': False, 'reason': <str>}  — blocked, with why
         so on_signal can surface the real reason to the chart marker.
         """
-        # === Global directional gate (same toggle as real) ===
-        # Test mode shadows respect the same LONG/SHORT master gate so the
-        # paper-trading view stays consistent with what a real deployment
-        # would have done. Closures/exits run normally; only opens blocked.
-        # EXCEPT: when bypass_gates=True (Fuel Auto-Filter), always allow.
-        if not bypass_gates and not self._side_allowed(side):
+        # === 🚦 ГОЛОВНІ КНОПКИ напрямку — НЕ ОБХОДЯТЬСЯ (виправлено 08.09) ===
+        # Paper тримає ТОЙ САМИЙ головний вимикач, що й real: інакше тестова
+        # книга показувала б угоди, яких реальний бот НЕ зробив би, і порівняти
+        # їх було б неможливо. `bypass_gates` тут теж більше не знімає кнопки
+        # (див. розгорнуте пояснення в `_open_position`).
+        if not self._side_allowed(side):
             print(f"[TM] 🚫 SHADOW {side} entries disabled — {symbol} not opened")
             return {'ok': False, 'reason':
                     f'{side} entries are disabled (master {side} toggle OFF)'}
@@ -7050,6 +7062,11 @@ class TradeManager:
                         return {'ok': True, 'queued': True,
                                 'reason': f'{symbol} {side} → черга ❤️ Fuel Auto-Filter '
                                           f'(чекає фільтр черги)'}
+                    if _disp == 'blocked_dir':
+                        from detection import direction_gate as _dgm
+                        return {'ok': False,
+                                'reason': _dgm.live_reason(side) or
+                                          f'Напрямок {side} вимкнено'}
                     if _disp == 'dropped':
                         return {'ok': False,
                                 'reason': f'{symbol} {side} відкинуто Чергою-2 '

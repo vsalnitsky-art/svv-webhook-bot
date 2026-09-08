@@ -35,6 +35,35 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 
+def _dg_mod():
+    """🚦 Модуль воріт напрямку (`direction_gate`) — з кешем на рівні модуля.
+
+    ⚠️ Чому не просто `from detection import direction_gate` у місці виклику:
+    ЛЮБИЙ імпорт підмодуля виконує `detection/__init__.py`, а той тягне за собою
+    `sleeper_scanner → core → pybit`, тобто ПІВПРОЄКТУ. У проді це нешкідливо
+    (пакет уже завантажено), але сканер навмисно вміє вантажитись САМОСТІЙНО —
+    саме так його беруть ізольовані тести. Прямий пакетний імпорт зламав
+    `test_ob_choch_only.py` і `test_signal_gate_unified.py` на рівному місці.
+    Тому: спершу звичайний шлях, а якщо пакет недоступний — вантажимо СУСІДНІЙ
+    файл напряму (у `direction_gate` немає жодної важкої залежності).
+    """
+    m = globals().get('_DG_CACHE')
+    if m is not None:
+        return m
+    try:
+        from detection import direction_gate as m      # звичайний шлях (прод)
+    except Exception:
+        import importlib.util as _ilu, os as _os
+        _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                           'direction_gate.py')
+        _spec = _ilu.spec_from_file_location('detection.direction_gate', _p)
+        m = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(m)
+    globals()['_DG_CACHE'] = m
+    return m
+
+
+
 # Defaults
 # Пауза МІЖ циклами. Сам цикл тепер швидкий (паралельний префетч),
 # тож тримаємо коротку паузу — щоб перевірка йшла майже безперервно
@@ -3636,11 +3665,32 @@ class SMCScanner:
         ЛИШЕ якщо решта вже пропустила**. Це єдиний фільтр, що ходить у
         ЗОВНІШНЮ біржу (2-3 HTTP на монету); решта читає власну БД/кеші, тому
         вони рахуються завжди — розклад має показувати всі увімкнені фільтри.
-        Додаючи новий фільтр із мережевим запитом, ставити його ТУДИ Ж."""
+        Додаючи новий фільтр із мережевим запитом, ставити його ТУДИ Ж.
+
+        🚦 **ПЕРШИМИ стоять ГОЛОВНІ КНОПКИ напрямку** (Trade Direction). Вони
+        НЕ фільтр — вони головний вимикач: вимкнений бік не породжує сигналів
+        узагалі, обидва вимкнені = бот не приймає нічого. Тому вони йдуть ДО
+        всіх фільтрів і не залежать від жодного тумблера."""
         parts = []
         allowed = True
         reason = ''
         _m = lambda ok: '✓' if ok else '✗'
+
+        # 🚦 ГОЛОВНІ КНОПКИ НАПРЯМКУ — найперші, поза всіма тумблерами.
+        # Раніше сканер про них не знав ВЗАГАЛІ (жодної згадки ключів у файлі),
+        # тож сигнал вимкненого напрямку спокійно йшов у `on_signal` → чергу.
+        # Сегмент у розкладі з'являється, лише коли хоч одна кнопка вимкнена
+        # (при обох увімкнених вимикач нічого не робить — не шумимо).
+        _dg = _dg_mod()
+        _dg_s = _dg.live_settings()
+        if _dg_s is not None:
+            _dg_chip = _dg.chip(_dg_s, side_label)
+            if _dg_chip:
+                parts.append(_dg_chip)
+            if not _dg.allows(_dg_s, side_label):
+                # Далі не рахуємо НІЧОГО: решта фільтрів ходить у БД/кеші, а на
+                # вимкненому напрямку їхній результат нікому не потрібен.
+                return (False, _dg.reason(_dg_s, side_label), ' · '.join(parts))
 
         # OB
         if self._settings.get('ob_filter_enabled', False):
