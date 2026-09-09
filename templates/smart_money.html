@@ -4569,7 +4569,14 @@ function _obNewHTML(p, fallback) {
               + `<span style="color:#6b7280">: немає</span>`);
     }
     if (p.htf_note) bits.push(`<span style="color:#6b7280;font-size:0.64rem">${p.htf_note}</span>`);
-    // 3) Час появи: слово сіре, ЧИСЛО світле monospace.
+    // 3) Свічка САМОГО блоку — вона лежить «назад у часі», і саме через це
+    // виникало питання «бокс на графіку з 12:00, а бот побачив о 21:00?».
+    // Приглушений колір: це довідка, а не момент події.
+    if (p.bar_time_txt) {
+        bits.push(`<span style="color:#6b7280">свічка блоку</span> `
+            + `<span style="color:#9aa3b5;font-family:monospace">${p.bar_time_txt}</span>`);
+    }
+    // 4) Час появи: слово сіре, ЧИСЛО світле monospace.
     bits.push(`<span style="color:#6b7280">зʼявився</span> `
         + `<span style="color:#e5e7eb;font-family:monospace">${p.appeared_txt || '—'}</span>`
         + `<span style="color:#6b7280;font-size:0.62rem"> UTC</span>`);

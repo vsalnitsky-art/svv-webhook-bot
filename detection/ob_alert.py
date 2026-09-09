@@ -239,7 +239,8 @@ def fmt_lag(sec) -> str:
 
 
 def build_parts(symbol: str, tf1, side1, tag1, tf4, side4, price,
-                appeared, now, htf_note: str = '', first: bool = False) -> Dict:
+                appeared, now, htf_note: str = '', first: bool = False,
+                bar_time=None) -> Dict:
     """ШМАТКИ повідомлення — чисті ДАНІ, без розмітки.
 
     ⚠️ Той самий прийом, що у вердикті драбини ліквідності (`verdict.parts`
@@ -264,6 +265,12 @@ def build_parts(symbol: str, tf1, side1, tag1, tf4, side4, price,
         'htf_note': str(htf_note or ''),
         'appeared': appeared,
         'appeared_txt': fmt_utc(appeared),
+        # ⚠️ СВІЧКА САМОГО БЛОКУ — та, НА ЯКІЙ намальовано бокс. Вона лежить
+        # «назад у часі» відносно появи, і саме через це виникає питання
+        # «блок на графіку з 12:00, а бот побачив о 21:00?» (кейс LITUSDT).
+        # Обидва часи в рядку — і питання відпадає само.
+        'bar_time': _to_sec(bar_time),
+        'bar_time_txt': fmt_utc(bar_time) if _to_sec(bar_time) else None,
         'price': price,
         'price_txt': fmt_price(price),
         'lag_sec': lag,
@@ -295,6 +302,9 @@ def build_text(parts: Dict) -> str:
             bits.append(f"OB {p['tf4']}: немає")
     if p.get('htf_note'):
         bits.append(p['htf_note'])
+    # Свічка блоку — ПЕРЕД появою: спершу «де намальовано», потім «коли виник».
+    if p.get('bar_time_txt'):
+        bits.append(f"свічка блоку {p['bar_time_txt']} UTC")
     bits.append(f"зʼявився {p.get('appeared_txt') or '—'} UTC")
     if p.get('first'):
         # Перший показ після старту: чесно кажемо, що це вік блоку, а не

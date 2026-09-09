@@ -1830,6 +1830,17 @@ class SMCScanner:
         for symbol in list(self._watchlist):
             if not self._running:
                 return
+            # ⚡ БАР TF ВОРІТ МІГ ЗАКРИТИСЬ ПРЯМО ЗАРАЗ, ПОСЕРЕД ПРОХОДУ.
+            # Кейс LITUSDT (09.09): бар закрився о 21:00, а смуга кликалась лише
+            # на ПОЧАТКУ циклу — реакція прийшла аж через **3хв 07с**, коли
+            # почався наступний цикл. Перевірка тут коштує один `if` на монету
+            # (`_ob_lane_due` — арифметика над `now // tf_secs`, без I/O), а
+            # очікування зводить до однієї монети замість цілого циклу.
+            try:
+                self._ob_fast_lane(md)
+            except Exception as _fle2:
+                if self._errors <= 5:
+                    print(f"[SMC] OB lane (mid-cycle) error: {_fle2}")
             try:
                 # Fetch klines at configured timeframe
                 tf = self.get_timeframe()
@@ -2673,9 +2684,15 @@ class SMCScanner:
         return False
 
     def _ob_fast_lane(self, md) -> int:
-        """⚡ Порахувати OB-стан УСІХ монет НА ПОЧАТКУ циклу — один раз на бар.
+        """⚡ Порахувати OB-стан УСІХ монет — один раз на КОЖНЕ закриття бару.
 
         Повертає, скільки монет опрацьовано (0 = смуга не була потрібна).
+
+        ⚠️ **КЛИЧЕТЬСЯ З ДВОХ МІСЦЬ** (кейс LITUSDT 09.09): на початку циклу і
+        МІЖ МОНЕТАМИ в самому проході. Спершу було лише «на початку циклу» — і
+        якщо бар закривався в СЕРЕДИНІ проходу, реакція чекала до кінця циклу:
+        на проді це дало **3хв 07с** замість очікуваних секунд. Другий виклик
+        зводить очікування до однієї монети (~7с).
         """
         if not self._settings.get('ob_alert_enabled', True):
             return 0
@@ -2685,6 +2702,12 @@ class SMCScanner:
         ob_tf = self._settings.get('ob_filter_timeframe', '1h')
         if not self._ob_lane_due(ob_tf, time.time()):
             return 0
+        # ⚠️ ЗАКРИВСЯ НОВИЙ БАР → усе, пораховане в цьому циклі ДО нього, стало
+        # СТАРИМ. Без цього гейт `_ob_done_cycle` мовчки пропустив би саме ті
+        # монети, які вже пройшли на початку циклу, — тобто найгірший випадок
+        # (бар закрився одразу після монети №1) лишився б без реакції на цілий
+        # цикл, попри другий виклик смуги.
+        self._ob_done_cycle.clear()
         _t0 = time.time()
         # Один запит на монету, паралельно — той самий пул, що й повний префетч.
         try:
@@ -2760,7 +2783,7 @@ class SMCScanner:
             symbol=symbol, tf1=ob_tf, side1=_side1,
             tag1=ob.get('created_by_tag'), tf4=_tf4, side4=_side4,
             price=_price, appeared=_app, now=_now, htf_note=_note,
-            first=_first)
+            first=_first, bar_time=ob.get('bar_time'))
         _text = oba.build_text(_parts)
         try:
             from detection.activity_log import log_activity

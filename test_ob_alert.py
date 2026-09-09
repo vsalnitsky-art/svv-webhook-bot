@@ -249,6 +249,30 @@ def test_text_carries_everything_the_user_asked_for():
     print(f'✓ рядок логу: {t}')
 
 
+def test_both_times_are_shown_so_the_gap_is_explainable():
+    """🐞 ПИТАННЯ КОРИСТУВАЧА (LITUSDT): «OB, який промальовувався на графіку
+    орієнтовно о 12 годині, визначився аж у 21 — це нормально?»
+
+    Так, і причина саме в ДВОХ РІЗНИХ часах: бокс МАЛЮЄТЬСЯ на свічці блоку
+    (`bar_time`, «назад у часі»), а ІСНУВАТИ починає, коли закрився бар із
+    BOS/CHoCH. Рядок мусить нести ОБИДВА — тоді питання відпадає само."""
+    app = 1_757_453_100                       # 09.09.25 21:25 UTC — поява
+    bar = app - 9 * HOUR                      # свічка блоку — на 9 год раніше
+    p = oba.build_parts('LITUSDT', '1h', 'SHORT', 'CHoCH', '4h', 'LONG',
+                        4.654, app, app + 187, bar_time=bar)
+    t = oba.build_text(p)
+    _check('свічка блоку 09.09.25 о 12:25' in t, f'час свічки блоку: {t}')
+    _check('зʼявився 09.09.25 о 21:25' in t, f'час появи: {t}')
+    _check(t.index('свічка блоку') < t.index('зʼявився'),
+           f'спершу «де намальовано», потім «коли виник»: {t}')
+    # Без bar_time сегмент просто відсутній — нічого не вигадуємо
+    p2 = oba.build_parts('LITUSDT', '1h', 'SHORT', None, None, None,
+                         4.654, app, app + 10)
+    _check(p2['bar_time_txt'] is None and 'свічка блоку' not in oba.build_text(p2),
+           'немає bar_time → сегмента немає')
+    print(f'✓ обидва часи в рядку: {t}')
+
+
 def test_missing_htf_is_said_out_loud():
     """4H не порахувався → пишемо «немає», а не мовчимо: інакше виглядало б,
     ніби старшого блоку не існує."""
@@ -468,6 +492,54 @@ def test_fast_lane_runs_once_per_bar_not_every_cycle():
     print('✓ швидка смуга: рівно раз на бар TF воріт, не щоцикл')
 
 
+def test_lane_also_fires_mid_cycle_not_only_at_the_start():
+    """🐞 ПРОД-КЕЙС LITUSDT (09.09): бар закрився о 21:00, а реакція прийшла аж
+    через **3хв 07с**. Причина не в детекції: смуга кликалась ЛИШЕ на початку
+    циклу, тож закриття бару ПОСЕРЕД проходу чекало наступного циклу.
+
+    Перевірка коштує один `if` на монету (`_ob_lane_due` — чиста арифметика над
+    `now // tf_secs`, без I/O), а очікування зводить до однієї монети."""
+    src = open(os.path.join(_HERE, 'detection', 'smc_scanner.py'),
+               encoding='utf-8').read()
+    i = src.index('for symbol in list(self._watchlist):')
+    body = src[i:i + 1200]
+    _check('self._ob_fast_lane(md)' in body,
+           'смуга мусить перевірятись і МІЖ монетами, а не лише на старті циклу')
+    _check(body.index('self._ob_fast_lane(md)') < body.index('_pf_klines'),
+           'перевірка мусить стояти ДО важкої роботи по монеті')
+    # І це ДРУГИЙ виклик — перший лишається на початку циклу
+    _check(src.count('self._ob_fast_lane(md)') >= 2,
+           'потрібні ОБИДВА виклики: на старті циклу і в проході')
+    print('✓ смуга ловить закриття бару і посеред циклу')
+
+
+def test_new_bar_invalidates_work_already_done_this_cycle():
+    """⚠️ НАЙТОНШЕ МІСЦЕ другого виклику. Монети, опрацьовані ДО закриття бару,
+    мають `_ob_done_cycle == _scan_count`, і гейт у `_update_smc_ob` мовчки
+    пропустив би саме їх — тобто найгірший випадок (бар закрився одразу після
+    монети №1) лишився б без реакції на цілий цикл, попри другий виклик."""
+    _install_log(); _install_db(); _install_detectors(ob4=None)
+    ns = _ns()
+    ns._watchlist = ['BTCUSDT', 'ETHUSDT']
+    seen = []
+    ns._update_smc_ob = lambda sym, md: seen.append(sym)
+    # монета вже пройшла в ЦЬОМУ циклі
+    ns._ob_done_cycle['BTCUSDT'] = ns._scan_count
+    ns._ob_fast_lane(None)
+    _check('BTCUSDT' in seen,
+           f'після закриття бару вже опрацьовану монету треба ПЕРЕрахувати: {seen}')
+    _check('ETHUSDT' in seen, f'решту — теж: {seen}')
+    src = open(os.path.join(_HERE, 'detection', 'smc_scanner.py'),
+               encoding='utf-8').read()
+    i = src.index('def _ob_fast_lane(')
+    body = src[i:i + 2200]
+    _check('self._ob_done_cycle.clear()' in body,
+           'новий бар мусить знімати позначку «вже пораховано цим циклом»')
+    _check(body.index('_ob_lane_due') < body.index('_ob_done_cycle.clear()'),
+           'чистити гейт лише КОЛИ бар справді закрився, а не щоразу')
+    print('✓ новий бар знімає позначку — жодна монета не лишається без перерахунку')
+
+
 def test_fast_lane_marks_the_cycle_so_work_is_not_done_twice():
     """Смуга кличе ТОЙ САМИЙ `_update_smc_ob` (другої копії логіки немає), а
     позначка циклу не дає звичайному проходу зробити ту саму роботу вдруге."""
@@ -603,6 +675,7 @@ if __name__ == '__main__':
     test_freshness_window_is_one_bar_by_default()
     test_seen_list_is_capped_and_does_not_mutate_input()
     test_text_carries_everything_the_user_asked_for()
+    test_both_times_are_shown_so_the_gap_is_explainable()
     test_missing_htf_is_said_out_loud()
     test_price_formatter_mirrors_the_page()
     test_lag_is_human_readable()
@@ -617,6 +690,8 @@ if __name__ == '__main__':
     test_htf_is_computed_once_and_cached_until_its_bar_closes()
     test_htf_failure_is_reported_not_hidden()
     test_fast_lane_runs_once_per_bar_not_every_cycle()
+    test_lane_also_fires_mid_cycle_not_only_at_the_start()
+    test_new_bar_invalidates_work_already_done_this_cycle()
     test_fast_lane_marks_the_cycle_so_work_is_not_done_twice()
     test_lane_cycle_does_not_download_the_same_bars_twice()
     test_guard_stops_the_second_computation_in_the_same_cycle()
