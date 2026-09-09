@@ -4506,6 +4506,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <option value="closed">🔚 Закрито</option>
                         <option value="passthrough">➡️ Пряме відкриття</option>
                         <option value="autosl">🎯 Авто-SL з OB</option>
+                        <option value="ob_new">🆕 Новий OB на графіку</option>
                         <option value="config">📋 Параметри</option>
                     </select>
                     <button onclick="exportActivityLog('csv')" style="white-space:nowrap;font-size:0.7rem;padding:5px 11px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#22c55e;cursor:pointer" title="Завантажити всі події логу як CSV (для Excel / аналізу)">📥 CSV</button>
@@ -4533,7 +4534,56 @@ const _actMeta = {
     passthrough: ['➡️', 'Пряме відкриття', '#fbbf24'],
     autosl: ['🎯', 'Авто-SL з OB', '#38bdf8'],
     config: ['📋', 'Параметри', '#facc15'],
+    ob_new: ['🆕', 'Новий OB', '#22d3ee'],
 };
+
+// 🆕 РЯДОК «НОВИЙ OB» — РОЗФАРБОВАНИЙ ПО ЗМІСТУ.
+//
+// Вимога користувача: «розмалюй цю інформацію кольорами, щоб не зливався
+// текст». Решта подій логу малюється одним сірим `#cbd5e1`, і тут це читалось
+// як суцільна смуга: у рядку аж чотири РІЗНІ за природою речі — напрямок 1H,
+// напрямок 4H, час появи і ціна.
+//
+// ⚠️ Малюємо зі СТРУКТУРНИХ полів `x.parts`, а НЕ розбираючи український
+// текст. Той самий прийом, що у вердикті драбини ліквідності: бекенд дає
+// чисті дані + плаский `detail` як фолбек, а кольори — справа фронта.
+// ⚠️ Ціну форматує `fmtPriceJS` — ЄДИНИЙ формат ціни на сторінці (Python
+// дзеркалить його пороги лише для CSV/TG; тест-замок звіряє їх).
+const _OB_SIDE_COL = { LONG: '#22c55e', SHORT: '#ef4444' };
+function _obNewHTML(p, fallback) {
+    if (!p || typeof p !== 'object') return `<span style="color:#cbd5e1">${fallback}</span>`;
+    const sep = '<span style="color:#4b5563"> · </span>';
+    const sideCol = s => _OB_SIDE_COL[s] || '#9aa3b5';
+    const bits = [];
+    // 1) Блок TF воріт — головне, тому яскравіше за решту.
+    let b1 = `<span style="color:${sideCol(p.side1)};font-weight:800">${p.side1 || '—'}</span>`
+        + ` <span style="color:#93c5fd;font-weight:700">OB ${p.tf1 || '?'}</span>`;
+    if (p.tag1) b1 += ` <span style="color:#a78bfa;font-size:0.64rem">(${p.tag1})</span>`;
+    bits.push(b1);
+    // 2) Старший TF — БУРШТИНОВА мітка, щоб 1H і 4H не зливались.
+    if (p.tf4) {
+        bits.push(p.side4
+            ? `<span style="color:${sideCol(p.side4)};font-weight:800">${p.side4}</span>`
+              + ` <span style="color:#fbbf24;font-weight:700">OB ${p.tf4}</span>`
+            : `<span style="color:#fbbf24;font-weight:700">OB ${p.tf4}</span>`
+              + `<span style="color:#6b7280">: немає</span>`);
+    }
+    if (p.htf_note) bits.push(`<span style="color:#6b7280;font-size:0.64rem">${p.htf_note}</span>`);
+    // 3) Час появи: слово сіре, ЧИСЛО світле monospace.
+    bits.push(`<span style="color:#6b7280">зʼявився</span> `
+        + `<span style="color:#e5e7eb;font-family:monospace">${p.appeared_txt || '—'}</span>`
+        + `<span style="color:#6b7280;font-size:0.62rem"> UTC</span>`);
+    // 4) Швидкість реакції — окремим акцентом: це те, що користувач перевіряє.
+    if (p.lag_txt && p.lag_txt !== '—') {
+        bits.push(`<span style="color:#6b7280">⚡ виявлено за </span>`
+            + `<span style="color:#22d3ee;font-weight:700;font-family:monospace">${p.lag_txt}</span>`);
+    }
+    // 5) Ціна — найяскравіше, monospace (як усі числа в проєкті).
+    const pr = (typeof p.price === 'number' && p.price > 0)
+        ? fmtPriceJS(p.price) : (p.price_txt || '—');
+    bits.push(`<span style="color:#fff;font-weight:800;font-family:monospace">${pr}</span>`);
+    return bits.join(sep);
+}
 async function toggleActivityLog() {
     const on = document.getElementById('activity-log-enabled').checked;
     try {
@@ -4632,11 +4682,16 @@ async function loadActivityLog() {
             const det = c.steps.map(s => {
                 const m = _actMeta[s.event] || ['•', s.event, '#cbd5e1'];
                 const tt = new Date(s.t * 1000).toLocaleTimeString([], { hour12: false });
+                // 🆕 «Новий OB» малюємо ПО ЗМІСТУ (кольори за природою даних),
+                // решта подій — як раніше, одним кольором.
+                const body = (s.event === 'ob_new' && s.x && s.x.parts)
+                    ? _obNewHTML(s.x.parts, esc(s.detail))
+                    : `<span style="color:#cbd5e1">${esc(s.detail)}</span>`;
                 return `<div style="line-height:1.4">`
                     + `<span style="color:${m[2]};font-weight:900">●</span> `
                     + `<span style="color:#6b7280;font-size:0.64rem">${tt}</span> `
                     + `<span style="color:${m[2]};font-size:0.66rem;font-weight:700">${m[1]}:</span> `
-                    + `<span style="color:#cbd5e1">${esc(s.detail)}</span></div>`;
+                    + `${body}</div>`;
             }).join('');
             const ids = c.steps.map(s => s.id).filter(v => v != null);
             return `<tr>

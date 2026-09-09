@@ -47,20 +47,37 @@ def _dg_mod():
     Тому: спершу звичайний шлях, а якщо пакет недоступний — вантажимо СУСІДНІЙ
     файл напряму (у `direction_gate` немає жодної важкої залежності).
     """
-    m = globals().get('_DG_CACHE')
+    return _sibling_mod('direction_gate', '_DG_CACHE')
+
+
+def _sibling_mod(name: str, cache_key: str):
+    """Завантажити СУСІДНІЙ модуль `detection/<name>.py` безпечно для тестів.
+
+    Та сама причина, що в `_dg_mod` (див. докстрінг вище): звичайний пакетний
+    імпорт тягне `detection/__init__.py` → `pybit`. Тому спершу звичайний шлях,
+    а при невдачі — файл напряму. Працює ЛИШЕ для модулів без важких
+    залежностей (`direction_gate`, `ob_alert`).
+    """
+    m = globals().get(cache_key)
     if m is not None:
         return m
     try:
-        from detection import direction_gate as m      # звичайний шлях (прод)
+        import importlib
+        m = importlib.import_module(f'detection.{name}')   # звичайний шлях (прод)
     except Exception:
         import importlib.util as _ilu, os as _os
         _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
-                           'direction_gate.py')
-        _spec = _ilu.spec_from_file_location('detection.direction_gate', _p)
+                           f'{name}.py')
+        _spec = _ilu.spec_from_file_location(f'detection.{name}', _p)
         m = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(m)
-    globals()['_DG_CACHE'] = m
+    globals()[cache_key] = m
     return m
+
+
+def _oba_mod():
+    """🆕 Модуль алерту «новий OB» (`ob_alert`) — чисті функції, кеш на модулі."""
+    return _sibling_mod('ob_alert', '_OBA_CACHE')
 
 
 
@@ -115,6 +132,9 @@ DB_KEY_DEDUP_STATE = 'smc_dedup_state_v1'  # authoritative per-symbol dedup gate
 # рестарт обнуляв лічильник і «епоху», тож бот міг ВДРУГЕ відкрити угоду на тому
 # самому 1H-OB, а UI завжди показував «VOB 0 · чекаємо #1».
 DB_KEY_VOB_STATE = 'smc_vob_state_v1'
+# 🆕 Опрацьовані OB-блоки на TF воріт (щоб рестарт НЕ переоголошував поточний
+# блок кожної монети як «новий» — це СТАН, а не подія).
+DB_KEY_OB_ALERT = 'smc_ob_alert_v1'
 DB_KEY_TRENDS_STATE = 'smc_trends_state_v1'  # last-known trend dot per symbol (restart cache)
 SIGNALS_PERSIST_LIMIT = 50         # max signals stored per symbol
 
@@ -177,6 +197,25 @@ DEFAULT_SETTINGS = {
     # ⚠️ Діє ЛИШЕ разом з `ob_filter_enabled` — це уточнення воріт, а не
     # окремий фільтр. На малюнок блоку, SL і такт `vob_one_per_ob` НЕ впливає.
     'ob_filter_choch_only': True,
+
+    # === 🆕 АЛЕРТ «НОВИЙ OB НА ГРАФІКУ» (вимога 09.09) ===================
+    # «Моментальна реакція на появу на графіку нового OB 1H і моментальна
+    # відправка повідомлення в Лог роботи бота про появу нового OB в який саме
+    # час і поточна ціна монети» + «який на даний момент останній і актуальний
+    # OB 4H і також записати цю інформацію».
+    #
+    # ⚠️ Це ЛИШЕ ПОВІДОМЛЕННЯ. Ворота входу (`ob_filter_*`), такт
+    # `vob_one_per_ob` і джерела Manual SL читають ТОЙ САМИЙ рядок БД і
+    # поводяться РІВНО як раніше — алерт нічого не дозволяє й не блокує.
+    # TF беремо з `ob_filter_timeframe` (тобто «той OB, що зазначено в
+    # налаштуваннях»), окремого TF НЕ заводимо: два джерела розійшлись би.
+    'ob_alert_enabled': True,
+    # Старший TF, який дописуємо в те саме повідомлення. Порожньо = не питати.
+    # Рахується ЛИШЕ в момент події (кілька разів на добу), а не щоцикл.
+    'ob_alert_htf': '4h',
+    # Вікно свіжості в секундах, 0 = АВТО = один бар `ob_filter_timeframe`.
+    # Старший за вікно блок «щойно» не зʼявився → беремо за базу молча.
+    'ob_alert_max_lag_sec': 0,
 
     # === 💧 Liquidity Filter (окремий незалежний фільтр) ===
     # Пропускає сигнал ЛИШЕ якщо ліквідність У БІК УГОДИ ≥ порогу.
@@ -524,6 +563,26 @@ class SMCScanner:
         # так колись зʼявився баг «бейдж каже 1H, а числа з чарт-TF».
         self._ob_zones: Dict[str, Dict] = {}
 
+        # 🆕 АЛЕРТ «НОВИЙ OB»: які блоки вже ОПРАЦЬОВАНІ (список `bar_time` на
+        # монету) + коли востаннє бачили закриття бару TF воріт.
+        # ⚠️ СПИСОК, а не «водяний знак»: коли поточний OB стає breaker, він
+        # випадає і «останнім» стає СТАРІШИЙ блок із МЕНШИМ bar_time — умова
+        # `bt > prev` не спрацювала б НІКОЛИ (та сама пастка, що вже
+        # задокументована для VOB).
+        # ⚠️ ПЕРСИСТИТЬСЯ (`DB_KEY_OB_ALERT`): інакше кожен рестарт оголошував
+        # би поточний блок КОЖНОЇ монети «новим» — це флуд станом, а не подія.
+        self._ob_alert_seen: Dict[str, List[int]] = {}
+        # Знімок OB старшого TF (4h) — {(symbol, tf): (valid_until, ob|None)}.
+        # Рахується ЛИШЕ в момент події і живе до закриття свого бару, тож на
+        # постійне навантаження не впливає (кілька запитів на добу на монету).
+        self._ob_htf_cache: Dict[tuple, tuple] = {}
+        # Номер циклу, у якому OB-стан монети вже порахований — щоб «швидка
+        # смуга» на початку циклу і звичайний прохід НЕ робили роботу двічі.
+        self._ob_done_cycle: Dict[str, int] = {}
+        # Останнє бачене закриття бару TF воріт (щоб швидка смуга вмикалась
+        # РІВНО на новому барі, а не щоцикл).
+        self._ob_lane_bar: Optional[float] = None
+
         # Signal markers per symbol — points on the chart where Telegram alerts
         # actually fired. Used to display LONG/SHORT dots on the chart.
         # {symbol: [{'time': ts_sec, 'price': float, 'side': 'LONG'|'SHORT'}, ...]}
@@ -566,7 +625,10 @@ class SMCScanner:
         # 🔢 Стан VOB-нумерації (такт 1H-OB + «результативний сигнал уже був»)
         # мусить пережити рестарт, інакше бот почне такт заново.
         self._load_vob_state()
-    
+        # 🆕 Опрацьовані OB-блоки: без цього перший цикл після рестарту оголосив
+        # би поточний блок КОЖНОЇ монети «новим» (флуд станом, а не подія).
+        self._load_ob_alert_state()
+
     # ========================================
     # Persistence
     # ========================================
@@ -852,6 +914,66 @@ class SMCScanner:
         except Exception as e:
             print(f"[SMC] dedup state persist error: {e}")
     
+    # ── 🆕 АЛЕРТ «НОВИЙ OB»: персист опрацьованих блоків ──────────────────
+    # Тротл запису: подія рідка (кілька разів на добу на монету), але писати БД
+    # на кожну монету в межах одного циклу все одно не треба.
+    _OB_ALERT_PERSIST_GAP = 20.0
+
+    def _persist_ob_alert_state(self, force: bool = False):
+        """💾 Зберегти, які OB-блоки вже ОПРАЦЬОВАНІ.
+
+        ⚠️ Без цього кожен рестарт (а `botupdate` робиться часто) оголошував би
+        ПОТОЧНИЙ блок кожної монети watchlist «новим» і виливав у 🧾 Лог
+        десятки рядків СТАНУ замість подій — рівно той флуд, через який лог
+        VOB уже довелось чистити."""
+        if not self.db:
+            return
+        _now = time.time()
+        if not force and (_now - getattr(self, '_ob_alert_saved_at', 0.0)
+                          ) < self._OB_ALERT_PERSIST_GAP:
+            return
+        try:
+            self._ob_alert_saved_at = _now
+            self.db.set_setting(DB_KEY_OB_ALERT, {
+                'tf': self._settings.get('ob_filter_timeframe', '1h'),
+                'seen': {k: list(v) for k, v in self._ob_alert_seen.items() if v},
+            })
+        except Exception as e:
+            print(f"[SMC] OB alert state persist error: {e}")
+
+    def _load_ob_alert_state(self):
+        """Відновити опрацьовані OB-блоки після рестарту.
+
+        ⚠️ Збережений TF звіряємо з поточним: користувач міг перемкнути
+        `ob_filter_timeframe`, і тоді `bar_time` зі старого TF нічого не
+        означають — починаємо з чистого (вікно свіжості все одно не дасть
+        оголосити давній блок «новим»)."""
+        if not self.db:
+            return
+        try:
+            st = self.db.get_setting(DB_KEY_OB_ALERT, None)
+            if not isinstance(st, dict):
+                return
+            if str(st.get('tf') or '') != str(
+                    self._settings.get('ob_filter_timeframe', '1h')):
+                return
+            seen = st.get('seen') or {}
+            if not isinstance(seen, dict):
+                return
+            for k, v in seen.items():
+                if not isinstance(v, (list, tuple)):
+                    continue
+                out = []
+                for x in v:
+                    try:
+                        out.append(int(float(x)))
+                    except (TypeError, ValueError):
+                        pass
+                if out:
+                    self._ob_alert_seen[str(k).upper()] = out[-_oba_mod().SEEN_CAP:]
+        except Exception as e:
+            print(f"[SMC] OB alert state load error: {e}")
+
     def _persist_vob_state(self):
         """💾 Зберегти стан VOB-нумерації, щоб він ПЕРЕЖИВАВ рестарт:
           • `_vob_alert_seen`  — пер-напрямкова база (який VOB уже опрацьовано);
@@ -1215,6 +1337,9 @@ class SMCScanner:
                        # OB filter
                        'ob_filter_enabled', 'ob_filter_timeframe',
                        'ob_filter_choch_only',
+                       # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
+                       'ob_alert_enabled', 'ob_alert_htf',
+                       'ob_alert_max_lag_sec',
                        # 💧 Фільтр ліквідності за напрямком
                        'liq_filter_enabled', 'liq_filter_exchange',
                        'liq_filter_bars', 'liq_filter_min_pct',
@@ -1356,6 +1481,20 @@ class SMCScanner:
             # «Лише з CHoCH» — булевий тумблер, дефолт УВІМК.
             self._settings['ob_filter_choch_only'] = bool(
                 self._settings.get('ob_filter_choch_only', True))
+
+            # === 🆕 Алерт «новий OB»: валідація ===
+            self._settings['ob_alert_enabled'] = bool(
+                self._settings.get('ob_alert_enabled', True))
+            # Старший TF: той самий набір, що у воріт, АБО порожньо = не питати.
+            _ah = str(self._settings.get('ob_alert_htf', '4h') or '').strip().lower()
+            self._settings['ob_alert_htf'] = _ah if _ah in ALLOWED_OB_TFS else (
+                '' if _ah in ('', 'off', 'none') else '4h')
+            # Вікно свіжості: 0 = АВТО (один бар TF воріт). Відʼємне → 0.
+            try:
+                _aml = float(self._settings.get('ob_alert_max_lag_sec', 0) or 0)
+            except (TypeError, ValueError):
+                _aml = 0.0
+            self._settings['ob_alert_max_lag_sec'] = max(0.0, _aml)
 
             # === 💧 Фільтр ліквідності: валідація ===
             self._settings['liq_filter_enabled'] = bool(
@@ -1636,8 +1775,42 @@ class SMCScanner:
         # мережеве очікування, його безпечно робити паралельно: результат просто
         # кладеться в кеш `self._prefetch`, який далі читає той самий цикл.
         self._prefetch = {}
+
+        # ⚡ ШВИДКА СМУГА OB — ЩОБ РЕАКЦІЯ НА НОВИЙ OB БУЛА СЕКУНДНОЮ.
+        #
+        # Вимога: «моментальна реакція на появу на графіку нового OB». Вузьке
+        # місце було не в детекції, а в ЧЕРЗІ: `_update_smc_ob` викликається в
+        # ПОСЛІДОВНОМУ проході, тож монета №33 дізнавалась про свій новий блок
+        # аж у кінці циклу — затримка до повного циклу (хвилини).
+        #
+        # ⚠️ СТОЇТЬ ПЕРЕД ПОВНИМ ПРЕФЕТЧЕМ — і це головне. Повний префетч тягне
+        # ~10 HTTP на монету (3000 барів × кілька TF) і сам з'їдає десятки
+        # секунд; після нього «швидка» смуга вже не швидка. Тут вона тягне РІВНО
+        # (ob_tf, 700) — один запит на монету, паралельно.
+        # ⚠️ КЛЮЧОВА ЕКОНОМІЯ: OB рахується по ЗАКРИТИХ барах, отже змінитись він
+        # може ЛИШЕ коли закрився бар TF воріт. Тому смуга працює НЕ щоцикл, а
+        # РІВНО на першому циклі після закриття бару (для 1h — раз на годину);
+        # решту циклів вона коштує один `if`.
+        # ⚠️ Логіка НЕ дублюється: смуга кличе ТОЙ САМИЙ `_update_smc_ob`, а
+        # `_ob_done_cycle` не дає звичайному проходу зробити ту саму роботу
+        # вдруге в межах одного циклу.
+        _lane_n = 0
+        try:
+            _lane_n = self._ob_fast_lane(md)
+        except Exception as _fle:
+            if self._errors <= 5:
+                print(f"[SMC] OB fast lane error: {_fle}")
+
         try:
             _pf_specs = self._prefetch_specs()
+            # ⚠️ Смуга вже стягнула і СПОЖИЛА (`pop`) бари `(ob_tf, 700)`, а
+            # `_update_smc_ob` цього циклу пропускається по гейту — отже повний
+            # префетч качав би ці 700 барів на КОЖНУ монету вдруге, і ніхто їх
+            # не забрав би. Викидаємо саме цей набір (ліміт 700 унікальний для
+            # OB-споживача: решта специфікацій бере 3000).
+            if _lane_n:
+                _ob_spec = (self._settings.get('ob_filter_timeframe', '1h'), 700)
+                _pf_specs = [sp for sp in _pf_specs if sp != _ob_spec]
             if _pf_specs and len(self._watchlist) > 1:
                 _pf_t0 = time.time()
                 self._prefetch_klines(md, list(self._watchlist), _pf_specs)
@@ -2347,6 +2520,11 @@ class SMCScanner:
         no OB exists" from "scanner never ran on this symbol".
         """
         ob_tf = self._settings.get('ob_filter_timeframe', '1h')
+        # ⚡ Уже пораховано в цьому циклі «швидкою смугою» (`_ob_fast_lane`) —
+        # не робимо ту саму роботу (700 барів + детекція) вдруге. Саме цей
+        # гейт дозволяє смузі бути РАННЬОЮ і при цьому НЕ додати навантаження.
+        if self._ob_done_cycle.get(symbol) == self._scan_count:
+            return
         # Whether or not the filter is enabled, we still maintain the OB
         # state so the chart panel always shows accurate info. Disabling
         # the filter just makes the gate skip the check.
@@ -2466,7 +2644,194 @@ class SMCScanner:
                 self._last_ob_dir[symbol] = _nd
         except Exception:
             pass
-    
+
+        # 🆕 МОМЕНТАЛЬНЕ ПОВІДОМЛЕННЯ ПРО НОВИЙ OB — тут і зараз.
+        # Пишемо ОДРАЗУ в місці детекції (а не в кінці циклу), бо вимога —
+        # «моментальна відправка». Ціна беремо з `klines[-1]` — це ЖИВИЙ
+        # (форміруючий) бар, тобто РІВНО та ціна, що на графіку, і вона не
+        # коштує жодного зайвого запиту.
+        try:
+            self._ob_alert_tick(symbol, md, ob_tf, ob, klines)
+        except Exception as e:
+            if self._errors <= 5:
+                print(f"[SMC] OB alert error for {symbol}: {e}")
+
+    def _ob_lane_due(self, tf: str, now: float) -> bool:
+        """Чи настав час швидкої смуги: чи ЗАКРИВСЯ новий бар TF воріт?
+
+        ЧИСТА-за-духом перевірка (єдиний стан — `_ob_lane_bar`): рахуємо номер
+        поточного бару як `now // tf_secs`. Змінився — бар закрився, блок МОЖЕ
+        бути новим. Не змінився — перевіряти нічого, бо детекція йде по
+        ЗАКРИТИХ барах і новішого блоку фізично не існує.
+        ⚠️ Перший виклик після старту теж «настав»: ми ще не знаємо стану і
+        мусимо взяти базу (тихо, через вікно свіжості)."""
+        _sec = max(1, _oba_mod().tf_secs(tf))
+        _slot = float(int(now // _sec))
+        if self._ob_lane_bar is None or _slot != self._ob_lane_bar:
+            self._ob_lane_bar = _slot
+            return True
+        return False
+
+    def _ob_fast_lane(self, md) -> int:
+        """⚡ Порахувати OB-стан УСІХ монет НА ПОЧАТКУ циклу — один раз на бар.
+
+        Повертає, скільки монет опрацьовано (0 = смуга не була потрібна).
+        """
+        if not self._settings.get('ob_alert_enabled', True):
+            return 0
+        syms = list(self._watchlist)
+        if not syms:
+            return 0
+        ob_tf = self._settings.get('ob_filter_timeframe', '1h')
+        if not self._ob_lane_due(ob_tf, time.time()):
+            return 0
+        _t0 = time.time()
+        # Один запит на монету, паралельно — той самий пул, що й повний префетч.
+        try:
+            self._prefetch_klines(md, syms, [(ob_tf, 700)])
+        except Exception:
+            pass        # не вийшло — `_update_smc_ob` довантажить сам
+        _n = 0
+        for sym in syms:
+            if not self._running:
+                break
+            try:
+                self._update_smc_ob(sym, md)
+                self._ob_done_cycle[sym] = self._scan_count
+                _n += 1
+            except Exception as e:
+                if self._errors <= 5:
+                    print(f"[SMC] fast-lane OB error {sym}: {e}")
+        _el = time.time() - _t0
+        print(f"[SMC] ⚡ OB lane ({ob_tf}): {_n} symbols in {_el:.1f}s "
+              f"({(_el / _n if _n else 0):.2f}s/coin)")
+        return _n
+
+    # ═══════════ 🆕 АЛЕРТ «НОВИЙ OB НА ГРАФІКУ» ═══════════════════════════
+    def _ob_alert_tick(self, symbol: str, md, ob_tf: str,
+                       ob: Optional[Dict], klines) -> Optional[str]:
+        """Порівняти поточний блок із опрацьованими і, якщо він НОВИЙ і ЩОЙНО
+        зʼявився, написати ОДИН рядок у 🧾 Лог роботи бота.
+
+        Повертає outcome (`new`/`stale`/`duplicate`/`no_ob`/`off`) — зручно для
+        тестів і діагностики.
+
+        ⚠️ Нічого не дозволяє і не блокує: ворота входу, такт `vob_one_per_ob`
+        і джерела Manual SL читають ТОЙ САМИЙ рядок БД і працюють як раніше.
+        """
+        oba = _oba_mod()
+        if not self._settings.get('ob_alert_enabled', True):
+            return 'off'
+        _seen = self._ob_alert_seen.get(symbol) or []
+        _now = time.time()
+        _out = oba.outcome(_seen, ob, ob_tf, _now,
+                           self._settings.get('ob_alert_max_lag_sec', 0))
+        if _out in ('no_ob', 'duplicate'):
+            return _out
+
+        # Новий для нас блок — позначаємо опрацьованим У ОБОХ випадках
+        # ('new' і 'stale'), інакше «старий» блок перевірявся б щоцикл.
+        self._ob_alert_seen[symbol] = oba.seen_add(_seen, ob.get('bar_time'))
+        self._persist_ob_alert_state(force=(_out == 'new'))
+        if _out != 'new':
+            # Старий блок → ТИХА база. У лог не пишемо: це СТАН, не подія.
+            return _out
+
+        _side1 = oba.side_of(ob.get('bias'))
+        _app = oba.appeared_at(ob, ob_tf)
+        # Поточна ціна = закриття ЖИВОГО бару (той самий масив, що малює графік).
+        _price = None
+        try:
+            if klines:
+                _price = float(klines[-1].get('close') or 0) or None
+        except (TypeError, ValueError, AttributeError, IndexError):
+            _price = None
+
+        # 🔎 Старший TF (4h) — рахуємо ЛИШЕ ЗАРАЗ, у момент події.
+        _htf = str(self._settings.get('ob_alert_htf', '4h') or '').strip()
+        _side4, _tf4, _note = None, None, ''
+        if _htf:
+            _tf4 = _htf
+            _ob4, _note = self._ob_on_htf(symbol, md, _htf, ob_tf, ob)
+            _side4 = oba.side_of((_ob4 or {}).get('bias'))
+
+        _parts = oba.build_parts(
+            symbol=symbol, tf1=ob_tf, side1=_side1,
+            tag1=ob.get('created_by_tag'), tf4=_tf4, side4=_side4,
+            price=_price, appeared=_app, now=_now, htf_note=_note)
+        _text = oba.build_text(_parts)
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            return _out
+        log_activity(symbol, 'ob_new', _text, side=_side1, source='OB',
+                     extra={'parts': _parts})
+        print(f"[SMC] 🆕 OB {ob_tf} {symbol}: {_text}")
+        return _out
+
+    def _ob_on_htf(self, symbol: str, md, tf: str, ob_tf: str,
+                   ob_same: Optional[Dict]):
+        """OB старшого TF (деф. 4h) → `(ob|None, note)`.
+
+        ⚠️ ЧОМУ ЛИШЕ В МОМЕНТ ПОДІЇ, а не щоцикл: це ЄДИНЕ місце фічі, що
+        ходить у мережу. Новий OB на монеті трапляється кілька разів на добу,
+        тож тут це одиничні запити; рахувати 4h для 33 монет КОЖЕН цикл
+        означало б +33 HTTP на цикл заради рядка, який майже ніколи не пишеться
+        (той самий принцип, що у 💧 фільтра ліквідності — «останнім у ланцюгу і
+        лише якщо справді потрібно»).
+
+        ⚠️ Коли старший TF ЗБІГАЄТЬСЯ з TF воріт — НЕ питаємо біржу вдруге,
+        беремо вже порахований блок: два різні числа для того самого TF були б
+        прямим протиріччям.
+        """
+        oba = _oba_mod()
+        if str(tf).lower() == str(ob_tf).lower():
+            return ob_same, 'той самий TF, що й ворота'
+        _key = (symbol, str(tf).lower())
+        _hit = self._ob_htf_cache.get(_key)
+        if _hit and time.time() < _hit[0]:
+            return _hit[1], ''
+        try:
+            from detection.ob_detector import detect_last_order_block
+            from detection.smc_structure import detect_smc_structure
+        except Exception:
+            return None, 'детектор недоступний'
+        try:
+            kl = self._pf_klines(md, symbol, tf, 700)
+        except Exception as e:
+            return None, f'бари {tf} не завантажились ({e})'
+        if not kl or len(kl) < 220:
+            return None, f'мало історії {tf}'
+        kl_closed = kl[:-1] if len(kl) >= 2 else kl
+        try:
+            _res = detect_smc_structure(kl_closed,
+                                        internal_size=self.get_internal_size(),
+                                        swing_size=int(self._settings.get('swing_size', 50)))
+            _int = _res.get('internal', {})
+            _ob4 = detect_last_order_block(klines=kl_closed,
+                                           pivots=_int.get('pivots', []),
+                                           events=_int.get('events', []))
+        except Exception as e:
+            return None, f'{tf} не порахувався ({e})'
+        # Кеш дійсний РІВНО до закриття поточного бару цього TF — раніше за це
+        # блок змінитись не може (детекція по закритих барах).
+        try:
+            _tl = kl[-1].get('t')
+            _tl = float(_tl) / 1000.0 if float(_tl) > 1e12 else float(_tl)
+            self._ob_htf_cache[_key] = (_tl + oba.tf_secs(tf), _ob4)
+            if len(self._ob_htf_cache) > self.OB_ZONES_CAP:
+                self._ob_htf_cache.clear()
+        except (TypeError, ValueError, AttributeError):
+            pass
+        # Рядок старшого TF теж персистимо — хай буде доступний і решті
+        # споживачів (чарт/панель), зайвої роботи це не додає.
+        try:
+            from storage.db_operations import get_db
+            get_db().upsert_smc_ob_state(symbol, tf, _ob4)
+        except Exception:
+            pass
+        return _ob4, ''
+
     def _current_ob_bartime(self, symbol: str):
         """bar_time поточного 1H-OB (з sob_smc_ob_state на ob_filter_timeframe) —
         ідентифікатор «епохи» для `vob_one_per_ob`. None, коли валідного OB нема

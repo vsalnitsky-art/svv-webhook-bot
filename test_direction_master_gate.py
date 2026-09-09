@@ -189,9 +189,21 @@ def test_scanner_does_not_drag_the_whole_package_into_the_hot_path():
     _check('def _dg_mod()' in src, 'потрібен завантажувач із фолбеком на файл')
     j = src.index('def _dg_mod()')
     loader = src[j:j + 1200]
+    # ⚠️ Завантажувач може САМ робити фолбек, або делегувати спільному
+    # помічникові (`_sibling_mod`) — відколи той самий прийом знадобився ще й
+    # для `ob_alert`. Перевіряємо НАМІР, а не конкретне місце рядка: інакше
+    # будь-яке виправлення дублювання ламало б тест на рівному місці.
+    if 'spec_from_file_location' not in loader:
+        _check('_sibling_mod' in loader,
+               'або фолбек тут, або делегування спільному завантажувачу')
+        k = src.index('def _sibling_mod(')
+        loader = src[k:k + 1400]
     _check('spec_from_file_location' in loader,
            'фолбек мусить вантажити сусідній файл напряму')
-    _check('_DG_CACHE' in loader, 'модуль треба кешувати, а не шукати щоразу')
+    _check('cache_key' in loader or '_DG_CACHE' in loader,
+           'модуль треба кешувати, а не шукати щоразу')
+    _check("globals()['_DG_CACHE']" in src or "'_DG_CACHE'" in src,
+           'кеш саме для direction_gate мусить лишитись')
     print('✓ сканер не тягне важкий пакет у гарячий шлях')
 
 
