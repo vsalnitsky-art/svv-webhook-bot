@@ -451,6 +451,118 @@ def test_tp1_never_passes_tp2():
     print('✓ TP-1 ніколи не перестрибує TP-2')
 
 
+# ═════════ 🎯 TP-1 = ВЛАСНЕ ЧИСЛО «🎯 Автопілота» (вимога 09.09) ════════════
+# Дослівно: «Manual TP-1 буде мати автоматичне число із 🎯 Автопілот; у випадку
+# якщо число 🎯 Автопілот менше за автоматичне значення Manual TP-2, то поле
+# Manual TP-1 залишаємо порожнім».
+#
+# ⚠️ «Менше» тут НАПРЯМКОВЕ, а не арифметичне: рівень мусить лежати МІЖ входом
+# і TP-2 (для LONG нижче за TP-2, для SHORT — ВИЩЕ). Буквальне `<` на шорті
+# означало б протилежне і ставило б частковий вихід ДАЛІ за повний.
+_MAGNET = lambda p: {'price': p, 'kind': 'magnet', 'label': '🧲 магніт'}
+
+
+def test_tp1_is_the_autopilot_own_number_when_tp2_came_from_the_magnet():
+    """TP-2 = 🧲 магніт, отже власна ціль автопілота — ОКРЕМЕ змістовне число,
+    і саме воно стає TP-1. Вікно частки шляху його НЕ гейтить: тут магніт аж
+    +100%, тож 110.0 лежить на 10% шляху — далеко ПОЗА вікном 30-75%, і все
+    одно виставляється (інакше вимога «TP-1 = число Автопілота» не діяла б)."""
+    r = tp.plan_targets('LONG', 100.0, 100.0, _tg(), objective=_MAGNET(200.0))
+    _check(r['tp2']['price'] == 200.0, f'TP-2 мусить бути магнітом: {r["tp2"]}')
+    _check(r['tp1'] is not None and r['tp1']['price'] == 110.0,
+           f'TP-1 = власна ціль автопілота (Weak High 110): {r["tp1"]}')
+    _check(r['tp1']['kind'] == 'swing', f'тип обʼєкта зберігається: {r["tp1"]}')
+    _check(r['tp1']['path_pct'] == 10.0,
+           f'частка шляху рахується, але НЕ відсіює: {r["tp1"]}')
+    _check(any('🎯 Автопілота' in x for x in r['reasons']),
+           f'у поясненні має бути видно джерело рівня: {r["reasons"]}')
+    print(f"✓ TP-1 = число 🎯 Автопілота {r['tp1']['price']} "
+          f"(TP-2 з магніту {r['tp2']['price']})")
+
+
+def test_tp1_is_empty_when_the_autopilot_number_is_not_before_tp2():
+    """ГОЛОВНИЙ ЗАМОК ВИМОГИ. Магніт ($105) БЛИЖЧИЙ за власну ціль автопілота
+    ($110) — реальний кейс STXUSDT. Число автопілота лежить ЗА TP-2, тож поле
+    лишається ПОРОЖНІМ. ⚠️ Похідний «50% шляху» тут НЕ підставляється: користувач
+    просив саме порожнє поле, а не вигаданий замінник."""
+    r = tp.plan_targets('LONG', 100.0, 100.0, _tg(), objective=_MAGNET(105.0))
+    _check(r['tp2']['price'] == 105.0, f'TP-2 = магніт: {r["tp2"]}')
+    _check(r['tp1'] is None, f'TP-1 мусить лишитись ПОРОЖНІМ: {r["tp1"]}')
+    _check(any('не перед TP-2' in x for x in r['reasons']),
+           f'причина має бути названа: {r["reasons"]}')
+    _check(not any('шляху до цілі' in x for x in r['reasons']),
+           f'похідний рівень НЕ підставляється: {r["reasons"]}')
+    print('✓ число 🎯 Автопілота за TP-2 → поле TP-1 ПОРОЖНЄ (без заміни)')
+
+
+def test_short_mirrors_the_rule():
+    """Для SHORT «перед TP-2» означає ВИЩЕ за TP-2. Арифметичне `<` дало б тут
+    рівно протилежний висновок в обох випадках — саме це й перевіряємо."""
+    tg = tp.collect_targets('SHORT', 100.0, swing={'low': {'price': 90.0}},
+                            runway={'dir': 'SHORT', 'next': {'price': 97.0},
+                                    'main': {'price': 93.0}})
+    ok = tp.plan_targets('SHORT', 100.0, 100.0, tg, objective=_MAGNET(80.0))
+    _check(ok['tp1'] is not None and ok['tp1']['price'] == 90.0,
+           f'SHORT: 90 ВИЩЕ за TP-2 80 → це і є TP-1: {ok["tp1"]}')
+    _check(100.0 > ok['tp1']['price'] > ok['tp2']['price'],
+           f'порядок для SHORT дзеркальний: {ok}')
+    bad = tp.plan_targets('SHORT', 100.0, 100.0, tg, objective=_MAGNET(95.0))
+    _check(bad['tp1'] is None,
+           f'SHORT: 90 НИЖЧЕ за TP-2 95 → порожньо: {bad["tp1"]}')
+    print('✓ SHORT дзеркальний: «перед TP-2» = ВИЩЕ за TP-2')
+
+
+def test_gap_still_guards_the_own_number():
+    """Зазор лишається чинним і для власного числа: рівень впритул до входу
+    зʼїла б комісія, впритул до TP-2 — це не поділ, а два рівні в одній точці.
+    В обох випадках поле ПОРОЖНЄ (а не підмінене похідним)."""
+    near_entry = tp.plan_targets('LONG', 100.0, 100.0,
+                                 [{'price': 100.1, 'kind': 'poc', 'label': 'POC'}],
+                                 objective=_MAGNET(110.0), cfg={'tp_min_gap_pct': 1.0})
+    _check(near_entry['tp1'] is None, f'впритул до входу: {near_entry["tp1"]}')
+    near_tp2 = tp.plan_targets('LONG', 100.0, 100.0,
+                               [{'price': 109.9, 'kind': 'poc', 'label': 'POC'}],
+                               objective=_MAGNET(110.0), cfg={'tp_min_gap_pct': 1.0})
+    _check(near_tp2['tp1'] is None, f'впритул до TP-2: {near_tp2["tp1"]}')
+    print('✓ зазор поважається і для числа 🎯 Автопілота (порожньо, не заміна)')
+
+
+def test_without_a_magnet_the_window_search_still_works():
+    """⚠️ Запасний шлях НЕ видалено. Магніту немає → власне число автопілота
+    ЗБІГАЄТЬСЯ з TP-2, і взяти TP-1 звідти неможливо. Тоді працює стара
+    механіка: найсильніший обʼєкт у вікні частки шляху, а якщо його немає —
+    похідний рівень. Інакше без магніту TP-1 не було б де взяти взагалі."""
+    r = tp.plan_targets('LONG', 100.0, 100.0, _tg(), stop=98.0)
+    _check(r['tp2']['price'] == 110.0, f'TP-2 = найдальша ціль: {r["tp2"]}')
+    _check(r['tp1'] is not None and r['tp1']['price'] == 103.0,
+           f'TP-1 з вікна шляху, як і раніше: {r["tp1"]}')
+    fb = tp.plan_targets('LONG', 100.0, 100.0,
+                         [{'price': 110.0, 'kind': 'swing', 'label': 'HH'}])
+    _check(fb['tp1'] is not None and fb['tp1']['kind'] == 'path',
+           f'похідний рівень лишився для цієї гілки: {fb["tp1"]}')
+    print('✓ без магніту працює стара механіка (вікно + похідний рівень)')
+
+
+def test_every_exit_goes_through_the_shared_lock():
+    """ЗАМОК ВІД МАЙБУТНЬОЇ ПРАВКИ. Виходів із розрахунку тепер ДВА, тож
+    правило «TP-1 не перевищує TP-2» винесено в `_finish_targets`. Нова гілка
+    з власним `return` обійшла б його мовчки — цей тест такого не дозволяє."""
+    import ast
+    src = open(os.path.join(_ROOT, 'detection/trade_pilot.py'),
+               encoding='utf-8').read()
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == 'plan_targets')
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Return):
+            continue
+        v = node.value
+        if isinstance(v, ast.Dict):
+            continue                       # ранній вихід «цілі немає» — без TP-1
+        _check(isinstance(v, ast.Call) and getattr(v.func, 'id', '') == '_finish_targets',
+               f'рядок {node.lineno}: вихід повз спільний замок _finish_targets')
+    print('✓ кожен вихід plan_targets проходить спільний замок')
+
+
 def test_low_r_target_is_still_set():
     """⚠️ ЗАМОК ВІД ПОВТОРУ. Була спроба відсікати цілі, ближчі за стоп
     (R < порогу) — користувач це СКАСУВАВ: «не потрібно відсікати ніякі угоди».
@@ -603,6 +715,12 @@ if __name__ == '__main__':
     test_fallback_mirrors_for_short()
     test_fallback_can_be_disabled()
     test_tp1_never_passes_tp2()
+    test_tp1_is_the_autopilot_own_number_when_tp2_came_from_the_magnet()
+    test_tp1_is_empty_when_the_autopilot_number_is_not_before_tp2()
+    test_short_mirrors_the_rule()
+    test_gap_still_guards_the_own_number()
+    test_without_a_magnet_the_window_search_still_works()
+    test_every_exit_goes_through_the_shared_lock()
     test_low_r_target_is_still_set()
     test_r_is_reported_for_a_good_setup()
     test_levels_do_not_depend_on_the_stop()

@@ -264,13 +264,18 @@ def test_toggle_off_keeps_old_behaviour():
 
 # ═══════════ 3. TP-1 ЛИШАЄТЬСЯ ЗА АВТОПІЛОТОМ ══════════════════════════════
 def test_tp1_is_still_the_pilots_level_inside_the_magnet_path():
-    """TP-2 = магніт, TP-1 = те, що вибрав АВТОПІЛОТ у вікні шляху до нього.
+    """TP-2 = магніт, TP-1 = ВЛАСНЕ ЧИСЛО автопілота (його найдальша ціль).
+
+    ⚠️ ЗМІНА КОНТРАКТУ (вимога користувача 09.09): раніше TP-1 шукався серед
+    ВСІХ обʼєктів у вікні частки шляху до магніту; тепер береться САМЕ число
+    «🎯 Автопілота», а якщо воно не лежить перед TP-2 — поле лишається
+    ПОРОЖНІМ. Стара фікстура мала POC на 130 (тобто ЗА магнітом) і сьогодні
+    дала б порожньо — це другий half цього ж тесту, нижче.
     Перевіряємо на СПРАВЖНІЙ `plan_targets`."""
     tp = _REAL
     targets = [
         {'price': 103.0, 'dist_pct': 3.0, 'kind': 'swing', 'label': 'Weak High'},
         {'price': 106.0, 'dist_pct': 6.0, 'kind': 'liq_next', 'label': 'пул'},
-        {'price': 130.0, 'dist_pct': 30.0, 'kind': 'poc', 'label': 'POC'},
     ]
     magnet = {'price': 110.0, 'dist_pct': 10.0, 'kind': 'magnet',
               'label': 'магніт ліквідності 38.0%'}
@@ -280,10 +285,33 @@ def test_tp1_is_still_the_pilots_level_inside_the_magnet_path():
            f"TP-2 мусить бути магнітом: {r.get('tp2')}")
     t1 = r.get('tp1') or {}
     _check(t1, f'TP-1 мусить зʼявитись: {r}')
+    _check(t1['price'] == 106.0,
+           f'TP-1 = найдальша ціль автопілота перед магнітом: {t1}')
     _check(100.0 < t1['price'] < 110.0,
            f'TP-1 суворо між входом і магнітом: {t1}')
     _check(t1['kind'] != 'magnet', f'TP-1 — рівень автопілота, не магніт: {t1}')
     print(f"✓ TP-2 = магніт 110, TP-1 = автопілот {t1['price']} ({t1['kind']})")
+
+
+def test_tp1_stays_empty_when_the_pilot_number_is_beyond_the_magnet():
+    """Другий half вимоги: ціль автопілота (POC 130) лежить ДАЛІ за магніт
+    (110), тож «частковий» вихід опинився б за повним. Поле ПОРОЖНЄ, і
+    похідний «% шляху» НЕ підставляється — користувач просив саме порожнє."""
+    tp = _REAL
+    targets = [
+        {'price': 103.0, 'dist_pct': 3.0, 'kind': 'swing', 'label': 'Weak High'},
+        {'price': 130.0, 'dist_pct': 30.0, 'kind': 'poc', 'label': 'POC'},
+    ]
+    magnet = {'price': 110.0, 'dist_pct': 10.0, 'kind': 'magnet',
+              'label': 'магніт ліквідності 38.0%'}
+    r = tp.plan_targets('LONG', 100.0, 101.0, targets,
+                        objective=magnet, stop=98.0)
+    _check((r.get('tp2') or {}).get('price') == 110.0,
+           f"TP-2 мусить бути магнітом: {r.get('tp2')}")
+    _check(r.get('tp1') is None, f"TP-1 мусить лишитись порожнім: {r.get('tp1')}")
+    _check(any('не перед TP-2' in x for x in (r.get('reasons') or [])),
+           f"причина має бути названа: {r.get('reasons')}")
+    print('✓ ціль автопілота за магнітом → TP-1 ПОРОЖНЄ (без похідного рівня)')
 
 
 def test_ui_knows_the_magnet_icon():
@@ -495,6 +523,7 @@ if __name__ == '__main__':
     test_unusable_magnet_is_not_retried()
     test_toggle_off_keeps_old_behaviour()
     test_tp1_is_still_the_pilots_level_inside_the_magnet_path()
+    test_tp1_stays_empty_when_the_pilot_number_is_beyond_the_magnet()
     test_ui_knows_the_magnet_icon()
     test_queue4_recheck_skips_the_liquidity_filter()
     test_intake_still_checks_liquidity()
