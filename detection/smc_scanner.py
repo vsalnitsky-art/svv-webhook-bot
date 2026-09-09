@@ -4442,6 +4442,13 @@ class SMCScanner:
 
         return {'ok': bool(ok_snap and row),
                 'row': dict(row) if row else None,
+                # 💧 УСІ сходинки драбини — для Manual TP-1 «щось із середини
+                # шляху ціна → магніт» (вимога 09.09). Це ТОЙ САМИЙ зріз, що
+                # вже порахований для магніту: мережі не коштує НІЧОГО, і
+                # рівень TP-1 гарантовано з тієї самої драбини, що й TP-2
+                # (інакше два рівні однієї угоди рахувались би з різних даних —
+                # рівно та помилка, що з PD-зоною).
+                'rows': [dict(r) for r in (snap.get('rows') or [])],
                 'pct': pct,
                 'directional': directional,
                 'global_row': dict(g_row) if g_row else None,

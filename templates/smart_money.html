@@ -3289,6 +3289,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <option value="1000">1000 год</option>
                 </select>
             </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="💧 ЗВІДКИ БЕРЕТЬСЯ Manual TP-1. УВІМК (за замовчуванням) — рівень береться зі СХОДИНОК драбини ліквідності: беремо ту, що НАЙБЛИЖЧА до середини шляху «поточна ціна → 🧲 магніт (TP-2)». Сходинка — це реальний кластер ліквідації, тобто місце, де рух статистично гальмує. Драбина — ТА САМА, що дала магніт для TP-2, тож обидва рівні угоди рахуються з одних даних. ВИМК — повертається попередній ланцюг: власне число 🎯 Автопілота, далі вікно шляху. Немає придатної сходинки → похідний «% шляху» (поле нижче).">
+                <input type="checkbox" id="tm-pilot-tp1-liq" onchange="saveTMSettings()">
+                💧 TP-1 з драбини ліквідності · середина
+                <input type="number" id="tm-pilot-tp1-liq-mid" min="0" max="100" step="5" style="width:50px;font-size:0.72rem;padding:2px 4px" onchange="saveTMSettings()">
+                % шляху до TP-2
+            </label>
             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="🎯 ДЕ ШУКАТИ TP-1 — вікно у % ШЛЯХУ від входу до TP-2 (а НЕ у % ціни). Серед обʼєктів графіка у цьому вікні виграє НАЙСИЛЬНІШИЙ (пул ліквідації > POC/VAH/VAL > рівновага діапазону > swing). Ширше вікно = більше шансів знайти справжній рівень; вужче = частковий вихід ближче до середини руху. Кейс WIFUSDT 08.09: ціль +2.23%, вікно 30-75% дало смугу шириною ~1% — жоден обʼєкт туди не потрапив.">
                 🎯 TP-1 у вікні
                 <input type="number" id="tm-pilot-tp1-min-path" min="0" max="100" step="5" style="width:50px;font-size:0.72rem;padding:2px 4px" onchange="saveTMSettings()">
@@ -8805,6 +8811,10 @@ async function loadTMSettings() {
         _setV('tm-pilot-tp1-min-path', s.pilot_tp1_min_path_pct != null ? s.pilot_tp1_min_path_pct : 30, 30);
         _setV('tm-pilot-tp1-max-path', s.pilot_tp1_max_path_pct != null ? s.pilot_tp1_max_path_pct : 75, 75);
         _setV('tm-pilot-tp1-fallback', s.pilot_tp1_fallback_path_pct != null ? s.pilot_tp1_fallback_path_pct : 50, 50);
+        // 💧 TP-1 із драбини ліквідності (деф. ON) + точка «середини».
+        const _tp1liq = document.getElementById('tm-pilot-tp1-liq');
+        if (_tp1liq) _tp1liq.checked = (s.pilot_tp1_from_liquidity !== false);
+        _setV('tm-pilot-tp1-liq-mid', s.pilot_tp1_liq_mid_pct != null ? s.pilot_tp1_liq_mid_pct : 50, 50);
         document.getElementById('tm-tp1-move-be').checked = !!s.tp1_move_to_be;
         _setV('tm-pilot-poc-hours', s.pilot_poc_hours != null ? s.pilot_poc_hours : 72, 72);
         // Validate TF before assigning to <select> — fall back to 15m for
@@ -9275,6 +9285,8 @@ async function saveTMSettings() {
             pilot_tp1_min_path_pct: _numOr('tm-pilot-tp1-min-path', 30),
             pilot_tp1_max_path_pct: _numOr('tm-pilot-tp1-max-path', 75),
             pilot_tp1_fallback_path_pct: _numOr('tm-pilot-tp1-fallback', 50),
+            pilot_tp1_from_liquidity: document.getElementById('tm-pilot-tp1-liq').checked,
+            pilot_tp1_liq_mid_pct: _numOr('tm-pilot-tp1-liq-mid', 50),
             tp1_move_to_be: document.getElementById('tm-tp1-move-be').checked,
             pilot_poc_hours: parseInt(document.getElementById('tm-pilot-poc-hours').value) || 72,
             opposite_ob_exit_timeframe: document.getElementById('tm-opposite-ob-exit-tf').value || '15m',

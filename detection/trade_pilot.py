@@ -53,6 +53,17 @@ DEFAULTS = {
     # шляху до цілі. Це не «рівень із повітря»: він ПОХІДНИЙ від власної цілі
     # автопілота, і в підписі так і сказано. 0 = не ставити (лишити порожнім).
     'tp1_fallback_path_pct': 50.0,
+    # 💧 TP-1 З ДРАБИНИ ЛІКВІДНОСТІ (вимога користувача 09.09, дослівно:
+    # «Зміни алгоритм автоматичного визначення Manual TP-1, на даний момент
+    # 🎯 Автопілот не підходить. Став автоматично значення із 💧 Ліквідність
+    # щось із середню шкалу між 🧲 найбільший магніт і поточна ціна»).
+    # УВІМК → TP-1 береться зі СХОДИНОК тієї самої драбини, що дала магніт
+    # (TP-2), а не з обʼєктів автопілота. ВИМК → повертається попередній
+    # ланцюг (власне число автопілота → вікно шляху → похідний рівень).
+    'tp1_from_liquidity': True,
+    # Яку ТОЧКУ шляху «ціна → TP-2» вважаємо серединою: беремо сходинку,
+    # НАЙБЛИЖЧУ до неї. 50 = рівно посередині.
+    'tp1_liq_mid_pct': 50.0,
 }
 
 # Сила обʼєкта як місця ЙМОВІРНОЇ РЕАКЦІЇ ціни — щоб серед кількох придатних
@@ -248,9 +259,79 @@ def is_risk_free(side: str, entry, stop) -> bool:
     return (s >= e) if str(side).upper() == 'LONG' else (s <= e)
 
 
+def pick_tp1_from_ladder(side: str, entry, price, tp2_price, ladder,
+                         cfg: Optional[Dict] = None) -> Optional[Dict]:
+    """💧 TP-1 = СХОДИНКА ДРАБИНИ ЛІКВІДНОСТІ біля СЕРЕДИНИ шляху до TP-2.
+
+    Вимога користувача (09.09), дослівно: «Став автоматично значення із
+    💧 Ліквідність щось із середню шкалу між 🧲 найбільший магніт і поточна
+    ціна».
+
+    Чому саме сходинка, а не просто «половина шляху»: сходинка — це РЕАЛЬНИЙ
+    кластер ліквідації, тобто місце, де рух статистично гальмує. Половина
+    шляху — просто число. Тому шукаємо кластер ПОБЛИЗУ середини, а «просто
+    число» лишається запасним варіантом (`tp1_fallback_path_pct`).
+
+    `ladder` — список `{price, label, pct}`, де `price` — уже БЛИЖНЯ МЕЖА
+    смуги для цього боку. ⚠️ Межу рахує ВИКЛИКАЧ через `ladder.magnet_edge`
+    — те саме правило, що для магніту (LONG зустрічає нижню межу, SHORT —
+    верхню). Дублювати його тут означало б завести друге джерело правди.
+
+    ⚠️ Кандидат мусить бути попереду І ВХОДУ, І ПОТОЧНОЇ ЦІНИ: перше — тверде
+    правило поділу (TP-1 між входом і TP-2), друге — буквально те, що просив
+    користувач («між магнітом і поточною ціною»). На відкритті вони збігаються.
+    """
+    c = {**DEFAULTS, **(cfg or {})}
+    e, p, t2 = _f(entry), _f(price), _f(tp2_price)
+    if not e or not t2 or side not in ('LONG', 'SHORT'):
+        return None
+    ref = p if (p and p > 0) else e          # від чого міряємо «шлях»
+    if not _ahead(side, ref, t2):
+        return None                          # TP-2 позаду ціни — шляху немає
+    span = abs(t2 - ref)
+    if span <= 0:
+        return None
+    gap = max(0.0, float(c.get('tp_min_gap_pct', DEFAULTS['tp_min_gap_pct'])))
+    lo_p = max(0.0, float(c.get('tp1_min_path_pct', DEFAULTS['tp1_min_path_pct'])))
+    hi_p = max(lo_p, float(c.get('tp1_max_path_pct', DEFAULTS['tp1_max_path_pct'])))
+    mid_p = max(0.0, min(100.0, float(
+        c.get('tp1_liq_mid_pct', DEFAULTS['tp1_liq_mid_pct']))))
+
+    best, best_key = None, None
+    for row in (ladder or []):
+        lvl = _f((row or {}).get('price'))
+        if lvl is None or lvl <= 0:
+            continue
+        # Строго ПОПЕРЕДУ входу і поточної ціни, і строго ДО TP-2.
+        if not _ahead(side, e, lvl) or not _ahead(side, ref, lvl):
+            continue
+        if not _ahead(side, lvl, t2):
+            continue
+        d_entry = abs(lvl - e) / e * 100.0
+        if d_entry < gap:
+            continue                          # комісія зʼїла б частковий вихід
+        if abs(t2 - lvl) / lvl * 100.0 < gap:
+            continue                          # впритул до TP-2 — це не поділ
+        path = abs(lvl - ref) / span * 100.0
+        if path < lo_p or path > hi_p:
+            continue                          # поза вікном частки шляху
+        try:
+            share = float((row or {}).get('pct') or 0.0)
+        except (TypeError, ValueError):
+            share = 0.0
+        # Головне — БЛИЗЬКО ДО СЕРЕДИНИ; за однакової відстані виграє
+        # ТОВСТІША сходинка (там реакція ймовірніша).
+        key = (round(abs(path - mid_p), 6), -share)
+        if best_key is None or key < best_key:
+            best, best_key = {'price': lvl, 'path_pct': round(path, 1),
+                              'pct': share,
+                              'label': (row or {}).get('label') or 'ліквідність'}, key
+    return best
+
+
 def plan_targets(side: str, entry, price, targets: List[Dict],
                  *, objective: Optional[Dict] = None, stop=None,
-                 cfg: Optional[Dict] = None) -> Dict:
+                 cfg: Optional[Dict] = None, ladder=None) -> Dict:
     """🎯 Розкласти цілі на ДВА рівні фіксації: TP-1 (частковий) і TP-2 (повний).
 
     АНАЛІТИКА (чому саме так):
@@ -315,6 +396,63 @@ def plan_targets(side: str, entry, price, targets: List[Dict],
     lo_p = max(0.0, float(c.get('tp1_min_path_pct', DEFAULTS['tp1_min_path_pct'])))
     hi_p = max(lo_p, float(c.get('tp1_max_path_pct', DEFAULTS['tp1_max_path_pct'])))
     mid_p = (lo_p + hi_p) / 2.0
+
+    def _derived_tp1(why: str):
+        """➗ ПОХІДНИЙ рівень: `tp1_fallback_path_pct`% шляху до TP-2.
+
+        ⚠️ ОДНА реалізація на ОБИДВА шляхи (💧 драбина і стара гілка обʼєктів)
+        — інакше зʼявилось би два «однакових» розрахунки, які з часом
+        розійшлись би. `0` = не ставити (лишити поле порожнім).
+        """
+        fb = max(0.0, float(c.get('tp1_fallback_path_pct',
+                                  DEFAULTS['tp1_fallback_path_pct'])))
+        lvl = None
+        if fb > 0 and span > 0:
+            lvl = (e * (1.0 + span * fb / 100.0 / 100.0) if side == 'LONG'
+                   else e * (1.0 - span * fb / 100.0 / 100.0))
+        # ⚠️ Похідний рівень теж мусить лежати СТРОГО перед TP-2 — інакше
+        # «частковий» вихід опинився б ДАЛІ за повний (частка шляху > 100%).
+        if lvl and _ahead(side, e, lvl) and _ahead(side, lvl, tp2['price']) \
+                and abs(lvl - e) / e * 100.0 >= gap \
+                and abs(tp2['price'] - lvl) / lvl * 100.0 >= gap:
+            out = _pack({'price': lvl, 'kind': 'path',
+                         'label': f'{fb:g}% шляху до цілі'})
+            out['path_pct'] = round(fb, 1)
+            reasons.append(f"TP-1 (частковий, похідний): {fb:g}% шляху до цілі "
+                           f"@ {out['price']:.8g} (+{out['from_entry_pct']:.2f}% "
+                           f"від входу) — {why}"
+                           + (f", {out['r']}R" if out['r'] else ''))
+            return out
+        reasons.append('проміжного рівня немає — працюємо одним TP-2')
+        return None
+
+    # ═══ 💧 ДРАБИНА ЛІКВІДНОСТІ — ГОЛОВНЕ ДЖЕРЕЛО TP-1 (вимога 09.09) ═════
+    # Дослівно: «на даний момент 🎯 Автопілот не підходить. Став автоматично
+    # значення із 💧 Ліквідність щось із середню шкалу між 🧲 найбільший
+    # магніт і поточна ціна».
+    #
+    # ⚠️ Ця гілка ЗАМІЩУЄ «власне число автопілота» — вона стоїть ПЕРЕД ним і
+    # при успіху одразу виходить. Обʼєкти автопілота до TP-1 більше не
+    # потрапляють, поки тумблер `tp1_from_liquidity` УВІМКНЕНО.
+    # ⚠️ Сходинки — з ТОГО САМОГО зрізу драбини, що дав магніт (TP-2), тож
+    # обидва рівні угоди рахуються з ОДНИХ даних.
+    # ⚠️ Немає придатної сходинки → НЕ мовчимо і НЕ беремо обʼєкт автопілота:
+    # падаємо на похідний «% шляху» (він теж середина, просто без кластера).
+    if c.get('tp1_from_liquidity', DEFAULTS['tp1_from_liquidity']) and ladder:
+        _liq = pick_tp1_from_ladder(side, e, p, tp2['price'], ladder, c)
+        if _liq:
+            _c = _pack({'price': _liq['price'], 'kind': 'liq_step',
+                        'label': _liq.get('label') or 'ліквідність'})
+            _c['path_pct'] = _liq['path_pct']
+            reasons.append(
+                f"TP-1 (частковий) = 💧 сходинка ліквідності: {_c['label']} "
+                f"@ {_c['price']:.8g} (+{_c['from_entry_pct']:.2f}% від входу, "
+                f"{_c['path_pct']:.0f}% шляху до TP-2"
+                + (f", {_c['r']}R)" if _c['r'] else ')'))
+            return _finish_targets(side, _c, tp2, reasons)
+        return _finish_targets(
+            side, _derived_tp1('💧 придатної сходинки ліквідності між ціною '
+                               'і TP-2 немає'), tp2, reasons)
 
     # ═══ ПЕРШИМ — ВЛАСНЕ ЧИСЛО «🎯 Автопілота» ════════════════════════════
     # Вимога користувача (09.09), дослівно: «Manual TP-1 буде мати автоматичне
@@ -394,28 +532,9 @@ def plan_targets(side: str, entry, price, targets: List[Dict],
                        f"{tp1['path_pct']:.0f}% шляху до цілі"
                        + (f", {tp1['r']}R)" if tp1['r'] else ')'))
     else:
-        # Обʼєкта у вікні немає — беремо ПОХІДНИЙ рівень від власної цілі.
-        fb = max(0.0, float(c.get('tp1_fallback_path_pct',
-                                  DEFAULTS['tp1_fallback_path_pct'])))
-        lvl = None
-        if fb > 0 and span > 0:
-            lvl = (e * (1.0 + span * fb / 100.0 / 100.0) if side == 'LONG'
-                   else e * (1.0 - span * fb / 100.0 / 100.0))
-        # ⚠️ Похідний рівень теж мусить лежати СТРОГО перед TP-2 — інакше
-        # «частковий» вихід опинився б ДАЛІ за повний (частка шляху > 100%).
-        if lvl and _ahead(side, e, lvl) and _ahead(side, lvl, tp2['price']) \
-                and abs(lvl - e) / e * 100.0 >= gap \
-                and abs(tp2['price'] - lvl) / lvl * 100.0 >= gap:
-            tp1 = _pack({'price': lvl, 'kind': 'path',
-                         'label': f'{fb:g}% шляху до цілі'})
-            tp1['path_pct'] = round(fb, 1)
-            reasons.append(f"TP-1 (частковий, похідний): {fb:g}% шляху до цілі "
-                           f"@ {tp1['price']:.8g} (+{tp1['from_entry_pct']:.2f}% "
-                           f"від входу) — обʼєкта графіка у вікні "
-                           f"{lo_p:g}-{hi_p:g}% немає"
-                           + (f", {tp1['r']}R" if tp1['r'] else ''))
-        else:
-            reasons.append('проміжного рівня немає — працюємо одним TP-2')
+        # Обʼєкта у вікні немає — беремо ПОХІДНИЙ рівень від власної цілі
+        # (та сама реалізація, що й для 💧-гілки).
+        tp1 = _derived_tp1(f'обʼєкта графіка у вікні {lo_p:g}-{hi_p:g}% немає')
 
     return _finish_targets(side, tp1, tp2, reasons)
 

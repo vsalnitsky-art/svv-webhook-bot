@@ -462,6 +462,133 @@ def test_tp1_never_passes_tp2():
 _MAGNET = lambda p: {'price': p, 'kind': 'magnet', 'label': '🧲 магніт'}
 
 
+# ═════════ 💧 TP-1 = СХОДИНКА ДРАБИНИ ЛІКВІДНОСТІ (вимога 09.09) ═══════════
+# Дослівно: «Зміни алгоритм автоматичного визначення Manual TP-1, на даний
+# момент 🎯 Автопілот не підходить. Став автоматично значення із 💧 Ліквідність
+# щось із середню шкалу між 🧲 найбільший магніт і поточна ціна».
+_MAG110 = {'price': 110.0, 'kind': 'magnet', 'label': 'магніт ліквідності 22%'}
+
+
+def _ladder():
+    """Сходинки драбини (`price` — УЖЕ ближня межа смуги для цього боку)."""
+    return [{'price': 102.0, 'pct': 3.0, 'label': '$102–103'},
+            {'price': 105.0, 'pct': 9.0, 'label': '$105–106'},    # ~50% шляху
+            {'price': 108.5, 'pct': 22.0, 'label': '$108–109'}]
+
+
+def test_tp1_comes_from_the_ladder_middle_not_from_the_autopilot():
+    """ГОЛОВНИЙ ЗАМОК ВИМОГИ. TP-2 = 🧲 магніт (110), ціна 100 → TP-1 мусить
+    бути СХОДИНКОЮ драбини біля СЕРЕДИНИ шляху (105 = рівно 50%), а НЕ
+    обʼєктом автопілота."""
+    r = tp.plan_targets('LONG', 100.0, 100.0, _tg(), objective=_MAG110,
+                        stop=98.0, ladder=_ladder())
+    _check(r['tp2']['price'] == 110.0, f'TP-2 = магніт: {r["tp2"]}')
+    _check(r['tp1'] and r['tp1']['price'] == 105.0,
+           f'TP-1 = сходинка на 50% шляху: {r["tp1"]}')
+    _check(r['tp1']['kind'] == 'liq_step', f'тип рівня — сходинка: {r["tp1"]}')
+    _check(r['tp1']['path_pct'] == 50.0, f'частка шляху: {r["tp1"]}')
+    _check(any('сходинка ліквідності' in x for x in r['reasons']),
+           f'джерело мусить бути назване: {r["reasons"]}')
+    # ⚠️ І це НЕ обʼєкт автопілота: його власна ціль — Weak High 110 (= TP-2)
+    _check(tp.pick_objective(_tg())['price'] != r['tp1']['price'],
+           'TP-1 більше не дорівнює числу автопілота')
+    print(f"✓ TP-1 = 💧 сходинка {r['tp1']['price']} (50% шляху), не автопілот")
+
+
+def test_middle_wins_over_a_fatter_step_further_away():
+    """«Середина» — головний критерій; товщина сходинки лише ТАЙБРЕЙК.
+    Тут 108.5 має частку 22% проти 9%, але лежить на 85% шляху — беремо 105."""
+    r = tp.plan_targets('LONG', 100.0, 100.0, _tg(), objective=_MAG110,
+                        stop=98.0, ladder=_ladder())
+    _check(r['tp1']['price'] == 105.0, f'ближче до середини важливіше: {r["tp1"]}')
+    # За РІВНОЇ відстані від середини виграє товща сходинка
+    two = [{'price': 104.0, 'pct': 2.0, 'label': 'тонка'},
+           {'price': 106.0, 'pct': 30.0, 'label': 'товста'}]
+    r2 = tp.plan_targets('LONG', 100.0, 100.0, _tg(), objective=_MAG110,
+                         stop=98.0, ladder=two)
+    _check(r2['tp1']['price'] == 106.0,
+           f'за однакової відстані від 50% виграє товща: {r2["tp1"]}')
+    print('✓ головне — середина; товщина сходинки — тайбрейк')
+
+
+def test_short_takes_the_ladder_middle_downwards():
+    """Для SHORT «між ціною і магнітом» = НИЖЧЕ ціни. Дзеркальність тут не
+    формальність: переплутати бік = поставити частковий вихід за повним."""
+    mag = {'price': 90.0, 'kind': 'magnet', 'label': 'магніт'}
+    lad = [{'price': 98.0, 'pct': 4.0, 'label': '$98'},
+           {'price': 95.0, 'pct': 8.0, 'label': '$95'},     # 50% шляху
+           {'price': 91.0, 'pct': 25.0, 'label': '$91'}]
+    r = tp.plan_targets('SHORT', 100.0, 100.0, [], objective=mag,
+                        stop=102.0, ladder=lad)
+    _check(r['tp1'] and r['tp1']['price'] == 95.0, f'середина вниз: {r["tp1"]}')
+    _check(100.0 > r['tp1']['price'] > r['tp2']['price'],
+           f'порядок для SHORT дзеркальний: {r}')
+    print('✓ SHORT: сходинка на 50% шляху ВНИЗ')
+
+
+def test_steps_behind_or_too_close_are_rejected():
+    """Сходинка ПОЗАДУ входу/ціни або впритул до входу чи до TP-2 —
+    не кандидат: у першому випадку це не ціль, у решті комісія зʼїла б
+    частковий вихід (або це взагалі не поділ)."""
+    lad = [{'price': 95.0, 'pct': 40.0, 'label': 'позаду'},
+           {'price': 100.2, 'pct': 40.0, 'label': 'впритул до входу'},
+           {'price': 109.9, 'pct': 40.0, 'label': 'впритул до TP-2'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, [], objective=_MAG110,
+                        stop=98.0, ladder=lad, cfg={'tp_min_gap_pct': 1.0})
+    _check(r['tp1'] is None or r['tp1']['kind'] == 'path',
+           f'жодна з цих сходинок не годиться: {r["tp1"]}')
+    print('✓ сходинки позаду / впритул відсіюються')
+
+
+def test_no_suitable_step_falls_back_to_the_derived_middle():
+    """Немає придатної сходинки → похідний «% шляху» (це теж середина, просто
+    без кластера). ⚠️ Обʼєкт автопілота сюди НЕ підставляється."""
+    r = tp.plan_targets('LONG', 100.0, 100.0, _tg(), objective=_MAG110,
+                        stop=98.0, ladder=[])          # порожня драбина
+    # порожня драбина = режим не має даних → працює СТАРИЙ ланцюг
+    _check(r['tp1'] is not None, f'без драбини лишається стара механіка: {r}')
+    # А ось коли драбина Є, але жодна сходинка не годиться — похідний рівень
+    r2 = tp.plan_targets('LONG', 100.0, 100.0, _tg(), objective=_MAG110,
+                         stop=98.0, ladder=[{'price': 95.0, 'pct': 9.0}])
+    _check(r2['tp1'] and r2['tp1']['kind'] == 'path',
+           f'мав бути похідний рівень: {r2["tp1"]}')
+    _check(any('сходинки ліквідності' in x and 'немає' in x
+               for x in r2['reasons']), f'причина названа: {r2["reasons"]}')
+    print('✓ немає сходинки → похідний «% шляху», а не обʼєкт автопілота')
+
+
+def test_toggle_off_restores_the_previous_chain():
+    """`tp1_from_liquidity=False` → повертається попередня поведінка (власне
+    число автопілота). Драбина при цьому ігнорується повністю."""
+    r = tp.plan_targets('LONG', 100.0, 100.0, _tg(), objective=_MAG110,
+                        stop=98.0, ladder=_ladder(),
+                        cfg={'tp1_from_liquidity': False})
+    _check(r['tp1'] and r['tp1']['price'] == 110.0 or r['tp1'] is None
+           or r['tp1']['kind'] != 'liq_step',
+           f'з вимкненим тумблером сходинка не береться: {r["tp1"]}')
+    _check(not any('сходинка ліквідності' in x for x in r['reasons']),
+           f'жодної згадки про драбину: {r["reasons"]}')
+    print('✓ тумблер OFF → стара поведінка, драбина не використовується')
+
+
+def test_ladder_tp1_still_obeys_the_shared_lock():
+    """Замок «TP-1 ніколи не перевищує TP-2» діє і для нової гілки —
+    вона теж виходить через `_finish_targets`."""
+    lad = [{'price': 120.0, 'pct': 50.0, 'label': 'за TP-2'}]
+    r = tp.plan_targets('LONG', 100.0, 100.0, [], objective=_MAG110,
+                        stop=98.0, ladder=lad)
+    _check(r['tp1'] is None or r['tp1']['price'] < r['tp2']['price'],
+           f'сходинка ЗА TP-2 не може стати TP-1: {r["tp1"]}')
+    print('✓ спільний замок діє і на 💧-гілці')
+
+
+def test_liquidity_defaults_are_on_and_middle_is_50():
+    d = tp.DEFAULTS
+    _check(d.get('tp1_from_liquidity') is True, d.get('tp1_from_liquidity'))
+    _check(d.get('tp1_liq_mid_pct') == 50.0, d.get('tp1_liq_mid_pct'))
+    print('✓ дефолти: 💧-джерело УВІМК, середина = 50% шляху')
+
+
 def test_tp1_is_the_autopilot_own_number_when_tp2_came_from_the_magnet():
     """TP-2 = 🧲 магніт, отже власна ціль автопілота — ОКРЕМЕ змістовне число,
     і саме воно стає TP-1. Вікно частки шляху його НЕ гейтить: тут магніт аж
@@ -552,8 +679,16 @@ def test_every_exit_goes_through_the_shared_lock():
                encoding='utf-8').read()
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, ast.FunctionDef) and n.name == 'plan_targets')
+    # ⚠️ Рахуємо ЛИШЕ ВЛАСНІ `return` функції. `ast.walk` спускається і у
+    # ВКЛАДЕНІ функції (`_derived_tp1` — спільний похідний рівень для обох
+    # гілок), а їхні `return` повертають значення В `plan_targets`, а не з неї,
+    # тож замка не потребують. Без цього виключення тест падав би на КОЖНОМУ
+    # нормальному рефакторингу у вкладений хелпер.
+    _nested = {id(x) for d in ast.walk(fn)
+               if isinstance(d, ast.FunctionDef) and d is not fn
+               for x in ast.walk(d)}
     for node in ast.walk(fn):
-        if not isinstance(node, ast.Return):
+        if not isinstance(node, ast.Return) or id(node) in _nested:
             continue
         v = node.value
         if isinstance(v, ast.Dict):
@@ -715,6 +850,14 @@ if __name__ == '__main__':
     test_fallback_mirrors_for_short()
     test_fallback_can_be_disabled()
     test_tp1_never_passes_tp2()
+    test_tp1_comes_from_the_ladder_middle_not_from_the_autopilot()
+    test_middle_wins_over_a_fatter_step_further_away()
+    test_short_takes_the_ladder_middle_downwards()
+    test_steps_behind_or_too_close_are_rejected()
+    test_no_suitable_step_falls_back_to_the_derived_middle()
+    test_toggle_off_restores_the_previous_chain()
+    test_ladder_tp1_still_obeys_the_shared_lock()
+    test_liquidity_defaults_are_on_and_middle_is_50()
     test_tp1_is_the_autopilot_own_number_when_tp2_came_from_the_magnet()
     test_tp1_is_empty_when_the_autopilot_number_is_not_before_tp2()
     test_short_mirrors_the_rule()

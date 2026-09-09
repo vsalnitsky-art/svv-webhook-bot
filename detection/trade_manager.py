@@ -332,6 +332,14 @@ DEFAULT_SETTINGS = {
     # Похідний рівень, коли обʼєкта у вікні немає. 0 = НЕ ставити TP-1 узагалі
     # (працюємо одним TP-2) — це коректний стан, а не помилка.
     'pilot_tp1_fallback_path_pct': 50.0,
+    # 💧 TP-1 З ДРАБИНИ ЛІКВІДНОСТІ (вимога 09.09): «🎯 Автопілот не підходить,
+    # став значення із 💧 Ліквідність — щось із середину між 🧲 магнітом і
+    # поточною ціною». УВІМК → TP-1 = сходинка драбини, найближча до середини
+    # шляху; ВИМК → повертається попередній ланцюг (обʼєкт автопілота).
+    # ⚠️ НОВИЙ ключ, тож `merged.update(stored)` віддає саме цей дефолт —
+    # міграція (як `pilot_autofill_migrated_v1`) тут НЕ потрібна.
+    'pilot_tp1_from_liquidity': True,
+    'pilot_tp1_liq_mid_pct': 50.0,
     # Службова позначка одноразової міграції тумблера автозаповнення (див.
     # `_load_settings`). НЕ показується в UI, лише щоб міграція спрацювала раз.
     'pilot_autofill_migrated_v1': False,
@@ -864,7 +872,8 @@ class TradeManager:
             # працює»). Зводимо до коректного порядку замість тихої поломки.
             for _k, _d, _hi in (('pilot_tp1_min_path_pct', 30.0, 100.0),
                                 ('pilot_tp1_max_path_pct', 75.0, 100.0),
-                                ('pilot_tp1_fallback_path_pct', 50.0, 99.0)):
+                                ('pilot_tp1_fallback_path_pct', 50.0, 99.0),
+                                ('pilot_tp1_liq_mid_pct', 50.0, 100.0)):
                 try:
                     self._settings[_k] = max(0.0, min(_hi, float(
                         self._settings.get(_k, _d) if self._settings.get(_k) is not None else _d)))
@@ -872,6 +881,8 @@ class TradeManager:
                     self._settings[_k] = _d
             if self._settings['pilot_tp1_max_path_pct'] < self._settings['pilot_tp1_min_path_pct']:
                 self._settings['pilot_tp1_max_path_pct'] = self._settings['pilot_tp1_min_path_pct']
+            self._settings['pilot_tp1_from_liquidity'] = bool(
+                self._settings.get('pilot_tp1_from_liquidity', True))
             _sem = str(self._settings.get('signal_exit_mode', 'or') or 'or').lower()
             self._settings['signal_exit_mode'] = _sem if _sem in ('or', 'and') else 'or'
 
@@ -3224,6 +3235,60 @@ class TradeManager:
                 'magnet_lo': lo, 'magnet_hi': hi, 'note': _note,
                 'exchange': mg.get('exchange')}
 
+    def _liq_ladder_levels(self, symbol: str, side: str) -> list:
+        """💧 Сходинки драбини ліквідності як рівні-кандидати для Manual TP-1.
+
+        Вимога користувача (09.09): «Став автоматично значення із 💧
+        Ліквідність щось із середню шкалу між 🧲 найбільший магніт і поточна
+        ціна». Тобто TP-1 більше НЕ обʼєкт автопілота, а СХОДИНКА драбини.
+
+        ⚠️ **ТОЙ САМИЙ ЗРІЗ, ЩО ДАВ МАГНІТ.** `get_liq_magnet` віддає і
+        `row` (магніт → TP-2), і `rows` (уся драбина → кандидати TP-1) з
+        ОДНОГО кешованого знімка. Тому: (а) мережі це не коштує НІЧОГО —
+        `_liq_snapshot` уже в кеші після вибору магніту; (б) обидва рівні
+        угоди рахуються з ОДНИХ даних, і «TP-1 з однієї драбини, TP-2 з
+        іншої» структурно неможливо (урок PD-зони).
+
+        ⚠️ **Ближню межу смуги рахує `ladder.magnet_edge`** — ТА САМА функція,
+        що для магніту (LONG зустрічає нижню межу, SHORT — верхню). Своєї
+        копії правила тут НЕ заводимо.
+        """
+        if side not in ('LONG', 'SHORT'):
+            return []
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            if sc is None:
+                return []
+            try:
+                mg = sc.get_liq_magnet(symbol, side=side)
+            except TypeError:
+                mg = sc.get_liq_magnet(symbol)   # старіший сканер
+        except Exception:
+            return []
+        rows = (mg or {}).get('rows') or []
+        if not rows:
+            return []
+        try:
+            from detection.liquidation_map import ladder as _lad
+        except Exception:
+            return []
+        out = []
+        for r in rows:
+            try:
+                edge = _lad.magnet_edge(r, side)
+            except Exception:
+                edge = None
+            if not edge or edge <= 0:
+                continue
+            try:
+                lo, hi = float(r.get('price')), float(r.get('price_hi', r.get('price')))
+                lbl = _lad.fmt_band_ua(lo, hi)
+            except Exception:
+                lbl = 'сходинка ліквідності'
+            out.append({'price': edge, 'pct': r.get('pct'), 'label': lbl})
+        return out
+
     def _pilot_tick(self, symbol: str, pos: Dict, current_price: float,
                     is_shadow: bool) -> bool:
         """Один такт автопілота. True → позицію ЗАКРИТО (ціль досягнуто)."""
@@ -3306,11 +3371,15 @@ class TradeManager:
             if (s.get('pilot_autofill_tp') and not self._pilot_tp_done(pos)
                     and (res.get('targets') or res.get('objective'))):
                 try:
+                    # 💧 Сходинки драбини питаємо ЛИШЕ коли режим увімкнено
+                    # (інакше зайвий похід у сканер на кожній новій угоді).
+                    _ladder = (self._liq_ladder_levels(symbol, side)
+                               if cfg.get('tp1_from_liquidity') else None)
                     _tps = trade_pilot.plan_targets(
                         side, pos.get('entry_price'), current_price,
                         res.get('targets') or [],
                         objective=res.get('objective'),
-                        stop=pos.get('manual_sl'), cfg=cfg)
+                        stop=pos.get('manual_sl'), cfg=cfg, ladder=_ladder)
                     self._pilot_apply_tp(symbol, pos, _tps, is_shadow)
                 except Exception as e:
                     print(f"[TM-Pilot] TP autofill error {symbol}: {e}")
