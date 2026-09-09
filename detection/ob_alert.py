@@ -68,6 +68,27 @@ def _to_sec(ts) -> Optional[float]:
     return v / 1000.0 if v > 1e12 else v
 
 
+def close_of(bar) -> Optional[float]:
+    """Ціна закриття бару.
+
+    ⚠️ КЛЮЧ — `p`, А НЕ `close`. `market_data.fetch_klines` віддає
+    `[{p, v, b, s, h, l, o, t}, …]` (див. його докстрінг). Перша версія читала
+    `bar.get('close')` — і в КОЖНОМУ рядку логу замість ціни стояв прочерк
+    (`⚡ виявлено за 4хв 46с · —`), хоча самі бари були на місці.
+    `close`/`c` лишені як фолбек: у `get_chart_data` ohlc уже сконвертований і
+    несе саме `close`, тож функція має працювати з обома формами."""
+    if not isinstance(bar, dict):
+        return None
+    for k in ('p', 'close', 'c'):
+        try:
+            v = float(bar.get(k))
+        except (TypeError, ValueError):
+            continue
+        if v > 0:
+            return v
+    return None
+
+
 def side_of(bias) -> Optional[str]:
     """BULLISH→LONG, BEARISH→SHORT, решта→None (напрямку немає)."""
     b = str(bias or '').upper().strip()
@@ -218,7 +239,7 @@ def fmt_lag(sec) -> str:
 
 
 def build_parts(symbol: str, tf1, side1, tag1, tf4, side4, price,
-                appeared, now, htf_note: str = '') -> Dict:
+                appeared, now, htf_note: str = '', first: bool = False) -> Dict:
     """ШМАТКИ повідомлення — чисті ДАНІ, без розмітки.
 
     ⚠️ Той самий прийом, що у вердикті драбини ліквідності (`verdict.parts`
@@ -247,6 +268,12 @@ def build_parts(symbol: str, tf1, side1, tag1, tf4, side4, price,
         'price_txt': fmt_price(price),
         'lag_sec': lag,
         'lag_txt': (fmt_lag(lag) if lag is not None else '—'),
+        # ⚠️ ПЕРШИЙ ПОКАЗ ПІСЛЯ СТАРТУ — це НЕ наша реакція.
+        # На проді після рестарту 6 монет дали «⚡ виявлено за 4хв 43с»: бот
+        # просто піднявся через 4хв після закриття бару, а число читалось як
+        # «бот думав 4 хвилини». Тут `lag` міряє вік блоку, а не швидкість
+        # бота, тож підпис мусить бути ІНШИЙ.
+        'first': bool(first),
     }
 
 
@@ -269,7 +296,11 @@ def build_text(parts: Dict) -> str:
     if p.get('htf_note'):
         bits.append(p['htf_note'])
     bits.append(f"зʼявився {p.get('appeared_txt') or '—'} UTC")
-    if p.get('lag_sec') is not None:
+    if p.get('first'):
+        # Перший показ після старту: чесно кажемо, що це вік блоку, а не
+        # швидкість реакції бота.
+        bits.append(f"👀 перший показ після старту (вік {p.get('lag_txt')})")
+    elif p.get('lag_sec') is not None:
         bits.append(f"⚡ виявлено за {p.get('lag_txt')}")
     bits.append(p.get('price_txt') or '—')
     return ' · '.join(bits)

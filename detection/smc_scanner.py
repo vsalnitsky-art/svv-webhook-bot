@@ -2723,6 +2723,9 @@ class SMCScanner:
         if not self._settings.get('ob_alert_enabled', True):
             return 'off'
         _seen = self._ob_alert_seen.get(symbol) or []
+        # Порожня база = монету бачимо ВПЕРШЕ (старт / новий символ). Вік блоку
+        # тоді НЕ є мірою нашої швидкості — підпис у рядку буде інший.
+        _first = not _seen
         _now = time.time()
         _out = oba.outcome(_seen, ob, ob_tf, _now,
                            self._settings.get('ob_alert_max_lag_sec', 0))
@@ -2740,12 +2743,10 @@ class SMCScanner:
         _side1 = oba.side_of(ob.get('bias'))
         _app = oba.appeared_at(ob, ob_tf)
         # Поточна ціна = закриття ЖИВОГО бару (той самий масив, що малює графік).
-        _price = None
-        try:
-            if klines:
-                _price = float(klines[-1].get('close') or 0) or None
-        except (TypeError, ValueError, AttributeError, IndexError):
-            _price = None
+        # ⚠️ Ключ закриття у `fetch_klines` — `p`, а не `close` (див.
+        # `ob_alert.close_of`). Через це в перших рядках логу замість ціни
+        # стояв прочерк.
+        _price = oba.close_of(klines[-1]) if klines else None
 
         # 🔎 Старший TF (4h) — рахуємо ЛИШЕ ЗАРАЗ, у момент події.
         _htf = str(self._settings.get('ob_alert_htf', '4h') or '').strip()
@@ -2758,7 +2759,8 @@ class SMCScanner:
         _parts = oba.build_parts(
             symbol=symbol, tf1=ob_tf, side1=_side1,
             tag1=ob.get('created_by_tag'), tf4=_tf4, side4=_side4,
-            price=_price, appeared=_app, now=_now, htf_note=_note)
+            price=_price, appeared=_app, now=_now, htf_note=_note,
+            first=_first)
         _text = oba.build_text(_parts)
         try:
             from detection.activity_log import log_activity

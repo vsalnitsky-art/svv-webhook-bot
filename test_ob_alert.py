@@ -308,16 +308,43 @@ def test_parts_mirror_the_text():
 
 
 # ═══════════ 4. ПОДІЯ В ЛОЗІ ══════════════════════════════════════════════
+def test_price_key_is_p_not_close():
+    """🐞 ДЕФЕКТ, ЗНАЙДЕНИЙ НА ПРОДІ (09.09). У КОЖНОМУ рядку логу замість ціни
+    стояв прочерк: `⚡ виявлено за 4хв 46с · —`.
+
+    Причина: `market_data.fetch_klines` віддає `[{p, v, b, s, h, l, o, t}, …]`
+    — ціна закриття лежить у **`p`**, а перша версія читала `bar['close']`.
+    Бари були на місці, ціна просто не діставалась. Тест фіксує САМЕ контракт
+    fetch_klines, щоб помилка не повернулась."""
+    _check(oba.close_of({'p': 78539.9, 't': 1}) == 78539.9,
+           'ключ `p` — основний контракт fetch_klines')
+    _check(oba.close_of({'close': 5.0}) == 5.0, 'ohlc чарта несе `close` — фолбек')
+    _check(oba.close_of({'c': 7.0}) == 7.0, '`c` — теж фолбек')
+    _check(oba.close_of({'h': 9.0}) is None, 'чужі ключі ціною НЕ вважаємо')
+    for bad in (None, {}, {'p': 0}, {'p': 'abc'}, {'p': None}):
+        _check(oba.close_of(bad) is None, f'сміття → None: {bad}')
+    # І докстрінг market_data мусить і далі обіцяти `p` — інакше контракт поїхав
+    md = open(os.path.join(_HERE, 'detection', 'market_data.py'),
+              encoding='utf-8').read()
+    _check('{p, v, b, s, h, l, o, t}' in md,
+           'контракт fetch_klines змінився — перевірити close_of')
+    print('✓ ціна береться з `p` (контракт fetch_klines), а не з `close`')
+
+
 def test_new_ob_logs_exactly_once_with_time_and_price():
     """Повна вимога в одному тесті: НОВИЙ блок → ОДИН рядок, із часом появи,
-    ціною і 4H; повтор — жодного рядка."""
+    ціною і 4H; повтор — жодного рядка.
+
+    ⚠️ Бари ТУТ — у форматі `fetch_klines` (`p`), а не вигаданому `close`:
+    саме на вигаданому форматі перша версія тесту пропустила прод-дефект."""
     _install_log(); _install_db(); _install_detectors(ob4=_ob(bias='BULLISH'))
     now = time.time()
     ns = _ns()
+    ns._ob_alert_seen['BTCUSDT'] = [1]        # база вже є → не «перший показ»
     ob = _ob(bias='BULLISH', bar_time=int((now - 2 * HOUR) * 1000),
              created_at_t=int((now - HOUR - 30) * 1000))
     out = ns._ob_alert_tick('BTCUSDT', None, '1h', ob,
-                            [{'t': int(now * 1000), 'close': 78539.9}])
+                            [{'t': int(now * 1000), 'p': 78539.9}])
     _check(out == 'new', f'мусив бути new: {out}')
     _check(len(_LOGGED) == 1, f'рівно ОДИН рядок: {_LOGGED}')
     e = _LOGGED[0]
@@ -326,10 +353,32 @@ def test_new_ob_logs_exactly_once_with_time_and_price():
     _check('$78,539.90' in e['detail'], f'ціна з ЖИВОГО бару: {e["detail"]}')
     _check('LONG OB 4H' in e['detail'], f'4H мусить бути дописаний: {e["detail"]}')
     _check(isinstance(e['extra'].get('parts'), dict), 'для UI потрібні parts')
+    _check('⚡ виявлено за' in e['detail'],
+           f'у робочому стані підпис — саме про швидкість: {e["detail"]}')
     # повтор того самого блоку — тиша
-    ns._ob_alert_tick('BTCUSDT', None, '1h', ob, [{'t': 1, 'close': 78539.9}])
+    ns._ob_alert_tick('BTCUSDT', None, '1h', ob, [{'t': 1, 'p': 78539.9}])
     _check(len(_LOGGED) == 1, f'повтор НЕ має писати нічого: {_LOGGED}')
     print(f'✓ новий OB → один рядок: {e["detail"]}')
+
+
+def test_first_sight_after_restart_does_not_claim_our_speed():
+    """🐞 ДРУГИЙ ПРОД-ДЕФЕКТ. Після рестарту 6 монет дали
+    `⚡ виявлено за 4хв 43с` — і це читалось як «бот думав 4 хвилини». Насправді
+    бот піднявся через 4хв після закриття бару: число міряло ВІК БЛОКУ, а не
+    нашу реакцію. Перший показ монети мусить бути підписаний ІНАКШЕ."""
+    _install_log(); _install_db(); _install_detectors(ob4=None)
+    now = time.time()
+    ns = _ns(htf='')                      # база порожня → перший показ
+    ob = _ob(bias='SHORT' and 'BEARISH', bar_time=int((now - 2 * HOUR) * 1000),
+             created_at_t=int((now - HOUR - 283) * 1000))
+    out = ns._ob_alert_tick('LTCUSDT', None, '1h', ob,
+                            [{'t': int(now * 1000), 'p': 104.5}])
+    _check(out == 'new', out)
+    d = _LOGGED[0]['detail']
+    _check('перший показ після старту' in d, f'мусить бути чесний підпис: {d}')
+    _check('⚡ виявлено за' not in d, f'⚡ про швидкість тут БРЕШЕ: {d}')
+    _check('4хв 43с' in d, f'вік блоку все одно показуємо: {d}')
+    print(f'✓ перший показ підписаний чесно: {d}')
 
 
 def test_old_block_marks_baseline_without_logging():
@@ -517,6 +566,34 @@ def test_ui_paints_the_row_from_structured_fields():
     print('✓ UI фарбує рядок зі структурних полів (1H / 4H / час / ціна)')
 
 
+def test_ob_new_is_always_its_own_row():
+    """🐞 ТРЕТІЙ ПРОД-ДЕФЕКТ + пряма вимога: «Зроби цей запис окремим, не в купі
+    записів, де нічого не можна розібрати» → «окремою стрічкою».
+
+    Таблиця логу ЗШИВАЄ події однієї монети+сторони в межах 180с в ОДИН рядок.
+    На проді за 8 годин було signal 156 + rejected 134 + sltp 130 — тож рядок
+    «🆕 Новий OB» гарантовано приклеювався до ланцюга угоди і зникав з очей.
+    Це подія ІНШОЇ природи (зміна СТРУКТУРИ на графіку, а не крок угоди), тож
+    зшивати її неправильно й по суті."""
+    html = open(os.path.join(_HERE, 'templates', 'smart_money.html'),
+                encoding='utf-8').read()
+    i = html.index('const SOLO_EVENTS')
+    blk = html[i:i + 900]
+    _check("'ob_new'" in blk, 'ob_new мусить бути у списку «окремою стрічкою»')
+    _check('chains.push(' in blk and 'solo: true' in blk,
+           'окрема подія мусить створювати ВЛАСНИЙ ланцюг')
+    # ⚠️ Найтонше місце: після окремого рядка НЕ можна оновлювати lastByKey —
+    # інакше наступна подія монети приклеїлась би вже до «Новий OB».
+    _check('lastByKey' not in blk.split('return;')[0],
+           'lastByKey у гілці solo чіпати НЕ можна')
+    _check(blk.split('return;')[0].count('SOLO_EVENTS.has') == 1,
+           'перевірка solo мусить стояти ДО звичайного групування')
+    # І рядок мусить ЧИТАТИСЬ як окремий, а не лише формально ним бути
+    _check('c.solo' in html and 'box-shadow:inset 3px 0 0' in html,
+           'окрема стрічка мусить мати візуальний кант')
+    print('✓ «Новий OB» — завжди ОКРЕМА стрічка (і візуально теж)')
+
+
 if __name__ == '__main__':
     test_appeared_is_the_close_of_the_bar_that_created_the_block()
     test_no_creation_time_means_we_never_claim_it_appeared()
@@ -530,7 +607,9 @@ if __name__ == '__main__':
     test_price_formatter_mirrors_the_page()
     test_lag_is_human_readable()
     test_parts_mirror_the_text()
+    test_price_key_is_p_not_close()
     test_new_ob_logs_exactly_once_with_time_and_price()
+    test_first_sight_after_restart_does_not_claim_our_speed()
     test_old_block_marks_baseline_without_logging()
     test_toggle_off_does_nothing_at_all()
     test_no_ob_is_silent()
@@ -544,4 +623,5 @@ if __name__ == '__main__':
     test_alert_is_message_only_and_does_not_touch_the_entry_gate()
     test_settings_defaults_are_a_new_key_no_migration_needed()
     test_ui_paints_the_row_from_structured_fields()
+    test_ob_new_is_always_its_own_row()
     print('\nУсі тести алерту «новий OB» пройдено ✅')

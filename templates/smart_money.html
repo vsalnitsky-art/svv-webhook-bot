@@ -4658,7 +4658,22 @@ async function loadActivityLog() {
         const GROUP_WINDOW = 180;   // sec between steps to still count as one chain
         const chrono = evs.slice().reverse();   // oldest-first for chaining
         const chains = []; const lastByKey = {};
+        // 🆕 «Новий OB» — ЗАВЖДИ ОКРЕМА СТРІЧКА (вимога користувача).
+        // Групування зшиває події однієї монети+сторони в межах 180с, і поява
+        // нового OB тонула серед signal/rejected/sltp — на проді це 156+134+130
+        // записів, тож рядок «🆕» був фізично невидимий («в купі записів, де
+        // нічого не можна розібрати»). Це подія ІНШОЇ природи: не крок життєвого
+        // циклу угоди, а факт зміни СТРУКТУРИ на графіку, тож зшивати її з
+        // ланцюгом угоди неправильно й по суті.
+        // ⚠️ `lastByKey` НЕ чіпаємо: наступна подія тієї самої монети мусить
+        // продовжити СВІЙ ланцюг, а не приклеїтись до рядка «Новий OB».
+        const SOLO_EVENTS = new Set(['ob_new']);
         chrono.forEach(e => {
+            if (SOLO_EVENTS.has(e.event)) {
+                chains.push({ symbol: e.symbol, side: e.side, steps: [e],
+                              tLast: e.t, solo: true });
+                return;
+            }
             const key = (e.symbol || '') + '|' + (e.side || '');
             const prev = lastByKey[key];
             if (prev && (e.t - prev.tLast) <= GROUP_WINDOW) {
@@ -4694,7 +4709,12 @@ async function loadActivityLog() {
                     + `${body}</div>`;
             }).join('');
             const ids = c.steps.map(s => s.id).filter(v => v != null);
-            return `<tr>
+            // Окрема стрічка мусить і ЧИТАТИСЬ як окрема: лівий бірюзовий кант
+            // + ледь помітне тло. Без цього рядок стоїть окремо лише формально.
+            const rowStyle = c.solo
+                ? ' style="background:rgba(34,211,238,0.05);'
+                  + 'box-shadow:inset 3px 0 0 #22d3ee"' : '';
+            return `<tr${rowStyle}>
                 <td style="color:#8b93a7;font-size:0.72rem;white-space:nowrap;vertical-align:top">${t}</td>
                 <td style="font-weight:700;vertical-align:top">${c.symbol ? tvSym(c.symbol, c.symbol) : ''}</td>
                 <td style="color:${sideCol};font-weight:700;font-size:0.72rem;vertical-align:top">${c.side || '—'}</td>
