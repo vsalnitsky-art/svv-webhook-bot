@@ -220,19 +220,21 @@ def test_controls_left_the_queue4_accordion():
     гармошки Черги-4 — інакше при вимкненій черзі їх не знайти."""
     html = _src('templates/smart_money.html')
     q4 = html[html.index('id="ff-q4-settings"'):html.index('id="ff-timers4-table"')]
-    for cid in ('ff-queue4-sl-source', 'ff-queue4-min-rr'):
-        _check(cid not in q4, f'{cid} мусить піти з налаштувань Черги-4')
-        _check(cid in html, f'{cid} мусить лишитись на сторінці (перенесено)')
-    print('✓ контроли пішли з гармошки Черги-4')
+    # ⚠️ «📐 Мін. R» користувач попросив ПОВЕРНУТИ в Чергу-4 (09.09), тож тут
+    # стережемо лише «🛑 SL з» — він лишається в окремій секції рівнів.
+    _check('ff-queue4-sl-source' not in q4,
+           'ff-queue4-sl-source мусить піти з налаштувань Черги-4')
+    _check('ff-queue4-sl-source' in html, 'і лишитись на сторінці (перенесено)')
+    print('✓ «SL з» пішов із гармошки Черги-4 (Мін. R лишився там свідомо)')
 
 
 def test_controls_are_in_their_own_top_level_section():
-    """⚠️ Спершу блок лежав УСЕРЕДИНІ гармошки «🛡 Авто-SL та ворота відкриття»
-    — і його все одно не було видно: він опинявся ПІД довгим рядом інших полів
-    («Де ці параметри?»). Тепер це ВЛАСНА секція верхнього рівня."""
+    """⚠️ Історія переносів (щоб не робити цього вп'яте): блок лежав у гармошці
+    Черги-4 → усередині «🛡 Авто-SL» (не видно під рядом полів) → першою
+    секцією, але ВСЕ ЩЕ в блоці Черг. Тепер — власна секція ПОЗА чергами."""
     html = _src('templates/smart_money.html')
-    g = html[html.index('<div id="levels-body">'):html.index('❤️ FF base')]
-    for cid in ('ff-queue4-sl-source', 'ff-queue4-min-rr', 'tm-pilot-tp2-magnet',
+    g = html[html.index('<div id="levels-body">'):html.index('<!-- ====================== TRADE MANAGER')]
+    for cid in ('ff-queue4-sl-source', 'ff-sl-source-on', 'tm-pilot-tp2-magnet',
                 'ff-mag-exchange', 'ff-mag-bars', 'tm-pilot-tp1-min-path',
                 'tm-pilot-tp1-max-path', 'tm-pilot-tp1-fallback'):
         _check(cid in g, f'{cid} мусить бути в секції «🎯 Рівні угоди»')
@@ -242,20 +244,100 @@ def test_controls_are_in_their_own_top_level_section():
     hdr = html[html.index("togglePanel('levels')") - 200:html.index('<div id="levels-body">')]
     _check('коли ВСІ черги вимкнені' in hdr,
            'заголовок секції мусить прямо казати, що це працює без черг')
-    print('✓ рівні — власна секція верхнього рівня, усі параметри в ній')
+    print('✓ рівні — власна секція, усі параметри в ній')
 
 
-def test_levels_section_comes_first():
-    """«Винеси на самий верх параметрів» — секція мусить стояти ПЕРЕД
-    «🛡 Авто-SL та ворота відкриття» і перед усіма чергами."""
+def test_levels_section_sits_right_before_trade_manager():
+    """«Винеси із блоку Черг… Розмісти перед Trade Manager» (09.09)."""
     html = _src('templates/smart_money.html')
     i = html.index("togglePanel('levels')")
-    for later, name in ((html.index("togglePanel('autosl')"), '🛡 Авто-SL'),
-                        (html.index("toggleQueuePanel('q1')"), 'Черга-1')):
-        _check(i < later, f'секція рівнів мусить стояти ПЕРЕД {name}')
-    _check(html.index("const _PANEL_IDS = ['levels'") > 0,
-           'і бути ПЕРШОЮ у списку секцій')
-    print('✓ секція рівнів — найперша серед параметрів')
+    tm = html.index('<!-- ====================== TRADE MANAGER')
+    _check(i < tm, 'секція мусить стояти ПЕРЕД Trade Manager')
+    # І ПІСЛЯ всіх черг — тобто вже поза їхнім блоком.
+    for earlier, name in ((html.index("toggleQueuePanel('q1')"), 'Черга-1'),
+                          (html.index('id="ff-q4-settings"'), 'Черга-4'),
+                          (html.index("togglePanel('fund')"), '💰 Funding')):
+        _check(earlier < i, f'секція мусить стояти ПІСЛЯ {name} (поза блоком Черг)')
+    # Між секцією і Trade Manager не має бути нічого стороннього.
+    _check(html[i:tm].count('togglePanel(') == 1,
+           'між рівнями і Trade Manager не має бути іншої секції')
+    print('✓ секція стоїть поза чергами, безпосередньо перед Trade Manager')
+
+
+def test_min_r_went_back_to_queue4_settings():
+    """⚠️ Окреме рішення користувача (09.09): «📐 Мін. R на відкриття ≥ —
+    поверни в налаштування Черга-4». Поле переїхало, але ключ і ГЛОБАЛЬНА дія
+    гейта не змінились — він і далі рахується на прямому відкритті."""
+    html = _src('templates/smart_money.html')
+    q4 = html[html.index('id="ff-q4-settings"'):html.index('id="ff-timers4-table"')]
+    _check('ff-queue4-min-rr' in q4, 'поле «Мін. R» мусить бути в гармошці Черги-4')
+    lv = html[html.index('<div id="levels-body">'):html.index('<!-- ====================== TRADE MANAGER')]
+    _check('ff-queue4-min-rr' not in lv, 'і НЕ дублюватись у секції рівнів')
+    _check(html.count('id="ff-queue4-min-rr"') == 1, 'рівно ОДИН контрол на сторінці')
+    # Код лишився глобальним — це головне, що не можна загубити при переносі.
+    body = _method('detection/trade_manager.py', 'on_signal')
+    _check('min_open_r()' in body,
+           'гейт за R мусить лишитись на прямому шляху, попри переїзд поля в Q4')
+    print('✓ «Мін. R» повернувся в Чергу-4; гейт лишився глобальним')
+
+
+# ═════════ 5. 🛑 ТУМБЛЕР «SL з» ════════════════════════════════════════════
+def test_sl_source_toggle_exists_everywhere_it_must():
+    """«🛑 SL з додай тумблер для можливості вимкнути при нагоді» (09.09)."""
+    ff = _src('detection/fuel_filter.py')
+    html = _src('templates/smart_money.html')
+    _check("'sl_source_enabled': True," in ff, 'ключ мусить бути з дефолтом ON')
+    _check("s['sl_source_enabled'] = bool(" in ff, 'і валідуватись у bool')
+    _check('def sl_source_on(self' in ff, 'потрібен ЄДИНИЙ читач тумблера')
+    _check('ff-sl-source-on' in html, 'потрібен контрол в UI')
+    _check("sl_source_enabled: _c('ff-sl-source-on')" in html, 'і збереження')
+    _check("setIf('ff-sl-source-on', s.sl_source_enabled !== false)" in html,
+           'дефолт ON мусить читатись як ON, а не як «не задано → OFF»')
+    print('✓ тумблер «SL з» є в налаштуваннях, коді й UI')
+
+
+def test_toggle_off_disables_the_choice_on_both_paths():
+    """⚠️ ОДНА поведінка на ВСІ шляхи. Гасити лише половину (напр. лишити
+    Черзі-4 її джерело) означало б повернути саме ту розбіжність, через яку
+    вибір і став глобальним: одне поле — різний стоп залежно від того, хто
+    відкрив угоду."""
+    q4 = _method('detection/fuel_filter.py', '_q4_set_vob_sl')
+    _check('self.sl_source_on(s)' in q4, 'Черга-4 мусить питати тумблер')
+    i = q4.index('self.sl_source_on(s)')
+    _check('return False' in q4[i:i + 500], 'вимкнено → Q4 стоп не ставить')
+    # Порівнюємо з РЕАЛЬНИМ читанням у коді, а не зі згадкою в докстрінгу.
+    _check(i < q4.index("src = str(s.get('queue4_sl_source'"),
+           'перевірка мусить стояти ДО читання джерела')
+    tm = _strip_comments(_method('detection/trade_manager.py', '_auto_ob_manual_sl'))
+    _check("_sl_src_on = bool(s.get('sl_source_enabled', True))" in tm,
+           'TM мусить читати той самий ключ')
+    _check('if _sl_src_on:' in tm, 'і пропускати пріоритет обраного джерела')
+    print('✓ вимкнений тумблер знімає вибір на ОБОХ шляхах')
+
+
+def test_toggle_off_still_leaves_a_stop():
+    """Вимкнений тумблер НЕ має лишати угоду без стопа: звичайний ланцюг
+    (OB TF → ★TF → Volumized → % від входу) працює далі."""
+    tm = _strip_comments(_method('detection/trade_manager.py', '_auto_ob_manual_sl'))
+    i = tm.index('if _sl_src_on:')
+    tail = tm[i:]
+    for later in ('_add_ob(ob_tf', 'sources.append(_from_pct)'):
+        _check(later in tail, f'{later} мусить лишитись у ланцюгу')
+    print('✓ з вимкненим тумблером стоп усе одно ставиться')
+
+
+def test_disabled_select_is_dimmed():
+    """Активний контрол, який ні на що не впливає, — та сама вада, що з полями
+    TTL при ♾ «Без терміну»."""
+    html = _src('templates/smart_money.html')
+    _check('function _ffLevelsSync(' in html, 'потрібен синхронізатор вигляду')
+    i = html.index('function _ffLevelsSync(')
+    seg = html[i:i + 700]
+    _check('disabled = !on' in seg and 'opacity' in seg,
+           'вимкнена випадайка мусить бути погашена і недоступна')
+    _check("_ffLevelsSync();" in html[html.index("setIf('ff-sl-source-on'"):][:200],
+           'синхронізацію треба кликати одразу після завантаження стану')
+    print('✓ випадайка джерела гасне разом із тумблером')
 
 
 def test_keys_were_not_renamed():
@@ -285,7 +367,12 @@ if __name__ == '__main__':
         test_magnet_source_is_one_key_shown_in_two_places,
         test_controls_left_the_queue4_accordion,
         test_controls_are_in_their_own_top_level_section,
-        test_levels_section_comes_first,
+        test_levels_section_sits_right_before_trade_manager,
+        test_min_r_went_back_to_queue4_settings,
+        test_sl_source_toggle_exists_everywhere_it_must,
+        test_toggle_off_disables_the_choice_on_both_paths,
+        test_toggle_off_still_leaves_a_stop,
+        test_disabled_select_is_dimmed,
         test_keys_were_not_renamed,
     ]
     _all = [v for k, v in sorted(globals().items()) if k.startswith('test_')]

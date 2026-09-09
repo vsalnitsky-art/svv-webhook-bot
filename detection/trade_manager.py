@@ -2029,6 +2029,10 @@ class TradeManager:
         # 15m). Те саме поле давало РІЗНИЙ стоп залежно від того, яка черга
         # відкрила угоду. Тепер обране джерело йде ПЕРШИМ завжди; решта —
         # фолбек, і в лозі видно, чому обране не спрацювало.
+        # 🛑 ТУМБЛЕР «SL з» (`sl_source_enabled`, деф. УВІМК). Вимкнено → вибір
+        # НЕ нав'язується: працює звичайний ланцюг OB TF → ★TF → Volumized →
+        # % від входу, тобто рівно та поведінка, що була до глобалізації вибору.
+        _sl_src_on = bool(s.get('sl_source_enabled', True))
         _sl_src = str(s.get('queue4_sl_source', '1h') or '1h').lower()
         if _sl_src not in ('1h', '15m'):
             _sl_src = '1h'
@@ -2040,11 +2044,12 @@ class TradeManager:
                 _seen_tf.add(tf)
                 sources.append(lambda: _from_ob(tf, tag))
 
-        if _sl_src == '1h':
-            _add_ob(star_tf, f'★{star_tf.upper()} (обране джерело: 1H OB)')
-        else:
-            # «15m Volumized OB» — саме 15m, як написано в налаштуванні.
-            sources.append(lambda: _from_volumized('15m'))
+        if _sl_src_on:
+            if _sl_src == '1h':
+                _add_ob(star_tf, f'★{star_tf.upper()} (обране джерело: 1H OB)')
+            else:
+                # «15m Volumized OB» — саме 15m, як написано в налаштуванні.
+                sources.append(lambda: _from_volumized('15m'))
         _add_ob(ob_tf, ob_tf.upper())
         _add_ob(star_tf, f'★{star_tf.upper()}')
 

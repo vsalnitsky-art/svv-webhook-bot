@@ -319,6 +319,16 @@ DEFAULT_SETTINGS = {
     #   '15m'          — межа Volumized OB на 15m.
     #   SL = межа + буфер `queue3_vob_sl_buffer_pct`.
     'queue4_sl_source': '1h',
+    # 🛑 ТУМБЛЕР «SL з» (вимога користувача 09.09: «додай тумблер для можливості
+    # вимкнути при нагоді»). Дефолт УВІМК = поточна поведінка.
+    # ВИМКНЕНО → обране джерело НЕ нав'язується НІКОМУ: `_q4_set_vob_sl` не
+    # ставить стоп узагалі, а `trade_manager._auto_ob_manual_sl` іде своїм
+    # звичайним ланцюгом (OB TF → ★TF → Volumized → % від входу).
+    # ⚠️ Це ОДНА поведінка на ВСІ шляхи. Гасити лише половину (напр. лишити
+    # Черзі-4 її джерело) означало б повернути саме ту розбіжність, через яку
+    # вибір і став глобальним: одне поле — різний стоп залежно від того, хто
+    # відкрив угоду.
+    'sl_source_enabled': True,
     # 🔥 Виснаженість Черги-4: НЕ відкривати угоду, якщо хід уже виснажений понад
     #    поріг (0..100). Дефолт УВІМКНЕНО, поріг 95% (ріже лише зовсім вичерпані
     #    рухи). Це ЄДИНИЙ запобіжник Q4 (решта safeguard-ів у Q4 вимкнені).
@@ -1052,6 +1062,7 @@ class FuelFilterDaemon:
         # Джерело Manual SL — лише два допустимі значення; будь-що інше → дефолт.
         _sls = str(s.get('queue4_sl_source', '1h') or '1h').lower()
         s['queue4_sl_source'] = _sls if _sls in ('1h', '15m') else '1h'
+        s['sl_source_enabled'] = bool(s.get('sl_source_enabled', True))
         try:
             s['queue4_mm_new_min'] = max(0, min(100, int(s.get('queue4_mm_new_min', 30) or 0)))
         except (TypeError, ValueError):
@@ -7181,6 +7192,14 @@ class FuelFilterDaemon:
         r, detail = self._q4_expected_r(symbol, side, s)
         return r, detail, self._q4_rr_objective.pop(symbol, None)
 
+    def sl_source_on(self, s: Optional[Dict] = None) -> bool:
+        """🛑 Чи застосовувати обране «SL з». ЄДИНЕ джерело для обох шляхів
+        (`_q4_set_vob_sl` тут і `trade_manager._auto_ob_manual_sl` у TM)."""
+        try:
+            return bool((s or self.get_settings()).get('sl_source_enabled', True))
+        except Exception:
+            return True
+
     def min_open_r(self, s: Optional[Dict] = None) -> float:
         """📐 Поріг «Мін. R на відкриття». 0 = гейт вимкнено.
 
@@ -7385,6 +7404,15 @@ class FuelFilterDaemon:
             def log_activity(*_a, **_k):
                 pass
         _tag, _src_name = 'Черга-4', 'Q4'
+        # 🛑 Тумблер «SL з» вимкнено → джерело НЕ нав'язуємо: стоп поставить
+        # звичайний ланцюг `trade_manager._auto_ob_manual_sl` (OB TF → ★TF →
+        # Volumized → % від входу), тобто угода однаково не лишиться без стопа.
+        if not self.sl_source_on(s):
+            log_activity(sym, 'sltp',
+                         f'{_tag}: джерело «SL з» вимкнено — стоп поставить '
+                         'звичайний авто-SL Trade Manager',
+                         side=side, source=_src_name)
+            return False
         try:
             src = str(s.get('queue4_sl_source', '1h') or '1h').lower()
             if src not in ('1h', '15m'):

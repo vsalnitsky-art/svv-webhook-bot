@@ -2653,81 +2653,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <!-- ₿ BTCUSDT банер ПЕРЕНЕСЕНО вище — над панеллю «Напрямок за
                  таймфреймами» (див. #ff-btc-start-banner у блоці Smart Direction). -->
 
-            <!-- ═══ 🎯 РІВНІ УГОДИ — ПЕРША СЕКЦІЯ ПАРАМЕТРІВ ═══════════════════
-                 Вимога користувача (08.09): «Винеси за межі Черга-4 автоматичний
-                 SL і TP… виділи ці параметри, щоб їх було видно» → «винеси на
-                 самий верх параметрів». Спершу я поклав блок ВСЕРЕДИНУ гармошки
-                 «🛡 Авто-SL та ворота відкриття», і його все одно не було видно:
-                 він опинявся ПІД довгим рядом інших полів. Тепер це ОКРЕМА
-                 секція верхнього рівня, ПЕРША в списку і з власною гармошкою
-                 (`togglePanel('levels')`), розгорнута за замовчуванням.
-                 ⚠️ Ключі НЕ перейменовані (`queue4_sl_source`, `queue4_min_rr`) —
-                 це зламало б збережені налаштування. -->
-            <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
-                <div style="font-size:0.8rem;font-weight:700;color:#7dd3fc;cursor:pointer;user-select:none" onclick="togglePanel('levels')" title="Клік — згорнути/розгорнути"><span id="levels-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🎯 РІВНІ УГОДИ: SL · TP-1 · TP-2 <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— діють на КОЖНЕ відкриття, зокрема коли ВСІ черги вимкнені й сигнал іде прямо в угоду</span></div>
-            </div>
-            <div id="levels-body">
-            <!-- ═══ 🎯 РІВНІ УГОДИ: SL · TP-1 · TP-2 — ГЛОБАЛЬНО ════════════════
-                 Вимога користувача (08.09): «Винеси за межі Черга-4 автоматичний
-                 SL і TP… Це має спрацьовувати навіть, коли всі черги вимкнені.»
-                 «🛑 SL з» і «📐 Мін. R» ЖИЛИ в гармошці Черги-4 і виглядали як її
-                 налаштування — а при вимкнених чергах сигнал ішов прямо у
-                 відкриття повз них. Тепер вони тут, і код теж глобальний.
-                 ⚠️ Ключі (`queue4_sl_source`, `queue4_min_rr`) НЕ перейменовані:
-                 це зламало б збережені налаштування. Той самий прецедент, що
-                 з `q2_auto_ob_sl*` — історична назва ключа ≠ область дії. -->
-            <div style="border:1px solid rgba(56,189,248,0.25);border-radius:8px;padding:10px 12px;background:rgba(8,47,73,0.28);margin-top:8px">
-                <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
-                    <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="🛑 Звідки брати рівень для Manual SL. SL = межа блоку + буфер (SHORT над верхом, LONG під низом). • 1H OB — той самий ★-блок, що намальовано на графіку (рядок сканера на TF OB-фільтра). • 15m Volumized OB — межа Volumized-блоку на 15m. Обране джерело йде ПЕРШИМ у ланцюгу для БУДЬ-ЯКОЇ угоди; якщо блоку немає — беруться наступні, і в 🧾 Лозі видно, чому обране не спрацювало. Раніше цей вибір діяв ЛИШЕ на угоди Черги-4, а на прямому відкритті мовчки бралося «OB TF» вище.">
-                        🛑 SL з
-                        <select id="ff-queue4-sl-source" onchange="saveFuelFilterSettings()" style="font-size:0.72rem;padding:2px 4px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="1h">1H OB</option><option value="15m">15m Volumized OB</option></select>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="📐 Мінімальний очікуваний R для відкриття. R = відстань до ЦІЛІ поділена на відстань до СТОПА — те саме число, що потім стоїть у колонці «🎯 Автопілот», бо рахується з ТИХ САМИХ джерел (стоп — обране «🛑 SL з» із тим самим буфером і стелею; ціль — 🧲 магніт, інакше ціль автопілота). Угода з R менше 1 ризикує більшим заради меншого: кейс ARBUSDT 31.08 — стоп 8.23%, ціль 1.60% (0.19R), результат −8.58%. У черзі запис при відмові НЕ виселяється (R рухомий); на прямому відкритті сигнал просто не відкривається. 0 = вимкнути.">
-                        📐 Мін. R на відкриття ≥ <input type="number" id="ff-queue4-min-rr" min="0" max="20" step="0.1" style="width:52px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> R (0=вимк)
-                    </label>
-                    <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🧲 ЦІЛЬ УГОДИ (= Manual TP-2) береться з НАЙБІЛЬШОЇ сходинки драбини ліквідності ПОПЕРЕДУ входу в бік угоди (ближня межа смуги). Це не просто рівень TP-2: магніт стає ЦІЛЛЮ, тож із нього одразу узгоджені колонка «🎯 Автопілот», R і автозакриття. Вимкнути → ціль рахує автопілот з обʼєктів графіка (пул ліквідації / екстремум діапазону / POC / VAH-VAL), і запиту до біржі не буде взагалі.">
-                        <input type="checkbox" id="tm-pilot-tp2-magnet" onchange="saveTMSettings()"> 🧲 <b>TP-2 з магніту ліквідності</b>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Біржа і глибина історії, з яких будується драбина ліквідності для 🧲 магніту. ⚠️ Це ТІ САМІ ключі, що в секції «💧 Liquidity Filter» — одне джерело, два місця показу: зміна тут одразу видно там і навпаки. Інакше поріг фільтра і ціль угоди рахувались би з різних даних.">
-                        🧲 магніт з
-                        <select id="ff-mag-exchange" onchange="updateMagnetSource()" style="font-size:0.72rem;padding:2px 4px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace">
-                            <option value="binance">BINANCE</option>
-                            <option value="bybit">BYBIT</option>
-                            <option value="mexc">MEXC</option>
-                            <option value="bingx">BINGX</option>
-                        </select>
-                        <select id="ff-mag-bars" onchange="updateMagnetSource()" style="font-size:0.72rem;padding:2px 4px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace">
-                            <option value="24">24 год</option>
-                            <option value="48">48 год</option>
-                            <option value="72">72 год</option>
-                            <option value="120">120 год</option>
-                            <option value="168">168 год</option>
-                            <option value="240">240 год</option>
-                            <option value="336">336 год</option>
-                            <option value="504">504 год</option>
-                            <option value="720">720 год</option>
-                            <option value="1000">1000 год</option>
-                        </select>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="🎯 ДЕ ШУКАТИ TP-1 — вікно у % ШЛЯХУ від входу до TP-2 (а НЕ у % ціни). Серед обʼєктів графіка у цьому вікні виграє НАЙСИЛЬНІШИЙ (пул ліквідації > POC/VAH/VAL > рівновага діапазону > swing). Ширше вікно = більше шансів знайти справжній рівень; вужче = частковий вихід ближче до середини руху. Кейс WIFUSDT 08.09: ціль +2.23%, вікно 30-75% дало смугу шириною ~1% — жоден обʼєкт туди не потрапив.">
-                        🎯 TP-1 у вікні
-                        <input type="number" id="tm-pilot-tp1-min-path" min="0" max="100" step="5" style="width:50px;font-size:0.72rem;padding:2px 4px" onchange="saveTMSettings()">
-                        <span style="color:#8b93a7">–</span>
-                        <input type="number" id="tm-pilot-tp1-max-path" min="0" max="100" step="5" style="width:50px;font-size:0.72rem;padding:2px 4px" onchange="saveTMSettings()">
-                        % шляху до TP-2
-                    </label>
-                    <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="➗ Що робити, коли у вікні НЕМАЄ жодного обʼєкта графіка. Ненульове значення ставить TP-1 на цій частці шляху до цілі — це НЕ «рівень із повітря», він похідний від власної цілі, і в лозі так і підписано «N% шляху до цілі». 0 = не вигадувати рівень узагалі, працювати одним TP-2 (порожній TP-1 — коректний стан).">
-                        ➗ інакше фолбек <input type="number" id="tm-pilot-tp1-fallback" min="0" max="99" step="5" style="width:50px;font-size:0.72rem;padding:2px 4px" onchange="saveTMSettings()"> % шляху (0=не ставити)
-                    </label>
-                </div>
-                <div style="font-size:0.64rem;color:#6b7280;margin-top:8px;line-height:1.5">
-                    💡 <b>TP-2</b> = ціль угоди: 🧲 магніт ліквідності попереду входу, інакше найдальший обʼєкт графіка.
-                    <b>TP-1</b> = найсильніший обʼєкт у вікні шляху, інакше похідний рівень.
-                    Саме виставлення рівнів вмикає «🎯 Автозаповнення TP-1 / TP-2» у блоці <b>Exit Rules</b> (там же — «TP-1 закриває %», «мін. зазор» і вікно цілей автопілота).
-                    ⚠️ Буфер стопа тут різний за походженням: пряме відкриття бере «Буфер, %» вище, Черга-4 — «SL буфер» із налаштувань Черги-3.
-                </div>
-            </div>
-            </div>
 
             <!-- 🛡 ГЛОБАЛЬНІ ворота відкриття та авто-SL (не належать жодній черзі) -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
@@ -3026,6 +2951,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Протермінувати запис Черги-4 через N год, якщо не відкрилась. 0 = без ліміту.">TTL <input type="number" id="ff-queue4-ttl" min="0" max="72" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> год</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="♾ БЕЗ ТЕРМІНУ: запис Черги-4 живе, доки його не ЗАМІНИТЬ ПРОТИЛЕЖНИЙ сигнал по тій самій монеті (або поки не відкриється / не приберете вручну). Вимикає ОБИДВА виселення за часом — і TTL, і «викид при застої» (інакше монета все одно зникала б і заміняти було б нічого). Санітарні виходи (вже в угоді, 1H-OB уже відпрацьовано) лишаються."><input type="checkbox" id="ff-queue4-nottl" onchange="saveFuelFilterSettings(); _ffQueue4TtlSync()"> ♾ Без терміну (лише заміна протилежним)</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="🚨 ЖОРСТКА СТЕЛЯ ЗАСТРЯГАННЯ. Абсолютна межа життя запису в Черзі-4, яку ♾ «Без терміну» НЕ вимикає. ♾ означає «живе, доки не замінить протилежний сигнал», а не «живе вічно за будь-яких умов». Запис, що провисів довше — вже не актуальна ситуація, а джерело незрозумілих спрацювань: монету ПОВНІСТЮ прибирає з усіх черг. Повернення — лише через новий сигнал і всі фільтри. 0 = вимкнути запобіжник (не радимо).">🚨 Застряг ≥ <input type="number" id="ff-queue4-hardmax" min="0" max="720" step="1" style="width:52px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> год → викинути</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="📐 Мінімальний очікуваний R для відкриття (поле живе тут, у Черзі-4, але гейт рахується і на ПРЯМОМУ відкритті, коли всі черги вимкнені). R = відстань до ЦІЛІ поділена на відстань до СТОПА — те саме число, що потім стоїть у колонці «🎯 Автопілот», бо рахується з ТИХ САМИХ джерел (стоп — обране «🛑 SL з» із тим самим буфером і стелею; ціль — 🧲 магніт, інакше ціль автопілота). Угода з R менше 1 ризикує більшим заради меншого: кейс ARBUSDT 31.08 — стоп 8.23%, ціль 1.60% (0.19R), результат −8.58%. У черзі запис при відмові НЕ виселяється (R рухомий); на прямому відкритті сигнал просто не відкривається. 0 = вимкнути.">
+                        📐 Мін. R на відкриття ≥ <input type="number" id="ff-queue4-min-rr" min="0" max="20" step="0.1" style="width:52px;font-size:0.72rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> R (0=вимк)
+                    </label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="🔁 Перед ВІДКРИТТЯМ ще раз проганяємо монету через ТОЙ САМИЙ ланцюг фільтрів сканера (OB Match / Forecast 1H+4H / Decision / POC / PD), який пускав її в Чергу-4. Монета могла простояти в черзі годинами — за цей час OB чи прогноз могли перевернутись. Не пройшла повторну перевірку → НЕ відкриваємо, лишається в черзі до наступного тіку. За замовч. УВІМК."><input type="checkbox" id="ff-queue4-recheck" onchange="saveFuelFilterSettings()"> 🔁 Повторна перевірка фільтрів на виході</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Не відкривати угоду, якщо хід уже виснажений понад поріг. Єдиний запобіжник Черги-4.">
                         <input type="checkbox" id="ff-queue4-exh-on" onchange="saveFuelFilterSettings()"> 🔥 Виснаженість ≤ <input type="number" id="ff-queue4-exh-pct" min="1" max="100" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> %</label>
@@ -3308,6 +3236,78 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 💡 Монета сюди потрапляє, коли «МММ» тримається довше за поріг (нижче в налаштуваннях). Показуються ЛИШЕ монети, що зараз є у 💰 Funding Rate Scanner — щойно монета виходить зі сканера (funding нормалізувався), вона зникає з таблиці (лишається в 📜 Архіві монет). Такі монети не дублюються в таблиці вище. <b>🚀</b> = аномальний ріст (різкий рух ціни + зростання обсягу) — варто розглянути, навіть коли МММ низький. <b>🎯</b> = найкращий збіг показників для входу (SCORE ВІДМІННИЙ + сильний МММ у той бік + ₿ BTCUSDT START у той самий бік + funding/обсяг підтверджують). Коли активна — під монетою зʼявляється рядок «рекомендована ботом» із таймером і статистикою.
             </div>
         </div><!-- /fund-body -->
+    </div>
+
+    <!-- ═══ 🎯 РІВНІ УГОДИ: SL · TP-1 · TP-2 — ОКРЕМА СЕКЦІЯ ПЕРЕД TRADE MANAGER
+         Історія переносів (щоб не робити цього вп'яте):
+           1) «🛑 SL з» і «📐 Мін. R» жили в гармошці Черги-4 і виглядали як ЇЇ
+              налаштування — а при вимкнених чергах сигнал ішов прямо у
+              відкриття повз них;
+           2) поклав блок усередину «🛡 Авто-SL та ворота відкриття» — його все
+              одно не було видно під довгим рядом полів («Де ці параметри?»);
+           3) підняв ПЕРШОЮ секцією — але це ВСЕ ЩЕ був блок Черг;
+           4) ⇒ ТЕПЕР: власна секція ПОЗА чергами, безпосередньо ПЕРЕД
+              💼 Trade Manager (вимога користувача 09.09).
+         ⚠️ «📐 Мін. R на відкриття» ПОВЕРНУТО в налаштування Черги-4 — окреме
+         рішення користувача. Ключ `queue4_min_rr` і його ГЛОБАЛЬНА дія (гейт
+         рахується і на прямому відкритті) НЕ змінились — змінилось лише місце
+         показу.
+         ⚠️ Ключі НЕ перейменовані (`queue4_sl_source`) — це зламало б збережені
+         налаштування. Історична назва ключа ≠ область дії. -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
+        <div style="font-size:0.8rem;font-weight:700;color:#7dd3fc;cursor:pointer;user-select:none" onclick="togglePanel('levels')" title="Клік — згорнути/розгорнути"><span id="levels-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🎯 РІВНІ УГОДИ: SL · TP-1 · TP-2 <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— діють на КОЖНЕ відкриття, зокрема коли ВСІ черги вимкнені й сигнал іде прямо в угоду</span></div>
+    </div>
+    <div id="levels-body">
+    <div style="border:1px solid rgba(56,189,248,0.25);border-radius:8px;padding:10px 12px;background:rgba(8,47,73,0.28);margin-top:8px">
+        <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🛑 Звідки брати рівень для Manual SL. SL = межа блоку + буфер (SHORT над верхом, LONG під низом). • 1H OB — той самий ★-блок, що намальовано на графіку (рядок сканера на TF OB-фільтра). • 15m Volumized OB — межа Volumized-блоку на 15m. Обране джерело йде ПЕРШИМ у ланцюгу для БУДЬ-ЯКОЇ угоди; якщо блоку немає — беруться наступні, і в 🧾 Лозі видно, чому обране не спрацювало.&#10;&#10;ТУМБЛЕР ВИМКНЕНО → вибір не нав'язується НІКОМУ: Черга-4 свій стоп не ставить, а працює звичайний ланцюг авто-SL (OB TF → ★TF → Volumized → % від входу). Тобто повертається поведінка, яка була до того, як вибір став глобальним. Угода все одно НЕ лишиться без стопа — гарантію тримає «🛡 Стоп ЗАВЖДИ» вище.">
+                <input type="checkbox" id="ff-sl-source-on" onchange="saveFuelFilterSettings(); _ffLevelsSync()">
+                🛑 <b>SL з</b>
+                <select id="ff-queue4-sl-source" onchange="saveFuelFilterSettings()" style="font-size:0.72rem;padding:2px 4px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="1h">1H OB</option><option value="15m">15m Volumized OB</option></select>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="🧲 ЦІЛЬ УГОДИ (= Manual TP-2) береться з НАЙБІЛЬШОЇ сходинки драбини ліквідності ПОПЕРЕДУ входу в бік угоди (ближня межа смуги). Це не просто рівень TP-2: магніт стає ЦІЛЛЮ, тож із нього одразу узгоджені колонка «🎯 Автопілот», R і автозакриття. Вимкнути → ціль рахує автопілот з обʼєктів графіка (пул ліквідації / екстремум діапазону / POC / VAH-VAL), і запиту до біржі не буде взагалі.">
+                <input type="checkbox" id="tm-pilot-tp2-magnet" onchange="saveTMSettings()"> 🧲 <b>TP-2 з магніту ліквідності</b>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="Біржа і глибина історії, з яких будується драбина ліквідності для 🧲 магніту. ⚠️ Це ТІ САМІ ключі, що в секції «💧 Liquidity Filter» — одне джерело, два місця показу: зміна тут одразу видно там і навпаки. Інакше поріг фільтра і ціль угоди рахувались би з різних даних.">
+                🧲 магніт з
+                <select id="ff-mag-exchange" onchange="updateMagnetSource()" style="font-size:0.72rem;padding:2px 4px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace">
+                    <option value="binance">BINANCE</option>
+                    <option value="bybit">BYBIT</option>
+                    <option value="mexc">MEXC</option>
+                    <option value="bingx">BINGX</option>
+                </select>
+                <select id="ff-mag-bars" onchange="updateMagnetSource()" style="font-size:0.72rem;padding:2px 4px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace">
+                    <option value="24">24 год</option>
+                    <option value="48">48 год</option>
+                    <option value="72">72 год</option>
+                    <option value="120">120 год</option>
+                    <option value="168">168 год</option>
+                    <option value="240">240 год</option>
+                    <option value="336">336 год</option>
+                    <option value="504">504 год</option>
+                    <option value="720">720 год</option>
+                    <option value="1000">1000 год</option>
+                </select>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="🎯 ДЕ ШУКАТИ TP-1 — вікно у % ШЛЯХУ від входу до TP-2 (а НЕ у % ціни). Серед обʼєктів графіка у цьому вікні виграє НАЙСИЛЬНІШИЙ (пул ліквідації > POC/VAH/VAL > рівновага діапазону > swing). Ширше вікно = більше шансів знайти справжній рівень; вужче = частковий вихід ближче до середини руху. Кейс WIFUSDT 08.09: ціль +2.23%, вікно 30-75% дало смугу шириною ~1% — жоден обʼєкт туди не потрапив.">
+                🎯 TP-1 у вікні
+                <input type="number" id="tm-pilot-tp1-min-path" min="0" max="100" step="5" style="width:50px;font-size:0.72rem;padding:2px 4px" onchange="saveTMSettings()">
+                <span style="color:#8b93a7">–</span>
+                <input type="number" id="tm-pilot-tp1-max-path" min="0" max="100" step="5" style="width:50px;font-size:0.72rem;padding:2px 4px" onchange="saveTMSettings()">
+                % шляху до TP-2
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1" title="➗ Що робити, коли у вікні НЕМАЄ жодного обʼєкта графіка. Ненульове значення ставить TP-1 на цій частці шляху до цілі — це НЕ «рівень із повітря», він похідний від власної цілі, і в лозі так і підписано «N% шляху до цілі». 0 = не вигадувати рівень узагалі, працювати одним TP-2 (порожній TP-1 — коректний стан).">
+                ➗ інакше фолбек <input type="number" id="tm-pilot-tp1-fallback" min="0" max="99" step="5" style="width:50px;font-size:0.72rem;padding:2px 4px" onchange="saveTMSettings()"> % шляху (0=не ставити)
+            </label>
+        </div>
+        <div style="font-size:0.64rem;color:#6b7280;margin-top:8px;line-height:1.5">
+            💡 <b>TP-2</b> = ціль угоди: 🧲 магніт ліквідності попереду входу, інакше найдальший обʼєкт графіка.
+            <b>TP-1</b> = найсильніший обʼєкт у вікні шляху, інакше похідний рівень.
+            Саме виставлення рівнів вмикає «🎯 Автозаповнення TP-1 / TP-2» у блоці <b>Exit Rules</b> (там же — «TP-1 закриває %», «мін. зазор» і вікно цілей автопілота).
+            ⚠️ Буфер стопа різний за походженням: пряме відкриття бере «Буфер, %» (🛡 Авто-SL), Черга-4 — «SL буфер» із налаштувань Черги-3.
+            ⚠️ «📐 Мін. R на відкриття» живе в <b>налаштуваннях Черги-4</b> — але рахується і на прямому відкритті теж.
+        </div>
+    </div>
     </div>
 
     <!-- ====================== TRADE MANAGER ====================== -->
@@ -9082,6 +9082,19 @@ async function toggleSideGate(side) {
 }
 
 let _tmSaveTimer = null;
+// 🛑 Тумблер «SL з» вимкнено → ГАСИМО випадайку джерела. Активний контрол,
+// який ні на що не впливає, — це та сама вада, що з полями TTL при ♾ «Без
+// терміну»: користувач крутить значення і не бачить ефекту.
+function _ffLevelsSync() {
+    const on = !!(document.getElementById('ff-sl-source-on') || {}).checked;
+    const sel = document.getElementById('ff-queue4-sl-source');
+    if (sel) {
+        sel.disabled = !on;
+        sel.style.opacity = on ? '1' : '0.4';
+        sel.title = on ? '' : 'Тумблер «SL з» вимкнено — вибір не застосовується';
+    }
+}
+
 // Число з поля з ЯВНИМ дефолтом лише коли поле порожнє/нечислове.
 // ⚠️ Навмисно НЕ `parseFloat(v) || d`: нуль — змістовне значення для
 // «фолбек TP-1 = не ставити», а `||` мовчки перетворив би його на дефолт.
@@ -11741,6 +11754,8 @@ function renderFuelFilter(d) {
     setIf('ff-queue4-nottl', s.queue4_no_ttl === true);            // деф. OFF
     setIf('ff-queue4-hardmax', String(s.queue4_hard_max_hours != null ? s.queue4_hard_max_hours : 24));
     setIf('ff-queue4-sl-source', String(s.queue4_sl_source || '1h'));
+    setIf('ff-sl-source-on', s.sl_source_enabled !== false);   // деф. ON
+    _ffLevelsSync();
     _ffQueue4TtlSync();
     setIf('ff-queue4-exh-on', s.queue4_exhaustion_on !== false);
     setIf('ff-queue4-recheck', s.queue4_recheck_filters !== false);   // деф. ON
@@ -12759,6 +12774,7 @@ async function saveFuelFilterSettings() {
         queue4_no_ttl: _c('ff-queue4-nottl'),
         queue4_hard_max_hours: parseFloat(_v('ff-queue4-hardmax', '24') || '24'),
         queue4_sl_source: _v('ff-queue4-sl-source', '1h') || '1h',
+        sl_source_enabled: _c('ff-sl-source-on'),
         queue4_exhaustion_on: _c('ff-queue4-exh-on'),
         queue4_recheck_filters: _c('ff-queue4-recheck'),
         // 0 = свідомо вимкнути гейт за R, тому НЕ через `|| 1`.
