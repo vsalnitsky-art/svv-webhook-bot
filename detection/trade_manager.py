@@ -3454,18 +3454,51 @@ class TradeManager:
                                  side=side, source='PILOT')
                 return False
             lvl = self._round_sltp_value(res['stop'])
+            # 🐞 СПАМ ОДНИМ І ТИМ САМИМ РІВНЕМ (кейс ETHUSDT 09.09) — не зламати!
+            #
+            # У лозі щотакту (20-35с) стояли ДВА однакові рядки:
+            #   «🤖 Бот (Автопілот · структура): Manual SL → $2543.63»
+            #   «🎯 Автопілот: SL → $2,543.63 · стоп підтягнуто: структура…»
+            # і так годинами, хоча стоп НЕ РУХАВСЯ.
+            #
+            # Корінь — РАТЧЕТ ПОРІВНЮВАВ СИРЕ ЧИСЛО З ОКРУГЛЕНИМ. `plan()`
+            # рахує кандидата з повною точністю (swing×(1+buf) = 2543.62973),
+            # а на позиції лежить УЖЕ ОКРУГЛЕНИЙ рівень (2543.63). Для SHORT
+            # «краще» = нижче, і 2543.62973 < 2543.63 → `better_stop` каже
+            # ТАК → пишемо… те саме 2543.63. Наступний тік — знову те саме.
+            # Вічний цикл на дві сотих цента. (Для LONG дзеркально.)
+            #
+            # ⚠️ Фікс саме ТУТ, а не в `trade_pilot`: округлення — вузол TM
+            # (`_sltp_dp` знає точність рівня), чиста функція про нього не
+            # знає й знати не мусить. Порівнюємо ТЕ, ЩО РЕАЛЬНО ЗАПИШЕМО, з
+            # тим, ЩО ВЖЕ СТОЇТЬ — і це закриває будь-яке інше джерело
+            # мікрошуму, а не лише це.
+            _cur = self._round_sltp_value(pos.get('manual_sl'))
+            if _cur is not None and lvl is not None and _cur == lvl:
+                # Нічого не змінюється → це НЕ подія: ні запису, ні рядка в
+                # лозі, ні приросту 🛡. Стан у колонці лишається як був.
+                return False
             r = self.update_manual_sl_tp(
                 symbol, manual_sl=lvl, is_shadow=is_shadow,
-                origin=self.SRC_AUTO, origin_label='Автопілот · структура') or {}
+                origin=self.SRC_AUTO, origin_label='Автопілот · структура',
+                # ⬇️ ОДИН РЯДОК = ОДНА ПОДІЯ: нижче автопілот пише СВІЙ,
+                # змістовніший рядок (із причиною і ціллю). Дублювати той
+                # самий факт двома записами — той самий флуд, лише вдвічі.
+                quiet=True) or {}
             if r.get('ok'):
                 # ⬆️ Лічильник росте САМЕ ТУТ — стоп реально переїхав.
                 _prev = (self._pilot_state.get(pkey) or {})
                 self._pilot_mark(pkey,
                                  trails=int(_prev.get('trails') or 0) + 1,
                                  last_trail_at=now, last_stop=lvl)
+                # `extra` дублює поля, які раніше нікуди не дівались із рядка
+                # TM — інакше після `quiet=True` CSV-експорт втратив би їх.
                 log_activity(symbol, 'sltp',
                              f'🎯 Автопілот: SL → {self._fmt_price(lvl)} · {_why}',
-                             side=side, source='PILOT')
+                             side=side, source='PILOT',
+                             extra={'manual_sl': lvl,
+                                    'origin': self.SRC_AUTO,
+                                    'is_shadow': bool(is_shadow)})
             else:
                 self._pilot_mark(
                     pkey, trail_block=f'не прийнято: {r.get("reason", "—")}')
@@ -3557,7 +3590,11 @@ class TradeManager:
             r = self.update_manual_sl_tp(
                 symbol, manual_tp=self._round_sltp_value(tp2['price']),
                 is_shadow=is_shadow, origin=self.SRC_AUTO,
-                origin_label=f"Автопілот · {tp2.get('label')}") or {}
+                origin_label=f"Автопілот · {tp2.get('label')}",
+                # Той самий принцип, що у трейлі SL: автопілот пише СВІЙ
+                # рядок нижче (з рівнем, міткою, % і R) — другий, бідніший,
+                # лише дублював би подію.
+                quiet=True) or {}
             if r.get('ok'):
                 log_activity(symbol, 'sltp',
                              f"🎯 Автопілот: TP-2 → {self._fmt_price(tp2['price'])} "
@@ -6695,7 +6732,7 @@ class TradeManager:
                               manual_tp=None, is_shadow: bool = False,
                               origin: str = 'user',
                               origin_label: str = None,
-                              manual_tp1=None) -> Dict:
+                              manual_tp1=None, quiet: bool = False) -> Dict:
         """Set or clear the per-position manual SL/TP override.
 
         `origin` — ХТО ставить рівень: 'user' (руками з UI, дефолт — щоб усі
@@ -6918,7 +6955,10 @@ class TradeManager:
                 parts.append(f"Manual TP-2 → {self._fmt_sltp(updated.get('manual_tp'))}")
             elif tp_op[0] == 'clear':
                 parts.append("Manual TP-2 знято")
-            if parts:
+            # `quiet=True` — виклик, який САМ пише змістовніший рядок
+            # (автопілот). Позначку 🏷 походження і сам рівень це НЕ чіпає —
+            # гаситься РІВНО дублювання в 🧾 Лозі («один рядок = одна подія»).
+            if parts and not quiet:
                 from detection.activity_log import log_activity
                 _auto = (origin == self.SRC_AUTO)
                 _who = (f"🤖 Бот{f' ({origin_label})' if origin_label else ''}"

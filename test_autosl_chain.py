@@ -700,6 +700,79 @@ def test_the_lock_is_logged_once_not_every_tick():
     print('✓ пояснення пишеться раз, а не щотіку')
 
 
+# ═════════ 🔇 СПАМ ТИМ САМИМ РІВНЕМ (кейс ETHUSDT 09.09) ═══════════════════
+def test_ratchet_compares_the_rounded_level_not_the_raw_one():
+    """🐞 ГОЛОВНИЙ ДЕФЕКТ. У лозі щотакту (20-35с) стояли ДВА однакові рядки:
+
+        22:45:32 🤖 Бот (Автопілот · структура): Manual SL → $2543.63
+        22:45:32 🎯 Автопілот: SL → $2,543.63 · стоп підтягнуто: структура…
+        22:46:08 (те саме)   22:46:45 (те саме) …
+
+    — і так годинами, хоча стоп НЕ РУХАВСЯ.
+
+    Корінь: ратчет порівнював СИРЕ число з ОКРУГЛЕНИМ. `plan()` рахує
+    кандидата з повною точністю (swing×(1+buf) = 2543.62973), а на позиції
+    лежить УЖЕ ОКРУГЛЕНИЙ рівень (2543.63). Для SHORT «краще» = нижче, тож
+    2543.62973 < 2543.63 → `better_stop` каже ТАК → пишемо те саме 2543.63.
+    Вічний цикл на дві сотих цента."""
+    tp = _load('detection.trade_pilot', 'detection/trade_pilot.py')
+    rnd = TM._round_sltp_value
+    raw = 2539.82 * (1 + 0.0015)              # структурний стоп SHORT
+    stored = rnd(raw)
+    _check(stored == 2543.63, f'відтворення кейсу зі скріна: {stored}')
+    _check(raw != stored, 'сире число МУСИТЬ відрізнятись — у цьому й пастка')
+    # Ратчет на СИРОМУ vs збереженому — саме він і зациклював
+    _check(tp.better_stop('SHORT', raw, stored) is True,
+           'без фіксу ратчет вічно вважає сирий кандидат «кращим»')
+    # А на ОКРУГЛЕНОМУ — рівність, тобто робити нічого
+    _check(tp.better_stop('SHORT', rnd(raw), stored) is False,
+           'округлений кандидат = чинний рівень → трейлу немає')
+    print(f'✓ пастка відтворена: сире {raw} vs збережене {stored}')
+
+
+def test_no_op_trail_writes_nothing_at_all():
+    """Гейт у коді: якщо ОКРУГЛЕНИЙ кандидат дорівнює чинному рівню — ні
+    запису, ні рядка в лозі, ні приросту 🛡. Порівнюємо саме ТЕ, ЩО РЕАЛЬНО
+    ЗАПИШЕМО, з тим, ЩО ВЖЕ СТОЇТЬ — це закриває будь-яке джерело мікрошуму,
+    а не лише конкретно це."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index('lvl = self._round_sltp_value(res[')
+    j = src.index('r = self.update_manual_sl_tp(', i)
+    guard = src[i:j]
+    _check("_cur = self._round_sltp_value(pos.get('manual_sl'))" in guard,
+           'чинний рівень теж треба ОКРУГЛИТИ перед порівнянням')
+    _check('_cur == lvl' in guard and 'return False' in guard,
+           'рівні збіглись → вихід ДО запису')
+    # ⚠️ Гейт мусить стояти ПЕРЕД викликом, інакше він нічого не економить
+    _check(guard.index('_cur == lvl') < len(guard),
+           'перевірка мусить бути ДО update_manual_sl_tp')
+    print('✓ трейл «у те саме місце» не пише нічого')
+
+
+def test_one_action_is_one_log_row():
+    """Правило проєкту «один рядок = одна подія». Автопілот пише СВІЙ,
+    змістовніший рядок (рівень + причина + ціль), тож загальний рядок TM на
+    цьому шляху лише дублював подію — і подвоював той самий флуд."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    # 1) у TM є вимикач логу, і він гасить САМЕ лог, а не запис рівня
+    i = src.index('if parts and not quiet:')
+    _check('quiet: bool = False' in src, 'потрібен параметр `quiet` із дефолтом False')
+    head = src[:i]
+    _check("pos['manual_sl_by'] = origin_label or ''" in head,
+           'позначка 🏷 походження мусить лишатись — гаситься лише лог')
+    # 2) обидва шляхи автопілота (трейл SL і TP-2) кличуть з quiet=True
+    for anchor in ("origin_label='Автопілот · структура'",
+                   'origin_label=f"Автопілот · {tp2.get(\'label\')}"'):
+        k = src.index(anchor)
+        _check('quiet=True' in src[k:k + 400],
+               f'виклик біля «{anchor[:34]}…» мусить бути quiet=True')
+    # 3) власний рядок автопілота НЕ втратив структурні поля для CSV
+    m = src.index("f'🎯 Автопілот: SL → {self._fmt_price(lvl)} · {_why}'")
+    _check("'manual_sl': lvl" in src[m:m + 400] and "'origin'" in src[m:m + 400],
+           'після quiet=True поля для CSV мусять бути у ВЛАСНОМУ рядку')
+    print('✓ одна дія — один рядок (і CSV не втратив полів)')
+
+
 # ═════════ 📨 ЧАСТКОВЕ ЗАКРИТТЯ: у ГРУПУ і КОРОТКО ═════════════════════════
 def test_partial_close_goes_to_the_group_topic():
     """🐞 Повідомлення про часткове закриття йшли в ОСОБИСТИЙ бот: `_notify`
@@ -788,6 +861,9 @@ if __name__ == '__main__':
     test_pilot_does_not_overwrite_a_hand_set_stop()
     test_clearing_the_stop_returns_control_to_the_pilot()
     test_the_lock_is_logged_once_not_every_tick()
+    test_ratchet_compares_the_rounded_level_not_the_raw_one()
+    test_no_op_trail_writes_nothing_at_all()
+    test_one_action_is_one_log_row()
     test_partial_close_goes_to_the_group_topic()
     test_partial_close_message_is_one_line()
     test_tp_lines_have_no_labels()
