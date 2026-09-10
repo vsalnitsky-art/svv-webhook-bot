@@ -3641,6 +3641,44 @@ class SMCScanner:
     # Alerts logic
     # ========================================
     
+    @staticmethod
+    def _alertable_ids(new_events) -> set:
+        """🔇 Які з нових подій МАЮТЬ ПРАВО дати алерт — по ОДНІЙ на напрямок.
+
+        ЧИСТА функція (без I/O, без стану) → юніт-тест.
+
+        `new_events` = [(eid, ev), …]. Повертає множину `eid` НАЙНОВІШИХ подій
+        кожного напрямку (`ev['dir']`), тобто максимум ДВА алерти за прохід:
+        один бичачий, один ведмежий.
+
+        **Чому це потрібно** (кейс 10.09): події приходять ПАЧКОЮ, і при
+        вимкненому вікні свіжості (`recency_minutes = 0`) кожна ланка старого
+        ланцюга CHoCH вважалась «свіжою» і фаєрила власний алерт. На проді один
+        прохід дав 40 «сигналів» по BCHUSDT за 0.8 секунди.
+
+        ⚠️ **Новизна тут вимірюється `to_t`** (бар, на якому close перетнув
+        рівень), а НЕ `from_t` зі складу `eid`: `from_t` — це СТАРИЙ півот, що
+        ламається, і за ним «найновіша» подія була б не тією, що на графіку.
+        ⚠️ Порожній вхід → порожня множина (нічого не фаєримо, а не «все»).
+        """
+        best = {}
+        for item in (new_events or []):
+            try:
+                eid, ev = item
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(ev, dict):
+                continue
+            d = ev.get('dir')
+            try:
+                t = int(ev.get('to_t', 0) or 0)
+            except (TypeError, ValueError):
+                t = 0
+            cur = best.get(d)
+            if cur is None or t > cur[0]:
+                best[d] = (t, eid)
+        return {eid for _t, eid in best.values()}
+
     def _process_alerts(self, symbol: str, result: Dict):
         # Note: SMC scanner no longer sends Telegram messages directly.
         # Telegram delivery is owned by Trade Manager (real or test mode),
@@ -3782,7 +3820,20 @@ class SMCScanner:
         now_ms = int(time.time() * 1000)
         
         mode = self._settings.get('alert_mode', DEFAULT_ALERT_MODE)
-        
+
+        # 🔇 ОДИН АЛЕРТ НА НАПРЯМОК ЗА ОДИН ПРОХІД (кейс 10.09 — не зламати!).
+        # `new_events` може прийти ПАЧКОЮ (десятки подій за один виклик), а при
+        # `Свіжість сигналу: без ліміту` вікно віку нічого не відсіює — тож
+        # старий ЛАНЦЮГ CHoCH фаєрив УСІ свої ланки поспіль. На проді: BCHUSDT
+        # 40 «сигналів» за 0.8с з інтервалом 0.02с — це ОДИН прохід циклу, а не
+        # 40 циклів. Тепер алерт дозволено лише НАЙНОВІШІЙ події кожного
+        # напрямку: історія лишається в `seen`/hwm, але в лог і в торгівлю йде
+        # РІВНО те, що зараз на графіку.
+        # ⚠️ Обмежуємо САМЕ АЛЕРТ, а не весь цикл: `_pending_choch`, хук
+        # `on_bos_event` і `queue2_on_choch` мусять бачити КОЖНУ подію —
+        # інакше зламалась би логіка CHoCH+BOS і виходи TM.
+        _alertable = self._alertable_ids(new_events)
+
         for _, ev in new_events:
             tag = ev.get('tag')
             to_t = ev.get('to_t', 0) or 0
@@ -3839,7 +3890,7 @@ class SMCScanner:
 
             if mode == 'choch':
                 # CHoCH-only mode — alerts must be on FRESH CHoCH
-                if tag == 'CHoCH' and is_recent:
+                if tag == 'CHoCH' and is_recent and ev_id(ev) in _alertable:
                     if not self._htf_allows(symbol, ev['dir']):
                         print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
                         self._log_signal_block(symbol, ev['dir'], 'CHoCH заблоковано HTF-фільтром (проти старшого тренду)')
@@ -3861,7 +3912,7 @@ class SMCScanner:
                 # (b) adds a second alert when the same move is confirmed.
                 if tag == 'CHoCH':
                     # (a) alert on the fresh CHoCH itself
-                    if is_recent:
+                    if is_recent and ev_id(ev) in _alertable:
                         if not self._htf_allows(symbol, ev['dir']):
                             print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
                             self._log_signal_block(symbol, ev['dir'], 'CHoCH заблоковано HTF-фільтром (проти старшого тренду)')
@@ -4633,6 +4684,23 @@ class SMCScanner:
                 self._record_marker(symbol, event, side_label,
                                     'rejected', _reason, entry_price=evt_level)
                 log_activity(symbol, 'rejected', _reason, side=side_label, source='scanner')
+                # 🔁 ДЕДУП СТАВИМО Й НА ВІДХИЛЕНОМУ СИГНАЛІ (кейс 10.09 —
+                # не зламати!). Раніше позначка `_last_signal_dir` стояла ЛИШЕ
+                # на успішному шляху, ~70 рядків нижче — тобто ПІСЛЯ цього
+                # `return`. Наслідок на проді: напрямок, який ріже фільтр
+                # (OB / Decision), НІКОЛИ не позначався опрацьованим і
+                # фаєрився ЗНОВУ на КОЖНОМУ проході. Лог за 5.6 хв: ASTER
+                # LONG 44 сигнали, FIL 42, BCH 39, ADA 35 — і рівно по ОДНОМУ
+                # сигналу в протилежний бік (той пройшов фільтр і позначку
+                # отримав). Асиметрія 44:1 і є доказом.
+                #
+                # ⚠️ «Дедуплікація 1/тренд» — про ТРЕНД, а не про «1 угоду»:
+                # структурний сигнал СТАВСЯ, фільтр лише вирішив ним не
+                # торгувати. Скид позначки лишається там, де й був — на
+                # ФЛІПІ 1H-OB (`_update_smc_ob`), тобто «новий 1H-OB → новий
+                # сигнал», рівно як просив користувач.
+                self._last_signal_dir[symbol] = side_label
+                self._persist_dedup_state()
                 return
 
             # Entry price = the structural break LEVEL of the event that fired
