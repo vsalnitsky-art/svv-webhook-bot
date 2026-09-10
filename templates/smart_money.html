@@ -2354,8 +2354,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 title="✋ Створити РУЧНИЙ сигнал у напрямку вердикту банера. Фільтри сканера (OB / Forecast / Decision / POC / PD) ПРОПУСКАЮТЬСЯ — рішення ваше. Далі сигнал іде ТИМ САМИМ алгоритмом: черга → двигун → відкриття. Мітка угоди — ✋ Ручний.">
                             ✋ Сигнал
                         </button>
+                        <!-- ⚠️ ДВА РІЗНІ ПІДПИСИ, а не один спільний.
+                             Раніше «Trade Manager disabled» стояло ВПРИТУЛ до
+                             ✋ Сигналу, хоча стосується лише ⬆LONG/⬇SHORT
+                             (пряме відкриття) — і читалось як «сигнал теж
+                             заблоковано». Гірше: відповідь на натискання
+                             писалась у ТОЙ САМИЙ елемент, і найближчий
+                             перемальунок банера (кожні ~10с) її стирав. -->
                         <span class="sm-decision-actions-hint"
                               id="sm-decision-actions-hint"
+                              style="color:#888;font-size:0.7rem"></span>
+                        <span class="sm-decision-actions-hint"
+                              id="sm-decision-signal-hint"
                               style="color:#888;font-size:0.7rem"></span>
                     </div>
                     
@@ -4762,14 +4772,19 @@ async function sendManualSignal() {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ symbol: currentSymbol, side: side })
         });
+        if (!r.ok) { alert(`✋ Сигнал: сервер відповів ${r.status}`); return; }
         const d = await r.json();
-        const hint = document.getElementById('sm-decision-actions-hint');
+        // ⚠️ ВЛАСНИЙ елемент, а не спільний `sm-decision-actions-hint`: у той
+        // пише `updateManualEntryButtons` на КОЖНОМУ перемальунку банера
+        // (~10с), тож відповідь на натискання стиралась — і виглядало, ніби
+        // кнопка нічого не зробила.
+        const hint = document.getElementById('sm-decision-signal-hint');
         if (hint) {
             hint.textContent = d.ok
-                ? `✋ Сигнал ${side} відправлено в обробку`
+                ? `✋ Сигнал ${side} → ${d.outcome || 'відправлено в обробку'}`
                 : `✋ Сигнал ${side}: ${d.reason || 'помилка'}`;
             hint.style.color = d.ok ? '#86efac' : '#fca5a5';
-            setTimeout(() => { hint.textContent = ''; }, 8000);
+            setTimeout(() => { hint.textContent = ''; }, 12000);
         }
         if (typeof loadActivityLog === 'function'
             && document.getElementById('act-log-body')
@@ -8511,7 +8526,14 @@ function updateManualEntryButtons(decision) {
     let hintText = '';
     if (!tmEnabled) {
         disabled = true;
-        hintText = '⚠️ Trade Manager disabled — turn it ON in TM Settings first';
+        // ⚠️ ПІДПИС МУСИТЬ НАЗИВАТИ, ЧОГО САМЕ ВІН СТОСУЄТЬСЯ. Питання
+        // користувача: «до чого тут Trade Manager disabled? Сигнал мав би як
+        // мінімум потрапити у Чергу». Мав — і потрапляє: ✋ Сигнал кличе
+        // `on_signal` → `intercept` → черга, і майстер-тумблер TM цього шляху
+        // НЕ гасить. Гасить він лише ПРЯМЕ відкриття цими двома кнопками.
+        hintText = '⚠️ ⬆LONG / ⬇SHORT (пряме відкриття) вимкнено: Trade Manager '
+                 + 'OFF — увімкніть у TM Settings. ✋ Сигнал працює й далі — '
+                 + 'він іде в чергу, а не відкриває угоду.';
     } else if (hasPosition) {
         disabled = true;
         hintText = `Position already open (${decision.position.side}) — close first`;

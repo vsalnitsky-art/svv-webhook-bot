@@ -4301,7 +4301,14 @@ def register_api_routes(app):
         поточного OI (див. `detection/liq_scan.py`), а не жива liq-map —
         вона будується на приросту OI і є лише для монет, які демон веде.
 
-        Body: {exchange, top_n, min_vol_usd, min_oi_usd, bars, sort_by}
+        Body: {exchange, top_n, min_vol_usd, min_oi_usd, bars, sort_by,
+               universe}
+        `universe='watchlist'` → сканується РІВНО watchlist бота; `top_n` і
+        пороги обігу/OI при цьому НЕ застосовуються (список склала людина).
+
+        ⚠️ Watchlist читає САМЕ ЦЕЙ маршрут, а не `liq_scan`: модуль лишається
+        без залежності від сканера (його беруть ізольовані тести), а джерело
+        списку — те саме `scanner.get_watchlist()`, що малює сторінку.
         """
         from detection import liq_scan
         d = request.get_json() or {}
@@ -4311,6 +4318,20 @@ def register_api_routes(app):
                 return float(d.get(k, dflt))
             except (TypeError, ValueError):
                 return dflt
+        _uni = str(d.get('universe') or 'top').lower()
+        _syms = None
+        if _uni == 'watchlist':
+            try:
+                from detection.smc_scanner import get_smc_scanner
+                _sc = get_smc_scanner()
+                _syms = list(_sc.get_watchlist()) if _sc else []
+            except Exception as e:
+                return jsonify({'ok': False,
+                                'reason': f'watchlist недоступний: {e}'})
+            if not _syms:
+                return jsonify({'ok': False, 'universe': 'watchlist',
+                                'reason': 'watchlist порожній (сканер ще не '
+                                          'піднявся або список не заданий)'})
         try:
             return jsonify(liq_scan.scan_liquidity(
                 exchange=(d.get('exchange') or 'binance'),
@@ -4318,7 +4339,8 @@ def register_api_routes(app):
                 min_vol_usd=_num('min_vol_usd', 20_000_000),
                 min_oi_usd=_num('min_oi_usd', 5_000_000),
                 bars=int(_num('bars', liq_scan.DEFAULT_BARS)),
-                sort_by=(d.get('sort_by') or 'pull')))
+                sort_by=(d.get('sort_by') or 'pull'),
+                universe=_uni, symbols=_syms))
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
@@ -4837,10 +4859,22 @@ def register_api_routes(app):
                 price = (sc._get_live_price(symbol) or 0) if sc is not None else 0
             except Exception:
                 price = 0
-            tm.on_signal(symbol=symbol, side=side, entry_price=price,
-                         opened_by='manual')
+            # ⚠️ РЕЗУЛЬТАТ `on_signal` ПОВЕРТАЄМО КОРИСТУВАЧЕВІ. Раніше він
+            # ІГНОРУВАВСЯ, і сторінка писала «відправлено в обробку» незалежно
+            # від того, що сталось насправді — сигнал міг стати в чергу,
+            # відкритись, або бути відхиленим (дубль, вимкнений напрямок), і
+            # відрізнити це було ніяк. Питання «чому не відправляється сигнал?»
+            # виникло саме тому, що відповідь нічого не казала.
+            res = tm.on_signal(symbol=symbol, side=side, entry_price=price,
+                               opened_by='manual') or {}
+            _st = res.get('status') or 'processed'
+            _lbl = {'queued': 'у ЧЕРГУ', 'opened': 'ВІДКРИТО угоду',
+                    'duplicate': 'дубль — нової угоди немає',
+                    'rejected': 'ВІДХИЛЕНО'}.get(_st, _st)
             return jsonify({'ok': True, 'symbol': symbol, 'side': side,
-                            'detail': detail})
+                            'detail': detail, 'status': _st,
+                            'outcome': _lbl + (f" · {res['reason']}"
+                                               if res.get('reason') else '')})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 

@@ -66,6 +66,26 @@ PER_SYMBOL_OI_CAP = MAX_SYMBOLS
 # Рівні далі за це від ціни в драбину не потрапляють: вони не «магніти».
 WINDOW_PCT = 12.0
 
+# 🔁 ПАРТНЕРСЬКА БІРЖА ДЛЯ ФОЛБЕКУ ПО ОКРЕМІЙ МОНЕТІ (вимога користувача:
+# «якщо на момент скану монету не знайдено на біржі — автоматично вибрати іншу
+# біржу саме для цієї монети; вибрано Binance → підміною Bybit і навпаки»).
+#
+# ⚠️ Це ТОЧКОВА заміна на ОДНУ монету, а не зміна біржі скану: решта списку
+# лишається на обраній біржі. Bybit — партнер за замовчуванням для MEXC/BingX
+# із тієї самої причини, що й у `smc_scanner._liq_snapshot`: це біржа, на якій
+# бот ТОРГУЄ, отже монета watchlist там є за визначенням.
+# ⚠️ Фолбек НЕ мовчазний: рядок несе `exchange` (хто РЕАЛЬНО дав числа),
+# `requested_exchange` і `fallback` — інакше поруч стояли б числа Bybit під
+# заголовком «BINANCE» і звірити їх було б неможливо (урок MNTUSDT).
+FALLBACK_EXCHANGE = {'binance': 'bybit', 'bybit': 'binance',
+                     'mexc': 'bybit', 'bingx': 'bybit'}
+
+
+def fallback_for(exchange: str) -> Optional[str]:
+    """Партнерська біржа для точкової підміни, або None (немає/не підтримана)."""
+    alt = FALLBACK_EXCHANGE.get((exchange or '').lower())
+    return alt if (alt and alt in _OI_ONE and alt in _KLINES) else None
+
 
 def _f(v) -> Optional[float]:
     try:
@@ -374,6 +394,59 @@ NO_BULK_OI = {
 }
 
 
+def _resolve_symbol(session, exchange: str, symbol: str) -> Dict:
+    """Ціна + OI по ОДНІЙ монеті, з ФОЛБЕКОМ на партнерську біржу.
+
+    Повертає `{'symbol','price','oi_usd','exchange','requested_exchange',
+    'fallback','note'}` або `{'ok': False, 'reason': …}`.
+
+    ⚠️ **Ціна й OI приходять із ТІЄЇ САМОЇ біржі, звідки потім беруться
+    свічки** — тому `exchange` у результаті обовʼязково їде далі: змішати OI
+    Binance зі свічками Bybit означало б порахувати рівні ліквідації по двох
+    різних ринках (та сама помилка, що з PD-зоною — одна метрика з двох джерел).
+
+    ⚠️ Причина невдачі НАЗИВАЄ ОБИДВІ спроби. «Не знайдено на binance» без
+    згадки, що Bybit теж не дав даних, читалось би як проблема однієї біржі.
+    """
+    sym = norm_symbol(symbol)
+    tried = []
+
+    def _try(ex):
+        if ex not in _OI_ONE or ex not in _KLINES:
+            tried.append(f'{ex}: не підтримується')
+            return None
+        try:
+            px, oi = _OI_ONE[ex](session, sym)
+        except Exception as e:
+            tried.append(f'{ex}: {str(e)[:40]}')
+            return None
+        if not px or px <= 0:
+            tried.append(f'{ex}: монету не знайдено')
+            return None
+        if not oi or oi <= 0:
+            tried.append(f'{ex}: немає відкритого інтересу')
+            return None
+        return px, oi
+
+    ex0 = (exchange or 'binance').lower()
+    got = _try(ex0)
+    if got:
+        return {'symbol': sym, 'price': got[0], 'oi_usd': got[1], 'vol_usd': 0.0,
+                'exchange': ex0, 'requested_exchange': ex0,
+                'fallback': False, 'note': ''}
+    alt = fallback_for(ex0)
+    if alt and alt != ex0:
+        got = _try(alt)
+        if got:
+            return {'symbol': sym, 'price': got[0], 'oi_usd': got[1],
+                    'vol_usd': 0.0, 'exchange': alt, 'requested_exchange': ex0,
+                    'fallback': True,
+                    'note': f'через {alt.upper()} (фолбек: {tried[0]})'}
+    return {'ok': False, 'symbol': sym, 'exchange': ex0,
+            'requested_exchange': ex0, 'fallback': False,
+            'reason': 'немає даних — ' + ' · '.join(tried)}
+
+
 def scan_one(exchange: str = 'binance', symbol: str = 'BTCUSDT',
              bars: int = DEFAULT_BARS, rows: int = 12) -> Dict:
     """💧 Аналіз ЛІКВІДНОСТІ ОДНІЄЇ МОНЕТИ — повна драбина + вердикт.
@@ -429,22 +502,42 @@ def scan_liquidity(exchange: str = 'binance', top_n: int = 40,
                    min_vol_usd: float = 20_000_000,
                    min_oi_usd: float = 5_000_000,
                    bars: int = DEFAULT_BARS,
-                   sort_by: str = 'pull') -> Dict:
+                   sort_by: str = 'pull',
+                   universe: str = 'top',
+                   symbols: Optional[List[str]] = None) -> Dict:
     """Разовий скан: список монет із перекосом ліквідності й магнітами.
+
+    **ДВА ДЖЕРЕЛА СПИСКУ (`universe`):**
+      • `'top'` (як було) — найактивніші монети САМОЇ БІРЖІ: беремо її тікери
+        і відсіюємо за обігом і OI. Кількість — `top_n`.
+      • `'watchlist'` — РІВНО ті монети, що передані в `symbols` (watchlist
+        бота). Тут `top_n` / `min_vol_usd` / `min_oi_usd` **не застосовуються
+        взагалі**: список уже обраний людиною, і «відсіяти» з нього монету
+        означало б показати не те, про що просили. Саме тому UI ці три поля
+        ховає — активний контрол, який ні на що не впливає, вводить в оману
+        (той самий принцип, що з полями TTL при ♾ «Без терміну»).
 
     Вартість:
       • біржа з bulk-OI (Bybit, MEXC): 1 запит тікерів + 1 запит свічок на
         монету → при `top_n=40` це ~41 HTTP, 15-30 секунд;
       • без bulk-OI (Binance, BingX): + ще 1 запит OI на монету → ~81 HTTP.
         Саме тому там діє стеля `PER_SYMBOL_OI_CAP`.
+      • `universe='watchlist'`: тікери біржі НЕ качаємо взагалі (список уже
+        відомий), зате OI питаємо поштучно на КОЖНІЙ біржі — інакше не було б
+        куди застосувати фолбек по окремій монеті.
     """
     import requests
-    from detection import tickr_core
 
     exchange = (exchange or 'binance').lower()
     if exchange not in _KLINES:
         return {'ok': False, 'exchange': exchange,
                 'reason': f'скан ліквідності для {exchange} не підтримується'}
+
+    universe = 'watchlist' if str(universe or 'top').lower() == 'watchlist' else 'top'
+    if universe == 'watchlist':
+        return _scan_watchlist(exchange, symbols or [], bars, sort_by)
+
+    from detection import tickr_core
 
     try:
         metrics = tickr_core._ACTIVITY[exchange](tickr_core.MARKET_SWAP)
@@ -540,10 +633,94 @@ def scan_liquidity(exchange: str = 'binance', top_n: int = 40,
             rows.append(r)
     rows = sort_rows(rows, sort_by)
     ok_rows = [r for r in rows if r.get('ok')]
-    return {'ok': True, 'exchange': exchange,
+    return {'ok': True, 'exchange': exchange, 'universe': 'top',
             'scanned': len(cands), 'with_data': len(ok_rows),
             'dropped_vol': drop_vol, 'dropped_oi': drop_oi,
             'sort_by': sort_by, 'bars': bars,
             'bulk_oi': bulk_oi, 'warnings': warnings,
+            'took_sec': round(time.time() - t0, 1),
+            'rows': rows, 'fetched_at': time.time()}
+
+
+def _scan_watchlist(exchange: str, symbols: List[str], bars: int,
+                    sort_by: str) -> Dict:
+    """🎯 Скан РІВНО того списку монет, що дали (watchlist бота).
+
+    ⚠️ **ЖОДНОГО ВІДСІВУ.** Ні `top_n`, ні обіг, ні OI: список склала людина,
+    і «мовчки викинути» з нього монету — це показати не те, про що просили.
+    Єдина межа — `MAX_SYMBOLS`, і про її спрацювання пишеться ВГОЛОС.
+
+    ⚠️ **ФОЛБЕК ПО ОКРЕМІЙ МОНЕТІ, а не по всьому скану.** Монети watchlist
+    підбирались під Bybit (там бот торгує), тож частини з них на Binance
+    просто НЕМАЄ — це вже задокументований кейс MNTUSDT. Така монета не
+    зникає з таблиці й не показує нулі: її числа беруться з партнерської
+    біржі (`FALLBACK_EXCHANGE`), а рядок несе `exchange`/`fallback`, щоб було
+    видно, ЗВІДКИ вони насправді.
+    """
+    import requests
+
+    syms, seen = [], set()
+    for s in symbols or []:
+        n = norm_symbol(s)
+        if n not in seen:
+            seen.add(n)
+            syms.append(n)
+    if not syms:
+        return {'ok': False, 'exchange': exchange, 'universe': 'watchlist',
+                'reason': 'watchlist порожній — нема чого сканувати'}
+
+    warnings = []
+    _asked = len(syms)
+    if _asked > MAX_SYMBOLS:
+        syms = syms[:MAX_SYMBOLS]
+        warnings.append(f'у watchlist {_asked} монет, але стеля скану — '
+                        f'{MAX_SYMBOLS}')
+
+    session = requests.Session()
+    bars = max(24, min(int(bars or DEFAULT_BARS), 1000))
+    t0 = time.time()
+
+    def _one(sym):
+        c = _resolve_symbol(session, exchange, sym)
+        if c.get('ok') is False:
+            return {'symbol': sym, 'ok': False, 'reason': c.get('reason'),
+                    'exchange': c.get('exchange'), 'fallback': False}
+        ex = c['exchange']
+        try:
+            kl = _KLINES[ex](session, sym, DEFAULT_INTERVAL, bars)
+        except Exception as e:
+            return {'symbol': sym, 'ok': False, 'exchange': ex,
+                    'fallback': c['fallback'],
+                    'reason': f'свічки недоступні ({ex}): {str(e)[:60]}'}
+        lv = build_levels(kl, c['oi_usd'], c['price'], symbol=sym)
+        row = summarise(lv, c['price'], sym)
+        row['oi_usd'] = round(c['oi_usd'], 0)
+        row['vol_usd'] = 0
+        # Хто РЕАЛЬНО дав числа — їде в рядок, а не лише в заголовок таблиці.
+        row['exchange'] = ex
+        row['requested_exchange'] = c['requested_exchange']
+        row['fallback'] = c['fallback']
+        if c.get('note'):
+            row['note'] = c['note']
+        return row
+
+    rows = []
+    with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
+        for r in pool.map(_one, syms):
+            rows.append(r)
+    rows = sort_rows(rows, sort_by)
+    ok_rows = [r for r in rows if r.get('ok')]
+    n_fb = sum(1 for r in rows if r.get('fallback'))
+    if n_fb:
+        alt = fallback_for(exchange)
+        warnings.append(f'{n_fb} монет узято з {str(alt).upper()} — на '
+                        f'{exchange.upper()} їх немає')
+    return {'ok': True, 'exchange': exchange, 'universe': 'watchlist',
+            'scanned': len(syms), 'with_data': len(ok_rows),
+            'dropped_vol': 0, 'dropped_oi': 0, 'fallback_used': n_fb,
+            'sort_by': sort_by, 'bars': bars,
+            # OI тут ЗАВЖДИ поштучний — для фолбеку по монеті іншого шляху
+            # немає, тож bulk-режим біржі значення не має.
+            'bulk_oi': False, 'warnings': warnings,
             'took_sec': round(time.time() - t0, 1),
             'rows': rows, 'fetched_at': time.time()}

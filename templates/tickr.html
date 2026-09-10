@@ -280,7 +280,22 @@
                 <option value="bingx">BingX</option>
             </select>
         </div>
+        <!-- 🎯 ДЖЕРЕЛО СПИСКУ. «Watchlist бота» сканує РІВНО ті монети, що
+             стоять у списку сканера — тож `МОНЕТ`, `ОБІГ 24H` і `OI` тоді не
+             діють і ХОВАЮТЬСЯ (`_liqUniverseSync`): список склала людина, і
+             мовчки відсіювати з нього монети означало б показати не те, про
+             що просили. Монету, якої немає на обраній біржі, беремо з
+             партнерської (Binance↔Bybit) — див. `liq_scan.FALLBACK_EXCHANGE`. -->
         <div class="tk-field">
+            <label>СПИСОК</label>
+            <select id="liq-universe" onchange="_liqUniverseSync();_liqCostHint()"
+                    title="«Топ біржі» — найактивніші монети самої біржі з відсівом за обігом і OI.
+«🎯 Watchlist бота» — рівно ті монети, що сканує бот; відсів не застосовується, а монету, якої немає на обраній біржі, беремо з партнерської (Binance↔Bybit).">
+                <option value="top" selected>Топ біржі</option>
+                <option value="watchlist">🎯 Watchlist бота</option>
+            </select>
+        </div>
+        <div class="tk-field" id="liq-f-topn">
             <label>МОНЕТ</label>
             <!-- Стеля 200 = `liq_scan.MAX_SYMBOLS` (і `PER_SYMBOL_OI_CAP`, щоб
                  на Binance/BingX вибір не різався мовчки). -->
@@ -317,11 +332,11 @@
                 <option value="near">за близькістю магніту</option>
             </select>
         </div>
-        <div class="tk-field">
+        <div class="tk-field" id="liq-f-minvol">
             <label>ОБІГ 24H ≥, $M</label>
             <input type="number" id="liq-minvol" value="20" min="0" step="5" style="width:70px">
         </div>
-        <div class="tk-field">
+        <div class="tk-field" id="liq-f-minoi">
             <label>OI ≥, $M</label>
             <input type="number" id="liq-minoi" value="5" min="0" step="1" style="width:70px">
         </div>
@@ -584,7 +599,9 @@ function tkOnSortChange() {
 
 document.addEventListener('DOMContentLoaded', () => { try { tkOnSortChange(); } catch (e) {} });
 // Ціна запуску мусить стояти ВІДРАЗУ, а не лише після зміни поля.
-document.addEventListener('DOMContentLoaded', () => { try { _liqCostHint(); } catch (e) {} });
+document.addEventListener('DOMContentLoaded', () => {
+    try { _liqUniverseSync(); _liqCostHint(); _liqLoadWlCount(); } catch (e) {}
+});
 
 async function tkTopActive() {
     const btn = document.getElementById('tk-top-btn');
@@ -1074,21 +1091,48 @@ async function liqOne() {
 // РОСТЕ з глибиною (168 барів ≈ 2, 1000 барів ≈ 10 при ліміті 2400/хв на IP).
 // Тому показуємо, СКІЛЬКИ це коштує, ДО натискання — і попереджаємо, коли
 // комбінація підходить до ліміту біржі.
+// 🎯 Показуємо ЛИШЕ ті поля, що справді діють. У режимі watchlist кількість
+// монет і пороги обігу/OI не застосовуються ВЗАГАЛІ — активний контрол, який
+// ні на що не впливає, вводить в оману (той самий принцип, що з полями TTL
+// при ♾ «Без терміну» в Черзі-4).
+function _liqUniverseIsWatchlist() {
+    return ((document.getElementById('liq-universe') || {}).value || 'top') === 'watchlist';
+}
+function _liqUniverseSync() {
+    const wl = _liqUniverseIsWatchlist();
+    ['liq-f-topn', 'liq-f-minvol', 'liq-f-minoi'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = wl ? 'none' : '';
+    });
+}
+
 function _liqCostHint() {
     const el = document.getElementById('liq-stat');
     if (!el || window._liqScanning) return;
     const ex = (document.getElementById('liq-exch') || {}).value || 'binance';
-    const n = parseInt((document.getElementById('liq-topn') || {}).value, 10) || 40;
+    const wl = _liqUniverseIsWatchlist();
+    // У watchlist кількість монет наперед не відома (її знає лише сервер), тож
+    // беремо ЖИВИЙ лічильник сторінки, а не вигадуємо число.
+    const n = wl ? (window._liqWlCount || 0)
+                 : (parseInt((document.getElementById('liq-topn') || {}).value, 10) || 40);
     const bars = parseInt((document.getElementById('liq-bars') || {}).value, 10) || 168;
-    const perSym = (ex === 'binance' || ex === 'bingx') ? 2 : 1;   // свічки + OI
-    const reqs = 1 + n * perSym;
+    // ⚠️ У watchlist OI ЗАВЖДИ поштучний на БУДЬ-ЯКІЙ біржі: інакше не було б
+    // куди застосувати фолбек по окремій монеті.
+    const perSym = (wl || ex === 'binance' || ex === 'bingx') ? 2 : 1;  // свічки + OI
+    if (wl && !n) {
+        el.textContent = 'Натисни «Сканувати» — візьмемо весь watchlist бота. '
+            + 'Монету, якої немає на обраній біржі, перевіримо на партнерській '
+            + '(Binance↔Bybit).';
+        return;
+    }
+    const reqs = (wl ? 0 : 1) + n * perSym;
     const secs = Math.max(3, Math.round(reqs / 8 * 0.4));
     // Вага свічок у Binance зростає сходинками за лімітом бару.
     const w = bars > 500 ? 10 : bars >= 100 ? 2 : 1;
     const weight = n * w + (perSym === 2 ? n : 0);
-    let txt = `Натисни «Сканувати». ${n} монет × ${bars} год ≈ ${reqs} запитів `
-            + `(~${secs}с у 8 потоків)`;
-    if (perSym === 2) txt += ' — OI на цій біржі береться поштучно';
+    let txt = `Натисни «Сканувати». ${wl ? 'Watchlist: ' : ''}${n} монет × `
+            + `${bars} год ≈ ${reqs} запитів (~${secs}с у 8 потоків)`;
+    if (perSym === 2) txt += ' — OI береться поштучно';
     if (ex === 'binance' && weight > 1500) {
         txt += ` · ⚠️ вага ≈${weight}/2400 за хвилину — близько до ліміту `
              + `Binance, зменш глибину або кількість монет`;
@@ -1096,17 +1140,32 @@ function _liqCostHint() {
     el.textContent = txt + '.';
 }
 
+// Скільки монет у watchlist — лише щоб підказка про вартість не брехала.
+// Тягнемо ОДИН раз і тихо: не вийшло — просто не показуємо число.
+async function _liqLoadWlCount() {
+    try {
+        const r = await fetch('/api/smc/watchlist');
+        const d = await r.json();
+        window._liqWlCount = ((d && d.watchlist) || []).length;
+        _liqCostHint();
+    } catch (e) { /* підказка обійдеться без числа */ }
+}
+
 async function liqScan() {
     const btn = document.getElementById('liq-scan-btn');
     const stat = document.getElementById('liq-stat');
     const tb = document.getElementById('liq-tbody');
     const exch = document.getElementById('liq-exch').value;
+    const wl = _liqUniverseIsWatchlist();
     btn.disabled = true;
     window._liqScanning = true;
-    stat.textContent = `Сканую ${exch}… перший запит — уся біржа, далі свічки по монетах.`;
+    stat.textContent = wl
+        ? `Сканую watchlist бота на ${exch}… монети, яких там немає, беру з партнерської біржі.`
+        : `Сканую ${exch}… перший запит — уся біржа, далі свічки по монетах.`;
     try {
         const body = {
             exchange: exch,
+            universe: wl ? 'watchlist' : 'top',
             top_n: parseInt(document.getElementById('liq-topn').value, 10) || 40,
             // Глибина історії — той самий `bars`, що в режимі однієї монети.
             bars: parseInt(document.getElementById('liq-bars').value, 10) || 168,
@@ -1126,8 +1185,14 @@ async function liqScan() {
             tb.innerHTML = '<tr><td colspan="9" style="color:#667;padding:16px">— немає даних —</td></tr>';
             return;
         }
-        stat.textContent = `${d.exchange.toUpperCase()}: проскановано ${d.scanned} монет, `
-            + `з даними ${d.with_data} · відсіяно за обігом ${d.dropped_vol}, за OI ${d.dropped_oi}`
+        // У watchlist відсіву немає ЗА ВИЗНАЧЕННЯМ, тож і рядка про нього немає
+        // (нулі «відсіяно 0, 0» лише збивали б з пантелику).
+        stat.textContent = `${d.exchange.toUpperCase()}`
+            + (d.universe === 'watchlist' ? ' · 🎯 WATCHLIST' : '')
+            + `: проскановано ${d.scanned} монет, з даними ${d.with_data}`
+            + (d.universe === 'watchlist'
+                ? (d.fallback_used ? ` · через партнерську біржу ${d.fallback_used}` : '')
+                : ` · відсіяно за обігом ${d.dropped_vol}, за OI ${d.dropped_oi}`)
             + ` · глибина ${d.bars} год · ${d.took_sec}с`
             // Біржа без bulk-OI тягне його поштучно — кажемо це прямо, щоб
             // довший скан і стеля монет не виглядали як збій.
@@ -1149,9 +1214,17 @@ async function liqScan() {
             const mCol = r.magnet_dir === 'up' ? '#4ade80' : '#f87171';
             const nCol = r.near_dir === 'up' ? '#4ade80' : '#f87171';
             const nArr = r.near_dir === 'up' ? '↑' : '↓';
+            // 🔁 Фолбек НЕ мовчазний: числа взяті з ІНШОЇ біржі, ніж у
+            // заголовку, тож монета несе бейдж — інакше звірити їх із біржею
+            // було б неможливо (урок MNTUSDT).
+            const fb = r.fallback
+                ? ` <span style="color:#fbbf24;font-size:0.68rem"
+                        title="${(r.note || 'взято з партнерської біржі').replace(/"/g, '')}"
+                        >⇄${String(r.exchange || '').toUpperCase()}</span>`
+                : '';
             return `<tr title="${(r.verdict || '').replace(/"/g, '')}">`
                 + `<td>${i + 1}</td>`
-                + `<td style="font-weight:700">${r.symbol}</td>`
+                + `<td style="font-weight:700">${r.symbol}${fb}</td>`
                 + `<td style="font-family:monospace">${_lqPrice(r.price)}</td>`
                 + `<td style="color:${col};font-weight:700">${arrow}</td>`
                 + `<td style="font-family:monospace"><span style="color:#4ade80">${r.above_pct}%</span>`

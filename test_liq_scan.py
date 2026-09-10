@@ -513,6 +513,155 @@ def test_dropdown_list_is_readable_on_dark_page():
     print('✓ випадайка читабельна на темній сторінці')
 
 
+# ═══════ 🎯 WATCHLIST-РЕЖИМ + ФОЛБЕК ПО ОКРЕМІЙ МОНЕТІ (вимога 10.09) ═══════
+#
+# Вимога користувача дослівно: «Додай до цього скану можливість сканувати
+# WATCHLIST, при цьому, якщо вибрано WATCHLIST, не потрібен вибір кількості
+# МОНЕТ і ОБІГ 24H ≥, OI ≥… Якщо на момент скану монету не знайдено на біржі,
+# потрібно автоматично вибрати іншу біржу для перевірки саме цієї монети,
+# наприклад вибрано Binance — підміною буде Bybit і навпаки.»
+
+def _fake_net(found):
+    """Підмінити мережу: `found` = {(біржа, символ): (ціна, OI)}.
+
+    Свічки віддаємо однакові, але ЗАПАМʼЯТОВУЄМО, з якої біржі їх просили —
+    без цього не перевірити головного: числа монети мусять приходити з ОДНІЄЇ
+    біржі (OI + свічки), інакше рівні рахувались би по двох різних ринках.
+    """
+    calls = {'klines': []}
+
+    def _oi(ex):
+        def f(session, symbol):
+            return found.get((ex, symbol), (None, None))
+        return f
+
+    def _kl(ex):
+        def f(session, symbol, interval, bars):
+            calls['klines'].append((ex, symbol))
+            return _bars((100.0, 60, 1000))
+        return f
+
+    S._OI_ONE = {e: _oi(e) for e in ('binance', 'bybit', 'mexc', 'bingx')}
+    S._KLINES = {e: _kl(e) for e in ('binance', 'bybit', 'mexc', 'bingx')}
+    return calls
+
+
+def test_watchlist_mode_scans_exactly_the_given_list():
+    """Список склала людина — жодного відсіву за обігом/OI. Пороги передаємо
+    свідомо ЗАВИЩЕНІ: у режимі `top` вони викосили б усе."""
+    _o, _k = S._OI_ONE, S._KLINES
+    _fake_net({('binance', 'AAAUSDT'): (100.0, 50e6),
+               ('binance', 'BBBUSDT'): (100.0, 50e6)})
+    try:
+        r = S.scan_liquidity(exchange='binance', universe='watchlist',
+                             symbols=['AAAUSDT', 'BBBUSDT'],
+                             min_vol_usd=9e18, min_oi_usd=9e18, top_n=1)
+    finally:
+        S._OI_ONE, S._KLINES = _o, _k
+    _check(r.get('ok'), f'скан мав пройти: {r.get("reason")}')
+    _check(r['universe'] == 'watchlist', 'режим мусить бути названий у відповіді')
+    _check(r['scanned'] == 2, f'мали просканувати ОБИДВІ монети, а не {r["scanned"]}')
+    _check({x['symbol'] for x in r['rows']} == {'AAAUSDT', 'BBBUSDT'},
+           'у таблиці мусять бути рівно ті монети, що дали')
+    _check(r['dropped_vol'] == 0 and r['dropped_oi'] == 0,
+           'у watchlist відсіву немає ЗА ВИЗНАЧЕННЯМ')
+
+
+def test_missing_coin_falls_back_to_the_partner_exchange():
+    """MNTUSDT-кейс: монети немає на Binance → беремо Bybit САМЕ для неї."""
+    _o, _k = S._OI_ONE, S._KLINES
+    calls = _fake_net({('binance', 'AAAUSDT'): (100.0, 50e6),
+                       ('bybit', 'MNTUSDT'): (100.0, 40e6)})
+    try:
+        r = S.scan_liquidity(exchange='binance', universe='watchlist',
+                             symbols=['AAAUSDT', 'MNTUSDT'])
+    finally:
+        S._OI_ONE, S._KLINES = _o, _k
+    by = {x['symbol']: x for x in r['rows']}
+    _check(by['MNTUSDT'].get('ok'), f'MNT мала пройти через фолбек: {by["MNTUSDT"]}')
+    _check(by['MNTUSDT']['exchange'] == 'bybit', 'числа взяті з BYBIT')
+    _check(by['MNTUSDT']['fallback'] is True, 'фолбек мусить бути ПОЗНАЧЕНИЙ')
+    _check(by['AAAUSDT']['fallback'] is False, 'решта лишається на обраній біржі')
+    _check(r['fallback_used'] == 1, 'лічильник фолбеків у підсумку')
+    # ⚠️ ГОЛОВНЕ: свічки MNT теж із Bybit — OI однієї біржі зі свічками іншої
+    # дав би рівні ліквідації по двох різних ринках.
+    _check(('bybit', 'MNTUSDT') in calls['klines'],
+           f'свічки MNT мали піти в BYBIT, а не {calls["klines"]}')
+    _check(('binance', 'MNTUSDT') not in calls['klines'],
+           'свічки НЕ можна брати з біржі, яка монету не знає')
+
+
+def test_fallback_goes_the_other_way_too():
+    """«Binance → Bybit і навпаки» — обидва напрямки, а не один."""
+    _check(S.fallback_for('binance') == 'bybit', 'binance → bybit')
+    _check(S.fallback_for('bybit') == 'binance', 'bybit → binance')
+    _o, _k = S._OI_ONE, S._KLINES
+    _fake_net({('binance', 'XXXUSDT'): (100.0, 30e6)})
+    try:
+        r = S.scan_liquidity(exchange='bybit', universe='watchlist',
+                             symbols=['XXXUSDT'])
+    finally:
+        S._OI_ONE, S._KLINES = _o, _k
+    _check(r['rows'][0]['exchange'] == 'binance',
+           'обрано Bybit, монети там немає → підміна Binance')
+
+
+def test_coin_on_neither_exchange_says_both_attempts():
+    """Мовчазний прочерк не годиться: причина називає ОБИДВІ спроби."""
+    _o, _k = S._OI_ONE, S._KLINES
+    _fake_net({})
+    try:
+        r = S.scan_liquidity(exchange='binance', universe='watchlist',
+                             symbols=['NOPEUSDT'])
+    finally:
+        S._OI_ONE, S._KLINES = _o, _k
+    row = r['rows'][0]
+    _check(row.get('ok') is False, 'рядок мусить бути позначений як без даних')
+    _check('binance' in row['reason'] and 'bybit' in row['reason'],
+           f'причина мусить назвати обидві біржі: {row["reason"]}')
+
+
+def test_empty_watchlist_is_an_honest_refusal():
+    r = S.scan_liquidity(exchange='binance', universe='watchlist', symbols=[])
+    _check(not r.get('ok'), 'порожній список — це відмова, а не порожня таблиця')
+    _check('watchlist' in (r.get('reason') or ''), f'причина: {r.get("reason")}')
+
+
+def test_watchlist_mode_never_touches_exchange_tickers():
+    """Список уже відомий — качати тікери всієї біржі ні до чого.
+
+    Тест-замок на ВАРТІСТЬ: `tickr_core` у цій гілці не має викликатись
+    узагалі, інакше «легкий» режим тягнув би зайвий важкий запит.
+    """
+    import ast
+    src = open(os.path.join(_ROOT, 'detection', 'liq_scan.py'),
+               encoding='utf-8').read()
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == '_scan_watchlist')
+    txt = ast.dump(fn)
+    _check('tickr_core' not in txt, '_scan_watchlist не має чіпати tickr_core')
+    _check('min_vol_usd' not in txt and 'min_oi_usd' not in txt,
+           'пороги обігу/OI у watchlist не застосовуються')
+
+
+def test_ui_hides_the_fields_that_do_not_apply():
+    """Активний контрол, який ні на що не впливає, вводить в оману — той самий
+    принцип, що з полями TTL при ♾ «Без терміну» в Черзі-4."""
+    html = open(os.path.join(_ROOT, 'templates', 'tickr.html'),
+                encoding='utf-8').read()
+    _check('id="liq-universe"' in html, 'немає вибору списку')
+    _check('value="watchlist"' in html, 'немає опції watchlist')
+    for wrap in ('liq-f-topn', 'liq-f-minvol', 'liq-f-minoi'):
+        _check(f'id="{wrap}"' in html, f'поле {wrap} нема як сховати')
+    i = html.find('function _liqUniverseSync')
+    _check(i > 0, 'немає _liqUniverseSync')
+    body = html[i:i + 500]
+    for wrap in ('liq-f-topn', 'liq-f-minvol', 'liq-f-minoi'):
+        _check(wrap in body, f'_liqUniverseSync не ховає {wrap}')
+    _check("universe: wl ? 'watchlist' : 'top'" in html,
+           'режим не передається на бекенд')
+
+
 if __name__ == '__main__':
     test_levels_are_built_from_oi_and_history()
     test_mass_follows_where_positions_were_opened()
@@ -537,4 +686,11 @@ if __name__ == '__main__':
     test_scan_sends_the_chosen_history_depth()
     test_history_dropdown_offers_only_depths_the_backend_honours()
     test_dropdown_list_is_readable_on_dark_page()
+    test_watchlist_mode_scans_exactly_the_given_list()
+    test_missing_coin_falls_back_to_the_partner_exchange()
+    test_fallback_goes_the_other_way_too()
+    test_coin_on_neither_exchange_says_both_attempts()
+    test_empty_watchlist_is_an_honest_refusal()
+    test_watchlist_mode_never_touches_exchange_tickers()
+    test_ui_hides_the_fields_that_do_not_apply()
     print('\nУсі тести скану ліквідності пройдено ✅')
