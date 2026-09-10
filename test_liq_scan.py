@@ -299,7 +299,13 @@ def test_list_scan_falls_back_to_per_symbol_oi():
         _check(r['ok'], r)
         _check(sorted(seen) == ['BIGUSDT', 'MIDUSDT'],
                f'OI мали спитати лише в тих, хто пройшов обіг: {seen}')
-        _check([x['symbol'] for x in r['rows']] == ['BIGUSDT'],
+        # ⚠️ Перевіряємо САМЕ відсів за OI (`scanned` = скільки пішло в
+        # розрахунок), а не вміст таблиці: з 10.09 звіт додатково відкидає
+        # рядки «⚖ рівновага», і ця фікстура дає саме такий вердикт — тобто
+        # порожній `rows` тут КОРЕКТНИЙ і про OI нічого не каже.
+        _check(r['scanned'] == 1,
+               f'у розрахунок мала піти лише BIGUSDT, пішло {r["scanned"]}')
+        _check('MIDUSDT' not in [x['symbol'] for x in r['rows']],
                f'монета з мізерним OI мала відсіятись: {r["rows"]}')
         _check(r['bulk_oi'] is False and r['warnings'],
                'UI мусить бачити, що OI брався поштучно')
@@ -538,7 +544,10 @@ def _fake_net(found):
     def _kl(ex):
         def f(session, symbol, interval, bars):
             calls['klines'].append((ex, symbol))
-            return _bars((100.0, 60, 1000))
+            # ⚠️ Свічки мусять дати РЕАЛЬНИЙ ПЕРЕКІС: із 10.09 звіт відкидає
+            # рядки «⚖ рівновага», тож рівний ряд навколо ціни давав би
+            # порожню таблицю — і тест перевіряв би не те, що заявлено.
+            return _bars((88.0, 60, 3000))
         return f
 
     S._OI_ONE = {e: _oi(e) for e in ('binance', 'bybit', 'mexc', 'bingx')}
@@ -662,6 +671,61 @@ def test_ui_hides_the_fields_that_do_not_apply():
            'режим не передається на бекенд')
 
 
+# ══════ ⚖ РІВНОВАГА НЕ ЙДЕ В ЗВІТ (вимога користувача 10.09) ══════════════
+#
+# Дослівно: «💧 Ліквідність по біржі — куди тягне ринок — у звіті відсікай
+# записи у яких "рівновага", їх не потрібно показувати».
+
+def test_flat_rows_are_dropped_from_the_report():
+    rows = [{'symbol': 'A', 'ok': True, 'pull': 'up', 'pull_pct': 40},
+            {'symbol': 'B', 'ok': True, 'pull': 'flat', 'pull_pct': 4},
+            {'symbol': 'C', 'ok': True, 'pull': 'down', 'pull_pct': 30}]
+    keep, n = S.drop_flat(rows)
+    _check(n == 1, f'мала прибратись рівно одна рівновага, прибрано {n}')
+    _check([r['symbol'] for r in keep] == ['A', 'C'],
+           f'у звіті лишаються лише монети з перекосом: {keep}')
+
+
+def test_rows_without_data_are_not_confused_with_flat():
+    """«немає даних» ≠ «рівновага». Викинути перше означало б приховати, що
+    монету не вдалось порахувати."""
+    rows = [{'symbol': 'X', 'ok': False, 'reason': 'свічки недоступні'},
+            {'symbol': 'Y', 'ok': True, 'pull': 'flat', 'pull_pct': 2}]
+    keep, n = S.drop_flat(rows)
+    _check(n == 1, 'прибирається лише рівновага')
+    _check([r['symbol'] for r in keep] == ['X'],
+           f'рядок без даних мусить лишитись: {keep}')
+
+
+def test_list_scan_applies_the_filter_and_says_how_many():
+    """Мовчазне зникнення рядків читалось би як збій — кількість НАЗВАНА."""
+    _o, _k = S._OI_ONE, S._KLINES
+    _fake_net({('binance', 'AAAUSDT'): (100.0, 50e6)})
+    try:
+        r = S.scan_liquidity(exchange='binance', universe='watchlist',
+                             symbols=['AAAUSDT'])
+    finally:
+        S._OI_ONE, S._KLINES = _o, _k
+    _check('dropped_flat' in r, 'у відповіді немає лічильника рівноваг')
+    _check(all(x.get('pull') != 'flat' for x in r['rows'] if x.get('ok')),
+           f'рівновага просочилась у звіт: {r["rows"]}')
+    html = open(os.path.join(_ROOT, 'templates', 'tickr.html'),
+                encoding='utf-8').read()
+    _check('d.dropped_flat' in html, 'статус не показує, скільки прибрано')
+
+
+def test_single_coin_mode_still_answers_flat():
+    """⚠️ Фільтр — ЛИШЕ для списку. У режимі однієї монети ви питали САМЕ про
+    неї, і «рівновага» — коректна відповідь, а не сміття."""
+    import ast
+    src = open(os.path.join(_ROOT, 'detection', 'liq_scan.py'),
+               encoding='utf-8').read()
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == 'scan_one')
+    _check('drop_flat' not in ast.dump(fn),
+           'scan_one не має відсікати рівновагу')
+
+
 if __name__ == '__main__':
     test_levels_are_built_from_oi_and_history()
     test_mass_follows_where_positions_were_opened()
@@ -693,4 +757,8 @@ if __name__ == '__main__':
     test_empty_watchlist_is_an_honest_refusal()
     test_watchlist_mode_never_touches_exchange_tickers()
     test_ui_hides_the_fields_that_do_not_apply()
+    test_flat_rows_are_dropped_from_the_report()
+    test_rows_without_data_are_not_confused_with_flat()
+    test_list_scan_applies_the_filter_and_says_how_many()
+    test_single_coin_mode_still_answers_flat()
     print('\nУсі тести скану ліквідності пройдено ✅')

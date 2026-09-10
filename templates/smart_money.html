@@ -333,6 +333,10 @@
     gap: 8px;
     align-items: center;
     margin-top: 8px;
+    /* Довгий підпис не має ЛАМАТИ кнопки: у flex-рядку текст із'їдав їхню
+       ширину, і «⬆ LONG» стискалось у два рядки. Тепер підпис переноситься
+       цілим блоком, а кнопки тримають свій розмір (`flex:0 0 auto` нижче). */
+    flex-wrap: wrap;
 }
 .sm-decision-btn {
     padding: 6px 16px;
@@ -343,7 +347,27 @@
     cursor: pointer;
     transition: all 0.12s ease;
     letter-spacing: 0.3px;
+    /* ⚠️ Кнопка НЕ стискається під текст сусіда і не переносить свій підпис —
+       саме через це «⬆ LONG» ламалось на два рядки. */
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
+/* ✋ Напрямок ручного сигналу — компактний селектор поруч із кнопкою.
+   Темна тема нативного меню: `color-scheme` + суцільні `option`
+   (той самий урок, що з випадайками на 📡 Tickr). */
+.sm-signal-dir {
+    flex: 0 0 auto;
+    padding: 6px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(168,85,247,0.45);
+    background: rgba(168,85,247,0.10);
+    color: #d8b4fe;
+    font-size: 0.74rem;
+    font-weight: 600;
+    cursor: pointer;
+    color-scheme: dark;
+}
+.sm-signal-dir option { background: #141821; color: #dde3ee; }
 .sm-decision-btn-long {
     background: rgba(34, 197, 94, 0.12);
     border-color: rgba(34, 197, 94, 0.45);
@@ -374,7 +398,19 @@
 .sm-decision-actions-hint {
     margin-left: 4px;
     font-style: italic;
+    /* Підпис займає решту рядка і обрізається на ДВОХ рядках (вимога
+       користувача «не більше ніж на дві стрічки»). Повний текст лишається
+       в `title`, тож нічого не втрачається. */
+    flex: 1 1 240px;
+    min-width: 0;
+    line-height: 1.25;
+    max-height: 2.5em;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
 }
+.sm-decision-actions-hint:empty { flex: 0 0 auto; }
 
 .sm-decision-position {
     margin-top: 4px;
@@ -2346,12 +2382,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <!-- ✋ РУЧНИЙ СИГНАЛ — не відкриває напряму, а створює
                              СИГНАЛ, який іде ОДРАЗУ на обробку ПІСЛЯ фільтрів:
                              черга → двигун → відкриття. Ворота сканера
-                             пропускаються (рішення користувача). Напрямок —
-                             з вердикту банера (LONG/SHORT). -->
+                             пропускаються (рішення користувача).
+                             НАПРЯМОК: «за вердиктом» (як було) АБО заданий
+                             РУКАМИ — вибір поруч із кнопкою. -->
+                        <select class="sm-signal-dir" id="sm-signal-dir"
+                                onchange="_smSignalDirSync()"
+                                title="Напрямок ручного сигналу: «за вердиктом» бере бік банера, LONG/SHORT — ваш власний вибір, навіть проти вердикту.">
+                            <option value="auto" selected>за вердиктом</option>
+                            <option value="LONG">⬆ LONG</option>
+                            <option value="SHORT">⬇ SHORT</option>
+                        </select>
                         <button class="sm-decision-btn" id="sm-decision-btn-signal"
                                 onclick="sendManualSignal()"
                                 style="border:1px solid rgba(168,85,247,0.55);background:rgba(168,85,247,0.12);color:#d8b4fe"
-                                title="✋ Створити РУЧНИЙ сигнал у напрямку вердикту банера. Фільтри сканера (OB / Forecast / Decision / POC / PD) ПРОПУСКАЮТЬСЯ — рішення ваше. Далі сигнал іде ТИМ САМИМ алгоритмом: черга → двигун → відкриття. Мітка угоди — ✋ Ручний.">
+                                title="✋ Створити РУЧНИЙ сигнал. Напрямок — із селектора зліва. Фільтри сканера (OB / Forecast / Decision / POC / PD) ПРОПУСКАЮТЬСЯ — рішення ваше. Далі сигнал іде ТИМ САМИМ алгоритмом: черга → двигун → відкриття. Мітка угоди — ✋ Ручний.">
                             ✋ Сигнал
                         </button>
                         <!-- ⚠️ ДВА РІЗНІ ПІДПИСИ, а не один спільний.
@@ -4761,12 +4805,32 @@ async function deleteActivityLog(ids) {
 // ОДРАЗУ на обробку ПІСЛЯ фільтрів: `on_signal` → черги → двигун. Ворота
 // сканера (`_signal_allowed`) ПРОПУСКАЮТЬСЯ — рішення ухвалює користувач;
 // у 🧾 Лозі все одно видно розклад фільтрів (проти чого ви йдете).
+// ✋ НАПРЯМОК РУЧНОГО СИГНАЛУ — ЄДИНЕ місце вибору (щоб кнопка, підпис і сам
+// запит на сервер не могли розійтись). 'auto' = вердикт банера, як було
+// раніше; LONG/SHORT — власний вибір користувача, навіть ПРОТИ вердикту.
+function _smSignalSide() {
+    const v = (document.getElementById('sm-signal-dir') || {}).value || 'auto';
+    if (v === 'LONG' || v === 'SHORT') return v;
+    return (window._smDecisionDir === 'SHORT') ? 'SHORT' : 'LONG';
+}
+// Кнопка ПІДПИСАНА напрямком, який реально піде: у режимі «за вердиктом» він
+// змінюється разом із банером, і без підпису натискання було б наосліп.
+function _smSignalDirSync() {
+    const btn = document.getElementById('sm-decision-btn-signal');
+    if (!btn || btn.dataset.busy === '1') return;
+    const side = _smSignalSide();
+    btn.textContent = `✋ Сигнал ${side}`;
+    const col = side === 'SHORT' ? '#fca5a5' : '#86efac';
+    btn.style.color = col;
+    btn.style.borderColor = side === 'SHORT'
+        ? 'rgba(239,68,68,0.55)' : 'rgba(34,197,94,0.55)';
+}
+
 async function sendManualSignal() {
     if (!currentSymbol) { alert('Спершу оберіть монету'); return; }
-    // Напрямок = вердикт банера (LONG/SHORT), як його бачить користувач.
-    const side = (window._smDecisionDir === 'SHORT') ? 'SHORT' : 'LONG';
+    const side = _smSignalSide();
     const btn = document.getElementById('sm-decision-btn-signal');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ …'; }
+    if (btn) { btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = '⏳ …'; }
     try {
         const r = await fetch('/api/smc/manual-signal', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4794,7 +4858,10 @@ async function sendManualSignal() {
     } catch (e) {
         alert('Помилка ручного сигналу: ' + e);
     } finally {
-        if (btn) { btn.disabled = false; btn.textContent = '✋ Сигнал'; }
+        // Підпис повертає _smSignalDirSync — інакше кнопка втратила б
+        // напрямок і наступне натискання знову було б наосліп.
+        if (btn) { btn.disabled = false; btn.dataset.busy = '0'; }
+        _smSignalDirSync();
     }
 }
 
@@ -8494,7 +8561,10 @@ function renderDecision(decision) {
     //   - TM not enabled (master toggle)
     //   - This symbol already has an open position (real or paper)
     updateManualEntryButtons(decision);
-    
+    // ✋ Кнопка сигналу підписана НАПРЯМКОМ. У режимі «за вердиктом» він
+    // змінюється разом із банером, тож синхронізуємо на КОЖНОМУ рендері.
+    try { _smSignalDirSync(); } catch (e) {}
+
     // Cache for the expandable details panel — populated only when toggled
     // open, so we don't render 18 component rows on every chart refresh.
     window._lastDecision = decision;
@@ -8524,6 +8594,7 @@ function updateManualEntryButtons(decision) {
 
     let disabled = false;
     let hintText = '';
+    let hintFull = '';
     if (!tmEnabled) {
         disabled = true;
         // ⚠️ ПІДПИС МУСИТЬ НАЗИВАТИ, ЧОГО САМЕ ВІН СТОСУЄТЬСЯ. Питання
@@ -8531,9 +8602,16 @@ function updateManualEntryButtons(decision) {
         // мінімум потрапити у Чергу». Мав — і потрапляє: ✋ Сигнал кличе
         // `on_signal` → `intercept` → черга, і майстер-тумблер TM цього шляху
         // НЕ гасить. Гасить він лише ПРЯМЕ відкриття цими двома кнопками.
-        hintText = '⚠️ ⬆LONG / ⬇SHORT (пряме відкриття) вимкнено: Trade Manager '
-                 + 'OFF — увімкніть у TM Settings. ✋ Сигнал працює й далі — '
-                 + 'він іде в чергу, а не відкриває угоду.';
+        // ⚠️ КОРОТКО — максимум два рядки (вимога користувача): деталі йдуть
+        // у `title`, інакше підпис ламав ширину кнопок.
+        hintText = '⚠️ ⬆LONG/⬇SHORT вимкнено — Trade Manager OFF. '
+                 + '✋ Сигнал працює (йде в чергу).';
+        hintFull = 'Майстер-тумблер Trade Manager вимкнено, тому ПРЯМЕ '
+                 + 'відкриття кнопками ⬆LONG / ⬇SHORT недоступне — увімкніть '
+                 + 'його в TM Settings.\n✋ Сигнал цього тумблера НЕ '
+                 + 'стосується: він створює сигнал, який іде звичайним '
+                 + 'алгоритмом (черга → двигун → відкриття), а не відкриває '
+                 + 'угоду сам.';
     } else if (hasPosition) {
         disabled = true;
         hintText = `Position already open (${decision.position.side}) — close first`;
@@ -8543,7 +8621,12 @@ function updateManualEntryButtons(decision) {
 
     longBtn.disabled = disabled;
     shortBtn.disabled = disabled;
-    if (hint) hint.textContent = hintText;
+    if (hint) {
+        hint.textContent = hintText;
+        // Повний текст — у підказці: сам підпис обрізаний двома рядками,
+        // але нічого не втрачається.
+        hint.title = hintFull || hintText;
+    }
 }
 
 // Manual position open from the Decision Center panel. Posts to TM API
@@ -14775,6 +14858,16 @@ async function toggleFuelScan(symbol) {
 
 // === Init ===
 document.addEventListener('DOMContentLoaded', async () => {
+    // ✋ Напрямок сигналу: памʼятаємо вибір і одразу підписуємо кнопку — щоб
+    // до першого рендера банера вона не стояла без напрямку.
+    try {
+        const _sd = localStorage.getItem('smSignalDir');
+        const _sdEl = document.getElementById('sm-signal-dir');
+        if (_sd && _sdEl) _sdEl.value = _sd;
+        if (_sdEl) _sdEl.addEventListener('change',
+            () => { try { localStorage.setItem('smSignalDir', _sdEl.value); } catch (e) {} });
+        _smSignalDirSync();
+    } catch (e) {}
     // ⚪ POC: відновити вибір ринку (SPOT/FUTURES) і таймфрейму (дефолт 1H).
     try {
         const _pm = localStorage.getItem('sm_poc_market');

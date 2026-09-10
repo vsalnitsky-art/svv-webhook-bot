@@ -104,6 +104,89 @@ def test_endpoint_does_not_gate_on_the_tm_master_switch():
                f'ручний сигнал не має залежати від майстер-тумблера ({bad})')
 
 
+# ══════ 🖐 РУЧНИЙ ВИБІР НАПРЯМКУ + ПІДПИС НЕ ЛАМАЄ КНОПКИ (вимога 10.09) ══════
+#
+# Дві вимоги користувача, обидві по цьому самому рядку кнопок:
+#   1. «Текст розмісти так, щоб кнопки не втрачали свою форму. Його не потрібно
+#      багато, не більше ніж на дві стрічки.»
+#   2. «Зроби сигнал також щоб був ручний вибір LONG чи SHORT.»
+
+def _css(html, sel):
+    i = html.find(sel + ' {')
+    if i < 0:
+        i = html.find(sel + '{')
+    _check(i > 0, f'CSS-правило {sel} не знайдено')
+    return html[i:html.find('}', i)]
+
+
+def test_buttons_keep_their_shape_next_to_a_long_hint():
+    """У flex-рядку текст зʼїдав ширину кнопок, і «⬆ LONG» ламалось на два
+    рядки. Кнопка не має ні стискатись, ні переносити свій підпис."""
+    btn = _css(_HTML, '.sm-decision-btn')
+    _check('flex: 0 0 auto' in btn or 'flex:0 0 auto' in btn,
+           f'кнопка мусить бути flex:0 0 auto — {btn}')
+    _check('white-space: nowrap' in btn or 'white-space:nowrap' in btn,
+           'підпис кнопки не має переноситись')
+    row = _css(_HTML, '.sm-decision-actions')
+    _check('flex-wrap: wrap' in row or 'flex-wrap:wrap' in row,
+           'довгий підпис мусить переноситись ЦІЛИМ блоком, а не тиснути кнопки')
+
+
+def test_hint_is_capped_at_two_lines():
+    """«не більше ніж на дві стрічки» — і це мусить триматись CSS-ом, а не
+    надією на коротку фразу."""
+    h = _css(_HTML, '.sm-decision-actions-hint')
+    _check('-webkit-line-clamp: 2' in h or '-webkit-line-clamp:2' in h,
+           f'немає обмеження у два рядки: {h}')
+    _check('overflow: hidden' in h or 'overflow:hidden' in h,
+           'без overflow:hidden обрізання не спрацює')
+
+
+def test_the_tm_off_text_is_actually_short():
+    """Замок на ДОВЖИНУ: попередній варіант був на 160+ символів і в три
+    рядки. Деталі мусять піти в `title`, а не в сам підпис."""
+    body = _fn(_HTML, 'updateManualEntryButtons')
+    j = body.find('if (!tmEnabled)')
+    seg = body[j:body.find('} else if', j)]
+    m = re.search(r"hintText = ((?:.|\n)*?);", seg)
+    txt = ''.join(re.findall(r"'([^']*)'", m.group(1)))
+    _check(len(txt) <= 90, f'підпис задовгий ({len(txt)} символів): {txt}')
+    _check('hintFull' in seg, 'повний текст мусить лишитись у title')
+    _check("hint.title" in body, 'title підпису не виставляється')
+
+
+def test_signal_direction_can_be_chosen_by_hand():
+    """Селектор напрямку: «за вердиктом» (як було) + власні LONG / SHORT."""
+    _check('id="sm-signal-dir"' in _HTML, 'немає селектора напрямку сигналу')
+    for v in ('"auto"', '"LONG"', '"SHORT"'):
+        _check(f'value={v}' in _HTML, f'немає опції {v}')
+    body = _fn(_HTML, '_smSignalSide')
+    _check("'LONG'" in body and "'SHORT'" in body,
+           'ручний вибір не повертається як є')
+    _check('_smDecisionDir' in body,
+           'режим «за вердиктом» мусить лишитись (стара поведінка)')
+
+
+def test_send_uses_the_selector_not_the_verdict_directly():
+    """ЄДИНЕ місце вибору: якби `sendManualSignal` читав вердикт сам, кнопка
+    показувала б один напрямок, а на сервер летів би інший."""
+    body = _fn(_HTML, 'sendManualSignal')
+    _check('_smSignalSide()' in body, 'sendManualSignal не питає селектор')
+    _check('_smDecisionDir' not in body,
+           'sendManualSignal не має читати вердикт повз _smSignalSide')
+
+
+def test_button_is_labelled_with_the_direction_that_will_be_sent():
+    """У режимі «за вердиктом» напрямок змінюється разом із банером — без
+    підпису натискання було б наосліп."""
+    body = _fn(_HTML, '_smSignalDirSync')
+    _check('_smSignalSide()' in body, 'підпис не спирається на той самий вибір')
+    _check('Сигнал ${side}' in body, 'кнопка не підписана напрямком')
+    _check('_smSignalDirSync()' in _fn(_HTML, 'renderDecision')
+           or '_smSignalDirSync' in _HTML.split('updateManualEntryButtons(decision);')[1][:400],
+           'підпис не оновлюється на перемальунку банера')
+
+
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]
     bad = 0

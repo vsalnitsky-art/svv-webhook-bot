@@ -259,6 +259,29 @@ def sort_rows(rows: List[Dict], by: str = 'pull') -> List[Dict]:
     return ok + bad
 
 
+def drop_flat(rows: List[Dict]) -> (List[Dict], int):
+    """⚖ ПРИБРАТИ РЯДКИ БЕЗ ПЕРЕКОСУ (вимога користувача 10.09).
+
+    Дослівно: «у звіті відсікай записи у яких "рівновага", їх не потрібно
+    показувати». Скан і сортується за ПЕРЕКОСОМ, тож монета, у якої перекосу
+    немає (`pull == 'flat'`, тобто перевага ≤ `ladder.FLAT_PP`), не несе для
+    цього звіту жодної інформації і лише розбавляє список.
+
+    ⚠️ Рядки БЕЗ ДАНИХ (`ok is False`) НЕ чіпаємо: «немає даних» і
+    «рівновага» — РІЗНІ речі, і мовчки викинути перше означало б приховати
+    від користувача, що монету не вдалось порахувати.
+    ⚠️ Це стосується ЛИШЕ СПИСКУ. У `scan_one` (одна монета) рівновага —
+    коректна й потрібна відповідь: ви питали САМЕ про цю монету.
+
+    Повертає `(рядки, скільки прибрано)` — кількість іде в статус, бо
+    мовчазне зникнення монет із вибраного списку читалось би як збій
+    (той самий принцип, що з clamp-ом кількості монет і глибини історії).
+    """
+    keep = [r for r in (rows or [])
+            if not (r.get('ok') and r.get('pull') == 'flat')]
+    return keep, len(rows or []) - len(keep)
+
+
 # ── мережа ────────────────────────────────────────────────────────────────
 def _klines_bybit(session, symbol, interval, limit):
     r = session.get('https://api.bybit.com/v5/market/kline',
@@ -632,9 +655,11 @@ def scan_liquidity(exchange: str = 'binance', top_n: int = 40,
         for r in pool.map(_one, cands):
             rows.append(r)
     rows = sort_rows(rows, sort_by)
+    rows, drop_flat_n = drop_flat(rows)
     ok_rows = [r for r in rows if r.get('ok')]
     return {'ok': True, 'exchange': exchange, 'universe': 'top',
             'scanned': len(cands), 'with_data': len(ok_rows),
+            'dropped_flat': drop_flat_n,
             'dropped_vol': drop_vol, 'dropped_oi': drop_oi,
             'sort_by': sort_by, 'bars': bars,
             'bulk_oi': bulk_oi, 'warnings': warnings,
@@ -709,6 +734,7 @@ def _scan_watchlist(exchange: str, symbols: List[str], bars: int,
         for r in pool.map(_one, syms):
             rows.append(r)
     rows = sort_rows(rows, sort_by)
+    rows, drop_flat_n = drop_flat(rows)
     ok_rows = [r for r in rows if r.get('ok')]
     n_fb = sum(1 for r in rows if r.get('fallback'))
     if n_fb:
@@ -717,7 +743,8 @@ def _scan_watchlist(exchange: str, symbols: List[str], bars: int,
                         f'{exchange.upper()} їх немає')
     return {'ok': True, 'exchange': exchange, 'universe': 'watchlist',
             'scanned': len(syms), 'with_data': len(ok_rows),
-            'dropped_vol': 0, 'dropped_oi': 0, 'fallback_used': n_fb,
+            'dropped_vol': 0, 'dropped_oi': 0, 'dropped_flat': drop_flat_n,
+            'fallback_used': n_fb,
             'sort_by': sort_by, 'bars': bars,
             # OI тут ЗАВЖДИ поштучний — для фолбеку по монеті іншого шляху
             # немає, тож bulk-режим біржі значення не має.
