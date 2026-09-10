@@ -2954,19 +2954,61 @@ class SMCScanner:
         Рішення ухвалює `_ob_filter_allows`; тут ми показуємо ЧОМУ воно таке:
         «BEARISH/BOS» одразу пояснює відмову при увімкненому «лише з CHoCH»,
         інакше в лозі стояло б голе «OB(1h):✗»."""
+        return (self._ob_state_info(symbol) or {}).get('label', '?')
+
+    def _ob_state_info(self, symbol: str) -> Dict:
+        """ПОВНИЙ опис блоку, за яким ухвалює рішення OB-фільтр.
+
+        **Питання користувача (10.09): «що це за OB? Їх немає на графіку».**
+        Раніше в лозі стояло лише `BEARISH/BOS` — бік і тег, і НІ ОДНОГО
+        орієнтира, за яким блок можна знайти очима. А подія «🆕 Новий OB»
+        поруч несе і свічку блоку, і ціну — тобто ДВА повідомлення про ТОЙ
+        САМИЙ рядок БД описували його ПО-РІЗНОМУ.
+
+        Тепер `label` несе те саме, що й рядок алерту:
+        `BEARISH/BOS · свічка 10.09.26 о 03:00 UTC · $122.50–123.40`.
+
+        ⚠️ **Джерело ОДНЕ** — той самий рядок `sob_smc_ob_state` на
+        `ob_filter_timeframe`, який читає `_ob_filter_allows`. Ми нічого не
+        перераховуємо: інакше повернувся б баг «мітка каже 1H, а числа з
+        іншого TF».
+        ⚠️ **Форматування теж ОДНЕ** — `ob_alert.fmt_utc` / `fmt_price`, ті
+        самі функції, що друкують подію «🆕 Новий OB». Свій формат тут
+        означав би два різні написання одного числа.
+
+        Повертає `{label, bias, tag, bar_time, low, high, where}`; `where` —
+        готовий «де шукати» (свічка + межі) або порожньо.
+        """
         try:
             from storage.db_operations import get_db
             row = get_db().get_smc_ob_state(
                 symbol, self._settings.get('ob_filter_timeframe', '1h'))
         except Exception:
-            return '?'
+            return {'label': '?', 'bias': None, 'tag': None, 'where': ''}
         if not row:
-            return 'не рахувався'
+            return {'label': 'не рахувався', 'bias': None, 'tag': None, 'where': ''}
         bias = row.get('bias')
         if not bias:
-            return 'нема блоку'
-        tag = (row.get('created_by_tag') or '?').upper()
-        return f"{bias}/{'CHoCH' if tag == 'CHOCH' else tag}"
+            return {'label': 'нема блоку', 'bias': None, 'tag': None, 'where': ''}
+        _tag_raw = (row.get('created_by_tag') or '?').upper()
+        # ⚠️ Тег пишемо «CHoCH», а не «CHOCH» — у всьому проєкті саме так.
+        tag = 'CHoCH' if _tag_raw == 'CHOCH' else _tag_raw
+        bt = row.get('bar_time')
+        lo, hi = row.get('bar_low'), row.get('bar_high')
+        where = ''
+        try:
+            _oba = _oba_mod()
+            bits = []
+            if bt:
+                bits.append(f"свічка {_oba.fmt_utc(_oba._to_sec(bt))} UTC")
+            if lo and hi:
+                bits.append(f"{_oba.fmt_price(lo)}–{_oba.fmt_price(hi)}")
+            where = ' · '.join(bits)
+        except Exception:
+            where = ''
+        return {'label': f"{bias}/{tag}" + (f" · {where}" if where else ''),
+                'bias': bias, 'tag': tag, 'bar_time': bt,
+                'low': lo, 'high': hi, 'where': where}
 
 
     @staticmethod
@@ -4139,21 +4181,34 @@ class SMCScanner:
             _choch_only = bool(self._settings.get('ob_filter_choch_only', True))
             # Стан блоку в розкладі: «BEARISH/BOS» одразу пояснює відмову,
             # коли увімкнено «лише з CHoCH» (інакше було б голе ✗).
-            _st = self._ob_state_label(symbol)
+            _info = self._ob_state_info(symbol)
+            _st = _info.get('label', '?')
+            _obtf = str(self._settings.get('ob_filter_timeframe', '1h')).upper()
             parts.append(f"OB({self._settings.get('ob_filter_timeframe', '1h')}"
                          f"{' лише CHoCH' if _choch_only else ''}"
                          f" {_st}):{_m(ok)}")
             if not ok and allowed:
                 # Причину розрізняємо: «немає блоку», «не той напрямок» і
                 # «не той тип події» — це ТРИ РІЗНІ відмови, зливати не можна.
+                #
+                # ⚠️ **ПРИЧИНА МУСИТЬ НАЗВАТИ САМ БЛОК** (питання користувача
+                # 10.09: «що це за напрямок? що це за OB? їх немає на
+                # графіку»). Раніше стояло голе «Order Block проти напрямку» —
+                # ні боку сигналу, ні боку блоку, ні свічки, ні цін. Знайти
+                # той блок очима було НЕМОЖЛИВО, і рядок читався як вигадка.
                 _want = 'BULLISH' if side_label == 'LONG' else 'BEARISH'
-                if '/' not in _st:
-                    _why = f'OB-фільтр заблокував ({_st} на {self._settings.get("ob_filter_timeframe", "1h")})'
-                elif not _st.startswith(_want):
-                    _why = 'OB-фільтр заблокував (Order Block проти напрямку)'
+                _bias = _info.get('bias')
+                _where = _info.get('where') or ''
+                _tail = f' · {_where}' if _where else ''
+                if not _bias:
+                    _why = (f'OB-фільтр заблокував: на {_obtf} {_st} '
+                            f'(сигнал {side_label})')
+                elif _bias != _want:
+                    _why = (f'OB-фільтр заблокував: {_obtf}-блок {_bias} ПРОТИ '
+                            f'сигналу {side_label} (потрібен {_want}){_tail}')
                 else:
-                    _why = ('OB-фільтр заблокував (блок створено BOS — '
-                            'продовження, а не CHoCH)')
+                    _why = (f'OB-фільтр заблокував: {_obtf}-блок {_bias} '
+                            f'створено BOS — продовження, а не CHoCH{_tail}')
                 allowed, reason = False, _why
 
         # PD (сам гейтить свій тумблер; у розклад додаємо лише коли увімкнено)

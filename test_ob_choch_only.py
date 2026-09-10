@@ -51,6 +51,9 @@ def _ns(choch_only=True, tf='1h'):
                     'ob_filter_choch_only': choch_only}
     ns._ob_filter_allows = S._ob_filter_allows.__get__(ns)
     ns._ob_state_label = S._ob_state_label.__get__(ns)
+    # `_ob_state_label` делегує в `_ob_state_info` (з 10.09) — беремо СПРАВЖНІЙ
+    # метод, щоб тест перевіряв реальну мітку, а не свою вигадку.
+    ns._ob_state_info = S._ob_state_info.__get__(ns)
     return ns
 
 
@@ -138,11 +141,16 @@ def test_unknown_tag_blocks_when_on():
 
 # ── прозорість у 🧾 Лозі ──────────────────────────────────────────────────
 def test_state_label_explains_the_decision():
-    """Голе «OB(1h):✗» нічого не пояснює. Розклад мусить нести стан блоку."""
+    """Голе «OB(1h):✗» нічого не пояснює. Розклад мусить нести стан блоку.
+
+    ⚠️ КОНТРАКТ РОЗШИРЕНО (10.09): окрім `BEARISH/BOS` мітка тепер несе ще й
+    «де шукати блок» — свічку та межі (питання користувача «що це за OB? їх
+    немає на графіку»). Тому перевіряємо ПРЕФІКС, а не точну рівність; сам
+    орієнтир закріплено в `test_ob_reason_clarity.py`."""
     _fake_db(_row('BEARISH', 'BOS'))
-    _check(_ns()._ob_state_label('X') == 'BEARISH/BOS', _ns()._ob_state_label('X'))
+    _check(_ns()._ob_state_label('X').startswith('BEARISH/BOS'), _ns()._ob_state_label('X'))
     _fake_db(_row('BULLISH', 'CHoCH'))
-    _check(_ns()._ob_state_label('X') == 'BULLISH/CHoCH', _ns()._ob_state_label('X'))
+    _check(_ns()._ob_state_label('X').startswith('BULLISH/CHoCH'), _ns()._ob_state_label('X'))
     _fake_db(None)
     _check(_ns()._ob_state_label('X') == 'не рахувався', _ns()._ob_state_label('X'))
     _fake_db({'bias': None})
@@ -159,6 +167,7 @@ def _gate_ns(row, choch_only=True):
                     'use_pd_zone_filter': False}
     ns._ob_filter_allows = S._ob_filter_allows.__get__(ns)
     ns._ob_state_label = S._ob_state_label.__get__(ns)
+    ns._ob_state_info = S._ob_state_info.__get__(ns)
     ns._forecast_pair = lambda sym: ('—', '—')
     ns.get_pd_pct = lambda sym: None
     ns._decision_gate = lambda sym, side, at_intake=False: (True, '')
@@ -176,8 +185,13 @@ def test_reason_tells_bos_apart_from_wrong_direction():
     _check('BOS' in reason and 'CHoCH' in reason, f'причина: {reason}')
     _check('BEARISH/BOS' in detail and 'лише CHoCH' in detail, f'розклад: {detail}')
 
+    # ⚠️ ФОРМУЛЮВАННЯ ЗМІНЕНО (10.09): замість голого «проти напрямку»
+    # причина тепер НАЗИВАЄ обидва боки і сам блок — інакше знайти той OB на
+    # графіку було неможливо (питання користувача). Перевіряємо СУТЬ.
     ok2, reason2, _ = gate(_gate_ns(_row('BULLISH', 'CHoCH')), 'X', 'SHORT')
-    _check(ok2 is False and 'проти напрямку' in reason2, f'причина: {reason2}')
+    _check(ok2 is False, f'протилежний блок мав заблокувати: {reason2}')
+    _check('ПРОТИ' in reason2 and 'BULLISH' in reason2 and 'SHORT' in reason2,
+           f'причина мусить назвати бік блоку і бік сигналу: {reason2}')
 
     ok3, reason3, _ = gate(_gate_ns(None), 'X', 'SHORT')
     _check(ok3 is False and 'не рахувався' in reason3, f'причина: {reason3}')

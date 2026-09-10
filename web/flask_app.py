@@ -3261,11 +3261,35 @@ def register_api_routes(app):
         for sym, evs in by_sym.items():
             evs = sorted(evs, key=lambda e: e.get('t') or 0)
             groups, cur = [], None
+            # 🧵 ДЕ РІЖЕМО ЛАНЦЮГ. Раніше — ЛИШЕ на `signal`, без жодної межі
+            # за часом. Наслідок в експорті (10.09): ORDIUSDT «blocked» об
+            # 11:01 і «🆕 Новий OB» о 17:00 опинились в ОДНІЙ сесії — **через
+            # 6 годин**, а `outcome` усього ланцюга став `ob_new`. Через це
+            # здавалося, ніби «Сигнал» і «Новий OB» — те саме.
+            #
+            # ⚠️ `ob_new` — подія ІНШОЇ ПРИРОДИ: не крок життєвого циклу
+            # угоди, а факт зміни СТРУКТУРИ на графіку (до того ж на ІНШОМУ
+            # TF: 1H проти 15m у CHoCH). Вона вже винесена в окремий рядок у
+            # 🧾 Лозі (`SOLO_EVENTS`), і експорт мусить робити ТЕ САМЕ —
+            # інакше два подання того самого логу суперечать одне одному.
+            _SOLO = {'ob_new'}
+            _MAX_GAP = 3 * 3600     # розрив > 3 год — це вже інша історія
+            _prev_t = None
             for e in evs:
-                if e.get('event') == 'signal' or cur is None:
+                _t = e.get('t') or 0
+                _solo = e.get('event') in _SOLO
+                _gap = (_prev_t is not None and _t - _prev_t > _MAX_GAP)
+                if (e.get('event') == 'signal' or cur is None
+                        or _solo or _gap):
                     cur = []
                     groups.append(cur)
                 cur.append(e)
+                # ⚠️ Після solo-події наступна подія теж починає СВІЙ ланцюг —
+                # інакше вона приклеїлась би вже до рядка «Новий OB» (той
+                # самий найтонший момент, що й у таблиці логу).
+                _prev_t = None if _solo else _t
+                if _solo:
+                    cur = None
             for g in groups:
                 sid += 1
                 start = g[0].get('t')

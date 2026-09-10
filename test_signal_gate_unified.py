@@ -39,6 +39,10 @@ def _self(settings, ob_ok=True, pd_ok=True, fc_ok=True, str_ok=True, poc_ok=True
     # `_ob_state_label` живить розклад «OB(1h лише CHoCH BEARISH/BOS):✗» —
     # рішення воно НЕ ухвалює, тому тут порожній стан.
     ns._ob_state_label = lambda sym: 'BULLISH/CHoCH'
+    # ⚠️ `_signal_allowed` читає САМЕ `_ob_state_info` (з 10.09): причина
+    # відмови мусить назвати бік блоку і «де його шукати», а не лише мітку.
+    ns._ob_state_info = lambda sym: {'label': 'BULLISH/CHoCH', 'bias': 'BULLISH',
+                                     'tag': 'CHoCH', 'where': ''}
     ns._forecast_pair = lambda sym: ('—', '—')
     ns.get_pd_pct = lambda sym: None
     ns._decision_gate = lambda sym, side, at_intake=False: (True, 'LONG 80%')
