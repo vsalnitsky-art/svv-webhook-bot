@@ -3375,14 +3375,46 @@ class TradeManager:
                     # (інакше зайвий похід у сканер на кожній новій угоді).
                     _ladder = (self._liq_ladder_levels(symbol, side)
                                if cfg.get('tp1_from_liquidity') else None)
-                    _tps = trade_pilot.plan_targets(
-                        side, pos.get('entry_price'), current_price,
-                        res.get('targets') or [],
-                        objective=res.get('objective'),
-                        stop=pos.get('manual_sl'), cfg=cfg, ladder=_ladder)
+                    _args = (side, pos.get('entry_price'), current_price,
+                             res.get('targets') or [])
+                    _kw = dict(objective=res.get('objective'),
+                               stop=pos.get('manual_sl'), cfg=cfg)
+                    try:
+                        _tps = trade_pilot.plan_targets(*_args, ladder=_ladder, **_kw)
+                    except TypeError:
+                        # ⚠️ ФОЛБЕК НА СТАРІШИЙ `trade_pilot` — той самий прийом,
+                        # що з `get_liq_magnet(side=…)` і `_signal_allowed(skip_liq=)`.
+                        # Файли розпаковуються/деплояться в РІЗНОМУ порядку, і
+                        # новий kwarg `ladder=` у ще не оновленому модулі кидав
+                        # TypeError на КОЖНОМУ такті: угода лишалась БЕЗ обох TP,
+                        # і ніде про це не було сказано (кейс NEOUSDT 09.09).
+                        _tps = trade_pilot.plan_targets(*_args, **_kw)
                     self._pilot_apply_tp(symbol, pos, _tps, is_shadow)
+                    pos.pop('pilot_tp_err', None)
                 except Exception as e:
+                    # ⚠️ ЗБІЙ НЕ МАЄ БУТИ НЕВИДИМИМ. Раніше тут стояв ЛИШЕ
+                    # `print` у stdout — на проді його не видно, тож порожні
+                    # поля Manual TP читались як «бот просто не працює».
+                    # Той самий урок, що «Черга-4 ⚠️ збій після відкриття».
+                    # Анти-флуд: незмінна причина пишеться ОДИН раз, а не
+                    # щотіку (такт 20с — за годину було б 180 рядків).
+                    _err = f'{type(e).__name__}: {e}'
                     print(f"[TM-Pilot] TP autofill error {symbol}: {e}")
+                    if pos.get('pilot_tp_err') != _err:
+                        pos['pilot_tp_err'] = _err
+                        try:
+                            from detection.activity_log import log_activity as _la
+                            _la(symbol, 'skipped',
+                                f'🎯 Автопілот: ⚠️ збій автозаповнення TP — '
+                                f'{_err} · рівні НЕ виставлено',
+                                side=side, source='PILOT')
+                        except Exception:
+                            pass
+                        if is_shadow:
+                            try:
+                                self._persist_shadow_positions()
+                            except Exception:
+                                pass
 
             _obj = res.get('objective')
             if _obj and not pos.get('pilot_objective'):
@@ -3462,7 +3494,21 @@ class TradeManager:
             # звірити руками), і чи ризик уже прибрано.
             'r_stop': pos.get('pilot_r_stop'),
             'risk_free': bool(_rfree),
-            'tp_skip': pos.get('pilot_tp_skip') or '',
+            # ⚠️ ЧОТИРИ ПРИЧИНИ ПОРОЖНІХ ПОЛІВ Manual TP — КОЖНА МУСИТЬ
+            # ГОВОРИТИ. Кейс NEOUSDT (09.09): «Де Manual TP-1 / TP-2? Що
+            # сталось?» — обидва поля порожні, у 🧾 Лозі жодного слова, у
+            # тултипі теж. При цьому РОЗРАХУНОК був правильний (ціль 🧲 $2.0000
+            # дала б TP-2 = 2.0000, 1.59R), тобто проблема стояла НЕ в
+            # арифметиці, а в тому, що про причину ніде не сказано. Тепер
+            # кожен зі станів видно в тултипі колонки «🎯 Автопілот».
+            'tp_skip': pos.get('pilot_tp_skip') or '',     # рівня немає де взяти
+            'tp_err': pos.get('pilot_tp_err') or '',       # збій розрахунку
+            'tp_off': not bool(s.get('pilot_autofill_tp')),  # тумблер вимкнено
+            # Рівень ЗНЯВ оператор → автопілот свідомо не відновлює (правило
+            # «людина має приоритет»), але тепер це видно, а не «зникло».
+            'tp_locked': bool(pos.get('pilot_tp_cleared')
+                              and not pos.get('manual_tp')
+                              and not pos.get('manual_tp1')),
             'objective': res.get('objective'),
             'next': res.get('next_obstacle'),
             'targets': res.get('targets') or [],
