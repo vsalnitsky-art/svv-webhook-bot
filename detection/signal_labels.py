@@ -22,6 +22,7 @@ SIGNAL_BADGES = {
     'choch':      '🟦 CHoCH',
     'choch_bos':  '🟦 CHoCH+BOS',
     'vob_alert':  '🟪 Volumized OB',
+    'ob_alert':   '🆕 Новий OB',          # 🆕 Новий 1H-OB (за збігом TF)
     'vob':        '💰 Volumized OB',      # funding-VOB (kind='vob')
     'poc':        '🎯 POC-сетап',         # POC-сетап → черга FF (kind='poc')
     'opp':        '🔄 Реверс',

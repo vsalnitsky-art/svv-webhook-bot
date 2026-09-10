@@ -213,6 +213,22 @@ DEFAULT_SETTINGS = {
     # Старший TF, який дописуємо в те саме повідомлення. Порожньо = не питати.
     # Рахується ЛИШЕ в момент події (кілька разів на добу), а не щоцикл.
     'ob_alert_htf': '4h',
+    # 🆕 ДРУГИЙ TF = ВИМОГА ЗБІГУ (вимога користувача 10.09).
+    # УВІМК (дефолт): подія «новий OB» вважається такою, що СТАЛАСЬ, лише коли
+    # напрямки ОСНОВНОГО (`ob_filter_timeframe`) і СТАРШОГО (`ob_alert_htf`) TF
+    # ЗІЙШЛИСЬ. ВИМК: ідуть ВСІ нові OB основного TF, старший не питаємо
+    # взагалі (ні запиту, ні рядка 4H у повідомленні).
+    # ⚠️ Тумблер ОКРЕМО від самого TF: інакше «вимкнути при нагоді» стирало б
+    # вибір користувача (той самий принцип, що чекбокс+TF в OB-фільтрі).
+    'ob_alert_htf_enabled': True,
+    # 🔁 Deduplicate Signals (1 per trend) ДЛЯ НОВОГО OB. Той самий напрямок у
+    # ТІЙ САМІЙ комбінації TF глушиться; перебити може лише ПРОТИЛЕЖНИЙ.
+    'ob_alert_dedup': True,
+    # 📨 Чи йде 🆕 Новий OB у ТОРГІВЛЮ як окремий ТИП СИГНАЛУ (через ті самі
+    # спільні ворота `_signal_allowed` → `tm.on_signal(opened_by='ob_alert')`).
+    # ⚠️ Дефолт OFF — новий тип сигналу не має мовчки розширити потік угод на
+    # робочій установці (та сама причина, що у `vob_alert_enabled`).
+    'ob_alert_signal': False,
     # Вікно свіжості в секундах, 0 = АВТО = один бар `ob_filter_timeframe`.
     # Старший за вікно блок «щойно» не зʼявився → беремо за базу молча.
     'ob_alert_max_lag_sec': 0,
@@ -572,6 +588,18 @@ class SMCScanner:
         # ⚠️ ПЕРСИСТИТЬСЯ (`DB_KEY_OB_ALERT`): інакше кожен рестарт оголошував
         # би поточний блок КОЖНОЇ монети «новим» — це флуд станом, а не подія.
         self._ob_alert_seen: Dict[str, List[int]] = {}
+        # 🔁 ДЕДУП «1 на тренд» для 🆕 Нового OB: останній ВИСТРІЛЕНИЙ сигнал
+        # монети — {'side': 'SHORT', 'combo': '1H+4H', 'ts': …}.
+        # ⚠️ Разом із `combo`, бо правило користувача прив'язане до КОМБІНАЦІЇ
+        # TF: «1H+4H SHORT має право перебити лише 1H+4H LONG».
+        # ⚠️ ПЕРСИСТИТЬСЯ разом із `seen` — інакше кожен рестарт знімав би
+        # глушіння і той самий тренд давав би сигнал повторно.
+        self._ob_alert_fired: Dict[str, Dict] = {}
+        # 🔎 Діагностика ПРИДУШЕНИХ станів (збігу нема / дедуп) — IN-MEMORY,
+        # у 🧾 Лог НЕ пишеться. Це СТАНИ, а не події: «новий 1H-блок без збігу»
+        # трапляється на кожній монеті щокілька годин, і в лозі це був би рівно
+        # той флуд, через який лог VOB уже довелось чистити.
+        self._ob_alert_diag: Dict[str, Dict] = {}
         # Знімок OB старшого TF (4h) — {(symbol, tf): (valid_until, ob|None)}.
         # Рахується ЛИШЕ в момент події і живе до закриття свого бару, тож на
         # постійне навантаження не впливає (кілька запитів на добу на монету).
@@ -937,6 +965,11 @@ class SMCScanner:
             self.db.set_setting(DB_KEY_OB_ALERT, {
                 'tf': self._settings.get('ob_filter_timeframe', '1h'),
                 'seen': {k: list(v) for k, v in self._ob_alert_seen.items() if v},
+                # 🔁 Позначка дедупу «1 на тренд» мусить ПЕРЕЖИТИ рестарт:
+                # інакше `botupdate` (робиться часто) знімав би глушіння і той
+                # самий тренд давав би другий сигнал.
+                'fired': {k: dict(v) for k, v in self._ob_alert_fired.items()
+                          if isinstance(v, dict) and v.get('side')},
             })
         except Exception as e:
             print(f"[SMC] OB alert state persist error: {e}")
@@ -971,6 +1004,22 @@ class SMCScanner:
                         pass
                 if out:
                     self._ob_alert_seen[str(k).upper()] = out[-_oba_mod().SEEN_CAP:]
+            # 🔁 Позначки дедупу. `combo` зберігаємо ЯК БУЛО: якщо користувач
+            # перемкнув другий TF, `dedup_allows` сам побачить іншу комбінацію і
+            # не глушитиме новий тип сигналу старою позначкою.
+            fired = st.get('fired') or {}
+            if isinstance(fired, dict):
+                for k, v in fired.items():
+                    if not isinstance(v, dict):
+                        continue
+                    _sd = str(v.get('side') or '').upper().strip()
+                    if _sd not in ('LONG', 'SHORT'):
+                        continue
+                    self._ob_alert_fired[str(k).upper()] = {
+                        'side': _sd,
+                        'combo': str(v.get('combo') or '').upper().strip(),
+                        'ts': v.get('ts'),
+                    }
         except Exception as e:
             print(f"[SMC] OB alert state load error: {e}")
 
@@ -1339,7 +1388,8 @@ class SMCScanner:
                        'ob_filter_choch_only',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
-                       'ob_alert_max_lag_sec',
+                       'ob_alert_htf_enabled', 'ob_alert_dedup',
+                       'ob_alert_signal', 'ob_alert_max_lag_sec',
                        # 💧 Фільтр ліквідності за напрямком
                        'liq_filter_enabled', 'liq_filter_exchange',
                        'liq_filter_bars', 'liq_filter_min_pct',
@@ -1489,6 +1539,13 @@ class SMCScanner:
             _ah = str(self._settings.get('ob_alert_htf', '4h') or '').strip().lower()
             self._settings['ob_alert_htf'] = _ah if _ah in ALLOWED_OB_TFS else (
                 '' if _ah in ('', 'off', 'none') else '4h')
+            # 🆕 Другий TF (вимога ЗБІГУ) · дедуп «1 на тренд» · торговий сигнал
+            self._settings['ob_alert_htf_enabled'] = bool(
+                self._settings.get('ob_alert_htf_enabled', True))
+            self._settings['ob_alert_dedup'] = bool(
+                self._settings.get('ob_alert_dedup', True))
+            self._settings['ob_alert_signal'] = bool(
+                self._settings.get('ob_alert_signal', False))
             # Вікно свіжості: 0 = АВТО (один бар TF воріт). Відʼємне → 0.
             try:
                 _aml = float(self._settings.get('ob_alert_max_lag_sec', 0) or 0)
@@ -2734,13 +2791,18 @@ class SMCScanner:
     def _ob_alert_tick(self, symbol: str, md, ob_tf: str,
                        ob: Optional[Dict], klines) -> Optional[str]:
         """Порівняти поточний блок із опрацьованими і, якщо він НОВИЙ і ЩОЙНО
-        зʼявився, написати ОДИН рядок у 🧾 Лог роботи бота.
+        зʼявився, написати ОДИН рядок у 🧾 Лог роботи бота (і — за тумблером —
+        відправити СИГНАЛ у ту саму обробку, що й решта типів сигналу).
 
-        Повертає outcome (`new`/`stale`/`duplicate`/`no_ob`/`off`) — зручно для
-        тестів і діагностики.
+        Повертає outcome — зручно для тестів і діагностики:
+          `off` · `no_ob` · `duplicate` · `stale` · `wait_htf` · `dedup` · `new`.
 
-        ⚠️ Нічого не дозволяє і не блокує: ворота входу, такт `vob_one_per_ob`
-        і джерела Manual SL читають ТОЙ САМИЙ рядок БД і працюють як раніше.
+        ⚠️ **ВОРОТА ВХОДУ НЕ ЧІПАЄМО.** `_ob_filter_allows`, «1H OB лише з
+        CHoCH», такт `vob_one_per_ob` і джерела Manual SL читають ТОЙ САМИЙ
+        рядок БД і працюють РІВНО як раніше. Торговий сигнал (коли увімкнено)
+        іде через ЄДИНІ спільні ворота `_signal_allowed` — як і кожен інший шлях
+        (урок ASTERUSDT: VOB-alert колись кликав `on_signal` напряму й обходив
+        усі фільтри).
         """
         oba = _oba_mod()
         if not self._settings.get('ob_alert_enabled', True):
@@ -2755,12 +2817,11 @@ class SMCScanner:
         if _out in ('no_ob', 'duplicate'):
             return _out
 
-        # Новий для нас блок — позначаємо опрацьованим У ОБОХ випадках
-        # ('new' і 'stale'), інакше «старий» блок перевірявся б щоцикл.
-        self._ob_alert_seen[symbol] = oba.seen_add(_seen, ob.get('bar_time'))
-        self._persist_ob_alert_state(force=(_out == 'new'))
         if _out != 'new':
-            # Старий блок → ТИХА база. У лог не пишемо: це СТАН, не подія.
+            # Старий блок → ТИХА база (позначаємо опрацьованим, інакше
+            # перевірявся б щоцикл). У лог не пишемо: це СТАН, не подія.
+            self._ob_alert_seen[symbol] = oba.seen_add(_seen, ob.get('bar_time'))
+            self._persist_ob_alert_state()
             return _out
 
         _side1 = oba.side_of(ob.get('bias'))
@@ -2771,19 +2832,62 @@ class SMCScanner:
         # стояв прочерк.
         _price = oba.close_of(klines[-1]) if klines else None
 
-        # 🔎 Старший TF (4h) — рахуємо ЛИШЕ ЗАРАЗ, у момент події.
+        # 🔎 ДРУГИЙ (СТАРШИЙ) TF — рахуємо ЛИШЕ ЗАРАЗ, у момент події.
+        # Вимкнений тумблер = біржу НЕ питаємо взагалі (ні запиту, ні рядка 4H).
         _htf = str(self._settings.get('ob_alert_htf', '4h') or '').strip()
+        _htf_on = bool(self._settings.get('ob_alert_htf_enabled', True)) and bool(_htf)
         _side4, _tf4, _note = None, None, ''
-        if _htf:
+        if _htf_on:
             _tf4 = _htf
             _ob4, _note = self._ob_on_htf(symbol, md, _htf, ob_tf, ob)
             _side4 = oba.side_of((_ob4 or {}).get('bias'))
 
+        _combo = oba.combo_label(ob_tf, _tf4, _htf_on)
+        _conv_ok, _conv_note = oba.converge(_side1, _side4, _htf_on)
+        if not _conv_ok:
+            # ⏳ ЗБІГУ ЩЕ НЕМА → блок опрацьованим НЕ позначаємо: старший TF
+            # оновлюється СВОЇМ баром, тож збіг може настати за кілька хвилин, і
+            # тоді це буде та сама поява. Поки блок у вікні свіжості — спробуємо
+            # знову; далі `outcome` сам зробить його 'stale' і тихо візьме за
+            # базу (тож вічного перебору не буде).
+            # ⚠️ У 🧾 Лог НЕ пишемо — це СТАН, а не подія (урок флуду VOB).
+            self._ob_alert_diag[symbol] = {
+                'outcome': 'wait_htf', 'side': _side1, 'combo': _combo,
+                'note': _conv_note or (_note or ''), 'ts': _now}
+            return 'wait_htf'
+
+        # 🔁 ДЕДУП «1 на тренд»: той самий напрямок у ТІЙ САМІЙ комбінації TF
+        # глушиться — перебити може ЛИШЕ протилежний.
+        _ded_note = ''
+        if self._settings.get('ob_alert_dedup', True):
+            _ded_ok, _ded_note = oba.dedup_allows(
+                self._ob_alert_fired.get(symbol), _side1, _combo)
+        else:
+            _ded_ok = True
+
+        # Блок ОПРАЦЬОВАНО (і при дедупі теж — інакше придушений блок
+        # перевірявся б щоцикл до кінця вікна свіжості).
+        self._ob_alert_seen[symbol] = oba.seen_add(_seen, ob.get('bar_time'))
+        if not _ded_ok:
+            self._ob_alert_diag[symbol] = {
+                'outcome': 'dedup', 'side': _side1, 'combo': _combo,
+                'note': _ded_note, 'ts': _now}
+            self._persist_ob_alert_state()
+            return 'dedup'
+
+        self._ob_alert_fired[symbol] = {'side': _side1, 'combo': _combo,
+                                        'ts': _now}
+        self._ob_alert_diag[symbol] = {
+            'outcome': 'new', 'side': _side1, 'combo': _combo,
+            'note': _conv_note, 'ts': _now}
+        self._persist_ob_alert_state(force=True)
+
         _parts = oba.build_parts(
             symbol=symbol, tf1=ob_tf, side1=_side1,
             tag1=ob.get('created_by_tag'), tf4=_tf4, side4=_side4,
-            price=_price, appeared=_app, now=_now, htf_note=_note,
-            first=_first, bar_time=ob.get('bar_time'))
+            price=_price, appeared=_app, now=_now,
+            htf_note=(_conv_note if _htf_on else ''),
+            first=_first, bar_time=ob.get('bar_time'), combo=_combo)
         _text = oba.build_text(_parts)
         try:
             from detection.activity_log import log_activity
@@ -2792,7 +2896,42 @@ class SMCScanner:
         log_activity(symbol, 'ob_new', _text, side=_side1, source='OB',
                      extra={'parts': _parts})
         print(f"[SMC] 🆕 OB {ob_tf} {symbol}: {_text}")
+
+        # 📨 ТИП СИГНАЛУ (за тумблером) — у ту саму обробку, що й решта.
+        if self._settings.get('ob_alert_signal', False):
+            try:
+                self._ob_alert_signal(symbol, _side1, _combo, _price, _text)
+            except Exception as e:
+                if self._errors <= 5:
+                    print(f"[SMC] OB-alert signal error {symbol}: {e}")
         return _out
+
+    def _ob_alert_signal(self, symbol: str, side: str, combo: str,
+                         price, head: str) -> bool:
+        """📨 Відправити 🆕 Новий OB як ТИП СИГНАЛУ → черги / відкриття.
+
+        ⚠️ **ЧЕРЕЗ `_signal_allowed`, І НІЯК ІНАКШЕ.** Це ЄДИНІ спільні ворота
+        всіх фільтрів (OB/PD/Forecast/Decision/POC/Ліквідність + головні кнопки
+        напрямку). Був дефект, коли VOB-alert кликав `on_signal` напряму й
+        обходив усі фільтри — бот відкрив ASTERUSDT SHORT попри прогноз LONG.
+        Кожен НОВИЙ шлях відкриття мусить заходити сюди, інакше налаштування
+        користувача — фікція.
+        """
+        from detection.activity_log import log_activity
+        _ok, _reason, _detail = self._signal_allowed(symbol, side, at_intake=True)
+        log_activity(symbol, 'signal',
+                     f'🆕 Новий OB ({combo}) {side} · {_detail}',
+                     side=side, source='scanner')
+        if not _ok:
+            log_activity(symbol, 'rejected', _reason, side=side, source='scanner')
+            return False
+        _entry = price or self._get_live_price(symbol) or 0
+        from detection.trade_manager import get_trade_manager
+        _tm = get_trade_manager()
+        if _tm:
+            _tm.on_signal(symbol=symbol, side=side, entry_price=_entry,
+                          opened_by='ob_alert')
+        return True
 
     def _ob_on_htf(self, symbol: str, md, tf: str, ob_tf: str,
                    ob_same: Optional[Dict]):
@@ -5518,6 +5657,17 @@ class SMCScanner:
                 # правди для UI/інфосайту «де ми втрачаємо сигнали».
                 'vob_diag': {sym: dict(rec) for sym, rec in self._vob_diag.items()},
                 'vob_alert_enabled': bool(self._settings.get('vob_alert_enabled', False)),
+                # 🆕 ПРОЗОРІСТЬ НОВОГО ТИПУ СИГНАЛУ «Новий OB»: останнє рішення
+                # по монеті (`new`/`wait_htf`/`dedup`) + комбінація TF і причина.
+                # ⚠️ Придушені стани у 🧾 Лог НЕ пишуться (це СТАНИ, а не
+                # події — урок флуду VOB), тож відповідь на «чому по монеті
+                # немає реакції» живе САМЕ тут.
+                'ob_alert_diag': {sym: dict(rec)
+                                  for sym, rec in self._ob_alert_diag.items()},
+                'ob_alert_fired': {sym: dict(rec)
+                                   for sym, rec in self._ob_alert_fired.items()},
+                'ob_alert_enabled': bool(self._settings.get('ob_alert_enabled', True)),
+                'ob_alert_signal': bool(self._settings.get('ob_alert_signal', False)),
                 'pending_choch': {k: {'dir': v['dir'], 'level': v['level']}
                                    for k, v in self._pending_choch.items()},
                 

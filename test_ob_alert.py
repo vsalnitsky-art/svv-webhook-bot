@@ -113,8 +113,15 @@ def _ns(tf='1h', htf='4h', enabled=True, pf=None):
     ns = types.SimpleNamespace()
     ns._settings = {'ob_filter_timeframe': tf, 'ob_alert_enabled': enabled,
                     'ob_alert_htf': htf, 'ob_alert_max_lag_sec': 0,
+                    # 🆕 Другий TF = вимога ЗБІГУ + дедуп «1 на тренд» — див.
+                    # `test_ob_signal_type.py`. Тут вони в дефолтному стані
+                    # (УВІМК), бо саме так працює прод.
+                    'ob_alert_htf_enabled': True, 'ob_alert_dedup': True,
+                    'ob_alert_signal': False,
                     'swing_size': 50, 'internal_size': 5}
     ns._ob_alert_seen = {}
+    ns._ob_alert_fired = {}
+    ns._ob_alert_diag = {}
     ns._ob_htf_cache = {}
     ns._ob_done_cycle = {}
     ns._ob_lane_bar = None

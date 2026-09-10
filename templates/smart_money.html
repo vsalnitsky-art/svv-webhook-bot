@@ -2200,6 +2200,41 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-ob-choch-only" checked onchange="updateObChochOnly()">
                         📐 1H OB лише з CHoCH
                     </label>
+                    <!-- 🆕 НОВИЙ OB — ОКРЕМИЙ ТИП СИГНАЛУ (вимога 10.09).
+                         Власний тумблер, другий TF (вимога ЗБІГУ) і свій
+                         дедуп «1 на тренд». Стоїть ОДНИМ блоком, щоб було
+                         видно, що ці три налаштування про ОДНЕ й те саме. -->
+                    <div style="flex-basis:100%;height:0;margin:0;padding:0;border:0"></div>
+                    <div id="sm-obalert-group"
+                         style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;
+                                flex-basis:100%;padding:6px 8px;border:1px solid #2b3444;
+                                border-radius:6px;background:rgba(56,189,248,0.04)">
+                        <label class="sm-checkbox" title="🆕 НОВИЙ ТИП СИГНАЛУ: подія «на графіку зʼявився новий Order Block» на основному TF (Require OB Match TF, деф. 1H). Пише один рядок у 🧾 Лог роботи бота (час появи + свічка блоку + поточна ціна), а за тумблером «📨 Відправляти в торгівлю» ще й шле сигнал у ту саму обробку, що й решта типів (через УСІ спільні фільтри). Вимкнено — жодного рядка і жодного сигналу цього типу.">
+                            <input type="checkbox" id="sm-ob-alert" checked onchange="updateObAlert()">
+                            🆕 Новий OB (тип сигналу)
+                        </label>
+                        <label class="sm-checkbox" title="🔎 ДРУГИЙ ТАЙМФРЕЙМ = ВИМОГА ЗБІГУ. УВІМК: «новий OB зʼявився» вважається лише тоді, коли напрямки ОБОХ таймфреймів ЗІЙШЛИСЬ (напр. 1H і 4H обидва BEARISH) — інші блоки тихо пропускаються. ВИМК: ідуть ВСІ нові OB основного TF, старший таймфрейм не запитується взагалі (ні зайвого запиту до біржі, ні рядка 4H у повідомленні). ⚠️ Немає блоку на старшому TF = збігу НЕМА (невизначеність не пропускаємо).">
+                            <input type="checkbox" id="sm-ob-alert-htf" checked onchange="updateObAlert()">
+                            🔎 Збіг із другим TF
+                        </label>
+                        <div class="sm-control-item">
+                            <label>Другий TF:</label>
+                            <select id="sm-ob-alert-htf-tf" onchange="updateObAlert()">
+                                <option value="15m">15M</option>
+                                <option value="30m">30M</option>
+                                <option value="1h">1H</option>
+                                <option value="4h" selected>4H</option>
+                            </select>
+                        </div>
+                        <label class="sm-checkbox" title="🔁 Deduplicate Signals (1 per trend) ДЛЯ НОВОГО OB: той самий напрямок у ТІЙ САМІЙ комбінації таймфреймів глушиться, перебити його може ЛИШЕ ПРОТИЛЕЖНИЙ новий OB. Тобто при одному TF (1H) SHORT перебиває лише LONG; при двох (1H+4H) — 1H+4H SHORT перебиває лише 1H+4H LONG. Позначка переживає рестарт.">
+                            <input type="checkbox" id="sm-ob-alert-dedup" checked onchange="updateObAlert()">
+                            🔁 Дедуп (1 на тренд)
+                        </label>
+                        <label class="sm-checkbox" title="📨 Відправляти 🆕 Новий OB у ТОРГІВЛЮ як сигнал: через ЄДИНІ спільні ворота (OB/PD/Forecast/Decision/POC/Ліквідність + головні кнопки напрямку) → черги FF → відкриття. Мітка угоди — 🆕 Новий OB. ⚠️ Дефолт ВИМКНЕНО: новий тип сигналу не має мовчки розширити потік угод. Вимкнено — 🆕 Новий OB лишається ЛИШЕ повідомленням у лозі.">
+                            <input type="checkbox" id="sm-ob-alert-signal" onchange="updateObAlert()">
+                            📨 Відправляти в торгівлю
+                        </label>
+                    </div>
                 </div>
             </div>
             
@@ -6069,6 +6104,19 @@ async function loadSettings() {
             if (vobOne) vobOne.checked = !!s.vob_one_per_ob;             // default OFF
             const obChoch = document.getElementById('sm-ob-choch-only');
             if (obChoch) obChoch.checked = s.ob_filter_choch_only !== false;  // default ON
+            // 🆕 Новий OB — окремий тип сигналу (master ON · збіг ON · дедуп ON ·
+            // у торгівлю OFF).
+            const oaEn = document.getElementById('sm-ob-alert');
+            if (oaEn) oaEn.checked = s.ob_alert_enabled !== false;
+            const oaHtf = document.getElementById('sm-ob-alert-htf');
+            if (oaHtf) oaHtf.checked = s.ob_alert_htf_enabled !== false;
+            const oaHtfTf = document.getElementById('sm-ob-alert-htf-tf');
+            if (oaHtfTf) oaHtfTf.value = s.ob_alert_htf || '4h';
+            const oaDed = document.getElementById('sm-ob-alert-dedup');
+            if (oaDed) oaDed.checked = s.ob_alert_dedup !== false;
+            const oaSig = document.getElementById('sm-ob-alert-signal');
+            if (oaSig) oaSig.checked = !!s.ob_alert_signal;               // default OFF
+            _smObAlertSync();
             const recEl = document.getElementById('sm-recency');
             if (recEl) recEl.value = String(s.recency_minutes != null ? s.recency_minutes : 0);
             document.getElementById('sm-timeframe').value = s.timeframe || '5m';
@@ -6229,6 +6277,19 @@ function updateSettingsSummary() {
         const obCh = document.getElementById('sm-ob-choch-only');
         if (obCh && obCh.checked) summary += ' (лише CHoCH)';
     }
+    // 🆕 Новий OB — тип сигналу: показуємо АКТИВНУ комбінацію TF (те саме, чим
+    // міряє «тренд» дедуп), щоб у шапці було видно, за чим саме бот реагує.
+    const oaOn = document.getElementById('sm-ob-alert');
+    if (oaOn && oaOn.checked) {
+        const _tf1 = (obTf ? obTf.value : '1h').toUpperCase();
+        const _oaH = document.getElementById('sm-ob-alert-htf');
+        const _oaT = document.getElementById('sm-ob-alert-htf-tf');
+        let _combo = _tf1;
+        if (_oaH && _oaH.checked && _oaT) _combo += '+' + _oaT.value.toUpperCase();
+        summary += ` · 🆕 OB ${_combo}`;
+        const _oaS = document.getElementById('sm-ob-alert-signal');
+        if (_oaS && _oaS.checked) summary += '📨';
+    }
     // 💧 Фільтр ліквідності помітно звужує потік — має бути видно в шапці.
     const lqOn = document.getElementById('sm-liq-filter-enabled');
     if (lqOn && lqOn.checked) {
@@ -6318,6 +6379,52 @@ async function updateObChochOnly() {
         });
         updateSettingsSummary();
     } catch (err) { alert('OB CHoCH-only update error: ' + err); }
+}
+
+// 🆕 НОВИЙ OB — ОКРЕМИЙ ТИП СИГНАЛУ: один обробник на ВСІ чотири контроли.
+// ⚠️ Шлемо їх РАЗОМ (як `updateOBFilter`): частковий стан не має доїжджати до
+// бекенда (напр. «збіг увімкнено», а TF лишився від попереднього вибору).
+async function updateObAlert() {
+    const on = document.getElementById('sm-ob-alert');
+    const htfOn = document.getElementById('sm-ob-alert-htf');
+    const htfTf = document.getElementById('sm-ob-alert-htf-tf');
+    const dedup = document.getElementById('sm-ob-alert-dedup');
+    const asSig = document.getElementById('sm-ob-alert-signal');
+    _smObAlertSync();
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                ob_alert_enabled: !!(on && on.checked),
+                ob_alert_htf_enabled: !!(htfOn && htfOn.checked),
+                ob_alert_htf: (htfTf && htfTf.value) || '4h',
+                ob_alert_dedup: !!(dedup && dedup.checked),
+                ob_alert_signal: !!(asSig && asSig.checked),
+            }),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('New-OB signal update error: ' + err); }
+}
+// ⚠️ Активний контрол, який ні на що не впливає, вводить в оману (той самий
+// принцип, що з полями TTL при ♾ «Без терміну»): master OFF гасить усю групу,
+// а вимкнений «Збіг із другим TF» гасить саму випадайку TF.
+function _smObAlertSync() {
+    const on = document.getElementById('sm-ob-alert');
+    const htfOn = document.getElementById('sm-ob-alert-htf');
+    const htfTf = document.getElementById('sm-ob-alert-htf-tf');
+    const dedup = document.getElementById('sm-ob-alert-dedup');
+    const asSig = document.getElementById('sm-ob-alert-signal');
+    const master = !!(on && on.checked);
+    [htfOn, dedup, asSig].forEach(el => {
+        if (!el) return;
+        el.disabled = !master;
+        if (el.parentElement) el.parentElement.style.opacity = master ? '1' : '0.45';
+    });
+    if (htfTf) {
+        const live = master && !!(htfOn && htfOn.checked);
+        htfTf.disabled = !live;
+        if (htfTf.parentElement) htfTf.parentElement.style.opacity = live ? '1' : '0.45';
+    }
 }
 
 // OB Filter — single handler for both checkbox and dropdown change events.
@@ -13220,6 +13327,7 @@ function histSymCell(c, isShadow) {
 const SIGNAL_BADGES_JS = {
     'choch': '🟦 CHoCH', 'choch_bos': '🟦 CHoCH+BOS',
     'vob_alert': '🟪 Volumized OB', 'vob': '💰 Volumized OB',
+    'ob_alert': '🆕 Новий OB',
     'poc': '🎯 POC-сетап',
     'opp': '🔄 Реверс', 'external': '🔌 Зовнішня', 'manual': '✋ Ручний',
     'manual_ui': '✋ Ручний', 'manual_ui_overflow': '✋ Ручний',
@@ -13231,6 +13339,7 @@ const ENGINE_BADGES_JS = {
 };
 const SIGNAL_ICON_JS = {
     'choch': '🟦', 'choch_bos': '🟦', 'vob_alert': '🟪', 'vob': '💰',
+    'ob_alert': '🆕',
     'poc': '🎯', 'opp': '🔄', 'external': '🔌', 'manual': '✋',
     'manual_ui': '✋', 'manual_ui_overflow': '✋',
     'Q3-VOB(funding)': '💰', 'POC-сетап': '🎯', 'EXH': '🔥', 'FF': '🔥',
