@@ -3806,6 +3806,37 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </select>
                         </div>
 
+                        <!-- 🧮 ОКРЕМЕ правило — СВІДОМО стоїть ПІСЛЯ «Комбінувати»,
+                             щоб не читалось як четверте правило того збігу: там
+                             нейтраль ЛАМАЄ збіг, а тут вона і є підставою вийти. -->
+                        <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
+                            <label>
+                                <input type="checkbox" id="tm-use-mm-flat-exit" onchange="saveTMSettings()">
+                                🧮 Старий МММ ⚖ → вихід
+                                <span class="tm-help" title="САМОСТІЙНЕ правило: щойно «🧮 Старий МММ» по монеті втрачає напрямок (⚖ рівновага — сила тиску впала нижче порога напрямку), відкрита угода ЗАКРИВАЄТЬСЯ. Це ТОЙ САМИЙ показник, що в колонці «🧮 Старий МММ» таблиці угод і в секції 🧮 МММ-монітор — число береться з готового знімка двигуна, нічого не перераховується. ⚠️ У комбінуванні (АБО/AND) вище це правило НЕ бере участі: там нейтраль ламає збіг, а тут вона і є причиною виходу. ⚠️ «Немає даних» (бот щойно піднявся, liq-map ще не зібрала рівні) — це НЕ рівновага: правило мовчить, угода тримається. Перевірка не частіше ніж раз на 20с на монету. За замовчуванням ВИМКНЕНО.">?</span>
+                            </label>
+                        </div>
+                        <div class="tm-row">
+                            <label>
+                                ⚖ Закривати коли:
+                                <span class="tm-help" title="• Лише рівновага — дослівно те, що просили: виходимо, коли МММ став ⚖ (напрямку немає). Якщо МММ РОЗВЕРНУВСЯ проти угоди, але напрямок у нього є — тримаємо. • Рівновага АБО проти — виходимо ще й на розвороті МММ у протилежний бік. Варіант для тих, хто вважає розворот гіршим сигналом за згасання.">?</span>
+                            </label>
+                            <select id="tm-mm-flat-exit-mode" onchange="saveTMSettings()"
+                                    style="background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px">
+                                <option value="flat">лише ⚖ рівновага</option>
+                                <option value="flat_or_against">⚖ рівновага АБО проти</option>
+                            </select>
+                        </div>
+                        <div class="tm-row">
+                            <label>
+                                ⏱ Тримається ≥
+                                <span class="tm-help" title="Скільки СЕКУНД стан має протриматись безперервно, перш ніж закривати. 0 = закривати на першому ж такті (дослівна вимога). Поле існує тому, що межа напрямку — це сила ≈10%: біля неї показник може миготіти між «рівновага» і «слабкий напрямок», і кожне миготіння вибивало б з ринку. Знімок оновлюється раз на ~30с, тож розумні значення — 60-120с.">?</span>
+                            </label>
+                            <input type="number" id="tm-mm-flat-exit-confirm" min="0" max="3600" step="30"
+                                   onchange="saveTMSettings()"
+                                   style="width:62px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"> с
+                        </div>
+
                         <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
                             <label>
                                 <input type="checkbox" id="tm-pilot-enabled" onchange="saveTMSettings()">
@@ -9072,6 +9103,10 @@ async function loadTMSettings() {
         document.getElementById('tm-use-forecast-1h-exit').checked = !!s.use_forecast_1h_exit;
         document.getElementById('tm-use-forecast-4h-exit').checked = !!s.use_forecast_4h_exit;
         document.getElementById('tm-use-decision-exit').checked = !!s.use_decision_exit;
+        document.getElementById('tm-use-mm-flat-exit').checked = !!s.use_mm_flat_exit;
+        document.getElementById('tm-mm-flat-exit-mode').value =
+            (s.mm_flat_exit_mode === 'flat_or_against') ? 'flat_or_against' : 'flat';
+        _setV('tm-mm-flat-exit-confirm', s.mm_flat_exit_confirm_sec != null ? s.mm_flat_exit_confirm_sec : 0, 0);
         document.getElementById('tm-signal-exit-mode').value =
             (s.signal_exit_mode === 'and') ? 'and' : 'or';
         _setV('tm-signal-exit-min-conf', s.signal_exit_min_conf != null ? s.signal_exit_min_conf : 0, 0);
@@ -9548,6 +9583,11 @@ async function saveTMSettings() {
             use_forecast_4h_exit: document.getElementById('tm-use-forecast-4h-exit').checked,
             use_decision_exit: document.getElementById('tm-use-decision-exit').checked,
             signal_exit_mode: document.getElementById('tm-signal-exit-mode').value || 'or',
+            use_mm_flat_exit: document.getElementById('tm-use-mm-flat-exit').checked,
+            mm_flat_exit_mode: document.getElementById('tm-mm-flat-exit-mode').value || 'flat',
+            // ⚠️ `|| 0` тут БЕЗПЕЧНИЙ саме тому, що 0 і є дефолтом (на відміну
+            // від полів рівнів, де 0 — окреме змістовне значення).
+            mm_flat_exit_confirm_sec: parseInt(document.getElementById('tm-mm-flat-exit-confirm').value) || 0,
             signal_exit_min_conf: parseInt(document.getElementById('tm-signal-exit-min-conf').value) || 0,
             pilot_enabled: document.getElementById('tm-pilot-enabled').checked,
             pilot_min_target_dist_pct: parseFloat(document.getElementById('tm-pilot-min-target').value) || 0.3,
@@ -9837,6 +9877,7 @@ function reasonLabel(r) {
         'forecast_1h_exit': '🔮 F1H проти',
         'forecast_4h_exit': '🔮 F4H проти',
         'decision_exit': '🧠 Decision проти',
+        'mm_flat_exit': '🧮 Старий МММ ⚖',
         'signal_exit_and': '🔗 AND (усі проти)',
         'pilot_target': '🎯 Автопілот (ціль)',
         'bos_2_partial': '✂️ BOS-2',

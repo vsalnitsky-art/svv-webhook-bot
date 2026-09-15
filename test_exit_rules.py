@@ -60,6 +60,7 @@ class _TM(TM):
         self._lock = threading.RLock()
         self._opp_ob_base = {}
         self._signal_exit_at = {}
+        self._mm_flat_since = {}
         self.closed = []
         pos = {'symbol': 'MNTUSDT', 'side': side, 'entry_price': 0.5136,
                'opened_at': opened_at}
@@ -437,6 +438,250 @@ def test_min_conf_default_is_off():
     print('✓ дефолт порога чіткості — 0 (вимкнено)')
 
 
+
+# ═════ 4. 🧮 СТАРИЙ МММ БЕЗ НАПРЯМКУ → ВИХІД (вимога 15.09) ═══════════════
+# «Додай вихід із угоди по показнику "🧮 Старий МММ" — якщо нейтраль,
+# закриваємо угоду.» Показник беремо З ТОГО САМОГО знімка, що малює колонку
+# «🧮 Старий МММ» у таблиці угод і рядок 🧮 МММ-монітора.
+_SRC_TM = open(os.path.join(_ROOT, 'detection', 'trade_manager.py'),
+               encoding='utf-8').read()
+_HTML_SM = open(os.path.join(_ROOT, 'templates', 'smart_money.html'),
+                encoding='utf-8').read()
+
+
+class _FF:
+    """Фейковий Fuel Filter: віддає РІВНО той зріз, що `mm_snapshot_for`."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    def mm_snapshot_for(self, symbols):
+        self.calls.append(list(symbols))
+        return {k: dict(v) for k, v in self.rows.items()}
+
+
+def _use_ff(ff):
+    ffm.get_fuel_filter = (lambda: ff)
+
+
+def _mm(side='SHORT', rows=None, **settings):
+    """TM з увімкненим правилом 🧮 + підставленим знімком МММ."""
+    cfg = {'use_mm_flat_exit': True, 'mm_flat_exit_mode': 'flat',
+           'mm_flat_exit_confirm_sec': 0, 'use_opposite_ob_exit': False}
+    cfg.update(settings)
+    t = _reset(side=side, **cfg)
+    _use_ff(_FF(rows if rows is not None else {}))
+    return t
+
+
+def _row(mm, strength=5):
+    return {'mm': mm, 'strength': strength, 'strength_prev': strength,
+            'delta': 0, 'grow_since': None}
+
+
+def test_flat_mm_closes_the_trade():
+    """Дослівна вимога: МММ став ⚖ рівновагою → угоду закрито."""
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row(None, 4)})
+    closed = t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(closed and t.closed == [('real', 'mm_flat_exit')],
+           f'⚖ рівновага мусить закривати угоду: {t.closed}')
+    _check(any('рівновага' in x for x in _LOG),
+           f'причина не названа в 🧾 Лозі: {_LOG}')
+    print('✓ 🧮 МММ ⚖ рівновага → вихід')
+
+
+def test_directional_mm_keeps_the_trade():
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row('SHORT', 62)})
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [], f'МММ тримає напрямок — виходу бути не може: {t.closed}')
+    print('✓ 🧮 МММ у бік угоди → тримаємо')
+
+
+def test_missing_snapshot_is_not_flat():
+    """⚠️ ГОЛОВНИЙ ЗАПОБІЖНИК. Знімка по монеті може не бути (бот щойно
+    піднявся, liq-map ще не зібрала рівні). Якби порожньо читалось як
+    «рівновага», КОЖЕН рестарт закривав би ВСІ відкриті позиції."""
+    t = _mm(side='SHORT', rows={})                     # знімок порожній
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [], f'«немає даних» — це НЕ нейтраль: {t.closed}')
+    # І сам Fuel Filter може ще не існувати.
+    _use_ff(None)
+    t._signal_exit_at.clear()
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [], f'без Fuel Filter правило мусить мовчати: {t.closed}')
+    print('✓ 🧮 «немає даних» ≠ «нейтраль» (рестарт не вбиває позиції)')
+
+
+def test_opposite_mm_holds_by_default_and_closes_in_the_other_mode():
+    """Дослівна вимога — про НЕЙТРАЛЬ, тож розворот МММ за замовчуванням угоду
+    НЕ чіпає. Для тих, хто вважає розворот гіршим за згасання, є окремий режим."""
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)})
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [], f'режим «лише рівновага» не закриває на розвороті: {t.closed}')
+    t2 = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)},
+             mm_flat_exit_mode='flat_or_against')
+    t2._check_signal_exits('MNTUSDT', t2._positions['MNTUSDT'], 0.5, False)
+    _check(t2.closed == [('real', 'mm_flat_exit')],
+           f'режим «рівновага АБО проти» мусить закрити: {t2.closed}')
+    print('✓ 🧮 розворот МММ: тримаємо (деф.) / закриваємо (окремий режим)')
+
+
+def test_bad_mode_value_falls_back_to_flat():
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)},
+            mm_flat_exit_mode='щось не те')
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [], f'сміттєвий режим → дефолт «лише рівновага»: {t.closed}')
+    print('✓ 🧮 некоректний режим → дефолт, а не збій')
+
+
+def test_confirm_window_requires_the_state_to_hold():
+    """Межа напрямку — сила ≈10%, і біля неї показник миготить. Тому є вікно
+    підтвердження: перший такт рівноваги ще не закриває."""
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row(None, 6)},
+            mm_flat_exit_confirm_sec=60)
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [], f'закрили, не дочекавшись підтвердження: {t.closed}')
+    # «Відмотуємо» початок стану на 61с назад — стан протримався.
+    t._mm_flat_since['MNTUSDT'] -= 61
+    t._signal_exit_at.clear()
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [('real', 'mm_flat_exit')],
+           f'після витримки мусить закрити: {t.closed}')
+    _check(any('тримається' in x for x in _LOG),
+           f'у причині не видно, скільки стан тримався: {_LOG}')
+    print('✓ 🧮 вікно підтвердження: миготіння не вибиває з ринку')
+
+
+def test_confirm_timer_resets_when_direction_returns():
+    """Інакше короткі провали в рівновагу «накопичувались» би між епізодами і
+    рано чи пізно дали б вихід там, де стан щоразу тримався секунди."""
+    ff = _FF({'MNTUSDT': _row(None, 6)})
+    t = _reset(side='SHORT', use_mm_flat_exit=True, mm_flat_exit_confirm_sec=60,
+               use_opposite_ob_exit=False)
+    _use_ff(ff)
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check('MNTUSDT' in t._mm_flat_since, 'таймер не стартував')
+    ff.rows = {'MNTUSDT': _row('SHORT', 44)}           # напрямок повернувся
+    t._signal_exit_at.clear()
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check('MNTUSDT' not in t._mm_flat_since,
+           'таймер не обнулено, коли напрямок повернувся')
+    print('✓ 🧮 таймер підтвердження обнуляється на поверненні напрямку')
+
+
+def test_rule_is_off_by_default():
+    _check(tmmod.DEFAULT_SETTINGS['use_mm_flat_exit'] is False,
+           'нове правило виходу не має вмикатись саме')
+    _check(tmmod.DEFAULT_SETTINGS['mm_flat_exit_mode'] == 'flat',
+           'дефолтний режим мусить бути дослівною вимогою — лише рівновага')
+    _check(tmmod.DEFAULT_SETTINGS['mm_flat_exit_confirm_sec'] == 0,
+           'дефолт підтвердження — 0 (закривати одразу, як і просили)')
+    ff = _FF({'MNTUSDT': _row(None, 3)})
+    t = _reset(side='SHORT', use_opposite_ob_exit=False)   # усі правила OFF
+    _use_ff(ff)
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [] and ff.calls == [],
+           f'вимкнене правило не має ні закривати, ні читати знімок: {ff.calls}')
+    print('✓ 🧮 дефолт OFF і жодної роботи при вимкненому правилі')
+
+
+def test_rule_stays_out_of_the_and_or_combination():
+    """⚠️ У комбінуванні трьох вердиктів нейтраль ЛАМАЄ збіг, а тут вона і є
+    підставою вийти. Змішати їх означало б прямо протилежні правила в одному
+    вузлі, тому 🧮 працює ОКРЕМО — навіть у найсуворішому режимі 'and'."""
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row(None, 2)},
+            use_forecast_1h_exit=True, use_decision_exit=True,
+            signal_exit_mode='and')
+    t._fc = {'f1_side': 0, 'f1_conf': 0, 'f4_side': 0, 'f4_conf': 0}
+    t._dc = {'recommended': 'NEUTRAL'}
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [('real', 'mm_flat_exit')],
+           f'🧮 мусить спрацювати незалежно від режиму комбінування: {t.closed}')
+    # І навпаки: у самому комбінуванні МММ не згадується.
+    i = _SRC_TM.index('def _signal_exit_reason(')
+    fn = _SRC_TM[i:_SRC_TM.index('\n    def ', i + 10)]
+    _check('mm_flat' not in fn and 'mm_snapshot_for' not in fn,
+           'МММ просочився в комбінування трьох вердиктів')
+    print('✓ 🧮 правило живе ОКРЕМО від АБО/AND-комбінування')
+
+
+def test_source_is_the_shared_snapshot_and_nothing_is_recomputed():
+    """Та сама метрика у двох місцях = ОДНЕ джерело: інакше бот закривав би
+    угоду за числом, якого на екрані не видно (урок PD-зони)."""
+    ff = _FF({'MNTUSDT': _row(None, 7)})
+    t = _reset(side='SHORT', use_mm_flat_exit=True, use_opposite_ob_exit=False)
+    _use_ff(ff)
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(ff.calls == [['MNTUSDT']], f'знімок не запитано як треба: {ff.calls}')
+    i = _SRC_TM.index('def _mm_flat_exit_reason(')
+    fn = _SRC_TM[i:_SRC_TM.index('\n    def ', i + 10)]
+    if '"""' in fn:                       # докстрінг пояснює — код не рахує
+        fn = fn[fn.index('"""', fn.index('"""') + 3) + 3:]
+    _check('mm_snapshot_for' in fn, 'правило не читає спільний знімок')
+    for bad in ('_fuel_dir_legacy', 'compute_mm', '_liq_state', 'get_state('):
+        _check(bad not in fn, f'правило рахує МММ саме ({bad}) — розійдеться з UI')
+    print('✓ 🧮 джерело — спільний знімок, власних розрахунків немає')
+
+
+def test_paper_position_closes_into_its_own_book():
+    t = _mm(side='LONG', rows={'MNTUSDT': _row(None, 1)})
+    t._positions, t._shadow_positions = {}, t._positions or t._shadow_positions
+    pos = list(t._shadow_positions.values())[0] if t._shadow_positions else None
+    if pos is None:                       # _mm створює реальну — зробимо паперову
+        pos = {'symbol': 'MNTUSDT', 'side': 'LONG', 'entry_price': 0.5,
+               'opened_at': 1000.0}
+        t._shadow_positions = {'MNTUSDT': pos}
+    t._check_signal_exits('MNTUSDT', pos, 0.5, True)
+    _check(t.closed == [('paper', 'mm_flat_exit')],
+           f'паперова угода мусить закритись у СВОЮ книгу: {t.closed}')
+    print('✓ 🧮 paper-позиція закривається у свою книгу')
+
+
+def test_throttle_is_per_book_not_per_symbol():
+    """🐞 Було: тротл ключувався ЛИШЕ символом, тож по монеті з ДВОМА
+    позиціями (real + paper) перевірку з'їдала та книга, чий монітор устиг
+    першим, — друга лишалась БЕЗ правил виходу. Той самий клас помилки, що вже
+    ловили на `_pilot_at` (кейс TRXUSDT)."""
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row(None, 3)})
+    pos = t._positions['MNTUSDT']
+    t._shadow_positions = {'MNTUSDT': dict(pos)}
+    t._check_signal_exits('MNTUSDT', pos, 0.5, False)          # реальна
+    t._check_signal_exits('MNTUSDT', t._shadow_positions['MNTUSDT'], 0.5, True)
+    _check(t.closed == [('real', 'mm_flat_exit'), ('paper', 'mm_flat_exit')],
+           f'обидві книги мусять перевірятись у тому самому такті: {t.closed}')
+    _check(t._exit_key('AAA', True) != t._exit_key('AAA', False),
+           'ключ тротлу не розрізняє книги')
+    print('✓ тротл правил виходу — окремий на КОЖНУ книгу')
+
+
+def test_reason_has_human_labels_everywhere():
+    """Код причини мусить мати підпис у ВСІХ трьох місцях показу, інакше в
+    історії угод стоятиме сире `mm_flat_exit`."""
+    _check("'mm_flat_exit': '🧮 Старий МММ втратив напрямок" in _SRC_TM,
+           'немає розгорнутого підпису причини закриття')
+    _check("'mm_flat_exit': '🧮 Старий МММ ⚖'" in _SRC_TM,
+           'немає короткого бейджа причини')
+    _check("'mm_flat_exit': '🧮 Старий МММ ⚖'" in _HTML_SM,
+           'JS-мапа причин на сторінці не знає про нове правило')
+    print('✓ причина має людський підпис у TM і на сторінці')
+
+
+def test_ui_toggle_is_wired_both_ways():
+    _check('id="tm-use-mm-flat-exit"' in _HTML_SM, 'немає тумблера правила')
+    _check('id="tm-mm-flat-exit-mode"' in _HTML_SM, 'немає вибору режиму')
+    _check('id="tm-mm-flat-exit-confirm"' in _HTML_SM, 'немає поля підтвердження')
+    for key in ('use_mm_flat_exit', 'mm_flat_exit_mode', 'mm_flat_exit_confirm_sec'):
+        _check(f'{key}:' in _HTML_SM, f'{key} не йде у збереження налаштувань')
+        _check(f's.{key}' in _HTML_SM, f'{key} не відновлюється з налаштувань')
+    # ⚠️ Блок мусить стояти ПІСЛЯ «Комбінувати» — інакше читався б як четверте
+    # правило того збігу, у якому нейтраль означає ПРОТИЛЕЖНЕ.
+    _check(_HTML_SM.index('id="tm-use-mm-flat-exit"')
+           > _HTML_SM.index('id="tm-signal-exit-mode"'),
+           'правило стоїть серед трьох вердиктів — читатиметься як частина AND/OR')
+    print('✓ UI: тумблер + режим + підтвердження, і стоять окремо від AND/OR')
+
+
 if __name__ == '__main__':
     test_mnt_case_preexisting_opposite_ob_must_not_close()
     test_new_opposite_ob_closes()
@@ -468,4 +713,18 @@ if __name__ == '__main__':
     test_threshold_zero_keeps_any_explicit_side_clear()
     test_and_waits_when_one_verdict_is_weak()
     test_min_conf_default_is_off()
+    test_flat_mm_closes_the_trade()
+    test_directional_mm_keeps_the_trade()
+    test_missing_snapshot_is_not_flat()
+    test_opposite_mm_holds_by_default_and_closes_in_the_other_mode()
+    test_bad_mode_value_falls_back_to_flat()
+    test_confirm_window_requires_the_state_to_hold()
+    test_confirm_timer_resets_when_direction_returns()
+    test_rule_is_off_by_default()
+    test_rule_stays_out_of_the_and_or_combination()
+    test_source_is_the_shared_snapshot_and_nothing_is_recomputed()
+    test_paper_position_closes_into_its_own_book()
+    test_throttle_is_per_book_not_per_symbol()
+    test_reason_has_human_labels_everywhere()
+    test_ui_toggle_is_wired_both_ways()
     print('\nУсі тести правил виходу пройдено ✅')

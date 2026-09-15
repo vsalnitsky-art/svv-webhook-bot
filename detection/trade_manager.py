@@ -264,6 +264,21 @@ DEFAULT_SETTINGS = {
     'use_forecast_1h_exit': False,   # Forecast 1H проти позиції → вихід
     'use_forecast_4h_exit': False,   # Forecast 4H проти позиції → вихід
     'use_decision_exit': False,      # Decision Center проти позиції → вихід
+    # === 🧮 СТАРИЙ МММ БЕЗ НАПРЯМКУ → ВИХІД (вимога 15.09) ===
+    # ⚠️ ОКРЕМЕ правило, воно НЕ бере участі в комбінуванні `signal_exit_mode`
+    # нижче. Ті три — про ПРОТИЛЕЖНИЙ вердикт; це — про ВІДСУТНІСТЬ напрямку:
+    # МММ, який тримав угоду, згас у ⚖ рівновагу. Змішати їх в один AND/OR
+    # означало б, що «нейтраль ламає збіг» (правило тих трьох) і «нейтраль
+    # закриває» (це правило) працюють одночасно — пряме протиріччя.
+    'use_mm_flat_exit': False,
+    # 'flat'             — закривати ЛИШЕ на ⚖ рівновазі (дослівна вимога);
+    # 'flat_or_against'  — і коли МММ розвернувся ПРОТИ угоди.
+    'mm_flat_exit_mode': 'flat',
+    # Скільки СЕКУНД стан має протриматись, перш ніж закривати. 0 = закривати на
+    # першому ж такті (дослівна вимога). Поле існує, бо межа напрямку — це
+    # |dir| ≤ 0.1, тобто сила ≈10%: біля неї показник може миготіти між
+    # «рівновага» і «слабкий напрямок» і смикати угоду.
+    'mm_flat_exit_confirm_sec': 0,
     # Як КОМБІНУВАТИ увімкнені правила вище:
     #   'or'  (ДЕФОЛТ) — кожне САМОСТІЙНО: спрацювало будь-яке → вихід;
     #   'and'          — вихід лише коли ВСІ увімкнені одночасно проти позиції.
@@ -554,8 +569,17 @@ class TradeManager:
         # ТФ виходу в момент ВІДКРИТТЯ угоди. Правило спрацьовує лише коли
         # з'явився НОВІШИЙ протилежний блок, а не на блоці, що вже там висів.
         self._opp_ob_base: Dict[str, Dict] = {}
-        # 🔮/🧠 Анти-флуд перевірки прогнозу й Decision у моніторі: {symbol: ts}.
+        # 🔮/🧠/🧮 Анти-флуд перевірки правил виходу в моніторі: {SYMBOL|R|S: ts}.
+        # ⚠️ Ключ несе КНИГУ (`_exit_key`), а не лише символ: по одній монеті
+        # можуть одночасно стояти РЕАЛЬНА і ПАПЕРОВА позиції, і спільний ключ
+        # означав би, що перевірку з'їдає та книга, чий монітор устиг першим, —
+        # друга лишалась би без правил виходу (той самий клас помилки, що вже
+        # ловили на `_pilot_at` у кейсі TRXUSDT).
         self._signal_exit_at: Dict[str, float] = {}
+        # 🧮 «Старий МММ без напрямку» — З ЯКОГО МОМЕНТУ стан тримається,
+        # {SYMBOL: ts}. Ключ САМЕ символьний: МММ — показник монети, він
+        # однаковий для обох книг. Потрібен для `mm_flat_exit_confirm_sec`.
+        self._mm_flat_since: Dict[str, float] = {}
         # 🎯 Автопілот угоди: тротл перевірки + останнє рішення (для UI).
         self._pilot_at: Dict[str, float] = {}
         # 🧬 Походження угоди, передане Fuel Filter-ом ПЕРЕД відкриттям.
@@ -829,7 +853,7 @@ class TradeManager:
                       'use_time_stop', 'use_trailing', 'use_be',
                       'use_forecast_1h_close', 'use_opposite_ob_exit',
                       'use_forecast_1h_exit', 'use_forecast_4h_exit',
-                      'use_decision_exit',
+                      'use_decision_exit', 'use_mm_flat_exit',
                       'pilot_enabled',
                       'pilot_autofill_tp', 'pilot_tp2_from_magnet',
                       'tp1_move_to_be',
@@ -885,6 +909,17 @@ class TradeManager:
                 self._settings.get('pilot_tp1_from_liquidity', True))
             _sem = str(self._settings.get('signal_exit_mode', 'or') or 'or').lower()
             self._settings['signal_exit_mode'] = _sem if _sem in ('or', 'and') else 'or'
+            # 🧮 Вихід по «Старий МММ»: некоректний режим → дефолт 'flat'
+            # (дослівна вимога), а не збій; підтвердження — секунди ≥ 0.
+            _mfm = str(self._settings.get('mm_flat_exit_mode', 'flat')
+                       or 'flat').lower()
+            self._settings['mm_flat_exit_mode'] = (
+                _mfm if _mfm in ('flat', 'flat_or_against') else 'flat')
+            try:
+                self._settings['mm_flat_exit_confirm_sec'] = max(
+                    0, int(float(self._settings.get('mm_flat_exit_confirm_sec', 0) or 0)))
+            except (TypeError, ValueError):
+                self._settings['mm_flat_exit_confirm_sec'] = 0
 
             # opposite_ob_exit_timeframe — validated string, default '15m'
             ALLOWED_EXIT_TFS = ('15m', '30m', '1h', '4h')
@@ -2963,19 +2998,116 @@ class TradeManager:
                 return (code, f'{desc} — проти {side}')
         return None
 
+    @staticmethod
+    def _exit_key(symbol: str, is_shadow: bool) -> str:
+        """Ключ тротлу правил виходу — СИМВОЛ + КНИГА.
+
+        ⚠️ Раніше ключем був лише символ, і коли по монеті стояли ОБИДВІ
+        позиції (реальна + паперова), перша ж перевірка «з'їдала» вікно
+        `SIGNAL_EXIT_TTL`, а друга книга тихо лишалась БЕЗ правил виходу.
+        Той самий дефект уже ловили на `_pilot_at` (кейс TRXUSDT).
+        """
+        return f"{symbol}|{'S' if is_shadow else 'R'}"
+
+    def _mm_flat_drop_if_idle(self, symbol: str):
+        """Зняти таймер «МММ без напрямку», якщо по монеті не лишилось позицій.
+
+        ⚠️ Таймер СПІЛЬНИЙ для обох книг (МММ — показник монети), тож закриття
+        ОДНІЄЇ позиції його знімати не має: друга книга ще в угоді, і після
+        скидання їй довелося б заново набирати підтвердження.
+        """
+        try:
+            with self._lock:
+                alive = (symbol in (self._positions or {})
+                         or symbol in (self._shadow_positions or {}))
+        except Exception:
+            alive = False
+        if not alive:
+            self._mm_flat_since.pop(str(symbol).upper(), None)
+
+    def _mm_flat_exit_reason(self, symbol: str, pos: Dict) -> Optional[tuple]:
+        """🧮 «Старий МММ втратив напрямок» → (reason_code, опис) або None.
+
+        Вимога користувача (15.09) дослівно: «Додай вихід із угоди по показнику
+        "🧮 Старий МММ" — якщо нейтраль, закриваємо угоду».
+
+        ⚠️ **ДЖЕРЕЛО — ТОЙ САМИЙ ЗНІМОК**, що малює колонку «🧮 Старий МММ» у
+        таблиці відкритих угод і рядок 🧮 МММ-монітора: `ff.mm_snapshot_for`.
+        Свого розрахунку тут НЕМАЄ і бути не може — інакше бот закривав би
+        угоду за числом, якого на екрані не видно (урок PD-зони).
+
+        ⚠️ **«НЕМАЄ ДАНИХ» — ЦЕ НЕ «НЕЙТРАЛЬ».** Знімка по монеті може не бути
+        взагалі: бот щойно піднявся, liq-map ще не зібрала рівні, монета щойно
+        додана. Якби порожній рядок читався як рівновага, КОЖЕН рестарт
+        закривав би ВСІ відкриті позиції. Немає рядка → правило мовчить (і
+        таймер підтвердження скидається — стан невідомий, а не «тримається»).
+
+        ⚠️ Знімок будується для монет У ВІДКРИТІЙ УГОДІ навіть при вимкненому
+        🧮 МММ-моніторі, тож правило НЕ залежить від того тумблера.
+        """
+        s = self._settings
+        if not s.get('use_mm_flat_exit'):
+            return None
+        side = pos.get('side')
+        if side not in ('LONG', 'SHORT'):
+            return None
+        sym = str(symbol).upper()
+        row = None
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if ff is not None and hasattr(ff, 'mm_snapshot_for'):
+                row = (ff.mm_snapshot_for([sym]) or {}).get(sym)
+        except Exception:
+            row = None
+        if not row:
+            self._mm_flat_since.pop(sym, None)
+            return None
+        mm = row.get('mm')
+        strength = row.get('strength')
+        flat = mm not in ('LONG', 'SHORT')
+        against = (mm == self._opposite_of(side))
+        mode = str(s.get('mm_flat_exit_mode', 'flat') or 'flat').lower()
+        hit = flat or (against and mode == 'flat_or_against')
+        if not hit:
+            # Напрямок тримає угоду → таймер підтвердження ОБНУЛЯЄМО, інакше
+            # короткий провал у рівновагу «накопичувався» б між епізодами.
+            self._mm_flat_since.pop(sym, None)
+            return None
+        now = time.time()
+        since = self._mm_flat_since.setdefault(sym, now)
+        need = float(s.get('mm_flat_exit_confirm_sec') or 0)
+        held = now - float(since)
+        if need > 0 and held < need:
+            return None
+        _st = f' (сила {int(strength)}%)' if strength is not None else ''
+        _held = f' · тримається {int(held)}с' if need > 0 else ''
+        if flat:
+            why = (f'🧮 Старий МММ втратив напрямок — ⚖ рівновага{_st}{_held}')
+        else:
+            why = (f'🧮 Старий МММ розвернувся у {mm}{_st} — проти {side}{_held}')
+        return ('mm_flat_exit', why)
+
     def _check_signal_exits(self, symbol: str, pos: Dict,
                             current_price: float, is_shadow: bool) -> bool:
         """Прогнати самостійні правила виходу. True → позицію ЗАКРИТО."""
         s = self._settings
         if not (s.get('use_forecast_1h_exit') or s.get('use_forecast_4h_exit')
-                or s.get('use_decision_exit')):
+                or s.get('use_decision_exit') or s.get('use_mm_flat_exit')):
             return False
         now = time.time()
-        if now - float(self._signal_exit_at.get(symbol) or 0) < self.SIGNAL_EXIT_TTL:
+        _k = self._exit_key(symbol, is_shadow)
+        if now - float(self._signal_exit_at.get(_k) or 0) < self.SIGNAL_EXIT_TTL:
             return False
-        self._signal_exit_at[symbol] = now
+        self._signal_exit_at[_k] = now
         try:
-            hit = self._signal_exit_reason(symbol, pos)
+            # 🧮 МММ — ОКРЕМЕ правило, ПОЗА комбінуванням `signal_exit_mode`
+            # (там нейтраль ЛАМАЄ збіг, тут вона і є підставою для виходу).
+            # Перевіряємо його ПЕРШИМ: це читання готового знімка, тоді як
+            # прогноз/Decision можуть коштувати помітно більше.
+            hit = self._mm_flat_exit_reason(symbol, pos)
+            if not hit:
+                hit = self._signal_exit_reason(symbol, pos)
         except Exception as e:
             print(f"[TM] signal-exit check error {symbol}: {e}")
             return False
@@ -5362,6 +5494,7 @@ class TradeManager:
             'forecast_1h_exit': '🔮 Forecast 1H розвернувся проти позиції',
             'forecast_4h_exit': '🔮 Forecast 4H розвернувся проти позиції',
             'decision_exit': '🧠 Decision Center рекомендує протилежне',
+            'mm_flat_exit': '🧮 Старий МММ втратив напрямок (⚖ рівновага)',
             'signal_exit_and': '🔗 AND: усі увімкнені вердикти проти позиції',
             'pilot_target': '🎯 Автопілот: ціль на графіку досягнута',
         }
@@ -5421,7 +5554,12 @@ class TradeManager:
         # 🧱 База Opposite OB Exit прив'язана до КОНКРЕТНОЇ угоди — після
         # закриття вона більше не діє (нова угода зафіксує свою).
         self._opp_ob_base.pop(symbol, None)
-        self._signal_exit_at.pop(symbol, None)
+        # ⚠️ Тротл правил виходу — ключ КНИГИ: паперова позиція по цій монеті
+        # може лишатись відкритою, і її вікно перевірок стирати не можна.
+        self._signal_exit_at.pop(self._exit_key(symbol, False), None)
+        # 🧮 Таймер «МММ без напрямку» — символьний і СПІЛЬНИЙ для обох книг,
+        # тож знімаємо його лише коли по монеті не лишилось ЖОДНОЇ позиції.
+        self._mm_flat_drop_if_idle(symbol)
         # ⚠️ Чистимо стан САМЕ СВОЄЇ книги: паперова позиція по цій монеті
         # може лишатись відкритою, і її супровід стирати не можна.
         self._pilot_at.pop(self._pilot_key(symbol, False), None)
@@ -5958,7 +6096,8 @@ class TradeManager:
         # 🧱 База Opposite OB Exit прив'язана до КОНКРЕТНОЇ угоди — після
         # закриття вона більше не діє (нова угода зафіксує свою).
         self._opp_ob_base.pop(symbol, None)
-        self._signal_exit_at.pop(symbol, None)
+        self._signal_exit_at.pop(self._exit_key(symbol, True), None)
+        self._mm_flat_drop_if_idle(symbol)
         # ⚠️ Лише ПАПЕРОВА книга — реальна позиція по цій монеті живе далі.
         self._pilot_at.pop(self._pilot_key(symbol, True), None)
         self._pilot_state.pop(self._pilot_key(symbol, True), None)
@@ -7739,6 +7878,7 @@ class TradeManager:
             'forecast_1h_exit': '🔮 Forecast 1H Exit',
             'forecast_4h_exit': '🔮 Forecast 4H Exit',
             'decision_exit': '🧠 Decision Exit',
+            'mm_flat_exit': '🧮 Старий МММ ⚖',
             'signal_exit_and': '🔗 Signal Exit (AND)',
             'pilot_target': '🎯 Автопілот (ціль)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',
