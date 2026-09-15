@@ -104,14 +104,16 @@ MM_GROW_MIN_SPAN_SEC = 60
 # півпроєкту в ізольовані тести. Тест-замок звіряє числа між файлами.
 MM_PRICE_WINDOW_SEC = 15 * 60
 MM_PRICE_DEADZONE = 0.10
-# 🧠 РІШЕННЯ (банер Decision) у моніторі — НАЙДОРОЖЧИЙ показник таблиці:
-# `compute_decision` проганяє `evaluate_entry` ДВІЧІ (LONG + SHORT) на монету.
-# Тому він (а) має власний тумблер `mm_monitor_decision` (деф. ВИМКНЕНО),
-# (б) кешується на монету і (в) оновлюється порціями — не більше
-# MM_DECISION_MAX_PER_TICK найстаріших записів за такт. Так таблиця
-# заповнюється за кілька тактів замість того, щоб покласти двигун на першому.
-MM_DECISION_TTL = 120.0
-MM_DECISION_MAX_PER_TICK = 8
+# 🟪 VOB-ВІДКРИТТЯ З МОНІТОРА (вимога 15.09): «коли зʼявляється саме НОВИЙ VOB
+# по монеті, яка є в таблиці, і VOB співпадає з напрямком монети — відкрити».
+# ⚠️ Це ЄДИНЕ місце монітора, що ходить у МЕРЕЖУ: детекція Volumized OB вимагає
+# свічок (200 барів на монету). Тому перевірка йде ПОРЦІЯМИ — не більше
+# MM_VOB_MAX_PER_TICK монет за такт, найдавніше перевірені першими. Пропущений
+# такт нічого не втрачає: «новий» блок визначається за `formation_time`, тож
+# його побачимо наступного разу — просто трохи пізніше.
+MM_VOB_MAX_PER_TICK = 15
+# Дозволені TF (ті самі, що у Volumized-налаштуваннях сканера).
+MM_VOB_TFS = ('1m', '3m', '5m', '15m', '30m', '1h')
 
 LIQ_STATE_TTL = 20.0
 LIQ_STATE_CAP = 400             # запобіжник памʼяті: скільки монет тримати в кеші
@@ -221,11 +223,10 @@ DEFAULT_SETTINGS = {
     # недоступне. Дефолт УВІМК: монітор нічого не відкриває сам, він лише
     # показує стан — тож увімкненим він потік угод не розширює.
     'mm_monitor_enabled': True,
-    # 🧠 Колонка «Рішення» (вердикт банера Decision) у моніторі. ОКРЕМИЙ тумблер
-    # і дефолт ВИМКНЕНО — на відміну від решти колонок, це не читання готового
-    # кешу, а РОЗРАХУНОК (`compute_decision` = 2× `evaluate_entry` на монету).
-    # Вмикати свідомо, коли потрібен саме цей зріз.
-    'mm_monitor_decision': False,
+    # 🟪 Авто-відкриття за НОВИМ Volumized OB по монетах монітора (вимога 15.09).
+    # Дефолт УВІМК — на прохання користувача; TF за замовчуванням 5m.
+    'mm_vob_open': True,
+    'mm_vob_tf': '5m',
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -847,10 +848,14 @@ class FuelFilterDaemon:
         # проміжок (~30с) — на ньому «напрямок» був би шумом, тому міряємо рух
         # за тим самим 15-хв вікном, що й колонка Price у 💰 Funding.
         self._mm_price_hist: Dict[str, list] = {}
-        # 🧠 {SYMBOL: (ts, {reco, headline, verdict})} — кеш вердикту Decision.
-        # Оновлюється ПОРЦІЯМИ (див. MM_DECISION_MAX_PER_TICK) і лише коли
-        # увімкнено `mm_monitor_decision`.
-        self._mm_decision: Dict[str, tuple] = {}
+        # 🟪 VOB-відкриття з монітора: {SYMBOL: formation_time опрацьованого
+        # блоку} + {SYMBOL: ts останньої перевірки} для черги порцій.
+        self._mm_vob_seen: Dict[str, float] = {}
+        self._mm_vob_at: Dict[str, float] = {}
+        # ⏳ Новий VOB Є, але сила НЕ росте → чекаємо саме цього стану:
+        # {SYMBOL: {'ft','side','since'}}. Віддається у рядок монітора, щоб
+        # затримка була ВИДНА, а не виглядала як «бот нічого не робить».
+        self._mm_vob_pending: Dict[str, Dict] = {}
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -1359,7 +1364,9 @@ class FuelFilterDaemon:
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
         s['mmm_limited_mode'] = bool(s.get('mmm_limited_mode', True))
         s['mm_monitor_enabled'] = bool(s.get('mm_monitor_enabled', True))
-        s['mm_monitor_decision'] = bool(s.get('mm_monitor_decision', False))
+        s['mm_vob_open'] = bool(s.get('mm_vob_open', True))
+        _vtf = str(s.get('mm_vob_tf', '5m') or '5m').lower()
+        s['mm_vob_tf'] = _vtf if _vtf in MM_VOB_TFS else '5m'
         s['enabled'] = bool(s.get('enabled', False))
         try:
             s['direction_smoothing_min'] = max(0, min(600,
@@ -3178,59 +3185,151 @@ class FuelFilterDaemon:
                 hist.pop(_sym, None)
                 self._mm_grow_since.pop(_sym, None)
 
-    def _mm_decisions(self, snap: Dict, now: float, s: Dict) -> Dict:
-        """🧠 Вердикт банера Decision по монетах знімка — з кешем і ПОРЦІЯМИ.
+    def _mm_vob_tick(self, snap: Dict, s: Dict, now: float):
+        """🟪 НОВИЙ Volumized OB по монеті монітора → ВІДКРИТИ УГОДУ.
 
-        ⚠️ ЄДИНЕ ДЖЕРЕЛО — `TradeManager.compute_decision`, той самий виклик,
-        що малює банер «LONG 71% СИЛЬНИЙ» над графіком. Свого розрахунку тут
-        немає СВІДОМО: другий «такий самий» вердикт розійшовся б із банером.
+        Вимога користувача (15.09): «відслідковування і автоматичне відкриття
+        угоди, коли зʼявляється саме НОВИЙ VOB по монеті, яка є в таблиці
+        🧮 МММ-монітор. VOB має співпадати з напрямком, в якому на даний момент
+        знаходиться монета.»
 
-        ⚠️ ЧОМУ ПОРЦІЯМИ. `compute_decision` — це 2× `evaluate_entry`
-        (LONG + SHORT) плюс збір контексту; на 200 монетах за такт це поклало б
-        двигун. Тому оновлюємо лише `MM_DECISION_MAX_PER_TICK` НАЙСТАРІШИХ
-        записів, решта віддається з кешу (TTL `MM_DECISION_TTL`). Таблиця
-        заповнюється за кілька тактів — і це чесно видно: монета без вердикту
-        показує «⏳», а не порожнечу.
+        Правила (кожне закрите тестом):
+        - кандидати — РІВНО ті монети, що видно в таблиці: є у знімку, мають
+          напрямок (⚖ рівновага нічого відкривати не може) і ще НЕ в угоді;
+        - блок беремо ТІЛЬКИ в бік МММ (`_funding_vob` віддає найновіший
+          НЕ-breaker OB потрібної сторони) — «співпадає з напрямком» це і є;
+        - «НОВИЙ» = інший `formation_time`, ніж уже опрацьований;
+        - і сила МММ мусить РОСТИ (вимога 15.09) — інакше блок НЕ витрачається,
+          а стає в очікування (`_mm_vob_pending`) і відкриє угоду, щойно ріст
+          зʼявиться. Причина затримки видно в рядку таблиці (⏳) і в 🧾 Лозі.
+
+        ⚠️ **ПЕРШИЙ ПОКАЗ МОНЕТИ — ТИХА БАЗА, угоду НЕ відкриваємо.** Після
+        рестарту (а `botupdate` роблять часто) перший же знайдений блок виглядав
+        би «новим», і бот відкрив би угоду по блоку, якому може бути півдня. Той
+        самий урок, що вже задокументований для VOB-алерту: «блок, що утворився
+        пів дня тому, ми лише БАЧИМО на графіку, а сигналом він був тоді».
+
+        ⚠️ **ПОРЦІЯМИ.** Це ЄДИНЕ місце монітора з мережею (200 свічок на
+        монету). Перевіряємо не більше `MM_VOB_MAX_PER_TICK` монет за такт,
+        найдавніше перевірені першими. Затримка нічого не губить: блок
+        лишається «новим», доки ми його не опрацювали.
         """
-        cache = getattr(self, '_mm_decision', None)
-        if cache is None:
-            cache = self._mm_decision = {}
-        if not s.get('mm_monitor_decision', False):
-            # Вимкнено → кеш НЕ тримаємо: після вмикання він віддав би
-            # вердикти, яким могло бути півдня.
-            if cache:
-                self._mm_decision = {}
-            return {}
-        tm = None
+        if not s.get('mm_vob_open', True) or not s.get('enabled', False):
+            return
+        tf = str(s.get('mm_vob_tf', '5m') or '5m')
+        cands = [sym for sym, v in snap.items()
+                 if v.get('status') in ('LONG', 'SHORT')]
+        if not cands:
+            return
+        # Монети в угоді пропускаємо (у таблиці їх теж немає).
+        open_syms = self._mm_open_syms()
+        cands = [c for c in cands if c not in open_syms]
+        # ⏳ Монети, що ВЖЕ чекають на ріст сили, — ПЕРШИМИ: у них блок готовий,
+        # і кожен пропущений такт це прямо відкладена угода. Далі — найдавніше
+        # перевірені (нові монети без позначки йдуть попереду решти).
+        cands.sort(key=lambda x: (0 if x in self._mm_vob_pending else 1,
+                                  self._mm_vob_at.get(x, 0.0)))
         try:
-            tm = self._get_tm() if self._get_tm else None
+            from detection.activity_log import log_activity
         except Exception:
-            tm = None
-        if tm is None or not hasattr(tm, 'compute_decision'):
-            return {}
-        # Найстаріші — першими (відсутні в кеші мають ts=0, тобто йдуть спершу).
-        order = sorted(snap.keys(), key=lambda x: (cache.get(x) or (0.0,))[0])
+            def log_activity(*a, **k):
+                pass
         done = 0
-        for sym in order:
-            if done >= MM_DECISION_MAX_PER_TICK:
+        for sym in cands:
+            if done >= MM_VOB_MAX_PER_TICK:
                 break
-            if (now - (cache.get(sym) or (0.0,))[0]) < MM_DECISION_TTL:
-                break       # список відсортовано → далі всі ще свіжіші
-            try:
-                px = float((snap.get(sym) or {}).get('mark_price') or 0.0)
-                d = tm.compute_decision(sym, px) or {}
-                reco = (d.get('recommended') or '').upper() or None
-                cache[sym] = (now, {'reco': reco,
-                                    'headline': d.get('headline') or '',
-                                    'verdict': d.get('verdict') or ''} if d else None)
-            except Exception:
-                # Збій по ОДНІЙ монеті не має зупиняти такт; позначаємо часом,
-                # щоб не впертись у неї на кожному такті.
-                cache[sym] = (now, None)
             done += 1
-        for dead in [k for k in cache if k not in snap]:
-            cache.pop(dead, None)
-        return {k: v[1] for k, v in cache.items() if v[1]}
+            self._mm_vob_at[sym] = now
+            side = snap[sym].get('status')
+            try:
+                ob = self._funding_vob(sym, side, tf)
+            except Exception as e:
+                print(f"[FF-MMM-VOB] {sym} error: {e}")
+                continue
+            if not ob:
+                continue
+            ft = ob.get('formation_time')
+            if ft is None:
+                continue
+            prev = self._mm_vob_seen.get(sym)
+            if prev is None:
+                self._mm_vob_seen[sym] = ft      # тиха база — див. докстрінг
+                continue
+            if ft == prev:
+                self._mm_vob_pending.pop(sym, None)
+                continue
+            # 📈 ДРУГА УМОВА ВХОДУ (вимога 15.09): сила МММ мусить РОСТИ.
+            # ⚠️ «Росте» тут — ТЕ САМЕ, що малює ⏱ таймер і стрілку ↑ у
+            # `ffFuelCell`: наявність `_mm_grow_since[sym]`. Власного правила
+            # не заводимо — інакше в рядку таймер стояв би «—», а бот
+            # відкривав би «бо росте».
+            if sym not in self._mm_grow_since:
+                # ⚠️ Блок НЕ позначаємо опрацьованим — саме це й означає
+                # «дочекатися стану»: щойно сила піде вгору, той самий блок
+                # відкриє угоду. Позначка `pending` живить ⏳ у таблиці.
+                p = self._mm_vob_pending.get(sym)
+                if not p or p.get('ft') != ft or p.get('side') != side:
+                    self._mm_vob_pending[sym] = {'ft': ft, 'side': side,
+                                                 'since': now}
+                    log_activity(sym, 'skipped',
+                                 f'🧮 МММ-монітор: новий Volumized OB ({tf}) {side} '
+                                 'є, але сила МММ НЕ росте — відкриття ВІДКЛАДЕНО '
+                                 'до появи росту (блок лишається чинним)',
+                                 side=side, source='MMM')
+                continue
+            self._mm_vob_seen[sym] = ft
+            self._mm_vob_pending.pop(sym, None)
+            self._mm_vob_open_one(sym, side, ob, tf, s, log_activity)
+        # Памʼять: тримаємо позначки лише для монет, що є у знімку.
+        for dead in [k for k in self._mm_vob_seen if k not in snap]:
+            self._mm_vob_seen.pop(dead, None)
+            self._mm_vob_at.pop(dead, None)
+        for dead in [k for k in self._mm_vob_pending if k not in snap]:
+            self._mm_vob_pending.pop(dead, None)
+
+    def _mm_vob_open_one(self, sym: str, side: str, ob: Dict, tf: str,
+                         s: Dict, log_activity):
+        """Відкриття по новому VOB. Шлях ТОЙ САМИЙ, що у ✋ групового відкриття
+        монітора, — відрізняється лише мітка сигналу (🟪 Volumized OB) і те, що
+        рішення тут АВТОМАТИЧНЕ.
+
+        ⚠️ `by_hand` тут **НЕ** ставимо: це не рішення людини, тож правило
+        «нова ситуація» і решта воріт `_open` мусять діяти як для будь-якого
+        автоматичного відкриття. 🚦 головні кнопки напрямку теж тримає `_open`.
+        """
+        mark = (self._mm_snapshot.get(sym) or {}).get('mark_price')
+        if not mark or mark <= 0:
+            try:
+                from detection.market_data import get_market_data
+                md = get_market_data()
+                tk = md.get_ticker(sym) if md else None
+                mark = (tk or {}).get('last')
+            except Exception:
+                mark = None
+        if not mark or mark <= 0:
+            return
+        _str = int((self._mm_snapshot.get(sym) or {}).get('strength') or 0)
+        try:
+            opened = self._open(sym, side, {'mark_price': mark, 'dir': side}, s,
+                                opened_by=_ob_compose('vob_alert', 'MMM'),
+                                signal_at=time.time())
+        except Exception as e:
+            print(f"[FF-MMM-VOB] open error {sym}: {e}")
+            return
+        if not opened:
+            return
+        with self._lock:
+            self._timers[sym] = {'dir': side, 'since': time.time(),
+                                 'start_price': mark}
+        log_activity(sym, 'opened',
+                     f'🧮 МММ-монітор: НОВИЙ Volumized OB ({tf}) у бік {side} '
+                     f'збігся з МММ (сила {_str}%) — відкрито автоматично',
+                     side=side, source='MMM')
+        print(f"[FF-MMM-VOB] opened {side} {sym} on new {tf} VOB")
+        try:
+            self._q4_set_vob_sl(sym, side, s)
+        except Exception as e:
+            print(f"[FF-MMM-VOB] SL error {sym}: {e}")
 
     def _mm_capture(self, fuels: Dict, settings: Optional[Dict] = None,
                     now: Optional[float] = None):
@@ -3316,21 +3415,36 @@ class FuelFilterDaemon:
         # рахуємо у `mm_monitor_state`), щоб читач лишався читачем: те саме
         # правило, що з шарами Черги-4 «двигун рахує — get_state читає».
         self._mm_track_prices(snap, _now)
-        # 🧠 РІШЕННЯ — єдиний РОЗРАХУНОК у цій таблиці, тож за тумблером,
-        # з кешем і порціями (див. MM_DECISION_*).
-        _dec = self._mm_decisions(snap, _now, s)
-        for _sym, _v in snap.items():
-            _v['decision'] = _dec.get(_sym)
         # 📈 ПРИРІСТ СИЛИ + ⏱ ТАЙМЕР РОСТУ — теж у ЗНІМОК (див. `_mm_track_growth`).
         self._mm_track_growth(snap, _now)
         with self._lock:
             self._mm_snapshot = snap
             self._mm_snapshot_ts = _now
+        # 🟪 НОВИЙ VOB по монеті монітора → авто-відкриття. Стоїть ПІСЛЯ запису
+        # знімка: кандидати беруться РІВНО з того, що зараз у таблиці.
+        # ⚠️ Гейт на тумблер монітора свідомий: при вимкненому моніторі таблиці
+        # немає, а знімок лишається лише для колонки в угодах — відкривати по
+        # ньому означало б торгувати з невидимого списку.
+        if _mon:
+            try:
+                self._mm_vob_tick(snap, s, _now)
+            except Exception as e:
+                print(f"[FF-MMM-VOB] tick error: {e}")
 
     def mm_monitor_state(self, settings: Optional[Dict] = None) -> Dict:
         """🧮 Рядки МММ-монітора — ЧИТАННЯ готового знімка, без розрахунків.
 
-        Повертає {'rows': [...], 'ts', 'enabled', 'limited', 'counts': {...}}.
+        Повертає {'rows': [...], 'ts', 'enabled', 'limited'}.
+
+        ⚠️ **МОНЕТИ У ВІДКРИТІЙ УГОДІ В РЯДКИ НЕ ПОТРАПЛЯЮТЬ** (вимога 15.09:
+        «монета, яка в угоді, не потрібно відображати у таблиці»). Монітор —
+        це список КАНДИДАТІВ; те, що вже в роботі, живе в таблицях угод. Зі
+        ЗНІМКА такі монети НЕ прибираються: він живить колонку «🧮 Старий МММ»
+        у тих таблицях (`mm_snapshot_for`).
+        ⚠️ **ЛІЧИЛЬНИКІВ ТУТ НЕМАЄ.** Вкладки рахує ФРОНТ — і рахує вже з
+        урахуванням фільтра «Сила ≥», який теж живе на фронті. Серверне число
+        поруч із відфільтрованою таблицею означало б, що «(36)» на вкладці і
+        кількість рядків під нею — різні речі (саме це й було видно на скріні).
         `enabled=False` — тумблер монітора вимкнено: знімка немає СВІДОМО, і
         порожню таблицю треба підписати саме так, а не «немає даних».
         `limited=True` означає, що `mmm_limited_mode` УВІМКНЕНО і МММ рахується
@@ -3350,14 +3464,15 @@ class FuelFilterDaemon:
             # протекли б у таблицю монітора, який щойно вимкнули.
             snap = dict(self._mm_snapshot or {}) if _on else {}
             grow = dict(getattr(self, '_mm_grow_since', {}) or {})
+            vw = dict(getattr(self, '_mm_vob_pending', {}) or {})
             ts = float(self._mm_snapshot_ts or 0.0)
-            in_q = set(self._pending) | set(self._pending2) \
-                | set(self._pending3) | set(self._pending4)
-        # Відкриті позиції (FF + обидві книги TM) — монету в угоді вибрати не
-        # можна. Набір збирає ЄДИНИЙ `_mm_open_syms`.
+        # Відкриті позиції (FF + обидві книги TM) — такі монети в таблиці не
+        # показуємо взагалі. Набір збирає ЄДИНИЙ `_mm_open_syms`.
         open_syms = self._mm_open_syms()
-        rows, counts = [], {'LONG': 0, 'SHORT': 0, 'flat': 0}
+        rows = []
         for sym, v in snap.items():
+            if sym in open_syms:
+                continue
             st = v.get('status') if v.get('status') in ('LONG', 'SHORT') else None
             stren = int(v.get('strength') or 0)
             # ⚠️ Віддаємо САМУ базову силу, а не готове «up/down»: стрілку
@@ -3366,7 +3481,6 @@ class FuelFilterDaemon:
             # База — зі ЗНІМКА (`_mm_track_growth`), тобто найстаріший семпл у
             # вікні приросту, а не «попередній такт».
             p = v.get('strength_prev')
-            _open = sym in open_syms
             # 📈 «СИЛА РОСТЕ» У ЧИСЛІ (вимога 15.09) — приріст сили за ВІКНО
             # `MM_GROW_WINDOW_SEC`. Сила сама по собі — ЧАСТКА у відсотках, тож
             # її зміна міряється у ПУНКТАХ (45% → 57% = +12 п.п.).
@@ -3405,15 +3519,12 @@ class FuelFilterDaemon:
                 # 🔮 Прогноз 1H/4H із кешу — та сама пара, що на бейджах графіка.
                 'f1': v.get('f1'),
                 'f4': v.get('f4'),
-                # 🧠 Вердикт Decision або None (вимкнено / ще не порахувався).
-                'decision': v.get('decision'),
-                'in_trade': _open,
-                'in_queue': (sym in in_q) and not _open,
-                # Монету, що вже в угоді, обирати нема сенсу — друга позиція по
-                # тому самому символу все одно не відкриється.
-                'selectable': (not _open) and st in ('LONG', 'SHORT'),
+                # ⏳ Новий VOB уже є, але чекаємо, поки сила ПІДЕ ВГОРУ.
+                # Без цього поля затримка виглядала б як «бот нічого не робить».
+                'vob_wait': (dict(vw[sym]) if sym in vw else None),
+                # ⚖ рівновага — відкривати нічого, тож і обирати нічого.
+                'selectable': st in ('LONG', 'SHORT'),
             })
-            counts['LONG' if st == 'LONG' else ('SHORT' if st == 'SHORT' else 'flat')] += 1
         # Сортування: спершу сила (найвиразніший напрямок зверху), потім символ —
         # стабільний порядок, щоб рядки не «стрибали» під курсором.
         rows.sort(key=lambda r: (-int(r.get('strength') or 0), r['symbol']))
@@ -3422,10 +3533,6 @@ class FuelFilterDaemon:
             'ts': ts,
             'enabled': _on,
             'limited': bool(s.get('mmm_limited_mode', True)),
-            # Колонка «🧠 Рішення» має власний тумблер — фронт мусить знати, чи
-            # порожня комірка означає «вимкнено» чи «ще рахується».
-            'decision_on': bool(s.get('mm_monitor_decision', False)),
-            'counts': counts,
         }
 
     def mm_snapshot_for(self, symbols) -> Dict:

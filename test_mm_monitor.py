@@ -82,6 +82,9 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._lock = threading.RLock()
     ff._mm_snapshot = {}
     ff._mm_str_hist = {}
+    ff._mm_vob_seen = {}
+    ff._mm_vob_at = {}
+    ff._mm_vob_pending = {}
     ff._mm_price_hist = {}
     ff._mm_decision = {}
     ff._clock = [10_000.0]
@@ -198,25 +201,33 @@ def test_rows_are_sorted_by_strength_then_symbol():
     print('✓ сортування: сила ↓, далі символ (стабільний порядок)')
 
 
-def test_groups_are_countable_for_the_long_short_tabs():
-    """«Сортувати окремо на LONG чи SHORT» — вкладки рахують ПОВНИЙ знімок."""
+def test_backend_no_longer_ships_tab_counts():
+    """⚠️ Лічильники вкладок рахує ФРОНТ — разом із фільтром «Сила ≥», який
+    теж живе там. Серверне число поруч із відфільтрованою таблицею означало б,
+    що «(36)» на вкладці і кількість рядків під нею — різні речі (скарга
+    15.09). Два джерела одного числа не тримаємо."""
     ff = _mk()
     _cap(ff, A=0.5, B=0.4, C=-0.6, D=0.01)
-    c = ff.mm_monitor_state()['counts']
-    _check(c == {'LONG': 2, 'SHORT': 1, 'flat': 1}, c)
-    print('✓ лічильники вкладок: LONG / SHORT / ⚖ рівновага')
+    st = ff.mm_monitor_state()
+    _check('counts' not in st, f'сервер усе ще шле власні лічильники: {st.keys()}')
+    _check(len(st['rows']) == 4, st['rows'])
+    print('✓ лічильників на бекенді немає — їх рахує фронт із фільтром')
 
 
 # ═══════════ 2. ПРИДАТНІСТЬ ДО ВИБОРУ ════════════════════════════════════
-def test_a_coin_already_in_a_trade_cannot_be_selected():
+def test_a_coin_already_in_a_trade_is_not_shown_at_all():
+    """Вимога 15.09: «монета, яка в угоді, не потрібно відображати у таблиці».
+    ⚠️ Але зі ЗНІМКА вона НЕ зникає — знімок живить колонку «🧮 Старий МММ»
+    у таблицях угод."""
     ff = _mk()
     _cap(ff, BTCUSDT=0.5, ETHUSDT=0.5)
     ff._fuel_managed = {'BTCUSDT': {}}
     by = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}
-    _check(by['BTCUSDT']['in_trade'] and not by['BTCUSDT']['selectable'],
-           by['BTCUSDT'])
+    _check('BTCUSDT' not in by, f'монета в угоді лишилась у таблиці: {list(by)}')
     _check(by['ETHUSDT']['selectable'], by['ETHUSDT'])
-    print('✓ монета в угоді: помічена і НЕ обирається')
+    _check(ff.mm_snapshot_for(['BTCUSDT']).get('BTCUSDT'),
+           'колонка в таблиці угод втратила число — знімок чіпати не можна')
+    print('✓ монета в угоді: у таблиці немає, у знімку для угод — є')
 
 
 def test_balanced_mm_is_not_selectable():
@@ -226,17 +237,6 @@ def test_balanced_mm_is_not_selectable():
     r = ff.mm_monitor_state()['rows'][0]
     _check(not r['selectable'], r)
     print('✓ ⚖ рівновага не обирається (немає чого відкривати)')
-
-
-def test_queue_membership_is_shown_but_does_not_block():
-    """Монета може стояти в черзі — це ІНФОРМАЦІЯ, а не заборона: ✋ ручне
-    відкриття свідомо проходить повз ворота черг."""
-    ff = _mk()
-    _cap(ff, BTCUSDT=0.5)
-    ff._pending4 = {'BTCUSDT': {'dir': 'LONG'}}
-    r = ff.mm_monitor_state()['rows'][0]
-    _check(r['in_queue'] and r['selectable'], r)
-    print('✓ «у черзі» показано, але вибору не блокує')
 
 
 # ═══════════ 3. ГРУПОВЕ ВІДКРИТТЯ ════════════════════════════════════════
@@ -350,7 +350,7 @@ def test_limited_mode_is_said_out_loud():
 def test_empty_snapshot_is_not_an_error():
     st = _mk().mm_monitor_state()
     _check(st['rows'] == [] and st['ts'] == 0.0, st)
-    _check(st['counts'] == {'LONG': 0, 'SHORT': 0, 'flat': 0}, st)
+    _check(st['enabled'] is True and 'limited' in st, st)
     print('✓ порожній знімок (бот щойно піднявся) — коректний стан')
 
 
@@ -457,8 +457,12 @@ function _el(id) {
                              querySelector:()=>({textContent:''})};
   return _els[id];
 }
+const _tabSpans = {};
 const _tabs = ['all','LONG','SHORT','flat'].map(d => ({
-  dataset:{mmdir:d}, style:{}, querySelector:()=>({textContent:''})}));
+  dataset:{mmdir:d}, style:{},
+  // ⚠️ Стабільний span: якби фейк віддавав НОВИЙ обʼєкт на кожен виклик,
+  // прочитати назад те, що записав рендер, було б неможливо.
+  querySelector:()=>(_tabSpans[d] = _tabSpans[d] || {textContent:''})}));
 // Заголовки таблиці — ОКРЕМІ стаби з `getAttribute`: `_mmHeaderArrows` шукає
 // саме `th[data-mmsort]`, і якби фейк повертав на будь-який селектор вкладки,
 // тест падав би «на рівному місці» (так і сталось).
@@ -471,6 +475,13 @@ const document = {
                           'mm-open-btn','mm-updated','mm-limited-hint'].includes(id)
                          ? _el(id) : null),
   querySelectorAll: sel => (String(sel).includes('data-mmsort') ? _ths : _tabs),
+};
+// Памʼять фільтрів (localStorage) — сторінка без неї не запускається.
+const _LS = {};
+const localStorage = {
+  getItem: k => (k in _LS ? _LS[k] : null),
+  setItem: (k, v) => { _LS[k] = String(v); },
+  removeItem: k => { delete _LS[k]; },
 };
 const fetch = async () => ({ok:true, json: async () => ({})});
 const confirm = () => false;
@@ -976,7 +987,7 @@ def test_ui_has_growth_column_with_timer_and_sorting():
     # ⏱ Таймер — ОКРЕМА колонка (вимога 15.09), а не хвіст комірки приросту.
     _check('⏱ Росте' in tbl, 'таймер не винесено в окрему колонку')
     _n = len(_re.findall(r'<th[\s>]', tbl))
-    _check(_n == 9, f'очікував 9 колонок: {_n}')
+    _check(_n == 8, f'очікував 8 колонок: {_n}')
     _check(f'colspan="{_n}"' in tbl,
            f'colspan порожнього рядка не дорівнює числу колонок ({_n})')
     for col in ('symbol', 'strength', 'delta', 'grow', 'pchg'):
@@ -1296,172 +1307,40 @@ def test_snapshot_carries_the_forecast_pair():
     print('✓ знімок несе пару прогнозів 1H/4H')
 
 
-def test_js_forecast_cell_mirrors_the_chart_badge_format():
-    """Формат — ТОЧНО як у бейджа над графіком («1H: 🟢 LONG +100% · 90%»).
-    Свого подання не вигадуємо: дві різні подачі одного числа на одній
-    сторінці — це той самий клас помилки, що «банер vs бейдж» у PD-зоні."""
+def test_js_forecast_is_two_columns_with_direction_only():
+    """Вимога 15.09: дві ОКРЕМІ колонки і в кожній лише «1H: 🔴 SHORT».
+    Числа (рух і впевненість) нікуди не зникли — вони в підказці комірки."""
     out = _run_js(r'''
 const R = (s, f1, f4) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50, delta:0,
   grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
-  f1:f1, f4:f4, in_trade:false, in_queue:false, selectable:true});
+  delta_span:180, f1:f1, f4:f4, selectable:true});
 mmApplyState({rows:[
-  R('AAAUSDT', {side:1,pct:100,conf:90}, {side:1,pct:70,conf:75}),
-  R('BBBUSDT', {side:-1,pct:-40,conf:55}, null),
-  R('CCCUSDT', {side:0,pct:0,conf:12}, null)],
-  enabled:true, limited:false, ts:1, counts:{LONG:3,SHORT:0,flat:0}});
+  R('AAAUSDT', {side:1,pct:100,conf:90}, {side:-1,pct:-70,conf:75}),
+  R('BBBUSDT', {side:0,pct:0,conf:12}, null)],
+  enabled:true, limited:false, ts:1});
 const rows = document.getElementById('mm-tbody').innerHTML.split('</tr>');
 const cell = s => rows.filter(x => x.includes(s))[0] || '';
+const a = cell('AAA'), b = cell('BBB');
 console.log(JSON.stringify({
-  a1:cell('AAA').includes('1H: 🟢 LONG +100% · 90%'),
-  a4:cell('AAA').includes('4H: 🟢 LONG +70% · 75%'),
-  b:cell('BBB').includes('🔴 SHORT -40% · 55%'),
-  bNo:cell('BBB').includes('4H: —'),
-  c:cell('CCC').includes('⚪ ней')}));
+  a1:a.includes('1H: 🟢 LONG'), a4:a.includes('4H: 🔴 SHORT'),
+  // ДВІ окремі комірки, а не одна з <br>
+  twoCells:(a.split('<td').length - 1) === 8 && !/1H.*<br>.*4H/.test(a),
+  // ⚠️ Числа МУСЯТЬ бути в підказці, тож шукаємо їх лише у ВИДИМОМУ тексті
+  // (title вирізаємо) — інакше тест забороняв би те, що ми свідомо лишили.
+  noPct:!a.replace(/title="[^"]*"/g, '').includes('+100%'),
+  tip:a.includes('очікуваний рух'),
+  neutral:b.includes('1H: ⚪ ней'), none:b.includes('4H: —')}));
 ''')
     import json
     d = json.loads(out)
-    _check(d['a1'] and d['a4'], f'формат прогнозу не збігається з бейджем: {d}')
-    _check(d['b'], f'SHORT-прогноз не показано: {d}')
-    _check(d['bNo'], '«немає прогнозу 4H» мусить бути видно окремо')
-    _check(d['c'], 'нейтральний прогноз не показано як «ней»')
-    # ⚠️ Той самий формат, що в бейджі чарту (перевіряємо, що бейдж не змінився).
-    _check("` · ${fc.confidence}%`" in _HTML or '· ${fc.confidence}%' in _HTML,
-           'формат бейджа прогнозу змінився — колонку треба вирівняти під нього')
-    print('✓ JS: 🔮 колонка прогнозу 1:1 з бейджем над графіком')
+    _check(d['a1'] and d['a4'], f'напрямок прогнозу не показано: {d}')
+    _check(d['twoCells'], f'прогноз має бути у ДВОХ окремих комірках: {d}')
+    _check(d['noPct'], f'у комірці лишились відсотки — просили лише напрямок: {d}')
+    _check(d['tip'], f'числа мусять лишитись у підказці: {d}')
+    _check(d['neutral'] and d['none'],
+           f'«ней» і «немає прогнозу» мусять читатись по-різному: {d}')
+    print('✓ JS: 🔮 дві колонки, лише напрямок, числа — у підказці')
 
-
-def test_decision_is_off_by_default_and_costs_nothing():
-    """⚠️ ЄДИНИЙ РОЗРАХУНОК таблиці (`compute_decision` = 2× `evaluate_entry`
-    на монету) — тож дефолт ВИМКНЕНО і жодного виклику при вимкненому тумблері."""
-    _check(_m.DEFAULT_SETTINGS['mm_monitor_decision'] is False,
-           'новий важкий показник не має вмикатись сам')
-    ff = _mk()
-    calls = []
-    ff._get_tm = lambda: types.SimpleNamespace(
-        compute_decision=lambda s, p: calls.append(s) or {'recommended': 'LONG'})
-    _cap(ff, BTCUSDT=0.5)
-    _check(not calls, f'вимкнена колонка все одно рахувала: {calls}')
-    st = ff.mm_monitor_state()
-    _check(st['decision_on'] is False, st)
-    _check(st['rows'][0]['decision'] is None, st['rows'][0])
-    print('✓ 🧠 Рішення: дефолт OFF і жодного розрахунку')
-
-
-def test_decision_uses_the_same_verdict_as_the_banner():
-    ff = _mk()
-    ff._settings['mm_monitor_decision'] = True
-    ff._get_tm = lambda: types.SimpleNamespace(
-        compute_decision=lambda s, p: {'recommended': 'LONG',
-                                       'headline': 'LONG 71%',
-                                       'verdict': 'good'})
-    _cap(ff, BTCUSDT=0.5)
-    d = ff.mm_monitor_state()['rows'][0]['decision']
-    _check(d == {'reco': 'LONG', 'headline': 'LONG 71%', 'verdict': 'good'}, d)
-    # ⚠️ Свого розрахунку вердикту тут немає — лише виклик TM.
-    _code = _fn_code('_mm_decisions')
-    _check('compute_decision' in _code and 'evaluate_entry' not in _code
-           and 'build_decision' not in _code,
-           'монітор рахує вердикт САМ — він розійдеться з банером')
-    print('✓ 🧠 Рішення: єдине джерело — compute_decision (як у банера)')
-
-
-def test_decision_refreshes_in_capped_batches():
-    """⚠️ 200 монет × 2 оцінки входу за такт поклали б двигун. Оновлюємо
-    НАЙСТАРІШІ порціями; решта віддається з кешу, а монета без вердикту чесно
-    показує «⏳»."""
-    ff = _mk()
-    ff._settings['mm_monitor_decision'] = True
-    calls = []
-
-    def _dec(sym, px):
-        calls.append(sym)
-        return {'recommended': 'LONG', 'headline': 'LONG 60%', 'verdict': 'good'}
-    ff._get_tm = lambda: types.SimpleNamespace(compute_decision=_dec)
-    n = _m.MM_DECISION_MAX_PER_TICK
-    pairs = {f'C{i:03d}USDT': 0.5 for i in range(n * 3)}
-    _cap(ff, **pairs)
-    _check(len(calls) == n, f'порція не обмежена: {len(calls)} при межі {n}')
-    got = len([r for r in ff.mm_monitor_state()['rows'] if r['decision']])
-    _check(got == n, f'вердиктів у таблиці {got}, мало бути {n}')
-    # Наступний такт бере НАСТУПНІ найстаріші, а не ті самі.
-    first = set(calls)
-    calls.clear()
-    _cap(ff, **pairs)
-    _check(len(calls) == n and not (set(calls) & first),
-           f'другий такт перерахував ті самі монети: {sorted(calls)[:3]}')
-    _check(len([r for r in ff.mm_monitor_state()['rows'] if r['decision']]) == 2 * n,
-           'таблиця не заповнюється такт за тактом')
-    print(f'✓ 🧠 Рішення: по {n} найстаріших за такт, решта — з кешу')
-
-
-def test_decision_cache_is_dropped_when_the_toggle_goes_off():
-    """Інакше після повторного вмикання таблиця показала б вердикти, яким
-    могло бути півдня — «заморожені» числа гірші за порожню комірку."""
-    ff = _mk()
-    ff._settings['mm_monitor_decision'] = True
-    ff._get_tm = lambda: types.SimpleNamespace(
-        compute_decision=lambda s, p: {'recommended': 'LONG', 'headline': 'L 60%',
-                                       'verdict': 'good'})
-    _cap(ff, BTCUSDT=0.5)
-    _check(ff._mm_decision, 'кеш не наповнився')
-    ff._settings['mm_monitor_decision'] = False
-    _cap(ff, BTCUSDT=0.5)
-    _check(not ff._mm_decision, 'старі вердикти лишились у кеші')
-    print('✓ 🧠 Рішення: вимкнення чистить кеш вердиктів')
-
-
-def test_js_decision_cell_tells_off_from_not_yet_computed():
-    """⚠️ Три різні стани — і кожен мусить говорити сам за себе: вимкнено /
-    ще рахується / є вердикт."""
-    out = _run_js(r'''
-const R = (s, dec) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50, delta:0,
-  grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
-  decision:dec, in_trade:false, in_queue:false, selectable:true});
-const rowsOf = () => document.getElementById('mm-tbody').innerHTML.split('</tr>');
-mmApplyState({rows:[R('AAAUSDT',null)], enabled:true, limited:false, ts:1,
-  decision_on:false, counts:{LONG:1,SHORT:0,flat:0}});
-const off = rowsOf().filter(x => x.includes('AAA'))[0];
-mmApplyState({rows:[R('AAAUSDT',null), R('BBBUSDT',{reco:'LONG',headline:'LONG 71%',verdict:'good'})],
-  enabled:true, limited:false, ts:2, decision_on:true, counts:{LONG:2,SHORT:0,flat:0}});
-const rs = rowsOf();
-console.log(JSON.stringify({
-  off:/вимкнено/.test(off) && !off.includes('⏳'),
-  pending:(rs.filter(x => x.includes('AAA'))[0]||'').includes('⏳'),
-  value:(rs.filter(x => x.includes('BBB'))[0]||'').includes('LONG 71%'),
-  word:(rs.filter(x => x.includes('BBB'))[0]||'').includes('СИЛЬНИЙ')}));
-''')
-    import json
-    d = json.loads(out)
-    _check(d['off'], f'вимкнена колонка не пояснює себе: {d}')
-    _check(d['pending'], f'«ще рахується» не відрізняється від «немає»: {d}')
-    _check(d['value'] and d['word'], f'вердикт не показано: {d}')
-    print('✓ JS: 🧠 три стани комірки — вимкнено / ⏳ / вердикт')
-
-
-def test_verdict_words_match_the_decision_banner():
-    """⚠️ ЗАМОК. Та сама оцінка не має називатись у таблиці інакше, ніж у
-    банері над графіком: усі мапи V_UA на сторінці мусять збігатися."""
-    import re as _re
-    # Беремо лише СЛОВЕСНІ мапи: поруч у файлі є ще й мапа КОЛЬОРІВ з тими
-    # самими ключами, і без цього звуження тест порівнював би різні речі.
-    maps = _re.findall(r"\{\s*good:\s*'([А-ЯІЇЄҐ]+)',\s*marginal:\s*'([А-ЯІЇЄҐ]+)',"
-                       r"\s*poor:\s*'([А-ЯІЇЄҐ]+)'\s*\}", _HTML)
-    _check(len(maps) >= 2, f'мап V_UA замало — перевірка втратила сенс: {maps}')
-    _check(len(set(maps)) == 1, f'написання вердикту розійшлось: {set(maps)}')
-    _check('_MM_V_UA' in _HTML, 'мапа монітора не знайдена')
-    print(f'✓ вердикт пишеться однаково в {len(maps)} місцях: {maps[0]}')
-
-
-def test_ui_has_the_decision_toggle_wired_both_ways():
-    _check('id="ff-mm-decision"' in _HTML, 'немає чекбокса колонки «Рішення»')
-    _check("mm_monitor_decision: _c('ff-mm-decision')" in _HTML,
-           'ключ не йде в збереження налаштувань')
-    _check("setIf('ff-mm-decision'" in _HTML,
-           'стан чекбокса не відновлюється із налаштувань')
-    print('✓ UI: тумблер колонки «🧠 Рішення» зберігається і відновлюється')
-
-
-# ═══════════ 14. 🧮 «СТАРИЙ МММ» У ТАБЛИЦЯХ ВІДКРИТИХ УГОД ═══════════════
 def test_snapshot_for_reads_and_computes_nothing():
     """⚠️ `/api/tm/state` опитується кожні 5с під ОДНИМ gunicorn-воркером.
     Саме через розрахунки на цьому ендпоінті колонку «МММ» колись і прибрали —
@@ -1643,6 +1522,367 @@ def test_delta_span_is_in_the_table_signature():
     sig = _HTML[i:i + 900]
     _check('r.delta_span' in sig, 'delta_span не входить у сигнатуру таблиці')
     print('✓ delta_span у сигнатурі — поява показника перемальовує рядок')
+
+
+
+# ═══ 16. 🎛 ФІЛЬТРИ: ПАМʼЯТЬ + ЧЕСНІ ЛІЧИЛЬНИКИ (скарга 15.09) ════════════
+def test_js_tab_counters_respect_the_strength_filter():
+    """🐞 СКАРГА ЗІ СКРІНА: стояло «Сила ≥ 50», на вкладках світилось
+    «🟢 LONG (36) · 🔴 SHORT (6)», а в таблиці — лічені рядки. Лічильник мусить
+    рахувати ТЕ САМЕ, що видно під ним.
+    ⚠️ Фільтр НАПРЯМКУ на лічильники НЕ впливає — інакше кожна необрана
+    вкладка завжди показувала б (0) і перемкнутись було б неможливо."""
+    out = _run_js(r'''
+const R = (s, mm, st) => ({symbol:s, mm:mm, strength:st, strength_prev:st, delta:0,
+  grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
+  delta_span:180, f1:null, f4:null, selectable:mm !== null});
+const rows = [R('A','LONG',80), R('B','LONG',20), R('C','SHORT',70),
+              R('D','SHORT',10), R('E',null,5)];
+const N = () => _tabs.map(t => t.querySelector().textContent);
+mmApplyState({rows:rows, enabled:true, limited:false, ts:1});
+const before = N();
+document.getElementById('mm-min-str').value = '50';
+mmRender();
+const after = N();
+const shown = (document.getElementById('mm-tbody').innerHTML.match(/<tr/g)||[]).length;
+console.log(JSON.stringify({before, after, shown}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['before'] == ['(5)', '(2)', '(2)', '(1)'],
+           f'без фільтра лічильники мусять бути повними: {d["before"]}')
+    _check(d['after'] == ['(2)', '(1)', '(1)', '(0)'],
+           f'із «Сила ≥ 50» лічильники не звузились: {d["after"]}')
+    _check(d['shown'] == 2,
+           f'кількість рядків мусить збігатися з лічильником «Всі»: {d}')
+    print('✓ JS: лічильники вкладок = те, що реально видно під ними')
+
+
+def test_js_filters_survive_a_page_reload():
+    """«Сила ≥ не запамʼятовується» — запамʼятовуємо ВСІ три UI-фільтри
+    (поріг сили, вкладка напрямку, сортування) у localStorage."""
+    out = _run_js(r'''
+mmApplyState({rows:[], enabled:true, limited:false, ts:1});
+document.getElementById('mm-min-str').value = '35';
+mmMinStrChanged();
+mmSetDir('SHORT');
+mmSort('price');
+const saved = JSON.parse(_LS[_MM_UI_KEY] || 'null');
+// Імітуємо перезавантаження: скидаємо стан у дефолти і читаємо збережене.
+_mmDir = 'all'; _mmSort = {col:'strength', dir:-1};
+document.getElementById('mm-min-str').value = '0';
+_mmLoadUi();
+console.log(JSON.stringify({saved, dir:_mmDir, sort:_mmSort,
+  minStr:document.getElementById('mm-min-str').value}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['saved'] and d['saved']['minStr'] == 35,
+           f'поріг сили не збережено: {d["saved"]}')
+    _check(str(d['minStr']) == '35', f'поріг не відновлено: {d}')
+    _check(d['dir'] == 'SHORT', f'вкладку напрямку не відновлено: {d}')
+    _check(d['sort']['col'] == 'price', f'сортування не відновлено: {d}')
+    print('✓ JS: поріг сили, вкладка і сортування переживають перезавантаження')
+
+
+def test_ui_table_is_striped_so_rows_do_not_blend():
+    i = _HTML.index('id="mm-table"')
+    blk = _HTML[max(0, i - 900):i]
+    _check('#mm-table tbody tr:nth-child(even)' in blk,
+           'немає зебри — рядки зливаються (скарга 15.09)')
+    _check('#mm-table tbody tr:hover' in blk, 'немає підсвітки рядка під курсором')
+    print('✓ UI: таблиця монітора — зебра + підсвітка рядка')
+
+
+def test_js_price_cell_is_a_single_line():
+    """Вимога 15.09: «Колонку Ціна пиши в один рядок»."""
+    out = _run_js(r'''
+mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:50, strength_prev:50,
+  delta:0, grow_since:null, price:1.5, price_dir:'up', price_chg:0.42,
+  price_span:900, delta_span:180, f1:null, f4:null, selectable:true}],
+  enabled:true, limited:false, ts:1});
+const h = document.getElementById('mm-tbody').innerHTML;
+const cell = h.split('<td')[6] || '';
+console.log(JSON.stringify({br:cell.includes('<br>'), px:cell.includes('1.5'),
+  arrow:cell.includes('▲'), pct:cell.includes('+0.42%'),
+  win:cell.replace(/title="[^"]*"/g, '').includes('15хв')}));
+''')
+    import json
+    d = json.loads(out)
+    _check(not d['br'], f'ціна досі у два рядки: {d}')
+    _check(d['px'] and d['arrow'] and d['pct'], f'ціна/напрямок/рух: {d}')
+    _check(not d['win'], 'вікно спостереження мусить піти в підказку, не в рядок')
+    print('✓ JS: колонка «Ціна» — один рядок (вікно — у підказці)')
+
+
+# ═══ 17. 🟪 НОВИЙ VOB → АВТО-ВІДКРИТТЯ (вимога 15.09) ════════════════════
+def _vob(ff, **per_symbol):
+    """Підмінити детектор VOB: {'AAAUSDT': {'LONG': ft}} — який блок і в який
+    бік «бачить» бот. Заразом рахуємо виклики (порції/кандидати)."""
+    ff.vob_calls = []
+
+    def _f(sym, side, tf):
+        ff.vob_calls.append((sym, side, tf))
+        ft = (per_symbol.get(sym) or {}).get(side)
+        return None if ft is None else {'formation_time': ft, 'breaker': False}
+    ff._funding_vob = _f
+
+
+def test_new_vob_in_the_mm_direction_opens_a_trade():
+    """Вимога дослівно: «автоматичне відкриття угоди, коли зʼявляється саме
+    НОВИЙ VOB по монеті… VOB має співпадати з напрямком монети»."""
+    _install_log()
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True, 'mm_vob_tf': '5m'})
+    _vob(ff, AAAUSDT={'LONG': 1000})
+    _cap(ff, AAAUSDT=0.40)                   # перший показ — ТИХА БАЗА
+    _check(not ff.opened, f'перший показ не має відкривати: {ff.opened}')
+    _cap(ff, AAAUSDT=0.45)
+    _cap(ff, AAAUSDT=0.50)                   # сила РОСТЕ (друга умова входу)
+    _check(ff._mm_grow_since.get('AAAUSDT'), 'фікстура не дала росту сили')
+    _vob(ff, AAAUSDT={'LONG': 2000})         # НОВИЙ блок
+    _cap(ff, AAAUSDT=0.55)
+    _check(len(ff.opened) == 1 and ff.opened[0]['side'] == 'LONG', ff.opened)
+    _check(ff.vob_calls and ff.vob_calls[0][2] == '5m',
+           f'TF мусить братись із налаштування: {ff.vob_calls}')
+    _check(any('Volumized OB' in (x['detail'] or '') for x in _LOGGED),
+           f'подія не пояснена в 🧾 Лозі: {_LOGGED}')
+    print('✓ 🟪 новий VOD у бік МММ → угода відкрита')
+
+
+def test_first_sight_is_a_silent_baseline():
+    """⚠️ Після рестарту (а `botupdate` роблять часто) перший знайдений блок
+    виглядав би «новим». Відкрити по ньому означало б торгувати блоком, якому
+    може бути півдня — той самий урок, що у VOB-алерті."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'LONG': 999})
+    _cap(ff, AAAUSDT=0.5)
+    _cap(ff, AAAUSDT=0.5)                    # той самий блок — не новий
+    _check(not ff.opened, f'той самий блок відкрив угоду: {ff.opened}')
+    print('✓ 🟪 перший показ — тиха база, той самий блок не відкриває')
+
+
+def test_vob_against_the_mm_direction_is_ignored():
+    """«VOB має співпадати з напрямком» — блок протилежного боку не береться
+    ВЗАГАЛІ: детектор питається саме про бік МММ."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'SHORT': 1000})        # є лише ВЕДМЕЖИЙ блок
+    _cap(ff, AAAUSDT=0.5)                    # а МММ каже LONG
+    _vob(ff, AAAUSDT={'SHORT': 2000})
+    _cap(ff, AAAUSDT=0.5)
+    _check(not ff.opened, f'відкрили проти напрямку МММ: {ff.opened}')
+    _check(all(c[1] == 'LONG' for c in ff.vob_calls),
+           f'детектор питали не в бік МММ: {ff.vob_calls}')
+    print('✓ 🟪 блок проти напрямку МММ ігнорується')
+
+
+def test_flat_and_in_trade_coins_are_not_candidates():
+    """Кандидати — РІВНО ті монети, що видно в таблиці: ⚖ рівновага відкривати
+    нічого не може, а монета в угоді в таблиці й не показується."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    ff._fuel_managed = {'BBBUSDT': {}}
+    _vob(ff, AAAUSDT={'LONG': 1}, BBBUSDT={'LONG': 1}, CCCUSDT={'LONG': 1})
+    _cap(ff, AAAUSDT=0.5, BBBUSDT=0.5, CCCUSDT=0.02)   # CCC — рівновага
+    asked = {c[0] for c in ff.vob_calls}
+    _check(asked == {'AAAUSDT'}, f'кандидати відібрані невірно: {asked}')
+    print('✓ 🟪 кандидати = рядки таблиці (без ⚖ і без монет в угоді)')
+
+
+def test_vob_check_is_capped_per_tick():
+    """⚠️ ЄДИНЕ місце монітора з мережею (200 свічок на монету). Без порції
+    повний watchlist дав би сотні запитів за такт."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    n = _m.MM_VOB_MAX_PER_TICK
+    pairs = {f'C{i:03d}USDT': 0.5 for i in range(n * 2)}
+    _vob(ff, **{k: {'LONG': 1} for k in pairs})
+    _cap(ff, **pairs)
+    _check(len(ff.vob_calls) == n, f'порція не обмежена: {len(ff.vob_calls)}')
+    first = {c[0] for c in ff.vob_calls}
+    _vob(ff, **{k: {'LONG': 1} for k in pairs})
+    _cap(ff, **pairs)
+    _check(not ({c[0] for c in ff.vob_calls} & first),
+           'другий такт перевіряє ТІ САМІ монети — черга не рухається')
+    print(f'✓ 🟪 не більше {n} монет за такт, черга рухається')
+
+
+def test_toggle_off_means_no_network_at_all():
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': False})
+    _vob(ff, AAAUSDT={'LONG': 1})
+    _cap(ff, AAAUSDT=0.5)
+    _check(not ff.vob_calls, f'вимкнений тумблер усе одно ходив по свічки: {ff.vob_calls}')
+    _check(_m.DEFAULT_SETTINGS['mm_vob_open'] is True, 'дефолт мав бути УВІМК')
+    _check(_m.DEFAULT_SETTINGS['mm_vob_tf'] == '5m', 'дефолтний TF мав бути 5m')
+    print('✓ 🟪 тумблер OFF → жодного запиту; дефолти: УВІМК · 5m')
+
+
+def test_monitor_toggle_off_stops_vob_opening_too():
+    """Вимкнений монітор = таблиці немає. Відкривати по невидимому списку не
+    можна, хоча знімок для колонки в угодах лишається."""
+    ff = _mk(mon=False)
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    ff._fuel_managed = {'AAAUSDT': {}}
+    _vob(ff, AAAUSDT={'LONG': 1})
+    _cap(ff, AAAUSDT=0.5)
+    _check(not ff.vob_calls and not ff.opened,
+           f'вимкнений монітор усе одно торгував: {ff.vob_calls}')
+    print('✓ 🟪 вимкнений монітор не відкриває по VOB')
+
+
+def test_vob_open_goes_through_the_same_gates():
+    """⚠️ `by_hand` НЕ ставимо: рішення АВТОМАТИЧНЕ, тож «нова ситуація» і
+    решта воріт `_open` (у т.ч. 🚦 головні кнопки напрямку) мусять діяти."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'LONG': 1})
+    _cap(ff, AAAUSDT=0.40)
+    _cap(ff, AAAUSDT=0.45)
+    _cap(ff, AAAUSDT=0.50)                   # сила росте
+    _vob(ff, AAAUSDT={'LONG': 2})
+    _cap(ff, AAAUSDT=0.55)
+    kw = ff.opened[0]['kw']
+    _check(not kw.get('by_hand'), f'авто-відкриття не має бути «ручним»: {kw}')
+    _check(not kw.get('skip_safeguard') and not kw.get('skip_ctr_safeguard'),
+           f'авто-шлях не має пропускати запобіжники: {kw}')
+    _check('MMM' in str(kw.get('opened_by')) and 'vob' in str(kw.get('opened_by')),
+           f'мітка мусить називати і сигнал, і двигун: {kw.get("opened_by")}')
+    print(f'✓ 🟪 мітка {kw.get("opened_by")!r}, ворота `_open` не обходяться')
+
+
+# ═══ 18. 📈 ВХІД ЧЕКАЄ НА РІСТ СИЛИ + ⏳ ВІЗУАЛІЗАЦІЯ (вимога 15.09) ══════
+def _grow(ff, sym='AAAUSDT'):
+    """Три такти зі зростанням — щоб `_mm_grow_since` реально зайнявся."""
+    _cap(ff, **{sym: 0.40})
+    _cap(ff, **{sym: 0.45})
+    _cap(ff, **{sym: 0.50})
+
+
+def test_new_vob_waits_until_strength_is_growing():
+    """Вимога дослівно: «при відкритті угоди потрібно відслідковувати, щоб
+    "Сила росте" — росла, інакше потрібно дочекатися саме цього стану»."""
+    _install_log()
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'LONG': 1000})
+    _cap(ff, AAAUSDT=0.50)                   # база
+    _cap(ff, AAAUSDT=0.50)
+    _cap(ff, AAAUSDT=0.50)                   # плато → сила НЕ росте
+    _check(not ff._mm_grow_since.get('AAAUSDT'), 'фікстура: росту бути не мало')
+    _vob(ff, AAAUSDT={'LONG': 2000})         # новий блок, але росту немає
+    _cap(ff, AAAUSDT=0.50)
+    _check(not ff.opened, f'відкрили без росту сили: {ff.opened}')
+    row = ff.mm_monitor_state()['rows'][0]
+    _check(row['vob_wait'] and row['vob_wait']['side'] == 'LONG',
+           f'причина затримки не віддається в рядок: {row.get("vob_wait")}')
+    _check(any('НЕ росте' in (x['detail'] or '') for x in _LOGGED),
+           f'причина затримки не пояснена в 🧾 Лозі: {_LOGGED}')
+    print('✓ 📈 новий VOB без росту сили → чекаємо, причина названа')
+
+
+def test_the_waiting_block_is_not_spent_and_fires_on_growth():
+    """⚠️ НАЙВАЖЛИВІШЕ: блок НЕ «витрачається» під час очікування. Інакше
+    «дочекатися стану» перетворилось би на «пропустити сигнал»."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'LONG': 1000})
+    for _ in range(3):
+        _cap(ff, AAAUSDT=0.50)               # база + плато
+    _vob(ff, AAAUSDT={'LONG': 2000})
+    _cap(ff, AAAUSDT=0.50)                   # чекаємо
+    _cap(ff, AAAUSDT=0.50)                   # усе ще чекаємо
+    _check(not ff.opened, ff.opened)
+    # Сила пішла вгору — ТОЙ САМИЙ блок мусить відкрити угоду.
+    _cap(ff, AAAUSDT=0.62)
+    _check(len(ff.opened) == 1 and ff.opened[0]['side'] == 'LONG',
+           f'блок загубився під час очікування: {ff.opened}')
+    _check(not ff.mm_monitor_state()['rows'][0]['vob_wait'],
+           'позначку очікування не знято після відкриття')
+    print('✓ 📈 блок чекає, не витрачається, і відкриває угоду на рості')
+
+
+def test_waiting_state_is_logged_once_not_every_tick():
+    """Такт 30с — незмінна причина не має щоразу писатись у 🧾 Лог."""
+    _install_log()
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'LONG': 1000})
+    for _ in range(3):
+        _cap(ff, AAAUSDT=0.50)
+    _vob(ff, AAAUSDT={'LONG': 2000})
+    for _ in range(4):
+        _cap(ff, AAAUSDT=0.50)
+    n = len([x for x in _LOGGED if 'НЕ росте' in (x['detail'] or '')])
+    _check(n == 1, f'причина очікування написана {n} разів замість одного')
+    print('✓ 📈 причина очікування пишеться ОДИН раз, без флуду')
+
+
+def test_waiting_coins_are_checked_first():
+    """⚠️ У монети, що чекає, блок УЖЕ готовий — кожен пропущений такт це
+    прямо відкладена угода. Тому вона стоїть попереду загальної черги порцій."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    n = _m.MM_VOB_MAX_PER_TICK
+    pairs = {f'C{i:03d}USDT': 0.50 for i in range(n * 3)}
+    _vob(ff, **{k: {'LONG': 1} for k in pairs})
+    for _ in range(3):
+        _cap(ff, **pairs)                     # бази + плато
+    # Одній монеті даємо НОВИЙ блок — вона стане в очікування росту.
+    _vob(ff, **{k: {'LONG': (2 if k == 'C000USDT' else 1)} for k in pairs})
+    while 'C000USDT' not in ff._mm_vob_pending:
+        _cap(ff, **pairs)
+    _vob(ff, **{k: {'LONG': (2 if k == 'C000USDT' else 1)} for k in pairs})
+    _cap(ff, **pairs)
+    _check(ff.vob_calls and ff.vob_calls[0][0] == 'C000USDT',
+           f'монета в очікуванні мусить перевірятись першою: {ff.vob_calls[:3]}')
+    print('✓ 📈 монети в очікуванні росту перевіряються першими')
+
+
+def test_js_shows_why_the_entry_is_delayed():
+    """Візуалізація: поруч із назвою монети — ⏳ з живим таймером і повним
+    поясненням у підказці."""
+    out = _run_js(r'''
+const R = (s, w) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50, delta:0,
+  grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
+  delta_span:180, f1:null, f4:null, vob_wait:w, selectable:true});
+mmApplyState({rows:[R('AAAUSDT', {side:'LONG', ft:2000, since:1700000000}),
+                    R('BBBUSDT', null)],
+  enabled:true, limited:false, ts:1});
+const rows = document.getElementById('mm-tbody').innerHTML.split('</tr>');
+const cell = s => rows.filter(x => x.includes(s))[0] || '';
+const a = cell('AAA'), b = cell('BBB');
+console.log(JSON.stringify({
+  badge:a.includes('⏳'), timer:a.includes('ff-timer'),
+  why:/сила МММ зараз НЕ росте/.test(a),
+  inSymbolCell:a.split('<td')[2].includes('⏳'),
+  clean:!b.includes('⏳')}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['badge'] and d['why'], f'причину затримки не видно: {d}')
+    _check(d['timer'], 'скільки вже чекаємо — має бути видно (живий таймер)')
+    _check(d['inSymbolCell'], 'значок мусить стояти біля назви монети')
+    _check(d['clean'], 'монета без очікування не має нічого показувати')
+    print('✓ JS: ⏳ біля назви монети + таймер + пояснення в підказці')
+
+
+def test_ui_has_the_vob_controls_wired_both_ways():
+    _check('id="ff-mm-vob-open"' in _HTML, 'немає тумблера VOB→угода')
+    _check('id="ff-mm-vob-tf"' in _HTML, 'немає вибору TF')
+    for key in ('mm_vob_open', 'mm_vob_tf'):
+        _check(f'{key}:' in _HTML, f'{key} не йде у збереження налаштувань')
+        _check(f's.{key}' in _HTML, f'{key} не відновлюється з налаштувань')
+    # Випадайка мусить пропонувати лише ті TF, які приймає бекенд.
+    i = _HTML.index('id="ff-mm-vob-tf"')
+    blk = _HTML[i:_HTML.index('</select>', i)]
+    import re as _re
+    opts = set(_re.findall(r'value="([^"]+)"', blk))
+    _check(opts <= set(_m.MM_VOB_TFS),
+           f'у списку є TF, якого бекенд не приймає: {opts - set(_m.MM_VOB_TFS)}')
+    print(f'✓ UI: 🟪 тумблер + TF ({len(opts)} варіантів) збережені й відновлені')
 
 
 if __name__ == '__main__':
