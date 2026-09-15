@@ -3655,6 +3655,26 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/mm-monitor/open', methods=['POST'])
+    def api_fuel_filter_mm_group_open():
+        """✋ ГРУПОВЕ відкриття обраних монет 🧮 МММ-монітора.
+        Body: {"symbols": ["BTCUSDT", ...]}. Напрямок КОЖНОЇ монети — її власний
+        живий МММ (те саме, що показано в рядку). Ворота черг пропускаються —
+        рішення ухвалює людина; 🚦 головні кнопки напрямку і запобіжники `_open`
+        лишаються. Відповідь несе результат ПО КОЖНІЙ монеті окремо."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            symbols = data.get('symbols') or []
+            if not isinstance(symbols, list):
+                return jsonify({'ok': False, 'reason': 'symbols must be a list'})
+            return jsonify(ff.group_open(symbols))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/queue4/clear', methods=['POST'])
     def api_fuel_filter_queue4_clear():
         """Clear Queue 4 «🎯 Усі шари» entirely."""

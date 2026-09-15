@@ -110,6 +110,7 @@
   var ENGINE_BADGES_JS = {
     "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4",
     "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап",
+    "MMM": "🧮 МММ-монітор",
     "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий"
   };
   var SIGNAL_ICON_JS = {
@@ -117,7 +118,8 @@
     "ob_alert": "🆕",
     "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋",
     "manual_ui": "✋", "manual_ui_overflow": "✋",
-    "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥"
+    "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥",
+    "MMM": "🧮"
   };
   function signalCodeOf(raw) {
     if (!raw) return "";

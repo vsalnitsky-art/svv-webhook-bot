@@ -2793,6 +2793,59 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             </div>
 
+            <!-- 🧮 МММ-МОНІТОР: живий напрямок МММ по монетах + групове ✋ відкриття.
+                 ⚠️ Це МОНІТОР, а не черга: рядки НЕ чекають сигналу і двигун їх
+                 сам не відкриває. Джерело чисел — ТОЙ САМИЙ знімок двигуна, що
+                 живить колонку «МММ» у чергах (одне джерело правди). -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
+                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mm')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mm-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🧮 МММ-монітор <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— живий напрямок МММ по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
+                <div style="display:flex;align-items:center;gap:10px">
+                    <span id="mm-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
+                </div>
+            </div>
+            <div id="mm-body">
+                <!-- Режим економії: МММ рахується НЕ по всьому watchlist. Мовчати
+                     про це не можна — коротка таблиця читалась би як «бот сліпий». -->
+                <div id="mm-limited-hint" style="display:none;margin:0 0 8px;padding:7px 11px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:0.7rem;font-weight:600"></div>
+                <div style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
+                    <span style="color:#8b93a7">Показати:</span>
+                    <button type="button" data-mmdir="all" onclick="mmSetDir('all')" class="ff-qdir-btn">Всі <span class="mm-dir-n"></span></button>
+                    <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span></button>
+                    <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span></button>
+                    <button type="button" data-mmdir="flat" onclick="mmSetDir('flat')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span></button>
+                    <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Показувати лише монети, де сила МММ не нижча за поріг. Слабкий тиск (≤10%) напрямку фактично не має.">
+                        Сила ≥ <input type="number" id="mm-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" onchange="mmRender()"> %
+                    </label>
+                </div>
+                <!-- Панель групової дії. Кнопка НЕАКТИВНА, поки нічого не обрано —
+                     активний контрол, який нічого не робить, вводить в оману. -->
+                <div style="display:flex;align-items:center;gap:8px;margin:0 0 8px;flex-wrap:wrap">
+                    <span id="mm-sel-count" style="font-size:0.7rem;color:#8b93a7;font-family:monospace">Обрано 0</span>
+                    <button type="button" id="mm-open-btn" onclick="mmOpenSelected()" disabled
+                            style="font-size:0.68rem;padding:4px 12px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#4ade80;cursor:pointer;font-weight:700"
+                            title="✋ Відкрити УСІ обрані монети одразу. Напрямок кожної = її власний МММ (те, що в рядку). Ворота черг пропускаються — рішення ухвалює людина; 🚦 головні кнопки напрямку і запобіжники відкриття (ціна/розмір) лишаються.">✋ Відкрити обрані</button>
+                    <button type="button" onclick="mmClearSel()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid #3a3f4b;background:transparent;color:#8b93a7;cursor:pointer">Зняти вибір</button>
+                    <span id="mm-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
+                </div>
+                <div class="ff-timers-scroll">
+                    <table class="tm-table" id="mm-table">
+                        <thead>
+                            <tr>
+                                <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mm-check-all" onchange="mmToggleAll(this.checked)"></th>
+                                <th>Символ</th>
+                                <th title="Напрямок тиску МММ (той самий показник, що в колонці «МММ» черг).">МММ</th>
+                                <th title="Сила тиску 0–100% + тренд від попереднього такту (↑ міцніє / ↓ слабшає).">Сила</th>
+                                <th title="Ціна зі знімка МММ.">Ціна</th>
+                                <th title="Чи монета вже в угоді або стоїть у якійсь черзі.">Стан</th>
+                            </tr>
+                        </thead>
+                        <tbody id="mm-tbody">
+                            <tr><td colspan="6" class="tm-empty-msg">Немає даних МММ</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
             <!-- ❤️ FF base: intercepted coins waiting for ₿ START + fuel -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
                 <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="toggleQueuePanel('q1')" title="Клік — згорнути/розгорнути цю чергу"><span id="q1-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> ❤️ Черга на вхід <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети, перехоплені з ЛОНГ/ШОРТ; чекають ₿ START + МММ у напрямку</span></div>
@@ -4914,7 +4967,7 @@ function togglePanel(pid) {
     // ⚡ C2: важкі секції (Черга-4, 💰 Funding) сервер рахує ЛИШЕ на запит. Поки
     // гармошка була згорнута, ми їх не просили — тож на РОЗГОРТАННІ тягнемо
     // стан одразу, а не чекаємо до 30с наступного полла.
-    if (open && (pid === 'q4' || pid === 'fund')) {
+    if (open && (pid === 'q4' || pid === 'fund' || pid === 'mm')) {
         try { loadFuelFilterStatus(); } catch (e) {}
     }
 }
@@ -4927,7 +4980,7 @@ function _qCollapsed(qid) {
 }
 // Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
 // 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
-const _PANEL_IDS = ['levels', 'autosl', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
+const _PANEL_IDS = ['levels', 'autosl', 'mm', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
 (() => {
     _PANEL_IDS.forEach(pid => {
         try {
@@ -11214,6 +11267,232 @@ async function clearTradeArchive() {
 // ========== Fuel Auto-Filter ==========
 let _ffActiveSymbols = [];
 
+// ═══════════════════════════════════════════════════════════════════════
+// 🧮 МММ-МОНІТОР — жива таблиця напрямків МММ + групове ✋ відкриття.
+//
+// ⚠️ ЦЕ МОНІТОР, А НЕ ЧЕРГА. Рядки нічого не «чекають», двигун їх сам не
+// відкриває, TTL їх не виселяє. Числа приходять ГОТОВИМИ зі знімка двигуна
+// (`mm_monitor`) — фронт нічого не рахує (той самий принцип, що з шарами
+// Черги-4: «двигун рахує, UI читає»).
+// ⚠️ ВИБІР ЖИВЕ ПОЗА DOM (`_mmSel`). Таблиця перемальовується на кожному
+// поллі (10с), тож якби галочки трималися лише в розмітці, їх стирало б
+// просто під час вибору — і групове відкриття було б неможливим.
+// ═══════════════════════════════════════════════════════════════════════
+let _mmRows = [];              // останній знімок рядків із сервера
+let _mmMeta = { limited: true, ts: 0, counts: {} };
+let _mmSel = new Set();        // обрані символи (переживають перемальовку)
+let _mmDir = 'all';            // фільтр показу: all | LONG | SHORT | flat
+// Локальний escape: глобального `esc` на сторінці НЕМАЄ (той, що є, — локальна
+// константа всередині рендера логу), тож покладатись на нього не можна.
+const _mmEsc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+
+function mmSetDir(d) {
+    _mmDir = d;
+    mmRender();
+}
+function mmClearSel() {
+    _mmSel.clear();
+    mmRender();
+}
+// Рядки, які зараз ВИДНО (після фільтрів напрямку і сили).
+function _mmVisibleRows() {
+    const minStr = Math.max(0, Math.min(100,
+        parseFloat((document.getElementById('mm-min-str') || {}).value) || 0));
+    return _mmRows.filter(r => {
+        if (_mmDir === 'LONG' && r.mm !== 'LONG') return false;
+        if (_mmDir === 'SHORT' && r.mm !== 'SHORT') return false;
+        if (_mmDir === 'flat' && (r.mm === 'LONG' || r.mm === 'SHORT')) return false;
+        return (r.strength || 0) >= minStr;
+    });
+}
+function mmToggleAll(on) {
+    // «Обрати всі» стосується ЛИШЕ видимих і придатних рядків — інакше клік
+    // тихо обрав би монети, яких на екрані немає.
+    _mmVisibleRows().forEach(r => {
+        if (!r.selectable) return;
+        if (on) _mmSel.add(r.symbol); else _mmSel.delete(r.symbol);
+    });
+    mmRender();
+}
+function mmRowToggle(sym, on) {
+    if (on) _mmSel.add(sym); else _mmSel.delete(sym);
+    _mmSyncSelUI();
+}
+// Лічильник + активність кнопки. Кнопка, що нічого не зробить, мусить бути
+// вимкнена — активний контрол без дії вводить в оману.
+function _mmSyncSelUI() {
+    const n = _mmSel.size;
+    const c = document.getElementById('mm-sel-count');
+    if (c) c.textContent = `Обрано ${n}`;
+    const b = document.getElementById('mm-open-btn');
+    if (b) {
+        b.disabled = (n === 0);
+        b.style.opacity = n ? '1' : '0.45';
+        b.style.cursor = n ? 'pointer' : 'not-allowed';
+    }
+}
+function mmRender() {
+    const tb = document.getElementById('mm-tbody');
+    if (!tb) return;
+    // Обрані монети, яких уже немає в знімку (відкрились / зникли) — прибираємо,
+    // щоб кнопка не обіцяла відкрити те, чого в таблиці вже нема.
+    const live = new Set(_mmRows.map(r => r.symbol));
+    Array.from(_mmSel).forEach(s => { if (!live.has(s)) _mmSel.delete(s); });
+    // Лічильники вкладок — по ПОВНОМУ знімку (фільтр сили їх не звужує).
+    const cnt = _mmMeta.counts || {};
+    // Вигляд вкладок — ТОЧНО той самий, що у вкладок напрямку Черги-1/2 (вони
+    // теж стилізуються інлайном у JS, а не класом), щоб сторінка лишалась
+    // однорідною.
+    document.querySelectorAll('#mm-body [data-mmdir]').forEach(btn => {
+        const d = btn.dataset.mmdir;
+        const n = d === 'all' ? _mmRows.length
+            : (d === 'flat' ? (cnt.flat || 0) : (cnt[d] || 0));
+        const el = btn.querySelector('.mm-dir-n');
+        if (el) el.textContent = `(${n})`;
+        const on = (d === _mmDir);
+        btn.style.cssText = 'cursor:pointer;padding:3px 10px;border-radius:11px;'
+            + 'font-size:0.68rem;font-weight:700;'
+            + 'border:1px solid ' + (on ? '#ffffff55' : '#ffffff18') + ';'
+            + 'background:' + (on ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.03)') + ';'
+            + 'color:' + (on ? '#e5e7eb' : '#9aa3b5') + ';';
+    });
+    const rows = _mmVisibleRows();
+    // Сигнатура: нічого не змінилось → DOM не чіпаємо (той самий прийом, що в
+    // таблиці Черги-4 — інакше рядки «стрибають» під курсором).
+    const sig = _mmDir + '|' + rows.map(r => [r.symbol, r.mm, r.strength,
+        r.strength_prev, r.in_trade ? 1 : 0, r.in_queue ? 1 : 0,
+        _mmSel.has(r.symbol) ? 1 : 0].join(':')).join(',');
+    if (tb.dataset.sig !== sig) {
+        tb.dataset.sig = sig;
+        if (!rows.length) {
+            tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">'
+                + (_mmRows.length ? 'Немає монет під цей фільтр' : 'Немає даних МММ')
+                + '</td></tr>';
+        } else {
+            tb.innerHTML = rows.map(r => {
+                const sel = _mmSel.has(r.symbol);
+                const _s = _mmEsc(r.symbol);
+                const cb = r.selectable
+                    ? `<input type="checkbox" ${sel ? 'checked' : ''} onchange="mmRowToggle('${_s}', this.checked)">`
+                    : `<input type="checkbox" disabled title="${r.in_trade ? 'монета вже в угоді' : 'МММ без напрямку — відкривати нічого'}">`;
+                let state = '<span style="color:#6b7280">—</span>';
+                if (r.in_trade) state = '<span style="color:#38bdf8">в угоді</span>';
+                else if (r.in_queue) state = '<span style="color:#fbbf24">у черзі</span>';
+                return `<tr${sel ? ' style="background:rgba(56,189,248,0.07)"' : ''}>`
+                    + `<td>${cb}</td>`
+                    + `<td style="font-weight:700">${_s}</td>`
+                    + `<td>${ffFuelCell(r.mm, r.strength, r.strength_prev)}</td>`
+                    + `<td style="font-family:monospace;text-align:right">${Math.round(r.strength || 0)}%</td>`
+                    + `<td style="font-family:monospace;text-align:right">${r.price ? fmtPriceJS(r.price) : '—'}</td>`
+                    + `<td style="font-size:0.68rem">${state}</td>`
+                    + `</tr>`;
+            }).join('');
+        }
+        const all = document.getElementById('mm-check-all');
+        if (all) {
+            const selectable = rows.filter(r => r.selectable);
+            all.checked = selectable.length > 0
+                && selectable.every(r => _mmSel.has(r.symbol));
+        }
+    }
+    _mmSyncSelUI();
+}
+// Дані з `/api/fuel-filter/state` (секція 'mm'). Викликається лише коли сервер
+// РЕАЛЬНО віддав секцію — див. `served.mm`.
+function mmApplyState(mm) {
+    _mmRows = (mm && Array.isArray(mm.rows)) ? mm.rows : [];
+    _mmMeta = { limited: !!(mm && mm.limited), ts: (mm && mm.ts) || 0,
+                counts: (mm && mm.counts) || {} };
+    const up = document.getElementById('mm-updated');
+    if (up) {
+        up.textContent = _mmMeta.ts
+            ? `${_mmRows.length} монет · оновлено ${new Date(_mmMeta.ts * 1000).toLocaleTimeString()}`
+            : 'ще немає знімка';
+    }
+    // ⚠️ Режим економії НАЗИВАЄМО вголос: інакше коротка таблиця виглядала б як
+    // «бот не бачить монет», хоча це свідоме налаштування.
+    const hint = document.getElementById('mm-limited-hint');
+    if (hint) {
+        if (_mmMeta.limited) {
+            hint.style.display = 'block';
+            hint.innerHTML = '⚠️ Режим економії: МММ рахується НЕ по всьому '
+                + 'WATCHLIST, а лише по монетах «у роботі» (₿ · відкриті угоди · '
+                + 'черги 1-4 · фандинг · додані вручну). Щоб бачити ВЕСЬ список — '
+                + 'зніміть тумблер «🧮 Обмежений МММ (тільки «в роботі»)» у '
+                + 'налаштуваннях Fuel Filter. '
+                + '<button type="button" onclick="mmDisableLimited()" '
+                + 'style="margin-left:6px;font-size:0.66rem;padding:2px 8px;'
+                + 'border-radius:5px;border:1px solid rgba(245,158,11,0.5);'
+                + 'background:rgba(245,158,11,0.12);color:#fbbf24;cursor:pointer;'
+                + 'font-weight:700">Рахувати весь WATCHLIST</button>';
+        } else {
+            hint.style.display = 'none';
+        }
+    }
+    mmRender();
+}
+// Перемкнути «🧮 Обмежений МММ» просто з монітора. ⚠️ Чіпаємо ТОЙ САМИЙ
+// чекбокс налаштувань і зберігаємо звичайним `saveFuelFilterSettings()` —
+// другого шляху запису цього ключа не заводимо (інакше два місця розійдуться).
+function mmDisableLimited() {
+    const cb = document.getElementById('ff-mmm-limited');
+    if (!cb) {
+        alert('Тумблер «🧮 Обмежений МММ» не знайдено на сторінці');
+        return;
+    }
+    cb.checked = false;
+    try { saveFuelFilterSettings(); } catch (e) { alert('Не збереглось: ' + e); }
+    const hint = document.getElementById('mm-limited-hint');
+    if (hint) hint.innerHTML = '⏳ Повний режим увімкнено — весь WATCHLIST '
+        + 'зʼявиться протягом 1-2 тактів МММ (до ~60с).';
+}
+
+async function mmOpenSelected() {
+    const syms = Array.from(_mmSel);
+    if (!syms.length) return;
+    const btn = document.getElementById('mm-open-btn');
+    const out = document.getElementById('mm-open-result');
+    if (!confirm(`✋ Відкрити ${syms.length} угод(и) за живим МММ?\n\n`
+        + syms.join(', ')
+        + '\n\nНапрямок кожної = її МММ. Ворота черг пропускаються.')) return;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ відкриваю…'; }
+    if (out) { out.style.color = '#8b93a7'; out.textContent = ''; }
+    try {
+        const r = await fetch('/api/fuel-filter/mm-monitor/open', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbols: syms })
+        });
+        // ⚠️ HTTP-статус перевіряємо ОКРЕМО: без цього 404/500 виглядав би як
+        // «відкрито» (той самий урок, що з `submitManualTp1`).
+        if (!r.ok) {
+            if (out) { out.style.color = '#f87171'; out.textContent = `сервер відповів ${r.status}`; }
+            return;
+        }
+        const d = await r.json();
+        if (!d.ok && d.reason) {
+            if (out) { out.style.color = '#f87171'; out.textContent = d.reason; }
+            return;
+        }
+        // Результат ПО КОЖНІЙ монеті — часткова невдача не має виглядати як
+        // загальний успіх (і навпаки).
+        const fails = (d.results || []).filter(x => !x.ok);
+        if (out) {
+            out.style.color = fails.length ? '#fbbf24' : '#4ade80';
+            out.textContent = `відкрито ${d.opened || 0}`
+                + (fails.length ? ` · не вдалось ${fails.length}: `
+                    + fails.map(f => `${f.symbol} (${f.reason})`).join('; ') : '');
+        }
+        (d.results || []).forEach(x => { if (x.ok) _mmSel.delete(x.symbol); });
+        loadFuelFilterStatus();
+    } catch (e) {
+        if (out) { out.style.color = '#f87171'; out.textContent = 'помилка: ' + e; }
+    } finally {
+        if (btn) { btn.textContent = '✋ Відкрити обрані'; }
+        _mmSyncSelUI();
+    }
+}
+
 // ⚡ C2: просимо в сервера ЛИШЕ ті важкі секції, чиї гармошки РОЗГОРНУТІ.
 // Згорнута Черга-4 / 💰 Funding → сервер не рахує їхні шари на кожен полл
 // (це найдорожча частина відповіді). Секції-«легковики» йдуть завжди.
@@ -11225,6 +11504,8 @@ function _ffWantedSections() {
     const want = [];
     if (vis('q4-body')) want.push('q4');
     if (vis('fund-body')) want.push('fund');
+    // 🧮 МММ-монітор: до 200+ рядків на полл — просимо лише коли розгорнуто.
+    if (vis('mm-body')) want.push('mm');
     return want;
 }
 
@@ -11970,7 +12251,11 @@ function renderFuelFilter(d) {
     // ⚡ C2: які ВАЖКІ секції сервер реально порахував у цій відповіді.
     // Без цього прапорця порожній `timers4` (секцію просто не запитували)
     // помилково прочитався б як «черга порожня» і стер би таблицю.
-    const _served = d.served || { q4: true, fund: true };
+    const _served = d.served || { q4: true, fund: true, mm: true };
+    // 🧮 МММ-монітор — малюємо ЛИШЕ коли сервер реально віддав секцію. Без цієї
+    // перевірки порожній `mm_monitor` (секцію просто не просили, бо гармошка
+    // згорнута) стер би таблицю і виглядав би як «МММ зник».
+    if (_served.mm && d.mm_monitor) mmApplyState(d.mm_monitor);
     // BTC START/STOP banner — refresh from state, then let the global ticker
     // keep the progress filling smoothly.
     const bsg = d.btc_start || {};
@@ -13335,6 +13620,7 @@ const SIGNAL_BADGES_JS = {
 const ENGINE_BADGES_JS = {
     'Q1': '🎯 Черга-1', 'Q2': '🎯 Черга-2', 'Q3': '🎯 Готовність', 'Q4': '🎯 Черга-4',
     'Q3-VOB(funding)': '💰 VOB+Шари', 'POC-сетап': '🎯 POC-сетап',
+    'MMM': '🧮 МММ-монітор',
     'EXH': '🔥 Виснаженість', 'FF': '🔥 FF', 'direct': '⚡ Прямий',
 };
 const SIGNAL_ICON_JS = {
@@ -13343,6 +13629,7 @@ const SIGNAL_ICON_JS = {
     'poc': '🎯', 'opp': '🔄', 'external': '🔌', 'manual': '✋',
     'manual_ui': '✋', 'manual_ui_overflow': '✋',
     'Q3-VOB(funding)': '💰', 'POC-сетап': '🎯', 'EXH': '🔥', 'FF': '🔥',
+    'MMM': '🧮',
 };
 function signalCodeOf(raw) {
     if (!raw) return '';

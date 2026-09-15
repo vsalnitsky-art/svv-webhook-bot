@@ -359,9 +359,28 @@ def test_cache_drop_on_queue_exit():
 
 # ─────────────────────────────── C2 ─────────────────────────────────────────
 def test_heavy_sections_are_declared():
-    _check(set(FF.HEAVY_SECTIONS) == {'q4', 'fund'},
-           f'несподіваний перелік важких секцій: {FF.HEAVY_SECTIONS}')
-    print('✓ C2: важкі секції оголошені явно')
+    """C2: важкі секції оголошені явно і КОЖНА реально гейтиться в `get_state`.
+
+    ⚠️ КОНТРАКТ РОЗШИРЕНО (15.09), це не регресія: раніше тут стояла ТОЧНА
+    рівність `{'q4','fund'}`, тож будь-яка нова важка секція ламала тест «на
+    рівному місці» — хоча механізм C2 саме для того й існує, щоб їх додавати.
+    Тепер стережемо СУТЬ: базові дві на місці, і жодна оголошена секція не
+    лишилась без свого `_want_<ім'я>` (інакше вона потрапляла б у відповідь
+    завжди і економія була б фікцією).
+    """
+    import re
+    _check({'q4', 'fund'} <= set(FF.HEAVY_SECTIONS),
+           f'базові важкі секції зникли: {FF.HEAVY_SECTIONS}')
+    src = open(os.path.join(_ROOT, 'detection', 'fuel_filter.py'),
+               encoding='utf-8').read()
+    body = src[src.index('def get_state('):]
+    body = body[:body.index('\n    def ', 10)]
+    for name in FF.HEAVY_SECTIONS:
+        _check(re.search(rf"_want_{name}\s*=\s*\(sections is None\)", body),
+               f'секція «{name}» оголошена важкою, але в get_state не гейтиться')
+        _check(f"'{name}':" in body.split("'served'")[1][:200],
+               f'секція «{name}» не потрапила у прапорець served')
+    print(f'✓ C2: важкі секції оголошені явно і гейтяться ({len(FF.HEAVY_SECTIONS)})')
 
 
 if __name__ == '__main__':

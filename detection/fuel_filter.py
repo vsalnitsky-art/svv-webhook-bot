@@ -707,6 +707,15 @@ class FuelFilterDaemon:
         # per cycle in _refresh_score_cache (cheap; read by both tables).
         self._fuel_str: Dict[str, int] = {}
         self._fuel_str_prev: Dict[str, int] = {}
+        # 🧮 МММ-МОНІТОР: знімок напрямку МММ по КОЖНІЙ порахованій монеті,
+        # {SYMBOL: {'status','dir','strength','mark_price'}} + час знімка.
+        # ⚠️ Пише його ДВИГУН (`_tick`) із ТИХ САМИХ `_fuel_dir_smoothed`, що
+        # живлять колонку «МММ» у чергах — `get_state` лише ЧИТАЄ. Той самий
+        # урок, що з шарами Черги-4 (B2): якби монітор рахував сам, таблиця
+        # показувала б інші числа, ніж ті, за якими ухвалює рішення двигун.
+        self._mm_snapshot: Dict[str, Dict] = {}
+        self._mm_prev: Dict[str, Dict] = {}     # попередній такт → тренд сили ↑/↓
+        self._mm_snapshot_ts: float = 0.0
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -2864,6 +2873,203 @@ class FuelFilterDaemon:
                 'status': status, 'raw_dir': raw, 'raw_status': fd.get('status'),
                 'runway': fd.get('runway'), 'target': fd.get('target')}
 
+    # ═══════════ 🧮 МММ-МОНІТОР (жива таблиця напрямків + групове відкриття) ═══
+    def _mm_capture(self, fuels: Dict):
+        """Зберегти знімок МММ по всіх монетах, які двигун порахував ЦЬОГО такту.
+
+        ⚠️ Викликається ЛИШЕ з `_tick`, одразу після `_fuel_dir_smoothed(update=
+        True)`. Монітор не має права рахувати МММ сам: інакше в таблиці стояло б
+        одне число, а рішення двигун ухвалював би за іншим (той самий урок, що з
+        шарами Черги-4 — «шари рахує двигун, get_state їх читає»).
+
+        Попередній знімок лишається в `_mm_prev` — з нього береться ТРЕНД сили
+        (↑/↓) для КОЖНОЇ монети монітора. `_fuel_str_prev` тут не годиться: він
+        заповнюється лише для черг/позицій/фандингу, тож для решти watchlist
+        стрілка була б порожня.
+        """
+        snap = {}
+        for sym, f in (fuels or {}).items():
+            if not f:
+                continue
+            try:
+                d = float(f.get('dir') or 0.0)
+            except (TypeError, ValueError):
+                d = 0.0
+            snap[str(sym).upper()] = {
+                'status': f.get('status'),
+                'dir': round(d, 3),
+                # Та сама конвенція сили, що в банері ₿: |fuel_dir| × 100.
+                'strength': int(round(abs(d) * 100)),
+                'mark_price': f.get('mark_price'),
+            }
+        with self._lock:
+            self._mm_prev = dict(getattr(self, '_mm_snapshot', {}) or {})
+            self._mm_snapshot = snap
+            self._mm_snapshot_ts = time.time()
+
+    def mm_monitor_state(self, settings: Optional[Dict] = None) -> Dict:
+        """🧮 Рядки МММ-монітора — ЧИТАННЯ готового знімка, без розрахунків.
+
+        Повертає {'rows': [...], 'ts', 'limited', 'counts': {...}}.
+        `limited=True` означає, що `mmm_limited_mode` УВІМКНЕНО і МММ рахується
+        НЕ по всьому watchlist, а лише по монетах «у роботі» (₿ + угоди + черги
+        + фандинг + додані вручну). Це ОБОВʼЯЗКОВО віддати у відповідь: інакше
+        коротка таблиця читалась би як «бот нічого не бачить», а не як «режим
+        економії» (той самий принцип, що з мовчазним clamp-ом у скані
+        ліквідності — обрізання має бути НАЗВАНЕ вголос).
+        """
+        s = settings if isinstance(settings, dict) else self.get_settings()
+        with self._lock:
+            snap = dict(self._mm_snapshot or {})
+            prev = dict(getattr(self, '_mm_prev', {}) or {})
+            ts = float(self._mm_snapshot_ts or 0.0)
+            managed = set(self._fuel_managed.keys())
+            in_q = set(self._pending) | set(self._pending2) \
+                | set(self._pending3) | set(self._pending4)
+        # Відкриті позиції TM (real + paper) — монету в угоді вибрати не можна.
+        open_syms = set(managed)
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            if tm is not None and hasattr(tm, '_lock'):
+                with tm._lock:
+                    open_syms |= set(getattr(tm, '_positions', {}) or {})
+                    open_syms |= set(getattr(tm, '_shadow_positions', {}) or {})
+        except Exception:
+            pass
+        rows, counts = [], {'LONG': 0, 'SHORT': 0, 'flat': 0}
+        for sym, v in snap.items():
+            st = v.get('status') if v.get('status') in ('LONG', 'SHORT') else None
+            stren = int(v.get('strength') or 0)
+            # ⚠️ Віддаємо САМУ попередню силу, а не готове «up/down»: стрілку
+            # малює той самий спільний віджет `ffFuelCell`, що й у колонці «МММ»
+            # черг. Друге правило тренду на фронті розійшлося б із першим.
+            p = (prev.get(sym) or {}).get('strength')
+            _open = sym in open_syms
+            rows.append({
+                'symbol': sym,
+                'mm': st,
+                'strength': stren,
+                'strength_prev': (int(p) if p is not None else None),
+                'dir': v.get('dir'),
+                'price': v.get('mark_price'),
+                'in_trade': _open,
+                'in_queue': (sym in in_q) and not _open,
+                # Монету, що вже в угоді, обирати нема сенсу — друга позиція по
+                # тому самому символу все одно не відкриється.
+                'selectable': (not _open) and st in ('LONG', 'SHORT'),
+            })
+            counts['LONG' if st == 'LONG' else ('SHORT' if st == 'SHORT' else 'flat')] += 1
+        # Сортування: спершу сила (найвиразніший напрямок зверху), потім символ —
+        # стабільний порядок, щоб рядки не «стрибали» під курсором.
+        rows.sort(key=lambda r: (-int(r.get('strength') or 0), r['symbol']))
+        return {
+            'rows': rows,
+            'ts': ts,
+            'limited': bool(s.get('mmm_limited_mode', True)),
+            'counts': counts,
+        }
+
+    def group_open(self, symbols: List[str]) -> Dict:
+        """✋ ГРУПОВЕ відкриття обраних монет МММ-монітора.
+
+        Напрямок КОЖНОЇ монети — її власний МММ зі ЗНІМКА, тобто рівно те, що
+        людина бачила в рядку. Ворота черг пропускаються (як у ✋ ручному
+        відкритті з Черги-4 — рішення ухвалює людина), але лишаються:
+          • 🚦 головні кнопки напрямку — `_open` перевіряє їх ЗАВЖДИ, і ✋ ручне
+            їх НЕ обходить (задокументоване рішення користувача);
+          • запобіжники `_open` (ціна, розмір позиції);
+          • авто-SL/TP-рівні — ставляться звичайним шляхом.
+
+        Повертає {'ok', 'opened', 'failed', 'results': [{symbol, side, ok,
+        reason}]} — по КОЖНІЙ монеті окремо: часткова невдача не має виглядати
+        як загальний збій.
+        """
+        s = self.get_settings()
+        out = {'ok': True, 'opened': 0, 'failed': 0, 'results': []}
+        if not s.get('enabled'):
+            return {'ok': False, 'opened': 0, 'failed': 0, 'results': [],
+                    'reason': 'Fuel Auto-Filter вимкнено'}
+        syms = [str(x).upper().strip() for x in (symbols or []) if str(x).strip()]
+        # Дедуп зі збереженням порядку — той самий символ двічі не відкриваємо.
+        syms = list(dict.fromkeys(syms))
+        if not syms:
+            return {'ok': False, 'opened': 0, 'failed': 0, 'results': [],
+                    'reason': 'Не обрано жодної монети'}
+        with self._lock:
+            snap = dict(self._mm_snapshot or {})
+        try:
+            from detection.activity_log import log_activity
+        except Exception:
+            log_activity = lambda *a, **k: None
+        for sym in syms:
+            r = self._mm_open_one(sym, snap.get(sym) or {}, s, log_activity)
+            out['results'].append(r)
+            if r.get('ok'):
+                out['opened'] += 1
+            else:
+                out['failed'] += 1
+        log_activity('ALL', 'opened' if out['opened'] else 'skipped',
+                     f"🧮 МММ-монітор: групове відкриття — обрано {len(syms)}, "
+                     f"відкрито {out['opened']}, не вдалось {out['failed']}",
+                     source='MMM')
+        return out
+
+    def _mm_open_one(self, sym: str, mm: Dict, s: Dict, log_activity) -> Dict:
+        """Одна монета групового відкриття. Напрямок — ЛИШЕ з МММ-знімка."""
+        side = mm.get('status')
+        if side not in ('LONG', 'SHORT'):
+            return {'symbol': sym, 'side': None, 'ok': False,
+                    'reason': 'МММ без напрямку (⚖ рівновага) — нічого відкривати'}
+        if sym in self._fuel_managed:
+            return {'symbol': sym, 'side': side, 'ok': False,
+                    'reason': 'уже в угоді (FF)'}
+        if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+            return {'symbol': sym, 'side': side, 'ok': False,
+                    'reason': 'уже має відкриту позицію'}
+        # Ціна: знімок → прямий тікер (той самий ланцюг, що у ✋ Черги-4).
+        mark = mm.get('mark_price')
+        if not mark or mark <= 0:
+            try:
+                from detection.market_data import get_market_data
+                md = get_market_data()
+                tk = md.get_ticker(sym) if md else None
+                mark = (tk or {}).get('last')
+            except Exception:
+                mark = None
+        if not mark or mark <= 0:
+            return {'symbol': sym, 'side': side, 'ok': False,
+                    'reason': 'не вдалося отримати ціну'}
+        try:
+            opened = self._open(sym, side, {'mark_price': mark, 'dir': side}, s,
+                                opened_by=_ob_compose('manual', 'MMM'),
+                                skip_ctr_safeguard=True, skip_safeguard=True,
+                                by_hand=True)
+        except Exception as e:
+            print(f"[FF-MMM] group open error {sym}: {e}")
+            return {'symbol': sym, 'side': side, 'ok': False, 'reason': f'помилка: {e}'}
+        if not opened:
+            log_activity(sym, 'skipped',
+                         f'🧮 МММ-монітор: групове відкриття {side} відхилено на '
+                         'рівні `_open` (напрямок вимкнено кнопкою / ціна / розмір)',
+                         side=side, source='MMM')
+            return {'symbol': sym, 'side': side, 'ok': False,
+                    'reason': 'відхилено `_open` (кнопка напрямку / ціна / розмір)'}
+        with self._lock:
+            self._timers[sym] = {'dir': side, 'since': time.time(),
+                                 'start_price': mark}
+        log_activity(sym, 'opened',
+                     f'🧮 МММ-монітор: ✋ ГРУПОВЕ відкриття {side} за живим МММ '
+                     f'(сила {mm.get("strength")}%) — ворота черг пропущено '
+                     '(рішення користувача)',
+                     side=side, source='MMM')
+        print(f"[FF-MMM] group opened {side} {sym}")
+        # Той самий Manual SL, що й на решті шляхів відкриття.
+        try:
+            self._q4_set_vob_sl(sym, side, s)
+        except Exception as e:
+            print(f"[FF-MMM] SL error {sym}: {e}")
+        return {'symbol': sym, 'side': side, 'ok': True, 'reason': 'відкрито'}
+
     def get_btc_session(self) -> Dict:
         """The committed ₿ BTCUSDT session that the banner shows:
         {'dir': 'LONG'|'SHORT'|None, 'paused': bool, 'since': float}.
@@ -4116,6 +4322,11 @@ class FuelFilterDaemon:
         fuels = {}
         for sym in relevant:
             fuels[sym] = self._fuel_dir_smoothed(sym, update=True)
+
+        # 🧮 ЗНІМОК ДЛЯ МММ-МОНІТОРА — рівно ті числа, які щойно порахував
+        # двигун. Нічого не перераховуємо пізніше: монітор, колонка «МММ» у
+        # чергах і рішення двигуна мусять показувати ОДНЕ значення.
+        self._mm_capture(fuels)
 
         # BTC table-row snapshot (fuel-based, like the other coins).
         bfuel = fuels.get('BTCUSDT')
@@ -8797,7 +9008,7 @@ class FuelFilterDaemon:
     # згорнута. Усе інше (банер, лічильники, налаштування, Черги-1..3) віддається
     # завжди — воно дешеве. `None` = віддати ВСЕ (сумісність для інфо-сайту та
     # будь-якого стороннього споживача API).
-    HEAVY_SECTIONS = ('q4', 'fund')
+    HEAVY_SECTIONS = ('q4', 'fund', 'mm')
 
     def get_state(self, sections: Optional[set] = None) -> Dict:
         """Snapshot for the UI: settings + live timers + active tracking.
@@ -8808,6 +9019,10 @@ class FuelFilterDaemon:
         No auto-open. Position management (close) is optional via setting."""
         _want_q4 = (sections is None) or ('q4' in sections)
         _want_fund = (sections is None) or ('fund' in sections)
+        # 🧮 МММ-монітор: до 200+ рядків на кожен 10с-полл. Рахунку тут немає
+        # (лише читання знімка двигуна), але ганяти їх, коли гармошка згорнута,
+        # немає сенсу — той самий принцип C2, що для Черги-4 і фандингу.
+        _want_mm = (sections is None) or ('mm' in sections)
         with self._lock:
             settings = self.get_settings()
             duration_sec = settings['duration_minutes'] * 60
@@ -9085,7 +9300,9 @@ class FuelFilterDaemon:
             # ⚡ C2: які ВАЖКІ секції реально пораховано в цій відповіді. Фронт
             # МУСИТЬ це читати: без прапорця він прийняв би `timers4: []` за
             # «черга порожня» і стер би таблицю, хоча її просто не запитували.
-            'served': {'q4': _want_q4, 'fund': _want_fund},
+            'served': {'q4': _want_q4, 'fund': _want_fund, 'mm': _want_mm},
+            # 🧮 МММ-монітор — готовий знімок двигуна (жодних розрахунків тут).
+            'mm_monitor': (self.mm_monitor_state(settings) if _want_mm else None),
             # 🎚 Смуги грейда (ЄДИНЕ джерело — setup_grader). UI будує випадайку
             # «Готовність ≥» саме з них, щоб назва і число НЕ розходились.
             'grade_bands': _grade_bands(),
