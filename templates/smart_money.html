@@ -2836,14 +2836,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <thead>
                             <tr>
                                 <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mm-check-all" onchange="mmToggleAll(this.checked)"></th>
-                                <th>Символ</th>
-                                <th title="СТАРИЙ показник МММ (той самий, що живить шар «Старий МММ» у Черзі-4): напрямок тиску + сила 0–100% + тренд від попереднього такту (↑ міцніє / ↓ слабшає).">Старий МММ</th>
-                                <th title="Ціна зі знімка МММ.">Ціна</th>
+                                <th data-mmsort="symbol" onclick="mmSort('symbol')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
+                                <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="СТАРИЙ показник МММ (той самий, що живить шар «Старий МММ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">Старий МММ<span class="ff-sort-arrow"></span></th>
+                                <th data-mmsort="delta" onclick="mmSort('delta')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за останній такт двигуна (~30с). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. У підказці рядка є і відносний %. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
+                                <th data-mmsort="price" onclick="mmSort('price')" style="cursor:pointer;user-select:none" title="Ціна зі знімка МММ. Клік — сортувати.">Ціна<span class="ff-sort-arrow"></span></th>
                                 <th title="Чи монета вже в угоді або стоїть у якійсь черзі.">Стан</th>
                             </tr>
                         </thead>
                         <tbody id="mm-tbody">
-                            <tr><td colspan="5" class="tm-empty-msg">Немає даних МММ</td></tr>
+                            <tr><td colspan="6" class="tm-empty-msg">Немає даних МММ</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -11285,6 +11286,9 @@ let _mmRows = [];              // останній знімок рядків і�
 let _mmMeta = { limited: true, ts: 0, counts: {} };
 let _mmSel = new Set();        // обрані символи (переживають перемальовку)
 let _mmDir = 'all';            // фільтр показу: all | LONG | SHORT | flat
+// Сортування таблиці. Дефолт — сила ↓ (те саме, що віддає бекенд), тайбрейк
+// завжди символ, щоб рядки не «стрибали» під курсором між поллами.
+let _mmSort = { col: 'strength', dir: -1 };
 // Локальний escape: глобального `esc` на сторінці НЕМАЄ (той, що є, — локальна
 // константа всередині рендера логу), тож покладатись на нього не можна.
 const _mmEsc = s => String(s == null ? '' : s)
@@ -11293,6 +11297,73 @@ const _mmEsc = s => String(s == null ? '' : s)
 function mmSetDir(d) {
     _mmDir = d;
     mmRender();
+}
+// Клік по заголовку: той самий символ → міняємо напрямок, інший → беремо його
+// (спадання за замовчуванням, як у Черг). Символ сортуємо за зростанням.
+function mmSort(col) {
+    if (_mmSort.col === col) _mmSort.dir = -_mmSort.dir;
+    else _mmSort = { col, dir: (col === 'symbol') ? 1 : -1 };
+    mmRender();
+}
+// ⚠️ «Немає даних» ≠ «нуль». Рядок без приросту/ціни/таймера йде в КІНЕЦЬ при
+// БУДЬ-ЯКОМУ напрямку сортування, а не вдає найгірше (чи найкраще) значення.
+function _mmSortVal(r, col) {
+    if (col === 'symbol') return r.symbol || '';
+    if (col === 'delta') return (r.delta == null ? null : Number(r.delta));
+    if (col === 'price') return (r.price == null ? null : Number(r.price));
+    if (col === 'grow') return (r.grow_since == null ? null : -Number(r.grow_since));
+    return Number(r.strength || 0);
+}
+function _mmSortRows(rows) {
+    const { col, dir } = _mmSort;
+    return rows.slice().sort((a, b) => {
+        const va = _mmSortVal(a, col), vb = _mmSortVal(b, col);
+        const na = (va === null || va === undefined || Number.isNaN(va));
+        const nb = (vb === null || vb === undefined || Number.isNaN(vb));
+        if (na !== nb) return na ? 1 : -1;      // порожні — завжди вниз
+        if (!na) {
+            if (typeof va === 'string') {
+                const c = va.localeCompare(vb);
+                if (c) return c * dir;
+            } else if (va !== vb) {
+                return (va < vb ? -1 : 1) * dir;
+            }
+        }
+        return String(a.symbol).localeCompare(String(b.symbol));  // стабільність
+    });
+}
+function _mmHeaderArrows() {
+    document.querySelectorAll('#mm-table th[data-mmsort]').forEach(th => {
+        const a = th.querySelector('.ff-sort-arrow');
+        if (!a) return;
+        a.textContent = (th.getAttribute('data-mmsort') === _mmSort.col)
+            ? (_mmSort.dir < 0 ? ' ▼' : ' ▲') : '';
+    });
+}
+// 📈 «Сила росте» — приріст у ПУНКТАХ + ⏱ таймер безперервного росту.
+// ⚠️ Поріг фарбування ТОЙ САМИЙ, що в стрілці `ffFuelCell` (> +1 / < −1),
+// інакше в одному рядку стрілка казала б «→», а число світилось зеленим.
+function _mmGrowCell(r) {
+    const d = (r.delta == null) ? null : Number(r.delta);
+    if (d === null) {
+        return '<span style="color:#6b7280" title="Немає попереднього такту — приріст рахувати нізвідки">—</span>';
+    }
+    const col = d > 1 ? '#4ade80' : (d < -1 ? '#f87171' : '#8b93a7');
+    const ico = d > 1 ? '↑' : (d < -1 ? '↓' : '→');
+    const sgn = d > 0 ? '+' : '';
+    const rel = (r.delta_rel == null) ? '' : ` (${r.delta_rel > 0 ? '+' : ''}${r.delta_rel}% відносно)`;
+    const tip = `Сила ${r.strength_prev != null ? r.strength_prev + '%' : '—'} → ${r.strength}%`
+        + ` за останній такт двигуна (~30с): ${sgn}${d} п.п.${rel}`
+        + (r.grow_since ? ' ⏱ Таймер — скільки сила росте БЕЗПЕРЕРВНО; обнуляється, щойно ріст спиняється.' : '');
+    // ⏱ Таймер малюємо тим самим класом, що й решта живих лічильників сторінки
+    // (`.ff-timer[data-since]`) — його веде ОДИН глобальний 1с-тікер, тож
+    // секунди йдуть, а таблиця не перебудовується (урок `held_sec` у Черзі-4).
+    const t = r.grow_since
+        ? ` <span class="ff-timer" data-since="${Math.floor(r.grow_since)}"`
+          + ` style="color:#4ade80;font-size:0.62rem">--:--:--</span>`
+        : '';
+    return `<span title="${_mmEsc(tip)}" style="color:${col};font-family:monospace;white-space:nowrap">`
+        + `${ico} ${sgn}${d}</span>${t}`;
 }
 function mmClearSel() {
     _mmSel.clear();
@@ -11360,15 +11431,20 @@ function mmRender() {
             + 'background:' + (on ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.03)') + ';'
             + 'color:' + (on ? '#e5e7eb' : '#9aa3b5') + ';';
     });
-    const rows = _mmVisibleRows();
+    const rows = _mmSortRows(_mmVisibleRows());
+    _mmHeaderArrows();
     // Сигнатура: нічого не змінилось → DOM не чіпаємо (той самий прийом, що в
     // таблиці Черги-4 — інакше рядки «стрибають» під курсором).
     // ⚠️ `enabled` — ЧАСТИНА сигнатури: інакше перемикання тумблера при
     // порожній таблиці нічого б не перемалювало, і «Монітор вимкнено» висіло б
     // замість «Немає даних» (і навпаки). Упіймано тестом.
-    const sig = _mmDir + '|' + (_mmMeta.enabled ? '1' : '0') + '|'
-        + rows.map(r => [r.symbol, r.mm, r.strength,
-        r.strength_prev, r.in_trade ? 1 : 0, r.in_queue ? 1 : 0,
+    // ⚠️ `grow_since` теж у сигнатурі — це МОМЕНТ старту росту (змінюється
+    // рідко). Самі СЕКУНДИ в неї НЕ входять: їх малює глобальний 1с-тікер,
+    // інакше таблиця перебудовувалась би щосекунди (урок `held_sec` у Черзі-4).
+    const sig = _mmDir + '|' + (_mmMeta.enabled ? '1' : '0')
+        + '|' + _mmSort.col + _mmSort.dir + '|'
+        + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev, r.delta,
+        r.grow_since || 0, r.in_trade ? 1 : 0, r.in_queue ? 1 : 0,
         _mmSel.has(r.symbol) ? 1 : 0].join(':')).join(',');
     if (tb.dataset.sig !== sig) {
         tb.dataset.sig = sig;
@@ -11378,7 +11454,7 @@ function mmRender() {
             const _why = !_mmMeta.enabled
                 ? '🔌 Монітор вимкнено — увімкніть тумблер у шапці секції'
                 : (_mmRows.length ? 'Немає монет під цей фільтр' : 'Немає даних МММ');
-            tb.innerHTML = `<tr><td colspan="5" class="tm-empty-msg">${_why}</td></tr>`;
+            tb.innerHTML = `<tr><td colspan="6" class="tm-empty-msg">${_why}</td></tr>`;
         } else {
             tb.innerHTML = rows.map(r => {
                 const sel = _mmSel.has(r.symbol);
@@ -11391,11 +11467,15 @@ function mmRender() {
                 else if (r.in_queue) state = '<span style="color:#fbbf24">у черзі</span>';
                 return `<tr${sel ? ' style="background:rgba(56,189,248,0.07)"' : ''}>`
                     + `<td>${cb}</td>`
-                    + `<td style="font-weight:700">${_s}</td>`
+                    // Клік по НАЗВІ → графік у TradingView, ТОЧНО як у WATCHLIST:
+                    // спільний `tvSym` (одна вкладка `tvchart`, BYBIT:<SYM>.P).
+                    // Він сам робить stopPropagation, тож галочка не смикається.
+                    + `<td style="font-weight:700">${tvSym(r.symbol)}</td>`
                     // ⚠️ Окремої колонки «Сила» НЕМАЄ (прибрано на прохання):
                     // віджет `ffFuelCell` уже показує і напрямок, і 0-100%, і
                     // тренд — друга колонка дублювала те саме число.
                     + `<td>${ffFuelCell(r.mm, r.strength, r.strength_prev)}</td>`
+                    + `<td>${_mmGrowCell(r)}</td>`
                     + `<td style="font-family:monospace;text-align:right">${r.price ? fmtPriceJS(r.price) : '—'}</td>`
                     + `<td style="font-size:0.68rem">${state}</td>`
                     + `</tr>`;

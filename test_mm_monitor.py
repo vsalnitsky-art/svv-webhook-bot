@@ -81,6 +81,7 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._lock = threading.RLock()
     ff._mm_snapshot = {}
     ff._mm_prev = {}
+    ff._mm_grow_since = {}
     ff._mm_snapshot_ts = 0.0
     ff._fuel_managed = {}
     ff._pending, ff._pending2, ff._pending3, ff._pending4 = {}, {}, {}, {}
@@ -397,8 +398,11 @@ def test_ui_reads_served_flag_before_drawing():
 def test_ui_uses_the_shared_mm_widget():
     """Та сама метрика у двох місцях — ОДИН вигляд: монітор малює МММ тим самим
     `ffFuelCell`, що й колонка «МММ» черг."""
+    # Вікно беремо ДО кінця функції, а не «перші N символів»: `mmRender` росте,
+    # і фіксований зріз почав би врізати рядок із викликом віджета.
     i = _HTML.index('function mmRender()')
-    _check('ffFuelCell(r.mm, r.strength, r.strength_prev)' in _HTML[i:i + 4000],
+    fn = _HTML[i:_HTML.index('function mmApplyState(', i)]
+    _check('ffFuelCell(r.mm, r.strength, r.strength_prev)' in fn,
            'монітор малює МММ власним віджетом — вигляд розійдеться')
     print('✓ МММ малює спільний віджет ffFuelCell')
 
@@ -438,17 +442,29 @@ function _el(id) {
 }
 const _tabs = ['all','LONG','SHORT','flat'].map(d => ({
   dataset:{mmdir:d}, style:{}, querySelector:()=>({textContent:''})}));
+// Заголовки таблиці — ОКРЕМІ стаби з `getAttribute`: `_mmHeaderArrows` шукає
+// саме `th[data-mmsort]`, і якби фейк повертав на будь-який селектор вкладки,
+// тест падав би «на рівному місці» (так і сталось).
+const _arrows = {};
+const _ths = ['symbol','strength','delta','price'].map(c => ({
+  _c:c, getAttribute:()=>c,
+  querySelector:()=>(_arrows[c] = _arrows[c] || {textContent:''})}));
 const document = {
   getElementById: id => (['mm-tbody','mm-check-all','mm-min-str','mm-sel-count',
                           'mm-open-btn','mm-updated','mm-limited-hint'].includes(id)
                          ? _el(id) : null),
-  querySelectorAll: () => _tabs,
+  querySelectorAll: sel => (String(sel).includes('data-mmsort') ? _ths : _tabs),
 };
 const fetch = async () => ({ok:true, json: async () => ({})});
 const confirm = () => false;
 const loadFuelFilterStatus = () => {};
+const saveFuelFilterSettings = () => {};
+const alert = () => {};
 const ffFuelCell = () => '<mm/>';
 const fmtPriceJS = p => String(p);
+// Спільний лінк на TradingView (той самий, що в watchlist) — у фейк-DOM
+// підміняємо простим текстом, щоб перевіряти РОЗТАШУВАННЯ, а не розмітку.
+const tvSym = (s, label) => String(label != null ? label : s);
 '''
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False,
                                      encoding='utf-8') as f:
@@ -704,38 +720,238 @@ def test_ui_labels_the_column_as_the_old_mm():
 
 
 # ═══════════ 9. КОЛОНКА «СИЛА» ПРИБРАНА (вимога 15.09 #3) ════════════════
-def test_strength_column_is_gone_from_the_table():
+def test_duplicate_strength_column_is_gone_from_the_table():
     """«Прибери колонку Сила — вона все одно дублює показник МММ»: віджет
-    `ffFuelCell` уже малює і напрямок, і 0-100%, і стрілку тренду."""
+    `ffFuelCell` уже малює і напрямок, і 0-100%, і стрілку тренду.
+
+    ⚠️ НЕ ПЛУТАТИ з колонкою «Сила **росте**» (додана пізніше): та показує
+    ЗМІНУ сили в пунктах + таймер росту — інша метрика, не дублікат."""
     i = _HTML.index('id="mm-table"')
-    tbl = _HTML[i:i + 1600]
-    import re as _re
-    _check('>Сила</th>' not in tbl, 'колонка «Сила» досі в заголовку')
-    # ⚠️ `<th` матчить і `<thead>` — рахуємо саме теги колонок.
-    _n = len(_re.findall(r'<th[\s>]', tbl))
-    _check(_n == 5, f'очікував 5 колонок: {_n}')
-    _check('colspan="5"' in tbl and 'colspan="6"' not in tbl,
-           'colspan порожнього рядка не відповідає кількості колонок')
-    print('✓ UI: колонки «Сила» немає, заголовок і colspan узгоджені')
+    tbl = _HTML[i:i + 2600]
+    _check('>Сила</th>' not in tbl and '>Сила<span' not in tbl,
+           'колонка-дублікат «Сила» повернулась у заголовок')
+    _check('Сила росте' in tbl, 'колонка ПРИРОСТУ має лишатись')
+    print('✓ UI: дублікат «Сила» прибрано (а «Сила росте» — інша метрика)')
 
 
-def test_row_has_exactly_five_cells_and_still_shows_the_percent():
-    """Число нікуди не зникло — воно всередині віджета МММ."""
+def test_row_cells_match_the_header_and_percent_lives_in_the_widget():
+    """Кількість `<td>` мусить збігатися з кількістю `<th>` — інакше таблиця
+    «зʼїжджає». Саме число % нікуди не зникло: воно всередині віджета МММ."""
     out = _run_js(r'''
-mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:57, strength_prev:40, price:1.5, in_trade:false, in_queue:false, selectable:true}],
+mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:57, strength_prev:40,
+  delta:17, delta_rel:42.5, grow_since:null, price:1.5, in_trade:false,
+  in_queue:false, selectable:true}],
   enabled:true, limited:false, ts:1, counts:{LONG:1,SHORT:0,flat:0}});
 const h = document.getElementById('mm-tbody').innerHTML;
 console.log(JSON.stringify({cells:(h.match(/<td/g)||[]).length,
                             widget:h.includes('<mm/>')}));
 ''')
-    import json
+    import json, re as _re
     d = json.loads(out)
-    _check(d['cells'] == 5, f'у рядку має бути 5 комірок: {d}')
+    i = _HTML.index('id="mm-table"')
+    _th = len(_re.findall(r'<th[\s>]', _HTML[i:i + 2600]))
+    _check(d['cells'] == _th, f'{d["cells"]} комірок проти {_th} заголовків')
     _check(d['widget'], 'віджет МММ (де і стоїть %) зник із рядка')
     # Сила лишається у ДАНИХ — вона живить сортування і фільтр «Сила ≥».
     _check('_mmVisibleRows' in _HTML and 'mm-min-str' in _HTML,
            'фільтр/сортування за силою прибирати НЕ просили')
-    print('✓ рядок: 5 комірок, % — усередині віджета, фільтр сили лишився')
+    print(f'✓ рядок: {d["cells"]} комірок = {_th} заголовків, % — у віджеті')
+
+
+# ═══════════ 10. 📈 «СИЛА РОСТЕ» ЧИСЛОМ + ⏱ ТАЙМЕР (вимога 15.09) ════════
+def test_growth_is_measured_in_points_not_relative_percent():
+    """⚠️ ГОЛОВНЕ РІШЕННЯ. Сила — це вже ЧАСТКА у відсотках, тож її зміна
+    міряється в ПУНКТАХ (45% → 57% = +12 п.п.). Відносний % тут пастка: 1% → 5%
+    дало б «+400%», і сортування за зростанням підняло б нагору ШУМ замість
+    монет із реальним тиском. Відносне число віддаємо ОКРЕМО — для підказки."""
+    ff = _mk()
+    _cap(ff, AAAUSDT=0.45, BBBUSDT=0.01)
+    _cap(ff, AAAUSDT=0.57, BBBUSDT=0.05)
+    by = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}
+    _check(by['AAAUSDT']['delta'] == 12, by['AAAUSDT'])      # 45 → 57 п.п.
+    _check(by['BBBUSDT']['delta'] == 4, by['BBBUSDT'])       # 1 → 5 п.п.
+    # Відносний % теж є — але саме як ДОВІДКА поруч, не як критерій.
+    _check(by['BBBUSDT']['delta_rel'] == 400.0, by['BBBUSDT'])
+    _check(by['AAAUSDT']['delta'] > by['BBBUSDT']['delta'],
+           'за пунктами реальний тиск має бути вище за шум')
+    print('✓ приріст у ПУНКТАХ (відносний % — лише в підказці)')
+
+
+def test_no_previous_tick_means_no_number_invented():
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.40)
+    r = ff.mm_monitor_state()['rows'][0]
+    _check(r['delta'] is None and r['delta_rel'] is None, r)
+    print('✓ немає попереднього такту → приріст не вигадуємо')
+
+
+def test_grow_timer_starts_on_growth_and_resets_when_it_stops():
+    """Вимога дослівно: «включай таймер при кожному старті показника "Сила
+    росту" і обнуляй, коли перестає рости»."""
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.20)                       # базовий такт
+    _check(ff.mm_monitor_state()['rows'][0]['grow_since'] is None, 'ще не росла')
+    _cap(ff, BTCUSDT=0.40)                       # +20 п.п. → СТАРТ
+    t1 = ff.mm_monitor_state()['rows'][0]['grow_since']
+    _check(t1, 'таймер не стартував на рості')
+    _cap(ff, BTCUSDT=0.55)                       # росте далі → той самий старт
+    t2 = ff.mm_monitor_state()['rows'][0]['grow_since']
+    _check(t2 == t1, f'таймер перезапустився посеред росту: {t1} → {t2}')
+    _cap(ff, BTCUSDT=0.55)                       # плато → ОБНУЛЕННЯ
+    _check(ff.mm_monitor_state()['rows'][0]['grow_since'] is None,
+           'таймер не обнулився, коли ріст спинився')
+    _cap(ff, BTCUSDT=0.75)                       # знову ріст → НОВИЙ старт
+    t3 = ff.mm_monitor_state()['rows'][0]['grow_since']
+    _check(t3 and t3 != t1, f'новий ріст мусить дати НОВИЙ старт: {t3}')
+    print('✓ таймер: старт на рості · тримається · обнуляється на зупинці')
+
+
+def test_falling_strength_also_clears_the_timer():
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.20)
+    _cap(ff, BTCUSDT=0.60)
+    _check(ff.mm_monitor_state()['rows'][0]['grow_since'], 'мав стартувати')
+    _cap(ff, BTCUSDT=0.30)                       # падіння
+    _check(ff.mm_monitor_state()['rows'][0]['grow_since'] is None,
+           'падіння — це теж «перестала рости»')
+    print('✓ падіння сили обнуляє таймер так само, як плато')
+
+
+def test_growth_threshold_matches_the_shared_arrow_widget():
+    """⚠️ ОДНЕ ВИЗНАЧЕННЯ «РОСТЕ». Стрілку ↑ малює спільний `ffFuelCell` за
+    умовою `now > prev + 1`. Якби таймер мав ІНШИЙ поріг, у рядку стрілка
+    казала б «→», а таймер біг — суперечність прямо на екрані."""
+    _check(_m.MM_GROW_MIN_DELTA == 1, _m.MM_GROW_MIN_DELTA)
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.20)
+    _cap(ff, BTCUSDT=0.21)                       # +1 п.п. — для стрілки це «→»
+    _check(ff.mm_monitor_state()['rows'][0]['grow_since'] is None,
+           '+1 п.п. стрілка показує як «→» — таймер не має стартувати')
+    _cap(ff, BTCUSDT=0.23)                       # +2 п.п. — стрілка вже ↑
+    _check(ff.mm_monitor_state()['rows'][0]['grow_since'], '+2 п.п. → ↑ і таймер')
+    # І сам віджет на сторінці мусить лишатись із тим самим порогом.
+    i = _HTML.index('function ffFuelCell(')
+    _check('now > prev + 1' in _HTML[i:i + 2500],
+           'поріг стрілки у ffFuelCell змінився — таймер розійдеться з нею')
+    print('✓ «росте» визначено ОДИН раз (поріг таймера = поріг стрілки)')
+
+
+def test_timer_is_cleared_when_the_monitor_is_switched_off():
+    """Інакше після вмикання таймер показував би час, протягом якого монітор
+    узагалі нічого не рахував."""
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.20)
+    _cap(ff, BTCUSDT=0.60)
+    _check(ff._mm_grow_since, 'таймер мав бути')
+    ff._settings['mm_monitor_enabled'] = False
+    _cap(ff, BTCUSDT=0.90)
+    _check(not ff._mm_grow_since, 'вимкнений монітор не має тримати таймери')
+    print('✓ вимкнення монітора чистить і таймери росту')
+
+
+def test_timer_does_not_leak_for_vanished_coins():
+    ff = _mk()
+    _cap(ff, AAAUSDT=0.20, BBBUSDT=0.20)
+    _cap(ff, AAAUSDT=0.60, BBBUSDT=0.60)
+    _check(len(ff._mm_grow_since) == 2, ff._mm_grow_since)
+    _cap(ff, AAAUSDT=0.90)                       # BBB зникла зі знімка
+    _check('BBBUSDT' not in ff._mm_grow_since,
+           f'таймер зниклої монети лишився: {ff._mm_grow_since}')
+    print('✓ монета зникла зі знімка → її таймер прибрано')
+
+
+# ═══════════ 11. UI: TradingView · колонка приросту · сортування ══════════
+def test_symbol_opens_tradingview_exactly_like_the_watchlist():
+    """«Зроби щоб при натисканні на монету відкривався TradingView, так як і в
+    WATCHLIST» — беремо ТУ САМУ функцію `tvSym`, а не свій лінк."""
+    i = _HTML.index('function mmRender()')
+    fn = _HTML[i:i + 6000]
+    _check('tvSym(r.symbol)' in fn, 'назва монети не веде у TradingView')
+    # Та сама функція, що й у watchlist-рядку → та сама вкладка і той самий
+    # формат символу (BYBIT:<SYM>.P). Другого лінка в проєкті не заводимо.
+    _check('tvSym(sym, short)' in _HTML, 'watchlist мусить лишитись на tvSym')
+    j = _HTML.index('function tvSym(')
+    tv = _HTML[j:j + 900]
+    _check("window.open(this.href,'tvchart')" in tv, 'одна вкладка tvchart')
+    _check('event.stopPropagation()' in tv,
+           'без stopPropagation клік по назві смикав би галочку рядка')
+    print('✓ назва монети → TradingView через спільний tvSym (як у WATCHLIST)')
+
+
+def test_ui_has_growth_column_with_timer_and_sorting():
+    i = _HTML.index('id="mm-table"')
+    tbl = _HTML[i:i + 2600]
+    import re as _re
+    _check('Сила росте' in tbl, 'немає колонки приросту')
+    _n = len(_re.findall(r'<th[\s>]', tbl))
+    _check(_n == 6, f'очікував 6 колонок: {_n}')
+    _check('colspan="6"' in tbl and 'colspan="5"' not in tbl, 'colspan не оновлено')
+    for col in ('symbol', 'strength', 'delta', 'price'):
+        _check(f'data-mmsort="{col}"' in tbl, f'колонка {col} не сортується')
+    _check("mmSort('delta')" in tbl, 'сортування за приростом не підключене')
+    _check('п.п.' in tbl, 'у підказці не сказано, що це ПУНКТИ, а не відносний %')
+    print('✓ UI: колонка «Сила росте» + сортування по ній')
+
+
+def test_timer_uses_the_shared_one_second_ticker():
+    """⚠️ Секунди НЕ мають перебудовувати таблицю: той самий прийом, що з
+    `held_sec` у Черзі-4 — `.ff-timer[data-since]` + ОДИН глобальний тікер."""
+    i = _HTML.index('function _mmGrowCell(')
+    fn = _HTML[i:i + 2200]
+    _check('class="ff-timer" data-since=' in fn, 'таймер не на спільному класі')
+    _check('fmtTimer' not in fn, 'секунди не треба малювати тут — їх веде тікер')
+    # Сам тікер уже існує і бере ВСІ такі елементи сторінки.
+    _check(".ff-timer[data-since]" in _HTML and 'window._ffTimerTick' in _HTML,
+           'глобальний 1с-тікер зник — таймер стоятиме')
+    # `grow_since` у сигнатурі є (щоб старт/зупинка перемалювались), а секунд там
+    # немає (інакше DOM перебудовувався б щосекунди).
+    j = _HTML.index('const sig = _mmDir')
+    sig = _HTML[j:j + 600]
+    _check('r.grow_since' in sig, 'старт таймера не входить у сигнатуру')
+    _check('Date.now' not in sig, 'у сигнатурі не має бути живого часу')
+    print('✓ таймер: спільний 1с-тікер, таблиця не перебудовується щосекунди')
+
+
+def test_js_sorting_by_growth_puts_the_fastest_first():
+    out = _run_js(r'''
+const R = (s, st, d, g) => ({symbol:s, mm:'LONG', strength:st, strength_prev:st-(d||0),
+  delta:d, delta_rel:null, grow_since:g, price:1, in_trade:false, in_queue:false, selectable:true});
+mmApplyState({rows:[R('AAA',50,3,null), R('BBB',80,null,null), R('CCC',40,12,null)],
+  enabled:true, limited:false, ts:1, counts:{LONG:3,SHORT:0,flat:0}});
+mmSort('delta');                     // перший клік по новій колонці → спадання
+const h = document.getElementById('mm-tbody').innerHTML;
+const order = ['AAA','BBB','CCC'].map(s => h.indexOf(s));
+console.log(JSON.stringify({order}));
+''')
+    import json
+    o = json.loads(out)['order']
+    a, b, c = o[0], o[1], o[2]
+    _check(c < a, 'монета з більшим приростом мусить бути вище')
+    # ⚠️ Рядок БЕЗ приросту (null) — у кінець, а не «як нуль».
+    _check(b > a and b > c, f'рядок без даних мусить бути внизу: {o}')
+    print('✓ JS: сортування за приростом, «немає даних» — у кінець')
+
+
+def test_js_growth_cell_agrees_with_the_arrow_deadzone():
+    """Зелене число і стрілка ↑ мусять зʼявлятись ОДНОЧАСНО: +1 — це ще «→»."""
+    out = _run_js(r'''
+const R = (s, d) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50-d, delta:d,
+  delta_rel:null, grow_since:null, price:1, in_trade:false, in_queue:false, selectable:true});
+mmApplyState({rows:[R('AAA',1), R('BBB',5), R('CCC',-5)], enabled:true,
+  limited:false, ts:1, counts:{LONG:3,SHORT:0,flat:0}});
+// ⚠️ Ріжемо саме на РЯДКИ: символ трапляється двічі в одному рядку (в
+// обробнику галочки й у комірці назви), тож split по символу дав би шматок
+// БЕЗ клітинки приросту — саме на цьому перша версія тесту й помилилась.
+const rows = document.getElementById('mm-tbody').innerHTML.split('</tr>');
+const cell = s => rows.filter(x => x.includes(s))[0] || '';
+console.log(JSON.stringify({one:cell('AAA').includes('→'),
+  up:cell('BBB').includes('↑'), down:cell('CCC').includes('↓')}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['one'], '+1 п.п. мусить показуватись як «→» (як і стрілка)')
+    _check(d['up'] and d['down'], f'напрямок приросту не показано: {d}')
+    print('✓ JS: поріг клітинки приросту збігається зі стрілкою')
 
 
 if __name__ == '__main__':

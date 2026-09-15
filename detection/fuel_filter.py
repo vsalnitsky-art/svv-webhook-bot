@@ -62,6 +62,12 @@ EXHAUSTION_TTL = 120            # cache exhaustion per symbol for 2 min
 # дані ФІЗИЧНО не змінюються — перераховувати їх по 7 разів на монету за такт
 # (див. коментар до `_liq_state`) було чистою втратою. 20с < CYCLE_SECS=30с →
 # КОЖЕН такт двигуна все одно читає свіжий знімок; UI-полл між тактами шерить.
+# 📈 «Сила росте» — МІНІМАЛЬНИЙ приріст (у пунктах), який вважається РОСТОМ.
+# ⚠️ Це ТА САМА умова, що малює стрілку ↑ у спільному віджеті `ffFuelCell`
+# (`now > prev + 1`). Тримати два різні пороги не можна: у таблиці стрілка
+# казала б «→», а таймер росту біг би — суперечність прямо на екрані.
+MM_GROW_MIN_DELTA = 1
+
 LIQ_STATE_TTL = 20.0
 LIQ_STATE_CAP = 400             # запобіжник памʼяті: скільки монет тримати в кеші
 BIAS_TTL = 10                   # cache compute_bias result per symbol (sec)
@@ -722,6 +728,11 @@ class FuelFilterDaemon:
         self._mm_snapshot: Dict[str, Dict] = {}
         self._mm_prev: Dict[str, Dict] = {}     # попередній такт → тренд сили ↑/↓
         self._mm_snapshot_ts: float = 0.0
+        # ⏱ ТАЙМЕР РОСТУ СИЛИ: {SYMBOL: ts початку безперервного росту}.
+        # Ставиться на ПЕРШОМУ такті, де сила зросла, і ЗНІМАЄТЬСЯ, щойно рости
+        # перестала (вимога 15.09: «включай таймер при кожному старті показника
+        # "Сила росту" і обнуляй, коли перестає рости»).
+        self._mm_grow_since: Dict[str, float] = {}
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -2901,8 +2912,11 @@ class FuelFilterDaemon:
         # які вже ніхто не оновлює.
         if not s.get('mm_monitor_enabled', True):
             with self._lock:
-                if self._mm_snapshot or self._mm_prev:
+                if self._mm_snapshot or self._mm_prev or self._mm_grow_since:
                     self._mm_snapshot, self._mm_prev = {}, {}
+                    # ⏱ Таймери росту теж скидаємо: після вмикання монітора
+                    # вони показували б час, протягом якого нічого не рахувалось.
+                    self._mm_grow_since = {}
                     self._mm_snapshot_ts = 0.0
             return
         snap = {}
@@ -2933,10 +2947,30 @@ class FuelFilterDaemon:
                 # liq-map + накладений `_live_price`).
                 'mark_price': f.get('mark_price'),
             }
+        _now = time.time()
         with self._lock:
-            self._mm_prev = dict(getattr(self, '_mm_snapshot', {}) or {})
+            _prev = dict(getattr(self, '_mm_snapshot', {}) or {})
+            # ⏱ ТАЙМЕР РОСТУ — рахуємо ТУТ, бо тільки тут видно ОБА такти.
+            # «Росте» = ТА САМА умова, що малює стрілку ↑ у спільному віджеті
+            # `ffFuelCell` (`now > prev + 1`). Інше правило дало б таблицю, де
+            # стрілка каже «→», а таймер біжить — пряме протиріччя на екрані.
+            for _sym, _cur in snap.items():
+                _p = (_prev.get(_sym) or {}).get('strength')
+                _grew = (_p is not None
+                         and int(_cur.get('strength') or 0) > int(_p) + MM_GROW_MIN_DELTA)
+                if _grew:
+                    # ПЕРШИЙ такт росту → старт; далі таймер не перезапускаємо.
+                    self._mm_grow_since.setdefault(_sym, _now)
+                else:
+                    # Перестала рости (плато або падіння) → ОБНУЛЯЄМО.
+                    self._mm_grow_since.pop(_sym, None)
+            # Монети, що зникли зі знімка, таймер не тримають (інакше памʼять
+            # росла б, а таблиця показувала б час по неіснуючому рядку).
+            for _dead in [k for k in self._mm_grow_since if k not in snap]:
+                self._mm_grow_since.pop(_dead, None)
+            self._mm_prev = _prev
             self._mm_snapshot = snap
-            self._mm_snapshot_ts = time.time()
+            self._mm_snapshot_ts = _now
 
     def mm_monitor_state(self, settings: Optional[Dict] = None) -> Dict:
         """🧮 Рядки МММ-монітора — ЧИТАННЯ готового знімка, без розрахунків.
@@ -2955,6 +2989,7 @@ class FuelFilterDaemon:
         with self._lock:
             snap = dict(self._mm_snapshot or {})
             prev = dict(getattr(self, '_mm_prev', {}) or {})
+            grow = dict(getattr(self, '_mm_grow_since', {}) or {})
             ts = float(self._mm_snapshot_ts or 0.0)
             managed = set(self._fuel_managed.keys())
             in_q = set(self._pending) | set(self._pending2) \
@@ -2978,11 +3013,30 @@ class FuelFilterDaemon:
             # черг. Друге правило тренду на фронті розійшлося б із першим.
             p = (prev.get(sym) or {}).get('strength')
             _open = sym in open_syms
+            # 📈 «СИЛА РОСТЕ» У ЧИСЛІ (вимога 15.09) — приріст сили за ОДИН такт
+            # двигуна (~CYCLE_SECS). Сила сама по собі — ЧАСТКА у відсотках,
+            # тож її зміна міряється у ПУНКТАХ (45% → 57% = +12 п.п.).
+            # ⚠️ ВІДНОСНИЙ % тут був би пасткою: при слабкій силі 1% → 5% це
+            # «+400%», і сортування за зростанням підняло б нагору шум замість
+            # монет із реальним тиском. Відносне число віддаємо ОКРЕМО —
+            # виключно для підказки, сортування живе на пунктах.
+            _delta = (stren - int(p)) if p is not None else None
+            _rel = None
+            if p is not None and int(p) > 0:
+                _rel = round((stren - int(p)) * 100.0 / int(p), 1)
             rows.append({
                 'symbol': sym,
                 'mm': st,
                 'strength': stren,
                 'strength_prev': (int(p) if p is not None else None),
+                'delta': _delta,
+                'delta_rel': _rel,
+                # ⏱ ПОЧАТОК безперервного росту (epoch) або None. Віддаємо САМЕ
+                # момент старту, а не «скільки секунд»: живі секунди малює
+                # глобальний 1с-тікер на фронті (`.ff-timer[data-since]`), тож
+                # таблиця не перебудовується щосекунди — той самий прийом, що
+                # з `held_sec` у Черзі-4.
+                'grow_since': (float(grow[sym]) if sym in grow else None),
                 'dir': v.get('dir'),
                 'price': v.get('mark_price'),
                 'in_trade': _open,
