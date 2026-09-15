@@ -66,7 +66,34 @@ EXHAUSTION_TTL = 120            # cache exhaustion per symbol for 2 min
 # ⚠️ Це ТА САМА умова, що малює стрілку ↑ у спільному віджеті `ffFuelCell`
 # (`now > prev + 1`). Тримати два різні пороги не можна: у таблиці стрілка
 # казала б «→», а таймер росту біг би — суперечність прямо на екрані.
+# ⚠️ ЦЕЙ САМИЙ поріг працює і як ДОПУСК ВІДКАТУ для таймера (див. нижче):
+# третього магічного числа для «ріст скінчився» не заводимо.
 MM_GROW_MIN_DELTA = 1
+# ⏳ ВІКНО ВИМІРЮВАННЯ ПРИРОСТУ СИЛИ — «золота середина» проти мерехтіння.
+#
+# **Чому НЕ «попередній такт» (як було).** Заміряно на живому коді: приріст
+# рахувався між ДВОМА СУСІДНІМИ тактами двигуна (~30с), і це давало три вади
+# одночасно:
+#   1) ОДИН пропущений такт (liq-map мить не віддала стан по монеті) прибирав
+#      монету зі знімка → наступного такту «попередньої сили» не існувало →
+#      комірка показувала «—», хоча дані вже повернулись. Тобто один збій
+#      коштував ДВА такти показника;
+#   2) сила — ЦІЛЕ число (|dir|×100), тож рух 0.520 → 0.525 дає ті самі «52»:
+#      приріст 0, а таймер росту ОБНУЛЯЄТЬСЯ;
+#   3) джерело (daemon liq-map) оновлюється раз на 60с, а такт — 30с, тож
+#      кожен другий такт порівнював фактично ТІ САМІ рівні.
+#
+# **Рішення — база не «попередній такт», а НАЙСТАРІШИЙ семпл у ВІКНІ.**
+# 180с = 3 оновлення джерела: достатньо, щоб разовий пропуск не стирав
+# показник і щоб дрібне тремтіння цілого числа не перемикало стрілку, і
+# водночас це все ще «зараз», а не вчорашній стан.
+MM_GROW_WINDOW_SEC = 180
+# ⏳ Поки історії менше за це — приросту НЕ показуємо («—» + «набираємо
+# історію»). 60с = рівно один повний цикл джерела: у межах одного оновлення
+# liq-map рівні ІДЕНТИЧНІ, і будь-який «приріст» там — лише шум ціни.
+# Це друга половина вимоги: показник не мерехтить, але й не видає за
+# виміряний той приріст, який виміряти ще не встиг.
+MM_GROW_MIN_SPAN_SEC = 60
 # 💹 НАПРЯМОК ЦІНИ в МММ-моніторі (вимога 15.09: «щоб було розуміння чи ціна
 # росте чи падає»). Вікно і мертва зона СВІДОМО ті самі числа, що вже живлять
 # колонку «Price» у 💰 Funding (`funding_monitor.PRICE_WINDOW` = 15 хв ·
@@ -668,6 +695,35 @@ DEFAULT_SETTINGS = {
 }
 
 
+def mm_window_change(hist, now: float, window: float) -> Dict:
+    """📐 ЗМІНА ЗНАЧЕННЯ ЗА ВІКНОМ — ЧИСТА функція, ЄДИНА на весь монітор.
+
+    Вхід — історія `[(ts, value)…]`, вихід:
+    `{'first','last','peak','low','abs','span','points'}`; `first/last = None`,
+    коли в вікні менше двох точок.
+
+    ⚠️ Одна реалізація на ОБИДВІ метрики монітора (💹 рух ціни і 📈 приріст
+    сили МММ). Дві «однакові» функції з часом розійшлись би, і «за 3 хв» у
+    сусідніх колонках означало б різні речі.
+    ⚠️ **`span` віддається ЗАВЖДИ і показується в UI.** Вікно набирається
+    тактами двигуна, тож одразу після старту (чи після того, як монета
+    повернулась у знімок) воно НЕПОВНЕ: «+5 п.п. за 40 секунд» і «+5 п.п. за
+    3 хвилини» — різні за вагою твердження, і видавати перше за друге не можна.
+    ⚠️ `peak`/`low` потрібні, щоб відрізнити «досі росте» від «виросло, а тепер
+    відкочується» — за самим `abs` ці два стани не розрізнити.
+    """
+    pts = [p for p in (hist or []) if p and p[0] >= (now - window)]
+    if len(pts) < 2:
+        return {'first': None, 'last': None, 'peak': None, 'low': None,
+                'abs': None, 'span': 0.0, 'points': len(pts)}
+    vals = [float(p[1]) for p in pts]
+    return {'first': vals[0], 'last': vals[-1],
+            'peak': max(vals), 'low': min(vals),
+            'abs': vals[-1] - vals[0],
+            'span': round(float(pts[-1][0]) - float(pts[0][0]), 1),
+            'points': len(pts)}
+
+
 def mm_price_move(hist, now: float,
                   window: float = MM_PRICE_WINDOW_SEC,
                   deadzone: float = MM_PRICE_DEADZONE) -> Dict:
@@ -685,17 +741,13 @@ def mm_price_move(hist, now: float,
     ⚠️ Менше двох точок → чесне `flat` із `span=0`, а не вигаданий нуль-рух:
     порожню історію в UI видно як «—».
     """
-    pts = [p for p in (hist or []) if p and p[0] >= (now - window)]
-    if len(pts) < 2:
-        return {'chg': 0.0, 'dir': 'flat', 'span': 0.0, 'points': len(pts)}
-    p0, p1 = float(pts[0][1] or 0.0), float(pts[-1][1] or 0.0)
-    if p0 <= 0 or p1 <= 0:
-        return {'chg': 0.0, 'dir': 'flat', 'span': 0.0, 'points': len(pts)}
+    w = mm_window_change(hist, now, window)
+    p0, p1 = w['first'], w['last']
+    if p0 is None or p0 <= 0 or p1 is None or p1 <= 0:
+        return {'chg': 0.0, 'dir': 'flat', 'span': 0.0, 'points': w['points']}
     chg = round((p1 - p0) / p0 * 100.0, 2)
     d = 'up' if chg > deadzone else ('down' if chg < -deadzone else 'flat')
-    return {'chg': chg, 'dir': d,
-            'span': round(float(pts[-1][0]) - float(pts[0][0]), 1),
-            'points': len(pts)}
+    return {'chg': chg, 'dir': d, 'span': w['span'], 'points': w['points']}
 
 
 class FuelFilterDaemon:
@@ -779,7 +831,11 @@ class FuelFilterDaemon:
         # урок, що з шарами Черги-4 (B2): якби монітор рахував сам, таблиця
         # показувала б інші числа, ніж ті, за якими ухвалює рішення двигун.
         self._mm_snapshot: Dict[str, Dict] = {}
-        self._mm_prev: Dict[str, Dict] = {}     # попередній такт → тренд сили ↑/↓
+        # 📈 ІСТОРІЯ СИЛИ для приросту: {SYMBOL: [(ts, strength)…]}, обрізана
+        # вікном MM_GROW_WINDOW_SEC. База приросту — НАЙСТАРІШИЙ семпл у вікні,
+        # а не «попередній такт»: саме це прибирає мерехтіння показника
+        # (детальніше — у коментарі до MM_GROW_WINDOW_SEC).
+        self._mm_str_hist: Dict[str, list] = {}
         self._mm_snapshot_ts: float = 0.0
         # ⏱ ТАЙМЕР РОСТУ СИЛИ: {SYMBOL: ts початку безперервного росту}.
         # Ставиться на ПЕРШОМУ такті, де сила зросла, і ЗНІМАЄТЬСЯ, щойно рости
@@ -3048,6 +3104,80 @@ class FuelFilterDaemon:
         for dead in [k for k in hist if k not in snap]:
             hist.pop(dead, None)
 
+    def _mm_track_growth(self, snap: Dict, now: float):
+        """📈 Приріст сили МММ за ВІКНОМ + ⏱ таймер безперервного росту.
+
+        Дописує в кожен рядок знімка: `strength_prev` (база — найстаріший
+        семпл у вікні), `delta` (пункти), `delta_rel` (% від бази, лише для
+        підказки), `delta_span` (скільки історії реально набралось).
+
+        ⚠️ **БАЗА — НЕ «попередній такт», а ВІКНО** `MM_GROW_WINDOW_SEC`. Саме
+        це прибирає мерехтіння: разовий пропуск монети у знімку більше не
+        стирає показник (стара база лишається в історії), а дрібне тремтіння
+        ЦІЛОГО числа сили між сусідніми тактами не перемикає стрілку.
+        ⚠️ **І водночас показник не стає «застарілим»:** усе, що старше за
+        вікно, ВИКИДАЄТЬСЯ, тож база завжди свіжа; поки набралось менше за
+        `MM_GROW_MIN_SPAN_SEC`, приросту НЕ показуємо взагалі — у межах одного
+        оновлення liq-map рівні ідентичні, і «приріст» там був би шумом ціни.
+        ⚠️ Монета, якої не було ДОВШЕ за вікно, починає з чистої історії — її
+        стара база непорівнянна з теперішнім станом.
+
+        **⏱ Таймер** іде за ТІЄЮ САМОЮ умовою `delta > MM_GROW_MIN_DELTA`, що
+        малює стрілку ↑ у спільному віджеті, ПЛЮС одна додаткова:
+        **відкат від піку вікна більший за той самий допуск = ріст скінчився**.
+        Без неї вікно тягнуло б «росте» ще до 3 хв після того, як сила
+        розвернулась (та сама «застарілість», лише з іншого боку). Дрібний
+        відкат на 1 пункт таймер НЕ збиває — саме цього й просили.
+        """
+        hist = getattr(self, '_mm_str_hist', None)
+        if hist is None:
+            hist = self._mm_str_hist = {}
+        for sym, v in snap.items():
+            st = int(v.get('strength') or 0)
+            h = hist.setdefault(sym, [])
+            h.append((now, st))
+            cut = now - MM_GROW_WINDOW_SEC
+            if h and h[0][0] < cut:
+                hist[sym] = h = [p for p in h if p[0] >= cut]
+            w = mm_window_change(h, now, MM_GROW_WINDOW_SEC)
+            _ready = (w['abs'] is not None
+                      and w['span'] >= MM_GROW_MIN_SPAN_SEC)
+            base = int(w['first']) if _ready else None
+            delta = int(round(w['abs'])) if _ready else None
+            v['strength_prev'] = base
+            v['delta'] = delta
+            v['delta_rel'] = (round((st - base) * 100.0 / base, 1)
+                              if base else None)
+            v['delta_span'] = w['span']
+            # ⏱ Ріст ТРИВАЄ, поки (а) за вікном приріст вищий за поріг і
+            # (б) ми не віддали більше за той самий поріг від піку вікна.
+            _peak = w['peak']
+            _grew = (delta is not None and delta > MM_GROW_MIN_DELTA
+                     and _peak is not None
+                     and (_peak - st) <= MM_GROW_MIN_DELTA)
+            if _grew:
+                # ПЕРШИЙ такт росту → старт; далі таймер НЕ перезапускаємо.
+                self._mm_grow_since.setdefault(sym, now)
+            else:
+                self._mm_grow_since.pop(sym, None)
+        # ⚠️ НАЙВАЖЛИВІШЕ МІСЦЕ ВСІЄЇ ПРАВКИ. Монету, якої НЕМАЄ в цьому знімку,
+        # прибирати ОДРАЗУ НЕ МОЖНА — саме так і виглядав головний дефект:
+        # liq-map мить мовчала, монета випадала, її база стиралась, і показник
+        # гас на два такти, хоча дані вже повернулись. Тому історію просто
+        # ОБРІЗАЄМО вікном: пережила разовий пропуск — база збереглась;
+        # монети не було довше за вікно — не лишилось жодного семпла, історія
+        # (а з нею і таймер) зникає сама. Памʼять обмежена тим самим вікном.
+        _cut = now - MM_GROW_WINDOW_SEC
+        for _sym in list(hist.keys()):
+            if _sym in snap:
+                continue
+            _kept = [p for p in hist[_sym] if p[0] >= _cut]
+            if _kept:
+                hist[_sym] = _kept
+            else:
+                hist.pop(_sym, None)
+                self._mm_grow_since.pop(_sym, None)
+
     def _mm_decisions(self, snap: Dict, now: float, s: Dict) -> Dict:
         """🧠 Вердикт банера Decision по монетах знімка — з кешем і ПОРЦІЯМИ.
 
@@ -3102,7 +3232,8 @@ class FuelFilterDaemon:
             cache.pop(dead, None)
         return {k: v[1] for k, v in cache.items() if v[1]}
 
-    def _mm_capture(self, fuels: Dict, settings: Optional[Dict] = None):
+    def _mm_capture(self, fuels: Dict, settings: Optional[Dict] = None,
+                    now: Optional[float] = None):
         """Зберегти знімок МММ по всіх монетах, які двигун порахував ЦЬОГО такту.
 
         ⚠️ Викликається ЛИШЕ з `_tick`, одразу після `_fuel_dir_smoothed(update=
@@ -3110,10 +3241,11 @@ class FuelFilterDaemon:
         одне число, а рішення двигун ухвалював би за іншим (той самий урок, що з
         шарами Черги-4 — «шари рахує двигун, get_state їх читає»).
 
-        Попередній знімок лишається в `_mm_prev` — з нього береться ТРЕНД сили
-        (↑/↓) для КОЖНОЇ монети монітора. `_fuel_str_prev` тут не годиться: він
-        заповнюється лише для черг/позицій/фандингу, тож для решти watchlist
-        стрілка була б порожня.
+        ТРЕНД сили (↑/↓) береться з ІСТОРІЇ `_mm_str_hist` за вікном
+        `MM_GROW_WINDOW_SEC` (`_mm_track_growth`), а не з попереднього такту —
+        інакше показник мерехтить. `_fuel_str_prev` тут не годиться взагалі:
+        він заповнюється лише для черг/позицій/фандингу, тож для решти
+        watchlist стрілка була б порожня.
         """
         s = settings if isinstance(settings, dict) else self.get_settings()
         # 🔌 ТУМБЛЕР монітора (як у Черг). ВИМКНЕНО → ПОВНИЙ знімок не будуємо:
@@ -3129,8 +3261,9 @@ class FuelFilterDaemon:
         _keep = self._mm_open_syms() if not _mon else None
         if not _mon and not _keep:
             with self._lock:
-                if self._mm_snapshot or self._mm_prev or self._mm_grow_since:
-                    self._mm_snapshot, self._mm_prev = {}, {}
+                if self._mm_snapshot or self._mm_str_hist or self._mm_grow_since:
+                    self._mm_snapshot = {}
+                    self._mm_str_hist = {}
                     # ⏱ Таймери росту теж скидаємо: після вмикання монітора
                     # вони показували б час, протягом якого нічого не рахувалось.
                     self._mm_grow_since = {}
@@ -3176,7 +3309,9 @@ class FuelFilterDaemon:
                 # тим самим правилом, що й бейджі над графіком.
                 **self._mm_forecast(_fe, sym),
             }
-        _now = time.time()
+        # `now` передається ЛИШЕ з тестів (щоб програвати такти без sleep) —
+        # у проді завжди системний час.
+        _now = float(now) if now else time.time()
         # 💹 НАПРЯМОК ЦІНИ — по історії знімків. Пишемо результат У ЗНІМОК (а не
         # рахуємо у `mm_monitor_state`), щоб читач лишався читачем: те саме
         # правило, що з шарами Черги-4 «двигун рахує — get_state читає».
@@ -3186,27 +3321,9 @@ class FuelFilterDaemon:
         _dec = self._mm_decisions(snap, _now, s)
         for _sym, _v in snap.items():
             _v['decision'] = _dec.get(_sym)
+        # 📈 ПРИРІСТ СИЛИ + ⏱ ТАЙМЕР РОСТУ — теж у ЗНІМОК (див. `_mm_track_growth`).
+        self._mm_track_growth(snap, _now)
         with self._lock:
-            _prev = dict(getattr(self, '_mm_snapshot', {}) or {})
-            # ⏱ ТАЙМЕР РОСТУ — рахуємо ТУТ, бо тільки тут видно ОБА такти.
-            # «Росте» = ТА САМА умова, що малює стрілку ↑ у спільному віджеті
-            # `ffFuelCell` (`now > prev + 1`). Інше правило дало б таблицю, де
-            # стрілка каже «→», а таймер біжить — пряме протиріччя на екрані.
-            for _sym, _cur in snap.items():
-                _p = (_prev.get(_sym) or {}).get('strength')
-                _grew = (_p is not None
-                         and int(_cur.get('strength') or 0) > int(_p) + MM_GROW_MIN_DELTA)
-                if _grew:
-                    # ПЕРШИЙ такт росту → старт; далі таймер не перезапускаємо.
-                    self._mm_grow_since.setdefault(_sym, _now)
-                else:
-                    # Перестала рости (плато або падіння) → ОБНУЛЯЄМО.
-                    self._mm_grow_since.pop(_sym, None)
-            # Монети, що зникли зі знімка, таймер не тримають (інакше памʼять
-            # росла б, а таблиця показувала б час по неіснуючому рядку).
-            for _dead in [k for k in self._mm_grow_since if k not in snap]:
-                self._mm_grow_since.pop(_dead, None)
-            self._mm_prev = _prev
             self._mm_snapshot = snap
             self._mm_snapshot_ts = _now
 
@@ -3232,7 +3349,6 @@ class FuelFilterDaemon:
             # «🧮 Старий МММ» у таблицях угод), і без цієї перевірки вони
             # протекли б у таблицю монітора, який щойно вимкнули.
             snap = dict(self._mm_snapshot or {}) if _on else {}
-            prev = dict(getattr(self, '_mm_prev', {}) or {})
             grow = dict(getattr(self, '_mm_grow_since', {}) or {})
             ts = float(self._mm_snapshot_ts or 0.0)
             in_q = set(self._pending) | set(self._pending2) \
@@ -3244,22 +3360,22 @@ class FuelFilterDaemon:
         for sym, v in snap.items():
             st = v.get('status') if v.get('status') in ('LONG', 'SHORT') else None
             stren = int(v.get('strength') or 0)
-            # ⚠️ Віддаємо САМУ попередню силу, а не готове «up/down»: стрілку
+            # ⚠️ Віддаємо САМУ базову силу, а не готове «up/down»: стрілку
             # малює той самий спільний віджет `ffFuelCell`, що й у колонці «МММ»
             # черг. Друге правило тренду на фронті розійшлося б із першим.
-            p = (prev.get(sym) or {}).get('strength')
+            # База — зі ЗНІМКА (`_mm_track_growth`), тобто найстаріший семпл у
+            # вікні приросту, а не «попередній такт».
+            p = v.get('strength_prev')
             _open = sym in open_syms
-            # 📈 «СИЛА РОСТЕ» У ЧИСЛІ (вимога 15.09) — приріст сили за ОДИН такт
-            # двигуна (~CYCLE_SECS). Сила сама по собі — ЧАСТКА у відсотках,
-            # тож її зміна міряється у ПУНКТАХ (45% → 57% = +12 п.п.).
+            # 📈 «СИЛА РОСТЕ» У ЧИСЛІ (вимога 15.09) — приріст сили за ВІКНО
+            # `MM_GROW_WINDOW_SEC`. Сила сама по собі — ЧАСТКА у відсотках, тож
+            # її зміна міряється у ПУНКТАХ (45% → 57% = +12 п.п.).
             # ⚠️ ВІДНОСНИЙ % тут був би пасткою: при слабкій силі 1% → 5% це
             # «+400%», і сортування за зростанням підняло б нагору шум замість
             # монет із реальним тиском. Відносне число віддаємо ОКРЕМО —
             # виключно для підказки, сортування живе на пунктах.
-            _delta = (stren - int(p)) if p is not None else None
-            _rel = None
-            if p is not None and int(p) > 0:
-                _rel = round((stren - int(p)) * 100.0 / int(p), 1)
+            _delta = v.get('delta')
+            _rel = v.get('delta_rel')
             rows.append({
                 'symbol': sym,
                 'mm': st,
@@ -3267,6 +3383,10 @@ class FuelFilterDaemon:
                 'strength_prev': (int(p) if p is not None else None),
                 'delta': _delta,
                 'delta_rel': _rel,
+                # Скільки історії реально набралось під цей приріст: неповне
+                # вікно мусить бути видно, інакше «+5 п.п.» за 40с читалось би
+                # як «+5 п.п.» за 3 хв.
+                'delta_span': v.get('delta_span'),
                 # ⏱ ПОЧАТОК безперервного росту (epoch) або None. Віддаємо САМЕ
                 # момент старту, а не «скільки секунд»: живі секунди малює
                 # глобальний 1с-тікер на фронті (`.ff-timer[data-since]`), тож
@@ -3326,7 +3446,6 @@ class FuelFilterDaemon:
             return {}
         with self._lock:
             snap = dict(self._mm_snapshot or {})
-            prev = dict(getattr(self, '_mm_prev', {}) or {})
             grow = dict(getattr(self, '_mm_grow_since', {}) or {})
         out = {}
         for sym in want:
@@ -3334,13 +3453,13 @@ class FuelFilterDaemon:
             if not v:
                 continue
             st = v.get('status') if v.get('status') in ('LONG', 'SHORT') else None
-            stren = int(v.get('strength') or 0)
-            p = (prev.get(sym) or {}).get('strength')
             out[sym] = {
                 'mm': st,
-                'strength': stren,
-                'strength_prev': (int(p) if p is not None else None),
-                'delta': (stren - int(p)) if p is not None else None,
+                'strength': int(v.get('strength') or 0),
+                # ⚠️ Та сама база приросту, що в моніторі (зі знімка), — інакше
+                # стрілка тренду в таблиці угод і в моніторі показувала б різне.
+                'strength_prev': v.get('strength_prev'),
+                'delta': v.get('delta'),
                 'grow_since': (float(grow[sym]) if sym in grow else None),
             }
         return out

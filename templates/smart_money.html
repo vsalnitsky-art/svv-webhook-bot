@@ -2844,8 +2844,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mm-check-all" onchange="mmToggleAll(this.checked)"></th>
                                 <th data-mmsort="symbol" onclick="mmSort('symbol')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                                 <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="СТАРИЙ показник МММ (той самий, що живить шар «Старий МММ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">Старий МММ<span class="ff-sort-arrow"></span></th>
-                                <th data-mmsort="delta" onclick="mmSort('delta')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за останній такт двигуна (~30с). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. У підказці рядка є і відносний %. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
-                                <th data-mmsort="grow" onclick="mmSort('grow')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу сила МММ росте БЕЗПЕРЕВНО. Таймер стартує на першому такті росту, обнуляється щойно ріст спиняється (плато або падіння), і стартує заново при наступному рості. «—» = зараз не росте. Клік — сортувати (найдовший ріст зверху).">⏱ Росте<span class="ff-sort-arrow"></span></th>
+                                <th data-mmsort="delta" onclick="mmSort('delta')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за ВІКНО СПОСТЕРЕЖЕННЯ (~3 хв, тобто три оновлення джерела). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. Базою є НАЙСТАРІШЕ значення у вікні, а не попередній такт: разовий пропуск даних більше не стирає показник, а дрібне тремтіння цілого числа сили не перемикає стрілку. Поки історії менше за одне оновлення джерела — показуємо «—», а не вигаданий приріст. Фактичне вікно по кожному рядку — у підказці комірки. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
+                                <th data-mmsort="grow" onclick="mmSort('grow')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу сила МММ росте БЕЗПЕРЕРВНО. Ріст ТРИВАЄ, поки виконуються ДВІ умови: (1) за вікном спостереження приріст вищий за поріг і (2) сила не відкотилась від свого піку в цьому вікні більше ніж на той самий поріг. Перша умова прибирає мерехтіння — дрібне тремтіння таймер не збиває; друга не дає таймеру тягнути «росте» ще хвилини після того, як сила вже розвернулась. «—» = зараз не росте. Клік — сортувати (найдовший ріст зверху).">⏱ Росте<span class="ff-sort-arrow"></span></th>
                                 <th data-mmsort="pchg" onclick="mmSort('pchg')" style="cursor:pointer;user-select:none" title="Ціна зі знімка МММ + КУДИ вона йде: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). Поруч зі стрілкою — за скільки часу історії реально набралось: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ ціни (найсильніший ріст зверху).">Ціна<span class="ff-sort-arrow"></span></th>
                                 <th title="🔮 Прогноз 1H і 4H — ТІ САМІ значення, що на бейджах над графіком (6 горизонтів Фібоначчі). Формат: напрямок · очікуваний рух % · впевненість %. Читається з кешу прогнозу, нічого не рахує.">🔮 Прогноз</th>
                                 <th title="🧠 Вердикт банера Decision («LONG 71% СИЛЬНИЙ») — той самий розрахунок, що над графіком. Колонка працює лише коли увімкнено чекбокс «🧠 Рішення» над таблицею; ⏳ означає, що до цієї монети черга оновлення ще не дійшла.">🧠 Рішення</th>
@@ -11399,17 +11399,30 @@ function _mmHeaderArrows() {
 // 📈 «Сила росте» — приріст у ПУНКТАХ.
 // ⚠️ Поріг фарбування ТОЙ САМИЙ, що в стрілці `ffFuelCell` (> +1 / < −1),
 // інакше в одному рядку стрілка казала б «→», а число світилось зеленим.
+// ⚠️ Вікно НЕ зашите у фронті: бекенд віддає `delta_span` — скільки історії
+// реально набралось під цей приріст. Те саме правило, що в колонці «Ціна».
+function _mmSpanTxt(sec) {
+    const s = Math.round(Number(sec) || 0);
+    return s >= 60 ? `${Math.round(s / 60)}хв` : `${s}с`;
+}
 function _mmGrowCell(r) {
     const d = (r.delta == null) ? null : Number(r.delta);
     if (d === null) {
-        return '<span style="color:#6b7280" title="Немає попереднього такту — приріст рахувати нізвідки">—</span>';
+        // Два РІЗНІ порожні стани, і кожен мусить говорити сам за себе.
+        const tip = (r.delta_span > 0)
+            ? `Набираємо історію (${_mmSpanTxt(r.delta_span)}). Приріст показуємо, лише коли вікно спостереження перевищить одне оновлення джерела — інакше це був би шум, а не ріст.`
+            : 'Історії ще немає — монета щойно зʼявилась у знімку МММ';
+        return `<span style="color:#6b7280" title="${_mmEsc(tip)}">—</span>`;
     }
     const col = d > 1 ? '#4ade80' : (d < -1 ? '#f87171' : '#8b93a7');
     const ico = d > 1 ? '↑' : (d < -1 ? '↓' : '→');
     const sgn = d > 0 ? '+' : '';
     const rel = (r.delta_rel == null) ? '' : ` (${r.delta_rel > 0 ? '+' : ''}${r.delta_rel}% відносно)`;
     const tip = `Сила ${r.strength_prev != null ? r.strength_prev + '%' : '—'} → ${r.strength}%`
-        + ` за останній такт двигуна (~30с): ${sgn}${d} п.п.${rel}`;
+        + ` за ${_mmSpanTxt(r.delta_span)} спостереження: ${sgn}${d} п.п.${rel}.`
+        + ' База — найстаріше значення у вікні, а не попередній такт: разовий'
+        + ' пропуск даних більше не стирає показник, а дрібне тремтіння цілого'
+        + ' числа сили не перемикає стрілку.';
     return `<span title="${_mmEsc(tip)}" style="color:${col};font-family:monospace;white-space:nowrap">`
         + `${ico} ${sgn}${d}</span>`;
 }
@@ -11578,7 +11591,7 @@ function mmRender() {
         + (_mmMeta.decisionOn ? 'D' : '-')
         + '|' + _mmSort.col + _mmSort.dir + '|'
         + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev, r.delta,
-        r.grow_since || 0, r.price, r.price_dir || '', r.price_chg,
+        r.grow_since || 0, r.delta_span, r.price, r.price_dir || '', r.price_chg,
         (r.f1 ? r.f1.side + '/' + r.f1.pct + '/' + r.f1.conf : ''),
         (r.f4 ? r.f4.side + '/' + r.f4.pct + '/' + r.f4.conf : ''),
         (r.decision ? r.decision.headline + '/' + r.decision.verdict : ''),

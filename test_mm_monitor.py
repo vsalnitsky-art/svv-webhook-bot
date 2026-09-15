@@ -81,7 +81,10 @@ def _mk(limited=False, enabled=True, mon=True):
     ff = FF.__new__(FF)
     ff._lock = threading.RLock()
     ff._mm_snapshot = {}
-    ff._mm_prev = {}
+    ff._mm_str_hist = {}
+    ff._mm_price_hist = {}
+    ff._mm_decision = {}
+    ff._clock = [10_000.0]
     ff._mm_grow_since = {}
     ff._mm_snapshot_ts = 0.0
     ff._fuel_managed = {}
@@ -130,9 +133,21 @@ def _cap(ff, **pairs):
 
     ⚠️ Новий МММ навмисно подаємо ПРОТИЛЕЖНИМ (`-v`) — тож КОЖЕН тест заразом
     доводить, що монітор бере саме СТАРИЙ показник, а не той, що лежить поруч
-    у `fuels`."""
+    у `fuels`.
+
+    ⚠️ Кожен виклик СУНЕ ВІРТУАЛЬНИЙ ГОДИННИК на `CYCLE_SECS` — приріст сили
+    тепер міряється за ВІКНОМ ЧАСУ, а не «попереднім тактом», тож без руху
+    годинника тести перевіряли б неіснуючу поведінку (усі такти в одну мить)."""
     ff._legacy = {str(k).upper(): v for k, v in pairs.items()}
-    ff._mm_capture(_fuels(**{k: -v for k, v in pairs.items()}))
+    ff._mm_capture(_fuels(**{k: -v for k, v in pairs.items()}), now=ff._clock[0])
+    ff._clock[0] += _m.CYCLE_SECS
+
+
+def _caps(ff, n=3, **pairs):
+    """`n` тактів поспіль із тими самими значеннями — щоб набралось вікно
+    (`MM_GROW_MIN_SPAN_SEC`) і приріст став ВИМІРЯНИМ, а не вигаданим."""
+    for _ in range(n):
+        _cap(ff, **pairs)
 
 
 # ═══════════ 1. ДЖЕРЕЛО ЧИСЕЛ — ЗНІМОК ДВИГУНА ═══════════════════════════
@@ -159,17 +174,18 @@ def test_monitor_reads_the_engine_snapshot_and_computes_nothing():
     print('✓ монітор читає готовий знімок двигуна, сам нічого не рахує')
 
 
-def test_strength_trend_comes_from_the_previous_tick():
-    """Стрілку ↑/↓ малює спільний віджет `ffFuelCell`, тож віддаємо ПОПЕРЕДНЮ
+def test_strength_trend_comes_from_the_window_baseline():
+    """Стрілку ↑/↓ малює спільний віджет `ffFuelCell`, тож віддаємо БАЗОВУ
     силу, а не власний висновок «up/down» — друге правило тренду розійшлося б
-    із першим."""
+    із першим. База — найстаріше значення у вікні, а не попередній такт."""
     ff = _mk()
     _cap(ff, BTCUSDT=0.20)
+    _cap(ff, BTCUSDT=0.45)
     _cap(ff, BTCUSDT=0.45)
     r = ff.mm_monitor_state()['rows'][0]
     _check(r['strength'] == 45 and r['strength_prev'] == 20, r)
     _check('trend' not in r, 'готового «up/down» у рядку бути не має')
-    print('✓ тренд сили: віддаємо попереднє число, стрілку малює спільний віджет')
+    print('✓ тренд сили: віддаємо базове число, стрілку малює спільний віджет')
 
 
 def test_rows_are_sorted_by_strength_then_symbol():
@@ -771,6 +787,7 @@ def test_growth_is_measured_in_points_not_relative_percent():
     ff = _mk()
     _cap(ff, AAAUSDT=0.45, BBBUSDT=0.01)
     _cap(ff, AAAUSDT=0.57, BBBUSDT=0.05)
+    _cap(ff, AAAUSDT=0.57, BBBUSDT=0.05)      # добираємо вікно спостереження
     by = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}
     _check(by['AAAUSDT']['delta'] == 12, by['AAAUSDT'])      # 45 → 57 п.п.
     _check(by['BBBUSDT']['delta'] == 4, by['BBBUSDT'])       # 1 → 5 п.п.
@@ -789,30 +806,74 @@ def test_no_previous_tick_means_no_number_invented():
     print('✓ немає попереднього такту → приріст не вигадуємо')
 
 
-def test_grow_timer_starts_on_growth_and_resets_when_it_stops():
-    """Вимога дослівно: «включай таймер при кожному старті показника "Сила
-    росту" і обнуляй, коли перестає рости»."""
+def _since(ff, sym='BTCUSDT'):
+    r = [x for x in ff.mm_monitor_state()['rows'] if x['symbol'] == sym]
+    return r[0]['grow_since'] if r else None
+
+
+def test_grow_timer_starts_on_growth_and_holds_through_a_single_flat_tick():
+    """Вимога 15.09: «включай таймер при кожному старті росту і обнуляй, коли
+    перестає рости». Уточнення 15.09 («щоб не було частого мерехтіння»): ОДИН
+    рівний такт — це ще НЕ «перестала рости», інакше таймер гас щохвилини на
+    дрібному тремтінні цілого числа сили."""
     ff = _mk()
-    _cap(ff, BTCUSDT=0.20)                       # базовий такт
-    _check(ff.mm_monitor_state()['rows'][0]['grow_since'] is None, 'ще не росла')
-    _cap(ff, BTCUSDT=0.40)                       # +20 п.п. → СТАРТ
-    t1 = ff.mm_monitor_state()['rows'][0]['grow_since']
+    _cap(ff, BTCUSDT=0.20)
+    _check(_since(ff) is None, 'ще не росла')
+    _cap(ff, BTCUSDT=0.40)
+    _cap(ff, BTCUSDT=0.55)                       # вікно набралось → СТАРТ
+    t1 = _since(ff)
     _check(t1, 'таймер не стартував на рості')
-    _cap(ff, BTCUSDT=0.55)                       # росте далі → той самий старт
-    t2 = ff.mm_monitor_state()['rows'][0]['grow_since']
-    _check(t2 == t1, f'таймер перезапустився посеред росту: {t1} → {t2}')
-    _cap(ff, BTCUSDT=0.55)                       # плато → ОБНУЛЕННЯ
-    _check(ff.mm_monitor_state()['rows'][0]['grow_since'] is None,
-           'таймер не обнулився, коли ріст спинився')
-    _cap(ff, BTCUSDT=0.75)                       # знову ріст → НОВИЙ старт
-    t3 = ff.mm_monitor_state()['rows'][0]['grow_since']
-    _check(t3 and t3 != t1, f'новий ріст мусить дати НОВИЙ старт: {t3}')
-    print('✓ таймер: старт на рості · тримається · обнуляється на зупинці')
+    _cap(ff, BTCUSDT=0.60)                       # росте далі → той самий старт
+    _check(_since(ff) == t1, 'таймер перезапустився посеред росту')
+    _cap(ff, BTCUSDT=0.60)                       # ОДИН рівний такт
+    _check(_since(ff) == t1,
+           'один рівний такт НЕ має збивати таймер — це і є мерехтіння')
+    print('✓ таймер: старт на рості, один рівний такт його не збиває')
+
+
+def test_grow_timer_stops_when_the_rise_ages_out_of_the_window():
+    """Друга половина «золотої середини»: показник не має ЗАСТРЯГАТИ. Сила
+    стоїть на місці → щойно старий низький рівень випав із вікна, приросту
+    більше немає і таймер гасне сам."""
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.20)
+    _cap(ff, BTCUSDT=0.40)
+    _cap(ff, BTCUSDT=0.60)
+    _check(_since(ff), 'таймер мав стартувати')
+    for _ in range(int(_m.MM_GROW_WINDOW_SEC / _m.CYCLE_SECS) + 1):
+        _cap(ff, BTCUSDT=0.60)                   # рівне плато
+    _check(_since(ff) is None,
+           'плато довше за вікно мусить погасити таймер')
+    _cap(ff, BTCUSDT=0.90)
+    _cap(ff, BTCUSDT=0.90)
+    t3 = _since(ff)
+    _check(t3, f'новий ріст мусить дати НОВИЙ старт: {t3}')
+    print('✓ таймер гасне, коли ріст випав із вікна, і стартує на новому')
+
+
+def test_giveback_from_the_peak_stops_the_timer_at_once():
+    """⚠️ Без цього вікно тягнуло б «росте» ще кілька хвилин після розвороту —
+    та сама «застарілість», лише з іншого боку. Відкат від піку вікна більший
+    за поріг = ріст скінчився, і це видно ОДРАЗУ."""
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.20)
+    _cap(ff, BTCUSDT=0.40)
+    _cap(ff, BTCUSDT=0.60)
+    _check(_since(ff), 'таймер мав стартувати')
+    _cap(ff, BTCUSDT=0.46)                       # −14 п.п. від піку
+    r = [x for x in ff.mm_monitor_state()['rows'] if x['symbol'] == 'BTCUSDT'][0]
+    _check(r['grow_since'] is None,
+           'відкат від піку мусить гасити таймер негайно')
+    _check(r['delta'] is not None and r['delta'] > 0,
+           f'приріст за вікном ще додатний — саме тому й потрібне окреме '
+           f'правило відкату: {r["delta"]}')
+    print('✓ відкат від піку гасить таймер одразу, не чекаючи вікна')
 
 
 def test_falling_strength_also_clears_the_timer():
     ff = _mk()
     _cap(ff, BTCUSDT=0.20)
+    _cap(ff, BTCUSDT=0.40)
     _cap(ff, BTCUSDT=0.60)
     _check(ff.mm_monitor_state()['rows'][0]['grow_since'], 'мав стартувати')
     _cap(ff, BTCUSDT=0.30)                       # падіння
@@ -845,23 +906,48 @@ def test_timer_is_cleared_when_the_monitor_is_switched_off():
     узагалі нічого не рахував."""
     ff = _mk()
     _cap(ff, BTCUSDT=0.20)
+    _cap(ff, BTCUSDT=0.40)
     _cap(ff, BTCUSDT=0.60)
     _check(ff._mm_grow_since, 'таймер мав бути')
     ff._settings['mm_monitor_enabled'] = False
     _cap(ff, BTCUSDT=0.90)
     _check(not ff._mm_grow_since, 'вимкнений монітор не має тримати таймери')
+    _check(not ff._mm_str_hist, 'історія сили теж мусить піти')
     print('✓ вимкнення монітора чистить і таймери росту')
 
 
-def test_timer_does_not_leak_for_vanished_coins():
+def test_one_missing_tick_does_not_wipe_the_indicator():
+    """⚠️ ЦЕ Й БУВ КОРІНЬ МЕРЕХТІННЯ. liq-map мить не віддала стан → монета
+    випадала зі знімка, її база стиралась, і показник гас на ДВА такти, хоча
+    дані вже повернулись. Тепер база лежить в історії й переживає пропуск."""
+    ff = _mk()
+    _cap(ff, AAAUSDT=0.40)
+    _cap(ff, AAAUSDT=0.44)
+    _cap(ff, AAAUSDT=0.47)
+    _check(ff.mm_monitor_state()['rows'][0]['delta'] == 7, 'база не набралась')
+    _cap(ff)                                     # ТАКТ БЕЗ ДАНИХ по монеті
+    _check(ff.mm_monitor_state()['rows'] == [], 'рядка не мало бути')
+    _cap(ff, AAAUSDT=0.50)                       # дані повернулись
+    r = ff.mm_monitor_state()['rows'][0]
+    _check(r['delta'] == 10,
+           f'разовий пропуск стер базу — показник знову мерехтить: {r}')
+    _check(r['grow_since'], 'і таймер росту теж мусив пережити пропуск')
+    print('✓ разовий пропуск даних більше не стирає приріст і таймер')
+
+
+def test_history_of_a_long_gone_coin_is_forgotten():
+    """Памʼять обмежена ТИМ САМИМ вікном: монета, якої не було довше за нього,
+    починає з чистого аркуша — її стара база непорівнянна з теперішнім станом."""
     ff = _mk()
     _cap(ff, AAAUSDT=0.20, BBBUSDT=0.20)
     _cap(ff, AAAUSDT=0.60, BBBUSDT=0.60)
+    _cap(ff, AAAUSDT=0.60, BBBUSDT=0.60)
     _check(len(ff._mm_grow_since) == 2, ff._mm_grow_since)
-    _cap(ff, AAAUSDT=0.90)                       # BBB зникла зі знімка
-    _check('BBBUSDT' not in ff._mm_grow_since,
-           f'таймер зниклої монети лишився: {ff._mm_grow_since}')
-    print('✓ монета зникла зі знімка → її таймер прибрано')
+    for _ in range(int(_m.MM_GROW_WINDOW_SEC / _m.CYCLE_SECS) + 2):
+        _cap(ff, AAAUSDT=0.90)                   # BBB немає ДОВШЕ за вікно
+    _check('BBBUSDT' not in ff._mm_grow_since and 'BBBUSDT' not in ff._mm_str_hist,
+           f'стан зниклої монети лишився: {ff._mm_grow_since} / {ff._mm_str_hist}')
+    print('✓ монета зникла надовго → історія і таймер прибрані')
 
 
 # ═══════════ 11. UI: TradingView · колонка приросту · сортування ══════════
@@ -1083,7 +1169,9 @@ def test_price_history_is_trimmed_and_forgets_dead_symbols():
     """Інакше памʼять росла б, а монета, що повернулась у знімок, рахувала б
     «рух» від ціни годинної давності."""
     ff = _mk()
-    old = time.time() - (_m.MM_PRICE_WINDOW_SEC + 10 * _m.CYCLE_SECS)
+    # ⚠️ Годинник ВІРТУАЛЬНИЙ (`ff._clock`) — `time.time()` тут дав би точку
+    # з майбутнього і тест перевіряв би не те.
+    old = ff._clock[0] - (_m.MM_PRICE_WINDOW_SEC + 10 * _m.CYCLE_SECS)
     ff._mm_price_hist = {'BTCUSDT': [(old, 1.0)], 'ZZZUSDT': [(old, 2.0)]}
     _cap(ff, BTCUSDT=0.5)
     _check('ZZZUSDT' not in ff._mm_price_hist,
@@ -1449,6 +1537,113 @@ def test_ui_trades_tables_got_the_column_and_the_right_colspan():
     _check(_HTML.count('${oldMmCellHTML(p)}') == 2,
            'комірка підключена не в обидві таблиці (real + paper)')
     print('✓ UI: колонка «🧮 Старий МММ» у real+paper, спільний віджет')
+
+
+# ═══ 15. 🩹 БОРОТЬБА З МЕРЕХТІННЯМ: вікно замість «попереднього такту» ════
+def test_window_change_is_one_shared_pure_function():
+    """⚠️ Дві «однакові» функції зміни-за-вікном розійшлись би, і «за 3 хв» у
+    сусідніх колонках означало б різні речі. Тому ядро ОДНЕ."""
+    f = _m.mm_window_change
+    now = 10_000.0
+    h = [(now - 120, 40), (now - 60, 55), (now, 50)]
+    w = f(h, now, 180)
+    _check(w['first'] == 40 and w['last'] == 50 and w['abs'] == 10, w)
+    _check(w['peak'] == 55 and w['low'] == 40, f'пік/дно потрібні для відкату: {w}')
+    _check(w['span'] == 120.0 and w['points'] == 3, w)
+    # Менше двох точок у вікні → чесно порожньо, а не вигаданий нуль.
+    _check(f([(now, 5)], now, 180)['abs'] is None, 'одна точка — це не зміна')
+    _check(f([], now, 180)['span'] == 0.0, 'порожня історія')
+    # Точки поза вікном участі не беруть.
+    _check(f([(now - 5000, 1), (now - 10, 7), (now, 9)], now, 180)['first'] == 7,
+           'стара точка потрапила у вікно')
+    # І ЦЕ САМЕ ЯДРО живить рух ціни — окремої реалізації немає.
+    src = _SRC[_SRC.index('def mm_price_move('):]
+    src = src[:src.index('\n\nclass ')]
+    _check('mm_window_change(' in src, 'рух ціни рахує щось своє')
+    print('✓ зміна-за-вікном: одна чиста функція на ціну і на силу')
+
+
+def test_growth_needs_a_real_window_before_it_is_shown():
+    """⚠️ Половина вимоги «не застарілий»: у межах ОДНОГО оновлення джерела
+    рівні liq-map ідентичні, тож «приріст» там був би шумом ціни, а не ростом.
+    Поки історії менше — чесне «—» плюс `delta_span`, щоб було видно, скільки
+    вже набралось."""
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.40)
+    r = ff.mm_monitor_state()['rows'][0]
+    _check(r['delta'] is None and r['delta_span'] == 0.0, r)
+    _cap(ff, BTCUSDT=0.50)
+    r = ff.mm_monitor_state()['rows'][0]
+    _check(r['delta'] is None, f'30с історії — ще не вимір: {r}')
+    _check(r['delta_span'] == float(_m.CYCLE_SECS),
+           f'набране вікно мусить бути видно: {r}')
+    _cap(ff, BTCUSDT=0.50)
+    r = ff.mm_monitor_state()['rows'][0]
+    _check(r['delta'] == 10 and r['delta_span'] >= _m.MM_GROW_MIN_SPAN_SEC, r)
+    print('✓ приріст показуємо лише з реальним вікном, і вікно назване')
+
+
+def test_tiny_drift_no_longer_blanks_the_indicator():
+    """Сила — ЦІЛЕ число (|dir|×100): рух 0.520 → 0.525 дає ті самі «52».
+    Раніше це означало приріст 0 і обнулений таймер КОЖЕН другий такт."""
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.40)
+    _cap(ff, BTCUSDT=0.45)
+    _cap(ff, BTCUSDT=0.455)                 # те саме ціле 45
+    _cap(ff, BTCUSDT=0.452)                 # і знову 45
+    r = ff.mm_monitor_state()['rows'][0]
+    _check(r['delta'] == 5, f'дрібний дрейф зʼїв приріст: {r}')
+    _check(r['grow_since'], 'дрібний дрейф не має гасити таймер')
+    print('✓ тремтіння цілого числа сили більше не гасить показник')
+
+
+def test_window_constants_are_consistent_with_the_source():
+    """Вікно мусить накривати щонайменше два оновлення джерела, інакше
+    повертається та сама вада, яку й лікуємо."""
+    _check(_m.MM_GROW_MIN_SPAN_SEC >= 60,
+           'мінімальне вікно менше за оновлення liq-map (60с) — це знову шум')
+    _check(_m.MM_GROW_WINDOW_SEC >= 2 * _m.MM_GROW_MIN_SPAN_SEC,
+           'вікно завузьке, щоб пережити разовий пропуск такту')
+    _check(_m.MM_GROW_WINDOW_SEC > _m.CYCLE_SECS * 2,
+           'вікно мусить накривати більше за два такти двигуна')
+    print(f'✓ константи: вікно {_m.MM_GROW_WINDOW_SEC}с, мінімум '
+          f'{_m.MM_GROW_MIN_SPAN_SEC}с, такт {_m.CYCLE_SECS}с')
+
+
+def test_js_growth_cell_tells_the_two_empty_states_apart():
+    """«Ще набираємо історію» і «історії немає» — РІЗНІ речі, і комірка мусить
+    називати їх по-різному, а вікно брати з бекенда, а не зашивати своє."""
+    out = _run_js(r'''
+const R = (s, d, span) => ({symbol:s, mm:'LONG', strength:50, strength_prev:(d==null?null:45),
+  delta:d, delta_rel:null, delta_span:span, grow_since:null, price:1,
+  price_dir:'flat', price_chg:0, price_span:900,
+  in_trade:false, in_queue:false, selectable:true});
+mmApplyState({rows:[R('AAAUSDT',null,0), R('BBBUSDT',null,30), R('CCCUSDT',5,180)],
+  enabled:true, limited:false, ts:1, counts:{LONG:3,SHORT:0,flat:0}});
+const rows = document.getElementById('mm-tbody').innerHTML.split('</tr>');
+const cell = s => rows.filter(x => x.includes(s))[0] || '';
+console.log(JSON.stringify({
+  none:/Історії ще немає/.test(cell('AAA')),
+  warming:/Набираємо історію \(30с\)/.test(cell('BBB')),
+  value:cell('CCC').includes('+5'), win:/за 3хв/.test(cell('CCC'))}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['none'] and d['warming'],
+           f'два порожні стани не розрізняються: {d}')
+    _check(d['value'] and d['win'],
+           f'у підказці немає РЕАЛЬНОГО вікна, за яке виміряно приріст: {d}')
+    print('✓ JS: «немає історії» ≠ «набираємо», вікно — з бекенда')
+
+
+def test_delta_span_is_in_the_table_signature():
+    """Інакше перехід «—» → число (вікно нарешті набралось) не перемалював би
+    таблицю: самі `delta`/`strength` у цей момент могли не змінитись."""
+    i = _HTML.index('const sig = _mmDir')
+    sig = _HTML[i:i + 900]
+    _check('r.delta_span' in sig, 'delta_span не входить у сигнатуру таблиці')
+    print('✓ delta_span у сигнатурі — поява показника перемальовує рядок')
+
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]
