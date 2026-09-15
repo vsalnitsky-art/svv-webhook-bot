@@ -164,6 +164,12 @@ DEFAULT_SETTINGS = {
     # додатково рахує ВЕСЬ WATCHLIST (у т.ч. bulk із Tickr-добірки). Мета —
     # не ганяти важкий розрахунок по всьому списку.
     'mmm_limited_mode': True,
+    # 🧮 МММ-МОНІТОР — власний тумблер (як у кожної Черги). ВИМКНЕНО → знімок
+    # напрямків не будується взагалі (legacy-МММ по 200+ монетах щотакту не
+    # рахується), таблиця чесно каже «монітор вимкнено», групове відкриття
+    # недоступне. Дефолт УВІМК: монітор нічого не відкриває сам, він лише
+    # показує стан — тож увімкненим він потік угод не розширює.
+    'mm_monitor_enabled': True,
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -1223,6 +1229,7 @@ class FuelFilterDaemon:
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
         s['mmm_limited_mode'] = bool(s.get('mmm_limited_mode', True))
+        s['mm_monitor_enabled'] = bool(s.get('mm_monitor_enabled', True))
         s['enabled'] = bool(s.get('enabled', False))
         try:
             s['direction_smoothing_min'] = max(0, min(600,
@@ -2874,7 +2881,7 @@ class FuelFilterDaemon:
                 'runway': fd.get('runway'), 'target': fd.get('target')}
 
     # ═══════════ 🧮 МММ-МОНІТОР (жива таблиця напрямків + групове відкриття) ═══
-    def _mm_capture(self, fuels: Dict):
+    def _mm_capture(self, fuels: Dict, settings: Optional[Dict] = None):
         """Зберегти знімок МММ по всіх монетах, які двигун порахував ЦЬОГО такту.
 
         ⚠️ Викликається ЛИШЕ з `_tick`, одразу після `_fuel_dir_smoothed(update=
@@ -2887,19 +2894,43 @@ class FuelFilterDaemon:
         заповнюється лише для черг/позицій/фандингу, тож для решти watchlist
         стрілка була б порожня.
         """
+        s = settings if isinstance(settings, dict) else self.get_settings()
+        # 🔌 ТУМБЛЕР монітора (як у Черг). ВИМКНЕНО → знімок не будуємо взагалі:
+        # це і є економія (legacy-МММ на 200+ монет щотакту не рахується).
+        # Старий знімок ЧИСТИМО, щоб таблиця не показувала «заморожені» числа,
+        # які вже ніхто не оновлює.
+        if not s.get('mm_monitor_enabled', True):
+            with self._lock:
+                if self._mm_snapshot or self._mm_prev:
+                    self._mm_snapshot, self._mm_prev = {}, {}
+                    self._mm_snapshot_ts = 0.0
+            return
         snap = {}
         for sym, f in (fuels or {}).items():
             if not f:
                 continue
+            # 🧮 СТАРИЙ ПОКАЗНИК МММ (вимога користувача 15.09) — саме
+            # `_fuel_dir_legacy` (сирий (fa−fb)/den по розташуванню кластерів
+            # liq-map), ТОЙ САМИЙ, що живить шар «Старий МММ» у Черзі-4.
+            # ⚠️ Мережі це не коштує НІЧОГО: legacy читає `_liq_state` — той
+            # самий кешований (TTL 20с) знімок, який щойно взяв новий МММ.
+            # Тут лише арифметика над уже завантаженими рівнями.
+            old = self._fuel_dir_legacy(sym)
+            if not old:
+                continue
             try:
-                d = float(f.get('dir') or 0.0)
+                d = float(old.get('dir') or 0.0)
             except (TypeError, ValueError):
                 d = 0.0
             snap[str(sym).upper()] = {
-                'status': f.get('status'),
+                'status': old.get('status'),
                 'dir': round(d, 3),
-                # Та сама конвенція сили, що в банері ₿: |fuel_dir| × 100.
-                'strength': int(round(abs(d) * 100)),
+                # Сила — з ТОГО САМОГО legacy-розрахунку (|dir| × 100), а не
+                # порахована вдруге тут: два «однакових» числа розійшлись би.
+                'strength': int(old.get('strength') or 0),
+                # ⚠️ Ціна — з НОВОГО зрізу: legacy її взагалі не повертає, а
+                # `mark_price` в обох випадках один і той самий (знімок
+                # liq-map + накладений `_live_price`).
                 'mark_price': f.get('mark_price'),
             }
         with self._lock:
@@ -2910,7 +2941,9 @@ class FuelFilterDaemon:
     def mm_monitor_state(self, settings: Optional[Dict] = None) -> Dict:
         """🧮 Рядки МММ-монітора — ЧИТАННЯ готового знімка, без розрахунків.
 
-        Повертає {'rows': [...], 'ts', 'limited', 'counts': {...}}.
+        Повертає {'rows': [...], 'ts', 'enabled', 'limited', 'counts': {...}}.
+        `enabled=False` — тумблер монітора вимкнено: знімка немає СВІДОМО, і
+        порожню таблицю треба підписати саме так, а не «немає даних».
         `limited=True` означає, що `mmm_limited_mode` УВІМКНЕНО і МММ рахується
         НЕ по всьому watchlist, а лише по монетах «у роботі» (₿ + угоди + черги
         + фандинг + додані вручну). Це ОБОВʼЯЗКОВО віддати у відповідь: інакше
@@ -2965,6 +2998,7 @@ class FuelFilterDaemon:
         return {
             'rows': rows,
             'ts': ts,
+            'enabled': bool(s.get('mm_monitor_enabled', True)),
             'limited': bool(s.get('mmm_limited_mode', True)),
             'counts': counts,
         }
@@ -2989,6 +3023,12 @@ class FuelFilterDaemon:
         if not s.get('enabled'):
             return {'ok': False, 'opened': 0, 'failed': 0, 'results': [],
                     'reason': 'Fuel Auto-Filter вимкнено'}
+        # ⚠️ Вимкнений монітор = знімка НЕМАЄ, тож напрямок брати нізвідки.
+        # Кажемо це прямо: інакше кожна монета отримала б причину «МММ без
+        # напрямку», що виглядало б як «ринок у рівновазі», а не як тумблер.
+        if not s.get('mm_monitor_enabled', True):
+            return {'ok': False, 'opened': 0, 'failed': 0, 'results': [],
+                    'reason': '🧮 МММ-монітор вимкнено — увімкніть тумблер секції'}
         syms = [str(x).upper().strip() for x in (symbols or []) if str(x).strip()]
         # Дедуп зі збереженням порядку — той самий символ двічі не відкриваємо.
         syms = list(dict.fromkeys(syms))
@@ -4324,9 +4364,9 @@ class FuelFilterDaemon:
             fuels[sym] = self._fuel_dir_smoothed(sym, update=True)
 
         # 🧮 ЗНІМОК ДЛЯ МММ-МОНІТОРА — рівно ті числа, які щойно порахував
-        # двигун. Нічого не перераховуємо пізніше: монітор, колонка «МММ» у
-        # чергах і рішення двигуна мусять показувати ОДНЕ значення.
-        self._mm_capture(fuels)
+        # двигун. Нічого не перераховуємо пізніше: монітор, колонка «Старий
+        # МММ» у Черзі-4 і рішення двигуна мусять показувати ОДНЕ значення.
+        self._mm_capture(fuels, settings)
 
         # BTC table-row snapshot (fuel-based, like the other coins).
         bfuel = fuels.get('BTCUSDT')

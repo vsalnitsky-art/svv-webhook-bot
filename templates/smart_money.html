@@ -2798,9 +2798,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  сам не відкриває. Джерело чисел — ТОЙ САМИЙ знімок двигуна, що
                  живить колонку «МММ» у чергах (одне джерело правди). -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
-                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mm')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mm-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🧮 МММ-монітор <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— живий напрямок МММ по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mm')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mm-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🧮 МММ-монітор <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— живий СТАРИЙ МММ по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
                 <div style="display:flex;align-items:center;gap:10px">
                     <span id="mm-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
+                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🧮 МММ-монітор. ВИМКНЕНО — бот НЕ рахує знімок напрямків (економія: старий МММ по всіх монетах щотакту не рахується), таблиця порожня, групове відкриття недоступне. Сам моніторинг нічого не відкриває автоматично — лише показує стан і дає ✋ відкрити обране вручну.">
+                        <input type="checkbox" id="ff-mm-monitor-enabled" checked onchange="saveFuelFilterSettings()">
+                        <span class="slider"></span>
+                    </label>
                 </div>
             </div>
             <div id="mm-body">
@@ -2833,14 +2837,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <tr>
                                 <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mm-check-all" onchange="mmToggleAll(this.checked)"></th>
                                 <th>Символ</th>
-                                <th title="Напрямок тиску МММ (той самий показник, що в колонці «МММ» черг).">МММ</th>
-                                <th title="Сила тиску 0–100% + тренд від попереднього такту (↑ міцніє / ↓ слабшає).">Сила</th>
+                                <th title="СТАРИЙ показник МММ (той самий, що живить шар «Старий МММ» у Черзі-4): напрямок тиску + сила 0–100% + тренд від попереднього такту (↑ міцніє / ↓ слабшає).">Старий МММ</th>
                                 <th title="Ціна зі знімка МММ.">Ціна</th>
                                 <th title="Чи монета вже в угоді або стоїть у якійсь черзі.">Стан</th>
                             </tr>
                         </thead>
                         <tbody id="mm-tbody">
-                            <tr><td colspan="6" class="tm-empty-msg">Немає даних МММ</td></tr>
+                            <tr><td colspan="5" class="tm-empty-msg">Немає даних МММ</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -11360,15 +11363,22 @@ function mmRender() {
     const rows = _mmVisibleRows();
     // Сигнатура: нічого не змінилось → DOM не чіпаємо (той самий прийом, що в
     // таблиці Черги-4 — інакше рядки «стрибають» під курсором).
-    const sig = _mmDir + '|' + rows.map(r => [r.symbol, r.mm, r.strength,
+    // ⚠️ `enabled` — ЧАСТИНА сигнатури: інакше перемикання тумблера при
+    // порожній таблиці нічого б не перемалювало, і «Монітор вимкнено» висіло б
+    // замість «Немає даних» (і навпаки). Упіймано тестом.
+    const sig = _mmDir + '|' + (_mmMeta.enabled ? '1' : '0') + '|'
+        + rows.map(r => [r.symbol, r.mm, r.strength,
         r.strength_prev, r.in_trade ? 1 : 0, r.in_queue ? 1 : 0,
         _mmSel.has(r.symbol) ? 1 : 0].join(':')).join(',');
     if (tb.dataset.sig !== sig) {
         tb.dataset.sig = sig;
         if (!rows.length) {
-            tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">'
-                + (_mmRows.length ? 'Немає монет під цей фільтр' : 'Немає даних МММ')
-                + '</td></tr>';
+            // ⚠️ Три РІЗНІ причини порожньої таблиці — і кожна мусить говорити
+            // сама за себе: вимкнений тумблер це РІШЕННЯ, а не «немає даних».
+            const _why = !_mmMeta.enabled
+                ? '🔌 Монітор вимкнено — увімкніть тумблер у шапці секції'
+                : (_mmRows.length ? 'Немає монет під цей фільтр' : 'Немає даних МММ');
+            tb.innerHTML = `<tr><td colspan="5" class="tm-empty-msg">${_why}</td></tr>`;
         } else {
             tb.innerHTML = rows.map(r => {
                 const sel = _mmSel.has(r.symbol);
@@ -11382,8 +11392,10 @@ function mmRender() {
                 return `<tr${sel ? ' style="background:rgba(56,189,248,0.07)"' : ''}>`
                     + `<td>${cb}</td>`
                     + `<td style="font-weight:700">${_s}</td>`
+                    // ⚠️ Окремої колонки «Сила» НЕМАЄ (прибрано на прохання):
+                    // віджет `ffFuelCell` уже показує і напрямок, і 0-100%, і
+                    // тренд — друга колонка дублювала те саме число.
                     + `<td>${ffFuelCell(r.mm, r.strength, r.strength_prev)}</td>`
-                    + `<td style="font-family:monospace;text-align:right">${Math.round(r.strength || 0)}%</td>`
                     + `<td style="font-family:monospace;text-align:right">${r.price ? fmtPriceJS(r.price) : '—'}</td>`
                     + `<td style="font-size:0.68rem">${state}</td>`
                     + `</tr>`;
@@ -11403,18 +11415,22 @@ function mmRender() {
 function mmApplyState(mm) {
     _mmRows = (mm && Array.isArray(mm.rows)) ? mm.rows : [];
     _mmMeta = { limited: !!(mm && mm.limited), ts: (mm && mm.ts) || 0,
+                enabled: !(mm && mm.enabled === false),
                 counts: (mm && mm.counts) || {} };
     const up = document.getElementById('mm-updated');
     if (up) {
-        up.textContent = _mmMeta.ts
-            ? `${_mmRows.length} монет · оновлено ${new Date(_mmMeta.ts * 1000).toLocaleTimeString()}`
-            : 'ще немає знімка';
+        up.textContent = !_mmMeta.enabled ? 'вимкнено'
+            : (_mmMeta.ts
+               ? `${_mmRows.length} монет · оновлено ${new Date(_mmMeta.ts * 1000).toLocaleTimeString()}`
+               : 'ще немає знімка');
     }
     // ⚠️ Режим економії НАЗИВАЄМО вголос: інакше коротка таблиця виглядала б як
     // «бот не бачить монет», хоча це свідоме налаштування.
     const hint = document.getElementById('mm-limited-hint');
     if (hint) {
-        if (_mmMeta.limited) {
+        // Вимкнений монітор → про режим економії НЕ пишемо: два попередження
+        // поруч тільки заплутали б, а причина порожньої таблиці вже в ній самій.
+        if (_mmMeta.limited && _mmMeta.enabled) {
             hint.style.display = 'block';
             hint.innerHTML = '⚠️ Режим економії: МММ рахується НЕ по всьому '
                 + 'WATCHLIST, а лише по монетах «у роботі» (₿ · відкриті угоди · '
@@ -12293,6 +12309,7 @@ function renderFuelFilter(d) {
     setIf('ff-use-potential', s.use_potential_exit);
     setIf('ff-manage-positions', s.manage_open_positions !== false);  // default true
     setIf('ff-mmm-limited', s.mmm_limited_mode !== false);  // default true
+    setIf('ff-mm-monitor-enabled', s.mm_monitor_enabled !== false);  // default true
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
     setIf('ff-manage-close-mm', String(s.manage_close_min_mm != null ? s.manage_close_min_mm : 0));
@@ -13321,6 +13338,7 @@ async function saveFuelFilterSettings() {
     const payload = {
         manage_open_positions: _c('ff-manage-positions'),
         mmm_limited_mode: _c('ff-mmm-limited'),
+        mm_monitor_enabled: _c('ff-mm-monitor-enabled'),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
