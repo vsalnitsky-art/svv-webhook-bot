@@ -24,6 +24,7 @@ import ast
 import importlib.util
 import os
 import sys
+import time
 import types
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -446,7 +447,7 @@ const _tabs = ['all','LONG','SHORT','flat'].map(d => ({
 // саме `th[data-mmsort]`, і якби фейк повертав на будь-який селектор вкладки,
 // тест падав би «на рівному місці» (так і сталось).
 const _arrows = {};
-const _ths = ['symbol','strength','delta','price'].map(c => ({
+const _ths = ['symbol','strength','delta','grow','pchg'].map(c => ({
   _c:c, getAttribute:()=>c,
   querySelector:()=>(_arrows[c] = _arrows[c] || {textContent:''})}));
 const document = {
@@ -748,8 +749,11 @@ console.log(JSON.stringify({cells:(h.match(/<td/g)||[]).length,
 ''')
     import json, re as _re
     d = json.loads(out)
+    # ⚠️ Ріжемо рівно по `</thead>`, а не «перші N символів»: підказки в
+    # заголовках ростуть, і фіксоване вікно вже одного разу обрізало таблицю
+    # посередині — тест падав «на рівному місці».
     i = _HTML.index('id="mm-table"')
-    _th = len(_re.findall(r'<th[\s>]', _HTML[i:i + 2600]))
+    _th = len(_re.findall(r'<th[\s>]', _HTML[i:_HTML.index('</thead>', i)]))
     _check(d['cells'] == _th, f'{d["cells"]} комірок проти {_th} заголовків')
     _check(d['widget'], 'віджет МММ (де і стоїть %) зник із рядка')
     # Сила лишається у ДАНИХ — вона живить сортування і фільтр «Сила ≥».
@@ -880,26 +884,35 @@ def test_symbol_opens_tradingview_exactly_like_the_watchlist():
 
 def test_ui_has_growth_column_with_timer_and_sorting():
     i = _HTML.index('id="mm-table"')
-    tbl = _HTML[i:i + 2600]
+    tbl = _HTML[i:_HTML.index('</table>', i)]
     import re as _re
     _check('Сила росте' in tbl, 'немає колонки приросту')
+    # ⏱ Таймер — ОКРЕМА колонка (вимога 15.09), а не хвіст комірки приросту.
+    _check('⏱ Росте' in tbl, 'таймер не винесено в окрему колонку')
     _n = len(_re.findall(r'<th[\s>]', tbl))
-    _check(_n == 6, f'очікував 6 колонок: {_n}')
-    _check('colspan="6"' in tbl and 'colspan="5"' not in tbl, 'colspan не оновлено')
-    for col in ('symbol', 'strength', 'delta', 'price'):
+    _check(_n == 9, f'очікував 9 колонок: {_n}')
+    _check(f'colspan="{_n}"' in tbl,
+           f'colspan порожнього рядка не дорівнює числу колонок ({_n})')
+    for col in ('symbol', 'strength', 'delta', 'grow', 'pchg'):
         _check(f'data-mmsort="{col}"' in tbl, f'колонка {col} не сортується')
     _check("mmSort('delta')" in tbl, 'сортування за приростом не підключене')
+    _check("mmSort('grow')" in tbl, 'сортування за таймером не підключене')
     _check('п.п.' in tbl, 'у підказці не сказано, що це ПУНКТИ, а не відносний %')
-    print('✓ UI: колонка «Сила росте» + сортування по ній')
+    print(f'✓ UI: «Сила росте» + окрема ⏱ колонка, {_n} колонок із сортуванням')
 
 
 def test_timer_uses_the_shared_one_second_ticker():
     """⚠️ Секунди НЕ мають перебудовувати таблицю: той самий прийом, що з
     `held_sec` у Черзі-4 — `.ff-timer[data-since]` + ОДИН глобальний тікер."""
-    i = _HTML.index('function _mmGrowCell(')
-    fn = _HTML[i:i + 2200]
+    # ⏱ Таймер живе у ВЛАСНІЙ функції комірки (окрема колонка), і саме її
+    # перевіряємо — раніше зріз від `_mmGrowCell` випадково накривав сусідню
+    # функцію, тобто тест «проходив» ні за що.
+    i = _HTML.index('function _mmTimerCell(')
+    fn = _HTML[i:_HTML.index('\n}', i)]
     _check('class="ff-timer" data-since=' in fn, 'таймер не на спільному класі')
     _check('fmtTimer' not in fn, 'секунди не треба малювати тут — їх веде тікер')
+    _check('function _mmTimerCell(' in _HTML and '_mmTimerCell(r)' in _HTML,
+           'комірка таймера не підключена до рядка таблиці')
     # Сам тікер уже існує і бере ВСІ такі елементи сторінки.
     _check(".ff-timer[data-since]" in _HTML and 'window._ffTimerTick' in _HTML,
            'глобальний 1с-тікер зник — таймер стоятиме')
@@ -953,6 +966,489 @@ console.log(JSON.stringify({one:cell('AAA').includes('→'),
     _check(d['up'] and d['down'], f'напрямок приросту не показано: {d}')
     print('✓ JS: поріг клітинки приросту збігається зі стрілкою')
 
+
+
+# ═══════════ 11. ⏱ ТАЙМЕР — ОКРЕМА КОЛОНКА (вимога 15.09) ════════════════
+def test_js_timer_lives_in_its_own_cell_not_in_the_growth_cell():
+    """Вимога дослівно: «Таймер зроби окремою колонкою». Раніше він тулився
+    хвостом у комірку приросту й розтягував її; тепер це власний стовпчик."""
+    out = _run_js(r'''
+mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:57, strength_prev:40,
+  delta:17, delta_rel:42.5, grow_since:1700000000, price:1.5,
+  in_trade:false, in_queue:false, selectable:true}],
+  enabled:true, limited:false, ts:1, counts:{LONG:1,SHORT:0,flat:0}});
+const h = document.getElementById('mm-tbody').innerHTML;
+// Розбираємо рядок на комірки: у ЯКІЙ саме стоїть таймер?
+const tds = h.split('<td').slice(1);
+const iTimer = tds.findIndex(t => t.includes('ff-timer'));
+const iGrow = tds.findIndex(t => t.includes('+17'));
+console.log(JSON.stringify({iTimer, iGrow, n:tds.length}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['iTimer'] >= 0, 'таймера немає в рядку взагалі')
+    _check(d['iGrow'] >= 0, 'приросту немає в рядку')
+    _check(d['iTimer'] != d['iGrow'],
+           f'таймер і приріст в ОДНІЙ комірці — колонку не виділено: {d}')
+    _check(d['iTimer'] == d['iGrow'] + 1,
+           f'таймер мусить стояти одразу за приростом: {d}')
+    print('✓ JS: ⏱ таймер — окрема комірка одразу за «Сила росте»')
+
+
+def test_js_timer_cell_is_empty_when_strength_is_not_growing():
+    """«Обнуляється, коли перестає рости» має бути ВИДНО: порожній таймер —
+    це стан «не росте», а не «дані загубились»."""
+    out = _run_js(r'''
+mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:57, strength_prev:57,
+  delta:0, delta_rel:0, grow_since:null, price:1.5,
+  in_trade:false, in_queue:false, selectable:true}],
+  enabled:true, limited:false, ts:1, counts:{LONG:1,SHORT:0,flat:0}});
+const h = document.getElementById('mm-tbody').innerHTML;
+console.log(JSON.stringify({timer:h.includes('ff-timer'),
+  says:/не росте/.test(h)}));
+''')
+    import json
+    d = json.loads(out)
+    _check(not d['timer'], 'таймер малюється, хоча сила не росте')
+    _check(d['says'], 'порожній таймер нічого не пояснює')
+    print('✓ JS: не росте → таймера немає, і причина названа')
+
+
+# ═══════════ 12. 💹 НАПРЯМОК ЦІНИ (вимога 15.09) ═════════════════════════
+def test_price_move_is_a_pure_function_with_a_deadzone():
+    """⚠️ Мертва зона обовʼязкова: без неї «росте/падає» мигало б на
+    кожній сотій відсотка. Правило те саме, що в колонці Price у 💰 Funding."""
+    mv = _m.mm_price_move
+    now = 10_000.0
+    up = mv([(now - 600, 100.0), (now, 101.0)], now)
+    down = mv([(now - 600, 100.0), (now, 99.0)], now)
+    flat = mv([(now - 600, 100.0), (now, 100.05)], now)
+    _check(up['dir'] == 'up' and up['chg'] == 1.0, up)
+    _check(down['dir'] == 'down' and down['chg'] == -1.0, down)
+    _check(flat['dir'] == 'flat', f'0.05% — це шум, а не напрямок: {flat}')
+    # Рівно на межі мертвої зони — ще НЕ напрямок (строге «>»).
+    edge = mv([(now - 600, 100.0), (now, 100.10)], now)
+    _check(edge['dir'] == 'flat', f'на межі мертвої зони напрямку немає: {edge}')
+    print('✓ рух ціни: чиста функція + мертва зона 0.10%')
+
+
+def test_price_move_reports_how_much_history_it_actually_had():
+    """⚠️ «+0.4% за 40 секунд» і «+0.4% за 15 хвилин» — різні за вагою
+    твердження. Без `span` таблиця видавала б перше за друге."""
+    mv = _m.mm_price_move
+    now = 10_000.0
+    fresh = mv([(now - 40, 100.0), (now, 100.4)], now)
+    _check(fresh['span'] == 40.0, fresh)
+    # Точки ПОЗА вікном участі не беруть.
+    old = mv([(now - 5000, 50.0), (now - 60, 100.0), (now, 101.0)], now)
+    _check(old['points'] == 2 and old['chg'] == 1.0,
+           f'точка поза вікном потрапила в розрахунок: {old}')
+    # Менше двох точок → чесне «немає напрямку», а не вигаданий нуль-рух.
+    _check(mv([(now, 100.0)], now)['span'] == 0.0, 'одна точка — це не рух')
+    _check(mv([], now)['dir'] == 'flat', 'порожня історія')
+    print('✓ рух ціни: вікно і кількість точок віддаються чесно')
+
+
+def test_price_window_matches_the_funding_column():
+    """⚠️ ЗАМОК МІЖ ФАЙЛАМИ. Дві колонки на одній сторінці не мають називати
+    «росте» різні речі: вікно і мертва зона мусять збігатися з
+    `funding_monitor.PRICE_WINDOW` / `PRICE_DEADZONE`."""
+    import re as _re
+    src = open(os.path.join(_HERE, 'detection', 'funding_monitor.py'),
+               encoding='utf-8').read()
+    w = int(_re.search(r'^PRICE_WINDOW\s*=\s*(\d+)', src, _re.M).group(1))
+    dz = float(_re.search(r'^PRICE_DEADZONE\s*=\s*([\d.]+)', src, _re.M).group(1))
+    _check(_m.MM_PRICE_WINDOW_SEC == w * 60,
+           f'вікно розійшлось: монітор {_m.MM_PRICE_WINDOW_SEC}с, фандинг {w}хв')
+    _check(_m.MM_PRICE_DEADZONE == dz,
+           f'мертва зона розійшлась: {_m.MM_PRICE_DEADZONE} проти {dz}')
+    print(f'✓ вікно/мертва зона ціни збігаються з 💰 Funding ({w}хв · {dz}%)')
+
+
+def test_snapshot_carries_the_price_direction():
+    """Напрямок рахує ДВИГУН і кладе у знімок; `mm_monitor_state` лише читає
+    (той самий поділ, що з шарами Черги-4)."""
+    ff = _mk()
+    ff._mm_price_hist = {'BTCUSDT': [(time.time() - 600, 100.0)]}
+    _cap(ff, BTCUSDT=0.5)
+    row = ff.mm_monitor_state()['rows'][0]
+    _check(row['price_dir'] in ('up', 'down', 'flat'), row)
+    _check('price_chg' in row and 'price_span' in row, row)
+    # Ціна знімка — `mark_price` із нового зрізу (legacy її не віддає).
+    _check(row['price'] is not None, row)
+    print(f"✓ знімок несе напрямок ціни: {row['price_dir']} {row['price_chg']}%")
+
+
+def test_price_history_is_trimmed_and_forgets_dead_symbols():
+    """Інакше памʼять росла б, а монета, що повернулась у знімок, рахувала б
+    «рух» від ціни годинної давності."""
+    ff = _mk()
+    old = time.time() - (_m.MM_PRICE_WINDOW_SEC + 10 * _m.CYCLE_SECS)
+    ff._mm_price_hist = {'BTCUSDT': [(old, 1.0)], 'ZZZUSDT': [(old, 2.0)]}
+    _cap(ff, BTCUSDT=0.5)
+    _check('ZZZUSDT' not in ff._mm_price_hist,
+           'історія монети, якої немає у знімку, не прибрана')
+    _check(all(t > old for t, _ in ff._mm_price_hist['BTCUSDT']),
+           f'точка поза вікном лишилась: {ff._mm_price_hist}')
+    print('✓ історія цін: обрізається вікном, сироти прибираються')
+
+
+def test_js_price_cell_shows_direction_and_the_real_window():
+    """⚠️ Вікно НЕ зашите у фронті: показуємо `price_span`, що прийшов із
+    бекенда. Інакше одразу після рестарту «+0.4%» за 40с читалось би як
+    «+0.4% за 15 хвилин»."""
+    out = _run_js(r'''
+const R = (s, dir, chg, span) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50,
+  delta:0, grow_since:null, price:1.5, price_dir:dir, price_chg:chg, price_span:span,
+  in_trade:false, in_queue:false, selectable:true});
+mmApplyState({rows:[R('AAAUSDT','up',0.42,900), R('BBBUSDT','down',-1.1,40),
+  R('CCCUSDT','flat',0.02,900), R('DDDUSDT',null,0,0)],
+  enabled:true, limited:false, ts:1, counts:{LONG:4,SHORT:0,flat:0}});
+const rows = document.getElementById('mm-tbody').innerHTML.split('</tr>');
+const cell = s => rows.filter(x => x.includes(s))[0] || '';
+console.log(JSON.stringify({
+  up:cell('AAA').includes('▲') && cell('AAA').includes('+0.42%'),
+  win:cell('AAA').includes('15хв'), fresh:cell('BBB').includes('40с'),
+  down:cell('BBB').includes('▼'), flat:cell('CCC').includes('▬'),
+  none:!/[▲▼▬]/.test(cell('DDD'))}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['up'] and d['down'] and d['flat'], f'стрілки напрямку ціни: {d}')
+    _check(d['win'] and d['fresh'],
+           f'показане вікно не збігається з тим, що віддав бекенд: {d}')
+    _check(d['none'], 'без історії напрямок вигадувати не можна')
+    print('✓ JS: ціна ▲/▼/▬ + чесне вікно спостереження')
+
+
+def test_js_price_sorting_uses_the_move_not_the_price():
+    """Колонку додали, щоб бачити, ЯКА монета зараз іде вгору, — тож клік по
+    заголовку сортує за РУХОМ. Рядок без історії — у кінець."""
+    out = _run_js(r'''
+const R = (s, px, dir, chg) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50,
+  delta:0, grow_since:null, price:px, price_dir:dir, price_chg:chg, price_span:900,
+  in_trade:false, in_queue:false, selectable:true});
+mmApplyState({rows:[R('AAAUSDT',900,'up',0.2), R('BBBUSDT',1,'up',5.0),
+  R('CCCUSDT',50,null,0)], enabled:true, limited:false, ts:1,
+  counts:{LONG:3,SHORT:0,flat:0}});
+mmSort('pchg');
+const h = document.getElementById('mm-tbody').innerHTML;
+console.log(JSON.stringify({order:['AAA','BBB','CCC'].map(s => h.indexOf(s))}));
+''')
+    import json
+    a, b, c = json.loads(out)['order']
+    _check(b < a, 'монета з більшим РУХОМ мусить бути вище за дорожчу')
+    _check(c > a and c > b, 'рядок без напрямку — у кінець')
+    print('✓ JS: сортування колонки «Ціна» — за рухом, а не за ціною')
+
+
+# ═══════════ 13. 🔮 ПРОГНОЗ + 🧠 РІШЕННЯ (скріни 1 і 2) ══════════════════
+def _fn_code(name):
+    """Тіло методу БЕЗ докстрінга — щоб пояснення в коментарях («ensure_fresh
+    тут заборонений») не видавалось за виклик. Замок має дивитись на КОД."""
+    src = _SRC[_SRC.index(f'def {name}('):]
+    src = src[:src.index('\n    def ')]
+    if '"""' in src:
+        src = src[src.index('"""', src.index('"""') + 3) + 3:]
+    return src
+
+
+class _FE:
+    """Фейковий кеш прогнозу — рівно тієї форми, що `forecast_engine.get`."""
+
+    def __init__(self, data):
+        self.data = data
+        self.calls = []
+
+    def get(self, sym):
+        self.calls.append(sym)
+        return self.data.get(sym)
+
+
+def test_forecast_is_read_from_the_same_cache_as_the_chart_badge():
+    """⚠️ Бейдж «🔮 1H» над графіком і колонка монітора мусять показувати ОДНЕ
+    число — тому джерело одне: `forecast_engine.get`. Нічого не рахуємо і не
+    довантажуємо (`ensure_fresh` ходить по свічки — це 200+ монет щотакту)."""
+    fe = _FE({'BTCUSDT': {'forecast_1h': {'side': 1, 'pct': 100, 'confidence': 90},
+                          'forecast_4h': {'side': 1, 'pct': 70, 'confidence': 75}}})
+    out = FF._mm_forecast(fe, 'BTCUSDT')
+    _check(out['f1'] == {'side': 1, 'pct': 100.0, 'conf': 90}, out)
+    _check(out['f4'] == {'side': 1, 'pct': 70.0, 'conf': 75}, out)
+    _check(FF._mm_forecast(None, 'X') == {'f1': None, 'f4': None},
+           'без двигуна прогнозу — порожньо, а не виняток')
+    _check(FF._mm_forecast(_FE({}), 'X') == {'f1': None, 'f4': None},
+           'немає в кеші — порожньо')
+    # ⚠️ `ensure_fresh` у цьому шляху заборонений — він ходить по свічки.
+    _check('ensure_fresh' not in _fn_code('_mm_forecast'),
+           'монітор не має права довантажувати прогноз (200+ монет щотакту)')
+    print('✓ прогноз: той самий кеш, що в бейджа; нічого не рахуємо')
+
+
+def test_neutral_forecast_is_not_the_same_as_no_forecast():
+    """«ней» — це змістовна відповідь двигуна; порожній кеш — ні. У таблиці
+    вони мусять читатись по-різному."""
+    fe = _FE({'AAA': {'forecast_1h': {'side': 0, 'pct': 0, 'confidence': 12},
+                      'forecast_4h': {}}})
+    out = FF._mm_forecast(fe, 'AAA')
+    _check(out['f1'] == {'side': 0, 'pct': 0.0, 'conf': 12}, out)
+    _check(out['f4'] is None, f'порожній прогноз мусить бути None: {out}')
+    print('✓ прогноз: нейтраль ≠ «немає даних»')
+
+
+def test_snapshot_carries_the_forecast_pair():
+    ff = _mk()
+    fe = _FE({'BTCUSDT': {'forecast_1h': {'side': -1, 'pct': -40, 'confidence': 60},
+                          'forecast_4h': {'side': 1, 'pct': 12, 'confidence': 30}}})
+    ff._mm_forecast_engine = lambda: fe
+    _cap(ff, BTCUSDT=0.5)
+    row = ff.mm_monitor_state()['rows'][0]
+    _check(row['f1']['side'] == -1 and row['f4']['side'] == 1, row)
+    # Двигун прогнозу беремо ОДИН раз на такт, а не на монету.
+    _check(fe.calls == ['BTCUSDT'], fe.calls)
+    print('✓ знімок несе пару прогнозів 1H/4H')
+
+
+def test_js_forecast_cell_mirrors_the_chart_badge_format():
+    """Формат — ТОЧНО як у бейджа над графіком («1H: 🟢 LONG +100% · 90%»).
+    Свого подання не вигадуємо: дві різні подачі одного числа на одній
+    сторінці — це той самий клас помилки, що «банер vs бейдж» у PD-зоні."""
+    out = _run_js(r'''
+const R = (s, f1, f4) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50, delta:0,
+  grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
+  f1:f1, f4:f4, in_trade:false, in_queue:false, selectable:true});
+mmApplyState({rows:[
+  R('AAAUSDT', {side:1,pct:100,conf:90}, {side:1,pct:70,conf:75}),
+  R('BBBUSDT', {side:-1,pct:-40,conf:55}, null),
+  R('CCCUSDT', {side:0,pct:0,conf:12}, null)],
+  enabled:true, limited:false, ts:1, counts:{LONG:3,SHORT:0,flat:0}});
+const rows = document.getElementById('mm-tbody').innerHTML.split('</tr>');
+const cell = s => rows.filter(x => x.includes(s))[0] || '';
+console.log(JSON.stringify({
+  a1:cell('AAA').includes('1H: 🟢 LONG +100% · 90%'),
+  a4:cell('AAA').includes('4H: 🟢 LONG +70% · 75%'),
+  b:cell('BBB').includes('🔴 SHORT -40% · 55%'),
+  bNo:cell('BBB').includes('4H: —'),
+  c:cell('CCC').includes('⚪ ней')}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['a1'] and d['a4'], f'формат прогнозу не збігається з бейджем: {d}')
+    _check(d['b'], f'SHORT-прогноз не показано: {d}')
+    _check(d['bNo'], '«немає прогнозу 4H» мусить бути видно окремо')
+    _check(d['c'], 'нейтральний прогноз не показано як «ней»')
+    # ⚠️ Той самий формат, що в бейджі чарту (перевіряємо, що бейдж не змінився).
+    _check("` · ${fc.confidence}%`" in _HTML or '· ${fc.confidence}%' in _HTML,
+           'формат бейджа прогнозу змінився — колонку треба вирівняти під нього')
+    print('✓ JS: 🔮 колонка прогнозу 1:1 з бейджем над графіком')
+
+
+def test_decision_is_off_by_default_and_costs_nothing():
+    """⚠️ ЄДИНИЙ РОЗРАХУНОК таблиці (`compute_decision` = 2× `evaluate_entry`
+    на монету) — тож дефолт ВИМКНЕНО і жодного виклику при вимкненому тумблері."""
+    _check(_m.DEFAULT_SETTINGS['mm_monitor_decision'] is False,
+           'новий важкий показник не має вмикатись сам')
+    ff = _mk()
+    calls = []
+    ff._get_tm = lambda: types.SimpleNamespace(
+        compute_decision=lambda s, p: calls.append(s) or {'recommended': 'LONG'})
+    _cap(ff, BTCUSDT=0.5)
+    _check(not calls, f'вимкнена колонка все одно рахувала: {calls}')
+    st = ff.mm_monitor_state()
+    _check(st['decision_on'] is False, st)
+    _check(st['rows'][0]['decision'] is None, st['rows'][0])
+    print('✓ 🧠 Рішення: дефолт OFF і жодного розрахунку')
+
+
+def test_decision_uses_the_same_verdict_as_the_banner():
+    ff = _mk()
+    ff._settings['mm_monitor_decision'] = True
+    ff._get_tm = lambda: types.SimpleNamespace(
+        compute_decision=lambda s, p: {'recommended': 'LONG',
+                                       'headline': 'LONG 71%',
+                                       'verdict': 'good'})
+    _cap(ff, BTCUSDT=0.5)
+    d = ff.mm_monitor_state()['rows'][0]['decision']
+    _check(d == {'reco': 'LONG', 'headline': 'LONG 71%', 'verdict': 'good'}, d)
+    # ⚠️ Свого розрахунку вердикту тут немає — лише виклик TM.
+    _code = _fn_code('_mm_decisions')
+    _check('compute_decision' in _code and 'evaluate_entry' not in _code
+           and 'build_decision' not in _code,
+           'монітор рахує вердикт САМ — він розійдеться з банером')
+    print('✓ 🧠 Рішення: єдине джерело — compute_decision (як у банера)')
+
+
+def test_decision_refreshes_in_capped_batches():
+    """⚠️ 200 монет × 2 оцінки входу за такт поклали б двигун. Оновлюємо
+    НАЙСТАРІШІ порціями; решта віддається з кешу, а монета без вердикту чесно
+    показує «⏳»."""
+    ff = _mk()
+    ff._settings['mm_monitor_decision'] = True
+    calls = []
+
+    def _dec(sym, px):
+        calls.append(sym)
+        return {'recommended': 'LONG', 'headline': 'LONG 60%', 'verdict': 'good'}
+    ff._get_tm = lambda: types.SimpleNamespace(compute_decision=_dec)
+    n = _m.MM_DECISION_MAX_PER_TICK
+    pairs = {f'C{i:03d}USDT': 0.5 for i in range(n * 3)}
+    _cap(ff, **pairs)
+    _check(len(calls) == n, f'порція не обмежена: {len(calls)} при межі {n}')
+    got = len([r for r in ff.mm_monitor_state()['rows'] if r['decision']])
+    _check(got == n, f'вердиктів у таблиці {got}, мало бути {n}')
+    # Наступний такт бере НАСТУПНІ найстаріші, а не ті самі.
+    first = set(calls)
+    calls.clear()
+    _cap(ff, **pairs)
+    _check(len(calls) == n and not (set(calls) & first),
+           f'другий такт перерахував ті самі монети: {sorted(calls)[:3]}')
+    _check(len([r for r in ff.mm_monitor_state()['rows'] if r['decision']]) == 2 * n,
+           'таблиця не заповнюється такт за тактом')
+    print(f'✓ 🧠 Рішення: по {n} найстаріших за такт, решта — з кешу')
+
+
+def test_decision_cache_is_dropped_when_the_toggle_goes_off():
+    """Інакше після повторного вмикання таблиця показала б вердикти, яким
+    могло бути півдня — «заморожені» числа гірші за порожню комірку."""
+    ff = _mk()
+    ff._settings['mm_monitor_decision'] = True
+    ff._get_tm = lambda: types.SimpleNamespace(
+        compute_decision=lambda s, p: {'recommended': 'LONG', 'headline': 'L 60%',
+                                       'verdict': 'good'})
+    _cap(ff, BTCUSDT=0.5)
+    _check(ff._mm_decision, 'кеш не наповнився')
+    ff._settings['mm_monitor_decision'] = False
+    _cap(ff, BTCUSDT=0.5)
+    _check(not ff._mm_decision, 'старі вердикти лишились у кеші')
+    print('✓ 🧠 Рішення: вимкнення чистить кеш вердиктів')
+
+
+def test_js_decision_cell_tells_off_from_not_yet_computed():
+    """⚠️ Три різні стани — і кожен мусить говорити сам за себе: вимкнено /
+    ще рахується / є вердикт."""
+    out = _run_js(r'''
+const R = (s, dec) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50, delta:0,
+  grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
+  decision:dec, in_trade:false, in_queue:false, selectable:true});
+const rowsOf = () => document.getElementById('mm-tbody').innerHTML.split('</tr>');
+mmApplyState({rows:[R('AAAUSDT',null)], enabled:true, limited:false, ts:1,
+  decision_on:false, counts:{LONG:1,SHORT:0,flat:0}});
+const off = rowsOf().filter(x => x.includes('AAA'))[0];
+mmApplyState({rows:[R('AAAUSDT',null), R('BBBUSDT',{reco:'LONG',headline:'LONG 71%',verdict:'good'})],
+  enabled:true, limited:false, ts:2, decision_on:true, counts:{LONG:2,SHORT:0,flat:0}});
+const rs = rowsOf();
+console.log(JSON.stringify({
+  off:/вимкнено/.test(off) && !off.includes('⏳'),
+  pending:(rs.filter(x => x.includes('AAA'))[0]||'').includes('⏳'),
+  value:(rs.filter(x => x.includes('BBB'))[0]||'').includes('LONG 71%'),
+  word:(rs.filter(x => x.includes('BBB'))[0]||'').includes('СИЛЬНИЙ')}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['off'], f'вимкнена колонка не пояснює себе: {d}')
+    _check(d['pending'], f'«ще рахується» не відрізняється від «немає»: {d}')
+    _check(d['value'] and d['word'], f'вердикт не показано: {d}')
+    print('✓ JS: 🧠 три стани комірки — вимкнено / ⏳ / вердикт')
+
+
+def test_verdict_words_match_the_decision_banner():
+    """⚠️ ЗАМОК. Та сама оцінка не має називатись у таблиці інакше, ніж у
+    банері над графіком: усі мапи V_UA на сторінці мусять збігатися."""
+    import re as _re
+    # Беремо лише СЛОВЕСНІ мапи: поруч у файлі є ще й мапа КОЛЬОРІВ з тими
+    # самими ключами, і без цього звуження тест порівнював би різні речі.
+    maps = _re.findall(r"\{\s*good:\s*'([А-ЯІЇЄҐ]+)',\s*marginal:\s*'([А-ЯІЇЄҐ]+)',"
+                       r"\s*poor:\s*'([А-ЯІЇЄҐ]+)'\s*\}", _HTML)
+    _check(len(maps) >= 2, f'мап V_UA замало — перевірка втратила сенс: {maps}')
+    _check(len(set(maps)) == 1, f'написання вердикту розійшлось: {set(maps)}')
+    _check('_MM_V_UA' in _HTML, 'мапа монітора не знайдена')
+    print(f'✓ вердикт пишеться однаково в {len(maps)} місцях: {maps[0]}')
+
+
+def test_ui_has_the_decision_toggle_wired_both_ways():
+    _check('id="ff-mm-decision"' in _HTML, 'немає чекбокса колонки «Рішення»')
+    _check("mm_monitor_decision: _c('ff-mm-decision')" in _HTML,
+           'ключ не йде в збереження налаштувань')
+    _check("setIf('ff-mm-decision'" in _HTML,
+           'стан чекбокса не відновлюється із налаштувань')
+    print('✓ UI: тумблер колонки «🧠 Рішення» зберігається і відновлюється')
+
+
+# ═══════════ 14. 🧮 «СТАРИЙ МММ» У ТАБЛИЦЯХ ВІДКРИТИХ УГОД ═══════════════
+def test_snapshot_for_reads_and_computes_nothing():
+    """⚠️ `/api/tm/state` опитується кожні 5с під ОДНИМ gunicorn-воркером.
+    Саме через розрахунки на цьому ендпоінті колонку «МММ» колись і прибрали —
+    тож тепер вона бере ГОТОВИЙ знімок двигуна."""
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.5, ETHUSDT=-0.42)
+    ff._legacy_calls.clear()
+    got = ff.mm_snapshot_for(['btcusdt', 'ZZZUSDT'])
+    _check(not ff._legacy_calls, f'читач порахував МММ: {ff._legacy_calls}')
+    _check(set(got) == {'BTCUSDT'}, f'символ не нормалізовано / зайве: {got}')
+    _check(got['BTCUSDT']['mm'] == 'LONG' and got['BTCUSDT']['strength'] == 50, got)
+    _check(ff.mm_snapshot_for([]) == {}, 'порожній запит — порожня відповідь')
+    print('✓ mm_snapshot_for: лише читання знімка')
+
+
+def test_trades_column_shows_the_same_number_as_the_monitor():
+    """Та сама метрика у двох місцях = ОДНЕ значення (правило проєкту)."""
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.30)
+    _cap(ff, BTCUSDT=0.55)
+    row = [r for r in ff.mm_monitor_state()['rows'] if r['symbol'] == 'BTCUSDT'][0]
+    cell = ff.mm_snapshot_for(['BTCUSDT'])['BTCUSDT']
+    for k in ('mm', 'strength', 'strength_prev', 'delta', 'grow_since'):
+        _check(row[k] == cell[k],
+               f'{k}: монітор {row[k]!r} ≠ таблиця угод {cell[k]!r}')
+    print('✓ колонка угод і монітор показують ОДНЕ число')
+
+
+def test_open_trades_keep_their_mm_even_when_the_monitor_is_off():
+    """⚠️ Колонка в таблиці УГОД до монітора стосунку не має. Прив'язати її до
+    чужого тумблера означало б «вимкнув монітор — зникли числа в угодах».
+    Але сама ТАБЛИЦЯ МОНІТОРА при цьому лишається порожньою."""
+    ff = _mk(mon=False)
+    ff._fuel_managed = {'BTCUSDT': {}}
+    _cap(ff, BTCUSDT=0.5, ETHUSDT=-0.5)
+    _check(ff._legacy_calls == ['BTCUSDT'],
+           f'при вимкненому моніторі рахуємо ЛИШЕ монети в угоді: {ff._legacy_calls}')
+    _check(ff.mm_snapshot_for(['BTCUSDT']).get('BTCUSDT'),
+           'колонка в таблиці угод лишилась без числа')
+    st = ff.mm_monitor_state()
+    _check(st['enabled'] is False and st['rows'] == [],
+           f'вимкнений монітор показує рядки: {st}')
+    print('✓ тумблер монітора не гасить колонку в таблицях угод')
+
+
+def test_state_route_enriches_positions_from_the_snapshot():
+    src = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
+    i = src.index("@app.route('/api/tm/state')")
+    blk = src[i:i + 4000]
+    _check('mm_snapshot_for' in blk, 'маршрут не читає знімок МММ')
+    _check("pos['old_mm']" in blk, 'позиція не отримує поле old_mm')
+    # ⚠️ Жодних розрахунків на цьому гарячому ендпоінті.
+    for bad in ('_fuel_dir_legacy', 'compute_mm', '_liq_state'):
+        _check(bad not in blk, f'на /api/tm/state зʼявився розрахунок: {bad}')
+    print('✓ /api/tm/state: колонка живиться знімком, без розрахунків')
+
+
+def test_ui_trades_tables_got_the_column_and_the_right_colspan():
+    import re as _re
+    for tid, empty in (('tm-open-table', 'No open positions'),
+                       ('tm-shadow-open-table', 'No paper positions')):
+        i = _HTML.index(f'id="{tid}"')
+        tbl = _HTML[i:_HTML.index('</table>', i)]
+        _check('Старий МММ' in tbl, f'{tid}: немає заголовка колонки')
+        n = len(_re.findall(r'<th[\s>]', tbl))
+        m = _re.search(r'colspan="(\d+)"', tbl)
+        _check(m and int(m.group(1)) == n,
+               f'{tid}: colspan {m and m.group(1)} ≠ {n} заголовків')
+    # Комірку малює ТОЙ САМИЙ спільний віджет, що й у моніторі та чергах.
+    i = _HTML.index('function oldMmCellHTML(')
+    fn = _HTML[i:_HTML.index('\n}', i)]
+    _check('ffFuelCell(' in fn, 'колонка малює МММ своїм способом')
+    _check(_HTML.count('${oldMmCellHTML(p)}') == 2,
+           'комірка підключена не в обидві таблиці (real + paper)')
+    print('✓ UI: колонка «🧮 Старий МММ» у real+paper, спільний віджет')
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]

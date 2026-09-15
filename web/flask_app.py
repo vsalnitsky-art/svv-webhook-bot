@@ -5899,10 +5899,24 @@ def register_api_routes(app):
                 # Fuel STRENGTH (0..100 + prev + dir) — CHEAP map from the score
                 # cache; do NOT compute per position here (would block -w 1).
                 str_map = ff.get_fuel_strength_map()
-                for pos in ((state.get('positions') or []) + (state.get('shadow_positions') or [])):
+                _all_pos = ((state.get('positions') or [])
+                            + (state.get('shadow_positions') or []))
+                # 🧮 Колонка «Старий МММ» у таблицях відкритих угод. Це ЧИТАННЯ
+                # знімка, який двигун уже порахував для 🧮 МММ-монітора — тобто
+                # рівно те саме число, що стоїть у моніторі й у шарі «Старий
+                # МММ» Черги-4. ЖОДНИХ розрахунків на цьому гарячому ендпоінті:
+                # саме через них колонку «МММ» колись і прибрали звідси.
+                _mm_map = {}
+                try:
+                    _mm_map = ff.mm_snapshot_for([p.get('symbol') for p in _all_pos])
+                except AttributeError:
+                    pass          # старіший fuel_filter — колонка просто порожня
+                for pos in _all_pos:
                     sym = pos.get('symbol')
                     if sym in exh_map:
                         pos['exhaustion'] = exh_map[sym]
+                    if sym in _mm_map:
+                        pos['old_mm'] = _mm_map[sym]
                     # Колонку «МММ» прибрано з таблиць відкритих угод, тож
                     # ці поля більше не потрібні в кожному поллі (легший payload).
                     # Мапа лишається — її читають інші місця; щоб повернути

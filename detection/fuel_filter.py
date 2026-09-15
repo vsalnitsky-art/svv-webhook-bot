@@ -67,6 +67,24 @@ EXHAUSTION_TTL = 120            # cache exhaustion per symbol for 2 min
 # (`now > prev + 1`). Тримати два різні пороги не можна: у таблиці стрілка
 # казала б «→», а таймер росту біг би — суперечність прямо на екрані.
 MM_GROW_MIN_DELTA = 1
+# 💹 НАПРЯМОК ЦІНИ в МММ-моніторі (вимога 15.09: «щоб було розуміння чи ціна
+# росте чи падає»). Вікно і мертва зона СВІДОМО ті самі числа, що вже живлять
+# колонку «Price» у 💰 Funding (`funding_monitor.PRICE_WINDOW` = 15 хв ·
+# `PRICE_DEADZONE` = 0.10%) — інакше дві колонки на одній сторінці називали б
+# «росте» різні речі. Константи ДУБЛЮЮТЬСЯ, а не імпортуються, бо джерело
+# семплів тут ІНШЕ (знімок МММ раз на CYCLE_SECS проти 1-хв опитувань
+# фандинг-сканера) і пакетний імпорт `detection.funding_monitor` тягнув би
+# півпроєкту в ізольовані тести. Тест-замок звіряє числа між файлами.
+MM_PRICE_WINDOW_SEC = 15 * 60
+MM_PRICE_DEADZONE = 0.10
+# 🧠 РІШЕННЯ (банер Decision) у моніторі — НАЙДОРОЖЧИЙ показник таблиці:
+# `compute_decision` проганяє `evaluate_entry` ДВІЧІ (LONG + SHORT) на монету.
+# Тому він (а) має власний тумблер `mm_monitor_decision` (деф. ВИМКНЕНО),
+# (б) кешується на монету і (в) оновлюється порціями — не більше
+# MM_DECISION_MAX_PER_TICK найстаріших записів за такт. Так таблиця
+# заповнюється за кілька тактів замість того, щоб покласти двигун на першому.
+MM_DECISION_TTL = 120.0
+MM_DECISION_MAX_PER_TICK = 8
 
 LIQ_STATE_TTL = 20.0
 LIQ_STATE_CAP = 400             # запобіжник памʼяті: скільки монет тримати в кеші
@@ -176,6 +194,11 @@ DEFAULT_SETTINGS = {
     # недоступне. Дефолт УВІМК: монітор нічого не відкриває сам, він лише
     # показує стан — тож увімкненим він потік угод не розширює.
     'mm_monitor_enabled': True,
+    # 🧠 Колонка «Рішення» (вердикт банера Decision) у моніторі. ОКРЕМИЙ тумблер
+    # і дефолт ВИМКНЕНО — на відміну від решти колонок, це не читання готового
+    # кешу, а РОЗРАХУНОК (`compute_decision` = 2× `evaluate_entry` на монету).
+    # Вмикати свідомо, коли потрібен саме цей зріз.
+    'mm_monitor_decision': False,
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -645,6 +668,36 @@ DEFAULT_SETTINGS = {
 }
 
 
+def mm_price_move(hist, now: float,
+                  window: float = MM_PRICE_WINDOW_SEC,
+                  deadzone: float = MM_PRICE_DEADZONE) -> Dict:
+    """💹 «Ціна росте чи падає» — ЧИСТА функція над історією `[(ts, price)…]`.
+
+    Повертає `{'chg': %, 'dir': 'up'|'down'|'flat', 'span': секунд}`.
+    `dir` дзеркалить `funding_monitor._price_move`: рух у межах мертвої зони
+    (±`deadzone` %) — це «рівно», а не слабкий напрямок.
+
+    ⚠️ **`span` віддаємо ОБОВʼЯЗКОВО**, і це не косметика. Історія набирається
+    тактами двигуна, тож одразу після старту (чи для монети, яка щойно
+    зʼявилась у знімку) вікно ще НЕ повне: «+0.4%» за 40 секунд і «+0.4%» за
+    15 хвилин — різні за вагою твердження. Без `span` таблиця видавала б перше
+    за друге.
+    ⚠️ Менше двох точок → чесне `flat` із `span=0`, а не вигаданий нуль-рух:
+    порожню історію в UI видно як «—».
+    """
+    pts = [p for p in (hist or []) if p and p[0] >= (now - window)]
+    if len(pts) < 2:
+        return {'chg': 0.0, 'dir': 'flat', 'span': 0.0, 'points': len(pts)}
+    p0, p1 = float(pts[0][1] or 0.0), float(pts[-1][1] or 0.0)
+    if p0 <= 0 or p1 <= 0:
+        return {'chg': 0.0, 'dir': 'flat', 'span': 0.0, 'points': len(pts)}
+    chg = round((p1 - p0) / p0 * 100.0, 2)
+    d = 'up' if chg > deadzone else ('down' if chg < -deadzone else 'flat')
+    return {'chg': chg, 'dir': d,
+            'span': round(float(pts[-1][0]) - float(pts[0][0]), 1),
+            'points': len(pts)}
+
+
 class FuelFilterDaemon:
     def __init__(self, db, get_trade_manager: Callable,
                  get_watchlist: Callable):
@@ -733,6 +786,15 @@ class FuelFilterDaemon:
         # перестала (вимога 15.09: «включай таймер при кожному старті показника
         # "Сила росту" і обнуляй, коли перестає рости»).
         self._mm_grow_since: Dict[str, float] = {}
+        # 💹 ІСТОРІЯ ЦІНИ для напрямку «росте / падає»: {SYMBOL: [(ts, price)…]},
+        # обрізана вікном MM_PRICE_WINDOW_SEC. Один такт дає надто короткий
+        # проміжок (~30с) — на ньому «напрямок» був би шумом, тому міряємо рух
+        # за тим самим 15-хв вікном, що й колонка Price у 💰 Funding.
+        self._mm_price_hist: Dict[str, list] = {}
+        # 🧠 {SYMBOL: (ts, {reco, headline, verdict})} — кеш вердикту Decision.
+        # Оновлюється ПОРЦІЯМИ (див. MM_DECISION_MAX_PER_TICK) і лише коли
+        # увімкнено `mm_monitor_decision`.
+        self._mm_decision: Dict[str, tuple] = {}
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -1241,6 +1303,7 @@ class FuelFilterDaemon:
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
         s['mmm_limited_mode'] = bool(s.get('mmm_limited_mode', True))
         s['mm_monitor_enabled'] = bool(s.get('mm_monitor_enabled', True))
+        s['mm_monitor_decision'] = bool(s.get('mm_monitor_decision', False))
         s['enabled'] = bool(s.get('enabled', False))
         try:
             s['direction_smoothing_min'] = max(0, min(600,
@@ -2892,6 +2955,153 @@ class FuelFilterDaemon:
                 'runway': fd.get('runway'), 'target': fd.get('target')}
 
     # ═══════════ 🧮 МММ-МОНІТОР (жива таблиця напрямків + групове відкриття) ═══
+    def _mm_open_syms(self) -> set:
+        """Монети з ВІДКРИТОЮ позицією (FF-керовані + книги TM real/paper).
+
+        ЄДИНЕ місце, де збирається цей набір: ним і помічається рядок «в угоді»
+        в моніторі, і визначається, для кого знімок будується навіть при
+        ВИМКНЕНОМУ моніторі (колонка «🧮 Старий МММ» у таблицях угод).
+        """
+        with self._lock:
+            out = set(self._fuel_managed.keys())
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            if tm is not None and hasattr(tm, '_lock'):
+                with tm._lock:
+                    out |= set(getattr(tm, '_positions', {}) or {})
+                    out |= set(getattr(tm, '_shadow_positions', {}) or {})
+        except Exception:
+            pass
+        return out
+
+    def _mm_forecast_engine(self):
+        """Двигун прогнозу або None. Беремо ОДИН раз на такт — не на монету."""
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            return get_forecast_engine()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _mm_forecast(fe, symbol: str) -> Dict:
+        """🔮 {'f1': {...}|None, 'f4': {...}|None} із КЕШУ прогнозу.
+
+        ⚠️ Джерело — РІВНО те саме `forecast_engine.get()`, що живить бейджі
+        «🔮 1H / 4H» над графіком, тож число в моніторі і число на бейджі не
+        можуть розійтись. Нічого не рахуємо і не довантажуємо: `ensure_fresh`
+        тут заборонений — він ходить по свічки, а це 200+ монет щотакту.
+        ⚠️ Прогноз без напрямку (`side = 0`) віддаємо як Є, а не як «немає
+        даних»: «ней» — це змістовна відповідь двигуна, і в таблиці вона має
+        читатись інакше, ніж порожній кеш.
+        """
+        out = {'f1': None, 'f4': None}
+        if fe is None:
+            return out
+        try:
+            c = fe.get(symbol)
+        except Exception:
+            c = None
+        if not c:
+            return out
+        for _key, _src in (('f1', 'forecast_1h'), ('f4', 'forecast_4h')):
+            fc = c.get(_src)
+            if not isinstance(fc, dict) or fc.get('side') is None:
+                continue
+            try:
+                out[_key] = {'side': int(fc.get('side') or 0),
+                             'pct': round(float(fc.get('pct') or 0.0), 2),
+                             'conf': int(float(fc.get('confidence') or 0))}
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _mm_track_prices(self, snap: Dict, now: float):
+        """💹 Дописати в кожен рядок знімка напрямок ЦІНИ за 15-хв вікном.
+
+        Історія живе в `_mm_price_hist` і обрізається САМИМ вікном, тож памʼять
+        обмежена: ~30 точок на монету (такт CYCLE_SECS=30с × 15 хв).
+        ⚠️ Монети, що зникли зі знімка, історію не тримають — інакше після
+        повернення монети «рух» рахувався б від ціни годинної давності.
+        """
+        # `getattr` — бо демон подекуди збирається через `__new__` (ізольовані
+        # тести), і монітор не має падати через відсутнє поле.
+        hist = getattr(self, '_mm_price_hist', None)
+        if hist is None:
+            hist = self._mm_price_hist = {}
+        for sym, v in snap.items():
+            try:
+                px = float(v.get('mark_price') or 0.0)
+            except (TypeError, ValueError):
+                px = 0.0
+            h = hist.setdefault(sym, [])
+            if px > 0:
+                h.append((now, px))
+            # Обрізаємо вікном (із запасом в один такт, щоб не втратити точку,
+            # яка щойно вийшла за межу і є єдиною «старою»).
+            cut = now - MM_PRICE_WINDOW_SEC - CYCLE_SECS
+            if h and h[0][0] < cut:
+                hist[sym] = h = [p for p in h if p[0] >= cut]
+            mv = mm_price_move(h, now)
+            v['price_chg'] = mv['chg']
+            v['price_dir'] = mv['dir']
+            v['price_span'] = mv['span']
+        for dead in [k for k in hist if k not in snap]:
+            hist.pop(dead, None)
+
+    def _mm_decisions(self, snap: Dict, now: float, s: Dict) -> Dict:
+        """🧠 Вердикт банера Decision по монетах знімка — з кешем і ПОРЦІЯМИ.
+
+        ⚠️ ЄДИНЕ ДЖЕРЕЛО — `TradeManager.compute_decision`, той самий виклик,
+        що малює банер «LONG 71% СИЛЬНИЙ» над графіком. Свого розрахунку тут
+        немає СВІДОМО: другий «такий самий» вердикт розійшовся б із банером.
+
+        ⚠️ ЧОМУ ПОРЦІЯМИ. `compute_decision` — це 2× `evaluate_entry`
+        (LONG + SHORT) плюс збір контексту; на 200 монетах за такт це поклало б
+        двигун. Тому оновлюємо лише `MM_DECISION_MAX_PER_TICK` НАЙСТАРІШИХ
+        записів, решта віддається з кешу (TTL `MM_DECISION_TTL`). Таблиця
+        заповнюється за кілька тактів — і це чесно видно: монета без вердикту
+        показує «⏳», а не порожнечу.
+        """
+        cache = getattr(self, '_mm_decision', None)
+        if cache is None:
+            cache = self._mm_decision = {}
+        if not s.get('mm_monitor_decision', False):
+            # Вимкнено → кеш НЕ тримаємо: після вмикання він віддав би
+            # вердикти, яким могло бути півдня.
+            if cache:
+                self._mm_decision = {}
+            return {}
+        tm = None
+        try:
+            tm = self._get_tm() if self._get_tm else None
+        except Exception:
+            tm = None
+        if tm is None or not hasattr(tm, 'compute_decision'):
+            return {}
+        # Найстаріші — першими (відсутні в кеші мають ts=0, тобто йдуть спершу).
+        order = sorted(snap.keys(), key=lambda x: (cache.get(x) or (0.0,))[0])
+        done = 0
+        for sym in order:
+            if done >= MM_DECISION_MAX_PER_TICK:
+                break
+            if (now - (cache.get(sym) or (0.0,))[0]) < MM_DECISION_TTL:
+                break       # список відсортовано → далі всі ще свіжіші
+            try:
+                px = float((snap.get(sym) or {}).get('mark_price') or 0.0)
+                d = tm.compute_decision(sym, px) or {}
+                reco = (d.get('recommended') or '').upper() or None
+                cache[sym] = (now, {'reco': reco,
+                                    'headline': d.get('headline') or '',
+                                    'verdict': d.get('verdict') or ''} if d else None)
+            except Exception:
+                # Збій по ОДНІЙ монеті не має зупиняти такт; позначаємо часом,
+                # щоб не впертись у неї на кожному такті.
+                cache[sym] = (now, None)
+            done += 1
+        for dead in [k for k in cache if k not in snap]:
+            cache.pop(dead, None)
+        return {k: v[1] for k, v in cache.items() if v[1]}
+
     def _mm_capture(self, fuels: Dict, settings: Optional[Dict] = None):
         """Зберегти знімок МММ по всіх монетах, які двигун порахував ЦЬОГО такту.
 
@@ -2906,22 +3116,37 @@ class FuelFilterDaemon:
         стрілка була б порожня.
         """
         s = settings if isinstance(settings, dict) else self.get_settings()
-        # 🔌 ТУМБЛЕР монітора (як у Черг). ВИМКНЕНО → знімок не будуємо взагалі:
-        # це і є економія (legacy-МММ на 200+ монет щотакту не рахується).
-        # Старий знімок ЧИСТИМО, щоб таблиця не показувала «заморожені» числа,
-        # які вже ніхто не оновлює.
-        if not s.get('mm_monitor_enabled', True):
+        # 🔌 ТУМБЛЕР монітора (як у Черг). ВИМКНЕНО → ПОВНИЙ знімок не будуємо:
+        # це і є економія (legacy-МММ на 200+ монет щотакту не рахується), і
+        # таблиця чесно каже «монітор вимкнено».
+        # ⚠️ ВИНЯТОК — монети У ВІДКРИТІЙ УГОДІ (їх одиниці). Їхній рядок знімка
+        # живить колонку «🧮 Старий МММ» у таблицях угод, а та колонка до
+        # монітора стосунку не має: прив'язати її до чужого тумблера означало б
+        # «вимкнув монітор — зникли числа в угодах» без жодної причини. Ціна
+        # питання — кілька арифметичних викликів над УЖЕ кешованим знімком
+        # liq-map, тобто економію тумблера це не з'їдає.
+        _mon = bool(s.get('mm_monitor_enabled', True))
+        _keep = self._mm_open_syms() if not _mon else None
+        if not _mon and not _keep:
             with self._lock:
                 if self._mm_snapshot or self._mm_prev or self._mm_grow_since:
                     self._mm_snapshot, self._mm_prev = {}, {}
                     # ⏱ Таймери росту теж скидаємо: після вмикання монітора
                     # вони показували б час, протягом якого нічого не рахувалось.
                     self._mm_grow_since = {}
+                    self._mm_price_hist = {}
                     self._mm_snapshot_ts = 0.0
             return
         snap = {}
+        # 🔮 Прогноз 1H/4H — ЧИСТЕ ЧИТАННЯ кешу `forecast_engine` (той самий
+        # кеш, що малює бейджі «🔮 1H / 4H» над графіком). Рахувати нічого не
+        # треба, тож колонка безкоштовна і не має власного тумблера. Двигун
+        # беремо ОДИН раз на такт, а не на кожну монету.
+        _fe = self._mm_forecast_engine()
         for sym, f in (fuels or {}).items():
             if not f:
+                continue
+            if _keep is not None and str(sym).upper() not in _keep:
                 continue
             # 🧮 СТАРИЙ ПОКАЗНИК МММ (вимога користувача 15.09) — саме
             # `_fuel_dir_legacy` (сирий (fa−fb)/den по розташуванню кластерів
@@ -2946,8 +3171,21 @@ class FuelFilterDaemon:
                 # `mark_price` в обох випадках один і той самий (знімок
                 # liq-map + накладений `_live_price`).
                 'mark_price': f.get('mark_price'),
+                # 🔮 {'f1': {...}|None, 'f4': {...}|None} — сирі поля прогнозу
+                # (side / pct / conf), як їх віддає двигун. Форматує їх ФРОНТ,
+                # тим самим правилом, що й бейджі над графіком.
+                **self._mm_forecast(_fe, sym),
             }
         _now = time.time()
+        # 💹 НАПРЯМОК ЦІНИ — по історії знімків. Пишемо результат У ЗНІМОК (а не
+        # рахуємо у `mm_monitor_state`), щоб читач лишався читачем: те саме
+        # правило, що з шарами Черги-4 «двигун рахує — get_state читає».
+        self._mm_track_prices(snap, _now)
+        # 🧠 РІШЕННЯ — єдиний РОЗРАХУНОК у цій таблиці, тож за тумблером,
+        # з кешем і порціями (див. MM_DECISION_*).
+        _dec = self._mm_decisions(snap, _now, s)
+        for _sym, _v in snap.items():
+            _v['decision'] = _dec.get(_sym)
         with self._lock:
             _prev = dict(getattr(self, '_mm_snapshot', {}) or {})
             # ⏱ ТАЙМЕР РОСТУ — рахуємо ТУТ, бо тільки тут видно ОБА такти.
@@ -2986,24 +3224,22 @@ class FuelFilterDaemon:
         ліквідності — обрізання має бути НАЗВАНЕ вголос).
         """
         s = settings if isinstance(settings, dict) else self.get_settings()
+        _on = bool(s.get('mm_monitor_enabled', True))
         with self._lock:
-            snap = dict(self._mm_snapshot or {})
+            # ⚠️ ВИМКНЕНИЙ монітор → рядків НЕМАЄ, і це перевіряється ЯВНО, а не
+            # покладається на порожній знімок: при вимкненому тумблері знімок
+            # СВІДОМО лишається для монет у відкритих угодах (він живить колонку
+            # «🧮 Старий МММ» у таблицях угод), і без цієї перевірки вони
+            # протекли б у таблицю монітора, який щойно вимкнули.
+            snap = dict(self._mm_snapshot or {}) if _on else {}
             prev = dict(getattr(self, '_mm_prev', {}) or {})
             grow = dict(getattr(self, '_mm_grow_since', {}) or {})
             ts = float(self._mm_snapshot_ts or 0.0)
-            managed = set(self._fuel_managed.keys())
             in_q = set(self._pending) | set(self._pending2) \
                 | set(self._pending3) | set(self._pending4)
-        # Відкриті позиції TM (real + paper) — монету в угоді вибрати не можна.
-        open_syms = set(managed)
-        try:
-            tm = self._get_tm() if self._get_tm else None
-            if tm is not None and hasattr(tm, '_lock'):
-                with tm._lock:
-                    open_syms |= set(getattr(tm, '_positions', {}) or {})
-                    open_syms |= set(getattr(tm, '_shadow_positions', {}) or {})
-        except Exception:
-            pass
+        # Відкриті позиції (FF + обидві книги TM) — монету в угоді вибрати не
+        # можна. Набір збирає ЄДИНИЙ `_mm_open_syms`.
+        open_syms = self._mm_open_syms()
         rows, counts = [], {'LONG': 0, 'SHORT': 0, 'flat': 0}
         for sym, v in snap.items():
             st = v.get('status') if v.get('status') in ('LONG', 'SHORT') else None
@@ -3039,6 +3275,18 @@ class FuelFilterDaemon:
                 'grow_since': (float(grow[sym]) if sym in grow else None),
                 'dir': v.get('dir'),
                 'price': v.get('mark_price'),
+                # 💹 Куди йде ЦІНА за 15-хв вікном: 'up' / 'down' / 'flat' + сам
+                # рух у %. `price_span` — скільки секунд історії реально
+                # набралось: неповне вікно мусить бути видно, інакше «+0.4% за
+                # 40с» читалось би як «+0.4% за 15 хв».
+                'price_dir': v.get('price_dir'),
+                'price_chg': v.get('price_chg'),
+                'price_span': v.get('price_span'),
+                # 🔮 Прогноз 1H/4H із кешу — та сама пара, що на бейджах графіка.
+                'f1': v.get('f1'),
+                'f4': v.get('f4'),
+                # 🧠 Вердикт Decision або None (вимкнено / ще не порахувався).
+                'decision': v.get('decision'),
                 'in_trade': _open,
                 'in_queue': (sym in in_q) and not _open,
                 # Монету, що вже в угоді, обирати нема сенсу — друга позиція по
@@ -3052,10 +3300,50 @@ class FuelFilterDaemon:
         return {
             'rows': rows,
             'ts': ts,
-            'enabled': bool(s.get('mm_monitor_enabled', True)),
+            'enabled': _on,
             'limited': bool(s.get('mmm_limited_mode', True)),
+            # Колонка «🧠 Рішення» має власний тумблер — фронт мусить знати, чи
+            # порожня комірка означає «вимкнено» чи «ще рахується».
+            'decision_on': bool(s.get('mm_monitor_decision', False)),
             'counts': counts,
         }
+
+    def mm_snapshot_for(self, symbols) -> Dict:
+        """🧮 СТАРИЙ МММ по вказаних монетах — ЧИТАННЯ знімка двигуна.
+
+        Живить колонку «🧮 Старий МММ» у таблицях ВІДКРИТИХ УГОД. Сюди
+        свідомо винесено рівно те, що потрібно спільному віджету `ffFuelCell`
+        (напрямок + сила + попередня сила для стрілки) плюс момент старту росту.
+
+        ⚠️ ЖОДНИХ РОЗРАХУНКІВ: `/api/tm/state` опитується кожні 5с, і будь-яка
+        арифметика тут блокувала б бота під одним gunicorn-воркером — той самий
+        урок, через який колонку «МММ» колись і прибрали з цих таблиць.
+        Тепер число бере ГОТОВИЙ знімок, який двигун уже порахував, тож
+        таблиця угод і 🧮 МММ-монітор показують ОДНЕ І ТЕ САМЕ значення.
+        """
+        want = {str(x).upper() for x in (symbols or []) if x}
+        if not want:
+            return {}
+        with self._lock:
+            snap = dict(self._mm_snapshot or {})
+            prev = dict(getattr(self, '_mm_prev', {}) or {})
+            grow = dict(getattr(self, '_mm_grow_since', {}) or {})
+        out = {}
+        for sym in want:
+            v = snap.get(sym)
+            if not v:
+                continue
+            st = v.get('status') if v.get('status') in ('LONG', 'SHORT') else None
+            stren = int(v.get('strength') or 0)
+            p = (prev.get(sym) or {}).get('strength')
+            out[sym] = {
+                'mm': st,
+                'strength': stren,
+                'strength_prev': (int(p) if p is not None else None),
+                'delta': (stren - int(p)) if p is not None else None,
+                'grow_since': (float(grow[sym]) if sym in grow else None),
+            }
+        return out
 
     def group_open(self, symbols: List[str]) -> Dict:
         """✋ ГРУПОВЕ відкриття обраних монет МММ-монітора.

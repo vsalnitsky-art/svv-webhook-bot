@@ -2820,6 +2820,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Показувати лише монети, де сила МММ не нижча за поріг. Слабкий тиск (≤10%) напрямку фактично не має.">
                         Сила ≥ <input type="number" id="mm-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" onchange="mmRender()"> %
                     </label>
+                    <!-- 🧠 ЄДИНИЙ РОЗРАХУНОК у цій таблиці — тому окремий тумблер
+                         і дефолт ВИМКНЕНО. Решта колонок (МММ, прогноз, ціна) —
+                         читання вже готових кешів, вони безкоштовні. -->
+                    <label style="display:flex;align-items:center;gap:5px;margin-left:4px;color:#8b93a7;cursor:pointer" title="🧠 Колонка «Рішення» — вердикт того самого банера Decision («LONG 71% СИЛЬНИЙ»), що над графіком. Це ЄДИНИЙ показник таблиці, який треба РАХУВАТИ (оцінка входу окремо в LONG і в SHORT на кожну монету), тому він за окремим тумблером і оновлюється порціями по кілька монет за такт — таблиця заповнюється протягом хвилини-двох. Решта колонок читають готові кеші й нічого не навантажують.">
+                        <input type="checkbox" id="ff-mm-decision" onchange="saveFuelFilterSettings()"> 🧠 Рішення
+                    </label>
                 </div>
                 <!-- Панель групової дії. Кнопка НЕАКТИВНА, поки нічого не обрано —
                      активний контрол, який нічого не робить, вводить в оману. -->
@@ -2839,12 +2845,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <th data-mmsort="symbol" onclick="mmSort('symbol')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                                 <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="СТАРИЙ показник МММ (той самий, що живить шар «Старий МММ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">Старий МММ<span class="ff-sort-arrow"></span></th>
                                 <th data-mmsort="delta" onclick="mmSort('delta')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за останній такт двигуна (~30с). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. У підказці рядка є і відносний %. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
-                                <th data-mmsort="price" onclick="mmSort('price')" style="cursor:pointer;user-select:none" title="Ціна зі знімка МММ. Клік — сортувати.">Ціна<span class="ff-sort-arrow"></span></th>
+                                <th data-mmsort="grow" onclick="mmSort('grow')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу сила МММ росте БЕЗПЕРЕВНО. Таймер стартує на першому такті росту, обнуляється щойно ріст спиняється (плато або падіння), і стартує заново при наступному рості. «—» = зараз не росте. Клік — сортувати (найдовший ріст зверху).">⏱ Росте<span class="ff-sort-arrow"></span></th>
+                                <th data-mmsort="pchg" onclick="mmSort('pchg')" style="cursor:pointer;user-select:none" title="Ціна зі знімка МММ + КУДИ вона йде: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). Поруч зі стрілкою — за скільки часу історії реально набралось: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ ціни (найсильніший ріст зверху).">Ціна<span class="ff-sort-arrow"></span></th>
+                                <th title="🔮 Прогноз 1H і 4H — ТІ САМІ значення, що на бейджах над графіком (6 горизонтів Фібоначчі). Формат: напрямок · очікуваний рух % · впевненість %. Читається з кешу прогнозу, нічого не рахує.">🔮 Прогноз</th>
+                                <th title="🧠 Вердикт банера Decision («LONG 71% СИЛЬНИЙ») — той самий розрахунок, що над графіком. Колонка працює лише коли увімкнено чекбокс «🧠 Рішення» над таблицею; ⏳ означає, що до цієї монети черга оновлення ще не дійшла.">🧠 Рішення</th>
                                 <th title="Чи монета вже в угоді або стоїть у якійсь черзі.">Стан</th>
                             </tr>
                         </thead>
                         <tbody id="mm-tbody">
-                            <tr><td colspan="6" class="tm-empty-msg">Немає даних МММ</td></tr>
+                            <tr><td colspan="9" class="tm-empty-msg">Немає даних МММ</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -4062,6 +4071,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
+                        <th title="🧮 СТАРИЙ МММ по монеті — той самий показник, що в секції «🧮 МММ-монітор» і в шарі «Старий МММ» Черги-4: напрямок тиску маркетмейкера (🟢 вгору / 🔴 вниз), сила 0–100% і стрілка тренду (сила росте / слабшає). Це ЧИТАННЯ знімка двигуна — на цю таблицю воно не додає жодного розрахунку. Порожньо («—») означає, що знімка по монеті ще немає.">🧮 Старий МММ</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
@@ -4073,7 +4083,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="15" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -4130,6 +4140,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
+                        <th title="🧮 СТАРИЙ МММ по монеті — той самий показник, що в секції «🧮 МММ-монітор» і в шарі «Старий МММ» Черги-4: напрямок тиску маркетмейкера (🟢 вгору / 🔴 вниз), сила 0–100% і стрілка тренду (сила росте / слабшає). Це ЧИТАННЯ знімка двигуна — на цю таблицю воно не додає жодного розрахунку. Порожньо («—») означає, що знімка по монеті ще немає.">🧮 Старий МММ</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
@@ -4140,7 +4151,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -11311,6 +11322,10 @@ function _mmSortVal(r, col) {
     if (col === 'symbol') return r.symbol || '';
     if (col === 'delta') return (r.delta == null ? null : Number(r.delta));
     if (col === 'price') return (r.price == null ? null : Number(r.price));
+    // 💹 Сортуємо за РУХОМ ціни, а не за самою ціною: «яка монета зараз іде
+    // вгору» — питання, заради якого колонку й додали. Рядок без історії
+    // (`price_dir` порожній) — це «ще не знаємо», а не «нуль».
+    if (col === 'pchg') return (!r.price_dir ? null : Number(r.price_chg || 0));
     if (col === 'grow') return (r.grow_since == null ? null : -Number(r.grow_since));
     return Number(r.strength || 0);
 }
@@ -11340,7 +11355,7 @@ function _mmHeaderArrows() {
             ? (_mmSort.dir < 0 ? ' ▼' : ' ▲') : '';
     });
 }
-// 📈 «Сила росте» — приріст у ПУНКТАХ + ⏱ таймер безперервного росту.
+// 📈 «Сила росте» — приріст у ПУНКТАХ.
 // ⚠️ Поріг фарбування ТОЙ САМИЙ, що в стрілці `ffFuelCell` (> +1 / < −1),
 // інакше в одному рядку стрілка казала б «→», а число світилось зеленим.
 function _mmGrowCell(r) {
@@ -11353,17 +11368,92 @@ function _mmGrowCell(r) {
     const sgn = d > 0 ? '+' : '';
     const rel = (r.delta_rel == null) ? '' : ` (${r.delta_rel > 0 ? '+' : ''}${r.delta_rel}% відносно)`;
     const tip = `Сила ${r.strength_prev != null ? r.strength_prev + '%' : '—'} → ${r.strength}%`
-        + ` за останній такт двигуна (~30с): ${sgn}${d} п.п.${rel}`
-        + (r.grow_since ? ' ⏱ Таймер — скільки сила росте БЕЗПЕРЕРВНО; обнуляється, щойно ріст спиняється.' : '');
-    // ⏱ Таймер малюємо тим самим класом, що й решта живих лічильників сторінки
-    // (`.ff-timer[data-since]`) — його веде ОДИН глобальний 1с-тікер, тож
-    // секунди йдуть, а таблиця не перебудовується (урок `held_sec` у Черзі-4).
-    const t = r.grow_since
-        ? ` <span class="ff-timer" data-since="${Math.floor(r.grow_since)}"`
-          + ` style="color:#4ade80;font-size:0.62rem">--:--:--</span>`
-        : '';
+        + ` за останній такт двигуна (~30с): ${sgn}${d} п.п.${rel}`;
     return `<span title="${_mmEsc(tip)}" style="color:${col};font-family:monospace;white-space:nowrap">`
-        + `${ico} ${sgn}${d}</span>${t}`;
+        + `${ico} ${sgn}${d}</span>`;
+}
+// ⏱ ОКРЕМА КОЛОНКА ТАЙМЕРА (вимога 15.09). Раніше він тулився в комірку
+// приросту й ламав її ширину; окремим стовпчиком його видно і за ним можна
+// сортувати.
+// ⚠️ Малюємо тим самим класом, що й решта живих лічильників сторінки
+// (`.ff-timer[data-since]`) — його веде ОДИН глобальний 1с-тікер, тож секунди
+// йдуть, а таблиця не перебудовується (урок `held_sec` у Черзі-4).
+function _mmTimerCell(r) {
+    if (!r.grow_since) {
+        return '<span style="color:#6b7280" title="Зараз сила не росте — таймер обнулено. Він стартує наново на першому ж такті росту.">—</span>';
+    }
+    return `<span class="ff-timer" data-since="${Math.floor(r.grow_since)}"`
+        + ` title="Скільки сила МММ росте БЕЗПЕРЕРВНО. Обнулиться, щойно ріст спиниться."`
+        + ` style="color:#4ade80;font-family:monospace">--:--:--</span>`;
+}
+// 💹 ЦІНА + КУДИ ВОНА ЙДЕ (вимога 15.09: «щоб було розуміння чи ціна росте чи
+// падає»). Стрілки й кольори — ті самі, що в колонці Price у 💰 Funding
+// (▲ росте зелений / ▼ падає червоний / ▬ рівно сірий).
+// ⚠️ Вікно НЕ зашите у фронті: бекенд віддає `price_span` — скільки секунд
+// історії реально набралось, і ми пишемо саме його. Інакше одразу після
+// рестарту «+0.4%» за 40 секунд читалось би як «+0.4% за 15 хвилин».
+function _mmPriceCell(r) {
+    const px = (r.price ? fmtPriceJS(r.price) : '—');
+    const d = r.price_dir;
+    if (!d) {
+        return `<span style="font-family:monospace">${px}</span>`
+            + `<br><span style="color:#6b7280;font-size:0.62rem" title="Історії ще замало — напрямок зʼявиться за кілька тактів двигуна">—</span>`;
+    }
+    const col = d === 'up' ? '#4ade80' : (d === 'down' ? '#f87171' : '#8b93a7');
+    const ico = d === 'up' ? '▲' : (d === 'down' ? '▼' : '▬');
+    const chg = Number(r.price_chg || 0);
+    const sgn = chg > 0 ? '+' : '';
+    const span = Number(r.price_span || 0);
+    const ago = span >= 60 ? `${Math.round(span / 60)}хв` : `${Math.round(span)}с`;
+    const tip = `Рух ціни за ${ago} спостереження: ${sgn}${chg}%.`
+        + ` Мертва зона 0.10% — менший рух вважаємо «рівно» (та сама умова, що в колонці Price у 💰 Funding).`;
+    return `<span style="font-family:monospace">${px}</span>`
+        + `<br><span title="${_mmEsc(tip)}" style="color:${col};font-size:0.64rem;font-family:monospace;white-space:nowrap">`
+        + `${ico} ${sgn}${chg}% · ${ago}</span>`;
+}
+// 🔮 ПРОГНОЗ 1H / 4H — ТОЧНО той самий вигляд, що бейджі над графіком
+// («1H: 🟢 LONG +100% · 90%»), бо це буквально ті самі числа з того самого
+// кешу. Свого формату НЕ вигадуємо: дві різні подачі одного числа на одній
+// сторінці — це той самий клас помилки, що «банер vs бейдж» у PD-зоні.
+function _mmFcSeg(f, tf) {
+    if (!f) {
+        return `<span style="color:#6b7280">${tf}: —</span>`;
+    }
+    const s = Number(f.side || 0);
+    const col = s === 1 ? '#4ade80' : (s === -1 ? '#fca5a5' : '#8b93a7');
+    const ico = s === 1 ? '🟢' : (s === -1 ? '🔴' : '⚪');
+    const dir = s === 1 ? 'LONG' : (s === -1 ? 'SHORT' : 'ней');
+    const sgn = Number(f.pct || 0) > 0 ? '+' : '';
+    return `<span style="color:${col}">${tf}: ${ico} ${dir} ${sgn}${f.pct}% · ${f.conf}%</span>`;
+}
+function _mmFcCell(r) {
+    return `<span style="font-size:0.64rem;font-family:monospace;white-space:nowrap">`
+        + `${_mmFcSeg(r.f1, '1H')}<br>${_mmFcSeg(r.f4, '4H')}</span>`;
+}
+// 🧠 Вердикт Decision. ⚠️ Дзеркало мапи банера — ТІ САМІ слова, інакше та сама
+// оцінка називалась би в таблиці інакше, ніж на екрані вище.
+const _MM_V_UA = { good: 'СИЛЬНИЙ', marginal: 'СЕРЕДНІЙ', poor: 'СЛАБКИЙ' };
+function _mmDecCell(r) {
+    // ⚠️ Три РІЗНІ причини порожньої комірки, і кожна мусить говорити сама за
+    // себе: вимкнений тумблер — це РІШЕННЯ, «⏳» — черга оновлення ще не
+    // дійшла, «—» — вердикту немає взагалі.
+    if (!_mmMeta.decisionOn) {
+        return '<span style="color:#6b7280" title="Колонку вимкнено — увімкніть чекбокс «🧠 Рішення» над таблицею. Це єдиний показник тут, який треба РАХУВАТИ, тому він за окремим тумблером.">—</span>';
+    }
+    const d = r.decision;
+    if (!d || !d.headline) {
+        return '<span style="color:#8b93a7" title="Вердикт ще не порахований: оновлюється порціями по кілька монет за такт, щоб не вантажити двигун. Зʼявиться протягом хвилини-двох.">⏳</span>';
+    }
+    const reco = String(d.reco || '').toUpperCase();
+    const col = reco === 'LONG' ? '#4ade80' : (reco === 'SHORT' ? '#f87171' : '#8b93a7');
+    const v = _MM_V_UA[d.verdict] || '';
+    const vcol = d.verdict === 'good' ? '#4ade80'
+        : (d.verdict === 'poor' ? '#f87171' : '#fbbf24');
+    return `<span title="Той самий вердикт, що в банері Decision над графіком"`
+        + ` style="font-size:0.66rem;font-family:monospace;white-space:nowrap">`
+        + `<b style="color:${col}">${_mmEsc(d.headline)}</b>`
+        + (v ? ` <span style="color:${vcol};font-size:0.6rem">${v}</span>` : '')
+        + `</span>`;
 }
 function mmClearSel() {
     _mmSel.clear();
@@ -11441,10 +11531,17 @@ function mmRender() {
     // ⚠️ `grow_since` теж у сигнатурі — це МОМЕНТ старту росту (змінюється
     // рідко). Самі СЕКУНДИ в неї НЕ входять: їх малює глобальний 1с-тікер,
     // інакше таблиця перебудовувалась би щосекунди (урок `held_sec` у Черзі-4).
+    // ⚠️ Нові колонки теж У СИГНАТУРІ — інакше ціна/прогноз/вердикт мінялись би
+    // на сервері, а на екрані лишалось би старе число (сигнатура ж «не змінилась»).
     const sig = _mmDir + '|' + (_mmMeta.enabled ? '1' : '0')
+        + (_mmMeta.decisionOn ? 'D' : '-')
         + '|' + _mmSort.col + _mmSort.dir + '|'
         + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev, r.delta,
-        r.grow_since || 0, r.in_trade ? 1 : 0, r.in_queue ? 1 : 0,
+        r.grow_since || 0, r.price, r.price_dir || '', r.price_chg,
+        (r.f1 ? r.f1.side + '/' + r.f1.pct + '/' + r.f1.conf : ''),
+        (r.f4 ? r.f4.side + '/' + r.f4.pct + '/' + r.f4.conf : ''),
+        (r.decision ? r.decision.headline + '/' + r.decision.verdict : ''),
+        r.in_trade ? 1 : 0, r.in_queue ? 1 : 0,
         _mmSel.has(r.symbol) ? 1 : 0].join(':')).join(',');
     if (tb.dataset.sig !== sig) {
         tb.dataset.sig = sig;
@@ -11454,7 +11551,7 @@ function mmRender() {
             const _why = !_mmMeta.enabled
                 ? '🔌 Монітор вимкнено — увімкніть тумблер у шапці секції'
                 : (_mmRows.length ? 'Немає монет під цей фільтр' : 'Немає даних МММ');
-            tb.innerHTML = `<tr><td colspan="6" class="tm-empty-msg">${_why}</td></tr>`;
+            tb.innerHTML = `<tr><td colspan="9" class="tm-empty-msg">${_why}</td></tr>`;
         } else {
             tb.innerHTML = rows.map(r => {
                 const sel = _mmSel.has(r.symbol);
@@ -11476,7 +11573,10 @@ function mmRender() {
                     // тренд — друга колонка дублювала те саме число.
                     + `<td>${ffFuelCell(r.mm, r.strength, r.strength_prev)}</td>`
                     + `<td>${_mmGrowCell(r)}</td>`
-                    + `<td style="font-family:monospace;text-align:right">${r.price ? fmtPriceJS(r.price) : '—'}</td>`
+                    + `<td>${_mmTimerCell(r)}</td>`
+                    + `<td style="text-align:right">${_mmPriceCell(r)}</td>`
+                    + `<td>${_mmFcCell(r)}</td>`
+                    + `<td>${_mmDecCell(r)}</td>`
                     + `<td style="font-size:0.68rem">${state}</td>`
                     + `</tr>`;
             }).join('');
@@ -11496,6 +11596,10 @@ function mmApplyState(mm) {
     _mmRows = (mm && Array.isArray(mm.rows)) ? mm.rows : [];
     _mmMeta = { limited: !!(mm && mm.limited), ts: (mm && mm.ts) || 0,
                 enabled: !(mm && mm.enabled === false),
+                // 🧠 Чи взагалі просили рахувати вердикт: без цього прапорця
+                // порожня комірка «Рішення» читалась би як «немає вердикту»,
+                // хоча насправді колонку просто вимкнено.
+                decisionOn: !!(mm && mm.decision_on),
                 counts: (mm && mm.counts) || {} };
     const up = document.getElementById('mm-updated');
     if (up) {
@@ -12390,6 +12494,7 @@ function renderFuelFilter(d) {
     setIf('ff-manage-positions', s.manage_open_positions !== false);  // default true
     setIf('ff-mmm-limited', s.mmm_limited_mode !== false);  // default true
     setIf('ff-mm-monitor-enabled', s.mm_monitor_enabled !== false);  // default true
+    setIf('ff-mm-decision', s.mm_monitor_decision === true);         // default false
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
     setIf('ff-manage-close-mm', String(s.manage_close_min_mm != null ? s.manage_close_min_mm : 0));
@@ -13419,6 +13524,7 @@ async function saveFuelFilterSettings() {
         manage_open_positions: _c('ff-manage-positions'),
         mmm_limited_mode: _c('ff-mmm-limited'),
         mm_monitor_enabled: _c('ff-mm-monitor-enabled'),
+        mm_monitor_decision: _c('ff-mm-decision'),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
@@ -13627,6 +13733,20 @@ const FUEL_TOOLTIP = "МММ — тиск маркетмейкера на цін
 // МММ columns and the 💰 funding table): coloured direction dot + strength
 // 0..100% + trend arrow + mini-bar + a colour-coded band word at the END.
 //   dir: 'LONG'|'SHORT'|null(=balanced),  now/prev: 0..100 strength (or null)
+// 🧮 Комірка «Старий МММ» у таблицях ВІДКРИТИХ УГОД (real + paper).
+// ⚠️ Малює ТОЙ САМИЙ спільний віджет `ffFuelCell`, що й 🧮 МММ-монітор і черги
+// — тобто одна метрика виглядає однаково в усіх трьох місцях. `hideBand=true`:
+// у цих таблицях і так тісно, словесний рівень тиску туди не влазить (він
+// лишається в підказці віджета).
+// ⚠️ Дані приходять ГОТОВИМИ з `/api/tm/state` (`pos.old_mm` = зріз знімка
+// двигуна). Нічого не рахуємо і не довантажуємо.
+function oldMmCellHTML(p) {
+    const m = p && p.old_mm;
+    if (!m) {
+        return '<td><span style="color:#6b7280" title="Знімка МММ по цій монеті ще немає (перший такт після старту) або 🧮 МММ-монітор ще не рахував її">—</span></td>';
+    }
+    return `<td>${ffFuelCell(m.mm, m.strength, m.strength_prev, true)}</td>`;
+}
 function ffFuelCell(dir, now, prev, hideBand) {
     // Той самий дизайн, що й SCORE: пілюля фіксованої ширини з тонованим фоном +
     // метр 0–100 + фіксовані під-колонки [напрямок ▲▼ / сила% / рівень], а стрілка
@@ -14520,7 +14640,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="15" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -14552,6 +14672,7 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
+                    ${oldMmCellHTML(p)}
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${pilotCellHTML(p)}
@@ -14620,7 +14741,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-shadow-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -14644,6 +14765,7 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
+                    ${oldMmCellHTML(p)}
                     ${manualSlTpCellsHTML(p, true)}
                     ${pilotCellHTML(p)}
                     ${manualModeCellHTML(p, true)}
