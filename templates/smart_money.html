@@ -2863,10 +2863,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <th data-mmsort="pchg" onclick="mmSort('pchg')" style="cursor:pointer;user-select:none" title="Ціна зі знімка МММ + КУДИ вона йде: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). Поруч зі стрілкою — за скільки часу історії реально набралось: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ ціни (найсильніший ріст зверху).">Ціна<span class="ff-sort-arrow"></span></th>
                                 <th title="🔮 Прогноз 1H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 1H» над графіком. Читається готовим, нічого не рахує.">🔮 1H</th>
                                 <th title="🔮 Прогноз 4H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 4H» над графіком.">🔮 4H</th>
+                                <th title="👁 СТАН СКАНУ VOB по монеті — ознака, що шлях «🧮 VOB→сигнал» реально працює, навіть коли нового блоку немає. 👁 = перевірено, блок той самий · ⏳ = перший показ, поставлено тиху базу (чекаємо НАСТУПНИЙ блок) · ∅ = блоку в бік МММ немає · 🆕 = по цьому блоку пішов сигнал · ⛔ = блок «📦 Volumized OB Trend» вимкнено · ⚠️ = збій. Число поруч — скільки минуло з останньої перевірки монети.">👁 VOB</th>
                             </tr>
                         </thead>
                         <tbody id="mm-tbody">
-                            <tr><td colspan="8" class="tm-empty-msg">Немає даних МММ</td></tr>
+                            <tr><td colspan="9" class="tm-empty-msg">Немає даних МММ</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -11456,6 +11457,29 @@ function _mmGrowCell(r) {
 // сила НЕ росте — відкриття ВІДКЛАДЕНО» користувач СКАСУВАВ («відміни цю
 // перевірку»). Ріст сили лишився ПОКАЗНИКОМ (колонки нижче), а не умовою
 // входу, тож і пояснювати затримку більше нічим — її немає.
+// 👁 СТАН СКАНУ VOB — щоб «чи скануються VOB узагалі» було ВИДНО, а не
+// доводилось вірити. Живі секунди малює той самий глобальний 1с-тікер
+// (`.ff-timer`), тож ЧАС у сигнатуру таблиці не входить — лише СТАН.
+const _MM_VOB_ST = {
+    signal: {i: '🆕', c: '#4ade80', t: 'по цьому блоку пішов СИГНАЛ у загальний алгоритм'},
+    base:   {i: '⏳', c: '#fbbf24', t: 'перший показ монети — поставлено ТИХУ БАЗУ; сигнал дасть НАСТУПНИЙ новий блок'},
+    same:   {i: '👁', c: '#8b93a7', t: 'перевірено: блок той самий, що вже опрацьований — нового немає'},
+    none:   {i: '∅',  c: '#6b7280', t: 'блоку Volumized OB у бік МММ зараз немає'},
+    off:    {i: '⛔', c: '#f87171', t: 'блок «📦 Volumized OB Trend» вимкнено — бот не шукає'},
+    err:    {i: '⚠️', c: '#f87171', t: 'збій отримання блоку — дивись 🧾 Лог'},
+};
+function _mmVobCell(r) {
+    const v = r.vob;
+    if (!v || !v.state) {
+        return '<span style="color:#6b7280" title="Монету ще не перевіряли цього циклу — скан іде порціями.">—</span>';
+    }
+    const st = _MM_VOB_ST[v.state] || {i: v.state, c: '#8b93a7', t: ''};
+    const tip = _mmEsc(`${st.t}${v.tf ? ' · TF ' + v.tf : ''}`);
+    const ago = v.ts
+        ? ` <span class="ff-timer" data-since="${Math.floor(v.ts)}"
+                 style="color:#6b7280;font-size:0.62rem">--:--:--</span>` : '';
+    return `<span title="${tip}" style="color:${st.c};white-space:nowrap">${st.i}</span>${ago}`;
+}
 function _mmTimerCell(r) {
     if (!r.grow_since) {
         return '<span style="color:#6b7280" title="Зараз сила не росте — таймер обнулено. Він стартує наново на першому ж такті росту.">—</span>';
@@ -11650,6 +11674,9 @@ function mmRender() {
         + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev, r.delta,
         r.grow_since || 0, r.delta_span, r.price, r.price_dir || '', r.price_chg,
         (r.f1 ? r.f1.side : ''), (r.f4 ? r.f4.side : ''),
+        // ⚠️ САМ СТАН — у сигнатурі; секунди «скільки тому» малює 1с-тікер,
+        // інакше таблиця перебудовувалась би щотакту.
+        (r.vob ? r.vob.state : ''),
         _mmSel.has(r.symbol) ? 1 : 0].join(':')).join(',');
     if (tb.dataset.sig !== sig) {
         tb.dataset.sig = sig;
@@ -11659,7 +11686,7 @@ function mmRender() {
             const _why = !_mmMeta.enabled
                 ? '🔌 Монітор вимкнено — увімкніть тумблер у шапці секції'
                 : (_mmRows.length ? 'Немає монет під цей фільтр' : 'Немає даних МММ');
-            tb.innerHTML = `<tr><td colspan="8" class="tm-empty-msg">${_why}</td></tr>`;
+            tb.innerHTML = `<tr><td colspan="9" class="tm-empty-msg">${_why}</td></tr>`;
         } else {
             tb.innerHTML = rows.map(r => {
                 const sel = _mmSel.has(r.symbol);
@@ -11685,6 +11712,7 @@ function mmRender() {
                     + `<td style="text-align:right">${_mmPriceCell(r)}</td>`
                     + `<td>${_mmFcCell(r.f1, '1H')}</td>`
                     + `<td>${_mmFcCell(r.f4, '4H')}</td>`
+                    + `<td style="font-family:monospace;font-size:0.68rem">${_mmVobCell(r)}</td>`
                     + `</tr>`;
             }).join('');
         }

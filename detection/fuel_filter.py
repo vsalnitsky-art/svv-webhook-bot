@@ -857,6 +857,16 @@ class FuelFilterDaemon:
         # блоку} + {SYMBOL: ts останньої перевірки} для черги порцій.
         self._mm_vob_seen: Dict[str, float] = {}
         self._mm_vob_at: Dict[str, float] = {}
+        # 👁 ЩО САМЕ СКАН VOB БАЧИТЬ ПО МОНЕТІ — {SYMBOL: {state, ft, tf, ts}}.
+        # Без цього шлях був НЕВИДИМИЙ: поки не зʼявиться новий блок, у лозі й
+        # у таблиці не було ЖОДНОЇ ознаки, що скан узагалі працює (скарга
+        # 16.09: «не бачу жодних ознак сканування»). Стани:
+        #   off   — блок «📦 Volumized OB Trend» вимкнено, ми не шукаємо;
+        #   none  — блоку в бік МММ немає;
+        #   base  — перший показ: тиха база, чекаємо НАСТУПНИЙ блок;
+        #   same  — блок той самий, що вже опрацьований;
+        #   signal— по цьому блоку щойно пішов сигнал.
+        self._mm_vob_diag: Dict[str, Dict] = {}
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -3275,6 +3285,18 @@ class FuelFilterDaemon:
         if sc is None:
             return
         tf = str(sc.volumized_tf() or '')
+        # ⛔ Сам блок Volumized вимкнено → шукати нема чого. Кажемо це ПРЯМО в
+        # рядку монітора, а не мовчимо: «блоку немає» і «ми не шукаємо» — різні
+        # речі, і друге виглядало б як «скан зламався».
+        try:
+            _vob_on = bool(sc.volumized_on())
+        except Exception:
+            _vob_on = True
+        if not _vob_on:
+            for _sym in snap:
+                self._mm_vob_diag[_sym] = {'state': 'off', 'ft': None,
+                                           'tf': tf, 'ts': now}
+            return
         cands = [sym for sym, v in snap.items()
                  if v.get('status') in ('LONG', 'SHORT')]
         if not cands:
@@ -3304,23 +3326,33 @@ class FuelFilterDaemon:
                 done += 1
             self._mm_vob_at[sym] = now
             side = snap[sym].get('status')
+
+            def _diag(state, ft=None):
+                self._mm_vob_diag[sym] = {'state': state, 'ft': ft,
+                                          'tf': tf, 'ts': now}
             try:
                 ob = sc.volumized_ob_side(sym, side)
             except Exception as e:
                 print(f"[FF-MMM-VOB] {sym} error: {e}")
+                _diag('err')
                 continue
             if not ob:
+                _diag('none')
                 continue
             ft = ob.get('formation_time')
             if ft is None:
+                _diag('none')
                 continue
             prev = self._mm_vob_seen.get(sym)
             if prev is None:
                 self._mm_vob_seen[sym] = ft      # тиха база — див. докстрінг
+                _diag('base', ft)
                 continue
             if ft == prev:
+                _diag('same', ft)
                 continue
             self._mm_vob_seen[sym] = ft
+            _diag('signal', ft)
             self._mm_vob_signal_one(sym, side, ob, tf, s, log_activity, sc)
         # Памʼять: позначку тримаємо за ЧАСОМ останньої перевірки, а НЕ за
         # присутністю у знімку.
@@ -3333,6 +3365,7 @@ class FuelFilterDaemon:
         for dead in [k for k, t in list(self._mm_vob_at.items()) if t < _cut]:
             self._mm_vob_at.pop(dead, None)
             self._mm_vob_seen.pop(dead, None)
+            self._mm_vob_diag.pop(dead, None)
 
     def _mm_vob_signal_one(self, sym: str, side: str, ob: Dict, tf: str,
                            s: Dict, log_activity, sc):
@@ -3535,6 +3568,7 @@ class FuelFilterDaemon:
             # протекли б у таблицю монітора, який щойно вимкнули.
             snap = dict(self._mm_snapshot or {}) if _on else {}
             grow = dict(getattr(self, '_mm_grow_since', {}) or {})
+            vdg = dict(getattr(self, '_mm_vob_diag', {}) or {})
             ts = float(self._mm_snapshot_ts or 0.0)
         # Відкриті позиції (FF + обидві книги TM) — такі монети в таблиці не
         # показуємо взагалі. Набір збирає ЄДИНИЙ `_mm_open_syms`.
@@ -3589,6 +3623,9 @@ class FuelFilterDaemon:
                 # 🔮 Прогноз 1H/4H із кешу — та сама пара, що на бейджах графіка.
                 'f1': v.get('f1'),
                 'f4': v.get('f4'),
+                # 👁 Стан скану VOB по монеті — ОЗНАКА, що шлях працює, навіть
+                # коли нового блоку немає (скарга «не бачу сканування»).
+                'vob': (dict(vdg[sym]) if sym in vdg else None),
                 # ⚖ рівновага — відкривати нічого, тож і обирати нічого.
                 'selectable': st in ('LONG', 'SHORT'),
             })

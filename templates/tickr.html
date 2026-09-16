@@ -329,7 +329,9 @@
             <select id="liq-sort">
                 <option value="pull" selected>за перекосом</option>
                 <option value="magnet">за розміром магніту</option>
-                <option value="near">за близькістю магніту</option>
+                <!-- 🧭 Замість «за близькістю магніту» (вимога 16.09): звіт
+                     «куди тягне ліквідність» — рядок-вердикт по кожній монеті. -->
+                <option value="pull_report">🧭 куди тягне (звіт)</option>
             </select>
         </div>
         <div class="tk-field" id="liq-f-minvol">
@@ -399,9 +401,11 @@
     <div class="tk-scroll" style="margin-top:12px">
         <table class="tk-table">
             <thead><tr>
-                <th>#</th><th>Symbol</th><th>Ціна</th><th>Тягне</th>
-                <th>⬆ / ⬇</th><th>Перекіс</th>
-                <th>Найбільший магніт</th><th>Найближчий</th><th>OI</th>
+                <th>#</th><th>Symbol</th><th>Ціна</th>
+                <th class="lqc-pull">Тягне</th>
+                <th class="lqc-split">⬆ / ⬇</th><th class="lqc-skew">Перекіс</th>
+                <th class="lqc-mag">Найбільший магніт</th>
+                <th class="lqc-near">Найближчий</th><th>OI</th>
             </tr></thead>
             <tbody id="liq-tbody"><tr><td colspan="9" style="color:#667;padding:16px">— ще не скановано —</td></tr></tbody>
         </table>
@@ -1050,39 +1054,59 @@ async function liqOne() {
             + `<span class="ld">ціна</span><span class="lb"></span><span class="lv"></span></div>`);
         document.getElementById('liq1-rows').innerHTML = html.join('');
 
-        // 🧭 Вердикт ШМАТКАМИ: числа фарбуємо окремо від пояснювальних слів,
-        // магніт — другим рядком (як у блоці на Smart Money).
+        // 🧭 Вердикт ШМАТКАМИ — СПІЛЬНИЙ рендер із режимом-звітом списку
+        // (`_lqVerdictHTML`): один вигляд в обох місцях, інакше «тягне ВГОРУ»
+        // виглядало б по-різному на одній сторінці.
         const noteEl = document.getElementById('liq1-note');
-        const pt = d.verdict_parts || null;
-        const tone = d.verdict_tone === 'up' ? '#4ade80'
-                   : d.verdict_tone === 'down' ? '#f87171'
-                   : d.verdict_tone === 'flat' ? '#9aa3b5' : '#6b7280';
-        if (!pt) { noteEl.textContent = d.verdict || ''; noteEl.style.color = tone; }
-        else {
-            const dim = '#8b93a7';
-            const seg = [`<span style="color:${tone};font-weight:700">${pt.icon}</span>`];
-            if (pt.lead) seg.push(`<span style="color:${dim}">${pt.lead}</span>`);
-            if (pt.lead_val) seg.push(`<b style="color:${tone}">${pt.lead_val}</b>`);
-            if (pt.action) seg.push(`<span style="color:${dim}">·</span> <b style="color:${tone}">${pt.action}</b>`);
-            if (pt.strength) seg.push(`<span style="color:#fbbf24">${pt.strength}</span>`);
-            if (pt.skew) seg.push(`<span style="color:${dim}">(</span><b style="color:${tone}">${pt.skew}</b><span style="color:${dim}">)</span>`);
-            let h = `<div>${seg.join(' ')}</div>`;
-            const m = pt.magnet;
-            if (m) {
-                const mc = m.dir === 'up' ? '#4ade80' : '#f87171';
-                h += `<div class="l2"><span style="color:${dim}">🧲 найбільший магніт</span> `
-                   + `<b style="color:#e2e8f0">${m.price}</b> <span style="color:${dim}">·</span> `
-                   + `<b style="color:${mc}">${m.pct}</b> <span style="color:${dim}">·</span> `
-                   + `<b style="color:${mc}">${m.dist}</b></div>`;
-            }
-            noteEl.innerHTML = h;
-            noteEl.style.color = '';
-        }
+        const _v = _lqVerdictHTML(d.verdict_parts, d.verdict, d.verdict_tone, true);
+        noteEl.innerHTML = _v.html;
+        noteEl.style.color = _v.plain ? _v.tone : '';
     } catch (e) {
         stat.textContent = 'Помилка: ' + e;
     } finally {
         btn.disabled = false;
     }
+}
+
+// 🧭 У режимі ЗВІТУ вузькі колонки ховаємо, а «Тягне» перетворюється на
+// широку колонку з рядком-вердиктом. Ховаємо, а не лишаємо порожніми:
+// стовпчик-привид без даних читається як «дані загубились».
+function _lqApplyReportCols(on) {
+    const hide = ['lqc-split', 'lqc-skew', 'lqc-mag', 'lqc-near'];
+    hide.forEach(c => document.querySelectorAll('.' + c).forEach(el => {
+        el.style.display = on ? 'none' : '';
+    }));
+    const th = document.querySelector('.lqc-pull');
+    if (th) th.textContent = on ? 'Куди тягне ліквідність' : 'Тягне';
+}
+
+// 🧭 ВЕРДИКТ ЛІКВІДНОСТІ — ЄДИНИЙ РЕНДЕР (режим однієї монети + звіт списку).
+// Числа фарбуємо окремо від пояснювальних слів; 🧲 магніт — другим рядком.
+// ⚠️ Два різні малювання того самого вердикту на одній сторінці розійшлись би,
+// тому обидва місця ходять сюди (той самий принцип, що `verdict.parts` у бекенді:
+// модуль дає ЧИСТІ дані, кольори — справа фронта).
+function _lqVerdictHTML(parts, text, toneKey, withMagnet) {
+    const tone = toneKey === 'up' ? '#4ade80'
+               : toneKey === 'down' ? '#f87171'
+               : toneKey === 'flat' ? '#9aa3b5' : '#6b7280';
+    if (!parts) return {html: (text || ''), tone: tone, plain: true};
+    const dim = '#8b93a7';
+    const seg = [`<span style="color:${tone};font-weight:700">${parts.icon}</span>`];
+    if (parts.lead) seg.push(`<span style="color:${dim}">${parts.lead}</span>`);
+    if (parts.lead_val) seg.push(`<b style="color:${tone}">${parts.lead_val}</b>`);
+    if (parts.action) seg.push(`<span style="color:${dim}">·</span> <b style="color:${tone}">${parts.action}</b>`);
+    if (parts.strength) seg.push(`<span style="color:#fbbf24">${parts.strength}</span>`);
+    if (parts.skew) seg.push(`<span style="color:${dim}">(</span><b style="color:${tone}">${parts.skew}</b><span style="color:${dim}">)</span>`);
+    let h = `<div>${seg.join(' ')}</div>`;
+    const m = withMagnet ? parts.magnet : null;
+    if (m) {
+        const mc = m.dir === 'up' ? '#4ade80' : '#f87171';
+        h += `<div class="l2"><span style="color:${dim}">🧲 найбільший магніт</span> `
+           + `<b style="color:#e2e8f0">${m.price}</b> <span style="color:${dim}">·</span> `
+           + `<b style="color:${mc}">${m.pct}</b> <span style="color:${dim}">·</span> `
+           + `<b style="color:${mc}">${m.dist}</b></div>`;
+    }
+    return {html: h, tone: tone, plain: false};
 }
 
 // 💸 ЦІНА ЗАПУСКУ — ЖИВИМ РЯДКОМ, а не статичним написом.
@@ -1205,10 +1229,16 @@ async function liqScan() {
             tb.innerHTML = '<tr><td colspan="9" style="color:#667;padding:16px">— порожньо —</td></tr>';
             return;
         }
+        // 🧭 РЕЖИМ ЗВІТУ: замість колонок магнітів — ОДИН рядок-вердикт
+        // «▲ Маса ліквідності ВИЩЕ ціни 62.3% · тягне ВГОРУ …» по кожній
+        // монеті (вимога 16.09). Порядок — за перекосом, як і в `pull`.
+        const _report = (document.getElementById('liq-sort') || {}).value === 'pull_report';
+        _lqApplyReportCols(_report);
         tb.innerHTML = rows.map((r, i) => {
+            const _span = _report ? 3 : 7;
             if (!r.ok) {
                 return `<tr><td>${i + 1}</td><td>${r.symbol}</td>`
-                     + `<td colspan="7" style="color:#6b7280">${r.reason || 'немає рівнів'}</td></tr>`;
+                     + `<td colspan="${_span}" style="color:#6b7280">${r.reason || 'немає рівнів'}</td></tr>`;
             }
             // Колір = напрямок тяги (вгору зелений, вниз червоний) — та сама
             // конвенція, що в блоці ліквідності на Smart Money.
@@ -1225,6 +1255,18 @@ async function liqScan() {
                         title="${(r.note || 'взято з партнерської біржі').replace(/"/g, '')}"
                         >⇄${String(r.exchange || '').toUpperCase()}</span>`
                 : '';
+            if (_report) {
+                // Вердикт малює ТОЙ САМИЙ хелпер, що й режим однієї монети —
+                // «тягне ВГОРУ» не має виглядати по-різному на одній сторінці.
+                const v = _lqVerdictHTML(r.verdict_parts, r.verdict, r.pull, false);
+                return `<tr>`
+                    + `<td>${i + 1}</td>`
+                    + `<td style="font-weight:700">${r.symbol}${fb}</td>`
+                    + `<td style="font-family:monospace">${_lqPrice(r.price)}</td>`
+                    + `<td colspan="5" style="line-height:1.45">${v.html}</td>`
+                    + `<td style="font-family:monospace;color:#8b93a7">${_lqUsd(r.oi_usd)}</td>`
+                    + `</tr>`;
+            }
             return `<tr title="${(r.verdict || '').replace(/"/g, '')}">`
                 + `<td>${i + 1}</td>`
                 + `<td style="font-weight:700">${r.symbol}${fb}</td>`

@@ -179,11 +179,58 @@ def test_sorting_modes():
            'за перекосом')
     _check([r['symbol'] for r in S.sort_rows(rows, 'magnet')][:3] == ['C', 'B', 'A'],
            'за розміром магніту')
-    _check([r['symbol'] for r in S.sort_rows(rows, 'near')][:3] == ['C', 'A', 'B'],
-           'за близькістю магніту')
+    # 🧭 Режим ЗВІТУ «куди тягне» має ТОЙ САМИЙ порядок, що й `pull` —
+    # відрізняється лише ПОДАННЯ на фронті (рядок-вердикт замість колонок).
+    _check([r['symbol'] for r in S.sort_rows(rows, 'pull_report')][:3] == ['B', 'C', 'A'],
+           'звіт «куди тягне» мусить іти за перекосом')
+    # ⚠️ Режим `near` ПРИБРАНО (вимога 16.09) — невідомий ключ НЕ падає і НЕ
+    # дає випадкового порядку: мовчки повертаємось до перекосу.
+    _check([r['symbol'] for r in S.sort_rows(rows, 'near')][:3] == ['B', 'C', 'A'],
+           'прибраний режим мусить чесно давати порядок за перекосом')
     _check(S.sort_rows(rows, 'pull')[-1]['symbol'] == 'D',
            'монети без даних — у кінці, але НЕ зникають')
-    print('✓ три режими сортування + рядки без даних не губляться')
+    print('✓ режими сортування + звіт + рядки без даних не губляться')
+
+
+def test_near_fields_survive_even_though_the_sort_is_gone():
+    """⚠️ Прибрали РЕЖИМ, а не дані: `near_*` живлять колонку «Найближчий»
+    у звичайній таблиці, і це ІНШЕ питання («що спрацює першим»), ніж
+    «куди тягне»."""
+    import inspect
+    src = inspect.getsource(S.summarise)
+    for key in ('near_price', 'near_dist', 'near_dir'):
+        _check(f"'{key}'" in src, f'{key} зник із рядка скану')
+    print('✓ поля найближчого магніту лишились (прибрано лише сортування)')
+
+
+def test_ui_offers_the_report_instead_of_the_near_sort():
+    """🧭 Вимога 16.09: «заміни відбір "за близькістю магніту" на звіт по
+    монетах, які покажуть ▲ Маса ліквідності ВИЩЕ ціни … тягне ВГОРУ»."""
+    html = open(os.path.join(_ROOT, 'templates', 'tickr.html'),
+                encoding='utf-8').read()
+    i = html.index('id="liq-sort"')
+    blk = html[i:html.index('</select>', i)]
+    import re as _re
+    opts = _re.findall(r'value="([^"]+)"', blk)
+    _check('near' not in opts, f'режим «за близькістю» лишився: {opts}')
+    _check('pull_report' in opts, f'немає режиму-звіту: {opts}')
+    _check('куди тягне' in blk, 'опція не підписана зрозуміло для людини')
+    print(f'✓ UI: режими {opts} — «за близькістю» замінено звітом')
+
+
+def test_report_row_and_single_coin_draw_the_same_verdict():
+    """⚠️ Один вигляд вердикту на всю сторінку: і рядок звіту, і режим однієї
+    монети малюють його ОДНИМ хелпером. Дві копії розійшлись би."""
+    html = open(os.path.join(_ROOT, 'templates', 'tickr.html'),
+                encoding='utf-8').read()
+    _check(html.count('function _lqVerdictHTML') == 1,
+           'хелпер вердикту мусить бути ОДИН')
+    _check(html.count('_lqVerdictHTML(') >= 3,
+           'вердикт малюється не з хелпера (є друга копія розмітки?)')
+    # У режимі звіту вузькі колонки ховаються, а не лишаються порожніми.
+    _check('_lqApplyReportCols' in html and 'lqc-near' in html,
+           'колонки магнітів у звіті не ховаються')
+    print('✓ звіт і одна монета малюють вердикт ОДНИМ рендером')
 
 
 def test_unknown_exchange_refuses_instead_of_raising():
@@ -727,38 +774,18 @@ def test_single_coin_mode_still_answers_flat():
 
 
 if __name__ == '__main__':
-    test_levels_are_built_from_oi_and_history()
-    test_mass_follows_where_positions_were_opened()
-    test_bigger_volume_gives_bigger_mass()
-    test_levels_already_swept_are_dropped()
-    test_far_levels_are_outside_the_window()
-    test_no_data_returns_nothing_not_zeros()
-    test_garbage_bars_never_raise()
-    test_summary_uses_the_same_ladder_and_verdict()
-    test_nearest_magnet_is_not_the_biggest()
-    test_sorting_modes()
-    test_unknown_exchange_refuses_instead_of_raising()
-    test_symbol_is_normalised_for_each_exchange()
-    test_single_coin_works_on_exchange_without_bulk_oi()
-    test_single_coin_refuses_honestly_when_there_is_no_data()
-    test_list_scan_falls_back_to_per_symbol_oi()
-    test_per_symbol_oi_has_a_ceiling()
-    test_cheap_coin_magnet_is_not_rounded_to_zero()
-    test_module_says_it_is_a_snapshot_not_the_live_map()
-    test_clamped_coin_count_is_said_out_loud()
-    test_coin_count_dropdown_matches_the_backend_ceiling()
-    test_scan_sends_the_chosen_history_depth()
-    test_history_dropdown_offers_only_depths_the_backend_honours()
-    test_dropdown_list_is_readable_on_dark_page()
-    test_watchlist_mode_scans_exactly_the_given_list()
-    test_missing_coin_falls_back_to_the_partner_exchange()
-    test_fallback_goes_the_other_way_too()
-    test_coin_on_neither_exchange_says_both_attempts()
-    test_empty_watchlist_is_an_honest_refusal()
-    test_watchlist_mode_never_touches_exchange_tickers()
-    test_ui_hides_the_fields_that_do_not_apply()
-    test_flat_rows_are_dropped_from_the_report()
-    test_rows_without_data_are_not_confused_with_flat()
-    test_list_scan_applies_the_filter_and_says_how_many()
-    test_single_coin_mode_still_answers_flat()
-    print('\nУсі тести скану ліквідності пройдено ✅')
+    # ⚠️ Перелік тестів БІЛЬШЕ НЕ ПИШЕТЬСЯ РУКАМИ. Раніше тут стояв явний
+    # список викликів, і щойно доданий тест просто НЕ ЗАПУСКАВСЯ — мовчки,
+    # без жодної ознаки (на це вже наступили 16.09). Беремо всі `test_*`.
+    _fns = [(k, v) for k, v in sorted(globals().items())
+            if k.startswith('test_') and callable(v)]
+    _bad = 0
+    for _name, _fn in _fns:
+        try:
+            _fn()
+        except Exception as _e:
+            _bad += 1
+            print(f'  FAIL {_name}: {type(_e).__name__}: {_e}')
+    print(f'\n{len(_fns) - _bad}/{len(_fns)} — тести скану ліквідності'
+          + (' пройдено ✅' if not _bad else ' ❌'))
+    raise SystemExit(1 if _bad else 0)

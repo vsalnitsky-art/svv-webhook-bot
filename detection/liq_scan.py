@@ -237,9 +237,18 @@ def summarise(levels: List[Dict], price: float, symbol: str,
 
 
 def sort_rows(rows: List[Dict], by: str = 'pull') -> List[Dict]:
-    """Порядок списку. `pull` — за силою перекосу (де ринок тягне найдужче),
-    `magnet` — за розміром найбільшого магніту, `near` — за близькістю
-    найближчого магніту (що спрацює першим)."""
+    """Порядок списку:
+      • `pull`        — за силою перекосу (де ринок тягне найдужче);
+      • `magnet`      — за розміром найбільшого магніту;
+      • `pull_report` — 🧭 ЗВІТ «куди тягне ліквідність»: порядок ТОЙ САМИЙ, що
+        у `pull` (сильніший перекіс — вище), відрізняється лише ПОДАННЯ на
+        фронті (рядок-вердикт замість колонок магнітів).
+
+    ⚠️ Режим `near` («за близькістю магніту») ПРИБРАНО на вимогу користувача
+    16.09 — його місце в списку зайняв звіт. Самі поля `near_*` ЛИШИЛИСЬ: вони
+    живлять колонку «Найближчий» у звичайній таблиці, і це інше питання
+    («що спрацює першим»), ніж «куди тягне».
+    """
     ok = [r for r in rows if r.get('ok')]
     bad = [r for r in rows if not r.get('ok')]
 
@@ -251,10 +260,7 @@ def sort_rows(rows: List[Dict], by: str = 'pull') -> List[Dict]:
 
     if by == 'magnet':
         ok.sort(key=lambda r: -_pct(r.get('magnet_pct')))
-    elif by == 'near':
-        ok.sort(key=lambda r: (r.get('near_dist') if r.get('near_dist')
-                               is not None else 9e9))
-    else:
+    else:                      # 'pull' і 'pull_report' — однаковий порядок
         ok.sort(key=lambda r: -(r.get('pull_pct') or 0))
     return ok + bad
 

@@ -84,6 +84,10 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._mm_str_hist = {}
     ff._mm_vob_seen = {}
     ff._mm_vob_at = {}
+    # ⚠️ БЕЗ цього поля `_mm_vob_tick` кидає AttributeError на ПЕРШІЙ монеті, а
+    # `_mm_capture` його ковтає — тест «нічого не робить» і падає на рівному
+    # місці. Той самий капкан, що вже ловив `_mm_vob_seen`/`_mm_vob_at`.
+    ff._mm_vob_diag = {}
     ff._mm_price_hist = {}
     ff._mm_decision = {}
     ff._clock = [10_000.0]
@@ -994,8 +998,15 @@ def test_ui_has_growth_column_with_timer_and_sorting():
     _check('Сила росте' in tbl, 'немає колонки приросту')
     # ⏱ Таймер — ОКРЕМА колонка (вимога 15.09), а не хвіст комірки приросту.
     _check('⏱ Росте' in tbl, 'таймер не винесено в окрему колонку')
+    # ⚠️ Кількість колонок звіряємо зі СКЛАДОМ, а не з магічним числом: список
+    # нижче — це і є контракт таблиці, тож додана колонка мусить бути названа
+    # ТУТ, а не просто зсунути число.
+    _cols = ['Символ', 'Старий МММ', 'Сила росте', '⏱ Росте', 'Ціна',
+             '🔮 1H', '🔮 4H', '👁 VOB']
+    for _c in _cols:
+        _check(_c in tbl, f'немає колонки «{_c}»')
     _n = len(_re.findall(r'<th[\s>]', tbl))
-    _check(_n == 8, f'очікував 8 колонок: {_n}')
+    _check(_n == len(_cols) + 1, f'колонок {_n}, а в контракті {len(_cols)}+☑')
     _check(f'colspan="{_n}"' in tbl,
            f'colspan порожнього рядка не дорівнює числу колонок ({_n})')
     for col in ('symbol', 'strength', 'delta', 'grow', 'pchg'):
@@ -1318,6 +1329,12 @@ def test_snapshot_carries_the_forecast_pair():
 def test_js_forecast_is_two_columns_with_direction_only():
     """Вимога 15.09: дві ОКРЕМІ колонки і в кожній лише «1H: 🔴 SHORT».
     Числа (рух і впевненість) нікуди не зникли — вони в підказці комірки."""
+    # Скільки комірок має рядок — беремо з ЖИВОГО заголовка таблиці, а не з
+    # магічного числа: кожна нова колонка інакше ламала б цей тест на рівному
+    # місці (на 8→9 уже наступили).
+    import re as _re
+    _t = _HTML[_HTML.index('id="mm-table"'):]
+    _ncells = len(_re.findall(r'<th[\s>]', _t[:_t.index('</thead>')]))
     out = _run_js(r'''
 const R = (s, f1, f4) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50, delta:0,
   grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
@@ -1332,13 +1349,13 @@ const a = cell('AAA'), b = cell('BBB');
 console.log(JSON.stringify({
   a1:a.includes('1H: 🟢 LONG'), a4:a.includes('4H: 🔴 SHORT'),
   // ДВІ окремі комірки, а не одна з <br>
-  twoCells:(a.split('<td').length - 1) === 8 && !/1H.*<br>.*4H/.test(a),
+  twoCells:(a.split('<td').length - 1) === __N__ && !/1H.*<br>.*4H/.test(a),
   // ⚠️ Числа МУСЯТЬ бути в підказці, тож шукаємо їх лише у ВИДИМОМУ тексті
   // (title вирізаємо) — інакше тест забороняв би те, що ми свідомо лишили.
   noPct:!a.replace(/title="[^"]*"/g, '').includes('+100%'),
   tip:a.includes('очікуваний рух'),
   neutral:b.includes('1H: ⚪ ней'), none:b.includes('4H: —')}));
-''')
+'''.replace('__N__', str(_ncells)))
     import json
     d = json.loads(out)
     _check(d['a1'] and d['a4'], f'напрямок прогнозу не показано: {d}')
@@ -1849,6 +1866,83 @@ def test_baseline_survives_a_one_tick_dropout():
     _check(any(x['symbol'] == 'AAAUSDT' for x in ff.signals),
            f'новий блок після пропуску не дав сигналу: {ff.signals}')
     print('✓ 🧮 разовий пропуск монети більше не ковтає наступний блок')
+
+
+# ── 👁 СКАН VOB МУСИТЬ БУТИ ВИДИМИЙ (скарга 16.09) ───────────────────────
+# «Я так і не зрозумів. VOB з МММ-монітора будуть скануватись чи ні? Бо зараз
+# я не бачу жодних ознак на сканування.» Поки нового блоку немає, шлях мовчав
+# ЦІЛКОМ — тепер кожна монета несе стан перевірки.
+
+def test_every_checked_coin_reports_its_vob_state():
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'LONG': 1000})          # блок є
+    _cap(ff, AAAUSDT=0.50, BBBUSDT=0.50)      # BBB — блоку немає
+    rows = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}
+    _check((rows['AAAUSDT'].get('vob') or {}).get('state') == 'base',
+           f"перший показ мусить бути «тиха база»: {rows['AAAUSDT'].get('vob')}")
+    _check((rows['BBBUSDT'].get('vob') or {}).get('state') == 'none',
+           f"«блоку немає» мусить бути окремим станом: {rows['BBBUSDT'].get('vob')}")
+    _cap(ff, AAAUSDT=0.50, BBBUSDT=0.50)      # той самий блок
+    rows = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}
+    _check(rows['AAAUSDT']['vob']['state'] == 'same',
+           'повторна перевірка мусить бути видима як «той самий блок»')
+    _check(rows['AAAUSDT']['vob'].get('ts'), 'немає часу останньої перевірки')
+    print('✓ 👁 кожна перевірена монета звітує стан скану (base/same/none)')
+
+
+def test_new_block_shows_up_as_signal_state():
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'LONG': 1000})
+    _cap(ff, AAAUSDT=0.50)
+    _vob(ff, AAAUSDT={'LONG': 2000})
+    _cap(ff, AAAUSDT=0.50)
+    st = (ff.mm_monitor_state()['rows'][0].get('vob') or {})
+    _check(st.get('state') == 'signal' and st.get('ft') == 2000, st)
+    print('✓ 👁 новий блок видно в рядку як «сигнал» (а не лише в лозі)')
+
+
+def test_disabled_volumized_block_says_so_instead_of_pretending():
+    """⛔ «Ми не шукаємо» і «блоку немає» — РІЗНІ речі; друге виглядало б як
+    «скан зламався»."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'LONG': 1000})
+    _sc = ff._mm_vob_scanner()
+    _sc.volumized_on = lambda: False
+    ff._mm_vob_scanner = lambda: _sc
+    _cap(ff, AAAUSDT=0.50)
+    _check(not ff.vob_calls, f'вимкнений блок усе одно питали: {ff.vob_calls}')
+    _check((ff.mm_monitor_state()['rows'][0].get('vob') or {}).get('state') == 'off',
+           'стан «вимкнено» не доїхав у рядок')
+    print('✓ ⛔ вимкнений Volumized OB Trend названо прямо в рядку')
+
+
+def test_js_draws_the_vob_state_column():
+    out = _run_js(r'''
+const R = (s, v) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50, delta:0,
+  grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
+  delta_span:180, f1:null, f4:null, vob:v, selectable:true});
+mmApplyState({rows:[R('AAAUSDT', {state:'base', ft:1, tf:'5m', ts:1700000000}),
+                    R('BBBUSDT', {state:'signal', ft:2, tf:'5m', ts:1700000000}),
+                    R('CCCUSDT', null)],
+  enabled:true, limited:false, ts:1});
+const rows = document.getElementById('mm-tbody').innerHTML.split('</tr>');
+const cell = s => rows.filter(x => x.includes(s))[0] || '';
+console.log(JSON.stringify({
+  base:cell('AAA').includes('⏳'), sig:cell('BBB').includes('🆕'),
+  none:cell('CCC').includes('—'),
+  timer:cell('AAA').includes('ff-timer'),
+  why:/тиху базу|ТИХУ БАЗУ/i.test(cell('AAA'))}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['base'] and d['sig'], f'стан скану не намальовано: {d}')
+    _check(d['timer'], 'не видно, коли монету перевіряли востаннє')
+    _check(d['why'], 'стан без пояснення — доведеться здогадуватись')
+    _check(d['none'], 'ще не перевірена монета мусить бути «—», а не порожньо')
+    print('✓ JS: колонка 👁 VOB — значок + живий час + пояснення')
 
 
 # ── ⚑ «СКІЛЬКИ У ФІЛЬТРІ, А СКІЛЬКИ ПОЗА» (вимога 16.09) ─────────────────

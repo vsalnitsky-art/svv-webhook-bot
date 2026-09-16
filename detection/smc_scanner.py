@@ -5158,6 +5158,15 @@ class SMCScanner:
         """TF блоку «📦 Volumized OB Trend» — той, що обрано в налаштуваннях."""
         return self._settings.get('volumized_timeframe', '1h')
 
+    def volumized_on(self) -> bool:
+        """Чи увімкнений сам блок «📦 Volumized OB Trend» (чекбокс Enable).
+
+        Читачам це потрібно ОКРЕМО від `volumized_ob_side`: та повертає None і
+        коли блоку просто немає, і коли скан вимкнено, а це РІЗНІ речі —
+        «блоку немає» і «ми не шукаємо» не можна показувати однаково.
+        """
+        return bool(self._settings.get('use_volumized_ob', True))
+
     def has_fresh_vob(self, symbol: str) -> bool:
         """Чи є придатний знімок блоків за напрямком (без походу в мережу).
         Читачі питають ЦЕ, щоб не витрачати свій бюджет запитів на дурно."""
