@@ -76,6 +76,89 @@ def test_poc_label_not_choch():
     assert 'CHoCH' not in sl.pretty_opened_by('poc → Q4')
 
 
+# ═══ 🧮 КАРТИНКА УГОДИ З «МММ-МОНІТОРА» (вимога 15.09) ═══════════════════
+# «🟪 заміни на 🧮, щоб видно було, що ця угода із "🧮 МММ-монітор"».
+# Угоди монітора несуть ТОЙ САМИЙ сигнал, що й угоди Черги-4 (`vob_alert`),
+# тож картинка сигналу їх не розрізняла. Тепер картинку дає ДВИГУН.
+
+def test_mmm_trade_shows_the_monitor_icon_not_the_signal_one():
+    assert sl.icon_of('vob_alert → MMM') == '🧮'
+    # ✋ групове відкриття з монітора — теж 🧮 (двигун той самий)
+    assert sl.icon_of('manual → MMM') == '🧮'
+
+
+def test_other_engines_keep_the_signal_icon():
+    # нічого, крім МММ-монітора, не змінилось
+    assert sl.icon_of('vob_alert → Q4') == '🟪'
+    assert sl.icon_of('choch_bos → Q1') == '🟦'
+    assert sl.icon_of('manual → Q4') == '✋'
+    assert sl.icon_of('poc → Q4') == '🎯'
+
+
+def test_single_code_is_a_signal_not_an_engine():
+    # запис черги несе лише СИГНАЛ — його не можна читати як двигун
+    assert sl.engine_code_of('vob_alert') == ''
+    assert sl.icon_of('vob_alert') == '🟪'
+    assert sl.engine_code_of('vob_alert → MMM') == 'MMM'
+    assert sl.engine_code_of('vob_alert → MMM · 🤪 LONG 70%') == 'MMM'
+
+
+def test_icon_change_does_not_touch_the_label_or_the_logic():
+    raw = 'vob_alert → MMM'
+    # повна мітка (підказка) лишається як була
+    assert sl.pretty_opened_by(raw) == '🟪 Volumized OB → 🧮 МММ-монітор'
+    # код сигналу для логіки — теж
+    assert sl.signal_code_of(raw) == 'vob_alert'
+
+
+def test_unknown_code_falls_back_to_the_tag_icon():
+    assert sl.icon_of('🎯 Черга-4 (усі 4 шари)') == sl.FALLBACK_ICON
+
+
+# ═══ JS-ДЗЕРКАЛА мусять збігатися з бекендом ═════════════════════════════
+# Іконки малює ФРОНТ, тож без цього замка мапи розійшлись би мовчки — і на
+# сторінці стояло б 🟪, хоча бекенд уже каже 🧮.
+
+def _js_map(text, name):
+    """Витягти { 'k': 'v', … } із JS-джерела за іменем константи."""
+    import re
+    i = text.index(name)
+    start = text.index('{', i)
+    depth, end = 0, start
+    for j in range(start, len(text)):
+        if text[j] == '{':
+            depth += 1
+        elif text[j] == '}':
+            depth -= 1
+            if depth == 0:
+                end = j
+                break
+    body = text[start:end + 1]
+    return dict(re.findall(r"""['"]([^'"]+)['"]\s*:\s*['"]([^'"]+)['"]""", body))
+
+
+def _js_files():
+    for rel in ('templates/smart_money.html', 'infosite/app.js'):
+        with open(os.path.join(_HERE, rel), encoding='utf-8') as f:
+            yield rel, f.read()
+
+
+def test_both_js_mirrors_match_the_python_icon_maps():
+    for rel, src in _js_files():
+        assert _js_map(src, 'SIGNAL_ICON_JS') == sl.SIGNAL_ICONS, rel
+        assert _js_map(src, 'ENGINE_ICON_OVERRIDE_JS') == sl.ENGINE_ICON_OVERRIDE, rel
+
+
+def test_both_js_mirrors_apply_the_override_before_the_signal_icon():
+    # порядок важливий: спершу двигун, потім сигнал — інакше 🧮 ніколи не
+    # переможе 🟪 і правка не діяла б.
+    for rel, src in _js_files():
+        i = src.index('function signalIconHtml')
+        body = src[i:i + 500]
+        assert 'ENGINE_ICON_OVERRIDE_JS' in body, rel
+        assert body.index('ENGINE_ICON_OVERRIDE_JS') < body.index('SIGNAL_ICON_JS'), rel
+
+
 if __name__ == '__main__':
     fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in fns:

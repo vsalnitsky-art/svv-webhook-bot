@@ -121,9 +121,18 @@
     "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥",
     "MMM": "🧮"
   };
+  // Двигун, чия картинка ПЕРЕКРИВАЄ картинку сигналу: угоди 🧮 МММ-монітора
+  // йдуть від того самого `vob_alert`, що й угоди Черги-4, тож 🟪 їх не
+  // розрізняло. Мітка у підказці лишається повною.
+  var ENGINE_ICON_OVERRIDE_JS = { "MMM": "🧮" };
   function signalCodeOf(raw) {
     if (!raw) return "";
     return String(raw).split(" · ")[0].split(" → ")[0].trim();
+  }
+  function engineCodeOf(raw) {
+    if (!raw) return "";
+    var parts = String(raw).split(" · ")[0].split(" → ");
+    return parts.length > 1 ? parts[parts.length - 1].trim() : "";
   }
   function prettyOpenedBy(raw) {
     if (!raw) return "";
@@ -140,8 +149,8 @@
   }
   function signalIconHtml(raw) {
     if (!raw) return "";
-    var code = signalCodeOf(raw);
-    var icon = SIGNAL_ICON_JS[code] || "🏷";
+    var icon = ENGINE_ICON_OVERRIDE_JS[engineCodeOf(raw)]
+      || SIGNAL_ICON_JS[signalCodeOf(raw)] || "🏷";
     var full = prettyOpenedBy(raw).replace(/"/g, "&quot;");
     return '<span title="' + full + '" style="margin-right:3px;font-size:0.8rem;cursor:help">' + icon + "</span>";
   }
