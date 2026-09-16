@@ -112,7 +112,19 @@ MM_PRICE_DEADZONE = 0.10
 # монети, по яких доводиться рахувати самим (3000 барів на монету).
 # Пропущений такт нічого не втрачає: «новий» блок визначається за
 # `formation_time`, тож його побачимо наступного разу — просто трохи пізніше.
-MM_VOB_MAX_PER_TICK = 15
+# Стеля «холодних» монет за такт. **0 = БЕЗ ЛІМІТУ** — дослівна вимога 16.09:
+# «скануватись мають ВСІ монети із таблиці МММ-монітор, за винятком
+# відфільтрованих». Саме фільтр «Сила ≥» і тримає список коротким, тож окремий
+# бюджет більше не потрібен; поле лишилось як ЗАПОБІЖНИК на випадок «Сила ≥ 0»
+# по всьому watchlist. Перевищення НЕ мовчазне: монета отримує стан ⏸ у колонці
+# 👁 VOB (раніше вона просто зникала з черги без жодної ознаки).
+MM_VOB_MAX_PER_TICK = 0
+# Таймфрейми, які монітор може обрати ДЛЯ СЕБЕ. Порожній рядок = «як у скану»
+# (тоді читання безкоштовне — кеш уже наповнив скан).
+# ⚠️ Свій TF замінює РІВНО свічку: Swing / Zone Invalidation / Max ATR /
+# Zone Count / Combine і далі беруться з «📦 Volumized OB Trend». Другий набір
+# ПАРАМЕТРІВ = другий «останній блок» (урок PD-зони), і його ми не заводимо.
+MM_VOB_TFS = ('', '1m', '3m', '5m', '15m', '30m', '1h', '4h')
 # Скільки тримати позначку «цей блок уже опрацьовано», якщо монета зникла зі
 # знімка. Раніше позначка вмирала на ПЕРШОМУ ж пропуску — і монета поверталась
 # із чистою базою, ковтаючи наступний реальний блок.
@@ -232,6 +244,14 @@ DEFAULT_SETTINGS = {
     # параметри детектора диктує блок «📦 Volumized OB Trend» сканера — щоб
     # монітор торгував РІВНО тим блоком, який намальовано на графіку.
     'mm_vob_open': True,
+    # Власний TF монітора; '' = брати TF зі скану «📦 Volumized OB Trend».
+    'mm_vob_tf': '',
+    # Стеля «холодних» монет за такт (0 = всі, див. MM_VOB_MAX_PER_TICK).
+    'mm_vob_max_per_tick': MM_VOB_MAX_PER_TICK,
+    # ⚑ Поріг «Сила ≥» — ОДНЕ число на показ І на скан (вимога 16.09).
+    # Раніше воно жило лише в localStorage сторінки, тож бекенд про нього не
+    # знав і сканував монети, яких на екрані немає.
+    'mm_str_min': 0,
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -1376,6 +1396,17 @@ class FuelFilterDaemon:
         s['mmm_limited_mode'] = bool(s.get('mmm_limited_mode', True))
         s['mm_monitor_enabled'] = bool(s.get('mm_monitor_enabled', True))
         s['mm_vob_open'] = bool(s.get('mm_vob_open', True))
+        _vtf = str(s.get('mm_vob_tf', '') or '').strip().lower()
+        s['mm_vob_tf'] = _vtf if _vtf in MM_VOB_TFS else ''
+        try:
+            s['mm_str_min'] = max(0, min(100, int(float(s.get('mm_str_min', 0)))))
+        except (TypeError, ValueError):
+            s['mm_str_min'] = 0
+        try:
+            s['mm_vob_max_per_tick'] = max(0, min(500,
+                int(s.get('mm_vob_max_per_tick', MM_VOB_MAX_PER_TICK))))
+        except (TypeError, ValueError):
+            s['mm_vob_max_per_tick'] = MM_VOB_MAX_PER_TICK
         s['enabled'] = bool(s.get('enabled', False))
         try:
             s['direction_smoothing_min'] = max(0, min(600,
@@ -3272,19 +3303,31 @@ class FuelFilterDaemon:
         самий урок, що вже задокументований для VOB-алерту: «блок, що утворився
         пів дня тому, ми лише БАЧИМО на графіку, а сигналом він був тоді».
 
-        ⚠️ **ПОРЦІЯМИ — ЛИШЕ КОЛИ ДОВОДИТЬСЯ РАХУВАТИ САМИМ.** Монета, по якій
-        скан уже поклав свіжий знімок (`has_fresh_vob`), коштує НУЛЬ — таких
-        беремо ВСІХ за такт. Бюджет `MM_VOB_MAX_PER_TICK` витрачають лише
-        «холодні» монети (яких скан ще не дійшов): саме вони тягнуть 3000
-        барів. Раніше бюджет їли ВСІ підряд, тож повне коло по 230 монетах
-        займало ~8 хв навіть коли дані вже були під рукою.
+        ⚠️ **СКАНУЄМО ВСІ МОНЕТИ ТАБЛИЦІ, КРІМ ВІДФІЛЬТРОВАНИХ** (вимога
+        16.09, дослівно). Список кандидатів = РІВНО рядки, які людина бачить:
+        напрямок є · не в угоді · **сила ≥ `mm_str_min`** (той самий поріг
+        «Сила ≥», що фільтрує таблицю — одне число на показ і на скан).
+        Відсіяна монета не сканується взагалі: питати біржу про те, чого на
+        екрані немає, — марна робота.
+        Бюджет за такт (`mm_vob_max_per_tick`) за замовчуванням **0 = без
+        ліміту**; він лишився ЗАПОБІЖНИКОМ на випадок «Сила ≥ 0» по всьому
+        watchlist. Коли він таки спрацював, монета отримує стан **⏸ wait** —
+        мовчазного зникнення з черги більше немає.
+
+        ⚠️ **ВЛАСНИЙ TF** (`mm_vob_tf`, '' = як у скану). Замінює РІВНО свічку;
+        решта параметрів — з «📦 Volumized OB Trend». Ціна вибору: свій TF не
+        збігається з кешем скану, тож КОЖНА монета «холодна» і тягне
+        `VOB_KLINES_LIMIT` барів. Саме тому запобіжник вище й лишився.
         """
         if not s.get('mm_vob_open', True) or not s.get('enabled', False):
             return
         sc = self._mm_vob_scanner()
         if sc is None:
             return
-        tf = str(sc.volumized_tf() or '')
+        # 🕐 Власний TF монітора; порожньо = TF скану (тоді кеш скану годиться
+        # і читання безкоштовне).
+        _own_tf = str(s.get('mm_vob_tf', '') or '').strip()
+        tf = _own_tf or str(sc.volumized_tf() or '')
         # ⛔ Сам блок Volumized вимкнено → шукати нема чого. Кажемо це ПРЯМО в
         # рядку монітора, а не мовчимо: «блоку немає» і «ми не шукаємо» — різні
         # речі, і друге виглядало б як «скан зламався».
@@ -3297,8 +3340,14 @@ class FuelFilterDaemon:
                 self._mm_vob_diag[_sym] = {'state': 'off', 'ft': None,
                                            'tf': tf, 'ts': now}
             return
+        # ⚑ ТОЙ САМИЙ поріг, що фільтрує таблицю: скануємо рівно те, що видно.
+        try:
+            _min_str = max(0, min(100, int(float(s.get('mm_str_min', 0) or 0))))
+        except (TypeError, ValueError):
+            _min_str = 0
         cands = [sym for sym, v in snap.items()
-                 if v.get('status') in ('LONG', 'SHORT')]
+                 if v.get('status') in ('LONG', 'SHORT')
+                 and float(v.get('strength') or 0) >= _min_str]
         if not cands:
             return
         # Монети в угоді пропускаємо (у таблиці їх теж немає).
@@ -3312,16 +3361,31 @@ class FuelFilterDaemon:
         except Exception:
             def log_activity(*a, **k):
                 pass
+        try:
+            _cap = max(0, int(s.get('mm_vob_max_per_tick',
+                                    MM_VOB_MAX_PER_TICK) or 0))
+        except (TypeError, ValueError):
+            _cap = MM_VOB_MAX_PER_TICK
         done = 0
         for sym in cands:
             # Знімок скану вже є → читання безкоштовне, бюджет не витрачаємо.
+            # ⚠️ Свій TF → кеш скану не про нього, тож «теплих» тут не буде.
             _warm = False
             try:
-                _warm = bool(sc.has_fresh_vob(sym))
+                _warm = bool(sc.has_fresh_vob(sym, tf))
+            except TypeError:        # старіший сканер без параметра TF
+                try:
+                    _warm = (not _own_tf) and bool(sc.has_fresh_vob(sym))
+                except Exception:
+                    pass
             except Exception:
                 pass
             if not _warm:
-                if done >= MM_VOB_MAX_PER_TICK:
+                if _cap and done >= _cap:
+                    # ⏸ НЕ мовчимо: інакше монета просто зникає з черги, і це
+                    # знову читається як «скан не працює».
+                    self._mm_vob_diag[sym] = {'state': 'wait', 'ft': None,
+                                              'tf': tf, 'ts': now}
                     continue          # не `break`: далі можуть бути «теплі»
                 done += 1
             self._mm_vob_at[sym] = now
@@ -3331,7 +3395,15 @@ class FuelFilterDaemon:
                 self._mm_vob_diag[sym] = {'state': state, 'ft': ft,
                                           'tf': tf, 'ts': now}
             try:
-                ob = sc.volumized_ob_side(sym, side)
+                try:
+                    ob = sc.volumized_ob_side(sym, side, tf=tf)
+                except TypeError:
+                    # Старіший сканер без власного TF. Мовчки взяти ЙОГО
+                    # таймфрейм не можна — це був би блок не того масштабу,
+                    # ніж просив користувач; тож шлях чесно не працює.
+                    if _own_tf:
+                        raise
+                    ob = sc.volumized_ob_side(sym, side)
             except Exception as e:
                 print(f"[FF-MMM-VOB] {sym} error: {e}")
                 _diag('err')
@@ -3632,11 +3704,30 @@ class FuelFilterDaemon:
         # Сортування: спершу сила (найвиразніший напрямок зверху), потім символ —
         # стабільний порядок, щоб рядки не «стрибали» під курсором.
         rows.sort(key=lambda r: (-int(r.get('strength') or 0), r['symbol']))
+        # TF самого скану — щоб підпис «як у скану (5m)» показував ЖИВЕ
+        # значення, а не вгадане фронтом.
+        # ⚠️ НЕ через `_mm_vob_scanner()` — той пише рядок у 🧾 Лог, а це
+        # шлях ЧИТАННЯ стану (його смикає полл сторінки).
+        _vob_scan_tf = ''
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            _sc = get_smc_scanner()
+            _vob_scan_tf = str(_sc.volumized_tf() or '') if _sc else ''
+        except Exception:
+            pass
         return {
             'rows': rows,
             'ts': ts,
             'enabled': _on,
             'limited': bool(s.get('mmm_limited_mode', True)),
+            # ⚑ Поріг «Сила ≥» їде З СЕРВЕРА: він тепер керує не лише показом,
+            # а й тим, ЯКІ монети скануються (вимога 16.09). Два числа —
+            # своє на сторінці і своє в боті — дали б «бачу одне, сканує інше».
+            'str_min': int(s.get('mm_str_min', 0) or 0),
+            'vob_tf': str(s.get('mm_vob_tf', '') or ''),
+            'vob_tf_scan': _vob_scan_tf,
+            'vob_cap': int(s.get('mm_vob_max_per_tick',
+                                 MM_VOB_MAX_PER_TICK) or 0),
         }
 
     def mm_snapshot_for(self, symbols) -> Dict:

@@ -2817,8 +2817,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span></button>
                     <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span></button>
                     <button type="button" data-mmdir="flat" onclick="mmSetDir('flat')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span></button>
-                    <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Показувати лише монети, де сила МММ не нижча за поріг. Слабкий тиск (≤10%) напрямку фактично не має.">
-                        Сила ≥ <input type="number" id="mm-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged()"> %
+                    <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ. Керує ОДРАЗУ ДВОМА речами: які монети видно в таблиці і які монети бот СКАНУЄ на Volumized OB — відсіяну монету він не питає в біржі взагалі (вимога 16.09). Слабкий тиск (≤10%) напрямку фактично не має. Значення зберігається в налаштуваннях бота, а не лише у вашому браузері.">
+                        Сила ≥ <input type="number" id="mm-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged()" onchange="mmMinStrSave()"> %
                     </label>
                     <!-- ⚑ Скільки монет фільтр ВІДСІЯВ. Без цього числа «Всі (6)»
                          не відрізнити від «у боті всього 6 монет» (скарга 16.09). -->
@@ -2831,8 +2831,22 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          Trend», тож монітор торгує РІВНО тим блоком, що на графіку.
                          Окремий контрол означав би другий набір параметрів. -->
                     <span id="ff-mm-vob-src" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"
-                          title="Блок для авто-відкриття шукає СКАН «📦 Volumized OB Trend» (⚙️ Settings): TF, Swing Length, Zone Invalidation, Max ATR Mult, Zone Count і Combine Zones беруться ЗВІДТИ. Тому бот відкриває рівно по тому боксу, який намальовано на графіку. Окремого TF у монітора немає навмисно — два набори параметрів дали б два різні «останні блоки». Тумблер Enable того блоку вимкнено → монітор нічого не відкриває.">
+                          title="Параметри блоку — Swing Length, Zone Invalidation, Max ATR Mult, Zone Count, Combine Zones — ЗАВЖДИ беруться зі скану «📦 Volumized OB Trend» (⚙️ Settings). Свій тут лише ТАЙМФРЕЙМ: другий набір ПАРАМЕТРІВ дав би два різні «останні блоки», а інша свічка — це просто інший масштаб того самого методу. Тумблер Enable того блоку вимкнено → монітор нічого не шукає.">
                         параметри з 📦 Volumized OB Trend</span>
+                    <!-- 🕐 ВЛАСНИЙ TF монітора (вимога 16.09) — «як у скану» лишається
+                         дефолтом, бо лише тоді читання безкоштовне (кеш скану). -->
+                    <label style="display:flex;align-items:center;gap:5px;color:#8b93a7;cursor:pointer"
+                           title="Таймфрейм, на якому МММ-монітор шукає Volumized OB. «як у скану» = той самий TF, що в ⚙️ Settings → 📦 Volumized OB Trend: тоді монітор читає ВЖЕ ПОРАХОВАНИЙ скан і не робить жодного запиту до біржі. Власний TF — це окремий розрахунок на КОЖНУ монету таблиці (по 3000 барів), тобто реальне навантаження; решта параметрів методу однакова в обох випадках.">
+                        🕐 <select id="ff-mm-vob-tf" onchange="saveFuelFilterSettings()"
+                                   style="font-size:0.68rem;padding:2px 4px">
+                            <option value="">як у скану</option>
+                            <option value="1m">1m</option><option value="3m">3m</option>
+                            <option value="5m">5m</option><option value="15m">15m</option>
+                            <option value="30m">30m</option><option value="1h">1h</option>
+                            <option value="4h">4h</option>
+                        </select>
+                    </label>
+                    <span id="ff-mm-vob-cost" style="font-size:0.64rem;color:#8b93a7;font-family:monospace"></span>
                 </div>
                 <!-- Панель групової дії. Кнопка НЕАКТИВНА, поки нічого не обрано —
                      активний контрол, який нічого не робить, вводить в оману. -->
@@ -11467,6 +11481,7 @@ const _MM_VOB_ST = {
     none:   {i: '∅',  c: '#6b7280', t: 'блоку Volumized OB у бік МММ зараз немає'},
     off:    {i: '⛔', c: '#f87171', t: 'блок «📦 Volumized OB Trend» вимкнено — бот не шукає'},
     err:    {i: '⚠️', c: '#f87171', t: 'збій отримання блоку — дивись 🧾 Лог'},
+    wait:   {i: '⏸', c: '#8b93a7', t: 'черга на перевірку: за такт обробляється не більше «стелі» монет (власний TF рахується окремо по кожній) — дійде наступним тактом'},
 };
 function _mmVobCell(r) {
     const v = r.vob;
@@ -11556,16 +11571,18 @@ function _mmVisibleRows() {
         return true;
     });
 }
-// 💾 Фільтри — це UI-налаштування користувача, вони МУСЯТЬ переживати
-// перезавантаження сторінки (скарга 15.09: «Сила ≥ не запамʼятовується»).
-// Тримаємо їх у localStorage, як `wlSortMode` у watchlist, а не в БД: це вибір
-// ПОКАЗУ, він не має стосунку до налаштувань бота.
+// 💾 Вкладка і сортування — це вибір ПОКАЗУ, вони живуть у localStorage (як
+// `wlSortMode` у watchlist) і мусять переживати перезавантаження (скарга
+// 15.09). ⚠️ А от поріг «Сила ≥» ПЕРЕЇХАВ У НАЛАШТУВАННЯ БОТА (`mm_str_min`),
+// бо з 16.09 він керує ще й тим, ЯКІ монети сканувати: число з одного браузера
+// не може вирішувати, що робить бот. Тому тут його більше немає.
 const _MM_UI_KEY = 'mmMonitorUi';
+// Разовий переїзд старого локального порогу в налаштування бота (див. нижче).
+let _mmStrMigrated = false, _mmStrLocal = null;
 function _mmSaveUi() {
     try {
         localStorage.setItem(_MM_UI_KEY, JSON.stringify({
-            dir: _mmDir, minStr: _mmMinStr(),
-            sortCol: _mmSort.col, sortDir: _mmSort.dir }));
+            dir: _mmDir, sortCol: _mmSort.col, sortDir: _mmSort.dir }));
     } catch (e) { /* приватний режим — не критично */ }
 }
 function _mmLoadUi() {
@@ -11574,8 +11591,18 @@ function _mmLoadUi() {
     if (!v || typeof v !== 'object') return;
     if (['all', 'LONG', 'SHORT', 'flat'].includes(v.dir)) _mmDir = v.dir;
     if (v.sortCol) _mmSort = { col: v.sortCol, dir: (v.sortDir < 0 ? -1 : 1) };
-    const el = document.getElementById('mm-min-str');
-    if (el && v.minStr != null) el.value = v.minStr;
+    // 🔁 ОДНОРАЗОВИЙ ПЕРЕЇЗД старого локального порогу в налаштування бота:
+    // без нього збережене «Сила ≥ 50» мовчки обнулилось би після деплою — рівно
+    // та скарга, через яку поріг колись і почали зберігати.
+    if (v.minStr != null && !_mmStrMigrated) {
+        _mmStrMigrated = true;
+        _mmStrLocal = Math.max(0, Math.min(100, parseFloat(v.minStr) || 0));
+    }
+}
+// Поле «Сила ≥» тепер налаштування бота — зберігаємо тим самим шляхом, що й
+// решта (другого шляху запису ключа не заводимо).
+function mmMinStrSave() {
+    try { saveFuelFilterSettings(); } catch (e) { /* сторінка ще не готова */ }
 }
 function mmToggleAll(on) {
     // «Обрати всі» стосується ЛИШЕ видимих і придатних рядків — інакше клік
@@ -11728,6 +11755,34 @@ function mmRender() {
 // Дані з `/api/fuel-filter/state` (секція 'mm'). Викликається лише коли сервер
 // РЕАЛЬНО віддав секцію — див. `served.mm`.
 let _mmUiLoaded = false;
+// 💸 ЦІНА ВЛАСНОГО TF — живим рядком, а не здогадкою. «як у скану» читає вже
+// порахований знімок (нуль запитів); свій TF означає РЕАЛЬНИЙ розрахунок на
+// кожну монету, що пройшла фільтр «Сила ≥» (той самий принцип, що
+// `_liqCostHint` на 📡 Tickr — вартість видно ДО того, як її заплатиш).
+function _mmVobCostHint(mm) {
+    const el = document.getElementById('ff-mm-vob-cost');
+    if (!el) return;
+    const own = String((mm && mm.vob_tf) || '');
+    const scanTf = String((mm && mm.vob_tf_scan) || '');
+    const cap = Number((mm && mm.vob_cap) || 0);
+    const n = _mmRowsByStrength().filter(r => r.selectable).length;
+    if (!own) {
+        el.textContent = scanTf ? `· TF ${scanTf} · без запитів` : '';
+        el.style.color = '#8b93a7';
+        el.title = 'Монітор читає ВЖЕ ПОРАХОВАНИЙ скан — мережа не смикається.';
+        return;
+    }
+    const capped = cap > 0 && n > cap;
+    el.textContent = `· ${n} монет × ~3 запити${capped ? ` · за такт ${cap}` : ''}`;
+    el.style.color = (n > 40 || capped) ? '#fbbf24' : '#8b93a7';
+    el.title = `Власний TF ${own} не збігається з кешем скану, тож КОЖНА з `
+        + `${n} монет, що пройшли «Сила ≥», рахується окремо (${_MM_VOB_BARS} `
+        + `барів ≈ 3 запити). Підняти поріг «Сила ≥» — найпростіший спосіб `
+        + `зменшити цю ціну.`
+        + (capped ? ` Зараз за такт обробляється не більше ${cap} — решта чекає `
+                  + `(⏸ у колонці 👁 VOB).` : '');
+}
+const _MM_VOB_BARS = 3000;   // VOB_KLINES_LIMIT сканера — для підпису вартості
 function mmApplyState(mm) {
     // Відновлюємо збережені фільтри РІВНО ОДИН раз і саме тут — так вони
     // гарантовано застосуються ДО першого рендера, незалежно від порядку init.
@@ -11735,6 +11790,19 @@ function mmApplyState(mm) {
     _mmRows = (mm && Array.isArray(mm.rows)) ? mm.rows : [];
     _mmMeta = { limited: !!(mm && mm.limited), ts: (mm && mm.ts) || 0,
                 enabled: !(mm && mm.enabled === false) };
+    // ⚑ Поріг «Сила ≥» приходить З СЕРВЕРА — це те саме число, за яким бот
+    // вирішує, які монети сканувати. Поле не чіпаємо, поки в ньому друкують.
+    const _sEl = document.getElementById('mm-min-str');
+    if (_sEl && mm && mm.str_min != null && document.activeElement !== _sEl) {
+        // Разовий переїзд старого локального значення (див. `_mmLoadUi`).
+        if (_mmStrLocal != null) {
+            const _loc = _mmStrLocal; _mmStrLocal = null;
+            if (_loc > 0 && Number(mm.str_min) === 0) {
+                _sEl.value = _loc; mmMinStrSave();
+            } else { _sEl.value = mm.str_min; }
+        } else { _sEl.value = mm.str_min; }
+    }
+    _mmVobCostHint(mm);
     const up = document.getElementById('mm-updated');
     if (up) {
         up.textContent = !_mmMeta.enabled ? 'вимкнено'
@@ -12629,6 +12697,8 @@ function renderFuelFilter(d) {
     setIf('ff-mmm-limited', s.mmm_limited_mode !== false);  // default true
     setIf('ff-mm-monitor-enabled', s.mm_monitor_enabled !== false);  // default true
     setIf('ff-mm-vob-open', s.mm_vob_open !== false);                 // default true
+    const _vtfEl = document.getElementById('ff-mm-vob-tf');
+    if (_vtfEl) _vtfEl.value = String(s.mm_vob_tf || '');
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
     setIf('ff-manage-close-mm', String(s.manage_close_min_mm != null ? s.manage_close_min_mm : 0));
@@ -13659,6 +13729,10 @@ async function saveFuelFilterSettings() {
         mmm_limited_mode: _c('ff-mmm-limited'),
         mm_monitor_enabled: _c('ff-mm-monitor-enabled'),
         mm_vob_open: _c('ff-mm-vob-open'),
+        // 🕐 Власний TF монітора ('' = як у скану) і поріг «Сила ≥» — обидва
+        // тепер налаштування бота, бо керують САМИМ СКАНУВАННЯМ.
+        mm_vob_tf: (document.getElementById('ff-mm-vob-tf') || {}).value || '',
+        mm_str_min: _mmMinStr(),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),

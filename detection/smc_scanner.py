@@ -5145,12 +5145,17 @@ class SMCScanner:
 
     def _vob_sides_put(self, symbol, res, vtf, ts=None):
         """Покласти блоки за напрямком у кеш. Кличеться зі СКАНУ з уже
-        порахованим `vol_result` — тобто коштує НУЛЬ (ні мережі, ні CPU)."""
+        порахованим `vol_result` — тобто коштує НУЛЬ (ні мережі, ні CPU).
+
+        ⚠️ КЛЮЧ — `(символ, TF)`, а не символ. Читач може просити ІНШИЙ TF
+        (МММ-монітор має власний вибір), і без TF у ключі він отримав би блоки
+        чужого таймфрейму — та сама підміна, що в уроці PD-зони."""
         try:
             c = getattr(self, '_vob_sides_cache', None)
             if c is None:
                 self._vob_sides_cache = c = {}
-            c[symbol] = (ts or time.time(), self._vob_newest_live(res), vtf)
+            c[(symbol, str(vtf))] = (ts or time.time(),
+                                     self._vob_newest_live(res), vtf)
         except Exception:
             pass
 
@@ -5167,13 +5172,19 @@ class SMCScanner:
         """
         return bool(self._settings.get('use_volumized_ob', True))
 
-    def has_fresh_vob(self, symbol: str) -> bool:
+    def has_fresh_vob(self, symbol: str, tf=None) -> bool:
         """Чи є придатний знімок блоків за напрямком (без походу в мережу).
-        Читачі питають ЦЕ, щоб не витрачати свій бюджет запитів на дурно."""
-        hit = (getattr(self, '_vob_sides_cache', None) or {}).get(symbol)
+        Читачі питають ЦЕ, щоб не витрачати свій бюджет запитів на дурно.
+
+        `tf` — якщо читач працює на СВОЄМУ таймфреймі; порожньо = TF скану.
+        ⚠️ Кеш скану наповнюється лише для ЙОГО TF, тож власний TF читача
+        майже завжди «холодний» — і це чесно видно саме тут."""
+        key = (symbol, str(tf or self.volumized_tf()))
+        hit = (getattr(self, '_vob_sides_cache', None) or {}).get(key)
         return bool(hit and (time.time() - hit[0]) <= self.VOB_SIDES_TTL)
 
-    def volumized_ob_side(self, symbol: str, side: str, allow_fetch: bool = True):
+    def volumized_ob_side(self, symbol: str, side: str, allow_fetch: bool = True,
+                          tf=None):
         """🟦 Найновіший НЕ-breaker Volumized OB у бік `side` — З ТОГО САМОГО
         розрахунку, що малює бокс на графіку і трикутник ▲/▼ у watchlist.
 
@@ -5187,6 +5198,13 @@ class SMCScanner:
         ⚠️ Тумблер **Enable** (`use_volumized_ob`) вимкнено → None: скану немає,
         боксів на графіку немає, отже й торгувати нема по чому.
         ⚠️ `allow_fetch=False` → лише кеш (нуль мережі).
+        ⚠️ **`tf` ЗАМІНЮЄ ЛИШЕ ТАЙМФРЕЙМ** (вимога 16.09: у МММ-монітора має
+        бути власний вибір TF). Решта параметрів — Swing / Zone Invalidation /
+        Max ATR / Zone Count / Combine — і далі БЕРУТЬСЯ З НАЛАШТУВАНЬ, тобто
+        «метод сканування» лишається ОДИН, змінюється лише свічка. Другий набір
+        ПАРАМЕТРІВ ми не заводимо — це і був би «другий останній блок».
+        ⚠️ Свій TF = кеш скану не підходить → на кожну монету реальний запит
+        `VOB_KLINES_LIMIT` барів. Це ЦІНА вибору, і читач мусить її врахувати.
         Повертає СИРИЙ OB (`formation_time`/`top`/`bottom`/`breaker`) або None.
         """
         if side not in ('LONG', 'SHORT'):
@@ -5194,12 +5212,12 @@ class SMCScanner:
         if not self._settings.get('use_volumized_ob', True):
             return None
         now = time.time()
-        hit = (getattr(self, '_vob_sides_cache', None) or {}).get(symbol)
+        vtf = str(tf or self.volumized_tf())
+        hit = (getattr(self, '_vob_sides_cache', None) or {}).get((symbol, vtf))
         if hit and (now - hit[0]) <= self.VOB_SIDES_TTL:
             return (hit[1] or {}).get(side)
         if not allow_fetch:
             return None
-        vtf = self.volumized_tf()
         try:
             from detection.market_data import get_market_data
             from detection.volumized_ob import detect_volumized_obs

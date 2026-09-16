@@ -479,7 +479,8 @@ const _ths = ['symbol','strength','delta','grow','pchg'].map(c => ({
 const document = {
   getElementById: id => (['mm-tbody','mm-check-all','mm-min-str','mm-sel-count',
                           'mm-open-btn','mm-updated','mm-limited-hint',
-                          'mm-str-out'].includes(id)
+                          'mm-str-out', 'ff-mm-vob-cost',
+                          'ff-mm-vob-tf'].includes(id)
                          ? _el(id) : null),
   querySelectorAll: sel => (String(sel).includes('data-mmsort') ? _ths : _tabs),
   // Вкладки шукають і поштучно (лічильник «у фільтрі / поза фільтром»).
@@ -1588,23 +1589,22 @@ def test_js_filters_survive_a_page_reload():
     (поріг сили, вкладка напрямку, сортування) у localStorage."""
     out = _run_js(r'''
 mmApplyState({rows:[], enabled:true, limited:false, ts:1});
-document.getElementById('mm-min-str').value = '35';
-mmMinStrChanged();
 mmSetDir('SHORT');
 mmSort('price');
 const saved = JSON.parse(_LS[_MM_UI_KEY] || 'null');
 // Імітуємо перезавантаження: скидаємо стан у дефолти і читаємо збережене.
 _mmDir = 'all'; _mmSort = {col:'strength', dir:-1};
-document.getElementById('mm-min-str').value = '0';
 _mmLoadUi();
+// Поріг «Сила ≥» приходить із НАЛАШТУВАНЬ БОТА, а не з localStorage.
+mmApplyState({rows:[], enabled:true, limited:false, ts:2, str_min:35});
 console.log(JSON.stringify({saved, dir:_mmDir, sort:_mmSort,
   minStr:document.getElementById('mm-min-str').value}));
 ''')
     import json
     d = json.loads(out)
-    _check(d['saved'] and d['saved']['minStr'] == 35,
-           f'поріг сили не збережено: {d["saved"]}')
-    _check(str(d['minStr']) == '35', f'поріг не відновлено: {d}')
+    _check(d['saved'] and 'minStr' not in d['saved'],
+           f'поріг сили більше не місце в localStorage: {d["saved"]}')
+    _check(str(d['minStr']) == '35', f'поріг не приїхав із сервера: {d}')
     _check(d['dir'] == 'SHORT', f'вкладку напрямку не відновлено: {d}')
     _check(d['sort']['col'] == 'price', f'сортування не відновлено: {d}')
     print('✓ JS: поріг сили, вкладка і сортування переживають перезавантаження')
@@ -1658,11 +1658,17 @@ def _vob(ff, warm=False, **per_symbol):
         def volumized_tf(self):
             return '5m'
 
-        def has_fresh_vob(self, sym):
+        def volumized_on(self):
+            return True
+
+        # ⚠️ Сигнатури мусять збігатися з РЕАЛЬНИМ сканером, включно з власним
+        # TF монітора: інакше шлях тихо падає в `except TypeError` і тест
+        # «нічого не робить» (саме так це й виявилось 16.09).
+        def has_fresh_vob(self, sym, tf=None):
             return warm
 
-        def volumized_ob_side(self, sym, side, allow_fetch=True):
-            ff.vob_calls.append((sym, side, '5m'))
+        def volumized_ob_side(self, sym, side, allow_fetch=True, tf=None):
+            ff.vob_calls.append((sym, side, str(tf or '5m')))
             ft = (per_symbol.get(sym) or {}).get(side)
             return None if ft is None else {'formation_time': ft,
                                             'breaker': False,
@@ -1782,8 +1788,10 @@ def test_toggle_off_means_no_network_at_all():
     _cap(ff, AAAUSDT=0.5)
     _check(not ff.vob_calls, f'вимкнений тумблер усе одно ходив по свічки: {ff.vob_calls}')
     _check(_m.DEFAULT_SETTINGS['mm_vob_open'] is True, 'дефолт мав бути УВІМК')
-    _check('mm_vob_tf' not in _m.DEFAULT_SETTINGS,
-           'власний TF монітора мав зникнути — його диктує блок Volumized')
+    # 🕐 ВЛАСНИЙ TF ПОВЕРНУТО (вимога 16.09: «додай сюди вибір таймфрейму»),
+    # але дефолт — ПОРОЖНІЙ = «як у скану»: лише так читання безкоштовне.
+    _check(_m.DEFAULT_SETTINGS.get('mm_vob_tf') == '',
+           'дефолт TF монітора мусить бути «як у скану» (порожній)')
     print('✓ 🟪 тумблер OFF → жодного запиту; власного TF немає')
 
 
@@ -1866,6 +1874,119 @@ def test_baseline_survives_a_one_tick_dropout():
     _check(any(x['symbol'] == 'AAAUSDT' for x in ff.signals),
            f'новий блок після пропуску не дав сигналу: {ff.signals}')
     print('✓ 🧮 разовий пропуск монети більше не ковтає наступний блок')
+
+
+# ── 🕐 ВЛАСНИЙ TF + «СКАНУЄМО ВСІ, КРІМ ВІДФІЛЬТРОВАНИХ» (вимога 16.09) ──
+
+def test_own_timeframe_goes_into_the_scanner_call():
+    """«Додай сюди вибір таймфрейму, щоб МММ-монітор мав свою можливість
+    коригувати метод сканування.»"""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True,
+                         'mm_vob_tf': '15m'})
+    _vob(ff, warm=True, AAAUSDT={'LONG': 1000})
+    _cap(ff, AAAUSDT=0.50)
+    _check(ff.vob_calls and ff.vob_calls[0][2] == '15m',
+           f'власний TF не доїхав до сканера: {ff.vob_calls}')
+    print('✓ 🕐 обраний TF монітора йде в сканер')
+
+
+def test_empty_timeframe_means_the_scan_one():
+    """Дефолт — «як у скану»: лише так читання безкоштовне (кеш уже є)."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True, 'mm_vob_tf': ''})
+    _vob(ff, warm=True, AAAUSDT={'LONG': 1000})
+    _cap(ff, AAAUSDT=0.50)
+    _check(ff.vob_calls and ff.vob_calls[0][2] == '5m',
+           f'порожній TF мусить означати TF скану: {ff.vob_calls}')
+    print('✓ 🕐 «як у скану» бере TF блоку Volumized OB Trend')
+
+
+def test_only_the_timeframe_is_ours_the_method_stays_shared():
+    """⚠️ Свій тут ЛИШЕ таймфрейм. Другий набір ПАРАМЕТРІВ (swing / zone /
+    atr / combine) дав би другий «останній блок» — урок PD-зони."""
+    import inspect
+    src = inspect.getsource(_m.FuelFilterDaemon._mm_vob_tick)
+    for bad in ('swing_length', 'ob_end_method', 'max_atr_mult',
+                'zone_count', 'combine_obs', 'detect_volumized_obs'):
+        _check(bad not in src, f'монітор завів власний параметр методу: {bad}')
+    print('✓ 🕐 свій — лише TF; параметри методу лишились у скану')
+
+
+def test_filtered_out_coins_are_not_scanned_at_all():
+    """«Скануватись мають ВСІ монети із таблиці, за винятком відфільтрованих.»
+    Поріг «Сила ≥» тепер ОДИН і для показу, і для скану."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True,
+                         'mm_str_min': 40})
+    _vob(ff, warm=True, AAAUSDT={'LONG': 1}, BBBUSDT={'LONG': 2})
+    _cap(ff, AAAUSDT=0.55, BBBUSDT=0.10)     # 55% проходить, 10% — ні
+    got = {c[0] for c in ff.vob_calls}
+    _check(got == {'AAAUSDT'}, f'сканувались не ті монети: {ff.vob_calls}')
+    print('✓ ⚑ відсіяна фільтром монета не сканується взагалі')
+
+
+def test_every_coin_that_passes_the_filter_is_scanned_in_one_tick():
+    """Бюджет за такт БІЛЬШЕ НЕ ріже список за замовчуванням (0 = всі)."""
+    _check(_m.MM_VOB_MAX_PER_TICK == 0,
+           f'дефолт мусить бути «без ліміту»: {_m.MM_VOB_MAX_PER_TICK}')
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    pairs = {f'C{i:02d}USDT': 0.50 for i in range(40)}
+    _vob(ff, **{k: {'LONG': 1} for k in pairs})   # warm=False → всі «холодні»
+    _cap(ff, **pairs)
+    _check(len(ff.vob_calls) == len(pairs),
+           f'просканували не всіх: {len(ff.vob_calls)} із {len(pairs)}')
+    print(f'✓ ⚑ усі {len(pairs)} монет таблиці за ОДИН такт (ліміт вимкнено)')
+
+
+def test_the_cap_is_a_setting_and_it_says_who_is_waiting():
+    """Запобіжник лишився — але спрацювання ВИДНО (⏸), а не мовчазне."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True,
+                         'mm_vob_max_per_tick': 2})
+    pairs = {f'C{i:02d}USDT': 0.50 for i in range(5)}
+    _vob(ff, **{k: {'LONG': 1} for k in pairs})
+    _cap(ff, **pairs)
+    _check(len(ff.vob_calls) == 2, f'стеля не спрацювала: {ff.vob_calls}')
+    waits = [k for k, v in ff._mm_vob_diag.items() if v.get('state') == 'wait']
+    _check(len(waits) == 3, f'монети, що чекають, мусять бути видні: {ff._mm_vob_diag}')
+    print('✓ ⏸ стеля — налаштування, а хто чекає — видно в колонці 👁 VOB')
+
+
+def test_state_carries_the_threshold_and_the_timeframes():
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_str_min': 30,
+                         'mm_vob_tf': '15m'})
+    _cap(ff, AAAUSDT=0.50)
+    st = ff.mm_monitor_state()
+    _check(st.get('str_min') == 30, f'поріг не доїхав у стан: {st.get("str_min")}')
+    _check(st.get('vob_tf') == '15m', f'TF монітора не доїхав: {st.get("vob_tf")}')
+    _check('vob_cap' in st, 'стеля за такт не доїхала у стан')
+    print('✓ ⚑ поріг і таймфрейми віддаються сторінці (одне число на всіх)')
+
+
+def test_js_shows_the_price_of_the_own_timeframe():
+    """Ціна вибору мусить бути видна ДО того, як її заплатиш (як у 📡 Tickr)."""
+    out = _run_js(r'''
+const R = s => ({symbol:s, mm:'LONG', strength:50, strength_prev:50, delta:0,
+  grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
+  delta_span:180, f1:null, f4:null, vob:null, selectable:true});
+const rows = ['AAAUSDT','BBBUSDT','CCCUSDT'].map(R);
+mmApplyState({rows, enabled:true, limited:false, ts:1, str_min:0,
+              vob_tf:'', vob_tf_scan:'5m', vob_cap:0});
+const asScan = document.getElementById('ff-mm-vob-cost').textContent;
+mmApplyState({rows, enabled:true, limited:false, ts:2, str_min:0,
+              vob_tf:'15m', vob_tf_scan:'5m', vob_cap:0});
+const own = document.getElementById('ff-mm-vob-cost').textContent;
+console.log(JSON.stringify({asScan, own}));
+''')
+    import json
+    d = json.loads(out)
+    _check('без запитів' in d['asScan'], f'«як у скану» не названо дешевим: {d}')
+    _check('3' in d['own'] and 'монет' in d['own'],
+           f'ціна власного TF не показана: {d}')
+    print('✓ 💸 JS: ціна власного TF рахується з ЖИВОЇ кількості монет')
 
 
 # ── 👁 СКАН VOB МУСИТЬ БУТИ ВИДИМИЙ (скарга 16.09) ───────────────────────
@@ -2131,11 +2252,21 @@ def test_ui_has_the_vob_controls_wired_both_ways():
     _check('id="ff-mm-vob-open"' in _HTML, 'немає тумблера VOB→угода')
     _check('mm_vob_open:' in _HTML, 'mm_vob_open не йде у збереження налаштувань')
     _check('s.mm_vob_open' in _HTML, 'mm_vob_open не відновлюється з налаштувань')
-    # ⚠️ ВЛАСНОГО TF у монітора БІЛЬШЕ НЕМАЄ — його диктує блок «📦 Volumized
-    # OB Trend». Мертвий контрол тут гірший за його відсутність: він означав би
-    # другий набір параметрів і другий «останній блок».
-    _check('ff-mm-vob-tf' not in _HTML, 'мертва випадайка TF лишилась у сторінці')
-    _check('mm_vob_tf' not in _HTML, 'сторінка досі шле/читає mm_vob_tf')
+    # 🕐 ВЛАСНИЙ TF (16.09) — випадайка є, пише налаштування і відновлюється.
+    # ⚠️ Але саме TF, і НІЧОГО більше: решта параметрів методу лишається у
+    # блоці «📦 Volumized OB Trend» (другий набір = другий «останній блок»).
+    _check('id="ff-mm-vob-tf"' in _HTML, 'немає випадайки власного TF монітора')
+    _check('mm_vob_tf:' in _HTML, 'TF монітора не йде у збереження налаштувань')
+    _check('s.mm_vob_tf' in _HTML, 'TF монітора не відновлюється з налаштувань')
+    _i = _HTML.index('id="ff-mm-vob-tf"')
+    _sel = _HTML[_i:_HTML.index('</select>', _i)]
+    import re as _re
+    _opts = _re.findall(r'value="([^"]*)"', _sel)
+    _check(_opts and _opts[0] == '', 'перша опція мусить бути «як у скану»')
+    for _o in _opts:
+        _check(_o in _m.MM_VOB_TFS, f'опція {_o!r} не проходить валідацію бекенда')
+    _check('параметри з 📦 Volumized OB Trend' in _HTML,
+           'підпис про спільні параметри прибрали — TF читався б як «свій метод»')
     # …але звідки беруться параметри, мусить бути СКАЗАНО прямо.
     _check('ff-mm-vob-src' in _HTML and 'Volumized OB Trend' in _HTML,
            'не видно, що параметри беруться зі скану Volumized OB Trend')
