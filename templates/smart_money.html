@@ -2824,13 +2824,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="🟪 АВТО-ВІДКРИТТЯ ЗА НОВИМ VOB. Бот стежить за Volumized OB по монетах ЦІЄЇ таблиці і відкриває угоду, щойно зʼявився НОВИЙ блок У БІК того напрямку, в якому монета зараз за МММ. ⚖ рівновага нічого не відкриває (напрямку немає), монети в угоді не беруться. ⚠️ Перший показ монети після старту — ТИХА БАЗА: по блоку, який міг утворитись півдня тому, угоду не відкриваємо, чекаємо НАСТУПНИЙ. Це єдине місце монітора, що ходить по свічки, тому монети перевіряються порціями — реакція може відставати на такт-два.">
                         <input type="checkbox" id="ff-mm-vob-open" onchange="saveFuelFilterSettings()"> 🟪 VOB→угода
                     </label>
-                    <label style="display:flex;align-items:center;gap:5px;color:#8b93a7;cursor:pointer" title="Таймфрейм, на якому шукаємо новий Volumized OB для авто-відкриття. За замовчуванням 5M.">
-                        TF <select id="ff-mm-vob-tf" onchange="saveFuelFilterSettings()" style="padding:2px 4px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace;font-size:0.68rem">
-                            <option value="1m">1m</option><option value="3m">3m</option>
-                            <option value="5m">5m</option><option value="15m">15m</option>
-                            <option value="30m">30m</option><option value="1h">1h</option>
-                        </select>
-                    </label>
+                    <!-- ⚠️ ВЛАСНОГО TF тут НЕМАЄ: блок бере сканер «📦 Volumized OB
+                         Trend», тож монітор торгує РІВНО тим блоком, що на графіку.
+                         Окремий контрол означав би другий набір параметрів. -->
+                    <span id="ff-mm-vob-src" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"
+                          title="Блок для авто-відкриття шукає СКАН «📦 Volumized OB Trend» (⚙️ Settings): TF, Swing Length, Zone Invalidation, Max ATR Mult, Zone Count і Combine Zones беруться ЗВІДТИ. Тому бот відкриває рівно по тому боксу, який намальовано на графіку. Окремого TF у монітора немає навмисно — два набори параметрів дали б два різні «останні блоки». Тумблер Enable того блоку вимкнено → монітор нічого не відкриває.">
+                        параметри з 📦 Volumized OB Trend</span>
                 </div>
                 <!-- Панель групової дії. Кнопка НЕАКТИВНА, поки нічого не обрано —
                      активний контрол, який нічого не робить, вводить в оману. -->
@@ -12574,8 +12573,6 @@ function renderFuelFilter(d) {
     setIf('ff-mmm-limited', s.mmm_limited_mode !== false);  // default true
     setIf('ff-mm-monitor-enabled', s.mm_monitor_enabled !== false);  // default true
     setIf('ff-mm-vob-open', s.mm_vob_open !== false);                 // default true
-    const _mvtf = document.getElementById('ff-mm-vob-tf');
-    if (_mvtf) _mvtf.value = s.mm_vob_tf || '5m';
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
     setIf('ff-manage-close-mm', String(s.manage_close_min_mm != null ? s.manage_close_min_mm : 0));
@@ -13606,7 +13603,6 @@ async function saveFuelFilterSettings() {
         mmm_limited_mode: _c('ff-mmm-limited'),
         mm_monitor_enabled: _c('ff-mm-monitor-enabled'),
         mm_vob_open: _c('ff-mm-vob-open'),
-        mm_vob_tf: (document.getElementById('ff-mm-vob-tf') || {}).value || '5m',
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),

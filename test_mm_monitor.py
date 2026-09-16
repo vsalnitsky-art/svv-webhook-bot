@@ -1615,16 +1615,29 @@ console.log(JSON.stringify({br:cell.includes('<br>'), px:cell.includes('1.5'),
 
 
 # ═══ 17. 🟪 НОВИЙ VOB → АВТО-ВІДКРИТТЯ (вимога 15.09) ════════════════════
-def _vob(ff, **per_symbol):
-    """Підмінити детектор VOB: {'AAAUSDT': {'LONG': ft}} — який блок і в який
-    бік «бачить» бот. Заразом рахуємо виклики (порції/кандидати)."""
+def _vob(ff, warm=False, **per_symbol):
+    """Підмінити СКАНЕР: {'AAAUSDT': {'LONG': ft}} — який блок і в який бік
+    віддає скан «📦 Volumized OB Trend». Заразом рахуємо виклики.
+
+    ⚠️ Стабимо саме сканер, бо монітор БІЛЬШЕ не має власного детектора: блок
+    мусить бути той самий, що на графіку. `warm` = чи є свіжий знімок скану
+    (тоді читання безкоштовне й бюджет порції не витрачається).
+    """
     ff.vob_calls = []
 
-    def _f(sym, side, tf):
-        ff.vob_calls.append((sym, side, tf))
-        ft = (per_symbol.get(sym) or {}).get(side)
-        return None if ft is None else {'formation_time': ft, 'breaker': False}
-    ff._funding_vob = _f
+    class _SC:
+        def volumized_tf(self):
+            return '5m'
+
+        def has_fresh_vob(self, sym):
+            return warm
+
+        def volumized_ob_side(self, sym, side, allow_fetch=True):
+            ff.vob_calls.append((sym, side, '5m'))
+            ft = (per_symbol.get(sym) or {}).get(side)
+            return None if ft is None else {'formation_time': ft, 'breaker': False}
+
+    ff._mm_vob_scanner = lambda: _SC()
 
 
 def test_new_vob_in_the_mm_direction_opens_a_trade():
@@ -1689,9 +1702,9 @@ def test_flat_and_in_trade_coins_are_not_candidates():
     print('✓ 🟪 кандидати = рядки таблиці (без ⚖ і без монет в угоді)')
 
 
-def test_vob_check_is_capped_per_tick():
-    """⚠️ ЄДИНЕ місце монітора з мережею (200 свічок на монету). Без порції
-    повний watchlist дав би сотні запитів за такт."""
+def test_cold_coins_are_capped_per_tick():
+    """⚠️ Бюджет порції витрачають ЛИШЕ монети, по яких доводиться РАХУВАТИ
+    самим (3000 барів). Без цього повний watchlist дав би сотні запитів."""
     ff = _mk()
     ff._settings.update({'enabled': True, 'mm_vob_open': True})
     n = _m.MM_VOB_MAX_PER_TICK
@@ -1704,7 +1717,21 @@ def test_vob_check_is_capped_per_tick():
     _cap(ff, **pairs)
     _check(not ({c[0] for c in ff.vob_calls} & first),
            'другий такт перевіряє ТІ САМІ монети — черга не рухається')
-    print(f'✓ 🟪 не більше {n} монет за такт, черга рухається')
+    print(f'✓ 🟪 не більше {n} ХОЛОДНИХ монет за такт, черга рухається')
+
+
+def test_warm_coins_cost_nothing_and_are_all_served():
+    """Скан уже поклав знімок → читання безкоштовне, тож обмежувати нема чого.
+    Раніше бюджет їли ВСІ підряд і повне коло по 230 монетах тривало ~8 хв."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    n = _m.MM_VOB_MAX_PER_TICK
+    pairs = {f'C{i:03d}USDT': 0.5 for i in range(n * 3)}
+    _vob(ff, warm=True, **{k: {'LONG': 1} for k in pairs})
+    _cap(ff, **pairs)
+    _check(len(ff.vob_calls) == len(pairs),
+           f'теплі монети мусять оброблятись усі за такт: {len(ff.vob_calls)}')
+    print(f'✓ 🟪 теплі монети (знімок скану) — усі {len(pairs)} за ОДИН такт')
 
 
 def test_toggle_off_means_no_network_at_all():
@@ -1714,8 +1741,9 @@ def test_toggle_off_means_no_network_at_all():
     _cap(ff, AAAUSDT=0.5)
     _check(not ff.vob_calls, f'вимкнений тумблер усе одно ходив по свічки: {ff.vob_calls}')
     _check(_m.DEFAULT_SETTINGS['mm_vob_open'] is True, 'дефолт мав бути УВІМК')
-    _check(_m.DEFAULT_SETTINGS['mm_vob_tf'] == '5m', 'дефолтний TF мав бути 5m')
-    print('✓ 🟪 тумблер OFF → жодного запиту; дефолти: УВІМК · 5m')
+    _check('mm_vob_tf' not in _m.DEFAULT_SETTINGS,
+           'власний TF монітора мав зникнути — його диктує блок Volumized')
+    print('✓ 🟪 тумблер OFF → жодного запиту; власного TF немає')
 
 
 def test_monitor_toggle_off_stops_vob_opening_too():
@@ -1749,6 +1777,61 @@ def test_vob_open_goes_through_the_same_gates():
     _check('MMM' in str(kw.get('opened_by')) and 'vob' in str(kw.get('opened_by')),
            f'мітка мусить називати і сигнал, і двигун: {kw.get("opened_by")}')
     print(f'✓ 🟪 мітка {kw.get("opened_by")!r}, ворота `_open` не обходяться')
+
+
+# ── 🟦 ДЖЕРЕЛО БЛОКУ = СКАН «📦 Volumized OB Trend» (вимога 16.09) ────────
+# «Використовуй VOB алгоритм, що на скріні… має бути задіяний цей скан VOB».
+# Монітор мусить брати РІВНО той блок, що намальовано на графіку, — тобто з
+# параметрами користувача (TF · Swing · Zone Invalidation · ATR · Zone Count ·
+# Combine), а не з власних констант funding-стратегії.
+
+def _src(path, fn):
+    """Тіло функції `fn` із файлу `path` — БЕЗ докстрінга (для тест-замків).
+
+    ⚠️ Докстрінг ріжемо обовʼязково: він ПОЯСНЮЄ, чому власного детектора тут
+    більше немає, і згадує `_funding_vob` — інакше замок падав би на власному
+    коментарі (та сама пастка, що вже ловила `ensure_fresh`)."""
+    code = open(os.path.join(_HERE, path), encoding='utf-8').read()
+    for node in ast.walk(ast.parse(code)):
+        if isinstance(node, ast.FunctionDef) and node.name == fn:
+            body = node.body[1:] if ast.get_docstring(node) else node.body
+            return '\n'.join(ast.get_source_segment(code, n) or '' for n in body)
+    raise AssertionError(f'{fn} не знайдено у {path}')
+
+
+def test_monitor_has_no_detector_of_its_own():
+    body = _src('detection/fuel_filter.py', '_mm_vob_tick')
+    _check('volumized_ob_side' in body,
+           'монітор не питає блок у скану «Volumized OB Trend»')
+    for bad in ('_funding_vob', 'detect_volumized_obs', 'fetch_klines'):
+        _check(bad not in body,
+               f'у монітор повернувся власний детектор ({bad}) — блок розійдеться '
+               'із тим, що на графіку')
+    print('✓ 🟦 монітор лише ЧИТАЄ блок скану, свого детектора не має')
+
+
+def test_scanner_side_lookup_uses_the_user_settings_and_full_window():
+    body = _src('detection/smc_scanner.py', 'volumized_ob_side')
+    for key in ('volumized_timeframe', 'volumized_swing_length',
+                'volumized_ob_end_method', 'volumized_max_atr_mult',
+                'volumized_zone_count', 'volumized_combine_obs'):
+        _check(key in body or key == 'volumized_timeframe',
+               f'{key} не береться з налаштувань користувача')
+    _check('VOB_KLINES_LIMIT' in body and 'limit=200' not in body,
+           'глибина барів мусить бути та сама, що у графіка (3000), а не 200')
+    _check('use_volumized_ob' in body,
+           'вимкнений Enable мусить означати «блоку немає»')
+    print('✓ 🟦 сканер віддає блок за налаштуваннями користувача на 3000 барах')
+
+
+def test_scan_warms_the_side_cache_for_free():
+    """Знімок кладе САМ скан із уже порахованого `vol_result` — тож у робочому
+    стані монітор не робить ЖОДНОГО запиту."""
+    code = open(os.path.join(_HERE, 'detection/smc_scanner.py'), encoding='utf-8').read()
+    i = code.index('vol_result = get_latest_ob_trend')
+    _check('_vob_sides_put(symbol, vol_result' in code[i:i + 2500],
+           'скан не наповнює кеш блоків за напрямком')
+    print('✓ 🟦 кеш наповнює скан — читання для монітора безкоштовне')
 
 
 # ═══ 18. 📈 ОЧІКУВАННЯ РОСТУ СИЛИ — СКАСОВАНО КОРИСТУВАЧЕМ (16.09) ══════
@@ -1833,18 +1916,17 @@ console.log(JSON.stringify({rows:h.includes('AAAUSDT'), hourglass:h.includes('�
 
 def test_ui_has_the_vob_controls_wired_both_ways():
     _check('id="ff-mm-vob-open"' in _HTML, 'немає тумблера VOB→угода')
-    _check('id="ff-mm-vob-tf"' in _HTML, 'немає вибору TF')
-    for key in ('mm_vob_open', 'mm_vob_tf'):
-        _check(f'{key}:' in _HTML, f'{key} не йде у збереження налаштувань')
-        _check(f's.{key}' in _HTML, f'{key} не відновлюється з налаштувань')
-    # Випадайка мусить пропонувати лише ті TF, які приймає бекенд.
-    i = _HTML.index('id="ff-mm-vob-tf"')
-    blk = _HTML[i:_HTML.index('</select>', i)]
-    import re as _re
-    opts = set(_re.findall(r'value="([^"]+)"', blk))
-    _check(opts <= set(_m.MM_VOB_TFS),
-           f'у списку є TF, якого бекенд не приймає: {opts - set(_m.MM_VOB_TFS)}')
-    print(f'✓ UI: 🟪 тумблер + TF ({len(opts)} варіантів) збережені й відновлені')
+    _check('mm_vob_open:' in _HTML, 'mm_vob_open не йде у збереження налаштувань')
+    _check('s.mm_vob_open' in _HTML, 'mm_vob_open не відновлюється з налаштувань')
+    # ⚠️ ВЛАСНОГО TF у монітора БІЛЬШЕ НЕМАЄ — його диктує блок «📦 Volumized
+    # OB Trend». Мертвий контрол тут гірший за його відсутність: він означав би
+    # другий набір параметрів і другий «останній блок».
+    _check('ff-mm-vob-tf' not in _HTML, 'мертва випадайка TF лишилась у сторінці')
+    _check('mm_vob_tf' not in _HTML, 'сторінка досі шле/читає mm_vob_tf')
+    # …але звідки беруться параметри, мусить бути СКАЗАНО прямо.
+    _check('ff-mm-vob-src' in _HTML and 'Volumized OB Trend' in _HTML,
+           'не видно, що параметри беруться зі скану Volumized OB Trend')
+    print('✓ UI: 🟪 тумблер + підпис «параметри з 📦 Volumized OB Trend»')
 
 
 if __name__ == '__main__':

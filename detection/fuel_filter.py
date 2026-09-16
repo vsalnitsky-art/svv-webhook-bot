@@ -106,14 +106,13 @@ MM_PRICE_WINDOW_SEC = 15 * 60
 MM_PRICE_DEADZONE = 0.10
 # 🟪 VOB-ВІДКРИТТЯ З МОНІТОРА (вимога 15.09): «коли зʼявляється саме НОВИЙ VOB
 # по монеті, яка є в таблиці, і VOB співпадає з напрямком монети — відкрити».
-# ⚠️ Це ЄДИНЕ місце монітора, що ходить у МЕРЕЖУ: детекція Volumized OB вимагає
-# свічок (200 барів на монету). Тому перевірка йде ПОРЦІЯМИ — не більше
-# MM_VOB_MAX_PER_TICK монет за такт, найдавніше перевірені першими. Пропущений
-# такт нічого не втрачає: «новий» блок визначається за `formation_time`, тож
-# його побачимо наступного разу — просто трохи пізніше.
+# ⚠️ Блок бере СКАНЕР («📦 Volumized OB Trend» — TF і всі параметри з
+# налаштувань користувача), а монітор лише ЧИТАЄ його знімок. Поки скан по
+# монеті свіжий, читання безкоштовне; бюджет нижче витрачають ЛИШЕ «холодні»
+# монети, по яких доводиться рахувати самим (3000 барів на монету).
+# Пропущений такт нічого не втрачає: «новий» блок визначається за
+# `formation_time`, тож його побачимо наступного разу — просто трохи пізніше.
 MM_VOB_MAX_PER_TICK = 15
-# Дозволені TF (ті самі, що у Volumized-налаштуваннях сканера).
-MM_VOB_TFS = ('1m', '3m', '5m', '15m', '30m', '1h')
 
 LIQ_STATE_TTL = 20.0
 LIQ_STATE_CAP = 400             # запобіжник памʼяті: скільки монет тримати в кеші
@@ -224,9 +223,11 @@ DEFAULT_SETTINGS = {
     # показує стан — тож увімкненим він потік угод не розширює.
     'mm_monitor_enabled': True,
     # 🟪 Авто-відкриття за НОВИМ Volumized OB по монетах монітора (вимога 15.09).
-    # Дефолт УВІМК — на прохання користувача; TF за замовчуванням 5m.
+    # Дефолт УВІМК — на прохання користувача.
+    # ⚠️ ВЛАСНОГО TF тут НЕМАЄ (ключ `mm_vob_tf` прибрано 16.09): TF і всі
+    # параметри детектора диктує блок «📦 Volumized OB Trend» сканера — щоб
+    # монітор торгував РІВНО тим блоком, який намальовано на графіку.
     'mm_vob_open': True,
-    'mm_vob_tf': '5m',
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -1361,8 +1362,6 @@ class FuelFilterDaemon:
         s['mmm_limited_mode'] = bool(s.get('mmm_limited_mode', True))
         s['mm_monitor_enabled'] = bool(s.get('mm_monitor_enabled', True))
         s['mm_vob_open'] = bool(s.get('mm_vob_open', True))
-        _vtf = str(s.get('mm_vob_tf', '5m') or '5m').lower()
-        s['mm_vob_tf'] = _vtf if _vtf in MM_VOB_TFS else '5m'
         s['enabled'] = bool(s.get('enabled', False))
         try:
             s['direction_smoothing_min'] = max(0, min(600,
@@ -3181,6 +3180,38 @@ class FuelFilterDaemon:
                 hist.pop(_sym, None)
                 self._mm_grow_since.pop(_sym, None)
 
+    def _mm_vob_scanner(self):
+        """Сканер як ЄДИНЕ джерело блоків Volumized OB для монітора.
+
+        ⚠️ Фолбеку на власний детектор НЕМАЄ і бути не може: «тихо порахувати
+        самим» означало б торгувати блоком, якого немає на графіку — рівно та
+        розбіжність, яку ця правка й прибирає. Немає сканера чи він старої
+        версії (файли деплояться в різному порядку) → шлях просто не працює, і
+        про це пишемо ОДИН рядок у 🧾 Лог (не щотакту — такт 30с).
+        """
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+        except Exception:
+            sc = None
+        if sc is not None and hasattr(sc, 'volumized_ob_side'):
+            self._mm_vob_src_warned = False
+            return sc
+        if not getattr(self, '_mm_vob_src_warned', False):
+            self._mm_vob_src_warned = True
+            try:
+                from detection.activity_log import log_activity
+                log_activity('—', 'skipped',
+                             '🧮 МММ-монітор: авто-відкриття за VOB не працює — '
+                             'сканер не віддає блоки «📦 Volumized OB Trend» '
+                             '(не піднявся або стара версія detection/smc_scanner.py). '
+                             'Свій детектор тут НЕ використовується свідомо: блок '
+                             'мусить бути той самий, що на графіку.',
+                             source='MMM')
+            except Exception:
+                pass
+        return None
+
     def _mm_vob_tick(self, snap: Dict, s: Dict, now: float):
         """🟪 НОВИЙ Volumized OB по монеті монітора → ВІДКРИТИ УГОДУ.
 
@@ -3192,9 +3223,26 @@ class FuelFilterDaemon:
         Правила (кожне закрите тестом):
         - кандидати — РІВНО ті монети, що видно в таблиці: є у знімку, мають
           напрямок (⚖ рівновага нічого відкривати не може) і ще НЕ в угоді;
-        - блок беремо ТІЛЬКИ в бік МММ (`_funding_vob` віддає найновіший
-          НЕ-breaker OB потрібної сторони) — «співпадає з напрямком» це і є;
+        - блок беремо ТІЛЬКИ в бік МММ — «співпадає з напрямком» це і є;
         - «НОВИЙ» = інший `formation_time`, ніж уже опрацьований.
+
+        🟦 **ДЖЕРЕЛО БЛОКУ = СКАН «📦 Volumized OB Trend»** (вимога 16.09:
+        «Використовуй VOB алгоритм, що на скріні… має бути задіяний цей скан
+        VOB»). Кличемо `scanner.volumized_ob_side(sym, side)` — той самий
+        розрахунок, що малює бокс на графіку і трикутник ▲/▼ у watchlist, з
+        ТИМИ САМИМИ налаштуваннями користувача (TF · Swing Length · Zone
+        Invalidation · Max ATR Mult · Zone Count · Combine Zones) і на тих
+        самих 3000 барах.
+        ⚠️ Власного детектора тут БІЛЬШЕ НЕМАЄ. Раніше шлях кликав
+        `_funding_vob` — а він захардкоджений під funding-стратегію (swing=5,
+        200 барів) і НЕ читає налаштування сканера, тож монітор торгував
+        блоком, якого на екрані немає (урок PD-зони). Повертати не можна.
+        ⚠️ Тумблер **Enable** блоку Volumized вимкнено → сканер віддає None і
+        монітор нічого не відкриває: боксів на графіку немає, торгувати нема по
+        чому.
+        ⚠️ Сканера ще немає / стара версія файлу без `volumized_ob_side` → шлях
+        МОВЧКИ не працює, тому пишемо ОДИН рядок у 🧾 Лог: невидимий збій
+        читається як «бот просто не відкриває».
 
         ⚠️ **ОЧІКУВАННЯ РОСТУ СИЛИ МММ — СКАСОВАНО КОРИСТУВАЧЕМ (не повертати!).**
         Був гейт «новий VOB є, але сила МММ НЕ росте — відкриття ВІДКЛАДЕНО»
@@ -3209,14 +3257,19 @@ class FuelFilterDaemon:
         самий урок, що вже задокументований для VOB-алерту: «блок, що утворився
         пів дня тому, ми лише БАЧИМО на графіку, а сигналом він був тоді».
 
-        ⚠️ **ПОРЦІЯМИ.** Це ЄДИНЕ місце монітора з мережею (200 свічок на
-        монету). Перевіряємо не більше `MM_VOB_MAX_PER_TICK` монет за такт,
-        найдавніше перевірені першими. Затримка нічого не губить: блок
-        лишається «новим», доки ми його не опрацювали.
+        ⚠️ **ПОРЦІЯМИ — ЛИШЕ КОЛИ ДОВОДИТЬСЯ РАХУВАТИ САМИМ.** Монета, по якій
+        скан уже поклав свіжий знімок (`has_fresh_vob`), коштує НУЛЬ — таких
+        беремо ВСІХ за такт. Бюджет `MM_VOB_MAX_PER_TICK` витрачають лише
+        «холодні» монети (яких скан ще не дійшов): саме вони тягнуть 3000
+        барів. Раніше бюджет їли ВСІ підряд, тож повне коло по 230 монетах
+        займало ~8 хв навіть коли дані вже були під рукою.
         """
         if not s.get('mm_vob_open', True) or not s.get('enabled', False):
             return
-        tf = str(s.get('mm_vob_tf', '5m') or '5m')
+        sc = self._mm_vob_scanner()
+        if sc is None:
+            return
+        tf = str(sc.volumized_tf() or '')
         cands = [sym for sym, v in snap.items()
                  if v.get('status') in ('LONG', 'SHORT')]
         if not cands:
@@ -3234,13 +3287,20 @@ class FuelFilterDaemon:
                 pass
         done = 0
         for sym in cands:
-            if done >= MM_VOB_MAX_PER_TICK:
-                break
-            done += 1
+            # Знімок скану вже є → читання безкоштовне, бюджет не витрачаємо.
+            _warm = False
+            try:
+                _warm = bool(sc.has_fresh_vob(sym))
+            except Exception:
+                pass
+            if not _warm:
+                if done >= MM_VOB_MAX_PER_TICK:
+                    continue          # не `break`: далі можуть бути «теплі»
+                done += 1
             self._mm_vob_at[sym] = now
             side = snap[sym].get('status')
             try:
-                ob = self._funding_vob(sym, side, tf)
+                ob = sc.volumized_ob_side(sym, side)
             except Exception as e:
                 print(f"[FF-MMM-VOB] {sym} error: {e}")
                 continue

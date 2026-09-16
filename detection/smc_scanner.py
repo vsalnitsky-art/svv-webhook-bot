@@ -2201,6 +2201,12 @@ class SMCScanner:
                                 zone_count=self._settings.get('volumized_zone_count', 'Low'),
                                 combine_obs=bool(self._settings.get('volumized_combine_obs', True)),
                             )
+                            # 🧮 Блоки ЗА НАПРЯМКОМ — у кеш для читачів (МММ-
+                            # монітор). Розрахунок УЖЕ зроблено на цих барах,
+                            # тож це коштує нуль, зате читач бере РІВНО той
+                            # блок, що намальовано на графіку, і не ходить у
+                            # мережу власним шляхом.
+                            self._vob_sides_put(symbol, vol_result, vol_tf)
                             if self._settings.get('use_volumized_ob', True):
                                 # 🔒 ОДНЕ ДЖЕРЕЛО ПРАВДИ для ▲/▼ (watchlist), бейджа
                                 # «5M» і намальованого боксу: беремо ТУ САМУ функцію,
@@ -5114,6 +5120,98 @@ class SMCScanner:
             print(f"[SMC] volumized OB chart error {symbol}: {e}")
         cache[symbol] = (now, vob)
         return vob
+
+    # 🧮 Скільки секунд знімок блоків за напрямком вважається придатним для
+    # ЧИТАЧІВ (МММ-монітор). Це НЕ «свіжість блоку», а вік самого розрахунку:
+    # скан перераховує його щоцикл, тож у робочому стані читач НІКОЛИ не ходить
+    # у мережу сам. Ширше за цикл скану СВІДОМО — інакше монітор почав би
+    # тягнути по 3000 барів на монету паралельно скану.
+    VOB_SIDES_TTL = 300.0
+
+    @staticmethod
+    def _vob_newest_live(res):
+        """{'LONG': ob|None, 'SHORT': ob|None} — найновіший НЕ-breaker блок
+        КОЖНОГО боку з готового результату `detect_volumized_obs`.
+
+        ⚠️ breaker пропускаємо: такий бокс малюється пунктиром із «✕» — зона
+        знецінена, вхід по ній помилковий (те саме правило, що в скані)."""
+        out = {'LONG': None, 'SHORT': None}
+        for _side, _key in (('LONG', 'bullish_obs'), ('SHORT', 'bearish_obs')):
+            for ob in ((res or {}).get(_key) or []):    # newest first
+                if not ob.get('breaker'):
+                    out[_side] = ob
+                    break
+        return out
+
+    def _vob_sides_put(self, symbol, res, vtf, ts=None):
+        """Покласти блоки за напрямком у кеш. Кличеться зі СКАНУ з уже
+        порахованим `vol_result` — тобто коштує НУЛЬ (ні мережі, ні CPU)."""
+        try:
+            c = getattr(self, '_vob_sides_cache', None)
+            if c is None:
+                self._vob_sides_cache = c = {}
+            c[symbol] = (ts or time.time(), self._vob_newest_live(res), vtf)
+        except Exception:
+            pass
+
+    def volumized_tf(self):
+        """TF блоку «📦 Volumized OB Trend» — той, що обрано в налаштуваннях."""
+        return self._settings.get('volumized_timeframe', '1h')
+
+    def has_fresh_vob(self, symbol: str) -> bool:
+        """Чи є придатний знімок блоків за напрямком (без походу в мережу).
+        Читачі питають ЦЕ, щоб не витрачати свій бюджет запитів на дурно."""
+        hit = (getattr(self, '_vob_sides_cache', None) or {}).get(symbol)
+        return bool(hit and (time.time() - hit[0]) <= self.VOB_SIDES_TTL)
+
+    def volumized_ob_side(self, symbol: str, side: str, allow_fetch: bool = True):
+        """🟦 Найновіший НЕ-breaker Volumized OB у бік `side` — З ТОГО САМОГО
+        розрахунку, що малює бокс на графіку і трикутник ▲/▼ у watchlist.
+
+        Вимога користувача (16.09): «Використовуй VOB алгоритм, що на скріні…
+        має бути задіяний цей скан VOB» — тобто РІВНО блок «📦 Volumized OB
+        Trend»: TF, Swing Length, Zone Invalidation, Max ATR Mult, Zone Count і
+        Combine Zones беруться з НАЛАШТУВАНЬ КОРИСТУВАЧА, а не з чиїхось
+        власних констант. Свого детектора читачам заводити НЕ МОЖНА: інакше бот
+        відкривав би угоду по блоку, якого на екрані немає (урок PD-зони).
+
+        ⚠️ Тумблер **Enable** (`use_volumized_ob`) вимкнено → None: скану немає,
+        боксів на графіку немає, отже й торгувати нема по чому.
+        ⚠️ `allow_fetch=False` → лише кеш (нуль мережі).
+        Повертає СИРИЙ OB (`formation_time`/`top`/`bottom`/`breaker`) або None.
+        """
+        if side not in ('LONG', 'SHORT'):
+            return None
+        if not self._settings.get('use_volumized_ob', True):
+            return None
+        now = time.time()
+        hit = (getattr(self, '_vob_sides_cache', None) or {}).get(symbol)
+        if hit and (now - hit[0]) <= self.VOB_SIDES_TTL:
+            return (hit[1] or {}).get(side)
+        if not allow_fetch:
+            return None
+        vtf = self.volumized_tf()
+        try:
+            from detection.market_data import get_market_data
+            from detection.volumized_ob import detect_volumized_obs
+            md = get_market_data()
+            vk = md.fetch_klines(symbol, limit=self.VOB_KLINES_LIMIT,
+                                 interval=vtf) if md else None
+            if not vk or len(vk) <= 20:
+                return None
+            res = detect_volumized_obs(
+                vk,
+                swing_length=int(self._settings.get('volumized_swing_length', 10)),
+                ob_end_method=self._settings.get('volumized_ob_end_method', 'Wick'),
+                max_atr_mult=float(self._settings.get('volumized_max_atr_mult', 3.5)),
+                zone_count=self._settings.get('volumized_zone_count', 'Low'),
+                combine_obs=bool(self._settings.get('volumized_combine_obs', True)),
+            )
+        except Exception as e:
+            print(f"[SMC] volumized OB side error {symbol}: {e}")
+            return None
+        self._vob_sides_put(symbol, res, vtf, now)
+        return (self._vob_newest_live(res) or {}).get(side)
 
     def _format_vob(self, lob, vtf):
         """Форматує сирий `latest_ob` (з `detect_volumized_obs`) у вигляд для
