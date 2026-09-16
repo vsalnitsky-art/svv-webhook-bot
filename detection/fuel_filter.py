@@ -852,10 +852,6 @@ class FuelFilterDaemon:
         # блоку} + {SYMBOL: ts останньої перевірки} для черги порцій.
         self._mm_vob_seen: Dict[str, float] = {}
         self._mm_vob_at: Dict[str, float] = {}
-        # ⏳ Новий VOB Є, але сила НЕ росте → чекаємо саме цього стану:
-        # {SYMBOL: {'ft','side','since'}}. Віддається у рядок монітора, щоб
-        # затримка була ВИДНА, а не виглядала як «бот нічого не робить».
-        self._mm_vob_pending: Dict[str, Dict] = {}
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -3198,10 +3194,14 @@ class FuelFilterDaemon:
           напрямок (⚖ рівновага нічого відкривати не може) і ще НЕ в угоді;
         - блок беремо ТІЛЬКИ в бік МММ (`_funding_vob` віддає найновіший
           НЕ-breaker OB потрібної сторони) — «співпадає з напрямком» це і є;
-        - «НОВИЙ» = інший `formation_time`, ніж уже опрацьований;
-        - і сила МММ мусить РОСТИ (вимога 15.09) — інакше блок НЕ витрачається,
-          а стає в очікування (`_mm_vob_pending`) і відкриє угоду, щойно ріст
-          зʼявиться. Причина затримки видно в рядку таблиці (⏳) і в 🧾 Лозі.
+        - «НОВИЙ» = інший `formation_time`, ніж уже опрацьований.
+
+        ⚠️ **ОЧІКУВАННЯ РОСТУ СИЛИ МММ — СКАСОВАНО КОРИСТУВАЧЕМ (не повертати!).**
+        Був гейт «новий VOB є, але сила МММ НЕ росте — відкриття ВІДКЛАДЕНО»
+        (разом із чергою `_mm_vob_pending` і ⏳ у таблиці). Користувач його
+        СКАСУВАВ дослівно: «відміни цю перевірку». Тепер новий блок у бік МММ
+        відкриває угоду ОДРАЗУ, а ріст сили лишається суто ПОКАЗНИКОМ
+        (колонки «Сила росте» / ⏱), який нічого не блокує.
 
         ⚠️ **ПЕРШИЙ ПОКАЗ МОНЕТИ — ТИХА БАЗА, угоду НЕ відкриваємо.** Після
         рестарту (а `botupdate` роблять часто) перший же знайдений блок виглядав
@@ -3224,11 +3224,9 @@ class FuelFilterDaemon:
         # Монети в угоді пропускаємо (у таблиці їх теж немає).
         open_syms = self._mm_open_syms()
         cands = [c for c in cands if c not in open_syms]
-        # ⏳ Монети, що ВЖЕ чекають на ріст сили, — ПЕРШИМИ: у них блок готовий,
-        # і кожен пропущений такт це прямо відкладена угода. Далі — найдавніше
-        # перевірені (нові монети без позначки йдуть попереду решти).
-        cands.sort(key=lambda x: (0 if x in self._mm_vob_pending else 1,
-                                  self._mm_vob_at.get(x, 0.0)))
+        # Найдавніше перевірені — першими (нові монети без позначки йдуть
+        # попереду решти), щоб черга порцій рухалась по колу.
+        cands.sort(key=lambda x: self._mm_vob_at.get(x, 0.0))
         try:
             from detection.activity_log import log_activity
         except Exception:
@@ -3256,36 +3254,13 @@ class FuelFilterDaemon:
                 self._mm_vob_seen[sym] = ft      # тиха база — див. докстрінг
                 continue
             if ft == prev:
-                self._mm_vob_pending.pop(sym, None)
-                continue
-            # 📈 ДРУГА УМОВА ВХОДУ (вимога 15.09): сила МММ мусить РОСТИ.
-            # ⚠️ «Росте» тут — ТЕ САМЕ, що малює ⏱ таймер і стрілку ↑ у
-            # `ffFuelCell`: наявність `_mm_grow_since[sym]`. Власного правила
-            # не заводимо — інакше в рядку таймер стояв би «—», а бот
-            # відкривав би «бо росте».
-            if sym not in self._mm_grow_since:
-                # ⚠️ Блок НЕ позначаємо опрацьованим — саме це й означає
-                # «дочекатися стану»: щойно сила піде вгору, той самий блок
-                # відкриє угоду. Позначка `pending` живить ⏳ у таблиці.
-                p = self._mm_vob_pending.get(sym)
-                if not p or p.get('ft') != ft or p.get('side') != side:
-                    self._mm_vob_pending[sym] = {'ft': ft, 'side': side,
-                                                 'since': now}
-                    log_activity(sym, 'skipped',
-                                 f'🧮 МММ-монітор: новий Volumized OB ({tf}) {side} '
-                                 'є, але сила МММ НЕ росте — відкриття ВІДКЛАДЕНО '
-                                 'до появи росту (блок лишається чинним)',
-                                 side=side, source='MMM')
                 continue
             self._mm_vob_seen[sym] = ft
-            self._mm_vob_pending.pop(sym, None)
             self._mm_vob_open_one(sym, side, ob, tf, s, log_activity)
         # Памʼять: тримаємо позначки лише для монет, що є у знімку.
         for dead in [k for k in self._mm_vob_seen if k not in snap]:
             self._mm_vob_seen.pop(dead, None)
             self._mm_vob_at.pop(dead, None)
-        for dead in [k for k in self._mm_vob_pending if k not in snap]:
-            self._mm_vob_pending.pop(dead, None)
 
     def _mm_vob_open_one(self, sym: str, side: str, ob: Dict, tf: str,
                          s: Dict, log_activity):
@@ -3464,7 +3439,6 @@ class FuelFilterDaemon:
             # протекли б у таблицю монітора, який щойно вимкнули.
             snap = dict(self._mm_snapshot or {}) if _on else {}
             grow = dict(getattr(self, '_mm_grow_since', {}) or {})
-            vw = dict(getattr(self, '_mm_vob_pending', {}) or {})
             ts = float(self._mm_snapshot_ts or 0.0)
         # Відкриті позиції (FF + обидві книги TM) — такі монети в таблиці не
         # показуємо взагалі. Набір збирає ЄДИНИЙ `_mm_open_syms`.
@@ -3519,9 +3493,6 @@ class FuelFilterDaemon:
                 # 🔮 Прогноз 1H/4H із кешу — та сама пара, що на бейджах графіка.
                 'f1': v.get('f1'),
                 'f4': v.get('f4'),
-                # ⏳ Новий VOB уже є, але чекаємо, поки сила ПІДЕ ВГОРУ.
-                # Без цього поля затримка виглядала б як «бот нічого не робить».
-                'vob_wait': (dict(vw[sym]) if sym in vw else None),
                 # ⚖ рівновага — відкривати нічого, тож і обирати нічого.
                 'selectable': st in ('LONG', 'SHORT'),
             })

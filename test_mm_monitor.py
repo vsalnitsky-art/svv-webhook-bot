@@ -84,7 +84,6 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._mm_str_hist = {}
     ff._mm_vob_seen = {}
     ff._mm_vob_at = {}
-    ff._mm_vob_pending = {}
     ff._mm_price_hist = {}
     ff._mm_decision = {}
     ff._clock = [10_000.0]
@@ -1638,8 +1637,7 @@ def test_new_vob_in_the_mm_direction_opens_a_trade():
     _cap(ff, AAAUSDT=0.40)                   # перший показ — ТИХА БАЗА
     _check(not ff.opened, f'перший показ не має відкривати: {ff.opened}')
     _cap(ff, AAAUSDT=0.45)
-    _cap(ff, AAAUSDT=0.50)                   # сила РОСТЕ (друга умова входу)
-    _check(ff._mm_grow_since.get('AAAUSDT'), 'фікстура не дала росту сили')
+    _cap(ff, AAAUSDT=0.50)
     _vob(ff, AAAUSDT={'LONG': 2000})         # НОВИЙ блок
     _cap(ff, AAAUSDT=0.55)
     _check(len(ff.opened) == 1 and ff.opened[0]['side'] == 'LONG', ff.opened)
@@ -1753,120 +1751,84 @@ def test_vob_open_goes_through_the_same_gates():
     print(f'✓ 🟪 мітка {kw.get("opened_by")!r}, ворота `_open` не обходяться')
 
 
-# ═══ 18. 📈 ВХІД ЧЕКАЄ НА РІСТ СИЛИ + ⏳ ВІЗУАЛІЗАЦІЯ (вимога 15.09) ══════
-def _grow(ff, sym='AAAUSDT'):
-    """Три такти зі зростанням — щоб `_mm_grow_since` реально зайнявся."""
-    _cap(ff, **{sym: 0.40})
-    _cap(ff, **{sym: 0.45})
-    _cap(ff, **{sym: 0.50})
+# ═══ 18. 📈 ОЧІКУВАННЯ РОСТУ СИЛИ — СКАСОВАНО КОРИСТУВАЧЕМ (16.09) ══════
+# Був гейт «новий VOB є, але сила МММ НЕ росте — відкриття ВІДКЛАДЕНО» (черга
+# `_mm_vob_pending`, поле `vob_wait`, ⏳ у таблиці). Користувач СКАСУВАВ його
+# дослівно: «відміни цю перевірку». Тести нижче — ЗАМКИ, щоб гейт не повернувся
+# тихо: ріст сили лишається ПОКАЗНИКОМ, а не умовою входу.
 
 
-def test_new_vob_waits_until_strength_is_growing():
-    """Вимога дослівно: «при відкритті угоди потрібно відслідковувати, щоб
-    "Сила росте" — росла, інакше потрібно дочекатися саме цього стану»."""
+def test_new_vob_opens_even_when_strength_is_not_growing():
+    """Плато сили — і все одно відкриваємо: це і є скасування перевірки."""
     _install_log()
     ff = _mk()
     ff._settings.update({'enabled': True, 'mm_vob_open': True})
     _vob(ff, AAAUSDT={'LONG': 1000})
-    _cap(ff, AAAUSDT=0.50)                   # база
-    _cap(ff, AAAUSDT=0.50)
-    _cap(ff, AAAUSDT=0.50)                   # плато → сила НЕ росте
+    for _ in range(3):
+        _cap(ff, AAAUSDT=0.50)               # база + плато → росту НЕМАЄ
     _check(not ff._mm_grow_since.get('AAAUSDT'), 'фікстура: росту бути не мало')
-    _vob(ff, AAAUSDT={'LONG': 2000})         # новий блок, але росту немає
+    _vob(ff, AAAUSDT={'LONG': 2000})         # НОВИЙ блок
     _cap(ff, AAAUSDT=0.50)
-    _check(not ff.opened, f'відкрили без росту сили: {ff.opened}')
-    row = ff.mm_monitor_state()['rows'][0]
-    _check(row['vob_wait'] and row['vob_wait']['side'] == 'LONG',
-           f'причина затримки не віддається в рядок: {row.get("vob_wait")}')
-    _check(any('НЕ росте' in (x['detail'] or '') for x in _LOGGED),
-           f'причина затримки не пояснена в 🧾 Лозі: {_LOGGED}')
-    print('✓ 📈 новий VOB без росту сили → чекаємо, причина названа')
-
-
-def test_the_waiting_block_is_not_spent_and_fires_on_growth():
-    """⚠️ НАЙВАЖЛИВІШЕ: блок НЕ «витрачається» під час очікування. Інакше
-    «дочекатися стану» перетворилось би на «пропустити сигнал»."""
-    ff = _mk()
-    ff._settings.update({'enabled': True, 'mm_vob_open': True})
-    _vob(ff, AAAUSDT={'LONG': 1000})
-    for _ in range(3):
-        _cap(ff, AAAUSDT=0.50)               # база + плато
-    _vob(ff, AAAUSDT={'LONG': 2000})
-    _cap(ff, AAAUSDT=0.50)                   # чекаємо
-    _cap(ff, AAAUSDT=0.50)                   # усе ще чекаємо
-    _check(not ff.opened, ff.opened)
-    # Сила пішла вгору — ТОЙ САМИЙ блок мусить відкрити угоду.
-    _cap(ff, AAAUSDT=0.62)
     _check(len(ff.opened) == 1 and ff.opened[0]['side'] == 'LONG',
-           f'блок загубився під час очікування: {ff.opened}')
-    _check(not ff.mm_monitor_state()['rows'][0]['vob_wait'],
-           'позначку очікування не знято після відкриття')
-    print('✓ 📈 блок чекає, не витрачається, і відкриває угоду на рості')
+           f'угоду не відкрито, хоча перевірку скасовано: {ff.opened}')
+    _check(not any('НЕ росте' in (x['detail'] or '') for x in _LOGGED),
+           f'у 🧾 Лозі лишилось «відкладено через ріст»: {_LOGGED}')
+    print('✓ 📈 перевірку скасовано: плато сили більше не відкладає вхід')
 
 
-def test_waiting_state_is_logged_once_not_every_tick():
-    """Такт 30с — незмінна причина не має щоразу писатись у 🧾 Лог."""
-    _install_log()
+def test_falling_strength_does_not_delay_the_entry_either():
+    """Не лише плато: навіть спад сили більше нічого не відкладає."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'LONG': 1000})
+    _cap(ff, AAAUSDT=0.70)
+    _cap(ff, AAAUSDT=0.60)
+    _cap(ff, AAAUSDT=0.50)                   # сила ПАДАЄ
+    _vob(ff, AAAUSDT={'LONG': 2000})
+    _cap(ff, AAAUSDT=0.40)
+    _check(len(ff.opened) == 1, f'спад сили відклав вхід: {ff.opened}')
+    print('✓ 📈 спад сили теж не блокує — умова входу знята повністю')
+
+
+def test_no_waiting_state_is_produced_anywhere():
+    """Разом із гейтом пішли і його сліди: черга очікування, поле рядка і
+    згадка `_mm_grow_since` у самому шляху відкриття."""
+    import inspect
     ff = _mk()
     ff._settings.update({'enabled': True, 'mm_vob_open': True})
     _vob(ff, AAAUSDT={'LONG': 1000})
     for _ in range(3):
         _cap(ff, AAAUSDT=0.50)
     _vob(ff, AAAUSDT={'LONG': 2000})
-    for _ in range(4):
-        _cap(ff, AAAUSDT=0.50)
-    n = len([x for x in _LOGGED if 'НЕ росте' in (x['detail'] or '')])
-    _check(n == 1, f'причина очікування написана {n} разів замість одного')
-    print('✓ 📈 причина очікування пишеться ОДИН раз, без флуду')
+    _cap(ff, AAAUSDT=0.50)
+    _check(not hasattr(ff, '_mm_vob_pending'),
+           'черга очікування `_mm_vob_pending` лишилась у стані')
+    rows = ff.mm_monitor_state()['rows']
+    _check(all('vob_wait' not in r for r in rows),
+           f'поле `vob_wait` ще їде в рядок: {rows}')
+    src = inspect.getsource(_m.FuelFilterDaemon._mm_vob_tick)
+    _check('_mm_grow_since' not in src,
+           'шлях відкриття знову дивиться на таймер росту')
+    print('✓ 📈 слідів гейта не лишилось (черга · поле рядка · код)')
 
 
-def test_waiting_coins_are_checked_first():
-    """⚠️ У монети, що чекає, блок УЖЕ готовий — кожен пропущений такт це
-    прямо відкладена угода. Тому вона стоїть попереду загальної черги порцій."""
-    ff = _mk()
-    ff._settings.update({'enabled': True, 'mm_vob_open': True})
-    n = _m.MM_VOB_MAX_PER_TICK
-    pairs = {f'C{i:03d}USDT': 0.50 for i in range(n * 3)}
-    _vob(ff, **{k: {'LONG': 1} for k in pairs})
-    for _ in range(3):
-        _cap(ff, **pairs)                     # бази + плато
-    # Одній монеті даємо НОВИЙ блок — вона стане в очікування росту.
-    _vob(ff, **{k: {'LONG': (2 if k == 'C000USDT' else 1)} for k in pairs})
-    while 'C000USDT' not in ff._mm_vob_pending:
-        _cap(ff, **pairs)
-    _vob(ff, **{k: {'LONG': (2 if k == 'C000USDT' else 1)} for k in pairs})
-    _cap(ff, **pairs)
-    _check(ff.vob_calls and ff.vob_calls[0][0] == 'C000USDT',
-           f'монета в очікуванні мусить перевірятись першою: {ff.vob_calls[:3]}')
-    print('✓ 📈 монети в очікуванні росту перевіряються першими')
-
-
-def test_js_shows_why_the_entry_is_delayed():
-    """Візуалізація: поруч із назвою монети — ⏳ з живим таймером і повним
-    поясненням у підказці."""
+def test_js_no_longer_draws_the_waiting_badge():
+    """⏳ біля назви монети більше немає — затримки, яку він пояснював, теж."""
+    _check('_mmWaitBadge' not in _HTML, 'функція ⏳-бейджа лишилась у сторінці')
+    _check('vob_wait' not in _HTML, 'сторінка ще читає `vob_wait`')
     out = _run_js(r'''
-const R = (s, w) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50, delta:0,
-  grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
-  delta_span:180, f1:null, f4:null, vob_wait:w, selectable:true});
-mmApplyState({rows:[R('AAAUSDT', {side:'LONG', ft:2000, since:1700000000}),
-                    R('BBBUSDT', null)],
+mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:50, strength_prev:50,
+  delta:0, grow_since:null, price:1, price_dir:'flat', price_chg:0,
+  price_span:900, delta_span:180, f1:null, f4:null, selectable:true}],
   enabled:true, limited:false, ts:1});
-const rows = document.getElementById('mm-tbody').innerHTML.split('</tr>');
-const cell = s => rows.filter(x => x.includes(s))[0] || '';
-const a = cell('AAA'), b = cell('BBB');
-console.log(JSON.stringify({
-  badge:a.includes('⏳'), timer:a.includes('ff-timer'),
-  why:/сила МММ зараз НЕ росте/.test(a),
-  inSymbolCell:a.split('<td')[2].includes('⏳'),
-  clean:!b.includes('⏳')}));
+const h = document.getElementById('mm-tbody').innerHTML;
+console.log(JSON.stringify({rows:h.includes('AAAUSDT'), hourglass:h.includes('⏳')}));
 ''')
     import json
     d = json.loads(out)
-    _check(d['badge'] and d['why'], f'причину затримки не видно: {d}')
-    _check(d['timer'], 'скільки вже чекаємо — має бути видно (живий таймер)')
-    _check(d['inSymbolCell'], 'значок мусить стояти біля назви монети')
-    _check(d['clean'], 'монета без очікування не має нічого показувати')
-    print('✓ JS: ⏳ біля назви монети + таймер + пояснення в підказці')
+    _check(d['rows'], 'рядок монітора взагалі не намалювався')
+    _check(not d['hourglass'], 'у рядку досі малюється ⏳')
+    print('✓ JS: ⏳ прибрано, рядок малюється без нього')
 
 
 def test_ui_has_the_vob_controls_wired_both_ways():

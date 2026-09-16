@@ -11450,21 +11450,10 @@ function _mmGrowCell(r) {
 // ⚠️ Малюємо тим самим класом, що й решта живих лічильників сторінки
 // (`.ff-timer[data-since]`) — його веде ОДИН глобальний 1с-тікер, тож секунди
 // йдуть, а таблиця не перебудовується (урок `held_sec` у Черзі-4).
-// ⏳ ЧОМУ УГОДА ЩЕ НЕ ВІДКРИТА. Новий Volumized OB уже є і збігається з
-// напрямком МММ, але сила НЕ росте — бот свідомо ЧЕКАЄ цього стану (вимога
-// 15.09). Без цього значка затримка виглядала б як «бот нічого не робить».
-// Живі секунди веде ТОЙ САМИЙ глобальний 1с-тікер, що й решта таймерів.
-function _mmWaitBadge(r) {
-    const w = r.vob_wait;
-    if (!w) return '';
-    const tip = `🟪 Новий Volumized OB у бік ${w.side || ''} вже зʼявився, але `
-        + 'сила МММ зараз НЕ росте — відкриття ВІДКЛАДЕНО саме через це. '
-        + 'Блок не витрачено: щойно сила піде вгору (стрілка ↑ і ⏱ таймер), '
-        + 'угода відкриється по ньому ж.';
-    return ` <span title="${_mmEsc(tip)}" style="color:#fbbf24;font-size:0.62rem;`
-        + `font-family:monospace;white-space:nowrap">⏳<span class="ff-timer"`
-        + ` data-since="${Math.floor(w.since || 0)}">--:--:--</span></span>`;
-}
+// ⚠️ ⏳-бейджа «чекаємо росту сили» тут БІЛЬШЕ НЕМАЄ: гейт «новий VOB є, але
+// сила НЕ росте — відкриття ВІДКЛАДЕНО» користувач СКАСУВАВ («відміни цю
+// перевірку»). Ріст сили лишився ПОКАЗНИКОМ (колонки нижче), а не умовою
+// входу, тож і пояснювати затримку більше нічим — її немає.
 function _mmTimerCell(r) {
     if (!r.grow_since) {
         return '<span style="color:#6b7280" title="Зараз сила не росте — таймер обнулено. Він стартує наново на першому ж такті росту.">—</span>';
@@ -11634,7 +11623,6 @@ function mmRender() {
         + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev, r.delta,
         r.grow_since || 0, r.delta_span, r.price, r.price_dir || '', r.price_chg,
         (r.f1 ? r.f1.side : ''), (r.f4 ? r.f4.side : ''),
-        (r.vob_wait ? r.vob_wait.since : 0),
         _mmSel.has(r.symbol) ? 1 : 0].join(':')).join(',');
     if (tb.dataset.sig !== sig) {
         tb.dataset.sig = sig;
@@ -11660,7 +11648,7 @@ function mmRender() {
                     // Клік по НАЗВІ → графік у TradingView, ТОЧНО як у WATCHLIST:
                     // спільний `tvSym` (одна вкладка `tvchart`, BYBIT:<SYM>.P).
                     // Він сам робить stopPropagation, тож галочка не смикається.
-                    + `<td style="font-weight:700;white-space:nowrap">${tvSym(r.symbol)}${_mmWaitBadge(r)}</td>`
+                    + `<td style="font-weight:700;white-space:nowrap">${tvSym(r.symbol)}</td>`
                     // ⚠️ Окремої колонки «Сила» НЕМАЄ (прибрано на прохання):
                     // віджет `ffFuelCell` уже показує і напрямок, і 0-100%, і
                     // тренд — друга колонка дублювала те саме число.
