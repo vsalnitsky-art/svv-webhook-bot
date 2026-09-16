@@ -395,8 +395,11 @@ def test_selection_survives_the_poll():
     DOM, їх стирало б просто під час вибору — групове відкриття стало б
     неможливим. Тому вибір живе в `_mmSel` ПОЗА розміткою."""
     _check('let _mmSel = new Set()' in _HTML, 'вибір не винесений із DOM')
+    # ⚠️ Зріз — ДО КІНЦЯ функції, а не «перші N символів»: `mmRender` росте, і
+    # фіксоване вікно вже врізало рядок із відновленням галочок (той самий
+    # капкан, що вже ловили на `<th>` і на віджеті МММ).
     i = _HTML.index('function mmRender()')
-    fn = _HTML[i:i + 4000]
+    fn = _HTML[i:_HTML.index('function mmApplyState(', i)]
     _check('_mmSel.has(r.symbol)' in fn, 'рендер не відновлює галочки з набору')
     _check("tb.dataset.sig" in fn, 'немає сигнатури — DOM перебудовується даремно')
     print('✓ вибір переживає полл (живе поза DOM) + сигнатура таблиці')
@@ -471,9 +474,15 @@ const _ths = ['symbol','strength','delta','grow','pchg'].map(c => ({
   querySelector:()=>(_arrows[c] = _arrows[c] || {textContent:''})}));
 const document = {
   getElementById: id => (['mm-tbody','mm-check-all','mm-min-str','mm-sel-count',
-                          'mm-open-btn','mm-updated','mm-limited-hint'].includes(id)
+                          'mm-open-btn','mm-updated','mm-limited-hint',
+                          'mm-str-out'].includes(id)
                          ? _el(id) : null),
   querySelectorAll: sel => (String(sel).includes('data-mmsort') ? _ths : _tabs),
+  // Вкладки шукають і поштучно (лічильник «у фільтрі / поза фільтром»).
+  querySelector: sel => {
+    const m = String(sel).match(/data-mmdir="([^"]+)"/);
+    return m ? (_tabs.find(t => t.dataset.mmdir === m[1]) || null) : null;
+  },
 };
 // Памʼять фільтрів (localStorage) — сторінка без неї не запускається.
 const _LS = {};
@@ -1625,6 +1634,9 @@ def _vob(ff, warm=False, **per_symbol):
     """
     ff.vob_calls = []
 
+    ff.signals = []
+    ff.gate = getattr(ff, 'gate', (True, '', 'розклад ✓'))
+
     class _SC:
         def volumized_tf(self):
             return '5m'
@@ -1635,9 +1647,21 @@ def _vob(ff, warm=False, **per_symbol):
         def volumized_ob_side(self, sym, side, allow_fetch=True):
             ff.vob_calls.append((sym, side, '5m'))
             ft = (per_symbol.get(sym) or {}).get(side)
-            return None if ft is None else {'formation_time': ft, 'breaker': False}
+            return None if ft is None else {'formation_time': ft,
+                                            'breaker': False,
+                                            'top': 1.05, 'bottom': 0.95}
+
+        def _signal_allowed(self, sym, side, at_intake=False, **kw):
+            return ff.gate
+
+    class _TM:
+        def on_signal(self, symbol, side, entry_price, opened_by):
+            ff.signals.append({'symbol': symbol, 'side': side,
+                               'opened_by': opened_by, 'price': entry_price})
+            return {'status': 'queued'}
 
     ff._mm_vob_scanner = lambda: _SC()
+    ff._get_tm = lambda: _TM()
 
 
 def test_new_vob_in_the_mm_direction_opens_a_trade():
@@ -1648,12 +1672,12 @@ def test_new_vob_in_the_mm_direction_opens_a_trade():
     ff._settings.update({'enabled': True, 'mm_vob_open': True, 'mm_vob_tf': '5m'})
     _vob(ff, AAAUSDT={'LONG': 1000})
     _cap(ff, AAAUSDT=0.40)                   # перший показ — ТИХА БАЗА
-    _check(not ff.opened, f'перший показ не має відкривати: {ff.opened}')
+    _check(not ff.signals, f'перший показ не має давати сигнал: {ff.signals}')
     _cap(ff, AAAUSDT=0.45)
     _cap(ff, AAAUSDT=0.50)
     _vob(ff, AAAUSDT={'LONG': 2000})         # НОВИЙ блок
     _cap(ff, AAAUSDT=0.55)
-    _check(len(ff.opened) == 1 and ff.opened[0]['side'] == 'LONG', ff.opened)
+    _check(len(ff.signals) == 1 and ff.signals[0]['side'] == 'LONG', ff.signals)
     _check(ff.vob_calls and ff.vob_calls[0][2] == '5m',
            f'TF мусить братись із налаштування: {ff.vob_calls}')
     _check(any('Volumized OB' in (x['detail'] or '') for x in _LOGGED),
@@ -1670,7 +1694,7 @@ def test_first_sight_is_a_silent_baseline():
     _vob(ff, AAAUSDT={'LONG': 999})
     _cap(ff, AAAUSDT=0.5)
     _cap(ff, AAAUSDT=0.5)                    # той самий блок — не новий
-    _check(not ff.opened, f'той самий блок відкрив угоду: {ff.opened}')
+    _check(not ff.signals, f'той самий блок дав сигнал: {ff.signals}')
     print('✓ 🟪 перший показ — тиха база, той самий блок не відкриває')
 
 
@@ -1683,7 +1707,7 @@ def test_vob_against_the_mm_direction_is_ignored():
     _cap(ff, AAAUSDT=0.5)                    # а МММ каже LONG
     _vob(ff, AAAUSDT={'SHORT': 2000})
     _cap(ff, AAAUSDT=0.5)
-    _check(not ff.opened, f'відкрили проти напрямку МММ: {ff.opened}')
+    _check(not ff.signals, f'сигнал проти напрямку МММ: {ff.signals}')
     _check(all(c[1] == 'LONG' for c in ff.vob_calls),
            f'детектор питали не в бік МММ: {ff.vob_calls}')
     print('✓ 🟪 блок проти напрямку МММ ігнорується')
@@ -1754,29 +1778,124 @@ def test_monitor_toggle_off_stops_vob_opening_too():
     ff._fuel_managed = {'AAAUSDT': {}}
     _vob(ff, AAAUSDT={'LONG': 1})
     _cap(ff, AAAUSDT=0.5)
-    _check(not ff.vob_calls and not ff.opened,
-           f'вимкнений монітор усе одно торгував: {ff.vob_calls}')
+    _check(not ff.vob_calls and not ff.signals,
+           f'вимкнений монітор усе одно сигналив: {ff.vob_calls}')
     print('✓ 🟪 вимкнений монітор не відкриває по VOB')
 
 
-def test_vob_open_goes_through_the_same_gates():
-    """⚠️ `by_hand` НЕ ставимо: рішення АВТОМАТИЧНЕ, тож «нова ситуація» і
-    решта воріт `_open` (у т.ч. 🚦 головні кнопки напрямку) мусять діяти."""
+def test_vob_goes_out_as_a_signal_through_the_shared_gate():
+    """Вимога 16.09: «не відкриває угоду, а передає монету у вигляді сигналу
+    далі по алгоритму». Тобто СПІЛЬНІ ВОРОТА сканера → `tm.on_signal`, а вже
+    черги/двигун вирішують, куди монета потрапить."""
     ff = _mk()
     ff._settings.update({'enabled': True, 'mm_vob_open': True})
     _vob(ff, AAAUSDT={'LONG': 1})
-    _cap(ff, AAAUSDT=0.40)
-    _cap(ff, AAAUSDT=0.45)
-    _cap(ff, AAAUSDT=0.50)                   # сила росте
+    _cap(ff, AAAUSDT=0.50)
     _vob(ff, AAAUSDT={'LONG': 2})
-    _cap(ff, AAAUSDT=0.55)
-    kw = ff.opened[0]['kw']
-    _check(not kw.get('by_hand'), f'авто-відкриття не має бути «ручним»: {kw}')
-    _check(not kw.get('skip_safeguard') and not kw.get('skip_ctr_safeguard'),
-           f'авто-шлях не має пропускати запобіжники: {kw}')
-    _check('MMM' in str(kw.get('opened_by')) and 'vob' in str(kw.get('opened_by')),
-           f'мітка мусить називати і сигнал, і двигун: {kw.get("opened_by")}')
-    print(f'✓ 🟪 мітка {kw.get("opened_by")!r}, ворота `_open` не обходяться')
+    _cap(ff, AAAUSDT=0.50)
+    _check(not ff.opened, f'монітор НЕ має відкривати сам: {ff.opened}')
+    _check(len(ff.signals) == 1, f'сигнал не пішов: {ff.signals}')
+    _check(ff.signals[0]['opened_by'] == 'mm_vob',
+           f'мітка сигналу мусить називати монітор: {ff.signals[0]}')
+    _check(ff.signals[0]['price'] > 0, 'сигнал без ціни входу')
+    print(f"✓ 🧮 VOB → сигнал {ff.signals[0]['opened_by']!r} (не пряме відкриття)")
+
+
+def test_blocked_by_the_scanner_filters_means_no_signal():
+    """⚠️ Ворота сканера обходити НЕ можна (урок ASTERUSDT). Не пропустили —
+    сигналу немає, а причина названа в 🧾 Лозі."""
+    _install_log()
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    ff.gate = (False, 'OB-фільтр заблокував', 'OB(1h BEARISH):✗')
+    _vob(ff, AAAUSDT={'LONG': 1})
+    _cap(ff, AAAUSDT=0.50)
+    _vob(ff, AAAUSDT={'LONG': 2})
+    _cap(ff, AAAUSDT=0.50)
+    _check(not ff.signals and not ff.opened, f'сигнал пішов повз ворота: {ff.signals}')
+    _check(any(x['event'] == 'rejected' and 'OB-фільтр' in (x['detail'] or '')
+               for x in _LOGGED), f'причину відмови не названо: {_LOGGED}')
+    print('✓ 🧮 фільтри сканера ріжуть сигнал монітора, як будь-який інший')
+
+
+def test_every_signal_is_written_to_the_log():
+    """«Де сигнали?» — шлях більше НЕ мовчить: і сам сигнал, і розклад фільтрів
+    ідуть у 🧾 Лог із джерелом MMM."""
+    _install_log()
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'LONG': 1})
+    _cap(ff, AAAUSDT=0.50)
+    _vob(ff, AAAUSDT={'LONG': 2})
+    _cap(ff, AAAUSDT=0.50)
+    _sig = [x for x in _LOGGED if x['event'] == 'signal' and x['source'] == 'MMM']
+    _check(len(_sig) == 1, f'сигнал не потрапив у лог: {_LOGGED}')
+    _check('розклад' in (_sig[0]['detail'] or ''),
+           f'розклад фільтрів не доїхав у рядок: {_sig[0]}')
+    print('✓ 🧮 кожен сигнал монітора видно в 🧾 Лозі (з розкладом фільтрів)')
+
+
+def test_baseline_survives_a_one_tick_dropout():
+    """⚠️ КОРІНЬ «сигналів немає»: монета, що випала зі знімка на ОДИН такт,
+    поверталась із чистою базою і ковтала наступний РЕАЛЬНО новий блок."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_vob_open': True})
+    _vob(ff, AAAUSDT={'LONG': 1}, BBBUSDT={'LONG': 1})
+    _cap(ff, AAAUSDT=0.50, BBBUSDT=0.50)
+    _cap(ff, BBBUSDT=0.50)                    # AAA зникла на такт
+    _check('AAAUSDT' in ff._mm_vob_seen, 'базу стерто на першому ж пропуску')
+    _vob(ff, AAAUSDT={'LONG': 2}, BBBUSDT={'LONG': 1})
+    _cap(ff, AAAUSDT=0.50, BBBUSDT=0.50)
+    _check(any(x['symbol'] == 'AAAUSDT' for x in ff.signals),
+           f'новий блок після пропуску не дав сигналу: {ff.signals}')
+    print('✓ 🧮 разовий пропуск монети більше не ковтає наступний блок')
+
+
+# ── ⚑ «СКІЛЬКИ У ФІЛЬТРІ, А СКІЛЬКИ ПОЗА» (вимога 16.09) ─────────────────
+# «Коли увімкнений фільтр "Сила ≥" — незрозуміло що з іншою кількістю монет».
+# «Всі (6)» без другого числа читається як «у боті всього 6 монет».
+
+def test_js_says_how_many_the_strength_filter_left_out():
+    out = _run_js(r'''
+const R = (s, str) => ({symbol:s, mm:'LONG', strength:str, strength_prev:str,
+  delta:0, grow_since:null, price:1, price_dir:'flat', price_chg:0,
+  price_span:900, delta_span:180, f1:null, f4:null, selectable:true});
+const rows = [];
+for (let i = 0; i < 6; i++) rows.push(R('A' + i + 'USDT', 70));   // у фільтрі
+for (let i = 0; i < 17; i++) rows.push(R('B' + i + 'USDT', 10));  // поза
+document.getElementById('mm-min-str').value = '50';
+mmApplyState({rows: rows, enabled:true, limited:false, ts:1});
+const badge = document.getElementById('mm-str-out');
+const tab = document.querySelector('#mm-body [data-mmdir="all"]');
+console.log(JSON.stringify({
+  txt: badge.textContent, tip: badge.title || '',
+  tabN: (tab.querySelector('.mm-dir-n') || {}).textContent,
+  tabTip: tab.title || ''}));
+''')
+    import json
+    d = json.loads(out)
+    _check('17' in d['txt'] and '23' in d['txt'],
+           f'не видно, скільки монет поза фільтром: {d["txt"]!r}')
+    _check(d['tabN'] == '(6)', f'вкладка мусить рахувати ВИДИМІ: {d["tabN"]!r}')
+    _check('поза фільтром 17' in d['tabTip'],
+           f'у підказці вкладки немає розкладу: {d["tabTip"]!r}')
+    print(f'✓ ⚑ «{d["txt"]}» + розклад у підказці вкладки')
+
+
+def test_js_badge_is_silent_when_nothing_is_filtered_out():
+    """Нічого не відсіяно → напису НЕМАЄ: зайвий «поза фільтром 0» — шум."""
+    out = _run_js(r'''
+mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:70, strength_prev:70,
+  delta:0, grow_since:null, price:1, price_dir:'flat', price_chg:0,
+  price_span:900, delta_span:180, f1:null, f4:null, selectable:true}],
+  enabled:true, limited:false, ts:1});
+const b = document.getElementById('mm-str-out');
+console.log(JSON.stringify({txt:b.textContent, tip:b.title || ''}));
+''')
+    import json
+    d = json.loads(out)
+    _check(not d['txt'] and not d['tip'], f'напис лишився без потреби: {d}')
+    print('✓ ⚑ фільтр нічого не відсік → напису немає')
 
 
 # ── 🟦 ДЖЕРЕЛО БЛОКУ = СКАН «📦 Volumized OB Trend» (вимога 16.09) ────────
@@ -1852,8 +1971,8 @@ def test_new_vob_opens_even_when_strength_is_not_growing():
     _check(not ff._mm_grow_since.get('AAAUSDT'), 'фікстура: росту бути не мало')
     _vob(ff, AAAUSDT={'LONG': 2000})         # НОВИЙ блок
     _cap(ff, AAAUSDT=0.50)
-    _check(len(ff.opened) == 1 and ff.opened[0]['side'] == 'LONG',
-           f'угоду не відкрито, хоча перевірку скасовано: {ff.opened}')
+    _check(len(ff.signals) == 1 and ff.signals[0]['side'] == 'LONG',
+           f'сигналу немає, хоча перевірку скасовано: {ff.signals}')
     _check(not any('НЕ росте' in (x['detail'] or '') for x in _LOGGED),
            f'у 🧾 Лозі лишилось «відкладено через ріст»: {_LOGGED}')
     print('✓ 📈 перевірку скасовано: плато сили більше не відкладає вхід')
@@ -1869,7 +1988,7 @@ def test_falling_strength_does_not_delay_the_entry_either():
     _cap(ff, AAAUSDT=0.50)                   # сила ПАДАЄ
     _vob(ff, AAAUSDT={'LONG': 2000})
     _cap(ff, AAAUSDT=0.40)
-    _check(len(ff.opened) == 1, f'спад сили відклав вхід: {ff.opened}')
+    _check(len(ff.signals) == 1, f'спад сили відклав сигнал: {ff.signals}')
     print('✓ 📈 спад сили теж не блокує — умова входу знята повністю')
 
 

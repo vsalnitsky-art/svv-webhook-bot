@@ -102,6 +102,7 @@
   var SIGNAL_BADGES_JS = {
     "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS",
     "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB",
+    "mm_vob": "🧮 VOB з МММ-монітора",
     "ob_alert": "🆕 Новий OB",
     "poc": "🎯 POC-сетап",
     "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний",
@@ -115,6 +116,7 @@
   };
   var SIGNAL_ICON_JS = {
     "choch": "🟦", "choch_bos": "🟦", "vob_alert": "🟪", "vob": "💰",
+    "mm_vob": "🧮",
     "ob_alert": "🆕",
     "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋",
     "manual_ui": "✋", "manual_ui_overflow": "✋",

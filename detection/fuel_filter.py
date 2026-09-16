@@ -113,6 +113,10 @@ MM_PRICE_DEADZONE = 0.10
 # Пропущений такт нічого не втрачає: «новий» блок визначається за
 # `formation_time`, тож його побачимо наступного разу — просто трохи пізніше.
 MM_VOB_MAX_PER_TICK = 15
+# Скільки тримати позначку «цей блок уже опрацьовано», якщо монета зникла зі
+# знімка. Раніше позначка вмирала на ПЕРШОМУ ж пропуску — і монета поверталась
+# із чистою базою, ковтаючи наступний реальний блок.
+MM_VOB_SEEN_TTL = 6 * 3600
 
 LIQ_STATE_TTL = 20.0
 LIQ_STATE_CAP = 400             # запобіжник памʼяті: скільки монет тримати в кеші
@@ -1446,6 +1450,7 @@ class FuelFilterDaemon:
             return ''
         _kind_lbl = {'choch': 'CHoCH', 'choch_bos': 'CHoCH+BOS',
                      'vob': 'Volumized OB', 'vob_alert': 'Volumized OB',
+                     'mm_vob': '🧮 VOB з МММ-монітора',
                      'poc': '🎯 POC-сетап', 'opp': '🔄 Реверс'}.get(kind, kind or '?')
         try:
             from detection.activity_log import log_activity
@@ -3316,55 +3321,86 @@ class FuelFilterDaemon:
             if ft == prev:
                 continue
             self._mm_vob_seen[sym] = ft
-            self._mm_vob_open_one(sym, side, ob, tf, s, log_activity)
-        # Памʼять: тримаємо позначки лише для монет, що є у знімку.
-        for dead in [k for k in self._mm_vob_seen if k not in snap]:
-            self._mm_vob_seen.pop(dead, None)
+            self._mm_vob_signal_one(sym, side, ob, tf, s, log_activity, sc)
+        # Памʼять: позначку тримаємо за ЧАСОМ останньої перевірки, а НЕ за
+        # присутністю у знімку.
+        # ⚠️ Раніше тут стояло «немає у знімку → забути»: монета, що випала на
+        # ОДИН такт (liq-map мить не віддала стан), поверталась із ЧИСТОЮ базою,
+        # і наступний — уже РЕАЛЬНО новий — блок ковтався як «перший показ».
+        # Це й був один із коренів «сигналів немає». Той самий урок, що з
+        # `_mm_str_hist`: обрізаємо вікном, а не видаляємо на першому пропуску.
+        _cut = now - MM_VOB_SEEN_TTL
+        for dead in [k for k, t in list(self._mm_vob_at.items()) if t < _cut]:
             self._mm_vob_at.pop(dead, None)
+            self._mm_vob_seen.pop(dead, None)
 
-    def _mm_vob_open_one(self, sym: str, side: str, ob: Dict, tf: str,
-                         s: Dict, log_activity):
-        """Відкриття по новому VOB. Шлях ТОЙ САМИЙ, що у ✋ групового відкриття
-        монітора, — відрізняється лише мітка сигналу (🟪 Volumized OB) і те, що
-        рішення тут АВТОМАТИЧНЕ.
+    def _mm_vob_signal_one(self, sym: str, side: str, ob: Dict, tf: str,
+                           s: Dict, log_activity, sc):
+        """🧮 НОВИЙ Volumized OB → **СИГНАЛ У ЗАГАЛЬНИЙ АЛГОРИТМ** (вимога 16.09).
 
-        ⚠️ `by_hand` тут **НЕ** ставимо: це не рішення людини, тож правило
-        «нова ситуація» і решта воріт `_open` мусять діяти як для будь-якого
-        автоматичного відкриття. 🚦 головні кнопки напрямку теж тримає `_open`.
+        Дослівно: «МММ-монітор при знайденому VOB не відкриває угоду, а передає
+        монету у вигляді сигналу далі по алгоритму, тобто монета має потрапити
+        у Чергу, якщо Черга увімкнена».
+
+        Тому шлях тут ТОЧНО ТОЙ САМИЙ, що у VOB-алерта сканера:
+        **`_signal_allowed` → `tm.on_signal`** → `intercept` → черга → двигун.
+        Куди саме потрапить монета, вирішують ЧЕРГИ: увімкнена — стане в неї,
+        усі вимкнені — TM відкриє напряму (задокументована поведінка `intercept`).
+
+        ⚠️ **ПРЯМОГО `_open` ТУТ БІЛЬШЕ НЕМАЄ.** Він обходив і спільні ворота
+        сканера, і черги — тобто монітор торгував повз увесь алгоритм. Лишився
+        лише у ✋ ГРУПОВОМУ відкритті, де рішення ухвалює ЛЮДИНА.
+        ⚠️ Мітка сигналу — **власний код `mm_vob`** (🧮), а не `vob_alert`:
+        інакше в черзі й в угоді монітор не відрізнявся б від Черги-4, а саме
+        це вже доводилось виправляти (див. «КАРТИНКА УГОДИ МОНІТОРА»). Двигун
+        допише свою частину сам → «🧮 VOB з МММ-монітора → 🎯 Черга-4».
+        ⚠️ Сигнал ЗАВЖДИ пишеться в 🧾 Лог — і пропущений, і зарізаний, із
+        повним розкладом фільтрів. Саме мовчання цього шляху й робило питання
+        «а де сигнали?» без відповіді.
         """
-        mark = (self._mm_snapshot.get(sym) or {}).get('mark_price')
+        _snap = (self._mm_snapshot.get(sym) or {})
+        mark = _snap.get('mark_price')
         if not mark or mark <= 0:
-            try:
-                from detection.market_data import get_market_data
-                md = get_market_data()
-                tk = md.get_ticker(sym) if md else None
-                mark = (tk or {}).get('last')
-            except Exception:
-                mark = None
-        if not mark or mark <= 0:
-            return
-        _str = int((self._mm_snapshot.get(sym) or {}).get('strength') or 0)
+            mark = ob.get('bottom') if side == 'LONG' else ob.get('top')
         try:
-            opened = self._open(sym, side, {'mark_price': mark, 'dir': side}, s,
-                                opened_by=_ob_compose('vob_alert', 'MMM'),
-                                signal_at=time.time())
+            mark = float(mark or 0)
+        except Exception:
+            mark = 0.0
+        if mark <= 0:
+            return
+        _str = int(_snap.get('strength') or 0)
+        _head = (f'🧮 МММ-монітор: новий Volumized OB ({tf}) {side} '
+                 f'· МММ {side} {_str}%')
+        # ═══ СПІЛЬНІ ВОРОТА СКАНЕРА — обійти їх не можна (урок ASTERUSDT) ═══
+        try:
+            ok, reason, detail = sc._signal_allowed(sym, side, at_intake=True)
         except Exception as e:
-            print(f"[FF-MMM-VOB] open error {sym}: {e}")
-            return
-        if not opened:
-            return
-        with self._lock:
-            self._timers[sym] = {'dir': side, 'since': time.time(),
-                                 'start_price': mark}
-        log_activity(sym, 'opened',
-                     f'🧮 МММ-монітор: НОВИЙ Volumized OB ({tf}) у бік {side} '
-                     f'збігся з МММ (сила {_str}%) — відкрито автоматично',
+            ok, reason, detail = True, '', f'ворота не перевірились: {e}'
+        log_activity(sym, 'signal', f'{_head} · {detail}',
                      side=side, source='MMM')
-        print(f"[FF-MMM-VOB] opened {side} {sym} on new {tf} VOB")
+        if not ok:
+            log_activity(sym, 'rejected', reason, side=side, source='MMM')
+            return
         try:
-            self._q4_set_vob_sl(sym, side, s)
+            tm = self._get_tm() if self._get_tm else None
+        except Exception:
+            tm = None
+        if tm is None:
+            log_activity(sym, 'skipped',
+                         f'{_head} — Trade Manager недоступний, сигнал втрачено',
+                         side=side, source='MMM')
+            return
+        try:
+            res = tm.on_signal(symbol=sym, side=side, entry_price=mark,
+                               opened_by='mm_vob') or {}
         except Exception as e:
-            print(f"[FF-MMM-VOB] SL error {sym}: {e}")
+            print(f"[FF-MMM-VOB] on_signal error {sym}: {e}")
+            log_activity(sym, 'skipped',
+                         f'{_head} — збій обробки сигналу: {e}',
+                         side=side, source='MMM')
+            return
+        _st = str(res.get('status') or '')
+        print(f"[FF-MMM-VOB] signal {side} {sym} ({tf}) → {_st or 'ok'}")
 
     def _mm_capture(self, fuels: Dict, settings: Optional[Dict] = None,
                     now: Optional[float] = None):

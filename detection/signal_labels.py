@@ -22,6 +22,10 @@ SIGNAL_BADGES = {
     'choch':      '🟦 CHoCH',
     'choch_bos':  '🟦 CHoCH+BOS',
     'vob_alert':  '🟪 Volumized OB',
+    # 🧮 VOB, знайдений МММ-монітором. ОКРЕМИЙ код, а не `vob_alert`: інакше в
+    # черзі й в угоді монітор не відрізнявся б від Черги-4 (та сама причина, що
+    # й ENGINE_ICON_OVERRIDE нижче).
+    'mm_vob':     '🧮 VOB з МММ-монітора',
     'ob_alert':   '🆕 Новий OB',          # 🆕 Новий 1H-OB (за збігом TF)
     'vob':        '💰 Volumized OB',      # funding-VOB (kind='vob')
     'poc':        '🎯 POC-сетап',         # POC-сетап → черга FF (kind='poc')
@@ -53,6 +57,7 @@ SIGNAL_ICONS = {
     'choch': '🟦',
     'choch_bos': '🟦',
     'vob_alert': '🟪',
+    'mm_vob': '🧮',
     'vob': '💰',
     'ob_alert': '🆕',
     'poc': '🎯',

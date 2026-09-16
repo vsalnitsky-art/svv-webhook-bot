@@ -2820,9 +2820,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Показувати лише монети, де сила МММ не нижча за поріг. Слабкий тиск (≤10%) напрямку фактично не має.">
                         Сила ≥ <input type="number" id="mm-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged()"> %
                     </label>
+                    <!-- ⚑ Скільки монет фільтр ВІДСІЯВ. Без цього числа «Всі (6)»
+                         не відрізнити від «у боті всього 6 монет» (скарга 16.09). -->
+                    <span id="mm-str-out" style="font-size:0.66rem;color:#fbbf24;font-family:monospace"></span>
                     <!-- 🟪 Авто-відкриття за НОВИМ Volumized OB по монетах таблиці. -->
-                    <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="🟪 АВТО-ВІДКРИТТЯ ЗА НОВИМ VOB. Бот стежить за Volumized OB по монетах ЦІЄЇ таблиці і відкриває угоду, щойно зʼявився НОВИЙ блок У БІК того напрямку, в якому монета зараз за МММ. ⚖ рівновага нічого не відкриває (напрямку немає), монети в угоді не беруться. ⚠️ Перший показ монети після старту — ТИХА БАЗА: по блоку, який міг утворитись півдня тому, угоду не відкриваємо, чекаємо НАСТУПНИЙ. Це єдине місце монітора, що ходить по свічки, тому монети перевіряються порціями — реакція може відставати на такт-два.">
-                        <input type="checkbox" id="ff-mm-vob-open" onchange="saveFuelFilterSettings()"> 🟪 VOB→угода
+                    <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="🧮 НОВИЙ VOB → СИГНАЛ. Бот стежить за Volumized OB по монетах ЦІЄЇ таблиці і, щойно зʼявився НОВИЙ блок У БІК поточного МММ, віддає монету як СИГНАЛ у загальний алгоритм: спільні фільтри сканера → черга (якщо увімкнена) → двигун. Сам монітор угоду НЕ відкриває. Усі черги вимкнені — Trade Manager відкриє напряму, як і для будь-якого іншого сигналу. ⚖ рівновага сигналу не дає (напрямку немає), монети в угоді не беруться. ⚠️ Перший показ монети після старту — ТИХА БАЗА: по блоку, який міг утворитись півдня тому, сигналу немає, чекаємо НАСТУПНИЙ. Сигнал і причина відмови ЗАВЖДИ пишуться в 🧾 Лог (джерело MMM).">
+                        <input type="checkbox" id="ff-mm-vob-open" onchange="saveFuelFilterSettings()"> 🧮 VOB→сигнал
                     </label>
                     <!-- ⚠️ ВЛАСНОГО TF тут НЕМАЄ: блок бере сканер «📦 Volumized OB
                          Trend», тож монітор торгує РІВНО тим блоком, що на графіку.
@@ -11593,11 +11596,36 @@ function mmRender() {
     // Вигляд вкладок — ТОЧНО той самий, що у вкладок напрямку Черги-1/2 (вони
     // теж стилізуються інлайном у JS, а не класом), щоб сторінка лишалась
     // однорідною.
+    // ⚑ ТЕ САМЕ по ВСІХ рядках — щоб було видно, скільки монет фільтр «Сила ≥»
+    // лишив ПОЗА показом. «Всі (6)» без цього числа читається як «у боті всього
+    // 6 монет», хоча їх може бути 23 (скарга 16.09).
+    const _all = { LONG: 0, SHORT: 0, flat: 0 };
+    _mmRows.forEach(r => {
+        _all[r.mm === 'LONG' ? 'LONG' : (r.mm === 'SHORT' ? 'SHORT' : 'flat')] += 1;
+    });
+    const _outTotal = _mmRows.length - _byStr.length;
+    const _outEl = document.getElementById('mm-str-out');
+    if (_outEl) {
+        _outEl.textContent = _outTotal > 0
+            ? `⚑ поза фільтром ${_outTotal} з ${_mmRows.length}` : '';
+        _outEl.title = _outTotal > 0
+            ? (`Фільтр «Сила ≥ ${_mmMinStr()}%» лишив у таблиці ${_byStr.length} `
+               + `монет із ${_mmRows.length}; решта ${_outTotal} — зі слабшою силою МММ. `
+               + 'Це НЕ «бот їх не бачить»: вони рахуються, просто не показані. '
+               + 'Постав 0, щоб побачити всі.')
+            : '';
+    }
     document.querySelectorAll('#mm-body [data-mmdir]').forEach(btn => {
         const d = btn.dataset.mmdir;
         const n = d === 'all' ? _byStr.length : (cnt[d] || 0);
+        const nAll = d === 'all' ? _mmRows.length : (_all[d] || 0);
         const el = btn.querySelector('.mm-dir-n');
         if (el) el.textContent = `(${n})`;
+        // У підказці — обидва числа, щоб «скільки у фільтрі / скільки поза» було
+        // видно для КОЖНОЇ вкладки, а не лише загалом.
+        btn.title = (nAll > n)
+            ? `у фільтрі ${n} · поза фільтром ${nAll - n} (усього ${nAll})`
+            : `${n} монет`;
         const on = (d === _mmDir);
         btn.style.cssText = 'cursor:pointer;padding:3px 10px;border-radius:11px;'
             + 'font-size:0.68rem;font-weight:700;'
@@ -13908,6 +13936,7 @@ function histSymCell(c, isShadow) {
 const SIGNAL_BADGES_JS = {
     'choch': '🟦 CHoCH', 'choch_bos': '🟦 CHoCH+BOS',
     'vob_alert': '🟪 Volumized OB', 'vob': '💰 Volumized OB',
+    'mm_vob': '🧮 VOB з МММ-монітора',
     'ob_alert': '🆕 Новий OB',
     'poc': '🎯 POC-сетап',
     'opp': '🔄 Реверс', 'external': '🔌 Зовнішня', 'manual': '✋ Ручний',
@@ -13921,6 +13950,7 @@ const ENGINE_BADGES_JS = {
 };
 const SIGNAL_ICON_JS = {
     'choch': '🟦', 'choch_bos': '🟦', 'vob_alert': '🟪', 'vob': '💰',
+    'mm_vob': '🧮',
     'ob_alert': '🆕',
     'poc': '🎯', 'opp': '🔄', 'external': '🔌', 'manual': '✋',
     'manual_ui': '✋', 'manual_ui_overflow': '✋',
