@@ -513,7 +513,14 @@ class BybitConnector:
             
             if stop_loss:
                 params["stopLoss"] = str(stop_loss)
-            if take_profit:
+            # ⚠️ TP: НУЛЬ — ЗМІСТОВНЕ значення. Bybit трактує `takeProfit="0"`
+            # як СКАСУВАТИ тейк-профіт, тож перевірка мусить бути `is not None`.
+            # Раніше стояло `if take_profit:` — нуль мовчки ковтався, і
+            # скасувати біржовий TP було ФІЗИЧНО НЕМОЖЛИВО: той, що поставлено
+            # при відкритті, лишався на біржі назавжди, хоч би що робив
+            # оператор у боті. Виклики з `take_profit=None` (усі наявні)
+            # поводяться РІВНО як раніше.
+            if take_profit is not None:
                 params["takeProfit"] = str(take_profit)
             if trailing_stop:
                 params["trailingStop"] = str(trailing_stop)

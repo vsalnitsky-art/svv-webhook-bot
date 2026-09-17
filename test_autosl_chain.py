@@ -820,6 +820,146 @@ def test_tp_lines_have_no_labels():
     print(f'✓ рядки рівнів без підписів: {txt.splitlines()[0]}')
 
 
+# ═════════ ✋ ЗНЯТИЙ Manual TP-2 = ЗНЯТИЙ АВТО-ВИХІД ════════════════════════
+# Скарга дослівно: «Чому, коли я вручну видаляю Manual TP-1 Manual TP-2, вони
+# все одно спрацьовують?» Поле очищалось ПРАВИЛЬНО — угоду закривали ДВА інші
+# шляхи на ТІЙ САМІЙ ціні: стратегічний TP (`use_tp`/`tp_pct`, у REAL-книзі ще
+# й НА БІРЖІ) і автопілот, для якого TP-2 і Є ціллю (🧲 магніт).
+def test_the_rule_measures_tp2_not_both_fields():
+    """ЄДИНЕ ДЖЕРЕЛО правила — `_tp2_cleared_by_user`.
+
+    Міряємо САМЕ TP-2: TP-1 — ЧАСТКОВА фіксація, і зняти її, лишивши повний
+    вихід, — нормальний сценарій, який не має вимикати автоматичний вихід."""
+    f = TM._tp2_cleared_by_user
+    _check(f({'pilot_tp_cleared': True}) is True,
+           'знято TP-2 → авто-фіксації немає')
+    _check(f({'pilot_tp_cleared': True, 'manual_tp': 1.23}) is False,
+           'TP-2 стоїть → правило не діє, хоч би що робили з TP-1')
+    _check(f({'pilot_tp_cleared': True, 'manual_tp1': 1.1}) is True,
+           'знятий TP-2 лишається знятим, навіть коли TP-1 на місці')
+    _check(f({}) is False, 'порожня позиція — не «оператор зняв»')
+    _check(f({'manual_tp': 0}) is False,
+           'рівня просто ще немає (не рахований) — це НЕ рішення оператора')
+    print('✓ правило міряє саме TP-2, а не «обидва поля порожні»')
+
+
+def test_pilot_does_not_close_at_a_level_the_operator_deleted():
+    """Автопілот: `act='take'` на знятому TP-2 НЕ закриває угоду.
+
+    Без цього гейта видалення рівня нічого не змінювало: угода закривалась на
+    тій самій ціні, лише з причиною «🎯 Автопілот (ціль)» замість Manual TP —
+    саме це й виглядало як «видалений TP усе одно спрацював»."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index("if act == 'take' and self._tp2_cleared_by_user(pos):")
+    j = src.index("if act == 'take':", i)
+    guard = src[i:j]
+    _check('return False' in guard, 'знятий рівень → угоду НЕ фіксуємо')
+    _check("_pilot_mark(pkey, take_block=" in guard,
+           'стан має сказати ПРАВДУ: план хотів фіксацію, її заблоковано')
+    _check("if not pos.get('_pilot_take_user_lock'):" in guard,
+           'анти-флуд: пояснення пишеться раз, а не щотакту (такт 20с)')
+    _check('Впишіть Manual TP-2' in guard,
+           'у лозі має бути сказано, ЯК повернути автоматичну фіксацію')
+    # ⚠️ Гейт мусить стояти ПЕРЕД гілкою закриття, інакше він марний.
+    _check(i < src.index("self._close_position(symbol, px, reason='pilot_target')"),
+           'гейт мусить стояти ДО закриття за ціллю')
+    print('✓ автопілот не закриває на рівні, який оператор видалив')
+
+
+def test_strategic_tp_respects_the_cleared_level_in_both_books():
+    """Стратегічний TP (`use_tp` + `tp_pct`) — другий шлях на ту саму ціну.
+
+    Паперова книга ДЗЕРКАЛИТЬ реальну: інакше та сама угода поводилась би
+    по-різному залежно від книги."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    for close_call, book in (("self._close_position(symbol, current_price, reason='take_profit')", 'real'),
+                             ("self._close_shadow(symbol, current_price, reason='take_profit')", 'paper')):
+        k = src.index(close_call)
+        head = src[max(0, k - 900):k]
+        _check('self._tp2_cleared_by_user(pos)' in head,
+               f'{book}: перед закриттям по стратегічному TP має стояти гейт')
+        _check('_log_tp_cleared_once' in head,
+               f'{book}: мовчазний пропуск читався б як «бот завис»')
+    print('✓ стратегічний TP поважає знятий рівень в ОБОХ книгах')
+
+
+def test_the_strategic_block_is_said_once_not_every_tick():
+    """Монітор тікає раз на 4с, а ціна може стояти вище TP годинами."""
+    _reset()
+    o = _tm()
+    pos = {'side': 'LONG', 'entry_price': 100.0, 'tp_price': 105.0,
+           'pilot_tp_cleared': True}
+    o._log_tp_cleared_once('XRPUSDT', pos, False)
+    o._log_tp_cleared_once('XRPUSDT', pos, False)
+    o._log_tp_cleared_once('XRPUSDT', pos, False)
+    _check(len(_LOG) == 1, f'мав бути РІВНО один рядок, а не {len(_LOG)}')
+    _check('ЗНЯТО ОПЕРАТОРОМ' in _text(), f'причина має бути названа: {_text()}')
+    print('✓ стратегічний блок пояснюється один раз')
+
+
+def test_putting_the_level_back_releases_the_lock():
+    """Замок НЕ вічний: вписали Manual TP-2 → автофіксація повертається,
+    і пояснення зʼявиться знову, якщо рівень знімуть удруге."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    k = src.index("pos['manual_tp'] = _tv")
+    body = src[k:k + 900]
+    _check("pos.pop('pilot_tp_cleared', None)" in body,
+           'ручний рівень знімає позначку «оператор зняв TP-2»')
+    _check("pos.pop('_pilot_take_user_lock', None)" in body
+           and "pos.pop('_tp_cleared_logged', None)" in body,
+           'позначки «про це вже сказано» теж скидаються')
+    _check('_src == self.SRC_USER' in body,
+           'знімає замок САМЕ оператор, а не автопілот')
+    print('✓ повернутий рівень знімає замок')
+
+
+def test_exchange_tp_can_be_cancelled_at_all():
+    """🏦 РІВЕНЬ ЖИВ НЕ ЛИШЕ В БОТІ. Для реальної угоди тейк, поставлений при
+    відкритті, стоїть НА BYBIT — і скасувати його було ФІЗИЧНО неможливо:
+    `set_trading_stop` мав `if take_profit:`, тобто ковтав нуль, яким Bybit і
+    скасовує тейк. Поле в інтерфейсі порожнє, а біржа закриває позицію сама."""
+    src = open(os.path.join(_ROOT, 'core/bybit_connector.py')).read()
+    i = src.index('def set_trading_stop')
+    body = src[i:i + 1800]
+    _check('if take_profit is not None:' in body,
+           'нуль — ЗМІСТОВНЕ значення (скасувати), перевірка мусить бути is not None')
+    # ⚠️ Коментар ПОЯСНЮЄ стару перевірку дослівно, тож замок мусить дивитись
+    # на КОД, а не на текст (та сама пастка, що вже ловилась на `ensure_fresh`).
+    code = '\n'.join(ln for ln in body.splitlines()
+                     if not ln.strip().startswith('#'))
+    _check('if take_profit:' not in code,
+           'стара перевірка робила скасування неможливим')
+    print('✓ біржовий тейк-профіт тепер можна скасувати')
+
+
+def test_clearing_tp2_cancels_the_exchange_tp_and_says_what_happened():
+    """І скасовуємо його САМЕ тоді, коли оператор зняв Manual TP-2 — інакше
+    внутрішні гейти нічого не варті: біржа закриє позицію повз усю логіку."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index('# 🏦 РЕАЛЬНА КНИГА: знятий TP-2 знімаємо Й НА БІРЖІ.')
+    body = src[i:i + 2200]
+    _check("not is_shadow" in body, 'паперова книга біржу не чіпає')
+    _check("tp_op[0] == 'clear'" in body, 'лише на ЗНЯТТЯ рівня')
+    _check("origin != self.SRC_AUTO" in body,
+           'лише рішення ОПЕРАТОРА, не двигуна')
+    _check('take_profit=0' in body, 'скасування — це явний нуль')
+    _check('_exok' in body and 'НЕ вдалось скасувати' in body,
+           'результат ЧИТАЄМО: відмова означає, що тейк лишився на біржі')
+    print('✓ знятий TP-2 знімає й біржовий тейк, а відмова не мовчить')
+
+
+def test_protective_exits_are_never_touched():
+    """⚠️ Правило знімає ФІКСАЦІЮ ПРИБУТКУ, а не ЗАХИСТ. Стоп-лос і решта
+    виходів мусять лишитись недоторканими — ризик не знімаємо ніколи."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    for close_call in ("self._close_position(symbol, current_price, reason='stop_loss')",
+                       "self._close_shadow(symbol, current_price, reason='stop_loss')"):
+        k = src.index(close_call)
+        _check('_tp2_cleared_by_user' not in src[max(0, k - 400):k],
+               'стоп-лос НЕ має залежати від знятого TP-2')
+    print('✓ захисні виходи правило не зачіпає')
+
+
 if __name__ == '__main__':
     test_mnt_case_star_1h_block_is_used_instead_of_waiting()
     test_chosen_source_wins_for_every_trade()
@@ -867,4 +1007,12 @@ if __name__ == '__main__':
     test_partial_close_goes_to_the_group_topic()
     test_partial_close_message_is_one_line()
     test_tp_lines_have_no_labels()
+    test_the_rule_measures_tp2_not_both_fields()
+    test_pilot_does_not_close_at_a_level_the_operator_deleted()
+    test_strategic_tp_respects_the_cleared_level_in_both_books()
+    test_the_strategic_block_is_said_once_not_every_tick()
+    test_putting_the_level_back_releases_the_lock()
+    test_exchange_tp_can_be_cancelled_at_all()
+    test_clearing_tp2_cancels_the_exchange_tp_and_says_what_happened()
+    test_protective_exits_are_never_touched()
     print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')

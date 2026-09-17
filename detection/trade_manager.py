@@ -1677,8 +1677,15 @@ class TradeManager:
         if s.get('use_tp') and pos.get('tp_price'):
             if (pos['side'] == 'LONG' and current_price >= pos['tp_price']) or \
                (pos['side'] == 'SHORT' and current_price <= pos['tp_price']):
-                self._close_position(symbol, current_price, reason='take_profit')
-                return
+                # ✋ Оператор зняв Manual TP-2 → стратегічний TP теж не фіксує.
+                # Інакше «видалив рівень» нічого не означало б: угода закрилась
+                # би на 🎯 Take Profit від `tp_pct`, і в інтерфейсі це виглядало
+                # б як «видалений TP усе одно спрацював».
+                if self._tp2_cleared_by_user(pos):
+                    self._log_tp_cleared_once(symbol, pos, False)
+                else:
+                    self._close_position(symbol, current_price, reason='take_profit')
+                    return
         
         # 2) Time stop
         if s.get('use_time_stop'):
@@ -2267,8 +2274,14 @@ class TradeManager:
         if s.get('use_tp') and pos.get('tp_price'):
             if (pos['side'] == 'LONG' and current_price >= pos['tp_price']) or \
                (pos['side'] == 'SHORT' and current_price <= pos['tp_price']):
-                self._close_shadow(symbol, current_price, reason='take_profit')
-                return
+                # ✋ Те саме правило, що в реальній книзі: знятий Manual TP-2
+                # знімає й стратегічну фіксацію. Паперова книга ДЗЕРКАЛИТЬ
+                # реальну — інакше та сама угода поводилась би по-різному.
+                if self._tp2_cleared_by_user(pos):
+                    self._log_tp_cleared_once(symbol, pos, True)
+                else:
+                    self._close_shadow(symbol, current_price, reason='take_profit')
+                    return
         # 2) Time stop.
         if s.get('use_time_stop'):
             elapsed_h = (time.time() - pos['opened_at']) / 3600
@@ -3661,7 +3674,27 @@ class TradeManager:
             # Чому трейл не застосовано (для чесної іконки в таблиці).
             # Порожньо = або трейлу не було, або він пройшов.
             'trail_block': '',
+            # Чому НЕ зафіксували результат на цілі (порожньо = не було приводу).
+            'take_block': '',
         }
+
+        # ✋ ОПЕРАТОР ЗНЯВ Manual TP-2 → автопілот на цілі НЕ ЗАКРИВАЄ.
+        # TP-2 і Є ціль автопілота (🧲 магніт), тож без цього гейта видалення
+        # рівня нічого не змінювало: угода закривалась на тій самій ціні, лише
+        # з причиною «🎯 Автопілот (ціль)» замість «Manual TP». Той самий
+        # принцип, що вже діє для SL (`_pilot_sl_user_lock`): рішення людини
+        # має пріоритет. Стоп автопілот веде далі — захист лишається.
+        if act == 'take' and self._tp2_cleared_by_user(pos):
+            self._pilot_mark(pkey, take_block='оператор зняв Manual TP-2')
+            if not pos.get('_pilot_take_user_lock'):
+                pos['_pilot_take_user_lock'] = True
+                log_activity(symbol, 'skipped',
+                             f'🎯 Автопілот: ціль досягнута, але Manual TP-2 '
+                             f'ЗНЯТО ОПЕРАТОРОМ — угоду НЕ фіксуємо, ведемо '
+                             f'далі (стоп працює). Впишіть Manual TP-2, щоб '
+                             f'повернути автоматичну фіксацію.',
+                             side=side, source='PILOT')
+            return False
 
         if act == 'take':
             log_activity(symbol, 'closed',
@@ -3758,6 +3791,62 @@ class TradeManager:
         # 'hold' — рішення ТРИМАТИ. У 🧾 Лог не пишемо (це стан, а не подія):
         # він уже відображений у колонці «🎯 Автопілот» таблиці угод.
         return False
+
+    @staticmethod
+    def _tp2_cleared_by_user(pos: Dict) -> bool:
+        """✋ ОПЕРАТОР ЗНЯВ ПОВНИЙ ВИХІД (Manual TP-2) — ЄДИНЕ ДЖЕРЕЛО правила.
+
+        Скарга дослівно: «Чому, коли я вручну видаляю Manual TP-1 Manual TP-2,
+        вони все одно спрацьовують?» Поле справді очищалось правильно, але
+        угода закривалась на ТОМУ САМОМУ рівні ДВОМА іншими шляхами:
+          • 🎯 стратегічний TP (`use_tp` + `tp_pct`) — `tp_price`, порахований
+            при відкритті; у REAL-книзі він ще й стоїть НА БІРЖІ;
+          • 🎯 автопілот — TP-2 і Є його ЦІЛЛЮ (🧲 магніт), тож `act='take'`
+            фіксував результат на тій самій ціні, лише з іншою причиною.
+        Тобто «видалив рівень» нічого не означало, і це читалось як брехня
+        інтерфейсу: поле порожнє, а вихід працює.
+
+        ПРАВИЛО: знятий TP-2 = знятої АВТОМАТИЧНОЇ ФІКСАЦІЇ ПРИБУТКУ по цій
+        угоді. Виходи, що ЗАХИЩАЮТЬ (SL, беззбиток, правила виходу за
+        вердиктом, Opposite OB, час) НЕ чіпаються — ризик не знімаємо ніколи.
+
+        ⚠️ Міряємо САМЕ TP-2 (`manual_tp`), а не «обидва поля порожні»: TP-1 —
+        ЧАСТКОВА фіксація, і зняти її, лишивши повний вихід, — нормальний
+        сценарій. Знято TP-2, а TP-1 лишився → повного авто-виходу немає,
+        частковий працює.
+        ⚠️ Замок НЕ вічний: вписали будь-який Manual TP-2 → правило знімається
+        само (умова перестає виконуватись), нічого «розблоковувати» не треба.
+        ⚠️ `pilot_tp_cleared` ставиться ЛИШЕ на `origin='user'` — рівень, який
+        не виставив автопілот (порожнє поле з самого початку), сюди не
+        потрапляє: це не рішення оператора, а ще не порахований рівень.
+        """
+        return bool(pos.get('pilot_tp_cleared') and not pos.get('manual_tp'))
+
+    def _log_tp_cleared_once(self, symbol: str, pos: Dict,
+                             is_shadow: bool) -> None:
+        """Сказати В ЛОЗІ, що стратегічний TP не спрацював через знятий рівень.
+
+        ⚠️ Мовчання тут було б гірше за сам дефект: ціна СТОЇТЬ на рівні
+        стратегічного TP, монітор тікає раз на 4с — і без цього рядка
+        виглядало б, ніби бот просто «завис» і не бачить власного тейка.
+        ⚠️ Анти-флуд ОБОВʼЯЗКОВИЙ: ціна може триматись вище TP годинами, тож
+        пишемо ОДИН раз на угоду. Позначка знімається, щойно оператор вписав
+        Manual TP-2 назад (`update_manual_sl_tp`), — щоб пояснення зʼявилось і
+        для наступного разу."""
+        if pos.get('_tp_cleared_logged'):
+            return
+        pos['_tp_cleared_logged'] = True
+        try:
+            from detection.activity_log import log_activity
+            log_activity(symbol, 'skipped',
+                         f'🎯 Стратегічний TP {self._fmt_price(pos.get("tp_price"))} '
+                         f'досягнуто, але Manual TP-2 ЗНЯТО ОПЕРАТОРОМ — '
+                         f'не фіксуємо'
+                         + (' (🧪 paper)' if is_shadow else '')
+                         + '. Впишіть Manual TP-2, щоб повернути автофіксацію.',
+                         side=pos.get('side'), source='TM')
+        except Exception:
+            pass
 
     @staticmethod
     def _pilot_tp_done(pos: Dict) -> bool:
@@ -7163,6 +7252,13 @@ class TradeManager:
                 pos['manual_tp_src'] = _src
                 pos['manual_tp_by'] = origin_label or ''
                 self._record_manual_hist(pos, 'tp', _tv)
+                # ✋ Рівень ПОВЕРНУВСЯ → знімаємо замок «оператор зняв TP-2»
+                # і позначки «про це вже сказано», щоб пояснення зʼявилось
+                # знову, якщо рівень знімуть удруге.
+                if _src == self.SRC_USER:
+                    pos.pop('pilot_tp_cleared', None)
+                pos.pop('_pilot_take_user_lock', None)
+                pos.pop('_tp_cleared_logged', None)
             elif tp_op[0] == 'clear':
                 pos.pop('manual_tp', None)
                 pos.pop('manual_tp_src', None)
@@ -7186,7 +7282,45 @@ class TradeManager:
                 self._persist_positions()
         except Exception as e:
             print(f"[TM] manual SL/TP persist warn for {symbol}: {e}")
-        
+
+        # 🏦 РЕАЛЬНА КНИГА: знятий TP-2 знімаємо Й НА БІРЖІ.
+        # ⚠️ Без цього гейти всередині бота нічого не вартували: тейк, який
+        # `place_order(take_profit=…)` поставив при відкритті, лишався на
+        # Bybit, і біржа закривала позицію САМА — повз усю нашу логіку. Поле в
+        # інтерфейсі порожнє, а на біржі тейк стоїть: рівно та розбіжність
+        # «одне число у двох місцях», яку проєкт не допускає.
+        # ⚠️ Скасувати можна лише явним `takeProfit="0"` — саме тому в
+        # `bybit_connector.set_trading_stop` перевірка стала `is not None`.
+        # ⚠️ Результат ЧИТАЄМО: відмова біржі означає, що тейк ТАМ ЛИШИВСЯ, і
+        # мовчати про це не можна — оператор має знати, що угоду все одно
+        # можуть закрити.
+        if (not is_shadow and tp_op[0] == 'clear'
+                and origin != self.SRC_AUTO
+                and updated.get('tp_price') and getattr(self, 'bybit', None)):
+            _exok = False
+            try:
+                _exok = bool(self.bybit.set_trading_stop(symbol=symbol,
+                                                         take_profit=0))
+            except Exception as e:
+                print(f"[TM] cancel exchange TP error for {symbol}: {e}")
+            try:
+                from detection.activity_log import log_activity
+                if _exok:
+                    log_activity(symbol, 'sltp',
+                                 f'🏦 Біржовий тейк-профіт СКАСОВАНО разом із '
+                                 f'Manual TP-2 (був '
+                                 f'{self._fmt_price(updated.get("tp_price"))})',
+                                 side=updated.get('side'), source='TM')
+                else:
+                    log_activity(symbol, 'skipped',
+                                 f'🏦 ⚠️ НЕ вдалось скасувати біржовий '
+                                 f'тейк-профіт '
+                                 f'{self._fmt_price(updated.get("tp_price"))} — '
+                                 f'він ЛИШИВСЯ на Bybit і може закрити позицію',
+                                 side=updated.get('side'), source='TM')
+            except Exception:
+                pass
+
         # Log the change so operator can correlate with later closes.
         sl_disp = f"{updated.get('manual_sl')}" if 'manual_sl' in updated else '—'
         tp_disp = f"{updated.get('manual_tp')}" if 'manual_tp' in updated else '—'

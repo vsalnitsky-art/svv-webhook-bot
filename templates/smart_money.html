@@ -15054,6 +15054,10 @@ const _PILOT_ACT = {
 // відхилив Trade Manager). Показувати тут 🛡 «стоп підтягнуто» — брехня:
 // стоп не зрушив. Окремий значок і колір, причина — у тултипі.
 const _PILOT_BLOCKED = ['🔒', 'трейл заблоковано', '#fbbf24'];
+// ✋ План хотів ЗАФІКСУВАТИ результат на цілі, але оператор ЗНЯВ Manual TP-2 —
+// автоматичної фіксації по цій угоді більше немає. Це стан СИЛЬНІШИЙ за
+// заблокований трейл (йшлося про закриття угоди), тож перекриває і його.
+const _PILOT_TAKE_BLOCKED = ['✋', 'фіксацію знято оператором', '#fbbf24'];
 const _PILOT_KIND = {
     liq_next: '💧', liq_main: '🌊', swing: '🏁', poc: '⚪',
     // Нові типи цілей: межа зони вартості, рівновага діапазону та ПОХІДНИЙ
@@ -15070,9 +15074,11 @@ function pilotCellHTML(p) {
     }
     // Заблокований трейл перекриває значок дії — стан УГОДИ важливіший за
     // намір плану (той самий принцип, що ⚖️ БЗ перекриває «бот» у полі SL).
-    const [ic, lbl, col] = pl.trail_block
-        ? _PILOT_BLOCKED
-        : (_PILOT_ACT[pl.action] || ['•', pl.action || '—', '#8b93a7']);
+    const [ic, lbl, col] = pl.take_block
+        ? _PILOT_TAKE_BLOCKED
+        : (pl.trail_block
+            ? _PILOT_BLOCKED
+            : (_PILOT_ACT[pl.action] || ['•', pl.action || '—', '#8b93a7']));
     const obj = pl.objective || null;
     const nxt = pl.next || null;
     const pr = pl.progress || null;
@@ -15115,7 +15121,8 @@ function pilotCellHTML(p) {
             ? '<span style="color:#fbbf24" title="TP не виставлено — див. підказку">⚠</span>' : '');
 
     const tip = [
-        `${lbl}${pl.trail_block ? ': ' + pl.trail_block : ''}`,
+        `${lbl}${pl.take_block ? ': ' + pl.take_block : (pl.trail_block ? ': ' + pl.trail_block : '')}`,
+        pl.take_block ? '✋ Ціль ДОСЯГНУТА, але Manual TP-2 знято руками — автопілот угоду НЕ фіксує і веде далі (стоп працює). Впишіть Manual TP-2, щоб повернути автоматичну фіксацію.' : null,
         obj ? `Ціль (TP-2): ${obj.label} @ ${obj.price}` : 'Цілі попереду не видно',
         (pl.r != null)
             ? `R = ${pl.r} — плановий: (вхід→ціль) / (вхід→ПОЧАТКОВИЙ стоп${pl.r_stop ? ' ' + pl.r_stop : ''}). Трейл і беззбиток його НЕ роздувають.`
