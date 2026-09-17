@@ -960,6 +960,100 @@ def test_protective_exits_are_never_touched():
     print('✓ захисні виходи правило не зачіпає')
 
 
+# ═════════ 🧮 ПРАВИЛО «Старий МММ ⚖» ГАСИТЬ АВТОМАТИКУ АВТОПІЛОТА ══════════
+# Вимога дослівно (17.09): «Якщо увімкнено "🧮 Старий МММ ⚖ → вихід" — потрібно
+# автоматично вимкнути все, що стосується автоматичного "🎯 Автопілот"; якщо
+# Manual TP-1 або Manual TP-2 виставлені вручну, бот має реагувати на ручні
+# дані. І тумблер ⚖️ TP-1 переводить SL у беззбиток має працювати.»
+def test_the_rule_and_the_autopilot_automation_are_mutually_exclusive():
+    """ЄДИНЕ джерело умови — щоб «вимкнено» означало те саме в логіці й в UI."""
+    f = TM._pilot_auto_off
+    _check(f({'use_mm_flat_exit': True}) is True, 'правило увімкнене → автоматики немає')
+    _check(f({'use_mm_flat_exit': False}) is False, 'вимкнене правило нічого не гасить')
+    _check(f({}) is False, 'порожні налаштування — не привід гасити автопілот')
+    print('✓ правило і автоматика автопілота — взаємовиключні')
+
+
+def test_the_gate_stops_the_whole_tick_not_just_one_action():
+    """Увесь такт, а не сім окремих перевірок: ціль, 🧲 магніт, трейл, `take`,
+    автозаповнення TP і якір R живуть САМЕ в `_pilot_tick`."""
+    o = _tm()
+    o._settings = {'pilot_enabled': True, 'use_mm_flat_exit': True}
+    o._pilot_state, o._pilot_at = {}, {}
+    pos = {'side': 'LONG', 'entry_price': 100.0}
+    _check(o._pilot_tick('BTCUSDT', pos, 101.0, False) is False,
+           'такту немає → позицію автопілот не закриває')
+    _check(not o._pilot_at,
+           'троттл НЕ чіпали — доказ, що жодної роботи не виконувалось')
+    st = o.get_pilot_state('BTCUSDT', False)
+    _check(st and st.get('auto_off'),
+           f'колонка мусить сказати ПРИЧИНУ, а не застигнути: {st}')
+    ts = st['ts']
+    o._pilot_tick('BTCUSDT', pos, 101.5, False)
+    o._pilot_tick('BTCUSDT', pos, 102.0, False)
+    _check(o.get_pilot_state('BTCUSDT', False)['ts'] == ts,
+           'анти-флуд: знімок пишеться раз, інакше таблиця смикалась би щотакту')
+    # ⚠️ Реальна і паперова книги — РІЗНІ ключі (урок TRXUSDT).
+    o._pilot_tick('BTCUSDT', pos, 101.0, True)
+    _check(o.get_pilot_state('BTCUSDT', True) is not None
+           and o.get_pilot_state('BTCUSDT', True) is not st,
+           'паперова книга має власний знімок')
+    print('✓ гейт зупиняє ВЕСЬ такт автопілота і пояснює це в колонці')
+
+
+def test_the_gate_stands_before_any_pilot_work():
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index('def _pilot_tick')
+    j = src.index('def _pilot_mark', i)
+    body = src[i:j]
+    g = body.index('if self._pilot_auto_off(s):')
+    _check(g < body.index('from detection import trade_pilot'),
+           'гейт мусить стояти ДО завантаження модуля автопілота')
+    _check(g < body.index('pilot_tp2_from_magnet'),
+           'ДО 🧲 магніту — інакше запит до біржі робився б дарма')
+    _check(g < body.index("if act == 'take'"),
+           'ДО закриття за ціллю')
+    _check(g < body.index('pilot_autofill_tp'),
+           'ДО автозаповнення Manual TP-1/TP-2')
+    print('✓ гейт стоїть найпершим — жодна автоматика повз нього не проходить')
+
+
+def test_manual_levels_and_breakeven_are_outside_the_gate():
+    """РУЧНІ рівні мусять працювати далі — це половина вимоги."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index('def _check_manual_tp1')
+    j = src.index('def _tp1_move_to_breakeven', i)
+    tp1 = src[i:j]
+    _check('_pilot_auto_off' not in tp1,
+           'перевірка РУЧНОГО TP-1 не має залежати від правила')
+    _check('_tp1_move_to_breakeven' in tp1,
+           '⚖️ TP-1 → беззбиток викликається саме звідси і мусить лишитись')
+    be = src[src.index('def _tp1_move_to_breakeven'):][:3000]
+    _check('_pilot_auto_off' not in be,
+           'беззбиток після TP-1 працює незалежно від правила')
+    # І в МОНІТОРАХ обидві перевірки стоять ОКРЕМИМИ викликами після пілота.
+    for anchor in ('self._check_manual_tp1(symbol, pos, current_price, False)',
+                   'self._check_manual_tp1(symbol, pos, current_price, True)'):
+        k = src.index(anchor)
+        _check('_pilot_tick' not in src[k:k + 200],
+               'ручний TP-1 — окремий крок монітора, не частина автопілота')
+    _check('manual_reason = self._check_manual_sl_tp(pos, current_price)' in src,
+           'ручний SL/TP теж лишається окремим кроком')
+    print('✓ ручні Manual TP-1/TP-2 і ⚖️ беззбиток гейт не зачіпає')
+
+
+def test_the_rule_does_not_rewrite_the_users_own_toggle():
+    """Гасимо ПОВЕДІНКУ, а не чужий тумблер у БД: вимкнув правило — автопілот
+    повернувся рівно таким, як його налаштували."""
+    src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
+    i = src.index('def _pilot_auto_off')
+    body = src[i:src.index('def _pilot_note_auto_off', i)]
+    _check("s.get('use_mm_flat_exit')" in body, 'умова читає саме це правило')
+    _check("'pilot_enabled'" not in body.split('"""')[-1],
+           'чужий тумблер НЕ переписуємо')
+    print('✓ правило гасить поведінку, а не налаштування користувача')
+
+
 if __name__ == '__main__':
     test_mnt_case_star_1h_block_is_used_instead_of_waiting()
     test_chosen_source_wins_for_every_trade()
@@ -1015,4 +1109,9 @@ if __name__ == '__main__':
     test_exchange_tp_can_be_cancelled_at_all()
     test_clearing_tp2_cancels_the_exchange_tp_and_says_what_happened()
     test_protective_exits_are_never_touched()
+    test_the_rule_and_the_autopilot_automation_are_mutually_exclusive()
+    test_the_gate_stops_the_whole_tick_not_just_one_action()
+    test_the_gate_stands_before_any_pilot_work()
+    test_manual_levels_and_breakeven_are_outside_the_gate()
+    test_the_rule_does_not_rewrite_the_users_own_toggle()
     print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')

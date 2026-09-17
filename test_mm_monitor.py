@@ -1910,6 +1910,151 @@ def _src(path, fn):
 # тихо: ріст сили лишається ПОКАЗНИКОМ, а не умовою входу.
 
 
+# ═══ 19. 📍 МОНІТОР — ВЛАСНА СЕКЦІЯ ПОЗА ВІКНОМ ЧЕРГ, НАД POC (17.09) ══════
+# Вимога дослівно: «Винеси МММ-монітор із вікна Черг, розмісти над POC-сетап».
+# Монітор ніколи не був чергою (рядки не чекають сигналу, двигун їх не
+# відкриває), але лежав УСЕРЕДИНІ панелі Fuel Auto-Filter — і читався як ще
+# одна черга.
+def test_monitor_is_its_own_panel_above_poc_and_outside_the_queues():
+    mm = _HTML.index('id="mm-monitor-panel"')
+    poc = _HTML.index('id="poc-setup-panel"')
+    ff = _HTML.index('id="fuel-filter-panel"')
+    _check(mm < poc, 'МММ-монітор має стояти НАД 🎯 POC-сетапом')
+    _check(poc < ff, 'POC і далі стоїть над панеллю черг (порядок не ламаємо)')
+    _check(mm < ff, 'монітор мусить бути ПОЗА вікном Черг, а не всередині')
+    # Таблиця і тумблер переїхали РАЗОМ із секцією, а не лишились у чергах.
+    for _id in ('mm-body', 'mm-tbody', 'ff-mm-monitor-enabled', 'mm-bias-banner'):
+        _check(mm < _HTML.index(f'id="{_id}"') < ff,
+               f'{_id} мусить лежати всередині власної секції монітора')
+    print('✓ монітор — власна секція, стоїть над POC і поза вікном Черг')
+
+
+def test_the_panel_keeps_the_accordion_contract():
+    """Секція лишається гармошкою `togglePanel('mm')` — переїзд не має її
+    зламати, інакше сервер знову рахував би важку секцію завжди."""
+    _check("togglePanel('mm')" in _HTML, 'заголовок має лишитись клікабельним')
+    _check('id="mm-caret"' in _HTML, 'каретка гармошки на місці')
+    _check("'mm'" in _HTML[_HTML.index('const _PANEL_IDS'):
+                           _HTML.index('const _PANEL_IDS') + 220],
+           'секція мусить лишитись у _PANEL_IDS (памʼять згорнуто/розгорнуто)')
+    print('✓ гармошка монітора пережила переїзд')
+
+
+# ═══ 20. 🧮 ПРАВИЛО «Старий МММ ⚖ → вихід» ГАСИТЬ АВТОМАТИКУ АВТОПІЛОТА ════
+# Вимога дослівно (17.09): «Якщо увімкнено 🧮 Старий МММ ⚖ → вихід — потрібно
+# автоматично вимкнути все, що стосується автоматичного 🎯 Автопілот; якщо
+# Manual TP-1 або Manual TP-2 виставлені вручну, бот має реагувати на ручні
+# дані. І тумблер ⚖️ TP-1 переводить SL у беззбиток має працювати».
+def test_page_dims_exactly_the_controls_that_went_dead():
+    i = _HTML.index('const _PILOT_AUTO_IDS')
+    block = _HTML[i:i + 900]
+    for _id in ('tm-pilot-enabled', 'tm-pilot-autofill-tp', 'tm-pilot-tp1-liq',
+                'tm-pilot-tp1-fallback'):
+        _check(f"'{_id}'" in block, f'{_id} стає мертвим → мусить гаснути')
+    # ⚠️ Ці ТРИ — НЕ гасити: перші два обслуговують РУЧНІ рівні, третій живить
+    # ще й гейт за R ПЕРЕД відкриттям, тобто працює й без автопілота.
+    for _id in ('tm-tp1-move-be', 'tm-pilot-tp1-pct', 'tm-pilot-tp2-magnet'):
+        _check(f"'{_id}'" not in block,
+               f'{_id} мусить лишатись активним — він працює і без автопілота')
+    _check('_tmPilotAutoSync()' in _HTML, 'потрібна функція синхронізації')
+    _check('id="tm-pilot-auto-off-note"' in _HTML,
+           'мовчки погашені поля читались би як збій — потрібен напис')
+    print('✓ сторінка гасить РІВНО мертві контроли, ручні лишає живими')
+
+
+def test_the_sync_runs_on_change_and_after_settings_load():
+    i = _HTML.index('id="tm-use-mm-flat-exit"')
+    _check('_tmPilotAutoSync()' in _HTML[i:i + 260],
+           'перемикання правила мусить одразу синхронізувати контроли')
+    j = _HTML.index("document.getElementById('tm-tp1-move-be').checked")
+    _check('_tmPilotAutoSync()' in _HTML[j:j + 500],
+           'після застосування налаштувань теж — інакше поля виглядали б '
+           'активними до першого кліку')
+    print('✓ синхронізація йде і на зміну, і після завантаження налаштувань')
+
+
+def test_the_column_says_why_the_autopilot_is_silent():
+    _check('_PILOT_AUTO_OFF' in _HTML, 'потрібен окремий стан комірки')
+    i = _HTML.index('const [ic, lbl, col] = ')
+    chain = _HTML[i:i + 420]
+    _check(chain.index('pl.auto_off') < chain.index('pl.take_block'),
+           'вимкнена автоматика — найсильніший стан: такту взагалі не було')
+    tip = _HTML[_HTML.index('pl.auto_off ?', i):][:600]
+    _check('Manual TP-1/TP-2' in tip and 'беззбиток' in tip,
+           'підказка мусить сказати, ЩО саме працює далі')
+    print('✓ комірка «🎯 Автопілот» пояснює, чому автоматики немає')
+
+
+# ═══ 21. 💾 БАНЕР ПЕРЕЖИВАЄ РЕСТАРТ — таймер і показники (вимога 17.09) ═════
+# Дослівно: «Банер МММ-монітор не має втрачати свій таймер і показники після
+# кожного рестарту бота. Всі дані мають зберігатись і відновлюватись.»
+# `botupdate` роблять часто, а таймер міряє, скільки РИНОК тримає напрямок —
+# обнуляти його рестартом означало б показувати вік ПРОЦЕСУ замість віку СТАНУ.
+def test_the_banner_is_written_into_the_persisted_state():
+    src = _SRC[_SRC.index('def _persist_state'):]
+    body = src[:src.index('def ', 20)]
+    _check("'mm_bias'" in body, 'важіль мусить лягати в той самий блоб стану')
+    _check("'mm_bias_since'" in body,
+           'таймер зберігаємо ОКРЕМИМ числом — саме воно вирішує, '
+           'продовжити відлік чи почати заново')
+    print('✓ важіль і таймер банера пишуться у стан FF')
+
+
+def test_restart_restores_both_and_marks_them_as_restored():
+    src = _SRC[_SRC.index('def _load_state'):]
+    body = src[:src.index('def ', 20)]
+    _check("st.get('mm_bias')" in body and "st.get('mm_bias_since')" in body,
+           'на старті читаємо ОБИДВА поля')
+    _check("'restored'" in body,
+           'до першого такту числа з минулого запуску — це має бути ВИДНО')
+    _check('time.time() + 60' in body,
+           'час із майбутнього (переведений годинник) не має дати відʼємний таймер')
+    print('✓ рестарт повертає важіль і таймер, і чесно їх позначає')
+
+
+def test_the_timer_continues_when_the_direction_is_the_same():
+    """ГОЛОВНЕ: після рестарту напрямок той самий → таймер НЕ перезапускається."""
+    ff = _mk()
+    t0 = 10_000.0
+    ff._mm_bias = {'dir': 'LONG', 'pct': 40.0, 'since': int(t0), 'restored': True}
+    ff._mm_bias_since = t0
+    snap = {'AAA': {'status': 'LONG', 'strength': 60},
+            'BBB': {'status': 'LONG', 'strength': 20}}
+    ff._mm_open_syms = lambda: set()
+    ff._mm_track_bias(snap, t0 + 3600)
+    _check(ff._mm_bias_since == t0,
+           f'таймер мусить ПРОДОВЖИТИСЬ: {ff._mm_bias_since} != {t0}')
+    _check(ff._mm_bias['since'] == int(t0), 'у знімку — той самий момент')
+    _check(ff._mm_bias['dir'] == 'LONG', 'напрямок перерахований наживо')
+    _check('restored' not in ff._mm_bias,
+           'позначка «відновлено» мусить зникнути сама на першому ж такті')
+    print('✓ той самий напрямок після рестарту → таймер іде далі')
+
+
+def test_a_flip_after_restart_still_restarts_the_timer():
+    """Замок з іншого боку: відновлення НЕ має «приморожувати» таймер."""
+    ff = _mk()
+    t0 = 10_000.0
+    ff._mm_bias = {'dir': 'LONG', 'since': int(t0), 'restored': True}
+    ff._mm_bias_since = t0
+    ff._mm_open_syms = lambda: set()
+    ff._mm_track_bias({'AAA': {'status': 'SHORT', 'strength': 70}}, t0 + 100)
+    _check(ff._mm_bias['dir'] == 'SHORT', 'напрямок перевернувся')
+    _check(ff._mm_bias_since == t0 + 100, 'на фліпі таймер стартує заново')
+    print('✓ фліп після рестарту таймер перезапускає, як і має бути')
+
+
+def test_the_page_shows_that_the_numbers_were_restored():
+    _check('id="mm-bias-restored"' in _HTML, 'потрібна позначка біля таймера')
+    i = _HTML.index('function mmRenderBias')
+    body = _HTML[i:_HTML.index('function mmApplyState', i)]
+    _check('b.restored' in body and 'mm-bias-restored' in body,
+           'рендер мусить читати прапорець і показувати/ховати позначку')
+    _check('Відновлено після рестарту' in body,
+           'у підказці банера має бути сказано, звідки числа')
+    print('✓ сторінка показує, що числа відновлені, а не щойно пораховані')
+
+
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]
     bad = 0

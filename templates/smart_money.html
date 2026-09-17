@@ -2482,6 +2482,104 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
     </div>
 
+    <!-- ===== 🧮 МММ-МОНІТОР — ВЛАСНА секція ПОЗА вікном Черг (вимога 17.09) =====
+         Монітор ніколи не був чергою: рядки не чекають сигналу і двигун їх
+         сам не відкриває. Поки він лежав усередині панелі Fuel Auto-Filter,
+         це читалось як «ще одна черга» — і зникав разом із нею. Тепер стоїть
+         НАД 🎯 POC-сетапом, як окремий блок верхнього рівня. -->
+    <div class="tm-panel" id="mm-monitor-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(56,189,248,0.28);border-radius:8px;background:rgba(56,189,248,0.05)">
+        <!-- 🧮 МММ-МОНІТОР: живий напрямок МММ по монетах + групове ✋ відкриття.
+             ⚠️ Це МОНІТОР, а не черга: рядки НЕ чекають сигналу і двигун їх
+             сам не відкриває. Джерело чисел — ТОЙ САМИЙ знімок двигуна, що
+             живить колонку «МММ» у чергах (одне джерело правди). -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px">
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mm')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mm-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🧮 МММ-монітор <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— живий СТАРИЙ МММ по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
+            <div style="display:flex;align-items:center;gap:10px">
+                <span id="mm-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
+                <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🧮 МММ-монітор. ВИМКНЕНО — бот НЕ рахує знімок напрямків (економія: старий МММ по всіх монетах щотакту не рахується), таблиця порожня, групове відкриття недоступне. Сам моніторинг нічого не відкриває автоматично — лише показує стан і дає ✋ відкрити обране вручну.">
+                    <input type="checkbox" id="ff-mm-monitor-enabled" checked onchange="saveFuelFilterSettings()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+        <div id="mm-body">
+            <!-- ⚖️ БАНЕР ВАЖЕЛЯ МОНІТОРА — вигляд 1-в-1 з ₿ BTCUSDT (вимога
+                 17.09: «поки що лише вигляд такий і таймер»). Ті самі
+                 розміри, той самий прогрес-бар, той самий формат таймера і
+                 бейджа статусу — саме тому рендер бере СПІЛЬНІ хелпери
+                 (`dirGrad` / `dirTint` / `fuelBand` / `flipTimerHTML`), а не
+                 свої копії: інакше два банери на одній сторінці почали б
+                 розходитись у кольорах і словах. Алгоритм ₿ (сеанси, пауза,
+                 START/STOP) тут НЕ повторюється — свідомо. -->
+            <div id="mm-bias-banner" style="display:flex;align-items:center;gap:14px;margin:0 0 10px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
+                <span style="font-weight:900;font-size:1.1rem;color:#ffb02e;text-shadow:0 0 9px rgba(247,147,26,0.6);white-space:nowrap">🧮 МММ-МОНІТОР</span>
+                <div style="flex:1;min-width:120px;height:18px;border-radius:9px;background:rgba(255,255,255,0.07);overflow:hidden;position:relative">
+                    <div id="mm-bias-bar" style="height:100%;width:0%;border-radius:9px;background:#facc15;transition:width 0.4s linear,background 0.3s"></div>
+                    <span id="mm-bias-label" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
+                </div>
+                <span id="mm-bias-timer" class="ff-flip" style="white-space:nowrap"></span>
+                <!-- ↻ Показники й таймер персистяться, тож рестарт бота їх НЕ
+                     обнуляє. Позначка живе лише до першого такту після старту:
+                     відновлені числа ще не є свіжим розрахунком, і це видно. -->
+                <span id="mm-bias-restored" style="display:none;font-size:0.66rem;color:#8b93a7"
+                      title="Показники й таймер відновлено після рестарту бота — таймер продовжено з того самого моменту, числа оновляться найближчим тактом (~30с).">↻</span>
+                <span id="mm-bias-status" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap;background:transparent">—</span>
+            </div>
+            <!-- Режим економії: МММ рахується НЕ по всьому watchlist. Мовчати
+                 про це не можна — коротка таблиця читалась би як «бот сліпий». -->
+            <div id="mm-limited-hint" style="display:none;margin:0 0 8px;padding:7px 11px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:0.7rem;font-weight:600"></div>
+            <div style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
+                <span style="color:#8b93a7">Показати:</span>
+                <button type="button" data-mmdir="all" onclick="mmSetDir('all')" class="ff-qdir-btn">Всі <span class="mm-dir-n"></span></button>
+                <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span></button>
+                <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span></button>
+                <button type="button" data-mmdir="flat" onclick="mmSetDir('flat')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span></button>
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧮 МММ-МОНІТОР» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
+                    Сила ≥ <input type="number" id="mm-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged()" onchange="mmMinStrSave()"> %
+                </label>
+                <!-- ⚑ Скільки монет фільтр ВІДСІЯВ. Без цього числа «Всі (6)»
+                     не відрізнити від «у боті всього 6 монет» (скарга 16.09). -->
+                <span id="mm-str-out" style="font-size:0.66rem;color:#fbbf24;font-family:monospace"></span>
+            </div>
+            <!-- Панель групової дії. Кнопка НЕАКТИВНА, поки нічого не обрано —
+                 активний контрол, який нічого не робить, вводить в оману. -->
+            <div style="display:flex;align-items:center;gap:8px;margin:0 0 8px;flex-wrap:wrap">
+                <span id="mm-sel-count" style="font-size:0.7rem;color:#8b93a7;font-family:monospace">Обрано 0</span>
+                <button type="button" id="mm-open-btn" onclick="mmOpenSelected()" disabled
+                        style="font-size:0.68rem;padding:4px 12px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#4ade80;cursor:pointer;font-weight:700"
+                        title="✋ Відкрити УСІ обрані монети одразу. Напрямок кожної = її власний МММ (те, що в рядку). Ворота черг пропускаються — рішення ухвалює людина; 🚦 головні кнопки напрямку і запобіжники відкриття (ціна/розмір) лишаються.">✋ Відкрити обрані</button>
+                <button type="button" onclick="mmClearSel()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid #3a3f4b;background:transparent;color:#8b93a7;cursor:pointer">Зняти вибір</button>
+                <span id="mm-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
+            </div>
+            <!-- 🦓 Зебра саме для ЦІЄЇ таблиці (рядків багато і вони щільні).
+                 Клас на <tbody>, щоб порожній рядок-заглушка не смугався. -->
+            <style>
+              #mm-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
+              #mm-table tbody tr:hover { background: rgba(56,189,248,0.10); }
+              #mm-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
+            </style>
+            <div class="ff-timers-scroll">
+                <table class="tm-table" id="mm-table">
+                    <thead>
+                        <tr>
+                            <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mm-check-all" onchange="mmToggleAll(this.checked)"></th>
+                            <th data-mmsort="symbol" onclick="mmSort('symbol')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="СТАРИЙ показник МММ (той самий, що живить шар «Старий МММ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">Старий МММ<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="delta" onclick="mmSort('delta')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за ВІКНО СПОСТЕРЕЖЕННЯ (~3 хв, тобто три оновлення джерела). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. Базою є НАЙСТАРІШЕ значення у вікні, а не попередній такт: разовий пропуск даних більше не стирає показник, а дрібне тремтіння цілого числа сили не перемикає стрілку. Поки історії менше за одне оновлення джерела — показуємо «—», а не вигаданий приріст. Фактичне вікно по кожному рядку — у підказці комірки. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="grow" onclick="mmSort('grow')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу сила МММ росте БЕЗПЕРЕРВНО. Ріст ТРИВАЄ, поки виконуються ДВІ умови: (1) за вікном спостереження приріст вищий за поріг і (2) сила не відкотилась від свого піку в цьому вікні більше ніж на той самий поріг. Перша умова прибирає мерехтіння — дрібне тремтіння таймер не збиває; друга не дає таймеру тягнути «росте» ще хвилини після того, як сила вже розвернулась. «—» = зараз не росте. Клік — сортувати (найдовший ріст зверху).">⏱ Росте<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="pchg" onclick="mmSort('pchg')" style="cursor:pointer;user-select:none" title="Ціна зі знімка МММ + КУДИ вона йде: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). Поруч зі стрілкою — за скільки часу історії реально набралось: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ ціни (найсильніший ріст зверху).">Ціна<span class="ff-sort-arrow"></span></th>
+                            <th title="🔮 Прогноз 1H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 1H» над графіком. Читається готовим, нічого не рахує.">🔮 1H</th>
+                            <th title="🔮 Прогноз 4H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 4H» над графіком.">🔮 4H</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mm-tbody">
+                        <tr><td colspan="8" class="tm-empty-msg">Немає даних МММ</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- ===== 🎯 POC-СЕТАП (незалежний рушій; над Fuel Auto-Filter) ===== -->
     <div class="tm-panel" id="poc-setup-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(168,85,247,0.28);border-radius:8px;background:rgba(168,85,247,0.05)">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
@@ -2791,92 +2889,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
             </div>
             </div>
-            </div>
-
-            <!-- 🧮 МММ-МОНІТОР: живий напрямок МММ по монетах + групове ✋ відкриття.
-                 ⚠️ Це МОНІТОР, а не черга: рядки НЕ чекають сигналу і двигун їх
-                 сам не відкриває. Джерело чисел — ТОЙ САМИЙ знімок двигуна, що
-                 живить колонку «МММ» у чергах (одне джерело правди). -->
-            <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
-                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mm')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mm-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🧮 МММ-монітор <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— живий СТАРИЙ МММ по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
-                <div style="display:flex;align-items:center;gap:10px">
-                    <span id="mm-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
-                    <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🧮 МММ-монітор. ВИМКНЕНО — бот НЕ рахує знімок напрямків (економія: старий МММ по всіх монетах щотакту не рахується), таблиця порожня, групове відкриття недоступне. Сам моніторинг нічого не відкриває автоматично — лише показує стан і дає ✋ відкрити обране вручну.">
-                        <input type="checkbox" id="ff-mm-monitor-enabled" checked onchange="saveFuelFilterSettings()">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-            </div>
-            <div id="mm-body">
-                <!-- ⚖️ БАНЕР ВАЖЕЛЯ МОНІТОРА — вигляд 1-в-1 з ₿ BTCUSDT (вимога
-                     17.09: «поки що лише вигляд такий і таймер»). Ті самі
-                     розміри, той самий прогрес-бар, той самий формат таймера і
-                     бейджа статусу — саме тому рендер бере СПІЛЬНІ хелпери
-                     (`dirGrad` / `dirTint` / `fuelBand` / `flipTimerHTML`), а не
-                     свої копії: інакше два банери на одній сторінці почали б
-                     розходитись у кольорах і словах. Алгоритм ₿ (сеанси, пауза,
-                     START/STOP) тут НЕ повторюється — свідомо. -->
-                <div id="mm-bias-banner" style="display:flex;align-items:center;gap:14px;margin:0 0 10px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
-                    <span style="font-weight:900;font-size:1.1rem;color:#ffb02e;text-shadow:0 0 9px rgba(247,147,26,0.6);white-space:nowrap">🧮 МММ-МОНІТОР</span>
-                    <div style="flex:1;min-width:120px;height:18px;border-radius:9px;background:rgba(255,255,255,0.07);overflow:hidden;position:relative">
-                        <div id="mm-bias-bar" style="height:100%;width:0%;border-radius:9px;background:#facc15;transition:width 0.4s linear,background 0.3s"></div>
-                        <span id="mm-bias-label" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
-                    </div>
-                    <span id="mm-bias-timer" class="ff-flip" style="white-space:nowrap"></span>
-                    <span id="mm-bias-status" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap;background:transparent">—</span>
-                </div>
-                <!-- Режим економії: МММ рахується НЕ по всьому watchlist. Мовчати
-                     про це не можна — коротка таблиця читалась би як «бот сліпий». -->
-                <div id="mm-limited-hint" style="display:none;margin:0 0 8px;padding:7px 11px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:0.7rem;font-weight:600"></div>
-                <div style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
-                    <span style="color:#8b93a7">Показати:</span>
-                    <button type="button" data-mmdir="all" onclick="mmSetDir('all')" class="ff-qdir-btn">Всі <span class="mm-dir-n"></span></button>
-                    <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span></button>
-                    <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span></button>
-                    <button type="button" data-mmdir="flat" onclick="mmSetDir('flat')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span></button>
-                    <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧮 МММ-МОНІТОР» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
-                        Сила ≥ <input type="number" id="mm-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged()" onchange="mmMinStrSave()"> %
-                    </label>
-                    <!-- ⚑ Скільки монет фільтр ВІДСІЯВ. Без цього числа «Всі (6)»
-                         не відрізнити від «у боті всього 6 монет» (скарга 16.09). -->
-                    <span id="mm-str-out" style="font-size:0.66rem;color:#fbbf24;font-family:monospace"></span>
-                </div>
-                <!-- Панель групової дії. Кнопка НЕАКТИВНА, поки нічого не обрано —
-                     активний контрол, який нічого не робить, вводить в оману. -->
-                <div style="display:flex;align-items:center;gap:8px;margin:0 0 8px;flex-wrap:wrap">
-                    <span id="mm-sel-count" style="font-size:0.7rem;color:#8b93a7;font-family:monospace">Обрано 0</span>
-                    <button type="button" id="mm-open-btn" onclick="mmOpenSelected()" disabled
-                            style="font-size:0.68rem;padding:4px 12px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#4ade80;cursor:pointer;font-weight:700"
-                            title="✋ Відкрити УСІ обрані монети одразу. Напрямок кожної = її власний МММ (те, що в рядку). Ворота черг пропускаються — рішення ухвалює людина; 🚦 головні кнопки напрямку і запобіжники відкриття (ціна/розмір) лишаються.">✋ Відкрити обрані</button>
-                    <button type="button" onclick="mmClearSel()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid #3a3f4b;background:transparent;color:#8b93a7;cursor:pointer">Зняти вибір</button>
-                    <span id="mm-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
-                </div>
-                <!-- 🦓 Зебра саме для ЦІЄЇ таблиці (рядків багато і вони щільні).
-                     Клас на <tbody>, щоб порожній рядок-заглушка не смугався. -->
-                <style>
-                  #mm-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
-                  #mm-table tbody tr:hover { background: rgba(56,189,248,0.10); }
-                  #mm-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
-                </style>
-                <div class="ff-timers-scroll">
-                    <table class="tm-table" id="mm-table">
-                        <thead>
-                            <tr>
-                                <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mm-check-all" onchange="mmToggleAll(this.checked)"></th>
-                                <th data-mmsort="symbol" onclick="mmSort('symbol')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
-                                <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="СТАРИЙ показник МММ (той самий, що живить шар «Старий МММ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">Старий МММ<span class="ff-sort-arrow"></span></th>
-                                <th data-mmsort="delta" onclick="mmSort('delta')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за ВІКНО СПОСТЕРЕЖЕННЯ (~3 хв, тобто три оновлення джерела). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. Базою є НАЙСТАРІШЕ значення у вікні, а не попередній такт: разовий пропуск даних більше не стирає показник, а дрібне тремтіння цілого числа сили не перемикає стрілку. Поки історії менше за одне оновлення джерела — показуємо «—», а не вигаданий приріст. Фактичне вікно по кожному рядку — у підказці комірки. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
-                                <th data-mmsort="grow" onclick="mmSort('grow')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу сила МММ росте БЕЗПЕРЕРВНО. Ріст ТРИВАЄ, поки виконуються ДВІ умови: (1) за вікном спостереження приріст вищий за поріг і (2) сила не відкотилась від свого піку в цьому вікні більше ніж на той самий поріг. Перша умова прибирає мерехтіння — дрібне тремтіння таймер не збиває; друга не дає таймеру тягнути «росте» ще хвилини після того, як сила вже розвернулась. «—» = зараз не росте. Клік — сортувати (найдовший ріст зверху).">⏱ Росте<span class="ff-sort-arrow"></span></th>
-                                <th data-mmsort="pchg" onclick="mmSort('pchg')" style="cursor:pointer;user-select:none" title="Ціна зі знімка МММ + КУДИ вона йде: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). Поруч зі стрілкою — за скільки часу історії реально набралось: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ ціни (найсильніший ріст зверху).">Ціна<span class="ff-sort-arrow"></span></th>
-                                <th title="🔮 Прогноз 1H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 1H» над графіком. Читається готовим, нічого не рахує.">🔮 1H</th>
-                                <th title="🔮 Прогноз 4H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 4H» над графіком.">🔮 4H</th>
-                            </tr>
-                        </thead>
-                        <tbody id="mm-tbody">
-                            <tr><td colspan="8" class="tm-empty-msg">Немає даних МММ</td></tr>
-                        </tbody>
-                    </table>
-                </div>
             </div>
 
             <!-- ❤️ FF base: intercepted coins waiting for ₿ START + fuel -->
@@ -3831,7 +3843,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                              нейтраль ЛАМАЄ збіг, а тут вона і є підставою вийти. -->
                         <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
                             <label>
-                                <input type="checkbox" id="tm-use-mm-flat-exit" onchange="saveTMSettings()">
+                                <input type="checkbox" id="tm-use-mm-flat-exit" onchange="saveTMSettings();_tmPilotAutoSync()">
                                 🧮 Старий МММ ⚖ → вихід
                                 <span class="tm-help" title="САМОСТІЙНЕ правило: щойно «🧮 Старий МММ» по монеті втрачає напрямок (⚖ рівновага — сила тиску впала нижче порога напрямку), відкрита угода ЗАКРИВАЄТЬСЯ. Це ТОЙ САМИЙ показник, що в колонці «🧮 Старий МММ» таблиці угод і в секції 🧮 МММ-монітор — число береться з готового знімка двигуна, нічого не перераховується. ⚠️ У комбінуванні (АБО/AND) вище це правило НЕ бере участі: там нейтраль ламає збіг, а тут вона і є причиною виходу. ⚠️ «Немає даних» (бот щойно піднявся, liq-map ще не зібрала рівні) — це НЕ рівновага: правило мовчить, угода тримається. Перевірка не частіше ніж раз на 20с на монету. За замовчуванням ВИМКНЕНО.">?</span>
                             </label>
@@ -3855,6 +3867,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="tm-mm-flat-exit-confirm" min="0" max="3600" step="30"
                                    onchange="saveTMSettings()"
                                    style="width:62px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"> с
+                        </div>
+                        <!-- 🧮 Правило і АВТОМАТИКА автопілота — взаємовиключні
+                             (вимога 17.09). Напис зʼявляється лише коли правило
+                             увімкнене: мовчки погашені поля читались би як збій. -->
+                        <div id="tm-pilot-auto-off-note" style="display:none;margin-top:6px;font-size:0.68rem;line-height:1.35;color:#fbbf24">
+                            🧮 Правило увімкнено → <b>АВТОМАТИКУ 🎯 Автопілота вимкнено</b>:
+                            він не обирає ціль, не веде стоп і не заповнює Manual TP-1/TP-2.
+                            Ваші <b>ручні</b> Manual TP-1/TP-2 і <b>⚖️ TP-1 → беззбиток</b> працюють як зазвичай.
                         </div>
 
                         <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
@@ -9151,6 +9171,10 @@ async function loadTMSettings() {
         if (_tp1liq) _tp1liq.checked = (s.pilot_tp1_from_liquidity !== false);
         _setV('tm-pilot-tp1-liq-mid', s.pilot_tp1_liq_mid_pct != null ? s.pilot_tp1_liq_mid_pct : 50, 50);
         document.getElementById('tm-tp1-move-be').checked = !!s.tp1_move_to_be;
+        // 🧮 Правило «Старий МММ ⚖» гасить автоматику автопілота — синхронізуємо
+        // ОДРАЗУ після застосування налаштувань, інакше контроли виглядали б
+        // активними до першого кліку по тумблеру.
+        _tmPilotAutoSync();
         _setV('tm-pilot-poc-hours', s.pilot_poc_hours != null ? s.pilot_poc_hours : 72, 72);
         // Validate TF before assigning to <select> — fall back to 15m for
         // unknown values so the dropdown doesn't end up in a blank state.
@@ -9520,6 +9544,36 @@ function _ffLevelsSync() {
         sel.style.opacity = on ? '1' : '0.4';
         sel.title = on ? '' : 'Тумблер «SL з» вимкнено — вибір не застосовується';
     }
+}
+
+// 🧮 «Старий МММ ⚖ → вихід» УВІМКНЕНО → автоматику 🎯 Автопілота вимкнено.
+// Дзеркалить бекендний `TradeManager._pilot_auto_off`: правило і автоматичний
+// супровід — взаємовиключні, тож контроли, які вже НІ НА ЩО не впливають,
+// гасимо (той самий принцип, що з випадайкою «SL з» і полями TTL при ♾).
+// ⚠️ СВІДОМО НЕ гасимо: «⚖️ TP-1 → беззбиток» і «TP-1 закриває N%» — вони
+// обслуговують РУЧНІ Manual TP-1/TP-2, які мусять працювати далі (дослівна
+// вимога), а також 🧲 «TP-2 з магніту» — він живить ще й гейт за R ПЕРЕД
+// відкриттям, тобто працює й без автопілота.
+const _PILOT_AUTO_IDS = [
+    'tm-pilot-enabled', 'tm-pilot-min-target', 'tm-pilot-max-target',
+    'tm-pilot-autofill-tp', 'tm-pilot-swing-tf', 'tm-pilot-poc-hours',
+    'tm-pilot-stop-buf', 'tm-pilot-be-r',
+    'tm-pilot-tp1-liq', 'tm-pilot-tp1-liq-mid',
+    'tm-pilot-tp1-min-path', 'tm-pilot-tp1-max-path', 'tm-pilot-tp1-fallback',
+];
+function _tmPilotAutoSync() {
+    const off = !!(document.getElementById('tm-use-mm-flat-exit') || {}).checked;
+    const note = document.getElementById('tm-pilot-auto-off-note');
+    if (note) note.style.display = off ? '' : 'none';
+    _PILOT_AUTO_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.disabled = off;
+        el.style.opacity = off ? '0.4' : '1';
+        if (off) el.title = 'Вимкнено правилом «🧮 Старий МММ ⚖ → вихід»: '
+            + 'автоматику автопілота знято, працюють лише ручні Manual TP-1/TP-2 '
+            + 'і ⚖️ TP-1 → беззбиток';
+    });
 }
 
 // Число з поля з ЯВНИМ дефолтом лише коли поле порожнє/нечислове.
@@ -11779,8 +11833,19 @@ function mmRenderBias(bias) {
             + `🔴 SHORT: ${b.n_short || 0} монет · вага ${b.w_short || 0}\n`
             + `⚖ рівновага: ${b.n_flat || 0} монет · вага ${b.w_flat || 0}\n`
             + `Разом: ${b.coins || 0} монет · вага ${b.w_total || 0}\n`
-            + 'Фільтр «Сила ≥» на банер НЕ впливає — він лише ховає рядки таблиці.';
+            + 'Фільтр «Сила ≥» на банер НЕ впливає — він лише ховає рядки таблиці.'
+            // ↻ Числа з попереднього запуску: важіль і таймер персистяться, тож
+            // рестарт бота їх не обнуляє. До першого такту це ще не свіжий
+            // розрахунок — і про це сказано, а не замовчано.
+            + (b.restored
+                ? '\n↻ Відновлено після рестарту бота — таймер продовжено, числа '
+                  + 'оновляться найближчим тактом (~30с).'
+                : '');
     }
+    // Той самий стан — маленькою позначкою біля таймера, щоб його було видно
+    // без наведення (таймер тут головний, і він саме той, що й до рестарту).
+    const rst = document.getElementById('mm-bias-restored');
+    if (rst) rst.style.display = (_mmBias && _mmBias.restored) ? '' : 'none';
 }
 function mmApplyState(mm) {
     // Відновлюємо збережені фільтри РІВНО ОДИН раз і саме тут — так вони
@@ -15058,6 +15123,10 @@ const _PILOT_BLOCKED = ['🔒', 'трейл заблоковано', '#fbbf24'];
 // автоматичної фіксації по цій угоді більше немає. Це стан СИЛЬНІШИЙ за
 // заблокований трейл (йшлося про закриття угоди), тож перекриває і його.
 const _PILOT_TAKE_BLOCKED = ['✋', 'фіксацію знято оператором', '#fbbf24'];
+// 🧮 Автоматику автопілота вимкнено правилом «Старий МММ ⚖ → вихід»: виходом
+// керує ТОЙ показник, а автопілот не веде ні ціль, ні стоп, ні рівні.
+// Найсильніший зі станів — він означає, що такту взагалі не було.
+const _PILOT_AUTO_OFF = ['🧮', 'автоматику вимкнено правилом', '#8b93a7'];
 const _PILOT_KIND = {
     liq_next: '💧', liq_main: '🌊', swing: '🏁', poc: '⚪',
     // Нові типи цілей: межа зони вартості, рівновага діапазону та ПОХІДНИЙ
@@ -15074,11 +15143,13 @@ function pilotCellHTML(p) {
     }
     // Заблокований трейл перекриває значок дії — стан УГОДИ важливіший за
     // намір плану (той самий принцип, що ⚖️ БЗ перекриває «бот» у полі SL).
-    const [ic, lbl, col] = pl.take_block
-        ? _PILOT_TAKE_BLOCKED
-        : (pl.trail_block
-            ? _PILOT_BLOCKED
-            : (_PILOT_ACT[pl.action] || ['•', pl.action || '—', '#8b93a7']));
+    const [ic, lbl, col] = pl.auto_off
+        ? _PILOT_AUTO_OFF
+        : (pl.take_block
+            ? _PILOT_TAKE_BLOCKED
+            : (pl.trail_block
+                ? _PILOT_BLOCKED
+                : (_PILOT_ACT[pl.action] || ['•', pl.action || '—', '#8b93a7'])));
     const obj = pl.objective || null;
     const nxt = pl.next || null;
     const pr = pl.progress || null;
@@ -15121,7 +15192,8 @@ function pilotCellHTML(p) {
             ? '<span style="color:#fbbf24" title="TP не виставлено — див. підказку">⚠</span>' : '');
 
     const tip = [
-        `${lbl}${pl.take_block ? ': ' + pl.take_block : (pl.trail_block ? ': ' + pl.trail_block : '')}`,
+        `${lbl}${pl.auto_off ? ': ' + pl.auto_off : (pl.take_block ? ': ' + pl.take_block : (pl.trail_block ? ': ' + pl.trail_block : ''))}`,
+        pl.auto_off ? '🧮 Увімкнено правило «Старий МММ ⚖ → вихід», тож АВТОМАТИКА автопілота вимкнена: він не обирає ціль, не веде стоп і не заповнює Manual TP-1/TP-2. Виходом керує сам показник 🧮, а ваші РУЧНІ Manual TP-1/TP-2 і ⚖️ «TP-1 → беззбиток» працюють як зазвичай. Щоб повернути автопілот — вимкніть це правило в Exit Rules.' : null,
         pl.take_block ? '✋ Ціль ДОСЯГНУТА, але Manual TP-2 знято руками — автопілот угоду НЕ фіксує і веде далі (стоп працює). Впишіть Manual TP-2, щоб повернути автоматичну фіксацію.' : null,
         obj ? `Ціль (TP-2): ${obj.label} @ ${obj.price}` : 'Цілі попереду не видно',
         (pl.r != null)

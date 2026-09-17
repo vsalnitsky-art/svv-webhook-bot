@@ -1948,6 +1948,27 @@ class FuelFilterDaemon:
             except (TypeError, ValueError):
                 self._btc_verdict_since = 0.0
             self._btc_paused = False
+            # ⚖️ БАНЕР 🧮 МММ-МОНІТОРА: повертаємо важіль І таймер.
+            # Без цього кожен рестарт показував би «⏸ FLAT 00:00» ще до першого
+            # такту, а потім таймер стартував би з нуля, хоча напрямок ринку не
+            # мінявся — тобто банер міряв би ВІК ПРОЦЕСУ, а не віку СТАНУ.
+            # ⚠️ Числа позначаємо `restored`: до першого `_mm_capture` (≤ один
+            # такт) вони з минулого запуску, і це має бути ВИДНО, а не виглядати
+            # як свіжий розрахунок. Позначка зникає сама — `_mm_track_bias`
+            # будує знімок заново і поля в ньому просто немає.
+            _mb = st.get('mm_bias')
+            self._mm_bias = dict(_mb) if isinstance(_mb, dict) else {}
+            if self._mm_bias:
+                self._mm_bias['restored'] = True
+            try:
+                self._mm_bias_since = float(st.get('mm_bias_since') or 0.0)
+            except (TypeError, ValueError):
+                self._mm_bias_since = 0.0
+            # Час із майбутнього (переведений годинник / зіпсований блоб) дав би
+            # відʼємний таймер — краще почати відлік заново, ніж брехати.
+            if self._mm_bias_since > time.time() + 60:
+                self._mm_bias_since = 0.0
+                self._mm_bias = {}
             # Restore the entry queue PER SESSION. We persist the queue now and
             # bring it back on boot, tied to the session it belonged to. The
             # session-flip logic in _update_btc_verdict handles staleness: on the
@@ -2022,6 +2043,16 @@ class FuelFilterDaemon:
                 'last_trade_end': self._last_trade_end,
                 'consumed_signal_at': self._consumed_signal_at,
                 'funding_muted': self._funding_muted,
+                # ⚖️ БАНЕР 🧮 МММ-МОНІТОРА — важіль І ЙОГО ТАЙМЕР (вимога 17.09:
+                # «банер не має втрачати таймер і показники після кожного
+                # рестарту»). `botupdate` роблять часто, а таймер міряє, скільки
+                # ринок тримає напрямок, — обнуляти його рестартом бота означало
+                # б показувати вік ПРОЦЕСУ замість віку СТАНУ.
+                # ⚠️ `since` зберігаємо ОКРЕМИМ числом, а не лише всередині
+                # знімка: саме воно порівнюється в `_mm_track_bias`, і саме від
+                # нього залежить, продовжиться таймер чи почнеться заново.
+                'mm_bias': dict(self._mm_bias or {}),
+                'mm_bias_since': float(self._mm_bias_since or 0.0),
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
