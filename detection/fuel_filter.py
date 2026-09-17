@@ -847,6 +847,7 @@ class FuelFilterDaemon:
         # блоку} + {SYMBOL: ts останньої перевірки} для черги порцій.
         # ⚖️ Банер монітора: {dir, pct, …} + момент, відколи тримається
         # ПОТОЧНИЙ напрямок (для таймера). Рахує `_mm_capture`, стан лише читає.
+        self._mm_state_since: Dict = {}   # ⏱ відколи монета тримає стан
         self._mm_bias: Dict = {}
         self._mm_bias_since: float = 0.0
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
@@ -1956,6 +1957,25 @@ class FuelFilterDaemon:
             # такт) вони з минулого запуску, і це має бути ВИДНО, а не виглядати
             # як свіжий розрахунок. Позначка зникає сама — `_mm_track_bias`
             # будує знімок заново і поля в ньому просто немає.
+            _mss = st.get('mm_state_since')
+            self._mm_state_since = {}
+            if isinstance(_mss, dict):
+                _n = time.time()
+                for _k, _v in _mss.items():
+                    if not isinstance(_v, dict):
+                        continue
+                    try:
+                        _since = float(_v.get('since') or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    # ⚠️ `seen` ставимо ТЕПЕРІШНІМ часом: інакше прибирання
+                    # «давно не бачили» знесло б увесь відновлений стан ще до
+                    # першого такту — і персист не мав би сенсу. Сам стан
+                    # перевіриться першим же знімком: інший напрямок → відлік
+                    # почнеться заново.
+                    if 0 < _since <= _n + 60:
+                        self._mm_state_since[str(_k).upper()] = {
+                            'st': _v.get('st'), 'since': _since, 'seen': _n}
             _mb = st.get('mm_bias')
             self._mm_bias = dict(_mb) if isinstance(_mb, dict) else {}
             if self._mm_bias:
@@ -2051,6 +2071,12 @@ class FuelFilterDaemon:
                 # ⚠️ `since` зберігаємо ОКРЕМИМ числом, а не лише всередині
                 # знімка: саме воно порівнюється в `_mm_track_bias`, і саме від
                 # нього залежить, продовжиться таймер чи почнеться заново.
+                # ⏱ Таймери стану по монетах — з тієї самої причини, що банер:
+                # вони міряють, скільки РИНОК тримає напрямок, а не скільки
+                # живе процес. Рестарт не має їх обнуляти.
+                'mm_state_since': {k: {'st': v.get('st'),
+                                       'since': float(v.get('since') or 0)}
+                                   for k, v in (self._mm_state_since or {}).items()},
                 'mm_bias': dict(self._mm_bias or {}),
                 'mm_bias_since': float(self._mm_bias_since or 0.0),
             })
@@ -3211,6 +3237,43 @@ class FuelFilterDaemon:
                 hist.pop(_sym, None)
                 self._mm_grow_since.pop(_sym, None)
 
+    def _mm_track_state(self, snap: Dict, now: float):
+        """⏱ СКІЛЬКИ ЧАСУ МОНЕТА ТРИМАЄ СВІЙ СТАН (LONG / SHORT / ⚖ рівновага).
+
+        **Вимога користувача (17.09):** «Додай таймер для кожної монети, яка
+        знаходиться в стані LONG SHORT Рівновага — скільки саме часу».
+
+        Пишемо `state_since` У ЗНІМОК: `mm_monitor_state` лишається ЧИТАЧЕМ
+        (той самий урок B2, що з шарами Черги-4 і важелем банера).
+
+        ⚠️ **⚖ РІВНОВАГА — ТЕЖ СТАН, а не «немає стану».** Її тримаємо під
+        ключем `'FLAT'` і міряємо так само: питання «скільки монета вже без
+        напрямку» не менш змістовне за «скільки вона в LONG».
+        ⚠️ **РАЗОВИЙ ПРОПУСК МОНЕТИ ТАЙМЕР НЕ СКИДАЄ** — той самий урок, що з
+        `_mm_str_hist` («обрізаємо вікном, а не видаляємо»): liq-map могла на
+        мить не віддати стан, і обнуляти через це годинний відлік означало б
+        те саме мерехтіння, через яке переробляли «Силу росте». Запис живе,
+        доки монету бачили не давніше за `MM_GROW_WINDOW_SEC`.
+        ⚠️ Віддаємо МОМЕНТ (epoch), а не «скільки секунд»: живі секунди малює
+        глобальний 1с-тікер сторінки, тож таблиця не перебудовується щосекунди.
+        """
+        hist = getattr(self, '_mm_state_since', None)
+        if hist is None:
+            hist = self._mm_state_since = {}
+        for sym, v in (snap or {}).items():
+            st = v.get('status') if v.get('status') in ('LONG', 'SHORT') else 'FLAT'
+            rec = hist.get(sym)
+            if not rec or rec.get('st') != st:
+                rec = {'st': st, 'since': now}
+                hist[sym] = rec
+            rec['seen'] = now
+            v['state_since'] = int(rec['since'])
+            v['state_kind'] = st
+        # Забуваємо лише те, чого не бачили ДОВШЕ за вікно (памʼять обмежена).
+        for sym in [k for k, r in hist.items()
+                    if now - float(r.get('seen') or 0) > MM_GROW_WINDOW_SEC]:
+            hist.pop(sym, None)
+
     def _mm_track_bias(self, snap: Dict, now: float):
         """⚖️ ВАЖІЛЬ НАПРЯМКУ ПО ВСІХ МОНЕТАХ МОНІТОРА → банер «🧮 МММ-МОНІТОР».
 
@@ -3321,6 +3384,9 @@ class FuelFilterDaemon:
                     # ⏱ Таймери росту теж скидаємо: після вмикання монітора
                     # вони показували б час, протягом якого нічого не рахувалось.
                     self._mm_grow_since = {}
+                    # ⏱ Таймери стану теж: після вмикання монітора вони
+                    # показували б час, протягом якого нічого не рахувалось.
+                    self._mm_state_since = {}
                     self._mm_price_hist = {}
                     self._mm_snapshot_ts = 0.0
                 # ⚖️ Банер теж гасимо: «заморожений» важіль, який уже ніхто не
@@ -3376,6 +3442,8 @@ class FuelFilterDaemon:
         self._mm_track_prices(snap, _now)
         # 📈 ПРИРІСТ СИЛИ + ⏱ ТАЙМЕР РОСТУ — теж у ЗНІМОК (див. `_mm_track_growth`).
         self._mm_track_growth(snap, _now)
+        # ⏱ СКІЛЬКИ МОНЕТА ТРИМАЄ СВІЙ СТАН (LONG/SHORT/⚖) — вимога 17.09.
+        self._mm_track_state(snap, _now)
         with self._lock:
             self._mm_snapshot = snap
             self._mm_snapshot_ts = _now
@@ -3458,6 +3526,9 @@ class FuelFilterDaemon:
                 # таблиця не перебудовується щосекунди — той самий прийом, що
                 # з `held_sec` у Черзі-4.
                 'grow_since': (float(grow[sym]) if sym in grow else None),
+                # ⏱ ВІДКОЛИ монета тримає ПОТОЧНИЙ стан (LONG / SHORT / ⚖).
+                # Момент, а не секунди — секунди малює той самий 1с-тікер.
+                'state_since': v.get('state_since'),
                 'dir': v.get('dir'),
                 'price': v.get('mark_price'),
                 # 💹 Куди йде ЦІНА за 15-хв вікном: 'up' / 'down' / 'flat' + сам

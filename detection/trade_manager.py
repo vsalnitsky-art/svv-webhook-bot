@@ -3453,8 +3453,11 @@ class TradeManager:
         # ⚠️ РУЧНІ рівні НЕ зачеплені: `_check_manual_tp1` і `_check_manual_sl_tp`
         # стоять у моніторі ОКРЕМО від автопілота, а ⚖️ «TP-1 → беззбиток»
         # викликається з `_check_manual_tp1` — тест-замок стереже обидва.
+        # ⚠️ ОДНА здатність лишається — 🧲 магніт у Manual TP-1 (вимога 17.09).
+        # Вона живе в ОКРЕМОМУ редукованому такті і НІЧОГО не закриває, тож
+        # гейт тут і далі стоїть найпершим: повний план сюди не доходить.
         if self._pilot_auto_off(s):
-            self._pilot_note_auto_off(symbol, is_shadow)
+            self._pilot_magnet_tp1(symbol, pos, current_price, is_shadow)
             return False
         side = pos.get('side')
         if side not in ('LONG', 'SHORT'):
@@ -3850,24 +3853,153 @@ class TradeManager:
         """
         return bool(s.get('use_mm_flat_exit'))
 
-    def _pilot_note_auto_off(self, symbol: str, is_shadow: bool) -> None:
-        """Сказати В КОЛОНЦІ, що автоматика автопілота вимкнена правилом.
+    def _pilot_magnet_tp1(self, symbol: str, pos: Dict, current_price: float,
+                          is_shadow: bool) -> None:
+        """🧲 РЕДУКОВАНИЙ такт при увімкненому 🧮 «Старий МММ ⚖ → вихід».
 
-        ⚠️ Без цього комірка «🎯 Автопілот» просто застигла б на останньому
-        стані — тобто виглядала б як робочий супровід, якого вже немає.
-        ⚠️ Пишемо ОДИН раз (доки стан не змінився), а не щотакту: `ts` у знімку
-        інакше смикав би таблицю на кожному поллі.
+        **Вимога користувача (17.09), дослівно:** «при виборі 🧮 Старий МММ ⚖ →
+        вихід із 🎯 Автопілота беремо "🧲 найбільший магніт" і ставимо в
+        Manual TP-1. І таким чином щоб не було пустим поле 🎯 Автопілот у
+        таблицях відкритих угод — підраховуй дані для Manual TP-1.»
+
+        Тобто правило гасить РІШЕННЯ автопілота (вибір цілі, трейл стопа,
+        `take`, автозаповнення TP-2, план поділу), але ОДНУ його здатність
+        лишає: знайти найбільший магніт ліквідності ПОПЕРЕДУ входу і віддати
+        цей рівень оператору як ЧАСТКОВУ фіксацію.
+
+        ⚠️ **МАГНІТ ЙДЕ САМЕ В TP-1, а не в TP-2** — так просив користувач.
+        Наслідок, про який треба знати: TP-1 закриває лише
+        `pilot_tp1_close_pct`% позиції (деф. 50), решту веде 🧮 правило і стоп.
+        ⚠️ **ЦЕ ТОЙ САМИЙ МАГНІТ**, що живить TP-2 у звичайному режимі
+        (`_magnet_objective` → `get_liq_magnet` за напрямком, ближня межа
+        смуги): другого розрахунку не заводимо, інакше два місця показували б
+        різні рівні (урок PD-зони).
+        ⚠️ **Питаємо РІВНО ОДИН раз на угоду** (`pilot_magnet_done`), і лише
+        коли біржа ВІДПОВІЛА; мовчання біржі позначку не ставить — повтор
+        безкоштовний, зріз кешується.
+        ⚠️ **Рівень пише ТОЙ САМИЙ `_pilot_apply_tp`**, що й повний шлях: там
+        уже живуть правила «оператора не чіпаємо», позначка 🤖 бота і рядок у
+        🧾 Лозі. Своєї копії запису TP-1 не робимо.
+        ⚠️ Колонка «🎯 Автопілот» заповнюється ЗАВЖДИ — ціль, смужка прогресу
+        від входу і плановий R (від ТОГО САМОГО якоря `pilot_r_stop`). Немає
+        магніту → у тултипі стоїть ПРИЧИНА, а не порожнеча.
         """
+        s = self._settings
+        side = pos.get('side')
+        now = time.time()
         pkey = self._pilot_key(symbol, is_shadow)
-        st = self._pilot_state.get(pkey)
-        if isinstance(st, dict) and st.get('auto_off'):
+        # Той самий тротл, що в повному такті: монітор тікає раз на 4с, а
+        # писати знімок щоразу означало б смикати таблицю на кожному поллі.
+        if now - float(self._pilot_at.get(pkey) or 0) < self.PILOT_TTL:
             return
-        self._pilot_state[pkey] = {
-            'ts': time.time(), 'is_shadow': bool(is_shadow), 'action': 'off',
+        self._pilot_at[pkey] = now
+        _prev = self._pilot_state.get(pkey) or {}
+        snap = {
+            'at': now, 'is_shadow': bool(is_shadow), 'action': 'hold',
             'auto_off': '🧮 Старий МММ ⚖ → вихід',
-            'trails': int((st or {}).get('trails') or 0),
-            'trail_block': '', 'take_block': '',
+            'objective': None, 'progress': None, 'next': None, 'targets': [],
+            'r': None, 'r_stop': None, 'risk_free': False,
+            'tp_off': not bool(s.get('pilot_autofill_tp')),
+            'tp_skip': '', 'tp_err': '', 'tp_locked': False,
+            'trails': int(_prev.get('trails') or 0),
+            'last_trail_at': _prev.get('last_trail_at'),
+            'last_stop': _prev.get('last_stop'),
+            'trail_block': '', 'take_block': '', 'why': '',
         }
+        if side not in ('LONG', 'SHORT'):
+            snap['why'] = 'напрямок угоди невідомий'
+            self._pilot_state[pkey] = snap
+            return
+        try:
+            from detection import trade_pilot
+        except Exception as e:
+            snap['why'] = f'модуль автопілота недоступний: {e}'
+            self._pilot_state[pkey] = snap
+            return
+
+        entry = pos.get('entry_price')
+        obj = pos.get('pilot_objective') or None
+        if not obj and not pos.get('pilot_magnet_done'):
+            if not s.get('pilot_tp2_from_magnet', True):
+                # Тумблер джерела вимкнено → біржу НЕ питаємо взагалі
+                # (те саме правило, що в повному шляху: зайвого запиту немає).
+                pos['pilot_magnet_note'] = ('🧲 джерело вимкнено тумблером '
+                                            '«TP-2 з магніту»')
+                pos['pilot_magnet_done'] = True
+            else:
+                try:
+                    _mag = self._magnet_objective(symbol, side, entry)
+                except Exception as e:
+                    _mag = None
+                    snap['tp_err'] = f'{type(e).__name__}: {e}'
+                if _mag:
+                    pos['pilot_magnet_done'] = True
+                    pos['pilot_objective'] = dict(_mag)
+                    pos.pop('pilot_magnet_note', None)
+                    obj = pos['pilot_objective']
+                elif snap['tp_err']:
+                    pass                      # збій — позначку не ставимо
+                elif getattr(self, '_magnet_data_ok', False):
+                    # Відповідь БУЛА, магніт не годиться → більше не питаємо.
+                    pos['pilot_magnet_done'] = True
+                    pos['pilot_magnet_note'] = (getattr(self, '_magnet_skip', '')
+                                                or 'магніт не підійшов як рівень')
+                else:
+                    pos['pilot_magnet_note'] = 'біржа не відповіла — спробуємо ще'
+
+        if not obj:
+            snap['tp_skip'] = (snap['tp_err'] and ''
+                               or pos.get('pilot_magnet_note')
+                               or 'магніт ще не порахований')
+            snap['why'] = '🧲 магніту немає — Manual TP-1 не виставлено'
+            self._pilot_state[pkey] = snap
+            return
+
+        snap['objective'] = obj
+        try:
+            snap['progress'] = trade_pilot.progress(side, entry, current_price, obj)
+        except Exception:
+            pass
+        # 📐 R — ПЛАНОВИЙ, від ПОЧАТКОВОГО стопа. Якір той самий, що в повному
+        # такті, і ставиться ОДИН раз — інакше трейл/беззбиток його роздували б
+        # (кейс VIRTUALUSDT «168.53R»).
+        _sl = pos.get('manual_sl')
+        try:
+            _rfree = trade_pilot.is_risk_free(side, entry, _sl)
+        except Exception:
+            _rfree = False
+        if not pos.get('pilot_r_stop') and _sl and not _rfree:
+            pos['pilot_r_stop'] = _sl
+        snap['risk_free'] = bool(_rfree)
+        snap['r_stop'] = pos.get('pilot_r_stop')
+        try:
+            snap['r'] = trade_pilot.risk_reward(entry, pos.get('pilot_r_stop'), obj)
+        except Exception:
+            pass
+
+        if pos.get('pilot_tp_cleared') and not pos.get('manual_tp1'):
+            # Рівень зняв ОПЕРАТОР → не відновлюємо (людина має пріоритет).
+            snap['tp_locked'] = True
+        elif s.get('pilot_autofill_tp') and not self._pilot_tp_done(pos):
+            _d = obj.get('dist_pct')
+            if _d is None:
+                try:
+                    _d = abs(float(obj['price']) - float(entry)) / float(entry) * 100.0
+                except (TypeError, ValueError, ZeroDivisionError):
+                    _d = 0.0
+            self._pilot_apply_tp(symbol, pos, {
+                'tp1': {'price': obj.get('price'),
+                        'label': obj.get('label') or '🧲 магніт ліквідності',
+                        'from_entry_pct': float(_d), 'r': snap['r']},
+                'tp2': None,
+                'reasons': ['🧮 правило «Старий МММ ⚖ → вихід»: автопілот '
+                            'віддає лише 🧲 магніт у Manual TP-1'],
+            }, is_shadow)
+        snap['tp1'] = pos.get('manual_tp1')
+        snap['why'] = ('🧲 магніт ' + self._fmt_price(obj.get('price'))
+                       + ' → Manual TP-1'
+                       + (' (виставлено)' if pos.get('manual_tp1') else ''))
+        self._pilot_state[pkey] = snap
 
     def _log_tp_cleared_once(self, symbol: str, pos: Dict,
                              is_shadow: bool) -> None:

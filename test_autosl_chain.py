@@ -974,37 +974,45 @@ def test_the_rule_and_the_autopilot_automation_are_mutually_exclusive():
     print('✓ правило і автоматика автопілота — взаємовиключні')
 
 
-def test_the_gate_stops_the_whole_tick_not_just_one_action():
-    """Увесь такт, а не сім окремих перевірок: ціль, 🧲 магніт, трейл, `take`,
-    автозаповнення TP і якір R живуть САМЕ в `_pilot_tick`."""
+def test_the_gate_stops_every_DECISION_of_the_autopilot():
+    """Правило гасить РІШЕННЯ автопілота: ціль із графіка, трейл стопа, `take`,
+    автозаповнення TP-2, план поділу. Лишається РІВНО одна дія — 🧲 магніт у
+    Manual TP-1 (вимога 17.09), і вона нічого не закриває.
+
+    ⚠️ Раніше тут стояв замок «такту НЕ БУЛО взагалі» (`_pilot_at` порожній).
+    Користувач ЗМІНИВ вимогу — редукований такт тепер потрібен, тож замок
+    переписано під нову поведінку, а не «полагоджено»."""
+    _reset()
     o = _tm()
-    o._settings = {'pilot_enabled': True, 'use_mm_flat_exit': True}
+    o._settings = {'pilot_enabled': True, 'use_mm_flat_exit': True,
+                   'pilot_tp2_from_magnet': True, 'pilot_autofill_tp': True,
+                   'pilot_tp1_close_pct': 50}
     o._pilot_state, o._pilot_at = {}, {}
+    o._magnet_data_ok = True
+    o._magnet_objective = lambda sym, side, entry: None
     pos = {'side': 'LONG', 'entry_price': 100.0}
     _check(o._pilot_tick('BTCUSDT', pos, 101.0, False) is False,
-           'такту немає → позицію автопілот не закриває')
-    _check(not o._pilot_at,
-           'троттл НЕ чіпали — доказ, що жодної роботи не виконувалось')
+           'редукований такт НІКОЛИ не закриває угоду')
     st = o.get_pilot_state('BTCUSDT', False)
     _check(st and st.get('auto_off'),
            f'колонка мусить сказати ПРИЧИНУ, а не застигнути: {st}')
-    ts = st['ts']
-    o._pilot_tick('BTCUSDT', pos, 101.5, False)
-    o._pilot_tick('BTCUSDT', pos, 102.0, False)
-    _check(o.get_pilot_state('BTCUSDT', False)['ts'] == ts,
-           'анти-флуд: знімок пишеться раз, інакше таблиця смикалась би щотакту')
+    _check(st.get('action') != 'take' and not st.get('trail_block'),
+           'ні фіксації, ні трейлу в цьому режимі немає')
+    _check('pilot_r_stop' not in pos, 'без стопа якір R не вигадуємо')
     # ⚠️ Реальна і паперова книги — РІЗНІ ключі (урок TRXUSDT).
     o._pilot_tick('BTCUSDT', pos, 101.0, True)
     _check(o.get_pilot_state('BTCUSDT', True) is not None
            and o.get_pilot_state('BTCUSDT', True) is not st,
            'паперова книга має власний знімок')
-    print('✓ гейт зупиняє ВЕСЬ такт автопілота і пояснює це в колонці')
+    print('✓ гейт гасить рішення автопілота, лишаючи тільки 🧲 → TP-1')
 
 
 def test_the_gate_stands_before_any_pilot_work():
     src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
     i = src.index('def _pilot_tick')
-    j = src.index('def _pilot_mark', i)
+    # ⚠️ Зріз — РІВНО тіло `_pilot_tick`: редукований такт живе в
+    # ОКРЕМОМУ методі нижче, і його рядки не мають плутати замок.
+    j = src.index('def _pilot_auto_off', i)
     body = src[i:j]
     g = body.index('if self._pilot_auto_off(s):')
     _check(g < body.index('from detection import trade_pilot'),
@@ -1047,11 +1055,151 @@ def test_the_rule_does_not_rewrite_the_users_own_toggle():
     повернувся рівно таким, як його налаштували."""
     src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
     i = src.index('def _pilot_auto_off')
-    body = src[i:src.index('def _pilot_note_auto_off', i)]
+    body = src[i:src.index('def _pilot_magnet_tp1', i)]
     _check("s.get('use_mm_flat_exit')" in body, 'умова читає саме це правило')
     _check("'pilot_enabled'" not in body.split('"""')[-1],
            'чужий тумблер НЕ переписуємо')
     print('✓ правило гасить поведінку, а не налаштування користувача')
+
+
+# ═════════ 🧲 МАГНІТ → Manual TP-1 у режимі 🧮 (вимога 17.09) ═══════════════
+# Дослівно: «при виборі 🧮 Старий МММ ⚖ → вихід із 🎯 Автопілота беремо
+# "🧲 найбільший магніт" і ставимо в Manual TP-1. І таким чином щоб не було
+# пустим поле 🎯 Автопілот в таблицях відкритих угод — підраховуй дані для
+# Manual TP-1.»
+def _mm_tm(**over):
+    o = _tm()
+    o._settings = dict({'pilot_enabled': True, 'use_mm_flat_exit': True,
+                        'pilot_tp2_from_magnet': True, 'pilot_autofill_tp': True,
+                        'pilot_tp1_close_pct': 50}, **over)
+    o._pilot_state, o._pilot_at = {}, {}
+    o._magnet_data_ok = True
+    o.db = None          # персист у стабі не потрібен
+    o.calls = []
+
+    def _mag(sym, side, entry):
+        o.calls.append(sym)
+        return {'price': 2.0, 'dist_pct': 8.51, 'kind': 'magnet',
+                'label': '🧲 магніт $2.0000'}
+    o._magnet_objective = _mag
+    return o
+
+
+def test_the_magnet_becomes_manual_tp1_and_the_column_is_filled():
+    _reset()
+    o = _mm_tm()
+    pos = {'side': 'SHORT', 'entry_price': 2.1860, 'manual_sl': 2.3033}
+    _check(o._pilot_tick('NEOUSDT', pos, 2.1500, False) is False,
+           'редукований такт угоду не закриває')
+    _check(_near(pos.get('manual_tp1'), 2.0),
+           f'магніт мав лягти в Manual TP-1: {pos.get("manual_tp1")}')
+    _check(pos.get('manual_tp') is None,
+           'TP-2 у цьому режимі НЕ ставимо — просили саме TP-1')
+    st = o.get_pilot_state('NEOUSDT', False)
+    _check(st.get('objective') and st.get('progress'),
+           f'колонка «🎯 Автопілот» не має бути порожньою: {st}')
+    _check(st.get('r') and st['r'] > 1,
+           f'R мусить рахуватись (від початкового стопа): {st.get("r")}')
+    _check(st.get('r_stop') == 2.3033, 'якір R — стоп на момент появи')
+    _check('магніт' in (st.get('why') or ''), f'у тултипі має бути причина: {st}')
+    _check('TP-1' in _text() and 'Автопілот' in _text(),
+           f'рівень мусить бути названий у 🧾 Лозі: {_text()}')
+    print('✓ 🧲 магніт → Manual TP-1, колонка заповнена числами')
+
+
+def test_the_exchange_is_asked_once_per_trade():
+    """Магніт — це запит до біржі. Питаємо РІВНО один раз на угоду."""
+    _reset()
+    o = _mm_tm()
+    pos = {'side': 'SHORT', 'entry_price': 2.1860, 'manual_sl': 2.3033}
+    for _ in range(3):
+        o._pilot_at = {}            # знімаємо тротл, імітуючи наступні такти
+        o._pilot_tick('NEOUSDT', pos, 2.15, False)
+    _check(o.calls == ['NEOUSDT'], f'мав бути ОДИН запит, а не {o.calls}')
+    print('✓ біржу питаємо один раз на угоду')
+
+
+def test_the_source_toggle_off_means_no_exchange_call_at_all():
+    _reset()
+    o = _mm_tm(pilot_tp2_from_magnet=False)
+    pos = {'side': 'LONG', 'entry_price': 100.0}
+    o._pilot_tick('BTCUSDT', pos, 101.0, False)
+    _check(o.calls == [], 'вимкнене джерело → зайвого запиту до біржі немає')
+    st = o.get_pilot_state('BTCUSDT', False)
+    _check('вимкнено' in (st.get('tp_skip') or ''),
+           f'причина мусить бути названа, а не порожнеча: {st}')
+    _check(pos.get('manual_tp1') is None, 'рівня немає звідки взяти')
+    print('✓ вимкнене джерело магніту — біржу не турбуємо, причину кажемо')
+
+
+def test_the_operators_own_tp1_is_never_overwritten():
+    _reset()
+    o = _mm_tm()
+    pos = {'side': 'SHORT', 'entry_price': 2.1860, 'manual_sl': 2.3033,
+           'manual_tp1': 2.1000, 'manual_tp1_src': TM.SRC_USER}
+    o._pilot_tick('NEOUSDT', pos, 2.15, False)
+    _check(_near(pos['manual_tp1'], 2.1000),
+           f'рівень оператора лишається недоторканим: {pos["manual_tp1"]}')
+    print('✓ ручний TP-1 автопілот не перекриває')
+
+
+def test_a_cleared_tp1_stays_cleared():
+    """Оператор ЗНЯВ рівень → не відновлюємо, але кажемо про це в тултипі."""
+    _reset()
+    o = _mm_tm()
+    pos = {'side': 'SHORT', 'entry_price': 2.1860, 'manual_sl': 2.3033,
+           'pilot_tp_cleared': True}
+    o._pilot_tick('NEOUSDT', pos, 2.15, False)
+    _check(pos.get('manual_tp1') is None, 'знятий рівень не повертаємо')
+    _check(o.get_pilot_state('NEOUSDT', False).get('tp_locked') is True,
+           'стан «зняв оператор» мусить бути видно')
+    print('✓ знятий TP-1 лишається знятим і це видно')
+
+
+def test_no_magnet_means_a_reason_not_an_empty_cell():
+    _reset()
+    o = _mm_tm()
+    o._magnet_objective = lambda *a: None
+    o._magnet_skip = 'магніт лежить ПОЗАДУ входу'
+    pos = {'side': 'LONG', 'entry_price': 100.0}
+    o._pilot_tick('BTCUSDT', pos, 101.0, False)
+    st = o.get_pilot_state('BTCUSDT', False)
+    _check('ПОЗАДУ' in (st.get('tp_skip') or ''), f'причина зі сканера: {st}')
+    _check('магніт' in (st.get('why') or ''), f'і в підсумку теж: {st}')
+    print('✓ немає магніту — комірка каже ЧОМУ')
+
+
+def test_the_exchange_silence_is_retried_not_remembered():
+    """Біржа не відповіла → позначку «питали» НЕ ставимо: наступний такт
+    спробує ще (зріз кешується, повтор безкоштовний)."""
+    _reset()
+    o = _mm_tm()
+    o._magnet_objective = lambda *a: None
+    o._magnet_data_ok = False
+    pos = {'side': 'LONG', 'entry_price': 100.0}
+    o._pilot_tick('BTCUSDT', pos, 101.0, False)
+    _check(not pos.get('pilot_magnet_done'),
+           'мовчання біржі не має закривати питання назавжди')
+    print('✓ мовчання біржі — повторимо, а не забудемо')
+
+
+def test_the_page_shows_the_magnet_state_separately():
+    html = open(os.path.join(_ROOT, 'templates/smart_money.html')).read()
+    _check('_PILOT_AUTO_TP1' in html,
+           'коли магніт є — комірка мусить казати саме це, а не «вимкнено»')
+    i = html.index('const [ic, lbl, col] = ')
+    chain = html[i:i + 460]
+    _check('pl.objective ? _PILOT_AUTO_TP1 : _PILOT_AUTO_OFF' in chain,
+           'два РІЗНІ стани: є магніт / магніту немає')
+    tip = html[html.index('pl.auto_off ?', i):][:700]
+    _check('Manual TP-1' in tip and 'Manual TP-2' in tip,
+           'тултип мусить сказати, що саме лишилось працювати')
+    # Тумблери, які в цьому режимі ЗНОВУ мають сенс, гасити не можна.
+    dim = html[html.index('const _PILOT_AUTO_IDS'):][:900]
+    for _id in ('tm-pilot-autofill-tp', 'tm-pilot-tp2-magnet'):
+        _check(f"'{_id}'" not in dim,
+               f'{_id} керує магнітом у TP-1 — гасити його не можна')
+    print('✓ сторінка розрізняє «магніт → TP-1» і «нічого не робимо»')
 
 
 if __name__ == '__main__':
@@ -1110,8 +1258,16 @@ if __name__ == '__main__':
     test_clearing_tp2_cancels_the_exchange_tp_and_says_what_happened()
     test_protective_exits_are_never_touched()
     test_the_rule_and_the_autopilot_automation_are_mutually_exclusive()
-    test_the_gate_stops_the_whole_tick_not_just_one_action()
+    test_the_gate_stops_every_DECISION_of_the_autopilot()
     test_the_gate_stands_before_any_pilot_work()
     test_manual_levels_and_breakeven_are_outside_the_gate()
     test_the_rule_does_not_rewrite_the_users_own_toggle()
+    test_the_magnet_becomes_manual_tp1_and_the_column_is_filled()
+    test_the_exchange_is_asked_once_per_trade()
+    test_the_source_toggle_off_means_no_exchange_call_at_all()
+    test_the_operators_own_tp1_is_never_overwritten()
+    test_a_cleared_tp1_stays_cleared()
+    test_no_magnet_means_a_reason_not_an_empty_cell()
+    test_the_exchange_silence_is_retried_not_remembered()
+    test_the_page_shows_the_magnet_state_separately()
     print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')

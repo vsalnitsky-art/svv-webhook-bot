@@ -84,6 +84,7 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._mm_str_hist = {}
     ff._mm_bias = {}
     ff._mm_bias_since = 0.0
+    ff._mm_state_since = {}
     ff._mm_price_hist = {}
     ff._mm_decision = {}
     ff._clock = [10_000.0]
@@ -1009,15 +1010,15 @@ def test_ui_has_growth_column_with_timer_and_sorting():
     # ⚠️ Кількість колонок звіряємо зі СКЛАДОМ, а не з магічним числом: список
     # нижче — це і є контракт таблиці, тож додана колонка мусить бути названа
     # ТУТ, а не просто зсунути число.
-    _cols = ['Символ', 'Старий МММ', 'Сила росте', '⏱ Росте', 'Ціна',
-             '🔮 1H', '🔮 4H']
+    _cols = ['Символ', 'Старий МММ', '⏱ У стані', 'Сила росте', '⏱ Росте',
+             'Ціна', '🔮 1H', '🔮 4H']
     for _c in _cols:
         _check(_c in tbl, f'немає колонки «{_c}»')
     _n = len(_re.findall(r'<th[\s>]', tbl))
     _check(_n == len(_cols) + 1, f'колонок {_n}, а в контракті {len(_cols)}+☑')
     _check(f'colspan="{_n}"' in tbl,
            f'colspan порожнього рядка не дорівнює числу колонок ({_n})')
-    for col in ('symbol', 'strength', 'delta', 'grow', 'pchg'):
+    for col in ('symbol', 'strength', 'state', 'delta', 'grow', 'pchg'):
         _check(f'data-mmsort="{col}"' in tbl, f'колонка {col} не сортується')
     _check("mmSort('delta')" in tbl, 'сортування за приростом не підключене')
     _check("mmSort('grow')" in tbl, 'сортування за таймером не підключене')
@@ -1626,17 +1627,26 @@ def test_ui_table_is_striped_so_rows_do_not_blend():
 
 def test_js_price_cell_is_a_single_line():
     """Вимога 15.09: «Колонку Ціна пиши в один рядок»."""
+    # ⚠️ НОМЕР колонки беремо з ЖИВОГО заголовка, а не магічним числом: на
+    # зсуві після додавання колонки цей тест уже падав «на рівному місці».
+    import re as _re
+    _i = _HTML.index('id="mm-table"')
+    _head = _HTML[_i:_HTML.index('</thead>', _i)]
+    # Зріз обривається ВСЕРЕДИНІ самого <th> колонки «Ціна», тож лічильник уже
+    # включає її → це і є номер потрібного <td (нумерація split збігається).
+    _idx = len(_re.findall(r'<th[\s>]', _head[:_head.index('>Ціна<')]))
     out = _run_js(r'''
 mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:50, strength_prev:50,
-  delta:0, grow_since:null, price:1.5, price_dir:'up', price_chg:0.42,
-  price_span:900, delta_span:180, f1:null, f4:null, selectable:true}],
+  delta:0, grow_since:null, state_since:null, price:1.5, price_dir:'up',
+  price_chg:0.42, price_span:900, delta_span:180, f1:null, f4:null,
+  selectable:true}],
   enabled:true, limited:false, ts:1});
 const h = document.getElementById('mm-tbody').innerHTML;
-const cell = h.split('<td')[6] || '';
+const cell = h.split('<td')[__IDX__] || '';
 console.log(JSON.stringify({br:cell.includes('<br>'), px:cell.includes('1.5'),
   arrow:cell.includes('▲'), pct:cell.includes('+0.42%'),
   win:cell.replace(/title="[^"]*"/g, '').includes('15хв')}));
-''')
+'''.replace('__IDX__', str(_idx)))
     import json
     d = json.loads(out)
     _check(not d['br'], f'ціна досі у два рядки: {d}')
@@ -1948,12 +1958,17 @@ def test_the_panel_keeps_the_accordion_contract():
 def test_page_dims_exactly_the_controls_that_went_dead():
     i = _HTML.index('const _PILOT_AUTO_IDS')
     block = _HTML[i:i + 900]
-    for _id in ('tm-pilot-enabled', 'tm-pilot-autofill-tp', 'tm-pilot-tp1-liq',
-                'tm-pilot-tp1-fallback'):
+    for _id in ('tm-pilot-enabled', 'tm-pilot-tp1-liq', 'tm-pilot-tp1-fallback',
+                'tm-pilot-swing-tf'):
         _check(f"'{_id}'" in block, f'{_id} стає мертвим → мусить гаснути')
-    # ⚠️ Ці ТРИ — НЕ гасити: перші два обслуговують РУЧНІ рівні, третій живить
-    # ще й гейт за R ПЕРЕД відкриттям, тобто працює й без автопілота.
-    for _id in ('tm-tp1-move-be', 'tm-pilot-tp1-pct', 'tm-pilot-tp2-magnet'):
+    # ⚠️ Ці ЧОТИРИ — НЕ гасити: «⚖️ TP-1 → беззбиток» і «TP-1 закриває N%»
+    # обслуговують РУЧНІ рівні; 🧲 «TP-2 з магніту» — ДЖЕРЕЛО рівня, який у
+    # цьому режимі йде в Manual TP-1 (і воно ж живить гейт за R); а
+    # «Автозаповнення TP» саме й дозволяє боту вписати той магніт.
+    # ⚠️ `tm-pilot-autofill-tp` СВІДОМО переїхав із першого списку в другий:
+    # вимога 17.09 повернула йому сенс, тож замок переписано, а не «полагоджено».
+    for _id in ('tm-tp1-move-be', 'tm-pilot-tp1-pct', 'tm-pilot-tp2-magnet',
+                'tm-pilot-autofill-tp'):
         _check(f"'{_id}'" not in block,
                f'{_id} мусить лишатись активним — він працює і без автопілота')
     _check('_tmPilotAutoSync()' in _HTML, 'потрібна функція синхронізації')
@@ -1979,8 +1994,8 @@ def test_the_column_says_why_the_autopilot_is_silent():
     chain = _HTML[i:i + 420]
     _check(chain.index('pl.auto_off') < chain.index('pl.take_block'),
            'вимкнена автоматика — найсильніший стан: такту взагалі не було')
-    tip = _HTML[_HTML.index('pl.auto_off ?', i):][:600]
-    _check('Manual TP-1/TP-2' in tip and 'беззбиток' in tip,
+    tip = _HTML[_HTML.index('pl.auto_off ?', i):][:800]
+    _check('Manual TP-1' in tip and 'беззбиток' in tip,
            'підказка мусить сказати, ЩО саме працює далі')
     print('✓ комірка «🎯 Автопілот» пояснює, чому автоматики немає')
 
@@ -2053,6 +2068,116 @@ def test_the_page_shows_that_the_numbers_were_restored():
     _check('Відновлено після рестарту' in body,
            'у підказці банера має бути сказано, звідки числа')
     print('✓ сторінка показує, що числа відновлені, а не щойно пораховані')
+
+
+# ═══ 22. ⏱ СКІЛЬКИ МОНЕТА ТРИМАЄ СТАН LONG / SHORT / ⚖ (вимога 17.09) ══════
+# Дослівно: «Додай таймер для кожної монети, яка знаходиться в стані LONG SHORT
+# Рівновага — скільки саме часу, для МММ-монітор.»
+def _st_row(ff, sym='AAAUSDT'):
+    return next((r for r in ff.mm_monitor_state()['rows'] if r['symbol'] == sym), None)
+
+
+def test_the_state_timer_starts_and_keeps_running():
+    ff = _mk()
+    t0 = ff._clock[0]
+    _caps(ff, 3, AAAUSDT=0.5)
+    r = _st_row(ff)
+    _check(r['mm'] == 'LONG', 'стан монети — LONG')
+    _check(r['state_since'] == int(t0),
+           f'відлік мусить іти від ПЕРШОГО такту стану: {r["state_since"]} vs {int(t0)}')
+    print('✓ таймер стану стартує і не перезапускається, поки стан тримається')
+
+
+def test_every_change_of_state_restarts_it_including_flat():
+    """⚖ рівновага — ТЕЖ стан: «скільки монета вже без напрямку» не менш
+    змістовне за «скільки вона в LONG»."""
+    ff = _mk()
+    _caps(ff, 2, AAAUSDT=0.5)
+    _flat_at = ff._clock[0]
+    _cap(ff, AAAUSDT=0.02)                      # → ⚖ рівновага
+    r = _st_row(ff)
+    _check(r['mm'] is None and r['state_since'] == int(_flat_at),
+           f'перехід у рівновагу мусить перезапустити відлік: {r}')
+    _short_at = ff._clock[0]
+    _cap(ff, AAAUSDT=-0.6)                      # → SHORT
+    r = _st_row(ff)
+    _check(r['mm'] == 'SHORT' and r['state_since'] == int(_short_at),
+           f'фліп теж перезапускає: {r}')
+    print('✓ будь-яка зміна стану (у т.ч. ⚖) перезапускає таймер')
+
+
+def test_a_one_tick_dropout_does_not_reset_the_timer():
+    """Той самий урок, що з «Силою росте»: liq-map могла на мить не віддати
+    стан, і обнуляти через це годинний відлік означало б мерехтіння."""
+    ff = _mk()
+    t0 = ff._clock[0]
+    _caps(ff, 2, AAAUSDT=0.5)
+    _cap(ff)                                     # монети у знімку НЕМАЄ
+    _cap(ff, AAAUSDT=0.5)                        # повернулась із тим самим станом
+    _check(_st_row(ff)['state_since'] == int(t0),
+           'разовий пропуск не має збивати відлік')
+    print('✓ разовий пропуск монети таймер не скидає')
+
+
+def test_a_long_absence_is_forgotten():
+    ff = _mk()
+    _caps(ff, 2, AAAUSDT=0.5)
+    ff._clock[0] += _m.MM_GROW_WINDOW_SEC + _m.CYCLE_SECS * 2
+    _cap(ff)                                     # прибирання «давно не бачили»
+    _check('AAAUSDT' not in ff._mm_state_since,
+           'запис, якого не бачили довше за вікно, мусить зникнути')
+    _back = ff._clock[0]
+    _cap(ff, AAAUSDT=0.5)
+    _check(_st_row(ff)['state_since'] == int(_back),
+           'після довгої відсутності відлік чесно починається заново')
+    print('✓ довга відсутність — відлік заново, памʼять не тече')
+
+
+def test_the_monitor_toggle_clears_the_state_timers():
+    ff = _mk()
+    _caps(ff, 2, AAAUSDT=0.5)
+    ff._settings['mm_monitor_enabled'] = False
+    _cap(ff, AAAUSDT=0.5)
+    _check(not ff._mm_state_since,
+           'вимкнений монітор гасить і таймери — застиглі числа виглядають живими')
+    print('✓ вимкнений монітор чистить таймери стану')
+
+
+def test_the_state_timer_survives_a_restart():
+    src = _SRC[_SRC.index('def _persist_state'):]
+    body = src[:src.index('def ', 20)]
+    _check("'mm_state_since'" in body,
+           'таймери стану мусять лягати в той самий блоб стану')
+    src2 = _SRC[_SRC.index('def _load_state'):]
+    body2 = src2[:src2.index('def ', 20)]
+    _check("st.get('mm_state_since')" in body2, 'на старті читаємо їх назад')
+    _check("'seen': _n" in body2,
+           '`seen` мусить стати ТЕПЕРІШНІМ часом, інакше прибирання «давно не '
+           'бачили» знесло б відновлене ще до першого такту')
+    # І поведінка: відновлений стан ПРОДОВЖУЄТЬСЯ, якщо напрямок той самий.
+    ff = _mk()
+    t0 = ff._clock[0] - 3600
+    ff._mm_state_since = {'AAAUSDT': {'st': 'LONG', 'since': t0, 'seen': ff._clock[0]}}
+    _cap(ff, AAAUSDT=0.5)
+    _check(_st_row(ff)['state_since'] == int(t0),
+           'той самий стан після рестарту → відлік ПРОДОВЖУЄТЬСЯ')
+    print('✓ таймер стану переживає рестарт, а фліп його все одно перезапускає')
+
+
+def test_the_page_draws_the_state_timer_with_the_shared_ticker():
+    i = _HTML.index('id="mm-table"')
+    tbl = _HTML[i:_HTML.index('</table>', i)]
+    _check('⏱ У стані' in tbl, 'потрібна окрема колонка стану')
+    _check('data-mmsort="state"' in tbl, 'колонка мусить сортуватись')
+    j = _HTML.index('function _mmStateCell')
+    cell = _HTML[j:_HTML.index('function _mmTimerCell', j)]
+    _check('ff-timer' in cell and 'data-since' in cell,
+           'секунди веде СПІЛЬНИЙ 1с-тікер, а не власний інтервал')
+    _check('setInterval' not in cell, 'другого інтервалу на сторінці не заводимо')
+    sig = _HTML[_HTML.index('const sig = _mmDir'):][:700]
+    _check('state_since' in sig,
+           'момент старту — у сигнатурі, інакше перезапуск не перемалював би рядок')
+    print('✓ UI: окрема колонка «⏱ У стані» на спільному тікері')
 
 
 if __name__ == '__main__':

@@ -2565,6 +2565,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mm-check-all" onchange="mmToggleAll(this.checked)"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="СТАРИЙ показник МММ (той самий, що живить шар «Старий МММ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">Старий МММ<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="state" onclick="mmSort('state')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан МММ — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Відлік починається заново на КОЖНІЙ зміні стану (у тому числі при переході в рівновагу і назад). ⚖ рівновага — теж стан: «скільки монета вже без напрямку» не менш важливо за «скільки вона в LONG». Разовий пропуск монети у знімку таймер НЕ збиває, а рестарт бота його не обнуляє — момент старту зберігається. Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="delta" onclick="mmSort('delta')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за ВІКНО СПОСТЕРЕЖЕННЯ (~3 хв, тобто три оновлення джерела). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. Базою є НАЙСТАРІШЕ значення у вікні, а не попередній такт: разовий пропуск даних більше не стирає показник, а дрібне тремтіння цілого числа сили не перемикає стрілку. Поки історії менше за одне оновлення джерела — показуємо «—», а не вигаданий приріст. Фактичне вікно по кожному рядку — у підказці комірки. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="grow" onclick="mmSort('grow')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу сила МММ росте БЕЗПЕРЕРВНО. Ріст ТРИВАЄ, поки виконуються ДВІ умови: (1) за вікном спостереження приріст вищий за поріг і (2) сила не відкотилась від свого піку в цьому вікні більше ніж на той самий поріг. Перша умова прибирає мерехтіння — дрібне тремтіння таймер не збиває; друга не дає таймеру тягнути «росте» ще хвилини після того, як сила вже розвернулась. «—» = зараз не росте. Клік — сортувати (найдовший ріст зверху).">⏱ Росте<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="pchg" onclick="mmSort('pchg')" style="cursor:pointer;user-select:none" title="Ціна зі знімка МММ + КУДИ вона йде: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). Поруч зі стрілкою — за скільки часу історії реально набралось: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ ціни (найсильніший ріст зверху).">Ціна<span class="ff-sort-arrow"></span></th>
@@ -2573,7 +2574,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="mm-tbody">
-                        <tr><td colspan="8" class="tm-empty-msg">Немає даних МММ</td></tr>
+                        <tr><td colspan="9" class="tm-empty-msg">Немає даних МММ</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -3873,8 +3874,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                              увімкнене: мовчки погашені поля читались би як збій. -->
                         <div id="tm-pilot-auto-off-note" style="display:none;margin-top:6px;font-size:0.68rem;line-height:1.35;color:#fbbf24">
                             🧮 Правило увімкнено → <b>АВТОМАТИКУ 🎯 Автопілота вимкнено</b>:
-                            він не обирає ціль, не веде стоп і не заповнює Manual TP-1/TP-2.
-                            Ваші <b>ручні</b> Manual TP-1/TP-2 і <b>⚖️ TP-1 → беззбиток</b> працюють як зазвичай.
+                            він не обирає ціль, не веде стоп і не заповнює Manual TP-2.
+                            Лишилась ОДНА дія — <b>🧲 найбільший магніт ліквідності → Manual TP-1</b>
+                            (частковий вихід на «TP-1 закриває N%»); працює, доки увімкнені
+                            «🧲 TP-2 з магніту» і «Автозаповнення TP».
+                            Ваші <b>ручні</b> рівні і <b>⚖️ TP-1 → беззбиток</b> — як зазвичай.
                         </div>
 
                         <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
@@ -9552,11 +9556,12 @@ function _ffLevelsSync() {
 // гасимо (той самий принцип, що з випадайкою «SL з» і полями TTL при ♾).
 // ⚠️ СВІДОМО НЕ гасимо: «⚖️ TP-1 → беззбиток» і «TP-1 закриває N%» — вони
 // обслуговують РУЧНІ Manual TP-1/TP-2, які мусять працювати далі (дослівна
-// вимога), а також 🧲 «TP-2 з магніту» — він живить ще й гейт за R ПЕРЕД
-// відкриттям, тобто працює й без автопілота.
+// вимога); 🧲 «TP-2 з магніту» — ДЖЕРЕЛО рівня, який у цьому режимі йде в
+// Manual TP-1 (і воно ж живить гейт за R ПЕРЕД відкриттям); а також
+// «Автозаповнення TP» — саме воно дозволяє боту вписати той магніт.
 const _PILOT_AUTO_IDS = [
     'tm-pilot-enabled', 'tm-pilot-min-target', 'tm-pilot-max-target',
-    'tm-pilot-autofill-tp', 'tm-pilot-swing-tf', 'tm-pilot-poc-hours',
+    'tm-pilot-swing-tf', 'tm-pilot-poc-hours',
     'tm-pilot-stop-buf', 'tm-pilot-be-r',
     'tm-pilot-tp1-liq', 'tm-pilot-tp1-liq-mid',
     'tm-pilot-tp1-min-path', 'tm-pilot-tp1-max-path', 'tm-pilot-tp1-fallback',
@@ -11449,6 +11454,9 @@ function _mmSortVal(r, col) {
     // (`price_dir` порожній) — це «ще не знаємо», а не «нуль».
     if (col === 'pchg') return (!r.price_dir ? null : Number(r.price_chg || 0));
     if (col === 'grow') return (r.grow_since == null ? null : -Number(r.grow_since));
+    // ⏱ Довше у стані = «більше» (сортуємо спаданням тривалості, а не
+    // моменту), тож беремо момент зі знаком мінус — як і для «Росте».
+    if (col === 'state') return (r.state_since == null ? null : -Number(r.state_since));
     return Number(r.strength || 0);
 }
 function _mmSortRows(rows) {
@@ -11517,6 +11525,21 @@ function _mmGrowCell(r) {
 // сила НЕ росте — відкриття ВІДКЛАДЕНО» користувач СКАСУВАВ («відміни цю
 // перевірку»). Ріст сили лишився ПОКАЗНИКОМ (колонки нижче), а не умовою
 // входу, тож і пояснювати затримку більше нічим — її немає.
+// ⏱ СКІЛЬКИ МОНЕТА ТРИМАЄ СВІЙ СТАН (вимога 17.09). Колір — за самим станом,
+// щоб рядок читався як ціле: зелений LONG · червоний SHORT · сірий ⚖.
+// ⚠️ Секунди малює ТОЙ САМИЙ глобальний 1с-тікер (`.ff-timer[data-since]`), що
+// веде «⏱ Росте» і таймери Черг — другого інтервалу на сторінці не заводимо.
+const _MM_STATE_TXT = { LONG: '🟢 LONG', SHORT: '🔴 SHORT' };
+function _mmStateCell(r) {
+    if (!r.state_since) {
+        return '<span style="color:#6b7280" title="Стан щойно зʼявився — відлік почнеться наступним тактом.">—</span>';
+    }
+    const col = r.mm === 'LONG' ? '#4ade80' : (r.mm === 'SHORT' ? '#f87171' : '#8b93a7');
+    const lbl = _MM_STATE_TXT[r.mm] || '⚖ рівновага';
+    return `<span class="ff-timer" data-since="${Math.floor(r.state_since)}"`
+        + ` title="Монета тримає стан ${lbl} без перерви. Відлік почнеться заново на зміні стану."`
+        + ` style="color:${col};font-family:monospace">--:--:--</span>`;
+}
 function _mmTimerCell(r) {
     if (!r.grow_since) {
         return '<span style="color:#6b7280" title="Зараз сила не росте — таймер обнулено. Він стартує наново на першому ж такті росту.">—</span>';
@@ -11721,7 +11744,7 @@ function mmRender() {
     const sig = _mmDir + '|' + (_mmMeta.enabled ? '1' : '0')
         + '|' + _mmSort.col + _mmSort.dir + '|'
         + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev, r.delta,
-        r.grow_since || 0, r.delta_span, r.price, r.price_dir || '', r.price_chg,
+        r.grow_since || 0, r.state_since || 0, r.delta_span, r.price, r.price_dir || '', r.price_chg,
         (r.f1 ? r.f1.side : ''), (r.f4 ? r.f4.side : ''),
         _mmSel.has(r.symbol) ? 1 : 0].join(':')).join(',');
     if (tb.dataset.sig !== sig) {
@@ -11732,7 +11755,7 @@ function mmRender() {
             const _why = !_mmMeta.enabled
                 ? '🔌 Монітор вимкнено — увімкніть тумблер у шапці секції'
                 : (_mmRows.length ? 'Немає монет під цей фільтр' : 'Немає даних МММ');
-            tb.innerHTML = `<tr><td colspan="8" class="tm-empty-msg">${_why}</td></tr>`;
+            tb.innerHTML = `<tr><td colspan="9" class="tm-empty-msg">${_why}</td></tr>`;
         } else {
             tb.innerHTML = rows.map(r => {
                 const sel = _mmSel.has(r.symbol);
@@ -11753,6 +11776,7 @@ function mmRender() {
                     // віджет `ffFuelCell` уже показує і напрямок, і 0-100%, і
                     // тренд — друга колонка дублювала те саме число.
                     + `<td>${ffFuelCell(r.mm, r.strength, r.strength_prev)}</td>`
+                    + `<td>${_mmStateCell(r)}</td>`
                     + `<td>${_mmGrowCell(r)}</td>`
                     + `<td>${_mmTimerCell(r)}</td>`
                     + `<td style="text-align:right">${_mmPriceCell(r)}</td>`
@@ -15124,9 +15148,12 @@ const _PILOT_BLOCKED = ['🔒', 'трейл заблоковано', '#fbbf24'];
 // заблокований трейл (йшлося про закриття угоди), тож перекриває і його.
 const _PILOT_TAKE_BLOCKED = ['✋', 'фіксацію знято оператором', '#fbbf24'];
 // 🧮 Автоматику автопілота вимкнено правилом «Старий МММ ⚖ → вихід»: виходом
-// керує ТОЙ показник, а автопілот не веде ні ціль, ні стоп, ні рівні.
-// Найсильніший зі станів — він означає, що такту взагалі не було.
+// керує ТОЙ показник, а автопілот не веде ні ціль, ні стоп, ні TP-2.
+// ⚠️ ОДНА здатність лишилась — 🧲 магніт у Manual TP-1 (вимога 17.09), тож
+// значків ДВА: поки магніт є, комірка так і каже; немає — чесне «вимкнено».
+// Один значок на обидва стани знову зробив би причину здогадкою.
 const _PILOT_AUTO_OFF = ['🧮', 'автоматику вимкнено правилом', '#8b93a7'];
+const _PILOT_AUTO_TP1 = ['🧲', 'магніт → Manual TP-1', '#fbbf24'];
 const _PILOT_KIND = {
     liq_next: '💧', liq_main: '🌊', swing: '🏁', poc: '⚪',
     // Нові типи цілей: межа зони вартості, рівновага діапазону та ПОХІДНИЙ
@@ -15144,7 +15171,7 @@ function pilotCellHTML(p) {
     // Заблокований трейл перекриває значок дії — стан УГОДИ важливіший за
     // намір плану (той самий принцип, що ⚖️ БЗ перекриває «бот» у полі SL).
     const [ic, lbl, col] = pl.auto_off
-        ? _PILOT_AUTO_OFF
+        ? (pl.objective ? _PILOT_AUTO_TP1 : _PILOT_AUTO_OFF)
         : (pl.take_block
             ? _PILOT_TAKE_BLOCKED
             : (pl.trail_block
@@ -15193,9 +15220,9 @@ function pilotCellHTML(p) {
 
     const tip = [
         `${lbl}${pl.auto_off ? ': ' + pl.auto_off : (pl.take_block ? ': ' + pl.take_block : (pl.trail_block ? ': ' + pl.trail_block : ''))}`,
-        pl.auto_off ? '🧮 Увімкнено правило «Старий МММ ⚖ → вихід», тож АВТОМАТИКА автопілота вимкнена: він не обирає ціль, не веде стоп і не заповнює Manual TP-1/TP-2. Виходом керує сам показник 🧮, а ваші РУЧНІ Manual TP-1/TP-2 і ⚖️ «TP-1 → беззбиток» працюють як зазвичай. Щоб повернути автопілот — вимкніть це правило в Exit Rules.' : null,
+        pl.auto_off ? '🧮 Увімкнено правило «Старий МММ ⚖ → вихід»: виходом керує ТОЙ показник, тож автопілот не обирає ціль, не веде стоп і не заповнює Manual TP-2. Лишилась ОДНА його дія — 🧲 найбільший магніт ліквідності попереду входу йде в Manual TP-1 (частковий вихід). Ваші РУЧНІ рівні і ⚖️ «TP-1 → беззбиток» працюють як зазвичай. Щоб повернути повний автопілот — вимкніть це правило в Exit Rules.' : null,
         pl.take_block ? '✋ Ціль ДОСЯГНУТА, але Manual TP-2 знято руками — автопілот угоду НЕ фіксує і веде далі (стоп працює). Впишіть Manual TP-2, щоб повернути автоматичну фіксацію.' : null,
-        obj ? `Ціль (TP-2): ${obj.label} @ ${obj.price}` : 'Цілі попереду не видно',
+        obj ? `${pl.auto_off ? 'Рівень Manual TP-1 (🧲 магніт)' : 'Ціль (TP-2)'}: ${obj.label} @ ${obj.price}` : 'Цілі попереду не видно',
         (pl.r != null)
             ? `R = ${pl.r} — плановий: (вхід→ціль) / (вхід→ПОЧАТКОВИЙ стоп${pl.r_stop ? ' ' + pl.r_stop : ''}). Трейл і беззбиток його НЕ роздувають.`
             : null,
