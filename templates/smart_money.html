@@ -2588,6 +2588,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <tr>
                             <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mm-check-all" onchange="mmToggleAll(this.checked)"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
+                            <!-- 📍 ДЕ МОНЕТА ЗАРАЗ (вимога 18.09). Монети «в
+                                 роботі» з таблиці більше НЕ зникають — вони
+                                 підписані станом. -->
+                            <th data-mmsort="status" onclick="mmSort('status')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Монета в угоді або в черзі з таблиці НЕ зникає — просто видно, що вона вже в роботі, і галочка для ✋ групового відкриття їй недоступна. Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="СТАРИЙ показник МММ (той самий, що живить шар «Старий МММ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">Старий МММ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="state" onclick="mmSort('state')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан МММ — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Відлік починається заново на КОЖНІЙ зміні стану (у тому числі при переході в рівновагу і назад). ⚖ рівновага — теж стан: «скільки монета вже без напрямку» не менш важливо за «скільки вона в LONG». Разовий пропуск монети у знімку таймер НЕ збиває, а рестарт бота його не обнуляє — момент старту зберігається. Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="delta" onclick="mmSort('delta')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за ВІКНО СПОСТЕРЕЖЕННЯ (~3 хв, тобто три оновлення джерела). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. Базою є НАЙСТАРІШЕ значення у вікні, а не попередній такт: разовий пропуск даних більше не стирає показник, а дрібне тремтіння цілого числа сили не перемикає стрілку. Поки історії менше за одне оновлення джерела — показуємо «—», а не вигаданий приріст. Фактичне вікно по кожному рядку — у підказці комірки. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
@@ -2599,7 +2603,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="mm-tbody">
-                        <tr><td colspan="10" class="tm-empty-msg">Немає даних МММ</td></tr>
+                        <tr><td colspan="11" class="tm-empty-msg">Немає даних МММ</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -2633,38 +2637,75 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
         </div>
         <div id="lh-body">
-            <details class="sm-settings-bar" style="margin:10px 0 6px">
-                <summary class="sm-settings-summary" style="cursor:pointer;font-size:0.75rem;color:#67e8f9;font-weight:600">⚙️ Налаштування (💧 Сканер ліквідності)</summary>
-                <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-top:10px">
-                    <div>
-                        <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Біржа</label>
-                        <select id="lh-exchange" onchange="lhSave()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
+            <!-- 🎨 ВІДСТУПИ І ВИРІВНЮВАННЯ (скарга 18.09: «поля ховаються,
+                 переглянь візуальні відступи»). Три речі, що ламали вигляд:
+                 (1) `.sm-settings-summary` — це flex із `space-between`, і при
+                 ОДНОМУ текстовому вузлі підпис відлітав до правого краю (у
+                 решти гармошок поруч стоїть другий span, тому там усе рівно) —
+                 тепер підпис ліворуч, а праворуч ЖИВИЙ розклад параметрів;
+                 (2) поля мали інлайнові стилі й різні висоти → нерівні
+                 проміжки: тепер один клас `.lh-f` і сітка з однаковим gap;
+                 (3) чекбокс тиснувся збоку до вузького поля — він переїхав у
+                 ВЛАСНИЙ рядок за роздільником. -->
+            <style>
+              #liq-hunter-panel .lh-grid { display:flex; flex-wrap:wrap;
+                  gap:12px 16px; align-items:flex-end; padding:10px 12px 12px; }
+              #liq-hunter-panel .lh-f { display:flex; flex-direction:column; gap:4px; }
+              #liq-hunter-panel .lh-f > label { font-size:0.64rem; color:#8b93a7;
+                  text-transform:uppercase; letter-spacing:.5px; white-space:nowrap; }
+              #liq-hunter-panel .lh-f select,
+              #liq-hunter-panel .lh-f input { background:rgba(0,0,0,0.3);
+                  color:#e5e7eb; border:1px solid rgba(255,255,255,0.15);
+                  border-radius:4px; padding:4px 7px; font-size:0.72rem;
+                  height:28px; box-sizing:border-box; }
+              #liq-hunter-panel .lh-f input { width:78px; font-family:monospace;
+                  text-align:right; }
+              #liq-hunter-panel .lh-flip { flex-basis:100%; display:flex;
+                  align-items:center; gap:7px; margin-top:2px; padding-top:10px;
+                  border-top:1px solid rgba(255,255,255,0.07);
+                  font-size:0.7rem; color:#cbd5e1; cursor:pointer; }
+              #liq-hunter-panel .lh-actions { display:flex; align-items:center;
+                  gap:10px; flex-wrap:wrap; margin:10px 0 2px; }
+              /* 🧲 Відсотки магніту — РІВНА колонка: кожен сегмент однакової
+                 ширини, числа праворуч, monospace (розряди вишиковуються). */
+              #lh-table .lh-seg { display:inline-block; font-family:monospace; }
+            </style>
+            <details class="sm-settings-bar" style="margin:10px 0 8px">
+                <summary class="sm-settings-summary" style="cursor:pointer;font-size:0.75rem;color:#67e8f9;font-weight:600">
+                    <span>⚙️ Налаштування (💧 Сканер ліквідності)</span>
+                    <!-- Живий розклад: згорнута гармошка мусить казати, ЗА ЧИМ
+                         саме зараз відбираються монети. -->
+                    <span class="sm-settings-summary-right" id="lh-sum">—</span>
+                </summary>
+                <div class="lh-grid">
+                    <div class="lh-f">
+                        <label>Біржа</label>
+                        <select id="lh-exchange" onchange="lhSave()">
                             <option value="binance">Binance</option>
                             <option value="bybit">Bybit</option>
                             <option value="mexc">MEXC</option>
                             <option value="bingx">BingX</option>
                         </select>
                     </div>
-                    <div>
-                        <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Список</label>
-                        <select id="lh-universe" onchange="lhSave()" title="«Топ біржі» — найактивніші монети самої біржі з відсівом за обігом і OI. «🎯 Watchlist бота» — рівно ті монети, що сканує бот; відсів тоді НЕ застосовується, а монету, якої немає на обраній біржі, беремо з партнерської (Binance↔Bybit)."
-                                style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
+                    <div class="lh-f">
+                        <label>Список</label>
+                        <select id="lh-universe" onchange="lhSave()" title="«Топ біржі» — найактивніші монети самої біржі з відсівом за обігом і OI. «🎯 Watchlist бота» — рівно ті монети, що сканує бот; відсів тоді НЕ застосовується (поля «Монет», «Обіг», «OI» ХОВАЮТЬСЯ — активний контрол, який ні на що не впливає, вводив би в оману), а монету, якої немає на обраній біржі, беремо з партнерської (Binance↔Bybit).">
                             <option value="top">Топ біржі</option>
                             <option value="watchlist">🎯 Watchlist бота</option>
                         </select>
                     </div>
-                    <div id="lh-f-topn">
-                        <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Монет</label>
-                        <select id="lh-topn" onchange="lhSave()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
+                    <div class="lh-f" id="lh-f-topn">
+                        <label>Монет</label>
+                        <select id="lh-topn" onchange="lhSave()">
                             <option>20</option><option>40</option><option>60</option>
                             <option>100</option><option>150</option><option>200</option>
                         </select>
                     </div>
-                    <div>
-                        <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Історія, год</label>
+                    <div class="lh-f">
+                        <label>Історія, год</label>
                         <!-- ТІ САМІ варіанти, що на 📡 Tickr: це той самий `bars`
                              того самого `build_levels`; два різні списки розійшлись би. -->
-                        <select id="lh-bars" onchange="lhSave()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
+                        <select id="lh-bars" onchange="lhSave()">
                             <option value="24">24 (1 доба)</option>
                             <option value="48">48 (2 доби)</option>
                             <option value="72">72 (3 доби)</option>
@@ -2677,43 +2718,47 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <option value="1000">1000 (~42 доби · максимум)</option>
                         </select>
                     </div>
-                    <div>
-                        <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Сортування</label>
-                        <select id="lh-sort" onchange="lhSave()" style="background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px">
+                    <div class="lh-f">
+                        <label>Сортування</label>
+                        <select id="lh-sort" onchange="lhSave()">
                             <option value="pull">за перекосом</option>
                             <option value="magnet">за розміром магніту</option>
                             <option value="pull_report">🧭 куди тягне (звіт)</option>
                         </select>
                     </div>
-                    <div id="lh-f-minvol">
-                        <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">Обіг 24H ≥, $M</label>
-                        <input type="number" id="lh-minvol" min="0" step="5" value="20" onchange="lhSave()" style="width:70px;background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px;font-family:monospace">
+                    <div class="lh-f" id="lh-f-minvol">
+                        <label>Обіг 24H ≥, $M</label>
+                        <input type="number" id="lh-minvol" min="0" step="5" value="20" onchange="lhSave()">
                     </div>
-                    <div id="lh-f-minoi">
-                        <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">OI ≥, $M</label>
-                        <input type="number" id="lh-minoi" min="0" step="1" value="5" onchange="lhSave()" style="width:70px;background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px;font-family:monospace">
+                    <div class="lh-f" id="lh-f-minoi">
+                        <label>OI ≥, $M</label>
+                        <input type="number" id="lh-minoi" min="0" step="1" value="5" onchange="lhSave()">
                     </div>
-                    <div>
-                        <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">⏱ Періодичність, хв</label>
+                    <div class="lh-f">
+                        <label>⏱ Період, хв</label>
                         <input type="number" id="lh-interval" min="1" max="720" step="5" value="15" onchange="lhSave()"
-                               title="Як часто сканер сам ходить на біржу. Скан іде спільною чергою сканів, тож із іншими сканами він ніколи не збігається."
-                               style="width:70px;background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px;font-family:monospace">
+                               title="Як часто сканер сам ходить на біржу. Скан іде спільною чергою сканів, тож із іншими сканами він ніколи не збігається.">
                     </div>
-                    <div>
-                        <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px">💧 Маса ≥, %</label>
+                    <div class="lh-f">
+                        <label>💧 Маса ≥, %</label>
                         <input type="number" id="lh-mass" min="0" max="100" step="5" value="65" onchange="lhSave()"
-                               title="Беремо монету, лише якщо маса ліквідності В БІК БАНЕРА не менша за це число: банер 🔴 SHORT → «Маса ліквідності НИЖЧЕ ціни ≥ 65% · тягне ВНИЗ», банер 🟢 LONG → маса ВИЩЕ ціни. Та сама конвенція, що в 💧 фільтрі входу."
-                               style="width:70px;background:rgba(0,0,0,0.3);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:3px 6px;font-family:monospace">
+                               title="Беремо монету, лише якщо маса ліквідності В БІК БАНЕРА не менша за це число: банер 🔴 SHORT → «Маса ліквідності НИЖЧЕ ціни ≥ 65% · тягне ВНИЗ», банер 🟢 LONG → маса ВИЩЕ ціни. Та сама конвенція, що в 💧 фільтрі входу.">
                     </div>
-                    <label style="display:flex;align-items:center;gap:6px;font-size:0.7rem;color:#cbd5e1;cursor:pointer"
+                    <div class="lh-f">
+                        <label>🧲 Магніт ≥, %</label>
+                        <input type="number" id="lh-magdist" min="0" max="100" step="0.5" value="3" onchange="lhSave()"
+                               title="Мінімальна ВІДСТАНЬ до найсильнішого магніту у % від поточної ціни. Магніт за пів відсотка — це не ціль, а шум: такі монети в таблицю не додаються. 0 = не фільтрувати. ⚠️ Монета, по якій драбина взагалі не дала сходинки, цим фільтром НЕ ріжеться — «невідомо» це не «близько», і в колонці магніту чесно стоїть «—».">
+                    </div>
+                    <label class="lh-flip"
                            title="Банер МММ-монітора розвернувся → таблиця застаріла (монети відбирались під протилежний бік). Тоді пересканюємо одразу, не чекаючи періодичності. Спаму немає: сам банер перемикається повільно (антиспам), плюс діє мінімальний проміжок 60с між сканами.">
-                        <input type="checkbox" id="lh-rescan-flip" onchange="lhSave()"> 🔁 Пересканувати на зміні напрямку банера
+                        <input type="checkbox" id="lh-rescan-flip" onchange="lhSave()" style="margin:0">
+                        🔁 Пересканувати на зміні напрямку банера
                     </label>
                 </div>
             </details>
-            <div style="display:flex;align-items:center;gap:10px;margin:0 0 8px;flex-wrap:wrap">
+            <div class="lh-actions">
                 <button type="button" id="lh-scan-btn" onclick="lhScanNow()"
-                        style="font-size:0.68rem;padding:4px 12px;border-radius:5px;border:1px solid rgba(34,211,238,0.4);background:rgba(34,211,238,0.1);color:#67e8f9;cursor:pointer;font-weight:700"
+                        style="font-size:0.68rem;padding:5px 13px;border-radius:5px;border:1px solid rgba(34,211,238,0.4);background:rgba(34,211,238,0.1);color:#67e8f9;cursor:pointer;font-weight:700"
                         title="Сканувати ЗАРАЗ: оновити дані вручну, не чекаючи періодичності. Запит стає у спільну чергу сканів біржі.">💧 Сканувати</button>
                 <span id="lh-dir" style="font-size:0.7rem;font-family:monospace"></span>
                 <span id="lh-stat" style="font-size:0.68rem;color:#8b93a7">Ще не сканували</span>
@@ -11627,6 +11672,9 @@ function _mmSortVal(r, col) {
     // ⏱ Довше у стані = «більше» (сортуємо спаданням тривалості, а не
     // моменту), тож беремо момент зі знаком мінус — як і для «Росте».
     if (col === 'state') return (r.state_since == null ? null : -Number(r.state_since));
+    // 📍 Стан: спершу те, що вже В РОБОТІ (угода → черга), потім вільні.
+    if (col === 'status') return r.in_trade ? 0
+        : ((r.queues && r.queues.length) ? 1 : 2);
     return Number(r.strength || 0);
 }
 function _mmSortRows(rows) {
@@ -11699,6 +11747,31 @@ function _mmGrowCell(r) {
 // щоб рядок читався як ціле: зелений LONG · червоний SHORT · сірий ⚖.
 // ⚠️ Секунди малює ТОЙ САМИЙ глобальний 1с-тікер (`.ff-timer[data-since]`), що
 // веде «⏱ Росте» і таймери Черг — другого інтервалу на сторінці не заводимо.
+// 📍 ДЕ МОНЕТА ЗАРАЗ (вимога 18.09: «поверни поле статус в таблицю, пиши де на
+// даний момент монета»). Бекенд дає ЧИСТІ прапорці (`in_trade` / `queues`), а
+// підпис і колір робимо тут — той самий принцип, що з `verdict.parts`.
+// ⚠️ Стани РОЗРІЗНЕНІ: «в угоді» і «в черзі» — це різні речі, і зливати їх в
+// одне «зайнята» означало б знову ховати інформацію.
+const _MM_Q_TXT = { Q1: 'Черга-1', Q2: 'Черга-2', Q3: 'Черга-3', Q4: 'Черга-4' };
+function _mmStatusCell(r) {
+    if (r.in_trade) {
+        return '<span style="color:#38bdf8;font-weight:700;white-space:nowrap"'
+            + ' title="Монета У ВІДКРИТІЙ УГОДІ (реальній або паперовій). Друга'
+            + ' позиція по тому самому символу не відкриється, тож галочка'
+            + ' недоступна. Її 🧮 Старий МММ видно ще й у колонці таблиці угод —'
+            + ' це те саме число.">💼 в угоді</span>';
+    }
+    const qs = Array.isArray(r.queues) ? r.queues : [];
+    if (qs.length) {
+        const lbl = qs.map(q => _MM_Q_TXT[q] || q).join(' · ');
+        return `<span style="color:#fbbf24;white-space:nowrap" title="Монета вже`
+            + ` стоїть у черзі (${lbl}) і чекає свого двигуна. Це ІНФОРМАЦІЯ, а`
+            + ` не заборона: ✋ групове відкриття свідомо йде повз ворота черг.">`
+            + `🎯 ${lbl}</span>`;
+    }
+    return '<span style="color:#6b7280" title="Монета вільна — ні в угоді, ні в'
+        + ' жодній черзі. Саме такі й є кандидатами на ✋ групове відкриття.">—</span>';
+}
 const _MM_STATE_TXT = { LONG: '🟢 LONG', SHORT: '🔴 SHORT' };
 function _mmStateCell(r) {
     if (!r.state_since) {
@@ -11931,6 +12004,7 @@ function mmRender() {
         + '|' + ((_mmMeta.pending || {}).reason || '')
         + '|' + _mmSort.col + _mmSort.dir + '|'
         + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev, r.delta,
+        (r.in_trade ? 'T' : '') + ((r.queues || []).join('')),
         r.grow_since || 0, r.state_since || 0, r.delta_span, r.price, r.price_dir || '', r.price_chg,
         (r.f1 ? r.f1.side : ''), (r.f4 ? r.f4.side : ''),
         _mmSel.has(r.symbol) ? 1 : 0].join(':')).join(',');
@@ -11950,17 +12024,20 @@ function mmRender() {
                       ? '⏳ Перший знімок після старту ще рахується…'
                       : (_mmRows.length ? 'Немає монет під цей фільтр'
                                         : 'Немає даних МММ')));
-            tb.innerHTML = `<tr><td colspan="10" class="tm-empty-msg">${_why}</td></tr>`;
+            tb.innerHTML = `<tr><td colspan="11" class="tm-empty-msg">${_why}</td></tr>`;
         } else {
             tb.innerHTML = rows.map(r => {
                 const sel = _mmSel.has(r.symbol);
                 const _s = _mmEsc(r.symbol);
-                // ⚠️ Монет У ВІДКРИТІЙ УГОДІ в рядках уже НЕМАЄ — їх відсіює
-                // бекенд (вимога 15.09), тож єдина причина неактивної галочки —
-                // ⚖ рівновага, і підпис може бути прямим.
+                // ⚠️ З 18.09 монети В УГОДІ з рядків НЕ зникають (вимога), тож
+                // причин неактивної галочки ДВІ — і кожна підписана своєю:
+                // ⚖ рівновага (відкривати нічого) і 💼 угода (друга позиція по
+                // тому самому символу все одно не відкриється).
                 const cb = r.selectable
                     ? `<input type="checkbox" ${sel ? 'checked' : ''} onchange="mmRowToggle('${_s}', this.checked)">`
-                    : `<input type="checkbox" disabled title="МММ без напрямку — відкривати нічого">`;
+                    : (r.in_trade
+                        ? `<input type="checkbox" disabled title="Монета вже у відкритій угоді — друга позиція по тому самому символу не відкриється">`
+                        : `<input type="checkbox" disabled title="МММ без напрямку — відкривати нічого">`);
                 return `<tr${sel ? ' style="background:rgba(56,189,248,0.10)"' : ''}>`
                     + `<td>${cb}</td>`
                     // Клік по НАЗВІ → графік у TradingView, ТОЧНО як у WATCHLIST:
@@ -11970,6 +12047,7 @@ function mmRender() {
                     // ⚠️ Окремої колонки «Сила» НЕМАЄ (прибрано на прохання):
                     // віджет `ffFuelCell` уже показує і напрямок, і 0-100%, і
                     // тренд — друга колонка дублювала те саме число.
+                    + `<td>${_mmStatusCell(r)}</td>`
                     + `<td>${ffFuelCell(r.mm, r.strength, r.strength_prev)}</td>`
                     + `<td>${_mmStateCell(r)}</td>`
                     + `<td>${_mmGrowCell(r)}</td>`
@@ -12053,7 +12131,10 @@ function mmRenderBias(bias) {
             + `🔴 SHORT: ${b.n_short || 0} монет · вага ${b.w_short || 0}\n`
             + `⚖ рівновага: ${b.n_flat || 0} монет · вага ${b.w_flat || 0}\n`
             + `Разом: ${b.coins || 0} монет · вага ${b.w_total || 0}\n`
-            + 'Фільтр «Сила ≥» на банер НЕ впливає — він лише ховає рядки таблиці.'
+            + 'Фільтр «Сила ≥» на банер НЕ впливає — він лише ховає рядки таблиці.\n'
+            + '📍 Монети В УГОДІ у важіль НЕ входять (важіль описує ВІЛЬНИЙ ринок — '
+            + 'те, куди ще можна зайти), хоча в таблиці вони видно зі станом 💼. '
+            + 'Саме тому рядків під банером буває більше, ніж монет у розкладі вище.'
             // ↻ Числа з попереднього запуску: важіль і таймер персистяться, тож
             // рестарт бота їх не обнуляє. До першого такту це ще не свіжий
             // розрахунок — і про це сказано, а не замовчано.
@@ -12158,9 +12239,9 @@ function mmApplyState(mm) {
                (cov.no_data ? `Без даних МММ: ${cov.no_data} — liq-map ще не зібрала `
                    + 'по них рівнів (нові монети «дозрівають» кілька хвилин). '
                    + '«Немає даних» ≠ «немає тиску», тож рядок не вигадуємо.' : ''),
-               (cov.in_trade ? `Уже в угоді: ${cov.in_trade} — монітор показує `
-                   + 'КАНДИДАТІВ, а те, що в роботі, живе в таблицях угод '
-                   + '(колонка «🧮 Старий МММ» бере ті самі числа).' : ''),
+               (cov.in_trade ? `З них уже в угоді: ${cov.in_trade} — вони ЛИШАЮТЬСЯ `
+                   + 'у таблиці зі станом 💼 (вимога 18.09), просто їх не можна '
+                   + 'обрати для ✋ відкриття і вони не входять у важіль банера.' : ''),
                'Набір монет: BTC + угоди + черги + фандинг + WATCHLIST '
                + '(у режимі економії — лише монети «в роботі»).',
                (_mmMeta.queues_off ? '❤️ Fuel Auto-Filter ВИМКНЕНО: черги і '
@@ -12309,6 +12390,9 @@ async function lhSave() {
         min_oi_usd: _lhNum('lh-minoi', 5) * 1e6,
         interval_min: _lhNum('lh-interval', 15),
         min_mass_pct: _lhNum('lh-mass', 65),
+        // 🧲 Мінімальна відстань до магніту (0 = не фільтрувати), тож знову
+        // `_lhNum`, а не `||` — нуль тут ЗМІСТОВНИЙ.
+        min_magnet_dist_pct: _lhNum('lh-magdist', 3),
         rescan_on_flip: !!(document.getElementById('lh-rescan-flip') || {}).checked,
     };
     try {
@@ -12369,8 +12453,23 @@ function lhApply(d) {
     set('lh-minoi', String(Math.round((s.min_oi_usd || 0) / 1e6)));
     set('lh-interval', String(s.interval_min));
     set('lh-mass', String(s.min_mass_pct));
+    set('lh-magdist', String(s.min_magnet_dist_pct));
     set('lh-rescan-flip', s.rescan_on_flip !== false);
     _lhUniverseSync();
+    // Згорнута гармошка мусить казати, ЗА ЧИМ саме відбираються монети —
+    // інакше «7 монет» ні з чим звірити (той самий принцип, що розклад
+    // фільтрів у 🧾 Лозі).
+    const sum = document.getElementById('lh-sum');
+    if (sum) {
+        sum.textContent = [
+            String(s.exchange || '').toUpperCase(),
+            (s.universe === 'watchlist' ? '🎯 watchlist' : `топ ${s.top_n}`),
+            `${s.bars} год`,
+            `💧 маса ≥ ${s.min_mass_pct}%`,
+            `🧲 магніт ≥ ${s.min_magnet_dist_pct}%`,
+            `⏱ ${s.interval_min} хв`,
+        ].join(' · ');
+    }
     const up = document.getElementById('lh-updated');
     if (up) {
         up.textContent = !s.enabled ? 'вимкнено'
@@ -12421,16 +12520,35 @@ function _lhMassCell(r) {
         + ` <span style="color:#8b93a7;font-size:0.66rem">${where}</span>`;
 }
 function _lhMagnetCell(r) {
+    // 🧲 РІВНА КОЛОНКА (вимога 18.09: «відсотки вирівняй в рівну колонку і
+    // виділи кольором»). Кожен сегмент — inline-block ФІКСОВАНОЇ ширини з
+    // власним вирівнюванням: ціна ліворуч, обидва відсотки праворуч. Саме
+    // фіксовані ширини й тримають стовпчик рівним, коли числа різної довжини
+    // (той самий прийом, що в колонці «🎯 Автопілот»).
+    const seg = (w, al, html, ttl) => `<span class="lh-seg" style="width:${w}px;`
+        + `text-align:${al}"${ttl ? ` title="${ttl}"` : ''}>${html}</span>`;
     if (!r.magnet_price) {
-        return '<span style="color:#6b7280" title="Значущої сходинки драбина не дала.">—</span>';
+        return seg(104, 'left', '<span style="color:#6b7280">—</span>',
+                   'Значущої сходинки драбина не дала — відстань невідома, і '
+                   + 'фільтром «магніт ≥ %» така монета НЕ ріжеться.');
     }
     const up = r.magnet_dir === 'up';
     const col = up ? '#4ade80' : '#f87171';
-    const arr = up ? '↑' : '↓';
-    return `<span style="color:${col};font-family:monospace;font-weight:700">${arr} ${r.magnet_price}</span>`
-        + ` <span style="color:#8b93a7;font-family:monospace;font-size:0.66rem">`
-        + `${r.magnet_pct != null ? r.magnet_pct + '%' : ''}`
-        + `${r.magnet_dist != null ? ' · ' + r.magnet_dist : ''}</span>`;
+    // ⚠️ Відстань малюємо з СИРОГО числа (`magnet_dist_pct`) — саме воно
+    // живить і фільтр «магніт ≥ %», тож підпис і поріг не можуть розійтись.
+    const d = (r.magnet_dist_pct == null) ? null : Number(r.magnet_dist_pct);
+    return seg(104, 'left', `<span style="color:${col};font-weight:700">`
+               + `${up ? '↑' : '↓'} ${r.magnet_price}</span>`,
+               'Ціна найсильнішої сходинки драбини (ближня межа смуги).')
+        + seg(62, 'right', d == null ? '<span style="color:#6b7280">—</span>'
+              : `<span style="color:${col};font-weight:700">${up ? '↑' : '↓'}`
+                + `${d.toFixed(2)}%</span>`,
+              'ВІДСТАНЬ до магніту від поточної ціни. Саме її обмежує '
+              + 'налаштування «🧲 Магніт ≥, %».')
+        + seg(56, 'right', r.magnet_pct != null
+              ? `<span style="color:#8b93a7">${r.magnet_pct}%</span>` : '',
+              'ЧАСТКА цієї сходинки від усієї маси ліквідності — наскільки '
+              + 'магніт вагомий (це НЕ відстань).');
 }
 function lhRender() {
     const tb = document.getElementById('lh-tbody');
@@ -12440,7 +12558,8 @@ function lhRender() {
     // ⚠️ Час У СПИСКУ в неї НЕ входить: секунди малює глобальний 1с-тікер.
     const sig = (_lhMeta.enabled ? '1' : '0') + '|' + (_lhMeta.dir || '') + '|'
         + rows.map(r => [r.symbol, r.mass_pct, r.magnet_price, r.magnet_pct,
-            r.magnet_dir, Math.floor(r.since || 0)].join(':')).join(',');
+            r.magnet_dist_pct, r.magnet_dir,
+            Math.floor(r.since || 0)].join(':')).join(',');
     if (tb.dataset.sig === sig) return;
     tb.dataset.sig = sig;
     if (!rows.length) {

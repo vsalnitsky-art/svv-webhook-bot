@@ -228,19 +228,27 @@ def test_backend_no_longer_ships_tab_counts():
 
 
 # ═══════════ 2. ПРИДАТНІСТЬ ДО ВИБОРУ ════════════════════════════════════
-def test_a_coin_already_in_a_trade_is_not_shown_at_all():
-    """Вимога 15.09: «монета, яка в угоді, не потрібно відображати у таблиці».
-    ⚠️ Але зі ЗНІМКА вона НЕ зникає — знімок живить колонку «🧮 Старий МММ»
-    у таблицях угод."""
+def test_a_coin_in_work_stays_in_the_table_with_its_status():
+    """⚠️ **ВИМОГА ЗМІНИЛАСЬ (18.09), замок ПЕРЕПИСАНО, а не полагоджено.**
+    Дослівно: «Із таблиці "🧮 МММ-МОНІТОР" не потрібно видаляти монети що в
+    роботі — поверни поле статус в таблицю, пиши де на даний момент монета.»
+    Раніше (15.09) такий рядок ВИКИДАВСЯ як «не кандидат»."""
     ff = _mk()
-    _cap(ff, BTCUSDT=0.5, ETHUSDT=0.5)
+    _cap(ff, BTCUSDT=0.5, ETHUSDT=0.5, XRPUSDT=0.5)
     ff._fuel_managed = {'BTCUSDT': {}}
+    ff._pending4 = {'XRPUSDT': {}}
     by = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}
-    _check('BTCUSDT' not in by, f'монета в угоді лишилась у таблиці: {list(by)}')
-    _check(by['ETHUSDT']['selectable'], by['ETHUSDT'])
+    _check('BTCUSDT' in by, f'монета в угоді мусить ЛИШИТИСЬ у таблиці: {list(by)}')
+    _check(by['BTCUSDT']['in_trade'] is True, f'стан не названий: {by["BTCUSDT"]}')
+    _check(by['BTCUSDT']['selectable'] is False,
+           'монету в угоді не можна обирати для ✋ відкриття')
+    _check(by['XRPUSDT']['queues'] == ['Q4'],
+           f'треба писати, У ЯКІЙ саме черзі монета: {by["XRPUSDT"]}')
+    _check(by['ETHUSDT']['selectable'] and not by['ETHUSDT']['queues']
+           and by['ETHUSDT']['in_trade'] is False, by['ETHUSDT'])
     _check(ff.mm_snapshot_for(['BTCUSDT']).get('BTCUSDT'),
            'колонка в таблиці угод втратила число — знімок чіпати не можна')
-    print('✓ монета в угоді: у таблиці немає, у знімку для угод — є')
+    print('✓ монета в роботі лишається в таблиці зі своїм станом')
 
 
 def test_balanced_mm_is_not_selectable():
@@ -792,7 +800,10 @@ def test_duplicate_strength_column_is_gone_from_the_table():
     ⚠️ НЕ ПЛУТАТИ з колонкою «Сила **росте**» (додана пізніше): та показує
     ЗМІНУ сили в пунктах + таймер росту — інша метрика, не дублікат."""
     i = _HTML.index('id="mm-table"')
-    tbl = _HTML[i:i + 2600]
+    # ⚠️ Ріжемо по КІНЦЮ таблиці, а не фіксованими 2600 символами: нова
+    # колонка «📍 Стан» виштовхнула перевірку за межу (та сама пастка, на яку
+    # вже наступали з `mmRender`).
+    tbl = _HTML[i:_HTML.index('</table>', i)]
     _check('>Сила</th>' not in tbl and '>Сила<span' not in tbl,
            'колонка-дублікат «Сила» повернулась у заголовок')
     _check('Сила росте' in tbl, 'колонка ПРИРОСТУ має лишатись')
@@ -1029,15 +1040,16 @@ def test_ui_has_growth_column_with_timer_and_sorting():
     # ⚠️ Кількість колонок звіряємо зі СКЛАДОМ, а не з магічним числом: список
     # нижче — це і є контракт таблиці, тож додана колонка мусить бути названа
     # ТУТ, а не просто зсунути число.
-    _cols = ['Символ', 'Старий МММ', '⏱ У стані', 'Сила росте', '⏱ Росте',
-             'Ціна', 'Рух', '🔮 1H', '🔮 4H']
+    _cols = ['Символ', '📍 Стан', 'Старий МММ', '⏱ У стані', 'Сила росте',
+             '⏱ Росте', 'Ціна', 'Рух', '🔮 1H', '🔮 4H']
     for _c in _cols:
         _check(_c in tbl, f'немає колонки «{_c}»')
     _n = len(_re.findall(r'<th[\s>]', tbl))
     _check(_n == len(_cols) + 1, f'колонок {_n}, а в контракті {len(_cols)}+☑')
     _check(f'colspan="{_n}"' in tbl,
            f'colspan порожнього рядка не дорівнює числу колонок ({_n})')
-    for col in ('symbol', 'strength', 'state', 'delta', 'grow', 'price', 'pchg'):
+    for col in ('symbol', 'status', 'strength', 'state', 'delta', 'grow',
+                'price', 'pchg'):
         _check(f'data-mmsort="{col}"' in tbl, f'колонка {col} не сортується')
     _check("mmSort('delta')" in tbl, 'сортування за приростом не підключене')
     _check("mmSort('grow')" in tbl, 'сортування за таймером не підключене')
@@ -1730,7 +1742,9 @@ def test_no_direction_until_the_skew_is_real():
 
 
 def test_coins_in_a_trade_do_not_move_the_banner():
-    """Банер описує те, що ПІД ним видно: монети в угоді таблиця не показує."""
+    """⚠️ Уточнено 18.09: таблиця монети в угоді ТЕПЕР ПОКАЗУЄ (зі станом 💼),
+    а важіль і далі рахує лише ВІЛЬНИЙ ринок — те, куди ще можна зайти (саме
+    цей напрямок бере 💧 Сканер). Різниця названа в підказці банера."""
     ff = _mk()
     ff._settings.update({'enabled': True})
     ff._fuel_managed = {'BBBUSDT': {'side': 'SHORT'}}
@@ -1738,7 +1752,7 @@ def test_coins_in_a_trade_do_not_move_the_banner():
     b = ff.mm_monitor_state()['bias']
     _check(b['n_short'] == 0 and b['dir'] == 'LONG',
            f'монета в угоді потрапила у важіль: {b}')
-    print('✓ ⚖️ монети в угоді у важіль не входять (як і в таблицю)')
+    print('✓ ⚖️ монети в угоді у важіль не входять (хоч у таблиці й видно)')
 
 
 def test_the_timer_runs_while_the_side_holds_and_resets_on_a_flip():
@@ -2239,14 +2253,15 @@ def test_the_coverage_breakdown_explains_every_missing_coin():
     _check(cov['targeted'] == 4, f'узяли в роботу 4 монети: {cov}')
     _check(cov['no_data'] == 1, f'одна без даних МММ: {cov}')
     _check(cov['in_trade'] == 0 and cov['rows'] == 3, f'у таблиці три: {cov}')
-    # А тепер одна з них — уже в угоді.
+    # А тепер одна з них — уже в угоді. ⚠️ З 18.09 вона з таблиці НЕ зникає,
+    # тож `in_trade` — це підмножина рядків, а не «загублені» монети.
     ff._mm_open_syms = lambda: {'AAAUSDT'}
     cov = ff.mm_monitor_state()['coverage']
-    _check(cov['in_trade'] == 1 and cov['rows'] == 2,
-           f'монета в угоді названа ОКРЕМО, а не «зникла»: {cov}')
-    _check(cov['targeted'] - cov['no_data'] - cov['in_trade'] == cov['rows'],
+    _check(cov['in_trade'] == 1 and cov['rows'] == 3,
+           f'монета в угоді лишається рядком і названа ОКРЕМО: {cov}')
+    _check(cov['targeted'] - cov['no_data'] == cov['rows'],
            f'розклад мусить СХОДИТИСЬ до кількості рядків: {cov}')
-    print('✓ розклад покриття сходиться: узяли − без даних − в угоді = рядки')
+    print('✓ розклад покриття сходиться: узяли − без даних = рядки')
 
 
 def test_a_disabled_monitor_reports_no_coverage():
@@ -2265,7 +2280,7 @@ def test_the_page_shows_rows_out_of_targeted():
     body = _HTML[i:_HTML.index("const hint = document.getElementById('mm-limited-hint')", i)]
     _check('coverage' in body and "' з '" in body,
            'у шапці мусить стояти «N з M», інакше 49 проти 51 читається як втрата')
-    for _w in ('Без даних МММ', 'Уже в угоді', 'узяв у роботу'):
+    for _w in ('Без даних МММ', 'уже в угоді', 'узяв у роботу'):
         _check(_w in body, f'у підказці має бути рядок «{_w}»')
     print('✓ шапка каже «N з M», а розклад — у підказці')
 
@@ -2814,6 +2829,84 @@ def test_the_collapsed_list_is_not_rendered_but_still_counted():
     _check("pid === 'mmlist'" in t and 'mmRender()' in t,
            'на розгортанні таблицю треба намалювати одразу')
     print('✓ 🪗 згорнутий список не малюється, але лічильник чесний')
+
+
+# ═══════════ 30. 📍 «ДЕ МОНЕТА ЗАРАЗ» — СТАН У ТАБЛИЦІ (вимога 18.09) ══════
+# Дослівно: «Із таблиці не потрібно видаляти монети що в роботі — поверни поле
+# статус в таблицю, пиши де на даний момент монета.»
+def test_the_queue_map_says_which_queue_exactly():
+    """«В роботі» замало — треба ЯКА САМЕ черга (Q1…Q4)."""
+    ff = _mk()
+    ff._pending = {'AUSDT': {}}
+    ff._pending2 = {'AUSDT': {}}
+    ff._pending3 = {'BUSDT': {}}
+    m = _m.FuelFilterDaemon._mm_queue_map(ff)
+    _check(sorted(m.get('AUSDT') or []) == ['Q1', 'Q2'], f'дві черги: {m}')
+    _check(m.get('BUSDT') == ['Q3'], f'Черга-3: {m}')
+    _check('CUSDT' not in m, 'вільної монети в мапі бути не має')
+    print('✓ 📍 мапа черг каже, у ЯКІЙ саме черзі монета')
+
+
+def test_a_coin_in_a_queue_is_still_selectable():
+    """«У черзі» — це ІНФОРМАЦІЯ, а не заборона: ✋ ручне свідомо йде повз
+    ворота черг (задокументоване рішення 15.09, воно не змінювалось)."""
+    ff = _mk()
+    _cap(ff, AAAUSDT=0.7)
+    ff._pending4 = {'AAAUSDT': {}}
+    r = ff.mm_monitor_state()['rows'][0]
+    _check(r['queues'] == ['Q4'] and r['selectable'] is True, r)
+    print('✓ 📍 монета в черзі лишається придатною для ✋ відкриття')
+
+
+def test_ui_status_column_is_next_to_the_symbol():
+    i = _HTML.index('id="mm-table"')
+    tbl = _HTML[i:_HTML.index('</table>', i)]
+    _check(tbl.index('data-mmsort="symbol"') < tbl.index('data-mmsort="status"')
+           < tbl.index('data-mmsort="strength"'),
+           'колонка стану мусить стояти ОДРАЗУ за символом')
+    _check('_mmStatusCell' in _HTML, 'немає рендера стану')
+    print('✓ UI: «📍 Стан» стоїть одразу за назвою монети')
+
+
+def test_js_status_cell_tells_the_three_states_apart():
+    """💼 угода / 🎯 черга / — вільна мусять читатись ПО-РІЗНОМУ: одне спільне
+    «зайнята» знову ховало б інформацію, заради якої колонку й повернули."""
+    out = _run_js(r'''
+mmApplyState({rows:[
+  {symbol:'TRADED', mm:'LONG', strength:50, price:1, in_trade:true, queues:[], selectable:false},
+  {symbol:'QUEUED', mm:'LONG', strength:40, price:1, in_trade:false, queues:['Q4'], selectable:true},
+  {symbol:'FREEUP', mm:'LONG', strength:30, price:1, in_trade:false, queues:[], selectable:true}],
+  limited:false, ts:1});
+const rows = _els['mm-tbody'].innerHTML.split('</tr>');
+console.log(JSON.stringify({
+  traded: rows.find(x => x.includes('TRADED')) || '',
+  queued: rows.find(x => x.includes('QUEUED')) || '',
+  free:   rows.find(x => x.includes('FREEUP')) || ''}));
+''')
+    import json
+    d = json.loads(out)
+    # ⚠️ Звіряємо ВИДИМІ значки, а не будь-яке слово в рядку: підказки самі
+    # згадують і «угоду», і «чергу», тож пошук по тексту ловив би їх.
+    _check('💼' in d['traded'], f'угода не підписана: {d["traded"][:200]}')
+    _check('disabled' in d['traded'],
+           'монету в угоді не можна обирати — галочка мусить бути неактивна')
+    _check('🎯 Черга-4' in d['queued'], f'черга не названа: {d["queued"][:200]}')
+    _check('💼' not in d['queued'], 'черга ≠ угода')
+    _check('disabled' not in d['queued'],
+           'монета в черзі лишається придатною для ✋ відкриття')
+    _check('💼' not in d['free'] and '🎯' not in d['free'],
+           f'вільна монета не мусить нічого обіцяти: {d["free"][:200]}')
+    print('✓ JS: три стани підписані по-різному, галочка — лише вільним')
+
+
+def test_the_state_of_work_is_in_the_table_signature():
+    """Інакше перехід «вільна → в угоді» не перемалював би рядок (той самий
+    випадок, що з `enabled` і причиною порожньої таблиці)."""
+    i = _HTML.index('const sig = _mmDir')
+    body = _HTML[i:_HTML.index('if (tb.dataset.sig !== sig)', i)]
+    _check('in_trade' in body and 'queues' in body,
+           'стан монети мусить входити в сигнатуру таблиці')
+    print('✓ 📍 стан монети входить у сигнатуру таблиці')
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]

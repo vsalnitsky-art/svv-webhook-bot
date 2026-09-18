@@ -53,6 +53,11 @@ _pkg.scan_queue = _sq
 _lh = _load('detection.liq_hunter', 'liq_hunter.py')
 _pkg.liq_hunter = _lh
 
+# ⏳ Пауза МІЖ сканами у ТЕСТАХ не потрібна: вона про навантаження на біржу, і
+# її перевіряє окремий тест (`test_the_queue_runs_one_scan_at_a_time` ставить
+# своє значення). Без цього кожен скан у файлі чекав би 5 секунд.
+_sq.MIN_GAP_SEC = 0.0
+
 _SRC = open(os.path.join(_HERE, 'detection', 'liq_hunter.py'),
             encoding='utf-8').read()
 _HTML = open(os.path.join(_HERE, 'templates', 'smart_money.html'),
@@ -114,6 +119,12 @@ def _mk(rows=None, direction='SHORT', work=(), **settings):
     h = _lh.LiqHunterDaemon(_DB(), get_watchlist=lambda: ['AAAUSDT'],
                             scan_fn=_scan,
                             get_fuel_filter=lambda: _FF(direction, work))
+    # ⚠️ ФОНОВИЙ ПОТІК У ТЕСТАХ НЕ ПІДНІМАЄМО. `update_settings({'enabled':
+    # True})` у проді стартує цикл — і в тестах десяток таких циклів прокидався
+    # б посеред інших тестів, подаючи у СПІЛЬНУ чергу сканів завдання з тим
+    # самим імʼям. Дедуп (правильно) віддавав би чужий результат, і тест падав
+    # би «на рівному місці». Тік ми й так кличемо руками.
+    h.start = lambda: None
     base = {'enabled': True}
     base.update(settings)
     h.update_settings(base)
@@ -343,6 +354,13 @@ def test_the_same_scan_asked_twice_is_not_doubled():
         return {'ok': True}
 
     a = q.submit('same', _slow)
+    # ⚠️ Другий і третій запити приходять, коли перший УЖЕ ПРАЦЮЄ (саме так і
+    # буває при подвійному кліку) — дедуп мусить накривати і цей випадок, а не
+    # лише «ще стоїть у черзі».
+    for _ in range(50):
+        if (q.state().get('running') or {}).get('name') == 'same':
+            break
+        time.sleep(0.02)
     b = q.submit('same', _slow)
     c = q.submit('same', _slow)
     _check(b is a and c is a, 'той самий скан мусить чекати на ТОЙ САМИЙ job')
@@ -469,6 +487,117 @@ def test_the_scanner_never_opens_trades_itself():
         _check(bad not in names, f'сканер не має кликати {bad}')
     print('✓ сканер нічого не відкриває і не сигналить')
 
+
+
+# ═══════════ 8. 🧲 ФІЛЬТР «МАГНІТ НЕ ЗАБЛИЗЬКО» + РІВНА КОЛОНКА (18.09) ════
+# Дослівно: «додай в параметри фільтр обмежуючий малий відсоток (за
+# замовчуванням 3%), тобто менше цього відсотка від ціни, монети не додавати
+# в таблицю» + «відсотки вирівняй в рівну колонку і виділи кольором».
+def test_the_magnet_distance_is_read_raw_not_parsed_from_the_label():
+    """⚠️ `magnet_dist` — ФОРМАТОВАНИЙ рядок («↓5.58%»), і парсити його заради
+    числа не можна (задокументована пастка). Беремо `magnet_row['dist_pct']`."""
+    r = _row('AUSDT', 20.0, 80.0, magnet_row={'dist_pct': 5.58})
+    _check(_lh.magnet_dist_pct(r) == 5.58, 'відстань мусить братись сирою')
+    _check(_lh.magnet_dist_pct(_row('B', 20.0, 80.0)) is None,
+           'немає сходинки → None, а НЕ нуль')
+    i = _SRC.index('def magnet_dist_pct(')
+    body = _SRC[i:_SRC.index('\ndef ', i + 10)]
+    _check("'magnet_dist'" not in body.replace("'magnet_dist_pct'", ''),
+           'форматований підпис парсити не можна')
+    print('✓ 🧲 відстань береться сирим числом, а не з підпису')
+
+
+def test_a_magnet_too_close_to_price_is_not_added():
+    near = _row('NEARUSDT', 20.0, 80.0, magnet_row={'dist_pct': -1.2})
+    far = _row('FARUSDT', 20.0, 80.0, magnet_row={'dist_pct': -7.4})
+    h = _mk([near, far], direction='SHORT', min_mass_pct=65,
+            min_magnet_dist_pct=3)
+    res = h.scan('t')
+    got = [r['symbol'] for r in h.get_state()['rows']]
+    _check(got == ['FARUSDT'], f'магніт за 1.2% мусить бути відсіяний: {got}')
+    _check(res['near'] == 1, f'відсів мусить бути НАЗВАНИЙ у розкладі: {res}')
+    _check('магніт ближче' in h.get_state()['status'],
+           f'статус мовчить про відсів: {h.get_state()["status"]}')
+    print('✓ 🧲 монета з близьким магнітом у таблицю не додається')
+
+
+def test_the_magnet_filter_default_is_three_percent_and_zero_disables_it():
+    _check(_lh.DEFAULTS['min_magnet_dist_pct'] == 3.0, 'дефолт — 3%')
+    near = _row('NEARUSDT', 20.0, 80.0, magnet_row={'dist_pct': -1.2})
+    h = _mk([near], direction='SHORT', min_mass_pct=65, min_magnet_dist_pct=0)
+    h.scan('t')
+    _check(len(h.get_state()['rows']) == 1, '0 = фільтр вимкнено')
+    print('✓ 🧲 дефолт 3%, «0» вимикає фільтр')
+
+
+def test_an_unknown_distance_is_not_treated_as_close():
+    """«Невідомо» ≠ «близько»: вигаданої відмови не даємо (той самий принцип,
+    що fail-open у 💧 фільтра входу)."""
+    h = _mk([_row('AUSDT', 20.0, 80.0)], direction='SHORT', min_mass_pct=65,
+            min_magnet_dist_pct=3)
+    res = h.scan('t')
+    _check(len(h.get_state()['rows']) == 1 and res['near'] == 0,
+           f'рядок без сходинки не має різатись: {res}')
+    print('✓ 🧲 магніт без відстані фільтром не ріжеться')
+
+
+def test_the_row_carries_the_raw_distance_for_the_page():
+    h = _mk([_row('AUSDT', 20.0, 80.0, magnet_row={'dist_pct': -7.4})],
+            direction='SHORT', min_mass_pct=65)
+    h.scan('t')
+    r = h.get_state()['rows'][0]
+    _check(r['magnet_dist_pct'] == 7.4,
+           f'сире число мусить доїхати до сторінки: {r}')
+    print('✓ 🧲 сире число відстані їде в рядок (колонка й поріг — одне число)')
+
+
+def test_ui_has_the_magnet_filter_field_and_an_even_column():
+    i = _HTML.index('id="liq-hunter-panel"')
+    sec = _HTML[i:_HTML.index('id="poc-setup-panel"')]
+    _check('id="lh-magdist"' in sec, 'немає поля «🧲 Магніт ≥, %»')
+    _check('min_magnet_dist_pct' in _HTML,
+           'ключ мусить і зберігатись, і підставлятись у поле')
+    body = _HTML[_HTML.index('function _lhMagnetCell(r) {'):
+                 _HTML.index('function lhRender()')]
+    # Рівну колонку тримають САМЕ фіксовані ширини сегментів (той самий прийом,
+    # що в колонці «🎯 Автопілот»), а не пробіли в тексті.
+    _check('width:${w}px' in body and 'text-align' in body,
+           'відсотки мусять стояти у сегментах фіксованої ширини')
+    _check('#4ade80' in body and '#f87171' in body, 'відсотки мусять мати колір')
+    _check('magnet_dist_pct' in body,
+           'малюємо з СИРОГО числа — того самого, що живить поріг')
+    print('✓ UI: поле «🧲 Магніт ≥ %» + рівна кольорова колонка')
+
+
+def test_the_settings_summary_has_both_sides_so_it_does_not_drift_right():
+    """Скарга 18.09 «поля ховаються, переглянь візуальні відступи»:
+    `.sm-settings-summary` — це flex зі `space-between`, і при ОДНОМУ дочірньому
+    вузлі підпис відлітав до правого краю. Потрібні ДВА вузли."""
+    i = _HTML.index('id="liq-hunter-panel"')
+    sec = _HTML[i:_HTML.index('id="poc-setup-panel"')]
+    j = sec.index('<summary class="sm-settings-summary"')
+    head = sec[j:sec.index('</summary>', j)]
+    _check(head.count('<span') >= 2,
+           'у підписі гармошки мусить бути і лівий текст, і правий розклад')
+    _check('sm-settings-summary-right' in head,
+           'правий блок мусить бути ТИМ САМИМ класом, що в решти гармошок')
+    _check('id="lh-sum"' in head and 'lh-sum' in _HTML.split('function lhApply')[1],
+           'розклад параметрів мусить оновлюватись живими даними')
+    print('✓ UI: підпис гармошки не відлітає праворуч і несе розклад')
+
+
+def test_the_fields_are_one_grid_with_equal_gaps():
+    i = _HTML.index('id="liq-hunter-panel"')
+    sec = _HTML[i:_HTML.index('id="poc-setup-panel"')]
+    _check('.lh-grid' in sec and 'class="lh-grid"' in sec,
+           'поля мусять лежати в одній сітці з однаковим gap')
+    _check(sec.count('class="lh-f"') >= 9,
+           'кожне поле — той самий клас (однакова висота й відступи)')
+    # Чекбокс переїхав у ВЛАСНИЙ рядок за роздільником — на скріні він тиснувся
+    # збоку до вузького поля.
+    _check('lh-flip' in sec and 'flex-basis:100%' in sec,
+           'тумблер переcкану мусить стояти окремим рядком')
+    print('✓ UI: одна сітка полів + тумблер окремим рядком')
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]

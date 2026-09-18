@@ -71,6 +71,10 @@ DEFAULTS = {
     'min_oi_usd': 5_000_000,
     'interval_min': 15,             # періодичність скану, хв (вимога)
     'min_mass_pct': 65.0,           # поріг «Маса ліквідності» у бік банера, %
+    # 🧲 Мінімальна ВІДСТАНЬ до найсильнішого магніту, % від поточної ціни
+    # (вимога 18.09): магніт за 0.5% — це не ціль, а шум, і брати таку монету
+    # в таблицю немає сенсу. 0 = не фільтрувати.
+    'min_magnet_dist_pct': 3.0,
     'rescan_on_flip': True,         # перескан на зміні напрямку банера
 }
 
@@ -90,19 +94,40 @@ def mass_pct(row: Dict, side: str):
         return None
 
 
+def magnet_dist_pct(row: Dict):
+    """Відстань до найсильнішого магніту у ВІДСОТКАХ — СИРИМ числом.
+
+    ⚠️ `magnet_dist` — це ФОРМАТОВАНИЙ рядок («↓5.58%»), і парсити його заради
+    числа НЕ МОЖНА (задокументована пастка магніта). Беремо сирий рядок
+    сходинки `magnet_row['dist_pct']` — той самий, з якого малюється підпис.
+    Немає даних → `None` (це НЕ «нуль»).
+    """
+    mr = row.get('magnet_row') or {}
+    try:
+        return abs(float(mr.get('dist_pct')))
+    except (TypeError, ValueError):
+        return None
+
+
 def pick_rows(rows: List[Dict], side: str, min_pct: float,
-              in_work=None) -> (List[Dict], Dict):
+              in_work=None, min_magnet_dist: float = 0.0) -> (List[Dict], Dict):
     """ЧИСТИЙ відбір монет під напрямок банера.
 
     Повертає `(відібрані, розклад)`. Розклад називає КОЖНУ причину відсіву —
     «монет мало» ніколи не має бути здогадкою:
       • `weak`    — маса в потрібний бік нижча за поріг;
+      • `near`    — 🧲 магніт ЗАБЛИЗЬКО (менше `min_magnet_dist` % від ціни);
       • `in_work` — монета ВЖЕ в роботі (відкрита угода або черга), тож
         повторно її не додаємо (дослівна вимога);
       • `nodata`  — по монеті скан не дав чисел.
+
+    ⚠️ Магніт БЕЗ ВІДСТАНІ (драбина не дала сходинки) фільтром `near` НЕ
+    ріжеться: «невідомо» — це не «близько», і вигадувати відмову ми не маємо
+    (той самий принцип, що fail-open у 💧 фільтра). Такий рядок просто покаже
+    «—» у колонці магніту.
     """
     work = {str(x).upper() for x in (in_work or set())}
-    out, st = [], {'weak': 0, 'in_work': 0, 'nodata': 0,
+    out, st = [], {'weak': 0, 'near': 0, 'in_work': 0, 'nodata': 0,
                    'scanned': len(rows or [])}
     for r in (rows or []):
         sym = str(r.get('symbol') or '').upper()
@@ -115,6 +140,11 @@ def pick_rows(rows: List[Dict], side: str, min_pct: float,
             continue
         if p < float(min_pct or 0):
             st['weak'] += 1
+            continue
+        _md = magnet_dist_pct(r)
+        if float(min_magnet_dist or 0) > 0 and _md is not None \
+                and _md < float(min_magnet_dist):
+            st['near'] += 1
             continue
         # ⚠️ Перевірка «в роботі» стоїть ПІСЛЯ порога навмисно: у розкладі має
         # бути видно, скільки монет ПІДІЙШЛИ і були пропущені саме тому, що
@@ -193,6 +223,11 @@ class LiqHunterDaemon:
                                              float(s.get('min_mass_pct', 65))))
         except (TypeError, ValueError):
             s['min_mass_pct'] = 65.0
+        try:
+            s['min_magnet_dist_pct'] = max(0.0, min(100.0, float(
+                s.get('min_magnet_dist_pct', 3))))
+        except (TypeError, ValueError):
+            s['min_magnet_dist_pct'] = 3.0
         return s
 
     def update_settings(self, patch: Dict) -> Dict:
@@ -351,7 +386,8 @@ class LiqHunterDaemon:
             self._persist_state()
             return {'ok': False, 'reason': why, 'dir': side}
         picked, st = pick_rows(res.get('rows') or [], side,
-                               float(s['min_mass_pct']), self._in_work())
+                               float(s['min_mass_pct']), self._in_work(),
+                               float(s['min_magnet_dist_pct']))
         rows = []
         with self._lock:
             old_since = dict(self._since)
@@ -374,6 +410,9 @@ class LiqHunterDaemon:
                 'magnet_price': r.get('magnet_price'),
                 'magnet_pct': r.get('magnet_pct'),
                 'magnet_dist': r.get('magnet_dist'),
+                # СИРЕ число відстані — фронт малює ним рівну колонку і колір;
+                # формальний підпис (`magnet_dist`) лишається для тултипа.
+                'magnet_dist_pct': magnet_dist_pct(r),
                 'magnet_dir': r.get('magnet_dir'),
                 'exchange': r.get('exchange') or s['exchange'],
                 'fallback': bool(r.get('fallback')),
@@ -384,6 +423,8 @@ class LiqHunterDaemon:
         status = (f"✅ {len(rows)} монет у бік {side} · маса ≥ {s['min_mass_pct']:.0f}% · "
                   f"переглянуто {st['scanned']} · слабких {st['weak']} · "
                   f"у роботі {st['in_work']}"
+                  + (f" · магніт ближче {s['min_magnet_dist_pct']:.0f}%: "
+                     f"{st['near']}" if st['near'] else '')
                   + (f" · без даних {st['nodata']}" if st['nodata'] else '')
                   + (f" · черга {_q}с" if _q else ''))
         with self._lock:
