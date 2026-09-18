@@ -94,6 +94,11 @@ def _mk(limited=False, enabled=True, mon=True):
     # поле ЗАВЖДИ додавати сюди: без цього шлях падає з AttributeError на
     # рівному місці, а `_mm_capture` виняток ковтає (наступали вже тричі).
     ff._mm_pending = {'reason': 'boot', 'at': 0.0}
+    # ₿ банер (режим «🔁 Дублювання») — ЧИСТИЙ ПОКАЗ, який редукований такт теж
+    # оновлює. Сеансні поля лишаємо порожніми: тест доводить, що їх НЕ чіпають.
+    ff._btc_live_dir, ff._btc_live_since, ff._btc_fuel_strength = None, 0.0, 0
+    ff._btc_verdict_dir, ff._btc_verdict_since, ff._btc_paused = None, 0.0, False
+    ff._btc_liqfuel_raw = lambda: (0.42, 'LONG', 42)
     ff._fuel_managed = {}
     ff._pending, ff._pending2, ff._pending3, ff._pending4 = {}, {}, {}, {}
     ff._timers = {}
@@ -2547,6 +2552,82 @@ def test_the_source_tick_is_read_through_a_public_accessor():
     _check('last_tick_at' in body and '_last_tick_at' not in body,
            'FF мусить читати ПУБЛІЧНИЙ метод, а не приватне поле')
     print('✓ позначка джерела читається публічним методом')
+
+
+# ═══ 27. ₿ БАНЕР У «🔁 ДУБЛЮВАННІ» МУСИТЬ ПОВТОРЮВАТИ «МММ-бабло» (18.09) ═══
+# Дослівно: «він має повторювати "МММ-бабло ↑ зверху → тягне в LONG" бо
+# увімкнено "дублювання", а він показує "рівновага", це взагалі як так?»
+#
+# ДІАГНОЗ: модель тут ні до чого — джерело банера (`_btc_liqfuel_raw`) це
+# РІВНО той самий `(fa−fb)/den`, що й рядок «МММ-бабло» у `compute_bias`.
+# Банер показував СТАРЕ число: живі поля оновлював лише `_update_btc_verdict`,
+# який живе в ПОВНОМУ такті, а з вимкненими чергами такт не виконувався.
+
+def test_the_reduced_tick_refreshes_the_btc_live_banner():
+    ff = _mm_only_ff()
+    ff._tick()
+    _check(ff._btc_live_dir == 'LONG',
+           f'банер лишився без напрямку, хоча МММ-бабло каже LONG: {ff._btc_live_dir}')
+    _check(ff._btc_fuel_strength == 42,
+           f'сила банера не оновилась: {ff._btc_fuel_strength}')
+    _check(ff._btc_live_since, 'таймер напрямку не стартував')
+    print('✓ ₿ банер оновлюється і з вимкненими чергами')
+
+
+def test_the_reduced_tick_never_touches_the_session():
+    """Сеанс (напрямок, пауза, START/STOP, OP-4 «фліп чистить чергу») належить
+    ЧЕРГАМ. Оживити його при вимкненому боті означало б чистити черги і
+    перезапускати сеанси без відома користувача."""
+    ff = _mm_only_ff()
+    ff._tick()
+    _check(ff._btc_verdict_dir is None and not ff._btc_verdict_since,
+           f'редукований такт зачепив СЕАНС: {ff._btc_verdict_dir}')
+    i = _SRC.index('def _mm_only_tick(self')
+    body = _SRC[i:_SRC.index('\n    def ', i + 10)]
+    # ⚠️ Коментарі ріжемо: замок падав на ВЛАСНОМУ поясненні, де сеансні поля
+    # названі як те, чого тут НЕ робимо (та сама пастка, що з `ensure_fresh`).
+    code = '\n'.join(l for l in body.splitlines() if not l.lstrip().startswith('#'))
+    _check('_btc_verdict' not in code and '_btc_paused' not in code,
+           'сеансні поля не мають згадуватись у редукованому такті')
+    print('✓ редукований такт чіпає ПОКАЗ, а не сеанс')
+
+
+def test_one_writer_for_the_live_banner_fields():
+    """Два писачі цих полів розійшлися б — і банер знову почав би суперечити
+    рядку «МММ-бабло». Пишемо ЛИШЕ у `_btc_banner_live_refresh`."""
+    import re as _re
+    for _fld in ('_btc_live_dir', '_btc_live_since', '_btc_fuel_strength'):
+        # Присвоєння `self.<поле> =` поза `__init__` мусить бути РІВНО одне.
+        hits = [m.start() for m in _re.finditer(r'self\.' + _fld + r'\s*=', _SRC)]
+        outside = [h for h in hits if 'def __init__' not in _SRC[:h][-4000:]]
+        _check(len(outside) == 1,
+               f'{_fld}: писачів поза __init__ має бути 1, знайдено {len(outside)}')
+    i = _SRC.index('def _btc_banner_live_refresh(self')
+    body = _SRC[i:_SRC.index('\n    def ', i + 10)]
+    for _fld in ('_btc_live_dir', '_btc_fuel_strength'):
+        _check(_fld in body, f'{_fld} мусить писатись саме тут')
+    print('✓ живі поля банера має РІВНО одного писача')
+
+
+def test_the_banner_and_the_decision_line_share_the_same_formula():
+    """⚠️ КРОС-ФАЙЛОВИЙ ЗАМОК. Рядок «МММ-бабло» рахує `compute_bias` у
+    `web/flask_app.py` СВОЇМ інлайном, банер — `_btc_liqfuel_raw`. Це вже
+    приводили до спільного знаменника; якщо хтось змінить одну сторону, вони
+    знову почнуть показувати різне під ОДНІЄЮ назвою (урок PD-зони)."""
+    flask = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
+    j = flask.index('МММ-бабло ↑ зверху')
+    dec = flask[max(0, j - 2200):j + 900]
+    i = _SRC.index('def _btc_liqfuel_raw(self')
+    ban = _SRC[i:_SRC.index('\n    def ', i + 10)]
+    for _part in ("lev['usd'] / (1.0 + dist / 2.0)", 'dist > 15',
+                  "abs(lev['price'] - mark) / mark * 100.0"):
+        _check(_part in dec, f'у compute_bias змінилась формула: немає «{_part}»')
+        _check(_part in ban, f'у банері змінилась формула: немає «{_part}»')
+    # Поріг нейтралі теж мусить бути один: ±0.1 там і `FUEL_LONG_THR` тут.
+    _check('> 0.1' in dec and '< -0.1' in dec, 'поріг у compute_bias зрушив')
+    _check(_m.FUEL_LONG_THR == 0.1,
+           f'FUEL_LONG_THR більше не 0.1 ({_m.FUEL_LONG_THR}) — банер розійдеться')
+    print('✓ банер і рядок «МММ-бабло» рахуються однією формулою')
 
 
 if __name__ == '__main__':

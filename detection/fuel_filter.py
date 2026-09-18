@@ -3942,6 +3942,39 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] BTC liqfuel raw error: {e}")
             return 0.0, None, 0
 
+    def _btc_banner_live_refresh(self) -> Optional[str]:
+        """Оновити ЖИВІ поля банера ₿ (режим «🔁 Дублювання») → напрямок або None.
+
+        **Скарга 18.09, дослівно:** «він має повторювати "МММ-бабло ↑ зверху →
+        тягне в LONG" бо увімкнено "дублювання", а він показує "рівновага", це
+        взагалі як так?»
+
+        **ДІАГНОЗ: модель тут ні до чого.** Джерело банера — `_btc_liqfuel_raw`,
+        тобто РІВНО той самий `(fa−fb)/den` із тим самим зважуванням
+        `usd/(1+dist/2)`, вікном 15% і порогом ±0.1, що й рядок «МММ-бабло» у
+        `compute_bias` (це вже приводили до спільного знаменника раніше).
+        Розійтись вони не можуть — банер показував **СТАРЕ** число, бо ці поля
+        оновлював ЛИШЕ `_update_btc_verdict`, а він живе в ПОВНОМУ такті. При
+        вимкненому ❤️ Fuel Auto-Filter такт не виконувався, і на банері
+        застигали нулі («⚪ рівновага · 0%»), тоді як рядок Smart Direction
+        рахувався щоразу наново з `/api/smc/bias`.
+
+        ⚠️ **ЦЕ РІВНО ПОКАЗ.** Сеансна механіка (`_btc_verdict_dir/_since`,
+        пауза, START/STOP, OP-4 «фліп чистить чергу», TG) лишається у
+        `_update_btc_verdict` і НЕ виконується при вимкнених чергах — інакше
+        вимкнений бот перезапускав би сеанси й чистив черги. Тест-замок на це є.
+        ⚠️ Таймер скидається ЛИШЕ на ЗМІНІ напрямку (у т.ч. в рівновагу й назад),
+        тож він чесно рахує тривалість ПОТОЧНОГО напрямку.
+        """
+        _d, _st, _bstr = self._btc_liqfuel_raw()
+        self._btc_fuel_strength = _bstr
+        # status уже несе ±0.1-нейтраль: None = ⚖ рівновага.
+        live = _st if _st in ('LONG', 'SHORT') else None
+        if live != self._btc_live_dir:
+            self._btc_live_since = time.time() if live else 0.0
+        self._btc_live_dir = live
+        return live
+
     def _update_btc_verdict(self):
         """BTC МММ *session* tracker (drives the ₿ banner + START engine + queue).
 
@@ -3965,8 +3998,7 @@ class FuelFilterDaemon:
             # «професійна» МММ-модель), через що банер показував рівновагу/іншу силу,
             # поки reason казав SHORT. Тепер алгоритм ЄДИНИЙ — банер і «МММ-бабло»
             # завжди збігаються.
-            fdir, _st, _bstr = self._btc_liqfuel_raw()
-            self._btc_fuel_strength = _bstr
+            live = self._btc_banner_live_refresh()
             # Бабло-модель для деталей/тултипа банера (напрямок беремо зі status).
             if _MM_MODEL:
                 try:
@@ -3977,15 +4009,6 @@ class FuelFilterDaemon:
                         self._btc_mm = r
                 except Exception:
                     pass
-            # status уже несе ±0.1-нейтраль: None = ⚖ рівновага → WAIT/пауза.
-            live = _st if _st in ('LONG', 'SHORT') else None
-            # LIVE напрямок для банера-'live' (миттєве дублювання, без сеансу).
-            # Таймер: скидаємо відлік ЛИШЕ коли напрямок ЗМІНИВСЯ (у т.ч. на
-            # рівновагу й назад) — так один таймер чесно рахує тривалість поточного
-            # напрямку («сеансу»).
-            if live != self._btc_live_dir:
-                self._btc_live_since = time.time() if live else 0.0
-            self._btc_live_dir = live
         except Exception as e:
             print(f"[FuelFilter] BTC МММ calc error: {e}")
             return
@@ -4990,6 +5013,15 @@ class FuelFilterDaemon:
         _t0 = time.time()
         fuels = {s: self._fuel_dir_smoothed(s, update=True) for s in relevant}
         self._mm_capture(fuels, settings)
+        # ₿ банер у режимі «🔁 Дублювання» — ЧИСТИЙ ПОКАЗ, тож оновлюємо і тут:
+        # інакше він застигав на нулях («⚪ рівновага»), поки рядок «МММ-бабло»
+        # у банері рішення рахувався наново і казав LONG (скарга 18.09).
+        # ⚠️ САМЕ сеансні поля (`_btc_verdict_dir/_since`, пауза, START/STOP,
+        # OP-4) тут НЕ чіпаються — сеанс належить чергам, а вони вимкнені.
+        try:
+            self._btc_banner_live_refresh()
+        except Exception as e:
+            print(f"[FuelFilter] ₿ live banner refresh error: {e}")
         print(f"[FF] mm-only tick: {len(relevant)} coins in "
               f"{(time.time() - _t0):.1f}s (❤️ Fuel Auto-Filter OFF — "
               f"рахуємо ЛИШЕ знімок МММ)")
