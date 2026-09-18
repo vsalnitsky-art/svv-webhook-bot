@@ -848,6 +848,7 @@ class FuelFilterDaemon:
         # ⚖️ Банер монітора: {dir, pct, …} + момент, відколи тримається
         # ПОТОЧНИЙ напрямок (для таймера). Рахує `_mm_capture`, стан лише читає.
         self._mm_state_since: Dict = {}   # ⏱ відколи монета тримає стан
+        self._mm_stats: Dict = {}        # скільки монет цілили / дали дані
         self._mm_bias: Dict = {}
         self._mm_bias_since: float = 0.0
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
@@ -3388,6 +3389,7 @@ class FuelFilterDaemon:
                     # показували б час, протягом якого нічого не рахувалось.
                     self._mm_state_since = {}
                     self._mm_price_hist = {}
+                    self._mm_stats = {}
                     self._mm_snapshot_ts = 0.0
                 # ⚖️ Банер теж гасимо: «заморожений» важіль, який уже ніхто не
                 # перераховує, виглядає як живий — гірше за порожній банер.
@@ -3447,6 +3449,12 @@ class FuelFilterDaemon:
         with self._lock:
             self._mm_snapshot = snap
             self._mm_snapshot_ts = _now
+            # 📊 СКІЛЬКИ МОНЕТ ЦІЛИЛИ і скільки РЕАЛЬНО дали МММ. Без цього
+            # «49 монет» під WATCHLIST на 51 читається як загублені монети —
+            # а насправді по частині з них liq-map ще не дала рівнів (або вони
+            # вже в угоді й у таблиці не показуються).
+            self._mm_stats = {'targeted': len(fuels or {}),
+                              'data': len(snap), 'ts': _now} if _mon else {}
         # ⚖️ ВАЖІЛЬ НАПРЯМКУ для банера — рахуємо ТУТ, у двигуні, і кладемо
         # готовим; `mm_monitor_state` лишається читачем (урок B2 з шарами Q4).
         self._mm_track_bias(snap, _now)
@@ -3483,14 +3491,17 @@ class FuelFilterDaemon:
             # «🧮 Старий МММ» у таблицях угод), і без цієї перевірки вони
             # протекли б у таблицю монітора, який щойно вимкнули.
             snap = dict(self._mm_snapshot or {}) if _on else {}
+            _cov = dict(getattr(self, '_mm_stats', {}) or {})
             grow = dict(getattr(self, '_mm_grow_since', {}) or {})
             ts = float(self._mm_snapshot_ts or 0.0)
         # Відкриті позиції (FF + обидві книги TM) — такі монети в таблиці не
         # показуємо взагалі. Набір збирає ЄДИНИЙ `_mm_open_syms`.
         open_syms = self._mm_open_syms()
         rows = []
+        _skip_trade = 0
         for sym, v in snap.items():
             if sym in open_syms:
+                _skip_trade += 1
                 continue
             st = v.get('status') if v.get('status') in ('LONG', 'SHORT') else None
             stren = int(v.get('strength') or 0)
@@ -3556,6 +3567,21 @@ class FuelFilterDaemon:
             'str_min': int(s.get('mm_str_min', 0) or 0),
             # ⚖️ Готовий важіль напрямку для банера (рахує двигун, тут ЧИТАННЯ).
             'bias': dict(getattr(self, '_mm_bias', {}) or {}),
+            # 📊 ЧОМУ РЯДКІВ МЕНШЕ, НІЖ МОНЕТ У WATCHLIST (питання 17.09:
+            # «у WATCHLIST 51, а монітор працює із 49 — чому?»). Різниця
+            # НІКОЛИ не має бути здогадкою, тож віддаємо ПОВНИЙ розклад:
+            #   targeted — скільки монет двигун узяв у роботу цього такту;
+            #   no_data  — узяв, але СТАРИЙ МММ по них ще не порахувався
+            #              (liq-map не зібрала рівнів / монета щойно додана);
+            #   in_trade — є у знімку, але вже В УГОДІ, тож у таблиці КАНДИДАТІВ
+            #              їх свідомо немає (рішення 15.09).
+            'coverage': {
+                'targeted': int(_cov.get('targeted') or 0),
+                'no_data': max(0, int(_cov.get('targeted') or 0)
+                               - int(_cov.get('data') or 0)),
+                'in_trade': int(_skip_trade),
+                'rows': len(rows),
+            } if _on else {},
         }
 
     def mm_snapshot_for(self, symbols) -> Dict:

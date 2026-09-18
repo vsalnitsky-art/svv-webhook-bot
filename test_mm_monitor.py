@@ -1011,14 +1011,14 @@ def test_ui_has_growth_column_with_timer_and_sorting():
     # нижче — це і є контракт таблиці, тож додана колонка мусить бути названа
     # ТУТ, а не просто зсунути число.
     _cols = ['Символ', 'Старий МММ', '⏱ У стані', 'Сила росте', '⏱ Росте',
-             'Ціна', '🔮 1H', '🔮 4H']
+             'Ціна', 'Рух', '🔮 1H', '🔮 4H']
     for _c in _cols:
         _check(_c in tbl, f'немає колонки «{_c}»')
     _n = len(_re.findall(r'<th[\s>]', tbl))
     _check(_n == len(_cols) + 1, f'колонок {_n}, а в контракті {len(_cols)}+☑')
     _check(f'colspan="{_n}"' in tbl,
            f'colspan порожнього рядка не дорівнює числу колонок ({_n})')
-    for col in ('symbol', 'strength', 'state', 'delta', 'grow', 'pchg'):
+    for col in ('symbol', 'strength', 'state', 'delta', 'grow', 'price', 'pchg'):
         _check(f'data-mmsort="{col}"' in tbl, f'колонка {col} не сортується')
     _check("mmSort('delta')" in tbl, 'сортування за приростом не підключене')
     _check("mmSort('grow')" in tbl, 'сортування за таймером не підключене')
@@ -1625,16 +1625,18 @@ def test_ui_table_is_striped_so_rows_do_not_blend():
     print('✓ UI: таблиця монітора — зебра + підсвітка рядка')
 
 
-def test_js_price_cell_is_a_single_line():
-    """Вимога 15.09: «Колонку Ціна пиши в один рядок»."""
-    # ⚠️ НОМЕР колонки беремо з ЖИВОГО заголовка, а не магічним числом: на
+def test_js_price_and_move_are_two_aligned_columns():
+    """Вимога 17.09: «значення розбий рівними стовпчиками, відсотки в інший
+    стовпчик». Раніше ціна і рух жили в ОДНІЙ комірці, тож числа різної
+    довжини зсували одне одного і стовпчик читався як каша."""
+    # ⚠️ НОМЕРИ колонок беремо з ЖИВОГО заголовка, а не магічним числом: на
     # зсуві після додавання колонки цей тест уже падав «на рівному місці».
     import re as _re
     _i = _HTML.index('id="mm-table"')
     _head = _HTML[_i:_HTML.index('</thead>', _i)]
-    # Зріз обривається ВСЕРЕДИНІ самого <th> колонки «Ціна», тож лічильник уже
-    # включає її → це і є номер потрібного <td (нумерація split збігається).
-    _idx = len(_re.findall(r'<th[\s>]', _head[:_head.index('>Ціна<')]))
+    _px = len(_re.findall(r'<th[\s>]', _head[:_head.index('>Ціна<')]))
+    _mv = len(_re.findall(r'<th[\s>]', _head[:_head.index('>Рух<')]))
+    _check(_mv == _px + 1, 'колонка «Рух» мусить стояти ОДРАЗУ за «Ціна»')
     out = _run_js(r'''
 mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:50, strength_prev:50,
   delta:0, grow_since:null, state_since:null, price:1.5, price_dir:'up',
@@ -1642,17 +1644,26 @@ mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:50, strength_prev:50,
   selectable:true}],
   enabled:true, limited:false, ts:1});
 const h = document.getElementById('mm-tbody').innerHTML;
-const cell = h.split('<td')[__IDX__] || '';
-console.log(JSON.stringify({br:cell.includes('<br>'), px:cell.includes('1.5'),
-  arrow:cell.includes('▲'), pct:cell.includes('+0.42%'),
-  win:cell.replace(/title="[^"]*"/g, '').includes('15хв')}));
-'''.replace('__IDX__', str(_idx)))
+const px = h.split('<td')[__PX__] || '', mv = h.split('<td')[__MV__] || '';
+console.log(JSON.stringify({
+  px_val: px.includes('1.5'), px_pct: px.includes('0.42%'),
+  mv_arrow: mv.includes('▲'), mv_pct: mv.includes('+0.42%'),
+  right: px.includes('text-align:right') && mv.includes('text-align:right'),
+  mono: px.includes('monospace') && mv.includes('monospace'),
+  br: px.includes('<br>') || mv.includes('<br>'),
+  win: mv.replace(/title="[^"]*"/g, '').includes('15хв')}));
+'''.replace('__PX__', str(_px)).replace('__MV__', str(_mv)))
     import json
     d = json.loads(out)
-    _check(not d['br'], f'ціна досі у два рядки: {d}')
-    _check(d['px'] and d['arrow'] and d['pct'], f'ціна/напрямок/рух: {d}')
+    _check(d['px_val'] and not d['px_pct'],
+           f'у «Ціна» — САМА ціна, без відсотка: {d}')
+    _check(d['mv_arrow'] and d['mv_pct'], f'у «Рух» — стрілка і відсоток: {d}')
+    _check(d['right'] and d['mono'],
+           f'обидві праворуч і monospace — інакше розряди не вишикуються: {d}')
+    _check(not d['br'], f'жодних переносів у рядок: {d}')
     _check(not d['win'], 'вікно спостереження мусить піти в підказку, не в рядок')
-    print('✓ JS: колонка «Ціна» — один рядок (вікно — у підказці)')
+    print('✓ JS: «Ціна» і «Рух» — дві рівні колонки, відсоток окремо')
+
 
 
 # ═══ 18. ⚖️ БАНЕР «🧮 МММ-МОНІТОР» — ВАЖІЛЬ ЗА ВЕЛИЧИНОЮ ВІДСОТКІВ (17.09) ══
@@ -2178,6 +2189,76 @@ def test_the_page_draws_the_state_timer_with_the_shared_ticker():
     _check('state_since' in sig,
            'момент старту — у сигнатурі, інакше перезапуск не перемалював би рядок')
     print('✓ UI: окрема колонка «⏱ У стані» на спільному тікері')
+
+
+# ═══ 23. 📊 «У WATCHLIST 51, А МОНІТОР ПРАЦЮЄ ІЗ 49 — ЧОМУ?» (17.09) ═══════
+# Питання користувача зі скріна. Різниця пояснюється, а не лишається здогадкою:
+# частина монет ще БЕЗ даних МММ (liq-map не зібрала рівнів), частина вже
+# В УГОДІ — і таких монітор свідомо не показує (він список КАНДИДАТІВ).
+def test_the_coverage_breakdown_explains_every_missing_coin():
+    ff = _mk()
+    ff._legacy = {'AAAUSDT': 0.5, 'BBBUSDT': -0.6, 'CCCUSDT': 0.02}
+    # DDD двигун узяв у роботу, але СТАРИЙ МММ по ній ще не порахувався.
+    ff._mm_capture(_fuels(AAAUSDT=-0.5, BBBUSDT=0.6, CCCUSDT=-0.02,
+                          DDDUSDT=-0.4), now=ff._clock[0])
+    cov = ff.mm_monitor_state()['coverage']
+    _check(cov['targeted'] == 4, f'узяли в роботу 4 монети: {cov}')
+    _check(cov['no_data'] == 1, f'одна без даних МММ: {cov}')
+    _check(cov['in_trade'] == 0 and cov['rows'] == 3, f'у таблиці три: {cov}')
+    # А тепер одна з них — уже в угоді.
+    ff._mm_open_syms = lambda: {'AAAUSDT'}
+    cov = ff.mm_monitor_state()['coverage']
+    _check(cov['in_trade'] == 1 and cov['rows'] == 2,
+           f'монета в угоді названа ОКРЕМО, а не «зникла»: {cov}')
+    _check(cov['targeted'] - cov['no_data'] - cov['in_trade'] == cov['rows'],
+           f'розклад мусить СХОДИТИСЬ до кількості рядків: {cov}')
+    print('✓ розклад покриття сходиться: узяли − без даних − в угоді = рядки')
+
+
+def test_a_disabled_monitor_reports_no_coverage():
+    ff = _mk(mon=False)
+    _cap(ff, AAAUSDT=0.5)
+    _check(ff.mm_monitor_state()['coverage'] == {},
+           'вимкнений монітор нічого не рахує — і чисел не вигадує')
+    print('✓ вимкнений монітор не показує фальшивого покриття')
+
+
+def test_the_page_shows_rows_out_of_targeted():
+    i = _HTML.index("const up = document.getElementById('mm-updated')")
+    body = _HTML[i:i + 1800]
+    _check('coverage' in body and "' з '" in body,
+           'у шапці мусить стояти «N з M», інакше 49 проти 51 читається як втрата')
+    for _w in ('Без даних МММ', 'Уже в угоді', 'узяв у роботу'):
+        _check(_w in body, f'у підказці має бути рядок «{_w}»')
+    print('✓ шапка каже «N з M», а розклад — у підказці')
+
+
+# ═══ 24. 🖼 ЗНАЧКИ В КОЛОНЦІ «🎯 Автопілот» НЕ ПОВТОРЮЮТЬСЯ (17.09) ════════
+# Скарга: «картинка два магніта» — 🧲 стояв і як значок ДІЇ, і як значок ЦІЛІ.
+def test_the_action_icon_never_repeats_the_objective_icon():
+    _kinds = _HTML[_HTML.index('const _PILOT_KIND'):]
+    _kinds = _kinds[:_kinds.index('}')]
+    import re as _re
+    used = set(_re.findall(r"'([^']{1,4})'", _kinds.split('=', 1)[1]))
+    for _name in ('_PILOT_ACT', '_PILOT_BLOCKED', '_PILOT_TAKE_BLOCKED',
+                  '_PILOT_AUTO_OFF', '_PILOT_AUTO_TP1'):
+        j = _HTML.index('const ' + _name)
+        blk = _HTML[j:_HTML.index(';', j)]
+        for ic in _re.findall(r"\['([^']+)',", blk) or _re.findall(r"'([^']{1,4})':", blk):
+            _check(ic not in used,
+                   f'значок дії «{ic}» ({_name}) дублює значок ЦІЛІ — '
+                   f'у комірці вони стоять поруч і читаються як помилка')
+    print('✓ значок дії і значок цілі — різні картинки')
+
+
+def test_the_two_auto_off_states_differ_by_colour_not_by_a_duplicate_icon():
+    a = _HTML[_HTML.index('const _PILOT_AUTO_OFF'):][:200]
+    b = _HTML[_HTML.index('const _PILOT_AUTO_TP1'):][:200]
+    _check("'🧲'" not in b, '🧲 лишається ЛИШЕ за ціллю, у значку дії його немає')
+    _check('#8b93a7' in a and '#fbbf24' in b,
+           'стани розрізняє КОЛІР: сірий «нічого не робимо» / бурштин «веде TP-1»')
+    _check('Manual TP-1' in b, 'підпис мусить казати, що саме лишилось працювати')
+    print('✓ два стани правила — один значок, різні кольори й підписи')
 
 
 if __name__ == '__main__':
