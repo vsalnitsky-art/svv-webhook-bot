@@ -2292,18 +2292,84 @@ def test_a_fresh_boot_says_the_first_snapshot_is_being_computed():
     print('✓ прогрів після старту названий («перший знімок рахується»)')
 
 
-def test_the_master_switch_off_is_named_not_silent():
-    """❤️ Fuel Auto-Filter вимкнено → знімка НЕ БУДЕ НІКОЛИ, і монітор мусить
-    сказати саме це, а не показувати той самий напис, що під час прогріву."""
+# ⚠️ ВИМОГА ЗМІНИЛАСЬ (скарга 18.09: «МММ-монітор взагалі перестав працювати.
+# Навіть у таблиці відкритих угод не відображається»). Учора тут стояв замок
+# `test_the_master_switch_off_is_named_not_silent`: вимкнений ❤️ Fuel
+# Auto-Filter мав ЧЕСНО СКАЗАТИ, що знімка не буде. Тепер знімок ПРОСТО Є —
+# бо він живить не лише монітор, а й колонку «🧮 Старий МММ» в угодах і
+# ПРАВИЛО ВИХОДУ `use_mm_flat_exit`. Замок переписано, а не «полагоджено».
+
+def _mm_only_ff():
+    """Демон із вимкненими чергами + стаби, яких торкається редукований такт."""
     ff = _mk(enabled=False)
+    ff._registered = []
+    ff._register_with_liqmap = lambda syms: ff._registered.extend(syms)
+    ff._mm_watchlist_part = lambda s: ['ETHUSDT']
+    ff._fuel_managed = {'SOLUSDT': {'mode': 'paper'}}
+    ff._fuel_dir_smoothed = lambda sym, update=False: {
+        'dir': -0.4, 'status': 'SHORT', 'mark_price': 10.0}
+    ff._legacy = {'BTCUSDT': 0.42, 'ETHUSDT': 0.30, 'SOLUSDT': -0.55}
+    return ff
+
+
+def test_the_master_switch_off_still_builds_the_mm_snapshot():
+    """❤️ Fuel Auto-Filter керує ЧЕРГАМИ І ВІДКРИТТЯМ. Знімок МММ до них
+    стосунку не має — на ньому тримаються колонка в угодах і правило виходу."""
+    ff = _mm_only_ff()
     ff._tick()
-    _check(ff._mm_pending.get('reason') == 'ff_off',
-           f'вимкнений майстер-тумблер не названо: {ff._mm_pending}')
-    _check(not ff._mm_snapshot_ts, 'знімок не мав зʼявитись')
+    _check(ff._mm_snapshot_ts, 'знімок мусить зʼявитись і з вимкненими чергами')
+    _check('SOLUSDT' in ff._mm_snapshot,
+           f'монета у ВІДКРИТІЙ угоді мусить бути у знімку: {list(ff._mm_snapshot)}')
+    _check(ff.mm_snapshot_for(['SOLUSDT']).get('SOLUSDT'),
+           'колонка «🧮 Старий МММ» в угодах лишилась порожня')
+    _check('BTCUSDT' in ff._registered,
+           'без реєстрації liq-map просто не сканує ці монети')
     st = ff.mm_monitor_state()
-    _check((st.get('pending') or {}).get('reason') == 'ff_off',
-           'причина не доїхала в UI')
-    print('✓ вимкнений ❤️ Fuel Auto-Filter названо вголос (чекати марно)')
+    _check(st.get('queues_off') is True,
+           'вужчий набір монет мусить бути НАЗВАНИЙ (черги вимкнено)')
+    _check(not st.get('pending'), f'знімок є → причини бути не має: {st}')
+    print('✓ вимкнені черги знімок МММ більше НЕ вбивають')
+
+
+def test_the_reduced_tick_does_no_trading_work():
+    """Редукований такт — РІВНО знімок. Будь-яка торгова дія тут була б
+    відкриттям/закриттям угод при ВИМКНЕНОМУ боті."""
+    i = _SRC.index('def _mm_only_tick(self')
+    body = _SRC[i:_SRC.index('\n    def ', i + 10)]
+    body = body[body.index('"""', body.index('"""') + 3):]     # без докстрінга
+    for bad in ('_enforce_btc_flip_close', '_update_btc_verdict', '_engine_tick',
+                'self._open(', 'note_trade_closed', '_persist_state',
+                '_pending4', 'intercept'):
+        _check(bad not in body,
+               f'у редукованому такті НЕ місце «{bad}» — черги вимкнені')
+    print('✓ редукований такт не робить жодної торгової роботи')
+
+
+def test_the_daemon_starts_even_when_the_master_switch_is_off():
+    """КОРІНЬ скарги: при `enabled=False` потік узагалі не створювався, тож
+    `_tick` (а з ним `_mm_capture`) не виконувався ЖОДНОГО разу."""
+    i = _SRC.index('def init_fuel_filter(')
+    body = _SRC[i:_SRC.index('\ndef ', i + 10)]
+    _check('if _instance.is_enabled():' not in body,
+           'старт потоку знову під тумблером — знімок МММ помре разом із чергами')
+    _check('_instance.start()' in body, 'потік мусить стартувати')
+    print('✓ демон стартує незалежно від майстер-тумблера')
+
+
+def test_every_engine_still_gates_on_the_master_switch():
+    """Друга половина тієї самої зміни: якщо потік тепер працює ЗАВЖДИ, то
+    кожен двигун МУСИТЬ сам перевіряти тумблер — інакше вимкнений бот
+    продовжив би відкривати угоди."""
+    for _fn in ('_engine_tick', '_engine_tick_q2', '_engine_tick_readiness',
+                '_engine_tick_queue4'):
+        i = _SRC.index(f'def {_fn}(self')
+        head = _SRC[i:_SRC.index('\n    def ', i + 10)][:2500]
+        _check("s.get('enabled')" in head or "settings.get('enabled')" in head,
+               f'{_fn} не перевіряє майстер-тумблер — вимкнений бот торгуватиме')
+    i = _SRC.index('def _run_alerts(self')
+    _check("s.get('enabled')" in _SRC[i:_SRC.index('\n    def ', i + 10)],
+           'цикл алертів не перевіряє майстер-тумблер')
+    print('✓ усі двигуни самі гейтяться на майстер-тумблері')
 
 
 def test_the_reason_disappears_once_the_snapshot_exists():
@@ -2317,22 +2383,71 @@ def test_the_reason_disappears_once_the_snapshot_exists():
     print('✓ причина зникає, щойно знімок є')
 
 
-def test_the_page_tells_the_three_reasons_apart():
+def test_the_page_tells_the_two_reasons_apart():
+    """⚠️ Раніше причин було ТРИ; «❤️ Fuel Auto-Filter вимкнено» зникла разом
+    зі своєю причиною — знімок тепер будується і з вимкненими чергами."""
     i = _HTML.index("const up = document.getElementById('mm-updated')")
     body = _HTML[i:_HTML.index("const hint = document.getElementById('mm-limited-hint')", i)]
-    for _w in ('ff_off', 'error', 'Fuel Auto-Filter вимкнено', 'перший знімок'):
+    for _w in ('error', 'перший знімок', 'queues_off'):
         _check(_w in body, f'у шапці немає стану «{_w}»')
+    _check("'ff_off'" not in body, 'мертва гілка ff_off лишилась у шапці')
     # Порожня таблиця теж мусить розрізняти причини, а не писати «Немає даних».
     j = _HTML.index("const _why = !_mmMeta.enabled")
     why = _HTML[j:j + 900]
-    for _w in ('ff_off', 'error', 'boot'):
+    for _w in ('error', 'boot'):
         _check(_w in why, f'порожня таблиця не розрізняє «{_w}»')
+    _check("'ff_off'" not in why, 'мертва гілка ff_off лишилась у таблиці')
     # ⚠️ Причина — У СИГНАТУРІ: без неї перехід між станами не перемалював би
     # напис (рядків як не було, так і немає).
     k = _HTML.index('const sig = _mmDir')
     _check('pending' in _HTML[k:k + 400],
            'причина не входить у сигнатуру — напис не оновиться')
-    print('✓ UI розрізняє прогрів / вимкнений FF / збій такту')
+    print('✓ UI розрізняє прогрів і збій такту, а вимкнені черги — окремо')
+
+
+# ═══ 26. 🐞 СТАН З СЕРВЕРА МУСИТЬ ДОЇХАТИ В `_mmMeta` (скарга 18.09) ════════
+# КОРІНЬ другої половини скарги: `mmApplyState` будував `_mmMeta` з ТРЬОХ полів
+# (`limited`/`ts`/`enabled`), тож `coverage` («49 з 51 монет», 17.09) і
+# `pending` («чому знімка немає», 18.09) НІКОЛИ не доїжджали на сторінку —
+# обидві фічі були мертві, а шапка й порожня таблиця показували фолбек.
+
+def test_every_state_field_the_page_uses_reaches_mmmeta():
+    # ⚠️ Анкор — САМЕ присвоєння в `mmApplyState`, а не початковий літерал
+    # (той оголошується вище і теж починається з `_mmMeta = {`).
+    i = _HTML.index('_mmMeta = { limited: !!(mm')
+    assign = _HTML[i:_HTML.index('};', i)]
+    # Ключі, які сторінка ЧИТАЄ як `_mmMeta.<key>`, мусять бути в присвоєнні.
+    import re as _re
+    used = set(_re.findall(r'_mmMeta\.([a-z_]+)', _HTML))
+    for key in sorted(used):
+        _check(f'{key}:' in assign,
+               f'`_mmMeta.{key}` читається на сторінці, але в `mmApplyState` '
+               f'НЕ присвоюється — поле мертве')
+    # І навпаки: усе, що сервер віддає для показу, мусить бути прочитане.
+    for key in ('coverage', 'pending', 'queues_off', 'ts', 'limited', 'enabled'):
+        _check(f'{key}:' in assign, f'поле «{key}» не потрапляє в _mmMeta')
+    print('✓ усі поля стану монітора доїжджають у _mmMeta')
+
+
+def test_level_inputs_show_a_dot_not_a_locale_comma():
+    """Скріншот 18.09: поля показували `0,38000` / `136,00`, а та сама ціна в
+    колонці «🎯 Автопілот» — `$0.38000`. `<input type=number>` малює значення
+    за локаллю браузера, і `lang="en"` це не лікує."""
+    i = _HTML.index('const _inp =')
+    _inp = _HTML[i:_HTML.index('\n', i)]
+    _check('type="text"' in _inp and 'inputmode="decimal"' in _inp,
+           'поля рівнів знову віддані локалі браузера')
+    j = _HTML.index('function _numFromInput')
+    fn = _HTML[j:_HTML.index('\n}', j)]
+    _check("replace(',', '.')" in fn, 'кома у ВВЕДЕНОМУ тексті не нормалізується')
+    # ⚠️ NaN не має мовчки їхати на сервер: там він стане `null` = «не чіпати»,
+    # і користувач думав би, що зберіг.
+    for _fn in ('submitManualTp1', 'submitManualSlTp'):
+        k = _HTML.index(f'async function {_fn}(')
+        body = _HTML[k:k + 1200]
+        _check('_numFromInput' in body, f'{_fn} не читає поле спільним правилом')
+        _check('Number.isNaN' in body, f'{_fn} відправив би NaN на сервер')
+    print('✓ рівні малюються з КРАПКОЮ, кома на вводі нормалізується')
 
 
 def test_the_tick_prints_a_profile_so_the_cost_is_a_number():

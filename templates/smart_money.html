@@ -11415,7 +11415,11 @@ let _ffActiveSymbols = [];
 // просто під час вибору — і групове відкриття було б неможливим.
 // ═══════════════════════════════════════════════════════════════════════
 let _mmRows = [];              // останній знімок рядків із сервера
-let _mmMeta = { limited: true, ts: 0, counts: {} };
+// ⚠️ ТА САМА ФОРМА, що її будує `mmApplyState` — інакше до першої відповіді
+// сервера сторінка читала б неіснуючі поля. (`counts` тут лежало як спадок:
+// серверне поле прибрали ще 15.09, коли лічильники вкладок переїхали на фронт.)
+let _mmMeta = { limited: true, ts: 0, enabled: true,
+                coverage: {}, pending: {}, queues_off: false };
 let _mmSel = new Set();        // обрані символи (переживають перемальовку)
 let _mmDir = 'all';            // фільтр показу: all | LONG | SHORT | flat
 // Сортування таблиці. Дефолт — сила ↓ (те саме, що віддає бекенд), тайбрейк
@@ -11762,19 +11766,17 @@ function mmRender() {
         if (!rows.length) {
             // ⚠️ Три РІЗНІ причини порожньої таблиці — і кожна мусить говорити
             // сама за себе: вимкнений тумблер це РІШЕННЯ, а не «немає даних».
-            // ⏳ Четверта причина (18.09): знімка ЩЕ (або ВЖЕ) немає — і «Немає
-            // даних МММ» тут бреше, бо дані не порахувались, а не відсутні.
+            // ⏳ Четверта причина (18.09): знімка ЩЕ немає — і «Немає даних
+            // МММ» тут бреше, бо дані не порахувались, а не відсутні.
             const _p = (_mmMeta.pending || {}).reason;
             const _why = !_mmMeta.enabled
                 ? '🔌 Монітор вимкнено — увімкніть тумблер у шапці секції'
-                : (_p === 'ff_off'
-                   ? '⛔ ❤️ Fuel Auto-Filter вимкнено — знімок МММ будує його такт'
-                   : (_p === 'error'
-                      ? '⚠️ Такт двигуна падає — знімок МММ не будується'
-                      : (_p === 'boot'
-                         ? '⏳ Перший знімок після старту ще рахується…'
-                         : (_mmRows.length ? 'Немає монет під цей фільтр'
-                                           : 'Немає даних МММ'))));
+                : (_p === 'error'
+                   ? '⚠️ Такт двигуна падає — знімок МММ не будується'
+                   : (_p === 'boot'
+                      ? '⏳ Перший знімок після старту ще рахується…'
+                      : (_mmRows.length ? 'Немає монет під цей фільтр'
+                                        : 'Немає даних МММ')));
             tb.innerHTML = `<tr><td colspan="10" class="tm-empty-msg">${_why}</td></tr>`;
         } else {
             tb.innerHTML = rows.map(r => {
@@ -11898,8 +11900,17 @@ function mmApplyState(mm) {
     if (!_mmUiLoaded) { _mmUiLoaded = true; _mmLoadUi(); }
     _mmRows = (mm && Array.isArray(mm.rows)) ? mm.rows : [];
     mmRenderBias(mm && mm.bias);
+    // ⚠️ КОЖНЕ нове поле стану МУСИТЬ бути ТУТ. `coverage` («49 з 51 монет»,
+    // 17.09) і `pending` («чому знімка немає», 18.09) приїжджали з сервера, але
+    // в `_mmMeta` НЕ клались — тобто обидві фічі були мертві на сторінці:
+    // шапка ніколи не показувала «N з M», а порожня таблиця завжди писала
+    // «Немає даних МММ». Тест-замок тепер звіряє ключі відповіді з тими, що
+    // реально доїжджають у `_mmMeta`.
     _mmMeta = { limited: !!(mm && mm.limited), ts: (mm && mm.ts) || 0,
-                enabled: !(mm && mm.enabled === false) };
+                enabled: !(mm && mm.enabled === false),
+                coverage: (mm && mm.coverage) || {},
+                pending: (mm && mm.pending) || {},
+                queues_off: !!(mm && mm.queues_off) };
     // ⚑ Поріг «Сила ≥» приходить З СЕРВЕРА — це те саме число, за яким бот
     // вирішує, які монети сканувати. Поле не чіпаємо, поки в ньому друкують.
     const _sEl = document.getElementById('mm-min-str');
@@ -11919,40 +11930,36 @@ function mmApplyState(mm) {
         // різниці — у підказці (немає даних МММ / уже в угоді).
         const cov = _mmMeta.coverage || {};
         const tgt = Number(cov.targeted || 0);
-        // ⏳ ПОКИ ЗНІМКА НЕМАЄ — КАЖЕМО ЧОМУ (скарга 18.09: «після рестарту
-        // монітор довго в такому стані і не оновлюється»). Нейтральне «ще
-        // немає знімка» однаково виглядало і для нормального прогріву, і для
-        // вимкненого ❤️ Fuel Auto-Filter (тоді знімка не буде НІКОЛИ), і для
-        // збою такту. Три різні ситуації — три різні написи.
+        // ⏳ ПОКИ ЗНІМКА НЕМАЄ — КАЖЕМО ЧОМУ (скарга 18.09). Причин лишилось
+        // ДВІ: нормальний прогрів і збій такту. Третьої («❤️ Fuel Auto-Filter
+        // вимкнено») БІЛЬШЕ НЕ ІСНУЄ — вимкнені черги знімок уже не зупиняють.
         const pend = _mmMeta.pending || {};
         const _wait = pend.at ? Math.max(0, Math.round(Date.now() / 1000 - pend.at)) : 0;
         const _waitTxt = _wait >= 60 ? `${Math.floor(_wait / 60)}хв ${_wait % 60}с`
                                      : `${_wait}с`;
-        const _pendTxt = pend.reason === 'ff_off'
-            ? '⛔ ❤️ Fuel Auto-Filter вимкнено — знімок не рахується'
-            : (pend.reason === 'error' ? '⚠️ збій такту — знімка немає'
-               : `⏳ перший знімок рахується · ${_waitTxt}`);
+        const _pendTxt = pend.reason === 'error'
+            ? '⚠️ збій такту — знімка немає'
+            : `⏳ перший знімок рахується · ${_waitTxt}`;
+        // ❤️ Черги вимкнено → знімок рахує РЕДУКОВАНИЙ такт (вужчий набір
+        // монет). Позначка мусить бути видима, інакше коротший список
+        // читається як «бот загубив монети».
+        const _qOff = _mmMeta.queues_off ? ' · ❤️ черги OFF' : '';
         up.textContent = !_mmMeta.enabled ? 'вимкнено'
             : (_mmMeta.ts
                ? `${_mmRows.length}${tgt ? ' з ' + tgt : ''} монет · оновлено `
-                 + new Date(_mmMeta.ts * 1000).toLocaleTimeString()
-               : _pendTxt);
-        up.style.color = (!_mmMeta.enabled || _mmMeta.ts) ? ''
-            : (pend.reason === 'error' ? '#f87171'
-               : (pend.reason === 'ff_off' ? '#fbbf24' : ''));
+                 + new Date(_mmMeta.ts * 1000).toLocaleTimeString() + _qOff
+               : _pendTxt + _qOff);
+        up.style.color = !_mmMeta.enabled ? ''
+            : ((!_mmMeta.ts && pend.reason === 'error') ? '#f87171'
+               : (_mmMeta.queues_off ? '#fbbf24' : ''));
         up.title = !_mmMeta.enabled ? 'Монітор вимкнено тумблером у шапці секції.'
-            : (!_mmMeta.ts ? (pend.reason === 'ff_off'
-                 ? 'Знімок МММ будує такт ❤️ Fuel Auto-Filter. Майстер-тумблер '
-                   + 'тієї секції ВИМКНЕНО, тож такт виходить першим рядком і '
-                   + 'знімка не буде, скільки б не чекати. Увімкніть Fuel '
-                   + 'Auto-Filter — перший знімок зʼявиться за один такт (~30с).'
-                 : (pend.reason === 'error'
+            : (!_mmMeta.ts ? (pend.reason === 'error'
                     ? 'Такт двигуна падає ДО побудови знімка — монітор не '
                       + 'прогрівається, а зламаний.\n' + (pend.detail || '')
                     : 'Знімок пишеться в КІНЦІ такту двигуна: спершу він тягне '
                       + 'liq-map по всіх монетах «у роботі». Після рестарту всі '
                       + 'кеші холодні, тож перший такт найдовший. Банер вище '
-                      + 'показує ВІДНОВЛЕНІ числа (↻), а не свіжі.'))
+                      + 'показує ВІДНОВЛЕНІ числа (↻), а не свіжі.')
             : [`Двигун узяв у роботу: ${tgt} монет`,
                `У таблиці: ${cov.rows != null ? cov.rows : _mmRows.length}`,
                (cov.no_data ? `Без даних МММ: ${cov.no_data} — liq-map ще не зібрала `
@@ -11963,6 +11970,12 @@ function mmApplyState(mm) {
                    + '(колонка «🧮 Старий МММ» бере ті самі числа).' : ''),
                'Набір монет: BTC + угоди + черги + фандинг + WATCHLIST '
                + '(у режимі економії — лише монети «в роботі»).',
+               (_mmMeta.queues_off ? '❤️ Fuel Auto-Filter ВИМКНЕНО: черги і '
+                   + 'відкриття не працюють, але знімок МММ рахується — він '
+                   + 'живить цю таблицю, колонку «🧮 Старий МММ» в угодах і '
+                   + 'правило виходу «🧮 Старий МММ ⚖ → вихід». Набір монет у '
+                   + 'цьому режимі вужчий: BTC + відкриті угоди + WATCHLIST '
+                   + '(без черг і фандингу — вони не наповнюються).' : ''),
               ].filter(Boolean).join('\n'));
     }
     // ⚠️ Режим економії НАЗИВАЄМО вголос: інакше коротка таблиця виглядала б як
@@ -15350,23 +15363,33 @@ function manualSlTpCellsHTML(p, isShadow) {
     const t1Done = p.tp1_done
         ? '<span style="color:#4ade80;font-size:0.62rem" title="TP-1 уже спрацював — частину зафіксовано">✓</span>'
         : '';
+    // 🔢 `type="text" inputmode="decimal"`, а НЕ `type="number"` (скарга 18.09).
+    // `<input type=number>` малює значення за ЛОКАЛЛЮ браузера, і в
+    // українській локалі поля показували `0,38000` / `136,00`, тоді як та сама
+    // ціна в колонці «🎯 Автопілот» стояла з КРАПКОЮ (`$0.38000`) — одне число
+    // у двох написаннях в ОДНОМУ рядку. Атрибут `lang="en"` це не лікує:
+    // Firefox його для числових полів ігнорує взагалі, Chrome — не завжди.
+    // Тепер рендеримо МИ, тож крапка гарантована; `inputmode="decimal"` лишає
+    // числову клавіатуру на телефоні, а кому у ВВЕДЕНОМУ тексті нормалізує
+    // `_numFromInput` на сабміті.
+    const _inp = 'type="text" inputmode="decimal" autocomplete="off" lang="en"';
     return `
         <td>
-            <input type="number" step="any" min="0" placeholder="—" lang="en"
+            <input ${_inp} placeholder="—"
                    value="${sl}" title="${slSk.title}"
                    style="${slSk.style}"
                    onblur="submitManualSlTp('${sym}', this.value, null, ${shFlag})"
                    onkeydown="if(event.key==='Enter'){this.blur();}">
         </td>
         <td style="white-space:nowrap">
-            <input type="number" step="any" min="0" placeholder="—" lang="en"
+            <input ${_inp} placeholder="—"
                    value="${tp1}" title="${t1Sk.title}"
                    style="${t1Sk.style}"
                    onblur="submitManualTp1('${sym}', this.value, ${shFlag})"
                    onkeydown="if(event.key==='Enter'){this.blur();}">${t1Done}
         </td>
         <td>
-            <input type="number" step="any" min="0" placeholder="—" lang="en"
+            <input ${_inp} placeholder="—"
                    value="${tp}" title="${tpSk.title}"
                    style="${tpSk.style}"
                    onblur="submitManualSlTp('${sym}', null, this.value, ${shFlag})"
@@ -15374,12 +15397,23 @@ function manualSlTpCellsHTML(p, isShadow) {
         </td>`;
 }
 
+// 🔢 ЄДИНЕ правило читання поля рівня: порожньо → 0 («зняти рівень»), кома →
+// крапка (українська розкладка і мобільна клавіатура дають саме кому),
+// пробіли/нерозривні пробіли геть. NaN повертаємо як NaN — сабміт це помітить
+// і НЕ відправить сміття на сервер (мовчки зняти рівень було б найгірше).
+function _numFromInput(v) {
+    if (v === '' || v === null || v === undefined) return 0;
+    const s = String(v).replace(/\s| /g, '').replace(',', '.');
+    return s === '' ? 0 : parseFloat(s);
+}
+
 // 🎯 TP-1 — частковий вихід. Окремий сабміт: у бекенді це окреме поле
 // (`manual_tp1`), бо спрацювання РІЗНЕ — TP-1 ріже частину, TP-2 закриває все.
 async function submitManualTp1(symbol, value, isShadow) {
     try {
-        const body = { symbol, is_shadow: !!isShadow,
-                       manual_tp1: (value === '' ? 0 : parseFloat(value)) };
+        const _v = _numFromInput(value);
+        if (Number.isNaN(_v)) { alert('Manual TP-1: введіть число'); return; }
+        const body = { symbol, is_shadow: !!isShadow, manual_tp1: _v };
         // ⚠️ URL той самий, що й у submitManualSlTp — ЛИТЕРАЛ НЕ ДУБЛЮВАТИ
         // навмання: раніше тут стояло `manual-sltp` (без дефіса), маршрут
         // віддавав 404, помилка глушилась у catch — і рівень, який щойно
@@ -15529,9 +15563,14 @@ async function submitManualSlTp(symbol, manualSl, manualTp, isShadow) {
     // Build payload — only include fields we mean to change. The server
     // treats `null`/missing as "leave unchanged" and 0/'' as "clear".
     const body = { symbol, is_shadow: !!isShadow };
-    if (manualSl !== null) body.manual_sl = (manualSl === '' ? 0 : parseFloat(manualSl));
-    if (manualTp !== null) body.manual_tp = (manualTp === '' ? 0 : parseFloat(manualTp));
-    
+    if (manualSl !== null) body.manual_sl = _numFromInput(manualSl);
+    if (manualTp !== null) body.manual_tp = _numFromInput(manualTp);
+    // ⚠️ Сміття НЕ відправляємо: `parseFloat('абв')` → NaN → JSON `null` →
+    // сервер прочитав би це як «не чіпати», і користувач думав би, що зберіг.
+    if (Number.isNaN(body.manual_sl) || Number.isNaN(body.manual_tp)) {
+        alert('Manual SL/TP: введіть число'); return;
+    }
+
     try {
         const res = await fetch('/api/tm/positions/manual-sl-tp', {
             method: 'POST',

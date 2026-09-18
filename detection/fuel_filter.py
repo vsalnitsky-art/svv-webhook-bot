@@ -3627,13 +3627,17 @@ class FuelFilterDaemon:
             } if _on else {},
             # ⏳ ЧОМУ ЗНІМКА ЩЕ НЕМАЄ (скарга 18.09). Поле є ЛИШЕ поки `ts == 0`
             # — тобто поки `_mm_capture` не відпрацював жодного разу від
-            # старту. Три причини РОЗРІЗНЕНІ, бо дії за ними різні:
-            #   boot   — перший такт іще рахується (нормальний прогрів);
-            #   ff_off — ❤️ Fuel Auto-Filter ВИМКНЕНО → такт виходить першим
-            #            рядком, знімка не буде НІКОЛИ, і чекати марно;
-            #   error  — такт падає до `_mm_capture` (текст винятку в `detail`).
+            # старту. Дві причини РОЗРІЗНЕНІ, бо дії за ними різні:
+            #   boot  — перший такт іще рахується (нормальний прогрів);
+            #   error — такт падає до `_mm_capture` (текст винятку в `detail`).
+            # ⚠️ Причини «❤️ Fuel Auto-Filter вимкнено» БІЛЬШЕ НЕМАЄ: тепер
+            # вимкнені черги знімок НЕ зупиняють (див. `_mm_only_tick`).
             'pending': (dict(getattr(self, '_mm_pending', {}) or {})
                         if (_on and not ts) else {}),
+            # ❤️ Черги вимкнено → знімок рахує РЕДУКОВАНИЙ такт, і набір монет
+            # вужчий (без черг і фандингу). Мовчати про це не можна: коротший
+            # список читався б як «бот половину монет загубив».
+            'queues_off': not bool(s.get('enabled')),
         }
 
     def mm_snapshot_for(self, symbols) -> Dict:
@@ -4926,18 +4930,81 @@ class FuelFilterDaemon:
         except Exception as e:
             print(f"[FuelFilter] liqmap register error: {e}")
 
+    def _mm_watchlist_part(self, settings: Dict) -> List[str]:
+        """WATCHLIST-частина набору монет для МММ — ЄДИНЕ джерело на ОБИДВА
+        такти (повний і редукований «МММ-only»).
+
+        У ПОВНОМУ режимі (`mmm_limited_mode=False`) беремо ВЕСЬ watchlist, в
+        обмеженому — лише додані ВРУЧНУ. Два «однакових» набори в двох місцях
+        розійшлися б, і монітор показував би не ті монети, що двигун.
+        """
+        _limited = bool(settings.get('mmm_limited_mode', True))
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            _sc = get_smc_scanner()
+            if _sc:
+                return list(_sc.symbols_by_source('manual') if _limited
+                            else _sc.get_watchlist())
+            if self._get_watchlist:
+                return list(self._get_watchlist() or [])   # fallback: full list
+        except Exception as e:
+            print(f"[FuelFilter] МММ watchlist set error: {e}")
+        return []
+
+    def _mm_only_tick(self, settings: Dict):
+        """🧮 РЕДУКОВАНИЙ ТАКТ: лише знімок МММ, коли ❤️ Fuel Auto-Filter ВИМКНЕНО.
+
+        **Скарга 18.09:** «МММ-монітор взагалі перестав працювати. Навіть у
+        таблиці відкритих угод не відображається.» На скріні ❤️ Fuel
+        Auto-Filter стояв **OFF** — а `init_fuel_filter` при вимкненому тумблері
+        навіть НЕ ЗАПУСКАВ потік, тож `_tick` (а з ним `_mm_capture`) не
+        виконувався ЖОДНОГО разу.
+
+        ⚠️ **ЗНІМОК МММ — НЕ ЧАСТИНА ЧЕРГ.** Він живить ТРИ речі, дві з яких до
+        черг стосунку не мають:
+          • 🧮 МММ-монітор (окрема секція, свій тумблер);
+          • колонку «🧮 Старий МММ» у таблицях ВІДКРИТИХ УГОД;
+          • **правило виходу `use_mm_flat_exit`** — тобто з вимкненими чергами
+            відкриті позиції МОВЧКИ втрачали цей вихід (`mm_snapshot_for` →
+            порожньо → «немає даних» → правило не спрацьовує НІКОЛИ).
+        Останнє — найгірше: тумблер ДВИГУНА ВІДКРИТТЯ тихо вимикав правило
+        ЗАКРИТТЯ вже відкритих угод.
+
+        ⚠️ **ЖОДНОЇ ТОРГОВОЇ РОБОТИ ТУТ НЕМАЄ:** ні ₿-сеансу, ні
+        `_enforce_btc_flip_close` (він ЗАКРИВАЄ угоди), ні TTL/виселень, ні
+        двигунів. Рівно набір монет → `_liq_state` → `_mm_capture`.
+        """
+        _mon = bool(settings.get('mm_monitor_enabled', True))
+        _open = self._mm_open_syms()
+        if not _mon and not _open:
+            # Нема ні таблиці, ні угод → рахувати нічого. `_mm_capture` із
+            # порожнім набором ЧЕСНО гасить знімок і банер (та сама гілка, що
+            # й при вимкненому моніторі) — застиглі числа гірші за порожні.
+            self._mm_capture({}, settings)
+            return
+        relevant = list(dict.fromkeys(
+            ['BTCUSDT'] + sorted(_open)
+            + [str(x).upper() for x in self._mm_watchlist_part(settings)]))
+        # Без реєстрації liq-map просто не СКАНУЄ ці монети → рівнів не буде.
+        self._register_with_liqmap(relevant)
+        _t0 = time.time()
+        fuels = {s: self._fuel_dir_smoothed(s, update=True) for s in relevant}
+        self._mm_capture(fuels, settings)
+        print(f"[FF] mm-only tick: {len(relevant)} coins in "
+              f"{(time.time() - _t0):.1f}s (❤️ Fuel Auto-Filter OFF — "
+              f"рахуємо ЛИШЕ знімок МММ)")
+
     def _tick(self):
         settings = self.get_settings()
         self._last_tick_ts = time.time()
         _t0 = self._last_tick_ts
         if not settings.get('enabled'):
-            # ⚠️ ТУТ ВМИРАВ 🧮 МММ-МОНІТОР МОВЧКИ. `_mm_capture` кличеться в
-            # КІНЦІ такту, тож вимкнений майстер-тумблер ❤️ Fuel Auto-Filter
-            # означав «знімка не буде НІКОЛИ» — а таблиця писала «ще немає
-            # знімка», тобто те саме, що й під час нормального прогріву.
-            # Причину називаємо вголос (урок «невидимий збій читається як
-            # „бот не працює“»).
-            self._mm_pending = {'reason': 'ff_off', 'at': _t0}
+            # ⚠️ ТУТ ВМИРАВ 🧮 МММ-МОНІТОР. Раніше тут стояв голий `return`, і
+            # знімка МММ не було НІКОЛИ — разом із ним мовчки зникали колонка
+            # «🧮 Старий МММ» в угодах і ПРАВИЛО ВИХОДУ `use_mm_flat_exit`.
+            # Тепер вимкнений майстер-тумблер зупиняє ЧЕРГИ І ВІДКРИТТЯ, а не
+            # показник, за яким ведуться вже відкриті угоди.
+            self._mm_only_tick(settings)
             return
         # BTC banner direction = main-window МММ indicator (compute_bias fuel).
         self._update_btc_verdict()
@@ -5026,18 +5093,7 @@ class FuelFilterDaemon:
         # додані ВРУЧНУ. У ПОВНОМУ режимі (mmm_limited_mode=False) додається ще й
         # ВЕСЬ WATCHLIST (у т.ч. bulk із Tickr-добірки). Обмежений режим (дефолт)
         # не ганяє важкий liqmap по всьому списку.
-        _limited = bool(settings.get('mmm_limited_mode', True))
-        _wl = []
-        try:
-            from detection.smc_scanner import get_smc_scanner
-            _sc = get_smc_scanner()
-            if _sc:
-                _wl = (_sc.symbols_by_source('manual') if _limited
-                       else _sc.get_watchlist())
-            elif self._get_watchlist:
-                _wl = self._get_watchlist()   # fallback: full list
-        except Exception as e:
-            print(f"[FuelFilter] МММ watchlist set error: {e}")
+        _wl = self._mm_watchlist_part(settings)
         relevant = list(dict.fromkeys(
             ['BTCUSDT'] + managed + pending_all + list(funding_syms)
             + [str(x).upper() for x in (_wl or [])]))
@@ -10400,14 +10456,26 @@ _instance: Optional[FuelFilterDaemon] = None
 
 
 def init_fuel_filter(db, get_trade_manager, get_watchlist) -> FuelFilterDaemon:
-    """Create the singleton and auto-start the loop if the persisted toggle
-    is ON (so it survives restarts)."""
+    """Create the singleton and START the loop — ЗАВЖДИ, а не лише при
+    увімкненому тумблері.
+
+    ⚠️ **ЧОМУ ЗАВЖДИ (скарга 18.09).** Раніше при `enabled=False` потік навіть
+    не створювався, тож `_tick` не виконувався ЖОДНОГО разу — і разом із
+    чергами мовчки вмирав знімок 🧮 МММ: порожній монітор, порожня колонка
+    «Старий МММ» в угодах і НЕПРАЦЮЮЧЕ правило виходу `use_mm_flat_exit`.
+    Тумблер має зупиняти ЧЕРГИ І ВІДКРИТТЯ, а не супровід уже відкритих угод.
+
+    ⚠️ **ТОРГІВЛЮ ЦЕ НЕ ВМИКАЄ.** При `enabled=False` `_tick` іде в
+    `_mm_only_tick` (лише знімок), а всі чотири двигуни (`_engine_tick`,
+    `_engine_tick_q2/_readiness/_queue4`) і цикл алертів ПЕРШИМ РЯДКОМ
+    перевіряють `s.get('enabled')` і виходять. Тест-замок на це стоїть.
+    """
     global _instance
     if _instance is None:
         _instance = FuelFilterDaemon(db, get_trade_manager, get_watchlist)
-        if _instance.is_enabled():
-            _instance.start()
-            print("[FuelFilter] restored ON state from DB — loop running")
+        _instance.start()
+        print("[FuelFilter] loop running · черги "
+              + ("ON" if _instance.is_enabled() else "OFF (лише знімок МММ)"))
     return _instance
 
 
