@@ -108,6 +108,12 @@ MM_PRICE_DEADZONE = 0.10
 # Те саме число, що всюди в проєкті відділяє ⚖ рівновагу від напрямку
 # (`|dir| ≤ 0.1`), тож банер і комірки МММ не можуть казати різне.
 MM_BIAS_FLAT = 0.10
+# 🐢 ГІСТЕРЕЗИС ВИХОДУ З НАПРЯМКУ (вимога 18.09: «перехід між статусами має
+# бути повільним, а НЕ різким і частим»). Зайти в напрямок можна лише за
+# `MM_BIAS_FLAT`, а ВИЙТИ — аж коли важіль просів нижче за цю, МЕНШУ межу.
+# Без різних порогів банер біля 0.10 перемикався б туди-сюди на шумі — той
+# самий прийом, що вже стоїть у `_fuel_hyst` для самого МММ.
+MM_BIAS_EXIT = 0.06
 
 LIQ_STATE_TTL = 20.0
 # ⏱ Скільки МАКСИМУМ тримати знімок, поки демон liq-map НЕ ТІКАВ. Демон —
@@ -227,6 +233,10 @@ DEFAULT_SETTINGS = {
     # ⚑ Поріг «Сила ≥» таблиці монітора. Живе в налаштуваннях бота, а не в
     # localStorage сторінки: інакше в кожному браузері був би свій список.
     'mm_str_min': 0,
+    # 🐢 ⏱ ПІДТВЕРДЖЕННЯ ЗМІНИ СТАТУСУ БАНЕРА, секунди (вимога 18.09).
+    # Новий стан (LONG / SHORT / ⚖) мусить протриматись стільки, перш ніж
+    # банер його ПОКАЖЕ. 0 = перемикати миттєво (стара поведінка).
+    'mm_bias_confirm_sec': 120,
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -864,6 +874,11 @@ class FuelFilterDaemon:
         self._mm_pending: Dict = {'reason': 'boot', 'at': time.time()}
         self._mm_bias: Dict = {}
         self._mm_bias_since: float = 0.0
+        # 🐢 КАНДИДАТ на зміну статусу банера: {'dir', 'since'}. Поки він не
+        # протримався `mm_bias_confirm_sec`, банер показує СТАРИЙ статус.
+        # СВІДОМО не персиститься: вікно підтвердження коротке, і після
+        # рестарту чесніше почати відлік заново, ніж «дорахувати» чужий.
+        self._mm_bias_cand: Dict = {}
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -1376,6 +1391,11 @@ class FuelFilterDaemon:
             s['mm_str_min'] = max(0, min(100, int(float(s.get('mm_str_min', 0)))))
         except (TypeError, ValueError):
             s['mm_str_min'] = 0
+        try:
+            s['mm_bias_confirm_sec'] = max(0, min(3600,
+                int(float(s.get('mm_bias_confirm_sec', 120)))))
+        except (TypeError, ValueError):
+            s['mm_bias_confirm_sec'] = 120
         s['enabled'] = bool(s.get('enabled', False))
         try:
             s['direction_smoothing_min'] = max(0, min(600,
@@ -3316,7 +3336,8 @@ class FuelFilterDaemon:
                     if now - float(r.get('seen') or 0) > MM_GROW_WINDOW_SEC]:
             hist.pop(sym, None)
 
-    def _mm_track_bias(self, snap: Dict, now: float):
+    def _mm_track_bias(self, snap: Dict, now: float,
+                       settings: Optional[Dict] = None):
         """⚖️ ВАЖІЛЬ НАПРЯМКУ ПО ВСІХ МОНЕТАХ МОНІТОРА → банер «🧮 МММ-МОНІТОР».
 
         **Вимога користувача (17.09), дослівно:** «За основу банера візьми
@@ -3346,6 +3367,30 @@ class FuelFilterDaemon:
         ⏱ Таймер: `_mm_bias_since` — момент, ВІДКОЛИ тримається поточний
         напрямок. Зміна напрямку (зокрема в рівновагу і назад) перезапускає
         його; решту часу він просто біжить.
+
+        🐢 **ПЕРЕХІД МІЖ СТАТУСАМИ — ПОВІЛЬНИЙ (вимога 18.09, дослівно:
+        «Перехід в банері МММ-монітор між статусами має бути повільним, а НЕ
+        різким і частим, має бути антиспам»).** Захисти ДВА, і вони різні:
+
+          1. **ГІСТЕРЕЗИС** (`MM_BIAS_EXIT` < `MM_BIAS_FLAT`): зайти в напрямок
+             можна лише за 0.10, а вийти — аж нижче 0.06. Один поріг на обидві
+             події означав би перемикання на кожному дрібному коливанні рівно
+             там, де важіль і зависає найчастіше.
+          2. **ПІДТВЕРДЖЕННЯ ЧАСОМ** (`mm_bias_confirm_sec`, деф. 120с): новий
+             стан спершу стає КАНДИДАТОМ і показується лише коли протримався
+             задане вікно. Це і є «повільно»: одна-дві хвилини шуму банер не
+             зрушать.
+
+        ⚠️ Гаситься САМЕ СТАТУС, а не числа: `pct`/розклад лишаються ЖИВИМИ
+        (смуга рухається щотакту). Заморозити ще й їх означало б показувати
+        застарілий ринок, а просили прибрати миготіння ПІДПИСУ.
+        ⚠️ Кандидат ВИДИМИЙ (`cand_dir`/`cand_since`/`confirm_sec` у відповіді
+        → ⏳ у банері): мовчазне «чомусь не перемикається» читалось би як збій.
+        ⚠️ Сам перехід рахується від ПІДТВЕРДЖЕНОГО стану, тож і таймер
+        `since`, і «зміна напрямку» для 💧 сканера (перескан на фліпі)
+        спрацьовують РАЗ на реальний розворот, а не на кожен сплеск.
+        ⚠️ ПЕРШИЙ стан після чистого старту беремо ОДРАЗУ (підтверджувати
+        нічого — попереднього статусу ще не існувало).
         """
         wl = ws = wf = 0.0
         n_long = n_short = n_flat = 0
@@ -3369,16 +3414,51 @@ class FuelFilterDaemon:
                 n_flat += 1
         total = wl + ws + wf
         net = ((wl - ws) / total) if total > 0 else 0.0
-        side = None
-        if net > MM_BIAS_FLAT:
-            side = 'LONG'
-        elif net < -MM_BIAS_FLAT:
-            side = 'SHORT'
         prev = (self._mm_bias or {}).get('dir')
+        # 1️⃣ СИРИЙ стан із ГІСТЕРЕЗИСОМ: у напрямок заходимо за MM_BIAS_FLAT,
+        #    а виходимо з нього лише нижче за MM_BIAS_EXIT.
+        raw = None
+        if net > MM_BIAS_FLAT:
+            raw = 'LONG'
+        elif net < -MM_BIAS_FLAT:
+            raw = 'SHORT'
+        elif prev == 'LONG' and net > MM_BIAS_EXIT:
+            raw = 'LONG'
+        elif prev == 'SHORT' and net < -MM_BIAS_EXIT:
+            raw = 'SHORT'
+        # 2️⃣ ПІДТВЕРДЖЕННЯ ЧАСОМ.
+        _s = settings if isinstance(settings, dict) else self.get_settings()
+        try:
+            need = max(0, int(float(_s.get('mm_bias_confirm_sec', 120))))
+        except (TypeError, ValueError):
+            need = 120
+        # Чистий старт (статусу ще не було ЖОДНОГО) — підтверджувати нічого.
+        _fresh = not (self._mm_bias or self._mm_bias_since)
+        side, cand_dir, cand_since = prev, None, 0.0
+        if raw == prev or _fresh or need <= 0:
+            side = raw
+            self._mm_bias_cand = {}
+        else:
+            c = dict(self._mm_bias_cand or {})
+            if c.get('dir') != raw or not c.get('since'):
+                c = {'dir': raw, 'since': now}
+            held = max(0.0, now - float(c.get('since') or now))
+            if held >= need:
+                side = raw
+                self._mm_bias_cand = {}
+            else:
+                self._mm_bias_cand = c
+                cand_dir, cand_since = raw, float(c['since'])
         if side != prev or not self._mm_bias_since:
             self._mm_bias_since = now
         self._mm_bias = {
             'dir': side,
+            # 🐢 Що показує РИНОК просто зараз і скільки цьому кандидату ще
+            # чекати. Без цих полів банер «завис» би без пояснення.
+            'raw_dir': raw,
+            'cand_dir': cand_dir,
+            'cand_since': int(cand_since) if cand_since else 0,
+            'confirm_sec': int(need),
             # 0..100 — так само, як сила МММ у комірках і на банері ₿.
             'pct': round(abs(net) * 100.0, 1),
             'net': round(net, 4),
@@ -3436,6 +3516,7 @@ class FuelFilterDaemon:
                 # перераховує, виглядає як живий — гірше за порожній банер.
                 self._mm_bias = {}
                 self._mm_bias_since = 0.0
+                self._mm_bias_cand = {}
             return
         snap = {}
         # 🔮 Прогноз 1H/4H — ЧИСТЕ ЧИТАННЯ кешу `forecast_engine` (той самий
@@ -3500,7 +3581,7 @@ class FuelFilterDaemon:
             self._mm_pending = {}
         # ⚖️ ВАЖІЛЬ НАПРЯМКУ для банера — рахуємо ТУТ, у двигуні, і кладемо
         # готовим; `mm_monitor_state` лишається читачем (урок B2 з шарами Q4).
-        self._mm_track_bias(snap, _now)
+        self._mm_track_bias(snap, _now, s)
 
     def mm_monitor_state(self, settings: Optional[Dict] = None) -> Dict:
         """🧮 Рядки МММ-монітора — ЧИТАННЯ готового знімка, без розрахунків.
@@ -3674,6 +3755,37 @@ class FuelFilterDaemon:
                 'delta': v.get('delta'),
                 'grow_since': (float(grow[sym]) if sym in grow else None),
             }
+        return out
+
+    def mm_bias(self) -> Dict:
+        """⚖️ ВАЖІЛЬ БАНЕРА «🧮 МММ-монітор» — ПУБЛІЧНЕ читання готового знімка.
+
+        Потрібен 💧 Сканеру ліквідності: він відбирає монети САМЕ в той бік,
+        який банер показує ЗАРАЗ, і пересканує на його фліпі.
+
+        ⚠️ Метод публічний НАВМИСНО: читати чужий `_mm_bias` напряму не можна
+        (той самий принцип, через який зʼявились `volumized_on()` у сканері й
+        `last_tick_at()` у liq-map). Тут ЛИШЕ читання — жодних розрахунків:
+        важіль рахує двигун у `_mm_track_bias` (урок B2).
+        ⚠️ `dir` — це вже ПІДТВЕРДЖЕНИЙ статус (гістерезис + вікно
+        `mm_bias_confirm_sec`), тож споживач не побачить миготіння.
+        """
+        with self._lock:
+            return dict(getattr(self, '_mm_bias', {}) or {})
+
+    def symbols_in_work(self) -> set:
+        """Монети «В РОБОТІ» — ВІДКРИТА УГОДА **або** запис у будь-якій черзі.
+
+        ЄДИНЕ джерело цього набору для зовнішніх споживачів (💧 Сканер
+        ліквідності: «якщо монета вже в роботі — повторно не додавати»).
+        Збирати його самотужки по приватних `_pending*` означало б завести
+        другий «однаковий» список, який із часом розійдеться з першим.
+        """
+        out = self._mm_open_syms()          # бере свій лок сам — не вкладаємо
+        with self._lock:
+            for d in (self._pending, self._pending2,
+                      self._pending3, self._pending4):
+                out |= {str(k).upper() for k in (d or {})}
         return out
 
     def group_open(self, symbols: List[str]) -> Dict:

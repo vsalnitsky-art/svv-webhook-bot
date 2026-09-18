@@ -84,6 +84,10 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._mm_str_hist = {}
     ff._mm_bias = {}
     ff._mm_bias_since = 0.0
+    # ⚠️ Нове поле стану ЗАВЖДИ додавати сюди (на цю пастку вже наступали):
+    # без нього справжній метод падає з AttributeError на першій же монеті, і
+    # тести «нічого не роблять».
+    ff._mm_bias_cand = {}
     ff._mm_state_since = {}
     ff._mm_price_hist = {}
     ff._mm_decision = {}
@@ -464,8 +468,11 @@ def _run_js(body):
     # Банер монітора свідомо малюється СПІЛЬНИМИ з ₿ хелперами, а вони лежать
     # ПОЗА цим зрізом. Підкладаємо саме їх (вирізані з того ж файлу), а не свої
     # копії: інакше тест перевіряв би вигляд, якого на сторінці немає.
+    # `_qCollapsed` теж спільний (гармошки) — 📋 список монет монітора
+    # перевіряє ним, чи його гармошка згорнута.
     for _fn in ('function dirGrad(', 'function dirTint(', 'function fuelBand(',
-                'function flipTimerHTML(', 'function fmtTimer('):
+                'function flipTimerHTML(', 'function fmtTimer(',
+                'function _qCollapsed('):
         if _fn in src:
             continue
         _a = _HTML.index(_fn)
@@ -1742,6 +1749,11 @@ def test_the_timer_runs_while_the_side_holds_and_resets_on_a_flip():
     _caps(ff, 3, AAAUSDT=0.80)
     _check(ff.mm_monitor_state()['bias']['since'] == t0,
            'таймер перезапустився, хоча напрямок не мінявся')
+    # ⚠️ ВИМОГА ЗМІНИЛАСЬ (18.09): статус перемикається ПОВІЛЬНО, тож фліп
+    # спершу стає КАНДИДАТОМ і лише після `mm_bias_confirm_sec` міняє банер.
+    # Тут вікно вимкнено (0), щоб перевіряти САМЕ таймер, а не підтвердження —
+    # для нього є окремі тести в розділі «🐢 ПОВІЛЬНИЙ ПЕРЕХІД».
+    ff._settings['mm_bias_confirm_sec'] = 0
     _cap(ff, AAAUSDT=-0.80)                     # фліп
     b = ff.mm_monitor_state()['bias']
     _check(b['dir'] == 'SHORT' and b['since'] > t0, f'фліп не перезапустив таймер: {b}')
@@ -2076,9 +2088,19 @@ def test_a_flip_after_restart_still_restarts_the_timer():
     ff._mm_bias = {'dir': 'LONG', 'since': int(t0), 'restored': True}
     ff._mm_bias_since = t0
     ff._mm_open_syms = lambda: set()
+    # ⚠️ ВИМОГА ЗМІНИЛАСЬ (18.09): між станами банер переходить ПОВІЛЬНО. Тому
+    # тут ДВА такти: перший робить SHORT лише кандидатом, другий (уже поза
+    # вікном підтвердження) його застосовує. Замок лишається про те саме —
+    # відновлений стан НЕ «приморожує» банер назавжди.
+    ff._settings['mm_bias_confirm_sec'] = 120
     ff._mm_track_bias({'AAA': {'status': 'SHORT', 'strength': 70}}, t0 + 100)
+    _check(ff._mm_bias['dir'] == 'LONG',
+           'миттєвий фліп — антиспам не спрацював')
+    _check(ff._mm_bias['cand_dir'] == 'SHORT', 'кандидат мусить бути видимим')
+    t0 = t0 + 100 + 120
+    ff._mm_track_bias({'AAA': {'status': 'SHORT', 'strength': 70}}, t0)
     _check(ff._mm_bias['dir'] == 'SHORT', 'напрямок перевернувся')
-    _check(ff._mm_bias_since == t0 + 100, 'на фліпі таймер стартує заново')
+    _check(ff._mm_bias_since == t0, 'на фліпі таймер стартує заново')
     print('✓ фліп після рестарту таймер перезапускає, як і має бути')
 
 
@@ -2629,6 +2651,169 @@ def test_the_banner_and_the_decision_line_share_the_same_formula():
            f'FUEL_LONG_THR більше не 0.1 ({_m.FUEL_LONG_THR}) — банер розійдеться')
     print('✓ банер і рядок «МММ-бабло» рахуються однією формулою')
 
+
+
+# ═══════════ 28. 🐢 ПОВІЛЬНИЙ ПЕРЕХІД СТАТУСУ БАНЕРА (антиспам, 18.09) ═════
+# Вимога дослівно: «Перехід в банері МММ-монітор між статусами має бути
+# повільним, а НЕ різким і частим, має бути антиспам.»
+def test_the_banner_waits_for_the_new_state_to_hold():
+    """Фліп СПЕРШУ стає кандидатом і лише потім міняє статус."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_bias_confirm_sec': 120})
+    _cap(ff, AAAUSDT=0.80)                       # перший стан — одразу LONG
+    _check(ff.mm_monitor_state()['bias']['dir'] == 'LONG', 'перший стан беремо одразу')
+    _cap(ff, AAAUSDT=-0.80)                      # ринок перевернувся
+    b = ff.mm_monitor_state()['bias']
+    _check(b['dir'] == 'LONG', f'статус смикнувся одразу: {b["dir"]}')
+    _check(b['cand_dir'] == 'SHORT' and b['raw_dir'] == 'SHORT',
+           f'кандидат мусить бути видимим: {b}')
+    _caps(ff, 4, AAAUSDT=-0.80)                  # 4 × 30с = 120с витримки
+    _check(ff.mm_monitor_state()['bias']['dir'] == 'SHORT',
+           'після витримки статус мусить перемкнутись')
+    print('✓ 🐢 статус банера міняється лише після витримки')
+
+
+def test_a_short_spike_never_reaches_the_banner():
+    """ГОЛОВНЕ ПРО АНТИСПАМ: сплеск на один-два такти статус НЕ чіпає."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_bias_confirm_sec': 120})
+    _cap(ff, AAAUSDT=0.80)
+    _cap(ff, AAAUSDT=-0.80)                      # сплеск
+    _cap(ff, AAAUSDT=0.80)                       # і назад
+    b = ff.mm_monitor_state()['bias']
+    _check(b['dir'] == 'LONG', f'сплеск перемкнув банер: {b["dir"]}')
+    _check(not b['cand_dir'], f'кандидат мусить зникнути: {b}')
+    print('✓ 🐢 короткий сплеск банер не перемикає')
+
+
+def test_hysteresis_holds_the_side_near_the_threshold():
+    """Другий захист: вийти з напрямку можна лише НИЖЧЕ за меншу межу.
+
+    Один поріг на вхід і вихід означав би перемикання рівно там, де важіль і
+    зависає найчастіше (0.10)."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_bias_confirm_sec': 0})
+    _cap(ff, AAAUSDT=0.80)
+    # ⚠️ Важіль рахується по СИЛАХ монет, тож «0.08» треба зібрати з боків:
+    # 60 проти 50 → (60−50)/110 = 0.09 — нижче входу, але вище виходу.
+    _cap(ff, AAAUSDT=0.60, BBBUSDT=-0.50)
+    b = ff.mm_monitor_state()['bias']
+    _check(b['dir'] == 'LONG' and b['raw_dir'] == 'LONG',
+           f'гістерезис не втримав напрямок: {b}')
+    _cap(ff, AAAUSDT=0.52, BBBUSDT=-0.50)   # (52−50)/102 = 0.02 — вийшли
+    _check(ff.mm_monitor_state()['bias']['dir'] is None,
+           'нижче межі виходу статус мусить стати ⚖')
+    _check(_m.MM_BIAS_EXIT < _m.MM_BIAS_FLAT,
+           'межа виходу мусить бути МЕНШОЮ за межу входу')
+    print('✓ 🐢 гістерезис: вхід 10%, вихід 6%')
+
+
+def test_zero_confirm_keeps_the_old_instant_behaviour():
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_bias_confirm_sec': 0})
+    _cap(ff, AAAUSDT=0.80)
+    _cap(ff, AAAUSDT=-0.80)
+    _check(ff.mm_monitor_state()['bias']['dir'] == 'SHORT',
+           '0 = перемикати миттєво (стара поведінка)')
+    print('✓ 🐢 «0 с» повертає миттєве перемикання')
+
+
+def test_the_confirm_window_is_a_setting_with_a_default():
+    """Ключ мусить бути в дефолтах і санітизуватись у `get_settings`."""
+    _check(_m.DEFAULT_SETTINGS.get('mm_bias_confirm_sec') == 120,
+           'дефолт вікна підтвердження мусить бути 120с')
+    ff = FF.__new__(FF)
+    ff._db = type('D', (), {'get_setting': lambda *a, **k: {
+        'mm_bias_confirm_sec': 'ой'}})()
+    _check(FF.get_settings(ff)['mm_bias_confirm_sec'] == 120,
+           'сміття в налаштуванні мусить давати дефолт, а не збій')
+    ff._db = type('D', (), {'get_setting': lambda *a, **k: {
+        'mm_bias_confirm_sec': 99999}})()
+    _check(FF.get_settings(ff)['mm_bias_confirm_sec'] == 3600, 'стеля 3600с')
+    print('✓ 🐢 вікно підтвердження — окреме налаштування (деф. 120с)')
+
+
+def test_ui_shows_the_candidate_and_the_control():
+    _check('id="mm-bias-cand"' in _HTML, 'потрібна позначка кандидата в банері')
+    _check('id="ff-mm-bias-confirm"' in _HTML, 'потрібне поле «⏱ Перехід ≥»')
+    i = _HTML.index('function mmRenderBias')
+    body = _HTML[i:_HTML.index('function mmApplyState', i)]
+    for _k in ('cand_since', 'confirm_sec', 'cand_dir'):
+        _check(_k in body, f'рендер мусить читати {_k}')
+    _check('mm_bias_confirm_sec' in _HTML,
+           'ключ мусить і зберігатись, і підставлятись у поле')
+    print('✓ 🐢 UI: кандидат видимий, вікно налаштовується')
+
+
+def test_the_scanner_reads_the_confirmed_direction_only():
+    """💧 Сканер бере `mm_bias()`, тобто ПІДТВЕРДЖЕНИЙ статус — інакше перескан
+    ішов би на кожен сплеск важеля."""
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_bias_confirm_sec': 120})
+    _cap(ff, AAAUSDT=0.80)
+    _cap(ff, AAAUSDT=-0.80)
+    _check(_m.FuelFilterDaemon.mm_bias(ff).get('dir') == 'LONG',
+           'публічний читач мусить віддавати ПІДТВЕРДЖЕНИЙ напрямок')
+    print('✓ 🐢 mm_bias() віддає підтверджений напрямок')
+
+
+def test_symbols_in_work_covers_trades_and_every_queue():
+    """Єдине джерело «монета вже в роботі» для 💧 Сканера."""
+    ff = _mk()
+    ff._fuel_managed = {'AAAUSDT': {}}
+    ff._pending = {'BBBUSDT': {}}
+    ff._pending4 = {'CCCUSDT': {}}
+    got = _m.FuelFilterDaemon.symbols_in_work(ff)
+    for _s in ('AAAUSDT', 'BBBUSDT', 'CCCUSDT'):
+        _check(_s in got, f'{_s} мусить вважатись «в роботі»: {got}')
+    print('✓ symbols_in_work: угоди + усі черги')
+
+
+# ═══════════ 29. 🪗 СПИСОК МОНЕТ МОНІТОРА — ОКРЕМА ГАРМОШКА (18.09) ═══════
+def test_the_coin_list_is_its_own_accordion_starting_at_selection():
+    """Вимога: «зроби вікно таблиці меншим по висоті десь в двічі і заверни у
+    гармошку; гармошку починай із "Обрано"»."""
+    i = _HTML.index('id="mm-monitor-panel"')
+    j = _HTML.index('id="liq-hunter-panel"')
+    sec = _HTML[i:j]
+    _check('id="mmlist-body"' in sec and 'id="mmlist-caret"' in sec,
+           'потрібна пара body+caret гармошки списку')
+    _check("togglePanel('mmlist')" in sec, 'заголовок мусить перемикати гармошку')
+    # Саме «Обрано» — ПЕРШЕ, що ховається: гармошка починається з нього.
+    _check(sec.index('id="mmlist-body"') < sec.index('id="mm-sel-count"')
+           < sec.index('id="mm-table"'),
+           'усередині гармошки спершу «Обрано», потім таблиця')
+    # Банер і фільтри лишаються ЗОВНІ — це «монітор одним поглядом».
+    _check(sec.index('id="mm-bias-banner"') < sec.index('id="mmlist-body"'),
+           'банер не має ховатись разом зі списком')
+    print('✓ 🪗 список монет — власна гармошка, починається з «Обрано»')
+
+
+def test_the_coin_list_is_half_as_tall_and_collapsed_by_default():
+    i = _HTML.index('id="mm-table"')
+    head = _HTML[max(0, i - 400):i]
+    _check('max-height:340px' in head,
+           'висота вікна таблиці мусить бути вдвічі меншою за типові 680px')
+    _check('_PANEL_CLOSED_BY_DEFAULT' in _HTML, 'потрібен список дефолтно згорнутих')
+    k = _HTML.index('_PANEL_CLOSED_BY_DEFAULT = new Set(')
+    _check("'mmlist'" in _HTML[k:k + 120], 'список монет — згорнутий за замовчуванням')
+    _check("'mmlist'" in _HTML[_HTML.index('const _PANEL_IDS ='):
+                               _HTML.index('const _PANEL_IDS =') + 300],
+           'гармошка мусить памʼятати свій стан (бути в _PANEL_IDS)')
+    print('✓ 🪗 вдвічі нижче + згорнуто за замовчуванням, стан памʼятається')
+
+
+def test_the_collapsed_list_is_not_rendered_but_still_counted():
+    i = _HTML.index('function mmRender()')
+    body = _HTML[i:_HTML.index('\nfunction ', i + 10)]
+    _check("_qCollapsed('mmlist')" in body, 'згорнутий список не малюємо')
+    _check(body.index('mmlist-n') < body.index("_qCollapsed('mmlist')"),
+           'лічильник у заголовку мусить оновлюватись ДО виходу')
+    t = _HTML[_HTML.index('function togglePanel('):]
+    t = t[:t.index('\nconst toggleQueuePanel')]
+    _check("pid === 'mmlist'" in t and 'mmRender()' in t,
+           'на розгортанні таблицю треба намалювати одразу')
+    print('✓ 🪗 згорнутий список не малюється, але лічильник чесний')
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]

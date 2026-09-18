@@ -522,6 +522,21 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start POC-setup: {e}")
 
+        if not _auto_started.get('liq_hunter'):
+            _auto_started['liq_hunter'] = True
+            try:
+                # 💧 Сканер ліквідності — власний рушій під банером
+                # 🧮 МММ-монітора. Дефолт OFF, тож піднімається лише коли
+                # користувач сам його увімкнув (стан читається з БД).
+                from detection.liq_hunter import init_liq_hunter
+                def _lh_watchlist():
+                    from detection.smc_scanner import get_smc_scanner
+                    smc = get_smc_scanner()
+                    return [s.upper() for s in smc.get_watchlist()] if smc else []
+                init_liq_hunter(db=get_db(), get_watchlist=_lh_watchlist)
+            except Exception as e:
+                print(f"[APP] Failed to start Liquidity hunter: {e}")
+
         if not _auto_started.get('tickr_opp'):
             _auto_started['tickr_opp'] = True
             try:
@@ -3675,6 +3690,51 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    # ═══════ 💧 СКАНЕР ЛІКВІДНОСТІ (власний рушій під 🧮 МММ-монітором) ═══
+    @app.route('/api/liq-hunter/state')
+    def api_liq_hunter_state():
+        """Стан 💧 Сканера: таблиця відібраних монет + розклад останнього скану.
+        Лише ЧИТАННЯ готового стану — жодних запитів до біржі тут немає."""
+        try:
+            from detection.liq_hunter import get_liq_hunter
+            lh = get_liq_hunter()
+            if not lh:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            return jsonify(lh.get_state())
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/liq-hunter/settings', methods=['POST'])
+    def api_liq_hunter_settings():
+        """Налаштування сканера (той самий блоб, що й читає рушій)."""
+        try:
+            from detection.liq_hunter import get_liq_hunter
+            lh = get_liq_hunter()
+            if not lh:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            s = lh.update_settings(request.get_json(silent=True) or {})
+            return jsonify({'ok': True, 'settings': s})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/liq-hunter/scan', methods=['POST'])
+    def api_liq_hunter_scan():
+        """💧 Сканувати ЗАРАЗ (ручний запуск і оновлення даних).
+
+        Іде тією самою спільною чергою сканів, що й періодичний скан, тож
+        подвійне натискання не б'є по біржі двічі."""
+        try:
+            from detection.liq_hunter import get_liq_hunter
+            lh = get_liq_hunter()
+            if not lh:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            res = lh.scan('manual')
+            st = lh.get_state()
+            st['scan'] = res
+            return jsonify(st)
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/queue4/clear', methods=['POST'])
     def api_fuel_filter_queue4_clear():
         """Clear Queue 4 «🎯 Усі шари» entirely."""
@@ -4377,14 +4437,22 @@ def register_api_routes(app):
                                 'reason': 'watchlist порожній (сканер ще не '
                                           'піднявся або список не заданий)'})
         try:
-            return jsonify(liq_scan.scan_liquidity(
-                exchange=(d.get('exchange') or 'binance'),
-                top_n=int(_num('top_n', 40)),
-                min_vol_usd=_num('min_vol_usd', 20_000_000),
-                min_oi_usd=_num('min_oi_usd', 5_000_000),
-                bars=int(_num('bars', liq_scan.DEFAULT_BARS)),
-                sort_by=(d.get('sort_by') or 'pull'),
-                universe=_uni, symbols=_syms))
+            # ⏳ ЧЕРЕЗ СПІЛЬНУ ЧЕРГУ СКАНІВ (вимога 18.09): за раз біржу
+            # сканує РІВНО один процес на весь бот. Подвійний клік по
+            # «Сканувати» не дає подвійного залпу — другий запит чекає на той
+            # самий результат (дедуп за іменем завдання).
+            from detection import scan_queue
+            return jsonify(scan_queue.run(
+                'tickr:liq-list',
+                lambda: liq_scan.scan_liquidity(
+                    exchange=(d.get('exchange') or 'binance'),
+                    top_n=int(_num('top_n', 40)),
+                    min_vol_usd=_num('min_vol_usd', 20_000_000),
+                    min_oi_usd=_num('min_oi_usd', 5_000_000),
+                    bars=int(_num('bars', liq_scan.DEFAULT_BARS)),
+                    sort_by=(d.get('sort_by') or 'pull'),
+                    universe=_uni, symbols=_syms),
+                source='tickr', timeout=600.0))
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
@@ -4400,12 +4468,19 @@ def register_api_routes(app):
         """
         from detection import liq_scan
         d = request.get_json() or {}
+        _sym = liq_scan.norm_symbol(d.get('symbol') or 'BTCUSDT')
         try:
-            return jsonify(liq_scan.scan_one(
-                exchange=(d.get('exchange') or 'binance'),
-                symbol=(d.get('symbol') or 'BTCUSDT'),
-                bars=int(d.get('bars') or liq_scan.DEFAULT_BARS),
-                rows=int(d.get('rows') or 12)))
+            # Теж через спільну чергу — 2-3 запити дрібні, але саме вони
+            # найчастіше летять ПОРУЧ із великим сканом списку.
+            from detection import scan_queue
+            return jsonify(scan_queue.run(
+                f'tickr:liq-one:{_sym}',
+                lambda: liq_scan.scan_one(
+                    exchange=(d.get('exchange') or 'binance'),
+                    symbol=_sym,
+                    bars=int(d.get('bars') or liq_scan.DEFAULT_BARS),
+                    rows=int(d.get('rows') or 12)),
+                source='tickr', timeout=180.0))
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 

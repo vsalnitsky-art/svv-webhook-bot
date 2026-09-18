@@ -132,7 +132,18 @@ class OpportunityDaemon:
         oi_baseline = self._read_oi_baseline()
         # Scan a generous top slice; the threshold (not top_n) decides who
         # actually fires, so ask for enough headroom.
-        res = self._scan({'top_n': 100}, oi_baseline)
+        # ⏳ ЧЕРЕЗ СПІЛЬНУ ЧЕРГУ СКАНІВ БІРЖІ (вимога 18.09: «кожен скан у свою
+        # чергу»): цей скан періодичний і легко збігався з ручним сканом
+        # ліквідності зі сторінки 📡 Tickr. Тепер вони стоять один за одним.
+        # ⚠️ Черга недоступна (старіший файл/збій імпорту) → сканеруємо як
+        # раніше: тихо ЗУПИНИТИ демон через службовий модуль не можна.
+        try:
+            from detection import scan_queue
+            res = scan_queue.run('tickr:opportunity',
+                                 lambda: self._scan({'top_n': 100}, oi_baseline),
+                                 source='opp-daemon', timeout=600.0)
+        except Exception:
+            res = self._scan({'top_n': 100}, oi_baseline)
         if not res.get('ok'):
             print(f"[OppDaemon] scan failed: {res.get('reason')}")
             self._refresh_oi_baseline()
