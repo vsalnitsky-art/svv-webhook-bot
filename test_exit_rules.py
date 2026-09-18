@@ -570,6 +570,59 @@ def test_confirm_timer_resets_when_direction_returns():
     print('✓ 🧮 таймер підтвердження обнуляється на поверненні напрямку')
 
 
+# ─── ⏱ ВИТРИМКА НАЛЕЖИТЬ ⚖ РІВНОВАЗІ, А НЕ РОЗВОРОТУ (вимога 18.09) ───────
+# Дослівно: «⏱ Тримається ≥ — має відноситись до "Рівновага", а коли "проти"
+# то закривати відразу». Сенс поля — межа напрямку |dir| ≤ 0.1, біля якої
+# показник МИГОТИТЬ; зустрічний тиск миготінням не є.
+
+def test_against_closes_immediately_despite_the_confirm_window():
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)},
+            mm_flat_exit_mode='flat_or_against', mm_flat_exit_confirm_sec=900)
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [('real', 'mm_flat_exit')],
+           f'розворот МММ мусить закривати ОДРАЗУ, без витримки: {t.closed}')
+    _check(any('ОДРАЗУ' in x for x in _LOG),
+           f'у причині не сказано, що витримка тут не діє: {_LOG}')
+    print('✓ 🧮 «проти» закривається одразу, витримку не чекає')
+
+
+def test_against_does_not_start_or_keep_the_flat_timer():
+    """Таймер міряє САМЕ рівновагу. Лишити його після розвороту означало б
+    віддати наступному епізоду ⚖ чужу «відпрацьовану» витримку."""
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)},
+            mm_flat_exit_mode='flat_or_against', mm_flat_exit_confirm_sec=900)
+    t._mm_flat_since['MNTUSDT'] = time.time() - 10   # ⚖ уже лічився
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check('MNTUSDT' not in t._mm_flat_since,
+           'таймер рівноваги лишився після розвороту')
+    print('✓ 🧮 розворот не успадковує і не лишає таймер рівноваги')
+
+
+def test_the_window_still_guards_the_flat_state_in_the_same_mode():
+    """⚠️ Половина вимоги, яку легко загубити: витримка мусить ПРАЦЮВАТИ для
+    ⚖ рівноваги і в режимі «рівновага АБО проти» теж."""
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row(None, 6)},
+            mm_flat_exit_mode='flat_or_against', mm_flat_exit_confirm_sec=900)
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [], f'⚖ рівновага мусить чекати витримку: {t.closed}')
+    t._mm_flat_since['MNTUSDT'] -= 901
+    t._signal_exit_at.clear()
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [('real', 'mm_flat_exit')],
+           f'після витримки ⚖ мусить закрити: {t.closed}')
+    print('✓ 🧮 витримка і далі стереже саме ⚖ рівновагу')
+
+
+def test_ui_says_the_window_is_about_the_flat_state():
+    i = _HTML_SM.index('id="tm-mm-flat-exit-confirm"')
+    block = _HTML_SM[max(0, i - 900):i]
+    _check('Рівновага тримається' in block,
+           'підпис поля не каже, що витримка — саме про ⚖ рівновагу')
+    _check('ОДРАЗУ' in block,
+           'у підказці не сказано, що розворот закривається без витримки')
+    print('✓ UI: поле підписане як витримка ⚖ рівноваги')
+
+
 def test_rule_is_off_by_default():
     _check(tmmod.DEFAULT_SETTINGS['use_mm_flat_exit'] is False,
            'нове правило виходу не має вмикатись саме')
@@ -720,6 +773,10 @@ if __name__ == '__main__':
     test_bad_mode_value_falls_back_to_flat()
     test_confirm_window_requires_the_state_to_hold()
     test_confirm_timer_resets_when_direction_returns()
+    test_against_closes_immediately_despite_the_confirm_window()
+    test_against_does_not_start_or_keep_the_flat_timer()
+    test_the_window_still_guards_the_flat_state_in_the_same_mode()
+    test_ui_says_the_window_is_about_the_flat_state()
     test_rule_is_off_by_default()
     test_rule_stays_out_of_the_and_or_combination()
     test_source_is_the_shared_snapshot_and_nothing_is_recomputed()

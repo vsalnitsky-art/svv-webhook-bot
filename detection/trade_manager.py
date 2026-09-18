@@ -3057,6 +3057,9 @@ class TradeManager:
 
         ⚠️ Знімок будується для монет У ВІДКРИТІЙ УГОДІ навіть при вимкненому
         🧮 МММ-моніторі, тож правило НЕ залежить від того тумблера.
+
+        ⚠️ **«⏱ Тримається ≥» — ЛИШЕ ПРО ⚖ РІВНОВАГУ** (вимога 18.09): розворот
+        МММ ПРОТИ угоди закривається ОДРАЗУ, без витримки. Див. нижче.
         """
         s = self._settings
         if not s.get('use_mm_flat_exit'):
@@ -3088,18 +3091,29 @@ class TradeManager:
             self._mm_flat_since.pop(sym, None)
             return None
         now = time.time()
+        _st = f' (сила {int(strength)}%)' if strength is not None else ''
+        # ⏱ «Тримається ≥» НАЛЕЖИТЬ ⚖ РІВНОВАЗІ, А НЕ РОЗВОРОТУ (вимога 18.09,
+        # дослівно: «має відноситись до "Рівновага", а коли "проти" то
+        # закривати відразу»). Причина витримки — межа напрямку |dir| ≤ 0.1:
+        # біля неї показник МИГОТИТЬ між «рівновага» і «слабкий напрямок», і
+        # кожне миготіння вибивало б з ринку. Розворот МММ у ПРОТИЛЕЖНИЙ бік —
+        # це не миготіння біля нуля, а зустрічний тиск: чекати там задані N
+        # секунд означало б свідомо сидіти проти ринку.
+        if against:
+            # Таймер знімаємо: він міряє САМЕ рівновагу, і лишати його «в
+            # спадок» наступному епізоду не можна.
+            self._mm_flat_since.pop(sym, None)
+            return ('mm_flat_exit',
+                    f'🧮 Старий МММ розвернувся у {mm}{_st} — проти {side} '
+                    f'· закриваємо ОДРАЗУ (витримка стосується лише ⚖ рівноваги)')
         since = self._mm_flat_since.setdefault(sym, now)
         need = float(s.get('mm_flat_exit_confirm_sec') or 0)
         held = now - float(since)
         if need > 0 and held < need:
             return None
-        _st = f' (сила {int(strength)}%)' if strength is not None else ''
         _held = f' · тримається {int(held)}с' if need > 0 else ''
-        if flat:
-            why = (f'🧮 Старий МММ втратив напрямок — ⚖ рівновага{_st}{_held}')
-        else:
-            why = (f'🧮 Старий МММ розвернувся у {mm}{_st} — проти {side}{_held}')
-        return ('mm_flat_exit', why)
+        return ('mm_flat_exit',
+                f'🧮 Старий МММ втратив напрямок — ⚖ рівновага{_st}{_held}')
 
     def _check_signal_exits(self, symbol: str, pos: Dict,
                             current_price: float, is_shadow: bool) -> bool:
