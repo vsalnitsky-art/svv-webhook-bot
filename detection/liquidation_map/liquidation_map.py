@@ -143,6 +143,19 @@ class LiquidationMapDaemon:
             'history_hours': (time.time() - first_seen) / 3600 if first_seen else 0,
         }
     
+    def last_tick_at(self) -> Optional[float]:
+        """Коли демон ОСТАННІЙ РАЗ дописав дані (epoch) або None до першого тіку.
+
+        ⚠️ ПУБЛІЧНИЙ читач `_last_tick_at` — щоб споживачам не доводилось
+        лізти в приватне поле. Потрібен `fuel_filter._liq_state`: рівні й
+        мітигацію в БД пише ВИКЛЮЧНО цей демон, тож поки позначка не зрушила,
+        `get_state()` для будь-якої монети поверне ТЕ САМЕ — і повторна збірка
+        (до 3000 ORM-рядків на монету) є чистою втратою. Демон тікає раз на
+        `SCAN_INTERVAL_SEC` (60с), а FF — раз на 30с, тобто рівно половина
+        збірок була зайвою.
+        """
+        return self._last_tick_at
+
     def get_active_symbols(self) -> List[str]:
         with self._lock:
             now = time.time()

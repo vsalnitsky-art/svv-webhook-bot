@@ -90,6 +90,10 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._clock = [10_000.0]
     ff._mm_grow_since = {}
     ff._mm_snapshot_ts = 0.0
+    # ⏳ Причина «чому знімка ще немає» — нове поле стану (18.09). Кожне нове
+    # поле ЗАВЖДИ додавати сюди: без цього шлях падає з AttributeError на
+    # рівному місці, а `_mm_capture` виняток ковтає (наступали вже тричі).
+    ff._mm_pending = {'reason': 'boot', 'at': 0.0}
     ff._fuel_managed = {}
     ff._pending, ff._pending2, ff._pending3, ff._pending4 = {}, {}, {}, {}
     ff._timers = {}
@@ -987,7 +991,10 @@ def test_symbol_opens_tradingview_exactly_like_the_watchlist():
     """«Зроби щоб при натисканні на монету відкривався TradingView, так як і в
     WATCHLIST» — беремо ТУ САМУ функцію `tvSym`, а не свій лінк."""
     i = _HTML.index('function mmRender()')
-    fn = _HTML[i:i + 6000]
+    # ⚠️ Ріжемо по КІНЦЮ функції, а не фіксованими 6000 символами — на цю
+    # пастку в цьому файлі наступали вже тричі (див. коментар нижче в
+    # `test_selection_survives_the_poll`).
+    fn = _HTML[i:_HTML.index('function mmApplyState(', i)]
     _check('tvSym(r.symbol)' in fn, 'назва монети не веде у TradingView')
     # Та сама функція, що й у watchlist-рядку → та сама вкладка і той самий
     # формат символу (BYBIT:<SYM>.P). Другого лінка в проєкті не заводимо.
@@ -2225,7 +2232,10 @@ def test_a_disabled_monitor_reports_no_coverage():
 
 def test_the_page_shows_rows_out_of_targeted():
     i = _HTML.index("const up = document.getElementById('mm-updated')")
-    body = _HTML[i:i + 1800]
+    # ⚠️ Ріжемо по НАСТУПНОМУ блоку, а не фіксованими N символами: підказка
+    # росте, і зріз «i + 1800» уже двічі обрізав перевірку на рівному місці
+    # (та сама пастка, що з `mmRender` і колонкою «Ціна»).
+    body = _HTML[i:_HTML.index("const hint = document.getElementById('mm-limited-hint')", i)]
     _check('coverage' in body and "' з '" in body,
            'у шапці мусить стояти «N з M», інакше 49 проти 51 читається як втрата')
     for _w in ('Без даних МММ', 'Уже в угоді', 'узяв у роботу'):
@@ -2259,6 +2269,169 @@ def test_the_two_auto_off_states_differ_by_colour_not_by_a_duplicate_icon():
            'стани розрізняє КОЛІР: сірий «нічого не робимо» / бурштин «веде TP-1»')
     _check('Manual TP-1' in b, 'підпис мусить казати, що саме лишилось працювати')
     print('✓ два стани правила — один значок, різні кольори й підписи')
+
+
+# ═══ 25. ⏳ «ПІСЛЯ РЕСТАРТУ МОНІТОР ДОВГО ПОРОЖНІЙ» (скарга 18.09) ═════════
+# Дослівно: «Після рестарту бота, МММ-монітор довго знаходиться в такому стані
+# і не оновлюється, що так сильно тормозить сторінку?»
+#
+# ДІАГНОЗ. `_mm_snapshot_ts == 0` означало РІВНО «ще немає знімка» — і цей
+# самий напис однаково стояв у ТРЬОХ зовсім різних ситуаціях:
+#   • ❤️ Fuel Auto-Filter ВИМКНЕНО — `_tick` виходить ПЕРШИМ рядком, тож
+#     `_mm_capture` не викликається НІКОЛИ і чекати марно;
+#   • перший такт іще рахується (нормальний прогрів після рестарту);
+#   • такт ПАДАЄ до `_mm_capture` — раніше про це знав лише stdout.
+# Це той самий урок, що «невидимий збій читається як „бот не працює“».
+
+def test_a_fresh_boot_says_the_first_snapshot_is_being_computed():
+    ff = _mk()
+    st = ff.mm_monitor_state()
+    _check(not st['ts'], 'знімка ще не має бути')
+    _check((st.get('pending') or {}).get('reason') == 'boot',
+           f"прогрів мусить бути НАЗВАНИЙ, а не мовчазний: {st.get('pending')}")
+    print('✓ прогрів після старту названий («перший знімок рахується»)')
+
+
+def test_the_master_switch_off_is_named_not_silent():
+    """❤️ Fuel Auto-Filter вимкнено → знімка НЕ БУДЕ НІКОЛИ, і монітор мусить
+    сказати саме це, а не показувати той самий напис, що під час прогріву."""
+    ff = _mk(enabled=False)
+    ff._tick()
+    _check(ff._mm_pending.get('reason') == 'ff_off',
+           f'вимкнений майстер-тумблер не названо: {ff._mm_pending}')
+    _check(not ff._mm_snapshot_ts, 'знімок не мав зʼявитись')
+    st = ff.mm_monitor_state()
+    _check((st.get('pending') or {}).get('reason') == 'ff_off',
+           'причина не доїхала в UI')
+    print('✓ вимкнений ❤️ Fuel Auto-Filter названо вголос (чекати марно)')
+
+
+def test_the_reason_disappears_once_the_snapshot_exists():
+    """Поле живе ЛИШЕ поки знімка немає — інакше пояснення висіло б вічно."""
+    ff = _mk()
+    _cap(ff, BTCUSDT=0.42)
+    st = ff.mm_monitor_state()
+    _check(st['ts'], 'знімок мав зʼявитись')
+    _check(not st.get('pending'),
+           f'причина мусить зникнути разом із появою знімка: {st.get("pending")}')
+    print('✓ причина зникає, щойно знімок є')
+
+
+def test_the_page_tells_the_three_reasons_apart():
+    i = _HTML.index("const up = document.getElementById('mm-updated')")
+    body = _HTML[i:_HTML.index("const hint = document.getElementById('mm-limited-hint')", i)]
+    for _w in ('ff_off', 'error', 'Fuel Auto-Filter вимкнено', 'перший знімок'):
+        _check(_w in body, f'у шапці немає стану «{_w}»')
+    # Порожня таблиця теж мусить розрізняти причини, а не писати «Немає даних».
+    j = _HTML.index("const _why = !_mmMeta.enabled")
+    why = _HTML[j:j + 900]
+    for _w in ('ff_off', 'error', 'boot'):
+        _check(_w in why, f'порожня таблиця не розрізняє «{_w}»')
+    # ⚠️ Причина — У СИГНАТУРІ: без неї перехід між станами не перемалював би
+    # напис (рядків як не було, так і немає).
+    k = _HTML.index('const sig = _mmDir')
+    _check('pending' in _HTML[k:k + 400],
+           'причина не входить у сигнатуру — напис не оновиться')
+    print('✓ UI розрізняє прогрів / вимкнений FF / збій такту')
+
+
+def test_the_tick_prints_a_profile_so_the_cost_is_a_number():
+    """Проєктна конвенція: вартість такту мусить бути В ЦИФРАХ, а не «здається
+    повільно» (як `[SMC] Scan #N` і `[FF-Q4] tick`)."""
+    i = _SRC.index('def _tick(self)')
+    body = _SRC[i:_SRC.index('\n    def ', i + 10)]
+    _check('[FF] tick #' in body, 'такт не друкує профіль')
+    for _w in ('fuel', 's/coin', '_tick_profile'):
+        _check(_w in body, f'у профілі немає «{_w}»')
+    print('✓ профіль такту друкується (coins · pre · fuel · mm)')
+
+
+def _fake_lm(tick_at):
+    """Демон liq-map, що рахує, скільки разів у нього просили знімок."""
+    class _LM:
+        def __init__(self):
+            self.calls = 0
+            self.tick = tick_at
+
+        def last_tick_at(self):
+            return self.tick
+
+        def get_state(self, sym, lookback_hours=24, profile='tori'):
+            self.calls += 1
+            return {'mark_price': 100.0, 'events': [], 'cluster_zones': []}
+    lm = _LM()
+    mod = types.ModuleType('detection.liquidation_map.liquidation_map')
+    mod.get_liquidation_map = lambda: lm
+    sys.modules['detection.liquidation_map.liquidation_map'] = mod
+    sys.modules.setdefault('detection.liquidation_map',
+                           types.ModuleType('detection.liquidation_map'))
+    return lm
+
+
+def _liq_ff():
+    import threading
+    ff = FF.__new__(FF)
+    ff._lock = threading.RLock()
+    ff._liq_state_cache = {}
+    ff._liq_decay_profile = lambda: 'tori'
+    return ff
+
+
+def test_liq_state_does_not_rebuild_while_the_source_has_not_ticked():
+    """НАЙДОРОЖЧИЙ крок такту — збірка знімка liq-map по КОЖНІЙ монеті
+    (`liqmap_get_events` до 3000 ORM-рядків). Рівні пише ВИКЛЮЧНО демон
+    liq-map, і тікає він раз на 60с, а наш такт — раз на 30с. Отже рівно
+    половина збірок читала БАЙТ-У-БАЙТ те саме. Це НЕ послаблення свіжості:
+    щойно демон тікне, позначка зрушить і ми перерахуємо."""
+    lm = _fake_lm(1_000.0)
+    ff = _liq_ff()
+    a = ff._liq_state('BTCUSDT')
+    _check(lm.calls == 1 and a, 'перша збірка мусить статись')
+    # «Відмотуємо» кеш за межу TTL — джерело при цьому НЕ тікало.
+    ts, lst, src = ff._liq_state_cache['BTCUSDT']
+    ff._liq_state_cache['BTCUSDT'] = (ts - _m.LIQ_STATE_TTL - 1, lst, src)
+    b = ff._liq_state('BTCUSDT')
+    _check(lm.calls == 1, f'перезбірка без тіку джерела = чиста втрата: {lm.calls}')
+    _check(b is a, 'мусить повернутись ТОЙ САМИЙ обʼєкт')
+    print('✓ джерело не тікало → знімок не перезбирається')
+
+
+def test_liq_state_rebuilds_as_soon_as_the_source_ticks():
+    lm = _fake_lm(1_000.0)
+    ff = _liq_ff()
+    ff._liq_state('BTCUSDT')
+    ts, lst, src = ff._liq_state_cache['BTCUSDT']
+    ff._liq_state_cache['BTCUSDT'] = (ts - _m.LIQ_STATE_TTL - 1, lst, src)
+    lm.tick = 1_060.0                      # демон зробив свій 60-секундний тік
+    ff._liq_state('BTCUSDT')
+    _check(lm.calls == 2, f'після тіку джерела мусить перерахувати: {lm.calls}')
+    print('✓ тік джерела → свіжа збірка')
+
+
+def test_a_dead_liqmap_does_not_freeze_the_snapshot_forever():
+    """Стеля потрібна: якщо демон ліг, його позначка не зрушить НІКОЛИ, і без
+    межі ми б віддавали той самий знімок до кінця життя процесу."""
+    lm = _fake_lm(1_000.0)
+    ff = _liq_ff()
+    ff._liq_state('BTCUSDT')
+    ts, lst, src = ff._liq_state_cache['BTCUSDT']
+    ff._liq_state_cache['BTCUSDT'] = (ts - _m.LIQ_STATE_SRC_MAX - 1, lst, src)
+    ff._liq_state('BTCUSDT')
+    _check(lm.calls == 2, 'стеля не спрацювала — знімок заморожено назавжди')
+    print('✓ мертвий демон не морозить знімок назавжди')
+
+
+def test_the_source_tick_is_read_through_a_public_accessor():
+    """Читати чуже приватне поле не можна — той самий принцип, через який у
+    сканері зʼявився публічний `volumized_on()`."""
+    _lmsrc = open(os.path.join(_HERE, 'detection', 'liquidation_map',
+                               'liquidation_map.py'), encoding='utf-8').read()
+    _check('def last_tick_at(' in _lmsrc, 'немає публічного читача')
+    i = _SRC.index('def _liq_src_tick')
+    body = _SRC[i:_SRC.index('\n    def ', i + 10)]
+    _check('last_tick_at' in body and '_last_tick_at' not in body,
+           'FF мусить читати ПУБЛІЧНИЙ метод, а не приватне поле')
+    print('✓ позначка джерела читається публічним методом')
 
 
 if __name__ == '__main__':

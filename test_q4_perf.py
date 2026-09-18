@@ -110,8 +110,13 @@ def test_liq_state_cache_hits_within_ttl():
     _check(len(builds) == 2, 'force=True обходить кеш')
 
     # Протермінований запис має перечитатись.
-    ts, st = o._liq_state_cache['ETHUSDT']
-    o._liq_state_cache['ETHUSDT'] = (ts - ffmod.LIQ_STATE_TTL - 1, st)
+    # ⚠️ У записі тепер ТРИ поля: (ts, знімок, позначка тіку джерела). Третє
+    # дозволяє НЕ перезбирати знімок, поки демон liq-map не тікав (див.
+    # `LIQ_STATE_SRC_MAX`). Тут фейковий демон такого методу не має → позначка
+    # None → поведінка рівно та сама, що була: після TTL перечитуємо.
+    ts, st, src = o._liq_state_cache['ETHUSDT']
+    _check(src is None, 'демон без `last_tick_at` → продовження кешу не діє')
+    o._liq_state_cache['ETHUSDT'] = (ts - ffmod.LIQ_STATE_TTL - 1, st, src)
     o._liq_state('ETHUSDT')
     _check(len(builds) == 3, 'після TTL знімок перечитується (дані не «залипають»)')
     print(f'✓ A2: 7 звернень → 1 збірка liq-map (TTL {ffmod.LIQ_STATE_TTL:.0f}с)')

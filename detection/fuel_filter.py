@@ -110,6 +110,11 @@ MM_PRICE_DEADZONE = 0.10
 MM_BIAS_FLAT = 0.10
 
 LIQ_STATE_TTL = 20.0
+# ⏱ Скільки МАКСИМУМ тримати знімок, поки демон liq-map НЕ ТІКАВ. Демон —
+# ЄДИНИЙ, хто пише рівні/мітигацію в БД, тож поки його позначка не зрушила,
+# перезбірка дає БАЙТ-У-БАЙТ те саме (і коштує до 3000 ORM-рядків на монету).
+# Стеля потрібна на випадок, коли демон ліг: вічно віддавати старе не можна.
+LIQ_STATE_SRC_MAX = 180.0
 LIQ_STATE_CAP = 400             # запобіжник памʼяті: скільки монет тримати в кеші
 BIAS_TTL = 10                   # cache compute_bias result per symbol (sec)
 FUEL_LONG_THR = 0.1            # fuel_dir > +0.1 → LONG bias
@@ -849,6 +854,14 @@ class FuelFilterDaemon:
         # ПОТОЧНИЙ напрямок (для таймера). Рахує `_mm_capture`, стан лише читає.
         self._mm_state_since: Dict = {}   # ⏱ відколи монета тримає стан
         self._mm_stats: Dict = {}        # скільки монет цілили / дали дані
+        # ⏳ ЧОМУ ЗНІМКА ЩЕ НЕМАЄ (скарга 18.09: «після рестарту монітор довго
+        # в такому стані і не оновлюється»). `_mm_snapshot_ts == 0` означало
+        # РІВНО «ще немає знімка» — і це однаково виглядало для трьох зовсім
+        # різних причин: (а) ❤️ Fuel Auto-Filter вимкнено, тож `_tick` виходить
+        # ПЕРШИМ рядком і `_mm_capture` не викликається НІКОЛИ; (б) перший такт
+        # ще рахується; (в) такт ПАДАЄ до `_mm_capture` (раніше про це був лише
+        # `print` у stdout). Тримаємо причину тут і віддаємо її в UI.
+        self._mm_pending: Dict = {'reason': 'boot', 'at': time.time()}
         self._mm_bias: Dict = {}
         self._mm_bias_since: float = 0.0
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
@@ -2891,13 +2904,27 @@ class FuelFilterDaemon:
         if not sym:
             return None
         now = time.time()
-        if not force:
-            hit = self._liq_state_cache.get(sym)
-            if hit and (now - hit[0]) < LIQ_STATE_TTL:
-                return hit[1]
+        hit = self._liq_state_cache.get(sym) if not force else None
+        if hit and (now - hit[0]) < LIQ_STATE_TTL:
+            return hit[1]
         try:
             from detection.liquidation_map.liquidation_map import get_liquidation_map
             lm = get_liquidation_map()
+        except Exception:
+            return None
+        # ⏱ TTL МИНУВ, АЛЕ ДЖЕРЕЛО НЕ ТІКАЛО → перезбирати НЕМА ЧОГО.
+        # Рівні й мітигацію в БД пише ВИКЛЮЧНО демон liq-map, і він тікає раз
+        # на 60с, тоді як наш такт — 30с. Тобто рівно половина збірок читала
+        # БАЙТ-У-БАЙТ ті самі рядки (до 3000 ORM-об'єктів на монету × усі
+        # монети «в роботі» — саме це найдорожче в такті). Це НЕ послаблення
+        # свіжості: щойно демон тікне, позначка зрушить і ми перерахуємо.
+        # Стеля `LIQ_STATE_SRC_MAX` — запобіжник на випадок, якщо демон ліг:
+        # вічно тримати знімок не можна.
+        _src = self._liq_src_tick(lm)
+        if (hit and _src is not None and len(hit) > 2 and hit[2] == _src
+                and (now - hit[0]) < LIQ_STATE_SRC_MAX):
+            return hit[1]
+        try:
             lst = lm.get_state(sym, lookback_hours=24,
                                profile=self._liq_decay_profile()) if lm else None
         except Exception:
@@ -2915,8 +2942,22 @@ class FuelFilterDaemon:
                 self._liq_state_cache.pop(k, None)
             if len(self._liq_state_cache) >= LIQ_STATE_CAP:
                 self._liq_state_cache.clear()
-        self._liq_state_cache[sym] = (now, lst)
+        self._liq_state_cache[sym] = (now, lst, _src)
         return lst
+
+    @staticmethod
+    def _liq_src_tick(lm) -> Optional[float]:
+        """Позначка останнього тіку демона liq-map (або None).
+
+        ⚠️ Через ПУБЛІЧНИЙ `last_tick_at()`; старіший модуль без нього → None,
+        і кеш поводиться рівно як раніше (лише TTL). Приватне поле не читаємо.
+        """
+        try:
+            fn = getattr(lm, 'last_tick_at', None)
+            v = fn() if callable(fn) else None
+            return float(v) if v else None
+        except Exception:
+            return None
 
     def _fuel_dir_legacy(self, symbol: str) -> Optional[Dict]:
         """СТАРИЙ показник МММ: сирий (fa−fb)/den по liq-map (розташування кластерів
@@ -3455,6 +3496,8 @@ class FuelFilterDaemon:
             # вже в угоді й у таблиці не показуються).
             self._mm_stats = {'targeted': len(fuels or {}),
                               'data': len(snap), 'ts': _now} if _mon else {}
+            # ⏳ Знімок Є → причина «чому його немає» більше не потрібна.
+            self._mm_pending = {}
         # ⚖️ ВАЖІЛЬ НАПРЯМКУ для банера — рахуємо ТУТ, у двигуні, і кладемо
         # готовим; `mm_monitor_state` лишається читачем (урок B2 з шарами Q4).
         self._mm_track_bias(snap, _now)
@@ -3582,6 +3625,15 @@ class FuelFilterDaemon:
                 'in_trade': int(_skip_trade),
                 'rows': len(rows),
             } if _on else {},
+            # ⏳ ЧОМУ ЗНІМКА ЩЕ НЕМАЄ (скарга 18.09). Поле є ЛИШЕ поки `ts == 0`
+            # — тобто поки `_mm_capture` не відпрацював жодного разу від
+            # старту. Три причини РОЗРІЗНЕНІ, бо дії за ними різні:
+            #   boot   — перший такт іще рахується (нормальний прогрів);
+            #   ff_off — ❤️ Fuel Auto-Filter ВИМКНЕНО → такт виходить першим
+            #            рядком, знімка не буде НІКОЛИ, і чекати марно;
+            #   error  — такт падає до `_mm_capture` (текст винятку в `detail`).
+            'pending': (dict(getattr(self, '_mm_pending', {}) or {})
+                        if (_on and not ts) else {}),
         }
 
     def mm_snapshot_for(self, symbols) -> Dict:
@@ -4843,6 +4895,14 @@ class FuelFilterDaemon:
                 self._tick()
             except Exception as e:
                 print(f"[FuelFilter] tick error: {e}")
+                # ⚠️ Раніше про це знав ЛИШЕ stdout. Якщо такт падає ДО
+                # `_mm_capture`, знімка не буде НІКОЛИ, а таблиця монітора
+                # писала нейтральне «ще немає знімка» — тобто поломка
+                # виглядала як прогрів. Тепер причина видима в UI, і лише
+                # доки знімка справді немає (є знімок → поле порожнє).
+                if not self._mm_snapshot_ts:
+                    self._mm_pending = {'reason': 'error', 'at': time.time(),
+                                        'detail': f'{type(e).__name__}: {e}'}
             self._stop.wait(CYCLE_SECS)
 
     def _register_with_liqmap(self, symbols: List[str]):
@@ -4869,7 +4929,15 @@ class FuelFilterDaemon:
     def _tick(self):
         settings = self.get_settings()
         self._last_tick_ts = time.time()
+        _t0 = self._last_tick_ts
         if not settings.get('enabled'):
+            # ⚠️ ТУТ ВМИРАВ 🧮 МММ-МОНІТОР МОВЧКИ. `_mm_capture` кличеться в
+            # КІНЦІ такту, тож вимкнений майстер-тумблер ❤️ Fuel Auto-Filter
+            # означав «знімка не буде НІКОЛИ» — а таблиця писала «ще немає
+            # знімка», тобто те саме, що й під час нормального прогріву.
+            # Причину називаємо вголос (урок «невидимий збій читається як
+            # „бот не працює“»).
+            self._mm_pending = {'reason': 'ff_off', 'at': _t0}
             return
         # BTC banner direction = main-window МММ indicator (compute_bias fuel).
         self._update_btc_verdict()
@@ -4976,14 +5044,36 @@ class FuelFilterDaemon:
         self._register_with_liqmap(relevant)
 
         # Advance EMA + read fuel once per cycle for each relevant coin.
+        # ⏱ ЦЕ НАЙДОРОЖЧИЙ КРОК ТАКТУ і його треба бачити В ЦИФРАХ, а не «на
+        # відчуття»: на КОЖНУ монету `_liq_state` збирає знімок liq-map
+        # (`liqmap_get_latest_oi` × провайдери + `liqmap_get_events` до 3000
+        # ORM-рядків із `.to_dict()`). При 50 монетах це ~150 сесій БД за такт
+        # у ТОМУ САМОМУ процесі, що обслуговує сторінку.
+        _tp0 = time.time()
         fuels = {}
         for sym in relevant:
             fuels[sym] = self._fuel_dir_smoothed(sym, update=True)
+        _t_fuel = time.time() - _tp0
 
         # 🧮 ЗНІМОК ДЛЯ МММ-МОНІТОРА — рівно ті числа, які щойно порахував
         # двигун. Нічого не перераховуємо пізніше: монітор, колонка «Старий
         # МММ» у Черзі-4 і рішення двигуна мусять показувати ОДНЕ значення.
+        _tp0 = time.time()
         self._mm_capture(fuels, settings)
+        _t_mm = time.time() - _tp0
+        # ⏱ ПРОФІЛЬ ТАКТУ — та сама конвенція, що `[SMC] Scan #N` і `[FF-Q4]
+        # tick`. Без цього «чому після рестарту так довго» лишається здогадкою.
+        self._tick_count = int(getattr(self, '_tick_count', 0)) + 1
+        _t_pre = _tp0 - _t_fuel - _t0
+        self._tick_profile = {
+            'n': self._tick_count, 'coins': len(relevant),
+            'pre': round(_t_pre, 2), 'fuel': round(_t_fuel, 2),
+            'mm': round(_t_mm, 2), 'ts': time.time(),
+        }
+        print(f"[FF] tick #{self._tick_count}: {len(relevant)} coins in "
+              f"{(time.time() - _t0):.1f}s — pre {_t_pre:.1f}s · "
+              f"fuel {_t_fuel:.1f}s ({(_t_fuel / max(1, len(relevant))):.2f}s/coin) "
+              f"· mm {_t_mm:.1f}s")
 
         # BTC table-row snapshot (fuel-based, like the other coins).
         bfuel = fuels.get('BTCUSDT')
