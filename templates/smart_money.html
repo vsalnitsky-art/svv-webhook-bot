@@ -2668,7 +2668,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                   gap:10px; flex-wrap:wrap; margin:10px 0 2px; }
               /* 🧲 Відсотки магніту — РІВНА колонка: кожен сегмент однакової
                  ширини, числа праворуч, monospace (розряди вишиковуються). */
-              #lh-table .lh-seg { display:inline-block; font-family:monospace; }
+              #lh-table .lh-seg { display:inline-block; font-family:monospace;
+                  white-space:nowrap; }
+              /* 📏 КОЖЕН РЯДОК — В ОДНУ СТРІЧКУ (скарга 18.09: смуга магніту
+                 «$0.22000–0.22500» переносилась, і рядок ставав на дві). */
+              #lh-table th, #lh-table td { white-space:nowrap; padding:4px 8px; }
+              /* 🦓 Зебра — як у таблиці МММ-монітора: рядків багато і вони
+                 щільні, без неї вони зливаються. Клас на <tbody>, щоб
+                 порожній рядок-заглушка не смугався. */
+              #lh-table tbody tr:nth-child(even) { background:rgba(255,255,255,0.035); }
+              #lh-table tbody tr:hover { background:rgba(34,211,238,0.10); }
+              #lh-table tbody td { border-bottom:1px solid rgba(255,255,255,0.05); }
             </style>
             <details class="sm-settings-bar" style="margin:10px 0 8px">
                 <summary class="sm-settings-summary" style="cursor:pointer;font-size:0.75rem;color:#67e8f9;font-weight:600">
@@ -10168,6 +10178,9 @@ function reasonLabel(r) {
         'forecast_4h_exit': '🔮 F4H проти',
         'decision_exit': '🧠 Decision проти',
         'mm_flat_exit': '🧮 Старий МММ ⚖',
+        // ⚠️ Розворот МММ — ОКРЕМИЙ бейдж: підписувати його «⚖» означало б
+        // показувати не ту причину, що спрацювала (скарга 18.09).
+        'mm_against_exit': '🧮 Старий МММ ПРОТИ',
         'signal_exit_and': '🔗 AND (усі проти)',
         'pilot_target': '🎯 Автопілот (ціль)',
         'bos_2_partial': '✂️ BOS-2',
@@ -12132,9 +12145,9 @@ function mmRenderBias(bias) {
             + `⚖ рівновага: ${b.n_flat || 0} монет · вага ${b.w_flat || 0}\n`
             + `Разом: ${b.coins || 0} монет · вага ${b.w_total || 0}\n`
             + 'Фільтр «Сила ≥» на банер НЕ впливає — він лише ховає рядки таблиці.\n'
-            + '📍 Монети В УГОДІ у важіль НЕ входять (важіль описує ВІЛЬНИЙ ринок — '
-            + 'те, куди ще можна зайти), хоча в таблиці вони видно зі станом 💼. '
-            + 'Саме тому рядків під банером буває більше, ніж монет у розкладі вище.'
+            + '📍 Рахуються ВСІ монети монітора, у тому числі ті, що вже в роботі '
+            + '(💼 угода / 🎯 черга): банер описує рівно те, що під ним видно, і '
+            + 'його розклад сходиться з рядками таблиці.'
             // ↻ Числа з попереднього запуску: важіль і таймер персистяться, тож
             // рестарт бота їх не обнуляє. До першого такту це ще не свіжий
             // розрахунок — і про це сказано, а не замовчано.
@@ -12528,7 +12541,7 @@ function _lhMagnetCell(r) {
     const seg = (w, al, html, ttl) => `<span class="lh-seg" style="width:${w}px;`
         + `text-align:${al}"${ttl ? ` title="${ttl}"` : ''}>${html}</span>`;
     if (!r.magnet_price) {
-        return seg(104, 'left', '<span style="color:#6b7280">—</span>',
+        return seg(152, 'left', '<span style="color:#6b7280">—</span>',
                    'Значущої сходинки драбина не дала — відстань невідома, і '
                    + 'фільтром «магніт ≥ %» така монета НЕ ріжеться.');
     }
@@ -12537,7 +12550,7 @@ function _lhMagnetCell(r) {
     // ⚠️ Відстань малюємо з СИРОГО числа (`magnet_dist_pct`) — саме воно
     // живить і фільтр «магніт ≥ %», тож підпис і поріг не можуть розійтись.
     const d = (r.magnet_dist_pct == null) ? null : Number(r.magnet_dist_pct);
-    return seg(104, 'left', `<span style="color:${col};font-weight:700">`
+    return seg(152, 'left', `<span style="color:${col};font-weight:700">`
                + `${up ? '↑' : '↓'} ${r.magnet_price}</span>`,
                'Ціна найсильнішої сходинки драбини (ближня межа смуги).')
         + seg(62, 'right', d == null ? '<span style="color:#6b7280">—</span>'
@@ -12545,8 +12558,10 @@ function _lhMagnetCell(r) {
                 + `${d.toFixed(2)}%</span>`,
               'ВІДСТАНЬ до магніту від поточної ціни. Саме її обмежує '
               + 'налаштування «🧲 Магніт ≥, %».')
-        + seg(56, 'right', r.magnet_pct != null
-              ? `<span style="color:#8b93a7">${r.magnet_pct}%</span>` : '',
+        // ⚠️ `magnet_pct` ПРИХОДИТЬ УЖЕ З «%» (`ladder.make_verdict`), тож
+        // свій додавати НЕ можна — на екрані було «23.0%%».
+        + seg(58, 'right', r.magnet_pct != null
+              ? `<span style="color:#8b93a7">${r.magnet_pct}</span>` : '',
               'ЧАСТКА цієї сходинки від усієї маси ліквідності — наскільки '
               + 'магніт вагомий (це НЕ відстань).');
 }

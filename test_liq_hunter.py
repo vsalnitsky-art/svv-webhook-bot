@@ -599,6 +599,37 @@ def test_the_fields_are_one_grid_with_equal_gaps():
            'тумблер переcкану мусить стояти окремим рядком')
     print('✓ UI: одна сітка полів + тумблер окремим рядком')
 
+
+# ═══════════ 9. 📏 ОДИН РЯДОК + 🦓 ЗЕБРА В ТАБЛИЦІ СКАНЕРА (18.09) ════════
+# Дослівно: «Навіщо в дві стрічки робити записи, розмісти все в одну стрічку і
+# зроби зебру в таблиці, щоб не зливались.» На скріні смуга магніту
+# «$0.22000–0.22500» переносилась, і кожен запис займав два рядки.
+def test_every_row_is_one_line_and_the_table_is_striped():
+    i = _HTML.index('id="liq-hunter-panel"')
+    sec = _HTML[i:_HTML.index('id="poc-setup-panel"')]
+    _check('#lh-table th, #lh-table td { white-space:nowrap' in sec,
+           'комірки мусять лишатись в ОДНУ стрічку')
+    _check('#lh-table tbody tr:nth-child(even)' in sec, 'немає зебри')
+    _check('#lh-table tbody tr:hover' in sec, 'немає підсвітки рядка')
+    body = _HTML[_HTML.index('function _lhMagnetCell(r) {'):
+                 _HTML.index('function lhRender()')]
+    _check('white-space:nowrap' in sec.split('.lh-seg')[1][:160],
+           'сегменти магніту теж не мають переноситись')
+    # Смуга ціни довга («$0.22000–0.22500»), тож її сегмент мусить бути ширшим
+    # за решту — інакше саме він і переносив рядок.
+    _check('seg(152,' in body, 'сегмент ціни магніту завузький для смуги')
+    print('✓ 📏 рядок сканера — в одну стрічку, таблиця зі смугами')
+
+
+def test_the_magnet_share_is_not_printed_with_two_percent_signs():
+    """`ladder.make_verdict` віддає `pct` УЖЕ з «%» — на екрані було «23.0%%»."""
+    body = _HTML[_HTML.index('function _lhMagnetCell(r) {'):
+                 _HTML.index('function lhRender()')]
+    _check('${r.magnet_pct}%' not in body,
+           'до готового «23.0%» додається ще один знак відсотка')
+    _check('${r.magnet_pct}' in body, 'частку магніту все одно треба показати')
+    print('✓ 🧲 частка магніту друкується без подвійного «%%»')
+
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]
     bad = 0

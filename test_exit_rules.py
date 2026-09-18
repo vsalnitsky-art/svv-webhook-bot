@@ -522,9 +522,37 @@ def test_opposite_mm_holds_by_default_and_closes_in_the_other_mode():
     t2 = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)},
              mm_flat_exit_mode='flat_or_against')
     t2._check_signal_exits('MNTUSDT', t2._positions['MNTUSDT'], 0.5, False)
-    _check(t2.closed == [('real', 'mm_flat_exit')],
+    # ⚠️ ВИМОГА ЗМІНИЛАСЬ (18.09): розворот має ВЛАСНИЙ код причини —
+    # `mm_against_exit`. Раніше обидві гілки віддавали `mm_flat_exit`, і в
+    # історії угод розворот підписувався як «⚖ рівновага» (скарга зі скріном).
+    _check(t2.closed == [('real', 'mm_against_exit')],
            f'режим «рівновага АБО проти» мусить закрити: {t2.closed}')
     print('✓ 🧮 розворот МММ: тримаємо (деф.) / закриваємо (окремий режим)')
+
+
+def test_the_two_reasons_are_never_mixed_up():
+    """Скарга 18.09: «Монета закрилась саме по протилежному значенню, а не
+    рівновага — потрібно точно розрізнити причини закриття». Один код на дві
+    різні події означав, що бейдж і рядок логу показували не те, що сталось."""
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row(None, 6)},
+            mm_flat_exit_mode='flat_or_against')
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [('real', 'mm_flat_exit')],
+           f'⚖ рівновага мусить лишитись `mm_flat_exit`: {t.closed}')
+    t2 = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)},
+             mm_flat_exit_mode='flat_or_against')
+    t2._check_signal_exits('MNTUSDT', t2._positions['MNTUSDT'], 0.5, False)
+    _check(t2.closed == [('real', 'mm_against_exit')],
+           f'розворот мусить мати ВЛАСНИЙ код: {t2.closed}')
+    # І підписи мусять бути РІЗНІ в усіх трьох місцях показу.
+    for src, name in ((_SRC_TM, 'trade_manager'), (_HTML_SM, 'сторінка')):
+        _check('mm_against_exit' in src, f'{name} не знає нової причини')
+    _check("'mm_against_exit': '🧮 Старий МММ РОЗВЕРНУВСЯ ПРОТИ позиції'" in _SRC_TM,
+           'немає розгорнутого підпису розвороту')
+    _check("'mm_against_exit': '🧮 Старий МММ ПРОТИ'" in _SRC_TM
+           and "'mm_against_exit': '🧮 Старий МММ ПРОТИ'" in _HTML_SM,
+           'бейдж розвороту мусить відрізнятись від бейджа рівноваги')
+    print('✓ 🧮 ⚖ рівновага і РОЗВОРОТ — різні причини з різними підписами')
 
 
 def test_bad_mode_value_falls_back_to_flat():
@@ -579,7 +607,8 @@ def test_against_closes_immediately_despite_the_confirm_window():
     t = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)},
             mm_flat_exit_mode='flat_or_against', mm_flat_exit_confirm_sec=900)
     t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
-    _check(t.closed == [('real', 'mm_flat_exit')],
+    # ⚠️ Код причини розвороту — ВЛАСНИЙ (`mm_against_exit`, уточнення 18.09).
+    _check(t.closed == [('real', 'mm_against_exit')],
            f'розворот МММ мусить закривати ОДРАЗУ, без витримки: {t.closed}')
     _check(any('ОДРАЗУ' in x for x in _LOG),
            f'у причині не сказано, що витримка тут не діє: {_LOG}')
@@ -770,6 +799,7 @@ if __name__ == '__main__':
     test_directional_mm_keeps_the_trade()
     test_missing_snapshot_is_not_flat()
     test_opposite_mm_holds_by_default_and_closes_in_the_other_mode()
+    test_the_two_reasons_are_never_mixed_up()
     test_bad_mode_value_falls_back_to_flat()
     test_confirm_window_requires_the_state_to_hold()
     test_confirm_timer_resets_when_direction_returns()
