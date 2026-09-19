@@ -40,8 +40,21 @@ liq_hunter — 💧 СКАНЕР ЛІКВІДНОСТІ: власний руші
 ⚠️ **КОЖЕН СКАН ІДЕ ЧЕРЕЗ СПІЛЬНУ ЧЕРГУ** `detection/scan_queue.py` — за раз
 працює рівно один скан біржі на весь бот (вимога 4).
 ⚠️ **ЦЕ СПОСТЕРЕЖЕННЯ, А НЕ ТОРГІВЛЯ.** Рушій нічого не відкриває і нікуди не
-сигналить: він лише веде список кандидатів. Відкриття угод лишається за
-чергами, сигналами і ✋ ручними діями.
+сигналить САМ: він веде список кандидатів і ВІДПОВІДАЄ на питання «чи є ця
+монета в таблиці й у той самий бік». Відкриття угод лишається за чергами,
+сигналами і ✋ ручними діями.
+
+**💧 VOB + БАНЕР + ТАБЛИЦЯ → СИГНАЛ (вимога 19.09), дослівно:** «Якщо увімкнено
+📦 Volumized OB Trend і увімкнено "Сканер ліквідності", то кожен новоутворений
+VOB звіряємо з таблицею "Сканер ліквідності", і якщо співпадає напрямок VOB +
+напрямок банера "МММ-монітор" і є така ж монета у таблиці — одразу маємо сигнал
+і відправляємо монету далі по алгоритму в Чергу (якщо активно) або відразу
+відкриваємо угоду, перед цим перевіривши, чи не існує вже відкрита така угода.»
+- Саму ПОДІЮ (новий VOB) ловить сканер — там, де VOB і рахується (`smc_scanner`,
+  той самий блок, що малює бокс на графіку). Тут живе лише ВІДПОВІДЬ про
+  таблицю: `vob_match(symbol, side)` над ЧИСТОЮ `vob_confluence(...)`.
+- ⚠️ Другого списку монет не заводимо: звіряємось РІВНО з тими рядками, що
+  людина бачить у таблиці 💧 Сканера.
 """
 
 import json
@@ -76,7 +89,21 @@ DEFAULTS = {
     # в таблицю немає сенсу. 0 = не фільтрувати.
     'min_magnet_dist_pct': 3.0,
     'rescan_on_flip': True,         # перескан на зміні напрямку банера
+    # 💧 VOB + банер + таблиця → СИГНАЛ (вимога 19.09). Дефолт **УВІМКНЕНО**:
+    # умову ввімкнення користувач задав САМИМИ наявними тумблерами («якщо
+    # увімкнено 📦 Volumized OB Trend і увімкнено Сканер»), тож третій тумблер
+    # із дефолтом OFF означав би, що вимога не працює, доки його не знайдуть.
+    # ⚠️ Потік угод це мовчки не розширює: сам 💧 Сканер дефолтом ВИМКНЕНИЙ,
+    # тобто шлях оживає лише після свідомого вмикання сканера. Тумблер існує,
+    # щоб можна було лишити таблицю і вимкнути САМЕ сигнали.
+    'vob_signal_on': True,
 }
+
+# Скільки останніх рішень шляху «VOB + таблиця» тримаємо для показу.
+SIGNAL_LOG_CAP = 12
+# TTL кешу налаштувань. Малий СВІДОМО: зміна з UI має діяти одразу, а кеш тут
+# лише щоб не читати блоб із БД сотні разів за скан-цикл.
+SETTINGS_TTL = 5.0
 
 
 def mass_pct(row: Dict, side: str):
@@ -157,6 +184,49 @@ def pick_rows(rows: List[Dict], side: str, min_pct: float,
     return out, st
 
 
+def vob_confluence(row: Optional[Dict], vob_side: str,
+                   bias_dir: Optional[str]) -> (bool, str):
+    """ЧИСТЕ правило «новий VOB → сигнал?» (вимога 19.09).
+
+    Три умови РАЗОМ і в цьому порядку:
+      1. банер 🧮 МММ-монітора має НАПРЯМОК (⚖ рівновага — не напрямок);
+      2. напрямок VOB ЗБІГАЄТЬСЯ з напрямком банера;
+      3. монета Є в таблиці 💧 Сканера, і рядок зібрано в ТОЙ САМИЙ бік.
+
+    ⚠️ Пункт 3 перевіряє ще й `row['side']`, а не лише присутність символу.
+    Одразу після розвороту банера таблиця ще стара (перескан попереду), і її
+    рядки зібрані під ПРОТИЛЕЖНИЙ бік — узяти такий рядок означало б назвати
+    «збігом» пряме протиріччя. Замість цього чесно кажемо, що чекаємо перескан.
+
+    Повертає `(ok, причина/розклад)`. Причина потрібна ЗАВЖДИ: «сигналу немає»
+    без пояснення читається як поломка.
+    """
+    side = (vob_side or '').upper().strip()
+    bias = (bias_dir or '').upper().strip()
+    if side not in ('LONG', 'SHORT'):
+        return False, 'напрямок VOB невідомий'
+    if bias not in ('LONG', 'SHORT'):
+        return False, '⚖ банер 🧮 МММ-монітора без напрямку'
+    if side != bias:
+        return False, f'VOB {side} ПРОТИ банера {bias}'
+    if not row:
+        return False, 'монети немає в таблиці 💧 Сканера ліквідності'
+    r_side = str(row.get('side') or '').upper()
+    if r_side and r_side != side:
+        return False, (f'рядок таблиці зібрано під {r_side} — '
+                       f'чекаємо перескан під {side}')
+    _bits = [f'VOB {side} = банер {bias}']
+    try:
+        _bits.append(f"💧 маса {float(row.get('mass_pct')):.1f}% у бік {side}")
+    except (TypeError, ValueError):
+        pass
+    if row.get('magnet_price'):
+        _d = row.get('magnet_dist_pct')
+        _bits.append('🧲 магніт ' + str(row.get('magnet_price'))
+                     + (f' ({float(_d):.2f}%)' if _d is not None else ''))
+    return True, ' · '.join(_bits)
+
+
 class LiqHunterDaemon:
     def __init__(self, db, get_watchlist: Optional[Callable] = None,
                  scan_fn: Optional[Callable] = None,
@@ -180,9 +250,31 @@ class LiqHunterDaemon:
         self._last: Dict = {}                # розклад останнього скану
         self._scanning: bool = False
         self._next_at: float = 0.0
+        # 💧 VOB + таблиця: ОСТАННІ рішення шляху (сигнал / відсіяно фільтрами /
+        # пропущено — угода вже відкрита). Без цього шлях був би невидимий, а
+        # «нічого не відбувається» читалось би як поломка (урок «де сигнали?»).
+        self._signals: List[Dict] = []
+        self._sig_count: int = 0
+        # Кеш налаштувань (див. `get_settings`): шлях «VOB + таблиця» питає їх
+        # по кожній монеті кожного скан-циклу.
+        self._s_cache: Dict = {}
+        self._s_cache_at: float = 0.0
 
     # ── налаштування ────────────────────────────────────────────────────
     def get_settings(self) -> Dict:
+        """Налаштування сканера з КОРОТКИМ кешем.
+
+        ⚠️ Кеш тут ОБОВʼЯЗКОВИЙ, а не «оптимізація»: відколи шлях «VOB +
+        таблиця» питає `vob_signal_on()` по КОЖНІЙ монеті КОЖНОГО скан-циклу,
+        читання блоба з БД коштувало б сотні сесій SQLAlchemy на цикл (той
+        самий урок, що з `get_mm_settings`). `SETTINGS_TTL` малий, а
+        `update_settings` кладе свіже значення в кеш одразу, тож зміна з UI
+        діє миттєво.
+        """
+        _now = time.time()
+        _c = self._s_cache
+        if _c and (_now - self._s_cache_at) < SETTINGS_TTL:
+            return dict(_c)
         s = dict(DEFAULTS)
         try:
             raw = self._db.get_setting(_DB_SETTINGS, {}) or {}
@@ -194,12 +286,15 @@ class LiqHunterDaemon:
                         s[k] = raw[k]
         except Exception:
             pass
-        return self._validate(s)
+        s = self._validate(s)
+        self._s_cache, self._s_cache_at = dict(s), _now
+        return s
 
     @staticmethod
     def _validate(s: Dict) -> Dict:
         s['enabled'] = bool(s.get('enabled'))
         s['rescan_on_flip'] = bool(s.get('rescan_on_flip', True))
+        s['vob_signal_on'] = bool(s.get('vob_signal_on', True))
         s['exchange'] = str(s.get('exchange') or 'binance').lower()
         s['universe'] = 'watchlist' if str(s.get('universe')) == 'watchlist' \
             else 'top'
@@ -237,6 +332,9 @@ class LiqHunterDaemon:
                 if k in patch:
                     s[k] = patch[k]
         s = self._validate(s)
+        # ⚠️ Кеш оновлюємо ОДРАЗУ: інакше до `SETTINGS_TTL` секунд бот працював
+        # би за старим значенням, а UI вже показував би нове.
+        self._s_cache, self._s_cache_at = dict(s), time.time()
         try:
             self._db.set_setting(_DB_SETTINGS, s)
         except Exception as e:
@@ -339,6 +437,59 @@ class LiqHunterDaemon:
             bars=int(s['bars']), sort_by=s['sort_by'],
             universe=s['universe'],
             symbols=(self._watchlist() if s['universe'] == 'watchlist' else None))
+
+    # ── 💧 VOB + БАНЕР + ТАБЛИЦЯ (відповідь для сканера) ────────────────
+    def row_for(self, symbol: str) -> Optional[Dict]:
+        """Рядок таблиці по монеті або None. РІВНО те, що видно на сторінці."""
+        sym = str(symbol or '').upper().strip()
+        if not sym:
+            return None
+        with self._lock:
+            for r in self._rows:
+                if str(r.get('symbol') or '').upper() == sym:
+                    return dict(r)
+        return None
+
+    def vob_signal_on(self) -> bool:
+        """Чи ПРАЦЮЄ шлях «VOB + таблиця» зараз: сканер увімкнено І сигнали не
+        вимкнені окремим тумблером. ОКРЕМИЙ метод, щоб сканер не вгадував це з
+        тексту причини (розбір рядків — це не перевірка стану)."""
+        s = self.get_settings()
+        return bool(s.get('enabled')) and bool(s.get('vob_signal_on', True))
+
+    def vob_match(self, symbol: str, vob_side: str) -> (bool, str, Optional[Dict]):
+        """Чи дає НОВИЙ VOB по монеті сигнал за правилом «VOB + банер + таблиця».
+
+        Повертає `(ok, причина, рядок_таблиці)`. Сам сигнал НЕ шлемо — його шле
+        сканер (там, де VOB і виник), через ті самі спільні ворота
+        `_signal_allowed`, що й решта сигналів.
+        """
+        s = self.get_settings()
+        if not s.get('enabled'):
+            return False, '💧 Сканер ліквідності вимкнено', None
+        if not s.get('vob_signal_on', True):
+            return False, 'сигнали «VOB + таблиця» вимкнено в налаштуваннях сканера', None
+        row = self.row_for(symbol)
+        ok, note = vob_confluence(row, vob_side, self.bias_dir())
+        return ok, note, row
+
+    def note_vob_signal(self, symbol: str, side: str, status: str,
+                        detail: str = ''):
+        """Записати РІШЕННЯ шляху «VOB + таблиця» (для показу в панелі).
+
+        `status`: 'signal' (пішов далі по алгоритму) · 'rejected' (спільні
+        ворота не пропустили) · 'in_trade' (угода по монеті вже відкрита) ·
+        'dup' (цей самий блок уже пішов як 🟪 VOB-алерт).
+        ⚠️ Звичайні «не збіглось» СЮДИ НЕ пишемо: це СТАН більшості монет
+        щотакту, і він залив би панель (той самий урок, що з логом VOB).
+        """
+        rec = {'symbol': str(symbol or '').upper(), 'side': side,
+               'status': status, 'detail': detail, 'at': time.time()}
+        with self._lock:
+            self._signals.insert(0, rec)
+            del self._signals[SIGNAL_LOG_CAP:]
+            if status == 'signal':
+                self._sig_count += 1
 
     # ── скан ────────────────────────────────────────────────────────────
     def scan(self, reason: str = 'manual') -> Dict:
@@ -496,6 +647,10 @@ class LiqHunterDaemon:
                    'status': self._status, 'last': dict(self._last),
                    'scanning': bool(self._scanning),
                    'next_at': self._next_at,
+                   # 💧 VOB + таблиця: скільки сигналів пішло від старту і що
+                   # саме сталось останнім — шлях мусить бути ВИДИМИЙ.
+                   'signals': [dict(x) for x in self._signals],
+                   'signal_count': self._sig_count,
                    'running': bool(self._thread and self._thread.is_alive())}
         # Живий напрямок банера — щоб було видно РОЗБІЖНІСТЬ між тим, під який
         # бік зібрано таблицю, і тим, куди банер дивиться зараз.

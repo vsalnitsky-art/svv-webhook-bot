@@ -4173,6 +4173,24 @@ class TradeManager:
         саме РЕАЛЬНУ книгу — не «якусь»."""
         return self._pilot_state.get(self._pilot_key(symbol, is_shadow))
 
+    def has_open_position(self, symbol: str) -> bool:
+        """Чи є ВІДКРИТА угода по монеті — у БУДЬ-ЯКІЙ книзі (real або 🧪 paper).
+
+        ПУБЛІЧНА відповідь на питання «угода вже існує?»: інакше кожен новий
+        шлях сигналу заглядав би у приватні `_positions`/`_shadow_positions`
+        сам (той самий принцип, через який зʼявились `volumized_on()` і
+        `last_tick_at()`). Обидві книги разом — бо в 🧪 режимі «відкрита угода»
+        це саме паперова позиція.
+        """
+        sym = (symbol or '').upper().strip()
+        if not sym:
+            return False
+        try:
+            return bool(sym in (self._positions or {})
+                        or sym in (self._shadow_positions or {}))
+        except Exception:
+            return False
+
     def set_origin_trace(self, symbol: str, text: str) -> None:
         """Fuel Filter кладе сюди ланцюг походження ПЕРЕД відкриттям; позиція
         забирає його при створенні. Одноразово — щоб не «прилипло» до наступної."""

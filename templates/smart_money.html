@@ -2622,7 +2622,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     <div class="tm-panel" id="liq-hunter-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(34,211,238,0.28);border-radius:8px;background:rgba(34,211,238,0.05)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
             <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('lh')"
-                 title="Клік — згорнути/розгорнути. 💧 Сканер відбирає монети за перекосом ліквідності В БІК, який показує банер 🧮 МММ-монітора, і веде власну таблицю кандидатів. Він нічого не відкриває і не сигналить — це спостереження.">
+                 title="Клік — згорнути/розгорнути. 💧 Сканер відбирає монети за перекосом ліквідності В БІК, який показує банер 🧮 МММ-монітора, і веде власну таблицю кандидатів. Сам він угод не відкриває: сигнал породжує лише збіг «новий VOB + напрямок банера + монета з цієї таблиці» (тумблер 📨 у налаштуваннях), і він іде звичайним алгоритмом — спільні фільтри → Черга → відкриття.">
                 <span id="lh-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span>
                 💧 Сканер ліквідності
                 <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети за масою ліквідації в бік банера МММ-монітора</span>
@@ -2764,6 +2764,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="lh-rescan-flip" onchange="lhSave()" style="margin:0">
                         🔁 Пересканувати на зміні напрямку банера
                     </label>
+                    <!-- 💧 VOB + банер + таблиця → СИГНАЛ (вимога 19.09).
+                         Дефолт УВІМКНЕНО: умову ввімкнення користувач задав
+                         самими наявними тумблерами (📦 Volumized OB Trend +
+                         💧 Сканер), тож третій вимикач із дефолтом OFF означав
+                         би, що вимога не працює, доки його не знайдуть. Потік
+                         угод це мовчки не розширює — сам Сканер дефолтом OFF. -->
+                    <label class="lh-flip"
+                           title="Кожен НОВОУТВОРЕНИЙ Volumized OB (той самий блок, що малюється на графіку) звіряється з цією таблицею. Якщо напрямок VOB = напрямок банера 🧮 МММ-монітора І монета є в таблиці — це СИГНАЛ: він проходить спільні ворота фільтрів і йде далі по алгоритму (у Чергу, якщо вона увімкнена, або одразу у відкриття, коли всі черги вимкнені). Перед відправкою перевіряється, чи немає вже ВІДКРИТОЇ угоди по монеті. Працює лише при увімкненому 📦 Volumized OB Trend у ⚙️ Settings.">
+                        <input type="checkbox" id="lh-vob-signal" onchange="lhSave()" style="margin:0">
+                        📨 Новий VOB + збіг із таблицею → сигнал (у Чергу / відкриття)
+                    </label>
                 </div>
             </details>
             <div class="lh-actions">
@@ -2773,6 +2784,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span id="lh-dir" style="font-size:0.7rem;font-family:monospace"></span>
                 <span id="lh-stat" style="font-size:0.68rem;color:#8b93a7">Ще не сканували</span>
             </div>
+            <!-- 📨 ШЛЯХ «VOB + таблиця» МУСИТЬ БУТИ ВИДИМИЙ. Поки не зʼявиться
+                 новий VOB, він мовчить за побудовою — і без цього рядка це
+                 читалось би як «не працює» (той самий урок, що «де сигнали?»
+                 у монітора). Тут — лічильник і останні рішення. -->
+            <div id="lh-sig" style="font-size:0.66rem;color:#8b93a7;margin:2px 0 6px;font-family:monospace"></div>
             <div class="ff-timers-scroll" style="max-height:340px">
                 <table class="tm-table" id="lh-table">
                     <thead>
@@ -12407,6 +12423,7 @@ async function lhSave() {
         // `_lhNum`, а не `||` — нуль тут ЗМІСТОВНИЙ.
         min_magnet_dist_pct: _lhNum('lh-magdist', 3),
         rescan_on_flip: !!(document.getElementById('lh-rescan-flip') || {}).checked,
+        vob_signal_on: !!(document.getElementById('lh-vob-signal') || {}).checked,
     };
     try {
         const r = await fetch('/api/liq-hunter/settings', {
@@ -12468,7 +12485,9 @@ function lhApply(d) {
     set('lh-mass', String(s.min_mass_pct));
     set('lh-magdist', String(s.min_magnet_dist_pct));
     set('lh-rescan-flip', s.rescan_on_flip !== false);
+    set('lh-vob-signal', s.vob_signal_on !== false);
     _lhUniverseSync();
+    _lhSignalsRender(d);
     // Згорнута гармошка мусить казати, ЗА ЧИМ саме відбираються монети —
     // інакше «7 монет» ні з чим звірити (той самий принцип, що розклад
     // фільтрів у 🧾 Лозі).
@@ -12481,6 +12500,7 @@ function lhApply(d) {
             `💧 маса ≥ ${s.min_mass_pct}%`,
             `🧲 магніт ≥ ${s.min_magnet_dist_pct}%`,
             `⏱ ${s.interval_min} хв`,
+            (s.vob_signal_on !== false ? '📨 VOB→сигнал' : '📨 VOB→сигнал: off'),
         ].join(' · ');
     }
     const up = document.getElementById('lh-updated');
@@ -12520,6 +12540,55 @@ function lhApply(d) {
         ].filter(Boolean).join('\n');
     }
     lhRender();
+}
+// 📨 ШЛЯХ «НОВИЙ VOB + БАНЕР + ТАБЛИЦЯ» — рядок видимості.
+// Бекенд віддає ЧИСТІ записи (`signals`), кольори й слова робить фронт (той
+// самий принцип, що `verdict.parts` у драбині).
+const _LH_SIG = {
+    signal:   { ic: '📨', col: '#4ade80', w: 'сигнал' },
+    rejected: { ic: '⛔', col: '#fbbf24', w: 'фільтри не пропустили' },
+    in_trade: { ic: '💼', col: '#38bdf8', w: 'угода вже відкрита' },
+    dup:      { ic: '↺',  col: '#8b93a7', w: 'блок уже пішов як 🟪 VOB-алерт' },
+};
+function _lhSignalsRender(d) {
+    const el = document.getElementById('lh-sig');
+    if (!el) return;
+    const s = d.settings || {};
+    if (s.vob_signal_on === false) {
+        el.innerHTML = '<span style="color:#8b93a7">📨 «Новий VOB + таблиця → сигнал» — вимкнено в налаштуваннях</span>';
+        el.title = 'Таблиця сканера й далі оновлюється, але сигнали з неї не йдуть.';
+        return;
+    }
+    // ⚠️ Друга половина умови — 📦 Volumized OB Trend. Вимкнений блок означає,
+    // що VOB узагалі не рахується, тож сигналів не буде НІКОЛИ; мовчати про це
+    // не можна — виглядало б як поломка шляху.
+    if (typeof wlVolumizedEnabled !== 'undefined' && !wlVolumizedEnabled) {
+        el.innerHTML = '<span style="color:#fbbf24">📦 Volumized OB Trend вимкнено '
+            + '(⚙️ Settings) — нових VOB немає, сигналів із таблиці не буде</span>';
+        el.title = 'Шлях працює лише коли увімкнені ОБИДВА: 📦 Volumized OB Trend '
+            + 'і 💧 Сканер ліквідності.';
+        return;
+    }
+    const list = Array.isArray(d.signals) ? d.signals : [];
+    const head = `📨 сигналів від старту: <b style="color:#4ade80">${d.signal_count || 0}</b>`;
+    if (!list.length) {
+        el.innerHTML = head + ' <span style="color:#8b93a7">· чекаємо НОВИЙ VOB по монеті з таблиці</span>';
+        el.title = 'Шлях мовчить, поки не зʼявиться новоутворений Volumized OB '
+            + 'по монеті, яка є в таблиці, і в той самий бік, що й банер '
+            + '🧮 МММ-монітора. Це нормальний стан, а не збій.';
+        return;
+    }
+    el.innerHTML = head + ' · ' + list.slice(0, 3).map(x => {
+        const m = _LH_SIG[x.status] || { ic: '•', col: '#8b93a7', w: x.status };
+        const t = x.at ? new Date(x.at * 1000).toLocaleTimeString() : '';
+        return `<span style="color:${m.col}">${m.ic} ${x.symbol} ${x.side || ''}</span>`
+            + `<span style="color:#6b7280"> ${t}</span>`;
+    }).join(' · ');
+    el.title = list.map(x => {
+        const m = _LH_SIG[x.status] || { w: x.status };
+        const t = x.at ? new Date(x.at * 1000).toLocaleString() : '';
+        return `${t} · ${x.symbol} ${x.side || ''} — ${m.w}${x.detail ? ': ' + x.detail : ''}`;
+    }).join('\n');
 }
 function _lhMassCell(r) {
     const up = r.mass_dir === 'up';
@@ -14729,6 +14798,7 @@ const SIGNAL_BADGES_JS = {
     'choch': '🟦 CHoCH', 'choch_bos': '🟦 CHoCH+BOS',
     'vob_alert': '🟪 Volumized OB', 'vob': '💰 Volumized OB',
     'mm_vob': '🧮 VOB з МММ-монітора',
+    'liq_vob': '💧 VOB + Сканер ліквідності',
     'ob_alert': '🆕 Новий OB',
     'poc': '🎯 POC-сетап',
     'opp': '🔄 Реверс', 'external': '🔌 Зовнішня', 'manual': '✋ Ручний',
@@ -14742,7 +14812,7 @@ const ENGINE_BADGES_JS = {
 };
 const SIGNAL_ICON_JS = {
     'choch': '🟦', 'choch_bos': '🟦', 'vob_alert': '🟪', 'vob': '💰',
-    'mm_vob': '🧮',
+    'mm_vob': '🧮', 'liq_vob': '💧',
     'ob_alert': '🆕',
     'poc': '🎯', 'opp': '🔄', 'external': '🔌', 'manual': '✋',
     'manual_ui': '✋', 'manual_ui_overflow': '✋',

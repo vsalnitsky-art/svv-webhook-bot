@@ -80,6 +80,26 @@ def _oba_mod():
     return _sibling_mod('ob_alert', '_OBA_CACHE')
 
 
+def _lh_mod():
+    """💧 Сканер ліквідності — ЖИВИЙ модуль (той, що тримає синглтон).
+
+    ⚠️ ТУТ НЕ МОЖНА користуватись `_sibling_mod`: він при невдачі вантажить
+    файл НАПРЯМУ, а це ОКРЕМИЙ обʼєкт модуля з власним `_instance = None` —
+    сканер мовчки вирішив би, що сканера немає, і шлях «VOB + таблиця» тихо не
+    працював би. Тому лише вже завантажений модуль або звичайний імпорт;
+    не вийшло — чесно None (шлях просто не спрацює).
+    """
+    import sys as _sys
+    m = _sys.modules.get('detection.liq_hunter')
+    if m is not None:
+        return m
+    try:
+        import importlib
+        return importlib.import_module('detection.liq_hunter')
+    except Exception:
+        return None
+
+
 
 # Defaults
 # Пауза МІЖ циклами. Сам цикл тепер швидкий (паралельний префетч),
@@ -568,6 +588,20 @@ class SMCScanner:
         # Віддається в get_state (`vob_diag`) → видно в UI/інфосайті. Жодного
         # тихого відкидання: раніше stale/epoch гинули без сліду — тепер ні.
         self._vob_diag: Dict[str, Dict] = {}
+        # 💧 VOB + 🧮 БАНЕР + ТАБЛИЦЯ 💧 СКАНЕРА → СИГНАЛ (вимога 19.09).
+        # ВЛАСНА база опрацьованих блоків {symbol: {side: [formation_time,…]}} —
+        # НЕ спільна з `_vob_alert_seen`: це два НЕЗАЛЕЖНІ споживачі тієї самої
+        # події, і спільна база означала б, що ввімкнений 🟪 VOB-алерт мовчки
+        # зʼїдає блоки у цього шляху (і навпаки).
+        # ⚠️ У БД НЕ персиститься СВІДОМО: після рестарту базу тримає вікно
+        # свіжості — блок у межах вікна це той, що ЩОЙНО зʼявився на графіку
+        # (він і має дати сигнал), старший → тиха база.
+        self._liqvob_seen: Dict[str, Dict[str, list]] = {}
+        # {symbol → formation_time блоку, який щойно пішов як 🟪 VOB-алерт} —
+        # щоб ОДИН блок не дав ДВА сигнали, коли увімкнені обидва шляхи.
+        self._vob_fired_ft: Dict[str, int] = {}
+        # 🔎 Прозорість шляху: {symbol → останнє рішення} (для get_state).
+        self._liqvob_diag: Dict[str, Dict] = {}
 
         # 🖼 УСІ ЖИВІ 1H-БЛОКИ обох сімей (internal + swing) — ЛИШЕ ДЛЯ ПОКАЗУ,
         # щоб графік бота збігався з LuxAlgo. Пишеться в `_update_smc_ob` (той
@@ -2397,6 +2431,9 @@ class SMCScanner:
                                                         if _tm:
                                                             _tm.on_signal(symbol=symbol, side=_cside,
                                                                           entry_price=_entry, opened_by='vob_alert')
+                                                        # 💧 ЦЕЙ БЛОК УЖЕ ВІДПРАЦЮВАВ як 🟪 VOB-алерт —
+                                                        # шлях «VOB + таблиця» його НЕ дублює.
+                                                        self._vob_fired_ft[symbol] = _ft
                                                     else:
                                                         # ⛔ Відсіяно — такт НЕ витрачено, чекаємо
                                                         # наступний VOB на цьому ж 1H-OB.
@@ -2450,6 +2487,8 @@ class SMCScanner:
                                                     if _tm:
                                                         _tm.on_signal(symbol=symbol, side=_cside,
                                                                       entry_price=_entry, opened_by='vob_alert')
+                                                    # 💧 Блок уже відпрацював як 🟪 VOB-алерт.
+                                                    self._vob_fired_ft[symbol] = _ft
                                                 else:
                                                     log_activity(symbol, 'signal',
                                                                  f'Volumized OB ({vol_tf}) {_cside} · '
@@ -2463,6 +2502,14 @@ class SMCScanner:
                                 except Exception as _ve:
                                     if self._errors <= 5:
                                         print(f"[SMC] VOB-alert error for {symbol}: {_ve}")
+
+                            # 💧 VOB + 🧮 БАНЕР + ТАБЛИЦЯ 💧 СКАНЕРА → СИГНАЛ
+                            # (вимога 19.09). НЕЗАЛЕЖНИЙ від 🟪 VOB-алерта шлях:
+                            # умова ввімкнення — саме «📦 Volumized OB Trend + 💧
+                            # Сканер», як просив користувач.
+                            if self._settings.get('use_volumized_ob', True):
+                                self._liq_vob_check(symbol, vol_result, vol_tf,
+                                                    vol_klines)
                         else:
                             # No TF data — clear cache so stale entries
                             # don't linger (e.g., user changed TF and
@@ -3552,6 +3599,135 @@ class SMCScanner:
                          side=side, source='VOB')
         except Exception:
             pass
+
+    # ═══ 💧 VOB + 🧮 БАНЕР + ТАБЛИЦЯ 💧 СКАНЕРА → СИГНАЛ (вимога 19.09) ═══
+    def _liq_vob_check(self, symbol, vol_result, vol_tf, vol_klines):
+        """НОВИЙ VOB звіряємо з таблицею 💧 Сканера ліквідності.
+
+        **Вимога дослівно:** «Якщо увімкнено 📦 Volumized OB Trend і увімкнено
+        "Сканер ліквідності", то кожен новоутворений VOB звіряємо з таблицею
+        "Сканер ліквідності", і якщо співпадає напрямок VOB + напрямок банера
+        "МММ-монітор" і є така ж монета у таблиці — одразу маємо сигнал і
+        відправляємо монету далі по алгоритму в Чергу (якщо активно) або
+        відразу відкриваємо угоду, перед цим перевіривши, чи не існує вже
+        відкрита така угода.»
+
+        Ключові рішення (кожне — урок, уже сплачений у цьому проєкті):
+        • **Блок — САМЕ ТОЙ, ЩО НА ГРАФІКУ** (`_vob_chart_candidates`): та сама
+          функція, що й у 🟪 VOB-алерта. Своєї «новизни» не вигадуємо.
+        • **«НОВИЙ» = ще НЕ опрацьований** (`_vob_outcome` над СПИСКОМ
+          formation_time) — інакше пастка breaker: коли поточний блок стає
+          breaker, найновішим стає СТАРІШИЙ, і водяний знак завис би назавжди.
+        • **ВІКНО СВІЖОСТІ** — те саме, що у VOB-алерта (`vob_alert_max_age_bars`,
+          0 = авто `swing_length + 2`). «Новоутворений» — це момент появи; другого
+          числа для того самого поняття не заводимо.
+        • **РОЗБІГ НЕ КОВТАЄ БЛОК:** якщо збігу зараз немає (монети ще немає в
+          таблиці, банер щойно розвернувся, угода відкрита) — блок НЕ
+          позначаємо опрацьованим і спробуємо ще, доки він у вікні свіжості.
+          Той самий прийом, що `wait_htf` у 🆕 Новому OB.
+        • **ЧЕРЕЗ СПІЛЬНІ ВОРОТА `_signal_allowed`, І НІЯК ІНАКШЕ** (урок
+          ASTERUSDT). «Далі по алгоритму в Чергу або відкрити» робить
+          `tm.on_signal` → `intercept`: черги вирішують самі, а коли всі
+          вимкнені — TM відкриває напряму.
+        • **Угода вже відкрита → сигналу немає** (дослівна вимога): питаємо
+          ПУБЛІЧНИЙ `tm.has_open_position` (обидві книги).
+        """
+        try:
+            _cands = self._vob_chart_candidates(vol_result)
+            if not _cands:
+                return
+            side, ob, ft = _cands[-1]
+            lh_mod = _lh_mod()
+            lh = lh_mod.get_liq_hunter() if lh_mod else None
+            if not lh:
+                return          # сканера немає/не піднявся — шлях просто мовчить
+            # ⚠️ Гейт шляху питаємо ДО того, як чіпати базу: вимкнений сканер
+            # НЕ має «зʼїдати» блоки — інакше після вмикання перший же реальний
+            # блок виглядав би вже опрацьованим.
+            if not lh.vob_signal_on():
+                return
+            ok, note, _row = lh.vob_match(symbol, side)
+            _done = self._vob_seen_list(self._liqvob_seen.setdefault(symbol, {}),
+                                        side)
+            _age = self._vob_age_bars(vol_klines, ft)
+            _sl = int(self._settings.get('volumized_swing_length', 10) or 10)
+            _cfg_age = int(self._settings.get('vob_alert_max_age_bars', 0) or 0)
+            _max_age = _cfg_age if _cfg_age > 0 else (_sl + 2)
+            _out = self._vob_outcome(_done, ft, _age, _max_age)
+            if _out == 'duplicate':
+                return
+            if _out in ('first_sight', 'stale'):
+                # Старий блок: сигналом він був у момент появи, а не тепер.
+                # Тиха база — у лог нічого (це СТАН, не подія).
+                self._vob_seen_add(self._liqvob_seen[symbol], side, ft)
+                self._liqvob_diag[symbol] = {
+                    'ts': time.time(), 'side': side, 'state': _out, 'ft': ft,
+                    'tf': vol_tf, 'note': f'вік {_age} барів, поріг {_max_age}'}
+                return
+            # ── блок СВІЖИЙ і ще не опрацьований ────────────────────────────
+            if self._vob_fired_ft.get(symbol) == ft:
+                # Той самий блок щойно пішов як 🟪 VOB-алерт — ДРУГОГО сигналу
+                # по ньому не робимо (у черзі це був би той самий запис).
+                self._vob_seen_add(self._liqvob_seen[symbol], side, ft)
+                self._liqvob_diag[symbol] = {
+                    'ts': time.time(), 'side': side, 'state': 'dup', 'ft': ft,
+                    'tf': vol_tf, 'note': 'цей блок уже пішов як 🟪 VOB-алерт'}
+                lh.note_vob_signal(symbol, side, 'dup',
+                                   'блок уже пішов як 🟪 VOB-алерт')
+                return
+            if not ok:
+                # Збігу немає → блок НЕ опрацьовуємо: таблиця оновлюється раз на
+                # 15 хв, банер підтверджується хвилинами, і блок цілком може
+                # «дочекатись» збігу, поки він свіжий.
+                self._liqvob_diag[symbol] = {
+                    'ts': time.time(), 'side': side, 'state': 'wait', 'ft': ft,
+                    'tf': vol_tf, 'note': note}
+                return
+            from detection.trade_manager import get_trade_manager
+            _tm = get_trade_manager()
+            if _tm and _tm.has_open_position(symbol):
+                # Дослівна вимога: перед відправкою перевіряємо, чи немає вже
+                # відкритої угоди. Блок НЕ опрацьовуємо — угода може закритись,
+                # поки блок ще свіжий.
+                self._liqvob_diag[symbol] = {
+                    'ts': time.time(), 'side': side, 'state': 'in_trade',
+                    'ft': ft, 'tf': vol_tf, 'note': 'угода по монеті вже відкрита'}
+                lh.note_vob_signal(symbol, side, 'in_trade',
+                                   'угода по монеті вже відкрита')
+                return
+            # Блок опрацьовано (сигнал або відсів фільтрами — обидва рази РАЗ).
+            self._vob_seen_add(self._liqvob_seen[symbol], side, ft)
+            try:
+                from detection.activity_log import log_activity
+            except Exception:
+                log_activity = lambda *a, **k: None
+            _entry = (self._get_live_price(symbol)
+                      or (ob.get('top') if side == 'SHORT' else ob.get('bottom'))
+                      or 0)
+            _ok, _reason, _detail = self._signal_allowed(symbol, side,
+                                                         at_intake=True)
+            _head = (f'💧 VOB + Сканер ліквідності ({vol_tf}) {side} · {note} · '
+                     f'{self._vob_age_label(ft, _age, vol_tf)}')
+            log_activity(symbol, 'signal', f'{_head} · {_detail}',
+                         side=side, source='LIQ-VOB')
+            if _ok:
+                self._liqvob_diag[symbol] = {
+                    'ts': time.time(), 'side': side, 'state': 'signal',
+                    'ft': ft, 'tf': vol_tf, 'note': note}
+                lh.note_vob_signal(symbol, side, 'signal', note)
+                if _tm:
+                    _tm.on_signal(symbol=symbol, side=side,
+                                  entry_price=_entry, opened_by='liq_vob')
+            else:
+                log_activity(symbol, 'rejected', _reason, side=side,
+                             source='LIQ-VOB')
+                self._liqvob_diag[symbol] = {
+                    'ts': time.time(), 'side': side, 'state': 'rejected',
+                    'ft': ft, 'tf': vol_tf, 'note': _reason}
+                lh.note_vob_signal(symbol, side, 'rejected', _reason)
+        except Exception as _e:
+            if self._errors <= 5:
+                print(f"[SMC] LIQ-VOB error for {symbol}: {_e}")
 
     @staticmethod
     def _swing_hl_labels(trend):
@@ -5662,6 +5838,12 @@ class SMCScanner:
                 # правди для UI/інфосайту «де ми втрачаємо сигнали».
                 'vob_diag': {sym: dict(rec) for sym, rec in self._vob_diag.items()},
                 'vob_alert_enabled': bool(self._settings.get('vob_alert_enabled', False)),
+                # 💧 ПРОЗОРІСТЬ шляху «VOB + банер + таблиця 💧 Сканера»:
+                # останнє рішення по монеті (signal/rejected/wait/in_trade/dup/
+                # stale). Придушені стани в 🧾 Лог не пишуться (це СТАНИ), тож
+                # «чому по монеті немає реакції» відповідає саме це поле.
+                'liqvob_diag': {sym: dict(rec)
+                                for sym, rec in self._liqvob_diag.items()},
                 # 🆕 ПРОЗОРІСТЬ НОВОГО ТИПУ СИГНАЛУ «Новий OB»: останнє рішення
                 # по монеті (`new`/`wait_htf`/`dedup`) + комбінація TF і причина.
                 # ⚠️ Придушені стани у 🧾 Лог НЕ пишуться (це СТАНИ, а не

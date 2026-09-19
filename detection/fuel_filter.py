@@ -1481,6 +1481,7 @@ class FuelFilterDaemon:
         _kind_lbl = {'choch': 'CHoCH', 'choch_bos': 'CHoCH+BOS',
                      'vob': 'Volumized OB', 'vob_alert': 'Volumized OB',
                      'mm_vob': '🧮 VOB з МММ-монітора',
+                     'liq_vob': '💧 VOB + Сканер ліквідності',
                      'poc': '🎯 POC-сетап', 'opp': '🔄 Реверс'}.get(kind, kind or '?')
         try:
             from detection.activity_log import log_activity
