@@ -61,6 +61,9 @@ class _TM(TM):
         self._opp_ob_base = {}
         self._signal_exit_at = {}
         self._mm_flat_since = {}
+        # 🔄 Витримка розвороту (20.09) — нове поле стану ЗАВЖДИ додавати сюди,
+        # інакше правило падає з AttributeError «на рівному місці».
+        self._mm_against_since = {}
         self.closed = []
         pos = {'symbol': 'MNTUSDT', 'side': side, 'entry_price': 0.5136,
                'opened_at': opened_at}
@@ -471,7 +474,11 @@ def _mm(side='SHORT', rows=None, **settings):
            'mm_flat_exit_confirm_sec': 0, 'use_opposite_ob_exit': False}
     cfg.update(settings)
     t = _reset(side=side, **cfg)
-    _use_ff(_FF(rows if rows is not None else {}))
+    ff = _FF(rows if rows is not None else {})
+    _use_ff(ff)
+    # Доступ до зрізу з тесту: сценарії «МММ розвернувся → повернувся» мусять
+    # міняти дані МІЖ тактами, а не створювати новий TM (таймери б зникли).
+    t._ff = ff
     return t
 
 
@@ -603,28 +610,74 @@ def test_confirm_timer_resets_when_direction_returns():
 # то закривати відразу». Сенс поля — межа напрямку |dir| ≤ 0.1, біля якої
 # показник МИГОТИТЬ; зустрічний тиск миготінням не є.
 
-def test_against_closes_immediately_despite_the_confirm_window():
+def test_the_reversal_waits_out_its_own_window():
+    """⚠️ ВИМОГА ЗМІНИЛАСЬ (20.09, дослівно: «потрібно трішки витримки, бо
+    секундна зміна і вибиває з угоди»). Замок 18.09 «проти → закривати
+    ОДРАЗУ» ПЕРЕПИСАНО, а не полагоджено: розворот тепер теж підтверджується
+    часом — але СВОЇМ полем, не полем ⚖ рівноваги."""
     t = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)},
-            mm_flat_exit_mode='flat_or_against', mm_flat_exit_confirm_sec=900)
+            mm_flat_exit_mode='flat_or_against',
+            mm_flat_exit_confirm_sec=0, mm_against_exit_confirm_sec=900)
     t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
-    # ⚠️ Код причини розвороту — ВЛАСНИЙ (`mm_against_exit`, уточнення 18.09).
+    _check(t.closed == [], f'секундний розворот не має вибивати з угоди: {t.closed}')
+    _check('MNTUSDT' in t._mm_against_since, 'відлік розвороту не стартував')
+    # Розворот ТРИМАЄТЬСЯ → після витримки закриваємо (код причини свій).
+    t._mm_against_since['MNTUSDT'] -= 901
+    t._signal_exit_at.clear()
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
     _check(t.closed == [('real', 'mm_against_exit')],
-           f'розворот МММ мусить закривати ОДРАЗУ, без витримки: {t.closed}')
-    _check(any('ОДРАЗУ' in x for x in _LOG),
-           f'у причині не сказано, що витримка тут не діє: {_LOG}')
-    print('✓ 🧮 «проти» закривається одразу, витримку не чекає')
+           f'витриманий розворот мусить закрити угоду: {t.closed}')
+    _check(any('тримається' in x for x in _LOG),
+           f'у причині не видно, скільки розворот тримався: {_LOG}')
+    print('✓ 🧮 розворот чекає ВЛАСНУ витримку, а потім закриває')
 
 
-def test_against_does_not_start_or_keep_the_flat_timer():
-    """Таймер міряє САМЕ рівновагу. Лишити його після розвороту означало б
-    віддати наступному епізоду ⚖ чужу «відпрацьовану» витримку."""
+def test_the_reversal_timer_resets_when_mm_comes_back():
+    """Повернувся напрямок (або ⚖) → відлік розвороту ОБНУЛЯЄТЬСЯ: інакше
+    короткі зустрічні сплески «накопичувались» би між епізодами."""
     t = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)},
-            mm_flat_exit_mode='flat_or_against', mm_flat_exit_confirm_sec=900)
-    t._mm_flat_since['MNTUSDT'] = time.time() - 10   # ⚖ уже лічився
+            mm_flat_exit_mode='flat_or_against', mm_against_exit_confirm_sec=900)
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check('MNTUSDT' in t._mm_against_since, 'відлік розвороту не стартував')
+    t._ff.rows['MNTUSDT'] = _row('SHORT', 40)        # МММ знову в бік угоди
+    t._signal_exit_at.clear()
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check('MNTUSDT' not in t._mm_against_since,
+           'відлік розвороту мусить обнулятись, коли МММ повернувся')
+    _check(t.closed == [], f'угода мусить лишитись відкритою: {t.closed}')
+    print('✓ 🧮 повернення МММ обнуляє відлік розвороту')
+
+
+def test_the_two_windows_never_inherit_each_other():
+    """⚖ і 🔄 — РІЗНІ події, тож і витримки різні. Перехід між станами не має
+    «дарувати» новому стану вже відпрацьований чужий час."""
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)},
+            mm_flat_exit_mode='flat_or_against',
+            mm_flat_exit_confirm_sec=900, mm_against_exit_confirm_sec=900)
+    t._mm_flat_since['MNTUSDT'] = time.time() - 890  # ⚖ майже «дозрів»
     t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
     _check('MNTUSDT' not in t._mm_flat_since,
            'таймер рівноваги лишився після розвороту')
-    print('✓ 🧮 розворот не успадковує і не лишає таймер рівноваги')
+    _check(t.closed == [], f'чужа витримка не має закривати угоду: {t.closed}')
+    # І дзеркально: розворот → рівновага не успадковує його відлік.
+    t._mm_against_since['MNTUSDT'] = time.time() - 890
+    t._ff.rows['MNTUSDT'] = _row(None, 5)
+    t._signal_exit_at.clear()
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check('MNTUSDT' not in t._mm_against_since,
+           'таймер розвороту лишився після переходу в ⚖')
+    _check(t.closed == [], f'⚖ мусить набирати СВОЮ витримку з нуля: {t.closed}')
+    print('✓ 🧮 витримки ⚖ і 🔄 не перетікають одна в одну')
+
+
+def test_zero_window_keeps_the_old_instant_behaviour():
+    """0 = закривати одразу — щоб стара поведінка лишалась досяжною."""
+    t = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)},
+            mm_flat_exit_mode='flat_or_against', mm_against_exit_confirm_sec=0)
+    t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
+    _check(t.closed == [('real', 'mm_against_exit')],
+           f'при 0 розворот мусить закривати одразу: {t.closed}')
+    print('✓ 🧮 «0 с» повертає миттєве закриття на розвороті')
 
 
 def test_the_window_still_guards_the_flat_state_in_the_same_mode():
@@ -642,14 +695,30 @@ def test_the_window_still_guards_the_flat_state_in_the_same_mode():
     print('✓ 🧮 витримка і далі стереже саме ⚖ рівновагу')
 
 
-def test_ui_says_the_window_is_about_the_flat_state():
+def test_ui_has_a_separate_window_for_each_state():
+    """⚠️ Замок ПЕРЕПИСАНО (вимога 20.09): полів тепер ДВА, і кожне мусить
+    казати, про який саме стан воно — інакше користувач крутив би не те."""
     i = _HTML_SM.index('id="tm-mm-flat-exit-confirm"')
-    block = _HTML_SM[max(0, i - 900):i]
-    _check('Рівновага тримається' in block,
+    _check('Рівновага тримається' in _HTML_SM[max(0, i - 900):i],
            'підпис поля не каже, що витримка — саме про ⚖ рівновагу')
-    _check('ОДРАЗУ' in block,
-           'у підказці не сказано, що розворот закривається без витримки')
-    print('✓ UI: поле підписане як витримка ⚖ рівноваги')
+    j = _HTML_SM.index('id="tm-mm-against-exit-confirm"')
+    _check(j > i, 'поле витримки розвороту мусить стояти під полем ⚖')
+    block = _HTML_SM[max(0, j - 1400):j]
+    _check('Розворот тримається' in block,
+           'друге поле не підписане як витримка РОЗВОРОТУ')
+    _check('обнуляється' in block or 'обнуля' in block,
+           'у підказці не сказано, що повернення МММ скидає відлік')
+    _check('mm_against_exit_confirm_sec' in _HTML_SM,
+           'ключ не їде на сервер')
+    print('✓ UI: у ⚖ і 🔄 власні поля витримки, обидва підписані')
+
+
+def test_the_reversal_window_has_a_sane_default():
+    _check(tmmod.DEFAULT_SETTINGS['mm_against_exit_confirm_sec'] == 60,
+           'дефолт витримки розвороту — 60с (одне оновлення джерела)')
+    _check(tmmod.DEFAULT_SETTINGS['mm_flat_exit_confirm_sec'] == 0,
+           'витримка ⚖ лишається окремим числом і не змінилась')
+    print('✓ ⚙️ дефолт витримки розвороту — 60с, ⚖ не зачеплено')
 
 
 def test_rule_is_off_by_default():
@@ -803,10 +872,13 @@ if __name__ == '__main__':
     test_bad_mode_value_falls_back_to_flat()
     test_confirm_window_requires_the_state_to_hold()
     test_confirm_timer_resets_when_direction_returns()
-    test_against_closes_immediately_despite_the_confirm_window()
-    test_against_does_not_start_or_keep_the_flat_timer()
+    test_the_reversal_waits_out_its_own_window()
+    test_the_reversal_timer_resets_when_mm_comes_back()
+    test_the_two_windows_never_inherit_each_other()
+    test_zero_window_keeps_the_old_instant_behaviour()
     test_the_window_still_guards_the_flat_state_in_the_same_mode()
-    test_ui_says_the_window_is_about_the_flat_state()
+    test_ui_has_a_separate_window_for_each_state()
+    test_the_reversal_window_has_a_sane_default()
     test_rule_is_off_by_default()
     test_rule_stays_out_of_the_and_or_combination()
     test_source_is_the_shared_snapshot_and_nothing_is_recomputed()

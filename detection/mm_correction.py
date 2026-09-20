@@ -106,13 +106,18 @@ def _share(against: int, forward: int):
     return (against / tot * 100.0) if tot > 0 else None
 
 
-def _layer(key, icon, name, pct, need, n, against, forward, note=''):
+def _layer(key, icon, name, pct, need, n, against, forward, note='', unit='%'):
     """Один шар у єдиній формі. `ok=False` — шар НЕ визначений (мала вибірка
-    або немає даних): він не «за» і не «проти», його просто не рахуємо."""
+    або немає даних): він не «за» і не «проти», його просто не рахуємо.
+
+    ⚠️ `unit` віддається З БЕКЕНДА, а не вгадується фронтом: дві часткові
+    ознаки міряються у **%**, а просідання важеля — у **п.п.**, і підписати
+    його відсотком означало б назвати число не тим, що воно є.
+    """
     ok = pct is not None and n >= MIN_SAMPLE
     return {'key': key, 'icon': icon, 'name': name,
             'pct': None if pct is None else round(pct, 1),
-            'need': round(float(need), 1), 'n': n,
+            'need': round(float(need), 1), 'n': n, 'unit': unit,
             'against': against, 'forward': forward,
             'ok': bool(ok), 'lit': bool(ok and pct >= need), 'note': note}
 
@@ -180,12 +185,13 @@ def lever_layer(now_pct, peak_pct, need_drop: float,
     p = _num(peak_pct)
     if n is None or p is None:
         return {'key': 'lever', 'icon': '📉', 'name': 'Важіль просів',
-                'pct': None, 'need': round(need, 1), 'n': 0,
+                'pct': None, 'need': round(need, 1), 'n': 0, 'unit': 'п.п.',
                 'against': 0, 'forward': 0, 'ok': False, 'lit': False,
                 'note': 'ще немає історії важеля'}
     drop = max(0.0, p - n)
     return {'key': 'lever', 'icon': '📉', 'name': 'Важіль просів',
             'pct': round(drop, 1), 'need': round(need, 1), 'n': 1,
+            'unit': 'п.п.',
             'against': 0, 'forward': 0, 'ok': True,
             'lit': bool(need > 0 and drop >= need),
             'note': f'пік {round(p, 1)} п.п. → зараз {round(n, 1)} п.п.'}

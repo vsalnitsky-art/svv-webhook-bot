@@ -4189,7 +4189,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <div class="tm-row">
                             <label>
                                 ⚖ Закривати коли:
-                                <span class="tm-help" title="• Лише рівновага — дослівно те, що просили: виходимо, коли МММ став ⚖ (напрямку немає). Якщо МММ РОЗВЕРНУВСЯ проти угоди, але напрямок у нього є — тримаємо. • Рівновага АБО проти — виходимо ще й на розвороті МММ у протилежний бік. Варіант для тих, хто вважає розворот гіршим сигналом за згасання. ⚠️ Розворот закривається ОДРАЗУ — поле «⏱ ⚖ Рівновага тримається ≥» на нього НЕ діє.">?</span>
+                                <span class="tm-help" title="• Лише рівновага — дослівно те, що просили: виходимо, коли МММ став ⚖ (напрямку немає). Якщо МММ РОЗВЕРНУВСЯ проти угоди, але напрямок у нього є — тримаємо. • Рівновага АБО проти — виходимо ще й на розвороті МММ у протилежний бік. Варіант для тих, хто вважає розворот гіршим сигналом за згасання. ⚠️ У кожного стану СВОЯ витримка: ⚖ рівновага — поле нижче, розворот — власне поле «⏱ 🔄 Розворот тримається ≥».">?</span>
                             </label>
                             <select id="tm-mm-flat-exit-mode" onchange="saveTMSettings()"
                                     style="background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px">
@@ -4200,9 +4200,22 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <div class="tm-row">
                             <label>
                                 ⏱ ⚖ Рівновага тримається ≥
-                                <span class="tm-help" title="Скільки СЕКУНД має протриматись безперервно САМЕ ⚖ РІВНОВАГА, перш ніж закривати. 0 = закривати на першому ж такті. Поле існує тому, що межа напрямку — це сила ≈10%: біля неї показник може миготіти між «рівновага» і «слабкий напрямок», і кожне миготіння вибивало б з ринку. Знімок оновлюється раз на ~30с, тож розумні значення — 60-120с. ⚠️ На РОЗВОРОТ МММ проти угоди (режим «⚖ рівновага АБО проти») витримка НЕ поширюється: зустрічний тиск — це не миготіння біля нуля, тож там угода закривається ОДРАЗУ.">?</span>
+                                <span class="tm-help" title="Скільки СЕКУНД має протриматись безперервно САМЕ ⚖ РІВНОВАГА, перш ніж закривати. 0 = закривати на першому ж такті. Поле існує тому, що межа напрямку — це сила ≈10%: біля неї показник може миготіти між «рівновага» і «слабкий напрямок», і кожне миготіння вибивало б з ринку. Знімок оновлюється раз на ~30с, тож розумні значення — 60-120с. ⚠️ Розворот МММ ПРОТИ угоди має ВЛАСНУ витримку — поле нижче (це різні події: тут «тиску немає», там «тиск проти»).">?</span>
                             </label>
                             <input type="number" id="tm-mm-flat-exit-confirm" min="0" max="3600" step="30"
+                                   onchange="saveTMSettings()"
+                                   style="width:62px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"> с
+                        </div>
+                        <!-- 🔄 ВИТРИМКА ДЛЯ РОЗВОРОТУ (вимога 20.09: «потрібно
+                             трішки витримки, бо секундна зміна і вибиває з
+                             угоди»). Скасовує правило 18.09 «проти → одразу».
+                             ОКРЕМЕ поле: рівновага і розворот — різні події. -->
+                        <div class="tm-row">
+                            <label>
+                                ⏱ 🔄 Розворот тримається ≥
+                                <span class="tm-help" title="Скільки СЕКУНД має протриматись РОЗВОРОТ «🧮 Старий МММ» ПРОТИ вашої угоди, перш ніж закривати (діє лише в режимі «⚖ рівновага АБО проти»). 0 = закривати одразу. Дефолт 60с ≈ одне оновлення liq-map: розворот мусить пережити хоча б ОДИН новий розрахунок джерела, а не миттєве тремтіння — інакше секундна зміна вибиває з угоди. Щойно МММ повертається у ваш бік або в ⚖ — відлік обнуляється. ⚠️ Витримка ⚖ рівноваги і витримка розвороту НЕ перетікають одна в одну: перехід між станами починає свій відлік заново.">?</span>
+                            </label>
+                            <input type="number" id="tm-mm-against-exit-confirm" min="0" max="3600" step="30"
                                    onchange="saveTMSettings()"
                                    style="width:62px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px"> с
                         </div>
@@ -9499,6 +9512,7 @@ async function loadTMSettings() {
         document.getElementById('tm-mm-flat-exit-mode').value =
             (s.mm_flat_exit_mode === 'flat_or_against') ? 'flat_or_against' : 'flat';
         _setV('tm-mm-flat-exit-confirm', s.mm_flat_exit_confirm_sec != null ? s.mm_flat_exit_confirm_sec : 0, 0);
+        _setV('tm-mm-against-exit-confirm', s.mm_against_exit_confirm_sec != null ? s.mm_against_exit_confirm_sec : 60, 60);
         document.getElementById('tm-signal-exit-mode').value =
             (s.signal_exit_mode === 'and') ? 'and' : 'or';
         _setV('tm-signal-exit-min-conf', s.signal_exit_min_conf != null ? s.signal_exit_min_conf : 0, 0);
@@ -10015,6 +10029,7 @@ async function saveTMSettings() {
             // ⚠️ `|| 0` тут БЕЗПЕЧНИЙ саме тому, що 0 і є дефолтом (на відміну
             // від полів рівнів, де 0 — окреме змістовне значення).
             mm_flat_exit_confirm_sec: parseInt(document.getElementById('tm-mm-flat-exit-confirm').value) || 0,
+            mm_against_exit_confirm_sec: parseInt(document.getElementById('tm-mm-against-exit-confirm').value) || 0,
             signal_exit_min_conf: parseInt(document.getElementById('tm-signal-exit-min-conf').value) || 0,
             pilot_enabled: document.getElementById('tm-pilot-enabled').checked,
             pilot_min_target_dist_pct: parseFloat(document.getElementById('tm-pilot-min-target').value) || 0.3,
@@ -12350,8 +12365,10 @@ function mmRenderCorr(corr) {
             tm.innerHTML = flipTimerHTML(Math.max(0, nowS - Number(c.since)));
             tm.title = 'Скільки триває корекція.';
         } else if ((c.state === 'pending' || c.state === 'ending') && c.cand_since) {
-            const held = Math.max(0, nowS - Number(c.cand_since));
-            tm.innerHTML = `<span class="fs">${held}/${need}с</span>`;
+            // ⚠️ ОКРУГЛЮЄМО: `cand_since` — серверний `time.time()` (ДРОБОВИЙ),
+            // тож без цього у відліку стояло «82.72762799263/120с».
+            const held = Math.max(0, Math.round(nowS - Number(c.cand_since)));
+            tm.innerHTML = `<span class="fs">${held}/${Math.round(need)}с</span>`;
             tm.title = 'Стан підтверджується часом — і початок корекції, і її '
                 + 'кінець. Поле «⏱ Підтвердження ≥» у налаштуваннях нижче.';
         } else if (c.state === 'ended' && c.ended_at) {
@@ -12371,8 +12388,12 @@ function mmRenderCorr(corr) {
                     + `${l.icon} ${l.name}: —</span>`;
             }
             const col = l.lit ? '#ff8a5b' : '#8b93a7';
+            // Одиницю дає БЕКЕНД (`unit`): частки — у %, просідання важеля —
+            // у п.п. Підписати їх однаково означало б назвати число не тим,
+            // що воно є (фолбек '%' — для старішого бекенда).
+            const u = l.unit || '%';
             return `<span style="color:${col}" title="${(l.note || '')} (монет: ${l.n || 0})">`
-                + `${l.icon} ${l.name} <b>${l.pct}%</b>/${l.need}%</span>`;
+                + `${l.icon} ${l.name} <b>${l.pct}${u}</b>/${l.need}${u}</span>`;
         });
         lay.innerHTML = parts.join('') + (parts.length
             ? ` <span style="color:#8b93a7">· ознак <b style="color:${v.col}">${c.lit || 0}</b>/${c.need || 0}</span>` : '');

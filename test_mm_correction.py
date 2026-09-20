@@ -616,6 +616,42 @@ console.log(JSON.stringify(seen));
     print('✓ 🎨 JS: усі чотири стани вердикту малюються на банері')
 
 
+def test_js_countdown_is_whole_seconds_not_a_raw_float():
+    """🐞 Зі скріна: «82.72762799263/120с». `cand_since` — серверний
+    `time.time()` (дробовий), тож віднімання давало сирий float прямо в UI."""
+    out = _run_js(r'''
+const now = Math.floor(Date.now()/1000);
+mmRenderCorr({state:'pending', cand_since: now - 82.72762799263, confirm_sec:120,
+              lit:2, need:2, layers:[], enabled:true, blocking:false});
+console.log(document.getElementById('mm-corr-timer').innerHTML);
+''').strip()
+    out = re.sub(r'<[^>]*>', '', out).strip()
+    _check(re.fullmatch(r'\d+/\d+с', out), f'відлік мусить бути цілим: {out}')
+    _check('.' not in out, f'у відліку лишився дробовий залишок: {out}')
+    print('✓ ⏱ відлік підтвердження — цілі секунди, без «хвоста»')
+
+
+def test_js_shows_the_unit_each_layer_really_uses():
+    """📉 Просідання важеля міряється в П.П., а не у %. Підписати його
+    відсотком означало б назвати число не тим, що воно є (і саме так було
+    видно на скріні: «Важіль просів 24.7%/15%»)."""
+    _check(mc.lever_layer(10.0, 34.7, 15.0)['unit'] == 'п.п.',
+           'шар важеля мусить сам казати свою одиницю')
+    _check(mc.price_layer({}, 'LONG', 60.0)['unit'] == '%',
+           'часткові ознаки лишаються у відсотках')
+    out = _run_js(r'''
+const L = [{key:'price',icon:'💹',name:'Ціна проти',pct:91.9,need:60,ok:true,lit:true,n:18,unit:'%'},
+           {key:'lever',icon:'📉',name:'Важіль просів',pct:24.7,need:15,ok:true,lit:true,n:1,unit:'п.п.'}];
+mmRenderCorr({state:'on', since: Math.floor(Date.now()/1000)-60, lit:2, need:2,
+              layers:L, enabled:true, blocking:true});
+console.log(document.getElementById('mm-corr-layers').innerHTML);
+''')
+    out = re.sub(r'<[^>]*>', '', out)
+    _check('24.7п.п./15п.п.' in out, f'важіль підписано не в п.п.: {out}')
+    _check('91.9%/60%' in out, f'частка мусить лишитись у %: {out}')
+    print('✓ 📉 одиницю дає бекенд: частки — %, важіль — п.п.')
+
+
 def test_js_timer_puts_the_day_in_the_same_tile():
     out = _run_js(r'''console.log(flipTimerHTML(2*86400 + 9*3600 + 57*60 + 19));''')
     _check('fd fdd' in out, f'доба не в плитці: {out}')
