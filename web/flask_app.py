@@ -28,6 +28,9 @@ _SERVICE_TABLES_TIME = {
     # log, safe to prune. Included so both manual «Службові» cleanup AND the
     # DB-autoclean loop keep it bounded automatically (keep_days).
     'sob_readiness_log': ('timestamp', 'dt'),
+    # 🔻 Сирий лог детектора корекції — теж append-grows (періодичний зріз +
+    # події), теж службовий: чиститься і вручну, і DB-autoclean-ом.
+    'sob_mm_corr_log': ('timestamp', 'dt'),
     'sob_liquidation_buckets': ('last_updated_ts', 'sec'),
     'sob_liquidation_oi_snapshots': ('ts', 'sec'),
     'sob_liquidation_events': ('ts', 'sec'),
@@ -3483,6 +3486,54 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/mm-corr-log')
+    def api_fuel_filter_mm_corr_log():
+        """🔻 СИРИЙ лог детектора корекції — для аналізу і калібрування порогів.
+
+        Параметри: `limit` (деф. 500, стеля 5000) · `kind`
+        (sample/start/end/state/block) · `state` · `symbol` · `format=csv`.
+
+        ⚠️ **CSV — це не «зручність», а формат роботи:** пороги підбираються
+        зведенням ряду значень (📦 VOB / 💹 Ціна / 📉 важіль) проти того, що
+        бот тоді зробив. Кожен рядок несе ще й ПОРОГИ, що діяли в ту мить,
+        тож вибірка лишається читабельною після їх зміни.
+        """
+        try:
+            limit = min(int(request.args.get('limit', 500)), 5000)
+        except (TypeError, ValueError):
+            limit = 500
+        try:
+            db = get_db()
+            rows = db.get_mm_corr_log(limit=limit,
+                                      kind=request.args.get('kind'),
+                                      state=request.args.get('state'),
+                                      symbol=request.args.get('symbol'))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+        if (request.args.get('format') or '').lower() == 'csv':
+            import csv as _csv
+            import io as _io
+            cols = ['timestamp', 'kind', 'state', 'prev_state', 'bias', 'bias_pct',
+                    'coins', 'lit', 'lit_hold', 'need_layers', 'determined',
+                    'vob_pct', 'vob_need', 'vob_n', 'vob_against', 'vob_tf',
+                    'price_pct', 'price_need', 'price_n', 'price_against',
+                    'lever', 'lever_peak', 'lever_drop', 'lever_need',
+                    'confirm_sec', 'blocking', 'blocked_n', 'lasted',
+                    'symbol', 'side', 'price', 'note']
+            buf = _io.StringIO()
+            w = _csv.writer(buf)
+            w.writerow(cols)
+            # Найстаріші ЗВЕРХУ: ряд у часі читається згори вниз, інакше кожен
+            # аналіз починався б із сортування.
+            for r in reversed(rows):
+                w.writerow([r.get(c) for c in cols])
+            return Response('﻿' + buf.getvalue(),
+                            mimetype='text/csv; charset=utf-8',
+                            headers={'Content-Disposition':
+                                     'attachment; filename=mm_correction_log.csv'})
+        return jsonify({'ok': True, 'rows': rows, 'count': len(rows)})
+
     @app.route('/api/fuel-filter/settings', methods=['POST'])
     def api_fuel_filter_settings():
         """Update settings. Body may include any of: enabled, duration_minutes,
@@ -4010,6 +4061,21 @@ def register_api_routes(app):
                 elif action == 'readiness_log_all':
                     # Delete ALL «Готовність» decision rows
                     result = conn.execute(text("DELETE FROM sob_readiness_log"))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
+                elif action == 'mm_corr_log_old':
+                    # 🔻 Delete old correction-detector samples (>14 days)
+                    result = conn.execute(text("""
+                        DELETE FROM sob_mm_corr_log
+                        WHERE timestamp < NOW() - INTERVAL '14 days'
+                    """))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
+                elif action == 'mm_corr_log_all':
+                    # 🔻 Delete ALL correction-detector rows
+                    result = conn.execute(text("DELETE FROM sob_mm_corr_log"))
                     deleted_rows = result.rowcount
                     conn.commit()
 

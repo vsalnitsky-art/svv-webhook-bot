@@ -92,6 +92,8 @@ def _mk(limited=False, enabled=True, mon=True):
     # ЗАВЖДИ додавати сюди, інакше `_mm_capture` мовчки ковтне AttributeError.
     ff._mm_corr_st, ff._mm_corr, ff._mm_lever_hist = {}, {}, []
     ff._mm_corr_skip_logged = {}
+    # 🧾 Таймер сирого логу корекції (20.09) — знову ТЕ САМЕ правило.
+    ff._mm_corr_log_at = 0.0
     ff._mm_state_since = {}
     ff._mm_price_hist = {}
     ff._mm_decision = {}

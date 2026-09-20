@@ -8,7 +8,7 @@ from sqlalchemy import desc, and_, or_
 from storage.db_models import (
     get_session, init_db,
     SleeperCandidate, OrderBlock, Trade, PerformanceStats, BotSetting, EventLog,
-    ReadinessLog,
+    ReadinessLog, MmCorrectionLog,
     SymbolBlacklist, SMCOBState,
     Top100OBSnapshot, Top100OBHistory,
     VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot,
@@ -721,6 +721,66 @@ class DBOperations:
             session.commit()
             return count
         except:
+            session.rollback()
+            return 0
+        finally:
+            session.close()
+
+    # === 🔻 КОРЕКЦІЯ: сирий лог детектора (для калібрування порогів) ===
+
+    # Білий список колонок: чужий ключ у `fields` не має класти вставку (а тим
+    # паче — такт двигуна). Той самий принцип «best-effort», що в log_readiness.
+    _MM_CORR_FIELDS = (
+        'kind', 'state', 'prev_state', 'bias', 'bias_pct', 'coins',
+        'lit', 'lit_hold', 'need_layers', 'determined',
+        'vob_pct', 'vob_need', 'vob_n', 'vob_against', 'vob_tf',
+        'price_pct', 'price_need', 'price_n', 'price_against',
+        'lever', 'lever_peak', 'lever_drop', 'lever_need', 'confirm_sec',
+        'blocking', 'blocked_n', 'lasted', 'symbol', 'side', 'price', 'note',
+    )
+
+    def log_mm_correction(self, **fields) -> None:
+        """Один рядок логу 🔻 детектора корекції. Best-effort: НІКОЛИ не кидає
+        виняток у такт двигуна (лог — не привід зупинити торгівлю)."""
+        session = get_session()
+        try:
+            row = MmCorrectionLog(**{k: v for k, v in fields.items()
+                                     if k in self._MM_CORR_FIELDS})
+            session.add(row)
+            session.commit()
+        except Exception:
+            session.rollback()
+        finally:
+            session.close()
+
+    def get_mm_corr_log(self, limit: int = 500, kind: str = None,
+                        state: str = None, symbol: str = None) -> List[Dict]:
+        """Останні рядки логу корекції, найновіші першими (аналіз / CSV)."""
+        session = get_session()
+        try:
+            q = session.query(MmCorrectionLog)
+            if kind:
+                q = q.filter(MmCorrectionLog.kind == kind)
+            if state:
+                q = q.filter(MmCorrectionLog.state == state)
+            if symbol:
+                q = q.filter(MmCorrectionLog.symbol == symbol.upper())
+            rows = q.order_by(desc(MmCorrectionLog.timestamp)).limit(limit).all()
+            return [r.to_dict() for r in rows]
+        finally:
+            session.close()
+
+    def clear_old_mm_corr(self, days: int = 14) -> int:
+        """Прибрати рядки логу корекції, старші за `days`."""
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=days)
+            count = session.query(MmCorrectionLog).filter(
+                MmCorrectionLog.timestamp < cutoff
+            ).delete()
+            session.commit()
+            return count
+        except Exception:
             session.rollback()
             return 0
         finally:

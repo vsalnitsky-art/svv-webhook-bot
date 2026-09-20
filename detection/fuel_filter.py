@@ -920,6 +920,9 @@ class FuelFilterDaemon:
         # {СИМВОЛ: `since` епізоду корекції, про який уже писали в лог} —
         # анти-флуд воріт відкриття (двигун смикає `_open` щотакту).
         self._mm_corr_skip_logged: Dict[str, float] = {}
+        # 🧾 Коли востаннє писали ПЕРІОДИЧНИЙ зріз у `sob_mm_corr_log`. Події
+        # (початок/кінець/перехід/блокування) пишуться повз цей таймер.
+        self._mm_corr_log_at: float = 0.0
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -1444,6 +1447,8 @@ class FuelFilterDaemon:
                                           _cd.get('mm_corr_enabled', True)))
         s['mm_corr_block_open'] = bool(s.get('mm_corr_block_open',
                                              _cd.get('mm_corr_block_open', True)))
+        s['mm_corr_log_enabled'] = bool(s.get('mm_corr_log_enabled',
+                                              _cd.get('mm_corr_log_enabled', True)))
 
         def _clamp(key, lo, hi, cast=float):
             try:
@@ -1457,6 +1462,10 @@ class FuelFilterDaemon:
         _clamp('mm_corr_price_pct', 0.0, 100.0)
         _clamp('mm_corr_lever_drop', 0.0, 200.0)
         _clamp('mm_corr_confirm_sec', 0, 3600, int)
+        # 🧾 Періодичність сирого логу. Нижня межа 30с = такт двигуна: частіше
+        # писати фізично нема чого (нових чисел не буде), а 0 читалось би як
+        # «кожен такт» і роздувало б таблицю непомітно.
+        _clamp('mm_corr_log_every_sec', 30, 86400, int)
         s['enabled'] = bool(s.get('enabled', False))
         try:
             s['direction_smoothing_min'] = max(0, min(600,
@@ -3568,6 +3577,110 @@ class FuelFilterDaemon:
             print(f"[FF] volumized trends error: {e}")
             return {'on': None, 'tf': '', 'trends': {}}
 
+    def _mm_corr_log_write(self, kind: str, **extra) -> bool:
+        """🧾 Один рядок СИРОГО логу 🔻 детектора корекції → `sob_mm_corr_log`.
+
+        **Вимога (20.09), дослівно:** «Зроби логування по "Корекції" для
+        подальшого аналізу і коригування налаштувань.»
+
+        ЄДИНИЙ писач логу: і періодичний зріз, і події (початок / кінець /
+        проміжний перехід), і блокування конкретної монети йдуть ЧЕРЕЗ НЬОГО —
+        інакше рядки різних видів мали б різні набори полів і CSV неможливо
+        було б аналізувати одним проходом.
+
+        ⚠️ **ДЖЕРЕЛО — ГОТОВИЙ ЗНІМОК** (`_mm_corr` + `_mm_bias`), той самий,
+        що малює банер. Нічого не перераховуємо: інакше в логу стояли б числа,
+        яких на екрані не було (урок PD-зони).
+        ⚠️ **ПОРОГИ ПИШЕМО В КОЖЕН РЯДОК** (`*_need`, `need_layers`,
+        `confirm_sec`). Їх і крутитимуть за підсумками аналізу, тож без знімка
+        порогів старі рядки стали б нечитабельними.
+        ⚠️ Помилка запису НЕ підіймається в такт двигуна (лог не має права
+        зупинити торгівлю) — той самий принцип, що в `log_readiness`.
+        """
+        try:
+            c = self.mm_correction()
+            if not c:
+                return False
+            lay = {x.get('key'): x for x in (c.get('layers') or [])}
+            b = self.mm_bias() or {}
+
+            def _g(key, field, dflt=None):
+                v = (lay.get(key) or {}).get(field)
+                return dflt if v is None else v
+
+            _since = float(c.get('since') or 0)
+            row = {
+                'kind': kind,
+                'state': c.get('state'), 'bias': c.get('bias'),
+                'bias_pct': b.get('pct'), 'coins': b.get('coins'),
+                'lit': c.get('lit'), 'lit_hold': c.get('lit_hold'),
+                'need_layers': c.get('need'), 'determined': c.get('determined'),
+                'vob_pct': _g('vob', 'pct'), 'vob_need': _g('vob', 'need'),
+                'vob_n': _g('vob', 'n'), 'vob_against': _g('vob', 'against'),
+                'vob_tf': (c.get('vob_tf') or '')[:6],
+                'price_pct': _g('price', 'pct'), 'price_need': _g('price', 'need'),
+                'price_n': _g('price', 'n'),
+                'price_against': _g('price', 'against'),
+                'lever': c.get('lever'), 'lever_peak': c.get('lever_peak'),
+                'lever_drop': _g('lever', 'pct'), 'lever_need': _g('lever', 'need'),
+                'confirm_sec': c.get('confirm_sec'),
+                'blocking': bool(c.get('blocking')),
+                # Скільки монет ворота вже зупинили В ЦЬОМУ епізоді — саме це
+                # число показує ЦІНУ блокування, коли потім звіряєш вердикт із
+                # тим, куди пішов ринок.
+                'blocked_n': sum(1 for v in (self._mm_corr_skip_logged or {}).values()
+                                 if _since and float(v or 0) == _since),
+                'lasted': c.get('lasted'),
+            }
+            row.update(extra)
+            from storage.db_operations import get_db
+            get_db().log_mm_correction(**row)
+            return True
+        except Exception as e:
+            print(f"[FF] mm-corr log error: {e}")
+            return False
+
+    def note_correction_block(self, symbol: str, side: str = '',
+                              reason: str = '', source: str = 'FF',
+                              price: Optional[float] = None,
+                              settings: Optional[Dict] = None) -> bool:
+        """🚫 Зафіксувати, що ворота корекції зупинили відкриття по монеті.
+
+        ЄДИНЕ місце запису для ОБОХ вузлів воріт (`fuel_filter._open` і
+        `trade_manager.on_signal`): дві копії анти-флуду розійшлися б, і
+        `blocked_n` у сирому логу рахував би лише половину подій.
+
+        Пише рядок `kind='block'` у `sob_mm_corr_log` (машині — для аналізу
+        «скільки і яких відкриттів коштувала корекція») і повертає True, якщо
+        це ПЕРША фіксація монети в ЦЬОМУ епізоді. Рядок у 🧾 Лог роботи бота
+        (людині) лишається за викликачем: у `_open` він анти-флудиться цим
+        самим результатом, а в `on_signal` пишеться завжди — прямий сигнал
+        трапляється рідко, і глушити його було б втратою події.
+
+        ⚠️ **АНТИ-ФЛУД ОБОВʼЯЗКОВИЙ:** двигун смикає `_open` щотакту по кожній
+        монеті черги, а корекція триває годинами — без ключа за епізодом
+        (`since`) це був би рівно той потоп, який уже чистили в Q4-recheck.
+        ⚠️ **ЦІНА В МОМЕНТ БЛОКУВАННЯ** — головне число для post-hoc аналізу
+        («а що зробив ринок після того, як ми не зайшли»). Беремо передану, а
+        без неї — з УЖЕ готового знімка монітора (нуль запитів).
+        """
+        sym = str(symbol or '').upper()
+        _c = self.mm_correction() or {}
+        _ep = float(_c.get('since') or 0)
+        if self._mm_corr_skip_logged.get(sym) == _ep:
+            return False
+        self._mm_corr_skip_logged[sym] = _ep
+        # Налаштування беремо ПЕРЕДАНІ, коли викликач їх уже має (`_open`):
+        # зайвий похід у БД на кожну заблоковану монету нікому не потрібен.
+        _s = settings if isinstance(settings, dict) else self.get_settings()
+        if bool(_s.get('mm_corr_log_enabled', True)):
+            _p = price
+            if _p is None:
+                _p = ((self._mm_snapshot or {}).get(sym) or {}).get('price')
+            self._mm_corr_log_write('block', symbol=sym[:20], side=(side or '')[:5],
+                                    price=_p, note=(reason or '')[:500])
+        return True
+
     def _mm_track_correction(self, snap: Dict, now: float, settings: Dict):
         """🔻 ЧИ ЙДЕ ЗАРАЗ КОРЕКЦІЯ ПРОТИ БАНЕРА — вердикт для банера + ворота.
 
@@ -3652,7 +3765,8 @@ class FuelFilterDaemon:
         # 🧾 ПОДІЯ — у лог, СТАН — ні. «Почалась» і «завершилась» трапляються
         # кілька разів на добу, тож флуду не буде; а мовчазний блок відкриттів
         # читався б як «бот перестав працювати» (урок «невидимий збій»).
-        if st.get('state') != _was and st.get('state') in ('on', 'ended'):
+        _changed = st.get('state') != _was
+        if _changed and st.get('state') in ('on', 'ended'):
             try:
                 from detection.activity_log import log_activity
                 _lay = ' · '.join(f"{x['icon']} {x['pct']}%/{x['need']}%"
@@ -3669,6 +3783,29 @@ class FuelFilterDaemon:
                 log_activity('ALL', 'event', _txt, side=d, source='MMM')
             except Exception:
                 pass
+
+        # 🧾 СИРИЙ ЛОГ ДЛЯ КАЛІБРУВАННЯ (вимога 20.09) — окремо від 🧾 Логу
+        # роботи бота. Там ПОДІЇ для людини, тут — РЯД ЗНАЧЕНЬ трьох ознак у
+        # часі разом із порогами, що діяли; без нього «підняти VOB з 60 до 70»
+        # можна лише навмання.
+        # ⚠️ ПИШЕМО І СТАН `trend` («корекції немає»): негативні семпли для
+        # підбору порогів так само обовʼязкові, як позитивні — інакше не видно,
+        # де детектор спрацював БИ з іншим числом.
+        # ⚠️ ПОДІЯ — ЗАВЖДИ, СТАН — за інтервалом: перехід між станами не має
+        # губитись через те, що семпл щойно писався (і навпаки — 30-секундний
+        # такт не має роздувати таблицю).
+        if bool(settings.get('mm_corr_log_enabled', True)):
+            try:
+                _every = max(30.0, float(settings.get('mm_corr_log_every_sec', 300) or 300))
+            except (TypeError, ValueError):
+                _every = 300.0
+            _due = (now - float(self._mm_corr_log_at or 0)) >= _every
+            if _changed or _due:
+                _kind = ('start' if st.get('state') == 'on' and _changed else
+                         'end' if st.get('state') == 'ended' and _changed else
+                         'state' if _changed else 'sample')
+                if self._mm_corr_log_write(_kind, prev_state=_was or 'trend'):
+                    self._mm_corr_log_at = now
 
     def _mm_capture(self, fuels: Dict, settings: Optional[Dict] = None,
                     now: Optional[float] = None):
@@ -4985,13 +5122,13 @@ class FuelFilterDaemon:
             _cb, _cwhy = self.correction_blocks_open()
             if _cb:
                 self._engine_skip[symbol] = _cwhy
-                # ⚠️ АНТИ-ФЛУД ОБОВʼЯЗКОВИЙ: двигун смикає `_open` щотакту по
-                # КОЖНІЙ монеті черги, а корекція триває годинами — без цього
-                # був би рівно той потоп, який уже чистили в Q4-recheck. Пишемо
-                # ОДИН рядок на монету НА ЕПІЗОД корекції (ключ — її `since`).
-                _ep = float((self.mm_correction() or {}).get('since') or 0)
-                if self._mm_corr_skip_logged.get(symbol) != _ep:
-                    self._mm_corr_skip_logged[symbol] = _ep
+                # ⚠️ АНТИ-ФЛУД + СИРИЙ ЛОГ — в ОДНОМУ місці
+                # (`note_correction_block`), спільному з вузлом у TM: двигун
+                # смикає `_open` щотакту по КОЖНІЙ монеті черги, а корекція
+                # триває годинами, тож пишемо ОДИН рядок на монету НА ЕПІЗОД.
+                if self.note_correction_block(symbol, side=side, reason=_cwhy,
+                                              source='FF', settings=settings,
+                                              price=fuel.get('mark_price')):
                     try:
                         from detection.activity_log import log_activity
                         log_activity(symbol, 'skipped', _cwhy, side=side,

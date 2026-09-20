@@ -102,6 +102,36 @@ def _install_log():
     _pkg.activity_log = mod
 
 
+# 🧾 СИРИЙ ЛОГ КОРЕКЦІЇ: підміняємо шар БД ще НА ІМПОРТІ модуля — інакше
+# `_mm_corr_log_write` потягнув би справжній `storage.db_operations` (а той —
+# конфіг і живе зʼєднання) просто заради тесту детектора.
+_DBROWS = []
+
+
+def _install_db(fail=False):
+    _DBROWS.clear()
+    st = sys.modules.get('storage') or types.ModuleType('storage')
+    st.__path__ = [os.path.join(_HERE, 'storage')]
+    sys.modules['storage'] = st
+    mod = types.ModuleType('storage.db_operations')
+
+    class _DB:
+        def log_mm_correction(self, **row):
+            if fail:
+                raise RuntimeError('БД лягла')
+            _DBROWS.append(dict(row))
+    mod.get_db = lambda: _DB()
+    sys.modules['storage.db_operations'] = mod
+    st.db_operations = mod
+
+
+_install_db()
+
+
+def _rows(kind=None):
+    return [r for r in _DBROWS if kind is None or r.get('kind') == kind]
+
+
 def _snap(**coins):
     """{SYM: (статус, сила, напрямок ціни)} → знімок монітора."""
     out = {}
@@ -122,11 +152,16 @@ def _mk(trends=None, vob_on=True, **settings):
     ff._mm_bias, ff._mm_bias_since, ff._mm_bias_cand = {}, 0.0, {}
     ff._mm_corr_st, ff._mm_corr, ff._mm_lever_hist = {}, {}, []
     ff._mm_corr_skip_logged = {}
+    # 🧾 Таймер сирого логу (20.09) і знімок монітора (звідки лог бере ціну в
+    # момент блокування). Нове поле стану ЗАВЖДИ додавати сюди.
+    ff._mm_corr_log_at = 0.0
+    ff._mm_snapshot = {}
     ff._engine_skip = {}
     s = {'mm_bias_confirm_sec': 0, 'mm_corr_confirm_sec': 0,
          'mm_corr_min_layers': 2, 'mm_corr_vob_pct': 60.0,
          'mm_corr_price_pct': 60.0, 'mm_corr_lever_drop': 15.0,
          'mm_corr_enabled': True, 'mm_corr_block_open': True,
+         'mm_corr_log_enabled': True, 'mm_corr_log_every_sec': 300,
          'mm_monitor_enabled': True, 'enabled': True}
     s.update(settings)
     ff._settings = s
@@ -588,6 +623,271 @@ def test_js_timer_puts_the_day_in_the_same_tile():
            f'таймер читається не так: {re.sub(r"<[^>]*>", "", out)}')
     _check('fday' not in out, 'старий стиль дня мусив зникнути')
     print('✓ ⏱ JS: «2д 09:57:19» — доба тією самою плиткою')
+
+
+# ═══════════ 6. 🧾 ЛОГУВАННЯ КОРЕКЦІЇ (вимога 20.09) ═════════════════════
+# «Зроби логування по "Корекції" для подальшого аналізу і коригування
+# налаштувань.» Тобто потрібен не ще один рядок для очей, а СИРИЙ РЯД значень
+# трьох ознак у часі + пороги, що діяли, + що бот тоді зробив.
+_MODELS_SRC = open(os.path.join(_HERE, 'storage', 'db_models.py'),
+                   encoding='utf-8').read()
+_DBOPS_SRC = open(os.path.join(_HERE, 'storage', 'db_operations.py'),
+                  encoding='utf-8').read()
+_FLASK_SRC = open(os.path.join(_HERE, 'web', 'flask_app.py'),
+                  encoding='utf-8').read()
+
+
+def _model_columns(name):
+    """Імена колонок моделі з AST — без імпорту SQLAlchemy і конфігу."""
+    for node in ast.walk(ast.parse(_MODELS_SRC)):
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            out = []
+            for b in node.body:
+                if (isinstance(b, ast.Assign) and isinstance(b.value, ast.Call)
+                        and getattr(b.value.func, 'id', '') == 'Column'):
+                    out.append(b.targets[0].id)
+            return out
+    raise AssertionError(f'модель {name} зникла')
+
+
+def _busy_market(ff=None, now=NOW):
+    """Ринок, який ПРОТИ банера LONG (обидві часткові ознаки засвічені)."""
+    snap = _snap(**{f'C{i}': ('LONG', 70, 'down') for i in range(8)})
+    trends = {f'C{i}': 'SHORT' for i in range(8)}
+    return (ff or _mk(trends=trends)), snap
+
+
+def test_every_sample_carries_the_thresholds_that_were_in_force():
+    """ГОЛОВНЕ для калібрування: у рядку мусять бути і ЗНАЧЕННЯ ознак, і
+    ПОРОГИ, що діяли в ту мить. Пороги ж і крутитимуть за підсумками аналізу —
+    без їх знімка старі рядки стануть нечитабельними («60% це багато чи мало
+    було тоді?»)."""
+    _install_db()
+    ff, snap = _busy_market()
+    _tick(ff, snap)
+    r = _rows()[-1]
+    for k in ('vob_pct', 'price_pct', 'lever', 'lever_peak',
+              'vob_need', 'price_need', 'lever_need', 'need_layers',
+              'confirm_sec', 'lit', 'lit_hold', 'determined', 'state', 'bias'):
+        _check(k in r, f'у рядку логу немає поля {k}: {sorted(r)}')
+    _check(r['vob_need'] == 60.0 and r['price_need'] == 60.0,
+           f'пороги мусять бути ТІ, що діяли: {r}')
+    _check(r['vob_pct'] == 100.0 and r['price_pct'] == 100.0,
+           f'значення ознак мусять бути справжніми: {r}')
+    _check(r['bias'] == 'LONG' and r['coins'] == 8,
+           f'контекст банера теж потрібен для аналізу: {r}')
+    print('✓ 🧾 рядок логу несе і значення ознак, і пороги, що діяли')
+
+
+def test_the_quiet_market_is_logged_too():
+    """НЕГАТИВНІ СЕМПЛИ ОБОВʼЯЗКОВІ. Без рядків «корекції немає» видно лише
+    те, де детектор спрацював, і неможливо побачити, де він спрацював БИ з
+    іншим порогом — тобто калібрувати нема на чому."""
+    _install_db()
+    snap = _snap(**{f'C{i}': ('LONG', 70, 'up') for i in range(8)})
+    ff = _mk(trends={f'C{i}': 'LONG' for i in range(8)})
+    _tick(ff, snap)
+    r = _rows()
+    _check(len(r) == 1 and r[0]['state'] == 'trend',
+           f'спокійний ринок теж мусить писатись: {r}')
+    _check(r[0]['lit'] == 0 and r[0]['vob_pct'] == 0.0,
+           f'у спокійному семплі мусять бути реальні нулі, а не порожнеча: {r[0]}')
+    print('✓ 🧾 «корекції немає» теж у логу — інакше калібрувати нема на чому')
+
+
+def test_samples_are_throttled_but_events_never_are():
+    """Такт двигуна 30с — писати щотакту означало б 2880 рядків на добу. Але
+    ПОДІЯ (початок/кінець) не має губитись через те, що семпл щойно писався."""
+    _install_db()
+    ff, snap = _busy_market()
+    quiet = _snap(**{f'C{i}': ('LONG', 70, 'up') for i in range(8)})
+    ff._mm_vob_trends = lambda: {'on': True, 'tf': '5m',
+                                 'trends': {f'C{i}': 'LONG' for i in range(8)}}
+    _tick(ff, quiet, NOW)                      # семпл №1 (trend)
+    _tick(ff, quiet, NOW + 30)                 # ще такт — писати нема чого
+    _tick(ff, quiet, NOW + 60)
+    _check(len(_rows()) == 1, f'семпли мусять троттлитись: {len(_rows())}')
+    # А тепер ринок розвернувся — це ПОДІЯ, і вона пише одразу.
+    ff._mm_vob_trends = lambda: {'on': True, 'tf': '5m',
+                                 'trends': {f'C{i}': 'SHORT' for i in range(8)}}
+    _tick(ff, snap, NOW + 90)
+    _check(len(_rows()) == 2 and _rows()[-1]['kind'] == 'start',
+           f'початок корекції мусить писатись повз троттл: {_rows()}')
+    _check(_rows()[-1]['prev_state'] == 'trend',
+           f'перехід мусить бути видно з рядка: {_rows()[-1]}')
+    print('✓ ⏱ семпли — за інтервалом, події — завжди')
+
+
+def test_the_start_and_the_end_are_both_in_the_log():
+    """Обидві межі епізоду мусять бути в одній вибірці: без `end` неможливо
+    порахувати ні тривалість, ні «чи не запізно ми відпустили ринок»."""
+    _install_db()
+    ff, snap = _busy_market()
+    _tick(ff, snap, NOW)
+    quiet = _snap(**{f'C{i}': ('LONG', 70, 'up') for i in range(8)})
+    ff._mm_vob_trends = lambda: {'on': True, 'tf': '5m',
+                                 'trends': {f'C{i}': 'LONG' for i in range(8)}}
+    _tick(ff, quiet, NOW + 600)
+    kinds = [r['kind'] for r in _rows()]
+    _check('start' in kinds and 'end' in kinds, f'бракує меж епізоду: {kinds}')
+    _end = [r for r in _rows() if r['kind'] == 'end'][-1]
+    _check(float(_end['lasted'] or 0) == 600.0,
+           f'тривалість корекції мусить бути в рядку: {_end}')
+    print('✓ 🔚 початок і кінець епізоду — обидва в логу, з тривалістю')
+
+
+def test_a_blocked_open_is_written_with_the_symbol_and_the_price():
+    """ЦІНА БЛОКУВАННЯ — головне число post-hoc аналізу: «а що зробив ринок
+    після того, як ми не зайшли». Без неї «блокування врятувало чи коштувало»
+    лишається здогадкою."""
+    _install_db()
+    _install_log()
+    ff = _mk()
+    ff._mm_corr = {'state': 'on', 'blocking': True, 'bias': 'LONG',
+                   'since': NOW, 'lit': 2, 'need': 2, 'layers': []}
+    ff._open = FF._open.__get__(ff)
+    for _ in range(4):
+        ff._open('AAAUSDT', 'LONG', {'mark_price': 1.25}, ff.get_settings())
+    b = _rows('block')
+    _check(len(b) == 1, f'рядок блокування — ОДИН на монету за епізод: {len(b)}')
+    _check(b[0]['symbol'] == 'AAAUSDT' and b[0]['side'] == 'LONG',
+           f'рядок мусить називати монету і бік: {b[0]}')
+    _check(b[0]['price'] == 1.25, f'ціна в момент блокування: {b[0]}')
+    # Друга монета того самого епізоду — свій рядок, і лічильник росте.
+    ff._open('BBBUSDT', 'SHORT', {'mark_price': 9.0}, ff.get_settings())
+    b = _rows('block')
+    _check(len(b) == 2 and b[-1]['blocked_n'] == 2,
+           f'`blocked_n` мусить показувати ціну епізоду: {b}')
+    print('✓ 🚫 блокування: монета · бік · ціна · скільки їх за епізод')
+
+
+def test_both_gates_write_through_one_writer():
+    """Вузлів воріт ДВА (`_open` і `on_signal`), а писач мусить лишатись ОДИН:
+    дві копії анти-флуду розійшлися б, і `blocked_n` рахував би половину."""
+    t = _fn_src(_TM_SRC, 'on_signal')
+    _check('note_correction_block' in t,
+           'прямий опен не фіксує блокування в сирому логу')
+    o = _fn_src(_FF_SRC, '_open')
+    _check('note_correction_block' in o, 'черговий опен не фіксує блокування')
+    _check('_mm_corr_skip_logged' not in t,
+           'TM не має вести власний анти-флуд — ключ живе у FF')
+    n = _fn_src(_FF_SRC, 'note_correction_block')
+    _check('_mm_corr_skip_logged' in n and "'block'" in n,
+           'писач мусить робити і анти-флуд, і рядок логу')
+    print('✓ 🚪 обидва вузли воріт пишуть через ОДИН писач')
+
+
+def test_the_log_can_be_switched_off():
+    """Тумблер мусить гасити САМ ЗАПИС, а не лише показ: інакше він брехав би
+    про економію (той самий принцип, що з тумблером монітора)."""
+    _install_db()
+    _install_log()
+    ff, snap = _busy_market()
+    ff._settings['mm_corr_log_enabled'] = False
+    _tick(ff, snap)
+    _check(not _rows(), f'вимкнений лог не має писати нічого: {_rows()}')
+    ff._mm_corr = {'state': 'on', 'blocking': True, 'bias': 'LONG',
+                   'since': NOW, 'lit': 2, 'need': 2, 'layers': []}
+    ff._open = FF._open.__get__(ff)
+    ff._open('AAAUSDT', 'LONG', {'mark_price': 1.0}, ff.get_settings())
+    _check(not _rows('block'), 'вимкнений лог не має писати і блокування')
+    _check([x for x in _LOGGED if x['event'] == 'skipped'],
+           'але 🧾 Лог роботи бота мусить лишитись — це різні речі')
+    print('✓ 🔌 тумблер гасить САМ запис, а подію для людини лишає')
+
+
+def test_a_broken_log_never_breaks_the_tick():
+    """Лог — не привід зупинити торгівлю. Збій БД мусить лишити і вердикт, і
+    ворота на місці (той самий принцип, що в `log_readiness`)."""
+    _install_db(fail=True)
+    ff, snap = _busy_market()
+    out = _tick(ff, snap)
+    _check(out.get('state') in ('on', 'pending'),
+           f'вердикт мусить рахуватись попри збій логу: {out}')
+    _check(ff._mm_corr_log_at == 0.0,
+           'невдалий запис не має вважатись зробленим (інакше троттл зʼїв би '
+           'наступну спробу)')
+    _install_db()
+    print('✓ 🛟 збій логу не чіпає ні вердикт, ні ворота')
+
+
+def test_the_engine_never_writes_a_field_the_table_cannot_store():
+    """Мовчазна втрата поля = дірка в аналізі. Тому: кожне поле, яке пише
+    двигун, мусить бути і колонкою таблиці, і в білому списку шару БД."""
+    _install_db()
+    ff, snap = _busy_market()
+    _tick(ff, snap)
+    ff._mm_corr = {'state': 'on', 'blocking': True, 'bias': 'LONG',
+                   'since': NOW, 'lit': 2, 'need': 2, 'layers': []}
+    ff._open = FF._open.__get__(ff)
+    ff._open('AAAUSDT', 'LONG', {'mark_price': 2.0}, ff.get_settings())
+    cols = set(_model_columns('MmCorrectionLog'))
+    white = set(re.findall(r"'(\w+)'", re.search(
+        r'_MM_CORR_FIELDS = \((.*?)\n    \)', _DBOPS_SRC, re.S).group(1)))
+    for r in _DBROWS:
+        for k in r:
+            _check(k in cols, f'поле {k} пишеться, але колонки для нього немає')
+            _check(k in white, f'поле {k} відріже білий список шару БД')
+    _check('timestamp' in cols and 'kind' in cols, 'бракує базових колонок')
+    print('✓ 🗄 кожне записане поле має колонку і проходить білий список')
+
+
+def test_the_csv_export_lists_every_column():
+    """CSV — робочий формат аналізу. Колонка, яку забули в експорті, робить
+    дані неповними МОВЧКИ."""
+    m = re.search(r"api_fuel_filter_mm_corr_log(.*?)\n    @app\.route",
+                  _FLASK_SRC, re.S)
+    _check(m, 'маршруту логу корекції немає')
+    body = m.group(1)
+    _check("format" in body and 'csv' in body, 'немає CSV-експорту')
+    listed = set(re.findall(r"'(\w+)'", body.split('cols = [')[1].split(']')[0]))
+    for c in _model_columns('MmCorrectionLog'):
+        if c == 'id':
+            continue
+        _check(c in listed, f'колонки {c} немає в CSV-експорті')
+    _check('reversed(rows)' in body,
+           'ряд у часі мусить читатись згори вниз (найстаріші зверху)')
+    print('✓ 📤 CSV віддає ВСІ колонки, найстаріші зверху')
+
+
+def test_the_table_is_pruned_like_every_other_service_log():
+    """Append-таблиця без чистки одного дня стане проблемою БД — у проєкті це
+    вже проходили з логом «Готовності»."""
+    _check("'sob_mm_corr_log': ('timestamp', 'dt')" in _FLASK_SRC,
+           'таблиця не в переліку службових — її не чистить ні ручна '
+           '«Службові», ні DB-autoclean')
+    _check('clear_old_mm_corr' in _DBOPS_SRC, 'немає чистки за віком')
+    print('✓ 🗑 таблиця чиститься як решта службових логів')
+
+
+def test_log_defaults_and_clamps():
+    _check(mc.DEFAULTS['mm_corr_log_enabled'] is True,
+           'без логу пороги калібрувати нема на чому — дефолт УВІМК')
+    _check(mc.DEFAULTS['mm_corr_log_every_sec'] == 300,
+           '300с ≈ 288 рядків на добу — достатньо і не роздуває БД')
+    ff = FF.__new__(FF)
+    ff._db = types.SimpleNamespace(get_setting=lambda *a, **k: {
+        'mm_corr_log_every_sec': 1})
+    s = FF.get_settings(ff)
+    _check(s['mm_corr_log_every_sec'] == 30,
+           'частіше за такт двигуна писати нема чого — мусить обрізатись до 30с')
+    print('✓ ⚙️ дефолти логу і нижня межа інтервалу')
+
+
+def test_ui_has_the_log_controls_and_the_csv_link():
+    for el in ('ff-mm-corr-log', 'ff-mm-corr-log-every', 'mm-corr-csv'):
+        _check(f'id="{el}"' in _HTML, f'немає контрола {el}')
+    for el in ('ff-mm-corr-log', 'ff-mm-corr-log-every'):
+        _check(f"'{el}'" in _HTML, f'контрол {el} нікуди не зберігається')
+    for key in ('mm_corr_log_enabled', 'mm_corr_log_every_sec'):
+        _check(key in _HTML, f'ключ {key} не їде на сервер')
+    _check('/api/fuel-filter/mm-corr-log' in _HTML and 'format=csv' in _HTML,
+           'немає посилання на вивантаження CSV')
+    # Згорнута гармошка мусить казати, чи лог узагалі пишеться.
+    _sum = _HTML.split('function _mmCorrSummary(')[1].split('\nfunction ')[0]
+    _check('mm_corr_log_enabled' in _sum,
+           'вимкнений лог мусить бути видно, не розгортаючи гармошку')
+    print('✓ 🖥 UI: тумблер логу, інтервал, CSV і розклад у шапці')
 
 
 if __name__ == '__main__':

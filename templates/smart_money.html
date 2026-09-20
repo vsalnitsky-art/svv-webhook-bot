@@ -2623,6 +2623,27 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="number" id="ff-mm-corr-confirm" min="0" max="3600" step="30" value="120" onchange="saveFuelFilterSettings()"
                                title="Скільки ознаки мусять протриматись — і щоб ПОЧАТИ корекцію, і щоб оголосити її КІНЕЦЬ. Підтвердження симетричне: повернути бота в ринок на одному спокійному такті означало б увійти на відкаті всередині корекції. 0 = миттєво.">
                     </div>
+                    <!-- 🧾 СИРИЙ ЛОГ ДЛЯ КАЛІБРУВАННЯ (вимога 20.09). Окремим
+                         рядком за роздільником: це не поріг детектора, а
+                         інструмент аналізу — змішувати їх у сітці означало б
+                         читати «логування» як ще одну ознаку корекції. -->
+                    <div style="flex-basis:100%;height:1px;background:rgba(255,255,255,0.07);margin:2px 0"></div>
+                    <label class="mmc-chk" title="Писати СИРИЙ ряд значень трьох ознак (📦 VOB · 💹 Ціна · 📉 Важіль) разом із порогами, що діяли в ту мить, у таблицю sob_mm_corr_log. Пишуться і семпли «корекції немає» — без них неможливо побачити, де детектор спрацював БИ з іншим порогом. Події (початок / кінець / блокування монети) пишуться завжди, незалежно від інтервалу.">
+                        <input type="checkbox" id="ff-mm-corr-log" onchange="saveFuelFilterSettings()" style="margin:0">
+                        🧾 Логувати для аналізу
+                    </label>
+                    <div class="mmc-f">
+                        <label>⏱ Зріз кожні, с</label>
+                        <input type="number" id="ff-mm-corr-log-every" min="30" max="86400" step="30" value="300" onchange="saveFuelFilterSettings()"
+                               title="Як часто писати ПЕРІОДИЧНИЙ зріз. 300с ≈ 288 рядків на добу; такт двигуна 30с дав би 2880 і роздував би БД без користі. Події пишуться повз цей таймер.">
+                    </div>
+                    <div class="mmc-f" style="align-self:end">
+                        <label>&nbsp;</label>
+                        <a href="/api/fuel-filter/mm-corr-log?limit=5000&format=csv"
+                           id="mm-corr-csv"
+                           title="Вивантажити сирий лог корекції у CSV (до 5000 рядків, найстаріші зверху). Кожен рядок несе і значення ознак, і пороги, що діяли, — тож вибірка лишається читабельною після зміни налаштувань."
+                           style="display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.05);color:#93c5fd;font-size:0.72rem;font-weight:600;text-decoration:none">⬇️ CSV логу</a>
+                    </div>
                 </div>
             </details>
             <!-- 🪗 СПИСОК МОНЕТ — ВЛАСНА ГАРМОШКА (вимога 18.09: «зроби вікно
@@ -12411,7 +12432,11 @@ function _mmCorrSummary(s) {
         + `💹 ${s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 60}% · `
         + `📉 ${s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15} п.п. · `
         + `⏱ ${s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 120}с · `
-        + (s.mm_corr_block_open === false ? 'відкриття дозволені' : '🚫 блок відкриттів');
+        + (s.mm_corr_block_open === false ? 'відкриття дозволені' : '🚫 блок відкриттів')
+        // 🧾 Логування теж у розкладі: вимкнений лог означає, що калібрувати
+        // пороги згодом буде НІ ЗА ЧИМ — це має бути видно, не відкриваючи.
+        + (s.mm_corr_log_enabled === false ? ' · 🧾 лог вимкнено'
+           : ` · 🧾 лог ${s.mm_corr_log_every_sec != null ? s.mm_corr_log_every_sec : 300}с`);
 }
 function mmApplyState(mm) {
     // Відновлюємо збережені фільтри РІВНО ОДИН раз і саме тут — так вони
@@ -13684,6 +13709,8 @@ function renderFuelFilter(d) {
     setIf('ff-mm-corr-price', String(s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 60));
     setIf('ff-mm-corr-drop', String(s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15));
     setIf('ff-mm-corr-confirm', String(s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 120));
+    setIf('ff-mm-corr-log', s.mm_corr_log_enabled !== false);       // default true
+    setIf('ff-mm-corr-log-every', String(s.mm_corr_log_every_sec != null ? s.mm_corr_log_every_sec : 300));
     if (typeof _mmCorrSummary === 'function') _mmCorrSummary(s);
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
@@ -14735,6 +14762,8 @@ async function saveFuelFilterSettings() {
         mm_corr_price_pct: _mmcNum('ff-mm-corr-price', 60),
         mm_corr_lever_drop: _mmcNum('ff-mm-corr-drop', 15),
         mm_corr_confirm_sec: _mmcNum('ff-mm-corr-confirm', 120),
+        mm_corr_log_enabled: _c('ff-mm-corr-log'),
+        mm_corr_log_every_sec: _mmcNum('ff-mm-corr-log-every', 300),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),

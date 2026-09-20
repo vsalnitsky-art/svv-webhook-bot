@@ -2545,6 +2545,17 @@ class TradeManager:
                     if _cb:
                         log_activity(symbol, 'skipped', _cwhy, side=side,
                                      source='TM')
+                        # 🧾 Той самий блок — у СИРИЙ лог корекції (для
+                        # калібрування порогів). ⚠️ Запис веде FF, а не ми:
+                        # два писачі мали б різний анти-флуд, і `blocked_n`
+                        # рахував би половину подій. Старіший файл без методу
+                        # → просто немає рядка, гейт працює як працював.
+                        try:
+                            if hasattr(_ff0, 'note_correction_block'):
+                                _ff0.note_correction_block(
+                                    symbol, side=side, reason=_cwhy, source='TM')
+                        except Exception:
+                            pass
                         return {'status': 'rejected', 'is_paper': False,
                                 'reason': _cwhy}
             except Exception as e:
