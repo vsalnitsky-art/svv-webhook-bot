@@ -88,6 +88,10 @@ def _mk(limited=False, enabled=True, mon=True):
     # без нього справжній метод падає з AttributeError на першій же монеті, і
     # тести «нічого не роблять».
     ff._mm_bias_cand = {}
+    # 🔻 Стан детектора корекції (19.09) — те саме правило: нове поле стану
+    # ЗАВЖДИ додавати сюди, інакше `_mm_capture` мовчки ковтне AttributeError.
+    ff._mm_corr_st, ff._mm_corr, ff._mm_lever_hist = {}, {}, []
+    ff._mm_corr_skip_logged = {}
     ff._mm_state_since = {}
     ff._mm_price_hist = {}
     ff._mm_decision = {}
@@ -1648,8 +1652,11 @@ console.log(JSON.stringify({saved, dir:_mmDir, sort:_mmSort,
 
 
 def test_ui_table_is_striped_so_rows_do_not_blend():
+    # ⚠️ Ріжемо по МЕЖАХ СЕКЦІЇ, а не «900 символів перед таблицею»: фіксований
+    # зріз уже виштовхував перевірку за межу щоразу, коли в панелі зʼявлявся
+    # новий блок (цього разу — стилі налаштувань детектора корекції).
     i = _HTML.index('id="mm-table"')
-    blk = _HTML[max(0, i - 900):i]
+    blk = _HTML[_HTML.index('id="mm-monitor-panel"'):i]
     _check('#mm-table tbody tr:nth-child(even)' in blk,
            'немає зебри — рядки зливаються (скарга 15.09)')
     _check('#mm-table tbody tr:hover' in blk, 'немає підсвітки рядка під курсором')

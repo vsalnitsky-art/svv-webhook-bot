@@ -237,6 +237,11 @@ DEFAULT_SETTINGS = {
     # Новий стан (LONG / SHORT / ⚖) мусить протриматись стільки, перш ніж
     # банер його ПОКАЖЕ. 0 = перемикати миттєво (стара поведінка).
     'mm_bias_confirm_sec': 120,
+    # 🔻 ДЕТЕКТОР КОРЕКЦІЇ банера (вимога 19.09) — пороги й тумблери живуть
+    # у `detection/mm_correction.DEFAULTS`, щоб число було в ОДНОМУ місці:
+    # mm_corr_enabled · mm_corr_min_layers · mm_corr_vob_pct ·
+    # mm_corr_price_pct · mm_corr_lever_drop · mm_corr_confirm_sec ·
+    # mm_corr_block_open. Підмішуються нижче, одразу після словника.
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -705,6 +710,29 @@ DEFAULT_SETTINGS = {
     'funding_gold_cooldown_min': 60,
 }
 
+# 🔻 Пороги детектора корекції — ЄДИНЕ джерело в `mm_correction.DEFAULTS`.
+# Підмішуємо їх сюди, щоб вони зберігались/валідувались тим самим блобом, але
+# НЕ дублюємо жодного числа: копія з часом розійшлася б з оригіналом.
+try:                                     # звичайний шлях (прод)
+    from detection import mm_correction as _MM_CORR
+except Exception:                        # ізольовані тести без пакета
+    try:
+        import mm_correction as _MM_CORR         # type: ignore
+    except Exception:
+        _MM_CORR = None
+_MM_CORR_DEFAULTS = dict(getattr(_MM_CORR, 'DEFAULTS', {}) or {})
+DEFAULT_SETTINGS.update(_MM_CORR_DEFAULTS)
+
+
+def _mm_corr_mod():
+    """Модуль 🔻 детектора корекції (чисті функції) або None.
+
+    ⚠️ None — це не «корекції немає», а «детектор недоступний»: у такому разі
+    вердикт чесно каже про це, а ворота відкриття НЕ блокують нічого
+    (fail-open — той самий принцип, що в 🚦 воріт напрямку).
+    """
+    return _MM_CORR
+
 
 def mm_window_change(hist, now: float, window: float) -> Dict:
     """📐 ЗМІНА ЗНАЧЕННЯ ЗА ВІКНОМ — ЧИСТА функція, ЄДИНА на весь монітор.
@@ -879,6 +907,19 @@ class FuelFilterDaemon:
         # СВІДОМО не персиститься: вікно підтвердження коротке, і після
         # рестарту чесніше почати відлік заново, ніж «дорахувати» чужий.
         self._mm_bias_cand: Dict = {}
+        # 🔻 КОРЕКЦІЯ (вимога 19.09). `_mm_corr_st` — ЧИСТИЙ стан машини
+        # (`mm_correction.next_state`), він і персиститься: «корекція триває
+        # 1г 20хв» не має обнулятись від `botupdate`. `_mm_corr` — готове
+        # подання для UI (стан + розклад шарів), збирається щотакту.
+        self._mm_corr_st: Dict = {}
+        self._mm_corr: Dict = {}
+        # Історія важеля У БІК БАНЕРА [(ts, п.п.)] для шару «📉 важіль просів».
+        # Скидається на ЗМІНІ напрямку банера: пік попереднього тренду до
+        # нового стосунку не має.
+        self._mm_lever_hist: List = []
+        # {СИМВОЛ: `since` епізоду корекції, про який уже писали в лог} —
+        # анти-флуд воріт відкриття (двигун смикає `_open` щотакту).
+        self._mm_corr_skip_logged: Dict[str, float] = {}
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -1396,6 +1437,26 @@ class FuelFilterDaemon:
                 int(float(s.get('mm_bias_confirm_sec', 120)))))
         except (TypeError, ValueError):
             s['mm_bias_confirm_sec'] = 120
+        # 🔻 ДЕТЕКТОР КОРЕКЦІЇ. Межі тримаємо тут (валідація — вузол налаштувань),
+        # а дефолти беремо з `mm_correction.DEFAULTS` — щоб число жило в одному місці.
+        _cd = _MM_CORR_DEFAULTS or {}
+        s['mm_corr_enabled'] = bool(s.get('mm_corr_enabled',
+                                          _cd.get('mm_corr_enabled', True)))
+        s['mm_corr_block_open'] = bool(s.get('mm_corr_block_open',
+                                             _cd.get('mm_corr_block_open', True)))
+
+        def _clamp(key, lo, hi, cast=float):
+            try:
+                s[key] = max(lo, min(hi, cast(float(s.get(key, _cd.get(key, lo))))))
+            except (TypeError, ValueError):
+                s[key] = cast(_cd.get(key, lo))
+
+        # 1..3 — шарів рівно три; 0 означало б «корекція завжди».
+        _clamp('mm_corr_min_layers', 1, 3, int)
+        _clamp('mm_corr_vob_pct', 0.0, 100.0)
+        _clamp('mm_corr_price_pct', 0.0, 100.0)
+        _clamp('mm_corr_lever_drop', 0.0, 200.0)
+        _clamp('mm_corr_confirm_sec', 0, 3600, int)
         s['enabled'] = bool(s.get('enabled', False))
         try:
             s['direction_smoothing_min'] = max(0, min(600,
@@ -2024,6 +2085,14 @@ class FuelFilterDaemon:
             if self._mm_bias_since > time.time() + 60:
                 self._mm_bias_since = 0.0
                 self._mm_bias = {}
+            # 🔻 Стан корекції переживає рестарт (як і таймер банера). Розклад
+            # шарів НЕ відновлюємо — він перерахується першим тактом; до того
+            # часу подання лишається порожнім, і UI про це чесно скаже.
+            _mcs = st.get('mm_corr_st')
+            self._mm_corr_st = dict(_mcs) if isinstance(_mcs, dict) else {}
+            # Час із майбутнього — той самий запобіжник, що для банера.
+            if float(self._mm_corr_st.get('since') or 0) > time.time() + 60:
+                self._mm_corr_st = {}
             # Restore the entry queue PER SESSION. We persist the queue now and
             # bring it back on boot, tied to the session it belonged to. The
             # session-flip logic in _update_btc_verdict handles staleness: on the
@@ -2114,6 +2183,11 @@ class FuelFilterDaemon:
                                    for k, v in (self._mm_state_since or {}).items()},
                 'mm_bias': dict(self._mm_bias or {}),
                 'mm_bias_since': float(self._mm_bias_since or 0.0),
+                # 🔻 СТАН КОРЕКЦІЇ (лише машина станів, без розкладу шарів —
+                # шари перерахуються першим же тактом). Без цього «корекція
+                # триває 1г 20хв» обнулялась би на кожному `botupdate`, а
+                # заразом знімалось би й блокування відкриттів.
+                'mm_corr_st': dict(self._mm_corr_st or {}),
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -3474,6 +3548,128 @@ class FuelFilterDaemon:
             'ts': int(now),
         }
 
+    def _mm_vob_trends(self) -> Dict:
+        """📦 Знімок Volumized-трендів зі СКАНЕРА — {'on','tf','trends'}.
+
+        ЄДИНЕ місце, де детектор корекції бере структуру молодшого TF. Читаємо
+        ПУБЛІЧНИМ `volumized_trends()`; старіший файл сканера (деплой у різному
+        порядку) методу не має → `on=None`, і шар чесно лишиться НЕВИЗНАЧЕНИМ,
+        а не «немає блоків проти».
+        """
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            if sc is None or not hasattr(sc, 'volumized_trends'):
+                return {'on': None, 'tf': '', 'trends': {}}
+            v = sc.volumized_trends() or {}
+            return {'on': v.get('on'), 'tf': v.get('tf') or '',
+                    'trends': v.get('trends') or {}}
+        except Exception as e:
+            print(f"[FF] volumized trends error: {e}")
+            return {'on': None, 'tf': '', 'trends': {}}
+
+    def _mm_track_correction(self, snap: Dict, now: float, settings: Dict):
+        """🔻 ЧИ ЙДЕ ЗАРАЗ КОРЕКЦІЯ ПРОТИ БАНЕРА — вердикт для банера + ворота.
+
+        **Вимога (19.09), дослівно:** «Потрібно щоб бот моніторив графіки і
+        відслідковував саме корекцію по монетах… Бот має професійно аналізувати
+        графіки і візуалізувати загальний вердикт на банері "МММ-монітор"
+        стосовно чи почалась або закінчилась корекція.»
+
+        Рахує ДВИГУН (тут), `mm_monitor_state` лише ЧИТАЄ — той самий урок B2,
+        що з шарами Черги-4 і з самим важелем банера.
+
+        Три ознаки і вся арифметика — у ЧИСТОМУ `detection/mm_correction.py`
+        (📦 VOB молодшого TF проти банера · 💹 ціна проти банера · 📉 важіль
+        просів від піку). Тут — ЛИШЕ збір контексту й зберігання стану.
+
+        ⚠️ **НЕМАЄ НАПРЯМКУ — НЕМАЄ КОРЕКЦІЇ.** Корекція означає «рух ПРОТИ
+        тренду»; коли банер у ⚖ рівновазі, тренду немає і коригувати нічого.
+        Стан скидається в `trend`, а причина названа (`reason`).
+        ⚠️ **ПІК ВАЖЕЛЯ РАХУЄМО ВІД ЗМІНИ НАПРЯМКУ.** Історія чиститься на фліпі
+        банера: пік попереднього тренду до нового не має жодного стосунку.
+        ⚠️ Мережі це не коштує НІЧОГО: знімок монітора вже є, тренди VOB сканер
+        і так тримає в кеші, важіль щойно порахував `_mm_track_bias`.
+        """
+        _mc = _mm_corr_mod()
+        bias = dict(getattr(self, '_mm_bias', {}) or {})
+        d = bias.get('dir')
+        _on = bool(settings.get('mm_corr_enabled', True))
+        if not _mc or not _on or d not in ('LONG', 'SHORT'):
+            with self._lock:
+                self._mm_corr_st = {}
+                self._mm_lever_hist = []
+                self._mm_corr = {'state': 'trend', 'enabled': _on,
+                                 'bias': d, 'layers': [], 'lit': 0,
+                                 'need': int(settings.get('mm_corr_min_layers', 2) or 2),
+                                 'blocking': False, 'ts': int(now),
+                                 'reason': ('детектор вимкнено' if not _on else
+                                            ('⚖ банер без напрямку — коригувати '
+                                             'нема чого' if not d else
+                                             'модуль детектора недоступний'))}
+            return
+        # 📉 Важіль У БІК БАНЕРА (зі знаком) + пік за вікном.
+        try:
+            net_pp = float(bias.get('net') or 0.0) * 100.0
+        except (TypeError, ValueError):
+            net_pp = 0.0
+        lever = net_pp if d == 'LONG' else -net_pp
+        hist = list(self._mm_lever_hist or [])
+        if hist and hist[-1][2] != d:
+            # 🔁 ФЛІП БАНЕРА = НОВИЙ ТРЕНД, отже й новий відлік: і пік важеля,
+            # і сам вердикт починаються з чистого аркуша. Лишити «корекцію
+            # проти LONG» під банером SHORT означало б показувати вердикт про
+            # ринок, якого вже немає (і блокувати відкриття за нього).
+            hist = []
+            self._mm_corr_st = {}
+        hist.append((now, lever, d))
+        _cut = now - _mc.WINDOW_SEC
+        hist = [h for h in hist if h[0] >= _cut]
+        peak = max((h[1] for h in hist), default=lever)
+        vob = self._mm_vob_trends()
+        res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
+                           settings, tf=vob.get('tf') or '')
+        st = _mc.next_state(self._mm_corr_st, res['lit'], res['lit_hold'],
+                            res['need'], now,
+                            float(settings.get('mm_corr_confirm_sec', 120) or 0))
+        _was = (self._mm_corr_st or {}).get('state')
+        blocking = bool(_mc.is_on(st) and settings.get('mm_corr_block_open', True))
+        with self._lock:
+            self._mm_lever_hist = hist
+            self._mm_corr_st = st
+            self._mm_corr = {
+                **st, 'enabled': True, 'bias': d,
+                'layers': res['layers'], 'lit': res['lit'],
+                'lit_hold': res['lit_hold'], 'need': res['need'],
+                'determined': res['determined'],
+                'confirm_sec': int(float(settings.get('mm_corr_confirm_sec', 120) or 0)),
+                'ended_show_sec': int(_mc.ENDED_SHOW_SEC),
+                'lever': round(lever, 1), 'lever_peak': round(peak, 1),
+                'vob_on': vob.get('on'), 'vob_tf': vob.get('tf'),
+                'blocking': blocking, 'block_on': bool(settings.get('mm_corr_block_open', True)),
+                'ts': int(now),
+            }
+        # 🧾 ПОДІЯ — у лог, СТАН — ні. «Почалась» і «завершилась» трапляються
+        # кілька разів на добу, тож флуду не буде; а мовчазний блок відкриттів
+        # читався б як «бот перестав працювати» (урок «невидимий збій»).
+        if st.get('state') != _was and st.get('state') in ('on', 'ended'):
+            try:
+                from detection.activity_log import log_activity
+                _lay = ' · '.join(f"{x['icon']} {x['pct']}%/{x['need']}%"
+                                  for x in res['layers'] if x['ok'] and x['lit'])
+                if st['state'] == 'on':
+                    _txt = (f'🔻 КОРЕКЦІЯ ПРОТИ банера {d}: ознак {res["lit"]}/'
+                            f'{res["need"]}' + (f' · {_lay}' if _lay else '')
+                            + (' · 🚫 відкриття угод зупинено' if blocking
+                               else ' · відкриття НЕ блокуємо (тумблер вимкнено)'))
+                else:
+                    _txt = (f'✅ КОРЕКЦІЯ ЗАВЕРШИЛАСЬ (тривала '
+                            f'{self._fmt_wait(float(st.get("lasted") or 0))}) — '
+                            f'банер {d}, відкриття знову дозволені')
+                log_activity('ALL', 'event', _txt, side=d, source='MMM')
+            except Exception:
+                pass
+
     def _mm_capture(self, fuels: Dict, settings: Optional[Dict] = None,
                     now: Optional[float] = None):
         """Зберегти знімок МММ по всіх монетах, які двигун порахував ЦЬОГО такту.
@@ -3520,6 +3716,9 @@ class FuelFilterDaemon:
                 self._mm_bias = {}
                 self._mm_bias_since = 0.0
                 self._mm_bias_cand = {}
+                self._mm_corr = {}
+                self._mm_corr_st = {}
+                self._mm_lever_hist = []
             return
         snap = {}
         # 🔮 Прогноз 1H/4H — ЧИСТЕ ЧИТАННЯ кешу `forecast_engine` (той самий
@@ -3590,11 +3789,19 @@ class FuelFilterDaemon:
         # показати «ринок» із трьох монет під згаслою таблицею.
         if _mon:
             self._mm_track_bias(snap, _now, s)
+            # 🔻 ВЕРДИКТ ПРО КОРЕКЦІЮ — одразу після важеля і на ТОМУ САМОМУ
+            # знімку: банер і його вердикт не можуть описувати різні ринки.
+            self._mm_track_correction(snap, _now, s)
         else:
             with self._lock:
                 self._mm_bias = {}
                 self._mm_bias_since = 0.0
                 self._mm_bias_cand = {}
+                # Вимкнений монітор гасить і вердикт: «заморожена» корекція
+                # блокувала б відкриття без жодного живого розрахунку.
+                self._mm_corr = {}
+                self._mm_corr_st = {}
+                self._mm_lever_hist = []
 
     def _mm_queue_map(self) -> Dict[str, List[str]]:
         """{СИМВОЛ: ['Q1','Q4', …]} — у ЯКИХ чергах зараз стоїть монета.
@@ -3761,7 +3968,55 @@ class FuelFilterDaemon:
             # вужчий (без черг і фандингу). Мовчати про це не можна: коротший
             # список читався б як «бот половину монет загубив».
             'queues_off': not bool(s.get('enabled')),
+            # 🔻 ВЕРДИКТ ПРО КОРЕКЦІЮ (вимога 19.09) — ЧИТАННЯ готового стану,
+            # який щотакту рахує `_mm_track_correction`. Банер малює з цього
+            # поля і стан, і розклад ознак, і те, чи блокуються відкриття.
+            'correction': dict(getattr(self, '_mm_corr', {}) or {}) if _on else {},
         }
+
+    def mm_correction(self) -> Dict:
+        """🔻 Вердикт про корекцію — ПУБЛІЧНЕ читання готового стану.
+
+        Тим самим правилом, що `mm_bias()`: читати чужий `_mm_corr` напряму не
+        можна, а рахувати тут — тим більше (рахує двигун).
+        """
+        with self._lock:
+            return dict(getattr(self, '_mm_corr', {}) or {})
+
+    def correction_blocks_open(self) -> tuple:
+        """🚫 Чи ЗАБОРОНЕНО зараз відкривати угоди через корекцію → (bool, причина).
+
+        **Вимога (19.09), дослівно:** «В період корекції потрібно обмежити
+        відкриття угод.»
+
+        ⚠️ Блокує ЛИШЕ ПІДТВЕРДЖЕНА корекція (`state == 'on'`). Відліки
+        (`pending`/`ending`) — це ще не подія, і зупиняти на них торгівлю
+        означало б реагувати на шум, від якого підтвердження й захищає.
+        ⚠️ Блокуються ОБИДВА напрямки. Вхід ЗА банером у корекції ловить ніж,
+        а вхід ПРОТИ банера — це торгівля проти власного тренду бота; ані те,
+        ані інше не є тим, заради чого бот тримає напрямок.
+        ⚠️ ✋ РУЧНІ дії це НЕ зупиняє — рішення людини лишається сильнішим
+        (той самий принцип, що в «нової ситуації»). Ворота стоять у двох
+        вузлах: `_open` (усі черги) і `on_signal` (прямі відкриття).
+        ⚠️ Помилка/недоступність → НЕ блокуємо: тихо зупинити торгівлю через
+        збій читання не можна (fail-open, як у 🚦 воріт напрямку).
+        """
+        try:
+            c = self.mm_correction()
+            if not c or c.get('state') != 'on' or not c.get('blocking'):
+                return False, ''
+            _lay = ' · '.join(f"{x['icon']} {x['name']} {x['pct']}% "
+                              f"(поріг {x['need']}%)"
+                              for x in (c.get('layers') or [])
+                              if x.get('ok') and x.get('lit'))
+            _held = self._fmt_wait(max(0.0, time.time() - float(c.get('since') or 0)))
+            return True, (f'🔻 КОРЕКЦІЯ проти банера {c.get("bias")} '
+                          f'(триває {_held}, ознак {c.get("lit")}/{c.get("need")}'
+                          + (f' · {_lay}' if _lay else '') + ') — '
+                          f'відкриття угод зупинено')
+        except Exception as e:
+            print(f"[FF] correction gate error: {e}")
+            return False, ''
 
     def mm_snapshot_for(self, symbols) -> Dict:
         """🧮 СТАРИЙ МММ по вказаних монетах — ЧИТАННЯ знімка двигуна.
@@ -4716,6 +4971,34 @@ class FuelFilterDaemon:
             # зупинити торгівлю повністю, тож збій читання не має ставати
             # тихою зупинкою бота.
             print(f"[FuelFilter] {symbol}: direction gate error: {_e} — пропускаю")
+
+        # 🔻 КОРЕКЦІЯ — НЕ ВІДКРИВАЄМО (вимога 19.09: «В період корекції
+        # потрібно обмежити відкриття угод»). Стоїть тут, бо `_open` — ЄДИНИЙ
+        # вузол відкриття ВСІХ черг; запис міг лягти в чергу ще до того, як
+        # корекція почалась, і двигун черги про неї не знає.
+        # ⚠️ ✋ РУЧНЕ (`by_hand`) ці ворота ОБХОДИТЬ — на відміну від 🚦 головних
+        # кнопок: корекція це ОЦІНКА РИНКУ ботом, а не заборона користувача, і
+        # людина має право відкрити свідомо (той самий принцип, що в «нової
+        # ситуації»). Запис у черзі при цьому НЕ виселяємо: корекція мине, і
+        # монета відкриється штатно.
+        if not by_hand:
+            _cb, _cwhy = self.correction_blocks_open()
+            if _cb:
+                self._engine_skip[symbol] = _cwhy
+                # ⚠️ АНТИ-ФЛУД ОБОВʼЯЗКОВИЙ: двигун смикає `_open` щотакту по
+                # КОЖНІЙ монеті черги, а корекція триває годинами — без цього
+                # був би рівно той потоп, який уже чистили в Q4-recheck. Пишемо
+                # ОДИН рядок на монету НА ЕПІЗОД корекції (ключ — її `since`).
+                _ep = float((self.mm_correction() or {}).get('since') or 0)
+                if self._mm_corr_skip_logged.get(symbol) != _ep:
+                    self._mm_corr_skip_logged[symbol] = _ep
+                    try:
+                        from detection.activity_log import log_activity
+                        log_activity(symbol, 'skipped', _cwhy, side=side,
+                                     source='FF')
+                    except Exception:
+                        pass
+                return False
 
         entry_price = fuel.get('mark_price')
         if not entry_price or entry_price <= 0:

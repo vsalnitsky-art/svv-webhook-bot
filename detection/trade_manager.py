@@ -2528,6 +2528,28 @@ class TradeManager:
                 print(f"[TM] FF intercept error for {symbol}: {e}")
                 log_activity(symbol, 'rejected', f'Помилка перехоплення Fuel-фільтром: {e}', side=side, source='TM')
 
+        # === 🔻 КОРЕКЦІЯ: у цей період угоди НЕ відкриваємо (вимога 19.09) ===
+        # Сюди доходять ЛИШЕ ПРЯМІ відкриття (сигнал, якого не взяла жодна
+        # черга). Опени з черг ловить `fuel_filter._open` — другий вузол тих
+        # самих воріт; разом вони накривають ВСІ автоматичні шляхи.
+        # ⚠️ ✋ РУЧНИЙ сигнал ці ворота ОБХОДИТЬ: корекція — це оцінка ринку
+        # ботом, а не заборона користувача (той самий принцип, що в «нової
+        # ситуації»). 🚦 головні кнопки напрямку лишаються сильнішими за все.
+        # ⚠️ Помилка читання НЕ блокує (fail-open).
+        if 'manual' not in str(opened_by or '').lower():
+            try:
+                from detection.fuel_filter import get_fuel_filter as _gff0
+                _ff0 = _gff0()
+                if _ff0 is not None and hasattr(_ff0, 'correction_blocks_open'):
+                    _cb, _cwhy = _ff0.correction_blocks_open()
+                    if _cb:
+                        log_activity(symbol, 'skipped', _cwhy, side=side,
+                                     source='TM')
+                        return {'status': 'rejected', 'is_paper': False,
+                                'reason': _cwhy}
+            except Exception as e:
+                print(f"[TM] correction gate error for {symbol}: {e}")
+
         # === 📐 ГЛОБАЛЬНІ ВОРОТА РІВНІВ: Мін. R + ЦІЛЬ УГОДИ (=TP-2) ===
         # Сюди доходять ЛИШЕ прямі відкриття — сигнал, який не взяла жодна
         # черга (усі вимкнені / FF вимкнено). Раніше на цьому шляху не

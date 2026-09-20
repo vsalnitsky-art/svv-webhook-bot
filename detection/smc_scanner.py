@@ -3601,6 +3601,30 @@ class SMCScanner:
             pass
 
     # ═══ 💧 VOB + 🧮 БАНЕР + ТАБЛИЦЯ 💧 СКАНЕРА → СИГНАЛ (вимога 19.09) ═══
+    def volumized_trends(self) -> dict:
+        """📦 ПУБЛІЧНИЙ знімок Volumized-трендів: {'on', 'tf', 'trends'}.
+
+        `trends` = {СИМВОЛ: 'LONG'|'SHORT'} — напрямок ПОТОЧНОГО (намальованого
+        на графіку) Volumized OB на `volumized_timeframe`. Це РІВНО той самий
+        кеш, що малює ▲/▼ у watchlist і бокс на панелі, тож «на 5m пішли
+        ведмежі блоки» означає одне й те саме скрізь.
+
+        ⚠️ Метод публічний НАВМИСНО: читати чужий `_volumized_trend_cache`
+        напряму не можна (той самий принцип, через який зʼявились
+        `has_open_position()` у TM і `last_tick_at()` у liq-map).
+        ⚠️ Нічого НЕ рахує — скан і так оновлює цей кеш щоциклу, тож для
+        споживача (🔻 детектор корекції) це коштує НУЛЬ запитів до біржі.
+        ⚠️ `on=False` (блок 📦 вимкнено) віддаємо ОКРЕМО від порожнього списку:
+        «ми не рахуємо» і «блоків немає» — різні відповіді.
+        """
+        with self._lock:
+            trends = {str(sym).upper(): (c or {}).get('trend')
+                      for sym, c in (self._volumized_trend_cache or {}).items()
+                      if (c or {}).get('trend') in ('LONG', 'SHORT')}
+        return {'on': bool(self._settings.get('use_volumized_ob', True)),
+                'tf': self._settings.get('volumized_timeframe', '1h'),
+                'trends': trends}
+
     def _liq_vob_check(self, symbol, vol_result, vol_tf, vol_klines):
         """НОВИЙ VOB звіряємо з таблицею 💧 Сканера ліквідності.
 

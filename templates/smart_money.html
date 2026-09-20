@@ -809,7 +809,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     letter-spacing: 0.5px;
     white-space: nowrap;
 }
-/* Flip-clock style digital timer for the BTC banner */
+/* Flip-clock style digital timer (банер ₿ BTCUSDT і банер 🧮 МММ-монітора).
+   🎨 ОДИН СТИЛЬ НА ВЕСЬ ТАЙМЕР (вимога 19.09: «Зроби професійний таймер
+   "2д 09:57:19", щоб все виглядало в одному стилі»). Раніше «2д» стояло
+   ПОЗА плитками: інший розмір (0.9 проти 1.25rem), інший колір (жовтий
+   проти білого) і без тла — сегмент днів «висів» збоку й ламав рядок.
+   Тепер доба — ТАКА САМА плитка, а одиниця («д») — маленький приглушений
+   суфікс усередині неї: це єдине, що відрізняє її від цифр часу. */
 .ff-flip { display: inline-flex; align-items: center; gap: 2px; }
 .ff-flip .fd {
     display: inline-block; min-width: 0.95em; padding: 3px 4px 4px;
@@ -824,8 +830,23 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     content: ''; position: absolute; left: 0; right: 0; top: 50%;
     height: 1px; background: rgba(0,0,0,0.5);
 }
-.ff-flip .fs { font-weight: 800; font-size: 1.1rem; color: #6b7280; padding: 0 1px; }
-.ff-flip .fday { font-size: 0.9rem; color: #facc15; font-weight: 800; margin-right: 3px; }
+/* Сегмент ДНІВ: та сама плитка (тло, висота, шрифт, колір), ширшa рівно
+   настільки, щоб умістити число з одиницею. */
+.ff-flip .fd.fdd {
+    min-width: auto; padding-left: 6px; padding-right: 5px; margin-right: 4px;
+}
+.ff-flip .fd.fdd i {
+    font-style: normal; font-size: 0.58em; font-weight: 700;
+    color: #9aa3b5; margin-left: 2px; letter-spacing: .5px;
+}
+.ff-flip .fs {
+    font-weight: 800; font-size: 1.15rem; line-height: 1; color: #8b93a7;
+    padding: 0 1px; font-family: 'Consolas', 'SF Mono', monospace;
+}
+/* 📐 Компактний варіант — той самий вигляд, менший масштаб (вердикт
+   корекції стоїть у рядку з текстом, а не окремим банером). */
+.ff-flip.ff-flip-sm .fd { font-size: 0.86rem; padding: 2px 3px 3px; border-radius: 3px; }
+.ff-flip.ff-flip-sm .fs { font-size: 0.8rem; }
 .tm-pnl-pos { color: #4ade80; }
 .tm-pnl-neg { color: #ef4444; }
 .tm-side-long { color: #4ade80; font-weight: 600; }
@@ -2529,6 +2550,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                       title="Показники й таймер відновлено після рестарту бота — таймер продовжено з того самого моменту, числа оновляться найближчим тактом (~30с).">↻</span>
                 <span id="mm-bias-status" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap;background:transparent">—</span>
             </div>
+            <!-- 🔻 ВЕРДИКТ ПРО КОРЕКЦІЮ (вимога 19.09). Окремий рядок під
+                 банером, а не ще один значок у ньому: це ДРУГИЙ вердикт («що
+                 з трендом просто зараз»), і він мусить читатись сам по собі,
+                 з розкладом ознак і таймером. -->
+            <div id="mm-corr-row" style="display:none;align-items:center;gap:10px;margin:-4px 0 10px;padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);flex-wrap:wrap">
+                <span id="mm-corr-state" style="font-weight:800;font-size:0.8rem;padding:3px 10px;border-radius:6px;white-space:nowrap">—</span>
+                <span id="mm-corr-timer" class="ff-flip" style="white-space:nowrap"></span>
+                <span id="mm-corr-layers" style="font-size:0.7rem;font-family:monospace;color:#8b93a7;display:flex;gap:10px;flex-wrap:wrap"></span>
+                <span style="flex:1"></span>
+                <span id="mm-corr-block" style="display:none;font-size:0.68rem;font-weight:700;padding:3px 9px;border-radius:6px;white-space:nowrap"></span>
+            </div>
             <!-- Режим економії: МММ рахується НЕ по всьому watchlist. Мовчати
                  про це не можна — коротка таблиця читалась би як «бот сліпий». -->
             <div id="mm-limited-hint" style="display:none;margin:0 0 8px;padding:7px 11px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:0.7rem;font-weight:600"></div>
@@ -2549,6 +2581,50 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     ⏱ Перехід ≥ <input type="number" id="ff-mm-bias-confirm" min="0" max="3600" step="30" value="120" style="width:60px;font-size:0.68rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> с
                 </label>
             </div>
+            <!-- 🔻 НАЛАШТУВАННЯ ДЕТЕКТОРА КОРЕКЦІЇ. Своя гармошка, бо це
+                 ОКРЕМИЙ вердикт зі своїми порогами: у ряд фільтрів показу
+                 (вище) вони не лізуть ні за змістом, ні за шириною. -->
+            <details class="sm-settings-bar" style="margin:0 0 8px">
+                <summary class="sm-settings-summary" style="cursor:pointer;font-size:0.73rem;color:#fbbf24;font-weight:600">
+                    <span>🔻 Корекція — детектор і ворота відкриття</span>
+                    <span class="sm-settings-summary-right" id="mm-corr-sum">—</span>
+                </summary>
+                <div class="mmc-grid">
+                    <label class="mmc-chk" title="Стежити за корекцією ПРОТИ напрямку банера і показувати вердикт. Ознаки рахуються по ВСІХ монетах монітора з того самого знімка, що малює таблицю, і НЕ коштують жодного зайвого запиту до біржі.">
+                        <input type="checkbox" id="ff-mm-corr-enabled" onchange="saveFuelFilterSettings()" style="margin:0">
+                        🔻 Стежити за корекцією
+                    </label>
+                    <label class="mmc-chk" title="🚫 Поки триває ПІДТВЕРДЖЕНА корекція — нові угоди не відкриваються (обидва напрямки). Відліки (⏳) не блокують нічого. ✋ Ручні відкриття й ручний сигнал ці ворота НЕ зупиняють — рішення людини сильніше. Записи з черг не виселяються: корекція мине — монета відкриється штатно.">
+                        <input type="checkbox" id="ff-mm-corr-block" onchange="saveFuelFilterSettings()" style="margin:0">
+                        🚫 Не відкривати угоди в корекції
+                    </label>
+                    <div class="mmc-f">
+                        <label>Ознак ≥</label>
+                        <input type="number" id="ff-mm-corr-layers" min="1" max="3" step="1" value="2" onchange="saveFuelFilterSettings()"
+                               title="Скільки ознак із трьох (📦 VOB · 💹 Ціна · 📉 Важіль) мусить збігтись, щоб оголосити корекцію. Шар, під яким замало монет із даними, вважається НЕВИЗНАЧЕНИМ і в підрахунок не йде.">
+                    </div>
+                    <div class="mmc-f">
+                        <label>📦 VOB проти ≥, %</label>
+                        <input type="number" id="ff-mm-corr-vob" min="0" max="100" step="5" value="60" onchange="saveFuelFilterSettings()"
+                               title="Частка монет монітора, чий ПОТОЧНИЙ Volumized OB на молодшому TF (той самий блок, що на графіку) дивиться ПРОТИ банера. Береться з кешу сканера — блок 📦 Volumized OB Trend має бути увімкнений.">
+                    </div>
+                    <div class="mmc-f">
+                        <label>💹 Ціна проти ≥, %</label>
+                        <input type="number" id="ff-mm-corr-price" min="0" max="100" step="5" value="60" onchange="saveFuelFilterSettings()"
+                               title="Частка монет, чий свіжий рух ціни (те саме 15-хв вікно, що в колонці «Рух») іде ПРОТИ банера. Монети без напрямку руху (▬) у частку не входять.">
+                    </div>
+                    <div class="mmc-f">
+                        <label>📉 Важіль просів ≥, п.п.</label>
+                        <input type="number" id="ff-mm-corr-drop" min="0" max="200" step="5" value="15" onchange="saveFuelFilterSettings()"
+                               title="На скільки пунктів важіль банера У БІК СВОГО НАПРЯМКУ впав від піку за останні 30 хв. Якщо важіль устиг перевернутись, просідання чесно виходить більшим за сам пік.">
+                    </div>
+                    <div class="mmc-f">
+                        <label>⏱ Підтвердження ≥, с</label>
+                        <input type="number" id="ff-mm-corr-confirm" min="0" max="3600" step="30" value="120" onchange="saveFuelFilterSettings()"
+                               title="Скільки ознаки мусять протриматись — і щоб ПОЧАТИ корекцію, і щоб оголосити її КІНЕЦЬ. Підтвердження симетричне: повернути бота в ринок на одному спокійному такті означало б увійти на відкаті всередині корекції. 0 = миттєво.">
+                    </div>
+                </div>
+            </details>
             <!-- 🪗 СПИСОК МОНЕТ — ВЛАСНА ГАРМОШКА (вимога 18.09: «зроби вікно
                  таблиці меншим по висоті десь в двічі і заверни у гармошку;
                  гармошку починай із "Обрано"; за замовчуванням звернуто»).
@@ -2579,6 +2655,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
               #mm-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
               #mm-table tbody tr:hover { background: rgba(56,189,248,0.10); }
               #mm-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
+              /* 🔻 Налаштування детектора корекції — та сама сітка, що в
+                 панелі 💧 Сканера (однакова висота полів і рівний gap). */
+              #mm-monitor-panel .mmc-grid { display:flex; flex-wrap:wrap;
+                  gap:12px 16px; align-items:flex-end; padding:10px 12px 12px; }
+              #mm-monitor-panel .mmc-f { display:flex; flex-direction:column; gap:4px; }
+              #mm-monitor-panel .mmc-f > label { font-size:0.64rem; color:#8b93a7;
+                  text-transform:uppercase; letter-spacing:.5px; white-space:nowrap; }
+              #mm-monitor-panel .mmc-f input { background:rgba(0,0,0,0.3);
+                  color:#e5e7eb; border:1px solid rgba(255,255,255,0.15);
+                  border-radius:4px; padding:4px 7px; font-size:0.72rem; height:28px;
+                  width:78px; box-sizing:border-box; font-family:monospace;
+                  text-align:right; }
+              #mm-monitor-panel .mmc-chk { display:flex; align-items:center; gap:7px;
+                  font-size:0.7rem; color:#cbd5e1; cursor:pointer; height:28px; }
             </style>
             <!-- Висота вдвічі менша за типову (680 → 340): секція стоїть над
                  усіма чергами, і повна таблиця відсувала їх за екран. -->
@@ -12196,6 +12286,132 @@ function mmRenderBias(bias) {
             cnd.style.display = 'none';
         }
     }
+    // 🔻 Вердикт про корекцію малюємо ТИМ САМИМ тактом (глобальний 1с-тікер
+    // кличе `mmRenderBias`), тож його таймери живі без другого інтервалу.
+    mmRenderCorr();
+}
+
+// ═════════ 🔻 ВЕРДИКТ ПРО КОРЕКЦІЮ (вимога 19.09) ════════════════════════
+// Бекенд (`detection/mm_correction.py` + `_mm_track_correction`) віддає ЧИСТІ
+// поля: стан, розклад ознак, чи блокуються відкриття. Слова й кольори — тут
+// (той самий принцип, що `verdict.parts` у драбині ліквідності).
+let _mmCorr = null;
+const _MM_CORR_VIEW = {
+    trend:   { txt: '▶️ ТРЕНД',                col: '#9aa3b5', bg: 'rgba(148,163,184,0.12)' },
+    pending: { txt: '⏳ ОЗНАКИ КОРЕКЦІЇ',      col: '#fbbf24', bg: 'rgba(245,158,11,0.14)' },
+    on:      { txt: '🔻 КОРЕКЦІЯ',             col: '#ff8a5b', bg: 'rgba(249,115,22,0.16)' },
+    ending:  { txt: '⏳ КОРЕКЦІЯ ЗГАСАЄ',      col: '#facc15', bg: 'rgba(245,158,11,0.12)' },
+    ended:   { txt: '✅ КОРЕКЦІЯ ЗАВЕРШИЛАСЬ', col: '#4ade80', bg: 'rgba(34,197,94,0.14)' },
+};
+function mmRenderCorr(corr) {
+    if (corr !== undefined) _mmCorr = corr || null;
+    const row = document.getElementById('mm-corr-row');
+    if (!row) return;
+    const c = _mmCorr || {};
+    // Монітор вимкнено / детектор вимкнено → рядка немає взагалі: порожній
+    // вердикт гірший за його відсутність (той самий принцип, що з банером).
+    if (!c.state || c.enabled === false) { row.style.display = 'none'; return; }
+    row.style.display = 'flex';
+    const nowS = Math.floor(Date.now() / 1000);
+    const v = _MM_CORR_VIEW[c.state] || _MM_CORR_VIEW.trend;
+    const st = document.getElementById('mm-corr-state');
+    if (st) {
+        st.textContent = v.txt;
+        st.style.color = v.col;
+        st.style.background = v.bg;
+    }
+    // ⏱ ТАЙМЕР — той самий вигляд, що в банерів (спільний `flipTimerHTML`),
+    // лише компактніший. Для відліків підтвердження показуємо «скільки/скільки».
+    const tm = document.getElementById('mm-corr-timer');
+    if (tm) {
+        const need = Number(c.confirm_sec || 0);
+        if (c.state === 'on' && c.since) {
+            tm.innerHTML = flipTimerHTML(Math.max(0, nowS - Number(c.since)));
+            tm.title = 'Скільки триває корекція.';
+        } else if ((c.state === 'pending' || c.state === 'ending') && c.cand_since) {
+            const held = Math.max(0, nowS - Number(c.cand_since));
+            tm.innerHTML = `<span class="fs">${held}/${need}с</span>`;
+            tm.title = 'Стан підтверджується часом — і початок корекції, і її '
+                + 'кінець. Поле «⏱ Підтвердження ≥» у налаштуваннях нижче.';
+        } else if (c.state === 'ended' && c.ended_at) {
+            tm.innerHTML = `<span class="fs">${fmtTimer(Math.max(0, nowS - Number(c.ended_at)))} тому</span>`;
+            tm.title = 'Скільки минуло з моменту, коли корекція завершилась.';
+        } else {
+            tm.innerHTML = '';
+        }
+    }
+    // Розклад ознак: кожна — своє число проти свого порога. «62%/60%» поруч зі
+    // станом і є доказ; без нього вердикт довелось би брати на віру.
+    const lay = document.getElementById('mm-corr-layers');
+    if (lay) {
+        const parts = (c.layers || []).map(l => {
+            if (!l.ok) {
+                return `<span style="color:#6b7280" title="${(l.note || 'немає даних')}">`
+                    + `${l.icon} ${l.name}: —</span>`;
+            }
+            const col = l.lit ? '#ff8a5b' : '#8b93a7';
+            return `<span style="color:${col}" title="${(l.note || '')} (монет: ${l.n || 0})">`
+                + `${l.icon} ${l.name} <b>${l.pct}%</b>/${l.need}%</span>`;
+        });
+        lay.innerHTML = parts.join('') + (parts.length
+            ? ` <span style="color:#8b93a7">· ознак <b style="color:${v.col}">${c.lit || 0}</b>/${c.need || 0}</span>` : '');
+    }
+    // 🚫 Ворота відкриття. Стан «корекція є, але блокування вимкнене» теж
+    // показуємо: мовчання читалось би як «бот усе одно стоїть».
+    const bl = document.getElementById('mm-corr-block');
+    if (bl) {
+        if (c.state === 'on' && c.blocking) {
+            bl.style.display = '';
+            bl.textContent = '🚫 відкриття зупинено';
+            bl.style.color = '#fca5a5';
+            bl.style.background = 'rgba(239,68,68,0.15)';
+            bl.title = 'Поки триває корекція, нові угоди не відкриваються '
+                + '(обидва напрямки). ✋ Ручні відкриття працюють. Записи з '
+                + 'черг не виселяються — вони відкриються після корекції.';
+        } else if (c.state === 'on') {
+            bl.style.display = '';
+            bl.textContent = '⚠️ відкриття дозволені';
+            bl.style.color = '#fbbf24';
+            bl.style.background = 'rgba(245,158,11,0.12)';
+            bl.title = 'Корекція триває, але тумблер «🚫 Не відкривати угоди в '
+                + 'корекції» вимкнено — бот відкриває угоди як зазвичай.';
+        } else {
+            bl.style.display = 'none';
+        }
+    }
+    row.title = 'Корекція = рух ПРОТИ напрямку банера, видний ОДРАЗУ по багатьох '
+        + 'монетах. Ознаки рахуються з того самого знімка, що малює таблицю, і '
+        + 'не коштують жодного запиту до біржі:\n'
+        + '📦 VOB проти — частка монет, чий поточний Volumized OB на молодшому '
+        + 'TF' + (c.vob_tf ? ` (${String(c.vob_tf).toUpperCase()})` : '') + ' дивиться проти банера;\n'
+        + '💹 Ціна проти — частка монет, чий свіжий рух іде проти банера;\n'
+        + '📉 Важіль просів — на скільки п.п. важіль банера впав від свого піку '
+        + `за 30 хв (зараз ${c.lever != null ? c.lever : '—'} п.п., пік ${c.lever_peak != null ? c.lever_peak : '—'}).\n`
+        + (c.vob_on === false
+            ? '⚠️ Блок 📦 Volumized OB Trend ВИМКНЕНО — ознака VOB не рахується.\n' : '')
+        + (c.reason ? c.reason + '\n' : '')
+        + 'Початок і кінець підтверджуються часом, а пороги входу й виходу різні '
+        + '(гістерезис) — щоб вердикт не миготів.';
+}
+// Число з поля детектора корекції. ⚠️ Саме так, а не `parseFloat(v) || d`:
+// 0 тут ЗМІСТОВНИЙ («поріг не вимагати»), а `||` мовчки підмінив би його
+// дефолтом (той самий урок, що з `_numOr` у полях рівнів угоди).
+function _mmcNum(id, dflt) {
+    const e = document.getElementById(id);
+    const v = parseFloat(e ? e.value : '');
+    return isNaN(v) ? dflt : v;
+}
+// Згорнута гармошка мусить казати, ЗА ЧИМ саме зараз визначається корекція.
+function _mmCorrSummary(s) {
+    const el = document.getElementById('mm-corr-sum');
+    if (!el || !s) return;
+    el.textContent = (s.mm_corr_enabled === false ? '⛔ вимкнено · ' : '')
+        + `ознак ≥ ${s.mm_corr_min_layers != null ? s.mm_corr_min_layers : 2}/3 · `
+        + `📦 ${s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60}% · `
+        + `💹 ${s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 60}% · `
+        + `📉 ${s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15} п.п. · `
+        + `⏱ ${s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 120}с · `
+        + (s.mm_corr_block_open === false ? 'відкриття дозволені' : '🚫 блок відкриттів');
 }
 function mmApplyState(mm) {
     // Відновлюємо збережені фільтри РІВНО ОДИН раз і саме тут — так вони
@@ -12203,6 +12419,10 @@ function mmApplyState(mm) {
     if (!_mmUiLoaded) { _mmUiLoaded = true; _mmLoadUi(); }
     _mmRows = (mm && Array.isArray(mm.rows)) ? mm.rows : [];
     mmRenderBias(mm && mm.bias);
+    // 🔻 Вердикт про корекцію — окреме поле відповіді (`correction`), окремий
+    // рядок під банером. Передаємо ЯВНО: `mmRenderBias` без аргументу лише
+    // перемальовує збережене (його щосекунди смикає глобальний тікер).
+    mmRenderCorr((mm && mm.correction) || null);
     // ⚠️ КОЖНЕ нове поле стану МУСИТЬ бути ТУТ. `coverage` («49 з 51 монет»,
     // 17.09) і `pending` («чому знімка немає», 18.09) приїжджали з сервера, але
     // в `_mmMeta` НЕ клались — тобто обидві фічі були мертві на сторінці:
@@ -13456,6 +13676,15 @@ function renderFuelFilter(d) {
     setIf('ff-mm-monitor-enabled', s.mm_monitor_enabled !== false);  // default true
     // 🐢 Антиспам банера монітора (секунди підтвердження статусу).
     setIf('ff-mm-bias-confirm', String(s.mm_bias_confirm_sec != null ? s.mm_bias_confirm_sec : 120));
+    // 🔻 Детектор корекції — дефолти ті самі, що в `mm_correction.DEFAULTS`.
+    setIf('ff-mm-corr-enabled', s.mm_corr_enabled !== false);       // default true
+    setIf('ff-mm-corr-block', s.mm_corr_block_open !== false);      // default true
+    setIf('ff-mm-corr-layers', String(s.mm_corr_min_layers != null ? s.mm_corr_min_layers : 2));
+    setIf('ff-mm-corr-vob', String(s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60));
+    setIf('ff-mm-corr-price', String(s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 60));
+    setIf('ff-mm-corr-drop', String(s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15));
+    setIf('ff-mm-corr-confirm', String(s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 120));
+    if (typeof _mmCorrSummary === 'function') _mmCorrSummary(s);
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
     setIf('ff-manage-close-mm', String(s.manage_close_min_mm != null ? s.manage_close_min_mm : 0));
@@ -14081,7 +14310,12 @@ function flipTimerHTML(sec) {
     const tiles = str => str.split('').map(ch => `<span class="fd">${ch}</span>`).join('');
     const sep = '<span class="fs">:</span>';
     let html = '';
-    if (d > 0) html += `<span class="fday">${d}д</span>`;
+    // 🎨 Доба — ТАКА САМА плитка, що й цифри часу (вимога 19.09 «в одному
+    // стилі»): раніше це був окремий жовтий текст без тла, який випадав із
+    // рядка. Одиниця («д») — маленький приглушений суфікс УСЕРЕДИНІ плитки.
+    // ⚠️ БЕЗ двокрапки після доби: «2д 09:57:19» — саме так це читає людина
+    // (а «2д:09:57:19» виглядало б як зайвий розряд часу). Відступ дає CSS.
+    if (d > 0) html += `<span class="fd fdd">${d}<i>д</i></span>`;
     html += tiles(p(h)) + sep + tiles(p(m)) + sep + tiles(p(s));
     return html;
 }
@@ -14492,6 +14726,15 @@ async function saveFuelFilterSettings() {
         // 🐢 Скільки новий статус банера мусить протриматись, перш ніж його
         // покажуть (антиспам). 0 = миттєво.
         mm_bias_confirm_sec: parseInt(_v('ff-mm-bias-confirm', '120') || '0', 10),
+        // 🔻 ДЕТЕКТОР КОРЕКЦІЇ (вимога 19.09). `_numOr`-стиль: 0 у порогах —
+        // ЗМІСТОВНЕ значення («не вимагати цієї ознаки»), тож `||` тут не можна.
+        mm_corr_enabled: _c('ff-mm-corr-enabled'),
+        mm_corr_block_open: _c('ff-mm-corr-block'),
+        mm_corr_min_layers: _mmcNum('ff-mm-corr-layers', 2),
+        mm_corr_vob_pct: _mmcNum('ff-mm-corr-vob', 60),
+        mm_corr_price_pct: _mmcNum('ff-mm-corr-price', 60),
+        mm_corr_lever_drop: _mmcNum('ff-mm-corr-drop', 15),
+        mm_corr_confirm_sec: _mmcNum('ff-mm-corr-confirm', 120),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
