@@ -3504,6 +3504,30 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/mm-corr-log/clear', methods=['POST'])
+    def api_fuel_filter_mm_corr_log_clear():
+        """🗑 Очистити лог корекції — прямо з гармошки 🔻 Корекція.
+
+        Лог набирається для КАЛІБРУВАННЯ, тож після зміни порогів стара вибірка
+        лише заважає: у ній семпли, зняті за іншими числами. Кнопка поруч із
+        ⬇️ CSV, щоб «вивантажив → обнулив → набираю заново» робилось в одному
+        місці, а не на сторінці адміністрування БД.
+
+        ⚠️ Реалізація ОДНА — `db.clear_old_mm_corr(days)`, той самий метод, що
+        вже чистить лог за віком (`days=0` = все, бо «старше за зараз»). Другої
+        копії DELETE не заводимо: розійшлись би.
+        """
+        data = request.get_json(silent=True) or {}
+        try:
+            days = max(0, int(data.get('days') or 0))
+        except (TypeError, ValueError):
+            days = 0
+        try:
+            n = get_db().clear_old_mm_corr(days)
+            return jsonify({'ok': True, 'deleted': int(n or 0), 'days': days})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/mm-corr-log')
     def api_fuel_filter_mm_corr_log():
         """🔻 СИРИЙ лог детектора корекції — для аналізу і калібрування порогів.

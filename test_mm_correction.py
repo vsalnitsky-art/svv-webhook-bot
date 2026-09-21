@@ -491,8 +491,13 @@ def test_the_switches_have_the_documented_defaults():
     _check(mc.DEFAULTS['mm_corr_block_open'] is True,
            'дослівна вимога: «в період корекції обмежити відкриття угод»')
     _check(mc.DEFAULTS['mm_corr_min_layers'] == 2, 'дефолт — 2 ознаки з 3')
-    _check(mc.DEFAULTS['mm_corr_confirm_sec'] == 120,
-           'підтвердження — те саме вікно, що в антиспамі банера')
+    # ⚠️ ПЕРЕПИСАНО (21.09), а не «полагоджено»: раніше тут стояло 120 із
+    # поясненням «те саме вікно, що в антиспамі банера». Лог показав, що цього
+    # замало — 9 із 33 стартів були миготінням усередині епізоду, тож вікно
+    # корекції СВІДОМО довше за банерне (`mm_bias_confirm_sec` = 120). Це різні
+    # події: банер гасить підпис, а тут ми зупиняємо ТОРГІВЛЮ.
+    _check(mc.DEFAULTS['mm_corr_confirm_sec'] == 300,
+           'підтвердження корекції — власне вікно, довше за банерне')
     # Ключі мусять доїхати в налаштування бота (інакше UI нікуди не збереже).
     for k in mc.DEFAULTS:
         _check(k in _ffm.DEFAULT_SETTINGS, f'ключа {k} немає в налаштуваннях FF')
@@ -871,10 +876,10 @@ def test_the_engine_never_writes_a_field_the_table_cannot_store():
 def test_the_csv_export_lists_every_column():
     """CSV — робочий формат аналізу. Колонка, яку забули в експорті, робить
     дані неповними МОВЧКИ."""
-    m = re.search(r"api_fuel_filter_mm_corr_log(.*?)\n    @app\.route",
-                  _FLASK_SRC, re.S)
-    _check(m, 'маршруту логу корекції немає')
-    body = m.group(1)
+    # ⚠️ Беремо функцію ЗА ТОЧНИМ ІМЕНЕМ через AST, а не регуляркою по
+    # префіксу: поруч зʼявився `api_fuel_filter_mm_corr_log_clear`, і пошук
+    # `find`/`search` за префіксом чіплявся вже за нього.
+    body = _fn_src(_FLASK_SRC, 'api_fuel_filter_mm_corr_log')
     _check("format" in body and 'csv' in body, 'немає CSV-експорту')
     listed = set(re.findall(r"'(\w+)'", body.split('cols = [')[1].split(']')[0]))
     for c in _model_columns('MmCorrectionLog'):
@@ -924,6 +929,139 @@ def test_ui_has_the_log_controls_and_the_csv_link():
     _check('mm_corr_log_enabled' in _sum,
            'вимкнений лог мусить бути видно, не розгортаючи гармошку')
     print('✓ 🖥 UI: тумблер логу, інтервал, CSV і розклад у шапці')
+
+
+# ═══════ 7. 🎚 ПЕРЕКАЛІБРУВАННЯ ПОРОГІВ + 🗑 ОЧИЩЕННЯ ЛОГУ (21.09) ═══════
+def test_new_defaults_come_from_the_log_analysis():
+    """Пороги змінені за підсумками 26-год логу: 💹 Ціна — найшумніший шар
+    (медіанний стрибок 14.4 п.п. проти 1.4 у VOB) і запускала 30 із 33
+    корекцій; 9 стартів були миготінням усередині епізоду."""
+    _check(mc.DEFAULTS['mm_corr_price_pct'] == 80.0,
+           f"поріг ціни: {mc.DEFAULTS['mm_corr_price_pct']}")
+    _check(mc.DEFAULTS['mm_corr_confirm_sec'] == 300,
+           f"підтвердження: {mc.DEFAULTS['mm_corr_confirm_sec']}")
+    # Решту НЕ чіпали: VOB стабільний і саме він ТРИМАЄ корекцію.
+    _check(mc.DEFAULTS['mm_corr_vob_pct'] == 60.0, 'поріг VOB не мали чіпати')
+    _check(mc.DEFAULTS['mm_corr_min_layers'] == 2,
+           '«3 з 3» дало б 3 епізоди за добу — це вимкнений детектор')
+    print('✓ нові дефолти: 💹 80% · ⏱ 300с (VOB і «2 з 3» без змін)')
+
+
+class _MigDB:
+    """Шар БД лише для міграції: один блоб налаштувань."""
+    def __init__(self, stored):
+        self.store = {'fuel_filter_settings': stored}
+    def get_setting(self, k, d=None):
+        return self.store.get(k, d)
+    def set_setting(self, k, v):
+        self.store[k] = v
+
+
+def _migrate(stored):
+    ff = FF.__new__(FF)
+    ff._db = _MigDB(dict(stored))
+    FF._migrate_settings(ff)
+    return ff._db.store['fuel_filter_settings']
+
+
+def test_a_saved_blob_really_gets_the_new_thresholds():
+    """⚠️ ГОЛОВНЕ: сторінка шле УСІ ключі одним блобом, тож старий дефолт уже
+    лежить у БД і перекрив би новий — правка в коді не зробила б НІЧОГО
+    (урок `pilot_autofill_migrated_v1`)."""
+    out = _migrate({'mm_corr_price_pct': 60.0, 'mm_corr_confirm_sec': 120,
+                    'enabled': True})
+    _check(out['mm_corr_price_pct'] == 80.0, f'ціна не переїхала: {out}')
+    _check(out['mm_corr_confirm_sec'] == 300, f'підтвердження не переїхало: {out}')
+    _check(out['enabled'] is True, 'решта налаштувань мусить лишитись')
+    print('✓ збережений блоб зі СТАРИМИ дефолтами перекалібровано')
+
+
+def test_a_value_the_user_set_by_hand_is_never_touched():
+    """Переписуємо ЛИШЕ те, що дорівнює старому дефолту: 65 чи 240 людина
+    поставила руками, і мовчки зрушити це означало б змінити чужу настройку."""
+    out = _migrate({'mm_corr_price_pct': 65.0, 'mm_corr_confirm_sec': 240})
+    _check(out['mm_corr_price_pct'] == 65.0, f'ручне значення зрушили: {out}')
+    _check(out['mm_corr_confirm_sec'] == 240, f'ручне значення зрушили: {out}')
+    print('✓ значення, задане руками, міграція не чіпає')
+
+
+def test_the_migration_runs_exactly_once():
+    """Інакше вона щоразу відкочувала б вибір користувача назад до 80/300."""
+    out = _migrate({'mm_corr_price_pct': 60.0})
+    _check(out.get(FF.MM_CORR_TUNE_FLAG) is True, 'позначку не поставлено')
+    out['mm_corr_price_pct'] = 60.0          # користувач свідомо повернув 60
+    again = _migrate(out)
+    _check(again['mm_corr_price_pct'] == 60.0,
+           f'міграція спрацювала ВДРУГЕ і перебила вибір: {again}')
+    print('✓ міграція одноразова — другий старт вибір не перебиває')
+
+
+def test_a_clean_install_is_stamped_too():
+    """⚠️ Порожній блоб теж отримує позначку: інакше міграція спрацювала б на
+    ДРУГОМУ старті й перекрила б вибір, який користувач уже встиг зробити."""
+    out = _migrate({})
+    _check(out.get(FF.MM_CORR_TUNE_FLAG) is True,
+           f'чиста установка мусить бути позначена: {out}')
+    print('✓ чиста установка позначається одразу')
+
+
+def test_a_broken_db_never_breaks_boot():
+    """Міграція живе в `__init__` — виняток там поклав би весь рушій."""
+    class _Boom:
+        def get_setting(self, *a, **k): raise RuntimeError('БД лягла')
+        def set_setting(self, *a, **k): raise RuntimeError('БД лягла')
+    ff = FF.__new__(FF); ff._db = _Boom()
+    FF._migrate_settings(ff)          # не має підняти виняток
+    print('✓ збій БД під час міграції не валить старт')
+
+
+def test_ui_fallbacks_match_the_new_defaults():
+    """Хардкоджені фолбеки в HTML — друге написання того самого числа. Якщо
+    вони відстануть, поле показуватиме 60 там, де бекенд рахує 80."""
+    for old in ('_mmcNum(\'ff-mm-corr-price\', 60)',
+                '_mmcNum(\'ff-mm-corr-confirm\', 120)',
+                's.mm_corr_price_pct != null ? s.mm_corr_price_pct : 60',
+                's.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 120'):
+        _check(old not in _HTML, f'у сторінці лишився старий фолбек: {old}')
+    _check("_mmcNum('ff-mm-corr-price', 80)" in _HTML, 'фолбек ціни не оновлено')
+    _check("_mmcNum('ff-mm-corr-confirm', 300)" in _HTML, 'фолбек вікна не оновлено')
+    _check('id="ff-mm-corr-price" min="0" max="100" step="5" value="80"' in _HTML,
+           'value= у полі ціни не оновлено')
+    _check('id="ff-mm-corr-confirm" min="0" max="3600" step="30" value="300"' in _HTML,
+           'value= у полі підтвердження не оновлено')
+    print('✓ фолбеки UI збігаються з новими дефолтами')
+
+
+def test_clear_button_exists_and_its_route_is_registered():
+    """Урок submitManualTp1: вигаданий URL виглядає як «збережено»."""
+    _check('mmCorrLogClear(' in _HTML, 'немає кнопки очищення логу')
+    _check('id="mm-corr-clear"' in _HTML, 'немає самої кнопки')
+    _check('id="mm-corr-clear-note"' in _HTML, 'немає місця для відповіді')
+    _check('/api/fuel-filter/mm-corr-log/clear' in _HTML, 'кнопка нікуди не шле')
+    fl = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
+    _check("@app.route('/api/fuel-filter/mm-corr-log/clear'" in fl,
+           'маршрут очищення не зареєстровано')
+    i = _HTML.find('async function mmCorrLogClear')
+    body = _HTML[i:i + 1600]
+    _check('confirm(' in body, 'незворотна дія мусить питати підтвердження')
+    _check('if (!r.ok)' in body, 'без перевірки HTTP 404 виглядав би як успіх')
+    _check('d.deleted' in body, 'результат мусить називати КІЛЬКІСТЬ видаленого')
+    print('✓ кнопка очищення: підтвердження · маршрут · відповідь числом')
+
+
+def test_clearing_reuses_the_single_delete_implementation():
+    """Другої копії DELETE не заводимо — розійшлись би (та сама чистка за
+    віком уже живе в `clear_old_mm_corr`)."""
+    fl = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
+    # ⚠️ Ріжемо ДОКСТРІНГ: він сам ПОЯСНЮЄ, чому власного DELETE тут немає —
+    # та сама пастка, що вже ловили на `ensure_fresh`.
+    body = _fn_src(fl, 'api_fuel_filter_mm_corr_log_clear')
+    _check('clear_old_mm_corr' in body, 'маршрут мусить кликати наявний метод')
+    # ⚠️ Шукаємо САМЕ SQL, а не слово: поле відповіді `deleted` містить його
+    # як підрядок, і груба перевірка падала на власній назві поля.
+    _check('DELETE FROM' not in body.upper() and 'text(' not in body,
+           'власного SQL у маршруті бути не має')
+    print('✓ очищення йде через ЄДИНУ наявну реалізацію')
 
 
 if __name__ == '__main__':

@@ -2610,7 +2610,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </div>
                     <div class="mmc-f">
                         <label>💹 Ціна проти ≥, %</label>
-                        <input type="number" id="ff-mm-corr-price" min="0" max="100" step="5" value="60" onchange="saveFuelFilterSettings()"
+                        <input type="number" id="ff-mm-corr-price" min="0" max="100" step="5" value="80" onchange="saveFuelFilterSettings()"
                                title="Частка монет, чий свіжий рух ціни (те саме 15-хв вікно, що в колонці «Рух») іде ПРОТИ банера. Монети без напрямку руху (▬) у частку не входять.">
                     </div>
                     <div class="mmc-f">
@@ -2620,7 +2620,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </div>
                     <div class="mmc-f">
                         <label>⏱ Підтвердження ≥, с</label>
-                        <input type="number" id="ff-mm-corr-confirm" min="0" max="3600" step="30" value="120" onchange="saveFuelFilterSettings()"
+                        <input type="number" id="ff-mm-corr-confirm" min="0" max="3600" step="30" value="300" onchange="saveFuelFilterSettings()"
                                title="Скільки ознаки мусять протриматись — і щоб ПОЧАТИ корекцію, і щоб оголосити її КІНЕЦЬ. Підтвердження симетричне: повернути бота в ринок на одному спокійному такті означало б увійти на відкаті всередині корекції. 0 = миттєво.">
                     </div>
                     <!-- 🧾 СИРИЙ ЛОГ ДЛЯ КАЛІБРУВАННЯ (вимога 20.09). Окремим
@@ -2644,6 +2644,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                            title="Вивантажити сирий лог корекції у CSV (до 5000 рядків, найстаріші зверху). Кожен рядок несе і значення ознак, і пороги, що діяли, — тож вибірка лишається читабельною після зміни налаштувань."
                            style="display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.05);color:#93c5fd;font-size:0.72rem;font-weight:600;text-decoration:none">⬇️ CSV логу</a>
                     </div>
+                    <!-- 🗑 Очистити лог (вимога 21.09). Стоїть ПОРУЧ із CSV:
+                         після зміни порогів стара вибірка лише заважає —
+                         у ній семпли, зняті за іншими числами. -->
+                    <div class="mmc-f" style="align-self:end">
+                        <label>&nbsp;</label>
+                        <button type="button" onclick="mmCorrLogClear()" id="mm-corr-clear"
+                                title="Видалити УСІ рядки логу корекції з БД. Потрібно після зміни порогів: стара вибірка знята за іншими числами і змішувати їх в одному CSV не можна. Спершу вивантажте ⬇️ CSV, якщо історія ще потрібна — відновити її буде неможливо."
+                                style="display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:6px;border:1px solid rgba(248,113,113,0.35);background:rgba(248,113,113,0.08);color:#f87171;font-size:0.72rem;font-weight:600;cursor:pointer">🗑 Очистити лог</button>
+                    </div>
+                    <div id="mm-corr-clear-note" style="flex-basis:100%;font-size:0.68rem;color:#8b93a7"></div>
                 </div>
             </details>
             <!-- 📨 СПОВІЩЕННЯ В TELEGRAM (вимога 21.09: «Додай можливість
@@ -12528,15 +12538,42 @@ async function mmTgCheck(test) {
         if (el) { el.style.color = '#f87171'; el.textContent = '⚠️ ' + e.message; }
     }
 }
+// 🗑 Очистити сирий лог корекції. Дія НЕЗВОРОТНА, тож підтвердження
+// обовʼязкове, а результат друкуємо числом — «щось натиснув і тиша» читалось
+// би як збій (той самий урок, що з мовчазним 404 у submitManualTp1).
+async function mmCorrLogClear() {
+    const note = document.getElementById('mm-corr-clear-note');
+    const btn = document.getElementById('mm-corr-clear');
+    if (!confirm('Видалити УСІ рядки логу корекції?\n\nЦе НЕЗВОРОТНО. Якщо історія ще потрібна для аналізу — спершу натисніть ⬇️ CSV логу.')) return;
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+    if (note) { note.style.color = '#8b93a7'; note.textContent = '⏳ чищу…'; }
+    try {
+        const r = await fetch('/api/fuel-filter/mm-corr-log/clear', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({days: 0})
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.reason || 'збій');
+        if (note) {
+            note.style.color = '#4ade80';
+            note.textContent = `🗑 видалено рядків: ${d.deleted} — лог набирається заново з поточними порогами`;
+        }
+    } catch (e) {
+        if (note) { note.style.color = '#f87171'; note.textContent = '⚠️ ' + e.message; }
+    } finally {
+        if (btn) { btn.disabled = false; btn.style.opacity = ''; }
+    }
+}
 function _mmCorrSummary(s) {
     const el = document.getElementById('mm-corr-sum');
     if (!el || !s) return;
     el.textContent = (s.mm_corr_enabled === false ? '⛔ вимкнено · ' : '')
         + `ознак ≥ ${s.mm_corr_min_layers != null ? s.mm_corr_min_layers : 2}/3 · `
         + `📦 ${s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60}% · `
-        + `💹 ${s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 60}% · `
+        + `💹 ${s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80}% · `
         + `📉 ${s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15} п.п. · `
-        + `⏱ ${s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 120}с · `
+        + `⏱ ${s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 300}с · `
         + (s.mm_corr_block_open === false ? 'відкриття дозволені' : '🚫 блок відкриттів')
         // 🧾 Логування теж у розкладі: вимкнений лог означає, що калібрувати
         // пороги згодом буде НІ ЗА ЧИМ — це має бути видно, не відкриваючи.
@@ -13811,9 +13848,9 @@ function renderFuelFilter(d) {
     setIf('ff-mm-corr-block', s.mm_corr_block_open !== false);      // default true
     setIf('ff-mm-corr-layers', String(s.mm_corr_min_layers != null ? s.mm_corr_min_layers : 2));
     setIf('ff-mm-corr-vob', String(s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60));
-    setIf('ff-mm-corr-price', String(s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 60));
+    setIf('ff-mm-corr-price', String(s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80));
     setIf('ff-mm-corr-drop', String(s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15));
-    setIf('ff-mm-corr-confirm', String(s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 120));
+    setIf('ff-mm-corr-confirm', String(s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 300));
     setIf('ff-mm-corr-log', s.mm_corr_log_enabled !== false);       // default true
     setIf('ff-mm-bias-tg', s.mm_bias_tg !== false);                 // default true
     setIf('ff-mm-corr-tg', s.mm_corr_tg !== false);                 // default true
@@ -14867,9 +14904,9 @@ async function saveFuelFilterSettings() {
         mm_corr_block_open: _c('ff-mm-corr-block'),
         mm_corr_min_layers: _mmcNum('ff-mm-corr-layers', 2),
         mm_corr_vob_pct: _mmcNum('ff-mm-corr-vob', 60),
-        mm_corr_price_pct: _mmcNum('ff-mm-corr-price', 60),
+        mm_corr_price_pct: _mmcNum('ff-mm-corr-price', 80),
         mm_corr_lever_drop: _mmcNum('ff-mm-corr-drop', 15),
-        mm_corr_confirm_sec: _mmcNum('ff-mm-corr-confirm', 120),
+        mm_corr_confirm_sec: _mmcNum('ff-mm-corr-confirm', 300),
         mm_corr_log_enabled: _c('ff-mm-corr-log'),
         mm_bias_tg: _c('ff-mm-bias-tg'),
         mm_corr_tg: _c('ff-mm-corr-tg'),

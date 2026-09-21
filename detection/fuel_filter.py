@@ -1125,6 +1125,48 @@ class FuelFilterDaemon:
         self._readiness_last_log: Dict[str, tuple] = {}
         self._last_tick_ts = 0
         self._load_state()
+        self._migrate_settings()
+
+    # Позначка ОДНОРАЗОВОЇ міграції порогів детектора корекції (21.09).
+    MM_CORR_TUNE_FLAG = 'mm_corr_tuned_v1'
+    # Що саме міняємо: ключ → (СТАРИЙ дефолт, НОВИЙ дефолт).
+    MM_CORR_TUNE = {
+        'mm_corr_price_pct': (60.0, 80.0),
+        'mm_corr_confirm_sec': (120, 300),
+    }
+
+    def _migrate_settings(self):
+        """⚠️ ЗМІНА ДЕФОЛТУ НЕ ДІЄ НА ВЖЕ ЗБЕРЕЖЕНИЙ БЛОБ — одноразова міграція.
+
+        Сторінка налаштувань шле УСІ ключі одним блобом, тож `mm_corr_price_pct:
+        60` осів у БД ще з часів старого дефолту і перекривав би новий (той самий
+        урок, що з `pilot_autofill_migrated_v1`). Правка дефолту в коді на
+        робочій установці без цього не робить НІЧОГО.
+
+        ⚠️ **Переписуємо ЛИШЕ значення, що дорівнює СТАРОМУ дефолту.** Сторінка
+        шле всі ключі завжди, тож збережені 60/120 — це майже напевно старий
+        дефолт, а не свідомий вибір; а от 65 чи 75 людина поставила руками, і
+        чіпати це не можна.
+        ⚠️ Позначку ставимо НАВІТЬ на чистій установці (порожній блоб) — інакше
+        міграція спрацювала б на ДРУГОМУ старті й перекрила б вибір, який
+        користувач уже встиг зробити.
+        """
+        try:
+            stored = self._db.get_setting(_DB_SETTINGS, {}) or {}
+            if not isinstance(stored, dict) or stored.get(self.MM_CORR_TUNE_FLAG):
+                return
+            out = dict(stored)
+            out[self.MM_CORR_TUNE_FLAG] = True
+            moved = []
+            for key, (old, new) in self.MM_CORR_TUNE.items():
+                if key in out and float(out[key]) == float(old):
+                    out[key] = new
+                    moved.append(f'{key} {old:g}→{new:g}')
+            self._db.set_setting(_DB_SETTINGS, out)
+            if moved:
+                print(f"[FuelFilter] 🔻 пороги корекції перекалібровано: {', '.join(moved)}")
+        except Exception as e:
+            print(f"[FuelFilter] settings migration warn: {e}")
 
     def _get_funding_symbols(self) -> List[str]:
         """Tracked coins from the 💰 Funding Rate Scanner — but only while that
@@ -3828,7 +3870,7 @@ class FuelFilterDaemon:
                            settings, tf=vob.get('tf') or '')
         st = _mc.next_state(self._mm_corr_st, res['lit'], res['lit_hold'],
                             res['need'], now,
-                            float(settings.get('mm_corr_confirm_sec', 120) or 0))
+                            float(settings.get('mm_corr_confirm_sec', 300) or 0))
         _was = (self._mm_corr_st or {}).get('state')
         blocking = bool(_mc.is_on(st) and settings.get('mm_corr_block_open', True))
         with self._lock:
@@ -3839,7 +3881,7 @@ class FuelFilterDaemon:
                 'layers': res['layers'], 'lit': res['lit'],
                 'lit_hold': res['lit_hold'], 'need': res['need'],
                 'determined': res['determined'],
-                'confirm_sec': int(float(settings.get('mm_corr_confirm_sec', 120) or 0)),
+                'confirm_sec': int(float(settings.get('mm_corr_confirm_sec', 300) or 0)),
                 'ended_show_sec': int(_mc.ENDED_SHOW_SEC),
                 'lever': round(lever, 1), 'lever_peak': round(peak, 1),
                 'vob_on': vob.get('on'), 'vob_tf': vob.get('tf'),
