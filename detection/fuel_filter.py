@@ -237,6 +237,11 @@ DEFAULT_SETTINGS = {
     # Новий стан (LONG / SHORT / ⚖) мусить протриматись стільки, перш ніж
     # банер його ПОКАЖЕ. 0 = перемикати миттєво (стара поведінка).
     'mm_bias_confirm_sec': 120,
+    # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
+    # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
+    # ГОЛОВНИЙ вміст тієї теми. ⚠️ Майстер-вимикач теми лишається в кабінеті
+    # адміна (`notify_btc`) — він гасить УСІ три потоки (банер · корекція · ₿).
+    'mm_bias_tg': True,
     # 🔻 ДЕТЕКТОР КОРЕКЦІЇ банера (вимога 19.09) — пороги й тумблери живуть
     # у `detection/mm_correction.DEFAULTS`, щоб число було в ОДНОМУ місці:
     # mm_corr_enabled · mm_corr_min_layers · mm_corr_vob_pct ·
@@ -907,6 +912,12 @@ class FuelFilterDaemon:
         # СВІДОМО не персиститься: вікно підтвердження коротке, і після
         # рестарту чесніше почати відлік заново, ніж «дорахувати» чужий.
         self._mm_bias_cand: Dict = {}
+        # 📨 Останній статус банера, ПРО ЯКИЙ УЖЕ сповіщали в Telegram.
+        # СВІДОМО не персиститься: після рестарту перший такт лише запамʼятовує
+        # стан і мовчить — інакше кожен `botupdate` слав би «зміну», якої не
+        # було. Читається через `getattr(..., '__none__')`, тож старі стаби
+        # тестів від нового поля не падають.
+        self._mm_bias_tg_last = '__none__'
         # 🔻 КОРЕКЦІЯ (вимога 19.09). `_mm_corr_st` — ЧИСТИЙ стан машини
         # (`mm_correction.next_state`), він і персиститься: «корекція триває
         # 1г 20хв» не має обнулятись від `botupdate`. `_mm_corr` — готове
@@ -1449,6 +1460,10 @@ class FuelFilterDaemon:
                                              _cd.get('mm_corr_block_open', True)))
         s['mm_corr_log_enabled'] = bool(s.get('mm_corr_log_enabled',
                                               _cd.get('mm_corr_log_enabled', True)))
+        s['mm_corr_tg'] = bool(s.get('mm_corr_tg', _cd.get('mm_corr_tg', True)))
+        # 📨 Зміна статусу банера 🧮 → Telegram (вимога 21.09). Ключ живе тут, а
+        # не в `mm_correction.DEFAULTS`: це про БАНЕР, а не про детектор корекції.
+        s['mm_bias_tg'] = bool(s.get('mm_bias_tg', True))
 
         def _clamp(key, lo, hi, cast=float):
             try:
@@ -3556,6 +3571,54 @@ class FuelFilterDaemon:
             'since': int(self._mm_bias_since or now),
             'ts': int(now),
         }
+        # 📨 TELEGRAM: зміна ПІДТВЕРДЖЕНОГО статусу банера (вимога 21.09 —
+        # тепер це ГОЛОВНЕ, заради чого існує тема 🧮 МММ-монітор).
+        if side != prev:
+            self._mm_bias_alert(prev, side, now, _s)
+
+    def _mm_bias_alert(self, prev, side, now: float, settings: Dict):
+        """📨 «Банер 🧮 МММ-монітора змінив статус» — у групу, тему 🧮.
+
+        **Вимога (21.09):** «основним тепер сюди напрявляй оповіщення стосовно
+        змін банера "🧮 МММ-МОНІТОР"».
+
+        ⚠️ **ПЕРШИЙ СТАН ПІСЛЯ СТАРТУ — МОВЧКИ.** `_mm_bias` персиститься, тож
+        після `botupdate` перший же такт міг би «побачити зміну» і надіслати
+        повідомлення про подію, якої не було. Позначка `_mm_bias_tg_last`
+        живе В ПАМʼЯТІ й на першому такті лише запамʼятовується — той самий
+        прийом, що в ₿-алерта (`_btc_start_last_alert`) і в тихій базі VOB.
+        ⚠️ Шлемо ЛИШЕ на ПІДТВЕРДЖЕНИЙ статус: кандидат (⏳) — це ще відлік, і
+        сповіщати про нього означало б повернути те саме миготіння, від якого
+        банер і захищали.
+        ⚠️ Best-effort: збій відправки НЕ підіймається в такт двигуна.
+        """
+        try:
+            if not bool(settings.get('mm_bias_tg', True)):
+                return
+            _prev_seen = getattr(self, '_mm_bias_tg_last', '__none__')
+            self._mm_bias_tg_last = side
+            if _prev_seen == '__none__':
+                return                      # перший такт після старту — тихо
+            if _prev_seen == side:
+                return
+            b = dict(self._mm_bias or {})
+            _ico = {'LONG': '🟢', 'SHORT': '🔴'}.get(side, '⏸')
+            _now_txt = f"{_ico} <b>{side}</b>" if side else "⏸ <b>РІВНОВАГА</b>"
+            _pico = {'LONG': '🟢', 'SHORT': '🔴'}.get(_prev_seen, '⏸')
+            _was = (f"{_pico} {_prev_seen}" if _prev_seen else "⏸ рівновага")
+            _held = ''
+            _since = float((self._mm_bias or {}).get('since') or 0)
+            if _since and now > _since:
+                _held = f" · тримався <b>{self._fmt_dur(now - _since)}</b>"
+            msg = (f"🧮 <b>МММ-МОНІТОР</b> → {_now_txt} · "
+                   f"важіль <b>{b.get('pct', 0)}%</b>\n"
+                   f"було: {_was}{_held}\n"
+                   f"монет: {b.get('coins', 0)} · 🟢 {b.get('n_long', 0)} / "
+                   f"🔴 {b.get('n_short', 0)} / ⚖ {b.get('n_flat', 0)}")
+            self._broadcast_users('btc', 'notify_btc', msg)
+            print(f"[FuelFilter] MMM banner TG: {_prev_seen} → {side}")
+        except Exception as e:
+            print(f"[FuelFilter] MMM banner TG error: {e}")
 
     def _mm_vob_trends(self) -> Dict:
         """📦 Знімок Volumized-трендів зі СКАНЕРА — {'on','tf','trends'}.
@@ -3767,22 +3830,36 @@ class FuelFilterDaemon:
         # читався б як «бот перестав працювати» (урок «невидимий збій»).
         _changed = st.get('state') != _was
         if _changed and st.get('state') in ('on', 'ended'):
+            # ⚠️ Текст будуємо ПОЗА try-блоком логу: він потрібен ОБОМ каналам
+            # (🧾 Лог і 📨 Telegram), і збій одного не має лишати другий без
+            # повідомлення — а `_txt` усередині `try` саме так і губився б.
+            _lay = ' · '.join(f"{x['icon']} {x['pct']}{x.get('unit') or '%'}/"
+                              f"{x['need']}{x.get('unit') or '%'}"
+                              for x in res['layers'] if x['ok'] and x['lit'])
+            if st['state'] == 'on':
+                _txt = (f'🔻 КОРЕКЦІЯ ПРОТИ банера {d}: ознак {res["lit"]}/'
+                        f'{res["need"]}' + (f' · {_lay}' if _lay else '')
+                        + (' · 🚫 відкриття угод зупинено' if blocking
+                           else ' · відкриття НЕ блокуємо (тумблер вимкнено)'))
+            else:
+                _txt = (f'✅ КОРЕКЦІЯ ЗАВЕРШИЛАСЬ (тривала '
+                        f'{self._fmt_wait(float(st.get("lasted") or 0))}) — '
+                        f'банер {d}, відкриття знову дозволені')
             try:
                 from detection.activity_log import log_activity
-                _lay = ' · '.join(f"{x['icon']} {x['pct']}%/{x['need']}%"
-                                  for x in res['layers'] if x['ok'] and x['lit'])
-                if st['state'] == 'on':
-                    _txt = (f'🔻 КОРЕКЦІЯ ПРОТИ банера {d}: ознак {res["lit"]}/'
-                            f'{res["need"]}' + (f' · {_lay}' if _lay else '')
-                            + (' · 🚫 відкриття угод зупинено' if blocking
-                               else ' · відкриття НЕ блокуємо (тумблер вимкнено)'))
-                else:
-                    _txt = (f'✅ КОРЕКЦІЯ ЗАВЕРШИЛАСЬ (тривала '
-                            f'{self._fmt_wait(float(st.get("lasted") or 0))}) — '
-                            f'банер {d}, відкриття знову дозволені')
                 log_activity('ALL', 'event', _txt, side=d, source='MMM')
             except Exception:
                 pass
+            # 📨 TELEGRAM: та сама ПОДІЯ — у ту саму тему 🧮 (вимога 21.09
+            # «Стосовно корекцій також зроби оповіщення»). Шлемо РІВНО те, що
+            # вже пішло в 🧾 Лог: два різні тексти про одну подію розійшлися б.
+            # ⚠️ Лише `on`/`ended` — відліки (`pending`/`ending`) це ще не подія.
+            if bool(settings.get('mm_corr_tg', True)):
+                try:
+                    self._broadcast_users('btc', 'notify_btc',
+                                          f"🧮 <b>МММ-МОНІТОР</b>\n{_txt}")
+                except Exception as _e:
+                    print(f"[FuelFilter] correction TG error: {_e}")
 
         # 🧾 СИРИЙ ЛОГ ДЛЯ КАЛІБРУВАННЯ (вимога 20.09) — окремо від 🧾 Логу
         # роботи бота. Там ПОДІЇ для людини, тут — РЯД ЗНАЧЕНЬ трьох ознак у

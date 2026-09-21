@@ -1351,7 +1351,7 @@ def register_auth_routes(app):
                 '<p class="sub" style="margin-top:-4px">Ринкові сигнали йдуть у '
                 '<b>Telegram-групу</b>. Ці перемикачі вмикають / вимикають відповідну '
                 'тему в групі для всіх учасників.</p>'
-                f'<div class="crow"><span class="t">₿ BTCUSDT — старт / стоп / пауза</span>'
+                f'<div class="crow"><span class="t">🧮 МММ-монітор — банер · 🔻 корекція · ₿ сеанс</span>'
                 f'<label class="sw"><input type="checkbox" id="nbtc" {_btc_ck} onchange="saventf()">'
                 '<span class="tr"></span></label></div>'
                 f'<div class="crow"><span class="t">💰 Funding — поява монети з ММ</span>'
@@ -1362,7 +1362,7 @@ def register_auth_routes(app):
         else:
             _ntf_section = (
                 '<div class="sect2"><div class="seclbl">🔔 Сповіщення в Telegram</div>'
-                '<p class="sub" style="margin-top:-4px">Ринкові сигнали (₿ BTCUSDT, '
+                '<p class="sub" style="margin-top:-4px">Ринкові сигнали (🧮 МММ-монітор, '
                 '💰 Funding, 🎯 рекомендації, 🚀 аномальний ріст, угоди) приходять у '
                 '<b>Telegram-групу</b>, а не в приватний чат. Доступ до групи — '
                 '<b>після реєстрації та схвалення адміністратором</b>; посилання на '

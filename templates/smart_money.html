@@ -2646,6 +2646,32 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </div>
                 </div>
             </details>
+            <!-- 📨 СПОВІЩЕННЯ В TELEGRAM (вимога 21.09: «Додай можливість
+                 вмикати та вимикати, тобто можливість контролювати відправку
+                 всіх оповіщень»). ОДНЕ місце на всі три потоки теми
+                 🧮 МММ-монітор — інакше тумблери шукали б по різних секціях. -->
+            <details class="sm-settings-bar" style="margin:0 0 8px">
+                <summary class="sm-settings-summary" style="cursor:pointer;font-size:0.73rem;color:#93c5fd;font-weight:600">
+                    <span>📨 Сповіщення в Telegram — тема «🧮 МММ-монітор»</span>
+                    <span class="sm-settings-summary-right" id="mm-tg-sum">—</span>
+                </summary>
+                <div class="mmc-grid">
+                    <label class="mmc-chk" title="Надсилати в групу (тема 🧮 МММ-монітор) повідомлення про ЗМІНУ СТАТУСУ банера: 🟢 LONG / 🔴 SHORT / ⏸ рівновага, з важелем і розкладом монет. Шлеться лише ПІДТВЕРДЖЕНИЙ статус (кандидат ⏳ — ще відлік), а перший стан після рестарту бота — мовчки, щоб botupdate не виглядав як подія.">
+                        <input type="checkbox" id="ff-mm-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
+                        ⚖️ Зміна статусу банера
+                    </label>
+                    <label class="mmc-chk" title="Надсилати в ту саму тему ПОДІЇ корекції: 🔻 почалась (з розкладом ознак і поміткою, чи зупинено відкриття) та ✅ завершилась (із тривалістю). Відліки підтвердження (⏳) НЕ надсилаються — це ще не подія.">
+                        <input type="checkbox" id="ff-mm-corr-tg" onchange="saveFuelFilterSettings()" style="margin:0">
+                        🔻 Початок / кінець корекції
+                    </label>
+                    <div style="flex-basis:100%;font-size:0.68rem;line-height:1.4;color:#8b93a7">
+                        ₿ <b>BTCUSDT (старт / стоп сеансу)</b> іде в ЦЮ САМУ тему — його
+                        окремий тумблер 📨 стоїть біля банера ₿ вище (як і раніше).
+                        <br>⚠️ Майстер-вимикач усієї теми — в кабінеті адміна
+                        («📢 Групові теми»): вимкнений там, він гасить ВСІ три потоки.
+                    </div>
+                </div>
+            </details>
             <!-- 🪗 СПИСОК МОНЕТ — ВЛАСНА ГАРМОШКА (вимога 18.09: «зроби вікно
                  таблиці меншим по висоті десь в двічі і заверни у гармошку;
                  гармошку починай із "Обрано"; за замовчуванням звернуто»).
@@ -12444,6 +12470,19 @@ function _mmcNum(id, dflt) {
     return isNaN(v) ? dflt : v;
 }
 // Згорнута гармошка мусить казати, ЗА ЧИМ саме зараз визначається корекція.
+// 📨 Згорнута гармошка сповіщень мусить казати, ЩО саме зараз шлеться в
+// групу: мовчазно вимкнений потік читається як «бот перестав повідомляти».
+function _mmTgSummary(s) {
+    const el = document.getElementById('mm-tg-sum');
+    if (!el || !s) return;
+    const on = [];
+    const off = [];
+    (s.mm_bias_tg === false ? off : on).push('⚖️ банер');
+    (s.mm_corr_tg === false ? off : on).push('🔻 корекція');
+    (s.start_signal_tg_alerts ? on : off).push('₿ сеанс');
+    el.textContent = (on.length ? '📨 ' + on.join(' · ') : '📭 нічого не шлемо')
+        + (off.length ? ' · ⛔ ' + off.join(' · ') : '');
+}
 function _mmCorrSummary(s) {
     const el = document.getElementById('mm-corr-sum');
     if (!el || !s) return;
@@ -13731,8 +13770,11 @@ function renderFuelFilter(d) {
     setIf('ff-mm-corr-drop', String(s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15));
     setIf('ff-mm-corr-confirm', String(s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 120));
     setIf('ff-mm-corr-log', s.mm_corr_log_enabled !== false);       // default true
+    setIf('ff-mm-bias-tg', s.mm_bias_tg !== false);                 // default true
+    setIf('ff-mm-corr-tg', s.mm_corr_tg !== false);                 // default true
     setIf('ff-mm-corr-log-every', String(s.mm_corr_log_every_sec != null ? s.mm_corr_log_every_sec : 300));
     if (typeof _mmCorrSummary === 'function') _mmCorrSummary(s);
+    if (typeof _mmTgSummary === 'function') _mmTgSummary(s);
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
     setIf('ff-manage-close-mm', String(s.manage_close_min_mm != null ? s.manage_close_min_mm : 0));
@@ -14784,6 +14826,8 @@ async function saveFuelFilterSettings() {
         mm_corr_lever_drop: _mmcNum('ff-mm-corr-drop', 15),
         mm_corr_confirm_sec: _mmcNum('ff-mm-corr-confirm', 120),
         mm_corr_log_enabled: _c('ff-mm-corr-log'),
+        mm_bias_tg: _c('ff-mm-bias-tg'),
+        mm_corr_tg: _c('ff-mm-corr-tg'),
         mm_corr_log_every_sec: _mmcNum('ff-mm-corr-log-every', 300),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),

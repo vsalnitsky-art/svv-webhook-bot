@@ -2394,8 +2394,10 @@ class TradeManager:
             if not is_shadow:
                 self._update_exchange_sl(pos['symbol'], new_sl)
             buf_note = f" (+{buf*100:.2f}% buffer)" if buf > 0 else ""
+            # 📨 У ГРУПОВИЙ ТОПІК: це подія ВІДКРИТОЇ УГОДИ, а приватний бот
+            # зарезервований під службові повідомлення (вимога 21.09).
             self._notify(f"⚖️ BE{' [paper]' if is_shadow else ''}: SL → {self._fmt_price(new_sl)} for "
-                          f"{pos['symbol']}{buf_note}")
+                          f"{pos['symbol']}{buf_note}", category='trades')
             (self._persist_shadow_positions if is_shadow else self._persist_positions)()
         elif pos['side'] == 'SHORT' and current_price <= entry * (1 - trigger):
             new_sl = entry * (1 - buf)
@@ -2404,8 +2406,10 @@ class TradeManager:
             if not is_shadow:
                 self._update_exchange_sl(pos['symbol'], new_sl)
             buf_note = f" (−{buf*100:.2f}% buffer)" if buf > 0 else ""
+            # 📨 У ГРУПОВИЙ ТОПІК: це подія ВІДКРИТОЇ УГОДИ, а приватний бот
+            # зарезервований під службові повідомлення (вимога 21.09).
             self._notify(f"⚖️ BE{' [paper]' if is_shadow else ''}: SL → {self._fmt_price(new_sl)} for "
-                          f"{pos['symbol']}{buf_note}")
+                          f"{pos['symbol']}{buf_note}", category='trades')
             (self._persist_shadow_positions if is_shadow else self._persist_positions)()
 
     # ============================================================
@@ -4899,7 +4903,8 @@ class TradeManager:
             real['trailing_active'] = True
             real['trailing_peak'] = current_price
             real['trailing_via_bos2'] = True  # marker — bypass use_trailing gate
-            self._notify(f"📈 Trailing активовано після BOS-2: {symbol}")
+            self._notify(f"📈 Trailing активовано після BOS-2: {symbol}",
+                         category='trades')
             print(f"[TM] 📈 Trailing activated for {symbol} via BOS-2 hook "
                   f"(use_trailing={s.get('use_trailing')})")
         
@@ -4991,7 +4996,7 @@ class TradeManager:
                 self._persist_shadow_positions()
                 self._notify(
                     f"📈 [TEST] Trailing активовано після BOS-2: {symbol}",
-                    is_test=True,
+                    is_test=True, category='trades',
                 )
                 print(f"[TM] [TEST] 📈 Shadow trailing activated for {symbol} via BOS-2 hook")
     
@@ -5291,7 +5296,8 @@ class TradeManager:
                 f"Entry: {self._fmt_price(c.get('entry_price'))} → "
                 f"Exit: {self._fmt_price(c.get('exit_price'))}\n"
                 f"PnL: {_sign}{c.get('pnl_pct', 0):.2f}% "
-                f"({_sign}${c.get('pnl_usd', 0):.2f})"
+                f"({_sign}${c.get('pnl_usd', 0):.2f})",
+                category='trades'
             )
         self._finalize_close_async(symbol, closed, _side, pos,
                                    notify_fn=_ext_notify)
@@ -5490,7 +5496,8 @@ class TradeManager:
                 f"🔄 Adopted external position\n"
                 f"{symbol} {side} @ {self._fmt_price(entry_price)}\n"
                 f"qty: {qty} · {sl_disp} · {tp_disp}\n"
-                f"TM will now manage exits via its algorithm."
+                f"TM will now manage exits via its algorithm.",
+                category='trades'
             )
         except Exception:
             pass

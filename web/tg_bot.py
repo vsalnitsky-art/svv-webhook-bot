@@ -115,7 +115,13 @@ def _admin_chat():
 # власного чату немає — шле в головний чат адміна з категорійним заголовком.
 _CAT_LABEL = {
     'funding':  '💰 Funding',
-    'btc':      '₿ BTCUSDT',
+    # 🧮 ТЕМА ПЕРЕЙМЕНОВАНА (вимога 21.09): головне в ній тепер — зміни банера
+    # «🧮 МММ-монітор» і 🔻 корекція, а ₿-сеанс лишається тут же (він і був).
+    # ⚠️ КЛЮЧ категорії лишається `btc` — його знають `TELEGRAM_CHAT_BTC` /
+    # `TELEGRAM_TOPIC_BTC`, збережені id тем (`tg_forum_topics`) і налаштування
+    # адміна `notify_btc`. Перейменувати ключ означало б загубити і тему, і
+    # тумблер (той самий прецедент, що з `q2_auto_ob_sl*`).
+    'btc':      '🧮 МММ-монітор',
     'trades':   '📈 Угоди',
     'signal':   '🎯 Напрямок',
     'register': '📝 Реєстрація',
@@ -134,7 +140,7 @@ _CAT_ENV = {
 # by category. Distinct from the per-symbol tags (#BTCUSDT) so they don't clash.
 _CAT_TAG = {
     'funding':  '#Funding',
-    'btc':      '#BTC_сеанс',
+    'btc':      '#МММ_монітор',
     'trades':   '#Угода',
     'signal':   '#Напрямок',
     'register': '#Реєстрація',
@@ -165,6 +171,57 @@ _PROTECTED_CATS = {'funding', 'btc', 'trades'}
 _forum_topics_cache = None    # {category: thread_id} for TELEGRAM_FORUM_CHAT
 
 
+_forum_names_cache = None     # {category: остання назва, яку ми ставили темі}
+
+
+def _forum_rename_if_needed(chat, category, tid):
+    """Перейменувати ВЖЕ СТВОРЕНУ тему форуму, якщо підпис категорії змінився.
+
+    Тема створюється ОДИН раз, а її `message_thread_id` персиститься — тож
+    зміна `_CAT_LABEL` сама по собі НЕ міняє назву в групі: у Telegram і далі
+    висіло б «₿ BTCUSDT» над повідомленнями про 🧮 МММ-монітор. Тобто без цього
+    перейменування вимога «зміни в групі назву» виконана б НЕ була.
+
+    ⚠️ Назву, яку ми поставили, ЗАПАМʼЯТОВУЄМО в БД: інакше `editForumTopic`
+    смикався б на КОЖНЕ повідомлення (зайвий запит до API на рівному місці).
+    ⚠️ Невдача НЕ ламає відправку — тема лишається зі старою назвою, а
+    повідомлення йде як ішло (best-effort, як і створення теми).
+    """
+    global _forum_names_cache
+    want = _CAT_LABEL.get(category)
+    if not want:
+        return
+    if _forum_names_cache is None:
+        try:
+            from storage.db_operations import get_db
+            saved = get_db().get_setting('tg_forum_topic_names', {}) or {}
+            _forum_names_cache = saved.get(str(chat), {}) if isinstance(saved, dict) else {}
+        except Exception:
+            _forum_names_cache = {}
+    if _forum_names_cache.get(category) == want:
+        return
+    try:
+        res = _api('editForumTopic', {'chat_id': chat, 'message_thread_id': int(tid),
+                                      'name': want})
+    except Exception as e:
+        print(f"[TG] rename topic {category} error: {e}")
+        return
+    if not (res or {}).get('ok'):
+        return
+    _forum_names_cache[category] = want
+    try:
+        from storage.db_operations import get_db
+        db = get_db()
+        saved = db.get_setting('tg_forum_topic_names', {}) or {}
+        if not isinstance(saved, dict):
+            saved = {}
+        saved.setdefault(str(chat), {})[category] = want
+        db.set_setting('tg_forum_topic_names', saved)
+    except Exception:
+        pass
+    print(f"[TG] forum topic renamed: {category} → {want}")
+
+
 def _forum_thread(category):
     """Get/auto-create a forum TOPIC for `category` inside TELEGRAM_FORUM_CHAT —
     one supergroup, a topic per category (💰/₿/📈/📝/💬). Thread ids persist in
@@ -187,6 +244,7 @@ def _forum_thread(category):
             _forum_topics_cache = {}
     tid = _forum_topics_cache.get(category)
     if tid:
+        _forum_rename_if_needed(chat, category, tid)
         return chat, tid
     res = _api('createForumTopic', {'chat_id': chat, 'name': _CAT_LABEL.get(category, category)})
     tid = (res.get('result') or {}).get('message_thread_id') if res.get('ok') else None
@@ -222,7 +280,7 @@ def _cat_chat(category):
 
 
 def _cat_enabled(category):
-    """Whether a GROUP category is on. 💰 Funding / ₿ BTCUSDT follow the admin's
+    """Whether a GROUP category is on. 💰 Funding / 🧮 МММ-монітор follow the admin's
     OWN cabinet toggle (notify_funding/notify_btc) — turning it off there stops
     the group too. Other categories default ON."""
     key = {'funding': 'notify_funding', 'btc': 'notify_btc'}.get(category)
@@ -430,7 +488,7 @@ def _handle_start(chat_id, username=None, name=None, lang=None, premium=None):
             "1️⃣ Натисніть «Реєстрація на сайті» і задайте <b>лише пароль</b> "
             "(email не потрібен — вас підтверджує Telegram).\n"
             "2️⃣ Адміністратор підтвердить вашу реєстрацію.\n"
-            "3️⃣ Ринкові сигнали (угоди, ₿ BTCUSDT, 💰 Funding) приходитимуть "
+            "3️⃣ Ринкові сигнали (угоди, 🧮 МММ-монітор, 💰 Funding) приходитимуть "
             "в <b>окрему групу</b> — посилання на вхід у групу надійде сюди "
             "<b>автоматично, після підтвердження реєстрації адміністратором</b>.\n\n"
             "💬 Виникли труднощі? Просто напишіть повідомлення сюди — "
