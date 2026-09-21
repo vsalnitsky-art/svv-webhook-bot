@@ -2670,6 +2670,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <br>⚠️ Майстер-вимикач усієї теми — в кабінеті адміна
                         («📢 Групові теми»): вимкнений там, він гасить ВСІ три потоки.
                     </div>
+                    <!-- 🩺 ПЕРЕВІРКА МАРШРУТУ (скарга 21.09 «сповіщень немає»).
+                         Усі причини мовчання були невидимі: тумблер кабінету,
+                         не налаштований чат/тема, бот не адмін теми, відмова
+                         Telegram. Кнопка шле пробне повідомлення ТИМ САМИМ
+                         шляхом і друкує, що саме сталось. -->
+                    <div style="flex-basis:100%;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+                                border-top:1px solid #2a2f3a;padding-top:8px;margin-top:2px">
+                        <button onclick="mmTgCheck(true)" class="sm-btn"
+                                style="font-size:0.68rem;padding:4px 10px"
+                                title="Надіслати пробне повідомлення в тему тим самим шляхом, що й бот, і показати результат: у який чат/тему пішло, чи увімкнений тумблер кабінету, і що саме відповів Telegram.">
+                            🩺 Перевірити тему
+                        </button>
+                        <span id="mm-tg-check" style="font-size:0.68rem;color:#8b93a7"></span>
+                    </div>
                 </div>
             </details>
             <!-- 🪗 СПИСОК МОНЕТ — ВЛАСНА ГАРМОШКА (вимога 18.09: «зроби вікно
@@ -12482,6 +12496,37 @@ function _mmTgSummary(s) {
     (s.start_signal_tg_alerts ? on : off).push('₿ сеанс');
     el.textContent = (on.length ? '📨 ' + on.join(' · ') : '📭 нічого не шлемо')
         + (off.length ? ' · ⛔ ' + off.join(' · ') : '');
+}
+// 🩺 «Сповіщень немає» мусить мати ПЕРЕВІРКУ, а не здогадку. Кнопка шле
+// пробне повідомлення тим самим шляхом і друкує ПОВНИЙ маршрут: у який
+// чат/тему, чи увімкнений тумблер кабінету, і що відповів Telegram.
+async function mmTgCheck(test) {
+    const el = document.getElementById('mm-tg-check');
+    if (el) { el.style.color = '#8b93a7'; el.textContent = '⏳ перевіряю…'; }
+    try {
+        const r = await fetch('/api/tg/topic-check', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({category: 'btc', test: !!test})
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (!el) return;
+        if (!d.ok) { el.style.color = '#f87171'; el.textContent = '⚠️ ' + (d.reason || 'збій'); return; }
+        const route = {forum: 'форум-група', env: 'власний чат категорії',
+                       admin: 'ПРИВАТНИЙ чат адміна', none: 'нікуди'}[d.route] || d.route;
+        const bits = [`тема «${d.label}»`, route];
+        if (d.chat) bits.push('чат ' + d.chat);
+        bits.push(d.thread ? 'тема #' + d.thread : 'без теми');
+        bits.push(d.enabled ? 'тумблер кабінету ✓' : 'тумблер кабінету ✗');
+        if (test) bits.push(d.sent ? '✅ повідомлення надіслано' : '❌ НЕ надіслано');
+        const bad = (test && !d.sent) || !d.enabled || d.route === 'none';
+        el.style.color = bad ? '#f87171' : (d.reason || d.rename_err ? '#fbbf24' : '#4ade80');
+        el.textContent = bits.join(' · ')
+            + (d.reason ? ' — ' + d.reason : '')
+            + (d.rename_err ? ' · перейменування: ' + d.rename_err : '');
+    } catch (e) {
+        if (el) { el.style.color = '#f87171'; el.textContent = '⚠️ ' + e.message; }
+    }
 }
 function _mmCorrSummary(s) {
     const el = document.getElementById('mm-corr-sum');

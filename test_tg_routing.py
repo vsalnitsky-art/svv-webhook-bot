@@ -605,6 +605,127 @@ def test_the_cabinet_still_calls_the_topic_by_its_new_name():
     print('✓ кабінет називає тему її новим імʼям')
 
 
+# ═══════════ 6. 🐞 «НАЗВА СТАРА, СПОВІЩЕНЬ НЕМАЄ» (скарга 21.09) ══════════
+def test_the_first_real_change_after_a_restart_is_not_swallowed():
+    """ГОЛОВНИЙ ДЕФЕКТ скарги. Позначка «перший показ після старту» живе в
+    `_mm_bias_alert`, а викликався він ЛИШЕ на зміні статусу — тож позначку
+    зʼїдала ПЕРША РЕАЛЬНА зміна після кожного рестарту. `botupdate` роблять
+    часто, тому на проді сповіщень не було взагалі."""
+    ff = _mk()
+    ff._mm_bias = {'dir': 'LONG', 'since': NOW - 3600, 'pct': 50.0}
+    ff._mm_bias_since = NOW - 3600            # відновлено з БД
+    _tick(ff, _long(), NOW)                   # такт 1: той самий LONG
+    _check(_banner(ff) == [], f'перший такт мусить лише запамʼятати: {ff.sent}')
+    _tick(ff, _short(), NOW + 60)             # ПЕРША реальна зміна
+    _check(len(_banner(ff)) == 1,
+           f'перша ж реальна зміна мусить піти, а не бути зʼїденою: {ff.sent}')
+    print('✓ перша реальна зміна після рестарту БІЛЬШЕ не ковтається')
+
+
+def test_the_alert_is_called_every_tick_not_only_on_a_change():
+    """Тест-замок на САМ корінь: якщо виклик знову заведуть під
+    `if side != prev`, позначка знову зʼїдатиме першу зміну."""
+    src = _fn_src(_FF_SRC, '_mm_track_bias')
+    _check('_mm_bias_alert' in src, 'виклик алерта зник')
+    for line in src.splitlines():
+        if '_mm_bias_alert' in line:
+            _check('if ' not in line,
+                   f'виклик мусить бути безумовним: {line.strip()}')
+    _check('if side != prev:\n    self._mm_bias_alert' not in src,
+           'виклик знову стоїть під умовою зміни')
+    print('✓ алерт кличеться на КОЖНОМУ такті — рішення ухвалює він сам')
+
+
+def test_a_topic_set_by_env_is_renamed_too():
+    """ДРУГИЙ ДЕФЕКТ: тему можна задати не автостворенням, а напряму
+    (`TELEGRAM_CHAT_BTC` + `TELEGRAM_TOPIC_BTC`). `_forum_thread` тоді виходить
+    першим рядком, і перейменування, що стояло лише там, НЕ спрацьовувало —
+    саме тому «назва теми залишається старою»."""
+    _DB.store.clear()
+    tg._forum_topics_cache = None
+    tg._forum_names_cache = None
+    calls = []
+    tg._api = lambda m, p=None: (calls.append((m, dict(p or {}))) or {'ok': True})
+    os.environ.pop('TELEGRAM_FORUM_CHAT', None)     # форум-групи НЕМАЄ
+    os.environ['TELEGRAM_CHAT_BTC'] = '-100777'
+    os.environ['TELEGRAM_TOPIC_BTC'] = '42'
+    try:
+        chat, thread = tg._cat_chat('btc')
+        _check((chat, thread) == ('-100777', '42'), f'маршрут: {chat}/{thread}')
+        _check(any(m == 'editForumTopic' and p.get('name') == '🧮 МММ-монітор'
+                   and int(p.get('message_thread_id')) == 42 for m, p in calls),
+               f'тему з env теж мусить перейменувати: {calls}')
+    finally:
+        os.environ.pop('TELEGRAM_CHAT_BTC', None)
+        os.environ.pop('TELEGRAM_TOPIC_BTC', None)
+    print('✓ тема, задана через env, теж перейменовується')
+
+
+def test_the_rename_cache_is_keyed_by_chat_and_category():
+    """Теми різних категорій можуть жити в РІЗНИХ чатах, тож спільний ключ
+    писав би назву однієї теми в запис іншої."""
+    src = _fn_src(_TG_SRC, '_forum_rename_if_needed')
+    _check('(str(chat), category)' in src,
+           'кеш назв мусить бути ключований парою (чат, категорія)')
+    print('✓ кеш назв ключований чатом і категорією')
+
+
+def test_every_silent_reason_is_named_by_the_checker():
+    """«Сповіщень немає» мало ЧОТИРИ мовчазні причини. Перевірка мусить
+    називати кожну, інакше користувач знову лишиться зі здогадкою."""
+    _DB.store.clear()
+    tg._forum_topics_cache = None
+    tg._forum_names_cache = None
+    tg._api = lambda m, p=None: {'ok': True}
+    os.environ.pop('TELEGRAM_FORUM_CHAT', None)
+    os.environ.pop('TELEGRAM_CHAT_BTC', None)
+    os.environ.pop('TELEGRAM_TOPIC_BTC', None)
+    os.environ['TELEGRAM_BOT_TOKEN'] = 'test:token'
+    os.environ['TELEGRAM_CHAT_ID'] = '999'
+    # 1) тумблер кабінету вимкнено
+    tg._cat_enabled = lambda c: False
+    r = tg.category_check('btc')
+    _check(not r['enabled'] and 'кабінет' in r['reason'],
+           f'вимкнений тумблер мусить бути НАЗВАНИЙ: {r}')
+    # 2) власного чату немає → приват адміна, а не тема групи
+    tg._cat_enabled = lambda c: True
+    r = tg.category_check('btc')
+    _check(r['route'] == 'admin' and 'ПРИВАТНИЙ' in r['reason'],
+           f'відсутність теми мусить бути названа: {r}')
+    # 3) Telegram відмовив на самій відправці
+    os.environ['TELEGRAM_CHAT_BTC'] = '-100777'
+    os.environ['TELEGRAM_TOPIC_BTC'] = '42'
+    tg._api = lambda m, p=None: ({'ok': True} if m == 'editForumTopic'
+                                 else {'ok': False, 'description': 'CHAT_WRITE_FORBIDDEN'})
+    try:
+        r = tg.category_check('btc', send_test=True)
+        _check(r.get('sent') is False and 'CHAT_WRITE_FORBIDDEN' in r['reason'],
+               f'відмову Telegram мусить бути видно дослівно: {r}')
+        # 4) успіх — теж однозначний
+        tg._api = lambda m, p=None: {'ok': True}
+        r = tg.category_check('btc', send_test=True)
+        _check(r.get('sent') is True, f'успішна відправка: {r}')
+        _check(r['chat'] == '-100777' and r['thread'] == '42',
+               f'маршрут мусить бути видний: {r}')
+    finally:
+        os.environ.pop('TELEGRAM_CHAT_BTC', None)
+        os.environ.pop('TELEGRAM_TOPIC_BTC', None)
+    print('✓ перевірка називає КОЖНУ з чотирьох мовчазних причин')
+
+
+def test_ui_has_the_checker_button_and_route_exists():
+    _check('mmTgCheck(' in _HTML, 'немає кнопки перевірки теми')
+    _check('id="mm-tg-check"' in _HTML, 'немає місця для результату перевірки')
+    _check("/api/tg/topic-check" in _HTML, 'кнопка нікуди не шле')
+    _fl = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
+    _check("@app.route('/api/tg/topic-check'" in _fl,
+           'маршрут перевірки не зареєстровано (урок submitManualTp1)')
+    _check('if (!r.ok)' in _HTML[_HTML.find('async function mmTgCheck'):
+                                 _HTML.find('async function mmTgCheck') + 1400],
+           'без перевірки HTTP-статусу 404 виглядав би як успіх')
+    print('✓ кнопка, місце для відповіді і маршрут — на місці')
+
+
 if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items())
              if k.startswith('test_') and callable(v)]

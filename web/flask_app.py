@@ -3486,6 +3486,24 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/tg/topic-check', methods=['POST'])
+    def api_tg_topic_check():
+        """🩺 «Сповіщень немає» / «назва теми стара» — ПОКАЗАТИ, чому.
+
+        Скарга 21.09: обидві несправності були мовчазні, і перевірити їх із
+        боку користувача не було чим. Тут видно ВЕСЬ маршрут категорії (чат,
+        тема, тумблер кабінету, остання відмова Telegram), а `test=1` реально
+        шле пробне повідомлення ТИМ САМИМ шляхом, що й бот.
+        """
+        data = request.get_json(silent=True) or {}
+        cat = str(data.get('category') or 'btc')
+        send = bool(data.get('test'))
+        try:
+            from web.tg_bot import category_check
+            return jsonify({'ok': True, **category_check(cat, send_test=send)})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/mm-corr-log')
     def api_fuel_filter_mm_corr_log():
         """🔻 СИРИЙ лог детектора корекції — для аналізу і калібрування порогів.

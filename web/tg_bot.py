@@ -171,7 +171,9 @@ _PROTECTED_CATS = {'funding', 'btc', 'trades'}
 _forum_topics_cache = None    # {category: thread_id} for TELEGRAM_FORUM_CHAT
 
 
-_forum_names_cache = None     # {category: остання назва, яку ми ставили темі}
+_forum_rename_err = ''        # причина, чому тему не перейменували
+_last_send_err = ''           # причина останньої невдалої відправки
+_forum_names_cache = None     # {(chat, category): остання назва, яку ми ставили}
 
 
 def _forum_rename_if_needed(chat, category, tid):
@@ -185,9 +187,14 @@ def _forum_rename_if_needed(chat, category, tid):
     ⚠️ Назву, яку ми поставили, ЗАПАМʼЯТОВУЄМО в БД: інакше `editForumTopic`
     смикався б на КОЖНЕ повідомлення (зайвий запит до API на рівному місці).
     ⚠️ Невдача НЕ ламає відправку — тема лишається зі старою назвою, а
-    повідомлення йде як ішло (best-effort, як і створення теми).
+    повідомлення йде як ішло (best-effort, як і створення теми). ПРИЧИНУ
+    відмови памʼятаємо в `_forum_rename_err`, щоб «назва не змінилась» можна
+    було ПОБАЧИТИ в перевірці теми, а не лише в stdout.
+    ⚠️ Кеш ключований ПАРОЮ (чат, категорія): теми різних категорій можуть
+    жити в РІЗНИХ чатах (форум-група проти `TELEGRAM_CHAT_<CAT>`), і спільний
+    ключ писав би назву однієї теми в запис іншої.
     """
-    global _forum_names_cache
+    global _forum_names_cache, _forum_rename_err
     want = _CAT_LABEL.get(category)
     if not want:
         return
@@ -195,20 +202,31 @@ def _forum_rename_if_needed(chat, category, tid):
         try:
             from storage.db_operations import get_db
             saved = get_db().get_setting('tg_forum_topic_names', {}) or {}
-            _forum_names_cache = saved.get(str(chat), {}) if isinstance(saved, dict) else {}
+            _forum_names_cache = {}
+            if isinstance(saved, dict):
+                for _c, _m in saved.items():
+                    if isinstance(_m, dict):
+                        for _cat, _nm in _m.items():
+                            _forum_names_cache[(str(_c), _cat)] = _nm
         except Exception:
             _forum_names_cache = {}
-    if _forum_names_cache.get(category) == want:
+    ckey = (str(chat), category)
+    if _forum_names_cache.get(ckey) == want:
         return
     try:
         res = _api('editForumTopic', {'chat_id': chat, 'message_thread_id': int(tid),
                                       'name': want})
     except Exception as e:
+        _forum_rename_err = f'{category}: {e}'
         print(f"[TG] rename topic {category} error: {e}")
         return
     if not (res or {}).get('ok'):
+        _forum_rename_err = (f"{category}: "
+                             f"{(res or {}).get('description') or (res or {}).get('error') or 'відмова'}")
+        print(f"[TG] rename topic {category} refused: {_forum_rename_err}")
         return
-    _forum_names_cache[category] = want
+    _forum_rename_err = ''
+    _forum_names_cache[ckey] = want
     try:
         from storage.db_operations import get_db
         db = get_db()
@@ -276,6 +294,13 @@ def _cat_chat(category):
     cenv, tenv = _CAT_ENV.get(category, (None, None))
     chat = (os.getenv(cenv) if cenv else None) or _admin_chat()
     thread = os.getenv(tenv) if tenv else None
+    # ⚠️ ПЕРЕЙМЕНУВАННЯ ПОТРІБНЕ І НА ЦЬОМУ ШЛЯХУ (скарга 21.09 «назва теми
+    # залишається старою»). Тему можна задати не лише автостворенням у
+    # `TELEGRAM_FORUM_CHAT`, а й напряму — `TELEGRAM_CHAT_BTC` +
+    # `TELEGRAM_TOPIC_BTC`. Тоді `_forum_thread` виходить ПЕРШИМ рядком
+    # (форум-чату немає), і виклик, що стояв лише там, не спрацьовував НІКОЛИ.
+    if chat and thread:
+        _forum_rename_if_needed(chat, category, thread)
     return chat, thread
 
 
@@ -291,6 +316,57 @@ def _cat_enabled(category):
         return admin_pref(key, True)
     except Exception:
         return True
+
+
+def category_check(category, send_test=False):
+    """🩺 КУДИ САМЕ піде повідомлення категорії — і чому воно НЕ йде.
+
+    Скарга 21.09 «сповіщень немає» була нерозвʼязною з боку користувача: усі
+    чотири причини мовчазні — вимкнений тумблер кабінету, не налаштований
+    чат/тема, бот не адмін теми, відмова Telegram. Тут вони НАЗВАНІ.
+    `send_test=True` ще й реально шле пробне повідомлення В ТУ САМУ тему тим
+    самим шляхом (`notify_category`), тож перевірка не «схожа на відправку», а
+    і Є відправкою.
+    """
+    label = _CAT_LABEL.get(category, category)
+    out = {'category': category, 'label': label,
+           'enabled': bool(_cat_enabled(category)),
+           'token': bool(_token()), 'chat': None, 'thread': None,
+           'route': 'none', 'rename_err': _forum_rename_err,
+           'send_err': _last_send_err, 'reason': ''}
+    if not out['token']:
+        out['reason'] = 'не задано TELEGRAM_BOT_TOKEN — бот не може писати нікуди'
+        return out
+    if not out['enabled']:
+        out['reason'] = ('вимкнено майстер-тумблер теми в кабінеті адміна '
+                         '(«📢 Групові теми» → notify_btc)')
+        return out
+    chat, thread = _cat_chat(category)
+    out['chat'], out['thread'] = chat, thread
+    if not chat:
+        out['reason'] = 'не налаштовано жодного чату (ні форум-група, ні TELEGRAM_CHAT_*)'
+        return out
+    if os.getenv('TELEGRAM_FORUM_CHAT') and str(chat) == str(os.getenv('TELEGRAM_FORUM_CHAT')):
+        out['route'] = 'forum'
+    elif _CAT_ENV.get(category) and os.getenv(_CAT_ENV[category][0]):
+        out['route'] = 'env'
+    else:
+        out['route'] = 'admin'
+        out['reason'] = ('для цієї категорії немає власного чату — повідомлення '
+                         'йдуть у ПРИВАТНИЙ чат адміна, а не в тему групи')
+    if not thread:
+        out['reason'] = (out['reason'] or
+                         'теми немає — повідомлення йде в сам чат, без теми')
+    if send_test:
+        ok = notify_category(category, f'🩺 Перевірка теми «{label}» — цей рядок '
+                                       'надіслано з налаштувань бота.')
+        out['sent'] = bool(ok)
+        out['send_err'] = _last_send_err
+        out['rename_err'] = _forum_rename_err       # спроба була саме зараз
+        if not ok:
+            out['reason'] = (f'Telegram не прийняв: {_last_send_err}' if _last_send_err
+                             else (out['reason'] or 'Telegram не прийняв повідомлення'))
+    return out
 
 
 def notify_category(category, text, buttons=None):
@@ -315,7 +391,16 @@ def notify_category(category, text, buttons=None):
         p['protect_content'] = True
     if buttons:
         p['reply_markup'] = {'inline_keyboard': buttons}
-    return bool(_api('sendMessage', p).get('ok'))
+    # ⚠️ Причину відмови ЗБЕРІГАЄМО: раніше `notify_category` віддавав голий
+    # bool, і «Telegram не прийняв» було не відрізнити від «ми не слали».
+    global _last_send_err
+    res = _api('sendMessage', p) or {}
+    if res.get('ok'):
+        _last_send_err = ''
+        return True
+    _last_send_err = str(res.get('description') or res.get('error') or 'відмова')
+    print(f"[TG] send to {category} failed: {_last_send_err}")
+    return False
 
 
 def cat_tag(category):
@@ -424,7 +509,16 @@ def tg_send(chat_id, text, buttons=None):
          'disable_web_page_preview': False}
     if buttons:
         p['reply_markup'] = {'inline_keyboard': buttons}
-    return bool(_api('sendMessage', p).get('ok'))
+    # ⚠️ Причину відмови ЗБЕРІГАЄМО: раніше `notify_category` віддавав голий
+    # bool, і «Telegram не прийняв» було не відрізнити від «ми не слали».
+    global _last_send_err
+    res = _api('sendMessage', p) or {}
+    if res.get('ok'):
+        _last_send_err = ''
+        return True
+    _last_send_err = str(res.get('description') or res.get('error') or 'відмова')
+    print(f"[TG] send to {category} failed: {_last_send_err}")
+    return False
 
 
 def _send_get_id(chat_id, text, buttons=None):

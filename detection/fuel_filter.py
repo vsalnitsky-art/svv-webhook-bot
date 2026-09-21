@@ -918,6 +918,10 @@ class FuelFilterDaemon:
         # було. Читається через `getattr(..., '__none__')`, тож старі стаби
         # тестів від нового поля не падають.
         self._mm_bias_tg_last = '__none__'
+        # Коли ми ПОБАЧИЛИ цей статус (для рядка «тримався …») і чи відлік
+        # почався з рестарту — тоді тривалість позначається ↻ як неповна.
+        self._mm_bias_tg_at = 0.0
+        self._mm_bias_tg_restored = False
         # 🔻 КОРЕКЦІЯ (вимога 19.09). `_mm_corr_st` — ЧИСТИЙ стан машини
         # (`mm_correction.next_state`), він і персиститься: «корекція триває
         # 1г 20хв» не має обнулятись від `botupdate`. `_mm_corr` — готове
@@ -3573,20 +3577,28 @@ class FuelFilterDaemon:
         }
         # 📨 TELEGRAM: зміна ПІДТВЕРДЖЕНОГО статусу банера (вимога 21.09 —
         # тепер це ГОЛОВНЕ, заради чого існує тема 🧮 МММ-монітор).
-        if side != prev:
-            self._mm_bias_alert(prev, side, now, _s)
+        # ⚠️ Кличемо на КОЖНОМУ такті, а НЕ під `if side != prev` — саме через
+        # це перша РЕАЛЬНА зміна після кожного рестарту мовчки ковталась
+        # (див. `_mm_bias_alert`: там позначка «перший показ» і живе).
+        self._mm_bias_alert(side, now, _s)
 
-    def _mm_bias_alert(self, prev, side, now: float, settings: Dict):
+    def _mm_bias_alert(self, side, now: float, settings: Dict):
         """📨 «Банер 🧮 МММ-монітора змінив статус» — у групу, тему 🧮.
 
         **Вимога (21.09):** «основним тепер сюди напрявляй оповіщення стосовно
         змін банера "🧮 МММ-МОНІТОР"».
 
-        ⚠️ **ПЕРШИЙ СТАН ПІСЛЯ СТАРТУ — МОВЧКИ.** `_mm_bias` персиститься, тож
-        після `botupdate` перший же такт міг би «побачити зміну» і надіслати
-        повідомлення про подію, якої не було. Позначка `_mm_bias_tg_last`
-        живе В ПАМʼЯТІ й на першому такті лише запамʼятовується — той самий
-        прийом, що в ₿-алерта (`_btc_start_last_alert`) і в тихій базі VOB.
+        ⚠️ **КЛИЧЕТЬСЯ НА КОЖНОМУ ТАКТІ, а не «коли статус змінився».** Саме
+        тут живе позначка «перший показ після старту», і якщо викликати лише
+        на зміні, ця позначка зʼїдає ПЕРШУ РЕАЛЬНУ зміну після кожного
+        рестарту — а `botupdate` роблять часто, тож на проді сповіщень не було
+        ВЗАГАЛІ (скарга 21.09, відтворено прогоном). Порівняння зі СВОЄЮ
+        позначкою — єдине джерело рішення «подія чи ні».
+
+        ⚠️ **ПЕРШИЙ ТАКТ ПІСЛЯ СТАРТУ — МОВЧКИ.** `_mm_bias` персиститься, тож
+        інакше перший же такт «побачив би зміну», якої за наших очей не було.
+        Позначка живе В ПАМʼЯТІ — той самий прийом, що в ₿-алерта
+        (`_btc_start_last_alert`) і в тихій базі VOB.
         ⚠️ Шлемо ЛИШЕ на ПІДТВЕРДЖЕНИЙ статус: кандидат (⏳) — це ще відлік, і
         сповіщати про нього означало б повернути те саме миготіння, від якого
         банер і захищали.
@@ -3596,20 +3608,29 @@ class FuelFilterDaemon:
             if not bool(settings.get('mm_bias_tg', True)):
                 return
             _prev_seen = getattr(self, '_mm_bias_tg_last', '__none__')
-            self._mm_bias_tg_last = side
-            if _prev_seen == '__none__':
-                return                      # перший такт після старту — тихо
+            _seen_at = float(getattr(self, '_mm_bias_tg_at', 0) or 0)
             if _prev_seen == side:
+                return                      # статус не змінився — не подія
+            self._mm_bias_tg_last = side
+            self._mm_bias_tg_at = now
+            if _prev_seen == '__none__':
+                # Перший такт після старту: лише запамʼятали, що бачимо.
+                self._mm_bias_tg_restored = bool(self._mm_bias_since)
                 return
             b = dict(self._mm_bias or {})
             _ico = {'LONG': '🟢', 'SHORT': '🔴'}.get(side, '⏸')
             _now_txt = f"{_ico} <b>{side}</b>" if side else "⏸ <b>РІВНОВАГА</b>"
             _pico = {'LONG': '🟢', 'SHORT': '🔴'}.get(_prev_seen, '⏸')
             _was = (f"{_pico} {_prev_seen}" if _prev_seen else "⏸ рівновага")
+            # ⚠️ Тривалість — від моменту, ВІДКОЛИ МИ БАЧИЛИ той статус, а не
+            # `_mm_bias['since']`: його вже перезаписано на поточний статус,
+            # тож там завжди був би нуль. Якщо відлік почався з нашого першого
+            # такту після рестарту, ставимо ↻ — та сама конвенція, що в банері.
             _held = ''
-            _since = float((self._mm_bias or {}).get('since') or 0)
-            if _since and now > _since:
-                _held = f" · тримався <b>{self._fmt_dur(now - _since)}</b>"
+            if _seen_at and now > _seen_at:
+                _mark = '↻' if getattr(self, '_mm_bias_tg_restored', False) else ''
+                _held = f" · тримався {_mark}<b>{self._fmt_dur(now - _seen_at)}</b>"
+            self._mm_bias_tg_restored = False
             msg = (f"🧮 <b>МММ-МОНІТОР</b> → {_now_txt} · "
                    f"важіль <b>{b.get('pct', 0)}%</b>\n"
                    f"було: {_was}{_held}\n"
