@@ -2606,7 +2606,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <div class="mmc-f">
                         <label>📦 VOB проти ≥, %</label>
                         <input type="number" id="ff-mm-corr-vob" min="0" max="100" step="5" value="60"
-                               oninput="_mmcExitSync(false)" onchange="_mmcExitSync(true); saveFuelFilterSettings()"
+                               oninput="_mmcExitSync()" onchange="_mmcExitSync(); saveFuelFilterSettings()"
                                title="ПОЧАТОК корекції. Частка монет монітора, чий ПОТОЧНИЙ Volumized OB на молодшому TF (той самий блок, що на графіку) дивиться ПРОТИ банера. Береться з кешу сканера — блок 📦 Volumized OB Trend має бути увімкнений.">
                     </div>
                     <div class="mmc-f">
@@ -2637,9 +2637,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </label>
                     <div class="mmc-f">
                         <label>📦 Кінець, коли проти &lt;, %</label>
-                        <input type="number" id="ff-mm-corr-vobexit" min="0" max="100" step="5" value="50"
-                               oninput="_mmcExitSync(false)" onchange="_mmcExitSync(true); saveFuelFilterSettings()"
-                               title="Нижче цієї частки ширина вважається ВІДНОВЛЕНОЮ і корекція може завершитись (після підтвердження часом). 50% — нейтральна лінія ширини ринку: «більшість монет уже НЕ проти тренду». ⚠️ БІЛЬШЕ число = корекція завершується РАНІШЕ (ширині досить впасти нижче вищої планки), МЕНШЕ = тримається довше. Саме тому воно НЕ може бути вищим за поріг старту 📦: інакше корекція завершувалась би на тій самій ширині, за якої щойно почалась — гістерезис вивернувся б навиворіт. Потрібен ранній кінець — спершу підніміть «📦 VOB проти ≥».">
+                        <input type="number" id="ff-mm-corr-vobexit" min="0" max="100" step="5" value="65"
+                               oninput="_mmcExitSync()" onchange="_mmcExitSync(); saveFuelFilterSettings()"
+                               title="Нижче цієї частки ширина вважається ВІДНОВЛЕНОЮ і корекція може завершитись (після підтвердження часом). 50% — нейтральна лінія ширини ринку: «більшість монет уже НЕ проти тренду». ⚠️ БІЛЬШЕ число = корекція завершується РАНІШЕ (ширині досить впасти нижче вищої планки), МЕНШЕ = тримається довше. Вище за поріг старту 📦 ставити МОЖНА: тоді у смузі «старт…кінець» вето ширини не діє і кінець там вирішують 💹 ціна та 📉 важіль, а вище порога кінця захист лишається повний (на ширині 90% корекція не завершиться в жодному разі).">
                     </div>
                     <!-- ⚠️ КЛЕМП «вихід ≤ вхід» МУСИТЬ ГОВОРИТИ. Поля стоять
                          далеко одне від одного (між ними роздільник і три
@@ -2647,8 +2647,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          «поле не зберігається» (скарга 22.09). Той самий урок,
                          що з мовчазним clamp-ом монет у скані ліквідності. -->
                     <div id="mm-corr-exit-note"
-                         style="flex-basis:100%;display:none;color:#fbbf24;font-size:0.72rem;line-height:1.35;
-                                background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25);
+                         style="flex-basis:100%;display:none;color:#93c5fd;font-size:0.72rem;line-height:1.35;
+                                background:rgba(147,197,253,0.08);border:1px solid rgba(147,197,253,0.25);
                                 border-radius:4px;padding:5px 8px;margin-top:2px"></div>
                     <div class="mmc-f">
                         <label>⏱ Підтвердження ≥, с</label>
@@ -12627,32 +12627,25 @@ async function mmCorrLogClear() {
         if (btn) { btn.disabled = false; btn.style.opacity = ''; }
     }
 }
-function _mmcExitSync(clamp) {
-    // 🧭 Поріг КІНЦЯ не може бути вищим за поріг СТАРТУ (вивернутий
-    // гістерезис — корекція завершувалась би на тій самій ширині, за якої
-    // щойно почалась). Бекенд це зводить, але МОВЧКИ: число просто «не
-    // зберігалось», і зрозуміти чому було неможливо — поля розділені
-    // роздільником і трьома чекбоксами. Тепер правило видно ще до збереження.
+function _mmcExitSync() {
+    // 🧭 Поріг КІНЦЯ вище за поріг СТАРТУ — це ДОЗВОЛЕНО (рішення користувача
+    // 22.09). Раніше сторінка й бекенд мовчки зводили число, і воно виглядало
+    // як «не зберігається». Тепер зводити нічого не треба, але наслідок мусить
+    // бути НАЗВАНИЙ: у смузі [вхід .. вихід) вето ширини не діє, і кінець там
+    // вирішують швидкі шари. Вище за поріг виходу захист лишається повний.
     const inp = document.getElementById('ff-mm-corr-vob');
     const out = document.getElementById('ff-mm-corr-vobexit');
     const note = document.getElementById('mm-corr-exit-note');
-    if (!inp || !out) return;
+    if (!inp || !out || !note) return;
     const hi = parseFloat(inp.value);
     const cur = parseFloat(out.value);
-    // Стеля поля йде за живим значенням входу — браузер опирається сам
-    // (стрілки й валідація), а не лише ми постфактум.
-    if (isFinite(hi)) out.max = String(hi);
-    if (!note) return;
     if (!isFinite(hi) || !isFinite(cur) || cur <= hi) { note.style.display = 'none'; return; }
-    // ⚠️ Зводимо РІВНО те, що показано, — інакше після збереження поле
-    // «стрибнуло» б саме по собі і виглядало як загублене введення.
-    if (clamp) out.value = String(hi);
     note.style.display = '';
-    note.textContent = (clamp ? `⚠️ ${cur}% зведено до ${hi}%: ` : `⚠️ ${cur}% буде зведено до ${hi}%: `)
-        + `кінець не може бути вищим за старт (📦 VOB проти ≥ ${hi}%). `
-        + 'БІЛЬШЕ число тут = корекція завершується РАНІШЕ, тож вище за старт '
-        + 'означало б «завершити на тій самій ширині, за якої щойно почалась». '
-        + 'Потрібен ранній кінець — спершу підніміть «📦 VOB проти ≥».';
+    note.textContent = `ℹ️ Кінець (${cur}%) вищий за старт (${hi}%) — так МОЖНА, `
+        + 'це мʼякша настройка: корекція завершується раніше. '
+        + `Ціна вибору: у смузі ${hi}–${cur}% вето ширини не діє і кінець там `
+        + `вирішують 💹 ціна та 📉 важіль. Вище ${cur}% захист повний — `
+        + 'на ширині 90% кінець і далі неможливий.';
 }
 function _mmCorrSummary(s) {
     const el = document.getElementById('mm-corr-sum');
@@ -12666,7 +12659,7 @@ function _mmCorrSummary(s) {
         // тепер вирішує кінець, і не бачити його в згорнутій шапці означало б
         // не знати головного числа детектора.
         + (s.mm_corr_breadth_exit === false ? ' · 🧭 кінець за голосами'
-           : ` → кінець <${s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 50}%`)
+           : ` → кінець <${s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 65}%`)
         + ' · '
         + `💹 ${s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80}% · `
         + `📉 ${s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15} п.п. · `
@@ -13948,7 +13941,7 @@ function renderFuelFilter(d) {
     setIf('ff-mm-corr-vobreq', s.mm_corr_vob_required !== false);   // default true
     setIf('ff-mm-corr-breadth', s.mm_corr_breadth_exit !== false);  // default true
     setIf('ff-mm-corr-ob', s.mm_corr_ob_on !== false);              // default true
-    setIf('ff-mm-corr-vobexit', String(s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 50));
+    setIf('ff-mm-corr-vobexit', String(s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 65));
     setIf('ff-mm-corr-price', String(s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80));
     setIf('ff-mm-corr-drop', String(s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15));
     setIf('ff-mm-corr-confirm', String(s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 300));
@@ -13956,7 +13949,7 @@ function renderFuelFilter(d) {
     setIf('ff-mm-bias-tg', s.mm_bias_tg !== false);                 // default true
     setIf('ff-mm-corr-tg', s.mm_corr_tg !== false);                 // default true
     setIf('ff-mm-corr-log-every', String(s.mm_corr_log_every_sec != null ? s.mm_corr_log_every_sec : 300));
-    if (typeof _mmcExitSync === 'function') _mmcExitSync(false);
+    if (typeof _mmcExitSync === 'function') _mmcExitSync();
     if (typeof _mmCorrSummary === 'function') _mmCorrSummary(s);
     if (typeof _mmTgSummary === 'function') _mmTgSummary(s);
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
@@ -15010,7 +15003,7 @@ async function saveFuelFilterSettings() {
         mm_corr_vob_required: _c('ff-mm-corr-vobreq'),
         mm_corr_breadth_exit: _c('ff-mm-corr-breadth'),
         mm_corr_ob_on: _c('ff-mm-corr-ob'),
-        mm_corr_vob_exit_pct: _mmcNum('ff-mm-corr-vobexit', 50),
+        mm_corr_vob_exit_pct: _mmcNum('ff-mm-corr-vobexit', 65),
         mm_corr_price_pct: _mmcNum('ff-mm-corr-price', 80),
         mm_corr_lever_drop: _mmcNum('ff-mm-corr-drop', 15),
         mm_corr_confirm_sec: _mmcNum('ff-mm-corr-confirm', 300),

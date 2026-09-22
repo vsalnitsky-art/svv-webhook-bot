@@ -1127,13 +1127,25 @@ class FuelFilterDaemon:
         self._load_state()
         self._migrate_settings()
 
-    # Позначка ОДНОРАЗОВОЇ міграції порогів детектора корекції (21.09).
-    MM_CORR_TUNE_FLAG = 'mm_corr_tuned_v1'
-    # Що саме міняємо: ключ → (СТАРИЙ дефолт, НОВИЙ дефолт).
-    MM_CORR_TUNE = {
-        'mm_corr_price_pct': (60.0, 80.0),
-        'mm_corr_confirm_sec': (120, 300),
-    }
+    # ⚠️ ХВИЛІ ОДНОРАЗОВИХ МІГРАЦІЙ: (позначка, {ключ: (СТАРИЙ, НОВИЙ)}).
+    # Список, а не одна пара, СВІДОМО: кожна зміна дефолту потребує СВОЄЇ
+    # позначки — стара вже стоїть у БД, і дописати ключ у неї означало б, що
+    # міграція не виконається НІКОЛИ (на робочій установці прапорець уже True).
+    MM_CORR_TUNE_WAVES = (
+        # 21.09 — перекалібрування порогів ПОЧАТКУ за першим логом.
+        ('mm_corr_tuned_v1', {
+            'mm_corr_price_pct': (60.0, 80.0),
+            'mm_corr_confirm_sec': (120, 300),
+        }),
+        # 22.09 — поріг КІНЦЯ 50 → 65 (рішення користувача: «60 на старт,
+        # 65 на кінець»). Вхід уже мав дефолт 60, тож його не чіпаємо.
+        ('mm_corr_exit65_v2', {
+            'mm_corr_vob_exit_pct': (50.0, 65.0),
+        }),
+    )
+    # Сумісність зі старими тестами/читачами (перша хвиля).
+    MM_CORR_TUNE_FLAG = MM_CORR_TUNE_WAVES[0][0]
+    MM_CORR_TUNE = MM_CORR_TUNE_WAVES[0][1]
 
     def _migrate_settings(self):
         """⚠️ ЗМІНА ДЕФОЛТУ НЕ ДІЄ НА ВЖЕ ЗБЕРЕЖЕНИЙ БЛОБ — одноразова міграція.
@@ -1153,15 +1165,20 @@ class FuelFilterDaemon:
         """
         try:
             stored = self._db.get_setting(_DB_SETTINGS, {}) or {}
-            if not isinstance(stored, dict) or stored.get(self.MM_CORR_TUNE_FLAG):
+            if not isinstance(stored, dict):
                 return
-            out = dict(stored)
-            out[self.MM_CORR_TUNE_FLAG] = True
-            moved = []
-            for key, (old, new) in self.MM_CORR_TUNE.items():
-                if key in out and float(out[key]) == float(old):
-                    out[key] = new
-                    moved.append(f'{key} {old:g}→{new:g}')
+            out, moved, dirty = dict(stored), [], False
+            for flag, tune in self.MM_CORR_TUNE_WAVES:
+                if out.get(flag):
+                    continue                      # ця хвиля вже пройшла
+                out[flag] = True
+                dirty = True
+                for key, (old, new) in tune.items():
+                    if key in out and float(out[key]) == float(old):
+                        out[key] = new
+                        moved.append(f'{key} {old:g}→{new:g}')
+            if not dirty:
+                return
             self._db.set_setting(_DB_SETTINGS, out)
             if moved:
                 print(f"[FuelFilter] 🔻 пороги корекції перекалібровано: {', '.join(moved)}")
@@ -1527,13 +1544,17 @@ class FuelFilterDaemon:
         # 1..3 — шарів рівно три; 0 означало б «корекція завжди».
         _clamp('mm_corr_min_layers', 1, 3, int)
         _clamp('mm_corr_vob_pct', 0.0, 100.0)
+        # ⚠️ КЛЕМП «вихід ≤ вхід» ПРИБРАНО (рішення користувача 22.09: «хочу
+        # 60 і 65»). Пороги тепер НЕЗАЛЕЖНІ.
+        # Моє попереднє твердження («вердикт миготів би на КОЖНОМУ такті») було
+        # ПЕРЕБІЛЬШЕННЯМ — прогін через справжні `breadth_exit_ok`+`next_state`
+        # показав інше: вихід вище за вхід відкриває вузьку смугу
+        # [вхід .. вихід), де вето ширини не діє і кінець там вирішують швидкі
+        # шари (тобто стара поведінка голосів САМЕ В ЦІЙ СМУЗІ). Вище за поріг
+        # виходу захист лишається повний: при ширині 90% (кейс скарги 22.09)
+        # 65 і 50 дають ІДЕНТИЧНИЙ результат. Це налаштування ризику —
+        # рішення користувача, а не наше.
         _clamp('mm_corr_vob_exit_pct', 0.0, 100.0)
-        # ⚠️ Поріг ВИХОДУ не може бути ВИЩИМ за поріг ВХОДУ: тоді корекція
-        # завершувалась би на ширині, за якої вона щойно б і почалась — тобто
-        # гістерезис вивернувся б навиворіт і вердикт миготів би на кожному
-        # такті (та сама пастка, що з вивернутим вікном TP-1).
-        if float(s['mm_corr_vob_exit_pct']) > float(s['mm_corr_vob_pct']):
-            s['mm_corr_vob_exit_pct'] = float(s['mm_corr_vob_pct'])
         _clamp('mm_corr_price_pct', 0.0, 100.0)
         _clamp('mm_corr_lever_drop', 0.0, 200.0)
         _clamp('mm_corr_confirm_sec', 0, 3600, int)

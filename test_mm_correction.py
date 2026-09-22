@@ -70,6 +70,26 @@ _HTML = open(os.path.join(_HERE, 'templates', 'smart_money.html'),
 NOW = 10_000.0
 
 
+def _mk_ff(stored):
+    """Двигун із ЗАПИСУВАНИМ сховищем налаштувань — його потребують і
+    валідація, і міграція дефолтів."""
+    ff = FF.__new__(FF)
+
+    class _Stored:
+        def __init__(self, data):
+            self.data = dict(data)
+
+        def get_setting(self, key, default=None):
+            return self.data if key == 'fuel_filter_settings' else default
+
+        def set_setting(self, key, val):
+            if key == 'fuel_filter_settings':
+                self.data = dict(val)
+
+    ff._db = _Stored(stored)
+    return ff
+
+
 def _check(c, msg):
     if not c:
         raise AssertionError(msg)
@@ -1109,7 +1129,9 @@ def test_breadth_vetoes_the_end_while_most_coins_are_against():
     _check(r['stay'] is True,
            'ширина 90% мусить ЗАБОРОНИТИ кінець — це і є суть скарги')
     _check(r['breadth_ok'] is False, f'вето ширини: {r["breadth_ok"]}')
-    _check('90.0' in r['why'] and '50' in r['why'],
+    # ⚠️ Поріг беремо з РЕЗУЛЬТАТУ, а не магічним числом: дефолт виходу
+    # змінювався (50 → 65), і зашите число ламало б тест на рівному місці.
+    _check('90.0' in r['why'] and str(r['exit_pct']) in r['why'],
            f'причина мусить називати ЧИСЛА: {r["why"]}')
     print('✓ 🧭 при 📦 90% проти банера кінець корекції ЗАБЛОКОВАНО')
 
@@ -1118,22 +1140,27 @@ def test_the_correction_ends_only_when_breadth_recovers():
     """Кінець настає САМЕ тоді, коли ширина відновилась — тобто частка «проти»
     впала нижче нейтральної лінії. І тільки тоді, а не коли вщухла ціна."""
     snap = _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(10)})
-    # 6 із 10 проти = 60% → ще тримає (≥ 50).
-    t60 = {f'C{i}': 'SHORT' for i in range(6)}
-    t60.update({f'C{i}': 'LONG' for i in range(6, 10)})
-    _check(mc.evaluate(snap, t60, 'LONG', 50.0, 51.0, _cfg())['stay'] is True,
-           '60% проти — корекція мусить тривати')
-    # 4 із 10 = 40% → ширина відновилась, кінець дозволено.
-    t40 = {f'C{i}': 'SHORT' for i in range(4)}
-    t40.update({f'C{i}': 'LONG' for i in range(4, 10)})
-    r = mc.evaluate(snap, t40, 'LONG', 50.0, 51.0, _cfg())
+    # ⚠️ Пороги беремо з КОНФІГА, а не числами: дефолт виходу вже мінявся
+    # (50 → 65), і зашиті 60/40/50 ламали б тест на рівному місці.
+    _cfg_now = _cfg()
+    _exit = float(_cfg_now.get('mm_corr_vob_exit_pct',
+                              mc.DEFAULTS['mm_corr_vob_exit_pct']))
+
+    def _against(n):
+        t = {f'C{i}': 'SHORT' for i in range(n)}
+        t.update({f'C{i}': 'LONG' for i in range(n, 10)})
+        return mc.evaluate(snap, t, 'LONG', 50.0, 51.0, _cfg_now)
+
+    _hold_n = int(_exit // 10) + 1          # частка ВИЩЕ порога → тримає
+    _end_n = max(0, int(_exit // 10) - 1)   # частка НИЖЧЕ порога → кінець можна
+    _check(_against(_hold_n)['stay'] is True,
+           f'{_hold_n * 10}% проти (> {_exit}) — корекція мусить тривати')
+    r = _against(_end_n)
     _check(r['stay'] is False and r['breadth_ok'] is True,
-           f'40% проти — ширина відновилась: {r["stay"]}/{r["breadth_ok"]}')
-    # Рівно на порозі (50%) кінця ще немає — порівняння СУВОРЕ.
-    t50 = {f'C{i}': 'SHORT' for i in range(5)}
-    t50.update({f'C{i}': 'LONG' for i in range(5, 10)})
-    _check(mc.evaluate(snap, t50, 'LONG', 50.0, 51.0, _cfg())['stay'] is True,
-           'рівно 50% — ширина ще НЕ відновилась')
+           f'{_end_n * 10}% проти — ширина відновилась: {r["stay"]}/{r["breadth_ok"]}')
+    # Рівно НА порозі кінця ще немає — порівняння СУВОРЕ («<», не «≤»).
+    _check(mc.breadth_exit_ok({'ok': True, 'pct': _exit}, _exit) is False,
+           f'рівно {_exit}% — ширина ще НЕ відновилась')
     print('✓ 🧭 кінець настає лише коли 📦 впала нижче нейтральної лінії')
 
 
@@ -1278,34 +1305,29 @@ def test_the_end_event_names_the_breadth_number():
     print('✓ 🧭 подія «завершилась» називає число ширини')
 
 
-def test_exit_threshold_can_never_exceed_the_entry_threshold():
-    """Вивернутий гістерезис = вердикт миготить на кожному такті (та сама
-    пастка, що з вікном TP-1: `max < min` давало порожнє вікно)."""
-    ff = FF.__new__(FF)
+def test_the_two_thresholds_are_independent():
+    """⚠️ ПЕРЕПИСАНО 22.09, а не «полагоджено»: вимога змінилась.
 
-    class _Stored:
-        def get_setting(self, *a, **kw):
-            return {'mm_corr_vob_pct': 60.0, 'mm_corr_vob_exit_pct': 90.0}
-
-    ff._db = _Stored()
+    Раніше тут стояв замок «вихід ≤ вхід». Користувач попросив 60/65 і має
+    рацію — обмеження було зайвим (див. розділ 10). Лишається лише 0..100."""
+    ff = _mk_ff({'mm_corr_vob_pct': 60.0, 'mm_corr_vob_exit_pct': 90.0})
     s = FF.get_settings(ff)
-    _check(s['mm_corr_vob_exit_pct'] <= s['mm_corr_vob_pct'],
-           f'поріг виходу мусить бути зведений до порога входу: '
-           f'{s["mm_corr_vob_exit_pct"]} > {s["mm_corr_vob_pct"]}')
+    _check(float(s['mm_corr_vob_exit_pct']) == 90.0,
+           f'поріг виходу НЕ можна зводити: {s["mm_corr_vob_exit_pct"]}')
     _check(s['mm_corr_vob_required'] is True and s['mm_corr_breadth_exit'] is True,
            'нові тумблери мусять проходити валідацію з дефолтами')
-    print('✓ 🧭 поріг виходу не може бути вищим за поріг входу')
+    print('✓ 🧭 пороги незалежні, лишилось лише 0..100')
 
 
 def test_new_keys_have_professional_defaults():
-    """Дефолти: ширина обовʼязкова, кінець за шириною, нейтральна лінія 50%."""
+    """Дефолти: ширина обовʼязкова, кінець вирішує ширина.
+    ⚠️ Саме ЧИСЛО порога виходу перевіряє розділ 10 (50 → 65 на вимогу 22.09)."""
     d = mc.DEFAULTS
     _check(d['mm_corr_vob_required'] is True, '📦 обовʼязкова на старт')
     _check(d['mm_corr_breadth_exit'] is True, '🧭 кінець вирішує ширина')
-    _check(d['mm_corr_vob_exit_pct'] == 50.0, 'нейтральна лінія ширини = 50%')
-    # 50 = 60 − EXIT_MARGIN_PCT: гістерезис був правильний, він просто не діяв.
-    _check(d['mm_corr_vob_exit_pct'] == d['mm_corr_vob_pct'] - mc.EXIT_MARGIN_PCT,
-           'поріг виходу мусить збігатись із послабленим порогом 📦')
+    # ⚠️ Звʼязку «вихід = вхід − EXIT_MARGIN_PCT» БІЛЬШЕ НЕМАЄ: 22.09 користувач
+    # обрав 60/65, тобто вихід ВИЩЕ за вхід. Гістерезис лишився в `lit_hold`
+    # (послаблені пороги голосів) — а поріг ширини тепер незалежне число.
     print('✓ 🧭 дефолти: ширина обовʼязкова · кінець за шириною · 50%')
 
 
@@ -1588,12 +1610,14 @@ def test_ui_exposes_the_second_source():
 
 
 
-# ═══ 10. 🧭 КЛЕМП «ВИХІД ≤ ВХІД» МУСИТЬ ГОВОРИТИ (скарга 22.09) ══════════════
-# Дослівно: «📦 Кінець, коли проти <, % не зберігається, якщо 📦 VOB проти ≥, %
-# менше цього значення.» Поле СПРАВДІ зводилось — бекенд не дає виходу бути
-# вищим за вхід (вивернутий гістерезис). Але робив це МОВЧКИ, а поля розділені
-# роздільником і трьома чекбоксами, тож звʼязок був невидимий і читався як
-# «введене число губиться».
+# ═══ 10. 🧭 ВИХІД МОЖЕ БУТИ ВИЩИМ ЗА ВХІД (рішення користувача 22.09) ════════
+# Дослівно: «Я хочу виставити 📦 VOB проти ≥ 60, а 📦 Кінець, коли проти < 65,
+# чому так неможна? Зроби ці значення за замовчуванням.»
+#
+# ⚠️ ЦЕ СКАСОВУЄ клемп «вихід ≤ вхід». Моє попереднє обґрунтування («вердикт
+# миготів би на КОЖНОМУ такті») було ПЕРЕБІЛЬШЕННЯМ — прогін через справжні
+# `breadth_exit_ok` + `next_state` показав інше, і тести нижче це фіксують
+# ЧИСЛАМИ, а не словами.
 
 
 def _js_fn(name):
@@ -1612,96 +1636,161 @@ def _js_fn(name):
     raise AssertionError('не знайшов кінець функції ' + name)
 
 
-def _run_exit_sync(entry, exit_val, clamp):
-    """Прогнати СПРАВЖНІЙ JS сторінки під node на крихітному фейк-DOM."""
+def _sim(entry, exit_pct, breadth, price_lit, confirm=300, tick=30):
+    """Прогін СПРАВЖНЬОЇ машини станів: скільки подій дасть така пара порогів."""
+    st, t, events = {}, 0.0, []
+    for b, plit in zip(breadth, price_lit):
+        b_ok = mc.breadth_exit_ok({'ok': True, 'pct': b}, exit_pct)
+        lit = (1 if b >= entry else 0) + (1 if plit else 0)
+        hold = (1 if b >= entry - mc.EXIT_MARGIN_PCT else 0) + (1 if plit else 0)
+        st = mc.next_state(st, lit, hold, 2, t, confirm,
+                           start_ok=(lit >= 2 and b >= entry),
+                           stay=((b_ok is False) or (hold >= 2)))
+        if st.get('event') in ('start', 'end'):
+            events.append((st['event'], b))
+        t += tick
+    return events
+
+
+def test_the_pair_the_user_asked_for_is_accepted():
+    """60 / 65 мусить ЗБЕРЕГТИСЬ як є — клемпа більше немає."""
+    ff = _mk_ff({'mm_corr_vob_pct': 60.0, 'mm_corr_vob_exit_pct': 65.0})
+    s = ff.get_settings()
+    _check(float(s['mm_corr_vob_pct']) == 60.0, f"вхід зіпсовано: {s['mm_corr_vob_pct']}")
+    _check(float(s['mm_corr_vob_exit_pct']) == 65.0,
+           f"вихід МУСИТЬ лишитись 65, а не зводитись: {s['mm_corr_vob_exit_pct']}")
+    src = _fn_src(_FF_SRC, 'get_settings')
+    _check("s['mm_corr_vob_exit_pct'] = float(s['mm_corr_vob_pct'])" not in src,
+           'клемп мусить бути ВИДАЛЕНИЙ, а не просто обійдений')
+    print('✓ 🧭 пара 60/65 зберігається без зведення')
+
+
+def test_both_thresholds_are_still_bounded_to_a_percent():
+    """Скасували МІЖПОЛЬОВЕ правило, а не здоровий глузд: 0..100 лишається."""
+    ff = _mk_ff({'mm_corr_vob_pct': 900.0, 'mm_corr_vob_exit_pct': -5.0})
+    s = ff.get_settings()
+    _check(float(s['mm_corr_vob_pct']) == 100.0, s['mm_corr_vob_pct'])
+    _check(float(s['mm_corr_vob_exit_pct']) == 0.0, s['mm_corr_vob_exit_pct'])
+    print('✓ 🧭 обидва пороги і далі обмежені 0..100')
+
+
+def test_at_the_breadth_that_caused_the_complaint_65_is_as_safe_as_50():
+    """ГОЛОВНЕ: на ширині 90% (кейс скарги 22.09) 65 НЕ гірший за 50.
+
+    Саме це робить вибір користувача безпечним — захист від «завершилась при
+    90% монет проти банера» лишається повним."""
+    b = [90] * 200
+    p = ([True] * 20 + [False] * 20) * 5
+    ev50 = _sim(60, 50, b, p)
+    ev65 = _sim(60, 65, b, p)
+    _check(ev50 == ev65, f'на 90% результати мусять збігатись: {ev50} vs {ev65}')
+    _check(len([e for e in ev65 if e[0] == 'end']) == 0,
+           f'жодного кінця при 90% проти банера: {ev65}')
+    print('✓ 🧭 при ширині 90% поріг 65 поводиться ТОЧНО як 50')
+
+
+def test_the_only_cost_is_the_band_between_the_two_thresholds():
+    """Ціна вибору названа чесно: у смузі [вхід..вихід) вето не діє.
+
+    ⚠️ Це НЕ «миготіння щотакту» (моє старе формулювання): темп задають самі
+    швидкі шари, а не такт двигуна."""
+    b = [62] * 200                      # ширина зависла В СМУЗІ 60..65
+    p = ([True] * 20 + [False] * 20) * 5
+    ev50 = _sim(60, 50, b, p)
+    ev65 = _sim(60, 65, b, p)
+    _check(len(ev50) == 1, f'нижче смуги вето тримає корекцію: {ev50}')
+    _check(len(ev65) > len(ev50),
+           f'у смузі кінець знову вирішують швидкі шари: {ev65}')
+    _check(len(ev65) < len(b),
+           f'але це НЕ подія на кожному такті: {len(ev65)} подій на {len(b)} тактів')
+    print(f'✓ 🧭 ціна вибору локальна: у смузі {len(ev65)} подій на {len(b)} тактів')
+
+
+def test_the_new_defaults_are_60_and_65():
+    """«Зроби ці значення за замовчуванням» — дослівно."""
+    _check(float(mc.DEFAULTS['mm_corr_vob_pct']) == 60.0,
+           mc.DEFAULTS['mm_corr_vob_pct'])
+    _check(float(mc.DEFAULTS['mm_corr_vob_exit_pct']) == 65.0,
+           mc.DEFAULTS['mm_corr_vob_exit_pct'])
+    # ⚠️ Хардкоджені фолбеки на сторінці — це ДРУГЕ написання того самого числа.
+    _check('_mmcNum(\'ff-mm-corr-vobexit\', 65)' in _HTML, 'save шле старий фолбек')
+    _check(_HTML.count('s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 65') == 2,
+           'у показі лишився фолбек 50')
+    _check('id="ff-mm-corr-vobexit" min="0" max="100" step="5" value="65"' in _HTML,
+           'value= у розмітці не оновлено')
+    print('✓ 🧭 дефолти 60 / 65 в усіх чотирьох місцях')
+
+
+def test_the_new_default_reaches_an_already_saved_install():
+    """⚠️ Зміна ІСНУЮЧОГО дефолту не діє на збережений блоб — потрібна хвиля
+    міграції з ВЛАСНОЮ позначкою (стара вже стоїть у БД і не спрацює вдруге)."""
+    _flags = [f for f, _ in FF.MM_CORR_TUNE_WAVES]
+    _check(len(set(_flags)) == len(_flags) >= 2, f'потрібна нова хвиля: {_flags}')
+    _wave = dict(FF.MM_CORR_TUNE_WAVES)[_flags[-1]]
+    _check(_wave.get('mm_corr_vob_exit_pct') == (50.0, 65.0), _wave)
+    # стара установка: перша хвиля вже пройдена, вихід лежить зі старим дефолтом
+    ff = _mk_ff({'mm_corr_tuned_v1': True, 'mm_corr_vob_exit_pct': 50.0,
+                 'mm_corr_vob_pct': 60.0})
+    ff._migrate_settings()
+    _saved = ff._db.get_setting('fuel_filter_settings', {})
+    _check(float(_saved['mm_corr_vob_exit_pct']) == 65.0,
+           f'нова хвиля не спрацювала: {_saved}')
+    _check(_saved.get(_flags[-1]) is True, 'позначка нової хвилі не поставлена')
+    print('✓ 🧭 нова хвиля міграції доносить 65 до збереженої установки')
+
+
+def test_a_hand_picked_value_is_never_overwritten():
+    """Збережене 55 — це ВИБІР ЛЮДИНИ, міграція його не чіпає (урок 21.09)."""
+    ff = _mk_ff({'mm_corr_tuned_v1': True, 'mm_corr_vob_exit_pct': 55.0})
+    ff._migrate_settings()
+    _saved = ff._db.get_setting('fuel_filter_settings', {})
+    _check(float(_saved['mm_corr_vob_exit_pct']) == 55.0,
+           f'ручне значення перезаписано: {_saved}')
+    print('✓ 🧭 ручний вибір міграція не перезаписує')
+
+
+def test_the_page_explains_the_trade_off_instead_of_clamping():
+    """Сторінка більше НЕ зводить число, але наслідок називає."""
     import json
     import subprocess
     js = _js_fn('_mmcExitSync') + (
         "\nconst _els = {"
-        "'ff-mm-corr-vob': {value: %s, max: '100'},"
-        "'ff-mm-corr-vobexit': {value: %s, max: '100'},"
+        "'ff-mm-corr-vob': {value: '60'},"
+        "'ff-mm-corr-vobexit': {value: '65'},"
         "'mm-corr-exit-note': {style: {display: 'none'}, textContent: ''}};\n"
         "const document = { getElementById: (id) => _els[id] || null };\n"
-        "_mmcExitSync(%s);\n"
+        "_mmcExitSync();\n"
         "console.log(JSON.stringify({exit: _els['ff-mm-corr-vobexit'].value,"
-        " max: _els['ff-mm-corr-vobexit'].max,"
         " shown: _els['mm-corr-exit-note'].style.display !== 'none',"
         " text: _els['mm-corr-exit-note'].textContent}));\n"
-    ) % (json.dumps(str(entry)), json.dumps(str(exit_val)),
-         'true' if clamp else 'false')
+    )
     r = subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=30)
     _check(r.returncode == 0, 'JS упав: ' + r.stderr[:400])
-    return json.loads(r.stdout.strip().splitlines()[-1])
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    _check(out['exit'] == '65', f'число НЕ можна чіпати: {out}')
+    _check(out['shown'], 'наслідок мусить бути названий')
+    for _must in ('МОЖНА', '60', '65', '90%'):
+        _check(_must in out['text'], f'у поясненні немає «{_must}»: {out["text"]}')
+    print('✓ 🧭 сторінка пояснює вибір, а не зводить число')
 
 
-def test_the_backend_rule_itself_is_unchanged():
-    """Саме ПРАВИЛО правильне і лишається: вихід вище за вхід означав би
-    «завершити корекцію на тій самій ширині, за якої вона щойно почалась»."""
-    src = _fn_src(_FF_SRC, 'get_settings')
-    _check("s['mm_corr_vob_exit_pct'] = float(s['mm_corr_vob_pct'])" in src,
-           'клемп мусить лишитись останньою лінією оборони для API')
-    print('✓ 🧭 правило «вихід ≤ вхід» лишається в силі')
-
-
-def test_the_page_says_the_value_was_clamped_instead_of_eating_it():
-    """Головне: клемп більше НЕ мовчазний."""
-    _check('id="mm-corr-exit-note"' in _HTML, 'немає місця для пояснення')
-    r = _run_exit_sync(entry=60, exit_val=70, clamp=True)
-    _check(r['exit'] == '60', 'показане число мусить збігтись зі збереженим: %s' % r)
-    _check(r['shown'], 'пояснення мусить зʼявитись')
-    for _must in ('70', '60', 'РАНІШЕ', '📦 VOB проти ≥'):
-        _check(_must in r['text'], 'у поясненні немає «%s»: %s' % (_must, r['text']))
-    print('✓ 🧭 зведення назване вголос, із числами і причиною')
-
-
-def test_the_note_warns_while_typing_before_anything_is_saved():
-    """Попередження ДО збереження — інакше людина дізнається постфактум."""
-    r = _run_exit_sync(entry=60, exit_val=70, clamp=False)
-    _check(r['exit'] == '70', 'під час набору число НЕ чіпаємо')
-    _check(r['shown'] and 'буде зведено' in r['text'],
-           'мусить попередити в майбутньому часі: %s' % r)
-    print('✓ 🧭 попередження зʼявляється ще під час набору')
-
-
-def test_a_valid_pair_says_nothing_at_all():
-    """Коректна пара — тиша: «все гаразд» окремим рядком це шум."""
-    for _pair in ((60, 50), (60, 60), (45, 45)):
-        r = _run_exit_sync(entry=_pair[0], exit_val=_pair[1], clamp=True)
-        _check(not r['shown'], 'зайве попередження на %s: %s' % (_pair, r))
-        _check(r['exit'] == str(_pair[1]), 'коректне число не чіпаємо: %s' % r)
-    print('✓ 🧭 коректна пара не шумить')
-
-
-def test_the_field_ceiling_follows_the_entry_threshold_live():
-    """Стеля поля йде за живим входом — браузер опирається сам. І саме тому
-    синк висить на ОБОХ полях: ЗНИЗИТИ вхід — це та сама ситуація, що підняти
-    вихід, і саме так у неї найчастіше і потрапляють."""
-    r = _run_exit_sync(entry=45, exit_val=45, clamp=False)
-    _check(r['max'] == '45', 'стеля мусить дорівнювати входу: %s' % r)
-    _i_in = _HTML.index('id="ff-mm-corr-vob"')
-    _i_out = _HTML.index('id="ff-mm-corr-vobexit"')
-    for _name, _i in (('входу', _i_in), ('виходу', _i_out)):
-        _frag = _HTML[_i:_i + 400]
-        _check('_mmcExitSync(false)' in _frag, 'поле %s не синкає під час набору' % _name)
-        _check('_mmcExitSync(true)' in _frag, 'поле %s не зводить перед збереженням' % _name)
-    print('✓ 🧭 стеля жива, синк висить на ОБОХ полях')
-
-
-def test_lowering_the_entry_is_the_same_situation():
-    """Найчастіший шлях у скаргу: вхід опустили НИЖЧЕ вже збереженого виходу."""
-    r = _run_exit_sync(entry=45, exit_val=50, clamp=True)
-    _check(r['exit'] == '45' and r['shown'],
-           'зниження входу мусить так само зводити і пояснювати: %s' % r)
-    print('✓ 🧭 зниження входу пояснюється так само, як підняття виходу')
-
-
-def test_saved_settings_refresh_the_hint():
-    """Після завантаження налаштувань стан пояснення мусить відповідати
-    ЗБЕРЕЖЕНИМ числам, а не лишатись від попереднього набору."""
-    _i = _HTML.index("_mmcExitSync === 'function'")
-    _j = _HTML.index("_mmCorrSummary === 'function'")
-    _check(_i < _j, 'синк мусить іти в тому самому місці, де решта підсумків')
-    print('✓ 🧭 підказка оновлюється після завантаження налаштувань')
+def test_a_valid_pair_stays_quiet():
+    """Вихід нижчий за вхід — класика, жодного напису."""
+    import json
+    import subprocess
+    js = _js_fn('_mmcExitSync') + (
+        "\nconst _els = {'ff-mm-corr-vob': {value: '60'},"
+        "'ff-mm-corr-vobexit': {value: '50'},"
+        "'mm-corr-exit-note': {style: {display: ''}, textContent: 'x'}};\n"
+        "const document = { getElementById: (id) => _els[id] || null };\n"
+        "_mmcExitSync();\n"
+        "console.log(JSON.stringify({shown: _els['mm-corr-exit-note'].style.display !== 'none'}));\n"
+    )
+    r = subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=30)
+    _check(r.returncode == 0, 'JS упав: ' + r.stderr[:400])
+    _check(not json.loads(r.stdout.strip().splitlines()[-1])['shown'],
+           'на класичній парі напису бути не повинно')
+    print('✓ 🧭 класична пара не шумить')
 
 
 if __name__ == '__main__':
