@@ -121,19 +121,98 @@ def mass_pct(row: Dict, side: str):
         return None
 
 
-def magnet_dist_pct(row: Dict):
-    """Відстань до найсильнішого магніту у ВІДСОТКАХ — СИРИМ числом.
+_LADDER_CACHE = {}
+
+
+def _ladder_mod():
+    """`ladder.py` СУСІДНІМ ФАЙЛОМ, а не через пакет.
+
+    ⚠️ `from detection.liquidation_map import ladder` виконує
+    `liquidation_map/__init__.py`, а той тягне сам ДЕМОН карти ліквідацій —
+    тобто півпроєкту заради двох чистих функцій. Той самий прийом і з тієї
+    самої причини, що `_dg_mod` / `_sibling_mod` у сканері.
+    """
+    if 'm' not in _LADDER_CACHE:
+        try:
+            from detection.liquidation_map import ladder as _m   # звичайний шлях
+        except Exception:
+            import importlib.util as _u
+            import os as _os
+            _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                               'liquidation_map', 'ladder.py')
+            _sp = _u.spec_from_file_location('_lh_ladder', _p)
+            _m = _u.module_from_spec(_sp)
+            _sp.loader.exec_module(_m)
+        _LADDER_CACHE['m'] = _m
+    return _LADDER_CACHE['m']
+
+
+def magnet_ahead(row: Dict, side: str) -> Optional[Dict]:
+    """🧲 Найсильніша сходинка ПОПЕРЕДУ ціни В БІК `side` — сирим рядком.
+
+    ⚠️ **ЧОМУ НЕ «найбільша сходинка драбини» (скарга 22.09).** У таблиці
+    стояло три монети «у бік LONG», і в двох магніт дивився ↑, а в ASTERUSDT —
+    **↓7.15%**. Протиріччя в ДАНИХ немає (62.2% маси розсіяні по багатьох
+    сходинках зверху, а 16.3% сидять в одній щільній знизу), але в КОЛОНЦІ
+    напрямленої таблиці глобальний магніт читається як «ціль унизу».
+    Це РІВНО та сама пастка, яку вже виправили для TP-2: драбина симетрична
+    навколо ціни й описує ВЕСЬ ринок, а ціль за визначенням попереду.
+
+    ⚠️ Правило НЕ переписуємо — кличемо ТУ САМУ `ladder.pick_magnet_ahead`,
+    що обирає ціль угоди. Друга копія «найбільша попереду, тайбрейк — ближча»
+    з часом розійшлася б із першою (урок PD-зони).
+    """
+    try:
+        return _ladder_mod().pick_magnet_ahead(
+            row.get('rows') or [], row.get('price'), side)
+    except Exception:
+        return None
+
+
+def magnet_dist_pct(row: Dict, side: Optional[str] = None):
+    """Відстань до магніту у ВІДСОТКАХ — СИРИМ числом.
 
     ⚠️ `magnet_dist` — це ФОРМАТОВАНИЙ рядок («↓5.58%»), і парсити його заради
     числа НЕ МОЖНА (задокументована пастка магніта). Беремо сирий рядок
-    сходинки `magnet_row['dist_pct']` — той самий, з якого малюється підпис.
+    сходинки — той самий, з якого малюється підпис.
     Немає даних → `None` (це НЕ «нуль»).
+
+    ⚠️ **З `side` — НАПРЯМКОВИЙ магніт** (сходинка ПОПЕРЕДУ входу), і саме він
+    тепер живить фільтр «🧲 Магніт ≥ %» та колонку. Без `side` — глобальний,
+    як і раніше: він лишився для тултипа «чому числа різні».
     """
-    mr = row.get('magnet_row') or {}
+    mr = (magnet_ahead(row, side) if side else None) or (
+        row.get('magnet_row') or {} if not side else {})
     try:
-        return abs(float(mr.get('dist_pct')))
+        return abs(float((mr or {}).get('dist_pct')))
     except (TypeError, ValueError):
         return None
+
+
+def magnet_view(row: Dict, side: str) -> Dict:
+    """Підписи НАПРЯМКОВОГО магніту у ТОМУ САМОМУ форматі, що в драбині.
+
+    Формат бере `ladder.fmt_band_ua` + стрілка за `dir` — дослівно як у
+    `make_verdict`. Свого форматування не заводимо: два написання одного
+    числа вже ловили на підписі смуги.
+    """
+    mr = magnet_ahead(row, side) or {}
+    if not mr:
+        return {'magnet_price': None, 'magnet_pct': None, 'magnet_dist': None,
+                'magnet_dist_pct': None, 'magnet_dir': None}
+    _lad = _ladder_mod()
+    _arrow = '↑' if mr.get('dir') == 'up' else '↓'
+    try:
+        _d = abs(float(mr.get('dist_pct')))
+    except (TypeError, ValueError):
+        _d = None
+    return {
+        'magnet_price': _lad.fmt_band_ua(mr.get('price'), mr.get('price_hi')),
+        'magnet_pct': f"{mr.get('pct')}%",
+        'magnet_dist': f"{_arrow}{mr.get('dist_pct')}%",
+        'magnet_dist_pct': _d,
+        'magnet_dir': mr.get('dir'),
+    }
 
 
 def pick_rows(rows: List[Dict], side: str, min_pct: float,
@@ -168,7 +247,11 @@ def pick_rows(rows: List[Dict], side: str, min_pct: float,
         if p < float(min_pct or 0):
             st['weak'] += 1
             continue
-        _md = magnet_dist_pct(r)
+        # ⚠️ ВІДСТАНЬ — до НАПРЯМКОВОГО магніту (сходинки ПОПЕРЕДУ входу), а
+        # не до глобальної найтовщої. Раніше фільтр судив число, яке до нашого
+        # боку стосунку не має: монету могло зрізати через щільну сходинку
+        # ПОЗАДУ і, навпаки, пропустити з ціллю за 0.2% попереду.
+        _md = magnet_dist_pct(r, side)
         if float(min_magnet_dist or 0) > 0 and _md is not None \
                 and _md < float(min_magnet_dist):
             st['near'] += 1
@@ -556,15 +639,18 @@ class LiqHunterDaemon:
                 'mass_dir': 'up' if side == 'LONG' else 'down',
                 'pull': r.get('pull'), 'pull_pct': r.get('pull_pct'),
                 'price': r.get('price'),
-                # 🧲 НАЙСИЛЬНІШИЙ МАГНІТ — з ТОГО САМОГО рядка скану (вимога:
-                # «Відображай… Найсильніший магніт — напрямок»).
-                'magnet_price': r.get('magnet_price'),
-                'magnet_pct': r.get('magnet_pct'),
-                'magnet_dist': r.get('magnet_dist'),
-                # СИРЕ число відстані — фронт малює ним рівну колонку і колір;
-                # формальний підпис (`magnet_dist`) лишається для тултипа.
-                'magnet_dist_pct': magnet_dist_pct(r),
-                'magnet_dir': r.get('magnet_dir'),
+                # 🧲 МАГНІТ — НАПРЯМКОВИЙ (сходинка ПОПЕРЕДУ входу в бік
+                # таблиці). Скарга 22.09: у напрямленій «LONG»-таблиці колонка
+                # показувала ГЛОБАЛЬНУ найтовщу сходинку, і в ASTERUSDT вона
+                # дивилась ↓ — читалось як «бот підібрав монети в різні боки».
+                **magnet_view(r, side),
+                # ГЛОБАЛЬНИЙ магніт лишається — але ОКРЕМИМИ полями, для
+                # тултипа «чому числа різні». Це чесна відповідь на питання
+                # «куди тягне ринок узагалі», і вона не та сама, що «де ціль».
+                'magnet_global_price': r.get('magnet_price'),
+                'magnet_global_pct': r.get('magnet_pct'),
+                'magnet_global_dist': r.get('magnet_dist'),
+                'magnet_global_dir': r.get('magnet_dir'),
                 'exchange': r.get('exchange') or s['exchange'],
                 'fallback': bool(r.get('fallback')),
                 'since': since[sym],

@@ -2627,7 +2627,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="ff-mm-corr-vobreq" onchange="saveFuelFilterSettings()" style="margin:0">
                         📦 Ширина обовʼязкова на СТАРТ
                     </label>
-                    <label class="mmc-chk" title="🧭 КІНЕЦЬ корекції вирішує ЛИШЕ ширина ринку: поки частка монет ПРОТИ банера ≥ порога виходу, завершити корекцію не можна. 💹 ціна і 📉 важіль можуть корекцію тільки ПРОДОВЖИТИ. ⚠️ Вимикати не рекомендовано: OFF повертає рівно ту поведінку, за якої корекція «завершувалась» при 90% монет проти банера (64 з 71).">
+                    <label class="mmc-chk" title="🧭 КІНЕЦЬ корекції вирішує ЛИШЕ ширина ринку: поки ЗА банером повернулось менше монет, ніж поріг виходу, завершити корекцію не можна. ⚠️ Коли ширина відновилась — вона й ухвалює рішення: 💹 ціна і 📉 важіль корекцію більше НЕ продовжують (раніше продовжували, і саме це тримало корекцію нескінченно — скарга «немає повідомлень про вихід»). ⚠️ Вимикати не рекомендовано: OFF повертає рівно ту поведінку, за якої корекція «завершувалась» при 90% монет проти банера (64 з 71).">
                         <input type="checkbox" id="ff-mm-corr-breadth" onchange="saveFuelFilterSettings()" style="margin:0">
                         🧭 Кінець вирішує ширина
                     </label>
@@ -2636,16 +2636,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         📐 + Order Block як джерело ширини
                     </label>
                     <div class="mmc-f">
-                        <label>📦 Кінець, коли проти &lt;, %</label>
-                        <input type="number" id="ff-mm-corr-vobexit" min="0" max="100" step="5" value="65"
+                        <label>🧭 Кінець: повернулось ЗА ≥, %</label>
+                        <input type="number" id="ff-mm-corr-vobexit" min="0" max="100" step="5" value="70"
                                oninput="_mmcExitSync()" onchange="_mmcExitSync(); saveFuelFilterSettings()"
-                               title="Нижче цієї частки ширина вважається ВІДНОВЛЕНОЮ і корекція може завершитись (після підтвердження часом). 50% — нейтральна лінія ширини ринку: «більшість монет уже НЕ проти тренду». ⚠️ БІЛЬШЕ число = корекція завершується РАНІШЕ (ширині досить впасти нижче вищої планки), МЕНШЕ = тримається довше. Вище за поріг старту 📦 ставити МОЖНА: тоді у смузі «старт…кінець» вето ширини не діє і кінець там вирішують 💹 ціна та 📉 важіль, а вище порога кінця захист лишається повний (на ширині 90% корекція не завершиться в жодному разі).">
+                               title="Скільки монет мусить ПОВЕРНУТИСЬ ЗА банером, щоб корекція вважалась завершеною (після підтвердження часом). Читається так само, як поріг старту: «скільки монет». ⚠️ СЕНС ЧИСЛА ЗМІНЕНО 22.09: раніше поле означало «частка ПРОТИ впала нижче X», тобто 65 вимагало лише «за ≥ 35%» — удвічі мʼякше, ніж читалось. ⚠️ БІЛЬШЕ число = корекція тримається ДОВШЕ (треба, щоб повернулось більше монет); МЕНШЕ = завершується раніше. Знаменник той самий, що в порозі старту, тож «за» і «проти» завжди дають у сумі 100%.">
                     </div>
-                    <!-- ⚠️ КЛЕМП «вихід ≤ вхід» МУСИТЬ ГОВОРИТИ. Поля стоять
-                         далеко одне від одного (між ними роздільник і три
-                         чекбокси), тож мовчазне зведення числа читалось як
-                         «поле не зберігається» (скарга 22.09). Той самий урок,
-                         що з мовчазним clamp-ом монет у скані ліквідності. -->
+                    <!-- 🧭 ДЗЕРКАЛО ПОРОГІВ. Старт міряє тих, хто ПРОТИ,
+                         кінець — тих, хто ЗА; поля стоять далеко одне від
+                         одного (між ними роздільник і три чекбокси), тож без
+                         перекладу «70% за = ≤30% проти» два числа на одній
+                         шкалі читались би як суперечність. -->
                     <div id="mm-corr-exit-note"
                          style="flex-basis:100%;display:none;color:#93c5fd;font-size:0.72rem;line-height:1.35;
                                 background:rgba(147,197,253,0.08);border:1px solid rgba(147,197,253,0.25);
@@ -12493,7 +12493,9 @@ function mmRenderCorr(corr) {
             && c.breadth_exit_on !== false) {
             const ready = c.breadth_ok === true;
             parts.push(`<span style="color:${ready ? '#4ade80' : '#fbbf24'}" `
-                + `title="${(c.why || '')}">🧭 кінець коли 📦 &lt;<b>${c.exit_pct}%</b>`
+                + `title="${(c.why || '')}">🧭 кінець коли ЗА <b>≥${c.exit_pct}%</b>`
+                + (c.breadth_for_pct != null
+                   ? ` <span style="color:#8b93a7">(зараз ${c.breadth_for_pct}%)</span>` : '')
                 + (ready ? ' ✓' : '') + '</span>');
         }
         lay.innerHTML = parts.join('') + (parts.length
@@ -12628,24 +12630,41 @@ async function mmCorrLogClear() {
     }
 }
 function _mmcExitSync() {
-    // 🧭 Поріг КІНЦЯ вище за поріг СТАРТУ — це ДОЗВОЛЕНО (рішення користувача
-    // 22.09). Раніше сторінка й бекенд мовчки зводили число, і воно виглядало
-    // як «не зберігається». Тепер зводити нічого не треба, але наслідок мусить
-    // бути НАЗВАНИЙ: у смузі [вхід .. вихід) вето ширини не діє, і кінець там
-    // вирішують швидкі шари. Вище за поріг виходу захист лишається повний.
+    // 🧭 ДВА ПОРОГИ — ОДНА ШКАЛА, АЛЕ РІЗНІ БОКИ (вимога 22.09):
+    //   ▶️ старт  — скільки монет ВТРАТИЛИ напрямок (ПРОТИ банера);
+    //   🧭 кінець — скільки монет ПОВЕРНУЛОСЬ (ЗА банером).
+    // Знаменник у них один, тож «за = 100 − проти». Саме тому число кінця
+    // тут ЗАВЖДИ перекладається у «проти»: інакше два пороги на сусідніх
+    // полях читались би як одна шкала, і 70 виглядало б «мʼякшим» за 60,
+    // хоча воно СУВОРІШЕ.
     const inp = document.getElementById('ff-mm-corr-vob');
     const out = document.getElementById('ff-mm-corr-vobexit');
     const note = document.getElementById('mm-corr-exit-note');
     if (!inp || !out || !note) return;
     const hi = parseFloat(inp.value);
     const cur = parseFloat(out.value);
-    if (!isFinite(hi) || !isFinite(cur) || cur <= hi) { note.style.display = 'none'; return; }
+    if (!isFinite(hi) || !isFinite(cur)) { note.style.display = 'none'; return; }
+    const mirror = Math.round((100 - cur) * 10) / 10;
     note.style.display = '';
-    note.textContent = `ℹ️ Кінець (${cur}%) вищий за старт (${hi}%) — так МОЖНА, `
-        + 'це мʼякша настройка: корекція завершується раніше. '
-        + `Ціна вибору: у смузі ${hi}–${cur}% вето ширини не діє і кінець там `
-        + `вирішують 💹 ціна та 📉 важіль. Вище ${cur}% захист повний — `
-        + 'на ширині 90% кінець і далі неможливий.';
+    if (mirror >= hi) {
+        // ⚠️ ВИВЕРНУТА ПАРА: кінець дозволений на ширині, за якої старт ЩЕ
+        // діє, — вердикт стрибав би між «почалась» і «завершилась».
+        note.style.color = '#fbbf24';
+        note.style.background = 'rgba(251,191,36,0.08)';
+        note.style.borderColor = 'rgba(251,191,36,0.25)';
+        note.textContent = `⚠️ ${cur}% «за» = ≤${mirror}% «проти», а старт — від `
+            + `${hi}% «проти». Смуги перекриваються: корекція могла б водночас `
+            + `і починатись, і завершуватись. Підніміть кінець вище `
+            + `${Math.round(100 - hi)}% або опустіть старт.`;
+    } else {
+        note.style.color = '#93c5fd';
+        note.style.background = 'rgba(147,197,253,0.08)';
+        note.style.borderColor = 'rgba(147,197,253,0.25)';
+        note.textContent = `ℹ️ Почнеться, коли ПРОТИ банера ≥ ${hi}% монет; `
+            + `завершиться, коли ЗА банером повернеться ≥ ${cur}% `
+            + `(тобто проти лишиться ≤ ${mirror}%). БІЛЬШЕ число тут = `
+            + `корекція тримається ДОВШЕ.`;
+    }
 }
 function _mmCorrSummary(s) {
     const el = document.getElementById('mm-corr-sum');
@@ -12659,7 +12678,7 @@ function _mmCorrSummary(s) {
         // тепер вирішує кінець, і не бачити його в згорнутій шапці означало б
         // не знати головного числа детектора.
         + (s.mm_corr_breadth_exit === false ? ' · 🧭 кінець за голосами'
-           : ` → кінець <${s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 65}%`)
+           : ` проти → кінець ЗА ≥${s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 70}%`)
         + ' · '
         + `💹 ${s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80}% · `
         + `📉 ${s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15} п.п. · `
@@ -13088,8 +13107,13 @@ function _lhMagnetCell(r) {
         + `text-align:${al}"${ttl ? ` title="${ttl}"` : ''}>${html}</span>`;
     if (!r.magnet_price) {
         return seg(152, 'left', '<span style="color:#6b7280">—</span>',
-                   'Значущої сходинки драбина не дала — відстань невідома, і '
-                   + 'фільтром «магніт ≥ %» така монета НЕ ріжеться.');
+                   'ПОПЕРЕДУ ціни в бік таблиці значущої сходинки немає — '
+                   + 'відстань невідома, і фільтром «магніт ≥ %» така монета '
+                   + 'НЕ ріжеться (невідомо ≠ близько).'
+                   + (r.magnet_global_price
+                      ? '\nНайтовща сходинка драбини взагалі: '
+                        + r.magnet_global_price + ' (' + r.magnet_global_dist
+                        + ') — вона ПОЗАДУ, тож ціллю не є.' : ''));
     }
     const up = r.magnet_dir === 'up';
     const col = up ? '#4ade80' : '#f87171';
@@ -13098,7 +13122,14 @@ function _lhMagnetCell(r) {
     const d = (r.magnet_dist_pct == null) ? null : Number(r.magnet_dist_pct);
     return seg(152, 'left', `<span style="color:${col};font-weight:700">`
                + `${up ? '↑' : '↓'} ${r.magnet_price}</span>`,
-               'Ціна найсильнішої сходинки драбини (ближня межа смуги).')
+               'Найсильніша сходинка ПОПЕРЕДУ ціни в бік таблиці (ближня '
+               + 'межа смуги) — те саме правило, за яким обирається ціль '
+               + 'угоди.'
+               + ((r.magnet_global_price && r.magnet_global_price !== r.magnet_price)
+                  ? '\nНайтовща сходинка драбини ВЗАГАЛІ: '
+                    + r.magnet_global_price + ' (' + r.magnet_global_pct + ', '
+                    + r.magnet_global_dist + '). Вона описує ринок цілком і '
+                    + 'може лежати ПОЗАДУ — тому в цій колонці не вона.' : ''))
         + seg(62, 'right', d == null ? '<span style="color:#6b7280">—</span>'
               : `<span style="color:${col};font-weight:700">${up ? '↑' : '↓'}`
                 + `${d.toFixed(2)}%</span>`,
@@ -13941,7 +13972,7 @@ function renderFuelFilter(d) {
     setIf('ff-mm-corr-vobreq', s.mm_corr_vob_required !== false);   // default true
     setIf('ff-mm-corr-breadth', s.mm_corr_breadth_exit !== false);  // default true
     setIf('ff-mm-corr-ob', s.mm_corr_ob_on !== false);              // default true
-    setIf('ff-mm-corr-vobexit', String(s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 65));
+    setIf('ff-mm-corr-vobexit', String(s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 70));
     setIf('ff-mm-corr-price', String(s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80));
     setIf('ff-mm-corr-drop', String(s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15));
     setIf('ff-mm-corr-confirm', String(s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 300));
@@ -15003,7 +15034,7 @@ async function saveFuelFilterSettings() {
         mm_corr_vob_required: _c('ff-mm-corr-vobreq'),
         mm_corr_breadth_exit: _c('ff-mm-corr-breadth'),
         mm_corr_ob_on: _c('ff-mm-corr-ob'),
-        mm_corr_vob_exit_pct: _mmcNum('ff-mm-corr-vobexit', 65),
+        mm_corr_vob_exit_pct: _mmcNum('ff-mm-corr-vobexit', 70),
         mm_corr_price_pct: _mmcNum('ff-mm-corr-price', 80),
         mm_corr_lever_drop: _mmcNum('ff-mm-corr-drop', 15),
         mm_corr_confirm_sec: _mmcNum('ff-mm-corr-confirm', 300),

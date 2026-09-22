@@ -104,8 +104,24 @@ def _row(sym, above, below, ok=True, **kw):
          'pull': 'up' if above > below else 'down',
          'pull_pct': abs(above - below), 'price': 1.0,
          'magnet_price': '$0.64000', 'magnet_pct': 14.2,
-         'magnet_dist': '↓5.58%', 'magnet_dir': 'down'}
+         'magnet_dist': '↓5.58%', 'magnet_dir': 'down', 'rows': []}
     r.update(kw)
+    # ⚠️ СТАБ МУСИТЬ ВІДДАВАТИ ТЕ САМЕ, ЩО СПРАВЖНЯ `summarise` — а вона несе
+    # ще й `rows` (сходинки драбини). Відколи магніт у сканері НАПРЯМКОВИЙ
+    # (скарга 22.09), без них `pick_magnet_ahead` не мав би на чому працювати
+    # і колонка мовчки порожніла б — рівно та пастка стабів, на яку в проєкті
+    # вже наступали. Синтезуємо сходинку з того самого `magnet_row`.
+    mr = r.get('magnet_row')
+    if mr and not r['rows']:
+        d = float(mr.get('dist_pct') or 0)
+        mid = r['price'] * (1.0 + d / 100.0)
+        half = r['price'] * 0.002
+        r['rows'] = [{'price': round(mid - half, 6),
+                      'price_hi': round(mid + half, 6),
+                      'pct': mr.get('pct', 14.2), 'dist_pct': d,
+                      'dir': 'up' if d > 0 else 'down',
+                      'side': 'short' if d > 0 else 'long',
+                      'usd': 1.0}]
     return r
 
 
@@ -280,13 +296,21 @@ def test_a_disabled_scanner_does_nothing_and_clears_the_table():
 
 # ═══════════ 5. ЩО САМЕ ПОКАЗУЄМО ════════════════════════════════════════
 def test_every_row_carries_the_mass_and_the_magnet():
-    h = _mk([_row('AUSDT', 20.0, 80.0)], direction='SHORT', min_mass_pct=65)
+    # ⚠️ Фікстурі потрібна СХОДИНКА ПОПЕРЕДУ: відколи магніт напрямковий
+    # (22.09), рядок без жодної сходинки в бік таблиці чесно показує «—».
+    h = _mk([_row('AUSDT', 20.0, 80.0, magnet_row={'dist_pct': -5.58})],
+            direction='SHORT', min_mass_pct=65)
     h.scan('t')
     r = h.get_state()['rows'][0]
     _check(r['mass_pct'] == 80.0 and r['mass_dir'] == 'down',
            f'маса мусить бути в рядку: {r}')
     for _k in ('magnet_price', 'magnet_pct', 'magnet_dist', 'magnet_dir'):
         _check(r.get(_k) is not None, f'магніт мусить нести {_k}')
+    # ГЛОБАЛЬНИЙ магніт лишається окремими полями — для тултипа «чому числа
+    # різні». Прибрати його означало б позбавити відповіді на питання «куди
+    # тягне ринок узагалі».
+    _check(r.get('magnet_global_price') == '$0.64000',
+           f'глобальний магніт мусить лишитись для тултипа: {r}')
     print('✓ у рядку — маса ліквідності і найсильніший магніт із напрямком')
 
 
@@ -629,6 +653,92 @@ def test_the_magnet_share_is_not_printed_with_two_percent_signs():
            'до готового «23.0%» додається ще один знак відсотка')
     _check('${r.magnet_pct}' in body, 'частку магніту все одно треба показати')
     print('✓ 🧲 частка магніту друкується без подвійного «%%»')
+
+# ═══ 10. 🧲 МАГНІТ У ТАБЛИЦІ — НАПРЯМКОВИЙ (скарга 22.09) ══════════════════
+# Дослівно: «Це як так? Чому в різні боки бот підібрав монети?» — у таблиці
+# «🟢 LONG» дві монети мали магніт ↑, а ASTERUSDT — ↓7.15%.
+
+
+def _aster_like():
+    """Рядок зі скріна: маса 62.2% ВГОРУ, найтовща сходинка — ВНИЗУ."""
+    price = 0.7113
+    rows = [{'price': 0.66, 'price_hi': 0.67, 'pct': 16.3, 'dist_pct': -7.15,
+             'dir': 'down', 'side': 'long', 'usd': 1.0}]
+    for pl in (0.72, 0.74, 0.76):
+        rows.append({'price': pl, 'price_hi': pl + 0.02, 'pct': 10.4,
+                     'dist_pct': round((pl + 0.01 - price) / price * 100, 2),
+                     'dir': 'up', 'side': 'short', 'usd': 1.0})
+    return _row('ASTERUSDT', 62.2, 37.8, price=price, rows=rows,
+                magnet_price='$0.66000–0.67000', magnet_pct='16.3%',
+                magnet_dist='↓7.15%', magnet_dir='down',
+                magnet_row=dict(rows[0]))
+
+
+def test_the_column_shows_the_magnet_ahead_not_the_global_one():
+    """ГОЛОВНИЙ ЗАМОК СКАРГИ: у таблиці LONG магніт мусить дивитись УПЕРЕД."""
+    h = _mk([_aster_like()], direction='LONG', min_mass_pct=60,
+            min_magnet_dist_pct=0)
+    h.scan('t')
+    r = h.get_state()['rows'][0]
+    _check(r['magnet_dir'] == 'up',
+           f'у LONG-таблиці магніт не може дивитись униз: {r["magnet_dir"]}')
+    _check(r['magnet_global_dir'] == 'down',
+           'глобальний магніт мусить лишитись у рядку — для тултипа')
+    _check(r['magnet_price'] != r['magnet_global_price'],
+           'це РІЗНІ сходинки, і рядок мусить нести обидві')
+    print('✓ 🧲 колонка показує магніт ПОПЕРЕДУ, а не найтовщий узагалі')
+
+
+def test_the_rule_is_the_same_function_that_picks_the_trade_target():
+    """Другої копії «найбільша попереду, тайбрейк — ближча» не заводимо."""
+    src = _SRC[_SRC.index('def magnet_ahead('):]
+    src = src[:src.index('\ndef ', 10)]
+    _check('pick_magnet_ahead' in src,
+           'магніт таблиці мусить рахувати ТА САМА функція, що ціль угоди')
+    for _bad in ('max(', 'sort(', 'dist_pct <'):
+        _check(_bad not in src, f'своє правило вибору заводити не можна: {_bad}')
+    print('✓ 🧲 правило одне — `ladder.pick_magnet_ahead`')
+
+
+def test_the_distance_filter_now_judges_the_target_we_would_trade():
+    """Фільтр «магніт ≥ %» мусить міряти сходинку ПОПЕРЕДУ.
+
+    Раніше він судив ГЛОБАЛЬНУ: монету зрізало через щільну сходинку ПОЗАДУ
+    (і навпаки — пропускало з ціллю за пів відсотка попереду)."""
+    price = 1.0
+    rows = [  # найтовща — ПОЗАДУ і БЛИЗЬКО (глобальний магніт за 0.8%)
+        {'price': 0.991, 'price_hi': 0.993, 'pct': 30.0, 'dist_pct': -0.8,
+         'dir': 'down', 'side': 'long', 'usd': 1.0},
+        # а попереду — далека й вагома ціль
+        {'price': 1.09, 'price_hi': 1.11, 'pct': 12.0, 'dist_pct': 10.0,
+         'dir': 'up', 'side': 'short', 'usd': 1.0}]
+    r = _row('XUSDT', 70.0, 30.0, price=price, rows=rows,
+             magnet_row=dict(rows[0]))
+    h = _mk([r], direction='LONG', min_mass_pct=60, min_magnet_dist_pct=3)
+    h.scan('t')
+    got = [x['symbol'] for x in h.get_state()['rows']]
+    _check(got == ['XUSDT'],
+           f'ціль за 10% попереду — монету різати нема за що: {got}')
+    _check(h.get_state()['rows'][0]['magnet_dist_pct'] == 10.0,
+           'у рядок мусить іти відстань до ЦІЛІ, а не до сходинки позаду')
+    print('✓ 🧲 поріг відстані міряє ту сходинку, якою й торгували б')
+
+
+def test_no_step_ahead_is_not_a_reason_to_drop_the_coin():
+    """«Немає сходинки попереду» → «—», але монету НЕ ріжемо (fail-open, той
+    самий принцип, що з невідомою відстанню)."""
+    rows = [{'price': 0.9, 'price_hi': 0.92, 'pct': 20.0, 'dist_pct': -9.0,
+             'dir': 'down', 'side': 'long', 'usd': 1.0}]
+    r = _row('YUSDT', 70.0, 30.0, price=1.0, rows=rows,
+             magnet_row=dict(rows[0]))
+    h = _mk([r], direction='LONG', min_mass_pct=60, min_magnet_dist_pct=3)
+    res = h.scan('t')
+    _check(len(h.get_state()['rows']) == 1 and res['near'] == 0,
+           f'монету без сходинки попереду різати не можна: {res}')
+    _check(h.get_state()['rows'][0]['magnet_price'] is None,
+           'і вигадувати магніт теж не можна — має бути «—»')
+    print('✓ 🧲 немає сходинки попереду → «—», але монета лишається')
+
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]

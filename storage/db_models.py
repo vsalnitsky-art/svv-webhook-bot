@@ -606,6 +606,11 @@ class MmCorrectionLog(Base):
     ob_n = Column(Integer)
     ob_against = Column(Integer)
     breadth_pct = Column(Float)
+    # 🧭 Частка монет, що ПОВЕРНУЛИСЬ ЗА банером — з 22.09 саме вона вирішує
+    # кінець корекції (`за = 100 − проти`). Тримаємо ОКРЕМОЮ колонкою, а не
+    # рахуємо при аналізі: поріг `vob_exit` у цьому ж рядку міряє САМЕ її, і
+    # без пари «поріг + число» старі семпли знову стануть нечитабельними.
+    breadth_for = Column(Float)
     breadth_src = Column(String(8))
     # 💹 Ціна проти банера
     price_pct = Column(Float)
@@ -640,7 +645,8 @@ class MmCorrectionLog(Base):
             'vob_exit': self.vob_exit,
             'ob_pct': self.ob_pct, 'ob_n': self.ob_n,
             'ob_against': self.ob_against,
-            'breadth_pct': self.breadth_pct, 'breadth_src': self.breadth_src,
+            'breadth_pct': self.breadth_pct, 'breadth_for': self.breadth_for,
+            'breadth_src': self.breadth_src,
             'vob_n': self.vob_n, 'vob_against': self.vob_against,
             'vob_tf': self.vob_tf,
             'price_pct': self.price_pct, 'price_need': self.price_need,
@@ -992,6 +998,7 @@ def migrate_sleeper_candidates_v3():
             ('ob_n', 'INTEGER'),
             ('ob_against', 'INTEGER'),
             ('breadth_pct', 'FLOAT'),
+            ('breadth_for', 'FLOAT'),
             ('breadth_src', 'VARCHAR(8)'),
         ]
         try:

@@ -1142,6 +1142,14 @@ class FuelFilterDaemon:
         ('mm_corr_exit65_v2', {
             'mm_corr_vob_exit_pct': (50.0, 65.0),
         }),
+        # 22.09 (пізніше того ж дня) — поріг КІНЦЯ ЗМІНИВ СЕНС: тепер він
+        # міряє тих, хто ПОВЕРНУВСЯ ЗА банером, а не тих, хто ще проти
+        # (дослівно: «вихід із корекції наприклад 70% — то це мається на увазі
+        # 70% монет повернулися за напрямком»). Старі дефолти 50 і 65 у новому
+        # сенсі означали б зовсім інше, тож обидва ведемо на 70.
+        ('mm_corr_exit_forward_v3', {
+            'mm_corr_vob_exit_pct': ((50.0, 65.0), 70.0),
+        }),
     )
     # Сумісність зі старими тестами/читачами (перша хвиля).
     MM_CORR_TUNE_FLAG = MM_CORR_TUNE_WAVES[0][0]
@@ -1174,9 +1182,14 @@ class FuelFilterDaemon:
                 out[flag] = True
                 dirty = True
                 for key, (old, new) in tune.items():
-                    if key in out and float(out[key]) == float(old):
+                    # ⚠️ `old` може бути КОРТЕЖЕМ: коли ключ змінює СЕНС, на
+                    # нове значення треба вести КОЖЕН зі старих дефолтів (у
+                    # `mm_corr_vob_exit_pct` їх було два — 50 і 65).
+                    olds = old if isinstance(old, (tuple, list)) else (old,)
+                    if key in out and any(float(out[key]) == float(o)
+                                          for o in olds):
+                        moved.append(f'{key} {float(out[key]):g}→{new:g}')
                         out[key] = new
-                        moved.append(f'{key} {old:g}→{new:g}')
             if not dirty:
                 return
             self._db.set_setting(_DB_SETTINGS, out)
@@ -3822,6 +3835,7 @@ class FuelFilterDaemon:
                 'ob_pct': _g('ob', 'pct'), 'ob_n': _g('ob', 'n'),
                 'ob_against': _g('ob', 'against'),
                 'breadth_pct': c.get('breadth_pct'),
+                'breadth_for': c.get('breadth_for_pct'),
                 'breadth_src': (c.get('breadth_src') or '')[:8],
                 'price_pct': _g('price', 'pct'), 'price_need': _g('price', 'need'),
                 'price_n': _g('price', 'n'),
@@ -3980,6 +3994,8 @@ class FuelFilterDaemon:
                 'exit_pct': res.get('exit_pct'),
                 'breadth_ok': res.get('breadth_ok'),
                 'breadth_pct': res.get('breadth_pct'),
+                # 🧭 Частка ТИХ, ХТО ПОВЕРНУВСЯ — число, що вирішує кінець.
+                'breadth_for_pct': res.get('breadth_for_pct'),
                 'breadth_src': res.get('breadth_src') or '',
                 'breadth_lit': bool(res.get('breadth_lit')),
                 'ob_on': bool(settings.get('mm_corr_ob_on', True)),
