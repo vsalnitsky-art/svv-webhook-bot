@@ -240,6 +240,58 @@ def _forum_rename_if_needed(chat, category, tid):
     print(f"[TG] forum topic renamed: {category} → {want}")
 
 
+def sync_topic_names():
+    """🏷 Привести назви ВЖЕ СТВОРЕНИХ тем до `_CAT_LABEL` — НЕЗАЛЕЖНО від того,
+    чи шлемо ми зараз повідомлення і чи увімкнений тумблер категорії.
+
+    **Скарга 22.09 дослівно:** «Тема в телеграм групі знову називається чомусь
+    "₿ BTCUSDT" і повідомлень про "✅ КОРЕКЦІЯ ЗАВЕРШИЛАСЬ" не було.»
+
+    ⚠️ **ОБИДВА СИМПТОМИ МАЛИ ОДИН КОРІНЬ, і це моя помилка проєктування.**
+    Перейменування жило ВСЕРЕДИНІ `_cat_chat`, тобто виконувалось лише як
+    ПОБІЧНИЙ ЕФЕКТ відправки. А `notify_category` перевіряє тумблер кабінету
+    (`_cat_enabled`) **ПЕРШИМ РЯДКОМ** і виходить ДО `_cat_chat`. Отже:
+      • немає повідомлень (тумблер `notify_btc` вимкнено, або просто тиша) →
+        `_cat_chat` не викликається → назва НІКОЛИ не оновиться;
+      • і навпаки: стара назва теми — це ОЗНАКА того, що повідомлення не йдуть,
+        а не окрема проблема.
+    Тобто «назва не змінилась» і «сповіщень немає» ззовні виглядали як дві
+    різні поломки, хоча це одна.
+
+    ⚠️ **НІЧОГО НЕ СТВОРЮЄМО.** Беремо лише ВЖЕ ВІДОМІ теми — з персистованої
+    мапи `tg_forum_topics` і з явних env `TELEGRAM_CHAT_<CAT>` +
+    `TELEGRAM_TOPIC_<CAT>`. Створювати тему для вимкненої категорії було б
+    протилежною помилкою: тумблер має гасити групу, а не наповнювати її.
+    ⚠️ Назва теми — це ВЛАСТИВІСТЬ теми, а не сповіщення, тож тумблер її НЕ
+    стосується. Викликається на СТАРТІ бота і з 🩺 перевірки теми.
+    """
+    done = 0
+    try:
+        fchat = os.getenv('TELEGRAM_FORUM_CHAT')
+        if fchat:
+            try:
+                from storage.db_operations import get_db
+                saved = get_db().get_setting('tg_forum_topics', {}) or {}
+                cmap = saved.get(str(fchat), {}) if isinstance(saved, dict) else {}
+            except Exception:
+                cmap = {}
+            for cat, tid in list((cmap or {}).items()):
+                if tid and cat not in _ADMIN_ONLY_CATS:
+                    _forum_rename_if_needed(fchat, cat, tid)
+                    done += 1
+        for cat, (cenv, tenv) in _CAT_ENV.items():
+            if cat in _ADMIN_ONLY_CATS:
+                continue
+            chat = os.getenv(cenv) if cenv else None
+            thread = os.getenv(tenv) if tenv else None
+            if chat and thread:
+                _forum_rename_if_needed(chat, cat, thread)
+                done += 1
+    except Exception as e:
+        print(f"[TG] sync topic names error: {e}")
+    return done
+
+
 def _forum_thread(category):
     """Get/auto-create a forum TOPIC for `category` inside TELEGRAM_FORUM_CHAT —
     one supergroup, a topic per category (💰/₿/📈/📝/💬). Thread ids persist in
@@ -337,6 +389,15 @@ def category_check(category, send_test=False):
     if not out['token']:
         out['reason'] = 'не задано TELEGRAM_BOT_TOKEN — бот не може писати нікуди'
         return out
+    # 🏷 Назву теми лагодимо ДО перевірки тумблера: вона до сповіщень стосунку
+    # не має, а саме на цьому місці «₿ BTCUSDT» і зависало назавжди, коли
+    # повідомлення не йшли (скарга 22.09). Нічого не створюємо — лише
+    # перейменовуємо вже відомі теми.
+    try:
+        sync_topic_names()
+        out['rename_err'] = _forum_rename_err
+    except Exception:
+        pass
     if not out['enabled']:
         out['reason'] = ('вимкнено майстер-тумблер теми в кабінеті адміна '
                          '(«📢 Групові теми» → notify_btc)')
@@ -401,6 +462,16 @@ def notify_category(category, text, buttons=None):
     _last_send_err = str(res.get('description') or res.get('error') or 'відмова')
     print(f"[TG] send to {category} failed: {_last_send_err}")
     return False
+
+
+def last_send_error():
+    """Причина ОСТАННЬОЇ невдалої відправки в групову тему.
+
+    Потрібна викликачам (`fuel_filter._broadcast_users`), щоб «повідомлення не
+    пішло» можна було НАПИСАТИ В 🧾 ЛОГ дослівною причиною, а не лишати в
+    stdout, якого на проді не видно (скарга 22.09).
+    """
+    return _last_send_err
 
 
 def cat_tag(category):
@@ -958,6 +1029,13 @@ def start_tg_bot():
         pass
     try:
         _purge_admin_only_topics()   # tidy stale 📝/💬 topics from the group
+    except Exception:
+        pass
+    try:
+        # 🏷 Назви тем — НА СТАРТІ, а не «коли щось надішлеться». Інакше
+        # вимкнений тумблер категорії (або просто тиша) назавжди лишав тему зі
+        # старою назвою — саме так «₿ BTCUSDT» і повернулось на очі (22.09).
+        sync_topic_names()
     except Exception:
         pass
     threading.Thread(target=_poll_loop, daemon=True, name='tg-bot-poll').start()

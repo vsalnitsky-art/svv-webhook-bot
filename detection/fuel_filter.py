@@ -3692,8 +3692,20 @@ class FuelFilterDaemon:
                    f"було: {_was}{_held}\n"
                    f"монет: {b.get('coins', 0)} · 🟢 {b.get('n_long', 0)} / "
                    f"🔴 {b.get('n_short', 0)} / ⚖ {b.get('n_flat', 0)}")
-            self._broadcast_users('btc', 'notify_btc', msg)
-            print(f"[FuelFilter] MMM banner TG: {_prev_seen} → {side}")
+            _ok, _why_tg = self._broadcast_users('btc', 'notify_btc', msg)
+            print(f"[FuelFilter] MMM banner TG: {_prev_seen} → {side} "
+                  f"{'OK' if _ok else 'FAIL: ' + _why_tg}")
+            if not _ok:
+                # Той самий принцип, що в події корекції: подія сталась,
+                # повідомлення не пішло — причина мусить бути ВИДИМОЮ.
+                try:
+                    from detection.activity_log import log_activity
+                    log_activity('ALL', 'event',
+                                 f'📨 Telegram НЕ прийняв зміну статусу банера: '
+                                 f'{_why_tg} — перевірте 🩺 «Перевірити тему»',
+                                 side=side, source='MMM')
+                except Exception:
+                    pass
         except Exception as e:
             print(f"[FuelFilter] MMM banner TG error: {e}")
 
@@ -4014,7 +4026,16 @@ class FuelFilterDaemon:
             # на скріні назва стояла в КОЖНОМУ повідомленні тричі.
             if bool(settings.get('mm_corr_tg', True)):
                 try:
-                    self._broadcast_users('btc', 'notify_btc', _txt)
+                    _ok, _why_tg = self._broadcast_users('btc', 'notify_btc', _txt)
+                    if not _ok:
+                        # ⚠️ МОВЧАТИ НЕ МОЖНА: подія сталась, а повідомлення не
+                        # пішло — і зовні це не відрізнити від «детектор не
+                        # спрацював». Пишемо ПРИЧИНУ в той самий 🧾 Лог.
+                        from detection.activity_log import log_activity
+                        log_activity('ALL', 'event',
+                                     f'📨 Telegram НЕ прийняв подію корекції: '
+                                     f'{_why_tg} — перевірте 🩺 «Перевірити тему»',
+                                     side=d, source='MMM')
                 except Exception as _e:
                     print(f"[FuelFilter] correction TG error: {_e}")
 
@@ -6440,12 +6461,23 @@ class FuelFilterDaemon:
         duplicated into the private bot — the private bot is for administrative
         messages only. `pref_key` is kept for signature compatibility (the
         admin's cabinet toggle still gates the group via notify_category).
-        Best-effort, never raises into the trading path."""
+        Best-effort, never raises into the trading path.
+
+        ⚠️ **ТЕПЕР ПОВЕРТАЄ `(ok, причина)`** (скарга 22.09 «повідомлень не
+        було»). Раніше результат `notify_category` тут ІГНОРУВАВСЯ, тож усі
+        чотири причини мовчання (вимкнений тумблер кабінету · немає чату/теми ·
+        бот не адмін теми · відмова Telegram) виглядали однаково — ніяк. Це той
+        самий урок, що вже сплачено на «Черга-4 ⚠️ збій після відкриття» і на
+        `_q4_set_vob_sl` («лог брехав»): **невидимий збій читається як „бот не
+        працює“**. Викликач вирішує, чи писати рядок у 🧾 Лог.
+        """
         try:
-            from web.tg_bot import notify_category
-            notify_category(category, text)
+            from web.tg_bot import notify_category, last_send_error
+            ok = bool(notify_category(category, text))
+            return ok, ('' if ok else (last_send_error() or 'не надіслано'))
         except Exception as e:
             print(f"[FuelFilter] broadcast {category} error: {e}")
+            return False, str(e)
 
 
     def _refresh_score_cache(self, settings: Dict):

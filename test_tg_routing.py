@@ -184,7 +184,17 @@ def _mk(trends=None, vob_on=True, **settings):
     ff._mm_vob_trends = lambda: {'on': vob_on, 'tf': '5m',
                                  'trends': dict(trends or {})}
     ff.sent = []
-    ff._broadcast_users = lambda cat, pref, text: ff.sent.append((cat, pref, text))
+    # ⚠️ Стаб мусить повертати ТЕ САМЕ, що справжній метод — `(ok, причина)`.
+    # Поки він віддавав None, розпакування в `_mm_track_correction` падало в
+    # `except Exception`, і нова гілка «Telegram не прийняв» не виконувалась
+    # НІКОЛИ, хоча тести зеленіли (задокументована пастка стабів).
+    ff.tg_ok = True
+
+    def _bc(cat, pref, text):
+        ff.sent.append((cat, pref, text))
+        return (True, '') if ff.tg_ok else (False, 'CHAT_WRITE_FORBIDDEN')
+
+    ff._broadcast_users = _bc
     return ff
 
 
@@ -724,6 +734,87 @@ def test_ui_has_the_checker_button_and_route_exists():
                                  _HTML.find('async function mmTgCheck') + 1400],
            'без перевірки HTTP-статусу 404 виглядав би як успіх')
     print('✓ кнопка, місце для відповіді і маршрут — на місці')
+
+
+
+# ═══ 7. 🏷 НАЗВА ТЕМИ НЕ ЗАЛЕЖИТЬ ВІД ВІДПРАВКИ · 📨 ВІДМОВА ГОВОРИТЬ (22.09) ══
+# **Скарга дослівно:** «Тема в телеграм групі знову називається чомусь
+# "₿ BTCUSDT" і повідомлень про "✅ КОРЕКЦІЯ ЗАВЕРШИЛАСЬ" не було.»
+# Обидва симптоми мали ОДИН корінь: перейменування жило ВСЕРЕДИНІ `_cat_chat`,
+# тобто спрацьовувало лише як побічний ефект відправки, а `notify_category`
+# виходить на тумблері кабінету ДО `_cat_chat`. Немає повідомлень → назва не
+# оновлюється НІКОЛИ, і зовні це виглядає як дві різні поломки.
+
+
+def test_topic_rename_no_longer_depends_on_sending():
+    """Назва теми — властивість ТЕМИ, а не сповіщення."""
+    _check(hasattr(tg, 'sync_topic_names'),
+           'потрібен окремий синхронізатор назв, не привʼязаний до відправки')
+    src = _fn_src(_TG_SRC, 'sync_topic_names')
+    _check('_forum_rename_if_needed' in src, 'він мусить саме перейменовувати')
+    _check('createForumTopic' not in src,
+           'створювати тему для вимкненої категорії НЕ можна — тумблер має '
+           'гасити групу, а не наповнювати її')
+    _check('_cat_enabled' not in src,
+           'тумблер сповіщень назви теми не стосується')
+    print('✓ 🏷 назва теми оновлюється незалежно від відправки')
+
+
+def test_startup_syncs_topic_names():
+    """Без виклику на СТАРТІ тиха група назавжди лишалась би зі старою назвою."""
+    src = _fn_src(_TG_SRC, 'start_tg_bot')
+    _check('sync_topic_names' in src, 'старт бота мусить синхронізувати назви')
+    print('✓ 🏷 назви тем синхронізуються на старті бота')
+
+
+def test_the_health_check_repairs_the_name_even_when_muted():
+    """🩺 кнопка мусить лагодити назву ДО раннього виходу на тумблері —
+    інакше користувач із вимкненою темою не має ЖОДНОГО способу її оновити."""
+    src = _fn_src(_TG_SRC, 'category_check')
+    _i_sync = src.find('sync_topic_names')
+    _i_gate = src.find("out['enabled']")
+    _check(_i_sync > 0, '🩺 перевірка мусить кликати синхронізатор')
+    # перший ранній `return` на тумблері йде ПІСЛЯ перевірки `not out['enabled']`
+    _i_ret = src.find('return out', src.find("if not out['enabled']"))
+    _check(_i_sync < _i_ret,
+           'синхронізація мусить стояти ДО виходу на вимкненому тумблері')
+    print('✓ 🩺 перевірка теми лагодить назву навіть при вимкненому тумблері')
+
+
+def test_a_refused_send_is_written_into_the_bot_log():
+    """Подія сталась, а Telegram не прийняв — це мусить бути ВИДНО в 🧾 Лозі,
+    а не лише в stdout (урок «невидимий збій читається як бот не працює»)."""
+    _check(hasattr(tg, 'last_send_error'),
+           'потрібен публічний читач причини відмови')
+    bc = _fn_src(_FF_SRC, '_broadcast_users')
+    # ⚠️ `_fn_src` віддає AST-unparse, тож `return ok, x` нормалізується в
+    # `return (ok, ...)` — шукаємо СУТЬ, а не дослівний рядок.
+    _check('last_send_error' in bc and 'return (ok' in bc,
+           f'_broadcast_users мусить віддавати (ok, причина): {bc[-200:]}')
+    for fn in ('_mm_track_correction', '_mm_bias_alert'):
+        body = _fn_src(_FF_SRC, fn)
+        _check('_broadcast_users' in body and 'if not _ok' in body,
+               f'{fn} мусить ЧИТАТИ результат відправки')
+        _check('НЕ прийняв' in body, f'{fn} мусить писати причину в 🧾 Лог')
+    print('✓ 📨 відмова Telegram більше не мовчазна')
+
+
+def test_a_refused_send_really_reaches_the_log():
+    """Не лише текст у коді — прогін: відмова мусить дати рядок у 🧾 Лозі."""
+    _LOGGED.clear()
+    ff = _mk(trends={f'C{i}': 'SHORT' for i in range(6)}, mm_corr_confirm_sec=0)
+    ff.tg_ok = False
+    _tick(ff, _snap(**{f'C{i}': ('LONG', 50, 'down') for i in range(6)}))
+    _bad = [m for m in _LOGGED if 'НЕ прийняв' in str(m.get('detail'))]
+    _check(_bad, f'рядок про відмову мусить бути в лозі: {_LOGGED}')
+    _check('CHAT_WRITE_FORBIDDEN' in str(_bad[-1]['detail']),
+           f'і нести ДОСЛІВНУ причину: {_bad[-1]}')
+    _LOGGED.clear()
+    ff2 = _mk(trends={f'C{i}': 'SHORT' for i in range(6)}, mm_corr_confirm_sec=0)
+    _tick(ff2, _snap(**{f'C{i}': ('LONG', 50, 'down') for i in range(6)}))
+    _check(not [m for m in _LOGGED if 'НЕ прийняв' in str(m.get('detail'))],
+           'успішна відправка зайвих рядків не пише')
+    print('✓ 📨 прогін: відмова дає рядок у 🧾 Лозі, успіх — ні')
 
 
 if __name__ == '__main__':
