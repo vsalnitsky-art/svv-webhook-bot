@@ -817,6 +817,67 @@ def test_a_refused_send_really_reaches_the_log():
     print('✓ 📨 прогін: відмова дає рядок у 🧾 Лозі, успіх — ні')
 
 
+
+# ═══ 8. 🩺 ЗВІТ ПЕРЕВІРКИ НЕ БРЕШЕ (реальний прогін на проді, 22.09) ═════════
+# Перша ж перевірка кнопкою віддала:
+#   тема «🧮 МММ-монітор» · форум-група · чат … · тема #42 · тумблер ✓ ·
+#   ✅ повідомлення надіслано · перейменування: trades: Bad Request:
+#   TOPIC_NOT_MODIFIED
+# Тобто канал ПРАЦЮЄ, а «помилка» — подвійний дефект МОГО ж коду.
+
+
+def test_topic_not_modified_is_success_not_a_failure():
+    """«Назва вже така, як треба» — це УСПІХ.
+
+    Telegram відмовляє на editForumTopic, коли міняти нічого. Рахуючи це
+    збоєм, ми (а) писали в 🩺 звіт неіснуючу проблему і (б) НЕ запамʼятовували
+    назву, тобто били в API на КОЖНІЙ синхронізації — вічно."""
+    src = _fn_src(_TG_SRC, '_forum_rename_if_needed')
+    _check('TOPIC_NOT_MODIFIED' in src, 'цей код відповіді мусить оброблятись')
+    _i_ok = src.find('TOPIC_NOT_MODIFIED')
+    _i_cache = src.find('_forum_names_cache[ckey] = want')
+    _check(0 < _i_ok < _i_cache,
+           'перевірка мусить стояти ДО запамʼятовування назви — інакше '
+           'наступна синхронізація знову піде в API')
+    print('✓ 🏷 TOPIC_NOT_MODIFIED = назва вже правильна, а не збій')
+
+
+def test_the_check_reports_this_categorys_error_not_someone_elses():
+    """🩺 перевірка ОДНІЄЇ теми мусить казати ПРО НЕЇ.
+
+    Глобальний рядок помилки давав звіт про «🧮 МММ-монітор» із причиною від
+    категорії `trades` — тобто перевірка звинувачувала не ту тему."""
+    _check(hasattr(tg, 'rename_error'), 'потрібен читач причини ПО КАТЕГОРІЇ')
+    _check(isinstance(tg._forum_rename_err, dict),
+           'причини мусять зберігатись ПО КАТЕГОРІЯХ, а не одним рядком')
+    tg._forum_rename_err.clear()
+    tg._forum_rename_err['trades'] = 'Bad Request: TOPIC_NOT_MODIFIED'
+    _check(tg.rename_error('btc') == '',
+           'чужа помилка НЕ має зʼявлятись у звіті про btc')
+    _check('TOPIC_NOT_MODIFIED' in tg.rename_error('trades'),
+           'своя — має')
+    tg._forum_rename_err.clear()
+    src = _fn_src(_TG_SRC, 'category_check')
+    _check('_forum_rename_err' not in src,
+           'category_check мусить читати через rename_error(category), а не '
+           'глобальний рядок')
+    _check(src.count('rename_error(category)') >= 3,
+           f'усі три місця звіту: {src.count("rename_error(category)")}')
+    print('✓ 🩺 звіт називає помилку САМЕ своєї теми')
+
+
+def test_a_successful_rename_clears_only_its_own_error():
+    """Успіх по одній категорії не має стирати причину по іншій."""
+    tg._forum_rename_err.clear()
+    tg._forum_rename_err['trades'] = 'бот не адмін теми'
+    tg._forum_rename_err['btc'] = 'старе'
+    tg._forum_rename_err.pop('btc', None)      # те, що робить успішний шлях
+    _check(tg.rename_error('trades') == 'бот не адмін теми',
+           'чужа причина мусить лишитись')
+    tg._forum_rename_err.clear()
+    print('✓ 🏷 успіх стирає причину лише своєї категорії')
+
+
 if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items())
              if k.startswith('test_') and callable(v)]

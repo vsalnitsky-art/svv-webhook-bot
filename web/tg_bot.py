@@ -171,7 +171,20 @@ _PROTECTED_CATS = {'funding', 'btc', 'trades'}
 _forum_topics_cache = None    # {category: thread_id} for TELEGRAM_FORUM_CHAT
 
 
-_forum_rename_err = ''        # причина, чому тему не перейменували
+_forum_rename_err = {}        # {category: причина, чому тему не перейменували}
+
+
+def rename_error(category=''):
+    """Причина невдалого перейменування ПО КОНКРЕТНІЙ категорії.
+
+    ⚠️ Раніше це був ОДИН глобальний рядок на всі категорії, і 🩺 перевірка
+    теми «🧮 МММ-монітор» показувала чужу помилку (реальний кейс 22.09:
+    `trades: Bad Request: TOPIC_NOT_MODIFIED` у звіті про btc). Перевірка
+    однієї теми мусить казати ПРО НЕЇ.
+    """
+    if not category:
+        return '; '.join(v for v in _forum_rename_err.values() if v)
+    return _forum_rename_err.get(category) or ''
 _last_send_err = ''           # причина останньої невдалої відправки
 _forum_names_cache = None     # {(chat, category): остання назва, яку ми ставили}
 
@@ -217,15 +230,20 @@ def _forum_rename_if_needed(chat, category, tid):
         res = _api('editForumTopic', {'chat_id': chat, 'message_thread_id': int(tid),
                                       'name': want})
     except Exception as e:
-        _forum_rename_err = f'{category}: {e}'
+        _forum_rename_err[category] = str(e)
         print(f"[TG] rename topic {category} error: {e}")
         return
     if not (res or {}).get('ok'):
-        _forum_rename_err = (f"{category}: "
-                             f"{(res or {}).get('description') or (res or {}).get('error') or 'відмова'}")
-        print(f"[TG] rename topic {category} refused: {_forum_rename_err}")
-        return
-    _forum_rename_err = ''
+        _why = ((res or {}).get('description') or (res or {}).get('error') or 'відмова')
+        # ⚠️ TOPIC_NOT_MODIFIED — це НЕ помилка, а «назва вже така, як треба».
+        # Telegram відмовляє на editForumTopic без реальної зміни. Рахувати це
+        # збоєм означало б (а) писати в 🩺 звіт неіснуючу проблему і (б) бити
+        # в API на КОЖНІЙ синхронізації, бо назву ми так і не запамʼятали.
+        if 'TOPIC_NOT_MODIFIED' not in str(_why).upper():
+            _forum_rename_err[category] = str(_why)
+            print(f"[TG] rename topic {category} refused: {_why}")
+            return
+    _forum_rename_err.pop(category, None)
     _forum_names_cache[ckey] = want
     try:
         from storage.db_operations import get_db
@@ -384,7 +402,7 @@ def category_check(category, send_test=False):
     out = {'category': category, 'label': label,
            'enabled': bool(_cat_enabled(category)),
            'token': bool(_token()), 'chat': None, 'thread': None,
-           'route': 'none', 'rename_err': _forum_rename_err,
+           'route': 'none', 'rename_err': rename_error(category),
            'send_err': _last_send_err, 'reason': ''}
     if not out['token']:
         out['reason'] = 'не задано TELEGRAM_BOT_TOKEN — бот не може писати нікуди'
@@ -395,7 +413,7 @@ def category_check(category, send_test=False):
     # перейменовуємо вже відомі теми.
     try:
         sync_topic_names()
-        out['rename_err'] = _forum_rename_err
+        out['rename_err'] = rename_error(category)
     except Exception:
         pass
     if not out['enabled']:
@@ -423,7 +441,7 @@ def category_check(category, send_test=False):
                                        'надіслано з налаштувань бота.')
         out['sent'] = bool(ok)
         out['send_err'] = _last_send_err
-        out['rename_err'] = _forum_rename_err       # спроба була саме зараз
+        out['rename_err'] = rename_error(category)  # спроба була саме зараз
         if not ok:
             out['reason'] = (f'Telegram не прийняв: {_last_send_err}' if _last_send_err
                              else (out['reason'] or 'Telegram не прийняв повідомлення'))
