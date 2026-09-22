@@ -1507,6 +1507,11 @@ class FuelFilterDaemon:
         s['mm_corr_log_enabled'] = bool(s.get('mm_corr_log_enabled',
                                               _cd.get('mm_corr_log_enabled', True)))
         s['mm_corr_tg'] = bool(s.get('mm_corr_tg', _cd.get('mm_corr_tg', True)))
+        # 🧭 ПРОФЕСІЙНІ ПРАВИЛА ПОЧАТКУ/КІНЦЯ (вимога 22.09).
+        s['mm_corr_vob_required'] = bool(
+            s.get('mm_corr_vob_required', _cd.get('mm_corr_vob_required', True)))
+        s['mm_corr_breadth_exit'] = bool(
+            s.get('mm_corr_breadth_exit', _cd.get('mm_corr_breadth_exit', True)))
         # 📨 Зміна статусу банера 🧮 → Telegram (вимога 21.09). Ключ живе тут, а
         # не в `mm_correction.DEFAULTS`: це про БАНЕР, а не про детектор корекції.
         s['mm_bias_tg'] = bool(s.get('mm_bias_tg', True))
@@ -1520,6 +1525,13 @@ class FuelFilterDaemon:
         # 1..3 — шарів рівно три; 0 означало б «корекція завжди».
         _clamp('mm_corr_min_layers', 1, 3, int)
         _clamp('mm_corr_vob_pct', 0.0, 100.0)
+        _clamp('mm_corr_vob_exit_pct', 0.0, 100.0)
+        # ⚠️ Поріг ВИХОДУ не може бути ВИЩИМ за поріг ВХОДУ: тоді корекція
+        # завершувалась би на ширині, за якої вона щойно б і почалась — тобто
+        # гістерезис вивернувся б навиворіт і вердикт миготів би на кожному
+        # такті (та сама пастка, що з вивернутим вікном TP-1).
+        if float(s['mm_corr_vob_exit_pct']) > float(s['mm_corr_vob_pct']):
+            s['mm_corr_vob_exit_pct'] = float(s['mm_corr_vob_pct'])
         _clamp('mm_corr_price_pct', 0.0, 100.0)
         _clamp('mm_corr_lever_drop', 0.0, 200.0)
         _clamp('mm_corr_confirm_sec', 0, 3600, int)
@@ -3742,6 +3754,10 @@ class FuelFilterDaemon:
                 'lit': c.get('lit'), 'lit_hold': c.get('lit_hold'),
                 'need_layers': c.get('need'), 'determined': c.get('determined'),
                 'vob_pct': _g('vob', 'pct'), 'vob_need': _g('vob', 'need'),
+                # 🧭 ПОРІГ ВИХОДУ ЗА ШИРИНОЮ — теж у КОЖЕН рядок: саме він
+                # тепер вирішує кінець корекції, і без нього старі семпли
+                # стануть нечитабельними рівно так само, як без `*_need`.
+                'vob_exit': c.get('exit_pct'),
                 'vob_n': _g('vob', 'n'), 'vob_against': _g('vob', 'against'),
                 'vob_tf': (c.get('vob_tf') or '')[:6],
                 'price_pct': _g('price', 'pct'), 'price_need': _g('price', 'need'),
@@ -3868,9 +3884,13 @@ class FuelFilterDaemon:
         vob = self._mm_vob_trends()
         res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
                            settings, tf=vob.get('tf') or '')
+        # 🧭 РІШЕННЯ «почати»/«тримати» приходять ГОТОВІ з `evaluate` — там і
+        # живуть професійні правила (📦 ширина обовʼязкова на старт, кінець
+        # вирішує ЛИШЕ ширина). Машина станів рахує таймери, а не ознаки.
         st = _mc.next_state(self._mm_corr_st, res['lit'], res['lit_hold'],
                             res['need'], now,
-                            float(settings.get('mm_corr_confirm_sec', 300) or 0))
+                            float(settings.get('mm_corr_confirm_sec', 300) or 0),
+                            start_ok=res.get('start_ok'), stay=res.get('stay'))
         _was = (self._mm_corr_st or {}).get('state')
         blocking = bool(_mc.is_on(st) and settings.get('mm_corr_block_open', True))
         with self._lock:
@@ -3881,6 +3901,14 @@ class FuelFilterDaemon:
                 'layers': res['layers'], 'lit': res['lit'],
                 'lit_hold': res['lit_hold'], 'need': res['need'],
                 'determined': res['determined'],
+                # 🧭 Чому корекція ТРИМАЄТЬСЯ (або може завершитись) — ЧИСТІ
+                # поля для UI/логу: «яке саме число зараз тримає вердикт» не
+                # має бути здогадкою (той самий принцип, що `verdict.parts`).
+                'exit_pct': res.get('exit_pct'),
+                'breadth_ok': res.get('breadth_ok'),
+                'why': res.get('why') or '',
+                'breadth_exit_on': bool(settings.get('mm_corr_breadth_exit', True)),
+                'vob_required': bool(settings.get('mm_corr_vob_required', True)),
                 'confirm_sec': int(float(settings.get('mm_corr_confirm_sec', 300) or 0)),
                 'ended_show_sec': int(_mc.ENDED_SHOW_SEC),
                 'lever': round(lever, 1), 'lever_peak': round(peak, 1),
@@ -3905,9 +3933,14 @@ class FuelFilterDaemon:
                         + (' · 🚫 відкриття угод зупинено' if blocking
                            else ' · відкриття НЕ блокуємо (тумблер вимкнено)'))
             else:
+                # 🧭 Кінець тепер ухвалює ШИРИНА ринку, тож у рядку мусить
+                # стояти САМЕ її число: інакше «завершилась» знову читалось би
+                # як здогадка (а саме на цьому й спіймали стару версію, яка
+                # закривала корекцію при 📦 90% монет проти банера).
                 _txt = (f'✅ КОРЕКЦІЯ ЗАВЕРШИЛАСЬ (тривала '
                         f'{self._fmt_wait(float(st.get("lasted") or 0))}) — '
-                        f'банер {d}, відкриття знову дозволені')
+                        f'банер {d}, відкриття знову дозволені'
+                        + (f' · {res.get("why")}' if res.get('why') else ''))
             try:
                 from detection.activity_log import log_activity
                 log_activity('ALL', 'event', _txt, side=d, source='MMM')

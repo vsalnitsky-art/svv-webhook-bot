@@ -3558,7 +3558,8 @@ def register_api_routes(app):
             import io as _io
             cols = ['timestamp', 'kind', 'state', 'prev_state', 'bias', 'bias_pct',
                     'coins', 'lit', 'lit_hold', 'need_layers', 'determined',
-                    'vob_pct', 'vob_need', 'vob_n', 'vob_against', 'vob_tf',
+                    'vob_pct', 'vob_need', 'vob_exit', 'vob_n', 'vob_against',
+                    'vob_tf',
                     'price_pct', 'price_need', 'price_n', 'price_against',
                     'lever', 'lever_peak', 'lever_drop', 'lever_need',
                     'confirm_sec', 'blocking', 'blocked_n', 'lasted',

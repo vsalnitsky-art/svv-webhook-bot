@@ -35,6 +35,45 @@ mm_correction — 🔻 ДЕТЕКТОР КОРЕКЦІЇ для банера «�
   • **1H-OB** — СТАРШИЙ таймфрейм. Його розворот означає зміну ТРЕНДУ, а не
     корекцію в тренді; змішати їх означало б плутати дві різні події.
 
+🧭 **ВХІД І ВИХІД — РІЗНІ ЗА ПРИРОДОЮ (перероблено 22.09, не зламати!).**
+Скарга користувача дослівно: «Це точно не професійному рівні якщо VOB 80% і
+корекція завершилась. Це як так завершилась, коли майже всі монети у
+протилежному стані? А ціна, як можна визначити за 15хв, що корекція
+завершилась, коли на проміжку наприклад в один день корекція продовжується.»
+
+Так і було: усі ТРИ ознаки були РІВНИМИ голосами в `lit >= need`, тож кінець
+ухвалювали два НАЙШВИДШІ шари (💹 ціна — вікно 15 хв, 📉 важіль — 30 хв), а
+повільну СТРУКТУРНУ ширину ринку вони просто перекривали голосами. У проді це
+дало 11 «завершень» за 12 год при 📦 VOB 63-90% проти банера (одне — при 90.1%,
+тобто 64 монети з 71).
+
+Професійне правило (ширина ринку / breadth): **тренд починається з імпульсу,
+а закінчується зі СТРУКТУРИ**. Класика — Zweig Breadth Thrust з АСИМЕТРИЧНИМИ
+порогами (<40% → >61.5%) і «percentage of stocks above MA», де 50% — нейтраль.
+Тому тут:
+
+  • **ПОЧАТОК** — швидкі ознаки (`lit >= need`), але 📦 ширина ОБОВʼЯЗКОВА
+    (`mm_corr_vob_required`): корекція це подія ШИРИНИ, а не смикання ціни;
+  • **КІНЕЦЬ** — вирішує ЛИШЕ ширина (`mm_corr_breadth_exit`): поки частка
+    монет ПРОТИ банера ≥ `mm_corr_vob_exit_pct` (деф. **50% = нейтраль**),
+    завершити корекцію НЕ МОЖНА. 💹 ціна і 📉 важіль можуть корекцію лише
+    ПРОДОВЖИТИ, скоротити — ніколи.
+
+⚠️ **ЧОМУ САМЕ 50.** Це нейтральна лінія ширини: «більшість монет уже НЕ проти
+тренду». Вона ж дорівнює послабленому порогу 📦 (`60 − EXIT_MARGIN_PCT`) — тобто
+гістерезис був правильний від початку, він просто НЕ ДІЯВ, бо шар перекривали
+голосами. Симуляція на двох реальних логах: 26-год лог — 14 «корекцій» по 10 хв
+→ **3 справжні по ~3 год (2 з них завершились самі)**; 12-год лог — 12 епізодів
+→ **ОДИН на 10.7 год** (там ширина не опускалась нижче 53%, отже корекція
+справді тривала весь час).
+⚠️ **«КОРЕКЦІЯ НАЗАВЖДИ» неможлива:** якщо ширина тримається проти банера
+досить довго, сам банер зрештою фліпне, а фліп ОБНУЛЯЄ вердикт (див.
+`_mm_track_correction`). Завершувати корекцію за таймером ми СВІДОМО не
+будемо — це повернуло б бота в ринок, де 9 монет із 10 структурно проти нього.
+⚠️ **ШИРИНИ НЕМАЄ (мала вибірка / 📦 вимкнено) → фолбек на стару логіку**
+(`lit_hold >= need`). «Немає даних» ≠ «ширина відновилась»: вигадувати кінець
+корекції на порожньому місці не можна.
+
 ⚠️ **ПОРІГ ВХОДУ І ПОРІГ ВИХОДУ РІЗНІ** (`EXIT_MARGIN_*`): увійти в корекцію
 можна лише за суворими порогами, а вийти — коли ознаки впали НИЖЧЕ за
 послаблені. Один поріг на обидві події дав би миготіння рівно там, де ринок
@@ -60,6 +99,20 @@ DEFAULTS = {
     'mm_corr_min_layers': 2,
     # 📦 Частка монет, чий Volumized OB (молодший TF) дивиться ПРОТИ банера, %.
     'mm_corr_vob_pct': 60.0,
+    # 📦 ШИРИНА ОБОВʼЯЗКОВА НА СТАРТ. Корекція — це подія ШИРИНИ ринку, а не
+    # смикання ціни: без неї шум 💹+📉 оголошував би «корекцію» там, де
+    # структура монет спокійна. OFF повертає стару поведінку «будь-які 2 з 3».
+    'mm_corr_vob_required': True,
+    # 🧭 КІНЕЦЬ КОРЕКЦІЇ ВИРІШУЄ ЛИШЕ ШИРИНА (вимога 22.09). Поки частка монет
+    # ПРОТИ банера ≥ `mm_corr_vob_exit_pct`, завершити корекцію не можна —
+    # 💹 ціна і 📉 важіль мають право лише ПРОДОВЖИТИ її.
+    # ⚠️ Вимикати не рекомендовано: OFF повертає рівно ту поведінку, через яку
+    # корекція «завершувалась» при 90% монет проти банера.
+    'mm_corr_breadth_exit': True,
+    # 📦 Нижче цієї частки «проти» ширина вважається ВІДНОВЛЕНОЮ і корекція
+    # може завершитись. 50% — нейтральна лінія ширини ринку («більшість уже
+    # НЕ проти»); вона ж = `mm_corr_vob_pct − EXIT_MARGIN_PCT`.
+    'mm_corr_vob_exit_pct': 50.0,
     # 💹 Частка монет, чий свіжий рух ціни йде ПРОТИ банера, %.
     # ⚠️ 60 → 80 ЗА ПІДСУМКАМИ ЛОГУ (26 год, 345 семплів). Цей шар — НАЙШУМНІШИЙ
     # із трьох: медіанний стрибок між сусідніми семплами 14.4 п.п., 90-й
@@ -120,20 +173,46 @@ def _share(against: int, forward: int):
     return (against / tot * 100.0) if tot > 0 else None
 
 
-def _layer(key, icon, name, pct, need, n, against, forward, note='', unit='%'):
+def _layer(key, icon, name, pct, need, n, against, forward, note='', unit='%',
+           role='start'):
     """Один шар у єдиній формі. `ok=False` — шар НЕ визначений (мала вибірка
     або немає даних): він не «за» і не «проти», його просто не рахуємо.
 
     ⚠️ `unit` віддається З БЕКЕНДА, а не вгадується фронтом: дві часткові
     ознаки міряються у **%**, а просідання важеля — у **п.п.**, і підписати
     його відсотком означало б назвати число не тим, що воно є.
+    ⚠️ `role` — на ЩО шар впливає: `'both'` (📦 ширина: і початок, і кінець)
+    чи `'start'` (💹 ціна, 📉 важіль: ЛИШЕ початок). Віддається З БЕКЕНДА з
+    тієї самої причини, що `unit`: правило живе в одному місці, а UI його
+    показує, а не дублює.
     """
     ok = pct is not None and n >= MIN_SAMPLE
     return {'key': key, 'icon': icon, 'name': name,
             'pct': None if pct is None else round(pct, 1),
             'need': round(float(need), 1), 'n': n, 'unit': unit,
-            'against': against, 'forward': forward,
+            'against': against, 'forward': forward, 'role': role,
             'ok': bool(ok), 'lit': bool(ok and pct >= need), 'note': note}
+
+
+def breadth_exit_ok(vob: Optional[Dict], exit_pct) -> Optional[bool]:
+    """🧭 Чи ДОЗВОЛЯЄ ширина ринку завершити корекцію.
+
+    • `True`  — частка монет «проти» впала НИЖЧЕ порога: більшість уже не
+      проти тренду, отже корекція може завершитись;
+    • `False` — ширина все ще проти банера: **кінець ЗАБОРОНЕНО** (вето);
+    • `None`  — ширину визначити нічим (мала вибірка, 📦 вимкнено, немає
+      даних). Тоді рішення ухвалює стара логіка голосів — вигадувати кінець
+      корекції на порожньому місці не можна.
+
+    ⚠️ Порівнюємо СУВОРО «<»: рівно на порозі ширина ще не відновилась.
+    """
+    v = dict(vob or {})
+    if not v.get('ok') or v.get('pct') is None:
+        return None
+    lim = _num(exit_pct)
+    if lim is None:
+        return None
+    return bool(float(v['pct']) < float(lim))
 
 
 def vob_layer(trends: Dict, symbols, bias: str, need_pct: float,
@@ -147,7 +226,7 @@ def vob_layer(trends: Dict, symbols, bias: str, need_pct: float,
     need = float(need_pct) - (EXIT_MARGIN_PCT if hold else 0.0)
     if not trends:
         return _layer('vob', '📦', f'VOB проти{(" " + tf.upper()) if tf else ""}',
-                      None, need, 0, 0, 0,
+                      None, need, 0, 0, 0, role='both',
                       note='немає даних Volumized OB (блок 📦 вимкнено або '
                            'сканер ще не порахував)')
     syms = {str(x).upper() for x in (symbols or [])}
@@ -162,7 +241,7 @@ def vob_layer(trends: Dict, symbols, bias: str, need_pct: float,
         else:
             a += 1
     return _layer('vob', '📦', f'VOB проти{(" " + tf.upper()) if tf else ""}',
-                  _share(a, f), need, a + f, a, f)
+                  _share(a, f), need, a + f, a, f, role='both')
 
 
 def price_layer(snap: Dict, bias: str, need_pct: float,
@@ -171,6 +250,11 @@ def price_layer(snap: Dict, bias: str, need_pct: float,
 
     Джерело — `price_dir` із того самого знімка монітора (колонка «Рух»), тож
     «ціна йде вниз» у банері й у таблиці — це одне й те саме число.
+
+    ⚠️ **ШАР ЛИШЕ ДЛЯ ПОЧАТКУ** (`role='start'`, вимога 22.09). Вікно руху —
+    15 хв, а медіанний стрибок частки між сусідніми семплами 15 п.п. (📦 для
+    порівняння — 1.4): таким показником фізично неможливо судити, чи
+    завершилась корекція, що триває годинами. Кінець вирішує ширина ринку.
     """
     need = float(need_pct) - (EXIT_MARGIN_PCT if hold else 0.0)
     want = 'up' if bias == 'LONG' else 'down'
@@ -183,7 +267,8 @@ def price_layer(snap: Dict, bias: str, need_pct: float,
             f += 1
         else:
             a += 1
-    return _layer('price', '💹', 'Ціна проти', _share(a, f), need, a + f, a, f)
+    return _layer('price', '💹', 'Ціна проти', _share(a, f), need, a + f, a, f,
+                  role='start')
 
 
 def lever_layer(now_pct, peak_pct, need_drop: float,
@@ -193,6 +278,9 @@ def lever_layer(now_pct, peak_pct, need_drop: float,
     ⚠️ Міряємо важіль У БІК БАНЕРА (зі знаком): якщо він встиг перевернутись,
     просідання чесно виходить більшим за сам пік — саме так це й виглядає на
     ринку.
+    ⚠️ **ШАР ЛИШЕ ДЛЯ ПОЧАТКУ** (`role='start'`, вимога 22.09): вікно піку —
+    30 хв, тобто це теж ШВИДКА ознака. Завершувати нею багатогодинну корекцію
+    означало б повертатись у ринок на першій же паузі.
     """
     need = max(0.0, float(need_drop) - (EXIT_MARGIN_PP if hold else 0.0))
     n = _num(now_pct)
@@ -201,11 +289,11 @@ def lever_layer(now_pct, peak_pct, need_drop: float,
         return {'key': 'lever', 'icon': '📉', 'name': 'Важіль просів',
                 'pct': None, 'need': round(need, 1), 'n': 0, 'unit': 'п.п.',
                 'against': 0, 'forward': 0, 'ok': False, 'lit': False,
-                'note': 'ще немає історії важеля'}
+                'role': 'start', 'note': 'ще немає історії важеля'}
     drop = max(0.0, p - n)
     return {'key': 'lever', 'icon': '📉', 'name': 'Важіль просів',
             'pct': round(drop, 1), 'need': round(need, 1), 'n': 1,
-            'unit': 'п.п.',
+            'unit': 'п.п.', 'role': 'start',
             'against': 0, 'forward': 0, 'ok': True,
             'lit': bool(need > 0 and drop >= need),
             'note': f'пік {round(p, 1)} п.п. → зараз {round(n, 1)} п.п.'}
@@ -213,11 +301,22 @@ def lever_layer(now_pct, peak_pct, need_drop: float,
 
 def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
              cfg: Dict, tf: str = '') -> Dict:
-    """Усі три шари РАЗОМ — і за суворими порогами, і за послабленими.
+    """Усі три шари РАЗОМ + готові рішення «ПОЧАТИ» і «ТРИМАТИ».
 
-    Повертає `{'layers', 'lit', 'lit_hold', 'need', 'determined'}`:
-      • `lit`      — скільки ознак за СУВОРИМИ порогами (рішення ПОЧАТИ);
-      • `lit_hold` — скільки за ПОСЛАБЛЕНИМИ (рішення ТРИМАТИ) — гістерезис.
+    Повертає `{'layers','lit','lit_hold','need','determined','start_ok',
+    'stay','exit_pct','breadth_ok','breadth_pct','why'}`:
+      • `lit`      — скільки ознак за СУВОРИМИ порогами;
+      • `lit_hold` — скільки за ПОСЛАБЛЕНИМИ (гістерезис голосів);
+      • **`start_ok`** — чи можна ПОЧАТИ корекцію (голоси + обовʼязкова 📦);
+      • **`stay`** — чи корекція мусить ТРИВАТИ (вето ширини АБО голоси);
+      • `breadth_ok` — `True/False/None` від `breadth_exit_ok` (див. її док).
+
+    🧭 **РІШЕННЯ ЖИВУТЬ ТУТ, А НЕ В `next_state`** — це ЧИСТЕ місце, де вже є
+    всі три шари й налаштування. `next_state` лишається машиною станів і
+    просто приймає готові `start_ok`/`stay`.
+    ⚠️ **ШИРИНА МОЖЕ ЛИШЕ ПРОДОВЖИТИ КОРЕКЦІЮ, СКОРОТИТИ — НІКОЛИ**:
+    `stay = вето_ширини OR (lit_hold >= need)`. Зворотний бік (ширина
+    відновилась, але 💹 ціна ще 95% проти) не має обривати корекцію достроково.
     """
     c = dict(DEFAULTS)
     c.update({k: v for k, v in (cfg or {}).items() if k in DEFAULTS})
@@ -229,18 +328,50 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
     relax = [vob_layer(trends, syms, bias, c['mm_corr_vob_pct'], True, tf),
              price_layer(snap, bias, c['mm_corr_price_pct'], True),
              lever_layer(lever_now, lever_peak, c['mm_corr_lever_drop'], True)]
+    lit = sum(1 for x in strict if x['lit'])
+    lit_hold = sum(1 for x in relax if x['lit'])
+    vob = strict[0]
+
+    # ▶️ ПОЧАТОК: голоси + 📦 ширина як обовʼязкова умова.
+    start_ok = lit >= need
+    if bool(c['mm_corr_vob_required']) and not vob['lit']:
+        start_ok = False
+
+    # 🧭 КІНЕЦЬ: вирішує ширина; голоси можуть лише ПРОДОВЖИТИ корекцію.
+    exit_pct = _num(c['mm_corr_vob_exit_pct'], 50.0)
+    b_ok = (breadth_exit_ok(vob, exit_pct)
+            if bool(c['mm_corr_breadth_exit']) else None)
+    stay = (b_ok is False) or (lit_hold >= need)
+    if b_ok is False:
+        why = (f'📦 ширина ринку все ще проти банера: {vob["pct"]}% ≥ '
+               f'{round(float(exit_pct), 1)}% — кінець корекції заблоковано')
+    elif b_ok is True:
+        why = (f'📦 ширина відновилась: {vob["pct"]}% < '
+               f'{round(float(exit_pct), 1)}%')
+    elif bool(c['mm_corr_breadth_exit']):
+        why = '📦 ширину визначити нічим — кінець за старим правилом голосів'
+    else:
+        why = '🧭 кінець за шириною вимкнено — працюють голоси ознак'
     return {
         'layers': strict,
-        'lit': sum(1 for x in strict if x['lit']),
-        'lit_hold': sum(1 for x in relax if x['lit']),
+        'lit': lit,
+        'lit_hold': lit_hold,
         'need': need,
         'determined': sum(1 for x in strict if x['ok']),
+        'start_ok': bool(start_ok),
+        'stay': bool(stay),
+        'exit_pct': None if exit_pct is None else round(float(exit_pct), 1),
+        'breadth_ok': b_ok,
+        'breadth_pct': vob['pct'],
+        'why': why,
     }
 
 
 def next_state(prev: Optional[Dict], lit: int, lit_hold: int, need: int,
                now: float, confirm_sec: float,
-               ended_show_sec: float = ENDED_SHOW_SEC) -> Dict:
+               ended_show_sec: float = ENDED_SHOW_SEC,
+               start_ok: Optional[bool] = None,
+               stay: Optional[bool] = None) -> Dict:
     """ЧИСТА машина станів вердикту: `trend → pending → on → ending → ended`.
 
     • **trend**   — корекції немає;
@@ -255,6 +386,13 @@ def next_state(prev: Optional[Dict], lit: int, lit_hold: int, need: int,
     повернути бота в ринок рівно на відкаті всередині корекції.
     ⚠️ ВХІД за `lit` (суворі пороги), УТРИМАННЯ за `lit_hold` (послаблені) —
     саме тут працює гістерезис.
+
+    🧭 **`start_ok` / `stay` ПЕРЕКРИВАЮТЬ підрахунок голосів** (вимога 22.09):
+    саме так сюди приходять професійні правила з `evaluate` — «📦 ширина
+    обовʼязкова на старт» і «кінець вирішує ЛИШЕ ширина». Машина станів про них
+    не знає й не мусить: її справа — таймери і переходи.
+    ⚠️ Дефолт `None` лишає СТАРУ арифметику (`lit >= need` / `lit_hold >=
+    need`), тож усі наявні виклики й тести поводяться як раніше.
     """
     p = dict(prev or {})
     st = p.get('state') if p.get('state') in STATES else 'trend'
@@ -263,8 +401,8 @@ def next_state(prev: Optional[Dict], lit: int, lit_hold: int, need: int,
     ended_at = _num(p.get('ended_at'), 0.0) or 0.0
     lasted = _num(p.get('lasted'), 0.0) or 0.0
     conf = max(0.0, _num(confirm_sec, 0.0) or 0.0)
-    want_on = lit >= need
-    stay_on = lit_hold >= need
+    want_on = (lit >= need) if start_ok is None else bool(start_ok)
+    stay_on = (lit_hold >= need) if stay is None else bool(stay)
 
     if st == 'ended' and (now - ended_at) >= max(0.0, ended_show_sec):
         st, ended_at, lasted = 'trend', 0.0, 0.0

@@ -1064,6 +1064,285 @@ def test_clearing_reuses_the_single_delete_implementation():
     print('✓ очищення йде через ЄДИНУ наявну реалізацію')
 
 
+
+# ═══════ 8. 🧭 ПРОФЕСІЙНИЙ ПОЧАТОК/КІНЕЦЬ: ШИРИНА РИНКУ ВИРІШУЄ (22.09) ════
+# **Скарга користувача, дослівно:** «Мені не подобається як працює корекція.
+# Це точно не професійному рівні якщо VOB 80% і корекція завершилась. Це як
+# так завершилась, коли майже всі монети у протилежному стані? А ціна, як
+# можна визначити за 15хв, що корекція завершилась, коли на проміжку
+# наприклад в один день корекція продовжується.»
+#
+# Лог проду (12 год, 144 семпли) підтвердив дослівно: 11 «завершень» при
+# 📦 VOB 63-90% проти банера, одне — при 90.1% (64 монети з 71). Причина:
+# три ознаки були РІВНИМИ голосами, тож кінець ухвалювали два найшвидші шари
+# (💹 15 хв, 📉 30 хв), перекриваючи повільну структурну ширину.
+
+
+def _six(price_dir='down'):
+    """Шість монет: банер LONG, усі йдуть проти нього (щоб вибірка ≥ MIN_SAMPLE)."""
+    return _snap(**{f'C{i}': ('LONG', 50, price_dir) for i in range(6)})
+
+
+def _cfg(**kw):
+    c = {'mm_corr_min_layers': 2, 'mm_corr_vob_pct': 60.0,
+         'mm_corr_price_pct': 60.0, 'mm_corr_lever_drop': 15.0}
+    c.update(kw)
+    return c
+
+
+def test_breadth_vetoes_the_end_while_most_coins_are_against():
+    """ГОЛОВНИЙ ЗАМОК СКАРГИ: при 📦 90% проти банера корекція завершитись
+    НЕ МОЖЕ, хай навіть 💹 ціна і 📉 важіль зовсім заспокоїлись.
+
+    Числа взяті з реального рядка логу 22.09 03:32 — саме там стара версія
+    оголосила кінець: vob 90.1% (64/71), price 7.7%, lever_drop 6.4.
+    """
+    trends = {f'C{i}': 'SHORT' for i in range(9)}
+    trends['C9'] = 'LONG'                       # 9 з 10 проти → 90%
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(10)})  # ціна ЗА банер
+    r = mc.evaluate(snap, trends, 'LONG', 50.0, 51.0, _cfg())
+    _check(r['layers'][0]['pct'] == 90.0, f'📦 мусить бути 90%: {r["layers"][0]}')
+    _check(not r['layers'][1]['lit'], '💹 ціна заспокоїлась')
+    _check(not r['layers'][2]['lit'], '📉 важіль майже не просів')
+    _check(r['lit_hold'] < r['need'],
+           'за СТАРИМ правилом голосів корекція вже «завершилась» би')
+    _check(r['stay'] is True,
+           'ширина 90% мусить ЗАБОРОНИТИ кінець — це і є суть скарги')
+    _check(r['breadth_ok'] is False, f'вето ширини: {r["breadth_ok"]}')
+    _check('90.0' in r['why'] and '50' in r['why'],
+           f'причина мусить називати ЧИСЛА: {r["why"]}')
+    print('✓ 🧭 при 📦 90% проти банера кінець корекції ЗАБЛОКОВАНО')
+
+
+def test_the_correction_ends_only_when_breadth_recovers():
+    """Кінець настає САМЕ тоді, коли ширина відновилась — тобто частка «проти»
+    впала нижче нейтральної лінії. І тільки тоді, а не коли вщухла ціна."""
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(10)})
+    # 6 із 10 проти = 60% → ще тримає (≥ 50).
+    t60 = {f'C{i}': 'SHORT' for i in range(6)}
+    t60.update({f'C{i}': 'LONG' for i in range(6, 10)})
+    _check(mc.evaluate(snap, t60, 'LONG', 50.0, 51.0, _cfg())['stay'] is True,
+           '60% проти — корекція мусить тривати')
+    # 4 із 10 = 40% → ширина відновилась, кінець дозволено.
+    t40 = {f'C{i}': 'SHORT' for i in range(4)}
+    t40.update({f'C{i}': 'LONG' for i in range(4, 10)})
+    r = mc.evaluate(snap, t40, 'LONG', 50.0, 51.0, _cfg())
+    _check(r['stay'] is False and r['breadth_ok'] is True,
+           f'40% проти — ширина відновилась: {r["stay"]}/{r["breadth_ok"]}')
+    # Рівно на порозі (50%) кінця ще немає — порівняння СУВОРЕ.
+    t50 = {f'C{i}': 'SHORT' for i in range(5)}
+    t50.update({f'C{i}': 'LONG' for i in range(5, 10)})
+    _check(mc.evaluate(snap, t50, 'LONG', 50.0, 51.0, _cfg())['stay'] is True,
+           'рівно 50% — ширина ще НЕ відновилась')
+    print('✓ 🧭 кінець настає лише коли 📦 впала нижче нейтральної лінії')
+
+
+def test_fast_layers_can_only_extend_a_correction_never_shorten_it():
+    """💹 ціна і 📉 важіль мають право ЛИШЕ продовжити корекцію.
+
+    Зворотний бік теж мусить триматись: ширина вже відновилась, але ознаки
+    ще горять голосами — обривати корекцію достроково не можна.
+    """
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'down') for i in range(10)})  # 💹 100%
+    t40 = {f'C{i}': 'SHORT' for i in range(4)}
+    t40.update({f'C{i}': 'LONG' for i in range(4, 10)})
+    r = mc.evaluate(snap, t40, 'LONG', 30.0, 60.0, _cfg())   # важіль −30 п.п.
+    _check(r['breadth_ok'] is True, 'ширина відновилась')
+    _check(r['lit_hold'] >= r['need'], 'але голоси 💹+📉 ще горять')
+    _check(r['stay'] is True,
+           'голоси мусять ПРОДОВЖИТИ корекцію, а не дати їй обірватись')
+    print('✓ 🧭 швидкі шари лише продовжують корекцію, скоротити не можуть')
+
+
+def test_the_price_and_lever_layers_are_marked_start_only():
+    """Роль шару віддає БЕКЕНД (`role`), а не вгадує фронт — той самий
+    принцип, що `unit`. Інакше «💹 7.7%/80%» поруч із живою корекцією
+    виглядало б як суперечність."""
+    r = mc.evaluate(_six(), {f'C{i}': 'SHORT' for i in range(6)},
+                    'LONG', 50.0, 52.0, _cfg())
+    roles = {x['key']: x.get('role') for x in r['layers']}
+    _check(roles['vob'] == 'both', f'📦 ширина вирішує і початок, і кінець: {roles}')
+    _check(roles['price'] == 'start', f'💹 ціна — лише початок: {roles}')
+    _check(roles['lever'] == 'start', f'📉 важіль — лише початок: {roles}')
+    print('✓ 🧭 роль кожного шару приходить із бекенда')
+
+
+def test_breadth_is_required_to_start_a_correction():
+    """Корекція — подія ШИРИНИ. 💹+📉 на спокійній структурі її не оголошують."""
+    # Ширина ЗА банер (усі 6 монет LONG), але ціна й важіль проти.
+    snap = _six()
+    trends = {f'C{i}': 'LONG' for i in range(6)}
+    r = mc.evaluate(snap, trends, 'LONG', 20.0, 60.0, _cfg())
+    _check(r['lit'] >= r['need'], 'голосів 💹+📉 формально досить')
+    _check(r['start_ok'] is False,
+           'але без ширини корекцію оголошувати не можна')
+    off = mc.evaluate(snap, trends, 'LONG', 20.0, 60.0,
+                      _cfg(mm_corr_vob_required=False))
+    _check(off['start_ok'] is True,
+           'вимкнений тумблер мусить повертати стару поведінку «2 з 3»')
+    print('✓ 🧭 📦 ширина обовʼязкова, щоб ПОЧАТИ корекцію')
+
+
+def test_no_breadth_data_falls_back_to_the_old_vote_rule():
+    """«Немає даних» ≠ «ширина відновилась». Коли 📦 визначити нічим (блок
+    вимкнено / мала вибірка), рішення ухвалює стара логіка голосів — вигадувати
+    кінець корекції на порожньому місці не можна."""
+    snap = _six()
+    r = mc.evaluate(snap, {}, 'LONG', 30.0, 60.0, _cfg())   # трендів немає зовсім
+    _check(r['breadth_ok'] is None, f'ширини немає: {r["breadth_ok"]}')
+    _check(not r['layers'][0]['ok'], '📦 шар мусить бути НЕВИЗНАЧЕНИМ')
+    _check(r['stay'] == (r['lit_hold'] >= r['need']),
+           'без ширини працює стара арифметика голосів')
+    _check('нічим' in r['why'], f'причина мусить це називати: {r["why"]}')
+    print('✓ 🧭 немає даних ширини → фолбек на старе правило голосів')
+
+
+def test_the_toggle_restores_the_old_behaviour_exactly():
+    """`mm_corr_breadth_exit=False` мусить повертати РІВНО стару поведінку —
+    інакше тумблер обіцяв би те, чого не робить."""
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(10)})
+    trends = {f'C{i}': 'SHORT' for i in range(9)}
+    trends['C9'] = 'LONG'                                   # 📦 90% проти
+    off = mc.evaluate(snap, trends, 'LONG', 50.0, 51.0,
+                      _cfg(mm_corr_breadth_exit=False))
+    _check(off['breadth_ok'] is None, 'вимкнено → ширина не голосує на вихід')
+    _check(off['stay'] == (off['lit_hold'] >= off['need']),
+           'вимкнено → рішення рівно за голосами (стара логіка)')
+    _check(off['stay'] is False,
+           'саме так стара версія і «завершувала» корекцію при 90% проти')
+    print('✓ 🧭 тумблер повертає стару поведінку рівно такою, якою вона була')
+
+
+def test_state_machine_takes_the_ready_made_decisions():
+    """`next_state` — машина станів, а не суддя ознак: `start_ok`/`stay`
+    приходять готові з `evaluate`. Дефолт `None` лишає стару арифметику, тож
+    усі наявні виклики поводяться як раніше."""
+    # Голосів немає (0/2), але `start_ok=True` мусить перекрити підрахунок.
+    st = mc.next_state({}, 0, 0, 2, 1000.0, 0, start_ok=True)
+    _check(st['state'] == 'on', f'рішення ззовні мусить діяти: {st}')
+    # Голосів немає, але `stay=True` (вето ширини) тримає корекцію.
+    st2 = mc.next_state(st, 0, 0, 2, 1100.0, 0, stay=True)
+    _check(st2['state'] == 'on', f'вето ширини тримає корекцію: {st2}')
+    st3 = mc.next_state(st2, 0, 0, 2, 1200.0, 0, stay=False)
+    _check(st3['state'] == 'ended', f'ширина відпустила → кінець: {st3}')
+    # Стара сигнатура — стара поведінка.
+    _check(mc.next_state({}, 2, 2, 2, 1000.0, 0)['state'] == 'on',
+           'без нових аргументів машина мусить рахувати голоси як раніше')
+    print('✓ 🧭 машина станів приймає готові рішення, стара сигнатура жива')
+
+
+def test_the_engine_passes_the_decisions_to_the_state_machine():
+    """Замок на ПРОВОДКУ: правила мають сенс лише якщо двигун їх передає."""
+    body = _fn_src(_FF_SRC, '_mm_track_correction')
+    _check('start_ok=res' in body and 'stay=res' in body,
+           'двигун мусить передавати ГОТОВІ рішення в next_state')
+    print('✓ 🧭 двигун передає рішення `evaluate` у машину станів')
+
+
+def test_a_long_correction_survives_a_calm_price_window():
+    """ПОВНИЙ ПРОГІН ЧЕРЕЗ ДВИГУН — дослівна відповідь на скаргу «як можна
+    визначити за 15хв, що корекція завершилась»."""
+    trends = {f'C{i}': 'SHORT' for i in range(9)}
+    trends['C9'] = 'LONG'                                   # 📦 90% проти
+    ff = _mk(trends=trends, mm_corr_confirm_sec=0)
+    # Такт 1: усе проти банера → корекція почалась.
+    _tick(ff, _snap(**{f'C{i}': ('LONG', 60, 'down') for i in range(10)}), NOW)
+    _check(ff._mm_corr['state'] == 'on', f'корекція мусить початись: {ff._mm_corr}')
+    # Такт 2: ціна повністю заспокоїлась і пішла ЗА банером, важіль стабільний.
+    _tick(ff, _snap(**{f'C{i}': ('LONG', 60, 'up') for i in range(10)}), NOW + 60)
+    _check(ff._mm_corr['state'] == 'on',
+           f'спокійні 15 хв ціни НЕ мають завершувати корекцію: {ff._mm_corr}')
+    _check(ff._mm_corr.get('breadth_ok') is False, 'тримає саме ширина')
+    # Такт 3: структура монет реально розвернулась → кінець.
+    ff._mm_vob_trends = lambda: {'on': True, 'tf': '5m',
+                                 'trends': {f'C{i}': 'LONG' for i in range(10)}}
+    _tick(ff, _snap(**{f'C{i}': ('LONG', 60, 'up') for i in range(10)}), NOW + 120)
+    _check(ff._mm_corr['state'] == 'ended',
+           f'ширина відновилась → кінець: {ff._mm_corr}')
+    print('✓ 🧭 багатогодинна корекція переживає спокійне 15-хв вікно ціни')
+
+
+def test_the_end_event_names_the_breadth_number():
+    """Рядок «завершилась» мусить нести ЧИСЛО ширини: саме на мовчазному
+    «завершилась» стару версію і спіймали."""
+    ff = _mk(trends={f'C{i}': 'SHORT' for i in range(6)}, mm_corr_confirm_sec=0)
+    _tick(ff, _six(), NOW)
+    _check(ff._mm_corr['state'] == 'on', 'корекція почалась')
+    ff._mm_vob_trends = lambda: {'on': True, 'tf': '5m',
+                                 'trends': {f'C{i}': 'LONG' for i in range(6)}}
+    _tick(ff, _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(6)}), NOW + 60)
+    ends = [m for m in _LOGGED if 'ЗАВЕРШИЛАСЬ' in str(m)]
+    _check(ends, f'подія кінця мусить бути в лозі: {_LOGGED}')
+    _check('ширина' in str(ends[-1]),
+           f'рядок кінця мусить називати ширину: {ends[-1]}')
+    print('✓ 🧭 подія «завершилась» називає число ширини')
+
+
+def test_exit_threshold_can_never_exceed_the_entry_threshold():
+    """Вивернутий гістерезис = вердикт миготить на кожному такті (та сама
+    пастка, що з вікном TP-1: `max < min` давало порожнє вікно)."""
+    ff = FF.__new__(FF)
+
+    class _Stored:
+        def get_setting(self, *a, **kw):
+            return {'mm_corr_vob_pct': 60.0, 'mm_corr_vob_exit_pct': 90.0}
+
+    ff._db = _Stored()
+    s = FF.get_settings(ff)
+    _check(s['mm_corr_vob_exit_pct'] <= s['mm_corr_vob_pct'],
+           f'поріг виходу мусить бути зведений до порога входу: '
+           f'{s["mm_corr_vob_exit_pct"]} > {s["mm_corr_vob_pct"]}')
+    _check(s['mm_corr_vob_required'] is True and s['mm_corr_breadth_exit'] is True,
+           'нові тумблери мусять проходити валідацію з дефолтами')
+    print('✓ 🧭 поріг виходу не може бути вищим за поріг входу')
+
+
+def test_new_keys_have_professional_defaults():
+    """Дефолти: ширина обовʼязкова, кінець за шириною, нейтральна лінія 50%."""
+    d = mc.DEFAULTS
+    _check(d['mm_corr_vob_required'] is True, '📦 обовʼязкова на старт')
+    _check(d['mm_corr_breadth_exit'] is True, '🧭 кінець вирішує ширина')
+    _check(d['mm_corr_vob_exit_pct'] == 50.0, 'нейтральна лінія ширини = 50%')
+    # 50 = 60 − EXIT_MARGIN_PCT: гістерезис був правильний, він просто не діяв.
+    _check(d['mm_corr_vob_exit_pct'] == d['mm_corr_vob_pct'] - mc.EXIT_MARGIN_PCT,
+           'поріг виходу мусить збігатись із послабленим порогом 📦')
+    print('✓ 🧭 дефолти: ширина обовʼязкова · кінець за шириною · 50%')
+
+
+def test_the_raw_log_carries_the_exit_threshold_too():
+    """Поріг ВИХОДУ тепер вирішує кінець, тож без нього в рядку старі семпли
+    стануть нечитабельними так само, як без `*_need`."""
+    _check('vob_exit' in _fn_src(_FF_SRC, '_mm_corr_log_write'),
+           'писач логу мусить класти поріг виходу в рядок')
+    cols = set(_model_columns('MmCorrectionLog'))
+    _check('vob_exit' in cols, 'у моделі БД немає колонки vob_exit')
+    dbo = open(os.path.join(_HERE, 'storage', 'db_operations.py'),
+               encoding='utf-8').read()
+    _check("'vob_exit'" in dbo, 'білий список шару БД відріже нове поле')
+    models = open(os.path.join(_HERE, 'storage', 'db_models.py'),
+                  encoding='utf-8').read()
+    _check('ADD COLUMN vob_exit FLOAT' in models,
+           'таблиця вже могла бути створена без колонки — потрібна міграція')
+    print('✓ 🧭 поріг виходу є і в рядку логу, і в БД, і в міграції')
+
+
+def test_ui_exposes_the_new_rules_and_says_which_layer_is_start_only():
+    """Мовчазна зміна правил читалась би як «бот зламався»: обидва тумблери,
+    поріг виходу і позначка «лише старт» мусять бути на сторінці."""
+    for _id in ('ff-mm-corr-vobreq', 'ff-mm-corr-breadth', 'ff-mm-corr-vobexit'):
+        _check(f'id="{_id}"' in _HTML, f'немає контрола {_id}')
+    for key in ('mm_corr_vob_required', 'mm_corr_breadth_exit',
+                'mm_corr_vob_exit_pct'):
+        _check(key in _HTML, f'ключ {key} не зберігається зі сторінки')
+    i = _HTML.find('function mmRenderCorr')
+    body = _HTML[i:_HTML.find('function _mmcNum', i)]
+    _check("l.role === 'start'" in body,
+           'рядок мусить показувати, що шар лише для старту')
+    _check('exit_pct' in body,
+           'поки корекція триває, мусить бути видно, за якої ширини вона скінчиться')
+    print('✓ 🧭 UI показує нові правила і роль кожного шару')
+
+
 if __name__ == '__main__':
     _fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in _fns:

@@ -2606,17 +2606,34 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <div class="mmc-f">
                         <label>📦 VOB проти ≥, %</label>
                         <input type="number" id="ff-mm-corr-vob" min="0" max="100" step="5" value="60" onchange="saveFuelFilterSettings()"
-                               title="Частка монет монітора, чий ПОТОЧНИЙ Volumized OB на молодшому TF (той самий блок, що на графіку) дивиться ПРОТИ банера. Береться з кешу сканера — блок 📦 Volumized OB Trend має бути увімкнений.">
+                               title="ПОЧАТОК корекції. Частка монет монітора, чий ПОТОЧНИЙ Volumized OB на молодшому TF (той самий блок, що на графіку) дивиться ПРОТИ банера. Береться з кешу сканера — блок 📦 Volumized OB Trend має бути увімкнений.">
                     </div>
                     <div class="mmc-f">
-                        <label>💹 Ціна проти ≥, %</label>
+                        <label>💹 Ціна проти ≥, % <span style="color:#6b7280">(старт)</span></label>
                         <input type="number" id="ff-mm-corr-price" min="0" max="100" step="5" value="80" onchange="saveFuelFilterSettings()"
-                               title="Частка монет, чий свіжий рух ціни (те саме 15-хв вікно, що в колонці «Рух») іде ПРОТИ банера. Монети без напрямку руху (▬) у частку не входять.">
+                               title="ЛИШЕ ПОЧАТОК корекції. Частка монет, чий свіжий рух ціни (те саме 15-хв вікно, що в колонці «Рух») іде ПРОТИ банера. Монети без напрямку руху (▬) у частку не входять. ⚠️ Завершити корекцію цей шар НЕ може: вікно 15 хв, а частка стрибає в медіані на 15 п.п. між сусідніми замірами — таким показником неможливо судити про кінець багатогодинної корекції.">
                     </div>
                     <div class="mmc-f">
-                        <label>📉 Важіль просів ≥, п.п.</label>
+                        <label>📉 Важіль просів ≥, п.п. <span style="color:#6b7280">(старт)</span></label>
                         <input type="number" id="ff-mm-corr-drop" min="0" max="200" step="5" value="15" onchange="saveFuelFilterSettings()"
-                               title="На скільки пунктів важіль банера У БІК СВОГО НАПРЯМКУ впав від піку за останні 30 хв. Якщо важіль устиг перевернутись, просідання чесно виходить більшим за сам пік.">
+                               title="ЛИШЕ ПОЧАТОК корекції. На скільки пунктів важіль банера У БІК СВОГО НАПРЯМКУ впав від піку за останні 30 хв. Якщо важіль устиг перевернутись, просідання чесно виходить більшим за сам пік. ⚠️ Завершити корекцію цей шар теж не може — вікно 30 хв це швидка ознака.">
+                    </div>
+                    <!-- 🧭 ПРАВИЛА ПОЧАТКУ/КІНЦЯ (вимога 22.09). Стоять ПІД
+                         порогами і за роздільником: це не ще один поріг, а те,
+                         ЯК пороги застосовуються. -->
+                    <div style="flex-basis:100%;height:1px;background:rgba(255,255,255,0.07);margin:2px 0"></div>
+                    <label class="mmc-chk" title="📦 Ширина ринку ОБОВʼЯЗКОВА, щоб оголосити початок: корекція — це подія ширини, а не смикання ціни. Вимкнено → корекцію можуть оголосити будь-які 2 ознаки з 3 (стара поведінка), тобто 💹 ціна + 📉 важіль на спокійній структурі.">
+                        <input type="checkbox" id="ff-mm-corr-vobreq" onchange="saveFuelFilterSettings()" style="margin:0">
+                        📦 Ширина обовʼязкова на СТАРТ
+                    </label>
+                    <label class="mmc-chk" title="🧭 КІНЕЦЬ корекції вирішує ЛИШЕ ширина ринку: поки частка монет ПРОТИ банера ≥ порога виходу, завершити корекцію не можна. 💹 ціна і 📉 важіль можуть корекцію тільки ПРОДОВЖИТИ. ⚠️ Вимикати не рекомендовано: OFF повертає рівно ту поведінку, за якої корекція «завершувалась» при 90% монет проти банера (64 з 71).">
+                        <input type="checkbox" id="ff-mm-corr-breadth" onchange="saveFuelFilterSettings()" style="margin:0">
+                        🧭 Кінець вирішує ширина
+                    </label>
+                    <div class="mmc-f">
+                        <label>📦 Кінець, коли проти &lt;, %</label>
+                        <input type="number" id="ff-mm-corr-vobexit" min="0" max="100" step="5" value="50" onchange="saveFuelFilterSettings()"
+                               title="Нижче цієї частки ширина вважається ВІДНОВЛЕНОЮ і корекція може завершитись (після підтвердження часом). 50% — нейтральна лінія ширини ринку: «більшість монет уже НЕ проти тренду». Не може бути вищим за поріг входу 📦 — інакше гістерезис вивернувся б і вердикт миготів би.">
                     </div>
                     <div class="mmc-f">
                         <label>⏱ Підтвердження ≥, с</label>
@@ -12442,9 +12459,28 @@ function mmRenderCorr(corr) {
             // у п.п. Підписати їх однаково означало б назвати число не тим,
             // що воно є (фолбек '%' — для старішого бекенда).
             const u = l.unit || '%';
-            return `<span style="color:${col}" title="${(l.note || '')} (монет: ${l.n || 0})">`
-                + `${l.icon} ${l.name} <b>${l.pct}${u}</b>/${l.need}${u}</span>`;
+            // 🧭 `role` теж із бекенда: шар «лише старт» не має права
+            // завершити корекцію, і це мусить бути видно прямо в рядку —
+            // інакше «💹 7.7%/80%» поруч із живою корекцією виглядає як
+            // суперечність, хоча насправді цей шар кінця не вирішує.
+            const st1 = (l.role === 'start')
+                ? '<span style="color:#6b7280;font-size:0.62rem"> старт</span>' : '';
+            const tip = (l.note || '') + ` (монет: ${l.n || 0})`
+                + (l.role === 'start'
+                    ? ' · шар ЛИШЕ для початку корекції: завершити її він не може'
+                    : ' · ШИРИНА РИНКУ: вирішує і початок, і кінець');
+            return `<span style="color:${col}" title="${tip}">`
+                + `${l.icon} ${l.name} <b>${l.pct}${u}</b>/${l.need}${u}${st1}</span>`;
         });
+        // 🧭 Поки корекція триває, головне питання — «коли вона завершиться».
+        // Відповідь = поріг виходу за шириною, тож він стоїть прямо тут.
+        if ((c.state === 'on' || c.state === 'ending') && c.exit_pct != null
+            && c.breadth_exit_on !== false) {
+            const ready = c.breadth_ok === true;
+            parts.push(`<span style="color:${ready ? '#4ade80' : '#fbbf24'}" `
+                + `title="${(c.why || '')}">🧭 кінець коли 📦 &lt;<b>${c.exit_pct}%</b>`
+                + (ready ? ' ✓' : '') + '</span>');
+        }
         lay.innerHTML = parts.join('') + (parts.length
             ? ` <span style="color:#8b93a7">· ознак <b style="color:${v.col}">${c.lit || 0}</b>/${c.need || 0}</span>` : '');
     }
@@ -12482,7 +12518,18 @@ function mmRenderCorr(corr) {
         + (c.vob_on === false
             ? '⚠️ Блок 📦 Volumized OB Trend ВИМКНЕНО — ознака VOB не рахується.\n' : '')
         + (c.reason ? c.reason + '\n' : '')
-        + 'Початок і кінець підтверджуються часом, а пороги входу й виходу різні '
+        + '\n🧭 ПОЧАТОК і КІНЕЦЬ — різні за природою:\n'
+        + '• почати корекцію можуть швидкі ознаки, але 📦 ширина ринку '
+        + (c.vob_required === false ? 'НЕ обовʼязкова (тумблер вимкнено);\n' : 'ОБОВʼЯЗКОВА;\n')
+        + (c.breadth_exit_on === false
+            ? '• ⚠️ «кінець вирішує ширина» ВИМКНЕНО — кінець ухвалюють голоси ознак, '
+              + 'тобто корекція може завершитись при майже всіх монетах проти банера.\n'
+            : '• завершити корекцію може ЛИШЕ ширина: поки 📦 ≥ '
+              + `${c.exit_pct != null ? c.exit_pct : '—'}%, кінець заблоковано. `
+              + '💹 ціна і 📉 важіль мають право лише ПРОДОВЖИТИ її — вікна 15 і 30 хв '
+              + 'заслабкі, щоб судити про кінець багатогодинної корекції.\n')
+        + (c.why ? c.why + '\n' : '')
+        + 'Обидві події ще й підтверджуються часом, а пороги входу й виходу різні '
         + '(гістерезис) — щоб вердикт не миготів.';
 }
 // Число з поля детектора корекції. ⚠️ Саме так, а не `parseFloat(v) || d`:
@@ -12570,7 +12617,14 @@ function _mmCorrSummary(s) {
     if (!el || !s) return;
     el.textContent = (s.mm_corr_enabled === false ? '⛔ вимкнено · ' : '')
         + `ознак ≥ ${s.mm_corr_min_layers != null ? s.mm_corr_min_layers : 2}/3 · `
-        + `📦 ${s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60}% · `
+        + `📦 ${s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60}%`
+        + (s.mm_corr_vob_required === false ? '' : '!')
+        // 🧭 Поріг ВИХОДУ стоїть у зведенні поруч із порогом входу: саме він
+        // тепер вирішує кінець, і не бачити його в згорнутій шапці означало б
+        // не знати головного числа детектора.
+        + (s.mm_corr_breadth_exit === false ? ' · 🧭 кінець за голосами'
+           : ` → кінець <${s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 50}%`)
+        + ' · '
         + `💹 ${s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80}% · `
         + `📉 ${s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15} п.п. · `
         + `⏱ ${s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 300}с · `
@@ -13848,6 +13902,9 @@ function renderFuelFilter(d) {
     setIf('ff-mm-corr-block', s.mm_corr_block_open !== false);      // default true
     setIf('ff-mm-corr-layers', String(s.mm_corr_min_layers != null ? s.mm_corr_min_layers : 2));
     setIf('ff-mm-corr-vob', String(s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60));
+    setIf('ff-mm-corr-vobreq', s.mm_corr_vob_required !== false);   // default true
+    setIf('ff-mm-corr-breadth', s.mm_corr_breadth_exit !== false);  // default true
+    setIf('ff-mm-corr-vobexit', String(s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 50));
     setIf('ff-mm-corr-price', String(s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80));
     setIf('ff-mm-corr-drop', String(s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15));
     setIf('ff-mm-corr-confirm', String(s.mm_corr_confirm_sec != null ? s.mm_corr_confirm_sec : 300));
@@ -14904,6 +14961,10 @@ async function saveFuelFilterSettings() {
         mm_corr_block_open: _c('ff-mm-corr-block'),
         mm_corr_min_layers: _mmcNum('ff-mm-corr-layers', 2),
         mm_corr_vob_pct: _mmcNum('ff-mm-corr-vob', 60),
+        // 🧭 Професійні правила початку/кінця (вимога 22.09).
+        mm_corr_vob_required: _c('ff-mm-corr-vobreq'),
+        mm_corr_breadth_exit: _c('ff-mm-corr-breadth'),
+        mm_corr_vob_exit_pct: _mmcNum('ff-mm-corr-vobexit', 50),
         mm_corr_price_pct: _mmcNum('ff-mm-corr-price', 80),
         mm_corr_lever_drop: _mmcNum('ff-mm-corr-drop', 15),
         mm_corr_confirm_sec: _mmcNum('ff-mm-corr-confirm', 300),

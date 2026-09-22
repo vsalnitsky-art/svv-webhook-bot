@@ -591,6 +591,10 @@ class MmCorrectionLog(Base):
     # 📦 VOB проти банера
     vob_pct = Column(Float)
     vob_need = Column(Float)
+    # 🧭 Поріг ВИХОДУ за шириною: нижче нього корекція має право завершитись.
+    # Відколи кінець ухвалює саме ширина (22.09), це така сама обовʼязкова
+    # частина знімка порогів, як `*_need`.
+    vob_exit = Column(Float)
     vob_n = Column(Integer)
     vob_against = Column(Integer)
     vob_tf = Column(String(6))
@@ -624,6 +628,7 @@ class MmCorrectionLog(Base):
             'lit': self.lit, 'lit_hold': self.lit_hold,
             'need_layers': self.need_layers, 'determined': self.determined,
             'vob_pct': self.vob_pct, 'vob_need': self.vob_need,
+            'vob_exit': self.vob_exit,
             'vob_n': self.vob_n, 'vob_against': self.vob_against,
             'vob_tf': self.vob_tf,
             'price_pct': self.price_pct, 'price_need': self.price_need,
@@ -960,6 +965,35 @@ def migrate_sleeper_candidates_v3():
             if 'no such table: information_schema' not in error_str.lower() \
                and 'duplicate column' not in error_str.lower():
                 print(f"[DB MIGRATE] Top100 zone migration warning: {e}")
+            conn.rollback()
+
+        # 🧭 MmCorrectionLog.vob_exit — поріг ВИХОДУ за шириною ринку. Додано
+        # 22.09 разом із переробкою «кінець корекції вирішує ЛИШЕ ширина».
+        # Таблиця вже могла бути створена без цієї колонки, а знімок порогів у
+        # кожному рядку — вимога самого логу, тож ALTER потрібен. Той самий
+        # ідемпотентний прийом, що вище: спершу information_schema, потім ALTER.
+        corr_table = f"{TABLE_PREFIX}mm_corr_log"
+        try:
+            table_check = conn.execute(text(f"""
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = '{corr_table}'
+            """)).fetchone()
+            if table_check is not None:
+                col_check = conn.execute(text(f"""
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = '{corr_table}'
+                      AND column_name = 'vob_exit'
+                """)).fetchone()
+                if col_check is None:
+                    conn.execute(text(
+                        f"ALTER TABLE {corr_table} ADD COLUMN vob_exit FLOAT"))
+                    conn.commit()
+                    print(f"[DB MIGRATE] Added {corr_table}.vob_exit")
+        except Exception as e:
+            error_str = str(e)
+            if 'no such table: information_schema' not in error_str.lower() \
+               and 'duplicate column' not in error_str.lower():
+                print(f"[DB MIGRATE] mm_corr_log vob_exit warning: {e}")
             conn.rollback()
 
 
