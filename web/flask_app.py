@@ -3560,6 +3560,8 @@ def register_api_routes(app):
                     'coins', 'lit', 'lit_hold', 'need_layers', 'determined',
                     'vob_pct', 'vob_need', 'vob_exit', 'vob_n', 'vob_against',
                     'vob_tf',
+                    'ob_pct', 'ob_n', 'ob_against',
+                    'breadth_pct', 'breadth_src',
                     'price_pct', 'price_need', 'price_n', 'price_against',
                     'lever', 'lever_peak', 'lever_drop', 'lever_need',
                     'confirm_sec', 'blocking', 'blocked_n', 'lasted',

@@ -2630,6 +2630,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="ff-mm-corr-breadth" onchange="saveFuelFilterSettings()" style="margin:0">
                         🧭 Кінець вирішує ширина
                     </label>
+                    <label class="mmc-chk" title="📐 ДРУГЕ структурне джерело ширини — звичайний Order Block (створюється подією BOS/CHoCH) на ТОМУ САМОМУ молодшому TF, що й 📦 VOB. Навіщо: Volumized OB народжується зі СВІНГА і мусить пройти фільтри висоти, зон і обʼєму — на різкому русі блок може не зʼявитись узагалі. Звичайний OB реагує на сам факт пробою структури. ⚠️ Це НЕ четвертий голос: 📦 і 📐 міряють одне й те саме, тож зливаються в ОДНУ ознаку «ширина» = МАКСИМУМ із двох (тривожніший сенсор виграє і на старті, і на кінці). Пороги спільні з 📦. Мережі не коштує нічого — бари вже завантажені.">
+                        <input type="checkbox" id="ff-mm-corr-ob" onchange="saveFuelFilterSettings()" style="margin:0">
+                        📐 + Order Block як джерело ширини
+                    </label>
                     <div class="mmc-f">
                         <label>📦 Кінець, коли проти &lt;, %</label>
                         <input type="number" id="ff-mm-corr-vobexit" min="0" max="100" step="5" value="50" onchange="saveFuelFilterSettings()"
@@ -12617,7 +12621,8 @@ function _mmCorrSummary(s) {
     if (!el || !s) return;
     el.textContent = (s.mm_corr_enabled === false ? '⛔ вимкнено · ' : '')
         + `ознак ≥ ${s.mm_corr_min_layers != null ? s.mm_corr_min_layers : 2}/3 · `
-        + `📦 ${s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60}%`
+        + `📦${s.mm_corr_ob_on === false ? '' : '+📐'} `
+        + `${s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60}%`
         + (s.mm_corr_vob_required === false ? '' : '!')
         // 🧭 Поріг ВИХОДУ стоїть у зведенні поруч із порогом входу: саме він
         // тепер вирішує кінець, і не бачити його в згорнутій шапці означало б
@@ -13904,6 +13909,7 @@ function renderFuelFilter(d) {
     setIf('ff-mm-corr-vob', String(s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60));
     setIf('ff-mm-corr-vobreq', s.mm_corr_vob_required !== false);   // default true
     setIf('ff-mm-corr-breadth', s.mm_corr_breadth_exit !== false);  // default true
+    setIf('ff-mm-corr-ob', s.mm_corr_ob_on !== false);              // default true
     setIf('ff-mm-corr-vobexit', String(s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 50));
     setIf('ff-mm-corr-price', String(s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80));
     setIf('ff-mm-corr-drop', String(s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15));
@@ -14964,6 +14970,7 @@ async function saveFuelFilterSettings() {
         // 🧭 Професійні правила початку/кінця (вимога 22.09).
         mm_corr_vob_required: _c('ff-mm-corr-vobreq'),
         mm_corr_breadth_exit: _c('ff-mm-corr-breadth'),
+        mm_corr_ob_on: _c('ff-mm-corr-ob'),
         mm_corr_vob_exit_pct: _mmcNum('ff-mm-corr-vobexit', 50),
         mm_corr_price_pct: _mmcNum('ff-mm-corr-price', 80),
         mm_corr_lever_drop: _mmcNum('ff-mm-corr-drop', 15),

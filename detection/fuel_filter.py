@@ -1512,6 +1512,8 @@ class FuelFilterDaemon:
             s.get('mm_corr_vob_required', _cd.get('mm_corr_vob_required', True)))
         s['mm_corr_breadth_exit'] = bool(
             s.get('mm_corr_breadth_exit', _cd.get('mm_corr_breadth_exit', True)))
+        s['mm_corr_ob_on'] = bool(
+            s.get('mm_corr_ob_on', _cd.get('mm_corr_ob_on', True)))
         # 📨 Зміна статусу банера 🧮 → Telegram (вимога 21.09). Ключ живе тут, а
         # не в `mm_correction.DEFAULTS`: це про БАНЕР, а не про детектор корекції.
         s['mm_bias_tg'] = bool(s.get('mm_bias_tg', True))
@@ -3715,6 +3717,26 @@ class FuelFilterDaemon:
             print(f"[FF] volumized trends error: {e}")
             return {'on': None, 'tf': '', 'trends': {}}
 
+    def _mm_ob_trends(self) -> Dict:
+        """📐 Знімок OB-трендів молодшого TF зі СКАНЕРА — {'on','tf','trends'}.
+
+        ДРУГЕ структурне джерело ширини поруч із 📦 VOB (вимога 22.09).
+        Читаємо ПУБЛІЧНИМ `ob_trends()`; старіший файл сканера (деплой у
+        різному порядку) методу не має → `on=None`, шар лишається НЕВИЗНАЧЕНИМ
+        і ширину далі тримає сам VOB — рівно як до цієї правки.
+        """
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            if sc is None or not hasattr(sc, 'ob_trends'):
+                return {'on': None, 'tf': '', 'trends': {}}
+            v = sc.ob_trends() or {}
+            return {'on': v.get('on'), 'tf': v.get('tf') or '',
+                    'trends': v.get('trends') or {}}
+        except Exception as e:
+            print(f"[FF] ob trends error: {e}")
+            return {'on': None, 'tf': '', 'trends': {}}
+
     def _mm_corr_log_write(self, kind: str, **extra) -> bool:
         """🧾 Один рядок СИРОГО логу 🔻 детектора корекції → `sob_mm_corr_log`.
 
@@ -3760,6 +3782,14 @@ class FuelFilterDaemon:
                 'vob_exit': c.get('exit_pct'),
                 'vob_n': _g('vob', 'n'), 'vob_against': _g('vob', 'against'),
                 'vob_tf': (c.get('vob_tf') or '')[:6],
+                # 📐 ДРУГЕ структурне джерело ширини. Поріг у нього СПІЛЬНИЙ
+                # із 📦 (`vob_need`/`vob_exit`) — вони міряють одне й те саме,
+                # тож другого числа не заводимо. `breadth_pct` — те, що
+                # РЕАЛЬНО вирішило (максимум із двох), `breadth_src` — чиє воно.
+                'ob_pct': _g('ob', 'pct'), 'ob_n': _g('ob', 'n'),
+                'ob_against': _g('ob', 'against'),
+                'breadth_pct': c.get('breadth_pct'),
+                'breadth_src': (c.get('breadth_src') or '')[:8],
                 'price_pct': _g('price', 'pct'), 'price_need': _g('price', 'need'),
                 'price_n': _g('price', 'n'),
                 'price_against': _g('price', 'against'),
@@ -3882,8 +3912,18 @@ class FuelFilterDaemon:
         hist = [h for h in hist if h[0] >= _cut]
         peak = max((h[1] for h in hist), default=lever)
         vob = self._mm_vob_trends()
-        res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
-                           settings, tf=vob.get('tf') or '')
+        obt = self._mm_ob_trends()
+        try:
+            res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
+                               settings, tf=vob.get('tf') or '',
+                               ob_trends=obt.get('trends') or {},
+                               ob_tf=obt.get('tf') or '')
+        except TypeError:
+            # Фолбек на СТАРІШИЙ `mm_correction` без другого джерела ширини
+            # (файли деплояться в різному порядку — той самий прийом, що на
+            # `get_liq_magnet(side=)` і `_signal_allowed(skip_liq=)`).
+            res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
+                               settings, tf=vob.get('tf') or '')
         # 🧭 РІШЕННЯ «почати»/«тримати» приходять ГОТОВІ з `evaluate` — там і
         # живуть професійні правила (📦 ширина обовʼязкова на старт, кінець
         # вирішує ЛИШЕ ширина). Машина станів рахує таймери, а не ознаки.
@@ -3906,6 +3946,10 @@ class FuelFilterDaemon:
                 # має бути здогадкою (той самий принцип, що `verdict.parts`).
                 'exit_pct': res.get('exit_pct'),
                 'breadth_ok': res.get('breadth_ok'),
+                'breadth_pct': res.get('breadth_pct'),
+                'breadth_src': res.get('breadth_src') or '',
+                'breadth_lit': bool(res.get('breadth_lit')),
+                'ob_on': bool(settings.get('mm_corr_ob_on', True)),
                 'why': res.get('why') or '',
                 'breadth_exit_on': bool(settings.get('mm_corr_breadth_exit', True)),
                 'vob_required': bool(settings.get('mm_corr_vob_required', True)),
@@ -3920,14 +3964,25 @@ class FuelFilterDaemon:
         # кілька разів на добу, тож флуду не буде; а мовчазний блок відкриттів
         # читався б як «бот перестав працювати» (урок «невидимий збій»).
         _changed = st.get('state') != _was
-        if _changed and st.get('state') in ('on', 'ended'):
+        # 📨 ЧИТАЄМО ПОДІЮ, А НЕ ЗМІНУ СТАНУ (скарга 22.09 «оповіщення не
+        # зовсім нормально відпрацьовують»). `state != _was` спрацьовував ще на
+        # ДВОХ переходах, які подіями НЕ є, і саме вони засмічували Telegram:
+        #   • `ending → on` (`resume`) — той самий епізод повертається → на
+        #     скріні два 🔻 підряд (08:08 і 08:30) без ✅ між ними, ще й з
+        #     «ознак 1/2», бо повернення йде за ПОСЛАБЛЕНИМ порогом;
+        #   • `pending → ended` (`abort`) — несправдливий старт згас у межах
+        #     показу минулого кінця → ДРУГЕ «✅ ЗАВЕРШИЛАСЬ» із ТІЄЮ САМОЮ
+        #     тривалістю через 10-15 хв (21:20 і 21:33 «тривала 17хв»).
+        # Обидва відтворено прогоном. Тепер рішення ухвалює сама машина станів.
+        _ev = st.get('event') or ''
+        if _ev in ('start', 'end'):
             # ⚠️ Текст будуємо ПОЗА try-блоком логу: він потрібен ОБОМ каналам
             # (🧾 Лог і 📨 Telegram), і збій одного не має лишати другий без
             # повідомлення — а `_txt` усередині `try` саме так і губився б.
             _lay = ' · '.join(f"{x['icon']} {x['pct']}{x.get('unit') or '%'}/"
                               f"{x['need']}{x.get('unit') or '%'}"
                               for x in res['layers'] if x['ok'] and x['lit'])
-            if st['state'] == 'on':
+            if _ev == 'start':
                 _txt = (f'🔻 КОРЕКЦІЯ ПРОТИ банера {d}: ознак {res["lit"]}/'
                         f'{res["need"]}' + (f' · {_lay}' if _lay else '')
                         + (' · 🚫 відкриття угод зупинено' if blocking
@@ -3937,9 +3992,14 @@ class FuelFilterDaemon:
                 # стояти САМЕ її число: інакше «завершилась» знову читалось би
                 # як здогадка (а саме на цьому й спіймали стару версію, яка
                 # закривала корекцію при 📦 90% монет проти банера).
+                # ⚠️ «відкриття знову дозволені» пишемо ЛИШЕ коли ворота
+                # справді були увімкнені — інакше кінець суперечив би власному
+                # рядку старту («відкриття НЕ блокуємо»).
+                _blk_on = bool(settings.get('mm_corr_block_open', True))
                 _txt = (f'✅ КОРЕКЦІЯ ЗАВЕРШИЛАСЬ (тривала '
                         f'{self._fmt_wait(float(st.get("lasted") or 0))}) — '
-                        f'банер {d}, відкриття знову дозволені'
+                        f'банер {d}'
+                        + (', відкриття знову дозволені' if _blk_on else '')
                         + (f' · {res.get("why")}' if res.get('why') else ''))
             try:
                 from detection.activity_log import log_activity
@@ -3949,11 +4009,12 @@ class FuelFilterDaemon:
             # 📨 TELEGRAM: та сама ПОДІЯ — у ту саму тему 🧮 (вимога 21.09
             # «Стосовно корекцій також зроби оповіщення»). Шлемо РІВНО те, що
             # вже пішло в 🧾 Лог: два різні тексти про одну подію розійшлися б.
-            # ⚠️ Лише `on`/`ended` — відліки (`pending`/`ending`) це ще не подія.
+            # ⚠️ Власного заголовка «🧮 МММ-МОНІТОР» більше НЕМАЄ: `tg_bot` і
+            # так додає тег #МММ_монітор, а сама тема називається так само —
+            # на скріні назва стояла в КОЖНОМУ повідомленні тричі.
             if bool(settings.get('mm_corr_tg', True)):
                 try:
-                    self._broadcast_users('btc', 'notify_btc',
-                                          f"🧮 <b>МММ-МОНІТОР</b>\n{_txt}")
+                    self._broadcast_users('btc', 'notify_btc', _txt)
                 except Exception as _e:
                     print(f"[FuelFilter] correction TG error: {_e}")
 
@@ -3974,8 +4035,12 @@ class FuelFilterDaemon:
                 _every = 300.0
             _due = (now - float(self._mm_corr_log_at or 0)) >= _every
             if _changed or _due:
-                _kind = ('start' if st.get('state') == 'on' and _changed else
-                         'end' if st.get('state') == 'ended' and _changed else
+                # ⚠️ `kind` теж іде від ПОДІЇ, а не від стану: раніше
+                # `resume` (`ending → on`) писався як `start`, а `abort`
+                # (`pending → ended`) — як `end`, тож калібрувальний лог
+                # ЗАВИЩУВАВ кількість епізодів. Аналіз за таким логом рахував
+                # би не те, що сталось на ринку.
+                _kind = (_ev if _ev in ('start', 'end') else
                          'state' if _changed else 'sample')
                 if self._mm_corr_log_write(_kind, prev_state=_was or 'trend'):
                     self._mm_corr_log_at = now

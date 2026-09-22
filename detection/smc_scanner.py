@@ -566,6 +566,12 @@ class SMCScanner:
         # same eviction path as _pd_zone_cache when a symbol falls out
         # of the watchlist.
         self._volumized_trend_cache: Dict[str, Dict] = {}
+        # 📐 Напрямок ПОТОЧНОГО звичайного Order Block на МОЛОДШОМУ TF (тому
+        # самому, що й Volumized). Друге структурне джерело ширини ринку для
+        # 🔻 детектора корекції (вимога 22.09: «VOB не відразу зʼявляються…
+        # додай ще відслідковування OB»). Рахується з ТИХ САМИХ барів, тож
+        # мережі не коштує НІЧОГО.
+        self._ob_trend_cache: Dict[str, Dict] = {}
         # 🟪 Volumized OB Alerts: ПЕР-НАПРЯМКОВА база свіжості
         # {symbol: {'LONG': formation_time, 'SHORT': formation_time}} — щоб
         # обробляти бичачий і ведмежий VOB НЕЗАЛЕЖНО й НЕ губити протилежний новий
@@ -1354,6 +1360,7 @@ class SMCScanner:
                 self._htf_cache.pop(symbol, None)
                 self._pd_zone_cache.pop(symbol, None)
                 self._volumized_trend_cache.pop(symbol, None)
+                self._ob_trend_cache.pop(symbol, None)
                 self._signal_markers.pop(symbol, None)
                 self._last_signal_dir.pop(symbol, None)
                 self._persist_dedup_state()
@@ -2510,12 +2517,27 @@ class SMCScanner:
                             if self._settings.get('use_volumized_ob', True):
                                 self._liq_vob_check(symbol, vol_result, vol_tf,
                                                     vol_klines)
+                            # 📐 ДРУГЕ СТРУКТУРНЕ ДЖЕРЕЛО ШИРИНИ — звичайний
+                            # Order Block на ТИХ САМИХ молодших барах.
+                            # Вимога 22.09: «VOB не відразу зʼявляються, навіть
+                            # коли монета отримала протилежний рух — додай ще
+                            # відслідковування OB, вони чітко реагують на рух».
+                            # ⚠️ Мережі це не коштує НІЧОГО: бари вже завантажені.
+                            # ⚠️ Структуру рахуємо на ЖИВИХ барах (`vol_klines`),
+                            # а НЕ беремо `vol_data['structure']` — та порахована
+                            # на ЗАКРИТИХ, тобто відставала б на цілий бар і шар
+                            # вийшов би ПОВІЛЬНІШИМ за VOB, тобто безглуздим.
+                            # Заміряно: +16 мс структура + 6 мс OB на монету при
+                            # 3000 барах (≈0.3% такту, де мережа — секунди).
+                            self._update_ob_trend(symbol, vol_klines, vol_tf,
+                                                  isize_v, ssize_v)
                         else:
                             # No TF data — clear cache so stale entries
                             # don't linger (e.g., user changed TF and
                             # the new TF has no klines yet).
                             with self._lock:
                                 self._volumized_trend_cache.pop(symbol, None)
+                                self._ob_trend_cache.pop(symbol, None)
                     except Exception as vol_err:
                         if self._errors <= 5:
                             print(f"[SMC] Volumized OB error for {symbol}: {vol_err}")
@@ -3620,6 +3642,66 @@ class SMCScanner:
         with self._lock:
             trends = {str(sym).upper(): (c or {}).get('trend')
                       for sym, c in (self._volumized_trend_cache or {}).items()
+                      if (c or {}).get('trend') in ('LONG', 'SHORT')}
+        return {'on': bool(self._settings.get('use_volumized_ob', True)),
+                'tf': self._settings.get('volumized_timeframe', '1h'),
+                'trends': trends}
+
+    def _update_ob_trend(self, symbol, klines, tf, isize, ssize):
+        """📐 Напрямок ПОТОЧНОГО (немітигованого) Order Block на молодшому TF.
+
+        Той самий детектор, що малює блоки на графіку (`detect_order_blocks`),
+        і та сама структура Pine — просто на тих барах, які скан уже має.
+
+        ⚠️ **Чому це ДРУГЕ джерело, а не заміна 📦 VOB.** Volumized OB
+        народжується зі СВІНГА і мусить пройти фільтри висоти/зон/обʼєму —
+        на різкому русі блок може не зʼявитись узагалі. Звичайний OB створює
+        ПОДІЯ СТРУКТУРИ (BOS/CHoCH), тобто сам факт пробою. Детектор корекції
+        зливає обидва в одну ознаку «ширина» (`mm_correction.breadth_of`).
+        ⚠️ Беремо `limit=1` — нам потрібен РІВНО поточний блок, як і у VOB.
+        ⚠️ Помилка НЕ підіймається в скан: це показник, а не ворота.
+        """
+        try:
+            from detection.smc_structure import detect_smc_structure
+            from detection.ob_detector import detect_order_blocks
+            if not klines or len(klines) < 220:
+                return
+            _st = detect_smc_structure(klines, internal_size=isize,
+                                       swing_size=ssize)
+            _it = _st.get('internal', {}) or {}
+            _obs = detect_order_blocks(klines=klines,
+                                       pivots=_it.get('pivots', []),
+                                       events=_it.get('events', []), limit=1)
+            if not _obs:
+                with self._lock:
+                    self._ob_trend_cache.pop(symbol, None)
+                return
+            _o = _obs[0]
+            with self._lock:
+                self._ob_trend_cache[symbol] = {
+                    'trend': 'LONG' if _o.get('bias') == 'BULLISH' else 'SHORT',
+                    'tf': tf,
+                    'bar_time': _o.get('bar_time'),
+                    'tag': _o.get('created_by_tag') or '',
+                    'updated_at': time.time(),
+                }
+        except Exception as e:
+            if self._errors <= 5:
+                print(f"[SMC] OB trend error for {symbol}: {e}")
+
+    def ob_trends(self) -> dict:
+        """📐 ПУБЛІЧНИЙ знімок OB-трендів молодшого TF: {'on','tf','trends'}.
+
+        Дзеркало `volumized_trends()` за формою — щоб 🔻 детектор корекції
+        споживав обидва джерела однаково. Нічого НЕ рахує (скан наповнює кеш
+        сам), тож для читача це НУЛЬ запитів до біржі.
+
+        ⚠️ `on` прив'язаний до того самого блоку скану, що рахує Volumized:
+        бари беруться звідти. Вимкнули 📦 Volumized OB Trend — немає і 📐.
+        """
+        with self._lock:
+            trends = {str(sym).upper(): (c or {}).get('trend')
+                      for sym, c in (self._ob_trend_cache or {}).items()
                       if (c or {}).get('trend') in ('LONG', 'SHORT')}
         return {'on': bool(self._settings.get('use_volumized_ob', True)),
                 'tf': self._settings.get('volumized_timeframe', '1h'),

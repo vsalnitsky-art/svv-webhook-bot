@@ -598,6 +598,15 @@ class MmCorrectionLog(Base):
     vob_n = Column(Integer)
     vob_against = Column(Integer)
     vob_tf = Column(String(6))
+    # 📐 ДРУГЕ структурне джерело ширини (звичайний OB на тому самому TF).
+    # Поріг спільний із 📦 (`vob_need`/`vob_exit`) — міряють одне й те саме.
+    # `breadth_pct` — число, що РЕАЛЬНО вирішило (максимум із двох сенсорів),
+    # `breadth_src` — чиє воно (📦 / 📐 / 📦+📐).
+    ob_pct = Column(Float)
+    ob_n = Column(Integer)
+    ob_against = Column(Integer)
+    breadth_pct = Column(Float)
+    breadth_src = Column(String(8))
     # 💹 Ціна проти банера
     price_pct = Column(Float)
     price_need = Column(Float)
@@ -629,6 +638,9 @@ class MmCorrectionLog(Base):
             'need_layers': self.need_layers, 'determined': self.determined,
             'vob_pct': self.vob_pct, 'vob_need': self.vob_need,
             'vob_exit': self.vob_exit,
+            'ob_pct': self.ob_pct, 'ob_n': self.ob_n,
+            'ob_against': self.ob_against,
+            'breadth_pct': self.breadth_pct, 'breadth_src': self.breadth_src,
             'vob_n': self.vob_n, 'vob_against': self.vob_against,
             'vob_tf': self.vob_tf,
             'price_pct': self.price_pct, 'price_need': self.price_need,
@@ -973,22 +985,33 @@ def migrate_sleeper_candidates_v3():
         # кожному рядку — вимога самого логу, тож ALTER потрібен. Той самий
         # ідемпотентний прийом, що вище: спершу information_schema, потім ALTER.
         corr_table = f"{TABLE_PREFIX}mm_corr_log"
+        corr_new_cols = [
+            ('vob_exit', 'FLOAT'),
+            # 📐 друге структурне джерело ширини (22.09)
+            ('ob_pct', 'FLOAT'),
+            ('ob_n', 'INTEGER'),
+            ('ob_against', 'INTEGER'),
+            ('breadth_pct', 'FLOAT'),
+            ('breadth_src', 'VARCHAR(8)'),
+        ]
         try:
             table_check = conn.execute(text(f"""
                 SELECT 1 FROM information_schema.tables
                 WHERE table_name = '{corr_table}'
             """)).fetchone()
             if table_check is not None:
-                col_check = conn.execute(text(f"""
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = '{corr_table}'
-                      AND column_name = 'vob_exit'
-                """)).fetchone()
-                if col_check is None:
-                    conn.execute(text(
-                        f"ALTER TABLE {corr_table} ADD COLUMN vob_exit FLOAT"))
-                    conn.commit()
-                    print(f"[DB MIGRATE] Added {corr_table}.vob_exit")
+                for col_name, col_type in corr_new_cols:
+                    col_check = conn.execute(text(f"""
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = '{corr_table}'
+                          AND column_name = '{col_name}'
+                    """)).fetchone()
+                    if col_check is None:
+                        conn.execute(text(
+                            f"ALTER TABLE {corr_table} "
+                            f"ADD COLUMN {col_name} {col_type}"))
+                        conn.commit()
+                        print(f"[DB MIGRATE] Added {corr_table}.{col_name}")
         except Exception as e:
             error_str = str(e)
             if 'no such table: information_schema' not in error_str.lower() \

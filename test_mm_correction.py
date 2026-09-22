@@ -1321,8 +1321,12 @@ def test_the_raw_log_carries_the_exit_threshold_too():
     _check("'vob_exit'" in dbo, 'білий список шару БД відріже нове поле')
     models = open(os.path.join(_HERE, 'storage', 'db_models.py'),
                   encoding='utf-8').read()
-    _check('ADD COLUMN vob_exit FLOAT' in models,
+    # ⚠️ Міграція стала СПИСКОМ колонок (до `vob_exit` додались числа 📐 OB),
+    # тож замок дивиться на ЗАПИС у списку, а не на готовий рядок ALTER.
+    _check("('vob_exit', 'FLOAT')" in models,
            'таблиця вже могла бути створена без колонки — потрібна міграція')
+    _check('ADD COLUMN {col_name} {col_type}' in models,
+           'міграція mm_corr_log мусить виконувати ALTER для кожної колонки')
     print('✓ 🧭 поріг виходу є і в рядку логу, і в БД, і в міграції')
 
 
@@ -1341,6 +1345,246 @@ def test_ui_exposes_the_new_rules_and_says_which_layer_is_start_only():
     _check('exit_pct' in body,
            'поки корекція триває, мусить бути видно, за якої ширини вона скінчиться')
     print('✓ 🧭 UI показує нові правила і роль кожного шару')
+
+
+
+# ═══ 9. 📨 ПОДІЯ ≠ ЗМІНА СТАНУ · 📐 OB ЯК ДРУГЕ ДЖЕРЕЛО ШИРИНИ (22.09) ════
+# **Дві скарги користувача одним пакетом:**
+#  1) «Проаналізуй оповіщення, вони не зовсім нормально відпрацьовують.»
+#     Скрін Telegram за 14 год: «✅ ЗАВЕРШИЛАСЬ (тривала 17хв)» ДВІЧІ
+#     (21:20 і 21:33), «(тривала 23хв)» двічі (0:16 і 0:31), «(тривала 27хв)»
+#     двічі (1:58 і 2:10); два 🔻 підряд без ✅ між ними (8:08 і 8:30);
+#     «🔻 КОРЕКЦІЯ … ознак 1/2» — менше, ніж потрібно.
+#  2) «Зверни увагу на VOB, вони не відразу зʼявляються, навіть коли монета
+#     отримала протилежний рух. Додай ще відслідковування OB.»
+
+
+def test_returning_from_ending_is_not_a_new_correction():
+    """`ending → on` — ТОЙ САМИЙ епізод (`since` не змінився), а не старт.
+    На скріні це давало два 🔻 підряд без ✅ між ними."""
+    st = mc.next_state({}, 2, 2, 2, 1000.0, 0)
+    _check(st['event'] == 'start' and st['state'] == 'on', f'старт: {st}')
+    _since = st['since']
+    st = mc.next_state(st, 0, 0, 2, 1100.0, 300)      # ознаки зникли → ending
+    _check(st['state'] == 'ending' and st['event'] == '', f'відлік кінця: {st}')
+    st = mc.next_state(st, 2, 2, 2, 1200.0, 300)      # повернулись → on
+    _check(st['state'] == 'on', f'корекція триває далі: {st}')
+    _check(st['event'] == 'resume',
+           f'це ПОВЕРНЕННЯ, а не новий старт: {st["event"]}')
+    _check(st['since'] == _since, 'таймер епізоду НЕ перезапускається')
+    print('✓ 📨 повернення з `ending` — не новий старт (два 🔻 підряд)')
+
+
+def test_an_aborted_false_start_does_not_re_announce_the_end():
+    """`pending → ended` — несправдливий старт згас, а бейдж «завершилась»
+    просто повернувся. Саме тут народжувалось ДРУГЕ «✅ ЗАВЕРШИЛАСЬ» із ТІЄЮ
+    САМОЮ тривалістю через 10-15 хв (21:20 і 21:33 «тривала 17хв»)."""
+    st = mc.next_state({}, 2, 2, 2, 0.0, 0)           # on
+    st = mc.next_state(st, 0, 0, 2, 1020.0, 0)        # → ended (17 хв)
+    _check(st['event'] == 'end', f'справжній кінець: {st}')
+    _lasted = st['lasted']
+    st = mc.next_state(st, 2, 2, 2, 1800.0, 300)      # смик ознак → pending
+    _check(st['state'] == 'pending' and st['event'] == '', f'{st}')
+    st = mc.next_state(st, 0, 0, 2, 1860.0, 300)      # смик минув
+    _check(st['state'] == 'ended', f'бейдж повертається: {st}')
+    _check(st['event'] == 'abort',
+           f'але це НЕ подія «завершилась»: {st["event"]}')
+    _check(st['lasted'] == _lasted, 'тривалість та сама — тому й було видно дубль')
+    print('✓ 📨 згаслий несправдливий старт НЕ шле друге «✅ завершилась»')
+
+
+def test_only_real_events_reach_the_log_and_telegram():
+    """Замок на ПРОВОДКУ: читач мусить дивитись на `event`, а не на зміну
+    стану — інакше повернеться рівно те, що на скріні."""
+    body = _fn_src(_FF_SRC, '_mm_track_correction')
+    _check("_ev in ('start', 'end')" in body,
+           'подію мусить вирішувати `event`, а не порівняння станів')
+    _check("st.get('state') in ('on', 'ended')" not in body,
+           'стара умова «стан змінився» мусить зникнути')
+    _check('_broadcast_users' in body, 'Telegram-гілка на місці')
+    print('✓ 📨 у Telegram і 🧾 Лог ідуть ЛИШЕ справжні події')
+
+
+def test_the_raw_log_kind_follows_the_event_too():
+    """Калібрувальний лог рахував `resume` як `start`, а `abort` як `end` —
+    тобто ЗАВИЩУВАВ кількість епізодів, і аналіз за ним рахував не те."""
+    body = _fn_src(_FF_SRC, '_mm_track_correction')
+    # ⚠️ `_fn_src` віддає AST-unparse, тож дужки/переноси нормалізовані —
+    # шукаємо СУТЬ, а не дослівний рядок із файлу.
+    _kl = [l for l in body.splitlines() if '_kind' in l and '=' in l]
+    _check(_kl and "_ev in ('start', 'end')" in _kl[0],
+           f'kind сирого логу мусить іти від події: {_kl}')
+    print('✓ 📨 kind сирого логу теж від події, а не від стану')
+
+
+def test_a_real_start_can_never_print_fewer_signs_than_needed():
+    """«ознак 1/2» на скріні бралось із повернення `ending → on`: воно йде за
+    ПОСЛАБЛЕНИМ порогом, а в текст друкувався СУВОРИЙ лічильник."""
+    st = mc.next_state({}, 2, 2, 2, 0.0, 0)
+    st = mc.next_state(st, 0, 0, 2, 100.0, 300)       # ending
+    st = mc.next_state(st, 1, 2, 2, 200.0, 300)       # суворих 1, послаблених 2
+    _check(st['state'] == 'on' and st['event'] == 'resume',
+           f'повернення за послабленим: {st}')
+    # А справжній старт завжди має lit >= need.
+    st2 = mc.next_state({}, 2, 2, 2, 0.0, 0)
+    _check(st2['event'] == 'start', 'справжній старт')
+    print('✓ 📨 «ознак 1/2» більше не потрапляє в рядок старту')
+
+
+def test_the_end_message_does_not_promise_openings_that_were_never_blocked():
+    """«відкриття знову дозволені» при вимкнених воротах суперечило власному
+    рядку старту («відкриття НЕ блокуємо»)."""
+    body = _fn_src(_FF_SRC, '_mm_track_correction')
+    _check("_blk_on = bool(settings.get('mm_corr_block_open', True))" in body,
+           'кінець мусить питати, чи ворота взагалі були увімкнені')
+    _check("', відкриття знову дозволені' if _blk_on else ''" in body,
+           'фраза мусить бути умовною')
+    print('✓ 📨 кінець не обіцяє зняти блок, якого не було')
+
+
+def test_telegram_does_not_repeat_the_topic_name_three_times():
+    """На скріні кожне повідомлення несло назву тричі: тег #МММ_монітор,
+    власний заголовок 🧮 МММ-МОНІТОР і сама назва теми."""
+    body = _fn_src(_FF_SRC, '_mm_track_correction')
+    _check('МММ-МОНІТОР' not in body,
+           'власний заголовок у повідомленні корекції зайвий — тег уже є')
+    print('✓ 📨 назва теми більше не дублюється в тілі повідомлення')
+
+
+# ───────────────────── 📐 OB як друге джерело ширини ─────────────────────
+
+def _t(n_against, n_for, side='SHORT', other='LONG'):
+    """Тренди по тих САМИХ символах, що й `_snap` (C0…): `evaluate` ріже
+    тренди за ключами знімка, тож чужі імена дали б порожню вибірку."""
+    d = {f'C{i}': side for i in range(n_against)}
+    d.update({f'C{n_against + i}': other for i in range(n_for)})
+    return d
+
+
+def test_ob_layer_mirrors_the_vob_layer_in_shape():
+    """Форма 1-в-1 — інакше UI і лог довелось би вчити двом розкладам."""
+    v = mc.vob_layer(_t(7, 3), None, 'LONG', 60.0, tf='5m')
+    o = mc.ob_layer(_t(7, 3), None, 'LONG', 60.0, tf='5m')
+    _check(set(v.keys()) == set(o.keys()), f'різні поля: {set(v) ^ set(o)}')
+    _check(o['key'] == 'ob' and o['icon'] == '📐', f'{o}')
+    _check(o['role'] == 'both', 'ширина вирішує і початок, і кінець')
+    _check(o['pct'] == 70.0 and o['lit'], f'7 з 10 проти: {o}')
+    print('✓ 📐 шар OB за формою — дзеркало шару VOB')
+
+
+def test_breadth_is_the_most_alarming_of_the_two_sensors():
+    """МАКСИМУМ, а не середнє: одне правило на обидва кінці."""
+    v = mc.vob_layer(_t(5, 5), None, 'LONG', 60.0)        # 50%
+    o = mc.ob_layer(_t(8, 2), None, 'LONG', 60.0)         # 80%
+    b = mc.breadth_of(v, o)
+    _check(b['ok'] and b['pct'] == 80.0, f'максимум із двох: {b}')
+    _check(b['src'] == '📐', f'джерело мусить бути назване: {b}')
+    _check(mc.breadth_of(v, None)['pct'] == 50.0, 'лише VOB — його число')
+    _check(mc.breadth_of(None, o)['pct'] == 80.0, 'лише OB — його число')
+    _check(mc.breadth_of(None, None)['ok'] is False,
+           'жодного → НЕ визначено (а не «ширина відновилась»)')
+    print('✓ 📐 ширина = найтривожніший із двох сенсорів')
+
+
+def test_ob_sees_the_move_that_vob_has_not_drawn_yet():
+    """ДОСЛІВНА скарга: «VOB не відразу зʼявляються, навіть коли монета
+    отримала протилежний рух». 📦 ще показує старий бік, 📐 вже перевернувся —
+    ширина мусить це ПОБАЧИТИ і корекція почнеться."""
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'down') for i in range(10)})
+    vob_t = {f'C{i}': 'LONG' for i in range(10)}          # 📦 ще «за банером»
+    ob_t = {f'C{i}': 'SHORT' for i in range(10)}          # 📐 уже проти
+    r = mc.evaluate(snap, vob_t, 'LONG', 50.0, 52.0, _cfg(),
+                    ob_trends=ob_t, ob_tf='5m')
+    _check(r['breadth_pct'] == 100.0, f'ширину бачить 📐: {r["breadth_pct"]}')
+    _check(r['breadth_lit'] and r['start_ok'],
+           f'корекція мусить стартувати: {r}')
+    off = mc.evaluate(snap, vob_t, 'LONG', 50.0, 52.0,
+                      _cfg(mm_corr_ob_on=False), ob_trends=ob_t, ob_tf='5m')
+    _check(not off['breadth_lit'] and not off['start_ok'],
+           'вимкнене джерело мусить повертати стару (сліпу) поведінку')
+    print('✓ 📐 OB ловить рух, якого 📦 VOB ще не намалював')
+
+
+def test_ob_also_holds_the_correction_open():
+    """Друге джерело працює і на ВИХІД: 📦 вже відпустив, 📐 ще ні."""
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(10)})
+    vob_t = _t(3, 7, 'SHORT', 'LONG')                     # 📦 30% — відпустив
+    ob_t = _t(7, 3, 'SHORT', 'LONG')                      # 📐 70% — тримає
+    r = mc.evaluate(snap, vob_t, 'LONG', 50.0, 51.0, _cfg(),
+                    ob_trends=ob_t, ob_tf='5m')
+    _check(r['breadth_ok'] is False and r['stay'] is True,
+           f'кінець мусить бути заблокований: {r["breadth_ok"]}/{r["stay"]}')
+    _check('70.0' in r['why'] and '📐' in r['why'],
+           f'причина мусить називати число І джерело: {r["why"]}')
+    print('✓ 📐 OB тримає корекцію, коли 📦 VOB уже відпустив')
+
+
+def test_the_second_source_is_not_a_fourth_vote():
+    """«2 з 3» не сміє мовчки стати «2 з 4»: 📦 і 📐 міряють ОДНЕ Й ТЕ САМЕ."""
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(10)})   # 💹 не горить
+    both = _t(9, 1, 'SHORT', 'LONG')
+    r = mc.evaluate(snap, both, 'LONG', 50.0, 51.0, _cfg(),
+                    ob_trends=both, ob_tf='5m')
+    _check(len(r['layers']) == 4, f'показуємо ЧОТИРИ шари: {len(r["layers"])}')
+    _check(r['lit'] == 1,
+           f'але голос лише ОДИН (ширина), а не два: lit={r["lit"]}')
+    _check(not r['start_ok'], 'одного голосу при need=2 не досить')
+    print('✓ 📐 друге джерело — не четвертий голос, а той самий «ширина»')
+
+
+def test_the_scanner_feeds_ob_trends_for_free():
+    """Замок на ДЖЕРЕЛО: бари вже завантажені, мережі це коштувати не може."""
+    sc = open(os.path.join(_HERE, 'detection', 'smc_scanner.py'),
+              encoding='utf-8').read()
+    _check('def ob_trends(' in sc, 'сканер мусить мати ПУБЛІЧНИЙ читач')
+    body = _fn_src(sc, '_update_ob_trend')
+    for bad in ('fetch_klines', '_pf_klines', 'requests', 'session'):
+        _check(bad not in body, f'жодної мережі у {bad}')
+    _check('detect_order_blocks' in body and 'detect_smc_structure' in body,
+           'мусить рахувати ТОЙ САМИЙ OB, що малюється на графіку')
+    _check('limit=1' in body, 'потрібен РІВНО поточний блок, як і у VOB')
+    ff = _fn_src(_FF_SRC, '_mm_ob_trends')
+    _check('ob_trends' in ff, 'FF читає публічним методом, а не чужим кешем')
+    _check('_ob_trend_cache' not in ff, 'лізти у приватний кеш сканера не можна')
+    print('✓ 📐 джерело OB — той самий скан, нуль запитів до біржі')
+
+
+def test_older_scanner_or_module_does_not_break_the_detector():
+    """Файли деплояться в різному порядку — обидва фолбеки мусять бути."""
+    body = _fn_src(_FF_SRC, '_mm_track_correction')
+    _check('except TypeError' in body,
+           'старіший mm_correction без ob_trends= мусить працювати')
+    ff = _fn_src(_FF_SRC, '_mm_ob_trends')
+    _check("hasattr(sc, 'ob_trends')" in ff,
+           'старіший сканер без ob_trends() → шар НЕ визначений, а не «немає проти»')
+    print('✓ 📐 старіші файли не ламають детектор')
+
+
+def test_the_raw_log_carries_both_sensors_and_the_decider():
+    """Без чисел 📐 у рядку неможливо буде перевірити, чий сенсор вирішив."""
+    body = _fn_src(_FF_SRC, '_mm_corr_log_write')
+    for f in ('ob_pct', 'ob_n', 'ob_against', 'breadth_pct', 'breadth_src'):
+        _check(f"'{f}'" in body, f'писач логу не кладе {f}')
+    cols = set(_model_columns('MmCorrectionLog'))
+    for f in ('ob_pct', 'ob_n', 'ob_against', 'breadth_pct', 'breadth_src'):
+        _check(f in cols, f'у моделі БД немає колонки {f}')
+    dbo = open(os.path.join(_HERE, 'storage', 'db_operations.py'),
+               encoding='utf-8').read()
+    for f in ('ob_pct', 'breadth_src'):
+        _check(f"'{f}'" in dbo, f'білий список шару БД відріже {f}')
+    models = open(os.path.join(_HERE, 'storage', 'db_models.py'),
+                  encoding='utf-8').read()
+    _check("('ob_pct', 'FLOAT')" in models and "('breadth_src', 'VARCHAR(8)')" in models,
+           'наявна таблиця потребує ALTER для нових колонок')
+    print('✓ 📐 сирий лог несе обидва сенсори і те, чиє число вирішило')
+
+
+def test_ui_exposes_the_second_source():
+    _check('id="ff-mm-corr-ob"' in _HTML, 'немає тумблера 📐')
+    _check('mm_corr_ob_on' in _HTML, 'ключ не зберігається зі сторінки')
+    _check(mc.DEFAULTS['mm_corr_ob_on'] is True,
+           'користувач просив саме додати джерело — дефолт УВІМК')
+    print('✓ 📐 друге джерело видно і керовано з UI')
 
 
 if __name__ == '__main__':

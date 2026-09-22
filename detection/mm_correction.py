@@ -99,6 +99,16 @@ DEFAULTS = {
     'mm_corr_min_layers': 2,
     # 📦 Частка монет, чий Volumized OB (молодший TF) дивиться ПРОТИ банера, %.
     'mm_corr_vob_pct': 60.0,
+    # 📐 ДРУГЕ СТРУКТУРНЕ ДЖЕРЕЛО ШИРИНИ — звичайний Order Block (створюється
+    # на BOS/CHoCH), на ТИХ САМИХ молодших барах, що й 📦 VOB.
+    # **Вимога користувача (22.09), дослівно:** «Зверни увагу на VOB, вони не
+    # відразу зʼявляються, навіть коли монета отримала протилежний рух. Додай
+    # ще відслідковування OB, вони чітко реагують на рух монет.»
+    # ⚠️ Це НЕ четвертий голос: 📦 і 📐 міряють ОДНЕ Й ТЕ САМЕ (частку монет,
+    # чия структура проти банера), тож вони зливаються в ОДНУ ознаку «ширина»
+    # через `breadth_of` = МАКСИМУМ із двох. Інакше «2 з 3» мовчки
+    # перетворилось би на «2 з 4» і старт став би легшим.
+    'mm_corr_ob_on': True,
     # 📦 ШИРИНА ОБОВʼЯЗКОВА НА СТАРТ. Корекція — це подія ШИРИНИ ринку, а не
     # смикання ціни: без неї шум 💹+📉 оголошував би «корекцію» там, де
     # структура монет спокійна. OFF повертає стару поведінку «будь-які 2 з 3».
@@ -244,6 +254,75 @@ def vob_layer(trends: Dict, symbols, bias: str, need_pct: float,
                   _share(a, f), need, a + f, a, f, role='both')
 
 
+def ob_layer(trends: Dict, symbols, bias: str, need_pct: float,
+             hold: bool = False, tf: str = '') -> Dict:
+    """📐 Частка монет, чий ПОТОЧНИЙ звичайний Order Block ПРОТИ банера.
+
+    **Навіщо ДРУГЕ джерело поруч із 📦 VOB** (вимога 22.09). Це РІЗНІ
+    детектори на ТИХ САМИХ барах:
+      • **📦 Volumized OB** народжується зі СВІНГА і живе лише якщо пройшов
+        фільтри висоти (`max_atr_mult`), обрізання зон (`zone_count`) і
+        обʼєму — тобто на різкому русі блок може не зʼявитись узагалі;
+      • **📐 Order Block** створює ПОДІЯ СТРУКТУРИ (BOS/CHoCH), тобто сам
+        факт пробою — без фільтрів обʼєму й висоти.
+    На синтетиці обидва перевертаються майже одночасно (104 з 109 фліпів —
+    той самий бар), АЛЕ розходяться в НАПРЯМКУ приблизно в 15% замірів. Саме
+    заради цього вони й стоять поруч: ширина ринку перестає бути заручником
+    фільтрів ОДНОГО детектора.
+
+    Форма відповіді — 1-в-1 як у `vob_layer`, щоб UI і лог малювали їх
+    однаково й нічого не довелось дублювати.
+    """
+    need = float(need_pct) - (EXIT_MARGIN_PCT if hold else 0.0)
+    name = f'OB проти{(" " + tf.upper()) if tf else ""}'
+    if not trends:
+        return _layer('ob', '📐', name, None, need, 0, 0, 0, role='both',
+                      note='немає даних Order Block (сканер ще не порахував '
+                           'або джерело вимкнено)')
+    syms = {str(x).upper() for x in (symbols or [])}
+    a = f = 0
+    for sym, t in trends.items():
+        if syms and str(sym).upper() not in syms:
+            continue
+        if t not in ('LONG', 'SHORT'):
+            continue
+        if t == bias:
+            f += 1
+        else:
+            a += 1
+    return _layer('ob', '📐', name, _share(a, f), need, a + f, a, f, role='both')
+
+
+def breadth_of(vob: Optional[Dict], ob: Optional[Dict]) -> Dict:
+    """🧭 ШИРИНА РИНКУ = найтривожніший із двох структурних сенсорів.
+
+    Повертає `{'ok', 'pct', 'src'}`, де `pct` — **МАКСИМУМ** визначених часток
+    «проти», а `src` — чиє це число (`'📦'` / `'📐'` / `'📦+📐'`).
+
+    ⚠️ **МАКСИМУМ, а не середнє — і це ОДНЕ правило на ОБИДВА кінці.**
+      • на СТАРТ: досить, щоб проти банера стало видно ХОЧ ОДНОМУ сенсору —
+        саме цього й просив користувач («VOB не відразу зʼявляються»);
+      • на КІНЕЦЬ: корекція тримається, поки проти банера каже ХОЧ ОДИН —
+        завершити на мовчанні одного сенсора означало б повернути бота в
+        ринок за половиною даних.
+    Обидва напрямки СУВОРІШІ, і це свідомо: скарга була саме про надто легкий
+    кінець.
+    ⚠️ Середнє тут було б гірше: воно РОЗМИВАЄ сигнал, коли один детектор
+    фізично не має блоку по монеті (а це його штатний стан).
+    ⚠️ Жоден не визначений → `ok=False`: «немає даних» ≠ «ширина відновилась».
+    """
+    out = []
+    for lay, icon in ((vob, '📦'), (ob, '📐')):
+        d = dict(lay or {})
+        if d.get('ok') and d.get('pct') is not None:
+            out.append((float(d['pct']), icon))
+    if not out:
+        return {'ok': False, 'pct': None, 'src': ''}
+    top = max(out)[0]
+    src = '+'.join(i for p, i in out if p == top)
+    return {'ok': True, 'pct': top, 'src': src}
+
+
 def price_layer(snap: Dict, bias: str, need_pct: float,
                 hold: bool = False) -> Dict:
     """💹 Частка монет, чий СВІЖИЙ рух ціни йде ПРОТИ банера.
@@ -300,8 +379,9 @@ def lever_layer(now_pct, peak_pct, need_drop: float,
 
 
 def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
-             cfg: Dict, tf: str = '') -> Dict:
-    """Усі три шари РАЗОМ + готові рішення «ПОЧАТИ» і «ТРИМАТИ».
+             cfg: Dict, tf: str = '', ob_trends: Optional[Dict] = None,
+             ob_tf: str = '') -> Dict:
+    """Усі ознаки РАЗОМ + готові рішення «ПОЧАТИ» і «ТРИМАТИ».
 
     Повертає `{'layers','lit','lit_hold','need','determined','start_ok',
     'stay','exit_pct','breadth_ok','breadth_pct','why'}`:
@@ -322,34 +402,54 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
     c.update({k: v for k, v in (cfg or {}).items() if k in DEFAULTS})
     need = max(1, int(_num(c['mm_corr_min_layers'], 2) or 2))
     syms = list((snap or {}).keys())
-    strict = [vob_layer(trends, syms, bias, c['mm_corr_vob_pct'], False, tf),
-              price_layer(snap, bias, c['mm_corr_price_pct'], False),
-              lever_layer(lever_now, lever_peak, c['mm_corr_lever_drop'], False)]
-    relax = [vob_layer(trends, syms, bias, c['mm_corr_vob_pct'], True, tf),
-             price_layer(snap, bias, c['mm_corr_price_pct'], True),
-             lever_layer(lever_now, lever_peak, c['mm_corr_lever_drop'], True)]
-    lit = sum(1 for x in strict if x['lit'])
-    lit_hold = sum(1 for x in relax if x['lit'])
-    vob = strict[0]
+    _ob_on = bool(c['mm_corr_ob_on'])
+    _obt = (ob_trends or {}) if _ob_on else {}
 
-    # ▶️ ПОЧАТОК: голоси + 📦 ширина як обовʼязкова умова.
+    def _set(hold):
+        return (vob_layer(trends, syms, bias, c['mm_corr_vob_pct'], hold, tf),
+                ob_layer(_obt, syms, bias, c['mm_corr_vob_pct'], hold,
+                         ob_tf or tf),
+                price_layer(snap, bias, c['mm_corr_price_pct'], hold),
+                lever_layer(lever_now, lever_peak, c['mm_corr_lever_drop'], hold))
+
+    s_vob, s_ob, s_price, s_lever = _set(False)
+    r_vob, r_ob, r_price, r_lever = _set(True)
+    if not _ob_on:
+        s_ob = dict(s_ob, note='📐 друге джерело ширини вимкнено', off=True)
+        r_ob = dict(r_ob, note='📐 друге джерело ширини вимкнено', off=True)
+    strict = [s_vob, s_ob, s_price, s_lever]
+
+    # 🧭 ШИРИНА — ОДНА ознака з ДВОХ сенсорів (`breadth_of` = максимум), а не
+    # четвертий голос: інакше «2 з 3» мовчки стало б «2 з 4».
+    b_strict = breadth_of(s_vob, s_ob)
+    b_relax = breadth_of(r_vob, r_ob)
+    _need_pct = float(c['mm_corr_vob_pct'])
+    b_lit = bool(b_strict['ok'] and b_strict['pct'] >= _need_pct)
+    b_lit_hold = bool(b_relax['ok']
+                      and b_relax['pct'] >= _need_pct - EXIT_MARGIN_PCT)
+
+    lit = int(b_lit) + sum(1 for x in (s_price, s_lever) if x['lit'])
+    lit_hold = int(b_lit_hold) + sum(1 for x in (r_price, r_lever) if x['lit'])
+
+    # ▶️ ПОЧАТОК: голоси + ширина як обовʼязкова умова.
     start_ok = lit >= need
-    if bool(c['mm_corr_vob_required']) and not vob['lit']:
+    if bool(c['mm_corr_vob_required']) and not b_lit:
         start_ok = False
 
     # 🧭 КІНЕЦЬ: вирішує ширина; голоси можуть лише ПРОДОВЖИТИ корекцію.
     exit_pct = _num(c['mm_corr_vob_exit_pct'], 50.0)
-    b_ok = (breadth_exit_ok(vob, exit_pct)
+    b_ok = (breadth_exit_ok(b_strict, exit_pct)
             if bool(c['mm_corr_breadth_exit']) else None)
     stay = (b_ok is False) or (lit_hold >= need)
+    _src = b_strict.get('src') or '📦'
     if b_ok is False:
-        why = (f'📦 ширина ринку все ще проти банера: {vob["pct"]}% ≥ '
+        why = (f'{_src} ширина ринку все ще проти банера: {b_strict["pct"]}% ≥ '
                f'{round(float(exit_pct), 1)}% — кінець корекції заблоковано')
     elif b_ok is True:
-        why = (f'📦 ширина відновилась: {vob["pct"]}% < '
+        why = (f'{_src} ширина відновилась: {b_strict["pct"]}% < '
                f'{round(float(exit_pct), 1)}%')
     elif bool(c['mm_corr_breadth_exit']):
-        why = '📦 ширину визначити нічим — кінець за старим правилом голосів'
+        why = '🧭 ширину визначити нічим — кінець за старим правилом голосів'
     else:
         why = '🧭 кінець за шириною вимкнено — працюють голоси ознак'
     return {
@@ -362,7 +462,9 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
         'stay': bool(stay),
         'exit_pct': None if exit_pct is None else round(float(exit_pct), 1),
         'breadth_ok': b_ok,
-        'breadth_pct': vob['pct'],
+        'breadth_pct': b_strict['pct'],
+        'breadth_src': _src,
+        'breadth_lit': b_lit,
         'why': why,
     }
 
@@ -393,6 +495,23 @@ def next_state(prev: Optional[Dict], lit: int, lit_hold: int, need: int,
     не знає й не мусить: її справа — таймери і переходи.
     ⚠️ Дефолт `None` лишає СТАРУ арифметику (`lit >= need` / `lit_hold >=
     need`), тож усі наявні виклики й тести поводяться як раніше.
+
+    📨 **`event` — ЩО САМЕ СТАЛОСЬ, а не просто «стан змінився» (22.09).**
+    Скарга користувача по Telegram: «оповіщення не зовсім нормально
+    відпрацьовують». Причина була в тому, що читач подій дивився на `state !=
+    попередній`, а зміна стану і ПОДІЯ — різні речі:
+      • `'start'`  — корекція справді ПОЧАЛАСЬ (новий `since`);
+      • `'resume'` — повернення з `ending` у `on`: **той самий епізод**,
+        `since` НЕ змінився. Оголошувати це «новою корекцією» — брехня
+        (на скріні: два 🔻 підряд о 08:08 і 08:30 без ✅ між ними);
+      • `'end'`    — корекція справді ЗАВЕРШИЛАСЬ (`on`/`ending` → `ended`);
+      • `'abort'`  — `pending → ended`: несправдливий старт згас, а бейдж
+        «✅ завершилась» просто ПОВЕРНУВСЯ (ми ще в межах `ended_show_sec`).
+        Раніше це давало ДРУГЕ «✅ ЗАВЕРШИЛАСЬ» із ТІЄЮ САМОЮ тривалістю
+        через 10-15 хв (на скріні: 21:20 і 21:33 «тривала 17хв»);
+      • `''`       — нічого не сталось (у т.ч. тихе згасання `ended → trend`).
+    ⚠️ Відлік (`pending`/`ending`) подією НЕ є — його показує UI, але не
+    розсилає Telegram (той самий принцип, що з кандидатом банера).
     """
     p = dict(prev or {})
     st = p.get('state') if p.get('state') in STATES else 'trend'
@@ -404,6 +523,7 @@ def next_state(prev: Optional[Dict], lit: int, lit_hold: int, need: int,
     want_on = (lit >= need) if start_ok is None else bool(start_ok)
     stay_on = (lit_hold >= need) if stay is None else bool(stay)
 
+    event = ''
     if st == 'ended' and (now - ended_at) >= max(0.0, ended_show_sec):
         st, ended_at, lasted = 'trend', 0.0, 0.0
     if st in ('trend', 'ended'):
@@ -411,29 +531,40 @@ def next_state(prev: Optional[Dict], lit: int, lit_hold: int, need: int,
             if conf <= 0:
                 st, since, cand = 'on', now, 0.0
                 ended_at = lasted = 0.0
+                event = 'start'
             else:
                 st, cand = 'pending', now
     elif st == 'pending':
         if not want_on:
+            # ⚠️ Несправдливий старт ЗГАС. Якщо ми ще в межах показу минулого
+            # кінця — бейдж просто ПОВЕРТАЄТЬСЯ, нічого не «завершилось»
+            # (саме тут і народжувалось друге «✅ ЗАВЕРШИЛАСЬ» із тією самою
+            # тривалістю через 10-15 хв).
             st, cand = ('ended' if ended_at else 'trend'), 0.0
+            event = 'abort' if st == 'ended' else ''
         elif (now - cand) >= conf:
             st, since, cand = 'on', now, 0.0
             ended_at = lasted = 0.0
+            event = 'start'
     elif st == 'on':
         if not stay_on:
             if conf <= 0:
                 st, cand = 'ended', 0.0
                 ended_at, lasted = now, max(0.0, now - since)
+                event = 'end'
             else:
                 st, cand = 'ending', now
     elif st == 'ending':
         if stay_on:
+            # ⚠️ ТОЙ САМИЙ епізод: `since` не чіпаємо і НОВИМ стартом це не є.
             st, cand = 'on', 0.0
+            event = 'resume'
         elif (now - cand) >= conf:
             st, cand = 'ended', 0.0
             ended_at, lasted = now, max(0.0, now - since)
+            event = 'end'
     return {'state': st, 'since': since, 'cand_since': cand,
-            'ended_at': ended_at, 'lasted': lasted}
+            'ended_at': ended_at, 'lasted': lasted, 'event': event}
 
 
 def is_on(state: Optional[Dict]) -> bool:
