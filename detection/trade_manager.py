@@ -2079,11 +2079,15 @@ class TradeManager:
         # OB timeframe is Queue-2-specific (its own setting, default 15m — the
         # main scan TF, always computed). NOT the scanner's ob_filter_timeframe.
         ob_tf = str(s.get('q2_auto_ob_sl_tf', '15m') or '15m').lower()
+        vol_tf = ''
         try:
             from detection.smc_scanner import get_smc_scanner
             _sc = get_smc_scanner()
-            star_tf = str((_sc.get_settings().get('ob_filter_timeframe', '1h')
-                           if _sc else '1h') or '1h').lower()
+            _ss = _sc.get_settings() if _sc else {}
+            star_tf = str(_ss.get('ob_filter_timeframe', '1h') or '1h').lower()
+            # TF Volumized сканера потрібен ЗАЗДАЛЕГІДЬ — щоб останній крок
+            # ланцюга проходив через той самий дедуп, що й сходи фолбеку.
+            vol_tf = str(_ss.get('volumized_timeframe', '') or '').lower()
         except Exception:
             star_tf = '1h'
 
@@ -2108,24 +2112,50 @@ class TradeManager:
         if _sl_src not in ('1h', '15m'):
             _sl_src = '1h'
 
-        sources, _seen_tf = [], set()
+        # 🛑 СХОДИ ФОЛБЕКУ — ТІ САМІ, що в Черзі-4 (`fuel_filter.SL_FALLBACK_TFS`).
+        # Вимога користувача 22.09: «Якщо увімкнено "SL з" — 1Н OB і немає
+        # можливості його отримати, то шукаємо на 15хв або на 5хв».
+        # ⚠️ Список ІМПОРТУЄМО, а не переписуємо тут: два «однакових» ланцюги
+        # розійшлися б, і стоп залежав би від того, ХТО його ставив — рівно та
+        # розбіжність, через яку джерело колись і зробили глобальним.
+        # ⚠️ `except Exception` — файли деплояться в різному порядку; зі
+        # старішим `fuel_filter` працюємо як раніше (15m).
+        try:
+            from detection.fuel_filter import SL_FALLBACK_TFS as _SL_FB
+        except Exception:
+            _SL_FB = ('15m',)
+
+        sources, _seen_tf, _seen_vtf = [], set(), set()
 
         def _add_ob(tf, tag):
             if tf and tf not in _seen_tf:
                 _seen_tf.add(tf)
                 sources.append(lambda: _from_ob(tf, tag))
 
+        def _add_vob(tf):
+            """Volumized-блок на КОНКРЕТНОМУ TF, без повторів. Дедуп потрібен,
+            бо сканерний `volumized_timeframe` часто дорівнює одному зі сходів
+            (у користувача 5m) — інакше той самий запит ішов би двічі й лог
+            отримав би дубльовану причину пропуску."""
+            if tf and tf not in _seen_vtf:
+                _seen_vtf.add(tf)
+                sources.append(lambda: _from_volumized(tf))
+
         if _sl_src_on:
             if _sl_src == '1h':
                 _add_ob(star_tf, f'★{star_tf.upper()} (обране джерело: 1H OB)')
             else:
                 # «15m Volumized OB» — саме 15m, як написано в налаштуванні.
-                sources.append(lambda: _from_volumized('15m'))
+                _add_vob('15m')
+            for _tf in _SL_FB:            # 15m → 5m (спільні сходи)
+                _add_vob(_tf)
         _add_ob(ob_tf, ob_tf.upper())
         _add_ob(star_tf, f'★{star_tf.upper()}')
 
-        if _from_volumized not in sources:
-            sources.append(_from_volumized)
+        if vol_tf:
+            _add_vob(vol_tf)              # сканерний TF — теж через дедуп
+        else:
+            sources.append(_from_volumized)   # TF невідомий → хай вирішує сам
         sources.append(_from_pct)
 
         cand, label = None, ''

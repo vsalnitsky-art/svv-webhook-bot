@@ -52,7 +52,9 @@ def _near(got, want):
 # ── стаби середовища, які читає `_auto_ob_manual_sl` ────────────────────────
 _LOG = []
 _OB_ROWS = {}         # tf → {bias, bar_high, bar_low} | None
-_VOB = {}             # 'bullish_obs' / 'bearish_obs' → [ob]
+_VOB = {}             # 'bullish_obs' / 'bearish_obs' → [ob]  (на будь-якому TF)
+_VOB_TF = {}          # tf → такий самий dict, коли TF мусить РОЗРІЗНЯТИСЬ
+_ASKED = []           # TF, за якими справді ходили по бари (порядок сходів)
 _SETTINGS = {}
 
 
@@ -63,6 +65,10 @@ def _install_stubs():
 
     ff = types.ModuleType('detection.fuel_filter')
     ff.get_fuel_filter = lambda: types.SimpleNamespace(get_settings=lambda: dict(_SETTINGS))
+    # ⚠️ Стаб мусить віддавати ТЕ САМЕ, що справжній модуль: TM імпортує звідси
+    # сходи фолбеку SL. Без цього виклик падав би в `except` і 5m-крок не
+    # перевірявся б узагалі (пастка стаба, на яку в проєкті вже наступали).
+    ff.SL_FALLBACK_TFS = ('15m', '5m')
     sys.modules['detection.fuel_filter'] = ff
 
     db = types.ModuleType('storage.db_operations')
@@ -77,13 +83,21 @@ def _install_stubs():
         'ob_filter_timeframe': '1h', 'volumized_timeframe': '5m'})
     sys.modules['detection.smc_scanner'] = sc
 
+    def _klines(s, limit=200, interval='5m'):
+        # Запамʼятовуємо, за ЯКИЙ TF питали — інакше перевірити сходи
+        # 15m→5m неможливо: детектор отримує лише бари.
+        _ASKED.append(interval)
+        return [{'o': 1}] * 50
+
     md = types.ModuleType('detection.market_data')
-    md.get_market_data = lambda: types.SimpleNamespace(
-        fetch_klines=lambda s, limit=200, interval='5m': [{'o': 1}] * 50)
+    md.get_market_data = lambda: types.SimpleNamespace(fetch_klines=_klines)
     sys.modules['detection.market_data'] = md
 
     vo = types.ModuleType('detection.volumized_ob')
-    vo.detect_volumized_obs = lambda *a, **k: dict(_VOB)
+    # `_VOB_TF[tf]` — блок САМЕ цього TF; `_VOB` — «однаково на будь-якому»
+    # (так поводились усі наявні тести до появи сходів).
+    vo.detect_volumized_obs = lambda *a, **k: dict(
+        _VOB_TF.get(_ASKED[-1] if _ASKED else '', _VOB))
     sys.modules['detection.volumized_ob'] = vo
 
 
@@ -98,7 +112,7 @@ def _tm():
 
 
 def _reset(**over):
-    _LOG.clear(); _OB_ROWS.clear(); _VOB.clear()
+    _LOG.clear(); _OB_ROWS.clear(); _VOB.clear(); _VOB_TF.clear(); _ASKED.clear()
     _SETTINGS.clear()
     _SETTINGS.update({'q2_auto_ob_sl': True, 'q2_auto_ob_sl_buffer_pct': 0.2,
                       'q2_auto_ob_sl_tf': '15m', 'autosl_fallback_on': True,
@@ -172,6 +186,10 @@ def test_ob_tf_is_the_fallback_when_chosen_source_has_nothing():
 
 
 def test_volumized_used_when_both_ob_rows_unusable():
+    """⚠️ ЗМІНА КОНТРАКТУ (22.09, вимога користувача): «Якщо увімкнено "SL з" —
+    1Н OB і немає можливості його отримати, то шукаємо на 15хв або на 5хв».
+    Раніше тут очікувався сканерний TF (5m) — тепер після 1H першим іде 15m, і
+    саме він мусить стояти в лозі. Тест ПЕРЕПИСАНО, а не «полагоджено»."""
     _reset()
     _OB_ROWS['15m'] = {'bias': 'BULLISH', 'bar_high': 0.5150, 'bar_low': 0.5100}
     _OB_ROWS['1h'] = None
@@ -180,8 +198,56 @@ def test_volumized_used_when_both_ob_rows_unusable():
     _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
     _check(_near(p['manual_sl'], 0.5250 * 1.002),
            f'мав узятись Volumized OB, отримано {p.get("manual_sl")}')
-    _check('Volumized OB 5m' in _text(), f'джерело в лозі: {_text()}')
+    _check('Volumized OB 15m' in _text(), f'джерело в лозі: {_text()}')
     print('✓ жодного придатного OB-рядка → Volumized OB у бік угоди')
+
+
+# ═════ 🛑 СХОДИ 1H → 15m → 5m (вимога 22.09) ═══════════════════════════════
+def test_chosen_1h_missing_walks_down_to_15m_then_5m():
+    """ДОСЛІВНА вимога: немає 1H-блоку → шукаємо на 15хв, потім на 5хв.
+    Раніше 5m-кроку не було взагалі: коли 15m нічого не давав, стоп тримався
+    лише на гарантії «% від входу»."""
+    _reset(queue4_sl_source='1h')
+    _OB_ROWS['1h'] = None
+    _OB_ROWS['15m'] = None
+    _VOB_TF['15m'] = {}                                   # на 15m блоку немає
+    _VOB_TF['5m'] = {'bearish_obs': [{'top': 0.5240, 'bottom': 0.5210,
+                                      'breaker': False}]}
+    p = _pos()
+    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
+    _check(_near(p['manual_sl'], 0.5240 * 1.002),
+           f'мав спуститись на 5m, отримано {p.get("manual_sl")}')
+    _check('Volumized OB 5m' in _text(), f'у лозі має бути саме 5m: {_text()}')
+    _check(_ASKED.index('15m') < _ASKED.index('5m'),
+           f'15m мусить питатись ПЕРШИМ (тісніший стоп не має обганяти): {_ASKED}')
+    print('✓ 1H немає → 15m → 5m, порядок спадний')
+
+
+def test_ladder_does_not_ask_the_same_timeframe_twice():
+    """Сканерний `volumized_timeframe` часто дорівнює одному зі сходів (у
+    користувача 5m). Без дедупу той самий запит ішов би двічі, а в лог падала б
+    дубльована причина пропуску."""
+    _reset(queue4_sl_source='1h')
+    _OB_ROWS['1h'] = None
+    _OB_ROWS['15m'] = None
+    p = _pos()
+    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
+    _check(len(_ASKED) == len(set(_ASKED)),
+           f'кожен TF мав питатись один раз, отримано {_ASKED}')
+    print('✓ жоден таймфрейм не питається двічі')
+
+
+def test_guarantee_still_last_when_no_timeframe_has_a_block():
+    """Сходи НЕ скасовують «🛡 Стоп ЗАВЖДИ»: не дав жоден TF — лишається
+    відсоток від входу, і угода не висить без стопа."""
+    _reset(queue4_sl_source='1h', autosl_fallback_pct=2.0)
+    _OB_ROWS['1h'] = None
+    _OB_ROWS['15m'] = None
+    p = _pos()
+    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
+    _check(_near(p['manual_sl'], 0.51360 * 1.02),
+           f'мала спрацювати гарантія 2% від входу, отримано {p.get("manual_sl")}')
+    print('✓ жоден TF не дав блоку → гарантія «% від входу»')
 
 
 def test_volumized_skips_breaker():
@@ -1207,6 +1273,9 @@ if __name__ == '__main__':
     test_chosen_source_wins_for_every_trade()
     test_ob_tf_is_the_fallback_when_chosen_source_has_nothing()
     test_volumized_used_when_both_ob_rows_unusable()
+    test_chosen_1h_missing_walks_down_to_15m_then_5m()
+    test_ladder_does_not_ask_the_same_timeframe_twice()
+    test_guarantee_still_last_when_no_timeframe_has_a_block()
     test_volumized_skips_breaker()
     test_percent_fallback_guarantees_a_stop()
     test_long_fallback_is_below_entry()

@@ -181,6 +181,75 @@ def test_sl_falls_back_when_chosen_source_missing():
     print('✓ фолбек на друге джерело (угода не лишається без SL)')
 
 
+def _ff_sl_tf(one_h=None, by_tf=None, price=None):
+    """Як `_ff_sl`, але Volumized-джерело РОЗРІЗНЯЄ таймфрейм — інакше сходи
+    15m→5m перевірити неможливо (старий стаб віддавав той самий блок на будь-який
+    TF). `by_tf` = {'15m': (top, bottom, tf) | None, '5m': …}, плюс список
+    запитаних TF у порядку звернення."""
+    asked = []
+
+    def _vob(sym, side, tf='15m'):
+        asked.append(tf)
+        return (by_tf or {}).get(tf)
+
+    o = FF.__new__(FF)
+    o._q4_ob_bounds_1h = lambda sym: one_h
+    o._q4_ob_bounds_vob = _vob
+    o._tm_has_position = lambda sym, is_real: True
+    o._fuel_dir_smoothed = lambda sym: {'mark_price': price}
+    tm = _TM(price=price)
+    o._get_tm = lambda: tm
+    return o, tm, asked
+
+
+def test_sl_ladder_is_1h_then_15m_then_5m():
+    """🛑 ВИМОГА 22.09 дослівно: «Якщо увімкнено "SL з" — 1Н OB і немає
+    можливості його отримати, то шукаємо на 15хв або на 5хв». Порядок СПАДНИЙ:
+    молодший TF дає ТІСНІШИЙ стоп, тож 5m не має обганяти 15m."""
+    _check(tuple(ffmod.SL_FALLBACK_TFS) == ('15m', '5m'),
+           f'сходи фолбеку мусять бути 15m→5m, отримано {ffmod.SL_FALLBACK_TFS}')
+    o, tm, asked = _ff_sl_tf(one_h=None, by_tf={}, price=100.0)
+    o._q4_set_vob_sl('BTCUSDT', 'LONG', dict(_S, queue4_sl_source='1h'))
+    _check(asked == ['15m', '5m'],
+           f'після 1H мали спитати 15m, потім 5m; спитали {asked}')
+    print('✓ сходи 1H OB → 15m Volumized → 5m Volumized')
+
+
+def test_sl_falls_back_to_5m_when_15m_has_no_block():
+    """Раніше фолбек був ОДИН (15m): не було блоку — Черга-4 лишала угоду без
+    стопа, і рятувала лише гарантія «% від входу» в TM."""
+    lg = _Log().install()
+    o, tm, asked = _ff_sl_tf(one_h=None, by_tf={'15m': None,
+                                                '5m': (104.0, 96.0, '5m')},
+                             price=100.0)
+    o._q4_set_vob_sl('BTCUSDT', 'LONG', dict(_S, queue4_sl_source='1h'))
+    _check(len(tm.calls) == 1 and abs(tm.calls[0][1] - 96.0 * 0.999) < 1e-9,
+           f'мав узятись 5m-блок (96·0.999), отримано {tm.calls}')
+    _check('5m' in lg.text, f'у лозі має бути видно, що рівень із 5m: {lg.text}')
+    print('✓ немає 1H і 15m → беремо 5m (і це видно в лозі)')
+
+
+def test_sl_source_15m_still_ends_with_1h():
+    """Обрано молодший блок → 15m → 5m → 1H. 1H НЕ зникає, просто стає останнім."""
+    o, tm, asked = _ff_sl_tf(one_h=(110.0, 90.0, '1h', 'BULLISH'),
+                             by_tf={}, price=100.0)
+    o._q4_set_vob_sl('BTCUSDT', 'LONG', dict(_S, queue4_sl_source='15m'))
+    _check(asked == ['15m', '5m'], f'мали спитати обидва молодші TF: {asked}')
+    _check(len(tm.calls) == 1 and abs(tm.calls[0][1] - 90.0 * 0.999) < 1e-9,
+           f'останнім фолбеком мав лишитись 1H-блок: {tm.calls}')
+    print('✓ вибір «15m»: 15m → 5m → 1H OB')
+
+
+def test_ladder_is_shared_with_trade_manager():
+    """⚠️ ДВА авто-SL уже колись розійшлись (у Черзі-4 «1H OB», а в лозі «OB
+    15M»). Сходи мусять бути ОДНИМ списком, який TM ІМПОРТУЄ, а не переписує."""
+    src = open(os.path.join(_ROOT, 'detection', 'trade_manager.py'),
+               encoding='utf-8').read()
+    _check('SL_FALLBACK_TFS' in src,
+           'trade_manager мусить брати сходи з fuel_filter, а не свої')
+    print('✓ сходи фолбеку — один список на обидва шляхи авто-SL')
+
+
 def test_sl_not_set_when_no_block_at_all():
     o, tm = _ff_sl(one_h=None, vob=None)
     o._q4_set_vob_sl('BTCUSDT', 'LONG', dict(_S))
@@ -496,6 +565,10 @@ if __name__ == '__main__':
     test_sl_short_uses_top_plus_buffer()
     test_sl_source_15m_picks_volumized()
     test_sl_falls_back_when_chosen_source_missing()
+    test_sl_ladder_is_1h_then_15m_then_5m()
+    test_sl_falls_back_to_5m_when_15m_has_no_block()
+    test_sl_source_15m_still_ends_with_1h()
+    test_ladder_is_shared_with_trade_manager()
     test_sl_not_set_when_no_block_at_all()
     test_sl_bad_source_value_falls_back_to_1h()
     test_sl_rejects_1h_block_with_opposite_bias()
