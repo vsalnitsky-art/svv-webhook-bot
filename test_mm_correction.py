@@ -1587,6 +1587,123 @@ def test_ui_exposes_the_second_source():
     print('✓ 📐 друге джерело видно і керовано з UI')
 
 
+
+# ═══ 10. 🧭 КЛЕМП «ВИХІД ≤ ВХІД» МУСИТЬ ГОВОРИТИ (скарга 22.09) ══════════════
+# Дослівно: «📦 Кінець, коли проти <, % не зберігається, якщо 📦 VOB проти ≥, %
+# менше цього значення.» Поле СПРАВДІ зводилось — бекенд не дає виходу бути
+# вищим за вхід (вивернутий гістерезис). Але робив це МОВЧКИ, а поля розділені
+# роздільником і трьома чекбоксами, тож звʼязок був невидимий і читався як
+# «введене число губиться».
+
+
+def _js_fn(name):
+    """Витягти ОДНУ функцію зі сторінки (шукаємо по `function <name>(`)."""
+    i = _HTML.index('function ' + name + '(')
+    depth, j, started = 0, i, False
+    while j < len(_HTML):
+        if _HTML[j] == '{':
+            depth += 1
+            started = True
+        elif _HTML[j] == '}':
+            depth -= 1
+            if started and depth == 0:
+                return _HTML[i:j + 1]
+        j += 1
+    raise AssertionError('не знайшов кінець функції ' + name)
+
+
+def _run_exit_sync(entry, exit_val, clamp):
+    """Прогнати СПРАВЖНІЙ JS сторінки під node на крихітному фейк-DOM."""
+    import json
+    import subprocess
+    js = _js_fn('_mmcExitSync') + (
+        "\nconst _els = {"
+        "'ff-mm-corr-vob': {value: %s, max: '100'},"
+        "'ff-mm-corr-vobexit': {value: %s, max: '100'},"
+        "'mm-corr-exit-note': {style: {display: 'none'}, textContent: ''}};\n"
+        "const document = { getElementById: (id) => _els[id] || null };\n"
+        "_mmcExitSync(%s);\n"
+        "console.log(JSON.stringify({exit: _els['ff-mm-corr-vobexit'].value,"
+        " max: _els['ff-mm-corr-vobexit'].max,"
+        " shown: _els['mm-corr-exit-note'].style.display !== 'none',"
+        " text: _els['mm-corr-exit-note'].textContent}));\n"
+    ) % (json.dumps(str(entry)), json.dumps(str(exit_val)),
+         'true' if clamp else 'false')
+    r = subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=30)
+    _check(r.returncode == 0, 'JS упав: ' + r.stderr[:400])
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+def test_the_backend_rule_itself_is_unchanged():
+    """Саме ПРАВИЛО правильне і лишається: вихід вище за вхід означав би
+    «завершити корекцію на тій самій ширині, за якої вона щойно почалась»."""
+    src = _fn_src(_FF_SRC, 'get_settings')
+    _check("s['mm_corr_vob_exit_pct'] = float(s['mm_corr_vob_pct'])" in src,
+           'клемп мусить лишитись останньою лінією оборони для API')
+    print('✓ 🧭 правило «вихід ≤ вхід» лишається в силі')
+
+
+def test_the_page_says_the_value_was_clamped_instead_of_eating_it():
+    """Головне: клемп більше НЕ мовчазний."""
+    _check('id="mm-corr-exit-note"' in _HTML, 'немає місця для пояснення')
+    r = _run_exit_sync(entry=60, exit_val=70, clamp=True)
+    _check(r['exit'] == '60', 'показане число мусить збігтись зі збереженим: %s' % r)
+    _check(r['shown'], 'пояснення мусить зʼявитись')
+    for _must in ('70', '60', 'РАНІШЕ', '📦 VOB проти ≥'):
+        _check(_must in r['text'], 'у поясненні немає «%s»: %s' % (_must, r['text']))
+    print('✓ 🧭 зведення назване вголос, із числами і причиною')
+
+
+def test_the_note_warns_while_typing_before_anything_is_saved():
+    """Попередження ДО збереження — інакше людина дізнається постфактум."""
+    r = _run_exit_sync(entry=60, exit_val=70, clamp=False)
+    _check(r['exit'] == '70', 'під час набору число НЕ чіпаємо')
+    _check(r['shown'] and 'буде зведено' in r['text'],
+           'мусить попередити в майбутньому часі: %s' % r)
+    print('✓ 🧭 попередження зʼявляється ще під час набору')
+
+
+def test_a_valid_pair_says_nothing_at_all():
+    """Коректна пара — тиша: «все гаразд» окремим рядком це шум."""
+    for _pair in ((60, 50), (60, 60), (45, 45)):
+        r = _run_exit_sync(entry=_pair[0], exit_val=_pair[1], clamp=True)
+        _check(not r['shown'], 'зайве попередження на %s: %s' % (_pair, r))
+        _check(r['exit'] == str(_pair[1]), 'коректне число не чіпаємо: %s' % r)
+    print('✓ 🧭 коректна пара не шумить')
+
+
+def test_the_field_ceiling_follows_the_entry_threshold_live():
+    """Стеля поля йде за живим входом — браузер опирається сам. І саме тому
+    синк висить на ОБОХ полях: ЗНИЗИТИ вхід — це та сама ситуація, що підняти
+    вихід, і саме так у неї найчастіше і потрапляють."""
+    r = _run_exit_sync(entry=45, exit_val=45, clamp=False)
+    _check(r['max'] == '45', 'стеля мусить дорівнювати входу: %s' % r)
+    _i_in = _HTML.index('id="ff-mm-corr-vob"')
+    _i_out = _HTML.index('id="ff-mm-corr-vobexit"')
+    for _name, _i in (('входу', _i_in), ('виходу', _i_out)):
+        _frag = _HTML[_i:_i + 400]
+        _check('_mmcExitSync(false)' in _frag, 'поле %s не синкає під час набору' % _name)
+        _check('_mmcExitSync(true)' in _frag, 'поле %s не зводить перед збереженням' % _name)
+    print('✓ 🧭 стеля жива, синк висить на ОБОХ полях')
+
+
+def test_lowering_the_entry_is_the_same_situation():
+    """Найчастіший шлях у скаргу: вхід опустили НИЖЧЕ вже збереженого виходу."""
+    r = _run_exit_sync(entry=45, exit_val=50, clamp=True)
+    _check(r['exit'] == '45' and r['shown'],
+           'зниження входу мусить так само зводити і пояснювати: %s' % r)
+    print('✓ 🧭 зниження входу пояснюється так само, як підняття виходу')
+
+
+def test_saved_settings_refresh_the_hint():
+    """Після завантаження налаштувань стан пояснення мусить відповідати
+    ЗБЕРЕЖЕНИМ числам, а не лишатись від попереднього набору."""
+    _i = _HTML.index("_mmcExitSync === 'function'")
+    _j = _HTML.index("_mmCorrSummary === 'function'")
+    _check(_i < _j, 'синк мусить іти в тому самому місці, де решта підсумків')
+    print('✓ 🧭 підказка оновлюється після завантаження налаштувань')
+
+
 if __name__ == '__main__':
     _fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in _fns:
