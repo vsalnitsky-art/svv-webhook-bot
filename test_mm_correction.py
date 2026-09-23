@@ -177,6 +177,7 @@ def _mk(trends=None, vob_on=True, **settings):
     # 🧾 Таймер сирого логу (20.09) і знімок монітора (звідки лог бере ціну в
     # момент блокування). Нове поле стану ЗАВЖДИ додавати сюди.
     ff._mm_corr_log_at = 0.0
+    ff._mm_corr_override = 0.0   # ⏸ ручна пауза (нове поле стану — див. пастку `_mk`)
     ff._mm_snapshot = {}
     ff._engine_skip = {}
     s = {'mm_bias_confirm_sec': 0, 'mm_corr_confirm_sec': 0,
@@ -584,7 +585,11 @@ def _run_js(body):
     pre = '''
 const _els = {};
 function _el(id) {
-  if (!_els[id]) _els[id] = {id, style:{}, innerHTML:'', textContent:'', title:''};
+  // ⚠️ `dataset` теж мусить бути: справжній елемент його має ЗАВЖДИ, і саме
+  // через нього кнопка ⏸ паузи захищається від перемальовування під час
+  // запиту. Без нього тест падав би «на рівному місці» (та сама пастка
+  // фейк-DOM, що вже ловили на `querySelectorAll`).
+  if (!_els[id]) _els[id] = {id, style:{}, dataset:{}, innerHTML:'', textContent:'', title:''};
   return _els[id];
 }
 const document = { getElementById: _el };
@@ -1830,6 +1835,209 @@ def test_the_page_warns_when_the_two_bands_overlap():
            f'це попередження, а не довідка: {out["color"]}')
     _check(out['exit'] == '30', 'число все одно НЕ зводимо')
     print('✓ 🧭 перекриття смуг названо, але число не зводиться')
+
+
+
+
+# ═══ 11. ⏸ РУЧНА ПАУЗА ВЕРДИКТУ + ДРУГИЙ РЯДОК (вимога 23.09) ════════════
+# Дослівно: «Додай кнопку ручного зупинення корекції, тобто все залишається
+# рахуватись відображатись як і зазвичай, а це лише дасть можливість раніше
+# дати можливість відслідковувати VOB в таблиці "Сканер ліквідності". Кнопка
+# вдавлена — то працюємо ніби як немає стану "Корекція". Стан кнопки
+# змінюється або ще одним натиском або автоматично коли Корекція дійсно
+# закінчилась.»
+def _in_correction(**over):
+    """Двигун із ЖИВОЮ підтвердженою корекцією проти банера LONG."""
+    coins = {f'C{i}USDT': ('LONG', 60, 'down') for i in range(8)}
+    ff = _mk(trends={s: 'SHORT' for s in coins}, **over)
+    ff._persist_state = lambda: None
+    c = _tick(ff, _snap(**coins))
+    _check(c['state'] == 'on' and c['blocking'], f'потрібна жива корекція: {c}')
+    return ff, coins
+
+
+def test_pause_lifts_the_gate_but_leaves_the_verdict_alone():
+    """ГОЛОВНЕ: пауза знімає ВОРОТА, а не детектор. Стан, ознаки й таймер
+    мусять лишитись такими самими — інакше «працюємо ніби немає корекції»
+    перетворилось би на «корекцію не рахуємо»."""
+    ff, coins = _in_correction()
+    before = dict(ff._mm_corr)
+    r = ff.set_correction_override()
+    _check(r['ok'] and r['override'], f'кнопка мусить вдавитись: {r}')
+    _check(ff.correction_blocks_open()[0] is False,
+           'при вдавленій кнопці ворота мусять бути зняті')
+    c = dict(ff._mm_corr)
+    _check(c['override'] is True and c['blocking'] is False, f'{c}')
+    for k in ('state', 'since', 'lit', 'need', 'layers', 'exit_pct'):
+        _check(c.get(k) == before.get(k), f'«{k}» змінилось паузою: {c.get(k)}')
+    # І далі рахується: наступний такт не знімає паузу і не ламає вердикт.
+    c2 = _tick(ff, _snap(**coins))
+    _check(c2['state'] == 'on' and c2['override'] and not c2['blocking'],
+           f'такт мусить зберегти і корекцію, і паузу: {c2}')
+    print('✓ ⏸ пауза знімає лише ворота — вердикт рахується як зазвичай')
+
+
+def test_second_press_returns_the_gate():
+    ff, coins = _in_correction()
+    ff.set_correction_override()
+    r = ff.set_correction_override()
+    _check(r['ok'] and r['override'] is False, f'другий натиск відпускає: {r}')
+    _check(_tick(ff, _snap(**coins))['blocking'],
+           'ворота мусять повернутись')
+    _check(ff.correction_blocks_open()[0] is True, 'і блокувати відкриття')
+    print('✓ ⏸ другий натиск повертає ворота')
+
+
+def test_pause_releases_itself_when_the_correction_really_ends():
+    """«Автоматично, коли Корекція дійсно закінчилась» — без цього наступна,
+    ВЖЕ ІНША корекція мовчки не блокувала б відкриття."""
+    ff, coins = _in_correction()
+    ff.set_correction_override()
+    # Ринок повернувся за банером → корекція завершується.
+    up = {s: ('LONG', 60, 'up') for s in coins}
+    ff._mm_vob_trends = lambda: {'on': True, 'tf': '5m',
+                                 'trends': {s: 'LONG' for s in coins}}
+    c = _tick(ff, _snap(**up), now=NOW + 600)
+    _check(c['state'] != 'on', f'корекція мусила завершитись: {c}')
+    _check(not c.get('override'), f'пауза мусить зніматись САМА: {c}')
+    _check(float(ff._mm_corr_override or 0) == 0.0, 'позначку теж знято')
+    print('✓ ⏸ пауза знімається сама, коли корекція завершилась')
+
+
+def test_pause_belongs_to_the_episode_not_to_a_flag():
+    """Пауза привʼязана до `since` ЕПІЗОДУ: НОВА корекція блокує знову, навіть
+    якщо кнопку не відпускали руками."""
+    ff, coins = _in_correction()
+    ff.set_correction_override()
+    _check(ff.correction_blocks_open()[0] is False, 'пауза діє')
+    # Той самий стан, але інший епізод (машину станів скинуто).
+    ff._mm_corr_st = {}
+    ff._mm_lever_hist = []
+    c = _tick(ff, _snap(**coins), now=NOW + 3600)
+    _check(c['state'] == 'on' and float(c['since']) > NOW,
+           f'це вже НОВА корекція: {c}')
+    _check(c['blocking'] and not c.get('override'),
+           f'нова корекція мусить блокувати: {c}')
+    print('✓ ⏸ пауза не переноситься на НАСТУПНУ корекцію')
+
+
+def test_pause_cannot_be_armed_without_a_correction():
+    """Вдавити кнопку над станом, якого немає, означало б, що наступна
+    корекція стартує вже призупиненою."""
+    coins = {f'C{i}USDT': ('LONG', 60, 'up') for i in range(8)}
+    ff = _mk(trends={s: 'LONG' for s in coins})
+    ff._persist_state = lambda: None
+    _tick(ff, _snap(**coins))
+    r = ff.set_correction_override(True)
+    _check(not r['ok'] and 'нема' in r['reason'],
+           f'мусить бути ЧЕСНА відмова з причиною: {r}')
+    _check(float(ff._mm_corr_override or 0) == 0.0, 'нічого не запамʼятали')
+    print('✓ ⏸ без корекції паузу поставити не можна — і сказано чому')
+
+
+def test_pause_survives_a_restart():
+    """`botupdate` роблять часто; без персисту кнопка «відпускалась» сама, а
+    ворота мовчки вмикались назад посеред того самого епізоду."""
+    ff, _ = _in_correction()
+    ff.set_correction_override()
+    _check('mm_corr_override' in _fn_src(_FF_SRC, '_persist_state'),
+           'паузу не зберігають у блобі стану')
+    _check('mm_corr_override' in _fn_src(_FF_SRC, '_load_state'),
+           'паузу не відновлюють на старті')
+    print('✓ ⏸ пауза переживає рестарт')
+
+
+def test_the_raw_log_says_why_the_gate_was_off():
+    """Семпл із `blocking=0` посеред живої корекції інакше читався б як дефект
+    детектора. Окремої КОЛОНКИ не заводимо — для цього є `note`."""
+    _DBROWS.clear()
+    ff, coins = _in_correction()
+    ff.set_correction_override()
+    ff._mm_corr_log_at = 0.0
+    ff._mm_corr_log_write('sample')
+    rows = _rows('sample')
+    _check(rows and rows[-1].get('blocking') is False,
+           f'ворота зняті — це має бути в рядку: {rows}')
+    _check('пауза' in (rows[-1].get('note') or ''),
+           f'причина мусить бути названа: {rows[-1]}')
+    print('✓ 🧾 у сирому лозі видно, що ворота зняла ручна пауза')
+
+
+def test_ui_moved_the_summary_to_a_second_line():
+    """Вимога 1 (23.09): «🧭 кінець коли ЗА… · ознак 1/2, 🚫 відкриття
+    зупинено — перенеси на другий рядок»."""
+    i = _HTML.index('id="mm-corr-row"')
+    j = _HTML.index('id="mm-limited-hint"')
+    row = _HTML[i:j]
+    _check('id="mm-corr-line2"' in row, 'другого рядка немає')
+    line2 = row[row.index('id="mm-corr-line2"'):]
+    for el in ('mm-corr-exit', 'mm-corr-count', 'mm-corr-block',
+               'mm-corr-override'):
+        _check(f'id="{el}"' in line2, f'{el} мусить стояти в ДРУГОМУ рядку')
+    _check('flex-basis:100%' in line2.split('>')[0],
+           'перенос ЦІЛИМ блоком тримає flex-basis, а не надія на ширину')
+    # Перший рядок лишає РІВНО стан/таймер/розклад шарів.
+    head = row[:row.index('id="mm-corr-line2"')]
+    for el in ('mm-corr-state', 'mm-corr-timer', 'mm-corr-layers'):
+        _check(f'id="{el}"' in head, f'{el} мусить лишитись у ПЕРШОМУ рядку')
+    print('✓ 🖥 підсумок і ворота переїхали на другий рядок')
+
+
+def test_js_draws_the_pressed_button_and_its_own_state():
+    """Стан «пауза» мусить відрізнятись від «тумблер вимкнено» — інакше
+    причина знову стає здогадкою."""
+    out = _run_js(r'''
+const now = Math.floor(Date.now()/1000);
+const L = [{key:'vob',icon:'📦',name:'VOB проти',pct:72,need:60,ok:true,lit:true,n:20,note:'',role:'both'},
+           {key:'price',icon:'💹',name:'Ціна проти',pct:80,need:60,ok:true,lit:true,n:18,note:'',role:'start'}];
+const g = id => document.getElementById(id);
+const seen = {};
+mmRenderCorr({state:'on', since: now-900, lit:2, need:2, layers:L, enabled:true,
+              blocking:true, exit_pct:70, breadth_for_pct:4.2, breadth_exit_on:true});
+seen.gate = {txt:g('mm-corr-block').textContent, btn:g('mm-corr-override').textContent,
+             show:g('mm-corr-override').style.display};
+mmRenderCorr({state:'on', since: now-900, lit:2, need:2, layers:L, enabled:true,
+              blocking:false, override:true, exit_pct:70, breadth_for_pct:4.2,
+              breadth_exit_on:true});
+seen.paused = {txt:g('mm-corr-block').textContent, btn:g('mm-corr-override').textContent,
+               exit:g('mm-corr-exit').innerHTML, cnt:g('mm-corr-count').innerHTML,
+               lay:g('mm-corr-layers').innerHTML};
+mmRenderCorr({state:'trend', lit:0, need:2, layers:[], enabled:true, blocking:false});
+seen.trend = {btn:g('mm-corr-override').style.display};
+console.log(JSON.stringify(seen));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['gate']['btn'] == '⏸ Пауза' and d['gate']['show'] != 'none',
+           f'кнопка мусить бути видна в корекції: {d["gate"]}')
+    _check('зупинено' in d['gate']['txt'], f'ворота: {d["gate"]}')
+    _check('ВДАВЛЕНА' in d['paused']['btn'], f'вдавлений стан: {d["paused"]}')
+    _check('пауза вручну' in d['paused']['txt'],
+           f'стан воріт мусить називати ПРИЧИНУ: {d["paused"]}')
+    _check('кінець коли ЗА' in d['paused']['exit'], f'{d["paused"]}')
+    _check('ознак' in d['paused']['cnt'], f'{d["paused"]}')
+    # ⚠️ Шукаємо САМЕ маркери підсумку, а не слова: «кінець» трапляється ще й
+    # у ПІДКАЗЦІ шару ширини («вирішує і початок, і кінець»).
+    _check('🧭 кінець коли' not in d['paused']['lay']
+           and 'ознак <b' not in d['paused']['lay'],
+           f'у першому рядку лишився підсумок: {d["paused"]["lay"]}')
+    _check(d['trend']['btn'] == 'none',
+           'без корекції кнопки бути не повинно')
+    print('✓ 🖥 кнопка паузи: вдавлений стан і власний підпис воріт')
+
+
+def test_the_button_goes_through_its_own_route():
+    _check('/api/fuel-filter/mm-corr/override' in _HTML, 'сторінка не кличе маршрут')
+    _check("@app.route('/api/fuel-filter/mm-corr/override'" in _FLASK_SRC,
+           'маршруту немає у flask_app (урок «URL фронта ≠ маршрут»)')
+    fn = _fn_src(_FLASK_SRC, 'api_fuel_filter_mm_corr_override')
+    _check('set_correction_override' in fn,
+           'маршрут мусить лише делегувати — правило живе в двигуні')
+    for bad in ('_mm_corr_override =', 'state ==', 'since'):
+        _check(bad not in fn, f'логіка паузи протекла в маршрут: {bad}')
+    _check('if (!r.ok)' in _HTML.split('async function mmCorrOverride')[1][:1200],
+           'HTTP-статус мусить перевірятись окремо (урок submitManualTp1)')
+    print('✓ 🚪 кнопка ходить своїм маршрутом, логіка лишилась у двигуні')
 
 
 if __name__ == '__main__':

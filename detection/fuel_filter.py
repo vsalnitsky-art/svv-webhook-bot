@@ -941,6 +941,11 @@ class FuelFilterDaemon:
         # подання для UI (стан + розклад шарів), збирається щотакту.
         self._mm_corr_st: Dict = {}
         self._mm_corr: Dict = {}
+        # ⏸ РУЧНА ПАУЗА ВЕРДИКТУ (вимога 23.09). Зберігаємо `since` ЕПІЗОДУ, для
+        # якого натиснули кнопку, а не голий `True`: так пауза гарантовано
+        # стосується САМЕ тієї корекції, яку людина бачила, і знімається сама,
+        # щойно епізод закінчився або почався НОВИЙ (див. `_corr_override_on`).
+        self._mm_corr_override: float = 0.0
         # Історія важеля У БІК БАНЕРА [(ts, п.п.)] для шару «📉 важіль просів».
         # Скидається на ЗМІНІ напрямку банера: пік попереднього тренду до
         # нового стосунку не має.
@@ -2224,6 +2229,13 @@ class FuelFilterDaemon:
             # Час із майбутнього — той самий запобіжник, що для банера.
             if float(self._mm_corr_st.get('since') or 0) > time.time() + 60:
                 self._mm_corr_st = {}
+            # ⏸ Ручна пауза теж переживає рестарт: `botupdate` роблять часто, і
+            # без цього кнопка «відпускалась» сама, а ворота мовчки вмикались
+            # назад посеред того самого епізоду.
+            try:
+                self._mm_corr_override = float(st.get('mm_corr_override') or 0)
+            except (TypeError, ValueError):
+                self._mm_corr_override = 0.0
             # Restore the entry queue PER SESSION. We persist the queue now and
             # bring it back on boot, tied to the session it belonged to. The
             # session-flip logic in _update_btc_verdict handles staleness: on the
@@ -2319,6 +2331,7 @@ class FuelFilterDaemon:
                 # триває 1г 20хв» обнулялась би на кожному `botupdate`, а
                 # заразом знімалось би й блокування відкриттів.
                 'mm_corr_st': dict(self._mm_corr_st or {}),
+                'mm_corr_override': float(self._mm_corr_override or 0),
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -3857,6 +3870,10 @@ class FuelFilterDaemon:
                 'lever_drop': _g('lever', 'pct'), 'lever_need': _g('lever', 'need'),
                 'confirm_sec': c.get('confirm_sec'),
                 'blocking': bool(c.get('blocking')),
+                # ⏸ Чому ворота не блокували — інакше семпл із `blocking=0`
+                # посеред живої корекції читався б як дефект детектора.
+                # Окремої КОЛОНКИ не заводимо: `note` для цього і є.
+                'note': ('⏸ пауза вручну' if c.get('override') else ''),
                 # Скільки монет ворота вже зупинили В ЦЬОМУ епізоді — саме це
                 # число показує ЦІНУ блокування, коли потім звіряєш вердикт із
                 # тим, куди пішов ринок.
@@ -3992,7 +4009,13 @@ class FuelFilterDaemon:
                             float(settings.get('mm_corr_confirm_sec', 300) or 0),
                             start_ok=res.get('start_ok'), stay=res.get('stay'))
         _was = (self._mm_corr_st or {}).get('state')
-        blocking = bool(_mc.is_on(st) and settings.get('mm_corr_block_open', True))
+        # ⏸ РУЧНА ПАУЗА — знімає ЛИШЕ ворота, решта лишається як є (вимога
+        # 23.09 дослівно: «все залишається рахуватись відображатись як і
+        # зазвичай»). Тому вона стоїть РІВНО тут, в одному множнику з
+        # тумблером: стан, таймер, ознаки, лог і Telegram не змінюються.
+        _ovr = self._corr_override_on(st)
+        blocking = bool(_mc.is_on(st) and settings.get('mm_corr_block_open', True)
+                        and not _ovr)
         with self._lock:
             self._mm_lever_hist = hist
             self._mm_corr_st = st
@@ -4020,6 +4043,10 @@ class FuelFilterDaemon:
                 'lever': round(lever, 1), 'lever_peak': round(peak, 1),
                 'vob_on': vob.get('on'), 'vob_tf': vob.get('tf'),
                 'blocking': blocking, 'block_on': bool(settings.get('mm_corr_block_open', True)),
+                # ⏸ Пауза ВИДИМА окремим полем, а не лише через `blocking`:
+                # «ворота вимкнені тумблером» і «ворота призупинені вручну» —
+                # РІЗНІ стани, і кнопка мусить показувати, що вона вдавлена.
+                'override': _ovr,
                 'ts': int(now),
             }
         # 🧾 ПОДІЯ — у лог, СТАН — ні. «Почалась» і «завершилась» трапляються
@@ -4429,6 +4456,94 @@ class FuelFilterDaemon:
         with self._lock:
             return dict(getattr(self, '_mm_corr', {}) or {})
 
+    def _corr_override_on(self, st: Dict) -> bool:
+        """⏸ Чи діє зараз РУЧНА ПАУЗА вердикту — і САМОЗНЯТТЯ, коли вже не діє.
+
+        **Вимога користувача (23.09), дослівно:** «Додай кнопку ручного
+        зупинення корекції… Кнопка вдавлена — то працюємо ніби як немає стану
+        "Корекція". Стан кнопки змінюється або ще одним натиском або
+        автоматично коли Корекція дійсно закінчилась.»
+
+        ⚠️ **Пауза привʼязана до ЕПІЗОДУ (`since`), а не до булевого прапорця.**
+        Саме це й дає обіцяне «автоматично»: епізод завершився (стан вийшов із
+        `on`/`ending`) або почався НОВИЙ (інший `since`) → кнопка відпускається
+        САМА. Голий `True` довелось би знімати окремою гілкою на кожному
+        переході, і рано чи пізно одну з них забули б — тоді наступна, ВЖЕ ІНША
+        корекція мовчки не блокувала б відкриття.
+        ⚠️ Знімаємо ТУТ, у читачі, а не в такті: цей метод кличе і сам такт, і
+        `/api/…/state`, тож стан не може «залипнути» через порядок викликів.
+        """
+        try:
+            ov = float(getattr(self, '_mm_corr_override', 0) or 0)
+        except (TypeError, ValueError):
+            ov = 0.0
+        if ov <= 0:
+            return False
+        state = (st or {}).get('state')
+        since = float((st or {}).get('since') or 0)
+        # Корекції вже немає АБО це вже інша корекція → пауза відпрацювала.
+        if state not in ('on', 'ending') or abs(since - ov) > 1.0:
+            self._mm_corr_override = 0.0
+            return False
+        return True
+
+    def set_correction_override(self, on: Optional[bool] = None) -> Dict:
+        """⏸ Натиснути/відпустити кнопку ручної паузи → {ok, override, reason}.
+
+        `on=None` — ПЕРЕМИКАЧ (саме так кличе кнопка), `True`/`False` — явно.
+
+        ⚠️ Паузу можна поставити ЛИШЕ на живу корекцію (`on`/`ending`): інакше
+        «вдавлена кнопка» висіла б над станом, якого немає, і наступна корекція
+        стартувала б уже призупиненою — тобто детектор мовчки не працював би.
+        ⚠️ Стан ОДРАЗУ персиститься: інакше `botupdate` через хвилину повернув
+        би ворота, а кнопка на екрані лишилась би вдавленою.
+        ⚠️ Дію пишемо в 🧾 Лог — це рішення ЛЮДИНИ, що знімає ворота відкриття;
+        воно мусить лишити слід так само, як ✋ ручне відкриття.
+        """
+        with self._lock:
+            st = dict(self._mm_corr_st or {})
+        cur = self._corr_override_on(st)
+        want = (not cur) if on is None else bool(on)
+        if want == cur:
+            return {'ok': True, 'override': cur, 'reason': 'без змін'}
+        if want:
+            state = st.get('state')
+            since = float(st.get('since') or 0)
+            if state not in ('on', 'ending') or since <= 0:
+                return {'ok': False, 'override': False,
+                        'reason': 'корекції зараз немає — нема чого призупиняти'}
+            self._mm_corr_override = since
+        else:
+            self._mm_corr_override = 0.0
+        # Подання оновлюємо ОДРАЗУ, щоб кнопка не «відпружинювала» до
+        # наступного такту (він може бути через 30с).
+        with self._lock:
+            if self._mm_corr:
+                self._mm_corr['override'] = want
+                if want:
+                    self._mm_corr['blocking'] = False
+                else:
+                    self._mm_corr['blocking'] = bool(
+                        self._mm_corr.get('state') == 'on'
+                        and self._mm_corr.get('block_on', True))
+        try:
+            self._persist_state()
+        except Exception:
+            pass
+        try:
+            from detection.activity_log import log_activity
+            log_activity('ALL', 'event',
+                         ('⏸ КОРЕКЦІЯ призупинена ВРУЧНУ — ворота відкриття '
+                          'знято, вердикт і далі рахується. Знімається другим '
+                          'натиском або САМА, коли корекція завершиться.')
+                         if want else
+                         '▶️ Ручну паузу корекції ЗНЯТО — ворота відкриття '
+                         'працюють як зазвичай.',
+                         side=st.get('bias') or '', source='MMM')
+        except Exception:
+            pass
+        return {'ok': True, 'override': want, 'reason': ''}
+
     def correction_blocks_open(self) -> tuple:
         """🚫 Чи ЗАБОРОНЕНО зараз відкривати угоди через корекцію → (bool, причина).
 
@@ -4446,6 +4561,9 @@ class FuelFilterDaemon:
         вузлах: `_open` (усі черги) і `on_signal` (прямі відкриття).
         ⚠️ Помилка/недоступність → НЕ блокуємо: тихо зупинити торгівлю через
         збій читання не можна (fail-open, як у 🚦 воріт напрямку).
+        ⚠️ ⏸ РУЧНА ПАУЗА (`set_correction_override`) знімає ворота, не чіпаючи
+        вердикт: вона вже врахована у полі `blocking`, тож тут другої перевірки
+        НЕ заводимо — одне рішення мусить мати одне джерело.
         """
         try:
             c = self.mm_correction()

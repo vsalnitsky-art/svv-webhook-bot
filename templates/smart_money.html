@@ -2558,8 +2558,19 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span id="mm-corr-state" style="font-weight:800;font-size:0.8rem;padding:3px 10px;border-radius:6px;white-space:nowrap">—</span>
                 <span id="mm-corr-timer" class="ff-flip" style="white-space:nowrap"></span>
                 <span id="mm-corr-layers" style="font-size:0.7rem;font-family:monospace;color:#8b93a7;display:flex;gap:10px;flex-wrap:wrap"></span>
-                <span style="flex:1"></span>
-                <span id="mm-corr-block" style="display:none;font-size:0.68rem;font-weight:700;padding:3px 9px;border-radius:6px;white-space:nowrap"></span>
+                <!-- 🧭 ДРУГИЙ РЯДОК (вимога 23.09): «кінець коли ЗА ≥…», лічильник
+                     ознак і стан воріт стоять ОКРЕМО від розкладу шарів —
+                     в один рядок вони не вміщались і зливались в суцільну смугу.
+                     `flex-basis:100%` у тому самому flex-контейнері = перенос
+                     ЦІЛИМ блоком (той самий прийом, що з підписом ✋ Сигналу). -->
+                <div id="mm-corr-line2" style="flex-basis:100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:0.7rem;font-family:monospace">
+                    <span id="mm-corr-exit" style="display:none"></span>
+                    <span id="mm-corr-count" style="color:#8b93a7"></span>
+                    <span style="flex:1"></span>
+                    <span id="mm-corr-block" style="display:none;font-size:0.68rem;font-weight:700;padding:3px 9px;border-radius:6px;white-space:nowrap"></span>
+                    <!-- ⏸ Ручна пауза ВЕРДИКТУ: знімає лише ворота відкриття. -->
+                    <button type="button" id="mm-corr-override" onclick="mmCorrOverride()" style="display:none;font-size:0.66rem;font-weight:700;padding:3px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;border:1px solid rgba(148,163,184,0.45);background:rgba(148,163,184,0.12);color:#cbd5e1"></button>
+                </div>
             </div>
             <!-- Режим економії: МММ рахується НЕ по всьому watchlist. Мовчати
                  про це не можна — коротка таблиця читалась би як «бот сліпий». -->
@@ -12487,19 +12498,32 @@ function mmRenderCorr(corr) {
             return `<span style="color:${col}" title="${tip}">`
                 + `${l.icon} ${l.name} <b>${l.pct}${u}</b>/${l.need}${u}${st1}</span>`;
         });
-        // 🧭 Поки корекція триває, головне питання — «коли вона завершиться».
-        // Відповідь = поріг виходу за шириною, тож він стоїть прямо тут.
+        lay.innerHTML = parts.join('');
+    }
+    // 🧭 ДРУГИЙ РЯДОК. «Коли завершиться» і «скільки ознак» — це ПІДСУМОК, а не
+    // черговий шар; разом із розкладом вони не вміщались в один рядок (вимога
+    // 23.09 — перенести). Значення ті самі, змінилось лише місце.
+    const ex = document.getElementById('mm-corr-exit');
+    if (ex) {
         if ((c.state === 'on' || c.state === 'ending') && c.exit_pct != null
             && c.breadth_exit_on !== false) {
             const ready = c.breadth_ok === true;
-            parts.push(`<span style="color:${ready ? '#4ade80' : '#fbbf24'}" `
-                + `title="${(c.why || '')}">🧭 кінець коли ЗА <b>≥${c.exit_pct}%</b>`
+            ex.style.display = '';
+            ex.style.color = ready ? '#4ade80' : '#fbbf24';
+            ex.title = c.why || '';
+            ex.innerHTML = `🧭 кінець коли ЗА <b>≥${c.exit_pct}%</b>`
                 + (c.breadth_for_pct != null
                    ? ` <span style="color:#8b93a7">(зараз ${c.breadth_for_pct}%)</span>` : '')
-                + (ready ? ' ✓' : '') + '</span>');
+                + (ready ? ' ✓' : '');
+        } else {
+            ex.style.display = 'none';
+            ex.innerHTML = '';
         }
-        lay.innerHTML = parts.join('') + (parts.length
-            ? ` <span style="color:#8b93a7">· ознак <b style="color:${v.col}">${c.lit || 0}</b>/${c.need || 0}</span>` : '');
+    }
+    const cnt = document.getElementById('mm-corr-count');
+    if (cnt) {
+        cnt.innerHTML = (c.layers || []).length
+            ? `ознак <b style="color:${v.col}">${c.lit || 0}</b>/${c.need || 0}` : '';
     }
     // 🚫 Ворота відкриття. Стан «корекція є, але блокування вимкнене» теж
     // показуємо: мовчання читалось би як «бот усе одно стоїть».
@@ -12513,6 +12537,18 @@ function mmRenderCorr(corr) {
             bl.title = 'Поки триває корекція, нові угоди не відкриваються '
                 + '(обидва напрямки). ✋ Ручні відкриття працюють. Записи з '
                 + 'черг не виселяються — вони відкриються після корекції.';
+        } else if (c.state === 'on' && c.override) {
+            // ⏸ Пауза — ОКРЕМИЙ стан, а не «тумблер вимкнено»: інакше причина
+            // знову стала б здогадкою (той самий принцип, що з чотирма
+            // причинами порожнього Manual TP).
+            bl.style.display = '';
+            bl.textContent = '⏸ пауза вручну — відкриття дозволені';
+            bl.style.color = '#93c5fd';
+            bl.style.background = 'rgba(56,189,248,0.14)';
+            bl.title = 'Кнопка «⏸ Пауза» вдавлена: бот працює так, ніби стану '
+                + '«Корекція» немає. Вердикт і далі рахується й показується. '
+                + 'Знімається другим натиском або САМА, коли корекція '
+                + 'завершиться (чи почнеться нова).';
         } else if (c.state === 'on') {
             bl.style.display = '';
             bl.textContent = '⚠️ відкриття дозволені';
@@ -12522,6 +12558,34 @@ function mmRenderCorr(corr) {
                 + 'корекції» вимкнено — бот відкриває угоди як зазвичай.';
         } else {
             bl.style.display = 'none';
+        }
+    }
+    // ⏸ КНОПКА РУЧНОЇ ПАУЗИ. Показуємо ЛИШЕ коли є що призупиняти (`on`/
+    // `ending`) — «вдавлена» кнопка над станом, якого немає, означала б, що
+    // наступна корекція стартує вже призупиненою.
+    const ob = document.getElementById('mm-corr-override');
+    if (ob && !ob.dataset.busy) {
+        const live = (c.state === 'on' || c.state === 'ending');
+        if (!live) { ob.style.display = 'none'; }
+        else {
+            ob.style.display = '';
+            const on = !!c.override;
+            ob.textContent = on ? '⏸ ПАУЗА ВДАВЛЕНА' : '⏸ Пауза';
+            ob.style.borderColor = on ? '#38bdf8' : 'rgba(148,163,184,0.45)';
+            ob.style.background = on ? 'rgba(56,189,248,0.22)' : 'rgba(148,163,184,0.12)';
+            ob.style.color = on ? '#e0f2fe' : '#cbd5e1';
+            ob.style.boxShadow = on ? 'inset 0 1px 3px rgba(0,0,0,0.5)' : 'none';
+            ob.title = on
+                ? 'Натисніть, щоб ПОВЕРНУТИ ворота корекції. Зараз бот '
+                  + 'відкриває угоди так, ніби корекції немає; вердикт, ознаки '
+                  + 'й таймер рахуються далі. Пауза знімається САМА, коли '
+                  + 'корекція завершиться або почнеться нова.'
+                : 'Ручна пауза: працювати так, ніби стану «Корекція» немає '
+                  + '(зокрема раніше відпрацьовувати VOB по монетах із '
+                  + 'таблиці 💧 Сканера ліквідності). Розрахунок і показ '
+                  + 'вердикту НЕ змінюються — знімаються лише ворота '
+                  + 'відкриття. Скасувати: другим натиском або автоматично '
+                  + 'після завершення корекції.';
         }
     }
     row.title = 'Корекція = рух ПРОТИ напрямку банера, видний ОДРАЗУ по багатьох '
@@ -12541,13 +12605,43 @@ function mmRenderCorr(corr) {
         + (c.breadth_exit_on === false
             ? '• ⚠️ «кінець вирішує ширина» ВИМКНЕНО — кінець ухвалюють голоси ознак, '
               + 'тобто корекція може завершитись при майже всіх монетах проти банера.\n'
-            : '• завершити корекцію може ЛИШЕ ширина: поки 📦 ≥ '
-              + `${c.exit_pct != null ? c.exit_pct : '—'}%, кінець заблоковано. `
+            : '• завершити корекцію може ЛИШЕ ширина: поки ЗА банером менше ніж '
+              + `${c.exit_pct != null ? c.exit_pct : '—'}% монет, кінець заблоковано. `
               + '💹 ціна і 📉 важіль мають право лише ПРОДОВЖИТИ її — вікна 15 і 30 хв '
               + 'заслабкі, щоб судити про кінець багатогодинної корекції.\n')
         + (c.why ? c.why + '\n' : '')
         + 'Обидві події ще й підтверджуються часом, а пороги входу й виходу різні '
         + '(гістерезис) — щоб вердикт не миготів.';
+}
+// ⏸ РУЧНА ПАУЗА ВЕРДИКТУ (вимога 23.09). Кнопка лише ПЕРЕМИКАЄ ворота —
+// розрахунок, таймер і показ корекції лишаються як були.
+async function mmCorrOverride() {
+    const b = document.getElementById('mm-corr-override');
+    if (!b) return;
+    // `busy` не дає 15-с поллю перемалювати кнопку під час запиту (той самий
+    // прийом, що з ✋ Сигналом у банері рішення).
+    b.dataset.busy = '1';
+    const old = b.textContent;
+    b.textContent = '⏳ …';
+    try {
+        const r = await fetch('/api/fuel-filter/mm-corr/override', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        });
+        // ⚠️ HTTP-статус перевіряємо ОКРЕМО: без цього 404/500 виглядав би як
+        // «спрацювало» (урок `submitManualTp1`).
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        if (!j.ok) { alert('Не вдалось: ' + (j.reason || 'невідома причина')); }
+        if (_mmCorr) _mmCorr.override = !!j.override;
+    } catch (e) {
+        alert('Помилка: ' + e);
+        b.textContent = old;
+    } finally {
+        delete b.dataset.busy;
+        mmRenderCorr();
+        loadFuelFilterStatus();
+    }
 }
 // Число з поля детектора корекції. ⚠️ Саме так, а не `parseFloat(v) || d`:
 // 0 тут ЗМІСТОВНИЙ («поріг не вимагати»), а `||` мовчки підмінив би його

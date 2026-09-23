@@ -3504,6 +3504,28 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/mm-corr/override', methods=['POST'])
+    def api_fuel_filter_mm_corr_override():
+        """⏸ Кнопка «ручна пауза корекції» — зняти/повернути ВОРОТА відкриття.
+
+        Вимога 23.09: «Кнопка вдавлена — то працюємо ніби як немає стану
+        "Корекція"». Тіло `{on: true|false}` або порожнє = ПЕРЕМИКАЧ.
+
+        ⚠️ Маршрут нічого не вирішує сам — уся логіка (зокрема САМОЗНЯТТЯ, коли
+        епізод закінчився) живе в `ff.set_correction_override`, бо її читає ще
+        й такт двигуна. Другої копії правила не заводимо.
+        """
+        data = request.get_json(silent=True) or {}
+        on = data.get('on', None)
+        try:
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'Fuel Filter недоступний'})
+            r = ff.set_correction_override(None if on is None else bool(on))
+            return jsonify({'ok': bool(r.get('ok')), **r})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/mm-corr-log/clear', methods=['POST'])
     def api_fuel_filter_mm_corr_log_clear():
         """🗑 Очистити лог корекції — прямо з гармошки 🔻 Корекція.

@@ -94,6 +94,7 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._mm_corr_skip_logged = {}
     # 🧾 Таймер сирого логу корекції (20.09) — знову ТЕ САМЕ правило.
     ff._mm_corr_log_at = 0.0
+    ff._mm_corr_override = 0.0   # ⏸ ручна пауза (нове поле стану — див. пастку `_mk`)
     ff._mm_state_since = {}
     ff._mm_price_hist = {}
     ff._mm_decision = {}
