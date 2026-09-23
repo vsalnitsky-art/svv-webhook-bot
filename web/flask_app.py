@@ -3518,6 +3518,10 @@ def register_api_routes(app):
         data = request.get_json(silent=True) or {}
         on = data.get('on', None)
         try:
+            # ⚠️ Імпорт ЛОКАЛЬНИЙ, як у кожному сусідньому маршруті: на рівні
+            # модуля імені `get_fuel_filter` НЕМАЄ (без цього рядка кнопка
+            # падала з «name 'get_fuel_filter' is not defined»).
+            from detection.fuel_filter import get_fuel_filter
             ff = get_fuel_filter()
             if not ff:
                 return jsonify({'ok': False, 'reason': 'Fuel Filter недоступний'})

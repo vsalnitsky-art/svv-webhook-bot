@@ -2040,6 +2040,56 @@ def test_the_button_goes_through_its_own_route():
     print('✓ 🚪 кнопка ходить своїм маршрутом, логіка лишилась у двигуні')
 
 
+def test_the_route_actually_runs_not_just_reads_right():
+    """Кейс 23.09: «Не вдалось: name 'get_fuel_filter' is not defined».
+
+    Попередній замок перевіряв лише ТЕКСТ маршруту — і пропустив, що в ньому
+    немає локального `from detection.fuel_filter import get_fuel_filter`
+    (на рівні модуля flask_app цього імені НЕМАЄ). Тепер тіло маршруту
+    ВИКОНУЄТЬСЯ в ізольованому просторі імен модуля: невідоме ім'я = падіння.
+    """
+    import ast, types
+    tree = ast.parse(_FLASK_SRC)
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+              and n.name == 'api_fuel_filter_mm_corr_override')
+    fn.decorator_list = []
+    mod = ast.Module(body=[fn], type_ignores=[])
+    calls = []
+
+    class _FF:
+        def set_correction_override(self, on=None):
+            calls.append(on)
+            return {'ok': True, 'override': True, 'reason': ''}
+
+    fake = types.ModuleType('detection.fuel_filter')
+    fake.get_fuel_filter = lambda: _FF()
+    saved = {k: sys.modules.get(k) for k in ('detection', 'detection.fuel_filter')}
+    pkg = saved['detection'] or types.ModuleType('detection')
+    sys.modules['detection'] = pkg
+    sys.modules['detection.fuel_filter'] = fake
+    had_attr = hasattr(pkg, 'fuel_filter')
+    old_attr = getattr(pkg, 'fuel_filter', None)
+    pkg.fuel_filter = fake
+    try:
+        ns = {'request': types.SimpleNamespace(get_json=lambda silent=True: {}),
+              'jsonify': lambda d: d}
+        exec(compile(mod, 'flask_app_route', 'exec'), ns)
+        out = ns['api_fuel_filter_mm_corr_override']()
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+        if had_attr:
+            pkg.fuel_filter = old_attr
+        elif hasattr(pkg, 'fuel_filter'):
+            delattr(pkg, 'fuel_filter')
+    _check(out.get('ok') is True, f'маршрут мусить виконатись: {out}')
+    _check(calls == [None], f'порожнє тіло = ПЕРЕМИКАЧ (on=None): {calls}')
+    print('✓ 🐞 маршрут ⏸ паузи реально виконується (не лише «правильно виглядає»)')
+
+
 if __name__ == '__main__':
     _fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in _fns:
