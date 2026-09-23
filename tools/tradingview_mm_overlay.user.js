@@ -317,16 +317,16 @@
         elDir.style.color = dirColor(dir);
         elDir.title = MM_HELP;
 
-        // МММ старий — в ОДНОМУ ряду з головним «5% · рівновага» (розмір шрифту свій).
+        // МММ LiQ — в ОДНОМУ ряду з головним «5% · рівновага» (розмір шрифту свій).
         if (elOld) {
             if (d.mm_old && d.mm_old.dir != null) {
                 const mo = d.mm_old, st = mo.status;
                 const dl = st === 'LONG' ? '🟢 LONG' : (st === 'SHORT' ? '🔴 SHORT' : '⚪');
                 const col = st === 'LONG' ? '#4ade80' : (st === 'SHORT' ? '#f87171' : '#8b93a7');
-                elOld.innerHTML = `<span style="color:#4b5563">·</span> МММ `
+                elOld.innerHTML = `<span style="color:#4b5563">·</span> МММ LiQ `
                     + `<span style="color:${col}">${dl}</span> ${mo.strength}%`;
                 elOld.style.display = '';
-                elOld.title = 'МММ (старий показник) — за розташуванням кластерів ((fa−fb)/den).';
+                elOld.title = 'МММ LiQ — за розташуванням кластерів ліквідації ((fa−fb)/den).';
             } else {
                 elOld.innerHTML = ''; elOld.style.display = 'none';
             }

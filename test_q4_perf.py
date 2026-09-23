@@ -255,7 +255,7 @@ def test_second_direction_costs_nothing():
     a = o._q4_layers_from(snap, 'LONG', _SETTINGS)
     b = o._q4_layers_from(snap, 'SHORT', _SETTINGS)
     _check(len(io) == n_after_snapshot, f'арифметика шарів зробила I/O: {io}')
-    _check(n_after_snapshot == 2, f'знімок = рівно 2 читання (Новий+Старий МММ), got {io}')
+    _check(n_after_snapshot == 2, f'знімок = рівно 2 читання (Новий+МММ LiQ), got {io}')
     _check(a['count'] == 4 and b['count'] == 0,
            f'LONG=4/4, SHORT=0/4; отримано {a["count"]}/{b["count"]}')
     print('✓ B1: один знімок → обидва напрямки (2-й коштує нуль)')
@@ -302,7 +302,7 @@ def test_snapshot_toggles_win_over_late_setting_change():
     o._fuel_dir_legacy = lambda s: {'status': 'LONG', 'strength': 30}
     o._setup_cache = {}
     s_off = dict(_SETTINGS, queue4_old_mm_on=False)
-    snap = o._q4_snapshot('ADAUSDT', s_off)          # Старий МММ НЕ читали
+    snap = o._q4_snapshot('ADAUSDT', s_off)          # МММ LiQ НЕ читали
     r = o._q4_layers_from(snap, 'LONG', dict(_SETTINGS))  # а тумблер уже ON
     keys = [l['key'] for l in r['layers']]
     _check('mm_old' not in keys,

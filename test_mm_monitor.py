@@ -75,7 +75,7 @@ def _install_log():
 def _mk(limited=False, enabled=True, mon=True):
     """Мінімальний демон: лише те, чого торкається монітор.
 
-    ⚠️ `_fuel_dir_legacy` підмінено стабом: монітор показує САМЕ СТАРИЙ МММ
+    ⚠️ `_fuel_dir_legacy` підмінено стабом: монітор показує САМЕ МММ LiQ
     (вимога 15.09), і тести мають ганяти той самий шлях, що прод."""
     import threading
     ff = FF.__new__(FF)
@@ -116,7 +116,7 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._settings = {'enabled': enabled, 'mmm_limited_mode': limited,
                     'mm_monitor_enabled': mon}
     ff.get_settings = lambda: dict(ff._settings)
-    # Старий МММ: той самий поріг ±0.1 і та сама сила |dir|×100, що в коді.
+    # МММ LiQ: той самий поріг ±0.1 і та сама сила |dir|×100, що в коді.
     ff._legacy = {}
     ff._legacy_calls = []
 
@@ -151,10 +151,10 @@ def _fuels(**pairs):
 
 
 def _cap(ff, **pairs):
-    """Один такт двигуна: `pairs` — це значення СТАРОГО МММ.
+    """Один такт двигуна: `pairs` — це значення МММ LiQ.
 
     ⚠️ Новий МММ навмисно подаємо ПРОТИЛЕЖНИМ (`-v`) — тож КОЖЕН тест заразом
-    доводить, що монітор бере саме СТАРИЙ показник, а не той, що лежить поруч
+    доводить, що монітор бере саме МММ LiQ, а не той, що лежить поруч
     у `fuels`.
 
     ⚠️ Кожен виклик СУНЕ ВІРТУАЛЬНИЙ ГОДИННИК на `CYCLE_SECS` — приріст сили
@@ -667,7 +667,7 @@ def test_toggle_default_is_on_and_is_a_real_setting():
 
 def test_toggle_off_stops_the_work_not_just_the_view():
     """⚠️ ГОЛОВНЕ ПРО ТУМБЛЕР: вимкнено → знімок НЕ будується взагалі.
-    Це і є економія — старий МММ по 200+ монетах щотакту не рахується.
+    Це і є економія — МММ LiQ по 200+ монетах щотакту не рахується.
     Якби ми лише ховали таблицю, робота лишилась би, а тумблер брехав би."""
     ff = _mk(mon=False)
     _cap(ff, BTCUSDT=0.5, ETHUSDT=-0.5)
@@ -741,11 +741,11 @@ console.log(JSON.stringify({off, nodata, filtered}));
     print('✓ JS: порожня таблиця називає СВОЮ причину')
 
 
-# ═══════════ 8. САМЕ СТАРИЙ МММ (вимога 15.09 #2) ════════════════════════
+# ═══════════ 8. САМЕ МММ LiQ (вимога 15.09 #2) ════════════════════════
 def test_monitor_shows_the_LEGACY_mm_not_the_new_one():
     """Дослівно: «Мені потрібно МММ саме старого зразка показник».
     Старий = `_fuel_dir_legacy` (сирий (fa−fb)/den по кластерах liq-map) —
-    ТОЙ САМИЙ, що живить шар «Старий МММ» у Черзі-4."""
+    ТОЙ САМИЙ, що живить шар «МММ LiQ» у Черзі-4."""
     ff = _mk()
     # Старий каже SHORT −0.40, новий у той самий момент — LONG +0.40.
     ff._legacy = {'BTCUSDT': -0.40}
@@ -753,7 +753,7 @@ def test_monitor_shows_the_LEGACY_mm_not_the_new_one():
     r = ff.mm_monitor_state()['rows'][0]
     _check(r['mm'] == 'SHORT', f'показано НОВИЙ МММ замість старого: {r}')
     _check(r['dir'] == -0.4 and r['strength'] == 40, r)
-    print('✓ у таблиці СТАРИЙ МММ (новий поруч — і його НЕ показуємо)')
+    print('✓ у таблиці МММ LiQ (новий поруч — і його НЕ показуємо)')
 
 
 def test_capture_uses_the_shared_legacy_function_and_no_extra_network():
@@ -763,10 +763,10 @@ def test_capture_uses_the_shared_legacy_function_and_no_extra_network():
     fn = next(n for n in ast.walk(ast.parse(_SRC))
               if isinstance(n, ast.FunctionDef) and n.name == '_mm_capture')
     body = ast.dump(fn)
-    _check('_fuel_dir_legacy' in body, 'знімок не бере СТАРИЙ МММ')
+    _check('_fuel_dir_legacy' in body, 'знімок не бере МММ LiQ')
     for bad in ('get_liquidation_map', 'fetch_klines', 'get_ticker'):
         _check(bad not in body, f'знімок ходить у мережу («{bad}»)')
-    print('✓ знімок бере старий МММ спільною функцією, без зайвої мережі')
+    print('✓ знімок бере МММ LiQ спільною функцією, без зайвої мережі')
 
 
 def test_price_still_comes_from_the_snapshot_because_legacy_has_none():
@@ -780,22 +780,22 @@ def test_price_still_comes_from_the_snapshot_because_legacy_has_none():
 
 
 def test_a_coin_without_legacy_data_is_skipped():
-    """Немає старого МММ по монеті → рядка немає. Вигадувати «рівновагу» не
+    """Немає МММ LiQ по монеті → рядка немає. Вигадувати «рівновагу» не
     можна: це різні речі («даних нема» ≠ «тиску нема»)."""
     ff = _mk()
     ff._legacy = {'BTCUSDT': 0.5}          # ETH свідомо без legacy
     ff._mm_capture(_fuels(BTCUSDT=-0.5, ETHUSDT=-0.5))
     got = [r['symbol'] for r in ff.mm_monitor_state()['rows']]
     _check(got == ['BTCUSDT'], got)
-    print('✓ монета без старого МММ у таблицю не потрапляє')
+    print('✓ монета без МММ LiQ у таблицю не потрапляє')
 
 
 def test_ui_labels_the_column_as_the_old_mm():
     i = _HTML.index('id="mm-table"')
     head = _HTML[i:i + 1600]
-    _check('Старий МММ' in head, 'колонка не підписана як СТАРИЙ МММ')
+    _check('МММ LiQ' in head, 'колонка не підписана як МММ LiQ')
     _check('Черзі-4' in head, 'у підказці не сказано, що це той самий показник')
-    print('✓ UI: колонка підписана «Старий МММ»')
+    print('✓ UI: колонка підписана «МММ LiQ»')
 
 
 # ═══════════ 9. КОЛОНКА «СИЛА» ПРИБРАНА (вимога 15.09 #3) ════════════════
@@ -1046,7 +1046,7 @@ def test_ui_has_growth_column_with_timer_and_sorting():
     # ⚠️ Кількість колонок звіряємо зі СКЛАДОМ, а не з магічним числом: список
     # нижче — це і є контракт таблиці, тож додана колонка мусить бути названа
     # ТУТ, а не просто зсунути число.
-    _cols = ['Символ', '📍 Стан', 'Старий МММ', '⏱ У стані', 'Сила росте',
+    _cols = ['Символ', '📍 Стан', 'МММ LiQ', '⏱ У стані', 'Сила росте',
              '⏱ Росте', 'Ціна', 'Рух', '🔮 1H', '🔮 4H']
     for _c in _cols:
         _check(_c in tbl, f'немає колонки «{_c}»')
@@ -1474,7 +1474,7 @@ def test_ui_trades_tables_got_the_column_and_the_right_colspan():
                        ('tm-shadow-open-table', 'No paper positions')):
         i = _HTML.index(f'id="{tid}"')
         tbl = _HTML[i:_HTML.index('</table>', i)]
-        _check('Старий МММ' in tbl, f'{tid}: немає заголовка колонки')
+        _check('МММ LiQ' in tbl, f'{tid}: немає заголовка колонки')
         n = len(_re.findall(r'<th[\s>]', tbl))
         m = _re.search(r'colspan="(\d+)"', tbl)
         _check(m and int(m.group(1)) == n,
@@ -1485,7 +1485,7 @@ def test_ui_trades_tables_got_the_column_and_the_right_colspan():
     _check('ffFuelCell(' in fn, 'колонка малює МММ своїм способом')
     _check(_HTML.count('${oldMmCellHTML(p)}') == 2,
            'комірка підключена не в обидві таблиці (real + paper)')
-    print('✓ UI: колонка «🧮 Старий МММ» у real+paper, спільний віджет')
+    print('✓ UI: колонка «🧮 МММ LiQ» у real+paper, спільний віджет')
 
 
 # ═══ 15. 🩹 БОРОТЬБА З МЕРЕХТІННЯМ: вікно замість «попереднього такту» ════
@@ -2016,8 +2016,8 @@ def test_the_panel_keeps_the_accordion_contract():
     print('✓ гармошка монітора пережила переїзд')
 
 
-# ═══ 20. 🧮 ПРАВИЛО «Старий МММ ⚖ → вихід» ГАСИТЬ АВТОМАТИКУ АВТОПІЛОТА ════
-# Вимога дослівно (17.09): «Якщо увімкнено 🧮 Старий МММ ⚖ → вихід — потрібно
+# ═══ 20. 🧮 ПРАВИЛО «МММ LiQ ⚖ → вихід» ГАСИТЬ АВТОМАТИКУ АВТОПІЛОТА ════
+# Вимога дослівно (17.09): «Якщо увімкнено 🧮 МММ LiQ ⚖ → вихід — потрібно
 # автоматично вимкнути все, що стосується автоматичного 🎯 Автопілот; якщо
 # Manual TP-1 або Manual TP-2 виставлені вручну, бот має реагувати на ручні
 # дані. І тумблер ⚖️ TP-1 переводить SL у беззбиток має працювати».
@@ -2263,7 +2263,7 @@ def test_the_page_draws_the_state_timer_with_the_shared_ticker():
 def test_the_coverage_breakdown_explains_every_missing_coin():
     ff = _mk()
     ff._legacy = {'AAAUSDT': 0.5, 'BBBUSDT': -0.6, 'CCCUSDT': 0.02}
-    # DDD двигун узяв у роботу, але СТАРИЙ МММ по ній ще не порахувався.
+    # DDD двигун узяв у роботу, але МММ LiQ по ній ще не порахувався.
     ff._mm_capture(_fuels(AAAUSDT=-0.5, BBBUSDT=0.6, CCCUSDT=-0.02,
                           DDDUSDT=-0.4), now=ff._clock[0])
     cov = ff.mm_monitor_state()['coverage']
@@ -2355,7 +2355,7 @@ def test_a_fresh_boot_says_the_first_snapshot_is_being_computed():
 # Навіть у таблиці відкритих угод не відображається»). Учора тут стояв замок
 # `test_the_master_switch_off_is_named_not_silent`: вимкнений ❤️ Fuel
 # Auto-Filter мав ЧЕСНО СКАЗАТИ, що знімка не буде. Тепер знімок ПРОСТО Є —
-# бо він живить не лише монітор, а й колонку «🧮 Старий МММ» в угодах і
+# бо він живить не лише монітор, а й колонку «🧮 МММ LiQ» в угодах і
 # ПРАВИЛО ВИХОДУ `use_mm_flat_exit`. Замок переписано, а не «полагоджено».
 
 def _mm_only_ff():
@@ -2380,7 +2380,7 @@ def test_the_master_switch_off_still_builds_the_mm_snapshot():
     _check('SOLUSDT' in ff._mm_snapshot,
            f'монета у ВІДКРИТІЙ угоді мусить бути у знімку: {list(ff._mm_snapshot)}')
     _check(ff.mm_snapshot_for(['SOLUSDT']).get('SOLUSDT'),
-           'колонка «🧮 Старий МММ» в угодах лишилась порожня')
+           'колонка «🧮 МММ LiQ» в угодах лишилась порожня')
     _check('BTCUSDT' in ff._registered,
            'без реєстрації liq-map просто не сканує ці монети')
     st = ff.mm_monitor_state()

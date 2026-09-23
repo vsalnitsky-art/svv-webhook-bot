@@ -2514,10 +2514,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
              сам не відкриває. Джерело чисел — ТОЙ САМИЙ знімок двигуна, що
              живить колонку «МММ» у чергах (одне джерело правди). -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px">
-            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mm')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mm-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🧮 МММ-монітор <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— живий СТАРИЙ МММ по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mm')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mm-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🧮 МММ-монітор <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— живий МММ LiQ по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
             <div style="display:flex;align-items:center;gap:10px">
                 <span id="mm-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
-                <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🧮 МММ-монітор. ВИМКНЕНО — бот НЕ рахує знімок напрямків (економія: старий МММ по всіх монетах щотакту не рахується), таблиця порожня, групове відкриття недоступне. Сам моніторинг нічого не відкриває автоматично — лише показує стан і дає ✋ відкрити обране вручну.">
+                <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🧮 МММ-монітор. ВИМКНЕНО — бот НЕ рахує знімок напрямків (економія: МММ LiQ по всіх монетах щотакту не рахується), таблиця порожня, групове відкриття недоступне. Сам моніторинг нічого не відкриває автоматично — лише показує стан і дає ✋ відкрити обране вручну.">
                     <input type="checkbox" id="ff-mm-monitor-enabled" checked onchange="saveFuelFilterSettings()">
                     <span class="slider"></span>
                 </label>
@@ -2785,7 +2785,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                  роботі» з таблиці більше НЕ зникають — вони
                                  підписані станом. -->
                             <th data-mmsort="status" onclick="mmSort('status')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Монета в угоді або в черзі з таблиці НЕ зникає — просто видно, що вона вже в роботі, і галочка для ✋ групового відкриття їй недоступна. Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="СТАРИЙ показник МММ (той самий, що живить шар «Старий МММ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">Старий МММ<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="Показник МММ LiQ (той самий, що живить шар «МММ LiQ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">МММ LiQ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="state" onclick="mmSort('state')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан МММ — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Відлік починається заново на КОЖНІЙ зміні стану (у тому числі при переході в рівновагу і назад). ⚖ рівновага — теж стан: «скільки монета вже без напрямку» не менш важливо за «скільки вона в LONG». Разовий пропуск монети у знімку таймер НЕ збиває, а рестарт бота його не обнуляє — момент старту зберігається. Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="delta" onclick="mmSort('delta')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за ВІКНО СПОСТЕРЕЖЕННЯ (~3 хв, тобто три оновлення джерела). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. Базою є НАЙСТАРІШЕ значення у вікні, а не попередній такт: разовий пропуск даних більше не стирає показник, а дрібне тремтіння цілого числа сили не перемикає стрілку. Поки історії менше за одне оновлення джерела — показуємо «—», а не вигаданий приріст. Фактичне вікно по кожному рядку — у підказці комірки. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="grow" onclick="mmSort('grow')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу сила МММ росте БЕЗПЕРЕРВНО. Ріст ТРИВАЄ, поки виконуються ДВІ умови: (1) за вікном спостереження приріст вищий за поріг і (2) сила не відкотилась від свого піку в цьому вікні більше ніж на той самий поріг. Перша умова прибирає мерехтіння — дрібне тремтіння таймер не збиває; друга не дає таймеру тягнути «росте» ще хвилини після того, як сила вже розвернулась. «—» = зараз не росте. Клік — сортувати (найдовший ріст зверху).">⏱ Росте<span class="ff-sort-arrow"></span></th>
@@ -3533,7 +3533,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div><!-- /q3-body -->
             <!-- 🎯 Queue 4 «Усі шари» -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
-                <div style="font-size:0.74rem;font-weight:700;color:#93c5fd;min-width:0;cursor:pointer;user-select:none" onclick="toggleQueuePanel('q4')" title="Клік — згорнути/розгорнути цю чергу"><span id="q4-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🎯 Черга-4 · Усі шари <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— приймає ВСІ сигнали (Alert mode), обидва боки. Відкриває, коли ВСІ 4 шари (Новий МММ · Старий МММ · Готовність · Запас) збіглись за напрямком сигналу. Протилежний сигнал стирає попередній запис. Тумблер OFF → черга не працює.</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#93c5fd;min-width:0;cursor:pointer;user-select:none" onclick="toggleQueuePanel('q4')" title="Клік — згорнути/розгорнути цю чергу"><span id="q4-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🎯 Черга-4 · Усі шари <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— приймає ВСІ сигнали (Alert mode), обидва боки. Відкриває, коли ВСІ 4 шари (Новий МММ · МММ LiQ · Готовність · Запас) збіглись за напрямком сигналу. Протилежний сигнал стирає попередній запис. Тумблер OFF → черга не працює.</span></div>
                 <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
                     <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк Чергу-4 «Усі шари».">
                         <input type="checkbox" id="ff-queue4-enabled" onchange="saveFuelFilterSettings()">
@@ -3547,8 +3547,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <summary class="sm-settings-summary">⚙️ Налаштування (Черга-4) <span class="sm-settings-summary-right" style="color:#8b93a7">складність шарів</span></summary>
                 <div style="padding:10px 12px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,0.06)">
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна сила НОВОГО МММ у бік сигналу. Тумблер зліва: вимкнено → шар НЕ рахується (не вантажимо сервер) і колонка ховається."><input type="checkbox" id="ff-queue4-new-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Новий МММ»">Новий МММ ≥ <select id="ff-queue4-mmnew" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Режим шару «Старий МММ». Старий МММ — контраріанський магніт ліквідності: на падаючій монеті зашкалює в LONG, тобто СИСТЕМНО проти тренду й не давав збиратись 4/4. • Вимагати — має збігтись за напрямком + сила ≥ обраної складності. • Ігнорувати (рек.) — не враховувати у ворота, Черга-4 стає 3-шаровою (складність не діє). • Контр-OK — зараховувати, якщо Старий МММ НЕ сильно ПРОТИ (сила ПРОТИ ≥ складності = блок)."><input type="checkbox" id="ff-queue4-old-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Старий МММ» (режим + Складність)">Старий МММ у воротах <select id="ff-queue4-mmold-mode" onchange="saveFuelFilterSettings(); _ffQueue4OldSync()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="require">вимагати</option><option value="ignore">ігнорувати</option><option value="contra_ok">контр-OK</option></select></label>
-                    <label id="ff-queue4-mmold-band-lbl" style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Складність для режиму «вимагати»/«контр-OK»: яку МІНІМАЛЬНУ силу має тримати Старий МММ (у бік сигналу — для «вимагати»; проти сигналу — поріг блокування для «контр-OK»). У режимі «ігнорувати» не діє.">Складність (Старий МММ) ≥ <select id="ff-queue4-mmold" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Режим шару «МММ LiQ». МММ LiQ — контраріанський магніт ліквідності: на падаючій монеті зашкалює в LONG, тобто СИСТЕМНО проти тренду й не давав збиратись 4/4. • Вимагати — має збігтись за напрямком + сила ≥ обраної складності. • Ігнорувати (рек.) — не враховувати у ворота, Черга-4 стає 3-шаровою (складність не діє). • Контр-OK — зараховувати, якщо МММ LiQ НЕ сильно ПРОТИ (сила ПРОТИ ≥ складності = блок)."><input type="checkbox" id="ff-queue4-old-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «МММ LiQ» (режим + Складність)">МММ LiQ у воротах <select id="ff-queue4-mmold-mode" onchange="saveFuelFilterSettings(); _ffQueue4OldSync()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="require">вимагати</option><option value="ignore">ігнорувати</option><option value="contra_ok">контр-OK</option></select></label>
+                    <label id="ff-queue4-mmold-band-lbl" style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Складність для режиму «вимагати»/«контр-OK»: яку МІНІМАЛЬНУ силу має тримати МММ LiQ (у бік сигналу — для «вимагати»; проти сигналу — поріг блокування для «контр-OK»). У режимі «ігнорувати» не діє.">Складність (МММ LiQ) ≥ <select id="ff-queue4-mmold" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="0">рівновага</option><option value="10">легкий</option><option value="30">помірний</option><option value="60">сильний</option><option value="85">потужний</option></select></label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="Мінімальна Готовність (grade_setup) у бік сигналу."><input type="checkbox" id="ff-queue4-setup-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Готовність» (важкий SMC-грейд — вимкни, щоб не вантажити сервер)">Готовність ≥ <select id="ff-queue4-setup" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="24">СЛАБКИЙ</option><option value="38">СЕРЕДНІЙ</option><option value="53">ХОРОШИЙ</option><option value="70">ВІДМІННИЙ</option></select></label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Тумблер шару «Запас» (runway). Вимкнено → шар НЕ рахується і колонка ховається. Права галочка — вимагати, щоб Запас був САМЕ у бік сигналу.">
                         <input type="checkbox" id="ff-queue4-runway-on" onchange="saveFuelFilterSettings(); _ffApplyQ4Cols()" title="Увімкнути шар «Запас»"> 🎯 Запас
@@ -3564,7 +3564,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="🔁 Перед ВІДКРИТТЯМ ще раз проганяємо монету через ТОЙ САМИЙ ланцюг фільтрів сканера (OB Match / Forecast 1H+4H / Decision / POC / PD), який пускав її в Чергу-4. Монета могла простояти в черзі годинами — за цей час OB чи прогноз могли перевернутись. Не пройшла повторну перевірку → НЕ відкриваємо, лишається в черзі до наступного тіку. За замовч. УВІМК."><input type="checkbox" id="ff-queue4-recheck" onchange="saveFuelFilterSettings()"> 🔁 Повторна перевірка фільтрів на виході</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="Не відкривати угоду, якщо хід уже виснажений понад поріг. Єдиний запобіжник Черги-4.">
                         <input type="checkbox" id="ff-queue4-exh-on" onchange="saveFuelFilterSettings()"> 🔥 Виснаженість ≤ <input type="number" id="ff-queue4-exh-pct" min="1" max="100" step="1" style="width:48px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> %</label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="🚧 Фільтр ВХОДУ: перед допуском сигналу дочекатись ПОВНОГО визначення шарів і порахувати, скільки ПОКАЗНИКІВ реально дивляться в бік сигналу (сирий напрямок Новий/Старий МММ/Готовність/Запас — БЕЗ порогів сили й БЕЗ авто-ok «ігнору»). Якщо менше за поріг — сигнал у Чергу-4 НЕ пускати взагалі (і викидати, якщо після визначення не дотягнув). Поки шари ще рахуються — сигнал чекає, не ріжеться. За замовч.: увімкнено, ≥1 (має бути хоча б один показник у бік; інакше сенсу додавати немає).">
+                    <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1;cursor:pointer" title="🚧 Фільтр ВХОДУ: перед допуском сигналу дочекатись ПОВНОГО визначення шарів і порахувати, скільки ПОКАЗНИКІВ реально дивляться в бік сигналу (сирий напрямок Новий/МММ LiQ/Готовність/Запас — БЕЗ порогів сили й БЕЗ авто-ok «ігнору»). Якщо менше за поріг — сигнал у Чергу-4 НЕ пускати взагалі (і викидати, якщо після визначення не дотягнув). Поки шари ще рахуються — сигнал чекає, не ріжеться. За замовч.: увімкнено, ≥1 (має бути хоча б один показник у бік; інакше сенсу додавати немає).">
                         <input type="checkbox" id="ff-queue4-entry-gate" onchange="saveFuelFilterSettings(); _ffQueue4EntrySync()"> 🚧 Фільтр входу: показників у бік ≥ <select id="ff-queue4-entry-min" onchange="saveFuelFilterSettings()" style="padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace"><option value="1">1 (хоч один)</option><option value="2">2</option><option value="3">3</option><option value="4">4 (усі)</option></select></label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:#cbd5e1" title="⏳ Ковзне вікно застою: таймер по монеті скидається щоразу, коли хоч один показник світиться в бік. Якщо N хв ПОСПІЛЬ жоден показник не був у бік (застій) — монету викидаємо з Черги-4. Працює постійно для кожної монети, незалежно від того, чи світилось раніше. 0 = вимкнено. За замовч. 30 хв.">⏳ Викид при застої (0 у бік)  <input type="number" id="ff-queue4-nolight" min="0" max="1440" step="5" style="width:56px;padding:4px 6px;border-radius:5px;border:1px solid rgba(147,197,253,0.4);background:rgba(0,0,0,0.25);color:#bfdbfe;font-family:monospace" onchange="saveFuelFilterSettings()"> хв</label>
                 </div>
@@ -3578,7 +3578,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th data-sortcol="dir" onclick="ffSortQueue4('dir')" style="cursor:pointer" title="Сортувати за напрямком">Напрямок<span class="ff-sort-arrow"></span></th>
                             <th data-sortcol="layers" onclick="ffSortQueue4('layers')" style="cursor:pointer" title="Конфлюенс увімкнених шарів. Усі зелені (LONG) / усі червоні (SHORT) = відкриття угоди. Сортування за замовчуванням — саме за цією колонкою.">🎯<span class="ff-sort-arrow"></span></th>
                             <th class="q4c-new" data-sortcol="mm_new" onclick="ffSortQueue4('mm_new')" style="cursor:pointer" title="Новий МММ (бабло-модель). Сортування: сила у бік сигналу.">Новий МММ<span class="ff-sort-arrow"></span></th>
-                            <th class="q4c-old" data-sortcol="mm_old" onclick="ffSortQueue4('mm_old')" style="cursor:pointer" title="Старий МММ ((fa−fb)/den). Сортування: сила у бік сигналу.">Старий МММ<span class="ff-sort-arrow"></span></th>
+                            <th class="q4c-old" data-sortcol="mm_old" onclick="ffSortQueue4('mm_old')" style="cursor:pointer" title="МММ LiQ ((fa−fb)/den). Сортування: сила у бік сигналу.">МММ LiQ<span class="ff-sort-arrow"></span></th>
                             <th class="q4c-setup" data-sortcol="setup" onclick="ffSortQueue4('setup')" style="cursor:pointer" title="SMC-готовність (grade_setup)">Готовність<span class="ff-sort-arrow"></span></th>
                             <th class="q4c-runway" data-sortcol="runway" onclick="ffSortQueue4('runway')" style="cursor:pointer" title="Запас ходу (runway) — показник TradingView-скрипта">Запас<span class="ff-sort-arrow"></span></th>
                             <th data-sortcol="held" onclick="ffSortQueue4('held')" style="cursor:pointer" title="Скільки часу монета в черзі">Очікує<span class="ff-sort-arrow"></span></th>
@@ -3706,7 +3706,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <input type="checkbox" id="ff-funding-route-q4" onchange="saveFuelFilterSettings()"> 🎯 Маршрут у Чергу-4 (фільтрація)
                             </label>
                         </div>
-                        <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 Напрямок = найновіший активний Order Block на «Напрямок OB, TF» (дефолт 1h). Сигнал = НОВИЙ Volumized OB на «Сигнал VOB, TF» (дефолт 5m) у той самий бік. Сигнал іде в <b>Чергу-4</b>, яка відкриває ЛИШЕ коли всі 4 шари (Новий/Старий МММ, Готовність, Запас) збіглись. Черга-4 має бути увімкнена.</div>
+                        <div style="font-size:0.64rem;color:#6b7280;margin-top:6px">💡 Напрямок = найновіший активний Order Block на «Напрямок OB, TF» (дефолт 1h). Сигнал = НОВИЙ Volumized OB на «Сигнал VOB, TF» (дефолт 5m) у той самий бік. Сигнал іде в <b>Чергу-4</b>, яка відкриває ЛИШЕ коли всі 4 шари (Новий/МММ LiQ, Готовність, Запас) збіглись. Черга-4 має бути увімкнена.</div>
                         <div style="font-size:0.64rem;color:#f0b866;margin-top:6px;padding:6px 8px;border:1px solid rgba(240,184,102,0.25);border-radius:5px;background:rgba(240,184,102,0.06)">🔑 <b>«Маршрут у Чергу-4»</b> — головний перемикач стратегії фандингу. Коли <b>ВИМКНЕНО</b>, фандинг більше НЕ заводить монети в чергу, а раніше заведені (з фандингу) <b>автоматично прибираються з усіх черг</b> і не відкриваються. Це НЕ єдиний шлях відкриття з фандингу — див. «Сигнали → угоди» нижче.</div>
                     </div>
                     <!-- 🎯 Шаровий конфлюенс → консолідований TG-сигнал -->
@@ -4264,8 +4264,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
                             <label>
                                 <input type="checkbox" id="tm-use-mm-flat-exit" onchange="saveTMSettings();_tmPilotAutoSync()">
-                                🧮 Старий МММ ⚖ → вихід
-                                <span class="tm-help" title="САМОСТІЙНЕ правило: щойно «🧮 Старий МММ» по монеті втрачає напрямок (⚖ рівновага — сила тиску впала нижче порога напрямку), відкрита угода ЗАКРИВАЄТЬСЯ. Це ТОЙ САМИЙ показник, що в колонці «🧮 Старий МММ» таблиці угод і в секції 🧮 МММ-монітор — число береться з готового знімка двигуна, нічого не перераховується. ⚠️ У комбінуванні (АБО/AND) вище це правило НЕ бере участі: там нейтраль ламає збіг, а тут вона і є причиною виходу. ⚠️ «Немає даних» (бот щойно піднявся, liq-map ще не зібрала рівні) — це НЕ рівновага: правило мовчить, угода тримається. Перевірка не частіше ніж раз на 20с на монету. За замовчуванням ВИМКНЕНО.">?</span>
+                                🧮 МММ LiQ ⚖ → вихід
+                                <span class="tm-help" title="САМОСТІЙНЕ правило: щойно «🧮 МММ LiQ» по монеті втрачає напрямок (⚖ рівновага — сила тиску впала нижче порога напрямку), відкрита угода ЗАКРИВАЄТЬСЯ. Це ТОЙ САМИЙ показник, що в колонці «🧮 МММ LiQ» таблиці угод і в секції 🧮 МММ-монітор — число береться з готового знімка двигуна, нічого не перераховується. ⚠️ У комбінуванні (АБО/AND) вище це правило НЕ бере участі: там нейтраль ламає збіг, а тут вона і є причиною виходу. ⚠️ «Немає даних» (бот щойно піднявся, liq-map ще не зібрала рівні) — це НЕ рівновага: правило мовчить, угода тримається. Перевірка не частіше ніж раз на 20с на монету. За замовчуванням ВИМКНЕНО.">?</span>
                             </label>
                         </div>
                         <div class="tm-row">
@@ -4295,7 +4295,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <div class="tm-row">
                             <label>
                                 ⏱ 🔄 Розворот тримається ≥
-                                <span class="tm-help" title="Скільки СЕКУНД має протриматись РОЗВОРОТ «🧮 Старий МММ» ПРОТИ вашої угоди, перш ніж закривати (діє лише в режимі «⚖ рівновага АБО проти»). 0 = закривати одразу. Дефолт 60с ≈ одне оновлення liq-map: розворот мусить пережити хоча б ОДИН новий розрахунок джерела, а не миттєве тремтіння — інакше секундна зміна вибиває з угоди. Щойно МММ повертається у ваш бік або в ⚖ — відлік обнуляється. ⚠️ Витримка ⚖ рівноваги і витримка розвороту НЕ перетікають одна в одну: перехід між станами починає свій відлік заново.">?</span>
+                                <span class="tm-help" title="Скільки СЕКУНД має протриматись РОЗВОРОТ «🧮 МММ LiQ» ПРОТИ вашої угоди, перш ніж закривати (діє лише в режимі «⚖ рівновага АБО проти»). 0 = закривати одразу. Дефолт 60с ≈ одне оновлення liq-map: розворот мусить пережити хоча б ОДИН новий розрахунок джерела, а не миттєве тремтіння — інакше секундна зміна вибиває з угоди. Щойно МММ повертається у ваш бік або в ⚖ — відлік обнуляється. ⚠️ Витримка ⚖ рівноваги і витримка розвороту НЕ перетікають одна в одну: перехід між станами починає свій відлік заново.">?</span>
                             </label>
                             <input type="number" id="tm-mm-against-exit-confirm" min="0" max="3600" step="30"
                                    onchange="saveTMSettings()"
@@ -4578,7 +4578,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="🧮 СТАРИЙ МММ по монеті — той самий показник, що в секції «🧮 МММ-монітор» і в шарі «Старий МММ» Черги-4: напрямок тиску маркетмейкера (🟢 вгору / 🔴 вниз), сила 0–100% і стрілка тренду (сила росте / слабшає). Це ЧИТАННЯ знімка двигуна — на цю таблицю воно не додає жодного розрахунку. Порожньо («—») означає, що знімка по монеті ще немає.">🧮 Старий МММ</th>
+                        <th title="🧮 МММ LiQ по монеті — той самий показник, що в секції «🧮 МММ-монітор» і в шарі «МММ LiQ» Черги-4: напрямок тиску маркетмейкера (🟢 вгору / 🔴 вниз), сила 0–100% і стрілка тренду (сила росте / слабшає). Це ЧИТАННЯ знімка двигуна — на цю таблицю воно не додає жодного розрахунку. Порожньо («—») означає, що знімка по монеті ще немає.">🧮 МММ LiQ</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
@@ -4647,7 +4647,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="🧮 СТАРИЙ МММ по монеті — той самий показник, що в секції «🧮 МММ-монітор» і в шарі «Старий МММ» Черги-4: напрямок тиску маркетмейкера (🟢 вгору / 🔴 вниз), сила 0–100% і стрілка тренду (сила росте / слабшає). Це ЧИТАННЯ знімка двигуна — на цю таблицю воно не додає жодного розрахунку. Порожньо («—») означає, що знімка по монеті ще немає.">🧮 Старий МММ</th>
+                        <th title="🧮 МММ LiQ по монеті — той самий показник, що в секції «🧮 МММ-монітор» і в шарі «МММ LiQ» Черги-4: напрямок тиску маркетмейкера (🟢 вгору / 🔴 вниз), сила 0–100% і стрілка тренду (сила росте / слабшає). Це ЧИТАННЯ знімка двигуна — на цю таблицю воно не додає жодного розрахунку. Порожньо («—») означає, що знімка по монеті ще немає.">🧮 МММ LiQ</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
@@ -9619,7 +9619,7 @@ async function loadTMSettings() {
         if (_tp1liq) _tp1liq.checked = (s.pilot_tp1_from_liquidity !== false);
         _setV('tm-pilot-tp1-liq-mid', s.pilot_tp1_liq_mid_pct != null ? s.pilot_tp1_liq_mid_pct : 50, 50);
         document.getElementById('tm-tp1-move-be').checked = !!s.tp1_move_to_be;
-        // 🧮 Правило «Старий МММ ⚖» гасить автоматику автопілота — синхронізуємо
+        // 🧮 Правило «МММ LiQ ⚖» гасить автоматику автопілота — синхронізуємо
         // ОДРАЗУ після застосування налаштувань, інакше контроли виглядали б
         // активними до першого кліку по тумблеру.
         _tmPilotAutoSync();
@@ -9994,7 +9994,7 @@ function _ffLevelsSync() {
     }
 }
 
-// 🧮 «Старий МММ ⚖ → вихід» УВІМКНЕНО → автоматику 🎯 Автопілота вимкнено.
+// 🧮 «МММ LiQ ⚖ → вихід» УВІМКНЕНО → автоматику 🎯 Автопілота вимкнено.
 // Дзеркалить бекендний `TradeManager._pilot_auto_off`: правило і автоматичний
 // супровід — взаємовиключні, тож контроли, які вже НІ НА ЩО не впливають,
 // гасимо (той самий принцип, що з випадайкою «SL з» і полями TTL при ♾).
@@ -10019,7 +10019,7 @@ function _tmPilotAutoSync() {
         if (!el) return;
         el.disabled = off;
         el.style.opacity = off ? '0.4' : '1';
-        if (off) el.title = 'Вимкнено правилом «🧮 Старий МММ ⚖ → вихід»: '
+        if (off) el.title = 'Вимкнено правилом «🧮 МММ LiQ ⚖ → вихід»: '
             + 'автоматику автопілота знято, працюють лише ручні Manual TP-1/TP-2 '
             + 'і ⚖️ TP-1 → беззбиток';
     });
@@ -10401,10 +10401,10 @@ function reasonLabel(r) {
         'forecast_1h_exit': '🔮 F1H проти',
         'forecast_4h_exit': '🔮 F4H проти',
         'decision_exit': '🧠 Decision проти',
-        'mm_flat_exit': '🧮 Старий МММ ⚖',
+        'mm_flat_exit': '🧮 МММ LiQ ⚖',
         // ⚠️ Розворот МММ — ОКРЕМИЙ бейдж: підписувати його «⚖» означало б
         // показувати не ту причину, що спрацювала (скарга 18.09).
-        'mm_against_exit': '🧮 Старий МММ ПРОТИ',
+        'mm_against_exit': '🧮 МММ LiQ ПРОТИ',
         'signal_exit_and': '🔗 AND (усі проти)',
         'pilot_target': '🎯 Автопілот (ціль)',
         'bos_2_partial': '✂️ BOS-2',
@@ -11995,7 +11995,7 @@ function _mmStatusCell(r) {
         return '<span style="color:#38bdf8;font-weight:700;white-space:nowrap"'
             + ' title="Монета У ВІДКРИТІЙ УГОДІ (реальній або паперовій). Друга'
             + ' позиція по тому самому символу не відкриється, тож галочка'
-            + ' недоступна. Її 🧮 Старий МММ видно ще й у колонці таблиці угод —'
+            + ' недоступна. Її 🧮 МММ LiQ видно ще й у колонці таблиці угод —'
             + ' це те саме число.">💼 в угоді</span>';
     }
     const qs = Array.isArray(r.queues) ? r.queues : [];
@@ -12771,8 +12771,8 @@ function mmApplyState(mm) {
                + '(у режимі економії — лише монети «в роботі»).',
                (_mmMeta.queues_off ? '❤️ Fuel Auto-Filter ВИМКНЕНО: черги і '
                    + 'відкриття не працюють, але знімок МММ рахується — він '
-                   + 'живить цю таблицю, колонку «🧮 Старий МММ» в угодах і '
-                   + 'правило виходу «🧮 Старий МММ ⚖ → вихід». Набір монет у '
+                   + 'живить цю таблицю, колонку «🧮 МММ LiQ» в угодах і '
+                   + 'правило виходу «🧮 МММ LiQ ⚖ → вихід». Набір монет у '
                    + 'цьому режимі вужчий: BTC + відкриті угоди + WATCHLIST '
                    + '(без черг і фандингу — вони не наповнюються).' : ''),
               ].filter(Boolean).join('\n'));
@@ -13870,7 +13870,7 @@ async function deleteTimer4(symbol) {
         ffRenderQueue4();
     } catch (e) { alert('Помилка видалення з Черги-4: ' + e); }
 }
-// Складність «Старий МММ» діє лише в режимах «вимагати»/«контр-OK»; у режимі
+// Складність «МММ LiQ» діє лише в режимах «вимагати»/«контр-OK»; у режимі
 // «ігнорувати» гасимо селектор, щоб було видно — параметр не впливає.
 function _ffQueue4OldSync() {
     const modeEl = document.getElementById('ff-queue4-mmold-mode');
@@ -15250,7 +15250,7 @@ const FUEL_TOOLTIP = "МММ — тиск маркетмейкера на цін
 // МММ columns and the 💰 funding table): coloured direction dot + strength
 // 0..100% + trend arrow + mini-bar + a colour-coded band word at the END.
 //   dir: 'LONG'|'SHORT'|null(=balanced),  now/prev: 0..100 strength (or null)
-// 🧮 Комірка «Старий МММ» у таблицях ВІДКРИТИХ УГОД (real + paper).
+// 🧮 Комірка «МММ LiQ» у таблицях ВІДКРИТИХ УГОД (real + paper).
 // ⚠️ Малює ТОЙ САМИЙ спільний віджет `ffFuelCell`, що й 🧮 МММ-монітор і черги
 // — тобто одна метрика виглядає однаково в усіх трьох місцях. `hideBand=true`:
 // у цих таблицях і так тісно, словесний рівень тиску туди не влазить (він
@@ -16373,7 +16373,7 @@ const _PILOT_BLOCKED = ['🔒', 'трейл заблоковано', '#fbbf24'];
 // автоматичної фіксації по цій угоді більше немає. Це стан СИЛЬНІШИЙ за
 // заблокований трейл (йшлося про закриття угоди), тож перекриває і його.
 const _PILOT_TAKE_BLOCKED = ['✋', 'фіксацію знято оператором', '#fbbf24'];
-// 🧮 Автоматику автопілота вимкнено правилом «Старий МММ ⚖ → вихід»: виходом
+// 🧮 Автоматику автопілота вимкнено правилом «МММ LiQ ⚖ → вихід»: виходом
 // керує ТОЙ показник, а автопілот не веде ні ціль, ні стоп, ні TP-2.
 // ⚠️ ОДНА здатність лишилась — 🧲 магніт у Manual TP-1 (вимога 17.09).
 // ⚠️ ЗНАЧОК ДІЇ НЕ ДУБЛЮЄ ЗНАЧОК ЦІЛІ (скарга 17.09: «картинка два магніта»):
@@ -16448,7 +16448,7 @@ function pilotCellHTML(p) {
 
     const tip = [
         `${lbl}${pl.auto_off ? ': ' + pl.auto_off : (pl.take_block ? ': ' + pl.take_block : (pl.trail_block ? ': ' + pl.trail_block : ''))}`,
-        pl.auto_off ? '🧮 Увімкнено правило «Старий МММ ⚖ → вихід»: виходом керує ТОЙ показник, тож автопілот не обирає ціль, не веде стоп і не заповнює Manual TP-2. Лишилась ОДНА його дія — 🧲 найбільший магніт ліквідності попереду входу йде в Manual TP-1 (частковий вихід). Ваші РУЧНІ рівні і ⚖️ «TP-1 → беззбиток» працюють як зазвичай. Щоб повернути повний автопілот — вимкніть це правило в Exit Rules.' : null,
+        pl.auto_off ? '🧮 Увімкнено правило «МММ LiQ ⚖ → вихід»: виходом керує ТОЙ показник, тож автопілот не обирає ціль, не веде стоп і не заповнює Manual TP-2. Лишилась ОДНА його дія — 🧲 найбільший магніт ліквідності попереду входу йде в Manual TP-1 (частковий вихід). Ваші РУЧНІ рівні і ⚖️ «TP-1 → беззбиток» працюють як зазвичай. Щоб повернути повний автопілот — вимкніть це правило в Exit Rules.' : null,
         pl.take_block ? '✋ Ціль ДОСЯГНУТА, але Manual TP-2 знято руками — автопілот угоду НЕ фіксує і веде далі (стоп працює). Впишіть Manual TP-2, щоб повернути автоматичну фіксацію.' : null,
         obj ? `${pl.auto_off ? 'Рівень Manual TP-1 (🧲 магніт)' : 'Ціль (TP-2)'}: ${obj.label} @ ${obj.price}` : 'Цілі попереду не видно',
         (pl.r != null)

@@ -264,7 +264,7 @@ DEFAULT_SETTINGS = {
     'use_forecast_1h_exit': False,   # Forecast 1H проти позиції → вихід
     'use_forecast_4h_exit': False,   # Forecast 4H проти позиції → вихід
     'use_decision_exit': False,      # Decision Center проти позиції → вихід
-    # === 🧮 СТАРИЙ МММ БЕЗ НАПРЯМКУ → ВИХІД (вимога 15.09) ===
+    # === 🧮 МММ LiQ БЕЗ НАПРЯМКУ → ВИХІД (вимога 15.09) ===
     # ⚠️ ОКРЕМЕ правило, воно НЕ бере участі в комбінуванні `signal_exit_mode`
     # нижче. Ті три — про ПРОТИЛЕЖНИЙ вердикт; це — про ВІДСУТНІСТЬ напрямку:
     # МММ, який тримав угоду, згас у ⚖ рівновагу. Змішати їх в один AND/OR
@@ -584,11 +584,11 @@ class TradeManager:
         # друга лишалась би без правил виходу (той самий клас помилки, що вже
         # ловили на `_pilot_at` у кейсі TRXUSDT).
         self._signal_exit_at: Dict[str, float] = {}
-        # 🧮 «Старий МММ без напрямку» — З ЯКОГО МОМЕНТУ стан тримається,
+        # 🧮 «МММ LiQ без напрямку» — З ЯКОГО МОМЕНТУ стан тримається,
         # {SYMBOL: ts}. Ключ САМЕ символьний: МММ — показник монети, він
         # однаковий для обох книг. Потрібен для `mm_flat_exit_confirm_sec`.
         self._mm_flat_since: Dict[str, float] = {}
-        # 🔄 «Старий МММ РОЗВЕРНУВСЯ ПРОТИ» — свій, ОКРЕМИЙ відлік (20.09).
+        # 🔄 «МММ LiQ РОЗВЕРНУВСЯ ПРОТИ» — свій, ОКРЕМИЙ відлік (20.09).
         # Спільний із ⚖ був би помилкою: перехід «рівновага → проти» скинув би
         # витримку одного стану в іншого, і закриття сталось би не тоді, коли
         # його чекають. Ключ теж символьний — МММ однаковий для обох книг.
@@ -922,7 +922,7 @@ class TradeManager:
                 self._settings.get('pilot_tp1_from_liquidity', True))
             _sem = str(self._settings.get('signal_exit_mode', 'or') or 'or').lower()
             self._settings['signal_exit_mode'] = _sem if _sem in ('or', 'and') else 'or'
-            # 🧮 Вихід по «Старий МММ»: некоректний режим → дефолт 'flat'
+            # 🧮 Вихід по «МММ LiQ»: некоректний режим → дефолт 'flat'
             # (дослівна вимога), а не збій; підтвердження — секунди ≥ 0.
             _mfm = str(self._settings.get('mm_flat_exit_mode', 'flat')
                        or 'flat').lower()
@@ -3125,12 +3125,12 @@ class TradeManager:
             self._mm_against_since.pop(str(symbol).upper(), None)
 
     def _mm_flat_exit_reason(self, symbol: str, pos: Dict) -> Optional[tuple]:
-        """🧮 «Старий МММ втратив напрямок» → (reason_code, опис) або None.
+        """🧮 «МММ LiQ втратив напрямок» → (reason_code, опис) або None.
 
         Вимога користувача (15.09) дослівно: «Додай вихід із угоди по показнику
-        "🧮 Старий МММ" — якщо нейтраль, закриваємо угоду».
+        "🧮 МММ LiQ" — якщо нейтраль, закриваємо угоду».
 
-        ⚠️ **ДЖЕРЕЛО — ТОЙ САМИЙ ЗНІМОК**, що малює колонку «🧮 Старий МММ» у
+        ⚠️ **ДЖЕРЕЛО — ТОЙ САМИЙ ЗНІМОК**, що малює колонку «🧮 МММ LiQ» у
         таблиці відкритих угод і рядок 🧮 МММ-монітора: `ff.mm_snapshot_for`.
         Свого розрахунку тут НЕМАЄ і бути не може — інакше бот закривав би
         угоду за числом, якого на екрані не видно (урок PD-зони).
@@ -3211,7 +3211,7 @@ class TradeManager:
             # і бейдж у таблиці та рядок у 🧾 Лозі підписували РОЗВОРОТ як
             # «⚖ рівновага» — тобто показували не те, що сталось.
             return ('mm_against_exit',
-                    f'🧮 Старий МММ розвернувся у {mm}{_st} — проти {side}{_ah}')
+                    f'🧮 МММ LiQ розвернувся у {mm}{_st} — проти {side}{_ah}')
         self._mm_against_since.pop(sym, None)
         since = self._mm_flat_since.setdefault(sym, now)
         need = float(s.get('mm_flat_exit_confirm_sec') or 0)
@@ -3220,7 +3220,7 @@ class TradeManager:
             return None
         _held = f' · тримається {int(held)}с' if need > 0 else ''
         return ('mm_flat_exit',
-                f'🧮 Старий МММ втратив напрямок — ⚖ рівновага{_st}{_held}')
+                f'🧮 МММ LiQ втратив напрямок — ⚖ рівновага{_st}{_held}')
 
     def _check_signal_exits(self, symbol: str, pos: Dict,
                             current_price: float, is_shadow: bool) -> bool:
@@ -3561,8 +3561,8 @@ class TradeManager:
         s = self._settings
         if not s.get('pilot_enabled'):
             return False
-        # 🧮 ПРАВИЛО «Старий МММ ⚖ → вихід» ВИМИКАЄ АВТОМАТИКУ АВТОПІЛОТА.
-        # Вимога користувача (17.09): «якщо увімкнено 🧮 Старий МММ ⚖ → вихід,
+        # 🧮 ПРАВИЛО «МММ LiQ ⚖ → вихід» ВИМИКАЄ АВТОМАТИКУ АВТОПІЛОТА.
+        # Вимога користувача (17.09): «якщо увімкнено 🧮 МММ LiQ ⚖ → вихід,
         # потрібно автоматично вимкнути все, що стосується автоматичного
         # 🎯 Автопілота; якщо Manual TP-1 або TP-2 виставлені вручну, бот має
         # реагувати на ручні дані».
@@ -3964,7 +3964,7 @@ class TradeManager:
 
     @staticmethod
     def _pilot_auto_off(s: Dict) -> bool:
-        """Чи вимкнено АВТОМАТИКУ 🎯 Автопілота правилом 🧮 «Старий МММ ⚖».
+        """Чи вимкнено АВТОМАТИКУ 🎯 Автопілота правилом 🧮 «МММ LiQ ⚖».
 
         ЄДИНЕ джерело умови — щоб «вимкнено» означало те саме і в логіці, і в
         інтерфейсі (сторінка гасить ті самі контроли тим самим правилом).
@@ -3976,9 +3976,9 @@ class TradeManager:
 
     def _pilot_magnet_tp1(self, symbol: str, pos: Dict, current_price: float,
                           is_shadow: bool) -> None:
-        """🧲 РЕДУКОВАНИЙ такт при увімкненому 🧮 «Старий МММ ⚖ → вихід».
+        """🧲 РЕДУКОВАНИЙ такт при увімкненому 🧮 «МММ LiQ ⚖ → вихід».
 
-        **Вимога користувача (17.09), дослівно:** «при виборі 🧮 Старий МММ ⚖ →
+        **Вимога користувача (17.09), дослівно:** «при виборі 🧮 МММ LiQ ⚖ →
         вихід із 🎯 Автопілота беремо "🧲 найбільший магніт" і ставимо в
         Manual TP-1. І таким чином щоб не було пустим поле 🎯 Автопілот у
         таблицях відкритих угод — підраховуй дані для Manual TP-1.»
@@ -4017,7 +4017,7 @@ class TradeManager:
         _prev = self._pilot_state.get(pkey) or {}
         snap = {
             'at': now, 'is_shadow': bool(is_shadow), 'action': 'hold',
-            'auto_off': '🧮 Старий МММ ⚖ → вихід',
+            'auto_off': '🧮 МММ LiQ ⚖ → вихід',
             'objective': None, 'progress': None, 'next': None, 'targets': [],
             'r': None, 'r_stop': None, 'risk_free': False,
             'tp_off': not bool(s.get('pilot_autofill_tp')),
@@ -4113,7 +4113,7 @@ class TradeManager:
                         'label': obj.get('label') or '🧲 магніт ліквідності',
                         'from_entry_pct': float(_d), 'r': snap['r']},
                 'tp2': None,
-                'reasons': ['🧮 правило «Старий МММ ⚖ → вихід»: автопілот '
+                'reasons': ['🧮 правило «МММ LiQ ⚖ → вихід»: автопілот '
                             'віддає лише 🧲 магніт у Manual TP-1'],
             }, is_shadow)
         snap['tp1'] = pos.get('manual_tp1')
@@ -5904,10 +5904,10 @@ class TradeManager:
             'forecast_1h_exit': '🔮 Forecast 1H розвернувся проти позиції',
             'forecast_4h_exit': '🔮 Forecast 4H розвернувся проти позиції',
             'decision_exit': '🧠 Decision Center рекомендує протилежне',
-            'mm_flat_exit': '🧮 Старий МММ втратив напрямок (⚖ рівновага)',
+            'mm_flat_exit': '🧮 МММ LiQ втратив напрямок (⚖ рівновага)',
             # ⚠️ РОЗВОРОТ — ОКРЕМА причина, а не «рівновага»: це різні події і
             # різні рішення (миготіння біля нуля проти зустрічного тиску).
-            'mm_against_exit': '🧮 Старий МММ РОЗВЕРНУВСЯ ПРОТИ позиції',
+            'mm_against_exit': '🧮 МММ LiQ РОЗВЕРНУВСЯ ПРОТИ позиції',
             'signal_exit_and': '🔗 AND: усі увімкнені вердикти проти позиції',
             'pilot_target': '🎯 Автопілот: ціль на графіку досягнута',
         }
@@ -8336,8 +8336,8 @@ class TradeManager:
             'forecast_1h_exit': '🔮 Forecast 1H Exit',
             'forecast_4h_exit': '🔮 Forecast 4H Exit',
             'decision_exit': '🧠 Decision Exit',
-            'mm_flat_exit': '🧮 Старий МММ ⚖',
-            'mm_against_exit': '🧮 Старий МММ ПРОТИ',
+            'mm_flat_exit': '🧮 МММ LiQ ⚖',
+            'mm_against_exit': '🧮 МММ LiQ ПРОТИ',
             'signal_exit_and': '🔗 Signal Exit (AND)',
             'pilot_target': '🎯 Автопілот (ціль)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',

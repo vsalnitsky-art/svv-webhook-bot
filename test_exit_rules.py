@@ -442,10 +442,10 @@ def test_min_conf_default_is_off():
 
 
 
-# ═════ 4. 🧮 СТАРИЙ МММ БЕЗ НАПРЯМКУ → ВИХІД (вимога 15.09) ═══════════════
-# «Додай вихід із угоди по показнику "🧮 Старий МММ" — якщо нейтраль,
+# ═════ 4. 🧮 МММ LiQ БЕЗ НАПРЯМКУ → ВИХІД (вимога 15.09) ═══════════════
+# «Додай вихід із угоди по показнику "🧮 МММ LiQ" — якщо нейтраль,
 # закриваємо угоду.» Показник беремо З ТОГО САМОГО знімка, що малює колонку
-# «🧮 Старий МММ» у таблиці угод і рядок 🧮 МММ-монітора.
+# «🧮 МММ LiQ» у таблиці угод і рядок 🧮 МММ-монітора.
 _SRC_TM = open(os.path.join(_ROOT, 'detection', 'trade_manager.py'),
                encoding='utf-8').read()
 _HTML_SM = open(os.path.join(_ROOT, 'templates', 'smart_money.html'),
@@ -554,10 +554,10 @@ def test_the_two_reasons_are_never_mixed_up():
     # І підписи мусять бути РІЗНІ в усіх трьох місцях показу.
     for src, name in ((_SRC_TM, 'trade_manager'), (_HTML_SM, 'сторінка')):
         _check('mm_against_exit' in src, f'{name} не знає нової причини')
-    _check("'mm_against_exit': '🧮 Старий МММ РОЗВЕРНУВСЯ ПРОТИ позиції'" in _SRC_TM,
+    _check("'mm_against_exit': '🧮 МММ LiQ РОЗВЕРНУВСЯ ПРОТИ позиції'" in _SRC_TM,
            'немає розгорнутого підпису розвороту')
-    _check("'mm_against_exit': '🧮 Старий МММ ПРОТИ'" in _SRC_TM
-           and "'mm_against_exit': '🧮 Старий МММ ПРОТИ'" in _HTML_SM,
+    _check("'mm_against_exit': '🧮 МММ LiQ ПРОТИ'" in _SRC_TM
+           and "'mm_against_exit': '🧮 МММ LiQ ПРОТИ'" in _HTML_SM,
            'бейдж розвороту мусить відрізнятись від бейджа рівноваги')
     print('✓ 🧮 ⚖ рівновага і РОЗВОРОТ — різні причини з різними підписами')
 
@@ -809,11 +809,11 @@ def test_throttle_is_per_book_not_per_symbol():
 def test_reason_has_human_labels_everywhere():
     """Код причини мусить мати підпис у ВСІХ трьох місцях показу, інакше в
     історії угод стоятиме сире `mm_flat_exit`."""
-    _check("'mm_flat_exit': '🧮 Старий МММ втратив напрямок" in _SRC_TM,
+    _check("'mm_flat_exit': '🧮 МММ LiQ втратив напрямок" in _SRC_TM,
            'немає розгорнутого підпису причини закриття')
-    _check("'mm_flat_exit': '🧮 Старий МММ ⚖'" in _SRC_TM,
+    _check("'mm_flat_exit': '🧮 МММ LiQ ⚖'" in _SRC_TM,
            'немає короткого бейджа причини')
-    _check("'mm_flat_exit': '🧮 Старий МММ ⚖'" in _HTML_SM,
+    _check("'mm_flat_exit': '🧮 МММ LiQ ⚖'" in _HTML_SM,
            'JS-мапа причин на сторінці не знає про нове правило')
     print('✓ причина має людський підпис у TM і на сторінці')
 
