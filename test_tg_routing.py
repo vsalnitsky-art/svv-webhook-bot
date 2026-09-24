@@ -425,8 +425,11 @@ def test_correction_start_and_end_are_announced():
            f'корекція мусила оголоситись: {ff._mm_corr}')
     corr = [t for c, p, t in ff.sent if 'КОРЕКЦІЯ' in t]
     _check(len(corr) == 1, f'мусить піти одне повідомлення про початок: {ff.sent}')
-    _check('🔻' in corr[0] and 'ознак' in corr[0],
-           f'у повідомленні — розклад ознак: {corr[0]}')
+    # Вимога 24.09: у TG ЛИШЕ напрямок корекції (протилежний банеру LONG) і
+    # час старту — розклад ознак лишається в 🧾 Лозі.
+    _check(corr[0].startswith('🔴 SHORT КОРЕКЦІЯ · почалась ')
+           and 'ознак' not in corr[0],
+           f'коротке повідомлення про старт: {corr[0]}')
     # …і завершення.
     ff.sent.clear()
     trends = {f'C{i}': 'LONG' for i in range(6)}
@@ -434,6 +437,9 @@ def test_correction_start_and_end_are_announced():
     _tick(ff, _long(strength=70), NOW + 120)
     ended = [t for c, p, t in ff.sent if 'ЗАВЕРШИЛАСЬ' in t]
     _check(len(ended) == 1, f'завершення теж мусить піти: {ff.sent}')
+    _check(ended[0].startswith('🔴 SHORT КОРЕКЦІЯ ЗАВЕРШИЛАСЬ (тривала ')
+           and '→' in ended[0] and 'банер' not in ended[0],
+           f'коротке повідомлення про кінець з часом від → до: {ended[0]}')
     print('✓ початок і кінець корекції → повідомлення в тему 🧮')
 
 
@@ -447,8 +453,10 @@ def test_the_telegram_text_is_the_same_event_as_the_log_line():
                if r['source'] == 'MMM' and 'КОРЕКЦІЯ' in r['detail']]
     tg_txt = [t for c, p, t in ff.sent if 'КОРЕКЦІЯ' in t]
     _check(log_txt and tg_txt, f'мусять бути обидва канали: {log_txt} / {tg_txt}')
-    _check(log_txt[0] in tg_txt[0],
-           f'текст мусить збігатись:\n  лог: {log_txt[0]}\n  TG:  {tg_txt[0]}')
+    # 24.09: TG став КОРОТКИМ, а лог лишив розклад — тож TG-текст мусить
+    # бути ПОЧАТКОМ рядка логу (одна подія — один текст, лог лише довший).
+    _check(log_txt[0].startswith(tg_txt[0]),
+           f'TG мусить бути початком рядка логу:\n  лог: {log_txt[0]}\n  TG:  {tg_txt[0]}')
     print('✓ Telegram і 🧾 Лог описують подію ОДНИМ текстом')
 
 
@@ -876,6 +884,24 @@ def test_a_successful_rename_clears_only_its_own_error():
            'чужа причина мусить лишитись')
     tg._forum_rename_err.clear()
     print('✓ 🏷 успіх стирає причину лише своєї категорії')
+
+
+def test_correction_tg_text_is_short_colored_and_timed():
+    """Вимога 24.09: «🔴 SHORT КОРЕКЦІЯ · почалась <дата час>» і «… ЗАВЕРШИЛАСЬ
+    (тривала …)» з коректним часом. Напрямок — ПРОТИЛЕЖНИЙ банеру."""
+    import datetime as _dt
+    from zoneinfo import ZoneInfo
+    t0 = _dt.datetime(2026, 9, 22, 23, 20, tzinfo=ZoneInfo('Europe/Kyiv')).timestamp()
+    t1 = t0 + 40 * 3600 + 47 * 60
+    s = _ffm.corr_tg_text('start', 'LONG', t0)
+    _check(s == '🔴 SHORT КОРЕКЦІЯ · почалась 22.09 23:20', s)
+    s = _ffm.corr_tg_text('start', 'SHORT', t0)
+    _check(s.startswith('🟢 LONG КОРЕКЦІЯ'), s)
+    e = _ffm.corr_tg_text('end', 'LONG', t0, t1, t1 - t0, FF._fmt_wait)
+    _check(e.startswith('🔴 SHORT КОРЕКЦІЯ ЗАВЕРШИЛАСЬ (тривала ')
+           and '(тривала 1д 16г 47хв)' in e
+           and e.endswith('22.09 23:20 → 24.09 16:07'), e)
+    print('✓ 📨 TG корекції: коротко, колір протилежного боку, дата й час')
 
 
 if __name__ == '__main__':

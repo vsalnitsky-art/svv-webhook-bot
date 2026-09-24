@@ -752,6 +752,42 @@ def _mm_corr_mod():
     return _MM_CORR
 
 
+CORR_TZ = 'Europe/Kyiv'
+
+
+def fmt_local_dt(ts) -> str:
+    """Epoch → «24.09 16:07» за київським часом (той, що бачить користувач у
+    Telegram). ЧИСТА функція. Літній/зимовий час веде `zoneinfo`; немає бази
+    часових поясів → UTC із позначкою, щоб час не видавався за місцевий."""
+    try:
+        from datetime import datetime, timezone
+        t = float(ts or 0)
+        if t <= 0:
+            return '—'
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime.fromtimestamp(t, ZoneInfo(CORR_TZ)).strftime('%d.%m %H:%M')
+        except Exception:
+            return datetime.fromtimestamp(t, timezone.utc).strftime('%d.%m %H:%M UTC')
+    except Exception:
+        return '—'
+
+
+def corr_tg_text(event: str, banner_dir, since, ended_at=0.0, lasted=0.0,
+                 fmt_wait=None) -> str:
+    """📨 Коротке повідомлення про корекцію (вимога 24.09): лише НАПРЯМОК
+    корекції (ПРОТИЛЕЖНИЙ банеру, з кольором), подія і час. Більше нічого.
+    ЧИСТА функція — її текст є ПОЧАТКОМ рядка 🧾 Логу, тож два канали не
+    розходяться."""
+    opp = 'SHORT' if banner_dir == 'LONG' else ('LONG' if banner_dir == 'SHORT' else '')
+    head = (('🔴 SHORT' if opp == 'SHORT' else '🟢 LONG') + ' КОРЕКЦІЯ') if opp else 'КОРЕКЦІЯ'
+    if event == 'start':
+        return f'{head} · почалась {fmt_local_dt(since)}'
+    dur = fmt_wait(float(lasted or 0)) if fmt_wait else f'{int(float(lasted or 0) // 60)}хв'
+    return (f'{head} ЗАВЕРШИЛАСЬ (тривала {dur}) · '
+            f'{fmt_local_dt(since)} → {fmt_local_dt(ended_at)}')
+
+
 def mm_window_change(hist, now: float, window: float) -> Dict:
     """📐 ЗМІНА ЗНАЧЕННЯ ЗА ВІКНОМ — ЧИСТА функція, ЄДИНА на весь монітор.
 
@@ -4090,6 +4126,14 @@ class FuelFilterDaemon:
                         f'банер {d}'
                         + (', відкриття знову дозволені' if _blk_on else '')
                         + (f' · {res.get("why")}' if res.get('why') else ''))
+            # 📨 У TELEGRAM — КОРОТКО (вимога 24.09): «🔴 SHORT КОРЕКЦІЯ ·
+            # почалась 22.09 23:20» / «… ЗАВЕРШИЛАСЬ (тривала …) · від → до».
+            # Дата старту обовʼязкова: без неї «тривала 40г» не було з чим
+            # звірити. Розклад ознак лишається в 🧾 Лозі (після короткого
+            # тексту), тож TG-рядок — ПОЧАТОК рядка логу, а не інший текст.
+            _tg = corr_tg_text(_ev, d, st.get('since'), st.get('ended_at'),
+                               st.get('lasted'), self._fmt_wait)
+            _txt = f'{_tg} · {_txt}'
             try:
                 from detection.activity_log import log_activity
                 log_activity('ALL', 'event', _txt, side=d, source='MMM')
@@ -4103,7 +4147,7 @@ class FuelFilterDaemon:
             # на скріні назва стояла в КОЖНОМУ повідомленні тричі.
             if bool(settings.get('mm_corr_tg', True)):
                 try:
-                    _ok, _why_tg = self._broadcast_users('btc', 'notify_btc', _txt)
+                    _ok, _why_tg = self._broadcast_users('btc', 'notify_btc', _tg)
                     if not _ok:
                         # ⚠️ МОВЧАТИ НЕ МОЖНА: подія сталась, а повідомлення не
                         # пішло — і зовні це не відрізнити від «детектор не
@@ -8566,7 +8610,8 @@ class FuelFilterDaemon:
     # ------------------------------------------------------------------
     @staticmethod
     def _fmt_wait(sec: float) -> str:
-        """«3г 12хв» / «47хв» / «40с» — читабельна тривалість очікування."""
+        """«1д 16г 47хв» / «3г 12хв» / «47хв» / «40с» — читабельна тривалість.
+        Від 24 год ділимо на ДОБИ (вимога 24.09: «40г 47хв» не читається)."""
         try:
             sec = max(0.0, float(sec))
         except (TypeError, ValueError):
@@ -8576,7 +8621,10 @@ class FuelFilterDaemon:
         m = int(sec // 60)
         if m < 60:
             return f'{m}хв'
-        return f'{m // 60}г {m % 60:02d}хв'
+        h = m // 60
+        if h < 24:
+            return f'{h}г {m % 60:02d}хв'
+        return f'{h // 24}д {h % 24}г {m % 60:02d}хв'
 
     def _origin_trace(self, sym: str, info: Dict, lay: Dict, now: float) -> str:
         """Компактний ЛАНЦЮГ ПОХОДЖЕННЯ для рядка відкриття.
