@@ -16600,6 +16600,7 @@ function manualSlTpCellsHTML(p, isShadow) {
     const t1Sk = _sltpSrcStyle(tp1, p.manual_tp1_src, p.manual_tp1_by, 'TP-1');
     // ✅ TP-1 уже спрацював — рівень лишається видимим (де саме зафіксували),
     // але більше не діє: позначаємо галочкою, щоб не було ілюзії активного TP.
+    const slTf = _slTfBadge(p);
     const t1Done = p.tp1_done
         ? '<span style="color:#4ade80;font-size:0.62rem" title="TP-1 уже спрацював — частину зафіксовано">✓</span>'
         : '';
@@ -16614,12 +16615,12 @@ function manualSlTpCellsHTML(p, isShadow) {
     // `_numFromInput` на сабміті.
     const _inp = 'type="text" inputmode="decimal" autocomplete="off" lang="en"';
     return `
-        <td>
+        <td style="white-space:nowrap">
             <input ${_inp} placeholder="—"
                    value="${sl}" title="${slSk.title}"
                    style="${slSk.style}"
                    onblur="submitManualSlTp('${sym}', this.value, null, ${shFlag})"
-                   onkeydown="if(event.key==='Enter'){this.blur();}">
+                   onkeydown="if(event.key==='Enter'){this.blur();}">${slTf}
         </td>
         <td style="white-space:nowrap">
             <input ${_inp} placeholder="—"
@@ -16635,6 +16636,27 @@ function manualSlTpCellsHTML(p, isShadow) {
                    onblur="submitManualSlTp('${sym}', null, this.value, ${shFlag})"
                    onkeydown="if(event.key==='Enter'){this.blur();}">
         </td>`;
+}
+
+// 🏷 З ЯКОГО ТАЙМФРЕЙМУ ВЗЯТО Manual SL (вимога 24.09) — бейдж праворуч
+// від поля. Значення дає БЕКЕНД (`manual_sl_tf`, правило `sl_tf_tag`), фронт
+// нічого не парсить. Показуємо ЛИШЕ для рівня, поставленого ботом:
+//   ✏️ ручний рівень — TF немає, позначку стирає бекенд;
+//   ⚖️ беззбиток — рівень від входу, а не від блоку, тож бейдж ховаємо тут
+//      теж (подвійний захист: `sl_breakeven` перекриває походження).
+function _slTfBadge(p) {
+    const tf = p && p.manual_sl_tf;
+    if (!tf || p.sl_breakeven || p.manual_sl_src !== 'auto'
+        || p.manual_sl === undefined || p.manual_sl === null || p.manual_sl === '') return '';
+    const pct = tf === '%';
+    const tip = pct
+        ? 'Manual SL: % від входу — жоден блок не дав придатного рівня (гарантія стопа)'
+        : `Manual SL взято з блоку на таймфреймі ${tf}`;
+    // Простий текст одразу за полем, БЕЗ рамки (вимога 24.09: «таблиця і так
+    // широка») — лише 4px відступу, щоб не зливалось із рамкою поля.
+    return `<span class="sm-sl-tf" title="${tip}" style="margin-left:4px;`
+        + `font-family:monospace;font-size:0.62rem;font-weight:700;`
+        + `color:${pct ? '#fbbf24' : '#7dd3fc'};vertical-align:middle">${tf}</span>`;
 }
 
 // 🔢 ЄДИНЕ правило читання поля рівня: порожньо → 0 («зняти рівень»), кома →

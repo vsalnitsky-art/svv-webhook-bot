@@ -7876,7 +7876,8 @@ class FuelFilterDaemon:
                 res = tm.update_manual_sl_tp(sym, manual_sl=sl,
                                              is_shadow=(is_shadow and not is_real),
                                              origin='auto',
-                                             origin_label='Q3-VOB · трейл')
+                                             origin_label='Q3-VOB · трейл',
+                                         origin_tf=(s or {}).get('funding_vob_tf'))
             except Exception as e:
                 print(f"[FF-VOB-open] {sym} SL update error: {e}")
                 return
@@ -7923,7 +7924,8 @@ class FuelFilterDaemon:
         try:
             res = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=is_shadow2,
                                          origin='auto',
-                                         origin_label='Q3-VOB · відкриття')
+                                         origin_label='Q3-VOB · відкриття',
+                                         origin_tf=(s or {}).get('funding_vob_tf'))
             sl_note = (f'SL={self._fmt_price(sl)}' if (res and res.get('ok'))
                        else f'SL={self._fmt_price(sl)} (не прийнято: {(res or {}).get("reason", "—")})')
         except Exception as e:

@@ -1268,6 +1268,104 @@ def test_the_page_shows_the_magnet_state_separately():
     print('✓ сторінка розрізняє «магніт → TP-1» і «нічого не робимо»')
 
 
+# ═══════════ 🏷 TF ДЖЕРЕЛА Manual SL — БЕЙДЖ ПРАВОРУЧ (вимога 24.09) ═══════════
+def test_sl_tf_tag_reads_the_timeframe_from_the_source_label():
+    f = tmmod.sl_tf_tag
+    _check(f('★1H (обране джерело: 1H OB)') == '1H', f('★1H (обране джерело: 1H OB)'))
+    _check(f('Volumized OB 15m') == '15M', f('Volumized OB 15m'))
+    _check(f('Черга-4 · Volumized OB (5m)') == '5M', 'Q4-підпис')
+    _check(f('OB 15M') == '15M', 'OB-рядок TF воріт')
+    _check(f('2% від входу') == '%', 'гарантія стопа — не блок, позначка %')
+    _check(f('Q3-VOB · трейл', '1m') == '1M', 'явний TF має пріоритет')
+    _check(f('Автопілот · структура') == '', 'TF невідомий → порожньо, не вигадуємо')
+    _check(f('Черга-4 · 1H OB', '15m') == '15M', 'явний TF сильніший за підпис')
+    _check(f('') == '' and f(None) == '', 'порожній вхід')
+    print('✓ 🏷 TF джерела SL береться з одного правила sl_tf_tag')
+
+
+def test_autosl_writes_the_timeframe_of_the_block():
+    _reset(queue4_sl_source='1h')
+    _OB_ROWS['1h'] = {'bias': 'BEARISH', 'bar_high': 0.5285, 'bar_low': 0.5250}
+    p = _pos()
+    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
+    _check(p.get('manual_sl_tf') == '1H', f"очікували 1H, маємо {p.get('manual_sl_tf')!r}")
+    _reset(autosl_fallback_pct=2.0)
+    p = _pos()
+    _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)     # жодного блоку → % від входу
+    _check(p.get('manual_sl_tf') == '%', f"гарантія → '%', маємо {p.get('manual_sl_tf')!r}")
+    print('✓ авто-SL пише TF блоку (або % для гарантії)')
+
+
+def test_bot_level_carries_the_tf_hand_level_erases_it():
+    """Вимога 24.09: «Якщо Manual SL виставлений вручну, цей напис стирається»."""
+    t = _StoreTM('SHORT', 100.0)
+    t.update_manual_sl_tp('BTCUSDT', manual_sl=110.0, origin='auto',
+                          origin_label='Черга-4 · 1H OB (1h)')
+    p = t._positions['BTCUSDT']
+    _check(p.get('manual_sl_tf') == '1H', f"бот → 1H, маємо {p.get('manual_sl_tf')!r}")
+    t.update_manual_sl_tp('BTCUSDT', manual_sl=108.0)          # руками
+    _check('manual_sl_tf' not in p, 'ручний рівень мусить стерти TF-бейдж')
+    t.update_manual_sl_tp('BTCUSDT', manual_sl=110.0, origin='auto',
+                          origin_label='Q3-VOB · трейл', origin_tf='5m')
+    _check(p.get('manual_sl_tf') == '5M', 'явний origin_tf')
+    t.update_manual_sl_tp('BTCUSDT', manual_sl=0)              # зняли
+    _check('manual_sl_tf' not in p, 'знятий рівень не лишає бейджа')
+    print('✓ 🏷 бот → TF є · вручну/зняли → TF стерто')
+
+
+def test_breakeven_erases_the_tf_badge():
+    """Вимога 24.09: «коли переведено у БЗ — напис прибирається»."""
+    o, pos = _tm_be()
+    pos['manual_sl_tf'] = '1H'
+    o._tp1_move_to_breakeven('BTCUSDT', pos, 103.0, False)
+    _check(pos.get('sl_breakeven') is True, 'беззбиток мав стати')
+    _check('manual_sl_tf' not in pos, 'після БЗ TF-бейдж прибирається')
+    print('✓ ⚖️ беззбиток прибирає TF-бейдж')
+
+
+def test_every_bot_sl_path_passes_a_timeframe():
+    ff = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           'detection', 'fuel_filter.py'), encoding='utf-8').read()
+    for lbl in ("'Q3-VOB · трейл'", "'Q3-VOB · відкриття'"):
+        i = ff.index(lbl)
+        _check('origin_tf=' in ff[i:i + 160], f'{lbl}: TF funding-VOB не передано')
+    tm = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           'detection', 'trade_manager.py'), encoding='utf-8').read()
+    i = tm.index("origin_label='Автопілот · структура'")
+    _check("origin_tf=(ctx or {}).get('swing_tf')" in tm[i:i + 200],
+           'трейл автопілота мусить передати TF структури')
+    print('✓ кожен ботовий шлях SL передає свій TF')
+
+
+def test_the_page_draws_the_badge_only_for_a_bot_level():
+    import subprocess, shutil
+    html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             'templates', 'smart_money.html'), encoding='utf-8').read()
+    i = html.index('function _slTfBadge(p)')
+    j = html.index('\n}\n', i) + 3
+    fn = html[i:j]
+    _check('${slTf}' in html, 'бейдж має стояти поруч із полем SL')
+    if not shutil.which('node'):
+        print('  (node немає — JS-частину пропущено)'); return
+    js = fn + r"""
+const out = {
+ bot: _slTfBadge({manual_sl: 1, manual_sl_src: 'auto', manual_sl_tf: '1H'}),
+ user: _slTfBadge({manual_sl: 1, manual_sl_src: 'user', manual_sl_tf: '1H'}),
+ be: _slTfBadge({manual_sl: 1, manual_sl_src: 'auto', manual_sl_tf: '1H', sl_breakeven: true}),
+ none: _slTfBadge({manual_sl_src: 'auto', manual_sl_tf: '1H'}),
+ pct: _slTfBadge({manual_sl: 1, manual_sl_src: 'auto', manual_sl_tf: '%'}),
+};
+console.log(JSON.stringify(out));"""
+    r = subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=20)
+    import json as _j
+    o = _j.loads(r.stdout.strip())
+    _check('>1H<' in o['bot'], f"бот → бейдж 1H: {o['bot']}")
+    _check(o['user'] == '' and o['be'] == '' and o['none'] == '',
+           f'вручну / БЗ / без рівня → порожньо: {o}')
+    _check('>%<' in o['pct'], 'гарантія стопа → %')
+    print('✓ сторінка малює TF-бейдж лише для ботового рівня')
+
+
 if __name__ == '__main__':
     test_mnt_case_star_1h_block_is_used_instead_of_waiting()
     test_chosen_source_wins_for_every_trade()
@@ -1339,4 +1437,10 @@ if __name__ == '__main__':
     test_no_magnet_means_a_reason_not_an_empty_cell()
     test_the_exchange_silence_is_retried_not_remembered()
     test_the_page_shows_the_magnet_state_separately()
+    test_sl_tf_tag_reads_the_timeframe_from_the_source_label()
+    test_autosl_writes_the_timeframe_of_the_block()
+    test_bot_level_carries_the_tf_hand_level_erases_it()
+    test_breakeven_erases_the_tf_badge()
+    test_every_bot_sl_path_passes_a_timeframe()
+    test_the_page_draws_the_badge_only_for_a_bot_level()
     print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')

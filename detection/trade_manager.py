@@ -529,6 +529,32 @@ def _new_position(symbol, side, entry_price, qty, sl_price, tp_price, order_id, 
     }
 
 
+
+_SL_TF_RE = None
+
+
+def sl_tf_tag(label, tf=None) -> str:
+    """🏷 Таймфрейм, з якого взято Manual SL, — для бейджа праворуч від поля.
+
+    ЄДИНЕ правило (вимога 24.09). `tf` — явний TF від викликача (пріоритет);
+    інакше TF шукається в людському підписі джерела («1H OB (1h)» → «1H»,
+    «Volumized OB 15m» → «15M»). Рівень «% від входу» — не блок, а гарантія
+    стопа, тож позначка «%». Нічого не знайшли → '' (TF не вигадуємо).
+    """
+    global _SL_TF_RE
+    import re as _re
+    if _SL_TF_RE is None:
+        _SL_TF_RE = _re.compile(r'(?<![\w.])(\d{1,3})\s*([mhdw])(?![\w])', _re.I)
+    if tf:
+        m = _SL_TF_RE.search(str(tf))
+        if m:
+            return f"{m.group(1)}{m.group(2).upper()}"
+    lbl = str(label or '')
+    if 'від входу' in lbl:
+        return '%'
+    m = _SL_TF_RE.search(lbl)
+    return f"{m.group(1)}{m.group(2).upper()}" if m else ''
+
 class TradeManager:
     
     def __init__(self, db=None, notifier=None, bybit=None, scanner=None):
@@ -1839,6 +1865,9 @@ class TradeManager:
             origin_label=f'Беззбиток після TP-1 (+{buf:g}% комісії)') or {}
         if r.get('ok'):
             pos['sl_breakeven'] = True
+            # 🏷 Беззбиток — рівень від ВХОДУ, а не від блоку: TF-бейдж знімаємо
+            # (вимога 24.09).
+            pos.pop('manual_sl_tf', None)
             log_activity(symbol, 'sltp',
                          f'⚖️ TP-1 → БЕЗЗБИТОК: SL {self._fmt_price(be)} '
                          f'(вхід {self._fmt_price(pos.get("entry_price"))} '
@@ -2197,6 +2226,7 @@ class TradeManager:
         # а не виглядало як введене руками.
         pos['manual_sl_src'] = self.SRC_AUTO
         pos['manual_sl_by'] = f'Авто-SL · {label}'
+        pos['manual_sl_tf'] = sl_tf_tag(label)   # 🏷 бейдж TF біля поля
         self._record_manual_hist(pos, 'sl', cand)
         try:
             from detection.activity_log import log_activity
@@ -3901,6 +3931,7 @@ class TradeManager:
             r = self.update_manual_sl_tp(
                 symbol, manual_sl=lvl, is_shadow=is_shadow,
                 origin=self.SRC_AUTO, origin_label='Автопілот · структура',
+                origin_tf=(ctx or {}).get('swing_tf'),
                 # ⬇️ ОДИН РЯДОК = ОДНА ПОДІЯ: нижче автопілот пише СВІЙ,
                 # змістовніший рядок (із причиною і ціллю). Дублювати той
                 # самий факт двома записами — той самий флуд, лише вдвічі.
@@ -7399,7 +7430,8 @@ class TradeManager:
                               manual_tp=None, is_shadow: bool = False,
                               origin: str = 'user',
                               origin_label: str = None,
-                              manual_tp1=None, quiet: bool = False) -> Dict:
+                              manual_tp1=None, quiet: bool = False,
+                              origin_tf: str = None) -> Dict:
         """Set or clear the per-position manual SL/TP override.
 
         `origin` — ХТО ставить рівень: 'user' (руками з UI, дефолт — щоб усі
@@ -7546,10 +7578,19 @@ class TradeManager:
                 # Нове значення — знімаємо позначку «про замок уже сказано»,
                 # щоб пояснення зʼявилось у лозі й для цього рівня.
                 pos.pop('_pilot_sl_user_lock', None)
+                # 🏷 TF джерела — ЛИШЕ для рівня, поставленого БОТОМ. Ручний
+                # рівень позначку СТИРАЄ (вимога 24.09): таймфрейму в нього немає.
+                _tft = (sl_tf_tag(origin_label, origin_tf)
+                        if _src == self.SRC_AUTO else '')
+                if _tft:
+                    pos['manual_sl_tf'] = _tft
+                else:
+                    pos.pop('manual_sl_tf', None)
             elif sl_op[0] == 'clear':
                 pos.pop('manual_sl', None)
                 pos.pop('manual_sl_src', None)
                 pos.pop('manual_sl_by', None)
+                pos.pop('manual_sl_tf', None)
                 # Поле очищено → автопілот знову веде стоп сам.
                 pos.pop('_pilot_sl_user_lock', None)
             # ⚖️ Позначка «стоп у беззбитку» належить рівню, а не угоді: щойно
