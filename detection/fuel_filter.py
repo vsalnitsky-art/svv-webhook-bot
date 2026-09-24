@@ -4809,6 +4809,8 @@ class FuelFilterDaemon:
                 p = book.get(sym)
                 if not p or not _should_close(p.get('side')):
                     continue
+                if p.get('manual_mode'):
+                    continue      # 📌 Manual — фліп ₿-сеансу угоду не закриває
                 try:
                     if is_real:
                         if hasattr(tm, 'manual_close') and callable(tm.manual_close):
@@ -5803,6 +5805,18 @@ class FuelFilterDaemon:
         except Exception:
             return False
 
+    def _tm_manual_locked(self, symbol: str, is_real: bool) -> bool:
+        """📌 Manual на угоді → автоматичні закриття Fuel Filter її НЕ чіпають.
+        Читаємо ПУБЛІЧНИЙ `TradeManager.is_manual_locked` (єдине правило).
+        Старіший TM без методу / збій → False (поведінка як раніше)."""
+        tm = self._get_tm() if self._get_tm else None
+        if not tm or not hasattr(tm, 'is_manual_locked'):
+            return False
+        try:
+            return bool(tm.is_manual_locked(symbol, is_shadow=not is_real))
+        except Exception:
+            return False
+
     def _tm_position_side(self, symbol: str) -> Optional[str]:
         """Side ('LONG'/'SHORT') of the TM position for `symbol` (real first,
         then paper), or None if there is no open position."""
@@ -5837,6 +5851,9 @@ class FuelFilterDaemon:
         if not tm:
             return False
         done = False
+        # 📌 Manual — автоматичний реверс угоду не закриває (і нову не відкриє).
+        if self._tm_manual_locked(symbol, True) or self._tm_manual_locked(symbol, False):
+            return False
         try:
             if symbol in (getattr(tm, '_positions', {}) or {}) and hasattr(tm, 'manual_close'):
                 tm.manual_close(symbol, reason='reverse_via_queue2')
@@ -5863,6 +5880,11 @@ class FuelFilterDaemon:
         """
         tm = self._get_tm() if self._get_tm else None
         if not tm:
+            return
+        # 📌 Manual — автоматичний вихід Fuel Filter (fuel_flipped / faded /
+        # potential …) угоду не закриває. Трекінг лишаємо: зняли 📌 — правило
+        # знову діє з наступного такту.
+        if self._tm_manual_locked(symbol, is_real):
             return
 
         if not is_real and (not exit_price or exit_price <= 0):

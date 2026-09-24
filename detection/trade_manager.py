@@ -1654,14 +1654,19 @@ class TradeManager:
         # original SL. Empty / 0 / None → not active for that field.
         # Auto-manage the Manual SL from the «Require OB Match» OB first (no-op
         # unless q2_auto_ob_sl is on) so the breach check below sees the latest.
-        self._auto_ob_manual_sl(symbol, pos, current_price)
-        # 🔮/🧠 Самостійні правила виходу (Forecast 1H / 4H / Decision).
-        # Стоять ПЕРЕД перевіркою Manual SL/TP: якщо вердикт розвернувся, немає
-        # сенсу чекати, поки ціна дійде до стопа.
-        if self._check_signal_exits(symbol, pos, current_price, False):
-            return
-        if self._pilot_tick(symbol, pos, current_price, False):
-            return
+        # 📌 Manual: автоматичні важелі (авто-SL, правила виходу за вердиктом,
+        # автопілот) стоять ТУТ, ДО ручних рівнів — тож гейт мусить бути ТУТ,
+        # а не лише нижче (кейс 24.09: 📌 угоди закривало «МММ LiQ ⚖ / ПРОТИ»).
+        _manual = self._manual_locked(pos)
+        if not _manual:
+            self._auto_ob_manual_sl(symbol, pos, current_price)
+            # 🔮/🧠 Самостійні правила виходу (Forecast 1H / 4H / Decision).
+            # Стоять ПЕРЕД перевіркою Manual SL/TP: якщо вердикт розвернувся,
+            # немає сенсу чекати, поки ціна дійде до стопа.
+            if self._check_signal_exits(symbol, pos, current_price, False):
+                return
+            if self._pilot_tick(symbol, pos, current_price, False):
+                return
         # 🎯 TP-1 — ЧАСТКОВА фіксація. Стоїть ПЕРЕД повним TP: інакше рівень
         # TP-2, який лежить далі, ніколи не дав би частковому спрацювати.
         self._check_manual_tp1(symbol, pos, current_price, False)
@@ -2295,14 +2300,15 @@ class TradeManager:
             if _d:
                 pos['entry_score'] = _d
 
-        self._auto_ob_manual_sl(symbol, pos, current_price)
-        # 🔮/🧠 Самостійні правила виходу (Forecast 1H / 4H / Decision).
-        # Стоять ПЕРЕД перевіркою Manual SL/TP: якщо вердикт розвернувся, немає
-        # сенсу чекати, поки ціна дійде до стопа.
-        if self._check_signal_exits(symbol, pos, current_price, True):
-            return
-        if self._pilot_tick(symbol, pos, current_price, True):
-            return
+        # 📌 Manual — той самий гейт, що в реальній книзі (паперова ДЗЕРКАЛИТЬ).
+        _manual = self._manual_locked(pos)
+        if not _manual:
+            self._auto_ob_manual_sl(symbol, pos, current_price)
+            # 🔮/🧠 Самостійні правила виходу (Forecast 1H / 4H / Decision).
+            if self._check_signal_exits(symbol, pos, current_price, True):
+                return
+            if self._pilot_tick(symbol, pos, current_price, True):
+                return
         # 🎯 TP-1 — ЧАСТКОВА фіксація. Стоїть ПЕРЕД повним TP: інакше рівень
         # TP-2, який лежить далі, ніколи не дав би частковому спрацювати.
         self._check_manual_tp1(symbol, pos, current_price, True)
@@ -2928,6 +2934,9 @@ class TradeManager:
         pos = real or shadow
         if not pos:
             return  # No open position for this symbol
+        # 📌 Manual — автоматичний вихід за Opposite OB не діє.
+        if self._manual_locked(pos):
+            return
         
         # Read OB at the configured exit TF from DB.
         # We don't trust ob_data parameter — scanner may have passed a
@@ -3992,6 +4001,28 @@ class TradeManager:
         потрапляє: це не рішення оператора, а ще не порахований рівень.
         """
         return bool(pos.get('pilot_tp_cleared') and not pos.get('manual_tp'))
+
+    @staticmethod
+    def _manual_locked(pos) -> bool:
+        """📌 Manual на угоді = ЖОДЕН автоматичний важіль її не чіпає (24.09).
+
+        ЄДИНЕ правило для всіх вузлів: правила виходу за вердиктом (🧮 МММ LiQ,
+        Forecast, Decision), 🎯 автопілот, авто-SL, Opposite OB, автоматичні
+        закриття Fuel Filter і БУДЬ-ЯКА зміна рівнів ботом. Лишаються ЛИШЕ дії
+        людини: ручні Manual SL / TP-1 / TP-2, озброєний вручну 🟰 беззбиток і
+        кнопка «Закрити».
+        """
+        try:
+            return bool(pos and pos.get('manual_mode'))
+        except Exception:
+            return False
+
+    def is_manual_locked(self, symbol: str, is_shadow: bool = False) -> bool:
+        """Публічний читач для інших модулів (Fuel Filter) — щоб не лізти в
+        чужі `_positions`."""
+        store = self._shadow_positions if is_shadow else self._positions
+        with self._lock:
+            return self._manual_locked(store.get(symbol))
 
     @staticmethod
     def _pilot_auto_off(s: Dict) -> bool:
@@ -7497,6 +7528,12 @@ class TradeManager:
             if not pos:
                 return {'ok': False,
                         'reason': f'No open {kind} position for {symbol}'}
+            # 📌 Manual: рівні веде ЛЮДИНА. Бот (трейл автопілота, TP-2 з
+            # магніту, беззбиток, Q3-VOB, Черга-4, POC) їх не змінює —
+            # це ЄДИНИЙ вузол, через який ідуть усі ці шляхи.
+            if origin == self.SRC_AUTO and self._manual_locked(pos):
+                return {'ok': False, 'manual_lock': True,
+                        'reason': '📌 Manual — рівні веде оператор, бот їх не змінює'}
             
             # === Directional validation ===
             # Only kicks in when at least one operation is 'set'. Skip and
