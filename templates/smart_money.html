@@ -2646,6 +2646,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="ff-mm-corr-ob" onchange="saveFuelFilterSettings()" style="margin:0">
                         📐 + Order Block як джерело ширини
                     </label>
+                    <div class="mmc-f" title="🧭 За яким сенсором вирішувати КІНЕЦЬ корекції. 📐 Order Block реагує на сам пробій структури й розвертається раніше; 📦 Volumized OB народжується зі свінга і проходить фільтри висоти/обʼєму, тож повертається пізніше (корекція триває довше). СТАРТ і далі бере тривожніший з обох. Обраний сенсор без даних → береться другий (у підказці буде «фолбек»).">
+                        <label>🧭 Вихід за</label>
+                        <select id="ff-mm-corr-exitsrc" onchange="saveFuelFilterSettings()">
+                            <option value="ob" selected>📐 OB</option>
+                            <option value="vob">📦 VOB</option>
+                        </select>
+                    </div>
+                    <div class="mmc-f" title="🕳 ДНО. Кінець корекції дозволено, лише якщо в ЦЬОМУ епізоді частка монет ЗА банером (за обраним сенсором виходу) спершу опускалась до цього рівня або нижче. Тобто вихід рахується як ВІДНОВЛЕННЯ ВІД ДНА: наприклад, дно 20% і кінець 40% — корекція просіла до ≤20% «за», а потім повернулось ≥40%. Без дна пара «вхід 60% проти / кінець 40% за» миготіла б (це одна й та сама межа). Якщо обраний сенсор дна так і не побачив — кінець, щойно ширина перестала тримати старт. 0 = вимкнено.">
+                        <label>🕳 Дно ЗА ≤, %</label>
+                        <input type="number" id="ff-mm-corr-trough" min="0" max="100" step="5" value="20"
+                               onchange="saveFuelFilterSettings()">
+                    </div>
                     <div class="mmc-f">
                         <label>🧭 Кінець: повернулось ЗА ≥, %</label>
                         <input type="number" id="ff-mm-corr-vobexit" min="0" max="100" step="5" value="70"
@@ -12511,7 +12523,15 @@ function mmRenderCorr(corr) {
             ex.style.display = '';
             ex.style.color = ready ? '#4ade80' : '#fbbf24';
             ex.title = c.why || '';
-            ex.innerHTML = `🧭 кінець коли ЗА <b>≥${c.exit_pct}%</b>`
+            const _xi = c.exit_src === 'vob' ? '📦' : (c.exit_src === 'ob' ? '📐' : '');
+            const _xf = c.exit_src && c.exit_src_want && c.exit_src !== c.exit_src_want;
+            ex.innerHTML = `🧭 кінець коли ${_xi ? _xi + ' ' : ''}ЗА <b>≥${c.exit_pct}%</b>`
+                + (_xf ? ' <span style="color:#fbbf24">фолбек</span>' : '')
+                + (c.exit_trough > 0
+                   ? (c.exit_troughed
+                      ? ` <span style="color:#4ade80" title="дно пройдено в цьому епізоді">🕳✓</span>`
+                      : ` <span style="color:#fbbf24" title="потрібне дно ЗА ≤${c.exit_trough}% у цьому епізоді">🕳 ≤${c.exit_trough}%</span>`)
+                   : '')
                 + (c.breadth_for_pct != null
                    ? ` <span style="color:#8b93a7">(зараз ${c.breadth_for_pct}%)</span>` : '')
                 + (ready ? ' ✓' : '');
@@ -12772,7 +12792,9 @@ function _mmCorrSummary(s) {
         // тепер вирішує кінець, і не бачити його в згорнутій шапці означало б
         // не знати головного числа детектора.
         + (s.mm_corr_breadth_exit === false ? ' · 🧭 кінець за голосами'
-           : ` проти → кінець ЗА ≥${s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 70}%`)
+           : ` проти → кінець ${s.mm_corr_exit_src === 'vob' ? '📦' : '📐'} ЗА ≥${s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 70}%`
+             + ((s.mm_corr_exit_trough_pct != null ? s.mm_corr_exit_trough_pct : 20) > 0
+                ? ` від дна ≤${s.mm_corr_exit_trough_pct != null ? s.mm_corr_exit_trough_pct : 20}%` : ''))
         + ' · '
         + `💹 ${s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80}% · `
         + `📉 ${s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15} п.п. · `
@@ -14066,6 +14088,8 @@ function renderFuelFilter(d) {
     setIf('ff-mm-corr-vobreq', s.mm_corr_vob_required !== false);   // default true
     setIf('ff-mm-corr-breadth', s.mm_corr_breadth_exit !== false);  // default true
     setIf('ff-mm-corr-ob', s.mm_corr_ob_on !== false);              // default true
+    setIf('ff-mm-corr-exitsrc', s.mm_corr_exit_src === 'vob' ? 'vob' : 'ob');  // default ob
+    setIf('ff-mm-corr-trough', String(s.mm_corr_exit_trough_pct != null ? s.mm_corr_exit_trough_pct : 20));
     setIf('ff-mm-corr-vobexit', String(s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 70));
     setIf('ff-mm-corr-price', String(s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80));
     setIf('ff-mm-corr-drop', String(s.mm_corr_lever_drop != null ? s.mm_corr_lever_drop : 15));
@@ -15128,6 +15152,8 @@ async function saveFuelFilterSettings() {
         mm_corr_vob_required: _c('ff-mm-corr-vobreq'),
         mm_corr_breadth_exit: _c('ff-mm-corr-breadth'),
         mm_corr_ob_on: _c('ff-mm-corr-ob'),
+        mm_corr_exit_src: _v('ff-mm-corr-exitsrc', 'ob') === 'vob' ? 'vob' : 'ob',
+        mm_corr_exit_trough_pct: _mmcNum('ff-mm-corr-trough', 20),
         mm_corr_vob_exit_pct: _mmcNum('ff-mm-corr-vobexit', 70),
         mm_corr_price_pct: _mmcNum('ff-mm-corr-price', 80),
         mm_corr_lever_drop: _mmcNum('ff-mm-corr-drop', 15),

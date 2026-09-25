@@ -1112,7 +1112,9 @@ def _six(price_dir='down'):
 
 def _cfg(**kw):
     c = {'mm_corr_min_layers': 2, 'mm_corr_vob_pct': 60.0,
-         'mm_corr_price_pct': 60.0, 'mm_corr_lever_drop': 15.0}
+         'mm_corr_price_pct': 60.0, 'mm_corr_lever_drop': 15.0,
+         # 🕳 дно вимкнено для тестів механіки виходу; розділ 13 вмикає явно
+         'mm_corr_exit_trough_pct': 0}
     c.update(kw)
     return c
 
@@ -2089,6 +2091,139 @@ def test_the_route_actually_runs_not_just_reads_right():
     _check(calls == [None], f'порожнє тіло = ПЕРЕМИКАЧ (on=None): {calls}')
     print('✓ 🐞 маршрут ⏸ паузи реально виконується (не лише «правильно виглядає»)')
 
+
+
+# ═══════════ 12. ВИХІД ЗА ОБРАНИМ СЕНСОРОМ: 📐 OB (деф.) чи 📦 VOB ══════════
+def test_exit_follows_ob_by_default_while_vob_lags():
+    """Скрін 25.09: «VOB проти 60%/60% · OB проти 10%/60%» — 📐 уже за банером,
+    📦 ще тримає. Дефолт 'ob' → корекція МОЖЕ завершитись."""
+    _check(mc.DEFAULTS['mm_corr_exit_src'] == 'ob', 'дефолт — OB')
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(10)})
+    vob_t = _t(6, 4, 'SHORT', 'LONG')                     # 📦 60% проти
+    ob_t = _t(1, 9, 'SHORT', 'LONG')                      # 📐 10% проти
+    # 🕳 (25.09) дно ОБОВʼЯЗКОВЕ: у цьому епізоді OB уже опускався до 10% «за»
+    r = mc.evaluate(snap, vob_t, 'LONG', 50.0, 51.0, _cfg(),
+                    ob_trends=ob_t, ob_tf='5m', exit_low=10.0)
+    _check(r['breadth_ok'] is True and r['stay'] is False,
+           f'за OB (90% повернулось від дна) корекція завершується: {r["why"]}')
+    _check(r['exit_src'] == 'ob' and r['breadth_for_pct'] == 90.0, str(r))
+    _check('📐' in r['why'], r['why'])
+    v = mc.evaluate(snap, vob_t, 'LONG', 50.0, 51.0,
+                    _cfg(mm_corr_exit_src='vob'), ob_trends=ob_t, ob_tf='5m',
+                    exit_low=10.0)
+    _check(v['breadth_ok'] is False and v['stay'] is True and
+           v['exit_src'] == 'vob' and v['breadth_for_pct'] == 40.0,
+           f'за VOB (40% повернулось) — тримаємо: {v["why"]}')
+    print('✓ 🧭 вихід за обраним сенсором: 📐 OB деф., 📦 VOB за вибором')
+
+
+def test_start_still_uses_the_worse_of_both():
+    """Вибір сенсора стосується ЛИШЕ виходу: старт і далі — максимум обох."""
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'down') for i in range(10)})
+    vob_t = {f'C{i}': 'SHORT' for i in range(10)}
+    ob_t = {f'C{i}': 'LONG' for i in range(10)}
+    r = mc.evaluate(snap, vob_t, 'LONG', 50.0, 52.0, _cfg(),
+                    ob_trends=ob_t, ob_tf='5m')
+    _check(r['breadth_lit'] and r['start_ok'] and r['breadth_pct'] == 100.0,
+           f'старт бачить 📦: {r}')
+    print('✓ 🧭 старт і далі — тривожніший із двох')
+
+
+def test_exit_sensor_without_data_falls_back_and_says_so():
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(10)})
+    vob_t = _t(2, 8, 'SHORT', 'LONG')
+    r = mc.evaluate(snap, vob_t, 'LONG', 50.0, 51.0, _cfg(),
+                    ob_trends={}, ob_tf='5m')            # 📐 даних немає
+    _check(r['exit_src'] == 'vob' and r['exit_src_want'] == 'ob', str(r))
+    _check('фолбек' in r['why'], r['why'])
+    # 📐 рахується для виходу навіть коли вимкнений як джерело СТАРТУ
+    ob_t = _t(1, 9, 'SHORT', 'LONG')
+    o = mc.evaluate(snap, _t(8, 2, 'SHORT', 'LONG'), 'LONG', 50.0, 51.0,
+                    _cfg(mm_corr_ob_on=False), ob_trends=ob_t, ob_tf='5m')
+    _check(o['exit_src'] == 'ob', str(o))
+    _check(mc.exit_src_of('сміття') == 'ob' and mc.exit_src_of('VOB') == 'vob',
+           'нормалізація')
+    print('✓ 🧭 обраний сенсор без даних → другий, і це названо')
+
+
+def test_exit_source_setting_round_trip_and_ui():
+    ff_src = open(os.path.join(_HERE, 'detection', 'fuel_filter.py'),
+                  encoding='utf-8').read()
+    _check("s['mm_corr_exit_src']" in ff_src, 'валідація в get_settings')
+    html = open(os.path.join(_HERE, 'templates', 'smart_money.html'),
+                encoding='utf-8').read()
+    _check('id="ff-mm-corr-exitsrc"' in html, 'випадайка в налаштуваннях')
+    _check('<option value="ob" selected>' in html, 'OB обрано за замовчуванням')
+    _check("mm_corr_exit_src: _v('ff-mm-corr-exitsrc'" in html, 'зберігається')
+    _check("setIf('ff-mm-corr-exitsrc'" in html, 'відновлюється')
+    print('✓ 🧭 налаштування «Вихід за» є в UI і зберігається')
+
+
+# ═══════════ 13. 🕳 ДНО: ВИХІД РАХУЄТЬСЯ ВІД ДНА (вимога 25.09) ══════════════
+def test_trough_default_and_pure_rule():
+    _check(mc.DEFAULTS['mm_corr_exit_trough_pct'] == 20.0, 'дефолт дна 20%')
+    _check(mc.exit_trough_reached(None, 35.0, 20.0) is False, 'дна не було')
+    _check(mc.exit_trough_reached(15.0, 45.0, 20.0) is True, 'дно було раніше')
+    _check(mc.exit_trough_reached(None, 18.0, 20.0) is True, 'дно зараз')
+    _check(mc.exit_trough_reached(None, 90.0, 0) is True, '0 = вимкнено')
+    print('✓ 🕳 правило дна — чиста функція')
+
+
+def test_screenshot_case_no_longer_flickers():
+    """Скрін 25.09: 📦 VOB проти 60% тримає старт, 📐 OB проти лише 10%
+    (тобто «за» 90%). Вхід 60 / вихід 40: без дна корекція завершувалась би
+    відразу після старту (одна межа). З дном — тримається."""
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(10)})
+    vob_t = _t(6, 4, 'SHORT', 'LONG')
+    ob_t = _t(1, 9, 'SHORT', 'LONG')
+    cfg = _cfg(mm_corr_vob_exit_pct=40.0, mm_corr_exit_trough_pct=20)
+    r = mc.evaluate(snap, vob_t, 'LONG', 50.0, 51.0, cfg,
+                    ob_trends=ob_t, ob_tf='5m')
+    _check(r['stay'] is True and r['exit_troughed'] is False,
+           f'дна не було — корекція тримається: {r["why"]}')
+    _check('дна' in r['why'], r['why'])
+    off = mc.evaluate(snap, vob_t, 'LONG', 50.0, 51.0,
+                      _cfg(mm_corr_vob_exit_pct=40.0, mm_corr_exit_trough_pct=0),
+                      ob_trends=ob_t, ob_tf='5m')
+    _check(off['stay'] is False, 'дно вимкнено — стара поведінка')
+    print('✓ 🕳 кейс зі скріна: без дна вихід не спрацьовує')
+
+
+def test_recovery_from_trough_ends_the_correction():
+    """Просіли до 10% «за», повернулось 40% → кінець."""
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(10)})
+    t = _t(6, 4, 'SHORT', 'LONG')                         # обидва: 40% «за»
+    r = mc.evaluate(snap, t, 'LONG', 50.0, 51.0,
+                    _cfg(mm_corr_vob_exit_pct=40.0, mm_corr_exit_trough_pct=20), ob_trends=t, ob_tf='5m',
+                    exit_low=10.0)
+    _check(r['breadth_ok'] is True and r['stay'] is False, r['why'])
+    print('✓ 🕳 відновлення від дна завершує корекцію')
+
+
+def test_no_trough_but_breadth_gone_still_ends():
+    """Обраний сенсор дна не бачив, але й ширина старт уже не тримає
+    (обидва сенсори «за» ≥ 60%) — корекція не висить до фліпу банера."""
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'up') for i in range(10)})
+    t = _t(3, 7, 'SHORT', 'LONG')                         # проти 30% < 50
+    r = mc.evaluate(snap, t, 'LONG', 50.0, 51.0,
+                    _cfg(mm_corr_vob_exit_pct=40.0, mm_corr_exit_trough_pct=20), ob_trends=t, ob_tf='5m')
+    _check(r['stay'] is False and r['exit_troughed'] is False, r['why'])
+    print('✓ 🕳 без дна, але без ширини — кінець')
+
+
+def test_episode_low_is_tracked_and_reset():
+    src = open(os.path.join(_HERE, 'detection', 'fuel_filter.py'),
+               encoding='utf-8').read()
+    body = src.split('def _mm_track_correction', 1)[1].split('\n    def ', 1)[0]
+    _check("exit_low=_low" in body, 'мінімум епізоду передається в evaluate')
+    _check("st['exit_low']" in body, 'мінімум пишеться в стан (персиститься)')
+    _check("('pending', 'on', 'ending')" in body, 'новий епізод — з чистого аркуша')
+    html = open(os.path.join(_HERE, 'templates', 'smart_money.html'),
+                encoding='utf-8').read()
+    _check('id="ff-mm-corr-trough"' in html and "setIf('ff-mm-corr-trough'" in html
+           and "mm_corr_exit_trough_pct: _mmcNum('ff-mm-corr-trough'" in html,
+           'поле дна в UI зберігається й відновлюється')
+    print('✓ 🕳 мінімум епізоду ведеться, поле в UI є')
 
 if __name__ == '__main__':
     _fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]

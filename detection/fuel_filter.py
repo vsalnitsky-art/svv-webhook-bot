@@ -1598,6 +1598,17 @@ class FuelFilterDaemon:
             s.get('mm_corr_breadth_exit', _cd.get('mm_corr_breadth_exit', True)))
         s['mm_corr_ob_on'] = bool(
             s.get('mm_corr_ob_on', _cd.get('mm_corr_ob_on', True)))
+        # 🧭 Сенсор виходу з корекції (вимога 25.09): 'ob' (деф.) | 'vob'.
+        _xs = str(s.get('mm_corr_exit_src', _cd.get('mm_corr_exit_src', 'ob'))
+                  or '').strip().lower()
+        s['mm_corr_exit_src'] = _xs if _xs in ('ob', 'vob') else 'ob'
+        # 🕳 «Дно» для виходу (вимога 25.09): 0..100, 0 = вимкнено.
+        try:
+            s['mm_corr_exit_trough_pct'] = max(0.0, min(100.0, float(
+                s.get('mm_corr_exit_trough_pct',
+                      _cd.get('mm_corr_exit_trough_pct', 20.0)))))
+        except (TypeError, ValueError):
+            s['mm_corr_exit_trough_pct'] = float(_cd.get('mm_corr_exit_trough_pct', 20.0))
         # 📨 Зміна статусу банера 🧮 → Telegram (вимога 21.09). Ключ живе тут, а
         # не в `mm_correction.DEFAULTS`: це про БАНЕР, а не про детектор корекції.
         s['mm_bias_tg'] = bool(s.get('mm_bias_tg', True))
@@ -4026,11 +4037,24 @@ class FuelFilterDaemon:
         peak = max((h[1] for h in hist), default=lever)
         vob = self._mm_vob_trends()
         obt = self._mm_ob_trends()
+        # 🕳 Мінімум частки «ЗА» обраного сенсора в ПОТОЧНОМУ епізоді — від
+        # нього рахується «дно» для виходу. Новий епізод (з trend/ended) —
+        # з чистого аркуша.
+        _prev = self._mm_corr_st or {}
+        _low = (_prev.get('exit_low')
+                if _prev.get('state') in ('pending', 'on', 'ending') else None)
         try:
-            res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
-                               settings, tf=vob.get('tf') or '',
-                               ob_trends=obt.get('trends') or {},
-                               ob_tf=obt.get('tf') or '')
+            try:
+                res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
+                                   settings, tf=vob.get('tf') or '',
+                                   ob_trends=obt.get('trends') or {},
+                                   ob_tf=obt.get('tf') or '', exit_low=_low)
+            except TypeError:
+                # старіший mm_correction без `exit_low`
+                res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
+                                   settings, tf=vob.get('tf') or '',
+                                   ob_trends=obt.get('trends') or {},
+                                   ob_tf=obt.get('tf') or '')
         except TypeError:
             # Фолбек на СТАРІШИЙ `mm_correction` без другого джерела ширини
             # (файли деплояться в різному порядку — той самий прийом, що на
@@ -4044,6 +4068,10 @@ class FuelFilterDaemon:
                             res['need'], now,
                             float(settings.get('mm_corr_confirm_sec', 300) or 0),
                             start_ok=res.get('start_ok'), stay=res.get('stay'))
+        if st.get('state') in ('pending', 'on', 'ending'):
+            _vals = [v for v in (_low, res.get('breadth_for_pct')) if v is not None]
+            if _vals:
+                st['exit_low'] = round(min(float(v) for v in _vals), 1)
         _was = (self._mm_corr_st or {}).get('state')
         # ⏸ РУЧНА ПАУЗА — знімає ЛИШЕ ворота, решта лишається як є (вимога
         # 23.09 дослівно: «все залишається рахуватись відображатись як і
@@ -4069,6 +4097,10 @@ class FuelFilterDaemon:
                 # 🧭 Частка ТИХ, ХТО ПОВЕРНУВСЯ — число, що вирішує кінець.
                 'breadth_for_pct': res.get('breadth_for_pct'),
                 'breadth_src': res.get('breadth_src') or '',
+                'exit_src': res.get('exit_src') or '',
+                'exit_src_want': res.get('exit_src_want') or 'ob',
+                'exit_trough': res.get('exit_trough'),
+                'exit_troughed': res.get('exit_troughed'),
                 'breadth_lit': bool(res.get('breadth_lit')),
                 'ob_on': bool(settings.get('mm_corr_ob_on', True)),
                 'why': res.get('why') or '',

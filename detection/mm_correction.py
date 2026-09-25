@@ -136,6 +136,26 @@ DEFAULTS = {
     # ⚠️ Вимикати не рекомендовано: OFF повертає рівно ту поведінку, через яку
     # корекція «завершувалась» при 90% монет проти банера.
     'mm_corr_breadth_exit': True,
+    # 🧭 ЗА ЯКИМ СЕНСОРОМ ВИХОДИМО З КОРЕКЦІЇ (вимога 25.09): 'ob' | 'vob'.
+    # Скрін користувача: «VOB проти 60%/60% · OB проти 10%/60%» — 📐 OB уже
+    # давно розвернувся за банером, а 📦 VOB ще тримав корекцію (він
+    # народжується зі свінга і проходить фільтри висоти/обʼєму, тож запізнюється).
+    # Дефолт 'ob' — рішення користувача. СТАРТ і далі бере МАКСИМУМ обох
+    # (`breadth_of`): тривожніший сенсор на вході не змінився.
+    # ⚠️ Обраний сенсор не визначений (мала вибірка / старіший сканер) →
+    # беремо ДРУГИЙ, і це названо в `why`. «Немає даних» ≠ «повернулись».
+    'mm_corr_exit_src': 'ob',
+    # 🕳 «ДНО» ДЛЯ ВИХОДУ (вимога 25.09, дослівно: «Вихід по OB 40% — це якщо
+    # корекція просідала нижче, наприклад 20% і майже до 0%, то тоді виходимо
+    # по OB 40%»). Кінець за шириною дозволено, лише якщо в ЦЬОМУ епізоді
+    # частка «ЗА банером» обраного сенсора СПЕРШУ опускалась до цього рівня.
+    # Це класичний breadth thrust: відновлення рахується ВІД ДНА, а не від
+    # будь-якого стану. Без дна вихід 40% при вході 60% миготів би (обидва
+    # пороги — одна межа). 0 = вимкнено (стара поведінка).
+    # ⚠️ Дна не було взагалі (обраний сенсор корекції так і не побачив) →
+    # кінець, щойно ширина ПЕРЕСТАЛА тримати старт (`b_lit_hold` згас), інакше
+    # така корекція тривала б до фліпу банера.
+    'mm_corr_exit_trough_pct': 20.0,
     # 🧭 ЧАСТКА МОНЕТ, ЯКІ ПОВЕРНУЛИСЬ ЗА БАНЕРОМ, — досягли її, корекція
     # завершується. Читається так само, як поріг старту: «скільки монет».
     # ⚠️ СЕНС ЧИСЛА ЗМІНЕНО 22.09 (вимога користувача). Раніше поле означало
@@ -328,6 +348,35 @@ def ob_layer(trends: Dict, symbols, bias: str, need_pct: float,
     return _layer('ob', '📐', name, _share(a, f), need, a + f, a, f, role='both')
 
 
+EXIT_SRCS = ('ob', 'vob')
+
+
+def exit_src_of(v) -> str:
+    """Нормалізований вибір сенсора виходу; сміття → дефолт 'ob'."""
+    v = str(v or '').strip().lower()
+    return v if v in EXIT_SRCS else 'ob'
+
+
+def exit_breadth(vob: Optional[Dict], ob: Optional[Dict], src: str):
+    """🧭 ШИРИНА ДЛЯ ВИХОДУ = ОДИН обраний сенсор → `(breadth, used, note)`.
+
+    Обраний не визначений → ДРУГИЙ (з позначкою у `note`); обидва ні →
+    `ok=False` (тоді кінець вирішують голоси, як і раніше).
+    ⚠️ Форма відповіді — та сама, що в `breadth_of`, тож `breadth_exit_ok`
+    читає її без змін.
+    """
+    src = exit_src_of(src)
+    pair = {'vob': (vob, '📦'), 'ob': (ob, '📐')}
+    other = 'vob' if src == 'ob' else 'ob'
+    for key, note in ((src, ''), (other, ' (фолбек)')):
+        d = dict(pair[key][0] or {})
+        if d.get('ok') and d.get('pct') is not None:
+            p = float(d['pct'])
+            return ({'ok': True, 'pct': p, 'for_pct': round(100.0 - p, 1),
+                     'src': pair[key][1]}, key, note)
+    return ({'ok': False, 'pct': None, 'for_pct': None, 'src': ''}, '', '')
+
+
 def breadth_of(vob: Optional[Dict], ob: Optional[Dict]) -> Dict:
     """🧭 ШИРИНА РИНКУ = найтривожніший із двох структурних сенсорів.
 
@@ -420,9 +469,19 @@ def lever_layer(now_pct, peak_pct, need_drop: float,
             'note': f'пік {round(p, 1)} п.п. → зараз {round(n, 1)} п.п.'}
 
 
+def exit_trough_reached(low_for, now_for, trough) -> bool:
+    """🕳 Чи опускалась частка «ЗА» до дна в цьому епізоді (ЧИСТА функція).
+    `trough <= 0` → правило вимкнено (завжди True)."""
+    t = _num(trough, 0.0) or 0.0
+    if t <= 0:
+        return True
+    vals = [float(v) for v in (low_for, now_for) if v is not None]
+    return bool(vals) and min(vals) <= t
+
+
 def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
              cfg: Dict, tf: str = '', ob_trends: Optional[Dict] = None,
-             ob_tf: str = '') -> Dict:
+             ob_tf: str = '', exit_low: Optional[float] = None) -> Dict:
     """Усі ознаки РАЗОМ + готові рішення «ПОЧАТИ» і «ТРИМАТИ».
 
     Повертає `{'layers','lit','lit_hold','need','determined','start_ok',
@@ -450,7 +509,10 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
     need = max(1, int(_num(c['mm_corr_min_layers'], 2) or 2))
     syms = list((snap or {}).keys())
     _ob_on = bool(c['mm_corr_ob_on'])
-    _obt = (ob_trends or {}) if _ob_on else {}
+    _exit_src = exit_src_of(c.get('mm_corr_exit_src'))
+    # 📐 рахуємо і тоді, коли він потрібен ЛИШЕ для виходу: тумблер
+    # `mm_corr_ob_on` керує джерелом ширини на СТАРТІ, а не тим, чи існує OB.
+    _obt = (ob_trends or {}) if (_ob_on or _exit_src == 'ob') else {}
 
     def _set(hold):
         return (vob_layer(trends, syms, bias, c['mm_corr_vob_pct'], hold, tf),
@@ -461,6 +523,7 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
 
     s_vob, s_ob, s_price, s_lever = _set(False)
     r_vob, r_ob, r_price, r_lever = _set(True)
+    _ob_exit = s_ob            # 📐 для виходу — до того, як стартова позначка «off»
     if not _ob_on:
         s_ob = dict(s_ob, note='📐 друге джерело ширини вимкнено', off=True)
         r_ob = dict(r_ob, note='📐 друге джерело ширини вимкнено', off=True)
@@ -468,8 +531,8 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
 
     # 🧭 ШИРИНА — ОДНА ознака з ДВОХ сенсорів (`breadth_of` = максимум), а не
     # четвертий голос: інакше «2 з 3» мовчки стало б «2 з 4».
-    b_strict = breadth_of(s_vob, s_ob)
-    b_relax = breadth_of(r_vob, r_ob)
+    b_strict = breadth_of(s_vob, s_ob if _ob_on else None)
+    b_relax = breadth_of(r_vob, r_ob if _ob_on else None)
     _need_pct = float(c['mm_corr_vob_pct'])
     b_lit = bool(b_strict['ok'] and b_strict['pct'] >= _need_pct)
     b_lit_hold = bool(b_relax['ok']
@@ -486,8 +549,19 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
     # 🧭 КІНЕЦЬ ВИРІШУЄ ЛИШЕ ШИРИНА — і рівно ОДНИМ числом: скільки монет
     # ПОВЕРНУЛОСЬ ЗА банером (вимога 22.09).
     exit_pct = _num(c['mm_corr_vob_exit_pct'], 70.0)
-    b_ok = (breadth_exit_ok(b_strict, exit_pct)
+    # 🧭 КІНЕЦЬ — за ОБРАНИМ сенсором (вимога 25.09), а не за максимумом.
+    b_exit, _exit_used, _exit_note = exit_breadth(s_vob, _ob_exit, _exit_src)
+    b_ok = (breadth_exit_ok(b_exit, exit_pct)
             if bool(c['mm_corr_breadth_exit']) else None)
+    # 🕳 ДНО: відновлення рахується лише ВІД ДНА (вимога 25.09).
+    _trough = _num(c.get('mm_corr_exit_trough_pct'), 0.0) or 0.0
+    _troughed = exit_trough_reached(exit_low, b_exit.get('for_pct'), _trough)
+    _no_trough_release = False
+    if b_ok is True and not _troughed:
+        if b_lit_hold:
+            b_ok = False            # відновились, але дна не було — тримаємо
+        else:
+            _no_trough_release = True   # ширина вже не тримає старт — кінець
     # ⚠️ **ГОЛОСИ БІЛЬШЕ НЕ ПРОДОВЖУЮТЬ КОРЕКЦІЮ, КОЛИ ШИРИНА ВІДНОВИЛАСЬ.**
     # Було `stay = (b_ok is False) or (lit_hold >= need)`, і саме це тримало
     # корекцію ВІЧНО — ось чому «немає повідомлень про вихід» (скарга 22.09).
@@ -498,12 +572,18 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
     # Тепер: ширина визначена → вона й ухвалює рішення, крапка. Голоси
     # лишаються ЛИШЕ фолбеком, коли ширини немає взагалі.
     stay = (not b_ok) if b_ok is not None else (lit_hold >= need)
-    _src = b_strict.get('src') or '📦'
+    _src = (b_exit.get('src') or '📦') + _exit_note
     _lim = round(float(exit_pct), 1)
-    _for = b_strict.get('for_pct')
-    if b_ok is False:
+    _for = b_exit.get('for_pct')
+    if b_ok is False and (b_exit.get('for_pct') or 0) >= _lim and not _troughed:
+        why = (f'{_src} за банером {_for}% (≥ {_lim}%), але дна ≤ '
+               f'{round(_trough, 1)}% у цьому епізоді ще не було — тримаємо')
+    elif b_ok is False:
         why = (f'{_src} повернулось за банером лише {_for}% монет (потрібно '
                f'≥ {_lim}%) — кінець корекції заблоковано')
+    elif _no_trough_release:
+        why = (f'{_src} за банером {_for}% (≥ {_lim}%); дна не було, але '
+               f'ширина вже не тримає старт — кінець')
     elif b_ok is True:
         why = (f'{_src} повернулось за банером {_for}% монет (≥ {_lim}%) — '
                f'ширина ринку відновилась')
@@ -525,8 +605,13 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
         # 🧭 Частка ТИХ, ХТО ПОВЕРНУВСЯ — число, яке ТЕПЕР вирішує кінець.
         # Віддаємо окремо, щоб UI і сирий лог показували саме його, а не
         # рахували «100 − проти» кожен у себе.
-        'breadth_for_pct': b_strict.get('for_pct'),
-        'breadth_src': _src,
+        'breadth_for_pct': b_exit.get('for_pct'),
+        'breadth_src': b_strict.get('src') or '📦',
+        # 🧭 Чий сенсор ЗАРАЗ вирішує кінець ('ob'/'vob'/'') — фолбек видно.
+        'exit_src': _exit_used,
+        'exit_trough': round(_trough, 1),
+        'exit_troughed': bool(_troughed),
+        'exit_src_want': _exit_src,
         'breadth_lit': b_lit,
         'why': why,
     }
