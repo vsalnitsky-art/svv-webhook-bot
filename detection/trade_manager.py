@@ -1610,6 +1610,11 @@ class TradeManager:
             pos = self._positions.get(symbol)
         if not pos:
             return
+        # 📨 Відкладене «▶️ ВІДКРИТО» — чекало стопа від Fuel Filter.
+        try:
+            self._flush_open_notice(pos, is_test=False)
+        except Exception:
+            pass
         
         current_price = self._get_current_price(symbol)
         if current_price is None:
@@ -2263,6 +2268,11 @@ class TradeManager:
             pos = self._shadow_positions.get(symbol)
         if not pos:
             return
+        # 📨 Відкладене «▶️ ВІДКРИТО» — чекало стопа від Fuel Filter.
+        try:
+            self._flush_open_notice(pos, is_test=True)
+        except Exception:
+            pass
         
         current_price = self._get_current_price(symbol)
         if current_price is None:
@@ -6385,18 +6395,7 @@ class TradeManager:
         # the scanner's klines cache. Failure to compute is non-fatal — we
         # just skip the OB line in the message.
         ob_line = self._format_last_ob_telegram(symbol)
-        dot = self._dir_dot(side)
-        _sl_str = self._sltp_display(pos, 'sl')
-        msg = (
-            f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
-            f"<b>#{symbol}</b>   🧪 ТЕСТ\n"
-            f"📍 Вхід: <b>{self._fmt_price(entry_price)}</b>\n"
-            f"🛡 SL: <b>{_sl_str}</b>"
-        )
-        _tp = self._tp_lines(pos)
-        if _tp:
-            msg += "\n" + _tp
-        self._notify(msg, is_test=True, category='trades')
+        self._notify_open(pos, is_test=True)
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
         return {'ok': True}
 
@@ -8302,20 +8301,77 @@ class TradeManager:
             f"<i>автореверс вимкнено — позицію не перевертаємо</i>",
             is_test=is_shadow, category='trades')
 
-    def _notify_open(self, pos):
+    # 📨 Скільки чекати на стоп перед повідомленням про відкриття. Угоди з черг
+    # і з ✋ групового відкриття отримують SL від Fuel Filter (`_q4_set_vob_sl`)
+    # уже ПІСЛЯ `_open` — за 1-3 с. Без очікування TG щоразу писав «SL: null»
+    # (кейс DASHUSDT 25.09: відкрито 13:25:30, стоп 1H OB — о 13:25:32).
+    OPEN_NOTICE_WAIT_SEC = 20
+
+    @staticmethod
+    def _has_sl(pos) -> bool:
+        for k in ('manual_sl', 'sl_price'):
+            try:
+                if pos.get(k) is not None and float(pos.get(k)) > 0:
+                    return True
+            except (TypeError, ValueError):
+                pass
+        return False
+
+    def _open_notice_text(self, pos, is_test: bool = False) -> str:
+        """Текст «▶️ ВІДКРИТО» — ОДИН на обидві книги (real + 🧪 paper).
+        Біля SL — таймфрейм джерела (`manual_sl_tf`, те саме поле, що підпис
+        праворуч від поля в таблиці), щоб число можна було звірити з графіком."""
         side = pos['side']
         dot = self._dir_dot(side)
         sl_str = self._sltp_display(pos, 'sl')
+        if sl_str == 'null':
+            sl_str = 'не виставлено'
+        else:
+            _tf = ''
+            try:
+                man = pos.get('manual_sl')
+                if man is not None and float(man) > 0:
+                    _tf = str(pos.get('manual_sl_tf') or '')
+            except (TypeError, ValueError):
+                _tf = ''
+            if _tf == '%':
+                sl_str += ' · % від входу'
+            elif _tf:
+                sl_str += f' · {_tf}'
         msg = (
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
-            f"<b>#{pos['symbol']}</b>\n"
+            f"<b>#{pos['symbol']}</b>" + ("   🧪 ТЕСТ" if is_test else "") + "\n"
             f"📍 Вхід: <b>{self._fmt_price(pos['entry_price'])}</b>\n"
             f"🛡 SL: <b>{sl_str}</b>"
         )
         _tp = self._tp_lines(pos)
         if _tp:
             msg += "\n" + _tp
-        self._notify(msg, category='trades')
+        return msg
+
+    def _notify_open(self, pos, is_test: bool = False, now: Optional[float] = None):
+        """Стоп уже є → шлемо одразу. Немає → ВІДКЛАДАЄМО: повідомлення піде
+        з монітора (`_flush_open_notice`), щойно стоп зʼявиться, або через
+        `OPEN_NOTICE_WAIT_SEC` без нього («не виставлено» — чесно, а не null)."""
+        if self._has_sl(pos):
+            self._notify(self._open_notice_text(pos, is_test), is_test=is_test,
+                         category='trades')
+            return True
+        pos['_open_notice_at'] = float(now if now is not None else time.time())
+        return False
+
+    def _flush_open_notice(self, pos, is_test: bool = False,
+                           now: Optional[float] = None) -> bool:
+        at = pos.get('_open_notice_at')
+        if not at:
+            return False
+        t = float(now if now is not None else time.time())
+        if not self._has_sl(pos) and (t - float(at)) < self.OPEN_NOTICE_WAIT_SEC:
+            return False
+        pos.pop('_open_notice_at', None)
+        self._notify(self._open_notice_text(pos, is_test), is_test=is_test,
+                     category='trades')
+        return True
 
     def _notify_pilot_levels(self, symbol: str, pos: Dict,
                              is_shadow: bool = False):
