@@ -2225,6 +2225,50 @@ def test_episode_low_is_tracked_and_reset():
            'поле дна в UI зберігається й відновлюється')
     print('✓ 🕳 мінімум епізоду ведеться, поле в UI є')
 
+
+# ═══════════ 14. 🔻 КОРЕКЦІЯ — БАНЕРОМ, ЯК 🧮 МММ-МОНІТОР (вимога 25.09) ════
+def test_ui_correction_is_a_banner_with_details_below():
+    i = _HTML.index('id="mm-corr-row"')
+    j = _HTML.index('id="mm-limited-hint"')
+    row = _HTML[i:j]
+    ban = row[row.index('id="mm-corr-banner"'):row.index('id="mm-corr-details"')]
+    for el in ('mm-corr-bar', 'mm-corr-mark', 'mm-corr-label',
+               'mm-corr-timer', 'mm-corr-state'):
+        _check(f'id="{el}"' in ban, f'{el} мусить бути В банері')
+    det = row[row.index('id="mm-corr-details"'):]
+    for el in ('mm-corr-layers', 'mm-corr-exit', 'mm-corr-count',
+               'mm-corr-block', 'mm-corr-override'):
+        _check(f'id="{el}"' in det, f'{el} мусить бути ПІД банером')
+    print('✓ 🖥 корекція — банер, розклад ознак компактно під ним')
+
+
+def test_js_banner_bar_is_the_breadth_against_the_banner():
+    out = _run_js(r'''
+const now = Math.floor(Date.now()/1000);
+const g = id => document.getElementById(id);
+const L = [{key:'vob',icon:'📦',name:'VOB проти',pct:61.4,need:60,ok:true,lit:true,n:40,role:'both'},
+           {key:'ob',icon:'📐',name:'OB проти',pct:55.7,need:60,ok:true,lit:false,n:40,role:'both'}];
+mmRenderCorr({state:'on', since:now-600, bias:'LONG', breadth_pct:61.4, layers:L,
+              lit:2, need:2, enabled:true, blocking:true});
+const on = {w:g('mm-corr-bar').style.width, lab:g('mm-corr-label').textContent,
+            mk:g('mm-corr-mark').style.left, st:g('mm-corr-state').textContent,
+            op:g('mm-corr-bar').style.opacity};
+mmRenderCorr({state:'trend', bias:'LONG', layers:L, lit:0, need:2, enabled:true});
+const tr = {w:g('mm-corr-bar').style.width, op:g('mm-corr-bar').style.opacity,
+            st:g('mm-corr-state').textContent};
+console.log(JSON.stringify({on, tr}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['on']['w'] == '61%', f'смуга = ширина проти банера: {d}')
+    _check('61% проти LONG' in d['on']['lab'], f'підпис смуги: {d}')
+    _check(d['on']['mk'] == '60.0%', f'риска = поріг старту: {d}')
+    _check(d['on']['st'] == '🔴 SHORT КОРЕКЦІЯ', f'напрямок корекції: {d}')
+    _check(d['tr']['w'] == '61%' and d['tr']['op'] == '0.45',
+           f'поза епізодом — фолбек із шарів, приглушено: {d}')
+    _check('ТРЕНД' in d['tr']['st'], f'{d}')
+    print('✓ 📊 смуга банера = частка монет проти банера, риска = поріг старту')
+
 if __name__ == '__main__':
     _fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in _fns:

@@ -2550,26 +2550,40 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                       title="Показники й таймер відновлено після рестарту бота — таймер продовжено з того самого моменту, числа оновляться найближчим тактом (~30с).">↻</span>
                 <span id="mm-bias-status" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap;background:transparent">—</span>
             </div>
-            <!-- 🔻 ВЕРДИКТ ПРО КОРЕКЦІЮ (вимога 19.09). Окремий рядок під
-                 банером, а не ще один значок у ньому: це ДРУГИЙ вердикт («що
-                 з трендом просто зараз»), і він мусить читатись сам по собі,
-                 з розкладом ознак і таймером. -->
-            <div id="mm-corr-row" style="display:none;align-items:center;gap:10px;margin:-4px 0 10px;padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);flex-wrap:wrap">
-                <span id="mm-corr-state" style="font-weight:800;font-size:0.8rem;padding:3px 10px;border-radius:6px;white-space:nowrap">—</span>
-                <span id="mm-corr-timer" class="ff-flip" style="white-space:nowrap"></span>
-                <span id="mm-corr-layers" style="font-size:0.7rem;font-family:monospace;color:#8b93a7;display:flex;gap:10px;flex-wrap:wrap"></span>
-                <!-- 🧭 ДРУГИЙ РЯДОК (вимога 23.09): «кінець коли ЗА ≥…», лічильник
-                     ознак і стан воріт стоять ОКРЕМО від розкладу шарів —
-                     в один рядок вони не вміщались і зливались в суцільну смугу.
-                     `flex-basis:100%` у тому самому flex-контейнері = перенос
-                     ЦІЛИМ блоком (той самий прийом, що з підписом ✋ Сигналу). -->
-                <div id="mm-corr-line2" style="flex-basis:100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:0.7rem;font-family:monospace">
-                    <span id="mm-corr-exit" style="display:none"></span>
-                    <span id="mm-corr-count" style="color:#8b93a7"></span>
-                    <span style="flex:1"></span>
-                    <span id="mm-corr-block" style="display:none;font-size:0.68rem;font-weight:700;padding:3px 9px;border-radius:6px;white-space:nowrap"></span>
-                    <!-- ⏸ Ручна пауза ВЕРДИКТУ: знімає лише ворота відкриття. -->
-                    <button type="button" id="mm-corr-override" onclick="mmCorrOverride()" style="display:none;font-size:0.66rem;font-weight:700;padding:3px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;border:1px solid rgba(148,163,184,0.45);background:rgba(148,163,184,0.12);color:#cbd5e1"></button>
+            <!-- 🔻 БАНЕР КОРЕКЦІЇ (вимога 25.09: «зроби Корекцію у вигляді
+                 банера, так само як банер МММ-монітор»). Та сама геометрія й
+                 ті самі хелпери вигляду, що в 🧮 банера (`dirGrad` /
+                 `flipTimerHTML`), — два банери поруч не мають розходитись.
+                 Смуга = ШИРИНА КОРЕКЦІЇ: частка монет, чия структура
+                 (📦 VOB / 📐 OB, більше з двох) ПРОТИ банера — рівно те
+                 число, що вирішує старт; риска на смузі — поріг старту.
+                 Розклад ознак і підсумок — компактно ПІД банером. -->
+            <div id="mm-corr-row" style="display:none;flex-direction:column;gap:4px;margin:-4px 0 10px">
+                <div id="mm-corr-banner" style="display:flex;align-items:center;gap:14px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
+                    <span style="font-weight:900;font-size:1.1rem;color:#ff8a5b;text-shadow:0 0 9px rgba(249,115,22,0.55);white-space:nowrap">🔻 КОРЕКЦІЯ</span>
+                    <div id="mm-corr-track" style="flex:1;min-width:120px;height:18px;border-radius:9px;background:rgba(255,255,255,0.07);overflow:hidden;position:relative">
+                        <div id="mm-corr-bar" style="height:100%;width:0%;border-radius:9px;background:#6b7280;transition:width 0.4s linear,background 0.3s,opacity 0.3s"></div>
+                        <div id="mm-corr-mark" style="display:none;position:absolute;top:0;bottom:0;width:2px;background:rgba(255,255,255,0.55)"></div>
+                        <span id="mm-corr-label" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
+                    </div>
+                    <span id="mm-corr-timer" class="ff-flip" style="white-space:nowrap"></span>
+                    <span id="mm-corr-state" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap">—</span>
+                </div>
+                <!-- Розклад ознак і підсумок — ОДНИМ компактним блоком під
+                     банером: зверху шари (кожен — число проти свого порога),
+                     знизу «кінець коли…», лічильник, ворота і ⏸ пауза. -->
+                <div id="mm-corr-details" style="display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;padding:0 4px">
+                    <span id="mm-corr-layers" style="font-size:0.7rem;font-family:monospace;color:#8b93a7;display:flex;gap:4px 14px;flex-wrap:wrap"></span>
+                    <!-- 🧭 ДРУГИЙ РЯДОК (вимога 23.09): підсумок окремо від шарів.
+                         `flex-basis:100%` = перенос ЦІЛИМ блоком. -->
+                    <div id="mm-corr-line2" style="flex-basis:100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:0.7rem;font-family:monospace">
+                        <span id="mm-corr-exit" style="display:none"></span>
+                        <span id="mm-corr-count" style="color:#8b93a7"></span>
+                        <span style="flex:1"></span>
+                        <span id="mm-corr-block" style="display:none;font-size:0.68rem;font-weight:700;padding:3px 9px;border-radius:6px;white-space:nowrap"></span>
+                        <!-- ⏸ Ручна пауза ВЕРДИКТУ: знімає лише ворота відкриття. -->
+                        <button type="button" id="mm-corr-override" onclick="mmCorrOverride()" style="display:none;font-size:0.66rem;font-weight:700;padding:3px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;border:1px solid rgba(148,163,184,0.45);background:rgba(148,163,184,0.12);color:#cbd5e1"></button>
+                    </div>
                 </div>
             </div>
             <!-- Режим економії: МММ рахується НЕ по всьому watchlist. Мовчати
@@ -12438,12 +12452,29 @@ function mmRenderBias(bias) {
 // (той самий принцип, що `verdict.parts` у драбині ліквідності).
 let _mmCorr = null;
 const _MM_CORR_VIEW = {
-    trend:   { txt: '▶️ ТРЕНД',                col: '#9aa3b5', bg: 'rgba(148,163,184,0.12)' },
-    pending: { txt: '⏳ ОЗНАКИ КОРЕКЦІЇ',      col: '#fbbf24', bg: 'rgba(245,158,11,0.14)' },
-    on:      { txt: '🔻 КОРЕКЦІЯ',             col: '#ff8a5b', bg: 'rgba(249,115,22,0.16)' },
-    ending:  { txt: '⏳ КОРЕКЦІЯ ЗГАСАЄ',      col: '#facc15', bg: 'rgba(245,158,11,0.12)' },
-    ended:   { txt: '✅ КОРЕКЦІЯ ЗАВЕРШИЛАСЬ', col: '#4ade80', bg: 'rgba(34,197,94,0.14)' },
+    trend:   { txt: '▶️ ТРЕНД',       col: '#9aa3b5', bg: 'rgba(148,163,184,0.12)' },
+    pending: { txt: '⏳ ОЗНАКИ',      col: '#fbbf24', bg: 'rgba(245,158,11,0.14)' },
+    on:      { txt: '🔻 КОРЕКЦІЯ',    col: '#ff8a5b', bg: 'rgba(249,115,22,0.16)' },
+    ending:  { txt: '⏳ ЗГАСАЄ',      col: '#facc15', bg: 'rgba(245,158,11,0.12)' },
+    ended:   { txt: '✅ ЗАВЕРШИЛАСЬ', col: '#4ade80', bg: 'rgba(34,197,94,0.14)' },
 };
+// 🔻 Ширина корекції для СМУГИ банера: частка монет, чия структура ПРОТИ
+// банера. Джерело — готове `breadth_pct` бекенда (максимум 📦/📐, те саме
+// число, що вирішує старт); фолбек — найбільша з увімкнених структурних ознак.
+function _mmCorrBreadth(c) {
+    if (c.breadth_pct != null && isFinite(Number(c.breadth_pct))) return Number(c.breadth_pct);
+    let best = null;
+    (c.layers || []).forEach(l => {
+        if ((l.key === 'vob' || l.key === 'ob') && l.ok && isFinite(Number(l.pct))) {
+            best = best == null ? Number(l.pct) : Math.max(best, Number(l.pct));
+        }
+    });
+    return best;
+}
+function _mmCorrStartNeed(c) {
+    const l = (c.layers || []).find(x => x.key === 'vob' || x.key === 'ob');
+    return l && isFinite(Number(l.need)) ? Number(l.need) : null;
+}
 function mmRenderCorr(corr) {
     if (corr !== undefined) _mmCorr = corr || null;
     const row = document.getElementById('mm-corr-row');
@@ -12455,11 +12486,53 @@ function mmRenderCorr(corr) {
     row.style.display = 'flex';
     const nowS = Math.floor(Date.now() / 1000);
     const v = _MM_CORR_VIEW[c.state] || _MM_CORR_VIEW.trend;
+    // Напрямок САМОЇ корекції — ПРОТИЛЕЖНИЙ банеру (так само підписує Telegram:
+    // «🔴 SHORT КОРЕКЦІЯ» під банером LONG).
+    const cdir = c.bias === 'LONG' ? 'SHORT' : (c.bias === 'SHORT' ? 'LONG' : null);
+    const live = (c.state === 'on' || c.state === 'pending' || c.state === 'ending');
     const st = document.getElementById('mm-corr-state');
     if (st) {
-        st.textContent = v.txt;
+        st.textContent = (c.state === 'on' && cdir)
+            ? (cdir === 'SHORT' ? '🔴 SHORT КОРЕКЦІЯ' : '🟢 LONG КОРЕКЦІЯ') : v.txt;
         st.style.color = v.col;
         st.style.background = v.bg;
+    }
+    // 📊 СМУГА — ширина корекції, риска — поріг старту. Колір — напрямок
+    // корекції; поза епізодом смуга приглушена (число живе, але це ще не подія).
+    const bar = document.getElementById('mm-corr-bar');
+    const lab = document.getElementById('mm-corr-label');
+    const mark = document.getElementById('mm-corr-mark');
+    const bp = _mmCorrBreadth(c);
+    const need = _mmCorrStartNeed(c);
+    if (bar) {
+        const w = bp == null ? 0 : Math.max(0, Math.min(100, bp));
+        bar.style.width = w.toFixed(0) + '%';
+        bar.style.background = (cdir && typeof dirGrad === 'function')
+            ? dirGrad(cdir) : 'linear-gradient(90deg,#6b7280,#9aa3b5)';
+        bar.style.opacity = live ? '1' : '0.45';
+    }
+    if (mark) {
+        if (need != null) {
+            mark.style.display = '';
+            mark.style.left = Math.max(0, Math.min(100, need)).toFixed(1) + '%';
+        } else { mark.style.display = 'none'; }
+    }
+    if (lab) {
+        lab.textContent = bp == null ? 'немає даних'
+            : (Math.round(bp) + '% проти ' + (c.bias || 'банера'));
+        lab.style.color = (live && cdir && typeof dirTint === 'function') ? dirTint(cdir) : '#cbd5e1';
+    }
+    const trk = document.getElementById('mm-corr-track');
+    if (trk) {
+        trk.title = 'ШИРИНА КОРЕКЦІЇ: частка монет монітора, чия структура '
+            + '(📦 Volumized OB / 📐 Order Block на молодшому TF — береться більше з '
+            + 'двох) дивиться ПРОТИ банера'
+            + (bp != null ? ` — зараз ${bp}%` : '') + '.\n'
+            + (need != null ? `Біла риска — поріг старту (${need}%). ` : '')
+            + (c.exit_pct != null
+               ? `Кінець: ЗА банером ≥ ${c.exit_pct}% за обраним сенсором виходу`
+                 + (c.breadth_for_pct != null ? ` (зараз ${c.breadth_for_pct}%)` : '') + '.'
+               : '');
     }
     // ⏱ ТАЙМЕР — той самий вигляд, що в банерів (спільний `flipTimerHTML`),
     // лише компактніший. Для відліків підтвердження показуємо «скільки/скільки».
