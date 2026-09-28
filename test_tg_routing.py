@@ -184,6 +184,7 @@ def _mk(trends=None, vob_on=True, **settings):
     ff._mm_vob_trends = lambda: {'on': vob_on, 'tf': '5m',
                                  'trends': dict(trends or {})}
     ff.sent = []
+    ff._mm_exit_trends = lambda tf: {}   # 🧭 TF виходу (28.09) — не лізти в сканер
     # ⚠️ Стаб мусить повертати ТЕ САМЕ, що справжній метод — `(ok, причина)`.
     # Поки він віддавав None, розпакування в `_mm_track_correction` падало в
     # `except Exception`, і нова гілка «Telegram не прийняв» не виконувалась

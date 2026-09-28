@@ -572,6 +572,10 @@ class SMCScanner:
         # додай ще відслідковування OB»). Рахується з ТИХ САМИХ барів, тож
         # мережі не коштує НІЧОГО.
         self._ob_trend_cache: Dict[str, Dict] = {}
+        # 🧭 VOB/OB на TF ВИХОДУ з корекції (вимога 28.09, деф. 15m) —
+        # {symbol: {'tf','bar','vob','ob'}}; TF ставить `corr_exit_trends(tf)`.
+        self._corr_exit_cache: Dict[str, Dict] = {}
+        self._corr_exit_tf: str = ''
         # 🟪 Volumized OB Alerts: ПЕР-НАПРЯМКОВА база свіжості
         # {symbol: {'LONG': formation_time, 'SHORT': formation_time}} — щоб
         # обробляти бичачий і ведмежий VOB НЕЗАЛЕЖНО й НЕ губити протилежний новий
@@ -1361,6 +1365,7 @@ class SMCScanner:
                 self._pd_zone_cache.pop(symbol, None)
                 self._volumized_trend_cache.pop(symbol, None)
                 self._ob_trend_cache.pop(symbol, None)
+                self._corr_exit_cache.pop(symbol, None)
                 self._signal_markers.pop(symbol, None)
                 self._last_signal_dir.pop(symbol, None)
                 self._persist_dedup_state()
@@ -2531,6 +2536,17 @@ class SMCScanner:
                             # 3000 барах (≈0.3% такту, де мережа — секунди).
                             self._update_ob_trend(symbol, vol_klines, vol_tf,
                                                   isize_v, ssize_v)
+                            # 🧭 ВИХІД ІЗ КОРЕКЦІЇ — НА СВОЄМУ TF (вимога 28.09).
+                            # Той самий VOB/OB, але на `_corr_exit_tf` (деф. 15m)
+                            # і по ЗАКРИТИХ барах: 5m перевертався надто часто,
+                            # і корекція «завершувалась», хоча тривала далі.
+                            # TF == Volumized TF → нічого не рахуємо, читач
+                            # бере вже наявні кеші (нуль роботи).
+                            _xtf = str(getattr(self, '_corr_exit_tf', '') or '')
+                            if _xtf and _xtf != vol_tf:
+                                self._update_corr_exit(
+                                    symbol, _get_tf_data(_xtf, use_cache=True),
+                                    _xtf, isize_v, ssize_v)
                         else:
                             # No TF data — clear cache so stale entries
                             # don't linger (e.g., user changed TF and
@@ -3342,9 +3358,31 @@ class SMCScanner:
         specs = {(s.get('timeframe', '15m'), KLINES_LIMIT)}
         if s.get('use_volumized_ob', True) or s.get('vob_alert_enabled', False):
             specs.add((s.get('volumized_timeframe', '1h'), 3000))
+            # 🧭 TF виходу з корекції: бари там беруться з КЕШУ до закриття
+            # бару, тож качаємо їх ЛИШЕ на першому циклі нового бару — інакше
+            # префетч тягнув би 3000 барів щоцикл, і ніхто їх не забрав би.
+            _xtf = str(getattr(self, '_corr_exit_tf', '') or '')
+            if (_xtf and _xtf != s.get('volumized_timeframe', '1h')
+                    and self._corr_exit_pf_due(_xtf)):
+                specs.add((_xtf, 3000))
         specs.add((s.get('ob_filter_timeframe', '1h'), 700))
         specs.add((s.get('pd_zone_timeframe', '1h'), 3000))
         return [sp for sp in specs if sp[0]]
+
+    def _corr_exit_pf_due(self, tf, now=None) -> bool:
+        """Чи перший це цикл НОВОГО бару `tf` (раз на бар → True)."""
+        t = str(tf or '').lower()
+        try:
+            secs = int(t[:-1]) * (60 if t.endswith('m') else 3600)
+        except (TypeError, ValueError):
+            return False
+        if secs <= 0:
+            return False
+        slot = (tf, int((now if now is not None else time.time()) // secs))
+        if getattr(self, '_corr_exit_pf_slot', None) == slot:
+            return False
+        self._corr_exit_pf_slot = slot
+        return True
 
     def _prefetch_klines(self, md, symbols, specs):
         """Завантажує бари для (символ × spec) ПАРАЛЕЛЬНО в `self._prefetch`.
@@ -3688,6 +3726,92 @@ class SMCScanner:
         except Exception as e:
             if self._errors <= 5:
                 print(f"[SMC] OB trend error for {symbol}: {e}")
+
+    CORR_EXIT_TFS = ('5m', '15m', '30m', '1h')
+
+    def _update_corr_exit(self, symbol, data, tf, isize, ssize):
+        """🧭 VOB + OB на TF ВИХОДУ з корекції (по ЗАКРИТИХ барах).
+
+        ⚠️ ТІ САМІ детектори й параметри, що малюють ▲/▼ (`get_latest_ob_trend`
+        з налаштуваннями 📦 Volumized OB Trend) і 📐 OB (`detect_order_blocks`,
+        limit=1) — змінюється РІВНО свічка. Другий набір параметрів дав би
+        другий «поточний блок» (урок PD-зони).
+        ⚠️ ЗАКРИТІ бари НАВМИСНО: скарга була саме про частий «вихід», а живий
+        бар 15m перемальовує блок усередині бару. Ціна вибору — вихід
+        підтверджується закриттям бару (до одного TF затримки).
+        ⚠️ Перераховуємо лише на НОВОМУ закритому барі — між закриттями дані
+        фізично ті самі (бари й так кешує `_get_tf_data(use_cache=True)`).
+        ⚠️ Помилка НЕ підіймається в скан: це показник, а не ворота.
+        """
+        try:
+            kl = (data or {}).get('klines_closed') or []
+            if len(kl) < 220:
+                with self._lock:
+                    self._corr_exit_cache.pop(symbol, None)
+                return
+            bar = kl[-1].get('t')
+            prev = self._corr_exit_cache.get(symbol) or {}
+            if prev.get('tf') == tf and prev.get('bar') == bar:
+                return
+            from detection.volumized_ob import get_latest_ob_trend
+            s = self._settings
+            vr = get_latest_ob_trend(
+                kl,
+                swing_length=int(s.get('volumized_swing_length', 10)),
+                ob_end_method=s.get('volumized_ob_end_method', 'Wick'),
+                max_atr_mult=float(s.get('volumized_max_atr_mult', 3.5)),
+                zone_count=s.get('volumized_zone_count', 'Low'),
+                combine_obs=bool(s.get('volumized_combine_obs', True)),
+            ) or {}
+            lob = vr.get('latest_ob') or {}
+            vob = ('LONG' if lob.get('type') == 'Bull' else
+                   ('SHORT' if lob.get('type') == 'Bear' else None))
+            ob = None
+            from detection.ob_detector import detect_order_blocks
+            _it = (data.get('structure') or {}).get('internal', {}) or {}
+            _obs = detect_order_blocks(klines=kl, pivots=_it.get('pivots', []),
+                                       events=_it.get('events', []), limit=1)
+            if _obs:
+                ob = 'LONG' if _obs[0].get('bias') == 'BULLISH' else 'SHORT'
+            with self._lock:
+                self._corr_exit_cache[symbol] = {
+                    'tf': tf, 'bar': bar, 'vob': vob, 'ob': ob,
+                    'updated_at': time.time()}
+        except Exception as e:
+            if self._errors <= 5:
+                print(f"[SMC] corr-exit trend error for {symbol}: {e}")
+
+    def corr_exit_trends(self, tf: str = '') -> dict:
+        """🧭 ПУБЛІЧНИЙ знімок VOB/OB на TF ВИХОДУ з корекції.
+
+        → `{'on','tf','vob':{SYM:dir},'ob':{SYM:dir}}`. Виклик ЗАПАМʼЯТОВУЄ
+        бажаний TF — наступні цикли скану рахують саме його (детектор
+        корекції питає щотакту, тож зміна налаштування діє з наступного циклу).
+        ⚠️ TF порожній або == Volumized TF → віддаємо ВЖЕ НАЯВНІ кеші
+        `volumized_trends()`/`ob_trends()` (нуль роботи, живі бари).
+        ⚠️ Беремо ЛИШЕ записи на ЗАПИТАНОМУ TF — інакше після зміни налаштування
+        читач отримав би блоки чужого масштабу.
+        """
+        tf = str(tf or '').strip().lower()
+        if tf and tf not in self.CORR_EXIT_TFS:
+            tf = '15m'
+        vol_tf = self._settings.get('volumized_timeframe', '1h')
+        on = bool(self._settings.get('use_volumized_ob', True))
+        if not tf or tf == vol_tf:
+            self._corr_exit_tf = ''
+            return {'on': on, 'tf': vol_tf,
+                    'vob': dict(self.volumized_trends().get('trends') or {}),
+                    'ob': dict(self.ob_trends().get('trends') or {})}
+        self._corr_exit_tf = tf
+        with self._lock:
+            rows = {str(k).upper(): dict(v or {})
+                    for k, v in (self._corr_exit_cache or {}).items()
+                    if (v or {}).get('tf') == tf}
+        return {'on': on, 'tf': tf,
+                'vob': {k: v['vob'] for k, v in rows.items()
+                        if v.get('vob') in ('LONG', 'SHORT')},
+                'ob': {k: v['ob'] for k, v in rows.items()
+                       if v.get('ob') in ('LONG', 'SHORT')}}
 
     def ob_trends(self) -> dict:
         """📐 ПУБЛІЧНИЙ знімок OB-трендів молодшого TF: {'on','tf','trends'}.

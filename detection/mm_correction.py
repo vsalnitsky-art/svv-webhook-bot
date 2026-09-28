@@ -145,6 +145,12 @@ DEFAULTS = {
     # ⚠️ Обраний сенсор не визначений (мала вибірка / старіший сканер) →
     # беремо ДРУГИЙ, і це названо в `why`. «Немає даних» ≠ «повернулись».
     'mm_corr_exit_src': 'ob',
+    # 🧭 ТАЙМФРЕЙМ ВИХОДУ з корекції (вимога 28.09, дослівно: «вихід із
+    # корекції будемо відслідковувати не 5хв VOB і OB, 15хв таймфрейм. Бо дуже
+    # часто вилітаємо, а корекція продовжується»). СТАРТ лишається на молодшому
+    # TF скану (там і має бути швидко), а КІНЕЦЬ судить обраний сенсор 📐/📦 на
+    # цьому TF і по ЗАКРИТИХ барах. '' = як у скану (стара поведінка).
+    'mm_corr_exit_tf': '15m',
     # 🕳 «ДНО» ДЛЯ ВИХОДУ (вимога 25.09, дослівно: «Вихід по OB 40% — це якщо
     # корекція просідала нижче, наприклад 20% і майже до 0%, то тоді виходимо
     # по OB 40%»). Кінець за шириною дозволено, лише якщо в ЦЬОМУ епізоді
@@ -481,7 +487,10 @@ def exit_trough_reached(low_for, now_for, trough) -> bool:
 
 def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
              cfg: Dict, tf: str = '', ob_trends: Optional[Dict] = None,
-             ob_tf: str = '', exit_low: Optional[float] = None) -> Dict:
+             ob_tf: str = '', exit_low: Optional[float] = None,
+             exit_trends: Optional[Dict] = None,
+             exit_ob_trends: Optional[Dict] = None,
+             exit_tf: str = '') -> Dict:
     """Усі ознаки РАЗОМ + готові рішення «ПОЧАТИ» і «ТРИМАТИ».
 
     Повертає `{'layers','lit','lit_hold','need','determined','start_ok',
@@ -550,7 +559,17 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
     # ПОВЕРНУЛОСЬ ЗА банером (вимога 22.09).
     exit_pct = _num(c['mm_corr_vob_exit_pct'], 70.0)
     # 🧭 КІНЕЦЬ — за ОБРАНИМ сенсором (вимога 25.09), а не за максимумом.
-    b_exit, _exit_used, _exit_note = exit_breadth(s_vob, _ob_exit, _exit_src)
+    # 🧭 …і на СВОЄМУ TF (вимога 28.09): коли FF передав тренди TF виходу,
+    # сенсори виходу будуються з них; старт і далі на молодшому TF.
+    # ⚠️ `None` = TF виходу збігається з TF скану (або старіший FF) → беремо
+    # ті самі шари, що й на старті (стара поведінка).
+    _x_vob, _x_ob = s_vob, _ob_exit
+    if exit_trends is not None or exit_ob_trends is not None:
+        _x_vob = vob_layer(exit_trends or {}, syms, bias,
+                           c['mm_corr_vob_pct'], False, exit_tf)
+        _x_ob = ob_layer(exit_ob_trends or {}, syms, bias,
+                         c['mm_corr_vob_pct'], False, exit_tf)
+    b_exit, _exit_used, _exit_note = exit_breadth(_x_vob, _x_ob, _exit_src)
     b_ok = (breadth_exit_ok(b_exit, exit_pct)
             if bool(c['mm_corr_breadth_exit']) else None)
     # 🕳 ДНО: відновлення рахується лише ВІД ДНА (вимога 25.09).
@@ -612,6 +631,11 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
         'exit_trough': round(_trough, 1),
         'exit_troughed': bool(_troughed),
         'exit_src_want': _exit_src,
+        # 🧭 На якому TF судимо кінець + частки «проти» обох сенсорів там —
+        # щоб UI показав, яке саме число тримає корекцію.
+        'exit_tf': exit_tf or tf,
+        'exit_vob_pct': _x_vob.get('pct') if _x_vob.get('ok') else None,
+        'exit_ob_pct': _x_ob.get('pct') if _x_ob.get('ok') else None,
         'breadth_lit': b_lit,
         'why': why,
     }

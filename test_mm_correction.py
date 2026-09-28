@@ -191,6 +191,9 @@ def _mk(trends=None, vob_on=True, **settings):
     ff.get_settings = lambda: dict(ff._settings)
     ff._mm_vob_trends = lambda: {'on': vob_on, 'tf': '5m',
                                  'trends': dict(trends or {})}
+    # 🧭 TF виходу (28.09): за замовчуванням «окремого TF немає» — тести
+    # механіки не мусять лізти в сканер. Розділ 15 підміняє явно.
+    ff._mm_exit_trends = lambda tf: {}
     return ff
 
 
@@ -2268,6 +2271,132 @@ console.log(JSON.stringify({on, tr}));
            f'поза епізодом — фолбек із шарів, приглушено: {d}')
     _check('ТРЕНД' in d['tr']['st'], f'{d}')
     print('✓ 📊 смуга банера = частка монет проти банера, риска = поріг старту')
+
+
+# ═══════ 15. 🕐 TF ВИХОДУ З КОРЕКЦІЇ (вимога 28.09, деф. 15m) ══════════════
+def test_exit_tf_default_is_15m_and_is_validated():
+    _check(mc.DEFAULTS['mm_corr_exit_tf'] == '15m', 'дефолт — 15m')
+    _check(_ffm.MM_CORR_EXIT_TFS == ('5m', '15m', '30m', '1h'), 'список TF')
+    for stored, want in (({}, '15m'), ({'mm_corr_exit_tf': '1h'}, '1h'),
+                         ({'mm_corr_exit_tf': ''}, ''),
+                         ({'mm_corr_exit_tf': '4h'}, '15m'),
+                         ({'mm_corr_exit_tf': None}, '')):
+        got = _mk_ff(stored).get_settings().get('mm_corr_exit_tf')
+        _check(got == want, f'{stored} → {got!r}, очікували {want!r}')
+    print('✓ 🕐 TF виходу: дефолт 15m, «як у скану» зберігається, сміття → 15m')
+
+
+def test_exit_is_judged_on_the_exit_tf_while_start_stays_on_scan_tf():
+    """ГОЛОВНИЙ ЗАМОК ВИМОГИ: 5m ще весь проти банера, а 15m уже повернувся —
+    кінець вирішує 15m. І навпаки: 5m «повернувся» на смику, 15m ще проти —
+    корекція ТРИМАЄТЬСЯ (саме від цього користувач і «вилітав»)."""
+    snap = _six('flat')
+    against = {f'C{i}': 'SHORT' for i in range(6)}
+    forward = {f'C{i}': 'LONG' for i in range(6)}
+    # 5m проти, 15m за → виходимо
+    r = mc.evaluate(snap, against, 'LONG', 0, 0, _cfg(), tf='5m',
+                    ob_trends=against, ob_tf='5m',
+                    exit_trends=forward, exit_ob_trends=forward, exit_tf='15m')
+    _check(r['exit_tf'] == '15m' and r['breadth_for_pct'] == 100.0
+           and r['stay'] is False, f'15m повернувся — кінець: {r}')
+    _check(r['breadth_pct'] == 100.0, 'старт і далі міряє 5m (проти 100%)')
+    # 5m «повернувся» (смик), 15m ще проти → тримаємо
+    r2 = mc.evaluate(snap, forward, 'LONG', 0, 0, _cfg(), tf='5m',
+                     ob_trends=forward, ob_tf='5m',
+                     exit_trends=against, exit_ob_trends=against, exit_tf='15m')
+    _check(r2['stay'] is True and r2['breadth_for_pct'] == 0.0,
+           f'смик 5m не завершує корекцію, поки 15m проти: {r2}')
+    _check(r2['exit_ob_pct'] == 100.0 and r2['exit_vob_pct'] == 100.0, str(r2))
+    # Без TF виходу — стара поведінка: кінець судить той самий 5m.
+    r3 = mc.evaluate(snap, forward, 'LONG', 0, 0, _cfg(), tf='5m',
+                     ob_trends=forward, ob_tf='5m')
+    _check(r3['stay'] is False and r3['exit_tf'] == '5m', f'стара поведінка: {r3}')
+    print('✓ 🕐 кінець судить TF виходу (15m), старт лишається на 5m')
+
+
+def test_the_engine_passes_the_exit_tf_trends_to_the_detector():
+    ff = _mk({f'C{i}': 'SHORT' for i in range(6)}, mm_corr_exit_tf='15m')
+    ff._mm_ob_trends = lambda: {'on': True, 'tf': '5m',
+                                'trends': {f'C{i}': 'SHORT' for i in range(6)}}
+    asked = []
+
+    def _xt(tf):
+        asked.append(tf)
+        return {'tf': '15m', 'vob': {f'C{i}': 'LONG' for i in range(6)},
+                'ob': {f'C{i}': 'LONG' for i in range(6)}}
+    ff._mm_exit_trends = _xt
+    c = _tick(ff, _six('down'))
+    _check(asked and asked[-1] == '15m', f'двигун питає обраний TF: {asked}')
+    _check(c.get('exit_tf') == '15m' and c.get('exit_tf_want') == '15m', str(c))
+    _check(c.get('breadth_for_pct') == 100.0, f'кінець міряє 15m: {c}')
+    print('✓ 🕐 двигун передає тренди TF виходу в детектор і показує TF')
+
+
+def _scanner():
+    spec = importlib.util.spec_from_file_location(
+        'detection.smc_scanner', os.path.join(_HERE, 'detection', 'smc_scanner.py'))
+    m = importlib.util.module_from_spec(spec)
+    sys.modules['detection.smc_scanner'] = m
+    spec.loader.exec_module(m)
+    sc = m.SMCScanner.__new__(m.SMCScanner)
+    sc._lock = threading.RLock()
+    sc._settings = {'volumized_timeframe': '5m', 'use_volumized_ob': True}
+    sc._volumized_trend_cache = {'AAA': {'trend': 'SHORT'}}
+    sc._ob_trend_cache = {'AAA': {'trend': 'SHORT'}}
+    sc._corr_exit_cache = {}
+    sc._corr_exit_tf = ''
+    sc._errors = 0
+    return sc
+
+
+def test_scanner_reader_returns_only_the_requested_tf_and_remembers_it():
+    sc = _scanner()
+    sc._corr_exit_cache = {'AAA': {'tf': '15m', 'vob': 'LONG', 'ob': 'LONG'},
+                           'BBB': {'tf': '1h', 'vob': 'SHORT', 'ob': 'SHORT'}}
+    v = sc.corr_exit_trends('15m')
+    _check(sc._corr_exit_tf == '15m', 'сканер запамʼятав TF для наступних циклів')
+    _check(v['tf'] == '15m' and v['vob'] == {'AAA': 'LONG'}
+           and v['ob'] == {'AAA': 'LONG'}, f'лише рядки запитаного TF: {v}')
+    same = sc.corr_exit_trends('5m')
+    _check(sc._corr_exit_tf == '' and same['vob'] == {'AAA': 'SHORT'}
+           and same['tf'] == '5m', f'TF == скану → наявні кеші, нуль роботи: {same}')
+    sc.corr_exit_trends('4h')
+    _check(sc._corr_exit_tf == '15m', 'сміття → 15m')
+    print('✓ 🕐 сканер віддає лише TF виходу, TF скану — з наявних кешів')
+
+
+def test_scanner_prefetches_the_exit_tf_once_per_bar():
+    sc = _scanner()
+    _check(sc._corr_exit_pf_due('15m', now=900 * 10 + 5), 'перший цикл бару')
+    _check(not sc._corr_exit_pf_due('15m', now=900 * 10 + 400), 'той самий бар')
+    _check(sc._corr_exit_pf_due('15m', now=900 * 11 + 1), 'новий бар')
+    specs_src = _fn_src(_SC_SRC, '_prefetch_specs')
+    _check('_corr_exit_pf_due' in specs_src, 'префетч лише на новому барі')
+    print('✓ 🕐 бари TF виходу качаються раз на бар')
+
+
+def test_exit_tf_uses_the_same_detectors_on_closed_bars():
+    src = _fn_src(_SC_SRC, '_update_corr_exit')
+    for key in ('volumized_swing_length', 'volumized_ob_end_method',
+                'volumized_max_atr_mult', 'volumized_zone_count',
+                'volumized_combine_obs', 'detect_order_blocks', 'klines_closed'):
+        _check(key in src, f'той самий метод, закриті бари: {key}')
+    _check("prev.get('bar') == bar" in src, 'перерахунок лише на новому барі')
+    _check('_update_corr_exit(' in _SC_SRC.split('def _update_corr_exit')[0],
+           'скан викликає розрахунок')
+    print('✓ 🕐 TF виходу — ті самі детектори й параметри, закриті бари')
+
+
+def test_ui_has_the_exit_tf_select():
+    _check('id="ff-mm-corr-exittf"' in _HTML, 'випадайка є')
+    sel = _HTML.split('id="ff-mm-corr-exittf"')[1].split('</select>')[0]
+    _check('value="15m" selected' in sel and 'value=""' in sel, sel)
+    _check("mm_corr_exit_tf: (document.getElementById('ff-mm-corr-exittf')" in _HTML,
+           'зберігається')
+    _check("setIf('ff-mm-corr-exittf'" in _HTML, 'завантажується')
+    _check('c.exit_tf' in _HTML and 's.mm_corr_exit_tf' in _HTML,
+           'TF видно в рядку «кінець коли…» і в зведенні')
+    print('✓ 🕐 UI: випадайка TF виходу, TF у рядку вердикту і зведенні')
 
 if __name__ == '__main__':
     _fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]

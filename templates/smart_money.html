@@ -2686,6 +2686,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <option value="vob">📦 VOB</option>
                         </select>
                     </div>
+                    <div class="mmc-f" title="🕐 ТАЙМФРЕЙМ, на якому вирішується КІНЕЦЬ корекції (той самий 📐 OB / 📦 VOB з тими самими параметрами 📦 Volumized OB Trend, але на обраних свічках і по ЗАКРИТИХ барах). 5m перевертається надто часто — корекція «завершувалась», хоча тривала далі. СТАРТ корекції лишається на молодшому TF скану. Ціна: кінець підтверджується закриттям бару обраного TF; бари качаються раз на бар (3 запити на монету).">
+                        <label>🕐 TF виходу</label>
+                        <select id="ff-mm-corr-exittf" onchange="saveFuelFilterSettings()">
+                            <option value="">як у скану</option>
+                            <option value="5m">5m</option>
+                            <option value="15m" selected>15m</option>
+                            <option value="30m">30m</option>
+                            <option value="1h">1h</option>
+                        </select>
+                    </div>
                     <div class="mmc-f" title="🕳 ДНО. Кінець корекції дозволено, лише якщо в ЦЬОМУ епізоді частка монет ЗА банером (за обраним сенсором виходу) спершу опускалась до цього рівня або нижче. Тобто вихід рахується як ВІДНОВЛЕННЯ ВІД ДНА: наприклад, дно 20% і кінець 40% — корекція просіла до ≤20% «за», а потім повернулось ≥40%. Без дна пара «вхід 60% проти / кінець 40% за» миготіла б (це одна й та сама межа). Якщо обраний сенсор дна так і не побачив — кінець, щойно ширина перестала тримати старт. 0 = вимкнено.">
                         <label>🕳 Дно ЗА ≤, %</label>
                         <input type="number" id="ff-mm-corr-trough" min="0" max="100" step="5" value="20"
@@ -12627,7 +12637,8 @@ function mmRenderCorr(corr) {
             ex.title = c.why || '';
             const _xi = c.exit_src === 'vob' ? '📦' : (c.exit_src === 'ob' ? '📐' : '');
             const _xf = c.exit_src && c.exit_src_want && c.exit_src !== c.exit_src_want;
-            ex.innerHTML = `🧭 кінець коли ${_xi ? _xi + ' ' : ''}ЗА <b>≥${_mmcFmt(c.exit_pct, true)}%</b>`
+            const _xtf = c.exit_tf ? ' ' + String(c.exit_tf).toUpperCase() : '';
+            ex.innerHTML = `🧭 кінець коли ${_xi ? _xi + _xtf + ' ' : ''}ЗА <b>≥${_mmcFmt(c.exit_pct, true)}%</b>`
                 + (_xf ? ' <span style="color:#fbbf24">фолбек</span>' : '')
                 + (c.exit_trough > 0
                    ? (c.exit_troughed
@@ -12894,7 +12905,7 @@ function _mmCorrSummary(s) {
         // тепер вирішує кінець, і не бачити його в згорнутій шапці означало б
         // не знати головного числа детектора.
         + (s.mm_corr_breadth_exit === false ? ' · 🧭 кінець за голосами'
-           : ` проти → кінець ${s.mm_corr_exit_src === 'vob' ? '📦' : '📐'} ЗА ≥${s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 70}%`
+           : ` проти → кінець ${s.mm_corr_exit_src === 'vob' ? '📦' : '📐'}${(s.mm_corr_exit_tf != null ? s.mm_corr_exit_tf : '15m') ? ' ' + String(s.mm_corr_exit_tf != null ? s.mm_corr_exit_tf : '15m').toUpperCase() : ''} ЗА ≥${s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 70}%`
              + ((s.mm_corr_exit_trough_pct != null ? s.mm_corr_exit_trough_pct : 20) > 0
                 ? ` від дна ≤${s.mm_corr_exit_trough_pct != null ? s.mm_corr_exit_trough_pct : 20}%` : ''))
         + ' · '
@@ -14191,6 +14202,7 @@ function renderFuelFilter(d) {
     setIf('ff-mm-corr-breadth', s.mm_corr_breadth_exit !== false);  // default true
     setIf('ff-mm-corr-ob', s.mm_corr_ob_on !== false);              // default true
     setIf('ff-mm-corr-exitsrc', s.mm_corr_exit_src === 'vob' ? 'vob' : 'ob');  // default ob
+    setIf('ff-mm-corr-exittf', s.mm_corr_exit_tf != null ? s.mm_corr_exit_tf : '15m');  // default 15m
     setIf('ff-mm-corr-trough', String(s.mm_corr_exit_trough_pct != null ? s.mm_corr_exit_trough_pct : 20));
     setIf('ff-mm-corr-vobexit', String(s.mm_corr_vob_exit_pct != null ? s.mm_corr_vob_exit_pct : 70));
     setIf('ff-mm-corr-price', String(s.mm_corr_price_pct != null ? s.mm_corr_price_pct : 80));
@@ -15255,6 +15267,8 @@ async function saveFuelFilterSettings() {
         mm_corr_breadth_exit: _c('ff-mm-corr-breadth'),
         mm_corr_ob_on: _c('ff-mm-corr-ob'),
         mm_corr_exit_src: _v('ff-mm-corr-exitsrc', 'ob') === 'vob' ? 'vob' : 'ob',
+        // ⚠️ '' — змістовне значення («як у скану»), тож не через `|| '15m'`.
+        mm_corr_exit_tf: (document.getElementById('ff-mm-corr-exittf') || {}).value ?? '15m',
         mm_corr_exit_trough_pct: _mmcNum('ff-mm-corr-trough', 20),
         mm_corr_vob_exit_pct: _mmcNum('ff-mm-corr-vobexit', 70),
         mm_corr_price_pct: _mmcNum('ff-mm-corr-price', 80),

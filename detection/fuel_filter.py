@@ -114,6 +114,8 @@ MM_BIAS_FLAT = 0.10
 # Без різних порогів банер біля 0.10 перемикався б туди-сюди на шумі — той
 # самий прийом, що вже стоїть у `_fuel_hyst` для самого МММ.
 MM_BIAS_EXIT = 0.06
+# 🧭 TF виходу з корекції (вимога 28.09) — дзеркало `SMCScanner.CORR_EXIT_TFS`.
+MM_CORR_EXIT_TFS = ('5m', '15m', '30m', '1h')
 
 # 🛑 СХОДИ ДЖЕРЕЛ Manual SL (вимога користувача 22.09, дослівно): «Якщо
 # увімкнено "SL з" — 1Н OB і немає можливості його отримати, то шукаємо на
@@ -1602,6 +1604,11 @@ class FuelFilterDaemon:
         _xs = str(s.get('mm_corr_exit_src', _cd.get('mm_corr_exit_src', 'ob'))
                   or '').strip().lower()
         s['mm_corr_exit_src'] = _xs if _xs in ('ob', 'vob') else 'ob'
+        # 🧭 TF виходу з корекції (вимога 28.09): '' = як у скану; сміття → 15m.
+        _xt = str(s.get('mm_corr_exit_tf', _cd.get('mm_corr_exit_tf', '15m'))
+                  or '').strip().lower()
+        s['mm_corr_exit_tf'] = (_xt if _xt in MM_CORR_EXIT_TFS or _xt == ''
+                                else '15m')
         # 🕳 «Дно» для виходу (вимога 25.09): 0..100, 0 = вимкнено.
         try:
             s['mm_corr_exit_trough_pct'] = max(0.0, min(100.0, float(
@@ -3836,6 +3843,29 @@ class FuelFilterDaemon:
             print(f"[FF] volumized trends error: {e}")
             return {'on': None, 'tf': '', 'trends': {}}
 
+    def _mm_exit_trends(self, tf: str) -> Dict:
+        """🧭 VOB/OB на TF ВИХОДУ з корекції — `{'tf','vob','ob'}` або `{}`.
+
+        Читаємо ПУБЛІЧНИМ `corr_exit_trends(tf)` (виклик заразом каже сканеру,
+        який TF рахувати). Порожній словник = «окремого TF немає» (обрано як у
+        скану / старіший сканер) → детектор судить кінець на тих самих шарах,
+        що й старт, тобто рівно як до цієї правки.
+        """
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            if sc is None or not hasattr(sc, 'corr_exit_trends'):
+                return {}
+            v = sc.corr_exit_trends(tf) or {}
+            vtf = self._mm_vob_trends().get('tf') or ''
+            if not v.get('tf') or not tf or v.get('tf') == vtf:
+                return {}
+            return {'tf': v.get('tf'), 'vob': v.get('vob') or {},
+                    'ob': v.get('ob') or {}}
+        except Exception as e:
+            print(f"[FF] corr-exit trends error: {e}")
+            return {}
+
     def _mm_ob_trends(self) -> Dict:
         """📐 Знімок OB-трендів молодшого TF зі СКАНЕРА — {'on','tf','trends'}.
 
@@ -4037,6 +4067,7 @@ class FuelFilterDaemon:
         peak = max((h[1] for h in hist), default=lever)
         vob = self._mm_vob_trends()
         obt = self._mm_ob_trends()
+        _xt = self._mm_exit_trends(str(settings.get('mm_corr_exit_tf', '15m') or ''))
         # 🕳 Мінімум частки «ЗА» обраного сенсора в ПОТОЧНОМУ епізоді — від
         # нього рахується «дно» для виходу. Новий епізод (з trend/ended) —
         # з чистого аркуша.
@@ -4045,10 +4076,23 @@ class FuelFilterDaemon:
                 if _prev.get('state') in ('pending', 'on', 'ending') else None)
         try:
             try:
-                res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
-                                   settings, tf=vob.get('tf') or '',
-                                   ob_trends=obt.get('trends') or {},
-                                   ob_tf=obt.get('tf') or '', exit_low=_low)
+                _xk = ({'exit_trends': _xt.get('vob') or {},
+                        'exit_ob_trends': _xt.get('ob') or {},
+                        'exit_tf': _xt.get('tf') or ''} if _xt else {})
+                try:
+                    res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever,
+                                       peak, settings, tf=vob.get('tf') or '',
+                                       ob_trends=obt.get('trends') or {},
+                                       ob_tf=obt.get('tf') or '', exit_low=_low,
+                                       **_xk)
+                except TypeError:
+                    if not _xk:
+                        raise
+                    # старіший mm_correction без TF виходу
+                    res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever,
+                                       peak, settings, tf=vob.get('tf') or '',
+                                       ob_trends=obt.get('trends') or {},
+                                       ob_tf=obt.get('tf') or '', exit_low=_low)
             except TypeError:
                 # старіший mm_correction без `exit_low`
                 res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
@@ -4099,6 +4143,10 @@ class FuelFilterDaemon:
                 'breadth_src': res.get('breadth_src') or '',
                 'exit_src': res.get('exit_src') or '',
                 'exit_src_want': res.get('exit_src_want') or 'ob',
+                'exit_tf': res.get('exit_tf') or vob.get('tf') or '',
+                'exit_tf_want': str(settings.get('mm_corr_exit_tf', '15m') or ''),
+                'exit_vob_pct': res.get('exit_vob_pct'),
+                'exit_ob_pct': res.get('exit_ob_pct'),
                 'exit_trough': res.get('exit_trough'),
                 'exit_troughed': res.get('exit_troughed'),
                 'breadth_lit': bool(res.get('breadth_lit')),
