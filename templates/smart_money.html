@@ -2681,14 +2681,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </label>
                     <div class="mmc-f" title="🧭 За яким сенсором вирішувати КІНЕЦЬ корекції. 📐 Order Block реагує на сам пробій структури й розвертається раніше; 📦 Volumized OB народжується зі свінга і проходить фільтри висоти/обʼєму, тож повертається пізніше (корекція триває довше). СТАРТ і далі бере тривожніший з обох. Обраний сенсор без даних → береться другий (у підказці буде «фолбек»).">
                         <label>🧭 Вихід за</label>
-                        <select id="ff-mm-corr-exitsrc" onchange="saveFuelFilterSettings()">
+                        <select id="ff-mm-corr-exitsrc" onchange="_mmcExitSync(); saveFuelFilterSettings()">
                             <option value="ob" selected>📐 OB</option>
                             <option value="vob">📦 VOB</option>
                         </select>
                     </div>
                     <div class="mmc-f" title="🕐 ТАЙМФРЕЙМ, на якому вирішується КІНЕЦЬ корекції (той самий 📐 OB / 📦 VOB з тими самими параметрами 📦 Volumized OB Trend, але на обраних свічках і по ЗАКРИТИХ барах). 5m перевертається надто часто — корекція «завершувалась», хоча тривала далі. СТАРТ корекції лишається на молодшому TF скану. Ціна: кінець підтверджується закриттям бару обраного TF; бари качаються раз на бар (3 запити на монету).">
                         <label>🕐 TF виходу</label>
-                        <select id="ff-mm-corr-exittf" onchange="saveFuelFilterSettings()">
+                        <select id="ff-mm-corr-exittf" onchange="_mmcExitSync(); saveFuelFilterSettings()">
                             <option value="">як у скану</option>
                             <option value="5m">5m</option>
                             <option value="15m" selected>15m</option>
@@ -2699,7 +2699,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <div class="mmc-f" title="🕳 ДНО. Кінець корекції дозволено, лише якщо в ЦЬОМУ епізоді частка монет ЗА банером (за обраним сенсором виходу) спершу опускалась до цього рівня або нижче. Тобто вихід рахується як ВІДНОВЛЕННЯ ВІД ДНА: наприклад, дно 20% і кінець 40% — корекція просіла до ≤20% «за», а потім повернулось ≥40%. Без дна пара «вхід 60% проти / кінець 40% за» миготіла б (це одна й та сама межа). Якщо обраний сенсор дна так і не побачив — кінець, щойно ширина перестала тримати старт. 0 = вимкнено.">
                         <label>🕳 Дно ЗА ≤, %</label>
                         <input type="number" id="ff-mm-corr-trough" min="0" max="100" step="5" value="20"
-                               onchange="saveFuelFilterSettings()">
+                               oninput="_mmcExitSync()" onchange="_mmcExitSync(); saveFuelFilterSettings()">
                     </div>
                     <div class="mmc-f">
                         <label>🧭 Кінець: повернулось ЗА ≥, %</label>
@@ -12642,17 +12642,26 @@ function mmRenderCorr(corr) {
             // це ВИДНО, інакше «5M» поруч із налаштованим 15m читалось би як збій.
             const _xtfFb = !!(c.exit_tf && c.exit_tf_want
                 && String(c.exit_tf).toLowerCase() !== String(c.exit_tf_want).toLowerCase());
-            ex.innerHTML = `🧭 кінець коли ${_xi ? _xi + _xtf + ' ' : ''}ЗА <b>≥${_mmcFmt(c.exit_pct, true)}%</b>`
+            // 🐞 АУДИТ 28.09: рядок читався як «ЗА ≥45% ✓», хоча «✓» стосувався
+            // ДНА, а поточне «за» (28.8%) до порога не дотягувало. Тепер кожне
+            // число підписане словом і стоїть у порядку «зараз → треба → дно».
+            // Плюс «проти» на TF виходу: у розкладі шарів вище — лише 5M, і
+            // 📐 5M 50% поруч із «ЗА ≥45%» виглядало як «вже мало б вийти».
+            const _xAg = c.exit_src === 'vob' ? c.exit_vob_pct
+                : (c.exit_src === 'ob' ? c.exit_ob_pct : null);
+            ex.innerHTML = `🧭 кінець: ${_xi ? _xi + _xtf + ' ' : ''}`
+                + (c.breadth_for_pct != null
+                   ? `ЗА зараз <b>${_mmcFmt(c.breadth_for_pct)}%</b>`
+                     + (_xAg != null ? ` <span style="color:#8b93a7">(проти ${_mmcFmt(_xAg)}%)</span>` : '')
+                   : 'ЗА зараз —')
+                + ` → треба <b>≥${_mmcFmt(c.exit_pct, true)}%</b>` + (ready ? ' ✓' : ' ✗')
                 + (_xf ? ' <span style="color:#fbbf24">фолбек</span>' : '')
                 + (_xtfFb ? ` <span style="color:#fbbf24" title="${String(c.exit_tf_want).toUpperCase()} ще без даних (зʼявиться з наступним циклом скану) — поки судимо на ${String(c.exit_tf).toUpperCase()}">⏳ ${String(c.exit_tf_want).toUpperCase()} рахується</span>` : '')
                 + (c.exit_trough > 0
                    ? (c.exit_troughed
-                      ? ` <span style="color:#4ade80" title="дно пройдено в цьому епізоді">🕳✓</span>`
-                      : ` <span style="color:#fbbf24" title="потрібне дно ЗА ≤${c.exit_trough}% у цьому епізоді">🕳 ≤${c.exit_trough}%</span>`)
-                   : '')
-                + (c.breadth_for_pct != null
-                   ? ` <span style="color:#8b93a7">(зараз ${_mmcFmt(c.breadth_for_pct)}%)</span>` : '')
-                + (ready ? ' ✓' : '');
+                      ? ` · <span style="color:#4ade80" title="у цьому епізоді частка ЗА вже опускалась до ≤${c.exit_trough}% на цьому ж сенсорі й TF">дно ≤${_mmcFmt(c.exit_trough, true)}% пройдено ✓</span>`
+                      : ` · <span style="color:#fbbf24" title="кінець дозволено лише після того, як частка ЗА в цьому епізоді опуститься до ≤${c.exit_trough}%">дно ≤${_mmcFmt(c.exit_trough, true)}% ще не було</span>`)
+                   : '');
         } else {
             ex.style.display = 'none';
             ex.innerHTML = '';
@@ -12660,8 +12669,19 @@ function mmRenderCorr(corr) {
     }
     const cnt = document.getElementById('mm-corr-count');
     if (cnt) {
+        // 🐞 АУДИТ 28.09: було «ознак 2/2», а в шапці — «ознак ≥ 2/3»: один
+        // формат означав «горить/треба», другий «треба/усього». Тепер ОДНЕ
+        // написання: «горить N з 3 · треба ≥K». Ознак ТРИ (ширина = 📦/📐
+        // разом, 💹, 📉), хоча рядків у розкладі чотири. І це умова СТАРТУ:
+        // коли корекція вже триває, кінець вирішує ширина, а не цей лічильник.
+        const _running = (c.state === 'on' || c.state === 'ending')
+            && c.breadth_exit_on !== false;
         cnt.innerHTML = (c.layers || []).length
-            ? `ознак <b style="color:${v.col}">${c.lit || 0}</b>/${c.need || 0}` : '';
+            ? `▶️ старт: ознак <b style="color:${v.col}">${c.lit || 0}</b> з 3 · треба ≥${c.need || 0}` : '';
+        cnt.title = 'Ознаки СТАРТУ: 🧭 ширина (📦 VOB і 📐 OB рахуються як ОДНА ознака — '
+            + 'береться більша з двох часток), 💹 ціна, 📉 важіль.'
+            + (_running ? ' Корекція вже триває — завершує її лише ширина на TF виходу, '
+                          + 'цей лічильник на кінець не впливає.' : '');
     }
     // 🚫 Ворота відкриття. Стан «корекція є, але блокування вимкнене» теж
     // показуємо: мовчання читалось би як «бот усе одно стоїть».
@@ -12743,10 +12763,12 @@ function mmRenderCorr(corr) {
         + (c.breadth_exit_on === false
             ? '• ⚠️ «кінець вирішує ширина» ВИМКНЕНО — кінець ухвалюють голоси ознак, '
               + 'тобто корекція може завершитись при майже всіх монетах проти банера.\n'
-            : '• завершити корекцію може ЛИШЕ ширина: поки ЗА банером менше ніж '
-              + `${c.exit_pct != null ? c.exit_pct : '—'}% монет, кінець заблоковано. `
-              + '💹 ціна і 📉 важіль мають право лише ПРОДОВЖИТИ її — вікна 15 і 30 хв '
-              + 'заслабкі, щоб судити про кінець багатогодинної корекції.\n')
+            : '• завершити корекцію може ЛИШЕ ширина на TF виходу'
+              + (c.exit_tf ? ` (${String(c.exit_tf).toUpperCase()}, ${c.exit_src === 'vob' ? '📦 VOB' : '📐 OB'})` : '')
+              + `: поки ЗА банером менше ніж ${c.exit_pct != null ? c.exit_pct : '—'}% монет`
+              + (c.exit_trough > 0 ? ` або в епізоді ще не було дна ЗА ≤${c.exit_trough}%` : '')
+              + ', кінець заблоковано. 💹 ціна і 📉 важіль на кінець НЕ впливають '
+              + '(ні продовжити, ні скоротити) — вікна 15 і 30 хв заслабкі для цього.\n')
         + (c.why ? c.why + '\n' : '')
         + 'Обидві події ще й підтверджуються часом, а пороги входу й виходу різні '
         + '(гістерезис) — щоб вердикт не миготів.';
@@ -12892,17 +12914,29 @@ function _mmcExitSync() {
         note.style.color = '#93c5fd';
         note.style.background = 'rgba(147,197,253,0.08)';
         note.style.borderColor = 'rgba(147,197,253,0.25)';
-        note.textContent = `ℹ️ Почнеться, коли ПРОТИ банера ≥ ${hi}% монет; `
-            + `завершиться, коли ЗА банером повернеться ≥ ${cur}% `
-            + `(тобто проти лишиться ≤ ${mirror}%). БІЛЬШЕ число тут = `
-            + `корекція тримається ДОВШЕ.`;
+        // 🐞 АУДИТ 28.09: рядок описував старт і кінець як ОДНУ шкалу «монет»,
+        // хоча старт міряється на TF скану (більша з 📦/📐), а кінець — ОДНИМ
+        // обраним сенсором на TF виходу і лише ПІСЛЯ дна. Без цього «📐 5M
+        // 50% проти» у розкладі поруч із «кінець ≥45% за» читалось як збій.
+        const _src = (document.getElementById('ff-mm-corr-exitsrc') || {}).value === 'vob' ? '📦 VOB' : '📐 OB';
+        const _tfv = (document.getElementById('ff-mm-corr-exittf') || {}).value;
+        const _tf = _tfv ? String(_tfv).toUpperCase() : 'TF скану';
+        const _tr = parseFloat((document.getElementById('ff-mm-corr-trough') || {}).value);
+        note.textContent = `ℹ️ Почнеться, коли ПРОТИ банера ≥ ${hi}% монет `
+            + `(на TF скану, береться більша з 📦 VOB / 📐 OB); `
+            + `завершиться, коли за ${_src} ${_tf} ЗА банером повернеться ≥ ${cur}% `
+            + `(тобто проти лишиться ≤ ${mirror}%)`
+            + ((isFinite(_tr) && _tr > 0)
+               ? ` — і лише якщо в цьому епізоді «за» на ${_src} ${_tf} спершу опускалось до ≤ ${_tr}%`
+               : '')
+            + `. БІЛЬШЕ число кінця = корекція тримається ДОВШЕ.`;
     }
 }
 function _mmCorrSummary(s) {
     const el = document.getElementById('mm-corr-sum');
     if (!el || !s) return;
     el.textContent = (s.mm_corr_enabled === false ? '⛔ вимкнено · ' : '')
-        + `ознак ≥ ${s.mm_corr_min_layers != null ? s.mm_corr_min_layers : 2}/3 · `
+        + `старт: ознак ≥${s.mm_corr_min_layers != null ? s.mm_corr_min_layers : 2} з 3 · `
         + `📦${s.mm_corr_ob_on === false ? '' : '+📐'} `
         + `${s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60}%`
         + (s.mm_corr_vob_required === false ? '' : '!')

@@ -3843,6 +3843,15 @@ class FuelFilterDaemon:
             print(f"[FF] volumized trends error: {e}")
             return {'on': None, 'tf': '', 'trends': {}}
 
+    @staticmethod
+    def _mm_exit_key(settings: Dict, scan_tf: str) -> str:
+        """Ключ «сенсор|TF», на якому ОБРАНО судити кінець корекції — під ним
+        живе 🕳 дно. `''` у TF виходу = TF скану (як і в `corr_exit_trends`)."""
+        src = str((settings or {}).get('mm_corr_exit_src') or 'ob').strip().lower()
+        src = src if src in ('ob', 'vob') else 'ob'
+        tf = str((settings or {}).get('mm_corr_exit_tf', '15m') or '').strip().lower()
+        return f"{src}|{tf or str(scan_tf or '').lower()}"
+
     def _mm_exit_trends(self, tf: str) -> Dict:
         """🧭 VOB/OB на TF ВИХОДУ з корекції — `{'tf','vob','ob'}` або `{}`.
 
@@ -4072,8 +4081,16 @@ class FuelFilterDaemon:
         # нього рахується «дно» для виходу. Новий епізод (з trend/ended) —
         # з чистого аркуша.
         _prev = self._mm_corr_st or {}
+        # 🐞 ДНО ПРИВʼЯЗАНЕ ДО СЕНСОРА І TF (аудит 28.09). Раніше мінімум «ЗА»
+        # змішував числа різних сенсорів/TF: поки 15M ще не порахувався, кінець
+        # тимчасово судився на 5M, і 5M-мінімум лягав у `exit_low` → «🕳✓ дно
+        # пройдено» для 15M, якого 15M НЕ бачив. Те саме при зміні «Вихід за» /
+        # «TF виходу» посеред епізоду. Тепер дно живе лише під ключем
+        # «сенсор|TF», який ОБРАНО, і фолбек у нього не пише.
+        _want_key = self._mm_exit_key(settings, vob.get('tf') or '')
         _low = (_prev.get('exit_low')
-                if _prev.get('state') in ('pending', 'on', 'ending') else None)
+                if (_prev.get('state') in ('pending', 'on', 'ending')
+                    and _prev.get('exit_low_key') == _want_key) else None)
         try:
             try:
                 _xk = ({'exit_trends': _xt.get('vob') or {},
@@ -4113,9 +4130,14 @@ class FuelFilterDaemon:
                             float(settings.get('mm_corr_confirm_sec', 300) or 0),
                             start_ok=res.get('start_ok'), stay=res.get('stay'))
         if st.get('state') in ('pending', 'on', 'ending'):
-            _vals = [v for v in (_low, res.get('breadth_for_pct')) if v is not None]
+            _real_key = (f"{res.get('exit_src') or ''}|"
+                         f"{str(res.get('exit_tf') or '').lower()}")
+            _now_for = (res.get('breadth_for_pct')
+                        if _real_key == _want_key else None)
+            _vals = [v for v in (_low, _now_for) if v is not None]
             if _vals:
                 st['exit_low'] = round(min(float(v) for v in _vals), 1)
+                st['exit_low_key'] = _want_key
         _was = (self._mm_corr_st or {}).get('state')
         # ⏸ РУЧНА ПАУЗА — знімає ЛИШЕ ворота, решта лишається як є (вимога
         # 23.09 дослівно: «все залишається рахуватись відображатись як і

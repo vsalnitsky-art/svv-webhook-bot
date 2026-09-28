@@ -2019,11 +2019,12 @@ console.log(JSON.stringify(seen));
     _check('ВДАВЛЕНА' in d['paused']['btn'], f'вдавлений стан: {d["paused"]}')
     _check('пауза вручну' in d['paused']['txt'],
            f'стан воріт мусить називати ПРИЧИНУ: {d["paused"]}')
-    _check('кінець коли ЗА' in d['paused']['exit'], f'{d["paused"]}')
+    _check('🧭 кінець:' in d['paused']['exit'] and 'ЗА зараз' in d['paused']['exit'],
+           f'{d["paused"]}')
     _check('ознак' in d['paused']['cnt'], f'{d["paused"]}')
     # ⚠️ Шукаємо САМЕ маркери підсумку, а не слова: «кінець» трапляється ще й
     # у ПІДКАЗЦІ шару ширини («вирішує і початок, і кінець»).
-    _check('🧭 кінець коли' not in d['paused']['lay']
+    _check('🧭 кінець' not in d['paused']['lay']
            and 'ознак <b' not in d['paused']['lay'],
            f'у першому рядку лишився підсумок: {d["paused"]["lay"]}')
     _check(d['trend']['btn'] == 'none',
@@ -2416,6 +2417,83 @@ def test_missing_exit_tf_data_falls_back_to_scan_tf_not_to_votes():
            f'фолбек названо: {r["why"]}')
     _check('_xtfFb' in _HTML and 'рахується' in _HTML, 'UI показує фолбек TF')
     print('✓ 🕐 немає даних TF виходу → фолбек на TF скану, а не на голоси')
+
+
+# ═══════════ 16. АУДИТ 28.09: ДНО НА СВОЄМУ СЕНСОРІ/TF · ЧЕСНІ ПІДПИСИ ═════
+def _audit_ff(**kw):
+    t5 = {f'C{i}': 'SHORT' for i in range(6)}
+    st = dict(mm_corr_exit_tf='15m', mm_corr_exit_src='ob',
+              mm_corr_exit_trough_pct=20, mm_corr_vob_exit_pct=45,
+              mm_corr_breadth_exit=True, mm_corr_vob_required=True)
+    st.update(kw)
+    ff = _mk(t5, **st)
+    ff._mm_ob_trends = lambda: {'on': True, 'tf': '5m', 'trends': dict(t5)}
+    return ff
+
+
+def test_trough_is_not_stamped_by_the_scan_tf_fallback():
+    """🐞 Поки 15M ще без даних, кінець тимчасово судиться на 5M — і раніше
+    5M-мінімум «за» (0%) лягав у дно 15M → «🕳✓ дно пройдено», якого 15M не
+    бачив. Тепер фолбек у дно НЕ пише."""
+    ff = _audit_ff()
+    ff._mm_exit_trends = lambda tf: {}          # 15M ще порожній
+    c = _tick(ff, _six('down'))
+    _check(c.get('state') == 'on', f'корекція почалась: {c}')
+    _check(c.get('exit_tf') == '5m', f'кінець тимчасово на 5m: {c}')
+    _check('exit_low' not in ff._mm_corr_st,
+           f'фолбек не пише дно 15M: {ff._mm_corr_st}')
+    # 15M зʼявився: «за» 50% ≥ 45%, але дна ≤20% на 15M не було → тримаємо
+    half = {f'C{i}': ('LONG' if i < 3 else 'SHORT') for i in range(6)}
+    ff._mm_exit_trends = lambda tf: {'tf': '15m', 'vob': half, 'ob': half}
+    c2 = _tick(ff, _six('down'), now=NOW + 30)
+    _check(c2.get('exit_troughed') is False and c2.get('state') == 'on',
+           f'дно 15M не пройдено → корекція тримається: {c2}')
+    _check(ff._mm_corr_st.get('exit_low') == 50.0
+           and ff._mm_corr_st.get('exit_low_key') == 'ob|15m',
+           f'дно пишеться лише під своїм ключем: {ff._mm_corr_st}')
+    print('✓ 🐞 дно не «пройдене» за рахунок фолбеку на TF скану')
+
+
+def test_trough_resets_when_the_exit_sensor_changes():
+    """Зміна «Вихід за» посеред епізоду: мінімум ІНШОГО сенсора не рахується."""
+    ff = _audit_ff()
+    low = {f'C{i}': 'SHORT' for i in range(6)}
+    ff._mm_exit_trends = lambda tf: {'tf': '15m', 'vob': low, 'ob': low}
+    _tick(ff, _six('down'))
+    _check(ff._mm_corr_st.get('exit_low') == 0.0, str(ff._mm_corr_st))
+    ff._settings['mm_corr_exit_src'] = 'vob'
+    half = {f'C{i}': ('LONG' if i < 3 else 'SHORT') for i in range(6)}
+    ff._mm_exit_trends = lambda tf: {'tf': '15m', 'vob': half, 'ob': low}
+    c = _tick(ff, _six('down'), now=NOW + 30)
+    _check(c.get('exit_troughed') is False, f'дно OB не переходить на VOB: {c}')
+    _check(ff._mm_corr_st.get('exit_low_key') == 'vob|15m', str(ff._mm_corr_st))
+    print('✓ 🐞 дно скидається при зміні сенсора виходу')
+
+
+def test_ui_exit_line_names_every_number():
+    _check('ЗА зараз' in _HTML and '→ треба' in _HTML, 'зараз → треба')
+    _check('пройдено ✓' in _HTML and 'ще не було' in _HTML,
+           'дно підписане словом, а не голим «🕳✓» біля порога')
+    _check('🕳✓' not in _HTML, 'голого «🕳✓» більше немає')
+    _check('c.exit_ob_pct' in _HTML and 'c.exit_vob_pct' in _HTML,
+           '«проти» на TF виходу видно в рядку')
+    _check('з 3 · треба ≥' in _HTML and 'старт: ознак ≥' in _HTML,
+           'ОДИН формат лічильника ознак у рядку і в зведенні')
+    _check('ознак ≥ ${' not in _HTML, 'старого «ознак ≥ N/3» немає')
+    _check('лише ПРОДОВЖИТИ її' not in _HTML,
+           'підказка більше не бреше про роль ціни/важеля')
+    print('✓ 🖥 рядок «кінець» і лічильник ознак — без двозначностей')
+
+
+def test_ui_info_line_names_exit_sensor_tf_and_trough():
+    src = _HTML.split('function _mmcExitSync')[1].split('function _mmCorrSummary')[0]
+    for k in ("ff-mm-corr-exitsrc", "ff-mm-corr-exittf", "ff-mm-corr-trough",
+              'на TF скану'):
+        _check(k in src, f'інфо-рядок знає: {k}')
+    for sel in ('id="ff-mm-corr-exitsrc" onchange="_mmcExitSync();',
+                'id="ff-mm-corr-exittf" onchange="_mmcExitSync();'):
+        _check(sel in _HTML, f'перерахунок інфо-рядка: {sel}')
+    print('✓ 🖥 інфо-рядок називає сенсор, TF виходу і дно')
 
 if __name__ == '__main__':
     _fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
