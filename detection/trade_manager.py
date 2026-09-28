@@ -1975,7 +1975,15 @@ class TradeManager:
             s = get_fuel_filter().get_settings()
         except Exception:
             return
-        if not s.get('q2_auto_ob_sl'):
+        # 🐞 КЕЙС 28.09 (INJ/ASTER/BCH/PONS/XRP): УСІ ПРЯМІ відкриття (черги
+        # вимкнені → 💧 VOB-сигнал → TM) лишались БЕЗ стопа. Цей метод — ЄДИНИЙ
+        # авто-SL прямого шляху, а виходив ПЕРШИМ рядком на `q2_auto_ob_sl=False`
+        # — тобто глобальне «🛑 SL з» і гарантія «% від входу» до прямих угод не
+        # доходили ВЗАГАЛІ (угоди з черг/✋ групового ставить `_q4_set_vob_sl`,
+        # тому там стоп був). Тепер вмикає ЛЮБИЙ із двох тумблерів:
+        # «Авто Manual SL з OB» (як було) АБО «🛑 SL з» (`sl_source_enabled`).
+        _q2_on = bool(s.get('q2_auto_ob_sl'))
+        if not (_q2_on or s.get('sl_source_enabled', True)):
             return
         try:
             buf = float(s.get('q2_auto_ob_sl_buffer_pct', 0.2) or 0.0) / 100.0
@@ -2188,7 +2196,10 @@ class TradeManager:
                 _add_vob('15m')
             for _tf in _SL_FB:            # 15m → 5m (спільні сходи)
                 _add_vob(_tf)
-        _add_ob(ob_tf, ob_tf.upper())
+        if _q2_on:
+            # «OB TF» — власний TF тумблера «Авто Manual SL з OB»; вимкнений
+            # тумблер свого TF у ланцюг не додає.
+            _add_ob(ob_tf, ob_tf.upper())
         _add_ob(star_tf, f'★{star_tf.upper()}')
 
         if vol_tf:

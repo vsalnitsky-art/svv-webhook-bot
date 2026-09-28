@@ -355,11 +355,37 @@ def test_user_typed_sl_is_never_touched():
 
 
 def test_disabled_feature_does_nothing():
-    _reset(q2_auto_ob_sl=False)
+    """Обидва тумблери OFF («Авто Manual SL з OB» і «🛑 SL з») → жодних дій.
+    ⚠️ Раніше вистачало ОДНОГО `q2_auto_ob_sl=False` — і саме через це прямі
+    угоди 28.09 лишились без стопа (див. тест нижче)."""
+    _reset(q2_auto_ob_sl=False, sl_source_enabled=False)
     p = _pos()
     _tm()._auto_ob_manual_sl('MNTUSDT', p, 0.51430)
-    _check(not p.get('manual_sl') and not _LOG, 'тумблер OFF → жодних дій')
-    print('✓ вимкнений авто-SL нічого не робить')
+    _check(not p.get('manual_sl') and not _LOG, 'обидва тумблери OFF → жодних дій')
+    print('✓ вимкнені обидва авто-SL нічого не роблять')
+
+
+def test_direct_open_gets_a_stop_when_only_sl_source_is_on():
+    """🐞 Кейс 28.09: «Авто Manual SL з OB» ВИМК, «🛑 SL з» УВІМК, черги вимкнені
+    → 💧 VOB-сигнал відкривав угоду НАПРЯМУ, і стопа не було взагалі
+    (INJ/ASTER/BCH/PONS/XRP). Тепер обране джерело + гарантія діють і тут."""
+    _reset(q2_auto_ob_sl=False, sl_source_enabled=True, queue4_sl_source='1h')
+    _OB_ROWS['15m'] = {'bias': 'BULLISH', 'bar_high': 7.50, 'bar_low': 7.30}
+    _OB_ROWS['1h'] = {'bias': 'BULLISH', 'bar_high': 7.20, 'bar_low': 7.10}
+    p = {'side': 'LONG', 'entry_price': 7.368,
+         'opened_by': 'liq_vob'}
+    _tm()._auto_ob_manual_sl('INJUSDT', p, 7.465)
+    _check(_near(p.get('manual_sl') or 0, 7.10 * 0.998),
+           f'мав стати стоп під ★1H-блоком, отримано {p.get("manual_sl")} · {_text()}')
+    _check('15M' not in _text().split('SL встановлено')[-1].split('·')[0],
+           'власний TF вимкненого «Авто Manual SL з OB» не мав стати джерелом')
+    # Жодного блоку → гарантія «% від входу» однаково ставить стоп.
+    _reset(q2_auto_ob_sl=False, sl_source_enabled=True)
+    p = {'side': 'LONG', 'entry_price': 0.7021}
+    _tm()._auto_ob_manual_sl('ASTERUSDT', p, 0.7069)
+    _check(_near(p.get('manual_sl') or 0, round(0.7021 * 0.98, 5)),
+           f'гарантія 2% від входу мала поставити стоп: {p.get("manual_sl")} · {_text()}')
+    print('✓ пряме відкриття отримує стоп і при вимкненому «Авто Manual SL з OB»')
 
 
 def test_defaults_guarantee_a_stop():
@@ -1384,6 +1410,7 @@ if __name__ == '__main__':
     test_set_once_is_preserved()
     test_user_typed_sl_is_never_touched()
     test_disabled_feature_does_nothing()
+    test_direct_open_gets_a_stop_when_only_sl_source_is_on()
     test_defaults_guarantee_a_stop()
     test_autosl_marks_level_as_bot_origin()
     test_user_edit_overrides_bot_origin()
