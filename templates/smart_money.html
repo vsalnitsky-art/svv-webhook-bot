@@ -847,6 +847,27 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
    корекції стоїть у рядку з текстом, а не окремим банером). */
 .ff-flip.ff-flip-sm .fd { font-size: 0.86rem; padding: 2px 3px 3px; border-radius: 3px; }
 .ff-flip.ff-flip-sm .fs { font-size: 0.8rem; }
+/* 🧮/🔻 БАНЕРИ — ОДНА СІТКА (вимога 25.09: «банери рівненькі»). Колонки
+   фіксованої ширини: заголовок · смуга · таймер · статус. Так смуги обох
+   банерів починаються й закінчуються на одній вертикалі незалежно від
+   довжини назви, таймера («10д 07:39:16» проти «11:31:43») і статусу. */
+.mm-ban { display: flex; align-items: center; gap: 14px; padding: 10px 14px;
+    border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.02); }
+.mm-ban-title { flex: 0 0 200px; font-weight: 900; font-size: 1.1rem; white-space: nowrap; }
+.mm-ban-bar { flex: 1 1 auto; min-width: 120px; height: 18px; border-radius: 9px;
+    background: rgba(255,255,255,0.07); overflow: hidden; position: relative; }
+.mm-ban-tm { flex: 0 0 290px; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 6px; white-space: nowrap; }
+.mm-ban-st { flex: 0 0 210px; box-sizing: border-box; text-align: center; font-weight: 800; font-size: 1.05rem;
+    padding: 3px 10px; border-radius: 6px; letter-spacing: 1px; white-space: nowrap; }
+/* Розклад ознак — рівна сітка: назва ліворуч, числа праворуч (tabular). */
+#mm-corr-layers { display: grid !important; grid-template-columns: repeat(4, max-content); gap: 4px 34px; }
+.mm-corr-lay { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.mm-corr-lay .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mm-corr-lay .v { font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 900px) {
+  #mm-corr-layers { grid-template-columns: repeat(2, max-content); }
+  .mm-ban-title { flex-basis: 150px; } .mm-ban-tm { flex-basis: auto; } .mm-ban-st { flex-basis: auto; }
+}
 .tm-pnl-pos { color: #4ade80; }
 .tm-pnl-neg { color: #ef4444; }
 .tm-side-long { color: #4ade80; font-weight: 600; }
@@ -2532,23 +2553,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  свої копії: інакше два банери на одній сторінці почали б
                  розходитись у кольорах і словах. Алгоритм ₿ (сеанси, пауза,
                  START/STOP) тут НЕ повторюється — свідомо. -->
-            <div id="mm-bias-banner" style="display:flex;align-items:center;gap:14px;margin:0 0 10px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
-                <span style="font-weight:900;font-size:1.1rem;color:#ffb02e;text-shadow:0 0 9px rgba(247,147,26,0.6);white-space:nowrap">🧮 МММ-МОНІТОР</span>
-                <div style="flex:1;min-width:120px;height:18px;border-radius:9px;background:rgba(255,255,255,0.07);overflow:hidden;position:relative">
+            <div id="mm-bias-banner" class="mm-ban" style="margin:0 0 10px">
+                <span class="mm-ban-title" style="color:#ffb02e;text-shadow:0 0 9px rgba(247,147,26,0.6)">🧮 МММ-МОНІТОР</span>
+                <div class="mm-ban-bar">
                     <div id="mm-bias-bar" style="height:100%;width:0%;border-radius:9px;background:#facc15;transition:width 0.4s linear,background 0.3s"></div>
                     <span id="mm-bias-label" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
                 </div>
-                <span id="mm-bias-timer" class="ff-flip" style="white-space:nowrap"></span>
-                <!-- 🐢 АНТИСПАМ: статус перемикається лише коли новий стан
-                     протримався `mm_bias_confirm_sec`. Поки йде відлік —
-                     кандидат ВИДИМИЙ, інакше «банер завис» читалось би як збій. -->
-                <span id="mm-bias-cand" style="display:none;font-size:0.66rem;color:#fbbf24;font-family:monospace;white-space:nowrap"></span>
-                <!-- ↻ Показники й таймер персистяться, тож рестарт бота їх НЕ
-                     обнуляє. Позначка живе лише до першого такту після старту:
-                     відновлені числа ще не є свіжим розрахунком, і це видно. -->
-                <span id="mm-bias-restored" style="display:none;font-size:0.66rem;color:#8b93a7"
-                      title="Показники й таймер відновлено після рестарту бота — таймер продовжено з того самого моменту, числа оновляться найближчим тактом (~30с).">↻</span>
-                <span id="mm-bias-status" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap;background:transparent">—</span>
+                <!-- ⏱ таймер + 🐢 кандидат (антиспам) + ↻ відновлено — В ОДНІЙ
+                     колонці фіксованої ширини, вирівняні праворуч. -->
+                <span class="mm-ban-tm">
+                    <span id="mm-bias-cand" style="display:none;font-size:0.66rem;color:#fbbf24;font-family:monospace;white-space:nowrap"></span>
+                    <span id="mm-bias-restored" style="display:none;font-size:0.66rem;color:#8b93a7"
+                          title="Показники й таймер відновлено після рестарту бота — таймер продовжено з того самого моменту, числа оновляться найближчим тактом (~30с).">↻</span>
+                    <span id="mm-bias-timer" class="ff-flip" style="white-space:nowrap"></span>
+                </span>
+                <span id="mm-bias-status" class="mm-ban-st" style="background:transparent">—</span>
             </div>
             <!-- 🔻 БАНЕР КОРЕКЦІЇ (вимога 25.09: «зроби Корекцію у вигляді
                  банера, так само як банер МММ-монітор»). Та сама геометрія й
@@ -2559,21 +2578,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  число, що вирішує старт; риска на смузі — поріг старту.
                  Розклад ознак і підсумок — компактно ПІД банером. -->
             <div id="mm-corr-row" style="display:none;flex-direction:column;gap:4px;margin:-4px 0 10px">
-                <div id="mm-corr-banner" style="display:flex;align-items:center;gap:14px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
-                    <span style="font-weight:900;font-size:1.1rem;color:#ff8a5b;text-shadow:0 0 9px rgba(249,115,22,0.55);white-space:nowrap">🔻 КОРЕКЦІЯ</span>
-                    <div id="mm-corr-track" style="flex:1;min-width:120px;height:18px;border-radius:9px;background:rgba(255,255,255,0.07);overflow:hidden;position:relative">
+                <div id="mm-corr-banner" class="mm-ban">
+                    <span class="mm-ban-title" style="color:#ff8a5b;text-shadow:0 0 9px rgba(249,115,22,0.55)">🔻 КОРЕКЦІЯ</span>
+                    <div id="mm-corr-track" class="mm-ban-bar">
                         <div id="mm-corr-bar" style="height:100%;width:0%;border-radius:9px;background:#6b7280;transition:width 0.4s linear,background 0.3s,opacity 0.3s"></div>
                         <div id="mm-corr-mark" style="display:none;position:absolute;top:0;bottom:0;width:2px;background:rgba(255,255,255,0.55)"></div>
                         <span id="mm-corr-label" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
                     </div>
-                    <span id="mm-corr-timer" class="ff-flip" style="white-space:nowrap"></span>
-                    <span id="mm-corr-state" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap">—</span>
+                    <span class="mm-ban-tm"><span id="mm-corr-timer" class="ff-flip" style="white-space:nowrap"></span></span>
+                    <span id="mm-corr-state" class="mm-ban-st">—</span>
                 </div>
                 <!-- Розклад ознак і підсумок — ОДНИМ компактним блоком під
                      банером: зверху шари (кожен — число проти свого порога),
                      знизу «кінець коли…», лічильник, ворота і ⏸ пауза. -->
-                <div id="mm-corr-details" style="display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;padding:0 4px">
-                    <span id="mm-corr-layers" style="font-size:0.7rem;font-family:monospace;color:#8b93a7;display:flex;gap:4px 14px;flex-wrap:wrap"></span>
+                <div id="mm-corr-details" style="display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;padding:2px 15px 0">
+                    <div id="mm-corr-layers" style="font-size:0.7rem;font-family:monospace;color:#8b93a7"></div>
                     <!-- 🧭 ДРУГИЙ РЯДОК (вимога 23.09): підсумок окремо від шарів.
                          `flex-basis:100%` = перенос ЦІЛИМ блоком. -->
                     <div id="mm-corr-line2" style="flex-basis:100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:0.7rem;font-family:monospace">
@@ -12471,6 +12490,15 @@ function _mmCorrBreadth(c) {
     });
     return best;
 }
+// 🔢 ЄДИНИЙ формат чисел корекції: частка — ЗАВЖДИ 1 знак після коми
+// («42.9», «2.0»), поріг — ціле, якщо воно ціле («60», а не «60.0»). Раніше
+// поруч стояли «43%» на смузі й «42.9%» у рядку — одне число, два написання.
+function _mmcFmt(v, need) {
+    const n = Number(v);
+    if (!isFinite(n)) return '—';
+    if (need && Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
+    return n.toFixed(1);
+}
 function _mmCorrStartNeed(c) {
     const l = (c.layers || []).find(x => x.key === 'vob' || x.key === 'ob');
     return l && isFinite(Number(l.need)) ? Number(l.need) : null;
@@ -12519,7 +12547,7 @@ function mmRenderCorr(corr) {
     }
     if (lab) {
         lab.textContent = bp == null ? 'немає даних'
-            : (Math.round(bp) + '% проти ' + (c.bias || 'банера'));
+            : (_mmcFmt(bp) + '% проти ' + (c.bias || 'банера'));
         lab.style.color = (live && cdir && typeof dirTint === 'function') ? dirTint(cdir) : '#cbd5e1';
     }
     const trk = document.getElementById('mm-corr-track');
@@ -12562,8 +12590,8 @@ function mmRenderCorr(corr) {
     if (lay) {
         const parts = (c.layers || []).map(l => {
             if (!l.ok) {
-                return `<span style="color:#6b7280" title="${(l.note || 'немає даних')}">`
-                    + `${l.icon} ${l.name}: —</span>`;
+                return `<span class="mm-corr-lay" style="color:#6b7280" title="${(l.note || 'немає даних')}">`
+                    + `<span class="n">${l.icon} ${l.name}</span><span class="v">—</span></span>`;
             }
             const col = l.lit ? '#ff8a5b' : '#8b93a7';
             // Одиницю дає БЕКЕНД (`unit`): частки — у %, просідання важеля —
@@ -12580,8 +12608,9 @@ function mmRenderCorr(corr) {
                 + (l.role === 'start'
                     ? ' · шар ЛИШЕ для початку корекції: завершити її він не може'
                     : ' · ШИРИНА РИНКУ: вирішує і початок, і кінець');
-            return `<span style="color:${col}" title="${tip}">`
-                + `${l.icon} ${l.name} <b>${l.pct}${u}</b>/${l.need}${u}${st1}</span>`;
+            return `<span class="mm-corr-lay" style="color:${col}" title="${tip}">`
+                + `<span class="n">${l.icon} ${l.name}${st1}</span>`
+                + `<span class="v"><b>${_mmcFmt(l.pct)}${u}</b> / ${_mmcFmt(l.need, true)}${u}</span></span>`;
         });
         lay.innerHTML = parts.join('');
     }
@@ -12598,7 +12627,7 @@ function mmRenderCorr(corr) {
             ex.title = c.why || '';
             const _xi = c.exit_src === 'vob' ? '📦' : (c.exit_src === 'ob' ? '📐' : '');
             const _xf = c.exit_src && c.exit_src_want && c.exit_src !== c.exit_src_want;
-            ex.innerHTML = `🧭 кінець коли ${_xi ? _xi + ' ' : ''}ЗА <b>≥${c.exit_pct}%</b>`
+            ex.innerHTML = `🧭 кінець коли ${_xi ? _xi + ' ' : ''}ЗА <b>≥${_mmcFmt(c.exit_pct, true)}%</b>`
                 + (_xf ? ' <span style="color:#fbbf24">фолбек</span>' : '')
                 + (c.exit_trough > 0
                    ? (c.exit_troughed
@@ -12606,7 +12635,7 @@ function mmRenderCorr(corr) {
                       : ` <span style="color:#fbbf24" title="потрібне дно ЗА ≤${c.exit_trough}% у цьому епізоді">🕳 ≤${c.exit_trough}%</span>`)
                    : '')
                 + (c.breadth_for_pct != null
-                   ? ` <span style="color:#8b93a7">(зараз ${c.breadth_for_pct}%)</span>` : '')
+                   ? ` <span style="color:#8b93a7">(зараз ${_mmcFmt(c.breadth_for_pct)}%)</span>` : '')
                 + (ready ? ' ✓' : '');
         } else {
             ex.style.display = 'none';

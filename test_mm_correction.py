@@ -638,7 +638,7 @@ console.log(JSON.stringify(seen));
     _check('01:06:40' in re.sub(r'<[^>]*>', '', d['on']['t']),
            f'таймер корекції не той: {d["on"]["t"]}')
     _check('class="fd"' in d['on']['t'], 'таймер мусить бути в тих самих плитках')
-    _check('72%' in d['on']['lay'] and '80%' in d['on']['lay'],
+    _check('72.0%' in d['on']['lay'] and '80.0%' in d['on']['lay'],
            f'розклад ознак не показано: {d["on"]["lay"]}')
     _check('зупинено' in d['on']['blk'], f'блокування не показано: {d["on"]}')
     _check('45/120' in d['pending']['t'], f'відлік не показано: {d["pending"]}')
@@ -679,8 +679,8 @@ mmRenderCorr({state:'on', since: Math.floor(Date.now()/1000)-60, lit:2, need:2,
 console.log(document.getElementById('mm-corr-layers').innerHTML);
 ''')
     out = re.sub(r'<[^>]*>', '', out)
-    _check('24.7п.п./15п.п.' in out, f'важіль підписано не в п.п.: {out}')
-    _check('91.9%/60%' in out, f'частка мусить лишитись у %: {out}')
+    _check('24.7п.п. / 15п.п.' in out, f'важіль підписано не в п.п.: {out}')
+    _check('91.9% / 60%' in out, f'частка мусить лишитись у %: {out}')
     print('✓ 📉 одиницю дає бекенд: частки — %, важіль — п.п.')
 
 
@@ -2261,7 +2261,7 @@ console.log(JSON.stringify({on, tr}));
     import json
     d = json.loads(out)
     _check(d['on']['w'] == '61%', f'смуга = ширина проти банера: {d}')
-    _check('61% проти LONG' in d['on']['lab'], f'підпис смуги: {d}')
+    _check('61.4% проти LONG' in d['on']['lab'], f'підпис смуги: {d}')
     _check(d['on']['mk'] == '60.0%', f'риска = поріг старту: {d}')
     _check(d['on']['st'] == '🔴 SHORT КОРЕКЦІЯ', f'напрямок корекції: {d}')
     _check(d['tr']['w'] == '61%' and d['tr']['op'] == '0.45',

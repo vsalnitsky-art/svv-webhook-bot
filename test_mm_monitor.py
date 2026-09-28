@@ -1821,9 +1821,14 @@ def test_ui_banner_looks_exactly_like_the_btc_one():
     blk = _HTML[i:_HTML.index('</div>', _HTML.index('mm-bias-status', i))]
     j = _HTML.index('id="ff-btc-start-banner"')
     btc = _HTML[j:j + 1200]
+    # ⚠️ Геометрію банера тепер тримає СПІЛЬНИЙ клас `.mm-ban` (25.09: обидва
+    # банери монітора на одній сітці) — тож звіряємо ЙОГО CSS із ₿-банером.
+    _check('class="mm-ban"' in blk, 'банер мусить стояти на спільній сітці .mm-ban')
+    ci = _HTML.index('.mm-ban {')
+    css = _HTML[ci:_HTML.index('@media', ci)].replace(': ', ':')
     for part in ('padding:10px 14px', 'border-radius:8px', 'height:18px',
                  'border-radius:9px'):
-        _check(part in blk and part in btc, f'вигляд розійшовся з ₿: {part}')
+        _check(part in css and part in btc, f'вигляд розійшовся з ₿: {part}')
     for el in ('mm-bias-bar', 'mm-bias-label', 'mm-bias-timer', 'mm-bias-status'):
         _check(f'id="{el}"' in blk, f'немає елемента {el}')
     _check('ff-flip' in blk, 'таймер мусить бути в тому самому стилі, що в ₿')
@@ -2925,6 +2930,19 @@ def test_the_state_of_work_is_in_the_table_signature():
     _check('in_trade' in body and 'queues' in body,
            'стан монети мусить входити в сигнатуру таблиці')
     print('✓ 📍 стан монети входить у сигнатуру таблиці')
+
+
+def test_ui_both_banners_share_one_grid():
+    """25.09: «банери рівненькі» — заголовок/таймер/статус фіксованої ширини."""
+    for bid in ('mm-bias-banner', 'mm-corr-banner'):
+        i = _HTML.index(f'id="{bid}"')
+        head = _HTML[i:i + 2500]
+        for cls in ('mm-ban', 'mm-ban-title', 'mm-ban-bar', 'mm-ban-tm', 'mm-ban-st'):
+            _check(f'class="{cls}"' in head or f'class="{cls}' in head,
+                   f'{bid}: немає {cls}')
+    ci = _HTML.index('.mm-ban-title {')
+    _check('flex: 0 0' in _HTML[ci:ci + 120], 'ширина заголовка мусить бути фіксованою')
+    print('✓ 🖥 обидва банери на одній сітці — смуги й таймери вирівняні')
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]
