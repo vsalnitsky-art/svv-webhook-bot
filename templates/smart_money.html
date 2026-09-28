@@ -12638,8 +12638,13 @@ function mmRenderCorr(corr) {
             const _xi = c.exit_src === 'vob' ? '📦' : (c.exit_src === 'ob' ? '📐' : '');
             const _xf = c.exit_src && c.exit_src_want && c.exit_src !== c.exit_src_want;
             const _xtf = c.exit_tf ? ' ' + String(c.exit_tf).toUpperCase() : '';
+            // 🕐 TF виходу ще без даних → кінець тимчасово судить TF скану —
+            // це ВИДНО, інакше «5M» поруч із налаштованим 15m читалось би як збій.
+            const _xtfFb = !!(c.exit_tf && c.exit_tf_want
+                && String(c.exit_tf).toLowerCase() !== String(c.exit_tf_want).toLowerCase());
             ex.innerHTML = `🧭 кінець коли ${_xi ? _xi + _xtf + ' ' : ''}ЗА <b>≥${_mmcFmt(c.exit_pct, true)}%</b>`
                 + (_xf ? ' <span style="color:#fbbf24">фолбек</span>' : '')
+                + (_xtfFb ? ` <span style="color:#fbbf24" title="${String(c.exit_tf_want).toUpperCase()} ще без даних (зʼявиться з наступним циклом скану) — поки судимо на ${String(c.exit_tf).toUpperCase()}">⏳ ${String(c.exit_tf_want).toUpperCase()} рахується</span>` : '')
                 + (c.exit_trough > 0
                    ? (c.exit_troughed
                       ? ` <span style="color:#4ade80" title="дно пройдено в цьому епізоді">🕳✓</span>`

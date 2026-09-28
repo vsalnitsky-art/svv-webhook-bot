@@ -564,12 +564,25 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
     # ⚠️ `None` = TF виходу збігається з TF скану (або старіший FF) → беремо
     # ті самі шари, що й на старті (стара поведінка).
     _x_vob, _x_ob = s_vob, _ob_exit
+    _x_tf = exit_tf or tf
     if exit_trends is not None or exit_ob_trends is not None:
         _x_vob = vob_layer(exit_trends or {}, syms, bias,
                            c['mm_corr_vob_pct'], False, exit_tf)
         _x_ob = ob_layer(exit_ob_trends or {}, syms, bias,
                          c['mm_corr_vob_pct'], False, exit_tf)
     b_exit, _exit_used, _exit_note = exit_breadth(_x_vob, _x_ob, _exit_src)
+    # 🐞 TF ВИХОДУ ЩЕ БЕЗ ДАНИХ → ФОЛБЕК НА TF СКАНУ, А НЕ НА ГОЛОСИ (скрін
+    # 28.09: 📐 5M 86.7% проти банера, а корекція «ЗГАСАЄ»). Після деплою/
+    # рестарту 15M-знімок зʼявляється лише з наступним циклом скану, і
+    # «немає даних 15M» читалось як «ширину визначити нічим» → кінець за
+    # голосами (💹/📉 спокійні → вихід). «Немає даних» ≠ «повернулись»:
+    # беремо ті самі сенсори на молодшому TF, поки 15M не порахується.
+    if not b_exit.get('ok') and (_x_vob is not s_vob or _x_ob is not _ob_exit):
+        b_exit, _exit_used, _fb = exit_breadth(s_vob, _ob_exit, _exit_src)
+        if b_exit.get('ok'):
+            _x_tf, _x_vob, _x_ob = tf, s_vob, _ob_exit
+            _exit_note = (f'{_fb} ({str(tf).upper()} — '
+                          f'{str(exit_tf).upper()} ще без даних)')
     b_ok = (breadth_exit_ok(b_exit, exit_pct)
             if bool(c['mm_corr_breadth_exit']) else None)
     # 🕳 ДНО: відновлення рахується лише ВІД ДНА (вимога 25.09).
@@ -633,7 +646,10 @@ def evaluate(snap: Dict, trends: Dict, bias: str, lever_now, lever_peak,
         'exit_src_want': _exit_src,
         # 🧭 На якому TF судимо кінець + частки «проти» обох сенсорів там —
         # щоб UI показав, яке саме число тримає корекцію.
-        'exit_tf': exit_tf or tf,
+        # ⚠️ РЕАЛЬНИЙ TF, що зараз вирішує кінець (при фолбеку — TF скану);
+        # бажаний віддає FF окремо (`exit_tf_want`).
+        'exit_tf': _x_tf,
+        'exit_note': _exit_note,
         'exit_vob_pct': _x_vob.get('pct') if _x_vob.get('ok') else None,
         'exit_ob_pct': _x_ob.get('pct') if _x_ob.get('ok') else None,
         'breadth_lit': b_lit,

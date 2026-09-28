@@ -2398,6 +2398,25 @@ def test_ui_has_the_exit_tf_select():
            'TF видно в рядку «кінець коли…» і в зведенні')
     print('✓ 🕐 UI: випадайка TF виходу, TF у рядку вердикту і зведенні')
 
+
+def test_missing_exit_tf_data_falls_back_to_scan_tf_not_to_votes():
+    """СКРІН 28.09: 📐 5M 86.7% проти банера, а корекція «ЗГАСАЄ» — бо 15M ще
+    не порахувався, і «немає даних 15M» ставало «кінець за голосами». Поки TF
+    виходу без даних, кінець судять ТІ САМІ сенсори на TF скану."""
+    snap = _snap(**{f'C{i}': ('LONG', 50, 'flat') for i in range(15)})
+    ag = {f'C{i}': 'SHORT' for i in range(13)}
+    ag.update({'C13': 'LONG', 'C14': 'LONG'})
+    r = mc.evaluate(snap, ag, 'LONG', 50, 50,
+                    _cfg(mm_corr_exit_src='vob', mm_corr_vob_exit_pct=60),
+                    tf='5m', ob_trends=ag, ob_tf='5m',
+                    exit_trends={}, exit_ob_trends={}, exit_tf='15m')
+    _check(r['stay'] is True, f'корекція ТРИМАЄТЬСЯ, а не згасає: {r}')
+    _check(r['exit_tf'] == '5m' and r['exit_src'] == 'vob', str(r))
+    _check(r['breadth_for_pct'] is not None and '15M ще без даних' in r['why'],
+           f'фолбек названо: {r["why"]}')
+    _check('_xtfFb' in _HTML and 'рахується' in _HTML, 'UI показує фолбек TF')
+    print('✓ 🕐 немає даних TF виходу → фолбек на TF скану, а не на голоси')
+
 if __name__ == '__main__':
     _fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in _fns:

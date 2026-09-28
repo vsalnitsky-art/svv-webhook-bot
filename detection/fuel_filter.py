@@ -4145,6 +4145,7 @@ class FuelFilterDaemon:
                 'exit_src_want': res.get('exit_src_want') or 'ob',
                 'exit_tf': res.get('exit_tf') or vob.get('tf') or '',
                 'exit_tf_want': str(settings.get('mm_corr_exit_tf', '15m') or ''),
+                'exit_note': res.get('exit_note') or '',
                 'exit_vob_pct': res.get('exit_vob_pct'),
                 'exit_ob_pct': res.get('exit_ob_pct'),
                 'exit_trough': res.get('exit_trough'),
