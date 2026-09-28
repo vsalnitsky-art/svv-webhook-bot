@@ -268,7 +268,8 @@ def pick_rows(rows: List[Dict], side: str, min_pct: float,
 
 
 def vob_confluence(row: Optional[Dict], vob_side: str,
-                   bias_dir: Optional[str]) -> (bool, str):
+                   bias_dir: Optional[str], coin_mm: Optional[str] = None,
+                   check_coin: bool = False) -> (bool, str):
     """ЧИСТЕ правило «новий VOB → сигнал?» (вимога 19.09).
 
     Три умови РАЗОМ і в цьому порядку:
@@ -280,6 +281,13 @@ def vob_confluence(row: Optional[Dict], vob_side: str,
     Одразу після розвороту банера таблиця ще стара (перескан попереду), і її
     рядки зібрані під ПРОТИЛЕЖНИЙ бік — узяти такий рядок означало б назвати
     «збігом» пряме протиріччя. Замість цього чесно кажемо, що чекаємо перескан.
+
+    4. (`check_coin`, вимога 28.09) власний **🧮 МММ LiQ монети** — той самий,
+       що кладе її у вкладку 🟢 LONG / 🔴 SHORT / ⚖ Рівновага МММ-монітора —
+       ЗБІГАЄТЬСЯ з банером. Монета у вкладці «⚖ Рівновага» чи протилежній →
+       сигналу немає. ⚠️ Немає даних по монеті → теж немає: «невідомо» ≠
+       «за напрямком». Блок при цьому НЕ ковтається — сканер спробує ще, поки
+       він свіжий (той самий прийом, що з розбігом таблиці).
 
     Повертає `(ok, причина/розклад)`. Причина потрібна ЗАВЖДИ: «сигналу немає»
     без пояснення читається як поломка.
@@ -298,7 +306,18 @@ def vob_confluence(row: Optional[Dict], vob_side: str,
     if r_side and r_side != side:
         return False, (f'рядок таблиці зібрано під {r_side} — '
                        f'чекаємо перескан під {side}')
+    _cm = (coin_mm or '').upper().strip()
+    if check_coin:
+        if _cm not in ('LONG', 'SHORT', 'FLAT'):
+            return False, ('🧮 МММ LiQ монети ще невідомий (немає в знімку '
+                           'МММ-монітора) — чекаємо')
+        if _cm != bias:
+            _lbl = '⚖ Рівновага' if _cm == 'FLAT' else _cm
+            return False, (f'🧮 МММ LiQ монети — {_lbl}, а банер {bias}: '
+                           f'монета не у вкладці {bias} МММ-монітора')
     _bits = [f'VOB {side} = банер {bias}']
+    if check_coin:
+        _bits.append(f'🧮 МММ LiQ монети {_cm}')
     try:
         _bits.append(f"💧 маса {float(row.get('mass_pct')):.1f}% у бік {side}")
     except (TypeError, ValueError):
@@ -553,8 +572,28 @@ class LiqHunterDaemon:
         if not s.get('vob_signal_on', True):
             return False, 'сигнали «VOB + таблиця» вимкнено в налаштуваннях сканера', None
         row = self.row_for(symbol)
-        ok, note = vob_confluence(row, vob_side, self.bias_dir())
+        ok, note = vob_confluence(row, vob_side, self.bias_dir(),
+                                  coin_mm=self.coin_mm(symbol), check_coin=True)
         return ok, note, row
+
+    def coin_mm(self, symbol: str) -> Optional[str]:
+        """🧮 МММ LiQ монети: 'LONG' / 'SHORT' / 'FLAT' (⚖) / None (немає даних).
+
+        ЄДИНЕ джерело — `ff.mm_snapshot_for` (той самий знімок, що розкладає
+        монети по вкладках МММ-монітора), тож «монета у вкладці LONG» і рішення
+        сигналу не можуть розійтись. Власного розрахунку тут немає.
+        """
+        sym = str(symbol or '').upper()
+        try:
+            ff = self._ff()
+            if not ff or not hasattr(ff, 'mm_snapshot_for'):
+                return None
+            v = (ff.mm_snapshot_for([sym]) or {}).get(sym)
+            if not v:
+                return None
+            return v.get('mm') if v.get('mm') in ('LONG', 'SHORT') else 'FLAT'
+        except Exception:
+            return None
 
     def note_vob_signal(self, symbol: str, side: str, status: str,
                         detail: str = ''):

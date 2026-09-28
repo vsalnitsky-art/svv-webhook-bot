@@ -129,22 +129,35 @@ class _DB:
 
 
 class _FF:
-    def __init__(self, direction='LONG'):
+    # ⚠️ Стаб мусить віддавати ТЕ САМЕ, що справжній `mm_snapshot_for`: без
+    # МММ монети нова умова (28.09) мовчки різала б кожен сигнал.
+    # За замовчуванням МММ кожної монети = банер (монета у «правильній» вкладці).
+    def __init__(self, direction='LONG', coin_mm=None):
         self.direction = direction
+        self.coin_mm = coin_mm or {}
 
     def mm_bias(self):
         return {'dir': self.direction}
+
+    def mm_snapshot_for(self, syms):
+        out = {}
+        for s in syms:
+            m = self.coin_mm.get(s, self.direction)
+            if m is None:
+                continue
+            out[s] = {'mm': m if m in ('LONG', 'SHORT') else None}
+        return out
 
     def symbols_in_work(self):
         return set()
 
 
-def _hunter(rows=(), direction='LONG', db=None, **settings):
+def _hunter(rows=(), direction='LONG', db=None, coin_mm=None, **settings):
     """💧 Сканер із ГОТОВОЮ таблицею (скан не запускаємо — нас цікавить звірка).
     Кладемо його в синглтон модуля, бо саме звідти його бере сканер."""
     h = _lh.LiqHunterDaemon(db or _DB(), get_watchlist=lambda: [],
                             scan_fn=lambda s: {'ok': True, 'rows': []},
-                            get_fuel_filter=lambda: _FF(direction))
+                            get_fuel_filter=lambda: _FF(direction, coin_mm))
     h.start = lambda: None          # фоновий цикл у тестах не піднімаємо
     base = {'enabled': True}
     base.update(settings)
@@ -461,6 +474,61 @@ def test_the_panel_shows_the_switch_and_the_signals():
            'бекенд мусить віддавати останні рішення шляху')
     print('✓ панель 💧 показує тумблер і останні сигнали')
 
+
+
+# ═══════ 🧮 МММ LiQ МОНЕТИ МУСИТЬ ЗБІГАТИСЬ ІЗ БАНЕРОМ (вимога 28.09) ═══════
+def test_coin_must_sit_in_the_banner_tab_of_the_mm_monitor():
+    """Монета у вкладці ⚖ Рівновага чи протилежній МММ-монітора сигналу не
+    дає, навіть коли VOB, банер і таблиця 💧 зійшлись."""
+    row = _table_row(side='LONG')
+    ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm='LONG',
+                                  check_coin=True)
+    _check(ok and '🧮 МММ LiQ монети LONG' in note, note)
+    ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm='FLAT',
+                                  check_coin=True)
+    _check(not ok and '⚖ Рівновага' in note, note)
+    ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm='SHORT',
+                                  check_coin=True)
+    _check(not ok and 'SHORT' in note, note)
+    ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm=None,
+                                  check_coin=True)
+    _check(not ok and 'невідомий' in note, f'немає даних ≠ за напрямком: {note}')
+    print('✓ 🧮 МММ LiQ монети мусить збігатися з банером')
+
+
+def test_vob_match_reads_the_coin_mm_from_the_monitor_snapshot():
+    row = _table_row(sym='AAAUSDT', side='LONG')
+    h = _hunter([row], direction='LONG', coin_mm={'AAAUSDT': 'LONG'})
+    ok, note, _ = h.vob_match('AAAUSDT', 'LONG')
+    _check(ok, note)
+    h = _hunter([row], direction='LONG', coin_mm={'AAAUSDT': 'FLAT'})
+    ok, note, _ = h.vob_match('AAAUSDT', 'LONG')
+    _check(not ok and '⚖' in note, note)
+    h = _hunter([row], direction='LONG', coin_mm={'AAAUSDT': None})
+    ok, note, _ = h.vob_match('AAAUSDT', 'LONG')
+    _check(not ok, f'немає рядка в знімку → сигналу немає: {note}')
+    src = open(os.path.join(_HERE, 'detection', 'liq_hunter.py'),
+               encoding='utf-8').read()
+    body = src.split('def coin_mm(')[1].split('\n    def ')[0]
+    _check('mm_snapshot_for' in body and '_fuel_dir_legacy' not in body,
+           'джерело — той самий знімок, що й вкладки монітора')
+    print('✓ vob_match бере 🧮 МММ LiQ монети зі знімка МММ-монітора')
+
+
+def test_a_coin_that_turns_into_the_banner_tab_fires_later():
+    """Монета ще у ⚖ → блок НЕ ковтається; перейшла у вкладку банера, поки
+    блок свіжий → сигнал іде."""
+    _install_log(); _install_tm()
+    _OPENED.clear()
+    row = _table_row(sym='AAAUSDT', side='LONG')
+    h = _hunter([row], direction='LONG', coin_mm={'AAAUSDT': 'FLAT'})
+    ns = _mk()
+    _run(ns, sym='AAAUSDT', side='LONG', bars_old=2)
+    _check(not _OPENED, 'у ⚖ сигналу немає')
+    h._get_ff = lambda: _FF('LONG', {'AAAUSDT': 'LONG'})
+    _run(ns, sym='AAAUSDT', side='LONG', bars_old=3)
+    _check(len(_OPENED) == 1, f'монета у вкладці LONG → сигнал: {_OPENED}')
+    print('✓ монета, що перейшла у вкладку банера, дає сигнал')
 
 if __name__ == '__main__':
     _fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
