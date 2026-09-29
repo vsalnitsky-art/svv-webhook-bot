@@ -35,6 +35,25 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 
+ENTRY_LEVEL_MAX_DEV_PCT = 2.0
+
+
+def entry_level_ok(level, live, max_dev_pct: float = ENTRY_LEVEL_MAX_DEV_PCT) -> bool:
+    """Чи можна входити за РІВНЕМ події структури (ЧИСТА функція).
+
+    Свіжий BOS/CHoCH ламає рівень біля поточної ціни, тож рівень ≈ ціна.
+    Далеко від ціни → подія історична, і вхід за нею — вигадана ціна.
+    Немає живої ціни → перевіряти нічим, рівень лишаємо (fail-open).
+    """
+    try:
+        level = float(level or 0); live = float(live or 0)
+    except (TypeError, ValueError):
+        return True
+    if level <= 0 or live <= 0:
+        return True
+    return abs(level / live - 1.0) * 100.0 <= max_dev_pct
+
+
 def mm_gate_decide(view, side):
     """🧮 ЧИСТЕ правило воріт «сигнал через МММ-монітор» (вимога 29.09).
 
@@ -4330,14 +4349,23 @@ class SMCScanner:
         # it does signal markers, dedup state, and TM hooks — all of which
         # are independent of Telegram.
         events = result.get('internal', {}).get('events', [])
+        # 🐞 «ПЕРШИЙ СКАН» НЕ МОЖНА ЗАРАХОВУВАТИ БЕЗ ВОДЯНОГО ЗНАКУ (кейс 29.09).
+        # Раніше обидва ранні виходи нижче ставили `_first_scan_done=True`, а
+        # `_event_hwm` лишався 0. Наступний прохід із подіями вважав УСЮ історію
+        # «новою»: по RENDER/SKY/VVV/PONS/QNT за 50с пішло ~35 сигналів на
+        # монету, а угоди відкрились за рівнем МІСЯЧНОЇ давності (RENDER $1.4250
+        # при ціні $1.93 → «+35%» на папері). Тепер ранній вихід перший скан НЕ
+        # зараховує: історію мовчки запише перший справжній прохід із подіями.
         if not events:
-            self._first_scan_done[symbol] = True
+            self._first_scan_done.pop(symbol, None)
             return
         # 🟪 Тумблер CHoCH/CHoCH+BOS: якщо вимкнено — CHoCH-алерти НЕ спрацьовують
         # (працює лише вибраний тип, напр. Volumized OB Alerts). VOB-алерти йдуть
         # окремим шляхом у _scan і від цього тумблера не залежать.
+        # ⚠️ Вимкнений тумблер теж НЕ зараховує перший скан — інакше його
+        # УВІМКНЕННЯ вивалювало б усю історію структури як «свіжі» сигнали.
         if not self._settings.get('choch_alerts_enabled', True):
-            self._first_scan_done[symbol] = True
+            self._first_scan_done.pop(symbol, None)
             return
         
         # === Stable event identifier ===
@@ -4578,7 +4606,8 @@ class SMCScanner:
                     # never on its own.
                     pending = self._pending_choch.get(symbol)
                     if pending and pending['dir'] == ev['dir']:
-                        if ev.get('to_t', 0) > pending.get('to_t', 0):
+                        # 🔇 лише НАЙНОВІША подія напрямку (див. _alertable_ids)
+                        if ev.get('to_t', 0) > pending.get('to_t', 0) and ev_id(ev) in _alertable:
                             if not self._htf_allows(symbol, ev['dir']):
                                 print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by HTF filter")
                                 self._log_signal_block(symbol, ev['dir'], 'CHoCH+BOS заблоковано HTF-фільтром (проти старшого тренду)')
@@ -4617,7 +4646,10 @@ class SMCScanner:
                     pending = self._pending_choch.get(symbol)
                     if pending and pending['dir'] == ev['dir']:
                         # Additional safety: BOS must be AFTER the CHoCH chronologically
-                        if ev.get('to_t', 0) > pending.get('to_t', 0):
+                        # 🔇 + лише НАЙНОВІША подія напрямку за прохід (кейс 29.09:
+                        # без цього кожен історичний BOS підтверджував свій CHoCH
+                        # і давав окремий сигнал — гейт стояв лише в режимі 'choch').
+                        if ev.get('to_t', 0) > pending.get('to_t', 0) and ev_id(ev) in _alertable:
                             if not self._htf_allows(symbol, ev['dir']):
                                 print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by HTF filter")
                                 self._log_signal_block(symbol, ev['dir'], 'CHoCH+BOS заблоковано HTF-фільтром (проти старшого тренду)')
@@ -5381,8 +5413,20 @@ class SMCScanner:
             # scan time. Live price is only a last-resort fallback if, for some
             # reason, the event carries no usable level.
             entry_price = event.get('level', 0)
+            _live = self._get_live_price(symbol) or 0
             if not entry_price or entry_price <= 0:
-                entry_price = self._get_live_price(symbol) or 0
+                entry_price = _live
+            elif not entry_level_ok(entry_price, _live):
+                # 🐞 Рівень ДАЛЕКО від живої ціни = подія НЕ свіжа (кейс 29.09:
+                # RENDER відкрито за $1.4250 при ціні $1.93). Вхід за вигаданою
+                # ціною дає фальшивий PnL і стоп «з того боку» — беремо живу.
+                print(f"[SMC] {symbol}: рівень події {entry_price} далеко від ціни "
+                      f"{_live} — вхід за живою ціною")
+                log_activity(symbol, 'signal',
+                             f'⚠️ рівень сигналу {self._fmt_price(entry_price)} далеко '
+                             f'від ціни {self._fmt_price(_live)} (> {ENTRY_LEVEL_MAX_DEV_PCT:g}%)'
+                             f' — вхід за живою ціною', side=side_label, source='scanner')
+                entry_price = _live
             
             entry_str = self._fmt_price(entry_price)
 
