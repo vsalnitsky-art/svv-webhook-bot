@@ -100,6 +100,24 @@ def _mm_gate_view(symbol):
         return {}
 
 
+def _corr_gate():
+    """🔻 Чи зупиняє підтверджена корекція сигнали → (blocked, причина).
+
+    ЄДИНЕ джерело — `FuelFilterDaemon.correction_blocks_open()` (той самий
+    вердикт, що стоїть у `_open` і `on_signal`): вона вже враховує тумблер
+    `mm_corr_block_open` і ⏸ ручну паузу. Немає FF / збій → не блокуємо.
+    """
+    try:
+        from detection.fuel_filter import get_fuel_filter
+        ff = get_fuel_filter()
+        if ff is None or not hasattr(ff, 'correction_blocks_open'):
+            return False, ''
+        b, why = ff.correction_blocks_open()
+        return bool(b), (why or '')
+    except Exception:
+        return False, ''
+
+
 def _dg_mod():
     """🚦 Модуль воріт напрямку (`direction_gate`) — з кешем на рівні модуля.
 
@@ -4820,6 +4838,15 @@ class SMCScanner:
                 parts.append(_mchip)
                 if not _mok:
                     return (False, _mwhy, ' · '.join(parts))
+
+        # 🔻 КОРЕКЦІЯ (вимога 29.09): поки підтверджена корекція блокує
+        # відкриття, сигнал ІГНОРУЄТЬСЯ повністю — не йде ні в чергу, ні у
+        # відкриття (раніше він лягав у чергу і відкривався після корекції
+        # за вже застарілою підставою). Читає лише памʼять двигуна.
+        _cb, _cwhy = _corr_gate()
+        if _cb:
+            parts.append('🔻Корекція:✗')
+            return (False, f'сигнал проігноровано — {_cwhy}', ' · '.join(parts))
 
         # OB
         if self._settings.get('ob_filter_enabled', False):

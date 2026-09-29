@@ -158,6 +158,59 @@ def test_setting_default_whitelist_and_ui():
     print('✓ тумблер: дефолт УВІМК, білий список, UI')
 
 
+# ── 4. корекція (вимога 29.09): сигнал ігнорується повністю ────────────────
+def test_correction_rejects_signal_in_shared_gate():
+    old_v, old_c = sc._mm_gate_view, sc._corr_gate
+    try:
+        sc._mm_gate_view = lambda sym: {}
+        sc._corr_gate = lambda: (True, '🔻 КОРЕКЦІЯ проти банера LONG')
+        ok, why, detail = S._signal_allowed(_ns(), 'AAAUSDT', 'LONG')
+        _check(ok is False and 'проігноровано' in why and '🔻Корекція:✗' in detail,
+               (ok, why, detail))
+        called = []
+        sc._corr_gate = lambda: called.append(1) or (False, '')
+        try:
+            S._signal_allowed(_ns(), 'AAAUSDT', 'LONG')
+        except Exception:
+            pass          # решта фільтрів у голому стабі — не предмет тесту
+        _check(called, 'поза корекцією ворота питаються і пропускають далі')
+    finally:
+        sc._mm_gate_view, sc._corr_gate = old_v, old_c
+    print('✓ підтверджена корекція відкидає сигнал у спільних воротах')
+
+
+def test_correction_gate_reads_the_single_verdict():
+    class _F:
+        def __init__(self, r): self.r = r
+        def correction_blocks_open(self): return self.r
+    import types as _t
+    fake = _t.ModuleType('detection.fuel_filter')
+    old = sys.modules.get('detection.fuel_filter')
+    try:
+        fake.get_fuel_filter = lambda: _F((True, 'X'))
+        sys.modules['detection.fuel_filter'] = fake
+        _check(sc._corr_gate() == (True, 'X'), 'бере вердикт correction_blocks_open')
+        fake.get_fuel_filter = lambda: _F((False, ''))   # ⏸ пауза / немає корекції
+        _check(sc._corr_gate() == (False, ''), 'пауза знімає ворота')
+        fake.get_fuel_filter = lambda: None
+        _check(sc._corr_gate() == (False, ''), 'немає FF → fail-open')
+    finally:
+        if old is not None:
+            sys.modules['detection.fuel_filter'] = old
+        else:
+            sys.modules.pop('detection.fuel_filter', None)
+    print('✓ ворота корекції — той самий вердикт, що в _open/on_signal')
+
+
+def test_correction_gate_sits_after_mm_before_other_filters():
+    body = _SC_SRC.split('def _signal_allowed')[1]
+    i_mm = body.index('mm_gate_decide(')
+    i_c = body.index('_corr_gate()')
+    i_ob = body.index("self._settings.get('ob_filter_enabled'")
+    _check(i_mm < i_c < i_ob, 'порядок: 🧮 МММ → 🔻 корекція → решта')
+    print('✓ 🔻 корекція стоїть одразу за 🧮 МММ')
+
+
 if __name__ == '__main__':
     _fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in _fns:
