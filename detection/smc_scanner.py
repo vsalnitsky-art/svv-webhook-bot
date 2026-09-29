@@ -35,6 +35,52 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 
+def mm_gate_decide(view, side):
+    """🧮 ЧИСТЕ правило воріт «сигнал через МММ-монітор» (вимога 29.09).
+
+    `view` — `FuelFilterDaemon.mm_gate_view(symbol)`. → `(applies, ok, chip,
+    reason)`:
+      • `applies=False` — монітор вимкнено / недоступний: умова не діє;
+      • інакше сигнал проходить, лише коли БАНЕР має напрямок, він ЗБІГАЄТЬСЯ
+        з боком сигналу, і монета стоїть у вкладці ЦЬОГО Ж напрямку таблиці
+        (її МММ LiQ = бік сигналу).
+    ⚠️ Монети немає в знімку → НЕ проходить: «невідомо» ≠ «за напрямком»
+    (те саме правило, що в 💧 VOB-сигналу зі Сканера ліквідності).
+    """
+    side = str(side or '').upper()
+    v = view if isinstance(view, dict) else {}
+    if not v or not v.get('on'):
+        return False, True, '', ''
+    b = v.get('dir')
+    c = v.get('coin')
+    ua = {'LONG': 'LONG', 'SHORT': 'SHORT', 'FLAT': '⚖ Рівновага'}
+    if b not in ('LONG', 'SHORT'):
+        return (True, False, f'🧮МММ[банер ⚖]:✗',
+                '🧮 МММ-монітор: банер без напрямку (⚖) — сигнал не пропускаємо')
+    if b != side:
+        return (True, False, f'🧮МММ[банер {b}]:✗',
+                f'🧮 МММ-монітор: банер {b}, а сигнал {side}')
+    if c is None:
+        return (True, False, f'🧮МММ[банер {b} · монети немає в таблиці]:✗',
+                f'🧮 МММ-монітор: монети немає в таблиці (МММ LiQ ще невідомий)')
+    if c != side:
+        return (True, False, f'🧮МММ[банер {b} · монета {ua.get(c, c)}]:✗',
+                f'🧮 МММ-монітор: монета у вкладці «{ua.get(c, c)}», а не {side}')
+    return True, True, f'🧮МММ[банер {b} · монета {c}]:✓', ''
+
+
+def _mm_gate_view(symbol):
+    """Читання монітора для воріт; немає FF / збій → `{}` (умова не діє)."""
+    try:
+        from detection.fuel_filter import get_fuel_filter
+        ff = get_fuel_filter()
+        if ff is None or not hasattr(ff, 'mm_gate_view'):
+            return {}
+        return ff.mm_gate_view(symbol) or {}
+    except Exception:
+        return {}
+
+
 def _dg_mod():
     """🚦 Модуль воріт напрямку (`direction_gate`) — з кешем на рівні модуля.
 
@@ -217,6 +263,12 @@ DEFAULT_SETTINGS = {
     # ⚠️ Діє ЛИШЕ разом з `ob_filter_enabled` — це уточнення воріт, а не
     # окремий фільтр. На малюнок блоку, SL і такт `vob_one_per_ob` НЕ впливає.
     'ob_filter_choch_only': True,
+
+    # === 🧮 СИГНАЛИ ЧЕРЕЗ МММ-МОНІТОР (вимога 29.09) =========================
+    # «Сигнал пропускаємо, якщо він відповідає напрямку МММ-монітор і є у
+    # відповідній МММ-монітор таблиці за напрямком». Діє, ЛИШЕ коли сам
+    # монітор увімкнено; цей тумблер — щоб умову можна було зняти окремо.
+    'mm_gate_enabled': True,
 
     # === 🆕 АЛЕРТ «НОВИЙ OB НА ГРАФІКУ» (вимога 09.09) ===================
     # «Моментальна реакція на появу на графіку нового OB 1H і моментальна
@@ -1432,6 +1484,8 @@ class SMCScanner:
                        # OB filter
                        'ob_filter_enabled', 'ob_filter_timeframe',
                        'ob_filter_choch_only',
+                       # 🧮 сигнали через МММ-монітор
+                       'mm_gate_enabled',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
@@ -1577,6 +1631,8 @@ class SMCScanner:
             # «Лише з CHoCH» — булевий тумблер, дефолт УВІМК.
             self._settings['ob_filter_choch_only'] = bool(
                 self._settings.get('ob_filter_choch_only', True))
+            self._settings['mm_gate_enabled'] = bool(
+                self._settings.get('mm_gate_enabled', True))
 
             # === 🆕 Алерт «новий OB»: валідація ===
             self._settings['ob_alert_enabled'] = bool(
@@ -4719,6 +4775,19 @@ class SMCScanner:
                 # Далі не рахуємо НІЧОГО: решта фільтрів ходить у БД/кеші, а на
                 # вимкненому напрямку їхній результат нікому не потрібен.
                 return (False, _dg.reason(_dg_s, side_label), ' · '.join(parts))
+
+        # 🧮 МММ-МОНІТОР (вимога 29.09): сигнал лише в бік БАНЕРА і лише по
+        # монеті з вкладки ТОГО Ж напрямку таблиці. Одразу після головних
+        # кнопок — це теж напрямкова умова, і читає вона лише памʼять двигуна
+        # (жодного запиту до БД/біржі), тож решту фільтрів після відмови не
+        # рахуємо. Діє лише при увімкненому моніторі і тумблері `mm_gate_enabled`.
+        if self._settings.get('mm_gate_enabled', True):
+            _app, _mok, _mchip, _mwhy = mm_gate_decide(_mm_gate_view(symbol),
+                                                       side_label)
+            if _app:
+                parts.append(_mchip)
+                if not _mok:
+                    return (False, _mwhy, ' · '.join(parts))
 
         # OB
         if self._settings.get('ob_filter_enabled', False):

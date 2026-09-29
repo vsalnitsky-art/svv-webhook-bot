@@ -2242,6 +2242,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-ob-choch-only" checked onchange="updateObChochOnly()">
                         📐 1H OB лише з CHoCH
                     </label>
+                    <label class="sm-checkbox" title="🧮 Сигнали через МММ-монітор. Коли УВІМК і сам 🧮 МММ-монітор увімкнено, КОЖЕН сигнал сканера (CHoCH / CHoCH+BOS, 🟪 Volumized OB, 🆕 Новий OB, 💧 VOB зі Сканера) проходить, лише якщо: (1) банер МММ-монітора має напрямок, (2) він ЗБІГАЄТЬСЯ з напрямком сигналу, (3) монета стоїть у таблиці монітора у вкладці ТОГО Ж напрямку (її МММ LiQ = бік сигналу). ⚖ Рівновага, протилежна вкладка або монети немає в таблиці → сигнал не пропускаємо (причина — у 🧾 Лозі). Ті самі ворота діють і на 🔁 повторній перевірці Черги-4 перед відкриттям. Вимкнений МММ-монітор → умова не діє. ✋ Ручний сигнал її не проходить (рішення людини).">
+                        <input type="checkbox" id="sm-mm-gate" checked onchange="updateMmGate()">
+                        🧮 Через МММ-монітор
+                    </label>
                     <!-- 🆕 НОВИЙ OB — ОКРЕМИЙ ТИП СИГНАЛУ (вимога 10.09).
                          Власний тумблер, другий TF (вимога ЗБІГУ) і свій
                          дедуп «1 на тренд». Стоїть ОДНИМ блоком, щоб було
@@ -6756,6 +6760,8 @@ async function loadSettings() {
             if (vobOne) vobOne.checked = !!s.vob_one_per_ob;             // default OFF
             const obChoch = document.getElementById('sm-ob-choch-only');
             if (obChoch) obChoch.checked = s.ob_filter_choch_only !== false;  // default ON
+            const mmGate = document.getElementById('sm-mm-gate');
+            if (mmGate) mmGate.checked = s.mm_gate_enabled !== false;  // default ON
             // 🆕 Новий OB — окремий тип сигналу (master ON · збіг ON · дедуп ON ·
             // у торгівлю OFF).
             const oaEn = document.getElementById('sm-ob-alert');
@@ -6929,6 +6935,8 @@ function updateSettingsSummary() {
         const obCh = document.getElementById('sm-ob-choch-only');
         if (obCh && obCh.checked) summary += ' (лише CHoCH)';
     }
+    const mmG = document.getElementById('sm-mm-gate');
+    if (mmG && mmG.checked) summary += ' · 🧮 МММ';
     // 🆕 Новий OB — тип сигналу: показуємо АКТИВНУ комбінацію TF (те саме, чим
     // міряє «тренд» дедуп), щоб у шапці було видно, за чим саме бот реагує.
     const oaOn = document.getElementById('sm-ob-alert');
@@ -7019,6 +7027,18 @@ async function updateVobOnePerOb() {
         });
         updateSettingsSummary();
     } catch (err) { alert('VOB one-per-OB update error: ' + err); }
+}
+// 🧮 Сигнали через МММ-монітор: бік банера + монета у вкладці того ж напрямку.
+async function updateMmGate() {
+    const enabled = document.getElementById('sm-mm-gate').checked;
+    try {
+        const r = await fetch('/api/smc/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mm_gate_enabled: enabled}),
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        updateSettingsSummary();
+    } catch (err) { alert('МММ-gate update error: ' + err); }
 }
 // 📐 «1H OB лише з CHoCH» — ворота входу приймають лише блок, створений
 // подією CHoCH (розворот), а не BOS (продовження). Дефолт УВІМК.

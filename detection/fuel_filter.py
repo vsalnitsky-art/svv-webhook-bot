@@ -957,6 +957,9 @@ class FuelFilterDaemon:
         # `print` у stdout). Тримаємо причину тут і віддаємо її в UI.
         self._mm_pending: Dict = {'reason': 'boot', 'at': time.time()}
         self._mm_bias: Dict = {}
+        # 🧮 Чи увімкнено монітор — пише `_mm_capture` на кожному такті. None =
+        # ще жодного такту (тоді `mm_gate_view` один раз читає налаштування).
+        self._mm_mon_on: Optional[bool] = None
         self._mm_bias_since: float = 0.0
         # 🐢 КАНДИДАТ на зміну статусу банера: {'dir', 'since'}. Поки він не
         # протримався `mm_bias_confirm_sec`, банер показує СТАРИЙ статус.
@@ -4316,6 +4319,7 @@ class FuelFilterDaemon:
         # питання — кілька арифметичних викликів над УЖЕ кешованим знімком
         # liq-map, тобто економію тумблера це не з'їдає.
         _mon = bool(s.get('mm_monitor_enabled', True))
+        self._mm_mon_on = _mon
         _keep = self._mm_open_syms() if not _mon else None
         if not _mon and not _keep:
             with self._lock:
@@ -4780,6 +4784,35 @@ class FuelFilterDaemon:
         """
         with self._lock:
             return dict(getattr(self, '_mm_bias', {}) or {})
+
+    def mm_gate_view(self, symbol: str) -> Dict:
+        """🧮 Що МММ-монітор каже про монету — для воріт сигналів сканера.
+
+        → `{'on': монітор увімкнено?, 'dir': напрямок БАНЕРА (підтверджений) |
+        None, 'coin': МММ LiQ монети 'LONG'/'SHORT'/'FLAT' | None (немає в
+        знімку)}`.
+        ⚠️ ЛИШЕ ЧИТАННЯ готового знімка (урок B2): ворота кличуться на кожен
+        сигнал і на кожен тік 🔁 recheck Черги-4, тож тут немає ні розрахунків,
+        ні походу в БД (крім першого виклику до першого такту двигуна).
+        ⚠️ `coin` — ТЕ САМЕ правило, що кладе монету у вкладку 🟢/🔴/⚖ таблиці
+        (`status` зі знімка), інакше «монета у вкладці LONG» і рішення воріт
+        могли б розійтись.
+        """
+        on = self._mm_mon_on
+        if on is None:
+            try:
+                on = bool(self.get_settings().get('mm_monitor_enabled', True))
+            except Exception:
+                on = True
+        sym = str(symbol or '').upper()
+        with self._lock:
+            b = dict(getattr(self, '_mm_bias', {}) or {})
+            v = (self._mm_snapshot or {}).get(sym)
+        d = b.get('dir') if b.get('dir') in ('LONG', 'SHORT') else None
+        coin = None
+        if v:
+            coin = v.get('status') if v.get('status') in ('LONG', 'SHORT') else 'FLAT'
+        return {'on': bool(on), 'dir': d, 'coin': coin}
 
     def symbols_in_work(self) -> set:
         """Монети «В РОБОТІ» — ВІДКРИТА УГОДА **або** запис у будь-якій черзі.
