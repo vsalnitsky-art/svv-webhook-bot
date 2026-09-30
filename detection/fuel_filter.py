@@ -4013,6 +4013,16 @@ class FuelFilterDaemon:
         tf = str((settings or {}).get('mm_corr_exit_tf', '15m') or '').strip().lower()
         return f"{src}|{tf or str(scan_tf or '').lower()}"
 
+    def _mm_corr_scanner_active(self, on: bool) -> None:
+        """🔻 Сказати сканеру, чи рахувати дані корекції (OB-тренди, TF виходу)."""
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            if sc is not None and hasattr(sc, 'set_corr_active'):
+                sc.set_corr_active(bool(on))
+        except Exception:
+            pass
+
     def _mm_exit_trends(self, tf: str) -> Dict:
         """🧭 VOB/OB на TF ВИХОДУ з корекції — `{'tf','vob','ob'}` або `{}`.
 
@@ -4204,7 +4214,21 @@ class FuelFilterDaemon:
         bias = dict(getattr(self, '_mm_bias', {}) or {})
         d = bias.get('dir')
         _on = bool(settings.get('mm_corr_enabled', True))
-        if not _mc or not _on or d not in ('LONG', 'SHORT'):
+        # 🔻 Сканеру — чи потрібні взагалі дані корекції (вимога 30.09).
+        self._mm_corr_scanner_active(_on)
+        if not _on:
+            # ВИМКНЕНО ПОВНІСТЮ: ні стану, ні паузи, ні вердикту — нічого, що
+            # могло б вплинути на відкриття чи сигнали.
+            with self._lock:
+                self._mm_corr_st = {}
+                self._mm_lever_hist = []
+                self._mm_corr_override = 0.0
+                self._mm_corr_skip_logged = {}
+                self._mm_corr = {'state': None, 'enabled': False, 'bias': d,
+                                 'layers': [], 'blocking': False,
+                                 'ts': int(now), 'reason': 'детектор вимкнено'}
+            return
+        if not _mc or d not in ('LONG', 'SHORT'):
             with self._lock:
                 self._mm_corr_st = {}
                 self._mm_lever_hist = []
@@ -4906,6 +4930,12 @@ class FuelFilterDaemon:
         try:
             c = self.mm_correction()
             if not c or c.get('state') != 'on' or not c.get('blocking'):
+                return False, ''
+            # 🔻 ДЕТЕКТОР ВИМКНЕНО → НІКОЛИ не блокує (вимога 30.09), навіть
+            # якщо в памʼяті ще лежить стан від попереднього такту (вимкнули
+            # між тактами). Налаштування читаємо ЛИШЕ тут — у рідкісному
+            # випадку «зараз блокуємо», а не на кожен виклик (гарячий шлях).
+            if not bool(self.get_settings().get('mm_corr_enabled', True)):
                 return False, ''
             _lay = ' · '.join(f"{x['icon']} {x['name']} {x['pct']}% "
                               f"(поріг {x['need']}%)"

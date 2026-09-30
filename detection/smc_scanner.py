@@ -686,6 +686,11 @@ class SMCScanner:
         # {symbol: {'tf','bar','vob','ob'}}; TF ставить `corr_exit_trends(tf)`.
         self._corr_exit_cache: Dict[str, Dict] = {}
         self._corr_exit_tf: str = ''
+        # 🔻 ЧИ ПОТРІБНІ ЗАРАЗ ДАНІ КОРЕКЦІЇ (вимога 30.09: «щоб можна було її
+        # вимкнути взагалі, щоб не брались в розрахунок її дані»). Ставить FF
+        # через `set_corr_active`; False → 📐 OB-тренди молодшого TF і VOB/OB
+        # на TF виходу НЕ рахуються і не качаються (вони живлять ЛИШЕ корекцію).
+        self._corr_active: bool = True
         # 🟪 Volumized OB Alerts: ПЕР-НАПРЯМКОВА база свіжості
         # {symbol: {'LONG': formation_time, 'SHORT': formation_time}} — щоб
         # обробляти бичачий і ведмежий VOB НЕЗАЛЕЖНО й НЕ губити протилежний новий
@@ -2672,8 +2677,9 @@ class SMCScanner:
                             # вийшов би ПОВІЛЬНІШИМ за VOB, тобто безглуздим.
                             # Заміряно: +16 мс структура + 6 мс OB на монету при
                             # 3000 барах (≈0.3% такту, де мережа — секунди).
-                            self._update_ob_trend(symbol, vol_klines, vol_tf,
-                                                  isize_v, ssize_v)
+                            if getattr(self, '_corr_active', True):
+                                self._update_ob_trend(symbol, vol_klines, vol_tf,
+                                                      isize_v, ssize_v)
                             # 🧭 ВИХІД ІЗ КОРЕКЦІЇ — НА СВОЄМУ TF (вимога 28.09).
                             # Той самий VOB/OB, але на `_corr_exit_tf` (деф. 15m)
                             # і по ЗАКРИТИХ барах: 5m перевертався надто часто,
@@ -2681,7 +2687,8 @@ class SMCScanner:
                             # TF == Volumized TF → нічого не рахуємо, читач
                             # бере вже наявні кеші (нуль роботи).
                             _xtf = str(getattr(self, '_corr_exit_tf', '') or '')
-                            if _xtf and _xtf != vol_tf:
+                            if (_xtf and _xtf != vol_tf
+                                    and getattr(self, '_corr_active', True)):
                                 self._update_corr_exit(
                                     symbol, _get_tf_data(_xtf, use_cache=True),
                                     _xtf, isize_v, ssize_v)
@@ -3515,6 +3522,7 @@ class SMCScanner:
             # префетч тягнув би 3000 барів щоцикл, і ніхто їх не забрав би.
             _xtf = str(getattr(self, '_corr_exit_tf', '') or '')
             if (_xtf and _xtf != s.get('volumized_timeframe', '1h')
+                    and getattr(self, '_corr_active', True)
                     and self._corr_exit_pf_due(_xtf)):
                 specs.add((_xtf, 3000))
         specs.add((s.get('ob_filter_timeframe', '1h'), 700))
@@ -3932,6 +3940,23 @@ class SMCScanner:
         except Exception as e:
             if self._errors <= 5:
                 print(f"[SMC] corr-exit trend error for {symbol}: {e}")
+
+    def set_corr_active(self, on: bool) -> None:
+        """🔻 Увімкнути/вимкнути збір даних для детектора корекції.
+
+        Вимкнено → OB-тренди молодшого TF і VOB/OB на TF виходу не рахуються,
+        кеші чистяться (застиглі числа не мають повернутись при вмиканні).
+        Volumized-тренди НЕ чіпаємо — вони живлять ▲/▼ у watchlist.
+        """
+        on = bool(on)
+        if on == getattr(self, '_corr_active', True):
+            return
+        self._corr_active = on
+        if not on:
+            with self._lock:
+                self._ob_trend_cache = {}
+                self._corr_exit_cache = {}
+            self._corr_exit_tf = ''
 
     def corr_exit_trends(self, tf: str = '') -> dict:
         """🧭 ПУБЛІЧНИЙ знімок VOB/OB на TF ВИХОДУ з корекції.

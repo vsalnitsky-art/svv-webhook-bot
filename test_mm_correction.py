@@ -2496,6 +2496,54 @@ def test_ui_info_line_names_exit_sensor_tf_and_trough():
         _check(sel in _HTML, f'перерахунок інфо-рядка: {sel}')
     print('✓ 🖥 інфо-рядок називає сенсор, TF виходу і дно')
 
+
+# ═══ 17. 🔻 КОРЕКЦІЯ ВИМКНЕНА ПОВНІСТЮ (вимога 30.09) ═════════════════════
+def test_disabled_correction_is_not_computed_and_never_blocks():
+    """«зроби щоб можна було її вимкнути взагалі, щоб не брались в розрахунок
+    її дані. І не впливала при вимкненому стані на відкриття чи блокування
+    сигналів»."""
+    ff = _mk(mm_corr_enabled=False)
+    calls = []
+    ff._mm_corr_scanner_active = lambda on: calls.append(on)
+    ff._mm_vob_trends = lambda: (_ for _ in ()).throw(
+        AssertionError('вимкнена корекція не має читати дані'))
+    ff._mm_bias = {'dir': 'LONG', 'net': 0.5}
+    # у памʼяті лежить живий блокуючий епізод + вдавлена пауза
+    ff._mm_corr_st = {'state': 'on', 'since': NOW - 600}
+    ff._mm_corr = {'state': 'on', 'blocking': True, 'bias': 'LONG',
+                   'since': NOW - 600, 'lit': 2, 'need': 2, 'layers': []}
+    ff._mm_corr_override = NOW - 600
+    ff._mm_track_correction({}, NOW, ff.get_settings())
+    _check(calls == [False], f'сканеру сказано не збирати дані корекції: {calls}')
+    _check(ff._mm_corr_st == {} and ff._mm_corr_override == 0.0, 'стан і пауза скинуті')
+    _check(ff._mm_corr.get('enabled') is False and not ff._mm_corr.get('blocking'),
+           ff._mm_corr)
+    _check(ff.correction_blocks_open() == (False, ''), 'вимкнена корекція не блокує')
+    print('✓ 🔻 вимкнена корекція: даних не рахує, стан/паузу скидає, не блокує')
+
+
+def test_disabling_between_ticks_unblocks_immediately():
+    ff = _mk(mm_corr_enabled=True)
+    ff._mm_corr = {'state': 'on', 'blocking': True, 'bias': 'LONG',
+                   'since': NOW, 'lit': 2, 'need': 2, 'layers': []}
+    _check(ff.correction_blocks_open()[0] is True, 'увімкнена — блокує')
+    ff._settings['mm_corr_enabled'] = False
+    _check(ff.correction_blocks_open() == (False, ''),
+           'вимкнули між тактами — ворота відкриваються одразу, без такту')
+    print('✓ 🔻 вимкнення діє на ворота миттєво')
+
+
+def test_scanner_skips_correction_data_when_inactive():
+    sc = _SC_SRC
+    _check('def set_corr_active' in sc, 'сканер має публічний вимикач')
+    for frag in ('self._update_ob_trend(symbol, vol_klines',
+                 'self._update_corr_exit('):
+        i = sc.index(frag)
+        _check("_corr_active" in sc[i - 250:i], f'{frag} не під гейтом _corr_active')
+    pf = _fn_src(_SC_SRC, '_prefetch_specs')
+    _check('_corr_active' in pf, 'префетч TF виходу теж під гейтом')
+    print('✓ 🔻 сканер не рахує й не качає дані корекції, коли її вимкнено')
+
 if __name__ == '__main__':
     _fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in _fns:

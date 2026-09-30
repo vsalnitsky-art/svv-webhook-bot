@@ -2686,9 +2686,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span class="sm-settings-summary-right" id="mm-corr-sum">—</span>
                 </summary>
                 <div class="mmc-grid">
-                    <label class="mmc-chk" title="Стежити за корекцією ПРОТИ напрямку банера і показувати вердикт. Ознаки рахуються по ВСІХ монетах монітора з того самого знімка, що малює таблицю, і НЕ коштують жодного зайвого запиту до біржі.">
-                        <input type="checkbox" id="ff-mm-corr-enabled" onchange="saveFuelFilterSettings()" style="margin:0">
-                        🔻 Стежити за корекцією
+                    <label class="mmc-chk" title="ГОЛОВНИЙ ВИМИКАЧ КОРЕКЦІЇ. Увімкнено — бот стежить за корекцією ПРОТИ напрямку банера і показує вердикт. ВИМКНЕНО — корекція вимкнена ПОВНІСТЮ: її дані не рахуються (сканер не збирає OB-тренди й TF виходу), банера немає, ⏸ пауза скидається, у лог і Telegram нічого не йде, і вона НІЯК не впливає ні на відкриття угод, ні на сигнали (усі ворота корекції пропускають).">
+                        <input type="checkbox" id="ff-mm-corr-enabled" onchange="_mmCorrEnabledSync(); saveFuelFilterSettings()" style="margin:0">
+                        🔻 Корекція увімкнена
                     </label>
                     <label class="mmc-chk" title="🚫 Поки триває ПІДТВЕРДЖЕНА корекція — нові угоди не відкриваються (обидва напрямки). Відліки (⏳) не блокують нічого. ✋ Ручні відкриття й ручний сигнал ці ворота НЕ зупиняють — рішення людини сильніше. Записи з черг не виселяються: корекція мине — монета відкриється штатно.">
                         <input type="checkbox" id="ff-mm-corr-block" onchange="saveFuelFilterSettings()" style="margin:0">
@@ -13125,10 +13125,36 @@ function _mmcExitSync() {
             + `. БІЛЬШЕ число кінця = корекція тримається ДОВШЕ.`;
     }
 }
+// 🔻 Головний вимикач корекції: вимкнено → решта контролів гармошки ГАСНЕ
+// (активний контрол, що ні на що не впливає, вводить в оману), і банер
+// корекції зникає одразу, не чекаючи такту двигуна.
+function _mmCorrEnabledSync() {
+    const m = document.getElementById('ff-mm-corr-enabled');
+    if (!m) return;
+    const on = !!m.checked;
+    const grid = m.closest ? m.closest('.mmc-grid') : null;
+    const box = grid && grid.parentElement;
+    if (box && box.querySelectorAll) {
+        box.querySelectorAll('input,select').forEach(el => {
+            if (el.id === 'ff-mm-corr-enabled') return;
+            el.disabled = !on;
+            el.style.opacity = on ? '' : '0.45';
+        });
+    }
+    if (!on) {
+        const row = document.getElementById('mm-corr-row');
+        if (row) row.style.display = 'none';
+        if (_mmCorr) _mmCorr = Object.assign({}, _mmCorr, {enabled: false});
+    }
+}
 function _mmCorrSummary(s) {
     const el = document.getElementById('mm-corr-sum');
     if (!el || !s) return;
-    el.textContent = (s.mm_corr_enabled === false ? '⛔ вимкнено · ' : '')
+    if (s.mm_corr_enabled === false) {
+        el.textContent = '⛔ ВИМКНЕНО — не рахується і нічого не блокує';
+        return;
+    }
+    el.textContent = ''
         + `старт: ознак ≥${s.mm_corr_min_layers != null ? s.mm_corr_min_layers : 2} з 3 · `
         + `📦${s.mm_corr_ob_on === false ? '' : '+📐'} `
         + `${s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60}%`
@@ -14427,6 +14453,7 @@ function renderFuelFilter(d) {
     setIf('ff-mm-bias-confirm', String(s.mm_bias_confirm_sec != null ? s.mm_bias_confirm_sec : 120));
     // 🔻 Детектор корекції — дефолти ті самі, що в `mm_correction.DEFAULTS`.
     setIf('ff-mm-corr-enabled', s.mm_corr_enabled !== false);       // default true
+    if (typeof _mmCorrEnabledSync === 'function') _mmCorrEnabledSync();
     setIf('ff-mm-corr-block', s.mm_corr_block_open !== false);      // default true
     setIf('ff-mm-corr-layers', String(s.mm_corr_min_layers != null ? s.mm_corr_min_layers : 2));
     setIf('ff-mm-corr-vob', String(s.mm_corr_vob_pct != null ? s.mm_corr_vob_pct : 60));
