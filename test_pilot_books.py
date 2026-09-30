@@ -425,6 +425,75 @@ def test_ui_separates_r_from_risk_free():
     print('✓ UI розділяє «плановий R» і «ризик прибрано»')
 
 
+
+# ═══════════ 🔄 РУЧНА ЗМІНА → ПЕРЕРАХУНОК АВТОПІЛОТА (вимога 30.09) ═══════
+def test_manual_objective_is_pure_and_directional():
+    mo = tmmod.manual_objective
+    o = mo('LONG', 100.0, 105.0, 'Manual TP-2 (вручну)')
+    _check(o and o['kind'] == 'manual' and o['price'] == 105.0 and o['dist_pct'] == 5.0, o)
+    _check(mo('LONG', 100.0, 95.0) is None, 'позаду входу ціллю бути не може')
+    _check(mo('SHORT', 100.0, 90.0)['dist_pct'] == 10.0, 'шорт — дзеркально')
+    _check(mo('SHORT', 100.0, 110.0) is None and mo('LONG', 0, 1) is None, 'сміття → None')
+    print('✓ ручна ціль: чиста функція, лише попереду входу')
+
+
+def test_manual_tp2_becomes_the_objective_and_resets_throttle():
+    o = _tm(no_ttl=False)
+    o.scanner = types.SimpleNamespace(_get_live_price=lambda s: 0.33000)
+    pkey = o._pilot_key('TRXUSDT', True)
+    o._pilot_at[pkey] = 10**12                      # «щойно рахували»
+    o._pilot_state[pkey] = {'objective': OBJ, 'r': 3.72}
+    pos = _pos(entry=0.32510, sl=0.32050)
+    pos.update({'manual_tp': 0.35000, 'pilot_objective': dict(OBJ),
+                'pilot_r_stop': 0.32050})
+    o._pilot_after_manual('TRXUSDT', pos, True, ('none',), ('set', 0.35), ('none',))
+    _check(pos['pilot_objective']['kind'] == 'manual'
+           and pos['pilot_objective']['price'] == 0.35, pos['pilot_objective'])
+    _check(pkey not in o._pilot_at, 'тротл знято → повний перерахунок на наступному такті')
+    snap = o._pilot_state[pkey]
+    _check(snap['objective']['price'] == 0.35 and snap.get('manual'), snap)
+    want = round((0.35 - 0.32510) / (0.32510 - 0.32050), 2)
+    _check(abs(snap['r'] - want) < 0.01, f"R перераховано від ручної цілі: {snap['r']} ≠ {want}")
+    _check(snap['progress'] is not None, 'прогрес перераховано по ціні з кешу')
+    _check(pos['pilot_r_stop'] == 0.32050, 'якір планового R не переписуємо')
+    print(f"✓ ручний TP-2 став ціллю, R {snap['r']} перераховано одразу")
+
+
+def test_clearing_manual_level_lets_the_pilot_pick_again():
+    o = _tm()
+    pos = _pos()
+    pos.update({'pilot_objective': {'price': 0.35, 'kind': 'manual'},
+                'pilot_magnet_done': True})
+    o._pilot_after_manual('TRXUSDT', pos, False, ('none',), ('clear', 0), ('none',))
+    _check('pilot_objective' not in pos and 'pilot_magnet_done' not in pos,
+           'знята ручна ціль → автопілот обирає ціль знову')
+    pos2 = _pos(); pos2['pilot_objective'] = dict(OBJ)
+    o._pilot_after_manual('TRXUSDT', pos2, False, ('none',), ('clear', 0), ('none',))
+    _check(pos2['pilot_objective'] == OBJ, 'ціль графіка не чіпаємо')
+    print('✓ зняли ручний рівень — ціль знову рахує автопілот')
+
+
+def test_magnet_mode_follows_manual_tp1():
+    o = _tm()
+    o._settings['use_mm_flat_exit'] = True           # режим 🧮
+    pos = _pos(); pos['manual_tp1'] = 0.34000
+    o._pilot_after_manual('TRXUSDT', pos, False, ('none',), ('none',), ('set', 0.34))
+    _check(pos['pilot_objective']['price'] == 0.34
+           and 'TP-1' in pos['pilot_objective']['label'], pos.get('pilot_objective'))
+    print('✓ у режимі 🧮 колонка йде за ручним TP-1')
+
+
+def test_user_changes_trigger_refresh_and_page_repolls():
+    src = inspect.getsource(TM.update_manual_sl_tp)
+    _check('_pilot_after_manual' in src and 'SRC_USER' in src.split('_pilot_after_manual')[0][-400:],
+           'перерахунок — лише на РУЧНУ зміну')
+    html = open(os.path.join(_ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
+    for fn in ('async function submitManualTp1', 'async function submitManualSlTp'):
+        body = html[html.index(fn):html.index(fn) + 4000]
+        _check('loadTMState(true), 5000' in body, f'{fn}: немає повторного дочитування')
+    _check("manual: '✏️'" in html, 'значок ручної цілі')
+    print('✓ ручна зміна → перерахунок + сторінка дочитує стан')
+
 if __name__ == '__main__':
     test_real_and_paper_keep_separate_state()
     test_throttle_is_per_book_not_per_symbol()
@@ -443,4 +512,9 @@ if __name__ == '__main__':
     test_legacy_trade_without_anchor_shows_no_r()
     test_is_risk_free_both_sides()
     test_ui_separates_r_from_risk_free()
+    test_manual_objective_is_pure_and_directional()
+    test_manual_tp2_becomes_the_objective_and_resets_throttle()
+    test_clearing_manual_level_lets_the_pilot_pick_again()
+    test_magnet_mode_follows_manual_tp1()
+    test_user_changes_trigger_refresh_and_page_repolls()
     print('\nУсі тести автопілота (книги + лічильник трейлів) пройдено ✅')

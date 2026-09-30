@@ -2173,6 +2173,29 @@ TP-2 — для LONG це «нижче за TP-2», для **SHORT — ВИЩЕ*
 `is_shadow` передається явно → paper іде з міткою 🧪 у свій топік.
 Тести: `test_autosl_chain.py` (розділ «TELEGRAM»).
 
+## 🔄 РУЧНА ЗМІНА Manual SL / TP-1 / TP-2 → АВТОПІЛОТ ПЕРЕРАХОВУЄТЬСЯ (30.09)
+
+Дослівно: «Після внесення ручних змін, перераховуй і перемальовуй Автопілот і
+всі дані» (Manual SL · TP-1 · TP-2).
+- `update_manual_sl_tp` на `origin='user'` (set/clear будь-якого з трьох) кличе
+  `_pilot_after_manual(symbol, pos, is_shadow, sl_op, tp_op, tp1_op)`:
+  1. **ціль колонки = ручний рівень**: звичайний режим → Manual TP-2, режим
+     🧮 «МММ LiQ ⚖ → вихід» → Manual TP-1. `pilot_objective` =
+     `manual_objective(side, entry, level, label)` (ЧИСТА, `kind='manual'`,
+     лише попереду входу). Зняли рівень → ручна ціль прибирається (+
+     `pilot_magnet_done`), ціль знову обирає автопілот; ціль ГРАФІКА не чіпаємо;
+  2. **тротл `_pilot_at` знято** → повний перерахунок на найближчому такті
+     монітора (≤ `monitor_interval_secs`), а не через `PILOT_TTL`;
+  3. **`_pilot_redraw(pkey, pos)`** оновлює знімок колонки ОДРАЗУ (ціль,
+     прогрес, R, `tp1`) — ціна лише з кешу сканера (ми під `self._lock`).
+- ⚠️ Якір планового R (`pilot_r_stop`) НЕ переписується ручним SL.
+- ⚠️ Бот-зміни (`origin='auto'`) цей шлях не запускають.
+- UI: обидва сабміти дочитують стан ще раз через 5с (`loadTMState(true), 5000`);
+  значок ручної цілі `manual: '✏️'` у `_PILOT_KIND`.
+- ⚠️ Стаби TM у тестах можуть не мати `_pilot_at`/`_pilot_state`/`scanner` —
+  код бере їх через `getattr` (інакше падали `test_autosl_chain`/`test_manual_lock`).
+Тест: `test_pilot_books.py` (+5).
+
 ## 🐞 АВТОПІЛОТ: СТАН НА КОЖНУ КНИГУ + ЛІЧИЛЬНИК = ФАКТ (кейс TRXUSDT)
 
 Скрін paper-таблиці 03.09: `TRXUSDT LONG · вхід $0.32510 · SL 0.3205 · ціль

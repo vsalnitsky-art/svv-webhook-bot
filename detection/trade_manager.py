@@ -555,6 +555,26 @@ def sl_tf_tag(label, tf=None) -> str:
     m = _SL_TF_RE.search(lbl)
     return f"{m.group(1)}{m.group(2).upper()}" if m else ''
 
+
+def manual_objective(side, entry, level, label='Manual TP (вручну)'):
+    """🎯 Ціль автопілота з РУЧНОГО рівня → dict або None. ЧИСТА функція.
+
+    Форма та сама, що в обʼєктів графіка (`price`/`kind`/`label`/`dist_pct`),
+    тож прогрес, R і колонка читають її без окремих гілок. Рівень мусить
+    лежати ПОПЕРЕДУ входу в бік угоди, інакше ціллю він бути не може.
+    """
+    try:
+        e = float(entry)
+        lv = float(level)
+    except (TypeError, ValueError):
+        return None
+    if e <= 0 or lv <= 0 or side not in ('LONG', 'SHORT'):
+        return None
+    if (side == 'LONG' and lv <= e) or (side == 'SHORT' and lv >= e):
+        return None
+    return {'price': lv, 'kind': 'manual', 'label': label,
+            'dist_pct': round(abs(lv - e) / e * 100.0, 2)}
+
 class TradeManager:
     
     def __init__(self, db=None, notifier=None, bybit=None, scanner=None):
@@ -4058,6 +4078,105 @@ class TradeManager:
         налаштував. Мовчки переписувати чужий тумблер у БД не можна.
         """
         return bool(s.get('use_mm_flat_exit'))
+
+    def _pilot_after_manual(self, symbol: str, pos: Dict, is_shadow: bool,
+                            sl_op, tp_op, tp1_op) -> None:
+        """🔄 Ручна зміна Manual SL / TP-1 / TP-2 → автопілот рахує ЗАНОВО.
+
+        **Вимога (30.09), дослівно:** «Після внесення ручних змін (Manual SL,
+        TP-1, TP-2) перераховуй і перемальовуй Автопілот і всі дані.»
+
+        1. **Ціль колонки = ваш рівень.** Звичайний режим → Manual TP-2, режим
+           🧮 «МММ LiQ ⚖ → вихід» → Manual TP-1 (там автопілот веде саме TP-1).
+           Рівень вписано → `pilot_objective` = цей рівень (`kind='manual'`),
+           тож прогрес, залишок і R рахуються від нього. Рівень знято → ручна
+           ціль прибирається, і автопілот обирає ціль знову сам (🧲 магніт
+           перепитується; `pilot_tp_cleared` і далі не дає вписати рівень).
+        2. **Тротл знято** (`_pilot_at`) → повний перерахунок на найближчому
+           такті монітора (≤ `monitor_interval_secs`), а не через 20с.
+        3. **Знімок колонки оновлюється ОДРАЗУ** (`_pilot_redraw`) — сторінка
+           перемальовується з новими числами вже на відповіді збереження.
+        ⚠️ Якір ПЛАНОВОГО R (`pilot_r_stop`) НЕ переписуємо: R міряється від
+        початкового стопа (кейс VIRTUALUSDT) — ручний SL це правило не скасовує.
+        ⚠️ Викликається під `self._lock` з `update_manual_sl_tp` — тут лише
+        мутації `pos` і памʼяті, жодного I/O.
+        """
+        side = pos.get('side')
+        magnet_mode = False
+        try:
+            magnet_mode = bool(self._pilot_auto_off(getattr(self, '_settings', {}) or {}))
+        except Exception:
+            pass
+        key_field, op = (('manual_tp1', tp1_op) if magnet_mode
+                         else ('manual_tp', tp_op))
+        label = 'Manual TP-1 (вручну)' if magnet_mode else 'Manual TP-2 (вручну)'
+        if op[0] == 'set' and pos.get(key_field):
+            obj = manual_objective(side, pos.get('entry_price'),
+                                   pos.get(key_field), label)
+            if obj:
+                pos['pilot_objective'] = obj
+        elif op[0] == 'clear':
+            _o = pos.get('pilot_objective') or {}
+            if _o.get('kind') == 'manual':
+                pos.pop('pilot_objective', None)
+                pos.pop('pilot_magnet_done', None)
+        pkey = self._pilot_key(symbol, is_shadow)
+        _at = getattr(self, '_pilot_at', None)
+        if isinstance(_at, dict):
+            _at.pop(pkey, None)
+        try:
+            self._pilot_redraw(pkey, pos)
+        except Exception as e:
+            print(f"[TM-Pilot] redraw error {symbol}: {e}")
+
+    def _pilot_redraw(self, pkey: str, pos: Dict) -> None:
+        """Оновити знімок колонки «🎯 Автопілот» з поточних полів позиції.
+
+        Лише ПОКАЗ (ціль, прогрес, R, рівні): рішення автопілота ухвалює
+        повний такт, який іде слідом. Ціна — остання відома (кеш сканера), без
+        запиту до біржі.
+        """
+        _st = getattr(self, '_pilot_state', None)
+        if not isinstance(_st, dict):
+            return
+        snap = dict(_st.get(pkey) or {})
+        if not snap:
+            return
+        from detection import trade_pilot
+        side = pos.get('side')
+        entry = pos.get('entry_price')
+        obj = pos.get('pilot_objective') or None
+        snap['objective'] = obj
+        # Лише кеш сканера — без запиту до біржі (ми під `self._lock`).
+        price = None
+        try:
+            _sc = getattr(self, 'scanner', None)
+            if _sc:
+                price = _sc._get_live_price(pkey.split('|')[0])
+        except Exception:
+            price = None
+        if obj and price:
+            try:
+                snap['progress'] = trade_pilot.progress(side, entry, price, obj)
+            except Exception:
+                pass
+        elif not obj:
+            snap['progress'] = None
+        try:
+            snap['risk_free'] = bool(trade_pilot.is_risk_free(
+                side, entry, pos.get('manual_sl')))
+        except Exception:
+            pass
+        snap['r_stop'] = pos.get('pilot_r_stop')
+        try:
+            snap['r'] = (trade_pilot.risk_reward(entry, pos.get('pilot_r_stop'), obj)
+                         if obj else None)
+        except Exception:
+            pass
+        snap['tp1'] = pos.get('manual_tp1')
+        snap['manual'] = True
+        snap['at'] = time.time()
+        self._pilot_state[pkey] = snap
 
     def _pilot_magnet_tp1(self, symbol: str, pos: Dict, current_price: float,
                           is_shadow: bool) -> None:
@@ -7684,6 +7803,12 @@ class TradeManager:
             # виставило рівень назад — тобто сперечалося б із людиною.
             if _src == self.SRC_USER and (tp_op[0] == 'clear' or tp1_op[0] == 'clear'):
                 pos['pilot_tp_cleared'] = True
+
+            # 🔄 РУЧНА ЗМІНА → АВТОПІЛОТ ПЕРЕРАХОВУЄТЬСЯ (вимога 30.09).
+            if _src == self.SRC_USER and any(
+                    op[0] in ('set', 'clear') for op in (sl_op, tp_op, tp1_op)):
+                self._pilot_after_manual(symbol, pos, is_shadow,
+                                         sl_op, tp_op, tp1_op)
 
             updated = dict(pos)
         

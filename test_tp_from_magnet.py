@@ -317,7 +317,9 @@ def test_tp1_stays_empty_when_the_pilot_number_is_beyond_the_magnet():
 def test_ui_knows_the_magnet_icon():
     html = open(os.path.join(_ROOT, 'templates', 'smart_money.html')).read()
     i = html.index('const _PILOT_KIND')
-    _check("magnet: '🧲'" in html[i:i + 400],
+    # Ріжемо по КІНЦЮ обʼєкта, а не фіксованими 400 символами: мапа росте
+    # (30.09 додано ✏️ ручну ціль), і сталий зріз уже обрізав не там.
+    _check("magnet: '🧲'" in html[i:html.index('};', i)],
            'колонка автопілота мусить малювати значок магніту')
     print('✓ UI знає значок 🧲 для цілі-магніту')
 

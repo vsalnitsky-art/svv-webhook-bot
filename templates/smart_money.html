@@ -16916,6 +16916,8 @@ const _PILOT_AUTO_OFF = ['🧮', 'автоматику вимкнено прав
 const _PILOT_AUTO_TP1 = ['🧮', 'правило веде лише Manual TP-1', '#fbbf24'];
 const _PILOT_KIND = {
     liq_next: '💧', liq_main: '🌊', swing: '🏁', poc: '⚪',
+    // ✏️ Ціль із РУЧНОГО рівня (Manual TP-2, у режимі 🧮 — Manual TP-1).
+    manual: '✏️',
     // Нові типи цілей: межа зони вартості, рівновага діапазону та ПОХІДНИЙ
     // рівень (частка шляху до цілі, коли обʼєкта графіка у вікні немає).
     va: '◫', eq: '⚖', path: '➗',
@@ -17131,6 +17133,9 @@ async function submitManualTp1(symbol, value, isShadow) {
         const r = await res.json();
         if (r && !r.ok && r.validation) alert('TP-1: ' + (r.reason || 'відхилено'));
         loadTMState();
+        // 🔄 Автопілот перераховується на найближчому такті монітора (≤ ~4с)
+        // — дочитуємо стан ще раз, щоб колонка показала ПОВНИЙ перерахунок.
+        setTimeout(() => loadTMState(true), 5000);
     } catch (e) {
         console.error('TP-1 save error', e);
         alert('TP-1: не вдалося зберегти рівень — ' + e);
@@ -17299,6 +17304,9 @@ async function submitManualSlTp(symbol, manualSl, manualTp, isShadow) {
         // isPoll=true → якщо користувач перейшов у СУСІДНЄ поле того ж рядка
         // (Tab SL→TP), не знищуємо його; інакше рендеримо.
         setTimeout(() => loadTMState(true), 200);
+        // 🔄 Ручна зміна → автопілот перераховується на найближчому такті
+        // монітора (≤ ~4с); другий запит показує вже ПОВНИЙ перерахунок.
+        setTimeout(() => loadTMState(true), 5000);
     } catch (err) {
         console.error('Manual SL/TP error:', err);
     }
