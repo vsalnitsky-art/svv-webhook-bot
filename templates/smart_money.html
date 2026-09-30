@@ -2604,6 +2604,23 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </span>
                 <span id="mm-biasnew-status" class="mm-ban-st" style="background:transparent">—</span>
             </div>
+            <!-- 🧭 «МММ-КОНСЕНСУС» (вимога 30.09): напрямок тиску ринку —
+                 ЛИШЕ коли обидва банери вище підтвердили той самий бік.
+                 Різні боки = ⚖ КОНФЛІКТ (чіткого тиску немає). Смуга = сила
+                 консенсусу = МЕНША з двох середніх сил. Лише показ. -->
+            <div id="mm-biascons-banner" class="mm-ban" style="margin:-4px 0 10px">
+                <span class="mm-ban-title" style="color:#c4b5fd;text-shadow:0 0 9px rgba(167,139,250,0.55)">🧭 МММ-КОНСЕНСУС</span>
+                <div class="mm-ban-bar">
+                    <div id="mm-biascons-bar" style="height:100%;width:0%;border-radius:9px;background:#6b7280;transition:width 0.4s linear,background 0.3s"></div>
+                    <span id="mm-biascons-label" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
+                </div>
+                <span class="mm-ban-tm">
+                    <span id="mm-biascons-restored" style="display:none;font-size:0.66rem;color:#8b93a7"
+                          title="Стан і таймер відновлено після рестарту бота — оновляться найближчим тактом (~30с).">↻</span>
+                    <span id="mm-biascons-timer" class="ff-flip" style="white-space:nowrap"></span>
+                </span>
+                <span id="mm-biascons-status" class="mm-ban-st" style="background:transparent">—</span>
+            </div>
             <!-- 🔻 БАНЕР КОРЕКЦІЇ (вимога 25.09: «зроби Корекцію у вигляді
                  банера, так само як банер МММ-монітор»). Та сама геометрія й
                  ті самі хелпери вигляду, що в 🧮 банера (`dirGrad` /
@@ -12466,9 +12483,12 @@ let _mmUiLoaded = false;
 let _mmBias = null;
 // ⚖️ Банер «🧮 МММ-new» (30.09) — той самий важіль, джерело — НОВИЙ МММ.
 let _mmBiasNew = null;
-function mmRenderBias(bias, biasNew) {
+// 🧭 «МММ-консенсус» (30.09) — збіг двох банерів, рахує бекенд.
+let _mmBiasCons = null;
+function mmRenderBias(bias, biasNew, biasCons) {
     if (bias !== undefined) _mmBias = bias || null;
     if (biasNew !== undefined) _mmBiasNew = biasNew || null;
+    if (biasCons !== undefined) _mmBiasCons = biasCons || null;
     const _MM_BIAS_IDS = {ban:'mm-bias-banner', bar:'mm-bias-bar', lab:'mm-bias-label',
         tmr:'mm-bias-timer', st:'mm-bias-status', rst:'mm-bias-restored', cnd:'mm-bias-cand'};
     const _MM_BIASNEW_IDS = {ban:'mm-biasnew-banner', bar:'mm-biasnew-bar', lab:'mm-biasnew-label',
@@ -12477,9 +12497,71 @@ function mmRenderBias(bias, biasNew) {
     // відрізняються лише ДЖЕРЕЛОМ чисел (МММ LiQ проти Новий МММ).
     _mmPaintBias(_mmBias, _MM_BIAS_IDS, 'МММ LiQ');
     _mmPaintBias(_mmBiasNew, _MM_BIASNEW_IDS, 'Новий МММ');
+    _mmPaintCons(_mmBiasCons);
     // 🔻 Вердикт про корекцію малюємо ТИМ САМИМ тактом (глобальний 1с-тікер
     // кличе `mmRenderBias`), тож його таймери живі без другого інтервалу.
     mmRenderCorr();
+}
+// 🧭 «МММ-консенсус»: напрямок — лише коли ОБИДВА банери підтвердили той
+// самий бік; різні боки — ⚖ КОНФЛІКТ. Смуга = сила консенсусу (менша з двох
+// середніх сил переможного боку). Таймер — скільки тримається ПОТОЧНИЙ стан.
+function _mmPaintCons(src) {
+    const bar = document.getElementById('mm-biascons-bar');
+    const lab = document.getElementById('mm-biascons-label');
+    const tmr = document.getElementById('mm-biascons-timer');
+    const st = document.getElementById('mm-biascons-status');
+    if (!bar || !st) return;
+    const c = src || {};
+    const state = c.state || null;
+    const dir = c.dir || null;
+    const arrow = d => d === 'LONG' ? '🟢 LONG' : (d === 'SHORT' ? '🔴 SHORT' : '⚖');
+    const str = Math.max(0, Math.min(100, Number(c.strength || 0)));
+    bar.style.width = dir ? str.toFixed(0) + '%' : '0%';
+    bar.style.background = dir ? dirGrad(dir) : 'linear-gradient(90deg,#6b7280,#9aa3b5)';
+    if (lab) {
+        let t = '';
+        if (dir) t = 'обидва за ' + dir + ' · сила ' + Math.round(str) + '% ' + fuelBand(str).txt;
+        else if (state === 'CONFLICT') t = 'конфлікт · LiQ ' + arrow(c.old_dir) + ' / new ' + arrow(c.new_dir);
+        else if (state === 'FLAT') t = 'немає збігу · LiQ ' + arrow(c.old_dir) + ' / new ' + arrow(c.new_dir);
+        else t = 'ще немає даних';
+        lab.textContent = t;
+        lab.style.color = dir ? dirTint(dir) : (state === 'CONFLICT' ? '#fbbf24' : '#cbd5e1');
+    }
+    const nowS = Math.floor(Date.now() / 1000);
+    const since = Number(c.since || 0);
+    if (tmr) tmr.innerHTML = (state && since) ? flipTimerHTML(Math.max(0, nowS - since)) : '';
+    if (dir === 'LONG') {
+        st.textContent = '🟢 LONG';
+        st.style.background = 'rgba(34,197,94,0.14)'; st.style.color = '#22ff88';
+        st.style.textShadow = '0 0 9px rgba(34,255,136,0.6)';
+    } else if (dir === 'SHORT') {
+        st.textContent = '🔴 SHORT';
+        st.style.background = 'rgba(239,68,68,0.14)'; st.style.color = '#ff4d4d';
+        st.style.textShadow = '0 0 9px rgba(255,77,77,0.6)';
+    } else if (state === 'CONFLICT') {
+        st.textContent = '⚖ КОНФЛІКТ';
+        st.style.background = 'rgba(245,158,11,0.14)'; st.style.color = '#fbbf24';
+        st.style.textShadow = 'none';
+    } else {
+        st.textContent = '⏸ FLAT';
+        st.style.background = 'rgba(148,163,184,0.14)'; st.style.color = '#cbd5e1';
+        st.style.textShadow = 'none';
+    }
+    const ban = document.getElementById('mm-biascons-banner');
+    if (ban) {
+        const f = (d, s, p) => arrow(d) + (d ? ' · одностайність ' + (p != null ? p : '—')
+            + '% · сила ' + (s != null ? s : '—') + '%' : ' без напрямку');
+        ban.title = 'МММ-консенсус: напрямок тиску ринку зʼявляється ЛИШЕ коли обидва '
+            + 'банери (🧮 МММ LiQ і 🧮 МММ-new) підтвердили той самий бік. Різні боки — '
+            + '⚖ КОНФЛІКТ: геометрія ліквідацій і позиціювання/кити/стакан дивляться в '
+            + 'різні боки, чіткого тиску немає. Сила = МЕНША з двох середніх сил '
+            + '(тиск не сильніший за слабшу модель). Лише показ — торгівлю не чіпає.\n'
+            + 'МММ LiQ: ' + f(c.old_dir, c.old_str, c.old_pct) + '\n'
+            + 'МММ-new: ' + f(c.new_dir, c.new_str, c.new_pct)
+            + (c.restored ? '\n↻ Відновлено після рестарту — оновиться найближчим тактом.' : '');
+    }
+    const rst = document.getElementById('mm-biascons-restored');
+    if (rst) rst.style.display = c.restored ? '' : 'none';
 }
 function _mmPaintBias(src, ids, srcName) {
     const bar = document.getElementById(ids.bar);
@@ -13073,7 +13155,7 @@ function mmApplyState(mm) {
     // гарантовано застосуються ДО першого рендера, незалежно від порядку init.
     if (!_mmUiLoaded) { _mmUiLoaded = true; _mmLoadUi(); }
     _mmRows = (mm && Array.isArray(mm.rows)) ? mm.rows : [];
-    mmRenderBias(mm && mm.bias, mm && mm.bias_new);
+    mmRenderBias(mm && mm.bias, mm && mm.bias_new, mm && mm.bias_cons);
     // 🔻 Вердикт про корекцію — окреме поле відповіді (`correction`), окремий
     // рядок під банером. Передаємо ЯВНО: `mmRenderBias` без аргументу лише
     // перемальовує збережене (його щосекунди смикає глобальний тікер).

@@ -313,6 +313,61 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
     return bias, since, cand
 
 
+def mm_consensus_step(b_old, b_new, now: float, prev_cons, prev_since):
+    """🧭 «МММ-консенсус» (вимога 30.09) → `(cons, since)`. ЧИСТА функція.
+
+    Напрямок тиску ринку — ЛИШЕ коли ОБИДВА банери (🧮 МММ LiQ і 🧮 МММ-new)
+    ПІДТВЕРДИЛИ той самий бік. Беремо підтверджені `dir` — антиспам (гістерезис
+    + вікно) кожен банер уже зробив сам, другого вікна не заводимо.
+    Стани: 'LONG' / 'SHORT' (збіг) · 'CONFLICT' (обидва мають напрямок, але
+    протилежний) · 'FLAT' (хоч один без напрямку) · None (ще немає даних).
+    Сила консенсусу = МЕНША з двох середніх сил переможного боку: тиск не
+    сильніший за слабшу з двох моделей. Таймер скидається на зміні стану,
+    зокрема на зміні ОРІЄНТАЦІЇ конфлікту (LiQ⬆/new⬇ ≠ LiQ⬇/new⬆).
+    ⚠️ Лише ПОКАЗ: жодна торгова логіка це не читає.
+    """
+    bo, bn = (b_old or {}), (b_new or {})
+    od, nd = bo.get('dir'), bn.get('dir')
+    if not bo and not bn:
+        state = None
+    elif od and nd and od == nd:
+        state = od
+    elif od and nd:
+        state = 'CONFLICT'
+    else:
+        state = 'FLAT'
+
+    def _avg(b, side):
+        try:
+            return float(b.get('avg_str') or 0) if b.get('avg_side') == side else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    strength = 0.0
+    pct = 0.0
+    if state in ('LONG', 'SHORT'):
+        strength = round(min(_avg(bo, state), _avg(bn, state)), 1)
+        pct = round(min(float(bo.get('pct') or 0), float(bn.get('pct') or 0)), 1)
+    key = f'{state}|{od}|{nd}' if state == 'CONFLICT' else str(state)
+    prev = prev_cons or {}
+    since = float(prev_since or 0.0)
+    if key != prev.get('key') or not since:
+        since = now
+    cons = {
+        'state': state,
+        'dir': state if state in ('LONG', 'SHORT') else None,
+        'key': key,
+        'old_dir': od, 'new_dir': nd,
+        'old_str': bo.get('avg_str'), 'new_str': bn.get('avg_str'),
+        'old_pct': bo.get('pct'), 'new_pct': bn.get('pct'),
+        'strength': strength,
+        'pct': pct,
+        'since': int(since),
+        'ts': int(now),
+    }
+    return cons, since
+
+
 def _q_allowed(op: int) -> bool:
     """True if queue-removal op #op is currently allowed (debug gate)."""
     if _QUEUE_OPS_ALLOWED.get(op, True):
@@ -1071,6 +1126,9 @@ class FuelFilterDaemon:
         self._mm_bias_new: Dict = {}
         self._mm_bias_new_since: float = 0.0
         self._mm_bias_new_cand: Dict = {}
+        # 🧭 «МММ-консенсус» — збіг двох банерів (лише показ).
+        self._mm_cons: Dict = {}
+        self._mm_cons_since: float = 0.0
         # 📨 Останній статус банера, ПРО ЯКИЙ УЖЕ сповіщали в Telegram.
         # СВІДОМО не персиститься: після рестарту перший такт лише запамʼятовує
         # стан і мовчить — інакше кожен `botupdate` слав би «зміну», якої не
@@ -2395,6 +2453,18 @@ class FuelFilterDaemon:
             if self._mm_bias_new_since > time.time() + 60:
                 self._mm_bias_new_since = 0.0
                 self._mm_bias_new = {}
+            # 🧭 «МММ-консенсус» — таймер переживає рестарт так само.
+            _mc = st.get('mm_cons')
+            self._mm_cons = dict(_mc) if isinstance(_mc, dict) else {}
+            if self._mm_cons:
+                self._mm_cons['restored'] = True
+            try:
+                self._mm_cons_since = float(st.get('mm_cons_since') or 0.0)
+            except (TypeError, ValueError):
+                self._mm_cons_since = 0.0
+            if self._mm_cons_since > time.time() + 60:
+                self._mm_cons_since = 0.0
+                self._mm_cons = {}
             # 🔻 Стан корекції переживає рестарт (як і таймер банера). Розклад
             # шарів НЕ відновлюємо — він перерахується першим тактом; до того
             # часу подання лишається порожнім, і UI про це чесно скаже.
@@ -2502,6 +2572,8 @@ class FuelFilterDaemon:
                 'mm_bias_since': float(self._mm_bias_since or 0.0),
                 'mm_bias_new': dict(getattr(self, '_mm_bias_new', {}) or {}),
                 'mm_bias_new_since': float(getattr(self, '_mm_bias_new_since', 0.0) or 0.0),
+                'mm_cons': dict(getattr(self, '_mm_cons', {}) or {}),
+                'mm_cons_since': float(getattr(self, '_mm_cons_since', 0.0) or 0.0),
                 # 🔻 СТАН КОРЕКЦІЇ (лише машина станів, без розкладу шарів —
                 # шари перерахуються першим же тактом). Без цього «корекція
                 # триває 1г 20хв» обнулялась би на кожному `botupdate`, а
@@ -3834,6 +3906,13 @@ class FuelFilterDaemon:
         self._mm_bias_new, self._mm_bias_new_since = bias, since
         self._mm_bias_new_cand = cand
 
+    def _mm_track_consensus(self, now: float):
+        """🧭 «МММ-консенсус» — збіг ПІДТВЕРДЖЕНИХ статусів двох банерів."""
+        cons, since = mm_consensus_step(
+            self._mm_bias, self._mm_bias_new, now,
+            getattr(self, '_mm_cons', {}), getattr(self, '_mm_cons_since', 0.0))
+        self._mm_cons, self._mm_cons_since = cons, since
+
     def _mm_bias_alert(self, side, now: float, settings: Dict):
         """📨 «Банер 🧮 МММ-монітора змінив статус» — у групу, тему 🧮.
 
@@ -4422,6 +4501,8 @@ class FuelFilterDaemon:
                 self._mm_bias_new = {}
                 self._mm_bias_new_since = 0.0
                 self._mm_bias_new_cand = {}
+                self._mm_cons = {}
+                self._mm_cons_since = 0.0
                 self._mm_corr = {}
                 self._mm_corr_st = {}
                 self._mm_lever_hist = []
@@ -4504,6 +4585,8 @@ class FuelFilterDaemon:
             self._mm_track_bias(snap, _now, s)
             # ⚖️ Банер «🧮 МММ-new» — ТОЙ САМИЙ знімок, джерело — новий МММ.
             self._mm_track_bias_new(snap, _now, s)
+            # 🧭 Консенсус двох банерів — одразу після обох, тим самим тактом.
+            self._mm_track_consensus(_now)
             # 🔻 ВЕРДИКТ ПРО КОРЕКЦІЮ — одразу після важеля і на ТОМУ САМОМУ
             # знімку: банер і його вердикт не можуть описувати різні ринки.
             self._mm_track_correction(snap, _now, s)
@@ -4515,6 +4598,8 @@ class FuelFilterDaemon:
                 self._mm_bias_new = {}
                 self._mm_bias_new_since = 0.0
                 self._mm_bias_new_cand = {}
+                self._mm_cons = {}
+                self._mm_cons_since = 0.0
                 # Вимкнений монітор гасить і вердикт: «заморожена» корекція
                 # блокувала б відкриття без жодного живого розрахунку.
                 self._mm_corr = {}
@@ -4662,6 +4747,8 @@ class FuelFilterDaemon:
             'bias': dict(getattr(self, '_mm_bias', {}) or {}),
             # ⚖️ Банер «🧮 МММ-new» — той самий важіль із НОВОГО МММ.
             'bias_new': dict(getattr(self, '_mm_bias_new', {}) or {}),
+            # 🧭 Консенсус двох банерів (лише показ).
+            'bias_cons': dict(getattr(self, '_mm_cons', {}) or {}),
             # 📊 ЧОМУ РЯДКІВ МЕНШЕ, НІЖ МОНЕТ У WATCHLIST (питання 17.09:
             # «у WATCHLIST 51, а монітор працює із 49 — чому?»). Різниця
             # НІКОЛИ не має бути здогадкою, тож віддаємо ПОВНИЙ розклад:

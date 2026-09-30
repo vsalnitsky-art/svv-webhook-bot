@@ -523,7 +523,10 @@ const document = {
                           'mm-bias-label', 'mm-bias-timer',
                           'mm-bias-status', 'mm-biasnew-banner', 'mm-biasnew-bar',
                           'mm-biasnew-label', 'mm-biasnew-timer',
-                          'mm-biasnew-status'].includes(id)
+                          'mm-biasnew-status', 'mm-biascons-banner',
+                          'mm-biascons-bar', 'mm-biascons-label',
+                          'mm-biascons-timer', 'mm-biascons-status',
+                          'mm-biascons-restored'].includes(id)
                          ? _el(id) : null),
   querySelectorAll: sel => (String(sel).includes('data-mmsort') ? _ths : _tabs),
   // Вкладки шукають і поштучно (лічильник «у фільтрі / поза фільтром»).
@@ -3082,6 +3085,78 @@ console.log(JSON.stringify({o:g('mm-bias-label').textContent, n:g('mm-biasnew-la
            f'слово тиску мусить бути від СИЛИ (25%), а не від 83%: {d}')
     _check('78% за LONG' in d['o'] and 'помірний тиск' in d['o'], d)
     print('✓ JS: «83% за SHORT · сила 25% легкий тиск» — без протиріччя з таблицею')
+
+
+# ═══ 33. 🧭 МММ-КОНСЕНСУС (вимога 30.09) ═════════════════════════════════
+def test_consensus_needs_both_banners_to_agree():
+    L = {'dir': 'LONG', 'pct': 81, 'avg_side': 'LONG', 'avg_str': 46}
+    L2 = {'dir': 'LONG', 'pct': 60, 'avg_side': 'LONG', 'avg_str': 30}
+    S = {'dir': 'SHORT', 'pct': 84, 'avg_side': 'SHORT', 'avg_str': 34}
+    F = {'dir': None, 'pct': 3, 'avg_side': 'LONG', 'avg_str': 12}
+    c, since = _m.mm_consensus_step(L, L2, 1000.0, {}, 0.0)
+    _check(c['state'] == 'LONG' and c['dir'] == 'LONG', c)
+    _check(c['strength'] == 30.0 and c['pct'] == 60.0, f'сила = МЕНША з двох: {c}')
+    k, _ = _m.mm_consensus_step(L, S, 1000.0, {}, 0.0)
+    _check(k['state'] == 'CONFLICT' and k['dir'] is None and k['strength'] == 0, k)
+    f, _ = _m.mm_consensus_step(L, F, 1000.0, {}, 0.0)
+    _check(f['state'] == 'FLAT' and f['dir'] is None, f)
+    e, _ = _m.mm_consensus_step({}, {}, 1000.0, {}, 0.0)
+    _check(e['state'] is None, e)
+    # таймер: той самий стан — продовжується; зміна (у т.ч. орієнтації конфлікту) — заново
+    c2, s2 = _m.mm_consensus_step(L, L2, 1300.0, c, since)
+    _check(s2 == 1000.0, 'той самий стан не скидає таймер')
+    k2, ks = _m.mm_consensus_step(L, S, 1400.0, c2, s2)
+    _check(ks == 1400.0, 'збіг → конфлікт скидає таймер')
+    Sx = {'dir': 'SHORT', 'pct': 70, 'avg_side': 'SHORT', 'avg_str': 20}
+    Lx = {'dir': 'LONG', 'pct': 70, 'avg_side': 'LONG', 'avg_str': 20}
+    k3, ks3 = _m.mm_consensus_step(Sx, Lx, 1500.0, k2, ks)
+    _check(ks3 == 1500.0, 'інша орієнтація конфлікту = новий стан')
+    print('✓ 🧭 консенсус: збіг → напрямок, розбіжність → конфлікт, сила = мін.')
+
+
+def test_consensus_is_tracked_persisted_and_display_only():
+    import inspect
+    src = inspect.getsource(FF._mm_capture)
+    _check('_mm_track_consensus' in src, 'двигун рахує консенсус тим самим тактом')
+    _check('mm_cons_since' in inspect.getsource(FF._persist_state), 'персист')
+    _check('mm_cons_since' in inspect.getsource(FF._load_state), 'відновлення')
+    _check("'bias_cons'" in inspect.getsource(FF.mm_monitor_state), 'стан віддає bias_cons')
+    import re, pathlib
+    root = pathlib.Path(__file__).parent / 'detection'
+    for pth in root.rglob('*.py'):
+        t = pth.read_text(encoding='utf-8', errors='ignore')
+        if pth.name == 'fuel_filter.py':
+            continue
+        _check('_mm_cons' not in t and 'bias_cons' not in t,
+               f'консенсус — лише показ, {pth.name} не має його читати')
+    print('✓ 🧭 консенсус рахується в двигуні, персиститься, торгівлю не чіпає')
+
+
+def test_js_consensus_banner_shows_agreement_and_conflict():
+    out = _run_js(r'''
+const base = {rows:[], enabled:true, limited:false, ts:1};
+const now = Math.floor(Date.now()/1000);
+mmApplyState(Object.assign({}, base, {bias:{dir:'LONG'}, bias_new:{dir:'SHORT'},
+  bias_cons:{state:'CONFLICT', dir:null, old_dir:'LONG', new_dir:'SHORT', since: now - 30}}));
+const g = id => document.getElementById(id);
+const a = {st:g('mm-biascons-status').textContent, lab:g('mm-biascons-label').textContent,
+           w:g('mm-biascons-bar').style.width};
+mmApplyState(Object.assign({}, base, {bias:{dir:'LONG'}, bias_new:{dir:'LONG'},
+  bias_cons:{state:'LONG', dir:'LONG', strength:30, old_dir:'LONG', new_dir:'LONG', since: now - 30}}));
+const b = {st:g('mm-biascons-status').textContent, lab:g('mm-biascons-label').textContent,
+           w:g('mm-biascons-bar').style.width};
+console.log(JSON.stringify({a, b}));
+''')
+    import json
+    d = json.loads(out)
+    _check('КОНФЛІКТ' in d['a']['st'] and 'LiQ' in d['a']['lab'] and d['a']['w'] == '0%', d)
+    _check('LONG' in d['b']['st'] and 'сила 30%' in d['b']['lab'] and d['b']['w'] == '30%', d)
+    i = _HTML.index('id="mm-biasnew-banner"')
+    j = _HTML.index('id="mm-biascons-banner"')
+    k = _HTML.index('id="mm-corr-row"')
+    _check(i < j < k, 'консенсус стоїть ОДРАЗУ під МММ-new')
+    _check('mm && mm.bias_cons' in _HTML, 'стан доїжджає в рендер')
+    print('✓ JS: банер консенсусу — ⚖ КОНФЛІКТ / 🟢 LONG із силою')
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]
