@@ -9021,7 +9021,7 @@ class FuelFilterDaemon:
     # Як часто повторювати в лозі ОДНУ Й ТУ САМУ причину невдалої перевірки.
     Q4_RECHECK_LOG_GAP = 900          # 15 хв
 
-    def _q4_recheck_filters(self, sym: str, side: str):
+    def _q4_recheck_filters(self, sym: str, side: str, kind: str = ''):
         """🔁 Повторний прогін СКАНЕРНОГО ланцюга фільтрів перед відкриттям із
         Черги-4 (той самий `_signal_allowed`, що пускав монету в чергу).
 
@@ -9042,12 +9042,19 @@ class FuelFilterDaemon:
             # тіку двигуна по кожній монеті черги). Монета вже пройшла його
             # НА ІНТЕЙКУ, коли ставала в чергу; решта ланцюга — наші власні
             # дані, тож перевіряється строго, як і було.
+            # `origin=kind` — ворота знають, ЗВІДКИ сигнал (напр. 🆕 Новий OB
+            # має власний тумблер 🧮 МММ-воріт `ob_alert_mm_gate`), тож
+            # recheck судить запис тими самими правилами, що й інтейк.
             try:
                 res = scanner._signal_allowed(sym, side, at_intake=False,
-                                              skip_liq=True)
+                                              skip_liq=True, origin=kind)
             except TypeError:
-                # Старіший сканер без параметра — не ламаємось.
-                res = scanner._signal_allowed(sym, side, at_intake=False)
+                # Старіший сканер без параметрів — не ламаємось.
+                try:
+                    res = scanner._signal_allowed(sym, side, at_intake=False,
+                                                  skip_liq=True)
+                except TypeError:
+                    res = scanner._signal_allowed(sym, side, at_intake=False)
             if isinstance(res, tuple):
                 ok = bool(res[0])
                 reason = str(res[1]) if len(res) > 1 and res[1] else 'фільтр'
@@ -9281,7 +9288,8 @@ class FuelFilterDaemon:
             # пускав її в чергу, але СТРОГО (at_intake=False). Не пройшла —
             # НЕ відкриваємо; лишається в черзі до наступного тіку.
             if s.get('queue4_recheck_filters', True):
-                _rc_ok, _rc_reason = self._q4_recheck_filters(sym, _open_dir)
+                _rc_ok, _rc_reason = self._q4_recheck_filters(
+                    sym, _open_dir, kind=str(info.get('kind') or ''))
                 if not _rc_ok:
                     # 🔇 АНТИ-ФЛУД: монета висить у черзі годинами, а перевірка
                     # йде на КОЖЕН тік двигуна. Без цього один ZECUSDT дав 48

@@ -88,6 +88,18 @@ def mm_gate_decide(view, side):
     return True, True, f'🧮МММ[банер {b} · монета {c}]:✓', ''
 
 
+def mm_gate_applies(settings, origin: str = '') -> bool:
+    """Чи діє 🧮 МММ-умова для сигналу з цим походженням (ЧИСТА). Загальний
+    тумблер `mm_gate_enabled`; для 🆕 Новий OB (`origin='ob_alert'`) — ще й
+    власний `ob_alert_mm_gate` (деф. ВИМК, вимога 30.09)."""
+    settings = settings or {}
+    if not settings.get('mm_gate_enabled', True):
+        return False
+    if str(origin or '') == 'ob_alert':
+        return bool(settings.get('ob_alert_mm_gate', False))
+    return True
+
+
 def _mm_gate_view(symbol):
     """Читання монітора для воріт; немає FF / збій → `{}` (умова не діє)."""
     try:
@@ -338,6 +350,12 @@ DEFAULT_SETTINGS = {
     # ⚠️ Дефолт OFF — новий тип сигналу не має мовчки розширити потік угод на
     # робочій установці (та сама причина, що у `vob_alert_enabled`).
     'ob_alert_signal': False,
+    # 📐 Які блоки вважаються «🆕 Новим OB» (вимога 30.09): 'both' — CHoCH і
+    # BOS (стара поведінка), 'choch' — лише CHoCH-блоки (розворот).
+    'ob_alert_tags': 'both',
+    # 🧮 Чи проганяти 🆕 Новий OB через МММ-монітор (`mm_gate_enabled`).
+    # Дефолт OFF (вимога 30.09) — для інших сигналів МММ-умова лишається.
+    'ob_alert_mm_gate': False,
     # Вікно свіжості в секундах, 0 = АВТО = один бар `ob_filter_timeframe`.
     # Старший за вікно блок «щойно» не зʼявився → беремо за базу молча.
     'ob_alert_max_lag_sec': 0,
@@ -1527,6 +1545,7 @@ class SMCScanner:
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
                        'ob_alert_signal', 'ob_alert_max_lag_sec',
+                       'ob_alert_tags', 'ob_alert_mm_gate',
                        # 💧 Фільтр ліквідності за напрямком
                        'liq_filter_enabled', 'liq_filter_exchange',
                        'liq_filter_bars', 'liq_filter_min_pct',
@@ -1691,6 +1710,10 @@ class SMCScanner:
             except (TypeError, ValueError):
                 _aml = 0.0
             self._settings['ob_alert_max_lag_sec'] = max(0.0, _aml)
+            self._settings['ob_alert_tags'] = _oba_mod().tag_mode_of(
+                self._settings.get('ob_alert_tags', 'both'))
+            self._settings['ob_alert_mm_gate'] = bool(
+                self._settings.get('ob_alert_mm_gate', False))
 
             # === 💧 Фільтр ліквідності: валідація ===
             self._settings['liq_filter_enabled'] = bool(
@@ -3003,6 +3026,19 @@ class SMCScanner:
             return _out
 
         _side1 = oba.side_of(ob.get('bias'))
+        # 📐 ЯКІ БЛОКИ БЕРЕМО (`ob_alert_tags`: 'choch' | 'both', вимога 30.09).
+        # Перевірка ДО старшого TF — відсіяний блок не коштує запиту до біржі.
+        # Відсіяний блок = тиха база (опрацьовано, у лог НЕ пишемо — це СТАН),
+        # причина — у `ob_alert_diag`.
+        _tag_ok, _tag_note = oba.tag_allows(
+            ob.get('created_by_tag'), self._settings.get('ob_alert_tags', 'both'))
+        if not _tag_ok:
+            self._ob_alert_seen[symbol] = oba.seen_add(_seen, ob.get('bar_time'))
+            self._ob_alert_diag[symbol] = {
+                'outcome': 'tag', 'side': _side1, 'combo': '',
+                'note': _tag_note, 'ts': _now}
+            self._persist_ob_alert_state()
+            return 'tag'
         _app = oba.appeared_at(ob, ob_tf)
         # Поточна ціна = закриття ЖИВОГО бару (той самий масив, що малює графік).
         # ⚠️ Ключ закриття у `fetch_klines` — `p`, а не `close` (див.
@@ -3096,7 +3132,8 @@ class SMCScanner:
         користувача — фікція.
         """
         from detection.activity_log import log_activity
-        _ok, _reason, _detail = self._signal_allowed(symbol, side, at_intake=True)
+        _ok, _reason, _detail = self._signal_allowed(symbol, side, at_intake=True,
+                                                     origin='ob_alert')
         log_activity(symbol, 'signal',
                      f'🆕 Новий OB ({combo}) {side} · {_detail}',
                      side=side, source='scanner')
@@ -4775,8 +4812,11 @@ class SMCScanner:
         # event_dir = 'bull' | 'bear'; bias = 'bull' | 'bear'
         return bias == event_dir
     
+    def _mm_gate_applies(self, origin: str = '') -> bool:
+        return mm_gate_applies(self._settings, origin)
+
     def _signal_allowed(self, symbol: str, side_label: str, at_intake: bool = False,
-                        skip_liq: bool = False):
+                        skip_liq: bool = False, origin: str = ''):
         """SPILNI VOROTA для БУДЬ-ЯКОГО входу сигналу (CHoCH/BOS ТА Volumized OB).
 
         Оцінює УСІ увімкнені фільтри (кожен — НЕЗАЛЕЖНИЙ, зі своїм тумблером) і
@@ -4831,7 +4871,10 @@ class SMCScanner:
         # кнопок — це теж напрямкова умова, і читає вона лише памʼять двигуна
         # (жодного запиту до БД/біржі), тож решту фільтрів після відмови не
         # рахуємо. Діє лише при увімкненому моніторі і тумблері `mm_gate_enabled`.
-        if self._settings.get('mm_gate_enabled', True):
+        # ⚠️ 🆕 Новий OB має ВЛАСНИЙ тумблер (`ob_alert_mm_gate`, деф. ВИМК):
+        # `origin='ob_alert'` + вимкнений тумблер → МММ-умову для нього не
+        # застосовуємо (і на інтейку, і в 🔁 recheck Черги-4 — `origin=kind`).
+        if mm_gate_applies(self._settings, origin):
             _app, _mok, _mchip, _mwhy = mm_gate_decide(_mm_gate_view(symbol),
                                                        side_label)
             if _app:

@@ -103,7 +103,7 @@ def _ob(bias='BULLISH', bar_time=None, created_at_t=None, tag='CHoCH',
 
 
 def _mk(htf_on=True, htf='4h', dedup=True, as_sig=False, ob4_bias='BULLISH',
-        allowed=True, tf='1h'):
+        allowed=True, tf='1h', tags='both'):
     """Мінімальний сканер: лише те, чого торкається 🆕 Новий OB."""
     ns = types.SimpleNamespace()
     ns._settings = {
@@ -111,6 +111,7 @@ def _mk(htf_on=True, htf='4h', dedup=True, as_sig=False, ob4_bias='BULLISH',
         'ob_alert_htf': htf, 'ob_alert_htf_enabled': htf_on,
         'ob_alert_dedup': dedup, 'ob_alert_signal': as_sig,
         'ob_alert_max_lag_sec': 0, 'swing_size': 50, 'internal_size': 5,
+        'ob_alert_tags': tags,
     }
     ns._ob_alert_seen = {}
     ns._ob_alert_fired = {}
@@ -130,8 +131,9 @@ def _mk(htf_on=True, htf='4h', dedup=True, as_sig=False, ob4_bias='BULLISH',
     ns._ob_on_htf = _htf_stub
     ns._gate_calls = []
 
-    def _gate(symbol, side, at_intake=False):
+    def _gate(symbol, side, at_intake=False, **kw):
         ns._gate_calls.append((symbol, side, at_intake))
+        ns._gate_kw = kw
         return (allowed, 'OB-фільтр заблокував: 1H-блок BEARISH ПРОТИ сигналу LONG',
                 'OB(1h):✓ · PD:✓')
     ns._signal_allowed = _gate
@@ -470,8 +472,10 @@ def test_ui_has_its_own_signal_type_block():
                 'sm-ob-alert-dedup', 'sm-ob-alert-signal'):
         _check(f'id="{cid}"' in _HTML, f'немає контрола {cid}')
     i = _HTML.index('id="sm-obalert-group"')
-    blk = _HTML[i:i + 3200]
-    _check(blk.count('updateObAlert()') >= 5,
+    # ⚠️ Ріжемо по КІНЦЮ групи, а не фіксованою довжиною (нові підказки
+    # виштовхували контроли за межу зрізу).
+    blk = _HTML[i:_HTML.index('</details>', i)]
+    _check(blk.count('updateObAlert()') >= 7,
            'кожен контрол мусить зберігати налаштування')
     # Блок мусить стояти в ряду ТИПІВ СИГНАЛІВ, поряд із 🟪 Volumized OB
     _check(_HTML.index('id="sm-vob-alert"') < i, 'блок не в ряду типів сигналів')
@@ -508,6 +512,75 @@ def test_header_summary_shows_the_active_combination():
     _check("_oaH.checked" in blk and "'+'" in blk,
            'у шапці мусить зʼявлятись другий TF, коли збіг увімкнено')
     print('✓ шапка налаштувань показує активну комбінацію (🆕 OB 1H+4H)')
+
+
+# ═══════════ 📐 ЯКІ БЛОКИ + 🧮 МММ-ВОРОТА (вимога 30.09) ═════════════════
+def test_tag_allows_truth_table():
+    _check(oba.tag_allows('BOS', 'both')[0] and oba.tag_allows('CHoCH', 'both')[0],
+           "'both' — обидві події")
+    _check(oba.tag_allows('CHoCH', 'choch')[0], 'CHoCH проходить')
+    ok, note = oba.tag_allows('BOS', 'choch')
+    _check(not ok and 'BOS' in note, note)
+    _check(not oba.tag_allows('', 'choch')[0], 'без тега = не беремо')
+    _check(oba.tag_mode_of('xxx') == 'both' and oba.tag_mode_of('CHOCH') == 'choch',
+           'нормалізація')
+    print('✓ tag_allows: CHoCH + BOS / лише CHoCH')
+
+
+def test_choch_only_skips_bos_block_silently_and_without_htf_request():
+    _install_log(); _install_tm()
+    ns = _mk(tags='choch', as_sig=True)
+    out = _tick(ns, ob=_ob(tag='BOS'))
+    _check(out == 'tag', out)
+    _check(not ns._htf_calls, 'відсіяний блок не питає старший TF')
+    _check(not _LOGGED and not _OPENED, 'ні рядка в лозі, ні сигналу')
+    _check(ns._ob_alert_diag['BTCUSDT']['outcome'] == 'tag', 'причина в diag')
+    _check(_tick(ns, ob=_ob(tag='BOS')) == 'duplicate', 'блок опрацьовано (тиха база)')
+    ns2 = _mk(tags='choch')
+    _check(_tick(ns2, ob=_ob(tag='CHoCH')) == 'new', 'CHoCH-блок іде далі')
+    print('✓ «Лише CHoCH»: BOS-блок — тиха база, CHoCH — подія')
+
+
+def test_both_mode_keeps_bos_blocks():
+    _install_log(); _install_tm()
+    _check(_tick(_mk(tags='both'), ob=_ob(tag='BOS')) == 'new', 'стара поведінка')
+    print('✓ «CHoCH + BOS» — BOS-блоки лишаються подією')
+
+
+def test_signal_goes_to_gate_with_ob_alert_origin():
+    _install_log(); _install_tm()
+    ns = _mk(as_sig=True)
+    _tick(ns)
+    _check(getattr(ns, '_gate_kw', {}).get('origin') == 'ob_alert', ns.__dict__.get('_gate_kw'))
+    print("✓ сигнал 🆕 Новий OB іде у ворота з origin='ob_alert'")
+
+
+def test_mm_gate_toggle_for_ob_alert():
+    ns = types.SimpleNamespace(_settings={'mm_gate_enabled': True})
+    f = S._mm_gate_applies.__get__(ns)
+    _check(f('') is True and f('choch') is True, 'решта сигналів — МММ діє')
+    _check(f('ob_alert') is False, 'Новий OB — дефолт ВИМК')
+    ns._settings['ob_alert_mm_gate'] = True
+    _check(f('ob_alert') is True, 'увімкнено — діє')
+    ns._settings['mm_gate_enabled'] = False
+    _check(f('ob_alert') is False and f('') is False, 'загальний тумблер сильніший')
+    print('✓ ob_alert_mm_gate: МММ-умова для 🆕 Нового OB за власним тумблером')
+
+
+def test_q4_recheck_passes_record_kind_as_origin():
+    ff_src = open(os.path.join(_HERE, 'detection', 'fuel_filter.py'), encoding='utf-8').read()
+    _check("origin=kind" in ff_src and "kind=str(info.get('kind') or '')" in ff_src,
+           'recheck Черги-4 судить запис за його походженням')
+    print('✓ 🔁 recheck Черги-4 передає kind → origin')
+
+
+def test_new_keys_defaults_and_ui():
+    _check(_m.DEFAULT_SETTINGS.get('ob_alert_tags') == 'both', 'дефолт both')
+    _check(_m.DEFAULT_SETTINGS.get('ob_alert_mm_gate') is False, 'дефолт ВИМК')
+    for k in ('sm-ob-alert-tags', 'sm-ob-alert-mm', 'ob_alert_tags:',
+              'ob_alert_mm_gate:', 's.ob_alert_tags', 's.ob_alert_mm_gate'):
+        _check(k in _HTML, k)
+    print('✓ нові ключі + контроли в групі 🆕 Новий OB')
 
 
 if __name__ == '__main__':

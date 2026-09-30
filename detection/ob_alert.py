@@ -268,6 +268,32 @@ def dedup_allows(prev, side, combo):
     return True, f'перебито протилежним ({p_side} → {side})'
 
 
+TAG_MODES = ('choch', 'both')
+
+
+def tag_mode_of(v) -> str:
+    """Нормалізація `ob_alert_tags`: 'choch' | 'both'; сміття → 'both'
+    (стара поведінка — беремо блоки обох подій)."""
+    s = str(v or '').strip().lower()
+    return s if s in TAG_MODES else 'both'
+
+
+def tag_allows(tag, mode) -> tuple:
+    """Які блоки йдуть як «🆕 Новий OB» → `(ok, note)`.
+
+    'both'  — CHoCH і BOS (як було);
+    'choch' — лише CHoCH-блок (розворот). BOS (продовження) і блок БЕЗ тега
+    (стара БД-строка) — відсів: «невизначеність = не беремо», як у воротах
+    «1H OB лише з CHoCH»."""
+    if tag_mode_of(mode) == 'both':
+        return True, ''
+    t = str(tag or '').strip().upper()
+    if t == 'CHOCH':
+        return True, ''
+    return False, (f'лише CHoCH: блок створено {"BOS" if t == "BOS" else "без тега"}'
+                   ' — не беремо')
+
+
 # ─────────────────────────── ФОРМАТ ───────────────────────────────────────
 
 def fmt_utc(ts) -> str:

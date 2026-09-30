@@ -2263,6 +2263,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="checkbox" id="sm-ob-alert-htf" checked onchange="updateObAlert()">
                             🔎 Збіг із другим TF
                         </label>
+                        <div class="sm-control-item" title="📐 ЯКІ БЛОКИ ВВАЖАЮТЬСЯ «🆕 Новим OB». «CHoCH + BOS» — обидві події структури (як було). «Лише CHoCH» — тільки блок РОЗВОРОТУ; BOS-блок (продовження тренду) і блок без тега тихо пропускаються — ні рядка в лозі, ні сигналу, ні запиту старшого TF.">
+                            <label>Блоки:</label>
+                            <select id="sm-ob-alert-tags" onchange="updateObAlert()">
+                                <option value="both" selected>CHoCH + BOS</option>
+                                <option value="choch">Лише CHoCH</option>
+                            </select>
+                        </div>
                         <div class="sm-control-item">
                             <label>Другий TF:</label>
                             <select id="sm-ob-alert-htf-tf" onchange="updateObAlert()">
@@ -2279,6 +2286,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <label class="sm-checkbox" title="📨 Відправляти 🆕 Новий OB у ТОРГІВЛЮ як сигнал: через ЄДИНІ спільні ворота (OB/PD/Forecast/Decision/POC/Ліквідність + головні кнопки напрямку) → черги FF → відкриття. Мітка угоди — 🆕 Новий OB. ⚠️ Дефолт ВИМКНЕНО: новий тип сигналу не має мовчки розширити потік угод. Вимкнено — 🆕 Новий OB лишається ЛИШЕ повідомленням у лозі.">
                             <input type="checkbox" id="sm-ob-alert-signal" onchange="updateObAlert()">
                             📨 Відправляти в торгівлю
+                        </label>
+                        <label class="sm-checkbox" title="🧮 Проганяти сигнали 🆕 Новий OB через МММ-монітор: пропускаємо лише в бік банера і лише монету з вкладки того ж напрямку (та сама умова, що «🧮 Через МММ-монітор» у рядку ALERTS; діє, лише коли той загальний тумблер увімкнено). ВИМК (дефолт) — для 🆕 Нового OB МММ-умова не застосовується (ні на вході, ні в 🔁 повторній перевірці Черги-4); для решти сигналів вона лишається.">
+                            <input type="checkbox" id="sm-ob-alert-mm" onchange="updateObAlert()">
+                            🧮 Через МММ-монітор
                         </label>
                     </div>
                 </div>
@@ -6795,6 +6806,10 @@ async function loadSettings() {
             if (oaDed) oaDed.checked = s.ob_alert_dedup !== false;
             const oaSig = document.getElementById('sm-ob-alert-signal');
             if (oaSig) oaSig.checked = !!s.ob_alert_signal;               // default OFF
+            const oaTags = document.getElementById('sm-ob-alert-tags');
+            if (oaTags) oaTags.value = s.ob_alert_tags === 'choch' ? 'choch' : 'both';
+            const oaMm = document.getElementById('sm-ob-alert-mm');
+            if (oaMm) oaMm.checked = !!s.ob_alert_mm_gate;                // default OFF
             _smObAlertSync();
             const recEl = document.getElementById('sm-recency');
             if (recEl) recEl.value = String(s.recency_minutes != null ? s.recency_minutes : 0);
@@ -6967,9 +6982,15 @@ function updateSettingsSummary() {
         const _oaT = document.getElementById('sm-ob-alert-htf-tf');
         let _combo = _tf1;
         if (_oaH && _oaH.checked && _oaT) _combo += '+' + _oaT.value.toUpperCase();
+        const _oaTg = document.getElementById('sm-ob-alert-tags');
         summary += ` · 🆕 OB ${_combo}`;
+        if (_oaTg && _oaTg.value === 'choch') summary += ' CHoCH';
         const _oaS = document.getElementById('sm-ob-alert-signal');
-        if (_oaS && _oaS.checked) summary += '📨';
+        if (_oaS && _oaS.checked) {
+            summary += '📨';
+            const _oaM = document.getElementById('sm-ob-alert-mm');
+            if (_oaM && _oaM.checked) summary += '🧮';
+        }
     }
     // 💧 Фільтр ліквідності помітно звужує потік — має бути видно в шапці.
     const lqOn = document.getElementById('sm-liq-filter-enabled');
@@ -7083,6 +7104,8 @@ async function updateObAlert() {
     const htfTf = document.getElementById('sm-ob-alert-htf-tf');
     const dedup = document.getElementById('sm-ob-alert-dedup');
     const asSig = document.getElementById('sm-ob-alert-signal');
+    const tags = document.getElementById('sm-ob-alert-tags');
+    const mmG = document.getElementById('sm-ob-alert-mm');
     _smObAlertSync();
     try {
         await fetch('/api/smc/settings', {
@@ -7093,6 +7116,8 @@ async function updateObAlert() {
                 ob_alert_htf: (htfTf && htfTf.value) || '4h',
                 ob_alert_dedup: !!(dedup && dedup.checked),
                 ob_alert_signal: !!(asSig && asSig.checked),
+                ob_alert_tags: (tags && tags.value === 'choch') ? 'choch' : 'both',
+                ob_alert_mm_gate: !!(mmG && mmG.checked),
             }),
         });
         updateSettingsSummary();
@@ -7107,12 +7132,20 @@ function _smObAlertSync() {
     const htfTf = document.getElementById('sm-ob-alert-htf-tf');
     const dedup = document.getElementById('sm-ob-alert-dedup');
     const asSig = document.getElementById('sm-ob-alert-signal');
+    const tags = document.getElementById('sm-ob-alert-tags');
+    const mmG = document.getElementById('sm-ob-alert-mm');
     const master = !!(on && on.checked);
-    [htfOn, dedup, asSig].forEach(el => {
+    [htfOn, dedup, asSig, tags].forEach(el => {
         if (!el) return;
         el.disabled = !master;
         if (el.parentElement) el.parentElement.style.opacity = master ? '1' : '0.45';
     });
+    // 🧮 МММ-ворота мають сенс лише коли сигнал іде в торгівлю.
+    if (mmG) {
+        const live = master && !!(asSig && asSig.checked);
+        mmG.disabled = !live;
+        if (mmG.parentElement) mmG.parentElement.style.opacity = live ? '1' : '0.45';
+    }
     if (htfTf) {
         const live = master && !!(htfOn && htfOn.checked);
         htfTf.disabled = !live;
