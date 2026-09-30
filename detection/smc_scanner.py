@@ -2410,6 +2410,7 @@ class SMCScanner:
                                     if _c is None:
                                         self._vob_cache = _c = {}
                                     _c[symbol] = (time.time(), _disp)
+                                    self._vob_zones_put(symbol, vol_result, vol_tf)
                                 except Exception:
                                     pass
                                 _disp_trend = ('LONG' if (_disp and _disp.get('type') == 'Bull')
@@ -5746,10 +5747,50 @@ class SMCScanner:
                     combine_obs=bool(self._settings.get('volumized_combine_obs', True)),
                 )
                 vob = self._format_vob(r.get('latest_ob'), vtf)
+                self._vob_zones_put(symbol, r, vtf)
+                # 🔒 ▲/▼ у watchlist = ТОЙ САМИЙ розрахунок, що бокс і бейдж.
+                # Раніше свіжий результат панелі (кеш скану > 30с) НЕ писався в
+                # `_volumized_trend_cache` → після переходу на іншу монету
+                # трикутник повертався до СТАРОГО значення скану й міняв колір.
+                self._vob_trend_put(symbol, vob, vtf)
         except Exception as e:
             print(f"[SMC] volumized OB chart error {symbol}: {e}")
         cache[symbol] = (now, vob)
         return vob
+
+    def _vob_trend_put(self, symbol: str, vob, vtf):
+        """Єдиний запис ▲/▼ (watchlist) з відформатованого останнього VOB."""
+        trend = ('LONG' if (vob and vob.get('type') == 'Bull')
+                 else ('SHORT' if vob else None))
+        try:
+            with self._lock:
+                self._volumized_trend_cache[symbol] = {
+                    'trend': trend, 'meta': (vob or {}), 'tf': vtf,
+                    'updated_at': time.time(),
+                }
+        except Exception:
+            pass
+
+    def _vob_zones_put(self, symbol: str, res, vtf):
+        """Усі ВИДИМІ Volumized OB обох боків (після zone_count), найновіший
+        першим — для малювання на графіку як у TradingView. Беремо ТОЙ САМИЙ
+        результат детектора, що дав `latest_ob`, тож бокси й ▲/▼ не розійдуться."""
+        try:
+            obs = list((res or {}).get('bullish_obs') or []) \
+                + list((res or {}).get('bearish_obs') or [])
+            _ft = lambda o: o.get('formation_time', o.get('start_time', 0)) or 0
+            obs.sort(key=_ft, reverse=True)
+            zones = [z for z in (self._format_vob(o, vtf) for o in obs) if z]
+            z = getattr(self, '_vob_zones', None)
+            if z is None:
+                self._vob_zones = z = {}
+            z[symbol] = zones
+        except Exception as e:
+            print(f"[SMC] _vob_zones_put error {symbol}: {e}")
+
+    def _volumized_zones(self, symbol: str):
+        """Видимі VOB для графіка (після `_latest_volumized_ob` — той самий прохід)."""
+        return list((getattr(self, '_vob_zones', None) or {}).get(symbol) or [])
 
     # 🧮 Скільки секунд знімок блоків за напрямком вважається придатним для
     # ЧИТАЧІВ (МММ-монітор). Це НЕ «свіжість блоку», а вік самого розрахунку:
@@ -6141,6 +6182,9 @@ class SMCScanner:
             # 🟦 Останній Volumized OB (для малювання ОДНОГО боксу на графіку,
             # як у Pine «Volumized Order Blocks»). Порахований з ТОЧНИМИ параметрами.
             'volumized_ob': self._latest_volumized_ob(symbol),
+            # Усі видимі VOB обох боків (як у TradingView: Zone Count One =
+            # 1 бичачий + 1 ведмежий). Той самий прохід детектора, що й вище.
+            'volumized_obs': self._volumized_zones(symbol),
             'volumized_enabled': bool(self._settings.get('use_volumized_ob', True)),
             'volumized_timeframe': self._settings.get('volumized_timeframe', '1h'),
             # === PD Zone (Premium/Discount/Equilibrium) badge data ===

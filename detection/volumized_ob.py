@@ -552,4 +552,8 @@ def get_latest_ob_trend(klines: List[Dict], **settings) -> Dict[str, Any]:
         # lastBearishOBTime). Списки — newest-first, тож [0] = найсвіжіший.
         'newest_bull': _vb[0] if _vb else None,
         'newest_bear': _vs[0] if _vs else None,
+        # Усі ВИДИМІ блоки обох боків (після zone_count) — для малювання
+        # на графіку як у TradingView (Zone Count One = 1 бичачий + 1 ведмежий).
+        'bullish_obs': _vb,
+        'bearish_obs': _vs,
     }

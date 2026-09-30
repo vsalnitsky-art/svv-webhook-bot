@@ -8096,11 +8096,15 @@ async function loadChart() {
         // Малюємо ОДИН найсвіжіший Volumized OB залитим прямокутником + мітка
         // «обсяг (%) · <TF> OB» — точно як у Pine «Volumized Order Blocks».
         // Дані з бекенду (d.volumized_ob) пораховані з ТОЧНИМИ параметрами.
+        // Як у TradingView: малюємо ВСІ видимі блоки обох боків
+        // (d.volumized_obs, після Zone Count: One = 1 бичачий + 1 ведмежий).
+        // ▲/▼ і бейдж — як і раніше за ОСТАННІМ (d.volumized_ob).
         if (volObPrim) {
-            const vob = d.volumized_ob;
-            if (d.volumized_enabled && vob
+            const _vobList = (Array.isArray(d.volumized_obs) && d.volumized_obs.length)
+                ? d.volumized_obs : (d.volumized_ob ? [d.volumized_ob] : []);
+            const _boxes = !d.volumized_enabled ? [] : _vobList.filter(vob => vob
                     && typeof vob.top === 'number' && typeof vob.bottom === 'number'
-                    && vob.start_time_sec) {
+                    && vob.start_time_sec).map(vob => {
                 const isBull = vob.type === 'Bull';
                 const stroke = isBull ? '#16a34a' : '#dc2626';       // зелений / червоний
                 const fill = isBull ? 'rgba(22,163,74,0.14)' : 'rgba(220,38,38,0.14)';
@@ -8111,7 +8115,7 @@ async function loadChart() {
                 const tfS = (vob.tf || d.volumized_timeframe || '1h').toUpperCase();
                 const tfWord = tfS.replace('M', ' Min').replace(' MIN', ' Min')
                     .replace('H', ' Hour').replace('D', ' Day');
-                volObPrim.setOB({
+                return {
                     startSec: _snapSecToChart(vob.start_time_sec, ohlc),
                     top: vob.top, bottom: vob.bottom,
                     stroke: stroke, fill: fill,
@@ -8120,10 +8124,9 @@ async function loadChart() {
                     dashed: !!vob.breaker,
                     labelMain: `${volK}${pctS}`,
                     labelSub: `${tfWord} OB${vob.breaker ? ' ✕' : ''}`,
-                });
-            } else {
-                volObPrim.setOB(null);   // немає OB → нічого не малюємо
-            }
+                };
+            });
+            volObPrim.setOBs(_boxes);   // порожньо → нічого не малюємо
         }
 
         // === Require OB Match box (OB зі СКАН-ФІЛЬТРА) ===
@@ -8348,6 +8351,10 @@ async function loadChart() {
         // бейдж «5M»). Оновлюємо на КОЖЕН перерахунок панелі, а не раз на скан.
         if (currentSymbol && volEnabled) {
             wlVolTrendLive[currentSymbol] = volTrend;   // 'LONG' | 'SHORT' | null
+            // Той самий колір лишається і ПІСЛЯ переходу на іншу монету:
+            // знімок списку теж отримує це значення (бекенд пише його в
+            // той самий кеш, тож наступний полл віддасть те саме або новіше).
+            wlVolumizedTrends[currentSymbol] = volTrend;
             const _vtEl = document.getElementById('vt-' + currentSymbol);
             if (_vtEl) _vtEl.innerHTML = wlVolTriInner(volTrend, volTf);
         }
