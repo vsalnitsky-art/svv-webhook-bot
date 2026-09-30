@@ -210,7 +210,10 @@ DEFAULT_ALERT_MODE = 'choch'  # 'choch' or 'choch_bos'
 # confirmations on slower pairs / higher timeframes where bars are 15m+.
 DEFAULT_RECENCY_MINUTES = 0   # 0 = off (no recency filter)
 ALLOWED_RECENCY_MINUTES = (0, 30, 60, 120)
-KLINES_LIMIT = 3000           # bars to fetch per scan via paginated API.
+# 🛑 TF джерела «🛑 SL з 1H OB» — СПРАВЖНІЙ 1h, незалежно від TF воріт
+# (`ob_filter_timeframe`). Сканер тримає рядок `sob_smc_ob_state` на цьому TF.
+SL_SOURCE_TF = '1h'
+KLINES_LIMIT = 3000          # bars to fetch per scan via paginated API.
                               # 3000 × 15m = ~31 days. Larger lookback gives
                               # the SMC structure detector enough history to
                               # stabilize trend state — matches what TV does
@@ -2296,6 +2299,25 @@ class SMCScanner:
                         if self._errors <= 5:
                             print(f"[SMC] Extra-TF OB ({opposite_exit_tf}) error for {symbol}: {extra_err}")
                 
+                # 4) 🛑 SL_SOURCE_TF (1h) — джерело «🛑 SL з 1H OB» читає рядок
+                # САМЕ 1h, а не `ob_filter_timeframe` (кейс STABLEUSDT 30.09:
+                # ворота стояли на 15m, і «1H OB» мовчки брав 15m-блок).
+                # Кеш `_get_tf_data` тримає бари до закриття 1h-бару, тож це
+                # ~1 запит на монету на годину (а при pd_zone_tf=1h — нуль).
+                if SL_SOURCE_TF not in (main_tf, ob_filter_tf, opposite_exit_tf):
+                    try:
+                        td_sl = _get_tf_data(SL_SOURCE_TF)
+                        if td_sl:
+                            ob_sl = detect_last_order_block(
+                                klines=td_sl['klines_closed'],
+                                pivots=td_sl['structure'].get('internal', {}).get('pivots', []),
+                                events=td_sl['structure'].get('internal', {}).get('events', []),
+                            )
+                            get_db().upsert_smc_ob_state(symbol, SL_SOURCE_TF, ob_sl)
+                    except Exception as sl_err:
+                        if self._errors <= 5:
+                            print(f"[SMC] SL-source OB ({SL_SOURCE_TF}) error for {symbol}: {sl_err}")
+
                 # === Compute PD Zone (Premium/Discount/Equilibrium) ===
                 # PD Zone classifies the CURRENT PRICE within the trailing
                 # range on the user-configured `pd_zone_timeframe` (default

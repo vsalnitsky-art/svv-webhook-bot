@@ -58,6 +58,9 @@ _ASKED = []           # TF, за якими справді ходили по б�
 _SETTINGS = {}
 
 
+_SC_SETTINGS = {'ob_filter_timeframe': '1h', 'volumized_timeframe': '5m'}
+
+
 def _install_stubs():
     lg = types.ModuleType('detection.activity_log')
     lg.log_activity = lambda sym, kind, text, **kw: _LOG.append((kind, text))
@@ -79,8 +82,7 @@ def _install_stubs():
     sys.modules['storage.db_operations'] = db
 
     sc = types.ModuleType('detection.smc_scanner')
-    sc.get_smc_scanner = lambda: types.SimpleNamespace(get_settings=lambda: {
-        'ob_filter_timeframe': '1h', 'volumized_timeframe': '5m'})
+    sc.get_smc_scanner = lambda: types.SimpleNamespace(get_settings=lambda: dict(_SC_SETTINGS))
     sys.modules['detection.smc_scanner'] = sc
 
     def _klines(s, limit=200, interval='5m'):
@@ -543,6 +545,38 @@ def test_q4_source_unavailable_falls_back_and_says_so():
     _check('немає готового OB' in _text(),
            f'причина, чому обране джерело не спрацювало, має бути в лозі: {_text()}')
     print('✓ обране джерело недоступне → фолбек, і в лозі видно чому')
+
+
+# ═════════ 🛑 «SL з 1H OB» = СПРАВЖНІЙ 1H (кейс STABLEUSDT 30.09) ══════════
+def test_1h_source_reads_real_1h_even_when_gates_are_on_15m():
+    """Ворота (`ob_filter_timeframe`) стояли на 15m, і «🛑 SL з 1H OB» брав
+    ★15m-блок: `Авто-SL з OB: SL встановлено з OB ★15M (обране джерело: 1H OB)`.
+    Тепер джерело читає рядок САМЕ 1h."""
+    _reset(queue4_sl_source='1h', q2_auto_ob_sl=False, sl_source_enabled=True)
+    _SC_SETTINGS['ob_filter_timeframe'] = '15m'
+    try:
+        _OB_ROWS['15m'] = {'bias': 'BULLISH', 'bar_high': 0.02850, 'bar_low': 0.02838}
+        _OB_ROWS['1h'] = {'bias': 'BULLISH', 'bar_high': 0.02820, 'bar_low': 0.02790}
+        p = _pos('LONG', 0.02870)
+        _tm()._auto_ob_manual_sl('STABLEUSDT', p, 0.02875)
+        _check(abs(p["manual_sl"] - 0.02790 * 0.998) < 1e-5,
+               f'мав узятись 1H-блок, отримано {p.get("manual_sl")} · {_text()}')
+        _check('★15M (обране' not in _text(), _text())
+    finally:
+        _SC_SETTINGS['ob_filter_timeframe'] = '1h'
+    print('✓ «SL з 1H OB» бере 1H навіть коли ворота на 15m')
+
+
+def test_scanner_keeps_a_real_1h_row_and_ff_reads_it():
+    src = open(os.path.join(_ROOT, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
+    _check("SL_SOURCE_TF = '1h'" in src, 'константа сканера')
+    _check('upsert_smc_ob_state(symbol, SL_SOURCE_TF' in src, 'сканер пише 1h-рядок')
+    ff = open(os.path.join(_ROOT, 'detection', 'fuel_filter.py'), encoding='utf-8').read()
+    i = ff.index('def _q4_ob_bounds_1h')
+    body = ff[i:ff.index('def _q4_ob_bounds_vob')]
+    _check('tf = SL_SOURCE_TF' in body and "get('ob_filter_timeframe'" not in body,
+           'Черга-4 теж читає справжній 1h, а не TF воріт')
+    print('✓ сканер тримає 1h-рядок, Черга-4 читає саме його')
 
 
 # ═════════ ⚖️ БЕЗЗБИТОК ПІСЛЯ TP-1 ═════════════════════════════════════════
@@ -1470,4 +1504,6 @@ if __name__ == '__main__':
     test_breakeven_erases_the_tf_badge()
     test_every_bot_sl_path_passes_a_timeframe()
     test_the_page_draws_the_badge_only_for_a_bot_level()
+    test_1h_source_reads_real_1h_even_when_gates_are_on_15m()
+    test_scanner_keeps_a_real_1h_row_and_ff_reads_it()
     print('\nУсі тести гарантії авто-SL + походження рівнів пройдено ✅')

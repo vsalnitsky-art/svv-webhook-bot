@@ -129,6 +129,9 @@ MM_CORR_EXIT_TFS = ('5m', '15m', '30m', '1h')
 # стоп залежав би від того, хто його ставив (це вже було: «у Черзі-4 1H OB, а в
 # лозі OB 15M»).
 SL_FALLBACK_TFS = ('15m', '5m')
+# 🛑 «🛑 SL з 1H OB» = СПРАВЖНІЙ 1h (дзеркало `smc_scanner.SL_SOURCE_TF`),
+# а не TF воріт `ob_filter_timeframe` (кейс STABLEUSDT 30.09).
+SL_SOURCE_TF = '1h'
 
 LIQ_STATE_TTL = 20.0
 # ⏱ Скільки МАКСИМУМ тримати знімок, поки демон liq-map НЕ ТІКАВ. Демон —
@@ -9418,17 +9421,15 @@ class FuelFilterDaemon:
                   f"({_el / max(1, _q4_seen):.3f}s/coin)")
 
     def _q4_ob_bounds_1h(self, sym: str):
-        """Межі 1H Order Block — ТОГО САМОГО ★-блоку, що видно на графіку.
-        Джерело ЄДИНЕ з OB-фільтром сканера: рядок `sob_smc_ob_state` на
-        `ob_filter_timeframe`. Повертає (top, bottom, tf, bias) або None.
+        """Межі 1H Order Block — рядок `sob_smc_ob_state` на СПРАВЖНЬОМУ 1h
+        (`SL_SOURCE_TF`, сканер тримає його завжди). Повертає (top, bottom, tf,
+        bias) або None.
 
-        ⚠️ НЕ рахувати OB інлайн — це вже давало розбіжність «мітка каже 1H, а
-        цифри з іншого TF» (див. кейс ★ у watchlist). Беремо лише те, що сканер
-        реально записав."""
+        ⚠️ Саме 1h, а НЕ `ob_filter_timeframe`: кейс STABLEUSDT 30.09 — ворота
+        стояли на 15m, і «🛑 SL з 1H OB» мовчки брав 15m-блок.
+        ⚠️ НЕ рахувати OB інлайн — беремо лише те, що сканер реально записав."""
         try:
-            from detection.smc_scanner import get_smc_scanner
-            sc = get_smc_scanner()
-            tf = (sc.get_settings().get('ob_filter_timeframe', '1h') if sc else '1h') or '1h'
+            tf = SL_SOURCE_TF
             st = self._db.get_smc_ob_state(sym, tf) or {}
             top = float(st.get('bar_high') or 0)
             bottom = float(st.get('bar_low') or 0)

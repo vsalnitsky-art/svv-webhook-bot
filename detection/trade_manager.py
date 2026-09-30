@@ -2190,7 +2190,9 @@ class TradeManager:
 
         if _sl_src_on:
             if _sl_src == '1h':
-                _add_ob(star_tf, f'★{star_tf.upper()} (обране джерело: 1H OB)')
+                # ⚠️ САМЕ 1h, а не `ob_filter_timeframe` (кейс STABLEUSDT 30.09:
+                # ворота стояли на 15m, і «1H OB» брав ★15m-блок).
+                _add_ob('1h', '1H (обране джерело: 1H OB)')
             else:
                 # «15m Volumized OB» — саме 15m, як написано в налаштуванні.
                 _add_vob('15m')
