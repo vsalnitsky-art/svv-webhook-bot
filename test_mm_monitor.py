@@ -1052,7 +1052,7 @@ def test_ui_has_growth_column_with_timer_and_sorting():
     # нижче — це і є контракт таблиці, тож додана колонка мусить бути названа
     # ТУТ, а не просто зсунути число.
     _cols = ['Символ', '📍 Стан', 'МММ LiQ', '🆕 Новий МММ', '⏱ У стані', 'Сила росте',
-             '⏱ Росте', 'Ціна', 'Рух', '🔮 1H', '🔮 4H', '🎯 Готовність']
+             '⏱ Росте', 'Ціна', 'Рух', '🔮 1H', '🔮 4H']
     for _c in _cols:
         _check(_c in tbl, f'немає колонки «{_c}»')
     _n = len(_re.findall(r'<th[\s>]', tbl))
@@ -3041,84 +3041,6 @@ console.log(JSON.stringify({o:g('mm-bias-status').textContent, n:g('mm-biasnew-s
     _check('LONG' in d['o'] and 'SHORT' in d['n'], d)
     _check(d['w'] == '40%' and 'Новий МММ' in d['tip'], d)
     print('✓ JS: два банери малюються незалежно, кожен зі свого джерела')
-
-
-# ═══════════ 32. КОЛОНКА «🎯 Готовність» (30.09) ═════════════════════════
-def _setup_ff():
-    ff = _mk()
-    ff._setup_cache, ff._setup_at, ff._exit_cache = {}, {}, {}
-    ff.calls = []
-
-    def _cs(sym, d, settings, **kw):
-        ff.calls.append((sym, d))
-        return {'ok': True, 'score': 55, 'grade': 'ХОРОШИЙ', 'dir': d}
-    ff._compute_setup = _cs
-    return ff
-
-
-def test_row_reads_the_same_setup_cache_as_the_queues():
-    ff = _setup_ff()
-    _cap(ff, AAAUSDT=0.80, BBBUSDT=0.02)
-    ff._setup_cache['AAAUSDT'] = {'ok': True, 'score': 61, 'dir': 'LONG'}
-    by = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}
-    _check(by['AAAUSDT']['setup']['score'] == 61, by['AAAUSDT'])
-    _check(by['BBBUSDT']['setup'] is None, by['BBBUSDT'])
-    import inspect
-    src = inspect.getsource(FF.mm_monitor_state)
-    _check('_compute_setup' not in src and 'grade_setup' not in src,
-           'стан лише ЧИТАЄ кеш — розрахунок живе в двигуні')
-    print('✓ 🎯 рядок монітора читає той самий кеш «Готовності», що й черги')
-
-
-def test_monitor_coins_fill_only_the_leftover_cap_and_flat_is_skipped():
-    ff = _setup_ff()
-    _cap(ff, AAAUSDT=0.80, BBBUSDT=-0.70, CCCUSDT=0.02)
-    extra = ff._mm_setup_targets(ff._settings)
-    _check(set(extra) == {'AAAUSDT', 'BBBUSDT'}, f'⚖ не має потрапляти: {extra}')
-    _check(extra['BBBUSDT'][0] == 'SHORT', extra)
-    s = dict(ff._settings, setup_max_per_cycle=2, setup_ttl=90)
-    ff._refresh_setup_cache(s, {'QQQUSDT': ('LONG', 0.0)}, extra=extra)
-    _check(ff.calls[0] == ('QQQUSDT', 'LONG'), f'черга мусить іти першою: {ff.calls}')
-    _check(len(ff.calls) == 2, f'cap спільний: {ff.calls}')
-    print('✓ 🎯 монітор добирає ЗАЛИШОК cap; ⚖ рівновага не рахується')
-
-
-def test_flip_of_the_coin_direction_recomputes_at_once():
-    ff = _setup_ff()
-    s = dict(ff._settings, setup_max_per_cycle=5, setup_ttl=9999)
-    ff._refresh_setup_cache(s, {}, extra={'AAAUSDT': ('LONG', 0.0)})
-    ff._refresh_setup_cache(s, {}, extra={'AAAUSDT': ('LONG', 0.0)})
-    _check(len(ff.calls) == 1, 'у межах TTL повтору немає')
-    ff._refresh_setup_cache(s, {}, extra={'AAAUSDT': ('SHORT', 0.0)})
-    _check(ff.calls[-1] == ('AAAUSDT', 'SHORT'), f'фліп — перерахунок: {ff.calls}')
-    print('✓ 🎯 фліп МММ монети → грейд перераховується одразу, не через TTL')
-
-
-def test_setting_off_or_monitor_off_gives_no_targets():
-    ff = _setup_ff()
-    _cap(ff, AAAUSDT=0.80)
-    _check(not ff._mm_setup_targets(dict(ff._settings, mm_setup_on=False)), 'тумблер')
-    _check(not ff._mm_setup_targets(dict(ff._settings, mm_monitor_enabled=False)), 'монітор')
-    _check(_m.DEFAULT_SETTINGS.get('mm_setup_on') is True, 'дефолт УВІМК')
-    print('✓ 🎯 тумблер/вимкнений монітор — «Готовність» монітора не рахується')
-
-
-def test_ui_setup_column_and_toggle():
-    _check('id="ff-mm-setup-on"' in _HTML and 'mm_setup_on: _c(' in _HTML, 'тумблер+збереження')
-    body = _HTML[_HTML.index('function _mmSetupCell'):_HTML.index('function mmApplyState')]
-    _check('ffSetupCell(r.setup)' in body, 'той самий рендер, що в чергах')
-    for mark in ('⚖', '⏳', 'setup_on'):
-        _check(mark in body, f'стан {mark}')
-    _check("col === 'setup'" in _HTML, 'сортування')
-    out = _run_js(r'''
-mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:50, selectable:true},
-                    {symbol:'BBBUSDT', mm:null, strength:5, selectable:false}],
-  enabled:true, limited:false, ts:1});
-console.log(document.getElementById('mm-tbody').innerHTML);
-''')
-    rows = out.split('</tr>')
-    _check('⏳' in rows[0] and '⚖' in rows[1], out[:400])
-    print('✓ 🖥 колонка «🎯 Готовність» + тумблер; ⏳ і ⚖ розрізнені')
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]
