@@ -217,8 +217,12 @@ def _mk(allowed=True, price=1.02):
     return ns
 
 
-def _run(ns, sym='AAAUSDT', side='LONG', bars_old=2, breaker=False):
+def _run(ns, sym='AAAUSDT', side='LONG', bars_old=2, breaker=False, seed=True):
     vr, ft = _vol(side, bars_old, breaker)
+    if seed:
+        # Бот уже спостерігав монету: на графіку до того стояв СТАРІШИЙ блок
+        # (ft=1). Лише тоді наш блок — НОВОУТВОРЕНИЙ (вимога 30.09).
+        ns._liqvob_seen.setdefault(sym, {}).setdefault(side, [1])
     ns._liq_vob_check(sym, vr, '5m', _klines(bars_old))
     return ft
 
@@ -374,7 +378,7 @@ def test_the_disabled_path_does_not_eat_blocks():
     ns = _mk()
     _run(ns)
     _check(not _OPENED, 'шлях вимкнено — сигналу немає')
-    _check(not ns._liqvob_seen.get('AAAUSDT'), 'база НЕ має бути зачеплена')
+    _check(ns._liqvob_seen.get('AAAUSDT') == {'LONG': [1]}, 'база НЕ має бути зачеплена')
     _hunter([_table_row()], direction='LONG')      # увімкнули
     _run(ns)
     _check(len(_OPENED) == 1, 'після вмикання той самий блок мусить спрацювати')
@@ -389,6 +393,7 @@ def test_one_block_never_gives_two_signals():
     ns = _mk()
     vr, ft = _vol('LONG', 2)
     ns._vob_fired_ft['AAAUSDT'] = ft          # блок щойно пішов як 🟪 алерт
+    ns._liqvob_seen['AAAUSDT'] = {'LONG': [1]}  # монету вже бачили
     ns._liq_vob_check('AAAUSDT', vr, '5m', _klines(2))
     _check(not _OPENED, 'дубля сигналу по одному блоку бути не може')
     _check(ns._liqvob_diag['AAAUSDT']['state'] == 'dup', 'причина названа')
@@ -529,6 +534,20 @@ def test_a_coin_that_turns_into_the_banner_tab_fires_later():
     _run(ns, sym='AAAUSDT', side='LONG', bars_old=3)
     _check(len(_OPENED) == 1, f'монета у вкладці LONG → сигнал: {_OPENED}')
     print('✓ монета, що перейшла у вкладку банера, дає сигнал')
+
+def test_block_already_on_chart_at_first_sight_is_not_a_signal():
+    """🧹 30.09: «VOB, що вже на графіку, не беремо до уваги — лише
+    новоутворений». Перший показ монети (бот щойно почав її бачити) — навіть
+    СВІЖИЙ блок лише база; сигнал дасть наступний, новіший."""
+    _install_log(); _install_tm()
+    _OPENED.clear()
+    _hunter([_table_row()], direction='LONG')
+    ns = _mk()
+    _run(ns, bars_old=2, seed=False)
+    _check(not _OPENED, 'блок, що вже був на графіку, сигналом не є')
+    _check(ns._liqvob_diag['AAAUSDT']['state'] == 'first_sight', 'тиха база')
+    print('✓ блок, що вже на графіку, — лише база')
+
 
 if __name__ == '__main__':
     _fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]

@@ -110,27 +110,27 @@ def test_log_only_real_misses_not_stable_states():
     `fired`/`filtered` теж не дублюємо — їх пише основний шлях."""
     _LOGS.clear()
     o = _mk()
-    for oc in ('stale', 'epoch', 'no_1h_ob'):
+    for oc in ('epoch', 'no_1h_ob'):
         o._vob_log_decision('BTCUSDT', 'SHORT', oc, age=99, max_age=7, ft=1,
                             vol_tf='5m', detail='x', num=2)
-    _check(len(_LOGS) == 3, f'реальні пропуски залоговані (маємо {len(_LOGS)})')
+    _check(len(_LOGS) == 2, f'реальні пропуски залоговані (маємо {len(_LOGS)})')
     _check(all(k.get('source') == 'VOB' for _a, k in _LOGS), 'source=VOB')
 
     n = len(_LOGS)
     for oc in ('duplicate', 'numbered', 'no_candidate', 'first_sight',
-               'fired', 'filtered'):
+               'fired', 'filtered', 'stale'):   # stale — спам 30.09
         o._vob_log_decision('ETHUSDT', 'LONG', oc, age=3, max_age=7, ft=5,
                             vol_tf='5m', detail='y', num=1)
     _check(len(_LOGS) == n, 'стабільні стани та fired/filtered у лог НЕ йдуть')
     # але в діагностику (бейдж) вони записані
-    _check(o._vob_diag['ETHUSDT']['outcome'] == 'filtered', 'бейдж має актуальний стан')
+    _check(o._vob_diag['ETHUSDT']['outcome'] == 'stale', 'бейдж має актуальний стан')
 
     # анти-дубль: той самий стан ПІДРЯД по одній монеті — лише один рядок
-    o._vob_log_decision('SOLUSDT', 'LONG', 'stale', age=99, max_age=7, ft=7,
+    o._vob_log_decision('SOLUSDT', 'LONG', 'epoch', age=99, max_age=7, ft=7,
                         vol_tf='5m', detail='z', num=1)
     n2 = len(_LOGS)
-    _check(n2 == n + 1, 'перший stale по монеті — записано')
-    o._vob_log_decision('SOLUSDT', 'LONG', 'stale', age=99, max_age=7, ft=7,
+    _check(n2 == n + 1, 'перший epoch по монеті — записано')
+    o._vob_log_decision('SOLUSDT', 'LONG', 'epoch', age=99, max_age=7, ft=7,
                         vol_tf='5m', detail='z', num=1)
     _check(len(_LOGS) == n2, 'той самий стан ПІДРЯД не дублюється')
     print('✓ у лозі лише реальні пропуски; стабільні стани — тільки в бейджі')
@@ -316,19 +316,24 @@ def test_epoch_flow_reset_then_new_5m():
 
 
 def test_vob_outcome_breaker_trap():
-    """ПАСТКА BREAKER: коли поточний OB стає breaker, він випадає зі списку і
-    «найновішим» стає СТАРІШИЙ блок із МЕНШИМ formation_time. Зі старим правилом
-    «ft мусить бути БІЛЬШИМ» такий блок назавжди лишався 'duplicate' → бот вічно
-    «чекав #N+1». Тепер новим є БУДЬ-ЯКИЙ ще не опрацьований formation_time."""
+    """«НОВИЙ» = НОВОУТВОРЕНИЙ (вимога 30.09: «VOB, що вже на графіку, не беремо
+    до уваги — лише новоутворений має відповідати за сигнал»).
+
+    Історія: колись новизна була «водяним знаком», потім — «будь-який
+    неопрацьований ft» (щоб зняти пастку breaker). Друге давало СПАМ: блок,
+    що проявився після breaker, або блок із новим ft після зміни детектора, —
+    обидва вже стояли на графіку, а фаєрили як нові. Тепер: неопрацьований І
+    новіший за всі опрацьовані; перший показ монети — лише база."""
     f = SC._vob_outcome
     done = [200]                       # опрацювали блок з ft=200
     _check(f(done, 200, 1, 7) == 'duplicate', 'той самий ft → duplicate')
-    # breaker → «найновішим» став СТАРІШИЙ блок ft=150 (раніше зависало назавжди)
-    _check(f(done, 150, 1, 7) == 'fresh', 'старіший, але НЕ опрацьований → fresh')
-    _check(f([], 100, 1, 7) == 'fresh', 'перший показ + свіжий → fresh')
+    _check(f(done, 150, 1, 7) == 'duplicate',
+           'старіший блок (проявився після breaker) — уже був на графіку → не сигнал')
+    _check(f(done, 250, 1, 7) == 'fresh', 'новіший + свіжий → fresh (сигнал)')
+    _check(f([], 100, 1, 7) == 'first_sight', 'перший показ + свіжий → лише база')
     _check(f([], 100, 99, 7) == 'first_sight', 'перший показ + старий → база')
-    _check(f(done, 150, 99, 7) == 'stale', 'новий, але старий за віком → stale')
-    _check(f(done, 150, 99, None) == 'fresh', 'без вікна віку → fresh')
+    _check(f(done, 250, 99, 7) == 'stale', 'новіший, але старий за віком → stale')
+    _check(f(done, 250, 99, None) == 'fresh', 'без вікна віку → fresh')
 
     # список опрацьованих обмежений (не росте нескінченно)
     seen = {}
@@ -364,8 +369,9 @@ def test_reset_does_not_swallow_block_formed_after_1h_ob():
             SC._vob_seen_add(seen, side, ft)
     _check(SC._vob_seen_list(seen, 'SHORT') == [900], 'старий SHORT забазовано')
     _check(SC._vob_seen_list(seen, 'LONG') == [], 'новий LONG НЕ забазовано')
-    _check(SC._vob_outcome(SC._vob_seen_list(seen, 'LONG'), 1500, 1, None) == 'fresh',
-           'LONG-блок після 1H-OB → fresh (стане VOB #1 і піде у фільтри)')
+    _d = SC._vob_seen_list(seen, 'LONG')
+    _check(not (1500 in _d or (_d and 1500 <= max(_d))),
+           'LONG-блок після 1H-OB → новий у гілці такту (стане VOB #1)')
     _check(SC._vob_outcome(SC._vob_seen_list(seen, 'SHORT'), 900, 1, None) == 'duplicate',
            'старий SHORT → duplicate (не смітить сигналами)')
     print('✓ скидання такту НЕ ковтає блок, що виник ПІСЛЯ 1H-OB (кейс NEARUSDT)')
@@ -441,6 +447,38 @@ def test_vob_state_persist_roundtrip():
     print('✓ стан VOB переживає рестарт (лічильник/епоха/fired/база)')
 
 
+def test_detector_change_rebases_silently():
+    """🧹 30.09 (спам у лозі): після зміни детектора formation_time блоків
+    інші, і стара база їх не впізнає → усі блоки, що ВЖЕ на графіку, фаєрили
+    як «нові». База несе версію; не та версія → перший прохід кожної монети
+    лише перебазовує графік, без сигналів."""
+    store = {scmod.DB_KEY_VOB_STATE: {'seen': {'BTCUSDT': {'LONG': [5]}},
+                                      'epoch': {}, 'fired': {}, 'counter': {}}}
+
+    class _DB:
+        def set_setting(self, k, v): store[k] = v
+        def get_setting(self, k, d=None): return store.get(k, d)
+
+    def _fresh():
+        o = SC.__new__(SC)
+        o.db = _DB(); o._vob_alert_seen = {}; o._vob_ob_epoch = {}
+        o._vob_epoch_fired = {}; o._vob_counter = {}
+        o._vob_rebase_pending = False; o._vob_rebased = set()
+        return o
+    a = _fresh(); a._load_vob_state()
+    _check(a._vob_rebase_pending is True, 'стара база (без версії) → перебазування')
+    a._persist_vob_state()
+    _check(store[scmod.DB_KEY_VOB_STATE].get('ver') == SC.VOB_BASELINE_VER,
+           'нова база пишеться з поточною версією')
+    b = _fresh(); b._load_vob_state()
+    _check(b._vob_rebase_pending is False, 'та сама версія → без перебазування')
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            'detection', 'smc_scanner.py'), encoding='utf-8').read()
+    _check('self._vob_rebase_pending' in src and 'self._vob_rebased.add(symbol)' in src,
+           'скан перебазовує монету один раз')
+    print('✓ зміна детектора → тихе перебазування, без потоку сигналів')
+
+
 if __name__ == '__main__':
     test_edge_outcome_fresh_first_sight_fires()
     test_edge_outcome_running()
@@ -460,4 +498,5 @@ if __name__ == '__main__':
     test_reset_does_not_swallow_block_formed_after_1h_ob()
     test_every_new_1h_ob_resets_even_same_direction()
     test_vob_state_persist_roundtrip()
+    test_detector_change_rebases_silently()
     print('\nУсі тести VOB (1H-OB такт + catch-all + блок=сигнал + чистий лог) пройдено ✅')

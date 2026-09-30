@@ -697,6 +697,9 @@ class SMCScanner:
         # OB, коли за один цикл з'явились обидва. Edge за formation_time окремо на
         # кожен бік. (Раніше — один int/symbol → протилежний VOB зникав.)
         self._vob_alert_seen: Dict[str, Dict[str, int]] = {}
+        # 🧹 Перебазування VOB після зміни детектора (див. VOB_BASELINE_VER).
+        self._vob_rebase_pending = False
+        self._vob_rebased = set()
         # 🔒 vob_one_per_ob: {symbol → bar_time 1H-OB, який ЗАРАЗ відстежуємо}.
         # 1H-OB = ТАКТ: свіжий 1H-OB скидає 5m-базу й чекає новий 5m-VOB.
         self._vob_ob_epoch: Dict[str, int] = {}
@@ -1202,6 +1205,7 @@ class SMCScanner:
                 'epoch': dict(self._vob_ob_epoch),
                 'fired': dict(self._vob_epoch_fired),
                 'counter': dict(self._vob_counter),
+                'ver': self.VOB_BASELINE_VER,
             })
         except Exception as e:
             print(f"[SMC] VOB state persist error: {e}")
@@ -1214,6 +1218,10 @@ class SMCScanner:
             st = self.db.get_setting(DB_KEY_VOB_STATE, None)
             if not isinstance(st, dict):
                 return
+            if st.get('ver') != self.VOB_BASELINE_VER:
+                # База записана ІНШИМ детектором → перший прохід кожної монети
+                # лише перебазовує поточні блоки (без сигналів).
+                self._vob_rebase_pending = True
             seen = st.get('seen') or {}
             if isinstance(seen, dict):
                 # Приймаємо і НОВИЙ формат (список ft), і СТАРИЙ (одиночний int).
@@ -2459,6 +2467,20 @@ class SMCScanner:
                                         if not isinstance(_seen, dict):
                                             _seen = {}          # per-side база (міграція зі старого int)
                                             self._vob_alert_seen[symbol] = _seen
+                                        # 🧹 ПЕРЕБАЗУВАННЯ після зміни детектора (версія бази
+                                        # у БД ≠ поточна): блоки, що ЗАРАЗ на графіку, лише
+                                        # позначаємо опрацьованими — жодного сигналу. Інакше
+                                        # нові formation_time (інша детекція) виглядали б
+                                        # «новими» і давали потік сигналів по старих блоках.
+                                        if (self._vob_rebase_pending
+                                                and symbol not in self._vob_rebased):
+                                            for (_s0, _o0, _f0) in _cands:
+                                                self._vob_seen_add(_seen, _s0, _f0)
+                                            _bt0 = self._current_ob_bartime(symbol)
+                                            if _bt0 is not None:
+                                                self._vob_ob_epoch[symbol] = _bt0
+                                            self._vob_rebased.add(symbol)
+                                            self._persist_vob_state()
                                         _sl = int(self._settings.get('volumized_swing_length', 10) or 10)
                                         _cfg_age = int(self._settings.get('vob_alert_max_age_bars', 0) or 0)
                                         # ⏱ ВІКНО СВІЖОСТІ (вимога користувача): сигнал = МОМЕНТ
@@ -2512,7 +2534,7 @@ class SMCScanner:
                                                 for _cside, _cand, _ft in _cands:   # старіші → новіші
                                                     _done = self._vob_seen_list(_seen, _cside)
                                                     _age = self._vob_age_bars(vol_klines, _ft)
-                                                    if _ft in _done:
+                                                    if _ft in _done or (_done and _ft <= max(_done)):
                                                         # не новий (наявний/старіший) → лічильник НЕ
                                                         # росте. Показуємо ПОТОЧНИЙ стан лічильника,
                                                         # щоб у UI завжди було видно такт нумерації.
@@ -2618,6 +2640,8 @@ class SMCScanner:
                                                                            ft=_ft, vol_tf=vol_tf)
                                                     continue
                                                 if _out == 'stale':
+                                                    # Опрацьовано назавжди — більше не повертаємось.
+                                                    self._vob_seen_add(_seen, _cside, _ft)
                                                     self._vob_log_decision(
                                                         symbol, _cside, 'stale', age=_age, max_age=_max_age,
                                                         ft=_ft, vol_tf=vol_tf,
@@ -3500,6 +3524,10 @@ class SMCScanner:
 
     # Скільки останніх formation_time тримаємо як «вже опрацьовані» на бік.
     VOB_SEEN_CAP = 12
+    # Версія бази «опрацьованих» VOB. Підняти, коли змінюється детектор
+    # (інші formation_time) — тоді перший прохід мовчки перебазує графік.
+    # 2 = Zone Count до Combine (30.09).
+    VOB_BASELINE_VER = 2
     # Скільки живих блоків віддавати на показ (LuxAlgo теж має ліміт показу)
     # і стеля памʼяті на кількість монет у `_ob_zones`.
     OB_ZONES_SHOW = 8
@@ -3640,21 +3668,28 @@ class SMCScanner:
         поточний OB ставав breaker, він випадав зі списку, «найновішим» ставав
         СТАРІШИЙ блок із МЕНШИМ formation_time → він назавжди лишався
         'duplicate', і бот вічно «чекав #N+1», хоч на графіку блок змінився.
-        ТЕПЕР новим вважається БУДЬ-ЯКИЙ блок, якого ще НЕ опрацьовували:
-          • 'duplicate'   — цей formation_time уже опрацьовано;
-          • 'first_sight' — перший показ і блок СТАРИЙ (тиха база);
-          • 'stale'       — новий блок, але старший за поріг свіжості;
-          • 'fresh'       — новий блок у межах свіжості → кандидат у сигнал.
+        ТЕПЕР (вимога 30.09: «VOB, що вже на графіку, не беремо — лише
+        НОВОУТВОРЕНИЙ»):
+          • 'duplicate'   — цей formation_time уже опрацьовано, АБО блок
+                            СТАРІШИЙ за найновіший опрацьований (він уже був
+                            на графіку — напр. проявився після breaker);
+          • 'first_sight' — перший показ монети: ВСЕ, що зараз на графіку,
+                            лише база, НЕЗАЛЕЖНО від віку (тиша);
+          • 'stale'       — новіший блок, але старший за поріг свіжості;
+          • 'fresh'       — НОВОУТВОРЕНИЙ блок у межах свіжості → сигнал.
         """
         try:
             ft = int(ft)
         except (TypeError, ValueError):
             return 'duplicate'
-        if ft in (done_list or []):
+        done = [int(x) for x in (done_list or []) if isinstance(x, (int, float))]
+        if ft in done:
+            return 'duplicate'
+        if not done:
+            return 'first_sight'
+        if ft <= max(done):
             return 'duplicate'
         _fresh = (age is None or max_age is None or age <= max_age)
-        if not done_list:
-            return 'fresh' if _fresh else 'first_sight'
         return 'fresh' if _fresh else 'stale'
 
     @staticmethod
@@ -3786,7 +3821,6 @@ class SMCScanner:
             return
         # ── ЩО ЙДЕ В 🧾 ЛОГ, А ЩО ЛИШЕ В БЕЙДЖ ─────────────────────────────
         # У лог — ЛИШЕ реальні події та реальні ПРОПУСКИ сигналу:
-        #   • stale     — блок з'явився, але вже застарів → сигнал втрачено;
         #   • epoch     — такт 1H-OB уже витрачений результативним сигналом;
         #   • no_1h_ob  — немає 1H-OB, тому сигналів не буде.
         # НЕ в лог (це СТАБІЛЬНІ СТАНИ, а не події — вони видні в бейджі
@@ -3795,10 +3829,12 @@ class SMCScanner:
         #   • duplicate     — блок уже опрацьований, чекаємо наступний;
         #   • numbered      — новий блок, але такт уже витрачено;
         #   • no_candidate  — валідного VOB просто немає;
-        #   • first_sight   — тиха базова лінія.
+        #   • first_sight   — тиха базова лінія;
+        #   • stale         — старий блок (30.09: «VOB, що вже на графіку, не
+        #                     беремо до уваги» — це НЕ подія, у лозі був спам).
         # 'fired'/'filtered' теж не дублюємо — основний шлях уже пише
         # `signal`/`rejected` з повним розкладом фільтрів.
-        if outcome not in ('stale', 'epoch', 'no_1h_ob'):
+        if outcome not in ('epoch', 'no_1h_ob'):
             return
         try:
             from detection.activity_log import log_activity
