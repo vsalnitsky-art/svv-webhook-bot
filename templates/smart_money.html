@@ -8134,11 +8134,11 @@ async function loadChart() {
         //
         // 🖼 ЯК У TRADINGVIEW: малюємо ВСІ живі блоки ОБОХ сімей.
         //
-        // ⚠️ Прибрано умову `d.ob_filter_enabled`: блоки малюються ЗАВЖДИ.
-        // У LuxAlgo вони теж не залежать від того, чи хтось за ними торгує —
-        // це ПОКАЗ структури, а тумблер `Require OB Match` керує ВОРОТАМИ
-        // ВХОДУ. Прив'язка показу до воріт означала, що при вимкненому
-        // фільтрі графік просто мовчав про структуру, яка на ньому є.
+        // ⚠️ OB-ФІЛЬТР ВИМКНЕНО → НА ГРАФІКУ OB НЕМАЄ (вимога 30.09, дослівно:
+        // «Якщо OB вимкнено, то на графіку також їх не має бути»). Це СКАСОВУЄ
+        // рішення 07.09 «малювати завжди, як у LuxAlgo»: з вимкненим фільтром
+        // пунктирні OB-бокси змішувались із боксом VOB, і на графіку висіли
+        // «казна які» блоки. Малюємо лише коли `Require OB Match` УВІМКНЕНО.
         //
         // Було: рівно ОДИН бокс із `d.last_ob`. Через це графік бота фізично не
         // міг збігтися з LuxAlgo — там одночасно висять і бичачі, і ведмежі
@@ -8147,7 +8147,9 @@ async function loadChart() {
         //
         // Джерело — `d.ob_zones` (готовий знімок зі СКАНУ, не рахується тут).
         // Фолбек на `d.last_ob` — коли скан ще не встиг заповнити зони.
-        if (obMatchPrim) {
+        if (obMatchPrim && !d.ob_filter_enabled) {
+            obMatchPrim.setOBs([]);          // фільтр вимкнено → жодного OB-боксу
+        } else if (obMatchPrim) {
             const zones = d.ob_zones || {};
             const obTfS = (d.ob_filter_timeframe || '1h').toUpperCase();
             const seen = new Set();
@@ -8225,7 +8227,11 @@ async function loadChart() {
         const ob = d.last_ob;
         const obFilterOn = !!d.ob_filter_enabled;
         const obTf = (d.ob_filter_timeframe || '1h').toUpperCase();
-        if (obBadge && ob && ob.bias) {
+        // ⚠️ Бейдж OB — теж лише при увімкненому фільтрі (як ★ у watchlist):
+        // вимкнено → про OB над графіком не пишемо нічого.
+        if (obBadge && !obFilterOn) {
+            obBadge.style.display = 'none';
+        } else if (obBadge && ob && ob.bias) {
             const isBull = ob.bias === 'BULLISH';
             const sideLabel = isBull ? 'Long' : 'Short';
             const icon = isBull ? '🟢' : '🔴';
@@ -8294,7 +8300,7 @@ async function loadChart() {
                 '',
                 zonesLine,
                 'Бейдж = ПОТОЧНИЙ блок (за ним працюють ворота).',
-                'На графіку намальовані ВСІ живі блоки обох сімей — як у LuxAlgo.',
+                'На графіку — ВСІ живі блоки обох сімей (лише при увімкненому OB-фільтрі).',
                 '',
                 'Pine SMC_PRO_BOT__47_ algorithm:',
                 '• parsedHigh/Low volatility filter (ATR 200)',

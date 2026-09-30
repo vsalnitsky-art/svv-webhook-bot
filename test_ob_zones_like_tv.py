@@ -225,13 +225,24 @@ def test_chart_draws_both_families_from_zones():
            'той самий блок може бути в обох сім\'ях — дублікат не малюємо двічі')
     _check('push(d.last_ob' in body,
            'потрібен фолбек на last_ob, поки скан не заповнив зони')
-    # ⚠️ ПОКАЗ НЕ ЗАЛЕЖИТЬ ВІД ВОРІТ. Раніше бокси малювались лише при
-    # увімкненому `Require OB Match` — тобто при вимкненому фільтрі графік
-    # мовчав про структуру, яка на ньому Є. У LuxAlgo блоки малюються завжди.
+    # ⚠️ ВИМОГА 30.09 (скасовує 07.09): OB-фільтр вимкнено → OB-боксів на
+    # графіку НЕМАЄ. Переписано, а не «полагоджено» — вимога змінилась.
     code = '\n'.join(l for l in body.splitlines() if not l.strip().startswith('//'))
-    _check('if (obMatchPrim) {' in code and 'ob_filter_enabled' not in code,
-           'малювання боксів НЕ сміє залежати від тумблера воріт')
-    print('✓ графік малює обидві сім\'ї, без дублів, із фолбеком і без прив\'язки до воріт')
+    _check('if (obMatchPrim && !d.ob_filter_enabled) {' in code
+           and 'obMatchPrim.setOBs([]);' in code,
+           'вимкнений OB-фільтр мусить ГАСИТИ всі OB-бокси')
+    print('✓ графік малює обидві сім\'ї без дублів — і лише при увімкненому OB-фільтрі')
+
+
+def test_badge_hidden_when_ob_filter_off():
+    html = open(os.path.join(_ROOT, 'templates/smart_money.html')).read()
+    i = html.index("const obBadge = document.getElementById('sm-ob-badge');",
+                   html.index('=== Require OB Match box'))
+    body = html[i:i + 1500]
+    _check("if (obBadge && !obFilterOn) {" in body
+           and body.index('!obFilterOn') < body.index('ob && ob.bias'),
+           'бейдж OB ховається ПЕРШИМ, коли фільтр вимкнено')
+    print('✓ бейдж OB схований при вимкненому фільтрі')
 
 
 def test_badge_still_shows_the_single_gate_block():
@@ -260,4 +271,5 @@ if __name__ == '__main__':
     test_primitive_draws_a_list_not_one_box()
     test_chart_draws_both_families_from_zones()
     test_badge_still_shows_the_single_gate_block()
+    test_badge_hidden_when_ob_filter_off()
     print('\nУсі тести «блоки як у TradingView» пройдено ✅')
