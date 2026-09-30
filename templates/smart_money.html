@@ -12493,9 +12493,24 @@ function _mmPaintBias(src, ids, srcName) {
     bar.style.width = pct.toFixed(0) + '%';
     // Немає напрямку → СІРИЙ бар: інакше залишок смуги читався б як «схил у LONG».
     bar.style.background = dir ? dirGrad(dir) : 'linear-gradient(90deg,#6b7280,#9aa3b5)';
+    // 💪 ДВА ЧИСЛА (30.09): `pct` — ОДНОСТАЙНІСТЬ (частка маси в один бік),
+    // `avg_str` — СЕРЕДНЯ СИЛА монет. Слово тиску («легкий/помірний…») — зі
+    // шкали СИЛИ монети (`fuelBand`), тож беремо його від `avg_str`, а не від
+    // одностайності: інакше «83% сильний тиск» суперечив таблиці, де в жодної
+    // монети немає більше 54%.
     if (lab) {
-        lab.textContent = Math.round(pct) + '% ' + fuelBand(pct).txt;
+        const side = dir === 'LONG' ? 'LONG' : (dir === 'SHORT' ? 'SHORT'
+            : (Number(b.net || 0) > 0 ? 'LONG' : (Number(b.net || 0) < 0 ? 'SHORT' : '')));
+        const hasAvg = b.avg_str !== undefined && b.avg_str !== null;
+        const avg = Number(b.avg_str || 0);
+        lab.textContent = Math.round(pct) + '%' + (side ? ' за ' + side : '')
+            + (hasAvg ? ' · сила ' + Math.round(avg) + '% ' + fuelBand(avg).txt
+                      : ' ' + fuelBand(pct).txt);
         lab.style.color = dir ? dirTint(dir) : '#cbd5e1';
+        lab.title = 'Одностайність ' + pct.toFixed(1) + '%: яка частка всієї маси '
+            + srcName + ' тягне в один бік. Середня сила '
+            + (hasAvg ? avg.toFixed(1) + '%' : '—') + ': наскільки в середньому '
+            + 'виражений ' + srcName + ' по монеті (та сама шкала, що в колонці таблиці).';
     }
     // ⏱ Скільки тримається ПОТОЧНИЙ стан. `since` — момент із сервера, тож
     // перезавантаження сторінки таймер не обнуляє.
@@ -12530,6 +12545,8 @@ function _mmPaintBias(src, ids, srcName) {
             + `🔴 SHORT: ${b.n_short || 0} монет · вага ${b.w_short || 0}\n`
             + `⚖ рівновага: ${b.n_flat || 0} монет · вага ${b.w_flat || 0}\n`
             + `Разом: ${b.coins || 0} монет · вага ${b.w_total || 0}\n`
+            + `💪 Середня сила: ${b.avg_str != null ? b.avg_str + '%' : '—'} `
+            + '(вага ÷ монет) — від неї слово тиску; відсоток смуги — ОДНОСТАЙНІСТЬ, а не сила.\n'
             + 'Фільтр «Сила ≥» на банер НЕ впливає — він лише ховає рядки таблиці.\n'
             + '📍 Рахуються ВСІ монети монітора, у тому числі ті, що вже в роботі '
             + '(💼 угода / 🎯 черга): банер описує рівно те, що під ним видно, і '

@@ -3042,6 +3042,42 @@ console.log(JSON.stringify({o:g('mm-bias-status').textContent, n:g('mm-biasnew-s
     _check(d['w'] == '40%' and 'Новий МММ' in d['tip'], d)
     print('✓ JS: два банери малюються незалежно, кожен зі свого джерела')
 
+
+# ═══ 32. 💪 ОДНОСТАЙНІСТЬ ≠ СИЛА (скарга 30.09) ═══════════════════════════
+def test_banner_separates_consensus_from_average_strength():
+    """«Новий МММ max 54%, решта нижче — як банер показує 83%?» 83% це
+    одностайність (частка маси в один бік), а сила — середнє по монетах."""
+    snap = {f'S{i}USDT': {'new_status': 'SHORT', 'new_strength': s}
+            for i, s in enumerate((54, 40, 30, 20, 16))}
+    snap['FUSDT'] = {'new_status': None, 'new_strength': 8}
+    b, _, _ = _m.mm_bias_step(snap, 1000.0, 0, {}, 0.0, {},
+                              st_key='new_status', str_key='new_strength')
+    _check(b['dir'] == 'SHORT' and b['pct'] > 90, f'одностайність висока: {b}')
+    _check(b['avg_str'] == round((54 + 40 + 30 + 20 + 16 + 8) / 6, 1),
+           f'середня сила = вага ÷ монет: {b}')
+    _check(b['avg_str'] <= 54, 'середня сила не може перевищити найсильнішу монету')
+    e, _, _ = _m.mm_bias_step({}, 1000.0, 0, {}, 0.0, {})
+    _check(e['avg_str'] == 0.0, 'порожній знімок → 0, а не ділення на нуль')
+    print('✓ 💪 банер: одностайність і середня сила — різні числа')
+
+
+def test_js_label_takes_pressure_word_from_average_strength():
+    out = _run_js(r'''
+const base = {rows:[], enabled:true, limited:false, ts:1};
+mmApplyState(Object.assign({}, base, {
+  bias:{dir:'LONG', pct:78, avg_str:52, since: Math.floor(Date.now()/1000) - 10},
+  bias_new:{dir:'SHORT', pct:83, avg_str:25, since: Math.floor(Date.now()/1000) - 75}}));
+const g = id => document.getElementById(id);
+console.log(JSON.stringify({o:g('mm-bias-label').textContent, n:g('mm-biasnew-label').textContent}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['n'].startswith('83% за SHORT') and 'сила 25%' in d['n'], d)
+    _check('легкий тиск' in d['n'] and 'сильний' not in d['n'],
+           f'слово тиску мусить бути від СИЛИ (25%), а не від 83%: {d}')
+    _check('78% за LONG' in d['o'] and 'помірний тиск' in d['o'], d)
+    print('✓ JS: «83% за SHORT · сила 25% легкий тиск» — без протиріччя з таблицею')
+
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]
     bad = 0
