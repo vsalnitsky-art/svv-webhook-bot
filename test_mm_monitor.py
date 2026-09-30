@@ -21,6 +21,7 @@ watchlist там не буде НІКОЛИ (на скріні — 0 рядкі�
   • черги і ворота входу лишились недоторканими.
 """
 import ast
+import inspect
 import importlib.util
 import os
 import sys
@@ -89,6 +90,7 @@ def _mk(limited=False, enabled=True, mon=True):
     # тести «нічого не роблять».
     ff._mm_bias_cand = {}
     ff._mm_bias_new, ff._mm_bias_new_since, ff._mm_bias_new_cand = {}, 0.0, {}
+    ff._mm_move, ff._mm_move_since, ff._mm_move_cand = {}, 0.0, {}
     # 🔻 Стан детектора корекції (19.09) — те саме правило: нове поле стану
     # ЗАВЖДИ додавати сюди, інакше `_mm_capture` мовчки ковтне AttributeError.
     ff._mm_corr_st, ff._mm_corr, ff._mm_lever_hist = {}, {}, []
@@ -523,10 +525,9 @@ const document = {
                           'mm-bias-label', 'mm-bias-timer',
                           'mm-bias-status', 'mm-biasnew-banner', 'mm-biasnew-bar',
                           'mm-biasnew-label', 'mm-biasnew-timer',
-                          'mm-biasnew-status', 'mm-biascons-banner',
-                          'mm-biascons-bar', 'mm-biascons-label',
-                          'mm-biascons-timer', 'mm-biascons-status',
-                          'mm-biascons-restored'].includes(id)
+                          'mm-biasnew-status', 'mm-move-banner', 'mm-move-bar',
+                          'mm-move-label', 'mm-move-timer', 'mm-move-status',
+                          'mm-move-cand', 'mm-move-restored'].includes(id)
                          ? _el(id) : null),
   querySelectorAll: sel => (String(sel).includes('data-mmsort') ? _ths : _tabs),
   // Вкладки шукають і поштучно (лічильник «у фільтрі / поза фільтром»).
@@ -1254,7 +1255,9 @@ def test_price_history_is_trimmed_and_forgets_dead_symbols():
     ff = _mk()
     # ⚠️ Годинник ВІРТУАЛЬНИЙ (`ff._clock`) — `time.time()` тут дав би точку
     # з майбутнього і тест перевіряв би не те.
-    old = ff._clock[0] - (_m.MM_PRICE_WINDOW_SEC + 10 * _m.CYCLE_SECS)
+    # ⚠️ Історія тримається під НАЙДОВШЕ вікно банера «📈 Рух ринку»
+    # (`MM_MOVE_MAX_SEC`, 30.09), а не лише 15 хв колонки «Рух».
+    old = ff._clock[0] - (_m.MM_MOVE_MAX_SEC + 10 * _m.CYCLE_SECS)
     ff._mm_price_hist = {'BTCUSDT': [(old, 1.0)], 'ZZZUSDT': [(old, 2.0)]}
     _cap(ff, BTCUSDT=0.5)
     _check('ZZZUSDT' not in ff._mm_price_hist,
@@ -3087,76 +3090,100 @@ console.log(JSON.stringify({o:g('mm-bias-label').textContent, n:g('mm-biasnew-la
     print('✓ JS: «83% за SHORT · сила 25% легкий тиск» — без протиріччя з таблицею')
 
 
-# ═══ 33. 🧭 МММ-КОНСЕНСУС (вимога 30.09) ═════════════════════════════════
-def test_consensus_needs_both_banners_to_agree():
-    L = {'dir': 'LONG', 'pct': 81, 'avg_side': 'LONG', 'avg_str': 46}
-    L2 = {'dir': 'LONG', 'pct': 60, 'avg_side': 'LONG', 'avg_str': 30}
-    S = {'dir': 'SHORT', 'pct': 84, 'avg_side': 'SHORT', 'avg_str': 34}
-    F = {'dir': None, 'pct': 3, 'avg_side': 'LONG', 'avg_str': 12}
-    c, since = _m.mm_consensus_step(L, L2, 1000.0, {}, 0.0)
-    _check(c['state'] == 'LONG' and c['dir'] == 'LONG', c)
-    _check(c['strength'] == 30.0 and c['pct'] == 60.0, f'сила = МЕНША з двох: {c}')
-    k, _ = _m.mm_consensus_step(L, S, 1000.0, {}, 0.0)
-    _check(k['state'] == 'CONFLICT' and k['dir'] is None and k['strength'] == 0, k)
-    f, _ = _m.mm_consensus_step(L, F, 1000.0, {}, 0.0)
-    _check(f['state'] == 'FLAT' and f['dir'] is None, f)
-    e, _ = _m.mm_consensus_step({}, {}, 1000.0, {}, 0.0)
-    _check(e['state'] is None, e)
-    # таймер: той самий стан — продовжується; зміна (у т.ч. орієнтації конфлікту) — заново
-    c2, s2 = _m.mm_consensus_step(L, L2, 1300.0, c, since)
-    _check(s2 == 1000.0, 'той самий стан не скидає таймер')
-    k2, ks = _m.mm_consensus_step(L, S, 1400.0, c2, s2)
-    _check(ks == 1400.0, 'збіг → конфлікт скидає таймер')
-    Sx = {'dir': 'SHORT', 'pct': 70, 'avg_side': 'SHORT', 'avg_str': 20}
-    Lx = {'dir': 'LONG', 'pct': 70, 'avg_side': 'LONG', 'avg_str': 20}
-    k3, ks3 = _m.mm_consensus_step(Sx, Lx, 1500.0, k2, ks)
-    _check(ks3 == 1500.0, 'інша орієнтація конфлікту = новий стан')
-    print('✓ 🧭 консенсус: збіг → напрямок, розбіжність → конфлікт, сила = мін.')
+# ═══ 33. 📈 БАНЕР «РУХ РИНКУ» (вимога 30.09) ════════════════════════════
+def _hist(now, start, end, span=900, pts=31):
+    """Лінійна історія ціни start→end за `span` секунд."""
+    return [(now - span + i * span / (pts - 1), start + (end - start) * i / (pts - 1))
+            for i in range(pts)]
 
 
-def test_consensus_is_tracked_persisted_and_display_only():
-    import inspect
-    src = inspect.getsource(FF._mm_capture)
-    _check('_mm_track_consensus' in src, 'двигун рахує консенсус тим самим тактом')
-    _check('mm_cons_since' in inspect.getsource(FF._persist_state), 'персист')
-    _check('mm_cons_since' in inspect.getsource(FF._load_state), 'відновлення')
-    _check("'bias_cons'" in inspect.getsource(FF.mm_monitor_state), 'стан віддає bias_cons')
-    import re, pathlib
-    root = pathlib.Path(__file__).parent / 'detection'
-    for pth in root.rglob('*.py'):
-        t = pth.read_text(encoding='utf-8', errors='ignore')
+def test_market_move_counts_percent_breadth_and_average():
+    now = 100_000.0
+    hm = {'AUSDT': _hist(now, 100, 102),     # +2%
+          'BUSDT': _hist(now, 10, 10.1),     # +1%
+          'CUSDT': _hist(now, 50, 49.5),     # -1%
+          'DUSDT': _hist(now, 1, 1.0005),    # +0.05% → на місці
+          'EUSDT': _hist(now, 5, 5.2, span=120)}  # історії замало — не рахуємо
+    mv = _m.mm_market_move(hm, now, 900)
+    _check(mv['coins'] == 4 and mv['up'] == 2 and mv['down'] == 1 and mv['flat'] == 1, mv)
+    _check(mv['avg_chg'] == round((2 + 1 - 1 + 0.05) / 4, 2), mv)
+    _check(mv['up_pct'] == 50.0 and mv['down_pct'] == 25.0, mv)
+    _check(mv['snap']['AUSDT']['mv_status'] == 'LONG'
+           and abs(mv['snap']['AUSDT']['mv_w'] - 2.0) < 1e-6, 'вага = |зміна %|')
+    e = _m.mm_market_move({}, now, 900)
+    _check(e['pending'] and e['coins'] == 0, 'порожньо → чесне «набираємо»')
+    print('✓ 📈 рух ринку: ширина, середня зміна, вага за розміром руху')
+
+
+def test_move_banner_direction_uses_the_same_hysteresis_and_window():
+    ff = _mk()
+    ff._settings['mm_bias_confirm_sec'] = 0
+    now = 200_000.0
+    ff._mm_price_hist = {f'U{i}USDT': _hist(now, 100, 101.5) for i in range(8)}
+    ff._mm_price_hist.update({f'D{i}USDT': _hist(now, 100, 99.8) for i in range(2)})
+    ff._mm_track_move(now, ff.get_settings())
+    m = ff._mm_move
+    _check(m['dir'] == 'LONG' and m['up'] == 8 and m['down'] == 2, m)
+    _check(m['window_min'] == 15 and m['avg_chg'] > 1.0, m)
+    _check('mm_bias_step(' in inspect.getsource(FF._mm_track_move),
+           'напрямок — через ту саму mm_bias_step')
+    # вікно 5 хв: історія 15 хв ріжеться своїм вікном
+    ff._settings['mm_move_window_min'] = 5
+    ff._mm_track_move(now, ff.get_settings())
+    _check(ff._mm_move['window_min'] == 5, ff._mm_move)
+    print('✓ 📈 напрямок банера — той самий гістерезис/антиспам, вікно з налаштування')
+
+
+def test_move_banner_is_pending_until_history_fills_half_the_window():
+    ff = _mk()
+    now = 300_000.0
+    ff._mm_price_hist = {'AUSDT': _hist(now, 100, 101, span=120)}
+    ff._mm_track_move(now, ff.get_settings())
+    _check(ff._mm_move.get('pending') and ff._mm_move.get('need_sec') == 450, ff._mm_move)
+    print('✓ 📈 до половини вікна історії — «набираємо», а не вигаданий рух')
+
+
+def test_move_banner_persists_and_is_display_only():
+    _check('mm_move_since' in inspect.getsource(FF._persist_state), 'персист')
+    _check('mm_move_since' in inspect.getsource(FF._load_state), 'відновлення')
+    _check("'move'" in inspect.getsource(FF.mm_monitor_state), 'стан віддає move')
+    _check(_m.MM_MOVE_MAX_SEC == 3600, 'історія тримається під найдовше вікно')
+    import pathlib
+    for pth in (pathlib.Path(__file__).parent / 'detection').rglob('*.py'):
         if pth.name == 'fuel_filter.py':
             continue
-        _check('_mm_cons' not in t and 'bias_cons' not in t,
-               f'консенсус — лише показ, {pth.name} не має його читати')
-    print('✓ 🧭 консенсус рахується в двигуні, персиститься, торгівлю не чіпає')
+        t = pth.read_text(encoding='utf-8', errors='ignore')
+        _check('_mm_move' not in t, f'{pth.name} не має читати «Рух ринку»')
+    _check('biascons' not in _HTML and '_mm_cons' not in _SRC,
+           'третій банер (консенсус) прибрано повністю')
+    print('✓ 📈 персист + лише показ + консенсус прибрано')
 
 
-def test_js_consensus_banner_shows_agreement_and_conflict():
+def test_js_move_banner_shows_percent_and_breadth():
     out = _run_js(r'''
 const base = {rows:[], enabled:true, limited:false, ts:1};
 const now = Math.floor(Date.now()/1000);
 mmApplyState(Object.assign({}, base, {bias:{dir:'LONG'}, bias_new:{dir:'SHORT'},
-  bias_cons:{state:'CONFLICT', dir:null, old_dir:'LONG', new_dir:'SHORT', since: now - 30}}));
+  move:{dir:'LONG', coins:70, up:64, down:3, flat:3, up_pct:91.4, down_pct:4.3,
+        avg_chg:0.82, med_chg:0.7, window_min:15, since: now - 90}}));
 const g = id => document.getElementById(id);
-const a = {st:g('mm-biascons-status').textContent, lab:g('mm-biascons-label').textContent,
-           w:g('mm-biascons-bar').style.width};
-mmApplyState(Object.assign({}, base, {bias:{dir:'LONG'}, bias_new:{dir:'LONG'},
-  bias_cons:{state:'LONG', dir:'LONG', strength:30, old_dir:'LONG', new_dir:'LONG', since: now - 30}}));
-const b = {st:g('mm-biascons-status').textContent, lab:g('mm-biascons-label').textContent,
-           w:g('mm-biascons-bar').style.width};
+const a = {st:g('mm-move-status').textContent, lab:g('mm-move-label').textContent,
+           w:g('mm-move-bar').style.width};
+mmApplyState(Object.assign({}, base, {move:{pending:true, have_sec:120, need_sec:450, window_min:15}}));
+const b = {lab:g('mm-move-label').textContent, w:g('mm-move-bar').style.width};
 console.log(JSON.stringify({a, b}));
 ''')
     import json
     d = json.loads(out)
-    _check('КОНФЛІКТ' in d['a']['st'] and 'LiQ' in d['a']['lab'] and d['a']['w'] == '0%', d)
-    _check('LONG' in d['b']['st'] and 'сила 30%' in d['b']['lab'] and d['b']['w'] == '30%', d)
+    _check('РОСТЕ' in d['a']['st'] and '+0.82%' in d['a']['lab']
+           and '91% монет вгору' in d['a']['lab'] and d['a']['w'] == '91%', d)
+    _check('набираємо' in d['b']['lab'] and d['b']['w'] == '0%', d)
     i = _HTML.index('id="mm-biasnew-banner"')
-    j = _HTML.index('id="mm-biascons-banner"')
+    j = _HTML.index('id="mm-move-banner"')
     k = _HTML.index('id="mm-corr-row"')
-    _check(i < j < k, 'консенсус стоїть ОДРАЗУ під МММ-new')
-    _check('mm && mm.bias_cons' in _HTML, 'стан доїжджає в рендер')
-    print('✓ JS: банер консенсусу — ⚖ КОНФЛІКТ / 🟢 LONG із силою')
+    _check(i < j < k, 'банер руху — під МММ-new, над корекцією')
+    _check('ff-mm-move-window' in _HTML and 'mm_move_window_min' in _HTML, 'вибір вікна')
+    print('✓ JS: «▲ +0.82% за 15 хв · 91% монет вгору» / «набираємо історію»')
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]
