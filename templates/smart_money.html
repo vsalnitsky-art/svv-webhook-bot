@@ -2648,6 +2648,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="⏱ АНТИСПАМ БАНЕРА: новий статус (🟢 LONG / 🔴 SHORT / ⏸ FLAT) показується лише коли протримався стільки секунд. Поки йде відлік, у банері видно кандидата (⏳). Плюс до цього діє гістерезис: зайти в напрямок можна за 10% важеля, а вийти — лише нижче 6%, тож коливання біля межі статус не смикають. 0 = перемикати миттєво (стара поведінка). ⚠️ Числа й смуга банера лишаються ЖИВИМИ — гаситься саме миготіння ПІДПИСУ.">
                     ⏱ Перехід ≥ <input type="number" id="ff-mm-bias-confirm" min="0" max="3600" step="30" value="120" style="width:60px;font-size:0.68rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> с
                 </label>
+                <!-- 🎯 Колонка «Готовність» (вимога 30.09) — той самий SMC-грейд,
+                     що й у чергах; рахується в межах спільного cap. -->
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="🎯 SMC-«Готовність» у таблиці монітора — ТОЙ САМИЙ грейд (1H + 4H контекст) і той самий кеш, що колонка «Готовність» у чергах. Напрямок — МММ LiQ монети; ⚖ рівновага → грейду немає. Рахується в НИЖЧОМУ пріоритеті в межах ліміту «Готовність за цикл», тож на великому watchlist таблиця заповнюється за кілька хвилин (⏳ = ще не дійшла черга).">
+                    <input type="checkbox" id="ff-mm-setup-on" checked onchange="saveFuelFilterSettings()"> 🎯 Готовність
+                </label>
             </div>
             <!-- 🔻 НАЛАШТУВАННЯ ДЕТЕКТОРА КОРЕКЦІЇ. Своя гармошка, бо це
                  ОКРЕМИЙ вердикт зі своїми порогами: у ряд фільтрів показу
@@ -2884,10 +2889,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th data-mmsort="pchg" onclick="mmSort('pchg')" style="cursor:pointer;user-select:none;text-align:right" title="КУДИ йде ціна: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). За скільки часу історії реально набралось — у підказці комірки: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ (найсильніший ріст зверху).">Рух<span class="ff-sort-arrow"></span></th>
                             <th title="🔮 Прогноз 1H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 1H» над графіком. Читається готовим, нічого не рахує.">🔮 1H</th>
                             <th title="🔮 Прогноз 4H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 4H» над графіком.">🔮 4H</th>
+                            <th data-mmsort="setup" onclick="mmSort('setup')" style="cursor:pointer;user-select:none" title="🎯 SMC-«Готовність» у напрямку МММ LiQ монети — той самий грейд і кеш, що колонка «Готовність» у чергах (1H, 4H — старший контекст). «⚖» — у монети немає напрямку, грейд не рахується. «⏳» — ще не дійшла черга (рахується в межах ліміту за цикл). Клік — сортувати (найвищий бал зверху).">🎯 Готовність<span class="ff-sort-arrow"></span></th>
                         </tr>
                     </thead>
                     <tbody id="mm-tbody">
-                        <tr><td colspan="12" class="tm-empty-msg">Немає даних МММ</td></tr>
+                        <tr><td colspan="13" class="tm-empty-msg">Немає даних МММ</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -11973,7 +11979,7 @@ let _mmRows = [];              // останній знімок рядків і�
 // сервера сторінка читала б неіснуючі поля. (`counts` тут лежало як спадок:
 // серверне поле прибрали ще 15.09, коли лічильники вкладок переїхали на фронт.)
 let _mmMeta = { limited: true, ts: 0, enabled: true,
-                coverage: {}, pending: {}, queues_off: false };
+                coverage: {}, pending: {}, queues_off: false, setup_on: true };
 let _mmSel = new Set();        // обрані символи (переживають перемальовку)
 let _mmDir = 'all';            // фільтр показу: all | LONG | SHORT | flat
 // Сортування таблиці. Дефолт — сила ↓ (те саме, що віддає бекенд), тайбрейк
@@ -12009,6 +12015,8 @@ function _mmSortVal(r, col) {
     if (col === 'delta') return (r.delta == null ? null : Number(r.delta));
     if (col === 'price') return (r.price == null ? null : Number(r.price));
     // 🆕 Новий МММ — за силою (порожнє → униз).
+    // 🎯 Готовність — за балом; ⚖/⏳ — «немає даних», униз.
+    if (col === 'setup') return (r.setup && r.setup.ok) ? Number(r.setup.score || 0) : null;
     if (col === 'newstr') return (r.new_strength == null ? null : Number(r.new_strength));
     // 💹 РУХ — власна колонка (17.09), тож «Ціна» тепер сортується за ЦІНОЮ, а
     // «яка монета зараз іде вгору» — це вже колонка «Рух». Рядок без історії
@@ -12269,6 +12277,18 @@ function _mmSyncSelUI() {
         b.style.cursor = n ? 'pointer' : 'not-allowed';
     }
 }
+// 🎯 «Готовність» монітора — ТОЙ САМИЙ рендер `ffSetupCell`, що в чергах, тож
+// пілюля ідентична. Три стани без грейду розрізнені: вимкнено · ⚖ немає
+// напрямку · ⏳ ще не дійшла черга (рахується в межах ліміту за цикл).
+function _mmSetupCell(r) {
+    const _blank = (txt, tip, col) => `<span style="display:inline-flex;align-items:center" title="${tip}">`
+        + `<span style="width:144px;text-align:center;color:${col};font-size:0.72rem">${txt}</span>`
+        + `<span style="width:15px"></span></span>`;
+    if (_mmMeta.setup_on === false) return _blank('—', 'Колонку «Готовність» вимкнено (🎯 у ряду фільтрів) або вимкнено SMC-грейдер.', '#555');
+    if (r.setup && r.setup.ok) return ffSetupCell(r.setup);
+    if (r.mm !== 'LONG' && r.mm !== 'SHORT') return _blank('⚖', 'У монети немає напрямку МММ LiQ — готовність рахується лише для LONG / SHORT.', '#8b93a7');
+    return _blank('⏳', 'Ще не дійшла черга: грейд рахується в НИЖЧОМУ пріоритеті в межах ліміту «Готовність за цикл».', '#fbbf24');
+}
 function mmRender() {
     const tb = document.getElementById('mm-tbody');
     if (!tb) return;
@@ -12348,9 +12368,11 @@ function mmRender() {
     // не перемалював би напис — рядків як не було, так і немає.
     const sig = _mmDir + '|' + (_mmMeta.enabled ? '1' : '0')
         + '|' + ((_mmMeta.pending || {}).reason || '')
+        + '|' + (_mmMeta.setup_on === false ? '0' : '1')
         + '|' + _mmSort.col + _mmSort.dir + '|'
         + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev, r.delta,
         r.new_mm || '', r.new_strength,
+        (r.setup && r.setup.ok) ? (r.setup.score + (r.setup.dir || '')) : '',
         (r.in_trade ? 'T' : '') + ((r.queues || []).join('')),
         r.grow_since || 0, r.state_since || 0, r.delta_span, r.price, r.price_dir || '', r.price_chg,
         (r.f1 ? r.f1.side : ''), (r.f4 ? r.f4.side : ''),
@@ -12371,7 +12393,7 @@ function mmRender() {
                       ? '⏳ Перший знімок після старту ще рахується…'
                       : (_mmRows.length ? 'Немає монет під цей фільтр'
                                         : 'Немає даних МММ')));
-            tb.innerHTML = `<tr><td colspan="12" class="tm-empty-msg">${_why}</td></tr>`;
+            tb.innerHTML = `<tr><td colspan="13" class="tm-empty-msg">${_why}</td></tr>`;
         } else {
             tb.innerHTML = rows.map(r => {
                 const sel = _mmSel.has(r.symbol);
@@ -12406,6 +12428,7 @@ function mmRender() {
                     + `<td style="text-align:right">${_mmMoveCell(r)}</td>`
                     + `<td>${_mmFcCell(r.f1, '1H')}</td>`
                     + `<td>${_mmFcCell(r.f4, '4H')}</td>`
+                    + `<td>${_mmSetupCell(r)}</td>`
                     + `</tr>`;
             }).join('');
         }
@@ -13037,7 +13060,8 @@ function mmApplyState(mm) {
                 enabled: !(mm && mm.enabled === false),
                 coverage: (mm && mm.coverage) || {},
                 pending: (mm && mm.pending) || {},
-                queues_off: !!(mm && mm.queues_off) };
+                queues_off: !!(mm && mm.queues_off),
+                setup_on: !(mm && mm.setup_on === false) };
     // ⚑ Поріг «Сила ≥» приходить З СЕРВЕРА — це те саме число, за яким бот
     // вирішує, які монети сканувати. Поле не чіпаємо, поки в ньому друкують.
     const _sEl = document.getElementById('mm-min-str');
@@ -14292,6 +14316,7 @@ function renderFuelFilter(d) {
     setIf('ff-mm-monitor-enabled', s.mm_monitor_enabled !== false);  // default true
     // 🐢 Антиспам банера монітора (секунди підтвердження статусу).
     setIf('ff-mm-bias-confirm', String(s.mm_bias_confirm_sec != null ? s.mm_bias_confirm_sec : 120));
+    setIf('ff-mm-setup-on', s.mm_setup_on !== false);   // default true
     // 🔻 Детектор корекції — дефолти ті самі, що в `mm_correction.DEFAULTS`.
     setIf('ff-mm-corr-enabled', s.mm_corr_enabled !== false);       // default true
     setIf('ff-mm-corr-block', s.mm_corr_block_open !== false);      // default true
@@ -15355,6 +15380,8 @@ async function saveFuelFilterSettings() {
         // 🐢 Скільки новий статус банера мусить протриматись, перш ніж його
         // покажуть (антиспам). 0 = миттєво.
         mm_bias_confirm_sec: parseInt(_v('ff-mm-bias-confirm', '120') || '0', 10),
+        // 🎯 Колонка «Готовність» у моніторі.
+        mm_setup_on: _c('ff-mm-setup-on'),
         // 🔻 ДЕТЕКТОР КОРЕКЦІЇ (вимога 19.09). `_numOr`-стиль: 0 у порогах —
         // ЗМІСТОВНЕ значення («не вимагати цієї ознаки»), тож `||` тут не можна.
         mm_corr_enabled: _c('ff-mm-corr-enabled'),

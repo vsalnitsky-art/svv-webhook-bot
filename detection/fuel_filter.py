@@ -341,6 +341,11 @@ DEFAULT_SETTINGS = {
     # Новий стан (LONG / SHORT / ⚖) мусить протриматись стільки, перш ніж
     # банер його ПОКАЖЕ. 0 = перемикати миттєво (стара поведінка).
     'mm_bias_confirm_sec': 120,
+    # 🎯 Колонка «Готовність» у 🧮 МММ-моніторі (вимога 30.09). Той самий
+    # SMC-грейд і той самий кеш `_setup_cache`, що й колонка «Готовність» черг;
+    # монети монітора йдуть у НИЖЧОМУ пріоритеті в межах того самого
+    # `setup_max_per_cycle`, тож додаткового навантаження понад cap немає.
+    'mm_setup_on': True,
     # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
     # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
     # ГОЛОВНИЙ вміст тієї теми. ⚠️ Майстер-вимикач теми лишається в кабінеті
@@ -4559,6 +4564,7 @@ class FuelFilterDaemon:
             snap = dict(self._mm_snapshot or {}) if _on else {}
             _cov = dict(getattr(self, '_mm_stats', {}) or {})
             grow = dict(getattr(self, '_mm_grow_since', {}) or {})
+            setup_c = dict(getattr(self, '_setup_cache', {}) or {})
             ts = float(self._mm_snapshot_ts or 0.0)
         # 📍 ДЕ МОНЕТА ЗАРАЗ. Відкриті позиції (FF + обидві книги TM) збирає
         # ЄДИНИЙ `_mm_open_syms`, черги — `_mm_queue_map`.
@@ -4613,6 +4619,9 @@ class FuelFilterDaemon:
                 'state_since': v.get('state_since'),
                 'dir': v.get('dir'),
                 # 🆕 НОВИЙ МММ (`_fuel_dir_smoothed`) — окрема колонка.
+                # 🎯 SMC-«Готовність» — ЧИТАННЯ того самого кешу, що й колонка
+                # черг; немає запису → None (фронт відрізняє ⚖ від «ще рахується»).
+                'setup': setup_c.get(sym),
                 'new_mm': v.get('new_status'),
                 'new_strength': v.get('new_strength'),
                 'new_dir': v.get('new_dir'),
@@ -4650,6 +4659,9 @@ class FuelFilterDaemon:
             'bias': dict(getattr(self, '_mm_bias', {}) or {}),
             # ⚖️ Банер «🧮 МММ-new» — той самий важіль із НОВОГО МММ.
             'bias_new': dict(getattr(self, '_mm_bias_new', {}) or {}),
+            # 🎯 Колонка «Готовність» увімкнена? (UI відрізняє «вимкнено» від «⏳»).
+            'setup_on': bool(s.get('mm_setup_on', True))
+                        and bool(s.get('setup_grader_on', True)),
             # 📊 ЧОМУ РЯДКІВ МЕНШЕ, НІЖ МОНЕТ У WATCHLIST (питання 17.09:
             # «у WATCHLIST 51, а монітор працює із 49 — чому?»). Різниця
             # НІКОЛИ не має бути здогадкою, тож віддаємо ПОВНИЙ розклад:
@@ -6304,6 +6316,13 @@ class FuelFilterDaemon:
         _t0 = time.time()
         fuels = {s: self._fuel_dir_smoothed(s, update=True) for s in relevant}
         self._mm_capture(fuels, settings)
+        # 🎯 «Готовність» монітора живе і з вимкненими чергами — той самий
+        # грейд і той самий cap (черг немає, тож увесь cap дістається монітору).
+        try:
+            self._refresh_setup_cache(settings, {},
+                                      extra=self._mm_setup_targets(settings))
+        except Exception as e:
+            print(f"[FuelFilter] mm setup refresh error: {e}")
         # ₿ банер у режимі «🔁 Дублювання» — ЧИСТИЙ ПОКАЗ, тож оновлюємо і тут:
         # інакше він застигав на нулях («⚪ рівновага»), поки рядок «МММ-бабло»
         # у банері рішення рахувався наново і казав LONG (скарга 18.09).
@@ -7007,7 +7026,8 @@ class FuelFilterDaemon:
                 self._fuel_str_prev = self._fuel_str
                 self._fuel_str = new_str
             # 🎯 SMC-грейдер для тих самих рядків (окремий, довший TTL).
-            self._refresh_setup_cache(settings, targets)
+            self._refresh_setup_cache(settings, targets,
+                                      extra=self._mm_setup_targets(settings))
             # ⚡ Скальп-«Готовність» лише для funding-монет (окремий швидкий TF).
             self._refresh_setup_scalp_cache(settings)
         except Exception as e:
@@ -7017,7 +7037,24 @@ class FuelFilterDaemon:
     _SETUP_TTL = 90          # с — як часто перераховувати сетап на монету
     _SETUP_MAX_PER_CYCLE = 6  # обмежувач навантаження: не більше N важких SMC/цикл
 
-    def _refresh_setup_cache(self, settings: Dict, targets: Dict):
+    def _mm_setup_targets(self, settings: Dict) -> Dict:
+        """🎯 Монети 🧮 МММ-монітора для «Готовності»: {SYM: (напрямок, 0)}.
+
+        Напрямок — МММ LiQ монети зі ЗНІМКА (рівно те, що людина бачить у
+        рядку). ⚖ рівновага → напрямку немає → грейд не рахується (`grade_setup`
+        потребує боку). Вимкнений монітор або `mm_setup_on=False` → порожньо.
+        """
+        if not bool(settings.get('mm_setup_on', True)):
+            return {}
+        if not bool(settings.get('mm_monitor_enabled', True)):
+            return {}
+        with self._lock:
+            snap = dict(self._mm_snapshot or {})
+        return {sym: (v.get('status'), 0.0) for sym, v in snap.items()
+                if v.get('status') in ('LONG', 'SHORT')}
+
+    def _refresh_setup_cache(self, settings: Dict, targets: Dict,
+                             extra: Optional[Dict] = None):
         """Оновлює self._setup_cache для видимих монет. SMC-аналіз важкий, тож:
         (а) кожну монету рахуємо не частіше за _SETUP_TTL; (б) за один цикл —
         не більше _SETUP_MAX_PER_CYCLE перерахунків (найстаріші першими), щоб не
@@ -7035,12 +7072,29 @@ class FuelFilterDaemon:
             _cap = int(settings.get('setup_max_per_cycle', self._SETUP_MAX_PER_CYCLE) or self._SETUP_MAX_PER_CYCLE)
         except (TypeError, ValueError):
             _cap = self._SETUP_MAX_PER_CYCLE
-        live = set(targets.keys())
-        # Кандидати на перерахунок: прострочені (за TTL), найстаріші першими.
-        due = sorted((s for s in live if (now - self._setup_at.get(s, 0)) >= _ttl),
-                     key=lambda s: self._setup_at.get(s, 0))
+        # 🎯 `extra` — монети 🧮 МММ-монітора. НИЖЧИЙ пріоритет: спершу черги/
+        # угоди (їх «Готовність» живить рішення), монітор добирає ЗАЛИШОК того
+        # самого cap. Напрямок черги/угоди сильніший за напрямок монітора.
+        extra = {k: v for k, v in (extra or {}).items() if k not in targets}
+        allt = dict(extra)
+        allt.update(targets)
+        live = set(allt.keys())
+
+        def _due(pool):
+            out = []
+            for s in pool:
+                d = (allt.get(s) or (None,))[0]
+                c = self._setup_cache.get(s) or {}
+                # Бік змінився (МММ монітора фліпнув) → старий грейд про ІНШИЙ
+                # напрямок, перерахунок одразу, а не через TTL.
+                stale_dir = (d in ('LONG', 'SHORT') and c.get('dir')
+                             and c.get('dir') != d)
+                if stale_dir or (now - self._setup_at.get(s, 0)) >= _ttl:
+                    out.append(s)
+            return sorted(out, key=lambda s: self._setup_at.get(s, 0))
+        due = _due(targets.keys()) + _due(extra.keys())
         for sym in due[:_cap]:
-            d = (targets.get(sym) or (None,))[0]
+            d = (allt.get(sym) or (None,))[0]
             try:
                 res = self._compute_setup(sym, d, settings)
             except Exception as e:
