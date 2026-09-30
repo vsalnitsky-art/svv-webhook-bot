@@ -72,8 +72,33 @@ def test_merge_puts_old_block_first_so_detect_must_resort():
     print('✓ злиття справді псує порядок — сортування в detect обовʼязкове')
 
 
+def test_combine_only_within_visible_zone_count():
+    """Як у Pine: спершу Zone Count, потім злиття. Свіжий блок НЕ склеюється
+    зі старими зонами поза Zone Count (кейс BTCUSDT 30.09: бокс стартував з
+    28.09 / 23.09 замість 30.09, обсяг 6.7K замість 2.483K)."""
+    for seed in range(12):
+        k = _walk(seed)
+        r1 = vob.detect_volumized_obs(k, swing_length=3, combine_obs=True, zone_count='One')
+        for key, raw in (('bullish_obs', 'all_bullish'), ('bearish_obs', 'all_bearish')):
+            vis = r1[key]
+            _check(len(vis) <= 1 and not any(o.get('combined') for o in vis),
+                   f'Zone Count One: блок не має зливатись зі старими ({key}, seed {seed})')
+            if r1[raw]:
+                _check(vis[0]['start_time'] == r1[raw][0]['start_time'],
+                       f'One: бокс мусить стартувати з найновішого блоку ({key}, seed {seed})')
+        r3 = vob.detect_volumized_obs(k, swing_length=3, combine_obs=True, zone_count='Low')
+        for key, raw in (('bullish_obs', 'all_bullish'), ('bearish_obs', 'all_bearish')):
+            top = r3[raw][:3]
+            if top:
+                lo = min(o['start_time'] for o in top)
+                _check(all(o['start_time'] >= lo for o in r3[key]),
+                       f'Low: у злиття потрапив блок поза трьома найновішими ({key}, seed {seed})')
+    print('✓ злиття лише в межах Zone Count — як у Pine')
+
+
 if __name__ == '__main__':
     test_lists_are_newest_first_after_combine()
     test_newest_block_is_never_trimmed_away()
     test_merge_puts_old_block_first_so_detect_must_resort()
+    test_combine_only_within_visible_zone_count()
     print('\nУсі тести «порядок VOB після злиття» пройдено ✅')

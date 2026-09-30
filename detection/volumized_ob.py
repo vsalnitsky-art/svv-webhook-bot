@@ -361,6 +361,20 @@ def detect_volumized_obs(
                 if len(bearish_obs) > max_ob_count:
                     bearish_obs.pop()
     
+    # 🐞 ЯК У PINE: СПЕРШУ ZONE COUNT, ПОТІМ «COMBINE ZONES» (кейс 30.09).
+    # Pine (`handleOrderBlocksFinal`) бере до показу лише перші `zoneCount`
+    # блоків КОЖНОГО боку (найновіші — `unshift`) і зливає ЛИШЕ їх. Ми ж
+    # зливали ВСІ 30 блоків, а обрізали потім — свіжий блок склеювався зі
+    # старими зонами, і бокс стартував із 28.09 / 23.09 замість 30.09, з
+    # сумою обсягів кількох блоків (6.7K замість 2.483K на TV).
+    # Списки тут уже newest-first (insert(0) у порядку формування).
+    zone_count_map = {'One': 1, 'Low': 3, 'Medium': 5, 'High': 10}
+    visible_count = zone_count_map.get(zone_count, 3)
+    all_bull_raw = list(bullish_obs)
+    all_bear_raw = list(bearish_obs)
+    bullish_obs = bullish_obs[:visible_count]
+    bearish_obs = bearish_obs[:visible_count]
+
     # === Post-processing: combine overlapping OBs of the same type ===
     if combine_obs:
         bullish_obs = _combine_obs_func(bullish_obs)
@@ -379,11 +393,9 @@ def detect_volumized_obs(
     bullish_obs.sort(key=_ft, reverse=True)
     bearish_obs.sort(key=_ft, reverse=True)
     
-    # Trim to visible count per zone_count setting
-    zone_count_map = {'One': 1, 'Low': 3, 'Medium': 5, 'High': 10}
-    visible_count = zone_count_map.get(zone_count, 3)
-    visible_bull = bullish_obs[:visible_count]
-    visible_bear = bearish_obs[:visible_count]
+    # Уже обрізано до Zone Count ДО злиття (див. вище).
+    visible_bull = bullish_obs
+    visible_bear = bearish_obs
     
     # === Latest OB across both lists (most recent formation_time) ===
     # User's principle: "trend = direction of the latest formed OB".
@@ -414,8 +426,9 @@ def detect_volumized_obs(
     return {
         'bullish_obs': visible_bull,
         'bearish_obs': visible_bear,
-        'all_bullish': bullish_obs,
-        'all_bearish': bearish_obs,
+        # Усі живі блоки БЕЗ злиття (newest-first) — для діагностики/тестів.
+        'all_bullish': all_bull_raw,
+        'all_bearish': all_bear_raw,
         'latest_ob': latest_ob,
         'trend': trend,
         'trend_meta': trend_meta,
