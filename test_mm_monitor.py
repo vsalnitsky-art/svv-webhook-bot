@@ -88,6 +88,7 @@ def _mk(limited=False, enabled=True, mon=True):
     # без нього справжній метод падає з AttributeError на першій же монеті, і
     # тести «нічого не роблять».
     ff._mm_bias_cand = {}
+    ff._mm_bias_new, ff._mm_bias_new_since, ff._mm_bias_new_cand = {}, 0.0, {}
     # 🔻 Стан детектора корекції (19.09) — те саме правило: нове поле стану
     # ЗАВЖДИ додавати сюди, інакше `_mm_capture` мовчки ковтне AttributeError.
     ff._mm_corr_st, ff._mm_corr, ff._mm_lever_hist = {}, {}, []
@@ -520,7 +521,9 @@ const document = {
                           'mm-open-btn','mm-updated','mm-limited-hint',
                           'mm-str-out', 'mm-bias-banner', 'mm-bias-bar',
                           'mm-bias-label', 'mm-bias-timer',
-                          'mm-bias-status'].includes(id)
+                          'mm-bias-status', 'mm-biasnew-banner', 'mm-biasnew-bar',
+                          'mm-biasnew-label', 'mm-biasnew-timer',
+                          'mm-biasnew-status'].includes(id)
                          ? _el(id) : null),
   querySelectorAll: sel => (String(sel).includes('data-mmsort') ? _ths : _tabs),
   // Вкладки шукають і поштучно (лічильник «у фільтрі / поза фільтром»).
@@ -1048,7 +1051,7 @@ def test_ui_has_growth_column_with_timer_and_sorting():
     # ⚠️ Кількість колонок звіряємо зі СКЛАДОМ, а не з магічним числом: список
     # нижче — це і є контракт таблиці, тож додана колонка мусить бути названа
     # ТУТ, а не просто зсунути число.
-    _cols = ['Символ', '📍 Стан', 'МММ LiQ', '⏱ У стані', 'Сила росте',
+    _cols = ['Символ', '📍 Стан', 'МММ LiQ', '🆕 Новий МММ', '⏱ У стані', 'Сила росте',
              '⏱ Росте', 'Ціна', 'Рух', '🔮 1H', '🔮 4H']
     for _c in _cols:
         _check(_c in tbl, f'немає колонки «{_c}»')
@@ -2944,6 +2947,100 @@ def test_ui_both_banners_share_one_grid():
     ci = _HTML.index('.mm-ban-title {')
     _check('flex: 0 0' in _HTML[ci:ci + 120], 'ширина заголовка мусить бути фіксованою')
     print('✓ 🖥 обидва банери на одній сітці — смуги й таймери вирівняні')
+
+
+# ═══════════ 31. БАНЕР «🧮 МММ-new» + КОЛОНКА «🆕 Новий МММ» (30.09) ═══════
+def test_new_banner_follows_the_NEW_mm_not_the_legacy_one():
+    """«створи такий самий банер "МММ-new"… який братиме дані із алгоритму
+    "Новий МММ"». `_cap` подає новий МММ ПРОТИЛЕЖНИМ старому — тож банери
+    мусять показати протилежні напрямки."""
+    ff = _mk()
+    ff._settings.update({'mm_bias_confirm_sec': 0})
+    _cap(ff, AAAUSDT=0.80, BBBUSDT=0.60, CCCUSDT=0.40)
+    st = ff.mm_monitor_state()
+    _check(st['bias'].get('dir') == 'LONG', st['bias'])
+    _check(st['bias_new'].get('dir') == 'SHORT', st['bias_new'])
+    _check(st['bias_new'].get('pct') == 100.0, st['bias_new'])
+    by = {r['symbol']: r for r in st['rows']}
+    _check(by['AAAUSDT']['new_mm'] == 'SHORT' and by['AAAUSDT']['new_strength'] == 80,
+           by['AAAUSDT'])
+    print('✓ 🧮 МММ-new рахується з НОВОГО МММ, колонка несе його напрямок і силу')
+
+
+def test_both_banners_share_one_pure_step():
+    """Одна формула на два банери: `mm_bias_step` із ключами джерела."""
+    snap = {'A': {'status': 'LONG', 'strength': 50, 'new_status': 'SHORT', 'new_strength': 20},
+            'B': {'status': None, 'strength': 10, 'new_status': 'SHORT', 'new_strength': 30}}
+    b1, _, _ = _m.mm_bias_step(snap, 1000.0, 0, {}, 0.0, {})
+    b2, _, _ = _m.mm_bias_step(snap, 1000.0, 0, {}, 0.0, {},
+                               st_key='new_status', str_key='new_strength')
+    _check(b1['dir'] == 'LONG' and abs(b1['net'] - 50 / 60) < 1e-3, b1)
+    _check(b2['dir'] == 'SHORT' and b2['pct'] == 100.0, b2)
+    import inspect
+    src = inspect.getsource(FF._mm_track_bias) + inspect.getsource(FF._mm_track_bias_new)
+    _check(src.count('mm_bias_step(') == 2 and 'net > MM_BIAS_FLAT' not in src,
+           'обидва банери мусять іти через ОДНУ чисту функцію')
+    print('✓ ⚖️ обидва банери — одна чиста функція, різне лише джерело')
+
+
+def test_new_banner_has_its_own_confirmation_and_is_display_only():
+    ff = _mk()
+    ff._settings.update({'mm_bias_confirm_sec': 120})
+    _cap(ff, AAAUSDT=0.80)
+    _cap(ff, AAAUSDT=-0.80)          # новий МММ: SHORT → LONG — ще кандидат
+    bn = ff.mm_monitor_state()['bias_new']
+    _check(bn['dir'] == 'SHORT' and bn['cand_dir'] == 'LONG', bn)
+    # Споживачі (сканер, ворота) читають СТАРИЙ банер.
+    _check(_m.FuelFilterDaemon.mm_bias(ff).get('dir') == 'LONG', 'mm_bias() мусить лишитись старим')
+    print('✓ 🐢 МММ-new має свій антиспам; mm_bias() лишився старим банером')
+
+
+def test_new_banner_persists_and_dies_with_the_monitor():
+    ff = _mk()
+    ff._settings.update({'mm_bias_confirm_sec': 0})
+    _cap(ff, AAAUSDT=0.80)
+    _check(ff._mm_bias_new_since > 0, 'таймер МММ-new не стартував')
+    import inspect
+    _check("'mm_bias_new_since'" in inspect.getsource(FF._persist_state),
+           'таймер МММ-new мусить персиститись')
+    _check("mm_bias_new_since" in inspect.getsource(FF._load_state), 'і відновлюватись')
+    ff._settings['mm_monitor_enabled'] = False
+    _cap(ff, AAAUSDT=0.80)
+    _check(not ff.mm_monitor_state().get('bias_new'), 'вимкнений монітор гасить і МММ-new')
+    print('✓ 💾 МММ-new переживає рестарт і гасне разом із монітором')
+
+
+def test_ui_new_banner_and_column():
+    i = _HTML.index('id="mm-bias-banner"')
+    j = _HTML.index('id="mm-biasnew-banner"')
+    k = _HTML.index('id="mm-corr-row"')
+    _check(i < j < k, 'МММ-new стоїть ОДРАЗУ під банером монітора')
+    head = _HTML[j:j + 2500]
+    for el in ('mm-biasnew-bar', 'mm-biasnew-label', 'mm-biasnew-timer',
+               'mm-biasnew-status', 'mm-biasnew-cand', 'mm-biasnew-restored'):
+        _check(f'id="{el}"' in head, f'немає {el}')
+    _check('mm && mm.bias_new' in _HTML, 'стан МММ-new мусить доїжджати в рендер')
+    body = _HTML[_HTML.index('function mmRender()'):_HTML.index('function mmApplyState')]
+    _check('r.new_mm' in body and 'r.new_strength' in body, 'колонка і сигнатура')
+    _check("col === 'newstr'" in _HTML, 'колонка сортується')
+    print('✓ 🖥 банер МММ-new під монітором + колонка «🆕 Новий МММ»')
+
+
+def test_js_new_banner_draws_its_own_direction():
+    out = _run_js(r'''
+const base = {rows:[], enabled:true, limited:false, ts:1};
+mmApplyState(Object.assign({}, base, {
+  bias:{dir:'LONG', pct:62, since: Math.floor(Date.now()/1000) - 10},
+  bias_new:{dir:'SHORT', pct:40, since: Math.floor(Date.now()/1000) - 75}}));
+const g = id => document.getElementById(id);
+console.log(JSON.stringify({o:g('mm-bias-status').textContent, n:g('mm-biasnew-status').textContent,
+  w:g('mm-biasnew-bar').style.width, tip:g('mm-biasnew-banner').title}));
+''')
+    import json
+    d = json.loads(out)
+    _check('LONG' in d['o'] and 'SHORT' in d['n'], d)
+    _check(d['w'] == '40%' and 'Новий МММ' in d['tip'], d)
+    print('✓ JS: два банери малюються незалежно, кожен зі свого джерела')
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]

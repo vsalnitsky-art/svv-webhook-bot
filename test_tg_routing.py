@@ -165,6 +165,7 @@ def _mk(trends=None, vob_on=True, **settings):
     ff = FF.__new__(FF)
     ff._lock = threading.RLock()
     ff._mm_bias, ff._mm_bias_since, ff._mm_bias_cand = {}, 0.0, {}
+    ff._mm_bias_new, ff._mm_bias_new_since, ff._mm_bias_new_cand = {}, 0.0, {}
     ff._mm_bias_tg_last = '__none__'
     ff._mm_corr_st, ff._mm_corr, ff._mm_lever_hist = {}, {}, []
     ff._mm_corr_skip_logged = {}

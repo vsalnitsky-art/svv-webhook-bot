@@ -212,6 +212,95 @@ _QUEUE_OPS_ALLOWED = {1: True, 2: True, 3: True, 4: True, 5: True,
                       6: True, 7: True, 8: True, 9: True, 10: True}
 
 
+def _fnum(v) -> float:
+    try:
+        return float(v or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
+                 st_key: str = 'status', str_key: str = 'strength'):
+    """⚖️ ОДИН крок важеля банера → `(bias, since, cand)`. ЧИСТА функція.
+
+    Єдине джерело правила для ОБОХ банерів: «🧮 МММ-монітор» (старий МММ,
+    `status`/`strength`) і «🧮 МММ-new» (новий МММ, `new_status`/
+    `new_strength`). Дві копії формули з часом розійшлися б.
+
+        важіль = (Σ сила LONG − Σ сила SHORT) / Σ сила ВСІХ монет
+
+    ⚖ рівноважні монети стоять у знаменнику; гістерезис MM_BIAS_FLAT/EXIT;
+    новий стан спершу КАНДИДАТ і стає статусом, лише протримавшись `need` с;
+    перший стан після чистого старту — одразу.
+    """
+    wl = ws = wf = 0.0
+    n_long = n_short = n_flat = 0
+    for _sym, v in (snap or {}).items():
+        if st_key not in v and str_key not in v:
+            continue
+        try:
+            st = float(v.get(str_key) or 0)
+        except (TypeError, ValueError):
+            st = 0.0
+        side = v.get(st_key)
+        if side == 'LONG':
+            wl += st
+            n_long += 1
+        elif side == 'SHORT':
+            ws += st
+            n_short += 1
+        else:
+            wf += st
+            n_flat += 1
+    total = wl + ws + wf
+    net = ((wl - ws) / total) if total > 0 else 0.0
+    prev_bias = prev_bias or {}
+    prev = prev_bias.get('dir')
+    raw = None
+    if net > MM_BIAS_FLAT:
+        raw = 'LONG'
+    elif net < -MM_BIAS_FLAT:
+        raw = 'SHORT'
+    elif prev == 'LONG' and net > MM_BIAS_EXIT:
+        raw = 'LONG'
+    elif prev == 'SHORT' and net < -MM_BIAS_EXIT:
+        raw = 'SHORT'
+    _fresh = not (prev_bias or prev_since)
+    side, cand_dir, cand_since, cand = prev, None, 0.0, {}
+    if raw == prev or _fresh or need <= 0:
+        side = raw
+    else:
+        c = dict(prev_cand or {})
+        if c.get('dir') != raw or not c.get('since'):
+            c = {'dir': raw, 'since': now}
+        held = max(0.0, now - float(c.get('since') or now))
+        if held >= need:
+            side = raw
+        else:
+            cand = c
+            cand_dir, cand_since = raw, float(c['since'])
+    since = float(prev_since or 0.0)
+    if side != prev or not since:
+        since = now
+    bias = {
+        'dir': side,
+        # 🐢 Що показує РИНОК просто зараз і скільки кандидату ще чекати.
+        'raw_dir': raw,
+        'cand_dir': cand_dir,
+        'cand_since': int(cand_since) if cand_since else 0,
+        'confirm_sec': int(need),
+        'pct': round(abs(net) * 100.0, 1),
+        'net': round(net, 4),
+        'w_long': round(wl, 1), 'w_short': round(ws, 1),
+        'w_flat': round(wf, 1), 'w_total': round(total, 1),
+        'n_long': n_long, 'n_short': n_short, 'n_flat': n_flat,
+        'coins': n_long + n_short + n_flat,
+        'since': int(since or now),
+        'ts': int(now),
+    }
+    return bias, since, cand
+
+
 def _q_allowed(op: int) -> bool:
     """True if queue-removal op #op is currently allowed (debug gate)."""
     if _QUEUE_OPS_ALLOWED.get(op, True):
@@ -966,6 +1055,10 @@ class FuelFilterDaemon:
         # СВІДОМО не персиститься: вікно підтвердження коротке, і після
         # рестарту чесніше почати відлік заново, ніж «дорахувати» чужий.
         self._mm_bias_cand: Dict = {}
+        # ⚖️ Банер «🧮 МММ-new» (новий МММ) — ті самі три поля, окремий стан.
+        self._mm_bias_new: Dict = {}
+        self._mm_bias_new_since: float = 0.0
+        self._mm_bias_new_cand: Dict = {}
         # 📨 Останній статус банера, ПРО ЯКИЙ УЖЕ сповіщали в Telegram.
         # СВІДОМО не персиститься: після рестарту перший такт лише запамʼятовує
         # стан і мовчить — інакше кожен `botupdate` слав би «зміну», якої не
@@ -2278,6 +2371,18 @@ class FuelFilterDaemon:
             if self._mm_bias_since > time.time() + 60:
                 self._mm_bias_since = 0.0
                 self._mm_bias = {}
+            # ⚖️ Банер «МММ-new» — те саме відновлення (таймер не обнуляється).
+            _mbn = st.get('mm_bias_new')
+            self._mm_bias_new = dict(_mbn) if isinstance(_mbn, dict) else {}
+            if self._mm_bias_new:
+                self._mm_bias_new['restored'] = True
+            try:
+                self._mm_bias_new_since = float(st.get('mm_bias_new_since') or 0.0)
+            except (TypeError, ValueError):
+                self._mm_bias_new_since = 0.0
+            if self._mm_bias_new_since > time.time() + 60:
+                self._mm_bias_new_since = 0.0
+                self._mm_bias_new = {}
             # 🔻 Стан корекції переживає рестарт (як і таймер банера). Розклад
             # шарів НЕ відновлюємо — він перерахується першим тактом; до того
             # часу подання лишається порожнім, і UI про це чесно скаже.
@@ -2383,6 +2488,8 @@ class FuelFilterDaemon:
                                    for k, v in (self._mm_state_since or {}).items()},
                 'mm_bias': dict(self._mm_bias or {}),
                 'mm_bias_since': float(self._mm_bias_since or 0.0),
+                'mm_bias_new': dict(getattr(self, '_mm_bias_new', {}) or {}),
+                'mm_bias_new_since': float(getattr(self, '_mm_bias_new_since', 0.0) or 0.0),
                 # 🔻 СТАН КОРЕКЦІЇ (лише машина станів, без розкладу шарів —
                 # шари перерахуються першим же тактом). Без цього «корекція
                 # триває 1г 20хв» обнулялась би на кожному `botupdate`, а
@@ -3673,87 +3780,47 @@ class FuelFilterDaemon:
         ⚠️ ПЕРШИЙ стан після чистого старту беремо ОДРАЗУ (підтверджувати
         нічого — попереднього статусу ще не існувало).
         """
-        wl = ws = wf = 0.0
-        n_long = n_short = n_flat = 0
-        for sym, v in (snap or {}).items():
-            try:
-                st = float(v.get('strength') or 0)
-            except (TypeError, ValueError):
-                st = 0.0
-            side = v.get('status')
-            if side == 'LONG':
-                wl += st
-                n_long += 1
-            elif side == 'SHORT':
-                ws += st
-                n_short += 1
-            else:
-                wf += st
-                n_flat += 1
-        total = wl + ws + wf
-        net = ((wl - ws) / total) if total > 0 else 0.0
-        prev = (self._mm_bias or {}).get('dir')
-        # 1️⃣ СИРИЙ стан із ГІСТЕРЕЗИСОМ: у напрямок заходимо за MM_BIAS_FLAT,
-        #    а виходимо з нього лише нижче за MM_BIAS_EXIT.
-        raw = None
-        if net > MM_BIAS_FLAT:
-            raw = 'LONG'
-        elif net < -MM_BIAS_FLAT:
-            raw = 'SHORT'
-        elif prev == 'LONG' and net > MM_BIAS_EXIT:
-            raw = 'LONG'
-        elif prev == 'SHORT' and net < -MM_BIAS_EXIT:
-            raw = 'SHORT'
-        # 2️⃣ ПІДТВЕРДЖЕННЯ ЧАСОМ.
         _s = settings if isinstance(settings, dict) else self.get_settings()
-        try:
-            need = max(0, int(float(_s.get('mm_bias_confirm_sec', 120))))
-        except (TypeError, ValueError):
-            need = 120
-        # Чистий старт (статусу ще не було ЖОДНОГО) — підтверджувати нічого.
-        _fresh = not (self._mm_bias or self._mm_bias_since)
-        side, cand_dir, cand_since = prev, None, 0.0
-        if raw == prev or _fresh or need <= 0:
-            side = raw
-            self._mm_bias_cand = {}
-        else:
-            c = dict(self._mm_bias_cand or {})
-            if c.get('dir') != raw or not c.get('since'):
-                c = {'dir': raw, 'since': now}
-            held = max(0.0, now - float(c.get('since') or now))
-            if held >= need:
-                side = raw
-                self._mm_bias_cand = {}
-            else:
-                self._mm_bias_cand = c
-                cand_dir, cand_since = raw, float(c['since'])
-        if side != prev or not self._mm_bias_since:
-            self._mm_bias_since = now
-        self._mm_bias = {
-            'dir': side,
-            # 🐢 Що показує РИНОК просто зараз і скільки цьому кандидату ще
-            # чекати. Без цих полів банер «завис» би без пояснення.
-            'raw_dir': raw,
-            'cand_dir': cand_dir,
-            'cand_since': int(cand_since) if cand_since else 0,
-            'confirm_sec': int(need),
-            # 0..100 — так само, як сила МММ у комірках і на банері ₿.
-            'pct': round(abs(net) * 100.0, 1),
-            'net': round(net, 4),
-            # Розклад для підказки: скільки монет і скільки «ваги» з кожного боку.
-            'w_long': round(wl, 1), 'w_short': round(ws, 1),
-            'w_flat': round(wf, 1), 'w_total': round(total, 1),
-            'n_long': n_long, 'n_short': n_short, 'n_flat': n_flat,
-            'coins': n_long + n_short + n_flat,
-            'since': int(self._mm_bias_since or now),
-            'ts': int(now),
-        }
+        bias, since, cand = mm_bias_step(
+            snap, now, self._mm_bias_confirm_need(_s),
+            self._mm_bias, self._mm_bias_since, self._mm_bias_cand)
+        self._mm_bias, self._mm_bias_since, self._mm_bias_cand = bias, since, cand
+        side = bias.get('dir')
         # 📨 TELEGRAM: зміна ПІДТВЕРДЖЕНОГО статусу банера (вимога 21.09 —
         # тепер це ГОЛОВНЕ, заради чого існує тема 🧮 МММ-монітор).
         # ⚠️ Кличемо на КОЖНОМУ такті, а НЕ під `if side != prev` — саме через
         # це перша РЕАЛЬНА зміна після кожного рестарту мовчки ковталась
         # (див. `_mm_bias_alert`: там позначка «перший показ» і живе).
         self._mm_bias_alert(side, now, _s)
+
+    def _mm_bias_confirm_need(self, s: Dict) -> int:
+        """🐢 Вікно підтвердження статусу — ОДНЕ число на обидва банери."""
+        try:
+            return max(0, int(float((s or {}).get('mm_bias_confirm_sec', 120))))
+        except (TypeError, ValueError):
+            return 120
+
+    def _mm_track_bias_new(self, snap: Dict, now: float,
+                           settings: Optional[Dict] = None):
+        """⚖️ Банер «🧮 МММ-new» — той самий важіль, але з НОВОГО МММ (вимога 30.09).
+
+        Дослівно: «створи такий самий банер "МММ-new" під ним, який братиме
+        дані із алгоритму "Новий МММ"». Новий МММ = `_fuel_dir_smoothed`
+        («бабло»-модель з EMA і гістерезисом) — поля `new_status` /
+        `new_strength` знімка, які кладе `_mm_capture` з тих самих `fuels`,
+        за якими двигун ухвалює рішення.
+        ⚠️ Розрахунок — ТА САМА чиста `mm_bias_step` (формула, гістерезис,
+        вікно підтвердження), тож два банери відрізняються РІВНО джерелом.
+        ⚠️ Лише ПОКАЗ: корекція, Telegram, 💧 Сканер, МММ-ворота сигналів і
+        далі читають СТАРИЙ банер (`mm_bias()`). Перевести їх — окреме рішення.
+        """
+        _s = settings if isinstance(settings, dict) else self.get_settings()
+        bias, since, cand = mm_bias_step(
+            snap, now, self._mm_bias_confirm_need(_s),
+            self._mm_bias_new, self._mm_bias_new_since, self._mm_bias_new_cand,
+            st_key='new_status', str_key='new_strength')
+        self._mm_bias_new, self._mm_bias_new_since = bias, since
+        self._mm_bias_new_cand = cand
 
     def _mm_bias_alert(self, side, now: float, settings: Dict):
         """📨 «Банер 🧮 МММ-монітора змінив статус» — у групу, тему 🧮.
@@ -4340,6 +4407,9 @@ class FuelFilterDaemon:
                 self._mm_bias = {}
                 self._mm_bias_since = 0.0
                 self._mm_bias_cand = {}
+                self._mm_bias_new = {}
+                self._mm_bias_new_since = 0.0
+                self._mm_bias_new_cand = {}
                 self._mm_corr = {}
                 self._mm_corr_st = {}
                 self._mm_lever_hist = []
@@ -4374,6 +4444,13 @@ class FuelFilterDaemon:
                 # Сила — з ТОГО САМОГО legacy-розрахунку (|dir| × 100), а не
                 # порахована вдруге тут: два «однакових» числа розійшлись би.
                 'strength': int(old.get('strength') or 0),
+                # 🆕 НОВИЙ МММ (`_fuel_dir_smoothed`) — той самий `f`, за яким
+                # двигун ухвалює рішення. Сила = |dir|×100 (як у колонці «МММ»
+                # черг). Живить колонку «🆕 Новий МММ» і банер «МММ-new».
+                'new_status': (f.get('status')
+                               if f.get('status') in ('LONG', 'SHORT') else None),
+                'new_dir': round(_fnum(f.get('dir')), 3),
+                'new_strength': int(round(abs(_fnum(f.get('dir'))) * 100)),
                 # ⚠️ Ціна — з НОВОГО зрізу: legacy її взагалі не повертає, а
                 # `mark_price` в обох випадках один і той самий (знімок
                 # liq-map + накладений `_live_price`).
@@ -4413,6 +4490,8 @@ class FuelFilterDaemon:
         # показати «ринок» із трьох монет під згаслою таблицею.
         if _mon:
             self._mm_track_bias(snap, _now, s)
+            # ⚖️ Банер «🧮 МММ-new» — ТОЙ САМИЙ знімок, джерело — новий МММ.
+            self._mm_track_bias_new(snap, _now, s)
             # 🔻 ВЕРДИКТ ПРО КОРЕКЦІЮ — одразу після важеля і на ТОМУ САМОМУ
             # знімку: банер і його вердикт не можуть описувати різні ринки.
             self._mm_track_correction(snap, _now, s)
@@ -4421,6 +4500,9 @@ class FuelFilterDaemon:
                 self._mm_bias = {}
                 self._mm_bias_since = 0.0
                 self._mm_bias_cand = {}
+                self._mm_bias_new = {}
+                self._mm_bias_new_since = 0.0
+                self._mm_bias_new_cand = {}
                 # Вимкнений монітор гасить і вердикт: «заморожена» корекція
                 # блокувала б відкриття без жодного живого розрахунку.
                 self._mm_corr = {}
@@ -4530,6 +4612,10 @@ class FuelFilterDaemon:
                 # Момент, а не секунди — секунди малює той самий 1с-тікер.
                 'state_since': v.get('state_since'),
                 'dir': v.get('dir'),
+                # 🆕 НОВИЙ МММ (`_fuel_dir_smoothed`) — окрема колонка.
+                'new_mm': v.get('new_status'),
+                'new_strength': v.get('new_strength'),
+                'new_dir': v.get('new_dir'),
                 'price': v.get('mark_price'),
                 # 💹 Куди йде ЦІНА за 15-хв вікном: 'up' / 'down' / 'flat' + сам
                 # рух у %. `price_span` — скільки секунд історії реально
@@ -4562,6 +4648,8 @@ class FuelFilterDaemon:
             'str_min': int(s.get('mm_str_min', 0) or 0),
             # ⚖️ Готовий важіль напрямку для банера (рахує двигун, тут ЧИТАННЯ).
             'bias': dict(getattr(self, '_mm_bias', {}) or {}),
+            # ⚖️ Банер «🧮 МММ-new» — той самий важіль із НОВОГО МММ.
+            'bias_new': dict(getattr(self, '_mm_bias_new', {}) or {}),
             # 📊 ЧОМУ РЯДКІВ МЕНШЕ, НІЖ МОНЕТ У WATCHLIST (питання 17.09:
             # «у WATCHLIST 51, а монітор працює із 49 — чому?»). Різниця
             # НІКОЛИ не має бути здогадкою, тож віддаємо ПОВНИЙ розклад:
