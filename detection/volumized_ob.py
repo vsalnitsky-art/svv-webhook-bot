@@ -365,6 +365,19 @@ def detect_volumized_obs(
     if combine_obs:
         bullish_obs = _combine_obs_func(bullish_obs)
         bearish_obs = _combine_obs_func(bearish_obs)
+
+    # 🐞 ПОРЯДОК ПІСЛЯ ЗЛИТТЯ = НАЙНОВІШИЙ ПЕРШИМ (кейс BTCUSDT 30.09).
+    # Pine зливає зони ПО ХОДУ історії: злитий блок стає першим у момент
+    # злиття, тобто за часом НОВІШОГО учасника. Ми зливаємо ОДНИМ проходом
+    # у кінці, і `_combine_obs_func` ставив КОЖЕН злитий блок на початок —
+    # старі злиті зони (21.09, 23.09) опинялись ПОПЕРЕДУ свіжого блоку 30.09.
+    # Обрізання до Zone Count (`[:3]`) тоді викидало САМЕ НАЙНОВІШИЙ блок, і
+    # «останнім VOB» ставав старий протилежний (бот SHORT, TradingView LONG);
+    # `newest_bull/bear` для VOB-алертів теж указував на старий блок.
+    # Злитий блок уже несе formation_time = max учасників — сортуємо за ним.
+    _ft = lambda ob: ob.get('formation_time', ob.get('start_time', 0)) or 0
+    bullish_obs.sort(key=_ft, reverse=True)
+    bearish_obs.sort(key=_ft, reverse=True)
     
     # Trim to visible count per zone_count setting
     zone_count_map = {'One': 1, 'Low': 3, 'Medium': 5, 'High': 10}
