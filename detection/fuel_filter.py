@@ -298,12 +298,15 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
         'w_flat': round(wf, 1), 'w_total': round(total, 1),
         'n_long': n_long, 'n_short': n_short, 'n_flat': n_flat,
         'coins': n_long + n_short + n_flat,
-        # 💪 СЕРЕДНЯ СИЛА (30.09): `pct` — це ОДНОСТАЙНІСТЬ (частка маси в
-        # один бік), а не сила. 83% одностайності при монетах по 20-50% — це
-        # «широкий, але помірний тиск». Сила = Σ|сила| ÷ кількість монет, та
-        # сама шкала 0-100, що в комірці МММ, тож слово тиску беремо САМЕ з неї.
-        'avg_str': (round(total / (n_long + n_short + n_flat), 1)
-                    if (n_long + n_short + n_flat) else 0.0),
+        # 💪 СЕРЕДНЯ СИЛА ПЕРЕМОЖНОГО БОКУ (30.09): `pct` — ОДНОСТАЙНІСТЬ
+        # (частка маси в один бік), а не сила. Сила = середнє по монетах ЛИШЕ
+        # того боку, що переважає (знак `net`): переміг LONG → середня сила
+        # LONG-монет, SHORT → SHORT-монет (вимога користувача). ⚖ і протилежний
+        # бік у середнє НЕ входять. Шкала 0-100, як у комірці МММ.
+        'avg_side': ('LONG' if net > 0 else ('SHORT' if net < 0 else None)),
+        'avg_str': (round(wl / n_long, 1) if (net > 0 and n_long)
+                    else (round(ws / n_short, 1) if (net < 0 and n_short)
+                          else 0.0)),
         'since': int(since or now),
         'ts': int(now),
     }

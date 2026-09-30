@@ -3053,8 +3053,13 @@ def test_banner_separates_consensus_from_average_strength():
     b, _, _ = _m.mm_bias_step(snap, 1000.0, 0, {}, 0.0, {},
                               st_key='new_status', str_key='new_strength')
     _check(b['dir'] == 'SHORT' and b['pct'] > 90, f'одностайність висока: {b}')
-    _check(b['avg_str'] == round((54 + 40 + 30 + 20 + 16 + 8) / 6, 1),
-           f'середня сила = вага ÷ монет: {b}')
+    _check(b['avg_side'] == 'SHORT' and b['avg_str'] == round((54 + 40 + 30 + 20 + 16) / 5, 1),
+           f'сила = середнє ЛИШЕ переможного боку, ⚖ не входить: {b}')
+    mix = {'L1': {'status': 'LONG', 'strength': 80}, 'L2': {'status': 'LONG', 'strength': 60},
+           'S1': {'status': 'SHORT', 'strength': 10}, 'F1': {'status': None, 'strength': 5}}
+    m, _, _ = _m.mm_bias_step(mix, 1000.0, 0, {}, 0.0, {})
+    _check(m['avg_side'] == 'LONG' and m['avg_str'] == 70.0,
+           f'переміг LONG → середня сила лише LONG-монет: {m}')
     _check(b['avg_str'] <= 54, 'середня сила не може перевищити найсильнішу монету')
     e, _, _ = _m.mm_bias_step({}, 1000.0, 0, {}, 0.0, {})
     _check(e['avg_str'] == 0.0, 'порожній знімок → 0, а не ділення на нуль')
