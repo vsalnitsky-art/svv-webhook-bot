@@ -94,6 +94,11 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._mmn_snapshot, ff._mmn_snapshot_ts, ff._mmn_stats = {}, 0.0, {}
     ff._mmn_str_hist, ff._mmn_price_hist = {}, {}
     ff._mmn_grow_since, ff._mmn_state_since = {}, {}
+    # 🎯 «Готовність» МММ-new (01.10): власний кеш + основний грейдер. Справжній
+    # `_compute_setup` ходить по свічки — у тестах його підміняють явно.
+    ff._mmn_setup, ff._mmn_setup_at = {}, {}
+    ff._setup_cache = {}
+    ff._compute_setup = lambda sym, d, s: None
     ff._mm_state_since = {}
     ff._mm_price_hist = {}
     ff._mm_decision = {}
@@ -449,7 +454,8 @@ def test_ui_uses_the_shared_mm_widget():
     # і фіксований зріз почав би врізати рядок із викликом віджета.
     i = _HTML.index('function mmRender(bk)')
     fn = _HTML[i:_HTML.index('function mmApplyState(', i)]
-    _check('ffFuelCell(r.mm, r.strength, r.strength_prev)' in fn,
+    _check('ffFuelCell(r.mm, r.strength, r.strength_prev)' in _HTML
+           and '_MM_CELL[c](r)' in fn,
            'монітор малює МММ власним віджетом — вигляд розійдеться')
     print('✓ МММ малює спільний віджет ffFuelCell')
 
@@ -672,6 +678,7 @@ def test_toggle_off_stops_the_work_not_just_the_view():
     Це і є економія — МММ LiQ по 200+ монетах щотакту не рахується.
     Якби ми лише ховали таблицю, робота лишилась би, а тумблер брехав би."""
     ff = _mk(mon=False)
+    ff._settings['mm_new_enabled'] = False     # обидва блоки вимкнено
     _cap(ff, BTCUSDT=0.5, ETHUSDT=-0.5)
     _check(not ff._legacy_calls,
            f'вимкнений монітор усе одно рахував МММ: {ff._legacy_calls}')
@@ -1048,7 +1055,7 @@ def test_ui_has_growth_column_with_timer_and_sorting():
     # ⚠️ Кількість колонок звіряємо зі СКЛАДОМ, а не з магічним числом: список
     # нижче — це і є контракт таблиці, тож додана колонка мусить бути названа
     # ТУТ, а не просто зсунути число.
-    _cols = ['Символ', '📍 Стан', 'МММ LiQ', '⏱ У стані', 'Сила росте',
+    _cols = ['Символ', '📍 Стан', 'МММ LiQ', 'МММ-new', '⏱ У стані', 'Сила росте',
              '⏱ Росте', 'Ціна', 'Рух', '🔮 1H', '🔮 4H']
     for _c in _cols:
         _check(_c in tbl, f'немає колонки «{_c}»')
@@ -1448,6 +1455,9 @@ def test_open_trades_keep_their_mm_even_when_the_monitor_is_off():
     чужого тумблера означало б «вимкнув монітор — зникли числа в угодах».
     Але сама ТАБЛИЦЯ МОНІТОРА при цьому лишається порожньою."""
     ff = _mk(mon=False)
+    # ⚠️ МММ-new вимикаємо явно: з 01.10 його колонка «МММ-LiQ» теж читає
+    # `_fuel_dir_legacy`, а тут перевіряємо САМЕ 🧮 тумблер.
+    ff._settings['mm_new_enabled'] = False
     ff._fuel_managed = {'BTCUSDT': {}}
     _cap(ff, BTCUSDT=0.5, ETHUSDT=-0.5)
     _check(ff._legacy_calls == ['BTCUSDT'],
@@ -3127,9 +3137,13 @@ def test_ui_new_block_is_a_full_twin_of_the_monitor():
     def _sorts(tid):
         a = _HTML.index(f'id="{tid}"')
         return _re.findall(r'data-mmsort="(\w+)"', _HTML[a:_HTML.index('</table>', a)])
-    _check(_sorts('mm-table') == _sorts('mmn-table'),
-           'колонки двох таблиць мусять збігатись 1-в-1')
-    _check("mmSort('delta','new')" in _HTML and "mmSetDir('LONG','new')" in _HTML,
+    # 01.10 (друга вимога того ж дня): склад колонок РІЗНИЙ — у 🧮 є «МММ-new»,
+    # у 🆕 — «МММ-LiQ», «Готовність», «Запас», без «Сила росте»/«Росте»/«Ціна».
+    _check(_sorts('mm-table') == ['symbol', 'status', 'strength', 'newstr', 'state',
+                                  'delta', 'grow', 'price', 'pchg'], _sorts('mm-table'))
+    _check(_sorts('mmn-table') == ['symbol', 'status', 'strength', 'liqstr', 'setup',
+                                   'state', 'runway', 'pchg'], _sorts('mmn-table'))
+    _check("mmSort('setup','new')" in _HTML and "mmSetDir('LONG','new')" in _HTML,
            'кнопки нового блоку працюють зі своєю книгою')
     _check("'mmn', 'mmnlist'" in _HTML, 'гармошки МММ-new у _PANEL_IDS')
     _check("new Set(['mmlist', 'mmnlist'])" in _HTML, 'список МММ-new згорнутий за замовч.')
@@ -3197,6 +3211,120 @@ console.log(JSON.stringify({o:[..._MMB.old.sel], n:[..._MMB.new.sel],
            f'слово тиску — від СИЛИ, а не від одностайності: {d}')
     _check('60% за LONG' in d['ol'], d)
     print('✓ JS: дві книги — свій вибір, свій фільтр, свій банер')
+
+
+# ═══ 35. СУСІДНІ КОЛОНКИ: 🧮 «МММ-new» · 🆕 «МММ-LiQ» + «Готовність» + «Запас» (01.10)
+# Дослівно: «В таблицю "🧮 МММ-монітор" поверни колонку "Новий МММ", назви її
+# "МММ-new". А для таблиці "МММ-new" поверни колонку "МММ-LiQ"… В таблиці
+# "МММ-new" видали колонки "СИЛА РОСТЕ" і "РОСТЕ" і "ЦІНА", а додай колонку
+# "запас" і "Готовність", як в скрипті для TradingView.»
+def test_each_table_carries_the_other_mm_from_the_same_numbers():
+    """`_cap` подає Новий МММ ПРОТИЛЕЖНИМ до МММ LiQ — тож сусідня колонка
+    кожної таблиці мусить показати РІВНО число іншої книги."""
+    ff = _mk()
+    _cap(ff, AAAUSDT=0.6)
+    old = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}['AAAUSDT']
+    new = {r['symbol']: r for r in ff.mm_monitor_state(book='new')['rows']}['AAAUSDT']
+    _check(old['mm'] == 'LONG' and old['new_mm'] == 'SHORT' and old['new_strength'] == 60, old)
+    _check(new['mm'] == 'SHORT' and new['liq_mm'] == 'LONG' and new['liq_strength'] == 60, new)
+    # Одне число в обох таблицях: колонка «МММ-new» у 🧮 = рядок МММ-new.
+    _check(old['new_strength'] == new['strength'] and new['liq_strength'] == old['strength'],
+           (old, new))
+    print('✓ «МММ-new» у 🧮 і «МММ-LiQ» у 🆕 — ті самі числа, що сусідня книга')
+
+
+def test_legacy_is_computed_once_per_coin_for_both_books():
+    ff = _mk()
+    _cap(ff, AAAUSDT=0.6, BBBUSDT=-0.3)
+    _check(sorted(ff._legacy_calls) == ['AAAUSDT', 'BBBUSDT'],
+           f'МММ LiQ рахуємо раз на монету за такт, а не по разу на книгу: {ff._legacy_calls}')
+    print('✓ МММ LiQ — один розрахунок на монету для обох таблиць')
+
+
+def test_runway_is_the_same_slice_the_overlay_shows():
+    ff = _mk()
+    rw = {'dir': 'SHORT', 'room_pct': 3.2, 'label': 'до пулу', 'main': {'price': 1.0, 'usd': 5e5}}
+    fu = _fuels(AAAUSDT=-0.6)
+    fu['AAAUSDT']['runway'] = rw
+    ff._legacy = {'AAAUSDT': 0.6}
+    ff._mm_capture(fu, now=ff._clock[0])
+    row = ff.mm_monitor_state(book='new')['rows'][0]
+    _check(row['runway'] == rw, f'«Запас» — той самий runway зі зрізу Нового МММ: {row}')
+    print('✓ «Запас» = runway зі зрізу Нового МММ (як у TradingView-оверлеї)')
+
+
+def test_setup_is_computed_in_portions_and_prefers_the_main_grader():
+    """⚠️ «Готовність» — важка (через неї колонку вже прибирали). Тому порція
+    за такт, TTL на монету, і готове значення основного грейдера не рахуємо
+    вдруге; ⚖ рівновага — не грейдимо."""
+    ff = _mk()
+    calls = []
+    ff._compute_setup = lambda sym, d, s: (calls.append((sym, d))
+                                           or {'ok': True, 'score': 50, 'grade': 'ХОРОШИЙ', 'dir': d})
+    ff._setup_cache = {'C00USDT': {'ok': True, 'score': 77, 'grade': 'ВІДМІННИЙ', 'dir': 'SHORT'}}
+    pairs = {f'C{i:02d}USDT': 0.6 for i in range(10)}
+    pairs['FLATUSDT'] = 0.0
+    _cap(ff, **pairs)
+    n = _m.FuelFilterDaemon.MMN_SETUP_MAX_PER_TICK
+    _check(len(calls) == n, f'за такт не більше {n} грейдів: {calls}')
+    _check(all(d == 'SHORT' for _, d in calls), 'напрямок грейду — Новий МММ монети')
+    _check('C00USDT' not in [c for c, _ in calls] and 'FLATUSDT' not in [c for c, _ in calls],
+           f'основний грейдер і ⚖ рівновага не рахуються: {calls}')
+    rows = {r['symbol']: r for r in ff.mm_monitor_state(book='new')['rows']}
+    _check(rows['C00USDT']['setup']['score'] == 77, 'готове значення основного грейдера')
+    _cap(ff, **pairs)
+    _check(len(set(c for c, _ in calls)) == 2 * n and len(calls) == 2 * n,
+           f'TTL: уже пораховані не повторюються, черга йде далі: {calls}')
+    _check(ff.mm_monitor_state()['rows'][0]['setup'] is None, '🧮 таблиця Готовність не несе')
+    ff2 = _mk(); ff2._settings['setup_grader_on'] = False
+    c2 = []
+    ff2._compute_setup = lambda sym, d, s: c2.append(sym)
+    _cap(ff2, AAAUSDT=0.6)
+    _check(not c2, 'вимкнений грейдер гасить і цю колонку')
+    print('✓ «Готовність» МММ-new: порціями, з TTL, без дубля основного грейдера')
+
+
+def test_ui_tables_have_the_requested_columns():
+    import re as _re
+
+    def heads(tid):
+        a = _HTML.index(f'id="{tid}"')
+        t = _HTML[a:_HTML.index('</thead>', a)]
+        return [_re.sub(r'<[^>]+>', '', x).strip()
+                for x in _re.findall(r'<th[^>]*>(.*?)</th>', t, flags=_re.S)]
+    o, n = heads('mm-table'), heads('mmn-table')
+    _check(o.index('МММ-new') == o.index('МММ LiQ') + 1, f'«МММ-new» праворуч від МММ LiQ: {o}')
+    _check(n.index('МММ-LiQ') == n.index('МММ-new') + 1, f'«МММ-LiQ» праворуч від МММ-new: {n}')
+    _check(n.index('Готовність') == n.index('МММ-LiQ') + 1, f'«Готовність» праворуч від МММ-LiQ: {n}')
+    _check('Запас' in n, n)
+    for gone in ('Сила росте', '⏱ Росте', 'Ціна'):
+        _check(gone not in n, f'у МММ-new лишилась колонка «{gone}»: {n}')
+    _check("_MMB.new.cols = ['status', 'mm', 'liq', 'setup', 'state', 'runway', 'pchg', 'f1', 'f4']" in _HTML
+           and len(n) == 11, 'склад JS-колонок = заголовки')
+    print('✓ UI: 🧮 +«МММ-new»; 🆕 +«МММ-LiQ»/«Готовність»/«Запас», без росту і ціни')
+
+
+def test_js_new_table_draws_the_new_cells():
+    out = _run_js(r'''
+const R = {symbol:'AAAUSDT', mm:'SHORT', strength:60, strength_prev:null, price:1,
+  liq_mm:'LONG', liq_strength:40, in_trade:false, queues:[], selectable:true,
+  setup:{ok:true, score:57, grade:'ХОРОШИЙ', dir:'SHORT', color:'#22c55e', hot:true},
+  runway:{dir:'SHORT', room_pct:3.2, label:'до пулу', main:{price:1.1}}};
+mmApplyState({rows:[R], enabled:true, limited:false, ts:1}, 'new');
+mmApplyState({rows:[Object.assign({}, R, {mm:'LONG', new_mm:'SHORT', new_strength:60,
+  setup:null, runway:null})], enabled:true, limited:false, ts:1}, 'old');
+console.log(JSON.stringify({n:document.getElementById('mmn-tbody').innerHTML,
+                            o:document.getElementById('mm-tbody').innerHTML}));
+''')
+    import json
+    d = json.loads(out)
+    tr_n = d['n'].split('</tr>')[0]
+    _check(tr_n.count('<td') == 11, f'11 комірок у МММ-new: {tr_n.count("<td")}')
+    _check('57%' in tr_n and 'ХОРОШИЙ' in tr_n and '🎯' in tr_n, 'Готовність намальована')
+    _check('3.2%' in tr_n and '↓' in tr_n, 'Запас намальований')
+    tr_o = d['o'].split('</tr>')[0]
+    _check(tr_o.count('<td') == 12, f'12 комірок у 🧮: {tr_o.count("<td")}')
+    print('✓ JS: МММ-new малює Готовність і Запас, 🧮 — колонку МММ-new')
 
 
 if __name__ == '__main__':

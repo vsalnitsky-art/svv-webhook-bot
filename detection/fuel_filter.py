@@ -1020,6 +1020,9 @@ class FuelFilterDaemon:
         # Рядок знімка має ТУ САМУ форму (`status`/`dir`/`strength`), тож усі
         # трекери й рендер спільні — відрізняється РІВНО джерело.
         self._mmn_snapshot: Dict[str, Dict] = {}
+        # 🎯 «Готовність» для рядків МММ-new — ВЛАСНИЙ кеш (див. `_mmn_setup_tick`).
+        self._mmn_setup: Dict[str, Dict] = {}
+        self._mmn_setup_at: Dict[str, float] = {}
         self._mmn_snapshot_ts: float = 0.0
         self._mmn_str_hist: Dict[str, list] = {}
         self._mmn_grow_since: Dict[str, float] = {}
@@ -3769,6 +3772,8 @@ class FuelFilterDaemon:
                     self._mmn_state_since = {}
                     self._mmn_price_hist = {}
                     self._mmn_stats = {}
+                    self._mmn_setup = {}
+                    self._mmn_setup_at = {}
                 self._mm_bias_new = {}
                 self._mm_bias_new_since = 0.0
                 self._mm_bias_new_cand = {}
@@ -3821,6 +3826,19 @@ class FuelFilterDaemon:
                 _fc[sym] = self._mm_forecast(_fe, sym)
             return _fc[sym]
 
+        # МММ LiQ теж потрібен ОБОМ книгам (у МММ-new це колонка «МММ-LiQ»):
+        # рахуємо раз на монету за такт. Це арифметика над уже кешованим
+        # `_liq_state`, мережі не коштує.
+        _lg: Dict[str, Optional[Dict]] = {}
+
+        def _legacy(sym):
+            if sym not in _lg:
+                try:
+                    _lg[sym] = self._fuel_dir_legacy(sym)
+                except Exception:
+                    _lg[sym] = None
+            return _lg[sym]
+
         # ═══ 🧮 КНИГА МММ LiQ ═══
         # ⚠️ ВИНЯТОК при вимкненому моніторі — монети У ВІДКРИТІЙ УГОДІ (їх
         # одиниці). Їхній рядок живить колонку «🧮 МММ LiQ» у таблицях угод і
@@ -3840,9 +3858,10 @@ class FuelFilterDaemon:
                 # 🧮 `_fuel_dir_legacy` (сирий (fa−fb)/den по кластерах liq-map)
                 # читає той самий кешований `_liq_state`, що щойно взяв новий
                 # МММ, — мережі це не коштує нічого.
-                old = self._fuel_dir_legacy(sym)
+                old = _legacy(sym)
                 if not old:
                     continue
+                _nd = _fnum(f.get('dir'))
                 snap[str(sym).upper()] = {
                     'status': old.get('status'),
                     'dir': round(_fnum(old.get('dir')), 3),
@@ -3851,6 +3870,11 @@ class FuelFilterDaemon:
                     # Ціна — з нового зрізу: legacy її не повертає, а `mark_price`
                     # в обох один (знімок liq-map + `_live_price`).
                     'mark_price': f.get('mark_price'),
+                    # 🆕 Колонка «МММ-new» у 🧮 таблиці — ТІ САМІ `fuels`, що
+                    # живлять книгу МММ-new (одне число в обох таблицях).
+                    'new_status': (f.get('status')
+                                   if f.get('status') in ('LONG', 'SHORT') else None),
+                    'new_strength': int(round(abs(_nd) * 100)),
                     **_fcast(sym),
                 }
             self._mm_track_prices(snap, _now)
@@ -3879,12 +3903,20 @@ class FuelFilterDaemon:
                     continue
                 st = f.get('status') if f.get('status') in ('LONG', 'SHORT') else None
                 d = _fnum(f.get('dir'))
+                _old = _legacy(sym) or {}
                 snap_n[str(sym).upper()] = {
                     'status': st,
                     'dir': round(d, 3),
                     # Сила = |dir|×100 — те саме правило, що в колонці «МММ» черг.
                     'strength': int(round(abs(d) * 100)),
                     'mark_price': f.get('mark_price'),
+                    # «МММ-LiQ» — той самий `_fuel_dir_legacy`, що 🧮 книга.
+                    'liq_status': (_old.get('status')
+                                   if _old.get('status') in ('LONG', 'SHORT') else None),
+                    'liq_strength': (int(_old.get('strength') or 0) if _old else None),
+                    # 🎯 «Запас» — ТОЙ САМИЙ `runway` зі зрізу Нового МММ, що
+                    # показує TradingView-оверлей і шар «Запас» Черги-4.
+                    'runway': f.get('runway'),
                     **_fcast(sym),
                 }
             self._mm_track_prices(snap_n, _now, hist_attr='_mmn_price_hist')
@@ -3897,11 +3929,58 @@ class FuelFilterDaemon:
                 self._mmn_stats = {'targeted': len(fuels or {}),
                                    'data': len(snap_n), 'ts': _now}
             self._mm_track_bias_new(snap_n, _now, s)
+            self._mmn_setup_tick(snap_n, s, _now)
 
         if _mon or _new:
             # ⏳ Знімок Є → причина «чому його немає» більше не потрібна.
             with self._lock:
                 self._mm_pending = {}
+
+    def _mmn_setup_tick(self, snap: Dict, settings: Dict, now: float):
+        """🎯 «Готовність» (SMC `grade_setup`) для рядків МММ-new.
+
+        ⚠️ ВАЖКИЙ розрахунок (свічки + SMC-аналіз), і саме через нього колонку
+        «Готовність» у моніторі 30.09 прибирали («дуже тормозить сторінку»).
+        Тому тут ДВІ межі, і обидві ЖОРСТКІ:
+          • не більше `MMN_SETUP_MAX_PER_TICK` монет за такт двигуна (найстаріші
+            першими) — повне коло займає кілька хвилин, а не один такт;
+          • кожну монету — не частіше `MMN_SETUP_TTL`.
+        Свіже значення з основного грейдера (`_setup_cache`, монети черг/угод)
+        береться готовим і власного розрахунку не потребує. Напрямок для
+        грейду — Новий МММ монети; ⚖ рівновага → не рахуємо (судити нічого).
+        Вимкнений `setup_grader_on` гасить і цю колонку.
+        """
+        if not bool(settings.get('setup_grader_on', True)):
+            with self._lock:
+                self._mmn_setup, self._mmn_setup_at = {}, {}
+            return
+        live = set(snap.keys())
+        with self._lock:
+            for k in list(self._mmn_setup_at):
+                if k not in live:
+                    self._mmn_setup_at.pop(k, None)
+                    self._mmn_setup.pop(k, None)
+            main = dict(self._setup_cache or {})
+            done_at = dict(self._mmn_setup_at)
+        due = sorted((sym for sym, v in snap.items()
+                      if v.get('status') in ('LONG', 'SHORT')
+                      and sym not in main
+                      and (now - done_at.get(sym, 0.0)) >= self.MMN_SETUP_TTL),
+                     key=lambda x: done_at.get(x, 0.0))
+        for sym in due[:self.MMN_SETUP_MAX_PER_TICK]:
+            try:
+                res = self._compute_setup(sym, snap[sym].get('status'), settings)
+            except Exception as e:
+                res = None
+                print(f"[FF-MMN-Setup] {sym} compute error: {e}")
+            with self._lock:
+                self._mmn_setup_at[sym] = now
+                if res is not None:
+                    self._mmn_setup[sym] = res
+
+    def _mmn_setup_for(self, sym: str) -> Optional[Dict]:
+        """Готовність монети для таблиці МММ-new: основний грейдер сильніший."""
+        return (self._setup_cache or {}).get(sym) or (self._mmn_setup or {}).get(sym)
 
     def _mm_queue_map(self) -> Dict[str, List[str]]:
         """{СИМВОЛ: ['Q1','Q4', …]} — у ЯКИХ чергах зараз стоїть монета.
@@ -4024,6 +4103,16 @@ class FuelFilterDaemon:
                 # 🔮 Прогноз 1H/4H із кешу — та сама пара, що на бейджах графіка.
                 'f1': v.get('f1'),
                 'f4': v.get('f4'),
+                # 🆕 Сусідній показник (форма рядка ОДНА на обидві книги, тож
+                # поля є завжди; у «чужій» книзі вони просто None):
+                #   🧮 книга → «МММ-new» (Новий МММ монети);
+                #   🆕 книга → «МММ-LiQ», «Запас» і «Готовність».
+                'new_mm': v.get('new_status'),
+                'new_strength': v.get('new_strength'),
+                'liq_mm': v.get('liq_status'),
+                'liq_strength': v.get('liq_strength'),
+                'runway': v.get('runway'),
+                'setup': (self._mmn_setup_for(sym) if _nb else None),
                 # 📍 СТАН МОНЕТИ. Віддаємо ЧИСТІ прапорці, а підпис і колір
                 # малює фронт (той самий принцип, що `verdict.parts`).
                 'in_trade': _trade,
@@ -10425,6 +10514,9 @@ class FuelFilterDaemon:
     # завжди — воно дешеве. `None` = віддати ВСЕ (сумісність для інфо-сайту та
     # будь-якого стороннього споживача API).
     HEAVY_SECTIONS = ('q4', 'fund', 'mm', 'mmn')
+    # 🎯 «Готовність» у МММ-new — порція і TTL (див. `_mmn_setup_tick`).
+    MMN_SETUP_MAX_PER_TICK = 4
+    MMN_SETUP_TTL = 300.0
 
     def get_state(self, sections: Optional[set] = None) -> Dict:
         """Snapshot for the UI: settings + live timers + active tracking.

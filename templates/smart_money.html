@@ -2694,6 +2694,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                  підписані станом. -->
                             <th data-mmsort="status" onclick="mmSort('status')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Монета в угоді або в черзі з таблиці НЕ зникає — просто видно, що вона вже в роботі, і галочка для ✋ групового відкриття їй недоступна. Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="Показник МММ LiQ (той самий, що живить шар «МММ LiQ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">МММ LiQ<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="newstr" onclick="mmSort('newstr')" style="cursor:pointer;user-select:none" title="МММ-new — НОВИЙ МММ тієї самої монети («бабло»-модель двигуна, `_fuel_dir_smoothed`): те саме число, що в блоці 🆕 МММ-new, колонці «МММ» черг і шарі «Новий МММ» Черги-4. Сила = |dir|×100. Клік — сортувати за силою.">МММ-new<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="state" onclick="mmSort('state')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан МММ — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Відлік починається заново на КОЖНІЙ зміні стану (у тому числі при переході в рівновагу і назад). ⚖ рівновага — теж стан: «скільки монета вже без напрямку» не менш важливо за «скільки вона в LONG». Разовий пропуск монети у знімку таймер НЕ збиває, а рестарт бота його не обнуляє — момент старту зберігається. Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="delta" onclick="mmSort('delta')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за ВІКНО СПОСТЕРЕЖЕННЯ (~3 хв, тобто три оновлення джерела). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. Базою є НАЙСТАРІШЕ значення у вікні, а не попередній такт: разовий пропуск даних більше не стирає показник, а дрібне тремтіння цілого числа сили не перемикає стрілку. Поки історії менше за одне оновлення джерела — показуємо «—», а не вигаданий приріст. Фактичне вікно по кожному рядку — у підказці комірки. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="grow" onclick="mmSort('grow')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу сила МММ росте БЕЗПЕРЕРВНО. Ріст ТРИВАЄ, поки виконуються ДВІ умови: (1) за вікном спостереження приріст вищий за поріг і (2) сила не відкотилась від свого піку в цьому вікні більше ніж на той самий поріг. Перша умова прибирає мерехтіння — дрібне тремтіння таймер не збиває; друга не дає таймеру тягнути «росте» ще хвилини після того, як сила вже розвернулась. «—» = зараз не росте. Клік — сортувати (найдовший ріст зверху).">⏱ Росте<span class="ff-sort-arrow"></span></th>
@@ -2704,7 +2705,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="mm-tbody">
-                        <tr><td colspan="11" class="tm-empty-msg">Немає даних МММ</td></tr>
+                        <tr><td colspan="12" class="tm-empty-msg">Немає даних МММ</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -2789,11 +2790,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmn-check-all" onchange="mmToggleAll(this.checked,'new')"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol','new')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="status" onclick="mmSort('status','new')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Монета в угоді або в черзі з таблиці НЕ зникає — просто видно, що вона вже в роботі, і галочка для ✋ групового відкриття їй недоступна. Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="strength" onclick="mmSort('strength','new')" style="cursor:pointer;user-select:none" title="Показник НОВИЙ МММ — «бабло»-модель двигуна (`_fuel_dir_smoothed`): той самий, що колонка «МММ» черг і шар «Новий МММ» Черги-4. Напрямок + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">Новий МММ<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="strength" onclick="mmSort('strength','new')" style="cursor:pointer;user-select:none" title="Показник НОВИЙ МММ — «бабло»-модель двигуна (`_fuel_dir_smoothed`): той самий, що колонка «МММ» черг і шар «Новий МММ» Черги-4. Напрямок + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">МММ-new<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="liqstr" onclick="mmSort('liqstr','new')" style="cursor:pointer;user-select:none" title="МММ-LiQ — МММ за розташуванням кластерів ліквідації (`_fuel_dir_legacy`) тієї самої монети: те саме число, що в блоці 🧮 МММ-монітор і шарі «МММ LiQ» Черги-4. Клік — сортувати за силою.">МММ-LiQ<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="setup" onclick="mmSort('setup','new')" style="cursor:pointer;user-select:none" title="🎯 Готовність — SMC-якість сетапу для ВХОДУ (0–100) у бік Нового МММ, той самий показник, що в TradingView-оверлеї: ВІДМІННИЙ · ХОРОШИЙ · СЕРЕДНІЙ · СЛАБКИЙ (🎯 = HOT). Розрахунок важкий, тому йде порціями: кілька монет за такт, кожна не частіше ніж раз на 5 хв (⏳ — черга ще не дійшла). Клік — сортувати за балом.">Готовність<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="state" onclick="mmSort('state','new')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан МММ — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Відлік починається заново на КОЖНІЙ зміні стану (у тому числі при переході в рівновагу і назад). ⚖ рівновага — теж стан: «скільки монета вже без напрямку» не менш важливо за «скільки вона в LONG». Разовий пропуск монети у знімку таймер НЕ збиває, а рестарт бота його не обнуляє — момент старту зберігається. Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="delta" onclick="mmSort('delta','new')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за ВІКНО СПОСТЕРЕЖЕННЯ (~3 хв, тобто три оновлення джерела). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. Базою є НАЙСТАРІШЕ значення у вікні, а не попередній такт: разовий пропуск даних більше не стирає показник, а дрібне тремтіння цілого числа сили не перемикає стрілку. Поки історії менше за одне оновлення джерела — показуємо «—», а не вигаданий приріст. Фактичне вікно по кожному рядку — у підказці комірки. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="grow" onclick="mmSort('grow','new')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу сила МММ росте БЕЗПЕРЕРВНО. Ріст ТРИВАЄ, поки виконуються ДВІ умови: (1) за вікном спостереження приріст вищий за поріг і (2) сила не відкотилась від свого піку в цьому вікні більше ніж на той самий поріг. Перша умова прибирає мерехтіння — дрібне тремтіння таймер не збиває; друга не дає таймеру тягнути «росте» ще хвилини після того, як сила вже розвернулась. «—» = зараз не росте. Клік — сортувати (найдовший ріст зверху).">⏱ Росте<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="price" onclick="mmSort('price','new')" style="cursor:pointer;user-select:none;text-align:right" title="Ціна зі знімка МММ (те саме число, що бачить двигун). Клік — сортувати за ціною.">Ціна<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="runway" onclick="mmSort('runway','new')" style="cursor:pointer;user-select:none;text-align:right" title="🎯 Запас — скільки простору до значущої ліквідності В БІК Нового МММ (↑/↓), як у TradingView-оверлеї. Малий запас = рух близько до великого кластера (ймовірне сповільнення/розворот). Без напрямку — «—». Клік — сортувати за запасом.">Запас<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="pchg" onclick="mmSort('pchg','new')" style="cursor:pointer;user-select:none;text-align:right" title="КУДИ йде ціна: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). За скільки часу історії реально набралось — у підказці комірки: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ (найсильніший ріст зверху).">Рух<span class="ff-sort-arrow"></span></th>
                             <th title="🔮 Прогноз 1H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 1H» над графіком. Читається готовим, нічого не рахує.">🔮 1H</th>
                             <th title="🔮 Прогноз 4H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 4H» над графіком.">🔮 4H</th>
@@ -11940,6 +11941,14 @@ function _mmMkBook(P, src, uiKey) {
 }
 const _MMB = { old: _mmMkBook('mm', 'МММ LiQ', 'mmMonitorUi'),
                new: _mmMkBook('mmn', 'Новий МММ', 'mmNewUi') };
+// 📋 СКЛАД КОЛОНОК КОЖНОЇ ТАБЛИЦІ (вимога 01.10). Ключі — у порядку показу,
+// без ☑ і «Символ» (вони є завжди). Заголовки в HTML ідуть у ТОМУ САМОМУ
+// порядку — тест-замок звіряє кількість <th> і <td>.
+//   🧮: МММ LiQ, праворуч «МММ-new» (Новий МММ тієї ж монети).
+//   🆕: МММ-new, праворуч «МММ-LiQ», далі «Готовність» і «Запас» — як у
+//       TradingView-оверлеї; «Сила росте», «⏱ Росте» і «Ціна» тут прибрано.
+_MMB.old.cols = ['status', 'mm', 'new', 'state', 'delta', 'grow', 'price', 'pchg', 'f1', 'f4'];
+_MMB.new.cols = ['status', 'mm', 'liq', 'setup', 'state', 'runway', 'pchg', 'f1', 'f4'];
 // Книга за кодом ('old' | 'new'); будь-що інше — 🧮 МММ-монітор.
 function _mmBk(bk) { return _MMB[bk === 'new' ? 'new' : 'old']; }
 const _mmBkCode = B => (B === _MMB.new ? 'new' : 'old');
@@ -11975,6 +11984,11 @@ function _mmSortVal(r, col) {
     if (col === 'symbol') return r.symbol || '';
     if (col === 'delta') return (r.delta == null ? null : Number(r.delta));
     if (col === 'price') return (r.price == null ? null : Number(r.price));
+    // Сусідні показники — за силою; рядок без даних униз.
+    if (col === 'newstr') return (r.new_strength == null ? null : Number(r.new_strength));
+    if (col === 'liqstr') return (r.liq_strength == null ? null : Number(r.liq_strength));
+    if (col === 'setup') return (r.setup && r.setup.ok ? Number(r.setup.score || 0) : null);
+    if (col === 'runway') return (r.runway && r.runway.room_pct != null ? Number(r.runway.room_pct) : null);
     // 💹 РУХ — власна колонка (17.09), тож «Ціна» сортується за ЦІНОЮ, а «яка
     // монета зараз іде вгору» — це колонка «Рух». Рядок без історії
     // (`price_dir` порожній) — це «ще не знаємо», а не «нуль».
@@ -12149,6 +12163,60 @@ function _mmFcCell(f, tf) {
     return `<span title="${_mmEsc(tip)}" style="color:${col};font-size:0.66rem;`
         + `font-family:monospace;white-space:nowrap">${tf}: ${ico} ${dir}</span>`;
 }
+// 🎯 «ГОТОВНІСТЬ» — SMC-якість сетапу, той самий вигляд, що в TradingView-
+// оверлеї: «45% 🟢 СЕРЕДНІЙ 🎯». Колір і слово — з бекенда (`grade_setup`).
+// ⚠️ Рахується ПОРЦІЯМИ (кілька монет за такт), тож «⏳» — це «черга ще не
+// дійшла», а не «немає сетапу»; ⚖ рівновага — грейдити нічого.
+function _mmSetupCell(r) {
+    const su = r.setup;
+    if (!su || !su.ok) {
+        const flat = (r.mm !== 'LONG' && r.mm !== 'SHORT');
+        return flat
+            ? '<span style="color:#6b7280" title="МММ без напрямку — сетап судити нема в який бік">—</span>'
+            : '<span style="color:#6b7280" title="Готовність рахується порціями (кілька монет за такт двигуна, кожна не частіше ніж раз на 5 хв) — черга ще не дійшла до цієї монети.">⏳</span>';
+    }
+    const col = su.color || '#94a3b8';
+    const ic = su.dir === 'LONG' ? '🟢' : (su.dir === 'SHORT' ? '🔴' : '⚪');
+    return `<span style="font-family:monospace;white-space:nowrap" title="Готовність — SMC-якість сетапу для ВХОДУ (0–100), та сама, що в TradingView-оверлеї і в колонці «Готовність» черг.">`
+        + `<b style="color:${col}">${su.score}%</b> `
+        + `<span style="color:${col};font-weight:700">${ic} ${_mmEsc(su.grade || '')}${su.hot ? ' 🎯' : ''}</span></span>`;
+}
+// 🎯 «ЗАПАС» — простір до значущої ліквідності В БІК Нового МММ, той самий
+// `runway`, що в TradingView-оверлеї («🎯 запас ↑ вгору 3.2% · …») і в шарі
+// «Запас» Черги-4. Без напрямку запас не показуємо — «куди» невизначено.
+function _mmRunwayCell(r) {
+    const rw = r.runway;
+    if (!rw || (rw.dir !== 'LONG' && rw.dir !== 'SHORT')) {
+        return '<span style="color:#6b7280" title="Немає напрямку МММ — запас не показується, бо «куди» невизначено.">—</span>';
+    }
+    const up = rw.dir === 'LONG';
+    const col = up ? '#22c55e' : '#ef4444';
+    const m = rw.main || {};
+    const tip = 'Запас ходу до значущої ліквідності ' + (up ? 'ВГОРУ' : 'ВНИЗ')
+        + (rw.label ? ' · ' + rw.label : '')
+        + (m.price != null ? ' · ціль @ ' + fmtPriceJS(m.price) : '')
+        + '. Малий запас = рух близько до великого кластера (ймовірне сповільнення/розворот).';
+    const val = rw.room_pct != null ? `${rw.room_pct}%` : _mmEsc(rw.label || '');
+    return `<span title="${_mmEsc(tip)}" style="font-family:monospace;white-space:nowrap">`
+        + `<span style="color:${col};font-weight:700">${up ? '↑' : '↓'}</span> `
+        + `<b style="color:#e5e7eb">${val}</b></span>`;
+}
+// Комірки за ключем колонки — ЄДИНЕ місце, де ключ стає розміткою.
+const _MM_CELL = {
+    status: r => `<td>${_mmStatusCell(r)}</td>`,
+    mm:     r => `<td>${ffFuelCell(r.mm, r.strength, r.strength_prev)}</td>`,
+    new:    r => `<td>${ffFuelCell(r.new_mm || null, r.new_strength == null ? null : Number(r.new_strength))}</td>`,
+    liq:    r => `<td>${ffFuelCell(r.liq_mm || null, r.liq_strength == null ? null : Number(r.liq_strength))}</td>`,
+    setup:  r => `<td>${_mmSetupCell(r)}</td>`,
+    state:  r => `<td>${_mmStateCell(r)}</td>`,
+    delta:  r => `<td>${_mmGrowCell(r)}</td>`,
+    grow:   r => `<td>${_mmTimerCell(r)}</td>`,
+    runway: r => `<td style="text-align:right">${_mmRunwayCell(r)}</td>`,
+    price:  r => `<td style="text-align:right">${_mmPriceCell(r)}</td>`,
+    pchg:   r => `<td style="text-align:right">${_mmMoveCell(r)}</td>`,
+    f1:     r => `<td>${_mmFcCell(r.f1, '1H')}</td>`,
+    f4:     r => `<td>${_mmFcCell(r.f4, '4H')}</td>`,
+};
 function mmClearSel(bk) {
     _mmBk(bk).sel.clear();
     mmRender(bk);
@@ -12191,8 +12259,10 @@ function _mmLoadUi(B) {
     try { v = JSON.parse(localStorage.getItem(B.uiKey) || 'null'); } catch (e) { v = null; }
     if (!v || typeof v !== 'object') return;
     if (['all', 'LONG', 'SHORT', 'flat'].includes(v.dir)) B.dir = v.dir;
-    // Колонку, якої вже немає (напр. прибраний «🆕 Новий МММ» у 🧮), не беремо.
-    if (v.sortCol && v.sortCol !== 'newstr') {
+    // Сортування за колонкою, якої в ЦІЙ таблиці немає, не відновлюємо.
+    const _ok = { newstr: 'new', liqstr: 'liq', setup: 'setup', runway: 'runway',
+                  delta: 'delta', grow: 'grow', price: 'price' };
+    if (v.sortCol && (!_ok[v.sortCol] || B.cols.includes(_ok[v.sortCol]))) {
         B.sort = { col: v.sortCol, dir: (v.sortDir < 0 ? -1 : 1) };
     }
     // 🔁 ОДНОРАЗОВИЙ ПЕРЕЇЗД старого локального порогу в налаштування бота:
@@ -12309,6 +12379,9 @@ function mmRender(bk) {
         + '|' + ((B.meta.pending || {}).reason || '')
         + '|' + B.sort.col + B.sort.dir + '|'
         + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev, r.delta,
+        r.new_mm || '', r.new_strength, r.liq_mm || '', r.liq_strength,
+        (r.setup && r.setup.ok ? r.setup.score + (r.setup.grade || '') : ''),
+        (r.runway ? (r.runway.dir || '') + r.runway.room_pct : ''),
         (r.in_trade ? 'T' : '') + ((r.queues || []).join('')),
         r.grow_since || 0, r.state_since || 0, r.delta_span, r.price, r.price_dir || '', r.price_chg,
         (r.f1 ? r.f1.side : ''), (r.f4 ? r.f4.side : ''),
@@ -12328,7 +12401,7 @@ function mmRender(bk) {
                       ? '⏳ Перший знімок після старту ще рахується…'
                       : (B.rows.length ? 'Немає монет під цей фільтр'
                                        : `Немає даних ${B.src}`)));
-            tb.innerHTML = `<tr><td colspan="11" class="tm-empty-msg">${_why}</td></tr>`;
+            tb.innerHTML = `<tr><td colspan="${B.cols.length + 2}" class="tm-empty-msg">${_why}</td></tr>`;
         } else {
             tb.innerHTML = rows.map(r => {
                 const sel = B.sel.has(r.symbol);
@@ -12346,16 +12419,9 @@ function mmRender(bk) {
                     // Клік по НАЗВІ → графік у TradingView, ТОЧНО як у WATCHLIST
                     // (спільний `tvSym`, він сам робить stopPropagation).
                     + `<td style="font-weight:700;white-space:nowrap">${tvSym(r.symbol)}</td>`
-                    + `<td>${_mmStatusCell(r)}</td>`
-                    // Показник книги (МММ LiQ / Новий МММ) — спільний віджет.
-                    + `<td>${ffFuelCell(r.mm, r.strength, r.strength_prev)}</td>`
-                    + `<td>${_mmStateCell(r)}</td>`
-                    + `<td>${_mmGrowCell(r)}</td>`
-                    + `<td>${_mmTimerCell(r)}</td>`
-                    + `<td style="text-align:right">${_mmPriceCell(r)}</td>`
-                    + `<td style="text-align:right">${_mmMoveCell(r)}</td>`
-                    + `<td>${_mmFcCell(r.f1, '1H')}</td>`
-                    + `<td>${_mmFcCell(r.f4, '4H')}</td>`
+                    // Решта — за складом колонок книги (`B.cols`). Показник
+                    // книги (МММ LiQ / Новий МММ) — спільний віджет `ffFuelCell`.
+                    + B.cols.map(c => _MM_CELL[c](r)).join('')
                     + `</tr>`;
             }).join('');
         }
