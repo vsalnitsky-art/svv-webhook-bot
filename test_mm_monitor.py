@@ -90,15 +90,10 @@ def _mk(limited=False, enabled=True, mon=True):
     # тести «нічого не роблять».
     ff._mm_bias_cand = {}
     ff._mm_bias_new, ff._mm_bias_new_since, ff._mm_bias_new_cand = {}, 0.0, {}
-    ff._mm_move, ff._mm_move_since, ff._mm_move_cand = {}, 0.0, {}
-    # 🔻 Стан детектора корекції (19.09) — те саме правило: нове поле стану
-    # ЗАВЖДИ додавати сюди, інакше `_mm_capture` мовчки ковтне AttributeError.
-    ff._mm_corr_st, ff._mm_corr, ff._mm_lever_hist = {}, {}, []
-    ff._mm_corr_skip_logged = {}
-    # 🧾 Таймер сирого логу корекції (20.09) — знову ТЕ САМЕ правило.
-    ff._mm_corr_log_at = 0.0
-    ff._mm_corr_override = 0.0   # ⏸ ручна пауза (нове поле стану — див. пастку `_mk`)
-    ff._mm_exit_trends = lambda tf: {}   # 🧭 TF виходу (28.09) — не лізти в сканер
+    # 🆕 Книга «МММ-new» (01.10) — свій знімок, історія і таймери.
+    ff._mmn_snapshot, ff._mmn_snapshot_ts, ff._mmn_stats = {}, 0.0, {}
+    ff._mmn_str_hist, ff._mmn_price_hist = {}, {}
+    ff._mmn_grow_since, ff._mmn_state_since = {}, {}
     ff._mm_state_since = {}
     ff._mm_price_hist = {}
     ff._mm_decision = {}
@@ -426,14 +421,14 @@ def test_ui_section_exists_with_selection_and_group_open():
 def test_selection_survives_the_poll():
     """⚠️ Таблиця перемальовується кожні ~10с. Якби галочки трималися лише в
     DOM, їх стирало б просто під час вибору — групове відкриття стало б
-    неможливим. Тому вибір живе в `_mmSel` ПОЗА розміткою."""
-    _check('let _mmSel = new Set()' in _HTML, 'вибір не винесений із DOM')
+    неможливим. Тому вибір живе в `_MMB.old.sel` ПОЗА розміткою."""
+    _check('sel: new Set()' in _HTML, 'вибір не винесений із DOM')
     # ⚠️ Зріз — ДО КІНЦЯ функції, а не «перші N символів»: `mmRender` росте, і
     # фіксоване вікно вже врізало рядок із відновленням галочок (той самий
     # капкан, що вже ловили на `<th>` і на віджеті МММ).
-    i = _HTML.index('function mmRender()')
+    i = _HTML.index('function mmRender(bk)')
     fn = _HTML[i:_HTML.index('function mmApplyState(', i)]
-    _check('_mmSel.has(r.symbol)' in fn, 'рендер не відновлює галочки з набору')
+    _check('B.sel.has(r.symbol)' in fn, 'рендер не відновлює галочки з набору')
     _check("tb.dataset.sig" in fn, 'немає сигнатури — DOM перебудовується даремно')
     print('✓ вибір переживає полл (живе поза DOM) + сигнатура таблиці')
 
@@ -452,7 +447,7 @@ def test_ui_uses_the_shared_mm_widget():
     `ffFuelCell`, що й колонка «МММ» черг."""
     # Вікно беремо ДО кінця функції, а не «перші N символів»: `mmRender` росте,
     # і фіксований зріз почав би врізати рядок із викликом віджета.
-    i = _HTML.index('function mmRender()')
+    i = _HTML.index('function mmRender(bk)')
     fn = _HTML[i:_HTML.index('function mmApplyState(', i)]
     _check('ffFuelCell(r.mm, r.strength, r.strength_prev)' in fn,
            'монітор малює МММ власним віджетом — вигляд розійдеться')
@@ -519,15 +514,13 @@ const _ths = ['symbol','strength','delta','grow','pchg'].map(c => ({
   _c:c, getAttribute:()=>c,
   querySelector:()=>(_arrows[c] = _arrows[c] || {textContent:''})}));
 const document = {
-  getElementById: id => (['mm-tbody','mm-check-all','mm-min-str','mm-sel-count',
-                          'mm-open-btn','mm-updated','mm-limited-hint',
-                          'mm-str-out', 'mm-bias-banner', 'mm-bias-bar',
-                          'mm-bias-label', 'mm-bias-timer',
-                          'mm-bias-status', 'mm-biasnew-banner', 'mm-biasnew-bar',
-                          'mm-biasnew-label', 'mm-biasnew-timer',
-                          'mm-biasnew-status', 'mm-move-banner', 'mm-move-bar',
-                          'mm-move-label', 'mm-move-timer', 'mm-move-status',
-                          'mm-move-cand', 'mm-move-restored'].includes(id)
+  // ⚠️ Білий список id — для ОБОХ книг (🧮 `mm-` і 🆕 `mmn-`, 01.10): інакше
+  // рендер нового блоку бачив би null і тест «нічого не робив».
+  getElementById: id => ((['-tbody','-check-all','-min-str','-sel-count',
+                           '-open-btn','-updated','-limited-hint',
+                           '-str-out', '-bias-banner', '-bias-bar',
+                           '-bias-label', '-bias-timer', '-bias-status',
+                           '-off', '-live'].some(x => id === 'mm' + x || id === 'mmn' + x))
                          ? _el(id) : null),
   querySelectorAll: sel => (String(sel).includes('data-mmsort') ? _ths : _tabs),
   // Вкладки шукають і поштучно (лічильник «у фільтрі / поза фільтром»).
@@ -585,7 +578,7 @@ mmApplyState({rows:[
 // ⚠️ Рахуємо САМЕ атрибут `checked` на полі, а не всі входження слова:
 // `this.checked` в обробнику кожного рядка теж містить його.
 const _h = document.getElementById('mm-tbody').innerHTML;
-console.log(JSON.stringify({sel:[..._mmSel],
+console.log(JSON.stringify({sel:[..._MMB.old.sel],
   checked:(_h.match(/type="checkbox" checked/g)||[]).length,
   aaaRow:/AAAUSDT/.test(_h)}));
 ''')
@@ -607,7 +600,7 @@ mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:50, strength_prev:nul
 mmRowToggle('AAAUSDT', true);
 mmApplyState({rows:[{symbol:'BBBUSDT', mm:'LONG', strength:50, strength_prev:null, price:1, in_trade:false, in_queue:false, selectable:true}],
   limited:false, ts:2, counts:{LONG:1,SHORT:0,flat:0}});
-console.log(JSON.stringify({sel:[..._mmSel]}));
+console.log(JSON.stringify({sel:[..._MMB.old.sel]}));
 ''')
     import json
     _check(json.loads(out)['sel'] == [], 'зникла монета лишилась обраною')
@@ -625,7 +618,7 @@ mmApplyState({rows:[
   limited:false, ts:1, counts:{LONG:1,SHORT:2,flat:0}});
 mmSetDir('SHORT');
 mmToggleAll(true);
-console.log(JSON.stringify({sel:[..._mmSel].sort()}));
+console.log(JSON.stringify({sel:[..._MMB.old.sel].sort()}));
 ''')
     import json
     _check(json.loads(out)['sel'] == ['SHRTA'],
@@ -1028,7 +1021,7 @@ def test_history_of_a_long_gone_coin_is_forgotten():
 def test_symbol_opens_tradingview_exactly_like_the_watchlist():
     """«Зроби щоб при натисканні на монету відкривався TradingView, так як і в
     WATCHLIST» — беремо ТУ САМУ функцію `tvSym`, а не свій лінк."""
-    i = _HTML.index('function mmRender()')
+    i = _HTML.index('function mmRender(bk)')
     # ⚠️ Ріжемо по КІНЦЮ функції, а не фіксованими 6000 символами — на цю
     # пастку в цьому файлі наступали вже тричі (див. коментар нижче в
     # `test_selection_survives_the_poll`).
@@ -1055,7 +1048,7 @@ def test_ui_has_growth_column_with_timer_and_sorting():
     # ⚠️ Кількість колонок звіряємо зі СКЛАДОМ, а не з магічним числом: список
     # нижче — це і є контракт таблиці, тож додана колонка мусить бути названа
     # ТУТ, а не просто зсунути число.
-    _cols = ['Символ', '📍 Стан', 'МММ LiQ', '🆕 Новий МММ', '⏱ У стані', 'Сила росте',
+    _cols = ['Символ', '📍 Стан', 'МММ LiQ', '⏱ У стані', 'Сила росте',
              '⏱ Росте', 'Ціна', 'Рух', '🔮 1H', '🔮 4H']
     for _c in _cols:
         _check(_c in tbl, f'немає колонки «{_c}»')
@@ -1089,7 +1082,7 @@ def test_timer_uses_the_shared_one_second_ticker():
            'глобальний 1с-тікер зник — таймер стоятиме')
     # `grow_since` у сигнатурі є (щоб старт/зупинка перемалювались), а секунд там
     # немає (інакше DOM перебудовувався б щосекунди).
-    j = _HTML.index('const sig = _mmDir')
+    j = _HTML.index('const sig = B.dir')
     sig = _HTML[j:j + 600]
     _check('r.grow_since' in sig, 'старт таймера не входить у сигнатуру')
     _check('Date.now' not in sig, 'у сигнатурі не має бути живого часу')
@@ -1255,9 +1248,9 @@ def test_price_history_is_trimmed_and_forgets_dead_symbols():
     ff = _mk()
     # ⚠️ Годинник ВІРТУАЛЬНИЙ (`ff._clock`) — `time.time()` тут дав би точку
     # з майбутнього і тест перевіряв би не те.
-    # ⚠️ Історія тримається під НАЙДОВШЕ вікно банера «📈 Рух ринку»
-    # (`MM_MOVE_MAX_SEC`, 30.09), а не лише 15 хв колонки «Рух».
-    old = ff._clock[0] - (_m.MM_MOVE_MAX_SEC + 10 * _m.CYCLE_SECS)
+    # ⚠️ Банер «📈 Рух ринку» ВИДАЛЕНО (01.10) — історія знову тримається
+    # лише під 15-хв вікно колонки «Рух».
+    old = ff._clock[0] - (_m.MM_PRICE_WINDOW_SEC + 10 * _m.CYCLE_SECS)
     ff._mm_price_hist = {'BTCUSDT': [(old, 1.0)], 'ZZZUSDT': [(old, 2.0)]}
     _cap(ff, BTCUSDT=0.5)
     _check('ZZZUSDT' not in ff._mm_price_hist,
@@ -1599,7 +1592,7 @@ console.log(JSON.stringify({
 def test_delta_span_is_in_the_table_signature():
     """Інакше перехід «—» → число (вікно нарешті набралось) не перемалював би
     таблицю: самі `delta`/`strength` у цей момент могли не змінитись."""
-    i = _HTML.index('const sig = _mmDir')
+    i = _HTML.index('const sig = B.dir')
     sig = _HTML[i:i + 900]
     _check('r.delta_span' in sig, 'delta_span не входить у сигнатуру таблиці')
     print('✓ delta_span у сигнатурі — поява показника перемальовує рядок')
@@ -1645,13 +1638,13 @@ def test_js_filters_survive_a_page_reload():
 mmApplyState({rows:[], enabled:true, limited:false, ts:1});
 mmSetDir('SHORT');
 mmSort('price');
-const saved = JSON.parse(_LS[_MM_UI_KEY] || 'null');
+const saved = JSON.parse(_LS[_MMB.old.uiKey] || 'null');
 // Імітуємо перезавантаження: скидаємо стан у дефолти і читаємо збережене.
-_mmDir = 'all'; _mmSort = {col:'strength', dir:-1};
-_mmLoadUi();
+_MMB.old.dir = 'all'; _MMB.old.sort = {col:'strength', dir:-1};
+_mmLoadUi(_MMB.old);
 // Поріг «Сила ≥» приходить із НАЛАШТУВАНЬ БОТА, а не з localStorage.
 mmApplyState({rows:[], enabled:true, limited:false, ts:2, str_min:35});
-console.log(JSON.stringify({saved, dir:_mmDir, sort:_mmSort,
+console.log(JSON.stringify({saved, dir:_MMB.old.dir, sort:_MMB.old.sort,
   minStr:document.getElementById('mm-min-str').value}));
 ''')
     import json
@@ -2153,9 +2146,10 @@ def test_a_flip_after_restart_still_restarts_the_timer():
 
 def test_the_page_shows_that_the_numbers_were_restored():
     _check('id="mm-bias-restored"' in _HTML, 'потрібна позначка біля таймера')
-    i = _HTML.index('function mmRenderBias')
-    body = _HTML[i:_HTML.index('function mmApplyState', i)]
-    _check('b.restored' in body and 'mm-bias-restored' in body,
+    i = _HTML.index('function _mmPaintBias')
+    body = _HTML[i:_HTML.index('\nfunction ', i + 10)]
+    _check('b.restored' in body and 'ids.rst' in body
+           and "rst: p + 'restored'" in _HTML,
            'рендер мусить читати прапорець і показувати/ховати позначку')
     _check('Відновлено після рестарту' in body,
            'у підказці банера має бути сказано, звідки числа')
@@ -2242,7 +2236,8 @@ def test_the_state_timer_survives_a_restart():
            'таймери стану мусять лягати в той самий блоб стану')
     src2 = _SRC[_SRC.index('def _load_state'):]
     body2 = src2[:src2.index('def ', 20)]
-    _check("st.get('mm_state_since')" in body2, 'на старті читаємо їх назад')
+    _check("('mm_state_since', '_mm_state_since')" in body2
+           and 'st.get(_key)' in body2, 'на старті читаємо їх назад')
     _check("'seen': _n" in body2,
            '`seen` мусить стати ТЕПЕРІШНІМ часом, інакше прибирання «давно не '
            'бачили» знесло б відновлене ще до першого такту')
@@ -2266,7 +2261,7 @@ def test_the_page_draws_the_state_timer_with_the_shared_ticker():
     _check('ff-timer' in cell and 'data-since' in cell,
            'секунди веде СПІЛЬНИЙ 1с-тікер, а не власний інтервал')
     _check('setInterval' not in cell, 'другого інтервалу на сторінці не заводимо')
-    sig = _HTML[_HTML.index('const sig = _mmDir'):][:700]
+    sig = _HTML[_HTML.index('const sig = B.dir'):][:700]
     _check('state_since' in sig,
            'момент старту — у сигнатурі, інакше перезапуск не перемалював би рядок')
     print('✓ UI: окрема колонка «⏱ У стані» на спільному тікері')
@@ -2306,14 +2301,14 @@ def test_a_disabled_monitor_reports_no_coverage():
 
 
 def test_the_page_shows_rows_out_of_targeted():
-    i = _HTML.index("const up = document.getElementById('mm-updated')")
+    i = _HTML.index("const up = _mmEl(B, '-updated')")
     # ⚠️ Ріжемо по НАСТУПНОМУ блоку, а не фіксованими N символами: підказка
     # росте, і зріз «i + 1800» уже двічі обрізав перевірку на рівному місці
     # (та сама пастка, що з `mmRender` і колонкою «Ціна»).
-    body = _HTML[i:_HTML.index("const hint = document.getElementById('mm-limited-hint')", i)]
+    body = _HTML[i:_HTML.index("const hint = _mmEl(B, '-limited-hint')", i)]
     _check('coverage' in body and "' з '" in body,
            'у шапці мусить стояти «N з M», інакше 49 проти 51 читається як втрата')
-    for _w in ('Без даних МММ', 'уже в угоді', 'узяв у роботу'):
+    for _w in ('Без даних ${B.src}', 'уже в угоді', 'узяв у роботу'):
         _check(_w in body, f'у підказці має бути рядок «{_w}»')
     print('✓ шапка каже «N з M», а розклад — у підказці')
 
@@ -2461,20 +2456,20 @@ def test_the_reason_disappears_once_the_snapshot_exists():
 def test_the_page_tells_the_two_reasons_apart():
     """⚠️ Раніше причин було ТРИ; «❤️ Fuel Auto-Filter вимкнено» зникла разом
     зі своєю причиною — знімок тепер будується і з вимкненими чергами."""
-    i = _HTML.index("const up = document.getElementById('mm-updated')")
-    body = _HTML[i:_HTML.index("const hint = document.getElementById('mm-limited-hint')", i)]
+    i = _HTML.index("const up = _mmEl(B, '-updated')")
+    body = _HTML[i:_HTML.index("const hint = _mmEl(B, '-limited-hint')", i)]
     for _w in ('error', 'перший знімок', 'queues_off'):
         _check(_w in body, f'у шапці немає стану «{_w}»')
     _check("'ff_off'" not in body, 'мертва гілка ff_off лишилась у шапці')
     # Порожня таблиця теж мусить розрізняти причини, а не писати «Немає даних».
-    j = _HTML.index("const _why = !_mmMeta.enabled")
+    j = _HTML.index("const _why = !B.meta.enabled")
     why = _HTML[j:j + 900]
     for _w in ('error', 'boot'):
         _check(_w in why, f'порожня таблиця не розрізняє «{_w}»')
     _check("'ff_off'" not in why, 'мертва гілка ff_off лишилась у таблиці')
     # ⚠️ Причина — У СИГНАТУРІ: без неї перехід між станами не перемалював би
     # напис (рядків як не було, так і немає).
-    k = _HTML.index('const sig = _mmDir')
+    k = _HTML.index('const sig = B.dir')
     _check('pending' in _HTML[k:k + 400],
            'причина не входить у сигнатуру — напис не оновиться')
     print('✓ UI розрізняє прогрів і збій такту, а вимкнені черги — окремо')
@@ -2489,11 +2484,11 @@ def test_the_page_tells_the_two_reasons_apart():
 def test_every_state_field_the_page_uses_reaches_mmmeta():
     # ⚠️ Анкор — САМЕ присвоєння в `mmApplyState`, а не початковий літерал
     # (той оголошується вище і теж починається з `_mmMeta = {`).
-    i = _HTML.index('_mmMeta = { limited: !!(mm')
+    i = _HTML.index('B.meta = { limited: !!(mm')
     assign = _HTML[i:_HTML.index('};', i)]
     # Ключі, які сторінка ЧИТАЄ як `_mmMeta.<key>`, мусять бути в присвоєнні.
     import re as _re
-    used = set(_re.findall(r'_mmMeta\.([a-z_]+)', _HTML))
+    used = set(_re.findall(r'B\.meta\.([a-z_]+)', _HTML))
     for key in sorted(used):
         _check(f'{key}:' in assign,
                f'`_mmMeta.{key}` читається на сторінці, але в `mmApplyState` '
@@ -2852,14 +2847,15 @@ def test_the_coin_list_is_half_as_tall_and_collapsed_by_default():
 
 
 def test_the_collapsed_list_is_not_rendered_but_still_counted():
-    i = _HTML.index('function mmRender()')
+    i = _HTML.index('function mmRender(bk)')
     body = _HTML[i:_HTML.index('\nfunction ', i + 10)]
-    _check("_qCollapsed('mmlist')" in body, 'згорнутий список не малюємо')
-    _check(body.index('mmlist-n') < body.index("_qCollapsed('mmlist')"),
+    _check("_qCollapsed(B.P + 'list')" in body, 'згорнутий список не малюємо')
+    _check(body.index("'list-n'") < body.index("_qCollapsed(B.P + 'list')"),
            'лічильник у заголовку мусить оновлюватись ДО виходу')
     t = _HTML[_HTML.index('function togglePanel('):]
     t = t[:t.index('\nconst toggleQueuePanel')]
-    _check("pid === 'mmlist'" in t and 'mmRender()' in t,
+    _check("pid === 'mmlist'" in t and "mmRender('old')" in t
+           and "pid === 'mmnlist'" in t and "mmRender('new')" in t,
            'на розгортанні таблицю треба намалювати одразу')
     print('✓ 🪗 згорнутий список не малюється, але лічильник чесний')
 
@@ -2935,44 +2931,14 @@ console.log(JSON.stringify({
 def test_the_state_of_work_is_in_the_table_signature():
     """Інакше перехід «вільна → в угоді» не перемалював би рядок (той самий
     випадок, що з `enabled` і причиною порожньої таблиці)."""
-    i = _HTML.index('const sig = _mmDir')
+    i = _HTML.index('const sig = B.dir')
     body = _HTML[i:_HTML.index('if (tb.dataset.sig !== sig)', i)]
     _check('in_trade' in body and 'queues' in body,
            'стан монети мусить входити в сигнатуру таблиці')
     print('✓ 📍 стан монети входить у сигнатуру таблиці')
 
 
-def test_ui_both_banners_share_one_grid():
-    """25.09: «банери рівненькі» — заголовок/таймер/статус фіксованої ширини."""
-    for bid in ('mm-bias-banner', 'mm-corr-banner'):
-        i = _HTML.index(f'id="{bid}"')
-        head = _HTML[i:i + 2500]
-        for cls in ('mm-ban', 'mm-ban-title', 'mm-ban-bar', 'mm-ban-tm', 'mm-ban-st'):
-            _check(f'class="{cls}"' in head or f'class="{cls}' in head,
-                   f'{bid}: немає {cls}')
-    ci = _HTML.index('.mm-ban-title {')
-    _check('flex: 0 0' in _HTML[ci:ci + 120], 'ширина заголовка мусить бути фіксованою')
-    print('✓ 🖥 обидва банери на одній сітці — смуги й таймери вирівняні')
-
-
 # ═══════════ 31. БАНЕР «🧮 МММ-new» + КОЛОНКА «🆕 Новий МММ» (30.09) ═══════
-def test_new_banner_follows_the_NEW_mm_not_the_legacy_one():
-    """«створи такий самий банер "МММ-new"… який братиме дані із алгоритму
-    "Новий МММ"». `_cap` подає новий МММ ПРОТИЛЕЖНИМ старому — тож банери
-    мусять показати протилежні напрямки."""
-    ff = _mk()
-    ff._settings.update({'mm_bias_confirm_sec': 0})
-    _cap(ff, AAAUSDT=0.80, BBBUSDT=0.60, CCCUSDT=0.40)
-    st = ff.mm_monitor_state()
-    _check(st['bias'].get('dir') == 'LONG', st['bias'])
-    _check(st['bias_new'].get('dir') == 'SHORT', st['bias_new'])
-    _check(st['bias_new'].get('pct') == 100.0, st['bias_new'])
-    by = {r['symbol']: r for r in st['rows']}
-    _check(by['AAAUSDT']['new_mm'] == 'SHORT' and by['AAAUSDT']['new_strength'] == 80,
-           by['AAAUSDT'])
-    print('✓ 🧮 МММ-new рахується з НОВОГО МММ, колонка несе його напрямок і силу')
-
-
 def test_both_banners_share_one_pure_step():
     """Одна формула на два банери: `mm_bias_step` із ключами джерела."""
     snap = {'A': {'status': 'LONG', 'strength': 50, 'new_status': 'SHORT', 'new_strength': 20},
@@ -2989,18 +2955,6 @@ def test_both_banners_share_one_pure_step():
     print('✓ ⚖️ обидва банери — одна чиста функція, різне лише джерело')
 
 
-def test_new_banner_has_its_own_confirmation_and_is_display_only():
-    ff = _mk()
-    ff._settings.update({'mm_bias_confirm_sec': 120})
-    _cap(ff, AAAUSDT=0.80)
-    _cap(ff, AAAUSDT=-0.80)          # новий МММ: SHORT → LONG — ще кандидат
-    bn = ff.mm_monitor_state()['bias_new']
-    _check(bn['dir'] == 'SHORT' and bn['cand_dir'] == 'LONG', bn)
-    # Споживачі (сканер, ворота) читають СТАРИЙ банер.
-    _check(_m.FuelFilterDaemon.mm_bias(ff).get('dir') == 'LONG', 'mm_bias() мусить лишитись старим')
-    print('✓ 🐢 МММ-new має свій антиспам; mm_bias() лишився старим банером')
-
-
 def test_new_banner_persists_and_dies_with_the_monitor():
     ff = _mk()
     ff._settings.update({'mm_bias_confirm_sec': 0})
@@ -3014,39 +2968,6 @@ def test_new_banner_persists_and_dies_with_the_monitor():
     _cap(ff, AAAUSDT=0.80)
     _check(not ff.mm_monitor_state().get('bias_new'), 'вимкнений монітор гасить і МММ-new')
     print('✓ 💾 МММ-new переживає рестарт і гасне разом із монітором')
-
-
-def test_ui_new_banner_and_column():
-    i = _HTML.index('id="mm-bias-banner"')
-    j = _HTML.index('id="mm-biasnew-banner"')
-    k = _HTML.index('id="mm-corr-row"')
-    _check(i < j < k, 'МММ-new стоїть ОДРАЗУ під банером монітора')
-    head = _HTML[j:j + 2500]
-    for el in ('mm-biasnew-bar', 'mm-biasnew-label', 'mm-biasnew-timer',
-               'mm-biasnew-status', 'mm-biasnew-cand', 'mm-biasnew-restored'):
-        _check(f'id="{el}"' in head, f'немає {el}')
-    _check('mm && mm.bias_new' in _HTML, 'стан МММ-new мусить доїжджати в рендер')
-    body = _HTML[_HTML.index('function mmRender()'):_HTML.index('function mmApplyState')]
-    _check('r.new_mm' in body and 'r.new_strength' in body, 'колонка і сигнатура')
-    _check("col === 'newstr'" in _HTML, 'колонка сортується')
-    print('✓ 🖥 банер МММ-new під монітором + колонка «🆕 Новий МММ»')
-
-
-def test_js_new_banner_draws_its_own_direction():
-    out = _run_js(r'''
-const base = {rows:[], enabled:true, limited:false, ts:1};
-mmApplyState(Object.assign({}, base, {
-  bias:{dir:'LONG', pct:62, since: Math.floor(Date.now()/1000) - 10},
-  bias_new:{dir:'SHORT', pct:40, since: Math.floor(Date.now()/1000) - 75}}));
-const g = id => document.getElementById(id);
-console.log(JSON.stringify({o:g('mm-bias-status').textContent, n:g('mm-biasnew-status').textContent,
-  w:g('mm-biasnew-bar').style.width, tip:g('mm-biasnew-banner').title}));
-''')
-    import json
-    d = json.loads(out)
-    _check('LONG' in d['o'] and 'SHORT' in d['n'], d)
-    _check(d['w'] == '40%' and 'Новий МММ' in d['tip'], d)
-    print('✓ JS: два банери малюються незалежно, кожен зі свого джерела')
 
 
 # ═══ 32. 💪 ОДНОСТАЙНІСТЬ ≠ СИЛА (скарга 30.09) ═══════════════════════════
@@ -3072,24 +2993,6 @@ def test_banner_separates_consensus_from_average_strength():
     print('✓ 💪 банер: одностайність і середня сила — різні числа')
 
 
-def test_js_label_takes_pressure_word_from_average_strength():
-    out = _run_js(r'''
-const base = {rows:[], enabled:true, limited:false, ts:1};
-mmApplyState(Object.assign({}, base, {
-  bias:{dir:'LONG', pct:78, avg_str:52, since: Math.floor(Date.now()/1000) - 10},
-  bias_new:{dir:'SHORT', pct:83, avg_str:25, since: Math.floor(Date.now()/1000) - 75}}));
-const g = id => document.getElementById(id);
-console.log(JSON.stringify({o:g('mm-bias-label').textContent, n:g('mm-biasnew-label').textContent}));
-''')
-    import json
-    d = json.loads(out)
-    _check(d['n'].startswith('83% за SHORT') and 'сила 25%' in d['n'], d)
-    _check('легкий тиск' in d['n'] and 'сильний' not in d['n'],
-           f'слово тиску мусить бути від СИЛИ (25%), а не від 83%: {d}')
-    _check('78% за LONG' in d['o'] and 'помірний тиск' in d['o'], d)
-    print('✓ JS: «83% за SHORT · сила 25% легкий тиск» — без протиріччя з таблицею')
-
-
 # ═══ 33. 📈 БАНЕР «РУХ РИНКУ» (вимога 30.09) ════════════════════════════
 def _hist(now, start, end, span=900, pts=31):
     """Лінійна історія ціни start→end за `span` секунд."""
@@ -3097,93 +3000,204 @@ def _hist(now, start, end, span=900, pts=31):
             for i in range(pts)]
 
 
-def test_market_move_counts_percent_breadth_and_average():
-    now = 100_000.0
-    hm = {'AUSDT': _hist(now, 100, 102),     # +2%
-          'BUSDT': _hist(now, 10, 10.1),     # +1%
-          'CUSDT': _hist(now, 50, 49.5),     # -1%
-          'DUSDT': _hist(now, 1, 1.0005),    # +0.05% → на місці
-          'EUSDT': _hist(now, 5, 5.2, span=120)}  # історії замало — не рахуємо
-    mv = _m.mm_market_move(hm, now, 900)
-    _check(mv['coins'] == 4 and mv['up'] == 2 and mv['down'] == 1 and mv['flat'] == 1, mv)
-    _check(mv['avg_chg'] == round((2 + 1 - 1 + 0.05) / 4, 2), mv)
-    _check(mv['up_pct'] == 50.0 and mv['down_pct'] == 25.0, mv)
-    _check(mv['snap']['AUSDT']['mv_status'] == 'LONG'
-           and abs(mv['snap']['AUSDT']['mv_w'] - 2.0) < 1e-6, 'вага = |зміна %|')
-    e = _m.mm_market_move({}, now, 900)
-    _check(e['pending'] and e['coins'] == 0, 'порожньо → чесне «набираємо»')
-    print('✓ 📈 рух ринку: ширина, середня зміна, вага за розміром руху')
+# ═══ 34. 🗑 «РУХ РИНКУ» + «КОРЕКЦІЯ» ВИДАЛЕНО · 🆕 МММ-new — ВЛАСНИЙ БЛОК (01.10)
+# Дослівно: «Банер "📈 РУХ РИНКУ" і весь алгоритм дій з ним — коректно
+# видалити. Банер "Корекція" і весь алгоритм дій з ним — коректно видалити.
+# Банер "МММ-монітор" і "Список монет" … в спільний блок під єдиний тумблер …
+# Банер "🧮 МММ-NEW" також має мати свій блок із тумблером. Організуй все
+# повністю ідентичне так, як працює "МММ-монітор", тільки на алгоритмі
+# "Новий МММ".»
+def test_move_and_correction_are_gone_from_the_engine():
+    for bad in ('mm_market_move', '_mm_track_move', '_mm_track_correction',
+                'correction_blocks_open', 'note_correction_block',
+                'set_correction_override', 'MM_MOVE_MAX_SEC', 'mm_correction'):
+        _check(bad not in _SRC, f'у двигуні лишилось «{bad}»')
+    dead = [k for k in _m.DEFAULT_SETTINGS
+            if k.startswith('mm_corr_') or k == 'mm_move_window_min']
+    _check(not dead, f'мертві ключі в дефолтах: {dead}')
+    _check(not os.path.exists(os.path.join(_HERE, 'detection', 'mm_correction.py')),
+           'модуль корекції мусить бути видалений')
+    print('✓ 🗑 рух ринку і корекція прибрані з двигуна й дефолтів')
 
 
-def test_move_banner_direction_uses_the_same_hysteresis_and_window():
+def test_purge_migration_strips_the_dead_keys_from_the_blob():
+    """Сторінка зберігала ВСІ ключі одним блобом — без чистки мертві
+    `mm_corr_*` / `mm_move_window_min` жили б у БД вічно."""
+    class _DB:
+        def __init__(self): self.v = {'mm_corr_enabled': True, 'mm_corr_vob_pct': 60,
+                                      'mm_move_window_min': 15, 'queue4_enabled': True}
+        def get_setting(self, k, d=None): return dict(self.v)
+        def set_setting(self, k, v): self.v = dict(v)
     ff = _mk()
-    ff._settings['mm_bias_confirm_sec'] = 0
-    now = 200_000.0
-    ff._mm_price_hist = {f'U{i}USDT': _hist(now, 100, 101.5) for i in range(8)}
-    ff._mm_price_hist.update({f'D{i}USDT': _hist(now, 100, 99.8) for i in range(2)})
-    ff._mm_track_move(now, ff.get_settings())
-    m = ff._mm_move
-    _check(m['dir'] == 'LONG' and m['up'] == 8 and m['down'] == 2, m)
-    _check(m['window_min'] == 15 and m['avg_chg'] > 1.0, m)
-    _check('mm_bias_step(' in inspect.getsource(FF._mm_track_move),
-           'напрямок — через ту саму mm_bias_step')
-    # вікно 5 хв: історія 15 хв ріжеться своїм вікном
-    ff._settings['mm_move_window_min'] = 5
-    ff._mm_track_move(now, ff.get_settings())
-    _check(ff._mm_move['window_min'] == 5, ff._mm_move)
-    print('✓ 📈 напрямок банера — той самий гістерезис/антиспам, вікно з налаштування')
+    ff._db = _DB()
+    _m.FuelFilterDaemon._migrate_settings(ff)
+    _check(ff._db.v == {'queue4_enabled': True}, f'лишилось: {ff._db.v}')
+    _m.FuelFilterDaemon._migrate_settings(ff)      # ідемпотентно
+    _check(ff._db.v == {'queue4_enabled': True}, 'друга міграція нічого не міняє')
+    print('✓ 🗑 міграція чистить мертві ключі з блобу (ідемпотентно)')
 
 
-def test_move_banner_is_pending_until_history_fills_half_the_window():
+def test_the_page_has_no_move_or_correction_left():
+    for bad in ('mm-move-banner', 'mm-corr-row', 'mmRenderCorr', '_mmPaintMove',
+                'ff-mm-move-window', 'ff-mm-corr-', 'mm_corr_', 'mm_move_window_min',
+                'mm-biasnew-banner', 'mm-corr-layers', 'ff-flip-sm'):
+        _check(bad not in _HTML, f'на сторінці лишилось «{bad}»')
+    print('✓ 🗑 на сторінці немає ні руху ринку, ні корекції')
+
+
+def test_new_book_follows_the_NEW_mm():
+    """`_cap` подає новий МММ ПРОТИЛЕЖНИМ старому — тож блоки мусять показати
+    протилежні напрямки, кожен зі свого джерела."""
     ff = _mk()
-    now = 300_000.0
-    ff._mm_price_hist = {'AUSDT': _hist(now, 100, 101, span=120)}
-    ff._mm_track_move(now, ff.get_settings())
-    _check(ff._mm_move.get('pending') and ff._mm_move.get('need_sec') == 450, ff._mm_move)
-    print('✓ 📈 до половини вікна історії — «набираємо», а не вигаданий рух')
+    ff._settings.update({'mm_bias_confirm_sec': 0, 'mmn_bias_confirm_sec': 0})
+    _cap(ff, AAAUSDT=0.80, BBBUSDT=0.60)
+    old = ff.mm_monitor_state()
+    new = ff.mm_monitor_state(book='new')
+    _check(old['book'] == 'old' and new['book'] == 'new', (old['book'], new['book']))
+    _check(old['bias'].get('dir') == 'LONG' and new['bias'].get('dir') == 'SHORT',
+           (old['bias'], new['bias']))
+    by = {r['symbol']: r for r in new['rows']}
+    _check(by['AAAUSDT']['mm'] == 'SHORT' and by['AAAUSDT']['strength'] == 80,
+           by['AAAUSDT'])
+    # Та сама форма рядка — тому фронт малює обидва блоки ОДНИМ рендером.
+    _check(set(old['rows'][0]) == set(new['rows'][0]),
+           'форма рядка в книгах мусить бути однакова')
+    print('✓ 🆕 МММ-new: свій знімок із НОВОГО МММ, та сама форма рядка')
 
 
-def test_move_banner_persists_and_is_display_only():
-    _check('mm_move_since' in inspect.getsource(FF._persist_state), 'персист')
-    _check('mm_move_since' in inspect.getsource(FF._load_state), 'відновлення')
-    _check("'move'" in inspect.getsource(FF.mm_monitor_state), 'стан віддає move')
-    _check(_m.MM_MOVE_MAX_SEC == 3600, 'історія тримається під найдовше вікно')
-    import pathlib
-    for pth in (pathlib.Path(__file__).parent / 'detection').rglob('*.py'):
-        if pth.name == 'fuel_filter.py':
-            continue
-        t = pth.read_text(encoding='utf-8', errors='ignore')
-        _check('_mm_move' not in t, f'{pth.name} не має читати «Рух ринку»')
-    _check('biascons' not in _HTML and '_mm_cons' not in _SRC,
-           'третій банер (консенсус) прибрано повністю')
-    print('✓ 📈 персист + лише показ + консенсус прибрано')
+def test_new_toggle_off_stops_only_the_new_book():
+    ff = _mk()
+    ff._settings.update({'mm_new_enabled': False})
+    _cap(ff, AAAUSDT=0.80)
+    new = ff.mm_monitor_state(book='new')
+    _check(new['enabled'] is False and new['rows'] == [] and not new['bias'], new)
+    _check(not ff._mmn_snapshot, 'вимкнений блок не рахує знімок узагалі')
+    _check(ff.mm_monitor_state()['rows'], '🧮 МММ-монітор при цьому працює')
+    print('✓ 🔌 вимкнений МММ-new повністю мовчить, 🧮 не зачеплений')
 
 
-def test_js_move_banner_shows_percent_and_breadth():
+def test_old_toggle_off_does_not_kill_the_new_book():
+    ff = _mk(mon=False)
+    _cap(ff, AAAUSDT=0.80)
+    _check(ff.mm_monitor_state()['rows'] == [], '🧮 вимкнено — рядків немає')
+    _check(ff.mm_monitor_state(book='new')['rows'], 'МММ-new живе своїм тумблером')
+    print('✓ 🔌 вимкнений 🧮 не гасить МММ-new')
+
+
+def test_group_open_from_the_new_book_uses_the_new_direction():
+    _install_log()
+    ff = _mk()
+    _cap(ff, AAAUSDT=0.5)                # старий LONG, новий SHORT
+    res = ff.group_open(['AAAUSDT'], book='new')
+    _check(res['opened'] == 1, res)
+    _check(ff.opened[0]['side'] == 'SHORT', f'напрямок — з НОВОГО МММ: {ff.opened}')
+    _check(ff.opened[0]['kw'].get('opened_by') == 'manual → MMN',
+           ff.opened[0]['kw'].get('opened_by'))
+    ff2 = _mk()
+    ff2._settings.update({'mm_new_enabled': False})
+    _cap(ff2, AAAUSDT=0.5)
+    r2 = ff2.group_open(['AAAUSDT'], book='new')
+    _check(r2['opened'] == 0 and 'вимкнено' in str(r2.get('reason', '')), r2)
+    print('✓ ✋ групове відкриття з МММ-new: напрямок і мітка свої')
+
+
+def test_the_new_book_engine_label_is_mirrored():
+    labels = importlib.import_module('detection.signal_labels')
+    _check(labels.ENGINE_BADGES.get('MMN', '').endswith('МММ-new'),
+           labels.ENGINE_BADGES.get('MMN'))
+    _check("'MMN':" in _HTML, 'дзеркало у smart_money.html')
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    _check('"MMN":' in js, 'дзеркало в infosite/app.js')
+    print('✓ мітка двигуна MMN: бекенд + обидва JS-дзеркала')
+
+
+def test_ui_new_block_is_a_full_twin_of_the_monitor():
+    i = _HTML.index('id="mmn-panel"')
+    _check(_HTML.index('id="mm-monitor-panel"') < i < _HTML.index('id="liq-hunter-panel"'),
+           'МММ-new стоїть одразу під 🧮 МММ-монітором')
+    for el in ('ff-mm-new-enabled', 'mmn-body', 'mmn-off', 'mmn-live',
+               'mmn-bias-banner', 'mmn-bias-bar', 'mmn-bias-timer', 'mmn-bias-status',
+               'mmn-bias-cand', 'mmn-bias-restored', 'mmn-min-str', 'mmn-str-out',
+               'ff-mmn-bias-confirm', 'mmnlist-body', 'mmnlist-n', 'mmn-sel-count',
+               'mmn-open-btn', 'mmn-table', 'mmn-tbody', 'mmn-check-all',
+               'mmn-limited-hint', 'mmn-updated'):
+        _check(f'id="{el}"' in _HTML, f'немає {el}')
+    import re as _re
+
+    def _sorts(tid):
+        a = _HTML.index(f'id="{tid}"')
+        return _re.findall(r'data-mmsort="(\w+)"', _HTML[a:_HTML.index('</table>', a)])
+    _check(_sorts('mm-table') == _sorts('mmn-table'),
+           'колонки двох таблиць мусять збігатись 1-в-1')
+    _check("mmSort('delta','new')" in _HTML and "mmSetDir('LONG','new')" in _HTML,
+           'кнопки нового блоку працюють зі своєю книгою')
+    _check("'mmn', 'mmnlist'" in _HTML, 'гармошки МММ-new у _PANEL_IDS')
+    _check("new Set(['mmlist', 'mmnlist'])" in _HTML, 'список МММ-new згорнутий за замовч.')
+    _check("want.push('mmn')" in _HTML and '_served.mmn && d.mm_new' in _HTML,
+           'секція mmn просиситься і читається за served')
+    for key in ('mm_new_enabled', 'mmn_bias_confirm_sec'):
+        _check(f'{key}:' in _HTML and f's.{key}' in _HTML, f'{key} не зберігається/не читається')
+    # Поріг «Сила ≥» приходить у стані блоку (`str_min`), як і в 🧮.
+    _check('mmn_str_min: _mmMinStr(_MMB.new)' in _HTML, 'поріг МММ-new не зберігається')
+    print('✓ 🖥 МММ-new — повний двійник 🧮: свій тумблер, банер, фільтри, список')
+
+
+def test_ui_monitor_is_one_block_under_one_switch():
+    i = _HTML.index('id="mm-body"')
+    j = _HTML.index('id="mm-live"')
+    k = _HTML.index('id="mm-bias-banner"')
+    l = _HTML.index('id="mmlist-body"')
+    _check(i < j < k < l, 'банер і список — усередині одного блоку під тумблером')
+    _check(_HTML.index('id="mm-off"') < j, 'напис «вимкнено» стоїть у тому самому блоці')
+    print('✓ 🧮 банер і список — один блок під одним тумблером')
+
+
+def test_js_switched_off_block_hides_banner_and_list():
     out = _run_js(r'''
-const base = {rows:[], enabled:true, limited:false, ts:1};
-const now = Math.floor(Date.now()/1000);
-mmApplyState(Object.assign({}, base, {bias:{dir:'LONG'}, bias_new:{dir:'SHORT'},
-  move:{dir:'LONG', coins:70, up:64, down:3, flat:3, up_pct:91.4, down_pct:4.3,
-        avg_chg:0.82, med_chg:0.7, window_min:15, since: now - 90}}));
+mmApplyState({rows:[], enabled:true, limited:false, ts:1,
+              bias:{dir:'LONG', pct:60, since: Math.floor(Date.now()/1000)-5}}, 'old');
+mmApplyState({rows:[], enabled:false, limited:false, ts:0,
+              bias:{dir:'SHORT', pct:70, since: 1}}, 'new');
 const g = id => document.getElementById(id);
-const a = {st:g('mm-move-status').textContent, lab:g('mm-move-label').textContent,
-           w:g('mm-move-bar').style.width};
-mmApplyState(Object.assign({}, base, {move:{pending:true, have_sec:120, need_sec:450, window_min:15}}));
-const b = {lab:g('mm-move-label').textContent, w:g('mm-move-bar').style.width};
-console.log(JSON.stringify({a, b}));
+console.log(JSON.stringify({noff:g('mmn-off').style.display, nlive:g('mmn-live').style.display,
+  ooff:g('mm-off').style.display, olive:g('mm-live').style.display,
+  nst:g('mmn-bias-status').textContent, ost:g('mm-bias-status').textContent}));
 ''')
     import json
     d = json.loads(out)
-    _check('РОСТЕ' in d['a']['st'] and '+0.82%' in d['a']['lab']
-           and '91% монет вгору' in d['a']['lab'] and d['a']['w'] == '91%', d)
-    _check('набираємо' in d['b']['lab'] and d['b']['w'] == '0%', d)
-    i = _HTML.index('id="mm-biasnew-banner"')
-    j = _HTML.index('id="mm-move-banner"')
-    k = _HTML.index('id="mm-corr-row"')
-    _check(i < j < k, 'банер руху — під МММ-new, над корекцією')
-    _check('ff-mm-move-window' in _HTML and 'mm_move_window_min' in _HTML, 'вибір вікна')
-    print('✓ JS: «▲ +0.82% за 15 хв · 91% монет вгору» / «набираємо історію»')
+    _check(d['noff'] == '' and d['nlive'] == 'none', f'вимкнений блок ховає все: {d}')
+    _check(d['ooff'] == 'none' and d['olive'] == '', f'увімкнений — показує: {d}')
+    _check('SHORT' not in d['nst'], f'вимкнений банер не малює застиглий статус: {d}')
+    _check('LONG' in d['ost'], f'старий банер живий: {d}')
+    print('✓ JS: вимкнений блок ховає банер і список, сусідній не зачіпає')
+
+
+def test_js_two_books_keep_their_own_state():
+    out = _run_js(r'''
+const R = (s, v) => ({symbol:s, mm: v > 0 ? 'LONG' : 'SHORT', strength: Math.abs(v),
+  strength_prev:null, price:1, in_trade:false, queues:[], selectable:true});
+mmApplyState({rows:[R('AAAUSDT', 50)], enabled:true, limited:false, ts:1,
+              bias:{dir:'LONG', pct:60, avg_str:50, since:1}}, 'old');
+mmApplyState({rows:[R('AAAUSDT', -40)], enabled:true, limited:false, ts:1, book:'new',
+              bias:{dir:'SHORT', pct:83, avg_str:25, since:1}});
+mmRowToggle('AAAUSDT', true, 'new');
+mmSetDir('SHORT', 'new');
+const g = id => document.getElementById(id);
+console.log(JSON.stringify({o:[..._MMB.old.sel], n:[..._MMB.new.sel],
+  od:_MMB.old.dir, nd:_MMB.new.dir,
+  ol:g('mm-bias-label').textContent, nl:g('mmn-bias-label').textContent,
+  ns:g('mmn-bias-status').textContent, tip:g('mmn-bias-banner').title}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['o'] == [] and d['n'] == ['AAAUSDT'], f'вибір не змішується: {d}')
+    _check(d['od'] == 'all' and d['nd'] == 'SHORT', f'фільтр не змішується: {d}')
+    _check('SHORT' in d['ns'] and 'Новий МММ' in d['tip'], d)
+    _check(d['nl'].startswith('83% за SHORT') and 'легкий тиск' in d['nl'],
+           f'слово тиску — від СИЛИ, а не від одностайності: {d}')
+    _check('60% за LONG' in d['ol'], d)
+    print('✓ JS: дві книги — свій вибір, свій фільтр, свій банер')
+
 
 if __name__ == '__main__':
     fns = [(k, v) for k, v in sorted(globals().items()) if k.startswith('test_')]

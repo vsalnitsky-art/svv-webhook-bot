@@ -1351,7 +1351,7 @@ def register_auth_routes(app):
                 '<p class="sub" style="margin-top:-4px">Ринкові сигнали йдуть у '
                 '<b>Telegram-групу</b>. Ці перемикачі вмикають / вимикають відповідну '
                 'тему в групі для всіх учасників.</p>'
-                f'<div class="crow"><span class="t">🧮 МММ-монітор — банер · 🔻 корекція · ₿ сеанс</span>'
+                f'<div class="crow"><span class="t">🧮 МММ-монітор — банер · ₿ сеанс</span>'
                 f'<label class="sw"><input type="checkbox" id="nbtc" {_btc_ck} onchange="saventf()">'
                 '<span class="tr"></span></label></div>'
                 f'<div class="crow"><span class="t">💰 Funding — поява монети з ММ</span>'

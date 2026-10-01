@@ -28,9 +28,6 @@ _SERVICE_TABLES_TIME = {
     # log, safe to prune. Included so both manual «Службові» cleanup AND the
     # DB-autoclean loop keep it bounded automatically (keep_days).
     'sob_readiness_log': ('timestamp', 'dt'),
-    # 🔻 Сирий лог детектора корекції — теж append-grows (періодичний зріз +
-    # події), теж службовий: чиститься і вручну, і DB-autoclean-ом.
-    'sob_mm_corr_log': ('timestamp', 'dt'),
     'sob_liquidation_buckets': ('last_updated_ts', 'sec'),
     'sob_liquidation_oi_snapshots': ('ts', 'sec'),
     'sob_liquidation_events': ('ts', 'sec'),
@@ -3504,107 +3501,6 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
-    @app.route('/api/fuel-filter/mm-corr/override', methods=['POST'])
-    def api_fuel_filter_mm_corr_override():
-        """⏸ Кнопка «ручна пауза корекції» — зняти/повернути ВОРОТА відкриття.
-
-        Вимога 23.09: «Кнопка вдавлена — то працюємо ніби як немає стану
-        "Корекція"». Тіло `{on: true|false}` або порожнє = ПЕРЕМИКАЧ.
-
-        ⚠️ Маршрут нічого не вирішує сам — уся логіка (зокрема САМОЗНЯТТЯ, коли
-        епізод закінчився) живе в `ff.set_correction_override`, бо її читає ще
-        й такт двигуна. Другої копії правила не заводимо.
-        """
-        data = request.get_json(silent=True) or {}
-        on = data.get('on', None)
-        try:
-            # ⚠️ Імпорт ЛОКАЛЬНИЙ, як у кожному сусідньому маршруті: на рівні
-            # модуля імені `get_fuel_filter` НЕМАЄ (без цього рядка кнопка
-            # падала з «name 'get_fuel_filter' is not defined»).
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'Fuel Filter недоступний'})
-            r = ff.set_correction_override(None if on is None else bool(on))
-            return jsonify({'ok': bool(r.get('ok')), **r})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/mm-corr-log/clear', methods=['POST'])
-    def api_fuel_filter_mm_corr_log_clear():
-        """🗑 Очистити лог корекції — прямо з гармошки 🔻 Корекція.
-
-        Лог набирається для КАЛІБРУВАННЯ, тож після зміни порогів стара вибірка
-        лише заважає: у ній семпли, зняті за іншими числами. Кнопка поруч із
-        ⬇️ CSV, щоб «вивантажив → обнулив → набираю заново» робилось в одному
-        місці, а не на сторінці адміністрування БД.
-
-        ⚠️ Реалізація ОДНА — `db.clear_old_mm_corr(days)`, той самий метод, що
-        вже чистить лог за віком (`days=0` = все, бо «старше за зараз»). Другої
-        копії DELETE не заводимо: розійшлись би.
-        """
-        data = request.get_json(silent=True) or {}
-        try:
-            days = max(0, int(data.get('days') or 0))
-        except (TypeError, ValueError):
-            days = 0
-        try:
-            n = get_db().clear_old_mm_corr(days)
-            return jsonify({'ok': True, 'deleted': int(n or 0), 'days': days})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/mm-corr-log')
-    def api_fuel_filter_mm_corr_log():
-        """🔻 СИРИЙ лог детектора корекції — для аналізу і калібрування порогів.
-
-        Параметри: `limit` (деф. 500, стеля 5000) · `kind`
-        (sample/start/end/state/block) · `state` · `symbol` · `format=csv`.
-
-        ⚠️ **CSV — це не «зручність», а формат роботи:** пороги підбираються
-        зведенням ряду значень (📦 VOB / 💹 Ціна / 📉 важіль) проти того, що
-        бот тоді зробив. Кожен рядок несе ще й ПОРОГИ, що діяли в ту мить,
-        тож вибірка лишається читабельною після їх зміни.
-        """
-        try:
-            limit = min(int(request.args.get('limit', 500)), 5000)
-        except (TypeError, ValueError):
-            limit = 500
-        try:
-            db = get_db()
-            rows = db.get_mm_corr_log(limit=limit,
-                                      kind=request.args.get('kind'),
-                                      state=request.args.get('state'),
-                                      symbol=request.args.get('symbol'))
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-        if (request.args.get('format') or '').lower() == 'csv':
-            import csv as _csv
-            import io as _io
-            cols = ['timestamp', 'kind', 'state', 'prev_state', 'bias', 'bias_pct',
-                    'coins', 'lit', 'lit_hold', 'need_layers', 'determined',
-                    'vob_pct', 'vob_need', 'vob_exit', 'vob_n', 'vob_against',
-                    'vob_tf',
-                    'ob_pct', 'ob_n', 'ob_against',
-                    'breadth_pct', 'breadth_for', 'breadth_src',
-                    'price_pct', 'price_need', 'price_n', 'price_against',
-                    'lever', 'lever_peak', 'lever_drop', 'lever_need',
-                    'confirm_sec', 'blocking', 'blocked_n', 'lasted',
-                    'symbol', 'side', 'price', 'note']
-            buf = _io.StringIO()
-            w = _csv.writer(buf)
-            w.writerow(cols)
-            # Найстаріші ЗВЕРХУ: ряд у часі читається згори вниз, інакше кожен
-            # аналіз починався б із сортування.
-            for r in reversed(rows):
-                w.writerow([r.get(c) for c in cols])
-            return Response('﻿' + buf.getvalue(),
-                            mimetype='text/csv; charset=utf-8',
-                            headers={'Content-Disposition':
-                                     'attachment; filename=mm_correction_log.csv'})
-        return jsonify({'ok': True, 'rows': rows, 'count': len(rows)})
-
     @app.route('/api/fuel-filter/settings', methods=['POST'])
     def api_fuel_filter_settings():
         """Update settings. Body may include any of: enabled, duration_minutes,
@@ -3808,7 +3704,9 @@ def register_api_routes(app):
             symbols = data.get('symbols') or []
             if not isinstance(symbols, list):
                 return jsonify({'ok': False, 'reason': 'symbols must be a list'})
-            return jsonify(ff.group_open(symbols))
+            # 🆕 `book='new'` — групове відкриття з блоку «МММ-new».
+            book = 'new' if str(data.get('book') or '') == 'new' else 'old'
+            return jsonify(ff.group_open(symbols, book=book))
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
@@ -4132,21 +4030,6 @@ def register_api_routes(app):
                 elif action == 'readiness_log_all':
                     # Delete ALL «Готовність» decision rows
                     result = conn.execute(text("DELETE FROM sob_readiness_log"))
-                    deleted_rows = result.rowcount
-                    conn.commit()
-
-                elif action == 'mm_corr_log_old':
-                    # 🔻 Delete old correction-detector samples (>14 days)
-                    result = conn.execute(text("""
-                        DELETE FROM sob_mm_corr_log
-                        WHERE timestamp < NOW() - INTERVAL '14 days'
-                    """))
-                    deleted_rows = result.rowcount
-                    conn.commit()
-
-                elif action == 'mm_corr_log_all':
-                    # 🔻 Delete ALL correction-detector rows
-                    result = conn.execute(text("DELETE FROM sob_mm_corr_log"))
                     deleted_rows = result.rowcount
                     conn.commit()
 

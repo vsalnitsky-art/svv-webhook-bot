@@ -547,124 +547,6 @@ class ReadinessLog(Base):
     )
 
 
-class MmCorrectionLog(Base):
-    """🔻 Per-sample log of the «КОРЕКЦІЯ» detector (МММ-монітор).
-
-    Навіщо: пороги детектора (`mm_corr_vob_pct` / `mm_corr_price_pct` /
-    `mm_corr_lever_drop` / `mm_corr_min_layers` / `mm_corr_confirm_sec`)
-    неможливо калібрувати «на око» — потрібен СИРИЙ ряд значень трьох ознак у
-    часі РАЗОМ із тим, які пороги діяли в ту мить і що бот тоді зробив.
-
-    ⚠️ **ПИШЕМО І «КОРЕКЦІЇ НЕМАЄ».** Для підбору порогів негативні семпли
-    (стан `trend`) потрібні не менше за позитивні: без них видно лише те, де
-    детектор спрацював, і неможливо побачити, де він СПРАЦЮВАВ БИ з іншим
-    порогом. Тому рядок пишеться періодично (`mm_corr_log_every_sec`), а НЕ
-    лише на подіях.
-
-    ⚠️ **ПОРОГИ ЗБЕРІГАЮТЬСЯ В КОЖНОМУ РЯДКУ** (`*_need`, `need_layers`,
-    `confirm_sec`). Налаштування змінюються саме заради калібрування, і без
-    цього знімка старі рядки стали б нечитабельними («60% це багато чи мало
-    було тоді?»).
-
-    `kind`: `sample` (періодичний зріз) · `start` (🔻 корекція почалась) ·
-    `end` (✅ завершилась) · `state` (інший перехід: pending/ending) ·
-    `block` (відкриття по КОНКРЕТНІЙ монеті зупинено воротами).
-
-    Префікс `sob_` → таблиця автоматично потрапляє в аналіз розміру БД і в
-    чистку за віком (`_SERVICE_TABLES_TIME`, DB-autoclean).
-    """
-    __tablename__ = f'{TABLE_PREFIX}mm_corr_log'
-
-    id = Column(Integer, primary_key=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    kind = Column(String(10), index=True)     # sample/start/end/state/block
-    state = Column(String(10))                # trend/pending/on/ending/ended
-    prev_state = Column(String(10))
-    bias = Column(String(5))                  # напрямок банера: LONG/SHORT
-    bias_pct = Column(Float)                  # сила банера, %
-    coins = Column(Integer)                   # монет у знімку монітора
-    # Підсумок ознак
-    lit = Column(Integer)                     # скільки ознак за СУВОРИМИ порогами
-    lit_hold = Column(Integer)                # за ПОСЛАБЛЕНИМИ (гістерезис)
-    need_layers = Column(Integer)             # скільки потрібно
-    determined = Column(Integer)              # скільки ознак узагалі визначені
-    # 📦 VOB проти банера
-    vob_pct = Column(Float)
-    vob_need = Column(Float)
-    # 🧭 Поріг ВИХОДУ за шириною: нижче нього корекція має право завершитись.
-    # Відколи кінець ухвалює саме ширина (22.09), це така сама обовʼязкова
-    # частина знімка порогів, як `*_need`.
-    vob_exit = Column(Float)
-    vob_n = Column(Integer)
-    vob_against = Column(Integer)
-    vob_tf = Column(String(6))
-    # 📐 ДРУГЕ структурне джерело ширини (звичайний OB на тому самому TF).
-    # Поріг спільний із 📦 (`vob_need`/`vob_exit`) — міряють одне й те саме.
-    # `breadth_pct` — число, що РЕАЛЬНО вирішило (максимум із двох сенсорів),
-    # `breadth_src` — чиє воно (📦 / 📐 / 📦+📐).
-    ob_pct = Column(Float)
-    ob_n = Column(Integer)
-    ob_against = Column(Integer)
-    breadth_pct = Column(Float)
-    # 🧭 Частка монет, що ПОВЕРНУЛИСЬ ЗА банером — з 22.09 саме вона вирішує
-    # кінець корекції (`за = 100 − проти`). Тримаємо ОКРЕМОЮ колонкою, а не
-    # рахуємо при аналізі: поріг `vob_exit` у цьому ж рядку міряє САМЕ її, і
-    # без пари «поріг + число» старі семпли знову стануть нечитабельними.
-    breadth_for = Column(Float)
-    breadth_src = Column(String(8))
-    # 💹 Ціна проти банера
-    price_pct = Column(Float)
-    price_need = Column(Float)
-    price_n = Column(Integer)
-    price_against = Column(Integer)
-    # 📉 Важіль просів від піку
-    lever = Column(Float)
-    lever_peak = Column(Float)
-    lever_drop = Column(Float)
-    lever_need = Column(Float)
-    confirm_sec = Column(Integer)
-    # Що бот із цим зробив
-    blocking = Column(Boolean, default=False)  # ворота відкриття активні
-    blocked_n = Column(Integer)                # монет заблоковано за епізод
-    lasted = Column(Float)                     # тривалість корекції (kind='end')
-    # Лише для kind='block'
-    symbol = Column(String(20))
-    side = Column(String(5))
-    price = Column(Float)
-    note = Column(Text)
-
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
-            'kind': self.kind, 'state': self.state, 'prev_state': self.prev_state,
-            'bias': self.bias, 'bias_pct': self.bias_pct, 'coins': self.coins,
-            'lit': self.lit, 'lit_hold': self.lit_hold,
-            'need_layers': self.need_layers, 'determined': self.determined,
-            'vob_pct': self.vob_pct, 'vob_need': self.vob_need,
-            'vob_exit': self.vob_exit,
-            'ob_pct': self.ob_pct, 'ob_n': self.ob_n,
-            'ob_against': self.ob_against,
-            'breadth_pct': self.breadth_pct, 'breadth_for': self.breadth_for,
-            'breadth_src': self.breadth_src,
-            'vob_n': self.vob_n, 'vob_against': self.vob_against,
-            'vob_tf': self.vob_tf,
-            'price_pct': self.price_pct, 'price_need': self.price_need,
-            'price_n': self.price_n, 'price_against': self.price_against,
-            'lever': self.lever, 'lever_peak': self.lever_peak,
-            'lever_drop': self.lever_drop, 'lever_need': self.lever_need,
-            'confirm_sec': self.confirm_sec,
-            'blocking': self.blocking, 'blocked_n': self.blocked_n,
-            'lasted': self.lasted,
-            'symbol': self.symbol, 'side': self.side, 'price': self.price,
-            'note': self.note,
-        }
-
-    __table_args__ = (
-        Index(f'ix_{TABLE_PREFIX}mcl_kind_ts', 'kind', 'timestamp'),
-    )
-
-
 class SymbolBlacklist(Base):
     """
     Blacklist - v8.2: Монети виключені з аналізу
@@ -985,45 +867,14 @@ def migrate_sleeper_candidates_v3():
                 print(f"[DB MIGRATE] Top100 zone migration warning: {e}")
             conn.rollback()
 
-        # 🧭 MmCorrectionLog.vob_exit — поріг ВИХОДУ за шириною ринку. Додано
-        # 22.09 разом із переробкою «кінець корекції вирішує ЛИШЕ ширина».
-        # Таблиця вже могла бути створена без цієї колонки, а знімок порогів у
-        # кожному рядку — вимога самого логу, тож ALTER потрібен. Той самий
-        # ідемпотентний прийом, що вище: спершу information_schema, потім ALTER.
-        corr_table = f"{TABLE_PREFIX}mm_corr_log"
-        corr_new_cols = [
-            ('vob_exit', 'FLOAT'),
-            # 📐 друге структурне джерело ширини (22.09)
-            ('ob_pct', 'FLOAT'),
-            ('ob_n', 'INTEGER'),
-            ('ob_against', 'INTEGER'),
-            ('breadth_pct', 'FLOAT'),
-            ('breadth_for', 'FLOAT'),
-            ('breadth_src', 'VARCHAR(8)'),
-        ]
+        # 🗑 Таблиця сирого логу 🔻 Корекції — функцію ВИДАЛЕНО (01.10), тож
+        # таблицю прибираємо з БД. Ідемпотентно (IF EXISTS); збій не валить
+        # міграції — таблиця просто лишиться, але її вже ніхто не читає й не пише.
         try:
-            table_check = conn.execute(text(f"""
-                SELECT 1 FROM information_schema.tables
-                WHERE table_name = '{corr_table}'
-            """)).fetchone()
-            if table_check is not None:
-                for col_name, col_type in corr_new_cols:
-                    col_check = conn.execute(text(f"""
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = '{corr_table}'
-                          AND column_name = '{col_name}'
-                    """)).fetchone()
-                    if col_check is None:
-                        conn.execute(text(
-                            f"ALTER TABLE {corr_table} "
-                            f"ADD COLUMN {col_name} {col_type}"))
-                        conn.commit()
-                        print(f"[DB MIGRATE] Added {corr_table}.{col_name}")
+            conn.execute(text(f"DROP TABLE IF EXISTS {TABLE_PREFIX}mm_corr_log"))
+            conn.commit()
         except Exception as e:
-            error_str = str(e)
-            if 'no such table: information_schema' not in error_str.lower() \
-               and 'duplicate column' not in error_str.lower():
-                print(f"[DB MIGRATE] mm_corr_log vob_exit warning: {e}")
+            print(f"[DB MIGRATE] drop mm_corr_log warning: {e}")
             conn.rollback()
 
 

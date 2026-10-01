@@ -104,10 +104,6 @@ MM_GROW_MIN_SPAN_SEC = 60
 # півпроєкту в ізольовані тести. Тест-замок звіряє числа між файлами.
 MM_PRICE_WINDOW_SEC = 15 * 60
 MM_PRICE_DEADZONE = 0.10
-# 📈 БАНЕР «РУХ РИНКУ» (вимога 30.09): вікно в хвилинах (вибір користувача) і
-# найдовше вікно, під яке тримаємо історію цін монітора.
-MM_MOVE_WINDOWS = (5, 15, 30, 60)
-MM_MOVE_MAX_SEC = max(MM_MOVE_WINDOWS) * 60
 # ⚖️ БАНЕР «🧮 МММ-МОНІТОР»: межа, за якою перекіс вважається НАПРЯМКОМ.
 # Те саме число, що всюди в проєкті відділяє ⚖ рівновагу від напрямку
 # (`|dir| ≤ 0.1`), тож банер і комірки МММ не можуть казати різне.
@@ -118,8 +114,6 @@ MM_BIAS_FLAT = 0.10
 # Без різних порогів банер біля 0.10 перемикався б туди-сюди на шумі — той
 # самий прийом, що вже стоїть у `_fuel_hyst` для самого МММ.
 MM_BIAS_EXIT = 0.06
-# 🧭 TF виходу з корекції (вимога 28.09) — дзеркало `SMCScanner.CORR_EXIT_TFS`.
-MM_CORR_EXIT_TFS = ('5m', '15m', '30m', '1h')
 
 # 🛑 СХОДИ ДЖЕРЕЛ Manual SL (вимога користувача 22.09, дослівно): «Якщо
 # увімкнено "SL з" — 1Н OB і немає можливості його отримати, то шукаємо на
@@ -357,18 +351,17 @@ DEFAULT_SETTINGS = {
     # Новий стан (LONG / SHORT / ⚖) мусить протриматись стільки, перш ніж
     # банер його ПОКАЖЕ. 0 = перемикати миттєво (стара поведінка).
     'mm_bias_confirm_sec': 120,
-    # 📈 Банер «РУХ РИНКУ»: вікно зміни ціни, хвилин (5/15/30/60).
-    'mm_move_window_min': 15,
+    # 🆕 БЛОК «МММ-new» (вимога 01.10): власний тумблер (вимкнено → блок на
+    # НОВОМУ МММ не рахується і не показується), власний поріг «Сила ≥» і
+    # власне вікно підтвердження статусу банера.
+    'mm_new_enabled': True,
+    'mmn_str_min': 0,
+    'mmn_bias_confirm_sec': 120,
     # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
     # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
     # ГОЛОВНИЙ вміст тієї теми. ⚠️ Майстер-вимикач теми лишається в кабінеті
-    # адміна (`notify_btc`) — він гасить УСІ три потоки (банер · корекція · ₿).
+    # адміна (`notify_btc`) — він гасить УСІ потоки теми (банер · ₿-сеанс).
     'mm_bias_tg': True,
-    # 🔻 ДЕТЕКТОР КОРЕКЦІЇ банера (вимога 19.09) — пороги й тумблери живуть
-    # у `detection/mm_correction.DEFAULTS`, щоб число було в ОДНОМУ місці:
-    # mm_corr_enabled · mm_corr_min_layers · mm_corr_vob_pct ·
-    # mm_corr_price_pct · mm_corr_lever_drop · mm_corr_confirm_sec ·
-    # mm_corr_block_open. Підмішуються нижче, одразу після словника.
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -837,64 +830,6 @@ DEFAULT_SETTINGS = {
     'funding_gold_cooldown_min': 60,
 }
 
-# 🔻 Пороги детектора корекції — ЄДИНЕ джерело в `mm_correction.DEFAULTS`.
-# Підмішуємо їх сюди, щоб вони зберігались/валідувались тим самим блобом, але
-# НЕ дублюємо жодного числа: копія з часом розійшлася б з оригіналом.
-try:                                     # звичайний шлях (прод)
-    from detection import mm_correction as _MM_CORR
-except Exception:                        # ізольовані тести без пакета
-    try:
-        import mm_correction as _MM_CORR         # type: ignore
-    except Exception:
-        _MM_CORR = None
-_MM_CORR_DEFAULTS = dict(getattr(_MM_CORR, 'DEFAULTS', {}) or {})
-DEFAULT_SETTINGS.update(_MM_CORR_DEFAULTS)
-
-
-def _mm_corr_mod():
-    """Модуль 🔻 детектора корекції (чисті функції) або None.
-
-    ⚠️ None — це не «корекції немає», а «детектор недоступний»: у такому разі
-    вердикт чесно каже про це, а ворота відкриття НЕ блокують нічого
-    (fail-open — той самий принцип, що в 🚦 воріт напрямку).
-    """
-    return _MM_CORR
-
-
-CORR_TZ = 'Europe/Kyiv'
-
-
-def fmt_local_dt(ts) -> str:
-    """Epoch → «24.09 16:07» за київським часом (той, що бачить користувач у
-    Telegram). ЧИСТА функція. Літній/зимовий час веде `zoneinfo`; немає бази
-    часових поясів → UTC із позначкою, щоб час не видавався за місцевий."""
-    try:
-        from datetime import datetime, timezone
-        t = float(ts or 0)
-        if t <= 0:
-            return '—'
-        try:
-            from zoneinfo import ZoneInfo
-            return datetime.fromtimestamp(t, ZoneInfo(CORR_TZ)).strftime('%d.%m %H:%M')
-        except Exception:
-            return datetime.fromtimestamp(t, timezone.utc).strftime('%d.%m %H:%M UTC')
-    except Exception:
-        return '—'
-
-
-def corr_tg_text(event: str, banner_dir, since, ended_at=0.0, lasted=0.0,
-                 fmt_wait=None) -> str:
-    """📨 Коротке повідомлення про корекцію (вимога 24.09): лише НАПРЯМОК
-    корекції (ПРОТИЛЕЖНИЙ банеру, з кольором), подія і час. Більше нічого.
-    ЧИСТА функція — її текст є ПОЧАТКОМ рядка 🧾 Логу, тож два канали не
-    розходяться."""
-    opp = 'SHORT' if banner_dir == 'LONG' else ('LONG' if banner_dir == 'SHORT' else '')
-    head = (('🔴 SHORT' if opp == 'SHORT' else '🟢 LONG') + ' КОРЕКЦІЯ') if opp else 'КОРЕКЦІЯ'
-    if event == 'start':
-        return f'{head} · почалась {fmt_local_dt(since)}'
-    dur = fmt_wait(float(lasted or 0)) if fmt_wait else f'{int(float(lasted or 0) // 60)}хв'
-    return (f'{head} ЗАВЕРШИЛАСЬ (тривала {dur}) · '
-            f'{fmt_local_dt(since)} → {fmt_local_dt(ended_at)}')
 
 
 def mm_window_change(hist, now: float, window: float) -> Dict:
@@ -952,60 +887,6 @@ def mm_price_move(hist, now: float,
     return {'chg': chg, 'dir': d, 'span': w['span'], 'points': w['points']}
 
 
-def mm_market_move(hist_map, now: float, window: float,
-                   deadzone: float = MM_PRICE_DEADZONE,
-                   min_fill: float = 0.5) -> Dict:
-    """📈 РУХ РИНКУ за вікном → ЧИСТА функція (вимога 30.09).
-
-    Дослівно: «дай мені банер який чітко реагуватиме, прораховуватиме у
-    відсотках рух ринку». Джерело — ТІ САМІ ціни монет 🧮 МММ-монітора, що
-    малюють колонку «Рух» (`_mm_price_hist`), тож банер і таблиця не можуть
-    розійтись (урок PD-зони). Жодного запиту до біржі.
-
-    Для кожної монети: зміна ціни у % від найстарішої точки вікна до останньої.
-    Монета рахується, лише коли історія покриває ≥ `min_fill` вікна —
-    інакше «+0.4% за 40 с» видавалось би за «+0.4% за 15 хв».
-
-    Повертає:
-      coins/up/down/flat — скільки монет і куди йдуть (мертва зона ±`deadzone`);
-      avg_chg / med_chg  — середня і медіанна зміна ринку, %;
-      up_pct / down_pct  — ширина: частка монет угору / вниз, %;
-      snap               — псевдо-знімок для `mm_bias_step` (статус за
-                           напрямком, вага = |зміна %|), щоб напрямок банера
-                           мав ТОЙ САМИЙ гістерезис і антиспам, що МММ-банери;
-      pending            — ще немає жодної монети з повною історією.
-    """
-    need_span = float(window) * float(min_fill)
-    chgs = []
-    snap = {}
-    up = down = flat = 0
-    for sym, h in (hist_map or {}).items():
-        w = mm_window_change(h, now, window)
-        p0, p1 = w['first'], w['last']
-        if (p0 is None or p1 is None or p0 <= 0 or p1 <= 0
-                or w['span'] < need_span):
-            continue
-        chg = (p1 - p0) / p0 * 100.0
-        chgs.append(chg)
-        if chg > deadzone:
-            st, up = 'LONG', up + 1
-        elif chg < -deadzone:
-            st, down = 'SHORT', down + 1
-        else:
-            st, flat = None, flat + 1
-        snap[sym] = {'mv_status': st, 'mv_w': abs(chg)}
-    n = len(chgs)
-    if not n:
-        return {'coins': 0, 'up': 0, 'down': 0, 'flat': 0,
-                'avg_chg': 0.0, 'med_chg': 0.0, 'up_pct': 0.0,
-                'down_pct': 0.0, 'snap': {}, 'pending': True}
-    srt = sorted(chgs)
-    med = (srt[n // 2] if n % 2 else (srt[n // 2 - 1] + srt[n // 2]) / 2.0)
-    return {'coins': n, 'up': up, 'down': down, 'flat': flat,
-            'avg_chg': round(sum(chgs) / n, 2), 'med_chg': round(med, 2),
-            'up_pct': round(up * 100.0 / n, 1),
-            'down_pct': round(down * 100.0 / n, 1),
-            'snap': snap, 'pending': False}
 
 
 class FuelFilterDaemon:
@@ -1123,6 +1004,7 @@ class FuelFilterDaemon:
         # 🧮 Чи увімкнено монітор — пише `_mm_capture` на кожному такті. None =
         # ще жодного такту (тоді `mm_gate_view` один раз читає налаштування).
         self._mm_mon_on: Optional[bool] = None
+        self._mmn_on: Optional[bool] = None   # 🆕 тумблер блоку «МММ-new»
         self._mm_bias_since: float = 0.0
         # 🐢 КАНДИДАТ на зміну статусу банера: {'dir', 'since'}. Поки він не
         # протримався `mm_bias_confirm_sec`, банер показує СТАРИЙ статус.
@@ -1133,10 +1015,17 @@ class FuelFilterDaemon:
         self._mm_bias_new: Dict = {}
         self._mm_bias_new_since: float = 0.0
         self._mm_bias_new_cand: Dict = {}
-        # 📈 Банер «РУХ РИНКУ» — ті самі три поля, окремий стан.
-        self._mm_move: Dict = {}
-        self._mm_move_since: float = 0.0
-        self._mm_move_cand: Dict = {}
+        # 🆕 БЛОК «МММ-new» (вимога 01.10): ВЛАСНИЙ знімок на НОВОМУ МММ і ті
+        # самі історії, що в 🧮 монітора, — окремі, бо монети й стани інші.
+        # Рядок знімка має ТУ САМУ форму (`status`/`dir`/`strength`), тож усі
+        # трекери й рендер спільні — відрізняється РІВНО джерело.
+        self._mmn_snapshot: Dict[str, Dict] = {}
+        self._mmn_snapshot_ts: float = 0.0
+        self._mmn_str_hist: Dict[str, list] = {}
+        self._mmn_grow_since: Dict[str, float] = {}
+        self._mmn_state_since: Dict = {}
+        self._mmn_price_hist: Dict[str, list] = {}
+        self._mmn_stats: Dict = {}
         # 📨 Останній статус банера, ПРО ЯКИЙ УЖЕ сповіщали в Telegram.
         # СВІДОМО не персиститься: після рестарту перший такт лише запамʼятовує
         # стан і мовчить — інакше кожен `botupdate` слав би «зміну», якої не
@@ -1147,27 +1036,6 @@ class FuelFilterDaemon:
         # почався з рестарту — тоді тривалість позначається ↻ як неповна.
         self._mm_bias_tg_at = 0.0
         self._mm_bias_tg_restored = False
-        # 🔻 КОРЕКЦІЯ (вимога 19.09). `_mm_corr_st` — ЧИСТИЙ стан машини
-        # (`mm_correction.next_state`), він і персиститься: «корекція триває
-        # 1г 20хв» не має обнулятись від `botupdate`. `_mm_corr` — готове
-        # подання для UI (стан + розклад шарів), збирається щотакту.
-        self._mm_corr_st: Dict = {}
-        self._mm_corr: Dict = {}
-        # ⏸ РУЧНА ПАУЗА ВЕРДИКТУ (вимога 23.09). Зберігаємо `since` ЕПІЗОДУ, для
-        # якого натиснули кнопку, а не голий `True`: так пауза гарантовано
-        # стосується САМЕ тієї корекції, яку людина бачила, і знімається сама,
-        # щойно епізод закінчився або почався НОВИЙ (див. `_corr_override_on`).
-        self._mm_corr_override: float = 0.0
-        # Історія важеля У БІК БАНЕРА [(ts, п.п.)] для шару «📉 важіль просів».
-        # Скидається на ЗМІНІ напрямку банера: пік попереднього тренду до
-        # нового стосунку не має.
-        self._mm_lever_hist: List = []
-        # {СИМВОЛ: `since` епізоду корекції, про який уже писали в лог} —
-        # анти-флуд воріт відкриття (двигун смикає `_open` щотакту).
-        self._mm_corr_skip_logged: Dict[str, float] = {}
-        # 🧾 Коли востаннє писали ПЕРІОДИЧНИЙ зріз у `sob_mm_corr_log`. Події
-        # (початок/кінець/перехід/блокування) пишуться повз цей таймер.
-        self._mm_corr_log_at: float = 0.0
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -1357,74 +1225,30 @@ class FuelFilterDaemon:
         self._load_state()
         self._migrate_settings()
 
-    # ⚠️ ХВИЛІ ОДНОРАЗОВИХ МІГРАЦІЙ: (позначка, {ключ: (СТАРИЙ, НОВИЙ)}).
-    # Список, а не одна пара, СВІДОМО: кожна зміна дефолту потребує СВОЄЇ
-    # позначки — стара вже стоїть у БД, і дописати ключ у неї означало б, що
-    # міграція не виконається НІКОЛИ (на робочій установці прапорець уже True).
-    MM_CORR_TUNE_WAVES = (
-        # 21.09 — перекалібрування порогів ПОЧАТКУ за першим логом.
-        ('mm_corr_tuned_v1', {
-            'mm_corr_price_pct': (60.0, 80.0),
-            'mm_corr_confirm_sec': (120, 300),
-        }),
-        # 22.09 — поріг КІНЦЯ 50 → 65 (рішення користувача: «60 на старт,
-        # 65 на кінець»). Вхід уже мав дефолт 60, тож його не чіпаємо.
-        ('mm_corr_exit65_v2', {
-            'mm_corr_vob_exit_pct': (50.0, 65.0),
-        }),
-        # 22.09 (пізніше того ж дня) — поріг КІНЦЯ ЗМІНИВ СЕНС: тепер він
-        # міряє тих, хто ПОВЕРНУВСЯ ЗА банером, а не тих, хто ще проти
-        # (дослівно: «вихід із корекції наприклад 70% — то це мається на увазі
-        # 70% монет повернулися за напрямком»). Старі дефолти 50 і 65 у новому
-        # сенсі означали б зовсім інше, тож обидва ведемо на 70.
-        ('mm_corr_exit_forward_v3', {
-            'mm_corr_vob_exit_pct': ((50.0, 65.0), 70.0),
-        }),
-    )
-    # Сумісність зі старими тестами/читачами (перша хвиля).
-    MM_CORR_TUNE_FLAG = MM_CORR_TUNE_WAVES[0][0]
-    MM_CORR_TUNE = MM_CORR_TUNE_WAVES[0][1]
+    # 🗑 Ключі ВИДАЛЕНИХ функцій (01.10: «📈 Рух ринку» і «🔻 Корекція» прибрано
+    # повністю). Сторінка шле налаштування одним блобом, тож без чистки ці
+    # ключі вічно лежали б у БД мертвим вантажем і їздили б назад у UI.
+    PURGED_SETTING_PREFIXES = ('mm_corr_',)
+    PURGED_SETTING_KEYS = ('mm_move_window_min',)
 
     def _migrate_settings(self):
-        """⚠️ ЗМІНА ДЕФОЛТУ НЕ ДІЄ НА ВЖЕ ЗБЕРЕЖЕНИЙ БЛОБ — одноразова міграція.
+        """🗑 Прибрати зі збереженого блобу ключі ВИДАЛЕНИХ функцій.
 
-        Сторінка налаштувань шле УСІ ключі одним блобом, тож `mm_corr_price_pct:
-        60` осів у БД ще з часів старого дефолту і перекривав би новий (той самий
-        урок, що з `pilot_autofill_migrated_v1`). Правка дефолту в коді на
-        робочій установці без цього не робить НІЧОГО.
-
-        ⚠️ **Переписуємо ЛИШЕ значення, що дорівнює СТАРОМУ дефолту.** Сторінка
-        шле всі ключі завжди, тож збережені 60/120 — це майже напевно старий
-        дефолт, а не свідомий вибір; а от 65 чи 75 людина поставила руками, і
-        чіпати це не можна.
-        ⚠️ Позначку ставимо НАВІТЬ на чистій установці (порожній блоб) — інакше
-        міграція спрацювала б на ДРУГОМУ старті й перекрила б вибір, який
-        користувач уже встиг зробити.
+        Ідемпотентно: немає таких ключів → БД не чіпаємо. Збій БД НЕ
+        підіймається (метод кличеться з `__init__`, виняток поклав би рушій).
         """
         try:
             stored = self._db.get_setting(_DB_SETTINGS, {}) or {}
             if not isinstance(stored, dict):
                 return
-            out, moved, dirty = dict(stored), [], False
-            for flag, tune in self.MM_CORR_TUNE_WAVES:
-                if out.get(flag):
-                    continue                      # ця хвиля вже пройшла
-                out[flag] = True
-                dirty = True
-                for key, (old, new) in tune.items():
-                    # ⚠️ `old` може бути КОРТЕЖЕМ: коли ключ змінює СЕНС, на
-                    # нове значення треба вести КОЖЕН зі старих дефолтів (у
-                    # `mm_corr_vob_exit_pct` їх було два — 50 і 65).
-                    olds = old if isinstance(old, (tuple, list)) else (old,)
-                    if key in out and any(float(out[key]) == float(o)
-                                          for o in olds):
-                        moved.append(f'{key} {float(out[key]):g}→{new:g}')
-                        out[key] = new
-            if not dirty:
+            dead = [k for k in stored
+                    if k in self.PURGED_SETTING_KEYS
+                    or any(str(k).startswith(p) for p in self.PURGED_SETTING_PREFIXES)]
+            if not dead:
                 return
+            out = {k: v for k, v in stored.items() if k not in dead}
             self._db.set_setting(_DB_SETTINGS, out)
-            if moved:
-                print(f"[FuelFilter] 🔻 пороги корекції перекалібровано: {', '.join(moved)}")
+            print(f"[FuelFilter] 🗑 прибрано ключі видалених функцій: {len(dead)}")
         except Exception as e:
             print(f"[FuelFilter] settings migration warn: {e}")
 
@@ -1757,75 +1581,25 @@ class FuelFilterDaemon:
                 int(float(s.get('mm_bias_confirm_sec', 120)))))
         except (TypeError, ValueError):
             s['mm_bias_confirm_sec'] = 120
-        try:
-            _mw = int(float(s.get('mm_move_window_min', 15)))
-        except (TypeError, ValueError):
-            _mw = 15
-        s['mm_move_window_min'] = _mw if _mw in MM_MOVE_WINDOWS else 15
-        # 🔻 ДЕТЕКТОР КОРЕКЦІЇ. Межі тримаємо тут (валідація — вузол налаштувань),
-        # а дефолти беремо з `mm_correction.DEFAULTS` — щоб число жило в одному місці.
-        _cd = _MM_CORR_DEFAULTS or {}
-        s['mm_corr_enabled'] = bool(s.get('mm_corr_enabled',
-                                          _cd.get('mm_corr_enabled', True)))
-        s['mm_corr_block_open'] = bool(s.get('mm_corr_block_open',
-                                             _cd.get('mm_corr_block_open', True)))
-        s['mm_corr_log_enabled'] = bool(s.get('mm_corr_log_enabled',
-                                              _cd.get('mm_corr_log_enabled', True)))
-        s['mm_corr_tg'] = bool(s.get('mm_corr_tg', _cd.get('mm_corr_tg', True)))
-        # 🧭 ПРОФЕСІЙНІ ПРАВИЛА ПОЧАТКУ/КІНЦЯ (вимога 22.09).
-        s['mm_corr_vob_required'] = bool(
-            s.get('mm_corr_vob_required', _cd.get('mm_corr_vob_required', True)))
-        s['mm_corr_breadth_exit'] = bool(
-            s.get('mm_corr_breadth_exit', _cd.get('mm_corr_breadth_exit', True)))
-        s['mm_corr_ob_on'] = bool(
-            s.get('mm_corr_ob_on', _cd.get('mm_corr_ob_on', True)))
-        # 🧭 Сенсор виходу з корекції (вимога 25.09): 'ob' (деф.) | 'vob'.
-        _xs = str(s.get('mm_corr_exit_src', _cd.get('mm_corr_exit_src', 'ob'))
-                  or '').strip().lower()
-        s['mm_corr_exit_src'] = _xs if _xs in ('ob', 'vob') else 'ob'
-        # 🧭 TF виходу з корекції (вимога 28.09): '' = як у скану; сміття → 15m.
-        _xt = str(s.get('mm_corr_exit_tf', _cd.get('mm_corr_exit_tf', '15m'))
-                  or '').strip().lower()
-        s['mm_corr_exit_tf'] = (_xt if _xt in MM_CORR_EXIT_TFS or _xt == ''
-                                else '15m')
-        # 🕳 «Дно» для виходу (вимога 25.09): 0..100, 0 = вимкнено.
-        try:
-            s['mm_corr_exit_trough_pct'] = max(0.0, min(100.0, float(
-                s.get('mm_corr_exit_trough_pct',
-                      _cd.get('mm_corr_exit_trough_pct', 20.0)))))
-        except (TypeError, ValueError):
-            s['mm_corr_exit_trough_pct'] = float(_cd.get('mm_corr_exit_trough_pct', 20.0))
-        # 📨 Зміна статусу банера 🧮 → Telegram (вимога 21.09). Ключ живе тут, а
-        # не в `mm_correction.DEFAULTS`: це про БАНЕР, а не про детектор корекції.
+        # 📨 Зміна статусу банера 🧮 → Telegram (вимога 21.09).
         s['mm_bias_tg'] = bool(s.get('mm_bias_tg', True))
-
-        def _clamp(key, lo, hi, cast=float):
-            try:
-                s[key] = max(lo, min(hi, cast(float(s.get(key, _cd.get(key, lo))))))
-            except (TypeError, ValueError):
-                s[key] = cast(_cd.get(key, lo))
-
-        # 1..3 — шарів рівно три; 0 означало б «корекція завжди».
-        _clamp('mm_corr_min_layers', 1, 3, int)
-        _clamp('mm_corr_vob_pct', 0.0, 100.0)
-        # ⚠️ КЛЕМП «вихід ≤ вхід» ПРИБРАНО (рішення користувача 22.09: «хочу
-        # 60 і 65»). Пороги тепер НЕЗАЛЕЖНІ.
-        # Моє попереднє твердження («вердикт миготів би на КОЖНОМУ такті») було
-        # ПЕРЕБІЛЬШЕННЯМ — прогін через справжні `breadth_exit_ok`+`next_state`
-        # показав інше: вихід вище за вхід відкриває вузьку смугу
-        # [вхід .. вихід), де вето ширини не діє і кінець там вирішують швидкі
-        # шари (тобто стара поведінка голосів САМЕ В ЦІЙ СМУЗІ). Вище за поріг
-        # виходу захист лишається повний: при ширині 90% (кейс скарги 22.09)
-        # 65 і 50 дають ІДЕНТИЧНИЙ результат. Це налаштування ризику —
-        # рішення користувача, а не наше.
-        _clamp('mm_corr_vob_exit_pct', 0.0, 100.0)
-        _clamp('mm_corr_price_pct', 0.0, 100.0)
-        _clamp('mm_corr_lever_drop', 0.0, 200.0)
-        _clamp('mm_corr_confirm_sec', 0, 3600, int)
-        # 🧾 Періодичність сирого логу. Нижня межа 30с = такт двигуна: частіше
-        # писати фізично нема чого (нових чисел не буде), а 0 читалось би як
-        # «кожен такт» і роздувало б таблицю непомітно.
-        _clamp('mm_corr_log_every_sec', 30, 86400, int)
+        # 🆕 БЛОК «МММ-new» (вимога 01.10) — ВЛАСНІ тумблер, поріг «Сила ≥» і
+        # вікно підтвердження статусу банера. Ті самі межі, що в 🧮 монітора.
+        s['mm_new_enabled'] = bool(s.get('mm_new_enabled', True))
+        try:
+            s['mmn_str_min'] = max(0, min(100, int(float(s.get('mmn_str_min', 0)))))
+        except (TypeError, ValueError):
+            s['mmn_str_min'] = 0
+        try:
+            s['mmn_bias_confirm_sec'] = max(0, min(3600,
+                int(float(s.get('mmn_bias_confirm_sec', 120)))))
+        except (TypeError, ValueError):
+            s['mmn_bias_confirm_sec'] = 120
+        # 🗑 Ключі ВИДАЛЕНИХ функцій не віддаємо назовні, навіть якщо чистка
+        # блобу в `_migrate_settings` не вдалась (збій БД на старті).
+        for _k in [k for k in s if k in self.PURGED_SETTING_KEYS
+                   or any(str(k).startswith(p) for p in self.PURGED_SETTING_PREFIXES)]:
+            s.pop(_k, None)
         s['enabled'] = bool(s.get('enabled', False))
         try:
             s['direction_smoothing_min'] = max(0, min(600,
@@ -2422,9 +2196,13 @@ class FuelFilterDaemon:
             # такт) вони з минулого запуску, і це має бути ВИДНО, а не виглядати
             # як свіжий розрахунок. Позначка зникає сама — `_mm_track_bias`
             # будує знімок заново і поля в ньому просто немає.
-            _mss = st.get('mm_state_since')
-            self._mm_state_since = {}
-            if isinstance(_mss, dict):
+            for _key, _attr in (('mm_state_since', '_mm_state_since'),
+                                ('mmn_state_since', '_mmn_state_since')):
+                _mss = st.get(_key)
+                _dst = {}
+                setattr(self, _attr, _dst)
+                if not isinstance(_mss, dict):
+                    continue
                 _n = time.time()
                 for _k, _v in _mss.items():
                     if not isinstance(_v, dict):
@@ -2439,7 +2217,7 @@ class FuelFilterDaemon:
                     # перевіриться першим же знімком: інший напрямок → відлік
                     # почнеться заново.
                     if 0 < _since <= _n + 60:
-                        self._mm_state_since[str(_k).upper()] = {
+                        _dst[str(_k).upper()] = {
                             'st': _v.get('st'), 'since': _since, 'seen': _n}
             _mb = st.get('mm_bias')
             self._mm_bias = dict(_mb) if isinstance(_mb, dict) else {}
@@ -2466,33 +2244,6 @@ class FuelFilterDaemon:
             if self._mm_bias_new_since > time.time() + 60:
                 self._mm_bias_new_since = 0.0
                 self._mm_bias_new = {}
-            # 📈 «Рух ринку» — напрямок і таймер переживають рестарт.
-            _mv = st.get('mm_move')
-            self._mm_move = dict(_mv) if isinstance(_mv, dict) else {}
-            if self._mm_move:
-                self._mm_move['restored'] = True
-            try:
-                self._mm_move_since = float(st.get('mm_move_since') or 0.0)
-            except (TypeError, ValueError):
-                self._mm_move_since = 0.0
-            if self._mm_move_since > time.time() + 60:
-                self._mm_move_since = 0.0
-                self._mm_move = {}
-            # 🔻 Стан корекції переживає рестарт (як і таймер банера). Розклад
-            # шарів НЕ відновлюємо — він перерахується першим тактом; до того
-            # часу подання лишається порожнім, і UI про це чесно скаже.
-            _mcs = st.get('mm_corr_st')
-            self._mm_corr_st = dict(_mcs) if isinstance(_mcs, dict) else {}
-            # Час із майбутнього — той самий запобіжник, що для банера.
-            if float(self._mm_corr_st.get('since') or 0) > time.time() + 60:
-                self._mm_corr_st = {}
-            # ⏸ Ручна пауза теж переживає рестарт: `botupdate` роблять часто, і
-            # без цього кнопка «відпускалась» сама, а ворота мовчки вмикались
-            # назад посеред того самого епізоду.
-            try:
-                self._mm_corr_override = float(st.get('mm_corr_override') or 0)
-            except (TypeError, ValueError):
-                self._mm_corr_override = 0.0
             # Restore the entry queue PER SESSION. We persist the queue now and
             # bring it back on boot, tied to the session it belonged to. The
             # session-flip logic in _update_btc_verdict handles staleness: on the
@@ -2585,14 +2336,11 @@ class FuelFilterDaemon:
                 'mm_bias_since': float(self._mm_bias_since or 0.0),
                 'mm_bias_new': dict(getattr(self, '_mm_bias_new', {}) or {}),
                 'mm_bias_new_since': float(getattr(self, '_mm_bias_new_since', 0.0) or 0.0),
-                'mm_move': dict(getattr(self, '_mm_move', {}) or {}),
-                'mm_move_since': float(getattr(self, '_mm_move_since', 0.0) or 0.0),
-                # 🔻 СТАН КОРЕКЦІЇ (лише машина станів, без розкладу шарів —
-                # шари перерахуються першим же тактом). Без цього «корекція
-                # триває 1г 20хв» обнулялась би на кожному `botupdate`, а
-                # заразом знімалось би й блокування відкриттів.
-                'mm_corr_st': dict(self._mm_corr_st or {}),
-                'mm_corr_override': float(self._mm_corr_override or 0),
+                # 🆕 Таймери стану монет блоку «МММ-new» — те саме правило.
+                'mmn_state_since': {k: {'st': v.get('st'),
+                                        'since': float(v.get('since') or 0)}
+                                    for k, v in (getattr(self, '_mmn_state_since', {})
+                                                 or {}).items()},
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -3672,7 +3420,8 @@ class FuelFilterDaemon:
                 continue
         return out
 
-    def _mm_track_prices(self, snap: Dict, now: float):
+    def _mm_track_prices(self, snap: Dict, now: float,
+                         hist_attr: str = '_mm_price_hist'):
         """💹 Дописати в кожен рядок знімка напрямок ЦІНИ за 15-хв вікном.
 
         Історія живе в `_mm_price_hist` і обрізається САМИМ вікном, тож памʼять
@@ -3682,9 +3431,10 @@ class FuelFilterDaemon:
         """
         # `getattr` — бо демон подекуди збирається через `__new__` (ізольовані
         # тести), і монітор не має падати через відсутнє поле.
-        hist = getattr(self, '_mm_price_hist', None)
+        hist = getattr(self, hist_attr, None)
         if hist is None:
-            hist = self._mm_price_hist = {}
+            hist = {}
+            setattr(self, hist_attr, hist)
         for sym, v in snap.items():
             try:
                 px = float(v.get('mark_price') or 0.0)
@@ -3695,10 +3445,7 @@ class FuelFilterDaemon:
                 h.append((now, px))
             # Обрізаємо вікном (із запасом в один такт, щоб не втратити точку,
             # яка щойно вийшла за межу і є єдиною «старою»).
-            # 📈 Тримаємо історію під НАЙДОВШЕ вікно «Руху ринку» (60 хв):
-            # колонка «Рух» і далі рахує свої 15 хв (`mm_price_move` сам ріже
-            # вікном), а банер бере з ТИХ САМИХ точок свою довжину.
-            cut = now - MM_MOVE_MAX_SEC - CYCLE_SECS
+            cut = now - MM_PRICE_WINDOW_SEC - CYCLE_SECS
             if h and h[0][0] < cut:
                 hist[sym] = h = [p for p in h if p[0] >= cut]
             mv = mm_price_move(h, now)
@@ -3708,7 +3455,9 @@ class FuelFilterDaemon:
         for dead in [k for k in hist if k not in snap]:
             hist.pop(dead, None)
 
-    def _mm_track_growth(self, snap: Dict, now: float):
+    def _mm_track_growth(self, snap: Dict, now: float,
+                         hist_attr: str = '_mm_str_hist',
+                         grow_attr: str = '_mm_grow_since'):
         """📈 Приріст сили МММ за ВІКНОМ + ⏱ таймер безперервного росту.
 
         Дописує в кожен рядок знімка: `strength_prev` (база — найстаріший
@@ -3733,9 +3482,14 @@ class FuelFilterDaemon:
         розвернулась (та сама «застарілість», лише з іншого боку). Дрібний
         відкат на 1 пункт таймер НЕ збиває — саме цього й просили.
         """
-        hist = getattr(self, '_mm_str_hist', None)
+        hist = getattr(self, hist_attr, None)
         if hist is None:
-            hist = self._mm_str_hist = {}
+            hist = {}
+            setattr(self, hist_attr, hist)
+        grow = getattr(self, grow_attr, None)
+        if grow is None:
+            grow = {}
+            setattr(self, grow_attr, grow)
         for sym, v in snap.items():
             st = int(v.get('strength') or 0)
             h = hist.setdefault(sym, [])
@@ -3761,9 +3515,9 @@ class FuelFilterDaemon:
                      and (_peak - st) <= MM_GROW_MIN_DELTA)
             if _grew:
                 # ПЕРШИЙ такт росту → старт; далі таймер НЕ перезапускаємо.
-                self._mm_grow_since.setdefault(sym, now)
+                grow.setdefault(sym, now)
             else:
-                self._mm_grow_since.pop(sym, None)
+                grow.pop(sym, None)
         # ⚠️ НАЙВАЖЛИВІШЕ МІСЦЕ ВСІЄЇ ПРАВКИ. Монету, якої НЕМАЄ в цьому знімку,
         # прибирати ОДРАЗУ НЕ МОЖНА — саме так і виглядав головний дефект:
         # liq-map мить мовчала, монета випадала, її база стиралась, і показник
@@ -3780,9 +3534,10 @@ class FuelFilterDaemon:
                 hist[_sym] = _kept
             else:
                 hist.pop(_sym, None)
-                self._mm_grow_since.pop(_sym, None)
+                grow.pop(_sym, None)
 
-    def _mm_track_state(self, snap: Dict, now: float):
+    def _mm_track_state(self, snap: Dict, now: float,
+                        hist_attr: str = '_mm_state_since'):
         """⏱ СКІЛЬКИ ЧАСУ МОНЕТА ТРИМАЄ СВІЙ СТАН (LONG / SHORT / ⚖ рівновага).
 
         **Вимога користувача (17.09):** «Додай таймер для кожної монети, яка
@@ -3802,9 +3557,10 @@ class FuelFilterDaemon:
         ⚠️ Віддаємо МОМЕНТ (epoch), а не «скільки секунд»: живі секунди малює
         глобальний 1с-тікер сторінки, тож таблиця не перебудовується щосекунди.
         """
-        hist = getattr(self, '_mm_state_since', None)
+        hist = getattr(self, hist_attr, None)
         if hist is None:
-            hist = self._mm_state_since = {}
+            hist = {}
+            setattr(self, hist_attr, hist)
         for sym, v in (snap or {}).items():
             st = v.get('status') if v.get('status') in ('LONG', 'SHORT') else 'FLAT'
             rec = hist.get(sym)
@@ -3902,68 +3658,26 @@ class FuelFilterDaemon:
 
     def _mm_track_bias_new(self, snap: Dict, now: float,
                            settings: Optional[Dict] = None):
-        """⚖️ Банер «🧮 МММ-new» — той самий важіль, але з НОВОГО МММ (вимога 30.09).
+        """⚖️ Банер блоку «🆕 МММ-new» — той самий важіль, але з НОВОГО МММ.
 
-        Дослівно: «створи такий самий банер "МММ-new" під ним, який братиме
-        дані із алгоритму "Новий МММ"». Новий МММ = `_fuel_dir_smoothed`
-        («бабло»-модель з EMA і гістерезисом) — поля `new_status` /
-        `new_strength` знімка, які кладе `_mm_capture` з тих самих `fuels`,
-        за якими двигун ухвалює рішення.
-        ⚠️ Розрахунок — ТА САМА чиста `mm_bias_step` (формула, гістерезис,
-        вікно підтвердження), тож два банери відрізняються РІВНО джерелом.
-        ⚠️ Лише ПОКАЗ: корекція, Telegram, 💧 Сканер, МММ-ворота сигналів і
-        далі читають СТАРИЙ банер (`mm_bias()`). Перевести їх — окреме рішення.
-        """
-        _s = settings if isinstance(settings, dict) else self.get_settings()
-        bias, since, cand = mm_bias_step(
-            snap, now, self._mm_bias_confirm_need(_s),
-            self._mm_bias_new, self._mm_bias_new_since, self._mm_bias_new_cand,
-            st_key='new_status', str_key='new_strength')
-        self._mm_bias_new, self._mm_bias_new_since = bias, since
-        self._mm_bias_new_cand = cand
-
-    def _mm_track_move(self, now: float, settings: Optional[Dict] = None):
-        """📈 Банер «РУХ РИНКУ» — зміна цін монет монітора за вікном, у %.
-
-        Числа — `mm_market_move` над `_mm_price_hist` (ті самі ціни, що в
-        колонці «Рух»); напрямок, гістерезис, антиспам і таймер — ТА САМА
-        `mm_bias_step`, що в МММ-банерів, з вагою = |зміна ціни %|: монета,
-        що пройшла 3%, важить більше за ту, що пройшла 0.2%.
-        ⚠️ Лише ПОКАЗ — торгова логіка його не читає.
+        `snap` — ВЛАСНИЙ знімок книги МММ-new (`_mmn_snapshot`), рядки якого
+        мають ту саму форму, що в 🧮 (`status`/`strength`), тож розрахунок —
+        ТА САМА чиста `mm_bias_step` (формула, ⚖ у знаменнику, гістерезис,
+        вікно підтвердження). Вікно підтвердження — ВЛАСНЕ
+        (`mmn_bias_confirm_sec`): блок має свої налаштування, як і 🧮.
+        ⚠️ Лише ПОКАЗ: Telegram, 💧 Сканер і 🧮 МММ-ворота сигналів і далі
+        читають банер 🧮 (`mm_bias()`). Перевести їх — окреме рішення.
         """
         _s = settings if isinstance(settings, dict) else self.get_settings()
         try:
-            win_min = int(_s.get('mm_move_window_min', 15) or 15)
+            need = max(0, int(float((_s or {}).get('mmn_bias_confirm_sec', 120))))
         except (TypeError, ValueError):
-            win_min = 15
-        if win_min not in MM_MOVE_WINDOWS:
-            win_min = 15
-        win = win_min * 60.0
-        mv = mm_market_move(getattr(self, '_mm_price_hist', {}) or {}, now, win)
-        need = self._mm_bias_confirm_need(_s)
-        if mv['pending']:
-            span = 0.0
-            for h in (getattr(self, '_mm_price_hist', {}) or {}).values():
-                if h:
-                    span = max(span, float(h[-1][0]) - float(h[0][0]))
-            prev = dict(self._mm_move or {})
-            prev.update({'pending': True, 'window_min': win_min,
-                         'have_sec': int(min(span, win)),
-                         'need_sec': int(win * 0.5), 'ts': int(now)})
-            self._mm_move = prev
-            return
+            need = 120
         bias, since, cand = mm_bias_step(
-            mv['snap'], now, need,
-            (self._mm_move if 'net' in (self._mm_move or {}) else {}),
-            self._mm_move_since,
-            self._mm_move_cand, st_key='mv_status', str_key='mv_w')
-        bias.update({k: mv[k] for k in ('up', 'down', 'flat', 'avg_chg',
-                                         'med_chg', 'up_pct', 'down_pct')})
-        bias['coins'] = mv['coins']
-        bias['window_min'] = win_min
-        bias['pending'] = False
-        self._mm_move, self._mm_move_since = bias, since
-        self._mm_move_cand = cand
+            snap, now, need,
+            self._mm_bias_new, self._mm_bias_new_since, self._mm_bias_new_cand)
+        self._mm_bias_new, self._mm_bias_new_since = bias, since
+        self._mm_bias_new_cand = cand
 
     def _mm_bias_alert(self, side, now: float, settings: Dict):
         """📨 «Банер 🧮 МММ-монітора змінив статус» — у групу, тему 🧮.
@@ -4023,7 +3737,7 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] MMM banner TG: {_prev_seen} → {side} "
                   f"{'OK' if _ok else 'FAIL: ' + _why_tg}")
             if not _ok:
-                # Той самий принцип, що в події корекції: подія сталась,
+                # Подія сталась,
                 # повідомлення не пішло — причина мусить бути ВИДИМОЮ.
                 try:
                     from detection.activity_log import log_activity
@@ -4036,653 +3750,158 @@ class FuelFilterDaemon:
         except Exception as e:
             print(f"[FuelFilter] MMM banner TG error: {e}")
 
-    def _mm_vob_trends(self) -> Dict:
-        """📦 Знімок Volumized-трендів зі СКАНЕРА — {'on','tf','trends'}.
+    def _mm_clear_book(self, new: bool = False, keep_snapshot: bool = False):
+        """Погасити книгу монітора (знімок + історії + банер).
 
-        ЄДИНЕ місце, де детектор корекції бере структуру молодшого TF. Читаємо
-        ПУБЛІЧНИМ `volumized_trends()`; старіший файл сканера (деплой у різному
-        порядку) методу не має → `on=None`, і шар чесно лишиться НЕВИЗНАЧЕНИМ,
-        а не «немає блоків проти».
+        `new=False` — 🧮 МММ-монітор (МММ LiQ), `new=True` — 🆕 МММ-new.
+        ⚠️ «Заморожені» числа, які вже ніхто не перераховує, виглядають як
+        живі — гірше за порожній блок, тож вимкнений тумблер чистить ВСЕ.
+        `keep_snapshot=True` — гасимо лише банер (знімок 🧮 лишається для монет
+        у відкритих угодах, див. `_mm_capture`).
         """
-        try:
-            from detection.smc_scanner import get_smc_scanner
-            sc = get_smc_scanner()
-            if sc is None or not hasattr(sc, 'volumized_trends'):
-                return {'on': None, 'tf': '', 'trends': {}}
-            v = sc.volumized_trends() or {}
-            return {'on': v.get('on'), 'tf': v.get('tf') or '',
-                    'trends': v.get('trends') or {}}
-        except Exception as e:
-            print(f"[FF] volumized trends error: {e}")
-            return {'on': None, 'tf': '', 'trends': {}}
-
-    @staticmethod
-    def _mm_exit_key(settings: Dict, scan_tf: str) -> str:
-        """Ключ «сенсор|TF», на якому ОБРАНО судити кінець корекції — під ним
-        живе 🕳 дно. `''` у TF виходу = TF скану (як і в `corr_exit_trends`)."""
-        src = str((settings or {}).get('mm_corr_exit_src') or 'ob').strip().lower()
-        src = src if src in ('ob', 'vob') else 'ob'
-        tf = str((settings or {}).get('mm_corr_exit_tf', '15m') or '').strip().lower()
-        return f"{src}|{tf or str(scan_tf or '').lower()}"
-
-    def _mm_corr_scanner_active(self, on: bool) -> None:
-        """🔻 Сказати сканеру, чи рахувати дані корекції (OB-тренди, TF виходу)."""
-        try:
-            from detection.smc_scanner import get_smc_scanner
-            sc = get_smc_scanner()
-            if sc is not None and hasattr(sc, 'set_corr_active'):
-                sc.set_corr_active(bool(on))
-        except Exception:
-            pass
-
-    def _mm_exit_trends(self, tf: str) -> Dict:
-        """🧭 VOB/OB на TF ВИХОДУ з корекції — `{'tf','vob','ob'}` або `{}`.
-
-        Читаємо ПУБЛІЧНИМ `corr_exit_trends(tf)` (виклик заразом каже сканеру,
-        який TF рахувати). Порожній словник = «окремого TF немає» (обрано як у
-        скану / старіший сканер) → детектор судить кінець на тих самих шарах,
-        що й старт, тобто рівно як до цієї правки.
-        """
-        try:
-            from detection.smc_scanner import get_smc_scanner
-            sc = get_smc_scanner()
-            if sc is None or not hasattr(sc, 'corr_exit_trends'):
-                return {}
-            v = sc.corr_exit_trends(tf) or {}
-            vtf = self._mm_vob_trends().get('tf') or ''
-            if not v.get('tf') or not tf or v.get('tf') == vtf:
-                return {}
-            return {'tf': v.get('tf'), 'vob': v.get('vob') or {},
-                    'ob': v.get('ob') or {}}
-        except Exception as e:
-            print(f"[FF] corr-exit trends error: {e}")
-            return {}
-
-    def _mm_ob_trends(self) -> Dict:
-        """📐 Знімок OB-трендів молодшого TF зі СКАНЕРА — {'on','tf','trends'}.
-
-        ДРУГЕ структурне джерело ширини поруч із 📦 VOB (вимога 22.09).
-        Читаємо ПУБЛІЧНИМ `ob_trends()`; старіший файл сканера (деплой у
-        різному порядку) методу не має → `on=None`, шар лишається НЕВИЗНАЧЕНИМ
-        і ширину далі тримає сам VOB — рівно як до цієї правки.
-        """
-        try:
-            from detection.smc_scanner import get_smc_scanner
-            sc = get_smc_scanner()
-            if sc is None or not hasattr(sc, 'ob_trends'):
-                return {'on': None, 'tf': '', 'trends': {}}
-            v = sc.ob_trends() or {}
-            return {'on': v.get('on'), 'tf': v.get('tf') or '',
-                    'trends': v.get('trends') or {}}
-        except Exception as e:
-            print(f"[FF] ob trends error: {e}")
-            return {'on': None, 'tf': '', 'trends': {}}
-
-    def _mm_corr_log_write(self, kind: str, **extra) -> bool:
-        """🧾 Один рядок СИРОГО логу 🔻 детектора корекції → `sob_mm_corr_log`.
-
-        **Вимога (20.09), дослівно:** «Зроби логування по "Корекції" для
-        подальшого аналізу і коригування налаштувань.»
-
-        ЄДИНИЙ писач логу: і періодичний зріз, і події (початок / кінець /
-        проміжний перехід), і блокування конкретної монети йдуть ЧЕРЕЗ НЬОГО —
-        інакше рядки різних видів мали б різні набори полів і CSV неможливо
-        було б аналізувати одним проходом.
-
-        ⚠️ **ДЖЕРЕЛО — ГОТОВИЙ ЗНІМОК** (`_mm_corr` + `_mm_bias`), той самий,
-        що малює банер. Нічого не перераховуємо: інакше в логу стояли б числа,
-        яких на екрані не було (урок PD-зони).
-        ⚠️ **ПОРОГИ ПИШЕМО В КОЖЕН РЯДОК** (`*_need`, `need_layers`,
-        `confirm_sec`). Їх і крутитимуть за підсумками аналізу, тож без знімка
-        порогів старі рядки стали б нечитабельними.
-        ⚠️ Помилка запису НЕ підіймається в такт двигуна (лог не має права
-        зупинити торгівлю) — той самий принцип, що в `log_readiness`.
-        """
-        try:
-            c = self.mm_correction()
-            if not c:
-                return False
-            lay = {x.get('key'): x for x in (c.get('layers') or [])}
-            b = self.mm_bias() or {}
-
-            def _g(key, field, dflt=None):
-                v = (lay.get(key) or {}).get(field)
-                return dflt if v is None else v
-
-            _since = float(c.get('since') or 0)
-            row = {
-                'kind': kind,
-                'state': c.get('state'), 'bias': c.get('bias'),
-                'bias_pct': b.get('pct'), 'coins': b.get('coins'),
-                'lit': c.get('lit'), 'lit_hold': c.get('lit_hold'),
-                'need_layers': c.get('need'), 'determined': c.get('determined'),
-                'vob_pct': _g('vob', 'pct'), 'vob_need': _g('vob', 'need'),
-                # 🧭 ПОРІГ ВИХОДУ ЗА ШИРИНОЮ — теж у КОЖЕН рядок: саме він
-                # тепер вирішує кінець корекції, і без нього старі семпли
-                # стануть нечитабельними рівно так само, як без `*_need`.
-                'vob_exit': c.get('exit_pct'),
-                'vob_n': _g('vob', 'n'), 'vob_against': _g('vob', 'against'),
-                'vob_tf': (c.get('vob_tf') or '')[:6],
-                # 📐 ДРУГЕ структурне джерело ширини. Поріг у нього СПІЛЬНИЙ
-                # із 📦 (`vob_need`/`vob_exit`) — вони міряють одне й те саме,
-                # тож другого числа не заводимо. `breadth_pct` — те, що
-                # РЕАЛЬНО вирішило (максимум із двох), `breadth_src` — чиє воно.
-                'ob_pct': _g('ob', 'pct'), 'ob_n': _g('ob', 'n'),
-                'ob_against': _g('ob', 'against'),
-                'breadth_pct': c.get('breadth_pct'),
-                'breadth_for': c.get('breadth_for_pct'),
-                'breadth_src': (c.get('breadth_src') or '')[:8],
-                'price_pct': _g('price', 'pct'), 'price_need': _g('price', 'need'),
-                'price_n': _g('price', 'n'),
-                'price_against': _g('price', 'against'),
-                'lever': c.get('lever'), 'lever_peak': c.get('lever_peak'),
-                'lever_drop': _g('lever', 'pct'), 'lever_need': _g('lever', 'need'),
-                'confirm_sec': c.get('confirm_sec'),
-                'blocking': bool(c.get('blocking')),
-                # ⏸ Чому ворота не блокували — інакше семпл із `blocking=0`
-                # посеред живої корекції читався б як дефект детектора.
-                # Окремої КОЛОНКИ не заводимо: `note` для цього і є.
-                'note': ('⏸ пауза вручну' if c.get('override') else ''),
-                # Скільки монет ворота вже зупинили В ЦЬОМУ епізоді — саме це
-                # число показує ЦІНУ блокування, коли потім звіряєш вердикт із
-                # тим, куди пішов ринок.
-                'blocked_n': sum(1 for v in (self._mm_corr_skip_logged or {}).values()
-                                 if _since and float(v or 0) == _since),
-                'lasted': c.get('lasted'),
-            }
-            row.update(extra)
-            from storage.db_operations import get_db
-            get_db().log_mm_correction(**row)
-            return True
-        except Exception as e:
-            print(f"[FF] mm-corr log error: {e}")
-            return False
-
-    def note_correction_block(self, symbol: str, side: str = '',
-                              reason: str = '', source: str = 'FF',
-                              price: Optional[float] = None,
-                              settings: Optional[Dict] = None) -> bool:
-        """🚫 Зафіксувати, що ворота корекції зупинили відкриття по монеті.
-
-        ЄДИНЕ місце запису для ОБОХ вузлів воріт (`fuel_filter._open` і
-        `trade_manager.on_signal`): дві копії анти-флуду розійшлися б, і
-        `blocked_n` у сирому логу рахував би лише половину подій.
-
-        Пише рядок `kind='block'` у `sob_mm_corr_log` (машині — для аналізу
-        «скільки і яких відкриттів коштувала корекція») і повертає True, якщо
-        це ПЕРША фіксація монети в ЦЬОМУ епізоді. Рядок у 🧾 Лог роботи бота
-        (людині) лишається за викликачем: у `_open` він анти-флудиться цим
-        самим результатом, а в `on_signal` пишеться завжди — прямий сигнал
-        трапляється рідко, і глушити його було б втратою події.
-
-        ⚠️ **АНТИ-ФЛУД ОБОВʼЯЗКОВИЙ:** двигун смикає `_open` щотакту по кожній
-        монеті черги, а корекція триває годинами — без ключа за епізодом
-        (`since`) це був би рівно той потоп, який уже чистили в Q4-recheck.
-        ⚠️ **ЦІНА В МОМЕНТ БЛОКУВАННЯ** — головне число для post-hoc аналізу
-        («а що зробив ринок після того, як ми не зайшли»). Беремо передану, а
-        без неї — з УЖЕ готового знімка монітора (нуль запитів).
-        """
-        sym = str(symbol or '').upper()
-        _c = self.mm_correction() or {}
-        _ep = float(_c.get('since') or 0)
-        if self._mm_corr_skip_logged.get(sym) == _ep:
-            return False
-        self._mm_corr_skip_logged[sym] = _ep
-        # Налаштування беремо ПЕРЕДАНІ, коли викликач їх уже має (`_open`):
-        # зайвий похід у БД на кожну заблоковану монету нікому не потрібен.
-        _s = settings if isinstance(settings, dict) else self.get_settings()
-        if bool(_s.get('mm_corr_log_enabled', True)):
-            _p = price
-            if _p is None:
-                _p = ((self._mm_snapshot or {}).get(sym) or {}).get('price')
-            self._mm_corr_log_write('block', symbol=sym[:20], side=(side or '')[:5],
-                                    price=_p, note=(reason or '')[:500])
-        return True
-
-    def _mm_track_correction(self, snap: Dict, now: float, settings: Dict):
-        """🔻 ЧИ ЙДЕ ЗАРАЗ КОРЕКЦІЯ ПРОТИ БАНЕРА — вердикт для банера + ворота.
-
-        **Вимога (19.09), дослівно:** «Потрібно щоб бот моніторив графіки і
-        відслідковував саме корекцію по монетах… Бот має професійно аналізувати
-        графіки і візуалізувати загальний вердикт на банері "МММ-монітор"
-        стосовно чи почалась або закінчилась корекція.»
-
-        Рахує ДВИГУН (тут), `mm_monitor_state` лише ЧИТАЄ — той самий урок B2,
-        що з шарами Черги-4 і з самим важелем банера.
-
-        Три ознаки і вся арифметика — у ЧИСТОМУ `detection/mm_correction.py`
-        (📦 VOB молодшого TF проти банера · 💹 ціна проти банера · 📉 важіль
-        просів від піку). Тут — ЛИШЕ збір контексту й зберігання стану.
-
-        ⚠️ **НЕМАЄ НАПРЯМКУ — НЕМАЄ КОРЕКЦІЇ.** Корекція означає «рух ПРОТИ
-        тренду»; коли банер у ⚖ рівновазі, тренду немає і коригувати нічого.
-        Стан скидається в `trend`, а причина названа (`reason`).
-        ⚠️ **ПІК ВАЖЕЛЯ РАХУЄМО ВІД ЗМІНИ НАПРЯМКУ.** Історія чиститься на фліпі
-        банера: пік попереднього тренду до нового не має жодного стосунку.
-        ⚠️ Мережі це не коштує НІЧОГО: знімок монітора вже є, тренди VOB сканер
-        і так тримає в кеші, важіль щойно порахував `_mm_track_bias`.
-        """
-        _mc = _mm_corr_mod()
-        bias = dict(getattr(self, '_mm_bias', {}) or {})
-        d = bias.get('dir')
-        _on = bool(settings.get('mm_corr_enabled', True))
-        # 🔻 Сканеру — чи потрібні взагалі дані корекції (вимога 30.09).
-        self._mm_corr_scanner_active(_on)
-        if not _on:
-            # ВИМКНЕНО ПОВНІСТЮ: ні стану, ні паузи, ні вердикту — нічого, що
-            # могло б вплинути на відкриття чи сигнали.
-            with self._lock:
-                self._mm_corr_st = {}
-                self._mm_lever_hist = []
-                self._mm_corr_override = 0.0
-                self._mm_corr_skip_logged = {}
-                self._mm_corr = {'state': None, 'enabled': False, 'bias': d,
-                                 'layers': [], 'blocking': False,
-                                 'ts': int(now), 'reason': 'детектор вимкнено'}
-            return
-        if not _mc or d not in ('LONG', 'SHORT'):
-            with self._lock:
-                self._mm_corr_st = {}
-                self._mm_lever_hist = []
-                self._mm_corr = {'state': 'trend', 'enabled': _on,
-                                 'bias': d, 'layers': [], 'lit': 0,
-                                 'need': int(settings.get('mm_corr_min_layers', 2) or 2),
-                                 'blocking': False, 'ts': int(now),
-                                 'reason': ('детектор вимкнено' if not _on else
-                                            ('⚖ банер без напрямку — коригувати '
-                                             'нема чого' if not d else
-                                             'модуль детектора недоступний'))}
-            return
-        # 📉 Важіль У БІК БАНЕРА (зі знаком) + пік за вікном.
-        try:
-            net_pp = float(bias.get('net') or 0.0) * 100.0
-        except (TypeError, ValueError):
-            net_pp = 0.0
-        lever = net_pp if d == 'LONG' else -net_pp
-        hist = list(self._mm_lever_hist or [])
-        if hist and hist[-1][2] != d:
-            # 🔁 ФЛІП БАНЕРА = НОВИЙ ТРЕНД, отже й новий відлік: і пік важеля,
-            # і сам вердикт починаються з чистого аркуша. Лишити «корекцію
-            # проти LONG» під банером SHORT означало б показувати вердикт про
-            # ринок, якого вже немає (і блокувати відкриття за нього).
-            hist = []
-            self._mm_corr_st = {}
-        hist.append((now, lever, d))
-        _cut = now - _mc.WINDOW_SEC
-        hist = [h for h in hist if h[0] >= _cut]
-        peak = max((h[1] for h in hist), default=lever)
-        vob = self._mm_vob_trends()
-        obt = self._mm_ob_trends()
-        _xt = self._mm_exit_trends(str(settings.get('mm_corr_exit_tf', '15m') or ''))
-        # 🕳 Мінімум частки «ЗА» обраного сенсора в ПОТОЧНОМУ епізоді — від
-        # нього рахується «дно» для виходу. Новий епізод (з trend/ended) —
-        # з чистого аркуша.
-        _prev = self._mm_corr_st or {}
-        # 🐞 ДНО ПРИВʼЯЗАНЕ ДО СЕНСОРА І TF (аудит 28.09). Раніше мінімум «ЗА»
-        # змішував числа різних сенсорів/TF: поки 15M ще не порахувався, кінець
-        # тимчасово судився на 5M, і 5M-мінімум лягав у `exit_low` → «🕳✓ дно
-        # пройдено» для 15M, якого 15M НЕ бачив. Те саме при зміні «Вихід за» /
-        # «TF виходу» посеред епізоду. Тепер дно живе лише під ключем
-        # «сенсор|TF», який ОБРАНО, і фолбек у нього не пише.
-        _want_key = self._mm_exit_key(settings, vob.get('tf') or '')
-        _low = (_prev.get('exit_low')
-                if (_prev.get('state') in ('pending', 'on', 'ending')
-                    and _prev.get('exit_low_key') == _want_key) else None)
-        try:
-            try:
-                _xk = ({'exit_trends': _xt.get('vob') or {},
-                        'exit_ob_trends': _xt.get('ob') or {},
-                        'exit_tf': _xt.get('tf') or ''} if _xt else {})
-                try:
-                    res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever,
-                                       peak, settings, tf=vob.get('tf') or '',
-                                       ob_trends=obt.get('trends') or {},
-                                       ob_tf=obt.get('tf') or '', exit_low=_low,
-                                       **_xk)
-                except TypeError:
-                    if not _xk:
-                        raise
-                    # старіший mm_correction без TF виходу
-                    res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever,
-                                       peak, settings, tf=vob.get('tf') or '',
-                                       ob_trends=obt.get('trends') or {},
-                                       ob_tf=obt.get('tf') or '', exit_low=_low)
-            except TypeError:
-                # старіший mm_correction без `exit_low`
-                res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
-                                   settings, tf=vob.get('tf') or '',
-                                   ob_trends=obt.get('trends') or {},
-                                   ob_tf=obt.get('tf') or '')
-        except TypeError:
-            # Фолбек на СТАРІШИЙ `mm_correction` без другого джерела ширини
-            # (файли деплояться в різному порядку — той самий прийом, що на
-            # `get_liq_magnet(side=)` і `_signal_allowed(skip_liq=)`).
-            res = _mc.evaluate(snap, vob.get('trends') or {}, d, lever, peak,
-                               settings, tf=vob.get('tf') or '')
-        # 🧭 РІШЕННЯ «почати»/«тримати» приходять ГОТОВІ з `evaluate` — там і
-        # живуть професійні правила (📦 ширина обовʼязкова на старт, кінець
-        # вирішує ЛИШЕ ширина). Машина станів рахує таймери, а не ознаки.
-        st = _mc.next_state(self._mm_corr_st, res['lit'], res['lit_hold'],
-                            res['need'], now,
-                            float(settings.get('mm_corr_confirm_sec', 300) or 0),
-                            start_ok=res.get('start_ok'), stay=res.get('stay'))
-        if st.get('state') in ('pending', 'on', 'ending'):
-            _real_key = (f"{res.get('exit_src') or ''}|"
-                         f"{str(res.get('exit_tf') or '').lower()}")
-            _now_for = (res.get('breadth_for_pct')
-                        if _real_key == _want_key else None)
-            _vals = [v for v in (_low, _now_for) if v is not None]
-            if _vals:
-                st['exit_low'] = round(min(float(v) for v in _vals), 1)
-                st['exit_low_key'] = _want_key
-        _was = (self._mm_corr_st or {}).get('state')
-        # ⏸ РУЧНА ПАУЗА — знімає ЛИШЕ ворота, решта лишається як є (вимога
-        # 23.09 дослівно: «все залишається рахуватись відображатись як і
-        # зазвичай»). Тому вона стоїть РІВНО тут, в одному множнику з
-        # тумблером: стан, таймер, ознаки, лог і Telegram не змінюються.
-        _ovr = self._corr_override_on(st)
-        blocking = bool(_mc.is_on(st) and settings.get('mm_corr_block_open', True)
-                        and not _ovr)
         with self._lock:
-            self._mm_lever_hist = hist
-            self._mm_corr_st = st
-            self._mm_corr = {
-                **st, 'enabled': True, 'bias': d,
-                'layers': res['layers'], 'lit': res['lit'],
-                'lit_hold': res['lit_hold'], 'need': res['need'],
-                'determined': res['determined'],
-                # 🧭 Чому корекція ТРИМАЄТЬСЯ (або може завершитись) — ЧИСТІ
-                # поля для UI/логу: «яке саме число зараз тримає вердикт» не
-                # має бути здогадкою (той самий принцип, що `verdict.parts`).
-                'exit_pct': res.get('exit_pct'),
-                'breadth_ok': res.get('breadth_ok'),
-                'breadth_pct': res.get('breadth_pct'),
-                # 🧭 Частка ТИХ, ХТО ПОВЕРНУВСЯ — число, що вирішує кінець.
-                'breadth_for_pct': res.get('breadth_for_pct'),
-                'breadth_src': res.get('breadth_src') or '',
-                'exit_src': res.get('exit_src') or '',
-                'exit_src_want': res.get('exit_src_want') or 'ob',
-                'exit_tf': res.get('exit_tf') or vob.get('tf') or '',
-                'exit_tf_want': str(settings.get('mm_corr_exit_tf', '15m') or ''),
-                'exit_note': res.get('exit_note') or '',
-                'exit_vob_pct': res.get('exit_vob_pct'),
-                'exit_ob_pct': res.get('exit_ob_pct'),
-                'exit_trough': res.get('exit_trough'),
-                'exit_troughed': res.get('exit_troughed'),
-                'breadth_lit': bool(res.get('breadth_lit')),
-                'ob_on': bool(settings.get('mm_corr_ob_on', True)),
-                'why': res.get('why') or '',
-                'breadth_exit_on': bool(settings.get('mm_corr_breadth_exit', True)),
-                'vob_required': bool(settings.get('mm_corr_vob_required', True)),
-                'confirm_sec': int(float(settings.get('mm_corr_confirm_sec', 300) or 0)),
-                'ended_show_sec': int(_mc.ENDED_SHOW_SEC),
-                'lever': round(lever, 1), 'lever_peak': round(peak, 1),
-                'vob_on': vob.get('on'), 'vob_tf': vob.get('tf'),
-                'blocking': blocking, 'block_on': bool(settings.get('mm_corr_block_open', True)),
-                # ⏸ Пауза ВИДИМА окремим полем, а не лише через `blocking`:
-                # «ворота вимкнені тумблером» і «ворота призупинені вручну» —
-                # РІЗНІ стани, і кнопка мусить показувати, що вона вдавлена.
-                'override': _ovr,
-                'ts': int(now),
-            }
-        # 🧾 ПОДІЯ — у лог, СТАН — ні. «Почалась» і «завершилась» трапляються
-        # кілька разів на добу, тож флуду не буде; а мовчазний блок відкриттів
-        # читався б як «бот перестав працювати» (урок «невидимий збій»).
-        _changed = st.get('state') != _was
-        # 📨 ЧИТАЄМО ПОДІЮ, А НЕ ЗМІНУ СТАНУ (скарга 22.09 «оповіщення не
-        # зовсім нормально відпрацьовують»). `state != _was` спрацьовував ще на
-        # ДВОХ переходах, які подіями НЕ є, і саме вони засмічували Telegram:
-        #   • `ending → on` (`resume`) — той самий епізод повертається → на
-        #     скріні два 🔻 підряд (08:08 і 08:30) без ✅ між ними, ще й з
-        #     «ознак 1/2», бо повернення йде за ПОСЛАБЛЕНИМ порогом;
-        #   • `pending → ended` (`abort`) — несправдливий старт згас у межах
-        #     показу минулого кінця → ДРУГЕ «✅ ЗАВЕРШИЛАСЬ» із ТІЄЮ САМОЮ
-        #     тривалістю через 10-15 хв (21:20 і 21:33 «тривала 17хв»).
-        # Обидва відтворено прогоном. Тепер рішення ухвалює сама машина станів.
-        _ev = st.get('event') or ''
-        if _ev in ('start', 'end'):
-            # ⚠️ Текст будуємо ПОЗА try-блоком логу: він потрібен ОБОМ каналам
-            # (🧾 Лог і 📨 Telegram), і збій одного не має лишати другий без
-            # повідомлення — а `_txt` усередині `try` саме так і губився б.
-            _lay = ' · '.join(f"{x['icon']} {x['pct']}{x.get('unit') or '%'}/"
-                              f"{x['need']}{x.get('unit') or '%'}"
-                              for x in res['layers'] if x['ok'] and x['lit'])
-            if _ev == 'start':
-                _txt = (f'🔻 КОРЕКЦІЯ ПРОТИ банера {d}: ознак {res["lit"]}/'
-                        f'{res["need"]}' + (f' · {_lay}' if _lay else '')
-                        + (' · 🚫 відкриття угод зупинено' if blocking
-                           else ' · відкриття НЕ блокуємо (тумблер вимкнено)'))
+            if new:
+                if not keep_snapshot:
+                    self._mmn_snapshot = {}
+                    self._mmn_snapshot_ts = 0.0
+                    self._mmn_str_hist = {}
+                    self._mmn_grow_since = {}
+                    self._mmn_state_since = {}
+                    self._mmn_price_hist = {}
+                    self._mmn_stats = {}
+                self._mm_bias_new = {}
+                self._mm_bias_new_since = 0.0
+                self._mm_bias_new_cand = {}
             else:
-                # 🧭 Кінець тепер ухвалює ШИРИНА ринку, тож у рядку мусить
-                # стояти САМЕ її число: інакше «завершилась» знову читалось би
-                # як здогадка (а саме на цьому й спіймали стару версію, яка
-                # закривала корекцію при 📦 90% монет проти банера).
-                # ⚠️ «відкриття знову дозволені» пишемо ЛИШЕ коли ворота
-                # справді були увімкнені — інакше кінець суперечив би власному
-                # рядку старту («відкриття НЕ блокуємо»).
-                _blk_on = bool(settings.get('mm_corr_block_open', True))
-                _txt = (f'✅ КОРЕКЦІЯ ЗАВЕРШИЛАСЬ (тривала '
-                        f'{self._fmt_wait(float(st.get("lasted") or 0))}) — '
-                        f'банер {d}'
-                        + (', відкриття знову дозволені' if _blk_on else '')
-                        + (f' · {res.get("why")}' if res.get('why') else ''))
-            # 📨 У TELEGRAM — КОРОТКО (вимога 24.09): «🔴 SHORT КОРЕКЦІЯ ·
-            # почалась 22.09 23:20» / «… ЗАВЕРШИЛАСЬ (тривала …) · від → до».
-            # Дата старту обовʼязкова: без неї «тривала 40г» не було з чим
-            # звірити. Розклад ознак лишається в 🧾 Лозі (після короткого
-            # тексту), тож TG-рядок — ПОЧАТОК рядка логу, а не інший текст.
-            _tg = corr_tg_text(_ev, d, st.get('since'), st.get('ended_at'),
-                               st.get('lasted'), self._fmt_wait)
-            _txt = f'{_tg} · {_txt}'
-            try:
-                from detection.activity_log import log_activity
-                log_activity('ALL', 'event', _txt, side=d, source='MMM')
-            except Exception:
-                pass
-            # 📨 TELEGRAM: та сама ПОДІЯ — у ту саму тему 🧮 (вимога 21.09
-            # «Стосовно корекцій також зроби оповіщення»). Шлемо РІВНО те, що
-            # вже пішло в 🧾 Лог: два різні тексти про одну подію розійшлися б.
-            # ⚠️ Власного заголовка «🧮 МММ-МОНІТОР» більше НЕМАЄ: `tg_bot` і
-            # так додає тег #МММ_монітор, а сама тема називається так само —
-            # на скріні назва стояла в КОЖНОМУ повідомленні тричі.
-            if bool(settings.get('mm_corr_tg', True)):
-                try:
-                    _ok, _why_tg = self._broadcast_users('btc', 'notify_btc', _tg)
-                    if not _ok:
-                        # ⚠️ МОВЧАТИ НЕ МОЖНА: подія сталась, а повідомлення не
-                        # пішло — і зовні це не відрізнити від «детектор не
-                        # спрацював». Пишемо ПРИЧИНУ в той самий 🧾 Лог.
-                        from detection.activity_log import log_activity
-                        log_activity('ALL', 'event',
-                                     f'📨 Telegram НЕ прийняв подію корекції: '
-                                     f'{_why_tg} — перевірте 🩺 «Перевірити тему»',
-                                     side=d, source='MMM')
-                except Exception as _e:
-                    print(f"[FuelFilter] correction TG error: {_e}")
-
-        # 🧾 СИРИЙ ЛОГ ДЛЯ КАЛІБРУВАННЯ (вимога 20.09) — окремо від 🧾 Логу
-        # роботи бота. Там ПОДІЇ для людини, тут — РЯД ЗНАЧЕНЬ трьох ознак у
-        # часі разом із порогами, що діяли; без нього «підняти VOB з 60 до 70»
-        # можна лише навмання.
-        # ⚠️ ПИШЕМО І СТАН `trend` («корекції немає»): негативні семпли для
-        # підбору порогів так само обовʼязкові, як позитивні — інакше не видно,
-        # де детектор спрацював БИ з іншим числом.
-        # ⚠️ ПОДІЯ — ЗАВЖДИ, СТАН — за інтервалом: перехід між станами не має
-        # губитись через те, що семпл щойно писався (і навпаки — 30-секундний
-        # такт не має роздувати таблицю).
-        if bool(settings.get('mm_corr_log_enabled', True)):
-            try:
-                _every = max(30.0, float(settings.get('mm_corr_log_every_sec', 300) or 300))
-            except (TypeError, ValueError):
-                _every = 300.0
-            _due = (now - float(self._mm_corr_log_at or 0)) >= _every
-            if _changed or _due:
-                # ⚠️ `kind` теж іде від ПОДІЇ, а не від стану: раніше
-                # `resume` (`ending → on`) писався як `start`, а `abort`
-                # (`pending → ended`) — як `end`, тож калібрувальний лог
-                # ЗАВИЩУВАВ кількість епізодів. Аналіз за таким логом рахував
-                # би не те, що сталось на ринку.
-                _kind = (_ev if _ev in ('start', 'end') else
-                         'state' if _changed else 'sample')
-                if self._mm_corr_log_write(_kind, prev_state=_was or 'trend'):
-                    self._mm_corr_log_at = now
-
-    def _mm_capture(self, fuels: Dict, settings: Optional[Dict] = None,
-                    now: Optional[float] = None):
-        """Зберегти знімок МММ по всіх монетах, які двигун порахував ЦЬОГО такту.
-
-        ⚠️ Викликається ЛИШЕ з `_tick`, одразу після `_fuel_dir_smoothed(update=
-        True)`. Монітор не має права рахувати МММ сам: інакше в таблиці стояло б
-        одне число, а рішення двигун ухвалював би за іншим (той самий урок, що з
-        шарами Черги-4 — «шари рахує двигун, get_state їх читає»).
-
-        ТРЕНД сили (↑/↓) береться з ІСТОРІЇ `_mm_str_hist` за вікном
-        `MM_GROW_WINDOW_SEC` (`_mm_track_growth`), а не з попереднього такту —
-        інакше показник мерехтить. `_fuel_str_prev` тут не годиться взагалі:
-        він заповнюється лише для черг/позицій/фандингу, тож для решти
-        watchlist стрілка була б порожня.
-        """
-        s = settings if isinstance(settings, dict) else self.get_settings()
-        # 🔌 ТУМБЛЕР монітора (як у Черг). ВИМКНЕНО → ПОВНИЙ знімок не будуємо:
-        # це і є економія (legacy-МММ на 200+ монет щотакту не рахується), і
-        # таблиця чесно каже «монітор вимкнено».
-        # ⚠️ ВИНЯТОК — монети У ВІДКРИТІЙ УГОДІ (їх одиниці). Їхній рядок знімка
-        # живить колонку «🧮 МММ LiQ» у таблицях угод, а та колонка до
-        # монітора стосунку не має: прив'язати її до чужого тумблера означало б
-        # «вимкнув монітор — зникли числа в угодах» без жодної причини. Ціна
-        # питання — кілька арифметичних викликів над УЖЕ кешованим знімком
-        # liq-map, тобто економію тумблера це не з'їдає.
-        _mon = bool(s.get('mm_monitor_enabled', True))
-        self._mm_mon_on = _mon
-        _keep = self._mm_open_syms() if not _mon else None
-        if not _mon and not _keep:
-            with self._lock:
-                if self._mm_snapshot or self._mm_str_hist or self._mm_grow_since:
+                if not keep_snapshot:
                     self._mm_snapshot = {}
+                    self._mm_snapshot_ts = 0.0
                     self._mm_str_hist = {}
-                    # ⏱ Таймери росту теж скидаємо: після вмикання монітора
-                    # вони показували б час, протягом якого нічого не рахувалось.
-                    self._mm_grow_since = {}
-                    # ⏱ Таймери стану теж: після вмикання монітора вони
+                    # ⏱ Таймери росту/стану теж: після вмикання монітора вони
                     # показували б час, протягом якого нічого не рахувалось.
+                    self._mm_grow_since = {}
                     self._mm_state_since = {}
                     self._mm_price_hist = {}
                     self._mm_stats = {}
-                    self._mm_snapshot_ts = 0.0
-                # ⚖️ Банер теж гасимо: «заморожений» важіль, який уже ніхто не
-                # перераховує, виглядає як живий — гірше за порожній банер.
                 self._mm_bias = {}
                 self._mm_bias_since = 0.0
                 self._mm_bias_cand = {}
-                self._mm_bias_new = {}
-                self._mm_bias_new_since = 0.0
-                self._mm_bias_new_cand = {}
-                self._mm_move = {}
-                self._mm_move_since = 0.0
-                self._mm_move_cand = {}
-                self._mm_corr = {}
-                self._mm_corr_st = {}
-                self._mm_lever_hist = []
-            return
-        snap = {}
-        # 🔮 Прогноз 1H/4H — ЧИСТЕ ЧИТАННЯ кешу `forecast_engine` (той самий
-        # кеш, що малює бейджі «🔮 1H / 4H» над графіком). Рахувати нічого не
-        # треба, тож колонка безкоштовна і не має власного тумблера. Двигун
-        # беремо ОДИН раз на такт, а не на кожну монету.
-        _fe = self._mm_forecast_engine()
-        for sym, f in (fuels or {}).items():
-            if not f:
-                continue
-            if _keep is not None and str(sym).upper() not in _keep:
-                continue
-            # 🧮 СТАРИЙ ПОКАЗНИК МММ (вимога користувача 15.09) — саме
-            # `_fuel_dir_legacy` (сирий (fa−fb)/den по розташуванню кластерів
-            # liq-map), ТОЙ САМИЙ, що живить шар «МММ LiQ» у Черзі-4.
-            # ⚠️ Мережі це не коштує НІЧОГО: legacy читає `_liq_state` — той
-            # самий кешований (TTL 20с) знімок, який щойно взяв новий МММ.
-            # Тут лише арифметика над уже завантаженими рівнями.
-            old = self._fuel_dir_legacy(sym)
-            if not old:
-                continue
-            try:
-                d = float(old.get('dir') or 0.0)
-            except (TypeError, ValueError):
-                d = 0.0
-            snap[str(sym).upper()] = {
-                'status': old.get('status'),
-                'dir': round(d, 3),
-                # Сила — з ТОГО САМОГО legacy-розрахунку (|dir| × 100), а не
-                # порахована вдруге тут: два «однакових» числа розійшлись би.
-                'strength': int(old.get('strength') or 0),
-                # 🆕 НОВИЙ МММ (`_fuel_dir_smoothed`) — той самий `f`, за яким
-                # двигун ухвалює рішення. Сила = |dir|×100 (як у колонці «МММ»
-                # черг). Живить колонку «🆕 Новий МММ» і банер «МММ-new».
-                'new_status': (f.get('status')
-                               if f.get('status') in ('LONG', 'SHORT') else None),
-                'new_dir': round(_fnum(f.get('dir')), 3),
-                'new_strength': int(round(abs(_fnum(f.get('dir'))) * 100)),
-                # ⚠️ Ціна — з НОВОГО зрізу: legacy її взагалі не повертає, а
-                # `mark_price` в обох випадках один і той самий (знімок
-                # liq-map + накладений `_live_price`).
-                'mark_price': f.get('mark_price'),
-                # 🔮 {'f1': {...}|None, 'f4': {...}|None} — сирі поля прогнозу
-                # (side / pct / conf), як їх віддає двигун. Форматує їх ФРОНТ,
-                # тим самим правилом, що й бейджі над графіком.
-                **self._mm_forecast(_fe, sym),
-            }
-        # `now` передається ЛИШЕ з тестів (щоб програвати такти без sleep) —
-        # у проді завжди системний час.
+
+    def _mm_capture(self, fuels: Dict, settings: Optional[Dict] = None,
+                    now: Optional[float] = None):
+        """Зберегти знімки МММ по всіх монетах, які двигун порахував ЦЬОГО такту.
+
+        ДВІ НЕЗАЛЕЖНІ КНИГИ (вимога 01.10), кожна під СВОЇМ тумблером:
+          • 🧮 МММ-монітор (`mm_monitor_enabled`) — МММ LiQ (`_fuel_dir_legacy`);
+          • 🆕 МММ-new (`mm_new_enabled`) — НОВИЙ МММ (`_fuel_dir_smoothed`,
+            тобто РІВНО ті `fuels`, за якими двигун ухвалює рішення).
+        Рядки обох книг мають ОДНУ форму (`status`/`dir`/`strength`/…), тож
+        трекери, банер і рендер спільні — відрізняється лише джерело.
+
+        ⚠️ Викликається ЛИШЕ з тактів двигуна. Монітор не має права рахувати МММ
+        сам: інакше в таблиці стояло б одне число, а рішення двигун ухвалював би
+        за іншим (урок шарів Черги-4 — «двигун рахує, get_state читає»).
+        """
+        s = settings if isinstance(settings, dict) else self.get_settings()
+        _mon = bool(s.get('mm_monitor_enabled', True))
+        _new = bool(s.get('mm_new_enabled', True))
+        self._mm_mon_on = _mon
+        self._mmn_on = _new
+        # `now` передається ЛИШЕ з тестів (щоб програвати такти без sleep).
         _now = float(now) if now else time.time()
-        # 💹 НАПРЯМОК ЦІНИ — по історії знімків. Пишемо результат У ЗНІМОК (а не
-        # рахуємо у `mm_monitor_state`), щоб читач лишався читачем: те саме
-        # правило, що з шарами Черги-4 «двигун рахує — get_state читає».
-        self._mm_track_prices(snap, _now)
-        # 📈 ПРИРІСТ СИЛИ + ⏱ ТАЙМЕР РОСТУ — теж у ЗНІМОК (див. `_mm_track_growth`).
-        self._mm_track_growth(snap, _now)
-        # ⏱ СКІЛЬКИ МОНЕТА ТРИМАЄ СВІЙ СТАН (LONG/SHORT/⚖) — вимога 17.09.
-        self._mm_track_state(snap, _now)
-        with self._lock:
-            self._mm_snapshot = snap
-            self._mm_snapshot_ts = _now
-            # 📊 СКІЛЬКИ МОНЕТ ЦІЛИЛИ і скільки РЕАЛЬНО дали МММ. Без цього
-            # «49 монет» під WATCHLIST на 51 читається як загублені монети —
-            # а насправді по частині з них liq-map ще не дала рівнів (або вони
-            # вже в угоді й у таблиці не показуються).
-            self._mm_stats = {'targeted': len(fuels or {}),
-                              'data': len(snap), 'ts': _now} if _mon else {}
-            # ⏳ Знімок Є → причина «чому його немає» більше не потрібна.
-            self._mm_pending = {}
-        # ⚖️ ВАЖІЛЬ НАПРЯМКУ для банера — рахуємо ТУТ, у двигуні, і кладемо
-        # готовим; `mm_monitor_state` лишається читачем (урок B2 з шарами Q4).
-        # ⚠️ ЛИШЕ при УВІМКНЕНОМУ моніторі. Коли тумблер вимкнено, знімок
-        # свідомо лишається лише для монет у ВІДКРИТИХ УГОДАХ (він живить
-        # колонку в таблицях угод) — порахувати важіль по них означало б
-        # показати «ринок» із трьох монет під згаслою таблицею.
-        if _mon:
-            self._mm_track_bias(snap, _now, s)
-            # ⚖️ Банер «🧮 МММ-new» — ТОЙ САМИЙ знімок, джерело — новий МММ.
-            self._mm_track_bias_new(snap, _now, s)
-            # 📈 «Рух ринку» — по цінах ТОГО САМОГО знімка.
-            self._mm_track_move(_now, s)
-            # 🔻 ВЕРДИКТ ПРО КОРЕКЦІЮ — одразу після важеля і на ТОМУ САМОМУ
-            # знімку: банер і його вердикт не можуть описувати різні ринки.
-            self._mm_track_correction(snap, _now, s)
+        # 🔮 Прогноз 1H/4H — ЧИСТЕ ЧИТАННЯ кешу (той самий, що малює бейджі над
+        # графіком). Двигун беремо ОДИН раз на такт, а не на кожну монету.
+        _fe = self._mm_forecast_engine() if (fuels and (_mon or _new)) else None
+        # Обидві книги беруть ТУ САМУ пару прогнозів — читаємо кеш ОДИН раз на
+        # монету за такт, а не двічі (по разу на книгу).
+        _fc: Dict[str, Dict] = {}
+
+        def _fcast(sym):
+            if sym not in _fc:
+                _fc[sym] = self._mm_forecast(_fe, sym)
+            return _fc[sym]
+
+        # ═══ 🧮 КНИГА МММ LiQ ═══
+        # ⚠️ ВИНЯТОК при вимкненому моніторі — монети У ВІДКРИТІЙ УГОДІ (їх
+        # одиниці). Їхній рядок живить колонку «🧮 МММ LiQ» у таблицях угод і
+        # правило виходу «🧮 МММ LiQ ⚖ → вихід» — це не монітор, а супровід
+        # угод, і вимикати його чужим тумблером не можна. Банера, списку і
+        # watchlist-монет при цьому НЕМАЄ.
+        _keep = self._mm_open_syms() if not _mon else None
+        if not _mon and not _keep:
+            self._mm_clear_book(new=False)
         else:
+            snap = {}
+            for sym, f in (fuels or {}).items():
+                if not f:
+                    continue
+                if _keep is not None and str(sym).upper() not in _keep:
+                    continue
+                # 🧮 `_fuel_dir_legacy` (сирий (fa−fb)/den по кластерах liq-map)
+                # читає той самий кешований `_liq_state`, що щойно взяв новий
+                # МММ, — мережі це не коштує нічого.
+                old = self._fuel_dir_legacy(sym)
+                if not old:
+                    continue
+                snap[str(sym).upper()] = {
+                    'status': old.get('status'),
+                    'dir': round(_fnum(old.get('dir')), 3),
+                    # Сила — з ТОГО САМОГО legacy-розрахунку (|dir| × 100).
+                    'strength': int(old.get('strength') or 0),
+                    # Ціна — з нового зрізу: legacy її не повертає, а `mark_price`
+                    # в обох один (знімок liq-map + `_live_price`).
+                    'mark_price': f.get('mark_price'),
+                    **_fcast(sym),
+                }
+            self._mm_track_prices(snap, _now)
+            self._mm_track_growth(snap, _now)
+            self._mm_track_state(snap, _now)
             with self._lock:
-                self._mm_bias = {}
-                self._mm_bias_since = 0.0
-                self._mm_bias_cand = {}
-                self._mm_bias_new = {}
-                self._mm_bias_new_since = 0.0
-                self._mm_bias_new_cand = {}
-                self._mm_move = {}
-                self._mm_move_since = 0.0
-                self._mm_move_cand = {}
-                # Вимкнений монітор гасить і вердикт: «заморожена» корекція
-                # блокувала б відкриття без жодного живого розрахунку.
-                self._mm_corr = {}
-                self._mm_corr_st = {}
-                self._mm_lever_hist = []
+                self._mm_snapshot = snap
+                self._mm_snapshot_ts = _now
+                self._mm_stats = ({'targeted': len(fuels or {}),
+                                   'data': len(snap), 'ts': _now} if _mon else {})
+            if _mon:
+                # ⚖️ Важіль банера рахує ДВИГУН (урок B2), стан лише читає.
+                self._mm_track_bias(snap, _now, s)
+            else:
+                # Знімок лишився ЛИШЕ для угод → «ринок» із трьох монет під
+                # згаслим блоком не рахуємо.
+                self._mm_clear_book(new=False, keep_snapshot=True)
+
+        # ═══ 🆕 КНИГА «МММ-new» ═══
+        if not _new:
+            self._mm_clear_book(new=True)
+        else:
+            snap_n = {}
+            for sym, f in (fuels or {}).items():
+                if not f:
+                    continue
+                st = f.get('status') if f.get('status') in ('LONG', 'SHORT') else None
+                d = _fnum(f.get('dir'))
+                snap_n[str(sym).upper()] = {
+                    'status': st,
+                    'dir': round(d, 3),
+                    # Сила = |dir|×100 — те саме правило, що в колонці «МММ» черг.
+                    'strength': int(round(abs(d) * 100)),
+                    'mark_price': f.get('mark_price'),
+                    **_fcast(sym),
+                }
+            self._mm_track_prices(snap_n, _now, hist_attr='_mmn_price_hist')
+            self._mm_track_growth(snap_n, _now, hist_attr='_mmn_str_hist',
+                                  grow_attr='_mmn_grow_since')
+            self._mm_track_state(snap_n, _now, hist_attr='_mmn_state_since')
+            with self._lock:
+                self._mmn_snapshot = snap_n
+                self._mmn_snapshot_ts = _now
+                self._mmn_stats = {'targeted': len(fuels or {}),
+                                   'data': len(snap_n), 'ts': _now}
+            self._mm_track_bias_new(snap_n, _now, s)
+
+        if _mon or _new:
+            # ⏳ Знімок Є → причина «чому його немає» більше не потрібна.
+            with self._lock:
+                self._mm_pending = {}
 
     def _mm_queue_map(self) -> Dict[str, List[str]]:
         """{СИМВОЛ: ['Q1','Q4', …]} — у ЯКИХ чергах зараз стоїть монета.
@@ -4700,8 +3919,13 @@ class FuelFilterDaemon:
                     out.setdefault(str(k).upper(), []).append(lbl)
         return out
 
-    def mm_monitor_state(self, settings: Optional[Dict] = None) -> Dict:
+    def mm_monitor_state(self, settings: Optional[Dict] = None,
+                         book: str = 'old') -> Dict:
         """🧮 Рядки МММ-монітора — ЧИТАННЯ готового знімка, без розрахунків.
+
+        `book='old'` — блок 🧮 МММ-монітор (МММ LiQ), `book='new'` — блок
+        🆕 МММ-new (НОВИЙ МММ). Форма відповіді ОДНА на обидва блоки: фронт
+        малює їх ТИМ САМИМ рендером (вимога 01.10: «повністю ідентичне»).
 
         Повертає {'rows': [...], 'ts', 'enabled', 'limited'}.
 
@@ -4724,17 +3948,19 @@ class FuelFilterDaemon:
         ліквідності — обрізання має бути НАЗВАНЕ вголос).
         """
         s = settings if isinstance(settings, dict) else self.get_settings()
-        _on = bool(s.get('mm_monitor_enabled', True))
+        _nb = (book == 'new')
+        _on = bool(s.get('mm_new_enabled' if _nb else 'mm_monitor_enabled', True))
+        _p = '_mmn' if _nb else '_mm'
         with self._lock:
-            # ⚠️ ВИМКНЕНИЙ монітор → рядків НЕМАЄ, і це перевіряється ЯВНО, а не
-            # покладається на порожній знімок: при вимкненому тумблері знімок
-            # СВІДОМО лишається для монет у відкритих угодах (він живить колонку
+            # ⚠️ ВИМКНЕНИЙ блок → рядків НЕМАЄ, і це перевіряється ЯВНО, а не
+            # покладається на порожній знімок: при вимкненому 🧮 знімок СВІДОМО
+            # лишається для монет у відкритих угодах (він живить колонку
             # «🧮 МММ LiQ» у таблицях угод), і без цієї перевірки вони
             # протекли б у таблицю монітора, який щойно вимкнули.
-            snap = dict(self._mm_snapshot or {}) if _on else {}
-            _cov = dict(getattr(self, '_mm_stats', {}) or {})
-            grow = dict(getattr(self, '_mm_grow_since', {}) or {})
-            ts = float(self._mm_snapshot_ts or 0.0)
+            snap = dict(getattr(self, _p + '_snapshot', {}) or {}) if _on else {}
+            _cov = dict(getattr(self, _p + '_stats', {}) or {})
+            grow = dict(getattr(self, _p + '_grow_since', {}) or {})
+            ts = float(getattr(self, _p + '_snapshot_ts', 0.0) or 0.0)
         # 📍 ДЕ МОНЕТА ЗАРАЗ. Відкриті позиції (FF + обидві книги TM) збирає
         # ЄДИНИЙ `_mm_open_syms`, черги — `_mm_queue_map`.
         # ⚠️ **ВИМОГА ЗМІНИЛАСЬ (18.09):** «Із таблиці не потрібно видаляти
@@ -4787,10 +4013,6 @@ class FuelFilterDaemon:
                 # Момент, а не секунди — секунди малює той самий 1с-тікер.
                 'state_since': v.get('state_since'),
                 'dir': v.get('dir'),
-                # 🆕 НОВИЙ МММ (`_fuel_dir_smoothed`) — окрема колонка.
-                'new_mm': v.get('new_status'),
-                'new_strength': v.get('new_strength'),
-                'new_dir': v.get('new_dir'),
                 'price': v.get('mark_price'),
                 # 💹 Куди йде ЦІНА за 15-хв вікном: 'up' / 'down' / 'flat' + сам
                 # рух у %. `price_span` — скільки секунд історії реально
@@ -4820,13 +4042,11 @@ class FuelFilterDaemon:
             'enabled': _on,
             'limited': bool(s.get('mmm_limited_mode', True)),
             # ⚑ Поріг «Сила ≥» їде З СЕРВЕРА — одне число на всі браузери.
-            'str_min': int(s.get('mm_str_min', 0) or 0),
+            'str_min': int(s.get('mmn_str_min' if _nb else 'mm_str_min', 0) or 0),
+            'book': 'new' if _nb else 'old',
             # ⚖️ Готовий важіль напрямку для банера (рахує двигун, тут ЧИТАННЯ).
-            'bias': dict(getattr(self, '_mm_bias', {}) or {}),
-            # ⚖️ Банер «🧮 МММ-new» — той самий важіль із НОВОГО МММ.
-            'bias_new': dict(getattr(self, '_mm_bias_new', {}) or {}),
-            # 📈 Банер «РУХ РИНКУ» (лише показ).
-            'move': dict(getattr(self, '_mm_move', {}) or {}),
+            'bias': (dict(getattr(self, '_mm_bias_new' if _nb else '_mm_bias', {})
+                          or {}) if _on else {}),
             # 📊 ЧОМУ РЯДКІВ МЕНШЕ, НІЖ МОНЕТ У WATCHLIST (питання 17.09:
             # «у WATCHLIST 51, а монітор працює із 49 — чому?»). Різниця
             # НІКОЛИ не має бути здогадкою, тож віддаємо ПОВНИЙ розклад:
@@ -4857,152 +4077,7 @@ class FuelFilterDaemon:
             # вужчий (без черг і фандингу). Мовчати про це не можна: коротший
             # список читався б як «бот половину монет загубив».
             'queues_off': not bool(s.get('enabled')),
-            # 🔻 ВЕРДИКТ ПРО КОРЕКЦІЮ (вимога 19.09) — ЧИТАННЯ готового стану,
-            # який щотакту рахує `_mm_track_correction`. Банер малює з цього
-            # поля і стан, і розклад ознак, і те, чи блокуються відкриття.
-            'correction': dict(getattr(self, '_mm_corr', {}) or {}) if _on else {},
         }
-
-    def mm_correction(self) -> Dict:
-        """🔻 Вердикт про корекцію — ПУБЛІЧНЕ читання готового стану.
-
-        Тим самим правилом, що `mm_bias()`: читати чужий `_mm_corr` напряму не
-        можна, а рахувати тут — тим більше (рахує двигун).
-        """
-        with self._lock:
-            return dict(getattr(self, '_mm_corr', {}) or {})
-
-    def _corr_override_on(self, st: Dict) -> bool:
-        """⏸ Чи діє зараз РУЧНА ПАУЗА вердикту — і САМОЗНЯТТЯ, коли вже не діє.
-
-        **Вимога користувача (23.09), дослівно:** «Додай кнопку ручного
-        зупинення корекції… Кнопка вдавлена — то працюємо ніби як немає стану
-        "Корекція". Стан кнопки змінюється або ще одним натиском або
-        автоматично коли Корекція дійсно закінчилась.»
-
-        ⚠️ **Пауза привʼязана до ЕПІЗОДУ (`since`), а не до булевого прапорця.**
-        Саме це й дає обіцяне «автоматично»: епізод завершився (стан вийшов із
-        `on`/`ending`) або почався НОВИЙ (інший `since`) → кнопка відпускається
-        САМА. Голий `True` довелось би знімати окремою гілкою на кожному
-        переході, і рано чи пізно одну з них забули б — тоді наступна, ВЖЕ ІНША
-        корекція мовчки не блокувала б відкриття.
-        ⚠️ Знімаємо ТУТ, у читачі, а не в такті: цей метод кличе і сам такт, і
-        `/api/…/state`, тож стан не може «залипнути» через порядок викликів.
-        """
-        try:
-            ov = float(getattr(self, '_mm_corr_override', 0) or 0)
-        except (TypeError, ValueError):
-            ov = 0.0
-        if ov <= 0:
-            return False
-        state = (st or {}).get('state')
-        since = float((st or {}).get('since') or 0)
-        # Корекції вже немає АБО це вже інша корекція → пауза відпрацювала.
-        if state not in ('on', 'ending') or abs(since - ov) > 1.0:
-            self._mm_corr_override = 0.0
-            return False
-        return True
-
-    def set_correction_override(self, on: Optional[bool] = None) -> Dict:
-        """⏸ Натиснути/відпустити кнопку ручної паузи → {ok, override, reason}.
-
-        `on=None` — ПЕРЕМИКАЧ (саме так кличе кнопка), `True`/`False` — явно.
-
-        ⚠️ Паузу можна поставити ЛИШЕ на живу корекцію (`on`/`ending`): інакше
-        «вдавлена кнопка» висіла б над станом, якого немає, і наступна корекція
-        стартувала б уже призупиненою — тобто детектор мовчки не працював би.
-        ⚠️ Стан ОДРАЗУ персиститься: інакше `botupdate` через хвилину повернув
-        би ворота, а кнопка на екрані лишилась би вдавленою.
-        ⚠️ Дію пишемо в 🧾 Лог — це рішення ЛЮДИНИ, що знімає ворота відкриття;
-        воно мусить лишити слід так само, як ✋ ручне відкриття.
-        """
-        with self._lock:
-            st = dict(self._mm_corr_st or {})
-        cur = self._corr_override_on(st)
-        want = (not cur) if on is None else bool(on)
-        if want == cur:
-            return {'ok': True, 'override': cur, 'reason': 'без змін'}
-        if want:
-            state = st.get('state')
-            since = float(st.get('since') or 0)
-            if state not in ('on', 'ending') or since <= 0:
-                return {'ok': False, 'override': False,
-                        'reason': 'корекції зараз немає — нема чого призупиняти'}
-            self._mm_corr_override = since
-        else:
-            self._mm_corr_override = 0.0
-        # Подання оновлюємо ОДРАЗУ, щоб кнопка не «відпружинювала» до
-        # наступного такту (він може бути через 30с).
-        with self._lock:
-            if self._mm_corr:
-                self._mm_corr['override'] = want
-                if want:
-                    self._mm_corr['blocking'] = False
-                else:
-                    self._mm_corr['blocking'] = bool(
-                        self._mm_corr.get('state') == 'on'
-                        and self._mm_corr.get('block_on', True))
-        try:
-            self._persist_state()
-        except Exception:
-            pass
-        try:
-            from detection.activity_log import log_activity
-            log_activity('ALL', 'event',
-                         ('⏸ КОРЕКЦІЯ призупинена ВРУЧНУ — ворота відкриття '
-                          'знято, вердикт і далі рахується. Знімається другим '
-                          'натиском або САМА, коли корекція завершиться.')
-                         if want else
-                         '▶️ Ручну паузу корекції ЗНЯТО — ворота відкриття '
-                         'працюють як зазвичай.',
-                         side=st.get('bias') or '', source='MMM')
-        except Exception:
-            pass
-        return {'ok': True, 'override': want, 'reason': ''}
-
-    def correction_blocks_open(self) -> tuple:
-        """🚫 Чи ЗАБОРОНЕНО зараз відкривати угоди через корекцію → (bool, причина).
-
-        **Вимога (19.09), дослівно:** «В період корекції потрібно обмежити
-        відкриття угод.»
-
-        ⚠️ Блокує ЛИШЕ ПІДТВЕРДЖЕНА корекція (`state == 'on'`). Відліки
-        (`pending`/`ending`) — це ще не подія, і зупиняти на них торгівлю
-        означало б реагувати на шум, від якого підтвердження й захищає.
-        ⚠️ Блокуються ОБИДВА напрямки. Вхід ЗА банером у корекції ловить ніж,
-        а вхід ПРОТИ банера — це торгівля проти власного тренду бота; ані те,
-        ані інше не є тим, заради чого бот тримає напрямок.
-        ⚠️ ✋ РУЧНІ дії це НЕ зупиняє — рішення людини лишається сильнішим
-        (той самий принцип, що в «нової ситуації»). Ворота стоять у двох
-        вузлах: `_open` (усі черги) і `on_signal` (прямі відкриття).
-        ⚠️ Помилка/недоступність → НЕ блокуємо: тихо зупинити торгівлю через
-        збій читання не можна (fail-open, як у 🚦 воріт напрямку).
-        ⚠️ ⏸ РУЧНА ПАУЗА (`set_correction_override`) знімає ворота, не чіпаючи
-        вердикт: вона вже врахована у полі `blocking`, тож тут другої перевірки
-        НЕ заводимо — одне рішення мусить мати одне джерело.
-        """
-        try:
-            c = self.mm_correction()
-            if not c or c.get('state') != 'on' or not c.get('blocking'):
-                return False, ''
-            # 🔻 ДЕТЕКТОР ВИМКНЕНО → НІКОЛИ не блокує (вимога 30.09), навіть
-            # якщо в памʼяті ще лежить стан від попереднього такту (вимкнули
-            # між тактами). Налаштування читаємо ЛИШЕ тут — у рідкісному
-            # випадку «зараз блокуємо», а не на кожен виклик (гарячий шлях).
-            if not bool(self.get_settings().get('mm_corr_enabled', True)):
-                return False, ''
-            _lay = ' · '.join(f"{x['icon']} {x['name']} {x['pct']}% "
-                              f"(поріг {x['need']}%)"
-                              for x in (c.get('layers') or [])
-                              if x.get('ok') and x.get('lit'))
-            _held = self._fmt_wait(max(0.0, time.time() - float(c.get('since') or 0)))
-            return True, (f'🔻 КОРЕКЦІЯ проти банера {c.get("bias")} '
-                          f'(триває {_held}, ознак {c.get("lit")}/{c.get("need")}'
-                          + (f' · {_lay}' if _lay else '') + ') — '
-                          f'відкриття угод зупинено')
-        except Exception as e:
-            print(f"[FF] correction gate error: {e}")
-            return False, ''
 
     def mm_snapshot_for(self, symbols) -> Dict:
         """🧮 МММ LiQ по вказаних монетах — ЧИТАННЯ знімка двигуна.
@@ -5100,8 +4175,12 @@ class FuelFilterDaemon:
                 out |= {str(k).upper() for k in (d or {})}
         return out
 
-    def group_open(self, symbols: List[str]) -> Dict:
+    def group_open(self, symbols: List[str], book: str = 'old') -> Dict:
         """✋ ГРУПОВЕ відкриття обраних монет МММ-монітора.
+
+        `book='old'` — блок 🧮 МММ-монітор (напрямок = МММ LiQ), `book='new'` —
+        блок 🆕 МММ-new (напрямок = НОВИЙ МММ). Кожен блок відкриває рівно
+        за тим показником, який людина бачила в ЙОГО таблиці.
 
         Напрямок КОЖНОЇ монети — її власний МММ зі ЗНІМКА, тобто рівно те, що
         людина бачила в рядку. Ворота черг пропускаються (як у ✋ ручному
@@ -5123,9 +4202,11 @@ class FuelFilterDaemon:
         # ⚠️ Вимкнений монітор = знімка НЕМАЄ, тож напрямок брати нізвідки.
         # Кажемо це прямо: інакше кожна монета отримала б причину «МММ без
         # напрямку», що виглядало б як «ринок у рівновазі», а не як тумблер.
-        if not s.get('mm_monitor_enabled', True):
+        _nb = (book == 'new')
+        _name = '🧮 МММ-new' if _nb else '🧮 МММ-монітор'
+        if not s.get('mm_new_enabled' if _nb else 'mm_monitor_enabled', True):
             return {'ok': False, 'opened': 0, 'failed': 0, 'results': [],
-                    'reason': '🧮 МММ-монітор вимкнено — увімкніть тумблер секції'}
+                    'reason': f'{_name} вимкнено — увімкніть тумблер блоку'}
         syms = [str(x).upper().strip() for x in (symbols or []) if str(x).strip()]
         # Дедуп зі збереженням порядку — той самий символ двічі не відкриваємо.
         syms = list(dict.fromkeys(syms))
@@ -5133,26 +4214,31 @@ class FuelFilterDaemon:
             return {'ok': False, 'opened': 0, 'failed': 0, 'results': [],
                     'reason': 'Не обрано жодної монети'}
         with self._lock:
-            snap = dict(self._mm_snapshot or {})
+            snap = dict((self._mmn_snapshot if _nb else self._mm_snapshot) or {})
         try:
             from detection.activity_log import log_activity
         except Exception:
             log_activity = lambda *a, **k: None
         for sym in syms:
-            r = self._mm_open_one(sym, snap.get(sym) or {}, s, log_activity)
+            r = self._mm_open_one(sym, snap.get(sym) or {}, s, log_activity,
+                                  book=book)
             out['results'].append(r)
             if r.get('ok'):
                 out['opened'] += 1
             else:
                 out['failed'] += 1
         log_activity('ALL', 'opened' if out['opened'] else 'skipped',
-                     f"🧮 МММ-монітор: групове відкриття — обрано {len(syms)}, "
+                     f"{_name}: групове відкриття — обрано {len(syms)}, "
                      f"відкрито {out['opened']}, не вдалось {out['failed']}",
                      source='MMM')
         return out
 
-    def _mm_open_one(self, sym: str, mm: Dict, s: Dict, log_activity) -> Dict:
-        """Одна монета групового відкриття. Напрямок — ЛИШЕ з МММ-знімка."""
+    def _mm_open_one(self, sym: str, mm: Dict, s: Dict, log_activity,
+                     book: str = 'old') -> Dict:
+        """Одна монета групового відкриття. Напрямок — ЛИШЕ з МММ-знімка
+        ТОГО блоку, з якого відкривають (`book`)."""
+        _nb = (book == 'new')
+        _name = '🧮 МММ-new' if _nb else '🧮 МММ-монітор'
         side = mm.get('status')
         if side not in ('LONG', 'SHORT'):
             return {'symbol': sym, 'side': None, 'ok': False,
@@ -5178,7 +4264,7 @@ class FuelFilterDaemon:
                     'reason': 'не вдалося отримати ціну'}
         try:
             opened = self._open(sym, side, {'mark_price': mark, 'dir': side}, s,
-                                opened_by=_ob_compose('manual', 'MMM'),
+                                opened_by=_ob_compose('manual', 'MMN' if _nb else 'MMM'),
                                 skip_ctr_safeguard=True, skip_safeguard=True,
                                 by_hand=True)
         except Exception as e:
@@ -5186,7 +4272,7 @@ class FuelFilterDaemon:
             return {'symbol': sym, 'side': side, 'ok': False, 'reason': f'помилка: {e}'}
         if not opened:
             log_activity(sym, 'skipped',
-                         f'🧮 МММ-монітор: групове відкриття {side} відхилено на '
+                         f'{_name}: групове відкриття {side} відхилено на '
                          'рівні `_open` (напрямок вимкнено кнопкою / ціна / розмір)',
                          side=side, source='MMM')
             return {'symbol': sym, 'side': side, 'ok': False,
@@ -5195,7 +4281,7 @@ class FuelFilterDaemon:
             self._timers[sym] = {'dir': side, 'since': time.time(),
                                  'start_price': mark}
         log_activity(sym, 'opened',
-                     f'🧮 МММ-монітор: ✋ ГРУПОВЕ відкриття {side} за живим МММ '
+                     f'{_name}: ✋ ГРУПОВЕ відкриття {side} за живим МММ '
                      f'(сила {mm.get("strength")}%) — ворота черг пропущено '
                      '(рішення користувача)',
                      side=side, source='MMM')
@@ -5989,34 +5075,6 @@ class FuelFilterDaemon:
             # тихою зупинкою бота.
             print(f"[FuelFilter] {symbol}: direction gate error: {_e} — пропускаю")
 
-        # 🔻 КОРЕКЦІЯ — НЕ ВІДКРИВАЄМО (вимога 19.09: «В період корекції
-        # потрібно обмежити відкриття угод»). Стоїть тут, бо `_open` — ЄДИНИЙ
-        # вузол відкриття ВСІХ черг; запис міг лягти в чергу ще до того, як
-        # корекція почалась, і двигун черги про неї не знає.
-        # ⚠️ ✋ РУЧНЕ (`by_hand`) ці ворота ОБХОДИТЬ — на відміну від 🚦 головних
-        # кнопок: корекція це ОЦІНКА РИНКУ ботом, а не заборона користувача, і
-        # людина має право відкрити свідомо (той самий принцип, що в «нової
-        # ситуації»). Запис у черзі при цьому НЕ виселяємо: корекція мине, і
-        # монета відкриється штатно.
-        if not by_hand:
-            _cb, _cwhy = self.correction_blocks_open()
-            if _cb:
-                self._engine_skip[symbol] = _cwhy
-                # ⚠️ АНТИ-ФЛУД + СИРИЙ ЛОГ — в ОДНОМУ місці
-                # (`note_correction_block`), спільному з вузлом у TM: двигун
-                # смикає `_open` щотакту по КОЖНІЙ монеті черги, а корекція
-                # триває годинами, тож пишемо ОДИН рядок на монету НА ЕПІЗОД.
-                if self.note_correction_block(symbol, side=side, reason=_cwhy,
-                                              source='FF', settings=settings,
-                                              price=fuel.get('mark_price')):
-                    try:
-                        from detection.activity_log import log_activity
-                        log_activity(symbol, 'skipped', _cwhy, side=side,
-                                     source='FF')
-                    except Exception:
-                        pass
-                return False
-
         entry_price = fuel.get('mark_price')
         if not entry_price or entry_price <= 0:
             print(f"[FuelFilter] {symbol}: no entry price — skip open")
@@ -6471,7 +5529,12 @@ class FuelFilterDaemon:
         `_enforce_btc_flip_close` (він ЗАКРИВАЄ угоди), ні TTL/виселень, ні
         двигунів. Рівно набір монет → `_liq_state` → `_mm_capture`.
         """
-        _mon = bool(settings.get('mm_monitor_enabled', True))
+        # 🧮 і 🆕 — два блоки зі СВОЇМИ тумблерами; WATCHLIST рахуємо, лише
+        # коли хоч один із них увімкнено (вимога 01.10: вимкнений блок «має
+        # повністю припинити роботу»). Монети у відкритих угодах — завжди:
+        # вони живлять колонку «🧮 МММ LiQ» в угодах і правило виходу.
+        _mon = (bool(settings.get('mm_monitor_enabled', True))
+                or bool(settings.get('mm_new_enabled', True)))
         _open = self._mm_open_syms()
         if not _mon and not _open:
             # Нема ні таблиці, ні угод → рахувати нічого. `_mm_capture` із
@@ -6481,7 +5544,8 @@ class FuelFilterDaemon:
             return
         relevant = list(dict.fromkeys(
             ['BTCUSDT'] + sorted(_open)
-            + [str(x).upper() for x in self._mm_watchlist_part(settings)]))
+            + ([str(x).upper() for x in self._mm_watchlist_part(settings)]
+               if _mon else [])))
         # Без реєстрації liq-map просто не СКАНУЄ ці монети → рівнів не буде.
         self._register_with_liqmap(relevant)
         _t0 = time.time()
@@ -6599,7 +5663,11 @@ class FuelFilterDaemon:
         # додані ВРУЧНУ. У ПОВНОМУ режимі (mmm_limited_mode=False) додається ще й
         # ВЕСЬ WATCHLIST (у т.ч. bulk із Tickr-добірки). Обмежений режим (дефолт)
         # не ганяє важкий liqmap по всьому списку.
-        _wl = self._mm_watchlist_part(settings)
+        # ⚠️ WATCHLIST-частина потрібна ЛИШЕ блокам 🧮/🆕 — обидва вимкнені →
+        # її не рахуємо (решта набору — черги/угоди/фандинг — потрібна двигуну).
+        _wl = (self._mm_watchlist_part(settings)
+               if (settings.get('mm_monitor_enabled', True)
+                   or settings.get('mm_new_enabled', True)) else [])
         relevant = list(dict.fromkeys(
             ['BTCUSDT'] + managed + pending_all + list(funding_syms)
             + [str(x).upper() for x in (_wl or [])]))
@@ -11356,7 +10424,7 @@ class FuelFilterDaemon:
     # згорнута. Усе інше (банер, лічильники, налаштування, Черги-1..3) віддається
     # завжди — воно дешеве. `None` = віддати ВСЕ (сумісність для інфо-сайту та
     # будь-якого стороннього споживача API).
-    HEAVY_SECTIONS = ('q4', 'fund', 'mm')
+    HEAVY_SECTIONS = ('q4', 'fund', 'mm', 'mmn')
 
     def get_state(self, sections: Optional[set] = None) -> Dict:
         """Snapshot for the UI: settings + live timers + active tracking.
@@ -11371,6 +10439,8 @@ class FuelFilterDaemon:
         # (лише читання знімка двигуна), але ганяти їх, коли гармошка згорнута,
         # немає сенсу — той самий принцип C2, що для Черги-4 і фандингу.
         _want_mm = (sections is None) or ('mm' in sections)
+        # 🆕 Блок «МММ-new» — той самий принцип, своя гармошка.
+        _want_mmn = (sections is None) or ('mmn' in sections)
         with self._lock:
             settings = self.get_settings()
             duration_sec = settings['duration_minutes'] * 60
@@ -11648,9 +10718,13 @@ class FuelFilterDaemon:
             # ⚡ C2: які ВАЖКІ секції реально пораховано в цій відповіді. Фронт
             # МУСИТЬ це читати: без прапорця він прийняв би `timers4: []` за
             # «черга порожня» і стер би таблицю, хоча її просто не запитували.
-            'served': {'q4': _want_q4, 'fund': _want_fund, 'mm': _want_mm},
+            'served': {'q4': _want_q4, 'fund': _want_fund, 'mm': _want_mm,
+                       'mmn': _want_mmn},
             # 🧮 МММ-монітор — готовий знімок двигуна (жодних розрахунків тут).
             'mm_monitor': (self.mm_monitor_state(settings) if _want_mm else None),
+            # 🆕 Блок «МММ-new» — та сама форма, книга НОВОГО МММ.
+            'mm_new': (self.mm_monitor_state(settings, book='new')
+                       if _want_mmn else None),
             # 🎚 Смуги грейда (ЄДИНЕ джерело — setup_grader). UI будує випадайку
             # «Готовність ≥» саме з них, щоб назва і число НЕ розходились.
             'grade_bands': _grade_bands(),

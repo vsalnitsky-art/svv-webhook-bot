@@ -87,9 +87,6 @@ def _load(name, fname):
     return mod
 
 
-mc = _load('detection.mm_correction', 'mm_correction.py')
-_pkg.mm_correction = mc
-
 _fspec = importlib.util.spec_from_file_location(
     'fuel_filter_tg_test', os.path.join(_HERE, 'detection', 'fuel_filter.py'))
 _ffm = importlib.util.module_from_spec(_fspec)
@@ -138,18 +135,6 @@ def _install_log():
 
 _install_log()
 
-_DBROWS = []
-_dbmod_corr = types.ModuleType('storage.db_operations')
-
-
-class _DB2(_DB):
-    def log_mm_correction(self, **row):
-        _DBROWS.append(dict(row))
-
-
-_dbmod.get_db = lambda: _DB2()
-
-
 def _snap(**coins):
     out = {}
     for sym, (st, stren, pdir) in coins.items():
@@ -166,29 +151,18 @@ def _mk(trends=None, vob_on=True, **settings):
     ff._lock = threading.RLock()
     ff._mm_bias, ff._mm_bias_since, ff._mm_bias_cand = {}, 0.0, {}
     ff._mm_bias_new, ff._mm_bias_new_since, ff._mm_bias_new_cand = {}, 0.0, {}
-    ff._mm_move, ff._mm_move_since, ff._mm_move_cand = {}, 0.0, {}
     ff._mm_bias_tg_last = '__none__'
-    ff._mm_corr_st, ff._mm_corr, ff._mm_lever_hist = {}, {}, []
-    ff._mm_corr_skip_logged = {}
-    ff._mm_corr_log_at = 0.0
     ff._mm_snapshot = {}
     ff._engine_skip = {}
-    s = {'mm_bias_confirm_sec': 0, 'mm_corr_confirm_sec': 0,
-         'mm_corr_min_layers': 2, 'mm_corr_vob_pct': 60.0,
-         'mm_corr_price_pct': 60.0, 'mm_corr_lever_drop': 15.0,
-         'mm_corr_enabled': True, 'mm_corr_block_open': True,
-         'mm_corr_log_enabled': False, 'mm_corr_log_every_sec': 300,
-         'mm_bias_tg': True, 'mm_corr_tg': True,
+    s = {'mm_bias_confirm_sec': 0,
+         'mm_bias_tg': True,
          'mm_monitor_enabled': True, 'enabled': True}
     s.update(settings)
     ff._settings = s
     ff.get_settings = lambda: dict(ff._settings)
-    ff._mm_vob_trends = lambda: {'on': vob_on, 'tf': '5m',
-                                 'trends': dict(trends or {})}
     ff.sent = []
-    ff._mm_exit_trends = lambda tf: {}   # 🧭 TF виходу (28.09) — не лізти в сканер
     # ⚠️ Стаб мусить повертати ТЕ САМЕ, що справжній метод — `(ok, причина)`.
-    # Поки він віддавав None, розпакування в `_mm_track_correction` падало в
+    # Поки він віддавав None, розпакування в `_mm_bias_alert` падало в
     # `except Exception`, і нова гілка «Telegram не прийняв» не виконувалась
     # НІКОЛИ, хоча тести зеленіли (задокументована пастка стабів).
     ff.tg_ok = True
@@ -204,13 +178,11 @@ def _mk(trends=None, vob_on=True, **settings):
 def _tick(ff, snap, now=NOW):
     s = ff.get_settings()
     ff._mm_track_bias(snap, now, s)
-    ff._mm_track_correction(snap, now, s)
-    return dict(ff._mm_corr)
+    return dict(ff._mm_bias)
 
 
 def _banner(ff):
-    """Лише повідомлення БАНЕРА (у них є важіль) — щоб тест про банер не
-    рахував заразом події корекції, які летять у ту саму тему."""
+    """Лише повідомлення БАНЕРА (у них є важіль)."""
     return [t for c, p, t in ff.sent if 'важіль' in t]
 
 
@@ -408,104 +380,17 @@ def test_a_broken_telegram_never_stops_the_tick():
     print('✓ збій Telegram не ламає розрахунок банера')
 
 
-# ═══════════ 3. КОРЕКЦІЯ → TELEGRAM ══════════════════════════════════════
-def _corr_on(ff, now=NOW):
-    """Довести детектор до підтвердженої корекції проти банера LONG."""
-    trends = {f'C{i}': 'SHORT' for i in range(6)}
-    ff._mm_vob_trends = lambda: {'on': True, 'tf': '5m', 'trends': trends}
-    _tick(ff, _long(strength=70), now)                 # банер LONG, важіль 70
-    down = _snap(**{f'C{i}': ('LONG', 20, 'down') for i in range(6)})
-    return _tick(ff, down, now + 60)                   # ознаки проти
-
-
-def test_correction_start_and_end_are_announced():
-    """«Стосовно корекцій також зроби оповіщення» — подія зупиняє відкриття
-    угод, і дізнаватись про неї лише з логу запізно."""
-    ff = _mk()
-    _install_log()
-    _corr_on(ff)
-    _check(ff._mm_corr.get('state') == 'on',
-           f'корекція мусила оголоситись: {ff._mm_corr}')
-    corr = [t for c, p, t in ff.sent if 'КОРЕКЦІЯ' in t]
-    _check(len(corr) == 1, f'мусить піти одне повідомлення про початок: {ff.sent}')
-    # Вимога 24.09: у TG ЛИШЕ напрямок корекції (протилежний банеру LONG) і
-    # час старту — розклад ознак лишається в 🧾 Лозі.
-    _check(corr[0].startswith('🔴 SHORT КОРЕКЦІЯ · почалась ')
-           and 'ознак' not in corr[0],
-           f'коротке повідомлення про старт: {corr[0]}')
-    # …і завершення.
-    ff.sent.clear()
-    trends = {f'C{i}': 'LONG' for i in range(6)}
-    ff._mm_vob_trends = lambda: {'on': True, 'tf': '5m', 'trends': trends}
-    _tick(ff, _long(strength=70), NOW + 120)
-    ended = [t for c, p, t in ff.sent if 'ЗАВЕРШИЛАСЬ' in t]
-    _check(len(ended) == 1, f'завершення теж мусить піти: {ff.sent}')
-    _check(ended[0].startswith('🔴 SHORT КОРЕКЦІЯ ЗАВЕРШИЛАСЬ (тривала ')
-           and '→' in ended[0] and 'банер' not in ended[0],
-           f'коротке повідомлення про кінець з часом від → до: {ended[0]}')
-    print('✓ початок і кінець корекції → повідомлення в тему 🧮')
-
-
-def test_the_telegram_text_is_the_same_event_as_the_log_line():
-    """⚠️ Два різні тексти про ОДНУ подію розійшлися б. Тому Telegram несе
-    РІВНО те, що вже пішло в 🧾 Лог роботи бота."""
-    ff = _mk()
-    _install_log()
-    _corr_on(ff)
-    log_txt = [r['detail'] for r in _LOGGED
-               if r['source'] == 'MMM' and 'КОРЕКЦІЯ' in r['detail']]
-    tg_txt = [t for c, p, t in ff.sent if 'КОРЕКЦІЯ' in t]
-    _check(log_txt and tg_txt, f'мусять бути обидва канали: {log_txt} / {tg_txt}')
-    # 24.09: TG став КОРОТКИМ, а лог лишив розклад — тож TG-текст мусить
-    # бути ПОЧАТКОМ рядка логу (одна подія — один текст, лог лише довший).
-    _check(log_txt[0].startswith(tg_txt[0]),
-           f'TG мусить бути початком рядка логу:\n  лог: {log_txt[0]}\n  TG:  {tg_txt[0]}')
-    print('✓ Telegram і 🧾 Лог описують подію ОДНИМ текстом')
-
-
-def test_countdowns_are_not_announced():
-    """⚠️ `pending` / `ending` — це ще не подія (той самий принцип, що з
-    кандидатом банера)."""
-    ff = _mk(mm_corr_confirm_sec=120)
-    _install_log()
-    trends = {f'C{i}': 'SHORT' for i in range(6)}
-    ff._mm_vob_trends = lambda: {'on': True, 'tf': '5m', 'trends': trends}
-    _tick(ff, _long(strength=70), NOW)
-    ff.sent.clear()
-    down = _snap(**{f'C{i}': ('LONG', 20, 'down') for i in range(6)})
-    _tick(ff, down, NOW + 60)
-    _check(ff._mm_corr.get('state') == 'pending',
-           f'мусить бути відлік: {ff._mm_corr.get("state")}')
-    _check([t for c, p, t in ff.sent if 'КОРЕКЦІЯ' in t] == [],
-           f'про відлік не сповіщаємо: {ff.sent}')
-    print('✓ відліки підтвердження в Telegram не йдуть')
-
-
-def test_the_correction_toggle_turns_it_off_but_the_log_stays():
-    """Тумблер гасить САМЕ ВІДПРАВКУ: 🧾 Лог роботи бота лишається — інакше
-    подія зникла б і з історії."""
-    ff = _mk(mm_corr_tg=False)
-    _install_log()
-    _corr_on(ff)
-    _check([t for c, p, t in ff.sent if 'КОРЕКЦІЯ' in t] == [],
-           f'тумблер вимкнено — у Telegram нічого: {ff.sent}')
-    _check(any('КОРЕКЦІЯ' in r['detail'] for r in _LOGGED),
-           '🧾 Лог мусить лишитись — тумблер про відправку, а не про історію')
-    print('✓ тумблер 🔻 корекції гасить відправку, не історію')
-
-
-def test_the_unit_in_the_telegram_text_is_the_one_the_layer_uses():
-    """📉 Важіль міряється в П.П., а частки — у %. Одиницю дає БЕКЕНД
-    (`layer['unit']`), і в тексті вона мусить бути та сама."""
-    src = _fn_src(_FF_SRC, '_mm_track_correction')
-    _check("x.get('unit')" in src or 'x.get("unit")' in src,
-           'текст події мусить брати одиницю з шару, а не зашивати «%»')
-    lev = mc.lever_layer(30.0, 55.0, 15.0)
-    _check(lev.get('unit') == 'п.п.', f'важіль — у п.п.: {lev}')
-    _check(mc.vob_layer({f'C{i}': 'SHORT' for i in range(6)},
-                        [f'C{i}' for i in range(6)], 'LONG',
-                        60.0).get('unit') == '%', 'частка — у %')
-    print('✓ одиниця в тексті — та сама, що в шарі (% vs п.п.)')
+# ═══════════ 3. 🗑 КОРЕКЦІЮ ВИДАЛЕНО (вимога 01.10) ══════════════════════
+def test_correction_alerts_are_gone():
+    """«Банер "Корекція" і весь алгоритм дій з ним — коректно видалити».
+    Потоку 🔻 у темі більше немає: ні тумблера, ні тексту, ні рушія."""
+    _check('_mm_track_correction' not in _FF_SRC, 'рушій корекції лишився')
+    _check('corr_tg_text' not in _FF_SRC and 'mm_corr_tg' not in _FF_SRC,
+           'текст / тумблер сповіщень корекції лишився')
+    _check(not os.path.exists(os.path.join(_HERE, 'detection', 'mm_correction.py')),
+           'модуль mm_correction.py мусить бути видалений')
+    _check('ff-mm-corr-tg' not in _HTML, 'тумблер 🔻 у гармошці сповіщень лишився')
+    print('✓ 🔻 сповіщень корекції більше немає')
 
 
 # ═══════════ 4. УГОДИ — В ГРУПУ, НЕ В ПРИВАТНИЙ БОТ ══════════════════════
@@ -571,12 +456,11 @@ def test_notify_without_a_category_means_the_private_chat():
 
 # ═══════════ 5. UI: КОНТРОЛЬ НАД УСІМА ПОТОКАМИ В ОДНОМУ МІСЦІ ═══════════
 def test_ui_has_both_toggles_and_they_reach_the_server():
-    for cid, key in (('ff-mm-bias-tg', 'mm_bias_tg'),
-                     ('ff-mm-corr-tg', 'mm_corr_tg')):
+    for cid, key in (('ff-mm-bias-tg', 'mm_bias_tg'),):
         _check(f'id="{cid}"' in _HTML, f'немає контрола {cid}')
         _check(f"setIf('{cid}'" in _HTML, f'{cid} не читається з налаштувань')
         _check(f"{key}: _c('{cid}')" in _HTML, f'{cid} не доїжджає на сервер')
-    print('✓ обидва тумблери є в UI і доїжджають на сервер')
+    print('✓ тумблер банера є в UI і доїжджає на сервер')
 
 
 def test_ui_names_every_stream_of_the_topic():
@@ -586,12 +470,12 @@ def test_ui_names_every_stream_of_the_topic():
     i = _HTML.find('function _mmTgSummary')
     _check(i > 0, 'підсумок сповіщень зник')
     body = _HTML[i:i + 800]
-    for token in ('mm_bias_tg', 'mm_corr_tg', 'start_signal_tg_alerts'):
+    for token in ('mm_bias_tg', 'start_signal_tg_alerts'):
         _check(token in body, f'підсумок мусить враховувати {token}')
     sec = _HTML[_HTML.find('id="mm-tg-sum"') - 600:_HTML.find('id="mm-tg-sum"') + 2000]
     _check('банера ₿' in sec, 'секція мусить пояснити, де тумблер ₿-сеансу')
     _check('кабінет' in sec, 'секція мусить назвати майстер-вимикач теми')
-    print('✓ UI називає всі три потоки і майстер-вимикач')
+    print('✓ UI називає всі потоки теми і майстер-вимикач')
 
 
 def test_defaults_are_on_and_validation_coerces():
@@ -599,19 +483,17 @@ def test_defaults_are_on_and_validation_coerces():
     → `merged.update(stored)` віддає дефолт (міграція не потрібна)."""
     _check(_ffm.DEFAULT_SETTINGS.get('mm_bias_tg') is True,
            'банерні сповіщення мусять бути увімкнені за замовчуванням')
-    _check(mc.DEFAULTS.get('mm_corr_tg') is True,
-           'сповіщення про корекцію мусять бути увімкнені за замовчуванням')
     ff = FF.__new__(FF)
     ff._lock = threading.RLock()
 
     class _Stored:
         def get_setting(self, k, d=None):
-            return {'mm_bias_tg': 'yes', 'mm_corr_tg': 0}
+            return {'mm_bias_tg': 'yes'}
     ff._db = _Stored()
     s = FF.get_settings(ff)
-    _check(s['mm_bias_tg'] is True and s['mm_corr_tg'] is False,
-           f'значення мусять зводитись до булевих: {s["mm_bias_tg"]!r}/'
-           f'{s["mm_corr_tg"]!r}')
+    _check(s['mm_bias_tg'] is True,
+           f'значення мусять зводитись до булевих: {s["mm_bias_tg"]!r}')
+    _check('mm_corr_tg' not in s, 'ключ сповіщень корекції мусить зникнути')
     print('✓ дефолти УВІМК, значення зводяться до булевих')
 
 
@@ -802,7 +684,7 @@ def test_a_refused_send_is_written_into_the_bot_log():
     # `return (ok, ...)` — шукаємо СУТЬ, а не дослівний рядок.
     _check('last_send_error' in bc and 'return (ok' in bc,
            f'_broadcast_users мусить віддавати (ok, причина): {bc[-200:]}')
-    for fn in ('_mm_track_correction', '_mm_bias_alert'):
+    for fn in ('_mm_bias_alert',):
         body = _fn_src(_FF_SRC, fn)
         _check('_broadcast_users' in body and 'if not _ok' in body,
                f'{fn} мусить ЧИТАТИ результат відправки')
@@ -813,16 +695,18 @@ def test_a_refused_send_is_written_into_the_bot_log():
 def test_a_refused_send_really_reaches_the_log():
     """Не лише текст у коді — прогін: відмова мусить дати рядок у 🧾 Лозі."""
     _LOGGED.clear()
-    ff = _mk(trends={f'C{i}': 'SHORT' for i in range(6)}, mm_corr_confirm_sec=0)
+    ff = _mk()
     ff.tg_ok = False
-    _tick(ff, _snap(**{f'C{i}': ('LONG', 50, 'down') for i in range(6)}))
+    _tick(ff, _long(), NOW)                 # перший такт — тиха база
+    _tick(ff, _short(), NOW + 60)           # реальна зміна статусу
     _bad = [m for m in _LOGGED if 'НЕ прийняв' in str(m.get('detail'))]
     _check(_bad, f'рядок про відмову мусить бути в лозі: {_LOGGED}')
     _check('CHAT_WRITE_FORBIDDEN' in str(_bad[-1]['detail']),
            f'і нести ДОСЛІВНУ причину: {_bad[-1]}')
     _LOGGED.clear()
-    ff2 = _mk(trends={f'C{i}': 'SHORT' for i in range(6)}, mm_corr_confirm_sec=0)
-    _tick(ff2, _snap(**{f'C{i}': ('LONG', 50, 'down') for i in range(6)}))
+    ff2 = _mk()
+    _tick(ff2, _long(), NOW)
+    _tick(ff2, _short(), NOW + 60)
     _check(not [m for m in _LOGGED if 'НЕ прийняв' in str(m.get('detail'))],
            'успішна відправка зайвих рядків не пише')
     print('✓ 📨 прогін: відмова дає рядок у 🧾 Лозі, успіх — ні')
@@ -887,24 +771,6 @@ def test_a_successful_rename_clears_only_its_own_error():
            'чужа причина мусить лишитись')
     tg._forum_rename_err.clear()
     print('✓ 🏷 успіх стирає причину лише своєї категорії')
-
-
-def test_correction_tg_text_is_short_colored_and_timed():
-    """Вимога 24.09: «🔴 SHORT КОРЕКЦІЯ · почалась <дата час>» і «… ЗАВЕРШИЛАСЬ
-    (тривала …)» з коректним часом. Напрямок — ПРОТИЛЕЖНИЙ банеру."""
-    import datetime as _dt
-    from zoneinfo import ZoneInfo
-    t0 = _dt.datetime(2026, 9, 22, 23, 20, tzinfo=ZoneInfo('Europe/Kyiv')).timestamp()
-    t1 = t0 + 40 * 3600 + 47 * 60
-    s = _ffm.corr_tg_text('start', 'LONG', t0)
-    _check(s == '🔴 SHORT КОРЕКЦІЯ · почалась 22.09 23:20', s)
-    s = _ffm.corr_tg_text('start', 'SHORT', t0)
-    _check(s.startswith('🟢 LONG КОРЕКЦІЯ'), s)
-    e = _ffm.corr_tg_text('end', 'LONG', t0, t1, t1 - t0, FF._fmt_wait)
-    _check(e.startswith('🔴 SHORT КОРЕКЦІЯ ЗАВЕРШИЛАСЬ (тривала ')
-           and '(тривала 1д 16г 47хв)' in e
-           and e.endswith('22.09 23:20 → 24.09 16:07'), e)
-    print('✓ 📨 TG корекції: коротко, колір протилежного боку, дата й час')
 
 
 if __name__ == '__main__':
