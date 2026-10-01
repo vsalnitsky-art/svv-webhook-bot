@@ -1,4 +1,12 @@
-"""🧮 СИГНАЛИ ЧЕРЕЗ МММ-МОНІТОР (вимога 29.09).
+"""🧮 СИГНАЛИ ЧЕРЕЗ МММ-NEW (вимога 01.10; до того — через МММ-монітор, 29.09).
+
+01.10 дослівно: «Кожен сигнал має перевірятись у таблиці "Список монет" банера
+"МММ-NEW" за відповідним напрямком. Якщо сигнал LONG і є ця монета в таблиці в
+закладці LONG — пропускаємо далі по алгоритму. Інакше ігноруємо з відповідним
+записом в лог бота. І додай ще тумблер (за замовчуванням вимкнений), пропускати
+сигнали лише за напрямком банера "МММ-NEW".»
+
+Історія (29.09):
 
 Дослівно: «Давай ось такі сигнали [рядок ALERTS: CHoCH / CHoCH+BOS, Volumized
 OB…] буде проганяти через МММ-монітор, якщо він увімкнений. Тобто сигнал
@@ -47,21 +55,35 @@ def _v(on=True, d='LONG', coin='LONG'):
 
 
 # ── 1. чисте правило ───────────────────────────────────────────────────────
-def test_passes_only_when_banner_and_coin_tab_match_the_signal():
+def test_passes_when_the_coin_sits_in_the_signal_tab():
+    """Базове правило 01.10: дивимось ЛИШЕ вкладку монети; банер не важить."""
     app, ok, chip, why = sc.mm_gate_decide(_v(), 'LONG')
     _check(app and ok and '✓' in chip and not why, (app, ok, chip, why))
-    for view, side, word in ((_v(d=None), 'LONG', 'без напрямку'),
-                             (_v(d='SHORT', coin='SHORT'), 'LONG', 'банер SHORT'),
-                             (_v(coin='FLAT'), 'LONG', 'Рівновага'),
-                             (_v(coin='SHORT'), 'LONG', 'вкладці'),
-                             (_v(coin=None), 'LONG', 'немає в таблиці')):
-        app, ok, chip, why = sc.mm_gate_decide(view, side)
+    for d in (None, 'SHORT'):
+        _check(sc.mm_gate_decide(_v(d=d, coin='LONG'), 'LONG')[1],
+               f'банер {d} без тумблера не ріже')
+    for view, word in ((_v(coin='FLAT'), 'Рівновага'),
+                       (_v(coin='SHORT'), 'вкладці'),
+                       (_v(coin=None), 'немає у «Списку монет»')):
+        app, ok, chip, why = sc.mm_gate_decide(view, 'LONG')
         _check(app and not ok and word in why and '✗' in chip, (view, why))
-    print('✓ пропуск лише: банер = бік сигналу і монета у вкладці того ж боку')
+    print('✓ пропуск лише коли монета у вкладці того ж напрямку МММ-new')
+
+
+def test_banner_toggle_adds_the_banner_requirement():
+    for view, word in ((_v(d=None), 'без напрямку'),
+                       (_v(d='SHORT', coin='LONG'), 'банер SHORT')):
+        app, ok, chip, why = sc.mm_gate_decide(view, 'LONG', True)
+        _check(app and not ok and word in why, (view, why))
+    app, ok, chip, _ = sc.mm_gate_decide(_v(), 'LONG', True)
+    _check(ok and 'банер LONG' in chip, chip)
+    _check(not sc.mm_gate_decide(_v(coin='SHORT'), 'LONG', True)[1],
+           'банер збігся, але вкладка чужа — відмова')
+    print('✓ тумблер «за банером МММ-NEW» додає вимогу напрямку банера')
 
 
 def test_short_mirrors_long():
-    _check(sc.mm_gate_decide(_v(d='SHORT', coin='SHORT'), 'SHORT')[1], 'SHORT ok')
+    _check(sc.mm_gate_decide(_v(d='SHORT', coin='SHORT'), 'SHORT', True)[1], 'SHORT ok')
     _check(not sc.mm_gate_decide(_v(d='SHORT', coin='LONG'), 'SHORT')[1], 'чужа вкладка')
     print('✓ SHORT дзеркальний')
 
@@ -70,16 +92,20 @@ def test_monitor_off_or_missing_does_not_apply():
     for view in ({}, None, _v(on=False, d=None, coin=None)):
         app, ok, chip, why = sc.mm_gate_decide(view, 'LONG')
         _check(not app and ok and not chip, (view, app, ok, chip))
-    print('✓ монітор вимкнено / FF недоступний — умова не діє')
+    print('✓ блок МММ-new вимкнено / FF недоступний — умова не діє')
 
 
 # ── 2. читання монітора ─────────────────────────────────────────────────────
 def _ff(bias=None, snap=None, on=True):
     f = FF.__new__(FF)
     f._lock = threading.RLock()
-    f._mm_bias = bias or {}
-    f._mm_snapshot = snap or {}
-    f._mm_mon_on = on
+    f._mm_bias_new = bias or {}
+    f._mmn_snapshot = snap or {}
+    f._mmn_on = on
+    # МММ LiQ свідомо подаємо ПРОТИЛЕЖНИМ — ворота мусять читати саме МММ-new.
+    f._mm_bias = {'dir': 'SHORT'}
+    f._mm_snapshot = {k: {'status': 'SHORT'} for k in (snap or {})}
+    f._mm_mon_on = True
     return f
 
 
@@ -91,15 +117,15 @@ def test_view_reads_the_same_snapshot_that_sorts_the_tabs():
     _check(f.mm_gate_view('BBBUSDT')['coin'] == 'FLAT', 'без напрямку = ⚖')
     _check(f.mm_gate_view('CCCUSDT')['coin'] is None, 'немає рядка = None')
     _check(_ff({'dir': None}).mm_gate_view('X')['dir'] is None, 'банер ⚖')
-    _check(_ff(on=False).mm_gate_view('X')['on'] is False, 'монітор вимкнено')
-    print('✓ mm_gate_view читає готовий знімок монітора')
+    _check(_ff(on=False).mm_gate_view('X')['on'] is False, 'МММ-new вимкнено')
+    print('✓ mm_gate_view читає готовий знімок МММ-new (не МММ LiQ)')
 
 
 def test_capture_records_the_monitor_switch():
     src = ast.get_source_segment(open(ffm.__file__, encoding='utf-8').read(),
                                  next(n for n in ast.walk(ast.parse(open(ffm.__file__, encoding='utf-8').read()))
                                       if isinstance(n, ast.FunctionDef) and n.name == '_mm_capture'))
-    _check('self._mm_mon_on = _mon' in src, 'такт пише стан тумблера')
+    _check('self._mmn_on = _new' in src, 'такт пише стан тумблера МММ-new')
     print('✓ такт двигуна запамʼятовує тумблер монітора (без походу в БД у воротах)')
 
 
@@ -115,8 +141,12 @@ def test_gate_blocks_signal_in_shared_gate():
     try:
         sc._mm_gate_view = lambda sym: _v(d='SHORT', coin='SHORT')
         ok, why, detail = S._signal_allowed(_ns(), 'AAAUSDT', 'LONG')
-        _check(ok is False and 'банер SHORT' in why and '🧮МММ' in detail,
+        _check(ok is False and 'вкладці' in why and '🆕МММ-new' in detail,
                (ok, why, detail))
+        sc._mm_gate_view = lambda sym: _v(d='SHORT', coin='LONG')
+        ns = _ns(); ns._settings['mm_gate_banner'] = True
+        ok, why, _ = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
+        _check(ok is False and 'банер SHORT' in why, why)
         sc._mm_gate_view = lambda sym: _v(coin='FLAT')
         ok, why, _ = S._signal_allowed(_ns(), 'AAAUSDT', 'LONG')
         _check(ok is False and 'Рівновага' in why, why)
@@ -151,7 +181,12 @@ def test_gate_sits_right_after_direction_buttons_before_other_filters():
 
 def test_setting_default_whitelist_and_ui():
     _check(sc.DEFAULT_SETTINGS.get('mm_gate_enabled') is True, 'дефолт УВІМК')
-    _check("'mm_gate_enabled'," in _SC_SRC, 'у білому списку')
+    _check(sc.DEFAULT_SETTINGS.get('mm_gate_banner') is False, 'банер — дефолт ВИМК')
+    _check("'mm_gate_enabled', 'mm_gate_banner'," in _SC_SRC, 'у білому списку')
+    _check('id="sm-mm-gate-banner"' in _HTML and 'mm_gate_banner: banner' in _HTML
+           and '!!s.mm_gate_banner' in _HTML, 'тумблер банера в UI')
+    _check('🧮 Через МММ-NEW' in _HTML and '🧮 Через МММ-монітор' not in _HTML,
+           'підпис перейменовано')
     _check('id="sm-mm-gate"' in _HTML and 'mm_gate_enabled: enabled' in _HTML,
            'чекбокс у рядку ALERTS шле налаштування')
     _check("s.mm_gate_enabled !== false" in _HTML, 'стан підтягується при завантаженні')

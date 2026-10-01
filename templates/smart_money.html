@@ -2232,9 +2232,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-ob-choch-only" checked onchange="updateObChochOnly()">
                         📐 1H OB лише з CHoCH
                     </label>
-                    <label class="sm-checkbox" title="🧮 Сигнали через МММ-монітор. Коли УВІМК і сам 🧮 МММ-монітор увімкнено, КОЖЕН сигнал сканера (CHoCH / CHoCH+BOS, 🟪 Volumized OB, 🆕 Новий OB, 💧 VOB зі Сканера) проходить, лише якщо: (1) банер МММ-монітора має напрямок, (2) він ЗБІГАЄТЬСЯ з напрямком сигналу, (3) монета стоїть у таблиці монітора у вкладці ТОГО Ж напрямку (її МММ LiQ = бік сигналу). ⚖ Рівновага, протилежна вкладка або монети немає в таблиці → сигнал не пропускаємо (причина — у 🧾 Лозі). Ті самі ворота діють і на 🔁 повторній перевірці Черги-4 перед відкриттям. Вимкнений МММ-монітор → умова не діє. ✋ Ручний сигнал її не проходить (рішення людини).">
+                    <label class="sm-checkbox" title="🧮 Сигнали через МММ-NEW. Коли УВІМК і блок 🆕 МММ-new увімкнено, КОЖЕН сигнал сканера (CHoCH / CHoCH+BOS, 🟪 Volumized OB, 🆕 Новий OB, 💧 VOB зі Сканера) перевіряється у «Списку монет» МММ-new: сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG, SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Ті самі ворота діють і на 🔁 повторній перевірці Черги-4 перед відкриттям. Вимкнений блок МММ-new → умова не діє. ✋ Ручний сигнал її не проходить (рішення людини).">
                         <input type="checkbox" id="sm-mm-gate" checked onchange="updateMmGate()">
-                        🧮 Через МММ-монітор
+                        🧮 Через МММ-NEW
+                    </label>
+                    <label class="sm-checkbox" title="🆕 Додатково до «🧮 Через МММ-NEW»: пропускати сигнали ЛИШЕ за напрямком банера МММ-new (банер ⚖ або протилежний → сигнал відхиляється, причина — у 🧾 Лозі). Діє лише разом із «🧮 Через МММ-NEW». ВИМК (дефолт) — банер не перевіряється, лише вкладка монети.">
+                        <input type="checkbox" id="sm-mm-gate-banner" onchange="updateMmGate()">
+                        за банером МММ-NEW
                     </label>
                     <!-- 🆕 НОВИЙ OB — ОКРЕМИЙ ТИП СИГНАЛУ (вимога 10.09).
                          Власний тумблер, другий TF (вимога ЗБІГУ) і свій
@@ -2277,9 +2281,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="checkbox" id="sm-ob-alert-signal" onchange="updateObAlert()">
                             📨 Відправляти в торгівлю
                         </label>
-                        <label class="sm-checkbox" title="🧮 Проганяти сигнали 🆕 Новий OB через МММ-монітор: пропускаємо лише в бік банера і лише монету з вкладки того ж напрямку (та сама умова, що «🧮 Через МММ-монітор» у рядку ALERTS; діє, лише коли той загальний тумблер увімкнено). ВИМК (дефолт) — для 🆕 Нового OB МММ-умова не застосовується (ні на вході, ні в 🔁 повторній перевірці Черги-4); для решти сигналів вона лишається.">
+                        <label class="sm-checkbox" title="🧮 Проганяти сигнали 🆕 Новий OB через МММ-NEW: пропускаємо лише монету з вкладки того ж напрямку «Списку монет» МММ-new (та сама умова, що «🧮 Через МММ-NEW» у рядку ALERTS, разом із її тумблером «за банером»; діє, лише коли той загальний тумблер увімкнено). ВИМК (дефолт) — для 🆕 Нового OB МММ-умова не застосовується (ні на вході, ні в 🔁 повторній перевірці Черги-4); для решти сигналів вона лишається.">
                             <input type="checkbox" id="sm-ob-alert-mm" onchange="updateObAlert()">
-                            🧮 Через МММ-монітор
+                            🧮 Через МММ-NEW
                         </label>
                     </div>
                 </div>
@@ -6697,6 +6701,9 @@ async function loadSettings() {
             if (obChoch) obChoch.checked = s.ob_filter_choch_only !== false;  // default ON
             const mmGate = document.getElementById('sm-mm-gate');
             if (mmGate) mmGate.checked = s.mm_gate_enabled !== false;  // default ON
+            const mmGateB = document.getElementById('sm-mm-gate-banner');
+            if (mmGateB) mmGateB.checked = !!s.mm_gate_banner;          // default OFF
+            _smMmGateSync();
             // 🆕 Новий OB — окремий тип сигналу (master ON · збіг ON · дедуп ON ·
             // у торгівлю OFF).
             const oaEn = document.getElementById('sm-ob-alert');
@@ -6875,7 +6882,10 @@ function updateSettingsSummary() {
         if (obCh && obCh.checked) summary += ' (лише CHoCH)';
     }
     const mmG = document.getElementById('sm-mm-gate');
-    if (mmG && mmG.checked) summary += ' · 🧮 МММ';
+    if (mmG && mmG.checked) {
+        const _mmB = document.getElementById('sm-mm-gate-banner');
+        summary += ' · 🧮 МММ-NEW' + (_mmB && _mmB.checked ? ' +банер' : '');
+    }
     // 🆕 Новий OB — тип сигналу: показуємо АКТИВНУ комбінацію TF (те саме, чим
     // міряє «тренд» дедуп), щоб у шапці було видно, за чим саме бот реагує.
     const oaOn = document.getElementById('sm-ob-alert');
@@ -6973,13 +6983,25 @@ async function updateVobOnePerOb() {
         updateSettingsSummary();
     } catch (err) { alert('VOB one-per-OB update error: ' + err); }
 }
-// 🧮 Сигнали через МММ-монітор: бік банера + монета у вкладці того ж напрямку.
+// 🧮 Сигнали через МММ-NEW: монета у вкладці «Списку монет» МММ-new того ж
+// напрямку (+ опційно бік банера МММ-new). Обидва тумблери шлемо РАЗОМ.
+function _smMmGateSync() {
+    const g = document.getElementById('sm-mm-gate');
+    const b = document.getElementById('sm-mm-gate-banner');
+    if (!g || !b) return;
+    b.disabled = !g.checked;
+    const lbl = b.closest ? b.closest('label') : null;
+    if (lbl && lbl.style) lbl.style.opacity = g.checked ? '' : '0.45';
+}
 async function updateMmGate() {
     const enabled = document.getElementById('sm-mm-gate').checked;
+    const bEl = document.getElementById('sm-mm-gate-banner');
+    const banner = !!(bEl && bEl.checked);
+    _smMmGateSync();
     try {
         const r = await fetch('/api/smc/settings', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({mm_gate_enabled: enabled}),
+            body: JSON.stringify({mm_gate_enabled: enabled, mm_gate_banner: banner}),
         });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         updateSettingsSummary();

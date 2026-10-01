@@ -54,17 +54,18 @@ def entry_level_ok(level, live, max_dev_pct: float = ENTRY_LEVEL_MAX_DEV_PCT) ->
     return abs(level / live - 1.0) * 100.0 <= max_dev_pct
 
 
-def mm_gate_decide(view, side):
-    """🧮 ЧИСТЕ правило воріт «сигнал через МММ-монітор» (вимога 29.09).
+def mm_gate_decide(view, side, need_banner: bool = False):
+    """🆕 ЧИСТЕ правило воріт «🧮 Через МММ-NEW» (вимога 01.10, замінило
+    «через МММ-монітор» 29.09).
 
-    `view` — `FuelFilterDaemon.mm_gate_view(symbol)`. → `(applies, ok, chip,
-    reason)`:
-      • `applies=False` — монітор вимкнено / недоступний: умова не діє;
-      • інакше сигнал проходить, лише коли БАНЕР має напрямок, він ЗБІГАЄТЬСЯ
-        з боком сигналу, і монета стоїть у вкладці ЦЬОГО Ж напрямку таблиці
-        (її МММ LiQ = бік сигналу).
-    ⚠️ Монети немає в знімку → НЕ проходить: «невідомо» ≠ «за напрямком»
-    (те саме правило, що в 💧 VOB-сигналу зі Сканера ліквідності).
+    `view` — `FuelFilterDaemon.mm_gate_view(symbol)` (блок МММ-new).
+    → `(applies, ok, chip, reason)`:
+      • `applies=False` — блок МММ-new вимкнено / недоступний: умова не діє;
+      • інакше сигнал проходить, лише коли монета стоїть у «Списку монет»
+        МММ-new у вкладці ТОГО Ж напрямку, що й сигнал (LONG → вкладка LONG);
+      • `need_banner=True` (тумблер `mm_gate_banner`, деф. ВИМК) — ще й банер
+        МММ-new мусить мати напрямок і збігатися з боком сигналу.
+    ⚠️ Монети немає в знімку → НЕ проходить: «невідомо» ≠ «за напрямком».
     """
     side = str(side or '').upper()
     v = view if isinstance(view, dict) else {}
@@ -73,19 +74,21 @@ def mm_gate_decide(view, side):
     b = v.get('dir')
     c = v.get('coin')
     ua = {'LONG': 'LONG', 'SHORT': 'SHORT', 'FLAT': '⚖ Рівновага'}
-    if b not in ('LONG', 'SHORT'):
-        return (True, False, f'🧮МММ[банер ⚖]:✗',
-                '🧮 МММ-монітор: банер без напрямку (⚖) — сигнал не пропускаємо')
-    if b != side:
-        return (True, False, f'🧮МММ[банер {b}]:✗',
-                f'🧮 МММ-монітор: банер {b}, а сигнал {side}')
+    bn = f' · банер {b or "⚖"}' if need_banner else ''
+    if need_banner:
+        if b not in ('LONG', 'SHORT'):
+            return (True, False, '🆕МММ-new[банер ⚖]:✗',
+                    '🆕 МММ-NEW: банер без напрямку (⚖) — сигнал не пропускаємо')
+        if b != side:
+            return (True, False, f'🆕МММ-new[банер {b}]:✗',
+                    f'🆕 МММ-NEW: банер {b}, а сигнал {side}')
     if c is None:
-        return (True, False, f'🧮МММ[банер {b} · монети немає в таблиці]:✗',
-                f'🧮 МММ-монітор: монети немає в таблиці (МММ LiQ ще невідомий)')
+        return (True, False, f'🆕МММ-new[монети немає в списку{bn}]:✗',
+                '🆕 МММ-NEW: монети немає у «Списку монет» (Новий МММ ще невідомий)')
     if c != side:
-        return (True, False, f'🧮МММ[банер {b} · монета {ua.get(c, c)}]:✗',
-                f'🧮 МММ-монітор: монета у вкладці «{ua.get(c, c)}», а не {side}')
-    return True, True, f'🧮МММ[банер {b} · монета {c}]:✓', ''
+        return (True, False, f'🆕МММ-new[вкладка {ua.get(c, c)}{bn}]:✗',
+                f'🆕 МММ-NEW: монета у вкладці «{ua.get(c, c)}», а сигнал {side}')
+    return True, True, f'🆕МММ-new[вкладка {c}{bn}]:✓', ''
 
 
 def mm_gate_applies(settings, origin: str = '') -> bool:
@@ -101,7 +104,7 @@ def mm_gate_applies(settings, origin: str = '') -> bool:
 
 
 def _mm_gate_view(symbol):
-    """Читання монітора для воріт; немає FF / збій → `{}` (умова не діє)."""
+    """Читання блоку МММ-new для воріт; немає FF / збій → `{}` (умова не діє)."""
     try:
         from detection.fuel_filter import get_fuel_filter
         ff = get_fuel_filter()
@@ -303,6 +306,10 @@ DEFAULT_SETTINGS = {
     # відповідній МММ-монітор таблиці за напрямком». Діє, ЛИШЕ коли сам
     # монітор увімкнено; цей тумблер — щоб умову можна було зняти окремо.
     'mm_gate_enabled': True,
+    # 🆕 «🧮 Через МММ-NEW» (вимога 01.10): ворота читають «Список монет»
+    # МММ-new (сигнал LONG → монета у вкладці LONG). Цей тумблер (деф. ВИМК)
+    # додає ще й вимогу «лише за напрямком банера МММ-new».
+    'mm_gate_banner': False,
 
     # === 🆕 АЛЕРТ «НОВИЙ OB НА ГРАФІКУ» (вимога 09.09) ===================
     # «Моментальна реакція на появу на графіку нового OB 1H і моментальна
@@ -338,7 +345,7 @@ DEFAULT_SETTINGS = {
     # 📐 Які блоки вважаються «🆕 Новим OB» (вимога 30.09): 'both' — CHoCH і
     # BOS (стара поведінка), 'choch' — лише CHoCH-блоки (розворот).
     'ob_alert_tags': 'both',
-    # 🧮 Чи проганяти 🆕 Новий OB через МММ-монітор (`mm_gate_enabled`).
+    # 🧮 Чи проганяти 🆕 Новий OB через МММ-NEW (`mm_gate_enabled`).
     # Дефолт OFF (вимога 30.09) — для інших сигналів МММ-умова лишається.
     'ob_alert_mm_gate': False,
     # Вікно свіжості в секундах, 0 = АВТО = один бар `ob_filter_timeframe`.
@@ -1521,7 +1528,7 @@ class SMCScanner:
                        'ob_filter_enabled', 'ob_filter_timeframe',
                        'ob_filter_choch_only',
                        # 🧮 сигнали через МММ-монітор
-                       'mm_gate_enabled',
+                       'mm_gate_enabled', 'mm_gate_banner',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
@@ -1670,6 +1677,8 @@ class SMCScanner:
                 self._settings.get('ob_filter_choch_only', True))
             self._settings['mm_gate_enabled'] = bool(
                 self._settings.get('mm_gate_enabled', True))
+            self._settings['mm_gate_banner'] = bool(
+                self._settings.get('mm_gate_banner', False))
 
             # === 🆕 Алерт «новий OB»: валідація ===
             self._settings['ob_alert_enabled'] = bool(
@@ -4677,17 +4686,19 @@ class SMCScanner:
                 # вимкненому напрямку їхній результат нікому не потрібен.
                 return (False, _dg.reason(_dg_s, side_label), ' · '.join(parts))
 
-        # 🧮 МММ-МОНІТОР (вимога 29.09): сигнал лише в бік БАНЕРА і лише по
-        # монеті з вкладки ТОГО Ж напрямку таблиці. Одразу після головних
+        # 🆕 «🧮 ЧЕРЕЗ МММ-NEW» (вимога 01.10, замінило МММ-монітор 29.09):
+        # сигнал лише по монеті з вкладки ТОГО Ж напрямку «Списку монет»
+        # МММ-new (+ бік банера МММ-new, якщо `mm_gate_banner`). Одразу після головних
         # кнопок — це теж напрямкова умова, і читає вона лише памʼять двигуна
         # (жодного запиту до БД/біржі), тож решту фільтрів після відмови не
-        # рахуємо. Діє лише при увімкненому моніторі і тумблері `mm_gate_enabled`.
+        # рахуємо. Діє лише при увімкненому блоці МММ-new і тумблері `mm_gate_enabled`.
         # ⚠️ 🆕 Новий OB має ВЛАСНИЙ тумблер (`ob_alert_mm_gate`, деф. ВИМК):
         # `origin='ob_alert'` + вимкнений тумблер → МММ-умову для нього не
         # застосовуємо (і на інтейку, і в 🔁 recheck Черги-4 — `origin=kind`).
         if mm_gate_applies(self._settings, origin):
-            _app, _mok, _mchip, _mwhy = mm_gate_decide(_mm_gate_view(symbol),
-                                                       side_label)
+            _app, _mok, _mchip, _mwhy = mm_gate_decide(
+                _mm_gate_view(symbol), side_label,
+                bool(self._settings.get('mm_gate_banner', False)))
             if _app:
                 parts.append(_mchip)
                 if not _mok:

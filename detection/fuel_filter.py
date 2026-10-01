@@ -4185,28 +4185,28 @@ class FuelFilterDaemon:
             return dict(getattr(self, '_mm_bias', {}) or {})
 
     def mm_gate_view(self, symbol: str) -> Dict:
-        """🧮 Що МММ-монітор каже про монету — для воріт сигналів сканера.
+        """🆕 Що каже блок «МММ-new» про монету — для воріт сигналів сканера
+        («🧮 Через МММ-NEW», вимога 01.10).
 
-        → `{'on': монітор увімкнено?, 'dir': напрямок БАНЕРА (підтверджений) |
-        None, 'coin': МММ LiQ монети 'LONG'/'SHORT'/'FLAT' | None (немає в
-        знімку)}`.
-        ⚠️ ЛИШЕ ЧИТАННЯ готового знімка (урок B2): ворота кличуться на кожен
-        сигнал і на кожен тік 🔁 recheck Черги-4, тож тут немає ні розрахунків,
-        ні походу в БД (крім першого виклику до першого такту двигуна).
-        ⚠️ `coin` — ТЕ САМЕ правило, що кладе монету у вкладку 🟢/🔴/⚖ таблиці
-        (`status` зі знімка), інакше «монета у вкладці LONG» і рішення воріт
-        могли б розійтись.
+        → `{'on': блок МММ-new увімкнено?, 'dir': напрямок БАНЕРА МММ-new
+        (підтверджений) | None, 'coin': вкладка монети у «Списку монет»
+        МММ-new — 'LONG'/'SHORT'/'FLAT' | None (немає в знімку)}`.
+        ⚠️ ЛИШЕ ЧИТАННЯ готового знімка `_mmn_snapshot` (урок B2): ворота
+        кличуться на кожен сигнал і кожен тік 🔁 recheck Черги-4.
+        ⚠️ `coin` — ТЕ САМЕ правило (`status`), що кладе монету у вкладку
+        🟢/🔴/⚖ таблиці МММ-new, інакше «монета у вкладці LONG» і рішення
+        воріт могли б розійтись.
         """
-        on = self._mm_mon_on
+        on = self._mmn_on
         if on is None:
             try:
-                on = bool(self.get_settings().get('mm_monitor_enabled', True))
+                on = bool(self.get_settings().get('mm_new_enabled', True))
             except Exception:
                 on = True
         sym = str(symbol or '').upper()
         with self._lock:
-            b = dict(getattr(self, '_mm_bias', {}) or {})
-            v = (self._mm_snapshot or {}).get(sym)
+            b = dict(getattr(self, '_mm_bias_new', {}) or {})
+            v = (getattr(self, '_mmn_snapshot', {}) or {}).get(sym)
         d = b.get('dir') if b.get('dir') in ('LONG', 'SHORT') else None
         coin = None
         if v:
