@@ -193,6 +193,46 @@ def test_setting_default_whitelist_and_ui():
     print('✓ тумблер: дефолт УВІМК, білий список, UI')
 
 
+# ── 3б. 💧 ОКРЕМА ПЕРЕВІРКА СКАНЕРОМ ЛІКВІДНОСТІ (вимога 01.10) ─────────────
+def test_liq_gate_rule():
+    _check(sc.liq_gate_decide(False, None, 'LONG')[:2] == (False, True),
+           'вимкнений Сканер — умова не діє')
+    app, ok, chip, why = sc.liq_gate_decide(True, None, 'LONG')
+    _check(app and not ok and 'немає' in why, why)
+    app, ok, chip, why = sc.liq_gate_decide(True, {'side': 'SHORT'}, 'LONG')
+    _check(app and not ok and 'SHORT' in why, why)
+    app, ok, chip, why = sc.liq_gate_decide(True, {'side': 'LONG', 'mass_pct': 70.1}, 'LONG')
+    _check(app and ok and '✓' in chip and '70.1' in chip, chip)
+    print('✓ 💧 правило: монета в таблиці Сканера під бік сигналу')
+
+
+def test_liq_gate_is_separate_and_off_by_default():
+    _check(sc.DEFAULT_SETTINGS.get('liq_gate_enabled') is False, 'дефолт ВИМК')
+    _check("'liq_gate_enabled'," in _SC_SRC, 'у білому списку')
+    old_r, old_m = sc._liq_gate_row, sc._mm_gate_view
+    calls = []
+    try:
+        sc._mm_gate_view = lambda sym: {}            # МММ-NEW не діє
+        sc._liq_gate_row = lambda sym: calls.append(sym) or (True, None)
+        ns = _ns(); ns._settings['liq_gate_enabled'] = True
+        ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
+        _check(ok is False and '💧 Сканер' in why and '💧Сканер' in detail, why)
+        calls.clear(); ns._settings['liq_gate_enabled'] = False
+        try:
+            S._signal_allowed(ns, 'AAAUSDT', 'LONG')
+        except Exception:
+            pass
+        _check(not calls, 'вимкнений тумблер Сканер не питає')
+    finally:
+        sc._liq_gate_row, sc._mm_gate_view = old_r, old_m
+    body = _SC_SRC.split('def _signal_allowed')[1]
+    _check(body.index('mm_gate_decide(') < body.index('liq_gate_decide(')
+           < body.index("self._settings.get('ob_filter_enabled'"), 'порядок')
+    _check('id="sm-liq-gate"' in _HTML and 'liq_gate_enabled:' in _HTML
+           and '!!s.liq_gate_enabled' in _HTML, 'UI-тумблер')
+    print('✓ 💧 «Через Сканер ліквідності» — окремий тумблер, деф. ВИМК')
+
+
 # ── 4. 🗑 корекцію ВИДАЛЕНО (вимога 01.10) — у воротах її більше немає ─────
 def test_correction_gate_is_gone():
     """«Банер "Корекція" і весь алгоритм дій з ним — коректно видалити».

@@ -4184,6 +4184,17 @@ class FuelFilterDaemon:
         with self._lock:
             return dict(getattr(self, '_mm_bias', {}) or {})
 
+    def mm_bias_new(self) -> Dict:
+        """⚖️ ВАЖІЛЬ БАНЕРА «🆕 МММ-NEW» — ПУБЛІЧНЕ читання готового знімка.
+
+        З 01.10 саме його читає 💧 Сканер ліквідності (бік відбору, перескан на
+        фліпі, VOB-сигнал): «Більше перевірок на банері МММ-монітор не робимо».
+        `dir` — ПІДТВЕРДЖЕНИЙ статус (гістерезис + вікно `mmn_bias_confirm_sec`).
+        Вимкнений блок МММ-new чистить знімок → `{}` (напрямку немає).
+        """
+        with self._lock:
+            return dict(getattr(self, '_mm_bias_new', {}) or {})
+
     def mm_gate_view(self, symbol: str) -> Dict:
         """🆕 Що каже блок «МММ-new» про монету — для воріт сигналів сканера
         («🧮 Через МММ-NEW», вимога 01.10).

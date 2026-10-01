@@ -91,8 +91,13 @@ class _FF:
         self.direction = direction
         self.work = set(work)
 
-    def mm_bias(self):
+    def mm_bias_new(self):
+        # З 01.10 сканер читає банер 🆕 МММ-NEW.
         return {'dir': self.direction}
+
+    def mm_bias(self):
+        # Банер 🧮 МММ-монітора свідомо ПРОТИЛЕЖНИЙ: сканер його не читає.
+        return {'dir': {'LONG': 'SHORT', 'SHORT': 'LONG'}.get(self.direction)}
 
     def symbols_in_work(self):
         return set(self.work)

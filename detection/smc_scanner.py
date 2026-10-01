@@ -103,6 +103,47 @@ def mm_gate_applies(settings, origin: str = '') -> bool:
     return True
 
 
+def liq_gate_decide(on, row, side):
+    """💧 ЧИСТЕ правило воріт «Через Сканер ліквідності» (вимога 01.10).
+
+    ОКРЕМА перевірка зі своїм тумблером (`liq_gate_enabled`, деф. ВИМК),
+    незалежна від «🧮 Через МММ-NEW». → `(applies, ok, chip, reason)`:
+      • `on=False` — 💧 Сканер ліквідності вимкнено / недоступний: його
+        таблиці немає, тож умова НЕ діє (fail-open — інакше вимкнений сканер
+        тихо зупинив би ВСІ сигнали);
+      • інакше сигнал проходить, лише коли монета Є в таблиці Сканера і її
+        рядок зібрано в ТОЙ САМИЙ бік, що й сигнал.
+    """
+    side = str(side or '').upper()
+    if not on:
+        return False, True, '', ''
+    if not row:
+        return (True, False, '💧Сканер[монети немає в таблиці]:✗',
+                '💧 Сканер ліквідності: монети немає в його таблиці')
+    r_side = str((row or {}).get('side') or '').upper()
+    if r_side != side:
+        return (True, False, f'💧Сканер[таблиця {r_side or "?"}]:✗',
+                f'💧 Сканер ліквідності: таблицю зібрано під {r_side or "?"}, '
+                f'а сигнал {side}')
+    _m = row.get('mass_pct')
+    _mt = f' · маса {_m}%' if _m is not None else ''
+    return True, True, f'💧Сканер[{r_side}{_mt}]:✓', ''
+
+
+def _liq_gate_row(symbol):
+    """Читання таблиці 💧 Сканера для воріт → `(on, row)`. Немає рушія / збій
+    → `(False, None)` (умова не діє). ЛИШЕ памʼять рушія, жодного запиту."""
+    try:
+        from detection.liq_hunter import get_liq_hunter
+        lh = get_liq_hunter()
+        if lh is None:
+            return False, None
+        on = bool((lh.get_settings() or {}).get('enabled'))
+        return on, (lh.row_for(symbol) if on else None)
+    except Exception:
+        return False, None
+
+
 def _mm_gate_view(symbol):
     """Читання блоку МММ-new для воріт; немає FF / збій → `{}` (умова не діє)."""
     try:
@@ -310,6 +351,9 @@ DEFAULT_SETTINGS = {
     # МММ-new (сигнал LONG → монета у вкладці LONG). Цей тумблер (деф. ВИМК)
     # додає ще й вимогу «лише за напрямком банера МММ-new».
     'mm_gate_banner': False,
+    # 💧 «Через Сканер ліквідності» (вимога 01.10) — ОКРЕМА перевірка: сигнал
+    # лише по монеті з таблиці 💧 Сканера, зібраній у той самий бік. Деф. ВИМК.
+    'liq_gate_enabled': False,
 
     # === 🆕 АЛЕРТ «НОВИЙ OB НА ГРАФІКУ» (вимога 09.09) ===================
     # «Моментальна реакція на появу на графіку нового OB 1H і моментальна
@@ -1529,6 +1573,7 @@ class SMCScanner:
                        'ob_filter_choch_only',
                        # 🧮 сигнали через МММ-монітор
                        'mm_gate_enabled', 'mm_gate_banner',
+                       'liq_gate_enabled',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
@@ -1679,6 +1724,8 @@ class SMCScanner:
                 self._settings.get('mm_gate_enabled', True))
             self._settings['mm_gate_banner'] = bool(
                 self._settings.get('mm_gate_banner', False))
+            self._settings['liq_gate_enabled'] = bool(
+                self._settings.get('liq_gate_enabled', False))
 
             # === 🆕 Алерт «новий OB»: валідація ===
             self._settings['ob_alert_enabled'] = bool(
@@ -4703,6 +4750,17 @@ class SMCScanner:
                 parts.append(_mchip)
                 if not _mok:
                     return (False, _mwhy, ' · '.join(parts))
+
+        # 💧 ЧЕРЕЗ СКАНЕР ЛІКВІДНОСТІ (вимога 01.10): ОКРЕМА перевірка зі своїм
+        # тумблером. Читає лише памʼять рушія (таблицю), тож стоїть поряд із
+        # МММ-воротами, до решти фільтрів.
+        if self._settings.get('liq_gate_enabled', False):
+            _lon, _lrow = _liq_gate_row(symbol)
+            _lapp, _lok, _lchip, _lwhy = liq_gate_decide(_lon, _lrow, side_label)
+            if _lapp:
+                parts.append(_lchip)
+                if not _lok:
+                    return (False, _lwhy, ' · '.join(parts))
 
         # OB
         if self._settings.get('ob_filter_enabled', False):

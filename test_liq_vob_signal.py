@@ -136,17 +136,23 @@ class _FF:
         self.direction = direction
         self.coin_mm = coin_mm or {}
 
-    def mm_bias(self):
+    def mm_bias_new(self):
+        # З 01.10 банер для сигналу — 🆕 МММ-NEW.
         return {'dir': self.direction}
 
+    def mm_gate_view(self, sym):
+        # Вкладка монети у «Списку монет» МММ-NEW (той самий знімок, що ворота).
+        m = self.coin_mm.get(sym, self.direction)
+        return {'on': True, 'dir': self.direction,
+                'coin': (m if m in ('LONG', 'SHORT', 'FLAT') else None)}
+
+    # 🧮 МММ-монітор свідомо ПРОТИЛЕЖНИЙ — сигнал його більше не читає.
+    def mm_bias(self):
+        return {'dir': {'LONG': 'SHORT', 'SHORT': 'LONG'}.get(self.direction)}
+
     def mm_snapshot_for(self, syms):
-        out = {}
-        for s in syms:
-            m = self.coin_mm.get(s, self.direction)
-            if m is None:
-                continue
-            out[s] = {'mm': m if m in ('LONG', 'SHORT') else None}
-        return out
+        _opp = {'LONG': 'SHORT', 'SHORT': 'LONG'}.get(self.direction)
+        return {s: {'mm': _opp} for s in syms}
 
     def symbols_in_work(self):
         return set()
@@ -488,7 +494,7 @@ def test_coin_must_sit_in_the_banner_tab_of_the_mm_monitor():
     row = _table_row(side='LONG')
     ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm='LONG',
                                   check_coin=True)
-    _check(ok and '🧮 МММ LiQ монети LONG' in note, note)
+    _check(ok and '🆕 МММ-NEW вкладка LONG' in note, note)
     ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm='FLAT',
                                   check_coin=True)
     _check(not ok and '⚖ Рівновага' in note, note)
@@ -497,8 +503,8 @@ def test_coin_must_sit_in_the_banner_tab_of_the_mm_monitor():
     _check(not ok and 'SHORT' in note, note)
     ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm=None,
                                   check_coin=True)
-    _check(not ok and 'невідомий' in note, f'немає даних ≠ за напрямком: {note}')
-    print('✓ 🧮 МММ LiQ монети мусить збігатися з банером')
+    _check(not ok and 'немає у «Списку монет»' in note, f'немає даних ≠ за напрямком: {note}')
+    print('✓ вкладка монети в 🆕 МММ-NEW мусить збігатися з банером')
 
 
 def test_vob_match_reads_the_coin_mm_from_the_monitor_snapshot():
@@ -515,9 +521,13 @@ def test_vob_match_reads_the_coin_mm_from_the_monitor_snapshot():
     src = open(os.path.join(_HERE, 'detection', 'liq_hunter.py'),
                encoding='utf-8').read()
     body = src.split('def coin_mm(')[1].split('\n    def ')[0]
-    _check('mm_snapshot_for' in body and '_fuel_dir_legacy' not in body,
-           'джерело — той самий знімок, що й вкладки монітора')
-    print('✓ vob_match бере 🧮 МММ LiQ монети зі знімка МММ-монітора')
+    _check('mm_gate_view' in body and 'mm_snapshot_for' not in body
+           and '_fuel_dir_legacy' not in body,
+           'джерело — знімок МММ-NEW (той самий, що ворота «Через МММ-NEW»)')
+    hb = src.split('def bias_dir(')[1].split('\n    def ')[0]
+    _check('mm_bias_new' in hb and 'mm_bias()' not in hb,
+           'банер — 🆕 МММ-NEW, не 🧮 МММ-монітор')
+    print('✓ vob_match бере банер і вкладку монети з 🆕 МММ-NEW')
 
 
 def test_a_coin_that_turns_into_the_banner_tab_fires_later():

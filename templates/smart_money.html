@@ -2240,6 +2240,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mm-gate-banner" onchange="updateMmGate()">
                         за банером МММ-NEW
                     </label>
+                    <label class="sm-checkbox" title="💧 Окрема перевірка сигналів Сканером ліквідності. Коли УВІМК і сам 💧 Сканер увімкнено, КОЖЕН сигнал сканера проходить, лише якщо монета є в таблиці Сканера ліквідності і таблицю зібрано в той самий бік, що й сигнал. Монети немає в таблиці або таблиця під протилежний бік → сигнал не пропускаємо (причина — у 🧾 Лозі). Діє і на 🔁 повторній перевірці Черги-4. Незалежна від «🧮 Через МММ-NEW». Вимкнений 💧 Сканер → умова не діє. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-liq-gate" onchange="updateLiqGate()">
+                        💧 Через Сканер ліквідності
+                    </label>
                     <!-- 🆕 НОВИЙ OB — ОКРЕМИЙ ТИП СИГНАЛУ (вимога 10.09).
                          Власний тумблер, другий TF (вимога ЗБІГУ) і свій
                          дедуп «1 на тренд». Стоїть ОДНИМ блоком, щоб було
@@ -2816,17 +2820,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
          Вимога 18.09: окреме вікно з ОСНОВНИМ тумблером і гармошкою
          налаштувань. Алгоритм — ГОТОВИЙ скан 💧 зі сторінки 📡 Tickr
          (`liq_scan.scan_liquidity`), із тими самими параметрами і тими самими
-         дефолтами. Відбір — за напрямком, який показує банер 🧮 МММ-монітора:
+         дефолтами. Відбір — за напрямком, який показує банер 🆕 МММ-NEW:
          LONG → маса ВИЩЕ ціни ≥ порогу, SHORT → маса НИЖЧЕ ціни ≥ порогу.
          Монету, яка ВЖЕ в роботі (відкрита угода або черга), у таблицю не
          додаємо. Скан іде спільною чергою сканів біржі. -->
     <div class="tm-panel" id="liq-hunter-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(34,211,238,0.28);border-radius:8px;background:rgba(34,211,238,0.05)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
             <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('lh')"
-                 title="Клік — згорнути/розгорнути. 💧 Сканер відбирає монети за перекосом ліквідності В БІК, який показує банер 🧮 МММ-монітора, і веде власну таблицю кандидатів. Сам він угод не відкриває: сигнал породжує лише збіг «новий VOB + напрямок банера + монета з цієї таблиці» (тумблер 📨 у налаштуваннях), і він іде звичайним алгоритмом — спільні фільтри → Черга → відкриття.">
+                 title="Клік — згорнути/розгорнути. 💧 Сканер відбирає монети за перекосом ліквідності В БІК, який показує банер 🆕 МММ-NEW, і веде власну таблицю кандидатів. Сам він угод не відкриває: сигнал породжує лише збіг «новий VOB + напрямок банера + монета з цієї таблиці» (тумблер 📨 у налаштуваннях), і він іде звичайним алгоритмом — спільні фільтри → Черга → відкриття.">
                 <span id="lh-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span>
                 💧 Сканер ліквідності
-                <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети за масою ліквідації в бік банера МММ-монітора</span>
+                <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети за масою ліквідації в бік банера МММ-NEW</span>
             </div>
             <div style="display:flex;align-items:center;gap:10px">
                 <span id="lh-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
@@ -2961,7 +2965,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                title="Мінімальна ВІДСТАНЬ до найсильнішого магніту у % від поточної ціни. Магніт за пів відсотка — це не ціль, а шум: такі монети в таблицю не додаються. 0 = не фільтрувати. ⚠️ Монета, по якій драбина взагалі не дала сходинки, цим фільтром НЕ ріжеться — «невідомо» це не «близько», і в колонці магніту чесно стоїть «—».">
                     </div>
                     <label class="lh-flip"
-                           title="Банер МММ-монітора розвернувся → таблиця застаріла (монети відбирались під протилежний бік). Тоді пересканюємо одразу, не чекаючи періодичності. Спаму немає: сам банер перемикається повільно (антиспам), плюс діє мінімальний проміжок 60с між сканами.">
+                           title="Банер МММ-NEW розвернувся → таблиця застаріла (монети відбирались під протилежний бік). Тоді пересканюємо одразу, не чекаючи періодичності. Спаму немає: сам банер перемикається повільно (антиспам), плюс діє мінімальний проміжок 60с між сканами.">
                         <input type="checkbox" id="lh-rescan-flip" onchange="lhSave()" style="margin:0">
                         🔁 Пересканувати на зміні напрямку банера
                     </label>
@@ -2972,7 +2976,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          би, що вимога не працює, доки його не знайдуть. Потік
                          угод це мовчки не розширює — сам Сканер дефолтом OFF. -->
                     <label class="lh-flip"
-                           title="Кожен НОВОУТВОРЕНИЙ Volumized OB (той самий блок, що малюється на графіку) звіряється з цією таблицею. Якщо напрямок VOB = напрямок банера 🧮 МММ-монітора І монета є в таблиці — це СИГНАЛ: він проходить спільні ворота фільтрів і йде далі по алгоритму (у Чергу, якщо вона увімкнена, або одразу у відкриття, коли всі черги вимкнені). Перед відправкою перевіряється, чи немає вже ВІДКРИТОЇ угоди по монеті. Працює лише при увімкненому 📦 Volumized OB Trend у ⚙️ Settings.">
+                           title="Кожен НОВОУТВОРЕНИЙ Volumized OB (той самий блок, що малюється на графіку) звіряється з цією таблицею. Якщо напрямок VOB = напрямок банера 🆕 МММ-NEW І монета є в таблиці — це СИГНАЛ: він проходить спільні ворота фільтрів і йде далі по алгоритму (у Чергу, якщо вона увімкнена, або одразу у відкриття, коли всі черги вимкнені). Перед відправкою перевіряється, чи немає вже ВІДКРИТОЇ угоди по монеті. Працює лише при увімкненому 📦 Volumized OB Trend у ⚙️ Settings.">
                         <input type="checkbox" id="lh-vob-signal" onchange="lhSave()" style="margin:0">
                         📨 Новий VOB + збіг із таблицею → сигнал (у Чергу / відкриття)
                     </label>
@@ -2995,7 +2999,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <thead>
                         <tr>
                             <th title="Клік по назві — графік у TradingView (одна вкладка).">Символ</th>
-                            <th title="💧 МАСА ЛІКВІДНОСТІ В БІК БАНЕРА: яка частка всієї маси рівнів ліквідації тягне ціну туди, куди дивиться банер 🧮 МММ-монітора. Це те саме число, що в блоці 💧 на 📡 Tickr.">💧 Маса ліквідності</th>
+                            <th title="💧 МАСА ЛІКВІДНОСТІ В БІК БАНЕРА: яка частка всієї маси рівнів ліквідації тягне ціну туди, куди дивиться банер 🆕 МММ-NEW. Це те саме число, що в блоці 💧 на 📡 Tickr.">💧 Маса ліквідності</th>
                             <th title="🧲 НАЙСИЛЬНІШИЙ МАГНІТ — найбільша сходинка драбини: напрямок (куди від поточної ціни), сама ціна, її частка від усієї маси і відстань.">🧲 Найсильніший магніт</th>
                             <th title="Скільки монета тримається у списку (між сканами відлік НЕ обнуляється).">⏱ У списку</th>
                         </tr>
@@ -6701,6 +6705,8 @@ async function loadSettings() {
             if (obChoch) obChoch.checked = s.ob_filter_choch_only !== false;  // default ON
             const mmGate = document.getElementById('sm-mm-gate');
             if (mmGate) mmGate.checked = s.mm_gate_enabled !== false;  // default ON
+            const liqGate = document.getElementById('sm-liq-gate');
+            if (liqGate) liqGate.checked = !!s.liq_gate_enabled;        // default OFF
             const mmGateB = document.getElementById('sm-mm-gate-banner');
             if (mmGateB) mmGateB.checked = !!s.mm_gate_banner;          // default OFF
             _smMmGateSync();
@@ -6886,6 +6892,8 @@ function updateSettingsSummary() {
         const _mmB = document.getElementById('sm-mm-gate-banner');
         summary += ' · 🧮 МММ-NEW' + (_mmB && _mmB.checked ? ' +банер' : '');
     }
+    const lqG = document.getElementById('sm-liq-gate');
+    if (lqG && lqG.checked) summary += ' · 💧 Сканер';
     // 🆕 Новий OB — тип сигналу: показуємо АКТИВНУ комбінацію TF (те саме, чим
     // міряє «тренд» дедуп), щоб у шапці було видно, за чим саме бот реагує.
     const oaOn = document.getElementById('sm-ob-alert');
@@ -6992,6 +7000,18 @@ function _smMmGateSync() {
     b.disabled = !g.checked;
     const lbl = b.closest ? b.closest('label') : null;
     if (lbl && lbl.style) lbl.style.opacity = g.checked ? '' : '0.45';
+}
+// 💧 Окрема перевірка сигналів Сканером ліквідності (деф. ВИМК).
+async function updateLiqGate() {
+    const el = document.getElementById('sm-liq-gate');
+    try {
+        const r = await fetch('/api/smc/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({liq_gate_enabled: !!(el && el.checked)}),
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        updateSettingsSummary();
+    } catch (err) { alert('Liq-gate update error: ' + err); }
 }
 async function updateMmGate() {
     const enabled = document.getElementById('sm-mm-gate').checked;
@@ -12938,7 +12958,7 @@ function lhApply(d) {
             + (cur !== tab
                 ? ` <span style="color:#fbbf24">· банер зараз ${w(cur)} — перескан попереду</span>`
                 : '');
-        dEl.title = 'Бік відбору задає банер 🧮 МММ-монітора: 🟢 LONG → беремо '
+        dEl.title = 'Бік відбору задає банер 🆕 МММ-NEW: 🟢 LONG → беремо '
             + 'монети з масою ліквідності ВИЩЕ ціни ≥ порогу, 🔴 SHORT → НИЖЧЕ '
             + 'ціни. ⚖ рівновага — скан не запускається взагалі (відбирати нема '
             + 'в який бік), і біржу ми при цьому не смикаємо.';
@@ -13078,7 +13098,7 @@ function lhRender() {
         const why = !_lhMeta.enabled
             ? '🔌 Сканер вимкнено — увімкніть тумблер у шапці або натисніть «💧 Сканувати»'
             : (!_lhMeta.dir
-               ? '⚖ Банер 🧮 МММ-монітора без напрямку — відбирати нема в який бік'
+               ? '⚖ Банер 🆕 МММ-NEW без напрямку — відбирати нема в який бік'
                : (_lhMeta.ts ? 'Жодна монета не пройшла поріг маси'
                              : 'Ще не сканували'));
         tb.innerHTML = `<tr><td colspan="4" class="tm-empty-msg">${why}</td></tr>`;
