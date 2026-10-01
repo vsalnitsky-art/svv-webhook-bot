@@ -1020,9 +1020,6 @@ class FuelFilterDaemon:
         # Рядок знімка має ТУ САМУ форму (`status`/`dir`/`strength`), тож усі
         # трекери й рендер спільні — відрізняється РІВНО джерело.
         self._mmn_snapshot: Dict[str, Dict] = {}
-        # 🎯 «Готовність» для рядків МММ-new — ВЛАСНИЙ кеш (див. `_mmn_setup_tick`).
-        self._mmn_setup: Dict[str, Dict] = {}
-        self._mmn_setup_at: Dict[str, float] = {}
         self._mmn_snapshot_ts: float = 0.0
         self._mmn_str_hist: Dict[str, list] = {}
         self._mmn_grow_since: Dict[str, float] = {}
@@ -3363,24 +3360,38 @@ class FuelFilterDaemon:
                 'runway': fd.get('runway'), 'target': fd.get('target')}
 
     # ═══════════ 🧮 МММ-МОНІТОР (жива таблиця напрямків + групове відкриття) ═══
-    def _mm_open_syms(self) -> set:
-        """Монети з ВІДКРИТОЮ позицією (FF-керовані + книги TM real/paper).
+    def _mm_open_sides(self) -> Dict[str, Optional[str]]:
+        """{МОНЕТА: 'LONG'|'SHORT'|None} — монети з ВІДКРИТОЮ позицією
+        (FF-керовані + книги TM real/paper) і бік угоди.
 
         ЄДИНЕ місце, де збирається цей набір: ним і помічається рядок «в угоді»
-        в моніторі, і визначається, для кого знімок будується навіть при
-        ВИМКНЕНОМУ моніторі (колонка «🧮 МММ LiQ» у таблицях угод).
+        в моніторі (разом із боком — колонка «📍 Стан»), і визначається, для
+        кого знімок будується навіть при ВИМКНЕНОМУ моніторі (колонка
+        «🧮 МММ LiQ» у таблицях угод). Бік TM (реальна → паперова) сильніший за
+        позначку FF; невідомий бік — None, а не вигаданий.
         """
+        def _side(v):
+            sd = str((v or {}).get('side') or '').upper() if isinstance(v, dict) else ''
+            return sd if sd in ('LONG', 'SHORT') else None
+        out: Dict[str, Optional[str]] = {}
         with self._lock:
-            out = set(self._fuel_managed.keys())
+            for k, v in (self._fuel_managed or {}).items():
+                out[k] = _side(v)
         try:
             tm = self._get_tm() if self._get_tm else None
             if tm is not None and hasattr(tm, '_lock'):
                 with tm._lock:
-                    out |= set(getattr(tm, '_positions', {}) or {})
-                    out |= set(getattr(tm, '_shadow_positions', {}) or {})
+                    for book in (getattr(tm, '_shadow_positions', {}) or {},
+                                 getattr(tm, '_positions', {}) or {}):
+                        for k, v in book.items():
+                            out[k] = _side(v) or out.get(k)
         except Exception:
             pass
         return out
+
+    def _mm_open_syms(self) -> set:
+        """Набір монет у відкритій угоді — ключі `_mm_open_sides` (одне джерело)."""
+        return set(self._mm_open_sides())
 
     def _mm_forecast_engine(self):
         """Двигун прогнозу або None. Беремо ОДИН раз на такт — не на монету."""
@@ -3772,8 +3783,6 @@ class FuelFilterDaemon:
                     self._mmn_state_since = {}
                     self._mmn_price_hist = {}
                     self._mmn_stats = {}
-                    self._mmn_setup = {}
-                    self._mmn_setup_at = {}
                 self._mm_bias_new = {}
                 self._mm_bias_new_since = 0.0
                 self._mm_bias_new_cand = {}
@@ -3929,58 +3938,11 @@ class FuelFilterDaemon:
                 self._mmn_stats = {'targeted': len(fuels or {}),
                                    'data': len(snap_n), 'ts': _now}
             self._mm_track_bias_new(snap_n, _now, s)
-            self._mmn_setup_tick(snap_n, s, _now)
 
         if _mon or _new:
             # ⏳ Знімок Є → причина «чому його немає» більше не потрібна.
             with self._lock:
                 self._mm_pending = {}
-
-    def _mmn_setup_tick(self, snap: Dict, settings: Dict, now: float):
-        """🎯 «Готовність» (SMC `grade_setup`) для рядків МММ-new.
-
-        ⚠️ ВАЖКИЙ розрахунок (свічки + SMC-аналіз), і саме через нього колонку
-        «Готовність» у моніторі 30.09 прибирали («дуже тормозить сторінку»).
-        Тому тут ДВІ межі, і обидві ЖОРСТКІ:
-          • не більше `MMN_SETUP_MAX_PER_TICK` монет за такт двигуна (найстаріші
-            першими) — повне коло займає кілька хвилин, а не один такт;
-          • кожну монету — не частіше `MMN_SETUP_TTL`.
-        Свіже значення з основного грейдера (`_setup_cache`, монети черг/угод)
-        береться готовим і власного розрахунку не потребує. Напрямок для
-        грейду — Новий МММ монети; ⚖ рівновага → не рахуємо (судити нічого).
-        Вимкнений `setup_grader_on` гасить і цю колонку.
-        """
-        if not bool(settings.get('setup_grader_on', True)):
-            with self._lock:
-                self._mmn_setup, self._mmn_setup_at = {}, {}
-            return
-        live = set(snap.keys())
-        with self._lock:
-            for k in list(self._mmn_setup_at):
-                if k not in live:
-                    self._mmn_setup_at.pop(k, None)
-                    self._mmn_setup.pop(k, None)
-            main = dict(self._setup_cache or {})
-            done_at = dict(self._mmn_setup_at)
-        due = sorted((sym for sym, v in snap.items()
-                      if v.get('status') in ('LONG', 'SHORT')
-                      and sym not in main
-                      and (now - done_at.get(sym, 0.0)) >= self.MMN_SETUP_TTL),
-                     key=lambda x: done_at.get(x, 0.0))
-        for sym in due[:self.MMN_SETUP_MAX_PER_TICK]:
-            try:
-                res = self._compute_setup(sym, snap[sym].get('status'), settings)
-            except Exception as e:
-                res = None
-                print(f"[FF-MMN-Setup] {sym} compute error: {e}")
-            with self._lock:
-                self._mmn_setup_at[sym] = now
-                if res is not None:
-                    self._mmn_setup[sym] = res
-
-    def _mmn_setup_for(self, sym: str) -> Optional[Dict]:
-        """Готовність монети для таблиці МММ-new: основний грейдер сильніший."""
-        return (self._setup_cache or {}).get(sym) or (self._mmn_setup or {}).get(sym)
 
     def _mm_queue_map(self) -> Dict[str, List[str]]:
         """{СИМВОЛ: ['Q1','Q4', …]} — у ЯКИХ чергах зараз стоїть монета.
@@ -4046,7 +4008,8 @@ class FuelFilterDaemon:
         # монети що в роботі — поверни поле статус, пиши де на даний момент
         # монета.» Раніше (15.09) такі рядки ВИКИДАЛИСЬ як «не кандидати» —
         # тепер вони лишаються, але ЯВНО підписані станом.
-        open_syms = self._mm_open_syms()
+        open_sides = self._mm_open_sides()
+        open_syms = set(open_sides)
         qmap = self._mm_queue_map()
         rows = []
         _in_trade = 0
@@ -4106,13 +4069,14 @@ class FuelFilterDaemon:
                 # 🆕 Сусідній показник (форма рядка ОДНА на обидві книги, тож
                 # поля є завжди; у «чужій» книзі вони просто None):
                 #   🧮 книга → «МММ-new» (Новий МММ монети);
-                #   🆕 книга → «МММ-LiQ», «Запас» і «Готовність».
+                #   🆕 книга → «МММ-LiQ» і «Запас».
                 'new_mm': v.get('new_status'),
                 'new_strength': v.get('new_strength'),
                 'liq_mm': v.get('liq_status'),
                 'liq_strength': v.get('liq_strength'),
                 'runway': v.get('runway'),
-                'setup': (self._mmn_setup_for(sym) if _nb else None),
+                # 💼 Бік відкритої угоди (LONG/SHORT) — колонка «📍 Стан».
+                'trade_side': open_sides.get(sym) if _trade else None,
                 # 📍 СТАН МОНЕТИ. Віддаємо ЧИСТІ прапорці, а підпис і колір
                 # малює фронт (той самий принцип, що `verdict.parts`).
                 'in_trade': _trade,
@@ -10514,9 +10478,7 @@ class FuelFilterDaemon:
     # завжди — воно дешеве. `None` = віддати ВСЕ (сумісність для інфо-сайту та
     # будь-якого стороннього споживача API).
     HEAVY_SECTIONS = ('q4', 'fund', 'mm', 'mmn')
-    # 🎯 «Готовність» у МММ-new — порція і TTL (див. `_mmn_setup_tick`).
-    MMN_SETUP_MAX_PER_TICK = 4
-    MMN_SETUP_TTL = 300.0
+
 
     def get_state(self, sections: Optional[set] = None) -> Dict:
         """Snapshot for the UI: settings + live timers + active tracking.

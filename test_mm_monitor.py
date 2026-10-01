@@ -94,11 +94,10 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._mmn_snapshot, ff._mmn_snapshot_ts, ff._mmn_stats = {}, 0.0, {}
     ff._mmn_str_hist, ff._mmn_price_hist = {}, {}
     ff._mmn_grow_since, ff._mmn_state_since = {}, {}
-    # 🎯 «Готовність» МММ-new (01.10): власний кеш + основний грейдер. Справжній
-    # `_compute_setup` ходить по свічки — у тестах його підміняють явно.
-    ff._mmn_setup, ff._mmn_setup_at = {}, {}
-    ff._setup_cache = {}
-    ff._compute_setup = lambda sym, d, s: None
+    # ⚠️ «Готовність» МММ-new ПРИБРАНО (01.10): якби код знову полiз у грейдер,
+    # цей стаб упіймав би виклик (див. test_readiness_column_is_gone).
+    ff._compute_setup_calls = []
+    ff._compute_setup = lambda sym, d, s: ff._compute_setup_calls.append(sym)
     ff._mm_state_since = {}
     ff._mm_price_hist = {}
     ff._mm_decision = {}
@@ -2293,7 +2292,7 @@ def test_the_coverage_breakdown_explains_every_missing_coin():
     _check(cov['in_trade'] == 0 and cov['rows'] == 3, f'у таблиці три: {cov}')
     # А тепер одна з них — уже в угоді. ⚠️ З 18.09 вона з таблиці НЕ зникає,
     # тож `in_trade` — це підмножина рядків, а не «загублені» монети.
-    ff._mm_open_syms = lambda: {'AAAUSDT'}
+    ff._mm_open_sides = lambda: {k: None for k in ('AAAUSDT',)}
     cov = ff.mm_monitor_state()['coverage']
     _check(cov['in_trade'] == 1 and cov['rows'] == 3,
            f'монета в угоді лишається рядком і названа ОКРЕМО: {cov}')
@@ -3141,9 +3140,9 @@ def test_ui_new_block_is_a_full_twin_of_the_monitor():
     # у 🆕 — «МММ-LiQ», «Готовність», «Запас», без «Сила росте»/«Росте»/«Ціна».
     _check(_sorts('mm-table') == ['symbol', 'status', 'strength', 'newstr', 'state',
                                   'delta', 'grow', 'price', 'pchg'], _sorts('mm-table'))
-    _check(_sorts('mmn-table') == ['symbol', 'status', 'strength', 'liqstr', 'setup',
+    _check(_sorts('mmn-table') == ['symbol', 'status', 'strength', 'liqstr',
                                    'state', 'runway', 'pchg'], _sorts('mmn-table'))
-    _check("mmSort('setup','new')" in _HTML and "mmSetDir('LONG','new')" in _HTML,
+    _check("mmSort('runway','new')" in _HTML and "mmSetDir('LONG','new')" in _HTML,
            'кнопки нового блоку працюють зі своєю книгою')
     _check("'mmn', 'mmnlist'" in _HTML, 'гармошки МММ-new у _PANEL_IDS')
     _check("new Set(['mmlist', 'mmnlist'])" in _HTML, 'список МММ-new згорнутий за замовч.')
@@ -3253,35 +3252,35 @@ def test_runway_is_the_same_slice_the_overlay_shows():
     print('✓ «Запас» = runway зі зрізу Нового МММ (як у TradingView-оверлеї)')
 
 
-def test_setup_is_computed_in_portions_and_prefers_the_main_grader():
-    """⚠️ «Готовність» — важка (через неї колонку вже прибирали). Тому порція
-    за такт, TTL на монету, і готове значення основного грейдера не рахуємо
-    вдруге; ⚖ рівновага — не грейдимо."""
+def test_readiness_column_is_gone():
+    """«Поле "ГОТОВНІСТЬ" — видали, дуже сильно стало тормозити сторінку»
+    (01.10). Прибрано розрахунок, а не лише колонку: двигун грейдер не кличе."""
     ff = _mk()
-    calls = []
-    ff._compute_setup = lambda sym, d, s: (calls.append((sym, d))
-                                           or {'ok': True, 'score': 50, 'grade': 'ХОРОШИЙ', 'dir': d})
-    ff._setup_cache = {'C00USDT': {'ok': True, 'score': 77, 'grade': 'ВІДМІННИЙ', 'dir': 'SHORT'}}
-    pairs = {f'C{i:02d}USDT': 0.6 for i in range(10)}
-    pairs['FLATUSDT'] = 0.0
-    _cap(ff, **pairs)
-    n = _m.FuelFilterDaemon.MMN_SETUP_MAX_PER_TICK
-    _check(len(calls) == n, f'за такт не більше {n} грейдів: {calls}')
-    _check(all(d == 'SHORT' for _, d in calls), 'напрямок грейду — Новий МММ монети')
-    _check('C00USDT' not in [c for c, _ in calls] and 'FLATUSDT' not in [c for c, _ in calls],
-           f'основний грейдер і ⚖ рівновага не рахуються: {calls}')
-    rows = {r['symbol']: r for r in ff.mm_monitor_state(book='new')['rows']}
-    _check(rows['C00USDT']['setup']['score'] == 77, 'готове значення основного грейдера')
-    _cap(ff, **pairs)
-    _check(len(set(c for c, _ in calls)) == 2 * n and len(calls) == 2 * n,
-           f'TTL: уже пораховані не повторюються, черга йде далі: {calls}')
-    _check(ff.mm_monitor_state()['rows'][0]['setup'] is None, '🧮 таблиця Готовність не несе')
-    ff2 = _mk(); ff2._settings['setup_grader_on'] = False
-    c2 = []
-    ff2._compute_setup = lambda sym, d, s: c2.append(sym)
-    _cap(ff2, AAAUSDT=0.6)
-    _check(not c2, 'вимкнений грейдер гасить і цю колонку')
-    print('✓ «Готовність» МММ-new: порціями, з TTL, без дубля основного грейдера')
+    _caps(ff, 3, AAAUSDT=0.6, BBBUSDT=-0.5)
+    _check(not ff._compute_setup_calls, f'грейдер кличеться: {ff._compute_setup_calls}')
+    for bad in ('_mmn_setup', 'MMN_SETUP'):
+        _check(bad not in _SRC, f'у двигуні лишилось «{bad}»')
+    _check('setup' not in ff.mm_monitor_state(book='new')['rows'][0], 'поле setup у рядку')
+    for bad in ('_mmSetupCell', 'data-mmsort="setup"', "'setup', 'state'"):
+        _check(bad not in _HTML, f'на сторінці лишилось «{bad}»')
+    print('✓ 🗑 «Готовність» у МММ-new прибрано разом із розрахунком')
+
+
+def test_status_carries_the_side_of_the_open_trade():
+    """«💼 LONG угода» — бік угоди з тієї самої мапи, що помічає «в угоді»."""
+    class _TM:
+        import threading as _t
+        _lock = _t.RLock()
+        _positions = {'AAAUSDT': {'side': 'SHORT'}}
+        _shadow_positions = {'BBBUSDT': {'side': 'LONG'}}
+    ff = _mk()
+    ff._get_tm = lambda: _TM()
+    _cap(ff, AAAUSDT=0.6, BBBUSDT=0.5, CCCUSDT=0.4)
+    by = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}
+    _check(by['AAAUSDT']['trade_side'] == 'SHORT' and by['AAAUSDT']['in_trade'], by['AAAUSDT'])
+    _check(by['BBBUSDT']['trade_side'] == 'LONG', by['BBBUSDT'])
+    _check(by['CCCUSDT']['trade_side'] is None and not by['CCCUSDT']['in_trade'], by['CCCUSDT'])
+    print('✓ 📍 Стан несе бік відкритої угоди (LONG/SHORT)')
 
 
 def test_ui_tables_have_the_requested_columns():
@@ -3295,36 +3294,43 @@ def test_ui_tables_have_the_requested_columns():
     o, n = heads('mm-table'), heads('mmn-table')
     _check(o.index('МММ-new') == o.index('МММ LiQ') + 1, f'«МММ-new» праворуч від МММ LiQ: {o}')
     _check(n.index('МММ-LiQ') == n.index('МММ-new') + 1, f'«МММ-LiQ» праворуч від МММ-new: {n}')
-    _check(n.index('Готовність') == n.index('МММ-LiQ') + 1, f'«Готовність» праворуч від МММ-LiQ: {n}')
     _check('Запас' in n, n)
-    for gone in ('Сила росте', '⏱ Росте', 'Ціна'):
+    for gone in ('Сила росте', '⏱ Росте', 'Ціна', 'Готовність'):
         _check(gone not in n, f'у МММ-new лишилась колонка «{gone}»: {n}')
-    _check("_MMB.new.cols = ['status', 'mm', 'liq', 'setup', 'state', 'runway', 'pchg', 'f1', 'f4']" in _HTML
-           and len(n) == 11, 'склад JS-колонок = заголовки')
-    print('✓ UI: 🧮 +«МММ-new»; 🆕 +«МММ-LiQ»/«Готовність»/«Запас», без росту і ціни')
+    _check("_MMB.new.cols = ['status', 'mm', 'liq', 'state', 'runway', 'pchg', 'f1', 'f4']" in _HTML
+           and len(n) == 10, 'склад JS-колонок = заголовки')
+    print('✓ UI: 🧮 +«МММ-new»; 🆕 +«МММ-LiQ»/«Запас», без росту, ціни й Готовності')
 
 
 def test_js_new_table_draws_the_new_cells():
     out = _run_js(r'''
 const R = {symbol:'AAAUSDT', mm:'SHORT', strength:60, strength_prev:null, price:1,
-  liq_mm:'LONG', liq_strength:40, in_trade:false, queues:[], selectable:true,
-  setup:{ok:true, score:57, grade:'ХОРОШИЙ', dir:'SHORT', color:'#22c55e', hot:true},
+  liq_mm:'LONG', liq_strength:40, in_trade:true, trade_side:'SHORT', queues:[], selectable:false,
   runway:{dir:'SHORT', room_pct:3.2, label:'до пулу', main:{price:1.1}}};
-mmApplyState({rows:[R], enabled:true, limited:false, ts:1}, 'new');
+const O = Object.assign({}, R, {symbol:'BBBUSDT', in_trade:false, trade_side:null, selectable:true,
+  runway:{dir:'LONG', room_pct:null, label:'простір відкритий (немає великих цілей попереду)'}});
+mmApplyState({rows:[R, O], enabled:true, limited:false, ts:1}, 'new');
 mmApplyState({rows:[Object.assign({}, R, {mm:'LONG', new_mm:'SHORT', new_strength:60,
-  setup:null, runway:null})], enabled:true, limited:false, ts:1}, 'old');
+  runway:null})], enabled:true, limited:false, ts:1}, 'old');
 console.log(JSON.stringify({n:document.getElementById('mmn-tbody').innerHTML,
                             o:document.getElementById('mm-tbody').innerHTML}));
 ''')
     import json
     d = json.loads(out)
-    tr_n = d['n'].split('</tr>')[0]
-    _check(tr_n.count('<td') == 11, f'11 комірок у МММ-new: {tr_n.count("<td")}')
-    _check('57%' in tr_n and 'ХОРОШИЙ' in tr_n and '🎯' in tr_n, 'Готовність намальована')
-    _check('3.2%' in tr_n and '↓' in tr_n, 'Запас намальований')
+    rows = d['n'].split('</tr>')
+    tr_a = [x for x in rows if 'AAAUSDT' in x][0]
+    tr_b = [x for x in rows if 'BBBUSDT' in x][0]
+    _check(tr_a.count('<td') == 10, f'10 комірок у МММ-new: {tr_a.count("<td")}')
+    _check('3.2%</b> <span' in tr_a and tr_a.index('3.2%') < tr_a.index('↓'),
+           'стрілка запасу праворуч від значення')
+    _check('♾' in tr_b and 'простір відкритий' not in tr_b.split('title=')[0]
+           and tr_b.index('♾') < tr_b.index('↑'), 'відкритий простір — значок ♾, текст лише в підказці')
+    _check('<b style="color:#f87171">SHORT</b> угода' in tr_a,
+           'у «Стан» кольором лише саме слово SHORT')
+    _check('Готовність' not in tr_a, 'Готовності в рядку немає')
     tr_o = d['o'].split('</tr>')[0]
     _check(tr_o.count('<td') == 12, f'12 комірок у 🧮: {tr_o.count("<td")}')
-    print('✓ JS: МММ-new малює Готовність і Запас, 🧮 — колонку МММ-new')
+    print('✓ JS: Стан «💼 SHORT угода», Запас «3.2% ↓» / «♾ ↑», без Готовності')
 
 
 if __name__ == '__main__':
