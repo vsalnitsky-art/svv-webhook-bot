@@ -820,8 +820,10 @@ def test_duplicate_strength_column_is_gone_from_the_table():
     tbl = _HTML[i:_HTML.index('</table>', i)]
     _check('>Сила</th>' not in tbl and '>Сила<span' not in tbl,
            'колонка-дублікат «Сила» повернулась у заголовок')
-    _check('Сила росте' in tbl, 'колонка ПРИРОСТУ має лишатись')
-    print('✓ UI: дублікат «Сила» прибрано (а «Сила росте» — інша метрика)')
+    # 04.10: «Сила росте» і «⏱ Росте» теж прибрано (замінено на «Запас»).
+    _check('Сила росте' not in tbl and '⏱ Росте' not in tbl,
+           '«Сила росте»/«⏱ Росте» повернулись у 🧮 таблицю')
+    print('✓ UI: дублікат «Сила» прибрано, «Сила росте»/«⏱ Росте» — теж')
 
 
 def test_row_cells_match_the_header_and_percent_lives_in_the_widget():
@@ -1044,145 +1046,74 @@ def test_symbol_opens_tradingview_exactly_like_the_watchlist():
     print('✓ назва монети → TradingView через спільний tvSym (як у WATCHLIST)')
 
 
-def test_ui_has_growth_column_with_timer_and_sorting():
+def test_ui_monitor_columns_contract():
+    """04.10: «"СИЛА РОСТЕ" і "РОСТЕ" — видалити», на їхньому місці «Запас»,
+    як у таблиці МММ-new."""
     i = _HTML.index('id="mm-table"')
     tbl = _HTML[i:_HTML.index('</table>', i)]
     import re as _re
-    _check('Сила росте' in tbl, 'немає колонки приросту')
-    # ⏱ Таймер — ОКРЕМА колонка (вимога 15.09), а не хвіст комірки приросту.
-    _check('⏱ Росте' in tbl, 'таймер не винесено в окрему колонку')
-    # ⚠️ Кількість колонок звіряємо зі СКЛАДОМ, а не з магічним числом: список
-    # нижче — це і є контракт таблиці, тож додана колонка мусить бути названа
-    # ТУТ, а не просто зсунути число.
-    _cols = ['Символ', '📍 Стан', 'МММ LiQ', 'МММ-new', '⏱ У стані', 'Сила росте',
-             '⏱ Росте', 'Ціна', 'Рух', '🔮 1H', '🔮 4H']
+    # ⚠️ Кількість колонок звіряємо зі СКЛАДОМ, а не з магічним числом.
+    _cols = ['Символ', '📍 Стан', 'МММ LiQ', 'МММ-new', '⏱ У стані', 'Запас',
+             'Ціна', 'Рух', '🔮 1H', '🔮 4H']
     for _c in _cols:
         _check(_c in tbl, f'немає колонки «{_c}»')
+    for _gone in ('Сила росте', '⏱ Росте', 'data-mmsort="delta"', 'data-mmsort="grow"'):
+        _check(_gone not in tbl, f'лишилось «{_gone}»')
     _n = len(_re.findall(r'<th[\s>]', tbl))
     _check(_n == len(_cols) + 1, f'колонок {_n}, а в контракті {len(_cols)}+☑')
     _check(f'colspan="{_n}"' in tbl,
            f'colspan порожнього рядка не дорівнює числу колонок ({_n})')
-    for col in ('symbol', 'status', 'strength', 'state', 'delta', 'grow',
-                'price', 'pchg'):
-        _check(f'data-mmsort="{col}"' in tbl, f'колонка {col} не сортується')
-    _check("mmSort('delta')" in tbl, 'сортування за приростом не підключене')
-    _check("mmSort('grow')" in tbl, 'сортування за таймером не підключене')
-    _check('п.п.' in tbl, 'у підказці не сказано, що це ПУНКТИ, а не відносний %')
-    print(f'✓ UI: «Сила росте» + окрема ⏱ колонка, {_n} колонок із сортуванням')
+    _check("mmSort('runway')" in tbl, 'сортування за запасом не підключене')
+    _check("_MMB.old.cols = ['status', 'mm', 'new', 'state', 'runway', 'price', 'pchg', 'f1', 'f4']"
+           in _HTML, 'склад JS-колонок 🧮 = заголовки')
+    for dead in ('_mmGrowCell', '_mmTimerCell'):
+        _check(dead not in _HTML, f'мертвий рендер {dead} лишився')
+    print(f'✓ UI: 🧮 без «Сила росте»/«⏱ Росте», із «Запас» — {_n} колонок')
+
+
+def test_monitor_rows_carry_the_runway_of_the_new_mmm():
+    """«Запас» у 🧮 — ТОЙ САМИЙ `runway` Нового МММ, що в таблиці МММ-new."""
+    ff = _mk()
+    rw = {'dir': 'LONG', 'room_pct': 3.2, 'label': 'до пулу'}
+    fuels = _fuels(AAAUSDT=-0.5)
+    fuels['AAAUSDT']['runway'] = rw
+    ff._legacy = {'AAAUSDT': 0.5}
+    ff._mm_capture(fuels, now=ff._clock[0])
+    o = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}
+    n = {r['symbol']: r for r in ff.mm_monitor_state(book='new')['rows']}
+    _check(o['AAAUSDT']['runway'] == rw == n['AAAUSDT']['runway'], (o, n))
+    print('✓ «Запас» у 🧮 і в МММ-new — одне число')
 
 
 def test_timer_uses_the_shared_one_second_ticker():
-    """⚠️ Секунди НЕ мають перебудовувати таблицю: той самий прийом, що з
-    `held_sec` у Черзі-4 — `.ff-timer[data-since]` + ОДИН глобальний тікер."""
-    # ⏱ Таймер живе у ВЛАСНІЙ функції комірки (окрема колонка), і саме її
-    # перевіряємо — раніше зріз від `_mmGrowCell` випадково накривав сусідню
-    # функцію, тобто тест «проходив» ні за що.
-    i = _HTML.index('function _mmTimerCell(')
-    fn = _HTML[i:_HTML.index('\n}', i)]
-    _check('class="ff-timer" data-since=' in fn, 'таймер не на спільному класі')
-    _check('fmtTimer' not in fn, 'секунди не треба малювати тут — їх веде тікер')
-    _check('function _mmTimerCell(' in _HTML and '_mmTimerCell(r)' in _HTML,
-           'комірка таймера не підключена до рядка таблиці')
-    # Сам тікер уже існує і бере ВСІ такі елементи сторінки.
+    """⚠️ Секунди НЕ мають перебудовувати таблицю: `.ff-timer[data-since]` +
+    ОДИН глобальний тікер (той самий прийом, що з `held_sec` у Черзі-4).
+    04.10: таймера росту більше немає — лишився «⏱ У стані»."""
     _check(".ff-timer[data-since]" in _HTML and 'window._ffTimerTick' in _HTML,
            'глобальний 1с-тікер зник — таймер стоятиме')
-    # `grow_since` у сигнатурі є (щоб старт/зупинка перемалювались), а секунд там
-    # немає (інакше DOM перебудовувався б щосекунди).
     j = _HTML.index('const sig = B.dir')
     sig = _HTML[j:j + 600]
-    _check('r.grow_since' in sig, 'старт таймера не входить у сигнатуру')
     _check('Date.now' not in sig, 'у сигнатурі не має бути живого часу')
     print('✓ таймер: спільний 1с-тікер, таблиця не перебудовується щосекунди')
 
 
-def test_js_sorting_by_growth_puts_the_fastest_first():
+def test_js_sorting_by_runway_puts_rows_without_data_last():
     out = _run_js(r'''
-const R = (s, st, d, g) => ({symbol:s, mm:'LONG', strength:st, strength_prev:st-(d||0),
-  delta:d, delta_rel:null, grow_since:g, price:1, in_trade:false, in_queue:false, selectable:true});
-mmApplyState({rows:[R('AAA',50,3,null), R('BBB',80,null,null), R('CCC',40,12,null)],
-  enabled:true, limited:false, ts:1, counts:{LONG:3,SHORT:0,flat:0}});
-mmSort('delta');                     // перший клік по новій колонці → спадання
+const R = (s, rw) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50,
+  price:1, in_trade:false, queues:[], selectable:true, runway:rw});
+mmApplyState({rows:[R('AAA',{dir:'LONG',room_pct:3}), R('BBB',null),
+  R('CCC',{dir:'LONG',room_pct:9})], enabled:true, limited:false, ts:1});
+mmSort('runway');
 const h = document.getElementById('mm-tbody').innerHTML;
-const order = ['AAA','BBB','CCC'].map(s => h.indexOf(s));
-console.log(JSON.stringify({order}));
+console.log(JSON.stringify({order:['AAA','BBB','CCC'].map(s => h.indexOf(s))}));
 ''')
     import json
-    o = json.loads(out)['order']
-    a, b, c = o[0], o[1], o[2]
-    _check(c < a, 'монета з більшим приростом мусить бути вище')
-    # ⚠️ Рядок БЕЗ приросту (null) — у кінець, а не «як нуль».
-    _check(b > a and b > c, f'рядок без даних мусить бути внизу: {o}')
-    print('✓ JS: сортування за приростом, «немає даних» — у кінець')
-
-
-def test_js_growth_cell_agrees_with_the_arrow_deadzone():
-    """Зелене число і стрілка ↑ мусять зʼявлятись ОДНОЧАСНО: +1 — це ще «→»."""
-    out = _run_js(r'''
-const R = (s, d) => ({symbol:s, mm:'LONG', strength:50, strength_prev:50-d, delta:d,
-  delta_rel:null, grow_since:null, price:1, in_trade:false, in_queue:false, selectable:true});
-mmApplyState({rows:[R('AAA',1), R('BBB',5), R('CCC',-5)], enabled:true,
-  limited:false, ts:1, counts:{LONG:3,SHORT:0,flat:0}});
-// ⚠️ Ріжемо саме на РЯДКИ: символ трапляється двічі в одному рядку (в
-// обробнику галочки й у комірці назви), тож split по символу дав би шматок
-// БЕЗ клітинки приросту — саме на цьому перша версія тесту й помилилась.
-const rows = document.getElementById('mm-tbody').innerHTML.split('</tr>');
-const cell = s => rows.filter(x => x.includes(s))[0] || '';
-console.log(JSON.stringify({one:cell('AAA').includes('→'),
-  up:cell('BBB').includes('↑'), down:cell('CCC').includes('↓')}));
-''')
-    import json
-    d = json.loads(out)
-    _check(d['one'], '+1 п.п. мусить показуватись як «→» (як і стрілка)')
-    _check(d['up'] and d['down'], f'напрямок приросту не показано: {d}')
-    print('✓ JS: поріг клітинки приросту збігається зі стрілкою')
+    a, b, c = json.loads(out)['order']
+    _check(min(a, c) >= 0 and b > a and b > c, f'рядок без запасу мусить бути внизу: {(a, b, c)}')
+    print('✓ JS: сортування 🧮 за «Запас», «немає даних» — у кінець')
 
 
 # ═══════════ 11. ⏱ ТАЙМЕР — ОКРЕМА КОЛОНКА (вимога 15.09) ════════════════
-def test_js_timer_lives_in_its_own_cell_not_in_the_growth_cell():
-    """Вимога дослівно: «Таймер зроби окремою колонкою». Раніше він тулився
-    хвостом у комірку приросту й розтягував її; тепер це власний стовпчик."""
-    out = _run_js(r'''
-mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:57, strength_prev:40,
-  delta:17, delta_rel:42.5, grow_since:1700000000, price:1.5,
-  in_trade:false, in_queue:false, selectable:true}],
-  enabled:true, limited:false, ts:1, counts:{LONG:1,SHORT:0,flat:0}});
-const h = document.getElementById('mm-tbody').innerHTML;
-// Розбираємо рядок на комірки: у ЯКІЙ саме стоїть таймер?
-const tds = h.split('<td').slice(1);
-const iTimer = tds.findIndex(t => t.includes('ff-timer'));
-const iGrow = tds.findIndex(t => t.includes('+17'));
-console.log(JSON.stringify({iTimer, iGrow, n:tds.length}));
-''')
-    import json
-    d = json.loads(out)
-    _check(d['iTimer'] >= 0, 'таймера немає в рядку взагалі')
-    _check(d['iGrow'] >= 0, 'приросту немає в рядку')
-    _check(d['iTimer'] != d['iGrow'],
-           f'таймер і приріст в ОДНІЙ комірці — колонку не виділено: {d}')
-    _check(d['iTimer'] == d['iGrow'] + 1,
-           f'таймер мусить стояти одразу за приростом: {d}')
-    print('✓ JS: ⏱ таймер — окрема комірка одразу за «Сила росте»')
-
-
-def test_js_timer_cell_is_empty_when_strength_is_not_growing():
-    """«Обнуляється, коли перестає рости» має бути ВИДНО: порожній таймер —
-    це стан «не росте», а не «дані загубились»."""
-    out = _run_js(r'''
-mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:57, strength_prev:57,
-  delta:0, delta_rel:0, grow_since:null, price:1.5,
-  in_trade:false, in_queue:false, selectable:true}],
-  enabled:true, limited:false, ts:1, counts:{LONG:1,SHORT:0,flat:0}});
-const h = document.getElementById('mm-tbody').innerHTML;
-console.log(JSON.stringify({timer:h.includes('ff-timer'),
-  says:/не росте/.test(h)}));
-''')
-    import json
-    d = json.loads(out)
-    _check(not d['timer'], 'таймер малюється, хоча сила не росте')
-    _check(d['says'], 'порожній таймер нічого не пояснює')
-    print('✓ JS: не росте → таймера немає, і причина названа')
-
-
 # ═══════════ 12. 💹 НАПРЯМОК ЦІНИ (вимога 15.09) ═════════════════════════
 def test_price_move_is_a_pure_function_with_a_deadzone():
     """⚠️ Мертва зона обовʼязкова: без неї «росте/падає» мигало б на
@@ -1570,41 +1501,6 @@ def test_window_constants_are_consistent_with_the_source():
            'вікно мусить накривати більше за два такти двигуна')
     print(f'✓ константи: вікно {_m.MM_GROW_WINDOW_SEC}с, мінімум '
           f'{_m.MM_GROW_MIN_SPAN_SEC}с, такт {_m.CYCLE_SECS}с')
-
-
-def test_js_growth_cell_tells_the_two_empty_states_apart():
-    """«Ще набираємо історію» і «історії немає» — РІЗНІ речі, і комірка мусить
-    називати їх по-різному, а вікно брати з бекенда, а не зашивати своє."""
-    out = _run_js(r'''
-const R = (s, d, span) => ({symbol:s, mm:'LONG', strength:50, strength_prev:(d==null?null:45),
-  delta:d, delta_rel:null, delta_span:span, grow_since:null, price:1,
-  price_dir:'flat', price_chg:0, price_span:900,
-  in_trade:false, in_queue:false, selectable:true});
-mmApplyState({rows:[R('AAAUSDT',null,0), R('BBBUSDT',null,30), R('CCCUSDT',5,180)],
-  enabled:true, limited:false, ts:1, counts:{LONG:3,SHORT:0,flat:0}});
-const rows = document.getElementById('mm-tbody').innerHTML.split('</tr>');
-const cell = s => rows.filter(x => x.includes(s))[0] || '';
-console.log(JSON.stringify({
-  none:/Історії ще немає/.test(cell('AAA')),
-  warming:/Набираємо історію \(30с\)/.test(cell('BBB')),
-  value:cell('CCC').includes('+5'), win:/за 3хв/.test(cell('CCC'))}));
-''')
-    import json
-    d = json.loads(out)
-    _check(d['none'] and d['warming'],
-           f'два порожні стани не розрізняються: {d}')
-    _check(d['value'] and d['win'],
-           f'у підказці немає РЕАЛЬНОГО вікна, за яке виміряно приріст: {d}')
-    print('✓ JS: «немає історії» ≠ «набираємо», вікно — з бекенда')
-
-
-def test_delta_span_is_in_the_table_signature():
-    """Інакше перехід «—» → число (вікно нарешті набралось) не перемалював би
-    таблицю: самі `delta`/`strength` у цей момент могли не змінитись."""
-    i = _HTML.index('const sig = B.dir')
-    sig = _HTML[i:i + 900]
-    _check('r.delta_span' in sig, 'delta_span не входить у сигнатуру таблиці')
-    print('✓ delta_span у сигнатурі — поява показника перемальовує рядок')
 
 
 # ═══ 16. 🎛 ФІЛЬТРИ: ПАМʼЯТЬ + ЧЕСНІ ЛІЧИЛЬНИКИ (скарга 15.09) ════════════
@@ -2266,7 +2162,7 @@ def test_the_page_draws_the_state_timer_with_the_shared_ticker():
     _check('⏱ У стані' in tbl, 'потрібна окрема колонка стану')
     _check('data-mmsort="state"' in tbl, 'колонка мусить сортуватись')
     j = _HTML.index('function _mmStateCell')
-    cell = _HTML[j:_HTML.index('function _mmTimerCell', j)]
+    cell = _HTML[j:_HTML.index('\n}', j)]
     _check('ff-timer' in cell and 'data-since' in cell,
            'секунди веде СПІЛЬНИЙ 1с-тікер, а не власний інтервал')
     _check('setInterval' not in cell, 'другого інтервалу на сторінці не заводимо')
@@ -3139,7 +3035,7 @@ def test_ui_new_block_is_a_full_twin_of_the_monitor():
     # 01.10 (друга вимога того ж дня): склад колонок РІЗНИЙ — у 🧮 є «МММ-new»,
     # у 🆕 — «МММ-LiQ», «Готовність», «Запас», без «Сила росте»/«Росте»/«Ціна».
     _check(_sorts('mm-table') == ['symbol', 'status', 'strength', 'newstr', 'state',
-                                  'delta', 'grow', 'price', 'pchg'], _sorts('mm-table'))
+                                  'runway', 'price', 'pchg'], _sorts('mm-table'))
     _check(_sorts('mmn-table') == ['symbol', 'status', 'strength', 'liqstr',
                                    'state', 'runway', 'pchg'], _sorts('mmn-table'))
     _check("mmSort('runway','new')" in _HTML and "mmSetDir('LONG','new')" in _HTML,
@@ -3329,7 +3225,7 @@ console.log(JSON.stringify({n:document.getElementById('mmn-tbody').innerHTML,
            'у «Стан» кольором лише саме слово SHORT')
     _check('Готовність' not in tr_a, 'Готовності в рядку немає')
     tr_o = d['o'].split('</tr>')[0]
-    _check(tr_o.count('<td') == 12, f'12 комірок у 🧮: {tr_o.count("<td")}')
+    _check(tr_o.count('<td') == 11, f'11 комірок у 🧮: {tr_o.count("<td")}')
     print('✓ JS: Стан «💼 SHORT угода», Запас «3.2% ↓» / «♾ ↑», без Готовності')
 
 

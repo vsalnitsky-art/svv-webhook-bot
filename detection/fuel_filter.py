@@ -3884,6 +3884,9 @@ class FuelFilterDaemon:
                     'new_status': (f.get('status')
                                    if f.get('status') in ('LONG', 'SHORT') else None),
                     'new_strength': int(round(abs(_nd) * 100)),
+                    # 🎯 «Запас» (вимога 04.10) — ТОЙ САМИЙ `runway` Нового МММ,
+                    # що в таблиці МММ-new і TradingView-оверлеї.
+                    'runway': f.get('runway'),
                     **_fcast(sym),
                 }
             self._mm_track_prices(snap, _now)

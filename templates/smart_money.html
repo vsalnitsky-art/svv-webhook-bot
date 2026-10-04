@@ -2704,8 +2704,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="Показник МММ LiQ (той самий, що живить шар «МММ LiQ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">МММ LiQ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="newstr" onclick="mmSort('newstr')" style="cursor:pointer;user-select:none" title="МММ-new — НОВИЙ МММ тієї самої монети («бабло»-модель двигуна, `_fuel_dir_smoothed`): те саме число, що в блоці 🆕 МММ-new, колонці «МММ» черг і шарі «Новий МММ» Черги-4. Сила = |dir|×100. Клік — сортувати за силою.">МММ-new<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="state" onclick="mmSort('state')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан МММ — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Відлік починається заново на КОЖНІЙ зміні стану (у тому числі при переході в рівновагу і назад). ⚖ рівновага — теж стан: «скільки монета вже без напрямку» не менш важливо за «скільки вона в LONG». Разовий пропуск монети у знімку таймер НЕ збиває, а рестарт бота його не обнуляє — момент старту зберігається. Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="delta" onclick="mmSort('delta')" style="cursor:pointer;user-select:none" title="📈 СИЛА РОСТЕ — на скільки змінилась сила МММ за ВІКНО СПОСТЕРЕЖЕННЯ (~3 хв, тобто три оновлення джерела). Сила — це частка у відсотках, тож її зміна міряється в ПУНКТАХ: 45% → 57% = +12 п.п. Базою є НАЙСТАРІШЕ значення у вікні, а не попередній такт: разовий пропуск даних більше не стирає показник, а дрібне тремтіння цілого числа сили не перемикає стрілку. Поки історії менше за одне оновлення джерела — показуємо «—», а не вигаданий приріст. Фактичне вікно по кожному рядку — у підказці комірки. Клік — сортувати (найбільший приріст зверху).">Сила росте<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="grow" onclick="mmSort('grow')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу сила МММ росте БЕЗПЕРЕРВНО. Ріст ТРИВАЄ, поки виконуються ДВІ умови: (1) за вікном спостереження приріст вищий за поріг і (2) сила не відкотилась від свого піку в цьому вікні більше ніж на той самий поріг. Перша умова прибирає мерехтіння — дрібне тремтіння таймер не збиває; друга не дає таймеру тягнути «росте» ще хвилини після того, як сила вже розвернулась. «—» = зараз не росте. Клік — сортувати (найдовший ріст зверху).">⏱ Росте<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="runway" onclick="mmSort('runway')" style="cursor:pointer;user-select:none;text-align:right" title="🎯 Запас — скільки простору до значущої ліквідності В БІК Нового МММ (↑/↓), як у таблиці МММ-new і в TradingView-оверлеї. Малий запас = рух близько до великого кластера (ймовірне сповільнення/розворот). ♾ = попереду великих цілей немає. Без напрямку — «—». Клік — сортувати за запасом.">Запас<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="price" onclick="mmSort('price')" style="cursor:pointer;user-select:none;text-align:right" title="Ціна зі знімка МММ (те саме число, що бачить двигун). Клік — сортувати за ціною.">Ціна<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="pchg" onclick="mmSort('pchg')" style="cursor:pointer;user-select:none;text-align:right" title="КУДИ йде ціна: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). За скільки часу історії реально набралось — у підказці комірки: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ (найсильніший ріст зверху).">Рух<span class="ff-sort-arrow"></span></th>
                             <th title="🔮 Прогноз 1H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 1H» над графіком. Читається готовим, нічого не рахує.">🔮 1H</th>
@@ -2713,7 +2712,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="mm-tbody">
-                        <tr><td colspan="12" class="tm-empty-msg">Немає даних МММ</td></tr>
+                        <tr><td colspan="11" class="tm-empty-msg">Немає даних МММ</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -11985,11 +11984,12 @@ const _MMB = { old: _mmMkBook('mm', 'МММ LiQ', 'mmMonitorUi'),
 // 📋 СКЛАД КОЛОНОК КОЖНОЇ ТАБЛИЦІ (вимога 01.10). Ключі — у порядку показу,
 // без ☑ і «Символ» (вони є завжди). Заголовки в HTML ідуть у ТОМУ САМОМУ
 // порядку — тест-замок звіряє кількість <th> і <td>.
-//   🧮: МММ LiQ, праворуч «МММ-new» (Новий МММ тієї ж монети).
+//   🧮: МММ LiQ, праворуч «МММ-new» (Новий МММ тієї ж монети); «Сила росте» і
+//       «⏱ Росте» замінено на «Запас», як у МММ-new (вимога 04.10).
 //   🆕: МММ-new, праворуч «МММ-LiQ», далі «Запас» — як у TradingView-оверлеї;
 //       «Сила росте», «⏱ Росте», «Ціна» і «Готовність» тут прибрано
 //       («Готовність» гальмувала сторінку — вимога 01.10).
-_MMB.old.cols = ['status', 'mm', 'new', 'state', 'delta', 'grow', 'price', 'pchg', 'f1', 'f4'];
+_MMB.old.cols = ['status', 'mm', 'new', 'state', 'runway', 'price', 'pchg', 'f1', 'f4'];
 _MMB.new.cols = ['status', 'mm', 'liq', 'state', 'runway', 'pchg', 'f1', 'f4'];
 // Книга за кодом ('old' | 'new'); будь-що інше — 🧮 МММ-монітор.
 function _mmBk(bk) { return _MMB[bk === 'new' ? 'new' : 'old']; }
@@ -12020,11 +12020,10 @@ function mmMinStrChanged(bk) {
     _mmSaveUi(_mmBk(bk));
     mmRender(bk);
 }
-// ⚠️ «Немає даних» ≠ «нуль». Рядок без приросту/ціни/таймера йде в КІНЕЦЬ при
+// ⚠️ «Немає даних» ≠ «нуль». Рядок без ціни/запасу/таймера йде в КІНЕЦЬ при
 // БУДЬ-ЯКОМУ напрямку сортування, а не вдає найгірше (чи найкраще) значення.
 function _mmSortVal(r, col) {
     if (col === 'symbol') return r.symbol || '';
-    if (col === 'delta') return (r.delta == null ? null : Number(r.delta));
     if (col === 'price') return (r.price == null ? null : Number(r.price));
     // Сусідні показники — за силою; рядок без даних униз.
     if (col === 'newstr') return (r.new_strength == null ? null : Number(r.new_strength));
@@ -12034,9 +12033,8 @@ function _mmSortVal(r, col) {
     // монета зараз іде вгору» — це колонка «Рух». Рядок без історії
     // (`price_dir` порожній) — це «ще не знаємо», а не «нуль».
     if (col === 'pchg') return (!r.price_dir ? null : Number(r.price_chg || 0));
-    if (col === 'grow') return (r.grow_since == null ? null : -Number(r.grow_since));
     // ⏱ Довше у стані = «більше» (сортуємо спаданням тривалості, а не
-    // моменту), тож беремо момент зі знаком мінус — як і для «Росте».
+    // моменту), тож беремо момент зі знаком мінус.
     if (col === 'state') return (r.state_since == null ? null : -Number(r.state_since));
     // 📍 Стан: спершу те, що вже В РОБОТІ (угода → черга), потім вільні.
     if (col === 'status') return r.in_trade ? 0
@@ -12069,35 +12067,10 @@ function _mmHeaderArrows(B) {
             ? (B.sort.dir < 0 ? ' ▼' : ' ▲') : '';
     });
 }
-// 📈 «Сила росте» — приріст у ПУНКТАХ.
-// ⚠️ Поріг фарбування ТОЙ САМИЙ, що в стрілці `ffFuelCell` (> +1 / < −1),
-// інакше в одному рядку стрілка казала б «→», а число світилось зеленим.
-// ⚠️ Вікно НЕ зашите у фронті: бекенд віддає `delta_span` — скільки історії
-// реально набралось під цей приріст. Те саме правило, що в колонці «Ціна».
+// Тривалість вікна спостереження людською мовою (колонка «Рух»).
 function _mmSpanTxt(sec) {
     const s = Math.round(Number(sec) || 0);
     return s >= 60 ? `${Math.round(s / 60)}хв` : `${s}с`;
-}
-function _mmGrowCell(r) {
-    const d = (r.delta == null) ? null : Number(r.delta);
-    if (d === null) {
-        // Два РІЗНІ порожні стани, і кожен мусить говорити сам за себе.
-        const tip = (r.delta_span > 0)
-            ? `Набираємо історію (${_mmSpanTxt(r.delta_span)}). Приріст показуємо, лише коли вікно спостереження перевищить одне оновлення джерела — інакше це був би шум, а не ріст.`
-            : 'Історії ще немає — монета щойно зʼявилась у знімку МММ';
-        return `<span style="color:#6b7280" title="${_mmEsc(tip)}">—</span>`;
-    }
-    const col = d > 1 ? '#4ade80' : (d < -1 ? '#f87171' : '#8b93a7');
-    const ico = d > 1 ? '↑' : (d < -1 ? '↓' : '→');
-    const sgn = d > 0 ? '+' : '';
-    const rel = (r.delta_rel == null) ? '' : ` (${r.delta_rel > 0 ? '+' : ''}${r.delta_rel}% відносно)`;
-    const tip = `Сила ${r.strength_prev != null ? r.strength_prev + '%' : '—'} → ${r.strength}%`
-        + ` за ${_mmSpanTxt(r.delta_span)} спостереження: ${sgn}${d} п.п.${rel}.`
-        + ' База — найстаріше значення у вікні, а не попередній такт: разовий'
-        + ' пропуск даних більше не стирає показник, а дрібне тремтіння цілого'
-        + ' числа сили не перемикає стрілку.';
-    return `<span title="${_mmEsc(tip)}" style="color:${col};font-family:monospace;white-space:nowrap">`
-        + `${ico} ${sgn}${d}</span>`;
 }
 // ⏱ ОКРЕМА КОЛОНКА ТАЙМЕРА (вимога 15.09). Раніше він тулився в комірку
 // приросту й ламав її ширину; окремим стовпчиком його видно і за ним можна
@@ -12153,14 +12126,6 @@ function _mmStateCell(r) {
     return `<span class="ff-timer" data-since="${Math.floor(r.state_since)}"`
         + ` title="Монета тримає стан ${lbl} без перерви. Відлік почнеться заново на зміні стану."`
         + ` style="color:${col};font-family:monospace">--:--:--</span>`;
-}
-function _mmTimerCell(r) {
-    if (!r.grow_since) {
-        return '<span style="color:#6b7280" title="Зараз сила не росте — таймер обнулено. Він стартує наново на першому ж такті росту.">—</span>';
-    }
-    return `<span class="ff-timer" data-since="${Math.floor(r.grow_since)}"`
-        + ` title="Скільки сила МММ росте БЕЗПЕРЕРВНО. Обнулиться, щойно ріст спиниться."`
-        + ` style="color:#4ade80;font-family:monospace">--:--:--</span>`;
 }
 // 💹 ЦІНА + КУДИ ВОНА ЙДЕ (вимога 15.09: «щоб було розуміння чи ціна росте чи
 // падає»). Стрілки й кольори — ті самі, що в колонці Price у 💰 Funding
@@ -12238,8 +12203,6 @@ const _MM_CELL = {
     new:    r => `<td>${ffFuelCell(r.new_mm || null, r.new_strength == null ? null : Number(r.new_strength))}</td>`,
     liq:    r => `<td>${ffFuelCell(r.liq_mm || null, r.liq_strength == null ? null : Number(r.liq_strength))}</td>`,
     state:  r => `<td>${_mmStateCell(r)}</td>`,
-    delta:  r => `<td>${_mmGrowCell(r)}</td>`,
-    grow:   r => `<td>${_mmTimerCell(r)}</td>`,
     runway: r => `<td style="text-align:right">${_mmRunwayCell(r)}</td>`,
     price:  r => `<td style="text-align:right">${_mmPriceCell(r)}</td>`,
     pchg:   r => `<td style="text-align:right">${_mmMoveCell(r)}</td>`,
@@ -12289,8 +12252,7 @@ function _mmLoadUi(B) {
     if (!v || typeof v !== 'object') return;
     if (['all', 'LONG', 'SHORT', 'flat'].includes(v.dir)) B.dir = v.dir;
     // Сортування за колонкою, якої в ЦІЙ таблиці немає, не відновлюємо.
-    const _ok = { newstr: 'new', liqstr: 'liq', runway: 'runway',
-                  delta: 'delta', grow: 'grow', price: 'price' };
+    const _ok = { newstr: 'new', liqstr: 'liq', runway: 'runway', price: 'price' };
     if (v.sortCol && (!_ok[v.sortCol] || B.cols.includes(_ok[v.sortCol]))) {
         B.sort = { col: v.sortCol, dir: (v.sortDir < 0 ? -1 : 1) };
     }
@@ -12402,17 +12364,17 @@ function mmRender(bk) {
     // таблиці Черги-4 — інакше рядки «стрибають» під курсором).
     // ⚠️ `enabled` і ПРИЧИНА порожньої таблиці — ЧАСТИНА сигнатури: інакше
     // перемикання тумблера при порожній таблиці нічого б не перемалювало.
-    // ⚠️ `grow_since`/`state_since` — МОМЕНТИ (змінюються рідко). Самі СЕКУНДИ
+    // ⚠️ `state_since` — МОМЕНТ (змінюється рідко). Самі СЕКУНДИ
     // в неї НЕ входять: їх малює глобальний 1с-тікер (урок `held_sec`).
     const sig = B.dir + '|' + (B.meta.enabled ? '1' : '0')
         + '|' + ((B.meta.pending || {}).reason || '')
         + '|' + B.sort.col + B.sort.dir + '|'
-        + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev, r.delta,
+        + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev,
         r.new_mm || '', r.new_strength, r.liq_mm || '', r.liq_strength,
         r.trade_side || '',
         (r.runway ? (r.runway.dir || '') + r.runway.room_pct : ''),
         (r.in_trade ? 'T' : '') + ((r.queues || []).join('')),
-        r.grow_since || 0, r.state_since || 0, r.delta_span, r.price, r.price_dir || '', r.price_chg,
+        r.state_since || 0, r.price, r.price_dir || '', r.price_chg,
         (r.f1 ? r.f1.side : ''), (r.f4 ? r.f4.side : ''),
         B.sel.has(r.symbol) ? 1 : 0].join(':')).join(',');
     if (tb.dataset.sig !== sig) {
