@@ -54,20 +54,25 @@ def entry_level_ok(level, live, max_dev_pct: float = ENTRY_LEVEL_MAX_DEV_PCT) ->
     return abs(level / live - 1.0) * 100.0 <= max_dev_pct
 
 
-def mm_gate_decide(view, side, need_banner: bool = False):
-    """🆕 ЧИСТЕ правило воріт «🧮 Через МММ-NEW» (вимога 01.10, замінило
-    «через МММ-монітор» 29.09).
+_MM_GATE_TAG = {'new': ('🆕МММ-new', '🆕 МММ-NEW'),
+                'old': ('🧮МММ-монітор', '🧮 МММ-МОНІТОР')}
 
-    `view` — `FuelFilterDaemon.mm_gate_view(symbol)` (блок МММ-new).
+
+def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new'):
+    """🧮 ЧИСТЕ правило воріт «Через МММ-NEW» / «Через МММ-МОНІТОР».
+
+    `view` — `FuelFilterDaemon.mm_gate_view(symbol, book)`; `book` = 'new'
+    (🆕 МММ-NEW, Новий МММ) | 'old' (🧮 МММ-монітор, МММ LiQ). Правило одне.
     → `(applies, ok, chip, reason)`:
-      • `applies=False` — блок МММ-new вимкнено / недоступний: умова не діє;
+      • `applies=False` — блок вимкнено / недоступний: умова не діє;
       • інакше сигнал проходить, лише коли монета стоїть у «Списку монет»
-        МММ-new у вкладці ТОГО Ж напрямку, що й сигнал (LONG → вкладка LONG);
-      • `need_banner=True` (тумблер `mm_gate_banner`, деф. ВИМК) — ще й банер
-        МММ-new мусить мати напрямок і збігатися з боком сигналу.
+        блоку у вкладці ТОГО Ж напрямку, що й сигнал (LONG → вкладка LONG);
+      • `need_banner=True` («за банером …», деф. ВИМК) — ще й банер блоку
+        мусить мати напрямок і збігатися з боком сигналу.
     ⚠️ Монети немає в знімку → НЕ проходить: «невідомо» ≠ «за напрямком».
     """
     side = str(side or '').upper()
+    tag, name = _MM_GATE_TAG.get(book, _MM_GATE_TAG['new'])
     v = view if isinstance(view, dict) else {}
     if not v or not v.get('on'):
         return False, True, '', ''
@@ -77,30 +82,32 @@ def mm_gate_decide(view, side, need_banner: bool = False):
     bn = f' · банер {b or "⚖"}' if need_banner else ''
     if need_banner:
         if b not in ('LONG', 'SHORT'):
-            return (True, False, '🆕МММ-new[банер ⚖]:✗',
-                    '🆕 МММ-NEW: банер без напрямку (⚖) — сигнал не пропускаємо')
+            return (True, False, f'{tag}[банер ⚖]:✗',
+                    f'{name}: банер без напрямку (⚖) — сигнал не пропускаємо')
         if b != side:
-            return (True, False, f'🆕МММ-new[банер {b}]:✗',
-                    f'🆕 МММ-NEW: банер {b}, а сигнал {side}')
+            return (True, False, f'{tag}[банер {b}]:✗',
+                    f'{name}: банер {b}, а сигнал {side}')
     if c is None:
-        return (True, False, f'🆕МММ-new[монети немає в списку{bn}]:✗',
-                '🆕 МММ-NEW: монети немає у «Списку монет» (Новий МММ ще невідомий)')
+        return (True, False, f'{tag}[монети немає в списку{bn}]:✗',
+                f'{name}: монети немає у «Списку монет» (МММ ще невідомий)')
     if c != side:
-        return (True, False, f'🆕МММ-new[вкладка {ua.get(c, c)}{bn}]:✗',
-                f'🆕 МММ-NEW: монета у вкладці «{ua.get(c, c)}», а сигнал {side}')
-    return True, True, f'🆕МММ-new[вкладка {c}{bn}]:✓', ''
+        return (True, False, f'{tag}[вкладка {ua.get(c, c)}{bn}]:✗',
+                f'{name}: монета у вкладці «{ua.get(c, c)}», а сигнал {side}')
+    return True, True, f'{tag}[вкладка {c}{bn}]:✓', ''
 
 
-def mm_gate_applies(settings, origin: str = '') -> bool:
-    """Чи діє 🧮 МММ-умова для сигналу з цим походженням (ЧИСТА). Загальний
-    тумблер `mm_gate_enabled`; для 🆕 Новий OB (`origin='ob_alert'`) — ще й
-    власний `ob_alert_mm_gate` (деф. ВИМК, вимога 30.09)."""
+# 🧮 ЗАГАЛЬНІ МММ-ВОРОТА (вимога 09.10) — для ВСІХ сигналів, усі деф. ВИМК.
+# (ключ тумблера, ключ «за банером», книга)
+MM_GATES = (('mm_gate_enabled', 'mm_gate_banner', 'new'),
+            ('mmo_gate_enabled', 'mmo_gate_banner', 'old'))
+
+
+def mm_gates_active(settings):
+    """Які МММ-ворота увімкнено → `[(book, need_banner)]` (ЧИСТА). Діють на
+    ВСІ сигнали однаково — окремого винятку для 🆕 Новий OB більше немає."""
     settings = settings or {}
-    if not settings.get('mm_gate_enabled', True):
-        return False
-    if str(origin or '') == 'ob_alert':
-        return bool(settings.get('ob_alert_mm_gate', False))
-    return True
+    return [(book, bool(settings.get(bk, False)))
+            for ek, bk, book in MM_GATES if settings.get(ek, False)]
 
 
 def liq_gate_decide(on, row, side):
@@ -144,14 +151,19 @@ def _liq_gate_row(symbol):
         return False, None
 
 
-def _mm_gate_view(symbol):
-    """Читання блоку МММ-new для воріт; немає FF / збій → `{}` (умова не діє)."""
+def _mm_gate_view(symbol, book: str = 'new'):
+    """Читання блоку МММ для воріт; немає FF / збій → `{}` (умова не діє)."""
     try:
         from detection.fuel_filter import get_fuel_filter
         ff = get_fuel_filter()
         if ff is None or not hasattr(ff, 'mm_gate_view'):
             return {}
-        return ff.mm_gate_view(symbol) or {}
+        if book == 'new':
+            return ff.mm_gate_view(symbol) or {}
+        try:
+            return ff.mm_gate_view(symbol, book=book) or {}
+        except TypeError:
+            return {}               # старіший fuel_filter — умова не діє
     except Exception:
         return {}
 
@@ -342,15 +354,15 @@ DEFAULT_SETTINGS = {
     # окремий фільтр. На малюнок блоку, SL і такт `vob_one_per_ob` НЕ впливає.
     'ob_filter_choch_only': True,
 
-    # === 🧮 СИГНАЛИ ЧЕРЕЗ МММ-МОНІТОР (вимога 29.09) =========================
-    # «Сигнал пропускаємо, якщо він відповідає напрямку МММ-монітор і є у
-    # відповідній МММ-монітор таблиці за напрямком». Діє, ЛИШЕ коли сам
-    # монітор увімкнено; цей тумблер — щоб умову можна було зняти окремо.
-    'mm_gate_enabled': True,
-    # 🆕 «🧮 Через МММ-NEW» (вимога 01.10): ворота читають «Список монет»
-    # МММ-new (сигнал LONG → монета у вкладці LONG). Цей тумблер (деф. ВИМК)
-    # додає ще й вимогу «лише за напрямком банера МММ-new».
+    # === 🧮 ЗАГАЛЬНІ МММ-ВОРОТА для ВСІХ сигналів (вимога 09.10) ============
+    # «Через МММ-NEW» / «Через МММ-МОНІТОР»: сигнал LONG → монета у вкладці
+    # LONG «Списку монет» відповідного блоку. «за банером …» додає вимогу,
+    # щоб і банер блоку мав той самий напрямок. Усі чотири — деф. ВИМК.
+    # Діють, лише коли сам блок увімкнено (fail-open).
+    'mm_gate_enabled': False,
     'mm_gate_banner': False,
+    'mmo_gate_enabled': False,
+    'mmo_gate_banner': False,
     # 💧 «Через Сканер ліквідності» (вимога 01.10) — ОКРЕМА перевірка: сигнал
     # лише по монеті з таблиці 💧 Сканера, зібраній у той самий бік. Деф. ВИМК.
     'liq_gate_enabled': False,
@@ -389,9 +401,6 @@ DEFAULT_SETTINGS = {
     # 📐 Які блоки вважаються «🆕 Новим OB» (вимога 30.09): 'both' — CHoCH і
     # BOS (стара поведінка), 'choch' — лише CHoCH-блоки (розворот).
     'ob_alert_tags': 'both',
-    # 🧮 Чи проганяти 🆕 Новий OB через МММ-NEW (`mm_gate_enabled`).
-    # Дефолт OFF (вимога 30.09) — для інших сигналів МММ-умова лишається.
-    'ob_alert_mm_gate': False,
     # Вікно свіжості в секундах, 0 = АВТО = один бар `ob_filter_timeframe`.
     # Старший за вікно блок «щойно» не зʼявився → беремо за базу молча.
     'ob_alert_max_lag_sec': 0,
@@ -1573,12 +1582,13 @@ class SMCScanner:
                        'ob_filter_choch_only',
                        # 🧮 сигнали через МММ-монітор
                        'mm_gate_enabled', 'mm_gate_banner',
+                       'mmo_gate_enabled', 'mmo_gate_banner',
                        'liq_gate_enabled',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
                        'ob_alert_signal', 'ob_alert_max_lag_sec',
-                       'ob_alert_tags', 'ob_alert_mm_gate',
+                       'ob_alert_tags',
                        # 💧 Фільтр ліквідності за напрямком
                        'liq_filter_enabled', 'liq_filter_exchange',
                        'liq_filter_bars', 'liq_filter_min_pct',
@@ -1720,10 +1730,9 @@ class SMCScanner:
             # «Лише з CHoCH» — булевий тумблер, дефолт УВІМК.
             self._settings['ob_filter_choch_only'] = bool(
                 self._settings.get('ob_filter_choch_only', True))
-            self._settings['mm_gate_enabled'] = bool(
-                self._settings.get('mm_gate_enabled', True))
-            self._settings['mm_gate_banner'] = bool(
-                self._settings.get('mm_gate_banner', False))
+            for _gk in ('mm_gate_enabled', 'mm_gate_banner',
+                        'mmo_gate_enabled', 'mmo_gate_banner'):
+                self._settings[_gk] = bool(self._settings.get(_gk, False))
             self._settings['liq_gate_enabled'] = bool(
                 self._settings.get('liq_gate_enabled', False))
 
@@ -1749,8 +1758,6 @@ class SMCScanner:
             self._settings['ob_alert_max_lag_sec'] = max(0.0, _aml)
             self._settings['ob_alert_tags'] = _oba_mod().tag_mode_of(
                 self._settings.get('ob_alert_tags', 'both'))
-            self._settings['ob_alert_mm_gate'] = bool(
-                self._settings.get('ob_alert_mm_gate', False))
 
             # === 💧 Фільтр ліквідності: валідація ===
             self._settings['liq_filter_enabled'] = bool(
@@ -4679,9 +4686,6 @@ class SMCScanner:
         # event_dir = 'bull' | 'bear'; bias = 'bull' | 'bear'
         return bias == event_dir
     
-    def _mm_gate_applies(self, origin: str = '') -> bool:
-        return mm_gate_applies(self._settings, origin)
-
     def _signal_allowed(self, symbol: str, side_label: str, at_intake: bool = False,
                         skip_liq: bool = False, origin: str = ''):
         """SPILNI VOROTA для БУДЬ-ЯКОГО входу сигналу (CHoCH/BOS ТА Volumized OB).
@@ -4733,19 +4737,15 @@ class SMCScanner:
                 # вимкненому напрямку їхній результат нікому не потрібен.
                 return (False, _dg.reason(_dg_s, side_label), ' · '.join(parts))
 
-        # 🆕 «🧮 ЧЕРЕЗ МММ-NEW» (вимога 01.10, замінило МММ-монітор 29.09):
-        # сигнал лише по монеті з вкладки ТОГО Ж напрямку «Списку монет»
-        # МММ-new (+ бік банера МММ-new, якщо `mm_gate_banner`). Одразу після головних
-        # кнопок — це теж напрямкова умова, і читає вона лише памʼять двигуна
-        # (жодного запиту до БД/біржі), тож решту фільтрів після відмови не
-        # рахуємо. Діє лише при увімкненому блоці МММ-new і тумблері `mm_gate_enabled`.
-        # ⚠️ 🆕 Новий OB має ВЛАСНИЙ тумблер (`ob_alert_mm_gate`, деф. ВИМК):
-        # `origin='ob_alert'` + вимкнений тумблер → МММ-умову для нього не
-        # застосовуємо (і на інтейку, і в 🔁 recheck Черги-4 — `origin=kind`).
-        if mm_gate_applies(self._settings, origin):
+        # 🧮 ЗАГАЛЬНІ МММ-ВОРОТА (вимога 09.10): «Через МММ-NEW» і «Через
+        # МММ-МОНІТОР» (+ «за банером …») — для ВСІХ сигналів однаково, усі
+        # деф. ВИМК. Сигнал лише по монеті з вкладки ТОГО Ж напрямку «Списку
+        # монет» блоку. Одразу після головних кнопок — напрямкова умова, що
+        # читає лише памʼять двигуна, тож після відмови решту не рахуємо.
+        # Вимкнений блок → умова не діє (fail-open).
+        for _book, _need_b in mm_gates_active(self._settings):
             _app, _mok, _mchip, _mwhy = mm_gate_decide(
-                _mm_gate_view(symbol), side_label,
-                bool(self._settings.get('mm_gate_banner', False)))
+                _mm_gate_view(symbol, _book), side_label, _need_b, _book)
             if _app:
                 parts.append(_mchip)
                 if not _mok:

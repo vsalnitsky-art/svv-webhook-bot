@@ -139,15 +139,15 @@ def _ns(gate=True):
 def test_gate_blocks_signal_in_shared_gate():
     old = sc._mm_gate_view
     try:
-        sc._mm_gate_view = lambda sym: _v(d='SHORT', coin='SHORT')
+        sc._mm_gate_view = lambda sym, book='new': _v(d='SHORT', coin='SHORT')
         ok, why, detail = S._signal_allowed(_ns(), 'AAAUSDT', 'LONG')
         _check(ok is False and 'вкладці' in why and '🆕МММ-new' in detail,
                (ok, why, detail))
-        sc._mm_gate_view = lambda sym: _v(d='SHORT', coin='LONG')
+        sc._mm_gate_view = lambda sym, book='new': _v(d='SHORT', coin='LONG')
         ns = _ns(); ns._settings['mm_gate_banner'] = True
         ok, why, _ = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
         _check(ok is False and 'банер SHORT' in why, why)
-        sc._mm_gate_view = lambda sym: _v(coin='FLAT')
+        sc._mm_gate_view = lambda sym, book='new': _v(coin='FLAT')
         ok, why, _ = S._signal_allowed(_ns(), 'AAAUSDT', 'LONG')
         _check(ok is False and 'Рівновага' in why, why)
     finally:
@@ -159,7 +159,7 @@ def test_toggle_off_skips_the_gate():
     old = sc._mm_gate_view
     called = []
     try:
-        sc._mm_gate_view = lambda sym: called.append(sym) or _v(d='SHORT')
+        sc._mm_gate_view = lambda sym, book='new': called.append(sym) or _v(d='SHORT')
         try:
             S._signal_allowed(_ns(False), 'AAAUSDT', 'LONG')
         except Exception:
@@ -180,17 +180,70 @@ def test_gate_sits_right_after_direction_buttons_before_other_filters():
 
 
 def test_setting_default_whitelist_and_ui():
-    _check(sc.DEFAULT_SETTINGS.get('mm_gate_enabled') is True, 'дефолт УВІМК')
-    _check(sc.DEFAULT_SETTINGS.get('mm_gate_banner') is False, 'банер — дефолт ВИМК')
-    _check("'mm_gate_enabled', 'mm_gate_banner'," in _SC_SRC, 'у білому списку')
-    _check('id="sm-mm-gate-banner"' in _HTML and 'mm_gate_banner: banner' in _HTML
-           and '!!s.mm_gate_banner' in _HTML, 'тумблер банера в UI')
-    _check('🧮 Через МММ-NEW' in _HTML and '🧮 Через МММ-монітор' not in _HTML,
-           'підпис перейменовано')
-    _check('id="sm-mm-gate"' in _HTML and 'mm_gate_enabled: enabled' in _HTML,
-           'чекбокс у рядку ALERTS шле налаштування')
-    _check("s.mm_gate_enabled !== false" in _HTML, 'стан підтягується при завантаженні')
-    print('✓ тумблер: дефолт УВІМК, білий список, UI')
+    """09.10: «загальні ворота … для всіх сигналів (за замовченням вимкнені)»."""
+    for k in ('mm_gate_enabled', 'mm_gate_banner', 'mmo_gate_enabled', 'mmo_gate_banner'):
+        _check(sc.DEFAULT_SETTINGS.get(k) is False, f'{k}: дефолт ВИМК')
+    _check("'mmo_gate_enabled', 'mmo_gate_banner'," in _SC_SRC
+           and "'mm_gate_enabled', 'mm_gate_banner'," in _SC_SRC, 'у білому списку')
+    for cid in ('sm-mm-gate', 'sm-mm-gate-banner', 'sm-mmo-gate', 'sm-mmo-gate-banner'):
+        _check(f'id="{cid}"' in _HTML, cid)
+    _check('Через МММ-NEW' in _HTML and 'Через МММ-МОНІТОР' in _HTML
+           and 'за банером МММ-МОНІТОР' in _HTML, 'підписи')
+    _check("['sm-mmo-gate', 'sm-mmo-gate-banner', 'mmo_gate_enabled', 'mmo_gate_banner']" in _HTML,
+           'updateMmGate шле обидві пари')
+    _check('id="sm-mm-gate" checked' not in _HTML, 'чекбокс не увімкнений за замовчуванням')
+    print('✓ чотири тумблери: дефолт ВИМК, білий список, UI')
+
+
+# ── 3а. 🧮 ВОРОТА «ЧЕРЕЗ МММ-МОНІТОР» (вимога 09.10) ────────────────────────
+def test_view_old_book_reads_the_monitor_snapshot():
+    f = _ff({'dir': 'LONG'}, {'AAAUSDT': {'status': 'LONG'}})
+    v = f.mm_gate_view('AAAUSDT', book='old')
+    _check(v == {'on': True, 'dir': 'SHORT', 'coin': 'SHORT'}, v)
+    f._mm_mon_on = False
+    _check(f.mm_gate_view('AAAUSDT', book='old')['on'] is False,
+           'вимкнений монітор → ворота не діють')
+    print('✓ mm_gate_view(book=old) читає знімок і банер 🧮 МММ-монітора')
+
+
+def test_old_book_gate_uses_its_own_labels():
+    app, ok, chip, why = sc.mm_gate_decide(_v(coin='SHORT'), 'LONG', False, 'old')
+    _check(app and not ok and '🧮МММ-монітор' in chip and 'МММ-МОНІТОР' in why, (chip, why))
+    app, ok, chip, _ = sc.mm_gate_decide(_v(d='SHORT'), 'LONG', True, 'old')
+    _check(not ok and 'банер SHORT' in chip, chip)
+    print('✓ ворота МММ-монітора — те саме правило, свої підписи')
+
+
+def test_both_gates_apply_independently():
+    seen = []
+    old = sc._mm_gate_view
+    try:
+        def fake(sym, book='new'):
+            seen.append(book)
+            return _v(coin='LONG') if book == 'new' else _v(coin='SHORT')
+        sc._mm_gate_view = fake
+        ns = _ns(False); ns._settings['mmo_gate_enabled'] = True
+        ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
+        _check(ok is False and 'МММ-МОНІТОР' in why and seen == ['old'], (why, seen))
+        seen.clear(); ns._settings['mm_gate_enabled'] = True
+        ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
+        _check(ok is False and seen == ['new', 'old'] and '🆕МММ-new[вкладка LONG]:✓' in detail,
+               (seen, detail))
+    finally:
+        sc._mm_gate_view = old
+    print('✓ увімкнені обидві пари — сигнал мусить пройти обидві')
+
+
+def test_gates_apply_to_every_origin_including_new_ob():
+    """«для всіх сигналів»: окремого винятку для 🆕 Новий OB більше немає."""
+    _check(sc.mm_gates_active({'mm_gate_enabled': True}) == [('new', False)], 'new')
+    _check(sc.mm_gates_active({'mmo_gate_enabled': True, 'mmo_gate_banner': True})
+           == [('old', True)], 'old')
+    _check(sc.mm_gates_active({}) == [], 'усі вимкнені за замовчуванням')
+    _check('ob_alert_mm_gate' not in _SC_SRC and 'mm_gate_applies' not in _SC_SRC,
+           'виняток для Нового OB прибрано')
+    _check('sm-ob-alert-mm' not in _HTML, 'чекбокс у групі Нового OB прибрано')
+    print('✓ ворота діють на всі сигнали, включно з 🆕 Новим OB')
 
 
 # ── 3б. 💧 ОКРЕМА ПЕРЕВІРКА СКАНЕРОМ ЛІКВІДНОСТІ (вимога 01.10) ─────────────
@@ -212,8 +265,8 @@ def test_liq_gate_is_separate_and_off_by_default():
     old_r, old_m = sc._liq_gate_row, sc._mm_gate_view
     calls = []
     try:
-        sc._mm_gate_view = lambda sym: {}            # МММ-NEW не діє
-        sc._liq_gate_row = lambda sym: calls.append(sym) or (True, None)
+        sc._mm_gate_view = lambda sym, book='new': {}            # МММ-NEW не діє
+        sc._liq_gate_row = lambda sym, book='new': calls.append(sym) or (True, None)
         ns = _ns(); ns._settings['liq_gate_enabled'] = True
         ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
         _check(ok is False and '💧 Сканер' in why and '💧Сканер' in detail, why)

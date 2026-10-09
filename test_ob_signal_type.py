@@ -475,7 +475,7 @@ def test_ui_has_its_own_signal_type_block():
     # ⚠️ Ріжемо по КІНЦЮ групи, а не фіксованою довжиною (нові підказки
     # виштовхували контроли за межу зрізу).
     blk = _HTML[i:_HTML.index('</details>', i)]
-    _check(blk.count('updateObAlert()') >= 7,
+    _check(blk.count('updateObAlert()') >= 6,
            'кожен контрол мусить зберігати налаштування')
     # Блок мусить стояти в ряду ТИПІВ СИГНАЛІВ, поряд із 🟪 Volumized OB
     _check(_HTML.index('id="sm-vob-alert"') < i, 'блок не в ряду типів сигналів')
@@ -555,18 +555,6 @@ def test_signal_goes_to_gate_with_ob_alert_origin():
     print("✓ сигнал 🆕 Новий OB іде у ворота з origin='ob_alert'")
 
 
-def test_mm_gate_toggle_for_ob_alert():
-    ns = types.SimpleNamespace(_settings={'mm_gate_enabled': True})
-    f = S._mm_gate_applies.__get__(ns)
-    _check(f('') is True and f('choch') is True, 'решта сигналів — МММ діє')
-    _check(f('ob_alert') is False, 'Новий OB — дефолт ВИМК')
-    ns._settings['ob_alert_mm_gate'] = True
-    _check(f('ob_alert') is True, 'увімкнено — діє')
-    ns._settings['mm_gate_enabled'] = False
-    _check(f('ob_alert') is False and f('') is False, 'загальний тумблер сильніший')
-    print('✓ ob_alert_mm_gate: МММ-умова для 🆕 Нового OB за власним тумблером')
-
-
 def test_q4_recheck_passes_record_kind_as_origin():
     ff_src = open(os.path.join(_HERE, 'detection', 'fuel_filter.py'), encoding='utf-8').read()
     _check("origin=kind" in ff_src and "kind=str(info.get('kind') or '')" in ff_src,
@@ -576,9 +564,9 @@ def test_q4_recheck_passes_record_kind_as_origin():
 
 def test_new_keys_defaults_and_ui():
     _check(_m.DEFAULT_SETTINGS.get('ob_alert_tags') == 'both', 'дефолт both')
-    _check(_m.DEFAULT_SETTINGS.get('ob_alert_mm_gate') is False, 'дефолт ВИМК')
-    for k in ('sm-ob-alert-tags', 'sm-ob-alert-mm', 'ob_alert_tags:',
-              'ob_alert_mm_gate:', 's.ob_alert_tags', 's.ob_alert_mm_gate'):
+    # 09.10: власний 🧮-тумблер Нового OB прибрано — діють ЗАГАЛЬНІ МММ-ворота.
+    _check('ob_alert_mm_gate' not in _m.DEFAULT_SETTINGS, 'ob_alert_mm_gate прибрано')
+    for k in ('sm-ob-alert-tags', 'ob_alert_tags:', 's.ob_alert_tags'):
         _check(k in _HTML, k)
     print('✓ нові ключі + контроли в групі 🆕 Новий OB')
 

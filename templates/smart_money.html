@@ -2232,14 +2232,26 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-ob-choch-only" checked onchange="updateObChochOnly()">
                         📐 1H OB лише з CHoCH
                     </label>
-                    <label class="sm-checkbox" title="🧮 Сигнали через МММ-NEW. Коли УВІМК і блок 🆕 МММ-new увімкнено, КОЖЕН сигнал сканера (CHoCH / CHoCH+BOS, 🟪 Volumized OB, 🆕 Новий OB, 💧 VOB зі Сканера) перевіряється у «Списку монет» МММ-new: сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG, SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Ті самі ворота діють і на 🔁 повторній перевірці Черги-4 перед відкриттям. Вимкнений блок МММ-new → умова не діє. ✋ Ручний сигнал її не проходить (рішення людини).">
-                        <input type="checkbox" id="sm-mm-gate" checked onchange="updateMmGate()">
-                        🧮 Через МММ-NEW
+                    <!-- 🧮 ЗАГАЛЬНІ МММ-ВОРОТА для ВСІХ сигналів (вимога 09.10, усі деф. ВИМК) -->
+                    <span id="sm-mmgates" style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:10px;
+                                padding:3px 8px;border:1px solid #2b3444;border-radius:6px">
+                    <label class="sm-checkbox" title="🆕 Ворота «Через МММ-NEW»: сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку 🆕 МММ-NEW, SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Діє на ВСІ сигнали сканера (CHoCH / CHoCH+BOS, 🟪 Volumized OB, 🆕 Новий OB, 💧 VOB зі Сканера) і на 🔁 повторній перевірці Черги-4 перед відкриттям. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить (рішення людини). ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mm-gate" onchange="updateMmGate()">
+                        🆕 Через МММ-NEW
                     </label>
-                    <label class="sm-checkbox" title="🆕 Додатково до «🧮 Через МММ-NEW»: пропускати сигнали ЛИШЕ за напрямком банера МММ-new (банер ⚖ або протилежний → сигнал відхиляється, причина — у 🧾 Лозі). Діє лише разом із «🧮 Через МММ-NEW». ВИМК (дефолт) — банер не перевіряється, лише вкладка монети.">
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-NEW»: банер МММ-NEW мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-NEW». ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-banner" onchange="updateMmGate()">
                         за банером МММ-NEW
                     </label>
+                    <label class="sm-checkbox" title="🧮 Ворота «Через МММ-МОНІТОР»: сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку 🧮 МММ-монітор (МММ LiQ), SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Незалежні від воріт МММ-NEW (увімкнені обидва — сигнал має пройти обидва). Діє на ВСІ сигнали сканера (CHoCH / CHoCH+BOS, 🟪 Volumized OB, 🆕 Новий OB, 💧 VOB зі Сканера) і на 🔁 повторній перевірці Черги-4 перед відкриттям. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить (рішення людини). ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mmo-gate" onchange="updateMmGate()">
+                        🧮 Через МММ-МОНІТОР
+                    </label>
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-МОНІТОР»: банер МММ-монітора мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-МОНІТОР». ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mmo-gate-banner" onchange="updateMmGate()">
+                        за банером МММ-МОНІТОР
+                    </label>
+                    </span>
                     <label class="sm-checkbox" title="💧 Окрема перевірка сигналів Сканером ліквідності. Коли УВІМК і сам 💧 Сканер увімкнено, КОЖЕН сигнал сканера проходить, лише якщо монета є в таблиці Сканера ліквідності і таблицю зібрано в той самий бік, що й сигнал. Монети немає в таблиці або таблиця під протилежний бік → сигнал не пропускаємо (причина — у 🧾 Лозі). Діє і на 🔁 повторній перевірці Черги-4. Незалежна від «🧮 Через МММ-NEW». Вимкнений 💧 Сканер → умова не діє. ВИМК (дефолт).">
                         <input type="checkbox" id="sm-liq-gate" onchange="updateLiqGate()">
                         💧 Через Сканер ліквідності
@@ -2285,10 +2297,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="checkbox" id="sm-ob-alert-signal" onchange="updateObAlert()">
                             📨 Відправляти в торгівлю
                         </label>
-                        <label class="sm-checkbox" title="🧮 Проганяти сигнали 🆕 Новий OB через МММ-NEW: пропускаємо лише монету з вкладки того ж напрямку «Списку монет» МММ-new (та сама умова, що «🧮 Через МММ-NEW» у рядку ALERTS, разом із її тумблером «за банером»; діє, лише коли той загальний тумблер увімкнено). ВИМК (дефолт) — для 🆕 Нового OB МММ-умова не застосовується (ні на вході, ні в 🔁 повторній перевірці Черги-4); для решти сигналів вона лишається.">
-                            <input type="checkbox" id="sm-ob-alert-mm" onchange="updateObAlert()">
-                            🧮 Через МММ-NEW
-                        </label>
+                        
                     </div>
                 </div>
             </div>
@@ -2621,6 +2630,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label class="mmc-chk" title="Надсилати в групу (тема 🧮 МММ-монітор) повідомлення про ЗМІНУ СТАТУСУ банера: 🟢 LONG / 🔴 SHORT / ⏸ рівновага, з важелем і розкладом монет. Шлеться лише ПІДТВЕРДЖЕНИЙ статус (кандидат ⏳ — ще відлік), а перший стан після рестарту бота — мовчки, щоб botupdate не виглядав як подія.">
                         <input type="checkbox" id="ff-mm-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
                         ⚖️ Зміна статусу банера
+                    </label>
+                    <label class="mmc-chk" title="🆕 Те саме для банера 🆕 МММ-NEW (вимога 09.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера МММ-NEW (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем і розкладом монет. Перший стан після рестарту — мовчки. Власний тумблер, незалежний від банера 🧮.">
+                        <input type="checkbox" id="ff-mmn-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
+                        🆕 Зміна статусу банера МММ-NEW
                     </label>
                     <div style="flex-basis:100%;font-size:0.68rem;line-height:1.4;color:#8b93a7">
                         ₿ <b>BTCUSDT (старт / стоп сеансу)</b> іде в ЦЮ САМУ тему — його
@@ -6702,12 +6715,15 @@ async function loadSettings() {
             if (vobOne) vobOne.checked = !!s.vob_one_per_ob;             // default OFF
             const obChoch = document.getElementById('sm-ob-choch-only');
             if (obChoch) obChoch.checked = s.ob_filter_choch_only !== false;  // default ON
-            const mmGate = document.getElementById('sm-mm-gate');
-            if (mmGate) mmGate.checked = s.mm_gate_enabled !== false;  // default ON
+            // 🧮 Загальні МММ-ворота (вимога 09.10) — усі чотири деф. ВИМК.
+            [['sm-mm-gate', 'mm_gate_enabled'], ['sm-mm-gate-banner', 'mm_gate_banner'],
+             ['sm-mmo-gate', 'mmo_gate_enabled'], ['sm-mmo-gate-banner', 'mmo_gate_banner']]
+                .forEach(([id, k]) => {
+                    const el = document.getElementById(id);
+                    if (el) el.checked = !!s[k];
+                });
             const liqGate = document.getElementById('sm-liq-gate');
             if (liqGate) liqGate.checked = !!s.liq_gate_enabled;        // default OFF
-            const mmGateB = document.getElementById('sm-mm-gate-banner');
-            if (mmGateB) mmGateB.checked = !!s.mm_gate_banner;          // default OFF
             _smMmGateSync();
             // 🆕 Новий OB — окремий тип сигналу (master ON · збіг ON · дедуп ON ·
             // у торгівлю OFF).
@@ -6723,8 +6739,6 @@ async function loadSettings() {
             if (oaSig) oaSig.checked = !!s.ob_alert_signal;               // default OFF
             const oaTags = document.getElementById('sm-ob-alert-tags');
             if (oaTags) oaTags.value = s.ob_alert_tags === 'choch' ? 'choch' : 'both';
-            const oaMm = document.getElementById('sm-ob-alert-mm');
-            if (oaMm) oaMm.checked = !!s.ob_alert_mm_gate;                // default OFF
             _smObAlertSync();
             const recEl = document.getElementById('sm-recency');
             if (recEl) recEl.value = String(s.recency_minutes != null ? s.recency_minutes : 0);
@@ -6886,11 +6900,13 @@ function updateSettingsSummary() {
         const obCh = document.getElementById('sm-ob-choch-only');
         if (obCh && obCh.checked) summary += ' (лише CHoCH)';
     }
-    const mmG = document.getElementById('sm-mm-gate');
-    if (mmG && mmG.checked) {
-        const _mmB = document.getElementById('sm-mm-gate-banner');
-        summary += ' · 🧮 МММ-NEW' + (_mmB && _mmB.checked ? ' +банер' : '');
-    }
+    [['sm-mm-gate', 'sm-mm-gate-banner', '🆕 МММ-NEW'],
+     ['sm-mmo-gate', 'sm-mmo-gate-banner', '🧮 МММ-МОН']].forEach(([g, b, t]) => {
+        const _g = document.getElementById(g);
+        if (!_g || !_g.checked) return;
+        const _b = document.getElementById(b);
+        summary += ' · ' + t + (_b && _b.checked ? ' +банер' : '');
+    });
     const lqG = document.getElementById('sm-liq-gate');
     if (lqG && lqG.checked) summary += ' · 💧 Сканер';
     // 🆕 Новий OB — тип сигналу: показуємо АКТИВНУ комбінацію TF (те саме, чим
@@ -6906,11 +6922,7 @@ function updateSettingsSummary() {
         summary += ` · 🆕 OB ${_combo}`;
         if (_oaTg && _oaTg.value === 'choch') summary += ' CHoCH';
         const _oaS = document.getElementById('sm-ob-alert-signal');
-        if (_oaS && _oaS.checked) {
-            summary += '📨';
-            const _oaM = document.getElementById('sm-ob-alert-mm');
-            if (_oaM && _oaM.checked) summary += '🧮';
-        }
+        if (_oaS && _oaS.checked) summary += '📨';
     }
     // 💧 Фільтр ліквідності помітно звужує потік — має бути видно в шапці.
     const lqOn = document.getElementById('sm-liq-filter-enabled');
@@ -6990,15 +7002,20 @@ async function updateVobOnePerOb() {
         updateSettingsSummary();
     } catch (err) { alert('VOB one-per-OB update error: ' + err); }
 }
-// 🧮 Сигнали через МММ-NEW: монета у вкладці «Списку монет» МММ-new того ж
-// напрямку (+ опційно бік банера МММ-new). Обидва тумблери шлемо РАЗОМ.
+// 🧮 ЗАГАЛЬНІ МММ-ВОРОТА (вимога 09.10): «Через МММ-NEW» / «Через
+// МММ-МОНІТОР» + «за банером …». Усі чотири тумблери шлемо РАЗОМ; «за
+// банером» гаситься, поки його головний тумблер вимкнено.
+const _SM_MM_GATES = [['sm-mm-gate', 'sm-mm-gate-banner', 'mm_gate_enabled', 'mm_gate_banner'],
+                      ['sm-mmo-gate', 'sm-mmo-gate-banner', 'mmo_gate_enabled', 'mmo_gate_banner']];
 function _smMmGateSync() {
-    const g = document.getElementById('sm-mm-gate');
-    const b = document.getElementById('sm-mm-gate-banner');
-    if (!g || !b) return;
-    b.disabled = !g.checked;
-    const lbl = b.closest ? b.closest('label') : null;
-    if (lbl && lbl.style) lbl.style.opacity = g.checked ? '' : '0.45';
+    _SM_MM_GATES.forEach(([gi, bi]) => {
+        const g = document.getElementById(gi);
+        const b = document.getElementById(bi);
+        if (!g || !b) return;
+        b.disabled = !g.checked;
+        const lbl = b.closest ? b.closest('label') : null;
+        if (lbl && lbl.style) lbl.style.opacity = g.checked ? '' : '0.45';
+    });
 }
 // 💧 Окрема перевірка сигналів Сканером ліквідності (деф. ВИМК).
 async function updateLiqGate() {
@@ -7013,14 +7030,18 @@ async function updateLiqGate() {
     } catch (err) { alert('Liq-gate update error: ' + err); }
 }
 async function updateMmGate() {
-    const enabled = document.getElementById('sm-mm-gate').checked;
-    const bEl = document.getElementById('sm-mm-gate-banner');
-    const banner = !!(bEl && bEl.checked);
+    const body = {};
+    _SM_MM_GATES.forEach(([gi, bi, gk, bk]) => {
+        const g = document.getElementById(gi);
+        const b = document.getElementById(bi);
+        body[gk] = !!(g && g.checked);
+        body[bk] = !!(b && b.checked);
+    });
     _smMmGateSync();
     try {
         const r = await fetch('/api/smc/settings', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({mm_gate_enabled: enabled, mm_gate_banner: banner}),
+            body: JSON.stringify(body),
         });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         updateSettingsSummary();
@@ -7049,7 +7070,6 @@ async function updateObAlert() {
     const dedup = document.getElementById('sm-ob-alert-dedup');
     const asSig = document.getElementById('sm-ob-alert-signal');
     const tags = document.getElementById('sm-ob-alert-tags');
-    const mmG = document.getElementById('sm-ob-alert-mm');
     _smObAlertSync();
     try {
         await fetch('/api/smc/settings', {
@@ -7061,7 +7081,6 @@ async function updateObAlert() {
                 ob_alert_dedup: !!(dedup && dedup.checked),
                 ob_alert_signal: !!(asSig && asSig.checked),
                 ob_alert_tags: (tags && tags.value === 'choch') ? 'choch' : 'both',
-                ob_alert_mm_gate: !!(mmG && mmG.checked),
             }),
         });
         updateSettingsSummary();
@@ -7077,19 +7096,12 @@ function _smObAlertSync() {
     const dedup = document.getElementById('sm-ob-alert-dedup');
     const asSig = document.getElementById('sm-ob-alert-signal');
     const tags = document.getElementById('sm-ob-alert-tags');
-    const mmG = document.getElementById('sm-ob-alert-mm');
     const master = !!(on && on.checked);
     [htfOn, dedup, asSig, tags].forEach(el => {
         if (!el) return;
         el.disabled = !master;
         if (el.parentElement) el.parentElement.style.opacity = master ? '1' : '0.45';
     });
-    // 🧮 МММ-ворота мають сенс лише коли сигнал іде в торгівлю.
-    if (mmG) {
-        const live = master && !!(asSig && asSig.checked);
-        mmG.disabled = !live;
-        if (mmG.parentElement) mmG.parentElement.style.opacity = live ? '1' : '0.45';
-    }
     if (htfTf) {
         const live = master && !!(htfOn && htfOn.checked);
         htfTf.disabled = !live;
@@ -12556,6 +12568,7 @@ function _mmTgSummary(s) {
     const on = [];
     const off = [];
     (s.mm_bias_tg === false ? off : on).push('⚖️ банер');
+    (s.mmn_bias_tg === false ? off : on).push('🆕 банер NEW');
     (s.start_signal_tg_alerts ? on : off).push('₿ сеанс');
     el.textContent = (on.length ? '📨 ' + on.join(' · ') : '📭 нічого не шлемо')
         + (off.length ? ' · ⛔ ' + off.join(' · ') : '');
@@ -13870,6 +13883,7 @@ function renderFuelFilter(d) {
     setIf('ff-mm-new-enabled', s.mm_new_enabled !== false);  // default true
     setIf('ff-mmn-bias-confirm', String(s.mmn_bias_confirm_sec != null ? s.mmn_bias_confirm_sec : 120));
     setIf('ff-mm-bias-tg', s.mm_bias_tg !== false);                 // default true
+    setIf('ff-mmn-bias-tg', s.mmn_bias_tg !== false);               // default true
     if (typeof _mmTgSummary === 'function') _mmTgSummary(s);
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
@@ -14917,6 +14931,7 @@ async function saveFuelFilterSettings() {
         mmn_str_min: _mmMinStr(_MMB.new),
         mmn_bias_confirm_sec: parseInt(_v('ff-mmn-bias-confirm', '120') || '0', 10),
         mm_bias_tg: _c('ff-mm-bias-tg'),
+        mmn_bias_tg: _c('ff-mmn-bias-tg'),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
