@@ -937,6 +937,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     vertical-align: middle;
 }
 
+/* 🏷 Позначка «останній OB 4H» у полі Side (колір = біас блоку). */
+.tm-ob4h { display:inline-block; margin-left:4px; padding:0 3px; border:1px solid; border-radius:4px; font-size:0.62rem; font-weight:700; font-family:monospace; line-height:1.3; vertical-align:middle; }
+
 /* Compact 📌 manual-mode mark to the LEFT of the symbol. Fixed width and ALWAYS
    present (empty when not manual) so the symbol column never shifts / jumps. */
 .tm-manual-mark {
@@ -4607,6 +4610,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="🧮 МММ LiQ по монеті — той самий показник, що в секції «🧮 МММ-монітор» і в шарі «МММ LiQ» Черги-4: напрямок тиску маркетмейкера (🟢 вгору / 🔴 вниз), сила 0–100% і стрілка тренду (сила росте / слабшає). Це ЧИТАННЯ знімка двигуна — на цю таблицю воно не додає жодного розрахунку. Порожньо («—») означає, що знімка по монеті ще немає.">🧮 МММ LiQ</th>
+                        <th title="🆕 МММ-NEW по монеті — той самий показник, що в секції «🆕 МММ-new» (новий МММ двигуна): напрямок, сила 0–100% і стрілка тренду. Це ЧИТАННЯ знімка двигуна — жодного розрахунку на цій таблиці. Коли блок МММ-new вимкнено, число береться з 🧮 знімка (там те саме значення з тих самих даних). «—» = знімка по монеті ще немає.">🆕 МММ-NEW</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
@@ -4618,7 +4622,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="15" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="16" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -4676,6 +4680,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="🧮 МММ LiQ по монеті — той самий показник, що в секції «🧮 МММ-монітор» і в шарі «МММ LiQ» Черги-4: напрямок тиску маркетмейкера (🟢 вгору / 🔴 вниз), сила 0–100% і стрілка тренду (сила росте / слабшає). Це ЧИТАННЯ знімка двигуна — на цю таблицю воно не додає жодного розрахунку. Порожньо («—») означає, що знімка по монеті ще немає.">🧮 МММ LiQ</th>
+                        <th title="🆕 МММ-NEW по монеті — той самий показник, що в секції «🆕 МММ-new» (новий МММ двигуна): напрямок, сила 0–100% і стрілка тренду. Це ЧИТАННЯ знімка двигуна — жодного розрахунку на цій таблиці. Коли блок МММ-new вимкнено, число береться з 🧮 знімка (там те саме значення з тих самих даних). «—» = знімка по монеті ще немає.">🆕 МММ-NEW</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
@@ -4686,7 +4691,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="15" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -15200,11 +15205,75 @@ const FUEL_TOOLTIP = "МММ — тиск маркетмейкера на цін
 // ⚠️ Дані приходять ГОТОВИМИ з `/api/tm/state` (`pos.old_mm` = зріз знімка
 // двигуна). Нічого не рахуємо і не довантажуємо.
 function oldMmCellHTML(p) {
-    const m = p && p.old_mm;
-    if (!m) {
-        return '<td><span style="color:#6b7280" title="Знімка МММ по цій монеті ще немає (перший такт після старту) або 🧮 МММ-монітор ще не рахував її">—</span></td>';
+    return mmCompactCellHTML(p && p.old_mm, '🧮 МММ LiQ',
+        'Знімка МММ LiQ по цій монеті ще немає (перший такт після старту)');
+}
+// 🆕 Комірка «МММ-NEW» (вимога 12.10) — `pos.new_mm` = зріз знімка блоку
+// МММ-new (фолбек — `new_status` 🧮 знімка, те саме число). Нічого не рахуємо.
+function newMmCellHTML(p) {
+    return mmCompactCellHTML(p && p.new_mm, '🆕 МММ-NEW',
+        'Знімка МММ-NEW по цій монеті ще немає (перший такт після старту)');
+}
+// 📏 КОМПАКТНА комірка МММ для таблиць угод (вимога 12.10 «зроби компактнішими»):
+// ▲/▼ + сила% + стрілка тренду + мініметр 0–100, фіксована ширина 64px (щоб
+// стовпчик не «стрибав»). Пороги кольору і тренду — ТІ САМІ, що в `ffFuelCell`
+// (>+1 ↑ · <−1 ↓), рівень тиску — у підказці.
+function mmCompactCellHTML(m, label, emptyTip) {
+    if (!m || m.strength == null) {
+        return `<td><span style="color:#6b7280" title="${emptyTip}">—</span></td>`;
     }
-    return `<td>${ffFuelCell(m.mm, m.strength, m.strength_prev, true)}</td>`;
+    const isL = m.mm === 'LONG', isS = m.mm === 'SHORT';
+    const ar = isL ? '▲' : (isS ? '▼' : '•');
+    const acol = isL ? '#22c55e' : (isS ? '#ef4444' : '#8b93a7');
+    const now = Number(m.strength);
+    const col = now >= 60 ? '#22c55e' : (now >= 30 ? '#84cc16'
+        : (now >= 10 ? '#bef264' : '#8b93a7'));
+    let tr = '', trcol = '#8b93a7';
+    if (m.strength_prev != null) {
+        const pv = Number(m.strength_prev);
+        if (now > pv + 1) { tr = '↑'; trcol = '#4ade80'; }
+        else if (now < pv - 1) { tr = '↓'; trcol = '#f87171'; }
+        else { tr = '→'; }
+    }
+    const band = (isL || isS) ? fuelBand(now).txt : 'рівновага';
+    const dirTxt = isL ? 'LONG' : (isS ? 'SHORT' : '⚖ рівновага');
+    const tip = `${label}: ${dirTxt} · сила ${Math.round(now)}% (${band})`
+        + (tr ? ` · тренд ${tr}` : '');
+    const w = Math.max(0, Math.min(100, now));
+    return `<td><span title="${tip}" style="display:inline-flex;flex-direction:column;gap:2px;width:64px;font-family:monospace">`
+        + `<span style="display:flex;align-items:center;line-height:1;font-size:0.74rem">`
+        +   `<span style="width:10px;color:${acol};font-weight:900">${ar}</span>`
+        +   `<b style="width:34px;text-align:right;color:${col}">${Math.round(now)}%</b>`
+        +   `<span style="width:14px;text-align:center;color:${trcol}">${tr}</span></span>`
+        + `<span style="height:2px;border-radius:2px;background:#ffffff14;overflow:hidden">`
+        +   `<span style="display:block;height:100%;width:${w}%;background:${acol}"></span></span>`
+        + `</span></td>`;
+}
+// 🏷 Позначка «останній OB 4H» у полі Side (вимога 12.10). `pos.ob4h` —
+// памʼять сканера (`ob_mark_for`, той самий `_ob_on_htf`, що дає «OB 4H» в
+// алерті 🆕 Новий OB). Колір — за біасом блоку (зелений BULLISH / червоний
+// BEARISH), рамка — чи збігається з напрямком угоди. Немає даних — нічого.
+function ob4hMarkHTML(p) {
+    const o = p && p.ob4h;
+    if (!o) return '';
+    if (!o.bias) {
+        return ' <span class="tm-ob4h" title="OB 4H: живого блоку на 4H зараз немає" style="color:#6b7280;border-color:#4b5563">4H —</span>';
+    }
+    const bull = o.bias === 'BULLISH';
+    const col = bull ? '#22c55e' : '#ef4444';
+    const agree = (bull && p.side === 'LONG') || (!bull && p.side === 'SHORT');
+    const tag = o.tag ? (String(o.tag).toUpperCase() === 'CHOCH' ? 'CHoCH' : String(o.tag).toUpperCase()) : '';
+    let when = '';
+    if (o.bar_time) {
+        const t = Number(o.bar_time); const d = new Date(t > 1e12 ? t : t * 1000);
+        const z = n => String(n).padStart(2, '0');
+        when = ` · свічка ${z(d.getUTCDate())}.${z(d.getUTCMonth() + 1)} ${z(d.getUTCHours())}:${z(d.getUTCMinutes())} UTC`;
+    }
+    const rng = (o.low != null && o.high != null) ? ` · ${fmtPriceJS(o.low)}–${fmtPriceJS(o.high)}` : '';
+    const tip = `Останній OB 4H: ${bull ? '🟢 BULLISH (LONG)' : '🔴 BEARISH (SHORT)'}`
+        + (tag ? ` · ${tag}` : '') + when + rng
+        + (agree ? ' — ЗА напрямком угоди' : ' — ПРОТИ напрямку угоди');
+    return ` <span class="tm-ob4h" title="${tip}" style="color:${col};border-color:${agree ? col : '#fbbf24'}">4H${bull ? '▲' : '▼'}</span>`;
 }
 function ffFuelCell(dir, now, prev, hideBand) {
     // Той самий дизайн, що й SCORE: пілюля фіксованої ширини з тонованим фоном +
@@ -16111,7 +16180,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="15" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="16" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -16139,11 +16208,12 @@ async function loadTMState(isPoll) {
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
                     <td>${manualMark}${histSymOpen(p, false)}${badges}</td>
-                    <td class="${sideClass}">${p.side}</td>
+                    <td class="${sideClass}" style="white-space:nowrap">${p.side}${ob4hMarkHTML(p)}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
                     ${oldMmCellHTML(p)}
+                    ${newMmCellHTML(p)}
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${pilotCellHTML(p)}
@@ -16212,7 +16282,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-shadow-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="15" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -16232,11 +16302,12 @@ async function loadTMState(isPoll) {
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
                     <td>${manualMark}${histSymOpen(p, true)}</td>
-                    <td class="${sideClass}">${p.side}</td>
+                    <td class="${sideClass}" style="white-space:nowrap">${p.side}${ob4hMarkHTML(p)}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
                     ${oldMmCellHTML(p)}
+                    ${newMmCellHTML(p)}
                     ${manualSlTpCellsHTML(p, true)}
                     ${pilotCellHTML(p)}
                     ${manualModeCellHTML(p, true)}

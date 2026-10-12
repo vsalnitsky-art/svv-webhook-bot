@@ -4236,6 +4236,38 @@ class FuelFilterDaemon:
             }
         return out
 
+    def mmn_snapshot_for(self, symbols) -> Dict:
+        """🆕 МММ-NEW по вказаних монетах — ЧИТАННЯ знімків двигуна.
+
+        Живить колонку «🆕 МММ-NEW» у таблицях ВІДКРИТИХ УГОД (вимога 12.10).
+        Джерело — знімок блоку МММ-new (`_mmn_snapshot`, ті самі `fuels`, що
+        малюють його таблицю). Коли блок вимкнено, знімок порожній — тоді
+        беремо `new_status`/`new_strength` з 🧮 знімка: там ТЕ САМЕ число з
+        тих самих `fuels`, і монети в угодах тримаються навіть при вимкненому
+        моніторі. ⚠️ ЖОДНИХ розрахунків — ендпоінт опитується кожні 5с.
+        """
+        want = {str(x).upper() for x in (symbols or []) if x}
+        if not want:
+            return {}
+        with self._lock:
+            snap_n = dict(getattr(self, '_mmn_snapshot', {}) or {})
+            snap_o = dict(self._mm_snapshot or {})
+        out = {}
+        for sym in want:
+            v = snap_n.get(sym)
+            if v:
+                st = v.get('status') if v.get('status') in ('LONG', 'SHORT') else None
+                out[sym] = {'mm': st, 'strength': int(v.get('strength') or 0),
+                            'strength_prev': v.get('strength_prev'),
+                            'delta': v.get('delta')}
+                continue
+            o = snap_o.get(sym)
+            if o and o.get('new_strength') is not None:
+                out[sym] = {'mm': o.get('new_status'),
+                            'strength': int(o.get('new_strength') or 0),
+                            'strength_prev': None, 'delta': None}
+        return out
+
     def mm_bias(self) -> Dict:
         """⚖️ ВАЖІЛЬ БАНЕРА «🧮 МММ-монітор» — ПУБЛІЧНЕ читання готового знімка.
 

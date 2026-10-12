@@ -1426,13 +1426,15 @@ def test_ui_trades_tables_got_the_column_and_the_right_colspan():
         m = _re.search(r'colspan="(\d+)"', tbl)
         _check(m and int(m.group(1)) == n,
                f'{tid}: colspan {m and m.group(1)} ≠ {n} заголовків')
-    # Комірку малює ТОЙ САМИЙ спільний віджет, що й у моніторі та чергах.
-    i = _HTML.index('function oldMmCellHTML(')
-    fn = _HTML[i:_HTML.index('\n}', i)]
-    _check('ffFuelCell(' in fn, 'колонка малює МММ своїм способом')
-    _check(_HTML.count('${oldMmCellHTML(p)}') == 2,
-           'комірка підключена не в обидві таблиці (real + paper)')
-    print('✓ UI: колонка «🧮 МММ LiQ» у real+paper, спільний віджет')
+    # ⚠️ 12.10 «зроби компактнішими»: обидві МММ-колонки угод малює СПІЛЬНИЙ
+    # компактний рендер (ffFuelCell 144px туди не влазив) — один на обидві.
+    for f in ('oldMmCellHTML', 'newMmCellHTML'):
+        i = _HTML.index(f'function {f}(')
+        fn = _HTML[i:_HTML.index('\n}', i)]
+        _check('mmCompactCellHTML(' in fn, f'{f} малює МММ своїм способом')
+        _check(_HTML.count('${' + f + '(p)}') == 2,
+               f'{f} підключена не в обидві таблиці (real + paper)')
+    print('✓ UI: колонки «🧮 МММ LiQ» + «🆕 МММ-NEW» у real+paper, спільний рендер')
 
 
 # ═══ 15. 🩹 БОРОТЬБА З МЕРЕХТІННЯМ: вікно замість «попереднього такту» ════

@@ -264,6 +264,10 @@ ALLOWED_RECENCY_MINUTES = (0, 30, 60, 120)
 # 🛑 TF джерела «🛑 SL з 1H OB» — СПРАВЖНІЙ 1h, незалежно від TF воріт
 # (`ob_filter_timeframe`). Сканер тримає рядок `sob_smc_ob_state` на цьому TF.
 SL_SOURCE_TF = '1h'
+# 🏷 Позначка «останній OB 4H» у таблицях ВІДКРИТИХ УГОД (вимога 12.10).
+# Рахується тим самим `_ob_on_htf`, що дає рядок «OB 4H» в алерті 🆕 Новий OB,
+# і кешується до закриття 4h-бару → ~1 запит на монету раз на 4 год.
+OB_MARK_TF = '4h'
 KLINES_LIMIT = 3000          # bars to fetch per scan via paginated API.
                               # 3000 × 15m = ~31 days. Larger lookback gives
                               # the SMC structure detector enough history to
@@ -809,6 +813,10 @@ class SMCScanner:
         # Рахується ЛИШЕ в момент події і живе до закриття свого бару, тож на
         # постійне навантаження не впливає (кілька запитів на добу на монету).
         self._ob_htf_cache: Dict[tuple, tuple] = {}
+        # 🏷 Останній OB 4H по монеті — {symbol: {bias, tag, bar_time, high,
+        # low, ts}}. IN-MEMORY (похідне від скану, відновиться першим циклом).
+        # Читає `/api/tm/state` через `ob_mark_for` — БЕЗ розрахунків і БД.
+        self._ob_mark: Dict[str, Dict] = {}
         # Номер циклу, у якому OB-стан монети вже порахований — щоб «швидка
         # смуга» на початку циклу і звичайний прохід НЕ робили роботу двічі.
         self._ob_done_cycle: Dict[str, int] = {}
@@ -2377,6 +2385,14 @@ class SMCScanner:
                         if self._errors <= 5:
                             print(f"[SMC] SL-source OB ({SL_SOURCE_TF}) error for {symbol}: {sl_err}")
 
+                # 5) 🏷 OB 4H — позначка в таблицях відкритих угод. Кеш
+                # `_ob_on_htf` живе до закриття 4h-бару, тож мережа ~раз на 4 год.
+                try:
+                    self._ob_mark_update(symbol, md)
+                except Exception as mk_err:
+                    if self._errors <= 5:
+                        print(f"[SMC] OB-mark ({OB_MARK_TF}) error for {symbol}: {mk_err}")
+
                 # === Compute PD Zone (Premium/Discount/Equilibrium) ===
                 # PD Zone classifies the CURRENT PRICE within the trailing
                 # range on the user-configured `pd_zone_timeframe` (default
@@ -3282,6 +3298,47 @@ class SMCScanner:
         except Exception:
             pass
         return _ob4, ''
+
+    def _ob_mark_update(self, symbol: str, md) -> None:
+        """🏷 Оновити позначку «останній OB 4H» монети (`self._ob_mark`).
+
+        ⚠️ Джерело — ТОЙ САМИЙ `_ob_on_htf`, що дає «OB 4H» в алерті 🆕 Новий
+        OB: два різні розрахунки одного блоку розійшлися б (урок PD-зони).
+        ⚠️ Невдача завантаження НЕ стирає попередню позначку — «бари не
+        прийшли» ≠ «блоку немає».
+        """
+        ob, note = self._ob_on_htf(symbol, md, OB_MARK_TF, '', None)
+        if ob is None and note:
+            return
+        sym = str(symbol).upper()
+        if not ob or ob.get('bias') not in ('BULLISH', 'BEARISH'):
+            self._ob_mark[sym] = {'bias': None, 'ts': time.time()}
+            return
+        self._ob_mark[sym] = {
+            'bias': ob.get('bias'),
+            'tag': ob.get('created_by_tag'),
+            'bar_time': ob.get('bar_time'),
+            'high': ob.get('bar_high'),
+            'low': ob.get('bar_low'),
+            'tf': OB_MARK_TF,
+            'ts': time.time(),
+        }
+
+    def ob_mark_for(self, symbols) -> Dict[str, Dict]:
+        """🏷 ПУБЛІЧНЕ читання позначки «останній OB 4H» по монетах.
+
+        Для `/api/tm/state` (опитується кожні 5с): ЛИШЕ памʼять, жодних
+        розрахунків, мережі чи БД. Монети, яку сканер ще не бачив (не в
+        watchlist / перший цикл після рестарту), у відповіді НЕМАЄ.
+        """
+        out = {}
+        for x in (symbols or []):
+            if not x:
+                continue
+            m = self._ob_mark.get(str(x).upper())
+            if m:
+                out[str(x).upper()] = dict(m)
+        return out
 
     def _current_ob_bartime(self, symbol: str):
         """bar_time поточного 1H-OB (з sob_smc_ob_state на ob_filter_timeframe) —
