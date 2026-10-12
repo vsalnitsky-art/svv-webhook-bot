@@ -4468,12 +4468,11 @@ class FuelFilterDaemon:
             print(f"[FF-MMM] group open error {sym}: {e}")
             return {'symbol': sym, 'side': side, 'ok': False, 'reason': f'помилка: {e}'}
         if not opened:
+            _why = getattr(self, '_engine_skip', {}).get(sym) or 'невідома причина'
             log_activity(sym, 'skipped',
-                         f'{_name}: групове відкриття {side} відхилено на '
-                         'рівні `_open` (напрямок вимкнено кнопкою / ціна / розмір)',
+                         f'{_name}: групове відкриття {side} не відбулось — {_why}',
                          side=side, source='MMM')
-            return {'symbol': sym, 'side': side, 'ok': False,
-                    'reason': 'відхилено `_open` (кнопка напрямку / ціна / розмір)'}
+            return {'symbol': sym, 'side': side, 'ok': False, 'reason': _why}
         with self._lock:
             self._timers[sym] = {'dir': side, 'since': time.time(),
                                  'start_price': mark}
@@ -5253,9 +5252,15 @@ class FuelFilterDaemon:
         # ГОЛОВНІ («якщо вимкнені — бот не працює в цей бік»), і саме так
         # написано в підказці самої кнопки: «будь-який LONG-сигнал (включно з
         # ручним відкриттям) — блокується». Щоб відкрити руками — увімкни кнопку.
+        # ✋ РУЧНЕ ВІДКРИТТЯ = ЖОДНИХ ВОРІТ (вимога 12.10, СКАСОВУЄ рішення 08.09
+        # «by_hand кнопок не обходить»). Дослівно: «при ручному відкритті щоб не
+        # було таких перевірок, це є ручне, тому не має бути таких блокувань».
+        # Для `by_hand` нижче лишаються ЛИШЕ технічні умови (ціна, TM, розмір).
+        if by_hand:
+            getattr(self, '_engine_skip', {}).pop(symbol, None)
         try:
             from detection import direction_gate as _dg
-            _dg_s = _dg.live_settings()
+            _dg_s = None if by_hand else _dg.live_settings()
             if _dg_s is not None and not _dg.allows(_dg_s, side):
                 _why = _dg.reason(_dg_s, side)
                 self._engine_skip[symbol] = _why
@@ -5275,6 +5280,7 @@ class FuelFilterDaemon:
         entry_price = fuel.get('mark_price')
         if not entry_price or entry_price <= 0:
             print(f"[FuelFilter] {symbol}: no entry price — skip open")
+            self._engine_skip[symbol] = 'немає ціни входу'
             return False
 
         # CHECK EXHAUSTION BEFORE OPENING: don't enter exhausted moves.
@@ -5291,7 +5297,7 @@ class FuelFilterDaemon:
         # Черги-4). У ручному відкритті це ще й показувало «Не відкрито:
         # Помилка…», хоча угода реально відкривалась.
         exh = None
-        if not skip_safeguard:
+        if not skip_safeguard and not by_hand:
             max_exh = settings.get('max_exhaustion_pct', 75)
             exh = self._exhaustion(symbol, side)
             if exh is not None and exh > max_exh:
@@ -5346,7 +5352,7 @@ class FuelFilterDaemon:
         # 🛡 М'який запобіжник: слабкий МММ / нейтральний(проти) CTR / виснажений
         # хід — три «вбивці», що системно давали збиткові входи. Єдиний чок-пойнт
         # усіх шляхів відкриття (Черга-1/2, сигнал). Причину — у per-row діагностику.
-        if settings.get('safeguard_on', True) and not skip_safeguard:
+        if settings.get('safeguard_on', True) and not skip_safeguard and not by_hand:
             ok_sg, sg_reason = self._soft_safeguard(symbol, side, settings,
                                                     skip_ctr=skip_ctr_safeguard)
             if not ok_sg:
@@ -5362,7 +5368,9 @@ class FuelFilterDaemon:
         # коли вердикт з'явиться і збіжиться. Повертаємо False (не відкрито) →
         # монета лишається в черзі й ретраїться наступним тіком, поки вердикт не
         # готовий/не збігся. Тільки для scanner-сигналів (не funding Q3-VOB).
-        if 'funding' not in str(opened_by or ''):
+        # ✋ Ручне відкриття вердикту прогнозу/Decision НЕ чекає — рішення
+        # ухвалила людина (саме цей re-gate і різав ✋ групове відкриття 12.10).
+        if not by_hand and 'funding' not in str(opened_by or ''):
             try:
                 from detection.smc_scanner import get_smc_scanner
                 _sc = get_smc_scanner()
@@ -5387,7 +5395,7 @@ class FuelFilterDaemon:
                 print(f"[FuelFilter] {symbol}: forecast re-gate error: {_e}")
 
         # CHECK WAIT VERDICT: if enabled, don't open coins in WAIT state
-        if settings.get('skip_wait_coins', False):
+        if settings.get('skip_wait_coins', False) and not by_hand:
             if self._is_wait_verdict(symbol):
                 print(f"[FuelFilter] {symbol}: verdict is WAIT — "
                       f"rejecting open (skip_wait_coins enabled)")
@@ -5396,6 +5404,7 @@ class FuelFilterDaemon:
         tm = self._get_tm() if self._get_tm else None
         if not tm:
             print(f"[FuelFilter] {symbol}: no TradeManager available — skip open")
+            self._engine_skip[symbol] = 'Trade Manager недоступний'
             return False
 
         # Check which mode is active (TM real or Test Mode paper)
@@ -5407,6 +5416,7 @@ class FuelFilterDaemon:
 
         if not tm_enabled and not test_mode:
             print(f"[FuelFilter] {symbol}: neither TM nor Test Mode enabled — skip open")
+            self._engine_skip[symbol] = 'вимкнено і Trade Manager, і Test Mode'
             return False
 
         # Prefer real TM if both are on
@@ -5433,12 +5443,21 @@ class FuelFilterDaemon:
                     # Real position via TM — bypass LONG/SHORT gates
                     # Fuel Filter operates independently from manual trade signals
                     print(f"[FuelFilter] {symbol}: calling tm.manual_open({symbol}, {side}, bypass_gates=True)")
-                    res = tm.manual_open(symbol, side, bypass_gates=True,
-                                         opened_by=opened_by)
+                    if by_hand:
+                        try:
+                            res = tm.manual_open(symbol, side, bypass_gates=True,
+                                                 opened_by=opened_by, by_hand=True)
+                        except TypeError:   # старіший TM без by_hand
+                            res = tm.manual_open(symbol, side, bypass_gates=True,
+                                                 opened_by=opened_by)
+                    else:
+                        res = tm.manual_open(symbol, side, bypass_gates=True,
+                                             opened_by=opened_by)
                     print(f"[FuelFilter] {symbol}: manual_open returned: {res}")
                     if not res or not res.get('ok'):
                         reason = (res or {}).get('reason', 'unknown')
                         print(f"[FuelFilter] {symbol}: real open rejected: {reason}")
+                        self._engine_skip[symbol] = f'Trade Manager відхилив: {reason}'
                         return False
                     # manual_open may DOWNGRADE to a paper (shadow) position when
                     # max_open_positions is reached. Respect the mode it ACTUALLY
@@ -5457,7 +5476,19 @@ class FuelFilterDaemon:
                     if hasattr(tm, '_open_shadow') and callable(tm._open_shadow):
                         sh_tag = opened_by or 'fuel_filter'
                         print(f"[FuelFilter] {symbol}: calling tm._open_shadow({symbol}, {side}, {entry_price}, {sh_tag!r}, bypass_gates=True)")
-                        tm._open_shadow(symbol, side, entry_price, sh_tag, bypass_gates=True)
+                        if by_hand:
+                            try:
+                                _sres = tm._open_shadow(symbol, side, entry_price, sh_tag,
+                                                        bypass_gates=True, by_hand=True)
+                            except TypeError:   # старіший TM без by_hand
+                                _sres = tm._open_shadow(symbol, side, entry_price, sh_tag,
+                                                        bypass_gates=True)
+                        else:
+                            _sres = tm._open_shadow(symbol, side, entry_price, sh_tag,
+                                                    bypass_gates=True)
+                        if isinstance(_sres, dict) and not _sres.get('ok', True):
+                            self._engine_skip[symbol] = (
+                                f"Trade Manager відхилив: {_sres.get('reason') or 'невідомо'}")
                         print(f"[FuelFilter] {symbol}: _open_shadow call completed")
                     else:
                         print(f"[FuelFilter] {symbol}: Test Mode enabled but _open_shadow not available")
@@ -5480,6 +5511,8 @@ class FuelFilterDaemon:
             if not has_pos:
                 print(f"[FuelFilter] {symbol}: open did not land in TM "
                       f"(gated/rejected) — NOT tracking, timer will restart")
+                if by_hand and not getattr(self, '_engine_skip', {}).get(symbol):
+                    self._engine_skip[symbol] = 'позиція не зʼявилась у Trade Manager'
                 return False
 
         # Track that fuel filter opened this position (for exit condition monitoring)
@@ -11096,7 +11129,8 @@ class FuelFilterDaemon:
             # _open() returns False on its own gates (exhaustion too high,
             # WAIT verdict if skip_wait on, no entry price, qty below min, …).
             return {'ok': False, 'opened': False,
-                    'reason': 'Відкриття відхилено (виснаженість/вердикт/розмір — див. лог)'}
+                    'reason': 'Відкриття не відбулось: '
+                              + (getattr(self, '_engine_skip', {}).get(symbol) or 'невідома причина')}
 
     def clear_all_timers(self) -> int:
         """Clear the whole FF table — waiting base + any timers."""
@@ -11213,12 +11247,12 @@ class FuelFilterDaemon:
             return {'ok': False, 'opened': False, 'reason': f'Помилка: {e}'}
 
         if not opened:
+            _why = getattr(self, '_engine_skip', {}).get(symbol) or 'невідома причина'
             log_activity(symbol, 'skipped',
-                         '✋ Черга-4: РУЧНЕ відкриття відхилено на рівні `_open` '
-                         '(ціна/розмір позиції — див. лог)',
+                         f'✋ Черга-4: РУЧНЕ відкриття не відбулось — {_why}',
                          side=side, source='Q4')
             return {'ok': False, 'opened': False,
-                    'reason': 'Відкриття відхилено (ціна/розмір — див. 🧾 Лог)'}
+                    'reason': f'Відкриття не відбулось: {_why}'}
 
         now = time.time()
         with self._lock:

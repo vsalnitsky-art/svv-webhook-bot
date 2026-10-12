@@ -133,7 +133,9 @@ def test_bypass_gates_no_longer_defeats_the_master_switch():
     _check(bad not in src,
            f'`{bad}` повертає баг: FF відкриває з bypass_gates=True '
            'і кнопки знову стануть декоративними')
-    _check(src.count('if not self._side_allowed(side):') == 2,
+    # ⚠️ 12.10: ✋ РУЧНЕ (`by_hand`) — єдиний виняток (вимога користувача).
+    # `bypass_gates` (усі черги FF) кнопки як і раніше НЕ знімає.
+    _check(src.count('if not by_hand and not self._side_allowed(side):') == 2,
            'перевірка мусить стояти в ОБОХ шляхах: _open_position і _open_shadow')
     print('✓ bypass_gates більше не знімає головні кнопки (real + paper)')
 
@@ -262,20 +264,19 @@ def test_trade_manager_handles_blocked_dir_in_both_call_sites():
 
 def test_ff_open_is_the_last_lock_and_by_hand_does_not_bypass_it():
     """`_open` — ЄДИНИЙ вузол усіх черг. Запис міг лягти в чергу ДО того, як
-    кнопку вимкнули, тож ворота потрібні і тут. ✋ їх НЕ обходить — це рішення
-    користувача («головні кнопки») і те саме, що обіцяє підказка кнопки."""
+    кнопку вимкнули, тож ворота потрібні і тут — для АВТОМАТИЧНИХ відкриттів.
+    ⚠️ 12.10 СКАСОВАНО «✋ їх не обходить»: ручне відкриття людини воріт не має
+    (вимога «при ручному відкритті щоб не було таких перевірок»)."""
     src = _src('detection/fuel_filter.py')
     i = src.index('    def _open(self, symbol: str, side: str')
     body = src[i:src.index('\n    def ', i + 10)]
     g = body.index('_dg.allows(')
     _check('return False' in body[g:g + 600], 'заблокований напрямок → відмова')
-    # Ворота мусять стояти ДО перевірок, які `by_hand` СВІДОМО обходить
-    # (блокування після ручного закриття, «нова ситуація»).
     _check(g < body.index('if not by_hand:'),
-           'ворота напрямку мусять стояти ДО by_hand-винятків')
-    _check('by_hand' not in body[g:g + 400],
-           'сама перевірка воріт НЕ сміє мати винятку by_hand')
-    print('✓ _open: останній замок, ✋ його не обходить')
+           'ворота напрямку мусять стояти ДО решти перевірок')
+    _check('None if by_hand else _dg.live_settings()' in body,
+           'ручне відкриття ворота напрямку не читає')
+    print('✓ _open: останній замок для авто, ✋ ручне — без воріт')
 
 
 def test_queue4_engine_now_respects_the_buttons():

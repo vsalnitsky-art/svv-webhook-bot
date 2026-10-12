@@ -536,7 +536,7 @@ def test_open_never_leaves_exh_unbound():
            f'запис {min(writes)}, читання {min(reads)}')
     # І саме ця ініціалізація має стояти ПОЗА умовою skip_safeguard.
     i = src.index('exh = None')
-    j = src.index('if not skip_safeguard:', i)
+    j = src.index('if not skip_safeguard and not by_hand:', i)
     _check(j > i, 'ініціалізація має передувати умові, а не бути в ній')
     print('✓ `_open` більше не падає з UnboundLocalError на exh')
 

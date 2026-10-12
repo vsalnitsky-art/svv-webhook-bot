@@ -5311,7 +5311,7 @@ class TradeManager:
         return snap
 
     def _open_position(self, symbol: str, side: str, entry_price: float, opened_by: str, bypass_gates: bool = False,
-                       manual_sl=None, manual_tp=None):
+                       manual_sl=None, manual_tp=None, by_hand: bool = False):
         """Open a real position. Returns a structured result so callers can
         surface the EXACT reason instead of a generic "order failed":
           {'ok': True}                      — position opened
@@ -5335,7 +5335,8 @@ class TradeManager:
         # черги проходила повз головний вимикач. `bypass_gates` лишається для
         # решти воріт (FF-підтвердження тощо), але ГОЛОВНІ КНОПКИ він більше
         # НЕ знімає — вони головні саме тому, що їх не обходить ніхто.
-        if not self._side_allowed(side):
+        # ✋ `by_hand` (ручне відкриття людиною) — ЄДИНИЙ виняток (вимога 12.10).
+        if not by_hand and not self._side_allowed(side):
             print(f"[TM] 🚫 REAL {side} entries disabled — {symbol} not opened")
             return {'ok': False, 'reason':
                     f'{side} entries are disabled (master {side} toggle is OFF). '
@@ -6390,7 +6391,7 @@ class TradeManager:
     # ============================================================
     
     def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str, bypass_gates: bool = False,
-                     manual_sl=None, manual_tp=None):
+                     manual_sl=None, manual_tp=None, by_hand: bool = False):
         """Open a paper-trading position. No Bybit calls.
 
         bypass_gates: If True, ignore LONG/SHORT entry gates (used by Fuel Auto-Filter).
@@ -6405,7 +6406,7 @@ class TradeManager:
         # книга показувала б угоди, яких реальний бот НЕ зробив би, і порівняти
         # їх було б неможливо. `bypass_gates` тут теж більше не знімає кнопки
         # (див. розгорнуте пояснення в `_open_position`).
-        if not self._side_allowed(side):
+        if not by_hand and not self._side_allowed(side):
             print(f"[TM] 🚫 SHADOW {side} entries disabled — {symbol} not opened")
             return {'ok': False, 'reason':
                     f'{side} entries are disabled (master {side} toggle OFF)'}
@@ -8115,7 +8116,7 @@ class TradeManager:
 
     def manual_open(self, symbol: str, side: str, bypass_gates: bool = False,
                     opened_by: Optional[str] = None,
-                    manual_sl=None, manual_tp=None) -> Dict:
+                    manual_sl=None, manual_tp=None, by_hand: bool = False) -> Dict:
         """User-initiated position open from the Decision Center panel.
 
         Uses Position Sizing settings from TM (sizing_mode, fixed_usd_amount,
@@ -8144,7 +8145,8 @@ class TradeManager:
             return {'ok': False, 'reason': f"side must be LONG or SHORT, got {side!r}"}
         # 🕒 Кулдаун повторного входу — лише для АВТО-відкриттів FF (bypass_gates):
         # не перевідкривати монету одразу після закриття (re-entry churn).
-        if bypass_gates and self._reentry_blocked(symbol):
+        # ✋ by_hand (людина) кулдаун не чекає.
+        if bypass_gates and not by_hand and self._reentry_blocked(symbol):
             return {'ok': False, 'reason': f'{symbol}: кулдаун повторного входу'}
 
         # === Fuel Auto-Filter interception ===
@@ -8215,7 +8217,8 @@ class TradeManager:
                 res = self._open_position(symbol, side, entry_price,
                                           opened_by=(opened_by or 'manual_ui'),
                                           bypass_gates=bypass_gates,
-                                          manual_sl=manual_sl, manual_tp=manual_tp)
+                                          manual_sl=manual_sl, manual_tp=manual_tp,
+                                          by_hand=by_hand)
             except Exception as e:
                 return {'ok': False, 'reason': f'Open error: {e}'}
             with self._lock:
@@ -8237,7 +8240,8 @@ class TradeManager:
                 self._open_shadow(symbol, side, entry_price,
                                   opened_by=(opened_by or 'manual_ui_overflow'),
                                   bypass_gates=bypass_gates,
-                                  manual_sl=manual_sl, manual_tp=manual_tp)
+                                  manual_sl=manual_sl, manual_tp=manual_tp,
+                                  by_hand=by_hand)
             except Exception as e:
                 return {'ok': False, 'reason': f'Shadow open error: {e}'}
             with self._lock:
