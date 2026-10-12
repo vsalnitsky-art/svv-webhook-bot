@@ -106,14 +106,19 @@ def _ff(bias=None, snap=None, on=True):
     f._mm_bias = {'dir': 'SHORT'}
     f._mm_snapshot = {k: {'status': 'SHORT'} for k in (snap or {})}
     f._mm_mon_on = True
+    # ⚑ Пороги «Сила ≥» вкладок (вимога 12.10) — кеш, який пише такт двигуна.
+    f._mmn_str_mins_c = {'all': 0, 'LONG': 0, 'SHORT': 0, 'flat': 0}
+    f._mm_str_mins_c = {'all': 0, 'LONG': 0, 'SHORT': 0, 'flat': 0}
     return f
 
 
 def test_view_reads_the_same_snapshot_that_sorts_the_tabs():
     f = _ff({'dir': 'LONG'}, {'AAAUSDT': {'status': 'LONG', 'strength': 40},
                               'BBBUSDT': {'status': None, 'strength': 5}})
-    _check(f.mm_gate_view('aaausdt') == {'on': True, 'dir': 'LONG', 'coin': 'LONG'},
-           f.mm_gate_view('aaausdt'))
+    _v1 = f.mm_gate_view('aaausdt')
+    _check({k: _v1[k] for k in ('on', 'dir', 'coin')}
+           == {'on': True, 'dir': 'LONG', 'coin': 'LONG'}, _v1)
+    _check(_v1['strength'] == 40 and _v1['str_min'] == 0, _v1)
     _check(f.mm_gate_view('BBBUSDT')['coin'] == 'FLAT', 'без напрямку = ⚖')
     _check(f.mm_gate_view('CCCUSDT')['coin'] is None, 'немає рядка = None')
     _check(_ff({'dir': None}).mm_gate_view('X')['dir'] is None, 'банер ⚖')
@@ -199,7 +204,7 @@ def test_setting_default_whitelist_and_ui():
 def test_view_old_book_reads_the_monitor_snapshot():
     f = _ff({'dir': 'LONG'}, {'AAAUSDT': {'status': 'LONG'}})
     v = f.mm_gate_view('AAAUSDT', book='old')
-    _check(v == {'on': True, 'dir': 'SHORT', 'coin': 'SHORT'}, v)
+    _check({k: v[k] for k in ('on', 'dir', 'coin')} == {'on': True, 'dir': 'SHORT', 'coin': 'SHORT'}, v)
     f._mm_mon_on = False
     _check(f.mm_gate_view('AAAUSDT', book='old')['on'] is False,
            'вимкнений монітор → ворота не діють')
@@ -297,6 +302,52 @@ def test_correction_gate_is_gone():
            'ворота досі питають корекцію')
     _check('correction_blocks_open' not in _SC_SRC, 'сканер досі читає вердикт корекції')
     print('✓ 🔻 корекції у спільних воротах більше немає')
+
+
+# ── ⚑ ПОРІГ «Сила ≥» ВКЛАДКИ У ВОРОТАХ (вимога 12.10) ─────────────────────
+def test_strength_gate_needs_the_coin_visible_in_its_tab():
+    v = dict(_v(), strength=12, str_min=20)
+    app, ok, chip, why = sc.mm_gate_decide(v, 'LONG', need_strength=True)
+    _check(app and not ok and '12%' in why and '20%' in why, (ok, chip, why))
+    v['strength'] = 25
+    app, ok, chip, _ = sc.mm_gate_decide(v, 'LONG', need_strength=True)
+    _check(ok and '25%≥20%' in chip, chip)
+    print('✓ ⚑ сила нижче порогу вкладки → сигнал відхилено; вище → пропущено')
+
+
+def test_strength_gate_threshold_zero_or_toggle_off_does_nothing():
+    v = dict(_v(), strength=5, str_min=0)
+    _check(sc.mm_gate_decide(v, 'LONG', need_strength=True)[1], 'поріг 0 = фільтр не задіяно')
+    v['str_min'] = 50
+    _check(sc.mm_gate_decide(v, 'LONG')[1], 'тумблер вимкнено → поріг не діє')
+    print('✓ ⚑ поріг 0 або вимкнений тумблер — умова не діє')
+
+
+def test_view_carries_the_threshold_of_the_coin_tab_per_book():
+    f = _ff({'dir': 'LONG'}, {'AAAUSDT': {'status': 'LONG', 'strength': 30},
+                              'BBBUSDT': {'status': None, 'strength': 7}})
+    f._mmn_str_mins_c = {'all': 5, 'LONG': 40, 'SHORT': 60, 'flat': 3}
+    f._mm_str_mins_c = {'all': 0, 'LONG': 0, 'SHORT': 25, 'flat': 0}
+    _check(f.mm_gate_view('AAAUSDT')['str_min'] == 40, 'вкладка LONG МММ-new')
+    _check(f.mm_gate_view('BBBUSDT')['str_min'] == 3, 'вкладка ⚖')
+    _check(f.mm_gate_view('AAAUSDT', 'old')['str_min'] == 25, '🧮: SHORT-вкладка свого блоку')
+    print('✓ ⚑ view несе поріг САМЕ вкладки монети і САМЕ свого блоку')
+
+
+def test_strength_toggle_reaches_the_shared_gate_and_ui():
+    old = sc._mm_gate_view
+    try:
+        sc._mm_gate_view = lambda sym, book='new': dict(_v(), strength=10, str_min=30)
+        ns = _ns(); ns._settings['mm_gate_strength'] = True
+        ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
+        _check(ok is False and 'поріг вкладки' in why, (ok, why))
+    finally:
+        sc._mm_gate_view = old
+    _check(sc.SMCScanner.__init__ and "'mm_gate_strength': False" in _SC_SRC, 'дефолт ВИМК')
+    for need in ('id="sm-mm-gate-str"', "['sm-mm-gate-str', 'mm_gate_strength']",
+                 'body.mm_gate_strength', 'class="mm-dir-thr"', '⚑≥'):
+        _check(need in _HTML, f'на сторінці немає «{need}»')
+    print('✓ ⚑ тумблер доходить до воріт; UI має чекбокс і позначку вкладки')
 
 
 if __name__ == '__main__':

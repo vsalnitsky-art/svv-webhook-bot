@@ -510,7 +510,10 @@ const _tabs = ['all','LONG','SHORT','flat'].map(d => ({
   dataset:{mmdir:d}, style:{},
   // ⚠️ Стабільний span: якби фейк віддавав НОВИЙ обʼєкт на кожен виклик,
   // прочитати назад те, що записав рендер, було б неможливо.
-  querySelector:()=>(_tabSpans[d] = _tabSpans[d] || {textContent:''})}));
+  // ⚑ Позначка порогу вкладки (`.mm-dir-thr`, 12.10) — ОКРЕМИЙ span.
+  querySelector:(sel)=>(String(sel||'').includes('mm-dir-thr')
+      ? (_tabSpans[d + ':thr'] = _tabSpans[d + ':thr'] || {textContent:'', style:{}})
+      : (_tabSpans[d] = _tabSpans[d] || {textContent:''}))}));
 // Заголовки таблиці — ОКРЕМІ стаби з `getAttribute`: `_mmHeaderArrows` шукає
 // саме `th[data-mmsort]`, і якби фейк повертав на будь-який селектор вкладки,
 // тест падав би «на рівному місці» (так і сталось).
@@ -1570,6 +1573,25 @@ console.log(JSON.stringify({longRows, shortField, shortRows, longField, N,
     _check(d['mins'] == {'all': 0, 'LONG': 50, 'SHORT': 25, 'flat': 0},
            f'пороги вкладок перемішались: {d["mins"]}')
     print('✓ JS: ⚑ у кожної вкладки свій поріг «Сила ≥» (і поле його показує)')
+
+
+def test_js_tab_with_active_threshold_is_marked():
+    """⚑ Вимога 12.10: на вкладці із задіяним фільтром — позначка «⚑≥N»;
+    поріг 0 = фільтр не задіяно, позначки немає."""
+    out = _run_js(r'''
+mmApplyState({rows:[], enabled:true, limited:false, ts:1, str_min:0,
+  str_mins:{all:0, LONG:20, SHORT:0, flat:0}});
+mmRender();
+console.log(JSON.stringify({l:_tabSpans['LONG:thr'].textContent,
+  s:(_tabSpans['SHORT:thr']||{}).textContent, a:(_tabSpans['all:thr']||{}).textContent,
+  border:_tabs[1].style.cssText}));
+''')
+    import json
+    d = json.loads(out)
+    _check('⚑≥20' in d['l'], f'вкладка LONG без позначки: {d}')
+    _check(not d['s'] and not d['a'], f'вкладки з порогом 0 не мають позначки: {d}')
+    _check('#fbbf24' in d['border'], f'рамка вкладки з фільтром не бурштинова: {d}')
+    print('✓ JS: ⚑ вкладка з активним порогом позначена «⚑≥N»')
 
 
 def test_js_tab_thresholds_come_from_the_server_per_book():

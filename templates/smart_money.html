@@ -2251,6 +2251,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmo-gate-banner" onchange="updateMmGate()">
                         за банером МММ-МОНІТОР
                     </label>
+                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» (для кожного блоку — його власні пороги). ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mm-gate-str" onchange="updateMmGate()">
+                        ⚑ з порогом «Сила ≥» вкладки
+                    </label>
                     </span>
                     <label class="sm-checkbox" title="💧 Окрема перевірка сигналів Сканером ліквідності. Коли УВІМК і сам 💧 Сканер увімкнено, КОЖЕН сигнал сканера проходить, лише якщо монета є в таблиці Сканера ліквідності і таблицю зібрано в той самий бік, що й сигнал. Монети немає в таблиці або таблиця під протилежний бік → сигнал не пропускаємо (причина — у 🧾 Лозі). Діє і на 🔁 повторній перевірці Черги-4. Незалежна від «🧮 Через МММ-NEW». Вимкнений 💧 Сканер → умова не діє. ВИМК (дефолт).">
                         <input type="checkbox" id="sm-liq-gate" onchange="updateLiqGate()">
@@ -2602,10 +2606,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div id="mm-limited-hint" style="display:none;margin:0 0 8px;padding:7px 11px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:0.7rem;font-weight:600"></div>
             <div style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
                 <span style="color:#8b93a7">Показати:</span>
-                <button type="button" data-mmdir="all" onclick="mmSetDir('all')" class="ff-qdir-btn">Всі <span class="mm-dir-n"></span></button>
-                <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span></button>
-                <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span></button>
-                <button type="button" data-mmdir="flat" onclick="mmSetDir('flat')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span></button>
+                <button type="button" data-mmdir="all" onclick="mmSetDir('all')" class="ff-qdir-btn">Всі <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="flat" onclick="mmSetDir('flat')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
                 <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧮 МММ-МОНІТОР» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
                     Сила ≥ <input type="number" id="mm-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged()" onchange="mmMinStrSave()"> %
                 </label>
@@ -2771,10 +2775,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div id="mmn-limited-hint" style="display:none;margin:0 0 8px;padding:7px 11px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:0.7rem;font-weight:600"></div>
             <div style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
                 <span style="color:#8b93a7">Показати:</span>
-                <button type="button" data-mmdir="all" onclick="mmSetDir('all','new')" class="ff-qdir-btn">Всі <span class="mm-dir-n"></span></button>
-                <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG','new')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span></button>
-                <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT','new')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span></button>
-                <button type="button" data-mmdir="flat" onclick="mmSetDir('flat','new')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span></button>
+                <button type="button" data-mmdir="all" onclick="mmSetDir('all','new')" class="ff-qdir-btn">Всі <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG','new')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT','new')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="flat" onclick="mmSetDir('flat','new')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
                 <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧮 МММ-NEW» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
                     Сила ≥ <input type="number" id="mmn-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged('new')" onchange="mmMinStrSave()"> %
                 </label>
@@ -6717,7 +6721,8 @@ async function loadSettings() {
             if (obChoch) obChoch.checked = s.ob_filter_choch_only !== false;  // default ON
             // 🧮 Загальні МММ-ворота (вимога 09.10) — усі чотири деф. ВИМК.
             [['sm-mm-gate', 'mm_gate_enabled'], ['sm-mm-gate-banner', 'mm_gate_banner'],
-             ['sm-mmo-gate', 'mmo_gate_enabled'], ['sm-mmo-gate-banner', 'mmo_gate_banner']]
+             ['sm-mmo-gate', 'mmo_gate_enabled'], ['sm-mmo-gate-banner', 'mmo_gate_banner'],
+             ['sm-mm-gate-str', 'mm_gate_strength']]
                 .forEach(([id, k]) => {
                     const el = document.getElementById(id);
                     if (el) el.checked = !!s[k];
@@ -6907,6 +6912,10 @@ function updateSettingsSummary() {
         const _b = document.getElementById(b);
         summary += ' · ' + t + (_b && _b.checked ? ' +банер' : '');
     });
+    const _gs = document.getElementById('sm-mm-gate-str');
+    const _anyMm = ['sm-mm-gate', 'sm-mmo-gate'].some(i => {
+        const e = document.getElementById(i); return e && e.checked; });
+    if (_gs && _gs.checked && _anyMm) summary += ' ⚑сила';
     const lqG = document.getElementById('sm-liq-gate');
     if (lqG && lqG.checked) summary += ' · 💧 Сканер';
     // 🆕 Новий OB — тип сигналу: показуємо АКТИВНУ комбінацію TF (те саме, чим
@@ -7016,6 +7025,15 @@ function _smMmGateSync() {
         const lbl = b.closest ? b.closest('label') : null;
         if (lbl && lbl.style) lbl.style.opacity = g.checked ? '' : '0.45';
     });
+    // ⚑ «з порогом вкладки» має сенс лише при хоч одних увімкнених МММ-воротах.
+    const gs = document.getElementById('sm-mm-gate-str');
+    if (gs) {
+        const any = _SM_MM_GATES.some(([gi]) => {
+            const g = document.getElementById(gi); return g && g.checked; });
+        gs.disabled = !any;
+        const lbl = gs.closest ? gs.closest('label') : null;
+        if (lbl && lbl.style) lbl.style.opacity = any ? '' : '0.45';
+    }
 }
 // 💧 Окрема перевірка сигналів Сканером ліквідності (деф. ВИМК).
 async function updateLiqGate() {
@@ -7037,6 +7055,8 @@ async function updateMmGate() {
         body[gk] = !!(g && g.checked);
         body[bk] = !!(b && b.checked);
     });
+    const _gs = document.getElementById('sm-mm-gate-str');
+    body.mm_gate_strength = !!(_gs && _gs.checked);
     _smMmGateSync();
     try {
         const r = await fetch('/api/smc/settings', {
@@ -12366,13 +12386,21 @@ function mmRender(bk) {
         // У підказці — обидва числа, щоб «скільки у фільтрі / скільки поза» було
         // видно для КОЖНОЇ вкладки, а не лише загалом.
         const _thr = _mmMinStr(B, d);
+        // ⚑ ВИДНО, НА ЯКІЙ ВКЛАДЦІ ЗАДІЯНО ФІЛЬТР (вимога 12.10): поріг > 0 →
+        // бурштинова позначка «⚑≥N» і бурштинова рамка; 0 = фільтр не задіяно.
+        const _tEl = btn.querySelector('.mm-dir-thr');
+        if (_tEl) {
+            _tEl.textContent = _thr > 0 ? ` ⚑≥${_thr}` : '';
+            if (_tEl.style) _tEl.style.cssText = 'color:#fbbf24;font-family:monospace;font-size:0.62rem';
+        }
         btn.title = (nAll > n)
             ? `Сила ≥ ${_thr}% · у фільтрі ${n} · поза фільтром ${nAll - n} (усього ${nAll})`
             : `${n} монет` + (_thr > 0 ? ` · Сила ≥ ${_thr}%` : '');
         const on = (d === B.dir);
         btn.style.cssText = 'cursor:pointer;padding:3px 10px;border-radius:11px;'
             + 'font-size:0.68rem;font-weight:700;'
-            + 'border:1px solid ' + (on ? '#ffffff55' : '#ffffff18') + ';'
+            + 'border:1px solid ' + (_thr > 0 ? (on ? '#fbbf24' : '#fbbf2466')
+                                              : (on ? '#ffffff55' : '#ffffff18')) + ';'
             + 'background:' + (on ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.03)') + ';'
             + 'color:' + (on ? '#e5e7eb' : '#9aa3b5') + ';';
     });

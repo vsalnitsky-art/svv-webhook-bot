@@ -58,7 +58,8 @@ _MM_GATE_TAG = {'new': ('🆕МММ-new', '🆕 МММ-NEW'),
                 'old': ('🧮МММ-монітор', '🧮 МММ-МОНІТОР')}
 
 
-def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new'):
+def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
+                   need_strength: bool = False):
     """🧮 ЧИСТЕ правило воріт «Через МММ-NEW» / «Через МММ-МОНІТОР».
 
     `view` — `FuelFilterDaemon.mm_gate_view(symbol, book)`; `book` = 'new'
@@ -70,6 +71,10 @@ def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new'):
       • `need_banner=True` («за банером …», деф. ВИМК) — ще й банер блоку
         мусить мати напрямок і збігатися з боком сигналу.
     ⚠️ Монети немає в знімку → НЕ проходить: «невідомо» ≠ «за напрямком».
+      • `need_strength=True` (`mm_gate_strength`, деф. ВИМК, вимога 12.10) —
+        ще й сила монети ≥ порогу «Сила ≥» ЇЇ вкладки (`view['str_min']`),
+        тобто монета мусить бути ВИДИМА в таблиці. Поріг 0 = фільтр вкладки
+        не задіяно → умова не діє.
     """
     side = str(side or '').upper()
     tag, name = _MM_GATE_TAG.get(book, _MM_GATE_TAG['new'])
@@ -93,6 +98,14 @@ def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new'):
     if c != side:
         return (True, False, f'{tag}[вкладка {ua.get(c, c)}{bn}]:✗',
                 f'{name}: монета у вкладці «{ua.get(c, c)}», а сигнал {side}')
+    thr = int(v.get('str_min') or 0) if need_strength else 0
+    if thr > 0:
+        st = int(v.get('strength') or 0)
+        if st < thr:
+            return (True, False, f'{tag}[вкладка {c} · сила {st}%<{thr}%{bn}]:✗',
+                    f'{name}: сила монети {st}% нижча за поріг вкладки «Сила ≥ {thr}%» '
+                    f'— у таблиці її не видно')
+        return True, True, f'{tag}[вкладка {c} · сила {st}%≥{thr}%{bn}]:✓', ''
     return True, True, f'{tag}[вкладка {c}{bn}]:✓', ''
 
 
@@ -363,6 +376,9 @@ DEFAULT_SETTINGS = {
     'mm_gate_banner': False,
     'mmo_gate_enabled': False,
     'mmo_gate_banner': False,
+    # ⚑ МММ-ворота враховують поріг «Сила ≥» вкладки (вимога 12.10): сигнал
+    # проходить, лише коли монета ВИДИМА у своїй вкладці. Деф. ВИМК.
+    'mm_gate_strength': False,
     # 💧 «Через Сканер ліквідності» (вимога 01.10) — ОКРЕМА перевірка: сигнал
     # лише по монеті з таблиці 💧 Сканера, зібраній у той самий бік. Деф. ВИМК.
     'liq_gate_enabled': False,
@@ -1583,6 +1599,7 @@ class SMCScanner:
                        # 🧮 сигнали через МММ-монітор
                        'mm_gate_enabled', 'mm_gate_banner',
                        'mmo_gate_enabled', 'mmo_gate_banner',
+                       'mm_gate_strength',
                        'liq_gate_enabled',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
@@ -1731,7 +1748,8 @@ class SMCScanner:
             self._settings['ob_filter_choch_only'] = bool(
                 self._settings.get('ob_filter_choch_only', True))
             for _gk in ('mm_gate_enabled', 'mm_gate_banner',
-                        'mmo_gate_enabled', 'mmo_gate_banner'):
+                        'mmo_gate_enabled', 'mmo_gate_banner',
+                        'mm_gate_strength'):
                 self._settings[_gk] = bool(self._settings.get(_gk, False))
             self._settings['liq_gate_enabled'] = bool(
                 self._settings.get('liq_gate_enabled', False))
@@ -4743,9 +4761,10 @@ class SMCScanner:
         # монет» блоку. Одразу після головних кнопок — напрямкова умова, що
         # читає лише памʼять двигуна, тож після відмови решту не рахуємо.
         # Вимкнений блок → умова не діє (fail-open).
+        _need_s = bool(self._settings.get('mm_gate_strength', False))
         for _book, _need_b in mm_gates_active(self._settings):
             _app, _mok, _mchip, _mwhy = mm_gate_decide(
-                _mm_gate_view(symbol, _book), side_label, _need_b, _book)
+                _mm_gate_view(symbol, _book), side_label, _need_b, _book, _need_s)
             if _app:
                 parts.append(_mchip)
                 if not _mok:

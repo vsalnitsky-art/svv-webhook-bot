@@ -1038,6 +1038,11 @@ class FuelFilterDaemon:
         # ще жодного такту (тоді `mm_gate_view` один раз читає налаштування).
         self._mm_mon_on: Optional[bool] = None
         self._mmn_on: Optional[bool] = None   # 🆕 тумблер блоку «МММ-new»
+        # ⚑ Пороги «Сила ≥» вкладок обох книг (вимога 12.10) — кеш для воріт
+        # сигналів, щоб ворота не ходили в БД на кожен сигнал. None = ще не
+        # зчитано (тоді ворота беруть налаштування напряму).
+        self._mm_str_mins_c: Optional[Dict] = None
+        self._mmn_str_mins_c: Optional[Dict] = None
         self._mm_bias_since: float = 0.0
         # 🐢 КАНДИДАТ на зміну статусу банера: {'dir', 'since'}. Поки він не
         # протримався `mm_bias_confirm_sec`, банер показує СТАРИЙ статус.
@@ -1676,6 +1681,7 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] settings persist error: {e}")
         # validated copy
         s2 = self.get_settings()
+        self._mm_str_mins_cache(s2)
         if s2.get('enabled'):
             self.start()
         # 🧾 Record the new lever set into the chronology (only when the monitor
@@ -3875,6 +3881,7 @@ class FuelFilterDaemon:
         _new = bool(s.get('mm_new_enabled', True))
         self._mm_mon_on = _mon
         self._mmn_on = _new
+        self._mm_str_mins_cache(s)
         # `now` передається ЛИШЕ з тестів (щоб програвати такти без sleep).
         _now = float(now) if now else time.time()
         # 🔮 Прогноз 1H/4H — ЧИСТЕ ЧИТАННЯ кешу (той самий, що малює бейджі над
@@ -4256,6 +4263,16 @@ class FuelFilterDaemon:
         with self._lock:
             return dict(getattr(self, '_mm_bias_new', {}) or {})
 
+    def _mm_str_mins_cache(self, s: Dict) -> None:
+        """⚑ Оновити кеш порогів «Сила ≥» обох книг із налаштувань."""
+        try:
+            self._mm_str_mins_c = mm_str_mins_norm(s.get('mm_str_mins'),
+                                                   s.get('mm_str_min', 0))
+            self._mmn_str_mins_c = mm_str_mins_norm(s.get('mmn_str_mins'),
+                                                    s.get('mmn_str_min', 0))
+        except Exception:
+            pass
+
     def mm_gate_view(self, symbol: str, book: str = 'new') -> Dict:
         """🆕 Що каже блок «МММ-new» про монету — для воріт сигналів сканера
         («🧮 Через МММ-NEW», вимога 01.10).
@@ -4291,7 +4308,22 @@ class FuelFilterDaemon:
         coin = None
         if v:
             coin = v.get('status') if v.get('status') in ('LONG', 'SHORT') else 'FLAT'
-        return {'on': bool(on), 'dir': d, 'coin': coin}
+        # ⚑ Сила монети і поріг «Сила ≥» ЇЇ вкладки (вимога 12.10) — для
+        # воріт «з порогом вкладки»: рішення = те, що людина бачить у таблиці.
+        mins = self._mm_str_mins_c if _old else self._mmn_str_mins_c
+        if mins is None:
+            try:
+                self._mm_str_mins_cache(self.get_settings())
+            except Exception:
+                pass
+            mins = (self._mm_str_mins_c if _old else self._mmn_str_mins_c) or {}
+        tab = {'LONG': 'LONG', 'SHORT': 'SHORT', 'FLAT': 'flat'}.get(coin)
+        try:
+            strength = int(v.get('strength') or 0) if v else None
+        except (TypeError, ValueError):
+            strength = 0
+        return {'on': bool(on), 'dir': d, 'coin': coin, 'strength': strength,
+                'str_min': int(mins.get(tab, 0) or 0) if tab else 0}
 
     def symbols_in_work(self) -> set:
         """Монети «В РОБОТІ» — ВІДКРИТА УГОДА **або** запис у будь-якій черзі.
