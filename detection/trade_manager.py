@@ -1639,6 +1639,11 @@ class TradeManager:
         current_price = self._get_current_price(symbol)
         if current_price is None:
             return
+        # 🏦 Легасі-угода зі SL/TP на біржі → знімаємо (рівні веде лише бот).
+        try:
+            self._strip_exchange_sltp(symbol, pos)
+        except Exception:
+            pass
         
         # Update Health Score evaluator state — peak PnL high-water mark.
         # This is independent of any trailing/BE logic and never decreases.
@@ -1990,6 +1995,11 @@ class TradeManager:
                 return
         except Exception:
             pass
+        # ✋ Оператор ЗНЯВ SL руками → гарантія стопа НЕ повертає його назад
+        # (вимога 12.10: «має бути ручне керування»). Без цього рядка поле
+        # заповнювалось знову за ~4с — і видалити Manual SL було неможливо.
+        if self._sl_cleared_by_user(pos):
+            return
         try:
             from detection.fuel_filter import get_fuel_filter
             s = get_fuel_filter().get_settings()
@@ -3908,6 +3918,21 @@ class TradeManager:
             # Для Manual TP таке правило вже діяло — тепер SL поводиться так
             # само. Скинути замок: очистити поле SL, тоді автопілот знову веде
             # стоп сам.
+            # ✋ ОПЕРАТОР ЗНЯВ SL РУКАМИ (вимога 12.10: «я не можу видалити
+            # Manual SL — має бути ручне керування»). Раніше очищене поле
+            # «повертало стоп автопілоту», і трейл ставив рівень назад через
+            # ~20с. Тепер порожнє поле — теж РІШЕННЯ людини.
+            if self._sl_cleared_by_user(pos):
+                self._pilot_mark(pkey, trail_block='оператор зняв SL вручну')
+                if not pos.get('_pilot_sl_user_lock'):
+                    pos['_pilot_sl_user_lock'] = True
+                    log_activity(symbol, 'skipped',
+                                 f'🎯 Автопілот: Manual SL ЗНЯТО ОПЕРАТОРОМ — '
+                                 f'структурний трейл '
+                                 f'{self._fmt_price(res["stop"])} не застосовано. '
+                                 f'Впишіть рівень руками, щоб знову мати стоп.',
+                                 side=side, source='PILOT')
+                return False
             if pos.get('manual_sl_src') == self.SRC_USER:
                 # Стан каже ПРАВДУ: план хотів трейл, але його заблоковано.
                 # Без цього в таблиці світився 🛡 «стоп підтягнуто» щотакту.
@@ -3981,6 +4006,18 @@ class TradeManager:
         # 'hold' — рішення ТРИМАТИ. У 🧾 Лог не пишемо (це стан, а не подія):
         # він уже відображений у колонці «🎯 Автопілот» таблиці угод.
         return False
+
+    @staticmethod
+    def _sl_cleared_by_user(pos: Dict) -> bool:
+        """✋ ОПЕРАТОР ЗНЯВ Manual SL — ЄДИНЕ ДЖЕРЕЛО правила (вимога 12.10).
+
+        Порожнє поле SL, яке очистила ЛЮДИНА, ніхто з бота не заповнює:
+        ні гарантія «🛡 Стоп ЗАВЖДИ» (`_auto_ob_manual_sl`), ні трейл
+        автопілота, ні беззбиток, ні Черга-4/Q3-VOB/POC (усі ботові рівні
+        ідуть через `update_manual_sl_tp(origin='auto')`, і там стоїть цей
+        гейт). Замок знімається, щойно оператор ВПИШЕ рівень знову."""
+        return bool(pos and pos.get('sl_cleared_by_user')
+                    and not pos.get('manual_sl'))
 
     @staticmethod
     def _tp2_cleared_by_user(pos: Dict) -> bool:
@@ -5342,8 +5379,10 @@ class TradeManager:
                 side=bybit_side,
                 qty=qty,
                 order_type='Market',
-                stop_loss=sl_price,
-                take_profit=tp_price,
+                # 🏦 SL/TP НА БІРЖУ НЕ ШЛЕМО (вимога 12.10): «на біржі має бути
+                # лише відкрита угода, а ці поля мають контролюватись ботом».
+                # sl_price/tp_price лишаються на позиції — їх, як і Manual
+                # SL/TP-1/TP-2, виконує МОНІТОР бота (`_monitor_position`).
             )
         except Exception as e:
             self._notify(f"❌ Failed to open {side} {symbol}: {e}")
@@ -5374,6 +5413,7 @@ class TradeManager:
                                                  entry_score=decision)
         position = _new_position(symbol, side, entry_price, qty,
                                    sl_price, tp_price, order_id, opened_by_full)
+        position['exchange_sltp'] = False   # 🏦 біржа рівнів не тримає
         if decision is not None:
             # Stored under entry_score key for backward-compat with the UI
             # column and legacy load_positions code; the dict shape is the
@@ -7163,10 +7203,54 @@ class TradeManager:
         return None
     
     def _update_exchange_sl(self, symbol: str, sl_price: float):
+        """🏦 НІЧОГО НЕ ШЛЕ НА БІРЖУ (вимога 12.10). Рівні угоди живуть ЛИШЕ
+        в боті — біржа тримає тільки саму позицію. Новий SL уже записано в
+        `pos['sl_price']`, і його виконує монітор бота."""
+        return None
+
+    def _strip_exchange_sltp(self, symbol: str, pos: Dict) -> None:
+        """🏦 Знімає з біржі SL/TP, поставлені ДО вимоги 12.10 (тоді
+        `place_order` слав їх разом з ордером). Один раз на позицію: успіх →
+        `exchange_sltp=False`; відмова → один рядок у 🧾 Лог і повтор не
+        частіше ніж раз на 5 хв. Зовнішні (✋ відкриті на біржі руками)
+        позиції НЕ чіпаємо — там рівні ставила людина на самій біржі."""
+        if pos.get('exchange_sltp') is False:
+            return
+        if 'external' in str(pos.get('opened_by') or '').lower():
+            return
+        if not (pos.get('sl_price') or pos.get('tp_price')):
+            pos['exchange_sltp'] = False
+            return
+        now = time.time()
+        if now - float(pos.get('_strip_sltp_at') or 0) < 300:
+            return
+        pos['_strip_sltp_at'] = now
+        ok = False
         try:
-            self.bybit.set_trading_stop(symbol=symbol, stop_loss=sl_price)
+            ok = bool(self.bybit.set_trading_stop(symbol=symbol,
+                                                  stop_loss=0, take_profit=0))
         except Exception as e:
-            print(f"[TM] update SL error for {symbol}: {e}")
+            print(f"[TM] strip exchange SL/TP error for {symbol}: {e}")
+        try:
+            from detection.activity_log import log_activity
+            if ok:
+                pos['exchange_sltp'] = False
+                log_activity(symbol, 'sltp',
+                             '🏦 SL/TP знято з біржі — рівні угоди тепер '
+                             'контролює лише бот', side=pos.get('side'),
+                             source='TM')
+            elif not pos.get('_strip_sltp_warned'):
+                pos['_strip_sltp_warned'] = True
+                log_activity(symbol, 'skipped',
+                             '🏦 ⚠️ НЕ вдалось зняти SL/TP з біржі — вони ще '
+                             'стоять на Bybit (повтор раз на 5 хв)',
+                             side=pos.get('side'), source='TM')
+        except Exception:
+            pass
+        try:
+            self._persist_positions()
+        except Exception:
+            pass
     
     # ============================================================
     # Tradeable list (mirrored from scanner watchlist)
@@ -7632,6 +7716,15 @@ class TradeManager:
             if origin == self.SRC_AUTO and self._manual_locked(pos):
                 return {'ok': False, 'manual_lock': True,
                         'reason': '📌 Manual — рівні веде оператор, бот їх не змінює'}
+            # ✋ SL, ЗНЯТИЙ ОПЕРАТОРОМ, бот не повертає (вимога 12.10). Решта
+            # полів того самого виклику (TP) застосовується як звичайно.
+            if (origin == self.SRC_AUTO and sl_op[0] == 'set'
+                    and self._sl_cleared_by_user(pos)):
+                sl_op = ('skip',)
+                if tp_op[0] == 'skip' and tp1_op[0] == 'skip':
+                    return {'ok': False, 'sl_user_cleared': True,
+                            'reason': '✋ Manual SL знято оператором — бот '
+                                      'його не повертає'}
             
             # === Directional validation ===
             # Only kicks in when at least one operation is 'set'. Skip and
@@ -7709,6 +7802,8 @@ class TradeManager:
                 pos['manual_sl'] = _sv
                 pos['manual_sl_src'] = _src
                 pos['manual_sl_by'] = origin_label or ''
+                if _src == self.SRC_USER:
+                    pos.pop('sl_cleared_by_user', None)
                 self._record_manual_hist(pos, 'sl', _sv)
                 # Нове значення — знімаємо позначку «про замок уже сказано»,
                 # щоб пояснення зʼявилось у лозі й для цього рівня.
@@ -7726,8 +7821,11 @@ class TradeManager:
                 pos.pop('manual_sl_src', None)
                 pos.pop('manual_sl_by', None)
                 pos.pop('manual_sl_tf', None)
-                # Поле очищено → автопілот знову веде стоп сам.
                 pos.pop('_pilot_sl_user_lock', None)
+                # ✋ Поле очистила ЛЮДИНА → воно лишається порожнім: жоден
+                # авто-шлях бота стоп назад не ставить (вимога 12.10).
+                if _src == self.SRC_USER:
+                    pos['sl_cleared_by_user'] = True
             # ⚖️ Позначка «стоп у беззбитку» належить рівню, а не угоді: щойно
             # ОПЕРАТОР вписав/зняв свій SL, зелений колір більше не чесний.
             # Автоматичний трейл позначку зберігає — угода й далі без ризику.
@@ -7802,6 +7900,7 @@ class TradeManager:
         # можуть закрити.
         if (not is_shadow and tp_op[0] == 'clear'
                 and origin != self.SRC_AUTO
+                and updated.get('exchange_sltp') is not False
                 and updated.get('tp_price') and getattr(self, 'bybit', None)):
             _exok = False
             try:

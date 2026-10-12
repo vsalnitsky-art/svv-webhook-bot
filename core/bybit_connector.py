@@ -511,7 +511,9 @@ class BybitConnector:
                 "positionIdx": position_idx
             }
             
-            if stop_loss:
+            # ⚠️ SL: нуль — теж змістовне значення («скасувати стоп» на Bybit),
+            # тому `is not None`, як і для TP нижче.
+            if stop_loss is not None:
                 params["stopLoss"] = str(stop_loss)
             # ⚠️ TP: НУЛЬ — ЗМІСТОВНЕ значення. Bybit трактує `takeProfit="0"`
             # як СКАСУВАТИ тейк-профіт, тож перевірка мусить бути `is not None`.
