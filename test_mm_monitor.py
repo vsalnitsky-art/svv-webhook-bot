@@ -638,7 +638,7 @@ mmApplyState({rows:[
   {symbol:'WEAKER', mm:'LONG', strength:12, strength_prev:null, price:1, in_trade:false, in_queue:false, selectable:true}],
   limited:false, ts:1, counts:{LONG:2,SHORT:0,flat:0}});
 document.getElementById('mm-min-str').value = '50';
-mmRender();
+mmMinStrChanged();
 const h = document.getElementById('mm-tbody').innerHTML;
 console.log(JSON.stringify({strong:h.includes('STRONG'), weak:h.includes('WEAKER')}));
 ''')
@@ -1508,8 +1508,8 @@ def test_js_tab_counters_respect_the_strength_filter():
     """🐞 СКАРГА ЗІ СКРІНА: стояло «Сила ≥ 50», на вкладках світилось
     «🟢 LONG (36) · 🔴 SHORT (6)», а в таблиці — лічені рядки. Лічильник мусить
     рахувати ТЕ САМЕ, що видно під ним.
-    ⚠️ Фільтр НАПРЯМКУ на лічильники НЕ впливає — інакше кожна необрана
-    вкладка завжди показувала б (0) і перемкнутись було б неможливо."""
+    ⚑ Вимога 12.10: поріг СВІЙ на кожну вкладку — «Сила ≥ 50» на «Всі» НЕ
+    звужує вкладки LONG / SHORT / ⚖ (у них свій поріг, тут 0)."""
     out = _run_js(r'''
 const R = (s, mm, st) => ({symbol:s, mm:mm, strength:st, strength_prev:st, delta:0,
   grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
@@ -1520,7 +1520,7 @@ const N = () => _tabs.map(t => t.querySelector().textContent);
 mmApplyState({rows:rows, enabled:true, limited:false, ts:1});
 const before = N();
 document.getElementById('mm-min-str').value = '50';
-mmRender();
+mmMinStrChanged();
 const after = N();
 const shown = (document.getElementById('mm-tbody').innerHTML.match(/<tr/g)||[]).length;
 console.log(JSON.stringify({before, after, shown}));
@@ -1529,12 +1529,83 @@ console.log(JSON.stringify({before, after, shown}));
     d = json.loads(out)
     _check(d['before'] == ['(5)', '(2)', '(2)', '(1)'],
            f'без фільтра лічильники мусять бути повними: {d["before"]}')
-    _check(d['after'] == ['(2)', '(1)', '(1)', '(0)'],
-           f'із «Сила ≥ 50» лічильники не звузились: {d["after"]}')
+    _check(d['after'] == ['(2)', '(2)', '(2)', '(1)'],
+           f'«Сила ≥ 50» на «Всі» мусить звузити ЛИШЕ «Всі»: {d["after"]}')
     _check(d['shown'] == 2,
            f'кількість рядків мусить збігатися з лічильником «Всі»: {d}')
-    print('✓ JS: лічильники вкладок = те, що реально видно під ними')
+    print('✓ JS: лічильник вкладки = те, що вона покаже (своїм порогом)')
 
+
+def test_js_each_tab_keeps_its_own_strength_threshold():
+    """⚑ Вимога 12.10: «Сила має відповідати конкретній закладці, а не для всіх
+    одразу». Перемикання вкладки підставляє в поле ЇЇ поріг; таблиця фільтрується
+    порогом активної вкладки; на збереження йдуть УСІ чотири пороги."""
+    out = _run_js(r'''
+const R = (s, mm, st) => ({symbol:s, mm:mm, strength:st, strength_prev:st, delta:0,
+  grow_since:null, price:1, price_dir:'flat', price_chg:0, price_span:900,
+  delta_span:180, f1:null, f4:null, selectable:mm !== null});
+const rows = [R('L1','LONG',80), R('L2','LONG',20), R('S1','SHORT',70),
+              R('S2','SHORT',30), R('S3','SHORT',10)];
+mmApplyState({rows:rows, enabled:true, limited:false, ts:1});
+const inp = document.getElementById('mm-min-str');
+mmSetDir('LONG');  inp.value = '50'; mmMinStrChanged();
+const longRows = (document.getElementById('mm-tbody').innerHTML.match(/<tr/g)||[]).length;
+mmSetDir('SHORT');
+const shortField = inp.value;
+inp.value = '25'; mmMinStrChanged();
+const shortRows = (document.getElementById('mm-tbody').innerHTML.match(/<tr/g)||[]).length;
+mmSetDir('LONG');
+const longField = inp.value;
+const N = _tabs.map(t => t.querySelector().textContent);
+console.log(JSON.stringify({longRows, shortField, shortRows, longField, N,
+  mins: _MMB.old.strMins}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['longRows'] == 1, f'LONG із порогом 50 мусить показати 1 рядок: {d}')
+    _check(str(d['shortField']) == '0', f'у SHORT поле мусить показати СВІЙ поріг (0): {d}')
+    _check(d['shortRows'] == 2, f'SHORT із порогом 25 мусить показати 2 рядки: {d}')
+    _check(str(d['longField']) == '50', f'повернення на LONG мусить повернути 50: {d}')
+    _check(d['N'] == ['(5)', '(1)', '(2)', '(0)'], f'кожна вкладка рахує своїм порогом: {d["N"]}')
+    _check(d['mins'] == {'all': 0, 'LONG': 50, 'SHORT': 25, 'flat': 0},
+           f'пороги вкладок перемішались: {d["mins"]}')
+    print('✓ JS: ⚑ у кожної вкладки свій поріг «Сила ≥» (і поле його показує)')
+
+
+def test_js_tab_thresholds_come_from_the_server_per_book():
+    """Пороги вкладок їдуть ЗІ СЕРВЕРА (`str_mins`) — одні на всі браузери,
+    окремо для 🧮 і 🆕."""
+    out = _run_js(r'''
+mmApplyState({rows:[], enabled:true, limited:false, ts:1, book:'old', str_min:10,
+  str_mins:{all:10, LONG:40, SHORT:60, flat:5}}, 'old');
+mmApplyState({rows:[], enabled:true, limited:false, ts:1, book:'new', str_min:0,
+  str_mins:{all:0, LONG:0, SHORT:35, flat:0}}, 'new');
+console.log(JSON.stringify({o:_MMB.old.strMins, n:_MMB.new.strMins}));
+''')
+    import json
+    d = json.loads(out)
+    _check(d['o'] == {'all': 10, 'LONG': 40, 'SHORT': 60, 'flat': 5}, f'🧮: {d}')
+    _check(d['n'] == {'all': 0, 'LONG': 0, 'SHORT': 35, 'flat': 0}, f'🆕: {d}')
+    print('✓ JS: пороги вкладок приїжджають із сервера, кожній книзі свої')
+
+
+def test_tab_thresholds_are_validated_and_served_per_book():
+    """Бекенд: `mm_str_mins` / `mmn_str_mins` — чотири пороги 0..100; старий
+    блоб без словника бере колишній спільний поріг для всіх вкладок."""
+    _check(_m.mm_str_mins_norm(None, 30) == {'all': 30, 'LONG': 30, 'SHORT': 30, 'flat': 30},
+           'старий блоб мусить узяти спільний поріг')
+    _check(_m.mm_str_mins_norm({'LONG': 150, 'SHORT': 'x', 'flat': -5}, 20)
+           == {'all': 20, 'LONG': 100, 'SHORT': 20, 'flat': 0}, 'межі/сміття')
+    ff = _mk()
+    ff._settings.update({'enabled': True, 'mm_str_min': 10,
+                         'mm_str_mins': {'all': 10, 'LONG': 40, 'SHORT': 60, 'flat': 5},
+                         'mmn_str_mins': {'all': 0, 'LONG': 0, 'SHORT': 35, 'flat': 0}})
+    _cap(ff, AAAUSDT=0.5)
+    _check(ff.mm_monitor_state()['str_mins'] == {'all': 10, 'LONG': 40, 'SHORT': 60, 'flat': 5},
+           '🧮 пороги вкладок не доїхали')
+    _check(ff.mm_monitor_state(book='new')['str_mins']['SHORT'] == 35,
+           '🆕 пороги вкладок не доїхали')
+    print('✓ бекенд: пороги вкладок валідуються і віддаються кожній книзі')
 
 def test_js_filters_survive_a_page_reload():
     """«Сила ≥ не запамʼятовується» — запамʼятовуємо ВСІ три UI-фільтри
@@ -1838,8 +1909,9 @@ const R = (s, str) => ({symbol:s, mm:'LONG', strength:str, strength_prev:str,
 const rows = [];
 for (let i = 0; i < 6; i++) rows.push(R('A' + i + 'USDT', 70));   // у фільтрі
 for (let i = 0; i < 17; i++) rows.push(R('B' + i + 'USDT', 10));  // поза
-document.getElementById('mm-min-str').value = '50';
 mmApplyState({rows: rows, enabled:true, limited:false, ts:1});
+document.getElementById('mm-min-str').value = '50';
+mmMinStrChanged();
 const badge = document.getElementById('mm-str-out');
 const tab = document.querySelector('#mm-body [data-mmdir="all"]');
 console.log(JSON.stringify({
@@ -3047,7 +3119,9 @@ def test_ui_new_block_is_a_full_twin_of_the_monitor():
     for key in ('mm_new_enabled', 'mmn_bias_confirm_sec'):
         _check(f'{key}:' in _HTML and f's.{key}' in _HTML, f'{key} не зберігається/не читається')
     # Поріг «Сила ≥» приходить у стані блоку (`str_min`), як і в 🧮.
-    _check('mmn_str_min: _mmMinStr(_MMB.new)' in _HTML, 'поріг МММ-new не зберігається')
+    _check("mmn_str_min: _mmMinStr(_MMB.new, 'all')" in _HTML
+           and 'mmn_str_mins: Object.assign({}, _MMB.new.strMins)' in _HTML,
+           'поріг МММ-new не зберігається')
     print('✓ 🖥 МММ-new — повний двійник 🧮: свій тумблер, банер, фільтри, список')
 
 

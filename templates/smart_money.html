@@ -2606,7 +2606,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span></button>
                 <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span></button>
                 <button type="button" data-mmdir="flat" onclick="mmSetDir('flat')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span></button>
-                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧮 МММ-МОНІТОР» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧮 МММ-МОНІТОР» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
                     Сила ≥ <input type="number" id="mm-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged()" onchange="mmMinStrSave()"> %
                 </label>
                 <!-- ⚑ Скільки монет фільтр ВІДСІЯВ. Без цього числа «Всі (6)»
@@ -2775,7 +2775,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG','new')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span></button>
                 <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT','new')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span></button>
                 <button type="button" data-mmdir="flat" onclick="mmSetDir('flat','new')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span></button>
-                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧮 МММ-NEW» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧮 МММ-NEW» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
                     Сила ≥ <input type="number" id="mmn-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged('new')" onchange="mmMinStrSave()"> %
                 </label>
                 <span id="mmn-str-out" style="font-size:0.66rem;color:#fbbf24;font-family:monospace"></span>
@@ -11989,6 +11989,9 @@ function _mmMkBook(P, src, uiKey) {
         // завжди символ, щоб рядки не «стрибали» під курсором між поллами.
         sort: { col: 'strength', dir: -1 },
         uiLoaded: false, strMigrated: false, strLocal: null,
+        // ⚑ Поріг «Сила ≥» — СВІЙ на кожну вкладку (вимога 12.10). Поле
+        // показує поріг АКТИВНОЇ вкладки; перемикання вкладки підставляє її.
+        strMins: { all: 0, LONG: 0, SHORT: 0, flat: 0 },
         bias: null };
 }
 const _MMB = { old: _mmMkBook('mm', 'МММ LiQ', 'mmMonitorUi'),
@@ -12014,7 +12017,9 @@ const _mmEsc = s => String(s == null ? '' : s)
 
 function mmSetDir(d, bk) {
     const B = _mmBk(bk);
+    _mmStrFromInput(B);              // спершу закріпити поріг вкладки, що йде
     B.dir = d;
+    _mmStrToInput(B);                // поле показує поріг НОВОЇ вкладки
     _mmSaveUi(B);
     mmRender(bk);
 }
@@ -12029,7 +12034,9 @@ function mmSort(col, bk) {
 }
 // Поле «Сила ≥» — свій обробник, щоб і перемалювати, і ЗАПАМʼЯТАТИ.
 function mmMinStrChanged(bk) {
-    _mmSaveUi(_mmBk(bk));
+    const B = _mmBk(bk);
+    _mmStrFromInput(B);
+    _mmSaveUi(B);
     mmRender(bk);
 }
 // ⚠️ «Немає даних» ≠ «нуль». Рядок без ціни/запасу/таймера йде в КІНЕЦЬ при
@@ -12225,28 +12232,37 @@ function mmClearSel(bk) {
     _mmBk(bk).sel.clear();
     mmRender(bk);
 }
-// Поточний поріг «Сила ≥» (0..100) книги.
-function _mmMinStr(B) {
+// ⚑ ПОРІГ «Сила ≥» — СВІЙ НА КОЖНУ ВКЛАДКУ (вимога 12.10: «Сила має
+// відповідати конкретній закладці, а не для всіх одразу»). Поле показує поріг
+// АКТИВНОЇ вкладки; кожна вкладка рахує свій лічильник своїм порогом.
+const _MM_TABS = ['all', 'LONG', 'SHORT', 'flat'];
+const _mmClampStr = v => Math.max(0, Math.min(100, parseFloat(v) || 0));
+// Поле → поріг активної вкладки (поле — джерело, поки людина його править).
+function _mmStrFromInput(B) {
+    const el = _mmEl(B, '-min-str');
+    if (el) B.strMins[B.dir] = _mmClampStr(el.value);
+}
+// Поріг активної вкладки → поле (на перемиканні вкладки / з сервера).
+function _mmStrToInput(B) {
+    const el = _mmEl(B, '-min-str');
+    if (el && document.activeElement !== el) el.value = B.strMins[B.dir] || 0;
+}
+// Поріг вкладки `d` (за замовчуванням — активної).
+function _mmMinStr(B, d) {
     B = B || _MMB.old;
-    return Math.max(0, Math.min(100,
-        parseFloat((_mmEl(B, '-min-str') || {}).value) || 0));
+    return _mmClampStr(B.strMins[d || B.dir]);
 }
-// Рядки після фільтра СИЛИ, але ще БЕЗ фільтра напрямку.
-// ⚠️ Саме на них рахуються лічильники вкладок: інакше «🟢 LONG (36)» стояло б
-// поруч із таблицею на 4 рядки (скарга 15.09). Напрямок тут НЕ застосовуємо —
-// інакше вкладка, яку не обрано, завжди показувала б (0).
-function _mmRowsByStrength(B) {
-    const minStr = _mmMinStr(B);
-    return B.rows.filter(r => (r.strength || 0) >= minStr);
+// Вкладка рядка: LONG / SHORT / flat.
+const _mmTabOf = r => (r.mm === 'LONG' ? 'LONG' : (r.mm === 'SHORT' ? 'SHORT' : 'flat'));
+// Рядки вкладки `d` ЗІ СВОЇМ порогом. «Всі» — усі напрямки з порогом «Всі».
+function _mmTabRows(B, d) {
+    const minStr = _mmMinStr(B, d);
+    return B.rows.filter(r => (d === 'all' || _mmTabOf(r) === d)
+                              && (r.strength || 0) >= minStr);
 }
-// Рядки, які зараз ВИДНО (фільтр сили + фільтр напрямку).
+// Рядки, які зараз ВИДНО — вкладка + її поріг.
 function _mmVisibleRows(B) {
-    return _mmRowsByStrength(B).filter(r => {
-        if (B.dir === 'LONG') return r.mm === 'LONG';
-        if (B.dir === 'SHORT') return r.mm === 'SHORT';
-        if (B.dir === 'flat') return r.mm !== 'LONG' && r.mm !== 'SHORT';
-        return true;
-    });
+    return _mmTabRows(B, B.dir);
 }
 // 💾 Вкладка і сортування — це вибір ПОКАЗУ, вони живуть у localStorage (як
 // `wlSortMode` у watchlist) і мусять переживати перезавантаження (скарга
@@ -12317,44 +12333,42 @@ function mmRender(bk) {
     // щоб кнопка не обіцяла відкрити те, чого в таблиці вже нема.
     const live = new Set(B.rows.map(r => r.symbol));
     Array.from(B.sel).forEach(s => { if (!live.has(s)) B.sel.delete(s); });
-    // ⚠️ Лічильники вкладок рахуємо ТУТ і САМЕ по рядках, що пройшли фільтр
-    // «Сила ≥» — бо інакше число на вкладці не збігається з тим, що під нею.
-    const _byStr = _mmRowsByStrength(B);
-    const cnt = { LONG: 0, SHORT: 0, flat: 0 };
-    _byStr.forEach(r => {
-        cnt[r.mm === 'LONG' ? 'LONG' : (r.mm === 'SHORT' ? 'SHORT' : 'flat')] += 1;
+    // ⚠️ Лічильник КОЖНОЇ вкладки рахується ЇЇ ВЛАСНИМ порогом «Сила ≥»
+    // (вимога 12.10) — число на вкладці = рядки, які вона покаже.
+    const cnt = {}, _all = {};
+    _MM_TABS.forEach(d => {
+        cnt[d] = _mmTabRows(B, d).length;
+        // ⚑ Скільки монет вкладки взагалі (без порогу) — щоб було видно, скільки
+        // фільтр лишив ПОЗА показом (скарга 16.09).
+        _all[d] = d === 'all' ? B.rows.length
+                              : B.rows.filter(r => _mmTabOf(r) === d).length;
     });
-    // ⚑ ТЕ САМЕ по ВСІХ рядках — щоб було видно, скільки монет фільтр «Сила ≥»
-    // лишив ПОЗА показом. «Всі (6)» без цього числа читається як «у боті всього
-    // 6 монет», хоча їх може бути 23 (скарга 16.09).
-    const _all = { LONG: 0, SHORT: 0, flat: 0 };
-    B.rows.forEach(r => {
-        _all[r.mm === 'LONG' ? 'LONG' : (r.mm === 'SHORT' ? 'SHORT' : 'flat')] += 1;
-    });
-    const _outTotal = B.rows.length - _byStr.length;
+    const _shown = cnt[B.dir], _tot = _all[B.dir];
+    const _outTotal = _tot - _shown;
     const _outEl = _mmEl(B, '-str-out');
     if (_outEl) {
         _outEl.textContent = _outTotal > 0
-            ? `⚑ поза фільтром ${_outTotal} з ${B.rows.length}` : '';
+            ? `⚑ поза фільтром ${_outTotal} з ${_tot}` : '';
         _outEl.title = _outTotal > 0
-            ? (`Фільтр «Сила ≥ ${_mmMinStr(B)}%» лишив у таблиці ${_byStr.length} `
-               + `монет із ${B.rows.length}; решта ${_outTotal} — зі слабшою силою МММ. `
+            ? (`Фільтр вкладки «Сила ≥ ${_mmMinStr(B)}%» лишив у таблиці ${_shown} `
+               + `монет із ${_tot}; решта ${_outTotal} — зі слабшою силою МММ. `
                + 'Це НЕ «бот їх не бачить»: вони рахуються, просто не показані. '
-               + 'Постав 0, щоб побачити всі.')
+               + 'Постав 0, щоб побачити всі. Поріг у кожної вкладки свій.')
             : '';
     }
     // Вигляд вкладок — ТОЧНО той самий, що у вкладок напрямку Черги-1/2.
     document.querySelectorAll(`#${B.P}-body [data-mmdir]`).forEach(btn => {
         const d = btn.dataset.mmdir;
-        const n = d === 'all' ? _byStr.length : (cnt[d] || 0);
-        const nAll = d === 'all' ? B.rows.length : (_all[d] || 0);
+        const n = cnt[d] || 0;
+        const nAll = _all[d] || 0;
         const el = btn.querySelector('.mm-dir-n');
         if (el) el.textContent = `(${n})`;
         // У підказці — обидва числа, щоб «скільки у фільтрі / скільки поза» було
         // видно для КОЖНОЇ вкладки, а не лише загалом.
+        const _thr = _mmMinStr(B, d);
         btn.title = (nAll > n)
-            ? `у фільтрі ${n} · поза фільтром ${nAll - n} (усього ${nAll})`
-            : `${n} монет`;
+            ? `Сила ≥ ${_thr}% · у фільтрі ${n} · поза фільтром ${nAll - n} (усього ${nAll})`
+            : `${n} монет` + (_thr > 0 ? ` · Сила ≥ ${_thr}%` : '');
         const on = (d === B.dir);
         btn.style.cssText = 'cursor:pointer;padding:3px 10px;border-radius:11px;'
             + 'font-size:0.68rem;font-weight:700;'
@@ -12625,17 +12639,25 @@ function mmApplyState(mm, bk) {
     if (_off) _off.style.display = B.meta.enabled ? 'none' : '';
     if (_live) _live.style.display = B.meta.enabled ? '' : 'none';
     mmRenderBias(B.meta.enabled ? ((mm && mm.bias) || null) : null, code);
-    // ⚑ Поріг «Сила ≥» приходить З СЕРВЕРА — одне число на всі браузери. Поле
-    // не чіпаємо, поки в ньому друкують.
+    // ⚑ Пороги «Сила ≥» приходять З СЕРВЕРА — свій на кожну вкладку, одні на
+    // всі браузери. Поле не чіпаємо, поки в ньому друкують (і щойно збережене
+    // не перекриваємо відповіддю, що вийшла ДО збереження).
     const _sEl = _mmEl(B, '-min-str');
-    if (_sEl && mm && mm.str_min != null && document.activeElement !== _sEl) {
+    const _fresh = Date.now() - ((typeof window !== 'undefined' && window._ffSettingsSavedAt) || 0) < 4000;
+    if (_sEl && mm && mm.str_min != null && document.activeElement !== _sEl && !_fresh) {
+        const _srv = (mm.str_mins && typeof mm.str_mins === 'object') ? mm.str_mins : null;
+        _MM_TABS.forEach(d => {
+            B.strMins[d] = _mmClampStr(_srv && _srv[d] != null ? _srv[d] : mm.str_min);
+        });
         // Разовий переїзд старого локального значення (див. `_mmLoadUi`).
         if (B.strLocal != null) {
             const _loc = B.strLocal; B.strLocal = null;
             if (_loc > 0 && Number(mm.str_min) === 0) {
-                _sEl.value = _loc; mmMinStrSave();
-            } else { _sEl.value = mm.str_min; }
-        } else { _sEl.value = mm.str_min; }
+                _MM_TABS.forEach(d => { B.strMins[d] = _loc; });
+                _mmStrToInput(B); mmMinStrSave();
+            }
+        }
+        _mmStrToInput(B);
     }
     const up = _mmEl(B, '-updated');
     if (up) {
@@ -14922,13 +14944,15 @@ async function saveFuelFilterSettings() {
         mmm_limited_mode: _c('ff-mmm-limited'),
         mm_monitor_enabled: _c('ff-mm-monitor-enabled'),
         // ⚑ Поріг «Сила ≥» — налаштування бота, а не браузера.
-        mm_str_min: _mmMinStr(_MMB.old),
+        mm_str_min: _mmMinStr(_MMB.old, 'all'),
+        mm_str_mins: Object.assign({}, _MMB.old.strMins),
         // 🐢 Скільки новий статус банера мусить протриматись, перш ніж його
         // покажуть (антиспам). 0 = миттєво.
         mm_bias_confirm_sec: parseInt(_v('ff-mm-bias-confirm', '120') || '0', 10),
         // 🆕 МММ-new — ті самі три параметри, свої ключі.
         mm_new_enabled: _c('ff-mm-new-enabled'),
-        mmn_str_min: _mmMinStr(_MMB.new),
+        mmn_str_min: _mmMinStr(_MMB.new, 'all'),
+        mmn_str_mins: Object.assign({}, _MMB.new.strMins),
         mmn_bias_confirm_sec: parseInt(_v('ff-mmn-bias-confirm', '120') || '0', 10),
         mm_bias_tg: _c('ff-mm-bias-tg'),
         mmn_bias_tg: _c('ff-mmn-bias-tg'),

@@ -220,6 +220,32 @@ def _fnum(v) -> float:
         return 0.0
 
 
+MM_STR_TABS = ('all', 'LONG', 'SHORT', 'flat')
+
+
+def mm_str_mins_norm(raw, legacy=0) -> dict:
+    """⚑ ПОРІГ «Сила ≥» — СВІЙ НА КОЖНУ ВКЛАДКУ (вимога 12.10: «Сила має
+    відповідати конкретній закладці, а не для всіх одразу»).
+
+    → {'all','LONG','SHORT','flat': 0..100}. Немає значення вкладки (старий
+    блоб без словника) → береться `legacy` (колишній спільний `mm_str_min`),
+    тож після деплою кожна вкладка стартує з того самого порогу, що й був.
+    Сміття → 0, а не збій."""
+    try:
+        base = max(0, min(100, int(float(legacy or 0))))
+    except (TypeError, ValueError):
+        base = 0
+    src = raw if isinstance(raw, dict) else {}
+    out = {}
+    for k in MM_STR_TABS:
+        v = src.get(k, base)
+        try:
+            out[k] = max(0, min(100, int(float(v))))
+        except (TypeError, ValueError):
+            out[k] = base
+    return out
+
+
 def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
                  st_key: str = 'status', str_key: str = 'strength'):
     """⚖️ ОДИН крок важеля банера → `(bias, since, cand)`. ЧИСТА функція.
@@ -347,6 +373,9 @@ DEFAULT_SETTINGS = {
     # ⚑ Поріг «Сила ≥» таблиці монітора. Живе в налаштуваннях бота, а не в
     # localStorage сторінки: інакше в кожному браузері був би свій список.
     'mm_str_min': 0,
+    # ⚑ …а тепер СВІЙ поріг на кожну вкладку (вимога 12.10). None = узяти
+    # спільний `mm_str_min` для всіх чотирьох (старий блоб).
+    'mm_str_mins': None,
     # 🐢 ⏱ ПІДТВЕРДЖЕННЯ ЗМІНИ СТАТУСУ БАНЕРА, секунди (вимога 18.09).
     # Новий стан (LONG / SHORT / ⚖) мусить протриматись стільки, перш ніж
     # банер його ПОКАЖЕ. 0 = перемикати миттєво (стара поведінка).
@@ -356,6 +385,7 @@ DEFAULT_SETTINGS = {
     # власне вікно підтвердження статусу банера.
     'mm_new_enabled': True,
     'mmn_str_min': 0,
+    'mmn_str_mins': None,
     'mmn_bias_confirm_sec': 120,
     # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
     # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
@@ -1598,6 +1628,11 @@ class FuelFilterDaemon:
             s['mmn_str_min'] = max(0, min(100, int(float(s.get('mmn_str_min', 0)))))
         except (TypeError, ValueError):
             s['mmn_str_min'] = 0
+        # ⚑ Поріг на кожну вкладку (вимога 12.10); спільний ключ лишається
+        # дзеркалом вкладки «Всі» — для старих читачів.
+        for _k, _lk in (('mm_str_mins', 'mm_str_min'), ('mmn_str_mins', 'mmn_str_min')):
+            s[_k] = mm_str_mins_norm(s.get(_k), s.get(_lk, 0))
+            s[_lk] = s[_k]['all']
         try:
             s['mmn_bias_confirm_sec'] = max(0, min(3600,
                 int(float(s.get('mmn_bias_confirm_sec', 120)))))
@@ -4118,6 +4153,10 @@ class FuelFilterDaemon:
             'limited': bool(s.get('mmm_limited_mode', True)),
             # ⚑ Поріг «Сила ≥» їде З СЕРВЕРА — одне число на всі браузери.
             'str_min': int(s.get('mmn_str_min' if _nb else 'mm_str_min', 0) or 0),
+            # ⚑ …і свій поріг на КОЖНУ вкладку (вимога 12.10).
+            'str_mins': mm_str_mins_norm(
+                s.get('mmn_str_mins' if _nb else 'mm_str_mins'),
+                s.get('mmn_str_min' if _nb else 'mm_str_min', 0)),
             'book': 'new' if _nb else 'old',
             # ⚖️ Готовий важіль напрямку для банера (рахує двигун, тут ЧИТАННЯ).
             'bias': (dict(getattr(self, '_mm_bias_new' if _nb else '_mm_bias', {})
