@@ -94,6 +94,10 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._mmn_snapshot, ff._mmn_snapshot_ts, ff._mmn_stats = {}, 0.0, {}
     ff._mmn_str_hist, ff._mmn_price_hist = {}, {}
     ff._mmn_grow_since, ff._mmn_state_since = {}, {}
+    # ⚡ Книга «МММ-CTR» (14.10) — свій знімок, банер і таймери.
+    ff._mmc_snapshot, ff._mmc_snapshot_ts, ff._mmc_stats = {}, 0.0, {}
+    ff._mmc_state_since, ff._mmc_price_hist = {}, {}
+    ff._mm_bias_ctr, ff._mm_bias_ctr_since, ff._mm_bias_ctr_cand = {}, 0.0, {}
     # ⚠️ «Готовність» МММ-new ПРИБРАНО (01.10): якби код знову полiз у грейдер,
     # цей стаб упіймав би виклик (див. test_readiness_column_is_gone).
     ff._compute_setup_calls = []
@@ -3137,7 +3141,7 @@ def test_ui_new_block_is_a_full_twin_of_the_monitor():
     _check("mmSort('runway','new')" in _HTML and "mmSetDir('LONG','new')" in _HTML,
            'кнопки нового блоку працюють зі своєю книгою')
     _check("'mmn', 'mmnlist'" in _HTML, 'гармошки МММ-new у _PANEL_IDS')
-    _check("new Set(['mmlist', 'mmnlist'])" in _HTML, 'список МММ-new згорнутий за замовч.')
+    _check("new Set(['mmlist', 'mmnlist', 'mmclist'])" in _HTML, 'список МММ-new згорнутий за замовч.')
     _check("want.push('mmn')" in _HTML and '_served.mmn && d.mm_new' in _HTML,
            'секція mmn просиситься і читається за served')
     for key in ('mm_new_enabled', 'mmn_bias_confirm_sec'):

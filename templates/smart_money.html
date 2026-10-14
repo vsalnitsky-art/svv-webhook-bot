@@ -2835,6 +2835,102 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     </div>
 
 
+    <!-- ===== ⚡ МММ-CTR (вимога 14.10) =====
+         «Створи третій МММ банер (монітор) по такому принципу як і два
+         попередні МММ, але за основу візьми дані [⚡ STC 1H · 4H]». Розмітка —
+         копія блоку 🆕 з префіксом id `mmc-`; JS — ТОЙ САМИЙ код монітора з
+         книгою `ctr`; бекенд — `mm_monitor_state(book="ctr")` (секція `mmc`).
+         Напрямок монети — `ctr_mm_dir`: 0.4·нахил 1H + 0.6·нахил 4H. -->
+    <div class="tm-panel" id="mmc-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(250,204,21,0.30);border-radius:8px;background:rgba(250,204,21,0.04)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px">
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mmc')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mmc-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> ⚡ МММ-CTR <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— нахил STC (CTR) 1H + 4H по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
+            <div style="display:flex;align-items:center;gap:10px">
+                <span id="mmc-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
+                <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк ⚡ МММ-CTR. ВИМКНЕНО — бот НЕ веде знімок STC 1H/4H і не тягне свічки для нього (банер, таймери, історію, список монет), таблиця порожня, групове відкриття недоступне. Сам моніторинг нічого не відкриває автоматично — лише показує стан і дає ✋ відкрити обране вручну.">
+                    <input type="checkbox" id="ff-mm-ctr-enabled" checked onchange="saveFuelFilterSettings()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+        <div id="mmc-body">
+            <div id="mmc-off" style="display:none;padding:9px 12px;border-radius:6px;border:1px dashed rgba(148,163,184,0.35);color:#8b93a7;font-size:0.72rem">🔌 МММ-CTR вимкнено — бот не рахує ні банер, ні список монет. Увімкніть тумблер у шапці блоку.</div>
+            <div id="mmc-live">
+            <div id="mmc-bias-banner" class="mm-ban" style="margin:0 0 10px">
+                <span class="mm-ban-title" style="color:#fde68a;text-shadow:0 0 9px rgba(250,204,21,0.45)">⚡ МММ-CTR</span>
+                <div class="mm-ban-bar">
+                    <div id="mmc-bias-bar" style="height:100%;width:0%;border-radius:9px;background:#facc15;transition:width 0.4s linear,background 0.3s"></div>
+                    <span id="mmc-bias-label" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
+                </div>
+                <span class="mm-ban-tm">
+                    <span id="mmc-bias-cand" style="display:none;font-size:0.66rem;color:#fbbf24;font-family:monospace;white-space:nowrap"></span>
+                    <span id="mmc-bias-restored" style="display:none;font-size:0.66rem;color:#8b93a7"
+                          title="Показники й таймер відновлено після рестарту бота — таймер продовжено з того самого моменту, числа оновляться найближчим тактом (~30с).">↻</span>
+                    <span id="mmc-bias-timer" class="ff-flip" style="white-space:nowrap"></span>
+                </span>
+                <span id="mmc-bias-status" class="mm-ban-st" style="background:transparent">—</span>
+            </div>
+            <div id="mmc-limited-hint" style="display:none;margin:0 0 8px;padding:7px 11px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:0.7rem;font-weight:600"></div>
+            <div style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
+                <span style="color:#8b93a7">Показати:</span>
+                <button type="button" data-mmdir="all" onclick="mmSetDir('all','ctr')" class="ff-qdir-btn">Всі <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG','ctr')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT','ctr')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="flat" onclick="mmSetDir('flat','ctr')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «⚡ МММ-CTR» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
+                    Сила ≥ <input type="number" id="mmc-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged('ctr')" onchange="mmMinStrSave()"> %
+                </label>
+                <span id="mmc-str-out" style="font-size:0.66rem;color:#fbbf24;font-family:monospace"></span>
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="⏱ АНТИСПАМ БАНЕРА: новий статус (🟢 LONG / 🔴 SHORT / ⏸ FLAT) показується лише коли протримався стільки секунд. Поки йде відлік, у банері видно кандидата (⏳). Плюс до цього діє гістерезис: зайти в напрямок можна за 10% важеля, а вийти — лише нижче 6%, тож коливання біля межі статус не смикають. 0 = перемикати миттєво (стара поведінка). ⚠️ Числа й смуга банера лишаються ЖИВИМИ — гаситься саме миготіння ПІДПИСУ.">
+                    ⏱ Перехід ≥ <input type="number" id="ff-mmc-bias-confirm" min="0" max="3600" step="30" value="120" style="width:60px;font-size:0.68rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> с
+                </label>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px;font-size:0.7rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none"
+                 onclick="togglePanel('mmclist')"
+                 title="Клік — згорнути/розгорнути список монет разом із панеллю групового відкриття. Поки згорнуто, таблиця НЕ малюється (найважча частина секції). Стан памʼятається; за замовчуванням згорнуто.">
+                <span id="mmclist-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span>
+                📋 Список монет <span id="mmclist-n" style="font-weight:400;color:#8b93a7;font-family:monospace"></span>
+            </div>
+            <div id="mmclist-body">
+            <div style="display:flex;align-items:center;gap:8px;margin:0 0 8px;flex-wrap:wrap">
+                <span id="mmc-sel-count" style="font-size:0.7rem;color:#8b93a7;font-family:monospace">Обрано 0</span>
+                <button type="button" id="mmc-open-btn" onclick="mmOpenSelected('ctr')" disabled
+                        style="font-size:0.68rem;padding:4px 12px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#4ade80;cursor:pointer;font-weight:700"
+                        title="✋ Відкрити УСІ обрані монети одразу. Напрямок кожної = її власний НОВИЙ МММ (те, що в рядку). Ворота черг пропускаються — рішення ухвалює людина; 🚦 головні кнопки напрямку і запобіжники відкриття (ціна/розмір) лишаються.">✋ Відкрити обрані</button>
+                <button type="button" onclick="mmClearSel('ctr')" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid #3a3f4b;background:transparent;color:#8b93a7;cursor:pointer">Зняти вибір</button>
+                <span id="mmc-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
+            </div>
+            <style>
+              #mmc-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
+              #mmc-table tbody tr:hover { background: rgba(56,189,248,0.10); }
+              #mmc-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
+            </style>
+            <div class="ff-timers-scroll" style="max-height:340px">
+                <table class="tm-table" id="mmc-table">
+                    <thead>
+                        <tr>
+                            <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmc-check-all" onchange="mmToggleAll(this.checked,'ctr')"></th>
+                            <th data-mmsort="symbol" onclick="mmSort('symbol','ctr')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="status" onclick="mmSort('status','ctr')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Монета в угоді або в черзі з таблиці НЕ зникає — просто видно, що вона вже в роботі, і галочка для ✋ групового відкриття їй недоступна. Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="strength" onclick="mmSort('strength','ctr')" style="cursor:pointer;user-select:none" title="⚡ МММ-CTR — напрямок монети з пари STC: 0.4 · нахил 1H + 0.6 · нахил 4H (нахил = (50−STC)/50: STC нижче 50 → LONG, вище 50 → SHORT). Сума ≤ 10% → ⚖ рівновага; 1H і 4H явно в різні боки → ⚖ рівновага-конфлікт (таймінг проти контексту). Сила 0–100%. Клік — сортувати за силою.">МММ-CTR<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="ctr1" onclick="mmSort('ctr1','ctr')" style="cursor:pointer;user-select:none" title="⚡ STC 1H — та сама величина, що в бейджі «⚡ 1h» над графіком: значення STC і нахил у %. 🟢 нижче 50 = LONG-нахил, 🔴 вище 50 = SHORT-нахил. Вага в МММ-CTR — 40% (таймінг). Клік — сортувати (найсильніший LONG-нахил зверху).">⚡ 1H<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="ctr4" onclick="mmSort('ctr4','ctr')" style="cursor:pointer;user-select:none" title="⚡ STC 4H — та сама величина, що в бейджі «· 4H» над графіком. Вага в МММ-CTR — 60% (контекст: старший TF). Клік — сортувати.">⚡ 4H<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="state" onclick="mmSort('state','ctr')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан МММ — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Відлік починається заново на КОЖНІЙ зміні стану (у тому числі при переході в рівновагу і назад). ⚖ рівновага — теж стан: «скільки монета вже без напрямку» не менш важливо за «скільки вона в LONG». Разовий пропуск монети у знімку таймер НЕ збиває, а рестарт бота його не обнуляє — момент старту зберігається. Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="price" onclick="mmSort('price','ctr')" style="cursor:pointer;user-select:none;text-align:right" title="Поточна ціна монети. Клік — сортувати за ціною.">Ціна<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="pchg" onclick="mmSort('pchg','ctr')" style="cursor:pointer;user-select:none;text-align:right" title="КУДИ йде ціна: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). За скільки часу історії реально набралось — у підказці комірки: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ (найсильніший ріст зверху).">Рух<span class="ff-sort-arrow"></span></th>
+                            <th title="🔮 Прогноз 1H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 1H» над графіком. Читається готовим, нічого не рахує.">🔮 1H</th>
+                            <th title="🔮 Прогноз 4H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 4H» над графіком.">🔮 4H</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mmc-tbody">
+                        <tr><td colspan="11" class="tm-empty-msg">Немає даних STC 1H/4H</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            </div>            </div>        </div>
+    </div>
+
+
+
     <!-- ===== 💧 СКАНЕР ЛІКВІДНОСТІ (власний рушій, ПІД 🧮 МММ-монітором) =====
          Вимога 18.09: окреме вікно з ОСНОВНИМ тумблером і гармошкою
          налаштувань. Алгоритм — ГОТОВИЙ скан 💧 зі сторінки 📡 Tickr
@@ -5522,7 +5618,7 @@ function togglePanel(pid) {
     // ⚡ C2: важкі секції (Черга-4, 💰 Funding) сервер рахує ЛИШЕ на запит. Поки
     // гармошка була згорнута, ми їх не просили — тож на РОЗГОРТАННІ тягнемо
     // стан одразу, а не чекаємо до 30с наступного полла.
-    if (open && (pid === 'q4' || pid === 'fund' || pid === 'mm' || pid === 'mmn')) {
+    if (open && (pid === 'q4' || pid === 'fund' || pid === 'mm' || pid === 'mmn' || pid === 'mmc')) {
         try { loadFuelFilterStatus(); } catch (e) {}
     }
     // 📋 Список монет МММ-монітора поки згорнутий НЕ малюється взагалі, тож на
@@ -5530,6 +5626,7 @@ function togglePanel(pid) {
     // порожньою до наступного полла (до 30с).
     if (open && pid === 'mmlist') { try { mmRender('old'); } catch (e) {} }
     if (open && pid === 'mmnlist') { try { mmRender('new'); } catch (e) {} }
+    if (open && pid === 'mmclist') { try { mmRender('ctr'); } catch (e) {} }
 }
 // Історична назва (заголовки Черг) — та сама функція.
 const toggleQueuePanel = togglePanel;
@@ -5540,11 +5637,11 @@ function _qCollapsed(qid) {
 }
 // Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
 // 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
-const _PANEL_IDS = ['levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
+const _PANEL_IDS = ['levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
 // Секції, ЗГОРНУТІ ЗА ЗАМОВЧУВАННЯМ (доки користувач сам не розгорне): список
 // монет МММ-монітора — вимога 18.09. Для решти дефолт лишається «розгорнуто»,
 // тобто збережений вибір користувача завжди сильніший за цей список.
-const _PANEL_CLOSED_BY_DEFAULT = new Set(['mmlist', 'mmnlist']);
+const _PANEL_CLOSED_BY_DEFAULT = new Set(['mmlist', 'mmnlist', 'mmclist']);
 (() => {
     _PANEL_IDS.forEach(pid => {
         try {
@@ -12020,7 +12117,9 @@ function _mmMkBook(P, src, uiKey) {
         bias: null };
 }
 const _MMB = { old: _mmMkBook('mm', 'МММ LiQ', 'mmMonitorUi'),
-               new: _mmMkBook('mmn', 'Новий МММ', 'mmNewUi') };
+               new: _mmMkBook('mmn', 'Новий МММ', 'mmNewUi'),
+               // ⚡ Третя книга (вимога 14.10): нахил STC (CTR) 1H + 4H.
+               ctr: _mmMkBook('mmc', 'МММ-CTR', 'mmCtrUi') };
 // 📋 СКЛАД КОЛОНОК КОЖНОЇ ТАБЛИЦІ (вимога 01.10). Ключі — у порядку показу,
 // без ☑ і «Символ» (вони є завжди). Заголовки в HTML ідуть у ТОМУ САМОМУ
 // порядку — тест-замок звіряє кількість <th> і <td>.
@@ -12031,9 +12130,11 @@ const _MMB = { old: _mmMkBook('mm', 'МММ LiQ', 'mmMonitorUi'),
 //       («Готовність» гальмувала сторінку — вимога 01.10).
 _MMB.old.cols = ['status', 'mm', 'new', 'state', 'runway', 'price', 'pchg', 'f1', 'f4'];
 _MMB.new.cols = ['status', 'mm', 'liq', 'state', 'runway', 'pchg', 'f1', 'f4'];
-// Книга за кодом ('old' | 'new'); будь-що інше — 🧮 МММ-монітор.
-function _mmBk(bk) { return _MMB[bk === 'new' ? 'new' : 'old']; }
-const _mmBkCode = B => (B === _MMB.new ? 'new' : 'old');
+//   ⚡: МММ-CTR (зважений нахил), праворуч сирі STC 1H і 4H.
+_MMB.ctr.cols = ['status', 'mm', 'ctr1', 'ctr4', 'state', 'price', 'pchg', 'f1', 'f4'];
+// Книга за кодом ('old' | 'new' | 'ctr'); будь-що інше — 🧮 МММ-монітор.
+function _mmBk(bk) { return _MMB[(bk === 'new' || bk === 'ctr') ? bk : 'old']; }
+const _mmBkCode = B => (B === _MMB.new ? 'new' : (B === _MMB.ctr ? 'ctr' : 'old'));
 const _mmEl = (B, suffix) => document.getElementById(B.P + suffix);
 // Локальний escape: глобального `esc` на сторінці НЕМАЄ (той, що є, — локальна
 // константа всередині рендера логу), тож покладатись на нього не можна.
@@ -12073,6 +12174,9 @@ function _mmSortVal(r, col) {
     if (col === 'newstr') return (r.new_strength == null ? null : Number(r.new_strength));
     if (col === 'liqstr') return (r.liq_strength == null ? null : Number(r.liq_strength));
     if (col === 'runway') return (r.runway && r.runway.room_pct != null ? Number(r.runway.room_pct) : null);
+    // ⚡ STC — за НАХИЛОМ зі знаком (+ = LONG), щоб «найсильніший LONG» був зверху.
+    if (col === 'ctr1') return (r.lean_1h == null ? null : Number(r.lean_1h));
+    if (col === 'ctr4') return (r.lean_4h == null ? null : Number(r.lean_4h));
     // 💹 РУХ — власна колонка (17.09), тож «Ціна» сортується за ЦІНОЮ, а «яка
     // монета зараз іде вгору» — це колонка «Рух». Рядок без історії
     // (`price_dir` порожній) — це «ще не знаємо», а не «нуль».
@@ -12252,7 +12356,23 @@ const _MM_CELL = {
     pchg:   r => `<td style="text-align:right">${_mmMoveCell(r)}</td>`,
     f1:     r => `<td>${_mmFcCell(r.f1, '1H')}</td>`,
     f4:     r => `<td>${_mmFcCell(r.f4, '4H')}</td>`,
+    ctr1:   r => `<td>${_mmStcCell(r.stc_1h, r.lean_1h, '1H')}</td>`,
+    ctr4:   r => `<td>${_mmStcCell(r.stc_4h, r.lean_4h, '4H')}</td>`,
 };
+// ⚡ Комірка STC одного TF — та сама конвенція, що бейдж «⚡ 1h · 4H» над
+// графіком: 🟢 STC < 50 (LONG-нахил) · 🔴 > 50 (SHORT-нахил), поруч нахил %.
+function _mmStcCell(stc, lean, tf) {
+    if (stc == null) return '<span style="color:#6b7280">—</span>';
+    const v = Number(stc);
+    const dot = v > 50 ? '🔴' : (v < 50 ? '🟢' : '⚪');
+    const col = v > 50 ? '#f87171' : (v < 50 ? '#4ade80' : '#9aa3b5');
+    const p = Math.abs(Number(lean || 0));
+    return `<span title="STC ${tf} ${v.toFixed(1)}/100 · нахил ${p}% ${v < 50 ? 'LONG' : (v > 50 ? 'SHORT' : '')}" `
+        + `style="font-family:monospace;white-space:nowrap">${dot} `
+        + `<span style="display:inline-block;width:26px;text-align:right;color:${col};font-weight:700">${Math.round(v)}</span>`
+        + `<span style="color:#8b93a7"> · </span>`
+        + `<span style="display:inline-block;width:34px;text-align:right;color:${col}">${p}%</span></span>`;
+}
 function mmClearSel(bk) {
     _mmBk(bk).sel.clear();
     mmRender(bk);
@@ -12305,7 +12425,8 @@ function _mmLoadUi(B) {
     if (!v || typeof v !== 'object') return;
     if (['all', 'LONG', 'SHORT', 'flat'].includes(v.dir)) B.dir = v.dir;
     // Сортування за колонкою, якої в ЦІЙ таблиці немає, не відновлюємо.
-    const _ok = { newstr: 'new', liqstr: 'liq', runway: 'runway', price: 'price' };
+    const _ok = { newstr: 'new', liqstr: 'liq', runway: 'runway', price: 'price',
+                  ctr1: 'ctr1', ctr4: 'ctr4' };
     if (v.sortCol && (!_ok[v.sortCol] || B.cols.includes(_ok[v.sortCol]))) {
         B.sort = { col: v.sortCol, dir: (v.sortDir < 0 ? -1 : 1) };
     }
@@ -12500,7 +12621,7 @@ function mmRenderBias(bias, bk) {
     if (bias !== undefined) _mmBk(bk).bias = bias || null;
     // ОДИН painter на обидва блоки: вигляд, таймер, кандидат, ↻ — ідентичні,
     // відрізняються лише ДЖЕРЕЛОМ чисел (МММ LiQ проти Новий МММ).
-    [_MMB.old, _MMB.new].forEach(B => _mmPaintBias(B.bias, _mmBiasIds(B), B.src));
+    [_MMB.old, _MMB.new, _MMB.ctr].forEach(B => _mmPaintBias(B.bias, _mmBiasIds(B), B.src));
 }
 function _mmPaintBias(src, ids, srcName) {
     const bar = document.getElementById(ids.bar);
@@ -12843,6 +12964,8 @@ function _ffWantedSections() {
     if (vis('mm-body')) want.push('mm');
     // 🆕 МММ-new — та сама логіка, власна секція (`mmn`).
     if (vis('mmn-body')) want.push('mmn');
+    // ⚡ МММ-CTR — своя секція (`mmc`).
+    if (vis('mmc-body')) want.push('mmc');
     return want;
 }
 
@@ -13887,13 +14010,14 @@ function renderFuelFilter(d) {
     // ⚡ C2: які ВАЖКІ секції сервер реально порахував у цій відповіді.
     // Без цього прапорця порожній `timers4` (секцію просто не запитували)
     // помилково прочитався б як «черга порожня» і стер би таблицю.
-    const _served = d.served || { q4: true, fund: true, mm: true, mmn: true };
+    const _served = d.served || { q4: true, fund: true, mm: true, mmn: true, mmc: true };
     // 🧮 МММ-монітор — малюємо ЛИШЕ коли сервер реально віддав секцію. Без цієї
     // перевірки порожній `mm_monitor` (секцію просто не просили, бо гармошка
     // згорнута) стер би таблицю і виглядав би як «МММ зник».
     if (_served.mm && d.mm_monitor) mmApplyState(d.mm_monitor, 'old');
     // 🆕 МММ-new — та сама перевірка `served`, свій блок.
     if (_served.mmn && d.mm_new) mmApplyState(d.mm_new, 'new');
+    if (_served.mmc && d.mm_ctr) mmApplyState(d.mm_ctr, 'ctr');
     // BTC START/STOP banner — refresh from state, then let the global ticker
     // keep the progress filling smoothly.
     const bsg = d.btc_start || {};
@@ -13936,6 +14060,8 @@ function renderFuelFilter(d) {
     setIf('ff-mm-bias-confirm', String(s.mm_bias_confirm_sec != null ? s.mm_bias_confirm_sec : 120));
     // 🆕 МММ-new — свій тумблер і своє вікно антиспаму (ідентично 🧮).
     setIf('ff-mm-new-enabled', s.mm_new_enabled !== false);  // default true
+    setIf('ff-mm-ctr-enabled', s.mm_ctr_enabled !== false);  // ⚡ default true
+    setIf('ff-mmc-bias-confirm', String(s.mmc_bias_confirm_sec != null ? s.mmc_bias_confirm_sec : 120));
     setIf('ff-mmn-bias-confirm', String(s.mmn_bias_confirm_sec != null ? s.mmn_bias_confirm_sec : 120));
     setIf('ff-mm-bias-tg', s.mm_bias_tg !== false);                 // default true
     setIf('ff-mmn-bias-tg', s.mmn_bias_tg !== false);               // default true
@@ -14987,6 +15113,11 @@ async function saveFuelFilterSettings() {
         mmn_str_min: _mmMinStr(_MMB.new, 'all'),
         mmn_str_mins: Object.assign({}, _MMB.new.strMins),
         mmn_bias_confirm_sec: parseInt(_v('ff-mmn-bias-confirm', '120') || '0', 10),
+        // ⚡ Блок «МММ-CTR» — свої тумблер, пороги «Сила ≥» і вікно банера.
+        mm_ctr_enabled: _c('ff-mm-ctr-enabled'),
+        mmc_str_min: _mmMinStr(_MMB.ctr, 'all'),
+        mmc_str_mins: Object.assign({}, _MMB.ctr.strMins),
+        mmc_bias_confirm_sec: parseInt(_v('ff-mmc-bias-confirm', '120') || '0', 10),
         mm_bias_tg: _c('ff-mm-bias-tg'),
         mmn_bias_tg: _c('ff-mmn-bias-tg'),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
@@ -15368,7 +15499,7 @@ const SIGNAL_BADGES_JS = {
 const ENGINE_BADGES_JS = {
     'Q1': '🎯 Черга-1', 'Q2': '🎯 Черга-2', 'Q3': '🎯 Готовність', 'Q4': '🎯 Черга-4',
     'Q3-VOB(funding)': '💰 VOB+Шари', 'POC-сетап': '🎯 POC-сетап',
-    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-new',
+    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-new', 'MMC': '⚡ МММ-CTR',
     'EXH': '🔥 Виснаженість', 'FF': '🔥 FF', 'direct': '⚡ Прямий',
 };
 const SIGNAL_ICON_JS = {
@@ -15378,12 +15509,12 @@ const SIGNAL_ICON_JS = {
     'poc': '🎯', 'opp': '🔄', 'external': '🔌', 'manual': '✋',
     'manual_ui': '✋', 'manual_ui_overflow': '✋',
     'Q3-VOB(funding)': '💰', 'POC-сетап': '🎯', 'EXH': '🔥', 'FF': '🔥',
-    'MMM': '🧮', 'MMN': '🧮',
+    'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡',
 };
 // Двигун, чия картинка ПЕРЕКРИВАЄ картинку сигналу: угоди 🧮 МММ-монітора
 // йдуть від того самого `vob_alert`, що й угоди Черги-4, тож 🟪 їх не
 // розрізняло. Мітка у підказці лишається повною.
-const ENGINE_ICON_OVERRIDE_JS = { 'MMM': '🧮', 'MMN': '🧮' };
+const ENGINE_ICON_OVERRIDE_JS = { 'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡' };
 function signalCodeOf(raw) {
     if (!raw) return '';
     return String(raw).split(' · ')[0].split(' → ')[0].trim();

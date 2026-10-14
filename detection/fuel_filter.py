@@ -337,6 +337,54 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
     return bias, since, cand
 
 
+# ⚡ МММ-CTR (вимога 14.10): третій банер на STC (CTR) 1H + 4H.
+# Ваги: 4H — КОНТЕКСТ (повільний, рідко перемикається), 1H — ТАЙМІНГ. Старший
+# TF важить більше, але 1H не є голосом «для галочки»: при 4H у нейтралі саме
+# 1H дає напрямок. Сума ваг = 1, тож сила лишається в шкалі 0-100.
+CTR_MM_W_1H = 0.4
+CTR_MM_W_4H = 0.6
+# Скільки свіжих STC (по одному TF) блок може дотягнути з біржі за ОДИН такт.
+# Решта монет бере кеш (навіть старіший за TTL) — блок не має перетворитись на
+# постійний залп запитів. 1h-кеш живе 300с, 4h — 900с.
+CTR_MM_FETCH_PER_TICK = 10
+
+
+def ctr_mm_dir(stc_1h, stc_4h) -> Optional[Dict]:
+    """⚡ Напрямок МММ-CTR по ОДНІЙ монеті з пари STC 1H/4H. ЧИСТА функція.
+
+    Нахил кожного TF — та сама конвенція, що в бейджі ⚡ над графіком:
+    STC < 50 → LONG-нахил, > 50 → SHORT-нахил, сила = |STC−50|/50.
+
+        dir = 0.4 · нахил_1H + 0.6 · нахил_4H      (−1 … +1, + = LONG)
+
+    • |dir| ≤ MM_BIAS_FLAT (0.10) → ⚖ рівновага — ТОЙ САМИЙ поріг, що в
+      колонці МММ і банерах, щоб «рівновага» означала одне й те саме;
+    • 1H і 4H ЯВНО в різні боки (кожен нахил > 0.10) → ⚖ рівновага-КОНФЛІКТ,
+      навіть якщо зважена сума формально вийшла за поріг: таймінг проти
+      контексту — це не напрямок, а очікування;
+    • немає хоч одного TF → None («невідомо» ≠ «рівновага»).
+    Приклад зі скріна: 1H STC 0 (нахил +1.0), 4H STC 30 (+0.4) → +0.64 → LONG 64%.
+    """
+    try:
+        s1 = float(stc_1h)
+        s4 = float(stc_4h)
+    except (TypeError, ValueError):
+        return None
+    l1 = max(-1.0, min(1.0, (50.0 - s1) / 50.0))
+    l4 = max(-1.0, min(1.0, (50.0 - s4) / 50.0))
+    d = CTR_MM_W_1H * l1 + CTR_MM_W_4H * l4
+    conflict = ((l1 > MM_BIAS_FLAT and l4 < -MM_BIAS_FLAT)
+                or (l1 < -MM_BIAS_FLAT and l4 > MM_BIAS_FLAT))
+    if conflict or abs(d) <= MM_BIAS_FLAT:
+        status = None
+    else:
+        status = 'LONG' if d > 0 else 'SHORT'
+    return {'dir': round(d, 3), 'status': status,
+            'strength': int(round(abs(d) * 100)),
+            'lean_1h': int(round(l1 * 100)), 'lean_4h': int(round(l4 * 100)),
+            'conflict': bool(conflict)}
+
+
 def _q_allowed(op: int) -> bool:
     """True if queue-removal op #op is currently allowed (debug gate)."""
     if _QUEUE_OPS_ALLOWED.get(op, True):
@@ -387,6 +435,11 @@ DEFAULT_SETTINGS = {
     'mmn_str_min': 0,
     'mmn_str_mins': None,
     'mmn_bias_confirm_sec': 120,
+    # ⚡ БЛОК «МММ-CTR» (вимога 14.10) — третій банер на STC 1H+4H.
+    'mm_ctr_enabled': True,
+    'mmc_str_min': 0,
+    'mmc_str_mins': None,
+    'mmc_bias_confirm_sec': 120,
     # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
     # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
     # ГОЛОВНИЙ вміст тієї теми. ⚠️ Майстер-вимикач теми лишається в кабінеті
@@ -1064,6 +1117,16 @@ class FuelFilterDaemon:
         self._mmn_state_since: Dict = {}
         self._mmn_price_hist: Dict[str, list] = {}
         self._mmn_stats: Dict = {}
+        # ⚡ БЛОК «МММ-CTR» (вимога 14.10) — третя книга, та сама форма рядка.
+        self._mmc_on: Optional[bool] = None
+        self._mmc_snapshot: Dict[str, Dict] = {}
+        self._mmc_snapshot_ts: float = 0.0
+        self._mmc_state_since: Dict = {}
+        self._mmc_price_hist: Dict[str, list] = {}
+        self._mmc_stats: Dict = {}
+        self._mm_bias_ctr: Dict = {}
+        self._mm_bias_ctr_since: float = 0.0
+        self._mm_bias_ctr_cand: Dict = {}
         # 📨 Останній статус банера, ПРО ЯКИЙ УЖЕ сповіщали в Telegram.
         # СВІДОМО не персиститься: після рестарту перший такт лише запамʼятовує
         # стан і мовчить — інакше кожен `botupdate` слав би «зміну», якої не
@@ -1635,7 +1698,18 @@ class FuelFilterDaemon:
             s['mmn_str_min'] = 0
         # ⚑ Поріг на кожну вкладку (вимога 12.10); спільний ключ лишається
         # дзеркалом вкладки «Всі» — для старих читачів.
-        for _k, _lk in (('mm_str_mins', 'mm_str_min'), ('mmn_str_mins', 'mmn_str_min')):
+        s['mm_ctr_enabled'] = bool(s.get('mm_ctr_enabled', True))
+        try:
+            s['mmc_str_min'] = max(0, min(100, int(float(s.get('mmc_str_min', 0)))))
+        except (TypeError, ValueError):
+            s['mmc_str_min'] = 0
+        try:
+            s['mmc_bias_confirm_sec'] = max(0, min(3600,
+                int(float(s.get('mmc_bias_confirm_sec', 120)))))
+        except (TypeError, ValueError):
+            s['mmc_bias_confirm_sec'] = 120
+        for _k, _lk in (('mm_str_mins', 'mm_str_min'), ('mmn_str_mins', 'mmn_str_min'),
+                        ('mmc_str_mins', 'mmc_str_min')):
             s[_k] = mm_str_mins_norm(s.get(_k), s.get(_lk, 0))
             s[_lk] = s[_k]['all']
         try:
@@ -2246,7 +2320,8 @@ class FuelFilterDaemon:
             # як свіжий розрахунок. Позначка зникає сама — `_mm_track_bias`
             # будує знімок заново і поля в ньому просто немає.
             for _key, _attr in (('mm_state_since', '_mm_state_since'),
-                                ('mmn_state_since', '_mmn_state_since')):
+                                ('mmn_state_since', '_mmn_state_since'),
+                                ('mmc_state_since', '_mmc_state_since')):
                 _mss = st.get(_key)
                 _dst = {}
                 setattr(self, _attr, _dst)
@@ -2293,6 +2368,18 @@ class FuelFilterDaemon:
             if self._mm_bias_new_since > time.time() + 60:
                 self._mm_bias_new_since = 0.0
                 self._mm_bias_new = {}
+            # ⚡ Банер «МММ-CTR» — те саме відновлення.
+            _mbc = st.get('mm_bias_ctr')
+            self._mm_bias_ctr = dict(_mbc) if isinstance(_mbc, dict) else {}
+            if self._mm_bias_ctr:
+                self._mm_bias_ctr['restored'] = True
+            try:
+                self._mm_bias_ctr_since = float(st.get('mm_bias_ctr_since') or 0.0)
+            except (TypeError, ValueError):
+                self._mm_bias_ctr_since = 0.0
+            if self._mm_bias_ctr_since > time.time() + 60:
+                self._mm_bias_ctr_since = 0.0
+                self._mm_bias_ctr = {}
             # Restore the entry queue PER SESSION. We persist the queue now and
             # bring it back on boot, tied to the session it belonged to. The
             # session-flip logic in _update_btc_verdict handles staleness: on the
@@ -2389,6 +2476,13 @@ class FuelFilterDaemon:
                 'mmn_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmn_state_since', {})
+                                                 or {}).items()},
+                # ⚡ Блок «МММ-CTR» — банер і таймери стану монет.
+                'mm_bias_ctr': dict(getattr(self, '_mm_bias_ctr', {}) or {}),
+                'mm_bias_ctr_since': float(getattr(self, '_mm_bias_ctr_since', 0.0) or 0.0),
+                'mmc_state_since': {k: {'st': v.get('st'),
+                                        'since': float(v.get('since') or 0)}
+                                    for k, v in (getattr(self, '_mmc_state_since', {})
                                                  or {}).items()},
             })
         except Exception as e:
@@ -3879,14 +3973,16 @@ class FuelFilterDaemon:
         s = settings if isinstance(settings, dict) else self.get_settings()
         _mon = bool(s.get('mm_monitor_enabled', True))
         _new = bool(s.get('mm_new_enabled', True))
+        _ctr = bool(s.get('mm_ctr_enabled', True))
         self._mm_mon_on = _mon
         self._mmn_on = _new
+        self._mmc_on = _ctr
         self._mm_str_mins_cache(s)
         # `now` передається ЛИШЕ з тестів (щоб програвати такти без sleep).
         _now = float(now) if now else time.time()
         # 🔮 Прогноз 1H/4H — ЧИСТЕ ЧИТАННЯ кешу (той самий, що малює бейджі над
         # графіком). Двигун беремо ОДИН раз на такт, а не на кожну монету.
-        _fe = self._mm_forecast_engine() if (fuels and (_mon or _new)) else None
+        _fe = self._mm_forecast_engine() if (fuels and (_mon or _new or _ctr)) else None
         # Обидві книги беруть ТУ САМУ пару прогнозів — читаємо кеш ОДИН раз на
         # монету за такт, а не двічі (по разу на книгу).
         _fc: Dict[str, Dict] = {}
@@ -4003,10 +4099,110 @@ class FuelFilterDaemon:
                                    'data': len(snap_n), 'ts': _now}
             self._mm_track_bias_new(snap_n, _now, s)
 
-        if _mon or _new:
+        # ═══ ⚡ КНИГА «МММ-CTR» (вимога 14.10) ═══
+        # Набір монет — ТОЙ САМИЙ, що в 🧮/🆕 (ключі `fuels`), джерело
+        # напрямку — STC 1H + 4H (`ctr_mm_dir`). Форма рядка та сама, тож
+        # трекери, банер і рендер спільні.
+        if not _ctr:
+            self._mm_clear_ctr()
+        else:
+            _rd = self._ctr_mm_readings(list((fuels or {}).keys()), _fe)
+            snap_c = {}
+            for sym, f in (fuels or {}).items():
+                if not f:
+                    continue
+                _S = str(sym).upper()
+                r = _rd.get(_S)
+                c = ctr_mm_dir(r[0], r[1]) if r else None
+                if not c:
+                    continue
+                snap_c[_S] = {
+                    'status': c['status'],
+                    'dir': c['dir'],
+                    'strength': c['strength'],
+                    'mark_price': f.get('mark_price'),
+                    'stc_1h': round(float(r[0]), 1),
+                    'stc_4h': round(float(r[1]), 1),
+                    'lean_1h': c['lean_1h'],
+                    'lean_4h': c['lean_4h'],
+                    'ctr_conflict': c['conflict'],
+                    **_fcast(sym),
+                }
+            self._mm_track_prices(snap_c, _now, hist_attr='_mmc_price_hist')
+            self._mm_track_state(snap_c, _now, hist_attr='_mmc_state_since')
+            with self._lock:
+                self._mmc_snapshot = snap_c
+                self._mmc_snapshot_ts = _now
+                self._mmc_stats = {'targeted': len(fuels or {}),
+                                   'data': len(snap_c), 'ts': _now}
+            try:
+                need = max(0, int(float(s.get('mmc_bias_confirm_sec', 120))))
+            except (TypeError, ValueError):
+                need = 120
+            bias, since, cand = mm_bias_step(
+                snap_c, _now, need,
+                getattr(self, '_mm_bias_ctr', {}),
+                getattr(self, '_mm_bias_ctr_since', 0.0),
+                getattr(self, '_mm_bias_ctr_cand', {}))
+            self._mm_bias_ctr, self._mm_bias_ctr_since = bias, since
+            self._mm_bias_ctr_cand = cand
+
+        if _mon or _new or _ctr:
             # ⏳ Знімок Є → причина «чому його немає» більше не потрібна.
             with self._lock:
                 self._mm_pending = {}
+
+    def _ctr_mm_readings(self, syms, fe=None) -> Dict[str, tuple]:
+        """⚡ STC 1H/4H по монетах для МММ-CTR → {СИМВОЛ: (stc_1h, stc_4h)}.
+
+        Джерело — ТОЙ САМИЙ кеш forecast-двигуна (`get_ctr_tf`), що малює бейдж
+        «⚡ 1h · 4H» над графіком, тож числа в банері й на бейджі однакові.
+        ⚠️ БЮДЖЕТ: за такт із біржі дотягується не більше
+        `CTR_MM_FETCH_PER_TICK` значень (кожне = 1 запит свічок). Решта монет
+        бере кеш, навіть старіший за TTL; монети без жодного значення стоять у
+        черзі ПЕРШИМИ. Так блок не стає постійним залпом запитів.
+        """
+        fe = fe or self._mm_forecast_engine()
+        if fe is None or not hasattr(fe, 'get_ctr_tf'):
+            return {}
+        peek = getattr(fe, 'peek_ctr_tf', None)
+        cur: Dict[str, Dict[str, Optional[float]]] = {}
+        todo = []          # (пріоритет, вік, символ, tf): 0 = немає значення
+        for sym in syms or []:
+            S = str(sym).upper()
+            cur[S] = {}
+            for tf in ('1h', '4h'):
+                got = peek(S, tf) if peek else None
+                if got and got[1] and got[1].get('stc') is not None:
+                    cur[S][tf] = got[1].get('stc')
+                    if got[0] >= got[2]:
+                        todo.append((1, -got[0], S, tf))
+                else:
+                    cur[S][tf] = None
+                    todo.append((0, 0.0, S, tf))
+        todo.sort()
+        for _pr, _age, S, tf in todo[:CTR_MM_FETCH_PER_TICK]:
+            try:
+                r = fe.get_ctr_tf(S, tf)
+                if r and r.get('stc') is not None:
+                    cur[S][tf] = r.get('stc')
+            except Exception:
+                pass
+        return {S: (v['1h'], v['4h']) for S, v in cur.items()
+                if v.get('1h') is not None and v.get('4h') is not None}
+
+    def _mm_clear_ctr(self):
+        """Погасити книгу ⚡ МММ-CTR (вимкнений тумблер — застиглі числа
+        виглядали б живими)."""
+        with self._lock:
+            self._mmc_snapshot = {}
+            self._mmc_snapshot_ts = 0.0
+            self._mmc_state_since = {}
+            self._mmc_price_hist = {}
+            self._mmc_stats = {}
+            self._mm_bias_ctr = {}
+            self._mm_bias_ctr_since = 0.0
+            self._mm_bias_ctr_cand = {}
 
     def _mm_queue_map(self) -> Dict[str, List[str]]:
         """{СИМВОЛ: ['Q1','Q4', …]} — у ЯКИХ чергах зараз стоїть монета.
@@ -4053,9 +4249,15 @@ class FuelFilterDaemon:
         ліквідності — обрізання має бути НАЗВАНЕ вголос).
         """
         s = settings if isinstance(settings, dict) else self.get_settings()
-        _nb = (book == 'new')
-        _on = bool(s.get('mm_new_enabled' if _nb else 'mm_monitor_enabled', True))
-        _p = '_mmn' if _nb else '_mm'
+        # ⚡ Третя книга `ctr` (МММ-CTR, 14.10) — та сама форма відповіді.
+        _bk = book if book in ('old', 'new', 'ctr') else 'old'
+        _nb = (_bk == 'new')
+        _on = bool(s.get({'old': 'mm_monitor_enabled', 'new': 'mm_new_enabled',
+                          'ctr': 'mm_ctr_enabled'}[_bk], True))
+        _p = {'old': '_mm', 'new': '_mmn', 'ctr': '_mmc'}[_bk]
+        _sk = {'old': 'mm', 'new': 'mmn', 'ctr': 'mmc'}[_bk]
+        _bias_attr = {'old': '_mm_bias', 'new': '_mm_bias_new',
+                      'ctr': '_mm_bias_ctr'}[_bk]
         with self._lock:
             # ⚠️ ВИМКНЕНИЙ блок → рядків НЕМАЄ, і це перевіряється ЯВНО, а не
             # покладається на порожній знімок: при вимкненому 🧮 знімок СВІДОМО
@@ -4139,6 +4341,13 @@ class FuelFilterDaemon:
                 'liq_mm': v.get('liq_status'),
                 'liq_strength': v.get('liq_strength'),
                 'runway': v.get('runway'),
+                # ⚡ Книга МММ-CTR: сирі STC обох TF, їхні нахили і прапорець
+                # конфлікту (1H проти 4H) — для колонок і підказки.
+                'stc_1h': v.get('stc_1h'),
+                'stc_4h': v.get('stc_4h'),
+                'lean_1h': v.get('lean_1h'),
+                'lean_4h': v.get('lean_4h'),
+                'ctr_conflict': v.get('ctr_conflict'),
                 # 💼 Бік відкритої угоди (LONG/SHORT) — колонка «📍 Стан».
                 'trade_side': open_sides.get(sym) if _trade else None,
                 # 📍 СТАН МОНЕТИ. Віддаємо ЧИСТІ прапорці, а підпис і колір
@@ -4159,15 +4368,13 @@ class FuelFilterDaemon:
             'enabled': _on,
             'limited': bool(s.get('mmm_limited_mode', True)),
             # ⚑ Поріг «Сила ≥» їде З СЕРВЕРА — одне число на всі браузери.
-            'str_min': int(s.get('mmn_str_min' if _nb else 'mm_str_min', 0) or 0),
+            'str_min': int(s.get(f'{_sk}_str_min', 0) or 0),
             # ⚑ …і свій поріг на КОЖНУ вкладку (вимога 12.10).
-            'str_mins': mm_str_mins_norm(
-                s.get('mmn_str_mins' if _nb else 'mm_str_mins'),
-                s.get('mmn_str_min' if _nb else 'mm_str_min', 0)),
-            'book': 'new' if _nb else 'old',
+            'str_mins': mm_str_mins_norm(s.get(f'{_sk}_str_mins'),
+                                         s.get(f'{_sk}_str_min', 0)),
+            'book': _bk,
             # ⚖️ Готовий важіль напрямку для банера (рахує двигун, тут ЧИТАННЯ).
-            'bias': (dict(getattr(self, '_mm_bias_new' if _nb else '_mm_bias', {})
-                          or {}) if _on else {}),
+            'bias': (dict(getattr(self, _bias_attr, {}) or {}) if _on else {}),
             # 📊 ЧОМУ РЯДКІВ МЕНШЕ, НІЖ МОНЕТ У WATCHLIST (питання 17.09:
             # «у WATCHLIST 51, а монітор працює із 49 — чому?»). Різниця
             # НІКОЛИ не має бути здогадкою, тож віддаємо ПОВНИЙ розклад:
@@ -4400,8 +4607,10 @@ class FuelFilterDaemon:
         # Кажемо це прямо: інакше кожна монета отримала б причину «МММ без
         # напрямку», що виглядало б як «ринок у рівновазі», а не як тумблер.
         _nb = (book == 'new')
-        _name = '🧮 МММ-new' if _nb else '🧮 МММ-монітор'
-        if not s.get('mm_new_enabled' if _nb else 'mm_monitor_enabled', True):
+        _nc = (book == 'ctr')
+        _name = '⚡ МММ-CTR' if _nc else ('🧮 МММ-new' if _nb else '🧮 МММ-монітор')
+        if not s.get('mm_ctr_enabled' if _nc else
+                     ('mm_new_enabled' if _nb else 'mm_monitor_enabled'), True):
             return {'ok': False, 'opened': 0, 'failed': 0, 'results': [],
                     'reason': f'{_name} вимкнено — увімкніть тумблер блоку'}
         syms = [str(x).upper().strip() for x in (symbols or []) if str(x).strip()]
@@ -4411,7 +4620,8 @@ class FuelFilterDaemon:
             return {'ok': False, 'opened': 0, 'failed': 0, 'results': [],
                     'reason': 'Не обрано жодної монети'}
         with self._lock:
-            snap = dict((self._mmn_snapshot if _nb else self._mm_snapshot) or {})
+            snap = dict((self._mmc_snapshot if _nc else
+                         (self._mmn_snapshot if _nb else self._mm_snapshot)) or {})
         try:
             from detection.activity_log import log_activity
         except Exception:
@@ -4435,7 +4645,8 @@ class FuelFilterDaemon:
         """Одна монета групового відкриття. Напрямок — ЛИШЕ з МММ-знімка
         ТОГО блоку, з якого відкривають (`book`)."""
         _nb = (book == 'new')
-        _name = '🧮 МММ-new' if _nb else '🧮 МММ-монітор'
+        _nc = (book == 'ctr')
+        _name = '⚡ МММ-CTR' if _nc else ('🧮 МММ-new' if _nb else '🧮 МММ-монітор')
         side = mm.get('status')
         if side not in ('LONG', 'SHORT'):
             return {'symbol': sym, 'side': None, 'ok': False,
@@ -4461,7 +4672,8 @@ class FuelFilterDaemon:
                     'reason': 'не вдалося отримати ціну'}
         try:
             opened = self._open(sym, side, {'mark_price': mark, 'dir': side}, s,
-                                opened_by=_ob_compose('manual', 'MMN' if _nb else 'MMM'),
+                                opened_by=_ob_compose('manual', 'MMC' if _nc else
+                                                      ('MMN' if _nb else 'MMM')),
                                 skip_ctr_safeguard=True, skip_safeguard=True,
                                 by_hand=True)
         except Exception as e:
@@ -5764,7 +5976,8 @@ class FuelFilterDaemon:
         # повністю припинити роботу»). Монети у відкритих угодах — завжди:
         # вони живлять колонку «🧮 МММ LiQ» в угодах і правило виходу.
         _mon = (bool(settings.get('mm_monitor_enabled', True))
-                or bool(settings.get('mm_new_enabled', True)))
+                or bool(settings.get('mm_new_enabled', True))
+                or bool(settings.get('mm_ctr_enabled', True)))
         _open = self._mm_open_syms()
         if not _mon and not _open:
             # Нема ні таблиці, ні угод → рахувати нічого. `_mm_capture` із
@@ -5897,7 +6110,8 @@ class FuelFilterDaemon:
         # її не рахуємо (решта набору — черги/угоди/фандинг — потрібна двигуну).
         _wl = (self._mm_watchlist_part(settings)
                if (settings.get('mm_monitor_enabled', True)
-                   or settings.get('mm_new_enabled', True)) else [])
+                   or settings.get('mm_new_enabled', True)
+                   or settings.get('mm_ctr_enabled', True)) else [])
         relevant = list(dict.fromkeys(
             ['BTCUSDT'] + managed + pending_all + list(funding_syms)
             + [str(x).upper() for x in (_wl or [])]))
@@ -10653,7 +10867,7 @@ class FuelFilterDaemon:
     # згорнута. Усе інше (банер, лічильники, налаштування, Черги-1..3) віддається
     # завжди — воно дешеве. `None` = віддати ВСЕ (сумісність для інфо-сайту та
     # будь-якого стороннього споживача API).
-    HEAVY_SECTIONS = ('q4', 'fund', 'mm', 'mmn')
+    HEAVY_SECTIONS = ('q4', 'fund', 'mm', 'mmn', 'mmc')
 
 
     def get_state(self, sections: Optional[set] = None) -> Dict:
@@ -10671,6 +10885,8 @@ class FuelFilterDaemon:
         _want_mm = (sections is None) or ('mm' in sections)
         # 🆕 Блок «МММ-new» — той самий принцип, своя гармошка.
         _want_mmn = (sections is None) or ('mmn' in sections)
+        # ⚡ Блок «МММ-CTR» — та сама схема.
+        _want_mmc = (sections is None) or ('mmc' in sections)
         with self._lock:
             settings = self.get_settings()
             duration_sec = settings['duration_minutes'] * 60
@@ -10949,12 +11165,15 @@ class FuelFilterDaemon:
             # МУСИТЬ це читати: без прапорця він прийняв би `timers4: []` за
             # «черга порожня» і стер би таблицю, хоча її просто не запитували.
             'served': {'q4': _want_q4, 'fund': _want_fund, 'mm': _want_mm,
-                       'mmn': _want_mmn},
+                       'mmn': _want_mmn, 'mmc': _want_mmc},
             # 🧮 МММ-монітор — готовий знімок двигуна (жодних розрахунків тут).
             'mm_monitor': (self.mm_monitor_state(settings) if _want_mm else None),
             # 🆕 Блок «МММ-new» — та сама форма, книга НОВОГО МММ.
             'mm_new': (self.mm_monitor_state(settings, book='new')
                        if _want_mmn else None),
+            # ⚡ Блок «МММ-CTR» — книга STC 1H+4H.
+            'mm_ctr': (self.mm_monitor_state(settings, book='ctr')
+                       if _want_mmc else None),
             # 🎚 Смуги грейда (ЄДИНЕ джерело — setup_grader). UI будує випадайку
             # «Готовність ≥» саме з них, щоб назва і число НЕ розходились.
             'grade_bands': _grade_bands(),

@@ -3705,7 +3705,9 @@ def register_api_routes(app):
             if not isinstance(symbols, list):
                 return jsonify({'ok': False, 'reason': 'symbols must be a list'})
             # 🆕 `book='new'` — групове відкриття з блоку «МММ-new».
-            book = 'new' if str(data.get('book') or '') == 'new' else 'old'
+            # ⚡ `book='ctr'` — з блоку «МММ-CTR» (STC 1H+4H).
+            _b = str(data.get('book') or '')
+            book = _b if _b in ('new', 'ctr') else 'old'
             return jsonify(ff.group_open(symbols, book=book))
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})

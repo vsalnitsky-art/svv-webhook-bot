@@ -488,6 +488,18 @@ class ForecastEngine:
             self._ctr_mtf[key] = (now, res)
         return res
 
+    def peek_ctr_tf(self, symbol: str, tf: str):
+        """Кеш STC одного TF БЕЗ мережі → `(вік_с, {stc,last_dir,age,tf}, ttl)`
+        або None, якщо значення ще не рахувалось. Для ⚡ МММ-CTR: блок сам
+        вирішує, кого оновлювати в межах свого бюджету запитів за такт."""
+        sym = (symbol or '').upper()
+        tf = str(tf or '').lower()
+        with self._lock:
+            c = self._ctr_mtf.get((sym, tf))
+        if not c:
+            return None
+        return (time.time() - c[0], c[1], self._CTR_MTF_TTL.get(tf, 300))
+
     def get_ctr_multi_tf(self, symbol: str, tfs: List[str]) -> Dict:
         """{tf: {stc,last_dir,age}} for each requested timeframe (cached)."""
         return {tf: self.get_ctr_tf(symbol, tf) for tf in (tfs or [])}
