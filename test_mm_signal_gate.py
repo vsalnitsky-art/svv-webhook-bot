@@ -350,6 +350,49 @@ def test_strength_toggle_reaches_the_shared_gate_and_ui():
     print('✓ ⚑ тумблер доходить до воріт; UI має чекбокс і позначку вкладки')
 
 
+# ── 3в. ⚡ ВОРОТА «ЧЕРЕЗ МММ-CTR» (вимога 15.10) ─────────────────────────────
+def test_view_ctr_book_reads_the_ctr_snapshot():
+    f = _ff({'dir': 'LONG'}, {'AAAUSDT': {'status': 'LONG'}})
+    f._mm_bias_ctr = {'dir': 'SHORT'}
+    f._mmc_snapshot = {'AAAUSDT': {'status': None, 'strength': 4}}
+    f._mmc_on = True
+    f._mmc_str_mins_c = {'all': 0, 'LONG': 0, 'SHORT': 0, 'flat': 7}
+    v = f.mm_gate_view('AAAUSDT', book='ctr')
+    _check({k: v[k] for k in ('on', 'dir', 'coin', 'str_min')}
+           == {'on': True, 'dir': 'SHORT', 'coin': 'FLAT', 'str_min': 7}, v)
+    f._mmc_on = False
+    _check(f.mm_gate_view('AAAUSDT', book='ctr')['on'] is False, 'вимкнений CTR → не діє')
+    print('✓ mm_gate_view(book=ctr) читає знімок, банер і пороги ⚡ МММ-CTR')
+
+
+def test_ctr_gate_rule_labels_and_activation():
+    app, ok, chip, why = sc.mm_gate_decide(_v(coin='SHORT'), 'LONG', False, 'ctr')
+    _check(app and not ok and '⚡МММ-CTR' in chip and '⚡ МММ-CTR' in why, (chip, why))
+    _check(sc.mm_gates_active({'mmc_gate_enabled': True, 'mmc_gate_banner': True})
+           == [('ctr', True)], 'ctr у переліку воріт')
+    seen = []
+    old = sc._mm_gate_view
+    try:
+        def fake(sym, book='new'):
+            seen.append(book)
+            return _v(coin='SHORT')
+        sc._mm_gate_view = fake
+        ns = _ns(False); ns._settings['mmc_gate_enabled'] = True
+        ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
+        _check(ok is False and seen == ['ctr'] and '⚡ МММ-CTR' in why
+               and '⚡МММ-CTR[вкладка SHORT]:✗' in detail, (seen, why, detail))
+    finally:
+        sc._mm_gate_view = old
+    for k in ('mmc_gate_enabled', 'mmc_gate_banner'):
+        _check(f"'{k}': False" in _SC_SRC, f'дефолт ВИМК: {k}')
+    _check("'mmc_gate_enabled', 'mmc_gate_banner'," in _SC_SRC, 'білий список')
+    for need in ('id="sm-mmc-gate"', 'id="sm-mmc-gate-banner"',
+                 "['sm-mmc-gate', 'sm-mmc-gate-banner', 'mmc_gate_enabled', 'mmc_gate_banner']",
+                 "'⚡ МММ-CTR']].forEach"):
+        _check(need in _HTML, f'на сторінці немає «{need}»')
+    print('✓ «Через МММ-CTR» — те саме правило, свої підписи, деф. ВИМК, UI')
+
+
 if __name__ == '__main__':
     _fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in _fns:

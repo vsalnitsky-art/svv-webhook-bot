@@ -55,7 +55,9 @@ def entry_level_ok(level, live, max_dev_pct: float = ENTRY_LEVEL_MAX_DEV_PCT) ->
 
 
 _MM_GATE_TAG = {'new': ('🆕МММ-new', '🆕 МММ-NEW'),
-                'old': ('🧮МММ-монітор', '🧮 МММ-МОНІТОР')}
+                'old': ('🧮МММ-монітор', '🧮 МММ-МОНІТОР'),
+                # ⚡ МММ-CTR (вимога 15.10) — та сама умова, книга STC 1H+4H.
+                'ctr': ('⚡МММ-CTR', '⚡ МММ-CTR')}
 
 
 def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
@@ -112,7 +114,9 @@ def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
 # 🧮 ЗАГАЛЬНІ МММ-ВОРОТА (вимога 09.10) — для ВСІХ сигналів, усі деф. ВИМК.
 # (ключ тумблера, ключ «за банером», книга)
 MM_GATES = (('mm_gate_enabled', 'mm_gate_banner', 'new'),
-            ('mmo_gate_enabled', 'mmo_gate_banner', 'old'))
+            ('mmo_gate_enabled', 'mmo_gate_banner', 'old'),
+            # ⚡ «Через МММ-CTR» (+ «за банером МММ-CTR»), вимога 15.10, деф. ВИМК.
+            ('mmc_gate_enabled', 'mmc_gate_banner', 'ctr'))
 
 
 def mm_gates_active(settings):
@@ -380,6 +384,8 @@ DEFAULT_SETTINGS = {
     'mm_gate_banner': False,
     'mmo_gate_enabled': False,
     'mmo_gate_banner': False,
+    'mmc_gate_enabled': False,
+    'mmc_gate_banner': False,
     # ⚑ МММ-ворота враховують поріг «Сила ≥» вкладки (вимога 12.10): сигнал
     # проходить, лише коли монета ВИДИМА у своїй вкладці. Деф. ВИМК.
     'mm_gate_strength': False,
@@ -1607,6 +1613,7 @@ class SMCScanner:
                        # 🧮 сигнали через МММ-монітор
                        'mm_gate_enabled', 'mm_gate_banner',
                        'mmo_gate_enabled', 'mmo_gate_banner',
+                       'mmc_gate_enabled', 'mmc_gate_banner',
                        'mm_gate_strength',
                        'liq_gate_enabled',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
@@ -1757,6 +1764,7 @@ class SMCScanner:
                 self._settings.get('ob_filter_choch_only', True))
             for _gk in ('mm_gate_enabled', 'mm_gate_banner',
                         'mmo_gate_enabled', 'mmo_gate_banner',
+                        'mmc_gate_enabled', 'mmc_gate_banner',
                         'mm_gate_strength'):
                 self._settings[_gk] = bool(self._settings.get(_gk, False))
             self._settings['liq_gate_enabled'] = bool(

@@ -2254,7 +2254,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmo-gate-banner" onchange="updateMmGate()">
                         за банером МММ-МОНІТОР
                     </label>
-                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» (для кожного блоку — його власні пороги). ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="⚡ Ворота «Через МММ-CTR» (вимога 15.10): сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку ⚡ МММ-CTR (STC 1H + 4H), SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Незалежні від інших МММ-воріт (увімкнені кілька — сигнал має пройти всі). Діє на ВСІ сигнали сканера і на 🔁 повторній перевірці Черги-4. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mmc-gate" onchange="updateMmGate()">
+                        ⚡ Через МММ-CTR
+                    </label>
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-CTR»: банер ⚡ МММ-CTR мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-CTR». ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mmc-gate-banner" onchange="updateMmGate()">
+                        за банером МММ-CTR
+                    </label>
+                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» / «Через МММ-CTR» (для кожного блоку — його власні пороги). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-str" onchange="updateMmGate()">
                         ⚑ з порогом «Сила ≥» вкладки
                     </label>
@@ -2641,6 +2649,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label class="mmc-chk" title="🆕 Те саме для банера 🆕 МММ-NEW (вимога 09.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера МММ-NEW (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем і розкладом монет. Перший стан після рестарту — мовчки. Власний тумблер, незалежний від банера 🧮.">
                         <input type="checkbox" id="ff-mmn-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
                         🆕 Зміна статусу банера МММ-NEW
+                    </label>
+                    <label class="mmc-chk" title="🔮 Те саме для банера 🔮 МММ-Прогноз (вимога 15.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем і розкладом монет. Перший стан після рестарту — мовчки. Власний тумблер.">
+                        <input type="checkbox" id="ff-mmf-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
+                        🔮 Зміна статусу банера МММ-Прогноз
                     </label>
                     <div style="flex-basis:100%;font-size:0.68rem;line-height:1.4;color:#8b93a7">
                         ₿ <b>BTCUSDT (старт / стоп сеансу)</b> іде в ЦЮ САМУ тему — його
@@ -6919,6 +6931,7 @@ async function loadSettings() {
             // 🧮 Загальні МММ-ворота (вимога 09.10) — усі чотири деф. ВИМК.
             [['sm-mm-gate', 'mm_gate_enabled'], ['sm-mm-gate-banner', 'mm_gate_banner'],
              ['sm-mmo-gate', 'mmo_gate_enabled'], ['sm-mmo-gate-banner', 'mmo_gate_banner'],
+             ['sm-mmc-gate', 'mmc_gate_enabled'], ['sm-mmc-gate-banner', 'mmc_gate_banner'],
              ['sm-mm-gate-str', 'mm_gate_strength']]
                 .forEach(([id, k]) => {
                     const el = document.getElementById(id);
@@ -7103,14 +7116,15 @@ function updateSettingsSummary() {
         if (obCh && obCh.checked) summary += ' (лише CHoCH)';
     }
     [['sm-mm-gate', 'sm-mm-gate-banner', '🆕 МММ-NEW'],
-     ['sm-mmo-gate', 'sm-mmo-gate-banner', '🧮 МММ-МОН']].forEach(([g, b, t]) => {
+     ['sm-mmo-gate', 'sm-mmo-gate-banner', '🧮 МММ-МОН'],
+     ['sm-mmc-gate', 'sm-mmc-gate-banner', '⚡ МММ-CTR']].forEach(([g, b, t]) => {
         const _g = document.getElementById(g);
         if (!_g || !_g.checked) return;
         const _b = document.getElementById(b);
         summary += ' · ' + t + (_b && _b.checked ? ' +банер' : '');
     });
     const _gs = document.getElementById('sm-mm-gate-str');
-    const _anyMm = ['sm-mm-gate', 'sm-mmo-gate'].some(i => {
+    const _anyMm = ['sm-mm-gate', 'sm-mmo-gate', 'sm-mmc-gate'].some(i => {
         const e = document.getElementById(i); return e && e.checked; });
     if (_gs && _gs.checked && _anyMm) summary += ' ⚑сила';
     const lqG = document.getElementById('sm-liq-gate');
@@ -7212,7 +7226,8 @@ async function updateVobOnePerOb() {
 // МММ-МОНІТОР» + «за банером …». Усі чотири тумблери шлемо РАЗОМ; «за
 // банером» гаситься, поки його головний тумблер вимкнено.
 const _SM_MM_GATES = [['sm-mm-gate', 'sm-mm-gate-banner', 'mm_gate_enabled', 'mm_gate_banner'],
-                      ['sm-mmo-gate', 'sm-mmo-gate-banner', 'mmo_gate_enabled', 'mmo_gate_banner']];
+                      ['sm-mmo-gate', 'sm-mmo-gate-banner', 'mmo_gate_enabled', 'mmo_gate_banner'],
+                      ['sm-mmc-gate', 'sm-mmc-gate-banner', 'mmc_gate_enabled', 'mmc_gate_banner']];
 function _smMmGateSync() {
     _SM_MM_GATES.forEach(([gi, bi]) => {
         const g = document.getElementById(gi);
@@ -12858,6 +12873,7 @@ function _mmTgSummary(s) {
     const off = [];
     (s.mm_bias_tg === false ? off : on).push('⚖️ банер');
     (s.mmn_bias_tg === false ? off : on).push('🆕 банер NEW');
+    (s.mmf_bias_tg === false ? off : on).push('🔮 банер Прогноз');
     (s.start_signal_tg_alerts ? on : off).push('₿ сеанс');
     el.textContent = (on.length ? '📨 ' + on.join(' · ') : '📭 нічого не шлемо')
         + (off.length ? ' · ⛔ ' + off.join(' · ') : '');
@@ -14191,6 +14207,7 @@ function renderFuelFilter(d) {
     setIf('ff-mmn-bias-confirm', String(s.mmn_bias_confirm_sec != null ? s.mmn_bias_confirm_sec : 120));
     setIf('ff-mm-bias-tg', s.mm_bias_tg !== false);                 // default true
     setIf('ff-mmn-bias-tg', s.mmn_bias_tg !== false);               // default true
+    setIf('ff-mmf-bias-tg', s.mmf_bias_tg !== false);               // 🔮 default true
     if (typeof _mmTgSummary === 'function') _mmTgSummary(s);
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
@@ -15251,6 +15268,7 @@ async function saveFuelFilterSettings() {
         mmf_bias_confirm_sec: parseInt(_v('ff-mmf-bias-confirm', '120') || '0', 10),
         mm_bias_tg: _c('ff-mm-bias-tg'),
         mmn_bias_tg: _c('ff-mmn-bias-tg'),
+        mmf_bias_tg: _c('ff-mmf-bias-tg'),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),

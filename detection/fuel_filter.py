@@ -440,6 +440,17 @@ def _q_allowed(op: int) -> bool:
     print(f"[FF-QUEUE] op#{op} BLOCKED — removal suppressed (coin kept in queue)")
     return False
 
+# 📨 Telegram про зміну статусу банера (тема 🧮): кожна книга — свої позначки
+# і тумблер, тож банери не ковтають події одне одного.
+_MM_BIAS_TG = {
+    'old': {'pref': '_mm_bias_tg', 'key': 'mm_bias_tg', 'bias': '_mm_bias',
+            'title': '🧮 <b>МММ-МОНІТОР</b>', 'name': 'МММ-монітор', 'src': 'MMM'},
+    'new': {'pref': '_mmn_bias_tg', 'key': 'mmn_bias_tg', 'bias': '_mm_bias_new',
+            'title': '🆕 <b>МММ-NEW</b>', 'name': 'МММ-NEW', 'src': 'MMN'},
+    'fc': {'pref': '_mmf_bias_tg', 'key': 'mmf_bias_tg', 'bias': '_mm_bias_fc',
+           'title': '🔮 <b>МММ-ПРОГНОЗ</b>', 'name': 'МММ-Прогноз', 'src': 'MMF'},
+}
+
 # Чотири книги МММ (групове ✋ відкриття): назва, тумблер, знімок, мітка двигуна.
 _MM_BOOKS = {
     'old': {'name': '🧮 МММ-монітор', 'key': 'mm_monitor_enabled',
@@ -514,6 +525,8 @@ DEFAULT_SETTINGS = {
     # 📨 Те саме для банера «🆕 МММ-NEW» (вимога 09.10: «таке саме, як і в
     # 🧮 МММ-МОНІТОР») — та сама тема, ВЛАСНИЙ тумблер.
     'mmn_bias_tg': True,
+    # 🔮 Те саме для банера «МММ-Прогноз» (вимога 15.10) — власний тумблер.
+    'mmf_bias_tg': True,
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -1162,6 +1175,7 @@ class FuelFilterDaemon:
         # зчитано (тоді ворота беруть налаштування напряму).
         self._mm_str_mins_c: Optional[Dict] = None
         self._mmn_str_mins_c: Optional[Dict] = None
+        self._mmc_str_mins_c: Optional[Dict] = None
         self._mm_bias_since: float = 0.0
         # 🐢 КАНДИДАТ на зміну статусу банера: {'dir', 'since'}. Поки він не
         # протримався `mm_bias_confirm_sec`, банер показує СТАРИЙ статус.
@@ -1217,6 +1231,9 @@ class FuelFilterDaemon:
         self._mmn_bias_tg_last = '__none__'
         self._mmn_bias_tg_at = 0.0
         self._mmn_bias_tg_restored = False
+        self._mmf_bias_tg_last = '__none__'
+        self._mmf_bias_tg_at = 0.0
+        self._mmf_bias_tg_restored = False
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -1765,6 +1782,7 @@ class FuelFilterDaemon:
         # 📨 Зміна статусу банера 🧮 → Telegram (вимога 21.09).
         s['mm_bias_tg'] = bool(s.get('mm_bias_tg', True))
         s['mmn_bias_tg'] = bool(s.get('mmn_bias_tg', True))
+        s['mmf_bias_tg'] = bool(s.get('mmf_bias_tg', True))
         # 🆕 БЛОК «МММ-new» (вимога 01.10) — ВЛАСНІ тумблер, поріг «Сила ≥» і
         # вікно підтвердження статусу банера. Ті самі межі, що в 🧮 монітора.
         s['mm_new_enabled'] = bool(s.get('mm_new_enabled', True))
@@ -3970,10 +3988,12 @@ class FuelFilterDaemon:
         банер і захищали.
         ⚠️ Best-effort: збій відправки НЕ підіймається в такт двигуна.
         """
-        _nb = (book == 'new')
-        _p = '_mmn_bias_tg' if _nb else '_mm_bias_tg'
+        # Таблиця книг: позначки · тумблер · банер · заголовок · джерело логу.
+        # 🔮 `fc` (вимога 15.10) — та сама механіка, свій тумблер `mmf_bias_tg`.
+        _B = _MM_BIAS_TG.get(book, _MM_BIAS_TG['old'])
+        _p = _B['pref']
         try:
-            if not bool(settings.get('mmn_bias_tg' if _nb else 'mm_bias_tg', True)):
+            if not bool(settings.get(_B['key'], True)):
                 return
             _prev_seen = getattr(self, _p + '_last', '__none__')
             _seen_at = float(getattr(self, _p + '_at', 0) or 0)
@@ -3984,9 +4004,9 @@ class FuelFilterDaemon:
             if _prev_seen == '__none__':
                 # Перший такт після старту: лише запамʼятали, що бачимо.
                 setattr(self, _p + '_restored', bool(
-                    getattr(self, '_mm_bias_new_since' if _nb else '_mm_bias_since', 0)))
+                    getattr(self, _B['bias'] + '_since', 0)))
                 return
-            b = dict(getattr(self, '_mm_bias_new' if _nb else '_mm_bias', {}) or {})
+            b = dict(getattr(self, _B['bias'], {}) or {})
             _ico = {'LONG': '🟢', 'SHORT': '🔴'}.get(side, '⏸')
             _now_txt = f"{_ico} <b>{side}</b>" if side else "⏸ <b>РІВНОВАГА</b>"
             _pico = {'LONG': '🟢', 'SHORT': '🔴'}.get(_prev_seen, '⏸')
@@ -4000,14 +4020,14 @@ class FuelFilterDaemon:
                 _mark = '↻' if getattr(self, _p + '_restored', False) else ''
                 _held = f" · тримався {_mark}<b>{self._fmt_dur(now - _seen_at)}</b>"
             setattr(self, _p + '_restored', False)
-            _title = '🆕 <b>МММ-NEW</b>' if _nb else '🧮 <b>МММ-МОНІТОР</b>'
+            _title = _B['title']
             msg = (f"{_title} → {_now_txt} · "
                    f"важіль <b>{b.get('pct', 0)}%</b>\n"
                    f"було: {_was}{_held}\n"
                    f"монет: {b.get('coins', 0)} · 🟢 {b.get('n_long', 0)} / "
                    f"🔴 {b.get('n_short', 0)} / ⚖ {b.get('n_flat', 0)}")
             _ok, _why_tg = self._broadcast_users('btc', 'notify_btc', msg)
-            print(f"[FuelFilter] {'MMN' if _nb else 'MMM'} banner TG: {_prev_seen} → {side} "
+            print(f"[FuelFilter] {_B['src']} banner TG: {_prev_seen} → {side} "
                   f"{'OK' if _ok else 'FAIL: ' + _why_tg}")
             if not _ok:
                 # Подія сталась,
@@ -4016,9 +4036,9 @@ class FuelFilterDaemon:
                     from detection.activity_log import log_activity
                     log_activity('ALL', 'event',
                                  f'📨 Telegram НЕ прийняв зміну статусу банера '
-                                 f'{"МММ-NEW" if _nb else "МММ-монітор"}: '
+                                 f'{_B["name"]}: '
                                  f'{_why_tg} — перевірте 🩺 «Перевірити тему»',
-                                 side=side, source='MMN' if _nb else 'MMM')
+                                 side=side, source=_B['src'])
                 except Exception:
                     pass
         except Exception as e:
@@ -4300,6 +4320,9 @@ class FuelFilterDaemon:
                 getattr(self, '_mm_bias_fc_cand', {}))
             self._mm_bias_fc, self._mm_bias_fc_since = bias, since
             self._mm_bias_fc_cand = cand
+            # 📨 Зміна ПІДТВЕРДЖЕНОГО статусу → Telegram (на КОЖНОМУ такті:
+            # рішення «подія чи ні» ухвалює сама функція).
+            self._mm_bias_alert(bias.get('dir'), _now, s, book='fc')
 
         if _mon or _new or _ctr or _fcb:
             # ⏳ Знімок Є → причина «чому його немає» більше не потрібна.
@@ -4679,6 +4702,8 @@ class FuelFilterDaemon:
                                                    s.get('mm_str_min', 0))
             self._mmn_str_mins_c = mm_str_mins_norm(s.get('mmn_str_mins'),
                                                     s.get('mmn_str_min', 0))
+            self._mmc_str_mins_c = mm_str_mins_norm(s.get('mmc_str_mins'),
+                                                    s.get('mmc_str_min', 0))
         except Exception:
             pass
 
@@ -4700,32 +4725,38 @@ class FuelFilterDaemon:
         # (вкладки 🟢/🔴/⚖ таблиці МММ-монітора за МММ LiQ).
         # ⚠️ Вимкнений 🧮 тримає знімок лише для монет в угодах → `on=False`,
         # тож ворота не діють і НЕ читають той урізаний знімок.
-        _old = (book == 'old')
-        on = self._mm_mon_on if _old else self._mmn_on
+        # ⚡ `book='ctr'` (вимога 15.10) — блок «МММ-CTR»: тумблер
+        # `mm_ctr_enabled` · банер `_mm_bias_ctr` · знімок `_mmc_snapshot`.
+        _bk = book if book in ('old', 'new', 'ctr') else 'new'
+        _P = {'old': ('_mm_mon_on', 'mm_monitor_enabled', '_mm_bias', '_mm_snapshot',
+                      '_mm_str_mins_c'),
+              'new': ('_mmn_on', 'mm_new_enabled', '_mm_bias_new', '_mmn_snapshot',
+                      '_mmn_str_mins_c'),
+              'ctr': ('_mmc_on', 'mm_ctr_enabled', '_mm_bias_ctr', '_mmc_snapshot',
+                      '_mmc_str_mins_c')}[_bk]
+        on = getattr(self, _P[0], None)
         if on is None:
             try:
-                on = bool(self.get_settings().get(
-                    'mm_monitor_enabled' if _old else 'mm_new_enabled', True))
+                on = bool(self.get_settings().get(_P[1], True))
             except Exception:
                 on = True
         sym = str(symbol or '').upper()
         with self._lock:
-            b = dict(getattr(self, '_mm_bias' if _old else '_mm_bias_new', {}) or {})
-            v = (getattr(self, '_mm_snapshot' if _old else '_mmn_snapshot', {})
-                 or {}).get(sym)
+            b = dict(getattr(self, _P[2], {}) or {})
+            v = (getattr(self, _P[3], {}) or {}).get(sym)
         d = b.get('dir') if b.get('dir') in ('LONG', 'SHORT') else None
         coin = None
         if v:
             coin = v.get('status') if v.get('status') in ('LONG', 'SHORT') else 'FLAT'
         # ⚑ Сила монети і поріг «Сила ≥» ЇЇ вкладки (вимога 12.10) — для
         # воріт «з порогом вкладки»: рішення = те, що людина бачить у таблиці.
-        mins = self._mm_str_mins_c if _old else self._mmn_str_mins_c
+        mins = getattr(self, _P[4], None)
         if mins is None:
             try:
                 self._mm_str_mins_cache(self.get_settings())
             except Exception:
                 pass
-            mins = (self._mm_str_mins_c if _old else self._mmn_str_mins_c) or {}
+            mins = getattr(self, _P[4], None) or {}
         tab = {'LONG': 'LONG', 'SHORT': 'SHORT', 'FLAT': 'flat'}.get(coin)
         try:
             strength = int(v.get('strength') or 0) if v else None

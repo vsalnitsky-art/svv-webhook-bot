@@ -200,6 +200,36 @@ def test_js_cell_matches_the_badge():
     print('✓ JS: комірка «🔴 SHORT −12% · 50%» як бейдж над графіком')
 
 
+# ═══════════ 4. TELEGRAM (вимога 15.10) ════════════════════════════════
+def test_banner_change_goes_to_telegram_once_per_confirmed_flip():
+    ff, _ = _ff_with({'BTCUSDT': (-50, -60)})
+    ff._settings['mmf_bias_confirm_sec'] = 0
+    sent = []
+    ff._broadcast_users = lambda cat, key, msg: (sent.append((cat, msg)) or (True, ''))
+    ff._legacy = {'BTCUSDT': 0.3}
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1000.0)      # перший такт — мовчки
+    _check(not sent, f'перший стан після старту не шлемо: {sent}')
+    ff._mm_forecast_engine().data['BTCUSDT'] = (50, 60)
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1030.0)
+    _check(len(sent) == 1 and sent[0][0] == 'btc' and 'МММ-ПРОГНОЗ' in sent[0][1]
+           and 'LONG' in sent[0][1], sent)
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1060.0)
+    _check(len(sent) == 1, 'той самий статус — не подія')
+    ff._settings['mmf_bias_tg'] = False
+    ff._mm_forecast_engine().data['BTCUSDT'] = (-50, -60)
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1090.0)
+    _check(len(sent) == 1, 'вимкнений тумблер — тиша')
+    print('✓ 🔮 банер → Telegram: лише підтверджена зміна, перший такт мовчки, свій тумблер')
+
+
+def test_telegram_toggle_on_page():
+    for need in ('id="ff-mmf-bias-tg"', "mmf_bias_tg: _c('ff-mmf-bias-tg')",
+                 "setIf('ff-mmf-bias-tg'", "'🔮 банер Прогноз'"):
+        _check(need in _HTML, need)
+    _check("'mmf_bias_tg': True" in _SRC, 'дефолт УВІМК')
+    print('✓ UI: тумблер 📨 🔮 банер у гармошці сповіщень')
+
+
 if __name__ == '__main__':
     n = 0
     for _name, _fn in list(globals().items()):
