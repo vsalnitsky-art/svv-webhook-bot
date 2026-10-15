@@ -6170,5 +6170,17 @@ SL порожній) або трейл автопілота (раніше зад
   Вимкнений блок CTR → умова не діє (fail-open). UI: `sm-mmc-gate` +
   `sm-mmc-gate-banner` у `#sm-mmgates`, `_SM_MM_GATES` (одним запитом),
   шапка `· ⚡ МММ-CTR +банер`.
-- ⚠️ МММ-воріт для 🔮 і Telegram для ⚡ CTR НЕМАЄ (не просили).
+- ⚠️ Telegram для ⚡ CTR НЕМАЄ (не просили).
 Тести: `test_mm_fc.py` (15), `test_mm_signal_gate.py` (23).
+
+### 🔮 ВОРОТА «ЧЕРЕЗ МММ-ПРОГНОЗ» (вимога 15.10)
+
+Дослівно: «Додай фільтр Через 🔮 МММ-Прогноз.» Четверта пара в `MM_GATES` —
+`mmf_gate_enabled`/`mmf_gate_banner` (деф. ВИМК, білий список + валідація),
+книга `fc`, підписи `_MM_GATE_TAG['fc']` (`🔮МММ-Прогноз[…]` / `🔮 МММ-ПРОГНОЗ`).
+Порядок: NEW → монітор → CTR → Прогноз. `mm_gate_view(sym, book='fc')` читає
+`_mmf_on` · `_mm_bias_fc` · `_mmf_snapshot` · `_mmf_str_mins_c` (кеш порогів
+додано в `_mm_str_mins_cache` → ⚑ `mm_gate_strength` діє і тут). Вимкнений
+блок 🔮 → умова не діє. UI: `sm-mmf-gate` + `sm-mmf-gate-banner` у
+`#sm-mmgates`, рядок у `_SM_MM_GATES`, шапка `· 🔮 МММ-Прогноз +банер`.
+Тест: `test_mm_signal_gate.py` (25).

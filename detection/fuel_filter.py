@@ -1176,6 +1176,7 @@ class FuelFilterDaemon:
         self._mm_str_mins_c: Optional[Dict] = None
         self._mmn_str_mins_c: Optional[Dict] = None
         self._mmc_str_mins_c: Optional[Dict] = None
+        self._mmf_str_mins_c: Optional[Dict] = None
         self._mm_bias_since: float = 0.0
         # 🐢 КАНДИДАТ на зміну статусу банера: {'dir', 'since'}. Поки він не
         # протримався `mm_bias_confirm_sec`, банер показує СТАРИЙ статус.
@@ -4704,6 +4705,8 @@ class FuelFilterDaemon:
                                                     s.get('mmn_str_min', 0))
             self._mmc_str_mins_c = mm_str_mins_norm(s.get('mmc_str_mins'),
                                                     s.get('mmc_str_min', 0))
+            self._mmf_str_mins_c = mm_str_mins_norm(s.get('mmf_str_mins'),
+                                                    s.get('mmf_str_min', 0))
         except Exception:
             pass
 
@@ -4727,13 +4730,17 @@ class FuelFilterDaemon:
         # тож ворота не діють і НЕ читають той урізаний знімок.
         # ⚡ `book='ctr'` (вимога 15.10) — блок «МММ-CTR»: тумблер
         # `mm_ctr_enabled` · банер `_mm_bias_ctr` · знімок `_mmc_snapshot`.
-        _bk = book if book in ('old', 'new', 'ctr') else 'new'
+        # 🔮 `book='fc'` (вимога 15.10) — блок «МММ-Прогноз»: тумблер
+        # `mm_fc_enabled` · банер `_mm_bias_fc` · знімок `_mmf_snapshot`.
+        _bk = book if book in ('old', 'new', 'ctr', 'fc') else 'new'
         _P = {'old': ('_mm_mon_on', 'mm_monitor_enabled', '_mm_bias', '_mm_snapshot',
                       '_mm_str_mins_c'),
               'new': ('_mmn_on', 'mm_new_enabled', '_mm_bias_new', '_mmn_snapshot',
                       '_mmn_str_mins_c'),
               'ctr': ('_mmc_on', 'mm_ctr_enabled', '_mm_bias_ctr', '_mmc_snapshot',
-                      '_mmc_str_mins_c')}[_bk]
+                      '_mmc_str_mins_c'),
+              'fc': ('_mmf_on', 'mm_fc_enabled', '_mm_bias_fc', '_mmf_snapshot',
+                     '_mmf_str_mins_c')}[_bk]
         on = getattr(self, _P[0], None)
         if on is None:
             try:

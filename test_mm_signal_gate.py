@@ -388,9 +388,55 @@ def test_ctr_gate_rule_labels_and_activation():
     _check("'mmc_gate_enabled', 'mmc_gate_banner'," in _SC_SRC, 'білий список')
     for need in ('id="sm-mmc-gate"', 'id="sm-mmc-gate-banner"',
                  "['sm-mmc-gate', 'sm-mmc-gate-banner', 'mmc_gate_enabled', 'mmc_gate_banner']",
-                 "'⚡ МММ-CTR']].forEach"):
+                 "'⚡ МММ-CTR'],"):
         _check(need in _HTML, f'на сторінці немає «{need}»')
     print('✓ «Через МММ-CTR» — те саме правило, свої підписи, деф. ВИМК, UI')
+
+
+# ── 3г. 🔮 ВОРОТА «ЧЕРЕЗ МММ-ПРОГНОЗ» (вимога 15.10) ─────────────────────────
+def test_view_fc_book_reads_the_forecast_snapshot():
+    f = _ff({'dir': 'LONG'}, {'AAAUSDT': {'status': 'LONG'}})
+    f._mm_bias_fc = {'dir': 'SHORT'}
+    f._mmf_snapshot = {'AAAUSDT': {'status': 'SHORT', 'strength': 29}}
+    f._mmf_on = True
+    f._mmf_str_mins_c = {'all': 0, 'LONG': 0, 'SHORT': 20, 'flat': 0}
+    v = f.mm_gate_view('AAAUSDT', book='fc')
+    _check({k: v[k] for k in ('on', 'dir', 'coin', 'str_min')}
+           == {'on': True, 'dir': 'SHORT', 'coin': 'SHORT', 'str_min': 20}, v)
+    f._mmf_on = False
+    _check(f.mm_gate_view('AAAUSDT', book='fc')['on'] is False, 'вимкнений 🔮 → не діє')
+    f._mmf_str_mins_c = None
+    f._mm_str_mins_cache({'mmf_str_mins': {'all': 0, 'LONG': 5, 'SHORT': 9, 'flat': 0}})
+    _check(f._mmf_str_mins_c and f._mmf_str_mins_c['SHORT'] == 9, f._mmf_str_mins_c)
+    print('✓ mm_gate_view(book=fc) читає знімок, банер і пороги 🔮 МММ-Прогноз')
+
+
+def test_fc_gate_rule_labels_and_activation():
+    app, ok, chip, why = sc.mm_gate_decide(_v(coin='SHORT'), 'LONG', False, 'fc')
+    _check(app and not ok and '🔮МММ-Прогноз' in chip and '🔮 МММ-ПРОГНОЗ' in why, (chip, why))
+    _check(sc.mm_gates_active({'mmf_gate_enabled': True})
+           == [('fc', False)], 'fc у переліку воріт')
+    seen = []
+    old = sc._mm_gate_view
+    try:
+        def fake(sym, book='new'):
+            seen.append(book)
+            return _v(coin='SHORT')
+        sc._mm_gate_view = fake
+        ns = _ns(False); ns._settings['mmf_gate_enabled'] = True
+        ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
+        _check(ok is False and seen == ['fc'] and '🔮 МММ-ПРОГНОЗ' in why
+               and '🔮МММ-Прогноз[вкладка SHORT]:✗' in detail, (seen, why, detail))
+    finally:
+        sc._mm_gate_view = old
+    for k in ('mmf_gate_enabled', 'mmf_gate_banner'):
+        _check(f"'{k}': False" in _SC_SRC, f'дефолт ВИМК: {k}')
+    _check("'mmf_gate_enabled', 'mmf_gate_banner'," in _SC_SRC, 'білий список')
+    for need in ('id="sm-mmf-gate"', 'id="sm-mmf-gate-banner"',
+                 "['sm-mmf-gate', 'sm-mmf-gate-banner', 'mmf_gate_enabled', 'mmf_gate_banner']",
+                 "'🔮 МММ-Прогноз']].forEach"):
+        _check(need in _HTML, f'на сторінці немає «{need}»')
+    print('✓ «Через МММ-Прогноз» — те саме правило, свої підписи, деф. ВИМК, UI')
 
 
 if __name__ == '__main__':

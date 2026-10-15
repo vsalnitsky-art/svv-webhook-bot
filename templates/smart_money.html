@@ -2262,7 +2262,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmc-gate-banner" onchange="updateMmGate()">
                         за банером МММ-CTR
                     </label>
-                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» / «Через МММ-CTR» (для кожного блоку — його власні пороги). ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="🔮 Ворота «Через МММ-Прогноз» (вимога 15.10): сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку 🔮 МММ-Прогноз (Forecast 1H + 4H), SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Незалежні від інших МММ-воріт (увімкнені кілька — сигнал має пройти всі). Діє на ВСІ сигнали сканера і на 🔁 повторній перевірці Черги-4. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mmf-gate" onchange="updateMmGate()">
+                        🔮 Через МММ-Прогноз
+                    </label>
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-Прогноз»: банер 🔮 МММ-Прогноз мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-Прогноз». ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mmf-gate-banner" onchange="updateMmGate()">
+                        за банером МММ-Прогноз
+                    </label>
+                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Прогноз» (для кожного блоку — його власні пороги). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-str" onchange="updateMmGate()">
                         ⚑ з порогом «Сила ≥» вкладки
                     </label>
@@ -6932,6 +6940,7 @@ async function loadSettings() {
             [['sm-mm-gate', 'mm_gate_enabled'], ['sm-mm-gate-banner', 'mm_gate_banner'],
              ['sm-mmo-gate', 'mmo_gate_enabled'], ['sm-mmo-gate-banner', 'mmo_gate_banner'],
              ['sm-mmc-gate', 'mmc_gate_enabled'], ['sm-mmc-gate-banner', 'mmc_gate_banner'],
+             ['sm-mmf-gate', 'mmf_gate_enabled'], ['sm-mmf-gate-banner', 'mmf_gate_banner'],
              ['sm-mm-gate-str', 'mm_gate_strength']]
                 .forEach(([id, k]) => {
                     const el = document.getElementById(id);
@@ -7117,14 +7126,15 @@ function updateSettingsSummary() {
     }
     [['sm-mm-gate', 'sm-mm-gate-banner', '🆕 МММ-NEW'],
      ['sm-mmo-gate', 'sm-mmo-gate-banner', '🧮 МММ-МОН'],
-     ['sm-mmc-gate', 'sm-mmc-gate-banner', '⚡ МММ-CTR']].forEach(([g, b, t]) => {
+     ['sm-mmc-gate', 'sm-mmc-gate-banner', '⚡ МММ-CTR'],
+     ['sm-mmf-gate', 'sm-mmf-gate-banner', '🔮 МММ-Прогноз']].forEach(([g, b, t]) => {
         const _g = document.getElementById(g);
         if (!_g || !_g.checked) return;
         const _b = document.getElementById(b);
         summary += ' · ' + t + (_b && _b.checked ? ' +банер' : '');
     });
     const _gs = document.getElementById('sm-mm-gate-str');
-    const _anyMm = ['sm-mm-gate', 'sm-mmo-gate', 'sm-mmc-gate'].some(i => {
+    const _anyMm = ['sm-mm-gate', 'sm-mmo-gate', 'sm-mmc-gate', 'sm-mmf-gate'].some(i => {
         const e = document.getElementById(i); return e && e.checked; });
     if (_gs && _gs.checked && _anyMm) summary += ' ⚑сила';
     const lqG = document.getElementById('sm-liq-gate');
@@ -7227,7 +7237,8 @@ async function updateVobOnePerOb() {
 // банером» гаситься, поки його головний тумблер вимкнено.
 const _SM_MM_GATES = [['sm-mm-gate', 'sm-mm-gate-banner', 'mm_gate_enabled', 'mm_gate_banner'],
                       ['sm-mmo-gate', 'sm-mmo-gate-banner', 'mmo_gate_enabled', 'mmo_gate_banner'],
-                      ['sm-mmc-gate', 'sm-mmc-gate-banner', 'mmc_gate_enabled', 'mmc_gate_banner']];
+                      ['sm-mmc-gate', 'sm-mmc-gate-banner', 'mmc_gate_enabled', 'mmc_gate_banner'],
+                      ['sm-mmf-gate', 'sm-mmf-gate-banner', 'mmf_gate_enabled', 'mmf_gate_banner']];
 function _smMmGateSync() {
     _SM_MM_GATES.forEach(([gi, bi]) => {
         const g = document.getElementById(gi);

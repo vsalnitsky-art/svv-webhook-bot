@@ -57,7 +57,9 @@ def entry_level_ok(level, live, max_dev_pct: float = ENTRY_LEVEL_MAX_DEV_PCT) ->
 _MM_GATE_TAG = {'new': ('🆕МММ-new', '🆕 МММ-NEW'),
                 'old': ('🧮МММ-монітор', '🧮 МММ-МОНІТОР'),
                 # ⚡ МММ-CTR (вимога 15.10) — та сама умова, книга STC 1H+4H.
-                'ctr': ('⚡МММ-CTR', '⚡ МММ-CTR')}
+                'ctr': ('⚡МММ-CTR', '⚡ МММ-CTR'),
+                # 🔮 МММ-Прогноз (вимога 15.10) — книга Forecast 1H+4H.
+                'fc': ('🔮МММ-Прогноз', '🔮 МММ-ПРОГНОЗ')}
 
 
 def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
@@ -116,7 +118,9 @@ def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
 MM_GATES = (('mm_gate_enabled', 'mm_gate_banner', 'new'),
             ('mmo_gate_enabled', 'mmo_gate_banner', 'old'),
             # ⚡ «Через МММ-CTR» (+ «за банером МММ-CTR»), вимога 15.10, деф. ВИМК.
-            ('mmc_gate_enabled', 'mmc_gate_banner', 'ctr'))
+            ('mmc_gate_enabled', 'mmc_gate_banner', 'ctr'),
+            # 🔮 «Через МММ-Прогноз» (+ «за банером»), вимога 15.10, деф. ВИМК.
+            ('mmf_gate_enabled', 'mmf_gate_banner', 'fc'))
 
 
 def mm_gates_active(settings):
@@ -386,6 +390,8 @@ DEFAULT_SETTINGS = {
     'mmo_gate_banner': False,
     'mmc_gate_enabled': False,
     'mmc_gate_banner': False,
+    'mmf_gate_enabled': False,
+    'mmf_gate_banner': False,
     # ⚑ МММ-ворота враховують поріг «Сила ≥» вкладки (вимога 12.10): сигнал
     # проходить, лише коли монета ВИДИМА у своїй вкладці. Деф. ВИМК.
     'mm_gate_strength': False,
@@ -1614,6 +1620,7 @@ class SMCScanner:
                        'mm_gate_enabled', 'mm_gate_banner',
                        'mmo_gate_enabled', 'mmo_gate_banner',
                        'mmc_gate_enabled', 'mmc_gate_banner',
+                       'mmf_gate_enabled', 'mmf_gate_banner',
                        'mm_gate_strength',
                        'liq_gate_enabled',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
@@ -1765,6 +1772,7 @@ class SMCScanner:
             for _gk in ('mm_gate_enabled', 'mm_gate_banner',
                         'mmo_gate_enabled', 'mmo_gate_banner',
                         'mmc_gate_enabled', 'mmc_gate_banner',
+                        'mmf_gate_enabled', 'mmf_gate_banner',
                         'mm_gate_strength'):
                 self._settings[_gk] = bool(self._settings.get(_gk, False))
             self._settings['liq_gate_enabled'] = bool(
