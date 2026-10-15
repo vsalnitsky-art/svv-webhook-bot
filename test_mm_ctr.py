@@ -154,7 +154,7 @@ def test_group_open_from_ctr_uses_its_own_direction_and_label():
     res = ff.group_open(['BTCUSDT'], book='ctr')
     _check(res['opened'] == 1 and ff.opened[0]['side'] == 'LONG', (res, ff.opened))
     _check('MMC' in ff.opened[0]['kw'].get('opened_by', ''), ff.opened[0])
-    _check("'MMC' if _nc" in _SRC, 'мітка двигуна MMC')
+    _check("'snap': '_mmc_snapshot', 'eng': 'MMC'" in _SRC, 'мітка двигуна MMC')
     print('✓ ✋ групове відкриття бере напрямок CTR, мітка MMC')
 
 
@@ -178,11 +178,11 @@ def test_ui_block_is_a_twin_with_its_own_columns():
                  'ff-mmc-bias-confirm', "mmSetDir('LONG','ctr')", 'mmc-bias-banner',
                  "mmSort('ctr4','ctr')"):
         _check(need in blk or need in _HTML, need)
-    _check("'mmc', 'mmclist'" in _HTML and "'mmclist'])" in _HTML, 'гармошки')
+    _check("'mmc', 'mmclist'" in _HTML and "'mmclist'" in _HTML.split('_PANEL_CLOSED_BY_DEFAULT = ')[1].split(';')[0], 'гармошки')
     _check("mmApplyState(d.mm_ctr, 'ctr')" in _HTML, 'стан доїжджає до книги')
     _check("want.push('mmc')" in _HTML, 'секцію просимо лише розгорнутою')
     _check('mm_ctr_enabled: _c(' in _HTML and 'mmc_str_mins:' in _HTML, 'збереження')
-    _check('[_MMB.old, _MMB.new, _MMB.ctr].forEach' in _HTML, 'банер малює 1с-тікер')
+    _check('[_MMB.old, _MMB.new, _MMB.ctr, _MMB.fc].forEach' in _HTML, 'банер малює 1с-тікер')
     print('✓ UI: блок-двійник, колонки ⚡ 1H/⚡ 4H, гармошки, збереження')
 
 
