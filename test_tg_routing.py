@@ -309,7 +309,7 @@ def test_a_confirmed_banner_change_is_announced():
     _check('МММ-МОНІТОР' in txt, f'повідомлення мусить назвати джерело: {txt}')
     _check('SHORT' in txt and 'LONG' in txt,
            f'мусить бути видно і новий статус, і попередній: {txt}')
-    _check('монет:' in txt, f'розклад монет — це і є підстава статусу: {txt}')
+    _check('монет:' not in txt, f'рядок «монет: …» прибрано (вимога 17.10): {txt}')
     print('✓ зміна статусу банера → повідомлення в тему 🧮')
 
 
@@ -472,7 +472,8 @@ def test_ui_names_every_stream_of_the_topic():
     body = _HTML[i:i + 800]
     for token in ('mm_bias_tg', 'start_signal_tg_alerts'):
         _check(token in body, f'підсумок мусить враховувати {token}')
-    sec = _HTML[_HTML.find('id="mm-tg-sum"') - 600:_HTML.find('id="mm-tg-sum"') + 2000]
+    _a = _HTML.find('id="mm-tg-sum"')
+    sec = _HTML[_a - 600:_HTML.find('</details>', _a)]   # до кінця гармошки, а не N символів
     _check('банера ₿' in sec, 'секція мусить пояснити, де тумблер ₿-сеансу')
     _check('кабінет' in sec, 'секція мусить назвати майстер-вимикач теми')
     print('✓ UI називає всі потоки теми і майстер-вимикач')

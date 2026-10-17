@@ -2262,15 +2262,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmc-gate-banner" onchange="updateMmGate()">
                         за банером МММ-CTR
                     </label>
-                    <label class="sm-checkbox" title="🔮 Ворота «Через МММ-Прогноз» (вимога 15.10): сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку 🔮 МММ-Прогноз (Forecast 1H + 4H), SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Незалежні від інших МММ-воріт (увімкнені кілька — сигнал має пройти всі). Діє на ВСІ сигнали сканера і на 🔁 повторній перевірці Черги-4. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить. ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="🔮 Ворота «Через МММ-Local» (вимога 15.10): сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку 🔮 МММ-Local (Forecast 1H + 4H), SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Незалежні від інших МММ-воріт (увімкнені кілька — сигнал має пройти всі). Діє на ВСІ сигнали сканера і на 🔁 повторній перевірці Черги-4. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить. ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mmf-gate" onchange="updateMmGate()">
-                        🔮 Через МММ-Прогноз
+                        🔮 Через МММ-Local
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через МММ-Прогноз»: банер 🔮 МММ-Прогноз мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-Прогноз». ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-Local»: банер 🔮 МММ-Local мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-Local». ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mmf-gate-banner" onchange="updateMmGate()">
-                        за банером МММ-Прогноз
+                        за банером МММ-Local
                     </label>
-                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Прогноз» (для кожного блоку — його власні пороги). ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» (для кожного блоку — його власні пороги). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-str" onchange="updateMmGate()">
                         ⚑ з порогом «Сила ≥» вкладки
                     </label>
@@ -2650,17 +2650,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span class="sm-settings-summary-right" id="mm-tg-sum">—</span>
                 </summary>
                 <div class="mmc-grid">
-                    <label class="mmc-chk" title="Надсилати в групу (тема 🧮 МММ-монітор) повідомлення про ЗМІНУ СТАТУСУ банера: 🟢 LONG / 🔴 SHORT / ⏸ рівновага, з важелем і розкладом монет. Шлеться лише ПІДТВЕРДЖЕНИЙ статус (кандидат ⏳ — ще відлік), а перший стан після рестарту бота — мовчки, щоб botupdate не виглядав як подія.">
+                    <label class="mmc-chk" title="Надсилати в групу (тема 🧮 МММ-монітор) повідомлення про ЗМІНУ СТАТУСУ банера: 🟢 LONG / 🔴 SHORT / ⏸ рівновага, з важелем. Шлеться лише ПІДТВЕРДЖЕНИЙ статус (кандидат ⏳ — ще відлік), а перший стан після рестарту бота — мовчки, щоб botupdate не виглядав як подія.">
                         <input type="checkbox" id="ff-mm-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
                         ⚖️ Зміна статусу банера
                     </label>
-                    <label class="mmc-chk" title="🆕 Те саме для банера 🆕 МММ-NEW (вимога 09.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера МММ-NEW (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем і розкладом монет. Перший стан після рестарту — мовчки. Власний тумблер, незалежний від банера 🧮.">
+                    <label class="mmc-chk" title="🆕 Те саме для банера 🆕 МММ-NEW (вимога 09.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера МММ-NEW (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем. Перший стан після рестарту — мовчки. Власний тумблер, незалежний від банера 🧮.">
                         <input type="checkbox" id="ff-mmn-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
                         🆕 Зміна статусу банера МММ-NEW
                     </label>
-                    <label class="mmc-chk" title="🔮 Те саме для банера 🔮 МММ-Прогноз (вимога 15.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем і розкладом монет. Перший стан після рестарту — мовчки. Власний тумблер.">
+                    <label class="mmc-chk" title="🔮 Те саме для банера 🔮 МММ-Local (вимога 15.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем. Перший стан після рестарту — мовчки. Власний тумблер.">
                         <input type="checkbox" id="ff-mmf-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
-                        🔮 Зміна статусу банера МММ-Прогноз
+                        🔮 Зміна статусу банера МММ-Local
+                    </label>
+                    <label class="mmc-chk" title="⚡ Те саме для банера ⚡ МММ-CTR (вимога 17.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем. Перший стан після рестарту — мовчки. Власний тумблер.">
+                        <input type="checkbox" id="ff-mmc-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
+                        ⚡ Зміна статусу банера МММ-CTR
                     </label>
                     <div style="flex-basis:100%;font-size:0.68rem;line-height:1.4;color:#8b93a7">
                         ₿ <b>BTCUSDT (старт / стоп сеансу)</b> іде в ЦЮ САМУ тему — його
@@ -2951,7 +2955,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
 
 
-    <!-- ===== 🔮 МММ-ПРОГНОЗ (вимога 15.10) =====
+    <!-- ===== 🔮 МММ-LOCAL (вимога 15.10) =====
          «Зроби ще один такий самий МММ (монітор) банер, як і ⚡ МММ-CTR, тільки
          на основі [бейджів 🔮 1H / 4H прогнозу]». Розмітка — копія блоку ⚡ з
          префіксом id `mmf-`; JS — ТОЙ САМИЙ код монітора з книгою `fc`;
@@ -2959,20 +2963,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
          Напрямок монети — `fc_mm_dir`: 0.4·pct 1H + 0.6·pct 4H. -->
     <div class="tm-panel" id="mmf-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(167,139,250,0.35);border-radius:8px;background:rgba(167,139,250,0.05)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px">
-            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mmf')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mmf-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🔮 МММ-Прогноз <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— прогноз 🔮 1H + 4H по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mmf')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mmf-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🔮 МММ-Local <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— прогноз 🔮 1H + 4H по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
             <div style="display:flex;align-items:center;gap:10px">
                 <span id="mmf-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
-                <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🔮 МММ-Прогноз. Блок лише ЧИТАЄ готовий кеш прогнозу 1H/4H (той самий, що бейджі над графіком) — жодного запиту до біржі. ВИМКНЕНО — бот НЕ веде цей знімок (банер, таймери, історію, список монет), таблиця порожня, групове відкриття недоступне. Сам моніторинг нічого не відкриває автоматично — лише показує стан і дає ✋ відкрити обране вручну.">
+                <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🔮 МММ-Local. Блок лише ЧИТАЄ готовий кеш прогнозу 1H/4H (той самий, що бейджі над графіком) — жодного запиту до біржі. ВИМКНЕНО — бот НЕ веде цей знімок (банер, таймери, історію, список монет), таблиця порожня, групове відкриття недоступне. Сам моніторинг нічого не відкриває автоматично — лише показує стан і дає ✋ відкрити обране вручну.">
                     <input type="checkbox" id="ff-mm-fc-enabled" checked onchange="saveFuelFilterSettings()">
                     <span class="slider"></span>
                 </label>
             </div>
         </div>
         <div id="mmf-body">
-            <div id="mmf-off" style="display:none;padding:9px 12px;border-radius:6px;border:1px dashed rgba(148,163,184,0.35);color:#8b93a7;font-size:0.72rem">🔌 МММ-Прогноз вимкнено — бот не рахує ні банер, ні список монет. Увімкніть тумблер у шапці блоку.</div>
+            <div id="mmf-off" style="display:none;padding:9px 12px;border-radius:6px;border:1px dashed rgba(148,163,184,0.35);color:#8b93a7;font-size:0.72rem">🔌 МММ-Local вимкнено — бот не рахує ні банер, ні список монет. Увімкніть тумблер у шапці блоку.</div>
             <div id="mmf-live">
             <div id="mmf-bias-banner" class="mm-ban" style="margin:0 0 10px">
-                <span class="mm-ban-title" style="color:#ddd6fe;text-shadow:0 0 9px rgba(167,139,250,0.5)">🔮 МММ-Прогноз</span>
+                <span class="mm-ban-title" style="color:#ddd6fe;text-shadow:0 0 9px rgba(167,139,250,0.5)">🔮 МММ-Local</span>
                 <div class="mm-ban-bar">
                     <div id="mmf-bias-bar" style="height:100%;width:0%;border-radius:9px;background:#a78bfa;transition:width 0.4s linear,background 0.3s"></div>
                     <span id="mmf-bias-label" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
@@ -2992,7 +2996,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG','fc')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
                 <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT','fc')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
                 <button type="button" data-mmdir="flat" onclick="mmSetDir('flat','fc')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
-                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🔮 МММ-Прогноз» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🔮 МММ-Local» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
                     Сила ≥ <input type="number" id="mmf-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged('fc')" onchange="mmMinStrSave()"> %
                 </label>
                 <span id="mmf-str-out" style="font-size:0.66rem;color:#fbbf24;font-family:monospace"></span>
@@ -3011,7 +3015,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span id="mmf-sel-count" style="font-size:0.7rem;color:#8b93a7;font-family:monospace">Обрано 0</span>
                 <button type="button" id="mmf-open-btn" onclick="mmOpenSelected('fc')" disabled
                         style="font-size:0.68rem;padding:4px 12px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#4ade80;cursor:pointer;font-weight:700"
-                        title="✋ Відкрити УСІ обрані монети одразу. Напрямок кожної = її власний 🔮 МММ-Прогноз (те, що в рядку). Ворота черг пропускаються — рішення ухвалює людина; 🚦 головні кнопки напрямку і запобіжники відкриття (ціна/розмір) лишаються.">✋ Відкрити обрані</button>
+                        title="✋ Відкрити УСІ обрані монети одразу. Напрямок кожної = її власний 🔮 МММ-Local (те, що в рядку). Ворота черг пропускаються — рішення ухвалює людина; 🚦 головні кнопки напрямку і запобіжники відкриття (ціна/розмір) лишаються.">✋ Відкрити обрані</button>
                 <button type="button" onclick="mmClearSel('fc')" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid #3a3f4b;background:transparent;color:#8b93a7;cursor:pointer">Зняти вибір</button>
                 <span id="mmf-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
             </div>
@@ -3027,9 +3031,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmf-check-all" onchange="mmToggleAll(this.checked,'fc')"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol','fc')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="status" onclick="mmSort('status','fc')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Монета в угоді або в черзі з таблиці НЕ зникає — просто видно, що вона вже в роботі, і галочка для ✋ групового відкриття їй недоступна. Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="strength" onclick="mmSort('strength','fc')" style="cursor:pointer;user-select:none" title="🔮 МММ-Прогноз — напрямок монети з пари прогнозів: 0.4 · pct 1H + 0.6 · pct 4H (pct — те саме «−12%» / «−41%», що в бейджах: знак = напрямок, величина = сила; впевненість — похідна від тієї самої суми, тому вдруге не враховується). Сума ≤ 10% → ⚖ рівновага; 1H і 4H явно в різні боки → ⚖ рівновага-конфлікт. Сила 0–100%. Клік — сортувати за силою.">МММ-Прогноз<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="fc1" onclick="mmSort('fc1','fc')" style="cursor:pointer;user-select:none" title="🔮 Прогноз 1H — та сама величина, що в бейджі «🔮 1H» над графіком: напрямок · очікуваний рух (pct, −100…+100) · впевненість. Вага в МММ-Прогноз — 40% (таймінг). Клік — сортувати (найсильніший LONG-нахил зверху).">🔮 1H<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="fc4" onclick="mmSort('fc4','fc')" style="cursor:pointer;user-select:none" title="🔮 Прогноз 4H — та сама величина, що в бейджі «🔮 4H» над графіком. Вага в МММ-Прогноз — 60% (контекст: старший TF). Клік — сортувати.">🔮 4H<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="strength" onclick="mmSort('strength','fc')" style="cursor:pointer;user-select:none" title="🔮 МММ-Local — напрямок монети з пари прогнозів: 0.4 · pct 1H + 0.6 · pct 4H (pct — те саме «−12%» / «−41%», що в бейджах: знак = напрямок, величина = сила; впевненість — похідна від тієї самої суми, тому вдруге не враховується). Сума ≤ 10% → ⚖ рівновага; 1H і 4H явно в різні боки → ⚖ рівновага-конфлікт. Сила 0–100%. Клік — сортувати за силою.">МММ-Local<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="fc1" onclick="mmSort('fc1','fc')" style="cursor:pointer;user-select:none" title="🔮 Прогноз 1H — та сама величина, що в бейджі «🔮 1H» над графіком: напрямок · очікуваний рух (pct, −100…+100) · впевненість. Вага в МММ-Local — 40% (таймінг). Клік — сортувати (найсильніший LONG-нахил зверху).">🔮 1H<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="fc4" onclick="mmSort('fc4','fc')" style="cursor:pointer;user-select:none" title="🔮 Прогноз 4H — та сама величина, що в бейджі «🔮 4H» над графіком. Вага в МММ-Local — 60% (контекст: старший TF). Клік — сортувати.">🔮 4H<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="state" onclick="mmSort('state','fc')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан МММ — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Відлік починається заново на КОЖНІЙ зміні стану (у тому числі при переході в рівновагу і назад). ⚖ рівновага — теж стан: «скільки монета вже без напрямку» не менш важливо за «скільки вона в LONG». Разовий пропуск монети у знімку таймер НЕ збиває, а рестарт бота його не обнуляє — момент старту зберігається. Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="price" onclick="mmSort('price','fc')" style="cursor:pointer;user-select:none;text-align:right" title="Поточна ціна монети. Клік — сортувати за ціною.">Ціна<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="pchg" onclick="mmSort('pchg','fc')" style="cursor:pointer;user-select:none;text-align:right" title="КУДИ йде ціна: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). За скільки часу історії реально набралось — у підказці комірки: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ (найсильніший ріст зверху).">Рух<span class="ff-sort-arrow"></span></th>
@@ -7127,7 +7131,7 @@ function updateSettingsSummary() {
     [['sm-mm-gate', 'sm-mm-gate-banner', '🆕 МММ-NEW'],
      ['sm-mmo-gate', 'sm-mmo-gate-banner', '🧮 МММ-МОН'],
      ['sm-mmc-gate', 'sm-mmc-gate-banner', '⚡ МММ-CTR'],
-     ['sm-mmf-gate', 'sm-mmf-gate-banner', '🔮 МММ-Прогноз']].forEach(([g, b, t]) => {
+     ['sm-mmf-gate', 'sm-mmf-gate-banner', '🔮 МММ-Local']].forEach(([g, b, t]) => {
         const _g = document.getElementById(g);
         if (!_g || !_g.checked) return;
         const _b = document.getElementById(b);
@@ -12241,8 +12245,8 @@ const _MMB = { old: _mmMkBook('mm', 'МММ LiQ', 'mmMonitorUi'),
                new: _mmMkBook('mmn', 'Новий МММ', 'mmNewUi'),
                // ⚡ Третя книга (вимога 14.10): нахил STC (CTR) 1H + 4H.
                ctr: _mmMkBook('mmc', 'МММ-CTR', 'mmCtrUi'),
-               // 🔮 Блок «МММ-Прогноз» (15.10) — книга `fc`, префікс id `mmf`.
-               fc: _mmMkBook('mmf', 'МММ-Прогноз', 'mmFcUi') };
+               // 🔮 Блок «МММ-Local» (15.10) — книга `fc`, префікс id `mmf`.
+               fc: _mmMkBook('mmf', 'МММ-Local', 'mmFcUi') };
 // 📋 СКЛАД КОЛОНОК КОЖНОЇ ТАБЛИЦІ (вимога 01.10). Ключі — у порядку показу,
 // без ☑ і «Символ» (вони є завжди). Заголовки в HTML ідуть у ТОМУ САМОМУ
 // порядку — тест-замок звіряє кількість <th> і <td>.
@@ -12884,7 +12888,8 @@ function _mmTgSummary(s) {
     const off = [];
     (s.mm_bias_tg === false ? off : on).push('⚖️ банер');
     (s.mmn_bias_tg === false ? off : on).push('🆕 банер NEW');
-    (s.mmf_bias_tg === false ? off : on).push('🔮 банер Прогноз');
+    (s.mmc_bias_tg === false ? off : on).push('⚡ банер CTR');
+    (s.mmf_bias_tg === false ? off : on).push('🔮 банер Local');
     (s.start_signal_tg_alerts ? on : off).push('₿ сеанс');
     el.textContent = (on.length ? '📨 ' + on.join(' · ') : '📭 нічого не шлемо')
         + (off.length ? ' · ⛔ ' + off.join(' · ') : '');
@@ -13114,7 +13119,7 @@ function _ffWantedSections() {
     if (vis('mmn-body')) want.push('mmn');
     // ⚡ МММ-CTR — своя секція (`mmc`).
     if (vis('mmc-body')) want.push('mmc');
-    // 🔮 МММ-Прогноз — своя секція (`mmf`).
+    // 🔮 МММ-Local — своя секція (`mmf`).
     if (vis('mmf-body')) want.push('mmf');
     return want;
 }
@@ -14219,6 +14224,7 @@ function renderFuelFilter(d) {
     setIf('ff-mm-bias-tg', s.mm_bias_tg !== false);                 // default true
     setIf('ff-mmn-bias-tg', s.mmn_bias_tg !== false);               // default true
     setIf('ff-mmf-bias-tg', s.mmf_bias_tg !== false);               // 🔮 default true
+    setIf('ff-mmc-bias-tg', s.mmc_bias_tg !== false);               // ⚡ default true
     if (typeof _mmTgSummary === 'function') _mmTgSummary(s);
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
@@ -15272,7 +15278,7 @@ async function saveFuelFilterSettings() {
         mmc_str_min: _mmMinStr(_MMB.ctr, 'all'),
         mmc_str_mins: Object.assign({}, _MMB.ctr.strMins),
         mmc_bias_confirm_sec: parseInt(_v('ff-mmc-bias-confirm', '120') || '0', 10),
-        // 🔮 Блок «МММ-Прогноз» — свої тумблер, пороги «Сила ≥» і вікно банера.
+        // 🔮 Блок «МММ-Local» — свої тумблер, пороги «Сила ≥» і вікно банера.
         mm_fc_enabled: _c('ff-mm-fc-enabled'),
         mmf_str_min: _mmMinStr(_MMB.fc, 'all'),
         mmf_str_mins: Object.assign({}, _MMB.fc.strMins),
@@ -15280,6 +15286,7 @@ async function saveFuelFilterSettings() {
         mm_bias_tg: _c('ff-mm-bias-tg'),
         mmn_bias_tg: _c('ff-mmn-bias-tg'),
         mmf_bias_tg: _c('ff-mmf-bias-tg'),
+        mmc_bias_tg: _c('ff-mmc-bias-tg'),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
@@ -15659,7 +15666,7 @@ const SIGNAL_BADGES_JS = {
 const ENGINE_BADGES_JS = {
     'Q1': '🎯 Черга-1', 'Q2': '🎯 Черга-2', 'Q3': '🎯 Готовність', 'Q4': '🎯 Черга-4',
     'Q3-VOB(funding)': '💰 VOB+Шари', 'POC-сетап': '🎯 POC-сетап',
-    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-new', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Прогноз',
+    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-new', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Local',
     'EXH': '🔥 Виснаженість', 'FF': '🔥 FF', 'direct': '⚡ Прямий',
 };
 const SIGNAL_ICON_JS = {

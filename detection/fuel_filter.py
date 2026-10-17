@@ -385,7 +385,7 @@ def ctr_mm_dir(stc_1h, stc_4h) -> Optional[Dict]:
             'conflict': bool(conflict)}
 
 
-# 🔮 МММ-ПРОГНОЗ (вимога 15.10): четвертий банер на 🔮 Forecast 1H + 4H —
+# 🔮 МММ-LOCAL (вимога 15.10): четвертий банер на 🔮 Forecast 1H + 4H —
 # ТІ САМІ числа, що в бейджах «1H: 🔴 SHORT −12% · 50%» над графіком.
 # Ваги ті самі, що в ⚡ МММ-CTR (4H — контекст, 1H — таймінг): одне правило
 # «як зважувати два TF» на обидва блоки, щоб «64%» означало одне й те саме.
@@ -394,7 +394,7 @@ FC_MM_W_4H = CTR_MM_W_4H
 
 
 def fc_mm_dir(f1, f4) -> Optional[Dict]:
-    """🔮 Напрямок МММ-Прогноз по ОДНІЙ монеті з пари прогнозів 1H/4H. ЧИСТА.
+    """🔮 Напрямок МММ-Local по ОДНІЙ монеті з пари прогнозів 1H/4H. ЧИСТА.
 
     `f1`/`f4` — рядки `{'side', 'pct', 'conf'}` із того самого кешу
     `forecast_engine.get()`, що малює бейджі. Нахил TF = `pct / 100`
@@ -447,8 +447,11 @@ _MM_BIAS_TG = {
             'title': '🧮 <b>МММ-МОНІТОР</b>', 'name': 'МММ-монітор', 'src': 'MMM'},
     'new': {'pref': '_mmn_bias_tg', 'key': 'mmn_bias_tg', 'bias': '_mm_bias_new',
             'title': '🆕 <b>МММ-NEW</b>', 'name': 'МММ-NEW', 'src': 'MMN'},
+    # ⚡ Банер МММ-CTR (вимога 17.10) — та сама тема, власний тумблер.
+    'ctr': {'pref': '_mmc_bias_tg', 'key': 'mmc_bias_tg', 'bias': '_mm_bias_ctr',
+            'title': '⚡ <b>МММ-CTR</b>', 'name': 'МММ-CTR', 'src': 'MMC'},
     'fc': {'pref': '_mmf_bias_tg', 'key': 'mmf_bias_tg', 'bias': '_mm_bias_fc',
-           'title': '🔮 <b>МММ-ПРОГНОЗ</b>', 'name': 'МММ-Прогноз', 'src': 'MMF'},
+           'title': '🔮 <b>МММ-LOCAL</b>', 'name': 'МММ-Local', 'src': 'MMF'},
 }
 
 # Чотири книги МММ (групове ✋ відкриття): назва, тумблер, знімок, мітка двигуна.
@@ -459,7 +462,7 @@ _MM_BOOKS = {
             'snap': '_mmn_snapshot', 'eng': 'MMN'},
     'ctr': {'name': '⚡ МММ-CTR', 'key': 'mm_ctr_enabled',
             'snap': '_mmc_snapshot', 'eng': 'MMC'},
-    'fc': {'name': '🔮 МММ-Прогноз', 'key': 'mm_fc_enabled',
+    'fc': {'name': '🔮 МММ-Local', 'key': 'mm_fc_enabled',
            'snap': '_mmf_snapshot', 'eng': 'MMF'},
 }
 
@@ -511,7 +514,7 @@ DEFAULT_SETTINGS = {
     'mmc_str_min': 0,
     'mmc_str_mins': None,
     'mmc_bias_confirm_sec': 120,
-    # 🔮 БЛОК «МММ-Прогноз» (вимога 15.10) — четвертий банер на Forecast 1H+4H.
+    # 🔮 БЛОК «МММ-Local» (вимога 15.10) — четвертий банер на Forecast 1H+4H.
     # Лише ЧИТАННЯ кешу прогнозу (жодного запиту до біржі), тож дефолт УВІМК.
     'mm_fc_enabled': True,
     'mmf_str_min': 0,
@@ -525,8 +528,10 @@ DEFAULT_SETTINGS = {
     # 📨 Те саме для банера «🆕 МММ-NEW» (вимога 09.10: «таке саме, як і в
     # 🧮 МММ-МОНІТОР») — та сама тема, ВЛАСНИЙ тумблер.
     'mmn_bias_tg': True,
-    # 🔮 Те саме для банера «МММ-Прогноз» (вимога 15.10) — власний тумблер.
+    # 🔮 Те саме для банера «МММ-Local» (вимога 15.10) — власний тумблер.
     'mmf_bias_tg': True,
+    # ⚡ Те саме для банера «МММ-CTR» (вимога 17.10) — власний тумблер.
+    'mmc_bias_tg': True,
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -1208,7 +1213,7 @@ class FuelFilterDaemon:
         self._mm_bias_ctr: Dict = {}
         self._mm_bias_ctr_since: float = 0.0
         self._mm_bias_ctr_cand: Dict = {}
-        # 🔮 БЛОК «МММ-Прогноз» (вимога 15.10) — четверта книга, та сама форма.
+        # 🔮 БЛОК «МММ-Local» (вимога 15.10) — четверта книга, та сама форма.
         self._mmf_on: Optional[bool] = None
         self._mmf_snapshot: Dict[str, Dict] = {}
         self._mmf_snapshot_ts: float = 0.0
@@ -1235,6 +1240,9 @@ class FuelFilterDaemon:
         self._mmf_bias_tg_last = '__none__'
         self._mmf_bias_tg_at = 0.0
         self._mmf_bias_tg_restored = False
+        self._mmc_bias_tg_last = '__none__'
+        self._mmc_bias_tg_at = 0.0
+        self._mmc_bias_tg_restored = False
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -1784,6 +1792,7 @@ class FuelFilterDaemon:
         s['mm_bias_tg'] = bool(s.get('mm_bias_tg', True))
         s['mmn_bias_tg'] = bool(s.get('mmn_bias_tg', True))
         s['mmf_bias_tg'] = bool(s.get('mmf_bias_tg', True))
+        s['mmc_bias_tg'] = bool(s.get('mmc_bias_tg', True))
         # 🆕 БЛОК «МММ-new» (вимога 01.10) — ВЛАСНІ тумблер, поріг «Сила ≥» і
         # вікно підтвердження статусу банера. Ті самі межі, що в 🧮 монітора.
         s['mm_new_enabled'] = bool(s.get('mm_new_enabled', True))
@@ -2486,7 +2495,7 @@ class FuelFilterDaemon:
             if self._mm_bias_ctr_since > time.time() + 60:
                 self._mm_bias_ctr_since = 0.0
                 self._mm_bias_ctr = {}
-            # 🔮 Банер «МММ-Прогноз» — те саме відновлення.
+            # 🔮 Банер «МММ-Local» — те саме відновлення.
             _mbf = st.get('mm_bias_fc')
             self._mm_bias_fc = dict(_mbf) if isinstance(_mbf, dict) else {}
             if self._mm_bias_fc:
@@ -2602,7 +2611,7 @@ class FuelFilterDaemon:
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmc_state_since', {})
                                                  or {}).items()},
-                # 🔮 Блок «МММ-Прогноз» — банер і таймери стану монет.
+                # 🔮 Блок «МММ-Local» — банер і таймери стану монет.
                 'mm_bias_fc': dict(getattr(self, '_mm_bias_fc', {}) or {}),
                 'mm_bias_fc_since': float(getattr(self, '_mm_bias_fc_since', 0.0) or 0.0),
                 'mmf_state_since': {k: {'st': v.get('st'),
@@ -4024,9 +4033,8 @@ class FuelFilterDaemon:
             _title = _B['title']
             msg = (f"{_title} → {_now_txt} · "
                    f"важіль <b>{b.get('pct', 0)}%</b>\n"
-                   f"було: {_was}{_held}\n"
-                   f"монет: {b.get('coins', 0)} · 🟢 {b.get('n_long', 0)} / "
-                   f"🔴 {b.get('n_short', 0)} / ⚖ {b.get('n_flat', 0)}")
+                   f"було: {_was}{_held}")
+            # (рядок «монет: N · 🟢/🔴/⚖» прибрано на прохання 17.10)
             _ok, _why_tg = self._broadcast_users('btc', 'notify_btc', msg)
             print(f"[FuelFilter] {_B['src']} banner TG: {_prev_seen} → {side} "
                   f"{'OK' if _ok else 'FAIL: ' + _why_tg}")
@@ -4276,8 +4284,10 @@ class FuelFilterDaemon:
                 getattr(self, '_mm_bias_ctr_cand', {}))
             self._mm_bias_ctr, self._mm_bias_ctr_since = bias, since
             self._mm_bias_ctr_cand = cand
+            # 📨 ⚡ Зміна ПІДТВЕРДЖЕНОГО статусу → Telegram (вимога 17.10).
+            self._mm_bias_alert(bias.get('dir'), _now, s, book='ctr')
 
-        # ═══ 🔮 КНИГА «МММ-Прогноз» (вимога 15.10) ═══
+        # ═══ 🔮 КНИГА «МММ-Local» (вимога 15.10) ═══
         # Набір монет — ТОЙ САМИЙ (ключі `fuels`), джерело напрямку — пара
         # прогнозів 1H/4H, яку `_fcast` уже прочитав для колонок 🔮 інших книг
         # (ОДНЕ читання кешу на монету за такт, мережі не коштує нічого).
@@ -4383,7 +4393,7 @@ class FuelFilterDaemon:
             self._mm_bias_ctr_cand = {}
 
     def _mm_clear_fc(self):
-        """Погасити книгу 🔮 МММ-Прогноз (вимкнений тумблер)."""
+        """Погасити книгу 🔮 МММ-Local (вимкнений тумблер)."""
         with self._lock:
             self._mmf_snapshot = {}
             self._mmf_snapshot_ts = 0.0
@@ -4440,7 +4450,7 @@ class FuelFilterDaemon:
         """
         s = settings if isinstance(settings, dict) else self.get_settings()
         # ⚡ Третя книга `ctr` (МММ-CTR, 14.10) — та сама форма відповіді.
-        # 🔮 Четверта книга `fc` (МММ-Прогноз, 15.10) — та сама форма.
+        # 🔮 Четверта книга `fc` (МММ-Local, 15.10) — та сама форма.
         _bk = book if book in ('old', 'new', 'ctr', 'fc') else 'old'
         _nb = (_bk == 'new')
         _on = bool(s.get({'old': 'mm_monitor_enabled', 'new': 'mm_new_enabled',
@@ -4539,7 +4549,7 @@ class FuelFilterDaemon:
                 'lean_1h': v.get('lean_1h'),
                 'lean_4h': v.get('lean_4h'),
                 'ctr_conflict': v.get('ctr_conflict'),
-                # 🔮 Книга МММ-Прогноз: конфлікт 1H проти 4H (самі прогнози
+                # 🔮 Книга МММ-Local: конфлікт 1H проти 4H (самі прогнози
                 # їдуть полями f1/f4, нахили — lean_1h/lean_4h).
                 'fc_conflict': v.get('fc_conflict'),
                 # 💼 Бік відкритої угоди (LONG/SHORT) — колонка «📍 Стан».
@@ -4730,7 +4740,7 @@ class FuelFilterDaemon:
         # тож ворота не діють і НЕ читають той урізаний знімок.
         # ⚡ `book='ctr'` (вимога 15.10) — блок «МММ-CTR»: тумблер
         # `mm_ctr_enabled` · банер `_mm_bias_ctr` · знімок `_mmc_snapshot`.
-        # 🔮 `book='fc'` (вимога 15.10) — блок «МММ-Прогноз»: тумблер
+        # 🔮 `book='fc'` (вимога 15.10) — блок «МММ-Local»: тумблер
         # `mm_fc_enabled` · банер `_mm_bias_fc` · знімок `_mmf_snapshot`.
         _bk = book if book in ('old', 'new', 'ctr', 'fc') else 'new'
         _P = {'old': ('_mm_mon_on', 'mm_monitor_enabled', '_mm_bias', '_mm_snapshot',
@@ -11092,7 +11102,7 @@ class FuelFilterDaemon:
         _want_mmn = (sections is None) or ('mmn' in sections)
         # ⚡ Блок «МММ-CTR» — та сама схема.
         _want_mmc = (sections is None) or ('mmc' in sections)
-        # 🔮 Блок «МММ-Прогноз» — та сама схема.
+        # 🔮 Блок «МММ-Local» — та сама схема.
         _want_mmf = (sections is None) or ('mmf' in sections)
         with self._lock:
             settings = self.get_settings()
@@ -11381,7 +11391,7 @@ class FuelFilterDaemon:
             # ⚡ Блок «МММ-CTR» — книга STC 1H+4H.
             'mm_ctr': (self.mm_monitor_state(settings, book='ctr')
                        if _want_mmc else None),
-            # 🔮 Блок «МММ-Прогноз» — книга Forecast 1H+4H.
+            # 🔮 Блок «МММ-Local» — книга Forecast 1H+4H.
             'mm_fc': (self.mm_monitor_state(settings, book='fc')
                       if _want_mmf else None),
             # 🎚 Смуги грейда (ЄДИНЕ джерело — setup_grader). UI будує випадайку

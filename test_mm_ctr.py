@@ -205,6 +205,36 @@ def test_js_stc_cell_follows_the_badge_convention():
     print('✓ JS: комірка STC — 🟢 <50 LONG / 🔴 >50 SHORT, як бейдж')
 
 
+# ═══════════ 5. TELEGRAM (вимога 17.10) ════════════════════════════════
+def test_ctr_banner_change_goes_to_telegram_once_per_confirmed_flip():
+    ff = _ff_with({('BTCUSDT', '1h'): 0, ('BTCUSDT', '4h'): 30})
+    ff._settings['mmc_bias_confirm_sec'] = 0
+    sent = []
+    ff._broadcast_users = lambda cat, key, msg: (sent.append((cat, msg)) or (True, ''))
+    ff._legacy = {'BTCUSDT': 0.3}
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1000.0)      # перший такт — мовчки
+    ctr = lambda: [m for c, m in sent if 'МММ-CTR' in m]
+    _check(not ctr(), f'перший стан після старту не шлемо: {sent}')
+    fe = ff._mm_forecast_engine()
+    fe.data[('BTCUSDT', '1h')] = 100
+    fe.data[('BTCUSDT', '4h')] = 70
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1030.0)
+    m = ctr()
+    _check(len(m) == 1 and 'SHORT' in m[0] and 'LONG' in m[0] and 'монет:' not in m[0], m)
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1060.0)
+    _check(len(ctr()) == 1, 'той самий статус — не подія')
+    ff._settings['mmc_bias_tg'] = False
+    fe.data[('BTCUSDT', '1h')] = 0
+    fe.data[('BTCUSDT', '4h')] = 30
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1090.0)
+    _check(len(ctr()) == 1, 'вимкнений тумблер — тиша')
+    for need in ('id="ff-mmc-bias-tg"', "mmc_bias_tg: _c('ff-mmc-bias-tg')",
+                 "setIf('ff-mmc-bias-tg'", "'⚡ банер CTR'"):
+        _check(need in _HTML, need)
+    _check("'mmc_bias_tg': True" in _SRC, 'дефолт УВІМК')
+    print('✓ ⚡ банер CTR → Telegram: підтверджена зміна, перший такт мовчки, свій тумблер')
+
+
 if __name__ == '__main__':
     n = 0
     for _name, _fn in list(globals().items()):

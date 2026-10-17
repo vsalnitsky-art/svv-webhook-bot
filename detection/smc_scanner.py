@@ -58,8 +58,8 @@ _MM_GATE_TAG = {'new': ('🆕МММ-new', '🆕 МММ-NEW'),
                 'old': ('🧮МММ-монітор', '🧮 МММ-МОНІТОР'),
                 # ⚡ МММ-CTR (вимога 15.10) — та сама умова, книга STC 1H+4H.
                 'ctr': ('⚡МММ-CTR', '⚡ МММ-CTR'),
-                # 🔮 МММ-Прогноз (вимога 15.10) — книга Forecast 1H+4H.
-                'fc': ('🔮МММ-Прогноз', '🔮 МММ-ПРОГНОЗ')}
+                # 🔮 МММ-Local (вимога 15.10) — книга Forecast 1H+4H.
+                'fc': ('🔮МММ-Local', '🔮 МММ-LOCAL')}
 
 
 def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
@@ -119,7 +119,7 @@ MM_GATES = (('mm_gate_enabled', 'mm_gate_banner', 'new'),
             ('mmo_gate_enabled', 'mmo_gate_banner', 'old'),
             # ⚡ «Через МММ-CTR» (+ «за банером МММ-CTR»), вимога 15.10, деф. ВИМК.
             ('mmc_gate_enabled', 'mmc_gate_banner', 'ctr'),
-            # 🔮 «Через МММ-Прогноз» (+ «за банером»), вимога 15.10, деф. ВИМК.
+            # 🔮 «Через МММ-Local» (+ «за банером»), вимога 15.10, деф. ВИМК.
             ('mmf_gate_enabled', 'mmf_gate_banner', 'fc'))
 
 

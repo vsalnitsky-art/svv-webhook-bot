@@ -3706,7 +3706,7 @@ def register_api_routes(app):
                 return jsonify({'ok': False, 'reason': 'symbols must be a list'})
             # 🆕 `book='new'` — групове відкриття з блоку «МММ-new».
             # ⚡ `book='ctr'` — з блоку «МММ-CTR» (STC 1H+4H).
-            # 🔮 `book='fc'` — з блоку «МММ-Прогноз» (Forecast 1H+4H).
+            # 🔮 `book='fc'` — з блоку «МММ-Local» (Forecast 1H+4H).
             _b = str(data.get('book') or '')
             book = _b if _b in ('new', 'ctr', 'fc') else 'old'
             return jsonify(ff.group_open(symbols, book=book))
