@@ -434,7 +434,7 @@ def test_fc_gate_rule_labels_and_activation():
     _check("'mmf_gate_enabled', 'mmf_gate_banner'," in _SC_SRC, 'білий список')
     for need in ('id="sm-mmf-gate"', 'id="sm-mmf-gate-banner"',
                  "['sm-mmf-gate', 'sm-mmf-gate-banner', 'mmf_gate_enabled', 'mmf_gate_banner']",
-                 "'🔮 МММ-Local']].forEach"):
+                 "'🔮 МММ-Local'],"):
         _check(need in _HTML, f'на сторінці немає «{need}»')
     print('✓ «Через МММ-Local» — те саме правило, свої підписи, деф. ВИМК, UI')
 

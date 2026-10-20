@@ -533,7 +533,8 @@ def scan_liquidity(exchange: str = 'binance', top_n: int = 40,
                    bars: int = DEFAULT_BARS,
                    sort_by: str = 'pull',
                    universe: str = 'top',
-                   symbols: Optional[List[str]] = None) -> Dict:
+                   symbols: Optional[List[str]] = None,
+                   keep_flat: bool = False) -> Dict:
     """Разовий скан: список монет із перекосом ліквідності й магнітами.
 
     **ДВА ДЖЕРЕЛА СПИСКУ (`universe`):**
@@ -564,7 +565,8 @@ def scan_liquidity(exchange: str = 'binance', top_n: int = 40,
 
     universe = 'watchlist' if str(universe or 'top').lower() == 'watchlist' else 'top'
     if universe == 'watchlist':
-        return _scan_watchlist(exchange, symbols or [], bars, sort_by)
+        return _scan_watchlist(exchange, symbols or [], bars, sort_by,
+                               keep_flat=keep_flat)
 
     from detection import tickr_core
 
@@ -661,7 +663,9 @@ def scan_liquidity(exchange: str = 'binance', top_n: int = 40,
         for r in pool.map(_one, cands):
             rows.append(r)
     rows = sort_rows(rows, sort_by)
-    rows, drop_flat_n = drop_flat(rows)
+    # `keep_flat` (🧭 МММ-Pull, 20.10): монітору ⚖ рівновага ПОТРІБНА — це
+    # окрема вкладка і маса в знаменнику банера; звіт на 📡 Tickr її й далі ріже.
+    rows, drop_flat_n = (rows, 0) if keep_flat else drop_flat(rows)
     ok_rows = [r for r in rows if r.get('ok')]
     return {'ok': True, 'exchange': exchange, 'universe': 'top',
             'scanned': len(cands), 'with_data': len(ok_rows),
@@ -674,7 +678,7 @@ def scan_liquidity(exchange: str = 'binance', top_n: int = 40,
 
 
 def _scan_watchlist(exchange: str, symbols: List[str], bars: int,
-                    sort_by: str) -> Dict:
+                    sort_by: str, keep_flat: bool = False) -> Dict:
     """🎯 Скан РІВНО того списку монет, що дали (watchlist бота).
 
     ⚠️ **ЖОДНОГО ВІДСІВУ.** Ні `top_n`, ні обіг, ні OI: список склала людина,
@@ -740,7 +744,7 @@ def _scan_watchlist(exchange: str, symbols: List[str], bars: int,
         for r in pool.map(_one, syms):
             rows.append(r)
     rows = sort_rows(rows, sort_by)
-    rows, drop_flat_n = drop_flat(rows)
+    rows, drop_flat_n = (rows, 0) if keep_flat else drop_flat(rows)
     ok_rows = [r for r in rows if r.get('ok')]
     n_fb = sum(1 for r in rows if r.get('fallback'))
     if n_fb:

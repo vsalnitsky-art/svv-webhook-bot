@@ -51,6 +51,7 @@ ENGINE_BADGES = {
     'MMN':              '🧮 МММ-new',       # те саме з блоку 🆕 МММ-new (новий МММ)
     'MMC':              '⚡ МММ-CTR',       # те саме з блоку ⚡ МММ-CTR (STC 1H+4H)
     'MMF':              '🔮 МММ-Local',   # те саме з блоку 🔮 МММ-Local (Forecast 1H+4H)
+    'MMP':              '🧭 МММ-Pull',    # те саме з блоку 🧭 МММ-Pull (скан ліквідності)
     'EXH':              '🔥 Виснаженість',
     'FF':               '🔥 FF',
     'direct':           '⚡ Прямий',       # FF вимкнено → відкрито одразу з сигналу
@@ -83,6 +84,7 @@ SIGNAL_ICONS = {
     'MMN': '🧮',
     'MMC': '⚡',
     'MMF': '🔮',
+    'MMP': '🧭',
 }
 
 FALLBACK_ICON = '🏷'
@@ -101,6 +103,7 @@ ENGINE_ICON_OVERRIDE = {
     'MMN': '🧮',
     'MMC': '⚡',
     'MMF': '🔮',
+    'MMP': '🧭',
 }
 
 

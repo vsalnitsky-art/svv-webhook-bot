@@ -6204,3 +6204,48 @@ SL порожній) або трейл автопілота (раніше зад
 - ⚠️ `test_ui_names_every_stream_of_the_topic` різав секцію фіксованими 2000
   символами — нова мітка виштовхнула текст; тепер ріже до `</details>`.
 Тести: `test_mm_ctr.py` (16), `test_mm_fc.py` (15), `test_tg_routing.py` (36).
+
+## 🧭 П'ЯТИЙ БЛОК «МММ-Pull» — банер + список на скані ліквідності (20.10)
+
+Дослівно: «Додай ще один МММ монітор і банер як і попередні, візьми за основу
+дані [📡 Tickr · 💧 скан: Біржа Binance · Список Watchlist бота · Історія 720 ·
+Сортування 🧭 куди тягне (звіт)]. Додай ці налаштування і вистав як на скріні
+за замовчуванням» + «додай до налаштувань [Через … · за банером …]».
+- **ПРАВИЛО — ЧИСТА `fuel_filter.pull_mm_dir(row)`**: `dir = (above_pct −
+  below_pct)/100` (маса ВИЩЕ ціни тягне ВГОРУ → LONG). `|dir| ≤ 0.10` → ⚖ — це
+  ТОЙ САМИЙ поріг, що `ladder.FLAT_PP` (10 п.п.) у звіті. Рядок без даних → None.
+- **ДЖЕРЕЛО — ГОТОВИЙ `liq_scan.scan_liquidity`** (той самий, що звіт Tickr і
+  💧 Сканер), новий kwarg **`keep_flat=True`**: монітору ⚖ потрібна (вкладка +
+  маса в знаменнику банера); звіт Tickr рівновагу ріже як і раніше (дефолт False).
+- **СКАН У ФОНІ**, бо такт 30с не може чекати мережі: `_mmp_scan_tick` (у
+  `_mm_capture`) лише вирішує «пора?» → `_mmp_scan_launch` (потік) →
+  `_mmp_scan_run` → `scan_queue.run('mm-pull', …)` (спільна черга сканів).
+  Один скан за раз; інтервал `mmp_interval_min` (деф. 15) від КІНЦЯ попереднього;
+  зміна біржі/списку/глибини/сортування (`_mmp_cfg`) → скан одразу. Невдалий
+  скан НЕ стирає попередній результат (причина — у `scan`). Watchlist —
+  `smc_scanner.get_watchlist()` (повний, режим економії liq-map не стосується →
+  `limited=False` для цієї книги).
+- Книга `pull` у `_mm_capture` (`_mmp_*`, `_mm_bias_pull*`), монети — з
+  результату скану; ціна — жива з `fuels`, інакше з моменту скану. Персист
+  банера й таймерів стану. `mm_monitor_state(book='pull')` (+поле `scan`),
+  секція `mmp` → `get_state()['mm_pull']`, ✋ `group_open(book='pull')` →
+  `manual → MMP` (🧭 МММ-Pull у `signal_labels` + обидва JS-дзеркала).
+- Ключі: `mm_pull_enabled` (**деф. ВИМК** — єдиний МММ-блок, що ходить на біржу:
+  2 запити на монету раз на інтервал) · `mmp_exchange` binance · `mmp_universe`
+  watchlist · `mmp_bars` 720 · `mmp_sort` pull_report · `mmp_interval_min` 15 ·
+  `mmp_str_min(s)` · `mmp_bias_confirm_sec` · `mmp_bias_tg` (деф. УВІМК).
+- 📨 TG: `_MM_BIAS_TG['pull']` (`🧭 МММ-PULL → …`, тема `btc`), UI
+  `ff-mmp-bias-tg`, шапка `🧭 банер Pull`.
+- 🚦 Ворота: п'ята пара `MM_GATES` — `mmp_gate_enabled`/`mmp_gate_banner` (деф.
+  ВИМК), підписи `🧭МММ-Pull[…]` / `🧭 МММ-PULL`; `mm_gate_view(book='pull')`
+  (кеш порогів `_mmp_str_mins_c`). UI `sm-mmp-gate` + `sm-mmp-gate-banner`.
+- UI: `#mmp-panel` під 🔮 Local (бірюзовий акцент, гармошки `mmp`/`mmplist`,
+  список згорнутий); рядок налаштувань скану `mmp-exchange/-universe/-bars/
+  -sort/-interval` + `#mmp-scan-status`; `_MMB.pull.cols = [status, mm, mass,
+  magnet, state, price, pchg, f1, f4]`, комірки `_mmMassCell` / `_mmMagnetCell`.
+Тест: `test_mm_pull.py` (15).
+
+⚠️ **ЗАЛИШКИ НА `main`:** `detection/mm_correction.py` і `test_mm_correction.py`
+видалено з коду 01.10, але файли лежать у репозиторії (завантаження через
+GitHub не видаляє файлів) — через них падають `test_mm_monitor` /
+`test_tg_routing`. Видалити вручну.

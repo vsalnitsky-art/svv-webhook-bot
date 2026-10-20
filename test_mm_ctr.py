@@ -182,7 +182,7 @@ def test_ui_block_is_a_twin_with_its_own_columns():
     _check("mmApplyState(d.mm_ctr, 'ctr')" in _HTML, 'стан доїжджає до книги')
     _check("want.push('mmc')" in _HTML, 'секцію просимо лише розгорнутою')
     _check('mm_ctr_enabled: _c(' in _HTML and 'mmc_str_mins:' in _HTML, 'збереження')
-    _check('[_MMB.old, _MMB.new, _MMB.ctr, _MMB.fc].forEach' in _HTML, 'банер малює 1с-тікер')
+    _check('[_MMB.old, _MMB.new, _MMB.ctr, _MMB.fc, _MMB.pull].forEach' in _HTML, 'банер малює 1с-тікер')
     print('✓ UI: блок-двійник, колонки ⚡ 1H/⚡ 4H, гармошки, збереження')
 
 
