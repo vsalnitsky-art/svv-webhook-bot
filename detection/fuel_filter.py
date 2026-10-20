@@ -4506,7 +4506,10 @@ class FuelFilterDaemon:
             self._mm_track_state(snap_p, _now, hist_attr='_mmp_state_since')
             with self._lock:
                 self._mmp_snapshot = snap_p
-                self._mmp_snapshot_ts = float(_scan.get('ts') or 0.0) if snap_p else 0.0
+                # «оновлено» = останній ТАКТ, а не момент скану: час скану
+                # показує окремий рядок стану скану, а тут застиглий час
+                # ховав би, що сторінка/двигун перестали оновлюватись.
+                self._mmp_snapshot_ts = _now if snap_p else 0.0
                 self._mmp_stats = {'targeted': int(_scan.get('scanned') or len(_prow)),
                                    'data': len(snap_p), 'ts': _now}
             try:
@@ -11740,6 +11743,11 @@ class FuelFilterDaemon:
             'served': {'q4': _want_q4, 'fund': _want_fund, 'mm': _want_mm,
                        'mmn': _want_mmn, 'mmc': _want_mmc, 'mmf': _want_mmf,
                        'mmp': _want_mmp},
+            # ⏱ ГОДИННИК СЕРВЕРА (20.10). Усі таймери сторінки рахують
+            # «зараз − момент старту», а моменти — серверні epoch. Годинник
+            # браузера може розходитись із серверним (кейс МММ-Pull: 32751/900с
+            # на свіжому запуску), тож фронт бере поправку звідси.
+            'server_now': time.time(),
             # 🧮 МММ-монітор — готовий знімок двигуна (жодних розрахунків тут).
             'mm_monitor': (self.mm_monitor_state(settings) if _want_mm else None),
             # 🆕 Блок «МММ-new» — та сама форма, книга НОВОГО МММ.

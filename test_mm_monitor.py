@@ -503,12 +503,15 @@ def _run_js(body):
     # перевіряє ним, чи його гармошка згорнута.
     for _fn in ('function dirGrad(', 'function dirTint(', 'function fuelBand(',
                 'function flipTimerHTML(', 'function fmtTimer(',
-                'function _qCollapsed('):
+                'function _qCollapsed(', 'function _nowF(', 'function _nowS('):
         if _fn in src:
             continue
         _a = _HTML.index(_fn)
         _b = _HTML.index('\n}', _a) + 2
         src = _HTML[_a:_b] + '\n' + src
+    # ⏱ Поправка на годинник сервера (20.10) — спільна змінна сторінки.
+    if 'var _SRV_SKEW' not in src:
+        src = 'var _SRV_SKEW = 0;\n' + src
     pre = r'''
 const _els = {};
 function _el(id) {

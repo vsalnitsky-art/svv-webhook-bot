@@ -269,6 +269,36 @@ def test_labels_everywhere():
     print('✓ мітка MMP «🧭 МММ-Pull» у Python і обох JS-дзеркалах')
 
 
+# ═══════════ 20.10 · скрін першого запуску: 32751/900с, «$10–10» ═════════
+def test_updated_is_the_last_tick_not_the_scan():
+    ff = _ff([_row('BTCUSDT', 70)])
+    ff._mm_capture({}, now=5000.0)
+    _check(ff._mmp_snapshot_ts == 5000.0, f'«оновлено» = такт, а не скан: {ff._mmp_snapshot_ts}')
+    print('✓ «оновлено» у блоці Pull = останній такт (час скану — окремим рядком)')
+
+
+def test_band_under_a_dollar_keeps_its_decimals():
+    sys.path.insert(0, os.path.join(_HERE, 'detection', 'liquidation_map'))
+    import ladder as L
+    _check(L.fmt_band_ua(10.0, 10.1) == '$10.0–10.1', L.fmt_band_ua(10.0, 10.1))
+    _check(L.fmt_band_ua(14.0, 14.2) == '$14.0–14.2', L.fmt_band_ua(14.0, 14.2))
+    _check(L.fmt_band_ua(62, 63) == '$62–63' and L.fmt_band_ua(76000, 78000) == '$76 000–78 000',
+           'смуга ≥ $1 — як і раніше цілими')
+    _check('function _liqBandDec(' in _HTML, 'JS-дзеркало на Smart Money')
+    print('✓ смуга вужча за $1: «$10.0–10.1», а не «$10–10»')
+
+
+def test_timers_use_the_server_clock():
+    _check("'server_now': time.time()" in _SRC, 'get_state віддає годинник сервера')
+    _check('_srvSkewNote(d.server_now)' in _HTML, 'фронт бере поправку з кожної відповіді')
+    a = _HTML.index('window._ffTimerTick = setInterval(')
+    _check('const nowS = _nowS();' in _HTML[a:a + 300], 'глобальний 1с-тікер — серверне «зараз»')
+    body = [l for l in _HTML.split('\n') if 'Date.now()' in l and '1000' in l
+            and not l.strip().startswith('//')]
+    _check(all('_SRV_SKEW' in l for l in body), f'сирий Date.now()/1000 лишився: {body}')
+    print('✓ таймери рахують від годинника сервера (поправка server_now)')
+
+
 if __name__ == '__main__':
     n = 0
     for _name, _fn in list(globals().items()):

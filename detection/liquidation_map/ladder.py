@@ -74,7 +74,23 @@ def _strength_word(diff_pp: float) -> str:
     return 'сильно'
 
 
-def _fmt_price_ua(v) -> str:
+def _band_dec(lo, hi) -> Optional[int]:
+    """Скільки знаків після коми треба, щоб межі смуги РОЗРІЗНЯЛИСЬ.
+
+    ⚠️ Кейс МММ-Pull (20.10): AVAX $9.74 · крок $0.1 → «$10–10», LINK крок $0.2
+    → «$14–14». Ціни ≥ $10 округлювались до цілого, і смуга вужча за $1
+    вироджувалась у одне число. Беремо знаки з ШИРИНИ смуги (0.1/0.2/0.5 → 1,
+    0.05 → 2); ширина ≥ $1 → цілі, як і раніше (BTC «$76 000–78 000»)."""
+    try:
+        w = abs(float(hi) - float(lo))
+    except (TypeError, ValueError):
+        return None
+    if w <= 0 or w >= 1:
+        return None
+    return min(7, max(1, int(math.ceil(-math.log10(w) - 1e-9))))
+
+
+def _fmt_price_ua(v, dec: Optional[int] = None) -> str:
     """$76 000 — пробіл замість коми: так число читається одразу.
 
     ⚠️ Дешеві монети округляти до цілого НЕ МОЖНА: драбина тепер рахується не
@@ -86,10 +102,12 @@ def _fmt_price_ua(v) -> str:
     except (TypeError, ValueError):
         return str(v)
     a = abs(f)
+    if a >= 10 and dec:
+        return f"${f:,.{dec}f}".replace(',', ' ')
     if a >= 10:
         return f"${int(round(f)):,}".replace(',', ' ')
-    dec = 3 if a >= 1 else (5 if a >= 0.01 else 7)
-    return f"${f:.{dec}f}"
+    _d = 3 if a >= 1 else (5 if a >= 0.01 else 7)
+    return f"${f:.{max(_d, dec or 0)}f}"
 
 
 def fmt_band_ua(lo, hi) -> str:
@@ -113,12 +131,13 @@ def fmt_band_ua(lo, hi) -> str:
         return ''
     if b is None or abs(b - a) < 1e-12:
         return _fmt_price_ua(a)
-    hi_s = _fmt_price_ua(b)
+    dec = _band_dec(a, b)
+    hi_s = _fmt_price_ua(b, dec)
     # Долар лишаємо ЛИШЕ на початку: «$76 000–78 000» читається як одна смуга,
     # «$76 000–$78 000» — як два окремі числа.
     if hi_s.startswith('$'):
         hi_s = hi_s[1:]
-    return f"{_fmt_price_ua(a)}–{hi_s}"
+    return f"{_fmt_price_ua(a, dec)}–{hi_s}"
 
 
 def magnet_edge(row: Dict, side: str) -> Optional[float]:
