@@ -503,7 +503,8 @@ def _run_js(body):
     # перевіряє ним, чи його гармошка згорнута.
     for _fn in ('function dirGrad(', 'function dirTint(', 'function fuelBand(',
                 'function flipTimerHTML(', 'function fmtTimer(',
-                'function _qCollapsed(', 'function _nowF(', 'function _nowS('):
+                'function _qCollapsed(', 'function _nowF(', 'function _nowS(',
+                'function _srvToPc(', 'function ob4hMarkHTML('):
         if _fn in src:
             continue
         _a = _HTML.index(_fn)

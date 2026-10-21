@@ -299,6 +299,35 @@ def test_timers_use_the_server_clock():
     print('✓ таймери рахують від годинника сервера (поправка server_now)')
 
 
+# ═══════════ 21.10 · годинник ПК · OB 4H у таблицях · відлік скану ═══════
+def test_banner_times_use_the_pc_clock():
+    _check('function _srvToPc(' in _HTML, 'хелпер годинника ПК')
+    for need in ('new Date(_srvToPc(B.meta.ts) * 1000)', 'new Date(_srvToPc(t) * 1000)',
+                 'new Date(_srvToPc(d.ts) * 1000)'):
+        _check(need in _HTML, need)
+    print('✓ «оновлено / скан / наступний» — за годинником ПК')
+
+
+def test_every_book_row_carries_the_4h_ob_mark():
+    ff = _ff([_row('BTCUSDT', 70), _row('ETHUSDT', 30)])
+    ff._mm_ob4h_marks = lambda syms: {'BTCUSDT': {'bias': 'BEARISH', 'bar_time': 1}}
+    ff._mm_capture({}, now=1000.0)
+    rows = {r['symbol']: r for r in ff.mm_monitor_state(ff.get_settings(), book='pull')['rows']}
+    _check(rows['BTCUSDT']['ob4h']['bias'] == 'BEARISH', rows['BTCUSDT'])
+    _check(rows['ETHUSDT']['ob4h'] is None, 'немає позначки → None, не вигадуємо')
+    _check("ob4hMarkHTML({ ob4h: r.ob4h, side: r.mm }, 'МММ у рядку')" in _HTML, 'рендер біля символу')
+    _check('ob_mark_for' in _SRC.split('def _mm_ob4h_marks')[1].split('def ')[0], 'джерело — сканер')
+    print('✓ кожен рядок МММ-таблиць несе «останній OB 4H» (те саме джерело, що угоди)')
+
+
+def test_next_scan_has_a_live_countdown():
+    a = _HTML.index('function _mmpScanPaint(')
+    seg = _HTML[a:_HTML.index('function _fmtCountdown(', a)]
+    _check('ff-countdown' in seg and 'data-until' in seg, 'відлік у рядку скану')
+    _check(".ff-countdown[data-until]" in _HTML, 'глобальний тікер веде відлік')
+    print('✓ «наступний … · через 4:59» — живий зворотний відлік, кольорами')
+
+
 if __name__ == '__main__':
     n = 0
     for _name, _fn in list(globals().items()):

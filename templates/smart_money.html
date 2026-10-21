@@ -12682,17 +12682,39 @@ function _mmpScanPaint(sc) {
     const el = document.getElementById('mmp-scan-status');
     if (!el) return;
     sc = sc || {};
-    const hm = t => { try { return new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return '—'; } };
+    const hm = t => { try { return new Date(_srvToPc(t) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return '—'; } };
+    // 🎨 Кольори (вимога 21.10): підписи приглушені, числа — кожне своїм
+    // кольором, щоб рядок не зливався; відлік — живий (той самий 1с-тікер).
+    const dim = t => `<span style="color:#6b7280">${t}</span>`;
+    const val = (t, c) => `<span style="color:${c};font-weight:700">${t}</span>`;
     const bits = [];
-    if (sc.running) bits.push('⏳ скан іде…');
-    if (sc.ts) bits.push(`скан ${hm(sc.ts)} · ${sc.scanned || 0} монет` + (sc.took != null ? ` · ${sc.took}с` : ''));
-    else if (!sc.running) bits.push('⏳ перший скан ще не завершився');
-    if (sc.next_at && !sc.running) bits.push(`наступний ~${hm(sc.next_at)}`);
-    if (sc.fallback) bits.push(`⇄ ${sc.fallback} з партнерської біржі`);
-    el.textContent = bits.join(' · ');
-    el.style.color = (sc.ok === false) ? '#f87171' : '#8b93a7';
+    if (sc.running) bits.push(val('⏳ скан іде…', '#22d3ee'));
+    if (sc.ts) bits.push(dim('скан ') + val(hm(sc.ts), '#e5e7eb')
+        + dim(' · ') + val(sc.scanned || 0, '#93c5fd') + dim(' монет')
+        + (sc.took != null ? dim(' · ') + val(sc.took + 'с', '#a78bfa') : ''));
+    else if (!sc.running) bits.push(val('⏳ перший скан ще не завершився', '#fbbf24'));
+    // ⏱ ЗВОРОТНИЙ ВІДЛІК до наступного скану (вимога 21.10). `data-until` —
+    // серверний момент, тож тікер рахує його від `_nowS()` (той самий годинник).
+    if (sc.next_at && !sc.running) {
+        const left = Math.max(0, Math.round(Number(sc.next_at) - _nowS()));
+        bits.push(dim('наступний ') + val(hm(sc.next_at), '#e5e7eb') + dim(' · через ')
+            + `<span class="ff-countdown" data-until="${Math.floor(Number(sc.next_at))}" `
+            + `style="color:${left <= 60 ? '#fbbf24' : '#22d3ee'};font-weight:700">${_fmtCountdown(left)}</span>`);
+    }
+    if (sc.fallback) bits.push(val('⇄ ' + sc.fallback, '#fbbf24') + dim(' з партнерської біржі'));
+    if (sc.ok === false) bits.unshift(val('⚠️ скан не вдався', '#f87171'));
+    el.innerHTML = bits.join(dim(' · '));
+    el.style.color = '#8b93a7';
     el.title = (sc.ok === false ? '⚠️ Останній скан не вдався: ' + (sc.reason || '') + ' — показано попередній результат. ' : '')
         + ((sc.warnings || []).join(' · ') || '');
+}
+// ⏱ «4:59» / «1г 02:15» / «зараз» — підпис зворотного відліку.
+function _fmtCountdown(sec) {
+    sec = Math.max(0, Math.floor(Number(sec) || 0));
+    if (sec <= 0) return 'зараз';
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60;
+    const p = n => String(n).padStart(2, '0');
+    return h > 0 ? `${h}г ${p(m)}:${p(x)}` : `${m}:${p(x)}`;
 }
 // 🔮 Повна комірка прогнозу одного TF — РІВНО як бейдж над графіком:
 // «🔴 SHORT −12% · 50%» (напрямок · pct · впевненість), стовпчиками.
@@ -12908,6 +12930,7 @@ function mmRender(bk) {
         (r.in_trade ? 'T' : '') + ((r.queues || []).join('')),
         r.state_since || 0, r.price, r.price_dir || '', r.price_chg,
         (r.f1 ? r.f1.side : ''), (r.f4 ? r.f4.side : ''),
+        (r.ob4h ? (r.ob4h.bias || '-') + (r.ob4h.bar_time || '') : ''),
         B.sel.has(r.symbol) ? 1 : 0].join(':')).join(',');
     if (tb.dataset.sig !== sig) {
         tb.dataset.sig = sig;
@@ -12941,7 +12964,10 @@ function mmRender(bk) {
                     + `<td>${cb}</td>`
                     // Клік по НАЗВІ → графік у TradingView, ТОЧНО як у WATCHLIST
                     // (спільний `tvSym`, він сам робить stopPropagation).
-                    + `<td style="font-weight:700;white-space:nowrap">${tvSym(r.symbol)}</td>`
+                    + `<td style="font-weight:700;white-space:nowrap">${tvSym(r.symbol)}`
+                    // 🏷 Останній OB 4H — та сама позначка, що в полі Side угод;
+                    // «за/проти» звіряється з напрямком книги в цьому рядку.
+                    + ob4hMarkHTML({ ob4h: r.ob4h, side: r.mm }, 'МММ у рядку') + `</td>`
                     // Решта — за складом колонок книги (`B.cols`). Показник
                     // книги (МММ LiQ / Новий МММ) — спільний віджет `ffFuelCell`.
                     + B.cols.map(c => _MM_CELL[c](r)).join('')
@@ -13189,7 +13215,7 @@ function mmApplyState(mm, bk) {
         up.textContent = !B.meta.enabled ? 'вимкнено'
             : (B.meta.ts
                ? `${B.rows.length}${tgt ? ' з ' + tgt : ''} монет · оновлено `
-                 + new Date(B.meta.ts * 1000).toLocaleTimeString() + _qOff
+                 + new Date(_srvToPc(B.meta.ts) * 1000).toLocaleTimeString() + _qOff
                : _pendTxt + _qOff);
         up.style.color = !B.meta.enabled ? ''
             : ((!B.meta.ts && pend.reason === 'error') ? '#f87171'
@@ -13453,7 +13479,7 @@ function lhApply(d) {
     if (up) {
         up.textContent = !s.enabled ? 'вимкнено'
             : (d.ts ? `${_lhRows.length} монет · оновлено `
-                      + new Date(d.ts * 1000).toLocaleTimeString()
+                      + new Date(_srvToPc(d.ts) * 1000).toLocaleTimeString()
                     : 'ще не сканували');
         up.title = 'Періодичний скан працює лише при увімкненому тумблері. '
             + 'Кнопка «💧 Сканувати» запускає скан вручну в будь-якому стані.';
@@ -13526,13 +13552,13 @@ function _lhSignalsRender(d) {
     }
     el.innerHTML = head + ' · ' + list.slice(0, 3).map(x => {
         const m = _LH_SIG[x.status] || { ic: '•', col: '#8b93a7', w: x.status };
-        const t = x.at ? new Date(x.at * 1000).toLocaleTimeString() : '';
+        const t = x.at ? new Date(_srvToPc(x.at) * 1000).toLocaleTimeString() : '';
         return `<span style="color:${m.col}">${m.ic} ${x.symbol} ${x.side || ''}</span>`
             + `<span style="color:#6b7280"> ${t}</span>`;
     }).join(' · ');
     el.title = list.map(x => {
         const m = _LH_SIG[x.status] || { w: x.status };
-        const t = x.at ? new Date(x.at * 1000).toLocaleString() : '';
+        const t = x.at ? new Date(_srvToPc(x.at) * 1000).toLocaleString() : '';
         return `${t} · ${x.symbol} ${x.side || ''} — ${m.w}${x.detail ? ': ' + x.detail : ''}`;
     }).join('\n');
 }
@@ -15300,6 +15326,15 @@ function _nowF() {
 function _nowS() {
     return Math.floor(_nowF());
 }
+// 🕐 ГОДИННИК ПК для ПОКАЗУ моментів (вимога 21.10: «годинник у кожному
+// банері підставляй із комп'ютера»). Серверний epoch переводимо на годинник
+// браузера тією самою поправкою — «оновлено / скан / наступний» показують час
+// вашого ПК. Тривалості таймерів від цього не змінюються.
+function _srvToPc(ts) {
+    const v = Number(ts);
+    if (!isFinite(v) || v <= 0) return v;
+    return v - (_SRV_SKEW || 0);
+}
 
 // One global 1s ticker that advances every live timer cell (those carrying a
 // data-since = unix start) and the BTC START/STOP progress. Ended/static cells
@@ -15310,6 +15345,14 @@ if (!window._ffTimerTick) {
         document.querySelectorAll('.ff-timer[data-since]').forEach(el => {
             const since = parseInt(el.getAttribute('data-since'), 10);
             if (!isNaN(since)) el.textContent = fmtTimer(nowS - since);
+        });
+        // ⏱ Зворотні відліки (наступний скан МММ-Pull) — серверний момент.
+        document.querySelectorAll('.ff-countdown[data-until]').forEach(el => {
+            const u = parseInt(el.getAttribute('data-until'), 10);
+            if (isNaN(u)) return;
+            const left = Math.max(0, u - nowS);
+            el.textContent = _fmtCountdown(left);
+            el.style.color = left <= 60 ? '#fbbf24' : '#22d3ee';
         });
         document.querySelectorAll('.ff-fundnext[data-next]').forEach(el => {
             const nx = parseInt(el.getAttribute('data-next'), 10);
@@ -15794,8 +15837,9 @@ function mmCompactCellHTML(m, label, emptyTip) {
 // памʼять сканера (`ob_mark_for`, той самий `_ob_on_htf`, що дає «OB 4H» в
 // алерті 🆕 Новий OB). Колір — за біасом блоку (зелений BULLISH / червоний
 // BEARISH), рамка — чи збігається з напрямком угоди. Немає даних — нічого.
-function ob4hMarkHTML(p) {
+function ob4hMarkHTML(p, what) {
     const o = p && p.ob4h;
+    const _what = what || 'угоди';
     if (!o) return '';
     if (!o.bias) {
         return ' <span class="tm-ob4h" title="OB 4H: живого блоку на 4H зараз немає" style="color:#6b7280;border-color:#4b5563">4H —</span>';
@@ -15803,6 +15847,9 @@ function ob4hMarkHTML(p) {
     const bull = o.bias === 'BULLISH';
     const col = bull ? '#22c55e' : '#ef4444';
     const agree = (bull && p.side === 'LONG') || (!bull && p.side === 'SHORT');
+    // ⚖ Немає напрямку (рядок МММ у рівновазі) — звіряти нема з чим: рамка
+    // кольору блоку, без «за/проти».
+    const hasSide = p.side === 'LONG' || p.side === 'SHORT';
     const tag = o.tag ? (String(o.tag).toUpperCase() === 'CHOCH' ? 'CHoCH' : String(o.tag).toUpperCase()) : '';
     let when = '';
     if (o.bar_time) {
@@ -15813,8 +15860,8 @@ function ob4hMarkHTML(p) {
     const rng = (o.low != null && o.high != null) ? ` · ${fmtPriceJS(o.low)}–${fmtPriceJS(o.high)}` : '';
     const tip = `Останній OB 4H: ${bull ? '🟢 BULLISH (LONG)' : '🔴 BEARISH (SHORT)'}`
         + (tag ? ` · ${tag}` : '') + when + rng
-        + (agree ? ' — ЗА напрямком угоди' : ' — ПРОТИ напрямку угоди');
-    return ` <span class="tm-ob4h" title="${tip}" style="color:${col};border-color:${agree ? col : '#fbbf24'}">4H${bull ? '▲' : '▼'}</span>`;
+        + (!hasSide ? '' : (agree ? ` — ЗА напрямком ${_what}` : ` — ПРОТИ напрямку ${_what}`));
+    return ` <span class="tm-ob4h" title="${tip}" style="color:${col};border-color:${(agree || !hasSide) ? col : '#fbbf24'}">4H${bull ? '▲' : '▼'}</span>`;
 }
 function ffFuelCell(dir, now, prev, hideBand) {
     // Той самий дизайн, що й SCORE: пілюля фіксованої ширини з тонованим фоном +

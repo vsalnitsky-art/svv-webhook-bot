@@ -4610,6 +4610,19 @@ class FuelFilterDaemon:
             self._mmp_scan = {}
             self._mmp_scan_at = 0.0
 
+    def _mm_ob4h_marks(self, symbols) -> Dict[str, Dict]:
+        """🏷 Позначка «останній OB 4H» для рядків МММ-таблиць — ЄДИНЕ джерело
+        `SMCScanner.ob_mark_for` (те саме, що поле Side відкритих угод). Лише
+        памʼять сканера: ні мережі, ні БД. Сканера немає → порожньо."""
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            _sc = get_smc_scanner()
+            if _sc is not None and hasattr(_sc, 'ob_mark_for'):
+                return dict(_sc.ob_mark_for(symbols) or {})
+        except Exception:
+            pass
+        return {}
+
     def _mmp_scan_info(self, s: Dict) -> Dict:
         """Стан скану для сторінки — ЛИШЕ читання."""
         with self._lock:
@@ -4911,6 +4924,11 @@ class FuelFilterDaemon:
                 # самому символу все одно не відкриється).
                 'selectable': st in ('LONG', 'SHORT') and not _trade,
             })
+        # 🏷 ОСТАННІЙ OB 4H біля монети (вимога 21.10) — ТА САМА позначка, що
+        # в полі Side відкритих угод: лише ЧИТАННЯ памʼяті сканера.
+        _ob4 = self._mm_ob4h_marks([r['symbol'] for r in rows]) if rows else {}
+        for r in rows:
+            r['ob4h'] = _ob4.get(r['symbol'])
         # Сортування: спершу сила (найвиразніший напрямок зверху), потім символ —
         # стабільний порядок, щоб рядки не «стрибали» під курсором.
         rows.sort(key=lambda r: (-int(r.get('strength') or 0), r['symbol']))
