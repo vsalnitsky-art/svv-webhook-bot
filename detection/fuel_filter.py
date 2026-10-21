@@ -442,6 +442,15 @@ MMP_SORTS = ('pull', 'magnet', 'pull_report')
 MMP_SCAN_JOB = 'mm-pull'
 
 
+def _mrow_num(row, key):
+    """Число з сирої сходинки-магніту (`magnet_row`) або None."""
+    try:
+        v = ((row or {}).get('magnet_row') or {}).get(key)
+        return None if v is None else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def pull_mm_dir(row) -> Optional[Dict]:
     """🧭 Напрямок МММ-Pull по ОДНІЙ монеті з рядка скану ліквідності. ЧИСТА.
 
@@ -4498,6 +4507,11 @@ class FuelFilterDaemon:
                     'magnet_pct': row.get('magnet_pct'),
                     'magnet_dist': row.get('magnet_dist'),
                     'magnet_dir': row.get('magnet_dir'),
+                    # Сирі ЧИСЛА магніту для сортування (вимога 21.10):
+                    # `magnet_pct`/`magnet_dist` — ФОРМАТОВАНІ рядки, парсити
+                    # їх заради числа не можна (задокументована пастка).
+                    'magnet_share': _mrow_num(row, 'pct'),
+                    'magnet_dist_pct': _mrow_num(row, 'dist_pct'),
                     'liq_exchange': row.get('exchange'),
                     'liq_fallback': bool(row.get('fallback')),
                     **_pf,
@@ -4911,6 +4925,8 @@ class FuelFilterDaemon:
                 'magnet_pct': v.get('magnet_pct'),
                 'magnet_dist': v.get('magnet_dist'),
                 'magnet_dir': v.get('magnet_dir'),
+                'magnet_share': v.get('magnet_share'),
+                'magnet_dist_pct': v.get('magnet_dist_pct'),
                 'liq_exchange': v.get('liq_exchange'),
                 'liq_fallback': v.get('liq_fallback'),
                 # 💼 Бік відкритої угоди (LONG/SHORT) — колонка «📍 Стан».

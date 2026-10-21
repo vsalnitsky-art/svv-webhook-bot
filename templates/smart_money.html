@@ -938,6 +938,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 }
 
 /* 🏷 Позначка «останній OB 4H» у полі Side (колір = біас блоку). */
+.mm-ob4h-slot { display:inline-block; width:38px; vertical-align:middle; }
+.mm-ob4h-slot .tm-ob4h { margin-left:0; }
+.mm-subsort { cursor:pointer; user-select:none; font-weight:400; font-size:0.66rem; color:#93c5fd; margin-left:4px; text-transform:none; }
+.mm-subsort:hover { color:#e5e7eb; }
 .tm-ob4h { display:inline-block; margin-left:4px; padding:0 3px; border:1px solid; border-radius:4px; font-size:0.62rem; font-weight:700; font-family:monospace; line-height:1.3; vertical-align:middle; }
 
 /* Compact 📌 manual-mode mark to the LEFT of the symbol. Fixed width and ALWAYS
@@ -3168,7 +3172,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th data-mmsort="status" onclick="mmSort('status','pull')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="strength" onclick="mmSort('strength','pull')" style="cursor:pointer;user-select:none" title="🧭 МММ-Pull — куди тягне маса ліквідності: (частка ВИЩЕ ціни − частка НИЖЧЕ) / 100. Маса вище → тягне ВГОРУ → LONG, нижче → SHORT. Перевага ≤ 10 п.п. → ⚖ рівновага (той самий поріг, що «⚖ рівновага» у звіті на 📡 Tickr). Сила 0–100%. Клік — сортувати за силою.">МММ-Pull<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="mass" onclick="mmSort('mass','pull')" style="cursor:pointer;user-select:none" title="Частки маси рівнів ліквідації ⬆ ВИЩЕ / ⬇ НИЖЧЕ поточної ціни — ті самі числа, що «▲ Маса ліквідності ВИЩЕ ціни 62.3%» у звіті 📡 Tickr. Клік — сортувати (найбільша перевага вгору зверху).">⬆ / ⬇ Маса<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="magnet" onclick="mmSort('magnet','pull')" style="cursor:pointer;user-select:none" title="🧲 Найбільший магніт — найтовща сходинка драбини: смуга цін, частка маси і відстань від ціни (як у вердикті звіту). Клік — сортувати за часткою магніту.">🧲 Магніт<span class="ff-sort-arrow"></span></th>
+                            <th style="white-space:nowrap" title="🧲 Найбільший магніт — найтовща сходинка драбини: смуга цін, частка маси і відстань від ціни (як у вердикті звіту). Сортування — клік по «частка %» або «відстань %».">🧲 Магніт <span class="mm-subsort" data-mmsort="magnet" onclick="mmSort('magnet','pull')" title="Сортувати за ЧАСТКОЮ маси в магніті (%). Повторний клік — у зворотний бік.">частка %<span class="ff-sort-arrow"></span></span> <span class="mm-subsort" data-mmsort="magdist" onclick="mmSort('magdist','pull')" title="Сортувати за ВІДСТАННЮ магніту від ціни (%). Повторний клік — у зворотний бік.">відстань %<span class="ff-sort-arrow"></span></span></th>
                             <th data-mmsort="state" onclick="mmSort('state','pull')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Стан оновлюється з кожним сканом ліквідності. Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="price" onclick="mmSort('price','pull')" style="cursor:pointer;user-select:none;text-align:right" title="Поточна ціна монети. Клік — сортувати за ціною.">Ціна<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="pchg" onclick="mmSort('pchg','pull')" style="cursor:pointer;user-select:none;text-align:right" title="КУДИ йде ціна: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв. Клік — сортувати за РУХОМ.">Рух<span class="ff-sort-arrow"></span></th>
@@ -12468,8 +12472,11 @@ function _mmSortVal(r, col) {
     // 🧭 Маса — перевага зі знаком (+ = тягне вгору), магніт — за часткою.
     if (col === 'mass') return (r.above_pct == null || r.below_pct == null ? null
         : Number(r.above_pct) - Number(r.below_pct));
-    if (col === 'magnet') return (r.magnet_pct == null ? null
-        : (parseFloat(String(r.magnet_pct).replace('%', '')) || 0));
+    // 🧲 Магніт (вимога 21.10): два відсотки — частка маси і відстань від
+    // ціни; сортуються СИРИМИ числами з бекенду (`magnet_share` /
+    // `magnet_dist_pct`), а не розбором форматованого підпису.
+    if (col === 'magnet') return (r.magnet_share == null ? null : Number(r.magnet_share));
+    if (col === 'magdist') return (r.magnet_dist_pct == null ? null : Number(r.magnet_dist_pct));
     // 💹 РУХ — власна колонка (17.09), тож «Ціна» сортується за ЦІНОЮ, а «яка
     // монета зараз іде вгору» — це колонка «Рух». Рядок без історії
     // (`price_dir` порожній) — це «ще не знаємо», а не «нуль».
@@ -12501,7 +12508,9 @@ function _mmSortRows(rows, B) {
     });
 }
 function _mmHeaderArrows(B) {
-    document.querySelectorAll(`#${B.P}-table th[data-mmsort]`).forEach(th => {
+    // `[data-mmsort]`, а не лише `th`: у колонці 🧲 Магніт сортують два
+    // підписи-відсотки всередині одного заголовка.
+    document.querySelectorAll(`#${B.P}-table [data-mmsort]`).forEach(th => {
         const a = th.querySelector('.ff-sort-arrow');
         if (!a) return;
         a.textContent = (th.getAttribute('data-mmsort') === B.sort.col)
@@ -12800,7 +12809,7 @@ function _mmLoadUi(B) {
     // Сортування за колонкою, якої в ЦІЙ таблиці немає, не відновлюємо.
     const _ok = { newstr: 'new', liqstr: 'liq', runway: 'runway', price: 'price',
                   ctr1: 'ctr1', ctr4: 'ctr4', fc1: 'fc1', fc4: 'fc4',
-                  mass: 'mass', magnet: 'magnet' };
+                  mass: 'mass', magnet: 'magnet', magdist: 'magnet' };
     if (v.sortCol && (!_ok[v.sortCol] || B.cols.includes(_ok[v.sortCol]))) {
         B.sort = { col: v.sortCol, dir: (v.sortDir < 0 ? -1 : 1) };
     }
@@ -12964,10 +12973,13 @@ function mmRender(bk) {
                     + `<td>${cb}</td>`
                     // Клік по НАЗВІ → графік у TradingView, ТОЧНО як у WATCHLIST
                     // (спільний `tvSym`, він сам робить stopPropagation).
-                    + `<td style="font-weight:700;white-space:nowrap">${tvSym(r.symbol)}`
                     // 🏷 Останній OB 4H — та сама позначка, що в полі Side угод;
                     // «за/проти» звіряється з напрямком книги в цьому рядку.
-                    + ob4hMarkHTML({ ob4h: r.ob4h, side: r.mm }, 'МММ у рядку') + `</td>`
+                    // ЛІВОРУЧ від назви (вимога 21.10), у слоті сталої ширини:
+                    // назви вишиковуються в стовпчик і там, де позначки немає.
+                    + `<td style="font-weight:700;white-space:nowrap"><span class="mm-ob4h-slot">`
+                    + ob4hMarkHTML({ ob4h: r.ob4h, side: r.mm }, 'МММ у рядку').trim()
+                    + `</span>${tvSym(r.symbol)}</td>`
                     // Решта — за складом колонок книги (`B.cols`). Показник
                     // книги (МММ LiQ / Новий МММ) — спільний віджет `ffFuelCell`.
                     + B.cols.map(c => _MM_CELL[c](r)).join('')

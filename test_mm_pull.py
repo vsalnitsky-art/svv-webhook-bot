@@ -32,6 +32,7 @@ def _row(sym, above, price=100.0, ok=True):
             'above_pct': above, 'below_pct': (None if above is None else 100 - above),
             'magnet_price': '$95.00–96.00', 'magnet_pct': '14.2%',
             'magnet_dist': '↓4.5%', 'magnet_dir': 'down', 'exchange': 'binance',
+            'magnet_row': {'price': 95.0, 'price_hi': 96.0, 'pct': 14.2, 'dist_pct': 4.5},
             'fallback': False}
 
 
@@ -326,6 +327,35 @@ def test_next_scan_has_a_live_countdown():
     _check('ff-countdown' in seg and 'data-until' in seg, 'відлік у рядку скану')
     _check(".ff-countdown[data-until]" in _HTML, 'глобальний тікер веде відлік')
     print('✓ «наступний … · через 4:59» — живий зворотний відлік, кольорами')
+
+
+
+# ═══════════ 21.10 · OB 4H ліворуч від назви · сортування магніту ═══════
+def test_ob4h_mark_sits_left_of_the_symbol():
+    a = _HTML.index("ob4hMarkHTML({ ob4h: r.ob4h, side: r.mm }, 'МММ у рядку')")
+    b = _HTML.index('${tvSym(r.symbol)}', a - 400)
+    _check(a < b, 'позначка OB 4H мусить стояти ПЕРЕД назвою монети')
+    _check('mm-ob4h-slot' in _HTML[a - 300:a], 'слот сталої ширини — назви в стовпчик')
+    _check('.mm-ob4h-slot {' in _HTML and 'width:38px' in _HTML, 'CSS слоту')
+    print('✓ 🏷 OB 4H — ліворуч від назви, у слоті сталої ширини')
+
+
+def test_magnet_sorts_by_share_and_distance_numbers():
+    ff = _ff([_row('BTCUSDT', 70), _row('ETHUSDT', 30)])
+    ff._mm_capture({}, now=1000.0)
+    r = ff.mm_monitor_state(ff.get_settings(), book='pull')['rows'][0]
+    _check(r['magnet_share'] == 14.2 and r['magnet_dist_pct'] == 4.5, r)
+    _check(_m._mrow_num({'magnet_row': None}, 'pct') is None, 'немає сходинки → None')
+    a = _HTML.index('function _mmSortVal(')
+    seg = _HTML[a:_HTML.index('\n}', a)]
+    _check("col === 'magnet') return (r.magnet_share" in seg, 'частка — сирим числом')
+    _check("col === 'magdist') return (r.magnet_dist_pct" in seg, 'відстань — сирим числом')
+    _check('parseFloat(String(r.magnet_pct)' not in seg, 'форматований підпис не парсимо')
+    for need in ("mmSort('magnet','pull')", "mmSort('magdist','pull')"):
+        _check(need in _HTML, need)
+    _check("magdist: 'magnet'" in _HTML, 'збережене сортування відновлюється для pull')
+    _check('#${B.P}-table [data-mmsort]' in _HTML, 'стрілки й на підписах усередині заголовка')
+    print('✓ 🧲 Магніт сортується за «частка %» і «відстань %» (сирі числа)')
 
 
 if __name__ == '__main__':
