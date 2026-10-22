@@ -3247,7 +3247,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили Decision (перевага одного боку над іншим, 0–100%): показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧠 МММ-Decision» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
                     Сила ≥ <input type="number" id="mmd-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged('dec')" onchange="mmMinStrSave()"> %
                 </label>
-                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="🧠 Фільтр за полем «ВЕРДИКТ» — словом сили банера Decision (те саме, що «SHORT 85% СИЛЬНИЙ» над графіком). Показує лише монети з вердиктом не слабшим за обраний: «СЕРЕДНІЙ+» = СЕРЕДНІЙ і СИЛЬНИЙ, «СИЛЬНИЙ» = лише СИЛЬНИЙ. Діє на всі вкладки разом із «Сила ≥» і на лічильники вкладок. Зберігається в налаштуваннях бота (однаково в усіх браузерах). ⚠️ На банер «🧠 МММ-Decision» НЕ впливає — важіль рахується по всіх монетах. З галочкою «⚑ з порогом «Сила ≥» вкладки» у МММ-воротах сигнал «Через МММ-Decision» теж мусить пройти цей фільтр (монету мусить бути ВИДНО в таблиці).">
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="🧠 Фільтр за полем «ВЕРДИКТ» — словом сили банера Decision (те саме, що «SHORT 85% СИЛЬНИЙ» над графіком). Показує лише монети з вердиктом не слабшим за обраний: «СЕРЕДНІЙ+» = СЕРЕДНІЙ і СИЛЬНИЙ, «СИЛЬНИЙ» = лише СИЛЬНИЙ. 🧠 Фільтр СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага), як і «Сила ≥» — випадайка показує фільтр активної вкладки; діє разом із «Сила ≥» на таблицю й лічильники. Зберігається в налаштуваннях бота (однаково в усіх браузерах). ⚠️ На банер «🧠 МММ-Decision» НЕ впливає — важіль рахується по всіх монетах. З галочкою «⚑ з порогом «Сила ≥» вкладки» у МММ-воротах сигнал «Через МММ-Decision» теж мусить пройти цей фільтр (монету мусить бути ВИДНО в таблиці).">
                     Вердикт ≥ <select id="mmd-verdict-min" onchange="mmVerdictChanged()" style="font-size:0.68rem;padding:2px 4px;background:#141821;color:#dde3ee;border:1px solid #3a3f4b;border-radius:4px;color-scheme:dark">
                         <option value="">усі</option><option value="marginal">СЕРЕДНІЙ+</option><option value="good">СИЛЬНИЙ</option>
                     </select>
@@ -12511,8 +12511,9 @@ function _mmMkBook(P, src, uiKey) {
         // ⚑ Поріг «Сила ≥» — СВІЙ на кожну вкладку (вимога 12.10). Поле
         // показує поріг АКТИВНОЇ вкладки; перемикання вкладки підставляє її.
         strMins: { all: 0, LONG: 0, SHORT: 0, flat: 0 },
-        // 🧠 Фільтр «Вердикт ≥» (лише книга `dec`): '' | 'marginal' | 'good'.
-        verdictMin: '',
+        // 🧠 Фільтр «Вердикт ≥» (лише книга `dec`): '' | 'marginal' | 'good' —
+        // СВІЙ на кожну вкладку, як і «Сила ≥» (вимога 22.10).
+        verdictMins: { all: '', LONG: '', SHORT: '', flat: '' },
         bias: null };
 }
 const _MMB = { old: _mmMkBook('mm', 'МММ LiQ', 'mmMonitorUi'),
@@ -12559,6 +12560,7 @@ function mmSetDir(d, bk) {
     _mmStrFromInput(B);              // спершу закріпити поріг вкладки, що йде
     B.dir = d;
     _mmStrToInput(B);                // поле показує поріг НОВОЇ вкладки
+    _mmVerdictToInput(B);            // 🧠 і «Вердикт ≥» НОВОЇ вкладки
     _mmSaveUi(B);
     mmRender(bk);
 }
@@ -12932,21 +12934,34 @@ function _mmTabRows(B, d) {
     const minStr = _mmMinStr(B, d);
     return B.rows.filter(r => (d === 'all' || _mmTabOf(r) === d)
                               && (r.strength || 0) >= minStr
-                              && _mmVerdictOk(B, r));
+                              && _mmVerdictOk(B, r, d));
 }
 // 🧠 Фільтр «Вердикт ≥» блоку МММ-Decision (вимога 22.10) — дзеркало
 // `fuel_filter.dec_verdict_ok`: СЛАБКИЙ < СЕРЕДНІЙ < СИЛЬНИЙ; '' = не задіяно;
 // рядок без вердикту при заданому порозі НЕ проходить.
 const _MMD_VRANK = { poor: 1, marginal: 2, good: 3 };
-function _mmVerdictOk(B, r) {
-    const need = _MMD_VRANK[(B && B.verdictMin) || ''] || 0;
+// Поріг «Вердикт ≥» вкладки `d` (за замовчуванням — активної). Свій на КОЖНУ
+// вкладку (вимога 22.10: «так як і фільтр "Сила"»).
+function _mmVerdictMin(B, d) {
+    const m = (B && B.verdictMins) || {};
+    const v = m[d || (B && B.dir) || 'all'] || '';
+    return _MMD_VRANK[v] ? v : '';
+}
+function _mmVerdictOk(B, r, d) {
+    const need = _MMD_VRANK[_mmVerdictMin(B, d)] || 0;
     if (!need) return true;
     return (_MMD_VRANK[r.dec_verdict || ''] || 0) >= need;
+}
+// Поріг активної вкладки → випадайка (на перемиканні вкладки / з сервера).
+function _mmVerdictToInput(B) {
+    if (B !== _MMB.dec) return;
+    const el = document.getElementById('mmd-verdict-min');
+    if (el && document.activeElement !== el) el.value = _mmVerdictMin(B);
 }
 function mmVerdictChanged() {
     const B = _MMB.dec;
     const el = document.getElementById('mmd-verdict-min');
-    B.verdictMin = el ? (el.value || '') : '';
+    B.verdictMins[B.dir] = el ? (el.value || '') : '';
     mmRender('dec');
     mmMinStrSave();
 }
@@ -13043,10 +13058,10 @@ function mmRender(bk) {
             ? `⚑ поза фільтром ${_outTotal} з ${_tot}` : '';
         _outEl.title = _outTotal > 0
             ? (`Фільтр вкладки «Сила ≥ ${_mmMinStr(B)}%»`
-               + (B.verdictMin ? ` + «Вердикт ≥ ${_MMD_V_UA[B.verdictMin] || ''}»` : '')
+               + (_mmVerdictMin(B) ? ` + «Вердикт ≥ ${_MMD_V_UA[_mmVerdictMin(B)] || ''}»` : '')
                + ` лишив у таблиці ${_shown} `
                + `монет із ${_tot}; решта ${_outTotal} — зі слабшою силою`
-               + (B.verdictMin ? ' або слабшим вердиктом. ' : ' МММ. ')
+               + (_mmVerdictMin(B) ? ' або слабшим вердиктом. ' : ' МММ. ')
                + 'Це НЕ «бот їх не бачить»: вони рахуються, просто не показані. '
                + 'Постав 0, щоб побачити всі. Поріг у кожної вкладки свій.')
             : '';
@@ -13061,11 +13076,14 @@ function mmRender(bk) {
         // У підказці — обидва числа, щоб «скільки у фільтрі / скільки поза» було
         // видно для КОЖНОЇ вкладки, а не лише загалом.
         const _thr = _mmMinStr(B, d);
+        // 🧠 «Вердикт ≥» вкладки (лише МММ-Decision) — теж видно на вкладці.
+        const _vm = _mmVerdictMin(B, d);
+        const _vTag = _vm ? ` 🧠≥${_vm === 'good' ? 'СИЛ' : 'СЕР'}` : '';
         // ⚑ ВИДНО, НА ЯКІЙ ВКЛАДЦІ ЗАДІЯНО ФІЛЬТР (вимога 12.10): поріг > 0 →
         // бурштинова позначка «⚑≥N» і бурштинова рамка; 0 = фільтр не задіяно.
         const _tEl = btn.querySelector('.mm-dir-thr');
         if (_tEl) {
-            _tEl.textContent = _thr > 0 ? ` ⚑≥${_thr}` : '';
+            _tEl.textContent = (_thr > 0 ? ` ⚑≥${_thr}` : '') + _vTag;
             if (_tEl.style) _tEl.style.cssText = 'color:#fbbf24;font-family:monospace;font-size:0.62rem';
         }
         btn.title = (nAll > n)
@@ -13074,7 +13092,7 @@ function mmRender(bk) {
         const on = (d === B.dir);
         btn.style.cssText = 'cursor:pointer;padding:3px 10px;border-radius:11px;'
             + 'font-size:0.68rem;font-weight:700;'
-            + 'border:1px solid ' + (_thr > 0 ? (on ? '#fbbf24' : '#fbbf2466')
+            + 'border:1px solid ' + ((_thr > 0 || _vm) ? (on ? '#fbbf24' : '#fbbf2466')
                                               : (on ? '#ffffff55' : '#ffffff18')) + ';'
             + 'background:' + (on ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.03)') + ';'
             + 'color:' + (on ? '#e5e7eb' : '#9aa3b5') + ';';
@@ -13095,7 +13113,7 @@ function mmRender(bk) {
     // перемикання тумблера при порожній таблиці нічого б не перемалювало.
     // ⚠️ `state_since` — МОМЕНТ (змінюється рідко). Самі СЕКУНДИ
     // в неї НЕ входять: їх малює глобальний 1с-тікер (урок `held_sec`).
-    const sig = B.dir + '|' + (B.verdictMin || '') + '|' + (B.meta.enabled ? '1' : '0')
+    const sig = B.dir + '|' + JSON.stringify(B.verdictMins || {}) + '|' + (B.meta.enabled ? '1' : '0')
         + '|' + ((B.meta.pending || {}).reason || '')
         + '|' + B.sort.col + B.sort.dir + '|'
         + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev,
@@ -13375,9 +13393,15 @@ function mmApplyState(mm, bk) {
         _mmStrToInput(B);
         // 🧠 «Вердикт ≥» — теж із сервера (лише книга `dec`).
         if (code === 'dec') {
-            B.verdictMin = String(mm.verdict_min || '');
-            const _vEl = document.getElementById('mmd-verdict-min');
-            if (_vEl && document.activeElement !== _vEl) _vEl.value = B.verdictMin;
+            // …свій на КОЖНУ вкладку (вимога 22.10); старий бекенд без словника
+            // → спільне значення на всі вкладки.
+            const _vs = (mm.verdict_mins && typeof mm.verdict_mins === 'object')
+                ? mm.verdict_mins : null;
+            _MM_TABS.forEach(d => {
+                const v = String((_vs && _vs[d] != null) ? _vs[d] : (mm.verdict_min || ''));
+                B.verdictMins[d] = _MMD_VRANK[v] ? v : '';
+            });
+            _mmVerdictToInput(B);
         }
     }
     const up = _mmEl(B, '-updated');
@@ -15772,7 +15796,8 @@ async function saveFuelFilterSettings() {
         mm_dec_enabled: _c('ff-mm-dec-enabled'),
         mmd_str_min: _mmMinStr(_MMB.dec, 'all'),
         mmd_str_mins: Object.assign({}, _MMB.dec.strMins),
-        mmd_verdict_min: _MMB.dec.verdictMin || '',
+        mmd_verdict_min: _mmVerdictMin(_MMB.dec, 'all'),
+        mmd_verdict_mins: Object.assign({}, _MMB.dec.verdictMins),
         mmd_bias_confirm_sec: parseInt(_v('ff-mmd-bias-confirm', '120') || '0', 10),
         mm_bias_tg: _c('ff-mm-bias-tg'),
         mmn_bias_tg: _c('ff-mmn-bias-tg'),

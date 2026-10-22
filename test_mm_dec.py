@@ -261,9 +261,9 @@ def test_verdict_filter_is_saved_and_served():
     st = ff.mm_monitor_state(book='dec')
     _check(st['verdict_min'] == 'good', st.get('verdict_min'))
     _check(ff.mm_monitor_state(book='fc')['verdict_min'] == '', 'інші книги без фільтра')
-    for need in ('id="mmd-verdict-min"', 'mmd_verdict_min: _MMB.dec.verdictMin',
-                 "B.verdictMin = String(mm.verdict_min || '')", '&& _mmVerdictOk(B, r)',
-                 "(B.verdictMin || '') + '|'"):
+    for need in ('id="mmd-verdict-min"', "mmd_verdict_min: _mmVerdictMin(_MMB.dec, 'all')",
+                 'mmd_verdict_mins: Object.assign({}, _MMB.dec.verdictMins)',
+                 '&& _mmVerdictOk(B, r, d)', 'JSON.stringify(B.verdictMins || {})'):
         _check(need in _HTML, need)
     a = _HTML.index('id="mmd-min-str"'); b = _HTML.index('id="mmd-verdict-min"'); c = _HTML.index('id="mmd-str-out"')
     _check(a < b < c, 'випадайка стоїть поруч із «Сила ≥»')
@@ -296,11 +296,16 @@ def test_js_tab_rows_filter_by_verdict():
           "function _mmMinStr(B,d){return _mmClampStr(B.strMins[d||B.dir]);}"
           "const _mmTabOf=r=>(r.mm==='LONG'?'LONG':(r.mm==='SHORT'?'SHORT':'flat'));"
           + _HTML[a:b] +
-          "\nconst B={dir:'all',strMins:{all:0,LONG:0,SHORT:0,flat:0},verdictMin:'',rows:["
+          "\nconst _MMB={};const B={dir:'all',strMins:{all:0,LONG:0,SHORT:0,flat:0},"
+          "verdictMins:{all:'',LONG:'',SHORT:'',flat:''},rows:["
           "{mm:'SHORT',strength:70,dec_verdict:'good'},{mm:'LONG',strength:40,dec_verdict:'marginal'},"
           "{mm:'LONG',strength:30,dec_verdict:'poor'}]};"
-          "console.log(_mmTabRows(B,'all').length);B.verdictMin='marginal';console.log(_mmTabRows(B,'all').length);"
-          "B.verdictMin='good';console.log(_mmTabRows(B,'all').length);console.log(_mmTabRows(B,'LONG').length);")
+          "console.log(_mmTabRows(B,'all').length);B.verdictMins.all='marginal';console.log(_mmTabRows(B,'all').length);"
+          "B.verdictMins.all='good';console.log(_mmTabRows(B,'all').length);"
+          # ⚠️ Вкладка LONG має СВІЙ фільтр: «Всі = СИЛЬНИЙ» на неї НЕ діє.
+          "console.log(_mmTabRows(B,'LONG').length);"
+          "B.verdictMins.LONG='good';console.log(_mmTabRows(B,'LONG').length);"
+          "console.log(_mmTabRows(B,'SHORT').length);")
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as f:
         f.write(js)
         path = f.name
@@ -308,8 +313,43 @@ def test_js_tab_rows_filter_by_verdict():
         r = subprocess.run(['node', path], capture_output=True, text=True, timeout=30)
     finally:
         os.unlink(path)
-    _check(r.stdout.split() == ['3', '2', '1', '0'], (r.stdout, r.stderr))
-    print('✓ JS: таблиця і лічильники вкладок фільтруються за «Вердикт ≥»')
+    _check(r.stdout.split() == ['3', '2', '1', '2', '0', '1'], (r.stdout, r.stderr))
+    print('✓ JS: кожна вкладка фільтрується СВОЇМ «Вердикт ≥»')
+
+
+# ═══════════ 6. «ВЕРДИКТ ≥» — СВІЙ НА КОЖНУ ВКЛАДКУ (вимога 22.10) ══════════
+def test_verdict_mins_norm_is_per_tab_with_legacy():
+    n = _m.dec_verdict_mins_norm
+    _check(n(None, 'good') == {'all': 'good', 'LONG': 'good', 'SHORT': 'good', 'flat': 'good'},
+           'старий блоб → спільне значення на всі вкладки')
+    got = n({'LONG': 'marginal', 'SHORT': 'сміття'}, '')
+    _check(got == {'all': '', 'LONG': 'marginal', 'SHORT': '', 'flat': ''}, got)
+    _check(n('x', 'bad') == {'all': '', 'LONG': '', 'SHORT': '', 'flat': ''}, 'сміття → усі')
+    print('✓ dec_verdict_mins_norm: свій поріг на вкладку, міграція зі спільного')
+
+
+def test_state_and_gate_use_the_coin_tab_verdict():
+    ff, _ = _ff_with({'BTCUSDT': _dec('SHORT', 0.15, verdict='marginal'),
+                      'ETHUSDT': _dec('LONG', 0.85, verdict='marginal')})
+    ff._settings['mmd_verdict_mins'] = {'all': '', 'LONG': '', 'SHORT': 'good', 'flat': ''}
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3, ETHUSDT=0.3), now=1000.0)
+    st = ff.mm_monitor_state(book='dec')
+    _check(st['verdict_mins']['SHORT'] == 'good' and st['verdict_mins']['LONG'] == '', st['verdict_mins'])
+    _check(ff.mm_gate_view('BTCUSDT', book='dec')['verdict_min'] == 'good', 'SHORT-монета → поріг SHORT')
+    _check(ff.mm_gate_view('ETHUSDT', book='dec')['verdict_min'] == '', 'LONG-монета → поріг LONG')
+    print('✓ стан віддає пороги вкладок, ворота беруть поріг ВКЛАДКИ монети')
+
+
+def test_tab_switch_shows_that_tabs_verdict():
+    a = _HTML.index('function mmSetDir(')
+    body = _HTML[a:_HTML.index('\n}', a)]
+    _check('_mmVerdictToInput(B)' in body, 'перемикання вкладки підставляє її «Вердикт ≥»')
+    a = _HTML.index('function mmVerdictChanged(')
+    body = _HTML[a:_HTML.index('\n}', a)]
+    _check('B.verdictMins[B.dir]' in body, 'випадайка пише поріг АКТИВНОЇ вкладки')
+    _check('_vs[d]' in _HTML and 'mm.verdict_mins' in _HTML, 'пороги вкладок їдуть із сервера')
+    _check('🧠≥' in _HTML, 'позначка фільтра на вкладці')
+    print('✓ UI: випадайка «Вердикт ≥» — поріг активної вкладки, позначка 🧠≥ на вкладці')
 
 
 if __name__ == '__main__':

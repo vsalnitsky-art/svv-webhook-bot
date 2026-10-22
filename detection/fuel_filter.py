@@ -558,6 +558,24 @@ def dec_verdict_ok(verdict, vmin) -> bool:
     return DEC_VERDICT_RANK.get(str(verdict or ''), 0) >= need
 
 
+def dec_verdict_mins_norm(raw, legacy='') -> dict:
+    """🧠 Фільтр «Вердикт ≥» — СВІЙ НА КОЖНУ ВКЛАДКУ (вимога 22.10: «має бути
+    для кожної закладки свій, так як і фільтр "Сила"»). ЧИСТА.
+
+    → {'all','LONG','SHORT','flat': '' | 'marginal' | 'good'}. Немає значення
+    вкладки (старий блоб без словника) → `legacy` (колишній спільний
+    `mmd_verdict_min`), тож після деплою кожна вкладка стартує з того, що було.
+    Сміття → '' (фільтр не задіяно), а не збій."""
+    base = str(legacy or '')
+    base = base if base in DEC_VERDICT_MINS else ''
+    src = raw if isinstance(raw, dict) else {}
+    out = {}
+    for k in MM_STR_TABS:
+        v = str(src.get(k, base) or '')
+        out[k] = v if v in DEC_VERDICT_MINS else ''
+    return out
+
+
 def _q_allowed(op: int) -> bool:
     """True if queue-removal op #op is currently allowed (debug gate)."""
     if _QUEUE_OPS_ALLOWED.get(op, True):
@@ -680,6 +698,7 @@ DEFAULT_SETTINGS = {
     # 🧠 Фільтр «Вердикт ≥» (вимога 22.10): '' — усі · 'marginal' — СЕРЕДНІЙ і
     # СИЛЬНИЙ · 'good' — лише СИЛЬНИЙ. Як і «Сила ≥» — налаштування БОТА.
     'mmd_verdict_min': '',
+    'mmd_verdict_mins': None,
     # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
     # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
     # ГОЛОВНИЙ вміст тієї теми. ⚠️ Майстер-вимикач теми лишається в кабінеті
@@ -2054,6 +2073,10 @@ class FuelFilterDaemon:
         s['mmd_bias_tg'] = bool(s.get('mmd_bias_tg', True))
         _vm = str(s.get('mmd_verdict_min') or '')
         s['mmd_verdict_min'] = _vm if _vm in DEC_VERDICT_MINS else ''
+        # 🧠 «Вердикт ≥» — свій на кожну вкладку; спільний ключ = дзеркало «Всі».
+        s['mmd_verdict_mins'] = dec_verdict_mins_norm(s.get('mmd_verdict_mins'),
+                                                      s['mmd_verdict_min'])
+        s['mmd_verdict_min'] = s['mmd_verdict_mins']['all']
         try:
             s['mmd_str_min'] = max(0, min(100, int(float(s.get('mmd_str_min', 0)))))
         except (TypeError, ValueError):
@@ -5414,6 +5437,10 @@ class FuelFilterDaemon:
                                          s.get(f'{_sk}_str_min', 0)),
             # 🧠 Фільтр «Вердикт ≥» — лише у книги МММ-Decision.
             'verdict_min': (str(s.get('mmd_verdict_min') or '') if _bk == 'dec' else ''),
+            # 🧠 …і свій «Вердикт ≥» на КОЖНУ вкладку (вимога 22.10).
+            'verdict_mins': (dec_verdict_mins_norm(s.get('mmd_verdict_mins'),
+                                                   s.get('mmd_verdict_min', ''))
+                             if _bk == 'dec' else {}),
             'book': _bk,
             # 🧭 МММ-Pull: стан ФОНОВОГО скану ліквідності (коли був, скільки
             # тривав, наступний, чи біжить зараз, причина невдачі, параметри).
@@ -5564,8 +5591,8 @@ class FuelFilterDaemon:
                                                     s.get('mmp_str_min', 0))
             self._mmd_str_mins_c = mm_str_mins_norm(s.get('mmd_str_mins'),
                                                     s.get('mmd_str_min', 0))
-            _vm = str(s.get('mmd_verdict_min') or '')
-            self._mmd_verdict_min_c = _vm if _vm in DEC_VERDICT_MINS else ''
+            self._mmd_verdict_mins_c = dec_verdict_mins_norm(
+                s.get('mmd_verdict_mins'), s.get('mmd_verdict_min', ''))
         except Exception:
             pass
 
@@ -5639,7 +5666,9 @@ class FuelFilterDaemon:
         if _bk == 'dec':
             # 🧠 «Вердикт ≥» теж визначає, чи ВИДНО монету в таблиці.
             out['verdict'] = (v or {}).get('dec_verdict') if v else None
-            out['verdict_min'] = getattr(self, '_mmd_verdict_min_c', '') or ''
+            # Поріг — ВКЛАДКИ монети (вимога 22.10: свій на кожну вкладку).
+            _vms = getattr(self, '_mmd_verdict_mins_c', None) or {}
+            out['verdict_min'] = (_vms.get(tab, '') or '') if tab else ''
         return out
 
     def symbols_in_work(self) -> set:
