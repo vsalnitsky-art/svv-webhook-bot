@@ -233,7 +233,7 @@ def test_gate_view_and_rule():
     _check("'mmp_gate_enabled', 'mmp_gate_banner'," in _SC_SRC, 'білий список')
     for need in ('id="sm-mmp-gate"', 'id="sm-mmp-gate-banner"',
                  "['sm-mmp-gate', 'sm-mmp-gate-banner', 'mmp_gate_enabled', 'mmp_gate_banner']",
-                 "'🧭 МММ-Pull']].forEach", '🧭 Через МММ-Pull', 'за банером МММ-Pull'):
+                 "'🧭 МММ-Pull'],", '🧭 Через МММ-Pull', 'за банером МММ-Pull'):
         _check(need in _HTML, f'на сторінці немає «{need}»')
     print('✓ ворота «🧭 Через МММ-Pull» + «за банером»: книга, підписи, деф. ВИМК, UI')
 

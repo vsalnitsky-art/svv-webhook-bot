@@ -3708,7 +3708,8 @@ def register_api_routes(app):
             # ⚡ `book='ctr'` — з блоку «МММ-CTR» (STC 1H+4H).
             # 🔮 `book='fc'` — з блоку «МММ-Local» (Forecast 1H+4H).
             _b = str(data.get('book') or '')
-            book = _b if _b in ('new', 'ctr', 'fc', 'pull') else 'old'
+            # 🧠 `book='dec'` — з блоку «МММ-Decision» (вердикт банера Decision).
+            book = _b if _b in ('new', 'ctr', 'fc', 'pull', 'dec') else 'old'
             return jsonify(ff.group_open(symbols, book=book))
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})

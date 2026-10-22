@@ -52,6 +52,7 @@ ENGINE_BADGES = {
     'MMC':              '⚡ МММ-CTR',       # те саме з блоку ⚡ МММ-CTR (STC 1H+4H)
     'MMF':              '🔮 МММ-Local',   # те саме з блоку 🔮 МММ-Local (Forecast 1H+4H)
     'MMP':              '🧭 МММ-Pull',    # те саме з блоку 🧭 МММ-Pull (скан ліквідності)
+    'MMD':              '🧠 МММ-Decision',  # те саме з блоку 🧠 МММ-Decision (вердикт банера Decision)
     'EXH':              '🔥 Виснаженість',
     'FF':               '🔥 FF',
     'direct':           '⚡ Прямий',       # FF вимкнено → відкрито одразу з сигналу
@@ -85,6 +86,7 @@ SIGNAL_ICONS = {
     'MMC': '⚡',
     'MMF': '🔮',
     'MMP': '🧭',
+    'MMD': '🧠',
 }
 
 FALLBACK_ICON = '🏷'
@@ -104,6 +106,7 @@ ENGINE_ICON_OVERRIDE = {
     'MMC': '⚡',
     'MMF': '🔮',
     'MMP': '🧭',
+    'MMD': '🧠',
 }
 
 

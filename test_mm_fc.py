@@ -174,7 +174,7 @@ def test_ui_block_is_a_twin_with_its_own_columns():
     _check("mmApplyState(d.mm_fc, 'fc')" in _HTML, 'стан доїжджає до книги')
     _check("want.push('mmf')" in _HTML, 'секцію просимо лише розгорнутою')
     _check('mm_fc_enabled: _c(' in _HTML and 'mmf_str_mins:' in _HTML, 'збереження')
-    _check('[_MMB.old, _MMB.new, _MMB.ctr, _MMB.fc, _MMB.pull].forEach' in _HTML, 'банер малює 1с-тікер')
+    _check('[_MMB.old, _MMB.new, _MMB.ctr, _MMB.fc, _MMB.pull, _MMB.dec].forEach' in _HTML, 'банер малює 1с-тікер')
     i = _HTML.index('id="mmc-panel"'); j = _HTML.index('id="mmf-panel"')
     _check(i < j, 'блок 🔮 стоїть під ⚡ МММ-CTR')
     print('✓ UI: блок-двійник під ⚡ CTR, колонки 🔮 1H/4H, гармошки, збереження')

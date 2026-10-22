@@ -6298,6 +6298,46 @@ SL порожній) або трейл автопілота (раніше зад
   `magnet_dist` більше не парсяться (задокументована пастка).
 Тест: `test_mm_pull.py` (23).
 
+## 🧠 ШОСТИЙ БЛОК «МММ-Decision» — банер + список на вердикті Decision (22.10)
+
+Дослівно: «Будуємо ще один МММ банер (монітор), за основу беремо ось ці
+показники» (банер Decision «SHORT 85% СИЛЬНИЙ») «І фільтр угод також додаємо
+до налаштувань ("Через МММ ..." і "за банером МММ ...")».
+- **ПРАВИЛО — ЧИСТА `fuel_filter.dec_mm_dir(dec)`**: напрямок = `recommended`
+  банера (LONG / SHORT; NEUTRAL → ⚖), власного порогу поверх НЕМАЄ; сила =
+  ПЕРЕВАГА `prob_long − prob_short` («SHORT 85%» → 70%). ⚠️ Саме перевага, а
+  не 85: рівноважна монета («LONG 52%») інакше важила б у знаменнику банера як
+  сильна. Немає вердикту / ймовірностей → None («невідомо» ≠ «рівновага»).
+- **ДЖЕРЕЛО — ТОЙ САМИЙ `TradeManager.compute_decision(sym, price)`**, що
+  малює банер над графіком (тест-замок: у `_mmd_decisions` немає
+  `evaluate_entry`/`build_decision`). Біржу не смикає (кеш сканера), але це
+  НАЙВАЖЧИЙ МММ-розрахунок (2× evaluate_entry на монету) — тому
+  **`_mmd_decisions`**: власний кеш `_mmd_dec` {СИМВОЛ: (ts, вердикт)},
+  `MMD_TTL = 90с`, за такт ≤ `MMD_PER_TICK = 12` монет (спершу без вердикту,
+  далі найстаріші); решта бере кеш; монети, що випали з набору, забуваються.
+- Книга `dec` у `_mm_capture` (`_mmd_*`, `_mm_bias_dec*`,
+  `mmd_bias_confirm_sec`), набір монет — ключі `fuels` (як ⚡/🔮); рядок несе
+  `dec_prob/dec_verdict/dec_conf/dec_headline`. Персист банера й таймерів
+  стану. `mm_monitor_state(book='dec')`, секція `mmd` → `get_state()['mm_dec']`,
+  ✋ `group_open(book='dec')` → `manual → MMD` (🧠 МММ-Decision у
+  `signal_labels` + обидва JS-дзеркала).
+- Ключі: `mm_dec_enabled` (**деф. ВИМК** — найважчий блок) · `mmd_str_min(s)` ·
+  `mmd_bias_confirm_sec` · `mmd_bias_tg` (деф. УВІМК). Нові → міграція не потрібна.
+- 📨 TG: `_MM_BIAS_TG['dec']` (`🧠 МММ-DECISION → …`, тема `btc`), UI
+  `ff-mmd-bias-tg`, шапка `🧠 банер Decision`.
+- 🚦 Ворота: шоста пара `MM_GATES` — `mmd_gate_enabled`/`mmd_gate_banner`
+  (деф. ВИМК), підписи `🧠МММ-Decision[…]` / `🧠 МММ-DECISION`;
+  `mm_gate_view(book='dec')` (кеш порогів `_mmd_str_mins_c`). UI
+  `sm-mmd-gate` + `sm-mmd-gate-banner`. Порядок: NEW → монітор → CTR → Local →
+  Pull → Decision. ⚠️ НЕ плутати з наявним `decision_filter_enabled` («Мін.
+  Decision-вердикт» — вердикт САМОЇ монети на момент сигналу, 10с-кеш); ці
+  ворота читають ТАБЛИЦЮ блоку (+ за бажанням — банер усього ринку).
+- UI: `#mmd-panel` під 🧭 Pull (рожевий акцент, гармошки `mmd`/`mmdlist`,
+  список згорнутий); `_MMB.dec.cols = [status, mm, dec, state, price, pchg,
+  f1, f4]`, комірка `_mmDecCell` = «🔴 SHORT 85% СИЛЬНИЙ» (слова — дзеркало
+  `V_UA` банера), сортування `dec` — за нахилом зі знаком.
+Тест: `test_mm_dec.py` (15).
+
 ⚠️ **ЗАЛИШКИ НА `main`:** `detection/mm_correction.py` і `test_mm_correction.py`
 видалено з коду 01.10, але файли лежать у репозиторії (завантаження через
 GitHub не видаляє файлів) — через них падають `test_mm_monitor` /

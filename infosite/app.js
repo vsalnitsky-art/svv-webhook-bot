@@ -112,7 +112,7 @@
   var ENGINE_BADGES_JS = {
     "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4",
     "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап",
-    "MMM": "🧮 МММ-монітор", "MMN": "🧮 МММ-new", "MMC": "⚡ МММ-CTR", "MMF": "🔮 МММ-Local", "MMP": "🧭 МММ-Pull",
+    "MMM": "🧮 МММ-монітор", "MMN": "🧮 МММ-new", "MMC": "⚡ МММ-CTR", "MMF": "🔮 МММ-Local", "MMP": "🧭 МММ-Pull", "MMD": "🧠 МММ-Decision",
     "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий"
   };
   var SIGNAL_ICON_JS = {
@@ -122,12 +122,12 @@
     "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋",
     "manual_ui": "✋", "manual_ui_overflow": "✋",
     "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥",
-    "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭"
+    "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠"
   };
   // Двигун, чия картинка ПЕРЕКРИВАЄ картинку сигналу: угоди 🧮 МММ-монітора
   // йдуть від того самого `vob_alert`, що й угоди Черги-4, тож 🟪 їх не
   // розрізняло. Мітка у підказці лишається повною.
-  var ENGINE_ICON_OVERRIDE_JS = { "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭" };
+  var ENGINE_ICON_OVERRIDE_JS = { "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠" };
   function signalCodeOf(raw) {
     if (!raw) return "";
     return String(raw).split(" · ")[0].split(" → ")[0].trim();

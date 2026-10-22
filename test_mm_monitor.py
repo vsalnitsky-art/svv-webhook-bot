@@ -106,6 +106,10 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._mmp_state_since, ff._mmp_price_hist = {}, {}
     ff._mm_bias_pull, ff._mm_bias_pull_since, ff._mm_bias_pull_cand = {}, 0.0, {}
     ff._mmp_scan, ff._mmp_scan_running, ff._mmp_scan_at = {}, False, 0.0
+    # 🧠 Книга «МММ-Decision» (22.10) — знімок, банер, таймери, кеш вердиктів.
+    ff._mmd_snapshot, ff._mmd_snapshot_ts, ff._mmd_stats = {}, 0.0, {}
+    ff._mmd_state_since, ff._mmd_price_hist, ff._mmd_dec = {}, {}, {}
+    ff._mm_bias_dec, ff._mm_bias_dec_since, ff._mm_bias_dec_cand = {}, 0.0, {}
     # ⚠️ «Готовність» МММ-new ПРИБРАНО (01.10): якби код знову полiз у грейдер,
     # цей стаб упіймав би виклик (див. test_readiness_column_is_gone).
     ff._compute_setup_calls = []

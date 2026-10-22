@@ -2282,7 +2282,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmp-gate-banner" onchange="updateMmGate()">
                         за банером МММ-Pull
                     </label>
-                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» / «Через МММ-Pull» (для кожного блоку — його власні пороги). ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="🧠 Ворота «Через МММ-Decision» (вимога 22.10): сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку 🧠 МММ-Decision (вердикт банера Decision по монеті — LONG), SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага (NEUTRAL), протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Незалежні від інших МММ-воріт (увімкнені кілька — сигнал має пройти всі). Діє на ВСІ сигнали сканера і на 🔁 повторній перевірці Черги-4. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mmd-gate" onchange="updateMmGate()">
+                        🧠 Через МММ-Decision
+                    </label>
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-Decision»: банер 🧠 МММ-Decision мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-Decision». ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mmd-gate-banner" onchange="updateMmGate()">
+                        за банером МММ-Decision
+                    </label>
+                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» / «Через МММ-Pull» / «Через МММ-Decision» (для кожного блоку — його власні пороги). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-str" onchange="updateMmGate()">
                         ⚑ з порогом «Сила ≥» вкладки
                     </label>
@@ -2681,6 +2689,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label class="mmc-chk" title="🧭 Те саме для банера 🧭 МММ-Pull (вимога 20.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем. Перший стан після рестарту — мовчки. Власний тумблер.">
                         <input type="checkbox" id="ff-mmp-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
                         🧭 Зміна статусу банера МММ-Pull
+                    </label>
+                    <label class="mmc-chk" title="🧠 Те саме для банера 🧠 МММ-Decision (вимога 22.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем. Перший стан після рестарту — мовчки. Власний тумблер.">
+                        <input type="checkbox" id="ff-mmd-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
+                        🧠 Зміна статусу банера МММ-Decision
                     </label>
                     <div style="flex-basis:100%;font-size:0.68rem;line-height:1.4;color:#8b93a7">
                         ₿ <b>BTCUSDT (старт / стоп сеансу)</b> іде в ЦЮ САМУ тему — його
@@ -3182,6 +3194,102 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </thead>
                     <tbody id="mmp-tbody">
                         <tr><td colspan="11" class="tm-empty-msg">Немає даних скану ліквідності (перший скан ще не завершився)</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            </div>            </div>        </div>
+    </div>
+
+
+
+    <!-- ===== 🧠 МММ-DECISION (вимога 22.10) =====
+         Шостий МММ-блок: банер + список на вердикті банера Decision Center
+         («SHORT 85% СИЛЬНИЙ»; той самий `TradeManager.compute_decision`).
+         Розмітка — копія блоку 🧭 з префіксом id `mmd-`; JS — ТОЙ САМИЙ код
+         монітора з книгою `dec`; бекенд — `mm_monitor_state(book="dec")`
+         (секція `mmd`). Напрямок — `dec_mm_dir`: вердикт банера, сила =
+         перевага prob_long − prob_short. -->
+    <div class="tm-panel" id="mmd-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(244,114,182,0.35);border-radius:8px;background:rgba(244,114,182,0.05)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px">
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mmd')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mmd-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🧠 МММ-Decision <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— вердикт банера Decision по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
+            <div style="display:flex;align-items:center;gap:10px">
+                <span id="mmd-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
+                <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🧠 МММ-Decision. ⚠️ Це найважчий МММ-блок: вердикт Decision (той самий, що банер «SHORT 85% СИЛЬНИЙ» над графіком) рахується по кожній монеті з кешу сканера — порціями по 12 монет за такт (~30с), кожен вердикт живе 90с. Біржу НЕ смикає. ВИМКНЕНО (дефолт) — нічого не рахується, банер і список порожні, групове відкриття недоступне. Сам моніторинг нічого не відкриває автоматично.">
+                    <input type="checkbox" id="ff-mm-dec-enabled" onchange="saveFuelFilterSettings()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+        <div id="mmd-body">
+            <div id="mmd-off" style="display:none;padding:9px 12px;border-radius:6px;border:1px dashed rgba(148,163,184,0.35);color:#8b93a7;font-size:0.72rem">🔌 МММ-Decision вимкнено — вердикти не рахуються, банера і списку немає. Увімкніть тумблер у шапці блоку.</div>
+            <div id="mmd-live">
+            <div id="mmd-bias-banner" class="mm-ban" style="margin:0 0 10px">
+                <span class="mm-ban-title" style="color:#fbcfe8;text-shadow:0 0 9px rgba(244,114,182,0.5)">🧠 МММ-Decision</span>
+                <div class="mm-ban-bar">
+                    <div id="mmd-bias-bar" style="height:100%;width:0%;border-radius:9px;background:#f472b6;transition:width 0.4s linear,background 0.3s"></div>
+                    <span id="mmd-bias-label" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
+                </div>
+                <span class="mm-ban-tm">
+                    <span id="mmd-bias-cand" style="display:none;font-size:0.66rem;color:#fbbf24;font-family:monospace;white-space:nowrap"></span>
+                    <span id="mmd-bias-restored" style="display:none;font-size:0.66rem;color:#8b93a7"
+                          title="Показники й таймер відновлено після рестарту бота — таймер продовжено з того самого моменту, числа оновляться найближчим тактом (~30с).">↻</span>
+                    <span id="mmd-bias-timer" class="ff-flip" style="white-space:nowrap"></span>
+                </span>
+                <span id="mmd-bias-status" class="mm-ban-st" style="background:transparent">—</span>
+            </div>
+            <div id="mmd-limited-hint" style="display:none;margin:0 0 8px;padding:7px 11px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:0.7rem;font-weight:600"></div>
+            <div style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
+                <span style="color:#8b93a7">Показати:</span>
+                <button type="button" data-mmdir="all" onclick="mmSetDir('all','dec')" class="ff-qdir-btn">Всі <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG','dec')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT','dec')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="flat" onclick="mmSetDir('flat','dec')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили Decision (перевага одного боку над іншим, 0–100%): показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧠 МММ-Decision» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
+                    Сила ≥ <input type="number" id="mmd-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged('dec')" onchange="mmMinStrSave()"> %
+                </label>
+                <span id="mmd-str-out" style="font-size:0.66rem;color:#fbbf24;font-family:monospace"></span>
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="⏱ АНТИСПАМ БАНЕРА: новий статус (🟢 LONG / 🔴 SHORT / ⏸ FLAT) показується лише коли протримався стільки секунд. Поки йде відлік, у банері видно кандидата (⏳). Плюс до цього діє гістерезис: зайти в напрямок можна за 10% важеля, а вийти — лише нижче 6%, тож коливання біля межі статус не смикають. 0 = перемикати миттєво (стара поведінка). ⚠️ Числа й смуга банера лишаються ЖИВИМИ — гаситься саме миготіння ПІДПИСУ.">
+                    ⏱ Перехід ≥ <input type="number" id="ff-mmd-bias-confirm" min="0" max="3600" step="30" value="120" style="width:60px;font-size:0.68rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> с
+                </label>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px;font-size:0.7rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none"
+                 onclick="togglePanel('mmdlist')"
+                 title="Клік — згорнути/розгорнути список монет разом із панеллю групового відкриття. Поки згорнуто, таблиця НЕ малюється (найважча частина секції). Стан памʼятається; за замовчуванням згорнуто.">
+                <span id="mmdlist-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span>
+                📋 Список монет <span id="mmdlist-n" style="font-weight:400;color:#8b93a7;font-family:monospace"></span>
+            </div>
+            <div id="mmdlist-body">
+            <div style="display:flex;align-items:center;gap:8px;margin:0 0 8px;flex-wrap:wrap">
+                <span id="mmd-sel-count" style="font-size:0.7rem;color:#8b93a7;font-family:monospace">Обрано 0</span>
+                <button type="button" id="mmd-open-btn" onclick="mmOpenSelected('dec')" disabled
+                        style="font-size:0.68rem;padding:4px 12px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#4ade80;cursor:pointer;font-weight:700"
+                        title="✋ Відкрити УСІ обрані монети одразу. Напрямок кожної = її власний вердикт 🧠 Decision (те, що в рядку). Ворота черг пропускаються — рішення ухвалює людина; 🚦 головні кнопки напрямку і запобіжники відкриття (ціна/розмір) лишаються.">✋ Відкрити обрані</button>
+                <button type="button" onclick="mmClearSel('dec')" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid #3a3f4b;background:transparent;color:#8b93a7;cursor:pointer">Зняти вибір</button>
+                <span id="mmd-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
+            </div>
+            <style>
+              #mmd-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
+              #mmd-table tbody tr:hover { background: rgba(56,189,248,0.10); }
+              #mmd-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
+            </style>
+            <div class="ff-timers-scroll" style="max-height:340px">
+                <table class="tm-table" id="mmd-table">
+                    <thead>
+                        <tr>
+                            <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmd-check-all" onchange="mmToggleAll(this.checked,'dec')"></th>
+                            <th data-mmsort="symbol" onclick="mmSort('symbol','dec')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="status" onclick="mmSort('status','dec')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="strength" onclick="mmSort('strength','dec')" style="cursor:pointer;user-select:none" title="🧠 МММ-Decision — напрямок = вердикт банера Decision (LONG / SHORT; NEUTRAL → ⚖ рівновага), сила = ПЕРЕВАГА одного боку над іншим: prob_long − prob_short. «SHORT 85%» → 85 − 15 = 70%. Саме перевага, а не 85: рівноважна монета («LONG 52%») інакше важила б у банері як сильна. Клік — сортувати за силою.">МММ-Decision<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="dec" onclick="mmSort('dec','dec')" style="cursor:pointer;user-select:none" title="🧠 Вердикт банера Decision — РІВНО той, що «SHORT 85% СИЛЬНИЙ» над графіком цієї монети: напрямок · ймовірність боку · слово сили (СИЛЬНИЙ / СЕРЕДНІЙ / СЛАБКИЙ). Клік — сортувати (LONG зверху, SHORT знизу, за впевненістю).">🧠 Вердикт<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="state" onclick="mmSort('state','dec')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Стан оновлюється з кожним новим вердиктом Decision (раз на ~90с на монету). Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="price" onclick="mmSort('price','dec')" style="cursor:pointer;user-select:none;text-align:right" title="Поточна ціна монети. Клік — сортувати за ціною.">Ціна<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="pchg" onclick="mmSort('pchg','dec')" style="cursor:pointer;user-select:none;text-align:right" title="КУДИ йде ціна: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв. Клік — сортувати за РУХОМ.">Рух<span class="ff-sort-arrow"></span></th>
+                            <th title="🔮 Прогноз 1H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 1H» над графіком.">🔮 1H</th>
+                            <th title="🔮 Прогноз 4H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 4H» над графіком.">🔮 4H</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mmd-tbody">
+                        <tr><td colspan="10" class="tm-empty-msg">Немає вердиктів Decision (перші рахуються порціями — до кількох тактів)</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -5877,7 +5985,7 @@ function togglePanel(pid) {
     // ⚡ C2: важкі секції (Черга-4, 💰 Funding) сервер рахує ЛИШЕ на запит. Поки
     // гармошка була згорнута, ми їх не просили — тож на РОЗГОРТАННІ тягнемо
     // стан одразу, а не чекаємо до 30с наступного полла.
-    if (open && (pid === 'q4' || pid === 'fund' || pid === 'mm' || pid === 'mmn' || pid === 'mmc' || pid === 'mmf' || pid === 'mmp')) {
+    if (open && (pid === 'q4' || pid === 'fund' || pid === 'mm' || pid === 'mmn' || pid === 'mmc' || pid === 'mmf' || pid === 'mmp' || pid === 'mmd')) {
         try { loadFuelFilterStatus(); } catch (e) {}
     }
     // 📋 Список монет МММ-монітора поки згорнутий НЕ малюється взагалі, тож на
@@ -5888,6 +5996,7 @@ function togglePanel(pid) {
     if (open && pid === 'mmclist') { try { mmRender('ctr'); } catch (e) {} }
     if (open && pid === 'mmflist') { try { mmRender('fc'); } catch (e) {} }
     if (open && pid === 'mmplist') { try { mmRender('pull'); } catch (e) {} }
+    if (open && pid === 'mmdlist') { try { mmRender('dec'); } catch (e) {} }
 }
 // Історична назва (заголовки Черг) — та сама функція.
 const toggleQueuePanel = togglePanel;
@@ -5898,11 +6007,11 @@ function _qCollapsed(qid) {
 }
 // Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
 // 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
-const _PANEL_IDS = ['levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
+const _PANEL_IDS = ['levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
 // Секції, ЗГОРНУТІ ЗА ЗАМОВЧУВАННЯМ (доки користувач сам не розгорне): список
 // монет МММ-монітора — вимога 18.09. Для решти дефолт лишається «розгорнуто»,
 // тобто збережений вибір користувача завжди сильніший за цей список.
-const _PANEL_CLOSED_BY_DEFAULT = new Set(['mmlist', 'mmnlist', 'mmclist', 'mmflist', 'mmplist']);
+const _PANEL_CLOSED_BY_DEFAULT = new Set(['mmlist', 'mmnlist', 'mmclist', 'mmflist', 'mmplist', 'mmdlist']);
 (() => {
     _PANEL_IDS.forEach(pid => {
         try {
@@ -7088,6 +7197,7 @@ async function loadSettings() {
              ['sm-mmc-gate', 'mmc_gate_enabled'], ['sm-mmc-gate-banner', 'mmc_gate_banner'],
              ['sm-mmf-gate', 'mmf_gate_enabled'], ['sm-mmf-gate-banner', 'mmf_gate_banner'],
              ['sm-mmp-gate', 'mmp_gate_enabled'], ['sm-mmp-gate-banner', 'mmp_gate_banner'],
+             ['sm-mmd-gate', 'mmd_gate_enabled'], ['sm-mmd-gate-banner', 'mmd_gate_banner'],
              ['sm-mm-gate-str', 'mm_gate_strength']]
                 .forEach(([id, k]) => {
                     const el = document.getElementById(id);
@@ -7275,14 +7385,15 @@ function updateSettingsSummary() {
      ['sm-mmo-gate', 'sm-mmo-gate-banner', '🧮 МММ-МОН'],
      ['sm-mmc-gate', 'sm-mmc-gate-banner', '⚡ МММ-CTR'],
      ['sm-mmf-gate', 'sm-mmf-gate-banner', '🔮 МММ-Local'],
-     ['sm-mmp-gate', 'sm-mmp-gate-banner', '🧭 МММ-Pull']].forEach(([g, b, t]) => {
+     ['sm-mmp-gate', 'sm-mmp-gate-banner', '🧭 МММ-Pull'],
+     ['sm-mmd-gate', 'sm-mmd-gate-banner', '🧠 МММ-Decision']].forEach(([g, b, t]) => {
         const _g = document.getElementById(g);
         if (!_g || !_g.checked) return;
         const _b = document.getElementById(b);
         summary += ' · ' + t + (_b && _b.checked ? ' +банер' : '');
     });
     const _gs = document.getElementById('sm-mm-gate-str');
-    const _anyMm = ['sm-mm-gate', 'sm-mmo-gate', 'sm-mmc-gate', 'sm-mmf-gate', 'sm-mmp-gate'].some(i => {
+    const _anyMm = ['sm-mm-gate', 'sm-mmo-gate', 'sm-mmc-gate', 'sm-mmf-gate', 'sm-mmp-gate', 'sm-mmd-gate'].some(i => {
         const e = document.getElementById(i); return e && e.checked; });
     if (_gs && _gs.checked && _anyMm) summary += ' ⚑сила';
     const lqG = document.getElementById('sm-liq-gate');
@@ -7387,7 +7498,8 @@ const _SM_MM_GATES = [['sm-mm-gate', 'sm-mm-gate-banner', 'mm_gate_enabled', 'mm
                       ['sm-mmo-gate', 'sm-mmo-gate-banner', 'mmo_gate_enabled', 'mmo_gate_banner'],
                       ['sm-mmc-gate', 'sm-mmc-gate-banner', 'mmc_gate_enabled', 'mmc_gate_banner'],
                       ['sm-mmf-gate', 'sm-mmf-gate-banner', 'mmf_gate_enabled', 'mmf_gate_banner'],
-                      ['sm-mmp-gate', 'sm-mmp-gate-banner', 'mmp_gate_enabled', 'mmp_gate_banner']];
+                      ['sm-mmp-gate', 'sm-mmp-gate-banner', 'mmp_gate_enabled', 'mmp_gate_banner'],
+                      ['sm-mmd-gate', 'sm-mmd-gate-banner', 'mmd_gate_enabled', 'mmd_gate_banner']];
 function _smMmGateSync() {
     _SM_MM_GATES.forEach(([gi, bi]) => {
         const g = document.getElementById(gi);
@@ -12403,7 +12515,9 @@ const _MMB = { old: _mmMkBook('mm', 'МММ LiQ', 'mmMonitorUi'),
                // 🔮 Блок «МММ-Local» (15.10) — книга `fc`, префікс id `mmf`.
                fc: _mmMkBook('mmf', 'МММ-Local', 'mmFcUi'),
                // 🧭 Блок «МММ-Pull» (20.10) — книга `pull`, префікс id `mmp`.
-               pull: _mmMkBook('mmp', 'МММ-Pull', 'mmPullUi') };
+               pull: _mmMkBook('mmp', 'МММ-Pull', 'mmPullUi'),
+               // 🧠 Блок «МММ-Decision» (22.10) — книга `dec`, префікс id `mmd`.
+               dec: _mmMkBook('mmd', 'МММ-Decision', 'mmDecUi') };
 // 📋 СКЛАД КОЛОНОК КОЖНОЇ ТАБЛИЦІ (вимога 01.10). Ключі — у порядку показу,
 // без ☑ і «Символ» (вони є завжди). Заголовки в HTML ідуть у ТОМУ САМОМУ
 // порядку — тест-замок звіряє кількість <th> і <td>.
@@ -12421,10 +12535,12 @@ _MMB.ctr.cols = ['status', 'mm', 'ctr1', 'ctr4', 'state', 'price', 'pchg', 'f1',
 _MMB.fc.cols = ['status', 'mm', 'fc1', 'fc4', 'state', 'price', 'pchg'];
 // 🧭 Маса ліквідності ⬆/⬇ і найбільший магніт — те, що в звіті 📡 Tickr.
 _MMB.pull.cols = ['status', 'mm', 'mass', 'magnet', 'state', 'price', 'pchg', 'f1', 'f4'];
-// Книга за кодом ('old' | 'new' | 'ctr' | 'fc' | 'pull'); інше — 🧮 МММ-монітор.
-function _mmBk(bk) { return _MMB[(bk === 'new' || bk === 'ctr' || bk === 'fc' || bk === 'pull') ? bk : 'old']; }
+// 🧠 Вердикт банера Decision — окрема колонка; 🔮 1H/4H лишаються як контекст.
+_MMB.dec.cols = ['status', 'mm', 'dec', 'state', 'price', 'pchg', 'f1', 'f4'];
+// Книга за кодом ('old' | 'new' | 'ctr' | 'fc' | 'pull' | 'dec'); інше — 🧮 МММ-монітор.
+function _mmBk(bk) { return _MMB[(bk === 'new' || bk === 'ctr' || bk === 'fc' || bk === 'pull' || bk === 'dec') ? bk : 'old']; }
 const _mmBkCode = B => (B === _MMB.new ? 'new' : (B === _MMB.ctr ? 'ctr'
-    : (B === _MMB.fc ? 'fc' : (B === _MMB.pull ? 'pull' : 'old'))));
+    : (B === _MMB.fc ? 'fc' : (B === _MMB.pull ? 'pull' : (B === _MMB.dec ? 'dec' : 'old')))));
 const _mmEl = (B, suffix) => document.getElementById(B.P + suffix);
 // Локальний escape: глобального `esc` на сторінці НЕМАЄ (той, що є, — локальна
 // константа всередині рендера логу), тож покладатись на нього не можна.
@@ -12477,6 +12593,8 @@ function _mmSortVal(r, col) {
     // `magnet_dist_pct`), а не розбором форматованого підпису.
     if (col === 'magnet') return (r.magnet_share == null ? null : Number(r.magnet_share));
     if (col === 'magdist') return (r.magnet_dist_pct == null ? null : Number(r.magnet_dist_pct));
+    // 🧠 Вердикт Decision — нахил зі знаком (+ LONG, − SHORT), як і в банері.
+    if (col === 'dec') return (r.dir == null ? null : Number(r.dir));
     // 💹 РУХ — власна колонка (17.09), тож «Ціна» сортується за ЦІНОЮ, а «яка
     // монета зараз іде вгору» — це колонка «Рух». Рядок без історії
     // (`price_dir` порожній) — це «ще не знаємо», а не «нуль».
@@ -12664,7 +12782,28 @@ const _MM_CELL = {
     fc4:    r => `<td>${_mmFcFullCell(r.f4, '4H')}</td>`,
     mass:   r => `<td>${_mmMassCell(r)}</td>`,
     magnet: r => `<td>${_mmMagnetCell(r)}</td>`,
+    dec:    r => `<td>${_mmDecCell(r)}</td>`,
 };
+// 🧠 «🔴 SHORT 85% · СИЛЬНИЙ» — РІВНО те, що банер Decision над графіком цієї
+// монети (той самий `compute_decision`). Слова сили — дзеркало `V_UA` банера.
+const _MMD_V_UA = { good: 'СИЛЬНИЙ', marginal: 'СЕРЕДНІЙ', poor: 'СЛАБКИЙ' };
+function _mmDecCell(r) {
+    if (r.dec_headline == null && r.dec_verdict == null) return '<span style="color:#6b7280">—</span>';
+    const side = r.mm;
+    if (side !== 'LONG' && side !== 'SHORT') {
+        return `<span title="Decision: NEUTRAL — бали LONG і SHORT майже рівні (⚖ рівновага)" style="font-family:monospace;color:#8b93a7">⚖ NEUTRAL</span>`;
+    }
+    const col = side === 'LONG' ? '#4ade80' : '#f87171';
+    const word = _MMD_V_UA[r.dec_verdict] || '';
+    const wcol = r.dec_verdict === 'good' ? col : (r.dec_verdict === 'poor' ? '#8b93a7' : '#fbbf24');
+    const tip = `Банер Decision: ${_mmEsc(r.dec_headline || '')}${word ? ' · ' + word : ''}`
+        + (r.dec_conf ? ` · впевненість ${_mmEsc(r.dec_conf)}` : '');
+    return `<span title="${tip}" style="font-family:monospace;white-space:nowrap">`
+        + `<span style="display:inline-block;width:78px;color:${col};font-weight:700">${side === 'LONG' ? '🟢' : '🔴'} ${side}</span>`
+        + `<span style="display:inline-block;width:40px;text-align:right;color:${col};font-weight:700">${r.dec_prob != null ? r.dec_prob + '%' : '—'}</span>`
+        + (word ? `<span style="display:inline-block;margin-left:8px;padding:0 5px;border:1px solid ${wcol};border-radius:4px;font-size:0.62rem;color:${wcol}">${word}</span>` : '')
+        + `</span>`;
+}
 // 🧭 «⬆ 62.3% / ⬇ 37.7%» — частки маси ліквідності вище/нижче ціни (ті самі
 // числа, що в звіті 📡 Tickr). Зелений — маса вище (тягне вгору), червоний — нижче.
 function _mmMassCell(r) {
@@ -12809,7 +12948,7 @@ function _mmLoadUi(B) {
     // Сортування за колонкою, якої в ЦІЙ таблиці немає, не відновлюємо.
     const _ok = { newstr: 'new', liqstr: 'liq', runway: 'runway', price: 'price',
                   ctr1: 'ctr1', ctr4: 'ctr4', fc1: 'fc1', fc4: 'fc4',
-                  mass: 'mass', magnet: 'magnet', magdist: 'magnet' };
+                  mass: 'mass', magnet: 'magnet', magdist: 'magnet', dec: 'dec' };
     if (v.sortCol && (!_ok[v.sortCol] || B.cols.includes(_ok[v.sortCol]))) {
         B.sort = { col: v.sortCol, dir: (v.sortDir < 0 ? -1 : 1) };
     }
@@ -13011,7 +13150,7 @@ function mmRenderBias(bias, bk) {
     if (bias !== undefined) _mmBk(bk).bias = bias || null;
     // ОДИН painter на обидва блоки: вигляд, таймер, кандидат, ↻ — ідентичні,
     // відрізняються лише ДЖЕРЕЛОМ чисел (МММ LiQ проти Новий МММ).
-    [_MMB.old, _MMB.new, _MMB.ctr, _MMB.fc, _MMB.pull].forEach(B => _mmPaintBias(B.bias, _mmBiasIds(B), B.src));
+    [_MMB.old, _MMB.new, _MMB.ctr, _MMB.fc, _MMB.pull, _MMB.dec].forEach(B => _mmPaintBias(B.bias, _mmBiasIds(B), B.src));
 }
 function _mmPaintBias(src, ids, srcName) {
     const bar = document.getElementById(ids.bar);
@@ -13130,6 +13269,7 @@ function _mmTgSummary(s) {
     (s.mmc_bias_tg === false ? off : on).push('⚡ банер CTR');
     (s.mmf_bias_tg === false ? off : on).push('🔮 банер Local');
     (s.mmp_bias_tg === false ? off : on).push('🧭 банер Pull');
+    (s.mmd_bias_tg === false ? off : on).push('🧠 банер Decision');
     (s.start_signal_tg_alerts ? on : off).push('₿ сеанс');
     el.textContent = (on.length ? '📨 ' + on.join(' · ') : '📭 нічого не шлемо')
         + (off.length ? ' · ⛔ ' + off.join(' · ') : '');
@@ -13363,6 +13503,8 @@ function _ffWantedSections() {
     if (vis('mmf-body')) want.push('mmf');
     // 🧭 МММ-Pull — своя секція (`mmp`).
     if (vis('mmp-body')) want.push('mmp');
+    // 🧠 МММ-Decision — своя секція (`mmd`).
+    if (vis('mmd-body')) want.push('mmd');
     return want;
 }
 
@@ -14408,7 +14550,7 @@ function renderFuelFilter(d) {
     // ⚡ C2: які ВАЖКІ секції сервер реально порахував у цій відповіді.
     // Без цього прапорця порожній `timers4` (секцію просто не запитували)
     // помилково прочитався б як «черга порожня» і стер би таблицю.
-    const _served = d.served || { q4: true, fund: true, mm: true, mmn: true, mmc: true, mmf: true, mmp: true };
+    const _served = d.served || { q4: true, fund: true, mm: true, mmn: true, mmc: true, mmf: true, mmp: true, mmd: true };
     // 🧮 МММ-монітор — малюємо ЛИШЕ коли сервер реально віддав секцію. Без цієї
     // перевірки порожній `mm_monitor` (секцію просто не просили, бо гармошка
     // згорнута) стер би таблицю і виглядав би як «МММ зник».
@@ -14417,6 +14559,7 @@ function renderFuelFilter(d) {
     if (_served.mmn && d.mm_new) mmApplyState(d.mm_new, 'new');
     if (_served.mmc && d.mm_ctr) mmApplyState(d.mm_ctr, 'ctr');
     if (_served.mmf && d.mm_fc) mmApplyState(d.mm_fc, 'fc');
+    if (_served.mmd && d.mm_dec) mmApplyState(d.mm_dec, 'dec');
     if (_served.mmp && d.mm_pull) { mmApplyState(d.mm_pull, 'pull'); _mmpScanPaint(d.mm_pull.scan); }
     // BTC START/STOP banner — refresh from state, then let the global ticker
     // keep the progress filling smoothly.
@@ -14472,12 +14615,16 @@ function renderFuelFilter(d) {
     setIf('mmp-bars', String(s.mmp_bars || 720));
     setIf('mmp-sort', s.mmp_sort || 'pull_report');
     setIf('mmp-interval', String(s.mmp_interval_min || 15));
+    // 🧠 МММ-Decision — тумблер (деф. ВИМК) і вікно банера.
+    setIf('ff-mm-dec-enabled', s.mm_dec_enabled === true);
+    setIf('ff-mmd-bias-confirm', String(s.mmd_bias_confirm_sec != null ? s.mmd_bias_confirm_sec : 120));
     setIf('ff-mmn-bias-confirm', String(s.mmn_bias_confirm_sec != null ? s.mmn_bias_confirm_sec : 120));
     setIf('ff-mm-bias-tg', s.mm_bias_tg !== false);                 // default true
     setIf('ff-mmn-bias-tg', s.mmn_bias_tg !== false);               // default true
     setIf('ff-mmf-bias-tg', s.mmf_bias_tg !== false);               // 🔮 default true
     setIf('ff-mmc-bias-tg', s.mmc_bias_tg !== false);               // ⚡ default true
     setIf('ff-mmp-bias-tg', s.mmp_bias_tg !== false);               // 🧭 default true
+    setIf('ff-mmd-bias-tg', s.mmd_bias_tg !== false);               // 🧠 default true
     if (typeof _mmTgSummary === 'function') _mmTgSummary(s);
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
@@ -15580,11 +15727,17 @@ async function saveFuelFilterSettings() {
         mmp_bars: parseInt(_v('mmp-bars', '720') || '720', 10),
         mmp_sort: _v('mmp-sort', 'pull_report'),
         mmp_interval_min: parseInt(_v('mmp-interval', '15') || '15', 10),
+        // 🧠 Блок «МММ-Decision» — тумблер, пороги, вікно банера.
+        mm_dec_enabled: _c('ff-mm-dec-enabled'),
+        mmd_str_min: _mmMinStr(_MMB.dec, 'all'),
+        mmd_str_mins: Object.assign({}, _MMB.dec.strMins),
+        mmd_bias_confirm_sec: parseInt(_v('ff-mmd-bias-confirm', '120') || '0', 10),
         mm_bias_tg: _c('ff-mm-bias-tg'),
         mmn_bias_tg: _c('ff-mmn-bias-tg'),
         mmf_bias_tg: _c('ff-mmf-bias-tg'),
         mmc_bias_tg: _c('ff-mmc-bias-tg'),
         mmp_bias_tg: _c('ff-mmp-bias-tg'),
+        mmd_bias_tg: _c('ff-mmd-bias-tg'),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
@@ -15968,7 +16121,7 @@ const SIGNAL_BADGES_JS = {
 const ENGINE_BADGES_JS = {
     'Q1': '🎯 Черга-1', 'Q2': '🎯 Черга-2', 'Q3': '🎯 Готовність', 'Q4': '🎯 Черга-4',
     'Q3-VOB(funding)': '💰 VOB+Шари', 'POC-сетап': '🎯 POC-сетап',
-    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-new', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Local', 'MMP': '🧭 МММ-Pull',
+    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-new', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Local', 'MMP': '🧭 МММ-Pull', 'MMD': '🧠 МММ-Decision',
     'EXH': '🔥 Виснаженість', 'FF': '🔥 FF', 'direct': '⚡ Прямий',
 };
 const SIGNAL_ICON_JS = {
@@ -15978,12 +16131,12 @@ const SIGNAL_ICON_JS = {
     'poc': '🎯', 'opp': '🔄', 'external': '🔌', 'manual': '✋',
     'manual_ui': '✋', 'manual_ui_overflow': '✋',
     'Q3-VOB(funding)': '💰', 'POC-сетап': '🎯', 'EXH': '🔥', 'FF': '🔥',
-    'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭',
+    'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠',
 };
 // Двигун, чия картинка ПЕРЕКРИВАЄ картинку сигналу: угоди 🧮 МММ-монітора
 // йдуть від того самого `vob_alert`, що й угоди Черги-4, тож 🟪 їх не
 // розрізняло. Мітка у підказці лишається повною.
-const ENGINE_ICON_OVERRIDE_JS = { 'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭' };
+const ENGINE_ICON_OVERRIDE_JS = { 'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠' };
 function signalCodeOf(raw) {
     if (!raw) return '';
     return String(raw).split(' · ')[0].split(' → ')[0].trim();
