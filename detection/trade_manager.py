@@ -254,7 +254,7 @@ DEFAULT_SETTINGS = {
     #          bias=BEARISH appears → close immediately.
     # Default OFF + 15m TF — opt-in for users who want the strict-bias-flip exit.
     'use_opposite_ob_exit': False,
-    'opposite_ob_exit_timeframe': '15m',  # 15m / 30m / 1h / 4h
+    'opposite_ob_exit_timeframe': '15m',  # 5m / 15m / 30m / 1h / 4h
 
     # === 🔮 Прогноз / 🧠 Decision як САМОСТІЙНІ правила виходу (усі дефолт OFF) ===
     # Кожне працює НЕЗАЛЕЖНО від інших і НЕ потребує CHoCH-підтвердження (на
@@ -986,7 +986,7 @@ class TradeManager:
                 self._settings['mm_against_exit_confirm_sec'] = 60
 
             # opposite_ob_exit_timeframe — validated string, default '15m'
-            ALLOWED_EXIT_TFS = ('15m', '30m', '1h', '4h')
+            ALLOWED_EXIT_TFS = ('5m', '15m', '30m', '1h', '4h')
             if self._settings.get('opposite_ob_exit_timeframe') not in ALLOWED_EXIT_TFS:
                 self._settings['opposite_ob_exit_timeframe'] = '15m'
             

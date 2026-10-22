@@ -1427,8 +1427,9 @@ def test_state_route_enriches_positions_from_the_snapshot():
     src = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
     i = src.index("@app.route('/api/tm/state')")
     blk = src[i:i + 4000]
-    _check('mm_snapshot_for' in blk, 'маршрут не читає знімок МММ')
-    _check("pos['old_mm']" in blk, 'позиція не отримує поле old_mm')
+    # ⚠️ 22.10: колонки «🧮 МММ LiQ»/«🆕 МММ-NEW» замінено на 🧠 МММ-Decision.
+    _check('dec_trade_for' in blk, 'маршрут не читає кеш МММ-Decision')
+    _check("pos['mmd']" in blk, 'позиція не отримує поле mmd')
     # ⚠️ Жодних розрахунків на цьому гарячому ендпоінті.
     for bad in ('_fuel_dir_legacy', 'compute_mm', '_liq_state'):
         _check(bad not in blk, f'на /api/tm/state зʼявився розрахунок: {bad}')
@@ -1436,25 +1437,24 @@ def test_state_route_enriches_positions_from_the_snapshot():
 
 
 def test_ui_trades_tables_got_the_column_and_the_right_colspan():
+    """⚠️ 22.10: МММ-колонки угод замінено на «🧠 МММ-Decision» + 🚨 сигнал
+    (тест переписано, а не «полагоджено» — вимога змінилась)."""
     import re as _re
     for tid, empty in (('tm-open-table', 'No open positions'),
                        ('tm-shadow-open-table', 'No paper positions')):
         i = _HTML.index(f'id="{tid}"')
         tbl = _HTML[i:_HTML.index('</table>', i)]
-        _check('МММ LiQ' in tbl, f'{tid}: немає заголовка колонки')
+        _check('🧠 МММ-Decision</th>' in tbl, f'{tid}: немає заголовка колонки')
+        _check('МММ LiQ</th>' not in tbl and 'МММ-NEW</th>' not in tbl,
+               f'{tid}: старі МММ-колонки мусять зникнути')
         n = len(_re.findall(r'<th[\s>]', tbl))
         m = _re.search(r'colspan="(\d+)"', tbl)
         _check(m and int(m.group(1)) == n,
                f'{tid}: colspan {m and m.group(1)} ≠ {n} заголовків')
-    # ⚠️ 12.10 «зроби компактнішими»: обидві МММ-колонки угод малює СПІЛЬНИЙ
-    # компактний рендер (ffFuelCell 144px туди не влазив) — один на обидві.
-    for f in ('oldMmCellHTML', 'newMmCellHTML'):
-        i = _HTML.index(f'function {f}(')
-        fn = _HTML[i:_HTML.index('\n}', i)]
-        _check('mmCompactCellHTML(' in fn, f'{f} малює МММ своїм способом')
+    for f in ('mmdTradeCellHTML', 'mmdAlertCellHTML'):
         _check(_HTML.count('${' + f + '(p)}') == 2,
                f'{f} підключена не в обидві таблиці (real + paper)')
-    print('✓ UI: колонки «🧮 МММ LiQ» + «🆕 МММ-NEW» у real+paper, спільний рендер')
+    print('✓ UI: колонки «🧠 МММ-Decision» + «🚨» у real+paper')
 
 
 # ═══ 15. 🩹 БОРОТЬБА З МЕРЕХТІННЯМ: вікно замість «попереднього такту» ════

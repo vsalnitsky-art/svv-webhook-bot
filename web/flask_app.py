@@ -6008,22 +6008,18 @@ def register_api_routes(app):
                 str_map = ff.get_fuel_strength_map()
                 _all_pos = ((state.get('positions') or [])
                             + (state.get('shadow_positions') or []))
-                # 🧮 Колонка «МММ LiQ» у таблицях відкритих угод. Це ЧИТАННЯ
-                # знімка, який двигун уже порахував для 🧮 МММ-монітора — тобто
-                # рівно те саме число, що стоїть у моніторі й у шарі «Старий
-                # МММ» Черги-4. ЖОДНИХ розрахунків на цьому гарячому ендпоінті:
-                # саме через них колонку «МММ» колись і прибрали звідси.
-                _mm_map = {}
+                # 🧠 Колонка «МММ-Decision» + 🚨 сигнальна колонка (вимога
+                # 22.10, замінили «🧮 МММ LiQ» і «🆕 МММ-NEW»). ЧИТАННЯ кешу
+                # вердиктів двигуна (той самий, що таблиця блоку 🧠 МММ-Decision)
+                # + пік угоди — ЖОДНИХ розрахунків на цьому гарячому ендпоінті.
+                _dec_map = {}
                 try:
-                    _mm_map = ff.mm_snapshot_for([p.get('symbol') for p in _all_pos])
-                except AttributeError:
-                    pass          # старіший fuel_filter — колонка просто порожня
-                # 🆕 Колонка «МММ-NEW» — так само ЧИТАННЯ знімка двигуна.
-                _mmn_map = {}
-                try:
-                    _mmn_map = ff.mmn_snapshot_for([p.get('symbol') for p in _all_pos])
-                except AttributeError:
-                    pass
+                    from detection.fuel_filter import mmd_trade_key
+                    _dec_map = ff.dec_trade_for([
+                        (p.get('symbol'), p.get('side'), p.get('opened_at'))
+                        for p in _all_pos])
+                except (AttributeError, ImportError):
+                    mmd_trade_key = None   # старіший fuel_filter — колонки порожні
                 # 🏷 Останній OB 4H (позначка в Side) — памʼять сканера, без БД.
                 _ob4_map = {}
                 try:
@@ -6037,10 +6033,10 @@ def register_api_routes(app):
                     sym = pos.get('symbol')
                     if sym in exh_map:
                         pos['exhaustion'] = exh_map[sym]
-                    if sym in _mm_map:
-                        pos['old_mm'] = _mm_map[sym]
-                    if sym in _mmn_map:
-                        pos['new_mm'] = _mmn_map[sym]
+                    if _dec_map and mmd_trade_key:
+                        _dk = mmd_trade_key(sym, pos.get('side'), pos.get('opened_at'))
+                        if _dk in _dec_map:
+                            pos['mmd'] = _dec_map[_dk]
                     if sym in _ob4_map:
                         pos['ob4h'] = _ob4_map[sym]
                     # Колонку «МММ» прибрано з таблиць відкритих угод, тож

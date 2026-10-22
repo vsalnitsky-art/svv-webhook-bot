@@ -942,6 +942,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .mm-ob4h-slot .tm-ob4h { margin-left:0; }
 .mm-subsort { cursor:pointer; user-select:none; font-weight:400; font-size:0.66rem; color:#93c5fd; margin-left:4px; text-transform:none; }
 .mm-subsort:hover { color:#e5e7eb; }
+.tm-ob4h-l { margin-left:0 !important; margin-right:5px; }
+/* 🚨 Сигнал МММ-Decision ПРОТИ угоди — блимає, щоб звернути увагу. */
+@keyframes tmMmdHot { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
+.tm-mmd-alert-hot { animation: tmMmdHot 1.2s ease-in-out infinite; }
 .tm-ob4h { display:inline-block; margin-left:4px; padding:0 3px; border:1px solid; border-radius:4px; font-size:0.62rem; font-weight:700; font-family:monospace; line-height:1.3; vertical-align:middle; }
 
 /* Compact 📌 manual-mode mark to the LEFT of the symbol. Fixed width and ALWAYS
@@ -4714,6 +4718,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <span style="margin-left:8px;font-size:0.78rem;color:#888">TF:</span>
                             <select id="tm-opposite-ob-exit-tf" onchange="saveTMSettings()"
                                     style="background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px">
+                                <option value="5m">5M</option>
                                 <option value="15m">15M</option>
                                 <option value="30m">30M</option>
                                 <option value="1h">1H</option>
@@ -5077,8 +5082,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="🧮 МММ LiQ по монеті — той самий показник, що в секції «🧮 МММ-монітор» і в шарі «МММ LiQ» Черги-4: напрямок тиску маркетмейкера (🟢 вгору / 🔴 вниз), сила 0–100% і стрілка тренду (сила росте / слабшає). Це ЧИТАННЯ знімка двигуна — на цю таблицю воно не додає жодного розрахунку. Порожньо («—») означає, що знімка по монеті ще немає.">🧮 МММ LiQ</th>
-                        <th title="🆕 МММ-NEW по монеті — той самий показник, що в секції «🆕 МММ-new» (новий МММ двигуна): напрямок, сила 0–100% і стрілка тренду. Це ЧИТАННЯ знімка двигуна — жодного розрахунку на цій таблиці. Коли блок МММ-new вимкнено, число береться з 🧮 знімка (там те саме значення з тих самих даних). «—» = знімка по монеті ще немає.">🆕 МММ-NEW</th>
+                        <th title="🧠 МММ-Decision по монеті — РІВНО той вердикт, що банер Decision над графіком і таблиця блоку «🧠 МММ-Decision» (той самий кеш двигуна): бік, ймовірність і слово сили. Для монет у відкритій угоді рахується ЗАВЖДИ, навіть коли блок 🧠 МММ-Decision вимкнено. «—» = вердикту ще немає (рахується порціями за такт).">🧠 МММ-Decision</th>
+                        <th title="🚨 Сигнал МММ-Decision ВІДНОСНО угоди: ✓ зелений — вердикт за угодою; ↓ бурштиновий — той самий бік, але перевага впала від піку цієї угоди на 15+ п.п. або слово сили опустилось (СИЛЬНИЙ → СЕРЕДНІЙ…); ⚖ бурштиновий — Decision став NEUTRAL; ⚠ червоний, що блимає — Decision ПРОТИЛЕЖНИЙ угоді (угода йде не за напрямком). Лише попередження — нічого не закриває.">🚨</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
@@ -5147,8 +5152,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="🧮 МММ LiQ по монеті — той самий показник, що в секції «🧮 МММ-монітор» і в шарі «МММ LiQ» Черги-4: напрямок тиску маркетмейкера (🟢 вгору / 🔴 вниз), сила 0–100% і стрілка тренду (сила росте / слабшає). Це ЧИТАННЯ знімка двигуна — на цю таблицю воно не додає жодного розрахунку. Порожньо («—») означає, що знімка по монеті ще немає.">🧮 МММ LiQ</th>
-                        <th title="🆕 МММ-NEW по монеті — той самий показник, що в секції «🆕 МММ-new» (новий МММ двигуна): напрямок, сила 0–100% і стрілка тренду. Це ЧИТАННЯ знімка двигуна — жодного розрахунку на цій таблиці. Коли блок МММ-new вимкнено, число береться з 🧮 знімка (там те саме значення з тих самих даних). «—» = знімка по монеті ще немає.">🆕 МММ-NEW</th>
+                        <th title="🧠 МММ-Decision по монеті — РІВНО той вердикт, що банер Decision над графіком і таблиця блоку «🧠 МММ-Decision» (той самий кеш двигуна): бік, ймовірність і слово сили. Для монет у відкритій угоді рахується ЗАВЖДИ, навіть коли блок 🧠 МММ-Decision вимкнено. «—» = вердикту ще немає (рахується порціями за такт).">🧠 МММ-Decision</th>
+                        <th title="🚨 Сигнал МММ-Decision ВІДНОСНО угоди: ✓ зелений — вердикт за угодою; ↓ бурштиновий — той самий бік, але перевага впала від піку цієї угоди на 15+ п.п. або слово сили опустилось (СИЛЬНИЙ → СЕРЕДНІЙ…); ⚖ бурштиновий — Decision став NEUTRAL; ⚠ червоний, що блимає — Decision ПРОТИЛЕЖНИЙ угоді (угода йде не за напрямком). Лише попередження — нічого не закриває.">🚨</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
@@ -10244,7 +10249,7 @@ async function loadTMSettings() {
         _setV('tm-pilot-poc-hours', s.pilot_poc_hours != null ? s.pilot_poc_hours : 72, 72);
         // Validate TF before assigning to <select> — fall back to 15m for
         // unknown values so the dropdown doesn't end up in a blank state.
-        const oppExitTf = ['15m', '30m', '1h', '4h'].includes(s.opposite_ob_exit_timeframe)
+        const oppExitTf = ['5m', '15m', '30m', '1h', '4h'].includes(s.opposite_ob_exit_timeframe)
             ? s.opposite_ob_exit_timeframe : '15m';
         document.getElementById('tm-opposite-ob-exit-tf').value = oppExitTf;
         document.getElementById('tm-use-htf-flip').checked = !!s.use_htf_flip;
@@ -16013,68 +16018,66 @@ const FUEL_TOOLTIP = "МММ — тиск маркетмейкера на цін
 // МММ columns and the 💰 funding table): coloured direction dot + strength
 // 0..100% + trend arrow + mini-bar + a colour-coded band word at the END.
 //   dir: 'LONG'|'SHORT'|null(=balanced),  now/prev: 0..100 strength (or null)
-// 🧮 Комірка «МММ LiQ» у таблицях ВІДКРИТИХ УГОД (real + paper).
-// ⚠️ Малює ТОЙ САМИЙ спільний віджет `ffFuelCell`, що й 🧮 МММ-монітор і черги
-// — тобто одна метрика виглядає однаково в усіх трьох місцях. `hideBand=true`:
-// у цих таблицях і так тісно, словесний рівень тиску туди не влазить (він
-// лишається в підказці віджета).
-// ⚠️ Дані приходять ГОТОВИМИ з `/api/tm/state` (`pos.old_mm` = зріз знімка
-// двигуна). Нічого не рахуємо і не довантажуємо.
-function oldMmCellHTML(p) {
-    return mmCompactCellHTML(p && p.old_mm, '🧮 МММ LiQ',
-        'Знімка МММ LiQ по цій монеті ще немає (перший такт після старту)');
-}
-// 🆕 Комірка «МММ-NEW» (вимога 12.10) — `pos.new_mm` = зріз знімка блоку
-// МММ-new (фолбек — `new_status` 🧮 знімка, те саме число). Нічого не рахуємо.
-function newMmCellHTML(p) {
-    return mmCompactCellHTML(p && p.new_mm, '🆕 МММ-NEW',
-        'Знімка МММ-NEW по цій монеті ще немає (перший такт після старту)');
-}
-// 📏 КОМПАКТНА комірка МММ для таблиць угод (вимога 12.10 «зроби компактнішими»):
-// ▲/▼ + сила% + стрілка тренду + мініметр 0–100, фіксована ширина 64px (щоб
-// стовпчик не «стрибав»). Пороги кольору і тренду — ТІ САМІ, що в `ffFuelCell`
-// (>+1 ↑ · <−1 ↓), рівень тиску — у підказці.
-function mmCompactCellHTML(m, label, emptyTip) {
-    if (!m || m.strength == null) {
-        return `<td><span style="color:#6b7280" title="${emptyTip}">—</span></td>`;
+// 🧠 Комірка «МММ-Decision» у таблицях ВІДКРИТИХ УГОД (вимога 22.10, замість
+// «🧮 МММ LiQ» і «🆕 МММ-NEW»). `pos.mmd` приходить ГОТОВИМ з `/api/tm/state`
+// (кеш вердиктів двигуна — той самий, що таблиця блоку 🧠 МММ-Decision), тож
+// нічого не рахуємо. Вигляд — компактна версія `_mmDecCell` (бік · % · слово).
+const _MMD_TRADE_WORD = { good: 'СИЛ', marginal: 'СЕР', poor: 'СЛАБ' };
+function mmdTradeCellHTML(p) {
+    const m = p && p.mmd;
+    if (!m) {
+        return '<td><span style="color:#6b7280" title="Вердикту МММ-Decision по цій монеті ще немає (рахується порціями за такт двигуна)">—</span></td>';
     }
-    const isL = m.mm === 'LONG', isS = m.mm === 'SHORT';
-    const ar = isL ? '▲' : (isS ? '▼' : '•');
-    const acol = isL ? '#22c55e' : (isS ? '#ef4444' : '#8b93a7');
-    const now = Number(m.strength);
-    const col = now >= 60 ? '#22c55e' : (now >= 30 ? '#84cc16'
-        : (now >= 10 ? '#bef264' : '#8b93a7'));
-    let tr = '', trcol = '#8b93a7';
-    if (m.strength_prev != null) {
-        const pv = Number(m.strength_prev);
-        if (now > pv + 1) { tr = '↑'; trcol = '#4ade80'; }
-        else if (now < pv - 1) { tr = '↓'; trcol = '#f87171'; }
-        else { tr = '→'; }
+    const word = (typeof _MMD_V_UA !== 'undefined' && _MMD_V_UA[m.verdict]) || '';
+    const tip = `🧠 МММ-Decision: ${m.headline || (m.mm || 'NEUTRAL')}${word ? ' · ' + word : ''}`
+        + (m.confidence ? ` · впевненість ${m.confidence}` : '') + ` · перевага ${m.strength}%`;
+    if (m.mm !== 'LONG' && m.mm !== 'SHORT') {
+        return `<td><span title="${tip}" style="font-family:monospace;color:#8b93a7;white-space:nowrap">⚖ NEUTRAL</span></td>`;
     }
-    const band = (isL || isS) ? fuelBand(now).txt : 'рівновага';
-    const dirTxt = isL ? 'LONG' : (isS ? 'SHORT' : '⚖ рівновага');
-    const tip = `${label}: ${dirTxt} · сила ${Math.round(now)}% (${band})`
-        + (tr ? ` · тренд ${tr}` : '');
-    const w = Math.max(0, Math.min(100, now));
-    return `<td><span title="${tip}" style="display:inline-flex;flex-direction:column;gap:2px;width:64px;font-family:monospace">`
-        + `<span style="display:flex;align-items:center;line-height:1;font-size:0.74rem">`
-        +   `<span style="width:10px;color:${acol};font-weight:900">${ar}</span>`
-        +   `<b style="width:34px;text-align:right;color:${col}">${Math.round(now)}%</b>`
-        +   `<span style="width:14px;text-align:center;color:${trcol}">${tr}</span></span>`
-        + `<span style="height:2px;border-radius:2px;background:#ffffff14;overflow:hidden">`
-        +   `<span style="display:block;height:100%;width:${w}%;background:${acol}"></span></span>`
+    const col = m.mm === 'LONG' ? '#4ade80' : '#f87171';
+    const wcol = m.verdict === 'good' ? col : (m.verdict === 'poor' ? '#8b93a7' : '#fbbf24');
+    const sw = _MMD_TRADE_WORD[m.verdict] || '';
+    return `<td><span title="${tip}" style="display:inline-flex;align-items:center;font-family:monospace;white-space:nowrap;font-size:0.74rem">`
+        + `<span style="width:14px;color:${col};font-weight:900">${m.mm === 'LONG' ? '▲' : '▼'}</span>`
+        + `<b style="width:34px;text-align:right;color:${col}">${m.prob != null ? m.prob + '%' : '—'}</b>`
+        + `<span style="width:34px;margin-left:5px;text-align:center;border:1px solid ${wcol};border-radius:3px;font-size:0.6rem;color:${wcol}">${sw}</span>`
         + `</span></td>`;
+}
+// 🚨 Сигнальна колонка поруч (вимога 22.10): чи МММ-Decision іде ЗА угодою.
+// Рівень рахує бекенд (`dec_trade_alert`, від ПІКУ цієї угоди) — фронт лише
+// фарбує: ok ✓ зелений · weaker ↓ бурштин · neutral ⚖ бурштин · against ⚠
+// червоний із блиманням (угода йде проти напрямку — звернути увагу).
+const _MMD_ALERT = {
+    ok:      { ic: '✓', col: '#4ade80', bg: '#22c55e1f', txt: 'OK' },
+    weaker:  { ic: '↓', col: '#fbbf24', bg: '#f59e0b26', txt: 'СЛАБШ' },
+    neutral: { ic: '⚖', col: '#fbbf24', bg: '#f59e0b26', txt: 'НЕЙТР' },
+    against: { ic: '⚠', col: '#fecaca', bg: '#dc2626', txt: 'ПРОТИ' },
+};
+function mmdAlertCellHTML(p) {
+    const a = p && p.mmd && p.mmd.alert;
+    if (!a || !_MMD_ALERT[a.level]) {
+        return '<td><span style="color:#6b7280" title="Сигналу ще немає — немає вердикту МММ-Decision">—</span></td>';
+    }
+    const st = _MMD_ALERT[a.level];
+    const tip = `🚨 ${a.text}` + (a.peak_align != null ? ` · пік за угоду ${a.peak_align}%` : '')
+        + (a.level === 'ok' ? '' : ' — угода може йти не за напрямком, зверніть увагу');
+    return `<td><span class="tm-mmd-alert${a.level === 'against' ? ' tm-mmd-alert-hot' : ''}" title="${tip}" `
+        + `style="display:inline-block;min-width:58px;text-align:center;padding:1px 5px;border-radius:4px;font-family:monospace;font-size:0.68rem;font-weight:700;color:${st.col};background:${st.bg};border:1px solid ${st.col}55">`
+        + `${st.ic} ${st.txt}</span></td>`;
 }
 // 🏷 Позначка «останній OB 4H» у полі Side (вимога 12.10). `pos.ob4h` —
 // памʼять сканера (`ob_mark_for`, той самий `_ob_on_htf`, що дає «OB 4H» в
 // алерті 🆕 Новий OB). Колір — за біасом блоку (зелений BULLISH / червоний
 // BEARISH), рамка — чи збігається з напрямком угоди. Немає даних — нічого.
-function ob4hMarkHTML(p, what) {
+function ob4hMarkHTML(p, what, left) {
     const o = p && p.ob4h;
     const _what = what || 'угоди';
     if (!o) return '';
+    // `left` — позначка стоїть ЛІВОРУЧ від тексту (поле Side угод, вимога 22.10):
+    // пробіл тоді не перед, а після неї.
+    const _sp = h => left ? h.trim().replace('class="tm-ob4h"', 'class="tm-ob4h tm-ob4h-l"') : h;
     if (!o.bias) {
-        return ' <span class="tm-ob4h" title="OB 4H: живого блоку на 4H зараз немає" style="color:#6b7280;border-color:#4b5563">4H —</span>';
+        return _sp(' <span class="tm-ob4h" title="OB 4H: живого блоку на 4H зараз немає" style="color:#6b7280;border-color:#4b5563">4H —</span>');
     }
     const bull = o.bias === 'BULLISH';
     const col = bull ? '#22c55e' : '#ef4444';
@@ -16093,7 +16096,7 @@ function ob4hMarkHTML(p, what) {
     const tip = `Останній OB 4H: ${bull ? '🟢 BULLISH (LONG)' : '🔴 BEARISH (SHORT)'}`
         + (tag ? ` · ${tag}` : '') + when + rng
         + (!hasSide ? '' : (agree ? ` — ЗА напрямком ${_what}` : ` — ПРОТИ напрямку ${_what}`));
-    return ` <span class="tm-ob4h" title="${tip}" style="color:${col};border-color:${(agree || !hasSide) ? col : '#fbbf24'}">4H${bull ? '▲' : '▼'}</span>`;
+    return _sp(` <span class="tm-ob4h" title="${tip}" style="color:${col};border-color:${(agree || !hasSide) ? col : '#fbbf24'}">4H${bull ? '▲' : '▼'}</span>`);
 }
 function ffFuelCell(dir, now, prev, hideBand) {
     // Той самий дизайн, що й SCORE: пілюля фіксованої ширини з тонованим фоном +
@@ -17028,12 +17031,12 @@ async function loadTMState(isPoll) {
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
                     <td>${manualMark}${histSymOpen(p, false)}${badges}</td>
-                    <td class="${sideClass}" style="white-space:nowrap">${p.side}${ob4hMarkHTML(p)}</td>
+                    <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
-                    ${oldMmCellHTML(p)}
-                    ${newMmCellHTML(p)}
+                    ${mmdTradeCellHTML(p)}
+                    ${mmdAlertCellHTML(p)}
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${pilotCellHTML(p)}
@@ -17122,12 +17125,12 @@ async function loadTMState(isPoll) {
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
                     <td>${manualMark}${histSymOpen(p, true)}</td>
-                    <td class="${sideClass}" style="white-space:nowrap">${p.side}${ob4hMarkHTML(p)}</td>
+                    <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
-                    ${oldMmCellHTML(p)}
-                    ${newMmCellHTML(p)}
+                    ${mmdTradeCellHTML(p)}
+                    ${mmdAlertCellHTML(p)}
                     ${manualSlTpCellsHTML(p, true)}
                     ${pilotCellHTML(p)}
                     ${manualModeCellHTML(p, true)}

@@ -33,34 +33,13 @@ def _check(c, m):
         raise AssertionError(m)
 
 
-# ═══════════════════════ 🆕 МММ-NEW у таблицях угод ═════════════════════════
-def test_mmn_snapshot_for_reads_the_new_book():
-    ff = _mon._mk()
-    ff._mmn_snapshot = {'BTCUSDT': {'status': 'SHORT', 'strength': 42,
-                                    'strength_prev': 30, 'delta': 12}}
-    ff._mm_snapshot = {'BTCUSDT': {'new_status': 'LONG', 'new_strength': 99}}
-    r = ff.mmn_snapshot_for(['btcusdt'])
-    _check(r == {'BTCUSDT': {'mm': 'SHORT', 'strength': 42,
-                             'strength_prev': 30, 'delta': 12}},
-           f'книга МММ-new має пріоритет: {r}')
-    print('✓ МММ-NEW береться зі знімка блоку МММ-new')
-
-
-def test_mmn_snapshot_for_falls_back_to_the_same_number_in_the_old_book():
-    ff = _mon._mk()
-    ff._mmn_snapshot = {}                       # блок МММ-new вимкнено
-    ff._mm_snapshot = {'ETHUSDT': {'new_status': 'LONG', 'new_strength': 37}}
-    r = ff.mmn_snapshot_for(['ETHUSDT', 'XRPUSDT'])
-    _check(r == {'ETHUSDT': {'mm': 'LONG', 'strength': 37,
-                             'strength_prev': None, 'delta': None}},
-           f'фолбек на new_status 🧮 знімка: {r}')
-    print('✓ вимкнений блок МММ-new → те саме число з 🧮 знімка')
-
-
+# ⚠️ 22.10: колонки «🧮 МММ LiQ»/«🆕 МММ-NEW» у таблицях угод замінено на
+# «🧠 МММ-Decision» + 🚨 сигнал (див. test_trades_mmd.py); `mmn_snapshot_for`
+# видалено разом із колонкою.
 def test_flask_only_reads_snapshots():
-    i = _FLASK.index("_mmn_map = ff.mmn_snapshot_for(")
-    blk = _FLASK[i - 600:i + 1400]
-    _check("pos['new_mm'] = _mmn_map[sym]" in blk, 'new_mm не кладеться в позицію')
+    i = _FLASK.index("_dec_map = ff.dec_trade_for(")
+    blk = _FLASK[i - 600:i + 1600]
+    _check("pos['mmd'] = _dec_map[_dk]" in blk, 'mmd не кладеться в позицію')
     _check("pos['ob4h'] = _ob4_map[sym]" in blk, 'ob4h не кладеться в позицію')
     _check('ob_mark_for(' in blk and 'get_smc_ob_state' not in blk,
            'OB 4H на гарячому ендпоінті мусить бути ЧИТАННЯМ памʼяті, без БД')
@@ -116,22 +95,22 @@ def test_tables_have_the_new_column_and_matching_colspans():
     for tid in ('tm-open-table', 'tm-shadow-open-table'):
         i = _HTML.index(f'id="{tid}"')
         tbl = _HTML[i:_HTML.index('</table>', i)]
-        _check('>🆕 МММ-NEW</th>' in tbl, f'{tid}: немає колонки МММ-NEW')
+        _check('>🧠 МММ-Decision</th>' in tbl, f'{tid}: немає колонки МММ-Decision')
         n = len(re.findall(r'<th[\s>]', tbl))
         m = re.search(r'colspan="(\d+)"', tbl)
         _check(m and int(m.group(1)) == n, f'{tid}: colspan ≠ {n}')
     _check(_HTML.count('colspan="16" class="tm-empty-msg">No open positions') == 2
            and _HTML.count('colspan="15" class="tm-empty-msg">No paper positions') == 2,
            'colspan у JS-заглушках не оновлено')
-    _check(_HTML.count('${p.side}${ob4hMarkHTML(p)}') == 2,
-           'позначка OB 4H мусить стояти в полі Side обох таблиць')
-    print('✓ колонка МММ-NEW + позначка OB 4H у Side, colspan 16/15')
+    # ⚠️ 22.10: позначка OB 4H стоїть ЛІВОРУЧ від сторони угоди.
+    _check(_HTML.count('${ob4hMarkHTML(p, null, true)}${p.side}') == 2,
+           'позначка OB 4H мусить стояти ЛІВОРУЧ у полі Side обох таблиць')
+    print('✓ колонка МММ-Decision + позначка OB 4H ліворуч у Side, colspan 16/15')
 
 
 def _js(body):
     src = ''
-    for f in ('function fuelBand(', 'function fmtPriceJS(', 'function mmCompactCellHTML(',
-              'function ob4hMarkHTML('):
+    for f in ('function fmtPriceJS(', 'function ob4hMarkHTML('):
         a = _HTML.index(f)
         src += _HTML[a:_HTML.index('\n}', a) + 2] + '\n'
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as fh:
@@ -144,31 +123,27 @@ def _js(body):
         os.unlink(path)
 
 
-def test_js_compact_cell_and_side_mark_render():
+def test_js_side_mark_render():
     out = _js(r'''
-console.log(mmCompactCellHTML({mm:'LONG', strength:57, strength_prev:40}, 'X', 'e'));
-console.log('|');
-console.log(mmCompactCellHTML(null, 'X', 'порожньо'));
-console.log('|');
 console.log(ob4hMarkHTML({side:'SHORT', ob4h:{bias:'BEARISH', tag:'CHOCH', bar_time:1700000000000, low:1, high:2}}));
 console.log('|');
 console.log(ob4hMarkHTML({side:'LONG', ob4h:{bias:'BEARISH'}}));
 console.log('|');
 console.log(ob4hMarkHTML({side:'LONG'}));
+console.log('|');
+console.log(JSON.stringify(ob4hMarkHTML({side:'LONG', ob4h:{bias:'BULLISH'}}, null, true)));
 ''')
     parts = out.split('|')
-    _check(len(parts) == 5, out)
-    c = parts[0]
-    _check('width:64px' in c and '57%' in c and '▲' in c and '↑' in c,
-           f'компактна комірка: {c}')
-    _check('144px' not in c, 'компактна комірка не має бути широким віджетом')
-    _check('—' in parts[1] and 'порожньо' in parts[1], 'порожній стан')
-    _check('4H▼' in parts[2] and '#ef4444' in parts[2] and 'CHoCH' in parts[2]
-           and 'ЗА напрямком' in parts[2], f'ведмежий 4H за шортом: {parts[2]}')
-    _check('ПРОТИ напрямку' in parts[3] and '#fbbf24' in parts[3],
-           f'проти угоди → бурштинова рамка: {parts[3]}')
-    _check(parts[4].strip() == '', 'немає даних → позначки немає')
-    print('✓ JS: компактна комірка 64px, позначка 4H▲/▼ кольором + «за/проти»')
+    _check(len(parts) == 4, out)
+    _check('4H▼' in parts[0] and '#ef4444' in parts[0] and 'CHoCH' in parts[0]
+           and 'ЗА напрямком' in parts[0], f'ведмежий 4H за шортом: {parts[0]}')
+    _check('ПРОТИ напрямку' in parts[1] and '#fbbf24' in parts[1],
+           f'проти угоди → бурштинова рамка: {parts[1]}')
+    _check(parts[2].strip() == '', 'немає даних → позначки немає')
+    left = parts[3].strip()
+    _check(left.startswith('"<span') and 'tm-ob4h-l' in left,
+           f'ліва позначка: без пробілу попереду і з класом відступу праворуч: {left}')
+    print('✓ JS: позначка 4H▲/▼ кольором + «за/проти», ліворуч — без зсуву')
 
 
 if __name__ == '__main__':
