@@ -113,6 +113,19 @@ def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
             return (True, False, f'{tag}[вкладка {c} · сила {st}%<{thr}%{bn}]:✗',
                     f'{name}: сила монети {st}% нижча за поріг вкладки «Сила ≥ {thr}%» '
                     f'— у таблиці її не видно')
+    # 🧠 «Вердикт ≥» блоку МММ-Decision (вимога 22.10) — та сама умова
+    # «монету ВИДНО в таблиці», що й поріг «Сила ≥» вкладки.
+    vmin = str(v.get('verdict_min') or '') if need_strength else ''
+    _vr = {'poor': 1, 'marginal': 2, 'good': 3}
+    _vu = {'poor': 'СЛАБКИЙ', 'marginal': 'СЕРЕДНІЙ', 'good': 'СИЛЬНИЙ'}
+    if _vr.get(vmin, 0) > 0:
+        vv = str(v.get('verdict') or '')
+        if _vr.get(vv, 0) < _vr[vmin]:
+            return (True, False,
+                    f'{tag}[вкладка {c} · вердикт {_vu.get(vv, "—")}<{_vu[vmin]}{bn}]:✗',
+                    f'{name}: вердикт монети {_vu.get(vv, "немає")} нижчий за фільтр '
+                    f'«Вердикт ≥ {_vu[vmin]}» — у таблиці її не видно')
+    if thr > 0:
         return True, True, f'{tag}[вкладка {c} · сила {st}%≥{thr}%{bn}]:✓', ''
     return True, True, f'{tag}[вкладка {c}{bn}]:✓', ''
 

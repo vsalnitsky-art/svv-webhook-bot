@@ -240,6 +240,78 @@ def test_js_cell_matches_the_banner():
     print('✓ JS: комірка «🔴 SHORT 85% СИЛЬНИЙ» як банер Decision')
 
 
+# ═══════════ 5. ФІЛЬТР «ВЕРДИКТ ≥» (вимога 22.10) ═══════════════════════
+def test_verdict_filter_rule_is_pure_and_ordered():
+    ok = _m.dec_verdict_ok
+    _check(ok('poor', '') and ok(None, ''), "'' = фільтр не задіяно")
+    _check(ok('good', 'marginal') and ok('marginal', 'marginal') and not ok('poor', 'marginal'),
+           'СЕРЕДНІЙ+ пускає СЕРЕДНІЙ і СИЛЬНИЙ')
+    _check(ok('good', 'good') and not ok('marginal', 'good'), 'СИЛЬНИЙ — лише СИЛЬНИЙ')
+    _check(not ok(None, 'good'), 'немає вердикту ≠ СИЛЬНИЙ')
+    _check(_m.DEFAULT_SETTINGS['mmd_verdict_min'] == '', 'деф. — усі')
+    print('✓ «Вердикт ≥»: СЛАБКИЙ < СЕРЕДНІЙ < СИЛЬНИЙ, деф. — усі')
+
+
+def test_verdict_filter_is_saved_and_served():
+    ff, _ = _ff_with({'BTCUSDT': _dec('SHORT', 0.15)})
+    _check("s['mmd_verdict_min'] = _vm if _vm in DEC_VERDICT_MINS else ''" in _SRC,
+           'невідоме значення → «усі», а не збій')
+    ff._settings['mmd_verdict_min'] = 'good'
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1000.0)
+    st = ff.mm_monitor_state(book='dec')
+    _check(st['verdict_min'] == 'good', st.get('verdict_min'))
+    _check(ff.mm_monitor_state(book='fc')['verdict_min'] == '', 'інші книги без фільтра')
+    for need in ('id="mmd-verdict-min"', 'mmd_verdict_min: _MMB.dec.verdictMin',
+                 "B.verdictMin = String(mm.verdict_min || '')", '&& _mmVerdictOk(B, r)',
+                 "(B.verdictMin || '') + '|'"):
+        _check(need in _HTML, need)
+    a = _HTML.index('id="mmd-min-str"'); b = _HTML.index('id="mmd-verdict-min"'); c = _HTML.index('id="mmd-str-out"')
+    _check(a < b < c, 'випадайка стоїть поруч із «Сила ≥»')
+    print('✓ «Вердикт ≥» зберігається в налаштуваннях і їде на сторінку поряд із «Сила ≥»')
+
+
+def test_gate_with_tab_threshold_respects_verdict():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('_sc_for_dec', os.path.join(_HERE, 'detection', 'smc_scanner.py'))
+    try:
+        sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+        decide = sc.mm_gate_decide
+    except Exception:
+        print('· smc_scanner не вантажиться ізольовано — перевірка лише за текстом')
+        _check("vmin = str(v.get('verdict_min') or '') if need_strength else ''" in _SC_SRC, 'умова в mm_gate_decide')
+        return
+    v = {'on': True, 'dir': 'SHORT', 'coin': 'SHORT', 'strength': 70, 'str_min': 0,
+         'verdict': 'marginal', 'verdict_min': 'good'}
+    _check(decide(v, 'SHORT', book='dec', need_strength=True)[1] is False, 'слабший вердикт ріже')
+    _check(decide(v, 'SHORT', book='dec', need_strength=False)[1] is True, 'без ⚑ — не діє')
+    v['verdict'] = 'good'
+    _check(decide(v, 'SHORT', book='dec', need_strength=True)[1] is True, 'СИЛЬНИЙ пропускає')
+    print('✓ ворота з «⚑ порогом вкладки» вимагають і «Вердикт ≥»')
+
+
+def test_js_tab_rows_filter_by_verdict():
+    a = _HTML.index('function _mmTabRows(')
+    b = _HTML.index('function mmVerdictChanged(', a)
+    js = ("const _MM_TABS=['all','LONG','SHORT','flat'];const _mmClampStr=v=>Math.max(0,Math.min(100,parseFloat(v)||0));"
+          "function _mmMinStr(B,d){return _mmClampStr(B.strMins[d||B.dir]);}"
+          "const _mmTabOf=r=>(r.mm==='LONG'?'LONG':(r.mm==='SHORT'?'SHORT':'flat'));"
+          + _HTML[a:b] +
+          "\nconst B={dir:'all',strMins:{all:0,LONG:0,SHORT:0,flat:0},verdictMin:'',rows:["
+          "{mm:'SHORT',strength:70,dec_verdict:'good'},{mm:'LONG',strength:40,dec_verdict:'marginal'},"
+          "{mm:'LONG',strength:30,dec_verdict:'poor'}]};"
+          "console.log(_mmTabRows(B,'all').length);B.verdictMin='marginal';console.log(_mmTabRows(B,'all').length);"
+          "B.verdictMin='good';console.log(_mmTabRows(B,'all').length);console.log(_mmTabRows(B,'LONG').length);")
+    with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as f:
+        f.write(js)
+        path = f.name
+    try:
+        r = subprocess.run(['node', path], capture_output=True, text=True, timeout=30)
+    finally:
+        os.unlink(path)
+    _check(r.stdout.split() == ['3', '2', '1', '0'], (r.stdout, r.stderr))
+    print('✓ JS: таблиця і лічильники вкладок фільтруються за «Вердикт ≥»')
+
+
 if __name__ == '__main__':
     n = 0
     for _name, _fn in list(globals().items()):

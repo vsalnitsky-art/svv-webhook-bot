@@ -527,6 +527,24 @@ def dec_mm_dir(dec) -> Optional[Dict]:
             'headline': str(dec.get('headline') or '')}
 
 
+# 🧠 Фільтр «Вердикт ≥» блоку МММ-Decision (вимога 22.10) — поряд із «Сила ≥».
+# Ранг слова сили банера Decision: СЛАБКИЙ < СЕРЕДНІЙ < СИЛЬНИЙ. '' = фільтр
+# не задіяно (як поріг «Сила ≥ 0»).
+DEC_VERDICT_RANK = {'poor': 1, 'marginal': 2, 'good': 3}
+DEC_VERDICT_MINS = ('', 'marginal', 'good')
+
+
+def dec_verdict_ok(verdict, vmin) -> bool:
+    """🧠 Чи проходить вердикт монети фільтр «Вердикт ≥ vmin». ЧИСТА.
+
+    `vmin` порожній → фільтр не задіяно (True). Немає вердикту при заданому
+    порозі → НЕ проходить: «невідомо» ≠ «СИЛЬНИЙ» (рядок і так без числа)."""
+    need = DEC_VERDICT_RANK.get(str(vmin or ''), 0)
+    if need <= 0:
+        return True
+    return DEC_VERDICT_RANK.get(str(verdict or ''), 0) >= need
+
+
 def _q_allowed(op: int) -> bool:
     """True if queue-removal op #op is currently allowed (debug gate)."""
     if _QUEUE_OPS_ALLOWED.get(op, True):
@@ -646,6 +664,9 @@ DEFAULT_SETTINGS = {
     'mmd_str_min': 0,
     'mmd_str_mins': None,
     'mmd_bias_confirm_sec': 120,
+    # 🧠 Фільтр «Вердикт ≥» (вимога 22.10): '' — усі · 'marginal' — СЕРЕДНІЙ і
+    # СИЛЬНИЙ · 'good' — лише СИЛЬНИЙ. Як і «Сила ≥» — налаштування БОТА.
+    'mmd_verdict_min': '',
     # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
     # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
     # ГОЛОВНИЙ вміст тієї теми. ⚠️ Майстер-вимикач теми лишається в кабінеті
@@ -2017,6 +2038,8 @@ class FuelFilterDaemon:
         # 🧠 БЛОК «МММ-Decision» — тумблер, поріг, вікно банера, TG.
         s['mm_dec_enabled'] = bool(s.get('mm_dec_enabled', False))
         s['mmd_bias_tg'] = bool(s.get('mmd_bias_tg', True))
+        _vm = str(s.get('mmd_verdict_min') or '')
+        s['mmd_verdict_min'] = _vm if _vm in DEC_VERDICT_MINS else ''
         try:
             s['mmd_str_min'] = max(0, min(100, int(float(s.get('mmd_str_min', 0)))))
         except (TypeError, ValueError):
@@ -5182,6 +5205,8 @@ class FuelFilterDaemon:
             # ⚑ …і свій поріг на КОЖНУ вкладку (вимога 12.10).
             'str_mins': mm_str_mins_norm(s.get(f'{_sk}_str_mins'),
                                          s.get(f'{_sk}_str_min', 0)),
+            # 🧠 Фільтр «Вердикт ≥» — лише у книги МММ-Decision.
+            'verdict_min': (str(s.get('mmd_verdict_min') or '') if _bk == 'dec' else ''),
             'book': _bk,
             # 🧭 МММ-Pull: стан ФОНОВОГО скану ліквідності (коли був, скільки
             # тривав, наступний, чи біжить зараз, причина невдачі, параметри).
@@ -5330,6 +5355,8 @@ class FuelFilterDaemon:
                                                     s.get('mmp_str_min', 0))
             self._mmd_str_mins_c = mm_str_mins_norm(s.get('mmd_str_mins'),
                                                     s.get('mmd_str_min', 0))
+            _vm = str(s.get('mmd_verdict_min') or '')
+            self._mmd_verdict_min_c = _vm if _vm in DEC_VERDICT_MINS else ''
         except Exception:
             pass
 
@@ -5398,8 +5425,13 @@ class FuelFilterDaemon:
             strength = int(v.get('strength') or 0) if v else None
         except (TypeError, ValueError):
             strength = 0
-        return {'on': bool(on), 'dir': d, 'coin': coin, 'strength': strength,
-                'str_min': int(mins.get(tab, 0) or 0) if tab else 0}
+        out = {'on': bool(on), 'dir': d, 'coin': coin, 'strength': strength,
+               'str_min': int(mins.get(tab, 0) or 0) if tab else 0}
+        if _bk == 'dec':
+            # 🧠 «Вердикт ≥» теж визначає, чи ВИДНО монету в таблиці.
+            out['verdict'] = (v or {}).get('dec_verdict') if v else None
+            out['verdict_min'] = getattr(self, '_mmd_verdict_min_c', '') or ''
+        return out
 
     def symbols_in_work(self) -> set:
         """Монети «В РОБОТІ» — ВІДКРИТА УГОДА **або** запис у будь-якій черзі.

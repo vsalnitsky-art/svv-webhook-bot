@@ -2290,7 +2290,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmd-gate-banner" onchange="updateMmGate()">
                         за банером МММ-Decision
                     </label>
-                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» / «Через МММ-Pull» / «Через МММ-Decision» (для кожного блоку — його власні пороги). ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» / «Через МММ-Pull» / «Через МММ-Decision» (для кожного блоку — його власні пороги; у 🧠 МММ-Decision — ще й фільтр «Вердикт ≥»). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-str" onchange="updateMmGate()">
                         ⚑ з порогом «Сила ≥» вкладки
                     </label>
@@ -3246,6 +3246,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <button type="button" data-mmdir="flat" onclick="mmSetDir('flat','dec')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
                 <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили Decision (перевага одного боку над іншим, 0–100%): показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧠 МММ-Decision» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
                     Сила ≥ <input type="number" id="mmd-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged('dec')" onchange="mmMinStrSave()"> %
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="🧠 Фільтр за полем «ВЕРДИКТ» — словом сили банера Decision (те саме, що «SHORT 85% СИЛЬНИЙ» над графіком). Показує лише монети з вердиктом не слабшим за обраний: «СЕРЕДНІЙ+» = СЕРЕДНІЙ і СИЛЬНИЙ, «СИЛЬНИЙ» = лише СИЛЬНИЙ. Діє на всі вкладки разом із «Сила ≥» і на лічильники вкладок. Зберігається в налаштуваннях бота (однаково в усіх браузерах). ⚠️ На банер «🧠 МММ-Decision» НЕ впливає — важіль рахується по всіх монетах. З галочкою «⚑ з порогом «Сила ≥» вкладки» у МММ-воротах сигнал «Через МММ-Decision» теж мусить пройти цей фільтр (монету мусить бути ВИДНО в таблиці).">
+                    Вердикт ≥ <select id="mmd-verdict-min" onchange="mmVerdictChanged()" style="font-size:0.68rem;padding:2px 4px;background:#141821;color:#dde3ee;border:1px solid #3a3f4b;border-radius:4px;color-scheme:dark">
+                        <option value="">усі</option><option value="marginal">СЕРЕДНІЙ+</option><option value="good">СИЛЬНИЙ</option>
+                    </select>
                 </label>
                 <span id="mmd-str-out" style="font-size:0.66rem;color:#fbbf24;font-family:monospace"></span>
                 <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="⏱ АНТИСПАМ БАНЕРА: новий статус (🟢 LONG / 🔴 SHORT / ⏸ FLAT) показується лише коли протримався стільки секунд. Поки йде відлік, у банері видно кандидата (⏳). Плюс до цього діє гістерезис: зайти в напрямок можна за 10% важеля, а вийти — лише нижче 6%, тож коливання біля межі статус не смикають. 0 = перемикати миттєво (стара поведінка). ⚠️ Числа й смуга банера лишаються ЖИВИМИ — гаситься саме миготіння ПІДПИСУ.">
@@ -12506,6 +12511,8 @@ function _mmMkBook(P, src, uiKey) {
         // ⚑ Поріг «Сила ≥» — СВІЙ на кожну вкладку (вимога 12.10). Поле
         // показує поріг АКТИВНОЇ вкладки; перемикання вкладки підставляє її.
         strMins: { all: 0, LONG: 0, SHORT: 0, flat: 0 },
+        // 🧠 Фільтр «Вердикт ≥» (лише книга `dec`): '' | 'marginal' | 'good'.
+        verdictMin: '',
         bias: null };
 }
 const _MMB = { old: _mmMkBook('mm', 'МММ LiQ', 'mmMonitorUi'),
@@ -12924,7 +12931,24 @@ const _mmTabOf = r => (r.mm === 'LONG' ? 'LONG' : (r.mm === 'SHORT' ? 'SHORT' : 
 function _mmTabRows(B, d) {
     const minStr = _mmMinStr(B, d);
     return B.rows.filter(r => (d === 'all' || _mmTabOf(r) === d)
-                              && (r.strength || 0) >= minStr);
+                              && (r.strength || 0) >= minStr
+                              && _mmVerdictOk(B, r));
+}
+// 🧠 Фільтр «Вердикт ≥» блоку МММ-Decision (вимога 22.10) — дзеркало
+// `fuel_filter.dec_verdict_ok`: СЛАБКИЙ < СЕРЕДНІЙ < СИЛЬНИЙ; '' = не задіяно;
+// рядок без вердикту при заданому порозі НЕ проходить.
+const _MMD_VRANK = { poor: 1, marginal: 2, good: 3 };
+function _mmVerdictOk(B, r) {
+    const need = _MMD_VRANK[(B && B.verdictMin) || ''] || 0;
+    if (!need) return true;
+    return (_MMD_VRANK[r.dec_verdict || ''] || 0) >= need;
+}
+function mmVerdictChanged() {
+    const B = _MMB.dec;
+    const el = document.getElementById('mmd-verdict-min');
+    B.verdictMin = el ? (el.value || '') : '';
+    mmRender('dec');
+    mmMinStrSave();
 }
 // Рядки, які зараз ВИДНО — вкладка + її поріг.
 function _mmVisibleRows(B) {
@@ -13018,8 +13042,11 @@ function mmRender(bk) {
         _outEl.textContent = _outTotal > 0
             ? `⚑ поза фільтром ${_outTotal} з ${_tot}` : '';
         _outEl.title = _outTotal > 0
-            ? (`Фільтр вкладки «Сила ≥ ${_mmMinStr(B)}%» лишив у таблиці ${_shown} `
-               + `монет із ${_tot}; решта ${_outTotal} — зі слабшою силою МММ. `
+            ? (`Фільтр вкладки «Сила ≥ ${_mmMinStr(B)}%»`
+               + (B.verdictMin ? ` + «Вердикт ≥ ${_MMD_V_UA[B.verdictMin] || ''}»` : '')
+               + ` лишив у таблиці ${_shown} `
+               + `монет із ${_tot}; решта ${_outTotal} — зі слабшою силою`
+               + (B.verdictMin ? ' або слабшим вердиктом. ' : ' МММ. ')
                + 'Це НЕ «бот їх не бачить»: вони рахуються, просто не показані. '
                + 'Постав 0, щоб побачити всі. Поріг у кожної вкладки свій.')
             : '';
@@ -13068,7 +13095,7 @@ function mmRender(bk) {
     // перемикання тумблера при порожній таблиці нічого б не перемалювало.
     // ⚠️ `state_since` — МОМЕНТ (змінюється рідко). Самі СЕКУНДИ
     // в неї НЕ входять: їх малює глобальний 1с-тікер (урок `held_sec`).
-    const sig = B.dir + '|' + (B.meta.enabled ? '1' : '0')
+    const sig = B.dir + '|' + (B.verdictMin || '') + '|' + (B.meta.enabled ? '1' : '0')
         + '|' + ((B.meta.pending || {}).reason || '')
         + '|' + B.sort.col + B.sort.dir + '|'
         + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev,
@@ -13345,6 +13372,12 @@ function mmApplyState(mm, bk) {
             }
         }
         _mmStrToInput(B);
+        // 🧠 «Вердикт ≥» — теж із сервера (лише книга `dec`).
+        if (code === 'dec') {
+            B.verdictMin = String(mm.verdict_min || '');
+            const _vEl = document.getElementById('mmd-verdict-min');
+            if (_vEl && document.activeElement !== _vEl) _vEl.value = B.verdictMin;
+        }
     }
     const up = _mmEl(B, '-updated');
     if (up) {
@@ -15731,6 +15764,7 @@ async function saveFuelFilterSettings() {
         mm_dec_enabled: _c('ff-mm-dec-enabled'),
         mmd_str_min: _mmMinStr(_MMB.dec, 'all'),
         mmd_str_mins: Object.assign({}, _MMB.dec.strMins),
+        mmd_verdict_min: _MMB.dec.verdictMin || '',
         mmd_bias_confirm_sec: parseInt(_v('ff-mmd-bias-confirm', '120') || '0', 10),
         mm_bias_tg: _c('ff-mm-bias-tg'),
         mmn_bias_tg: _c('ff-mmn-bias-tg'),
