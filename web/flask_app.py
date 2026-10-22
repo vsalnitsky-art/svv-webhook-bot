@@ -6201,6 +6201,26 @@ def register_api_routes(app):
             is_shadow=bool(data.get('is_shadow')),
         ))
 
+    @app.route('/api/tm/positions/opp-ob-exit', methods=['POST'])
+    def api_tm_opp_ob_exit():
+        """🧱 Пер-угодний тумблер Opposite OB Exit (колонка «🧱 OB»).
+
+        Body: {symbol, enabled: bool, is_shadow?: bool}. Діє НЕЗАЛЕЖНО від
+        глобального `use_opposite_ob_exit`; TF — з налаштувань Exit Rules.
+        Автомат (сигнал 🧠 МММ-Decision) перемикає той самий прапорець.
+        """
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        symbol = data.get('symbol', '')
+        if not symbol:
+            return jsonify({'ok': False, 'reason': 'symbol required'})
+        return jsonify(tm.update_opp_ob_exit(
+            symbol=symbol, enabled=bool(data.get('enabled')),
+            is_shadow=bool(data.get('is_shadow')), origin='user'))
+
     @app.route('/api/tm/positions/breakeven-close', methods=['POST'])
     def api_tm_breakeven_close():
         """Toggle per-position breakeven + fees auto-close.

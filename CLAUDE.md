@@ -6439,6 +6439,35 @@ DELETE падали, фінальний commit відкочував усе (од
 Тести: `test_trades_mmd.py` (9), `test_trades_mm_ob4h.py` (6, переписано),
 `test_mm_monitor.py` (2 замки переписано).
 
+## 🧱 OPPOSITE OB EXIT ПО УГОДІ + 🤖 АВТО-ВМИКАННЯ СИГНАЛОМ 🚨 (22.10)
+
+Дослівно: «Додай ще колонку в таблиці відкритих угод з тумблером (такий як
+"Manual 🎯 БЗ") він буде автоматично активувати алгоритм [Opposite OB Exit] по
+монеті незалежно увімкнений він в налаштуваннях чи ні… ввімкнення… коли
+сигнальне поле перейде в статус… тенденцію до закриття. А якщо статус
+сигнального поля покращився то тумблер… автоматично вимикаємо.»
+- **Поле позиції `opp_ob_exit`** (+`opp_ob_exit_by` = `auto`|`user`),
+  `TradeManager.update_opp_ob_exit(symbol, enabled, is_shadow, origin)`,
+  маршрут `POST /api/tm/positions/opp-ob-exit`. Колонка **«🧱 OB»** одразу за
+  «🎯 БЗ» (real + paper, colspan **17/16**), `oppObExitCellHTML` (🤖/✏️ поруч).
+- **`on_main_ob_update` — ПО КОЖНІЙ КНИЗІ:** правило діє, коли глобальний
+  `use_opposite_ob_exit` АБО `pos['opp_ob_exit']`. Логіка однієї книги —
+  `_opp_ob_check`; база блоку тепер ключована `_exit_key(sym, is_shadow)`
+  (`SYM|R`/`SYM|S`), раніше — символом і лише одна книга (`real or shadow`).
+  TF — той самий `opposite_ob_exit_timeframe`. ⚠️ Увімкнений посеред угоди
+  тумблер бере за базу блок на момент ВМИКАННЯ (те, що висіло, — не подія).
+- **🤖 Автомат:** двигун FF (`_mm_capture` → `_mmd_apply_trade_alerts`, в
+  ОБОХ гілках — і при вимкненому блоці 🧠) рахує 🚨 ТИМ САМИМ `dec_trade_for`,
+  що й колонка, і кличе `tm.apply_mmd_alert(sym, is_shadow, alert)`. Останній
+  рівень живе НА ПОЗИЦІЇ (`mmd_alert_lvl`, персиститься → рестарт не дає
+  фальшивого переходу). ЧИСТА `TradeManager.opp_ob_auto_action(prev, lvl, on,
+  by)`: перехід у `weaker/neutral/against` (`MMD_CLOSE_LEVELS`) → ON; повернення
+  до `ok` → OFF **лише якщо вмикав автомат**. Реагує ЛИШЕ на переходи — ручний
+  вибір людини між переходами автомат не перебиває. 📌 Manual-угоди не чіпає.
+  Кожне авто-перемикання — рядок у 🧾 Лозі (`🤖 Бот (🧠 МММ-Decision): 🧱 …`).
+Тест: `test_opp_ob_per_trade.py` (7); `test_exit_rules.py` (ключ бази
+`MNTUSDT|R`), `test_trades_mm_ob4h.py` (colspan 17/16).
+
 ⚠️ **ЗАЛИШКИ НА `main`:** `detection/mm_correction.py` і `test_mm_correction.py`
 видалено з коду 01.10, але файли лежать у репозиторії (завантаження через
 GitHub не видаляє файлів) — через них падають `test_mm_monitor` /

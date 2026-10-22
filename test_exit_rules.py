@@ -142,7 +142,7 @@ def test_same_side_new_ob_does_not_close_and_moves_baseline():
     _OB_ROWS['15m'] = _ob('BEARISH', 1_500_000_000 + HOUR_MS)        # новий, у бік
     t.on_main_ob_update('MNTUSDT')
     _check(t.closed == [], f'блок у наш бік не закриває: {t.closed}')
-    _check(t._opp_ob_base['MNTUSDT']['bar_time'] == 1_500_000_000 + HOUR_MS,
+    _check(t._opp_ob_base['MNTUSDT|R']['bar_time'] == 1_500_000_000 + HOUR_MS,
            'база мала зсунутись на новий блок')
     print('✓ новий блок у бік угоди не закриває і зсуває базу')
 

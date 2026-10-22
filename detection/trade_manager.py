@@ -2940,24 +2940,28 @@ class TradeManager:
         the scanner's per-symbol pass means we react in the same pass
         that computed the new OB — no polling, no race window.
         
-        Gate is the global `use_opposite_ob_exit` toggle. Off by default;
-        users who want this behavior opt in via the Exit Rules block.
+        Gate: the global `use_opposite_ob_exit` toggle (Off by default) OR the
+        per-position `opp_ob_exit` flag (column «🧱 OB», manual or auto from
+        the 🧠 МММ-Decision alert). Each book (real / paper) is checked apart.
         """
         s = self._settings
-        if not s.get('use_opposite_ob_exit'):
-            return
-        
+        glob = bool(s.get('use_opposite_ob_exit'))
+
         with self._lock:
             real = self._positions.get(symbol)
             shadow = self._shadow_positions.get(symbol)
-        
-        pos = real or shadow
-        if not pos:
-            return  # No open position for this symbol
-        # 📌 Manual — автоматичний вихід за Opposite OB не діє.
-        if self._manual_locked(pos):
+
+        # 🧱 Правило діє ПО КОЖНІЙ КНИЗІ окремо (вимога 22.10): глобальний
+        # тумблер Exit Rules АБО пер-угодний `opp_ob_exit` (колонка «🧱 OB»
+        # у таблицях угод — вмикається вручну або автоматично сигналом
+        # 🧠 МММ-Decision). Пер-угодний діє НЕЗАЛЕЖНО від глобального.
+        books = []
+        for is_sh, pos in ((False, real), (True, shadow)):
+            if pos and (glob or pos.get('opp_ob_exit')):
+                books.append((is_sh, pos))
+        if not books:
             return
-        
+
         # Read OB at the configured exit TF from DB.
         # We don't trust ob_data parameter — scanner may have passed a
         # different TF's OB. The DB row at our configured TF is authoritative.
@@ -2968,13 +2972,21 @@ class TradeManager:
         except Exception as e:
             print(f"[TM] opposite_ob_exit DB read error for {symbol}@{exit_tf}: {e}")
             return
-        
+
         if row is None or not row.get('bias'):
             # Either scanner never computed this TF, or no valid OB right now.
             # Don't treat absence as opposite signal; OBs come and go on every
             # mitigation, and we'd churn closes.
             return
+        for is_sh, pos in books:
+            # 📌 Manual — автоматичний вихід за Opposite OB не діє.
+            if self._manual_locked(pos):
+                continue
+            self._opp_ob_check(symbol, pos, is_sh, exit_tf, row)
 
+    def _opp_ob_check(self, symbol: str, pos: Dict, is_shadow: bool,
+                      exit_tf: str, row: Dict) -> None:
+        """🧱 Одна КНИГА правила Opposite OB Exit (рядок OB уже прочитано)."""
         ob_bias = row['bias']
         pos_long = pos['side'] == 'LONG'
 
@@ -2984,8 +2996,9 @@ class TradeManager:
         # сталось із MNTUSDT: о 23:28:50 авто-SL писав «OB на 15M протилежний
         # (BULLISH)» — блок уже був там, — а о 23:41 це ж правило закрило шорт.
         # Правило користувача: закриваємо, коли протилежний OB САМЕ З'ЯВИВСЯ.
-        # Тому порівнюємо `bar_time` з тим, що стояв на момент ВІДКРИТТЯ угоди.
-        base = self._opp_ob_baseline(symbol, pos, exit_tf, row)
+        # ⚠️ Для пер-угодного тумблера, увімкненого посеред угоди, база — блок
+        # на момент ВМИКАННЯ: те, що вже висіло, подією не є.
+        base = self._opp_ob_baseline(symbol, pos, exit_tf, row, is_shadow)
         if base is None:
             return    # базу щойно зафіксували — це стан на вході, не подія
 
@@ -3009,27 +3022,142 @@ class TradeManager:
         # === Close ===
         current_price = self._get_current_price(symbol) or pos['entry_price']
         ob_tag = (row.get('created_by_tag') or '').upper()
+        _via = (' · тумблер угоди'
+                + (' (🧠 авто)' if pos.get('opp_ob_exit_by') == 'auto' else '')
+                if pos.get('opp_ob_exit') and not self._settings.get('use_opposite_ob_exit')
+                else '')
         # Diagnostic log so user can correlate exits with OB events
         print(f"[TM] 🔃 Opposite OB exit triggered for {symbol} "
               f"({pos['side']} → NEW opposite OB={ob_bias}/{ob_tag or '?'} "
-              f"@ {exit_tf}, bar_time={cur_bt})")
+              f"@ {exit_tf}, bar_time={cur_bt}){_via}")
         try:
             from detection.activity_log import log_activity
             _bt = time.strftime('%d.%m %H:%M', time.gmtime(int(cur_bt) / 1000.0))
             log_activity(symbol, 'closed',
                          f'🧱 НОВИЙ протилежний OB на {exit_tf.upper()} '
                          f'({ob_bias}{", " + ob_tag if ob_tag else ""}, '
-                         f'утв. {_bt} UTC) → закриття {pos["side"]}',
+                         f'утв. {_bt} UTC) → закриття {pos["side"]}{_via}',
                          side=pos['side'], source='TM')
         except Exception:
             pass
 
-        if real:
-            self._close_position(symbol, current_price,
-                                  reason='opposite_ob_exit')
-        elif shadow:
+        if is_shadow:
             self._close_shadow(symbol, current_price,
                                 reason='opposite_ob_exit')
+        else:
+            self._close_position(symbol, current_price,
+                                  reason='opposite_ob_exit')
+
+    # 🚨 Рівні сигнальної колонки 🧠 МММ-Decision, що означають «угода має
+    # тенденцію до закриття» → авто-вмикання 🧱 Opposite OB Exit по угоді.
+    MMD_CLOSE_LEVELS = ('weaker', 'neutral', 'against')
+
+    @classmethod
+    def opp_ob_auto_action(cls, prev_lvl, lvl, on: bool, by: str):
+        """ЧИСТА: що зробити з пер-угодним 🧱 тумблером при зміні рівня 🚨.
+
+        → True (увімкнути) · False (вимкнути) · None (нічого).
+        • ПЕРЕХІД у «тенденцію до закриття» (з ✓ OK або перший показ) і тумблер
+          вимкнений → увімкнути;
+        • ПОКРАЩЕННЯ назад до ✓ OK і тумблер увімкнув САМЕ АВТОМАТ → вимкнути.
+          ⚠️ Увімкнений ЛЮДИНОЮ автомат не вимикає — рішення людини сильніше.
+        • Реагуємо лише на ПЕРЕХОДИ: якщо людина вимкнула тумблер посеред
+          «поганого» стану, автомат не вмикає його знову до наступного переходу.
+        """
+        bad = lvl in cls.MMD_CLOSE_LEVELS
+        prev_bad = prev_lvl in cls.MMD_CLOSE_LEVELS
+        if bad and not prev_bad and not on:
+            return True
+        if lvl == 'ok' and prev_bad and on and by == 'auto':
+            return False
+        return None
+
+    def apply_mmd_alert(self, symbol: str, is_shadow: bool,
+                        alert: Optional[Dict]) -> Optional[bool]:
+        """🚨→🧱 Застосувати рівень сигнальної колонки до пер-угодного тумблера.
+
+        Кличе двигун FF (`_mm_capture`) на кожному такті для КОЖНОЇ відкритої
+        позиції. Останній рівень живе НА ПОЗИЦІЇ (`mmd_alert_lvl`) і
+        персиститься разом із нею — рестарт не створює «фальшивого переходу».
+        📌 Manual-угоди автомат не чіпає (жодних автоматичних важелів)."""
+        lvl = (alert or {}).get('level')
+        if lvl not in ('ok',) + self.MMD_CLOSE_LEVELS:
+            return None
+        store = self._shadow_positions if is_shadow else self._positions
+        with self._lock:
+            pos = store.get(symbol)
+            if not pos:
+                return None
+            prev = pos.get('mmd_alert_lvl')
+            if prev == lvl:
+                return None
+            pos['mmd_alert_lvl'] = lvl
+            on = bool(pos.get('opp_ob_exit'))
+            by = pos.get('opp_ob_exit_by') or ''
+            locked = self._manual_locked(pos)
+        act = None if locked else self.opp_ob_auto_action(prev, lvl, on, by)
+        if act is None:
+            try:
+                if is_shadow:
+                    self._persist_shadow_positions()
+                else:
+                    self._persist_positions()
+            except Exception:
+                pass
+            return None
+        _ua = {'ok': '✓ за угодою', 'weaker': '↓ слабшає', 'neutral': '⚖ нейтраль',
+               'against': '⚠ ПРОТИ угоди'}
+        self.update_opp_ob_exit(symbol, act, is_shadow=is_shadow, origin='auto',
+                                reason=f'🚨 МММ-Decision: {_ua.get(lvl, lvl)}'
+                                       + (f' · {alert.get("text")}' if alert.get('text') else ''))
+        return act
+
+    def update_opp_ob_exit(self, symbol: str, enabled: bool,
+                           is_shadow: bool = False, origin: str = 'user',
+                           reason: str = '') -> Dict:
+        """🧱 Пер-угодний тумблер Opposite OB Exit (колонка «🧱 OB»).
+
+        Діє НЕЗАЛЕЖНО від глобального `use_opposite_ob_exit`. `origin='auto'`
+        — перемкнув сигнал 🧠 МММ-Decision (FF), `'user'` — людина. Позначка
+        `opp_ob_exit_by` показує, хто ввімкнув. Вимкнення знімає і базу блоку
+        цієї книги (повторне ввімкнення зафіксує нову)."""
+        store = self._shadow_positions if is_shadow else self._positions
+        kind = 'shadow' if is_shadow else 'real'
+        with self._lock:
+            pos = store.get(symbol)
+            if not pos:
+                return {'ok': False, 'reason': f'No open {kind} position for {symbol}'}
+            was = bool(pos.get('opp_ob_exit'))
+            if enabled:
+                pos['opp_ob_exit'] = True
+                pos['opp_ob_exit_by'] = 'auto' if origin == 'auto' else 'user'
+            else:
+                pos.pop('opp_ob_exit', None)
+                pos.pop('opp_ob_exit_by', None)
+                self._opp_ob_base.pop(self._exit_key(symbol, is_shadow), None)
+            updated = dict(pos)
+        try:
+            if is_shadow:
+                self._persist_shadow_positions()
+            else:
+                self._persist_positions()
+        except Exception as e:
+            print(f"[TM] opp-ob-exit persist warn for {symbol}: {e}")
+        if was != bool(enabled):
+            try:
+                from detection.activity_log import log_activity
+                who = '🤖 Бот (🧠 МММ-Decision)' if origin == 'auto' else '✏️ Користувач'
+                log_activity(symbol, 'sltp',
+                             f'{who}: 🧱 Opposite OB Exit по угоді '
+                             f'{"УВІМКНЕНО" if enabled else "ВИМКНЕНО"}'
+                             + (f' · {reason}' if reason else '')
+                             + (' (paper)' if is_shadow else ''),
+                             side=pos.get('side'),
+                             source='TM' if origin == 'auto' else 'user',
+                             extra={'origin': origin, 'is_shadow': is_shadow})
+            except Exception:
+                pass
+        return {'ok': True, 'position': updated, 'opp_ob_exit': bool(enabled)}
 
     # ------------------------------------------------------------------
     # 🔮 Forecast 1H / 4H та 🧠 Decision Center як САМОСТІЙНІ правила виходу
@@ -3322,7 +3450,7 @@ class TradeManager:
         return True
 
     def _opp_ob_baseline(self, symbol: str, pos: Dict, exit_tf: str,
-                         row: Dict) -> Optional[Dict]:
+                         row: Dict, is_shadow: bool = False) -> Optional[Dict]:
         """База «який OB стояв на момент відкриття угоди» для правила
         🧱 Opposite OB Exit.
 
@@ -3333,10 +3461,12 @@ class TradeManager:
         час відкриття) чи обраний TF — тож нова угода завжди починає з чистого
         аркуша, а перемикання TF у налаштуваннях не тягне стару базу."""
         key = f"{pos.get('side')}|{pos.get('opened_at')}|{exit_tf}"
-        cur = self._opp_ob_base.get(symbol)
+        # ⚠️ База — своя на КОЖНУ книгу (real/paper можуть мати різні угоди).
+        bk = self._exit_key(symbol, is_shadow)
+        cur = self._opp_ob_base.get(bk)
         if cur and cur.get('key') == key:
             return cur
-        self._opp_ob_base[symbol] = {
+        self._opp_ob_base[bk] = {
             'key': key,
             # `bar_time` блоку, що вже стояв на вході. None → блоку не було
             # зовсім, тоді БУДЬ-ЯКИЙ протилежний блок далі буде новим.
@@ -6178,7 +6308,7 @@ class TradeManager:
             print(f"[TM] fuel-filter close notify warn for {symbol}: {_e}")
         # 🧱 База Opposite OB Exit прив'язана до КОНКРЕТНОЇ угоди — після
         # закриття вона більше не діє (нова угода зафіксує свою).
-        self._opp_ob_base.pop(symbol, None)
+        self._opp_ob_base.pop(self._exit_key(symbol, False), None)
         # ⚠️ Тротл правил виходу — ключ КНИГИ: паперова позиція по цій монеті
         # може лишатись відкритою, і її вікно перевірок стирати не можна.
         self._signal_exit_at.pop(self._exit_key(symbol, False), None)
@@ -6709,7 +6839,7 @@ class TradeManager:
             print(f"[TM] fuel-filter close notify warn for {symbol}: {_e}")
         # 🧱 База Opposite OB Exit прив'язана до КОНКРЕТНОЇ угоди — після
         # закриття вона більше не діє (нова угода зафіксує свою).
-        self._opp_ob_base.pop(symbol, None)
+        self._opp_ob_base.pop(self._exit_key(symbol, True), None)
         self._signal_exit_at.pop(self._exit_key(symbol, True), None)
         self._mm_flat_drop_if_idle(symbol)
         # ⚠️ Лише ПАПЕРОВА книга — реальна позиція по цій монеті живе далі.

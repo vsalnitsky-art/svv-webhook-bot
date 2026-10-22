@@ -5091,11 +5091,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
+                        <th title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
                         <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="16" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="17" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -5160,11 +5161,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
+                        <th title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
                         <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="15" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="16" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -17003,7 +17005,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="16" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="17" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -17042,6 +17044,7 @@ async function loadTMState(isPoll) {
                     ${pilotCellHTML(p)}
                     ${manualModeCellHTML(p, false)}
                     ${breakevenCloseCellHTML(p, false)}
+                    ${oppObExitCellHTML(p, false)}
                     <td style="font-size:0.74rem;color:#cbd5e1">${p.opened_at ? `<span class="ff-timer" data-since="${Math.floor(p.opened_at)}">${fmtTimer(_nowS() - Math.floor(p.opened_at))}</span>` : '—'}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -17105,7 +17108,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-shadow-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="15" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="16" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -17135,6 +17138,7 @@ async function loadTMState(isPoll) {
                     ${pilotCellHTML(p)}
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}
+                    ${oppObExitCellHTML(p, true)}
                     <td style="font-size:0.74rem;color:#cbd5e1">${p.opened_at ? `<span class="ff-timer" data-since="${Math.floor(p.opened_at)}">${fmtTimer(_nowS() - Math.floor(p.opened_at))}</span>` : '—'}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -17541,6 +17545,45 @@ function breakevenCloseCellHTML(p, isShadow) {
                 <span class="slider"></span>
             </label>
         </td>`;
+}
+
+// 🧱 Пер-угодний Opposite OB Exit (вимога 22.10). Позначка 🤖 = увімкнув автомат
+// (сигнал 🚨 МММ-Decision перейшов у «тенденцію до закриття»), ✏️ = людина.
+function oppObExitCellHTML(p, isShadow) {
+    const sym = p.symbol;
+    const shFlag = isShadow ? 'true' : 'false';
+    const on = !!p.opp_ob_exit;
+    const auto = on && p.opp_ob_exit_by === 'auto';
+    const tip = on
+        ? (auto ? '🧱 Opposite OB Exit УВІМКНЕНО АВТОМАТОМ — сигнал 🚨 МММ-Decision показав тенденцію до закриття. Вимкнеться сам, коли 🚨 повернеться до ✓.'
+                : '🧱 Opposite OB Exit УВІМКНЕНО ВРУЧНУ — автомат його не вимикає.')
+          + ' Закриє угоду на НОВОМУ протилежному OB (TF — з Exit Rules), незалежно від глобального тумблера.'
+        : '🧱 Opposite OB Exit по угоді вимкнено. Увімкнеться автоматично, коли 🚨 МММ-Decision перейде в «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ».';
+    return `
+        <td style="text-align:center;white-space:nowrap">
+            <label class="tm-toggle-mini" title="${tip}">
+                <input type="checkbox" ${on ? 'checked' : ''}
+                       onchange="submitOppObExit('${sym}', this.checked, ${shFlag})">
+                <span class="slider"></span>
+            </label><span class="tm-oppob-by" style="display:inline-block;width:14px;margin-left:3px;font-size:0.68rem">${on ? (auto ? '🤖' : '✏️') : ''}</span>
+        </td>`;
+}
+
+async function submitOppObExit(symbol, enabled, isShadow) {
+    try {
+        const res = await fetch('/api/tm/positions/opp-ob-exit', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol, enabled: !!enabled, is_shadow: !!isShadow}),
+        });
+        if (!res.ok) { alert('🧱 Opposite OB Exit: сервер відповів ' + res.status); setTimeout(loadTMState, 200); return; }
+        const d = await res.json();
+        if (!d.ok) console.warn('Opp-OB toggle failed:', d.reason || 'unknown');
+        setTimeout(loadTMState, 150);
+    } catch (err) {
+        console.error('Opp-OB toggle error:', err);
+        setTimeout(loadTMState, 200);
+    }
 }
 
 // POST breakeven close toggle. enabled = bool. Refreshes the table after.

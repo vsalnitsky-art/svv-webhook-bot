@@ -4260,6 +4260,40 @@ class FuelFilterDaemon:
                 peaks[key] = {'dir': cur.get('dir'), 'status': cur.get('status'),
                               'verdict': cur.get('verdict'), 'seen': _now}
 
+    def _mmd_apply_trade_alerts(self) -> None:
+        """🚨→🧱 Рівень сигнальної колонки кожної відкритої угоди → TM
+        (`apply_mmd_alert`): перехід у «тенденцію до закриття» вмикає
+        пер-угодний 🧱 Opposite OB Exit, покращення до ✓ — вимикає (якщо
+        вмикав автомат). Сигнал рахується ТИМ САМИМ `dec_trade_for`, що
+        малює колонку 🚨, — тумблер і колонка не можуть розійтись."""
+        try:
+            tm = self._get_tm() if self._get_tm else None
+        except Exception:
+            tm = None
+        if tm is None or not hasattr(tm, 'apply_mmd_alert'):
+            return
+        items = []
+        try:
+            with tm._lock:
+                for is_sh, book in ((True, getattr(tm, '_shadow_positions', {}) or {}),
+                                    (False, getattr(tm, '_positions', {}) or {})):
+                    for k, v in book.items():
+                        if isinstance(v, dict) and v.get('side') in ('LONG', 'SHORT'):
+                            items.append((k, v.get('side'), v.get('opened_at'), is_sh))
+        except Exception:
+            return
+        if not items:
+            return
+        al = self.dec_trade_for([(k, sd, oa) for k, sd, oa, _ in items])
+        for k, sd, oa, is_sh in items:
+            a = (al.get(mmd_trade_key(k, sd, oa)) or {}).get('alert')
+            if not a:
+                continue
+            try:
+                tm.apply_mmd_alert(k, is_sh, a)
+            except Exception as e:
+                print(f"[FF] mmd→opp-ob auto warn {k}: {e}")
+
     def dec_trade_for(self, pairs) -> Dict[str, Dict]:
         """🧠 МММ-Decision + 🚨 сигнал по відкритих угодах — ЛИШЕ ЧИТАННЯ.
 
@@ -5041,9 +5075,11 @@ class FuelFilterDaemon:
                 self._mmd_decisions({S: (fuels or {}).get(S) or {} for S in _tsyms},
                                     _now, extra=_tsyms)
             self._mmd_track_peaks(_tpairs, _now)
+            self._mmd_apply_trade_alerts()
         else:
             _decs = self._mmd_decisions(fuels, _now, extra=_tsyms)
             self._mmd_track_peaks(_tpairs, _now)
+            self._mmd_apply_trade_alerts()
             snap_d = {}
             for sym, f in (fuels or {}).items():
                 if not f:

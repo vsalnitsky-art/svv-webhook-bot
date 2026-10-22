@@ -99,8 +99,8 @@ def test_tables_have_the_new_column_and_matching_colspans():
         n = len(re.findall(r'<th[\s>]', tbl))
         m = re.search(r'colspan="(\d+)"', tbl)
         _check(m and int(m.group(1)) == n, f'{tid}: colspan ≠ {n}')
-    _check(_HTML.count('colspan="16" class="tm-empty-msg">No open positions') == 2
-           and _HTML.count('colspan="15" class="tm-empty-msg">No paper positions') == 2,
+    _check(_HTML.count('colspan="17" class="tm-empty-msg">No open positions') == 2
+           and _HTML.count('colspan="16" class="tm-empty-msg">No paper positions') == 2,
            'colspan у JS-заглушках не оновлено')
     # ⚠️ 22.10: позначка OB 4H стоїть ЛІВОРУЧ від сторони угоди.
     _check(_HTML.count('${ob4hMarkHTML(p, null, true)}${p.side}') == 2,
