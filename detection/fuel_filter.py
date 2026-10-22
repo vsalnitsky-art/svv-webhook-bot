@@ -544,6 +544,13 @@ def dec_mm_dir(dec) -> Optional[Dict]:
 # Перевага в бік угоди впала від ПІКУ цієї угоди на стільки п.п. → «слабшає».
 MMD_WEAK_PP = 15
 MMD_PEAK_FORGET_SEC = 3600.0   # пік закритої угоди забуваємо через годину
+# 🚨→🧱 ПРОГРІВ ПІСЛЯ СТАРТУ: перші хвилини після рестарту Decision рахується
+# на ХОЛОДНИХ даних сканера (немає прогнозу/PD/цін) і масово дає NEUTRAL. Поки
+# триває прогрів, автомат 🧱 нічого не перемикає (і рівень на позиції НЕ
+# перезаписує — лишається попередній), а монети з відновленим вердиктом не
+# перераховуються холодним (кейс 22.10: після рестарту всі угоди → «НЕЙТР» і
+# масове авто-вмикання 🧱 OB).
+MMD_AUTO_WARMUP_SEC = 600.0
 
 
 def mmd_trade_key(symbol, side, opened_at) -> str:
@@ -1498,6 +1505,7 @@ class FuelFilterDaemon:
         self._mmd_price_hist: Dict[str, list] = {}
         self._mmd_stats: Dict = {}
         self._mmd_dec: Dict[str, tuple] = {}
+        self._mmd_boot_at: float = time.time()   # старт процесу → прогрів 🚨
         # 🚨 Пік вердикту в бік угоди {'SYM|SIDE': вердикт} — база сигналу
         # «МММ-Decision слабшає» у таблицях угод. Персиститься.
         self._mmd_trade_peak: Dict[str, Dict] = {}
@@ -4260,6 +4268,11 @@ class FuelFilterDaemon:
                 peaks[key] = {'dir': cur.get('dir'), 'status': cur.get('status'),
                               'verdict': cur.get('verdict'), 'seen': _now}
 
+    def _mmd_warming(self, now: Optional[float] = None) -> bool:
+        """🚨 Ще триває прогрів після старту (MMD_AUTO_WARMUP_SEC)?"""
+        _now = float(now) if now else time.time()
+        return (_now - float(getattr(self, '_mmd_boot_at', 0.0) or 0.0)) < MMD_AUTO_WARMUP_SEC
+
     def _mmd_apply_trade_alerts(self) -> None:
         """🚨→🧱 Рівень сигнальної колонки кожної відкритої угоди → TM
         (`apply_mmd_alert`): перехід у «тенденцію до закриття» вмикає
@@ -4271,6 +4284,8 @@ class FuelFilterDaemon:
         except Exception:
             tm = None
         if tm is None or not hasattr(tm, 'apply_mmd_alert'):
+            return
+        if self._mmd_warming():
             return
         items = []
         try:
@@ -5231,11 +5246,14 @@ class FuelFilterDaemon:
         for k in [k for k in cache if k not in syms]:
             cache.pop(k, None)
         todo = []
+        _warm = self._mmd_warming(now)
         for S in syms:
             hit = cache.get(S)
             _p = 0 if S in _ex else 1
             if not hit:
                 todo.append((_p, 0, 0.0, S))
+            elif _warm:
+                continue      # прогрів: відновлений вердикт не міняємо холодним
             elif (now - hit[0]) >= MMD_TTL:
                 todo.append((_p, 1, hit[0], S))
         todo.sort()

@@ -1287,6 +1287,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     background: rgba(120, 120, 120, 0.2);
     color: #777;
 }
+.tm-table.tm-pilot-off .tm-col-pilot{display:none}
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -5088,7 +5089,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
-                        <th title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
+                        <th class="tm-col-pilot" title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
                         <th title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
@@ -5158,7 +5159,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
-                        <th title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
+                        <th class="tm-col-pilot" title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
                         <th title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
@@ -10224,6 +10225,7 @@ async function loadTMSettings() {
             (s.signal_exit_mode === 'and') ? 'and' : 'or';
         _setV('tm-signal-exit-min-conf', s.signal_exit_min_conf != null ? s.signal_exit_min_conf : 0, 0);
         document.getElementById('tm-pilot-enabled').checked = !!s.pilot_enabled;
+        _tmPilotColSync(!!s.pilot_enabled);
         _setV('tm-pilot-min-target', s.pilot_min_target_dist_pct != null ? s.pilot_min_target_dist_pct : 0.3, 0.3);
         _setV('tm-pilot-max-target', s.pilot_max_target_dist_pct != null ? s.pilot_max_target_dist_pct : 15, 15);
         _setV('tm-pilot-stop-buf', s.pilot_stop_buf_pct != null ? s.pilot_stop_buf_pct : 0.1, 0.1);
@@ -10738,7 +10740,7 @@ async function saveTMSettings() {
             mm_flat_exit_confirm_sec: parseInt(document.getElementById('tm-mm-flat-exit-confirm').value) || 0,
             mm_against_exit_confirm_sec: parseInt(document.getElementById('tm-mm-against-exit-confirm').value) || 0,
             signal_exit_min_conf: parseInt(document.getElementById('tm-signal-exit-min-conf').value) || 0,
-            pilot_enabled: document.getElementById('tm-pilot-enabled').checked,
+            pilot_enabled: _tmPilotColSync(document.getElementById('tm-pilot-enabled').checked),
             pilot_min_target_dist_pct: parseFloat(document.getElementById('tm-pilot-min-target').value) || 0.3,
             pilot_max_target_dist_pct: parseFloat(document.getElementById('tm-pilot-max-target').value) || 15,
             pilot_stop_buf_pct: parseFloat(document.getElementById('tm-pilot-stop-buf').value) || 0.1,
@@ -17232,10 +17234,22 @@ const _PILOT_KIND = {
     // 🧲 Ціль із НАЙБІЛЬШОГО МАГНІТУ драбини ліквідності (Manual TP-2).
     magnet: '🧲',
 };
+// 🎯 Автопілот вимкнено в налаштуваннях → колонку «🎯 Автопілот» ховаємо в
+// ОБОХ таблицях відкритих угод (вона все одно порожня). CSS-клас на <table>,
+// тож ховається і заголовок, і комірки, без перебудови рядків. Повертає `on`.
+function _tmPilotColSync(on) {
+    on = !!on;
+    ['tm-open-table', 'tm-shadow-open-table'].forEach(id => {
+        const t = document.getElementById(id);
+        if (t) t.classList.toggle('tm-pilot-off', !on);
+    });
+    return on;
+}
+
 function pilotCellHTML(p) {
     const pl = p.pilot;
     if (!pl) {
-        return '<td style="font-size:0.7rem;color:#555;white-space:nowrap" '
+        return '<td class="tm-col-pilot" style="font-size:0.7rem;color:#555;white-space:nowrap" '
              + 'title="Автопілот вимкнено або ще не зробив висновку по цій монеті">—</td>';
     }
     // Заблокований трейл перекриває значок дії — стан УГОДИ важливіший за
@@ -17315,7 +17329,7 @@ function pilotCellHTML(p) {
 
     // Ширини підібрані під найдовші реальні значення (ціна «$2,411.95»,
     // залишок «13.9%», «3.53R») — саме вони й тримають стовпчик рівним.
-    return `<td style="font-size:0.7rem;white-space:nowrap;font-family:monospace" title="${tip}">`
+    return `<td class="tm-col-pilot" style="font-size:0.7rem;white-space:nowrap;font-family:monospace" title="${tip}">`
         + seg(14, 'center', `<span style="color:${col};font-weight:700">${ic}</span>`)
         + seg(40, 'left', bar)
         + seg(86, 'left', `<span style="color:#cbd5e1">${objTxt}</span>`)

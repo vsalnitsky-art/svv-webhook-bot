@@ -3059,7 +3059,8 @@ class TradeManager:
         → True (увімкнути) · False (вимкнути) · None (нічого).
         • ПЕРЕХІД у «тенденцію до закриття» (з ✓ OK або перший показ) і тумблер
           вимкнений → увімкнути;
-        • ПОКРАЩЕННЯ назад до ✓ OK і тумблер увімкнув САМЕ АВТОМАТ → вимкнути.
+        • ✓ OK і тумблер увімкнув САМЕ АВТОМАТ → вимкнути (за станом, не
+          лише на переході — щоб пропущений перехід не «залипав»).
           ⚠️ Увімкнений ЛЮДИНОЮ автомат не вимикає — рішення людини сильніше.
         • Реагуємо лише на ПЕРЕХОДИ: якщо людина вимкнула тумблер посеред
           «поганого» стану, автомат не вмикає його знову до наступного переходу.
@@ -3068,7 +3069,10 @@ class TradeManager:
         prev_bad = prev_lvl in cls.MMD_CLOSE_LEVELS
         if bad and not prev_bad and not on:
             return True
-        if lvl == 'ok' and prev_bad and on and by == 'auto':
+        # ⚠️ Вимкнення — за СТАНОМ, а не за переходом: ✓ OK + тумблер увімкнув
+        # автомат → вимикаємо завжди (інакше пропущений перехід — рестарт,
+        # такт без даних — лишав 🧱 увімкненим назавжди, кейс 22.10).
+        if lvl == 'ok' and on and by == 'auto':
             return False
         return None
 
@@ -3089,14 +3093,15 @@ class TradeManager:
             if not pos:
                 return None
             prev = pos.get('mmd_alert_lvl')
-            if prev == lvl:
-                return None
+            changed = prev != lvl
             pos['mmd_alert_lvl'] = lvl
             on = bool(pos.get('opp_ob_exit'))
             by = pos.get('opp_ob_exit_by') or ''
             locked = self._manual_locked(pos)
         act = None if locked else self.opp_ob_auto_action(prev, lvl, on, by)
         if act is None:
+            if not changed:
+                return None
             try:
                 if is_shadow:
                     self._persist_shadow_positions()

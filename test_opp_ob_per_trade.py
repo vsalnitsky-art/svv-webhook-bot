@@ -81,7 +81,9 @@ def test_auto_action_pure_rule():
            'людина вимкнула посеред поганого стану — автомат не перебиває')
     _check(A('against', 'ok', True, 'auto') is False, 'покращення → вимкнути')
     _check(A('against', 'ok', True, 'user') is None, 'увімкнене людиною не вимикаємо')
-    _check(A(None, 'ok', False, '') is None and A('ok', 'ok', True, 'auto') is None, 'ок → нічого')
+    _check(A(None, 'ok', False, '') is None, 'ок і вимкнено → нічого')
+    _check(A('ok', 'ok', True, 'auto') is False and A(None, 'ok', True, 'auto') is False,
+           'вимкнення ЗА СТАНОМ: пропущений перехід не лишає 🧱 увімкненим')
     print('✓ правило автомата: лише переходи, рішення людини сильніше')
 
 
@@ -104,6 +106,54 @@ def test_manual_lock_blocks_the_automat():
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'against'}) is None, '📌')
     _check('opp_ob_exit' not in t._positions['MNTUSDT'], '📌 угоду автомат не чіпає')
     print('✓ 📌 Manual-угоду автомат не чіпає')
+
+
+def test_auto_on_turns_off_even_if_level_was_already_ok():
+    # кейс 22.10: рівень на позиції вже 'ok' (перехід пропущено), а тумблер
+    # увімкнув автомат → наступний такт ✓ OK мусить вимкнути.
+    t = _tm(side='LONG', use_opposite_ob_exit=False)
+    p = t._positions['MNTUSDT']
+    p.update(opp_ob_exit=True, opp_ob_exit_by='auto', mmd_alert_lvl='ok')
+    _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'ok'}) is False, 'вимкнути')
+    _check('opp_ob_exit' not in p, p)
+    p.update(opp_ob_exit=True, opp_ob_exit_by='user')
+    _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'ok'}) is None, 'людське не чіпаємо')
+    print('✓ ✓ OK вимикає авто-🧱 навіть без зафіксованого переходу')
+
+
+def test_warmup_after_restart_freezes_the_automat():
+    import types, time as _t
+    ff_mod = _er.sys.modules.get('detection.fuel_filter')
+    _check('MMD_AUTO_WARMUP_SEC = 600.0' in _FF, 'константа прогріву')
+    a = _FF.index('def _mmd_apply_trade_alerts(')
+    fn = _FF[a:_FF.index('\n    def ', a + 10)]
+    _check('if self._mmd_warming():' in fn and
+           fn.index('_mmd_warming') < fn.index('apply_mmd_alert('),
+           'під час прогріву автомат 🧱 не викликається (рівень на позиції лишається)')
+    b = _FF.index('def _mmd_decisions(')
+    fd = _FF[b:_FF.index('\n    def ', b + 10)]
+    _check('elif _warm:' in fd, 'прогрів: відновлений вердикт не перераховується холодним')
+    c = _FF.index('def _mmd_warming(')
+    src = _FF[c:_FF.index('\n    def ', c + 10)]
+    ns = {'time': _t, 'Optional': object, 'MMD_AUTO_WARMUP_SEC': 600.0}
+    exec('class X:\n    ' + src.replace('Optional[float]', 'float'), ns)
+    X = ns['X']
+    now = 1_000_000.0
+    _check(X._mmd_warming(types.SimpleNamespace(_mmd_boot_at=now - 10), now), 'щойно стартував')
+    _check(not X._mmd_warming(types.SimpleNamespace(_mmd_boot_at=now - 601), now), 'прогрів минув')
+    print('✓ після рестарту 10 хв прогріву: 🧱 не перемикається, вердикт не холодний')
+
+
+def test_pilot_column_hidden_when_pilot_off():
+    _check(_HTML.count('<th class="tm-col-pilot"') == 2, 'заголовок у real і paper')
+    _check(_HTML.count('<td class="tm-col-pilot"') == 2, 'обидві гілки комірки')
+    _check('.tm-table.tm-pilot-off .tm-col-pilot{display:none}' in _HTML, 'CSS')
+    _check('_tmPilotColSync(!!s.pilot_enabled)' in _HTML and
+           "pilot_enabled: _tmPilotColSync(" in _HTML, 'синхронізація на завантаженні й збереженні')
+    a = _HTML.index('function _tmPilotColSync(')
+    fn = _HTML[a:_HTML.index('\n}', a)]
+    _check("'tm-open-table'" in fn and "'tm-shadow-open-table'" in fn, 'обидві таблиці')
+    print('✓ автопілот вимкнено → колонка «🎯 Автопілот» схована в обох таблицях')
 
 
 # ═══════════ 3. Проводка ═══════════════════════════════════════════════
