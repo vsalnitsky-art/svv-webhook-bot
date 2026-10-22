@@ -13346,7 +13346,8 @@ function mmApplyState(mm, bk) {
                enabled: !(mm && mm.enabled === false),
                coverage: (mm && mm.coverage) || {},
                pending: (mm && mm.pending) || {},
-               queues_off: !!(mm && mm.queues_off) };
+               queues_off: !!(mm && mm.queues_off),
+               restored: !!(mm && mm.restored) };
     // 🔌 ВИМКНЕНО → увесь блок мовчить (вимога 01.10): банер, фільтри і список
     // ховаються, лишається один напис. Застиглий банер виглядав би як живий.
     const _off = _mmEl(B, '-off'), _live = _mmEl(B, '-live');
@@ -13397,15 +13398,22 @@ function mmApplyState(mm, bk) {
         // монет). Позначка мусить бути видима, інакше коротший список
         // читається як «бот загубив монети».
         const _qOff = B.meta.queues_off ? ' · ❤️ черги OFF' : '';
+        // 💾 Рядки — знімок із МИНУЛОГО запуску (до першого такту книги після
+        // рестарту). Це має бути видно: числа ще не свіжі.
+        const _rst = B.meta.restored ? '↻ ' : '';
         up.textContent = !B.meta.enabled ? 'вимкнено'
             : (B.meta.ts
-               ? `${B.rows.length}${tgt ? ' з ' + tgt : ''} монет · оновлено `
+               ? `${_rst}${B.rows.length}${tgt ? ' з ' + tgt : ''} монет · `
+                 + (B.meta.restored ? 'з минулого запуску, ' : 'оновлено ')
                  + new Date(_srvToPc(B.meta.ts) * 1000).toLocaleTimeString() + _qOff
                : _pendTxt + _qOff);
         up.style.color = !B.meta.enabled ? ''
             : ((!B.meta.ts && pend.reason === 'error') ? '#f87171'
-               : (B.meta.queues_off ? '#fbbf24' : ''));
+               : (B.meta.restored ? '#94a3b8' : (B.meta.queues_off ? '#fbbf24' : '')));
         up.title = !B.meta.enabled ? 'Блок вимкнено тумблером у шапці секції — бот його не рахує.'
+            : B.meta.restored ? ('↻ Таблиця — збережений знімок із минулого запуску бота. '
+                + 'Перший такт після рестарту оновить її (≈30с). Ворота сигналів і правила '
+                + 'виходу цих чисел НЕ бачать — вони чекають свіжий розрахунок.')
             : (!B.meta.ts ? (pend.reason === 'error'
                     ? 'Такт двигуна падає ДО побудови знімка — блок не '
                       + 'прогрівається, а зламаний.\n' + (pend.detail || '')

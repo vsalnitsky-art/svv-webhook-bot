@@ -185,6 +185,10 @@ _DB_SETTINGS = 'fuel_filter_settings'
 _DB_STATE = 'fuel_filter_state'
 _DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
 _DB_FUNDING_ARCHIVE = 'fuel_filter_funding_archive'  # per-coin funding history
+# 💾 Знімки шести МММ-книг + їхні СИРІ кеші (STC, прогноз, вердикти Decision,
+# скан Pull) — щоб після рестарту блоки лише ОНОВЛЮВАЛИСЬ, а не збирались з нуля.
+# Окремий ключ: блоб великий, а `_DB_STATE` пишеться щотакту.
+_DB_MM_BOOKS = 'fuel_filter_mm_books_v1'
 FUNDING_ARCH_MAX = 400          # max samples kept per coin (RAM/512MB: was 800)
 FUNDING_ARCH_COINS_MAX = 200    # max distinct coins archived (RAM/512MB: was 400)
 _DB_OPP_STATS = 'fuel_opportunity_stats'  # 🎯 per-coin recommendation episodes
@@ -491,6 +495,15 @@ def pull_mm_dir(row) -> Optional[Dict]:
 # сканера, без мережі) — тому порціями й зі своїм TTL.
 MMD_TTL = 90.0            # с — вік вердикту, після якого монета стає в чергу
 MMD_PER_TICK = 12         # скільки монет перераховуємо за один такт (30с)
+
+# 💾 ЗБЕРЕЖЕННЯ МММ-КНИГ МІЖ РЕСТАРТАМИ (вимога 22.10: «після рестарту лише
+# обновити інформацію, а не чекати, поки все відновиться»).
+MM_BOOKS_PERSIST_SEC = 60.0       # як часто пишемо блоб (≈ одне оновлення liq-map)
+MM_BOOKS_SHOW_MAX_AGE = 6 * 3600.0  # знімок для ПОКАЗУ (з позначкою ↻) — до 6 год
+MM_BOOKS_RAW_MAX_AGE = 1800.0     # сирі кеші, що йдуть у РОЗРАХУНОК, — лише ≤30 хв
+MM_FC_RESTORE_SEC = 900.0         # 🔮 фолбек прогнозу — лише перші 15 хв після старту
+_MM_BOOK_PREFIX = {'old': '_mm', 'new': '_mmn', 'ctr': '_mmc', 'fc': '_mmf',
+                   'pull': '_mmp', 'dec': '_mmd'}
 
 
 def dec_mm_dir(dec) -> Optional[Dict]:
@@ -1617,6 +1630,7 @@ class FuelFilterDaemon:
         self._readiness_last_log: Dict[str, tuple] = {}
         self._last_tick_ts = 0
         self._load_state()
+        self._mm_books_load()
         self._migrate_settings()
 
     # 🗑 Ключі ВИДАЛЕНИХ функцій (01.10: «📈 Рух ринку» і «🔻 Корекція» прибрано
@@ -2889,6 +2903,162 @@ class FuelFilterDaemon:
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
+
+    # ------------------------------------------------------------------
+    # 💾 МММ-КНИГИ МІЖ РЕСТАРТАМИ (вимога 22.10)
+    # ------------------------------------------------------------------
+    def _mm_books_persist(self, now: float, force: bool = False) -> bool:
+        """💾 Записати знімки шести МММ-книг + сирі кеші в `_DB_MM_BOOKS`.
+
+        Чому це потрібно: банер і таймери вже переживали рестарт, а ТАБЛИЦІ й
+        джерела — ні. Після `botupdate` ⚡ CTR добирав STC по 10 значень за такт
+        (~5 хв на watchlist), 🧠 Decision — по 12 монет, 🔮 Local чекав першого
+        циклу сканера, 🧭 Pull запускав скан наново, а банер увесь цей час
+        рахувався з НЕПОВНОГО набору і смикався.
+        Пишемо РАЗ на `MM_BOOKS_PERSIST_SEC`: одне оновлення джерела, тож після
+        рестарту губиться не більше хвилини. Рядок у БД ОДИН і перезаписується —
+        кількість рядків не росте."""
+        last = float(getattr(self, '_mm_books_saved_at', 0.0) or 0.0)
+        if not force and last and (now - last) < MM_BOOKS_PERSIST_SEC:
+            return False
+        db = getattr(self, '_db', None)
+        if db is None:
+            return False
+        self._mm_books_saved_at = now
+        with self._lock:
+            books = {}
+            for bk, p in _MM_BOOK_PREFIX.items():
+                snap = getattr(self, p + '_snapshot', None) or {}
+                ts = float(getattr(self, p + '_snapshot_ts', 0.0) or 0.0)
+                if snap and ts:
+                    books[bk] = {'snap': {k: dict(v) for k, v in snap.items()},
+                                 'ts': ts,
+                                 'stats': dict(getattr(self, p + '_stats', {}) or {})}
+            scan = dict(getattr(self, '_mmp_scan', {}) or {})
+            scan_at = float(getattr(self, '_mmp_scan_at', 0.0) or 0.0)
+            dec = {k: [float(v[0]), v[1]]
+                   for k, v in (getattr(self, '_mmd_dec', {}) or {}).items()
+                   if isinstance(v, (tuple, list)) and len(v) == 2}
+            ctr = {k: {tf: [float(x[0]), x[1]] for tf, x in (v or {}).items()}
+                   for k, v in (getattr(self, '_mmc_rd_last', {}) or {}).items()}
+            fcl = {k: [float(v[0]), v[1]]
+                   for k, v in (getattr(self, '_mm_fc_last', {}) or {}).items()}
+        if scan.get('rows'):
+            # Повна драбина рядка (`rows`) книзі не потрібна — лише вага блобу.
+            scan['rows'] = {k: {kk: vv for kk, vv in (r or {}).items() if kk != 'rows'}
+                            for k, r in scan['rows'].items()}
+        if scan.get('cfg') is not None:
+            scan['cfg'] = list(scan['cfg'])
+        try:
+            db.set_setting(_DB_MM_BOOKS, {
+                'v': 1, 'ts': now, 'books': books,
+                'pull_scan': scan, 'pull_scan_at': scan_at,
+                'dec': dec, 'ctr_rd': ctr, 'fc_last': fcl})
+            return True
+        except Exception as e:
+            print(f"[FuelFilter] mm-books persist error: {e}")
+            return False
+
+    def _mm_books_load(self):
+        """💾 Відновити МММ-книги після рестарту. ДВА різні рівні довіри:
+
+        1. ЗНІМКИ для ПОКАЗУ (≤ `MM_BOOKS_SHOW_MAX_AGE`) лягають в окреме
+           `_mm_books_shown` і читаються ЛИШЕ `mm_monitor_state`, доки книга не
+           порахується вперше. ⚠️ У `_X_snapshot` їх НЕ кладемо: звідти читають
+           ворота сигналів (`mm_gate_view`), колонки угод і правило виходу
+           «🧮 МММ LiQ ⚖ → вихід» — торгувати чи закривати угоду за числом із
+           минулого запуску не можна (урок «немає даних ≠ рівновага»).
+        2. СИРІ КЕШІ джерел (≤ `MM_BOOKS_RAW_MAX_AGE`) — STC 1H/4H, вердикти
+           Decision (зі СВОЇМ часом, тож вони першими стають у чергу
+           перерахунку), пара прогнозів (фолбек лише `MM_FC_RESTORE_SEC`) і
+           результат скану Pull (свіжий → скан не повторюється). Вони йдуть у
+           звичайний розрахунок і замінюються свіжими тим самим механізмом
+           бюджету, що працює й без рестарту."""
+        self._boot_ts = time.time()
+        self._mm_books_shown = {}
+        self._mm_books_saved_at = 0.0
+        self._mmc_rd_last = {}
+        self._mm_fc_last = {}
+        try:
+            blob = self._db.get_setting(_DB_MM_BOOKS, {}) or {}
+        except Exception:
+            blob = {}
+        if not isinstance(blob, dict) or not blob.get('ts'):
+            return
+        now = self._boot_ts
+        try:
+            age = now - float(blob.get('ts') or 0)
+        except (TypeError, ValueError):
+            return
+        # Час із майбутнього (переведений годинник) — не довіряємо нічому.
+        if age < -60:
+            return
+        if age <= MM_BOOKS_SHOW_MAX_AGE:
+            for bk, b in (blob.get('books') or {}).items():
+                if bk in _MM_BOOK_PREFIX and isinstance(b, dict) and b.get('snap'):
+                    try:
+                        self._mm_books_shown[bk] = {
+                            'snap': {str(k).upper(): v for k, v in b['snap'].items()
+                                     if isinstance(v, dict)},
+                            'ts': float(b.get('ts') or 0),
+                            'stats': dict(b.get('stats') or {})}
+                    except (TypeError, ValueError, AttributeError):
+                        continue
+        if age > MM_BOOKS_RAW_MAX_AGE:
+            print(f"[FuelFilter] mm-books: знімки {len(self._mm_books_shown)} книг(и) "
+                  f"лише для показу (вік {int(age)}с > {int(MM_BOOKS_RAW_MAX_AGE)}с)")
+            return
+        try:
+            self._mmd_dec = {str(k).upper(): (float(v[0]), dict(v[1] or {}))
+                             for k, v in (blob.get('dec') or {}).items()
+                             if isinstance(v, list) and len(v) == 2}
+        except (TypeError, ValueError):
+            self._mmd_dec = {}
+        try:
+            self._mmc_rd_last = {
+                str(k).upper(): {tf: [float(x[0]), x[1]] for tf, x in (v or {}).items()
+                                 if tf in ('1h', '4h') and isinstance(x, list)
+                                 and len(x) == 2 and x[1] is not None}
+                for k, v in (blob.get('ctr_rd') or {}).items()}
+        except (TypeError, ValueError, AttributeError):
+            self._mmc_rd_last = {}
+        try:
+            self._mm_fc_last = {str(k).upper(): (float(v[0]), dict(v[1] or {}))
+                                for k, v in (blob.get('fc_last') or {}).items()
+                                if isinstance(v, list) and len(v) == 2}
+        except (TypeError, ValueError, AttributeError):
+            self._mm_fc_last = {}
+        scan = blob.get('pull_scan')
+        if isinstance(scan, dict) and scan.get('rows'):
+            if scan.get('cfg') is not None:
+                scan['cfg'] = tuple(scan['cfg'])
+            self._mmp_scan = scan
+            try:
+                self._mmp_scan_at = float(blob.get('pull_scan_at') or 0.0)
+            except (TypeError, ValueError):
+                self._mmp_scan_at = 0.0
+        print(f"[FuelFilter] mm-books restored (вік {int(age)}с): "
+              f"{len(self._mm_books_shown)} книг(и) · STC {len(self._mmc_rd_last)} · "
+              f"Decision {len(self._mmd_dec)} · прогноз {len(self._mm_fc_last)} · "
+              f"Pull {len((self._mmp_scan or {}).get('rows') or {}) if isinstance(scan, dict) else 0}")
+
+    def _mm_fc_remember(self, sym: str, pair: Dict, now: float) -> Dict:
+        """🔮 Пара прогнозів 1H/4H з фолбеком на ВІДНОВЛЕНУ — лише перші
+        `MM_FC_RESTORE_SEC` після старту, поки сканер не наповнив свій кеш.
+        Фолбек позначається `fc_stale` (видно, що це не свіжий прогноз)."""
+        last = getattr(self, '_mm_fc_last', None)
+        if last is None:
+            self._mm_fc_last = last = {}
+        S = str(sym).upper()
+        if pair.get('f1') or pair.get('f4'):
+            last[S] = (now, {'f1': pair.get('f1'), 'f4': pair.get('f4')})
+            return pair
+        boot = float(getattr(self, '_boot_ts', 0.0) or 0.0)
+        hit = last.get(S)
+        if (hit and boot and (now - boot) <= MM_FC_RESTORE_SEC
+                and (now - hit[0]) <= MM_BOOKS_RAW_MAX_AGE + MM_FC_RESTORE_SEC):
+            return {'f1': hit[1].get('f1'), 'f4': hit[1].get('f4'), 'fc_stale': True}
+        return pair
 
     # ------------------------------------------------------------------
     # per-coin funding ARCHIVE (history of what happened & when)
@@ -4399,7 +4569,9 @@ class FuelFilterDaemon:
 
         def _fcast(sym):
             if sym not in _fc:
-                _fc[sym] = self._mm_forecast(_fe, sym)
+                # 💾 Після рестарту, поки сканер не наповнив кеш прогнозу, —
+                # відновлена пара (позначка `fc_stale`), а не порожнеча.
+                _fc[sym] = self._mm_fc_remember(sym, self._mm_forecast(_fe, sym), _now)
             return _fc[sym]
 
         # МММ LiQ теж потрібен ОБОМ книгам (у МММ-new це колонка «МММ-LiQ»):
@@ -4725,6 +4897,8 @@ class FuelFilterDaemon:
             # ⏳ Знімок Є → причина «чому його немає» більше не потрібна.
             with self._lock:
                 self._mm_pending = {}
+        # 💾 Знімки + сирі кеші → БД (раз на хвилину): рестарт їх не обнуляє.
+        self._mm_books_persist(_now)
 
     def _ctr_mm_readings(self, syms, fe=None) -> Dict[str, tuple]:
         """⚡ STC 1H/4H по монетах для МММ-CTR → {СИМВОЛ: (stc_1h, stc_4h)}.
@@ -4740,6 +4914,14 @@ class FuelFilterDaemon:
         if fe is None or not hasattr(fe, 'get_ctr_tf'):
             return {}
         peek = getattr(fe, 'peek_ctr_tf', None)
+        # 💾 Останнє відоме STC по (монета, TF) — переживає рестарт. Коли кеш
+        # двигуна прогнозу порожній (щойно піднялись), беремо ЙОГО як застаріле
+        # значення: монета не зникає з таблиці, а стає в чергу оновлення за
+        # віком — той самий бюджет `CTR_MM_FETCH_PER_TICK`, без залпу запитів.
+        last = getattr(self, '_mmc_rd_last', None)
+        if last is None:
+            self._mmc_rd_last = last = {}
+        _t = time.time()
         cur: Dict[str, Dict[str, Optional[float]]] = {}
         todo = []          # (пріоритет, вік, символ, tf): 0 = немає значення
         for sym in syms or []:
@@ -4749,19 +4931,30 @@ class FuelFilterDaemon:
                 got = peek(S, tf) if peek else None
                 if got and got[1] and got[1].get('stc') is not None:
                     cur[S][tf] = got[1].get('stc')
+                    last.setdefault(S, {})[tf] = [_t - float(got[0] or 0), cur[S][tf]]
                     if got[0] >= got[2]:
                         todo.append((1, -got[0], S, tf))
                 else:
-                    cur[S][tf] = None
-                    todo.append((0, 0.0, S, tf))
+                    old = (last.get(S) or {}).get(tf)
+                    if old and old[1] is not None:
+                        cur[S][tf] = old[1]
+                        todo.append((1, -(_t - float(old[0] or 0)), S, tf))
+                    else:
+                        cur[S][tf] = None
+                        todo.append((0, 0.0, S, tf))
         todo.sort()
         for _pr, _age, S, tf in todo[:CTR_MM_FETCH_PER_TICK]:
             try:
                 r = fe.get_ctr_tf(S, tf)
                 if r and r.get('stc') is not None:
                     cur[S][tf] = r.get('stc')
+                    last.setdefault(S, {})[tf] = [_t, cur[S][tf]]
             except Exception:
                 pass
+        # Памʼять обмежена: монети, яких немає в наборі, не тримаємо.
+        _keep = set(cur)
+        for k in [k for k in last if k not in _keep]:
+            last.pop(k, None)
         return {S: (v['1h'], v['4h']) for S, v in cur.items()
                 if v.get('1h') is not None and v.get('4h') is not None}
 
@@ -5073,6 +5266,20 @@ class FuelFilterDaemon:
             _cov = dict(getattr(self, _p + '_stats', {}) or {})
             grow = dict(getattr(self, _p + '_grow_since', {}) or {})
             ts = float(getattr(self, _p + '_snapshot_ts', 0.0) or 0.0)
+            # 💾 Книга ще не порахувалась від старту → показуємо знімок із
+            # минулого запуску з позначкою `restored` (лише ПОКАЗ: ворота,
+            # колонки угод і правила виходу його не бачать — див.
+            # `_mm_books_load`). Перший же свіжий знімок його замінює.
+            _shown = getattr(self, '_mm_books_shown', None) or {}
+            _restored = False
+            if ts:
+                _shown.pop(_bk, None)
+            elif _on and _bk in _shown:
+                _rb = _shown[_bk]
+                snap = dict(_rb.get('snap') or {})
+                _cov = dict(_rb.get('stats') or {})
+                ts = float(_rb.get('ts') or 0.0)
+                _restored = bool(snap and ts)
         # 📍 ДЕ МОНЕТА ЗАРАЗ. Відкриті позиції (FF + обидві книги TM) збирає
         # ЄДИНИЙ `_mm_open_syms`, черги — `_mm_queue_map`.
         # ⚠️ **ВИМОГА ЗМІНИЛАСЬ (18.09):** «Із таблиці не потрібно видаляти
@@ -5239,6 +5446,8 @@ class FuelFilterDaemon:
             # вимкнені черги знімок НЕ зупиняють (див. `_mm_only_tick`).
             'pending': (dict(getattr(self, '_mm_pending', {}) or {})
                         if (_on and not ts) else {}),
+            # 💾 Рядки — ЗНІМОК З МИНУЛОГО ЗАПУСКУ (до першого такту книги).
+            'restored': _restored,
             # ❤️ Черги вимкнено → знімок рахує РЕДУКОВАНИЙ такт, і набір монет
             # вужчий (без черг і фандингу). Мовчати про це не можна: коротший
             # список читався б як «бот половину монет загубив».

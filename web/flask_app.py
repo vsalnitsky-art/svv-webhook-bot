@@ -51,23 +51,28 @@ def _db_service_cleanup(keep_days=None, wipe_all=False):
         kd = max(0, min(365, int(keep_days if keep_days is not None else 3)))
     except (TypeError, ValueError):
         kd = 3
-    with engine.connect() as conn:
-        for tbl, (col, kind) in _SERVICE_TABLES_TIME.items():
-            try:
-                if wipe_all:
-                    r = conn.execute(text(f"DELETE FROM {tbl}"))
-                elif kind == 'dt':
-                    r = conn.execute(text(f"DELETE FROM {tbl} WHERE {col} < NOW() - INTERVAL '{kd} days'"))
-                elif kind == 'sec':
-                    r = conn.execute(text(f"DELETE FROM {tbl} WHERE {col} < EXTRACT(EPOCH FROM NOW()) - {kd}*86400"))
-                elif kind == 'ms':
-                    r = conn.execute(text(f"DELETE FROM {tbl} WHERE {col} < (EXTRACT(EPOCH FROM NOW()) - {kd}*86400)*1000"))
-                else:
-                    continue
+    # ⚠️ КОЖНА ТАБЛИЦЯ — У СВОЇЙ ТРАНЗАКЦІЇ. Раніше всі DELETE йшли в ОДНІЙ:
+    # у Postgres перша ж помилка (таблиці немає / таймаут) переводить
+    # транзакцію в «aborted», усі наступні DELETE мовчки падають, а фінальний
+    # commit відкочує й те, що встигло видалитись, — тобто одна проблемна
+    # таблиця тихо вимикала ВСЮ автоочистку.
+    for tbl, (col, kind) in _SERVICE_TABLES_TIME.items():
+        if wipe_all:
+            sql = f"DELETE FROM {tbl}"
+        elif kind == 'dt':
+            sql = f"DELETE FROM {tbl} WHERE {col} < NOW() - INTERVAL '{kd} days'"
+        elif kind == 'sec':
+            sql = f"DELETE FROM {tbl} WHERE {col} < EXTRACT(EPOCH FROM NOW()) - {kd}*86400"
+        elif kind == 'ms':
+            sql = f"DELETE FROM {tbl} WHERE {col} < (EXTRACT(EPOCH FROM NOW()) - {kd}*86400)*1000"
+        else:
+            continue
+        try:
+            with engine.begin() as conn:
+                r = conn.execute(text(sql))
                 deleted += r.rowcount or 0
-            except Exception as _e:
-                print(f"[DB cleanup] {tbl} skip: {_e}")
-        conn.commit()
+        except Exception as _e:
+            print(f"[DB cleanup] {tbl} skip: {_e}")
     return deleted
 
 
@@ -83,7 +88,10 @@ def _db_vacuum_full():
     from storage.db_models import engine
     from sqlalchemy import create_engine, text
     # Biggest space consumers first: the service tables (+ the OB-state cache).
-    tables = list(_SERVICE_TABLES_TIME.keys()) + ['sob_smc_ob_state']
+    # ⚠️ `sob_bot_settings`: рядків там мало, але стан FF (щотакту) і знімки
+    # МММ-книг (щохвилини) ПЕРЕЗАПИСУЮТЬ великі JSON-блоби — кожен UPDATE лишає
+    # мертву версію рядка (TOAST), і без VACUUM таблиця роздувається.
+    tables = list(_SERVICE_TABLES_TIME.keys()) + ['sob_smc_ob_state', 'sob_bot_settings']
     ve = create_engine(engine.url, isolation_level='AUTOCOMMIT')
     ok, failed = 0, 0
     try:
