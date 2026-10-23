@@ -254,6 +254,9 @@ DEFAULT_SETTINGS = {
     #          bias=BEARISH appears → close immediately.
     # Default OFF + 15m TF — opt-in for users who want the strict-bias-flip exit.
     'use_opposite_ob_exit': False,
+    # 🤖 Автоконтроль пер-угодного 🧱 OB сигналом 🚨 МММ-Decision (вимога 23.10,
+    # деф. ВИМК): вимкнено → автомат тумблер угоди не чіпає взагалі.
+    'opp_ob_auto_enabled': False,
     'opposite_ob_exit_timeframe': '15m',  # 5m / 15m / 30m / 1h / 4h
 
     # === 🔮 Прогноз / 🧠 Decision як САМОСТІЙНІ правила виходу (усі дефолт OFF) ===
@@ -910,7 +913,7 @@ class TradeManager:
             for k in ['use_sl', 'use_tp', 'use_reverse_smc', 'use_reverse_signal',
                       'use_htf_flip',
                       'use_time_stop', 'use_trailing', 'use_be',
-                      'use_forecast_1h_close', 'use_opposite_ob_exit',
+                      'use_forecast_1h_close', 'use_opposite_ob_exit', 'opp_ob_auto_enabled',
                       'use_forecast_1h_exit', 'use_forecast_4h_exit',
                       'use_decision_exit', 'use_mm_flat_exit',
                       'pilot_enabled',
@@ -3098,7 +3101,10 @@ class TradeManager:
             on = bool(pos.get('opp_ob_exit'))
             by = pos.get('opp_ob_exit_by') or ''
             locked = self._manual_locked(pos)
-        act = None if locked else self.opp_ob_auto_action(prev, lvl, on, by)
+            # 🤖 Автоконтроль вимкнено (деф.) → рівень лише запамʼятовуємо,
+            # тумблер угоди не чіпаємо.
+            auto_on = bool(self._settings.get('opp_ob_auto_enabled', False))
+        act = None if (locked or not auto_on) else self.opp_ob_auto_action(prev, lvl, on, by)
         if act is None:
             if not changed:
                 return None

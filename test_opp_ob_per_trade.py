@@ -88,7 +88,7 @@ def test_auto_action_pure_rule():
 
 
 def test_apply_alert_toggles_and_logs():
-    t = _tm(side='LONG', use_opposite_ob_exit=False)
+    t = _tm(opp_ob_auto_enabled=True, side='LONG', use_opposite_ob_exit=False)
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'ok'}) is None, 'ok')
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'weaker', 'text': 'слабшає'}) is True, '')
     p = t._positions['MNTUSDT']
@@ -100,8 +100,22 @@ def test_apply_alert_toggles_and_logs():
     print('✓ 🚨 погіршення вмикає 🧱, покращення до ✓ вимикає (і це в лозі)')
 
 
+def test_automat_is_off_by_default():
+    t = _tm(side='LONG', use_opposite_ob_exit=False)
+    _check(TM.__dict__ is not None and
+           __import__('detection.trade_manager', fromlist=['x']).DEFAULT_SETTINGS.get('opp_ob_auto_enabled') is False,
+           'дефолт тумблера автоконтролю — ВИМК')
+    _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'against'}) is None, 'вимкнено → не чіпає')
+    p = t._positions['MNTUSDT']
+    _check('opp_ob_exit' not in p and p.get('mmd_alert_lvl') == 'against',
+           'рівень запамʼятовано, тумблер угоди не змінено')
+    _check('id="tm-opp-ob-auto"' in _HTML and 'opp_ob_auto_enabled: document' in _HTML,
+           'UI-тумблер + збереження')
+    print('✓ 🤖 автоконтроль 🧱 за замовчуванням вимкнено')
+
+
 def test_manual_lock_blocks_the_automat():
-    t = _tm(side='LONG')
+    t = _tm(opp_ob_auto_enabled=True, side='LONG')
     t._positions['MNTUSDT']['manual_mode'] = True
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'against'}) is None, '📌')
     _check('opp_ob_exit' not in t._positions['MNTUSDT'], '📌 угоду автомат не чіпає')
@@ -111,7 +125,7 @@ def test_manual_lock_blocks_the_automat():
 def test_auto_on_turns_off_even_if_level_was_already_ok():
     # кейс 22.10: рівень на позиції вже 'ok' (перехід пропущено), а тумблер
     # увімкнув автомат → наступний такт ✓ OK мусить вимкнути.
-    t = _tm(side='LONG', use_opposite_ob_exit=False)
+    t = _tm(opp_ob_auto_enabled=True, side='LONG', use_opposite_ob_exit=False)
     p = t._positions['MNTUSDT']
     p.update(opp_ob_exit=True, opp_ob_exit_by='auto', mmd_alert_lvl='ok')
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'ok'}) is False, 'вимкнути')
@@ -124,7 +138,7 @@ def test_auto_on_turns_off_even_if_level_was_already_ok():
 def test_warmup_after_restart_freezes_the_automat():
     import types, time as _t
     ff_mod = _er.sys.modules.get('detection.fuel_filter')
-    _check('MMD_AUTO_WARMUP_SEC = 600.0' in _FF, 'константа прогріву')
+    _check('MMD_AUTO_WARMUP_SEC = 300.0' in _FF, 'константа прогріву')
     a = _FF.index('def _mmd_apply_trade_alerts(')
     fn = _FF[a:_FF.index('\n    def ', a + 10)]
     _check('if self._mmd_warming():' in fn and
@@ -135,13 +149,13 @@ def test_warmup_after_restart_freezes_the_automat():
     _check('elif _warm:' in fd, 'прогрів: відновлений вердикт не перераховується холодним')
     c = _FF.index('def _mmd_warming(')
     src = _FF[c:_FF.index('\n    def ', c + 10)]
-    ns = {'time': _t, 'Optional': object, 'MMD_AUTO_WARMUP_SEC': 600.0}
+    ns = {'time': _t, 'Optional': object, 'MMD_AUTO_WARMUP_SEC': 300.0}
     exec('class X:\n    ' + src.replace('Optional[float]', 'float'), ns)
     X = ns['X']
     now = 1_000_000.0
     _check(X._mmd_warming(types.SimpleNamespace(_mmd_boot_at=now - 10), now), 'щойно стартував')
-    _check(not X._mmd_warming(types.SimpleNamespace(_mmd_boot_at=now - 601), now), 'прогрів минув')
-    print('✓ після рестарту 10 хв прогріву: 🧱 не перемикається, вердикт не холодний')
+    _check(not X._mmd_warming(types.SimpleNamespace(_mmd_boot_at=now - 301), now), 'прогрів минув')
+    print('✓ після рестарту 5 хв прогріву: 🧱 не перемикається, вердикт не холодний')
 
 
 def test_pilot_column_hidden_when_pilot_off():

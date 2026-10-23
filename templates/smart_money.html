@@ -4729,6 +4729,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
                         <div class="tm-row">
                             <label>
+                                <input type="checkbox" id="tm-opp-ob-auto" onchange="saveTMSettings()">
+                                🤖 Автоконтроль «🧱 OB» по угодах
+                                <span class="tm-help" title="Автоматично вмикає тумблер «🧱 OB» (Opposite OB Exit по угоді), коли сигнальна колонка 🚨 МММ-Decision переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ», і вимикає його, коли 🚨 повертається до ✓ (якщо вмикав автомат). Вимкнено → автомат тумблери угод не чіпає, керуєте лише ви. Перші 5 хв після рестарту автомат не діє (прогрів даних). За замовчуванням ВИМКНЕНО.">?</span>
+                            </label>
+                        </div>
+
+                        <div class="tm-row">
+                            <label>
                                 <input type="checkbox" id="tm-use-forecast-1h-exit" onchange="saveTMSettings()">
                                 🔮 Forecast 1H Exit
                                 <span class="tm-help" title="САМОСТІЙНЕ правило: щойно Forecast 1H по монеті став ПРОТИЛЕЖНИЙ до відкритої угоди (LONG → прогноз SHORT, і навпаки) — закриваємо ОДРАЗУ. Підтвердження CHoCH НЕ потрібне (на відміну від «Forecast 1H Confluence»). Нейтральний прогноз або відсутність даних позицію НЕ закривають. Працює незалежно від 4H і Decision. За замовчуванням ВИМКНЕНО.">?</span>
@@ -5092,7 +5100,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th class="tm-col-pilot" title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
-                        <th title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
+                        <th title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Якщо увімкнено «🤖 Автоконтроль «🧱 OB»» у Exit Rules (деф. вимкнено) — вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
                         <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th>Action</th></tr>
                 </thead>
@@ -5162,7 +5170,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th class="tm-col-pilot" title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
-                        <th title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
+                        <th title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Якщо увімкнено «🤖 Автоконтроль «🧱 OB»» у Exit Rules (деф. вимкнено) — вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
                         <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th></th></tr>
                 </thead>
@@ -10213,6 +10221,7 @@ async function loadTMSettings() {
         document.getElementById('tm-use-reverse-signal').checked = !!s.use_reverse_signal;
         document.getElementById('tm-use-forecast-close').checked = !!s.use_forecast_1h_close;
         document.getElementById('tm-use-opposite-ob-exit').checked = !!s.use_opposite_ob_exit;
+        document.getElementById('tm-opp-ob-auto').checked = !!s.opp_ob_auto_enabled;
         document.getElementById('tm-use-forecast-1h-exit').checked = !!s.use_forecast_1h_exit;
         document.getElementById('tm-use-forecast-4h-exit').checked = !!s.use_forecast_4h_exit;
         document.getElementById('tm-use-decision-exit').checked = !!s.use_decision_exit;
@@ -10729,6 +10738,7 @@ async function saveTMSettings() {
             use_reverse_signal: document.getElementById('tm-use-reverse-signal').checked,
             use_forecast_1h_close: document.getElementById('tm-use-forecast-close').checked,
             use_opposite_ob_exit: document.getElementById('tm-use-opposite-ob-exit').checked,
+            opp_ob_auto_enabled: document.getElementById('tm-opp-ob-auto').checked,
             use_forecast_1h_exit: document.getElementById('tm-use-forecast-1h-exit').checked,
             use_forecast_4h_exit: document.getElementById('tm-use-forecast-4h-exit').checked,
             use_decision_exit: document.getElementById('tm-use-decision-exit').checked,
