@@ -102,47 +102,59 @@ def test_capture_builds_the_dec_book_and_its_banner():
     print('✓ такт будує книгу Decision і її банер (той самий mm_bias_step)')
 
 
-def test_heavy_decision_is_batched_and_cached():
-    syms = {f'C{i}USDT': _dec('LONG', 0.8) for i in range(30)}
+def test_every_coin_is_recomputed_every_tick():
+    """Вимога 24.10: «при кожному скані ВСІ монети беруть участь, інформація
+    завжди свіжа». Раніше було ≤12 монет за такт → коло 75 монет ~3 хв."""
+    syms = {f'C{i}USDT': _dec('LONG', 0.8) for i in range(75)}
     ff, tm = _ff_with(syms)
+    ff._mmd_boot_at = 0.0
     fuels = _mon._fuels(**{k: 0.3 for k in syms})
     ff._mm_capture(fuels, now=1000.0)
-    _check(len(tm.calls) == _m.MMD_PER_TICK, f'за такт ≤ {_m.MMD_PER_TICK}: {len(tm.calls)}')
+    _check(len(tm.calls) == 75 and len(set(tm.calls)) == 75,
+           f'перший такт — усі 75: {len(tm.calls)}')
+    _check(len(ff.mm_monitor_state(book='dec')['rows']) == 75, 'усі 75 у таблиці')
     ff._mm_capture(fuels, now=1030.0)
-    ff._mm_capture(fuels, now=1060.0)
-    _check(len(set(tm.calls)) == 30 and len(tm.calls) == 30, 'кожна монета — один раз, поки свіжа')
-    ff._mm_capture(fuels, now=1061.0)
-    _check(len(tm.calls) == 30, 'свіжі вердикти не перераховуються')
-    ff._mm_capture(fuels, now=1000.0 + _m.MMD_TTL + 1)
-    _check(len(tm.calls) == 30 + _m.MMD_PER_TICK, 'протухлі — знову в черзі, порцією')
-    rows = ff.mm_monitor_state(book='dec')['rows']
-    _check(len(rows) == 30, 'рядки є для всіх, хто має вердикт у кеші')
-    print('✓ Decision рахується порціями (MMD_PER_TICK) і кешується на MMD_TTL')
+    _check(len(tm.calls) == 150, 'наступний такт — знову всі (свіжі дані щотакту)')
+    _check(not hasattr(_m, 'MMD_PER_TICK'), 'порційного ліміту немає')
+    _check(_m.MMD_TICK_BUDGET_SEC > 0, 'запобіжник — лише стеля часу')
+    print('✓ Decision: усі монети перераховуються КОЖЕН такт')
 
 
-def test_failing_coins_do_not_starve_the_refresh():
-    """Кейс 24.10 «26 з 75»: монети без вердикту (compute_decision → None)
-    щотакту ставали в чергу першими й з'їдали весь бюджет — пораховані
-    монети не оновлювались НІКОЛИ."""
-    good = {f'G{i}USDT': _dec('LONG', 0.8) for i in range(5)}
-    bad = [f'B{i}USDT' for i in range(40)]
-    ff, tm = _ff_with(dict(good))
+def test_stale_verdict_is_dropped_not_shown():
+    """Вердикт, який не вдалось оновити довше за MMD_TTL, — «невідомо»,
+    а не старе число під виглядом свіжого."""
+    data = {'AUSDT': _dec('LONG', 0.8), 'BUSDT': _dec('SHORT', 0.2)}
+    ff, tm = _ff_with(data)
     ff._mmd_boot_at = 0.0
-    fuels = _mon._fuels(**{k: 0.3 for k in list(good) + bad})
-    t = 1000.0
-    for _ in range(6):                      # усі хоч раз спробувані
-        ff._mm_capture(fuels, now=t)
-        t += 30
-    _check(all(g in tm.calls for g in good), 'добрі монети порахувались')
-    tm.calls.clear()
-    t = 1000.0 + _m.MMD_TTL + 200           # добрі протухли
-    for _ in range(6):
-        ff._mm_capture(fuels, now=t)
-        t += 30
-    _check(all(g in tm.calls for g in good),
-           f'протухлі добрі мусять оновитись попри 40 невдах: {tm.calls[:20]}')
-    _check(len(tm.calls) <= 6 * _m.MMD_PER_TICK, 'бюджет такту не перевищено')
-    print('✓ невдалі монети не блокують оновлення порахованих (повтор через MMD_TTL)')
+    fuels = _mon._fuels(AUSDT=0.3, BUSDT=0.3)
+    ff._mm_capture(fuels, now=1000.0)
+    data.pop('BUSDT')                       # далі compute_decision → None
+    ff._mm_capture(fuels, now=1030.0)
+    _check('BUSDT' in ff._mmd_dec, 'один невдалий такт — вердикт ще в межах TTL')
+    ff._mm_capture(fuels, now=1000.0 + _m.MMD_TTL + 1)
+    rows = {r['symbol'] for r in ff.mm_monitor_state(book='dec')['rows']}
+    _check('BUSDT' not in ff._mmd_dec and rows == {'AUSDT'}, f'застарілий викинуто: {rows}')
+    print('✓ застарілий вердикт не показується (свіже або невідомо)')
+
+
+def test_time_budget_rotates_the_rest_first():
+    syms = {f'C{i}USDT': _dec('LONG', 0.8) for i in range(10)}
+    ff, tm = _ff_with(syms)
+    ff._mmd_boot_at = 0.0
+    fuels = _mon._fuels(**{k: 0.3 for k in syms})
+    old = _m.MMD_TICK_BUDGET_SEC
+    _m.MMD_TICK_BUDGET_SEC = -1.0           # стеля «спрацювала» одразу
+    try:
+        ff._mm_capture(fuels, now=1000.0)
+    finally:
+        _m.MMD_TICK_BUDGET_SEC = old
+    first = list(tm.calls)
+    ff._mm_capture(fuels, now=1030.0)
+    rest = tm.calls[len(first):]
+    _check(len(first) <= 1, first)
+    _check(set(rest) == set(syms) and (not first or rest[-1] == first[0]),
+           f'недораховані — першими наступного такту: {rest}')
+    print('✓ стеля часу: недораховані монети йдуть першими наступного такту')
 
 
 def test_disabled_block_clears_everything():

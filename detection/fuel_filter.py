@@ -510,9 +510,13 @@ def pull_mm_dir(row) -> Optional[Dict]:
 # Center («SHORT 85% СИЛЬНИЙ»). Джерело — ТОЙ САМИЙ `TradeManager.
 # compute_decision`, що малює банер над графіком: свого вердикту тут НЕМАЄ
 # (урок PD-зони). Розрахунок ВАЖКИЙ (2× evaluate_entry на монету, з кешу
-# сканера, без мережі) — тому порціями й зі своїм TTL.
-MMD_TTL = 90.0            # с — вік вердикту, після якого монета стає в чергу
-MMD_PER_TICK = 12         # скільки монет перераховуємо за один такт (30с)
+# сканера, без мережі).
+# ⚠️ ВИМОГА 24.10: «при кожному скані ВСІ монети беруть участь, інформація
+# завжди свіжа». Тому ліміту на кількість монет за такт НЕМАЄ — кожен такт
+# (CYCLE_SECS) перераховує ВСІ. Єдиний запобіжник — ЧАС: якщо такт раптом
+# не встиг за MMD_TICK_BUDGET_SEC, решта монет іде першою наступного такту.
+MMD_TTL = 90.0            # с — вердикт, старіший за це, НЕ показується (≈3 такти)
+MMD_TICK_BUDGET_SEC = 10.0  # с — стеля часу на розрахунок Decision за один такт
 
 # 💾 ЗБЕРЕЖЕННЯ МММ-КНИГ МІЖ РЕСТАРТАМИ (вимога 22.10: «після рестарту лише
 # обновити інформацію, а не чекати, поки все відновиться»).
@@ -777,7 +781,7 @@ DEFAULT_SETTINGS = {
     'mmp_bias_confirm_sec': 120,
     # 🧠 БЛОК «МММ-Decision» (вимога 22.10) — шостий банер на вердикті банера
     # Decision Center. ⚠️ Тумблер — ВИМК: це найважчий розрахунок серед МММ-
-    # блоків (2× evaluate_entry на монету; порціями по MMD_PER_TICK за такт),
+    # блоків (2× evaluate_entry на КОЖНУ монету КОЖЕН такт, з кешів сканера),
     # тож новий рушій не має мовчки навантажити такт на робочій установці.
     'mm_dec_enabled': False,
     'mmd_str_min': 0,
@@ -5103,9 +5107,9 @@ class FuelFilterDaemon:
 
         # ═══ 🧠 КНИГА «МММ-Decision» (вимога 22.10) ═══
         # Набір монет — ТОЙ САМИЙ (ключі `fuels`), джерело напрямку — вердикт
-        # банера Decision Center (`TradeManager.compute_decision`). Розрахунок
-        # важкий, тож `_mmd_decisions` перераховує за такт не більше
-        # MMD_PER_TICK монет (найстаріші першими), решта бере кеш.
+        # банера Decision Center (`TradeManager.compute_decision`). Кожен такт
+        # `_mmd_decisions` перераховує ВСІ монети (вимога 24.10); запобіжник —
+        # лише стеля часу MMD_TICK_BUDGET_SEC.
         # 🚨 Монети У ВІДКРИТІЙ УГОДІ отримують вердикт ЗАВЖДИ (навіть при
         # вимкненому блоці): він живить колонку «🧠 МММ-Decision» і сигнал
         # «слабшає / ПРОТИ» у таблицях угод — це супровід угод, а не монітор.
@@ -5278,9 +5282,16 @@ class FuelFilterDaemon:
 
         Джерело — ТОЙ САМИЙ `TradeManager.compute_decision(symbol, price)`, що
         малює банер «SHORT 85% СИЛЬНИЙ» над графіком (тож число в таблиці й на
-        банері однакове). ⚠️ БЮДЖЕТ: за такт перераховуємо не більше
-        MMD_PER_TICK монет — спершу ті, де вердикту ще немає, далі найстаріші
-        за MMD_TTL. Решта бере кеш. Монети, що випали з набору, забуваємо.
+        банері однакове).
+
+        ⚠️ ВСІ МОНЕТИ — КОЖЕН ТАКТ (вимога 24.10). Розрахунок іде з кешів
+        сканера/прогнозу, без мережі, тож порційний ліміт лише робив частину
+        банера застарілою (75 монет по 12 за такт = коло ~3 хв). Запобіжник —
+        ЧАС (`MMD_TICK_BUDGET_SEC`): не встигли — недораховані монети стоять
+        першими наступного такту (черга за часом останньої спроби).
+        ⚠️ СВІЖІСТЬ: вердикт, старіший за MMD_TTL (не вдалось перерахувати),
+        НЕ віддається — «невідомо» ≠ старе число. Виняток — прогрів після
+        рестарту: відновлений вердикт тримаємо, холодним не перезаписуємо.
         """
         cache = getattr(self, '_mmd_dec', None)
         if cache is None:
@@ -5293,31 +5304,21 @@ class FuelFilterDaemon:
             syms.setdefault(S, {})
         for k in [k for k in cache if k not in syms]:
             cache.pop(k, None)
-        # ⚠️ НЕВДАЛІ СПРОБИ ПАМʼЯТАЄМО (кейс 24.10 «26 з 75»): монета, по якій
-        # compute_decision дав None, раніше лишалась «без вердикту» і щотакту
-        # ставала в чергу ПЕРШОЮ → невдахи з'їдали весь MMD_PER_TICK, а вже
-        # пораховані монети не оновлювались НІКОЛИ. Тепер невдала монета
-        # пробує знову лише через MMD_TTL і стоїть у черзі за часом спроби.
-        fails = getattr(self, '_mmd_fail', None)
-        if fails is None:
-            self._mmd_fail = fails = {}
-        for k in [k for k in fails if k not in syms]:
-            fails.pop(k, None)
+        # Час ОСТАННЬОЇ СПРОБИ (вдалої чи ні) — ключ черги: при спрацюванні
+        # запобіжника часу першими підуть ті, кого найдовше не рахували.
+        tried = getattr(self, '_mmd_fail', None)
+        if tried is None:
+            self._mmd_fail = tried = {}
+        for k in [k for k in tried if k not in syms]:
+            tried.pop(k, None)
         todo = []
         _warm = self._mmd_warming(now)
         for S in syms:
             hit = cache.get(S)
-            _p = 0 if S in _ex else 1
-            if not hit:
-                _ft = fails.get(S)
-                if _ft is None:
-                    todo.append((_p, 0.0, S))          # ще не пробували — першими
-                elif (now - _ft) >= MMD_TTL:
-                    todo.append((_p, _ft, S))          # невдача — у загальну чергу
-            elif _warm:
+            if hit and _warm:
                 continue      # прогрів: відновлений вердикт не міняємо холодним
-            elif (now - hit[0]) >= MMD_TTL:
-                todo.append((_p, hit[0], S))
+            _last = tried.get(S, hit[0] if hit else 0.0)
+            todo.append((0 if S in _ex else 1, _last, S))
         todo.sort()
         tm = None
         if todo:
@@ -5326,24 +5327,39 @@ class FuelFilterDaemon:
                 tm = get_trade_manager()
             except Exception:
                 tm = None
+        done = failed = 0
         if tm is not None and hasattr(tm, 'compute_decision'):
-            for _px, _ts, S in todo[:MMD_PER_TICK]:
+            _t0 = time.monotonic()
+            for _px, _ts, S in todo:
+                if time.monotonic() - _t0 > MMD_TICK_BUDGET_SEC:
+                    break
                 try:
                     price = float(syms[S].get('mark_price') or 0) or self._live_price(S) or 0
                     dec = tm.compute_decision(S, price)
                 except Exception:
                     dec = None
+                tried[S] = now
+                done += 1
                 if isinstance(dec, dict) and dec:
-                    fails.pop(S, None)
                     cache[S] = (now, {k: dec.get(k) for k in (
                         'recommended', 'prob_long', 'prob_short', 'verdict',
                         'confidence', 'headline')})
-                elif S in cache:
-                    # невдалий ПЕРЕрахунок: старий вердикт лишаємо, але черга
-                    # рухається далі (інакше та сама монета стояла б першою)
-                    cache[S] = (now, cache[S][1])
                 else:
-                    fails[S] = now
+                    failed += 1
+            _el = time.monotonic() - _t0
+            if done < len(todo) or failed:
+                print(f'[FF] 🧠 Decision: {done}/{len(todo)} монет за {_el:.1f}с'
+                      + (f' · без вердикту {failed}' if failed else '')
+                      + (' · ⏱ стеля часу — решта першою наступного такту'
+                         if done < len(todo) else ''))
+        self._mmd_last_run = {'todo': len(todo), 'done': done,
+                              'failed': failed, 'ts': now}
+        # Застарілий вердикт ВИКИДАЄМО з кешу, а не ховаємо при читанні: кеш
+        # читають ще таблиці угод і 🧱-автомат (`dec_trade_for`) — усі мусять
+        # бачити ОДНЕ й те саме «свіже або невідомо».
+        if not _warm:
+            for k in [k for k, v in cache.items() if (now - v[0]) > MMD_TTL]:
+                cache.pop(k, None)
         return {S: v[1] for S, v in cache.items()}
 
     def _mm_clear_dec(self, keep_syms=None):

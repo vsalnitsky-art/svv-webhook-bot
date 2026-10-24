@@ -146,7 +146,7 @@ def test_warmup_after_restart_freezes_the_automat():
            'під час прогріву автомат 🧱 не викликається (рівень на позиції лишається)')
     b = _FF.index('def _mmd_decisions(')
     fd = _FF[b:_FF.index('\n    def ', b + 10)]
-    _check('elif _warm:' in fd, 'прогрів: відновлений вердикт не перераховується холодним')
+    _check('if hit and _warm:' in fd, 'прогрів: відновлений вердикт не перераховується холодним')
     c = _FF.index('def _mmd_warming(')
     src = _FF[c:_FF.index('\n    def ', c + 10)]
     ns = {'time': _t, 'Optional': object, 'MMD_AUTO_WARMUP_SEC': 300.0}
