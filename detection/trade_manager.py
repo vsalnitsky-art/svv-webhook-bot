@@ -79,6 +79,46 @@ def _lite_trade(d: Dict) -> Dict:
 # At each monitor tick we read the setting and compute N_TICKS dynamically,
 # so users can change it without restart. Min 5s (rounded to 10s), Max 300s.
 
+# ⚡ Свіжість ціни для виходів (вимога 25.10, кейс XMRUSDT). Кеш сканера —
+# закриття останнього бару на момент ОСТАННЬОГО скану монети; старший за цей
+# поріг уже не «поточна ціна», і монітор питає біржу напряму.
+SCANNER_PRICE_FRESH_SEC = 30.0
+REST_PRICE_TTL_SEC = 3.0      # прямий запит ціни — не частіше, ніж раз на 3с
+
+
+def level_hit(side, kind, level, lo, hi):
+    """Чи торкнулась ціна рівня за діапазон [lo..hi] з моменту попереднього
+    такту монітора — тобто разом із ҐНОТАМИ, а не лише в точці.
+
+    kind 'tp' — рівень У БІК угоди (LONG: hi ≥ рівня · SHORT: lo ≤ рівня);
+    kind 'sl' — ПРОТИ угоди (LONG: lo ≤ рівня · SHORT: hi ≥ рівня).
+    Порожній / нульовий рівень не спрацьовує ніколи."""
+    try:
+        level = float(level)
+    except (TypeError, ValueError):
+        return False
+    if level <= 0 or lo is None or hi is None:
+        return False
+    fav = (side == 'LONG') == (kind == 'tp')
+    return (hi >= level) if fav else (lo <= level)
+
+
+def paper_fill(side, kind, level, current):
+    """Ціна виконання PAPER-закриття, коли рівень спрацював.
+
+    Поточна ціна вже ЗА рівнем (ринок пройшов рівень) → виконуємось за
+    поточною: для SL це гірше за рівень, і саме так виконалась би біржа.
+    Рівень торкнули лише ґнотом, а ціна повернулась → виконання НА рівні, як
+    у стоп/ліміт-ордера. Так paper не прикрашає SL і не губить TP."""
+    try:
+        level = float(level)
+    except (TypeError, ValueError):
+        return current
+    if level <= 0 or not current:
+        return current
+    return current if level_hit(side, kind, level, current, current) else level
+
+
 def breakeven_with_fees(side, entry, buf_pct):
     """⚖️ Рівень БЕЗЗБИТКУ з запасом на біржові комісії.
 
@@ -1148,7 +1188,16 @@ class TradeManager:
         with self._lock:
             symbols = list(self._positions.keys())
             shadow_symbols = list(self._shadow_positions.keys())
-        
+
+        # ⚡ Стрічка цін стереже РІВНО відкриті угоди (обидві книги). Порожній
+        # набір → стрічка біржу не смикає.
+        try:
+            _fd = self._feed()
+            if _fd is not None:
+                _fd.watch(set(symbols) | set(shadow_symbols))
+        except Exception:
+            pass
+
         for sym in symbols:
             try:
                 self._monitor_position(sym)
@@ -1702,9 +1751,11 @@ class TradeManager:
                 return
         # 🎯 TP-1 — ЧАСТКОВА фіксація. Стоїть ПЕРЕД повним TP: інакше рівень
         # TP-2, який лежить далі, ніколи не дав би частковому спрацювати.
-        self._check_manual_tp1(symbol, pos, current_price, False)
-        manual_reason = self._check_manual_sl_tp(pos, current_price)
+        _lo, _hi = self._px_range(symbol, False, current_price)
+        self._check_manual_tp1(symbol, pos, current_price, False, _lo, _hi)
+        manual_reason = self._check_manual_sl_tp(pos, current_price, _lo, _hi)
         if manual_reason:
+            # Реальна книга закриває РИНКОМ — ціна запису = поточна.
             self._close_position(symbol, current_price, reason=manual_reason)
             return
         # 🟰 Breakeven auto-close (fires even in manual mode, like Manual SL/TP).
@@ -1751,14 +1802,12 @@ class TradeManager:
         # 1) Hard exits — Stop Loss / Take Profit
         s = self._settings
         if s.get('use_sl') and pos.get('sl_price'):
-            if (pos['side'] == 'LONG' and current_price <= pos['sl_price']) or \
-               (pos['side'] == 'SHORT' and current_price >= pos['sl_price']):
+            if level_hit(pos['side'], 'sl', pos['sl_price'], _lo, _hi):
                 self._close_position(symbol, current_price, reason='stop_loss')
                 return
         
         if s.get('use_tp') and pos.get('tp_price'):
-            if (pos['side'] == 'LONG' and current_price >= pos['tp_price']) or \
-               (pos['side'] == 'SHORT' and current_price <= pos['tp_price']):
+            if level_hit(pos['side'], 'tp', pos['tp_price'], _lo, _hi):
                 # ✋ Оператор зняв Manual TP-2 → стратегічний TP теж не фіксує.
                 # Інакше «видалив рівень» нічого не означало б: угода закрилась
                 # би на 🎯 Take Profit від `tp_pct`, і в інтерфейсі це виглядало
@@ -1795,7 +1844,8 @@ class TradeManager:
         self._update_be(pos, current_price)
     
     def _check_manual_tp1(self, symbol: str, pos: Dict, current_price: float,
-                          is_shadow: bool) -> bool:
+                          is_shadow: bool, lo: Optional[float] = None,
+                          hi: Optional[float] = None) -> bool:
         """🎯 TP-1 — ЧАСТКОВА фіксація. True → частину закрито.
 
         Спрацьовує РІВНО ОДИН раз на угоду (`tp1_done`), інакше кожен наступний
@@ -1809,10 +1859,15 @@ class TradeManager:
         if lvl <= 0 or pos.get('tp1_done'):
             return False
         side = pos.get('side')
-        hit = ((side == 'LONG' and current_price >= lvl)
-               or (side == 'SHORT' and current_price <= lvl))
-        if not hit:
+        # ⚡ Діапазон з попереднього такту (ґноти), а не лише точка.
+        _lo = current_price if lo is None else min(lo, current_price)
+        _hi = current_price if hi is None else max(hi, current_price)
+        if not level_hit(side, 'tp', lvl, _lo, _hi):
             return False
+        # Paper — виконання на рівні, якщо його торкнув лише ґніт; реальна
+        # книга закриває ринком, тож для неї ціна лишається поточною.
+        if is_shadow:
+            current_price = paper_fill(side, 'tp', lvl, current_price)
         try:
             pct = float(self._settings.get('pilot_tp1_close_pct', 50) or 50)
         except (TypeError, ValueError):
@@ -1919,7 +1974,9 @@ class TradeManager:
                          side=side, source='PILOT')
 
     def _check_manual_sl_tp(self, pos: Dict,
-                              current_price: float) -> Optional[str]:
+                              current_price: float,
+                              lo: Optional[float] = None,
+                              hi: Optional[float] = None) -> Optional[str]:
         """Return 'manual_sl' / 'manual_tp' / None depending on whether the
         user-entered manual stop level has been breached. Works for both
         real and shadow positions — the only thing that matters is the
@@ -1947,18 +2004,16 @@ class TradeManager:
         manual_sl = _to_float(pos.get('manual_sl'))
         manual_tp = _to_float(pos.get('manual_tp'))
         side = pos.get('side')
+        # ⚡ [lo..hi] — ціна з попереднього такту разом із ґнотами
+        # (`_px_range`); без діапазону — точка, як раніше.
+        _lo = current_price if lo is None else min(lo, current_price)
+        _hi = current_price if hi is None else max(hi, current_price)
         
-        if manual_sl is not None:
-            hit = ((side == 'LONG' and current_price <= manual_sl)
-                   or (side == 'SHORT' and current_price >= manual_sl))
-            if hit:
-                return 'manual_sl'
+        if manual_sl is not None and level_hit(side, 'sl', manual_sl, _lo, _hi):
+            return 'manual_sl'
         
-        if manual_tp is not None:
-            hit = ((side == 'LONG' and current_price >= manual_tp)
-                   or (side == 'SHORT' and current_price <= manual_tp))
-            if hit:
-                return 'manual_tp'
+        if manual_tp is not None and level_hit(side, 'tp', manual_tp, _lo, _hi):
+            return 'manual_tp'
 
         return None
 
@@ -2367,10 +2422,14 @@ class TradeManager:
                 return
         # 🎯 TP-1 — ЧАСТКОВА фіксація. Стоїть ПЕРЕД повним TP: інакше рівень
         # TP-2, який лежить далі, ніколи не дав би частковому спрацювати.
-        self._check_manual_tp1(symbol, pos, current_price, True)
-        manual_reason = self._check_manual_sl_tp(pos, current_price)
+        _lo, _hi = self._px_range(symbol, True, current_price)
+        self._check_manual_tp1(symbol, pos, current_price, True, _lo, _hi)
+        manual_reason = self._check_manual_sl_tp(pos, current_price, _lo, _hi)
         if manual_reason:
-            self._close_shadow(symbol, current_price, reason=manual_reason)
+            _lvl = pos.get('manual_sl' if manual_reason == 'manual_sl' else 'manual_tp')
+            _kind = 'sl' if manual_reason == 'manual_sl' else 'tp'
+            self._close_shadow(symbol, paper_fill(pos['side'], _kind, _lvl, current_price),
+                               reason=manual_reason)
             return
         # 🟰 Breakeven auto-close (fires even in manual mode, like Manual SL/TP).
         if self._check_breakeven_close(pos, current_price):
@@ -2407,20 +2466,20 @@ class TradeManager:
         s = self._settings
         # 1) Hard Stop Loss / Take Profit.
         if s.get('use_sl') and pos.get('sl_price'):
-            if (pos['side'] == 'LONG' and current_price <= pos['sl_price']) or \
-               (pos['side'] == 'SHORT' and current_price >= pos['sl_price']):
-                self._close_shadow(symbol, current_price, reason='stop_loss')
+            if level_hit(pos['side'], 'sl', pos['sl_price'], _lo, _hi):
+                self._close_shadow(symbol, paper_fill(pos['side'], 'sl', pos['sl_price'], current_price),
+                                   reason='stop_loss')
                 return
         if s.get('use_tp') and pos.get('tp_price'):
-            if (pos['side'] == 'LONG' and current_price >= pos['tp_price']) or \
-               (pos['side'] == 'SHORT' and current_price <= pos['tp_price']):
+            if level_hit(pos['side'], 'tp', pos['tp_price'], _lo, _hi):
                 # ✋ Те саме правило, що в реальній книзі: знятий Manual TP-2
                 # знімає й стратегічну фіксацію. Паперова книга ДЗЕРКАЛИТЬ
                 # реальну — інакше та сама угода поводилась би по-різному.
                 if self._tp2_cleared_by_user(pos):
                     self._log_tp_cleared_once(symbol, pos, True)
                 else:
-                    self._close_shadow(symbol, current_price, reason='take_profit')
+                    self._close_shadow(symbol, paper_fill(pos['side'], 'tp', pos['tp_price'], current_price),
+                                       reason='take_profit')
                     return
         # 2) Time stop.
         if s.get('use_time_stop'):
@@ -6330,6 +6389,12 @@ class TradeManager:
         # може лишатись відкритою, і її супровід стирати не можна.
         self._pilot_at.pop(self._pilot_key(symbol, False), None)
         self._pilot_state.pop(self._pilot_key(symbol, False), None)
+        try:
+            _fd = self._feed()
+            if _fd is not None:
+                _fd.forget(self._pilot_key(symbol, False))
+        except Exception:
+            pass
         
         bybit_side = 'Buy' if pos['side'] == 'LONG' else 'Sell'
         qty = pos.get('remaining_qty', pos['qty'])
@@ -6856,6 +6921,12 @@ class TradeManager:
         # ⚠️ Лише ПАПЕРОВА книга — реальна позиція по цій монеті живе далі.
         self._pilot_at.pop(self._pilot_key(symbol, True), None)
         self._pilot_state.pop(self._pilot_key(symbol, True), None)
+        try:
+            _fd = self._feed()
+            if _fd is not None:
+                _fd.forget(self._pilot_key(symbol, True))
+        except Exception:
+            pass
         
         entry = pos['entry_price']
         if pos['side'] == 'LONG':
@@ -7326,23 +7397,107 @@ class TradeManager:
             print(f"[TM] balance fetch error: {e}")
             return 0
     
-    def _get_current_price(self, symbol: str) -> Optional[float]:
-        # Prefer scanner's cached klines (avoids Bybit API hit)
+    def _feed(self):
+        """⚡ Швидка стрічка цін (`detection/price_feed.py`) або None.
+
+        Лише для справжнього конектора Bybit (є `session`): стаби тестів і
+        старі конфігурації просто працюють без неї, як раніше."""
+        bb = getattr(self, 'bybit', None)
+        if bb is None or getattr(bb, 'session', None) is None:
+            return None
+        try:
+            from detection.price_feed import get_price_feed
+            return get_price_feed(bb)
+        except Exception:
+            return None
+
+    def _px_note(self, symbol: str, src: str, ts: float) -> None:
+        d = self.__dict__.setdefault('_px_meta', {})
+        d[symbol] = (src, float(ts or 0))
+
+    def price_meta(self, symbol: str) -> Optional[Dict]:
+        """Звідки і якої давності остання ціна монети: {src, age}.
+        Для колонки «Current» — щоб застаріла ціна була видна одразу."""
+        v = self.__dict__.get('_px_meta', {}).get(symbol)
+        if not v:
+            return None
+        return {'src': v[0], 'age': round(max(0.0, time.time() - v[1]), 1)}
+
+    def _get_current_price(self, symbol: str,
+                           cache_only: bool = False) -> Optional[float]:
+        """Поточна ціна монети — ЄДИНА точка для виходів і показу.
+
+        Порядок (вимога 25.10, кейс XMRUSDT — ціна з кешу сканера бувала
+        старшою на хвилини, бо скан проходить ~230 монет послідовно):
+          1. ⚡ стрічка цін, свіжіша за `STALE_SEC` (усі відкриті угоди);
+          2. кеш сканера, свіжіший за `SCANNER_PRICE_FRESH_SEC`;
+          3. прямий запит Bybit (не частіше `REST_PRICE_TTL_SEC` на монету);
+          4. останнім — кеш сканера будь-якої давності (краще, ніж нічого).
+        `cache_only=True` — без мережі (виклики під `self._lock`, напр.
+        `get_state`): тоді кеш сканера береться будь-якої давності."""
+        now = time.time()
+        fd = self._feed()
+        if fd is not None:
+            v = fd.price(symbol, now)
+            if v:
+                self._px_note(symbol, 'feed', v[1])
+                return v[0]
+        sc_p, sc_ts = None, None
         if self.scanner:
             try:
-                p = self.scanner._get_live_price(symbol)
-                if p:
-                    return p
-            except:
+                sc_p = self.scanner._get_live_price(symbol)
+            except Exception:
+                sc_p = None
+            try:
+                sc_ts = float(((getattr(self.scanner, '_cache', None) or {})
+                               .get(symbol) or {}).get('updated_at') or 0) or None
+            except Exception:
+                sc_ts = None
+        if sc_p and (sc_ts is None or now - sc_ts <= SCANNER_PRICE_FRESH_SEC):
+            self._px_note(symbol, 'scanner', sc_ts or now)
+            return sc_p
+        rc = self.__dict__.setdefault('_rest_px', {})
+        hit = rc.get(symbol)
+        if cache_only:
+            # Без мережі — найсвіжіше з того, що вже є в памʼяті.
+            if hit and (not sc_p or hit[1] >= (sc_ts or 0)):
+                self._px_note(symbol, 'rest', hit[1])
+                return hit[0]
+        else:
+            if hit and now - hit[1] <= REST_PRICE_TTL_SEC:
+                self._px_note(symbol, 'rest', hit[1])
+                return hit[0]
+            try:
+                p = self.bybit.get_price(symbol)
+                if p and p > 0:
+                    rc[symbol] = (float(p), now)
+                    self._px_note(symbol, 'rest', now)
+                    return float(p)
+            except Exception:
                 pass
-        # Fallback to Bybit
-        try:
-            p = self.bybit.get_price(symbol)
-            if p > 0:
-                return p
-        except:
-            pass
+        if sc_p:
+            self._px_note(symbol, 'scanner', sc_ts or now)
+            return sc_p
         return None
+
+    def _px_range(self, symbol: str, is_shadow: bool,
+                  current: float) -> Tuple[float, float]:
+        """(мін, макс) ціни з попереднього такту монітора цієї КНИГИ —
+        з ґнотами, які монітор між тактами не бачив би. Без стрічки — точка."""
+        lo = hi = current
+        fd = self._feed()
+        if fd is not None and current:
+            try:
+                r = fd.take_range(self._pilot_key(symbol, is_shadow), symbol)
+            except Exception:
+                r = None
+            if r:
+                lo, hi = min(lo, r[0]), max(hi, r[1])
+        return lo, hi
+
+    def price_feed_health(self) -> Optional[Dict]:
+        fd = self._feed()
+        return fd.health() if fd is not None else None
     
     def _update_exchange_sl(self, symbol: str, sl_price: float):
         """🏦 НІЧОГО НЕ ШЛЕ НА БІРЖУ (вимога 12.10). Рівні угоди живуть ЛИШЕ
@@ -7501,12 +7656,12 @@ class TradeManager:
                     live_qty = live.get('size') or pos.get('qty')
                     mark = live.get('mark_price') or 0
                     current = mark if mark > 0 else (
-                        self._get_current_price(sym) or entry)
+                        self._get_current_price(sym, cache_only=True) or entry)
                     unreal = live.get('unrealized_pnl')
                 else:
                     entry = pos['entry_price']
                     live_qty = pos.get('qty')
-                    current = self._get_current_price(sym) or entry
+                    current = self._get_current_price(sym, cache_only=True) or entry
                     unreal = None
                 if pos['side'] == 'LONG':
                     pnl_pct = (current - entry) / entry * 100
@@ -7522,6 +7677,8 @@ class TradeManager:
                     # Source flag the UI reads to show a ⇄ "synced with Bybit"
                     # marker. 'bybit' = exchange-truth, 'approx' = our fallback.
                     'pnl_source': 'bybit' if synced else 'approx',
+                    # ⚡ Вік / джерело ціни, за якою монітор судить виходи.
+                    'px': self.price_meta(sym),
                 }
                 if unreal is not None:
                     pos_dict['pnl_usd'] = round(unreal, 4)
@@ -7559,7 +7716,7 @@ class TradeManager:
             # Shadow positions snapshot
             shadow_positions = []
             for sym, pos in self._shadow_positions.items():
-                current = self._get_current_price(sym) or pos['entry_price']
+                current = self._get_current_price(sym, cache_only=True) or pos['entry_price']
                 entry = pos['entry_price']
                 if pos['side'] == 'LONG':
                     pnl_pct = (current - entry) / entry * 100
@@ -7569,6 +7726,7 @@ class TradeManager:
                     **pos,
                     'current_price': current,
                     'pnl_pct': round(pnl_pct, 3),
+                    'px': self.price_meta(sym),
                 }
                 health = self._compute_health(pos, is_shadow=True)
                 if health is not None:
@@ -7608,6 +7766,7 @@ class TradeManager:
                     'entry_score_breakdown': entry_stats,
                 },
                 'shadow_positions': shadow_positions,
+                'price_feed': self.price_feed_health(),
                 'shadow_closed': shadow_closed,
                 'shadow_stats': {
                     'total_closed': sh_total,

@@ -16102,6 +16102,21 @@ function mmdAlertCellHTML(p) {
 // памʼять сканера (`ob_mark_for`, той самий `_ob_on_htf`, що дає «OB 4H» в
 // алерті 🆕 Новий OB). Колір — за біасом блоку (зелений BULLISH / червоний
 // BEARISH), рамка — чи збігається з напрямком угоди. Немає даних — нічого.
+// ⚡ Вік / джерело ціни, за якою монітор судить TP/SL (вимога 25.10, кейс
+// XMRUSDT). Свіжа ціна стрічки — нічого не малюємо (без шуму); старша за 15с
+// — бурштинове «⏱ Nс», за 60с — червоне: такій ціні виходи довіряти не можна.
+const _PX_SRC = {feed: '⚡ стрічка цін Bybit', rest: 'прямий запит Bybit',
+                 scanner: 'кеш SMC-сканера'};
+function pxAgeHTML(p) {
+    const m = p && p.px;
+    if (!m || m.age == null) return '';
+    const age = Number(m.age) || 0;
+    if (age <= 15) return '';
+    const col = age > 60 ? '#f87171' : '#fbbf24';
+    const txt = age >= 120 ? Math.round(age / 60) + 'хв' : Math.round(age) + 'с';
+    const src = _PX_SRC[m.src] || m.src || '—';
+    return ` <span style="color:${col};font-size:0.72rem;font-family:monospace" title="Ціна застаріла: ${txt} · джерело — ${src}. Монітор TP/SL бере свіжу ціну напряму з біржі, а таблиця показує останню відому.">⏱${txt}</span>`;
+}
 function ob4hMarkHTML(p, what, left) {
     const o = p && p.ob4h;
     const _what = what || 'угоди';
@@ -17066,7 +17081,7 @@ async function loadTMState(isPoll) {
                     <td>${manualMark}${histSymOpen(p, false)}${badges}</td>
                     <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
-                    <td>${fmtPriceJS(p.current_price)}</td>
+                    <td>${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
                     ${mmdTradeCellHTML(p)}
                     ${mmdAlertCellHTML(p)}
@@ -17161,7 +17176,7 @@ async function loadTMState(isPoll) {
                     <td>${manualMark}${histSymOpen(p, true)}</td>
                     <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
-                    <td>${fmtPriceJS(p.current_price)}</td>
+                    <td>${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
                     ${mmdTradeCellHTML(p)}
                     ${mmdAlertCellHTML(p)}

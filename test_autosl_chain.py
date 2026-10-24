@@ -999,8 +999,11 @@ def test_strategic_tp_respects_the_cleared_level_in_both_books():
     по-різному залежно від книги."""
     src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
     for close_call, book in (("self._close_position(symbol, current_price, reason='take_profit')", 'real'),
-                             ("self._close_shadow(symbol, current_price, reason='take_profit')", 'paper')):
-        k = src.index(close_call)
+                             ("reason='take_profit')", 'paper')):
+        # paper закривається за `paper_fill(...)` (⚡ 25.10), тож шукаємо
+        # закриття shadow-книги за причиною, а не за дослівною ціною.
+        k = (src.index(close_call) if book == 'real'
+             else src.index(close_call, src.index("def _monitor_shadow_position")))
         head = src[max(0, k - 900):k]
         _check('self._tp2_cleared_by_user(pos)' in head,
                f'{book}: перед закриттям по стратегічному TP має стояти гейт')
@@ -1079,8 +1082,9 @@ def test_protective_exits_are_never_touched():
     виходів мусять лишитись недоторканими — ризик не знімаємо ніколи."""
     src = open(os.path.join(_ROOT, 'detection/trade_manager.py')).read()
     for close_call in ("self._close_position(symbol, current_price, reason='stop_loss')",
-                       "self._close_shadow(symbol, current_price, reason='stop_loss')"):
-        k = src.index(close_call)
+                       "reason='stop_loss')"):   # paper: виконання paper_fill (25.10)
+        k = (src.index(close_call) if 'current_price' in close_call
+             else src.index(close_call, src.index("def _monitor_shadow_position")))
         _check('_tp2_cleared_by_user' not in src[max(0, k - 400):k],
                'стоп-лос НЕ має залежати від знятого TP-2')
     print('✓ захисні виходи правило не зачіпає')
@@ -1166,12 +1170,12 @@ def test_manual_levels_and_breakeven_are_outside_the_gate():
     _check('_pilot_auto_off' not in be,
            'беззбиток після TP-1 працює незалежно від правила')
     # І в МОНІТОРАХ обидві перевірки стоять ОКРЕМИМИ викликами після пілота.
-    for anchor in ('self._check_manual_tp1(symbol, pos, current_price, False)',
-                   'self._check_manual_tp1(symbol, pos, current_price, True)'):
+    for anchor in ('self._check_manual_tp1(symbol, pos, current_price, False, _lo, _hi)',
+                   'self._check_manual_tp1(symbol, pos, current_price, True, _lo, _hi)'):
         k = src.index(anchor)
         _check('_pilot_tick' not in src[k:k + 200],
                'ручний TP-1 — окремий крок монітора, не частина автопілота')
-    _check('manual_reason = self._check_manual_sl_tp(pos, current_price)' in src,
+    _check('manual_reason = self._check_manual_sl_tp(pos, current_price, _lo, _hi)' in src,
            'ручний SL/TP теж лишається окремим кроком')
     print('✓ ручні Manual TP-1/TP-2 і ⚖️ беззбиток гейт не зачіпає')
 
