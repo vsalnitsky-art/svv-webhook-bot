@@ -123,12 +123,12 @@ def test_weakening_is_measured_from_the_trade_peak():
     fu = _mon._fuels(BTCUSDT=0.3)
     ff._mm_capture(fu, now=2000.0)
     data['BTCUSDT'] = _dec('LONG', 0.60)
-    ff._mm_capture(fu, now=2000.0 + _m.MMD_TTL + 1)
+    ff._mm_capture(fu, now=2000.0 + 300 + 1)
     k = _m.mmd_trade_key('BTCUSDT', 'LONG', 1000.0)
     a = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0)])[k]['alert']
     _check(a['level'] == 'weaker' and a['peak_align'] == 70, a)
     data['BTCUSDT'] = _dec('SHORT', 0.30)
-    ff._mm_capture(fu, now=2000.0 + 2 * _m.MMD_TTL + 2)
+    ff._mm_capture(fu, now=2000.0 + 2 * 300 + 2)
     a = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0)])[k]['alert']
     _check(a['level'] == 'against', a)
     # Пік не «опускається» разом із вердиктом.

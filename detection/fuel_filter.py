@@ -511,12 +511,34 @@ def pull_mm_dir(row) -> Optional[Dict]:
 # compute_decision`, що малює банер над графіком: свого вердикту тут НЕМАЄ
 # (урок PD-зони). Розрахунок ВАЖКИЙ (2× evaluate_entry на монету, з кешу
 # сканера, без мережі).
-# ⚠️ ВИМОГА 24.10: «при кожному скані ВСІ монети беруть участь, інформація
-# завжди свіжа». Тому ліміту на кількість монет за такт НЕМАЄ — кожен такт
-# (CYCLE_SECS) перераховує ВСІ. Єдиний запобіжник — ЧАС: якщо такт раптом
-# не встиг за MMD_TICK_BUDGET_SEC, решта монет іде першою наступного такту.
-MMD_TTL = 90.0            # с — вердикт, старіший за це, НЕ показується (≈3 такти)
+# ⏱ РІВНОМІРНА РОТАЦІЯ (вимога 24.10): кожна монета перераховується РІВНО
+# раз за `mmd_refresh_min` (деф. 5 хв), а робота розкладена порівну по тактах:
+# за такт — ceil(монет × CYCLE_SECS / період). 75 монет / 5 хв = 8 за такт,
+# без сплесків. Черга — за часом останньої спроби (найдавніші першими), тож
+# жодна монета не застрягає. Вердикт, не оновлений довше за 2 періоди,
+# прибирається (свіже або невідомо). Стеля часу такту — запобіжник.
+MMD_REFRESH_MIN_DEFAULT = 5
+MMD_REFRESH_MIN_RANGE = (1, 60)
+MMD_STALE_PERIODS = 2.0     # вердикт старший за N періодів — не показуємо
 MMD_TICK_BUDGET_SEC = 10.0  # с — стеля часу на розрахунок Decision за один такт
+
+
+def mmd_refresh_sec(settings) -> float:
+    """Період повного оновлення 🧠 МММ-Decision у секундах (з налаштувань)."""
+    lo, hi = MMD_REFRESH_MIN_RANGE
+    try:
+        m = int(float((settings or {}).get('mmd_refresh_min', MMD_REFRESH_MIN_DEFAULT)))
+    except (TypeError, ValueError):
+        m = MMD_REFRESH_MIN_DEFAULT
+    return float(max(lo, min(hi, m)) * 60)
+
+
+def mmd_tick_quota(n_coins: int, period_sec: float) -> int:
+    """Скільки монет перерахувати за такт, щоб усі встигли за період. ЧИСТА."""
+    if n_coins <= 0:
+        return 0
+    per = max(float(CYCLE_SECS), float(period_sec or 0))
+    return max(1, -(-n_coins * CYCLE_SECS // int(per)))
 
 # 💾 ЗБЕРЕЖЕННЯ МММ-КНИГ МІЖ РЕСТАРТАМИ (вимога 22.10: «після рестарту лише
 # обновити інформацію, а не чекати, поки все відновиться»).
@@ -781,12 +803,15 @@ DEFAULT_SETTINGS = {
     'mmp_bias_confirm_sec': 120,
     # 🧠 БЛОК «МММ-Decision» (вимога 22.10) — шостий банер на вердикті банера
     # Decision Center. ⚠️ Тумблер — ВИМК: це найважчий розрахунок серед МММ-
-    # блоків (2× evaluate_entry на КОЖНУ монету КОЖЕН такт, з кешів сканера),
+    # блоків (2× evaluate_entry на монету, рівномірна ротація mmd_refresh_min),
     # тож новий рушій не має мовчки навантажити такт на робочій установці.
     'mm_dec_enabled': False,
     'mmd_str_min': 0,
     'mmd_str_mins': None,
     'mmd_bias_confirm_sec': 120,
+    # ⏱ Період повного оновлення вердиктів (хв): кожна монета — раз за період,
+    # навантаження рівномірно по тактах (вимога 24.10).
+    'mmd_refresh_min': 5,
     # 🧠 Фільтр «Вердикт ≥» (вимога 22.10): '' — усі · 'marginal' — СЕРЕДНІЙ і
     # СИЛЬНИЙ · 'good' — лише СИЛЬНИЙ. Як і «Сила ≥» — налаштування БОТА.
     'mmd_verdict_min': '',
@@ -2182,6 +2207,7 @@ class FuelFilterDaemon:
                 int(float(s.get('mmd_bias_confirm_sec', 120)))))
         except (TypeError, ValueError):
             s['mmd_bias_confirm_sec'] = 120
+        s['mmd_refresh_min'] = int(mmd_refresh_sec(s) // 60)
         for _k, _lk in (('mm_str_mins', 'mm_str_min'), ('mmn_str_mins', 'mmn_str_min'),
                         ('mmc_str_mins', 'mmc_str_min'), ('mmf_str_mins', 'mmf_str_min'),
                         ('mmp_str_mins', 'mmp_str_min'), ('mmd_str_mins', 'mmd_str_min')):
@@ -5107,9 +5133,9 @@ class FuelFilterDaemon:
 
         # ═══ 🧠 КНИГА «МММ-Decision» (вимога 22.10) ═══
         # Набір монет — ТОЙ САМИЙ (ключі `fuels`), джерело напрямку — вердикт
-        # банера Decision Center (`TradeManager.compute_decision`). Кожен такт
-        # `_mmd_decisions` перераховує ВСІ монети (вимога 24.10); запобіжник —
-        # лише стеля часу MMD_TICK_BUDGET_SEC.
+        # банера Decision Center (`TradeManager.compute_decision`).
+        # `_mmd_decisions` веде рівномірну ротацію: кожна монета — раз за
+        # `mmd_refresh_min`, за такт порівну (вимога 24.10).
         # 🚨 Монети У ВІДКРИТІЙ УГОДІ отримують вердикт ЗАВЖДИ (навіть при
         # вимкненому блоці): він живить колонку «🧠 МММ-Decision» і сигнал
         # «слабшає / ПРОТИ» у таблицях угод — це супровід угод, а не монітор.
@@ -5119,11 +5145,12 @@ class FuelFilterDaemon:
             self._mm_clear_dec(keep_syms=_tsyms)
             if _tsyms:
                 self._mmd_decisions({S: (fuels or {}).get(S) or {} for S in _tsyms},
-                                    _now, extra=_tsyms)
+                                    _now, extra=_tsyms, period=mmd_refresh_sec(s))
             self._mmd_track_peaks(_tpairs, _now)
             self._mmd_apply_trade_alerts()
         else:
-            _decs = self._mmd_decisions(fuels, _now, extra=_tsyms)
+            _decs = self._mmd_decisions(fuels, _now, extra=_tsyms,
+                                        period=mmd_refresh_sec(s))
             self._mmd_track_peaks(_tpairs, _now)
             self._mmd_apply_trade_alerts()
             snap_d = {}
@@ -5277,51 +5304,65 @@ class FuelFilterDaemon:
             self._mm_bias_fc_since = 0.0
             self._mm_bias_fc_cand = {}
 
-    def _mmd_decisions(self, fuels, now: float, extra=None) -> Dict[str, Dict]:
+    def _mmd_decisions(self, fuels, now: float, extra=None,
+                       period: Optional[float] = None) -> Dict[str, Dict]:
         """🧠 Вердикти Decision по монетах книги → {СИМВОЛ: вердикт}.
 
         Джерело — ТОЙ САМИЙ `TradeManager.compute_decision(symbol, price)`, що
         малює банер «SHORT 85% СИЛЬНИЙ» над графіком (тож число в таблиці й на
         банері однакове).
 
-        ⚠️ ВСІ МОНЕТИ — КОЖЕН ТАКТ (вимога 24.10). Розрахунок іде з кешів
-        сканера/прогнозу, без мережі, тож порційний ліміт лише робив частину
-        банера застарілою (75 монет по 12 за такт = коло ~3 хв). Запобіжник —
-        ЧАС (`MMD_TICK_BUDGET_SEC`): не встигли — недораховані монети стоять
-        першими наступного такту (черга за часом останньої спроби).
-        ⚠️ СВІЖІСТЬ: вердикт, старіший за MMD_TTL (не вдалось перерахувати),
-        НЕ віддається — «невідомо» ≠ старе число. Виняток — прогрів після
+        ⏱ РІВНОМІРНА РОТАЦІЯ (вимога 24.10): `period` — за скільки секунд
+        оновлюється КОЖНА монета (`mmd_refresh_min`). За такт рахуємо рівно
+        `mmd_tick_quota(монет, period)` тих, чия черга настала (найдавніша
+        спроба — першою), тож навантаження однакове щотакту, без сплесків.
+        Монети в угоді — першими серед тих, кому вже час. Невдала спроба теж
+        рухає чергу (монета піде знову через період, а не блокує інших).
+        ⚠️ СВІЖІСТЬ: вердикт, старіший за MMD_STALE_PERIODS × період, НЕ
+        віддається — «невідомо» ≠ старе число. Виняток — прогрів після
         рестарту: відновлений вердикт тримаємо, холодним не перезаписуємо.
         """
         cache = getattr(self, '_mmd_dec', None)
         if cache is None:
             self._mmd_dec = cache = {}
+        per = float(period) if period else mmd_refresh_sec({})
         syms = {str(k).upper(): (v or {}) for k, v in (fuels or {}).items() if v}
         # 🚨 `extra` — монети у відкритій угоді: беруть участь навіть без
-        # даних МММ (ціна тоді жива) і стоять у черзі ПЕРШИМИ.
+        # даних МММ (ціна тоді жива) і йдуть першими серед тих, кому час.
         _ex = {str(x).upper() for x in (extra or ())}
         for S in _ex:
             syms.setdefault(S, {})
         for k in [k for k in cache if k not in syms]:
             cache.pop(k, None)
-        # Час ОСТАННЬОЇ СПРОБИ (вдалої чи ні) — ключ черги: при спрацюванні
-        # запобіжника часу першими підуть ті, кого найдовше не рахували.
+        # Час ОСТАННЬОЇ СПРОБИ (вдалої чи ні) — ключ черги ротації.
         tried = getattr(self, '_mmd_fail', None)
         if tried is None:
             self._mmd_fail = tried = {}
         for k in [k for k in tried if k not in syms]:
             tried.pop(k, None)
-        todo = []
         _warm = self._mmd_warming(now)
+        # Пів такту допуску: інакше монета, порахована трохи пізніше в такті,
+        # «зʼїжджала» б на цілий такт щоперіоду.
+        _due_at = per - CYCLE_SECS / 2.0
+        todo = []
         for S in syms:
             hit = cache.get(S)
             if hit and _warm:
                 continue      # прогрів: відновлений вердикт не міняємо холодним
             _last = tried.get(S, hit[0] if hit else 0.0)
+            if _last and (now - _last) < _due_at:
+                continue      # черга цієї монети ще не настала
             todo.append((0 if S in _ex else 1, _last, S))
         todo.sort()
+        quota = mmd_tick_quota(len(syms), per)
+        # Монета, якої ще НІКОЛИ не рахували (увімкнули блок, нова монета),
+        # отримує перший вердикт одразу — інакше таблиця стояла б порожня цілий
+        # період. Далі вона йде у звичайну рівномірну ротацію.
+        fresh = [x for x in todo if not x[1]]
+        batch = fresh + [x for x in todo if x[1]][:max(0, quota - len(fresh))]
+        _fresh_pos = {x[2]: i for i, x in enumerate(fresh)}
         tm = None
-        if todo:
+        if batch:
             try:
                 from detection.trade_manager import get_trade_manager
                 tm = get_trade_manager()
@@ -5330,7 +5371,7 @@ class FuelFilterDaemon:
         done = failed = 0
         if tm is not None and hasattr(tm, 'compute_decision'):
             _t0 = time.monotonic()
-            for _px, _ts, S in todo:
+            for _px, _ts, S in batch:
                 if time.monotonic() - _t0 > MMD_TICK_BUDGET_SEC:
                     break
                 try:
@@ -5339,6 +5380,11 @@ class FuelFilterDaemon:
                 except Exception:
                     dec = None
                 tried[S] = now
+                if S in _fresh_pos:
+                    # Перший вердикт пачкою, а черга — рівномірно: зсуваємо
+                    # «останню спробу» так, щоб наступні оновлення цих монет
+                    # розійшлись по періоду, а не впали в один такт.
+                    tried[S] = now - per * _fresh_pos[S] / max(1, len(fresh))
                 done += 1
                 if isinstance(dec, dict) and dec:
                     cache[S] = (now, {k: dec.get(k) for k in (
@@ -5346,19 +5392,22 @@ class FuelFilterDaemon:
                         'confidence', 'headline')})
                 else:
                     failed += 1
-            _el = time.monotonic() - _t0
-            if done < len(todo) or failed:
-                print(f'[FF] 🧠 Decision: {done}/{len(todo)} монет за {_el:.1f}с'
+            if failed or done < len(batch):
+                print(f'[FF] 🧠 Decision: {done}/{len(batch)} монет за '
+                      f'{time.monotonic() - _t0:.1f}с (черга {len(todo)})'
                       + (f' · без вердикту {failed}' if failed else '')
-                      + (' · ⏱ стеля часу — решта першою наступного такту'
-                         if done < len(todo) else ''))
-        self._mmd_last_run = {'todo': len(todo), 'done': done,
-                              'failed': failed, 'ts': now}
+                      + (' · ⏱ стеля часу' if done < len(batch) else ''))
+        self._mmd_last_run = {'due': len(todo), 'quota': quota, 'done': done,
+                              'failed': failed, 'period': per, 'ts': now}
         # Застарілий вердикт ВИКИДАЄМО з кешу, а не ховаємо при читанні: кеш
         # читають ще таблиці угод і 🧱-автомат (`dec_trade_for`) — усі мусять
-        # бачити ОДНЕ й те саме «свіже або невідомо».
+        # бачити ОДНЕ й те саме «свіже або невідомо». Викидаємо лише ПІСЛЯ
+        # невдалої спроби (`tried` новіший за вердикт): відновлений після
+        # рестарту вердикт живе, доки до нього не дійде черга ротації.
         if not _warm:
-            for k in [k for k, v in cache.items() if (now - v[0]) > MMD_TTL]:
+            _stale = per * MMD_STALE_PERIODS
+            for k in [k for k, v in cache.items()
+                      if (now - v[0]) > _stale and tried.get(k, 0.0) > v[0]]:
                 cache.pop(k, None)
         return {S: v[1] for S, v in cache.items()}
 

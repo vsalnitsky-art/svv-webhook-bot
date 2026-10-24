@@ -3261,6 +3261,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="⏱ АНТИСПАМ БАНЕРА: новий статус (🟢 LONG / 🔴 SHORT / ⏸ FLAT) показується лише коли протримався стільки секунд. Поки йде відлік, у банері видно кандидата (⏳). Плюс до цього діє гістерезис: зайти в напрямок можна за 10% важеля, а вийти — лише нижче 6%, тож коливання біля межі статус не смикають. 0 = перемикати миттєво (стара поведінка). ⚠️ Числа й смуга банера лишаються ЖИВИМИ — гаситься саме миготіння ПІДПИСУ.">
                     ⏱ Перехід ≥ <input type="number" id="ff-mmd-bias-confirm" min="0" max="3600" step="30" value="120" style="width:60px;font-size:0.68rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> с
                 </label>
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="⟳ ПЕРІОД ОНОВЛЕННЯ (1…60 хв, деф. 5): за цей час КОЖНА монета блоку отримує свіжий вердикт Decision. Робота розкладена РІВНОМІРНО по тактах (кожні 30с — однакова порція монет), тож сервер не отримує сплесків. Черга — за часом останнього розрахунку: найдавніша монета завжди наступна, жодна не застрягає. Вердикт, який не вдалось оновити 2 періоди поспіль, прибирається з таблиці (свіже або невідомо). Розрахунок іде з кешів сканера — біржу не смикає.">
+                    ⟳ Оновлення <input type="number" id="ff-mmd-refresh" min="1" max="60" step="1" value="5" style="width:48px;font-size:0.68rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> хв
+                </label>
             </div>
             <div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px;font-size:0.7rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none"
                  onclick="togglePanel('mmdlist')"
@@ -14716,6 +14719,7 @@ function renderFuelFilter(d) {
     // 🧠 МММ-Decision — тумблер (деф. ВИМК) і вікно банера.
     setIf('ff-mm-dec-enabled', s.mm_dec_enabled === true);
     setIf('ff-mmd-bias-confirm', String(s.mmd_bias_confirm_sec != null ? s.mmd_bias_confirm_sec : 120));
+    setIf('ff-mmd-refresh', String(s.mmd_refresh_min || 5));
     setIf('ff-mmn-bias-confirm', String(s.mmn_bias_confirm_sec != null ? s.mmn_bias_confirm_sec : 120));
     setIf('ff-mm-bias-tg', s.mm_bias_tg !== false);                 // default true
     setIf('ff-mmn-bias-tg', s.mmn_bias_tg !== false);               // default true
@@ -15832,6 +15836,7 @@ async function saveFuelFilterSettings() {
         mmd_verdict_min: _mmVerdictMin(_MMB.dec, 'all'),
         mmd_verdict_mins: Object.assign({}, _MMB.dec.verdictMins),
         mmd_bias_confirm_sec: parseInt(_v('ff-mmd-bias-confirm', '120') || '0', 10),
+        mmd_refresh_min: parseInt(_v('ff-mmd-refresh', '5') || '5', 10),
         mm_bias_tg: _c('ff-mm-bias-tg'),
         mmn_bias_tg: _c('ff-mmn-bias-tg'),
         mmf_bias_tg: _c('ff-mmf-bias-tg'),
