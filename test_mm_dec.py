@@ -120,6 +120,31 @@ def test_heavy_decision_is_batched_and_cached():
     print('✓ Decision рахується порціями (MMD_PER_TICK) і кешується на MMD_TTL')
 
 
+def test_failing_coins_do_not_starve_the_refresh():
+    """Кейс 24.10 «26 з 75»: монети без вердикту (compute_decision → None)
+    щотакту ставали в чергу першими й з'їдали весь бюджет — пораховані
+    монети не оновлювались НІКОЛИ."""
+    good = {f'G{i}USDT': _dec('LONG', 0.8) for i in range(5)}
+    bad = [f'B{i}USDT' for i in range(40)]
+    ff, tm = _ff_with(dict(good))
+    ff._mmd_boot_at = 0.0
+    fuels = _mon._fuels(**{k: 0.3 for k in list(good) + bad})
+    t = 1000.0
+    for _ in range(6):                      # усі хоч раз спробувані
+        ff._mm_capture(fuels, now=t)
+        t += 30
+    _check(all(g in tm.calls for g in good), 'добрі монети порахувались')
+    tm.calls.clear()
+    t = 1000.0 + _m.MMD_TTL + 200           # добрі протухли
+    for _ in range(6):
+        ff._mm_capture(fuels, now=t)
+        t += 30
+    _check(all(g in tm.calls for g in good),
+           f'протухлі добрі мусять оновитись попри 40 невдах: {tm.calls[:20]}')
+    _check(len(tm.calls) <= 6 * _m.MMD_PER_TICK, 'бюджет такту не перевищено')
+    print('✓ невдалі монети не блокують оновлення порахованих (повтор через MMD_TTL)')
+
+
 def test_disabled_block_clears_everything():
     ff, tm = _ff_with({'BTCUSDT': _dec('SHORT', 0.15)})
     ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1000.0)

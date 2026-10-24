@@ -5245,17 +5245,31 @@ class FuelFilterDaemon:
             syms.setdefault(S, {})
         for k in [k for k in cache if k not in syms]:
             cache.pop(k, None)
+        # ⚠️ НЕВДАЛІ СПРОБИ ПАМʼЯТАЄМО (кейс 24.10 «26 з 75»): монета, по якій
+        # compute_decision дав None, раніше лишалась «без вердикту» і щотакту
+        # ставала в чергу ПЕРШОЮ → невдахи з'їдали весь MMD_PER_TICK, а вже
+        # пораховані монети не оновлювались НІКОЛИ. Тепер невдала монета
+        # пробує знову лише через MMD_TTL і стоїть у черзі за часом спроби.
+        fails = getattr(self, '_mmd_fail', None)
+        if fails is None:
+            self._mmd_fail = fails = {}
+        for k in [k for k in fails if k not in syms]:
+            fails.pop(k, None)
         todo = []
         _warm = self._mmd_warming(now)
         for S in syms:
             hit = cache.get(S)
             _p = 0 if S in _ex else 1
             if not hit:
-                todo.append((_p, 0, 0.0, S))
+                _ft = fails.get(S)
+                if _ft is None:
+                    todo.append((_p, 0.0, S))          # ще не пробували — першими
+                elif (now - _ft) >= MMD_TTL:
+                    todo.append((_p, _ft, S))          # невдача — у загальну чергу
             elif _warm:
                 continue      # прогрів: відновлений вердикт не міняємо холодним
             elif (now - hit[0]) >= MMD_TTL:
-                todo.append((_p, 1, hit[0], S))
+                todo.append((_p, hit[0], S))
         todo.sort()
         tm = None
         if todo:
@@ -5265,16 +5279,23 @@ class FuelFilterDaemon:
             except Exception:
                 tm = None
         if tm is not None and hasattr(tm, 'compute_decision'):
-            for _px, _pr, _ts, S in todo[:MMD_PER_TICK]:
+            for _px, _ts, S in todo[:MMD_PER_TICK]:
                 try:
                     price = float(syms[S].get('mark_price') or 0) or self._live_price(S) or 0
                     dec = tm.compute_decision(S, price)
                 except Exception:
                     dec = None
                 if isinstance(dec, dict) and dec:
+                    fails.pop(S, None)
                     cache[S] = (now, {k: dec.get(k) for k in (
                         'recommended', 'prob_long', 'prob_short', 'verdict',
                         'confidence', 'headline')})
+                elif S in cache:
+                    # невдалий ПЕРЕрахунок: старий вердикт лишаємо, але черга
+                    # рухається далі (інакше та сама монета стояла б першою)
+                    cache[S] = (now, cache[S][1])
+                else:
+                    fails[S] = now
         return {S: v[1] for S, v in cache.items()}
 
     def _mm_clear_dec(self, keep_syms=None):
