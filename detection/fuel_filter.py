@@ -286,6 +286,17 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
     total = wl + ws + wf
     net = ((wl - ws) / total) if total > 0 else 0.0
     prev_bias = prev_bias or {}
+    # ⚠️ ПОРОЖНІЙ ЗНІМОК = «НЕМАЄ ДАНИХ», А НЕ «РІВНОВАГА» (аудит 24.10). Після
+    # рестарту, поки скан 🧭 Pull ще біжить або ⚡/🧠 добирають джерела, знімок
+    # буває порожнім; раніше це давало net=0 → кандидат ⏸ FLAT → через вікно
+    # підтвердження банер «падав у рівновагу», слав Telegram, а потім повертався.
+    # Тепер стан банера тримається, кандидат не росте, таймер не скидається.
+    if not (n_long or n_short or n_flat) and (prev_bias or prev_since):
+        held = dict(prev_bias)
+        held.update({'ts': int(now), 'empty': True, 'cand_dir': None,
+                     'cand_since': 0, 'confirm_sec': int(need)})
+        return held, float(prev_since or now), {}
+    _empty = not (n_long or n_short or n_flat)
     prev = prev_bias.get('dir')
     raw = None
     if net > MM_BIAS_FLAT:
@@ -296,7 +307,9 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
         raw = 'LONG'
     elif prev == 'SHORT' and net < -MM_BIAS_EXIT:
         raw = 'SHORT'
-    _fresh = not (prev_bias or prev_since)
+    # Банер, що ще НІКОЛИ не мав даних (`coins == 0`), теж «свіжий»: перший
+    # реальний стан береться одразу, без вікна підтвердження.
+    _fresh = not ((prev_bias and prev_bias.get('coins', 1)) or prev_since)
     side, cand_dir, cand_since, cand = prev, None, 0.0, {}
     if raw == prev or _fresh or need <= 0:
         side = raw
@@ -313,6 +326,8 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
     since = float(prev_since or 0.0)
     if side != prev or not since:
         since = now
+    if _empty:
+        since = 0.0          # даних ще не було — таймера немає взагалі
     bias = {
         'dir': side,
         # 🐢 Що показує РИНОК просто зараз і скільки кандидату ще чекати.
@@ -335,7 +350,7 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
         'avg_str': (round(wl / n_long, 1) if (net > 0 and n_long)
                     else (round(ws / n_short, 1) if (net < 0 and n_short)
                           else 0.0)),
-        'since': int(since or now),
+        'since': (0 if _empty else int(since or now)),
         'ts': int(now),
     }
     return bias, since, cand
@@ -351,6 +366,8 @@ CTR_MM_W_4H = 0.6
 # Решта монет бере кеш (навіть старіший за TTL) — блок не має перетворитись на
 # постійний залп запитів. 1h-кеш живе 300с, 4h — 900с.
 CTR_MM_FETCH_PER_TICK = 10
+# Через скільки повторювати STC, якого біржа не віддала (= TTL 1h-кешу).
+CTR_MM_FAIL_RETRY = 300.0
 
 
 def ctr_mm_dir(stc_1h, stc_4h) -> Optional[Dict]:
@@ -444,6 +461,7 @@ def fc_mm_dir(f1, f4) -> Optional[Dict]:
 MMP_EXCHANGES = ('binance', 'bybit', 'mexc', 'bingx')
 MMP_SORTS = ('pull', 'magnet', 'pull_report')
 MMP_SCAN_JOB = 'mm-pull'
+MMP_FAIL_RETRY = 300.0     # с — повтор НЕВДАЛОГО скану (успішний — за інтервалом)
 
 
 def _mrow_num(row, key):
@@ -4671,14 +4689,23 @@ class FuelFilterDaemon:
         _B = _MM_BIAS_TG.get(book, _MM_BIAS_TG['old'])
         _p = _B['pref']
         try:
-            if not bool(settings.get(_B['key'], True)):
-                return
             _prev_seen = getattr(self, _p + '_last', '__none__')
             _seen_at = float(getattr(self, _p + '_at', 0) or 0)
             if _prev_seen == side:
                 return                      # статус не змінився — не подія
             setattr(self, _p + '_last', side)
             setattr(self, _p + '_at', now)
+            # ⚠️ Позначку ведемо й при ВИМКНЕНОМУ тумблері (аудит 24.10): інакше
+            # після вмикання перша ж «зміна» порівнювалась би зі статусом
+            # годинної давності — і в групу йшло б «було: … · тримався 5г»
+            # про подію, якої за ці години могло бути кілька.
+            if not bool(settings.get(_B['key'], True)):
+                if _prev_seen == '__none__':
+                    setattr(self, _p + '_restored', bool(
+                        getattr(self, _B['bias'] + '_since', 0)))
+                else:
+                    setattr(self, _p + '_restored', False)
+                return
             if _prev_seen == '__none__':
                 # Перший такт після старту: лише запамʼятали, що бачимо.
                 setattr(self, _p + '_restored', bool(
@@ -5163,6 +5190,15 @@ class FuelFilterDaemon:
         last = getattr(self, '_mmc_rd_last', None)
         if last is None:
             self._mmc_rd_last = last = {}
+        # ⚠️ НЕВДАЛІ СПРОБИ ПАМʼЯТАЄМО (аудит 24.10 — той самий клас дефекту,
+        # що «26 з 75» у 🧠 Decision): STC, якого біржа не віддала, лишався
+        # «без значення» і щотакту ставав у чергу ПЕРШИМ, тож кілька таких
+        # монет з'їдали весь CTR_MM_FETCH_PER_TICK, а решта значень не
+        # оновлювались НІКОЛИ. Тепер невдача повторюється не раніше за
+        # CTR_MM_FAIL_RETRY і стоїть у загальній черзі за часом спроби.
+        fails = getattr(self, '_mmc_rd_fail', None)
+        if fails is None:
+            self._mmc_rd_fail = fails = {}
         _t = time.time()
         cur: Dict[str, Dict[str, Optional[float]]] = {}
         todo = []          # (пріоритет, вік, символ, tf): 0 = немає значення
@@ -5183,20 +5219,32 @@ class FuelFilterDaemon:
                         todo.append((1, -(_t - float(old[0] or 0)), S, tf))
                     else:
                         cur[S][tf] = None
-                        todo.append((0, 0.0, S, tf))
+                        _ft = fails.get((S, tf))
+                        if _ft is None:
+                            todo.append((0, 0.0, S, tf))
+                        elif (_t - _ft) >= CTR_MM_FAIL_RETRY:
+                            todo.append((1, -(_t - _ft), S, tf))
         todo.sort()
         for _pr, _age, S, tf in todo[:CTR_MM_FETCH_PER_TICK]:
+            ok = False
             try:
                 r = fe.get_ctr_tf(S, tf)
                 if r and r.get('stc') is not None:
                     cur[S][tf] = r.get('stc')
                     last.setdefault(S, {})[tf] = [_t, cur[S][tf]]
+                    ok = True
             except Exception:
                 pass
+            if ok:
+                fails.pop((S, tf), None)
+            elif cur[S].get(tf) is None:
+                fails[(S, tf)] = _t
         # Памʼять обмежена: монети, яких немає в наборі, не тримаємо.
         _keep = set(cur)
         for k in [k for k in last if k not in _keep]:
             last.pop(k, None)
+        for k in [k for k in fails if k[0] not in _keep]:
+            fails.pop(k, None)
         return {S: (v['1h'], v['4h']) for S, v in cur.items()
                 if v.get('1h') is not None and v.get('4h') is not None}
 
@@ -5356,8 +5404,10 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             every = 900.0
         ex, uni, bars, sort_by = self._mmp_cfg(s)
+        # Відлік на сторінці — за ТИМ САМИМ правилом, що `_mmp_scan_tick`.
+        _wait = min(every, MMP_FAIL_RETRY) if sc.get('ok') is False else every
         return {'ts': float(sc.get('ts') or 0.0), 'running': running,
-                'next_at': (at + every) if at else 0.0,
+                'next_at': (at + _wait) if at else 0.0,
                 'ok': sc.get('ok'), 'reason': sc.get('reason') or '',
                 'scanned': int(sc.get('scanned') or 0),
                 'took': sc.get('took'), 'fallback': int(sc.get('fallback') or 0),
@@ -5393,6 +5443,11 @@ class FuelFilterDaemon:
                 every = max(5, int(s.get('mmp_interval_min', 15) or 15)) * 60.0
             except (TypeError, ValueError):
                 every = 900.0
+            # ⚠️ Невдалий скан (біржа лягла) повторюємо через MMP_FAIL_RETRY, а
+            # не через повний інтервал: інакше таблиця стояла б застарілою
+            # 15+ хвилин через одну хвилинну відмову біржі (аудит 24.10).
+            if (self._mmp_scan or {}).get('ok') is False:
+                every = min(every, MMP_FAIL_RETRY)
             fresh = (self._mmp_scan_at and (now - self._mmp_scan_at) < every
                      and tuple(last_cfg or ()) == cfg)
             if fresh:
