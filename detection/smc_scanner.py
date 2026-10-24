@@ -341,6 +341,11 @@ DB_KEY_TRENDS_STATE = 'smc_trends_state_v1'  # last-known trend dot per symbol (
 # ▲/▼ Volumized-тренд watchlist — останній відомий стан (рестарт-кеш ПОКАЗУ).
 DB_KEY_VOL_TRENDS_STATE = 'smc_vol_trends_state_v1'
 VOL_TRENDS_RESTORE_MAX_AGE = 6 * 3600   # старший знімок після рестарту не показуємо
+# 🏷 OB 4H по монетах — знімок для рестарту: позначка + сирий блок + момент
+# закриття 4h-бару, до якого блок фізично не може змінитись (детекція по
+# закритих барах). Старші за два 4h-бари позначки не показуємо.
+DB_KEY_OB_MARK_STATE = 'smc_ob_mark_state_v1'
+OB_MARK_RESTORE_MAX_AGE = 8 * 3600
 SIGNALS_PERSIST_LIMIT = 50         # max signals stored per symbol
 
 DEFAULT_SETTINGS = {
@@ -857,6 +862,9 @@ class SMCScanner:
         # low, ts}}. IN-MEMORY (похідне від скану, відновиться першим циклом).
         # Читає `/api/tm/state` через `ob_mark_for` — БЕЗ розрахунків і БД.
         self._ob_mark: Dict[str, Dict] = {}
+        # Монети, чия позначка прийшла зі знімка минулого запуску і ще не
+        # перерахована цим запуском (див. `_load_ob_mark_state`).
+        self._ob_mark_restored: set = set()
         # Номер циклу, у якому OB-стан монети вже порахований — щоб «швидка
         # смуга» на початку циклу і звичайний прохід НЕ робили роботу двічі.
         self._ob_done_cycle: Dict[str, int] = {}
@@ -903,6 +911,7 @@ class SMCScanner:
         self._watchlist = self._load_watchlist()
         # ⚠️ ПІСЛЯ налаштувань: знімок звіряється з `volumized_timeframe`.
         self._load_vol_trends_state()
+        self._load_ob_mark_state()
         self._tradeable = self._load_tradeable()
         # Load signals only for symbols currently in watchlist
         self._load_all_signals()
@@ -2921,6 +2930,7 @@ class SMCScanner:
                 fresh_trends = self._build_trends(use_restart_fallback=False)
             self._persist_trends_state(fresh_trends)
             self._persist_vol_trends_state()
+            self._persist_ob_mark_state()
         except Exception as e:
             if self._errors <= 5:
                 print(f"[SMC] trends snapshot error: {e}")
@@ -3434,8 +3444,13 @@ class SMCScanner:
         if ob is None and note:
             return
         sym = str(symbol).upper()
+        # Момент закриття 4h-бару — до нього блок не зміниться; іде в знімок
+        # для рестарту разом із сирим блоком (див. `_load_ob_mark_state`).
+        _hit = (getattr(self, '_ob_htf_cache', None) or {}).get((symbol, OB_MARK_TF))
+        until = float(_hit[0]) if _hit else 0.0
+        getattr(self, '_ob_mark_restored', set()).discard(sym)
         if not ob or ob.get('bias') not in ('BULLISH', 'BEARISH'):
-            self._ob_mark[sym] = {'bias': None, 'ts': time.time()}
+            self._ob_mark[sym] = {'bias': None, 'ts': time.time(), 'until': until}
             return
         self._ob_mark[sym] = {
             'bias': ob.get('bias'),
@@ -3445,7 +3460,59 @@ class SMCScanner:
             'low': ob.get('bar_low'),
             'tf': OB_MARK_TF,
             'ts': time.time(),
+            'until': until,
+            'ob': dict(ob),
         }
+
+    def _persist_ob_mark_state(self):
+        """🏷 Знімок позначок OB 4H у БД (кінець КОЖНОГО скан-циклу), щоб після
+        рестарту колонки угод і таблиці МММ показували 4H одразу, а не через
+        повний прохід watchlist."""
+        if not self.db:
+            return
+        try:
+            with self._lock:
+                wl = set(self._watchlist)
+                marks = {s: dict(m) for s, m in self._ob_mark.items() if s in wl}
+            self.db.set_setting(DB_KEY_OB_MARK_STATE,
+                                {'tf': OB_MARK_TF, 'ts': time.time(), 'marks': marks})
+        except Exception as e:
+            print(f"[SMC] OB-mark persist error: {e}")
+
+    def _load_ob_mark_state(self):
+        """Відновлення OB 4H після рестарту — два рівні:
+        • бар, на якому рахувався блок, ще НЕ закрився (`until` попереду) →
+          позначка ТОЧНА, і сирий блок іде в `_ob_htf_cache`: скан не тягне
+          700 4h-барів на монету до закриття бару (втрати даних немає —
+          детекція по закритих барах, блок змінитись не може);
+        • бар уже закрився → позначка показується як ↻ «з минулого запуску»
+          (`restored`), доки скан її не перерахує; старша за
+          `OB_MARK_RESTORE_MAX_AGE` — не показується зовсім."""
+        if not self.db:
+            return
+        try:
+            st = self.db.get_setting(DB_KEY_OB_MARK_STATE, None)
+            if not isinstance(st, dict) or st.get('tf') != OB_MARK_TF:
+                return
+            now = time.time()
+            wl = set(self._watchlist)
+            n_exact = 0
+            for sym, m in (st.get('marks') or {}).items():
+                if sym not in wl or not isinstance(m, dict):
+                    continue
+                if now - float(m.get('ts') or 0) > OB_MARK_RESTORE_MAX_AGE:
+                    continue
+                until = float(m.get('until') or 0)
+                self._ob_mark[sym] = dict(m)
+                if until > now:
+                    n_exact += 1
+                    self._ob_htf_cache[(sym, OB_MARK_TF)] = (until, m.get('ob') if m.get('bias') else None)
+                else:
+                    self._ob_mark_restored.add(sym)
+            print(f"[SMC] Restored {len(self._ob_mark)} OB-{OB_MARK_TF} marks "
+                  f"from last run ({n_exact} still current)")
+        except Exception as e:
+            print(f"[SMC] OB-mark load error: {e}")
 
     def ob_mark_for(self, symbols) -> Dict[str, Dict]:
         """🏷 ПУБЛІЧНЕ читання позначки «останній OB 4H» по монетах.
@@ -3458,9 +3525,13 @@ class SMCScanner:
         for x in (symbols or []):
             if not x:
                 continue
-            m = self._ob_mark.get(str(x).upper())
+            s = str(x).upper()
+            m = self._ob_mark.get(s)
             if m:
-                out[str(x).upper()] = dict(m)
+                d = {k: v for k, v in m.items() if k not in ('ob', 'until')}
+                if s in getattr(self, '_ob_mark_restored', ()):
+                    d['restored'] = True
+                out[s] = d
         return out
 
     def _current_ob_bartime(self, symbol: str):

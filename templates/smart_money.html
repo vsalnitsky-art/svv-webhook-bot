@@ -13158,7 +13158,7 @@ function mmRender(bk) {
         // мусить перемалювати рядок (аудит 24.10: раніше в сигнатурі був лише бік).
         (r.f1 ? [r.f1.side, r.f1.pct, r.f1.conf].join('/') : ''),
         (r.f4 ? [r.f4.side, r.f4.pct, r.f4.conf].join('/') : ''),
-        (r.ob4h ? (r.ob4h.bias || '-') + (r.ob4h.bar_time || '') : ''),
+        (r.ob4h ? (r.ob4h.bias || '-') + (r.ob4h.bar_time || '') + (r.ob4h.restored ? '↻' : '') : ''),
         // ⚡ / 🧭 / 🧠 — поля власних колонок книг (STC, маса, магніт,
         // вердикт). Без них зміна, скажімо, вердикту СЕРЕДНІЙ → СИЛЬНИЙ при тій
         // самій силі або зсув магніту НЕ перемальовували рядок (аудит 24.10).
@@ -16132,9 +16132,15 @@ function ob4hMarkHTML(p, what, left) {
     if (!o) return '';
     // `left` — позначка стоїть ЛІВОРУЧ від тексту (поле Side угод, вимога 22.10):
     // пробіл тоді не перед, а після неї.
-    const _sp = h => left ? h.trim().replace('class="tm-ob4h"', 'class="tm-ob4h tm-ob4h-l"') : h;
+    // ↻ Позначка з минулого запуску (4h-бар уже закрився, скан ще не
+    // перерахував) — приглушена, з поясненням у підказці.
+    const _rs = o.restored ? ' · ↻ з минулого запуску (оновиться першим сканом монети)' : '';
+    const _sp = h => {
+        if (o.restored) h = h.replace('class="tm-ob4h"', 'class="tm-ob4h" data-restored="1"').replace('style="', 'style="opacity:0.5;');
+        return left ? h.trim().replace('class="tm-ob4h"', 'class="tm-ob4h tm-ob4h-l"') : h;
+    };
     if (!o.bias) {
-        return _sp(' <span class="tm-ob4h" title="OB 4H: живого блоку на 4H зараз немає" style="color:#6b7280;border-color:#4b5563">4H —</span>');
+        return _sp(` <span class="tm-ob4h" title="OB 4H: живого блоку на 4H зараз немає${_rs}" style="color:#6b7280;border-color:#4b5563">4H —</span>`);
     }
     const bull = o.bias === 'BULLISH';
     const col = bull ? '#22c55e' : '#ef4444';
@@ -16152,7 +16158,7 @@ function ob4hMarkHTML(p, what, left) {
     const rng = (o.low != null && o.high != null) ? ` · ${fmtPriceJS(o.low)}–${fmtPriceJS(o.high)}` : '';
     const tip = `Останній OB 4H: ${bull ? '🟢 BULLISH (LONG)' : '🔴 BEARISH (SHORT)'}`
         + (tag ? ` · ${tag}` : '') + when + rng
-        + (!hasSide ? '' : (agree ? ` — ЗА напрямком ${_what}` : ` — ПРОТИ напрямку ${_what}`));
+        + (!hasSide ? '' : (agree ? ` — ЗА напрямком ${_what}` : ` — ПРОТИ напрямку ${_what}`)) + _rs;
     return _sp(` <span class="tm-ob4h" title="${tip}" style="color:${col};border-color:${(agree || !hasSide) ? col : '#fbbf24'}">4H${bull ? '▲' : '▼'}</span>`);
 }
 function ffFuelCell(dir, now, prev, hideBand) {
