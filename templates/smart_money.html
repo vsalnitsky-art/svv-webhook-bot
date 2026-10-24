@@ -6304,6 +6304,7 @@ async function loadWatchlist() {
         wlVolumizedEnabled = !!d.volumized_enabled;
         wlVolumizedTimeframe = d.volumized_timeframe || '1h';
         wlVolumizedTrends = d.volumized_trends || {};
+        wlVolRestored = new Set(d.volumized_restored || []);
         wlVobDiag = d.vob_diag || {};
         wlVobAlertEnabled = !!d.vob_alert_enabled;
         // Dedup state: map of symbol → 'LONG' | 'SHORT' (last-alerted direction).
@@ -6341,20 +6342,26 @@ let wlObStates = {};
 let wlVolumizedEnabled = false;
 let wlVolumizedTimeframe = '1h';
 let wlVolumizedTrends = {};
+// ↻ Монети, чий ▲/▼ поки що з минулого запуску (state.volumized_restored).
+let wlVolRestored = new Set();
 // 🔒 ОДНЕ ДЖЕРЕЛО ПРАВДИ для ▲/▼: живе значення Volumized-тренду поточної
 // монети, яке панель порахувала НАЖИВО (бейдж «5M»). Для монети, що ЗАРАЗ
 // відкрита, трикутник у watchlist береться ЗВІДСИ (а не зі стейт-знімка),
 // щоб «зелений на панелі = зелений у списку». Фоновий скан оновлює інші рядки.
 let wlVolTrendLive = {};
 // Спільний рендер трикутника ▲/▼ (щоб watchlist і панель малювали ІДЕНТИЧНО).
-function wlVolTriInner(vt, tf) {
+function wlVolTriInner(vt, tf, restored) {
     if (vt !== 'LONG' && vt !== 'SHORT') return '';
     const isLong = (vt === 'LONG');
     const c  = isLong ? '#22c55e' : '#ef4444';
     const ic = isLong ? '▲' : '▼';
+    // ↻ Тренд із МИНУЛОГО запуску (бот щойно перезапустився, монету ще не
+    // скановано): показуємо одразу, але приглушено — це не свіжий розрахунок.
     const title = `Volumized OB Trend (${(tf || '').toUpperCase()}): ${vt}\n`
-        + 'Той самий напрямок, що й бейдж «5M» на панелі монети.';
-    return `<span title="${escapeHtml(title)}" style="color:${c};font-size:0.8rem;font-weight:bold">${ic}</span>`;
+        + (restored
+            ? '↻ Останній відомий стан із минулого запуску — оновиться першим сканом монети.'
+            : 'Той самий напрямок, що й бейдж «5M» на панелі монети.');
+    return `<span title="${escapeHtml(title)}" style="color:${c};font-size:0.8rem;font-weight:bold${restored ? ';opacity:0.5' : ''}">${ic}</span>`;
 }
 // Спільний рендер ★ (1H-OB) — щоб рядок watchlist і бейдж «OB 1H» на панелі
 // показували ІДЕНТИЧНО (колір за напрямком). Порожньо, коли валідного OB нема.
@@ -6536,8 +6543,9 @@ function renderWatchlist(list) {
             const vt = (sym === currentSymbol && (sym in wlVolTrendLive))
                 ? wlVolTrendLive[sym]
                 : wlVolumizedTrends[sym];
+            const _vtLive = (sym === currentSymbol && (sym in wlVolTrendLive));
             volTrendHtml = `<span class="wl-vt" id="vt-${sym}" style="margin-right:4px">`
-                + `${wlVolTriInner(vt, wlVolumizedTimeframe)}</span>`;
+                + `${wlVolTriInner(vt, wlVolumizedTimeframe, !_vtLive && wlVolRestored.has(sym))}</span>`;
         }
         
         // Dedup pill — Pine "1 per trend" gate state, now Vol-aligned.
@@ -10140,6 +10148,7 @@ async function updateStatus() {
         wlVolumizedEnabled = newVolEnabled;
         wlVolumizedTimeframe = d.volumized_timeframe || '1h';
         wlVolumizedTrends = newVolTrends;
+        wlVolRestored = new Set(d.volumized_restored || []);
         wlVobDiag = d.vob_diag || {};
         wlVobAlertEnabled = !!d.vob_alert_enabled;
         if (newObEnabled || wasEnabled || newVolEnabled || wasVolEnabled) {
@@ -12127,7 +12136,7 @@ async function loadBias() {
                 : '';
             extra += `<div class="sm-bias-mini">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-                    <span class="sm-bias-mini-label">Watchlist консенсус · ${srcLbl} (${w.total} монет)</span>
+                    <span class="sm-bias-mini-label">Watchlist консенсус · ${srcLbl} (${w.total} монет${(w.source === 'vol' && wlVolRestored.size) ? ` · <span title="Ці монети ще не скановано після рестарту — враховано їхній останній відомий ▲/▼ із минулого запуску. Оновлюються першим сканом." style="color:#94a3b8">↻ ${wlVolRestored.size} з минулого запуску</span>` : ''})</span>
                     <label class="sm-bias-auto" style="margin:0" title="Враховувати Watchlist консенсус при розрахунку вердикту. Коли вимкнено — вердикт базується тільки на forecast + liq-fuel.">
                         <input type="checkbox" id="sm-use-wl-consensus" onchange="toggleWatchlistConsensus(this.checked)" ${useWatchlistConsensus ? 'checked' : ''}>
                         <span class="sm-bias-auto-slider"></span>

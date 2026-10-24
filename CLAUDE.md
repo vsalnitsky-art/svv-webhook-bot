@@ -6601,6 +6601,28 @@ DELETE падали, фінальний commit відкочував усе (од
   немає — якщо бот лежить, реальна угода без захисту.
 Тест: `test_price_feed.py` (15); замки в `test_autosl_chain.py` оновлено.
 
+## 💾 ▲/▼ VOLUMIZED У WATCHLIST ПЕРЕЖИВАЄ РЕСТАРТ (вимога 25.10)
+
+Скарга: «WATCHLIST не зберігає свій стан… після рестарту все спочатку» + те
+саме з «Watchlist консенсус · ▲ Volumized». ● точки вже мали рестарт-кеш
+(`smc_trends_state_v1`), ★ OB читається з БД, а ▲/▼ (`_volumized_trend_cache`,
+з нього фронт рахує консенсус) жили лише в памʼяті.
+- `DB_KEY_VOL_TRENDS_STATE='smc_vol_trends_state_v1'` = `{tf, ts, trends}`;
+  пише `_persist_vol_trends_state` у кінці КОЖНОГО скан-циклу (поряд із
+  точками), читає `_load_vol_trends_state` ПІСЛЯ `_load_settings` (звірка TF).
+  Інший `volumized_timeframe` або знімок старший за
+  `VOL_TRENDS_RESTORE_MAX_AGE`=6 год → не показуємо.
+- ⚠️ ЛИШЕ ПОКАЗ: `_vol_trends_persisted` НЕ кладеться в
+  `_volumized_trend_cache` — звідти читає дедуп сигналів (`_dedup_allows`).
+  `_vol_trends_view()` → `get_state()['volumized_trends']` (свіжий скан
+  сильніший) + `volumized_restored` (список відновлених).
+- Ще не скановані монети зберігають старе значення при наступному записі;
+  видалення з watchlist / «немає даних TF» прибирають і з рестарт-кешу.
+- UI: відновлений ▲/▼ приглушений (`opacity:0.5`) з тултипом «↻ з минулого
+  запуску»; підпис консенсусу — `· ↻ N з минулого запуску`. Сам скан після
+  рестарту і далі йде повністю (свіжі дані потрібні) — змінився лише показ.
+Тест: `test_vol_trends_restore.py` (6).
+
 ⚠️ **ЗАЛИШКИ НА `main`:** `detection/mm_correction.py` і `test_mm_correction.py`
 видалено з коду 01.10, але файли лежать у репозиторії (завантаження через
 GitHub не видаляє файлів) — через них падають `test_mm_monitor` /

@@ -338,6 +338,9 @@ DB_KEY_VOB_STATE = 'smc_vob_state_v1'
 # блок кожної монети як «новий» — це СТАН, а не подія).
 DB_KEY_OB_ALERT = 'smc_ob_alert_v1'
 DB_KEY_TRENDS_STATE = 'smc_trends_state_v1'  # last-known trend dot per symbol (restart cache)
+# ▲/▼ Volumized-тренд watchlist — останній відомий стан (рестарт-кеш ПОКАЗУ).
+DB_KEY_VOL_TRENDS_STATE = 'smc_vol_trends_state_v1'
+VOL_TRENDS_RESTORE_MAX_AGE = 6 * 3600   # старший знімок після рестарту не показуємо
 SIGNALS_PERSIST_LIMIT = 50         # max signals stored per symbol
 
 DEFAULT_SETTINGS = {
@@ -885,12 +888,21 @@ class SMCScanner:
         # symbol hasn't been freshly scanned yet this run.
         self._trends_persisted: Dict[str, int] = {}
         self._load_trends_state()
+        # ▲/▼ Volumized-тренд із минулого запуску — {symbol: 'LONG'|'SHORT'}.
+        # ⚠️ ЛИШЕ ПОКАЗ (watchlist + консенсус «▲ Volumized»): у
+        # `_volumized_trend_cache` НЕ кладемо, бо звідти читає дедуп сигналів
+        # (`_dedup_allows`) — торгувати за станом минулого запуску не можна.
+        # Кожну монету перекриває її перший свіжий скан.
+        self._vol_trends_persisted: Dict[str, str] = {}
+        self._vol_trends_persisted_tf = None
         
         self._scan_count = 0
         self._errors = 0
         
         self._settings = self._load_settings()
         self._watchlist = self._load_watchlist()
+        # ⚠️ ПІСЛЯ налаштувань: знімок звіряється з `volumized_timeframe`.
+        self._load_vol_trends_state()
         self._tradeable = self._load_tradeable()
         # Load signals only for symbols currently in watchlist
         self._load_all_signals()
@@ -1393,6 +1405,69 @@ class SMCScanner:
         except Exception as e:
             print(f"[SMC] trends state load error: {e}")
 
+    def _persist_vol_trends_state(self):
+        """▲/▼ Volumized-тренд watchlist у БД (кінець КОЖНОГО скан-циклу), щоб
+        після рестарту watchlist і консенсус «▲ Volumized» показували останній
+        відомий стан одразу, а не порожнечу до кінця першого проходу.
+        Пишемо ЛИШЕ свіжі значення цього запуску (+ ще не переписані старі), з
+        TF і часом — інакше на іншому TF показувався б чужий тренд."""
+        if not self.db:
+            return
+        try:
+            with self._lock:
+                vt = self._settings.get('volumized_timeframe', '1h')
+                snap = ({k: v for k, v in self._vol_trends_persisted.items()
+                         if k in self._watchlist}
+                        if getattr(self, '_vol_trends_persisted_tf', None) == vt
+                        else {})
+                for sym, c in self._volumized_trend_cache.items():
+                    t = (c or {}).get('trend')
+                    if (c or {}).get('tf', vt) != vt:
+                        continue
+                    if t in ('LONG', 'SHORT'):
+                        snap[sym] = t
+                    else:
+                        snap.pop(sym, None)
+            self.db.set_setting(DB_KEY_VOL_TRENDS_STATE,
+                                {'tf': vt, 'ts': time.time(), 'trends': snap})
+        except Exception as e:
+            print(f"[SMC] vol trends persist error: {e}")
+
+    def _load_vol_trends_state(self):
+        if not self.db:
+            return
+        try:
+            st = self.db.get_setting(DB_KEY_VOL_TRENDS_STATE, None)
+            if not isinstance(st, dict):
+                return
+            if st.get('tf') != self._settings.get('volumized_timeframe', '1h'):
+                return
+            if time.time() - float(st.get('ts') or 0) > VOL_TRENDS_RESTORE_MAX_AGE:
+                return
+            self._vol_trends_persisted = {
+                k: v for k, v in (st.get('trends') or {}).items()
+                if v in ('LONG', 'SHORT')}
+            self._vol_trends_persisted_tf = st.get('tf')
+            print(f"[SMC] Restored {len(self._vol_trends_persisted)} cached "
+                  f"Volumized trends from last run")
+        except Exception as e:
+            print(f"[SMC] vol trends load error: {e}")
+
+    def _vol_trends_view(self):
+        """(тренди для показу, список відновлених) — свіжий скан сильніший за
+        знімок минулого запуску. Caller must hold self._lock."""
+        out = {sym: c.get('trend') for sym, c in self._volumized_trend_cache.items()}
+        restored = []
+        # Інший TF, ніж у знімку → старий тренд не про той масштаб.
+        if (self._settings.get('use_volumized_ob', True)
+                and getattr(self, '_vol_trends_persisted_tf', None)
+                == self._settings.get('volumized_timeframe', '1h')):
+            for sym, t in self._vol_trends_persisted.items():
+                if sym not in out and sym in self._watchlist:
+                    out[sym] = t
+                    restored.append(sym)
+        return out, restored
+
     def _persist_signals(self, symbol: str):
         """Save signal markers for one symbol to DB."""
         if not self.db:
@@ -1575,6 +1650,7 @@ class SMCScanner:
                 self._htf_cache.pop(symbol, None)
                 self._pd_zone_cache.pop(symbol, None)
                 self._volumized_trend_cache.pop(symbol, None)
+                self._vol_trends_persisted.pop(symbol, None)
                 self._signal_markers.pop(symbol, None)
                 self._last_signal_dir.pop(symbol, None)
                 self._persist_dedup_state()
@@ -2803,6 +2879,7 @@ class SMCScanner:
                             # the new TF has no klines yet).
                             with self._lock:
                                 self._volumized_trend_cache.pop(symbol, None)
+                                self._vol_trends_persisted.pop(symbol, None)
                     except Exception as vol_err:
                         if self._errors <= 5:
                             print(f"[SMC] Volumized OB error for {symbol}: {vol_err}")
@@ -2843,6 +2920,7 @@ class SMCScanner:
             with self._lock:
                 fresh_trends = self._build_trends(use_restart_fallback=False)
             self._persist_trends_state(fresh_trends)
+            self._persist_vol_trends_state()
         except Exception as e:
             if self._errors <= 5:
                 print(f"[SMC] trends snapshot error: {e}")
@@ -6223,6 +6301,7 @@ class SMCScanner:
             # Build per-symbol trend map (with restart fallback so the
             # watchlist consensus is populated immediately after a restart).
             trends = self._build_trends(use_restart_fallback=True)
+            _vol_view, _vol_restored = self._vol_trends_view()
 
             # Per-symbol HTF biases
             htf_biases = {sym: dict(b) for sym, b in self._htf_cache.items()}
@@ -6274,10 +6353,10 @@ class SMCScanner:
                 # symbol, value 'LONG'/'SHORT'/None. Watchlist table
                 # renders a column from this. Small payload — single
                 # token per symbol — so no need to gate by toggle.
-                'volumized_trends': {
-                    sym: cache.get('trend')
-                    for sym, cache in self._volumized_trend_cache.items()
-                },
+                # ↻ Монети, ще не скановані цього запуску, показують останній
+                # відомий тренд (`volumized_restored`) — лише показ.
+                'volumized_trends': _vol_view,
+                'volumized_restored': _vol_restored,
                 'volumized_enabled': bool(self._settings.get('use_volumized_ob', True)),
                 'volumized_timeframe': self._settings.get('volumized_timeframe', '1h'),
                 # 🔎 ПРОЗОРІСТЬ VOB-алерту: останнє рішення по кожній монеті —
