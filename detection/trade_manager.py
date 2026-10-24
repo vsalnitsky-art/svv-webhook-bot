@@ -3079,6 +3079,7 @@ class TradeManager:
             # Новий блок, але В НАШ бік — він підтримує позицію. Зсуваємо базу,
             # щоб наступний протилежний блок теж рахувався НОВИМ саме від нього.
             base['bar_time'] = int(cur_bt)
+            self._persist_book(is_shadow)
             return
 
         # === Close ===
@@ -3536,13 +3537,34 @@ class TradeManager:
         cur = self._opp_ob_base.get(bk)
         if cur and cur.get('key') == key:
             return cur
-        self._opp_ob_base[bk] = {
+        # 💾 База живе й НА ПОЗИЦІЇ (`opp_ob_base`), яка персиститься: після
+        # рестарту відновлюємо її, а не фіксуємо заново з поточного блоку —
+        # інакше протилежний OB, що зʼявився під час простою, став би «базою»
+        # і правило його проґавило. Памʼять і позиція тримають ОДИН обʼєкт,
+        # тож зсув бази (`base['bar_time'] = …`) потрапляє в обидва місця.
+        saved = pos.get('opp_ob_base')
+        if isinstance(saved, dict) and saved.get('key') == key:
+            self._opp_ob_base[bk] = saved
+            return saved
+        base = {
             'key': key,
             # `bar_time` блоку, що вже стояв на вході. None → блоку не було
             # зовсім, тоді БУДЬ-ЯКИЙ протилежний блок далі буде новим.
             'bar_time': (int(row['bar_time']) if row.get('bar_time') else None),
         }
+        self._opp_ob_base[bk] = base
+        pos['opp_ob_base'] = base
+        self._persist_book(is_shadow)
         return None
+
+    def _persist_book(self, is_shadow: bool) -> None:
+        try:
+            if is_shadow:
+                self._persist_shadow_positions()
+            else:
+                self._persist_positions()
+        except Exception:
+            pass
     
     def _get_forecast_1h(self, symbol: str) -> Optional[Dict]:
         """Read the latest Forecast 1H for the symbol from forecast_engine cache."""

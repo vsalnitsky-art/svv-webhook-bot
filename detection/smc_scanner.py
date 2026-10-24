@@ -346,6 +346,8 @@ VOL_TRENDS_RESTORE_MAX_AGE = 6 * 3600   # старший знімок після
 # закритих барах). Старші за два 4h-бари позначки не показуємо.
 DB_KEY_OB_MARK_STATE = 'smc_ob_mark_state_v1'
 OB_MARK_RESTORE_MAX_AGE = 8 * 3600
+# 💾 Похідні від скану (PD-зона до закриття бару) — див. `_persist_derived_state`.
+DB_KEY_DERIVED_STATE = 'smc_derived_state_v1'
 SIGNALS_PERSIST_LIMIT = 50         # max signals stored per symbol
 
 DEFAULT_SETTINGS = {
@@ -912,6 +914,7 @@ class SMCScanner:
         # ⚠️ ПІСЛЯ налаштувань: знімок звіряється з `volumized_timeframe`.
         self._load_vol_trends_state()
         self._load_ob_mark_state()
+        self._load_derived_state()
         self._tradeable = self._load_tradeable()
         # Load signals only for symbols currently in watchlist
         self._load_all_signals()
@@ -2545,11 +2548,22 @@ class SMCScanner:
                             pd_klines, pd_swing_pivots, pd_price)
                     else:
                         pd_pct = None
+                    # Рахується по ЗАКРИТИХ барах → значення не зміниться до
+                    # закриття поточного бару pd_zone_tf (`until`, для рестарту).
+                    _pd_until = 0.0
+                    try:
+                        if pd_data and pd_data.get('klines'):
+                            _tl = float(pd_data['klines'][-1].get('t') or 0)
+                            _tl = _tl / 1000.0 if _tl > 1e12 else _tl
+                            _pd_until = _tl + _oba_mod().tf_secs(pd_zone_tf)
+                    except (TypeError, ValueError, AttributeError):
+                        _pd_until = 0.0
                     with self._lock:
                         self._pd_zone_cache[symbol] = {
                             'pct': pd_pct,
                             'tf': pd_zone_tf,
                             'updated_at': time.time(),
+                            'until': _pd_until,
                         }
                 except Exception as pd_err:
                     if self._errors <= 5:
@@ -2931,6 +2945,7 @@ class SMCScanner:
             self._persist_trends_state(fresh_trends)
             self._persist_vol_trends_state()
             self._persist_ob_mark_state()
+            self._persist_derived_state()
         except Exception as e:
             if self._errors <= 5:
                 print(f"[SMC] trends snapshot error: {e}")
@@ -3463,6 +3478,59 @@ class SMCScanner:
             'until': until,
             'ob': dict(ob),
         }
+
+    def _persist_derived_state(self):
+        """💾 Похідні від скану дані, яким рестарт не має обнуляти роботу:
+        • PD-зона (`_pd_zone_cache`) — рахується по ЗАКРИТИХ барах, тож до
+          `until` (закриття бару) вона ТОЧНА і йде назад у робочий кеш;
+        • прогноз 1H/4H (`forecast_engine`) — власний знімок рушія."""
+        if not self.db:
+            return
+        try:
+            with self._lock:
+                wl = set(self._watchlist)
+                pd = {s: dict(c) for s, c in self._pd_zone_cache.items()
+                      if s in wl and isinstance(c, dict) and c.get('until')}
+            self.db.set_setting(DB_KEY_DERIVED_STATE, {'ts': time.time(), 'pd': pd})
+        except Exception as e:
+            print(f"[SMC] derived persist error: {e}")
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if fe is not None and hasattr(fe, 'persist'):
+                fe.persist(self.db)
+        except Exception as e:
+            print(f"[SMC] forecast persist error: {e}")
+
+    def _load_derived_state(self):
+        """PD відновлюється ЛИШЕ поки її бар не закрився (тоді вона збігається з
+        тим, що дав би скан) і лише на тому самому `pd_zone_timeframe`;
+        інакше PD-фільтр чесно чекає першого скану монети, як і раніше."""
+        if not self.db:
+            return
+        now = time.time()
+        try:
+            st = self.db.get_setting(DB_KEY_DERIVED_STATE, None)
+            tf = self._settings.get('pd_zone_timeframe', '1h')
+            wl = set(self._watchlist)
+            n = 0
+            for sym, c in ((st or {}).get('pd') or {}).items() if isinstance(st, dict) else ():
+                if (sym not in wl or not isinstance(c, dict) or c.get('tf') != tf
+                        or float(c.get('until') or 0) <= now):
+                    continue
+                self._pd_zone_cache[sym] = dict(c)
+                n += 1
+            if n:
+                print(f"[SMC] Restored {n} PD zones (bar still open)")
+        except Exception as e:
+            print(f"[SMC] derived load error: {e}")
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if fe is not None and hasattr(fe, 'restore'):
+                fe.restore(self.db)
+        except Exception as e:
+            print(f"[SMC] forecast restore error: {e}")
 
     def _persist_ob_mark_state(self):
         """🏷 Знімок позначок OB 4H у БД (кінець КОЖНОГО скан-циклу), щоб після

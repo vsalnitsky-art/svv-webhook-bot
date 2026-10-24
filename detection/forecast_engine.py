@@ -620,6 +620,73 @@ class ForecastEngine:
         except Exception:
             return self.get(symbol)
     
+    # 💾 Знімок кешу для рестарту. Без нього після кожного `botupdate` прогноз
+    # 1H/4H був порожній, доки сканер не дійде до монети: строгий re-gate
+    # Forecast при відкритті блокував угоди, колонки 🔮 і правила виходу
+    # мовчали. Відновлене живе з ОРИГІНАЛЬНИМ `computed_at` — тож
+    # `ensure_fresh` перераховує його за звичним правилом віку, а перший же
+    # скан монети перезаписує (`update` завжди перезаписує кеш).
+    DB_KEY_STATE = 'forecast_cache_v1'
+    RESTORE_MAX_AGE = 1800.0   # старший знімок не відновлюємо (ринок пішов)
+
+    def persist(self, db) -> int:
+        if db is None:
+            return 0
+        import json
+
+        def _dflt(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return str(v)
+
+        with self._lock:
+            items = list(self._cache.items())
+        out = {}
+        for sym, entry in items:
+            try:
+                e = json.loads(json.dumps(entry, default=_dflt))
+            except (TypeError, ValueError):
+                continue
+            e.pop('restored', None)
+            out[sym] = e
+        try:
+            db.set_setting(self.DB_KEY_STATE, {'ts': time.time(), 'cache': out})
+        except Exception as e:
+            print(f"[FORECAST] persist error: {e}")
+            return 0
+        return len(out)
+
+    def restore(self, db, now: Optional[float] = None) -> int:
+        if db is None:
+            return 0
+        now = time.time() if now is None else now
+        try:
+            st = db.get_setting(self.DB_KEY_STATE, None)
+        except Exception as e:
+            print(f"[FORECAST] restore error: {e}")
+            return 0
+        if not isinstance(st, dict) or not isinstance(st.get('cache'), dict):
+            return 0
+        n = 0
+        with self._lock:
+            for sym, e in st['cache'].items():
+                if not isinstance(e, dict) or sym in self._cache:
+                    continue
+                try:
+                    age = now - float(e.get('computed_at') or 0)
+                except (TypeError, ValueError):
+                    continue
+                if age < 0 or age > self.RESTORE_MAX_AGE:
+                    continue
+                e = dict(e)
+                e['restored'] = True
+                self._cache[sym] = e
+                n += 1
+        if n:
+            print(f"[FORECAST] Restored {n} forecasts from last run")
+        return n
+
     def clear(self, symbol: Optional[str] = None):
         with self._lock:
             if symbol:

@@ -690,6 +690,26 @@ def dec_verdict_mins_norm(raw, legacy='') -> dict:
     return out
 
 
+def funding_vob_outcome(prev_ft, ft) -> str:
+    """💰 Рішення по 1m/5m-VOB funding-монети. ЧИСТА.
+
+    'none' — блоку немає · 'base' — перший показ монети (рестарт або монета
+    щойно в таблиці): блок, що вже стоїть, лише запамʼятовуємо, сигналу НЕМАЄ ·
+    'dup' — той самий блок · 'new' — інший formation_time, тобто сигнал."""
+    try:
+        ft = int(ft or 0)
+    except (TypeError, ValueError):
+        ft = 0
+    if not ft:
+        return 'none'
+    if prev_ft is None:
+        return 'base'
+    try:
+        return 'dup' if int(prev_ft) == ft else 'new'
+    except (TypeError, ValueError):
+        return 'base'
+
+
 def _q_allowed(op: int) -> bool:
     """True if queue-removal op #op is currently allowed (debug gate)."""
     if _QUEUE_OPS_ALLOWED.get(op, True):
@@ -2926,6 +2946,15 @@ class FuelFilterDaemon:
             self._mmd_trade_peak = ({str(k): dict(v) for k, v in _mtp.items()
                                      if isinstance(v, dict)}
                                     if isinstance(_mtp, dict) else {})
+            # 💰 Опрацьовані funding-VOB — без них перший показ після рестарту
+            # прийняв би будь-який наявний блок за новий сигнал.
+            _fvs = st.get('funding_vob_seen')
+            if isinstance(_fvs, dict):
+                for k, v in _fvs.items():
+                    try:
+                        self._vob_seen[str(k)] = int(v)
+                    except (TypeError, ValueError):
+                        continue
             # Restore the entry queue PER SESSION. We persist the queue now and
             # bring it back on boot, tied to the session it belonged to. The
             # session-flip logic in _update_btc_verdict handles staleness: on the
@@ -3049,6 +3078,7 @@ class FuelFilterDaemon:
                 'mm_bias_dec_since': float(getattr(self, '_mm_bias_dec_since', 0.0) or 0.0),
                 # 🚨 Пік вердикту в бік угоди (база сигналу «слабшає»).
                 'mmd_trade_peak': dict(getattr(self, '_mmd_trade_peak', {}) or {}),
+                'funding_vob_seen': dict(getattr(self, '_vob_seen', {}) or {}),
                 'mmd_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmd_state_since', {})
@@ -8179,9 +8209,15 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             _cap = self._SETUP_MAX_PER_CYCLE
         live = set(targets.keys())
-        # Кандидати на перерахунок: прострочені (за TTL), найстаріші першими.
+        # Кандидати на перерахунок: прострочені (за TTL). Першими — монети
+        # Черги-4, бо їхній шар «Готовність» вирішує ВІДКРИТТЯ (після рестарту
+        # кеш порожній, і двигун інакше чекав би, поки до них дійде черга);
+        # далі — найстаріші. Сам грейд НЕ персиститься: TTL 90с, а знімок
+        # минулого запуску був би старішим за цей TTL і судив би угоду
+        # застарілими даними.
+        _q4 = set(getattr(self, '_pending4', {}) or {})
         due = sorted((s for s in live if (now - self._setup_at.get(s, 0)) >= _ttl),
-                     key=lambda s: self._setup_at.get(s, 0))
+                     key=lambda s: (s not in _q4, self._setup_at.get(s, 0)))
         for sym in due[:_cap]:
             d = (targets.get(sym) or (None,))[0]
             try:
@@ -9222,7 +9258,12 @@ class FuelFilterDaemon:
                                     'bottom': round(float(ob.get('bottom') or 0), 6)}
             # НОВИЙ OB (інший formation_time) → перевіряємо шари САМЕ ЗАРАЗ.
             # Позначаємо OB опрацьованим (щоб не спрацювати двічі на тому самому).
-            if ft and ft != self._vob_seen.get(sym):
+            # Перший показ монети (рестарт / монета щойно в таблиці) — ТИХА база:
+            # блок, що вже стоїть на графіку, сигналом не є.
+            _fv = funding_vob_outcome(self._vob_seen.get(sym), ft)
+            if _fv == 'base':
+                self._vob_seen[sym] = ft
+            elif _fv == 'new':
                 self._vob_seen[sym] = ft
                 if route:
                     # Маршрут сигналу в Чергу-4 (фільтрація 4-ма шарами + відкриття).

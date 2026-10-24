@@ -376,6 +376,7 @@ def test_layer_alert_vob_confirms_and_dedups():
     ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 1.2, 'bottom': 1.1, 'breaker': False}
     ff.sent = []
     ff._send_layer_alert = lambda sym, a, d, sl=None, mode='signal': ff.sent.append((sym, mode))
+    ff._vob_seen[sym] = 1   # 💾 бот уже бачив старіший блок: перший показ монети — тиха база (25.10)
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     ff._layer_signal_alert(ff.get_settings(), 2_000_010.0)   # same OB → no re-send
     assert len(ff.sent) == 1, ff.sent
@@ -397,6 +398,7 @@ def test_layer_alert_needs_all_layers():
     ff.sent = []
     ff._send_layer_alert = lambda *a, **k: ff.sent.append(1)
     ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 1, 'bottom': 1, 'breaker': False}
+    ff._vob_seen[sym] = 1   # 💾 бот уже бачив старіший блок: перший показ монети — тиха база (25.10)
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.sent == [], 'без усіх 5 шарів — новий VOB не дає сигналу'
     print('✓ layer TG: новий VOB дає сигнал лише ПІСЛЯ зходження всіх 5 шарів')
@@ -439,6 +441,7 @@ def test_vob_open_opens_and_sets_sl():
     ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
     # bullish OB: bottom=98, top=99 → LONG SL = 98 * (1 - 0.001) = 97.902
     ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._vob_seen[sym] = 1   # 💾 бот уже бачив старіший блок: перший показ монети — тиха база (25.10)
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.opened == [(sym, 'LONG', 'Q3-VOB(funding)')], ff.opened
     assert tm.sl_calls and abs(tm.sl_calls[-1][1] - 97.902) < 1e-6, tm.sl_calls
@@ -458,6 +461,7 @@ def test_vob_open_short_sl_above_block():
     ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
     # bearish OB: top=51, bottom=50 → SHORT SL = 51 * (1 + 0.001) = 51.051
     ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 51.0, 'bottom': 50.0, 'breaker': False}
+    ff._vob_seen[sym] = 1   # 💾 бот уже бачив старіший блок: перший показ монети — тиха база (25.10)
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.opened == [(sym, 'SHORT', 'Q3-VOB(funding)')], ff.opened
     assert abs(tm.sl_calls[-1][1] - 51.051) < 1e-6, tm.sl_calls
@@ -474,6 +478,7 @@ def test_vob_open_retrigger_moves_sl_no_reopen():
     tm = _FakeTM(); _wire_vob(ff, tm)
     ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
     ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._vob_seen[sym] = 1   # 💾 бот уже бачив старіший блок: перший показ монети — тиха база (25.10)
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)     # 1) відкрили
     ff.opened = []
     # НОВИЙ OB (інший ft) по вже відкритій монеті → лише пересунути SL.
@@ -495,6 +500,7 @@ def test_vob_open_disabled():
     tm = _FakeTM(); _wire_vob(ff, tm)
     ff._funding_layers = lambda s, a: {'base': 5, 'base4': 4, 'count': 5, 'layers': []}
     ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._vob_seen[sym] = 1   # 💾 бот уже бачив старіший блок: перший показ монети — тиха база (25.10)
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.opened == [] and not tm.sl_calls, 'вимкнено → нічого не відкриваємо'
     print('✓ VOB-open: вимкнено (queue3_vob_open=False) → жодних дій')
@@ -510,6 +516,7 @@ def test_vob_open_needs_all_five_layers():
     tm = _FakeTM(); _wire_vob(ff, tm)
     ff._funding_layers = lambda s, a: {'base': 4, 'base4': 4, 'count': 4, 'layers': []}  # не всі 5
     ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
+    ff._vob_seen[sym] = 1   # 💾 бот уже бачив старіший блок: перший показ монети — тиха база (25.10)
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.opened == [], 'без усіх 5 шарів VOB-угоду не відкриваємо'
     print('✓ VOB-open: нова угода лише коли всі 5 шарів зійшлись')
@@ -528,6 +535,7 @@ def test_vob_open_blocked_against_overall_trend():
     ff._funding_vob = lambda sym, d, tf=None: {'formation_time': 111, 'top': 99.0, 'bottom': 98.0, 'breaker': False}
     # ЗАГАЛЬНИЙ тренд ВНИЗ → LONG проти нього → НЕ відкриваємо.
     ff._funding_price = {sym: {'dir': 'up', 'chg': 1.0, 'dir_overall': 'down', 'chg_overall': -5.0}}
+    ff._vob_seen[sym] = 1   # 💾 бот уже бачив старіший блок: перший показ монети — тиха база (25.10)
     ff._layer_signal_alert(ff.get_settings(), 2_000_000.0)
     assert ff.opened == [], 'LONG проти загального тренду ↓ — не відкриваємо'
     # Загальний тренд ВГОРУ → LONG у бік → відкриваємо.
