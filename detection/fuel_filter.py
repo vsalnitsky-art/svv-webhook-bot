@@ -6708,6 +6708,8 @@ class FuelFilterDaemon:
         """
         _d, _st, _bstr = self._btc_liqfuel_raw()
         self._btc_fuel_strength = _bstr
+        # Сирий dir — для рядка події сеансу (`_log_btc_mm`) у `_update_btc_verdict`.
+        self._btc_live_fdir = _d
         # status уже несе ±0.1-нейтраль: None = ⚖ рівновага.
         live = _st if _st in ('LONG', 'SHORT') else None
         if live != self._btc_live_dir:
@@ -6739,6 +6741,11 @@ class FuelFilterDaemon:
             # поки reason казав SHORT. Тепер алгоритм ЄДИНИЙ — банер і «МММ-бабло»
             # завжди збігаються.
             live = self._btc_banner_live_refresh()
+            # ⚠️ `fdir` раніше рахувався тут інлайном; після винесення в
+            # `_btc_banner_live_refresh` (18.09) змінна зникла, а 5 викликів
+            # `_log_btc_mm(..., fdir)` лишились → NameError на КОЖНІЙ події
+            # сеансу (пауза/старт/фліп) обривав увесь такт двигуна.
+            fdir = getattr(self, '_btc_live_fdir', None)
             # Бабло-модель для деталей/тултипа банера (напрямок беремо зі status).
             if _MM_MODEL:
                 try:
