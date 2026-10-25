@@ -163,7 +163,7 @@ def test_manual_open_rejected_when_position_exists():
     }
     res = tm.manual_open('BTCUSDT', 'SHORT')
     assert res['ok'] is False
-    assert 'already' in res['reason'].lower()
+    assert 'вже є' in res['reason'].lower()
     assert bybit.orders_placed == []
     print('✓ manual_open rejected when real position already exists')
 

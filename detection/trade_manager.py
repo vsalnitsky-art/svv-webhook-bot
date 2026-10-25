@@ -6642,7 +6642,8 @@ class TradeManager:
         # === Fuel Auto-Filter confirmation gate (same as real) ===
         # Paper trades must pass the same FF-table confirmation so the test view
         # mirrors what a real deployment would do.
-        if not bypass_gates and self._settings.get('require_fuel_confirm', True):
+        if (not bypass_gates and not by_hand
+                and self._settings.get('require_fuel_confirm', True)):
             try:
                 from detection.fuel_filter import get_fuel_filter
                 ff = get_fuel_filter()
@@ -8474,7 +8475,8 @@ class TradeManager:
         # === Fuel Auto-Filter interception ===
         # A manual LONG/SHORT click is also queued in the ❤️ FF base while FF is
         # on (bypass_gates=True means this IS FF opening — don't re-intercept).
-        if not bypass_gates:
+        # ✋ by_hand (людина, вимога 25.10) — НЕ в чергу: відкриваємо одразу.
+        if not bypass_gates and not by_hand:
             try:
                 from detection.fuel_filter import get_fuel_filter
                 ff = get_fuel_filter()
@@ -8500,21 +8502,30 @@ class TradeManager:
         test_mode = self._settings.get('test_mode', True)
 
         # Check max positions limit
-        at_limit = self._at_max_positions()
+        # ✋ by_hand: стеля max_open_positions — обмеження АВТОМАТИКИ, а не
+        # людини (вимога 25.10 «любе ручне відкриття не має блокуватись»).
+        # Ручне відкриття йде в реальну книгу навіть на стелі.
+        at_limit = False if by_hand else self._at_max_positions()
         if at_limit and not test_mode:
             return {'ok': False, 'reason':
                     f'Max open positions ({self._settings.get("max_open_positions", 10)}) '
                     f'reached. Enable Test Mode to open additional paper positions.'}
 
         with self._lock:
+            # ⚠️ Книги TM ключовані СИМВОЛОМ (одна позиція на монету), а
+            # Bybit працює в one-way режимі (positionIdx 0): зустрічний ордер
+            # не відкрив би хедж, а ЗАКРИВ би наявну позицію. Тому друга угода
+            # по тій самій монеті поки неможлива — і для ручного теж.
             if symbol in self._positions:
                 return {'ok': False, 'reason':
-                        f'Already have an open position for {symbol}. '
-                        f'Close it first or use Manual SL/TP to manage.'}
+                        f'По {symbol} вже є реальна позиція '
+                        f'({self._positions[symbol].get("side")}). Хедж (друга '
+                        f'угода по тій самій монеті) ще не підтримується.'}
             if symbol in self._shadow_positions:
                 return {'ok': False, 'reason':
-                        f'Symbol {symbol} has a paper (shadow) position. '
-                        f'Close it first to avoid mixed real/paper state.'}
+                        f'По {symbol} вже є paper-позиція '
+                        f'({self._shadow_positions[symbol].get("side")}). Хедж '
+                        f'(друга угода по тій самій монеті) ще не підтримується.'}
 
         # Fetch fresh price
         entry_price = self._get_current_price(symbol)

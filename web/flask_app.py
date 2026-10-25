@@ -6106,9 +6106,13 @@ def register_api_routes(app):
         if not tm:
             return jsonify({'ok': False, 'reason': 'TM not initialized'})
         data = request.get_json() or {}
+        # ✋ Кнопки ⬆LONG/⬇SHORT — РУЧНЕ відкриття людиною (вимога 25.10:
+        # «любе ручне відкриття не має блокуватись»): без черг FF, без 🚦 кнопок
+        # напрямку, без стелі max_open_positions. Лишаються технічні умови.
         return jsonify(tm.manual_open(
             symbol=data.get('symbol', ''),
             side=data.get('side', ''),
+            by_hand=True,
         ))
     
     @app.route('/api/tm/positions/close', methods=['POST'])

@@ -62,7 +62,7 @@ def test_periodic_refresh_cannot_wipe_the_answer():
 def test_tm_disabled_text_names_the_buttons_it_is_about():
     """Підпис мусить сказати, ЧОГО він стосується, і що ✋ Сигнал працює."""
     body = _fn(_HTML, 'updateManualEntryButtons')
-    j = body.find('if (!tmEnabled)')
+    j = body.find('if (!tmEnabled && !testMode)')
     _check(j > 0, 'не знайдено гілку вимкненого TM')
     seg = body[j:body.find('} else if', j)]
     m = re.search(r"hintText = ((?:.|\n)*?);", seg)
@@ -146,7 +146,7 @@ def test_the_tm_off_text_is_actually_short():
     """Замок на ДОВЖИНУ: попередній варіант був на 160+ символів і в три
     рядки. Деталі мусять піти в `title`, а не в сам підпис."""
     body = _fn(_HTML, 'updateManualEntryButtons')
-    j = body.find('if (!tmEnabled)')
+    j = body.find('if (!tmEnabled && !testMode)')
     seg = body[j:body.find('} else if', j)]
     m = re.search(r"hintText = ((?:.|\n)*?);", seg)
     txt = ''.join(re.findall(r"'([^']*)'", m.group(1)))

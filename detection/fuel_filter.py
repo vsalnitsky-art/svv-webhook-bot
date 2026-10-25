@@ -6079,9 +6079,9 @@ class FuelFilterDaemon:
         """
         s = self.get_settings()
         out = {'ok': True, 'opened': 0, 'failed': 0, 'results': []}
-        if not s.get('enabled'):
-            return {'ok': False, 'opened': 0, 'failed': 0, 'results': [],
-                    'reason': 'Fuel Auto-Filter вимкнено'}
+        # ✋ Майстер-тумблер ❤️ Fuel Auto-Filter вимикає АВТОМАТИКУ черг, а не
+        # руки людини (вимога 25.10 «любе ручне відкриття не має блокуватись»):
+        # знімки МММ рахуються і при вимкнених чергах (`_mm_only_tick`).
         # ⚠️ Вимкнений монітор = знімка НЕМАЄ, тож напрямок брати нізвідки.
         # Кажемо це прямо: інакше кожна монета отримала б причину «МММ без
         # напрямку», що виглядало б як «ринок у рівновазі», а не як тумблер.
@@ -7112,6 +7112,14 @@ class FuelFilterDaemon:
 
         # Don't double-open: if TM already holds this symbol (real or shadow),
         # just adopt it into tracking instead of trying to open again.
+        if by_hand and (self._tm_has_position(symbol, True)
+                        or self._tm_has_position(symbol, False)):
+            # ✋ Людина просила ВІДКРИТИ, а не «прийняти в облік» наявну —
+            # мовчазне adopt читалось би як «відкрито». Друга позиція по тому
+            # самому символу (хедж) поки не підтримується книгою TM.
+            self._engine_skip[symbol] = ('по монеті вже є відкрита позиція — '
+                                         'хедж (друга угода) ще не підтримується')
+            return False
         if self._tm_has_position(symbol, is_real):
             print(f"[FuelFilter] {symbol}: TM already has a position — adopting into tracking")
         else:
@@ -12795,8 +12803,7 @@ class FuelFilterDaemon:
         """
         symbol = symbol.upper()
         settings = self.get_settings()
-        if not settings.get('enabled'):
-            return {'ok': False, 'reason': 'Fuel Auto-Filter is disabled'}
+        # ✋ Ручне — майстер-тумблер FF не блокує (вимога 25.10).
 
         with self._lock:
             timer = self._timers.get(symbol)
@@ -12931,8 +12938,7 @@ class FuelFilterDaemon:
         """
         symbol = (symbol or '').upper()
         s = self.get_settings()
-        if not s.get('enabled'):
-            return {'ok': False, 'opened': False, 'reason': 'Fuel Auto-Filter вимкнено'}
+        # ✋ Ручне — майстер-тумблер FF не блокує (вимога 25.10).
         with self._lock:
             info = dict(self._pending4.get(symbol) or {})
         side = info.get('dir')

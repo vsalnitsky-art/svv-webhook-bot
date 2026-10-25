@@ -9928,12 +9928,15 @@ function updateManualEntryButtons(decision) {
     if (!longBtn || !shortBtn) return;
 
     const tmEnabled = !!window._tmEnabled;
+    // 🧪 Test Mode: при вимкненому TM ручне відкриття йде в paper-книгу —
+    // кнопки НЕ гасимо (вимога 25.10 «любе ручне відкриття не має блокуватись»).
+    const testMode = !!(window._tmSettings && window._tmSettings.test_mode);
     const hasPosition = !!(decision && decision.position);
 
     let disabled = false;
     let hintText = '';
     let hintFull = '';
-    if (!tmEnabled) {
+    if (!tmEnabled && !testMode) {
         disabled = true;
         // ⚠️ ПІДПИС МУСИТЬ НАЗИВАТИ, ЧОГО САМЕ ВІН СТОСУЄТЬСЯ. Питання
         // користувача: «до чого тут Trade Manager disabled? Сигнал мав би як
@@ -9942,17 +9945,19 @@ function updateManualEntryButtons(decision) {
         // НЕ гасить. Гасить він лише ПРЯМЕ відкриття цими двома кнопками.
         // ⚠️ КОРОТКО — максимум два рядки (вимога користувача): деталі йдуть
         // у `title`, інакше підпис ламав ширину кнопок.
-        hintText = '⚠️ ⬆LONG/⬇SHORT вимкнено — Trade Manager OFF. '
-                 + '✋ Сигнал працює (йде в чергу).';
-        hintFull = 'Майстер-тумблер Trade Manager вимкнено, тому ПРЯМЕ '
-                 + 'відкриття кнопками ⬆LONG / ⬇SHORT недоступне — увімкніть '
-                 + 'його в TM Settings.\n✋ Сигнал цього тумблера НЕ '
+        hintText = '⚠️ ⬆LONG/⬇SHORT: TM і Test Mode OFF — нікуди відкрити. '
+                 + '✋ Сигнал працює.';
+        hintFull = 'Вимкнено І Trade Manager, І Test Mode — ні реальної, ні '
+                 + 'paper-книги, куди відкрити угоду кнопками ⬆LONG / ⬇SHORT. '
+                 + 'Увімкніть один із них.\n✋ Сигнал цього тумблера НЕ '
                  + 'стосується: він створює сигнал, який іде звичайним '
                  + 'алгоритмом (черга → двигун → відкриття), а не відкриває '
                  + 'угоду сам.';
     } else if (hasPosition) {
         disabled = true;
-        hintText = `Position already open (${decision.position.side}) — close first`;
+        hintText = `Позиція вже відкрита (${decision.position.side}) — хедж ще не підтримується`;
+    } else if (!tmEnabled) {
+        hintText = '🧪 TM OFF — ⬆LONG/⬇SHORT відкриють paper-угоду (Test Mode).';
     } else {
         hintText = 'Uses TM Position Sizing (USD/leverage/SL/TP)';
     }

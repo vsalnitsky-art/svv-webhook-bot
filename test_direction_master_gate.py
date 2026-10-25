@@ -144,7 +144,8 @@ def test_bypass_gates_still_governs_the_other_gates():
     """⚠️ Прибрати `bypass_gates` ЦІЛКОМ було б іншим багом: він законно знімає
     ІНШІ ворота (напр. FF-підтвердження). Знято лише з головних кнопок."""
     src = _src('detection/trade_manager.py')
-    _check("not bypass_gates and self._settings.get('require_fuel_confirm'" in src,
+    # 25.10: ✋ by_hand теж знімає FF-підтвердження (любе ручне не блокується).
+    _check("not bypass_gates and not by_hand" in src and "require_fuel_confirm" in src,
            'FF-підтвердження мусить і далі поважати bypass_gates')
     print('✓ bypass_gates лишився чинним для решти воріт')
 

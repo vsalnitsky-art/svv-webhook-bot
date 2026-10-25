@@ -500,12 +500,14 @@ def test_manual_open_keeps_queue_when_open_rejected():
     print('✓ відмова `_open` не викидає монету з черги')
 
 
-def test_manual_open_requires_ff_enabled():
+def test_manual_open_works_with_ff_disabled():
+    # ⚠️ ПЕРЕПИСАНО 25.10 (вимога «любе ручне відкриття не має блокуватись»):
+    # майстер-тумблер FF вимикає автоматику черг, а не руки людини.
     o = _ff_open({'BTCUSDT': {'dir': 'LONG'}})
     o.get_settings = lambda: {'enabled': False}
     r = o.force_open_queue4('BTCUSDT')
-    _check(not r['ok'], 'при вимкненому FF ручне відкриття не проходить')
-    print('✓ вимкнений Fuel Filter → відмова')
+    _check(r['ok'], f'вимкнений FF не має блокувати ручне відкриття: {r}')
+    print('✓ вимкнений Fuel Filter ручне відкриття не блокує')
 
 
 # ═════════ 🐞 UnboundLocalError у `_open` (ручне відкриття з Черги-4) ═══════
@@ -588,7 +590,7 @@ if __name__ == '__main__':
     test_manual_open_refuses_when_not_queued()
     test_manual_open_refuses_when_already_in_trade()
     test_manual_open_keeps_queue_when_open_rejected()
-    test_manual_open_requires_ff_enabled()
+    test_manual_open_works_with_ff_disabled()
     test_open_never_leaves_exh_unbound()
     test_q4_open_crash_is_logged_not_swallowed()
     print('\nУсі тести керувань Черги-4 пройдено ✅')
