@@ -479,6 +479,29 @@ def test_detector_change_rebases_silently():
     print('✓ зміна детектора → тихе перебазування, без потоку сигналів')
 
 
+def test_catch_all_base_survives_restart():
+    """💾 Кейс 25.10: у catch-all (`vob_one_per_ob` ВИМК) база опрацьованих
+    блоків не персистилась → після рестарту той самий блок фаєрив ДРУГИЙ
+    сигнал (CROUSDT/PONSUSDT/ZROUSDT). Кінець циклу пише стан при зміні."""
+    class _DB:
+        def __init__(self): self.n = 0; self.v = None
+        def set_setting(self, k, v): self.n += 1; self.v = v
+    o = _mk()
+    o.db = _DB()
+    o._vob_alert_seen = {}
+    o._vob_ob_epoch, o._vob_epoch_fired, o._vob_counter = {}, {}, {}
+    o._persist_vob_state_if_changed()
+    n0 = o.db.n
+    seen = o._vob_alert_seen.setdefault('CROUSDT', {})
+    SC._vob_seen_add(seen, 'LONG', 1792944000)
+    o._persist_vob_state_if_changed()
+    _check(o.db.n == n0 + 1, 'новий опрацьований блок → запис у БД')
+    _check(1792944000 in o.db.v['seen']['CROUSDT']['LONG'], 'блок у збереженій базі')
+    o._persist_vob_state_if_changed()
+    _check(o.db.n == n0 + 1, 'без змін — БД не чіпаємо')
+    print('✓ база catch-all переживає рестарт (запис лише при зміні)')
+
+
 if __name__ == '__main__':
     test_edge_outcome_fresh_first_sight_fires()
     test_edge_outcome_running()
@@ -499,4 +522,5 @@ if __name__ == '__main__':
     test_every_new_1h_ob_resets_even_same_direction()
     test_vob_state_persist_roundtrip()
     test_detector_change_rebases_silently()
+    test_catch_all_base_survives_restart()
     print('\nУсі тести VOB (1H-OB такт + catch-all + блок=сигнал + чистий лог) пройдено ✅')

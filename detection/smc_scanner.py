@@ -1328,6 +1328,27 @@ class SMCScanner:
         except Exception as e:
             print(f"[SMC] VOB state persist error: {e}")
 
+    def _persist_vob_state_if_changed(self):
+        """💾 Кінець скан-циклу: зберегти стан VOB, якщо він змінився.
+
+        ⚠️ Кейс 25.10: у гілці catch-all (`vob_one_per_ob` ВИМК) база
+        «опрацьованих» блоків (`_vob_alert_seen`) НЕ персистилась НІКОЛИ —
+        лише в гілці такту. Після рестарту відновлювалась давня база, і
+        блок, що вже дав сигнал (або був відсіяний фільтром) до рестарту,
+        виглядав «новим» і фаєрив ДРУГИЙ сигнал (CROUSDT/PONSUSDT/ZROUSDT).
+        Один запис на цикл і лише при зміні — БД не навантажує."""
+        try:
+            sig = repr(sorted(
+                (k, tuple((sd, tuple(self._vob_seen_list(v, sd)))
+                          for sd in ('LONG', 'SHORT')))
+                for k, v in self._vob_alert_seen.items() if isinstance(v, dict)))
+        except Exception:
+            return
+        if sig == getattr(self, '_vob_seen_sig', None):
+            return
+        self._persist_vob_state()
+        self._vob_seen_sig = sig
+
     def _load_vob_state(self):
         """Відновити стан VOB-нумерації після рестарту (див. _persist_vob_state)."""
         if not self.db:
@@ -2954,6 +2975,7 @@ class SMCScanner:
             self._persist_vol_trends_state()
             self._persist_ob_mark_state()
             self._persist_derived_state()
+            self._persist_vob_state_if_changed()
         except Exception as e:
             if self._errors <= 5:
                 print(f"[SMC] trends snapshot error: {e}")
