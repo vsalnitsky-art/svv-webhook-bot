@@ -63,7 +63,9 @@ _MM_GATE_TAG = {'new': ('🆕МММ-new', '🆕 МММ-NEW'),
                 # 🧭 МММ-Pull (вимога 20.10) — книга скану ліквідності «куди тягне».
                 'pull': ('🧭МММ-Pull', '🧭 МММ-PULL'),
                 # 🧠 МММ-Decision (вимога 22.10) — книга вердиктів банера Decision.
-                'dec': ('🧠МММ-Decision', '🧠 МММ-DECISION')}
+                'dec': ('🧠МММ-Decision', '🧠 МММ-DECISION'),
+                # 🧩 МММ-Готовність (вимога 25.10) — книга SMC-«Готовності».
+                'rdy': ('🧩МММ-Готовність', '🧩 МММ-ГОТОВНІСТЬ')}
 
 
 def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
@@ -141,7 +143,9 @@ MM_GATES = (('mm_gate_enabled', 'mm_gate_banner', 'new'),
             # 🧭 «Через МММ-Pull» (+ «за банером»), вимога 20.10, деф. ВИМК.
             ('mmp_gate_enabled', 'mmp_gate_banner', 'pull'),
             # 🧠 «Через МММ-Decision» (+ «за банером»), вимога 22.10, деф. ВИМК.
-            ('mmd_gate_enabled', 'mmd_gate_banner', 'dec'))
+            ('mmd_gate_enabled', 'mmd_gate_banner', 'dec'),
+            # 🧩 «Через МММ-Готовність» (+ «за банером»), вимога 25.10, деф. ВИМК.
+            ('mmr_gate_enabled', 'mmr_gate_banner', 'rdy'))
 
 
 def mm_gates_active(settings):
@@ -427,6 +431,8 @@ DEFAULT_SETTINGS = {
     'mmp_gate_banner': False,
     'mmd_gate_enabled': False,
     'mmd_gate_banner': False,
+    'mmr_gate_enabled': False,
+    'mmr_gate_banner': False,
     # ⚑ МММ-ворота враховують поріг «Сила ≥» вкладки (вимога 12.10): сигнал
     # проходить, лише коли монета ВИДИМА у своїй вкладці. Деф. ВИМК.
     'mm_gate_strength': False,
@@ -1736,6 +1742,7 @@ class SMCScanner:
                        'mmf_gate_enabled', 'mmf_gate_banner',
                        'mmp_gate_enabled', 'mmp_gate_banner',
                        'mmd_gate_enabled', 'mmd_gate_banner',
+                       'mmr_gate_enabled', 'mmr_gate_banner',
                        'mm_gate_strength',
                        'liq_gate_enabled',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
@@ -1890,6 +1897,7 @@ class SMCScanner:
                         'mmf_gate_enabled', 'mmf_gate_banner',
                         'mmp_gate_enabled', 'mmp_gate_banner',
                         'mmd_gate_enabled', 'mmd_gate_banner',
+                        'mmr_gate_enabled', 'mmr_gate_banner',
                         'mm_gate_strength'):
                 self._settings[_gk] = bool(self._settings.get(_gk, False))
             self._settings['liq_gate_enabled'] = bool(

@@ -261,7 +261,7 @@ def test_ui_block_is_a_twin_with_its_own_columns():
     _check("mmApplyState(d.mm_dec, 'dec')" in _HTML, 'стан доїжджає до книги')
     _check("want.push('mmd')" in _HTML, 'секцію просимо лише розгорнутою')
     _check('mm_dec_enabled: _c(' in _HTML and 'mmd_str_mins:' in _HTML, 'збереження')
-    _check('_MMB.pull, _MMB.dec].forEach' in _HTML, 'банер малює 1с-тікер')
+    _check('_MMB.pull, _MMB.dec, _MMB.rdy].forEach' in _HTML, 'банер малює 1с-тікер')
     _check('ff-mmd-bias-tg' in _HTML and "🧠 банер Decision" in _HTML, 'TG-тумблер і шапка')
     i = _HTML.index('id="mmp-panel"'); j = _HTML.index('id="mmd-panel"')
     _check(i < j, 'блок 🧠 стоїть під 🧭 МММ-Pull')

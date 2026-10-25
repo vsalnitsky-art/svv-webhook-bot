@@ -547,7 +547,7 @@ MM_BOOKS_SHOW_MAX_AGE = 6 * 3600.0  # знімок для ПОКАЗУ (з по�
 MM_BOOKS_RAW_MAX_AGE = 1800.0     # сирі кеші, що йдуть у РОЗРАХУНОК, — лише ≤30 хв
 MM_FC_RESTORE_SEC = 900.0         # 🔮 фолбек прогнозу — лише перші 15 хв після старту
 _MM_BOOK_PREFIX = {'old': '_mm', 'new': '_mmn', 'ctr': '_mmc', 'fc': '_mmf',
-                   'pull': '_mmp', 'dec': '_mmd'}
+                   'pull': '_mmp', 'dec': '_mmd', 'rdy': '_mmr'}
 
 
 def dec_mm_dir(dec) -> Optional[Dict]:
@@ -582,6 +582,85 @@ def dec_mm_dir(dec) -> Optional[Dict]:
             'verdict': str(dec.get('verdict') or ''),
             'confidence': str(dec.get('confidence') or ''),
             'headline': str(dec.get('headline') or '')}
+
+
+# 🧩 МММ-ГОТОВНІСТЬ (вимога 25.10): сьомий банер на SMC-«Готовності»
+# (`grade_setup` — той самий грейд, що колонка «🎯 Готовність» Черги-4 і бейдж
+# TradingView-оверлея). Грейд НАПРЯМКОВИЙ, тож рахуємо ОБИДВА боки з ОДНИХ
+# свічок і порівнюємо.
+# ⏱ ОНОВЛЕННЯ — ФОНОВИЙ СКАН У СПІЛЬНІЙ ЧЕРЗІ СКАНІВ (`scan_queue`, ім'я
+# `mm-rdy`) разом з іншими банерами, РАЗ НА `mmr_interval_min` (деф. 15 хв):
+# грейд — найважчий розрахунок проєкту (2 запити свічок + SMC-аналіз на
+# монету), і двічі вже доводилось прибирати колонку «Готовність», бо вона
+# гальмувала сторінку. Такт двигуна скан НЕ чекає — читає готовий результат.
+# 💾 Результат скану персиститься в `_DB_MM_BOOKS` і відновлюється після
+# рестарту: свіжий (молодший за інтервал) скан НЕ повторюється.
+MMR_SCAN_JOB = 'mm-rdy'
+MMR_FAIL_RETRY = 300.0         # с — повтор НЕВДАЛОГО скану
+MMR_INTERVAL_MIN_DEFAULT = 15
+MMR_INTERVAL_MIN_RANGE = (5, 240)
+MMR_COIN_PAUSE_SEC = 0.2       # пауза між монетами — рівний тиск на біржу
+MMR_RESTORE_MAX_AGE = 4 * 3600.0  # результат скану з минулого запуску — до 4 год
+
+
+def mmr_interval_sec(settings) -> float:
+    """Інтервал скану 🧩 МММ-Готовності у секундах (з налаштувань)."""
+    lo, hi = MMR_INTERVAL_MIN_RANGE
+    try:
+        m = int(float((settings or {}).get('mmr_interval_min', MMR_INTERVAL_MIN_DEFAULT)))
+    except (TypeError, ValueError):
+        m = MMR_INTERVAL_MIN_DEFAULT
+    return float(max(lo, min(hi, m)) * 60)
+
+
+def rdy_mm_dir(gl, gs) -> Optional[Dict]:
+    """🧩 Напрямок МММ-Готовності по ОДНІЙ монеті з грейдів LONG і SHORT. ЧИСТА.
+
+    • Бік = той, чия «Готовність» ВИЩА; він стає напрямком, лише коли його
+      бал ≥ СЕРЕДНІЙ (`grade_min`, єдине джерело порогів — setup_grader) І
+      перевага над протилежним > `MM_BIAS_FLAT` (10 п.п.). Інакше ⚖.
+    • Сила = ПЕРЕВАГА балів (|L − S|), а не бал переможця — той самий принцип,
+      що в 🧠 МММ-Decision: рівноважна монета («L 45 / S 40») інакше важила б
+      у знаменнику банера як сильна.
+    • Немає жодного грейду → None («невідомо» ≠ «рівновага»).
+    """
+    def _sc(g):
+        try:
+            if isinstance(g, dict) and g.get('ok', True) and g.get('score') is not None:
+                return int(g.get('score'))
+        except (TypeError, ValueError):
+            pass
+        return None
+    sl, ss = _sc(gl), _sc(gs)
+    if sl is None and ss is None:
+        return None
+    sl0, ss0 = (sl or 0), (ss or 0)
+    d = max(-1.0, min(1.0, (sl0 - ss0) / 100.0))
+    win_side = 'LONG' if sl0 >= ss0 else 'SHORT'
+    win = gl if win_side == 'LONG' else gs
+    win_score = sl0 if win_side == 'LONG' else ss0
+    status = (win_side if (abs(d) > MM_BIAS_FLAT
+                           and win_score >= _grade_min('СЕРЕДНІЙ')) else None)
+    return {'dir': round(d, 3), 'status': status,
+            'strength': int(round(abs(d) * 100)),
+            'rdy_l': sl, 'rdy_s': ss,
+            'rdy_side': win_side,
+            'rdy_score': win_score,
+            'rdy_grade': str((win or {}).get('grade') or ''),
+            'rdy_hot': bool((win or {}).get('hot'))}
+
+
+def _rdy_slim(g) -> Optional[Dict]:
+    """Грейд «Готовності» для зберігання: лише те, що читає книга й рендер
+    (повні `checks` у блоб БД не кладемо — лише вага)."""
+    if not isinstance(g, dict) or not g.get('ok', True):
+        return None
+    try:
+        return {'ok': True, 'score': int(g.get('score') or 0),
+                'grade': str(g.get('grade') or ''), 'hot': bool(g.get('hot')),
+                'vetoes': list(g.get('vetoes') or [])[:3]}
+    except (TypeError, ValueError):
+        return None
 
 
 # 🚨 СИГНАЛ «МММ-Decision слабшає / ПРОТИ угоди» (вимога 22.10, таблиці угод).
@@ -735,6 +814,9 @@ _MM_BIAS_TG = {
     # 🧠 Банер МММ-Decision (вимога 22.10) — та сама тема, власний тумблер.
     'dec': {'pref': '_mmd_bias_tg', 'key': 'mmd_bias_tg', 'bias': '_mm_bias_dec',
             'title': '🧠 <b>МММ-DECISION</b>', 'name': 'МММ-Decision', 'src': 'MMD'},
+    # 🧩 Банер МММ-Готовність (вимога 25.10) — та сама тема, власний тумблер.
+    'rdy': {'pref': '_mmr_bias_tg', 'key': 'mmr_bias_tg', 'bias': '_mm_bias_rdy',
+            'title': '🧩 <b>МММ-ГОТОВНІСТЬ</b>', 'name': 'МММ-Готовність', 'src': 'MMR'},
 }
 
 # Чотири книги МММ (групове ✋ відкриття): назва, тумблер, знімок, мітка двигуна.
@@ -751,6 +833,8 @@ _MM_BOOKS = {
              'snap': '_mmp_snapshot', 'eng': 'MMP'},
     'dec': {'name': '🧠 МММ-Decision', 'key': 'mm_dec_enabled',
             'snap': '_mmd_snapshot', 'eng': 'MMD'},
+    'rdy': {'name': '🧩 МММ-Готовність', 'key': 'mm_rdy_enabled',
+            'snap': '_mmr_snapshot', 'eng': 'MMR'},
 }
 
 DEFAULT_SETTINGS = {
@@ -836,6 +920,15 @@ DEFAULT_SETTINGS = {
     # СИЛЬНИЙ · 'good' — лише СИЛЬНИЙ. Як і «Сила ≥» — налаштування БОТА.
     'mmd_verdict_min': '',
     'mmd_verdict_mins': None,
+    # 🧩 БЛОК «МММ-Готовність» (вимога 25.10) — сьомий банер на SMC-«Готовності».
+    # ⚠️ Тумблер — ВИМК: грейд — найважчий розрахунок проєкту (2 запити свічок
+    # + SMC-аналіз на монету). Оновлення — фоновим сканом у спільній черзі
+    # сканів раз на `mmr_interval_min` (деф. 15 хв).
+    'mm_rdy_enabled': False,
+    'mmr_str_min': 0,
+    'mmr_str_mins': None,
+    'mmr_bias_confirm_sec': 120,
+    'mmr_interval_min': 15,
     # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
     # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
     # ГОЛОВНИЙ вміст тієї теми. ⚠️ Майстер-вимикач теми лишається в кабінеті
@@ -852,6 +945,8 @@ DEFAULT_SETTINGS = {
     'mmp_bias_tg': True,
     # 🧠 Те саме для банера «МММ-Decision» (вимога 22.10) — власний тумблер.
     'mmd_bias_tg': True,
+    # 🧩 Те саме для банера «МММ-Готовність» (вимога 25.10) — власний тумблер.
+    'mmr_bias_tg': True,
     'manage_open_positions': True,  # if True, FF closes positions it opened
     # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
@@ -1583,6 +1678,24 @@ class FuelFilterDaemon:
         self._mmd_bias_tg_last = '__none__'
         self._mmd_bias_tg_at = 0.0
         self._mmd_bias_tg_restored = False
+        # 🧩 БЛОК «МММ-Готовність» (вимога 25.10) — сьома книга, та сама форма.
+        # Джерело — ФОНОВИЙ скан грейдів (`_mmr_scan`) у спільній черзі сканів.
+        self._mmr_on: Optional[bool] = None
+        self._mmr_snapshot: Dict[str, Dict] = {}
+        self._mmr_snapshot_ts: float = 0.0
+        self._mmr_state_since: Dict = {}
+        self._mmr_price_hist: Dict[str, list] = {}
+        self._mmr_stats: Dict = {}
+        self._mm_bias_rdy: Dict = {}
+        self._mm_bias_rdy_since: float = 0.0
+        self._mm_bias_rdy_cand: Dict = {}
+        self._mmr_scan: Dict = {}          # {'rows': {SYM: {l, s, price}}, 'ts', ...}
+        self._mmr_scan_running: bool = False
+        self._mmr_scan_at: float = 0.0     # коли ЗАКІНЧИВСЯ останній скан
+        self._mmr_str_mins_c: Optional[Dict] = None
+        self._mmr_bias_tg_last = '__none__'
+        self._mmr_bias_tg_at = 0.0
+        self._mmr_bias_tg_restored = False
         # 📨 Останній статус банера, ПРО ЯКИЙ УЖЕ сповіщали в Telegram.
         # СВІДОМО не персиститься: після рестарту перший такт лише запамʼятовує
         # стан і мовчить — інакше кожен `botupdate` слав би «зміну», якої не
@@ -2228,9 +2341,23 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             s['mmd_bias_confirm_sec'] = 120
         s['mmd_refresh_min'] = int(mmd_refresh_sec(s) // 60)
+        # 🧩 БЛОК «МММ-Готовність» — тумблер, вікно банера, інтервал скану, TG.
+        s['mm_rdy_enabled'] = bool(s.get('mm_rdy_enabled', False))
+        s['mmr_bias_tg'] = bool(s.get('mmr_bias_tg', True))
+        try:
+            s['mmr_str_min'] = max(0, min(100, int(float(s.get('mmr_str_min', 0)))))
+        except (TypeError, ValueError):
+            s['mmr_str_min'] = 0
+        try:
+            s['mmr_bias_confirm_sec'] = max(0, min(3600,
+                int(float(s.get('mmr_bias_confirm_sec', 120)))))
+        except (TypeError, ValueError):
+            s['mmr_bias_confirm_sec'] = 120
+        s['mmr_interval_min'] = int(mmr_interval_sec(s) // 60)
         for _k, _lk in (('mm_str_mins', 'mm_str_min'), ('mmn_str_mins', 'mmn_str_min'),
                         ('mmc_str_mins', 'mmc_str_min'), ('mmf_str_mins', 'mmf_str_min'),
-                        ('mmp_str_mins', 'mmp_str_min'), ('mmd_str_mins', 'mmd_str_min')):
+                        ('mmp_str_mins', 'mmp_str_min'), ('mmd_str_mins', 'mmd_str_min'),
+                        ('mmr_str_mins', 'mmr_str_min')):
             s[_k] = mm_str_mins_norm(s.get(_k), s.get(_lk, 0))
             s[_lk] = s[_k]['all']
         try:
@@ -2845,7 +2972,8 @@ class FuelFilterDaemon:
                                 ('mmc_state_since', '_mmc_state_since'),
                                 ('mmf_state_since', '_mmf_state_since'),
                                 ('mmp_state_since', '_mmp_state_since'),
-                                ('mmd_state_since', '_mmd_state_since')):
+                                ('mmd_state_since', '_mmd_state_since'),
+                                ('mmr_state_since', '_mmr_state_since')):
                 _mss = st.get(_key)
                 _dst = {}
                 setattr(self, _attr, _dst)
@@ -2940,6 +3068,18 @@ class FuelFilterDaemon:
             if self._mm_bias_dec_since > time.time() + 60:
                 self._mm_bias_dec_since = 0.0
                 self._mm_bias_dec = {}
+            # 🧩 Банер «МММ-Готовність» — те саме відновлення.
+            _mbr = st.get('mm_bias_rdy')
+            self._mm_bias_rdy = dict(_mbr) if isinstance(_mbr, dict) else {}
+            if self._mm_bias_rdy:
+                self._mm_bias_rdy['restored'] = True
+            try:
+                self._mm_bias_rdy_since = float(st.get('mm_bias_rdy_since') or 0.0)
+            except (TypeError, ValueError):
+                self._mm_bias_rdy_since = 0.0
+            if self._mm_bias_rdy_since > time.time() + 60:
+                self._mm_bias_rdy_since = 0.0
+                self._mm_bias_rdy = {}
             # 🚨 Пік вердикту в бік угоди — щоб рестарт не «скидав» базу сигналу
             # «слабшає» (інакше вже ослаблий вердикт став би новим піком).
             _mtp = st.get('mmd_trade_peak')
@@ -3083,6 +3223,13 @@ class FuelFilterDaemon:
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmd_state_since', {})
                                                  or {}).items()},
+                # 🧩 Блок «МММ-Готовність» — банер і таймери стану монет.
+                'mm_bias_rdy': dict(getattr(self, '_mm_bias_rdy', {}) or {}),
+                'mm_bias_rdy_since': float(getattr(self, '_mm_bias_rdy_since', 0.0) or 0.0),
+                'mmr_state_since': {k: {'st': v.get('st'),
+                                        'since': float(v.get('since') or 0)}
+                                    for k, v in (getattr(self, '_mmr_state_since', {})
+                                                 or {}).items()},
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -3119,6 +3266,8 @@ class FuelFilterDaemon:
                                  'stats': dict(getattr(self, p + '_stats', {}) or {})}
             scan = dict(getattr(self, '_mmp_scan', {}) or {})
             scan_at = float(getattr(self, '_mmp_scan_at', 0.0) or 0.0)
+            rscan = dict(getattr(self, '_mmr_scan', {}) or {})
+            rscan_at = float(getattr(self, '_mmr_scan_at', 0.0) or 0.0)
             dec = {k: [float(v[0]), v[1]]
                    for k, v in (getattr(self, '_mmd_dec', {}) or {}).items()
                    if isinstance(v, (tuple, list)) and len(v) == 2}
@@ -3136,7 +3285,10 @@ class FuelFilterDaemon:
             db.set_setting(_DB_MM_BOOKS, {
                 'v': 1, 'ts': now, 'books': books,
                 'pull_scan': scan, 'pull_scan_at': scan_at,
-                'dec': dec, 'ctr_rd': ctr, 'fc_last': fcl})
+                'dec': dec, 'ctr_rd': ctr, 'fc_last': fcl,
+                # 🧩 Результат скану «Готовності» — після рестарту свіжий скан
+                # НЕ повторюється (вимога 25.10).
+                'rdy_scan': rscan, 'rdy_scan_at': rscan_at})
             return True
         except Exception as e:
             print(f"[FuelFilter] mm-books persist error: {e}")
@@ -3187,6 +3339,21 @@ class FuelFilterDaemon:
                             'stats': dict(b.get('stats') or {})}
                     except (TypeError, ValueError, AttributeError):
                         continue
+        # 🧩 Скан «Готовності» — власна межа віку: інтервал до 4 год, а
+        # повторювати скан після кожного рестарту (вимога 25.10: «із
+        # збереженням даних та їх відновленням») не можна. Чи він ще свіжий,
+        # вирішує `_mmr_scan_tick` за ТИМ САМИМ інтервалом, що й без рестарту.
+        rscan = blob.get('rdy_scan')
+        if age <= MMR_RESTORE_MAX_AGE and isinstance(rscan, dict) and rscan.get('rows'):
+            try:
+                self._mmr_scan = dict(rscan)
+                self._mmr_scan['rows'] = {str(k).upper(): v for k, v in
+                                          (rscan.get('rows') or {}).items()
+                                          if isinstance(v, dict)}
+                self._mmr_scan['restored'] = True
+                self._mmr_scan_at = float(blob.get('rdy_scan_at') or 0.0)
+            except (TypeError, ValueError, AttributeError):
+                self._mmr_scan, self._mmr_scan_at = {}, 0.0
         if age > MM_BOOKS_RAW_MAX_AGE:
             print(f"[FuelFilter] mm-books: знімки {len(self._mm_books_shown)} книг(и) "
                   f"лише для показу (вік {int(age)}с > {int(MM_BOOKS_RAW_MAX_AGE)}с)")
@@ -4869,6 +5036,8 @@ class FuelFilterDaemon:
         self._mmp_on = _pll
         _dcb = bool(s.get('mm_dec_enabled', False))
         self._mmd_on = _dcb
+        _rdb = bool(s.get('mm_rdy_enabled', False))
+        self._mmr_on = _rdb
         self._mm_mon_on = _mon
         self._mmn_on = _new
         self._mmc_on = _ctr
@@ -5223,7 +5392,55 @@ class FuelFilterDaemon:
             # 📨 Зміна ПІДТВЕРДЖЕНОГО статусу → Telegram.
             self._mm_bias_alert(bias.get('dir'), _now, s, book='dec')
 
-        if _mon or _new or _ctr or _fcb or _dcb:
+        # ═══ 🧩 КНИГА «МММ-Готовність» (вимога 25.10) ═══
+        # Набір монет — ТОЙ САМИЙ (ключі `fuels`), але рахує їх ФОНОВИЙ скан у
+        # спільній черзі сканів раз на `mmr_interval_min`; такт читає ГОТОВИЙ
+        # результат (як 🧭 Pull).
+        if not _rdb:
+            self._mm_clear_rdy()
+        else:
+            self._mmr_scan_tick(s, _now, list((fuels or {}).keys()))
+            with self._lock:
+                _rscan = dict(getattr(self, '_mmr_scan', {}) or {})
+            _rrows = dict(_rscan.get('rows') or {})
+            snap_r = {}
+            for _S, row in _rrows.items():
+                c = rdy_mm_dir(row.get('l'), row.get('s'))
+                if not c:
+                    continue
+                _f = (fuels or {}).get(_S) or {}
+                snap_r[_S] = {
+                    'status': c['status'],
+                    'dir': c['dir'],
+                    'strength': c['strength'],
+                    'mark_price': _f.get('mark_price') or row.get('price'),
+                    'rdy_l': c['rdy_l'], 'rdy_s': c['rdy_s'],
+                    'rdy_side': c['rdy_side'], 'rdy_score': c['rdy_score'],
+                    'rdy_grade': c['rdy_grade'], 'rdy_hot': c['rdy_hot'],
+                    **_fcast(_S),
+                }
+            self._mm_track_prices(snap_r, _now, hist_attr='_mmr_price_hist')
+            self._mm_track_state(snap_r, _now, hist_attr='_mmr_state_since')
+            with self._lock:
+                self._mmr_snapshot = snap_r
+                self._mmr_snapshot_ts = _now if snap_r else 0.0
+                self._mmr_stats = {'targeted': int(_rscan.get('scanned') or len(_rrows)),
+                                   'data': len(snap_r), 'ts': _now}
+            try:
+                need = max(0, int(float(s.get('mmr_bias_confirm_sec', 120))))
+            except (TypeError, ValueError):
+                need = 120
+            bias, since, cand = mm_bias_step(
+                snap_r, _now, need,
+                getattr(self, '_mm_bias_rdy', {}),
+                getattr(self, '_mm_bias_rdy_since', 0.0),
+                getattr(self, '_mm_bias_rdy_cand', {}))
+            self._mm_bias_rdy, self._mm_bias_rdy_since = bias, since
+            self._mm_bias_rdy_cand = cand
+            # 📨 Зміна ПІДТВЕРДЖЕНОГО статусу → Telegram.
+            self._mm_bias_alert(bias.get('dir'), _now, s, book='rdy')
+
+        if _mon or _new or _ctr or _fcb or _dcb or _rdb:
             # ⏳ Знімок Є → причина «чому його немає» більше не потрібна.
             with self._lock:
                 self._mm_pending = {}
@@ -5621,6 +5838,118 @@ class FuelFilterDaemon:
             self._mmp_scan_at = now
             self._mmp_scan_running = False
 
+    # ── 🧩 МММ-Готовність: фоновий скан грейдів (вимога 25.10) ────────────
+    def _mm_clear_rdy(self):
+        """Погасити книгу 🧩 МММ-Готовність (вимкнений тумблер). Результат
+        скану теж забуваємо: після вмикання застиглі числа виглядали б живими."""
+        with self._lock:
+            self._mmr_snapshot = {}
+            self._mmr_snapshot_ts = 0.0
+            self._mmr_state_since = {}
+            self._mmr_price_hist = {}
+            self._mmr_stats = {}
+            self._mm_bias_rdy = {}
+            self._mm_bias_rdy_since = 0.0
+            self._mm_bias_rdy_cand = {}
+            self._mmr_scan = {}
+            self._mmr_scan_at = 0.0
+
+    def _mmr_scan_info(self, s: Dict) -> Dict:
+        """Стан скану «Готовності» для сторінки — ЛИШЕ читання."""
+        with self._lock:
+            sc = dict(self._mmr_scan or {})
+            running = bool(self._mmr_scan_running)
+            at = float(self._mmr_scan_at or 0.0)
+        every = mmr_interval_sec(s)
+        # Відлік на сторінці — за ТИМ САМИМ правилом, що `_mmr_scan_tick`.
+        _wait = min(every, MMR_FAIL_RETRY) if sc.get('ok') is False else every
+        return {'ts': float(sc.get('ts') or 0.0), 'running': running,
+                'next_at': (at + _wait) if at else 0.0,
+                'ok': sc.get('ok'), 'reason': sc.get('reason') or '',
+                'scanned': int(sc.get('scanned') or 0),
+                'graded': len(sc.get('rows') or {}),
+                'took': sc.get('took'),
+                'restored': bool(sc.get('restored')),
+                'interval_min': int(every // 60)}
+
+    def _mmr_scan_tick(self, s: Dict, now: float, syms) -> bool:
+        """🧩 Чи пора запускати скан «Готовності» → True, якщо запущено.
+
+        ⚠️ Одночасно — РІВНО один скан (`_mmr_scan_running`), а сам він іде
+        через СПІЛЬНУ чергу сканів (`scan_queue`, ім'я `mm-rdy`) разом із
+        🧭 Pull, 💧 Сканером і 📡 Tickr — вимога 25.10 «в чергу з іншими
+        банерами». Інтервал — від КІНЦЯ попереднього скану."""
+        syms = [str(x).upper() for x in (syms or []) if x]
+        if not syms:
+            return False
+        with self._lock:
+            if self._mmr_scan_running:
+                return False
+            every = mmr_interval_sec(s)
+            if (self._mmr_scan or {}).get('ok') is False:
+                every = min(every, MMR_FAIL_RETRY)
+            if self._mmr_scan_at and (now - self._mmr_scan_at) < every:
+                return False
+            self._mmr_scan_running = True
+        self._mmr_scan_launch(dict(s), syms)
+        return True
+
+    def _mmr_scan_launch(self, s: Dict, syms: List[str]):
+        """Запустити скан у фоновому потоці (тести підміняють на синхронний)."""
+        threading.Thread(target=self._mmr_scan_run, args=(s, syms),
+                         name='mm-rdy-scan', daemon=True).start()
+
+    def _mmr_scan_run(self, s: Dict, syms: List[str]):
+        """Сам скан: грейд «Готовності» в ОБИДВА боки по кожній монеті —
+        ТОЙ САМИЙ `grade_setup` на ТИХ САМИХ свічках, що колонка «🎯 Готовність»
+        (`_compute_setup_both` будує вхідні дані ОДИН раз на монету).
+        Між монетами — пауза `MMR_COIN_PAUSE_SEC`: тиск на біржу рівний."""
+        t0 = time.time()
+        res: Dict = {}
+
+        def _fn():
+            rows, failed = {}, 0
+            for S in syms:
+                try:
+                    g = self._compute_setup_both(S, s)
+                except Exception as e:
+                    g = None
+                    print(f"[FF-Rdy] {S} grade error: {e}")
+                if g and (g.get('LONG') or g.get('SHORT')):
+                    rows[S] = {'l': _rdy_slim(g.get('LONG')),
+                               's': _rdy_slim(g.get('SHORT')),
+                               'price': self._live_price(S)}
+                else:
+                    failed += 1
+                time.sleep(MMR_COIN_PAUSE_SEC)
+            return {'ok': bool(rows) or not syms, 'rows': rows,
+                    'failed': failed,
+                    'reason': '' if rows else 'жодна монета не дала грейду'}
+        try:
+            try:
+                from detection import scan_queue
+                res = scan_queue.run(MMR_SCAN_JOB, _fn, source='MMR', timeout=1800.0)
+            except ImportError:
+                res = _fn()
+        except Exception as e:
+            res = {'ok': False, 'reason': f'{type(e).__name__}: {e}'}
+        now = time.time()
+        res = res if isinstance(res, dict) else {'ok': False, 'reason': 'збій'}
+        with self._lock:
+            if res.get('ok'):
+                self._mmr_scan = {'rows': dict(res.get('rows') or {}), 'ts': now,
+                                  'ok': True, 'scanned': len(syms),
+                                  'failed': int(res.get('failed') or 0),
+                                  'took': round(now - t0, 1), 'reason': ''}
+            else:
+                # ⚠️ Невдалий скан НЕ стирає попередній результат.
+                _old = dict(self._mmr_scan or {})
+                _old.update({'ok': False, 'failed_at': now,
+                             'reason': str(res.get('reason') or 'скан не вдався')[:160]})
+                self._mmr_scan = _old
+            self._mmr_scan_at = now
+            self._mmr_scan_running = False
+
     def _mm_queue_map(self) -> Dict[str, List[str]]:
         """{СИМВОЛ: ['Q1','Q4', …]} — у ЯКИХ чергах зараз стоїть монета.
 
@@ -5670,19 +5999,22 @@ class FuelFilterDaemon:
         # 🔮 Четверта книга `fc` (МММ-Local, 15.10) — та сама форма.
         # 🧭 П'ята книга `pull` (МММ-Pull, 20.10) — та сама форма + стан скану.
         # 🧠 Шоста книга `dec` (МММ-Decision, 22.10) — та сама форма.
-        _bk = book if book in ('old', 'new', 'ctr', 'fc', 'pull', 'dec') else 'old'
+        # 🧩 Сьома книга `rdy` (МММ-Готовність, 25.10) — та сама форма + скан.
+        _bk = book if book in ('old', 'new', 'ctr', 'fc', 'pull', 'dec', 'rdy') else 'old'
         _nb = (_bk == 'new')
         _on = bool(s.get({'old': 'mm_monitor_enabled', 'new': 'mm_new_enabled',
                           'ctr': 'mm_ctr_enabled', 'fc': 'mm_fc_enabled',
-                          'pull': 'mm_pull_enabled', 'dec': 'mm_dec_enabled'}[_bk],
-                         _bk not in ('pull', 'dec')))
+                          'pull': 'mm_pull_enabled', 'dec': 'mm_dec_enabled',
+                          'rdy': 'mm_rdy_enabled'}[_bk],
+                         _bk not in ('pull', 'dec', 'rdy')))
         _p = {'old': '_mm', 'new': '_mmn', 'ctr': '_mmc', 'fc': '_mmf',
-              'pull': '_mmp', 'dec': '_mmd'}[_bk]
+              'pull': '_mmp', 'dec': '_mmd', 'rdy': '_mmr'}[_bk]
         _sk = {'old': 'mm', 'new': 'mmn', 'ctr': 'mmc', 'fc': 'mmf',
-               'pull': 'mmp', 'dec': 'mmd'}[_bk]
+               'pull': 'mmp', 'dec': 'mmd', 'rdy': 'mmr'}[_bk]
         _bias_attr = {'old': '_mm_bias', 'new': '_mm_bias_new',
                       'ctr': '_mm_bias_ctr', 'fc': '_mm_bias_fc',
-                      'pull': '_mm_bias_pull', 'dec': '_mm_bias_dec'}[_bk]
+                      'pull': '_mm_bias_pull', 'dec': '_mm_bias_dec',
+                      'rdy': '_mm_bias_rdy'}[_bk]
         with self._lock:
             # ⚠️ ВИМКНЕНИЙ блок → рядків НЕМАЄ, і це перевіряється ЯВНО, а не
             # покладається на порожній знімок: при вимкненому 🧮 знімок СВІДОМО
@@ -5808,6 +6140,14 @@ class FuelFilterDaemon:
                 'dec_verdict': v.get('dec_verdict'),
                 'dec_conf': v.get('dec_conf'),
                 'dec_headline': v.get('dec_headline'),
+                # 🧩 Книга МММ-Готовність: бали обох боків, бік-переможець,
+                # його бал / слово грейда / 🎯 HOT.
+                'rdy_l': v.get('rdy_l'),
+                'rdy_s': v.get('rdy_s'),
+                'rdy_side': v.get('rdy_side'),
+                'rdy_score': v.get('rdy_score'),
+                'rdy_grade': v.get('rdy_grade'),
+                'rdy_hot': v.get('rdy_hot'),
                 # 💼 Бік відкритої угоди (LONG/SHORT) — колонка «📍 Стан».
                 'trade_side': open_sides.get(sym) if _trade else None,
                 # 📍 СТАН МОНЕТИ. Віддаємо ЧИСТІ прапорці, а підпис і колір
@@ -5848,7 +6188,8 @@ class FuelFilterDaemon:
             'book': _bk,
             # 🧭 МММ-Pull: стан ФОНОВОГО скану ліквідності (коли був, скільки
             # тривав, наступний, чи біжить зараз, причина невдачі, параметри).
-            'scan': (self._mmp_scan_info(s) if (_bk == 'pull' and _on) else {}),
+            'scan': (self._mmp_scan_info(s) if (_bk == 'pull' and _on) else
+                     self._mmr_scan_info(s) if (_bk == 'rdy' and _on) else {}),
             # ⚖️ Готовий важіль напрямку для банера (рахує двигун, тут ЧИТАННЯ).
             'bias': (dict(getattr(self, _bias_attr, {}) or {}) if _on else {}),
             # 📊 ЧОМУ РЯДКІВ МЕНШЕ, НІЖ МОНЕТ У WATCHLIST (питання 17.09:
@@ -5965,6 +6306,8 @@ class FuelFilterDaemon:
                                                     s.get('mmd_str_min', 0))
             self._mmd_verdict_mins_c = dec_verdict_mins_norm(
                 s.get('mmd_verdict_mins'), s.get('mmd_verdict_min', ''))
+            self._mmr_str_mins_c = mm_str_mins_norm(s.get('mmr_str_mins'),
+                                                    s.get('mmr_str_min', 0))
         except Exception:
             pass
 
@@ -5992,7 +6335,8 @@ class FuelFilterDaemon:
         # `mm_fc_enabled` · банер `_mm_bias_fc` · знімок `_mmf_snapshot`.
         # 🧭 `book='pull'` (вимога 20.10) — блок «МММ-Pull».
         # 🧠 `book='dec'` (вимога 22.10) — блок «МММ-Decision».
-        _bk = book if book in ('old', 'new', 'ctr', 'fc', 'pull', 'dec') else 'new'
+        # 🧩 `book='rdy'` (вимога 25.10) — блок «МММ-Готовність».
+        _bk = book if book in ('old', 'new', 'ctr', 'fc', 'pull', 'dec', 'rdy') else 'new'
         _P = {'old': ('_mm_mon_on', 'mm_monitor_enabled', '_mm_bias', '_mm_snapshot',
                       '_mm_str_mins_c'),
               'new': ('_mmn_on', 'mm_new_enabled', '_mm_bias_new', '_mmn_snapshot',
@@ -6004,11 +6348,13 @@ class FuelFilterDaemon:
               'pull': ('_mmp_on', 'mm_pull_enabled', '_mm_bias_pull', '_mmp_snapshot',
                        '_mmp_str_mins_c'),
               'dec': ('_mmd_on', 'mm_dec_enabled', '_mm_bias_dec', '_mmd_snapshot',
-                      '_mmd_str_mins_c')}[_bk]
+                      '_mmd_str_mins_c'),
+              'rdy': ('_mmr_on', 'mm_rdy_enabled', '_mm_bias_rdy', '_mmr_snapshot',
+                      '_mmr_str_mins_c')}[_bk]
         on = getattr(self, _P[0], None)
         if on is None:
             try:
-                on = bool(self.get_settings().get(_P[1], _bk not in ('pull', 'dec')))
+                on = bool(self.get_settings().get(_P[1], _bk not in ('pull', 'dec', 'rdy')))
             except Exception:
                 on = True
         sym = str(symbol or '').upper()
@@ -8316,15 +8662,12 @@ class FuelFilterDaemon:
                 continue
         return out
 
-    def _compute_setup(self, symbol: str, d: str, settings: Dict,
-                       base_tf: str = '1h', htf_tf: str = '4h',
-                       write_exit: bool = True) -> Optional[Dict]:
-        """Рахує SMC-«готовність» на base_tf (htf_tf — HTF-контекст) для напрямку
-        d. За замовчуванням 1H+4H (свінг). Для funding-скальпу викликається з
-        base_tf='5m', htf_tf='15m' і write_exit=False (щоб не чіпати 1H-«Готовність
-        виходу»). CTR береться на base_tf."""
-        if d not in ('LONG', 'SHORT'):
-            return None
+    def _setup_inputs(self, symbol: str, settings: Dict,
+                      base_tf: str = '1h', htf_tf: str = '4h') -> Optional[Dict]:
+        """Спільні вхідні дані SMC-«готовності» — НЕ залежать від напрямку:
+        свічки, SMC-аналіз, ліквідність, МММ, CTR, ₿-сесія, funding. Винесено
+        з `_compute_setup`, щоб 🧩 МММ-Готовність рахувала ОБИДВА боки з
+        одного аналізу (а не двічі тягнула свічки й двічі аналізувала)."""
         kl1_raw = self._setup_klines(symbol, base_tf, 150)
         if not kl1_raw or len(kl1_raw) < 40:
             return None
@@ -8342,14 +8685,6 @@ class FuelFilterDaemon:
                 htf_bias = getattr(an.analyze(kl4).market_bias, 'value', None)
         except Exception:
             smc = None
-        # 2) Move-potential (runway / виснаженість) на 1H.
-        mp = {}
-        try:
-            from detection.move_potential import analyze_move_potential
-            liq_levels_mp = None
-            mp = analyze_move_potential(d, kl1_raw, liq_levels_mp) or {}
-        except Exception:
-            mp = {}
         # 3) Ліквідність (levels) + mark.
         liq_levels, mark = None, None
         try:
@@ -8379,10 +8714,10 @@ class FuelFilterDaemon:
         a = self._anomalies.get(symbol) or {}
         vol_up = bool(a.get('vol24h') and a.get('vol24h_prev')
                       and a['vol24h'] > a['vol24h_prev'] * 1.005)
-        sig = {
+        return {
+            'kl1_raw': kl1_raw,
             'smc': smc,
             'htf_bias': htf_bias,
-            'mp': mp,
             'mm_dir': mm.get('dir'),
             'mm_strength': mm_strength,
             'mm_conflict': bool(sc.get('conflict')),
@@ -8397,6 +8732,34 @@ class FuelFilterDaemon:
             'vol_up': vol_up,
             'spike': bool(a.get('spike')),
         }
+
+    @staticmethod
+    def _setup_sig(inp: Dict, d: str) -> Dict:
+        """`sig` для grade_setup у бік `d`: спільні дані + move-potential (він
+        єдиний залежить від напрямку)."""
+        mp = {}
+        try:
+            from detection.move_potential import analyze_move_potential
+            mp = analyze_move_potential(d, inp.get('kl1_raw'), None) or {}
+        except Exception:
+            mp = {}
+        sig = {k: v for k, v in inp.items() if k != 'kl1_raw'}
+        sig['mp'] = mp
+        return sig
+
+    def _compute_setup(self, symbol: str, d: str, settings: Dict,
+                       base_tf: str = '1h', htf_tf: str = '4h',
+                       write_exit: bool = True) -> Optional[Dict]:
+        """Рахує SMC-«готовність» на base_tf (htf_tf — HTF-контекст) для напрямку
+        d. За замовчуванням 1H+4H (свінг). Для funding-скальпу викликається з
+        base_tf='5m', htf_tf='15m' і write_exit=False (щоб не чіпати 1H-«Готовність
+        виходу»). CTR береться на base_tf."""
+        if d not in ('LONG', 'SHORT'):
+            return None
+        inp = self._setup_inputs(symbol, settings, base_tf, htf_tf)
+        if inp is None:
+            return None
+        sig = self._setup_sig(inp, d)
         try:
             from detection.setup_grader import grade_setup, grade_exit
             _gcfg = {'strict': settings.get('setup_strict', 'strict'),
@@ -8413,6 +8776,29 @@ class FuelFilterDaemon:
         except Exception as e:
             print(f"[FF-Setup] {symbol} grade error: {e}")
             return None
+
+    def _compute_setup_both(self, symbol: str, settings: Dict) -> Optional[Dict]:
+        """🧩 «Готовність» 1H+4H В ОБИДВА БОКИ → {'LONG': грейд, 'SHORT': грейд}.
+        Свічки й SMC-аналіз — ОДИН раз (`_setup_inputs`), сам грейд — той
+        самий `grade_setup` із тими самими налаштуваннями, що колонка
+        «🎯 Готовність». «Готовність виходу» НЕ чіпаємо (вона про позицію)."""
+        inp = self._setup_inputs(symbol, settings)
+        if inp is None:
+            return None
+        try:
+            from detection.setup_grader import grade_setup
+        except Exception:
+            return None
+        _gcfg = {'strict': settings.get('setup_strict', 'strict'),
+                 'ctr_mode': settings.get('setup_ctr_mode', 'soft')}
+        out = {}
+        for d in ('LONG', 'SHORT'):
+            try:
+                out[d] = grade_setup(d, self._setup_sig(inp, d), _gcfg)
+            except Exception as e:
+                print(f"[FF-Rdy] {symbol} {d} grade error: {e}")
+                out[d] = None
+        return out
 
     @staticmethod
     def _fmt_dur(sec) -> str:
@@ -12364,7 +12750,7 @@ class FuelFilterDaemon:
     # згорнута. Усе інше (банер, лічильники, налаштування, Черги-1..3) віддається
     # завжди — воно дешеве. `None` = віддати ВСЕ (сумісність для інфо-сайту та
     # будь-якого стороннього споживача API).
-    HEAVY_SECTIONS = ('q4', 'fund', 'mm', 'mmn', 'mmc', 'mmf', 'mmp', 'mmd')
+    HEAVY_SECTIONS = ('q4', 'fund', 'mm', 'mmn', 'mmc', 'mmf', 'mmp', 'mmd', 'mmr')
 
 
     def get_state(self, sections: Optional[set] = None) -> Dict:
@@ -12388,6 +12774,7 @@ class FuelFilterDaemon:
         _want_mmf = (sections is None) or ('mmf' in sections)
         _want_mmp = (sections is None) or ('mmp' in sections)
         _want_mmd = (sections is None) or ('mmd' in sections)
+        _want_mmr = (sections is None) or ('mmr' in sections)
         with self._lock:
             settings = self.get_settings()
             duration_sec = settings['duration_minutes'] * 60
@@ -12667,7 +13054,7 @@ class FuelFilterDaemon:
             # «черга порожня» і стер би таблицю, хоча її просто не запитували.
             'served': {'q4': _want_q4, 'fund': _want_fund, 'mm': _want_mm,
                        'mmn': _want_mmn, 'mmc': _want_mmc, 'mmf': _want_mmf,
-                       'mmp': _want_mmp, 'mmd': _want_mmd},
+                       'mmp': _want_mmp, 'mmd': _want_mmd, 'mmr': _want_mmr},
             # ⏱ ГОДИННИК СЕРВЕРА (20.10). Усі таймери сторінки рахують
             # «зараз − момент старту», а моменти — серверні epoch. Годинник
             # браузера може розходитись із серверним (кейс МММ-Pull: 32751/900с
@@ -12690,6 +13077,9 @@ class FuelFilterDaemon:
             # 🧠 Блок «МММ-Decision» (22.10) — книга вердиктів банера Decision.
             'mm_dec': (self.mm_monitor_state(settings, book='dec')
                        if _want_mmd else None),
+            # 🧩 Блок «МММ-Готовність» (25.10) — книга SMC-«Готовності».
+            'mm_rdy': (self.mm_monitor_state(settings, book='rdy')
+                       if _want_mmr else None),
             # 🎚 Смуги грейда (ЄДИНЕ джерело — setup_grader). UI будує випадайку
             # «Готовність ≥» саме з них, щоб назва і число НЕ розходились.
             'grade_bands': _grade_bands(),

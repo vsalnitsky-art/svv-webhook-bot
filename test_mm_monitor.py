@@ -110,6 +110,11 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._mmd_snapshot, ff._mmd_snapshot_ts, ff._mmd_stats = {}, 0.0, {}
     ff._mmd_state_since, ff._mmd_price_hist, ff._mmd_dec = {}, {}, {}
     ff._mm_bias_dec, ff._mm_bias_dec_since, ff._mm_bias_dec_cand = {}, 0.0, {}
+    # 🧩 Книга «МММ-Готовність» (25.10) — знімок, банер, таймери, стан скану.
+    ff._mmr_snapshot, ff._mmr_snapshot_ts, ff._mmr_stats = {}, 0.0, {}
+    ff._mmr_state_since, ff._mmr_price_hist = {}, {}
+    ff._mm_bias_rdy, ff._mm_bias_rdy_since, ff._mm_bias_rdy_cand = {}, 0.0, {}
+    ff._mmr_scan, ff._mmr_scan_running, ff._mmr_scan_at = {}, False, 0.0
     # ⚠️ «Готовність» МММ-new ПРИБРАНО (01.10): якби код знову полiз у грейдер,
     # цей стаб упіймав би виклик (див. test_readiness_column_is_gone).
     ff._compute_setup_calls = []
