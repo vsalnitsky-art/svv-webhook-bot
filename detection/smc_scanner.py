@@ -873,6 +873,11 @@ class SMCScanner:
         # Монети, чия позначка прийшла зі знімка минулого запуску і ще не
         # перерахована цим запуском (див. `_load_ob_mark_state`).
         self._ob_mark_restored: set = set()
+        # 🏷 Останній OB 1H по монеті (поруч із 4H у полі Side угод, 26.10).
+        # Джерело — ТОЙ САМИЙ рядок `sob_smc_ob_state` на 1h, що пише скан
+        # (`_upsert_ob_state` записує позначку разом із БД-рядком).
+        self._ob_mark1h: Dict[str, Dict] = {}
+        self._ob_mark1h_restored: set = set()
         # Номер циклу, у якому OB-стан монети вже порахований — щоб «швидка
         # смуга» на початку циклу і звичайний прохід НЕ робили роботу двічі.
         self._ob_done_cycle: Dict[str, int] = {}
@@ -1698,6 +1703,7 @@ class SMCScanner:
                 # МММ-таблиці, бейджі VOB) — теж геть: монети вже не ведемо,
                 # тож її «останній OB 4H» застиг би і виглядав живим.
                 self._ob_mark.pop(symbol, None)
+                getattr(self, '_ob_mark1h', {}).pop(symbol, None)
                 self._ob_mark_restored.discard(symbol)
                 self._ob_zones.pop(symbol, None)
                 self._vob_diag.pop(symbol, None)
@@ -2507,7 +2513,7 @@ class SMCScanner:
                         pivots=result_closed.get('internal', {}).get('pivots', []),
                         events=result_closed.get('internal', {}).get('events', []),
                     )
-                    get_db().upsert_smc_ob_state(symbol, main_tf, ob_main)
+                    self._upsert_ob_state(symbol, main_tf, ob_main)
                 except Exception as ob_main_err:
                     if self._errors <= 5:
                         print(f"[SMC] Main-TF OB compute error for {symbol}: {ob_main_err}")
@@ -2535,7 +2541,7 @@ class SMCScanner:
                                 pivots=td_extra['structure'].get('internal', {}).get('pivots', []),
                                 events=td_extra['structure'].get('internal', {}).get('events', []),
                             )
-                            get_db().upsert_smc_ob_state(symbol, opposite_exit_tf, ob_extra)
+                            self._upsert_ob_state(symbol, opposite_exit_tf, ob_extra)
                     except Exception as extra_err:
                         if self._errors <= 5:
                             print(f"[SMC] Extra-TF OB ({opposite_exit_tf}) error for {symbol}: {extra_err}")
@@ -2554,7 +2560,7 @@ class SMCScanner:
                                 pivots=td_sl['structure'].get('internal', {}).get('pivots', []),
                                 events=td_sl['structure'].get('internal', {}).get('events', []),
                             )
-                            get_db().upsert_smc_ob_state(symbol, SL_SOURCE_TF, ob_sl)
+                            self._upsert_ob_state(symbol, SL_SOURCE_TF, ob_sl)
                     except Exception as sl_err:
                         if self._errors <= 5:
                             print(f"[SMC] SL-source OB ({SL_SOURCE_TF}) error for {symbol}: {sl_err}")
@@ -3168,8 +3174,7 @@ class SMCScanner:
 
         # Persist (None ob means "computed but no valid OB" — explicit clear)
         try:
-            db = get_db()
-            db.upsert_smc_ob_state(symbol, ob_tf, ob)
+            self._upsert_ob_state(symbol, ob_tf, ob)
         except Exception as e:
             if self._errors <= 5:
                 print(f"[SMC] DB upsert OB error for {symbol}@{ob_tf}: {e}")
@@ -3483,8 +3488,7 @@ class SMCScanner:
         # Рядок старшого TF теж персистимо — хай буде доступний і решті
         # споживачів (чарт/панель), зайвої роботи це не додає.
         try:
-            from storage.db_operations import get_db
-            get_db().upsert_smc_ob_state(symbol, tf, _ob4)
+            self._upsert_ob_state(symbol, tf, _ob4)
         except Exception:
             pass
         return _ob4, ''
@@ -3519,6 +3523,35 @@ class SMCScanner:
             'ts': time.time(),
             'until': until,
             'ob': dict(ob),
+        }
+
+    def _upsert_ob_state(self, symbol: str, tf: str, ob) -> None:
+        """Запис рядка `sob_smc_ob_state` + позначка «останній OB 1H» у памʼяті.
+
+        ЄДИНА точка запису OB-рядків скану: позначка 1H для таблиць угод
+        береться з ТОГО САМОГО блоку, що йде в БД (два розрахунки одного
+        блоку розійшлися б). Помилку БД кидаємо далі — кожен виклик її вже
+        обробляє.
+        """
+        from storage.db_operations import get_db
+        get_db().upsert_smc_ob_state(symbol, tf, ob)
+        if str(tf or '').lower() != '1h':
+            return
+        sym = str(symbol).upper()
+        if not hasattr(self, '_ob_mark1h'):
+            self._ob_mark1h, self._ob_mark1h_restored = {}, set()
+        self._ob_mark1h_restored.discard(sym)
+        if not ob or ob.get('bias') not in ('BULLISH', 'BEARISH'):
+            self._ob_mark1h[sym] = {'bias': None, 'tf': '1h', 'ts': time.time()}
+            return
+        self._ob_mark1h[sym] = {
+            'bias': ob.get('bias'),
+            'tag': ob.get('created_by_tag'),
+            'bar_time': ob.get('bar_time'),
+            'high': ob.get('bar_high'),
+            'low': ob.get('bar_low'),
+            'tf': '1h',
+            'ts': time.time(),
         }
 
     def _persist_derived_state(self):
@@ -3584,8 +3617,10 @@ class SMCScanner:
             with self._lock:
                 wl = set(self._watchlist)
                 marks = {s: dict(m) for s, m in self._ob_mark.items() if s in wl}
+                marks1h = {s: dict(m) for s, m in getattr(self, '_ob_mark1h', {}).items() if s in wl}
             self.db.set_setting(DB_KEY_OB_MARK_STATE,
-                                {'tf': OB_MARK_TF, 'ts': time.time(), 'marks': marks})
+                                {'tf': OB_MARK_TF, 'ts': time.time(), 'marks': marks,
+                                 'marks1h': marks1h})
         except Exception as e:
             print(f"[SMC] OB-mark persist error: {e}")
 
@@ -3619,12 +3654,26 @@ class SMCScanner:
                     self._ob_htf_cache[(sym, OB_MARK_TF)] = (until, m.get('ob') if m.get('bias') else None)
                 else:
                     self._ob_mark_restored.add(sym)
+            # 1H: блок міняється лише на закритті 1h-бару → поки той самий бар
+            # відкритий, позначка точна; інакше ↻ до першого скану монети.
+            if not hasattr(self, '_ob_mark1h'):
+                self._ob_mark1h, self._ob_mark1h_restored = {}, set()
+            for sym, m in (st.get('marks1h') or {}).items():
+                if sym not in wl or not isinstance(m, dict):
+                    continue
+                ts = float(m.get('ts') or 0)
+                if now - ts > OB_MARK_RESTORE_MAX_AGE:
+                    continue
+                self._ob_mark1h[sym] = dict(m)
+                if now >= (ts // 3600 + 1) * 3600:
+                    self._ob_mark1h_restored.add(sym)
             print(f"[SMC] Restored {len(self._ob_mark)} OB-{OB_MARK_TF} marks "
-                  f"from last run ({n_exact} still current)")
+                  f"from last run ({n_exact} still current), "
+                  f"{len(self._ob_mark1h)} OB-1h")
         except Exception as e:
             print(f"[SMC] OB-mark load error: {e}")
 
-    def ob_mark_for(self, symbols) -> Dict[str, Dict]:
+    def ob_mark_for(self, symbols, tf: str = OB_MARK_TF) -> Dict[str, Dict]:
         """🏷 ПУБЛІЧНЕ читання позначки «останній OB 4H» по монетах.
 
         Для `/api/tm/state` (опитується кожні 5с): ЛИШЕ памʼять, жодних
@@ -3637,16 +3686,19 @@ class SMCScanner:
         # ній ще відкрита угода, показувати застиглий стан не можна.
         _wl = getattr(self, '_watchlist', None)
         watched = set(_wl) if _wl else None   # список невідомий → не фільтруємо
+        is1h = str(tf or '').lower() == '1h'
+        marks = getattr(self, '_ob_mark1h', {}) if is1h else self._ob_mark
+        restored = getattr(self, '_ob_mark1h_restored' if is1h else '_ob_mark_restored', ())
         for x in (symbols or []):
             if not x:
                 continue
             s = str(x).upper()
             if watched is not None and s not in watched:
                 continue
-            m = self._ob_mark.get(s)
+            m = marks.get(s)
             if m:
                 d = {k: v for k, v in m.items() if k not in ('ob', 'until')}
-                if s in getattr(self, '_ob_mark_restored', ()):
+                if s in restored:
                     d['restored'] = True
                 out[s] = d
         return out

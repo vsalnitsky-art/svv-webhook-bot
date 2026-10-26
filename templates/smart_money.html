@@ -774,6 +774,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
    символ і клітинки не переносяться; надто широка → скрол контейнера. */
 #tm-open-table th, #tm-open-table td,
 #tm-shadow-open-table th, #tm-shadow-open-table td { white-space: nowrap; padding: 3px 6px; }
+/* 🦓 Зебра + підсвітка рядка (вимога 26.10) — рядки не зливаються. Ручні
+   (📌) рядки лишаються зі своїм бурштиновим тлом — правило нижче сильніше. */
+#tm-open-table tbody tr:nth-child(even) td,
+#tm-shadow-open-table tbody tr:nth-child(even) td { background: rgba(255,255,255,0.028); }
+#tm-open-table tbody tr:hover td,
+#tm-shadow-open-table tbody tr:hover td { background: rgba(96,165,250,0.07); }
 /* 💰 Funding table: keep EVERY cell on ONE line (symbol never wraps under the
    icons), stretch to full container width, and stay COMPACT (smaller font +
    tight padding) so all columns fit on screen without a scrollbar. */
@@ -4564,6 +4570,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 ⚠️ <b>Real money:</b> Коли увімкнено, бот автоматично відкриває та закриває реальні позиції на Bybit за сигналами SMC. Перевір налаштування перед увімкненням.
             </div>
             
+            <!-- ⚙️ Загальні налаштування TM — гармошка (вимога 26.10), стан
+                 памʼятається (`qPanel_tmgen`), дефолт — ЗГОРНУТО. -->
+            <div style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none"
+                 onclick="togglePanel('tmgen')"
+                 title="Клік — згорнути/розгорнути загальні налаштування Trade Manager (Fuel-підтвердження, Telegram, ліміт позицій, синхронізація з Bybit, лог угоди). Стан памʼятається; за замовчуванням згорнуто.">
+                <span id="tmgen-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span>
+                ⚙️ Загальні налаштування
+            </div>
+            <div id="tmgen-body">
             <div class="tm-row" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px;padding:10px;margin-bottom:10px">
                 <div style="display:flex;flex-direction:column;gap:10px">
                     <!-- Row 1: Fuel confirm + Telegram alerts -->
@@ -4619,6 +4634,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </label>
                     </div>
                 </div>
+            </div>
             </div>
 
             <details>
@@ -6148,11 +6164,11 @@ function _qCollapsed(qid) {
 }
 // Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
 // 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
-const _PANEL_IDS = ['levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
+const _PANEL_IDS = ['tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
 // Секції, ЗГОРНУТІ ЗА ЗАМОВЧУВАННЯМ (доки користувач сам не розгорне): список
 // монет МММ-монітора — вимога 18.09. Для решти дефолт лишається «розгорнуто»,
 // тобто збережений вибір користувача завжди сильніший за цей список.
-const _PANEL_CLOSED_BY_DEFAULT = new Set(['mmlist', 'mmnlist', 'mmclist', 'mmflist', 'mmplist', 'mmdlist', 'mmrlist']);
+const _PANEL_CLOSED_BY_DEFAULT = new Set(['tmgen', 'mmlist', 'mmnlist', 'mmclist', 'mmflist', 'mmplist', 'mmdlist', 'mmrlist']);
 (() => {
     _PANEL_IDS.forEach(pid => {
         try {
@@ -15499,6 +15515,15 @@ async function clearAllTimers() {
     }
 }
 
+// Кількість монет у позиції — без експоненти («1.146e+4» → «11,460»):
+// ≥1000 — ціле з розділювачем тисяч, менше — до 4 значущих без кінцевих нулів.
+function fmtQtyJS(q) {
+    const n = Number(q);
+    if (q == null || !isFinite(n)) return '—';
+    if (Math.abs(n) >= 1000) return Math.round(n).toLocaleString('en-US');
+    return String(parseFloat(n.toPrecision(4)));
+}
+
 function fmtNum(v) {
     if (v == null) return '—';
     const n = Number(v);
@@ -16326,8 +16351,14 @@ function pxAgeHTML(p) {
     const src = _PX_SRC[m.src] || m.src || '—';
     return ` <span style="color:${col};font-size:0.72rem;font-family:monospace" title="Ціна застаріла: ${txt} · джерело — ${src}. Монітор TP/SL бере свіжу ціну напряму з біржі, а таблиця показує останню відому.">⏱${txt}</span>`;
 }
-function ob4hMarkHTML(p, what, left) {
-    const o = p && p.ob4h;
+function ob4hMarkHTML(p, what, left) { return obMarkHTML(p, what, left, '4h'); }
+// 🏷 Останній OB 1H — той самий вигляд і ті самі правила «за/проти», що 4H
+// (поле Side угод, вимога 26.10). Джерело — рядок `sob_smc_ob_state` на 1h.
+function ob1hMarkHTML(p, what, left) { return obMarkHTML(p, what, left, '1h'); }
+function obMarkHTML(p, what, left, tf) {
+    const _tf = tf || '4h';
+    const L = _tf.toUpperCase();
+    const o = p && p['ob' + _tf];
     const _what = what || 'угоди';
     if (!o) return '';
     // `left` — позначка стоїть ЛІВОРУЧ від тексту (поле Side угод, вимога 22.10):
@@ -16340,7 +16371,7 @@ function ob4hMarkHTML(p, what, left) {
         return left ? h.trim().replace('class="tm-ob4h"', 'class="tm-ob4h tm-ob4h-l"') : h;
     };
     if (!o.bias) {
-        return _sp(` <span class="tm-ob4h" title="OB 4H: живого блоку на 4H зараз немає${_rs}" style="color:#6b7280;border-color:#4b5563">4H —</span>`);
+        return _sp(` <span class="tm-ob4h" title="OB ${L}: живого блоку на ${L} зараз немає${_rs}" style="color:#6b7280;border-color:#4b5563">${L} —</span>`);
     }
     const bull = o.bias === 'BULLISH';
     const col = bull ? '#22c55e' : '#ef4444';
@@ -16356,10 +16387,10 @@ function ob4hMarkHTML(p, what, left) {
         when = ` · свічка ${z(d.getUTCDate())}.${z(d.getUTCMonth() + 1)} ${z(d.getUTCHours())}:${z(d.getUTCMinutes())} UTC`;
     }
     const rng = (o.low != null && o.high != null) ? ` · ${fmtPriceJS(o.low)}–${fmtPriceJS(o.high)}` : '';
-    const tip = `Останній OB 4H: ${bull ? '🟢 BULLISH (LONG)' : '🔴 BEARISH (SHORT)'}`
+    const tip = `Останній OB ${L}: ${bull ? '🟢 BULLISH (LONG)' : '🔴 BEARISH (SHORT)'}`
         + (tag ? ` · ${tag}` : '') + when + rng
         + (!hasSide ? '' : (agree ? ` — ЗА напрямком ${_what}` : ` — ПРОТИ напрямку ${_what}`)) + _rs;
-    return _sp(` <span class="tm-ob4h" title="${tip}" style="color:${col};border-color:${(agree || !hasSide) ? col : '#fbbf24'}">4H${bull ? '▲' : '▼'}</span>`);
+    return _sp(` <span class="tm-ob4h" title="${tip}" style="color:${col};border-color:${(agree || !hasSide) ? col : '#fbbf24'}">${L}${bull ? '▲' : '▼'}</span>`);
 }
 function ffFuelCell(dir, now, prev, hideBand) {
     // Той самий дизайн, що й SCORE: пілюля фіксованої ширини з тонованим фоном +
@@ -17294,13 +17325,13 @@ async function loadTMState(isPoll) {
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
                     <td>${manualMark}${histSymOpen(p, false)}${badges}</td>
-                    <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${p.side}</td>
+                    <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${ob1hMarkHTML(p, null, true)}${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
                     ${mmdTradeCellHTML(p)}
                     ${mmdAlertCellHTML(p)}
-                    <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
+                    <td style="font-family:monospace;text-align:right" title="${p.remaining_qty || p.qty}">${fmtQtyJS(p.remaining_qty || p.qty)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${pilotCellHTML(p)}
                     ${manualModeCellHTML(p, false)}
@@ -17389,7 +17420,7 @@ async function loadTMState(isPoll) {
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
                     <td>${manualMark}${histSymOpen(p, true)}</td>
-                    <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${p.side}</td>
+                    <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${ob1hMarkHTML(p, null, true)}${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>

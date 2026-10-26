@@ -570,7 +570,7 @@ def test_1h_source_reads_real_1h_even_when_gates_are_on_15m():
 def test_scanner_keeps_a_real_1h_row_and_ff_reads_it():
     src = open(os.path.join(_ROOT, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
     _check("SL_SOURCE_TF = '1h'" in src, 'константа сканера')
-    _check('upsert_smc_ob_state(symbol, SL_SOURCE_TF' in src, 'сканер пише 1h-рядок')
+    _check('_upsert_ob_state(symbol, SL_SOURCE_TF' in src, 'сканер пише 1h-рядок')
     ff = open(os.path.join(_ROOT, 'detection', 'fuel_filter.py'), encoding='utf-8').read()
     i = ff.index('def _q4_ob_bounds_1h')
     body = ff[i:ff.index('def _q4_ob_bounds_vob')]

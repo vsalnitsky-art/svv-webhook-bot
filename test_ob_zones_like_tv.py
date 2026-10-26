@@ -181,7 +181,7 @@ def test_scanner_computes_swing_family_too():
            'потрібні ДВІ сім\'ї: internal + swing')
     _check("self._ob_zones[symbol]" in body, 'зони мусять зберігатись для показу')
     # І ворота лишились на ОДНОМУ блоці.
-    _check('upsert_smc_ob_state(symbol, ob_tf, ob)' in body,
+    _check('_upsert_ob_state(symbol, ob_tf, ob)' in body,
            'у БД (для воріт) і далі пише РІВНО поточний блок')
     print('✓ сканер рахує обидві сім\'ї, а в БД для воріт — той самий один блок')
 

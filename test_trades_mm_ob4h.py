@@ -103,16 +103,19 @@ def test_tables_have_the_new_column_and_matching_colspans():
            and _HTML.count('colspan="16" class="tm-empty-msg">No paper positions') == 2,
            'colspan у JS-заглушках не оновлено')
     # ⚠️ 22.10: позначка OB 4H стоїть ЛІВОРУЧ від сторони угоди.
-    _check(_HTML.count('${ob4hMarkHTML(p, null, true)}${p.side}') == 2,
+    _check(_HTML.count('${ob4hMarkHTML(p, null, true)}${ob1hMarkHTML(p, null, true)}${p.side}') == 2,
            'позначка OB 4H мусить стояти ЛІВОРУЧ у полі Side обох таблиць')
     print('✓ колонка МММ-Decision + позначка OB 4H ліворуч у Side, colspan 16/15')
 
 
 def _js(body):
     src = ''
-    for f in ('function fmtPriceJS(', 'function ob4hMarkHTML('):
+    for f in ('function fmtPriceJS(', 'function obMarkHTML(', 'function fmtQtyJS('):
         a = _HTML.index(f)
         src += _HTML[a:_HTML.index('\n}', a) + 2] + '\n'
+    for f in ('function ob4hMarkHTML(', 'function ob1hMarkHTML('):
+        a = _HTML.index(f)
+        src += _HTML[a:_HTML.index('\n', a)] + '\n'
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as fh:
         fh.write(src + body)
         path = fh.name
@@ -145,6 +148,59 @@ console.log(JSON.stringify(ob4hMarkHTML({side:'LONG', ob4h:{bias:'BULLISH'}}, nu
            f'ліва позначка: без пробілу попереду і з класом відступу праворуч: {left}')
     print('✓ JS: позначка 4H▲/▼ кольором + «за/проти», ліворуч — без зсуву')
 
+
+
+# ── 26.10: OB 1H поруч із 4H · Qty без експоненти · зебра · гармошка ──
+def test_1h_mark_is_written_with_the_db_row():
+    s = _sc.SMCScanner.__new__(_sc.SMCScanner)
+    s._watchlist = ['BTCUSDT']
+    s._ob_mark, s._ob_mark_restored = {}, set()
+    import types
+    rows = []
+    fake_db = types.SimpleNamespace(upsert_smc_ob_state=lambda *a: rows.append(a))
+    _prev = sys.modules.get('storage.db_operations')
+    sys.modules['storage.db_operations'] = types.SimpleNamespace(get_db=lambda: fake_db)
+    try:
+        s._upsert_ob_state('BTCUSDT', '15m', {'bias': 'BULLISH'})
+        _check('BTCUSDT' not in s.ob_mark_for(['BTCUSDT'], tf='1h'), '15m не є позначкою 1H')
+        s._upsert_ob_state('BTCUSDT', '1h', {'bias': 'BEARISH', 'created_by_tag': 'BOS',
+                                             'bar_high': 2.0, 'bar_low': 1.0})
+    finally:
+        if _prev is None:
+            sys.modules.pop('storage.db_operations', None)
+        else:
+            sys.modules['storage.db_operations'] = _prev
+    _check(len(rows) == 2, 'кожен виклик пише рядок у БД')
+    m = s.ob_mark_for(['BTCUSDT'], tf='1h')['BTCUSDT']
+    _check(m['bias'] == 'BEARISH' and m['tf'] == '1h' and m['high'] == 2.0, m)
+    _check(s.ob_mark_for(['BTCUSDT']) == {}, '4H-мапа окрема від 1H')
+    _check("pos['ob1h']" in _FLASK and "tf='1h'" in _FLASK, 'flask кладе ob1h у позицію')
+    print('✓ OB 1H: позначка з того самого рядка, що йде в БД')
+
+
+def test_js_1h_mark_and_qty():
+    out = _js(r'''
+console.log(ob1hMarkHTML({side:'SHORT', ob1h:{bias:'BULLISH'}}, null, true));
+console.log('|');
+console.log([fmtQtyJS(11460.2), fmtQtyJS(977.0), fmtQtyJS(9.9), fmtQtyJS(203.1), fmtQtyJS(0.012345), fmtQtyJS(null)].join(','));
+''')
+    a, b = out.split('|')
+    _check('1H▲' in a and 'ПРОТИ напрямку' in a and 'Останній OB 1H' in a, a)
+    _check(b.strip() == '11,460,977,9.9,203.1,0.01235,—', b)
+    _check('fmtQtyJS(p.remaining_qty || p.qty)' in _HTML and '.toPrecision(4)}</td>' not in _HTML,
+           'Qty без експоненти')
+    print('✓ JS: 1H▲/▼ за тими самими правилами, Qty «11,460» замість 1.146e+4')
+
+
+def test_zebra_and_settings_accordion():
+    _check('#tm-open-table tbody tr:nth-child(even) td' in _HTML
+           and '#tm-shadow-open-table tbody tr:nth-child(even) td' in _HTML, 'зебра обох таблиць')
+    i = _HTML.index('id="tmgen-body"')
+    j = _HTML.index('id="tm-trade-log-interval"')
+    _check(_HTML.index('id="tm-require-fuel-confirm"') > i and j > i, 'налаштування всередині гармошки')
+    _check("togglePanel('tmgen')" in _HTML and "new Set(['tmgen'," in _HTML
+           and "_PANEL_IDS = ['tmgen'," in _HTML, 'гармошка памʼятається, дефолт — згорнуто')
+    print('✓ зебра + гармошка «⚙️ Загальні налаштування» (згорнуто)')
 
 if __name__ == '__main__':
     n = 0
