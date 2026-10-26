@@ -197,7 +197,7 @@ console.log(mmdAlertCellHTML({}) + mmdTradeCellHTML({}));
 ''')
     p = out.split('|')
     _check(len(p) == 4, out)
-    _check('▲' in p[0] and '70%' in p[0] and 'СИЛ' not in p[0], p[0])
+    _check('▲' in p[0] and '70%' in p[0] and 'width:70%' in p[0] and 'width:36px' in p[0], p[0])
     _check('ПРОТИ' in p[1] and 'tm-mmd-alert-hot' in p[1] and '#dc2626' in p[1], p[1])
     _check('СЛАБШ' in p[2] and '#fbbf24' in p[2] and 'hot' not in p[2], p[2])
     _check(p[3].count('>—<') == 2, 'немає даних → «—» в обох комірках')

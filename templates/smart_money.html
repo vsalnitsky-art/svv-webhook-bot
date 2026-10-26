@@ -16271,14 +16271,18 @@ function mmdTradeCellHTML(p) {
     if (!m) {
         return '<td><span style="color:#6b7280" title="Даних 🧮 МММ-Trend по цій монеті ще немає">—</span></td>';
     }
-    const tip = `🧮 МММ-Trend: ${m.mm || '⚖ рівновага'} · сила ${m.strength}%`;
-    if (m.mm !== 'LONG' && m.mm !== 'SHORT') {
-        return `<td><span title="${tip}" style="font-family:monospace;color:#8b93a7;white-space:nowrap">⚖ ${m.strength}%</span></td>`;
-    }
-    const col = m.mm === 'LONG' ? '#4ade80' : '#f87171';
+    const st = Math.max(0, Math.min(100, Math.round(Number(m.strength) || 0)));
+    const dir = (m.mm === 'LONG' || m.mm === 'SHORT') ? m.mm : null;
+    const col = dir === 'LONG' ? '#4ade80' : (dir === 'SHORT' ? '#f87171' : '#8b93a7');
+    const ic = dir === 'LONG' ? '▲' : (dir === 'SHORT' ? '▼' : '⚖');
+    const tip = `🧮 МММ-Trend: ${dir || '⚖ рівновага'} · сила ${st}%`;
+    // Сегменти ФІКСОВАНОЇ ширини: значок 14 · відсоток 36 (праворуч) · мінісмужка
+    // 42 — відсотки й смужки вишиковуються в стовпчик у всіх рядках.
     return `<td><span title="${tip}" style="display:inline-flex;align-items:center;font-family:monospace;white-space:nowrap;font-size:0.74rem">`
-        + `<span style="width:14px;color:${col};font-weight:900">${m.mm === 'LONG' ? '▲' : '▼'}</span>`
-        + `<b style="width:34px;text-align:right;color:${col}">${m.strength}%</b>`
+        + `<span style="display:inline-block;width:14px;color:${col};font-weight:900;text-align:center">${ic}</span>`
+        + `<b style="display:inline-block;width:36px;text-align:right;color:${col}">${st}%</b>`
+        + `<span style="display:inline-block;width:42px;height:6px;margin-left:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden">`
+        + `<span style="display:block;height:100%;width:${st}%;background:${col}"></span></span>`
         + `</span></td>`;
 }
 // 🚨 Сигнальна колонка поруч: чи 🧮 МММ-Trend іде ЗА угодою (з 26.10; до того — Decision).
