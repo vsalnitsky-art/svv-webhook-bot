@@ -4567,10 +4567,13 @@ class FuelFilterDaemon:
         with self._lock:
             cache = dict(getattr(self, '_mmd_dec', {}) or {})
             peaks = dict(getattr(self, '_mmd_trade_peak', {}) or {})
+        _W = self._mm_watched()
         out = {}
         for sym, side, opened_at in (pairs or ()):
             S = str(sym or '').upper()
             sd = str(side or '').upper()
+            if _W is not None and S not in _W:
+                continue    # 👁 монету прибрано зі списку — стану не показуємо
             hit = cache.get(S)
             cur = dec_mm_dir(hit[1]) if hit else None
             if not cur:
@@ -5045,6 +5048,14 @@ class FuelFilterDaemon:
         self._mm_str_mins_cache(s)
         # `now` передається ЛИШЕ з тестів (щоб програвати такти без sleep).
         _now = float(now) if now else time.time()
+        # 👁 Лише монети WATCHLIST (вимога 26.10). Монета поза списком, але з
+        # відкритою угодою, лишається ТІЛЬКИ в знімку 🧮 (позначка
+        # `unwatched`) — там вона живить правило виходу «🧮 МММ LiQ ⚖ → вихід»
+        # (liq-map по ній живий); у таблицях і банерах її немає.
+        _W = self._mm_watched()
+        _fuels_all = fuels or {}
+        if _W is not None:
+            fuels = {k: v for k, v in _fuels_all.items() if str(k).upper() in _W}
         # 🔮 Прогноз 1H/4H — ЧИСТЕ ЧИТАННЯ кешу (той самий, що малює бейджі над
         # графіком). Двигун беремо ОДИН раз на такт, а не на кожну монету.
         _fe = (self._mm_forecast_engine()
@@ -5080,14 +5091,19 @@ class FuelFilterDaemon:
         # угод, і вимикати його чужим тумблером не можна. Банера, списку і
         # watchlist-монет при цьому НЕМАЄ.
         _keep = self._mm_open_syms() if not _mon else None
+        _open_now = _keep if _keep is not None else self._mm_open_syms()
         if not _mon and not _keep:
             self._mm_clear_book(new=False)
         else:
             snap = {}
-            for sym, f in (fuels or {}).items():
+            for sym, f in _fuels_all.items():
                 if not f:
                     continue
-                if _keep is not None and str(sym).upper() not in _keep:
+                _SU = str(sym).upper()
+                _unw = _W is not None and _SU not in _W
+                if _unw and _SU not in _open_now:
+                    continue
+                if _keep is not None and _SU not in _keep:
                     continue
                 # 🧮 `_fuel_dir_legacy` (сирий (fa−fb)/den по кластерах liq-map)
                 # читає той самий кешований `_liq_state`, що щойно взяв новий
@@ -5114,6 +5130,9 @@ class FuelFilterDaemon:
                     'runway': f.get('runway'),
                     **_fcast(sym),
                 }
+                if _unw:
+                    # Лише для правила виходу угоди: прогноз застиглий — геть.
+                    snap[_SU].update({'f1': None, 'f4': None, 'unwatched': True})
             self._mm_track_prices(snap, _now)
             self._mm_track_growth(snap, _now)
             self._mm_track_state(snap, _now)
@@ -5121,10 +5140,14 @@ class FuelFilterDaemon:
                 self._mm_snapshot = snap
                 self._mm_snapshot_ts = _now
                 self._mm_stats = ({'targeted': len(fuels or {}),
-                                   'data': len(snap), 'ts': _now} if _mon else {})
+                                   'data': sum(1 for v in snap.values()
+                                               if not v.get('unwatched')),
+                                   'ts': _now} if _mon else {})
             if _mon:
                 # ⚖️ Важіль банера рахує ДВИГУН (урок B2), стан лише читає.
-                self._mm_track_bias(snap, _now, s)
+                # Монети поза watchlist у важіль НЕ входять.
+                self._mm_track_bias({k: v for k, v in snap.items()
+                                     if not v.get('unwatched')}, _now, s)
             else:
                 # Знімок лишився ЛИШЕ для угод → «ринок» із трьох монет під
                 # згаслим блоком не рахуємо.
@@ -5278,6 +5301,8 @@ class FuelFilterDaemon:
             _prow = dict(_scan.get('rows') or {})
             snap_p = {}
             for _S, row in _prow.items():
+                if _W is not None and str(_S).upper() not in _W:
+                    continue    # 👁 прибрана зі списку — результат скану застарів
                 c = pull_mm_dir(row)
                 if not c:
                     continue
@@ -5340,6 +5365,11 @@ class FuelFilterDaemon:
         # «слабшає / ПРОТИ» у таблицях угод — це супровід угод, а не монітор.
         _tpairs = self._mm_open_pairs()
         _tsyms = {p.split('|')[0] for p in _tpairs} | self._mm_open_syms()
+        if _W is not None:
+            # 👁 Угода по монеті поза watchlist: вердикт не рахуємо і не
+            # показуємо (🧠/🚨 порожні, 🧱-автомат її не чіпає).
+            _tpairs = {p for p in _tpairs if p.split('|')[0] in _W}
+            _tsyms = {x for x in _tsyms if x in _W}
         if not _dcb:
             self._mm_clear_dec(keep_syms=_tsyms)
             if _tsyms:
@@ -5405,6 +5435,8 @@ class FuelFilterDaemon:
             _rrows = dict(_rscan.get('rows') or {})
             snap_r = {}
             for _S, row in _rrows.items():
+                if _W is not None and str(_S).upper() not in _W:
+                    continue    # 👁 прибрана зі списку
                 c = rdy_mm_dir(row.get('l'), row.get('s'))
                 if not c:
                     continue
@@ -6050,7 +6082,12 @@ class FuelFilterDaemon:
         qmap = self._mm_queue_map()
         rows = []
         _in_trade = 0
+        # 👁 Лише WATCHLIST (вимога 26.10): і живий знімок (позначка
+        # `unwatched`), і відновлений після рестарту.
+        _W = self._mm_watched()
         for sym, v in snap.items():
+            if v.get('unwatched') or (_W is not None and str(sym).upper() not in _W):
+                continue
             _trade = sym in open_syms
             if _trade:
                 _in_trade += 1
@@ -7761,6 +7798,25 @@ class FuelFilterDaemon:
                     pass
         except Exception as e:
             print(f"[FuelFilter] liqmap register error: {e}")
+
+    def _mm_watched(self) -> Optional[set]:
+        """👁 Набір монет WATCHLIST (вимога 26.10) — ЄДИНЕ джерело фільтра
+        «монету прибрали зі списку → її стан не показуємо».
+
+        Монету, яку прибрали з watchlist, сканер більше не веде: прогноз,
+        OB 4H, Decision по ній застигають. Навіть якщо по ній ще відкрита
+        угода, МММ-таблиці, банери і колонки 🧠/🚨 угод її НЕ показують.
+        Сканер недоступний / список порожній → None (фільтр не діє, fail-open:
+        інакше збій читання погасив би всі блоки)."""
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            _sc = get_smc_scanner()
+            wl = list(_sc.get_watchlist()) if _sc else []
+        except Exception:
+            wl = []
+        if not wl:
+            return None
+        return {str(x).upper() for x in wl}
 
     def _mm_watchlist_part(self, settings: Dict) -> List[str]:
         """WATCHLIST-частина набору монет для МММ — ЄДИНЕ джерело на ОБИДВА

@@ -1694,6 +1694,18 @@ class SMCScanner:
                 self._last_signal_dir.pop(symbol, None)
                 self._persist_dedup_state()
                 self._cache.pop(symbol, None)
+                # 🏷 Стан монети, який показується в таблицях (OB 4H біля Side,
+                # МММ-таблиці, бейджі VOB) — теж геть: монети вже не ведемо,
+                # тож її «останній OB 4H» застиг би і виглядав живим.
+                self._ob_mark.pop(symbol, None)
+                self._ob_mark_restored.discard(symbol)
+                self._ob_zones.pop(symbol, None)
+                self._vob_diag.pop(symbol, None)
+                self._liqvob_diag.pop(symbol, None)
+                self._ob_alert_diag.pop(symbol, None)
+                for _k in [k for k in self._ob_htf_cache
+                           if isinstance(k, tuple) and k and k[0] == symbol]:
+                    self._ob_htf_cache.pop(_k, None)
                 # Tradeable cleanup
                 if symbol in self._tradeable:
                     self._tradeable.remove(symbol)
@@ -3620,10 +3632,17 @@ class SMCScanner:
         watchlist / перший цикл після рестарту), у відповіді НЕМАЄ.
         """
         out = {}
+        # ⚠️ Лише монети WATCHLIST (вимога 26.10): монету, яку прибрали зі
+        # списку, сканер більше не веде — її позначка застигла. Навіть якщо по
+        # ній ще відкрита угода, показувати застиглий стан не можна.
+        _wl = getattr(self, '_watchlist', None)
+        watched = set(_wl) if _wl else None   # список невідомий → не фільтруємо
         for x in (symbols or []):
             if not x:
                 continue
             s = str(x).upper()
+            if watched is not None and s not in watched:
+                continue
             m = self._ob_mark.get(s)
             if m:
                 d = {k: v for k, v in m.items() if k not in ('ob', 'until')}
