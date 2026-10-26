@@ -93,7 +93,7 @@ def test_apply_alert_toggles_and_logs():
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'weaker', 'text': 'слабшає'}) is True, '')
     p = t._positions['MNTUSDT']
     _check(p['opp_ob_exit'] and p['opp_ob_exit_by'] == 'auto' and p['mmd_alert_lvl'] == 'weaker', p)
-    _check(any('🧠 МММ-Decision' in x and 'УВІМКНЕНО' in x for x in _er._LOG), _er._LOG)
+    _check(any('🧮 МММ-Trend' in x and 'УВІМКНЕНО' in x for x in _er._LOG), _er._LOG)
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'against'}) is None, 'вже увімкнено')
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'ok'}) is False, 'покращення')
     _check('opp_ob_exit' not in p and any('ВИМКНЕНО' in x for x in _er._LOG), p)
@@ -175,8 +175,10 @@ def test_engine_feeds_the_same_alert_as_the_column():
     a = _FF.index('def _mmd_apply_trade_alerts(')
     fn = _FF[a:_FF.index('\n    def ', a + 10)]
     _check('dec_trade_for(' in fn and 'apply_mmd_alert(' in fn, 'одне джерело з колонкою 🚨')
-    _check(_FF.count('self._mmd_apply_trade_alerts()') == 2,
-           'автомат мусить працювати і при вимкненому блоці 🧠')
+    # ⚠️ 26.10: 🚨 живе на 🧮 МММ-Trend, тож автомат кличеться ОДИН раз —
+    # ПОЗА гілками блоку 🧠 (діє незалежно від його тумблера).
+    _check(_FF.count('self._mmd_apply_trade_alerts()') == 1,
+           'автомат кличеться один раз, незалежно від блоку 🧠')
     print('✓ двигун подає той самий сигнал, що малює колонку 🚨')
 
 

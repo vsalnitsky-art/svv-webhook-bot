@@ -1,6 +1,6 @@
-"""🆕 МММ-NEW + компактний 🧮 МММ LiQ + 🏷 OB 4H у таблицях відкритих угод (12.10).
+"""🧮 МММ-Trend + компактний 🧮 МММ LiQ + 🏷 OB 4H у таблицях відкритих угод (12.10).
 
-Вимога дослівно: «Додай до таблиць відкритих угод ще поле "МММ-NEW" і зроби їх
+Вимога дослівно: «Додай до таблиць відкритих угод ще поле "МММ-Trend" і зроби їх
 компактнішими ці поля "🧮 МММ LiQ". І додай … помітку, який останній був OB 4Н
 (розмалюй відповідним кольором) по монеті. В полі "Side" зроби невеличку
 позначку стосовно OB 4Н.»
@@ -33,7 +33,7 @@ def _check(c, m):
         raise AssertionError(m)
 
 
-# ⚠️ 22.10: колонки «🧮 МММ LiQ»/«🆕 МММ-NEW» у таблицях угод замінено на
+# ⚠️ 22.10: колонки «🧮 МММ LiQ»/«🧮 МММ-Trend» у таблицях угод замінено на
 # «🧠 МММ-Decision» + 🚨 сигнал (див. test_trades_mmd.py); `mmn_snapshot_for`
 # видалено разом із колонкою.
 def test_flask_only_reads_snapshots():
@@ -95,7 +95,7 @@ def test_tables_have_the_new_column_and_matching_colspans():
     for tid in ('tm-open-table', 'tm-shadow-open-table'):
         i = _HTML.index(f'id="{tid}"')
         tbl = _HTML[i:_HTML.index('</table>', i)]
-        _check('>🧠 МММ-Decision</th>' in tbl, f'{tid}: немає колонки МММ-Decision')
+        _check('>🧮 МММ-Trend</th>' in tbl, f'{tid}: немає колонки МММ-Trend')
         n = len(re.findall(r'<th[\s>]', tbl))
         m = re.search(r'colspan="(\d+)"', tbl)
         _check(m and int(m.group(1)) == n, f'{tid}: colspan ≠ {n}')

@@ -92,7 +92,7 @@ class _FF:
         self.work = set(work)
 
     def mm_bias_new(self):
-        # З 01.10 сканер читає банер 🆕 МММ-NEW.
+        # З 01.10 сканер читає банер 🧮 МММ-Trend.
         return {'dir': self.direction}
 
     def mm_bias(self):

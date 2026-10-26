@@ -273,7 +273,7 @@ def vob_confluence(row: Optional[Dict], vob_side: str,
     """ЧИСТЕ правило «новий VOB → сигнал?» (вимога 19.09).
 
     Три умови РАЗОМ і в цьому порядку:
-      1. банер 🆕 МММ-NEW має НАПРЯМОК (⚖ рівновага — не напрямок);
+      1. банер 🧮 МММ-Trend має НАПРЯМОК (⚖ рівновага — не напрямок);
          (до 01.10 — банер 🧮 МММ-монітора);
       2. напрямок VOB ЗБІГАЄТЬСЯ з напрямком банера;
       3. монета Є в таблиці 💧 Сканера, і рядок зібрано в ТОЙ САМИЙ бік.
@@ -284,7 +284,7 @@ def vob_confluence(row: Optional[Dict], vob_side: str,
     «збігом» пряме протиріччя. Замість цього чесно кажемо, що чекаємо перескан.
 
     4. (`check_coin`, вимога 28.09 → 01.10) **вкладка монети у «Списку монет»
-       🆕 МММ-NEW** (🟢 LONG / 🔴 SHORT / ⚖ Рівновага) ЗБІГАЄТЬСЯ з банером. Монета у вкладці «⚖ Рівновага» чи протилежній →
+       🧮 МММ-Trend** (🟢 LONG / 🔴 SHORT / ⚖ Рівновага) ЗБІГАЄТЬСЯ з банером. Монета у вкладці «⚖ Рівновага» чи протилежній →
        сигналу немає. ⚠️ Немає даних по монеті → теж немає: «невідомо» ≠
        «за напрямком». Блок при цьому НЕ ковтається — сканер спробує ще, поки
        він свіжий (той самий прийом, що з розбігом таблиці).
@@ -297,7 +297,7 @@ def vob_confluence(row: Optional[Dict], vob_side: str,
     if side not in ('LONG', 'SHORT'):
         return False, 'напрямок VOB невідомий'
     if bias not in ('LONG', 'SHORT'):
-        return False, '⚖ банер 🆕 МММ-NEW без напрямку'
+        return False, '⚖ банер 🧮 МММ-Trend без напрямку'
     if side != bias:
         return False, f'VOB {side} ПРОТИ банера {bias}'
     if not row:
@@ -309,15 +309,15 @@ def vob_confluence(row: Optional[Dict], vob_side: str,
     _cm = (coin_mm or '').upper().strip()
     if check_coin:
         if _cm not in ('LONG', 'SHORT', 'FLAT'):
-            return False, ('монети ще немає у «Списку монет» 🆕 МММ-NEW '
+            return False, ('монети ще немає у «Списку монет» 🧮 МММ-Trend '
                            '— чекаємо')
         if _cm != bias:
             _lbl = '⚖ Рівновага' if _cm == 'FLAT' else _cm
-            return False, (f'🆕 МММ-NEW: монета у вкладці {_lbl}, а банер '
+            return False, (f'🧮 МММ-Trend: монета у вкладці {_lbl}, а банер '
                            f'{bias} — не у вкладці {bias}')
     _bits = [f'VOB {side} = банер {bias}']
     if check_coin:
-        _bits.append(f'🆕 МММ-NEW вкладка {_cm}')
+        _bits.append(f'🧮 МММ-Trend вкладка {_cm}')
     try:
         _bits.append(f"💧 маса {float(row.get('mass_pct')):.1f}% у бік {side}")
     except (TypeError, ValueError):
@@ -500,7 +500,7 @@ class LiqHunterDaemon:
             return None
 
     def bias_dir(self) -> Optional[str]:
-        """Напрямок банера «🆕 МММ-NEW» — ПІДТВЕРДЖЕНИЙ (`mm_bias_new`).
+        """Напрямок банера «🧮 МММ-Trend» — ПІДТВЕРДЖЕНИЙ (`mm_bias_new`).
 
         ⚠️ З 01.10 банер «🧮 МММ-монітор» сканер НЕ читає (вимога: «Більше
         перевірок на банері МММ-монітор не робимо»). Фолбеку на старий банер
@@ -582,12 +582,12 @@ class LiqHunterDaemon:
         return ok, note, row
 
     def coin_mm(self, symbol: str) -> Optional[str]:
-        """🆕 Вкладка монети у «Списку монет» МММ-NEW: 'LONG' / 'SHORT' /
+        """🆕 Вкладка монети у «Списку монет» МММ-Trend: 'LONG' / 'SHORT' /
         'FLAT' (⚖) / None (немає даних).
 
         ЄДИНЕ джерело — `ff.mm_gate_view` (той самий знімок `_mmn_snapshot`,
-        що розкладає монети по вкладках МММ-new і живить ворота «🧮 Через
-        МММ-NEW»), тож рішення сигналу й таблиця не можуть розійтись.
+        що розкладає монети по вкладках МММ-Trend і живить ворота «🧮 Через
+        МММ-Trend»), тож рішення сигналу й таблиця не можуть розійтись.
         ⚠️ Назва методу історична (раніше тут був МММ LiQ МММ-монітора).
         """
         sym = str(symbol or '').upper()
@@ -637,7 +637,7 @@ class LiqHunterDaemon:
             with self._lock:
                 self._rows, self._since = [], {}
                 self._dir = None
-                self._status = ('⚖ Банер «🆕 МММ-NEW» без напрямку — '
+                self._status = ('⚖ Банер «🧮 МММ-Trend» без напрямку — '
                                 'скан не запускаємо, відбирати нема в який бік')
                 self._last = {'reason': reason, 'at': now, 'skipped': 'flat'}
                 self._next_at = now + max(60.0, float(s['interval_min']) * 60.0)

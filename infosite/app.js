@@ -112,7 +112,7 @@
   var ENGINE_BADGES_JS = {
     "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4",
     "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап",
-    "MMM": "🧮 МММ-монітор", "MMN": "🧮 МММ-new", "MMC": "⚡ МММ-CTR", "MMF": "🔮 МММ-Local", "MMP": "🧭 МММ-Pull", "MMD": "🧠 МММ-Decision", "MMR": "🧩 МММ-Готовність",
+    "MMM": "🧮 МММ-монітор", "MMN": "🧮 МММ-Trend", "MMC": "⚡ МММ-CTR", "MMF": "🔮 МММ-Local", "MMP": "🧭 МММ-Pull", "MMD": "🧠 МММ-Decision", "MMR": "🧩 МММ-Готовність",
     "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий"
   };
   var SIGNAL_ICON_JS = {

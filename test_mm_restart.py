@@ -72,7 +72,7 @@ def test_trading_paths_never_see_the_restored_snapshot():
     ff._mm_books_persist(time.time(), force=True)
     ff2 = _boot(db)
     _check(ff2._mm_snapshot == {}, 'живий знімок порожній до першого такту')
-    _check(ff2._mmn_snapshot == {}, 'МММ-new теж')
+    _check(ff2._mmn_snapshot == {}, 'МММ-Trend теж')
     _check(ff2.mm_snapshot_for(['BTCUSDT']) == {},
            'правило «🧮 ⚖ → вихід» не має закрити угоду за числом минулого запуску')
     print('✓ ворота / колонки угод / правила виходу відновлений знімок НЕ бачать')

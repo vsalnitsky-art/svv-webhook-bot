@@ -943,7 +943,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .mm-subsort { cursor:pointer; user-select:none; font-weight:400; font-size:0.66rem; color:#93c5fd; margin-left:4px; text-transform:none; }
 .mm-subsort:hover { color:#e5e7eb; }
 .tm-ob4h-l { margin-left:0 !important; margin-right:5px; }
-/* 🚨 Сигнал МММ-Decision ПРОТИ угоди — блимає, щоб звернути увагу. */
+/* 🚨 Сигнал МММ-Trend ПРОТИ угоди — блимає, щоб звернути увагу. */
 @keyframes tmMmdHot { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
 .tm-mmd-alert-hot { animation: tmMmdHot 1.2s ease-in-out infinite; }
 .tm-ob4h { display:inline-block; margin-left:4px; padding:0 3px; border:1px solid; border-radius:4px; font-size:0.62rem; font-weight:700; font-family:monospace; line-height:1.3; vertical-align:middle; }
@@ -2247,15 +2247,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <!-- 🧮 ЗАГАЛЬНІ МММ-ВОРОТА для ВСІХ сигналів (вимога 09.10, усі деф. ВИМК) -->
                     <span id="sm-mmgates" style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:10px;
                                 padding:3px 8px;border:1px solid #2b3444;border-radius:6px">
-                    <label class="sm-checkbox" title="🆕 Ворота «Через МММ-NEW»: сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку 🆕 МММ-NEW, SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Діє на ВСІ сигнали сканера (CHoCH / CHoCH+BOS, 🟪 Volumized OB, 🆕 Новий OB, 💧 VOB зі Сканера) і на 🔁 повторній перевірці Черги-4 перед відкриттям. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить (рішення людини). ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="🆕 Ворота «Через МММ-Trend»: сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку 🧮 МММ-Trend, SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Діє на ВСІ сигнали сканера (CHoCH / CHoCH+BOS, 🟪 Volumized OB, 🆕 Новий OB, 💧 VOB зі Сканера) і на 🔁 повторній перевірці Черги-4 перед відкриттям. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить (рішення людини). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate" onchange="updateMmGate()">
-                        🆕 Через МММ-NEW
+                        🧮 Через МММ-Trend
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через МММ-NEW»: банер МММ-NEW мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-NEW». ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-Trend»: банер МММ-Trend мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-Trend». ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-banner" onchange="updateMmGate()">
-                        за банером МММ-NEW
+                        за банером МММ-Trend
                     </label>
-                    <label class="sm-checkbox" title="🧮 Ворота «Через МММ-МОНІТОР»: сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку 🧮 МММ-монітор (МММ LiQ), SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Незалежні від воріт МММ-NEW (увімкнені обидва — сигнал має пройти обидва). Діє на ВСІ сигнали сканера (CHoCH / CHoCH+BOS, 🟪 Volumized OB, 🆕 Новий OB, 💧 VOB зі Сканера) і на 🔁 повторній перевірці Черги-4 перед відкриттям. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить (рішення людини). ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="🧮 Ворота «Через МММ-МОНІТОР»: сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку 🧮 МММ-монітор (МММ LiQ), SHORT — у вкладці 🔴 SHORT. ⚖ Рівновага, протилежна вкладка або монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Незалежні від воріт МММ-Trend (увімкнені обидва — сигнал має пройти обидва). Діє на ВСІ сигнали сканера (CHoCH / CHoCH+BOS, 🟪 Volumized OB, 🆕 Новий OB, 💧 VOB зі Сканера) і на 🔁 повторній перевірці Черги-4 перед відкриттям. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить (рішення людини). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mmo-gate" onchange="updateMmGate()">
                         🧮 Через МММ-МОНІТОР
                     </label>
@@ -2303,12 +2303,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmr-gate-banner" onchange="updateMmGate()">
                         за банером МММ-Готовність
                     </label>
-                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-NEW» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» / «Через МММ-Pull» / «Через МММ-Decision» (для кожного блоку — його власні пороги; у 🧠 МММ-Decision — ще й фільтр «Вердикт ≥»). ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-Trend» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» / «Через МММ-Pull» / «Через МММ-Decision» (для кожного блоку — його власні пороги; у 🧠 МММ-Decision — ще й фільтр «Вердикт ≥»). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-str" onchange="updateMmGate()">
                         ⚑ з порогом «Сила ≥» вкладки
                     </label>
                     </span>
-                    <label class="sm-checkbox" title="💧 Окрема перевірка сигналів Сканером ліквідності. Коли УВІМК і сам 💧 Сканер увімкнено, КОЖЕН сигнал сканера проходить, лише якщо монета є в таблиці Сканера ліквідності і таблицю зібрано в той самий бік, що й сигнал. Монети немає в таблиці або таблиця під протилежний бік → сигнал не пропускаємо (причина — у 🧾 Лозі). Діє і на 🔁 повторній перевірці Черги-4. Незалежна від «🧮 Через МММ-NEW». Вимкнений 💧 Сканер → умова не діє. ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="💧 Окрема перевірка сигналів Сканером ліквідності. Коли УВІМК і сам 💧 Сканер увімкнено, КОЖЕН сигнал сканера проходить, лише якщо монета є в таблиці Сканера ліквідності і таблицю зібрано в той самий бік, що й сигнал. Монети немає в таблиці або таблиця під протилежний бік → сигнал не пропускаємо (причина — у 🧾 Лозі). Діє і на 🔁 повторній перевірці Черги-4. Незалежна від «🧮 Через МММ-Trend». Вимкнений 💧 Сканер → умова не діє. ВИМК (дефолт).">
                         <input type="checkbox" id="sm-liq-gate" onchange="updateLiqGate()">
                         💧 Через Сканер ліквідності
                     </label>
@@ -2687,9 +2687,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="ff-mm-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
                         ⚖️ Зміна статусу банера
                     </label>
-                    <label class="mmc-chk" title="🆕 Те саме для банера 🆕 МММ-NEW (вимога 09.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера МММ-NEW (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем. Перший стан після рестарту — мовчки. Власний тумблер, незалежний від банера 🧮.">
+                    <label class="mmc-chk" title="🆕 Те саме для банера 🧮 МММ-Trend (вимога 09.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера МММ-Trend (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем. Перший стан після рестарту — мовчки. Власний тумблер, незалежний від банера 🧮.">
                         <input type="checkbox" id="ff-mmn-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
-                        🆕 Зміна статусу банера МММ-NEW
+                        🆕 Зміна статусу банера МММ-Trend
                     </label>
                     <label class="mmc-chk" title="🔮 Те саме для банера 🔮 МММ-Local (вимога 15.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем. Перший стан після рестарту — мовчки. Власний тумблер.">
                         <input type="checkbox" id="ff-mmf-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
@@ -2791,9 +2791,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                  підписані станом. -->
                             <th data-mmsort="status" onclick="mmSort('status')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Монета в угоді або в черзі з таблиці НЕ зникає — просто видно, що вона вже в роботі, і галочка для ✋ групового відкриття їй недоступна. Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="strength" onclick="mmSort('strength')" style="cursor:pointer;user-select:none" title="Показник МММ LiQ (той самий, що живить шар «МММ LiQ» у Черзі-4): напрямок тиску + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">МММ LiQ<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="newstr" onclick="mmSort('newstr')" style="cursor:pointer;user-select:none" title="МММ-new — НОВИЙ МММ тієї самої монети («бабло»-модель двигуна, `_fuel_dir_smoothed`): те саме число, що в блоці 🆕 МММ-new, колонці «МММ» черг і шарі «Новий МММ» Черги-4. Сила = |dir|×100. Клік — сортувати за силою.">МММ-new<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="newstr" onclick="mmSort('newstr')" style="cursor:pointer;user-select:none" title="МММ-Trend — НОВИЙ МММ тієї самої монети («бабло»-модель двигуна, `_fuel_dir_smoothed`): те саме число, що в блоці 🧮 МММ-Trend, колонці «МММ» черг і шарі «Новий МММ» Черги-4. Сила = |dir|×100. Клік — сортувати за силою.">МММ-Trend<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="state" onclick="mmSort('state')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан МММ — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Відлік починається заново на КОЖНІЙ зміні стану (у тому числі при переході в рівновагу і назад). ⚖ рівновага — теж стан: «скільки монета вже без напрямку» не менш важливо за «скільки вона в LONG». Разовий пропуск монети у знімку таймер НЕ збиває, а рестарт бота його не обнуляє — момент старту зберігається. Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="runway" onclick="mmSort('runway')" style="cursor:pointer;user-select:none;text-align:right" title="🎯 Запас — скільки простору до значущої ліквідності В БІК Нового МММ (↑/↓), як у таблиці МММ-new і в TradingView-оверлеї. Малий запас = рух близько до великого кластера (ймовірне сповільнення/розворот). ♾ = попереду великих цілей немає. Без напрямку — «—». Клік — сортувати за запасом.">Запас<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="runway" onclick="mmSort('runway')" style="cursor:pointer;user-select:none;text-align:right" title="🎯 Запас — скільки простору до значущої ліквідності В БІК Нового МММ (↑/↓), як у таблиці МММ-Trend і в TradingView-оверлеї. Малий запас = рух близько до великого кластера (ймовірне сповільнення/розворот). ♾ = попереду великих цілей немає. Без напрямку — «—». Клік — сортувати за запасом.">Запас<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="price" onclick="mmSort('price')" style="cursor:pointer;user-select:none;text-align:right" title="Ціна зі знімка МММ (те саме число, що бачить двигун). Клік — сортувати за ціною.">Ціна<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="pchg" onclick="mmSort('pchg')" style="cursor:pointer;user-select:none;text-align:right" title="КУДИ йде ціна: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв (та сама мертва зона 0.10%, що в колонці Price у 💰 Funding). За скільки часу історії реально набралось — у підказці комірки: одразу після старту вікно ще неповне. Клік — сортувати за РУХОМ (найсильніший ріст зверху).">Рух<span class="ff-sort-arrow"></span></th>
                             <th title="🔮 Прогноз 1H — напрямок із ТОГО САМОГО кешу, що малює бейдж «🔮 1H» над графіком. Читається готовим, нічого не рахує.">🔮 1H</th>
@@ -2810,28 +2810,28 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
     </div>
 
-    <!-- ===== 🆕 МММ-new (вимога 01.10) =====
-         «Банер "🧮 МММ-NEW" також має мати свій блок із тумблером. Організуй
+    <!-- ===== 🧮 МММ-Trend (вимога 01.10) =====
+         «Банер "🧮 МММ-Trend" також має мати свій блок із тумблером. Організуй
          все повністю ідентичне так, як працює "МММ-монітор", тільки на
          алгоритмі "Новий МММ"». Розмітка — копія блоку 🧮 з префіксом id
          `mmn-`; JS — ТОЙ САМИЙ код монітора з параметром книги (`bk="new"`),
          а бекенд — `mm_monitor_state(book="new")` (секція `mmn`). -->
     <div class="tm-panel" id="mmn-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(167,139,250,0.30);border-radius:8px;background:rgba(167,139,250,0.05)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px">
-            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mmn')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mmn-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🆕 МММ-new <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— живий НОВИЙ МММ по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mmn')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mmn-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🧮 МММ-Trend <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— живий НОВИЙ МММ по монетах, окремо LONG і SHORT; галочки → групове відкриття</span></div>
             <div style="display:flex;align-items:center;gap:10px">
                 <span id="mmn-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
-                <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🆕 МММ-new. ВИМКНЕНО — бот НЕ веде знімок НОВОГО МММ (банер, таймери, історію, список монет), таблиця порожня, групове відкриття недоступне. Сам моніторинг нічого не відкриває автоматично — лише показує стан і дає ✋ відкрити обране вручну.">
+                <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🧮 МММ-Trend. ВИМКНЕНО — бот НЕ веде знімок НОВОГО МММ (банер, таймери, історію, список монет), таблиця порожня, групове відкриття недоступне. Сам моніторинг нічого не відкриває автоматично — лише показує стан і дає ✋ відкрити обране вручну.">
                     <input type="checkbox" id="ff-mm-new-enabled" checked onchange="saveFuelFilterSettings()">
                     <span class="slider"></span>
                 </label>
             </div>
         </div>
         <div id="mmn-body">
-            <div id="mmn-off" style="display:none;padding:9px 12px;border-radius:6px;border:1px dashed rgba(148,163,184,0.35);color:#8b93a7;font-size:0.72rem">🔌 МММ-new вимкнено — бот не рахує ні банер, ні список монет. Увімкніть тумблер у шапці блоку.</div>
+            <div id="mmn-off" style="display:none;padding:9px 12px;border-radius:6px;border:1px dashed rgba(148,163,184,0.35);color:#8b93a7;font-size:0.72rem">🔌 МММ-Trend вимкнено — бот не рахує ні банер, ні список монет. Увімкніть тумблер у шапці блоку.</div>
             <div id="mmn-live">
             <div id="mmn-bias-banner" class="mm-ban" style="margin:0 0 10px">
-                <span class="mm-ban-title" style="color:#7dd3fc;text-shadow:0 0 9px rgba(56,189,248,0.55)">🧮 МММ-NEW</span>
+                <span class="mm-ban-title" style="color:#7dd3fc;text-shadow:0 0 9px rgba(56,189,248,0.55)">🧮 МММ-Trend</span>
                 <div class="mm-ban-bar">
                     <div id="mmn-bias-bar" style="height:100%;width:0%;border-radius:9px;background:#facc15;transition:width 0.4s linear,background 0.3s"></div>
                     <span id="mmn-bias-label" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
@@ -2851,7 +2851,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG','new')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
                 <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT','new')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
                 <button type="button" data-mmdir="flat" onclick="mmSetDir('flat','new')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
-                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧮 МММ-NEW» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили МММ: показувати лише монети, де тиск не нижчий за нього. Слабкий тиск (≤10%) напрямку фактично не має. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Значення зберігається в налаштуваннях бота, тож однакове в усіх браузерах. ⚠️ На банер «🧮 МММ-Trend» цей фільтр НЕ впливає — важіль рахується по ВСІХ монетах монітора (слабкі й так важать мало за самою формулою).">
                     Сила ≥ <input type="number" id="mmn-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged('new')" onchange="mmMinStrSave()"> %
                 </label>
                 <span id="mmn-str-out" style="font-size:0.66rem;color:#fbbf24;font-family:monospace"></span>
@@ -2886,7 +2886,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmn-check-all" onchange="mmToggleAll(this.checked,'new')"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol','new')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="status" onclick="mmSort('status','new')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Монета в угоді або в черзі з таблиці НЕ зникає — просто видно, що вона вже в роботі, і галочка для ✋ групового відкриття їй недоступна. Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="strength" onclick="mmSort('strength','new')" style="cursor:pointer;user-select:none" title="Показник НОВИЙ МММ — «бабло»-модель двигуна (`_fuel_dir_smoothed`): той самий, що колонка «МММ» черг і шар «Новий МММ» Черги-4. Напрямок + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">МММ-new<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="strength" onclick="mmSort('strength','new')" style="cursor:pointer;user-select:none" title="Показник НОВИЙ МММ — «бабло»-модель двигуна (`_fuel_dir_smoothed`): той самий, що колонка «МММ» черг і шар «Новий МММ» Черги-4. Напрямок + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">МММ-Trend<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="liqstr" onclick="mmSort('liqstr','new')" style="cursor:pointer;user-select:none" title="МММ-LiQ — МММ за розташуванням кластерів ліквідації (`_fuel_dir_legacy`) тієї самої монети: те саме число, що в блоці 🧮 МММ-монітор і шарі «МММ LiQ» Черги-4. Клік — сортувати за силою.">МММ-LiQ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="state" onclick="mmSort('state','new')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан МММ — 🟢 LONG, 🔴 SHORT або ⚖ рівновагу. Відлік починається заново на КОЖНІЙ зміні стану (у тому числі при переході в рівновагу і назад). ⚖ рівновага — теж стан: «скільки монета вже без напрямку» не менш важливо за «скільки вона в LONG». Разовий пропуск монети у знімку таймер НЕ збиває, а рестарт бота його не обнуляє — момент старту зберігається. Клік — сортувати (найдовший стан зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="runway" onclick="mmSort('runway','new')" style="cursor:pointer;user-select:none;text-align:right" title="🎯 Запас — скільки простору до значущої ліквідності В БІК Нового МММ (↑/↓), як у TradingView-оверлеї. Малий запас = рух близько до великого кластера (ймовірне сповільнення/розворот). Без напрямку — «—». Клік — сортувати за запасом.">Запас<span class="ff-sort-arrow"></span></th>
@@ -3431,17 +3431,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
          Вимога 18.09: окреме вікно з ОСНОВНИМ тумблером і гармошкою
          налаштувань. Алгоритм — ГОТОВИЙ скан 💧 зі сторінки 📡 Tickr
          (`liq_scan.scan_liquidity`), із тими самими параметрами і тими самими
-         дефолтами. Відбір — за напрямком, який показує банер 🆕 МММ-NEW:
+         дефолтами. Відбір — за напрямком, який показує банер 🧮 МММ-Trend:
          LONG → маса ВИЩЕ ціни ≥ порогу, SHORT → маса НИЖЧЕ ціни ≥ порогу.
          Монету, яка ВЖЕ в роботі (відкрита угода або черга), у таблицю не
          додаємо. Скан іде спільною чергою сканів біржі. -->
     <div class="tm-panel" id="liq-hunter-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(34,211,238,0.28);border-radius:8px;background:rgba(34,211,238,0.05)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
             <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('lh')"
-                 title="Клік — згорнути/розгорнути. 💧 Сканер відбирає монети за перекосом ліквідності В БІК, який показує банер 🆕 МММ-NEW, і веде власну таблицю кандидатів. Сам він угод не відкриває: сигнал породжує лише збіг «новий VOB + напрямок банера + монета з цієї таблиці» (тумблер 📨 у налаштуваннях), і він іде звичайним алгоритмом — спільні фільтри → Черга → відкриття.">
+                 title="Клік — згорнути/розгорнути. 💧 Сканер відбирає монети за перекосом ліквідності В БІК, який показує банер 🧮 МММ-Trend, і веде власну таблицю кандидатів. Сам він угод не відкриває: сигнал породжує лише збіг «новий VOB + напрямок банера + монета з цієї таблиці» (тумблер 📨 у налаштуваннях), і він іде звичайним алгоритмом — спільні фільтри → Черга → відкриття.">
                 <span id="lh-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span>
                 💧 Сканер ліквідності
-                <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети за масою ліквідації в бік банера МММ-NEW</span>
+                <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети за масою ліквідації в бік банера МММ-Trend</span>
             </div>
             <div style="display:flex;align-items:center;gap:10px">
                 <span id="lh-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
@@ -3576,7 +3576,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                title="Мінімальна ВІДСТАНЬ до найсильнішого магніту у % від поточної ціни. Магніт за пів відсотка — це не ціль, а шум: такі монети в таблицю не додаються. 0 = не фільтрувати. ⚠️ Монета, по якій драбина взагалі не дала сходинки, цим фільтром НЕ ріжеться — «невідомо» це не «близько», і в колонці магніту чесно стоїть «—».">
                     </div>
                     <label class="lh-flip"
-                           title="Банер МММ-NEW розвернувся → таблиця застаріла (монети відбирались під протилежний бік). Тоді пересканюємо одразу, не чекаючи періодичності. Спаму немає: сам банер перемикається повільно (антиспам), плюс діє мінімальний проміжок 60с між сканами.">
+                           title="Банер МММ-Trend розвернувся → таблиця застаріла (монети відбирались під протилежний бік). Тоді пересканюємо одразу, не чекаючи періодичності. Спаму немає: сам банер перемикається повільно (антиспам), плюс діє мінімальний проміжок 60с між сканами.">
                         <input type="checkbox" id="lh-rescan-flip" onchange="lhSave()" style="margin:0">
                         🔁 Пересканувати на зміні напрямку банера
                     </label>
@@ -3587,7 +3587,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          би, що вимога не працює, доки його не знайдуть. Потік
                          угод це мовчки не розширює — сам Сканер дефолтом OFF. -->
                     <label class="lh-flip"
-                           title="Кожен НОВОУТВОРЕНИЙ Volumized OB (той самий блок, що малюється на графіку) звіряється з цією таблицею. Якщо напрямок VOB = напрямок банера 🆕 МММ-NEW І монета є в таблиці — це СИГНАЛ: він проходить спільні ворота фільтрів і йде далі по алгоритму (у Чергу, якщо вона увімкнена, або одразу у відкриття, коли всі черги вимкнені). Перед відправкою перевіряється, чи немає вже ВІДКРИТОЇ угоди по монеті. Працює лише при увімкненому 📦 Volumized OB Trend у ⚙️ Settings.">
+                           title="Кожен НОВОУТВОРЕНИЙ Volumized OB (той самий блок, що малюється на графіку) звіряється з цією таблицею. Якщо напрямок VOB = напрямок банера 🧮 МММ-Trend І монета є в таблиці — це СИГНАЛ: він проходить спільні ворота фільтрів і йде далі по алгоритму (у Чергу, якщо вона увімкнена, або одразу у відкриття, коли всі черги вимкнені). Перед відправкою перевіряється, чи немає вже ВІДКРИТОЇ угоди по монеті. Працює лише при увімкненому 📦 Volumized OB Trend у ⚙️ Settings.">
                         <input type="checkbox" id="lh-vob-signal" onchange="lhSave()" style="margin:0">
                         📨 Новий VOB + збіг із таблицею → сигнал (у Чергу / відкриття)
                     </label>
@@ -3610,7 +3610,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <thead>
                         <tr>
                             <th title="Клік по назві — графік у TradingView (одна вкладка).">Символ</th>
-                            <th title="💧 МАСА ЛІКВІДНОСТІ В БІК БАНЕРА: яка частка всієї маси рівнів ліквідації тягне ціну туди, куди дивиться банер 🆕 МММ-NEW. Це те саме число, що в блоці 💧 на 📡 Tickr.">💧 Маса ліквідності</th>
+                            <th title="💧 МАСА ЛІКВІДНОСТІ В БІК БАНЕРА: яка частка всієї маси рівнів ліквідації тягне ціну туди, куди дивиться банер 🧮 МММ-Trend. Це те саме число, що в блоці 💧 на 📡 Tickr.">💧 Маса ліквідності</th>
                             <th title="🧲 НАЙСИЛЬНІШИЙ МАГНІТ — найбільша сходинка драбини: напрямок (куди від поточної ціни), сама ціна, її частка від усієї маси і відстань.">🧲 Найсильніший магніт</th>
                             <th title="Скільки монета тримається у списку (між сканами відлік НЕ обнуляється).">⏱ У списку</th>
                         </tr>
@@ -4850,7 +4850,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label>
                                 <input type="checkbox" id="tm-opp-ob-auto" onchange="saveTMSettings()">
                                 🤖 Автоконтроль «🧱 OB» по угодах
-                                <span class="tm-help" title="Автоматично вмикає тумблер «🧱 OB» (Opposite OB Exit по угоді), коли сигнальна колонка 🚨 МММ-Decision переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ», і вимикає його, коли 🚨 повертається до ✓ (якщо вмикав автомат). Вимкнено → автомат тумблери угод не чіпає, керуєте лише ви. Перші 5 хв після рестарту автомат не діє (прогрів даних). За замовчуванням ВИМКНЕНО.">?</span>
+                                <span class="tm-help" title="Автоматично вмикає тумблер «🧱 OB» (Opposite OB Exit по угоді), коли сигнальна колонка 🚨 МММ-Trend переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ», і вимикає його, коли 🚨 повертається до ✓ (якщо вмикав автомат). Вимкнено → автомат тумблери угод не чіпає, керуєте лише ви. Перші 5 хв після рестарту автомат не діє (прогрів даних). За замовчуванням ВИМКНЕНО.">?</span>
                             </label>
                         </div>
 
@@ -5210,8 +5210,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="🧠 МММ-Decision по монеті — РІВНО той вердикт, що банер Decision над графіком і таблиця блоку «🧠 МММ-Decision» (той самий кеш двигуна): бік, ймовірність і слово сили. Для монет у відкритій угоді рахується ЗАВЖДИ, навіть коли блок 🧠 МММ-Decision вимкнено. «—» = вердикту ще немає (рахується порціями за такт).">🧠 МММ-Decision</th>
-                        <th title="🚨 Сигнал МММ-Decision ВІДНОСНО угоди: ✓ зелений — вердикт за угодою; ↓ бурштиновий — той самий бік, але перевага впала від піку цієї угоди на 15+ п.п. або слово сили опустилось (СИЛЬНИЙ → СЕРЕДНІЙ…); ⚖ бурштиновий — Decision став NEUTRAL; ⚠ червоний, що блимає — Decision ПРОТИЛЕЖНИЙ угоді (угода йде не за напрямком). Лише попередження — нічого не закриває.">🚨</th>
+                        <th title="🧮 МММ-Trend по монеті — РІВНО той стан, що в таблиці блоку «🧮 МММ-Trend» (ті самі дані двигуна): бік і сила. Для монет у відкритій угоді є ЗАВЖДИ, навіть коли блок 🧮 МММ-Trend вимкнено. «—» = даних ще немає.">🧮 МММ-Trend</th>
+                        <th title="🚨 Сигнал 🧮 МММ-Trend ВІДНОСНО угоди: ✓ зелений — МММ-Trend за угодою; ↓ бурштиновий — той самий бік, але сила впала від піку цієї угоди на 15+ п.п.; ⚖ бурштиновий — МММ-Trend у рівновазі; ⚠ червоний, що блимає — МММ-Trend ПРОТИЛЕЖНИЙ угоді (угода йде не за напрямком). Сам нічого не закриває (діє лише через 🤖 Автоконтроль «🧱 OB», якщо увімкнено).">🚨</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
@@ -5281,8 +5281,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="🧠 МММ-Decision по монеті — РІВНО той вердикт, що банер Decision над графіком і таблиця блоку «🧠 МММ-Decision» (той самий кеш двигуна): бік, ймовірність і слово сили. Для монет у відкритій угоді рахується ЗАВЖДИ, навіть коли блок 🧠 МММ-Decision вимкнено. «—» = вердикту ще немає (рахується порціями за такт).">🧠 МММ-Decision</th>
-                        <th title="🚨 Сигнал МММ-Decision ВІДНОСНО угоди: ✓ зелений — вердикт за угодою; ↓ бурштиновий — той самий бік, але перевага впала від піку цієї угоди на 15+ п.п. або слово сили опустилось (СИЛЬНИЙ → СЕРЕДНІЙ…); ⚖ бурштиновий — Decision став NEUTRAL; ⚠ червоний, що блимає — Decision ПРОТИЛЕЖНИЙ угоді (угода йде не за напрямком). Лише попередження — нічого не закриває.">🚨</th>
+                        <th title="🧮 МММ-Trend по монеті — РІВНО той стан, що в таблиці блоку «🧮 МММ-Trend» (ті самі дані двигуна): бік і сила. Для монет у відкритій угоді є ЗАВЖДИ, навіть коли блок 🧮 МММ-Trend вимкнено. «—» = даних ще немає.">🧮 МММ-Trend</th>
+                        <th title="🚨 Сигнал 🧮 МММ-Trend ВІДНОСНО угоди: ✓ зелений — МММ-Trend за угодою; ↓ бурштиновий — той самий бік, але сила впала від піку цієї угоди на 15+ п.п.; ⚖ бурштиновий — МММ-Trend у рівновазі; ⚠ червоний, що блимає — МММ-Trend ПРОТИЛЕЖНИЙ угоді (угода йде не за напрямком). Сам нічого не закриває (діє лише через 🤖 Автоконтроль «🧱 OB», якщо увімкнено).">🚨</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
@@ -7531,7 +7531,7 @@ function updateSettingsSummary() {
         const obCh = document.getElementById('sm-ob-choch-only');
         if (obCh && obCh.checked) summary += ' (лише CHoCH)';
     }
-    [['sm-mm-gate', 'sm-mm-gate-banner', '🆕 МММ-NEW'],
+    [['sm-mm-gate', 'sm-mm-gate-banner', '🧮 МММ-Trend'],
      ['sm-mmo-gate', 'sm-mmo-gate-banner', '🧮 МММ-МОН'],
      ['sm-mmc-gate', 'sm-mmc-gate-banner', '⚡ МММ-CTR'],
      ['sm-mmf-gate', 'sm-mmf-gate-banner', '🔮 МММ-Local'],
@@ -7642,7 +7642,7 @@ async function updateVobOnePerOb() {
         updateSettingsSummary();
     } catch (err) { alert('VOB one-per-OB update error: ' + err); }
 }
-// 🧮 ЗАГАЛЬНІ МММ-ВОРОТА (вимога 09.10): «Через МММ-NEW» / «Через
+// 🧮 ЗАГАЛЬНІ МММ-ВОРОТА (вимога 09.10): «Через МММ-Trend» / «Через
 // МММ-МОНІТОР» + «за банером …». Усі чотири тумблери шлемо РАЗОМ; «за
 // банером» гаситься, поки його головний тумблер вимкнено.
 const _SM_MM_GATES = [['sm-mm-gate', 'sm-mm-gate-banner', 'mm_gate_enabled', 'mm_gate_banner'],
@@ -12645,10 +12645,10 @@ let _ffActiveSymbols = [];
 // поллі (10с), тож якби галочки трималися лише в розмітці, їх стирало б
 // просто під час вибору — і групове відкриття було б неможливим.
 // ═══════════════════════════════════════════════════════════════════════
-// ⚠️ ДВА БЛОКИ — ОДИН КОД (вимога 01.10: «Банер "🧮 МММ-NEW" також має мати
+// ⚠️ ДВА БЛОКИ — ОДИН КОД (вимога 01.10: «Банер "🧮 МММ-Trend" також має мати
 // свій блок із тумблером. Організуй все повністю ідентичне так, як працює
 // "МММ-монітор", тільки на алгоритмі "Новий МММ"»). Книга `old` = 🧮 МММ-монітор
-// (МММ LiQ), книга `new` = 🆕 МММ-new (НОВИЙ МММ). Стан і id розведені книгою:
+// (МММ LiQ), книга `new` = 🧮 МММ-Trend (НОВИЙ МММ). Стан і id розведені книгою:
 // префікс id `mm` / `mmn` (`mm-tbody` / `mmn-tbody`, гармошка списку
 // `mmlist` / `mmnlist`). Дві копії рендера розійшлися б з часом — тому одна.
 function _mmMkBook(P, src, uiKey) {
@@ -12687,9 +12687,9 @@ const _MMB = { old: _mmMkBook('mm', 'МММ LiQ', 'mmMonitorUi'),
 // 📋 СКЛАД КОЛОНОК КОЖНОЇ ТАБЛИЦІ (вимога 01.10). Ключі — у порядку показу,
 // без ☑ і «Символ» (вони є завжди). Заголовки в HTML ідуть у ТОМУ САМОМУ
 // порядку — тест-замок звіряє кількість <th> і <td>.
-//   🧮: МММ LiQ, праворуч «МММ-new» (Новий МММ тієї ж монети); «Сила росте» і
-//       «⏱ Росте» замінено на «Запас», як у МММ-new (вимога 04.10).
-//   🆕: МММ-new, праворуч «МММ-LiQ», далі «Запас» — як у TradingView-оверлеї;
+//   🧮: МММ LiQ, праворуч «МММ-Trend» (Новий МММ тієї ж монети); «Сила росте» і
+//       «⏱ Росте» замінено на «Запас», як у МММ-Trend (вимога 04.10).
+//   🆕: МММ-Trend, праворуч «МММ-LiQ», далі «Запас» — як у TradingView-оверлеї;
 //       «Сила росте», «⏱ Росте», «Ціна» і «Готовність» тут прибрано
 //       («Готовність» гальмувала сторінку — вимога 01.10).
 _MMB.old.cols = ['status', 'mm', 'new', 'state', 'runway', 'price', 'pchg', 'f1', 'f4'];
@@ -13541,7 +13541,7 @@ function _mmTgSummary(s) {
     const on = [];
     const off = [];
     (s.mm_bias_tg === false ? off : on).push('⚖️ банер');
-    (s.mmn_bias_tg === false ? off : on).push('🆕 банер NEW');
+    (s.mmn_bias_tg === false ? off : on).push('🧮 банер Trend');
     (s.mmc_bias_tg === false ? off : on).push('⚡ банер CTR');
     (s.mmf_bias_tg === false ? off : on).push('🔮 банер Local');
     (s.mmp_bias_tg === false ? off : on).push('🧭 банер Pull');
@@ -13792,7 +13792,7 @@ function _ffWantedSections() {
     if (vis('fund-body')) want.push('fund');
     // 🧮 МММ-монітор: до 200+ рядків на полл — просимо лише коли розгорнуто.
     if (vis('mm-body')) want.push('mm');
-    // 🆕 МММ-new — та сама логіка, власна секція (`mmn`).
+    // 🧮 МММ-Trend — та сама логіка, власна секція (`mmn`).
     if (vis('mmn-body')) want.push('mmn');
     // ⚡ МММ-CTR — своя секція (`mmc`).
     if (vis('mmc-body')) want.push('mmc');
@@ -13949,7 +13949,7 @@ function lhApply(d) {
             + (cur !== tab
                 ? ` <span style="color:#fbbf24">· банер зараз ${w(cur)} — перескан попереду</span>`
                 : '');
-        dEl.title = 'Бік відбору задає банер 🆕 МММ-NEW: 🟢 LONG → беремо '
+        dEl.title = 'Бік відбору задає банер 🧮 МММ-Trend: 🟢 LONG → беремо '
             + 'монети з масою ліквідності ВИЩЕ ціни ≥ порогу, 🔴 SHORT → НИЖЧЕ '
             + 'ціни. ⚖ рівновага — скан не запускається взагалі (відбирати нема '
             + 'в який бік), і біржу ми при цьому не смикаємо.';
@@ -14089,7 +14089,7 @@ function lhRender() {
         const why = !_lhMeta.enabled
             ? '🔌 Сканер вимкнено — увімкніть тумблер у шапці або натисніть «💧 Сканувати»'
             : (!_lhMeta.dir
-               ? '⚖ Банер 🆕 МММ-NEW без напрямку — відбирати нема в який бік'
+               ? '⚖ Банер 🧮 МММ-Trend без напрямку — відбирати нема в який бік'
                : (_lhMeta.ts ? 'Жодна монета не пройшла поріг маси'
                              : 'Ще не сканували'));
         tb.innerHTML = `<tr><td colspan="4" class="tm-empty-msg">${why}</td></tr>`;
@@ -14854,7 +14854,7 @@ function renderFuelFilter(d) {
     // перевірки порожній `mm_monitor` (секцію просто не просили, бо гармошка
     // згорнута) стер би таблицю і виглядав би як «МММ зник».
     if (_served.mm && d.mm_monitor) mmApplyState(d.mm_monitor, 'old');
-    // 🆕 МММ-new — та сама перевірка `served`, свій блок.
+    // 🧮 МММ-Trend — та сама перевірка `served`, свій блок.
     if (_served.mmn && d.mm_new) mmApplyState(d.mm_new, 'new');
     if (_served.mmc && d.mm_ctr) mmApplyState(d.mm_ctr, 'ctr');
     if (_served.mmf && d.mm_fc) mmApplyState(d.mm_fc, 'fc');
@@ -14901,7 +14901,7 @@ function renderFuelFilter(d) {
     setIf('ff-mm-monitor-enabled', s.mm_monitor_enabled !== false);  // default true
     // 🐢 Антиспам банера монітора (секунди підтвердження статусу).
     setIf('ff-mm-bias-confirm', String(s.mm_bias_confirm_sec != null ? s.mm_bias_confirm_sec : 120));
-    // 🆕 МММ-new — свій тумблер і своє вікно антиспаму (ідентично 🧮).
+    // 🧮 МММ-Trend — свій тумблер і своє вікно антиспаму (ідентично 🧮).
     setIf('ff-mm-new-enabled', s.mm_new_enabled !== false);  // default true
     setIf('ff-mm-ctr-enabled', s.mm_ctr_enabled !== false);  // ⚡ default true
     setIf('ff-mmc-bias-confirm', String(s.mmc_bias_confirm_sec != null ? s.mmc_bias_confirm_sec : 120));
@@ -16008,7 +16008,7 @@ async function saveFuelFilterSettings() {
         // 🐢 Скільки новий статус банера мусить протриматись, перш ніж його
         // покажуть (антиспам). 0 = миттєво.
         mm_bias_confirm_sec: parseInt(_v('ff-mm-bias-confirm', '120') || '0', 10),
-        // 🆕 МММ-new — ті самі три параметри, свої ключі.
+        // 🧮 МММ-Trend — ті самі три параметри, свої ключі.
         mm_new_enabled: _c('ff-mm-new-enabled'),
         mmn_str_min: _mmMinStr(_MMB.new, 'all'),
         mmn_str_mins: Object.assign({}, _MMB.new.strMins),
@@ -16262,32 +16262,26 @@ const FUEL_TOOLTIP = "МММ — тиск маркетмейкера на цін
 // МММ columns and the 💰 funding table): coloured direction dot + strength
 // 0..100% + trend arrow + mini-bar + a colour-coded band word at the END.
 //   dir: 'LONG'|'SHORT'|null(=balanced),  now/prev: 0..100 strength (or null)
-// 🧠 Комірка «МММ-Decision» у таблицях ВІДКРИТИХ УГОД (вимога 22.10, замість
-// «🧮 МММ LiQ» і «🆕 МММ-NEW»). `pos.mmd` приходить ГОТОВИМ з `/api/tm/state`
-// (кеш вердиктів двигуна — той самий, що таблиця блоку 🧠 МММ-Decision), тож
-// нічого не рахуємо. Вигляд — компактна версія `_mmDecCell` (бік · % · слово).
-const _MMD_TRADE_WORD = { good: 'СИЛ', marginal: 'СЕР', poor: 'СЛАБ' };
+// 🧮 Комірка «МММ-Trend» у таблицях ВІДКРИТИХ УГОД (вимога 26.10; до того —
+// 🧠 МММ-Decision). `pos.mmd` (історична назва поля) приходить ГОТОВИМ з
+// `/api/tm/state` — ті самі `fuels` двигуна, що таблиця блоку МММ-Trend, тож
+// нічого не рахуємо. Вигляд: бік · сила%.
 function mmdTradeCellHTML(p) {
     const m = p && p.mmd;
     if (!m) {
-        return '<td><span style="color:#6b7280" title="Вердикту МММ-Decision по цій монеті ще немає (рахується порціями за такт двигуна)">—</span></td>';
+        return '<td><span style="color:#6b7280" title="Даних 🧮 МММ-Trend по цій монеті ще немає">—</span></td>';
     }
-    const word = (typeof _MMD_V_UA !== 'undefined' && _MMD_V_UA[m.verdict]) || '';
-    const tip = `🧠 МММ-Decision: ${m.headline || (m.mm || 'NEUTRAL')}${word ? ' · ' + word : ''}`
-        + (m.confidence ? ` · впевненість ${m.confidence}` : '') + ` · перевага ${m.strength}%`;
+    const tip = `🧮 МММ-Trend: ${m.mm || '⚖ рівновага'} · сила ${m.strength}%`;
     if (m.mm !== 'LONG' && m.mm !== 'SHORT') {
-        return `<td><span title="${tip}" style="font-family:monospace;color:#8b93a7;white-space:nowrap">⚖ NEUTRAL</span></td>`;
+        return `<td><span title="${tip}" style="font-family:monospace;color:#8b93a7;white-space:nowrap">⚖ ${m.strength}%</span></td>`;
     }
     const col = m.mm === 'LONG' ? '#4ade80' : '#f87171';
-    const wcol = m.verdict === 'good' ? col : (m.verdict === 'poor' ? '#8b93a7' : '#fbbf24');
-    const sw = _MMD_TRADE_WORD[m.verdict] || '';
     return `<td><span title="${tip}" style="display:inline-flex;align-items:center;font-family:monospace;white-space:nowrap;font-size:0.74rem">`
         + `<span style="width:14px;color:${col};font-weight:900">${m.mm === 'LONG' ? '▲' : '▼'}</span>`
-        + `<b style="width:34px;text-align:right;color:${col}">${m.prob != null ? m.prob + '%' : '—'}</b>`
-        + `<span style="width:34px;margin-left:5px;text-align:center;border:1px solid ${wcol};border-radius:3px;font-size:0.6rem;color:${wcol}">${sw}</span>`
+        + `<b style="width:34px;text-align:right;color:${col}">${m.strength}%</b>`
         + `</span></td>`;
 }
-// 🚨 Сигнальна колонка поруч (вимога 22.10): чи МММ-Decision іде ЗА угодою.
+// 🚨 Сигнальна колонка поруч: чи 🧮 МММ-Trend іде ЗА угодою (з 26.10; до того — Decision).
 // Рівень рахує бекенд (`dec_trade_alert`, від ПІКУ цієї угоди) — фронт лише
 // фарбує: ok ✓ зелений · weaker ↓ бурштин · neutral ⚖ бурштин · against ⚠
 // червоний із блиманням (угода йде проти напрямку — звернути увагу).
@@ -16300,7 +16294,7 @@ const _MMD_ALERT = {
 function mmdAlertCellHTML(p) {
     const a = p && p.mmd && p.mmd.alert;
     if (!a || !_MMD_ALERT[a.level]) {
-        return '<td><span style="color:#6b7280" title="Сигналу ще немає — немає вердикту МММ-Decision">—</span></td>';
+        return '<td><span style="color:#6b7280" title="Сигналу ще немає — немає даних 🧮 МММ-Trend">—</span></td>';
     }
     const st = _MMD_ALERT[a.level];
     const tip = `🚨 ${a.text}` + (a.peak_align != null ? ` · пік за угоду ${a.peak_align}%` : '')
@@ -16456,7 +16450,7 @@ const SIGNAL_BADGES_JS = {
 const ENGINE_BADGES_JS = {
     'Q1': '🎯 Черга-1', 'Q2': '🎯 Черга-2', 'Q3': '🎯 Готовність', 'Q4': '🎯 Черга-4',
     'Q3-VOB(funding)': '💰 VOB+Шари', 'POC-сетап': '🎯 POC-сетап',
-    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-new', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Local', 'MMP': '🧭 МММ-Pull', 'MMD': '🧠 МММ-Decision', 'MMR': '🧩 МММ-Готовність',
+    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-Trend', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Local', 'MMP': '🧭 МММ-Pull', 'MMD': '🧠 МММ-Decision', 'MMR': '🧩 МММ-Готовність',
     'EXH': '🔥 Виснаженість', 'FF': '🔥 FF', 'direct': '⚡ Прямий',
 };
 const SIGNAL_ICON_JS = {
@@ -17823,17 +17817,17 @@ function breakevenCloseCellHTML(p, isShadow) {
 }
 
 // 🧱 Пер-угодний Opposite OB Exit (вимога 22.10). Позначка 🤖 = увімкнув автомат
-// (сигнал 🚨 МММ-Decision перейшов у «тенденцію до закриття»), ✏️ = людина.
+// (сигнал 🚨 МММ-Trend перейшов у «тенденцію до закриття»), ✏️ = людина.
 function oppObExitCellHTML(p, isShadow) {
     const sym = p.symbol;
     const shFlag = isShadow ? 'true' : 'false';
     const on = !!p.opp_ob_exit;
     const auto = on && p.opp_ob_exit_by === 'auto';
     const tip = on
-        ? (auto ? '🧱 Opposite OB Exit УВІМКНЕНО АВТОМАТОМ — сигнал 🚨 МММ-Decision показав тенденцію до закриття. Вимкнеться сам, коли 🚨 повернеться до ✓.'
+        ? (auto ? '🧱 Opposite OB Exit УВІМКНЕНО АВТОМАТОМ — сигнал 🚨 МММ-Trend показав тенденцію до закриття. Вимкнеться сам, коли 🚨 повернеться до ✓.'
                 : '🧱 Opposite OB Exit УВІМКНЕНО ВРУЧНУ — автомат його не вимикає.')
           + ' Закриє угоду на НОВОМУ протилежному OB (TF — з Exit Rules), незалежно від глобального тумблера.'
-        : '🧱 Opposite OB Exit по угоді вимкнено. Увімкнеться автоматично, коли 🚨 МММ-Decision перейде в «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ».';
+        : '🧱 Opposite OB Exit по угоді вимкнено. Увімкнеться автоматично, коли 🚨 МММ-Trend перейде в «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ».';
     return `
         <td style="text-align:center;white-space:nowrap">
             <label class="tm-toggle-mini" title="${tip}">

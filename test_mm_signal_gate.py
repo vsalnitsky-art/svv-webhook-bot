@@ -1,10 +1,10 @@
-"""🧮 СИГНАЛИ ЧЕРЕЗ МММ-NEW (вимога 01.10; до того — через МММ-монітор, 29.09).
+"""🧮 СИГНАЛИ ЧЕРЕЗ МММ-Trend (вимога 01.10; до того — через МММ-монітор, 29.09).
 
 01.10 дослівно: «Кожен сигнал має перевірятись у таблиці "Список монет" банера
-"МММ-NEW" за відповідним напрямком. Якщо сигнал LONG і є ця монета в таблиці в
+"МММ-Trend" за відповідним напрямком. Якщо сигнал LONG і є ця монета в таблиці в
 закладці LONG — пропускаємо далі по алгоритму. Інакше ігноруємо з відповідним
 записом в лог бота. І додай ще тумблер (за замовчуванням вимкнений), пропускати
-сигнали лише за напрямком банера "МММ-NEW".»
+сигнали лише за напрямком банера "МММ-Trend".»
 
 Історія (29.09):
 
@@ -67,7 +67,7 @@ def test_passes_when_the_coin_sits_in_the_signal_tab():
                        (_v(coin=None), 'немає у «Списку монет»')):
         app, ok, chip, why = sc.mm_gate_decide(view, 'LONG')
         _check(app and not ok and word in why and '✗' in chip, (view, why))
-    print('✓ пропуск лише коли монета у вкладці того ж напрямку МММ-new')
+    print('✓ пропуск лише коли монета у вкладці того ж напрямку МММ-Trend')
 
 
 def test_banner_toggle_adds_the_banner_requirement():
@@ -79,7 +79,7 @@ def test_banner_toggle_adds_the_banner_requirement():
     _check(ok and 'банер LONG' in chip, chip)
     _check(not sc.mm_gate_decide(_v(coin='SHORT'), 'LONG', True)[1],
            'банер збігся, але вкладка чужа — відмова')
-    print('✓ тумблер «за банером МММ-NEW» додає вимогу напрямку банера')
+    print('✓ тумблер «за банером МММ-Trend» додає вимогу напрямку банера')
 
 
 def test_short_mirrors_long():
@@ -92,7 +92,7 @@ def test_monitor_off_or_missing_does_not_apply():
     for view in ({}, None, _v(on=False, d=None, coin=None)):
         app, ok, chip, why = sc.mm_gate_decide(view, 'LONG')
         _check(not app and ok and not chip, (view, app, ok, chip))
-    print('✓ блок МММ-new вимкнено / FF недоступний — умова не діє')
+    print('✓ блок МММ-Trend вимкнено / FF недоступний — умова не діє')
 
 
 # ── 2. читання монітора ─────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ def _ff(bias=None, snap=None, on=True):
     f._mm_bias_new = bias or {}
     f._mmn_snapshot = snap or {}
     f._mmn_on = on
-    # МММ LiQ свідомо подаємо ПРОТИЛЕЖНИМ — ворота мусять читати саме МММ-new.
+    # МММ LiQ свідомо подаємо ПРОТИЛЕЖНИМ — ворота мусять читати саме МММ-Trend.
     f._mm_bias = {'dir': 'SHORT'}
     f._mm_snapshot = {k: {'status': 'SHORT'} for k in (snap or {})}
     f._mm_mon_on = True
@@ -122,15 +122,15 @@ def test_view_reads_the_same_snapshot_that_sorts_the_tabs():
     _check(f.mm_gate_view('BBBUSDT')['coin'] == 'FLAT', 'без напрямку = ⚖')
     _check(f.mm_gate_view('CCCUSDT')['coin'] is None, 'немає рядка = None')
     _check(_ff({'dir': None}).mm_gate_view('X')['dir'] is None, 'банер ⚖')
-    _check(_ff(on=False).mm_gate_view('X')['on'] is False, 'МММ-new вимкнено')
-    print('✓ mm_gate_view читає готовий знімок МММ-new (не МММ LiQ)')
+    _check(_ff(on=False).mm_gate_view('X')['on'] is False, 'МММ-Trend вимкнено')
+    print('✓ mm_gate_view читає готовий знімок МММ-Trend (не МММ LiQ)')
 
 
 def test_capture_records_the_monitor_switch():
     src = ast.get_source_segment(open(ffm.__file__, encoding='utf-8').read(),
                                  next(n for n in ast.walk(ast.parse(open(ffm.__file__, encoding='utf-8').read()))
                                       if isinstance(n, ast.FunctionDef) and n.name == '_mm_capture'))
-    _check('self._mmn_on = _new' in src, 'такт пише стан тумблера МММ-new')
+    _check('self._mmn_on = _new' in src, 'такт пише стан тумблера МММ-Trend')
     print('✓ такт двигуна запамʼятовує тумблер монітора (без походу в БД у воротах)')
 
 
@@ -146,7 +146,7 @@ def test_gate_blocks_signal_in_shared_gate():
     try:
         sc._mm_gate_view = lambda sym, book='new': _v(d='SHORT', coin='SHORT')
         ok, why, detail = S._signal_allowed(_ns(), 'AAAUSDT', 'LONG')
-        _check(ok is False and 'вкладці' in why and '🆕МММ-new' in detail,
+        _check(ok is False and 'вкладці' in why and '🧮МММ-Trend' in detail,
                (ok, why, detail))
         sc._mm_gate_view = lambda sym, book='new': _v(d='SHORT', coin='LONG')
         ns = _ns(); ns._settings['mm_gate_banner'] = True
@@ -192,7 +192,7 @@ def test_setting_default_whitelist_and_ui():
            and "'mm_gate_enabled', 'mm_gate_banner'," in _SC_SRC, 'у білому списку')
     for cid in ('sm-mm-gate', 'sm-mm-gate-banner', 'sm-mmo-gate', 'sm-mmo-gate-banner'):
         _check(f'id="{cid}"' in _HTML, cid)
-    _check('Через МММ-NEW' in _HTML and 'Через МММ-МОНІТОР' in _HTML
+    _check('Через МММ-Trend' in _HTML and 'Через МММ-МОНІТОР' in _HTML
            and 'за банером МММ-МОНІТОР' in _HTML, 'підписи')
     _check("['sm-mmo-gate', 'sm-mmo-gate-banner', 'mmo_gate_enabled', 'mmo_gate_banner']" in _HTML,
            'updateMmGate шле обидві пари')
@@ -232,7 +232,7 @@ def test_both_gates_apply_independently():
         _check(ok is False and 'МММ-МОНІТОР' in why and seen == ['old'], (why, seen))
         seen.clear(); ns._settings['mm_gate_enabled'] = True
         ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
-        _check(ok is False and seen == ['new', 'old'] and '🆕МММ-new[вкладка LONG]:✓' in detail,
+        _check(ok is False and seen == ['new', 'old'] and '🧮МММ-Trend[вкладка LONG]:✓' in detail,
                (seen, detail))
     finally:
         sc._mm_gate_view = old
@@ -270,7 +270,7 @@ def test_liq_gate_is_separate_and_off_by_default():
     old_r, old_m = sc._liq_gate_row, sc._mm_gate_view
     calls = []
     try:
-        sc._mm_gate_view = lambda sym, book='new': {}            # МММ-NEW не діє
+        sc._mm_gate_view = lambda sym, book='new': {}            # МММ-Trend не діє
         sc._liq_gate_row = lambda sym, book='new': calls.append(sym) or (True, None)
         ns = _ns(); ns._settings['liq_gate_enabled'] = True
         ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
@@ -328,7 +328,7 @@ def test_view_carries_the_threshold_of_the_coin_tab_per_book():
                               'BBBUSDT': {'status': None, 'strength': 7}})
     f._mmn_str_mins_c = {'all': 5, 'LONG': 40, 'SHORT': 60, 'flat': 3}
     f._mm_str_mins_c = {'all': 0, 'LONG': 0, 'SHORT': 25, 'flat': 0}
-    _check(f.mm_gate_view('AAAUSDT')['str_min'] == 40, 'вкладка LONG МММ-new')
+    _check(f.mm_gate_view('AAAUSDT')['str_min'] == 40, 'вкладка LONG МММ-Trend')
     _check(f.mm_gate_view('BBBUSDT')['str_min'] == 3, 'вкладка ⚖')
     _check(f.mm_gate_view('AAAUSDT', 'old')['str_min'] == 25, '🧮: SHORT-вкладка свого блоку')
     print('✓ ⚑ view несе поріг САМЕ вкладки монети і САМЕ свого блоку')

@@ -90,7 +90,7 @@ def _mk(limited=False, enabled=True, mon=True):
     # тести «нічого не роблять».
     ff._mm_bias_cand = {}
     ff._mm_bias_new, ff._mm_bias_new_since, ff._mm_bias_new_cand = {}, 0.0, {}
-    # 🆕 Книга «МММ-new» (01.10) — свій знімок, історія і таймери.
+    # 🆕 Книга «МММ-Trend» (01.10) — свій знімок, історія і таймери.
     ff._mmn_snapshot, ff._mmn_snapshot_ts, ff._mmn_stats = {}, 0.0, {}
     ff._mmn_str_hist, ff._mmn_price_hist = {}, {}
     ff._mmn_grow_since, ff._mmn_state_since = {}, {}
@@ -115,7 +115,7 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._mmr_state_since, ff._mmr_price_hist = {}, {}
     ff._mm_bias_rdy, ff._mm_bias_rdy_since, ff._mm_bias_rdy_cand = {}, 0.0, {}
     ff._mmr_scan, ff._mmr_scan_running, ff._mmr_scan_at = {}, False, 0.0
-    # ⚠️ «Готовність» МММ-new ПРИБРАНО (01.10): якби код знову полiз у грейдер,
+    # ⚠️ «Готовність» МММ-Trend ПРИБРАНО (01.10): якби код знову полiз у грейдер,
     # цей стаб упіймав би виклик (див. test_readiness_column_is_gone).
     ff._compute_setup_calls = []
     ff._compute_setup = lambda sym, d, s: ff._compute_setup_calls.append(sym)
@@ -1076,12 +1076,12 @@ def test_symbol_opens_tradingview_exactly_like_the_watchlist():
 
 def test_ui_monitor_columns_contract():
     """04.10: «"СИЛА РОСТЕ" і "РОСТЕ" — видалити», на їхньому місці «Запас»,
-    як у таблиці МММ-new."""
+    як у таблиці МММ-Trend."""
     i = _HTML.index('id="mm-table"')
     tbl = _HTML[i:_HTML.index('</table>', i)]
     import re as _re
     # ⚠️ Кількість колонок звіряємо зі СКЛАДОМ, а не з магічним числом.
-    _cols = ['Символ', '📍 Стан', 'МММ LiQ', 'МММ-new', '⏱ У стані', 'Запас',
+    _cols = ['Символ', '📍 Стан', 'МММ LiQ', 'МММ-Trend', '⏱ У стані', 'Запас',
              'Ціна', 'Рух', '🔮 1H', '🔮 4H']
     for _c in _cols:
         _check(_c in tbl, f'немає колонки «{_c}»')
@@ -1100,7 +1100,7 @@ def test_ui_monitor_columns_contract():
 
 
 def test_monitor_rows_carry_the_runway_of_the_new_mmm():
-    """«Запас» у 🧮 — ТОЙ САМИЙ `runway` Нового МММ, що в таблиці МММ-new."""
+    """«Запас» у 🧮 — ТОЙ САМИЙ `runway` Нового МММ, що в таблиці МММ-Trend."""
     ff = _mk()
     rw = {'dir': 'LONG', 'room_pct': 3.2, 'label': 'до пулу'}
     fuels = _fuels(AAAUSDT=-0.5)
@@ -1110,7 +1110,7 @@ def test_monitor_rows_carry_the_runway_of_the_new_mmm():
     o = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}
     n = {r['symbol']: r for r in ff.mm_monitor_state(book='new')['rows']}
     _check(o['AAAUSDT']['runway'] == rw == n['AAAUSDT']['runway'], (o, n))
-    print('✓ «Запас» у 🧮 і в МММ-new — одне число')
+    print('✓ «Запас» у 🧮 і в МММ-Trend — одне число')
 
 
 def test_timer_uses_the_shared_one_second_ticker():
@@ -1413,7 +1413,7 @@ def test_open_trades_keep_their_mm_even_when_the_monitor_is_off():
     чужого тумблера означало б «вимкнув монітор — зникли числа в угодах».
     Але сама ТАБЛИЦЯ МОНІТОРА при цьому лишається порожньою."""
     ff = _mk(mon=False)
-    # ⚠️ МММ-new вимикаємо явно: з 01.10 його колонка «МММ-LiQ» теж читає
+    # ⚠️ МММ-Trend вимикаємо явно: з 01.10 його колонка «МММ-LiQ» теж читає
     # `_fuel_dir_legacy`, а тут перевіряємо САМЕ 🧮 тумблер.
     ff._settings['mm_new_enabled'] = False
     ff._fuel_managed = {'BTCUSDT': {}}
@@ -1432,7 +1432,7 @@ def test_state_route_enriches_positions_from_the_snapshot():
     src = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
     i = src.index("@app.route('/api/tm/state')")
     blk = src[i:i + 4000]
-    # ⚠️ 22.10: колонки «🧮 МММ LiQ»/«🆕 МММ-NEW» замінено на 🧠 МММ-Decision.
+    # ⚠️ 22.10: колонки «🧮 МММ LiQ»/«🧮 МММ-Trend» замінено на 🧠 МММ-Decision.
     _check('dec_trade_for' in blk, 'маршрут не читає кеш МММ-Decision')
     _check("pos['mmd']" in blk, 'позиція не отримує поле mmd')
     # ⚠️ Жодних розрахунків на цьому гарячому ендпоінті.
@@ -1449,8 +1449,9 @@ def test_ui_trades_tables_got_the_column_and_the_right_colspan():
                        ('tm-shadow-open-table', 'No paper positions')):
         i = _HTML.index(f'id="{tid}"')
         tbl = _HTML[i:_HTML.index('</table>', i)]
-        _check('🧠 МММ-Decision</th>' in tbl, f'{tid}: немає заголовка колонки')
-        _check('МММ LiQ</th>' not in tbl and 'МММ-NEW</th>' not in tbl,
+        # ⚠️ 26.10: колонку 🧠 МММ-Decision замінено на 🧮 МММ-Trend.
+        _check('🧮 МММ-Trend</th>' in tbl, f'{tid}: немає заголовка колонки')
+        _check('МММ LiQ</th>' not in tbl and 'МММ-Decision</th>' not in tbl,
                f'{tid}: старі МММ-колонки мусять зникнути')
         n = len(_re.findall(r'<th[\s>]', tbl))
         m = _re.search(r'colspan="(\d+)"', tbl)
@@ -2964,7 +2965,7 @@ def test_the_state_of_work_is_in_the_table_signature():
     print('✓ 📍 стан монети входить у сигнатуру таблиці')
 
 
-# ═══════════ 31. БАНЕР «🧮 МММ-new» + КОЛОНКА «🆕 Новий МММ» (30.09) ═══════
+# ═══════════ 31. БАНЕР «🧮 МММ-Trend» + КОЛОНКА «🆕 Новий МММ» (30.09) ═══════
 def test_both_banners_share_one_pure_step():
     """Одна формула на два банери: `mm_bias_step` із ключами джерела."""
     snap = {'A': {'status': 'LONG', 'strength': 50, 'new_status': 'SHORT', 'new_strength': 20},
@@ -2985,15 +2986,15 @@ def test_new_banner_persists_and_dies_with_the_monitor():
     ff = _mk()
     ff._settings.update({'mm_bias_confirm_sec': 0})
     _cap(ff, AAAUSDT=0.80)
-    _check(ff._mm_bias_new_since > 0, 'таймер МММ-new не стартував')
+    _check(ff._mm_bias_new_since > 0, 'таймер МММ-Trend не стартував')
     import inspect
     _check("'mm_bias_new_since'" in inspect.getsource(FF._persist_state),
-           'таймер МММ-new мусить персиститись')
+           'таймер МММ-Trend мусить персиститись')
     _check("mm_bias_new_since" in inspect.getsource(FF._load_state), 'і відновлюватись')
     ff._settings['mm_monitor_enabled'] = False
     _cap(ff, AAAUSDT=0.80)
-    _check(not ff.mm_monitor_state().get('bias_new'), 'вимкнений монітор гасить і МММ-new')
-    print('✓ 💾 МММ-new переживає рестарт і гасне разом із монітором')
+    _check(not ff.mm_monitor_state().get('bias_new'), 'вимкнений монітор гасить і МММ-Trend')
+    print('✓ 💾 МММ-Trend переживає рестарт і гасне разом із монітором')
 
 
 # ═══ 32. 💪 ОДНОСТАЙНІСТЬ ≠ СИЛА (скарга 30.09) ═══════════════════════════
@@ -3026,11 +3027,11 @@ def _hist(now, start, end, span=900, pts=31):
             for i in range(pts)]
 
 
-# ═══ 34. 🗑 «РУХ РИНКУ» + «КОРЕКЦІЯ» ВИДАЛЕНО · 🆕 МММ-new — ВЛАСНИЙ БЛОК (01.10)
+# ═══ 34. 🗑 «РУХ РИНКУ» + «КОРЕКЦІЯ» ВИДАЛЕНО · 🧮 МММ-Trend — ВЛАСНИЙ БЛОК (01.10)
 # Дослівно: «Банер "📈 РУХ РИНКУ" і весь алгоритм дій з ним — коректно
 # видалити. Банер "Корекція" і весь алгоритм дій з ним — коректно видалити.
 # Банер "МММ-монітор" і "Список монет" … в спільний блок під єдиний тумблер …
-# Банер "🧮 МММ-NEW" також має мати свій блок із тумблером. Організуй все
+# Банер "🧮 МММ-Trend" також має мати свій блок із тумблером. Організуй все
 # повністю ідентичне так, як працює "МММ-монітор", тільки на алгоритмі
 # "Новий МММ".»
 def test_move_and_correction_are_gone_from_the_engine():
@@ -3088,7 +3089,7 @@ def test_new_book_follows_the_NEW_mm():
     # Та сама форма рядка — тому фронт малює обидва блоки ОДНИМ рендером.
     _check(set(old['rows'][0]) == set(new['rows'][0]),
            'форма рядка в книгах мусить бути однакова')
-    print('✓ 🆕 МММ-new: свій знімок із НОВОГО МММ, та сама форма рядка')
+    print('✓ 🧮 МММ-Trend: свій знімок із НОВОГО МММ, та сама форма рядка')
 
 
 def test_new_toggle_off_stops_only_the_new_book():
@@ -3099,15 +3100,15 @@ def test_new_toggle_off_stops_only_the_new_book():
     _check(new['enabled'] is False and new['rows'] == [] and not new['bias'], new)
     _check(not ff._mmn_snapshot, 'вимкнений блок не рахує знімок узагалі')
     _check(ff.mm_monitor_state()['rows'], '🧮 МММ-монітор при цьому працює')
-    print('✓ 🔌 вимкнений МММ-new повністю мовчить, 🧮 не зачеплений')
+    print('✓ 🔌 вимкнений МММ-Trend повністю мовчить, 🧮 не зачеплений')
 
 
 def test_old_toggle_off_does_not_kill_the_new_book():
     ff = _mk(mon=False)
     _cap(ff, AAAUSDT=0.80)
     _check(ff.mm_monitor_state()['rows'] == [], '🧮 вимкнено — рядків немає')
-    _check(ff.mm_monitor_state(book='new')['rows'], 'МММ-new живе своїм тумблером')
-    print('✓ 🔌 вимкнений 🧮 не гасить МММ-new')
+    _check(ff.mm_monitor_state(book='new')['rows'], 'МММ-Trend живе своїм тумблером')
+    print('✓ 🔌 вимкнений 🧮 не гасить МММ-Trend')
 
 
 def test_group_open_from_the_new_book_uses_the_new_direction():
@@ -3124,12 +3125,12 @@ def test_group_open_from_the_new_book_uses_the_new_direction():
     _cap(ff2, AAAUSDT=0.5)
     r2 = ff2.group_open(['AAAUSDT'], book='new')
     _check(r2['opened'] == 0 and 'вимкнено' in str(r2.get('reason', '')), r2)
-    print('✓ ✋ групове відкриття з МММ-new: напрямок і мітка свої')
+    print('✓ ✋ групове відкриття з МММ-Trend: напрямок і мітка свої')
 
 
 def test_the_new_book_engine_label_is_mirrored():
     labels = importlib.import_module('detection.signal_labels')
-    _check(labels.ENGINE_BADGES.get('MMN', '').endswith('МММ-new'),
+    _check(labels.ENGINE_BADGES.get('MMN', '').endswith('МММ-Trend'),
            labels.ENGINE_BADGES.get('MMN'))
     _check("'MMN':" in _HTML, 'дзеркало у smart_money.html')
     js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
@@ -3140,7 +3141,7 @@ def test_the_new_book_engine_label_is_mirrored():
 def test_ui_new_block_is_a_full_twin_of_the_monitor():
     i = _HTML.index('id="mmn-panel"')
     _check(_HTML.index('id="mm-monitor-panel"') < i < _HTML.index('id="liq-hunter-panel"'),
-           'МММ-new стоїть одразу під 🧮 МММ-монітором')
+           'МММ-Trend стоїть одразу під 🧮 МММ-монітором')
     for el in ('ff-mm-new-enabled', 'mmn-body', 'mmn-off', 'mmn-live',
                'mmn-bias-banner', 'mmn-bias-bar', 'mmn-bias-timer', 'mmn-bias-status',
                'mmn-bias-cand', 'mmn-bias-restored', 'mmn-min-str', 'mmn-str-out',
@@ -3153,7 +3154,7 @@ def test_ui_new_block_is_a_full_twin_of_the_monitor():
     def _sorts(tid):
         a = _HTML.index(f'id="{tid}"')
         return _re.findall(r'data-mmsort="(\w+)"', _HTML[a:_HTML.index('</table>', a)])
-    # 01.10 (друга вимога того ж дня): склад колонок РІЗНИЙ — у 🧮 є «МММ-new»,
+    # 01.10 (друга вимога того ж дня): склад колонок РІЗНИЙ — у 🧮 є «МММ-Trend»,
     # у 🆕 — «МММ-LiQ», «Готовність», «Запас», без «Сила росте»/«Росте»/«Ціна».
     _check(_sorts('mm-table') == ['symbol', 'status', 'strength', 'newstr', 'state',
                                   'runway', 'price', 'pchg'], _sorts('mm-table'))
@@ -3161,8 +3162,8 @@ def test_ui_new_block_is_a_full_twin_of_the_monitor():
                                    'state', 'runway', 'pchg'], _sorts('mmn-table'))
     _check("mmSort('runway','new')" in _HTML and "mmSetDir('LONG','new')" in _HTML,
            'кнопки нового блоку працюють зі своєю книгою')
-    _check("'mmn', 'mmnlist'" in _HTML, 'гармошки МММ-new у _PANEL_IDS')
-    _check("'mmnlist'" in _HTML.split('_PANEL_CLOSED_BY_DEFAULT = ')[1].split(';')[0], 'список МММ-new згорнутий за замовч.')
+    _check("'mmn', 'mmnlist'" in _HTML, 'гармошки МММ-Trend у _PANEL_IDS')
+    _check("'mmnlist'" in _HTML.split('_PANEL_CLOSED_BY_DEFAULT = ')[1].split(';')[0], 'список МММ-Trend згорнутий за замовч.')
     _check("want.push('mmn')" in _HTML and '_served.mmn && d.mm_new' in _HTML,
            'секція mmn просиситься і читається за served')
     for key in ('mm_new_enabled', 'mmn_bias_confirm_sec'):
@@ -3170,8 +3171,8 @@ def test_ui_new_block_is_a_full_twin_of_the_monitor():
     # Поріг «Сила ≥» приходить у стані блоку (`str_min`), як і в 🧮.
     _check("mmn_str_min: _mmMinStr(_MMB.new, 'all')" in _HTML
            and 'mmn_str_mins: Object.assign({}, _MMB.new.strMins)' in _HTML,
-           'поріг МММ-new не зберігається')
-    print('✓ 🖥 МММ-new — повний двійник 🧮: свій тумблер, банер, фільтри, список')
+           'поріг МММ-Trend не зберігається')
+    print('✓ 🖥 МММ-Trend — повний двійник 🧮: свій тумблер, банер, фільтри, список')
 
 
 def test_ui_monitor_is_one_block_under_one_switch():
@@ -3231,10 +3232,10 @@ console.log(JSON.stringify({o:[..._MMB.old.sel], n:[..._MMB.new.sel],
     print('✓ JS: дві книги — свій вибір, свій фільтр, свій банер')
 
 
-# ═══ 35. СУСІДНІ КОЛОНКИ: 🧮 «МММ-new» · 🆕 «МММ-LiQ» + «Готовність» + «Запас» (01.10)
+# ═══ 35. СУСІДНІ КОЛОНКИ: 🧮 «МММ-Trend» · 🆕 «МММ-LiQ» + «Готовність» + «Запас» (01.10)
 # Дослівно: «В таблицю "🧮 МММ-монітор" поверни колонку "Новий МММ", назви її
-# "МММ-new". А для таблиці "МММ-new" поверни колонку "МММ-LiQ"… В таблиці
-# "МММ-new" видали колонки "СИЛА РОСТЕ" і "РОСТЕ" і "ЦІНА", а додай колонку
+# "МММ-Trend". А для таблиці "МММ-Trend" поверни колонку "МММ-LiQ"… В таблиці
+# "МММ-Trend" видали колонки "СИЛА РОСТЕ" і "РОСТЕ" і "ЦІНА", а додай колонку
 # "запас" і "Готовність", як в скрипті для TradingView.»
 def test_each_table_carries_the_other_mm_from_the_same_numbers():
     """`_cap` подає Новий МММ ПРОТИЛЕЖНИМ до МММ LiQ — тож сусідня колонка
@@ -3245,10 +3246,10 @@ def test_each_table_carries_the_other_mm_from_the_same_numbers():
     new = {r['symbol']: r for r in ff.mm_monitor_state(book='new')['rows']}['AAAUSDT']
     _check(old['mm'] == 'LONG' and old['new_mm'] == 'SHORT' and old['new_strength'] == 60, old)
     _check(new['mm'] == 'SHORT' and new['liq_mm'] == 'LONG' and new['liq_strength'] == 60, new)
-    # Одне число в обох таблицях: колонка «МММ-new» у 🧮 = рядок МММ-new.
+    # Одне число в обох таблицях: колонка «МММ-Trend» у 🧮 = рядок МММ-Trend.
     _check(old['new_strength'] == new['strength'] and new['liq_strength'] == old['strength'],
            (old, new))
-    print('✓ «МММ-new» у 🧮 і «МММ-LiQ» у 🆕 — ті самі числа, що сусідня книга')
+    print('✓ «МММ-Trend» у 🧮 і «МММ-LiQ» у 🆕 — ті самі числа, що сусідня книга')
 
 
 def test_legacy_is_computed_once_per_coin_for_both_books():
@@ -3282,7 +3283,7 @@ def test_readiness_column_is_gone():
     _check('setup' not in ff.mm_monitor_state(book='new')['rows'][0], 'поле setup у рядку')
     for bad in ('_mmSetupCell', 'data-mmsort="setup"', "'setup', 'state'"):
         _check(bad not in _HTML, f'на сторінці лишилось «{bad}»')
-    print('✓ 🗑 «Готовність» у МММ-new прибрано разом із розрахунком')
+    print('✓ 🗑 «Готовність» у МММ-Trend прибрано разом із розрахунком')
 
 
 def test_status_carries_the_side_of_the_open_trade():
@@ -3311,14 +3312,14 @@ def test_ui_tables_have_the_requested_columns():
         return [_re.sub(r'<[^>]+>', '', x).strip()
                 for x in _re.findall(r'<th[^>]*>(.*?)</th>', t, flags=_re.S)]
     o, n = heads('mm-table'), heads('mmn-table')
-    _check(o.index('МММ-new') == o.index('МММ LiQ') + 1, f'«МММ-new» праворуч від МММ LiQ: {o}')
-    _check(n.index('МММ-LiQ') == n.index('МММ-new') + 1, f'«МММ-LiQ» праворуч від МММ-new: {n}')
+    _check(o.index('МММ-Trend') == o.index('МММ LiQ') + 1, f'«МММ-Trend» праворуч від МММ LiQ: {o}')
+    _check(n.index('МММ-LiQ') == n.index('МММ-Trend') + 1, f'«МММ-LiQ» праворуч від МММ-Trend: {n}')
     _check('Запас' in n, n)
     for gone in ('Сила росте', '⏱ Росте', 'Ціна', 'Готовність'):
-        _check(gone not in n, f'у МММ-new лишилась колонка «{gone}»: {n}')
+        _check(gone not in n, f'у МММ-Trend лишилась колонка «{gone}»: {n}')
     _check("_MMB.new.cols = ['status', 'mm', 'liq', 'state', 'runway', 'pchg', 'f1', 'f4']" in _HTML
            and len(n) == 10, 'склад JS-колонок = заголовки')
-    print('✓ UI: 🧮 +«МММ-new»; 🆕 +«МММ-LiQ»/«Запас», без росту, ціни й Готовності')
+    print('✓ UI: 🧮 +«МММ-Trend»; 🆕 +«МММ-LiQ»/«Запас», без росту, ціни й Готовності')
 
 
 def test_js_new_table_draws_the_new_cells():
@@ -3339,7 +3340,7 @@ console.log(JSON.stringify({n:document.getElementById('mmn-tbody').innerHTML,
     rows = d['n'].split('</tr>')
     tr_a = [x for x in rows if 'AAAUSDT' in x][0]
     tr_b = [x for x in rows if 'BBBUSDT' in x][0]
-    _check(tr_a.count('<td') == 10, f'10 комірок у МММ-new: {tr_a.count("<td")}')
+    _check(tr_a.count('<td') == 10, f'10 комірок у МММ-Trend: {tr_a.count("<td")}')
     _check('3.2%</b> <span' in tr_a and tr_a.index('3.2%') < tr_a.index('↓'),
            'стрілка запасу праворуч від значення')
     _check('♾' in tr_b and 'простір відкритий' not in tr_b.split('title=')[0]

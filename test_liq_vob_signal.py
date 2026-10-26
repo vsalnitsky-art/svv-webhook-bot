@@ -137,11 +137,11 @@ class _FF:
         self.coin_mm = coin_mm or {}
 
     def mm_bias_new(self):
-        # З 01.10 банер для сигналу — 🆕 МММ-NEW.
+        # З 01.10 банер для сигналу — 🧮 МММ-Trend.
         return {'dir': self.direction}
 
     def mm_gate_view(self, sym):
-        # Вкладка монети у «Списку монет» МММ-NEW (той самий знімок, що ворота).
+        # Вкладка монети у «Списку монет» МММ-Trend (той самий знімок, що ворота).
         m = self.coin_mm.get(sym, self.direction)
         return {'on': True, 'dir': self.direction,
                 'coin': (m if m in ('LONG', 'SHORT', 'FLAT') else None)}
@@ -494,7 +494,7 @@ def test_coin_must_sit_in_the_banner_tab_of_the_mm_monitor():
     row = _table_row(side='LONG')
     ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm='LONG',
                                   check_coin=True)
-    _check(ok and '🆕 МММ-NEW вкладка LONG' in note, note)
+    _check(ok and '🧮 МММ-Trend вкладка LONG' in note, note)
     ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm='FLAT',
                                   check_coin=True)
     _check(not ok and '⚖ Рівновага' in note, note)
@@ -504,7 +504,7 @@ def test_coin_must_sit_in_the_banner_tab_of_the_mm_monitor():
     ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm=None,
                                   check_coin=True)
     _check(not ok and 'немає у «Списку монет»' in note, f'немає даних ≠ за напрямком: {note}')
-    print('✓ вкладка монети в 🆕 МММ-NEW мусить збігатися з банером')
+    print('✓ вкладка монети в 🧮 МММ-Trend мусить збігатися з банером')
 
 
 def test_vob_match_reads_the_coin_mm_from_the_monitor_snapshot():
@@ -523,11 +523,11 @@ def test_vob_match_reads_the_coin_mm_from_the_monitor_snapshot():
     body = src.split('def coin_mm(')[1].split('\n    def ')[0]
     _check('mm_gate_view' in body and 'mm_snapshot_for' not in body
            and '_fuel_dir_legacy' not in body,
-           'джерело — знімок МММ-NEW (той самий, що ворота «Через МММ-NEW»)')
+           'джерело — знімок МММ-Trend (той самий, що ворота «Через МММ-Trend»)')
     hb = src.split('def bias_dir(')[1].split('\n    def ')[0]
     _check('mm_bias_new' in hb and 'mm_bias()' not in hb,
-           'банер — 🆕 МММ-NEW, не 🧮 МММ-монітор')
-    print('✓ vob_match бере банер і вкладку монети з 🆕 МММ-NEW')
+           'банер — 🧮 МММ-Trend, не 🧮 МММ-монітор')
+    print('✓ vob_match бере банер і вкладку монети з 🧮 МММ-Trend')
 
 
 def test_a_coin_that_turns_into_the_banner_tab_fires_later():

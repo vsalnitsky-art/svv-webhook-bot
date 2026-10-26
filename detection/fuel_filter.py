@@ -255,7 +255,7 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
     """⚖️ ОДИН крок важеля банера → `(bias, since, cand)`. ЧИСТА функція.
 
     Єдине джерело правила для ОБОХ банерів: «🧮 МММ-монітор» (старий МММ,
-    `status`/`strength`) і «🧮 МММ-new» (новий МММ, `new_status`/
+    `status`/`strength`) і «🧮 МММ-Trend» (новий МММ, `new_status`/
     `new_strength`). Дві копії формули з часом розійшлися б.
 
         важіль = (Σ сила LONG − Σ сила SHORT) / Σ сила ВСІХ монет
@@ -676,6 +676,23 @@ MMD_PEAK_FORGET_SEC = 3600.0   # пік закритої угоди забува
 MMD_AUTO_WARMUP_SEC = 300.0
 
 
+def trend_mm_cur(f) -> Optional[Dict]:
+    """🧮 Поточний стан МММ-Trend (Новий МММ) по монеті з рядка `fuels` двигуна —
+    РІВНО ті числа, що в таблиці блоку МММ-Trend (`_mmn_snapshot` будується з
+    тих самих `fuels`). ЧИСТА. Форма — як у `dec_mm_dir` (`dir`/`status`/
+    `strength`), тож `dec_trade_alert` судить її тим самим правилом.
+    Немає `dir` → None («невідомо» ≠ «рівновага»)."""
+    if not isinstance(f, dict) or not f:
+        return None
+    try:
+        d = max(-1.0, min(1.0, float(f.get('dir'))))
+    except (TypeError, ValueError):
+        return None
+    st = f.get('status') if f.get('status') in ('LONG', 'SHORT') else None
+    return {'dir': round(d, 3), 'status': st,
+            'strength': int(round(abs(d) * 100)), 'verdict': ''}
+
+
 def mmd_trade_key(symbol, side, opened_at) -> str:
     """Ключ піку: 'SYM|SIDE|opened_at(цілі секунди)'. Одне правило на двигун
     (оновлення піку) і на ендпоінт (читання), щоб ключі не розійшлись."""
@@ -686,7 +703,7 @@ def mmd_trade_key(symbol, side, opened_at) -> str:
     return f"{str(symbol or '').upper()}|{str(side or '').upper()}|{oa}"
 
 
-def dec_trade_alert(side, cur, peak=None) -> Optional[Dict]:
+def dec_trade_alert(side, cur, peak=None, name: str = 'МММ-Trend') -> Optional[Dict]:
     """🚨 Стан МММ-Decision ВІДНОСНО відкритої угоди. ЧИСТА.
 
     `cur`/`peak` — результат `dec_mm_dir` (поточний / найсильніший у бік угоди
@@ -720,15 +737,15 @@ def dec_trade_alert(side, cur, peak=None) -> Optional[Dict]:
             p_rank = DEC_VERDICT_RANK.get(str(peak.get('verdict') or ''), 0)
     drop = (p_align - align) if p_align is not None else 0
     if st and st != sd:
-        level, text = 'against', f'ПРОТИ угоди: Decision {st}'
+        level, text = 'against', f'ПРОТИ угоди: {name} {st}'
     elif not st:
-        level, text = 'neutral', 'Decision NEUTRAL — напрямок угоди втрачено'
+        level, text = 'neutral', f'{name} ⚖ рівновага — напрямок угоди втрачено'
     else:
         c_rank = DEC_VERDICT_RANK.get(str(cur.get('verdict') or ''), 0)
         if drop >= MMD_WEAK_PP or (p_rank and c_rank and c_rank < p_rank):
-            level, text = 'weaker', f'слабшає: перевага {align}% (пік {p_align}%)'
+            level, text = 'weaker', f'{name} слабшає: сила {align}% (пік {p_align}%)'
         else:
-            level, text = 'ok', f'за угодою: перевага {align}%'
+            level, text = 'ok', f'{name} за угодою: сила {align}%'
     return {'level': level, 'align': align, 'peak_align': p_align,
             'drop': drop, 'text': text}
 
@@ -802,7 +819,7 @@ _MM_BIAS_TG = {
     'old': {'pref': '_mm_bias_tg', 'key': 'mm_bias_tg', 'bias': '_mm_bias',
             'title': '🧮 <b>МММ-МОНІТОР</b>', 'name': 'МММ-монітор', 'src': 'MMM'},
     'new': {'pref': '_mmn_bias_tg', 'key': 'mmn_bias_tg', 'bias': '_mm_bias_new',
-            'title': '🆕 <b>МММ-NEW</b>', 'name': 'МММ-NEW', 'src': 'MMN'},
+            'title': '🧮 <b>МММ-Trend</b>', 'name': 'МММ-Trend', 'src': 'MMN'},
     # ⚡ Банер МММ-CTR (вимога 17.10) — та сама тема, власний тумблер.
     'ctr': {'pref': '_mmc_bias_tg', 'key': 'mmc_bias_tg', 'bias': '_mm_bias_ctr',
             'title': '⚡ <b>МММ-CTR</b>', 'name': 'МММ-CTR', 'src': 'MMC'},
@@ -823,7 +840,7 @@ _MM_BIAS_TG = {
 _MM_BOOKS = {
     'old': {'name': '🧮 МММ-монітор', 'key': 'mm_monitor_enabled',
             'snap': '_mm_snapshot', 'eng': 'MMM'},
-    'new': {'name': '🧮 МММ-new', 'key': 'mm_new_enabled',
+    'new': {'name': '🧮 МММ-Trend', 'key': 'mm_new_enabled',
             'snap': '_mmn_snapshot', 'eng': 'MMN'},
     'ctr': {'name': '⚡ МММ-CTR', 'key': 'mm_ctr_enabled',
             'snap': '_mmc_snapshot', 'eng': 'MMC'},
@@ -873,7 +890,7 @@ DEFAULT_SETTINGS = {
     # Новий стан (LONG / SHORT / ⚖) мусить протриматись стільки, перш ніж
     # банер його ПОКАЖЕ. 0 = перемикати миттєво (стара поведінка).
     'mm_bias_confirm_sec': 120,
-    # 🆕 БЛОК «МММ-new» (вимога 01.10): власний тумблер (вимкнено → блок на
+    # 🆕 БЛОК «МММ-Trend» (вимога 01.10): власний тумблер (вимкнено → блок на
     # НОВОМУ МММ не рахується і не показується), власний поріг «Сила ≥» і
     # власне вікно підтвердження статусу банера.
     'mm_new_enabled': True,
@@ -934,7 +951,7 @@ DEFAULT_SETTINGS = {
     # ГОЛОВНИЙ вміст тієї теми. ⚠️ Майстер-вимикач теми лишається в кабінеті
     # адміна (`notify_btc`) — він гасить УСІ потоки теми (банер · ₿-сеанс).
     'mm_bias_tg': True,
-    # 📨 Те саме для банера «🆕 МММ-NEW» (вимога 09.10: «таке саме, як і в
+    # 📨 Те саме для банера «🧮 МММ-Trend» (вимога 09.10: «таке саме, як і в
     # 🧮 МММ-МОНІТОР») — та сама тема, ВЛАСНИЙ тумблер.
     'mmn_bias_tg': True,
     # 🔮 Те саме для банера «МММ-Local» (вимога 15.10) — власний тумблер.
@@ -1589,7 +1606,7 @@ class FuelFilterDaemon:
         # 🧮 Чи увімкнено монітор — пише `_mm_capture` на кожному такті. None =
         # ще жодного такту (тоді `mm_gate_view` один раз читає налаштування).
         self._mm_mon_on: Optional[bool] = None
-        self._mmn_on: Optional[bool] = None   # 🆕 тумблер блоку «МММ-new»
+        self._mmn_on: Optional[bool] = None   # 🆕 тумблер блоку «МММ-Trend»
         # ⚑ Пороги «Сила ≥» вкладок обох книг (вимога 12.10) — кеш для воріт
         # сигналів, щоб ворота не ходили в БД на кожен сигнал. None = ще не
         # зчитано (тоді ворота беруть налаштування напряму).
@@ -1603,11 +1620,11 @@ class FuelFilterDaemon:
         # СВІДОМО не персиститься: вікно підтвердження коротке, і після
         # рестарту чесніше почати відлік заново, ніж «дорахувати» чужий.
         self._mm_bias_cand: Dict = {}
-        # ⚖️ Банер «🧮 МММ-new» (новий МММ) — ті самі три поля, окремий стан.
+        # ⚖️ Банер «🧮 МММ-Trend» (новий МММ) — ті самі три поля, окремий стан.
         self._mm_bias_new: Dict = {}
         self._mm_bias_new_since: float = 0.0
         self._mm_bias_new_cand: Dict = {}
-        # 🆕 БЛОК «МММ-new» (вимога 01.10): ВЛАСНИЙ знімок на НОВОМУ МММ і ті
+        # 🆕 БЛОК «МММ-Trend» (вимога 01.10): ВЛАСНИЙ знімок на НОВОМУ МММ і ті
         # самі історії, що в 🧮 монітора, — окремі, бо монети й стани інші.
         # Рядок знімка має ТУ САМУ форму (`status`/`dir`/`strength`), тож усі
         # трекери й рендер спільні — відрізняється РІВНО джерело.
@@ -1671,6 +1688,11 @@ class FuelFilterDaemon:
         # 🚨 Пік вердикту в бік угоди {'SYM|SIDE': вердикт} — база сигналу
         # «МММ-Decision слабшає» у таблицях угод. Персиститься.
         self._mmd_trade_peak: Dict[str, Dict] = {}
+        # 🧮 Колонки 🚨 угод з 26.10 живуть на МММ-Trend: поточний стан по
+        # монетах у відкритій угоді {SYM: (ts, cur)} і ВЛАСНИЙ пік (стара база
+        # була в шкалі Decision — змішувати не можна). Пік персиститься.
+        self._mmt_trade: Dict[str, tuple] = {}
+        self._mmt_trade_peak: Dict[str, Dict] = {}
         self._mm_bias_dec: Dict = {}
         self._mm_bias_dec_since: float = 0.0
         self._mm_bias_dec_cand: Dict = {}
@@ -1706,7 +1728,7 @@ class FuelFilterDaemon:
         # почався з рестарту — тоді тривалість позначається ↻ як неповна.
         self._mm_bias_tg_at = 0.0
         self._mm_bias_tg_restored = False
-        # 🆕 Ті самі позначки для банера МММ-NEW (свої — книги незалежні).
+        # 🆕 Ті самі позначки для банера МММ-Trend (свої — книги незалежні).
         self._mmn_bias_tg_last = '__none__'
         self._mmn_bias_tg_at = 0.0
         self._mmn_bias_tg_restored = False
@@ -2267,7 +2289,7 @@ class FuelFilterDaemon:
         s['mmn_bias_tg'] = bool(s.get('mmn_bias_tg', True))
         s['mmf_bias_tg'] = bool(s.get('mmf_bias_tg', True))
         s['mmc_bias_tg'] = bool(s.get('mmc_bias_tg', True))
-        # 🆕 БЛОК «МММ-new» (вимога 01.10) — ВЛАСНІ тумблер, поріг «Сила ≥» і
+        # 🆕 БЛОК «МММ-Trend» (вимога 01.10) — ВЛАСНІ тумблер, поріг «Сила ≥» і
         # вікно підтвердження статусу банера. Ті самі межі, що в 🧮 монітора.
         s['mm_new_enabled'] = bool(s.get('mm_new_enabled', True))
         try:
@@ -3008,7 +3030,7 @@ class FuelFilterDaemon:
             if self._mm_bias_since > time.time() + 60:
                 self._mm_bias_since = 0.0
                 self._mm_bias = {}
-            # ⚖️ Банер «МММ-new» — те саме відновлення (таймер не обнуляється).
+            # ⚖️ Банер «МММ-Trend» — те саме відновлення (таймер не обнуляється).
             _mbn = st.get('mm_bias_new')
             self._mm_bias_new = dict(_mbn) if isinstance(_mbn, dict) else {}
             if self._mm_bias_new:
@@ -3082,8 +3104,8 @@ class FuelFilterDaemon:
                 self._mm_bias_rdy = {}
             # 🚨 Пік вердикту в бік угоди — щоб рестарт не «скидав» базу сигналу
             # «слабшає» (інакше вже ослаблий вердикт став би новим піком).
-            _mtp = st.get('mmd_trade_peak')
-            self._mmd_trade_peak = ({str(k): dict(v) for k, v in _mtp.items()
+            _mtp = st.get('mmt_trade_peak')
+            self._mmt_trade_peak = ({str(k): dict(v) for k, v in _mtp.items()
                                      if isinstance(v, dict)}
                                     if isinstance(_mtp, dict) else {})
             # 💰 Опрацьовані funding-VOB — без них перший показ після рестарту
@@ -3187,7 +3209,7 @@ class FuelFilterDaemon:
                 'mm_bias_since': float(self._mm_bias_since or 0.0),
                 'mm_bias_new': dict(getattr(self, '_mm_bias_new', {}) or {}),
                 'mm_bias_new_since': float(getattr(self, '_mm_bias_new_since', 0.0) or 0.0),
-                # 🆕 Таймери стану монет блоку «МММ-new» — те саме правило.
+                # 🆕 Таймери стану монет блоку «МММ-Trend» — те саме правило.
                 'mmn_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmn_state_since', {})
@@ -3217,7 +3239,7 @@ class FuelFilterDaemon:
                 'mm_bias_dec': dict(getattr(self, '_mm_bias_dec', {}) or {}),
                 'mm_bias_dec_since': float(getattr(self, '_mm_bias_dec_since', 0.0) or 0.0),
                 # 🚨 Пік вердикту в бік угоди (база сигналу «слабшає»).
-                'mmd_trade_peak': dict(getattr(self, '_mmd_trade_peak', {}) or {}),
+                'mmt_trade_peak': dict(getattr(self, '_mmt_trade_peak', {}) or {}),
                 'funding_vob_seen': dict(getattr(self, '_vob_seen', {}) or {}),
                 'mmd_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
@@ -4485,9 +4507,9 @@ class FuelFilterDaemon:
         «слабшає»). Ключ несе `opened_at`, тож нова угода — нова база; записи
         угод, яких не бачили > MMD_PEAK_FORGET_SEC, забуваються (а не одразу:
         TM міг ще не піднятись після рестарту — пік не має зникнути)."""
-        peaks = getattr(self, '_mmd_trade_peak', None)
+        peaks = getattr(self, '_mmt_trade_peak', None)
         if peaks is None:
-            self._mmd_trade_peak = peaks = {}
+            self._mmt_trade_peak = peaks = {}
         _now = float(now) if now else time.time()
         pairs = set(pairs or ())
         for k in list(peaks):
@@ -4496,11 +4518,11 @@ class FuelFilterDaemon:
                 v['seen'] = _now
             elif _now - float(v.get('seen') or _now) > MMD_PEAK_FORGET_SEC:
                 peaks.pop(k, None)
-        cache = getattr(self, '_mmd_dec', {}) or {}
+        cache = getattr(self, '_mmt_trade', {}) or {}
         for key in pairs:
             S, sd = key.split('|')[:2]
             hit = cache.get(S)
-            cur = dec_mm_dir(hit[1]) if hit else None
+            cur = hit[1] if hit else None
             if not cur:
                 continue
             a = dec_trade_alert(sd, cur, None)
@@ -4555,18 +4577,19 @@ class FuelFilterDaemon:
                 print(f"[FF] mmd→opp-ob auto warn {k}: {e}")
 
     def dec_trade_for(self, pairs) -> Dict[str, Dict]:
-        """🧠 МММ-Decision + 🚨 сигнал по відкритих угодах — ЛИШЕ ЧИТАННЯ.
+        """🧮 МММ-Trend + 🚨 сигнал по відкритих угодах — ЛИШЕ ЧИТАННЯ.
 
-        `pairs` — [(символ, бік, opened_at)]. Вердикт — з ТОГО САМОГО кешу `_mmd_dec`, що
-        живить таблицю блоку 🧠 МММ-Decision (одне число в обох місцях), сигнал
-        — `dec_trade_alert` від піку цієї угоди. ⚠️ Жодних розрахунків:
+        ⚠️ Назва історична (до 26.10 колонки жили на 🧠 МММ-Decision). Тепер
+        `pairs` — [(символ, бік, opened_at)], стан — `_mmt_trade` (ті самі
+        `fuels` двигуна, що й таблиця блоку МММ-Trend), сигнал —
+        `dec_trade_alert` від піку цієї угоди. ⚠️ Жодних розрахунків:
         ендпоінт `/api/tm/state` опитується кожні 5с.
-        → {mmd_trade_key(...): {mm, strength, prob, verdict, headline, confidence, ts,
+        → {mmd_trade_key(...): {mm, strength, src, ts,
                         alert{level, align, peak_align, drop, text}}}
         """
         with self._lock:
-            cache = dict(getattr(self, '_mmd_dec', {}) or {})
-            peaks = dict(getattr(self, '_mmd_trade_peak', {}) or {})
+            cache = dict(getattr(self, '_mmt_trade', {}) or {})
+            peaks = dict(getattr(self, '_mmt_trade_peak', {}) or {})
         _W = self._mm_watched()
         out = {}
         for sym, side, opened_at in (pairs or ()):
@@ -4575,14 +4598,12 @@ class FuelFilterDaemon:
             if _W is not None and S not in _W:
                 continue    # 👁 монету прибрано зі списку — стану не показуємо
             hit = cache.get(S)
-            cur = dec_mm_dir(hit[1]) if hit else None
+            cur = hit[1] if hit else None
             if not cur:
                 continue
             key = mmd_trade_key(S, sd, opened_at)
             out[key] = {'mm': cur['status'], 'strength': cur['strength'],
-                        'prob': cur['prob'], 'verdict': cur['verdict'],
-                        'headline': cur['headline'],
-                        'confidence': cur['confidence'], 'ts': hit[0],
+                        'src': 'trend', 'ts': hit[0],
                         'alert': dec_trade_alert(sd, cur, peaks.get(key))}
         return out
 
@@ -4865,9 +4886,9 @@ class FuelFilterDaemon:
 
     def _mm_track_bias_new(self, snap: Dict, now: float,
                            settings: Optional[Dict] = None):
-        """⚖️ Банер блоку «🆕 МММ-new» — той самий важіль, але з НОВОГО МММ.
+        """⚖️ Банер блоку «🧮 МММ-Trend» — той самий важіль, але з НОВОГО МММ.
 
-        `snap` — ВЛАСНИЙ знімок книги МММ-new (`_mmn_snapshot`), рядки якого
+        `snap` — ВЛАСНИЙ знімок книги МММ-Trend (`_mmn_snapshot`), рядки якого
         мають ту саму форму, що в 🧮 (`status`/`strength`), тож розрахунок —
         ТА САМА чиста `mm_bias_step` (формула, ⚖ у знаменнику, гістерезис,
         вікно підтвердження). Вікно підтвердження — ВЛАСНЕ
@@ -4891,7 +4912,7 @@ class FuelFilterDaemon:
     def _mm_bias_alert(self, side, now: float, settings: Dict, book: str = 'old'):
         """📨 «Банер 🧮 МММ-монітора змінив статус» — у групу, тему 🧮.
 
-        `book='new'` — те саме для банера «🆕 МММ-NEW» (вимога 09.10): та сама
+        `book='new'` — те саме для банера «🧮 МММ-Trend» (вимога 09.10): та сама
         тема, ВЛАСНИЙ тумблер `mmn_bias_tg` і ВЛАСНІ позначки `_mmn_bias_tg_*`
         (банери незалежні — спільна позначка ковтала б події одне одного).
 
@@ -4981,7 +5002,7 @@ class FuelFilterDaemon:
     def _mm_clear_book(self, new: bool = False, keep_snapshot: bool = False):
         """Погасити книгу монітора (знімок + історії + банер).
 
-        `new=False` — 🧮 МММ-монітор (МММ LiQ), `new=True` — 🆕 МММ-new.
+        `new=False` — 🧮 МММ-монітор (МММ LiQ), `new=True` — 🧮 МММ-Trend.
         ⚠️ «Заморожені» числа, які вже ніхто не перераховує, виглядають як
         живі — гірше за порожній блок, тож вимкнений тумблер чистить ВСЕ.
         `keep_snapshot=True` — гасимо лише банер (знімок 🧮 лишається для монет
@@ -5021,7 +5042,7 @@ class FuelFilterDaemon:
 
         ДВІ НЕЗАЛЕЖНІ КНИГИ (вимога 01.10), кожна під СВОЇМ тумблером:
           • 🧮 МММ-монітор (`mm_monitor_enabled`) — МММ LiQ (`_fuel_dir_legacy`);
-          • 🆕 МММ-new (`mm_new_enabled`) — НОВИЙ МММ (`_fuel_dir_smoothed`,
+          • 🧮 МММ-Trend (`mm_new_enabled`) — НОВИЙ МММ (`_fuel_dir_smoothed`,
             тобто РІВНО ті `fuels`, за якими двигун ухвалює рішення).
         Рядки обох книг мають ОДНУ форму (`status`/`dir`/`strength`/…), тож
         трекери, банер і рендер спільні — відрізняється лише джерело.
@@ -5071,7 +5092,7 @@ class FuelFilterDaemon:
                 _fc[sym] = self._mm_fc_remember(sym, self._mm_forecast(_fe, sym), _now)
             return _fc[sym]
 
-        # МММ LiQ теж потрібен ОБОМ книгам (у МММ-new це колонка «МММ-LiQ»):
+        # МММ LiQ теж потрібен ОБОМ книгам (у МММ-Trend це колонка «МММ-LiQ»):
         # рахуємо раз на монету за такт. Це арифметика над уже кешованим
         # `_liq_state`, мережі не коштує.
         _lg: Dict[str, Optional[Dict]] = {}
@@ -5120,13 +5141,13 @@ class FuelFilterDaemon:
                     # Ціна — з нового зрізу: legacy її не повертає, а `mark_price`
                     # в обох один (знімок liq-map + `_live_price`).
                     'mark_price': f.get('mark_price'),
-                    # 🆕 Колонка «МММ-new» у 🧮 таблиці — ТІ САМІ `fuels`, що
-                    # живлять книгу МММ-new (одне число в обох таблицях).
+                    # 🆕 Колонка «МММ-Trend» у 🧮 таблиці — ТІ САМІ `fuels`, що
+                    # живлять книгу МММ-Trend (одне число в обох таблицях).
                     'new_status': (f.get('status')
                                    if f.get('status') in ('LONG', 'SHORT') else None),
                     'new_strength': int(round(abs(_nd) * 100)),
                     # 🎯 «Запас» (вимога 04.10) — ТОЙ САМИЙ `runway` Нового МММ,
-                    # що в таблиці МММ-new і TradingView-оверлеї.
+                    # що в таблиці МММ-Trend і TradingView-оверлеї.
                     'runway': f.get('runway'),
                     **_fcast(sym),
                 }
@@ -5153,7 +5174,7 @@ class FuelFilterDaemon:
                 # згаслим блоком не рахуємо.
                 self._mm_clear_book(new=False, keep_snapshot=True)
 
-        # ═══ 🆕 КНИГА «МММ-new» ═══
+        # ═══ 🆕 КНИГА «МММ-Trend» ═══
         if not _new:
             self._mm_clear_book(new=True)
         else:
@@ -5370,18 +5391,18 @@ class FuelFilterDaemon:
             # показуємо (🧠/🚨 порожні, 🧱-автомат її не чіпає).
             _tpairs = {p for p in _tpairs if p.split('|')[0] in _W}
             _tsyms = {x for x in _tsyms if x in _W}
+        # 🧮 Колонки 🚨 угод (з 26.10) — МММ-Trend: ті самі `fuels`, що будують
+        # таблицю блоку МММ-Trend; монети в угоді є в `fuels` завжди, тож стан
+        # є навіть при вимкненому блоці. Decision для угод більше не рахуємо.
+        with self._lock:
+            self._mmt_trade = {S: (_now, c) for S in _tsyms
+                               for c in (trend_mm_cur((fuels or {}).get(S)),) if c}
+        self._mmd_track_peaks(_tpairs, _now)
+        self._mmd_apply_trade_alerts()
         if not _dcb:
-            self._mm_clear_dec(keep_syms=_tsyms)
-            if _tsyms:
-                self._mmd_decisions({S: (fuels or {}).get(S) or {} for S in _tsyms},
-                                    _now, extra=_tsyms, period=mmd_refresh_sec(s))
-            self._mmd_track_peaks(_tpairs, _now)
-            self._mmd_apply_trade_alerts()
+            self._mm_clear_dec()
         else:
-            _decs = self._mmd_decisions(fuels, _now, extra=_tsyms,
-                                        period=mmd_refresh_sec(s))
-            self._mmd_track_peaks(_tpairs, _now)
-            self._mmd_apply_trade_alerts()
+            _decs = self._mmd_decisions(fuels, _now, period=mmd_refresh_sec(s))
             snap_d = {}
             for sym, f in (fuels or {}).items():
                 if not f:
@@ -6003,7 +6024,7 @@ class FuelFilterDaemon:
         """🧮 Рядки МММ-монітора — ЧИТАННЯ готового знімка, без розрахунків.
 
         `book='old'` — блок 🧮 МММ-монітор (МММ LiQ), `book='new'` — блок
-        🆕 МММ-new (НОВИЙ МММ). Форма відповіді ОДНА на обидва блоки: фронт
+        🧮 МММ-Trend (НОВИЙ МММ). Форма відповіді ОДНА на обидва блоки: фронт
         малює їх ТИМ САМИМ рендером (вимога 01.10: «повністю ідентичне»).
 
         Повертає {'rows': [...], 'ts', 'enabled', 'limited'}.
@@ -6142,7 +6163,7 @@ class FuelFilterDaemon:
                 'f4': v.get('f4'),
                 # 🆕 Сусідній показник (форма рядка ОДНА на обидві книги, тож
                 # поля є завжди; у «чужій» книзі вони просто None):
-                #   🧮 книга → «МММ-new» (Новий МММ монети);
+                #   🧮 книга → «МММ-Trend» (Новий МММ монети);
                 #   🆕 книга → «МММ-LiQ» і «Запас».
                 'new_mm': v.get('new_status'),
                 'new_strength': v.get('new_strength'),
@@ -6316,12 +6337,12 @@ class FuelFilterDaemon:
             return dict(getattr(self, '_mm_bias', {}) or {})
 
     def mm_bias_new(self) -> Dict:
-        """⚖️ ВАЖІЛЬ БАНЕРА «🆕 МММ-NEW» — ПУБЛІЧНЕ читання готового знімка.
+        """⚖️ ВАЖІЛЬ БАНЕРА «🧮 МММ-Trend» — ПУБЛІЧНЕ читання готового знімка.
 
         З 01.10 саме його читає 💧 Сканер ліквідності (бік відбору, перескан на
         фліпі, VOB-сигнал): «Більше перевірок на банері МММ-монітор не робимо».
         `dir` — ПІДТВЕРДЖЕНИЙ статус (гістерезис + вікно `mmn_bias_confirm_sec`).
-        Вимкнений блок МММ-new чистить знімок → `{}` (напрямку немає).
+        Вимкнений блок МММ-Trend чистить знімок → `{}` (напрямку немає).
         """
         with self._lock:
             return dict(getattr(self, '_mm_bias_new', {}) or {})
@@ -6349,16 +6370,16 @@ class FuelFilterDaemon:
             pass
 
     def mm_gate_view(self, symbol: str, book: str = 'new') -> Dict:
-        """🆕 Що каже блок «МММ-new» про монету — для воріт сигналів сканера
-        («🧮 Через МММ-NEW», вимога 01.10).
+        """🆕 Що каже блок «МММ-Trend» про монету — для воріт сигналів сканера
+        («🧮 Через МММ-Trend», вимога 01.10).
 
-        → `{'on': блок МММ-new увімкнено?, 'dir': напрямок БАНЕРА МММ-new
+        → `{'on': блок МММ-Trend увімкнено?, 'dir': напрямок БАНЕРА МММ-Trend
         (підтверджений) | None, 'coin': вкладка монети у «Списку монет»
-        МММ-new — 'LONG'/'SHORT'/'FLAT' | None (немає в знімку)}`.
+        МММ-Trend — 'LONG'/'SHORT'/'FLAT' | None (немає в знімку)}`.
         ⚠️ ЛИШЕ ЧИТАННЯ готового знімка `_mmn_snapshot` (урок B2): ворота
         кличуться на кожен сигнал і кожен тік 🔁 recheck Черги-4.
         ⚠️ `coin` — ТЕ САМЕ правило (`status`), що кладе монету у вкладку
-        🟢/🔴/⚖ таблиці МММ-new, інакше «монета у вкладці LONG» і рішення
+        🟢/🔴/⚖ таблиці МММ-Trend, інакше «монета у вкладці LONG» і рішення
         воріт могли б розійтись.
         """
         # `book='old'` (вимога 09.10) — те саме для блоку 🧮 МММ-монітор:
@@ -6445,7 +6466,7 @@ class FuelFilterDaemon:
         """✋ ГРУПОВЕ відкриття обраних монет МММ-монітора.
 
         `book='old'` — блок 🧮 МММ-монітор (напрямок = МММ LiQ), `book='new'` —
-        блок 🆕 МММ-new (напрямок = НОВИЙ МММ). Кожен блок відкриває рівно
+        блок 🧮 МММ-Trend (напрямок = НОВИЙ МММ). Кожен блок відкриває рівно
         за тим показником, який людина бачила в ЙОГО таблиці.
 
         Напрямок КОЖНОЇ монети — її власний МММ зі ЗНІМКА, тобто рівно те, що
@@ -12829,7 +12850,7 @@ class FuelFilterDaemon:
         # (лише читання знімка двигуна), але ганяти їх, коли гармошка згорнута,
         # немає сенсу — той самий принцип C2, що для Черги-4 і фандингу.
         _want_mm = (sections is None) or ('mm' in sections)
-        # 🆕 Блок «МММ-new» — той самий принцип, своя гармошка.
+        # 🆕 Блок «МММ-Trend» — той самий принцип, своя гармошка.
         _want_mmn = (sections is None) or ('mmn' in sections)
         # ⚡ Блок «МММ-CTR» — та сама схема.
         _want_mmc = (sections is None) or ('mmc' in sections)
@@ -13125,7 +13146,7 @@ class FuelFilterDaemon:
             'server_now': time.time(),
             # 🧮 МММ-монітор — готовий знімок двигуна (жодних розрахунків тут).
             'mm_monitor': (self.mm_monitor_state(settings) if _want_mm else None),
-            # 🆕 Блок «МММ-new» — та сама форма, книга НОВОГО МММ.
+            # 🆕 Блок «МММ-Trend» — та сама форма, книга НОВОГО МММ.
             'mm_new': (self.mm_monitor_state(settings, book='new')
                        if _want_mmn else None),
             # ⚡ Блок «МММ-CTR» — книга STC 1H+4H.

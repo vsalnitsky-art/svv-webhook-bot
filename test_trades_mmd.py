@@ -1,7 +1,7 @@
 """🧠 МММ-Decision + 🚨 сигнал у таблицях відкритих угод · OB 4H ліворуч ·
 Opposite OB Exit на 5m (вимога 22.10).
 
-Дослівно: «Прибери в таблицях відкритих угод колонки 🧮 МММ LiQ і 🆕 МММ-NEW, а
+Дослівно: «Прибери в таблицях відкритих угод колонки 🧮 МММ LiQ і 🧮 МММ-Trend, а
 замість них продублюй показник МММ-Decision і поруч додай сигнальну колонку,
 яка має інформувати сигнальним кольоровим попередженням, що показник у полі
 МММ-Decision змінився у слабшу сторону або взагалі став протилежним
@@ -100,55 +100,54 @@ def _ff(data, positions=None, shadow=None, dec_on=False):
     return ff, tm
 
 
-def test_open_trades_get_decision_even_when_the_block_is_off():
+def test_open_trades_get_trend_even_when_the_block_is_off():
+    """⚠️ 26.10: колонки 🧠/🚨 угод живуть на 🧮 МММ-Trend (ті самі `fuels`
+    двигуна, що таблиця блоку). Decision для угод більше НЕ рахується."""
     pos = {'BTCUSDT': {'side': 'LONG', 'opened_at': 1000.0}}
-    ff, tm = _ff({'BTCUSDT': _dec('LONG', 0.85), 'ETHUSDT': _dec('LONG', 0.9)},
-                 positions=pos)
+    ff, tm = _ff({'BTCUSDT': _dec('SHORT', 0.1)}, positions=pos)
+    ff._settings['mm_new_enabled'] = False
     ff._legacy = {'BTCUSDT': 0.3, 'ETHUSDT': 0.3}
-    ff._mm_capture(_mon._fuels(BTCUSDT=0.3, ETHUSDT=0.3), now=2000.0)
-    _check(tm.calls == ['BTCUSDT'], f'рахується ЛИШЕ монета в угоді: {tm.calls}')
-    _check(ff.mm_monitor_state(book='dec')['rows'] == [],
-           'вимкнений блок таблиці не показує')
-    r = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0)])
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.42, ETHUSDT=0.3), now=2000.0)
+    _check(tm.calls == [], f'Decision для угод не рахується: {tm.calls}')
+    r = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0), ('ETHUSDT', 'LONG', 1000.0)])
     k = _m.mmd_trade_key('BTCUSDT', 'LONG', 1000.0)
-    _check(r[k]['mm'] == 'LONG' and r[k]['prob'] == 85
-           and r[k]['alert']['level'] == 'ok', r)
-    print('✓ монета в угоді має вердикт навіть при вимкненому блоці 🧠 МММ-Decision')
+    _check(set(r) == {k}, f'лише монета в угоді: {r}')
+    _check(r[k]['mm'] == 'LONG' and r[k]['strength'] == 42
+           and r[k]['src'] == 'trend' and r[k]['alert']['level'] == 'ok', r)
+    print('✓ монета в угоді має стан МММ-Trend навіть при вимкненому блоці')
 
 
 def test_weakening_is_measured_from_the_trade_peak():
     pos = {'BTCUSDT': {'side': 'LONG', 'opened_at': 1000.0}}
-    data = {'BTCUSDT': _dec('LONG', 0.85)}
-    ff, tm = _ff(data, positions=pos)
-    fu = _mon._fuels(BTCUSDT=0.3)
-    ff._mm_capture(fu, now=2000.0)
-    data['BTCUSDT'] = _dec('LONG', 0.60)
-    ff._mm_capture(fu, now=2000.0 + 300 + 1)
+    ff, tm = _ff({}, positions=pos)
     k = _m.mmd_trade_key('BTCUSDT', 'LONG', 1000.0)
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.6), now=2000.0)
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=2030.0)
     a = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0)])[k]['alert']
-    _check(a['level'] == 'weaker' and a['peak_align'] == 70, a)
-    data['BTCUSDT'] = _dec('SHORT', 0.30)
-    ff._mm_capture(fu, now=2000.0 + 2 * 300 + 2)
+    _check(a['level'] == 'weaker' and a['peak_align'] == 60, a)
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.05), now=2060.0)
+    a = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0)])[k]['alert']
+    _check(a['level'] == 'neutral' and 'МММ-Trend' in a['text'], a)
+    ff._mm_capture(_mon._fuels(BTCUSDT=-0.4), now=2090.0)
     a = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0)])[k]['alert']
     _check(a['level'] == 'against', a)
-    # Пік не «опускається» разом із вердиктом.
-    _check(ff._mmd_trade_peak[k]['dir'] == 0.7, ff._mmd_trade_peak)
-    print('✓ «слабшає» міряється від ПІКУ угоди, протилежний → against')
+    _check(ff._mmt_trade_peak[k]['dir'] == 0.6, ff._mmt_trade_peak)
+    print('✓ «слабшає» міряється від ПІКУ угоди, ⚖ → neutral, протилежний → against')
 
 
 def test_new_trade_does_not_inherit_old_peak_and_restart_keeps_it():
     ff, _ = _ff({})
-    ff._mmd_dec = {'BTCUSDT': (1.0, _dec('LONG', 0.9))}
+    ff._mmt_trade = {'BTCUSDT': (1.0, _m.trend_mm_cur({'dir': 0.5, 'status': 'LONG'}))}
     old = _m.mmd_trade_key('BTCUSDT', 'LONG', 1000)
     ff._mmd_track_peaks({old}, now=5000.0)
     new = _m.mmd_trade_key('BTCUSDT', 'LONG', 9000)
     _check(old != new, 'ключ несе opened_at')
     ff._mmd_track_peaks(set(), now=5000.0 + 60)
-    _check(old in ff._mmd_trade_peak, 'короткий пропуск (TM ще не піднявся) пік не стирає')
+    _check(old in ff._mmt_trade_peak, 'короткий пропуск (TM ще не піднявся) пік не стирає')
     ff._mmd_track_peaks(set(), now=5000.0 + _m.MMD_PEAK_FORGET_SEC + 61)
-    _check(old not in ff._mmd_trade_peak, 'пік закритої угоди забувається')
-    _check("'mmd_trade_peak'" in _SRC and "st.get('mmd_trade_peak')" in _SRC,
-           'пік персиститься в стан FF')
+    _check(old not in ff._mmt_trade_peak, 'пік закритої угоди забувається')
+    _check("'mmt_trade_peak'" in _SRC and "st.get('mmt_trade_peak')" in _SRC,
+           'пік персиститься в стан FF (власний ключ — шкала Decision не змішується)')
     print('✓ нова угода — нова база, пік переживає рестарт і забувається згодом')
 
 
@@ -171,7 +170,7 @@ def _js(body):
     for f in ('function mmdTradeCellHTML(', 'function mmdAlertCellHTML('):
         a = _HTML.index(f)
         src += _HTML[a:_HTML.index('\n}', a) + 2] + '\n'
-    for c in ('const _MMD_TRADE_WORD', 'const _MMD_ALERT'):
+    for c in ('const _MMD_ALERT',):
         a = _HTML.index(c)
         src = _HTML[a:_HTML.index('};', a) + 2] + '\n' + src
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as fh:
@@ -198,11 +197,11 @@ console.log(mmdAlertCellHTML({}) + mmdTradeCellHTML({}));
 ''')
     p = out.split('|')
     _check(len(p) == 4, out)
-    _check('▲' in p[0] and '85%' in p[0] and 'СИЛ' in p[0], p[0])
+    _check('▲' in p[0] and '70%' in p[0] and 'СИЛ' not in p[0], p[0])
     _check('ПРОТИ' in p[1] and 'tm-mmd-alert-hot' in p[1] and '#dc2626' in p[1], p[1])
     _check('СЛАБШ' in p[2] and '#fbbf24' in p[2] and 'hot' not in p[2], p[2])
     _check(p[3].count('>—<') == 2, 'немає даних → «—» в обох комірках')
-    print('✓ JS: 🧠 комірка + 🚨 ПРОТИ (червоний, блимає) / СЛАБШ (бурштин)')
+    print('✓ JS: 🧮 комірка + 🚨 ПРОТИ (червоний, блимає) / СЛАБШ (бурштин)')
 
 
 def test_blink_css_exists():

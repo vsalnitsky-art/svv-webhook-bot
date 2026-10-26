@@ -3712,7 +3712,7 @@ def register_api_routes(app):
             symbols = data.get('symbols') or []
             if not isinstance(symbols, list):
                 return jsonify({'ok': False, 'reason': 'symbols must be a list'})
-            # 🆕 `book='new'` — групове відкриття з блоку «МММ-new».
+            # 🆕 `book='new'` — групове відкриття з блоку «МММ-Trend».
             # ⚡ `book='ctr'` — з блоку «МММ-CTR» (STC 1H+4H).
             # 🔮 `book='fc'` — з блоку «МММ-Local» (Forecast 1H+4H).
             _b = str(data.get('book') or '')
@@ -6009,10 +6009,10 @@ def register_api_routes(app):
                 str_map = ff.get_fuel_strength_map()
                 _all_pos = ((state.get('positions') or [])
                             + (state.get('shadow_positions') or []))
-                # 🧠 Колонка «МММ-Decision» + 🚨 сигнальна колонка (вимога
-                # 22.10, замінили «🧮 МММ LiQ» і «🆕 МММ-NEW»). ЧИТАННЯ кешу
-                # вердиктів двигуна (той самий, що таблиця блоку 🧠 МММ-Decision)
-                # + пік угоди — ЖОДНИХ розрахунків на цьому гарячому ендпоінті.
+                # 🧮 Колонка «МММ-Trend» + 🚨 сигнальна колонка (з 26.10; до
+                # того — 🧠 МММ-Decision). ЧИТАННЯ стану двигуна (ті самі `fuels`,
+                # що таблиця блоку МММ-Trend) + пік угоди — ЖОДНИХ розрахунків
+                # на цьому гарячому ендпоінті. Поле `pos['mmd']` — історична назва.
                 _dec_map = {}
                 try:
                     from detection.fuel_filter import mmd_trade_key

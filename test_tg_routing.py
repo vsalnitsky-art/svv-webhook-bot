@@ -774,14 +774,14 @@ def test_a_successful_rename_clears_only_its_own_error():
     print('✓ 🏷 успіх стирає причину лише своєї категорії')
 
 
-# ═══════════ 9. 🆕 БАНЕР МММ-NEW → TELEGRAM (вимога 09.10) ════════════════
+# ═══════════ 9. 🆕 БАНЕР МММ-Trend → TELEGRAM (вимога 09.10) ════════════════
 def _tick_new(ff, snap, now=NOW):
     ff._mm_track_bias_new(snap, now, ff.get_settings())
     return dict(ff._mm_bias_new)
 
 
 def test_the_new_banner_change_is_announced_like_the_monitor():
-    """«Додай оповіщення в телеграм стосовно зміни статусу панелі МММ-NEW,
+    """«Додай оповіщення в телеграм стосовно зміни статусу панелі МММ-Trend,
     таке саме як і в 🧮 МММ-МОНІТОР»."""
     ff = _mk(mmn_bias_confirm_sec=0)
     _tick_new(ff, _long(), NOW)                    # перший такт — тиха база
@@ -791,9 +791,9 @@ def test_the_new_banner_change_is_announced_like_the_monitor():
     _check(len(_msgs) == 1, ff.sent)
     cat, pref = [(c, p) for c, p, t in ff.sent if t == _msgs[0]][0]
     _check(cat == 'btc' and pref == 'notify_btc', 'та сама тема')
-    _check('МММ-NEW' in _msgs[0] and 'МММ-МОНІТОР' not in _msgs[0]
+    _check('МММ-Trend' in _msgs[0] and 'МММ-МОНІТОР' not in _msgs[0]
            and 'SHORT' in _msgs[0] and 'LONG' in _msgs[0], _msgs[0])
-    print('✓ зміна статусу банера МММ-NEW → повідомлення в тему')
+    print('✓ зміна статусу банера МММ-Trend → повідомлення в тему')
 
 
 def test_the_two_banners_keep_separate_marks_and_toggles():
