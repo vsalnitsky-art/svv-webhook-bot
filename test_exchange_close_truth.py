@@ -53,6 +53,19 @@ def test_pending_until_final_record_exists():
     print('✓ немає запису біржі → None')
 
 
+def test_external_close_detected_late_still_resolves():
+    # Кейс 27.10: закрито на біржі о 2000, бот помітив о 2300 (підтвердження
+    # масового закриття) — запис біржі на 300с старший за closed_at.
+    recs = [_rec(2000, 10, 0.0767, 0.07556, 1.11, side='Buy')]
+    _check(summ(recs, 'SHORT', 1000, 2300) is None,
+           'без кількості угоди фінал за часом не видно (стара поведінка)')
+    s = summ(recs, 'SHORT', 1000, 2300, expected_qty=10)
+    _check(s and s['pnl_usd'] == 1.11 and s['qty'] == 10, s)
+    _check(summ(recs, 'SHORT', 1000, 2300, expected_qty=20) is None,
+           'покрито лише половину кількості — ще не фінал')
+    print('✓ закриття поза ботом, помічене пізно, звіряється за кількістю')
+
+
 def test_missing_fees_stay_unknown():
     r = _rec(2000, 1, 100, 101, 0.9)
     r['open_fee'] = None

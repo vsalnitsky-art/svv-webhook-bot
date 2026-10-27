@@ -176,7 +176,7 @@ def real_pnl_net(side, entry, current, qty, leverage, fee_pct, gross_usd=None):
 
 
 def exchange_close_summary(records, side, opened_at, closed_at,
-                           skew_sec=60, tail_sec=180):
+                           skew_sec=60, tail_sec=180, expected_qty=None):
     """🏦 Підсумок ЗАКРИТОЇ реальної угоди ВИКЛЮЧНО з записів Bybit closed-pnl.
 
     Бере ВСІ записи цієї угоди: бік ордера закриття (Sell для LONG, Buy для
@@ -208,10 +208,22 @@ def exchange_close_summary(records, side, opened_at, closed_at,
     recs = [r for r in records
             if r.get('side') == want and float(r.get('avg_exit_price') or 0) > 0
             and float(r.get('qty') or 0) > 0 and lo <= _ts(r) <= hi]
-    if not recs or not any(_ts(r) >= c - skew_sec for r in recs):
+    if not recs:
+        return None
+    qty = sum(float(r['qty']) for r in recs)
+    # Угода ЗАВЕРШЕНА, якщо є запис біля моменту закриття АБО записи біржі вже
+    # покривають усю кількість угоди. Друге потрібне для закриттів ПОЗА ботом:
+    # там `closed_at` — момент, коли бот ПОМІТИВ зникнення позиції (після
+    # підтвердження масового закриття — хвилини пізніше), а запис біржі старший,
+    # тож перше правило не спрацьовувало НІКОЛИ (кейс 27.10: 7 угод «⏳» годинами).
+    try:
+        eq = float(expected_qty or 0)
+    except (TypeError, ValueError):
+        eq = 0.0
+    full_qty = eq > 0 and qty >= eq * 0.995
+    if not (full_qty or any(_ts(r) >= c - skew_sec for r in recs)):
         return None
     recs.sort(key=_ts)
-    qty = sum(float(r['qty']) for r in recs)
     pnl = sum(float(r.get('closed_pnl') or 0) for r in recs)
 
     def _sum_all(key):
@@ -5931,7 +5943,8 @@ class TradeManager:
         for attempt in range(attempts):  # ~0.6 + 1.2 + 1.8 + 2.4 ≈ 6s worst case
             recs = self.bybit.get_closed_pnl(symbol, limit=50)
             summary = exchange_close_summary(
-                recs, side, closed.get('opened_at'), closed.get('closed_at'))
+                recs, side, closed.get('opened_at'), closed.get('closed_at'),
+                expected_qty=closed.get('qty'))
             if summary:
                 break
             if attempt < attempts - 1:
