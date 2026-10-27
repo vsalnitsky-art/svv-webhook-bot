@@ -5967,6 +5967,26 @@ class TradeManager:
             pass
         return True
     
+    # 🛡 Масове зникнення позицій закриваємо лише після N чистих фетчів поспіль
+    # і не раніше ніж за T секунд від першого (кейс 27.10).
+    MASS_CLOSE_CONFIRM_FETCHES = 3
+    MASS_CLOSE_CONFIRM_SEC = 20.0
+
+    @classmethod
+    def mass_close_confirmed(cls, streaks, now) -> bool:
+        """ЧИСТА: чи підтверджено масове зникнення. `streaks` — для кожного
+        зниклого символу (к-сть чистих фетчів поспіль, час першого) або None.
+        Підтверджено, коли КОЖЕН символ зник ≥ N фетчів і ≥ T секунд."""
+        if not streaks:
+            return False
+        for st in streaks:
+            if not st:
+                return False
+            c, t0 = st
+            if c < cls.MASS_CLOSE_CONFIRM_FETCHES or (now - t0) < cls.MASS_CLOSE_CONFIRM_SEC:
+                return False
+        return True
+
     def _reconcile_with_bybit(self) -> Dict:
         """Sync TM's view of open positions with what actually exists on
         Bybit. Two-way reconciliation:
@@ -6029,17 +6049,46 @@ class TradeManager:
         #    ONLY when the fetch was clean — a partial/error page must never
         #    trigger closes (root cause of the phantom-close storm).
         to_close = tm_symbols - live_symbols
-        # Sanity guard: if a single reconcile wants to close a large share of
-        # all tracked positions at once, that's almost certainly a bad/partial
-        # fetch rather than the user manually flattening everything. Skip and
-        # let the next clean tick handle it.
+        # 🛡 МАСОВЕ зникнення (≥5 і ≥50% книги) — або поганий фетч, або людина
+        # закрила все на біржі (кейс 27.10). РАНІШЕ такий тік просто
+        # пропускався — і НАЗАВЖДИ, бо наступні чисті фетчі давали ту саму
+        # картину: угоди, закриті на біржі, бот відслідковував вічно. Тепер
+        # закриваємо, коли зникнення ПІДТВЕРДИЛИ кілька чистих фетчів поспіль
+        # (`mass_close_confirmed`); поганий фетч до цього не доживає.
+        if ok:
+            streak = getattr(self, '_missing_streak', None)
+            if streak is None:
+                streak = self._missing_streak = {}
+            now = time.time()
+            for sym in list(streak):
+                if sym not in to_close:
+                    streak.pop(sym, None)
+            for sym in to_close:
+                c, t0 = streak.get(sym, (0, now))
+                streak[sym] = (c + 1, t0)
         if ok and to_close and tm_symbols:
             share = len(to_close) / len(tm_symbols)
             if len(to_close) >= 5 and share >= 0.5:
-                print(f"[TM] Reconcile: SKIPPED close of {len(to_close)}/"
-                      f"{len(tm_symbols)} positions ({share:.0%}) — looks like "
-                      f"a bad fetch, not real closes. Symbols: {sorted(to_close)}")
-                ok = False  # suppress the close pass this tick
+                if self.mass_close_confirmed(
+                        [self._missing_streak.get(s) for s in to_close],
+                        time.time()):
+                    print(f"[TM] Reconcile: масове закриття {len(to_close)}/"
+                          f"{len(tm_symbols)} ПІДТВЕРДЖЕНО — закриваємо")
+                    try:
+                        from detection.activity_log import log_activity
+                        log_activity('—', 'closed',
+                                     f'🔄 Bybit: {len(to_close)} з {len(tm_symbols)} '
+                                     f'реальних позицій закрито на біржі — '
+                                     f'підтверджено {self.MASS_CLOSE_CONFIRM_FETCHES} '
+                                     f'чистими відповідями поспіль, знімаємо з обліку: '
+                                     f'{", ".join(sorted(to_close))}', source='TM')
+                    except Exception:
+                        pass
+                else:
+                    print(f"[TM] Reconcile: масове зникнення {len(to_close)}/"
+                          f"{len(tm_symbols)} ({share:.0%}) — чекаю підтвердження. "
+                          f"Symbols: {sorted(to_close)}")
+                    ok = False  # suppress the close pass this tick
         if ok:
             for sym in to_close:
                 # Use current price as the best-available exit price. Bybit
