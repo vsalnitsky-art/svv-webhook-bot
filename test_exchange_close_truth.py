@@ -118,6 +118,37 @@ def test_resync_is_wired_and_page_shows_source():
     print('✓ ресинк підключено; сторінка показує ⇄ біржа / ⏳ очікує')
 
 
+def test_resync_picks_records_without_source():
+    # Кейс 27.10: стара версія ставила 'approx' лише в памʼяті й не персистила →
+    # після рестарту поле зникало, UI показував ⏳, а ресинк угоду не брав.
+    import time as _t
+    now = _t.time()
+    t = _tm([_rec(now - 100, 10, 0.0767, 0.07556, 1.11, side='Buy')])
+    t._archive_update = lambda c: None
+    c = {'symbol': 'XUSDT', 'side': 'SHORT', 'opened_at': now - 1000,
+         'closed_at': now - 50, 'qty': 10, 'pnl_usd': 0.5, 'pnl_pct': 0.5}
+    old = {'symbol': 'YUSDT', 'side': 'LONG', 'opened_at': 1, 'closed_at': now - 5 * 86400}
+    t._closed_trades = [old, c]
+    started = []
+    real_thread = threading.Thread
+
+    class _Sync:
+        def __init__(self, target=None, **kw):
+            self.t = target
+        def start(self):
+            started.append(1)
+            self.t()
+    threading.Thread = _Sync
+    try:
+        TM._resync_exchange_closes_bg(t)
+    finally:
+        threading.Thread = real_thread
+    _check(started, 'ресинк мусить запуститись для угоди без pnl_source')
+    _check(c.get('pnl_source') == 'exchange' and c['pnl_usd'] == 1.11, c)
+    _check('pnl_source' not in old, 'старше 3 діб — не чіпаємо')
+    print('✓ угода без pnl_source (після рестарту) звіряється з біржею')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:

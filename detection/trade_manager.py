@@ -5958,7 +5958,10 @@ class TradeManager:
                 closed['exch_tries'] = int(closed.get('exch_tries') or 0) + 1
                 closed['exch_try_at'] = time.time()
             self._persist_closed_trades()
-            print(f"[TM] ⏳ closed-PnL not yet on Bybit for {symbol}; will resync")
+            _n = closed['exch_tries']
+            if _n <= 2 or _n % 30 == 0:   # без флуду: ресинк іде щохвилини
+                print(f"[TM] ⏳ closed-PnL not yet on Bybit for {symbol} "
+                      f"(спроба {_n}, отримано записів: {len(recs or [])}); will resync")
             return False
 
         with self._lock:
@@ -5988,10 +5991,15 @@ class TradeManager:
             return
         now = time.time()
         with self._lock:
+            # Будь-яка НЕ звірена угода: 'pending'/'approx' І записи БЕЗ поля
+            # (стара версія ставила 'approx' лише в памʼяті й не персистила →
+            # після рестарту поле зникало; UI показував ⏳, а ресинк їх не брав).
             todo = [c for c in self._closed_trades
-                    if c.get('pnl_source') in ('pending', 'approx')
+                    if c.get('pnl_source') != 'exchange'
                     and now - float(c.get('closed_at') or 0) <= self.EXCH_RESYNC_MAX_AGE
                     and now - float(c.get('exch_try_at') or 0) >= self.EXCH_RESYNC_GAP]
+            # Найсвіжіші першими: старі незвірені не мають блокувати нові.
+            todo.sort(key=lambda c: -float(c.get('closed_at') or 0))
         if not todo:
             return
         self._exch_resync_busy = True
