@@ -138,6 +138,43 @@ def breakeven_with_fees(side, entry, buf_pct):
     return e * (1.0 + b / 100.0) if side == 'LONG' else e * (1.0 - b / 100.0)
 
 
+def real_pnl_net(side, entry, current, qty, leverage, fee_pct, gross_usd=None):
+    """💰 PnL ВІДКРИТОЇ реальної угоди з урахуванням ПЛЕЧА і КОМІСІЙ.
+
+    - `gross_usd` — брутто (Bybit `unrealisedPnl`, якщо є; інакше qty × рух);
+    - комісії = вхід (уже сплачена) + вихід (оцінка за поточною ціною),
+      `fee_pct` % на сторону від нотіоналу (Bybit taker ≈ 0.055%);
+    - `net_usd` = брутто − обидві комісії — стільки лишиться, якщо закрити ЗАРАЗ;
+    - `roi_pct` = нетто / маржа × 100, маржа = нотіонал входу / плече —
+      це саме той % на вкладені гроші, який показує біржа (з плечем);
+    - `move_pct` — сирий рух ціни (без плеча), для довідки.
+    Немає з чого рахувати → None (не вигадуємо).
+    """
+    try:
+        e, c, q = float(entry or 0), float(current or 0), abs(float(qty or 0))
+        lev = max(1.0, float(leverage or 1))
+        fee = max(0.0, float(fee_pct or 0)) / 100.0
+    except (TypeError, ValueError):
+        return None
+    if e <= 0 or c <= 0 or q <= 0 or side not in ('LONG', 'SHORT'):
+        return None
+    dirmul = 1.0 if side == 'LONG' else -1.0
+    gross = float(gross_usd) if gross_usd is not None else q * (c - e) * dirmul
+    fee_in, fee_out = q * e * fee, q * c * fee
+    net = gross - fee_in - fee_out
+    margin = q * e / lev
+    return {
+        'gross_usd': round(gross, 4),
+        'fee_in_usd': round(fee_in, 4), 'fee_out_usd': round(fee_out, 4),
+        'fees_usd': round(fee_in + fee_out, 4),
+        'net_usd': round(net, 4),
+        'margin_usd': round(margin, 4),
+        'roi_pct': round(net / margin * 100, 3) if margin > 0 else None,
+        'move_pct': round((c - e) / e * 100 * dirmul, 3),
+        'lev': round(lev, 2), 'fee_pct': round(fee * 100, 4),
+    }
+
+
 def clamp_sl_distance(side, entry, sl, max_pct):
     """🛡 Стеля відстані стопа від ВХОДУ — ЄДИНЕ джерело для ВСІХ авто-SL.
 
@@ -7763,6 +7800,12 @@ class TradeManager:
                     pos_dict['liq_price'] = live.get('liq_price')
                     pos_dict['leverage'] = live.get('leverage')
                     pos_dict['position_value'] = live.get('position_value')
+                # 💰 Нетто з плечем і комісіями (плече — з Bybit, інакше з
+                # налаштувань; комісія — `paper_fee_pct`, той самий taker-тариф).
+                _lev = (live or {}).get('leverage') or self._settings.get('leverage', 10)
+                pos_dict['pnl_net'] = real_pnl_net(
+                    pos['side'], entry, current, live_qty, _lev,
+                    self._settings.get('paper_fee_pct', 0.055), unreal)
                 # Attach Health Score (None when feature disabled)
                 health = self._compute_health(pos, is_shadow=False)
                 if health is not None:

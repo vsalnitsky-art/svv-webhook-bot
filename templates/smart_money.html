@@ -4706,7 +4706,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </div>
                         <div class="tm-row">
                             <label>Комісія / сторону, %:
-                                <span class="tm-help" title="Комісія за одну сторону угоди (Bybit taker ≈ 0.055%). Застосовується на вхід і на вихід при розрахунку чистого результату paper-угоди.">?</span>
+                                <span class="tm-help" title="Комісія за одну сторону угоди (Bybit taker ≈ 0.055%). Застосовується на вхід і на вихід при розрахунку чистого результату paper-угоди, а також у колонці PnL (нетто) відкритих РЕАЛЬНИХ угод.">?</span>
                             </label>
                             <input type="number" id="tm-paper-fee" min="0" max="1" step="0.005" onchange="saveTMSettings()">
                             <span style="color:#888;font-size:0.75rem">%</span>
@@ -5203,11 +5203,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             
             <!-- Stats -->
             <div class="tm-stats" id="tm-stats">
-                <span>📊 <b>0</b> closed</span>
-                <span>🟢 <b>0</b> wins</span>
-                <span>🔴 <b>0</b> losses</span>
-                <span>📈 win rate: <b>—</b></span>
-                <span>💰 PnL: <b>$0</b></span>
+                <span>📊 закрито: <b>0</b></span>
+                <span>🟢 у плюсі: <b>0</b></span>
+                <span>🔴 у мінусі: <b>0</b></span>
+                <span>📈 відсоток успішних: <b>—</b></span>
+                <span>💰 результат: <b>$0</b></span>
             </div>
             <!-- Decision Validation breakdown — shows win rate / avg PnL
                  grouped by the verdict the bot assigned at open. Critical
@@ -5215,7 +5215,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  actually outperform "marginal" / "poor" picks. Hidden until
                  there's enough scored data to be meaningful. -->
             <div class="tm-entry-stats" id="tm-entry-stats" style="display:none">
-                <span style="color:#888;font-size:0.72rem"><svg class="ein-icon"><use href="#ein-icon"/></svg> Decision validation:</span>
+                <span style="color:#888;font-size:0.72rem" title="Перевірка якості входів: закриті угоди згруповано за оцінкою, яку бот дав САМЕ В МОМЕНТ ВІДКРИТТЯ (Entry Score): ✅ сильний · 🟡 середній · ⚠️ слабкий. Для кожної групи — скільки угод, який відсоток закрився в плюсі і середній рух ціни на угоду (без плеча і комісій). Якщо «сильні» не виграють частіше за «середні», оцінці входу не варто довіряти."><svg class="ein-icon"><use href="#ein-icon"/></svg> Перевірка оцінки входу:</span>
                 <span class="tm-es-cell" data-bucket="good"></span>
                 <span class="tm-es-cell" data-bucket="marginal"></span>
                 <span class="tm-es-cell" data-bucket="poor"></span>
@@ -5225,7 +5225,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">📂 Open Positions <span id="tm-open-count" style="color:#666;font-weight:normal;font-size:0.75rem">(0)</span></h3>
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
-                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th title="💀 Ціна ліквідації реальної позиції на Bybit і відстань до неї від поточної ціни: червоний < 5%, бурштиновий < 15%. ⚠ — Manual SL стоїть за ліквідацією (стоп не встигне спрацювати).">💀 Ліквідація</th><th>PnL</th>
+                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th title="💀 Ціна ліквідації реальної позиції на Bybit і відстань до неї від поточної ціни: червоний < 5%, бурштиновий < 15%. ⚠ — Manual SL стоїть за ліквідацією (стоп не встигне спрацювати).">💀 Ліквідація</th><th title="💰 PnL з урахуванням ПЛЕЧА і КОМІСІЙ. Велике число — ROI на маржу (як у застосунку біржі): нетто ÷ (нотіонал входу ÷ плече). Під ним — нетто $ (брутто − комісія входу − оцінка комісії виходу), якщо закрити зараз, і плече. Рух ціни без плеча та розклад — у підказці комірки. Комісія — поле «Комісія / сторону, %» (Bybit taker ≈ 0.055%).">PnL <span style="font-size:0.62rem;color:#8b93a7;font-weight:400">ROI · нетто</span></th>
                         <th title="🧮 МММ-Trend по монеті — РІВНО той стан, що в таблиці блоку «🧮 МММ-Trend» (ті самі дані двигуна): бік і сила. Для монет у відкритій угоді є ЗАВЖДИ, навіть коли блок 🧮 МММ-Trend вимкнено. «—» = даних ще немає.">🧮 МММ-Trend</th>
                         <th title="🚨 Сигнал 🧮 МММ-Trend ВІДНОСНО угоди: ✓ зелений — МММ-Trend за угодою; ↓ бурштиновий — той самий бік, але сила впала від піку цієї угоди на 15+ п.п.; ⚖ бурштиновий — МММ-Trend у рівновазі; ⚠ червоний, що блимає — МММ-Trend ПРОТИЛЕЖНИЙ угоді (угода йде не за напрямком). Сам нічого не закриває (діє лише через 🤖 Автоконтроль «🧱 OB», якщо увімкнено).">🚨</th>
                         <th>Qty</th>
@@ -11562,10 +11562,38 @@ function entryBadgeHTML(e) {
     return `<span class="tm-health-badge ${cls}" title="${tip.replace(/"/g, '&quot;')}">${sign}${e.score.toFixed(0)}</span>`;
 }
 
+// 💰 PnL реальної угоди з ПЛЕЧЕМ і КОМІСІЯМИ (pnl_net з бекенду,
+// trade_manager.real_pnl_net). Головне число — ROI на маржу (як на біржі),
+// під ним нетто $ і плече; рух ціни без плеча та розклад комісій — у підказці.
+// Немає pnl_net (старіший бекенд) → старий показ (рух ціни + $).
+function realPnlCellHTML(p, usd, syncMark) {
+    const n = p.pnl_net;
+    if (!n || n.roi_pct == null) {
+        const cls = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
+        const sg = p.pnl_pct >= 0 ? '+' : '';
+        return `<td class="${cls}">${sg}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>`;
+    }
+    const sgn = v => (v >= 0 ? '+' : '−');
+    const usd2 = v => `${sgn(v)}$${Math.abs(v).toFixed(2)}`;
+    const cls = n.net_usd >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
+    const tip = [
+        `💰 PnL з урахуванням плеча ×${n.lev} і комісій (${n.fee_pct}% / сторону)`,
+        `Рух ціни (без плеча): ${sgn(n.move_pct)}${Math.abs(n.move_pct).toFixed(2)}%`,
+        `Брутто: ${usd2(n.gross_usd)}${p.pnl_source === 'bybit' ? ' (unrealised PnL Bybit)' : ' (розрахунок бота)'}`,
+        `Комісія входу: −$${n.fee_in_usd.toFixed(2)} · виходу (оцінка): −$${n.fee_out_usd.toFixed(2)}`,
+        `Нетто, якщо закрити зараз: ${usd2(n.net_usd)}`,
+        `Маржа: $${n.margin_usd.toFixed(2)} → ROI ${sgn(n.roi_pct)}${Math.abs(n.roi_pct).toFixed(2)}%`,
+    ].join('\n').replace(/"/g, '&quot;');
+    return `<td class="${cls}" style="white-space:nowrap;font-family:monospace" title="${tip}">` +
+        `<b>${sgn(n.roi_pct)}${Math.abs(n.roi_pct).toFixed(2)}%</b>${syncMark}` +
+        `<br><span style="font-size:0.7rem;opacity:0.85">${usd2(n.net_usd)} нетто · ×${n.lev}</span></td>`;
+}
+
 // Render the Entry Score validation breakdown — win rate per verdict bucket.
 // Hidden when there are no scored trades yet. The whole point: see whether
 // "good" picks ACTUALLY win more often than "marginal" / "poor" — that's
 // the feedback loop for tuning weights.
+const _ES_BUCKET_UA = {good: 'сильний', marginal: 'середній', poor: 'слабкий'};
 function renderEntryScoreBreakdown(breakdown) {
     const host = document.getElementById('tm-entry-stats');
     if (!host) return;
@@ -11584,14 +11612,18 @@ function renderEntryScoreBreakdown(breakdown) {
         }
         anyData = true;
         const emoji = bucket === 'good' ? '✅' : bucket === 'marginal' ? '🟡' : '⚠️';
+        const name = _ES_BUCKET_UA[bucket];
         const wrColor = b.win_rate >= 60 ? '#86efac' :
                         b.win_rate >= 40 ? '#fde68a' : '#fca5a5';
         const pnlSign = b.avg_pnl_pct >= 0 ? '+' : '';
         const pnlColor = b.avg_pnl_pct >= 0 ? '#86efac' : '#fca5a5';
+        cell.title = `Угоди, які бот при ВІДКРИТТІ оцінив як «${name}» (Entry Score): ` +
+            `закрито ${b.count}, із них у плюсі ${b.win_rate}%, ` +
+            `середній рух ціни на угоду ${pnlSign}${b.avg_pnl_pct}% (без плеча і комісій).`;
         cell.innerHTML =
-            `${emoji} <b>${bucket}</b>: ${b.count} ` +
-            `(<span style="color:${wrColor}">${b.win_rate}% win</span>, ` +
-            `<span style="color:${pnlColor}">${pnlSign}${b.avg_pnl_pct}% avg</span>)`;
+            `${emoji} <b>${name}</b>: ${b.count} ` +
+            `(<span style="color:${wrColor}">${b.win_rate}% у плюсі</span>, ` +
+            `<span style="color:${pnlColor}">сер. ${pnlSign}${b.avg_pnl_pct}%</span>)`;
     }
     host.style.display = anyData ? 'flex' : 'none';
 }
@@ -17328,11 +17360,11 @@ async function loadTMState(isPoll) {
         const pnlClass = (st.total_pnl_usd || 0) >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
         const pnlSign = (st.total_pnl_usd || 0) >= 0 ? '+' : '';
         document.getElementById('tm-stats').innerHTML =
-            `<span>📊 <b>${st.total_closed || 0}</b> closed</span>` +
-            `<span>🟢 <b>${st.wins || 0}</b> wins</span>` +
-            `<span>🔴 <b>${st.losses || 0}</b> losses</span>` +
-            `<span>📈 win rate: <b>${st.win_rate || 0}%</b></span>` +
-            `<span>💰 PnL: <b class="${pnlClass}">${pnlSign}$${(st.total_pnl_usd || 0).toFixed(2)}</b></span>`;
+            `<span title="Скільки реальних угод уже закрито">📊 закрито: <b>${st.total_closed || 0}</b></span>` +
+            `<span title="Закриті в плюсі">🟢 у плюсі: <b>${st.wins || 0}</b></span>` +
+            `<span title="Закриті в мінусі">🔴 у мінусі: <b>${st.losses || 0}</b></span>` +
+            `<span title="Частка прибуткових угод серед закритих">📈 відсоток успішних: <b>${st.win_rate || 0}%</b></span>` +
+            `<span title="Сумарний результат закритих реальних угод у $ (для угод, синхронізованих із Bybit, — closed PnL біржі, тобто вже з плечем і комісіями)">💰 результат: <b class="${pnlClass}">${pnlSign}$${(st.total_pnl_usd || 0).toFixed(2)}</b></span>`;
         
         // Entry Score validation row — only show if we actually have scored
         // trades. Shows "good: N (xx% win, +y.y% avg)" for each verdict.
@@ -17377,7 +17409,7 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}</td>
                     ${liqCellHTML(p)}
-                    <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
+                    ${realPnlCellHTML(p, usd, syncMark)}
                     ${mmdTradeCellHTML(p)}
                     ${mmdAlertCellHTML(p)}
                     <td style="font-family:monospace;text-align:right" title="${p.remaining_qty || p.qty}">${fmtQtyJS(p.remaining_qty || p.qty)}</td>
