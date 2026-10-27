@@ -245,8 +245,8 @@ def test_ui_block_is_a_twin_with_its_own_columns():
     th = len(re.findall(r'<th[\s>]', blk))
     m = re.search(r"_MMB\.pull\.cols = \[([^\]]*)\]", _HTML)
     ncols = len(m.group(1).split(','))
-    _check(th == ncols + 2, f'<th> {th} ≠ cols {ncols}+2')
-    _check(f'colspan="{ncols + 2}"' in _HTML[a:_HTML.index('</table>', a) + 400], 'colspan')
+    _check(th == ncols + 3, f'<th> {th} ≠ cols {ncols}+3 (TRD + ☑ + символ)')
+    _check(f'colspan="{ncols + 3}"' in _HTML[a:_HTML.index('</table>', a) + 400], 'colspan')
     for need in ("togglePanel('mmp')", "togglePanel('mmplist')", 'mmp-bias-banner',
                  "mmSetDir('LONG','pull')", 'ff-mmp-bias-confirm', 'mmp-scan-status',
                  "mmSort('mass','pull')", "mmSort('magnet','pull')"):
@@ -311,11 +311,18 @@ def test_banner_times_use_the_pc_clock():
 
 def test_every_book_row_carries_the_4h_ob_mark():
     ff = _ff([_row('BTCUSDT', 70), _row('ETHUSDT', 30)])
-    ff._mm_ob4h_marks = lambda syms: {'BTCUSDT': {'bias': 'BEARISH', 'bar_time': 1}}
+    ff._mm_ob4h_marks = lambda syms, tf='4h': ({'BTCUSDT': {'bias': 'BEARISH', 'bar_time': 1}} if tf == '4h'
+                                              else {'ETHUSDT': {'bias': 'BULLISH', 'bar_time': 2}})
+    ff._mm_tradeable_set = lambda: {'ETHUSDT'}
     ff._mm_capture({}, now=1000.0)
     rows = {r['symbol']: r for r in ff.mm_monitor_state(ff.get_settings(), book='pull')['rows']}
     _check(rows['BTCUSDT']['ob4h']['bias'] == 'BEARISH', rows['BTCUSDT'])
     _check(rows['ETHUSDT']['ob4h'] is None, 'немає позначки → None, не вигадуємо')
+    # 🏷 27.10: OB 1H + TRD у кожному рядку (те саме джерело, що угоди / WATCHLIST)
+    _check(rows['ETHUSDT']['ob1h']['bias'] == 'BULLISH' and rows['BTCUSDT']['ob1h'] is None, rows)
+    _check(rows['ETHUSDT']['tradeable'] is True and rows['BTCUSDT']['tradeable'] is False, rows)
+    _check("ob1hMarkHTML({ ob1h: r.ob1h, side: r.mm }, 'МММ у рядку')" in _HTML, 'OB 1H біля символу')
+    _check('<td>${_mmTrdCell(r)}</td>' in _HTML and "toggleTradeable('${s}')" in _HTML, 'TRD першою колонкою')
     _check("ob4hMarkHTML({ ob4h: r.ob4h, side: r.mm }, 'МММ у рядку')" in _HTML, 'рендер біля символу')
     _check('ob_mark_for' in _SRC.split('def _mm_ob4h_marks')[1].split('def ')[0], 'джерело — сканер')
     print('✓ кожен рядок МММ-таблиць несе «останній OB 4H» (те саме джерело, що угоди)')

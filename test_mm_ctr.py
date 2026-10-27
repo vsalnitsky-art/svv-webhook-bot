@@ -172,8 +172,8 @@ def test_ui_block_is_a_twin_with_its_own_columns():
     th = len(re.findall(r'<th[\s>]', blk))
     m = re.search(r"_MMB\.ctr\.cols = \[([^\]]*)\]", _HTML)
     ncols = len(m.group(1).split(','))
-    _check(th == ncols + 2, f'<th> {th} ≠ cols {ncols}+2')
-    _check(f'colspan="{ncols + 2}"' in blk, 'colspan порожнього рядка')
+    _check(th == ncols + 3, f'<th> {th} ≠ cols {ncols}+3 (TRD + ☑ + символ)')
+    _check(f'colspan="{ncols + 3}"' in blk, 'colspan порожнього рядка')
     for need in ("togglePanel('mmc')", "togglePanel('mmclist')", 'ff-mm-ctr-enabled',
                  'ff-mmc-bias-confirm', "mmSetDir('LONG','ctr')", 'mmc-bias-banner',
                  "mmSort('ctr4','ctr')"):

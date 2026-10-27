@@ -5745,18 +5745,35 @@ class FuelFilterDaemon:
             self._mmp_scan = {}
             self._mmp_scan_at = 0.0
 
-    def _mm_ob4h_marks(self, symbols) -> Dict[str, Dict]:
-        """🏷 Позначка «останній OB 4H» для рядків МММ-таблиць — ЄДИНЕ джерело
-        `SMCScanner.ob_mark_for` (те саме, що поле Side відкритих угод). Лише
-        памʼять сканера: ні мережі, ні БД. Сканера немає → порожньо."""
+    def _mm_ob4h_marks(self, symbols, tf: str = '4h') -> Dict[str, Dict]:
+        """🏷 Позначка «останній OB 4H/1H» для рядків МММ-таблиць — ЄДИНЕ
+        джерело `SMCScanner.ob_mark_for` (те саме, що поле Side відкритих
+        угод). Лише памʼять сканера: ні мережі, ні БД. Сканера немає → порожньо."""
         try:
             from detection.smc_scanner import get_smc_scanner
             _sc = get_smc_scanner()
             if _sc is not None and hasattr(_sc, 'ob_mark_for'):
-                return dict(_sc.ob_mark_for(symbols) or {})
+                if tf == '4h':
+                    return dict(_sc.ob_mark_for(symbols) or {})
+                try:
+                    return dict(_sc.ob_mark_for(symbols, tf=tf) or {})
+                except TypeError:
+                    return {}   # старіший сканер без 1H-позначок
         except Exception:
             pass
         return {}
+
+    def _mm_tradeable_set(self):
+        """🏷 Прапорець TRD — ТОЙ САМИЙ список, що кнопка TRD у WATCHLIST
+        (`SMCScanner.get_tradeable_symbols`). None = сканер недоступний."""
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            _sc = get_smc_scanner()
+            if _sc is not None and hasattr(_sc, 'get_tradeable_symbols'):
+                return set(_sc.get_tradeable_symbols() or [])
+        except Exception:
+            pass
+        return None
 
     def _mmp_scan_info(self, s: Dict) -> Dict:
         """Стан скану для сторінки — ЛИШЕ читання."""
@@ -6219,9 +6236,15 @@ class FuelFilterDaemon:
             })
         # 🏷 ОСТАННІЙ OB 4H біля монети (вимога 21.10) — ТА САМА позначка, що
         # в полі Side відкритих угод: лише ЧИТАННЯ памʼяті сканера.
-        _ob4 = self._mm_ob4h_marks([r['symbol'] for r in rows]) if rows else {}
+        _syms = [r['symbol'] for r in rows]
+        _ob4 = self._mm_ob4h_marks(_syms) if rows else {}
+        _ob1 = self._mm_ob4h_marks(_syms, tf='1h') if rows else {}
+        # 🏷 TRD (вимога 27.10) — дзеркало кнопки WATCHLIST; None = невідомо.
+        _trd = self._mm_tradeable_set() if rows else None
         for r in rows:
             r['ob4h'] = _ob4.get(r['symbol'])
+            r['ob1h'] = _ob1.get(r['symbol'])
+            r['tradeable'] = (None if _trd is None else (r['symbol'] in _trd))
         # Сортування: спершу сила (найвиразніший напрямок зверху), потім символ —
         # стабільний порядок, щоб рядки не «стрибали» під курсором.
         rows.sort(key=lambda r: (-int(r.get('strength') or 0), r['symbol']))

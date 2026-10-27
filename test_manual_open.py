@@ -220,7 +220,34 @@ def test_manual_open_normalizes_symbol_case():
     print('✓ manual_open normalizes lowercase symbol/side')
 
 
+def test_trd_off_blocks_real_for_queue_opens_only():
+    """🏷 TRD (27.10): авто-відкриття з черг (bypass_gates) при вимкненому TRD
+    НЕ йде в реальну книгу — лише paper; ✋ by_hand — без змін (реальна)."""
+    from types import SimpleNamespace
+    tm, bybit = _make_tm()
+    tm.scanner = SimpleNamespace(get_tradeable_symbols=lambda: [])
+    tm._settings['test_mode'] = True
+    r = tm.manual_open('BTCUSDT', 'LONG', bypass_gates=True)
+    assert r.get('mode') == 'test' and 'BTCUSDT' not in tm._positions, r
+    assert not bybit.orders_placed and 'TRD' in r.get('reason', '')
+    tm2, bybit2 = _make_tm()
+    tm2.scanner = SimpleNamespace(get_tradeable_symbols=lambda: [])
+    tm2._settings['test_mode'] = False
+    r2 = tm2.manual_open('ETHUSDT', 'LONG', bypass_gates=True)
+    assert r2['ok'] is False and 'TRD' in r2['reason'] and not bybit2.orders_placed
+    tm3, bybit3 = _make_tm()
+    tm3.scanner = SimpleNamespace(get_tradeable_symbols=lambda: [])
+    r3 = tm3.manual_open('SOLUSDT', 'LONG', by_hand=True)
+    assert r3['ok'] is True and 'SOLUSDT' in tm3._positions, r3
+    tm4, _ = _make_tm()
+    tm4.scanner = SimpleNamespace(get_tradeable_symbols=lambda: ['XRPUSDT'])
+    r4 = tm4.manual_open('XRPUSDT', 'LONG', bypass_gates=True)
+    assert r4['ok'] is True and 'XRPUSDT' in tm4._positions, r4
+    print('✓ TRD вимкнено → черги відкривають лише paper; ✋ ручне — реальна')
+
+
 if __name__ == '__main__':
+    test_trd_off_blocks_real_for_queue_opens_only()
     test_manual_open_long_places_buy_order()
     test_manual_open_short_places_sell_order()
     test_manual_open_uses_sizing_settings()

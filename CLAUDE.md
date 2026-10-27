@@ -6860,3 +6860,25 @@ GitHub не видаляє файлів) — через них падають `t
   (`977`, `9.9`); точне число — у тултипі. Експоненти `1.146e+4` більше немає.
 Тести: `test_trades_mm_ob4h.py` (9); замки `test_autosl_chain`,
 `test_ob_zones_like_tv` переписано на `_upsert_ob_state`.
+
+## 🏷 TRD + OB 1H у таблицях МММ · TRD тепер діє і на черги (вимога 27.10)
+
+Дослівно: «Додай позначку OB 1H в таблиці банерів. Продублюй кнопку TRD і її
+функціонал (якщо вимкнена, то реальні угоди не відкриваються — вірно?) із
+WATCHLIST. Розмісти у всіх таблицях банерів самою першою з лівої сторони.»
+- **🐞 Відповідь «вірно?» була «НЕ зовсім»:** `_is_tradeable` перевірявся ЛИШЕ
+  в `on_signal` (пряме відкриття). Черги FF відкривають через
+  `manual_open(bypass_gates=True)` — і йшли в РЕАЛЬНУ книгу повз TRD.
+  **Фікс:** у `manual_open` `trd_blocked = bypass_gates and not by_hand and not
+  _is_tradeable` → лише paper (Test Mode) або відмова з причиною «TRD
+  вимкнено». ✋ Ручне (by_hand / клік без bypass) — не блокується (25.10).
+  Paper-трек TRD і раніше не стосувався. `_is_tradeable` — `getattr(scanner)`.
+- **Таблиці МММ (усі 7 книг):** перша колонка `TRD` (`_mmTrdCell`, той самий
+  `toggleTradeable` і клас `wl-trade-flag`; стан — `tmTradeable`, фолбек —
+  серверне `r.tradeable` з `_mm_tradeable_set()` = `get_tradeable_symbols`).
+  `toggleTradeable` оновлює ВСІ кнопки монети (`querySelectorAll`).
+  OB 1H — другий слот `.mm-ob4h-slot` після OB 4H (`ob1hMarkHTML`, поле
+  `r.ob1h` з `_mm_ob4h_marks(syms, tf='1h')`). Обидва поля — у сигнатурі.
+  colspan = `B.cols.length + 3`; статичні colspan +1.
+Тести: `test_manual_open.py` (+1), `test_mm_pull.py` (розширено), контракти
+колонок `test_mm_{monitor,ctr,dec,fc,pull,rdy}` (+TRD).

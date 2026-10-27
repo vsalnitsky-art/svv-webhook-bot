@@ -250,8 +250,8 @@ def test_ui_block_is_a_twin_with_its_own_columns():
     th = len(re.findall(r'<th[\s>]', blk))
     m = re.search(r"_MMB\.dec\.cols = \[([^\]]*)\]", _HTML)
     ncols = len(m.group(1).split(','))
-    _check(th == ncols + 2, f'<th> {th} ≠ cols {ncols}+2')
-    _check(f'colspan="{ncols + 2}"' in blk, 'colspan порожнього рядка')
+    _check(th == ncols + 3, f'<th> {th} ≠ cols {ncols}+3 (TRD + ☑ + символ)')
+    _check(f'colspan="{ncols + 3}"' in blk, 'colspan порожнього рядка')
     _check('mmp' not in blk and "'pull'" not in blk, 'у двійнику лишились id/книга Pull')
     for need in ("togglePanel('mmd')", "togglePanel('mmdlist')", 'ff-mm-dec-enabled',
                  'ff-mmd-bias-confirm', "mmSetDir('LONG','dec')", 'mmd-bias-banner',

@@ -7578,7 +7578,7 @@ class TradeManager:
     
     def _is_tradeable(self, symbol: str) -> bool:
         """Check if symbol is in scanner's tradeable list."""
-        if not self.scanner:
+        if not getattr(self, 'scanner', None):
             return False
         try:
             tradeable = self.scanner.get_tradeable_symbols()
@@ -8540,10 +8540,20 @@ class TradeManager:
         # a hard ceiling for REAL positions. bypass_gates only affects the
         # LONG/SHORT entry gates inside _open_position (quality/trend checks).
         open_real = False
-        if self.is_enabled() and not at_limit:
+        # 🏷 TRD (вимога 27.10): АВТО-відкриття (черги FF, bypass_gates) теж
+        # мусить поважати прапорець TRD — інакше він діяв лише на прямий шлях
+        # on_signal, а угоди з черг ішли в РЕАЛЬНУ книгу повз нього.
+        # TRD вимкнено → лише paper (якщо Test Mode), реальної угоди немає.
+        # ✋ by_hand / клік без bypass — «любе ручне не блокується» (25.10).
+        trd_blocked = bool(bypass_gates) and (not by_hand) and (not self._is_tradeable(symbol))
+        if self.is_enabled() and not at_limit and not trd_blocked:
             if not self.bybit or not getattr(self.bybit, 'api_key', None):
                 return {'ok': False, 'reason': 'Bybit not configured (no API key)'}
             open_real = True
+        if trd_blocked and self.is_enabled() and not test_mode:
+            return {'ok': False, 'reason':
+                    f'{symbol}: TRD вимкнено — реальна угода не відкривається '
+                    f'(Test Mode теж вимкнено)'}
 
         if open_real:
             try:
@@ -8581,10 +8591,11 @@ class TradeManager:
                 pos = self._shadow_positions.get(symbol)
             if not pos:
                 return {'ok': False, 'reason': 'Shadow position creation failed'}
-            print(f"[TM] ℹ️ Max positions reached ({self._settings.get('max_open_positions')}), "
-                  f"opened {symbol} in Test Mode instead")
+            _why = (f'{symbol}: TRD вимкнено — відкрито paper замість реальної'
+                    if trd_blocked else 'Max positions limit reached')
+            print(f"[TM] ℹ️ {_why}, opened {symbol} in Test Mode")
             return {'ok': True, 'position': dict(pos), 'entry_price': entry_price,
-                    'mode': 'test', 'reason': 'Max positions limit reached'}
+                    'mode': 'test', 'reason': _why}
         else:
             return {'ok': False, 'reason':
                     f'TM disabled and max positions reached. Enable Test Mode or TM.'}

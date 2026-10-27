@@ -2790,7 +2790,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <table class="tm-table" id="mm-table">
                     <thead>
                         <tr>
-                            <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mm-check-all" onchange="mmToggleAll(this.checked)"></th>
+                            <th style="width:34px" title="TRD — той самий прапорець, що в WATCHLIST: вимкнено → по монеті НЕ відкриваються РЕАЛЬНІ угоди (автоматика йде лише в paper). Клік у рядку — перемкнути.">TRD</th><th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mm-check-all" onchange="mmToggleAll(this.checked)"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                             <!-- 📍 ДЕ МОНЕТА ЗАРАЗ (вимога 18.09). Монети «в
                                  роботі» з таблиці більше НЕ зникають — вони
@@ -2807,7 +2807,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="mm-tbody">
-                        <tr><td colspan="11" class="tm-empty-msg">Немає даних МММ</td></tr>
+                        <tr><td colspan="12" class="tm-empty-msg">Немає даних МММ</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -2889,7 +2889,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <table class="tm-table" id="mmn-table">
                     <thead>
                         <tr>
-                            <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmn-check-all" onchange="mmToggleAll(this.checked,'new')"></th>
+                            <th style="width:34px" title="TRD — той самий прапорець, що в WATCHLIST: вимкнено → по монеті НЕ відкриваються РЕАЛЬНІ угоди (автоматика йде лише в paper). Клік у рядку — перемкнути.">TRD</th><th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmn-check-all" onchange="mmToggleAll(this.checked,'new')"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol','new')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="status" onclick="mmSort('status','new')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Монета в угоді або в черзі з таблиці НЕ зникає — просто видно, що вона вже в роботі, і галочка для ✋ групового відкриття їй недоступна. Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="strength" onclick="mmSort('strength','new')" style="cursor:pointer;user-select:none" title="Показник НОВИЙ МММ — «бабло»-модель двигуна (`_fuel_dir_smoothed`): той самий, що колонка «МММ» черг і шар «Новий МММ» Черги-4. Напрямок + сила 0–100% + стрілка тренду. Клік — сортувати за силою.">МММ-Trend<span class="ff-sort-arrow"></span></th>
@@ -2902,7 +2902,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="mmn-tbody">
-                        <tr><td colspan="10" class="tm-empty-msg">Немає даних Новий МММ</td></tr>
+                        <tr><td colspan="11" class="tm-empty-msg">Немає даних Новий МММ</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -2983,7 +2983,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <table class="tm-table" id="mmc-table">
                     <thead>
                         <tr>
-                            <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmc-check-all" onchange="mmToggleAll(this.checked,'ctr')"></th>
+                            <th style="width:34px" title="TRD — той самий прапорець, що в WATCHLIST: вимкнено → по монеті НЕ відкриваються РЕАЛЬНІ угоди (автоматика йде лише в paper). Клік у рядку — перемкнути.">TRD</th><th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmc-check-all" onchange="mmToggleAll(this.checked,'ctr')"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol','ctr')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="status" onclick="mmSort('status','ctr')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Монета в угоді або в черзі з таблиці НЕ зникає — просто видно, що вона вже в роботі, і галочка для ✋ групового відкриття їй недоступна. Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="strength" onclick="mmSort('strength','ctr')" style="cursor:pointer;user-select:none" title="⚡ МММ-CTR — напрямок монети з пари STC: 0.4 · нахил 1H + 0.6 · нахил 4H (нахил = (50−STC)/50: STC нижче 50 → LONG, вище 50 → SHORT). Сума ≤ 10% → ⚖ рівновага; 1H і 4H явно в різні боки → ⚖ рівновага-конфлікт (таймінг проти контексту). Сила 0–100%. Клік — сортувати за силою.">МММ-CTR<span class="ff-sort-arrow"></span></th>
@@ -2997,7 +2997,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="mmc-tbody">
-                        <tr><td colspan="11" class="tm-empty-msg">Немає даних STC 1H/4H</td></tr>
+                        <tr><td colspan="12" class="tm-empty-msg">Немає даних STC 1H/4H</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -3079,7 +3079,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <table class="tm-table" id="mmf-table">
                     <thead>
                         <tr>
-                            <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmf-check-all" onchange="mmToggleAll(this.checked,'fc')"></th>
+                            <th style="width:34px" title="TRD — той самий прапорець, що в WATCHLIST: вимкнено → по монеті НЕ відкриваються РЕАЛЬНІ угоди (автоматика йде лише в paper). Клік у рядку — перемкнути.">TRD</th><th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmf-check-all" onchange="mmToggleAll(this.checked,'fc')"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol','fc')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="status" onclick="mmSort('status','fc')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Монета в угоді або в черзі з таблиці НЕ зникає — просто видно, що вона вже в роботі, і галочка для ✋ групового відкриття їй недоступна. Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="strength" onclick="mmSort('strength','fc')" style="cursor:pointer;user-select:none" title="🔮 МММ-Local — напрямок монети з пари прогнозів: 0.4 · pct 1H + 0.6 · pct 4H (pct — те саме «−12%» / «−41%», що в бейджах: знак = напрямок, величина = сила; впевненість — похідна від тієї самої суми, тому вдруге не враховується). Сума ≤ 10% → ⚖ рівновага; 1H і 4H явно в різні боки → ⚖ рівновага-конфлікт. Сила 0–100%. Клік — сортувати за силою.">МММ-Local<span class="ff-sort-arrow"></span></th>
@@ -3091,7 +3091,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="mmf-tbody">
-                        <tr><td colspan="9" class="tm-empty-msg">Немає даних прогнозу 1H/4H (кеш наповнює скан watchlist)</td></tr>
+                        <tr><td colspan="10" class="tm-empty-msg">Немає даних прогнозу 1H/4H (кеш наповнює скан watchlist)</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -3202,7 +3202,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <table class="tm-table" id="mmp-table">
                     <thead>
                         <tr>
-                            <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmp-check-all" onchange="mmToggleAll(this.checked,'pull')"></th>
+                            <th style="width:34px" title="TRD — той самий прапорець, що в WATCHLIST: вимкнено → по монеті НЕ відкриваються РЕАЛЬНІ угоди (автоматика йде лише в paper). Клік у рядку — перемкнути.">TRD</th><th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmp-check-all" onchange="mmToggleAll(this.checked,'pull')"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol','pull')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="status" onclick="mmSort('status','pull')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="strength" onclick="mmSort('strength','pull')" style="cursor:pointer;user-select:none" title="🧭 МММ-Pull — куди тягне маса ліквідності: (частка ВИЩЕ ціни − частка НИЖЧЕ) / 100. Маса вище → тягне ВГОРУ → LONG, нижче → SHORT. Перевага ≤ 10 п.п. → ⚖ рівновага (той самий поріг, що «⚖ рівновага» у звіті на 📡 Tickr). Сила 0–100%. Клік — сортувати за силою.">МММ-Pull<span class="ff-sort-arrow"></span></th>
@@ -3216,7 +3216,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="mmp-tbody">
-                        <tr><td colspan="11" class="tm-empty-msg">Немає даних скану ліквідності (перший скан ще не завершився)</td></tr>
+                        <tr><td colspan="12" class="tm-empty-msg">Немає даних скану ліквідності (перший скан ще не завершився)</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -3307,7 +3307,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <table class="tm-table" id="mmd-table">
                     <thead>
                         <tr>
-                            <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmd-check-all" onchange="mmToggleAll(this.checked,'dec')"></th>
+                            <th style="width:34px" title="TRD — той самий прапорець, що в WATCHLIST: вимкнено → по монеті НЕ відкриваються РЕАЛЬНІ угоди (автоматика йде лише в paper). Клік у рядку — перемкнути.">TRD</th><th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmd-check-all" onchange="mmToggleAll(this.checked,'dec')"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol','dec')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="status" onclick="mmSort('status','dec')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="strength" onclick="mmSort('strength','dec')" style="cursor:pointer;user-select:none" title="🧠 МММ-Decision — напрямок = вердикт банера Decision (LONG / SHORT; NEUTRAL → ⚖ рівновага), сила = ПЕРЕВАГА одного боку над іншим: prob_long − prob_short. «SHORT 85%» → 85 − 15 = 70%. Саме перевага, а не 85: рівноважна монета («LONG 52%») інакше важила б у банері як сильна. Клік — сортувати за силою.">МММ-Decision<span class="ff-sort-arrow"></span></th>
@@ -3320,7 +3320,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="mmd-tbody">
-                        <tr><td colspan="10" class="tm-empty-msg">Немає вердиктів Decision (перші рахуються порціями — до кількох тактів)</td></tr>
+                        <tr><td colspan="11" class="tm-empty-msg">Немає вердиктів Decision (перші рахуються порціями — до кількох тактів)</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -3408,7 +3408,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <table class="tm-table" id="mmr-table">
                     <thead>
                         <tr>
-                            <th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmr-check-all" onchange="mmToggleAll(this.checked,'rdy')"></th>
+                            <th style="width:34px" title="TRD — той самий прапорець, що в WATCHLIST: вимкнено → по монеті НЕ відкриваються РЕАЛЬНІ угоди (автоматика йде лише в paper). Клік у рядку — перемкнути.">TRD</th><th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mmr-check-all" onchange="mmToggleAll(this.checked,'rdy')"></th>
                             <th data-mmsort="symbol" onclick="mmSort('symbol','rdy')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="status" onclick="mmSort('status','rdy')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="strength" onclick="mmSort('strength','rdy')" style="cursor:pointer;user-select:none" title="🧩 МММ-Готовність — напрямок = бік, чия SMC-«Готовність» вища, ЯКЩО її бал ≥ СЕРЕДНІЙ і перевага над протилежним боком > 10 п.п.; інакше ⚖ рівновага. Сила = ПЕРЕВАГА балів (|LONG − SHORT|), а не бал переможця: рівноважна монета інакше важила б у банері як сильна. Клік — сортувати за силою.">МММ-Готовність<span class="ff-sort-arrow"></span></th>
@@ -3421,7 +3421,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </tr>
                     </thead>
                     <tbody id="mmr-tbody">
-                        <tr><td colspan="10" class="tm-empty-msg">Немає грейдів «Готовності» (перший скан іде у фоні — у черзі сканів)</td></tr>
+                        <tr><td colspan="11" class="tm-empty-msg">Немає грейдів «Готовності» (перший скан іде у фоні — у черзі сканів)</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -13263,6 +13263,21 @@ function _mmSyncSelUI(B) {
         b.style.cursor = n ? 'pointer' : 'not-allowed';
     }
 }
+// 🏷 TRD у таблицях МММ (вимога 27.10). Стан — ЄДИНЕ джерело `tmTradeable`
+// (той самий набір, що малює кнопку WATCHLIST); поки його немає — серверне
+// `r.tradeable`. Клік — той самий `toggleTradeable`.
+function _mmTrdOn(r) {
+    try { if (typeof tmTradeable !== 'undefined' && tmTradeable && tmTradeable.size) return tmTradeable.has(r.symbol); } catch (e) {}
+    return !!r.tradeable;
+}
+function _mmTrdCell(r) {
+    const on = _mmTrdOn(r);
+    const s = _mmEsc(r.symbol);
+    const t = on ? '✅ TRD: реальні угоди по монеті відкриваються. Click — вимкнути.'
+                 : '❌ TRD вимкнено: реальні угоди НЕ відкриваються (автоматика — лише paper). Click — увімкнути.';
+    return `<span class="wl-trade-flag ${on ? 'active' : 'inactive'}" data-sym="${s}" title="${t}"`
+         + ` onclick="event.stopPropagation();toggleTradeable('${s}')">TRD</span>`;
+}
 function mmRender(bk) {
     const B = _mmBk(bk);
     const code = _mmBkCode(B);
@@ -13360,6 +13375,8 @@ function mmRender(bk) {
         (r.f1 ? [r.f1.side, r.f1.pct, r.f1.conf].join('/') : ''),
         (r.f4 ? [r.f4.side, r.f4.pct, r.f4.conf].join('/') : ''),
         (r.ob4h ? (r.ob4h.bias || '-') + (r.ob4h.bar_time || '') + (r.ob4h.restored ? '↻' : '') : ''),
+        (r.ob1h ? (r.ob1h.bias || '-') + (r.ob1h.bar_time || '') + (r.ob1h.restored ? '↻' : '') : ''),
+        _mmTrdOn(r) ? 1 : 0,
         // ⚡ / 🧭 / 🧠 — поля власних колонок книг (STC, маса, магніт,
         // вердикт). Без них зміна, скажімо, вердикту СЕРЕДНІЙ → СИЛЬНИЙ при тій
         // самій силі або зсув магніту НЕ перемальовували рядок (аудит 24.10).
@@ -13384,7 +13401,7 @@ function mmRender(bk) {
                       ? '⏳ Перший знімок після старту ще рахується…'
                       : (B.rows.length ? 'Немає монет під цей фільтр'
                                        : `Немає даних ${B.src}`)));
-            tb.innerHTML = `<tr><td colspan="${B.cols.length + 2}" class="tm-empty-msg">${_why}</td></tr>`;
+            tb.innerHTML = `<tr><td colspan="${B.cols.length + 3}" class="tm-empty-msg">${_why}</td></tr>`;
         } else {
             tb.innerHTML = rows.map(r => {
                 const sel = B.sel.has(r.symbol);
@@ -13398,6 +13415,9 @@ function mmRender(bk) {
                         ? `<input type="checkbox" disabled title="Монета вже у відкритій угоді — друга позиція по тому самому символу не відкриється">`
                         : `<input type="checkbox" disabled title="МММ без напрямку — відкривати нічого">`);
                 return `<tr${sel ? ' style="background:rgba(56,189,248,0.10)"' : ''}>`
+                    // 🏷 TRD — ПЕРША колонка (вимога 27.10), та сама кнопка й той
+                    // самий `toggleTradeable`, що в WATCHLIST.
+                    + `<td>${_mmTrdCell(r)}</td>`
                     + `<td>${cb}</td>`
                     // Клік по НАЗВІ → графік у TradingView, ТОЧНО як у WATCHLIST
                     // (спільний `tvSym`, він сам робить stopPropagation).
@@ -13407,6 +13427,8 @@ function mmRender(bk) {
                     // назви вишиковуються в стовпчик і там, де позначки немає.
                     + `<td style="font-weight:700;white-space:nowrap"><span class="mm-ob4h-slot">`
                     + ob4hMarkHTML({ ob4h: r.ob4h, side: r.mm }, 'МММ у рядку').trim()
+                    + `</span><span class="mm-ob4h-slot">`
+                    + ob1hMarkHTML({ ob1h: r.ob1h, side: r.mm }, 'МММ у рядку').trim()
                     + `</span>${tvSym(r.symbol)}</td>`
                     // Решта — за складом колонок книги (`B.cols`). Показник
                     // книги (МММ LiQ / Новий МММ) — спільний віджет `ffFuelCell`.
@@ -18211,13 +18233,13 @@ async function toggleTradeable(symbol) {
                 tmTradeable.delete(symbol);
             }
             // Update visual on watchlist row
-            const flag = document.querySelector(`.wl-trade-flag[data-sym="${symbol}"]`);
-            if (flag) {
+            // ВСІ кнопки цієї монети: WATCHLIST + таблиці МММ (вимога 27.10).
+            document.querySelectorAll(`.wl-trade-flag[data-sym="${symbol}"]`).forEach(flag => {
                 flag.className = 'wl-trade-flag ' + (d.tradeable ? 'active' : 'inactive');
                 flag.title = d.tradeable
-                    ? 'Tradeable: позиції на цій монеті будуть відкриватися'
-                    : 'Click щоб дозволити торгівлю на цій монеті';
-            }
+                    ? '✅ TRD: реальні угоди по монеті відкриваються. Click — вимкнути.'
+                    : '❌ TRD вимкнено: реальні угоди НЕ відкриваються (автоматика — лише paper). Click — увімкнути.';
+            });
         } else {
             alert('Toggle failed: ' + (d.reason || 'unknown'));
         }

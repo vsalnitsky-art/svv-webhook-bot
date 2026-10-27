@@ -1088,7 +1088,7 @@ def test_ui_monitor_columns_contract():
     for _gone in ('Сила росте', '⏱ Росте', 'data-mmsort="delta"', 'data-mmsort="grow"'):
         _check(_gone not in tbl, f'лишилось «{_gone}»')
     _n = len(_re.findall(r'<th[\s>]', tbl))
-    _check(_n == len(_cols) + 1, f'колонок {_n}, а в контракті {len(_cols)}+☑')
+    _check(_n == len(_cols) + 2, f'колонок {_n}, а в контракті {len(_cols)}+TRD+☑')
     _check(f'colspan="{_n}"' in tbl,
            f'colspan порожнього рядка не дорівнює числу колонок ({_n})')
     _check("mmSort('runway')" in tbl, 'сортування за запасом не підключене')
@@ -3318,7 +3318,7 @@ def test_ui_tables_have_the_requested_columns():
     for gone in ('Сила росте', '⏱ Росте', 'Ціна', 'Готовність'):
         _check(gone not in n, f'у МММ-Trend лишилась колонка «{gone}»: {n}')
     _check("_MMB.new.cols = ['status', 'mm', 'liq', 'state', 'runway', 'pchg', 'f1', 'f4']" in _HTML
-           and len(n) == 10, 'склад JS-колонок = заголовки')
+           and len(n) == 11 and n[0] == 'TRD', 'склад JS-колонок = заголовки (+TRD першою)')
     print('✓ UI: 🧮 +«МММ-Trend»; 🆕 +«МММ-LiQ»/«Запас», без росту, ціни й Готовності')
 
 
@@ -3340,7 +3340,7 @@ console.log(JSON.stringify({n:document.getElementById('mmn-tbody').innerHTML,
     rows = d['n'].split('</tr>')
     tr_a = [x for x in rows if 'AAAUSDT' in x][0]
     tr_b = [x for x in rows if 'BBBUSDT' in x][0]
-    _check(tr_a.count('<td') == 10, f'10 комірок у МММ-Trend: {tr_a.count("<td")}')
+    _check(tr_a.count('<td') == 11, f'11 комірок у МММ-Trend (з TRD): {tr_a.count("<td")}')
     _check('3.2%</b> <span' in tr_a and tr_a.index('3.2%') < tr_a.index('↓'),
            'стрілка запасу праворуч від значення')
     _check('♾' in tr_b and 'простір відкритий' not in tr_b.split('title=')[0]
@@ -3349,7 +3349,7 @@ console.log(JSON.stringify({n:document.getElementById('mmn-tbody').innerHTML,
            'у «Стан» кольором лише саме слово SHORT')
     _check('Готовність' not in tr_a, 'Готовності в рядку немає')
     tr_o = d['o'].split('</tr>')[0]
-    _check(tr_o.count('<td') == 11, f'11 комірок у 🧮: {tr_o.count("<td")}')
+    _check(tr_o.count('<td') == 12, f'12 комірок у 🧮 (з TRD): {tr_o.count("<td")}')
     print('✓ JS: Стан «💼 SHORT угода», Запас «3.2% ↓» / «♾ ↑», без Готовності')
 
 
