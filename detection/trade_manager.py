@@ -8074,7 +8074,36 @@ class TradeManager:
         st['entry_score_breakdown'] = self._compute_entry_score_stats(sel)
         st['from'], st['to'] = lo, hi
         st['oldest_at'] = float(src[0].get('closed_at') or 0) if src else None
+        # 💰 База «% депозиту»: баланс на ПОЧАТОК періоду = поточний баланс
+        # мінус усе, що закрилось ВІДТОДІ (і в періоді, і після нього).
+        st['pnl_since_from_usd'] = round(sum(
+            float(c.get('pnl_usd') or 0) for c in src
+            if lo is None or float(c.get('closed_at') or 0) >= lo), 2)
         return st
+
+    WALLET_TTL_SEC = 30.0
+
+    def wallet_info(self) -> Dict:
+        """💰 Баланс на біржі (USDT, UNIFIED) з кешем WALLET_TTL_SEC — сторінка
+        питає раз на 30с, біржу не смикаємо частіше. Невдача НЕ кешується як
+        «$0»: віддаємо попередній знімок (позначка stale) або ok=False."""
+        now = time.time()
+        c = getattr(self, '_wallet_cache', None)
+        if c and now - c['at'] < self.WALLET_TTL_SEC:
+            return dict(c, cached=True)
+        info = None
+        try:
+            fn = getattr(self.bybit, 'get_wallet_info', None)
+            info = fn() if fn else None
+        except Exception as e:
+            print(f"[TM] wallet_info error: {e}")
+        if info:
+            self._wallet_cache = dict(info, ok=True, at=now)
+            return dict(self._wallet_cache)
+        if c:
+            return dict(c, stale=True)
+        return {'ok': False, 'at': now,
+                'reason': 'біржа не віддала баланс (немає API-ключа або помилка запиту)'}
 
     def manual_close(self, symbol: str, reason: str = 'manual') -> Dict:
         """Close a real position. Default reason 'manual' (UI button); callers

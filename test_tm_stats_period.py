@@ -149,6 +149,73 @@ def test_zebra_in_every_table():
     print('✓ зебра — одне правило на всі таблиці')
 
 
+def test_pnl_since_from_is_the_deposit_base():
+    t = _tm([_c(100, 1, 5), _c(200, -1, -2), _c(300, 1, 1)])
+    st = TM.stats_for_period(t, 150, 250)
+    _check(st['total_pnl_usd'] == -2 and st['pnl_since_from_usd'] == -1, 'база = усе, що закрилось від початку періоду')
+    _check(TM.stats_for_period(t, None, None)['pnl_since_from_usd'] == 4, st)
+    print('✓ % депозиту: база — баланс на початок періоду')
+
+
+class _BB:
+    def __init__(self, seq):
+        self.seq, self.calls = list(seq), 0
+
+    def get_wallet_info(self):
+        self.calls += 1
+        return self.seq.pop(0) if self.seq else None
+
+
+def test_wallet_info_caches_and_never_invents_zero():
+    t = _tm([])
+    t.bybit = _BB([{'wallet': 100.0, 'equity': 110.0, 'upnl': 10.0, 'available': 90.0}])
+    a = TM.wallet_info(t)
+    _check(a['ok'] and a['equity'] == 110.0, a)
+    TM.wallet_info(t)
+    _check(t.bybit.calls == 1, 'кеш 30с — біржу не смикаємо щополла')
+    t._wallet_cache['at'] -= 100
+    b = TM.wallet_info(t)
+    _check(b['ok'] and b.get('stale') and b['equity'] == 110.0, 'невдача → останній знімок зі stale, не $0')
+    t2 = _tm([]); t2.bybit = _BB([])
+    _check(TM.wallet_info(t2)['ok'] is False, 'немає даних → ok=False')
+    _check("@app.route('/api/tm/balance')" in _FLASK and '/api/tm/balance' in _HTML, 'маршрут + сторінка')
+    print('✓ баланс біржі: кеш 30с, невдача не стає «$0»')
+
+
+def test_closed_count_card_removed_count_moved_to_win_rate():
+    f = _js_fn('renderTmStats')
+    _check("card('Закрито угод'" not in f, 'картку «Закрито угод» прибрано')
+    i = f.index("card('Відсоток успішних'")
+    _check('${n} угод' in f[i:i + 400], 'загальна кількість — у картці «Відсоток успішних»')
+    _check("card('Баланс на біржі'" in f, 'блок балансу')
+    print('✓ «Закрито угод» → у «Відсоток успішних», + блок балансу')
+
+
+def test_amounts_hidden_by_default_without_flash():
+    i = _HTML.index("const _TM_AMT_KEY")
+    head = _HTML[i:i + 300]
+    _check("let _tmAmtShown = false;" in head and "=== '1'" in head, 'за замовчуванням СХОВАНО, показ лише за явним вибором')
+    _check(_HTML.index('let _tmAmtShown') < _HTML.index('function renderTmStats('), 'прапорець читається до рендера')
+    stats_html = _HTML[_HTML.index('id="tm-stats-wrap"'):]
+    stats_html = stats_html[:stats_html.index('</div>\n            </div>') if '</div>\n            </div>' in stats_html else 2000]
+    _check('<div class="bb-kpis" id="tm-stats"></div>' in _HTML, 'статична розмітка без сум')
+    js = '\n'.join(_js_fn(n) for n in ('_tmAmt', '_tmDepositPct')) + r'''
+    let _tmAmtShown = false;
+    const a = _tmAmt('$123.45');
+    _tmAmtShown = true;
+    const b = _tmAmt('$123.45');
+    const dp = _tmDepositPct({total_pnl_usd: 10, pnl_since_from_usd: 10}, {ok: true, wallet: 210});
+    const dn = _tmDepositPct({total_pnl_usd: 10}, {ok: false});
+    console.log(JSON.stringify({a, b, dp, dn}));'''
+    r = subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=20)
+    _check(r.returncode == 0, r.stderr)
+    o = json.loads(r.stdout)
+    _check('123' not in o['a'] and '••' in o['a'], 'сховано — суми в DOM немає')
+    _check(o['b'] == '$123.45', o)
+    _check(abs(o['dp'] - 5.0) < 1e-9 and o['dn'] is None, o)
+    print('✓ суми сховані з першого рендера, % депозиту від балансу на початок')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:

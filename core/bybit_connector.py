@@ -341,6 +341,30 @@ class BybitConnector:
             print(f"[BYBIT] get_wallet_balance error: {e}")
             return 0.0
     
+    def get_wallet_info(self) -> Optional[Dict]:
+        """💰 Баланс USDT на UNIFIED-рахунку: walletBalance (реалізований),
+        equity (з нереалізованим PnL), unrealisedPnl, доступно до виводу.
+        None — ключа немає або біржа не відповіла (НЕ нуль: «не знаємо» ≠ «$0»)."""
+        if not self.api_key:
+            return None
+        try:
+            response = self.session.get_wallet_balance(accountType="UNIFIED")
+            result = self._handle_response(response)
+            for acc in (result or {}).get('list') or []:
+                for coin in acc.get('coin', []):
+                    if coin.get('coin') == 'USDT':
+                        f = self._safe_float
+                        return {
+                            'wallet': f(coin.get('walletBalance')),
+                            'equity': f(coin.get('equity')),
+                            'upnl': f(coin.get('unrealisedPnl')),
+                            'available': f(coin.get('availableToWithdraw')),
+                        }
+            return None
+        except Exception as e:
+            print(f"[BYBIT] get_wallet_info error: {e}")
+            return None
+
     def get_positions(self, symbol: str = None) -> List[Dict]:
         """Безпечний варіант: повертає список або [] при будь-якій помилці.
         Зберігає старий контракт для всіх існуючих викликачів."""

@@ -5995,6 +5995,15 @@ def register_api_routes(app):
         except (TypeError, ValueError) as e:
             return jsonify({'ok': False, 'reason': f'некоректний період: {e}'})
 
+    @app.route('/api/tm/balance')
+    def api_tm_balance():
+        """💰 Баланс USDT на Bybit (кеш 30с у TM)."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Trade Manager недоступний'})
+        return jsonify(tm.wallet_info())
+
     @app.route('/api/tm/state')
     def api_tm_state():
         """Return Trade Manager state: positions, closed trades, stats.

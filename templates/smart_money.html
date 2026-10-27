@@ -1117,6 +1117,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .bb-bar { height: 4px; border-radius: 2px; background: #ef454a; margin-top: 5px; overflow: hidden; }
 .bb-bar > i { display: block; height: 100%; background: #20b26c; }
 .bb-empty { color: #71757a; font-size: 0.76rem; padding: 14px 4px; }
+.bb-eye { background: #101115; border: 1px solid #2b2f36; color: #adb1b8; font-size: 0.7rem;
+    padding: 3px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; white-space: nowrap; }
+.bb-eye:hover { color: #fff; border-color: #3a3f47; }
+.bb-mask { color: #71757a !important; letter-spacing: 0.12em; }
 
 .tm-entry-stats {
     display: flex;
@@ -5255,6 +5259,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </span>
                     </div>
                     <span class="bb-note" id="tm-stats-note"></span>
+                    <button type="button" class="bb-eye" id="tm-amt-toggle" onclick="tmToggleAmounts()"
+                            title="Показати / сховати суми в панелі. За замовчуванням суми СХОВАНІ; вибір запамʼятовується в цьому браузері.">👁 Показати суми</button>
                 </div>
                 <div class="bb-kpis" id="tm-stats"></div>
             </div>
@@ -11798,47 +11804,121 @@ async function tmLoadPeriodStats(force) {
     }
 }
 
+// 🙈 Суми в панелі СХОВАНІ за замовчуванням (вимога 27.10). Прапорець читається
+// СИНХРОННО до першого рендера, а картки малює лише JS — тож суми на старті
+// сторінки не «мелькають»: перший же рендер уже замаскований.
+const _TM_AMT_KEY = 'tmAmountsShown';
+let _tmAmtShown = false;
+try { _tmAmtShown = localStorage.getItem(_TM_AMT_KEY) === '1'; } catch (e) {}
+let _tmStatsLast = null;                 // останні аргументи renderTmStats — для перемальовки
+let _tmWallet = null;                    // відповідь /api/tm/balance
+let _tmWalletAt = 0;
+
+// Маска для СУМ (відсотки й кількості не ховаємо — вони не розкривають розмір рахунку).
+function _tmAmt(html) {
+    return _tmAmtShown ? html : '<span class="bb-mask">••••••</span>';
+}
+
+function _tmAmtSync() {
+    const b = document.getElementById('tm-amt-toggle');
+    if (b) b.textContent = _tmAmtShown ? '🙈 Сховати суми' : '👁 Показати суми';
+}
+
+function tmToggleAmounts() {
+    _tmAmtShown = !_tmAmtShown;
+    try { localStorage.setItem(_TM_AMT_KEY, _tmAmtShown ? '1' : '0'); } catch (e) {}
+    _tmAmtSync();
+    if (_tmStatsLast) renderTmStats(..._tmStatsLast);
+}
+
+// 💰 Баланс із біржі — раз на 30с (бекенд теж кешує 30с, біржу не смикаємо).
+async function tmLoadBalance(force) {
+    if (!force && Date.now() - _tmWalletAt < 30000) return;
+    _tmWalletAt = Date.now();
+    try {
+        const res = await fetch('/api/tm/balance');
+        const j = await res.json();
+        _tmWallet = (res.ok && j && j.ok) ? j : { ok: false, reason: (j && j.reason) || ('HTTP ' + res.status) };
+    } catch (e) {
+        _tmWallet = { ok: false, reason: 'не вдалося завантажити' };
+    }
+    if (_tmStatsLast) renderTmStats(..._tmStatsLast);
+}
+
+// % депозиту за період: база = баланс на ПОЧАТОК періоду = поточний гаманець
+// мінус P&L усіх угод, закритих відтоді (pnl_since_from_usd; для «Усе» — весь P&L).
+function _tmDepositPct(st, w) {
+    if (!st || !w || !w.ok || w.wallet == null) return null;
+    const since = st.pnl_since_from_usd != null ? st.pnl_since_from_usd : (st.total_pnl_usd || 0);
+    const base = w.wallet - since;
+    if (!(base > 0)) return null;
+    return (st.total_pnl_usd || 0) / base * 100;
+}
+
 // Картки P&L у стилі Bybit. ОДНА функція на «Усе» і на будь-який період.
 function renderTmStats(st, label, note) {
+    _tmStatsLast = [st, label, note];
     const host = document.getElementById('tm-stats');
     if (!host) return;
     _tmPeriodSync();
+    _tmAmtSync();
     const noteEl = document.getElementById('tm-stats-note');
     if (noteEl) noteEl.textContent = note || label || '';
-    if (!st) { host.innerHTML = '<div class="bb-empty">Немає даних за обраний період</div>';
-               renderEntryScoreBreakdown(null); return; }
-    const n = st.total_closed || 0;
-    if (!n) {
-        host.innerHTML = `<div class="bb-empty">Закритих угод ${label || ''} немає</div>`;
+    const usd = v => _tmAmt(`${(v || 0) >= 0 ? '+' : '−'}$${Math.abs(v || 0).toFixed(2)}`);
+    const money = v => _tmAmt(`$${(v || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`);
+    const cls = v => (v || 0) > 0 ? 'bb-up' : ((v || 0) < 0 ? 'bb-dn' : '');
+    const esc = t => (t || '').replace(/"/g, '&quot;');
+    const card = (l, v, sub, vc, tip) =>
+        `<div class="bb-kpi" title="${esc(tip)}"><div class="bb-kpi-l">${l}</div>` +
+        `<div class="bb-kpi-v ${vc || ''}">${v}</div>${sub ? `<div class="bb-kpi-s">${sub}</div>` : ''}</div>`;
+    // 💰 Баланс — показуємо ЗАВЖДИ, навіть коли закритих угод за період немає.
+    const w = _tmWallet;
+    let balCard;
+    if (!w) {
+        balCard = card('Баланс на біржі', '<span class="bb-mask">…</span>', 'завантаження', '', 'Баланс USDT на рахунку Bybit (UNIFIED).');
+    } else if (!w.ok) {
+        balCard = card('Баланс на біржі', '—', `<span class="bb-warn">⚠ ${w.reason || 'немає даних'}</span>`, '', 'Баланс USDT на рахунку Bybit (UNIFIED). Біржа не віддала баланс.');
+    } else {
+        const dp = _tmDepositPct(st, w);
+        const dpTxt = dp == null ? '% депозиту — немає даних'
+            : `<span class="${cls(dp)}">${dp >= 0 ? '+' : '−'}${Math.abs(dp).toFixed(2)}%</span> депозиту ${label || ''}`;
+        const tip = 'Загальний баланс (equity) USDT на Bybit: гаманець + нереалізований PnL відкритих угод. ' +
+            '% депозиту = чистий P&L закритих угод за період ÷ баланс гаманця на початок періоду ' +
+            '(поточний гаманець мінус усе, що закрилось відтоді). Поповнення й виводи коштів цей відсоток спотворюють.' +
+            (_tmAmtShown ? ` · Гаманець $${(w.wallet || 0).toFixed(2)} · нереаліз. ${(w.upnl || 0) >= 0 ? '+' : '−'}$${Math.abs(w.upnl || 0).toFixed(2)} · доступно $${(w.available || 0).toFixed(2)}` : '') +
+            (w.stale ? ' · ⚠ біржа зараз не відповідає — показано останній отриманий баланс' : '');
+        balCard = card('Баланс на біржі', money(w.equity != null ? w.equity : w.wallet),
+                       dpTxt + (w.stale ? ' <span class="bb-warn">⚠</span>' : ''), '', tip);
+    }
+    const n = st ? (st.total_closed || 0) : 0;
+    if (!st || !n) {
+        host.innerHTML = balCard + `<div class="bb-empty">${st ? `Закритих угод ${label || ''} немає` : 'Немає даних за обраний період'}</div>`;
         renderEntryScoreBreakdown(null);
         return;
     }
-    const usd = v => `${(v || 0) >= 0 ? '+' : '−'}$${Math.abs(v || 0).toFixed(2)}`;
-    const cls = v => (v || 0) > 0 ? 'bb-up' : ((v || 0) < 0 ? 'bb-dn' : '');
-    const card = (l, v, sub, vc, tip) =>
-        `<div class="bb-kpi" title="${(tip || '').replace(/"/g, '&quot;')}"><div class="bb-kpi-l">${l}</div>` +
-        `<div class="bb-kpi-v ${vc || ''}">${v}</div>${sub ? `<div class="bb-kpi-s">${sub}</div>` : ''}</div>`;
     const wr = st.win_rate || 0;
     const pf = st.profit_factor;
     host.innerHTML =
         card('Чистий P&amp;L', usd(st.total_pnl_usd),
              `<span class="bb-up">${usd(st.gross_profit_usd)}</span> · <span class="bb-dn">${usd(st.gross_loss_usd)}</span>`,
-             cls(st.total_pnl_usd),
+             _tmAmtShown ? cls(st.total_pnl_usd) : '',
              'Сумарний результат закритих угод у $. Для угод, звірених із Bybit, — closedPnl біржі (нетто: з плечем, комісіями й фандингом). Під числом — сума прибуткових і сума збиткових угод.') +
+        balCard +
         card('Відсоток успішних', `${wr}%`,
-             `<span class="bb-up">${st.wins || 0} W</span> · <span class="bb-dn">${st.losses || 0} L</span><div class="bb-bar"><i style="width:${Math.max(0, Math.min(100, wr))}%"></i></div>`,
-             wr >= 50 ? 'bb-up' : 'bb-dn', 'Частка угод, закритих у плюсі (за рухом ціни).') +
-        card('Закрито угод', `${n}`,
-             st.not_exchange ? `<span class="bb-warn">⏳ не звірено з біржею: ${st.not_exchange}</span>` : 'усі звірено з Bybit',
-             '', 'Скільки угод закрито за період. «Не звірено» — для них ще стоїть розрахунок бота; бот перепитує Bybit щохвилини (до 3 діб).') +
+             `${n} угод · <span class="bb-up">${st.wins || 0} W</span> · <span class="bb-dn">${st.losses || 0} L</span>` +
+             (st.not_exchange ? ` · <span class="bb-warn">⏳ ${st.not_exchange}</span>` : '') +
+             `<div class="bb-bar"><i style="width:${Math.max(0, Math.min(100, wr))}%"></i></div>`,
+             wr >= 50 ? 'bb-up' : 'bb-dn',
+             `Частка угод, закритих у плюсі (за рухом ціни). Усього закрито за період: ${n}.` +
+             (st.not_exchange ? ` ⏳ ${st.not_exchange} — ще не звірено з біржею (стоїть розрахунок бота; бот перепитує Bybit щохвилини до 3 діб).` : ' Усі звірено з Bybit.')) +
         card('Profit factor', pf == null ? (st.gross_profit_usd > 0 ? '∞' : '—') : pf.toFixed(2),
              `сер. <span class="bb-up">${usd(st.avg_win_usd)}</span> / <span class="bb-dn">${usd(st.avg_loss_usd)}</span>`,
              pf == null ? (st.gross_profit_usd > 0 ? 'bb-up' : '') : (pf >= 1 ? 'bb-up' : 'bb-dn'),
              'Сума прибутку ÷ сума збитку. Більше 1 — система заробляє. Під числом — середній прибуток прибуткової угоди і середній збиток збиткової.') +
-        card('Найкраща / найгірша', `<span class="${cls(st.best_usd)}">${usd(st.best_usd)}</span>`,
+        card('Найкраща / найгірша', `<span class="${_tmAmtShown ? cls(st.best_usd) : ''}">${usd(st.best_usd)}</span>`,
              `<span class="${cls(st.worst_usd)}">${usd(st.worst_usd)}</span> · сер. рух ${(st.avg_pnl_pct || 0) >= 0 ? '+' : ''}${(st.avg_pnl_pct || 0).toFixed(2)}%`,
              '', 'Найбільший результат однієї угоди в $ і найбільший збиток. «Сер. рух» — середній рух ціни на угоду (без плеча й комісій).') +
-        card('Комісії біржі', `$${(st.total_fees_usd || 0).toFixed(2)}`,
+        card('Комісії біржі', _tmAmt(`$${(st.total_fees_usd || 0).toFixed(2)}`),
              'вхід + вихід, Bybit', '', 'Сума комісій біржі (вхід + вихід) по угодах, звірених із Bybit. Уже враховані в чистому P&L.');
     renderEntryScoreBreakdown(st.entry_score_breakdown);
 }
@@ -17608,6 +17688,7 @@ async function loadTMState(isPoll) {
         // береться з /api/tm/stats (та сама closed_stats на бекенді).
         const st = d.stats || {};
         window._tmLiveStats = st;
+        tmLoadBalance(false);
         if (_tmPeriod.mode === 'all') {
             renderTmStats(st, 'за весь час');
         } else {
