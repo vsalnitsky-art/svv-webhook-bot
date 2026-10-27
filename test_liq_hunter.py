@@ -638,7 +638,8 @@ def test_every_row_is_one_line_and_the_table_is_striped():
     sec = _HTML[i:_HTML.index('id="poc-setup-panel"')]
     _check('#lh-table th, #lh-table td { white-space:nowrap' in sec,
            'комірки мусять лишатись в ОДНУ стрічку')
-    _check('#lh-table tbody tr:nth-child(even)' in sec, 'немає зебри')
+    # Зебра тепер ОДНА на всі таблиці (вимога 27.10) — глобальне правило .tm-table.
+    _check(':where(.tm-table, .poc-tbl) tbody tr:nth-child(even) > td' in _HTML, 'немає зебри')
     _check('#lh-table tbody tr:hover' in sec, 'немає підсвітки рядка')
     body = _HTML[_HTML.index('function _lhMagnetCell(r) {'):
                  _HTML.index('function lhRender()')]

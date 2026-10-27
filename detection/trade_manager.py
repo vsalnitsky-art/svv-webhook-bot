@@ -138,6 +138,39 @@ def breakeven_with_fees(side, entry, buf_pct):
     return e * (1.0 + b / 100.0) if side == 'LONG' else e * (1.0 - b / 100.0)
 
 
+def closed_stats(trades) -> Dict:
+    """ЧИСТА: підсумок закритих угод — ЄДИНЕ джерело для панелі статистики
+    (весь час і будь-який період рахуються ОДНІЄЮ функцією). pnl_usd — для
+    звірених із Bybit угод це closedPnl біржі (нетто з комісіями й фандингом)."""
+    trades = list(trades or [])
+    n = len(trades)
+    pnls = [float(c.get('pnl_usd') or 0) for c in trades]
+    pcts = [float(c.get('pnl_pct') or 0) for c in trades]
+    wins = sum(1 for v in pcts if v > 0)
+    losses = sum(1 for v in pcts if v < 0)
+    win_usd = [v for v in pnls if v > 0]
+    loss_usd = [v for v in pnls if v < 0]
+    gp, gl = sum(win_usd), sum(loss_usd)
+    fees = sum(float((c.get('exchange') or {}).get('fees_usd') or 0) for c in trades)
+    return {
+        'total_closed': n,
+        'wins': wins,
+        'losses': losses,
+        'win_rate': round(wins / n * 100, 1) if n else 0,
+        'total_pnl_usd': round(sum(pnls), 2),
+        'gross_profit_usd': round(gp, 2),
+        'gross_loss_usd': round(gl, 2),
+        'profit_factor': (round(gp / abs(gl), 2) if gl < 0 else None),
+        'avg_win_usd': round(gp / len(win_usd), 2) if win_usd else 0,
+        'avg_loss_usd': round(gl / len(loss_usd), 2) if loss_usd else 0,
+        'best_usd': round(max(pnls), 2) if pnls else 0,
+        'worst_usd': round(min(pnls), 2) if pnls else 0,
+        'avg_pnl_pct': round(sum(pcts) / n, 2) if n else 0,
+        'not_exchange': sum(1 for c in trades if c.get('pnl_source') != 'exchange'),
+        'total_fees_usd': round(fees, 4),
+    }
+
+
 def real_pnl_net(side, entry, current, qty, leverage, fee_pct, gross_usd=None):
     """💰 PnL ВІДКРИТОЇ реальної угоди з урахуванням ПЛЕЧА і КОМІСІЙ.
 
@@ -7935,16 +7968,8 @@ class TradeManager:
             # /api/tm/state НЕ серіалізував тисячі рядків (це й гальмувало сторінку).
             closed = [_lite_trade(c) for c in self._closed_trades[-STATE_CLOSED_LIMIT:]]
 
-            # Stats — real
-            total_closed = len(self._closed_trades)
-            wins = sum(1 for c in self._closed_trades if c.get('pnl_pct', 0) > 0)
-            losses = sum(1 for c in self._closed_trades if c.get('pnl_pct', 0) < 0)
-            total_pnl = sum(c.get('pnl_usd', 0) for c in self._closed_trades)
-            # 🏦 Скільки угод у підсумку ще НЕ звірено з біржею (розрахунок бота).
-            not_exch = sum(1 for c in self._closed_trades
-                           if c.get('pnl_source') != 'exchange')
-            total_fees = sum(float((c.get('exchange') or {}).get('fees_usd') or 0)
-                             for c in self._closed_trades)
+            # Stats — real (ТА САМА closed_stats, що й статистика за період)
+            real_stats = closed_stats(self._closed_trades)
             
             # Shadow positions snapshot
             shadow_positions = []
@@ -7990,16 +8015,7 @@ class TradeManager:
                 'errors': self._errors,
                 'positions': positions,
                 'closed_trades': closed,
-                'stats': {
-                    'total_closed': total_closed,
-                    'wins': wins,
-                    'losses': losses,
-                    'win_rate': round(wins / total_closed * 100, 1) if total_closed else 0,
-                    'total_pnl_usd': round(total_pnl, 2),
-                    'not_exchange': not_exch,
-                    'total_fees_usd': round(total_fees, 4),
-                    'entry_score_breakdown': entry_stats,
-                },
+                'stats': {**real_stats, 'entry_score_breakdown': entry_stats},
                 'shadow_positions': shadow_positions,
                 'price_feed': self.price_feed_health(),
                 'shadow_closed': shadow_closed,
@@ -8043,6 +8059,23 @@ class TradeManager:
             }
         return result
     
+    def stats_for_period(self, t_from=None, t_to=None, shadow: bool = False) -> Dict:
+        """Статистика закритих угод за період [t_from, t_to) (epoch-секунди за
+        closed_at; None = без межі). Джерело — ті самі записи й та сама
+        closed_stats, що панель «за весь час»."""
+        with self._lock:
+            src = list(self._shadow_closed if shadow else self._closed_trades)
+        lo = float(t_from) if t_from not in (None, '') else None
+        hi = float(t_to) if t_to not in (None, '') else None
+        sel = [c for c in src
+               if (lo is None or float(c.get('closed_at') or 0) >= lo)
+               and (hi is None or float(c.get('closed_at') or 0) < hi)]
+        st = closed_stats(sel)
+        st['entry_score_breakdown'] = self._compute_entry_score_stats(sel)
+        st['from'], st['to'] = lo, hi
+        st['oldest_at'] = float(src[0].get('closed_at') or 0) if src else None
+        return st
+
     def manual_close(self, symbol: str, reason: str = 'manual') -> Dict:
         """Close a real position. Default reason 'manual' (UI button); callers
         like the WAIT-gate pass their own reason so the close is labelled

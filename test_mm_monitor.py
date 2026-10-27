@@ -1689,7 +1689,8 @@ def test_ui_table_is_striped_so_rows_do_not_blend():
     # новий блок (цього разу — стилі налаштувань детектора корекції).
     i = _HTML.index('id="mm-table"')
     blk = _HTML[_HTML.index('id="mm-monitor-panel"'):i]
-    _check('#mm-table tbody tr:nth-child(even)' in blk,
+    # Зебра тепер ОДНА на всі таблиці (вимога 27.10) — глобальне правило .tm-table.
+    _check(':where(.tm-table, .poc-tbl) tbody tr:nth-child(even) > td' in _HTML,
            'немає зебри — рядки зливаються (скарга 15.09)')
     _check('#mm-table tbody tr:hover' in blk, 'немає підсвітки рядка під курсором')
     print('✓ UI: таблиця монітора — зебра + підсвітка рядка')

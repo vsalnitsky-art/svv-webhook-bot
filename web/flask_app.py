@@ -5980,6 +5980,21 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/tm/stats')
+    def api_tm_stats():
+        """📊 Статистика закритих угод за період: ?from=<epoch>&to=<epoch>
+        (межі дня рахує сторінка за годинником ПК) &book=real|paper."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Trade Manager недоступний'})
+        try:
+            st = tm.stats_for_period(request.args.get('from'), request.args.get('to'),
+                                     shadow=(request.args.get('book') == 'paper'))
+            return jsonify({'ok': True, 'stats': st})
+        except (TypeError, ValueError) as e:
+            return jsonify({'ok': False, 'reason': f'некоректний період: {e}'})
+
     @app.route('/api/tm/state')
     def api_tm_state():
         """Return Trade Manager state: positions, closed trades, stats.

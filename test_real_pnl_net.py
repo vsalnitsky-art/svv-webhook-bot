@@ -69,7 +69,8 @@ def test_page_renders_net_cell_and_ukrainian_stats():
     _check('${realPnlCellHTML(p, usd, syncMark)}' in _HTML, 'комірка PnL не підключена')
     _check('Decision validation' not in _HTML, 'лишився англійський підпис')
     _check('Перевірка оцінки входу' in _HTML, 'немає українського підпису')
-    for w in ('закрито:', 'у плюсі:', 'відсоток успішних:'):
+    # Панель P&L у стилі Bybit (27.10) — підписи карток.
+    for w in ('Чистий P&amp;L', 'Відсоток успішних', 'Закрито угод'):
         _check(w in _HTML, w)
     i = _HTML.index('function realPnlCellHTML(')
     fn = _HTML[i:_HTML.index('\n}\n', i) + 2]

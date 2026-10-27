@@ -706,6 +706,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     letter-spacing: 0.04em;
 }
 .tm-table tr:hover td { background: rgba(255,255,255,0.02); }
+/* 🦓 Зебра в УСІХ таблицях (вимога 27.10). :where() — нульова специфічність,
+   тож тонування рядків 📌 Manual / EXT і власні правила таблиць сильніші. */
+:where(.tm-table, .poc-tbl) tbody tr:nth-child(even) > td { background: rgba(255,255,255,0.032); }
+:where(.tm-table, .poc-tbl) tbody tr:hover > td { background: rgba(96,165,250,0.07); }
+/* 📜 Закриті угоди (real + paper) — кожен рядок в ОДНУ стрічку. */
+#tm-closed-table th, #tm-closed-table td,
+#tm-shadow-closed-table th, #tm-shadow-closed-table td { white-space: nowrap; }
+.tm-pnl-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
 /* Horizontal-scroll wrapper for the wide TM tables so they stay ON-SCREEN and
    never push the page sideways (wide content scrolls inside the box). */
 .tm-hscroll { overflow-x: auto; max-width: 100%; }
@@ -864,8 +872,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 @media (max-width: 900px) {
   .mm-ban-title { flex-basis: 150px; } .mm-ban-tm { flex-basis: auto; } .mm-ban-st { flex-basis: auto; }
 }
-.tm-pnl-pos { color: #4ade80; }
-.tm-pnl-neg { color: #ef4444; }
+.tm-pnl-pos { color: #20b26c; }   /* зелений Bybit */
+.tm-pnl-neg { color: #ef454a; }   /* червоний Bybit */
 .tm-side-long { color: #4ade80; font-weight: 600; }
 .tm-side-short { color: #ef4444; font-weight: 600; }
 .tm-close-btn {
@@ -1079,25 +1087,58 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     color: #aaa;
 }
 .tm-stats b { color: #ddd; font-weight: 600; }
+/* 📊 Панель P&L у стилі Bybit (вимога 27.10): темна картка, приглушені
+   uppercase-підписи, великі monospace-числа, зелений #20b26c / червоний
+   #ef454a, акцент #f7a600. Картки — в один ряд (скрол на вузькому). */
+.bb-stats { background: #17181e; border: 1px solid #2b2f36; border-radius: 10px;
+    padding: 10px 12px 12px; margin: 8px 0 4px; }
+.bb-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.bb-title { color: #fff; font-weight: 700; font-size: 0.82rem; letter-spacing: 0.02em; cursor: help; }
+.bb-period { display: inline-flex; align-items: center; gap: 2px; background: #101115;
+    border: 1px solid #2b2f36; border-radius: 6px; padding: 2px; flex-wrap: wrap; }
+.bb-period button { background: transparent; border: 0; color: #adb1b8; font-size: 0.72rem;
+    padding: 3px 10px; border-radius: 4px; cursor: pointer; font-weight: 600; }
+.bb-period button:hover { color: #fff; }
+.bb-period button.on { background: #2b2f36; color: #f7a600; }
+.bb-dates { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; }
+.bb-dates input { color-scheme: dark; background: #17181e; border: 1px solid #2b2f36; color: #fff;
+    border-radius: 4px; font-size: 0.72rem; padding: 2px 6px; font-family: inherit; }
+.bb-dash { color: #71757a; }
+.bb-note { color: #71757a; font-size: 0.7rem; margin-left: auto; }
+.bb-kpis { display: flex; gap: 8px; overflow-x: auto; }
+.bb-kpi { flex: 1 0 150px; min-height: 64px; background: #1d1e24; border: 1px solid #2b2f36;
+    border-radius: 8px; padding: 8px 12px; display: flex; flex-direction: column; justify-content: space-between; }
+.bb-kpi-l { color: #71757a; font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+.bb-kpi-v { color: #fff; font-size: 1.15rem; font-weight: 700; margin-top: 2px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bb-kpi-s { color: #adb1b8; font-size: 0.68rem; margin-top: 2px; white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.bb-up { color: #20b26c !important; } .bb-dn { color: #ef454a !important; } .bb-warn { color: #f7a600 !important; }
+.bb-bar { height: 4px; border-radius: 2px; background: #ef454a; margin-top: 5px; overflow: hidden; }
+.bb-bar > i { display: block; height: 100%; background: #20b26c; }
+.bb-empty { color: #71757a; font-size: 0.76rem; padding: 14px 4px; }
 
 .tm-entry-stats {
     display: flex;
-    gap: 12px;
+    gap: 8px;
     align-items: center;
-    padding: 4px 8px;
+    padding: 6px 12px;
     margin-top: 4px;
     font-size: 0.72rem;
-    color: #aaa;
-    background: rgba(99, 102, 241, 0.04);
-    border-radius: 3px;
+    color: #adb1b8;
+    background: #17181e;
+    border: 1px solid #2b2f36;
+    border-radius: 8px;
     flex-wrap: wrap;
 }
 .tm-es-cell {
-    padding: 2px 8px;
-    border-radius: 3px;
-    border: 1px solid rgba(255,255,255,0.06);
-    background: rgba(255,255,255,0.02);
+    padding: 3px 10px;
+    border-radius: 4px;
+    border: 1px solid #2b2f36;
+    background: #1d1e24;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.tm-es-cell b { color: #fff; font-family: inherit; }
 .tm-es-cell:empty { display: none; }
 
 .tm-empty-msg {
@@ -2766,7 +2807,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <!-- 🦓 Зебра саме для ЦІЄЇ таблиці (рядків багато і вони щільні).
                  Клас на <tbody>, щоб порожній рядок-заглушка не смугався. -->
             <style>
-              #mm-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
               #mm-table tbody tr:hover { background: rgba(56,189,248,0.10); }
               #mm-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
               /* 📨 Гармошка Telegram — та сама сітка, що в
@@ -2881,7 +2921,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span id="mmn-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
             </div>
             <style>
-              #mmn-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
               #mmn-table tbody tr:hover { background: rgba(56,189,248,0.10); }
               #mmn-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
             </style>
@@ -2975,7 +3014,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span id="mmc-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
             </div>
             <style>
-              #mmc-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
               #mmc-table tbody tr:hover { background: rgba(56,189,248,0.10); }
               #mmc-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
             </style>
@@ -3071,7 +3109,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span id="mmf-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
             </div>
             <style>
-              #mmf-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
               #mmf-table tbody tr:hover { background: rgba(56,189,248,0.10); }
               #mmf-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
             </style>
@@ -3194,7 +3231,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span id="mmp-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
             </div>
             <style>
-              #mmp-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
               #mmp-table tbody tr:hover { background: rgba(56,189,248,0.10); }
               #mmp-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
             </style>
@@ -3299,7 +3335,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span id="mmd-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
             </div>
             <style>
-              #mmd-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
               #mmd-table tbody tr:hover { background: rgba(56,189,248,0.10); }
               #mmd-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
             </style>
@@ -3400,7 +3435,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span id="mmr-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
             </div>
             <style>
-              #mmr-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.035); }
               #mmr-table tbody tr:hover { background: rgba(56,189,248,0.10); }
               #mmr-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
             </style>
@@ -3498,7 +3532,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
               /* 🦓 Зебра — як у таблиці МММ-монітора: рядків багато і вони
                  щільні, без неї вони зливаються. Клас на <tbody>, щоб
                  порожній рядок-заглушка не смугався. */
-              #lh-table tbody tr:nth-child(even) { background:rgba(255,255,255,0.035); }
               #lh-table tbody tr:hover { background:rgba(34,211,238,0.10); }
               #lh-table tbody td { border-bottom:1px solid rgba(255,255,255,0.05); }
             </style>
@@ -5202,12 +5235,28 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </details>
             
             <!-- Stats -->
-            <div class="tm-stats" id="tm-stats">
-                <span>📊 закрито: <b>0</b></span>
-                <span>🟢 у плюсі: <b>0</b></span>
-                <span>🔴 у мінусі: <b>0</b></span>
-                <span>📈 відсоток успішних: <b>—</b></span>
-                <span>💰 результат: <b>$0</b></span>
+            <div class="bb-stats" id="tm-stats-wrap">
+                <div class="bb-head">
+                    <span class="bb-title" title="Підсумок ЗАКРИТИХ реальних угод. Для угод, звірених із Bybit, PnL — це closedPnl біржі (нетто, з плечем, комісіями й фандингом). Джерело — живий список закритих угод (останні 2000); повна історія — «📚 За весь час (БД)» над таблицею.">P&amp;L · закриті угоди</span>
+                    <div class="bb-period" id="tm-stats-period">
+                        <button type="button" data-p="today" onclick="tmSetPeriod('today')">Сьогодні</button>
+                        <button type="button" data-p="7d" onclick="tmSetPeriod('7d')">7Д</button>
+                        <button type="button" data-p="30d" onclick="tmSetPeriod('30d')">30Д</button>
+                        <button type="button" data-p="all" onclick="tmSetPeriod('all')">Усе</button>
+                        <button type="button" data-p="day" onclick="tmSetPeriod('day')" title="Статистика за конкретний день (за годинником вашого ПК)">📅 День</button>
+                        <button type="button" data-p="range" onclick="tmSetPeriod('range')" title="Статистика за довільний період: від дати до дати включно">Період</button>
+                        <span class="bb-dates" id="tm-stats-day-wrap" style="display:none">
+                            <input type="date" id="tm-stats-day" onchange="tmPeriodInput()">
+                        </span>
+                        <span class="bb-dates" id="tm-stats-range-wrap" style="display:none">
+                            <input type="date" id="tm-stats-from" onchange="tmPeriodInput()">
+                            <span class="bb-dash">—</span>
+                            <input type="date" id="tm-stats-to" onchange="tmPeriodInput()">
+                        </span>
+                    </div>
+                    <span class="bb-note" id="tm-stats-note"></span>
+                </div>
+                <div class="bb-kpis" id="tm-stats"></div>
             </div>
             <!-- Decision Validation breakdown — shows win rate / avg PnL
                  grouped by the verdict the bot assigned at open. Critical
@@ -11620,10 +11669,12 @@ function closedRealPnlCellHTML(c) {
         tip = 'Біржа ще НЕ віддала запис закриття — показано розрахунок бота за останньою ціною. '
             + 'Бот перепитує Bybit щохвилини (до 3 діб) і замінить на факт біржі.';
     }
+    // Усе в ОДИН рядок і ВЕСЬ текст у кольорі результату (зелений / червоний
+    // Bybit): рух % · $ · ROI на маржу · плече; значок джерела — приглушений.
     const roi = (x && x.roi_pct != null)
-        ? `<br><span style="font-size:0.7rem;opacity:0.85">ROI ${sg(x.roi_pct)}${Math.abs(x.roi_pct).toFixed(2)}% · ×${x.leverage}</span>` : '';
-    return `<td class="${cls}" style="white-space:nowrap" title="${tip.replace(/"/g, '&quot;')}">`
-        + `${sg(c.pnl_pct || 0)}${Math.abs(c.pnl_pct || 0).toFixed(2)}% (${usd(c.pnl_usd || 0)})${mark}${roi}</td>`;
+        ? ` · ROI ${sg(x.roi_pct)}${Math.abs(x.roi_pct).toFixed(2)}%${x.leverage ? ` ×${x.leverage}` : ''}` : '';
+    return `<td class="${cls} tm-pnl-cell" style="white-space:nowrap" title="${tip.replace(/"/g, '&quot;')}">`
+        + `${sg(c.pnl_pct || 0)}${Math.abs(c.pnl_pct || 0).toFixed(2)}% · ${usd(c.pnl_usd || 0)}${roi}${mark}</td>`;
 }
 
 // Render the Entry Score validation breakdown — win rate per verdict bucket.
@@ -11631,6 +11682,167 @@ function closedRealPnlCellHTML(c) {
 // "good" picks ACTUALLY win more often than "marginal" / "poor" — that's
 // the feedback loop for tuning weights.
 const _ES_BUCKET_UA = {good: 'сильний', marginal: 'середній', poor: 'слабкий'};
+// ── 📊 P&L: період статистики (вимога 27.10) ─────────────────────────────
+// Межі дня — за годинником ПК (локальний час користувача). Вибір періоду —
+// UI-налаштування, тож localStorage (як wlSortMode), а не БД.
+const _TM_PERIOD_KEY = 'tmStatsPeriod';
+let _tmPeriod = { mode: 'all', day: '', from: '', to: '' };
+try {
+    const _sv = JSON.parse(localStorage.getItem(_TM_PERIOD_KEY) || 'null');
+    if (_sv && _sv.mode) _tmPeriod = Object.assign(_tmPeriod, _sv);
+} catch (e) {}
+let _tmPeriodFetch = { key: '', at: 0, busy: false };
+
+function _tmYmd(d) {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function _tmDayStart(ymd) {
+    const [y, m, d] = String(ymd || '').split('-').map(Number);
+    if (!y || !m || !d) return null;
+    return new Date(y, m - 1, d).getTime() / 1000;
+}
+// ЧИСТА: режим періоду → {from, to, label} (epoch-секунди; null = без межі).
+function _tmPeriodRange(p, nowMs) {
+    const now = new Date(nowMs || Date.now());
+    const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+    const DAY = 86400;
+    const fmt = ymd => { const [y, m, d] = ymd.split('-'); return `${d}.${m}.${y}`; };
+    switch (p.mode) {
+        case 'today': return { from: today0, to: today0 + DAY, label: 'сьогодні' };
+        case '7d':    return { from: today0 - 6 * DAY, to: today0 + DAY, label: 'за 7 днів' };
+        case '30d':   return { from: today0 - 29 * DAY, to: today0 + DAY, label: 'за 30 днів' };
+        case 'day': {
+            const f = _tmDayStart(p.day);
+            if (f == null) return null;
+            return { from: f, to: _tmDayStart(_tmYmd(new Date((f + DAY + 3600) * 1000))), label: `за ${fmt(p.day)}` };
+        }
+        case 'range': {
+            const f = _tmDayStart(p.from), t = _tmDayStart(p.to);
+            if (f == null || t == null) return null;
+            const lo = Math.min(f, t), hi = Math.max(f, t);
+            const a = f <= t ? p.from : p.to, b = f <= t ? p.to : p.from;
+            return { from: lo, to: _tmDayStart(_tmYmd(new Date((hi + DAY + 3600) * 1000))),
+                     label: a === b ? `за ${fmt(a)}` : `${fmt(a)} — ${fmt(b)}` };
+        }
+        default: return { from: null, to: null, label: 'за весь час' };
+    }
+}
+
+function _tmPeriodSync() {
+    document.querySelectorAll('#tm-stats-period button[data-p]').forEach(b =>
+        b.classList.toggle('on', b.getAttribute('data-p') === _tmPeriod.mode));
+    const dw = document.getElementById('tm-stats-day-wrap');
+    const rw = document.getElementById('tm-stats-range-wrap');
+    if (dw) dw.style.display = _tmPeriod.mode === 'day' ? 'inline-flex' : 'none';
+    if (rw) rw.style.display = _tmPeriod.mode === 'range' ? 'inline-flex' : 'none';
+    const today = _tmYmd(new Date());
+    const di = document.getElementById('tm-stats-day');
+    const fi = document.getElementById('tm-stats-from');
+    const ti = document.getElementById('tm-stats-to');
+    if (di) { di.value = _tmPeriod.day || today; di.max = today; }
+    if (fi) { fi.value = _tmPeriod.from || today; fi.max = today; }
+    if (ti) { ti.value = _tmPeriod.to || today; ti.max = today; }
+}
+
+function _tmPeriodSave() {
+    try { localStorage.setItem(_TM_PERIOD_KEY, JSON.stringify(_tmPeriod)); } catch (e) {}
+}
+
+function tmSetPeriod(mode) {
+    _tmPeriod.mode = mode;
+    const today = _tmYmd(new Date());
+    if (mode === 'day' && !_tmPeriod.day) _tmPeriod.day = today;
+    if (mode === 'range') {
+        if (!_tmPeriod.from) _tmPeriod.from = today;
+        if (!_tmPeriod.to) _tmPeriod.to = today;
+    }
+    _tmPeriodSave();
+    _tmPeriodSync();
+    if (mode === 'all') renderTmStats(window._tmLiveStats || {}, 'за весь час');
+    else tmLoadPeriodStats(true);
+}
+
+function tmPeriodInput() {
+    const v = id => (document.getElementById(id) || {}).value || '';
+    if (_tmPeriod.mode === 'day') _tmPeriod.day = v('tm-stats-day');
+    if (_tmPeriod.mode === 'range') { _tmPeriod.from = v('tm-stats-from'); _tmPeriod.to = v('tm-stats-to'); }
+    _tmPeriodSave();
+    tmLoadPeriodStats(true);
+}
+
+async function tmLoadPeriodStats(force) {
+    const r = _tmPeriodRange(_tmPeriod);
+    if (!r) { renderTmStats(null, 'оберіть дату'); return; }
+    const key = `${r.from}|${r.to}`;
+    const now = Date.now();
+    // Живі угоди закриваються рідко → перепитуємо не частіше ніж раз на 15с.
+    if (!force && _tmPeriodFetch.key === key && now - _tmPeriodFetch.at < 15000) return;
+    if (_tmPeriodFetch.busy && !force) return;
+    _tmPeriodFetch = { key, at: now, busy: true };
+    try {
+        const q = `from=${r.from}${r.to != null ? `&to=${r.to}` : ''}&book=real`;
+        const res = await fetch(`/api/tm/stats?${q}`);
+        const j = await res.json();
+        if (_tmPeriodFetch.key !== key) return;   // поки чекали, обрали інший період
+        if (!res.ok || !j.ok) { renderTmStats(null, r.label, `⚠ ${j.reason || 'HTTP ' + res.status}`); return; }
+        let note = '';
+        const st = j.stats || {};
+        if (st.oldest_at && r.from != null && r.from < st.oldest_at && (window._tmLiveStats || {}).total_closed >= 2000)
+            note = '⚠ період старший за живий список — повна історія в «📚 За весь час (БД)»';
+        renderTmStats(st, r.label, note);
+    } catch (e) {
+        renderTmStats(null, r.label, '⚠ не вдалося завантажити');
+    } finally {
+        _tmPeriodFetch.busy = false;
+    }
+}
+
+// Картки P&L у стилі Bybit. ОДНА функція на «Усе» і на будь-який період.
+function renderTmStats(st, label, note) {
+    const host = document.getElementById('tm-stats');
+    if (!host) return;
+    _tmPeriodSync();
+    const noteEl = document.getElementById('tm-stats-note');
+    if (noteEl) noteEl.textContent = note || label || '';
+    if (!st) { host.innerHTML = '<div class="bb-empty">Немає даних за обраний період</div>';
+               renderEntryScoreBreakdown(null); return; }
+    const n = st.total_closed || 0;
+    if (!n) {
+        host.innerHTML = `<div class="bb-empty">Закритих угод ${label || ''} немає</div>`;
+        renderEntryScoreBreakdown(null);
+        return;
+    }
+    const usd = v => `${(v || 0) >= 0 ? '+' : '−'}$${Math.abs(v || 0).toFixed(2)}`;
+    const cls = v => (v || 0) > 0 ? 'bb-up' : ((v || 0) < 0 ? 'bb-dn' : '');
+    const card = (l, v, sub, vc, tip) =>
+        `<div class="bb-kpi" title="${(tip || '').replace(/"/g, '&quot;')}"><div class="bb-kpi-l">${l}</div>` +
+        `<div class="bb-kpi-v ${vc || ''}">${v}</div>${sub ? `<div class="bb-kpi-s">${sub}</div>` : ''}</div>`;
+    const wr = st.win_rate || 0;
+    const pf = st.profit_factor;
+    host.innerHTML =
+        card('Чистий P&amp;L', usd(st.total_pnl_usd),
+             `<span class="bb-up">${usd(st.gross_profit_usd)}</span> · <span class="bb-dn">${usd(st.gross_loss_usd)}</span>`,
+             cls(st.total_pnl_usd),
+             'Сумарний результат закритих угод у $. Для угод, звірених із Bybit, — closedPnl біржі (нетто: з плечем, комісіями й фандингом). Під числом — сума прибуткових і сума збиткових угод.') +
+        card('Відсоток успішних', `${wr}%`,
+             `<span class="bb-up">${st.wins || 0} W</span> · <span class="bb-dn">${st.losses || 0} L</span><div class="bb-bar"><i style="width:${Math.max(0, Math.min(100, wr))}%"></i></div>`,
+             wr >= 50 ? 'bb-up' : 'bb-dn', 'Частка угод, закритих у плюсі (за рухом ціни).') +
+        card('Закрито угод', `${n}`,
+             st.not_exchange ? `<span class="bb-warn">⏳ не звірено з біржею: ${st.not_exchange}</span>` : 'усі звірено з Bybit',
+             '', 'Скільки угод закрито за період. «Не звірено» — для них ще стоїть розрахунок бота; бот перепитує Bybit щохвилини (до 3 діб).') +
+        card('Profit factor', pf == null ? (st.gross_profit_usd > 0 ? '∞' : '—') : pf.toFixed(2),
+             `сер. <span class="bb-up">${usd(st.avg_win_usd)}</span> / <span class="bb-dn">${usd(st.avg_loss_usd)}</span>`,
+             pf == null ? (st.gross_profit_usd > 0 ? 'bb-up' : '') : (pf >= 1 ? 'bb-up' : 'bb-dn'),
+             'Сума прибутку ÷ сума збитку. Більше 1 — система заробляє. Під числом — середній прибуток прибуткової угоди і середній збиток збиткової.') +
+        card('Найкраща / найгірша', `<span class="${cls(st.best_usd)}">${usd(st.best_usd)}</span>`,
+             `<span class="${cls(st.worst_usd)}">${usd(st.worst_usd)}</span> · сер. рух ${(st.avg_pnl_pct || 0) >= 0 ? '+' : ''}${(st.avg_pnl_pct || 0).toFixed(2)}%`,
+             '', 'Найбільший результат однієї угоди в $ і найбільший збиток. «Сер. рух» — середній рух ціни на угоду (без плеча й комісій).') +
+        card('Комісії біржі', `$${(st.total_fees_usd || 0).toFixed(2)}`,
+             'вхід + вихід, Bybit', '', 'Сума комісій біржі (вхід + вихід) по угодах, звірених із Bybit. Уже враховані в чистому P&L.');
+    renderEntryScoreBreakdown(st.entry_score_breakdown);
+}
+
 function renderEntryScoreBreakdown(breakdown) {
     const host = document.getElementById('tm-entry-stats');
     if (!host) return;
@@ -11650,10 +11862,10 @@ function renderEntryScoreBreakdown(breakdown) {
         anyData = true;
         const emoji = bucket === 'good' ? '✅' : bucket === 'marginal' ? '🟡' : '⚠️';
         const name = _ES_BUCKET_UA[bucket];
-        const wrColor = b.win_rate >= 60 ? '#86efac' :
-                        b.win_rate >= 40 ? '#fde68a' : '#fca5a5';
+        const wrColor = b.win_rate >= 60 ? '#20b26c' :
+                        b.win_rate >= 40 ? '#f7a600' : '#ef454a';
         const pnlSign = b.avg_pnl_pct >= 0 ? '+' : '';
-        const pnlColor = b.avg_pnl_pct >= 0 ? '#86efac' : '#fca5a5';
+        const pnlColor = b.avg_pnl_pct >= 0 ? '#20b26c' : '#ef454a';
         cell.title = `Угоди, які бот при ВІДКРИТТІ оцінив як «${name}» (Entry Score): ` +
             `закрито ${b.count}, із них у плюсі ${b.win_rate}%, ` +
             `середній рух ціни на угоду ${pnlSign}${b.avg_pnl_pct}% (без плеча і комісій).`;
@@ -17392,22 +17604,15 @@ async function loadTMState(isPoll) {
             updateManualEntryButtons(window._lastDecision);
         }
         
-        // Stats
+        // Stats — «Усе» малюється з живого стану; будь-який інший період
+        // береться з /api/tm/stats (та сама closed_stats на бекенді).
         const st = d.stats || {};
-        const pnlClass = (st.total_pnl_usd || 0) >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
-        const pnlSign = (st.total_pnl_usd || 0) >= 0 ? '+' : '';
-        document.getElementById('tm-stats').innerHTML =
-            `<span title="Скільки реальних угод уже закрито">📊 закрито: <b>${st.total_closed || 0}</b></span>` +
-            `<span title="Закриті в плюсі">🟢 у плюсі: <b>${st.wins || 0}</b></span>` +
-            `<span title="Закриті в мінусі">🔴 у мінусі: <b>${st.losses || 0}</b></span>` +
-            `<span title="Частка прибуткових угод серед закритих">📈 відсоток успішних: <b>${st.win_rate || 0}%</b></span>` +
-            `<span title="Сумарний результат закритих реальних угод у $ (для угод, синхронізованих із Bybit, — closed PnL біржі, тобто вже з плечем і комісіями)">💰 результат: <b class="${pnlClass}">${pnlSign}$${(st.total_pnl_usd || 0).toFixed(2)}</b></span>` +
-            (st.total_fees_usd ? `<span title="Сума комісій біржі (вхід + вихід) по угодах, звірених із Bybit">🧾 комісії: <b>$${st.total_fees_usd.toFixed(2)}</b></span>` : '') +
-            (st.not_exchange ? `<span style="color:#fbbf24" title="Стільки закритих угод ще НЕ звірено з біржею — у підсумку для них стоїть розрахунок бота. Бот перепитує Bybit щохвилини (до 3 діб від закриття).">⏳ не звірено з біржею: <b>${st.not_exchange}</b></span>` : '');
-        
-        // Entry Score validation row — only show if we actually have scored
-        // trades. Shows "good: N (xx% win, +y.y% avg)" for each verdict.
-        renderEntryScoreBreakdown(st.entry_score_breakdown);
+        window._tmLiveStats = st;
+        if (_tmPeriod.mode === 'all') {
+            renderTmStats(st, 'за весь час');
+        } else {
+            tmLoadPeriodStats(false);
+        }
         
         // Open positions
         const positions = d.positions || [];
@@ -17588,7 +17793,7 @@ async function loadTMState(isPoll) {
                     <td class="${sideClass}">${c.side}</td>
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
-                    <td class="${pnlClass}">${pnlSign}${c.pnl_pct.toFixed(2)}%</td>
+                    <td class="${pnlClass} tm-pnl-cell">${pnlSign}${c.pnl_pct.toFixed(2)}%</td>
                     ${reasonCellHTML(c)}
                     <td><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMShadowClosed('${c.symbol}', ${JSON.stringify(c.closed_at)}, ${c.exit_price})">✕</button></td>
                 </tr>`;
