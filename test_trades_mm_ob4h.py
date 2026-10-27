@@ -99,7 +99,7 @@ def test_tables_have_the_new_column_and_matching_colspans():
         n = len(re.findall(r'<th[\s>]', tbl))
         m = re.search(r'colspan="(\d+)"', tbl)
         _check(m and int(m.group(1)) == n, f'{tid}: colspan ≠ {n}')
-    _check(_HTML.count('colspan="17" class="tm-empty-msg">No open positions') == 2
+    _check(_HTML.count('colspan="18" class="tm-empty-msg">No open positions') == 2
            and _HTML.count('colspan="16" class="tm-empty-msg">No paper positions') == 2,
            'colspan у JS-заглушках не оновлено')
     # ⚠️ 22.10: позначка OB 4H стоїть ЛІВОРУЧ від сторони угоди.
@@ -110,7 +110,7 @@ def test_tables_have_the_new_column_and_matching_colspans():
 
 def _js(body):
     src = ''
-    for f in ('function fmtPriceJS(', 'function obMarkHTML(', 'function fmtQtyJS('):
+    for f in ('function fmtPriceJS(', 'function obMarkHTML(', 'function fmtQtyJS(', 'function liqCellHTML('):
         a = _HTML.index(f)
         src += _HTML[a:_HTML.index('\n}', a) + 2] + '\n'
     for f in ('function ob4hMarkHTML(', 'function ob1hMarkHTML('):
@@ -201,6 +201,39 @@ def test_zebra_and_settings_accordion():
     _check("togglePanel('tmgen')" in _HTML and "new Set(['tmgen'," in _HTML
            and "_PANEL_IDS = ['tmgen'," in _HTML, 'гармошка памʼятається, дефолт — згорнуто')
     print('✓ зебра + гармошка «⚙️ Загальні налаштування» (згорнуто)')
+
+
+# ═══════════════ 27.10 · 💀 Ліквідація в таблиці реальних угод ═══════════════
+def test_liquidation_column_in_real_table_only():
+    i = _HTML.index('id="tm-open-table"')
+    real = _HTML[i:_HTML.index('</table>', i)]
+    j = _HTML.index('id="tm-shadow-open-table"')
+    paper = _HTML[j:_HTML.index('</table>', j)]
+    _check('💀 Ліквідація</th>' in real, 'немає колонки в реальній таблиці')
+    _check('💀' not in paper, 'у paper ліквідації немає — це не біржова позиція')
+    _check(_HTML.count('${liqCellHTML(p)}') == 1, 'комірка лише в реальних рядках')
+    # Джерело — liqPrice біржі, той самий live-знімок, що entry/mark/PnL.
+    tm = open('detection/trade_manager.py', encoding='utf-8').read()
+    _check("pos_dict['liq_price'] = live.get('liq_price')" in tm, 'liq_price з live-знімка')
+    print('✓ колонка 💀 Ліквідація лише в таблиці реальних угод, джерело — Bybit')
+
+
+def test_js_liquidation_cell():
+    out = _js(r'''
+console.log(liqCellHTML({side:'LONG', current_price:100, liq_price:96, leverage:10}));
+console.log('|');
+console.log(liqCellHTML({side:'SHORT', current_price:100, liq_price:120, leverage:5}));
+console.log('|');
+console.log(liqCellHTML({side:'LONG', current_price:100, liq_price:90, manual_sl:89}));
+console.log('|');
+console.log(liqCellHTML({side:'LONG', current_price:100, liq_price:0}));
+''')
+    a, b, c, d = out.split('|')
+    _check('4.0%' in a and '#f87171' in a and '10×' in a, a)        # близько → червоний
+    _check('20.0%' in b and '#94a3b8' in b, b)                       # далеко → сірий
+    _check('⚠' in c and 'ЗА ціною ліквідації' in c, c)              # SL за ліквідацією
+    _check('>—<' in d, d)                                            # біржа не дала
+    print('✓ комірка ліквідації: відстань, кольори, ⚠ SL за ліквідацією, «—»')
 
 if __name__ == '__main__':
     n = 0

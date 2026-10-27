@@ -5225,7 +5225,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">📂 Open Positions <span id="tm-open-count" style="color:#666;font-weight:normal;font-size:0.75rem">(0)</span></h3>
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
-                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
+                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th title="💀 Ціна ліквідації реальної позиції на Bybit і відстань до неї від поточної ціни: червоний < 5%, бурштиновий < 15%. ⚠ — Manual SL стоїть за ліквідацією (стоп не встигне спрацювати).">💀 Ліквідація</th><th>PnL</th>
                         <th title="🧮 МММ-Trend по монеті — РІВНО той стан, що в таблиці блоку «🧮 МММ-Trend» (ті самі дані двигуна): бік і сила. Для монет у відкритій угоді є ЗАВЖДИ, навіть коли блок 🧮 МММ-Trend вимкнено. «—» = даних ще немає.">🧮 МММ-Trend</th>
                         <th title="🚨 Сигнал 🧮 МММ-Trend ВІДНОСНО угоди: ✓ зелений — МММ-Trend за угодою; ↓ бурштиновий — той самий бік, але сила впала від піку цієї угоди на 15+ п.п.; ⚖ бурштиновий — МММ-Trend у рівновазі; ⚠ червоний, що блимає — МММ-Trend ПРОТИЛЕЖНИЙ угоді (угода йде не за напрямком). Сам нічого не закриває (діє лише через 🤖 Автоконтроль «🧱 OB», якщо увімкнено).">🚨</th>
                         <th>Qty</th>
@@ -5240,7 +5240,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="17" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="18" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table></div>
             
@@ -16373,6 +16373,32 @@ function pxAgeHTML(p) {
     const src = _PX_SRC[m.src] || m.src || '—';
     return ` <span style="color:${col};font-size:0.72rem;font-family:monospace" title="Ціна застаріла: ${txt} · джерело — ${src}. Монітор TP/SL бере свіжу ціну напряму з біржі, а таблиця показує останню відому.">⏱${txt}</span>`;
 }
+// 💀 ЛІКВІДАЦІЯ реальної угоди (вимога 27.10) — `liq_price` біржі (Bybit
+// /position/list → liqPrice), той самий знімок, що дає Entry/Mark/PnL угоди.
+// Відстань рахуємо від ПОТОЧНОЇ (mark) ціни в бік збитку угоди. Кольори:
+// < 5% червоний, < 15% бурштин, далі сірий. Manual SL за ліквідацією
+// (LONG: SL ≤ liq · SHORT: SL ≥ liq) — ⚠: стоп не спрацює раніше ліквідації.
+function liqCellHTML(p) {
+    const liq = Number(p && p.liq_price) || 0;
+    const lev = Number(p && p.leverage) || 0;
+    const levTxt = lev > 0 ? ` · плече ${lev % 1 ? lev.toFixed(1) : lev}×` : '';
+    if (!(liq > 0)) {
+        return `<td style="color:#6b7280;text-align:right" title="Біржа не віддала ціну ліквідації${levTxt} (немає синхронізації з Bybit або крос-маржа з достатнім запасом — ліквідації в межах видимості немає).">—</td>`;
+    }
+    const cur = Number(p.current_price) || Number(p.entry_price) || 0;
+    const isLong = p.side === 'LONG';
+    const dist = cur > 0 ? (isLong ? (cur - liq) / cur : (liq - cur) / cur) * 100 : null;
+    const col = dist == null ? '#cbd5e1' : (dist < 5 ? '#f87171' : (dist < 15 ? '#fbbf24' : '#94a3b8'));
+    const sl = Number(p.manual_sl) || 0;
+    const slBehind = sl > 0 && (isLong ? sl <= liq : sl >= liq);
+    const warn = slBehind
+        ? ` <span style="color:#f87171" title="Manual SL ${fmtPriceJS(sl)} стоїть ЗА ціною ліквідації — позицію ліквідують раніше, ніж спрацює стоп.">⚠</span>` : '';
+    const distTxt = dist == null ? '' : ` <span style="color:${col}">${dist.toFixed(1)}%</span>`;
+    const tip = `Ціна ліквідації на Bybit: ${fmtPriceJS(liq)}${levTxt}`
+        + (dist == null ? '' : ` · до неї ${dist.toFixed(2)}% від поточної ціни`)
+        + '. Біржа перераховує її при зміні маржі / плеча.';
+    return `<td style="font-family:monospace;text-align:right;white-space:nowrap" title="${tip}">${fmtPriceJS(liq)}${distTxt}${warn}</td>`;
+}
 function ob4hMarkHTML(p, what, left) { return obMarkHTML(p, what, left, '4h'); }
 // 🏷 Останній OB 1H — той самий вигляд і ті самі правила «за/проти», що 4H
 // (поле Side угод, вимога 26.10). Джерело — рядок `sob_smc_ob_state` на 1h.
@@ -17319,7 +17345,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="17" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="18" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -17350,6 +17376,7 @@ async function loadTMState(isPoll) {
                     <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${ob1hMarkHTML(p, null, true)}${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}</td>
+                    ${liqCellHTML(p)}
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
                     ${mmdTradeCellHTML(p)}
                     ${mmdAlertCellHTML(p)}
