@@ -82,6 +82,17 @@ class BybitConnector:
         except (ValueError, TypeError):
             return default
     
+    @staticmethod
+    def _opt_float(value):
+        """float або None, якщо поля немає / порожнє (на відміну від _safe_float,
+        який підставляє 0 і так ховає «біржа не віддала»)."""
+        if value is None or value == '':
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
     def _handle_response(self, response: Dict) -> Optional[Dict]:
         """Обробка відповіді API"""
         if response.get('retCode') == 0:
@@ -564,7 +575,7 @@ class BybitConnector:
             return []
         try:
             response = self.session.get_closed_pnl(
-                category="linear", symbol=symbol, limit=limit)
+                category="linear", symbol=symbol, limit=max(1, min(100, int(limit))))
             result = self._handle_response(response)
             if result is None:
                 return []
@@ -579,6 +590,15 @@ class BybitConnector:
                     'avg_entry_price': self._safe_float(r.get('avgEntryPrice')),
                     'avg_exit_price': self._safe_float(r.get('avgExitPrice')),
                     'closed_pnl': self._safe_float(r.get('closedPnl')),
+                    # Факт біржі: вартість входу/виходу, комісії, плече.
+                    # Поля, яких біржа не віддала, лишаються None (не 0) —
+                    # «невідомо» не можна показувати як «нуль комісії».
+                    'cum_entry_value': self._opt_float(r.get('cumEntryValue')),
+                    'cum_exit_value': self._opt_float(r.get('cumExitValue')),
+                    'open_fee': self._opt_float(r.get('openFee')),
+                    'close_fee': self._opt_float(r.get('closeFee')),
+                    'leverage': self._opt_float(r.get('leverage')),
+                    'fill_count': self._opt_float(r.get('fillCount')),
                     'order_id': r.get('orderId'),
                     'created_time': int(r.get('createdTime') or 0),
                     'updated_time': int(r.get('updatedTime') or 0),

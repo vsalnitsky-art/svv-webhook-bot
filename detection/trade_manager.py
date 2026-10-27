@@ -175,6 +175,79 @@ def real_pnl_net(side, entry, current, qty, leverage, fee_pct, gross_usd=None):
     }
 
 
+def exchange_close_summary(records, side, opened_at, closed_at,
+                           skew_sec=60, tail_sec=180):
+    """🏦 Підсумок ЗАКРИТОЇ реальної угоди ВИКЛЮЧНО з записів Bybit closed-pnl.
+
+    Бере ВСІ записи цієї угоди: бік ордера закриття (Sell для LONG, Buy для
+    SHORT), час — від відкриття угоди до закриття + `tail_sec` (часткові TP-1
+    + фінальне закриття; запис ПОПЕРЕДНЬОЇ угоди по монеті — раніше відкриття,
+    НАСТУПНОЇ — пізніше закриття, тож вони не підмішуються).
+    Повертає None, поки біржа не віддала запис ФІНАЛЬНОГО закриття (не
+    вигадуємо). Числа — факт біржі: сумарний closedPnl (уже за вирахуванням
+    комісій і фандингу), кількість, вартість входу/виходу, комісії, плече.
+    Бот рахує лише похідні: середні ціни = вартість / кількість, рух ціни %
+    і ROI на маржу.
+    """
+    if side not in ('LONG', 'SHORT') or not records:
+        return None
+    try:
+        o = float(opened_at or 0)
+        c = float(closed_at or 0)
+    except (TypeError, ValueError):
+        return None
+    if c <= 0:
+        return None
+    want = 'Sell' if side == 'LONG' else 'Buy'
+
+    def _ts(r):
+        return int(r.get('updated_time') or r.get('created_time') or 0) / 1000.0
+
+    lo = (o - skew_sec) if o > 0 else (c - 86400)
+    hi = c + tail_sec
+    recs = [r for r in records
+            if r.get('side') == want and float(r.get('avg_exit_price') or 0) > 0
+            and float(r.get('qty') or 0) > 0 and lo <= _ts(r) <= hi]
+    if not recs or not any(_ts(r) >= c - skew_sec for r in recs):
+        return None
+    recs.sort(key=_ts)
+    qty = sum(float(r['qty']) for r in recs)
+    pnl = sum(float(r.get('closed_pnl') or 0) for r in recs)
+
+    def _sum_all(key):
+        vals = [r.get(key) for r in recs]
+        return None if any(v is None for v in vals) else sum(float(v) for v in vals)
+
+    ev, xv = _sum_all('cum_entry_value'), _sum_all('cum_exit_value')
+    entry = (ev / qty) if ev else (
+        sum(float(r.get('avg_entry_price') or 0) * float(r['qty']) for r in recs) / qty)
+    exit_p = (xv / qty) if xv else (
+        sum(float(r['avg_exit_price']) * float(r['qty']) for r in recs) / qty)
+    of, cf = _sum_all('open_fee'), _sum_all('close_fee')
+    lev = next((float(r['leverage']) for r in reversed(recs) if r.get('leverage')), None)
+    move = ((exit_p - entry) / entry * 100 * (1 if side == 'LONG' else -1)) if entry > 0 else 0.0
+    entry_value = ev if ev else entry * qty
+    margin = (entry_value / lev) if (lev and lev > 0) else None
+    return {
+        'source': 'bybit closed-pnl',
+        'parts': len(recs),
+        'qty': qty,
+        'entry_price': entry,
+        'exit_price': exit_p,
+        'pnl_usd': pnl,
+        'pnl_pct': move,
+        'entry_value': ev, 'exit_value': xv,
+        'open_fee': of, 'close_fee': cf,
+        'fees_usd': (of + cf) if (of is not None and cf is not None) else None,
+        'gross_usd': (pnl + of + cf) if (of is not None and cf is not None) else None,
+        'leverage': lev,
+        'margin_usd': margin,
+        'roi_pct': (pnl / margin * 100) if margin else None,
+        'closed_ts': _ts(recs[-1]),
+        'order_id': recs[-1].get('order_id'),
+    }
+
+
 def clamp_sl_distance(side, entry, sl, max_pct):
     """🛡 Стеля відстані стопа від ВХОДУ — ЄДИНЕ джерело для ВСІХ авто-SL.
 
@@ -1221,6 +1294,8 @@ class TradeManager:
                 if self._errors <= 10:
                     print(f"[TM] Reconcile error: {e}")
                 self._errors += 1
+            # 🏦 Закриті угоди, по яких біржа ще не віддала запис — дотягуємо.
+            self._resync_exchange_closes_bg()
         
         with self._lock:
             symbols = list(self._positions.keys())
@@ -5832,7 +5907,7 @@ class TradeManager:
                          name=f"close-finalize-{symbol}").start()
 
     def _apply_exchange_close_truth(self, symbol: str, closed: Dict,
-                                    side: str) -> bool:
+                                    side: str, attempts: int = 5) -> bool:
         """Overwrite a just-recorded closed trade with the REAL figures from
         Bybit's closed-PnL endpoint: actual avg entry/exit price and realized
         PnL (already net of trading fees + funding). Replaces our own
@@ -5849,70 +5924,87 @@ class TradeManager:
             closed['pnl_source'] = 'approx'
             return False
 
-        # The closing order side on Bybit is the OPPOSITE of the position side.
-        want_close_side = 'Sell' if side == 'LONG' else 'Buy'
-        our_qty = float(closed.get('remaining_qty_at_close')
-                        or closed.get('qty') or 0)
-
-        # CRITICAL: only accept a closed-PnL record that belongs to THIS close,
-        # i.e. whose Bybit timestamp is at/after the moment we closed. Right
-        # after the reduce-only fill Bybit may not have settled the new record
-        # yet — if a PREVIOUS trade on this same symbol exists, get_closed_pnl
-        # returns that stale record. Grabbing it would overwrite the real PnL
-        # with an old trade's numbers (e.g. +2% becomes +0.11%). We use a small
-        # negative buffer for clock skew, and keep retrying until the fresh
-        # record appears (or fall back to our approximation).
-        closed_at = float(closed.get('closed_at') or time.time())
-        min_ts_ms = int((closed_at - 30) * 1000)
-
-        record = None
-        for attempt in range(5):  # ~0.6 + 1.2 + 1.8 + 2.4 ≈ 6s worst case
-            recs = self.bybit.get_closed_pnl(symbol, limit=10)
-            if recs:
-                # Newest first. Keep only FRESH records (this close, not a
-                # previous trade) matching the close side.
-                fresh = [r for r in recs
-                         if r.get('side') == want_close_side
-                         and r.get('avg_exit_price', 0) > 0
-                         and int(r.get('updated_time') or r.get('created_time') or 0) >= min_ts_ms]
-                if fresh:
-                    if our_qty > 0:
-                        record = min(
-                            fresh, key=lambda r: abs(r.get('qty', 0) - our_qty))
-                    else:
-                        record = fresh[0]
-                    break
-            if attempt < 4:
+        # ВСІ записи біржі по ЦІЙ угоді (часткові закриття TP-1 + фінальне), а не
+        # один «найближчий за кількістю»: інакше результат часткових виходів
+        # губився і в таблиці стояв PnL лише останнього шматка.
+        summary = None
+        for attempt in range(attempts):  # ~0.6 + 1.2 + 1.8 + 2.4 ≈ 6s worst case
+            recs = self.bybit.get_closed_pnl(symbol, limit=50)
+            summary = exchange_close_summary(
+                recs, side, closed.get('opened_at'), closed.get('closed_at'))
+            if summary:
+                break
+            if attempt < attempts - 1:
                 time.sleep(0.6 * (attempt + 1))
 
-        if not record:
-            closed['pnl_source'] = 'approx'
-            print(f"[TM] ⚠️ closed-PnL not available for {symbol}; "
-                  f"kept approximation")
+        if not summary:
+            # Запис біржі ще не зʼявився — чесно «очікуємо», а НЕ мовчки
+            # лишаємо розрахунок бота як остаточний: фоновий ресинк дотягне.
+            with self._lock:
+                closed['pnl_source'] = 'pending'
+                closed['exch_tries'] = int(closed.get('exch_tries') or 0) + 1
+                closed['exch_try_at'] = time.time()
+            self._persist_closed_trades()
+            print(f"[TM] ⏳ closed-PnL not yet on Bybit for {symbol}; will resync")
             return False
 
-        entry = record['avg_entry_price'] or closed.get('entry_price')
-        exit_p = record['avg_exit_price']
-        pnl_usd = record['closed_pnl']
-        if entry and entry > 0:
-            if side == 'LONG':
-                pnl_pct = (exit_p - entry) / entry * 100
-            else:
-                pnl_pct = (entry - exit_p) / entry * 100
-        else:
-            pnl_pct = closed.get('pnl_pct', 0)
-
         with self._lock:
-            closed['entry_price'] = entry
-            closed['exit_price'] = exit_p
-            closed['pnl_usd'] = round(pnl_usd, 4)
-            closed['pnl_pct'] = round(pnl_pct, 4)
+            closed['entry_price'] = summary['entry_price']
+            closed['exit_price'] = summary['exit_price']
+            closed['qty'] = summary['qty']
+            closed['pnl_usd'] = round(summary['pnl_usd'], 4)
+            closed['pnl_pct'] = round(summary['pnl_pct'], 4)
             closed['pnl_source'] = 'exchange'
-            closed['exchange_order_id'] = record.get('order_id')
+            closed['exchange'] = summary
+            closed['exchange_order_id'] = summary.get('order_id')
+            closed.pop('exch_try_at', None)
         self._persist_closed_trades()
-        print(f"[TM] ✅ Exchange truth for {symbol}: entry={entry} "
-              f"exit={exit_p} realizedPnL=${pnl_usd:.4f} ({pnl_pct:+.2f}%)")
+        print(f"[TM] ✅ Exchange truth for {symbol}: entry={summary['entry_price']} "
+              f"exit={summary['exit_price']} realizedPnL=${summary['pnl_usd']:.4f} "
+              f"({summary['pnl_pct']:+.2f}%, записів {summary['parts']})")
         return True
+
+    EXCH_RESYNC_MAX_AGE = 3 * 86400   # дотягуємо запис біржі до 3 діб
+    EXCH_RESYNC_GAP = 60.0            # одна спроба на угоду раз на хвилину
+
+    def _resync_exchange_closes_bg(self):
+        """Фоново дотягнути факт біржі для закритих угод у стані 'pending' /
+        'approx' (Bybit ще не віддав запис або фетч падав). Окремий потік —
+        монітор виходів мережею не блокуємо; одночасно лише один прохід."""
+        if getattr(self, '_exch_resync_busy', False):
+            return
+        now = time.time()
+        with self._lock:
+            todo = [c for c in self._closed_trades
+                    if c.get('pnl_source') in ('pending', 'approx')
+                    and now - float(c.get('closed_at') or 0) <= self.EXCH_RESYNC_MAX_AGE
+                    and now - float(c.get('exch_try_at') or 0) >= self.EXCH_RESYNC_GAP]
+        if not todo:
+            return
+        self._exch_resync_busy = True
+
+        def _run():
+            try:
+                for c in todo[:10]:
+                    try:
+                        if self._apply_exchange_close_truth(
+                                c['symbol'], c, c.get('side'), attempts=1):
+                            self._archive_update(c)
+                    except Exception as e:
+                        print(f"[TM] exchange resync {c.get('symbol')}: {e}")
+            finally:
+                self._exch_resync_busy = False
+        threading.Thread(target=_run, daemon=True, name='exch-close-resync').start()
+
+    def _archive_update(self, closed: Dict):
+        """Переписати в постійному архіві рядок угоди фактом біржі (ресинк
+        приходить ПІСЛЯ того, як рядок уже записано розрахунком бота)."""
+        if not self.db or not hasattr(self.db, 'update_archive_trade'):
+            return
+        try:
+            self.db.update_archive_trade(closed, is_paper=False)
+        except Exception as e:
+            print(f"[TM] archive update error: {e}")
 
     def _adopt_external_position(self, bybit_pos: Dict) -> bool:
         """Adopt a position that exists on Bybit but not in TM's view.
@@ -7827,6 +7919,11 @@ class TradeManager:
             wins = sum(1 for c in self._closed_trades if c.get('pnl_pct', 0) > 0)
             losses = sum(1 for c in self._closed_trades if c.get('pnl_pct', 0) < 0)
             total_pnl = sum(c.get('pnl_usd', 0) for c in self._closed_trades)
+            # 🏦 Скільки угод у підсумку ще НЕ звірено з біржею (розрахунок бота).
+            not_exch = sum(1 for c in self._closed_trades
+                           if c.get('pnl_source') != 'exchange')
+            total_fees = sum(float((c.get('exchange') or {}).get('fees_usd') or 0)
+                             for c in self._closed_trades)
             
             # Shadow positions snapshot
             shadow_positions = []
@@ -7878,6 +7975,8 @@ class TradeManager:
                     'losses': losses,
                     'win_rate': round(wins / total_closed * 100, 1) if total_closed else 0,
                     'total_pnl_usd': round(total_pnl, 2),
+                    'not_exchange': not_exch,
+                    'total_fees_usd': round(total_fees, 4),
                     'entry_score_breakdown': entry_stats,
                 },
                 'shadow_positions': shadow_positions,

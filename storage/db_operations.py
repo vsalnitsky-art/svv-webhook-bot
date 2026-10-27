@@ -123,6 +123,35 @@ class DBOperations:
         finally:
             session.close()
 
+    def update_archive_trade(self, trade: Dict, is_paper: bool = False) -> bool:
+        """Переписати ціни/кількість/PnL уже заархівованої угоди фактом біржі.
+        Рядок шукаємо за (is_paper, symbol, closed_at ± 1с) — closed_at угоди
+        при ресинку не змінюється."""
+        session = get_session()
+        try:
+            ca = float(trade.get('closed_at') or 0)
+            row = (session.query(TradeArchive)
+                   .filter(TradeArchive.is_paper == bool(is_paper),
+                           TradeArchive.symbol == trade.get('symbol'),
+                           TradeArchive.closed_at >= ca - 1,
+                           TradeArchive.closed_at <= ca + 1)
+                   .order_by(TradeArchive.id.desc()).first())
+            if not row:
+                return False
+            row.entry_price = trade.get('entry_price')
+            row.exit_price = trade.get('exit_price')
+            row.qty = trade.get('qty', 0) or 0
+            row.pnl_pct = trade.get('pnl_pct')
+            row.pnl_usd = trade.get('pnl_usd', 0) or 0
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[Archive] trade archive update error: {e}")
+            return False
+        finally:
+            session.close()
+
     def get_trade_archive(self, limit: int = 1000, is_paper: Optional[bool] = None,
                           symbol: Optional[str] = None) -> List[Dict]:
         """Read archived trades (newest first). `limit` caps the result for

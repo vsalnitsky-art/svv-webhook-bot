@@ -11589,6 +11589,39 @@ function realPnlCellHTML(p, usd, syncMark) {
         `<br><span style="font-size:0.7rem;opacity:0.85">${usd2(n.net_usd)} нетто · ×${n.lev}</span></td>`;
 }
 
+// 🏦 PnL ЗАКРИТОЇ реальної угоди: ⇄ = факт біржі (Bybit closed-pnl, уже з
+// комісіями й фандингом); ⏳ = біржа ще не віддала запис, показано
+// розрахунок бота (дотягується фоново). Розклад біржі — у підказці.
+function closedRealPnlCellHTML(c) {
+    const cls = (c.pnl_usd || 0) >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
+    const sg = v => (v >= 0 ? '+' : '−');
+    const usd = v => `${sg(v)}$${Math.abs(v).toFixed(2)}`;
+    const x = c.exchange || null;
+    let mark, tip;
+    if (c.pnl_source === 'exchange') {
+        mark = ' <span style="opacity:0.6">⇄</span>';
+        const L = ['🏦 Дані БІРЖІ (Bybit closed-pnl)'];
+        if (x) {
+            L.push(`Вхід (сер.): ${fmtPriceJS(x.entry_price)} · вихід (сер.): ${fmtPriceJS(x.exit_price)}`);
+            L.push(`Кількість: ${x.qty}${x.parts > 1 ? ` · записів біржі: ${x.parts} (часткові + фінальне)` : ''}`);
+            if (x.gross_usd != null) L.push(`Брутто: ${usd(x.gross_usd)}`);
+            if (x.open_fee != null) L.push(`Комісія входу: −$${Math.abs(x.open_fee).toFixed(4)} · виходу: −$${Math.abs(x.close_fee).toFixed(4)}`);
+            L.push(`Реалізований PnL біржі (нетто, з фандингом): ${usd(x.pnl_usd)}`);
+            if (x.leverage) L.push(`Плече: ×${x.leverage}${x.roi_pct != null ? ` · ROI на маржу: ${sg(x.roi_pct)}${Math.abs(x.roi_pct).toFixed(2)}%` : ''}`);
+        }
+        L.push('% — рух ціни між середніми цінами біржі (без плеча)');
+        tip = L.join('\n');
+    } else {
+        mark = ' <span style="color:#fbbf24">⏳</span>';
+        tip = 'Біржа ще НЕ віддала запис закриття — показано розрахунок бота за останньою ціною. '
+            + 'Бот перепитує Bybit щохвилини (до 3 діб) і замінить на факт біржі.';
+    }
+    const roi = (x && x.roi_pct != null)
+        ? `<br><span style="font-size:0.7rem;opacity:0.85">ROI ${sg(x.roi_pct)}${Math.abs(x.roi_pct).toFixed(2)}% · ×${x.leverage}</span>` : '';
+    return `<td class="${cls}" style="white-space:nowrap" title="${tip.replace(/"/g, '&quot;')}">`
+        + `${sg(c.pnl_pct || 0)}${Math.abs(c.pnl_pct || 0).toFixed(2)}% (${usd(c.pnl_usd || 0)})${mark}${roi}</td>`;
+}
+
 // Render the Entry Score validation breakdown — win rate per verdict bucket.
 // Hidden when there are no scored trades yet. The whole point: see whether
 // "good" picks ACTUALLY win more often than "marginal" / "poor" — that's
@@ -17364,7 +17397,9 @@ async function loadTMState(isPoll) {
             `<span title="Закриті в плюсі">🟢 у плюсі: <b>${st.wins || 0}</b></span>` +
             `<span title="Закриті в мінусі">🔴 у мінусі: <b>${st.losses || 0}</b></span>` +
             `<span title="Частка прибуткових угод серед закритих">📈 відсоток успішних: <b>${st.win_rate || 0}%</b></span>` +
-            `<span title="Сумарний результат закритих реальних угод у $ (для угод, синхронізованих із Bybit, — closed PnL біржі, тобто вже з плечем і комісіями)">💰 результат: <b class="${pnlClass}">${pnlSign}$${(st.total_pnl_usd || 0).toFixed(2)}</b></span>`;
+            `<span title="Сумарний результат закритих реальних угод у $ (для угод, синхронізованих із Bybit, — closed PnL біржі, тобто вже з плечем і комісіями)">💰 результат: <b class="${pnlClass}">${pnlSign}$${(st.total_pnl_usd || 0).toFixed(2)}</b></span>` +
+            (st.total_fees_usd ? `<span title="Сума комісій біржі (вхід + вихід) по угодах, звірених із Bybit">🧾 комісії: <b>$${st.total_fees_usd.toFixed(2)}</b></span>` : '') +
+            (st.not_exchange ? `<span style="color:#fbbf24" title="Стільки закритих угод ще НЕ звірено з біржею — у підсумку для них стоїть розрахунок бота. Бот перепитує Bybit щохвилини (до 3 діб від закриття).">⏳ не звірено з біржею: <b>${st.not_exchange}</b></span>` : '');
         
         // Entry Score validation row — only show if we actually have scored
         // trades. Shows "good: N (xx% win, +y.y% avg)" for each verdict.
@@ -17434,8 +17469,11 @@ async function loadTMState(isPoll) {
         // Рендеримо ВСІ записи (у боксі з прокруткою). Захист: перебудовуємо
         // tbody ЛИШЕ коли дані змінились — інакше скрол не «стрибає» на початок
         // щополінгу і немає зайвого навантаження на великому списку.
+        // ⚠️ Джерело і PnL — у сигнатурі: факт біржі приходить ПІСЛЯ закриття
+        // (секунди або хвилини), і без цього рядок лишався б із розрахунком бота.
         const _cSig = closed.length
-            ? (closed.length + '|' + closed[0].closed_at + '|' + closed[closed.length - 1].closed_at)
+            ? (closed.length + '|' + closed[0].closed_at + '|' + closed[closed.length - 1].closed_at
+               + '|' + closed.map(c => (c.pnl_source || '') + c.pnl_usd).join(','))
             : '0';
         if (window._tmArchiveMode && window._tmArchiveMode.closed) {
             // Таблиця показує повний архів із БД — жива стрічка її не чіпає.
@@ -17458,7 +17496,7 @@ async function loadTMState(isPoll) {
                     <td class="${sideClass}">${c.side}</td>
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
-                    <td class="${pnlClass}">${pnlSign}${c.pnl_pct.toFixed(2)}% (${pnlSign}$${c.pnl_usd.toFixed(2)})</td>
+                    ${closedRealPnlCellHTML(c)}
                     ${reasonCellHTML(c)}
                     <td><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMClosed('${c.symbol}', ${JSON.stringify(c.closed_at)}, ${c.exit_price})">✕</button></td>
                 </tr>`;
