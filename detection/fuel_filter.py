@@ -2551,9 +2551,8 @@ class FuelFilterDaemon:
         changed = False
         # Чи вже є ВІДКРИТА угода по монеті (real/paper/FF) — щоб НЕ ставити її
         # знову в Чергу-4, поки угода відкрита (інакше запис «висить» і плутає).
-        _already_open = bool(sym in self._fuel_managed
-                             or self._tm_has_position(sym, True)
-                             or self._tm_has_position(sym, False))
+        # 🏦 paper-угода не рахується, коли сигнал піде в реальну книгу (TM пріоритет).
+        _already_open = self._tm_blocks_open(sym)
         # 🔄 ПРОТИЛЕЖНИЙ СИГНАЛ ПРИ ВІДКРИТІЙ УГОДІ (кейс ARBUSDT 31.08).
         # Раніше він просто ЗНИКАВ: «Reverse on opposite signal» вимкнено →
         # TM писав «тримаємо» і сигнал не зберігався НІДЕ. По ARB це коштувало
@@ -6553,12 +6552,9 @@ class FuelFilterDaemon:
         if side not in ('LONG', 'SHORT'):
             return {'symbol': sym, 'side': None, 'ok': False,
                     'reason': 'МММ без напрямку (⚖ рівновага) — нічого відкривати'}
-        if sym in self._fuel_managed:
+        if self._tm_blocks_open(sym):
             return {'symbol': sym, 'side': side, 'ok': False,
-                    'reason': 'уже в угоді (FF)'}
-        if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
-            return {'symbol': sym, 'side': side, 'ok': False,
-                    'reason': 'уже має відкриту позицію'}
+                    'reason': 'уже в угоді (відкрита позиція)'}
         # Ціна: знімок → прямий тікер (той самий ланцюг, що у ✋ Черги-4).
         mark = mm.get('mark_price')
         if not mark or mark <= 0:
@@ -7546,8 +7542,7 @@ class FuelFilterDaemon:
 
         # Don't double-open: if TM already holds this symbol (real or shadow),
         # just adopt it into tracking instead of trying to open again.
-        if by_hand and (self._tm_has_position(symbol, True)
-                        or self._tm_has_position(symbol, False)):
+        if by_hand and self._tm_blocks_open(symbol):
             # ✋ Людина просила ВІДКРИТИ, а не «прийняти в облік» наявну —
             # мовчазне adopt читалось би як «відкрито». Друга позиція по тому
             # самому символу (хедж) поки не підтримується книгою TM.
@@ -7656,6 +7651,29 @@ class FuelFilterDaemon:
         print(f"[FuelFilter] OPEN SUCCESS: {mode} {side} {symbol} @ {entry_price} "
               f"(fuel {fuel.get('dir')}, exhaustion {exh_str})")
         return True
+
+    def _tm_blocks_open(self, symbol: str) -> bool:
+        """🏦 Чи блокує наявна позиція НОВЕ відкриття монети. TM має
+        ПРІОРИТЕТ (вимога 27.10): paper-угода Test Mode не заважає реальній,
+        коли реальна книга доступна (TM ✓ · TRD ✓ · ліміт позицій).
+        ЄДИНЕ правило — `TradeManager.blocks_new_open`; старіший TM без методу
+        → стара поведінка (будь-яка позиція блокує)."""
+        _g = getattr(self, '_get_tm', None)
+        tm = _g() if _g else None
+        if tm is not None and hasattr(tm, 'blocks_new_open'):
+            try:
+                if tm.blocks_new_open(symbol):
+                    return True
+                fm = self._fuel_managed.get(symbol)
+                # FF-позначка реальної угоди блокує; paper-позначка — лише
+                # якщо реальну зараз відкрити неможливо (рішення TM вище).
+                return bool(fm and fm.get('mode') == 'real'
+                            and self._tm_has_position(symbol, True))
+            except Exception:
+                pass
+        return bool(symbol in (getattr(self, '_fuel_managed', None) or {})
+                    or self._tm_has_position(symbol, True)
+                    or self._tm_has_position(symbol, False))
 
     def _tm_has_position(self, symbol: str, is_real: bool) -> bool:
         """True if TradeManager currently holds a position for this symbol in
@@ -10860,9 +10878,7 @@ class FuelFilterDaemon:
                              f'Черга-4: протерміновано (>{ttl_h:.0f}год у черзі без відкриття)',
                              side=d, source='Q4')
                 continue
-            if sym in self._fuel_managed:
-                continue
-            if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+            if self._tm_blocks_open(sym):
                 with self._lock:
                     self._pending4.pop(sym, None); self._q4_cache_drop(sym); self._persist_state()
                 continue
@@ -11616,10 +11632,8 @@ class FuelFilterDaemon:
                 continue
             if (d == 'LONG' and not allow_long) or (d == 'SHORT' and not allow_short):
                 continue
-            if sym in self._fuel_managed:
-                continue
-            # dedup vs TM (real/paper) — drop if already held.
-            if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+            # dedup vs TM — drop if held (paper не рахується, коли реальна доступна).
+            if self._tm_blocks_open(sym):
                 with self._lock:
                     self._pending3.pop(sym, None)
                     self._persist_state()
@@ -11977,7 +11991,7 @@ class FuelFilterDaemon:
             #     open step below closes the opposite trade first (reverse). If the
             #     setting is OFF, keep the old behaviour (drop).
             _reverse_on = bool(s.get('queue2_reverse_via_queue', True))
-            if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+            if self._tm_blocks_open(sym):
                 _pside = self._tm_position_side(sym)
                 if _pside == d or not _reverse_on:
                     with self._lock:
@@ -12281,11 +12295,9 @@ class FuelFilterDaemon:
         def _pop_from_queue(_sym, _q):
             (self._pending if _q == 1 else self._pending2).pop(_sym, None)
         for sym, (held, d, qnum) in sorted(cand.items(), key=lambda kv: -kv[1][0]):
-            if sym in self._fuel_managed:
-                trace.append(f"{sym}:managed")
-                continue   # already managed (no duplicate)
-            # Skip if TM already holds this coin (real OR paper) — don't dup.
-            if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+            # Skip if TM already holds this coin — don't dup (🏦 paper не
+            # рахується, коли реальна книга доступна: TM має пріоритет).
+            if self._tm_blocks_open(sym):
                 trace.append(f"{sym}:вже-в-угодах")
                 if _q_allowed(3):   # OP 3: TM already holds the coin
                     with self._lock:
@@ -12934,9 +12946,7 @@ class FuelFilterDaemon:
                     continue
                 # Якщо по монеті вже ВІДКРИТА угода (FF-managed або в TM) —
                 # не показуємо її в черзі (запис прибирає двигун наступним тіком).
-                if sym in self._fuel_managed:
-                    continue
-                if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+                if self._tm_blocks_open(sym):
                     continue
                 _q4_rows += 1
                 if not _want_q4:
@@ -13441,9 +13451,7 @@ class FuelFilterDaemon:
         side = info.get('dir')
         if side not in ('LONG', 'SHORT'):
             return {'ok': False, 'opened': False, 'reason': f'{symbol} немає в Черзі-4'}
-        if symbol in self._fuel_managed:
-            return {'ok': False, 'opened': False, 'reason': f'{symbol} уже в угоді (FF)'}
-        if self._tm_has_position(symbol, True) or self._tm_has_position(symbol, False):
+        if self._tm_blocks_open(symbol):
             return {'ok': False, 'opened': False, 'reason': f'{symbol} уже має відкриту позицію'}
 
         # Ціна: той самий ланцюг, що й у `force_open_timer` — liq-map знімок, а

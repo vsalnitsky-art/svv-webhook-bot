@@ -171,17 +171,39 @@ def test_manual_open_rejected_when_position_exists():
 
 
 def test_manual_open_rejected_when_shadow_position_exists():
-    """Shadow position blocks real open too — avoid mixed state."""
+    """🏦 СКАСОВАНО 27.10 — «Trade Manager завжди має пріоритет»: paper-угода
+    більше НЕ блокує реальну. Блокує лише позиція В ТІЙ САМІЙ книзі: коли
+    реальна книга недоступна (тут — вимкнений TM), друга paper неможлива."""
     tm, bybit = _make_tm()
     tm._shadow_positions['BTCUSDT'] = {
         'symbol': 'BTCUSDT', 'side': 'LONG',
         'entry_price': 100.0, 'qty': 1.0, 'opened_at': 0,
         'opened_by': 'choch',
     }
+    tm._settings['enabled'] = False
+    tm._settings['test_mode'] = True
     res = tm.manual_open('BTCUSDT', 'LONG')
     assert res['ok'] is False
     assert 'paper' in res['reason'].lower() or 'shadow' in res['reason'].lower()
-    print('✓ manual_open rejected when shadow position exists')
+    assert tm.blocks_new_open('BTCUSDT') is True
+    print('✓ реальна книга недоступна → paper по монеті блокує другу paper')
+
+
+def test_real_opens_in_parallel_with_a_paper_trade():
+    """🏦 Trade Manager має ПРІОРИТЕТ (вимога 27.10): paper-угода по монеті
+    не заважає реальній, коли TM ✓ · TRD ✓ · ліміт дозволяє."""
+    tm, bybit = _make_tm()
+    tm._shadow_positions['BTCUSDT'] = {
+        'symbol': 'BTCUSDT', 'side': 'LONG',
+        'entry_price': 100.0, 'qty': 1.0, 'opened_at': 0,
+        'opened_by': 'choch',
+    }
+    assert tm.blocks_new_open('BTCUSDT') is False
+    res = tm.manual_open('BTCUSDT', 'LONG')
+    assert res['ok'] is True and res.get('mode') == 'real', res
+    assert len(bybit.orders_placed) == 1
+    assert 'BTCUSDT' in tm._positions and 'BTCUSDT' in tm._shadow_positions
+    print('✓ реальна угода відкривається паралельно з paper')
 
 
 def test_manual_open_rejected_on_bad_side():
@@ -266,6 +288,7 @@ if __name__ == '__main__':
     test_manual_open_rejected_when_bybit_no_api_key()
     test_manual_open_rejected_when_position_exists()
     test_manual_open_rejected_when_shadow_position_exists()
+    test_real_opens_in_parallel_with_a_paper_trade()
     test_manual_open_rejected_on_bad_side()
     test_manual_open_rejected_on_empty_symbol()
     test_manual_open_rejected_when_no_price()

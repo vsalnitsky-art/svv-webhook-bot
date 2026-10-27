@@ -7036,3 +7036,24 @@ Trades все розмісти в одну стрічку, поле PnL в ко�
   тултипі балансу); відсотки й кількості — видимі. Кнопка `#tm-amt-toggle`,
   `tmToggleAmounts()` перемальовує з `_tmStatsLast`.
 Тест: `test_tm_stats_period.py` (12).
+
+## 🏦 TRADE MANAGER МАЄ ПРІОРИТЕТ — paper НЕ блокує реальну (вимога 27.10)
+
+Дослівно: «при увімкненому тумблері Trade Manager не звертати увагу на
+відкриті угоди Test Mode, якщо позволяє 📊 Max Open Positions: то відкриваємо
+паралельно реальні угоди» + «Trade Manager — завжди має пріоритет».
+- ЄДИНЕ правило — `TradeManager.blocks_new_open(sym)`: реальна позиція блокує
+  ЗАВЖДИ; paper — лише коли `real_open_possible(sym)` = False (TM вимкнено /
+  TRD вимкнено / стеля `max_open_positions` вичерпана; те саме, що `route_book`).
+- `manual_open`: позиція блокує лише СВОЮ книгу (`book == 'real'` → real,
+  `book == 'paper'` → paper). `on_signal`: при доступній реальній книзі
+  paper не бере участі в маршрутизації (`existing_shadow_for_route`).
+- FF: `_tm_blocks_open(sym)` (делегує в TM; старіший TM → стара поведінка)
+  замість «real АБО paper» в `intercept`, двигунах Q1-Q4, ✋ Черга-4,
+  ✋ груповому МММ, показі Черги-4. FF-позначка paper (`_fuel_managed` з
+  `mode='paper'`) теж не блокує.
+- ⚠️ `_fuel_managed` ключований символом: коли FF відкриває реальну поверх
+  своєї paper, позначка стає `real` — FF-правила виходу далі супроводжують
+  реальну, paper живе за правилами TM (SL/TP/автопілот).
+- ⚠️ Хедж у РЕАЛЬНІЙ книзі (друга реальна по монеті) і далі неможливий.
+Тести: `test_tm_priority.py` (7), `test_manual_open.py` (+1, 1 переписано).

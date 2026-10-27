@@ -74,7 +74,7 @@ def test_open_position_no_longer_blocks_the_opposite_record():
     """`_already_open` блокує постановку в Чергу-4, поки угода відкрита. Для
     протилежного сигналу це саме та ситуація, заради якої він і ставиться."""
     src = open(os.path.join(_ROOT, 'detection/fuel_filter.py')).read()
-    i = src.index('_already_open = bool(sym in self._fuel_managed')
+    i = src.index('_already_open = self._tm_blocks_open(sym)')
     body = src[i:i + 1400]
     _check('if opp_wait:' in body and '_already_open = False' in body,
            'opp_wait має знімати блок «вже в угоді»')

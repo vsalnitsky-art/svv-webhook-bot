@@ -133,7 +133,7 @@ def test_same_symbol_second_trade_is_refused_with_an_honest_reason():
     r = TM.manual_open(t, 'BTCUSDT', 'SHORT', by_hand=True)
     _check(not r.get('ok') and 'Хедж' in r.get('reason', ''), r)
     _check(t.calls == [], 'зустрічний ордер у one-way режимі закрив би позицію')
-    i = _FF_SRC.index('if by_hand and (self._tm_has_position(symbol, True)')
+    i = _FF_SRC.index('if by_hand and self._tm_blocks_open(symbol):')
     _check('return False' in _FF_SRC[i:i + 600],
            'FF не має мовчки «приймати в облік» наявну позицію як ручне відкриття')
     print('✓ друга угода по тій самій монеті — чесна відмова (хедж ще не підтримується)')

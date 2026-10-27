@@ -2826,7 +2826,14 @@ class TradeManager:
         #     engine closes the opposite trade only when the signal is ready to
         #     open — NOT on the bare signal.
         #   • SAME-dir position               → NOT queued → handled as duplicate.
-        _pos = existing_real or existing_shadow
+        # 🏦 TM має ПРІОРИТЕТ (вимога 27.10): коли сигнал піде в РЕАЛЬНУ книгу,
+        # paper-угода по монеті не враховується — ні для черги, ні для дублю.
+        _real_possible = self.real_open_possible(symbol)
+        if _real_possible:
+            existing_shadow_for_route = None
+        else:
+            existing_shadow_for_route = existing_shadow
+        _pos = existing_real or existing_shadow_for_route
         _pos_side = _pos.get('side') if _pos else None
         _route_ff = (_pos is None)
         _opp_wait = False
@@ -2903,7 +2910,7 @@ class TradeManager:
         # стоїть позиція ТОГО САМОГО боку, нижче буде 'duplicate', і магніт із
         # контекстом цілей рахувались би даремно (це запит до біржі + важкий
         # `_pilot_context`).
-        _held = (existing_real or existing_shadow) or None
+        _held = (existing_real or existing_shadow_for_route) or None
         _same_side = bool(_held and _held.get('side') == side)
         try:
             from detection.fuel_filter import get_fuel_filter as _gff
@@ -7826,6 +7833,32 @@ class TradeManager:
             current_count = len(self._positions)
         return current_count >= max_pos
 
+    def real_open_possible(self, symbol: str) -> bool:
+        """📒 Чи піде НОВЕ відкриття цієї монети в РЕАЛЬНУ книгу — те саме
+        правило, що `route_book` у `manual_open`: TM увімкнено · TRD ✓ ·
+        стеля `max_open_positions` не вичерпана."""
+        try:
+            return bool(self.is_enabled() and self._is_tradeable(symbol)
+                        and not self._at_max_positions())
+        except Exception:
+            return False
+
+    def blocks_new_open(self, symbol: str) -> bool:
+        """🏦 Trade Manager має ПРІОРИТЕТ (вимога 27.10): paper-угода Test Mode
+        НЕ блокує реальну. Нове відкриття блокує:
+          • реальна позиція по монеті — завжди;
+          • paper-позиція — ЛИШЕ коли реальна книга недоступна (тоді нове
+            відкриття теж пішло б у paper, а друга paper по тій самій монеті
+            неможлива)."""
+        with self._lock:
+            has_real = symbol in self._positions
+            has_paper = symbol in self._shadow_positions
+        if has_real:
+            return True
+        if has_paper:
+            return not self.real_open_possible(symbol)
+        return False
+
     # ============================================================
     # State / queries
     # ============================================================
@@ -8791,12 +8824,14 @@ class TradeManager:
             # Bybit працює в one-way режимі (positionIdx 0): зустрічний ордер
             # не відкрив би хедж, а ЗАКРИВ би наявну позицію. Тому друга угода
             # по тій самій монеті поки неможлива — і для ручного теж.
-            if symbol in self._positions:
+            # 🏦 Книги НЕЗАЛЕЖНІ (вимога 27.10): paper-угода не блокує
+            # реальну — блокує лише позиція В ТІЙ САМІЙ книзі.
+            if book == 'real' and symbol in self._positions:
                 return {'ok': False, 'reason':
                         f'По {symbol} вже є реальна позиція '
                         f'({self._positions[symbol].get("side")}). Хедж (друга '
                         f'угода по тій самій монеті) ще не підтримується.'}
-            if symbol in self._shadow_positions:
+            if book == 'paper' and symbol in self._shadow_positions:
                 return {'ok': False, 'reason':
                         f'По {symbol} вже є paper-позиція '
                         f'({self._shadow_positions[symbol].get("side")}). Хедж '
