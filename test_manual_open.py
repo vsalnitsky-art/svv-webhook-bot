@@ -61,6 +61,8 @@ def _make_tm(enabled=True):
     tm._settings['test_mode'] = False
     # Stub current price lookup — manual_open needs it
     tm._get_current_price = lambda s: 100.0
+    from types import SimpleNamespace as _SN
+    tm.scanner = _SN(get_tradeable_symbols=lambda: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'])
     # Use default fixed_usd sizing — $100 per trade
     tm._settings['sizing_mode'] = 'fixed_usd'
     tm._settings['fixed_usd_amount'] = 100.0
@@ -137,7 +139,7 @@ def test_manual_open_rejected_when_tm_disabled():
     tm, bybit = _make_tm(enabled=False)
     res = tm.manual_open('BTCUSDT', 'LONG')
     assert res['ok'] is False
-    assert 'disabled' in res['reason'].lower()
+    assert 'trade manager вимкнено' in res['reason'].lower(), res
     assert bybit.orders_placed == []
     print('✓ manual_open rejected when TM disabled (no order)')
 
@@ -221,30 +223,38 @@ def test_manual_open_normalizes_symbol_case():
 
 
 def test_trd_off_blocks_real_for_queue_opens_only():
-    """🏷 TRD (27.10): авто-відкриття з черг (bypass_gates) при вимкненому TRD
-    НЕ йде в реальну книгу — лише paper; ✋ by_hand — без змін (реальна)."""
+    """📒 27.10: real = TRD ✓ + TM ✓ + стеля дозволяє; інакше paper (Test Mode),
+    інакше відмова. Діє для ВСІХ відкриттів — черги і ✋ ручні."""
     from types import SimpleNamespace
-    tm, bybit = _make_tm()
-    tm.scanner = SimpleNamespace(get_tradeable_symbols=lambda: [])
-    tm._settings['test_mode'] = True
-    r = tm.manual_open('BTCUSDT', 'LONG', bypass_gates=True)
-    assert r.get('mode') == 'test' and 'BTCUSDT' not in tm._positions, r
-    assert not bybit.orders_placed and 'TRD' in r.get('reason', '')
+    # TRD вимкнено + Test Mode → paper (і авто, і ручне)
+    for kw in ({'bypass_gates': True}, {'by_hand': True}):
+        tm, bybit = _make_tm()
+        tm.scanner = SimpleNamespace(get_tradeable_symbols=lambda: [])
+        tm._settings['test_mode'] = True
+        r = tm.manual_open('BTCUSDT', 'LONG', **kw)
+        assert r.get('mode') == 'test' and 'BTCUSDT' not in tm._positions, (kw, r)
+        assert not bybit.orders_placed and 'TRD' in r.get('reason', ''), r
+    # TRD вимкнено, Test Mode вимкнено → відмова з причиною
     tm2, bybit2 = _make_tm()
     tm2.scanner = SimpleNamespace(get_tradeable_symbols=lambda: [])
-    tm2._settings['test_mode'] = False
-    r2 = tm2.manual_open('ETHUSDT', 'LONG', bypass_gates=True)
+    r2 = tm2.manual_open('ETHUSDT', 'LONG', by_hand=True)
     assert r2['ok'] is False and 'TRD' in r2['reason'] and not bybit2.orders_placed
-    tm3, bybit3 = _make_tm()
-    tm3.scanner = SimpleNamespace(get_tradeable_symbols=lambda: [])
+    # TM вимкнено → paper
+    tm3, _ = _make_tm(enabled=False)
+    tm3._settings['test_mode'] = True
     r3 = tm3.manual_open('SOLUSDT', 'LONG', by_hand=True)
-    assert r3['ok'] is True and 'SOLUSDT' in tm3._positions, r3
+    assert r3.get('mode') == 'test' and 'Trade Manager' in r3['reason'], r3
+    # усе ✓ → реальна
     tm4, _ = _make_tm()
-    tm4.scanner = SimpleNamespace(get_tradeable_symbols=lambda: ['XRPUSDT'])
     r4 = tm4.manual_open('XRPUSDT', 'LONG', bypass_gates=True)
     assert r4['ok'] is True and 'XRPUSDT' in tm4._positions, r4
-    print('✓ TRD вимкнено → черги відкривають лише paper; ✋ ручне — реальна')
-
+    # чисте правило
+    RB = tm4.route_book
+    assert RB(True, True, False, False)[0] == 'real'
+    assert RB(True, False, False, True)[0] == 'paper'
+    assert RB(True, True, True, True)[0] == 'paper'
+    assert RB(False, True, False, False)[0] is None
+    print('✓ real = TRD + TM + стеля; інакше Test Mode — для всіх відкриттів')
 
 if __name__ == '__main__':
     test_trd_off_blocks_real_for_queue_opens_only()

@@ -8501,15 +8501,16 @@ class TradeManager:
 
         test_mode = self._settings.get('test_mode', True)
 
-        # Check max positions limit
-        # ✋ by_hand: стеля max_open_positions — обмеження АВТОМАТИКИ, а не
-        # людини (вимога 25.10 «любе ручне відкриття не має блокуватись»).
-        # Ручне відкриття йде в реальну книгу навіть на стелі.
-        at_limit = False if by_hand else self._at_max_positions()
-        if at_limit and not test_mode:
-            return {'ok': False, 'reason':
-                    f'Max open positions ({self._settings.get("max_open_positions", 10)}) '
-                    f'reached. Enable Test Mode to open additional paper positions.'}
+        # 📒 Вибір книги — ЄДИНЕ правило `route_book` (вимога 27.10), для ВСІХ
+        # шляхів, ✋ ручних теж: real = TRD ✓ + TM ✓ + стеля дозволяє; інакше
+        # paper (якщо Test Mode), інакше відмова з причиною.
+        at_limit = self._at_max_positions()
+        book, book_why = self.route_book(self.is_enabled(),
+                                         self._is_tradeable(symbol),
+                                         at_limit, test_mode,
+                                         self._settings.get('max_open_positions', 10))
+        if book is None:
+            return {'ok': False, 'reason': f'{symbol}: {book_why}'}
 
         with self._lock:
             # ⚠️ Книги TM ключовані СИМВОЛОМ (одна позиція на монету), а
@@ -8539,21 +8540,9 @@ class TradeManager:
         # NOTE: bypass_gates does NOT bypass max_open_positions — the limit is
         # a hard ceiling for REAL positions. bypass_gates only affects the
         # LONG/SHORT entry gates inside _open_position (quality/trend checks).
-        open_real = False
-        # 🏷 TRD (вимога 27.10): АВТО-відкриття (черги FF, bypass_gates) теж
-        # мусить поважати прапорець TRD — інакше він діяв лише на прямий шлях
-        # on_signal, а угоди з черг ішли в РЕАЛЬНУ книгу повз нього.
-        # TRD вимкнено → лише paper (якщо Test Mode), реальної угоди немає.
-        # ✋ by_hand / клік без bypass — «любе ручне не блокується» (25.10).
-        trd_blocked = bool(bypass_gates) and (not by_hand) and (not self._is_tradeable(symbol))
-        if self.is_enabled() and not at_limit and not trd_blocked:
-            if not self.bybit or not getattr(self.bybit, 'api_key', None):
-                return {'ok': False, 'reason': 'Bybit not configured (no API key)'}
-            open_real = True
-        if trd_blocked and self.is_enabled() and not test_mode:
-            return {'ok': False, 'reason':
-                    f'{symbol}: TRD вимкнено — реальна угода не відкривається '
-                    f'(Test Mode теж вимкнено)'}
+        open_real = (book == 'real')
+        if open_real and (not self.bybit or not getattr(self.bybit, 'api_key', None)):
+            return {'ok': False, 'reason': 'Bybit not configured (no API key)'}
 
         if open_real:
             try:
@@ -8574,8 +8563,8 @@ class TradeManager:
                         reason or 'Order placement failed — check Telegram/logs for details'}
             return {'ok': True, 'position': dict(pos), 'entry_price': entry_price,
                     'mode': 'real'}
-        elif test_mode:
-            # At limit, but test_mode is on → open shadow.
+        elif book == 'paper':
+            # 📒 Реальна книга недоступна (TRD / TM / стеля) → paper.
             # Pass bypass_gates so FF force-opens (and any explicit manual
             # bypass) skip the directional + fuel-confirm gates on the paper
             # path too, matching the real path above.
@@ -8591,14 +8580,33 @@ class TradeManager:
                 pos = self._shadow_positions.get(symbol)
             if not pos:
                 return {'ok': False, 'reason': 'Shadow position creation failed'}
-            _why = (f'{symbol}: TRD вимкнено — відкрито paper замість реальної'
-                    if trd_blocked else 'Max positions limit reached')
-            print(f"[TM] ℹ️ {_why}, opened {symbol} in Test Mode")
+            _why = f'{symbol}: {book_why}'
+            print(f"[TM] ℹ️ {_why}")
             return {'ok': True, 'position': dict(pos), 'entry_price': entry_price,
                     'mode': 'test', 'reason': _why}
-        else:
-            return {'ok': False, 'reason':
-                    f'TM disabled and max positions reached. Enable Test Mode or TM.'}
+        return {'ok': False, 'reason': f'{symbol}: {book_why}'}
+
+    @staticmethod
+    def route_book(tm_on: bool, trd_on: bool, at_limit: bool, test_mode: bool,
+                   max_pos=10):
+        """📒 ЄДИНЕ правило вибору книги (вимога 27.10, дослівно: «якщо
+        увімкнена кнопка TRD і увімкнений Trade Manager (і дозволяє показник
+        кількості) — відкриваємо реальну угоду. Інакше все іде в Test Mode (при
+        увімкненому тумблері)»). Діє для ВСІХ відкриттів, ✋ ручних теж.
+        → ('real'|'paper'|None, причина). ЧИСТА функція."""
+        miss = []
+        if not tm_on:
+            miss.append('Trade Manager вимкнено')
+        if not trd_on:
+            miss.append('TRD вимкнено')
+        if at_limit:
+            miss.append(f'ліміт реальних угод ({max_pos}) вичерпано')
+        if not miss:
+            return 'real', 'реальна угода'
+        why = ' · '.join(miss)
+        if test_mode:
+            return 'paper', f'{why} → paper (Test Mode)'
+        return None, f'{why}, а Test Mode вимкнено — угоду не відкрито'
     
     @staticmethod
     def _pop_closed_match(lst: list, match: Dict):

@@ -57,6 +57,7 @@ def _tm(at_limit=True, enabled=True, test_mode=True):
     t._reentry_blocked = lambda s: True
     t.is_enabled = lambda: enabled
     t._get_current_price = lambda s: 100.0
+    t._is_tradeable = lambda s: True
 
     def _open_position(symbol, side, price, opened_by=None, bypass_gates=False,
                        manual_sl=None, manual_tp=None, by_hand=False):
@@ -74,14 +75,16 @@ def _tm(at_limit=True, enabled=True, test_mode=True):
 
 
 def test_manual_open_ignores_the_position_cap():
+    # ⚠️ ПЕРЕПИСАНО 27.10 (вимога змінилась): «real = TRD + TM + стеля дозволяє,
+    # інакше Test Mode» — для ✋ ручних ТЕЖ. Ручне не відмовляє, а йде в paper.
     t = _tm(at_limit=True)
     r = TM.manual_open(t, 'BTCUSDT', 'LONG', by_hand=True)
-    _check(r.get('ok') and r.get('mode') == 'real', r)
-    _check(t.calls == [('real', 'BTCUSDT', 'LONG', True)], t.calls)
-    a = _tm(at_limit=True)
-    r = TM.manual_open(a, 'BTCUSDT', 'LONG')            # автоматика — як було
-    _check(r.get('mode') == 'test', f'авто на стелі й далі йде в paper: {r}')
-    print('✓ стеля max_open_positions ручне не блокує (авто — як було)')
+    _check(r.get('ok') and r.get('mode') == 'test', r)
+    _check(t.calls == [('paper', 'BTCUSDT', 'LONG', True)], t.calls)
+    a = _tm(at_limit=False)
+    r = TM.manual_open(a, 'BTCUSDT', 'LONG', by_hand=True)
+    _check(r.get('mode') == 'real', f'стеля дозволяє → реальна: {r}')
+    print('✓ стеля max_open_positions: ручне на стелі → paper (правило 27.10)')
 
 
 def test_manual_open_never_goes_to_a_queue():
