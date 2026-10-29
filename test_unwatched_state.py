@@ -34,7 +34,9 @@ def test_trade_coin_outside_watchlist_has_no_decision():
            'DOGEUSDT': {'side': 'SHORT', 'opened_at': 1000.0}}
     ff, tm = _ff_with_wl({'BTCUSDT'}, data={'BTCUSDT': _t._dec('LONG', 0.85),
                                            'DOGEUSDT': _t._dec('SHORT', 0.2)},
-                         positions=pos, dec_on=True)
+                         positions=pos, dec_on=True,
+                         sbr={'BTCUSDT': _t._row(_t._sig('LONG', 1500)),
+                              'DOGEUSDT': _t._row(_t._sig('SHORT', 1500))})
     ff._mm_capture(_mon._fuels(BTCUSDT=0.3, DOGEUSDT=-0.3), now=2000.0)
     _check('DOGEUSDT' not in tm.calls, f'вердикт для прибраної монети не рахується: {tm.calls}')
     r = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0), ('DOGEUSDT', 'SHORT', 1000.0)])

@@ -7143,3 +7143,30 @@ BTCUSDT і ETHUSDT увімкнено)… без економії… макси�
   (`_mms_on` · `_mm_bias_sbr` · `_mms_snapshot` · `_mms_str_mins_c`). UI
   `sm-mms-gate` + `sm-mms-gate-banner` у `#sm-mmgates`.
 Тест: `test_sbr_signals.py` (19).
+
+## 🔔 УГОДИ: «МММ-SBR» + 🚨 ПРОТИЛЕЖНИЙ СИГНАЛ ІЗ TF → 🧱 OB (29.10, ЗАМІЩУЄ 🧮 МММ-Trend)
+
+Дослівно: «Перероби таблиці відкритих угод замість 🧮 МММ-Trend бери показник
+МММ-SBR, а в 🚨 став коли вже з'явиться протилежна позначка із TF і якщо
+увімкнено тумблер активуй алгоритм 🧱 OB.»
+- **Колонка «🔔 МММ-SBR»** (real + paper): `_mm_capture` кладе в `_mmt_trade`
+  `sbr_mm_dir(рядок рушія SBR, sbr_tfs_of(s))` — ТОЙ САМИЙ розрахунок і ТІ САМІ
+  TF банера, що таблиця блоку МММ-SBR; є навіть при вимкненому блоці (рушій
+  працює завжди). Комірка: ▲/▼ · TF сигналу (`1H`/`4H`/`1H+4H`) · Score-смужка.
+- **🚨 — ЧИСТА `sbr_trade_alert(side, cur, opened_at)`**: `against` = SBR
+  протилежний І сигнал (`sbr_sig.close_t`) зʼявився ПІСЛЯ `opened_at` (червоне
+  «⚠ ПРОТИ <TF>», блимає) · `pre` = протилежний, але сигнал був ДО входу
+  (бурштин «⚑ ДО ВХОДУ», не «зʼявився») · `ok` = сигнал за угодою · `none` =
+  сигналу немає («—»). Без даних → None.
+- **🤖 Автоконтроль 🧱 OB** (`opp_ob_auto_enabled`, деф. ВИМК — без змін):
+  `TradeManager.MMD_CLOSE_LEVELS = ('against',)`, `MMD_KNOWN_LEVELS` = ok/
+  against/pre/none (pre/none запамʼятовуються в `mmd_alert_lvl`, нічого не
+  вмикають). Вимкнення — на `ok` (новий сигнал SBR за угодою), лише якщо
+  вмикав автомат. Старі рівні МММ-Trend (`weaker`/`neutral`) більше не «погані».
+  Лог `🤖 Бот (🔔 МММ-SBR)`. Прогрів 5 хв після рестарту лишився.
+- 🗑 Видалено: `trend_mm_cur`, `dec_trade_alert`, піки угод (`_mmt_trade_peak`,
+  `_mmd_track_peaks`, `MMD_WEAK_PP`, `MMD_PEAK_FORGET_SEC`, персист
+  `mmt_trade_peak`). Назви `dec_trade_for` / `pos['mmd']` / `mmdTradeCellHTML`
+  — ІСТОРИЧНІ (розділ «МММ-Trend · 🚨 угод» вище — історія рішень).
+Тести: `test_trades_mmd.py` (8, переписано), `test_opp_ob_per_trade.py` (11),
+`test_unwatched_state.py`, `test_trades_mm_ob4h.py`, `test_mm_monitor.py`.

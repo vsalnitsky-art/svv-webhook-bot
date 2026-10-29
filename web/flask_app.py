@@ -6096,10 +6096,10 @@ def register_api_routes(app):
                 str_map = ff.get_fuel_strength_map()
                 _all_pos = ((state.get('positions') or [])
                             + (state.get('shadow_positions') or []))
-                # 🧮 Колонка «МММ-Trend» + 🚨 сигнальна колонка (з 26.10; до
-                # того — 🧠 МММ-Decision). ЧИТАННЯ стану двигуна (ті самі `fuels`,
-                # що таблиця блоку МММ-Trend) + пік угоди — ЖОДНИХ розрахунків
-                # на цьому гарячому ендпоінті. Поле `pos['mmd']` — історична назва.
+                # 🔔 Колонка «МММ-SBR» + 🚨 сигнальна колонка (з 29.10; до того —
+                # 🧮 МММ-Trend / 🧠 МММ-Decision). ЧИТАННЯ стану двигуна (той
+                # самий `sbr_mm_dir`, що таблиця блоку МММ-SBR) — ЖОДНИХ
+                # розрахунків на цьому гарячому ендпоінті. `pos['mmd']` — історична назва.
                 _dec_map = {}
                 try:
                     from detection.fuel_filter import mmd_trade_key

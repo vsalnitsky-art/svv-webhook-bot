@@ -1450,7 +1450,7 @@ def test_ui_trades_tables_got_the_column_and_the_right_colspan():
         i = _HTML.index(f'id="{tid}"')
         tbl = _HTML[i:_HTML.index('</table>', i)]
         # ⚠️ 26.10: колонку 🧠 МММ-Decision замінено на 🧮 МММ-Trend.
-        _check('🧮 МММ-Trend</th>' in tbl, f'{tid}: немає заголовка колонки')
+        _check('🔔 МММ-SBR</th>' in tbl, f'{tid}: немає заголовка колонки')
         _check('МММ LiQ</th>' not in tbl and 'МММ-Decision</th>' not in tbl,
                f'{tid}: старі МММ-колонки мусять зникнути')
         n = len(_re.findall(r'<th[\s>]', tbl))

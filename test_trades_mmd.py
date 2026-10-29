@@ -1,4 +1,4 @@
-"""🧠 МММ-Decision + 🚨 сигнал у таблицях відкритих угод · OB 4H ліворуч ·
+"""🔔 МММ-SBR (з 29.10; до того 🧮 МММ-Trend / 🧠 МММ-Decision) + 🚨 сигнал у таблицях відкритих угод · OB 4H ліворуч ·
 Opposite OB Exit на 5m (вимога 22.10).
 
 Дослівно: «Прибери в таблицях відкритих угод колонки 🧮 МММ LiQ і 🧮 МММ-Trend, а
@@ -7,6 +7,9 @@ Opposite OB Exit на 5m (вимога 22.10).
 МММ-Decision змінився у слабшу сторону або взагалі став протилежним
 відповідно відкритій угоді» · «В колонці "Side" показник OB 4Н розмісти з
 лівої сторони» · «додай вибір 5хв таймфрейму» (Opposite OB Exit).
+
+29.10: «замість 🧮 МММ-Trend бери показник МММ-SBR, а в 🚨 став коли вже
+з'явиться протилежна позначка із TF і якщо увімкнено тумблер активуй 🧱 OB».
 """
 import os
 import subprocess
@@ -39,39 +42,52 @@ def _dec(reco, pl, verdict='good'):
                          else f'SHORT {round((1 - pl) * 100)}%')}
 
 
+# 🔔 З 29.10 колонки угод живуть на МММ-SBR (рушій Session Band Reversal).
+import importlib.util as _iu   # noqa: E402
+_sp = _iu.spec_from_file_location('sbr_signals_trades_t',
+                                  os.path.join(_HERE, 'detection', 'sbr_signals.py'))
+_S = _iu.module_from_spec(_sp)
+_sp.loader.exec_module(_S)
+
+
+def _sig(side, close_t, score=70.0, n=1):
+    return {'side': side, 't': int((close_t - 3600) * 1000), 'close_t': close_t,
+            'trigger': 1.0, 'score': score, 'risk': '1R', 'sl': 0.9, 'n': n,
+            'time_kyiv': '19:00'}
+
+
+def _row(s1=None, s4=None):
+    return {'1h': {'last': s1}, '4h': {'last': s4}, 'combo': _S.combine(s1, s4),
+            'fresh': {}}
+
+
 # ═══════════ 1. ЧИСТЕ ПРАВИЛО СИГНАЛУ ═══════════════════════════════════
 def test_alert_levels():
-    A = _m.dec_trade_alert
-    cur = _m.dec_mm_dir(_dec('LONG', 0.85))
-    _check(A('LONG', cur, None)['level'] == 'ok', 'за угодою → ok')
-    _check(A('SHORT', cur, None)['level'] == 'against', 'протилежний → against')
-    neu = _m.dec_mm_dir(_dec('NEUTRAL', 0.52, 'marginal'))
-    _check(A('LONG', neu, None)['level'] == 'neutral', 'NEUTRAL → neutral')
-    weak = _m.dec_mm_dir(_dec('LONG', 0.62, 'good'))
-    r = A('LONG', weak, cur)
-    _check(r['level'] == 'weaker' and r['align'] == 24 and r['peak_align'] == 70
-           and r['drop'] == 46, f'перевага впала від піку → weaker: {r}')
-    small = _m.dec_mm_dir(_dec('LONG', 0.80, 'good'))
-    _check(A('LONG', small, cur)['level'] == 'ok',
-           f'падіння < {_m.MMD_WEAK_PP} п.п. — ще не «слабшає»')
-    word = _m.dec_mm_dir(_dec('LONG', 0.84, 'marginal'))
-    _check(A('LONG', word, cur)['level'] == 'weaker',
-           'слово сили опустилось (СИЛЬНИЙ → СЕРЕДНІЙ) → weaker')
-    _check(A('LONG', None, cur) is None and A('', cur, None) is None,
+    A, D = _m.sbr_trade_alert, _m.sbr_mm_dir
+    long_ = D(_row(_sig('LONG', 2000, 80)))
+    _check(A('LONG', long_, 1000)['level'] == 'ok', 'сигнал за угодою → ok')
+    r = A('SHORT', long_, 1000)
+    _check(r['level'] == 'against' and r['tf'] == '1H' and '1H' in r['text'],
+           f'протилежний сигнал ПІСЛЯ входу → against із TF: {r}')
+    r = A('SHORT', long_, 3000)
+    _check(r['level'] == 'pre', f'протилежний, але ще до входу → pre (не «зʼявився»): {r}')
+    both = D(_row(_sig('SHORT', 1500), _sig('SHORT', 2000)))
+    _check(A('LONG', both, 1000)['tf'] == '1H+4H', 'TF = комбінація, що в колонці')
+    empty = D({'1h': {'last': None}, '4h': None, 'combo': None})
+    _check(A('LONG', empty, 1000)['level'] == 'none', 'сигналу немає → none')
+    _check(A('LONG', None, 1000) is None and A('', long_, 1000) is None,
            'немає даних → None («невідомо» ≠ «все гаразд»)')
-    print('✓ сигнал: ok / weaker (від піку угоди) / neutral / against, без даних — None')
+    print('✓ сигнал: ok / against (+TF, після входу) / pre (до входу) / none; без даних — None')
 
 
-def test_short_mirrors():
-    A = _m.dec_trade_alert
-    peak = _m.dec_mm_dir(_dec('SHORT', 0.10))
-    cur = _m.dec_mm_dir(_dec('SHORT', 0.35))
-    r = A('SHORT', cur, peak)
-    _check(r['align'] == 30 and r['peak_align'] == 80 and r['level'] == 'weaker', r)
-    print('✓ SHORT дзеркальний: перевага рахується у бік угоди')
+def test_only_against_drives_the_automat():
+    _check("MMD_CLOSE_LEVELS = ('against',)" in _TM_SRC,
+           'тенденцію до закриття дає ЛИШЕ протилежний сигнал SBR')
+    _check("'pre'" in _TM_SRC and "'none'" in _TM_SRC, 'pre/none запамʼятовуються')
+    print('✓ 🧱 автомат реагує лише на ⚠ ПРОТИ')
 
 
-# ═══════════ 2. ДВИГУН: вердикт для угод навіть при вимкненому блоці ═══
+# ═══════════ 2. ДВИГУН: стан SBR для угод навіть при вимкненому блоці ══
 class _TM:
     def __init__(self, data, positions=None, shadow=None):
         self.data, self.calls = data, []
@@ -84,7 +100,7 @@ class _TM:
         return self.data.get(sym)
 
 
-def _ff(data, positions=None, shadow=None, dec_on=False):
+def _ff(data, positions=None, shadow=None, dec_on=False, sbr=None):
     ff = _mon._mk()
     tm = _TM(data, positions, shadow)
     _mod = types.ModuleType('detection.trade_manager')
@@ -93,62 +109,42 @@ def _ff(data, positions=None, shadow=None, dec_on=False):
     if 'detection' in sys.modules:
         setattr(sys.modules['detection'], 'trade_manager', _mod)
     ff._get_tm = lambda: tm
-    ff._mmd_trade_peak = {}
     for k in ('mm_ctr_enabled', 'mm_fc_enabled'):
         ff._settings[k] = False
     ff._settings['mm_dec_enabled'] = dec_on
+    ff._sbr_rows = lambda: dict(sbr or {})
     return ff, tm
 
 
-def test_open_trades_get_trend_even_when_the_block_is_off():
-    """⚠️ 26.10: колонки 🧠/🚨 угод живуть на 🧮 МММ-Trend (ті самі `fuels`
-    двигуна, що таблиця блоку). Decision для угод більше НЕ рахується."""
+def test_open_trades_get_sbr_even_when_the_block_is_off():
     pos = {'BTCUSDT': {'side': 'LONG', 'opened_at': 1000.0}}
-    ff, tm = _ff({'BTCUSDT': _dec('SHORT', 0.1)}, positions=pos)
-    ff._settings['mm_new_enabled'] = False
-    ff._legacy = {'BTCUSDT': 0.3, 'ETHUSDT': 0.3}
+    sbr = {'BTCUSDT': _row(_sig('SHORT', 1500, 60), _sig('SHORT', 1800, 77)),
+           'ETHUSDT': _row(_sig('LONG', 1500))}
+    ff, tm = _ff({'BTCUSDT': _dec('SHORT', 0.1)}, positions=pos, sbr=sbr)
+    ff._settings['mm_sbr_enabled'] = False
     ff._mm_capture(_mon._fuels(BTCUSDT=0.42, ETHUSDT=0.3), now=2000.0)
     _check(tm.calls == [], f'Decision для угод не рахується: {tm.calls}')
     r = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0), ('ETHUSDT', 'LONG', 1000.0)])
     k = _m.mmd_trade_key('BTCUSDT', 'LONG', 1000.0)
     _check(set(r) == {k}, f'лише монета в угоді: {r}')
-    _check(r[k]['mm'] == 'LONG' and r[k]['strength'] == 42
-           and r[k]['src'] == 'trend' and r[k]['alert']['level'] == 'ok', r)
-    print('✓ монета в угоді має стан МММ-Trend навіть при вимкненому блоці')
+    v = r[k]
+    _check(v['mm'] == 'SHORT' and v['tf'] == '1H+4H' and v['strength'] == 77
+           and v['src'] == 'sbr' and v['alert']['level'] == 'against'
+           and v['alert']['tf'] == '1H+4H', v)
+    print('✓ монета в угоді має стан МММ-SBR навіть при вимкненому блоці; 🚨 ПРОТИ + TF')
 
 
-def test_weakening_is_measured_from_the_trade_peak():
+def test_trade_column_uses_the_banner_tf_choice():
     pos = {'BTCUSDT': {'side': 'LONG', 'opened_at': 1000.0}}
-    ff, tm = _ff({}, positions=pos)
+    sbr = {'BTCUSDT': _row(_sig('SHORT', 2500), _sig('LONG', 1800, 66))}
+    ff, _ = _ff({}, positions=pos, sbr=sbr)
+    ff._settings['mms_tf_1h'] = False
+    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=3000.0)
     k = _m.mmd_trade_key('BTCUSDT', 'LONG', 1000.0)
-    ff._mm_capture(_mon._fuels(BTCUSDT=0.6), now=2000.0)
-    ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=2030.0)
-    a = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0)])[k]['alert']
-    _check(a['level'] == 'weaker' and a['peak_align'] == 60, a)
-    ff._mm_capture(_mon._fuels(BTCUSDT=0.05), now=2060.0)
-    a = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0)])[k]['alert']
-    _check(a['level'] == 'neutral' and 'МММ-Trend' in a['text'], a)
-    ff._mm_capture(_mon._fuels(BTCUSDT=-0.4), now=2090.0)
-    a = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0)])[k]['alert']
-    _check(a['level'] == 'against', a)
-    _check(ff._mmt_trade_peak[k]['dir'] == 0.6, ff._mmt_trade_peak)
-    print('✓ «слабшає» міряється від ПІКУ угоди, ⚖ → neutral, протилежний → against')
-
-
-def test_new_trade_does_not_inherit_old_peak_and_restart_keeps_it():
-    ff, _ = _ff({})
-    ff._mmt_trade = {'BTCUSDT': (1.0, _m.trend_mm_cur({'dir': 0.5, 'status': 'LONG'}))}
-    old = _m.mmd_trade_key('BTCUSDT', 'LONG', 1000)
-    ff._mmd_track_peaks({old}, now=5000.0)
-    new = _m.mmd_trade_key('BTCUSDT', 'LONG', 9000)
-    _check(old != new, 'ключ несе opened_at')
-    ff._mmd_track_peaks(set(), now=5000.0 + 60)
-    _check(old in ff._mmt_trade_peak, 'короткий пропуск (TM ще не піднявся) пік не стирає')
-    ff._mmd_track_peaks(set(), now=5000.0 + _m.MMD_PEAK_FORGET_SEC + 61)
-    _check(old not in ff._mmt_trade_peak, 'пік закритої угоди забувається')
-    _check("'mmt_trade_peak'" in _SRC and "st.get('mmt_trade_peak')" in _SRC,
-           'пік персиститься в стан FF (власний ключ — шкала Decision не змішується)')
-    print('✓ нова угода — нова база, пік переживає рестарт і забувається згодом')
+    v = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0)])[k]
+    _check(v['tf'] == '4H' and v['alert']['level'] == 'ok',
+           f'обрано лише 4H — свіжий 1H SHORT не рахується (як у таблиці блоку): {v}')
+    print('✓ колонка угод бере ті самі TF, що банер МММ-SBR')
 
 
 def test_route_only_reads():
@@ -166,7 +162,7 @@ def test_route_only_reads():
 
 # ═══════════ 3. UI ═════════════════════════════════════════════════════
 def _js(body):
-    src = 'const _MMD_V_UA = { good: "СИЛЬНИЙ", marginal: "СЕРЕДНІЙ", poor: "СЛАБКИЙ" };\n'
+    src = ''
     for f in ('function mmdTradeCellHTML(', 'function mmdAlertCellHTML('):
         a = _HTML.index(f)
         src += _HTML[a:_HTML.index('\n}', a) + 2] + '\n'
@@ -184,24 +180,24 @@ def _js(body):
 
 
 def test_js_cells():
-    out = _js(r'''
-const m = {mm:'LONG', strength:70, prob:85, verdict:'good', headline:'LONG 85%',
-           alert:{level:'against', align:-20, peak_align:70, drop:90, text:'ПРОТИ угоди: Decision SHORT'}};
+    out = _js(r"""
+const m = {mm:'SHORT', strength:77, tf:'1H+4H', sig:{n:2, time_kyiv:'19:00', trigger:1.5},
+           alert:{level:'against', side:'SHORT', tf:'1H+4H', text:'ПРОТИ угоди: 🔔 МММ-SBR SHORT 1H+4H'}};
 console.log(mmdTradeCellHTML({mmd:m}));
 console.log('|');
 console.log(mmdAlertCellHTML({mmd:m}));
 console.log('|');
-console.log(mmdAlertCellHTML({mmd:Object.assign({}, m, {alert:{level:'weaker', align:24, peak_align:70, text:'слабшає'}})}));
+console.log(mmdAlertCellHTML({mmd:Object.assign({}, m, {alert:{level:'pre', tf:'4H', text:'до входу'}})}));
 console.log('|');
 console.log(mmdAlertCellHTML({}) + mmdTradeCellHTML({}));
-''')
+""")
     p = out.split('|')
     _check(len(p) == 4, out)
-    _check('▲' in p[0] and '70%' in p[0] and 'width:70%' in p[0] and 'width:36px' in p[0], p[0])
-    _check('ПРОТИ' in p[1] and 'tm-mmd-alert-hot' in p[1] and '#dc2626' in p[1], p[1])
-    _check('СЛАБШ' in p[2] and '#fbbf24' in p[2] and 'hot' not in p[2], p[2])
+    _check('▼' in p[0] and '1H+4H' in p[0] and 'width:77%' in p[0] and '77' in p[0], p[0])
+    _check('ПРОТИ 1H+4H' in p[1] and 'tm-mmd-alert-hot' in p[1] and '#dc2626' in p[1], p[1])
+    _check('ДО ВХОДУ' in p[2] and '#fbbf24' in p[2] and 'hot' not in p[2], p[2])
     _check(p[3].count('>—<') == 2, 'немає даних → «—» в обох комірках')
-    print('✓ JS: 🧮 комірка + 🚨 ПРОТИ (червоний, блимає) / СЛАБШ (бурштин)')
+    print('✓ JS: 🔔 комірка (бік · TF · Score) + 🚨 ПРОТИ+TF (червоний, блимає) / ДО ВХОДУ')
 
 
 def test_blink_css_exists():

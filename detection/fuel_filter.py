@@ -727,34 +727,53 @@ def _rdy_slim(g) -> Optional[Dict]:
         return None
 
 
-# 🚨 СИГНАЛ «МММ-Decision слабшає / ПРОТИ угоди» (вимога 22.10, таблиці угод).
-# Перевага в бік угоди впала від ПІКУ цієї угоди на стільки п.п. → «слабшає».
-MMD_WEAK_PP = 15
-MMD_PEAK_FORGET_SEC = 3600.0   # пік закритої угоди забуваємо через годину
-# 🚨→🧱 ПРОГРІВ ПІСЛЯ СТАРТУ: перші хвилини після рестарту Decision рахується
-# на ХОЛОДНИХ даних сканера (немає прогнозу/PD/цін) і масово дає NEUTRAL. Поки
-# триває прогрів, автомат 🧱 нічого не перемикає (і рівень на позиції НЕ
-# перезаписує — лишається попередній), а монети з відновленим вердиктом не
-# перераховуються холодним (кейс 22.10: після рестарту всі угоди → «НЕЙТР» і
-# масове авто-вмикання 🧱 OB).
+# 🚨→🧱 ПРОГРІВ ПІСЛЯ СТАРТУ: перші хвилини після рестарту джерела ще холодні
+# (рушій SBR довантажує бари). Поки триває прогрів, автомат 🧱 нічого не
+# перемикає (і рівень на позиції НЕ перезаписує — лишається попередній).
 MMD_AUTO_WARMUP_SEC = 300.0
 
 
-def trend_mm_cur(f) -> Optional[Dict]:
-    """🧮 Поточний стан МММ-Trend (Новий МММ) по монеті з рядка `fuels` двигуна —
-    РІВНО ті числа, що в таблиці блоку МММ-Trend (`_mmn_snapshot` будується з
-    тих самих `fuels`). ЧИСТА. Форма — як у `dec_mm_dir` (`dir`/`status`/
-    `strength`), тож `dec_trade_alert` судить її тим самим правилом.
-    Немає `dir` → None («невідомо» ≠ «рівновага»)."""
-    if not isinstance(f, dict) or not f:
+def sbr_trade_alert(side, cur, opened_at=None) -> Optional[Dict]:
+    """🚨 Стан 🔔 МММ-SBR ВІДНОСНО відкритої угоди (вимога 29.10). ЧИСТА.
+
+    `cur` — результат `sbr_mm_dir` по монеті (бік і сигнал, що його задав).
+    Дослівно: «в 🚨 став, коли вже з'явиться протилежна позначка із TF».
+      • 'against' — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився ПІСЛЯ відкриття угоди
+                    (єдиний рівень, що веде 🤖 автоконтроль 🧱 OB);
+      • 'pre'     — SBR протилежний, але його сигнал був ще ДО входу (це не
+                    «зʼявився» — лише попередження, 🧱 не вмикає);
+      • 'ok'      — останній сигнал SBR у бік угоди;
+      • 'none'    — сигналу SBR у пам'яті рушія немає.
+    Немає даних по монеті / невідомий бік → None («невідомо» ≠ «все гаразд»).
+    """
+    sd = str(side or '').upper()
+    if sd not in ('LONG', 'SHORT') or not isinstance(cur, dict):
         return None
+    st = cur.get('status')
+    tf = str(cur.get('sbr_tfs') or '')
+    sig = cur.get('sbr_sig') or {}
     try:
-        d = max(-1.0, min(1.0, float(f.get('dir'))))
+        sig_t = float(sig.get('close_t') or 0)
     except (TypeError, ValueError):
-        return None
-    st = f.get('status') if f.get('status') in ('LONG', 'SHORT') else None
-    return {'dir': round(d, 3), 'status': st,
-            'strength': int(round(abs(d) * 100)), 'verdict': ''}
+        sig_t = 0.0
+    try:
+        oa = float(opened_at or 0)
+    except (TypeError, ValueError):
+        oa = 0.0
+    when = ''
+    if sig.get('time_kyiv'):
+        when = f" #{sig.get('n') or 1} {sig.get('time_kyiv')} Kyiv"
+    if st not in ('LONG', 'SHORT'):
+        level, text = 'none', 'сигналу 🔔 МММ-SBR по монеті немає'
+    elif st == sd:
+        level, text = 'ok', f'🔔 МММ-SBR за угодою: {st} {tf}{when}'.strip()
+    elif oa <= 0 or sig_t >= oa:
+        level, text = 'against', f'ПРОТИ угоди: 🔔 МММ-SBR {st} {tf}{when}'.strip()
+    else:
+        level, text = 'pre', (f'🔔 МММ-SBR {st} {tf}{when} — сигнал був ще ДО '
+                              f'входу (не новий, 🧱 не вмикає)')
+    return {'level': level, 'side': st, 'tf': tf, 'sig_t': sig_t or None,
+            'text': text}
 
 
 def mmd_trade_key(symbol, side, opened_at) -> str:
@@ -765,53 +784,6 @@ def mmd_trade_key(symbol, side, opened_at) -> str:
     except (TypeError, ValueError):
         oa = 0
     return f"{str(symbol or '').upper()}|{str(side or '').upper()}|{oa}"
-
-
-def dec_trade_alert(side, cur, peak=None, name: str = 'МММ-Trend') -> Optional[Dict]:
-    """🚨 Стан МММ-Decision ВІДНОСНО відкритої угоди. ЧИСТА.
-
-    `cur`/`peak` — результат `dec_mm_dir` (поточний / найсильніший у бік угоди
-    за час угоди). Повертає {level, align, peak_align, drop, text}:
-      • 'against' — вердикт ПРОТИЛЕЖНИЙ угоді (найгірше);
-      • 'neutral' — вердикт NEUTRAL (напрямок угоди втрачено);
-      • 'weaker'  — той самий бік, але перевага впала від піку ≥ MMD_WEAK_PP
-                    п.п. або слово сили опустилось (СИЛЬНИЙ → СЕРЕДНІЙ…);
-      • 'ok'      — у бік угоди і не слабше за пік.
-    `align` = перевага у бік угоди, п.п. (−100…+100). Немає даних → None
-    («невідомо» ≠ «все гаразд»).
-    """
-    sd = str(side or '').upper()
-    if sd not in ('LONG', 'SHORT') or not isinstance(cur, dict):
-        return None
-    try:
-        d = float(cur.get('dir'))
-    except (TypeError, ValueError):
-        return None
-    sign = 1.0 if sd == 'LONG' else -1.0
-    align = int(round(d * sign * 100))
-    st = cur.get('status')
-    p_align = None
-    p_rank = 0
-    if isinstance(peak, dict):
-        try:
-            p_align = int(round(float(peak.get('dir')) * sign * 100))
-        except (TypeError, ValueError):
-            p_align = None
-        if peak.get('status') == sd:
-            p_rank = DEC_VERDICT_RANK.get(str(peak.get('verdict') or ''), 0)
-    drop = (p_align - align) if p_align is not None else 0
-    if st and st != sd:
-        level, text = 'against', f'ПРОТИ угоди: {name} {st}'
-    elif not st:
-        level, text = 'neutral', f'{name} ⚖ рівновага — напрямок угоди втрачено'
-    else:
-        c_rank = DEC_VERDICT_RANK.get(str(cur.get('verdict') or ''), 0)
-        if drop >= MMD_WEAK_PP or (p_rank and c_rank and c_rank < p_rank):
-            level, text = 'weaker', f'{name} слабшає: сила {align}% (пік {p_align}%)'
-        else:
-            level, text = 'ok', f'{name} за угодою: сила {align}%'
-    return {'level': level, 'align': align, 'peak_align': p_align,
-            'drop': drop, 'text': text}
 
 
 # 🧠 Фільтр «Вердикт ≥» блоку МММ-Decision (вимога 22.10) — поряд із «Сила ≥».
@@ -1769,11 +1741,10 @@ class FuelFilterDaemon:
         # 🚨 Пік вердикту в бік угоди {'SYM|SIDE': вердикт} — база сигналу
         # «МММ-Decision слабшає» у таблицях угод. Персиститься.
         self._mmd_trade_peak: Dict[str, Dict] = {}
-        # 🧮 Колонки 🚨 угод з 26.10 живуть на МММ-Trend: поточний стан по
-        # монетах у відкритій угоді {SYM: (ts, cur)} і ВЛАСНИЙ пік (стара база
-        # була в шкалі Decision — змішувати не можна). Пік персиститься.
+        # 🔔 Колонки 🚨 угод з 29.10 живуть на МММ-SBR: поточний стан по монетах
+        # у відкритій угоді {SYM: (ts, sbr_mm_dir)}. Піку немає — 🚨 судить сам
+        # факт протилежного сигналу після входу.
         self._mmt_trade: Dict[str, tuple] = {}
-        self._mmt_trade_peak: Dict[str, Dict] = {}
         self._mm_bias_dec: Dict = {}
         self._mm_bias_dec_since: float = 0.0
         self._mm_bias_dec_cand: Dict = {}
@@ -3226,12 +3197,6 @@ class FuelFilterDaemon:
             if self._mm_bias_sbr_since > time.time() + 60:
                 self._mm_bias_sbr_since = 0.0
                 self._mm_bias_sbr = {}
-            # 🚨 Пік вердикту в бік угоди — щоб рестарт не «скидав» базу сигналу
-            # «слабшає» (інакше вже ослаблий вердикт став би новим піком).
-            _mtp = st.get('mmt_trade_peak')
-            self._mmt_trade_peak = ({str(k): dict(v) for k, v in _mtp.items()
-                                     if isinstance(v, dict)}
-                                    if isinstance(_mtp, dict) else {})
             # 💰 Опрацьовані funding-VOB — без них перший показ після рестарту
             # прийняв би будь-який наявний блок за новий сигнал.
             _fvs = st.get('funding_vob_seen')
@@ -3363,7 +3328,6 @@ class FuelFilterDaemon:
                 'mm_bias_dec': dict(getattr(self, '_mm_bias_dec', {}) or {}),
                 'mm_bias_dec_since': float(getattr(self, '_mm_bias_dec_since', 0.0) or 0.0),
                 # 🚨 Пік вердикту в бік угоди (база сигналу «слабшає»).
-                'mmt_trade_peak': dict(getattr(self, '_mmt_trade_peak', {}) or {}),
                 'funding_vob_seen': dict(getattr(self, '_vob_seen', {}) or {}),
                 'mmd_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
@@ -4633,39 +4597,6 @@ class FuelFilterDaemon:
             pass
         return out
 
-    def _mmd_track_peaks(self, pairs, now: Optional[float] = None) -> None:
-        """🚨 Оновити ПІК вердикту в бік кожної відкритої угоди (база сигналу
-        «слабшає»). Ключ несе `opened_at`, тож нова угода — нова база; записи
-        угод, яких не бачили > MMD_PEAK_FORGET_SEC, забуваються (а не одразу:
-        TM міг ще не піднятись після рестарту — пік не має зникнути)."""
-        peaks = getattr(self, '_mmt_trade_peak', None)
-        if peaks is None:
-            self._mmt_trade_peak = peaks = {}
-        _now = float(now) if now else time.time()
-        pairs = set(pairs or ())
-        for k in list(peaks):
-            v = peaks.get(k) or {}
-            if k in pairs:
-                v['seen'] = _now
-            elif _now - float(v.get('seen') or _now) > MMD_PEAK_FORGET_SEC:
-                peaks.pop(k, None)
-        cache = getattr(self, '_mmt_trade', {}) or {}
-        for key in pairs:
-            S, sd = key.split('|')[:2]
-            hit = cache.get(S)
-            cur = hit[1] if hit else None
-            if not cur:
-                continue
-            a = dec_trade_alert(sd, cur, None)
-            pk = peaks.get(key)
-            pa = dec_trade_alert(sd, pk, None) if pk else None
-            if (pa is None or a['align'] > pa['align']
-                    or (a['align'] == pa['align'] and
-                        DEC_VERDICT_RANK.get(cur.get('verdict'), 0)
-                        > DEC_VERDICT_RANK.get((pk or {}).get('verdict'), 0))):
-                peaks[key] = {'dir': cur.get('dir'), 'status': cur.get('status'),
-                              'verdict': cur.get('verdict'), 'seen': _now}
-
     def _mmd_warming(self, now: Optional[float] = None) -> bool:
         """🚨 Ще триває прогрів після старту (MMD_AUTO_WARMUP_SEC)?"""
         _now = float(now) if now else time.time()
@@ -4708,19 +4639,18 @@ class FuelFilterDaemon:
                 print(f"[FF] mmd→opp-ob auto warn {k}: {e}")
 
     def dec_trade_for(self, pairs) -> Dict[str, Dict]:
-        """🧮 МММ-Trend + 🚨 сигнал по відкритих угодах — ЛИШЕ ЧИТАННЯ.
+        """🔔 МММ-SBR + 🚨 сигнал по відкритих угодах — ЛИШЕ ЧИТАННЯ.
 
-        ⚠️ Назва історична (до 26.10 колонки жили на 🧠 МММ-Decision). Тепер
-        `pairs` — [(символ, бік, opened_at)], стан — `_mmt_trade` (ті самі
-        `fuels` двигуна, що й таблиця блоку МММ-Trend), сигнал —
-        `dec_trade_alert` від піку цієї угоди. ⚠️ Жодних розрахунків:
-        ендпоінт `/api/tm/state` опитується кожні 5с.
-        → {mmd_trade_key(...): {mm, strength, src, ts,
-                        alert{level, align, peak_align, drop, text}}}
+        ⚠️ Назва історична (колонки жили на 🧠 МММ-Decision, потім 🧮 МММ-Trend;
+        з 29.10 — 🔔 МММ-SBR). `pairs` — [(символ, бік, opened_at)], стан —
+        `_mmt_trade` (той самий `sbr_mm_dir`, що й таблиця блоку МММ-SBR, на
+        тих самих TF банера), сигнал — `sbr_trade_alert`. ⚠️ Жодних
+        розрахунків: ендпоінт `/api/tm/state` опитується кожні 5с.
+        → {mmd_trade_key(...): {mm, strength, tf, sig, src, ts,
+                        alert{level, side, tf, sig_t, text}}}
         """
         with self._lock:
             cache = dict(getattr(self, '_mmt_trade', {}) or {})
-            peaks = dict(getattr(self, '_mmt_trade_peak', {}) or {})
         _W = self._mm_watched()
         out = {}
         for sym, side, opened_at in (pairs or ()):
@@ -4733,9 +4663,10 @@ class FuelFilterDaemon:
             if not cur:
                 continue
             key = mmd_trade_key(S, sd, opened_at)
-            out[key] = {'mm': cur['status'], 'strength': cur['strength'],
-                        'src': 'trend', 'ts': hit[0],
-                        'alert': dec_trade_alert(sd, cur, peaks.get(key))}
+            out[key] = {'mm': cur.get('status'), 'strength': cur.get('strength'),
+                        'tf': cur.get('sbr_tfs') or '', 'sig': cur.get('sbr_sig'),
+                        'src': 'sbr', 'ts': hit[0],
+                        'alert': sbr_trade_alert(sd, cur, opened_at)}
         return out
 
     def _mm_forecast_engine(self):
@@ -5524,13 +5455,14 @@ class FuelFilterDaemon:
             # показуємо (🧠/🚨 порожні, 🧱-автомат її не чіпає).
             _tpairs = {p for p in _tpairs if p.split('|')[0] in _W}
             _tsyms = {x for x in _tsyms if x in _W}
-        # 🧮 Колонки 🚨 угод (з 26.10) — МММ-Trend: ті самі `fuels`, що будують
-        # таблицю блоку МММ-Trend; монети в угоді є в `fuels` завжди, тож стан
-        # є навіть при вимкненому блоці. Decision для угод більше не рахуємо.
+        # 🔔 Колонки угод (з 29.10) — МММ-SBR: той самий `sbr_mm_dir` на тих
+        # самих TF банера, що й таблиця блоку МММ-SBR. Рядки рушія є для КОЖНОЇ
+        # монети watchlist незалежно від тумблера блоку (рушій працює завжди).
+        _srows_t = self._sbr_rows() if _tsyms else {}
+        _tfs_t = sbr_tfs_of(s)
         with self._lock:
             self._mmt_trade = {S: (_now, c) for S in _tsyms
-                               for c in (trend_mm_cur((fuels or {}).get(S)),) if c}
-        self._mmd_track_peaks(_tpairs, _now)
+                               for c in (sbr_mm_dir(_srows_t.get(S), _tfs_t),) if c}
         self._mmd_apply_trade_alerts()
         if not _dcb:
             self._mm_clear_dec()

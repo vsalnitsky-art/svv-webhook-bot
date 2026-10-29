@@ -72,32 +72,40 @@ def test_each_book_is_checked_apart():
 
 # ═══════════ 2. Автомат: перехід у «тенденцію до закриття» ════════════════
 def test_auto_action_pure_rule():
+    """⚠️ 29.10: 🚨 живе на 🔔 МММ-SBR — «тенденція до закриття» = ЛИШЕ
+    протилежний сигнал, що зʼявився після входу ('against'). 'pre' / 'none'
+    нічого не вмикають (тест переписано: вимога змінилась)."""
     A = TM.opp_ob_auto_action
-    _check(A(None, 'weaker', False, '') is True, 'перший показ уже поганий → увімкнути')
+    _check(A(None, 'against', False, '') is True, 'перший показ уже ПРОТИ → увімкнути')
     _check(A('ok', 'against', False, '') is True, 'ok → проти → увімкнути')
-    _check(A('ok', 'neutral', False, '') is True, 'ok → нейтраль → увімкнути')
-    _check(A('weaker', 'against', True, 'auto') is None, 'вже увімкнено')
-    _check(A('weaker', 'against', False, '') is None,
-           'людина вимкнула посеред поганого стану — автомат не перебиває')
+    _check(A('pre', 'against', False, '') is True, 'до входу → новий протилежний → увімкнути')
+    _check(A('ok', 'pre', False, '') is None and A('ok', 'none', False, '') is None,
+           'pre / none — не «тенденція до закриття»')
+    _check(A('weaker', 'against', False, '') is True,
+           'старий рівень МММ-Trend більше не вважається «поганим»')
+    _check(A('against', 'against', False, '') is None,
+           'людина вимкнула посеред ПРОТИ — автомат не перебиває')
     _check(A('against', 'ok', True, 'auto') is False, 'покращення → вимкнути')
     _check(A('against', 'ok', True, 'user') is None, 'увімкнене людиною не вимикаємо')
     _check(A(None, 'ok', False, '') is None, 'ок і вимкнено → нічого')
     _check(A('ok', 'ok', True, 'auto') is False and A(None, 'ok', True, 'auto') is False,
            'вимкнення ЗА СТАНОМ: пропущений перехід не лишає 🧱 увімкненим')
-    print('✓ правило автомата: лише переходи, рішення людини сильніше')
+    print('✓ правило автомата: лише протилежний SBR, рішення людини сильніше')
 
 
 def test_apply_alert_toggles_and_logs():
     t = _tm(opp_ob_auto_enabled=True, side='LONG', use_opposite_ob_exit=False)
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'ok'}) is None, 'ok')
-    _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'weaker', 'text': 'слабшає'}) is True, '')
+    _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'pre'}) is None, 'pre не вмикає')
+    _check(t.apply_mmd_alert('MNTUSDT', False,
+                             {'level': 'against', 'text': 'ПРОТИ угоди: SBR SHORT 4H'}) is True, '')
     p = t._positions['MNTUSDT']
-    _check(p['opp_ob_exit'] and p['opp_ob_exit_by'] == 'auto' and p['mmd_alert_lvl'] == 'weaker', p)
-    _check(any('🧮 МММ-Trend' in x and 'УВІМКНЕНО' in x for x in _er._LOG), _er._LOG)
+    _check(p['opp_ob_exit'] and p['opp_ob_exit_by'] == 'auto' and p['mmd_alert_lvl'] == 'against', p)
+    _check(any('МММ-SBR' in x and 'УВІМКНЕНО' in x for x in _er._LOG), _er._LOG)
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'against'}) is None, 'вже увімкнено')
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'ok'}) is False, 'покращення')
     _check('opp_ob_exit' not in p and any('ВИМКНЕНО' in x for x in _er._LOG), p)
-    print('✓ 🚨 погіршення вмикає 🧱, покращення до ✓ вимикає (і це в лозі)')
+    print('✓ 🚨 ПРОТИ вмикає 🧱, новий сигнал за угодою вимикає (і це в лозі)')
 
 
 def test_automat_is_off_by_default():

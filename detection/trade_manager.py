@@ -449,7 +449,7 @@ DEFAULT_SETTINGS = {
     #          bias=BEARISH appears → close immediately.
     # Default OFF + 15m TF — opt-in for users who want the strict-bias-flip exit.
     'use_opposite_ob_exit': False,
-    # 🤖 Автоконтроль пер-угодного 🧱 OB сигналом 🚨 МММ-Trend (з 26.10; було МММ-Decision, вимога 23.10,
+    # 🤖 Автоконтроль пер-угодного 🧱 OB сигналом 🚨 МММ-SBR (з 29.10; до того МММ-Trend/МММ-Decision, вимога 23.10,
     # деф. ВИМК): вимкнено → автомат тумблер угоди не чіпає взагалі.
     'opp_ob_auto_enabled': False,
     'opposite_ob_exit_timeframe': '15m',  # 5m / 15m / 30m / 1h / 4h
@@ -3168,7 +3168,7 @@ class TradeManager:
         
         Gate: the global `use_opposite_ob_exit` toggle (Off by default) OR the
         per-position `opp_ob_exit` flag (column «🧱 OB», manual or auto from
-        the 🧮 МММ-Trend alert). Each book (real / paper) is checked apart.
+        the 🔔 МММ-SBR alert). Each book (real / paper) is checked apart.
         """
         s = self._settings
         glob = bool(s.get('use_opposite_ob_exit'))
@@ -3275,9 +3275,13 @@ class TradeManager:
             self._close_position(symbol, current_price,
                                   reason='opposite_ob_exit')
 
-    # 🚨 Рівні сигнальної колонки 🧮 МММ-Trend, що означають «угода має
+    # 🚨 Рівні сигнальної колонки 🔔 МММ-SBR, що означають «угода має
     # тенденцію до закриття» → авто-вмикання 🧱 Opposite OB Exit по угоді.
-    MMD_CLOSE_LEVELS = ('weaker', 'neutral', 'against')
+    # 🔔 З 29.10 🚨 живе на МММ-SBR: «тенденція до закриття» = ЛИШЕ протилежний
+    # сигнал SBR, що зʼявився під час угоди ('against'). 'pre' (протилежний, але
+    # ще до входу) і 'none' (сигналу немає) — запамʼятовуються, нічого не вмикають.
+    MMD_CLOSE_LEVELS = ('against',)
+    MMD_KNOWN_LEVELS = ('ok', 'against', 'pre', 'none')
 
     @classmethod
     def opp_ob_auto_action(cls, prev_lvl, lvl, on: bool, by: str):
@@ -3312,7 +3316,7 @@ class TradeManager:
         персиститься разом із нею — рестарт не створює «фальшивого переходу».
         📌 Manual-угоди автомат не чіпає (жодних автоматичних важелів)."""
         lvl = (alert or {}).get('level')
-        if lvl not in ('ok',) + self.MMD_CLOSE_LEVELS:
+        if lvl not in self.MMD_KNOWN_LEVELS:
             return None
         store = self._shadow_positions if is_shadow else self._positions
         with self._lock:
@@ -3340,10 +3344,10 @@ class TradeManager:
             except Exception:
                 pass
             return None
-        _ua = {'ok': '✓ за угодою', 'weaker': '↓ слабшає', 'neutral': '⚖ нейтраль',
-               'against': '⚠ ПРОТИ угоди'}
+        _ua = {'ok': '✓ за угодою', 'against': '⚠ ПРОТИ угоди',
+               'pre': '⚑ проти ще до входу', 'none': '— сигналу немає'}
         self.update_opp_ob_exit(symbol, act, is_shadow=is_shadow, origin='auto',
-                                reason=f'🚨 МММ-Trend: {_ua.get(lvl, lvl)}'
+                                reason=f'🚨 МММ-SBR: {_ua.get(lvl, lvl)}'
                                        + (f' · {alert.get("text")}' if alert.get('text') else ''))
         return act
 
@@ -3353,7 +3357,7 @@ class TradeManager:
         """🧱 Пер-угодний тумблер Opposite OB Exit (колонка «🧱 OB»).
 
         Діє НЕЗАЛЕЖНО від глобального `use_opposite_ob_exit`. `origin='auto'`
-        — перемкнув сигнал 🧮 МММ-Trend (FF), `'user'` — людина. Позначка
+        — перемкнув сигнал 🚨 МММ-SBR (FF), `'user'` — людина. Позначка
         `opp_ob_exit_by` показує, хто ввімкнув. Вимкнення знімає і базу блоку
         цієї книги (повторне ввімкнення зафіксує нову)."""
         store = self._shadow_positions if is_shadow else self._positions
@@ -3381,7 +3385,7 @@ class TradeManager:
         if was != bool(enabled):
             try:
                 from detection.activity_log import log_activity
-                who = '🤖 Бот (🧮 МММ-Trend)' if origin == 'auto' else '✏️ Користувач'
+                who = '🤖 Бот (🔔 МММ-SBR)' if origin == 'auto' else '✏️ Користувач'
                 log_activity(symbol, 'sltp',
                              f'{who}: 🧱 Opposite OB Exit по угоді '
                              f'{"УВІМКНЕНО" if enabled else "ВИМКНЕНО"}'

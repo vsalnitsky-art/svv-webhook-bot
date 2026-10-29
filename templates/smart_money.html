@@ -957,7 +957,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .mm-subsort { cursor:pointer; user-select:none; font-weight:400; font-size:0.66rem; color:#93c5fd; margin-left:4px; text-transform:none; }
 .mm-subsort:hover { color:#e5e7eb; }
 .tm-ob4h-l { margin-left:0 !important; margin-right:5px; }
-/* 🚨 Сигнал МММ-Trend ПРОТИ угоди — блимає, щоб звернути увагу. */
+/* 🚨 Сигнал МММ-SBR ПРОТИ угоди — блимає, щоб звернути увагу. */
 @keyframes tmMmdHot { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
 .tm-mmd-alert-hot { animation: tmMmdHot 1.2s ease-in-out infinite; }
 .tm-ob4h { display:inline-block; margin-left:4px; padding:0 3px; border:1px solid; border-radius:4px; font-size:0.62rem; font-weight:700; font-family:monospace; line-height:1.3; vertical-align:middle; }
@@ -5025,7 +5025,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label>
                                 <input type="checkbox" id="tm-opp-ob-auto" onchange="saveTMSettings()">
                                 🤖 Автоконтроль «🧱 OB» по угодах
-                                <span class="tm-help" title="Автоматично вмикає тумблер «🧱 OB» (Opposite OB Exit по угоді), коли сигнальна колонка 🚨 МММ-Trend переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ», і вимикає його, коли 🚨 повертається до ✓ (якщо вмикав автомат). Вимкнено → автомат тумблери угод не чіпає, керуєте лише ви. Перші 5 хв після рестарту автомат не діє (прогрів даних). За замовчуванням ВИМКНЕНО.">?</span>
+                                <span class="tm-help" title="Автоматично вмикає тумблер «🧱 OB» (Opposite OB Exit по угоді), коли в сигнальній колонці 🚨 зʼявляється протилежний сигнал 🔔 МММ-SBR (⚠ ПРОТИ + TF, сигнал прийшов уже ПІСЛЯ входу), і вимикає його, коли новий сигнал SBR знову за угодою (✓, якщо вмикав автомат). Протилежний сигнал, що був ще ДО входу (⚑), тумблер не вмикає. Вимкнено → автомат тумблери угод не чіпає, керуєте лише ви. Перші 5 хв після рестарту автомат не діє (прогрів даних). За замовчуванням ВИМКНЕНО.">?</span>
                             </label>
                         </div>
 
@@ -5403,8 +5403,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th title="💀 Ціна ліквідації реальної позиції на Bybit і відстань до неї від поточної ціни: червоний < 5%, бурштиновий < 15%. ⚠ — Manual SL стоїть за ліквідацією (стоп не встигне спрацювати).">💀 Ліквідація</th><th title="💰 PnL з урахуванням ПЛЕЧА і КОМІСІЙ. Велике число — ROI на маржу (як у застосунку біржі): нетто ÷ (нотіонал входу ÷ плече). Під ним — нетто $ (брутто − комісія входу − оцінка комісії виходу), якщо закрити зараз, і плече. Рух ціни без плеча та розклад — у підказці комірки. Комісія — поле «Комісія / сторону, %» (Bybit taker ≈ 0.055%).">PnL <span style="font-size:0.62rem;color:#8b93a7;font-weight:400">ROI · нетто</span></th>
-                        <th title="🧮 МММ-Trend по монеті — РІВНО той стан, що в таблиці блоку «🧮 МММ-Trend» (ті самі дані двигуна): бік і сила. Для монет у відкритій угоді є ЗАВЖДИ, навіть коли блок 🧮 МММ-Trend вимкнено. «—» = даних ще немає.">🧮 МММ-Trend</th>
-                        <th title="🚨 Сигнал 🧮 МММ-Trend ВІДНОСНО угоди: ✓ зелений — МММ-Trend за угодою; ↓ бурштиновий — той самий бік, але сила впала від піку цієї угоди на 15+ п.п.; ⚖ бурштиновий — МММ-Trend у рівновазі; ⚠ червоний, що блимає — МММ-Trend ПРОТИЛЕЖНИЙ угоді (угода йде не за напрямком). Сам нічого не закриває (діє лише через 🤖 Автоконтроль «🧱 OB», якщо увімкнено).">🚨</th>
+                        <th title="🔔 МММ-SBR по монеті — РІВНО той стан, що в таблиці блоку «🔔 МММ-SBR» (той самий рушій Session Band Reversal і ті самі TF банера 1H/4H): бік останнього сигналу, на якому TF він прийшов і його Score. Для монет у відкритій угоді є ЗАВЖДИ, навіть коли блок 🔔 МММ-SBR вимкнено. «—» = даних ще немає (рушій ще не завантажив бари).">🔔 МММ-SBR</th>
+                        <th title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. Сам нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
@@ -5474,8 +5474,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="🧮 МММ-Trend по монеті — РІВНО той стан, що в таблиці блоку «🧮 МММ-Trend» (ті самі дані двигуна): бік і сила. Для монет у відкритій угоді є ЗАВЖДИ, навіть коли блок 🧮 МММ-Trend вимкнено. «—» = даних ще немає.">🧮 МММ-Trend</th>
-                        <th title="🚨 Сигнал 🧮 МММ-Trend ВІДНОСНО угоди: ✓ зелений — МММ-Trend за угодою; ↓ бурштиновий — той самий бік, але сила впала від піку цієї угоди на 15+ п.п.; ⚖ бурштиновий — МММ-Trend у рівновазі; ⚠ червоний, що блимає — МММ-Trend ПРОТИЛЕЖНИЙ угоді (угода йде не за напрямком). Сам нічого не закриває (діє лише через 🤖 Автоконтроль «🧱 OB», якщо увімкнено).">🚨</th>
+                        <th title="🔔 МММ-SBR по монеті — РІВНО той стан, що в таблиці блоку «🔔 МММ-SBR» (той самий рушій Session Band Reversal і ті самі TF банера 1H/4H): бік останнього сигналу, на якому TF він прийшов і його Score. Для монет у відкритій угоді є ЗАВЖДИ, навіть коли блок 🔔 МММ-SBR вимкнено. «—» = даних ще немає (рушій ще не завантажив бари).">🔔 МММ-SBR</th>
+                        <th title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. Сам нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
@@ -16905,50 +16905,59 @@ const FUEL_TOOLTIP = "МММ — тиск маркетмейкера на цін
 // МММ columns and the 💰 funding table): coloured direction dot + strength
 // 0..100% + trend arrow + mini-bar + a colour-coded band word at the END.
 //   dir: 'LONG'|'SHORT'|null(=balanced),  now/prev: 0..100 strength (or null)
-// 🧮 Комірка «МММ-Trend» у таблицях ВІДКРИТИХ УГОД (вимога 26.10; до того —
-// 🧠 МММ-Decision). `pos.mmd` (історична назва поля) приходить ГОТОВИМ з
-// `/api/tm/state` — ті самі `fuels` двигуна, що таблиця блоку МММ-Trend, тож
-// нічого не рахуємо. Вигляд: бік · сила%.
+// 🔔 Комірка «МММ-SBR» у таблицях ВІДКРИТИХ УГОД (вимога 29.10; до того —
+// 🧮 МММ-Trend / 🧠 МММ-Decision). `pos.mmd` (історична назва поля) приходить
+// ГОТОВИМ з `/api/tm/state` — той самий `sbr_mm_dir`, що таблиця блоку МММ-SBR.
+// Вигляд: бік · TF сигналу · Score-смужка.
 function mmdTradeCellHTML(p) {
     const m = p && p.mmd;
     if (!m) {
-        return '<td><span style="color:#6b7280" title="Даних 🧮 МММ-Trend по цій монеті ще немає">—</span></td>';
+        return '<td><span style="color:#6b7280" title="Даних 🔔 МММ-SBR по цій монеті ще немає">—</span></td>';
+    }
+    const dir = (m.mm === 'LONG' || m.mm === 'SHORT') ? m.mm : null;
+    if (!dir) {
+        return '<td><span style="color:#8b93a7" title="🔔 МММ-SBR: сигналу Session Band Reversal по монеті в історії немає">⚖ —</span></td>';
     }
     const st = Math.max(0, Math.min(100, Math.round(Number(m.strength) || 0)));
-    const dir = (m.mm === 'LONG' || m.mm === 'SHORT') ? m.mm : null;
-    const col = dir === 'LONG' ? '#4ade80' : (dir === 'SHORT' ? '#f87171' : '#8b93a7');
-    const ic = dir === 'LONG' ? '▲' : (dir === 'SHORT' ? '▼' : '⚖');
-    const tip = `🧮 МММ-Trend: ${dir || '⚖ рівновага'} · сила ${st}%`;
-    // Сегменти ФІКСОВАНОЇ ширини: значок 14 · відсоток 36 (праворуч) · мінісмужка
-    // 42 — відсотки й смужки вишиковуються в стовпчик у всіх рядках.
+    const col = dir === 'LONG' ? '#4ade80' : '#f87171';
+    const ic = dir === 'LONG' ? '▲' : '▼';
+    const tf = String(m.tf || '');
+    const g = m.sig || {};
+    const tip = `🔔 МММ-SBR: ${dir} ${tf} · Score ${st}`
+        + (g.time_kyiv ? ` · #${g.n || 1} ${g.time_kyiv} Kyiv` : '')
+        + (g.trigger != null ? ` · Trigger ${g.trigger}` : '');
+    // Сегменти ФІКСОВАНОЇ ширини: значок 14 · TF 46 · Score 26 (праворуч) ·
+    // мінісмужка 34 — стовпчики рівні в усіх рядках.
     return `<td><span title="${tip}" style="display:inline-flex;align-items:center;font-family:monospace;white-space:nowrap;font-size:0.74rem">`
         + `<span style="display:inline-block;width:14px;color:${col};font-weight:900;text-align:center">${ic}</span>`
-        + `<b style="display:inline-block;width:36px;text-align:right;color:${col}">${st}%</b>`
-        + `<span style="display:inline-block;width:42px;height:6px;margin-left:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden">`
+        + `<b style="display:inline-block;width:46px;color:${col}">${tf || '—'}</b>`
+        + `<span style="display:inline-block;width:26px;text-align:right;color:#cbd5e1">${st}</span>`
+        + `<span style="display:inline-block;width:34px;height:6px;margin-left:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden">`
         + `<span style="display:block;height:100%;width:${st}%;background:${col}"></span></span>`
         + `</span></td>`;
 }
-// 🚨 Сигнальна колонка поруч: чи 🧮 МММ-Trend іде ЗА угодою (з 26.10; до того — Decision).
-// Рівень рахує бекенд (`dec_trade_alert`, від ПІКУ цієї угоди) — фронт лише
-// фарбує: ok ✓ зелений · weaker ↓ бурштин · neutral ⚖ бурштин · against ⚠
-// червоний із блиманням (угода йде проти напрямку — звернути увагу).
+// 🚨 Сигнальна колонка поруч: протилежний сигнал 🔔 МММ-SBR із TF (з 29.10).
+// Рівень рахує бекенд (`sbr_trade_alert`) — фронт лише фарбує: ok ✓ зелений ·
+// pre ⚑ бурштин (протилежний, але ще до входу) · against ⚠ червоний із
+// блиманням + TF сигналу · none — «—».
 const _MMD_ALERT = {
     ok:      { ic: '✓', col: '#4ade80', bg: '#22c55e1f', txt: 'OK' },
-    weaker:  { ic: '↓', col: '#fbbf24', bg: '#f59e0b26', txt: 'СЛАБШ' },
-    neutral: { ic: '⚖', col: '#fbbf24', bg: '#f59e0b26', txt: 'НЕЙТР' },
+    pre:     { ic: '⚑', col: '#fbbf24', bg: '#f59e0b26', txt: 'ДО ВХОДУ' },
     against: { ic: '⚠', col: '#fecaca', bg: '#dc2626', txt: 'ПРОТИ' },
 };
 function mmdAlertCellHTML(p) {
     const a = p && p.mmd && p.mmd.alert;
     if (!a || !_MMD_ALERT[a.level]) {
-        return '<td><span style="color:#6b7280" title="Сигналу ще немає — немає даних 🧮 МММ-Trend">—</span></td>';
+        const why = a && a.text ? a.text : 'немає даних 🔔 МММ-SBR';
+        return `<td><span style="color:#6b7280" title="Сигналу немає — ${why}">—</span></td>`;
     }
     const st = _MMD_ALERT[a.level];
-    const tip = `🚨 ${a.text}` + (a.peak_align != null ? ` · пік за угоду ${a.peak_align}%` : '')
-        + (a.level === 'ok' ? '' : ' — угода може йти не за напрямком, зверніть увагу');
+    const tf = (a.level === 'against' && a.tf) ? ` ${a.tf}` : '';
+    const tip = `🚨 ${a.text}`
+        + (a.level === 'against' ? ' — угода йде проти нового розвороту, зверніть увагу' : '');
     return `<td><span class="tm-mmd-alert${a.level === 'against' ? ' tm-mmd-alert-hot' : ''}" title="${tip}" `
-        + `style="display:inline-block;min-width:58px;text-align:center;padding:1px 5px;border-radius:4px;font-family:monospace;font-size:0.68rem;font-weight:700;color:${st.col};background:${st.bg};border:1px solid ${st.col}55">`
-        + `${st.ic} ${st.txt}</span></td>`;
+        + `style="display:inline-block;min-width:58px;text-align:center;padding:1px 5px;border-radius:4px;font-family:monospace;font-size:0.68rem;font-weight:700;color:${st.col};background:${st.bg};border:1px solid ${st.col}55;white-space:nowrap">`
+        + `${st.ic} ${st.txt}${tf}</span></td>`;
 }
 // 🏷 Позначка «останній OB 4H» у полі Side (вимога 12.10). `pos.ob4h` —
 // памʼять сканера (`ob_mark_for`, той самий `_ob_on_htf`, що дає «OB 4H» в
@@ -18496,17 +18505,17 @@ function breakevenCloseCellHTML(p, isShadow) {
 }
 
 // 🧱 Пер-угодний Opposite OB Exit (вимога 22.10). Позначка 🤖 = увімкнув автомат
-// (сигнал 🚨 МММ-Trend перейшов у «тенденцію до закриття»), ✏️ = людина.
+// (зʼявився протилежний сигнал 🚨 МММ-SBR), ✏️ = людина.
 function oppObExitCellHTML(p, isShadow) {
     const sym = p.symbol;
     const shFlag = isShadow ? 'true' : 'false';
     const on = !!p.opp_ob_exit;
     const auto = on && p.opp_ob_exit_by === 'auto';
     const tip = on
-        ? (auto ? '🧱 Opposite OB Exit УВІМКНЕНО АВТОМАТОМ — сигнал 🚨 МММ-Trend показав тенденцію до закриття. Вимкнеться сам, коли 🚨 повернеться до ✓.'
+        ? (auto ? '🧱 Opposite OB Exit УВІМКНЕНО АВТОМАТОМ — зʼявився протилежний сигнал 🚨 МММ-SBR. Вимкнеться сам, коли новий сигнал SBR буде знову за угодою (✓).'
                 : '🧱 Opposite OB Exit УВІМКНЕНО ВРУЧНУ — автомат його не вимикає.')
           + ' Закриє угоду на НОВОМУ протилежному OB (TF — з Exit Rules), незалежно від глобального тумблера.'
-        : '🧱 Opposite OB Exit по угоді вимкнено. Увімкнеться автоматично, коли 🚨 МММ-Trend перейде в «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ».';
+        : '🧱 Opposite OB Exit по угоді вимкнено. Увімкнеться автоматично (якщо увімкнено 🤖 Автоконтроль), коли в 🚨 зʼявиться протилежний сигнал МММ-SBR (⚠ ПРОТИ + TF).';
     return `
         <td style="text-align:center;white-space:nowrap">
             <label class="tm-toggle-mini" title="${tip}">
