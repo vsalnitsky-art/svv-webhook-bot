@@ -451,6 +451,10 @@ DEFAULT_SETTINGS = {
     # (`spring_coil`, закриті 1h-бари WATCHLIST). Монета без потенціалу не
     # витрачає ресурсів далі (решта фільтрів не рахується). Немає даних →
     # не блокує.
+    # 🌀 ГОЛОВНИЙ ТУМБЛЕР «Пружини» (вимога 29.10, деф. УВІМК): ВИМКНЕНО →
+    # технологія не працює ЗОВСІМ — не рахується, ворота не діють, таблиця
+    # порожня (памʼять чиститься).
+    'spring_enabled': True,
     'spring_gate_enabled': True,
     'spring_min_pot': 40,
 
@@ -888,6 +892,11 @@ class SMCScanner:
         # барах монет WATCHLIST: {SYM: запис spring_coil.analyze + 'ts'}.
         # Рахується РАЗ на закритий 1h-бар із тих самих барів `_get_tf_data`.
         self._spring: Dict[str, Dict] = {}
+        # 🌀 Видимість роботи (лише памʼять): коли рахували, скільки монет,
+        # і що вирішили ворота (пропущено/відхилено + останні рішення).
+        self._spring_stats: Dict = {'calc_at': 0.0, 'calc_n': 0, 'calc_bar': 0,
+                                    'pass': 0, 'block': 0, 'nodata': 0,
+                                    'since': time.time(), 'last': []}
         # Монети, чия позначка прийшла зі знімка минулого запуску і ще не
         # перерахована цим запуском (див. `_load_ob_mark_state`).
         self._ob_mark_restored: set = set()
@@ -1804,7 +1813,7 @@ class SMCScanner:
                        'mms_gate_enabled', 'mms_gate_banner',
                        'mm_gate_strength',
                        'liq_gate_enabled',
-                       'spring_gate_enabled', 'spring_min_pot',
+                       'spring_enabled', 'spring_gate_enabled', 'spring_min_pot',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
@@ -1963,6 +1972,10 @@ class SMCScanner:
                 self._settings[_gk] = bool(self._settings.get(_gk, False))
             self._settings['liq_gate_enabled'] = bool(
                 self._settings.get('liq_gate_enabled', False))
+            self._settings['spring_enabled'] = bool(
+                self._settings.get('spring_enabled', True))
+            if not self._settings['spring_enabled']:
+                self._spring = {}   # застиглі числа виглядали б живими
             self._settings['spring_gate_enabled'] = bool(
                 self._settings.get('spring_gate_enabled', True))
             try:
@@ -2597,7 +2610,8 @@ class SMCScanner:
                 # 6) 🌀 «Пружина» — із ТИХ САМИХ закритих 1h-барів (кеш до
                 # закриття бару → нуль додаткових запитів; лише монети watchlist).
                 try:
-                    td_sp = _get_tf_data(SPRING_TF)
+                    td_sp = (_get_tf_data(SPRING_TF)
+                             if self._settings.get('spring_enabled', True) else None)
                     if td_sp:
                         self._spring_update(symbol, td_sp['klines_closed'])
                 except Exception as sp_err:
@@ -3745,6 +3759,14 @@ class SMCScanner:
             _t = 0
         if getattr(self, '_spring', None) is None:
             self._spring = {}
+        # 👁 Ознака живого сканування: монету ПЕРЕВІРЕНО цим проходом (навіть
+        # коли бар той самий і перераховувати нічого) — сторінка бачить рух.
+        st = self._spring_stats_ref()
+        cyc = int(getattr(self, '_scan_count', 0) or 0)
+        if st.get('tick_cycle') != cyc:
+            st['tick_cycle'], st['tick_n'] = cyc, 0
+        st['tick_n'] = int(st.get('tick_n') or 0) + 1
+        st['tick_sym'], st['tick_at'] = S, time.time()
         prev = self._spring.get(S)
         if prev and _t and prev.get('bar_t') == _t:
             return
@@ -3754,6 +3776,32 @@ class SMCScanner:
             return
         rec['ts'] = time.time()
         self._spring[S] = rec
+        if _t and st.get('calc_bar') != _t:
+            st['calc_bar'], st['calc_n'] = _t, 0
+        st['calc_n'] = int(st.get('calc_n') or 0) + 1
+        st['calc_at'] = rec['ts']
+
+    def _spring_stats_ref(self) -> Dict:
+        st = getattr(self, '_spring_stats', None)
+        if not isinstance(st, dict):
+            st = {'calc_at': 0.0, 'calc_n': 0, 'calc_bar': 0, 'pass': 0,
+                  'block': 0, 'nodata': 0, 'since': time.time(), 'last': []}
+            self._spring_stats = st
+        return st
+
+    def _spring_note(self, symbol: str, side: str, outcome: str, pot) -> None:
+        """🌀 Запамʼятати рішення воріт (для рядка стану на сторінці)."""
+        st = self._spring_stats_ref()
+        st[outcome] = int(st.get(outcome) or 0) + 1
+        st['last'] = ([{'symbol': str(symbol).upper(), 'side': side, 'outcome': outcome,
+                        'pot': (round(float(pot)) if pot is not None else None),
+                        'ts': time.time()}] + list(st.get('last') or []))[:8]
+
+    def spring_stats(self) -> Dict:
+        """🌀 Копія лічильників роботи «Пружини» (лише памʼять)."""
+        st = self._spring_stats_ref()
+        return {**{k: v for k, v in st.items() if k != 'last'},
+                'last': [dict(x) for x in (st.get('last') or [])]}
 
     def _spring_gate(self, symbol: str, side: str):
         """🌀 (applies, ok, chip, reason) воріт «Через Пружину».
@@ -3766,14 +3814,24 @@ class SMCScanner:
         need = int(self._settings.get('spring_min_pot', 40) or 0)
         pot = sc.potential(rec, side)
         if pot is None:
+            try:
+                self._spring_note(symbol, side, 'nodata', None)
+            except Exception:
+                pass
             return (True, True, f'🌀Пружина[≥{need}](немає даних):✓', '')
         ok, why = sc.gate(rec, side, 'require', need)
+        try:
+            self._spring_note(symbol, side, 'pass' if ok else 'block', pot)
+        except Exception:
+            pass
         chip = (f"🌀Пружина[≥{need}]({side} {pot:.0f} · "
                 f"{rec.get('label', '')}):{'✓' if ok else '✗'}")
         return (True, ok, chip, '' if ok else why.replace(' — чекає в черзі', ''))
 
     def spring_for(self, symbols=None) -> Dict[str, Dict]:
         """🌀 Записи «Пружини» (лише памʼять) для монет WATCHLIST."""
+        if not (getattr(self, '_settings', None) or {}).get('spring_enabled', True):
+            return {}
         try:
             wl = {str(x).upper() for x in (self.get_watchlist() or [])}
         except Exception:
@@ -5321,7 +5379,8 @@ class SMCScanner:
         # Читають лише памʼять (`_spring`), тож стоять до решти фільтрів:
         # сигнал по монеті без потенціалу далі не рахується зовсім.
         _sg = getattr(self, '_spring_gate', None)
-        if _sg and self._settings.get('spring_gate_enabled', True):
+        if (_sg and self._settings.get('spring_enabled', True)
+                and self._settings.get('spring_gate_enabled', True)):
             _sapp, _sok, _schip, _swhy = _sg(symbol, side_label)
             if _sapp:
                 parts.append(_schip)

@@ -3749,7 +3749,8 @@ def register_api_routes(app):
             sc = get_smc_scanner()
             recs = sc.spring_for() if sc is not None and hasattr(sc, 'spring_for') else {}
             _ss = getattr(sc, '_settings', {}) or {}
-            gate_on = bool(_ss.get('spring_gate_enabled', True))
+            enabled = bool(_ss.get('spring_enabled', True))
+            gate_on = enabled and bool(_ss.get('spring_gate_enabled', True))
             min_pot = _ss.get('spring_min_pot', 40)
             sides, queues = {}, {}
             try:
@@ -3773,7 +3774,11 @@ def register_api_routes(app):
                 rows.append(row)
             rows.sort(key=lambda x: -max(x.get('pot_long') or 0, x.get('pot_short') or 0))
             wl = len(sc.get_watchlist() or []) if sc is not None else 0
-            return jsonify({'ok': True, 'rows': rows, 'gate_on': gate_on, 'min_pot': min_pot,
+            stats = sc.spring_stats() if sc is not None and hasattr(sc, 'spring_stats') else {}
+            _now = time.time()
+            return jsonify({'ok': True, 'enabled': enabled, 'rows': rows, 'stats': stats,
+                            'next_at': (int(_now // 3600) + 1) * 3600, 'server_now': _now,
+                            'gate_on': gate_on, 'min_pot': min_pot,
                             'watchlist': wl, 'tf': '1h', 'ts': time.time()})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e), 'rows': []})

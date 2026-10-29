@@ -1349,6 +1349,19 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     color: #777;
 }
 .tm-table.tm-pilot-off .tm-col-pilot{display:none}
+
+/* 🌀 Пружина — рядок стану роботи (живе сканування + прогрес + ворота) */
+.spr-status{display:flex;flex-direction:column;gap:5px;margin:2px 0 8px;padding:7px 10px;border:1px solid #2b2f36;border-radius:6px;background:#11141b;font-size:0.68rem;color:#8b93a7}
+.spr-status .spr-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.spr-status .spr-k{text-transform:uppercase;letter-spacing:.04em;font-size:0.6rem;color:#6b7280}
+.spr-status .spr-v{font-family:monospace;color:#dde3ee}
+.spr-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 0 rgba(74,222,128,.6);animation:sprPulse 1.6s infinite}
+.spr-dot.idle{background:#fbbf24;animation:none}
+.spr-dot.off{background:#4b5563;animation:none}
+@keyframes sprPulse{0%{box-shadow:0 0 0 0 rgba(74,222,128,.55)}70%{box-shadow:0 0 0 7px rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
+.spr-bar{display:inline-block;width:120px;height:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;vertical-align:middle}
+.spr-bar>span{display:block;height:100%;background:#facc15;transition:width .6s}
+.spr-chip{font-family:monospace;padding:0 5px;border-radius:3px;border:1px solid #2b2f36}
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -2690,9 +2703,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <input type="checkbox" id="spr-gate" onchange="updateSpringGate()"> 🚦 сигнали лише з потенціалом</label>
                 <label title="Мінімальний потенціал (0-100) у бік сигналу.">поріг ≥
                     <input type="text" inputmode="numeric" id="spr-min" value="40" onchange="updateSpringGate()" style="width:34px;background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;font-size:0.7rem;padding:1px 4px;font-family:monospace;text-align:right"></label>
+                <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🌀 Пружину повністю. ВИМКНЕНО — бот НЕ рахує заряд монет, ворота «Через Пружину» не діють (сигнали йдуть як без них), таблиця порожня. УВІМКНЕНО — розрахунок із тих самих закритих 1h-барів сканера, без додаткових запитів до біржі.">
+                    <input type="checkbox" id="spr-enabled" checked onchange="updateSpringGate()">
+                    <span class="slider"></span>
+                </label>
             </div>
         </div>
         <div id="spr-body">
+            <div id="spr-off" class="tm-empty-msg" style="display:none;padding:10px 0">🔌 Пружину вимкнено — заряд монет не рахується, ворота «Через Пружину» не діють. Увімкніть тумблер праворуч у шапці.</div>
+            <div id="spr-live">
+            <div id="spr-status" class="spr-status"></div>
             <div id="spr-tabs" style="display:flex;gap:6px;margin:4px 0 6px;flex-wrap:wrap"></div>
             <div class="tm-hscroll" style="max-height:360px;overflow:auto">
             <table class="tm-table" id="spr-table">
@@ -2712,6 +2732,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:6px">Аналізуються ЛИШЕ монети WATCHLIST · ЗАКРИТІ 1h-бари · перерахунок раз на годину з тих самих барів, що вже тягне сканер (без додаткових запитів до біржі).</div>
+            </div>
         </div>
     </div>
 
@@ -7591,6 +7612,8 @@ async function loadSettings() {
                 });
             const liqGate = document.getElementById('sm-liq-gate');
             if (liqGate) liqGate.checked = !!s.liq_gate_enabled;        // default OFF
+            const sprE = document.getElementById('spr-enabled');
+            if (sprE && document.activeElement !== sprE) sprE.checked = s.spring_enabled !== false;   // default ON
             const sprG = document.getElementById('spr-gate');
             if (sprG && document.activeElement !== sprG) sprG.checked = s.spring_gate_enabled !== false;   // default ON
             const sprM = document.getElementById('spr-min');
@@ -7791,7 +7814,8 @@ function updateSettingsSummary() {
     const lqG = document.getElementById('sm-liq-gate');
     if (lqG && lqG.checked) summary += ' · 💧 Сканер';
     const spG = document.getElementById('spr-gate');
-    if (spG && spG.checked) {
+    const spE = document.getElementById('spr-enabled');
+    if (spG && spG.checked && !(spE && !spE.checked)) {
         const spM = document.getElementById('spr-min');
         summary += ' · 🌀 Пружина ≥' + (spM ? spM.value : '40');
     }
@@ -7921,13 +7945,15 @@ function _smMmGateSync() {
 // 🌀 Окремі ворота «Через Пружину» (налаштування сканера, деф. УВІМК).
 async function updateSpringGate() {
     const el = document.getElementById('spr-gate');
+    const en = document.getElementById('spr-enabled');
     const mi = document.getElementById('spr-min');
     let v = parseInt(mi ? mi.value : '40', 10);
     if (isNaN(v)) v = 40;   // 0 — змістовне значення, тому НЕ через `|| 40`
     try {
         const r = await fetch('/api/smc/settings', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({spring_gate_enabled: !!(el && el.checked),
+            body: JSON.stringify({spring_enabled: !(en && !en.checked),
+                                  spring_gate_enabled: !!(el && el.checked),
                                   spring_min_pot: Math.max(0, Math.min(100, v))}),
         });
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -16732,6 +16758,15 @@ function _sprPotCell(v, side, minPot, mode) {
 function sprRender() {
     const tb = document.getElementById('spr-tbody');
     if (!tb) return;
+    const on = _sprMeta.enabled !== false;
+    const offEl = document.getElementById('spr-off'), liveEl = document.getElementById('spr-live');
+    if (offEl) offEl.style.display = on ? 'none' : '';
+    if (liveEl) liveEl.style.display = on ? '' : 'none';
+    ['spr-gate', 'spr-min'].forEach(i => { const e = document.getElementById(i);
+        if (e) { e.disabled = !on; if (e.parentElement) e.parentElement.style.opacity = on ? '' : '0.45'; } });
+    const sumEl = document.getElementById('spr-sum');
+    if (!on) { if (sumEl) sumEl.textContent = '🔌 вимкнено'; tb.dataset.sig = ''; return; }
+    _sprStatusPaint();
     const minPot = Number(_sprMeta.min_pot != null ? _sprMeta.min_pot : 40);
     const mode = _sprMeta.gate_on === false ? 'off' : 'require';
     const cnt = {all: 0, LONG: 0, SHORT: 0, fired: 0, flat: 0};
@@ -16794,6 +16829,44 @@ function sprRender() {
             + `<td style="white-space:nowrap">${where}</td></tr>`;
     }).join('');
 }
+// 👁 Рядок стану: чи сканер реально проходить монети (пульс + прогрес циклу),
+// коли перераховано заряд і що вирішили ворота. Лише показ, бекенд — памʼять.
+function _sprStatusPaint() {
+    const el = document.getElementById('spr-status');
+    if (!el) return;
+    const st = _sprMeta.stats || {};
+    const wl = Number(_sprMeta.watchlist) || 0;
+    const now = (typeof _nowS === 'function') ? _nowS() : Math.floor(Date.now() / 1000);
+    const tickAt = Number(st.tick_at) || 0;
+    const age = tickAt ? Math.max(0, now - tickAt) : null;
+    const live = age !== null && age < 120;
+    const n = Number(st.tick_n) || 0;
+    const pct = wl ? Math.max(0, Math.min(100, Math.round(n / wl * 100))) : 0;
+    const hm = t => { if (!t) return '—'; const d = new Date(((typeof _srvToPc === 'function') ? _srvToPc(t) : t) * 1000);
+        return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+    const dot = live ? '<span class="spr-dot"></span>' : `<span class="spr-dot ${tickAt ? 'idle' : 'off'}"></span>`;
+    const scan = live
+        ? `<span class="spr-k">сканую</span><span class="spr-v">${st.tick_sym || '—'}</span>`
+          + `<span class="spr-bar" title="Прохід поточного скан-циклу: перевірено ${n} з ${wl} монет WATCHLIST"><span style="width:${pct}%"></span></span>`
+          + `<span class="spr-v">${pct}%</span><span>${n}/${wl} монет · цикл #${st.tick_cycle || 0}</span>`
+          + `<span>· остання перевірка <span class="ff-timer spr-v" data-since="${Math.floor(tickAt)}"></span> тому</span>`
+        : (tickAt ? `<span style="color:#fbbf24">⏸ сканер не доходив до монет <span class="ff-timer" data-since="${Math.floor(tickAt)}"></span> — чекаю наступного циклу</span>`
+                  : '<span>⏳ сканер ще не дійшов до монет після старту</span>');
+    const calc = `<span class="spr-k">перерахунок заряду</span><span class="spr-v">${hm(st.calc_at)}</span>`
+        + `<span>${Number(st.calc_n) || 0} монет на останньому барі</span>`
+        + (_sprMeta.next_at ? `<span>· наступний через <span class="ff-countdown spr-v" data-until="${Math.floor(_sprMeta.next_at)}"></span> (закриття 1h-бару)</span>` : '');
+    const g = _sprMeta.gate_on
+        ? `<span class="spr-k">ворота</span><span class="spr-chip" style="color:#4ade80">✓ ${Number(st.pass) || 0}</span>`
+          + `<span class="spr-chip" style="color:#f87171">✗ ${Number(st.block) || 0}</span>`
+          + `<span class="spr-chip" style="color:#8b93a7" title="Монету ще не пораховано — ворота не блокували">? ${Number(st.nodata) || 0}</span>`
+          + `<span>від ${hm(st.since)}</span>`
+          + (st.last || []).slice(0, 5).map(x => `<span class="spr-chip" title="${hm(x.ts)} · потенціал ${x.pot != null ? x.pot : '—'}" style="color:${x.outcome === 'pass' ? '#4ade80' : x.outcome === 'block' ? '#f87171' : '#8b93a7'}">${x.outcome === 'pass' ? '✓' : x.outcome === 'block' ? '✗' : '?'} ${x.symbol} ${x.side}</span>`).join('')
+        : '<span class="spr-k">ворота</span><span>вимкнено — сигнали йдуть без перевірки потенціалу</span>';
+    el.innerHTML = `<div class="spr-row">${dot}${scan}</div><div class="spr-row">${calc}</div><div class="spr-row">${g}</div>`;
+    // одразу намалювати секунди, не чекаючи тіка
+    el.querySelectorAll('.ff-timer[data-since]').forEach(t => { if (typeof fmtTimer === 'function') t.textContent = fmtTimer(now - Number(t.getAttribute('data-since'))); });
+    el.querySelectorAll('.ff-countdown[data-until]').forEach(t => { if (typeof _fmtCountdown === 'function') t.textContent = _fmtCountdown(Number(t.getAttribute('data-until')) - now); });
+}
 async function sprLoad(force) {
     if (!force && (_qCollapsed('spr') || (typeof document !== 'undefined' && document.hidden))) return;
     try {
@@ -16802,11 +16875,14 @@ async function sprLoad(force) {
         const d = await r.json();
         if (!d || !d.ok) return;
         _sprRows = d.rows || [];
-        _sprMeta = {gate_on: d.gate_on, min_pot: d.min_pot, watchlist: d.watchlist, ts: d.ts};
+        if (d.server_now && typeof _srvSkewNote === 'function') _srvSkewNote(d.server_now);
+        _sprMeta = {enabled: d.enabled, stats: d.stats || {}, next_at: d.next_at, gate_on: d.gate_on, min_pot: d.min_pot, watchlist: d.watchlist, ts: d.ts};
         sprRender();
     } catch (e) { console.error('spring load', e); }
 }
-setInterval(() => { try { sprLoad(false); } catch (e) {} }, 60000);
+// 5с — щоб пульс і прогрес були живими; запит лише читає памʼять бота і
+// пропускається, коли гармошка згорнута або вкладка неактивна.
+setInterval(() => { try { sprLoad(false); } catch (e) {} }, 5000);
 setTimeout(() => { try { sprLoad(false); } catch (e) {} }, 1500);
 
 async function saveFuelFilterSettings() {

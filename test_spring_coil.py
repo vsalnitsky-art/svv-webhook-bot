@@ -98,7 +98,7 @@ def test_gate_and_priority():
 
 
 def test_scanner_reuses_the_1h_bars_and_watchlist_only():
-    _check("td_sp = _get_tf_data(SPRING_TF)" in _SC, 'дані — ті самі закриті 1h-бари сканера')
+    _check("_get_tf_data(SPRING_TF)" in _SC, 'дані — ті самі закриті 1h-бари сканера')
     _check("(getattr(self, '_spring', None) or {}).pop(symbol, None)" in _SC, 'видалення з watchlist чистить запис')
     i = _SC.index('def spring_for(')
     fn = _SC[i:_SC.index('\n    def ', i + 10)]
@@ -141,6 +141,64 @@ def test_signal_gate_behaviour():
     _check(app and not ok and '✗' in chip and 'SHORT 10 < 40' in why, (chip, why))
     app, ok, chip, why = sc._spring_gate('XRPUSDT', 'SHORT')
     _check(ok and 'немає даних' in chip, 'немає даних → не блокуємо')
+
+
+
+def test_gate_decisions_are_counted_for_the_status_line():
+    rec = {'ok': True, 'pot_long': 70, 'pot_short': 10, 'label': '🌀', 'charge': 80}
+    sc = _scanner({'spring_min_pot': 40}, {'ETHUSDT': rec})
+    sc._spring_gate('ETHUSDT', 'LONG'); sc._spring_gate('ETHUSDT', 'SHORT')
+    sc._spring_gate('XRPUSDT', 'LONG')
+    st = sc.spring_stats()
+    _check((st['pass'], st['block'], st['nodata']) == (1, 1, 1), st)
+    _check(st['last'][0]['symbol'] == 'XRPUSDT' and st['last'][1]['outcome'] == 'block', st['last'])
+
+
+def test_scan_progress_is_tracked_even_without_a_new_bar():
+    """👁 «Чи сканує» — монета позначається ПЕРЕВІРЕНОЮ кожним проходом,
+    навіть коли бар той самий і перерахунку немає (прогрес циклу)."""
+    sc = _scanner({}, {})
+    sc._scan_count = 7
+    bars = _coil(seed=3)
+    sc._spring_update('ETHUSDT', bars)
+    sc._spring_update('BTCUSDT', bars)
+    sc._spring_update('ETHUSDT', bars)          # той самий бар → без перерахунку
+    st = sc.spring_stats()
+    _check(st['tick_cycle'] == 7 and st['tick_n'] == 3 and st['tick_sym'] == 'ETHUSDT', st)
+    _check(st['calc_n'] == 2 and st['calc_at'] > 0, 'перерахунок лише двічі (новий бар)')
+    sc._scan_count = 8
+    sc._spring_update('ETHUSDT', bars)
+    _check(sc.spring_stats()['tick_n'] == 1, 'новий цикл — прогрес з нуля')
+
+
+def test_master_switch_turns_the_whole_technology_off():
+    """🔌 Головний тумблер (деф. УВІМК): ВИМКНЕНО → не рахується, ворота не
+    діють, таблиця порожня."""
+    _check("'spring_enabled': True" in _SC, 'дефолт УВІМК')
+    rec = {'ok': True, 'pot_long': 70, 'pot_short': 10, 'label': '🌀', 'charge': 80}
+    sc = _scanner({'spring_enabled': False}, {'ETHUSDT': rec})
+    sc.get_watchlist = lambda: ['ETHUSDT']
+    _check(sc.spring_for() == {}, 'вимкнено → таблиця порожня')
+    sc._settings['spring_enabled'] = True
+    _check('ETHUSDT' in sc.spring_for(), 'увімкнено → видно')
+    i = _SC.index('def _signal_allowed(')
+    fn = _SC[i:_SC.index('\n    def ', i + 10)]
+    _check("self._settings.get('spring_enabled', True)" in fn, 'ворота гасить головний тумблер')
+    j = _SC.index('td_sp = (_get_tf_data(SPRING_TF)')
+    _check("spring_enabled" in _SC[j:j + 160], 'розрахунок у скані гасить головний тумблер')
+
+
+def test_ui_panel_toggle_and_status():
+    for i in ('id="spring-panel"', 'id="spr-enabled"', 'id="spr-gate"', 'id="spr-min"',
+              'id="spr-tbody"', 'id="spr-status"', 'id="spr-off"', 'id="spr-live"'):
+        _check(i in _HTML, i)
+    _check('spring_enabled: !(en && !en.checked)' in _HTML, 'тумблер пишеться в налаштування сканера')
+    _check('spring_gate_enabled: !!(el && el.checked)' in _HTML, 'ворота пишуться')
+    _check('spring_mode' not in _HTML, 'режиму Черги-4 немає')
+    _check("'spr'" in _HTML and 'function _sprStatusPaint' in _HTML, 'гармошка + рядок стану')
+    for k in ('spr-bar', 'spr-dot', 'tick_n', 'calc_at', 'ff-countdown'):
+        _check(k in _HTML, k)
+    _check("'/api/spring/state'" in _APP and "'enabled': enabled" in _APP and "'stats': stats" in _APP, 'маршрут')
 
 
 if __name__ == '__main__':
