@@ -201,6 +201,29 @@ def test_ui_panel_toggle_and_status():
     _check("'/api/spring/state'" in _APP and "'enabled': enabled" in _APP and "'stats': stats" in _APP, 'маршрут')
 
 
+
+def test_route_does_not_use_unimported_names():
+    """🐞 29.10: маршрут кликав `time.time()`, а `time` у flask_app глобально не
+    імпортовано → NameError → сторінка вічно «Завантаження…». Кожна функція,
+    що вживає `time.`, мусить мати власний `import time`."""
+    import ast
+    t = ast.parse(_APP)
+    fn = next(n for n in ast.walk(t) if isinstance(n, ast.FunctionDef) and n.name == 'api_spring_state')
+    uses = [n for n in ast.walk(fn) if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name) and n.value.id == 'time']
+    imp = any(isinstance(n, ast.Import) and any(a.name == 'time' and a.asname in (None, 'time') for a in n.names)
+              for n in ast.walk(fn))
+    _check(not uses or imp, 'api_spring_state вживає time без імпорту')
+
+
+def test_page_never_hangs_on_loading_silently():
+    i = _HTML.index('async function sprLoad(')
+    fn = _HTML[i:_HTML.index('\n}\n', i)]
+    for k in ("fail('сервер відповів HTTP", "fail('помилка на сервері", "fail('немає звʼязку"):
+        _check(k in fn, k)
+    _check('запит стану «Пружини» до бота' in _HTML, 'початковий напис у рядку стану')
+
+
 if __name__ == '__main__':
     n = 0
     for k, v in list(globals().items()):

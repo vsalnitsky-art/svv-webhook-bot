@@ -2712,7 +2712,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <div id="spr-body">
             <div id="spr-off" class="tm-empty-msg" style="display:none;padding:10px 0">🔌 Пружину вимкнено — заряд монет не рахується, ворота «Через Пружину» не діють. Увімкніть тумблер праворуч у шапці.</div>
             <div id="spr-live">
-            <div id="spr-status" class="spr-status"></div>
+            <div id="spr-status" class="spr-status"><div class="spr-row"><span class="spr-dot idle"></span><span>⏳ запит стану «Пружини» до бота…</span></div></div>
             <div id="spr-tabs" style="display:flex;gap:6px;margin:4px 0 6px;flex-wrap:wrap"></div>
             <div class="tm-hscroll" style="max-height:360px;overflow:auto">
             <table class="tm-table" id="spr-table">
@@ -16722,7 +16722,7 @@ async function onEngineIndepToggle(event) {
 // ═══ 🌀 «ПРУЖИНА» — потенціал монет WATCHLIST (вимога 29.10) ═══════════════
 // Дані — `/api/spring/state` (лише читання памʼяті сканера). Поки гармошка
 // згорнута, сторінка нічого не опитує.
-let _sprRows = [], _sprMeta = {}, _sprDir = 'all', _sprSortCol = 'pot', _sprSortDir = -1;
+let _sprErr = '', _sprRows = [], _sprMeta = {}, _sprDir = 'all', _sprSortCol = 'pot', _sprSortDir = -1;
 const _SPR_ORDER = {fired: 4, charged: 3, building: 2, flat: 1};
 const _SPR_COL = {fired: '#f472b6', charged: '#facc15', building: '#93c5fd', flat: '#6b7280'};
 function _sprPotMax(r) { return Math.max(Number(r.pot_long) || 0, Number(r.pot_short) || 0); }
@@ -16869,16 +16869,27 @@ function _sprStatusPaint() {
 }
 async function sprLoad(force) {
     if (!force && (_qCollapsed('spr') || (typeof document !== 'undefined' && document.hidden))) return;
+    // ⚠️ Будь-яка відмова мусить бути ВИДНА (кейс 29.10: мовчазне «Завантаження…» назавжди).
+    const fail = why => {
+        _sprErr = why;
+        const el = document.getElementById('spr-status');
+        if (el) el.innerHTML = `<div class="spr-row"><span class="spr-dot off" style="background:#f87171"></span>`
+            + `<span style="color:#f87171">⚠️ дані «Пружини» не отримано: ${why}</span>`
+            + `<span>· повтор через 5с</span></div>`;
+        const tb = document.getElementById('spr-tbody');
+        if (tb && !_sprRows.length) { tb.dataset.sig = ''; tb.innerHTML = `<tr><td colspan="10" class="tm-empty-msg">⚠️ ${why}</td></tr>`; }
+    };
     try {
         const r = await fetch('/api/spring/state');
-        if (!r.ok) return;
+        if (!r.ok) return fail('сервер відповів HTTP ' + r.status + (r.status === 404 ? ' (маршрут ще не задеплоєно)' : ''));
         const d = await r.json();
-        if (!d || !d.ok) return;
+        if (!d || !d.ok) return fail('помилка на сервері: ' + ((d && d.reason) || 'невідомо'));
+        _sprErr = '';
         _sprRows = d.rows || [];
         if (d.server_now && typeof _srvSkewNote === 'function') _srvSkewNote(d.server_now);
         _sprMeta = {enabled: d.enabled, stats: d.stats || {}, next_at: d.next_at, gate_on: d.gate_on, min_pot: d.min_pot, watchlist: d.watchlist, ts: d.ts};
         sprRender();
-    } catch (e) { console.error('spring load', e); }
+    } catch (e) { console.error('spring load', e); fail('немає звʼязку з ботом (' + (e && e.message || e) + ')'); }
 }
 // 5с — щоб пульс і прогрес були живими; запит лише читає памʼять бота і
 // пропускається, коли гармошка згорнута або вкладка неактивна.

@@ -3744,6 +3744,7 @@ def register_api_routes(app):
         """🌀 «Пружина» по монетах WATCHLIST (лише ЧИТАННЯ памʼяті сканера):
         заряд, напрямок, потенціал LONG/SHORT, вистріл + стан воріт «Через
         Пружину» і де монета зараз (угода / черга)."""
+        import time   # у модулі `time` глобально НЕ імпортовано (кейс 29.10: NameError → вічне «Завантаження…»)
         try:
             from detection.smc_scanner import get_smc_scanner
             sc = get_smc_scanner()
