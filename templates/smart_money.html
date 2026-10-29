@@ -2676,6 +2676,49 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
          сам не відкриває. Поки він лежав усередині панелі Fuel Auto-Filter,
          це читалось як «ще одна черга» — і зникав разом із нею. Тепер стоїть
          НАД 🎯 POC-сетапом, як окремий блок верхнього рівня. -->
+    <!-- ===== 🌀 «ПРУЖИНА» — потенціал монет WATCHLIST (вимога 29.10) =====
+         Заряд (стиснення волатильності/коробки/обʼєму), напрямок і вистріл по
+         ЗАКРИТИХ 1h-барах, які сканер уже тримає (detection/spring_coil.py).
+         Режим воріт керує Чергою-4: найзарядженіші першими, без потенціалу —
+         чекають у черзі. -->
+    <div class="tm-panel" id="spring-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(250,204,21,0.30);border-radius:8px;background:rgba(250,204,21,0.04)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px;gap:10px;flex-wrap:wrap">
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('spr')" title="Клік — згорнути/розгорнути. Поки згорнуто, сторінка не опитує ці дані."><span id="spr-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🌀 Пружина <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— які монети WATCHLIST заряджені на рух (вгору / вниз), а які ні · 1H</span></div>
+            <div style="display:flex;align-items:center;gap:10px;font-size:0.7rem;color:#8b93a7">
+                <span id="spr-sum" style="font-family:monospace"></span>
+                <label title="Як «Пружина» впливає на відкриття угод Черги-4. ВИМК — не враховується. ПРІОРИТЕТ — лише черговість: монети з більшим потенціалом у бік сигналу перевіряються й відкриваються першими (займають слоти Max Open Positions). ЧЕКАТИ (деф.) — ще й монета з потенціалом нижче порогу НЕ відкривається і не витрачає ресурсів (шари, перевірки фільтрів, R не рахуються) — вона чекає в черзі, доки зарядиться. Немає даних по монеті → не блокуємо. ✋ Ручні відкриття це не зачіпає.">🚦 Черга-4:
+                    <select id="spr-mode" onchange="saveFuelFilterSettings(); setTimeout(() => sprLoad(true), 900)" style="background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;font-size:0.7rem;padding:1px 4px">
+                        <option value="require">чекати без потенціалу</option>
+                        <option value="priority">лише пріоритет</option>
+                        <option value="off">не враховувати</option>
+                    </select></label>
+                <label title="Мінімальний потенціал (0-100) у бік угоди для режиму «чекати без потенціалу».">поріг ≥
+                    <input type="text" inputmode="numeric" id="spr-min" value="40" onchange="saveFuelFilterSettings(); setTimeout(() => sprLoad(true), 900)" style="width:34px;background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;font-size:0.7rem;padding:1px 4px;font-family:monospace;text-align:right"></label>
+            </div>
+        </div>
+        <div id="spr-body">
+            <div id="spr-tabs" style="display:flex;gap:6px;margin:4px 0 6px;flex-wrap:wrap"></div>
+            <div class="tm-hscroll" style="max-height:360px;overflow:auto">
+            <table class="tm-table" id="spr-table">
+                <thead><tr>
+                    <th data-sprsort="symbol" onclick="sprSort('symbol')" style="cursor:pointer">Монета<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="state" onclick="sprSort('state')" style="cursor:pointer" title="💥 вистрілила — пружина щойно розпрямилась (рух почався) · 🌀 заряджена — сильне стиснення, енергія накопичена · ⏳ заряджається · 😴 без заряду — монета вже рухається / розхитана, потенціалу старту немає">Стан<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="charge" onclick="sprSort('charge')" style="cursor:pointer" title="ЗАРЯД 0-100 — наскільки стиснута пружина: TTM-стиснення (BB в одиницях ATR) 30% · ATR% проти власної історії 25% · вузька коробка 24 год проти 4 діб 20% · обʼєм висихає 15% · тривалість стиснення 10%">Заряд<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="bias" onclick="sprSort('bias')" style="cursor:pointer" title="Куди ймовірніше вистрілить: позиція ціни в коробці 30% · нахил мінімумів/максимумів 30% · тренд EMA50/EMA200 25% · моментум 15%. ⚖ — напрямок ще не визначився">Напрямок<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="pl" onclick="sprSort('pl')" style="cursor:pointer;text-align:right" title="Потенціал LONG = заряд × частка напрямку вгору">🟢 LONG<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="ps" onclick="sprSort('ps')" style="cursor:pointer;text-align:right" title="Потенціал SHORT = заряд × частка напрямку вниз">🔴 SHORT<span class="ff-sort-arrow"></span></th>
+                    <th title="Скільки годинних барів поспіль триває стиснення і його глибина (high/mid/low)">Стиснення</th>
+                    <th style="text-align:right" title="Ширина коробки останніх 24 год у % від ціни">Коробка</th>
+                    <th style="text-align:right" title="Обʼєм останніх 12 год проти попередніх 72 (менше 1 — висихає)">Обʼєм</th>
+                    <th title="Де монета зараз: у відкритій угоді / у черзі">📍</th>
+                </tr></thead>
+                <tbody id="spr-tbody"><tr><td colspan="10" class="tm-empty-msg">Завантаження…</td></tr></tbody>
+            </table>
+            </div>
+            <div style="font-size:0.66rem;color:#6b7280;margin-top:6px">Аналізуються ЛИШЕ монети WATCHLIST · ЗАКРИТІ 1h-бари · перерахунок раз на годину з тих самих барів, що вже тягне сканер (без додаткових запитів до біржі).</div>
+        </div>
+    </div>
+
     <div class="tm-panel" id="mm-monitor-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(56,189,248,0.28);border-radius:8px;background:rgba(56,189,248,0.05)">
         <!-- 🧮 МММ-МОНІТОР: живий напрямок МММ по монетах + групове ✋ відкриття.
              ⚠️ Це МОНІТОР, а не черга: рядки НЕ чекають сигналу і двигун їх
@@ -6332,6 +6375,7 @@ function togglePanel(pid) {
     if (open && pid === 'mmdlist') { try { mmRender('dec'); } catch (e) {} }
     if (open && pid === 'mmrlist') { try { mmRender('rdy'); } catch (e) {} }
     if (open && pid === 'mmslist') { try { mmRender('sbr'); } catch (e) {} }
+    if (open && pid === 'spr') { try { sprLoad(true); } catch (e) {} }
 }
 // Історична назва (заголовки Черг) — та сама функція.
 const toggleQueuePanel = togglePanel;
@@ -6342,7 +6386,7 @@ function _qCollapsed(qid) {
 }
 // Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
 // 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
-const _PANEL_IDS = ['tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'mms', 'mmslist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
+const _PANEL_IDS = ['spr', 'tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'mms', 'mmslist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
 // Секції, ЗГОРНУТІ ЗА ЗАМОВЧУВАННЯМ (доки користувач сам не розгорне): список
 // монет МММ-монітора — вимога 18.09. Для решти дефолт лишається «розгорнуто»,
 // тобто збережений вибір користувача завжди сильніший за цей список.
@@ -15617,6 +15661,8 @@ function renderFuelFilter(d) {
     setIf('ff-queue4-exh-on', s.queue4_exhaustion_on !== false);
     setIf('ff-queue4-recheck', s.queue4_recheck_filters !== false);   // деф. ON
     setIf('ff-queue4-min-rr', String(s.queue4_min_rr != null ? s.queue4_min_rr : 1));
+    setIf('spr-mode', String(s.spring_mode || 'require'));            // 🌀 деф. «чекати»
+    setIf('spr-min', String(s.spring_min_pot != null ? s.spring_min_pot : 40));
     setIf('ff-queue4-exh-pct', String(s.queue4_exhaustion_pct != null ? s.queue4_exhaustion_pct : 95));
     _ffApplyQ4Cols();   // синхронізувати видимість колонок Черги-4 з тумблерами
     setIf('ff-queue3-vob-open', s.queue3_vob_open !== false);       // default true
@@ -16626,6 +16672,123 @@ async function onEngineIndepToggle(event) {
     }
 }
 
+
+// ═══ 🌀 «ПРУЖИНА» — потенціал монет WATCHLIST (вимога 29.10) ═══════════════
+// Дані — `/api/spring/state` (лише читання памʼяті сканера). Поки гармошка
+// згорнута, сторінка нічого не опитує.
+let _sprRows = [], _sprMeta = {}, _sprDir = 'all', _sprSortCol = 'pot', _sprSortDir = -1;
+const _SPR_ORDER = {fired: 4, charged: 3, building: 2, flat: 1};
+const _SPR_COL = {fired: '#f472b6', charged: '#facc15', building: '#93c5fd', flat: '#6b7280'};
+function _sprPotMax(r) { return Math.max(Number(r.pot_long) || 0, Number(r.pot_short) || 0); }
+function _sprVal(r, c) {
+    if (c === 'symbol') return r.symbol || '';
+    if (c === 'state') return (_SPR_ORDER[r.state] || 0) * 1000 + (Number(r.charge) || 0);
+    if (c === 'charge') return Number(r.charge) || 0;
+    if (c === 'bias') return Number(r.bias) || 0;
+    if (c === 'pl') return Number(r.pot_long) || 0;
+    if (c === 'ps') return Number(r.pot_short) || 0;
+    return _sprPotMax(r);
+}
+function sprSort(c) {
+    if (_sprSortCol === c) _sprSortDir = -_sprSortDir;
+    else { _sprSortCol = c; _sprSortDir = c === 'symbol' ? 1 : -1; }
+    sprRender();
+}
+function sprSetDir(d) { _sprDir = d; sprRender(); }
+function _sprFilter(r, d) {
+    if (d === 'LONG') return (Number(r.pot_long) || 0) > (Number(r.pot_short) || 0) && r.state !== 'flat';
+    if (d === 'SHORT') return (Number(r.pot_short) || 0) > (Number(r.pot_long) || 0) && r.state !== 'flat';
+    if (d === 'fired') return r.state === 'fired';
+    if (d === 'flat') return r.state === 'flat';
+    return true;
+}
+function _sprPotCell(v, side, minPot, mode) {
+    const n = Math.round(Number(v) || 0);
+    const col = side === 'LONG' ? '#4ade80' : '#f87171';
+    const ok = n >= minPot;
+    const c = mode === 'require' && !ok ? '#6b7280' : col;
+    return `<td style="text-align:right;font-family:monospace;color:${c};font-weight:${ok ? 700 : 400}" title="Потенціал ${side} ${n} / поріг ${minPot}">${n}</td>`;
+}
+function sprRender() {
+    const tb = document.getElementById('spr-tbody');
+    if (!tb) return;
+    const minPot = Number(_sprMeta.min_pot != null ? _sprMeta.min_pot : 40);
+    const mode = _sprMeta.mode || 'require';
+    const cnt = {all: 0, LONG: 0, SHORT: 0, fired: 0, flat: 0};
+    _sprRows.forEach(r => { Object.keys(cnt).forEach(k => { if (_sprFilter(r, k)) cnt[k]++; }); });
+    const tabs = document.getElementById('spr-tabs');
+    if (tabs) {
+        const lbl = {all: 'Всі', LONG: '🟢 LONG', SHORT: '🔴 SHORT', fired: '💥 Вистрілили', flat: '😴 Без заряду'};
+        tabs.innerHTML = Object.keys(lbl).map(k =>
+            `<button onclick="sprSetDir('${k}')" style="font-size:0.7rem;padding:2px 9px;border-radius:4px;cursor:pointer;border:1px solid ${_sprDir === k ? '#facc15' : '#2b2f36'};background:${_sprDir === k ? 'rgba(250,204,21,0.12)' : '#141821'};color:${_sprDir === k ? '#facc15' : '#cbd5e1'}">${lbl[k]} (${cnt[k]})</button>`).join('');
+    }
+    const sum = document.getElementById('spr-sum');
+    if (sum) {
+        const ch = _sprRows.filter(r => r.state === 'charged').length;
+        const ok = _sprRows.filter(r => _sprPotMax(r) >= minPot).length;
+        sum.textContent = `${_sprRows.length} з ${_sprMeta.watchlist || 0} · 🌀 ${ch} · ≥${minPot}: ${ok}`;
+    }
+    const rows = _sprRows.filter(r => _sprFilter(r, _sprDir)).slice().sort((a, b) => {
+        const x = _sprVal(a, _sprSortCol), y = _sprVal(b, _sprSortCol);
+        if (x < y) return -_sprSortDir;
+        if (x > y) return _sprSortDir;
+        return String(a.symbol).localeCompare(String(b.symbol));
+    });
+    document.querySelectorAll('#spr-table th[data-sprsort]').forEach(th => {
+        const a = th.querySelector('.ff-sort-arrow');
+        if (a) a.textContent = th.getAttribute('data-sprsort') === _sprSortCol ? (_sprSortDir > 0 ? ' ▲' : ' ▼') : '';
+    });
+    const sig = JSON.stringify([_sprDir, _sprSortCol, _sprSortDir, minPot, mode,
+        rows.map(r => [r.symbol, r.state, r.charge, r.bias, r.pot_long, r.pot_short, r.trade_side, (r.queues || []).join(','), r.restored])]);
+    if (tb.dataset.sig === sig) return;
+    tb.dataset.sig = sig;
+    if (!rows.length) {
+        tb.innerHTML = `<tr><td colspan="10" class="tm-empty-msg">${_sprRows.length ? 'Немає монет у цій вкладці' : 'Даних ще немає — сканер рахує «Пружину» на першому проході по WATCHLIST'}</td></tr>`;
+        return;
+    }
+    tb.innerHTML = rows.map(r => {
+        const st = r.state || 'flat';
+        const col = _SPR_COL[st] || '#8b93a7';
+        const chg = Math.max(0, Math.min(100, Math.round(Number(r.charge) || 0)));
+        const d = r.dir === 'LONG' ? '<span style="color:#4ade80">▲ LONG</span>'
+            : r.dir === 'SHORT' ? '<span style="color:#f87171">▼ SHORT</span>'
+            : '<span style="color:#8b93a7">⚖</span>';
+        const fired = r.fired ? ` · ${r.fired.side} ${r.fired.bars_ago === 0 ? 'щойно' : r.fired.bars_ago + ' бар тому'}` : '';
+        const p = r.parts || {};
+        const tip = `Заряд ${chg}: TTM ${Math.round((p.ttm || 0) * 100)} · ATR ${Math.round((p.atr || 0) * 100)} · коробка ${Math.round((p.box || 0) * 100)} · обʼєм ${Math.round((p.dry || 0) * 100)} · тривалість ${Math.round((p.dur || 0) * 100)}`
+            + ` | напрямок ${Number(r.bias || 0).toFixed(2)}: позиція ${Number(p.pos || 0).toFixed(2)} · структура ${Number(p.struct || 0).toFixed(2)} · тренд ${Number(p.trend || 0).toFixed(2)} · моментум ${Number(p.mom || 0).toFixed(2)}`
+            + (r.restored ? ' | ↻ з минулого запуску — перерахується першим проходом' : '');
+        const where = r.trade_side ? `<span style="color:#38bdf8">💼 ${r.trade_side}</span>`
+            : (r.queues && r.queues.length ? `<span style="color:#fbbf24">🎯 ${r.queues.join(',')}</span>` : '<span style="color:#4b5563">—</span>');
+        return `<tr title="${tip}" style="${r.restored ? 'opacity:0.6' : ''}">`
+            + `<td style="white-space:nowrap">${typeof tvSym === 'function' ? tvSym(r.symbol) : r.symbol}</td>`
+            + `<td style="white-space:nowrap;color:${col};font-weight:600">${r.label || st}<span style="color:#8b93a7;font-weight:400">${fired}</span></td>`
+            + `<td style="white-space:nowrap"><span style="display:inline-block;width:28px;text-align:right;font-family:monospace;color:${col}">${chg}</span>`
+            + `<span style="display:inline-block;width:56px;height:6px;margin-left:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;vertical-align:middle"><span style="display:block;height:100%;width:${chg}%;background:${col}"></span></span></td>`
+            + `<td style="white-space:nowrap;font-family:monospace">${d}</td>`
+            + _sprPotCell(r.pot_long, 'LONG', minPot, mode)
+            + _sprPotCell(r.pot_short, 'SHORT', minPot, mode)
+            + `<td style="white-space:nowrap;font-family:monospace;color:#cbd5e1">${r.squeeze_bars || 0} год · ${r.band || 'off'}</td>`
+            + `<td style="text-align:right;font-family:monospace">${Number(r.box_pct || 0).toFixed(2)}%</td>`
+            + `<td style="text-align:right;font-family:monospace;color:${(Number(r.vol_ratio) || 1) < 0.8 ? '#facc15' : '#cbd5e1'}">×${Number(r.vol_ratio || 0).toFixed(2)}</td>`
+            + `<td style="white-space:nowrap">${where}</td></tr>`;
+    }).join('');
+}
+async function sprLoad(force) {
+    if (!force && (_qCollapsed('spr') || (typeof document !== 'undefined' && document.hidden))) return;
+    try {
+        const r = await fetch('/api/spring/state');
+        if (!r.ok) return;
+        const d = await r.json();
+        if (!d || !d.ok) return;
+        _sprRows = d.rows || [];
+        _sprMeta = {mode: d.mode, min_pot: d.min_pot, watchlist: d.watchlist, ts: d.ts};
+        sprRender();
+    } catch (e) { console.error('spring load', e); }
+}
+setInterval(() => { try { sprLoad(false); } catch (e) {} }, 60000);
+setTimeout(() => { try { sprLoad(false); } catch (e) {} }, 1500);
+
 async function saveFuelFilterSettings() {
     // Mark the form as just-saved so an in-flight poll (whose GET started
     // before this save committed) can't re-apply stale server values and
@@ -16750,6 +16913,12 @@ async function saveFuelFilterSettings() {
             return isNaN(v) ? 1 : v;
         })(),
         queue4_exhaustion_pct: parseInt(_v('ff-queue4-exh-pct', '95') || '95', 10),
+        spring_mode: _v('spr-mode', 'require') || 'require',
+        // 0 — змістовне значення (поріг вимкнено), тому НЕ через `|| 40`.
+        spring_min_pot: (function () {
+            const v = parseInt(_v('spr-min', '40'), 10);
+            return isNaN(v) ? 40 : v;
+        })(),
         queue3_vob_open: _c('ff-queue3-vob-open'),
         queue3_vob_sl_buffer_pct: parseFloat(_v('ff-queue3-vob-buffer', '0.10') || '0.10'),
         queue3_vob_block_against_trend: _c('ff-queue3-vob-trend'),

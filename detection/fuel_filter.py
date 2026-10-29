@@ -1337,6 +1337,13 @@ DEFAULT_SETTINGS = {
     # R = відстань до цілі / відстань до стопа; рахується ДО входу з тих
     # самих джерел, що дадуть реальний SL і реальний TP-2 автопілота.
     'queue4_min_rr': 1.0,
+    # 🌀 «ПРУЖИНА» (вимога 29.10): пріоритет і ворота відкриття за потенціалом
+    # монети (`spring_coil`). 'off' — не враховувати · 'priority' — лише
+    # черговість (найзарядженіші першими) · 'require' (деф.) — ще й монета з
+    # потенціалом < `spring_min_pot` у бік угоди ЧЕКАЄ в черзі, важкі
+    # перевірки по ній не рахуються. Немає даних → не блокуємо.
+    'spring_mode': 'require',
+    'spring_min_pot': 40,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -2337,6 +2344,12 @@ class FuelFilterDaemon:
             s['queue4_min_rr'] = max(0.0, min(20.0, float(s.get('queue4_min_rr', 1.0) or 0.0)))
         except (TypeError, ValueError):
             s['queue4_min_rr'] = 1.0
+        if s.get('spring_mode') not in ('off', 'priority', 'require'):
+            s['spring_mode'] = 'require'
+        try:
+            s['spring_min_pot'] = max(0, min(100, int(float(s.get('spring_min_pot', 40)))))
+        except (TypeError, ValueError):
+            s['spring_min_pot'] = 40
         s['engine_smart_direction'] = bool(s.get('engine_smart_direction', False))
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
@@ -10966,6 +10979,26 @@ class FuelFilterDaemon:
         фільтра). Заповнює `_q4_recheck_filters`; тут лише читаємо й прибираємо."""
         return self._q4_recheck_pass_detail.pop(sym, '') or ''
 
+    def _spring_ctx(self):
+        """🌀 (модуль spring_coil, {SYM: запис}) — лише ЧИТАННЯ памʼяті сканера.
+        Немає сканера/модуля → (None, {}): ворота не діють (fail-open)."""
+        try:
+            try:
+                from detection import spring_coil as _m
+            except Exception:
+                import importlib.util as _iu, os as _os
+                _sp = _iu.spec_from_file_location(
+                    'spring_coil_ff', _os.path.join(_os.path.dirname(__file__), 'spring_coil.py'))
+                _m = _iu.module_from_spec(_sp)
+                _sp.loader.exec_module(_m)
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            if sc is None or not hasattr(sc, 'spring_for'):
+                return _m, {}
+            return _m, sc.spring_for()
+        except Exception:
+            return None, {}
+
     def _engine_tick_queue4(self):
         """🎯 Черга-4 «Усі шари» — відкриває угоду, коли ВСІ 4 шари збіглись за
         напрямком сигналу. Дедуп/вже-в-угоді/ціна — санітарні ворота; `_open`
@@ -11008,6 +11041,14 @@ class FuelFilterDaemon:
             hard_h = 24.0
         with self._lock:
             items = list(self._pending4.items())
+        # 🌀 «ПРУЖИНА»: найзарядженіші в бік свого сигналу — ПЕРШИМИ. Коли
+        # слоти `max_open_positions` обмежені, саме вони їх і займають.
+        _sp_mode = s.get('spring_mode', 'require')
+        _sp_min = s.get('spring_min_pot', 40)
+        _sp_mod, _sp = self._spring_ctx() if _sp_mode != 'off' else (None, {})
+        if _sp_mod is not None and _sp:
+            items.sort(key=lambda kv: -_sp_mod.priority_key(
+                _sp.get(str(kv[0]).upper()), (kv[1] or {}).get('dir')))
         # ⏱ Профіль такту — щоб приріст швидкості БУЛО ВИДНО в цифрах, а не «на
         # відчуття» (той самий підхід, що в профілі скан-циклу сканера).
         _t0 = time.time()
@@ -11082,6 +11123,17 @@ class FuelFilterDaemon:
                              'на цьому 1H-OB — чекаємо НОВИЙ 1H-OB (не відкрито)',
                              side=d, source='Q4')
                 continue
+            # 🌀 «ПРУЖИНА» — ДО важких розрахунків (знімок liq-map, шари,
+            # повторна перевірка фільтрів, R): монета без потенціалу в ЖОДЕН бік
+            # (сигнал може фліпнути) не коштує ресурсів — вона чекає в черзі.
+            if _sp_mod is not None and _sp_mode == 'require':
+                _rec = _sp.get(str(sym).upper())
+                _okd, _wd = _sp_mod.gate(_rec, d, 'require', _sp_min)
+                _oko, _ = _sp_mod.gate(_rec, 'SHORT' if d == 'LONG' else 'LONG',
+                                       'require', _sp_min)
+                if not _okd and not _oko:
+                    self._engine_skip[sym] = _wd
+                    continue
             # ⚡ B1: ОДИН знімок даних на монету за такт. `fuel` (Новий МММ) уже
             # всередині нього — окремий `_fuel_dir_smoothed` тут був зайвим
             # читанням тих самих даних.
@@ -11168,6 +11220,13 @@ class FuelFilterDaemon:
                     log_activity(sym, 'skipped',
                                  f'Черга-4: хід виснажений {_exh:.0f}%>{_exh_max:.0f}% — '
                                  'відкриття скасовано', side=_open_dir, source='Q4')
+                    continue
+            # 🌀 Потенціал саме в бік ВІДКРИТТЯ (після можливого фліпу).
+            if _sp_mod is not None and _sp_mode == 'require':
+                _okp, _wp = _sp_mod.gate(_sp.get(str(sym).upper()), _open_dir,
+                                         'require', _sp_min)
+                if not _okp:
+                    self._engine_skip[sym] = _wp
                     continue
             # 🔁 ПОВТОРНА ПЕРЕВІРКА ФІЛЬТРІВ (queue4_recheck_filters, деф. ON):
             # монета могла чекати в черзі годинами — за цей час OB/прогноз/

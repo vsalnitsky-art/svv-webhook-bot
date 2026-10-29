@@ -3739,6 +3739,45 @@ def register_api_routes(app):
             return jsonify({'ok': False, 'reason': str(e)})
 
     # ═══════ 🔔 SBR — сигнали Session Band Reversal 1H/4H (вимога 29.10) ═══
+    @app.route('/api/spring/state')
+    def api_spring_state():
+        """🌀 «Пружина» по монетах WATCHLIST (лише ЧИТАННЯ памʼяті сканера):
+        заряд, напрямок, потенціал LONG/SHORT, вистріл + режим воріт Черги-4 і
+        де монета зараз (угода / черга)."""
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            recs = sc.spring_for() if sc is not None and hasattr(sc, 'spring_for') else {}
+            mode, min_pot, sides, queues = 'require', 40, {}, {}
+            try:
+                from detection.fuel_filter import get_fuel_filter
+                ff = get_fuel_filter()
+                if ff is not None:
+                    _s = ff.get_settings()
+                    mode = _s.get('spring_mode', mode)
+                    min_pot = _s.get('spring_min_pot', min_pot)
+                    if hasattr(ff, '_mm_open_sides'):
+                        sides = ff._mm_open_sides() or {}
+                    if hasattr(ff, '_mm_queue_map'):
+                        queues = ff._mm_queue_map() or {}
+            except Exception:
+                pass
+            rows = []
+            for sym, r in recs.items():
+                row = {'symbol': sym, **{k: r.get(k) for k in (
+                    'state', 'label', 'charge', 'bias', 'dir', 'pot_long', 'pot_short',
+                    'squeeze_bars', 'band', 'box_pct', 'vol_ratio', 'atr_rank',
+                    'fired', 'price', 'bar_t', 'parts', 'restored')}}
+                row['trade_side'] = sides.get(sym)
+                row['queues'] = list(queues.get(sym) or [])
+                rows.append(row)
+            rows.sort(key=lambda x: -max(x.get('pot_long') or 0, x.get('pot_short') or 0))
+            wl = len(sc.get_watchlist() or []) if sc is not None else 0
+            return jsonify({'ok': True, 'rows': rows, 'mode': mode, 'min_pot': min_pot,
+                            'watchlist': wl, 'tf': '1h', 'ts': time.time()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e), 'rows': []})
+
     @app.route('/api/sbr/state')
     def api_sbr_state():
         """Стан рушія SBR: налаштування (вкл. монети з 🔔 Telegram), останні

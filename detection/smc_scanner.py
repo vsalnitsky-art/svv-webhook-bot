@@ -301,6 +301,7 @@ ALLOWED_RECENCY_MINUTES = (0, 30, 60, 120)
 # 🛑 TF джерела «🛑 SL з 1H OB» — СПРАВЖНІЙ 1h, незалежно від TF воріт
 # (`ob_filter_timeframe`). Сканер тримає рядок `sob_smc_ob_state` на цьому TF.
 SL_SOURCE_TF = '1h'
+SPRING_TF = '1h'   # 🌀 «Пружина» — TF аналізу заряду (spring_coil.TF)
 # 🏷 Позначка «останній OB 4H» у таблицях ВІДКРИТИХ УГОД (вимога 12.10).
 # Рахується тим самим `_ob_on_htf`, що дає рядок «OB 4H» в алерті 🆕 Новий OB,
 # і кешується до закриття 4h-бару → ~1 запит на монету раз на 4 год.
@@ -876,6 +877,10 @@ class SMCScanner:
         # low, ts}}. IN-MEMORY (похідне від скану, відновиться першим циклом).
         # Читає `/api/tm/state` через `ob_mark_for` — БЕЗ розрахунків і БД.
         self._ob_mark: Dict[str, Dict] = {}
+        # 🌀 «Пружина» (вимога 29.10) — заряд/напрямок/вистріл по ЗАКРИТИХ 1h
+        # барах монет WATCHLIST: {SYM: запис spring_coil.analyze + 'ts'}.
+        # Рахується РАЗ на закритий 1h-бар із тих самих барів `_get_tf_data`.
+        self._spring: Dict[str, Dict] = {}
         # Монети, чия позначка прийшла зі знімка минулого запуску і ще не
         # перерахована цим запуском (див. `_load_ob_mark_state`).
         self._ob_mark_restored: set = set()
@@ -1699,6 +1704,7 @@ class SMCScanner:
                 self._seen_events.pop(symbol, None)
                 self._htf_cache.pop(symbol, None)
                 self._pd_zone_cache.pop(symbol, None)
+                (getattr(self, '_spring', None) or {}).pop(symbol, None)
                 self._volumized_trend_cache.pop(symbol, None)
                 self._vol_trends_persisted.pop(symbol, None)
                 self._signal_markers.pop(symbol, None)
@@ -2572,6 +2578,16 @@ class SMCScanner:
                     except Exception as sl_err:
                         if self._errors <= 5:
                             print(f"[SMC] SL-source OB ({SL_SOURCE_TF}) error for {symbol}: {sl_err}")
+
+                # 6) 🌀 «Пружина» — із ТИХ САМИХ закритих 1h-барів (кеш до
+                # закриття бару → нуль додаткових запитів; лише монети watchlist).
+                try:
+                    td_sp = _get_tf_data(SPRING_TF)
+                    if td_sp:
+                        self._spring_update(symbol, td_sp['klines_closed'])
+                except Exception as sp_err:
+                    if self._errors <= 5:
+                        print(f"[SMC] spring error for {symbol}: {sp_err}")
 
                 # 5) 🏷 OB 4H — позначка в таблицях відкритих угод. Кеш
                 # `_ob_on_htf` живе до закриття 4h-бару, тож мережа ~раз на 4 год.
@@ -3574,7 +3590,10 @@ class SMCScanner:
                 wl = set(self._watchlist)
                 pd = {s: dict(c) for s, c in self._pd_zone_cache.items()
                       if s in wl and isinstance(c, dict) and c.get('until')}
-            self.db.set_setting(DB_KEY_DERIVED_STATE, {'ts': time.time(), 'pd': pd})
+                spr = {s: dict(c) for s, c in (getattr(self, '_spring', None) or {}).items()
+                       if s in wl}
+            self.db.set_setting(DB_KEY_DERIVED_STATE,
+                                {'ts': time.time(), 'pd': pd, 'spring': spr})
         except Exception as e:
             print(f"[SMC] derived persist error: {e}")
         try:
@@ -3605,6 +3624,24 @@ class SMCScanner:
                 n += 1
             if n:
                 print(f"[SMC] Restored {n} PD zones (bar still open)")
+            # 🌀 «Пружина»: бар ще відкритий → запис ТОЧНИЙ; старший (до 6 год) —
+            # лише показ із позначкою ↻, доки скан не перерахує монету.
+            m = 0
+            for sym, c in ((st or {}).get('spring') or {}).items() if isinstance(st, dict) else ():
+                if sym not in wl or not isinstance(c, dict) or not c.get('ok'):
+                    continue
+                bt = float(c.get('bar_t') or 0)
+                if now - bt > 6 * 3600 + 7200:
+                    continue
+                rec = dict(c)
+                if now >= bt + 7200:
+                    rec['restored'] = True
+                if getattr(self, '_spring', None) is None:
+                    self._spring = {}
+                self._spring[sym] = rec
+                m += 1
+            if m:
+                print(f"[SMC] Restored {m} spring records")
         except Exception as e:
             print(f"[SMC] derived load error: {e}")
         try:
@@ -3680,6 +3717,45 @@ class SMCScanner:
                   f"{len(self._ob_mark1h)} OB-1h")
         except Exception as e:
             print(f"[SMC] OB-mark load error: {e}")
+
+    def _spring_update(self, symbol: str, klines_closed) -> None:
+        """🌀 Перерахувати «Пружину», лише коли закрився НОВИЙ 1h-бар."""
+        S = str(symbol or '').upper()
+        if not klines_closed:
+            return
+        try:
+            _t = int(float(klines_closed[-1].get('t') or 0))
+            _t = _t // 1000 if _t > 10 ** 12 else _t
+        except (TypeError, ValueError):
+            _t = 0
+        if getattr(self, '_spring', None) is None:
+            self._spring = {}
+        prev = self._spring.get(S)
+        if prev and _t and prev.get('bar_t') == _t:
+            return
+        sc = _sibling_mod('spring_coil', '_SPRING_MOD')
+        rec = sc.analyze(klines_closed)
+        if not rec.get('ok'):
+            return
+        rec['ts'] = time.time()
+        self._spring[S] = rec
+
+    def spring_for(self, symbols=None) -> Dict[str, Dict]:
+        """🌀 Записи «Пружини» (лише памʼять) для монет WATCHLIST."""
+        try:
+            wl = {str(x).upper() for x in (self.get_watchlist() or [])}
+        except Exception:
+            wl = None
+        src = dict(getattr(self, '_spring', None) or {})
+        want = ({str(x).upper() for x in symbols} if symbols is not None else None)
+        out = {}
+        for S, rec in src.items():
+            if wl is not None and wl and S not in wl:
+                continue
+            if want is not None and S not in want:
+                continue
+            out[S] = rec
+        return out
 
     def ob_mark_for(self, symbols, tf: str = OB_MARK_TF) -> Dict[str, Dict]:
         """🏷 ПУБЛІЧНЕ читання позначки «останній OB 4H» по монетах.
