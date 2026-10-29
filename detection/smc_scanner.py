@@ -3767,10 +3767,11 @@ class SMCScanner:
             st['tick_cycle'], st['tick_n'] = cyc, 0
         st['tick_n'] = int(st.get('tick_n') or 0) + 1
         st['tick_sym'], st['tick_at'] = S, time.time()
-        prev = self._spring.get(S)
-        if prev and _t and prev.get('bar_t') == _t:
-            return
         sc = _sibling_mod('spring_coil', '_SPRING_MOD')
+        prev = self._spring.get(S)
+        if (prev and _t and prev.get('bar_t') == _t
+                and prev.get('ver') == getattr(sc, 'VERSION', None)):
+            return
         rec = sc.analyze(klines_closed)
         if not rec.get('ok'):
             return

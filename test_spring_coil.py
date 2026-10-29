@@ -285,7 +285,56 @@ def test_tug_cells_render_in_node():
     _check(out.returncode == 0, out.stderr)
     o = out.stdout
     _check('width:35%' in o and 'width:5%' in o and '▲ 88%' in o, o)
-    _check('▲ +3.20%' in o and '—' in o and 'AAA 70' in o and 'LONG 62%' in o, o)
+    _check('+3.20%' in o and 'width:92px' in o and '—' in o and 'AAA 70' in o and 'LONG 62%' in o, o)
+
+
+# ── АУДИТ 29.10: «вистріл» лише після стиснення · флет не накручений ─────────
+def test_dump_without_squeeze_is_not_a_fired_spring():
+    for seed in range(20):
+        b = _walk(seed)
+        last = b[-1]['p']
+        b[-1] = dict(b[-1], p=last * 0.95, h=last * 1.001, l=last * 0.948, v=9000)
+        r = S.analyze(b)
+        _check(r['state'] != 'fired', f'злив без стиснення ≠ вистріл (seed {seed}): {r["fired"]}')
+
+
+def test_fired_target_uses_the_pre_breakout_box():
+    b = _coil()
+    last = b[-1]['p']
+    b[-1] = dict(b[-1], p=last * 1.04, h=last * 1.045, l=last * 0.999, v=5000)
+    r = S.analyze(b)
+    f = r['fired']
+    _check(f['pre_sq'] >= S.FIRE_MIN_SQ or f['pre_ratio'] <= S.FIRE_MAX_BOX_RATIO, f)
+    w = max(f['box_hi'] - f['box_lo'], S.MOVE_MIN_ATR * r['atr'])
+    _check(abs(r['tgt_long'] - (f['level'] + w)) < 1e-9, 'ціль від коробки ДО пробою')
+    _check(r['tgt_long'] < r['box_hi'] + (r['box_hi'] - r['box_lo']), 'бар пробою не роздуває хід')
+
+
+def test_flat_spring_has_no_lean():
+    p = S.projection(100.0, 101.0, 99.0, 1.0, 1.0, 0.9, None, charge=2.0)
+    _check(p['lean'] is None and p['prob_long'] == 50.0, p)
+    q = S.projection(100.0, 101.0, 99.0, 1.0, 40, 10, None, charge=50.0)
+    _check(q['lean'] == 'LONG', q)
+
+
+def test_old_record_version_is_recomputed_on_the_same_bar():
+    _check("prev.get('ver') == getattr(sc, 'VERSION', None)" in _SC, 'версія в гейті перерахунку')
+    _check(S.analyze(_coil())['ver'] == S.VERSION, 'запис несе версію')
+
+
+def test_fired_spring_is_released_not_wound():
+    b = _coil()
+    last = b[-1]['p']
+    b[-1] = dict(b[-1], p=last * 1.04, h=last * 1.045, l=last * 0.999, v=5000)
+    r = S.analyze(b)
+    _check(r['state'] == 'fired' and r['released'] and r['lean'] == 'LONG', r)
+    c = S.analyze(_coil(up=False))
+    a = S.aggregate({'F': r, 'C': c})
+    _check(a['fired_long'] == 1 and a['coins'] == 1 and a['sum_long'] == c['pot_long'],
+           f'вистрілена не входить у натяг: {a}')
+    i = _HTML.index('function _sprTugCell(')
+    fn = _HTML[i:_HTML.index('\n}\n', i)]
+    _check('розпрямилась' in fn and fn.index('r.released') < fn.index('_sprTugHTML'), 'вистрілена — без шкали натягу')
 
 
 if __name__ == '__main__':

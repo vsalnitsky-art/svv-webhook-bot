@@ -59,6 +59,16 @@ DIR_MIN = 0.20          # |bias| ≥ — напрямок визначений
 FIRE_RANGE_ATR = 1.8
 FIRE_VOL_X = 1.8
 FIRE_LOOK = 3
+# 💥 «Вистріл» = розпрямлення СТИСНУТОЇ пружини, а не будь-яка велика свічка.
+# Перед баром пробою мусить стояти стиснення: BB ≤ FIRE_SQ_R·ATR щонайменше
+# FIRE_MIN_SQ барів поспіль (вузька коробка сама по собі не годиться — на шумі
+# вона трапляється надто часто). Інакше ринковий злив без заряду читався б як «вистріл» (кейс 29.10:
+# 47 із 55 монет «вистрілили SHORT» із зарядом 0).
+FIRE_MIN_SQ = 6
+FIRE_SQ_R = 1.0          # «справжнє» стиснення: BB ≤ 1.0 ATR (рівень high; шум дає ~1.6-1.9)
+# Версія алгоритму: запис іншої версії перераховується, навіть якщо бар той самий
+# (інакше відновлений після рестарту старий висновок жив би до наступного бару).
+VERSION = 3
 
 # 🎯 Ймовірний хід після вистрілу = «виміряний рух»: висота коробки,
 # відкладена від її межі (класична проєкція стиснення). Підлога — ATR×N, бо
@@ -222,12 +232,24 @@ def analyze(klines: List[Dict]) -> Dict:
         vb = sum(bv) / len(bv) if bv else 0.0
         rng = h[i] - lo[i]
         big = rng > FIRE_RANGE_ATR * atr[i - 1] and vb > 0 and v[i] > FIRE_VOL_X * vb
-        if big and c[i] > bh:
-            fired = {'side': 'LONG', 'bars_ago': back, 'level': bh}
-            break
-        if big and c[i] < bl:
-            fired = {'side': 'SHORT', 'bars_ago': back, 'level': bl}
-            break
+        if not big or not (c[i] > bh or c[i] < bl):
+            continue
+        pre_sq = 0
+        for k in range(i - 1, max(0, i - 73), -1):
+            r = _unit_r(c, atr, k)
+            if r is None or r >= FIRE_SQ_R:
+                break
+            pre_sq += 1
+        wk = max(h[max(0, i - WIDE_BARS):i]) - min(lo[max(0, i - WIDE_BARS):i])
+        pre_ratio = (bh - bl) / wk if wk > 0 else 1.0
+        if pre_sq < FIRE_MIN_SQ:
+            continue   # велика свічка без попереднього стиснення — це не пружина
+        side_f = 'LONG' if c[i] > bh else 'SHORT'
+        fired = {'side': side_f, 'bars_ago': back,
+                 'level': bh if side_f == 'LONG' else bl,
+                 'box_hi': bh, 'box_lo': bl, 'pre_sq': pre_sq,
+                 'pre_ratio': round(pre_ratio, 3)}
+        break
 
     if fired:
         bias = 1.0 if fired['side'] == 'LONG' else -1.0
@@ -242,7 +264,7 @@ def analyze(klines: List[Dict]) -> Dict:
         pot_short = charge * (1.0 - bias) / 2.0
 
     d = 'LONG' if bias >= DIR_MIN else ('SHORT' if bias <= -DIR_MIN else None)
-    proj = projection(price, box_h, box_l, a_now, pot_long, pot_short, fired)
+    proj = projection(price, box_h, box_l, a_now, pot_long, pot_short, fired, charge)
     t = kl[last].get('t')
     try:
         t = int(float(t))
@@ -250,7 +272,7 @@ def analyze(klines: List[Dict]) -> Dict:
     except (TypeError, ValueError):
         t = None
     return {
-        'ok': True, 'state': state, 'label': STATE_LABEL[state],
+        'ok': True, 'ver': VERSION, 'state': state, 'label': STATE_LABEL[state],
         'charge': round(charge, 1), 'bias': round(bias, 3), 'dir': d,
         'pot_long': round(pot_long, 1), 'pot_short': round(pot_short, 1),
         'squeeze_bars': sq_bars, 'band': band,
@@ -264,7 +286,8 @@ def analyze(klines: List[Dict]) -> Dict:
 
 
 def projection(price: float, box_h: float, box_l: float, atr: float,
-               pot_long: float, pot_short: float, fired: Optional[Dict] = None) -> Dict:
+               pot_long: float, pot_short: float, fired: Optional[Dict] = None,
+               charge: Optional[float] = None) -> Dict:
     """🎯 Куди і наскільки найсильніше накручено пружину. ЧИСТА.
 
     • `lean` — бік, у який накручено сильніше (LONG / SHORT; рівно → None);
@@ -274,23 +297,36 @@ def projection(price: float, box_h: float, box_l: float, atr: float,
     • `move_long_pct` / `move_short_pct` — ймовірний хід від ПОТОЧНОЇ ціни до
       цілі «виміряного руху» (`tgt_long` = верх коробки + висота, `tgt_short`
       = низ − висота); висота не менша за MOVE_MIN_ATR × ATR. Після вистрілу
-      ціль відкладається від рівня пробою.
+      ціль і висота беруться з коробки ДО пробою (бар пробою її роздув би).
+    • заряд < BUILDING без вистрілу → пружина не накручена: `lean` = None,
+      ймовірність 50 (напрямок із частки шуму не вигадуємо).
     """
-    w = max(float(box_h) - float(box_l), MOVE_MIN_ATR * float(atr or 0.0))
     hi, lo = float(box_h), float(box_l)
     if fired:
+        if fired.get('box_hi') is not None and fired.get('box_lo') is not None:
+            hi, lo = float(fired['box_hi']), float(fired['box_lo'])
         lvl = float(fired.get('level') or (hi if fired.get('side') == 'LONG' else lo))
         if fired.get('side') == 'LONG':
             hi = lvl
         else:
             lo = lvl
+    w = max(hi - lo, MOVE_MIN_ATR * float(atr or 0.0))
     tl, ts = hi + w, max(lo - w, 0.0)
     pl, ps = float(pot_long or 0.0), float(pot_short or 0.0)
+    if not fired and charge is not None and float(charge) < BUILDING:
+        pl = ps = 0.0
+    released = bool(fired)
+    if released:
+        # Пружина вже РОЗПРЯМИЛАСЬ: натягу немає. Бік — напрямок вистрілу,
+        # але «накручено N%» тут не показуємо (суперечило б «вистрілила»).
+        lean = fired.get('side')
+        pl = ps = 0.0
     tot = pl + ps
-    lean = 'LONG' if pl > ps else ('SHORT' if ps > pl else None)
+    if not released:
+        lean = 'LONG' if pl > ps else ('SHORT' if ps > pl else None)
     p = float(price or 0.0)
     return {
-        'lean': lean, 'lean_pp': round(abs(pl - ps), 1),
+        'lean': lean, 'released': released, 'lean_pp': round(abs(pl - ps), 1),
         'prob_long': round(100.0 * pl / tot, 1) if tot > 0 else 50.0,
         'tgt_long': tl, 'tgt_short': ts,
         'move_long_pct': round((tl - p) / p * 100.0, 2) if p > 0 else None,
@@ -301,18 +337,26 @@ def projection(price: float, box_h: float, box_l: float, atr: float,
 def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING) -> Dict:
     """⚖ Куди накручено WATCHLIST загалом. ЧИСТА.
 
-    Сума натягу LONG проти SHORT по монетах із зарядом ≥ `min_charge` (або
-    вистрілених): плоска монета нічого не накручує і не має розмивати картину.
+    Сума натягу LONG проти SHORT по монетах із зарядом ≥ `min_charge`: плоска
+    монета нічого не накручує. Вистрілені НЕ входять у натяг (пружина вже
+    розпрямилась) — їх кількість окремо: `fired_long`/`fired_short`.
     `prob_long` — частка суми натягу вгору; `top_long`/`top_short` —
     найсильніше накручена монета кожного боку (з ймовірним ходом).
     """
     sl = ss = 0.0
     n_l = n_s = n = 0
+    f_l = f_s = 0
     top = {'LONG': None, 'SHORT': None}
     for sym, r in (recs or {}).items():
         if not isinstance(r, dict) or not r.get('ok', True):
             continue
-        if r.get('state') != 'fired' and float(r.get('charge') or 0.0) < min_charge:
+        if r.get('state') == 'fired':
+            # уже розпрямилась — це рух, а не натяг; рахуємо окремо
+            fs = (r.get('fired') or {}).get('side')
+            f_l += fs == 'LONG'
+            f_s += fs == 'SHORT'
+            continue
+        if float(r.get('charge') or 0.0) < min_charge:
             continue
         pl, ps = float(r.get('pot_long') or 0.0), float(r.get('pot_short') or 0.0)
         n += 1
@@ -331,7 +375,7 @@ def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING) -> Dict:
     lean = 'LONG' if pl_ - 50 > 5 else ('SHORT' if 50 - pl_ > 5 else None)
     return {'coins': n, 'n_long': n_l, 'n_short': n_s,
             'sum_long': round(sl, 1), 'sum_short': round(ss, 1),
-            'prob_long': pl_, 'lean': lean,
+            'prob_long': pl_, 'lean': lean, 'fired_long': f_l, 'fired_short': f_s,
             'top_long': top['LONG'], 'top_short': top['SHORT']}
 
 
