@@ -550,7 +550,17 @@ _MM_BOOK_PREFIX = {'old': '_mm', 'new': '_mmn', 'ctr': '_mmc', 'fc': '_mmf',
                    'pull': '_mmp', 'dec': '_mmd', 'rdy': '_mmr', 'sbr': '_mms'}
 
 
-def sbr_mm_dir(row) -> Optional[Dict]:
+def sbr_tfs_of(settings) -> tuple:
+    """🔔 TF, з якими працює банер МММ-SBR (тумблери `mms_tf_1h`/`mms_tf_4h`,
+    деф. обидва). Обидва вимкнені → обидва (порожній банер читався б як «ринок
+    у рівновазі», а не як «нічого не обрано»). ЧИСТА."""
+    s = settings or {}
+    out = tuple(tf for tf, k in (('1h', 'mms_tf_1h'), ('4h', 'mms_tf_4h'))
+                if bool(s.get(k, True)))
+    return out or ('1h', '4h')
+
+
+def sbr_mm_dir(row, tfs=('1h', '4h')) -> Optional[Dict]:
     """🔔 Напрямок МММ-SBR по ОДНІЙ монеті з рядка рушія `sbr_signals`. ЧИСТА.
 
     • Напрямок = бік НАЙСВІЖІШОГО сигналу Session Band Reversal (1H або 4H —
@@ -562,10 +572,28 @@ def sbr_mm_dir(row) -> Optional[Dict]:
     """
     if not isinstance(row, dict):
         return None
-    s1, s4 = row.get('1h'), row.get('4h')
+    s1 = row.get('1h') if '1h' in tfs else None
+    s4 = row.get('4h') if '4h' in tfs else None
     if not s1 and not s4:
         return None
-    cmb = row.get('combo')
+    if tuple(tfs) == ('1h', '4h') and 'combo' in row:
+        cmb = row.get('combo')
+    else:
+        # Обрано один TF → вирішальний сигнал лише з нього (те саме правило
+        # `combine`, інший TF просто не подається).
+        try:
+            from detection.sbr_signals import combine as _cmb
+        except Exception:
+            try:
+                import importlib.util as _iu, os as _os
+                _sp = _iu.spec_from_file_location(
+                    'sbr_signals_ff', _os.path.join(_os.path.dirname(__file__), 'sbr_signals.py'))
+                _m = _iu.module_from_spec(_sp)
+                _sp.loader.exec_module(_m)
+                _cmb = _m.combine
+            except Exception:
+                return None
+        cmb = _cmb((s1 or {}).get('last'), (s4 or {}).get('last'))
     if not cmb:
         return {'status': None, 'dir': 0.0, 'strength': 0,
                 'sbr_tfs': '', 'sbr_sig': None, 'sbr_by_tf': {},
@@ -870,6 +898,9 @@ _MM_BIAS_TG = {
     # 🧩 Банер МММ-Готовність (вимога 25.10) — та сама тема, власний тумблер.
     'rdy': {'pref': '_mmr_bias_tg', 'key': 'mmr_bias_tg', 'bias': '_mm_bias_rdy',
             'title': '🧩 <b>МММ-ГОТОВНІСТЬ</b>', 'name': 'МММ-Готовність', 'src': 'MMR'},
+    # 🔔 Банер МММ-SBR (вимога 29.10) — та сама тема, власний тумблер.
+    'sbr': {'pref': '_mms_bias_tg', 'key': 'mms_bias_tg', 'bias': '_mm_bias_sbr',
+            'title': '🔔 <b>МММ-SBR</b>', 'name': 'МММ-SBR', 'src': 'MMS'},
 }
 
 # Чотири книги МММ (групове ✋ відкриття): назва, тумблер, знімок, мітка двигуна.
@@ -992,6 +1023,10 @@ DEFAULT_SETTINGS = {
     'mms_str_min': 0,
     'mms_str_mins': None,
     'mms_bias_confirm_sec': 120,
+    # 📶 TF банера: 1H / 4H / обидва (вимога 29.10). Обидва вимкнені = обидва.
+    'mms_tf_1h': True,
+    'mms_tf_4h': True,
+    'mms_bias_tg': True,
     # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
     # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
     # ГОЛОВНИЙ вміст тієї теми. ⚠️ Майстер-вимикач теми лишається в кабінеті
@@ -1776,6 +1811,9 @@ class FuelFilterDaemon:
         self._mm_bias_sbr_since: float = 0.0
         self._mm_bias_sbr_cand: Dict = {}
         self._mms_str_mins_c: Optional[Dict] = None
+        self._mms_bias_tg_last = '__none__'
+        self._mms_bias_tg_at = 0.0
+        self._mms_bias_tg_restored = False
         # 📨 Останній статус банера, ПРО ЯКИЙ УЖЕ сповіщали в Telegram.
         # СВІДОМО не персиститься: після рестарту перший такт лише запамʼятовує
         # стан і мовчить — інакше кожен `botupdate` слав би «зміну», якої не
@@ -2436,6 +2474,11 @@ class FuelFilterDaemon:
         s['mmr_interval_min'] = int(mmr_interval_sec(s) // 60)
         # 🔔 БЛОК «МММ-SBR» — тумблер і вікно банера.
         s['mm_sbr_enabled'] = bool(s.get('mm_sbr_enabled', True))
+        s['mms_bias_tg'] = bool(s.get('mms_bias_tg', True))
+        s['mms_tf_1h'] = bool(s.get('mms_tf_1h', True))
+        s['mms_tf_4h'] = bool(s.get('mms_tf_4h', True))
+        if not (s['mms_tf_1h'] or s['mms_tf_4h']):
+            s['mms_tf_1h'] = s['mms_tf_4h'] = True
         try:
             s['mms_str_min'] = max(0, min(100, int(float(s.get('mms_str_min', 0)))))
         except (TypeError, ValueError):
@@ -6044,13 +6087,14 @@ class FuelFilterDaemon:
         коли закрився бар, а не з наступним тактом (до 30с)."""
         _W = self._mm_watched() if watched == '__auto__' else watched
         _srows = self._sbr_rows()
+        _tfs = sbr_tfs_of(s)
         with self._lock:
             _prev = dict(getattr(self, '_mms_snapshot', {}) or {})
         snap_b = {}
         for _S, row in _srows.items():
             if _W is not None and str(_S).upper() not in _W:
                 continue    # 👁 лише WATCHLIST
-            c = sbr_mm_dir(row)
+            c = sbr_mm_dir(row, _tfs)
             if not c:
                 continue
             _f = (fuels or {}).get(_S) or {}
@@ -6079,6 +6123,9 @@ class FuelFilterDaemon:
             getattr(self, '_mm_bias_sbr_cand', {}))
         self._mm_bias_sbr, self._mm_bias_sbr_since = bias, since
         self._mm_bias_sbr_cand = cand
+        # 📨 Зміна ПІДТВЕРДЖЕНОГО статусу → Telegram (той самий шлях, що в
+        # решти банерів: перший такт мовчки, позначка й при вимкненому тумблері).
+        self._mm_bias_alert(bias.get('dir'), now, s, book='sbr')
 
     def on_sbr_update(self):
         """Хук рушія SBR: нові закриті бари → книга одразу. Помилка не
@@ -6620,7 +6667,9 @@ class FuelFilterDaemon:
         # 🧭 `book='pull'` (вимога 20.10) — блок «МММ-Pull».
         # 🧠 `book='dec'` (вимога 22.10) — блок «МММ-Decision».
         # 🧩 `book='rdy'` (вимога 25.10) — блок «МММ-Готовність».
-        _bk = book if book in ('old', 'new', 'ctr', 'fc', 'pull', 'dec', 'rdy') else 'new'
+        # 🔔 `book='sbr'` (вимога 29.10) — блок «МММ-SBR».
+        _bk = book if book in ('old', 'new', 'ctr', 'fc', 'pull', 'dec', 'rdy',
+                               'sbr') else 'new'
         _P = {'old': ('_mm_mon_on', 'mm_monitor_enabled', '_mm_bias', '_mm_snapshot',
                       '_mm_str_mins_c'),
               'new': ('_mmn_on', 'mm_new_enabled', '_mm_bias_new', '_mmn_snapshot',
@@ -6634,7 +6683,9 @@ class FuelFilterDaemon:
               'dec': ('_mmd_on', 'mm_dec_enabled', '_mm_bias_dec', '_mmd_snapshot',
                       '_mmd_str_mins_c'),
               'rdy': ('_mmr_on', 'mm_rdy_enabled', '_mm_bias_rdy', '_mmr_snapshot',
-                      '_mmr_str_mins_c')}[_bk]
+                      '_mmr_str_mins_c'),
+              'sbr': ('_mms_on', 'mm_sbr_enabled', '_mm_bias_sbr', '_mms_snapshot',
+                      '_mms_str_mins_c')}[_bk]
         on = getattr(self, _P[0], None)
         if on is None:
             try:

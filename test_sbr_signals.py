@@ -300,6 +300,63 @@ console.log('|'); console.log(_mmSbrTfCell({}));
     _check('—' in p[2], p[2])
 
 
+# ── 6. Вибір TF (банер + Telegram), ворота і TG банера (29.10) ────────────────
+def _ff_fn(name):
+    src = _ff_src()
+    a = src.index('def ' + name + '(')
+    b = src.index('\ndef ', a + 10)
+    import typing
+    ns = {'Optional': typing.Optional, 'Dict': typing.Dict,
+          '__file__': os.path.join(_ROOT, 'detection', 'fuel_filter.py')}
+    exec(src[a:b], ns)
+    return ns[name]
+
+
+def test_banner_tf_choice():
+    tfs_of = _ff_fn('sbr_tfs_of')
+    _check(tfs_of({}) == ('1h', '4h'), 'дефолт — обидва TF')
+    _check(tfs_of({'mms_tf_1h': False}) == ('4h',), 'лише 4H')
+    _check(tfs_of({'mms_tf_1h': False, 'mms_tf_4h': False}) == ('1h', '4h'),
+           'обидва вимкнені → обидва')
+    f = _ff_fn('sbr_mm_dir')
+    row = {'1h': {'last': _sig('SHORT', 3000, 90)}, '4h': {'last': _sig('LONG', 2000, 70)},
+           'combo': S.combine(_sig('SHORT', 3000, 90), _sig('LONG', 2000, 70))}
+    _check(f(row)['status'] == 'SHORT', 'обидва TF — найсвіжіший 1H SHORT')
+    c = f(row, ('4h',))
+    _check(c['status'] == 'LONG' and c['sbr_tfs'] == '4H' and c['strength'] == 70,
+           f'лише 4H — 1H не враховується: {c}')
+    _check(f({'1h': {'last': _sig('LONG', 1)}, '4h': None}, ('4h',)) is None,
+           'обраного TF немає → «невідомо»')
+
+
+def test_tg_tf_choice():
+    _check(S.tg_tfs_of({'tg_4h': False}) == ('1h',), 'лише 1H')
+    _check(S.tg_tfs_of({'tg_1h': False, 'tg_4h': False}) == S.TFS, 'обидва вимкнені → обидва')
+    now = 14400 * 500 + 3600 * 2 + 5          # закрився лише 1H
+    e, sent, clock, db = _engine(now, sig1='SHORT')
+    e.update_settings({'tg_1h': False})
+    e.tick()
+    _check(not sent, f'1H вимкнено для TG → сигнал 1H не шлеться: {sent}')
+    _check(e.rows()['BTCUSDT']['combo']['side'] == 'SHORT', 'але в книзі він є')
+
+
+def test_gates_and_banner_tg_wired():
+    sc = open(os.path.join(_ROOT, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
+    _check("('mms_gate_enabled', 'mms_gate_banner', 'sbr')" in sc, 'пара воріт у MM_GATES')
+    _check("'sbr': ('🔔МММ-SBR', '🔔 МММ-SBR')" in sc, 'підписи воріт')
+    ff = _ff_src()
+    _check("'key': 'mms_bias_tg'" in ff and "book='sbr')" in ff, 'TG банера SBR')
+    for i in ('sm-mms-gate', 'sm-mms-gate-banner', 'ff-mms-bias-tg', 'mms-tf-1h',
+              'mms-tf-4h', 'mms-tg-1h', 'mms-tg-4h'):
+        _check(f'id="{i}"' in _HTML, f'контрол {i}')
+    _check("'mms_gate_enabled', 'mms_gate_banner']" in _HTML, 'ворота в _SM_MM_GATES')
+    _check("mms_tf_1h: _c('mms-tf-1h')" in _HTML and "mms_bias_tg: _c('ff-mms-bias-tg')" in _HTML,
+           'збереження')
+    _check("tg_1h: _sbrChk('mms-tg-1h', true)" in _HTML, 'TG TF у sbrSaveTg')
+    _check("'pchg'" not in re.search(r"_MMB\.sbr\.cols = \[[^\]]*\]", _HTML).group(0),
+           'колонку «Рух» прибрано')
+
+
 if __name__ == '__main__':
     n = 0
     for k, v in list(globals().items()):

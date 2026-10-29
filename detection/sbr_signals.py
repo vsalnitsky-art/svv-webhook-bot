@@ -77,7 +77,18 @@ DEFAULT_SETTINGS = {
     'enabled': True,          # рушій (≈ 2 запити на монету на годину)
     'tg_enabled': True,       # майстер-вимикач 📨 у тему «🔔 Сигнали»
     'tg_symbols': list(DEFAULT_TG_SYMBOLS),
+    # 📶 TF сигналів у Telegram (вимога 29.10): 1H / 4H / обидва.
+    # Обидва вимкнені = обидва (інакше тумблер мовчки гасив би всю тему).
+    'tg_1h': True,
+    'tg_4h': True,
 }
+
+
+def tg_tfs_of(settings) -> tuple:
+    """TF, сигнали яких ідуть у Telegram. ЧИСТА."""
+    s = settings or {}
+    out = tuple(tf for tf, k in (('1h', 'tg_1h'), ('4h', 'tg_4h')) if bool(s.get(k, True)))
+    return out or TFS
 
 
 # ═══════════════════════════ ЧИСТІ ФУНКЦІЇ ═══════════════════════════════════
@@ -332,6 +343,10 @@ class SbrEngine:
         s['tg_symbols'] = sorted({str(x).upper() for x in (s.get('tg_symbols') or []) if x})
         s['enabled'] = bool(s.get('enabled', True))
         s['tg_enabled'] = bool(s.get('tg_enabled', True))
+        s['tg_1h'] = bool(s.get('tg_1h', True))
+        s['tg_4h'] = bool(s.get('tg_4h', True))
+        if not (s['tg_1h'] or s['tg_4h']):
+            s['tg_1h'] = s['tg_4h'] = True
         return s
 
     def get_settings(self) -> Dict:
@@ -351,6 +366,11 @@ class SbrEngine:
                 self._settings['enabled'] = bool(patch['enabled'])
             if 'tg_enabled' in patch:
                 self._settings['tg_enabled'] = bool(patch['tg_enabled'])
+            for k in ('tg_1h', 'tg_4h'):
+                if k in patch:
+                    self._settings[k] = bool(patch[k])
+            if not (self._settings.get('tg_1h', True) or self._settings.get('tg_4h', True)):
+                self._settings['tg_1h'] = self._settings['tg_4h'] = True
             if 'tg_symbols' in patch and isinstance(patch['tg_symbols'], list):
                 self._settings['tg_symbols'] = sorted(
                     {str(x).upper() for x in patch['tg_symbols'] if x})
@@ -574,9 +594,10 @@ class SbrEngine:
             ev = {'symbol': S, 'side': side, 'tfs': tf_lbl, 'at': now,
                   'score': max(g[1]['score'] for g in grp),
                   'trigger': grp[-1][1]['trigger'], 'tg': None}
-            if s['tg_enabled'] and S in s['tg_symbols'] and self._notify:
+            _tg_grp = [g for g in grp if g[0] in tg_tfs_of(s)]
+            if s['tg_enabled'] and S in s['tg_symbols'] and self._notify and _tg_grp:
                 try:
-                    ok, why = self._notify(tg_text(S, grp))
+                    ok, why = self._notify(tg_text(S, _tg_grp))
                 except Exception as e:
                     ok, why = False, str(e)
                 ev['tg'] = bool(ok)

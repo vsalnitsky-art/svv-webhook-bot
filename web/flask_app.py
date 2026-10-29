@@ -3762,7 +3762,7 @@ def register_api_routes(app):
             if not eng:
                 return jsonify({'ok': False, 'reason': 'not initialized'})
             data = request.get_json(silent=True) or {}
-            patch = {k: data[k] for k in ('enabled', 'tg_enabled') if k in data}
+            patch = {k: data[k] for k in ('enabled', 'tg_enabled', 'tg_1h', 'tg_4h') if k in data}
             return jsonify({'ok': True, 'settings': eng.update_settings(patch)})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})

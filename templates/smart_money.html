@@ -2364,6 +2364,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmr-gate-banner" onchange="updateMmGate()">
                         за банером МММ-Готовність
                     </label>
+                    <label class="sm-checkbox" title="🔔 Ворота «Через МММ-SBR» (вимога 29.10): сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG «Списку монет» блоку 🔔 МММ-SBR (останній сигнал Session Band Reversal на обраних TF — LONG), SHORT — у вкладці 🔴 SHORT. ⚖ / протилежна вкладка / монети немає у списку → сигнал не пропускаємо (причина — у 🧾 Лозі). Незалежні від інших МММ-воріт. Діє на ВСІ сигнали сканера і на 🔁 повторній перевірці Черги-4. Вимкнений блок → умова не діє. ✋ Ручний сигнал її не проходить. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mms-gate" onchange="updateMmGate()">
+                        🔔 Через МММ-SBR
+                    </label>
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-SBR»: банер 🔔 МММ-SBR мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-SBR». ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-mms-gate-banner" onchange="updateMmGate()">
+                        за банером МММ-SBR
+                    </label>
                     <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-Trend» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» / «Через МММ-Pull» / «Через МММ-Decision» (для кожного блоку — його власні пороги; у 🧠 МММ-Decision — ще й фільтр «Вердикт ≥»). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-str" onchange="updateMmGate()">
                         ⚑ з порогом «Сила ≥» вкладки
@@ -2771,6 +2779,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <label class="mmc-chk" title="🧩 Те саме для банера 🧩 МММ-Готовність (вимога 25.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем. Перший стан після рестарту — мовчки. Власний тумблер.">
                         <input type="checkbox" id="ff-mmr-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
                         🧩 Зміна статусу банера МММ-Готовність
+                    </label>
+                    <label class="mmc-chk" title="🔔 Те саме для банера 🔔 МММ-SBR (вимога 29.10): повідомлення в цю ж тему про ЗМІНУ ПІДТВЕРДЖЕНОГО статусу банера (🟢 LONG / 🔴 SHORT / ⏸ рівновага) з важелем. Перший стан після рестарту — мовчки. Власний тумблер. (Сигнали по окремих монетах ідуть в іншу тему — «🔔 Сигнали».)">
+                        <input type="checkbox" id="ff-mms-bias-tg" onchange="saveFuelFilterSettings()" style="margin:0">
+                        🔔 Зміна статусу банера МММ-SBR
                     </label>
                     <div style="flex-basis:100%;font-size:0.68rem;line-height:1.4;color:#8b93a7">
                         ₿ <b>BTCUSDT (старт / стоп сеансу)</b> іде в ЦЮ САМУ тему — його
@@ -3524,9 +3536,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="⏱ АНТИСПАМ БАНЕРА: новий статус (🟢 LONG / 🔴 SHORT / ⏸ FLAT) показується лише коли протримався стільки секунд. Поки йде відлік, у банері видно кандидата (⏳). Плюс до цього діє гістерезис: зайти в напрямок можна за 10% важеля, а вийти — лише нижче 6%, тож коливання біля межі статус не смикають. 0 = перемикати миттєво (стара поведінка). ⚠️ Числа й смуга банера лишаються ЖИВИМИ — гаситься саме миготіння ПІДПИСУ.">
                     ⏱ Перехід ≥ <input type="number" id="ff-mms-bias-confirm" min="0" max="3600" step="30" value="120" style="width:60px;font-size:0.68rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> с
                 </label>
-                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="📨 Майстер-вимикач Telegram для сигналів SBR: свіжий сигнал 1H/4H по монеті з кнопкою 🔔 у WATCHLIST одразу йде в тему «🔔 Сигнали». За замовчуванням 🔔 увімкнено для BTCUSDT і ETHUSDT.">
-                    <input type="checkbox" id="mms-tg-enabled" onchange="sbrSaveTg()"> 📨 Telegram «🔔 Сигнали»
-                </label>
+                <span style="display:flex;align-items:center;gap:6px;margin-left:8px;color:#8b93a7" title="📶 З якими таймфреймами працює БАНЕР і СПИСОК 🔔 МММ-SBR: напрямок монети = бік останнього сигналу САМЕ на обраних TF (колонка «📶 TF» теж лише з них). Обидва вимкнути не можна — лишиться той, що був. Рушій сигналів рахує обидва TF завжди.">
+                    📶 Банер: <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="mms-tf-1h" onchange="sbrTfGuard(this,'mms-tf-4h');saveFuelFilterSettings()"> 1H</label>
+                    <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="mms-tf-4h" onchange="sbrTfGuard(this,'mms-tf-1h');saveFuelFilterSettings()"> 4H</label>
+                </span>
+                <span style="display:flex;align-items:center;gap:6px;margin-left:8px;color:#8b93a7" title="📨 Сигнали в Telegram «🔔 Сигнали»: майстер-вимикач і з яких TF слати. Свіжий сигнал по монеті з кнопкою 🔔 у WATCHLIST одразу йде в тему (за замовчуванням 🔔 увімкнено для BTCUSDT і ETHUSDT). 1H і 4H на одному закритті в один бік — одне повідомлення «1H+4H». Обидва TF вимкнути не можна — лишиться той, що був.">
+                    <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="mms-tg-enabled" onchange="sbrSaveTg()"> 📨 Telegram:</label>
+                    <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="mms-tg-1h" onchange="sbrTfGuard(this,'mms-tg-4h');sbrSaveTg()"> 1H</label>
+                    <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="mms-tg-4h" onchange="sbrTfGuard(this,'mms-tg-1h');sbrSaveTg()"> 4H</label>
+                </span>
                 <span id="mms-scan-status" style="flex-basis:100%;font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
             </div>
             <div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px;font-size:0.7rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none"
@@ -3560,11 +3578,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th data-mmsort="sbrsig" onclick="mmSort('sbrsig','sbr')" style="cursor:pointer;user-select:none" title="🔔 Вирішальний сигнал — як мітка в TradingView: #N за добу (Київ), час бару (Київ), Trigger (high/low бару), Score, Risk і SL. Розклад обох TF — у підказці комірки. Клік — сортувати за часом сигналу (найсвіжіші зверху).">🔔 Сигнал<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="state" onclick="mmSort('state','sbr')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан — 🟢 LONG, 🔴 SHORT або ⚖. Клік — сортувати (найсвіжіша зміна внизу/зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="price" onclick="mmSort('price','sbr')" style="cursor:pointer;user-select:none;text-align:right" title="Поточна ціна монети. Клік — сортувати за ціною.">Ціна<span class="ff-sort-arrow"></span></th>
-                            <th data-mmsort="pchg" onclick="mmSort('pchg','sbr')" style="cursor:pointer;user-select:none;text-align:right" title="КУДИ йде ціна: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв. Клік — сортувати за РУХОМ.">Рух<span class="ff-sort-arrow"></span></th>
                         </tr>
                     </thead>
                     <tbody id="mms-tbody">
-                        <tr><td colspan="10" class="tm-empty-msg">Немає сигналів SBR (рушій тягне бари 1H/4H — перший прохід іде у фоні)</td></tr>
+                        <tr><td colspan="9" class="tm-empty-msg">Немає сигналів SBR (рушій тягне бари 1H/4H — перший прохід іде у фоні)</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -7526,6 +7543,7 @@ async function loadSettings() {
              ['sm-mmp-gate', 'mmp_gate_enabled'], ['sm-mmp-gate-banner', 'mmp_gate_banner'],
              ['sm-mmd-gate', 'mmd_gate_enabled'], ['sm-mmd-gate-banner', 'mmd_gate_banner'],
              ['sm-mmr-gate', 'mmr_gate_enabled'], ['sm-mmr-gate-banner', 'mmr_gate_banner'],
+             ['sm-mms-gate', 'mms_gate_enabled'], ['sm-mms-gate-banner', 'mms_gate_banner'],
              ['sm-mm-gate-str', 'mm_gate_strength']]
                 .forEach(([id, k]) => {
                     const el = document.getElementById(id);
@@ -7715,14 +7733,15 @@ function updateSettingsSummary() {
      ['sm-mmf-gate', 'sm-mmf-gate-banner', '🔮 МММ-Local'],
      ['sm-mmp-gate', 'sm-mmp-gate-banner', '🧭 МММ-Pull'],
      ['sm-mmd-gate', 'sm-mmd-gate-banner', '🧠 МММ-Decision'],
-     ['sm-mmr-gate', 'sm-mmr-gate-banner', '🧩 МММ-Готовність']].forEach(([g, b, t]) => {
+     ['sm-mmr-gate', 'sm-mmr-gate-banner', '🧩 МММ-Готовність'],
+     ['sm-mms-gate', 'sm-mms-gate-banner', '🔔 МММ-SBR']].forEach(([g, b, t]) => {
         const _g = document.getElementById(g);
         if (!_g || !_g.checked) return;
         const _b = document.getElementById(b);
         summary += ' · ' + t + (_b && _b.checked ? ' +банер' : '');
     });
     const _gs = document.getElementById('sm-mm-gate-str');
-    const _anyMm = ['sm-mm-gate', 'sm-mmo-gate', 'sm-mmc-gate', 'sm-mmf-gate', 'sm-mmp-gate', 'sm-mmd-gate', 'sm-mmr-gate'].some(i => {
+    const _anyMm = ['sm-mm-gate', 'sm-mmo-gate', 'sm-mmc-gate', 'sm-mmf-gate', 'sm-mmp-gate', 'sm-mmd-gate', 'sm-mmr-gate', 'sm-mms-gate'].some(i => {
         const e = document.getElementById(i); return e && e.checked; });
     if (_gs && _gs.checked && _anyMm) summary += ' ⚑сила';
     const lqG = document.getElementById('sm-liq-gate');
@@ -7829,7 +7848,8 @@ const _SM_MM_GATES = [['sm-mm-gate', 'sm-mm-gate-banner', 'mm_gate_enabled', 'mm
                       ['sm-mmf-gate', 'sm-mmf-gate-banner', 'mmf_gate_enabled', 'mmf_gate_banner'],
                       ['sm-mmp-gate', 'sm-mmp-gate-banner', 'mmp_gate_enabled', 'mmp_gate_banner'],
                       ['sm-mmd-gate', 'sm-mmd-gate-banner', 'mmd_gate_enabled', 'mmd_gate_banner'],
-                      ['sm-mmr-gate', 'sm-mmr-gate-banner', 'mmr_gate_enabled', 'mmr_gate_banner']];
+                      ['sm-mmr-gate', 'sm-mmr-gate-banner', 'mmr_gate_enabled', 'mmr_gate_banner'],
+                      ['sm-mms-gate', 'sm-mms-gate-banner', 'mms_gate_enabled', 'mms_gate_banner']];
 function _smMmGateSync() {
     _SM_MM_GATES.forEach(([gi, bi]) => {
         const g = document.getElementById(gi);
@@ -13196,7 +13216,7 @@ _MMB.dec.cols = ['status', 'mm', 'dec', 'state', 'price', 'pchg', 'f1', 'f4'];
 _MMB.rdy.cols = ['status', 'mm', 'rdy', 'state', 'price', 'pchg', 'f1', 'f4'];
 // 🔔 SBR: сила = Score; «📶 TF» — який сигнал прийшов (1H / 4H / 1H+4H, без
 // другого рядка); «🔔 Сигнал» — мітка як у TradingView (#N · час · Trigger · Score).
-_MMB.sbr.cols = ['status', 'mm', 'sbrtf', 'sbrsig', 'state', 'price', 'pchg'];
+_MMB.sbr.cols = ['status', 'mm', 'sbrtf', 'sbrsig', 'state', 'price'];
 // Книга за кодом ('old' | 'new' | 'ctr' | 'fc' | 'pull' | 'dec' | 'rdy'); інше — 🧮 МММ-монітор.
 function _mmBk(bk) { return _MMB[(bk === 'new' || bk === 'ctr' || bk === 'fc' || bk === 'pull' || bk === 'dec' || bk === 'rdy' || bk === 'sbr') ? bk : 'old']; }
 const _mmBkCode = B => (B === _MMB.new ? 'new' : (B === _MMB.ctr ? 'ctr'
@@ -13528,8 +13548,7 @@ function _mmsScanPaint(sc) {
     if (ev.length) bits.push(dim('останні: ') + ev.map(e => val(`${e.symbol.replace(/USDT$/, '')} ${e.side} ${e.tfs}`, e.side === 'LONG' ? '#4ade80' : '#f87171')
         + (e.tg === true ? '📨' : (e.tg === false ? '⚠️' : ''))).join(dim(' · ')));
     el.innerHTML = bits.join(dim(' · '));
-    const tg = document.getElementById('mms-tg-enabled');
-    if (tg && sc.settings && document.activeElement !== tg) tg.checked = sc.settings.tg_enabled !== false;
+    if (sc.settings) _sbrApplyTgSettings(sc.settings);
     if (sc.settings) sbrApplyTgSymbols(sc.settings.tg_symbols || []);
 }
 // 🧩 «🟢 LONG 57% ХОРОШИЙ 🎯 · L57/S31» — той самий SMC-грейд, що колонка
@@ -14146,6 +14165,7 @@ function _mmTgSummary(s) {
     (s.mmp_bias_tg === false ? off : on).push('🧭 банер Pull');
     (s.mmd_bias_tg === false ? off : on).push('🧠 банер Decision');
     (s.mmr_bias_tg === false ? off : on).push('🧩 банер Готовність');
+    (s.mms_bias_tg === false ? off : on).push('🔔 банер SBR');
     (s.start_signal_tg_alerts ? on : off).push('₿ сеанс');
     el.textContent = (on.length ? '📨 ' + on.join(' · ') : '📭 нічого не шлемо')
         + (off.length ? ' · ⛔ ' + off.join(' · ') : '');
@@ -15534,7 +15554,10 @@ function renderFuelFilter(d) {
     setIf('ff-mmc-bias-tg', s.mmc_bias_tg !== false);               // ⚡ default true
     setIf('ff-mmp-bias-tg', s.mmp_bias_tg !== false);               // 🧭 default true
     setIf('ff-mmd-bias-tg', s.mmd_bias_tg !== false);               // 🧠 default true
-    setIf('ff-mmr-bias-tg', s.mmr_bias_tg !== false);               // 🧩 default true
+    setIf('ff-mmr-bias-tg', s.mmr_bias_tg !== false);
+    setIf('ff-mms-bias-tg', s.mms_bias_tg !== false);               // 🔔 default true
+    setIf('mms-tf-1h', s.mms_tf_1h !== false);                      // 📶 default true
+    setIf('mms-tf-4h', s.mms_tf_4h !== false);               // 🧩 default true
     if (typeof _mmTgSummary === 'function') _mmTgSummary(s);
     setIf('ff-setup-cap', String(s.setup_max_per_cycle != null ? s.setup_max_per_cycle : 16));
     setIf('ff-setup-ttl', String(s.setup_ttl != null ? s.setup_ttl : 90));
@@ -16671,6 +16694,9 @@ async function saveFuelFilterSettings() {
         mmp_bias_tg: _c('ff-mmp-bias-tg'),
         mmd_bias_tg: _c('ff-mmd-bias-tg'),
         mmr_bias_tg: _c('ff-mmr-bias-tg'),
+        mms_bias_tg: _c('ff-mms-bias-tg'),
+        mms_tf_1h: _c('mms-tf-1h'),
+        mms_tf_4h: _c('mms-tf-4h'),
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
@@ -18857,10 +18883,26 @@ async function sbrLoadState() {
         const d = await res.json();
         if (d.ok && d.settings) {
             sbrApplyTgSymbols(d.settings.tg_symbols || []);
-            const tg = document.getElementById('mms-tg-enabled');
-            if (tg && document.activeElement !== tg) tg.checked = d.settings.tg_enabled !== false;
+            _sbrApplyTgSettings(d.settings);
         }
     } catch (e) { /* рушій ще не піднявся — лишаємо дефолт */ }
+}
+// 📶 Обидва TF вимкнути не можна: знятий останній — повертаємо галочку.
+function sbrTfGuard(el, otherId) {
+    const o = document.getElementById(otherId);
+    if (el && !el.checked && o && !o.checked) el.checked = true;
+}
+function _sbrChk(id, dflt) {
+    const e = document.getElementById(id);
+    return e ? !!e.checked : dflt;
+}
+function _sbrApplyTgSettings(st) {
+    if (!st) return;
+    [['mms-tg-enabled', st.tg_enabled], ['mms-tg-1h', st.tg_1h], ['mms-tg-4h', st.tg_4h]]
+        .forEach(([id, v]) => {
+            const e = document.getElementById(id);
+            if (e && document.activeElement !== e) e.checked = v !== false;
+        });
 }
 async function sbrSaveTg() {
     const tg = document.getElementById('mms-tg-enabled');
@@ -18868,7 +18910,9 @@ async function sbrSaveTg() {
     try {
         const res = await fetch('/api/sbr/settings', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({tg_enabled: !!tg.checked}),
+            body: JSON.stringify({tg_enabled: !!tg.checked,
+                                  tg_1h: _sbrChk('mms-tg-1h', true),
+                                  tg_4h: _sbrChk('mms-tg-4h', true)}),
         });
         const d = res.ok ? await res.json() : {ok: false, reason: 'HTTP ' + res.status};
         if (!d.ok) { alert('📨 Не збережено: ' + (d.reason || '')); tg.checked = !tg.checked; }

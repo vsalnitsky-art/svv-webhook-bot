@@ -7117,3 +7117,29 @@ BTCUSDT і ETHUSDT увімкнено)… без економії… макси�
   `POST /api/sbr/tg-symbol` {symbol, on}. БД: `sbr_settings`, `sbr_state_v1`.
 Тест: `test_sbr_signals.py` (16). Замки `test_mm_ctr/dec/fc` (1с-тікер) і
 `test_q4_perf` (словник `served` цілком) оновлено.
+
+### 🔔 SBR: вибір TF для банера і для TG · без «Руху» · TG банера · ворота (29.10)
+
+Дослівно: «тумблери для вибору з яким таймфреймом працюватиме банер 1Н чи 4Н
+або обидва і також для сигналів в телеграм» · «Колонку рух прибери» · TG про
+зміну банера і фільтри «Через МММ-SBR» — «зроби».
+- **TF банера/списку:** `mms_tf_1h`/`mms_tf_4h` (деф. обидва). ЧИСТА
+  `fuel_filter.sbr_tfs_of(s)` (обидва вимкнені → обидва);
+  `sbr_mm_dir(row, tfs)` — коли обрано один TF, вирішальний сигнал рахує той
+  самий `sbr_signals.combine`, але лише з обраного TF (колонка «📶 TF» теж).
+  Рушій сигналів і далі рахує ОБИДВА TF завжди.
+- **TF для Telegram:** `sbr_settings.tg_1h`/`tg_4h` (деф. обидва),
+  `sbr_signals.tg_tfs_of(s)`; `_on_signals` шле лише групи обраних TF;
+  `/api/sbr/settings` приймає `tg_1h`/`tg_4h`. UI: `mms-tg-1h`/`mms-tg-4h`
+  поруч із `mms-tg-enabled`, `sbrSaveTg` шле всі три. Зняти ОБИДВА TF не дає
+  `sbrTfGuard` (і бекенд трактує «обидва off» як обидва).
+- Колонку «Рух» прибрано: `_MMB.sbr.cols = [status, mm, sbrtf, sbrsig, state,
+  price]`, colspan 9.
+- 📨 `_MM_BIAS_TG['sbr']` (`🔔 МММ-SBR → …`, тема `btc`), тумблер `mms_bias_tg`
+  (деф. УВІМК), UI `ff-mms-bias-tg`, шапка `🔔 банер SBR`. Сигнали по монетах —
+  як і раніше в темі «🔔 Сигнали».
+- 🚦 Восьма пара `MM_GATES` — `mms_gate_enabled`/`mms_gate_banner` (деф. ВИМК),
+  підписи `🔔МММ-SBR[…]` / `🔔 МММ-SBR`; `mm_gate_view(book='sbr')`
+  (`_mms_on` · `_mm_bias_sbr` · `_mms_snapshot` · `_mms_str_mins_c`). UI
+  `sm-mms-gate` + `sm-mms-gate-banner` у `#sm-mmgates`.
+Тест: `test_sbr_signals.py` (19).
