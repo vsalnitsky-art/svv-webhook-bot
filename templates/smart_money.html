@@ -2679,21 +2679,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     <!-- ===== 🌀 «ПРУЖИНА» — потенціал монет WATCHLIST (вимога 29.10) =====
          Заряд (стиснення волатильності/коробки/обʼєму), напрямок і вистріл по
          ЗАКРИТИХ 1h-барах, які сканер уже тримає (detection/spring_coil.py).
-         Режим воріт керує Чергою-4: найзарядженіші першими, без потенціалу —
-         чекають у черзі. -->
+         Окремі ворота «Через Пружину» (налаштування сканера, не черги):
+         сигнали по монетах без потенціалу далі не йдуть. -->
     <div class="tm-panel" id="spring-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(250,204,21,0.30);border-radius:8px;background:rgba(250,204,21,0.04)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px;gap:10px;flex-wrap:wrap">
             <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('spr')" title="Клік — згорнути/розгорнути. Поки згорнуто, сторінка не опитує ці дані."><span id="spr-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🌀 Пружина <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— які монети WATCHLIST заряджені на рух (вгору / вниз), а які ні · 1H</span></div>
             <div style="display:flex;align-items:center;gap:10px;font-size:0.7rem;color:#8b93a7">
                 <span id="spr-sum" style="font-family:monospace"></span>
-                <label title="Як «Пружина» впливає на відкриття угод Черги-4. ВИМК — не враховується. ПРІОРИТЕТ — лише черговість: монети з більшим потенціалом у бік сигналу перевіряються й відкриваються першими (займають слоти Max Open Positions). ЧЕКАТИ (деф.) — ще й монета з потенціалом нижче порогу НЕ відкривається і не витрачає ресурсів (шари, перевірки фільтрів, R не рахуються) — вона чекає в черзі, доки зарядиться. Немає даних по монеті → не блокуємо. ✋ Ручні відкриття це не зачіпає.">🚦 Черга-4:
-                    <select id="spr-mode" onchange="saveFuelFilterSettings(); setTimeout(() => sprLoad(true), 900)" style="background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;font-size:0.7rem;padding:1px 4px">
-                        <option value="require">чекати без потенціалу</option>
-                        <option value="priority">лише пріоритет</option>
-                        <option value="off">не враховувати</option>
-                    </select></label>
-                <label title="Мінімальний потенціал (0-100) у бік угоди для режиму «чекати без потенціалу».">поріг ≥
-                    <input type="text" inputmode="numeric" id="spr-min" value="40" onchange="saveFuelFilterSettings(); setTimeout(() => sprLoad(true), 900)" style="width:34px;background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;font-size:0.7rem;padding:1px 4px;font-family:monospace;text-align:right"></label>
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="🌀 ВОРОТА «ЧЕРЕЗ ПРУЖИНУ» — окрема перевірка КОЖНОГО сигналу (не прив'язана до жодної черги): сигнал проходить далі, лише коли потенціал монети в бік сигналу ≥ порогу. Монета без потенціалу не витрачає ресурсів — решта фільтрів по ній не рахується, причина пишеться в 🧾 Лог. Діє на всі сигнали сканера (і на будь-який шлях відкриття). Немає даних по монеті → не блокує. ✋ Ручні сигнали й відкриття — без змін.">
+                    <input type="checkbox" id="spr-gate" onchange="updateSpringGate()"> 🚦 сигнали лише з потенціалом</label>
+                <label title="Мінімальний потенціал (0-100) у бік сигналу.">поріг ≥
+                    <input type="text" inputmode="numeric" id="spr-min" value="40" onchange="updateSpringGate()" style="width:34px;background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;font-size:0.7rem;padding:1px 4px;font-family:monospace;text-align:right"></label>
             </div>
         </div>
         <div id="spr-body">
@@ -7595,6 +7591,10 @@ async function loadSettings() {
                 });
             const liqGate = document.getElementById('sm-liq-gate');
             if (liqGate) liqGate.checked = !!s.liq_gate_enabled;        // default OFF
+            const sprG = document.getElementById('spr-gate');
+            if (sprG && document.activeElement !== sprG) sprG.checked = s.spring_gate_enabled !== false;   // default ON
+            const sprM = document.getElementById('spr-min');
+            if (sprM && document.activeElement !== sprM) sprM.value = String(s.spring_min_pot != null ? s.spring_min_pot : 40);
             _smMmGateSync();
             // 🆕 Новий OB — окремий тип сигналу (master ON · збіг ON · дедуп ON ·
             // у торгівлю OFF).
@@ -7790,6 +7790,11 @@ function updateSettingsSummary() {
     if (_gs && _gs.checked && _anyMm) summary += ' ⚑сила';
     const lqG = document.getElementById('sm-liq-gate');
     if (lqG && lqG.checked) summary += ' · 💧 Сканер';
+    const spG = document.getElementById('spr-gate');
+    if (spG && spG.checked) {
+        const spM = document.getElementById('spr-min');
+        summary += ' · 🌀 Пружина ≥' + (spM ? spM.value : '40');
+    }
     // 🆕 Новий OB — тип сигналу: показуємо АКТИВНУ комбінацію TF (те саме, чим
     // міряє «тренд» дедуп), щоб у шапці було видно, за чим саме бот реагує.
     const oaOn = document.getElementById('sm-ob-alert');
@@ -7912,6 +7917,23 @@ function _smMmGateSync() {
         const lbl = gs.closest ? gs.closest('label') : null;
         if (lbl && lbl.style) lbl.style.opacity = any ? '' : '0.45';
     }
+}
+// 🌀 Окремі ворота «Через Пружину» (налаштування сканера, деф. УВІМК).
+async function updateSpringGate() {
+    const el = document.getElementById('spr-gate');
+    const mi = document.getElementById('spr-min');
+    let v = parseInt(mi ? mi.value : '40', 10);
+    if (isNaN(v)) v = 40;   // 0 — змістовне значення, тому НЕ через `|| 40`
+    try {
+        const r = await fetch('/api/smc/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({spring_gate_enabled: !!(el && el.checked),
+                                  spring_min_pot: Math.max(0, Math.min(100, v))}),
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        try { updateSettingsSummary(); } catch (e) {}
+        sprLoad(true);
+    } catch (err) { alert('Spring-gate update error: ' + err); }
 }
 // 💧 Окрема перевірка сигналів Сканером ліквідності (деф. ВИМК).
 async function updateLiqGate() {
@@ -15661,8 +15683,6 @@ function renderFuelFilter(d) {
     setIf('ff-queue4-exh-on', s.queue4_exhaustion_on !== false);
     setIf('ff-queue4-recheck', s.queue4_recheck_filters !== false);   // деф. ON
     setIf('ff-queue4-min-rr', String(s.queue4_min_rr != null ? s.queue4_min_rr : 1));
-    setIf('spr-mode', String(s.spring_mode || 'require'));            // 🌀 деф. «чекати»
-    setIf('spr-min', String(s.spring_min_pot != null ? s.spring_min_pot : 40));
     setIf('ff-queue4-exh-pct', String(s.queue4_exhaustion_pct != null ? s.queue4_exhaustion_pct : 95));
     _ffApplyQ4Cols();   // синхронізувати видимість колонок Черги-4 з тумблерами
     setIf('ff-queue3-vob-open', s.queue3_vob_open !== false);       // default true
@@ -16713,7 +16733,7 @@ function sprRender() {
     const tb = document.getElementById('spr-tbody');
     if (!tb) return;
     const minPot = Number(_sprMeta.min_pot != null ? _sprMeta.min_pot : 40);
-    const mode = _sprMeta.mode || 'require';
+    const mode = _sprMeta.gate_on === false ? 'off' : 'require';
     const cnt = {all: 0, LONG: 0, SHORT: 0, fired: 0, flat: 0};
     _sprRows.forEach(r => { Object.keys(cnt).forEach(k => { if (_sprFilter(r, k)) cnt[k]++; }); });
     const tabs = document.getElementById('spr-tabs');
@@ -16782,7 +16802,7 @@ async function sprLoad(force) {
         const d = await r.json();
         if (!d || !d.ok) return;
         _sprRows = d.rows || [];
-        _sprMeta = {mode: d.mode, min_pot: d.min_pot, watchlist: d.watchlist, ts: d.ts};
+        _sprMeta = {gate_on: d.gate_on, min_pot: d.min_pot, watchlist: d.watchlist, ts: d.ts};
         sprRender();
     } catch (e) { console.error('spring load', e); }
 }
@@ -16913,12 +16933,6 @@ async function saveFuelFilterSettings() {
             return isNaN(v) ? 1 : v;
         })(),
         queue4_exhaustion_pct: parseInt(_v('ff-queue4-exh-pct', '95') || '95', 10),
-        spring_mode: _v('spr-mode', 'require') || 'require',
-        // 0 — змістовне значення (поріг вимкнено), тому НЕ через `|| 40`.
-        spring_min_pot: (function () {
-            const v = parseInt(_v('spr-min', '40'), 10);
-            return isNaN(v) ? 40 : v;
-        })(),
         queue3_vob_open: _c('ff-queue3-vob-open'),
         queue3_vob_sl_buffer_pct: parseFloat(_v('ff-queue3-vob-buffer', '0.10') || '0.10'),
         queue3_vob_block_against_trend: _c('ff-queue3-vob-trend'),

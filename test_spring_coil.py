@@ -1,5 +1,5 @@
-"""🌀 «Пружина» — заряд/напрямок/вистріл монет WATCHLIST + пріоритет і ворота
-Черги-4 (вимога 29.10).
+"""🌀 «Пружина» — заряд/напрямок/вистріл монет WATCHLIST + окремі ворота
+сигналів «Через Пружину» (вимога 29.10; не прив'язані до черг).
 
 Запуск: python3 test_spring_coil.py
 """
@@ -109,26 +109,38 @@ def test_scanner_reuses_the_1h_bars_and_watchlist_only():
     _check("'spring': spr" in _SC, 'персист через рестарт')
 
 
-def test_queue4_priority_and_gate_are_wired():
-    i = _FF.index('def _engine_tick_queue4(')
-    fn = _FF[i:_FF.index('\n    def ', i + 10)]
-    _check('priority_key' in fn and 'items.sort' in fn, 'найзарядженіші першими')
-    g = fn.index("_sp_mod.gate(_rec, d, 'require'")
-    _check(g < fn.index('self._q4_snapshot(sym, s)'), 'ворота стоять ДО важкого знімка')
-    _check(fn.index("_sp_mod.gate(_sp.get(str(sym).upper()), _open_dir")
-           < fn.index('self._q4_recheck_filters('), 'бік відкриття — до повторної перевірки')
-    _check("'spring_mode': 'require'" in _FF and "'spring_min_pot': 40" in _FF, 'дефолти')
+def _scanner(settings, spring):
+    """Справжній SMCScanner без __init__ (ізольовано) — лише воріт «Пружини»."""
+    spec = importlib.util.spec_from_file_location(
+        'smc_scanner_spring_t', os.path.join(_ROOT, 'detection', 'smc_scanner.py'))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    sc = m.SMCScanner.__new__(m.SMCScanner)
+    sc._settings = dict(settings)
+    sc._spring = dict(spring)
+    return sc
 
 
-def test_ui_panel_and_route():
-    for i in ('id="spring-panel"', 'id="spr-mode"', 'id="spr-min"', 'id="spr-tbody"'):
-        _check(i in _HTML, i)
-    _check("spring_mode: _v('spr-mode'" in _HTML and "setIf('spr-mode'" in _HTML, 'збереження')
-    _check("@app.route('/api/spring/state')" in _APP and "fetch('/api/spring/state')" in _HTML, 'маршрут')
-    i = _HTML.index('id="spr-table"')
-    tbl = _HTML[i:_HTML.index('</table>', i)]
-    n = len(re.findall(r'<th[\s>]', tbl))
-    _check('colspan="10"' in tbl and n == 10, f'{n} колонок')
+def test_signal_gate_is_separate_from_the_queues():
+    """⚠️ 29.10: «Зроби це окремо від Черги-4» — ворота живуть у сканері
+    (`_signal_allowed`), а в fuel_filter про «Пружину» немає ні слова."""
+    _check('spring' not in _FF.lower(), 'fuel_filter (черги) «Пружину» не знає')
+    i = _SC.index('def _signal_allowed(')
+    fn = _SC[i:_SC.index('\n    def ', i + 10)]
+    g = fn.index('_sg(symbol, side_label)')
+    _check(g < fn.index('# OB'), 'ворота стоять ДО OB/PD/Forecast/…')
+    _check("'spring_gate_enabled': True" in _SC and "'spring_min_pot': 40" in _SC, 'дефолти')
+
+
+def test_signal_gate_behaviour():
+    rec = {'ok': True, 'pot_long': 70, 'pot_short': 10, 'label': '🌀 заряджена', 'charge': 80}
+    sc = _scanner({'spring_min_pot': 40}, {'ETHUSDT': rec})
+    app, ok, chip, why = sc._spring_gate('ETHUSDT', 'LONG')
+    _check(app and ok and 'LONG 70' in chip and '✓' in chip, chip)
+    app, ok, chip, why = sc._spring_gate('ETHUSDT', 'SHORT')
+    _check(app and not ok and '✗' in chip and 'SHORT 10 < 40' in why, (chip, why))
+    app, ok, chip, why = sc._spring_gate('XRPUSDT', 'SHORT')
+    _check(ok and 'немає даних' in chip, 'немає даних → не блокуємо')
 
 
 if __name__ == '__main__':

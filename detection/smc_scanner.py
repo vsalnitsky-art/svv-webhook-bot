@@ -446,6 +446,13 @@ DEFAULT_SETTINGS = {
     # 💧 «Через Сканер ліквідності» (вимога 01.10) — ОКРЕМА перевірка: сигнал
     # лише по монеті з таблиці 💧 Сканера, зібраній у той самий бік. Деф. ВИМК.
     'liq_gate_enabled': False,
+    # 🌀 «ЧЕРЕЗ ПРУЖИНУ» (вимога 29.10) — ОКРЕМІ ворота, НЕ прив'язані до черг:
+    # сигнал проходить, лише коли потенціал монети в бік сигналу ≥ порогу
+    # (`spring_coil`, закриті 1h-бари WATCHLIST). Монета без потенціалу не
+    # витрачає ресурсів далі (решта фільтрів не рахується). Немає даних →
+    # не блокує.
+    'spring_gate_enabled': True,
+    'spring_min_pot': 40,
 
     # === 🆕 АЛЕРТ «НОВИЙ OB НА ГРАФІКУ» (вимога 09.09) ===================
     # «Моментальна реакція на появу на графіку нового OB 1H і моментальна
@@ -1797,6 +1804,7 @@ class SMCScanner:
                        'mms_gate_enabled', 'mms_gate_banner',
                        'mm_gate_strength',
                        'liq_gate_enabled',
+                       'spring_gate_enabled', 'spring_min_pot',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
@@ -1955,6 +1963,13 @@ class SMCScanner:
                 self._settings[_gk] = bool(self._settings.get(_gk, False))
             self._settings['liq_gate_enabled'] = bool(
                 self._settings.get('liq_gate_enabled', False))
+            self._settings['spring_gate_enabled'] = bool(
+                self._settings.get('spring_gate_enabled', True))
+            try:
+                self._settings['spring_min_pot'] = max(0, min(100, int(float(
+                    self._settings.get('spring_min_pot', 40)))))
+            except (TypeError, ValueError):
+                self._settings['spring_min_pot'] = 40
 
             # === 🆕 Алерт «новий OB»: валідація ===
             self._settings['ob_alert_enabled'] = bool(
@@ -3740,6 +3755,23 @@ class SMCScanner:
         rec['ts'] = time.time()
         self._spring[S] = rec
 
+    def _spring_gate(self, symbol: str, side: str):
+        """🌀 (applies, ok, chip, reason) воріт «Через Пружину».
+        Немає запису → умова не діє (fail-open): «невідомо» ≠ «без потенціалу»."""
+        try:
+            sc = _sibling_mod('spring_coil', '_SPRING_MOD')
+        except Exception:
+            return (False, True, '', '')
+        rec = (getattr(self, '_spring', None) or {}).get(str(symbol or '').upper())
+        need = int(self._settings.get('spring_min_pot', 40) or 0)
+        pot = sc.potential(rec, side)
+        if pot is None:
+            return (True, True, f'🌀Пружина[≥{need}](немає даних):✓', '')
+        ok, why = sc.gate(rec, side, 'require', need)
+        chip = (f"🌀Пружина[≥{need}]({side} {pot:.0f} · "
+                f"{rec.get('label', '')}):{'✓' if ok else '✗'}")
+        return (True, ok, chip, '' if ok else why.replace(' — чекає в черзі', ''))
+
     def spring_for(self, symbols=None) -> Dict[str, Dict]:
         """🌀 Записи «Пружини» (лише памʼять) для монет WATCHLIST."""
         try:
@@ -5284,6 +5316,17 @@ class SMCScanner:
                 parts.append(_lchip)
                 if not _lok:
                     return (False, _lwhy, ' · '.join(parts))
+
+        # 🌀 ЧЕРЕЗ ПРУЖИНУ (вимога 29.10): окремі ворота зі своїм тумблером.
+        # Читають лише памʼять (`_spring`), тож стоять до решти фільтрів:
+        # сигнал по монеті без потенціалу далі не рахується зовсім.
+        _sg = getattr(self, '_spring_gate', None)
+        if _sg and self._settings.get('spring_gate_enabled', True):
+            _sapp, _sok, _schip, _swhy = _sg(symbol, side_label)
+            if _sapp:
+                parts.append(_schip)
+                if not _sok:
+                    return (False, _swhy, ' · '.join(parts))
 
         # OB
         if self._settings.get('ob_filter_enabled', False):

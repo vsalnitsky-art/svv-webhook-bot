@@ -3742,20 +3742,20 @@ def register_api_routes(app):
     @app.route('/api/spring/state')
     def api_spring_state():
         """🌀 «Пружина» по монетах WATCHLIST (лише ЧИТАННЯ памʼяті сканера):
-        заряд, напрямок, потенціал LONG/SHORT, вистріл + режим воріт Черги-4 і
-        де монета зараз (угода / черга)."""
+        заряд, напрямок, потенціал LONG/SHORT, вистріл + стан воріт «Через
+        Пружину» і де монета зараз (угода / черга)."""
         try:
             from detection.smc_scanner import get_smc_scanner
             sc = get_smc_scanner()
             recs = sc.spring_for() if sc is not None and hasattr(sc, 'spring_for') else {}
-            mode, min_pot, sides, queues = 'require', 40, {}, {}
+            _ss = getattr(sc, '_settings', {}) or {}
+            gate_on = bool(_ss.get('spring_gate_enabled', True))
+            min_pot = _ss.get('spring_min_pot', 40)
+            sides, queues = {}, {}
             try:
                 from detection.fuel_filter import get_fuel_filter
                 ff = get_fuel_filter()
                 if ff is not None:
-                    _s = ff.get_settings()
-                    mode = _s.get('spring_mode', mode)
-                    min_pot = _s.get('spring_min_pot', min_pot)
                     if hasattr(ff, '_mm_open_sides'):
                         sides = ff._mm_open_sides() or {}
                     if hasattr(ff, '_mm_queue_map'):
@@ -3773,7 +3773,7 @@ def register_api_routes(app):
                 rows.append(row)
             rows.sort(key=lambda x: -max(x.get('pot_long') or 0, x.get('pot_short') or 0))
             wl = len(sc.get_watchlist() or []) if sc is not None else 0
-            return jsonify({'ok': True, 'rows': rows, 'mode': mode, 'min_pot': min_pot,
+            return jsonify({'ok': True, 'rows': rows, 'gate_on': gate_on, 'min_pot': min_pot,
                             'watchlist': wl, 'tf': '1h', 'ts': time.time()})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e), 'rows': []})
