@@ -383,7 +383,9 @@ def test_heavy_sections_are_declared():
     for name in FF.HEAVY_SECTIONS:
         _check(re.search(rf"_want_{name}\s*=\s*\(sections is None\)", body),
                f'секція «{name}» оголошена важкою, але в get_state не гейтиться')
-        _check(f"'{name}':" in body.split("'served'")[1][:200],
+        # Увесь словник `served` (до закривної дужки), а не фіксовані 200
+        # символів: нові секції переносять його на наступні рядки.
+        _check(f"'{name}':" in body.split("'served'")[1].split('}')[0],
                f'секція «{name}» не потрапила у прапорець served')
     print(f'✓ C2: важкі секції оголошені явно і гейтяться ({len(FF.HEAVY_SECTIONS)})')
 

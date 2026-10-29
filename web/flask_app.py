@@ -545,6 +545,21 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Liquidity hunter: {e}")
 
+        if not _auto_started.get('sbr'):
+            _auto_started['sbr'] = True
+            try:
+                # 🔔 Рушій сигналів Session Band Reversal 1H/4H (вимога 29.10):
+                # свій потік, бари тягне одразу після закриття бару, шле в тему
+                # «🔔 Сигнали» монети, відмічені кнопкою 🔔 у WATCHLIST.
+                from detection.sbr_signals import init_sbr_engine
+                def _sbr_watchlist():
+                    from detection.smc_scanner import get_smc_scanner
+                    smc = get_smc_scanner()
+                    return [s.upper() for s in smc.get_watchlist()] if smc else []
+                init_sbr_engine(db=get_db(), get_watchlist=_sbr_watchlist)
+            except Exception as e:
+                print(f"[APP] Failed to start SBR engine: {e}")
+
         if not _auto_started.get('tickr_opp'):
             _auto_started['tickr_opp'] = True
             try:
@@ -3718,8 +3733,56 @@ def register_api_routes(app):
             _b = str(data.get('book') or '')
             # 🧠 `book='dec'` — з блоку «МММ-Decision» (вердикт банера Decision).
             # 🧩 `book='rdy'` — з блоку «МММ-Готовність» (SMC-грейд обох боків).
-            book = _b if _b in ('new', 'ctr', 'fc', 'pull', 'dec', 'rdy') else 'old'
+            book = _b if _b in ('new', 'ctr', 'fc', 'pull', 'dec', 'rdy', 'sbr') else 'old'
             return jsonify(ff.group_open(symbols, book=book))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    # ═══════ 🔔 SBR — сигнали Session Band Reversal 1H/4H (вимога 29.10) ═══
+    @app.route('/api/sbr/state')
+    def api_sbr_state():
+        """Стан рушія SBR: налаштування (вкл. монети з 🔔 Telegram), останні
+        скани по TF, наступні закриття, журнал останніх сигналів. Лише ЧИТАННЯ."""
+        try:
+            from detection.sbr_signals import get_sbr_engine
+            eng = get_sbr_engine()
+            if not eng:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            return jsonify({'ok': True, **eng.state()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/sbr/settings', methods=['POST'])
+    def api_sbr_settings():
+        """Тумблери рушія: `enabled` (сам рушій) і `tg_enabled` (📨 у тему
+        «🔔 Сигнали»)."""
+        try:
+            from detection.sbr_signals import get_sbr_engine
+            eng = get_sbr_engine()
+            if not eng:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            patch = {k: data[k] for k in ('enabled', 'tg_enabled') if k in data}
+            return jsonify({'ok': True, 'settings': eng.update_settings(patch)})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/sbr/tg-symbol', methods=['POST'])
+    def api_sbr_tg_symbol():
+        """Кнопка 🔔 у WATCHLIST: {symbol, on} — слати сигнали монети в Telegram."""
+        try:
+            from detection.sbr_signals import get_sbr_engine
+            eng = get_sbr_engine()
+            if not eng:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            sym = str(data.get('symbol') or '').upper().strip()
+            if not sym:
+                return jsonify({'ok': False, 'reason': 'немає символу'})
+            st = eng.set_tg_symbol(sym, bool(data.get('on')))
+            return jsonify({'ok': True, 'symbol': sym,
+                            'on': sym in st['tg_symbols'],
+                            'tg_symbols': st['tg_symbols']})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 

@@ -124,6 +124,9 @@ _CAT_LABEL = {
     'btc':      '🧮 МММ-монітор',
     'trades':   '📈 Угоди',
     'signal':   '🎯 Напрямок',
+    # 🔔 Сигнали Session Band Reversal 1H/4H по монетах, відмічених кнопкою 🔔
+    # у WATCHLIST (вимога 29.10). Окрема тема — не змішується з «🎯 Напрямок».
+    'sbr':      '🔔 Сигнали',
     'register': '📝 Реєстрація',
     'support':  '💬 Підтримка',
 }
@@ -132,6 +135,7 @@ _CAT_ENV = {
     'btc':      ('TELEGRAM_CHAT_BTC',      'TELEGRAM_TOPIC_BTC'),
     'trades':   ('TELEGRAM_CHAT_TRADES',   'TELEGRAM_TOPIC_TRADES'),
     'signal':   ('TELEGRAM_CHAT_SIGNAL',   'TELEGRAM_TOPIC_SIGNAL'),
+    'sbr':      ('TELEGRAM_CHAT_SIGNALS',  'TELEGRAM_TOPIC_SIGNALS'),
     'register': ('TELEGRAM_CHAT_REGISTER', 'TELEGRAM_TOPIC_REGISTER'),
     'support':  ('TELEGRAM_CHAT_SUPPORT',  'TELEGRAM_TOPIC_SUPPORT'),
 }
@@ -143,6 +147,7 @@ _CAT_TAG = {
     'btc':      '#МММ_монітор',
     'trades':   '#Угода',
     'signal':   '#Напрямок',
+    'sbr':      '#Сигнали',
     'register': '#Реєстрація',
     'support':  '#Підтримка',
 }
@@ -165,7 +170,7 @@ _ADMIN_ONLY_CATS = {'register', 'support'}
 # saving (protect_content). Members can still WRITE in the topic. NOTE: Telegram
 # cannot block screenshots in a normal group (only secret chats) — protect_content
 # is the strongest the Bot API offers and disables forward/copy/save.
-_PROTECTED_CATS = {'funding', 'btc', 'trades'}
+_PROTECTED_CATS = {'funding', 'btc', 'trades', 'sbr'}
 
 
 _forum_topics_cache = None    # {category: thread_id} for TELEGRAM_FORUM_CHAT

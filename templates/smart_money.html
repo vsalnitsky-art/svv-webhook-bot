@@ -1211,6 +1211,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     color: #aaa;
     border-color: rgba(150, 150, 150, 0.4);
 }
+/* 🔔 SBR → Telegram «🔔 Сигнали» (вимога 29.10) — та сама форма, що TRD,
+   бурштиновий акцент. active = свіжий сигнал 1H/4H монети одразу йде в TG. */
+.wl-sbr-flag {
+    display: inline-block; cursor: pointer; font-size: 0.62rem; line-height: 1;
+    padding: 2px 4px; border-radius: 3px; user-select: none;
+    border: 1px solid transparent; transition: all 0.15s;
+}
+.wl-sbr-flag.active { background: rgba(251,146,60,0.18); border-color: rgba(251,146,60,0.45); }
+.wl-sbr-flag.inactive { opacity: 0.35; filter: grayscale(1); border-color: rgba(100,100,100,0.25); }
+.wl-sbr-flag:hover { opacity: 1; filter: none; }
 /* ❤️ Fuel Auto-Filter scan flag — same shape as TRD, pink accent.
    active = this coin is in the FF scan-list (will be scanned). */
 .wl-ff-flag {
@@ -3460,6 +3470,101 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </thead>
                     <tbody id="mmr-tbody">
                         <tr><td colspan="11" class="tm-empty-msg">Немає грейдів «Готовності» (перший скан іде у фоні — у черзі сканів)</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            </div>            </div>        </div>
+    </div>
+
+    <!-- ===== 🔔 МММ-SBR (вимога 29.10) =====
+         Восьмий МММ-блок: банер + список на сигналах Session Band Reversal
+         (`tools/tradingview_session_band_signals.pine`, 1:1) на 1H і 4H.
+         Дані рахує ОКРЕМИЙ рушій `detection/sbr_signals.py` одразу після
+         закриття бару; книга `sbr` (секція `mms`) лише читає його стан.
+         Розмітка — копія блоку 🧩 з префіксом id `mms-`. -->
+    <div class="tm-panel" id="mms-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(251,146,60,0.35);border-radius:8px;background:rgba(251,146,60,0.05)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px">
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none" onclick="togglePanel('mms')" title="Клік — згорнути/розгорнути монітор. Поки згорнуто, сервер НЕ віддає ці рядки (економія на кожному поллі)."><span id="mms-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🔔 МММ-SBR <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— сигнали Session Band Reversal на 1H і 4H (як у TradingView), окремо LONG і SHORT; галочки → групове відкриття</span></div>
+            <div style="display:flex;align-items:center;gap:10px">
+                <span id="mms-updated" style="font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
+                <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк банер і список 🔔 МММ-SBR. Сигнали рахує окремий рушій одразу після закриття кожного бару 1H і 4H (1000 свічок Bybit на TF, паралельно по всіх монетах WATCHLIST) — це той самий розрахунок, що скрипт «Session Band Reversal Signals» у TradingView. ВИМКНЕНО — гасне лише показ: рушій і Telegram «🔔 Сигнали» по монетах із кнопкою 🔔 у WATCHLIST працюють далі. Сам моніторинг нічого не відкриває автоматично.">
+                    <input type="checkbox" id="ff-mm-sbr-enabled" onchange="saveFuelFilterSettings()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+        <div id="mms-body">
+            <div id="mms-off" style="display:none;padding:9px 12px;border-radius:6px;border:1px dashed rgba(148,163,184,0.35);color:#8b93a7;font-size:0.72rem">🔌 МММ-SBR вимкнено — банера і списку немає. Рушій сигналів і Telegram «🔔 Сигнали» працюють далі. Увімкніть тумблер у шапці блоку.</div>
+            <div id="mms-live">
+            <div id="mms-bias-banner" class="mm-ban" style="margin:0 0 10px">
+                <span class="mm-ban-title" style="color:#fed7aa;text-shadow:0 0 9px rgba(251,146,60,0.5)">🔔 МММ-SBR</span>
+                <div class="mm-ban-bar">
+                    <div id="mms-bias-bar" style="height:100%;width:0%;border-radius:9px;background:#fb923c;transition:width 0.4s linear,background 0.3s"></div>
+                    <span id="mms-bias-label" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
+                </div>
+                <span class="mm-ban-tm">
+                    <span id="mms-bias-cand" style="display:none;font-size:0.66rem;color:#fbbf24;font-family:monospace;white-space:nowrap"></span>
+                    <span id="mms-bias-restored" style="display:none;font-size:0.66rem;color:#8b93a7"
+                          title="Показники й таймер відновлено після рестарту бота — таймер продовжено з того самого моменту, сигнали — з останнього збереженого стану рушія, свіжі бари — одразу після старту.">↻</span>
+                    <span id="mms-bias-timer" class="ff-flip" style="white-space:nowrap"></span>
+                </span>
+                <span id="mms-bias-status" class="mm-ban-st" style="background:transparent">—</span>
+            </div>
+            <div id="mms-limited-hint" style="display:none;margin:0 0 8px;padding:7px 11px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:0.7rem;font-weight:600"></div>
+            <div style="display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:0.68rem;flex-wrap:wrap">
+                <span style="color:#8b93a7">Показати:</span>
+                <button type="button" data-mmdir="all" onclick="mmSetDir('all','sbr')" class="ff-qdir-btn">Всі <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="LONG" onclick="mmSetDir('LONG','sbr')" class="ff-qdir-btn">🟢 LONG <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="SHORT" onclick="mmSetDir('SHORT','sbr')" class="ff-qdir-btn">🔴 SHORT <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <button type="button" data-mmdir="flat" onclick="mmSetDir('flat','sbr')" class="ff-qdir-btn">⚖ Рівновага <span class="mm-dir-n"></span><span class="mm-dir-thr"></span></button>
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="Поріг сили — Score вирішального сигналу SBR (55–100): показувати лише монети, де Score не нижчий за нього. ⚑ Поріг СВІЙ для кожної вкладки (Всі / LONG / SHORT / Рівновага) — поле показує поріг активної вкладки. Зберігається в налаштуваннях бота. ⚠️ На банер «🔔 МММ-SBR» НЕ впливає — важіль рахується по всіх монетах.">
+                    Сила ≥ <input type="number" id="mms-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged('sbr')" onchange="mmMinStrSave()"> %
+                </label>
+                <span id="mms-str-out" style="font-size:0.66rem;color:#fbbf24;font-family:monospace"></span>
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="⏱ АНТИСПАМ БАНЕРА: новий статус (🟢 LONG / 🔴 SHORT / ⏸ FLAT) показується лише коли протримався стільки секунд. Поки йде відлік, у банері видно кандидата (⏳). Плюс до цього діє гістерезис: зайти в напрямок можна за 10% важеля, а вийти — лише нижче 6%, тож коливання біля межі статус не смикають. 0 = перемикати миттєво (стара поведінка). ⚠️ Числа й смуга банера лишаються ЖИВИМИ — гаситься саме миготіння ПІДПИСУ.">
+                    ⏱ Перехід ≥ <input type="number" id="ff-mms-bias-confirm" min="0" max="3600" step="30" value="120" style="width:60px;font-size:0.68rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> с
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="📨 Майстер-вимикач Telegram для сигналів SBR: свіжий сигнал 1H/4H по монеті з кнопкою 🔔 у WATCHLIST одразу йде в тему «🔔 Сигнали». За замовчуванням 🔔 увімкнено для BTCUSDT і ETHUSDT.">
+                    <input type="checkbox" id="mms-tg-enabled" onchange="sbrSaveTg()"> 📨 Telegram «🔔 Сигнали»
+                </label>
+                <span id="mms-scan-status" style="flex-basis:100%;font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin:2px 0 6px;font-size:0.7rem;font-weight:700;color:#cbd5e1;cursor:pointer;user-select:none"
+                 onclick="togglePanel('mmslist')"
+                 title="Клік — згорнути/розгорнути список монет разом із панеллю групового відкриття. Поки згорнуто, таблиця НЕ малюється (найважча частина секції). Стан памʼятається; за замовчуванням згорнуто.">
+                <span id="mmslist-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span>
+                📋 Список монет <span id="mmslist-n" style="font-weight:400;color:#8b93a7;font-family:monospace"></span>
+            </div>
+            <div id="mmslist-body">
+            <div style="display:flex;align-items:center;gap:8px;margin:0 0 8px;flex-wrap:wrap">
+                <span id="mms-sel-count" style="font-size:0.7rem;color:#8b93a7;font-family:monospace">Обрано 0</span>
+                <button type="button" id="mms-open-btn" onclick="mmOpenSelected('sbr')" disabled
+                        style="font-size:0.68rem;padding:4px 12px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#4ade80;cursor:pointer;font-weight:700"
+                        title="✋ Відкрити УСІ обрані монети одразу. Напрямок кожної = бік її останнього сигналу SBR (те, що в рядку). Ворота черг пропускаються — рішення ухвалює людина; 🚦 головні кнопки напрямку і запобіжники відкриття (ціна/розмір) лишаються.">✋ Відкрити обрані</button>
+                <button type="button" onclick="mmClearSel('sbr')" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid #3a3f4b;background:transparent;color:#8b93a7;cursor:pointer">Зняти вибір</button>
+                <span id="mms-open-result" style="font-size:0.68rem;color:#8b93a7"></span>
+            </div>
+            <style>
+              #mms-table tbody tr:hover { background: rgba(56,189,248,0.10); }
+              #mms-table tbody td { border-bottom: 1px solid rgba(255,255,255,0.05); }
+            </style>
+            <div class="ff-timers-scroll" style="max-height:340px">
+                <table class="tm-table" id="mms-table">
+                    <thead>
+                        <tr>
+                            <th style="width:34px" title="TRD — той самий прапорець, що в WATCHLIST: вимкнено → по монеті НЕ відкриваються РЕАЛЬНІ угоди (усе йде в Test Mode). Клік у рядку — перемкнути.">TRD</th><th style="width:26px" title="Обрати всі видимі рядки, які можна відкрити"><input type="checkbox" id="mms-check-all" onchange="mmToggleAll(this.checked,'sbr')"></th>
+                            <th data-mmsort="symbol" onclick="mmSort('symbol','sbr')" style="cursor:pointer;user-select:none" title="Клік — сортувати за символом. Клік по НАЗВІ монети відкриває графік у TradingView (одна вкладка).">Символ<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="status" onclick="mmSort('status','sbr')" style="cursor:pointer;user-select:none" title="📍 ДЕ МОНЕТА ЗАРАЗ: 💼 у відкритій угоді · 🎯 у черзі (яка саме) · — вільна (кандидат). Клік — сортувати (спершу ті, що в роботі).">📍 Стан<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="strength" onclick="mmSort('strength','sbr')" style="cursor:pointer;user-select:none" title="🔔 МММ-SBR — напрямок = бік НАЙСВІЖІШОГО сигналу Session Band Reversal (1H або 4H); стан тримається до протилежного сигналу. Сила = Score вирішального сигналу (55–100). ⚖ = по монеті в історії 1000 барів немає жодного сигналу. Клік — сортувати за силою.">МММ-SBR<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="sbrtf" onclick="mmSort('sbrtf','sbr')" style="cursor:pointer;user-select:none" title="📶 ЯКИЙ сигнал прийшов: 1H, 4H або 1H+4H (обидва TF, чий ОСТАННІЙ сигнал у цьому самому боці). Повторення сигналу на іншому TF НЕ створює другого рядка — лише додає TF у цю колонку. 🆕 = сигнал на щойно закритому барі. Клік — сортувати (обидва TF зверху).">📶 TF<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="sbrsig" onclick="mmSort('sbrsig','sbr')" style="cursor:pointer;user-select:none" title="🔔 Вирішальний сигнал — як мітка в TradingView: #N за добу (Київ), час бару (Київ), Trigger (high/low бару), Score, Risk і SL. Розклад обох TF — у підказці комірки. Клік — сортувати за часом сигналу (найсвіжіші зверху).">🔔 Сигнал<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="state" onclick="mmSort('state','sbr')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан — 🟢 LONG, 🔴 SHORT або ⚖. Клік — сортувати (найсвіжіша зміна внизу/зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="price" onclick="mmSort('price','sbr')" style="cursor:pointer;user-select:none;text-align:right" title="Поточна ціна монети. Клік — сортувати за ціною.">Ціна<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="pchg" onclick="mmSort('pchg','sbr')" style="cursor:pointer;user-select:none;text-align:right" title="КУДИ йде ціна: ▲ росте / ▼ падає / ▬ рівно за вікно ~15 хв. Клік — сортувати за РУХОМ.">Рух<span class="ff-sort-arrow"></span></th>
+                        </tr>
+                    </thead>
+                    <tbody id="mms-tbody">
+                        <tr><td colspan="10" class="tm-empty-msg">Немає сигналів SBR (рушій тягне бари 1H/4H — перший прохід іде у фоні)</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -6196,7 +6301,7 @@ function togglePanel(pid) {
     // ⚡ C2: важкі секції (Черга-4, 💰 Funding) сервер рахує ЛИШЕ на запит. Поки
     // гармошка була згорнута, ми їх не просили — тож на РОЗГОРТАННІ тягнемо
     // стан одразу, а не чекаємо до 30с наступного полла.
-    if (open && (pid === 'q4' || pid === 'fund' || pid === 'mm' || pid === 'mmn' || pid === 'mmc' || pid === 'mmf' || pid === 'mmp' || pid === 'mmd' || pid === 'mmr')) {
+    if (open && (pid === 'q4' || pid === 'fund' || pid === 'mm' || pid === 'mmn' || pid === 'mmc' || pid === 'mmf' || pid === 'mmp' || pid === 'mmd' || pid === 'mmr' || pid === 'mms')) {
         try { loadFuelFilterStatus(); } catch (e) {}
     }
     // 📋 Список монет МММ-монітора поки згорнутий НЕ малюється взагалі, тож на
@@ -6209,6 +6314,7 @@ function togglePanel(pid) {
     if (open && pid === 'mmplist') { try { mmRender('pull'); } catch (e) {} }
     if (open && pid === 'mmdlist') { try { mmRender('dec'); } catch (e) {} }
     if (open && pid === 'mmrlist') { try { mmRender('rdy'); } catch (e) {} }
+    if (open && pid === 'mmslist') { try { mmRender('sbr'); } catch (e) {} }
 }
 // Історична назва (заголовки Черг) — та сама функція.
 const toggleQueuePanel = togglePanel;
@@ -6219,11 +6325,11 @@ function _qCollapsed(qid) {
 }
 // Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
 // 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
-const _PANEL_IDS = ['tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
+const _PANEL_IDS = ['tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'mms', 'mmslist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
 // Секції, ЗГОРНУТІ ЗА ЗАМОВЧУВАННЯМ (доки користувач сам не розгорне): список
 // монет МММ-монітора — вимога 18.09. Для решти дефолт лишається «розгорнуто»,
 // тобто збережений вибір користувача завжди сильніший за цей список.
-const _PANEL_CLOSED_BY_DEFAULT = new Set(['tmgen', 'mmlist', 'mmnlist', 'mmclist', 'mmflist', 'mmplist', 'mmdlist', 'mmrlist']);
+const _PANEL_CLOSED_BY_DEFAULT = new Set(['tmgen', 'mmlist', 'mmnlist', 'mmclist', 'mmflist', 'mmplist', 'mmdlist', 'mmrlist', 'mmslist']);
 (() => {
     _PANEL_IDS.forEach(pid => {
         try {
@@ -6887,6 +6993,7 @@ function renderWatchlist(list) {
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
             <span>${_mcapHtml}${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot ${_dotCls}" id="dot-${sym}"></span><span style="color:${srcColor};font-weight:600">${tvSym(sym, short)}</span></span>
             <span style="display:flex;align-items:center;gap:4px">
+                ${sbrFlagHTML(sym)}
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
                 ${srcHtml}
@@ -13060,7 +13167,12 @@ const _MMB = { old: _mmMkBook('mm', 'МММ LiQ', 'mmMonitorUi'),
                // 🧠 Блок «МММ-Decision» (22.10) — книга `dec`, префікс id `mmd`.
                dec: _mmMkBook('mmd', 'МММ-Decision', 'mmDecUi'),
                // 🧩 Блок «МММ-Готовність» (25.10) — книга `rdy`, префікс id `mmr`.
-               rdy: _mmMkBook('mmr', 'МММ-Готовність', 'mmRdyUi') };
+               rdy: _mmMkBook('mmr', 'МММ-Готовність', 'mmRdyUi'),
+               // 🔔 Блок «МММ-SBR» (29.10) — книга `sbr`, префікс id `mms`.
+               sbr: _mmMkBook('mms', 'МММ-SBR', 'mmSbrUi') };
+// 🔔 Дефолт сортування SBR — найсвіжіша зміна стану ЗВЕРХУ (вимога 29.10:
+// «сигнали … промальовуватись … якщо він щойно змінився»).
+_MMB.sbr.sort = { col: 'sbrsig', dir: -1 };
 // 📋 СКЛАД КОЛОНОК КОЖНОЇ ТАБЛИЦІ (вимога 01.10). Ключі — у порядку показу,
 // без ☑ і «Символ» (вони є завжди). Заголовки в HTML ідуть у ТОМУ САМОМУ
 // порядку — тест-замок звіряє кількість <th> і <td>.
@@ -13082,11 +13194,14 @@ _MMB.pull.cols = ['status', 'mm', 'mass', 'magnet', 'state', 'price', 'pchg', 'f
 _MMB.dec.cols = ['status', 'mm', 'dec', 'state', 'price', 'pchg', 'f1', 'f4'];
 // 🧩 «Готовність» переможного боку (бал · грейд · L/S); 🔮 1H/4H — контекст.
 _MMB.rdy.cols = ['status', 'mm', 'rdy', 'state', 'price', 'pchg', 'f1', 'f4'];
+// 🔔 SBR: сила = Score; «📶 TF» — який сигнал прийшов (1H / 4H / 1H+4H, без
+// другого рядка); «🔔 Сигнал» — мітка як у TradingView (#N · час · Trigger · Score).
+_MMB.sbr.cols = ['status', 'mm', 'sbrtf', 'sbrsig', 'state', 'price', 'pchg'];
 // Книга за кодом ('old' | 'new' | 'ctr' | 'fc' | 'pull' | 'dec' | 'rdy'); інше — 🧮 МММ-монітор.
-function _mmBk(bk) { return _MMB[(bk === 'new' || bk === 'ctr' || bk === 'fc' || bk === 'pull' || bk === 'dec' || bk === 'rdy') ? bk : 'old']; }
+function _mmBk(bk) { return _MMB[(bk === 'new' || bk === 'ctr' || bk === 'fc' || bk === 'pull' || bk === 'dec' || bk === 'rdy' || bk === 'sbr') ? bk : 'old']; }
 const _mmBkCode = B => (B === _MMB.new ? 'new' : (B === _MMB.ctr ? 'ctr'
     : (B === _MMB.fc ? 'fc' : (B === _MMB.pull ? 'pull' : (B === _MMB.dec ? 'dec'
-    : (B === _MMB.rdy ? 'rdy' : 'old'))))));
+    : (B === _MMB.rdy ? 'rdy' : (B === _MMB.sbr ? 'sbr' : 'old')))))));
 const _mmEl = (B, suffix) => document.getElementById(B.P + suffix);
 // Локальний escape: глобального `esc` на сторінці НЕМАЄ (той, що є, — локальна
 // константа всередині рендера логу), тож покладатись на нього не можна.
@@ -13144,6 +13259,11 @@ function _mmSortVal(r, col) {
     if (col === 'dec') return (r.dir == null ? null : Number(r.dir));
     // 🧩 «Готовність» — бал переможного боку.
     if (col === 'rdy') return (r.rdy_score == null ? null : Number(r.rdy_score));
+    // 🔔 SBR: TF — кількість TF у боці (обидва зверху), тайбрейк — Score;
+    // сигнал — момент закриття бару вирішального сигналу (свіжі зверху).
+    if (col === 'sbrtf') return (!r.sbr_tfs ? null
+        : (r.sbr_tfs.indexOf('+') >= 0 ? 2 : 1) * 1000 + Number(r.strength || 0));
+    if (col === 'sbrsig') return (r.sbr_sig && r.sbr_sig.close_t != null ? Number(r.sbr_sig.close_t) : null);
     // 💹 РУХ — власна колонка (17.09), тож «Ціна» сортується за ЦІНОЮ, а «яка
     // монета зараз іде вгору» — це колонка «Рух». Рядок без історії
     // (`price_dir` порожній) — це «ще не знаємо», а не «нуль».
@@ -13333,7 +13453,85 @@ const _MM_CELL = {
     magnet: r => `<td>${_mmMagnetCell(r)}</td>`,
     dec:    r => `<td>${_mmDecCell(r)}</td>`,
     rdy:    r => `<td>${_mmRdyCell(r)}</td>`,
+    sbrtf:  r => `<td>${_mmSbrTfCell(r)}</td>`,
+    sbrsig: r => `<td>${_mmSbrSigCell(r)}</td>`,
 };
+// 🔔 «📶 TF» — який сигнал SBR дав поточний бік: 1H · 4H · 1H+4H (вимога 6:
+// повтор на іншому TF НЕ створює другого рядка — лише додає TF сюди).
+// 🆕 — сигнал на ЩОЙНО закритому барі (найсвіжіша зміна).
+function _sbrTfTip(r) {
+    const by = r.sbr_by_tf || {};
+    return ['1h', '4h'].filter(tf => by[tf]).map(tf => {
+        const g = by[tf];
+        return `${tf.toUpperCase()}: ${r.mm || ''} #${g.n} · ${g.time_kyiv} Kyiv · Trigger ${fmtPriceJS(g.trigger)}`
+            + ` · Score ${Number(g.score).toFixed(2)} · Risk ${g.risk} · SL ${fmtPriceJS(g.sl)}`;
+    }).join('\n');
+}
+function _mmSbrTfCell(r) {
+    if (!r.sbr_tfs) return '<span style="color:#6b7280" title="Жодного сигналу SBR в історії 1000 барів 1H/4H">—</span>';
+    const col = r.mm === 'LONG' ? '#4ade80' : (r.mm === 'SHORT' ? '#f87171' : '#8b93a7');
+    const both = r.sbr_tfs.indexOf('+') >= 0;
+    const tip = _mmEsc(_sbrTfTip(r) || r.sbr_tfs) + (r.sbr_fresh ? '\n🆕 сигнал на щойно закритому барі' : '');
+    return `<span title="${tip}" style="font-family:monospace;white-space:nowrap">`
+        + `<span style="display:inline-block;min-width:52px;padding:0 6px;border:1px solid ${col};border-radius:4px;`
+        + `color:${col};font-weight:700;font-size:0.66rem;text-align:center;${both ? 'background:rgba(251,146,60,0.12)' : ''}">${_mmEsc(r.sbr_tfs)}</span>`
+        + `<span style="display:inline-block;width:20px;text-align:center">${r.sbr_fresh ? '🆕' : ''}</span></span>`;
+}
+// 🔔 «🔔 Сигнал» — вирішальний сигнал як мітка TradingView: #N · час бару
+// (Київ) · Trigger · Score · Risk · SL. Сегменти ФІКСОВАНОЇ ширини → стовпчики рівні.
+function _mmSbrSigCell(r) {
+    const g = r.sbr_sig;
+    if (!g) return '<span style="color:#6b7280">—</span>';
+    const col = r.mm === 'LONG' ? '#4ade80' : '#f87171';
+    const seg = (w, al, h) => `<span style="display:inline-block;width:${w}px;text-align:${al}">${h}</span>`;
+    const d = new Date(Number(g.t));
+    let day = '';
+    try { day = d.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Kyiv' }); } catch (e) { day = ''; }
+    return `<span title="${_mmEsc(_sbrTfTip(r))}" style="font-family:monospace;white-space:nowrap;font-size:0.68rem">`
+        + seg(78, 'left', `<b style="color:${col}">${_mmEsc(r.mm || '')} #${g.n}</b>`)
+        + seg(92, 'left', `<span style="color:#cbd5e1">${day} ${_mmEsc(g.time_kyiv || '')}</span>`)
+        + seg(96, 'right', `<span style="color:#e5e7eb">${fmtPriceJS(g.trigger)}</span>`)
+        + seg(56, 'right', `<b style="color:${col}">${Number(g.score).toFixed(2)}</b>`)
+        + seg(66, 'right', `<span style="color:#fbbf24">${_mmEsc(g.risk || '')}</span>`)
+        + seg(96, 'right', `<span style="color:#8b93a7">SL ${fmtPriceJS(g.sl)}</span>`)
+        + `</span>`;
+}
+// 🔔 Стан рушія SBR у ряду налаштувань: останній прохід кожного TF, наступне
+// закриття з відліком, монет, останні сигнали.
+function _mmsScanPaint(sc) {
+    const el = document.getElementById('mms-scan-status');
+    if (!el) return;
+    sc = sc || {};
+    const dim = t => `<span style="color:#6b7280">${t}</span>`;
+    const val = (t, c) => `<span style="color:${c};font-weight:700">${t}</span>`;
+    if (sc.ok === false) { el.innerHTML = val('⚠️ ' + _mmEsc(sc.reason || 'рушій SBR недоступний'), '#f87171'); return; }
+    const hm = t => { try { return new Date(_srvToPc(t) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); } catch (e) { return '—'; } };
+    const bits = [];
+    const ls = sc.last_scan || {};
+    ['1h', '4h'].forEach(tf => {
+        const x = ls[tf];
+        const nxt = (sc.next_at || {})[tf];
+        let b = val(tf.toUpperCase(), '#fb923c') + dim(' ');
+        if (x && x.at) b += dim('прохід ') + val(hm(x.at), '#e5e7eb') + dim(' · ') + val(x.ok, '#93c5fd') + dim('/' + x.asked + ' · ') + val(x.took + 'с', '#a78bfa');
+        else b += dim('ще не було проходу');
+        if (nxt) {
+            const left = Math.max(0, Math.round(Number(nxt) - _nowS()));
+            b += dim(' · закриття через ') + `<span class="ff-countdown" data-until="${Math.floor(Number(nxt))}" `
+                + `style="color:${left <= 60 ? '#fbbf24' : '#22d3ee'};font-weight:700">${_fmtCountdown(left)}</span>`;
+        }
+        bits.push(b);
+    });
+    if (sc.coins) bits.push(dim('монет ') + val(sc.coins, '#93c5fd'));
+    const tgS = ((sc.settings || {}).tg_symbols || []);
+    bits.push(dim('📨 🔔 у WATCHLIST: ') + val(tgS.length ? tgS.map(x => x.replace(/USDT$/, '')).join(', ') : '—', '#e5e7eb'));
+    const ev = (sc.events || []).slice(-3).reverse();
+    if (ev.length) bits.push(dim('останні: ') + ev.map(e => val(`${e.symbol.replace(/USDT$/, '')} ${e.side} ${e.tfs}`, e.side === 'LONG' ? '#4ade80' : '#f87171')
+        + (e.tg === true ? '📨' : (e.tg === false ? '⚠️' : ''))).join(dim(' · ')));
+    el.innerHTML = bits.join(dim(' · '));
+    const tg = document.getElementById('mms-tg-enabled');
+    if (tg && sc.settings && document.activeElement !== tg) tg.checked = sc.settings.tg_enabled !== false;
+    if (sc.settings) sbrApplyTgSymbols(sc.settings.tg_symbols || []);
+}
 // 🧩 «🟢 LONG 57% ХОРОШИЙ 🎯 · L57/S31» — той самий SMC-грейд, що колонка
 // «🎯 Готовність» Черги-4. Колір слова — смуги грейда (ЄДИНЕ джерело —
 // setup_grader, як і випадайка «Готовність ≥»).
@@ -13580,7 +13778,8 @@ function _mmLoadUi(B) {
     // Сортування за колонкою, якої в ЦІЙ таблиці немає, не відновлюємо.
     const _ok = { newstr: 'new', liqstr: 'liq', runway: 'runway', price: 'price',
                   ctr1: 'ctr1', ctr4: 'ctr4', fc1: 'fc1', fc4: 'fc4',
-                  mass: 'mass', magnet: 'magnet', magdist: 'magnet', dec: 'dec', rdy: 'rdy' };
+                  mass: 'mass', magnet: 'magnet', magdist: 'magnet', dec: 'dec', rdy: 'rdy',
+                  sbrtf: 'sbrtf', sbrsig: 'sbrsig' };
     if (v.sortCol && (!_ok[v.sortCol] || B.cols.includes(_ok[v.sortCol]))) {
         B.sort = { col: v.sortCol, dir: (v.sortDir < 0 ? -1 : 1) };
     }
@@ -13746,6 +13945,7 @@ function mmRender(bk) {
         r.magnet_pct || '', r.liq_fallback ? 1 : 0,
         r.dec_prob, r.dec_verdict || '', r.dec_conf || '',
         r.rdy_l, r.rdy_s, r.rdy_grade || '', r.rdy_hot ? 1 : 0,
+        r.sbr_tfs || '', r.sbr_fresh ? 1 : 0, (r.sbr_sig ? r.sbr_sig.t : ''),
         B.sel.has(r.symbol) ? 1 : 0].join(':')).join(',');
     if (tb.dataset.sig !== sig) {
         tb.dataset.sig = sig;
@@ -13822,7 +14022,7 @@ function mmRenderBias(bias, bk) {
     if (bias !== undefined) _mmBk(bk).bias = bias || null;
     // ОДИН painter на обидва блоки: вигляд, таймер, кандидат, ↻ — ідентичні,
     // відрізняються лише ДЖЕРЕЛОМ чисел (МММ LiQ проти Новий МММ).
-    [_MMB.old, _MMB.new, _MMB.ctr, _MMB.fc, _MMB.pull, _MMB.dec, _MMB.rdy].forEach(B => _mmPaintBias(B.bias, _mmBiasIds(B), B.src));
+    [_MMB.old, _MMB.new, _MMB.ctr, _MMB.fc, _MMB.pull, _MMB.dec, _MMB.rdy, _MMB.sbr].forEach(B => _mmPaintBias(B.bias, _mmBiasIds(B), B.src));
 }
 function _mmPaintBias(src, ids, srcName) {
     const bar = document.getElementById(ids.bar);
@@ -14203,6 +14403,8 @@ function _ffWantedSections() {
     if (vis('mmd-body')) want.push('mmd');
     // 🧩 МММ-Готовність — своя секція (`mmr`).
     if (vis('mmr-body')) want.push('mmr');
+    // 🔔 МММ-SBR — своя секція (`mms`).
+    if (vis('mms-body')) want.push('mms');
     return want;
 }
 
@@ -15248,7 +15450,7 @@ function renderFuelFilter(d) {
     // ⚡ C2: які ВАЖКІ секції сервер реально порахував у цій відповіді.
     // Без цього прапорця порожній `timers4` (секцію просто не запитували)
     // помилково прочитався б як «черга порожня» і стер би таблицю.
-    const _served = d.served || { q4: true, fund: true, mm: true, mmn: true, mmc: true, mmf: true, mmp: true, mmd: true, mmr: true };
+    const _served = d.served || { q4: true, fund: true, mm: true, mmn: true, mmc: true, mmf: true, mmp: true, mmd: true, mmr: true, mms: true };
     // 🧮 МММ-монітор — малюємо ЛИШЕ коли сервер реально віддав секцію. Без цієї
     // перевірки порожній `mm_monitor` (секцію просто не просили, бо гармошка
     // згорнута) стер би таблицю і виглядав би як «МММ зник».
@@ -15259,6 +15461,7 @@ function renderFuelFilter(d) {
     if (_served.mmf && d.mm_fc) mmApplyState(d.mm_fc, 'fc');
     if (_served.mmd && d.mm_dec) mmApplyState(d.mm_dec, 'dec');
     if (_served.mmr && d.mm_rdy) { mmApplyState(d.mm_rdy, 'rdy'); _mmrScanPaint(d.mm_rdy.scan); }
+    if (_served.mms && d.mm_sbr) { mmApplyState(d.mm_sbr, 'sbr'); _mmsScanPaint(d.mm_sbr.scan); }
     if (_served.mmp && d.mm_pull) { mmApplyState(d.mm_pull, 'pull'); _mmpScanPaint(d.mm_pull.scan); }
     // BTC START/STOP banner — refresh from state, then let the global ticker
     // keep the progress filling smoothly.
@@ -15320,6 +15523,8 @@ function renderFuelFilter(d) {
     setIf('ff-mmd-refresh', String(s.mmd_refresh_min || 5));
     // 🧩 МММ-Готовність — тумблер (деф. ВИМК), вікно банера, інтервал скану.
     setIf('ff-mm-rdy-enabled', s.mm_rdy_enabled === true);
+    setIf('ff-mm-sbr-enabled', s.mm_sbr_enabled !== false);         // 🔔 default true
+    setIf('ff-mms-bias-confirm', String(s.mms_bias_confirm_sec != null ? s.mms_bias_confirm_sec : 120));
     setIf('ff-mmr-bias-confirm', String(s.mmr_bias_confirm_sec != null ? s.mmr_bias_confirm_sec : 120));
     setIf('mmr-interval', String(s.mmr_interval_min || 15));
     setIf('ff-mmn-bias-confirm', String(s.mmn_bias_confirm_sec != null ? s.mmn_bias_confirm_sec : 120));
@@ -16451,6 +16656,10 @@ async function saveFuelFilterSettings() {
         mmd_refresh_min: parseInt(_v('ff-mmd-refresh', '5') || '5', 10),
         // 🧩 Блок «МММ-Готовність» — тумблер, пороги, вікно банера, інтервал скану.
         mm_rdy_enabled: _c('ff-mm-rdy-enabled'),
+        mm_sbr_enabled: _c('ff-mm-sbr-enabled'),
+        mms_str_min: _mmMinStr(_MMB.sbr, 'all'),
+        mms_str_mins: Object.assign({}, _MMB.sbr.strMins),
+        mms_bias_confirm_sec: parseInt(_v('ff-mms-bias-confirm', '120') || '0', 10),
         mmr_str_min: _mmMinStr(_MMB.rdy, 'all'),
         mmr_str_mins: Object.assign({}, _MMB.rdy.strMins),
         mmr_bias_confirm_sec: parseInt(_v('ff-mmr-bias-confirm', '120') || '0', 10),
@@ -16894,7 +17103,7 @@ const SIGNAL_BADGES_JS = {
 const ENGINE_BADGES_JS = {
     'Q1': '🎯 Черга-1', 'Q2': '🎯 Черга-2', 'Q3': '🎯 Готовність', 'Q4': '🎯 Черга-4',
     'Q3-VOB(funding)': '💰 VOB+Шари', 'POC-сетап': '🎯 POC-сетап',
-    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-Trend', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Local', 'MMP': '🧭 МММ-Pull', 'MMD': '🧠 МММ-Decision', 'MMR': '🧩 МММ-Готовність',
+    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-Trend', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Local', 'MMP': '🧭 МММ-Pull', 'MMD': '🧠 МММ-Decision', 'MMR': '🧩 МММ-Готовність', 'MMS': '🔔 МММ-SBR',
     'EXH': '🔥 Виснаженість', 'FF': '🔥 FF', 'direct': '⚡ Прямий',
 };
 const SIGNAL_ICON_JS = {
@@ -16904,12 +17113,12 @@ const SIGNAL_ICON_JS = {
     'poc': '🎯', 'opp': '🔄', 'external': '🔌', 'manual': '✋',
     'manual_ui': '✋', 'manual_ui_overflow': '✋',
     'Q3-VOB(funding)': '💰', 'POC-сетап': '🎯', 'EXH': '🔥', 'FF': '🔥',
-    'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩',
+    'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩', 'MMS': '🔔',
 };
 // Двигун, чия картинка ПЕРЕКРИВАЄ картинку сигналу: угоди 🧮 МММ-монітора
 // йдуть від того самого `vob_alert`, що й угоди Черги-4, тож 🟪 їх не
 // розрізняло. Мітка у підказці лишається повною.
-const ENGINE_ICON_OVERRIDE_JS = { 'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩' };
+const ENGINE_ICON_OVERRIDE_JS = { 'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩', 'MMS': '🔔' };
 function signalCodeOf(raw) {
     if (!raw) return '';
     return String(raw).split(' · ')[0].split(' → ')[0].trim();
@@ -18604,6 +18813,67 @@ async function clearTMShadowClosed() {
     }
 }
 
+// 🔔 SBR → Telegram (вимога 29.10). Набір монет, чиї свіжі сигнали Session Band
+// Reversal 1H/4H одразу йдуть у тему «🔔 Сигнали». ДЖЕРЕЛО — сервер
+// (`sbr_settings.tg_symbols`), дефолт до першої відповіді — той самий, що на
+// сервері (BTCUSDT, ETHUSDT).
+let sbrTgSymbols = new Set(['BTCUSDT', 'ETHUSDT']);
+const _SBR_TITLE_ON = '🔔 Сигнали SBR 1H/4H по монеті йдуть у Telegram «🔔 Сигнали» одразу після закриття бару. Click — вимкнути.';
+const _SBR_TITLE_OFF = '🔕 Сигнали SBR по монеті в Telegram НЕ надсилаються (у блоці 🔔 МММ-SBR вони видно і так). Click — увімкнути.';
+function sbrFlagHTML(sym) {
+    const on = sbrTgSymbols.has(sym);
+    return `<span class="wl-sbr-flag ${on ? 'active' : 'inactive'}" data-sym="${sym}" `
+        + `title="${on ? _SBR_TITLE_ON : _SBR_TITLE_OFF}" `
+        + `onclick="event.stopPropagation();toggleSbrTg('${sym}')">🔔</span>`;
+}
+function sbrApplyTgSymbols(list) {
+    const next = new Set((list || []).map(x => String(x).toUpperCase()));
+    sbrTgSymbols = next;
+    document.querySelectorAll('.wl-sbr-flag[data-sym]').forEach(el => {
+        const on = next.has(el.dataset.sym);
+        el.className = 'wl-sbr-flag ' + (on ? 'active' : 'inactive');
+        el.title = on ? _SBR_TITLE_ON : _SBR_TITLE_OFF;
+    });
+}
+async function toggleSbrTg(symbol) {
+    const on = !sbrTgSymbols.has(symbol);
+    try {
+        const res = await fetch('/api/sbr/tg-symbol', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol, on: on}),
+        });
+        if (!res.ok) { alert('🔔 Не збережено: HTTP ' + res.status); return; }
+        const d = await res.json();
+        if (d.ok) sbrApplyTgSymbols(d.tg_symbols || []);
+        else alert('🔔 Не збережено: ' + (d.reason || 'невідомо'));
+    } catch (err) {
+        alert('🔔 Помилка: ' + err);
+    }
+}
+async function sbrLoadState() {
+    try {
+        const res = await fetch('/api/sbr/state');
+        if (!res.ok) return;
+        const d = await res.json();
+        if (d.ok && d.settings) {
+            sbrApplyTgSymbols(d.settings.tg_symbols || []);
+            const tg = document.getElementById('mms-tg-enabled');
+            if (tg && document.activeElement !== tg) tg.checked = d.settings.tg_enabled !== false;
+        }
+    } catch (e) { /* рушій ще не піднявся — лишаємо дефолт */ }
+}
+async function sbrSaveTg() {
+    const tg = document.getElementById('mms-tg-enabled');
+    if (!tg) return;
+    try {
+        const res = await fetch('/api/sbr/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({tg_enabled: !!tg.checked}),
+        });
+        const d = res.ok ? await res.json() : {ok: false, reason: 'HTTP ' + res.status};
+        if (!d.ok) { alert('📨 Не збережено: ' + (d.reason || '')); tg.checked = !tg.checked; }
+    } catch (e) { alert('📨 Помилка: ' + e); }
+}
 async function toggleTradeable(symbol) {
     const isCurrentlyTradeable = tmTradeable.has(symbol);
     try {
@@ -18694,6 +18964,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch {}
     await loadSettings();
     await loadTMSettings();
+    // 🔔 Монети з Telegram-сигналами SBR — ДО першого рендера watchlist,
+    // щоб кнопки 🔔 одразу стояли в правильному стані.
+    await sbrLoadState();
+    setInterval(sbrLoadState, 60000);
     await loadWatchlist();
     await loadTMState();
     await loadTop100State();

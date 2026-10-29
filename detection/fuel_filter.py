@@ -547,7 +547,43 @@ MM_BOOKS_SHOW_MAX_AGE = 6 * 3600.0  # знімок для ПОКАЗУ (з по�
 MM_BOOKS_RAW_MAX_AGE = 1800.0     # сирі кеші, що йдуть у РОЗРАХУНОК, — лише ≤30 хв
 MM_FC_RESTORE_SEC = 900.0         # 🔮 фолбек прогнозу — лише перші 15 хв після старту
 _MM_BOOK_PREFIX = {'old': '_mm', 'new': '_mmn', 'ctr': '_mmc', 'fc': '_mmf',
-                   'pull': '_mmp', 'dec': '_mmd', 'rdy': '_mmr'}
+                   'pull': '_mmp', 'dec': '_mmd', 'rdy': '_mmr', 'sbr': '_mms'}
+
+
+def sbr_mm_dir(row) -> Optional[Dict]:
+    """🔔 Напрямок МММ-SBR по ОДНІЙ монеті з рядка рушія `sbr_signals`. ЧИСТА.
+
+    • Напрямок = бік НАЙСВІЖІШОГО сигналу Session Band Reversal (1H або 4H —
+      `sbr_signals.combine`); сила = його Score (0…100).
+    • Сигнал SBR — це РОЗВОРОТ, тож стан тримається до протилежного сигналу:
+      ⚖ рівноваги в цій книзі немає, крім монети без жодного сигналу в історії
+      (`status=None`, сила 0 — лежить у знаменнику банера, як ⚖ інших книг).
+    • Немає даних по монеті → None («невідомо» ≠ «рівновага»).
+    """
+    if not isinstance(row, dict):
+        return None
+    s1, s4 = row.get('1h'), row.get('4h')
+    if not s1 and not s4:
+        return None
+    cmb = row.get('combo')
+    if not cmb:
+        return {'status': None, 'dir': 0.0, 'strength': 0,
+                'sbr_tfs': '', 'sbr_sig': None, 'sbr_by_tf': {},
+                'sbr_fresh': False}
+    side = cmb['side']
+    st = int(cmb.get('strength') or 0)
+    sig = cmb.get('signal') or {}
+    fresh = bool(any((row.get('fresh') or {}).get(tf) for tf in (cmb.get('tfs') or [])))
+    by_tf = {}
+    for tf, sg in (cmb.get('by_tf') or {}).items():
+        by_tf[tf] = {k: sg.get(k) for k in ('t', 'close_t', 'trigger', 'score',
+                                             'risk', 'sl', 'n', 'time_kyiv')}
+    return {'status': side, 'dir': (st / 100.0) * (1 if side == 'LONG' else -1),
+            'strength': st, 'sbr_tfs': cmb.get('tf_label') or '',
+            'sbr_sig': {k: sig.get(k) for k in ('t', 'close_t', 'trigger', 'score',
+                                                 'risk', 'sl', 'n', 'time_kyiv')},
+            'sbr_by_tf': by_tf, 'sbr_fresh': fresh,
+            'sbr_decider': cmb.get('decider')}
 
 
 def dec_mm_dir(dec) -> Optional[Dict]:
@@ -852,6 +888,8 @@ _MM_BOOKS = {
             'snap': '_mmd_snapshot', 'eng': 'MMD'},
     'rdy': {'name': '🧩 МММ-Готовність', 'key': 'mm_rdy_enabled',
             'snap': '_mmr_snapshot', 'eng': 'MMR'},
+    'sbr': {'name': '🔔 МММ-SBR', 'key': 'mm_sbr_enabled',
+            'snap': '_mms_snapshot', 'eng': 'MMS'},
 }
 
 DEFAULT_SETTINGS = {
@@ -946,6 +984,14 @@ DEFAULT_SETTINGS = {
     'mmr_str_mins': None,
     'mmr_bias_confirm_sec': 120,
     'mmr_interval_min': 15,
+    # 🔔 БЛОК «МММ-SBR» (вимога 29.10) — сигнали Session Band Reversal 1H+4H.
+    # Дані рахує ОКРЕМИЙ рушій `detection/sbr_signals.py` одразу після
+    # закриття бару; книга лише читає його стан. Дефолт УВІМК: монітор сам
+    # нічого не відкриває, а рушій працює і без нього (Telegram «🔔 Сигнали»).
+    'mm_sbr_enabled': True,
+    'mms_str_min': 0,
+    'mms_str_mins': None,
+    'mms_bias_confirm_sec': 120,
     # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
     # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
     # ГОЛОВНИЙ вміст тієї теми. ⚠️ Майстер-вимикач теми лишається в кабінеті
@@ -1718,6 +1764,18 @@ class FuelFilterDaemon:
         self._mmr_bias_tg_last = '__none__'
         self._mmr_bias_tg_at = 0.0
         self._mmr_bias_tg_restored = False
+        # 🔔 БЛОК «МММ-SBR» (вимога 29.10) — восьма книга, та сама форма.
+        # Джерело — рушій `sbr_signals` (свій потік, бари 1H/4H на закритті).
+        self._mms_on: Optional[bool] = None
+        self._mms_snapshot: Dict[str, Dict] = {}
+        self._mms_snapshot_ts: float = 0.0
+        self._mms_state_since: Dict = {}
+        self._mms_price_hist: Dict[str, list] = {}
+        self._mms_stats: Dict = {}
+        self._mm_bias_sbr: Dict = {}
+        self._mm_bias_sbr_since: float = 0.0
+        self._mm_bias_sbr_cand: Dict = {}
+        self._mms_str_mins_c: Optional[Dict] = None
         # 📨 Останній статус банера, ПРО ЯКИЙ УЖЕ сповіщали в Telegram.
         # СВІДОМО не персиститься: після рестарту перший такт лише запамʼятовує
         # стан і мовчить — інакше кожен `botupdate` слав би «зміну», якої не
@@ -2376,10 +2434,21 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             s['mmr_bias_confirm_sec'] = 120
         s['mmr_interval_min'] = int(mmr_interval_sec(s) // 60)
+        # 🔔 БЛОК «МММ-SBR» — тумблер і вікно банера.
+        s['mm_sbr_enabled'] = bool(s.get('mm_sbr_enabled', True))
+        try:
+            s['mms_str_min'] = max(0, min(100, int(float(s.get('mms_str_min', 0)))))
+        except (TypeError, ValueError):
+            s['mms_str_min'] = 0
+        try:
+            s['mms_bias_confirm_sec'] = max(0, min(3600,
+                int(float(s.get('mms_bias_confirm_sec', 120)))))
+        except (TypeError, ValueError):
+            s['mms_bias_confirm_sec'] = 120
         for _k, _lk in (('mm_str_mins', 'mm_str_min'), ('mmn_str_mins', 'mmn_str_min'),
                         ('mmc_str_mins', 'mmc_str_min'), ('mmf_str_mins', 'mmf_str_min'),
                         ('mmp_str_mins', 'mmp_str_min'), ('mmd_str_mins', 'mmd_str_min'),
-                        ('mmr_str_mins', 'mmr_str_min')):
+                        ('mmr_str_mins', 'mmr_str_min'), ('mms_str_mins', 'mms_str_min')):
             s[_k] = mm_str_mins_norm(s.get(_k), s.get(_lk, 0))
             s[_lk] = s[_k]['all']
         try:
@@ -2994,7 +3063,8 @@ class FuelFilterDaemon:
                                 ('mmf_state_since', '_mmf_state_since'),
                                 ('mmp_state_since', '_mmp_state_since'),
                                 ('mmd_state_since', '_mmd_state_since'),
-                                ('mmr_state_since', '_mmr_state_since')):
+                                ('mmr_state_since', '_mmr_state_since'),
+                                ('mms_state_since', '_mms_state_since')):
                 _mss = st.get(_key)
                 _dst = {}
                 setattr(self, _attr, _dst)
@@ -3101,6 +3171,18 @@ class FuelFilterDaemon:
             if self._mm_bias_rdy_since > time.time() + 60:
                 self._mm_bias_rdy_since = 0.0
                 self._mm_bias_rdy = {}
+            # 🔔 Банер «МММ-SBR» — те саме відновлення.
+            _mbs = st.get('mm_bias_sbr')
+            self._mm_bias_sbr = dict(_mbs) if isinstance(_mbs, dict) else {}
+            if self._mm_bias_sbr:
+                self._mm_bias_sbr['restored'] = True
+            try:
+                self._mm_bias_sbr_since = float(st.get('mm_bias_sbr_since') or 0.0)
+            except (TypeError, ValueError):
+                self._mm_bias_sbr_since = 0.0
+            if self._mm_bias_sbr_since > time.time() + 60:
+                self._mm_bias_sbr_since = 0.0
+                self._mm_bias_sbr = {}
             # 🚨 Пік вердикту в бік угоди — щоб рестарт не «скидав» базу сигналу
             # «слабшає» (інакше вже ослаблий вердикт став би новим піком).
             _mtp = st.get('mmt_trade_peak')
@@ -3250,6 +3332,13 @@ class FuelFilterDaemon:
                 'mmr_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmr_state_since', {})
+                                                 or {}).items()},
+                # 🔔 Блок «МММ-SBR» — банер і таймери стану монет.
+                'mm_bias_sbr': dict(getattr(self, '_mm_bias_sbr', {}) or {}),
+                'mm_bias_sbr_since': float(getattr(self, '_mm_bias_sbr_since', 0.0) or 0.0),
+                'mms_state_since': {k: {'st': v.get('st'),
+                                        'since': float(v.get('since') or 0)}
+                                    for k, v in (getattr(self, '_mms_state_since', {})
                                                  or {}).items()},
             })
         except Exception as e:
@@ -5061,6 +5150,8 @@ class FuelFilterDaemon:
         self._mmd_on = _dcb
         _rdb = bool(s.get('mm_rdy_enabled', False))
         self._mmr_on = _rdb
+        _sbb = bool(s.get('mm_sbr_enabled', True))
+        self._mms_on = _sbb
         self._mm_mon_on = _mon
         self._mmn_on = _new
         self._mmc_on = _ctr
@@ -5492,7 +5583,15 @@ class FuelFilterDaemon:
             # 📨 Зміна ПІДТВЕРДЖЕНОГО статусу → Telegram.
             self._mm_bias_alert(bias.get('dir'), _now, s, book='rdy')
 
-        if _mon or _new or _ctr or _fcb or _dcb or _rdb:
+        # ═══ 🔔 КНИГА «МММ-SBR» (вимога 29.10) ═══
+        # Сигнали Session Band Reversal 1H + 4H рахує ОКРЕМИЙ рушій одразу
+        # після закриття бару (`sbr_signals`); такт лише ЧИТАЄ його стан.
+        if not _sbb:
+            self._mm_clear_sbr()
+        else:
+            self._mm_sbr_rebuild(s, _now, fuels=fuels, fcast=_fcast, watched=_W)
+
+        if _mon or _new or _ctr or _fcb or _dcb or _rdb or _sbb:
             # ⏳ Знімок Є → причина «чому його немає» більше не потрібна.
             with self._lock:
                 self._mm_pending = {}
@@ -5923,6 +6022,98 @@ class FuelFilterDaemon:
             self._mmr_scan = {}
             self._mmr_scan_at = 0.0
 
+    # ── 🔔 МММ-SBR: читання рушія Session Band Reversal (вимога 29.10) ────
+    def _mm_clear_sbr(self):
+        """Погасити книгу 🔔 МММ-SBR (вимкнений тумблер). Рушій сигналів і
+        Telegram «🔔 Сигнали» від цього НЕ зупиняються — гасне лише показ."""
+        with self._lock:
+            self._mms_snapshot = {}
+            self._mms_snapshot_ts = 0.0
+            self._mms_state_since = {}
+            self._mms_price_hist = {}
+            self._mms_stats = {}
+            self._mm_bias_sbr = {}
+            self._mm_bias_sbr_since = 0.0
+            self._mm_bias_sbr_cand = {}
+
+    def _mm_sbr_rebuild(self, s: Dict, now: float, fuels=None, fcast=None,
+                        watched='__auto__'):
+        """🔔 Перебудувати книгу МММ-SBR зі стану рушія: знімок, таймери стану,
+        банер. Кличеться з такту двигуна І одразу з рушія після нових барів
+        (`on_sbr_update`) — щоб вкладки LONG/SHORT змінювались у ту саму мить,
+        коли закрився бар, а не з наступним тактом (до 30с)."""
+        _W = self._mm_watched() if watched == '__auto__' else watched
+        _srows = self._sbr_rows()
+        with self._lock:
+            _prev = dict(getattr(self, '_mms_snapshot', {}) or {})
+        snap_b = {}
+        for _S, row in _srows.items():
+            if _W is not None and str(_S).upper() not in _W:
+                continue    # 👁 лише WATCHLIST
+            c = sbr_mm_dir(row)
+            if not c:
+                continue
+            _f = (fuels or {}).get(_S) or {}
+            _pv = _prev.get(_S) or {}
+            _fc = fcast(_S) if fcast else {'f1': _pv.get('f1'), 'f4': _pv.get('f4')}
+            snap_b[_S] = {**c,
+                          'mark_price': (_f.get('mark_price') or _pv.get('mark_price')
+                                         or row.get('price')),
+                          **_fc}
+        self._mm_track_prices(snap_b, now, hist_attr='_mms_price_hist')
+        self._mm_track_state(snap_b, now, hist_attr='_mms_state_since')
+        with self._lock:
+            self._mms_snapshot = snap_b
+            self._mms_snapshot_ts = now if snap_b else 0.0
+            self._mms_stats = {'targeted': len([x for x in _srows
+                                                if _W is None or x in _W]),
+                               'data': len(snap_b), 'ts': now}
+        try:
+            need = max(0, int(float(s.get('mms_bias_confirm_sec', 120))))
+        except (TypeError, ValueError):
+            need = 120
+        bias, since, cand = mm_bias_step(
+            snap_b, now, need,
+            getattr(self, '_mm_bias_sbr', {}),
+            getattr(self, '_mm_bias_sbr_since', 0.0),
+            getattr(self, '_mm_bias_sbr_cand', {}))
+        self._mm_bias_sbr, self._mm_bias_sbr_since = bias, since
+        self._mm_bias_sbr_cand = cand
+
+    def on_sbr_update(self):
+        """Хук рушія SBR: нові закриті бари → книга одразу. Помилка не
+        підіймається в рушій (його робота — сигнали й Telegram)."""
+        try:
+            s = self.get_settings()
+            if not bool(s.get('mm_sbr_enabled', True)):
+                return
+            self._mm_sbr_rebuild(s, time.time())
+        except Exception as e:
+            print(f"[FF-SBR] rebuild error: {e}")
+
+    def _sbr_rows(self) -> Dict[str, Dict]:
+        """Рядки рушія `sbr_signals` (лише памʼять). Немає рушія → {}."""
+        try:
+            from detection.sbr_signals import get_sbr_engine
+            eng = get_sbr_engine()
+            return eng.rows() if eng else {}
+        except Exception as e:
+            print(f"[FF-SBR] rows error: {e}")
+            return {}
+
+    def _sbr_info(self) -> Dict:
+        """Стан рушія для шапки блоку: коли скан, наступне закриття, 📨."""
+        try:
+            from detection.sbr_signals import get_sbr_engine
+            eng = get_sbr_engine()
+            if not eng:
+                return {'ok': False, 'reason': 'рушій SBR не запущено'}
+            st = eng.state()
+            st['ok'] = True
+            return st
+        except Exception as e:
+            return {'ok': False, 'reason': f'{type(e).__name__}: {e}'}
+
     def _mmr_scan_info(self, s: Dict) -> Dict:
         """Стан скану «Готовності» для сторінки — ЛИШЕ читання."""
         with self._lock:
@@ -6069,21 +6260,23 @@ class FuelFilterDaemon:
         # 🧭 П'ята книга `pull` (МММ-Pull, 20.10) — та сама форма + стан скану.
         # 🧠 Шоста книга `dec` (МММ-Decision, 22.10) — та сама форма.
         # 🧩 Сьома книга `rdy` (МММ-Готовність, 25.10) — та сама форма + скан.
-        _bk = book if book in ('old', 'new', 'ctr', 'fc', 'pull', 'dec', 'rdy') else 'old'
+        # 🔔 Восьма книга `sbr` (МММ-SBR, 29.10) — та сама форма + стан рушія.
+        _bk = book if book in ('old', 'new', 'ctr', 'fc', 'pull', 'dec', 'rdy',
+                               'sbr') else 'old'
         _nb = (_bk == 'new')
         _on = bool(s.get({'old': 'mm_monitor_enabled', 'new': 'mm_new_enabled',
                           'ctr': 'mm_ctr_enabled', 'fc': 'mm_fc_enabled',
                           'pull': 'mm_pull_enabled', 'dec': 'mm_dec_enabled',
-                          'rdy': 'mm_rdy_enabled'}[_bk],
+                          'rdy': 'mm_rdy_enabled', 'sbr': 'mm_sbr_enabled'}[_bk],
                          _bk not in ('pull', 'dec', 'rdy')))
         _p = {'old': '_mm', 'new': '_mmn', 'ctr': '_mmc', 'fc': '_mmf',
-              'pull': '_mmp', 'dec': '_mmd', 'rdy': '_mmr'}[_bk]
+              'pull': '_mmp', 'dec': '_mmd', 'rdy': '_mmr', 'sbr': '_mms'}[_bk]
         _sk = {'old': 'mm', 'new': 'mmn', 'ctr': 'mmc', 'fc': 'mmf',
-               'pull': 'mmp', 'dec': 'mmd', 'rdy': 'mmr'}[_bk]
+               'pull': 'mmp', 'dec': 'mmd', 'rdy': 'mmr', 'sbr': 'mms'}[_bk]
         _bias_attr = {'old': '_mm_bias', 'new': '_mm_bias_new',
                       'ctr': '_mm_bias_ctr', 'fc': '_mm_bias_fc',
                       'pull': '_mm_bias_pull', 'dec': '_mm_bias_dec',
-                      'rdy': '_mm_bias_rdy'}[_bk]
+                      'rdy': '_mm_bias_rdy', 'sbr': '_mm_bias_sbr'}[_bk]
         with self._lock:
             # ⚠️ ВИМКНЕНИЙ блок → рядків НЕМАЄ, і це перевіряється ЯВНО, а не
             # покладається на порожній знімок: при вимкненому 🧮 знімок СВІДОМО
@@ -6222,6 +6415,14 @@ class FuelFilterDaemon:
                 'rdy_score': v.get('rdy_score'),
                 'rdy_grade': v.get('rdy_grade'),
                 'rdy_hot': v.get('rdy_hot'),
+                # 🔔 Книга МММ-SBR: які TF дали поточний бік ('1H'/'4H'/'1H+4H'),
+                # вирішальний сигнал (час Kyiv, Trigger, Score, Risk, SL, #N),
+                # сигнали по кожному TF і прапорець «щойно, на останньому барі».
+                'sbr_tfs': v.get('sbr_tfs'),
+                'sbr_sig': v.get('sbr_sig'),
+                'sbr_by_tf': v.get('sbr_by_tf'),
+                'sbr_fresh': v.get('sbr_fresh'),
+                'sbr_decider': v.get('sbr_decider'),
                 # 💼 Бік відкритої угоди (LONG/SHORT) — колонка «📍 Стан».
                 'trade_side': open_sides.get(sym) if _trade else None,
                 # 📍 СТАН МОНЕТИ. Віддаємо ЧИСТІ прапорці, а підпис і колір
@@ -6253,7 +6454,7 @@ class FuelFilterDaemon:
             'enabled': _on,
             # 🧭 МММ-Pull бере монети зі СВОГО скану — режим економії liq-map
             # його не стосується, тож і попередження про нього не показуємо.
-            'limited': bool(s.get('mmm_limited_mode', True)) and _bk != 'pull',
+            'limited': bool(s.get('mmm_limited_mode', True)) and _bk not in ('pull', 'sbr'),
             # ⚑ Поріг «Сила ≥» їде З СЕРВЕРА — одне число на всі браузери.
             'str_min': int(s.get(f'{_sk}_str_min', 0) or 0),
             # ⚑ …і свій поріг на КОЖНУ вкладку (вимога 12.10).
@@ -6269,7 +6470,8 @@ class FuelFilterDaemon:
             # 🧭 МММ-Pull: стан ФОНОВОГО скану ліквідності (коли був, скільки
             # тривав, наступний, чи біжить зараз, причина невдачі, параметри).
             'scan': (self._mmp_scan_info(s) if (_bk == 'pull' and _on) else
-                     self._mmr_scan_info(s) if (_bk == 'rdy' and _on) else {}),
+                     self._mmr_scan_info(s) if (_bk == 'rdy' and _on) else
+                     self._sbr_info() if (_bk == 'sbr' and _on) else {}),
             # ⚖️ Готовий важіль напрямку для банера (рахує двигун, тут ЧИТАННЯ).
             'bias': (dict(getattr(self, _bias_attr, {}) or {}) if _on else {}),
             # 📊 ЧОМУ РЯДКІВ МЕНШЕ, НІЖ МОНЕТ У WATCHLIST (питання 17.09:
@@ -6388,6 +6590,8 @@ class FuelFilterDaemon:
                 s.get('mmd_verdict_mins'), s.get('mmd_verdict_min', ''))
             self._mmr_str_mins_c = mm_str_mins_norm(s.get('mmr_str_mins'),
                                                     s.get('mmr_str_min', 0))
+            self._mms_str_mins_c = mm_str_mins_norm(s.get('mms_str_mins'),
+                                                    s.get('mms_str_min', 0))
         except Exception:
             pass
 
@@ -12869,7 +13073,7 @@ class FuelFilterDaemon:
     # згорнута. Усе інше (банер, лічильники, налаштування, Черги-1..3) віддається
     # завжди — воно дешеве. `None` = віддати ВСЕ (сумісність для інфо-сайту та
     # будь-якого стороннього споживача API).
-    HEAVY_SECTIONS = ('q4', 'fund', 'mm', 'mmn', 'mmc', 'mmf', 'mmp', 'mmd', 'mmr')
+    HEAVY_SECTIONS = ('q4', 'fund', 'mm', 'mmn', 'mmc', 'mmf', 'mmp', 'mmd', 'mmr', 'mms')
 
 
     def get_state(self, sections: Optional[set] = None) -> Dict:
@@ -12894,6 +13098,7 @@ class FuelFilterDaemon:
         _want_mmp = (sections is None) or ('mmp' in sections)
         _want_mmd = (sections is None) or ('mmd' in sections)
         _want_mmr = (sections is None) or ('mmr' in sections)
+        _want_mms = (sections is None) or ('mms' in sections)
         with self._lock:
             settings = self.get_settings()
             duration_sec = settings['duration_minutes'] * 60
@@ -13171,7 +13376,8 @@ class FuelFilterDaemon:
             # «черга порожня» і стер би таблицю, хоча її просто не запитували.
             'served': {'q4': _want_q4, 'fund': _want_fund, 'mm': _want_mm,
                        'mmn': _want_mmn, 'mmc': _want_mmc, 'mmf': _want_mmf,
-                       'mmp': _want_mmp, 'mmd': _want_mmd, 'mmr': _want_mmr},
+                       'mmp': _want_mmp, 'mmd': _want_mmd, 'mmr': _want_mmr,
+                       'mms': _want_mms},
             # ⏱ ГОДИННИК СЕРВЕРА (20.10). Усі таймери сторінки рахують
             # «зараз − момент старту», а моменти — серверні epoch. Годинник
             # браузера може розходитись із серверним (кейс МММ-Pull: 32751/900с
@@ -13197,6 +13403,9 @@ class FuelFilterDaemon:
             # 🧩 Блок «МММ-Готовність» (25.10) — книга SMC-«Готовності».
             'mm_rdy': (self.mm_monitor_state(settings, book='rdy')
                        if _want_mmr else None),
+            # 🔔 МММ-SBR — сигнали Session Band Reversal 1H + 4H.
+            'mm_sbr': (self.mm_monitor_state(settings, book='sbr')
+                       if _want_mms else None),
             # 🎚 Смуги грейда (ЄДИНЕ джерело — setup_grader). UI будує випадайку
             # «Готовність ≥» саме з них, щоб назва і число НЕ розходились.
             'grade_bands': _grade_bands(),

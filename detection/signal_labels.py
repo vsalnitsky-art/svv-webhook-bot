@@ -54,6 +54,7 @@ ENGINE_BADGES = {
     'MMP':              '🧭 МММ-Pull',    # те саме з блоку 🧭 МММ-Pull (скан ліквідності)
     'MMD':              '🧠 МММ-Decision',  # те саме з блоку 🧠 МММ-Decision (вердикт банера Decision)
     'MMR':              '🧩 МММ-Готовність',  # те саме з блоку 🧩 МММ-Готовність (SMC-грейд)
+    'MMS':              '🔔 МММ-SBR',         # те саме з блоку 🔔 МММ-SBR (Session Band Reversal)
     'EXH':              '🔥 Виснаженість',
     'FF':               '🔥 FF',
     'direct':           '⚡ Прямий',       # FF вимкнено → відкрито одразу з сигналу
@@ -89,6 +90,7 @@ SIGNAL_ICONS = {
     'MMP': '🧭',
     'MMD': '🧠',
     'MMR': '🧩',
+    'MMS': '🔔',
 }
 
 FALLBACK_ICON = '🏷'
@@ -110,6 +112,7 @@ ENGINE_ICON_OVERRIDE = {
     'MMP': '🧭',
     'MMD': '🧠',
     'MMR': '🧩',
+    'MMS': '🔔',
 }
 
 
