@@ -16745,7 +16745,7 @@ function _sprVal(r, c) {
     if (c === 'bias') return Number(r.bias) || 0;
     if (c === 'pl') return Number(r.pot_long) || 0;
     if (c === 'ps') return Number(r.pot_short) || 0;
-    if (c === 'lean') return (Number(r.pot_long) || 0) - (Number(r.pot_short) || 0);
+    if (c === 'lean') return (Number(r.tension_long != null ? r.tension_long : r.pot_long) || 0) - (Number(r.tension_short != null ? r.tension_short : r.pot_short) || 0);
     if (c === 'move') { const m = _sprLeanMove(r); return m ? m.pct : -1e9; }
     return _sprPotMax(r);
 }
@@ -16773,13 +16773,23 @@ function _sprAggPaint() {
         : a.lean === 'SHORT' ? `<span style="color:#f87171;font-weight:700">▼ SHORT ${(100 - pL).toFixed(0)}%</span>`
         : `<span style="color:#cbd5e1;font-weight:700">⚖ рівновага ${pL.toFixed(0)}/${(100 - pL).toFixed(0)}</span>`;
     const tot = (Number(a.sum_long) || 0) + (Number(a.sum_short) || 0);
+    const enough = a.enough !== false;
     const top = (t, side) => t ? `<span class="spr-k">найсильніша ${side}</span><span style="font-family:monospace;color:${side === 'LONG' ? '#4ade80' : '#f87171'}">${t.symbol} ${Math.round(t.pot)}${t.move_pct != null ? ` · ${side === 'LONG' ? '+' : '−'}${Number(t.move_pct).toFixed(2)}%` : ''}</span>` : '';
+    const fired = (a.fired_long || a.fired_short) ? `<span title="Уже вистрілили — у натяг не входять">· 💥 вистрілили: <span style="color:#4ade80">▲${a.fired_long || 0}</span> / <span style="color:#f87171">▼${a.fired_short || 0}</span></span>` : '';
+    if (!enough) {
+        // Напрям ринку з однієї-двох монет не робимо: це був би висновок про
+        // WATCHLIST, побудований на винятку (кейс 29.10: «LONG 88%» з 1 з 55).
+        el.innerHTML = `<span class="spr-k">куди накручено WATCHLIST</span>`
+            + `<span style="color:#cbd5e1" title="Напрям ринку показуємо, коли заряджених (≥ 45) монет щонайменше ${a.need}: ≥ 3 і ≥ 10% від порахованих">⚖ замало заряджених: <b style="font-family:monospace">${a.coins}</b> з ${a.total || 0} (потрібно ≥ ${a.need}) — напрям ринку не визначаємо</span>`
+            + fired + top(a.top_long, 'LONG') + top(a.top_short, 'SHORT');
+        return;
+    }
     el.innerHTML = `<span class="spr-k">куди накручено WATCHLIST</span>`
         + `<span style="font-family:monospace;color:#f87171">SHORT ${Math.round(a.sum_short || 0)}</span>`
         + `<span title="Сума натягу LONG проти SHORT по ${a.coins} монетах із зарядом ≥ 45. Плоскі монети не враховуються — вони нічого не накручують; вистрілені теж — їхня пружина вже розпрямилась.">${_sprTugHTML(tot ? 200 * (a.sum_long || 0) / tot : 0, tot ? 200 * (a.sum_short || 0) / tot : 0, true)}</span>`
         + `<span style="font-family:monospace;color:#4ade80">${Math.round(a.sum_long || 0)} LONG</span>`
         + lean + `<span>· ${a.coins} монет: 🟢 ${a.n_long} / 🔴 ${a.n_short}</span>`
-        + ((a.fired_long || a.fired_short) ? `<span title="Уже вистрілили — у натяг не входять">· 💥 вистрілили: <span style="color:#4ade80">▲${a.fired_long || 0}</span> / <span style="color:#f87171">▼${a.fired_short || 0}</span></span>` : '')
+        + fired
         + top(a.top_long, 'LONG') + top(a.top_short, 'SHORT');
 }
 function sprSort(c) {
@@ -16806,8 +16816,14 @@ function _sprTugCell(r) {
     const lbl = side === 'LONG' ? `<span style="color:#4ade80">▲ ${pL.toFixed(0)}%</span>`
         : side === 'SHORT' ? `<span style="color:#f87171">▼ ${(100 - pL).toFixed(0)}%</span>`
         : '<span style="color:#8b93a7">⚖ 50%</span>';
-    const tip = `Натяг LONG ${Math.round(r.pot_long || 0)} / SHORT ${Math.round(r.pot_short || 0)} · перевага ${Math.round(r.lean_pp || 0)} п. · ймовірність вгору ${pL.toFixed(0)}% / вниз ${(100 - pL).toFixed(0)}%`;
-    return `<td style="white-space:nowrap" title="${tip}">${_sprTugHTML(r.pot_long, r.pot_short)}<span style="display:inline-block;width:44px;margin-left:6px;text-align:right;font-family:monospace">${lbl}</span></td>`;
+    // Шкала малює ЕФЕКТИВНИЙ натяг (той самий, з якого рахується підпис):
+    // у флеті він 0 — смужка порожня, а не «червона при ⚖ 50%».
+    const tL = r.tension_long != null ? r.tension_long : r.pot_long;
+    const tS = r.tension_short != null ? r.tension_short : r.pot_short;
+    const tip = r.state === 'flat'
+        ? `Пружина не накручена (заряд ${Math.round(r.charge || 0)} < 45) — натягу немає, бік не визначаємо`
+        : `Натяг LONG ${Math.round(tL || 0)} / SHORT ${Math.round(tS || 0)} · перевага ${Math.round(r.lean_pp || 0)} п. · ймовірність вгору ${pL.toFixed(0)}% / вниз ${(100 - pL).toFixed(0)}%`;
+    return `<td style="white-space:nowrap" title="${tip}">${_sprTugHTML(tL, tS)}<span style="display:inline-block;width:44px;margin-left:6px;text-align:right;font-family:monospace">${lbl}</span></td>`;
 }
 function _sprMoveCell(r) {
     const m = _sprLeanMove(r);
@@ -16825,12 +16841,15 @@ function _sprMoveCell(r) {
         + seg(92, 'right', `<span style="color:#cbd5e1">${m.tgt != null ? fp(m.tgt) : '—'}</span>`)
         + '</td>';
 }
-function _sprPotCell(v, side, minPot, mode) {
+function _sprPotCell(v, side, minPot, mode, flat) {
     const n = Math.round(Number(v) || 0);
     const col = side === 'LONG' ? '#4ade80' : '#f87171';
     const ok = n >= minPot;
-    const c = mode === 'require' && !ok ? '#6b7280' : col;
-    return `<td style="text-align:right;font-family:monospace;color:${c};font-weight:${ok ? 700 : 400}" title="Потенціал ${side} ${n} / поріг ${minPot}">${n}</td>`;
+    // Флет — потенціал є лише числом (ворота його читають), але пружина не
+    // накручена: приглушено, щоб не читалось як сигнал.
+    const c = flat ? '#4b5563' : (mode === 'require' && !ok ? '#6b7280' : col);
+    const tip = flat ? `Потенціал ${side} ${n} / поріг ${minPot} · пружина не накручена (заряд < 45)` : `Потенціал ${side} ${n} / поріг ${minPot}`;
+    return `<td style="text-align:right;font-family:monospace;color:${c};font-weight:${ok && !flat ? 700 : 400}" title="${tip}">${n}</td>`;
 }
 function sprRender() {
     const tb = document.getElementById('spr-tbody');
@@ -16872,7 +16891,7 @@ function sprRender() {
         if (a) a.textContent = th.getAttribute('data-sprsort') === _sprSortCol ? (_sprSortDir > 0 ? ' ▲' : ' ▼') : '';
     });
     const sig = JSON.stringify([_sprDir, _sprSortCol, _sprSortDir, minPot, mode,
-        rows.map(r => [r.symbol, r.state, r.charge, r.bias, r.pot_long, r.pot_short, r.lean, r.released, r.move_long_pct, r.move_short_pct, r.trade_side, (r.queues || []).join(','), r.restored])]);
+        rows.map(r => [r.symbol, r.state, r.charge, r.bias, r.dir, r.pot_long, r.pot_short, r.tension_long, r.tension_short, r.lean, r.released, r.move_long_pct, r.move_short_pct, r.trade_side, (r.queues || []).join(','), r.restored])]);
     if (tb.dataset.sig === sig) return;
     tb.dataset.sig = sig;
     if (!rows.length) {
@@ -16885,6 +16904,7 @@ function sprRender() {
         const chg = Math.max(0, Math.min(100, Math.round(Number(r.charge) || 0)));
         const d = r.dir === 'LONG' ? '<span style="color:#4ade80">▲ LONG</span>'
             : r.dir === 'SHORT' ? '<span style="color:#f87171">▼ SHORT</span>'
+            : st === 'flat' ? `<span style="color:#4b5563" title="Заряду немає — напрямок не визначаємо (сирий нахил ${Number(r.bias || 0).toFixed(2)})">—</span>`
             : '<span style="color:#8b93a7">⚖</span>';
         const fired = r.fired ? ` · ${r.fired.side} ${r.fired.bars_ago === 0 ? 'щойно' : r.fired.bars_ago + ' бар тому'}` : '';
         const p = r.parts || {};
@@ -16900,8 +16920,8 @@ function sprRender() {
             + `<span style="display:inline-block;width:56px;height:6px;margin-left:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;vertical-align:middle"><span style="display:block;height:100%;width:${chg}%;background:${col}"></span></span></td>`
             + `<td style="white-space:nowrap;font-family:monospace">${d}</td>`
             + _sprTugCell(r) + _sprMoveCell(r)
-            + _sprPotCell(r.pot_long, 'LONG', minPot, mode)
-            + _sprPotCell(r.pot_short, 'SHORT', minPot, mode)
+            + _sprPotCell(r.pot_long, 'LONG', minPot, mode, st === 'flat')
+            + _sprPotCell(r.pot_short, 'SHORT', minPot, mode, st === 'flat')
             + `<td style="white-space:nowrap;font-family:monospace;color:#cbd5e1">${r.squeeze_bars || 0} год · ${r.band || 'off'}</td>`
             + `<td style="text-align:right;font-family:monospace">${Number(r.box_pct || 0).toFixed(2)}%</td>`
             + `<td style="text-align:right;font-family:monospace;color:${(Number(r.vol_ratio) || 1) < 0.8 ? '#facc15' : '#cbd5e1'}">×${Number(r.vol_ratio || 0).toFixed(2)}</td>`

@@ -3771,22 +3771,25 @@ def register_api_routes(app):
             rows, full = [], {}
             for sym, r in recs.items():
                 r = dict(r)
-                if _spc is not None and 'lean' not in r and r.get('box_hi') is not None:
-                    # запис із минулого запуску (до появи проєкції) — добудувати
-                    # з тих самих полів, щоб бар і хід не були порожні до 1h-бару
+                if _spc is not None and 'tension_long' not in r and r.get('box_hi') is not None:
+                    # запис старішої версії (з минулого запуску) — добудувати
+                    # проєкцію тими самими правилами, щоб до нового 1h-бару
+                    # шкала, хід і напрямок не суперечили одне одному
                     try:
                         r.update(_spc.projection(r.get('price'), r.get('box_hi'), r.get('box_lo'),
                                                  r.get('atr') or 0.0, r.get('pot_long'),
-                                                 r.get('pot_short'), r.get('fired')))
+                                                 r.get('pot_short'), r.get('fired'), r.get('charge')))
                     except Exception:
                         pass
+                if r.get('state') == 'flat':
+                    r['dir'] = None   # те саме правило, що в spring_coil.analyze
                 full[sym] = r
                 row = {'symbol': sym, **{k: r.get(k) for k in (
                     'state', 'label', 'charge', 'bias', 'dir', 'pot_long', 'pot_short',
                     'squeeze_bars', 'band', 'box_pct', 'vol_ratio', 'atr_rank',
                     'fired', 'price', 'bar_t', 'parts', 'restored',
                     'lean', 'released', 'lean_pp', 'prob_long', 'tgt_long', 'tgt_short',
-                    'move_long_pct', 'move_short_pct')}}
+                    'move_long_pct', 'move_short_pct', 'tension_long', 'tension_short')}}
                 row['trade_side'] = sides.get(sym)
                 row['queues'] = list(queues.get(sym) or [])
                 rows.append(row)
@@ -3797,7 +3800,7 @@ def register_api_routes(app):
             return jsonify({'ok': True, 'enabled': enabled, 'rows': rows, 'stats': stats,
                             'next_at': (int(_now // 3600) + 1) * 3600, 'server_now': _now,
                             'gate_on': gate_on, 'min_pot': min_pot,
-                            'agg': (_spc.aggregate(full) if _spc is not None else None),
+                            'agg': (_spc.aggregate(full, total=len(full)) if _spc is not None else None),
                             'watchlist': wl, 'tf': '1h', 'ts': time.time()})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e), 'rows': []})

@@ -249,16 +249,17 @@ def test_projection_is_a_measured_move_with_atr_floor():
 def test_aggregate_ignores_flat_coins_and_picks_the_strongest():
     recs = {'A': {'ok': True, 'state': 'charged', 'charge': 80, 'pot_long': 70, 'pot_short': 10, 'move_long_pct': 3.0},
             'B': {'ok': True, 'state': 'building', 'charge': 50, 'pot_long': 10, 'pot_short': 40, 'move_short_pct': 2.0},
-            'C': {'ok': True, 'state': 'flat', 'charge': 20, 'pot_long': 0, 'pot_short': 20}}
+            'C': {'ok': True, 'state': 'flat', 'charge': 20, 'pot_long': 0, 'pot_short': 20},
+            'D': {'ok': True, 'state': 'charged', 'charge': 70, 'pot_long': 40, 'pot_short': 30}}
     a = S.aggregate(recs)
-    _check(a['coins'] == 2 and a['sum_long'] == 80 and a['sum_short'] == 50, a)
-    _check(a['lean'] == 'LONG' and a['n_long'] == 1 and a['n_short'] == 1, a)
+    _check(a['coins'] == 3 and a['sum_long'] == 120 and a['sum_short'] == 80 and a['enough'], a)
+    _check(a['lean'] == 'LONG' and a['n_long'] == 2 and a['n_short'] == 1, a)
     _check(a['top_long']['symbol'] == 'A' and a['top_short']['symbol'] == 'B', a)
     _check(S.aggregate({})['lean'] is None, 'порожньо → рівновага')
 
 
 def test_route_and_page_show_the_tug_bar_and_move():
-    for k in ("'lean'", "'prob_long'", "'move_long_pct'", "'tgt_short'", "_spc.aggregate(full)", "_spc.projection("):
+    for k in ("'lean'", "'prob_long'", "'move_long_pct'", "'tgt_short'", "_spc.aggregate(full, total=len(full))", "_spc.projection("):
         _check(k in _APP, k)
     for k in ('function _sprTugHTML(', 'function _sprMoveCell(', 'function _sprAggPaint(', 'id="spr-agg"',
               "sprSort('lean')", "sprSort('move')", 'agg: d.agg'):
@@ -335,6 +336,51 @@ def test_fired_spring_is_released_not_wound():
     i = _HTML.index('function _sprTugCell(')
     fn = _HTML[i:_HTML.index('\n}\n', i)]
     _check('розпрямилась' in fn and fn.index('r.released') < fn.index('_sprTugHTML'), 'вистрілена — без шкали натягу')
+
+
+# ── АУДИТ 29.10 (2): флет без напрямку · шкала = ефективний натяг · банер ───
+def test_flat_coin_has_no_direction():
+    for seed in range(10):
+        r = S.analyze(_walk(seed))
+        if r['state'] == 'flat':
+            _check(r['dir'] is None and r['lean'] is None, f'флет без напрямку: {r["dir"]} {r["lean"]}')
+            _check(r['tension_long'] == 0 and r['tension_short'] == 0, 'флет без натягу')
+    c = S.analyze(_coil())
+    _check(c['state'] != 'flat' and c['dir'] == 'LONG', 'накручена пружина зберігає напрямок')
+    _check(c['tension_long'] == c['pot_long'] and c['tension_short'] == c['pot_short'], c)
+    _check("if r.get('state') == 'flat':" in _APP and "r['dir'] = None" in _APP, 'маршрут для старих записів')
+
+
+def test_banner_needs_enough_charged_coins():
+    recs = {'JST': {'ok': True, 'state': 'building', 'charge': 48, 'pot_long': 42, 'pot_short': 6,
+                    'move_long_pct': 2.06, 'move_short_pct': 3.85}}
+    for i in range(54):
+        recs[f'F{i}'] = {'ok': True, 'state': 'flat', 'charge': 5, 'pot_long': 1, 'pot_short': 4}
+    a = S.aggregate(recs, total=55)
+    _check(a['coins'] == 1 and not a['enough'] and a['need'] == 6 and a['lean'] is None, a)
+    _check(a['top_long']['symbol'] == 'JST' and a['top_short'] is None,
+           f'LONG-монета не може бути «найсильнішою SHORT»: {a["top_short"]}')
+
+
+def test_flat_cells_and_thin_banner_render_in_node():
+    import shutil, subprocess
+    if not shutil.which('node'):
+        print('  (node немає — пропуск)'); return
+    fns = []
+    for name in ('_sprTugHTML', '_sprTugCell', '_sprPotCell', '_sprAggPaint'):
+        i = _HTML.index('function ' + name + '(')
+        fns.append(_HTML[i:_HTML.index('\n}\n', i) + 2])
+    js = ("const _el={style:{},innerHTML:''};const document={getElementById:()=>_el};"
+          "let _sprMeta={agg:{coins:1,total:55,need:6,enough:false,n_long:1,n_short:0,sum_long:42,sum_short:6,"
+          "prob_long:87.5,lean:null,top_long:{symbol:'JST',pot:42,move_pct:2.06},top_short:null}};\n" + '\n'.join(fns) +
+          "\nconst r={state:'flat',charge:31,pot_long:4,pot_short:27,tension_long:0,tension_short:0,lean:null,prob_long:50};"
+          "console.log(_sprTugCell(r));console.log(_sprPotCell(27,'SHORT',40,'require',true));_sprAggPaint();console.log(_el.innerHTML);")
+    out = subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=20)
+    _check(out.returncode == 0, out.stderr)
+    o = out.stdout
+    _check('width:0%' in o and 'width:13.5%' not in o and '⚖ 50%' in o, f'флет — порожня шкала: {o}')
+    _check('#4b5563' in o and 'не накручена' in o, 'флет — приглушений потенціал')
+    _check('замало заряджених' in o and '88%' not in o and 'JST 42' in o, f'банер без вердикту: {o}')
 
 
 if __name__ == '__main__':
