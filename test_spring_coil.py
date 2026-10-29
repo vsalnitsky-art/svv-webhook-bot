@@ -224,6 +224,70 @@ def test_page_never_hangs_on_loading_silently():
     _check('запит стану «Пружини» до бота' in _HTML, 'початковий напис у рядку стану')
 
 
+# ── ⚖ КУДИ НАКРУЧЕНО + 🎯 ЙМОВІРНИЙ ХІД (вимога 29.10) ──────────────────────
+def test_projection_points_where_the_spring_is_wound():
+    r = S.analyze(_coil(up=True))
+    _check(r['lean'] == 'LONG' and r['prob_long'] > 50, r)
+    _check(abs(r['prob_long'] - 100 * r['pot_long'] / (r['pot_long'] + r['pot_short'])) < 0.2, 'ймовірність = частка натягу')
+    _check(abs(r['lean_pp'] - abs(r['pot_long'] - r['pot_short'])) < 0.2, 'перевага в пунктах')
+    _check(r['tgt_long'] > r['box_hi'] and r['tgt_short'] < r['box_lo'], 'цілі за межами коробки')
+    d = S.analyze(_coil(up=False))
+    _check(d['lean'] == 'SHORT' and d['prob_long'] < 50, d)
+
+
+def test_projection_is_a_measured_move_with_atr_floor():
+    p = S.projection(100.0, 102.0, 98.0, 1.0, 60, 20)
+    _check(p['tgt_long'] == 106.0 and p['tgt_short'] == 94.0 and p['move_long_pct'] == 6.0, p)
+    tiny = S.projection(100.0, 100.2, 99.8, 1.0, 10, 10)
+    _check(tiny['tgt_long'] == 100.2 + 1.5 and tiny['lean'] is None and tiny['prob_long'] == 50.0, tiny)
+    z = S.projection(100.0, 101.0, 99.0, 1.0, 0, 0)
+    _check(z['prob_long'] == 50.0, 'нуль заряду → сторону не вигадуємо')
+    f = S.projection(105.0, 102.0, 98.0, 1.0, 60, 0, {'side': 'LONG', 'level': 102.0})
+    _check(f['tgt_long'] == 106.0, 'після вистрілу ціль від рівня пробою')
+
+
+def test_aggregate_ignores_flat_coins_and_picks_the_strongest():
+    recs = {'A': {'ok': True, 'state': 'charged', 'charge': 80, 'pot_long': 70, 'pot_short': 10, 'move_long_pct': 3.0},
+            'B': {'ok': True, 'state': 'building', 'charge': 50, 'pot_long': 10, 'pot_short': 40, 'move_short_pct': 2.0},
+            'C': {'ok': True, 'state': 'flat', 'charge': 20, 'pot_long': 0, 'pot_short': 20}}
+    a = S.aggregate(recs)
+    _check(a['coins'] == 2 and a['sum_long'] == 80 and a['sum_short'] == 50, a)
+    _check(a['lean'] == 'LONG' and a['n_long'] == 1 and a['n_short'] == 1, a)
+    _check(a['top_long']['symbol'] == 'A' and a['top_short']['symbol'] == 'B', a)
+    _check(S.aggregate({})['lean'] is None, 'порожньо → рівновага')
+
+
+def test_route_and_page_show_the_tug_bar_and_move():
+    for k in ("'lean'", "'prob_long'", "'move_long_pct'", "'tgt_short'", "_spc.aggregate(full)", "_spc.projection("):
+        _check(k in _APP, k)
+    for k in ('function _sprTugHTML(', 'function _sprMoveCell(', 'function _sprAggPaint(', 'id="spr-agg"',
+              "sprSort('lean')", "sprSort('move')", 'agg: d.agg'):
+        _check(k in _HTML, k)
+    i = _HTML.index('<table class="tm-table" id="spr-table">')
+    t = _HTML[i:_HTML.index('</table>', i)]
+    _check(len(re.findall(r'<th[ >]', t)) == 12 and 'colspan="12"' in t, 'колонок 12')
+
+
+def test_tug_cells_render_in_node():
+    import shutil, subprocess
+    if not shutil.which('node'):
+        print('  (node немає — пропуск)'); return
+    fns = []
+    for name in ('_sprLeanMove', '_sprTugHTML', '_sprTugCell', '_sprMoveCell', '_sprAggPaint'):
+        i = _HTML.index('function ' + name + '(')
+        fns.append(_HTML[i:_HTML.index('\n}\n', i) + 2])
+    js = ("const _el={style:{},innerHTML:''};const document={getElementById:()=>_el};"
+          "let _sprMeta={agg:{coins:2,n_long:1,n_short:1,sum_long:80,sum_short:50,prob_long:61.5,lean:'LONG',"
+          "top_long:{symbol:'AAA',pot:70,move_pct:3},top_short:null}};\n" + '\n'.join(fns) +
+          "\nconst r={pot_long:70,pot_short:10,lean:'LONG',prob_long:87.5,lean_pp:60,move_long_pct:3.2,move_short_pct:1,tgt_long:106,tgt_short:99};"
+          "console.log(_sprTugCell(r));console.log(_sprMoveCell(r));console.log(_sprMoveCell({}));_sprAggPaint();console.log(_el.innerHTML);")
+    out = subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=20)
+    _check(out.returncode == 0, out.stderr)
+    o = out.stdout
+    _check('width:35%' in o and 'width:5%' in o and '▲ 88%' in o, o)
+    _check('▲ +3.20%' in o and '—' in o and 'AAA 70' in o and 'LONG 62%' in o, o)
+
+
 if __name__ == '__main__':
     n = 0
     for k, v in list(globals().items()):

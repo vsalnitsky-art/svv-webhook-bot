@@ -1362,6 +1362,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .spr-bar{display:inline-block;width:120px;height:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;vertical-align:middle}
 .spr-bar>span{display:block;height:100%;background:#facc15;transition:width .6s}
 .spr-chip{font-family:monospace;padding:0 5px;border-radius:3px;border:1px solid #2b2f36}
+/* ⚖ бар перетягування: ліва половина — натяг SHORT, права — LONG, від центру */
+.spr-tug{position:relative;display:inline-block;width:92px;height:8px;border-radius:4px;background:rgba(255,255,255,0.07);overflow:hidden;vertical-align:middle}
+.spr-tug>i{position:absolute;top:0;bottom:0;display:block}
+.spr-tug>i.s{right:50%;background:#f87171}
+.spr-tug>i.l{left:50%;background:#4ade80}
+.spr-tug>b{position:absolute;left:50%;top:-1px;bottom:-1px;width:1px;background:#cbd5e1;opacity:.55}
+.spr-tug.big{width:260px;height:12px;border-radius:6px}
+.spr-agg{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 8px;padding:8px 10px;border:1px solid #2b2f36;border-radius:6px;background:#11141b;font-size:0.7rem;color:#8b93a7}
+.spr-agg .spr-k{text-transform:uppercase;letter-spacing:.04em;font-size:0.6rem;color:#6b7280}
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -2713,6 +2722,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div id="spr-off" class="tm-empty-msg" style="display:none;padding:10px 0">🔌 Пружину вимкнено — заряд монет не рахується, ворота «Через Пружину» не діють. Увімкніть тумблер праворуч у шапці.</div>
             <div id="spr-live">
             <div id="spr-status" class="spr-status"><div class="spr-row"><span class="spr-dot idle"></span><span>⏳ запит стану «Пружини» до бота…</span></div></div>
+            <div id="spr-agg" class="spr-agg" style="display:none"></div>
             <div id="spr-tabs" style="display:flex;gap:6px;margin:4px 0 6px;flex-wrap:wrap"></div>
             <div class="tm-hscroll" style="max-height:360px;overflow:auto">
             <table class="tm-table" id="spr-table">
@@ -2721,6 +2731,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <th data-sprsort="state" onclick="sprSort('state')" style="cursor:pointer" title="💥 вистрілила — пружина щойно розпрямилась (рух почався) · 🌀 заряджена — сильне стиснення, енергія накопичена · ⏳ заряджається · 😴 без заряду — монета вже рухається / розхитана, потенціалу старту немає">Стан<span class="ff-sort-arrow"></span></th>
                     <th data-sprsort="charge" onclick="sprSort('charge')" style="cursor:pointer" title="ЗАРЯД 0-100 — наскільки стиснута пружина: TTM-стиснення (BB в одиницях ATR) 30% · ATR% проти власної історії 25% · вузька коробка 24 год проти 4 діб 20% · обʼєм висихає 15% · тривалість стиснення 10%">Заряд<span class="ff-sort-arrow"></span></th>
                     <th data-sprsort="bias" onclick="sprSort('bias')" style="cursor:pointer" title="Куди ймовірніше вистрілить: позиція ціни в коробці 30% · нахил мінімумів/максимумів 30% · тренд EMA50/EMA200 25% · моментум 15%. ⚖ — напрямок ще не визначився">Напрямок<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="lean" onclick="sprSort('lean')" style="cursor:pointer" title="⚖ У який бік НАЙСИЛЬНІШЕ накручено пружину: ліва червона половина — натяг SHORT, права зелена — LONG (від центру, шкала потенціалу 0-100). Число — ймовірність вистрілу в цей бік = частка натягу (потенціал бік / сума потенціалів).">⚖ Накручено<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="move" onclick="sprSort('move')" style="cursor:pointer;text-align:right" title="🎯 Ймовірний хід у бік, куди накручено сильніше: «виміряний рух» — висота 24-год коробки (не менше 1.5×ATR), відкладена від її межі; % — від поточної ціни до цілі. Після вистрілу — від рівня пробою. Це орієнтир масштабу, а не гарантія.">🎯 Ймовірний хід<span class="ff-sort-arrow"></span></th>
                     <th data-sprsort="pl" onclick="sprSort('pl')" style="cursor:pointer;text-align:right" title="Потенціал LONG = заряд × частка напрямку вгору">🟢 LONG<span class="ff-sort-arrow"></span></th>
                     <th data-sprsort="ps" onclick="sprSort('ps')" style="cursor:pointer;text-align:right" title="Потенціал SHORT = заряд × частка напрямку вниз">🔴 SHORT<span class="ff-sort-arrow"></span></th>
                     <th title="Скільки годинних барів поспіль триває стиснення і його глибина (high/mid/low)">Стиснення</th>
@@ -2728,7 +2740,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <th style="text-align:right" title="Обʼєм останніх 12 год проти попередніх 72 (менше 1 — висихає)">Обʼєм</th>
                     <th title="Де монета зараз: у відкритій угоді / у черзі">📍</th>
                 </tr></thead>
-                <tbody id="spr-tbody"><tr><td colspan="10" class="tm-empty-msg">Завантаження…</td></tr></tbody>
+                <tbody id="spr-tbody"><tr><td colspan="12" class="tm-empty-msg">Завантаження…</td></tr></tbody>
             </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:6px">Аналізуються ЛИШЕ монети WATCHLIST · ЗАКРИТІ 1h-бари · перерахунок раз на годину з тих самих барів, що вже тягне сканер (без додаткових запитів до біржі).</div>
@@ -16733,7 +16745,41 @@ function _sprVal(r, c) {
     if (c === 'bias') return Number(r.bias) || 0;
     if (c === 'pl') return Number(r.pot_long) || 0;
     if (c === 'ps') return Number(r.pot_short) || 0;
+    if (c === 'lean') return (Number(r.pot_long) || 0) - (Number(r.pot_short) || 0);
+    if (c === 'move') { const m = _sprLeanMove(r); return m ? m.pct : -1e9; }
     return _sprPotMax(r);
+}
+// 🎯 Хід у бік, куди накручено сильніше (той самий `lean`, що й бар).
+function _sprLeanMove(r) {
+    const side = r.lean || (r.fired && r.fired.side) || null;
+    if (!side) return null;
+    const pct = Number(side === 'LONG' ? r.move_long_pct : r.move_short_pct);
+    const tgt = side === 'LONG' ? r.tgt_long : r.tgt_short;
+    return isFinite(pct) ? {side, pct, tgt} : null;
+}
+// ⚖ Бар перетягування: натяг SHORT ліворуч, LONG праворуч (половина = 100).
+function _sprTugHTML(pl, ps, big) {
+    const L = Math.max(0, Math.min(100, Number(pl) || 0)), S = Math.max(0, Math.min(100, Number(ps) || 0));
+    return `<span class="spr-tug${big ? ' big' : ''}"><i class="s" style="width:${S / 2}%"></i><i class="l" style="width:${L / 2}%"></i><b></b></span>`;
+}
+function _sprAggPaint() {
+    const el = document.getElementById('spr-agg');
+    if (!el) return;
+    const a = _sprMeta.agg;
+    if (!a || !a.coins) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    const pL = Number(a.prob_long) || 50;
+    const lean = a.lean === 'LONG' ? `<span style="color:#4ade80;font-weight:700">▲ LONG ${pL.toFixed(0)}%</span>`
+        : a.lean === 'SHORT' ? `<span style="color:#f87171;font-weight:700">▼ SHORT ${(100 - pL).toFixed(0)}%</span>`
+        : `<span style="color:#cbd5e1;font-weight:700">⚖ рівновага ${pL.toFixed(0)}/${(100 - pL).toFixed(0)}</span>`;
+    const tot = (Number(a.sum_long) || 0) + (Number(a.sum_short) || 0);
+    const top = (t, side) => t ? `<span class="spr-k">найсильніша ${side}</span><span style="font-family:monospace;color:${side === 'LONG' ? '#4ade80' : '#f87171'}">${t.symbol} ${Math.round(t.pot)}${t.move_pct != null ? ` · ${side === 'LONG' ? '+' : '−'}${Number(t.move_pct).toFixed(2)}%` : ''}</span>` : '';
+    el.innerHTML = `<span class="spr-k">куди накручено WATCHLIST</span>`
+        + `<span style="font-family:monospace;color:#f87171">SHORT ${Math.round(a.sum_short || 0)}</span>`
+        + `<span title="Сума потенціалу LONG проти SHORT по ${a.coins} монетах із зарядом ≥ 45 або вистрілених. Плоскі монети не враховуються — вони нічого не накручують.">${_sprTugHTML(tot ? 200 * (a.sum_long || 0) / tot : 0, tot ? 200 * (a.sum_short || 0) / tot : 0, true)}</span>`
+        + `<span style="font-family:monospace;color:#4ade80">${Math.round(a.sum_long || 0)} LONG</span>`
+        + lean + `<span>· ${a.coins} монет: 🟢 ${a.n_long} / 🔴 ${a.n_short}</span>`
+        + top(a.top_long, 'LONG') + top(a.top_short, 'SHORT');
 }
 function sprSort(c) {
     if (_sprSortCol === c) _sprSortDir = -_sprSortDir;
@@ -16747,6 +16793,23 @@ function _sprFilter(r, d) {
     if (d === 'fired') return r.state === 'fired';
     if (d === 'flat') return r.state === 'flat';
     return true;
+}
+function _sprTugCell(r) {
+    const pL = r.prob_long != null ? Number(r.prob_long) : 50;
+    const side = r.lean;
+    const lbl = side === 'LONG' ? `<span style="color:#4ade80">▲ ${pL.toFixed(0)}%</span>`
+        : side === 'SHORT' ? `<span style="color:#f87171">▼ ${(100 - pL).toFixed(0)}%</span>`
+        : '<span style="color:#8b93a7">⚖ 50%</span>';
+    const tip = `Натяг LONG ${Math.round(r.pot_long || 0)} / SHORT ${Math.round(r.pot_short || 0)} · перевага ${Math.round(r.lean_pp || 0)} п. · ймовірність вгору ${pL.toFixed(0)}% / вниз ${(100 - pL).toFixed(0)}%`;
+    return `<td style="white-space:nowrap" title="${tip}">${_sprTugHTML(r.pot_long, r.pot_short)}<span style="display:inline-block;width:44px;margin-left:6px;text-align:right;font-family:monospace">${lbl}</span></td>`;
+}
+function _sprMoveCell(r) {
+    const m = _sprLeanMove(r);
+    if (!m) return '<td style="text-align:right;color:#4b5563">—</td>';
+    const col = m.side === 'LONG' ? '#4ade80' : '#f87171';
+    const fp = v => (typeof fmtPriceJS === 'function' ? fmtPriceJS(v) : Number(v).toFixed(4));
+    const tip = `Ціль LONG ${r.tgt_long != null ? fp(r.tgt_long) : '—'} (+${Number(r.move_long_pct || 0).toFixed(2)}%) · ціль SHORT ${r.tgt_short != null ? fp(r.tgt_short) : '—'} (−${Number(r.move_short_pct || 0).toFixed(2)}%)`;
+    return `<td style="text-align:right;white-space:nowrap;font-family:monospace;color:${col}" title="${tip}">${m.side === 'LONG' ? '▲ +' : '▼ −'}${m.pct.toFixed(2)}%<span style="color:#8b93a7"> → ${m.tgt != null ? fp(m.tgt) : '—'}</span></td>`;
 }
 function _sprPotCell(v, side, minPot, mode) {
     const n = Math.round(Number(v) || 0);
@@ -16767,6 +16830,7 @@ function sprRender() {
     const sumEl = document.getElementById('spr-sum');
     if (!on) { if (sumEl) sumEl.textContent = '🔌 вимкнено'; tb.dataset.sig = ''; return; }
     _sprStatusPaint();
+    _sprAggPaint();
     const minPot = Number(_sprMeta.min_pot != null ? _sprMeta.min_pot : 40);
     const mode = _sprMeta.gate_on === false ? 'off' : 'require';
     const cnt = {all: 0, LONG: 0, SHORT: 0, fired: 0, flat: 0};
@@ -16794,11 +16858,11 @@ function sprRender() {
         if (a) a.textContent = th.getAttribute('data-sprsort') === _sprSortCol ? (_sprSortDir > 0 ? ' ▲' : ' ▼') : '';
     });
     const sig = JSON.stringify([_sprDir, _sprSortCol, _sprSortDir, minPot, mode,
-        rows.map(r => [r.symbol, r.state, r.charge, r.bias, r.pot_long, r.pot_short, r.trade_side, (r.queues || []).join(','), r.restored])]);
+        rows.map(r => [r.symbol, r.state, r.charge, r.bias, r.pot_long, r.pot_short, r.lean, r.move_long_pct, r.move_short_pct, r.trade_side, (r.queues || []).join(','), r.restored])]);
     if (tb.dataset.sig === sig) return;
     tb.dataset.sig = sig;
     if (!rows.length) {
-        tb.innerHTML = `<tr><td colspan="10" class="tm-empty-msg">${_sprRows.length ? 'Немає монет у цій вкладці' : 'Даних ще немає — сканер рахує «Пружину» на першому проході по WATCHLIST'}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="12" class="tm-empty-msg">${_sprRows.length ? 'Немає монет у цій вкладці' : 'Даних ще немає — сканер рахує «Пружину» на першому проході по WATCHLIST'}</td></tr>`;
         return;
     }
     tb.innerHTML = rows.map(r => {
@@ -16821,6 +16885,7 @@ function sprRender() {
             + `<td style="white-space:nowrap"><span style="display:inline-block;width:28px;text-align:right;font-family:monospace;color:${col}">${chg}</span>`
             + `<span style="display:inline-block;width:56px;height:6px;margin-left:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;vertical-align:middle"><span style="display:block;height:100%;width:${chg}%;background:${col}"></span></span></td>`
             + `<td style="white-space:nowrap;font-family:monospace">${d}</td>`
+            + _sprTugCell(r) + _sprMoveCell(r)
             + _sprPotCell(r.pot_long, 'LONG', minPot, mode)
             + _sprPotCell(r.pot_short, 'SHORT', minPot, mode)
             + `<td style="white-space:nowrap;font-family:monospace;color:#cbd5e1">${r.squeeze_bars || 0} год · ${r.band || 'off'}</td>`
@@ -16877,7 +16942,7 @@ async function sprLoad(force) {
             + `<span style="color:#f87171">⚠️ дані «Пружини» не отримано: ${why}</span>`
             + `<span>· повтор через 5с</span></div>`;
         const tb = document.getElementById('spr-tbody');
-        if (tb && !_sprRows.length) { tb.dataset.sig = ''; tb.innerHTML = `<tr><td colspan="10" class="tm-empty-msg">⚠️ ${why}</td></tr>`; }
+        if (tb && !_sprRows.length) { tb.dataset.sig = ''; tb.innerHTML = `<tr><td colspan="12" class="tm-empty-msg">⚠️ ${why}</td></tr>`; }
     };
     try {
         const r = await fetch('/api/spring/state');
@@ -16887,7 +16952,7 @@ async function sprLoad(force) {
         _sprErr = '';
         _sprRows = d.rows || [];
         if (d.server_now && typeof _srvSkewNote === 'function') _srvSkewNote(d.server_now);
-        _sprMeta = {enabled: d.enabled, stats: d.stats || {}, next_at: d.next_at, gate_on: d.gate_on, min_pot: d.min_pot, watchlist: d.watchlist, ts: d.ts};
+        _sprMeta = {enabled: d.enabled, agg: d.agg || null, stats: d.stats || {}, next_at: d.next_at, gate_on: d.gate_on, min_pot: d.min_pot, watchlist: d.watchlist, ts: d.ts};
         sprRender();
     } catch (e) { console.error('spring load', e); fail('немає звʼязку з ботом (' + (e && e.message || e) + ')'); }
 }

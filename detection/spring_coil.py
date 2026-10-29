@@ -60,6 +60,11 @@ FIRE_RANGE_ATR = 1.8
 FIRE_VOL_X = 1.8
 FIRE_LOOK = 3
 
+# 🎯 Ймовірний хід після вистрілу = «виміряний рух»: висота коробки,
+# відкладена від її межі (класична проєкція стиснення). Підлога — ATR×N, бо
+# надто вузька коробка дала б «хід» менший за звичайний шум бару.
+MOVE_MIN_ATR = 1.5
+
 MODES = ('off', 'priority', 'require')
 STATE_LABEL = {'fired': '💥 вистрілила', 'charged': '🌀 заряджена',
                'building': '⏳ заряджається', 'flat': '😴 без заряду'}
@@ -237,6 +242,7 @@ def analyze(klines: List[Dict]) -> Dict:
         pot_short = charge * (1.0 - bias) / 2.0
 
     d = 'LONG' if bias >= DIR_MIN else ('SHORT' if bias <= -DIR_MIN else None)
+    proj = projection(price, box_h, box_l, a_now, pot_long, pot_short, fired)
     t = kl[last].get('t')
     try:
         t = int(float(t))
@@ -251,9 +257,82 @@ def analyze(klines: List[Dict]) -> Dict:
         'unit_r': round(ur, 2) if ur is not None else None,
         'box_pct': round(box_pct, 2), 'box_hi': box_h, 'box_lo': box_l,
         'vol_ratio': round(vol_ratio, 2), 'atr_rank': round(rank * 100.0, 1),
-        'fired': fired, 'price': price, 'bar_t': t,
+        'fired': fired, 'price': price, 'bar_t': t, 'atr': a_now,
+        **proj,
         'parts': {k: round(x, 3) for k, x in {**parts_c, **parts_b}.items()},
     }
+
+
+def projection(price: float, box_h: float, box_l: float, atr: float,
+               pot_long: float, pot_short: float, fired: Optional[Dict] = None) -> Dict:
+    """🎯 Куди і наскільки найсильніше накручено пружину. ЧИСТА.
+
+    • `lean` — бік, у який накручено сильніше (LONG / SHORT; рівно → None);
+    • `lean_pp` — перевага натягу в пунктах (|pot_long − pot_short|);
+    • `prob_long` — частка натягу вгору, % (pot_long / (pot_long + pot_short));
+      нуль заряду → 50 (сторону не вигадуємо);
+    • `move_long_pct` / `move_short_pct` — ймовірний хід від ПОТОЧНОЇ ціни до
+      цілі «виміряного руху» (`tgt_long` = верх коробки + висота, `tgt_short`
+      = низ − висота); висота не менша за MOVE_MIN_ATR × ATR. Після вистрілу
+      ціль відкладається від рівня пробою.
+    """
+    w = max(float(box_h) - float(box_l), MOVE_MIN_ATR * float(atr or 0.0))
+    hi, lo = float(box_h), float(box_l)
+    if fired:
+        lvl = float(fired.get('level') or (hi if fired.get('side') == 'LONG' else lo))
+        if fired.get('side') == 'LONG':
+            hi = lvl
+        else:
+            lo = lvl
+    tl, ts = hi + w, max(lo - w, 0.0)
+    pl, ps = float(pot_long or 0.0), float(pot_short or 0.0)
+    tot = pl + ps
+    lean = 'LONG' if pl > ps else ('SHORT' if ps > pl else None)
+    p = float(price or 0.0)
+    return {
+        'lean': lean, 'lean_pp': round(abs(pl - ps), 1),
+        'prob_long': round(100.0 * pl / tot, 1) if tot > 0 else 50.0,
+        'tgt_long': tl, 'tgt_short': ts,
+        'move_long_pct': round((tl - p) / p * 100.0, 2) if p > 0 else None,
+        'move_short_pct': round((p - ts) / p * 100.0, 2) if p > 0 else None,
+    }
+
+
+def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING) -> Dict:
+    """⚖ Куди накручено WATCHLIST загалом. ЧИСТА.
+
+    Сума натягу LONG проти SHORT по монетах із зарядом ≥ `min_charge` (або
+    вистрілених): плоска монета нічого не накручує і не має розмивати картину.
+    `prob_long` — частка суми натягу вгору; `top_long`/`top_short` —
+    найсильніше накручена монета кожного боку (з ймовірним ходом).
+    """
+    sl = ss = 0.0
+    n_l = n_s = n = 0
+    top = {'LONG': None, 'SHORT': None}
+    for sym, r in (recs or {}).items():
+        if not isinstance(r, dict) or not r.get('ok', True):
+            continue
+        if r.get('state') != 'fired' and float(r.get('charge') or 0.0) < min_charge:
+            continue
+        pl, ps = float(r.get('pot_long') or 0.0), float(r.get('pot_short') or 0.0)
+        n += 1
+        sl += pl
+        ss += ps
+        if pl > ps:
+            n_l += 1
+        elif ps > pl:
+            n_s += 1
+        for side, v, mv in (('LONG', pl, r.get('move_long_pct')), ('SHORT', ps, r.get('move_short_pct'))):
+            if v > 0 and (top[side] is None or v > top[side]['pot']):
+                top[side] = {'symbol': sym, 'pot': round(v, 1), 'move_pct': mv,
+                             'state': r.get('state')}
+    tot = sl + ss
+    pl_ = round(100.0 * sl / tot, 1) if tot > 0 else 50.0
+    lean = 'LONG' if pl_ - 50 > 5 else ('SHORT' if 50 - pl_ > 5 else None)
+    return {'coins': n, 'n_long': n_l, 'n_short': n_s,
+            'sum_long': round(sl, 1), 'sum_short': round(ss, 1),
+            'prob_long': pl_, 'lean': lean,
+            'top_long': top['LONG'], 'top_short': top['SHORT']}
 
 
 def potential(rec: Optional[Dict], side: str) -> Optional[float]:

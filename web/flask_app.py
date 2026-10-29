@@ -3764,12 +3764,29 @@ def register_api_routes(app):
                         queues = ff._mm_queue_map() or {}
             except Exception:
                 pass
-            rows = []
+            try:
+                from detection import spring_coil as _spc
+            except Exception:
+                _spc = None
+            rows, full = [], {}
             for sym, r in recs.items():
+                r = dict(r)
+                if _spc is not None and 'lean' not in r and r.get('box_hi') is not None:
+                    # запис із минулого запуску (до появи проєкції) — добудувати
+                    # з тих самих полів, щоб бар і хід не були порожні до 1h-бару
+                    try:
+                        r.update(_spc.projection(r.get('price'), r.get('box_hi'), r.get('box_lo'),
+                                                 r.get('atr') or 0.0, r.get('pot_long'),
+                                                 r.get('pot_short'), r.get('fired')))
+                    except Exception:
+                        pass
+                full[sym] = r
                 row = {'symbol': sym, **{k: r.get(k) for k in (
                     'state', 'label', 'charge', 'bias', 'dir', 'pot_long', 'pot_short',
                     'squeeze_bars', 'band', 'box_pct', 'vol_ratio', 'atr_rank',
-                    'fired', 'price', 'bar_t', 'parts', 'restored')}}
+                    'fired', 'price', 'bar_t', 'parts', 'restored',
+                    'lean', 'lean_pp', 'prob_long', 'tgt_long', 'tgt_short',
+                    'move_long_pct', 'move_short_pct')}}
                 row['trade_side'] = sides.get(sym)
                 row['queues'] = list(queues.get(sym) or [])
                 rows.append(row)
@@ -3780,6 +3797,7 @@ def register_api_routes(app):
             return jsonify({'ok': True, 'enabled': enabled, 'rows': rows, 'stats': stats,
                             'next_at': (int(_now // 3600) + 1) * 3600, 'server_now': _now,
                             'gate_on': gate_on, 'min_pot': min_pot,
+                            'agg': (_spc.aggregate(full) if _spc is not None else None),
                             'watchlist': wl, 'tf': '1h', 'ts': time.time()})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e), 'rows': []})
