@@ -6302,7 +6302,16 @@ def register_api_routes(app):
         if not symbol:
             return jsonify({'ok': False, 'reason': 'symbol required'})
         return jsonify(tm.manual_close_shadow(symbol))
-    
+
+    @app.route('/api/tm/shadow/close-all', methods=['POST'])
+    def api_tm_shadow_close_all():
+        """✋ Закрити ВСІ відкриті paper-позиції (реальні не чіпає)."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        return jsonify(tm.manual_close_all_shadow())
+
     @app.route('/api/tm/positions/manual-sl-tp', methods=['POST'])
     def api_tm_manual_sl_tp():
         """Set or clear per-position manual SL/TP override.

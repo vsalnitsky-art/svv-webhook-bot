@@ -7368,3 +7368,13 @@ ATR у верхніх ~10% історії, обʼєм ×1.5-2. За попере
   реальну угоду не закриваємо (нова однаково не пішла б у real).
 - Paper-реверс не змінювався (біржі там немає).
 Тест: `test_reverse_flatten.py` (6).
+
+## ✖ «ЗАКРИТИ ВСІ» PAPER + 💵 БЕЗ СУМ У TELEGRAM (вимога 30.10)
+- Кнопка `#tm-shadow-close-all` у заголовку «Open Paper Positions» →
+  `closeAllTMShadow()` → `POST /api/tm/shadow/close-all` →
+  `TradeManager.manual_close_all_shadow()` (кожна позиція через
+  `manual_close_shadow`, reason `manual`). Реальні угоди НЕ чіпає; невдалі
+  монети повертаються у `failed` і показуються в alert.
+- У Telegram сум прибутку/збитку в $ НЕМАЄ: єдине місце було 🔄 External close
+  (`_ext_notify`) — лишився відсоток. Решта повідомлень і так несли лише %.
+Тест: `test_paper_close_all.py` (3).

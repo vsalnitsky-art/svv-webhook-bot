@@ -6042,8 +6042,9 @@ class TradeManager:
                 f"🔄 External close: {symbol} {_side}\n"
                 f"Entry: {self._fmt_price(c.get('entry_price'))} → "
                 f"Exit: {self._fmt_price(c.get('exit_price'))}\n"
-                f"PnL: {_sign}{c.get('pnl_pct', 0):.2f}% "
-                f"({_sign}${c.get('pnl_usd', 0):.2f})",
+                # 💵 Сум прибутку/збитку в Telegram НЕ пишемо (вимога 30.10) —
+                # лише відсоток руху.
+                f"PnL: {_sign}{c.get('pnl_pct', 0):.2f}%",
                 category='trades'
             )
         self._finalize_close_async(symbol, closed, _side, pos,
@@ -8336,7 +8337,26 @@ class TradeManager:
         current = self._get_current_price(symbol) or pos['entry_price']
         self._close_shadow(symbol, current, reason=reason)
         return {'ok': True}
-    
+
+    def manual_close_all_shadow(self, reason: str = 'manual') -> Dict:
+        """✋ Закрити ВСІ paper-позиції однією дією (кнопка над таблицею
+        «Open Paper Positions»). Реальні угоди НЕ чіпаються. Кожна позиція
+        проходить звичайний `manual_close_shadow`, тож архів, лог і
+        чистка черг (`note_manual_close`) — як при поштучному закритті."""
+        with self._lock:
+            syms = list(self._shadow_positions.keys())
+        closed, failed = [], []
+        for sym in syms:
+            try:
+                r = self.manual_close_shadow(sym, reason=reason)
+                if r.get('ok'):
+                    closed.append(sym)
+                else:
+                    failed.append({'symbol': sym, 'reason': r.get('reason', 'unknown')})
+            except Exception as e:
+                failed.append({'symbol': sym, 'reason': str(e)})
+        return {'ok': True, 'closed': closed, 'failed': failed}
+
     def close_all_with_queue(self, reason: str = 'auto_gate_wait',
                               throttle_secs: float = 0.4) -> Dict:
         """Close EVERY open position — real (💼 Trade Manager) and paper

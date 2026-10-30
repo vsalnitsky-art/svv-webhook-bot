@@ -5554,6 +5554,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0">
                 Open Paper Positions <span id="tm-shadow-open-count" style="color:#666;font-weight:normal">(0)</span>
                 <span id="tm-shadow-stats-inline" style="color:#888;font-weight:normal;font-size:0.72rem;margin-left:8px"></span>
+                <button type="button" id="tm-shadow-close-all" onclick="closeAllTMShadow()" title="Закрити ВСІ відкриті paper-позиції за поточною ціною. Реальні угоди не чіпаються." style="float:right;font-size:0.7rem;font-weight:600;padding:3px 10px;border-radius:4px;border:1px solid rgba(239,68,68,0.5);background:rgba(239,68,68,0.12);color:#f87171;cursor:pointer">✖ Закрити всі</button>
             </h3>
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
@@ -19075,6 +19076,28 @@ async function closeTMPosition(symbol) {
         }
     } catch (err) {
         alert('Close error: ' + err);
+    }
+}
+
+async function closeAllTMShadow() {
+    const cnt = ((document.getElementById('tm-shadow-open-count') || {}).textContent || '').replace(/\D/g, '');
+    if (cnt === '0') { alert('Відкритих paper-позицій немає.'); return; }
+    if (!confirm(`Закрити ВСІ paper-позиції${cnt ? ' (' + cnt + ')' : ''} зараз? Реальні угоди не чіпаються.`)) return;
+    const btn = document.getElementById('tm-shadow-close-all');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Закриваю…'; }
+    try {
+        const res = await fetch('/api/tm/shadow/close-all', {method: 'POST'});
+        if (!res.ok) { alert('Close-all failed: HTTP ' + res.status); return; }
+        const d = await res.json();
+        if (!d.ok) { alert('Close-all failed: ' + (d.reason || 'unknown')); return; }
+        const f = d.failed || [];
+        if (f.length) alert('Закрито ' + (d.closed || []).length + ', не вдалось: ' +
+                            f.map(x => x.symbol + ' (' + x.reason + ')').join(', '));
+        setTimeout(loadTMState, 300);
+    } catch (err) {
+        alert('Close-all error: ' + err);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '✖ Закрити всі'; }
     }
 }
 
