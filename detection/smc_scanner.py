@@ -357,6 +357,10 @@ DB_KEY_OB_MARK_STATE = 'smc_ob_mark_state_v1'
 OB_MARK_RESTORE_MAX_AGE = 8 * 3600
 # 💾 Похідні від скану (PD-зона до закриття бару) — див. `_persist_derived_state`.
 DB_KEY_DERIVED_STATE = 'smc_derived_state_v1'
+# 🌀 Поля `_spring_stats`, що переживають рестарт (накопичувальні лічильники
+# воріт + останній перерахунок); `tick_*` — ознака живого скану, не зберігаємо.
+SPRING_STATS_KEEP = ('calc_at', 'calc_n', 'calc_bar', 'pass', 'block', 'nodata',
+                     'since', 'last')
 SIGNALS_PERSIST_LIMIT = 50         # max signals stored per symbol
 
 DEFAULT_SETTINGS = {
@@ -3621,8 +3625,14 @@ class SMCScanner:
                       if s in wl and isinstance(c, dict) and c.get('until')}
                 spr = {s: dict(c) for s, c in (getattr(self, '_spring', None) or {}).items()
                        if s in wl}
+                # 🌀 Лічильники воріт і останній перерахунок — накопичуються
+                # між рестартами (tick_* — ознака ЖИВОГО скану, її не зберігаємо).
+                sst = {k: v for k, v in self._spring_stats_ref().items()
+                       if k in SPRING_STATS_KEEP}
+                sst['last'] = [dict(x) for x in (sst.get('last') or [])]
             self.db.set_setting(DB_KEY_DERIVED_STATE,
-                                {'ts': time.time(), 'pd': pd, 'spring': spr})
+                                {'ts': time.time(), 'pd': pd, 'spring': spr,
+                                 'spring_stats': sst})
         except Exception as e:
             print(f"[SMC] derived persist error: {e}")
         try:
@@ -3671,6 +3681,13 @@ class SMCScanner:
                 m += 1
             if m:
                 print(f"[SMC] Restored {m} spring records")
+            sst = (st or {}).get('spring_stats') if isinstance(st, dict) else None
+            if isinstance(sst, dict):
+                ref = self._spring_stats_ref()
+                for k in SPRING_STATS_KEEP:
+                    if k in sst:
+                        ref[k] = sst[k]
+                ref['last'] = [dict(x) for x in (ref.get('last') or []) if isinstance(x, dict)][:8]
         except Exception as e:
             print(f"[SMC] derived load error: {e}")
         try:

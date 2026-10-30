@@ -7,6 +7,7 @@ import importlib.util
 import os
 import random
 import re
+import threading
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 _sp = importlib.util.spec_from_file_location('spring_coil_t', os.path.join(_ROOT, 'detection', 'spring_coil.py'))
@@ -422,6 +423,45 @@ def test_page_shows_phase_tabs_and_move_direction():
         _check(k in _HTML, k)
     for k in ("'phase'", "'move24_pct'", "'atr_peak_ratio'", "'unit_r'"):
         _check(k in _APP, k)
+
+
+class _MemDB:
+    def __init__(self): self.d = {}
+    def get_setting(self, k, default=None): return self.d.get(k, default)
+    def set_setting(self, k, v):
+        import json
+        self.d[k] = json.loads(json.dumps(v))   # як справжня БД: лише JSON
+
+
+def test_gate_counters_survive_a_restart():
+    """💾 30.10: «дані Пружини при рестарті не накопичуються» — записи монет
+    уже відновлювались, а лічильники воріт і останній перерахунок обнулялись.
+    Тепер вони накопичуються; `tick_*` (ознака живого скану) — ні."""
+    import time as _t
+    rec = {'ok': True, 'pot_long': 70, 'pot_short': 10, 'label': '🌀', 'charge': 80,
+           'bar_t': int(_t.time()) // 3600 * 3600 - 3600}
+    db = _MemDB()
+    a = _scanner({'spring_min_pot': 40, 'pd_zone_timeframe': '1h'}, {'ETHUSDT': rec})
+    a.db, a._lock, a._watchlist, a._pd_zone_cache = db, threading.RLock(), ['ETHUSDT'], {}
+    a._scan_count = 3
+    a._spring_update('ETHUSDT', _coil(seed=3))
+    a._spring['ETHUSDT'] = dict(rec)            # бари фікстури старі — запис свіжий
+    a._spring_gate('ETHUSDT', 'LONG'); a._spring_gate('ETHUSDT', 'SHORT')
+    since = a.spring_stats()['since']
+    a._persist_derived_state()
+
+    b = _scanner({'spring_min_pot': 40, 'pd_zone_timeframe': '1h'}, {})
+    b.db, b._watchlist, b._pd_zone_cache = db, ['ETHUSDT'], {}
+    b._load_derived_state()
+    st = b.spring_stats()
+    _check((st['pass'], st['block']) == (1, 1) and st['since'] == since, st)
+    _check(st['calc_n'] == 1 and st['calc_at'] > 0, 'останній перерахунок відновлено')
+    _check(st['last'][0]['outcome'] == 'block', st['last'])
+    _check('tick_at' not in st, 'ознака живого скану не відновлюється')
+    _check('ETHUSDT' in b._spring, 'запис монети відновлено')
+    b._spring_gate('ETHUSDT', 'LONG')
+    _check(b.spring_stats()['pass'] == 2, 'лічильник продовжує рахувати')
+    _check('hmd(st.since)' in _HTML, 'сторінка показує дату початку накопичення')
 
 
 if __name__ == '__main__':

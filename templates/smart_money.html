@@ -17013,6 +17013,10 @@ function _sprStatusPaint() {
     const pct = wl ? Math.max(0, Math.min(100, Math.round(n / wl * 100))) : 0;
     const hm = t => { if (!t) return '—'; const d = new Date(((typeof _srvToPc === 'function') ? _srvToPc(t) : t) * 1000);
         return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+    // дата — коли момент не сьогодні (лічильники накопичуються між рестартами)
+    const hmd = t => { if (!t) return '—'; const d = new Date(((typeof _srvToPc === 'function') ? _srvToPc(t) : t) * 1000);
+        const td = new Date(); const same = d.toDateString() === td.toDateString();
+        return (same ? '' : String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + ' ') + hm(t); };
     const dot = live ? '<span class="spr-dot"></span>' : `<span class="spr-dot ${tickAt ? 'idle' : 'off'}"></span>`;
     const scan = live
         ? `<span class="spr-k">сканую</span><span class="spr-v">${st.tick_sym || '—'}</span>`
@@ -17028,7 +17032,7 @@ function _sprStatusPaint() {
         ? `<span class="spr-k">ворота</span><span class="spr-chip" style="color:#4ade80">✓ ${Number(st.pass) || 0}</span>`
           + `<span class="spr-chip" style="color:#f87171">✗ ${Number(st.block) || 0}</span>`
           + `<span class="spr-chip" style="color:#8b93a7" title="Монету ще не пораховано — ворота не блокували">? ${Number(st.nodata) || 0}</span>`
-          + `<span>від ${hm(st.since)}</span>`
+          + `<span title="Лічильники накопичуються і переживають рестарт бота">від ${hmd(st.since)}</span>`
           + (st.last || []).slice(0, 5).map(x => `<span class="spr-chip" title="${hm(x.ts)} · потенціал ${x.pot != null ? x.pot : '—'}" style="color:${x.outcome === 'pass' ? '#4ade80' : x.outcome === 'block' ? '#f87171' : '#8b93a7'}">${x.outcome === 'pass' ? '✓' : x.outcome === 'block' ? '✗' : '?'} ${x.symbol} ${x.side}</span>`).join('')
         : '<span class="spr-k">ворота</span><span>вимкнено — сигнали йдуть без перевірки потенціалу</span>';
     el.innerHTML = `<div class="spr-row">${dot}${scan}</div><div class="spr-row">${calc}</div><div class="spr-row">${g}</div>`;
