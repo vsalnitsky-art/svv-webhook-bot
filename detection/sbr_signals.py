@@ -289,19 +289,28 @@ def fmt_price(p) -> str:
 
 
 def tg_text(symbol: str, items: List[tuple]) -> str:
-    """Текст Telegram у форматі мітки Pine. `items` = [(tf, signal)] одного
-    боку — 1H і 4H, що зійшлись на одному закритті, ідуть ОДНИМ повідомленням."""
-    tf_lbl = '+'.join(TF_LABEL[tf] for tf, _ in items)
+    """Текст Telegram (формат користувача 30.10):
+
+        🔔 SBR · 🟢 LONG #2
+        #BTCUSDT · 1H · 76.27%
+        🎯 Trigger: 78,540.20
+        🛑 SL: 77,912.40
+
+    `items` = [(tf, signal)] одного боку — 1H і 4H, що зійшлись на одному
+    закритті, ідуть ОДНИМ повідомленням (`1H+4H`; рівні й номер — старшого TF,
+    Score — більший). Telegram не фарбує текст, тож «кольори» дають емодзі-
+    маркери, **жирний** для напрямку й Score і `моноширинний` для цін."""
+    tf_lbl = '+'.join(TF_LABEL[tf] for tf, _ in sorted(items, key=lambda x: TF_SEC[x[0]]))
     side = items[0][1]['side']
     head_sig = max(items, key=lambda x: TF_SEC[x[0]])[1]    # старший TF — головний
+    score = max(float(sig['score']) for _, sig in items)
     emo = '🟢' if side == 'LONG' else '🔴'
-    lines = [f"🔔 <b>SBR · #{symbol}</b> {emo} <b>{side} #{head_sig['n']}</b> · {tf_lbl}"]
-    for tf, sig in sorted(items, key=lambda x: TF_SEC[x[0]]):
-        pre = f"[{TF_LABEL[tf]}] " if len(items) > 1 else ''
-        lines.append(f"{pre}Time: {sig['time_kyiv']} Kyiv · Trigger: {fmt_price(sig['trigger'])}")
-        lines.append(f"{pre}Score: {sig['score']:.2f} · Risk: {sig['risk']} · "
-                     f"SL: {fmt_price(sig['sl'])}")
-    return '\n'.join(lines)
+    return '\n'.join([
+        f"🔔 <b>SBR</b> · {emo} <b>{side} #{head_sig['n']}</b>",
+        f"<b>#{symbol}</b> · <code>{tf_lbl}</code> · 📊 <b>{score:.2f}%</b>",
+        f"🎯 Trigger: <code>{fmt_price(head_sig['trigger'])}</code>",
+        f"🛑 SL: <code>{fmt_price(head_sig['sl'])}</code>",
+    ])
 
 
 # ═══════════════════════════ РУШІЙ (I/O) ═════════════════════════════════════

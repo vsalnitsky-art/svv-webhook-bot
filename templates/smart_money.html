@@ -2876,6 +2876,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </button>
                         <span id="mm-tg-check" style="font-size:0.68rem;color:#8b93a7"></span>
                     </div>
+                    <!-- 💬 Коментарі в темах (вимога 30.10). -->
+                    <div style="flex-basis:100%;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                        <button onclick="tgComments(false)" class="sm-btn"
+                                style="font-size:0.68rem;padding:4px 10px"
+                                title="Перевірити, чи можуть учасники коментувати повідомлення бота в темах 💰 Funding · 🧮 МММ-монітор · 📈 Угоди · 🔔 Сигнали.">
+                            💬 Коментарі: перевірити
+                        </button>
+                        <button onclick="tgComments(true)" class="sm-btn"
+                                style="font-size:0.68rem;padding:4px 10px"
+                                title="Дозволити учасникам писати в групі (решта їхніх прав не змінюється) і відкрити закриті теми. Потрібно, щоб бот був адміном групи з правом «Блокувати учасників» і «Керувати темами». Канал так не вмикається — групу обговорень привʼязують у налаштуваннях каналу.">
+                            💬 Увімкнути коментарі
+                        </button>
+                        <span id="tg-comments" style="font-size:0.68rem;color:#8b93a7"></span>
+                    </div>
                 </div>
             </details>
             <!-- 🪗 СПИСОК МОНЕТ — ВЛАСНА ГАРМОШКА (вимога 18.09: «зроби вікно
@@ -14336,6 +14350,32 @@ async function mmTgCheck(test) {
         el.textContent = bits.join(' · ')
             + (d.reason ? ' — ' + d.reason : '')
             + (d.rename_err ? ' · перейменування: ' + d.rename_err : '');
+    } catch (e) {
+        if (el) { el.style.color = '#f87171'; el.textContent = '⚠️ ' + e.message; }
+    }
+}
+// 💬 Коментарі в публічних темах: стан по кожній темі + кнопка «увімкнути».
+async function tgComments(enable) {
+    const el = document.getElementById('tg-comments');
+    if (enable && !confirm('Дозволити учасникам групи писати (коментувати) і відкрити закриті теми?')) return;
+    if (el) { el.style.color = '#8b93a7'; el.textContent = '⏳ …'; }
+    try {
+        const r = await fetch('/api/tg/comments', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enable: !!enable})
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (!el) return;
+        if (!d.ok) { el.style.color = '#f87171'; el.textContent = '⚠️ ' + (d.reason || 'збій'); return; }
+        const rows = d.rows || [];
+        const bad = rows.filter(x => !x.can_comment);
+        el.style.color = bad.length ? '#fbbf24' : '#4ade80';
+        el.innerHTML = rows.map(x =>
+            `<span style="color:${x.can_comment ? '#4ade80' : '#f87171'}">${x.can_comment ? '✅' : '⛔'} ${x.label}</span>`
+            + (x.fixed ? ' <span style="color:#38bdf8">(увімкнено)</span>' : '')
+            + (x.reason ? ` <span style="color:#8b93a7">— ${String(x.reason).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</span>` : '')
+        ).join(' · ');
     } catch (e) {
         if (el) { el.style.color = '#f87171'; el.textContent = '⚠️ ' + e.message; }
     }

@@ -3524,6 +3524,17 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/tg/comments', methods=['POST'])
+    def api_tg_comments():
+        """💬 Коментарі в публічних темах: {enable: bool} → стан по кожній
+        темі; enable=true дозволяє учасникам писати і відкриває закриті теми."""
+        data = request.get_json(silent=True) or {}
+        try:
+            from web.tg_bot import comments_status
+            return jsonify({'ok': True, 'rows': comments_status(enable=bool(data.get('enable')))})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/settings', methods=['POST'])
     def api_fuel_filter_settings():
         """Update settings. Body may include any of: enabled, duration_minutes,

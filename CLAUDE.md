@@ -7378,3 +7378,20 @@ ATR у верхніх ~10% історії, обʼєм ×1.5-2. За попере
 - У Telegram сум прибутку/збитку в $ НЕМАЄ: єдине місце було 🔄 External close
   (`_ext_notify`) — лишився відсоток. Решта повідомлень і так несли лише %.
 Тест: `test_paper_close_all.py` (3).
+
+## 🔔 ФОРМАТ TG-СИГНАЛУ SBR + 💬 КОМЕНТАРІ В ТЕМАХ (вимога 30.10)
+- `sbr_signals.tg_text` — формат користувача (4 рядки): `🔔 SBR · 🟢 LONG #2` /
+  `#BTCUSDT · 1H · 📊 76.27%` / `🎯 Trigger: …` / `🛑 SL: …`. Telegram не фарбує
+  текст → «кольори» = емодзі-маркери + <b> (бік, Score) + <code> (ціни, TF).
+  1H+4H на одному закритті → `1H+4H`, рівні й #N старшого TF, Score більший.
+  Time/Risk з тексту прибрано (є в таблиці блоку).
+- 💬 `tg_bot.comments_status(enable)` + `POST /api/tg/comments` + кнопки
+  «💬 Коментарі: перевірити / Увімкнути» у гармошці 📨 Сповіщення. Публічні теми
+  `_COMMENT_CATS` (funding/btc/trades/sbr). Група: `getChat` → права учасників;
+  enable → `setChatPermissions` (ЧИСТА `_merge_send_permission` ПЕРЕНОСИТЬ решту
+  прав, бо API скидає відсутні в False; `use_independent_chat_permissions`) +
+  `reopenForumTopic` (TOPIC_NOT_MODIFIED = успіх). Канал без `linked_chat_id` →
+  причина «привʼяжіть групу обговорень» (Bot API цього не вміє). Приватний чат
+  адміна не чіпається. Бот і далі ігнорує повідомлення учасників у групі.
+  Потрібні права бота-адміна: «Блокувати учасників» + «Керувати темами».
+Тести: `test_sbr_signals.py` (19), `test_tg_comments.py` (6).

@@ -497,6 +497,91 @@ def last_send_error():
     return _last_send_err
 
 
+# 💬 КОМЕНТАРІ В ТЕМАХ (вимога 30.10). Бот сам писати учасникам НЕ заважає —
+# повідомлення в групі він просто ігнорує (`_handle_message`). Коментувати не
+# дають НАЛАШТУВАННЯ ЧАТУ: у групи вимкнено «надсилання повідомлень» для
+# учасників, тему закрито, або це КАНАЛ без групи обговорень.
+_COMMENT_CATS = ('funding', 'btc', 'trades', 'sbr')
+
+
+def _merge_send_permission(perms):
+    """Поточні права учасників + `can_send_messages=True`. ЧИСТА.
+    ⚠️ Решту прав ПЕРЕНОСИМО як були: `setChatPermissions` скидає в False усе,
+    чого немає в запиті — інакше «увімкнути коментарі» мовчки забрало б медіа,
+    опитування тощо."""
+    out = {k: bool(v) for k, v in (perms or {}).items() if isinstance(v, bool)}
+    out['can_send_messages'] = True
+    return out
+
+
+def comments_status(enable=False):
+    """💬 Стан коментарів у публічних темах: [{category, label, chat, thread,
+    type, can_comment, reason, fixed}]. `enable=True` — ще й ВМИКАЄ там, де це
+    дозволяє Bot API: права учасників групи на повідомлення + відкриття
+    закритої теми. Канал так не вмикається (групу обговорень привʼязують у
+    налаштуваннях каналу) — про це сказано в `reason`."""
+    out, chats = [], {}
+    for cat in _COMMENT_CATS:
+        chat, thread = _cat_chat(cat)
+        row = {'category': cat, 'label': _CAT_LABEL.get(cat, cat), 'chat': chat,
+               'thread': thread, 'type': '', 'can_comment': False, 'reason': '',
+               'fixed': False}
+        out.append(row)
+        if not chat:
+            row['reason'] = 'чат не налаштовано'
+            continue
+        if str(chat) == str(_admin_chat() or ''):
+            row['reason'] = 'йде в ПРИВАТНИЙ чат адміна — там коментарів немає'
+            continue
+        info = chats.get(str(chat))
+        if info is None:
+            res = _api('getChat', {'chat_id': chat}) or {}
+            info = res.get('result') if res.get('ok') else {
+                'error': str(res.get('description') or res.get('error') or 'getChat не вдався')}
+            chats[str(chat)] = info
+        if info.get('error'):
+            row['reason'] = info['error']
+            continue
+        row['type'] = info.get('type', '')
+        if row['type'] == 'channel':
+            if info.get('linked_chat_id'):
+                row['can_comment'] = True
+            else:
+                row['reason'] = ('це КАНАЛ без групи обговорень — привʼяжіть групу: '
+                                 'Канал → Налаштування → Обговорення')
+            continue
+        perms = info.get('permissions') or {}
+        can = bool(perms.get('can_send_messages', True))
+        if not can and enable and not info.get('_perm_set'):
+            r = _api('setChatPermissions', {
+                'chat_id': chat, 'permissions': _merge_send_permission(perms),
+                'use_independent_chat_permissions': True}) or {}
+            if r.get('ok'):
+                perms = dict(perms, can_send_messages=True)
+                info['permissions'] = perms
+                info['_perm_set'] = True
+                can, row['fixed'] = True, True
+            else:
+                row['reason'] = ('не вдалось дозволити повідомлення: '
+                                 + str(r.get('description') or r.get('error') or 'відмова')
+                                 + ' (боту потрібне право адміна «Блокувати учасників»)')
+        elif info.get('_perm_set'):
+            can = True
+        if not can and not row['reason']:
+            row['reason'] = 'учасникам заборонено писати в групі (права групи)'
+        if can and thread and enable:
+            r = _api('reopenForumTopic', {'chat_id': chat,
+                                          'message_thread_id': int(thread)}) or {}
+            if r.get('ok'):
+                row['fixed'] = True
+            elif 'TOPIC_NOT_MODIFIED' not in str(r.get('description') or ''):
+                row['reason'] = ('тему не вдалось відкрити: '
+                                 + str(r.get('description') or r.get('error') or 'відмова'))
+                can = False
+        row['can_comment'] = can
+    return out
+
+
 def cat_tag(category):
     """Category hashtag for a category key (for callers that send directly)."""
     return _CAT_TAG.get(category, '')

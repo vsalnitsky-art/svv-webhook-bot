@@ -204,9 +204,18 @@ def test_tg_text_like_the_tv_label():
     sig = {'side': 'SHORT', 't': 0, 'close_t': 0, 'trigger': 2455.85, 'score': 76.39,
            'risk': '1R', 'sl': 2576.36, 'n': 1, 'time_kyiv': '19:00'}
     t = S.tg_text('ETHUSDT', [('4h', sig)])
-    for part in ('#ETHUSDT', 'SHORT #1', '4H', 'Time: 19:00 Kyiv', 'Trigger:', 'Score: 76.39',
-                 'Risk: 1R', 'SL:'):
-        _check(part in t, f'«{part}» у повідомленні: {t}')
+    lines = t.split('\n')
+    _check(lines == [
+        '🔔 <b>SBR</b> · 🔴 <b>SHORT #1</b>',
+        '<b>#ETHUSDT</b> · <code>4H</code> · 📊 <b>76.39%</b>',
+        '🎯 Trigger: <code>2,455.85</code>',
+        '🛑 SL: <code>2,576.36</code>',
+    ], f'формат 30.10: {lines}')
+    # 1H+4H на одному закритті — ОДНЕ повідомлення, рівні старшого TF, Score більший
+    s1 = dict(sig, score=80.0, trigger=2450.0, sl=2500.0, n=3)
+    t2 = S.tg_text('ETHUSDT', [('4h', sig), ('1h', s1)])
+    _check('<code>1H+4H</code>' in t2 and '<b>80.00%</b>' in t2
+           and '2,455.85' in t2 and 'SHORT #1' in t2 and t2.count('\n') == 3, t2)
 
 
 # ── 5. Книга МММ-SBR у fuel_filter ───────────────────────────────────────────
