@@ -795,6 +795,9 @@ class TradeManager:
         # In-memory state
         self._settings = self._load_settings()
         self._positions: Dict[str, Dict] = {}     # symbol → position dict
+        # 🔒 Монети, які бот ЗАРАЗ відкриває (ордер пішов, позиція ще не в книзі).
+        # Звірка з біржею їх НЕ «адоптує» як зовнішні (кейс ORDIUSDT 29.10).
+        self._opening: Dict[str, float] = {}
         self._closed_trades: List[Dict] = []
 
         # Live exchange-truth snapshot of open positions, keyed by symbol.
@@ -5879,6 +5882,29 @@ class TradeManager:
 
         # Place order
         bybit_side = 'Buy' if side == 'LONG' else 'Sell'
+        # 🔒 Позначка «відкриваємо» ДО ордера: між ордером і записом у книгу
+        # ідуть Decision/POC/знімок (секунди), і звірка з біржею встигала
+        # побачити позицію й «адоптувати» її як зовнішню (кейс ORDIUSDT 29.10).
+        self._opening[symbol] = time.time()
+        try:
+            return self._open_position_placed(
+                symbol, side, entry_price, opened_by, qty, sl_price, tp_price,
+                bybit_side, manual_sl, manual_tp)
+        finally:
+            self._opening.pop(symbol, None)
+
+    # Скільки секунд позначка «відкриваємо» ще захищає від адопції, якщо
+    # потік відкриття впав посередині (щоб монета не лишилась невидимою назавжди).
+    OPENING_GUARD_SEC = 120.0
+
+    def _is_opening(self, symbol: str) -> bool:
+        """ЧИСТА щодо біржі: бот саме відкриває цю монету (ордер пішов, позиції
+        ще немає в книзі) → звірка не має брати її за зовнішню."""
+        t = (getattr(self, '_opening', None) or {}).get(symbol)
+        return bool(t) and (time.time() - t) < self.OPENING_GUARD_SEC
+
+    def _open_position_placed(self, symbol, side, entry_price, opened_by, qty,
+                              sl_price, tp_price, bybit_side, manual_sl, manual_tp):
         try:
             result = self.bybit.place_order(
                 symbol=symbol,
@@ -6039,9 +6065,11 @@ class TradeManager:
             print(f"[TM] 🔄 External close detected for {symbol}: "
                   f"{_sign}{c.get('pnl_pct', 0):.2f}% (gone from Bybit, reason={reason})")
             self._notify(
-                f"🔄 External close: {symbol} {_side}\n"
-                f"Entry: {self._fmt_price(c.get('entry_price'))} → "
-                f"Exit: {self._fmt_price(c.get('exit_price'))}\n"
+                # «External» стосується ЛИШЕ закриття: угоду закрито на біржі
+                # (руками / ліквідація), а не ботом. Відкривав її бот.
+                f"🔄 ЗАКРИТО НА БІРЖІ (не ботом): #{symbol} {_side}\n"
+                f"Вхід: {self._fmt_price(c.get('entry_price'))} → "
+                f"Вихід: {self._fmt_price(c.get('exit_price'))}\n"
                 # 💵 Сум прибутку/збитку в Telegram НЕ пишемо (вимога 30.10) —
                 # лише відсоток руху.
                 f"PnL: {_sign}{c.get('pnl_pct', 0):.2f}%",
@@ -6267,10 +6295,10 @@ class TradeManager:
               f"@ ${entry_price} qty={qty} ({sl_disp}, {tp_disp})")
         try:
             self._notify(
-                f"🔄 Adopted external position\n"
-                f"{symbol} {side} @ {self._fmt_price(entry_price)}\n"
+                f"🔄 Позицію відкрито НЕ ботом — взято під облік\n"
+                f"#{symbol} {side} @ {self._fmt_price(entry_price)}\n"
                 f"qty: {qty} · {sl_disp} · {tp_disp}\n"
-                f"TM will now manage exits via its algorithm.",
+                f"Далі виходами керує бот.",
                 category='trades'
             )
         except Exception:
@@ -6352,6 +6380,10 @@ class TradeManager:
         
         # 1. Adopt positions present on Bybit but not in TM
         for sym in live_symbols - tm_symbols:
+            # 🔒 Бот сам щойно відкрив цю монету (ордер пішов, запис у книгу ще
+            # не встиг) — це НЕ зовнішня позиція (кейс ORDIUSDT 29.10).
+            if self._is_opening(sym):
+                continue
             if self._adopt_external_position(live_by_symbol[sym]):
                 adopted.append(sym)
         

@@ -94,7 +94,9 @@ def test_autopilot_trail_checks_the_lock_before_writing():
 
 # ═══════════════════════ 🏦 БІРЖА ТРИМАЄ ЛИШЕ ПОЗИЦІЮ ═══════════════════════
 def test_real_open_sends_no_sl_tp_to_exchange():
-    src = _fn_src(_TM_SRC, '_open_position')
+    # Ордер і запис позиції живуть у `_open_position_placed` (з 30.10 —
+    # `_open_position` лише ставить позначку «відкриваємо» навколо них).
+    src = _fn_src(_TM_SRC, '_open_position_placed')
     k = src.index('self.bybit.place_order(')
     call = src[k:src.index(')', src.index("order_type='Market'", k))]
     _check('stop_loss' not in call and 'take_profit' not in call,
