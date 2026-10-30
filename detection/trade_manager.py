@@ -2944,7 +2944,11 @@ class TradeManager:
         # If limit reached: signal goes to paper track instead (if test_mode on).
         real_opened = False
         real_reason = ''
-        at_limit = self._at_max_positions()
+        # 🔄 Реверс звільняє власне місце (одна угода закривається, одна
+        # відкривається), тож стеля `max_open_positions` його не блокує.
+        _reversing = bool(allow_reverse and existing_real
+                          and existing_real.get('side') != side)
+        at_limit = self._at_max_positions() and not _reversing
 
         if enabled and not at_limit:
             if existing_real:
@@ -2962,22 +2966,53 @@ class TradeManager:
                         return {'status': 'duplicate', 'reason':
                                 f'opposite signal, but "Reverse on opposite signal" '
                                 f'is OFF — holding {existing_real["side"]} position'}
+                    # 🔄 РЕВЕРС (вимога 30.10): сигнал пройшов усі ворота, а по
+                    # монеті стоїть протилежна угода → спершу ПОВНІСТЮ закрити її
+                    # НА БІРЖІ і дочекатись підтвердження, і лише потім відкривати
+                    # нову. Без підтвердження нову НЕ відкриваємо: в one-way
+                    # режимі Bybit зустрічний ордер не відкрив би угоду, а лише
+                    # зменшив/перевернув стару.
+                    _old = existing_real['side']
+                    if not self._is_tradeable(symbol):
+                        # Нова угода в реальну книгу однаково не піде (TRD
+                        # вимкнено) — закривати реальну заради нічого не можна.
+                        log_activity(symbol, 'skipped',
+                                     f'🔄 Реверс {_old} → {side}: TRD вимкнено — реальну '
+                                     f'{_old} не чіпаємо', side=side, source='TM')
+                        return {'real_opened': False, 'status': 'rejected',
+                                'reason': f'{symbol}: TRD вимкнено — реверс не виконано'}
                     print(f"[TM] 🔄 Reverse signal for {symbol}: "
-                          f"closing {existing_real['side']} → opening {side}")
+                          f"closing {_old} on exchange → opening {side}")
+                    log_activity(symbol, 'signal',
+                                 f'🔄 Реверс: протилежний сигнал {side} — закриваю {_old} '
+                                 f'на біржі, потім відкриваю {side}', side=side, source='TM')
+                    _flat_ok, _flat_why = self._flatten_on_exchange(symbol)
+                    if not _flat_ok:
+                        log_activity(symbol, 'rejected',
+                                     f'🔄 Реверс зупинено: {_old} на біржі НЕ закрилась '
+                                     f'({_flat_why}) — {side} НЕ відкриваємо, угода лишається',
+                                     side=side, source='TM')
+                        self._notify(f"⚠️ 🔄 Реверс <b>#{symbol}</b> зупинено: {_old} на "
+                                     f"біржі не закрилась ({_flat_why}). {side} не відкрито.",
+                                     category='trades')
+                        return {'real_opened': False, 'status': 'rejected',
+                                'reason': f'reverse-close not confirmed: {_flat_why}'}
                     try:
-                        self._close_position(symbol, entry_price, reason='reverse_signal')
+                        _px = self._get_current_price(symbol) or entry_price
+                        self._close_position(symbol, _px, reason='reverse_signal',
+                                             exchange_done=True)
                     except Exception as e:
-                        print(f"[TM] ❌ Reverse-close failed for {symbol}: {e}")
+                        print(f"[TM] ❌ Reverse-close bookkeeping failed for {symbol}: {e}")
                         return {'real_opened': False, 'status': 'rejected',
                                 'reason': f'reverse-close failed: {e}'}
-                    if self._is_tradeable(symbol):
-                        res = self._open_position(symbol, side, entry_price, opened_by) or {}
-                        if res.get('ok'):
-                            real_opened = True
-                        else:
-                            real_reason = res.get('reason', 'reverse-open blocked')
+                    res = self._open_position(symbol, side, entry_price, opened_by) or {}
+                    if res.get('ok'):
+                        real_opened = True
                     else:
-                        real_reason = f'{symbol} not in tradeable list (reverse-open skipped)'
+                        real_reason = res.get('reason', 'reverse-open blocked')
+                        log_activity(symbol, 'rejected',
+                                     f'🔄 Реверс: {_old} закрито на біржі, але {side} не '
+                                     f'відкрилась — {real_reason}', side=side, source='TM')
             else:
                 # No existing real position
                 if self._is_tradeable(symbol):
@@ -6702,7 +6737,63 @@ class TradeManager:
                 cands.append(hp)
         return round(max(cands), 4)
 
-    def _close_position(self, symbol: str, exit_price: float, reason: str):
+    # 🔄 Реверс: скільки разів перевіряємо біржу, що стара позиція закрилась,
+    # і пауза між перевірками (разом ≈ 3с — далі нову угоду НЕ відкриваємо).
+    REVERSE_FLAT_TRIES = 6
+    REVERSE_FLAT_WAIT_SEC = 0.5
+
+    @staticmethod
+    def reverse_flat_state(positions, symbol: str):
+        """ЧИСТА: що лишилось на біржі по монеті → [(bybit_side, size)].
+        Порожній список = позицію закрито повністю."""
+        S = (symbol or '').upper()
+        out = []
+        for p in positions or []:
+            try:
+                if str(p.get('symbol') or '').upper() == S and float(p.get('size') or 0) > 0:
+                    out.append((p.get('side'), float(p.get('size'))))
+            except (TypeError, ValueError, AttributeError):
+                continue
+        return out
+
+    def _flatten_on_exchange(self, symbol: str):
+        """🔄 Закрити ВСЕ, що стоїть на біржі по монеті, і ДОЧЕКАТИСЬ, поки
+        біржа підтвердить нуль. → (ok, причина).
+
+        Кількість береться з БІРЖІ, а не з книги бота (часткові закриття,
+        округлення, зовнішні зміни): закриваємо рівно те, що там є.
+        Біржа не відповіла / позиція лишилась → ok=False, і нову угоду
+        відкривати НЕ можна: в one-way режимі зустрічний ордер не відкрив би
+        нову позицію, а лише зменшив би чи перевернув стару."""
+        if not getattr(self, 'bybit', None) or not hasattr(self.bybit, 'get_positions_checked'):
+            return False, 'немає зʼєднання з біржею'
+        last = ''
+        for i in range(max(1, int(self.REVERSE_FLAT_TRIES))):
+            try:
+                positions, ok = self.bybit.get_positions_checked(symbol)
+            except Exception as e:
+                positions, ok, last = [], False, f'помилка запиту позицій: {e}'
+            if ok:
+                left = self.reverse_flat_state(positions, symbol)
+                if not left:
+                    return True, ''
+                for bside, size in left:
+                    try:
+                        self.bybit.close_position(symbol=symbol, side=bside, qty=size)
+                    except Exception as e:
+                        last = f'помилка ордера закриття: {e}'
+                last = last or f'на біржі ще {sum(s for _, s in left):g} шт.'
+            else:
+                last = last or 'біржа не віддала позиції'
+            if i + 1 < self.REVERSE_FLAT_TRIES:
+                time.sleep(self.REVERSE_FLAT_WAIT_SEC)
+        return False, last or 'позиція на біржі не закрилась'
+
+    def _close_position(self, symbol: str, exit_price: float, reason: str,
+                        exchange_done: bool = False):
+        """exchange_done=True — позицію на біржі вже закрито й ПІДТВЕРДЖЕНО
+        (`_flatten_on_exchange`), тож ордер закриття вдруге не шлемо — лише
+        облік угоди в боті."""
         with self._lock:
             pos = self._positions.get(symbol)
         if not pos:
@@ -6745,11 +6836,12 @@ class TradeManager:
         bybit_side = 'Buy' if pos['side'] == 'LONG' else 'Sell'
         qty = pos.get('remaining_qty', pos['qty'])
         
-        try:
-            self.bybit.close_position(symbol=symbol, side=bybit_side, qty=qty)
-        except Exception as e:
-            self._notify(f"⚠️ Close API error for {symbol}: {e}")
-        
+        if not exchange_done:
+            try:
+                self.bybit.close_position(symbol=symbol, side=bybit_side, qty=qty)
+            except Exception as e:
+                self._notify(f"⚠️ Close API error for {symbol}: {e}")
+
         # Calculate PnL
         entry = pos['entry_price']
         if pos['side'] == 'LONG':
