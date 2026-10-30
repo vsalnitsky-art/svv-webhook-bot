@@ -438,6 +438,14 @@ class SbrEngine:
                       'price': (s1 or s4 or {}).get('price')}
         return out
 
+    def snaps(self, symbol: str) -> Dict[str, Dict]:
+        """{'1h': snap, '4h': snap} однієї монети (лише памʼять, без мережі).
+        Читає 🚪 правило виходу «протилежний сигнал 🔔 МММ-SBR» у TM."""
+        S = str(symbol or '').upper()
+        with self._lock:
+            v = dict(self._state.get(S) or {})
+        return {tf: v.get(tf) for tf in TFS if v.get(tf)}
+
     def state(self) -> Dict:
         now = self._clock()
         with self._lock:

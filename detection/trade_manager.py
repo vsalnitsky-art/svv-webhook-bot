@@ -469,6 +469,13 @@ DEFAULT_SETTINGS = {
     # означало б, що «нейтраль ламає збіг» (правило тих трьох) і «нейтраль
     # закриває» (це правило) працюють одночасно — пряме протиріччя.
     'use_mm_flat_exit': False,
+    # === 🔔 ПРОТИЛЕЖНИЙ СИГНАЛ МММ-SBR → ВИХІД (вимога 30.10, деф. OFF) ===
+    # Самостійне правило: після входу на обраному TF (1H / 4H) зʼявився сигнал
+    # Session Band Reversal ПРОТИ угоди → закриваємо. Сигнали ДО входу — не
+    # подія. Джерело — той самий рушій `sbr_signals`, що малює блок 🔔 МММ-SBR.
+    'use_sbr_exit': False,
+    'sbr_exit_1h': True,
+    'sbr_exit_4h': True,
     # 'flat'             — закривати ЛИШЕ на ⚖ рівновазі (дослівна вимога);
     # 'flat_or_against'  — і коли МММ розвернувся ПРОТИ угоди.
     'mm_flat_exit_mode': 'flat',
@@ -1111,6 +1118,7 @@ class TradeManager:
                       'use_forecast_1h_close', 'use_opposite_ob_exit', 'opp_ob_auto_enabled',
                       'use_forecast_1h_exit', 'use_forecast_4h_exit',
                       'use_decision_exit', 'use_mm_flat_exit',
+                      'use_sbr_exit', 'sbr_exit_1h', 'sbr_exit_4h',
                       'pilot_enabled',
                       'pilot_autofill_tp', 'pilot_tp2_from_magnet',
                       'tp1_move_to_be',
@@ -3648,12 +3656,80 @@ class TradeManager:
         return ('mm_flat_exit',
                 f'🧮 МММ LiQ втратив напрямок — ⚖ рівновага{_st}{_held}')
 
+    @staticmethod
+    def sbr_exit_tfs(s: Dict) -> tuple:
+        """TF правила 🔔 SBR-виходу. Обидва зняті → обидва (як у банера)."""
+        tfs = tuple(tf for tf, k in (('1h', 'sbr_exit_1h'), ('4h', 'sbr_exit_4h'))
+                    if (s or {}).get(k, True))
+        return tfs or ('1h', '4h')
+
+    @staticmethod
+    def sbr_exit_hit(side, opened_at, snaps, tfs) -> Optional[tuple]:
+        """🔔 Протилежний сигнал SBR, що зʼявився ПІСЛЯ входу. ЧИСТА.
+
+        `snaps` — {'1h': {tail:[…]}, '4h': …} рушія; `tfs` — дозволені TF.
+        Повертає (tf, сигнал) найсвіжішого протилежного сигналу з `close_t` >
+        `opened_at`, або None. Невідомий час входу / бік → None: закривати
+        угоду, не знаючи, коли вона відкрилась, не можна (сигнал ДО входу —
+        не подія)."""
+        sd = str(side or '').upper()
+        if sd not in ('LONG', 'SHORT'):
+            return None
+        try:
+            oa = float(opened_at or 0)
+        except (TypeError, ValueError):
+            oa = 0.0
+        if oa <= 0:
+            return None
+        opp = 'SHORT' if sd == 'LONG' else 'LONG'
+        best = None
+        for tf in tfs or ():
+            sn = (snaps or {}).get(tf) or {}
+            for sig in (sn.get('tail') or []):
+                if not isinstance(sig, dict) or sig.get('side') != opp:
+                    continue
+                try:
+                    ct = float(sig.get('close_t') or 0)
+                except (TypeError, ValueError):
+                    continue
+                if ct > oa and (best is None or ct > best[2]):
+                    best = (tf, sig, ct)
+        return (best[0], best[1]) if best else None
+
+    def _sbr_exit_reason(self, symbol: str, pos: Dict) -> Optional[tuple]:
+        """🔔 Вихід по протилежному сигналу МММ-SBR 1H / 4H (вимога 30.10).
+        Монети немає в рушії (поза WATCHLIST / ще не порахована) → правило
+        мовчить: «немає даних» ≠ «сигнал проти»."""
+        s = self._settings
+        if not s.get('use_sbr_exit'):
+            return None
+        try:
+            from detection.sbr_signals import get_sbr_engine
+            eng = get_sbr_engine()
+        except Exception:
+            eng = None
+        if eng is None or not hasattr(eng, 'snaps'):
+            return None
+        hit = self.sbr_exit_hit(pos.get('side'), pos.get('opened_at'),
+                                eng.snaps(symbol), self.sbr_exit_tfs(s))
+        if not hit:
+            return None
+        tf, sig = hit
+        lab = {'1h': '1H', '4h': '4H'}.get(tf, tf)
+        when = f" #{sig.get('n') or 1} {sig.get('time_kyiv')} Kyiv" if sig.get('time_kyiv') else ''
+        sc = sig.get('score')
+        sc = f' · Score {float(sc):.0f}' if sc is not None else ''
+        return ('sbr_exit',
+                f"🔔 МММ-SBR {lab}: протилежний сигнал {sig.get('side')}{when}{sc} "
+                f"після входу — проти {str(pos.get('side') or '').upper()}")
+
     def _check_signal_exits(self, symbol: str, pos: Dict,
                             current_price: float, is_shadow: bool) -> bool:
         """Прогнати самостійні правила виходу. True → позицію ЗАКРИТО."""
         s = self._settings
         if not (s.get('use_forecast_1h_exit') or s.get('use_forecast_4h_exit')
-                or s.get('use_decision_exit') or s.get('use_mm_flat_exit')):
+                or s.get('use_decision_exit') or s.get('use_mm_flat_exit')
+                or s.get('use_sbr_exit')):
             return False
         now = time.time()
         _k = self._exit_key(symbol, is_shadow)
@@ -3666,6 +3742,10 @@ class TradeManager:
             # Перевіряємо його ПЕРШИМ: це читання готового знімка, тоді як
             # прогноз/Decision можуть коштувати помітно більше.
             hit = self._mm_flat_exit_reason(symbol, pos)
+            if not hit:
+                # 🔔 SBR — теж ОКРЕМЕ правило (подія «зʼявився протилежний
+                # сигнал»), поза AND/OR вердиктів; читання памʼяті рушія.
+                hit = self._sbr_exit_reason(symbol, pos)
             if not hit:
                 hit = self._signal_exit_reason(symbol, pos)
         except Exception as e:
@@ -6585,6 +6665,7 @@ class TradeManager:
             # ⚠️ РОЗВОРОТ — ОКРЕМА причина, а не «рівновага»: це різні події і
             # різні рішення (миготіння біля нуля проти зустрічного тиску).
             'mm_against_exit': '🧮 МММ LiQ РОЗВЕРНУВСЯ ПРОТИ позиції',
+            'sbr_exit': '🔔 Протилежний сигнал МММ-SBR після входу',
             'signal_exit_and': '🔗 AND: усі увімкнені вердикти проти позиції',
             'pilot_target': '🎯 Автопілот: ціль на графіку досягнута',
         }
@@ -9345,6 +9426,7 @@ class TradeManager:
             'decision_exit': '🧠 Decision Exit',
             'mm_flat_exit': '🧮 МММ LiQ ⚖',
             'mm_against_exit': '🧮 МММ LiQ ПРОТИ',
+            'sbr_exit': '🔔 SBR проти',
             'signal_exit_and': '🔗 Signal Exit (AND)',
             'pilot_target': '🎯 Автопілот (ціль)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',

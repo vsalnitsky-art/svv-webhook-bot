@@ -5137,6 +5137,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </select>
                         </div>
 
+                        <!-- 🔔 ОКРЕМЕ правило (вимога 30.10): протилежний сигнал
+                             МММ-SBR після входу → вихід. Поза AND/OR вище. -->
+                        <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
+                            <label>
+                                <input type="checkbox" id="tm-use-sbr-exit" onchange="saveTMSettings();_tmSbrExitSync()">
+                                🔔 МММ-SBR проти → вихід
+                                <span class="tm-help" title="САМОСТІЙНЕ правило: після відкриття угоди на обраному таймфрейме (1H та/або 4H) зʼявився сигнал Session Band Reversal ПРОТИЛЕЖНОГО напрямку — угода ЗАКРИВАЄТЬСЯ. Сигнали, що були ДО входу, — не подія (не закривають). Джерело — той самий рушій, що малює блок 🔔 МММ-SBR і шле сигнали в Telegram (ЗАКРИТІ бари). Монета поза WATCHLIST / ще не порахована → правило мовчить. ⚠️ У комбінуванні (АБО/AND) вище НЕ бере участі. Перевірка не частіше ніж раз на 20с на угоду. За замовчуванням ВИМКНЕНО.">?</span>
+                            </label>
+                            <label style="margin-left:10px"><input type="checkbox" id="tm-sbr-exit-1h" onchange="_tmSbrTfGuard(this);saveTMSettings()"> 1H</label>
+                            <label style="margin-left:6px"><input type="checkbox" id="tm-sbr-exit-4h" onchange="_tmSbrTfGuard(this);saveTMSettings()"> 4H</label>
+                        </div>
+
                         <!-- 🧮 ОКРЕМЕ правило — СВІДОМО стоїть ПІСЛЯ «Комбінувати»,
                              щоб не читалось як четверте правило того збігу: там
                              нейтраль ЛАМАЄ збіг, а тут вона і є підставою вийти. -->
@@ -10665,6 +10677,10 @@ async function loadTMSettings() {
         document.getElementById('tm-use-forecast-4h-exit').checked = !!s.use_forecast_4h_exit;
         document.getElementById('tm-use-decision-exit').checked = !!s.use_decision_exit;
         document.getElementById('tm-use-mm-flat-exit').checked = !!s.use_mm_flat_exit;
+        document.getElementById('tm-use-sbr-exit').checked = !!s.use_sbr_exit;
+        document.getElementById('tm-sbr-exit-1h').checked = s.sbr_exit_1h !== false;
+        document.getElementById('tm-sbr-exit-4h').checked = s.sbr_exit_4h !== false;
+        _tmSbrExitSync();
         document.getElementById('tm-mm-flat-exit-mode').value =
             (s.mm_flat_exit_mode === 'flat_or_against') ? 'flat_or_against' : 'flat';
         _setV('tm-mm-flat-exit-confirm', s.mm_flat_exit_confirm_sec != null ? s.mm_flat_exit_confirm_sec : 0, 0);
@@ -11085,6 +11101,20 @@ const _PILOT_AUTO_IDS = [
     'tm-pilot-tp1-liq', 'tm-pilot-tp1-liq-mid',
     'tm-pilot-tp1-min-path', 'tm-pilot-tp1-max-path', 'tm-pilot-tp1-fallback',
 ];
+// 🔔 Правило «МММ-SBR проти → вихід»: TF гасимо, коли правило вимкнене
+// (активний контрол, що ні на що не впливає, вводить в оману); зняти обидва
+// TF не даємо — бекенд усе одно трактує «обидва off» як обидва.
+function _tmSbrExitSync() {
+    const on = !!(document.getElementById('tm-use-sbr-exit') || {}).checked;
+    ['tm-sbr-exit-1h', 'tm-sbr-exit-4h'].forEach(id => {
+        const e = document.getElementById(id);
+        if (e) { e.disabled = !on; if (e.parentElement) e.parentElement.style.opacity = on ? '' : '0.45'; }
+    });
+}
+function _tmSbrTfGuard(el) {
+    const a = document.getElementById('tm-sbr-exit-1h'), b = document.getElementById('tm-sbr-exit-4h');
+    if (a && b && !a.checked && !b.checked) el.checked = true;
+}
 function _tmPilotAutoSync() {
     const off = !!(document.getElementById('tm-use-mm-flat-exit') || {}).checked;
     const note = document.getElementById('tm-pilot-auto-off-note');
@@ -11183,6 +11213,9 @@ async function saveTMSettings() {
             use_decision_exit: document.getElementById('tm-use-decision-exit').checked,
             signal_exit_mode: document.getElementById('tm-signal-exit-mode').value || 'or',
             use_mm_flat_exit: document.getElementById('tm-use-mm-flat-exit').checked,
+            use_sbr_exit: document.getElementById('tm-use-sbr-exit').checked,
+            sbr_exit_1h: document.getElementById('tm-sbr-exit-1h').checked,
+            sbr_exit_4h: document.getElementById('tm-sbr-exit-4h').checked,
             mm_flat_exit_mode: document.getElementById('tm-mm-flat-exit-mode').value || 'flat',
             // ⚠️ `|| 0` тут БЕЗПЕЧНИЙ саме тому, що 0 і є дефолтом (на відміну
             // від полів рівнів, де 0 — окреме змістовне значення).
@@ -11481,6 +11514,7 @@ function reasonLabel(r) {
         // ⚠️ Розворот МММ — ОКРЕМИЙ бейдж: підписувати його «⚖» означало б
         // показувати не ту причину, що спрацювала (скарга 18.09).
         'mm_against_exit': '🧮 МММ LiQ ПРОТИ',
+        'sbr_exit': '🔔 SBR проти',
         'signal_exit_and': '🔗 AND (усі проти)',
         'pilot_target': '🎯 Автопілот (ціль)',
         'bos_2_partial': '✂️ BOS-2',
@@ -16735,12 +16769,17 @@ async function onEngineIndepToggle(event) {
 // Дані — `/api/spring/state` (лише читання памʼяті сканера). Поки гармошка
 // згорнута, сторінка нічого не опитує.
 let _sprErr = '', _sprRows = [], _sprMeta = {}, _sprDir = 'all', _sprSortCol = 'pot', _sprSortDir = -1;
-const _SPR_ORDER = {fired: 4, charged: 3, building: 2, flat: 1};
-const _SPR_COL = {fired: '#f472b6', charged: '#facc15', building: '#93c5fd', flat: '#6b7280'};
+const _SPR_ORDER = {fired: 6, charged: 5, building: 4, cooling: 3, calm: 2, expansion: 1, flat: 1};
+const _SPR_COL = {fired: '#f472b6', charged: '#facc15', building: '#93c5fd', flat: '#6b7280',
+                  expansion: '#fb923c', cooling: '#67e8f9', calm: '#8b93a7'};
+// 🧭 Фаза монети без заряду (бекенд `spring_coil.phase_of`): не «нічого», а
+// що саме відбувається — рух іде / охолоджується / спокій.
+const _SPR_PHASE = {expansion: '🌋 рух іде', cooling: '🧊 охолоджується', calm: '😐 спокій'};
+function _sprPh(r) { return (r.state === 'flat' && _SPR_PHASE[r.phase]) ? r.phase : (r.state || 'flat'); }
 function _sprPotMax(r) { return Math.max(Number(r.pot_long) || 0, Number(r.pot_short) || 0); }
 function _sprVal(r, c) {
     if (c === 'symbol') return r.symbol || '';
-    if (c === 'state') return (_SPR_ORDER[r.state] || 0) * 1000 + (Number(r.charge) || 0);
+    if (c === 'state') return (_SPR_ORDER[_sprPh(r)] || 0) * 1000 + (Number(r.charge) || 0);
     if (c === 'charge') return Number(r.charge) || 0;
     if (c === 'bias') return Number(r.bias) || 0;
     if (c === 'pl') return Number(r.pot_long) || 0;
@@ -16762,6 +16801,14 @@ function _sprTugHTML(pl, ps, big) {
     const L = Math.max(0, Math.min(100, Number(pl) || 0)), S = Math.max(0, Math.min(100, Number(ps) || 0));
     return `<span class="spr-tug${big ? ' big' : ''}"><i class="s" style="width:${S / 2}%"></i><i class="l" style="width:${L / 2}%"></i><b></b></span>`;
 }
+function _sprPhaseTip(r) {
+    const pr = Number(r.atr_peak_ratio), mv = Number(r.move24_pct);
+    const tail = ` · BB/ATR ${r.unit_r != null ? Number(r.unit_r).toFixed(2) : '—'} · ATR ${isFinite(pr) ? Math.round(pr * 100) : '—'}% від піку 48 год · рух 24 год ${isFinite(mv) ? (mv > 0 ? '+' : '') + mv.toFixed(2) + '%' : '—'}`;
+    const P = {expansion: '🌋 Рух іде: смуги BB розігнані (≥ 2 ATR), волатильність у верхніх 20% історії — енергію витрачають, пружини немає',
+               cooling: '🧊 Охолоджується: ATR упав нижче 80% свого піку за 48 год — рух вщухає, з цього стану народжується стиснення',
+               calm: '😐 Спокій: ні руху, ні стиснення'};
+    return ((r.state === 'flat' && P[r.phase]) ? P[r.phase] : 'Стан пружини') + tail;
+}
 function _sprAggPaint() {
     const el = document.getElementById('spr-agg');
     if (!el) return;
@@ -16779,8 +16826,20 @@ function _sprAggPaint() {
     if (!enough) {
         // Напрям ринку з однієї-двох монет не робимо: це був би висновок про
         // WATCHLIST, побудований на винятку (кейс 29.10: «LONG 88%» з 1 з 55).
-        el.innerHTML = `<span class="spr-k">куди накручено WATCHLIST</span>`
-            + `<span style="color:#cbd5e1" title="Напрям ринку показуємо, коли заряджених (≥ 45) монет щонайменше ${a.need}: ≥ 3 і ≥ 10% від порахованих">⚖ замало заряджених: <b style="font-family:monospace">${a.coins}</b> з ${a.total || 0} (потрібно ≥ ${a.need}) — напрям ринку не визначаємо</span>`
+        const P = a.phases || {};
+        const REG = {expansion: ['🌋', 'РУХ ІДЕ', '#fb923c', 'енергію витрачають, а не копичать — нові пружини стиснуться, коли рух вщухне (ATR піде вниз, смуги звузяться)'],
+                     cooling: ['🧊', 'ОХОЛОДЖЕННЯ', '#67e8f9', 'рух вщухає — саме тут народжуються наступні стиснення'],
+                     calm: ['😐', 'СПОКІЙ', '#8b93a7', 'ні руху, ні стиснення']};
+        const rg = REG[a.regime];
+        const dirTxt = (a.regime === 'expansion' && (a.exp_up || a.exp_dn))
+            ? ` · <span style="color:#f87171">▼${a.exp_dn || 0}</span> / <span style="color:#4ade80">▲${a.exp_up || 0}</span> за 24 год` : '';
+        const cands = (a.candidates || []).filter(c => c.charge > 0)
+            .map(c => `<span style="font-family:monospace;color:#cbd5e1">${c.symbol} ${Math.round(c.charge)}</span>`).join(' · ');
+        el.innerHTML = `<span class="spr-k">фаза WATCHLIST</span>`
+            + (rg ? `<span style="color:${rg[2]};font-weight:700" title="${rg[3]}">${rg[0]} ${rg[1]}</span>` : '')
+            + `<span>🌋 ${P.expansion || 0} · 🧊 ${P.cooling || 0} · 😐 ${P.calm || 0}${dirTxt}</span>`
+            + `<span style="color:#8b93a7" title="Напрям «куди накручено» показуємо, коли заряджених (≥ 45) монет щонайменше ${a.need}: ≥ 3 і ≥ 10% від порахованих">заряджених ${a.coins} з ${a.total || 0} (для напряму ≥ ${a.need})</span>`
+            + (cands ? `<span class="spr-k">найближчі до стиснення</span>${cands}` : '')
             + fired + top(a.top_long, 'LONG') + top(a.top_short, 'SHORT');
         return;
     }
@@ -16803,6 +16862,7 @@ function _sprFilter(r, d) {
     if (d === 'SHORT') return (Number(r.pot_short) || 0) > (Number(r.pot_long) || 0) && r.state !== 'flat';
     if (d === 'fired') return r.state === 'fired';
     if (d === 'flat') return r.state === 'flat';
+    if (d in _SPR_PHASE) return _sprPh(r) === d;
     return true;
 }
 function _sprTugCell(r) {
@@ -16810,6 +16870,10 @@ function _sprTugCell(r) {
         // Пружина вже розпрямилась — натягу немає, шкалу «накручено» не малюємо.
         const up = (r.lean || (r.fired && r.fired.side)) === 'LONG';
         return `<td style="white-space:nowrap" title="Пружина вже вистрілила ${up ? 'вгору' : 'вниз'} — натягу немає, це рух, а не заряд"><span style="display:inline-block;width:92px;text-align:center;color:#f472b6">💥 розпрямилась</span><span style="display:inline-block;width:44px;margin-left:6px;text-align:right;font-family:monospace;color:${up ? '#4ade80' : '#f87171'}">${up ? '▲' : '▼'}</span></td>`;
+    }
+    if (r.state === 'flat') {
+        // Пружина не накручена: пуста шкала з «⚖ 50%» у кожному рядку — шум.
+        return `<td style="white-space:nowrap;color:#4b5563" title="Пружина не накручена (заряд ${Math.round(r.charge || 0)} < 45) — натягу немає">—</td>`;
     }
     const pL = r.prob_long != null ? Number(r.prob_long) : 50;
     const side = r.lean;
@@ -16866,11 +16930,12 @@ function sprRender() {
     _sprAggPaint();
     const minPot = Number(_sprMeta.min_pot != null ? _sprMeta.min_pot : 40);
     const mode = _sprMeta.gate_on === false ? 'off' : 'require';
-    const cnt = {all: 0, LONG: 0, SHORT: 0, fired: 0, flat: 0};
+    const cnt = {all: 0, LONG: 0, SHORT: 0, fired: 0, expansion: 0, cooling: 0, calm: 0};
     _sprRows.forEach(r => { Object.keys(cnt).forEach(k => { if (_sprFilter(r, k)) cnt[k]++; }); });
     const tabs = document.getElementById('spr-tabs');
     if (tabs) {
-        const lbl = {all: 'Всі', LONG: '🟢 LONG', SHORT: '🔴 SHORT', fired: '💥 Вистрілили', flat: '😴 Без заряду'};
+        const lbl = {all: 'Всі', LONG: '🟢 LONG', SHORT: '🔴 SHORT', fired: '💥 Вистрілили',
+                     expansion: '🌋 Рух іде', cooling: '🧊 Охолоджуються', calm: '😐 Спокій'};
         tabs.innerHTML = Object.keys(lbl).map(k =>
             `<button onclick="sprSetDir('${k}')" style="font-size:0.7rem;padding:2px 9px;border-radius:4px;cursor:pointer;border:1px solid ${_sprDir === k ? '#facc15' : '#2b2f36'};background:${_sprDir === k ? 'rgba(250,204,21,0.12)' : '#141821'};color:${_sprDir === k ? '#facc15' : '#cbd5e1'}">${lbl[k]} (${cnt[k]})</button>`).join('');
     }
@@ -16891,7 +16956,7 @@ function sprRender() {
         if (a) a.textContent = th.getAttribute('data-sprsort') === _sprSortCol ? (_sprSortDir > 0 ? ' ▲' : ' ▼') : '';
     });
     const sig = JSON.stringify([_sprDir, _sprSortCol, _sprSortDir, minPot, mode,
-        rows.map(r => [r.symbol, r.state, r.charge, r.bias, r.dir, r.pot_long, r.pot_short, r.tension_long, r.tension_short, r.lean, r.released, r.move_long_pct, r.move_short_pct, r.trade_side, (r.queues || []).join(','), r.restored])]);
+        rows.map(r => [r.symbol, r.state, r.phase, r.move24_pct, r.charge, r.bias, r.dir, r.pot_long, r.pot_short, r.tension_long, r.tension_short, r.lean, r.released, r.move_long_pct, r.move_short_pct, r.trade_side, (r.queues || []).join(','), r.restored])]);
     if (tb.dataset.sig === sig) return;
     tb.dataset.sig = sig;
     if (!rows.length) {
@@ -16900,10 +16965,15 @@ function sprRender() {
     }
     tb.innerHTML = rows.map(r => {
         const st = r.state || 'flat';
-        const col = _SPR_COL[st] || '#8b93a7';
+        const ph = _sprPh(r);
+        const col = _SPR_COL[ph] || _SPR_COL[st] || '#8b93a7';
+        const stLabel = (st === 'flat' && _SPR_PHASE[r.phase]) ? _SPR_PHASE[r.phase] : (r.label || st);
+        const mv24 = Number(r.move24_pct);
         const chg = Math.max(0, Math.min(100, Math.round(Number(r.charge) || 0)));
         const d = r.dir === 'LONG' ? '<span style="color:#4ade80">▲ LONG</span>'
             : r.dir === 'SHORT' ? '<span style="color:#f87171">▼ SHORT</span>'
+            : (st === 'flat' && r.phase === 'expansion' && isFinite(mv24) && mv24 !== 0)
+                ? `<span style="color:${mv24 > 0 ? '#4ade80' : '#f87171'};opacity:0.85" title="Пружини немає — це напрямок ПОТОЧНОГО руху (зміна ціни за 24 год), а не прогноз вистрілу">${mv24 > 0 ? '▲' : '▼'} рух ${mv24 > 0 ? '+' : '−'}${Math.abs(mv24).toFixed(1)}%</span>`
             : st === 'flat' ? `<span style="color:#4b5563" title="Заряду немає — напрямок не визначаємо (сирий нахил ${Number(r.bias || 0).toFixed(2)})">—</span>`
             : '<span style="color:#8b93a7">⚖</span>';
         const fired = r.fired ? ` · ${r.fired.side} ${r.fired.bars_ago === 0 ? 'щойно' : r.fired.bars_ago + ' бар тому'}` : '';
@@ -16915,7 +16985,7 @@ function sprRender() {
             : (r.queues && r.queues.length ? `<span style="color:#fbbf24">🎯 ${r.queues.join(',')}</span>` : '<span style="color:#4b5563">—</span>');
         return `<tr title="${tip}" style="${r.restored ? 'opacity:0.6' : ''}">`
             + `<td style="white-space:nowrap">${typeof tvSym === 'function' ? tvSym(r.symbol) : r.symbol}</td>`
-            + `<td style="white-space:nowrap;color:${col};font-weight:600">${r.label || st}<span style="color:#8b93a7;font-weight:400">${fired}</span></td>`
+            + `<td style="white-space:nowrap;color:${col};font-weight:600" title="${_sprPhaseTip(r)}">${stLabel}<span style="color:#8b93a7;font-weight:400">${fired}</span></td>`
             + `<td style="white-space:nowrap"><span style="display:inline-block;width:28px;text-align:right;font-family:monospace;color:${col}">${chg}</span>`
             + `<span style="display:inline-block;width:56px;height:6px;margin-left:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;vertical-align:middle"><span style="display:block;height:100%;width:${chg}%;background:${col}"></span></span></td>`
             + `<td style="white-space:nowrap;font-family:monospace">${d}</td>`

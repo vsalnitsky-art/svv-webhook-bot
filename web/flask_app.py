@@ -3789,7 +3789,8 @@ def register_api_routes(app):
                     'squeeze_bars', 'band', 'box_pct', 'vol_ratio', 'atr_rank',
                     'fired', 'price', 'bar_t', 'parts', 'restored',
                     'lean', 'released', 'lean_pp', 'prob_long', 'tgt_long', 'tgt_short',
-                    'move_long_pct', 'move_short_pct', 'tension_long', 'tension_short')}}
+                    'move_long_pct', 'move_short_pct', 'tension_long', 'tension_short',
+                    'phase', 'atr_peak_ratio', 'move24_pct', 'unit_r')}}
                 row['trade_side'] = sides.get(sym)
                 row['queues'] = list(queues.get(sym) or [])
                 rows.append(row)

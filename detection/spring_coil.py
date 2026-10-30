@@ -68,7 +68,21 @@ FIRE_MIN_SQ = 6
 FIRE_SQ_R = 1.0          # «справжнє» стиснення: BB ≤ 1.0 ATR (рівень high; шум дає ~1.6-1.9)
 # Версія алгоритму: запис іншої версії перераховується, навіть якщо бар той самий
 # (інакше відновлений після рестарту старий висновок жив би до наступного бару).
-VERSION = 4
+VERSION = 5
+
+# 🧭 ФАЗА монети, коли пружина НЕ накручена (вимога 30.10: «ми прийшли до
+# нульових результатів»). Заряд відповідає лише на «стиснуто чи ні»; після
+# сильного руху НЕ стиснуто ніщо, і таблиця мовчала. Фаза каже, ЩО відбувається:
+#   🌋 'expansion' — рух іде: BB ≥ TTM_OFF·ATR (тренд розганяє смуги) і ATR у
+#                    верхніх EXP_ATR_RANK історії — енергію ВИТРАЧАЮТЬ, не копичать;
+#   🧊 'cooling'   — рух вщухає: ATR ≤ COOL_RATIO від свого піку за PEAK_BARS —
+#                    саме з цього стану народжується наступне стиснення;
+#   😐 'calm'      — ні руху, ні стиснення.
+EXP_ATR_RANK = 0.80
+COOL_RATIO = 0.80
+PEAK_BARS = 48
+PHASE_LABEL = {'expansion': '🌋 рух іде', 'cooling': '🧊 охолоджується',
+               'calm': '😐 спокій'}
 
 # ⚖ Напрям ринку з «Пружини» показуємо лише коли заряджених монет достатньо:
 # щонайменше AGG_MIN_COINS і AGG_MIN_SHARE від порахованих. Інакше одна монета
@@ -277,6 +291,10 @@ def analyze(klines: List[Dict]) -> Dict:
     else:
         d = 'LONG' if bias >= DIR_MIN else ('SHORT' if bias <= -DIR_MIN else None)
     proj = projection(price, box_h, box_l, a_now, pot_long, pot_short, fired, charge)
+    peak = max((x for x in atr[-PEAK_BARS:] if x), default=a_now)
+    peak_ratio = a_now / peak if peak > 0 else 1.0
+    move24 = (price - c[-25]) / c[-25] * 100.0 if n > 25 and c[-25] else 0.0
+    ph = phase_of(state, ur, rank, peak_ratio)
     t = kl[last].get('t')
     try:
         t = int(float(t))
@@ -292,9 +310,24 @@ def analyze(klines: List[Dict]) -> Dict:
         'box_pct': round(box_pct, 2), 'box_hi': box_h, 'box_lo': box_l,
         'vol_ratio': round(vol_ratio, 2), 'atr_rank': round(rank * 100.0, 1),
         'fired': fired, 'price': price, 'bar_t': t, 'atr': a_now,
+        'phase': ph, 'atr_peak_ratio': round(peak_ratio, 3),
+        'move24_pct': round(move24, 2),
         **proj,
         'parts': {k: round(x, 3) for k, x in {**parts_c, **parts_b}.items()},
     }
+
+
+def phase_of(state: str, unit_r: Optional[float], atr_rank: float,
+             peak_ratio: float) -> str:
+    """🧭 Фаза монети. ЧИСТА. Накручена / вистрілена пружина → її стан;
+    інакше 'expansion' / 'cooling' / 'calm' (див. константи вище)."""
+    if state in ('fired', 'charged', 'building'):
+        return state
+    if unit_r is not None and unit_r >= TTM_OFF and atr_rank >= EXP_ATR_RANK:
+        return 'expansion'
+    if peak_ratio <= COOL_RATIO:
+        return 'cooling'
+    return 'calm'
 
 
 def projection(price: float, box_h: float, box_l: float, atr: float,
@@ -368,10 +401,23 @@ def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING,
     f_l = f_s = 0
     top = {'LONG': None, 'SHORT': None}
     counted = 0
+    phases = {'expansion': 0, 'cooling': 0, 'calm': 0}
+    exp_up = exp_dn = 0
+    cand = []
     for sym, r in (recs or {}).items():
         if not isinstance(r, dict) or not r.get('ok', True):
             continue
         counted += 1
+        ph = r.get('phase')
+        if ph in phases:
+            phases[ph] += 1
+            if ph == 'expansion':
+                mv = float(r.get('move24_pct') or 0)
+                exp_up += mv > 0
+                exp_dn += mv < 0
+            else:
+                # найближчі до стиснення: монети, що НЕ в русі, за зарядом
+                cand.append((float(r.get('charge') or 0), sym, ph))
         if r.get('state') == 'fired':
             # уже розпрямилась — це рух, а не натяг; рахуємо окремо
             fs = (r.get('fired') or {}).get('side')
@@ -401,7 +447,20 @@ def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING,
     lean = None
     if enough:
         lean = 'LONG' if pl_ - 50 > 5 else ('SHORT' if 50 - pl_ > 5 else None)
-    return {'coins': n, 'total': base, 'need': need, 'enough': enough, 'n_long': n_l, 'n_short': n_s,
+    cand.sort(key=lambda x: (-x[0], x[1]))
+    regime = None
+    if counted and not enough:
+        if phases['expansion'] * 2 >= counted:
+            regime = 'expansion'
+        elif phases['cooling'] * 2 >= counted:
+            regime = 'cooling'
+        else:
+            regime = 'calm'
+    return {'phases': phases, 'exp_up': exp_up, 'exp_dn': exp_dn,
+            'regime': regime,
+            'candidates': [{'symbol': s_, 'charge': round(c_, 1), 'phase': p_}
+                           for c_, s_, p_ in cand[:3]],
+            'coins': n, 'total': base, 'need': need, 'enough': enough, 'n_long': n_l, 'n_short': n_s,
             'sum_long': round(sl, 1), 'sum_short': round(ss, 1),
             'prob_long': pl_, 'lean': lean, 'fired_long': f_l, 'fired_short': f_s,
             'top_long': top['LONG'], 'top_short': top['SHORT']}

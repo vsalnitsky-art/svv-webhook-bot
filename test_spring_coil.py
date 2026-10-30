@@ -378,9 +378,50 @@ def test_flat_cells_and_thin_banner_render_in_node():
     out = subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=20)
     _check(out.returncode == 0, out.stderr)
     o = out.stdout
-    _check('width:0%' in o and 'width:13.5%' not in o and '⚖ 50%' in o, f'флет — порожня шкала: {o}')
+    # 30.10: у флеті замість пустої шкали з «⚖ 50%» — приглушене «—»
+    _check('spr-tug' not in o.split('\n')[0] and '>—</td>' in o.split('\n')[0], f'флет — без шкали: {o}')
     _check('#4b5563' in o and 'не накручена' in o, 'флет — приглушений потенціал')
-    _check('замало заряджених' in o and '88%' not in o and 'JST 42' in o, f'банер без вердикту: {o}')
+    _check('заряджених 1 з 55' in o and '88%' not in o and 'JST 42' in o, f'банер без вердикту: {o}')
+
+
+# ── АУДИТ 30.10: ФАЗА ринку замість «нічого» ────────────────────────────────
+def test_phase_of_names_what_is_happening():
+    _check(S.phase_of('charged', 0.8, 0.1, 1.0) == 'charged', 'заряд сильніший за фазу')
+    _check(S.phase_of('flat', 3.4, 0.9, 0.85) == 'expansion', 'розігнані смуги + висока ATR = рух іде')
+    _check(S.phase_of('flat', 1.6, 0.5, 0.6) == 'cooling', 'ATR нижче 80% піку = охолодження')
+    _check(S.phase_of('flat', 1.6, 0.5, 0.95) == 'calm', 'ні руху, ні стиснення')
+    _check(S.phase_of('flat', None, 0.9, 1.0) == 'calm', 'без BB — не розширення')
+
+
+def test_dump_reads_as_expansion_with_its_direction():
+    for seed in range(5):
+        b = _walk(seed)
+        p0 = b[-30]['p']
+        for k in range(1, 30):
+            p = p0 * (1 - 0.006 * k)
+            b[-30 + k] = dict(b[-30 + k], p=p, o=p * 1.004, h=p * 1.006, l=p * 0.994)
+        r = S.analyze(b)
+        _check(r['state'] == 'flat' and r['phase'] == 'expansion', f"злив = рух іде (seed {seed}): {r['phase']} ur={r['unit_r']}")
+        _check(r['move24_pct'] < -5 and 0 < r['atr_peak_ratio'] <= 1, r)
+
+
+def test_aggregate_reports_the_regime_and_candidates():
+    recs = {f'E{i}': {'ok': True, 'state': 'flat', 'phase': 'expansion', 'charge': 2,
+                      'move24_pct': -3.0 if i < 8 else 1.0} for i in range(10)}
+    recs['H'] = {'ok': True, 'state': 'flat', 'phase': 'calm', 'charge': 12}
+    recs['O'] = {'ok': True, 'state': 'flat', 'phase': 'cooling', 'charge': 9}
+    a = S.aggregate(recs, total=12)
+    _check(a['regime'] == 'expansion' and a['phases'] == {'expansion': 10, 'cooling': 1, 'calm': 1}, a)
+    _check(a['exp_dn'] == 8 and a['exp_up'] == 2, a)
+    _check([c['symbol'] for c in a['candidates']] == ['H', 'O'], 'кандидати — НЕ в русі, за зарядом')
+
+
+def test_page_shows_phase_tabs_and_move_direction():
+    for k in ("expansion: '🌋 Рух іде'", "cooling: '🧊 Охолоджуються'", "calm: '😐 Спокій'",
+              'function _sprPh(', 'фаза WATCHLIST', 'найближчі до стиснення', "рух ${mv24 > 0"):
+        _check(k in _HTML, k)
+    for k in ("'phase'", "'move24_pct'", "'atr_peak_ratio'", "'unit_r'"):
+        _check(k in _APP, k)
 
 
 if __name__ == '__main__':
