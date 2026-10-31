@@ -476,6 +476,16 @@ DEFAULT_SETTINGS = {
     'use_sbr_exit': False,
     'sbr_exit_1h': True,
     'sbr_exit_4h': True,
+    # 🔔⏳ ТРЕЙЛ замість миттєвого виходу (вимога 31.10, деф. OFF): протилежний
+    # сигнал SBR лише «озброює» угоду — запамʼятовуємо ціну; ціна далі ПРОТИ
+    # угоди (нижче/вище запамʼятованої) → закриваємо; ціна йде ЗА угодою →
+    # ведемо, доки не почнеться відкат ≥ `sbr_trail_pct`, але стоп ніколи не
+    # гірший за запамʼятовану ціну. 🌀 Поки «Заряд» на продовження ще є
+    # (потенціал Пружини в бік угоди ≥ `sbr_trail_charge_min`) — відкат угоду
+    # НЕ закриває, діє лише підлога (запамʼятована ціна). 0 = заряд не важить.
+    'sbr_exit_trail': False,
+    'sbr_trail_pct': 0.3,
+    'sbr_trail_charge_min': 40,
     # 'flat'             — закривати ЛИШЕ на ⚖ рівновазі (дослівна вимога);
     # 'flat_or_against'  — і коли МММ розвернувся ПРОТИ угоди.
     'mm_flat_exit_mode': 'flat',
@@ -1121,7 +1131,7 @@ class TradeManager:
                       'use_forecast_1h_close', 'use_opposite_ob_exit', 'opp_ob_auto_enabled',
                       'use_forecast_1h_exit', 'use_forecast_4h_exit',
                       'use_decision_exit', 'use_mm_flat_exit',
-                      'use_sbr_exit', 'sbr_exit_1h', 'sbr_exit_4h',
+                      'use_sbr_exit', 'sbr_exit_1h', 'sbr_exit_4h', 'sbr_exit_trail',
                       'pilot_enabled',
                       'pilot_autofill_tp', 'pilot_tp2_from_magnet',
                       'tp1_move_to_be',
@@ -1193,6 +1203,16 @@ class TradeManager:
                     0, int(float(self._settings.get('mm_against_exit_confirm_sec', 60) or 0)))
             except (TypeError, ValueError):
                 self._settings['mm_against_exit_confirm_sec'] = 60
+            try:
+                self._settings['sbr_trail_pct'] = max(0.05, min(10.0, float(
+                    self._settings.get('sbr_trail_pct', 0.3) or 0.3)))
+            except (TypeError, ValueError):
+                self._settings['sbr_trail_pct'] = 0.3
+            try:
+                self._settings['sbr_trail_charge_min'] = max(0.0, min(100.0, float(
+                    self._settings.get('sbr_trail_charge_min', 40) or 0)))
+            except (TypeError, ValueError):
+                self._settings['sbr_trail_charge_min'] = 40
 
             # opposite_ob_exit_timeframe — validated string, default '15m'
             ALLOWED_EXIT_TFS = ('5m', '15m', '30m', '1h', '4h')
@@ -1888,6 +1908,8 @@ class TradeManager:
         # (CTR / Decision data can lag the open by a tick). Filled ONCE — so the
         # trade-history modal shows «на вході» for CTR and Decision Center on
         # EVERY trade, not only those opened when the data was already warm.
+        if pos.get('spring_open') is None:
+            self._spring_open_mark(symbol, pos)
         if pos.get('ctr_open') is None:
             _c = self._ctr_snapshot(symbol)
             if _c:
@@ -1920,6 +1942,8 @@ class TradeManager:
         # 🎯 TP-1 — ЧАСТКОВА фіксація. Стоїть ПЕРЕД повним TP: інакше рівень
         # TP-2, який лежить далі, ніколи не дав би частковому спрацювати.
         _lo, _hi = self._px_range(symbol, False, current_price)
+        if not _manual and self._sbr_trail_tick(symbol, pos, current_price, False, _lo, _hi):
+            return
         self._check_manual_tp1(symbol, pos, current_price, False, _lo, _hi)
         manual_reason = self._check_manual_sl_tp(pos, current_price, _lo, _hi)
         if manual_reason:
@@ -2570,6 +2594,8 @@ class TradeManager:
         # Backfill entry snapshots that were unavailable at the exact open moment
         # (CTR / Decision data can lag the open by a tick) — filled ONCE so the
         # trade-history modal shows «на вході» for CTR + Decision on paper trades.
+        if pos.get('spring_open') is None:
+            self._spring_open_mark(symbol, pos)
         if pos.get('ctr_open') is None:
             _c = self._ctr_snapshot(symbol)
             if _c:
@@ -2591,6 +2617,8 @@ class TradeManager:
         # 🎯 TP-1 — ЧАСТКОВА фіксація. Стоїть ПЕРЕД повним TP: інакше рівень
         # TP-2, який лежить далі, ніколи не дав би частковому спрацювати.
         _lo, _hi = self._px_range(symbol, True, current_price)
+        if not _manual and self._sbr_trail_tick(symbol, pos, current_price, True, _lo, _hi):
+            return
         self._check_manual_tp1(symbol, pos, current_price, True, _lo, _hi)
         manual_reason = self._check_manual_sl_tp(pos, current_price, _lo, _hi)
         if manual_reason:
@@ -3734,7 +3762,9 @@ class TradeManager:
                     best = (tf, sig, ct)
         return (best[0], best[1]) if best else None
 
-    def _sbr_exit_reason(self, symbol: str, pos: Dict) -> Optional[tuple]:
+    def _sbr_exit_reason(self, symbol: str, pos: Dict,
+                         current_price: Optional[float] = None,
+                         is_shadow: bool = False) -> Optional[tuple]:
         """🔔 Вихід по протилежному сигналу МММ-SBR 1H / 4H (вимога 30.10).
         Монети немає в рушії (поза WATCHLIST / ще не порахована) → правило
         мовчить: «немає даних» ≠ «сигнал проти»."""
@@ -3757,9 +3787,165 @@ class TradeManager:
         when = f" #{sig.get('n') or 1} {sig.get('time_kyiv')} Kyiv" if sig.get('time_kyiv') else ''
         sc = sig.get('score')
         sc = f' · Score {float(sc):.0f}' if sc is not None else ''
+        if s.get('sbr_exit_trail'):
+            # 🔔⏳ Не виходимо — «озброюємо» угоду. ПЕРШЕ озброєння фіксує
+            # ціну назавжди: наступні протилежні сигнали підлогу не зсувають.
+            if isinstance(pos.get('sbr_trail'), dict):
+                return None
+            try:
+                px = float(current_price or 0)
+            except (TypeError, ValueError):
+                px = 0.0
+            if px <= 0:
+                return None
+            rec = self._spring_rec(symbol) or {}
+            pos['sbr_trail'] = {
+                'armed_px': px, 'best_px': px, 'stop_px': px,
+                'armed_at': time.time(), 'tf': lab, 'sig_side': sig.get('side'),
+                'sig_t': sig.get('close_t'), 'sig_n': sig.get('n'),
+                'sig_time': sig.get('time_kyiv'),
+                'charge_open': rec.get('charge'),
+            }
+            try:
+                from detection.activity_log import log_activity
+                log_activity(symbol, 'sltp',
+                             f"🔔⏳ МММ-SBR {lab}: протилежний сигнал {sig.get('side')}{when}{sc} "
+                             f"— НЕ виходимо, запамʼятовано ціну {px:g}: далі проти угоди → "
+                             f"закриття, за угодою → ведемо (стоп не гірший за {px:g})",
+                             side=pos.get('side'), source='TM',
+                             extra={'is_shadow': is_shadow, 'armed_px': px})
+            except Exception:
+                pass
+            self._persist_book(is_shadow)
+            return None
         return ('sbr_exit',
                 f"🔔 МММ-SBR {lab}: протилежний сигнал {sig.get('side')}{when}{sc} "
                 f"після входу — проти {str(pos.get('side') or '').upper()}")
+
+    def _spring_open_mark(self, symbol: str, pos: Dict) -> None:
+        """🌀 Запамʼятати «Заряд» на відкритті угоди (`spring_open`).
+        Монета ще не порахована → пробуємо на наступних тіках; якщо число
+        прийшло пізніше ніж за 5 хв після входу — позначка `spring_open_late`
+        (це вже не «на вході», а перше відоме значення)."""
+        rec = self._spring_rec(symbol)
+        if not rec or rec.get('charge') is None:
+            return
+        try:
+            pos['spring_open'] = round(float(rec.get('charge')), 1)
+        except (TypeError, ValueError):
+            return
+        try:
+            oa = float(pos.get('opened_at') or 0)
+        except (TypeError, ValueError):
+            oa = 0.0
+        if oa > 0 and time.time() - oa > 300:
+            pos['spring_open_late'] = True
+
+    def _spring_rec(self, symbol: str) -> Optional[Dict]:
+        """🌀 Запис «Пружини» монети — лише памʼять сканера (той самий
+        `spring_for`, що малює панель 🌀 і колонку «Заряд» угод)."""
+        sc = getattr(self, 'scanner', None)
+        if sc is None or not hasattr(sc, 'spring_for'):
+            return None
+        try:
+            return (sc.spring_for([symbol]) or {}).get(str(symbol or '').upper())
+        except Exception:
+            return None
+
+    @staticmethod
+    def sbr_trail_step(side, st, price, lo=None, hi=None, trail_pct=0.3,
+                       charge_ok=False):
+        """🔔⏳ Один крок трейлу після протилежного сигналу SBR. ЧИСТА.
+
+        `st` = {armed_px, best_px}. Повертає (новий_стан, причина|None).
+        • Стоп = запамʼятована ціна (підлога) — ціна пішла ПРОТИ угоди далі за
+          неї → 'floor'.
+        • Ціна йшла ЗА угодою → стоп підтягується до best ∓ trail_pct, але
+          ніколи не гірший за підлогу; відкат до нього → 'trail'.
+        • 🌀 `charge_ok` (заряд на продовження ще є) → відкат НЕ закриває,
+          стоп тримається на підлозі.
+        Стоп рахується від ПОПЕРЕДНЬОГО best, потім best оновлюється — інакше
+        один бар із ґнотами в обидва боки закривав би сам себе."""
+        sd = str(side or '').upper()
+        try:
+            px = float(price)
+            armed = float(st.get('armed_px'))
+            best = float(st.get('best_px') or armed)
+        except (TypeError, ValueError, AttributeError):
+            return st, None
+        lo = px if lo is None else float(lo)
+        hi = px if hi is None else float(hi)
+        k = max(0.0, float(trail_pct or 0)) / 100.0
+        out = dict(st)
+        if sd == 'LONG':
+            stop = armed if charge_ok else max(armed, best * (1 - k))
+            why = None
+            if lo < stop:
+                why = 'floor' if stop <= armed else 'trail'
+            best = max(best, hi)
+            out['stop_px'] = armed if charge_ok else max(armed, best * (1 - k))
+        elif sd == 'SHORT':
+            stop = armed if charge_ok else min(armed, best * (1 + k))
+            why = None
+            if hi > stop:
+                why = 'floor' if stop >= armed else 'trail'
+            best = min(best, lo)
+            out['stop_px'] = armed if charge_ok else min(armed, best * (1 + k))
+        else:
+            return st, None
+        out['best_px'] = best
+        out['charge_ok'] = bool(charge_ok)
+        if why:
+            out['hit_px'] = px
+        return out, why
+
+    def _sbr_trail_tick(self, symbol: str, pos: Dict, current_price: float,
+                        is_shadow: bool, lo=None, hi=None) -> bool:
+        """🔔⏳ Кожен тік монітора (дешево: арифметика + памʼять сканера).
+        True → позицію ЗАКРИТО."""
+        st = pos.get('sbr_trail')
+        s = self._settings
+        if not isinstance(st, dict) or not (s.get('use_sbr_exit') and s.get('sbr_exit_trail')):
+            return False
+        side = str(pos.get('side') or '').upper()
+        rec = self._spring_rec(symbol) or {}
+        pot = rec.get('pot_long' if side == 'LONG' else 'pot_short')
+        need = float(s.get('sbr_trail_charge_min', 40) or 0)
+        try:
+            charge_ok = bool(need > 0 and pot is not None and float(pot) >= need)
+        except (TypeError, ValueError):
+            charge_ok = False
+        prev_best = st.get('best_px')
+        new, why = self.sbr_trail_step(side, st, current_price, lo, hi,
+                                       s.get('sbr_trail_pct', 0.3), charge_ok)
+        new['pot'] = pot
+        new['charge'] = rec.get('charge')
+        st.clear()
+        st.update(new)
+        now = time.time()
+        if new.get('best_px') != prev_best and now - float(st.get('_saved', 0) or 0) > 30:
+            st['_saved'] = now
+            self._persist_book(is_shadow)
+        if not why:
+            return False
+        armed = st.get('armed_px')
+        txt = ('ціна пішла далі ПРОТИ угоди за запамʼятовану' if why == 'floor'
+               else 'почався відкат від найкращої ціни')
+        msg = (f"🔔⏳ МММ-SBR {st.get('tf') or ''}: {txt} (запамʼятовано {armed:g}, "
+               f"стоп {float(st.get('stop_px') or armed):g}, зараз {float(current_price):g})")
+        print(f"[TM] 🔻 sbr_trail_exit for {symbol}: {msg}")
+        try:
+            from detection.activity_log import log_activity
+            log_activity(symbol, 'closed', f'{msg} → закриття позиції',
+                         side=pos.get('side'), source='TM')
+        except Exception:
+            pass
+        px = current_price or pos.get('entry_price')
+        if is_shadow:
+            self._close_shadow(symbol, px, reason='sbr_trail_exit')
+        else:
+            self._close_position(symbol, px, reason='sbr_trail_exit')
+        return True
 
     def _check_signal_exits(self, symbol: str, pos: Dict,
                             current_price: float, is_shadow: bool) -> bool:
@@ -3783,7 +3969,7 @@ class TradeManager:
             if not hit:
                 # 🔔 SBR — теж ОКРЕМЕ правило (подія «зʼявився протилежний
                 # сигнал»), поза AND/OR вердиктів; читання памʼяті рушія.
-                hit = self._sbr_exit_reason(symbol, pos)
+                hit = self._sbr_exit_reason(symbol, pos, current_price, is_shadow)
             if not hit:
                 hit = self._signal_exit_reason(symbol, pos)
         except Exception as e:
@@ -5960,6 +6146,7 @@ class TradeManager:
         position['ff_mm_open'] = self._ff_mm_snapshot(symbol)
         # ⚡ CTR entry-gate reading at open (for the хронологія modal).
         position['ctr_open'] = self._ctr_snapshot(symbol)
+        self._spring_open_mark(symbol, position)
         # ⚪ POC (Volume Profile) знімок на вході — фіксуємо як на панелі.
         position['entry_poc'] = self._poc_snapshot(symbol, side, entry_price)
 
@@ -6734,6 +6921,7 @@ class TradeManager:
             # різні рішення (миготіння біля нуля проти зустрічного тиску).
             'mm_against_exit': '🧮 МММ LiQ РОЗВЕРНУВСЯ ПРОТИ позиції',
             'sbr_exit': '🔔 Протилежний сигнал МММ-SBR після входу',
+            'sbr_trail_exit': '🔔⏳ МММ-SBR проти: ціна не продовжила угоду (трейл від ціни сигналу)',
             'signal_exit_and': '🔗 AND: усі увімкнені вердикти проти позиції',
             'pilot_target': '🎯 Автопілот: ціль на графіку досягнута',
         }
@@ -7163,6 +7351,7 @@ class TradeManager:
         pos['ff_exh_open'] = self._ff_exhaustion(symbol, side)
         pos['ff_mm_open'] = self._ff_mm_snapshot(symbol)
         pos['ctr_open'] = self._ctr_snapshot(symbol)
+        self._spring_open_mark(symbol, pos)
         # ⚪ POC (Volume Profile) знімок на вході (paper) — як на панелі.
         pos['entry_poc'] = self._poc_snapshot(symbol, side, entry_price)
         pos['origin_trace'] = self._take_origin_trace(symbol)
@@ -9571,6 +9760,7 @@ class TradeManager:
             'mm_flat_exit': '🧮 МММ LiQ ⚖',
             'mm_against_exit': '🧮 МММ LiQ ПРОТИ',
             'sbr_exit': '🔔 SBR проти',
+            'sbr_trail_exit': '🔔⏳ SBR трейл',
             'signal_exit_and': '🔗 Signal Exit (AND)',
             'pilot_target': '🎯 Автопілот (ціль)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',

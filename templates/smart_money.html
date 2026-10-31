@@ -1349,6 +1349,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     color: #777;
 }
 .tm-table.tm-pilot-off .tm-col-pilot{display:none}
+.tm-cols-wrap{position:relative;display:inline-block}
+.tm-cols-menu{position:absolute;z-index:50;top:100%;right:0;margin-top:4px;min-width:220px;padding:8px 10px;background:#17181e;border:1px solid #2b2f36;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.5);font-size:0.74rem;font-weight:400;color:#cbd5e1;text-align:left}
+.tm-cols-wrap.left .tm-cols-menu{left:0;right:auto}
+.tm-cols-menu label{display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;white-space:nowrap}
+.tm-cols-menu .tm-cols-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px;color:#8b93a7;text-transform:uppercase;font-size:0.64rem;letter-spacing:0.04em}
 
 /* 🌀 Пружина — рядок стану роботи (живе сканування + прогрес + ворота) */
 .spr-status{display:flex;flex-direction:column;gap:5px;margin:2px 0 8px;padding:7px 10px;border:1px solid #2b2f36;border-radius:6px;background:#11141b;font-size:0.68rem;color:#8b93a7}
@@ -5162,6 +5167,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label style="margin-left:10px"><input type="checkbox" id="tm-sbr-exit-1h" onchange="_tmSbrTfGuard(this);saveTMSettings()"> 1H</label>
                             <label style="margin-left:6px"><input type="checkbox" id="tm-sbr-exit-4h" onchange="_tmSbrTfGuard(this);saveTMSettings()"> 4H</label>
                         </div>
+                        <div class="tm-row" style="margin-left:22px">
+                            <label>
+                                <input type="checkbox" id="tm-sbr-exit-trail" onchange="saveTMSettings();_tmSbrExitSync()">
+                                🔔⏳ трейл замість миттєвого виходу
+                                <span class="tm-help" title="Протилежний сигнал МММ-SBR НЕ закриває угоду одразу: бот запамʼятовує ціну на момент сигналу. Далі: ціна йде ПРОТИ угоди за запамʼятовану → закриття; ціна йде ЗА угодою → угоду ведемо, доки не почнеться відкат ≥ «відкат %» від найкращої ціни, але стоп ніколи не гірший за запамʼятовану ціну. 🌀 ЗАРЯД: поки потенціал Пружини в бік угоди ≥ «заряд ≥» (заряд на продовження ще є) — відкат угоду НЕ закриває, діє лише запамʼятована ціна. 0 = заряд не враховується. Стан видно в колонці 🚨. Діє, лише коли увімкнено «🔔 МММ-SBR проти → вихід». За замовчуванням вимкнено.">?</span>
+                            </label>
+                            <label style="margin-left:10px" title="Відкат від найкращої ціни (після сигналу), що закриває угоду — коли заряду на продовження вже немає">відкат ≥ <input type="number" id="tm-sbr-trail-pct" min="0.05" max="10" step="0.05" style="width:56px" onchange="saveTMSettings()"> %</label>
+                            <label style="margin-left:10px" title="🌀 Поки потенціал Пружини в бік угоди не менший за це число, відкат угоду не закриває (лише запамʼятована ціна). 0 = заряд не важить.">🌀 заряд ≥ <input type="number" id="tm-sbr-trail-charge" min="0" max="100" step="1" style="width:52px" onchange="saveTMSettings()"></label>
+                        </div>
 
                         <!-- 🧮 ОКРЕМЕ правило — СВІДОМО стоїть ПІСЛЯ «Комбінувати»,
                              щоб не читалось як четверте правило того збігу: там
@@ -5497,22 +5511,22 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             
             <!-- Open Positions -->
-            <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">📂 Open Positions <span id="tm-open-count" style="color:#666;font-weight:normal;font-size:0.75rem">(0)</span></h3>
+            <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">📂 Open Positions <span id="tm-open-count" style="color:#666;font-weight:normal;font-size:0.75rem">(0)</span><span class="tm-cols-wrap left"><button type="button" class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" onclick="tmColsMenu('tm-open-table', this)" title="Показати / приховати колонки таблиць відкритих угод (вибір памʼятається в цьому браузері; спільний для реальних і paper)">👁 Колонки</button></span></h3>
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
-                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th title="💀 Ціна ліквідації реальної позиції на Bybit і відстань до неї від поточної ціни: червоний < 5%, бурштиновий < 15%. ⚠ — Manual SL стоїть за ліквідацією (стоп не встигне спрацювати).">💀 Ліквідація</th><th title="💰 PnL з урахуванням ПЛЕЧА і КОМІСІЙ. Велике число — ROI на маржу (як у застосунку біржі): нетто ÷ (нотіонал входу ÷ плече). Під ним — нетто $ (брутто − комісія входу − оцінка комісії виходу), якщо закрити зараз, і плече. Рух ціни без плеча та розклад — у підказці комірки. Комісія — поле «Комісія / сторону, %» (Bybit taker ≈ 0.055%).">PnL <span style="font-size:0.62rem;color:#8b93a7;font-weight:400">ROI · нетто</span></th>
-                        <th title="🔔 МММ-SBR по монеті — РІВНО той стан, що в таблиці блоку «🔔 МММ-SBR» (той самий рушій Session Band Reversal і ті самі TF банера 1H/4H): бік останнього сигналу, на якому TF він прийшов і його Score. Для монет у відкритій угоді є ЗАВЖДИ, навіть коли блок 🔔 МММ-SBR вимкнено. «—» = даних ще немає (рушій ще не завантажив бари).">🔔 МММ-SBR</th>
-                        <th title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. Сам нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
-                        <th>Qty</th>
-                        <th title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
-                        <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
-                        <th title="Manual TP — leave empty for none. Bot closes when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
-                        <th class="tm-col-pilot" title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
-                        <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
-                        <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
-                        <th title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Якщо увімкнено «🤖 Автоконтроль «🧱 OB»» у Exit Rules (деф. вимкнено) — вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
-                        <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
-                        <th>Action</th></tr>
+                    <tr><th data-col="sym">Symbol</th><th data-col="side">Side</th><th data-col="entry">Entry</th><th data-col="cur">Current</th><th data-col="liq" title="💀 Ціна ліквідації реальної позиції на Bybit і відстань до неї від поточної ціни: червоний < 5%, бурштиновий < 15%. ⚠ — Manual SL стоїть за ліквідацією (стоп не встигне спрацювати).">💀 Ліквідація</th><th data-col="pnl" title="💰 PnL з урахуванням ПЛЕЧА і КОМІСІЙ. Велике число — ROI на маржу (як у застосунку біржі): нетто ÷ (нотіонал входу ÷ плече). Під ним — нетто $ (брутто − комісія входу − оцінка комісії виходу), якщо закрити зараз, і плече. Рух ціни без плеча та розклад — у підказці комірки. Комісія — поле «Комісія / сторону, %» (Bybit taker ≈ 0.055%).">PnL <span style="font-size:0.62rem;color:#8b93a7;font-weight:400">ROI · нетто</span></th>
+                        <th data-col="charge" title="🌀 ЗАРЯД Пружини по монеті (той самий запис, що в панелі 🌀 Пружина, закриті 1h-бари): ліворуч — число, запамʼятоване на ВІДКРИТТІ угоди, праворуч — поточне. Смужка — поточний заряд, градієнт іде від кольору заряду на вході до кольору поточного; біла риска — рівень на вході. Колір: сірий 0 · синій 45 (накручується) · жовтий 65 (накручена) · рожевий 100. ↻ — з минулого запуску. 🌀 бере участь у виході «🔔⏳ МММ-SBR трейл»: поки є заряд на продовження угоди, відкат її не закриває.">🌀 Заряд</th>
+                        <th data-col="alert" title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. ⏳ бурштиновий «🔔⏳ TF» — увімкнено «трейл»: протилежний сигнал запамʼятав ціну, угоду ведемо; поруч — стоп і відстань ціни від запамʼятованої (🌀 = заряд ще тримає угоду, відкат не закриває). Сам сигнал нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
+                        <th data-col="qty">Qty</th>
+                        <th data-col="sl" title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
+                        <th data-col="tp1" title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
+                        <th data-col="tp2" title="Manual TP — leave empty for none. Bot closes when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
+                        <th data-col="pilot" class="tm-col-pilot" title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
+                        <th data-col="manual" title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
+                        <th data-col="be" title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
+                        <th data-col="oppob" title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Якщо увімкнено «🤖 Автоконтроль «🧱 OB»» у Exit Rules (деф. вимкнено) — вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
+                        <th data-col="timer" title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
+                        <th data-col="act">Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
                     <tr><td colspan="18" class="tm-empty-msg">No open positions</td></tr>
@@ -5568,22 +5582,22 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0">
                 Open Paper Positions <span id="tm-shadow-open-count" style="color:#666;font-weight:normal">(0)</span>
                 <span id="tm-shadow-stats-inline" style="color:#888;font-weight:normal;font-size:0.72rem;margin-left:8px"></span>
-                <button type="button" id="tm-shadow-close-all" onclick="closeAllTMShadow()" title="Закрити ВСІ відкриті paper-позиції за поточною ціною. Реальні угоди не чіпаються." style="float:right;font-size:0.7rem;font-weight:600;padding:3px 10px;border-radius:4px;border:1px solid rgba(239,68,68,0.5);background:rgba(239,68,68,0.12);color:#f87171;cursor:pointer">✖ Закрити всі</button>
+                <span class="tm-cols-wrap" style="float:right;margin-left:8px"><button type="button" class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" onclick="tmColsMenu('tm-shadow-open-table', this)" title="Показати / приховати колонки таблиць відкритих угод (вибір памʼятається в цьому браузері; спільний для реальних і paper)">👁 Колонки</button></span><button type="button" id="tm-shadow-close-all" onclick="closeAllTMShadow()" title="Закрити ВСІ відкриті paper-позиції за поточною ціною. Реальні угоди не чіпаються." style="float:right;font-size:0.7rem;font-weight:600;padding:3px 10px;border-radius:4px;border:1px solid rgba(239,68,68,0.5);background:rgba(239,68,68,0.12);color:#f87171;cursor:pointer">✖ Закрити всі</button>
             </h3>
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
-                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
-                        <th title="🔔 МММ-SBR по монеті — РІВНО той стан, що в таблиці блоку «🔔 МММ-SBR» (той самий рушій Session Band Reversal і ті самі TF банера 1H/4H): бік останнього сигналу, на якому TF він прийшов і його Score. Для монет у відкритій угоді є ЗАВЖДИ, навіть коли блок 🔔 МММ-SBR вимкнено. «—» = даних ще немає (рушій ще не завантажив бари).">🔔 МММ-SBR</th>
-                        <th title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. Сам нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
-                        <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
-                        <th title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
-                        <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
-                        <th class="tm-col-pilot" title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
-                        <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
-                        <th title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
-                        <th title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Якщо увімкнено «🤖 Автоконтроль «🧱 OB»» у Exit Rules (деф. вимкнено) — вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
-                        <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
-                        <th></th></tr>
+                    <tr><th data-col="sym">Symbol</th><th data-col="side">Side</th><th data-col="entry">Entry</th><th data-col="cur">Current</th><th data-col="pnl">PnL</th>
+                        <th data-col="charge" title="🌀 ЗАРЯД Пружини по монеті (той самий запис, що в панелі 🌀 Пружина, закриті 1h-бари): ліворуч — число, запамʼятоване на ВІДКРИТТІ угоди, праворуч — поточне. Смужка — поточний заряд, градієнт іде від кольору заряду на вході до кольору поточного; біла риска — рівень на вході. Колір: сірий 0 · синій 45 (накручується) · жовтий 65 (накручена) · рожевий 100. ↻ — з минулого запуску. 🌀 бере участь у виході «🔔⏳ МММ-SBR трейл»: поки є заряд на продовження угоди, відкат її не закриває.">🌀 Заряд</th>
+                        <th data-col="alert" title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. ⏳ бурштиновий «🔔⏳ TF» — увімкнено «трейл»: протилежний сигнал запамʼятав ціну, угоду ведемо; поруч — стоп і відстань ціни від запамʼятованої (🌀 = заряд ще тримає угоду, відкат не закриває). Сам сигнал нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
+                        <th data-col="sl" title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
+                        <th data-col="tp1" title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
+                        <th data-col="tp2" title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level." TP-2 закриває позицію ПОВНІСТЮ. Автопілот ставить сюди ГОЛОВНУ ціль угоди — найдальший змістовний обʼєкт графіка попереду руху.">Manual TP-2</th>
+                        <th data-col="pilot" class="tm-col-pilot" title="🎯 АВТОПІЛОТ УГОДИ — що саме відбувається з позицією протягом усієї угоди. Смужка — скільки шляху від входу до ЦІЛІ вже пройдено. Ціль обирається один раз із реальних обʼєктів графіка попереду руху: 💧/🌊 пул ліквідації · 🏁 екстремум дилінг-діапазону · ⚪ POC. Нижче — найближча перепона. Значок ліворуч: ⏳ тримаємо · 🛡 стоп підтягнуто (×N — скільки разів) · 🎯 фіксація. Повний розклад і таймфрейми — у підказці комірки.">🎯 Автопілот</th>
+                        <th data-col="manual" title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
+                        <th data-col="be" title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
+                        <th data-col="oppob" title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Якщо увімкнено «🤖 Автоконтроль «🧱 OB»» у Exit Rules (деф. вимкнено) — вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
+                        <th data-col="timer" title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
+                        <th data-col="act"></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
                     <tr><td colspan="16" class="tm-empty-msg">No paper positions</td></tr>
@@ -10695,6 +10709,9 @@ async function loadTMSettings() {
         document.getElementById('tm-use-sbr-exit').checked = !!s.use_sbr_exit;
         document.getElementById('tm-sbr-exit-1h').checked = s.sbr_exit_1h !== false;
         document.getElementById('tm-sbr-exit-4h').checked = s.sbr_exit_4h !== false;
+        document.getElementById('tm-sbr-exit-trail').checked = !!s.sbr_exit_trail;
+        document.getElementById('tm-sbr-trail-pct').value = (s.sbr_trail_pct != null) ? s.sbr_trail_pct : 0.3;
+        document.getElementById('tm-sbr-trail-charge').value = (s.sbr_trail_charge_min != null) ? s.sbr_trail_charge_min : 40;
         _tmSbrExitSync();
         document.getElementById('tm-mm-flat-exit-mode').value =
             (s.mm_flat_exit_mode === 'flat_or_against') ? 'flat_or_against' : 'flat';
@@ -11121,9 +11138,14 @@ const _PILOT_AUTO_IDS = [
 // TF не даємо — бекенд усе одно трактує «обидва off» як обидва.
 function _tmSbrExitSync() {
     const on = !!(document.getElementById('tm-use-sbr-exit') || {}).checked;
-    ['tm-sbr-exit-1h', 'tm-sbr-exit-4h'].forEach(id => {
+    ['tm-sbr-exit-1h', 'tm-sbr-exit-4h', 'tm-sbr-exit-trail'].forEach(id => {
         const e = document.getElementById(id);
         if (e) { e.disabled = !on; if (e.parentElement) e.parentElement.style.opacity = on ? '' : '0.45'; }
+    });
+    const tr = on && !!(document.getElementById('tm-sbr-exit-trail') || {}).checked;
+    ['tm-sbr-trail-pct', 'tm-sbr-trail-charge'].forEach(id => {
+        const e = document.getElementById(id);
+        if (e) { e.disabled = !tr; if (e.parentElement) e.parentElement.style.opacity = tr ? '' : '0.45'; }
     });
 }
 function _tmSbrTfGuard(el) {
@@ -11231,6 +11253,9 @@ async function saveTMSettings() {
             use_sbr_exit: document.getElementById('tm-use-sbr-exit').checked,
             sbr_exit_1h: document.getElementById('tm-sbr-exit-1h').checked,
             sbr_exit_4h: document.getElementById('tm-sbr-exit-4h').checked,
+            sbr_exit_trail: document.getElementById('tm-sbr-exit-trail').checked,
+            sbr_trail_pct: _numOr('tm-sbr-trail-pct', 0.3),
+            sbr_trail_charge_min: _numOr('tm-sbr-trail-charge', 40),
             mm_flat_exit_mode: document.getElementById('tm-mm-flat-exit-mode').value || 'flat',
             // ⚠️ `|| 0` тут БЕЗПЕЧНИЙ саме тому, що 0 і є дефолтом (на відміну
             // від полів рівнів, де 0 — окреме змістовне значення).
@@ -11530,6 +11555,7 @@ function reasonLabel(r) {
         // показувати не ту причину, що спрацювала (скарга 18.09).
         'mm_against_exit': '🧮 МММ LiQ ПРОТИ',
         'sbr_exit': '🔔 SBR проти',
+        'sbr_trail_exit': '🔔⏳ SBR трейл',
         'signal_exit_and': '🔗 AND (усі проти)',
         'pilot_target': '🎯 Автопілот (ціль)',
         'bos_2_partial': '✂️ BOS-2',
@@ -17389,35 +17415,125 @@ const FUEL_TOOLTIP = "МММ — тиск маркетмейкера на цін
 // МММ columns and the 💰 funding table): coloured direction dot + strength
 // 0..100% + trend arrow + mini-bar + a colour-coded band word at the END.
 //   dir: 'LONG'|'SHORT'|null(=balanced),  now/prev: 0..100 strength (or null)
-// 🔔 Комірка «МММ-SBR» у таблицях ВІДКРИТИХ УГОД (вимога 29.10; до того —
-// 🧮 МММ-Trend / 🧠 МММ-Decision). `pos.mmd` (історична назва поля) приходить
-// ГОТОВИМ з `/api/tm/state` — той самий `sbr_mm_dir`, що таблиця блоку МММ-SBR.
-// Вигляд: бік · TF сигналу · Score-смужка.
-function mmdTradeCellHTML(p) {
-    const m = p && p.mmd;
-    if (!m) {
-        return '<td><span style="color:#6b7280" title="Даних 🔔 МММ-SBR по цій монеті ще немає">—</span></td>';
+// 👁 ВИДИМІСТЬ КОЛОНОК таблиць відкритих угод (вимога 31.10). Вибір —
+// localStorage['tmColsHidden'] (UI-налаштування цього браузера), спільний для
+// реальних і paper; за замовчуванням видно всі. Ключ колонки — `data-col` у <th>.
+const _TM_COLS_KEY = 'tmColsHidden';
+function _tmColsHidden() {
+    try { return new Set(JSON.parse(localStorage.getItem(_TM_COLS_KEY) || '[]')); } catch (e) { return new Set(); }
+}
+function _tmColsSave(set) {
+    try { localStorage.setItem(_TM_COLS_KEY, JSON.stringify(Array.from(set))); } catch (e) {}
+}
+function _tmApplyCols(tableId) {
+    const tbl = document.getElementById(tableId);
+    if (!tbl || !tbl.tHead || !tbl.tHead.rows.length) return;
+    const hidden = _tmColsHidden();
+    const ths = tbl.tHead.rows[0].cells;
+    const hide = [];
+    for (let i = 0; i < ths.length; i++) {
+        const k = ths[i].getAttribute('data-col');
+        const h = !!k && k !== 'sym' && hidden.has(k);
+        hide.push(h);
+        ths[i].style.display = h ? 'none' : '';
     }
-    const dir = (m.mm === 'LONG' || m.mm === 'SHORT') ? m.mm : null;
-    if (!dir) {
-        return '<td><span style="color:#8b93a7" title="🔔 МММ-SBR: сигналу Session Band Reversal по монеті в історії немає">⚖ —</span></td>';
+    const body = tbl.tBodies && tbl.tBodies[0];
+    if (!body) return;
+    for (const r of body.rows) {
+        if (r.cells.length !== ths.length) continue;   // рядок-заглушка з colspan
+        for (let i = 0; i < r.cells.length; i++) r.cells[i].style.display = hide[i] ? 'none' : '';
     }
-    const st = Math.max(0, Math.min(100, Math.round(Number(m.strength) || 0)));
-    const col = dir === 'LONG' ? '#4ade80' : '#f87171';
-    const ic = dir === 'LONG' ? '▲' : '▼';
-    const tf = String(m.tf || '');
-    const g = m.sig || {};
-    const tip = `🔔 МММ-SBR: ${dir} ${tf} · Score ${st}`
-        + (g.time_kyiv ? ` · #${g.n || 1} ${g.time_kyiv} Kyiv` : '')
-        + (g.trigger != null ? ` · Trigger ${g.trigger}` : '');
-    // Сегменти ФІКСОВАНОЇ ширини: значок 14 · TF 46 · Score 26 (праворуч) ·
-    // мінісмужка 34 — стовпчики рівні в усіх рядках.
-    return `<td><span title="${tip}" style="display:inline-flex;align-items:center;font-family:monospace;white-space:nowrap;font-size:0.74rem">`
-        + `<span style="display:inline-block;width:14px;color:${col};font-weight:900;text-align:center">${ic}</span>`
-        + `<b style="display:inline-block;width:46px;color:${col}">${tf || '—'}</b>`
-        + `<span style="display:inline-block;width:26px;text-align:right;color:#cbd5e1">${st}</span>`
-        + `<span style="display:inline-block;width:34px;height:6px;margin-left:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden">`
-        + `<span style="display:block;height:100%;width:${st}%;background:${col}"></span></span>`
+}
+function _tmColLabel(th) {
+    const k = th.getAttribute('data-col');
+    const fixed = {alert: '🚨 Сигнал', act: 'Дія', be: '🎯 БЗ', sl: 'Manual SL', tp1: 'Manual TP-1', tp2: 'Manual TP-2', pnl: 'PnL'};
+    if (fixed[k]) return fixed[k];
+    return (th.textContent || k).replace(/\s+/g, ' ').trim() || k;
+}
+function tmColsMenu(tableId, btn) {
+    const wrap = btn.parentElement;
+    const open = wrap.querySelector('.tm-cols-menu');
+    document.querySelectorAll('.tm-cols-menu').forEach(m => m.remove());
+    if (open) return;
+    const tbl = document.getElementById(tableId);
+    if (!tbl || !tbl.tHead) return;
+    const hidden = _tmColsHidden();
+    const items = Array.from(tbl.tHead.rows[0].cells)
+        .filter(th => th.getAttribute('data-col') && th.getAttribute('data-col') !== 'sym')
+        .map(th => {
+            const k = th.getAttribute('data-col');
+            return `<label><input type="checkbox" data-colkey="${k}" ${hidden.has(k) ? '' : 'checked'} onchange="tmColToggle(this)"> ${_tmColLabel(th)}</label>`;
+        }).join('');
+    const m = document.createElement('div');
+    m.className = 'tm-cols-menu';
+    m.onclick = ev => ev.stopPropagation();
+    m.innerHTML = `<div class="tm-cols-head"><span>Колонки таблиці</span>`
+        + `<button type="button" class="tm-copy-btn" style="font-size:0.66rem;padding:1px 8px" onclick="tmColsShowAll()">Показати всі</button></div>${items}`;
+    wrap.appendChild(m);
+}
+function tmColToggle(el) {
+    const set = _tmColsHidden();
+    const k = el.getAttribute('data-colkey');
+    if (el.checked) set.delete(k); else set.add(k);
+    _tmColsSave(set);
+    _tmApplyCols('tm-open-table');
+    _tmApplyCols('tm-shadow-open-table');
+}
+function tmColsShowAll() {
+    _tmColsSave(new Set());
+    document.querySelectorAll('.tm-cols-menu input[data-colkey]').forEach(i => { i.checked = true; });
+    _tmApplyCols('tm-open-table');
+    _tmApplyCols('tm-shadow-open-table');
+}
+document.addEventListener('click', ev => {
+    if (!ev.target.closest || !ev.target.closest('.tm-cols-wrap')) {
+        document.querySelectorAll('.tm-cols-menu').forEach(m => m.remove());
+    }
+});
+// 🌀 Комірка «Заряд» у таблицях ВІДКРИТИХ УГОД (вимога 31.10; до того —
+// 🔔 МММ-SBR). `p.spring_open` — заряд, запамʼятований TM на відкритті угоди,
+// `p.spring` — поточний запис Пружини (памʼять сканера через /api/tm/state).
+// Градієнт смужки йде від кольору заряду на вході до кольору поточного.
+const _CHG_STOPS = [[0, [75, 85, 99]], [45, [96, 165, 250]], [65, [250, 204, 21]], [100, [244, 114, 182]]];
+function chargeColor(v) {
+    const x = Math.max(0, Math.min(100, Number(v) || 0));
+    for (let i = 1; i < _CHG_STOPS.length; i++) {
+        const [b, cb] = _CHG_STOPS[i], [a, ca] = _CHG_STOPS[i - 1];
+        if (x <= b) {
+            const t = (x - a) / ((b - a) || 1);
+            return 'rgb(' + ca.map((c, k) => Math.round(c + (cb[k] - c) * t)).join(',') + ')';
+        }
+    }
+    return 'rgb(244,114,182)';
+}
+function springTradeCellHTML(p) {
+    const sp = (p && p.spring) || null;
+    const nowV = (sp && sp.charge != null && isFinite(Number(sp.charge))) ? Math.max(0, Math.min(100, Number(sp.charge))) : null;
+    const openV = (p && p.spring_open != null && isFinite(Number(p.spring_open))) ? Math.max(0, Math.min(100, Number(p.spring_open))) : null;
+    if (nowV == null && openV == null) {
+        return '<td><span style="color:#6b7280" title="🌀 Заряду Пружини по монеті ще немає (монета поза WATCHLIST, «Пружину» вимкнено або сканер ще не порахував)">—</span></td>';
+    }
+    const cNow = chargeColor(nowV != null ? nowV : openV);
+    const cOpen = chargeColor(openV != null ? openV : nowV);
+    const w = nowV != null ? nowV : 0;
+    const d = (nowV != null && openV != null) ? Math.round(nowV - openV) : null;
+    const dTxt = d == null ? '' : (d > 0 ? '+' + d : (d < 0 ? '−' + Math.abs(d) : '±0'));
+    const dCol = d == null ? '#6b7280' : (d > 0 ? '#facc15' : (d < 0 ? '#8b93a7' : '#6b7280'));
+    const side = String(p.side || '').toUpperCase();
+    const pot = sp ? (side === 'LONG' ? sp.pot_long : (side === 'SHORT' ? sp.pot_short : null)) : null;
+    const tip = '🌀 Заряд Пружини: на вході ' + (openV != null ? Math.round(openV) + (p.spring_open_late ? ' (перше відоме значення — на самому вході даних не було)' : '') : '—')
+        + ' → зараз ' + (nowV != null ? Math.round(nowV) : '—')
+        + (sp && sp.label ? ' · ' + sp.label : '')
+        + (pot != null ? ' · потенціал у бік угоди ' + Math.round(pot) : '')
+        + (sp && sp.restored ? ' · ↻ з минулого запуску' : '');
+    const mark = openV != null ? `<span style="position:absolute;top:-2px;bottom:-2px;left:calc(${openV}% - 1px);width:2px;background:#e5e7eb;opacity:0.85"></span>` : '';
+    return `<td><span title="${tip}" style="display:inline-flex;align-items:center;font-family:monospace;white-space:nowrap;font-size:0.74rem;${sp && sp.restored ? 'opacity:0.6' : ''}">`
+        + `<span style="display:inline-block;width:22px;text-align:right;color:${cOpen}">${openV != null ? Math.round(openV) : '—'}</span>`
+        + `<span style="display:inline-block;width:14px;text-align:center;color:#4b5563">→</span>`
+        + `<b style="display:inline-block;width:22px;text-align:left;color:${cNow}">${nowV != null ? Math.round(nowV) : '—'}</b>`
+        + `<span style="position:relative;display:inline-block;width:56px;height:7px;margin:0 6px 0 2px;border-radius:4px;background:rgba(255,255,255,0.07)">`
+        + `<span style="position:absolute;left:0;top:0;bottom:0;width:${w}%;border-radius:4px;background:linear-gradient(90deg, ${cOpen}, ${cNow});box-shadow:0 0 6px ${cNow}55;transition:width .6s ease"></span>${mark}</span>`
+        + `<span style="display:inline-block;width:28px;text-align:right;color:${dCol}">${dTxt}</span>`
         + `</span></td>`;
 }
 // 🚨 Сигнальна колонка поруч: протилежний сигнал 🔔 МММ-SBR із TF (з 29.10).
@@ -17429,7 +17545,34 @@ const _MMD_ALERT = {
     pre:     { ic: '⚑', col: '#fbbf24', bg: '#f59e0b26', txt: 'ДО ВХОДУ' },
     against: { ic: '⚠', col: '#fecaca', bg: '#dc2626', txt: 'ПРОТИ' },
 };
+// 🔔⏳ Трейл після протилежного сигналу SBR (вимога 31.10) — компактно:
+// бейдж «🔔⏳ TF» + стоп і відстань ціни від запамʼятованої. 🌀 = заряд на
+// продовження ще тримає угоду (відкат не закриває, діє лише підлога).
+function sbrTrailBadgeHTML(p) {
+    const t = p && p.sbr_trail;
+    if (!t || !t.armed_px) return '';
+    const side = String(p.side || '').toUpperCase();
+    const armed = Number(t.armed_px), cur = Number(p.current_price) || armed;
+    const stop = Number(t.stop_px) || armed;
+    const dist = armed > 0 ? (cur - armed) / armed * 100 * (side === 'SHORT' ? -1 : 1) : 0;
+    const dCol = dist > 0 ? '#4ade80' : (dist < 0 ? '#f87171' : '#cbd5e1');
+    const lifted = side === 'SHORT' ? stop < armed : stop > armed;
+    const tip = `🔔⏳ МММ-SBR ${t.tf || ''}: протилежний сигнал ${t.sig_side || ''}`
+        + (t.sig_time ? ` #${t.sig_n || 1} ${t.sig_time} Kyiv` : '')
+        + ` — угоду НЕ закрито, ведемо. Ціна на сигналі ${fmtPriceJS(armed)} · найкраща ${fmtPriceJS(t.best_px || armed)} · стоп ${fmtPriceJS(stop)}`
+        + (lifted ? ' (підтягнуто за ціною)' : ' (= ціна сигналу)')
+        + ` · зараз ${dist >= 0 ? '+' : '−'}${Math.abs(dist).toFixed(2)}% від ціни сигналу`
+        + (t.charge_ok ? ' · 🌀 заряд на продовження ще є (потенціал ' + Math.round(Number(t.pot) || 0) + ') — відкат не закриває, лише ціна сигналу' : ' · заряду на продовження немає — закриє відкат від найкращої ціни');
+    return `<td><span title="${tip}" style="display:inline-flex;align-items:center;gap:5px;font-family:monospace;font-size:0.68rem;white-space:nowrap">`
+        + `<span style="padding:1px 5px;border-radius:4px;font-weight:700;color:#fbbf24;background:#f59e0b26;border:1px solid #fbbf2455">🔔⏳ ${t.tf || ''}</span>`
+        + `<span style="color:${lifted ? '#4ade80' : '#cbd5e1'}">🛡${fmtPriceJS(stop)}</span>`
+        + `<span style="color:${dCol}">${dist >= 0 ? '+' : '−'}${Math.abs(dist).toFixed(2)}%</span>`
+        + (t.charge_ok ? '<span style="color:#facc15">🌀</span>' : '')
+        + `</span></td>`;
+}
 function mmdAlertCellHTML(p) {
+    const _tr = sbrTrailBadgeHTML(p);
+    if (_tr) return _tr;
     const a = p && p.mmd && p.mmd.alert;
     if (!a || !_MMD_ALERT[a.level]) {
         const why = a && a.text ? a.text : 'немає даних 🔔 МММ-SBR';
@@ -18463,7 +18606,7 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}</td>
                     ${liqCellHTML(p)}
                     ${realPnlCellHTML(p, usd, syncMark)}
-                    ${mmdTradeCellHTML(p)}
+                    ${springTradeCellHTML(p)}
                     ${mmdAlertCellHTML(p)}
                     <td style="font-family:monospace;text-align:right" title="${p.remaining_qty || p.qty}">${fmtQtyJS(p.remaining_qty || p.qty)}</td>
                     ${manualSlTpCellsHTML(p, false)}
@@ -18561,7 +18704,7 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
-                    ${mmdTradeCellHTML(p)}
+                    ${springTradeCellHTML(p)}
                     ${mmdAlertCellHTML(p)}
                     ${manualSlTpCellsHTML(p, true)}
                     ${pilotCellHTML(p)}
@@ -18574,6 +18717,9 @@ async function loadTMState(isPoll) {
             }).join('');
         }
         
+        _tmApplyCols('tm-open-table');
+        _tmApplyCols('tm-shadow-open-table');
+
         // Shadow closes (use original index for backend deletion)
         const rawShadowClosed = d.shadow_closed || [];
         const shadowClosedTbody = document.getElementById('tm-shadow-closed-tbody');

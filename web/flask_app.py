@@ -6189,6 +6189,7 @@ def register_api_routes(app):
                 # 🏷 Останній OB 4H (позначка в Side) — памʼять сканера, без БД.
                 _ob4_map = {}
                 _ob1_map = {}
+                _spr_map = {}
                 try:
                     from detection.smc_scanner import get_smc_scanner
                     _sc = get_smc_scanner()
@@ -6198,6 +6199,10 @@ def register_api_routes(app):
                             _ob1_map = _sc.ob_mark_for([p.get('symbol') for p in _all_pos], tf='1h')
                         except TypeError:   # старіший сканер без OB 1H
                             _ob1_map = {}
+                        # 🌀 «Заряд» Пружини — ЧИТАННЯ памʼяті сканера (`spring_for`,
+                        # той самий запис, що малює панель 🌀).
+                        if hasattr(_sc, 'spring_for'):
+                            _spr_map = _sc.spring_for([p.get('symbol') for p in _all_pos])
                 except (AttributeError, ImportError):
                     pass
                 for pos in _all_pos:
@@ -6212,6 +6217,11 @@ def register_api_routes(app):
                         pos['ob4h'] = _ob4_map[sym]
                     if sym in _ob1_map:
                         pos['ob1h'] = _ob1_map[sym]
+                    _sr = _spr_map.get(str(sym or '').upper())
+                    if _sr:
+                        pos['spring'] = {k: _sr.get(k) for k in (
+                            'charge', 'state', 'label', 'phase', 'dir',
+                            'pot_long', 'pot_short', 'restored')}
                     # Колонку «МММ» прибрано з таблиць відкритих угод, тож
                     # ці поля більше не потрібні в кожному поллі (легший payload).
                     # Мапа лишається — її читають інші місця; щоб повернути

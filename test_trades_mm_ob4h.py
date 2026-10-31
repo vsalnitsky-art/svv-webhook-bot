@@ -38,7 +38,7 @@ def _check(c, m):
 # видалено разом із колонкою.
 def test_flask_only_reads_snapshots():
     i = _FLASK.index("_dec_map = ff.dec_trade_for(")
-    blk = _FLASK[i - 600:i + 1600]
+    blk = _FLASK[i - 600:i + 2600]
     _check("pos['mmd'] = _dec_map[_dk]" in blk, 'mmd не кладеться в позицію')
     _check("pos['ob4h'] = _ob4_map[sym]" in blk, 'ob4h не кладеться в позицію')
     _check('ob_mark_for(' in blk and 'get_smc_ob_state' not in blk,
@@ -95,7 +95,7 @@ def test_tables_have_the_new_column_and_matching_colspans():
     for tid in ('tm-open-table', 'tm-shadow-open-table'):
         i = _HTML.index(f'id="{tid}"')
         tbl = _HTML[i:_HTML.index('</table>', i)]
-        _check('>🔔 МММ-SBR</th>' in tbl, f'{tid}: немає колонки МММ-SBR')
+        _check('>🌀 Заряд</th>' in tbl, f'{tid}: немає колонки 🌀 Заряд')
         n = len(re.findall(r'<th[\s>]', tbl))
         m = re.search(r'colspan="(\d+)"', tbl)
         _check(m and int(m.group(1)) == n, f'{tid}: colspan ≠ {n}')

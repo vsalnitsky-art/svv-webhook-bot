@@ -167,7 +167,7 @@ def test_warmup_after_restart_freezes_the_automat():
 
 
 def test_pilot_column_hidden_when_pilot_off():
-    _check(_HTML.count('<th class="tm-col-pilot"') == 2, 'заголовок у real і paper')
+    _check(_HTML.count('<th data-col="pilot" class="tm-col-pilot"') == 2, 'заголовок у real і paper')
     _check(_HTML.count('<td class="tm-col-pilot"') == 2, 'обидві гілки комірки')
     _check('.tm-table.tm-pilot-off .tm-col-pilot{display:none}' in _HTML, 'CSS')
     _check('_tmPilotColSync(!!s.pilot_enabled)' in _HTML and

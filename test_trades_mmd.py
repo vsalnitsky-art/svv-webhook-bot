@@ -163,12 +163,15 @@ def test_route_only_reads():
 # ═══════════ 3. UI ═════════════════════════════════════════════════════
 def _js(body):
     src = ''
-    for f in ('function mmdTradeCellHTML(', 'function mmdAlertCellHTML('):
+    for f in ('function chargeColor(', 'function springTradeCellHTML(',
+              'function sbrTrailBadgeHTML(', 'function mmdAlertCellHTML('):
         a = _HTML.index(f)
         src += _HTML[a:_HTML.index('\n}', a) + 2] + '\n'
-    for c in ('const _MMD_ALERT',):
+    for c in ('const _MMD_ALERT', 'const _CHG_STOPS'):
         a = _HTML.index(c)
-        src = _HTML[a:_HTML.index('};', a) + 2] + '\n' + src
+        e = _HTML.index(';\n', a) + 2
+        src = _HTML[a:e] + '\n' + src
+    src = "function fmtPriceJS(v){return String(Number(v));}\n" + src
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as fh:
         fh.write(src + body)
         path = fh.name
@@ -180,24 +183,31 @@ def _js(body):
 
 
 def test_js_cells():
+    """⚠️ 31.10: колонку 🔔 МММ-SBR замінено на 🌀 Заряд (на вході → зараз,
+    градієнт), а 🚨 показує ще й стан 🔔⏳ трейлу (тест переписано)."""
     out = _js(r"""
-const m = {mm:'SHORT', strength:77, tf:'1H+4H', sig:{n:2, time_kyiv:'19:00', trigger:1.5},
-           alert:{level:'against', side:'SHORT', tf:'1H+4H', text:'ПРОТИ угоди: 🔔 МММ-SBR SHORT 1H+4H'}};
-console.log(mmdTradeCellHTML({mmd:m}));
+const m = {alert:{level:'against', side:'SHORT', tf:'1H+4H', text:'ПРОТИ угоди: 🔔 МММ-SBR SHORT 1H+4H'}};
+console.log(springTradeCellHTML({side:'LONG', spring_open:30, spring:{charge:70, pot_long:50, label:'🌀 накручена'}}));
 console.log('|');
 console.log(mmdAlertCellHTML({mmd:m}));
 console.log('|');
-console.log(mmdAlertCellHTML({mmd:Object.assign({}, m, {alert:{level:'pre', tf:'4H', text:'до входу'}})}));
+console.log(mmdAlertCellHTML({mmd:{alert:{level:'pre', tf:'4H', text:'до входу'}}}));
 console.log('|');
-console.log(mmdAlertCellHTML({}) + mmdTradeCellHTML({}));
+console.log(mmdAlertCellHTML({}) + springTradeCellHTML({}));
+console.log('|');
+console.log(mmdAlertCellHTML({side:'LONG', current_price:102, mmd:m,
+  sbr_trail:{armed_px:100, best_px:103, stop_px:101, tf:'1H', sig_side:'SHORT', charge_ok:true, pot:55}}));
 """)
     p = out.split('|')
-    _check(len(p) == 4, out)
-    _check('▼' in p[0] and '1H+4H' in p[0] and 'width:77%' in p[0] and '77' in p[0], p[0])
+    _check(len(p) == 5, out)
+    _check('>30<' in p[0] and '>70<' in p[0] and '+40' in p[0] and 'linear-gradient' in p[0]
+           and 'width:70%' in p[0] and 'left:calc(30%' in p[0], p[0])
     _check('ПРОТИ 1H+4H' in p[1] and 'tm-mmd-alert-hot' in p[1] and '#dc2626' in p[1], p[1])
     _check('ДО ВХОДУ' in p[2] and '#fbbf24' in p[2] and 'hot' not in p[2], p[2])
     _check(p[3].count('>—<') == 2, 'немає даних → «—» в обох комірках')
-    print('✓ JS: 🔔 комірка (бік · TF · Score) + 🚨 ПРОТИ+TF (червоний, блимає) / ДО ВХОДУ')
+    _check('🔔⏳ 1H' in p[4] and '🛡101' in p[4] and '+2.00%' in p[4] and '🌀' in p[4]
+           and 'ПРОТИ' not in p[4].split('title=')[0], p[4])
+    print('✓ JS: 🌀 заряд (вхід → зараз, градієнт) + 🚨 ПРОТИ / ДО ВХОДУ / 🔔⏳ трейл')
 
 
 def test_blink_css_exists():

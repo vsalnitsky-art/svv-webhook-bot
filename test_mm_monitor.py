@@ -1450,14 +1450,15 @@ def test_ui_trades_tables_got_the_column_and_the_right_colspan():
         i = _HTML.index(f'id="{tid}"')
         tbl = _HTML[i:_HTML.index('</table>', i)]
         # ⚠️ 26.10: колонку 🧠 МММ-Decision замінено на 🧮 МММ-Trend.
-        _check('🔔 МММ-SBR</th>' in tbl, f'{tid}: немає заголовка колонки')
+        # ⚠️ 31.10: колонку 🔔 МММ-SBR замінено на 🌀 Заряд.
+        _check('🌀 Заряд</th>' in tbl, f'{tid}: немає заголовка колонки')
         _check('МММ LiQ</th>' not in tbl and 'МММ-Decision</th>' not in tbl,
                f'{tid}: старі МММ-колонки мусять зникнути')
         n = len(_re.findall(r'<th[\s>]', tbl))
         m = _re.search(r'colspan="(\d+)"', tbl)
         _check(m and int(m.group(1)) == n,
                f'{tid}: colspan {m and m.group(1)} ≠ {n} заголовків')
-    for f in ('mmdTradeCellHTML', 'mmdAlertCellHTML'):
+    for f in ('springTradeCellHTML', 'mmdAlertCellHTML'):
         _check(_HTML.count('${' + f + '(p)}') == 2,
                f'{f} підключена не в обидві таблиці (real + paper)')
     print('✓ UI: колонки «🧠 МММ-Decision» + «🚨» у real+paper')

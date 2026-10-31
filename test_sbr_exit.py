@@ -150,6 +150,104 @@ def test_engine_snaps_reads_memory_only():
     _check(e.snaps('XXX') == {}, 'невідома монета')
 
 
+# ── 🔔⏳ ТРЕЙЛ замість миттєвого виходу + 🌀 заряд (вимога 31.10) ─────────────
+def test_trail_step_floor_and_trailing_long():
+    st = {'armed_px': 100.0, 'best_px': 100.0}
+    st, why = TM.sbr_trail_step('LONG', st, 99.9, trail_pct=0.5)
+    _check(why == 'floor', 'ціна пішла далі проти угоди — закриття')
+    st = {'armed_px': 100.0, 'best_px': 100.0}
+    st, why = TM.sbr_trail_step('LONG', st, 100.0, trail_pct=0.5)
+    _check(why is None, 'на самій ціні сигналу — ще не закриваємо')
+    st, why = TM.sbr_trail_step('LONG', st, 104.0, trail_pct=0.5)
+    _check(why is None and st['best_px'] == 104.0 and abs(st['stop_px'] - 103.48) < 1e-9, st)
+    st, why = TM.sbr_trail_step('LONG', st, 103.4, trail_pct=0.5)
+    _check(why == 'trail', 'відкат від найкращої ≥ 0.5% — закриття')
+
+
+def test_trail_never_worse_than_the_signal_price():
+    st = {'armed_px': 100.0, 'best_px': 100.2}
+    st, why = TM.sbr_trail_step('LONG', st, 100.1, trail_pct=1.0)
+    _check(why is None and st['stop_px'] == 100.0, 'стоп не нижче ціни сигналу')
+    st, why = TM.sbr_trail_step('SHORT', {'armed_px': 100.0, 'best_px': 95.0}, 95.6, trail_pct=0.5)
+    _check(why == 'trail', 'SHORT дзеркально: відкат угору від найкращої')
+    st, why = TM.sbr_trail_step('SHORT', {'armed_px': 100.0, 'best_px': 100.0}, 100.2, trail_pct=0.5)
+    _check(why == 'floor', 'SHORT: ціна вище ціни сигналу — закриття')
+
+
+def test_charge_keeps_the_trade_through_a_pullback():
+    st = {'armed_px': 100.0, 'best_px': 104.0}
+    st2, why = TM.sbr_trail_step('LONG', dict(st), 102.0, trail_pct=0.5, charge_ok=True)
+    _check(why is None and st2['stop_px'] == 100.0, '🌀 заряд є → відкат не закриває')
+    _, why = TM.sbr_trail_step('LONG', dict(st), 99.0, trail_pct=0.5, charge_ok=True)
+    _check(why == 'floor', 'але ціна сигналу — тверда межа навіть із зарядом')
+    _, why = TM.sbr_trail_step('LONG', dict(st), 102.0, trail_pct=0.5, charge_ok=False)
+    _check(why == 'trail', 'заряду немає → відкат закриває')
+
+
+def test_wick_both_ways_does_not_close_itself():
+    st = {'armed_px': 100.0, 'best_px': 100.0}
+    st, why = TM.sbr_trail_step('LONG', st, 100.5, lo=100.0, hi=103.0, trail_pct=0.5)
+    _check(why is None and st['best_px'] == 103.0, 'стоп від ПОПЕРЕДНЬОГО best')
+
+
+class _SC:
+    def __init__(self, pot): self.pot = pot
+    def spring_for(self, syms): return {'ETHUSDT': {'charge': 70, 'pot_long': self.pot, 'pot_short': 5}}
+
+
+def test_trail_mode_arms_instead_of_closing_then_closes_on_drop():
+    t = _TM(side='LONG', opened_at=10_000.0, sbr_exit_trail=True, sbr_trail_pct=0.5,
+            sbr_trail_charge_min=40)
+    t.scanner = _SC(pot=10)
+    t._persist_book = lambda is_shadow: None
+    closed = _run(t, {'1h': {'tail': [_sig('SHORT', 20_000)]}})
+    pos = t._positions['ETHUSDT']
+    _check(not closed and t.closed == [] and pos['sbr_trail']['armed_px'] == 101.0, pos)
+    _check(any('НЕ виходимо' in x for x in _LOG), _LOG)
+    _check(not t._sbr_trail_tick('ETHUSDT', pos, 101.5, False), 'ціна за угодою — ведемо')
+    _check(t._sbr_trail_tick('ETHUSDT', pos, 100.9, False)
+           and t.closed == [('real', 'sbr_trail_exit')], t.closed)
+
+
+def test_trail_tick_uses_charge_from_the_spring():
+    t = _TM(side='LONG', sbr_exit_trail=True, sbr_trail_pct=0.5, sbr_trail_charge_min=40)
+    t.scanner = _SC(pot=60)
+    t._persist_book = lambda is_shadow: None
+    pos = t._positions['ETHUSDT']
+    pos['sbr_trail'] = {'armed_px': 100.0, 'best_px': 105.0}
+    _check(not t._sbr_trail_tick('ETHUSDT', pos, 103.0, False)
+           and pos['sbr_trail']['charge_ok'] is True, 'потенціал 60 ≥ 40 → тримаємо')
+    t.scanner = _SC(pot=10)
+    _check(t._sbr_trail_tick('ETHUSDT', pos, 103.0, False), 'заряд вичерпано → відкат закриває')
+
+
+def test_trail_settings_and_ui():
+    d = tmmod.DEFAULT_SETTINGS
+    _check(d['sbr_exit_trail'] is False and d['sbr_trail_pct'] == 0.3
+           and d['sbr_trail_charge_min'] == 40, 'дефолти')
+    for k in ('id="tm-sbr-exit-trail"', 'id="tm-sbr-trail-pct"', 'id="tm-sbr-trail-charge"',
+              "'sbr_trail_exit': '🔔⏳ SBR трейл'", 'sbr_exit_trail:', 'function sbrTrailBadgeHTML('):
+        _check(k in _HTML, k)
+    _check(_TMSRC.count("'sbr_trail_exit':") >= 2, 'підписи причини в TM')
+    _check(_TMSRC.count('self._sbr_trail_tick(symbol, pos, current_price,') == 2,
+           'трейл у ОБОХ моніторах (real + paper)')
+
+
+def test_charge_is_remembered_at_open():
+    import time as _t
+    t = _TM(side='LONG', opened_at=_t.time())
+    t.scanner = _SC(pot=10)
+    pos = {'opened_at': _t.time()}
+    t._spring_open_mark('ETHUSDT', pos)
+    _check(pos['spring_open'] == 70.0 and 'spring_open_late' not in pos, pos)
+    pos = {'opened_at': _t.time() - 3600}
+    t._spring_open_mark('ETHUSDT', pos)
+    _check(pos.get('spring_open_late') is True, 'перше відоме значення пізніше 5 хв — позначка')
+    _check(_TMSRC.count('self._spring_open_mark(symbol, position)') == 1
+           and _TMSRC.count('self._spring_open_mark(symbol, pos)') >= 3,
+           'заряд пишеться на відкритті (real + paper) і добирається в моніторах')
+
+
 if __name__ == '__main__':
     n = 0
     for k, v in list(globals().items()):
