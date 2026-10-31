@@ -93,6 +93,13 @@ def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
     v = view if isinstance(view, dict) else {}
     if not v or not v.get('on'):
         return False, True, '', ''
+    if v.get('stale'):
+        # 🔒 Бар щойно закрився, а стан блоку ще не оновлено (кейс OKBUSDT
+        # 31.10) — судити за старим означало б пропустити сигнал проти
+        # щойно зміненого напрямку. «Невідомо» ≠ «за напрямком».
+        return (True, False, f'{tag}[оновлюється після закриття бару]:✗',
+                f'{name}: бар щойно закрився, стан ще не оновлено — сигнал не '
+                f'пропускаємо за старими даними')
     b = v.get('dir')
     c = v.get('coin')
     ua = {'LONG': 'LONG', 'SHORT': 'SHORT', 'FLAT': '⚖ Рівновага'}

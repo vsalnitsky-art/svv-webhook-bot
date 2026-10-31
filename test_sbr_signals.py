@@ -366,6 +366,54 @@ def test_gates_and_banner_tg_wired():
            'колонку «Рух» прибрано')
 
 
+# ── 🔒 ворота SBR не судять за старим станом (кейс OKBUSDT 31.10) ──
+def test_stale_state_is_fetched_for_one_coin_and_signal_reaches_tg():
+    now = 14400 * 500 + 3600 * 2 + 5          # 1H щойно закрився
+    e, sent, clock, db = _engine(now - 3600, sig1=None)
+    e.tick()                                   # стан на ПОПЕРЕДНЬОМУ барі
+    clock['t'] = now
+    e._fetch_sig = 'SHORT'
+    _orig = e._fetch
+
+    def fetch(sym, tf, limit):
+        tf_sec = S.TF_SEC[tf]
+        last_closed_open = int(clock['t'] // tf_sec) * tf_sec - tf_sec
+        bars = _series(tf_sec, 300, last_closed_open, 'SHORT' if tf == '1h' else None)
+        bars.append(_bar((last_closed_open + tf_sec) * 1000, 100, 100, 100, 100))
+        return bars
+    e._fetch = fetch
+    _check(not e.is_current('BTCUSDT', ('1h',)), 'одразу після закриття бару стан застарілий')
+    _check(e.ensure_current('BTCUSDT', ('1h',)) is True, 'бар монети дотягнуто')
+    _check(e.is_current('BTCUSDT', ('1h',)), 'тепер актуальний')
+    _check(e.rows()['BTCUSDT']['combo']['side'] == 'SHORT', 'новий SHORT у стані')
+    _check(len(sent) == 1 and 'SHORT' in sent[0], f'свіжий сигнал пішов у TG: {sent}')
+    _check(e.ensure_current('BTCUSDT', ('1h',)) is False, 'повторно біржу не питаємо')
+    e.tick()
+    _check(len(sent) == 1, 'прохід tick не дублює сигнал')
+    _check(_orig is not None, '')
+
+
+def test_gate_rejects_while_sbr_state_is_stale():
+    src = open(os.path.join(_ROOT, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
+    a = src.index('_MM_GATE_TAG')
+    b = src.index('\ndef mm_gate_decide(')
+    c = src.index('\n# 🧮 ЗАГАЛЬНІ МММ-ВОРОТА')
+    ns = {}
+    exec(src[src.index('_MM_GATE_TAG = '):b] + src[b:c], ns)
+    f = ns['mm_gate_decide']
+    view = {'on': True, 'dir': 'LONG', 'coin': 'LONG', 'strength': 90, 'str_min': 0}
+    _check(f(view, 'LONG', True, 'sbr')[1] is True, 'актуальний стан LONG пропускає LONG')
+    app, ok, chip, why = f({**view, 'stale': True}, 'LONG', True, 'sbr')
+    _check(app and not ok and 'оновлюється' in chip, f'застарілий стан — не пропускаємо: {chip}')
+    _check(a > 0, '')
+    ff = open(os.path.join(_ROOT, 'detection', 'fuel_filter.py'), encoding='utf-8').read()
+    g = ff[ff.index('def mm_gate_view('):ff.index('def symbols_in_work(')]
+    _check("_bk == 'sbr'" in g and '_sbr_gate_fresh' in g and "out['stale']" in g,
+           'mm_gate_view звіряє актуальність SBR')
+    h = ff[ff.index('def _sbr_gate_fresh('):ff.index('def symbols_in_work(')]
+    _check('ensure_current' in h and 'on_sbr_update' in h, 'дотягує бар і перебудовує книгу')
+
+
 if __name__ == '__main__':
     n = 0
     for k, v in list(globals().items()):

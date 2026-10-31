@@ -538,36 +538,13 @@ class SbrEngine:
             res = list(ex.map(lambda j: (j, self._safe_fetch(*j)), jobs))
         now = self._clock()
         fresh: Dict[str, List[tuple]] = {}
-        need_by_tf = {}
-        for tf in TFS:
-            tf_sec = TF_SEC[tf]
-            bound = int(now // tf_sec) * tf_sec
-            if now < bound + SETTLE_SEC:
-                bound -= tf_sec
-            need_by_tf[tf] = (bound - tf_sec) * 1000
         for (S, tf), bars in res:
-            key = f'{S}|{tf}'
-            snap = tf_snapshot(bars, tf, now) if bars else None
-            if not snap:
-                k = (self._fail.get(key) or (0, 0))[0] + 1
-                self._fail[key] = (k, now + min(FAIL_BACKOFF_MAX, RETRY_SEC * 2 ** k))
+            ok, item = self._absorb(S, tf, bars, now)
+            if not ok:
                 continue
-            self._fail.pop(key, None)
-            with self._lock:
-                self._state.setdefault(S, {})[tf] = snap
             done.setdefault(tf, []).append(S)
-            if snap['closed_t'] < need_by_tf[tf]:
-                continue          # біржа ще не закрила бар → повтор за RETRY_SEC
-            last = snap.get('last')
-            if not is_fresh(snap):
-                continue
-            if self._sent.get(key) == int(last['t']):
-                continue
-            self._sent[key] = int(last['t'])
-            lag = now - float(last['close_t'])
-            if lag > TF_SEC[tf] * SEND_MAX_LAG_FRAC:
-                continue          # бот лежав на закритті — тиха база, не спам
-            fresh.setdefault(S, []).append((tf, last))
+            if item:
+                fresh.setdefault(S, []).append(item)
         with self._lock:
             self._ts = now
             for tf in TFS:
@@ -581,6 +558,86 @@ class SbrEngine:
             self._kick_book()
             self._persist()
         return done
+
+    @staticmethod
+    def _need_t(tf: str, now: float) -> int:
+        """Час відкриття (мс) ОСТАННЬОГО закритого бару TF на момент `now`."""
+        tf_sec = TF_SEC[tf]
+        bound = int(now // tf_sec) * tf_sec
+        if now < bound + SETTLE_SEC:
+            bound -= tf_sec
+        return (bound - tf_sec) * 1000
+
+    def _absorb(self, S: str, tf: str, bars, now: float):
+        """Прийняти бари монети: оновити стан і вирішити, чи це свіжий сигнал
+        для Telegram. → (стан оновлено?, (tf, сигнал) | None). ЄДИНЕ місце —
+        і для проходу `tick`, і для точкового `ensure_current`, тож TG-сигнал
+        не губиться, ким би бари не були дотягнуті."""
+        key = f'{S}|{tf}'
+        snap = tf_snapshot(bars, tf, now) if bars else None
+        if not snap:
+            k = (self._fail.get(key) or (0, 0))[0] + 1
+            self._fail[key] = (k, now + min(FAIL_BACKOFF_MAX, RETRY_SEC * 2 ** k))
+            return False, None
+        self._fail.pop(key, None)
+        with self._lock:
+            self._state.setdefault(S, {})[tf] = snap
+        if snap['closed_t'] < self._need_t(tf, now):
+            return True, None     # біржа ще не закрила бар → повтор за RETRY_SEC
+        last = snap.get('last')
+        if not is_fresh(snap):
+            return True, None
+        with self._lock:
+            if self._sent.get(key) == int(last['t']):
+                return True, None
+            self._sent[key] = int(last['t'])
+        lag = now - float(last['close_t'])
+        if lag > TF_SEC[tf] * SEND_MAX_LAG_FRAC:
+            return True, None     # бот лежав на закритті — тиха база, не спам
+        return True, (tf, last)
+
+    def is_current(self, symbol: str, tfs=TFS) -> bool:
+        """Чи має монета в памʼяті ОСТАННІЙ закритий бар кожного з `tfs`
+        (лише памʼять). False одразу після закриття бару, поки прохід
+        `tick` до монети ще не дійшов."""
+        S = str(symbol or '').upper()
+        now = self._clock()
+        with self._lock:
+            v = dict(self._state.get(S) or {})
+        for tf in tfs:
+            snap = v.get(tf)
+            if not snap or int(snap.get('closed_t') or 0) < self._need_t(tf, now):
+                return False
+        return True
+
+    def ensure_current(self, symbol: str, tfs=TFS) -> bool:
+        """🔒 Ворота «Через МММ-SBR» (кейс OKBUSDT 31.10): сигнал на закритті
+        бару міг пройти ворота ДО того, як прохід `tick` дістався монети, —
+        тобто за старим станом SBR. Тут ДОТЯГУЄМО відсутній закритий бар САМЕ
+        цієї монети (1-2 запити, лише у вікні після закриття бару). Свіжий
+        сигнал іде в Telegram тим самим шляхом, що й з `tick`.
+        → True, якщо стан монети оновлено."""
+        S = str(symbol or '').upper()
+        if not S or self._fetch is None:
+            return False
+        now = self._clock()
+        with self._lock:
+            v = dict(self._state.get(S) or {})
+        miss = [tf for tf in tfs
+                if not v.get(tf) or int(v[tf].get('closed_t') or 0) < self._need_t(tf, now)]
+        if not miss:
+            return False
+        upd, fresh = False, []
+        for tf in miss:
+            ok, item = self._absorb(S, tf, self._safe_fetch(S, tf), self._clock())
+            upd = upd or ok
+            if item:
+                fresh.append(item)
+        if fresh:
+            self._on_signals(S, fresh, self._clock())
+        if upd:
+            self._persist()
+        return upd
 
     def _kick_book(self):
         """Нові бари → книга 🔔 МММ-SBR перебудовується ОДРАЗУ (не чекаючи

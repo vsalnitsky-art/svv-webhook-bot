@@ -6625,6 +6625,9 @@ class FuelFilterDaemon:
             except Exception:
                 on = True
         sym = str(symbol or '').upper()
+        _sbr_stale = False
+        if _bk == 'sbr' and on:
+            _sbr_stale = not self._sbr_gate_fresh(sym)
         with self._lock:
             b = dict(getattr(self, _P[2], {}) or {})
             v = (getattr(self, _P[3], {}) or {}).get(sym)
@@ -6648,6 +6651,8 @@ class FuelFilterDaemon:
             strength = 0
         out = {'on': bool(on), 'dir': d, 'coin': coin, 'strength': strength,
                'str_min': int(mins.get(tab, 0) or 0) if tab else 0}
+        if _sbr_stale:
+            out['stale'] = True
         if _bk == 'dec':
             # 🧠 «Вердикт ≥» теж визначає, чи ВИДНО монету в таблиці.
             out['verdict'] = (v or {}).get('dec_verdict') if v else None
@@ -6655,6 +6660,33 @@ class FuelFilterDaemon:
             _vms = getattr(self, '_mmd_verdict_mins_c', None) or {}
             out['verdict_min'] = (_vms.get(tab, '') or '') if tab else ''
         return out
+
+    def _sbr_gate_fresh(self, sym: str) -> bool:
+        """🔒 Ворота «Через МММ-SBR» судять лише за АКТУАЛЬНИМ станом монети
+        (кейс OKBUSDT 31.10: VOB-сигнал на закритті 5m збігся із закриттям
+        1h-бару, прохід рушія SBR ще не дійшов до монети, і LONG пройшов
+        ворота за старим станом, хоча на тому самому барі вже був SHORT).
+        Немає останнього закритого бару → дотягуємо його ОДРАЗУ (1-2 запити,
+        лише у вікні після закриття) і перебудовуємо книгу.
+        → True = стан актуальний; False = дотягнути не вдалось (ворота чекають).
+        Немає рушія / старіший рушій → True (умова як і раніше)."""
+        try:
+            from detection.sbr_signals import get_sbr_engine
+            eng = get_sbr_engine()
+        except Exception:
+            return True
+        if not eng or not hasattr(eng, 'is_current'):
+            return True
+        try:
+            tfs = sbr_tfs_of(self.get_settings())
+            if eng.is_current(sym, tfs):
+                return True
+            if eng.ensure_current(sym, tfs):
+                self.on_sbr_update()
+            return bool(eng.is_current(sym, tfs))
+        except Exception as e:
+            print(f"[FF-SBR] gate refresh {sym}: {e}")
+            return True
 
     def symbols_in_work(self) -> set:
         """Монети «В РОБОТІ» — ВІДКРИТА УГОДА **або** запис у будь-якій черзі.
