@@ -414,6 +414,91 @@ def test_gate_rejects_while_sbr_state_is_stale():
     _check('ensure_current' in h and 'on_sbr_update' in h, 'дотягує бар і перебудовує книгу')
 
 
+# ── ⏰ БУДИЛЬНИК SBR → головна кнопка напрямку (вимога 01.11) ──────────────────
+def _asig(side, score=80.0):
+    return {'side': side, 'score': score, 'trigger': 1.0, 't': 0, 'close_t': 0, 'n': 1}
+
+
+def test_alarm_match_rule():
+    st = {'alarm_on': True, 'alarm_symbol': 'btc', 'alarm_tf': 'any', 'alarm_side': 'LONG'}
+    _check(S.alarm_norm_symbol('btc') == 'BTCUSDT' and S.alarm_norm_symbol('') == 'BTCUSDT'
+           and S.alarm_norm_symbol('eth-usdt') == 'ETHUSDT', 'нормалізація монети')
+    h = S.alarm_match(st, 'BTCUSDT', [('4h', _asig('LONG')), ('1h', _asig('LONG'))])
+    _check(h and h[0] == '1h', f'будь-який TF → молодший першим: {h}')
+    _check(S.alarm_match(st, 'BTCUSDT', [('1h', _asig('SHORT'))]) is None, 'інший бік')
+    _check(S.alarm_match(st, 'ETHUSDT', [('1h', _asig('LONG'))]) is None, 'інша монета')
+    _check(S.alarm_match({**st, 'alarm_tf': '4h'}, 'BTCUSDT', [('1h', _asig('LONG'))]) is None,
+           'лише 4H — сигнал 1H не будить')
+    _check(S.alarm_match({**st, 'alarm_on': False}, 'BTCUSDT', [('1h', _asig('LONG'))]) is None,
+           'головний тумблер вимкнено — нічого')
+
+
+class _MemDB:
+    def __init__(self): self.d = {}
+    def get_setting(self, k, d=None): return self.d.get(k, d)
+    def set_setting(self, k, v): self.d[k] = v
+
+
+def test_alarm_enables_the_main_button_and_keeps_working():
+    calls = []
+    dg = types.ModuleType('detection.direction_gate')
+    state = {'LONG': False}
+
+    def live_enable(side, source=''):
+        calls.append(side)
+        if state.get(side):
+            return True, 'вже увімкнено'
+        state[side] = True
+        return True, 'увімкнено'
+    dg.live_enable = live_enable
+    pkg = sys.modules.setdefault('detection', types.ModuleType('detection'))
+    old = sys.modules.get('detection.direction_gate')
+    sys.modules['detection.direction_gate'] = dg
+    pkg.direction_gate = dg
+    sent = []
+    try:
+        e = S.SbrEngine(_MemDB(), lambda: [], None, lambda t: (sent.append(t) or True, ''))
+        e.update_settings({'alarm_on': True, 'alarm_symbol': 'BTC', 'alarm_tf': 'any',
+                           'alarm_side': 'LONG'})
+        _check('BTCUSDT' in e._universe(), 'монета будильника рахується рушієм')
+        e._on_signals('BTCUSDT', [('1h', _asig('SHORT'))], 100.0)
+        _check(calls == [], 'SHORT не будить LONG-будильник')
+        e._on_signals('BTCUSDT', [('1h', _asig('LONG'))], 200.0)
+        st = e.get_settings()
+        _check(calls == ['LONG'] and state['LONG'], 'кнопку LONG увімкнено')
+        _check(st['alarm_on'] is True, 'головний тумблер лишається увімкненим (не одноразовий)')
+        _check(st['alarm_last']['ok'] and st['alarm_last']['side'] == 'LONG', st['alarm_last'])
+        _check(any('Будильник SBR' in x for x in sent), 'повідомлення в TG')
+        n = len(sent)
+        e._on_signals('BTCUSDT', [('4h', _asig('LONG'))], 300.0)
+        _check(len(sent) == n, 'кнопка вже увімкнена → без повторного TG')
+        e.update_settings({'alarm_on': False})
+        e._on_signals('BTCUSDT', [('1h', _asig('LONG'))], 400.0)
+        _check(calls == ['LONG', 'LONG'], 'вимкнений будильник нічого не робить')
+    finally:
+        if old is not None:
+            sys.modules['detection.direction_gate'] = old
+            pkg.direction_gate = old
+
+
+def test_alarm_ui_and_route():
+    for k in ('id="sbr-alarm-on"', 'id="sbr-alarm-sym"', 'id="sbr-alarm-tf"',
+              'id="sbr-alarm-side"', 'id="sbr-alarm-status"', 'function sbrSaveAlarm(',
+              'function _sbrApplyAlarm('):
+        _check(k in _HTML, k)
+    i = _HTML.index('id="sbr-alarm-box"')
+    _check(_HTML.index('id="sm-side-gates-state"') < i, 'будильник стоїть у рядку Trade Direction')
+    fl = open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
+    r = fl[fl.index("def api_sbr_settings("):fl.index("def api_sbr_tg_symbol(")]
+    for k in ('alarm_on', 'alarm_symbol', 'alarm_tf', 'alarm_side'):
+        _check(f"'{k}'" in r, k)
+    dg = open(os.path.join(_ROOT, 'detection', 'direction_gate.py'), encoding='utf-8').read()
+    _check('def live_enable(' in dg, 'вмикання кнопки живе в direction_gate')
+    sb = open(os.path.join(_ROOT, 'detection', 'sbr_signals.py'), encoding='utf-8').read()
+    _check('allow_long_entries' not in sb and 'allow_short_entries' not in sb,
+           'ключі кнопок не набираються руками')
+
+
 if __name__ == '__main__':
     n = 0
     for k, v in list(globals().items()):

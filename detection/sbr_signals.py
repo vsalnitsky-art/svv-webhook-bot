@@ -81,7 +81,49 @@ DEFAULT_SETTINGS = {
     # Обидва вимкнені = обидва (інакше тумблер мовчки гасив би всю тему).
     'tg_1h': True,
     'tg_4h': True,
+    # ⏰ БУДИЛЬНИК (вимога 01.11): свіжий сигнал SBR обраної монети / TF / боку
+    # вмикає відповідну ГОЛОВНУ кнопку напрямку (Trade Direction).
+    # `alarm_on` = ГОЛОВНИЙ ТУМБЛЕР будильника (деф. ВИМК): поки увімкнений,
+    # будильник працює ПОСТІЙНО — кожен збіг вмикає кнопку, якщо вона вимкнена
+    # (кнопка вже увімкнена → нічого не робимо і не шумимо).
+    'alarm_on': False,
+    'alarm_symbol': 'BTCUSDT',
+    'alarm_tf': 'any',        # '1h' | '4h' | 'any'
+    'alarm_side': 'LONG',     # 'LONG' | 'SHORT'
+    'alarm_last': None,       # {at, symbol, side, tf, ok, note} — останнє спрацювання
 }
+
+ALARM_TFS = ('any', '1h', '4h')
+ALARM_SIDES = ('LONG', 'SHORT')
+
+
+def alarm_norm_symbol(sym) -> str:
+    """'btc' / 'BTC' / 'btcusdt' → 'BTCUSDT'. Порожньо → BTCUSDT. ЧИСТА."""
+    s = ''.join(ch for ch in str(sym or '').upper() if ch.isalnum())
+    if not s:
+        return 'BTCUSDT'
+    return s if s.endswith('USDT') else s + 'USDT'
+
+
+def alarm_match(settings, symbol, items):
+    """⏰ Чи будить цей набір СВІЖИХ сигналів будильник. ЧИСТА.
+    `items` = [(tf, сигнал)]. → (tf, сигнал) першого збігу (молодший TF
+    раніше — реакція швидша) або None. Будильник вимкнений / інша монета /
+    інший бік / інший TF → None."""
+    s = settings or {}
+    if not s.get('alarm_on'):
+        return None
+    if str(symbol or '').upper() != alarm_norm_symbol(s.get('alarm_symbol')):
+        return None
+    side = str(s.get('alarm_side') or 'LONG').upper()
+    tf_need = str(s.get('alarm_tf') or 'any').lower()
+    for tf, sig in sorted(items or [], key=lambda x: TF_SEC.get(x[0], 0)):
+        if not isinstance(sig, dict) or str(sig.get('side') or '').upper() != side:
+            continue
+        if tf_need != 'any' and tf != tf_need:
+            continue
+        return tf, sig
+    return None
 
 
 def tg_tfs_of(settings) -> tuple:
@@ -356,7 +398,19 @@ class SbrEngine:
         s['tg_4h'] = bool(s.get('tg_4h', True))
         if not (s['tg_1h'] or s['tg_4h']):
             s['tg_1h'] = s['tg_4h'] = True
+        self._alarm_clean(s)
         return s
+
+    @staticmethod
+    def _alarm_clean(s: Dict) -> None:
+        s['alarm_on'] = bool(s.get('alarm_on', False))
+        s['alarm_symbol'] = alarm_norm_symbol(s.get('alarm_symbol'))
+        tf = str(s.get('alarm_tf') or 'any').lower()
+        s['alarm_tf'] = tf if tf in ALARM_TFS else 'any'
+        sd = str(s.get('alarm_side') or 'LONG').upper()
+        s['alarm_side'] = sd if sd in ALARM_SIDES else 'LONG'
+        if not isinstance(s.get('alarm_last'), dict):
+            s['alarm_last'] = None
 
     def get_settings(self) -> Dict:
         with self._lock:
@@ -383,6 +437,10 @@ class SbrEngine:
             if 'tg_symbols' in patch and isinstance(patch['tg_symbols'], list):
                 self._settings['tg_symbols'] = sorted(
                     {str(x).upper() for x in patch['tg_symbols'] if x})
+            for k in ('alarm_on', 'alarm_symbol', 'alarm_tf', 'alarm_side'):
+                if k in patch:
+                    self._settings[k] = patch[k]
+            self._alarm_clean(self._settings)
         self._save_settings()
         if self._settings['enabled']:
             self.start()
@@ -491,8 +549,11 @@ class SbrEngine:
             wl = [str(x).upper() for x in (self._get_watchlist() or []) if x]
         except Exception:
             wl = []
-        tg = self.get_settings()['tg_symbols']
-        return list(dict.fromkeys(wl + tg))
+        s = self.get_settings()
+        tg = s['tg_symbols']
+        # ⏰ Монета будильника рахується ЗАВЖДИ, навіть поза watchlist.
+        al = [s['alarm_symbol']] if s.get('alarm_on') else []
+        return list(dict.fromkeys(wl + tg + al))
 
     def _due(self, syms: List[str], tf: str, now: float) -> List[str]:
         """Монети, яким бракує ОСТАННЬОГО закритого бару TF."""
@@ -663,6 +724,10 @@ class SbrEngine:
         for tf, sig in items:
             by_side.setdefault(sig['side'], []).append((tf, sig))
         s = self.get_settings()
+        try:
+            self._alarm_check(S, items, now, s)
+        except Exception as e:
+            print(f"[SBR] alarm error {S}: {e}")
         for side, grp in by_side.items():
             tf_lbl = '+'.join(TF_LABEL[tf] for tf, _ in sorted(grp, key=lambda x: TF_SEC[x[0]]))
             ev = {'symbol': S, 'side': side, 'tfs': tf_lbl, 'at': now,
@@ -691,6 +756,52 @@ class SbrEngine:
                 if ev['tg'] is not None:
                     log_activity(S, 'signal', txt, side=side, source='SBR',
                                  extra={'tfs': tf_lbl, 'score': ev['score']})
+            except Exception:
+                pass
+
+
+    def _alarm_check(self, S: str, items: List[tuple], now: float, s: Dict) -> None:
+        """⏰ Збіг → увімкнути головну кнопку + зняти будильник + 🧾 Лог + TG."""
+        hit = alarm_match(s, S, items)
+        if not hit:
+            return
+        tf, sig = hit
+        side = str(sig.get('side')).upper()
+        try:
+            from detection import direction_gate as _dg
+        except Exception:
+            import importlib.util as _ilu, os as _os
+            _p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'direction_gate.py')
+            _sp = _ilu.spec_from_file_location('_sbr_dg', _p)
+            _dg = _ilu.module_from_spec(_sp)
+            _sp.loader.exec_module(_dg)
+        ok, note = _dg.live_enable(side, source='SBR alarm')
+        last = {'at': now, 'symbol': S, 'side': side, 'tf': TF_LABEL.get(tf, tf),
+                'ok': bool(ok), 'note': note, 'score': sig.get('score'),
+                'trigger': sig.get('trigger')}
+        with self._lock:
+            self._settings['alarm_last'] = last
+        self._save_settings()
+        if ok and note == 'вже увімкнено':
+            return      # кнопка й так увімкнена — без рядка в лозі й без TG
+        txt = (f"⏰ Будильник SBR: {S} {side} {TF_LABEL.get(tf, tf)} "
+               f"(Score {float(sig.get('score') or 0):.2f}) → "
+               + (f"головну кнопку {side} {note}" if ok
+                  else f"кнопку {side} НЕ увімкнено: {note}"))
+        print(f"[SBR] {txt}")
+        try:
+            from detection.activity_log import log_activity
+            log_activity(S, 'signal', txt, side=side, source='SBR',
+                         extra={'alarm': True, 'ok': bool(ok)})
+        except Exception:
+            pass
+        if s.get('tg_enabled') and self._notify:
+            try:
+                self._notify(f"⏰ <b>Будильник SBR</b> · #{S} "
+                             f"{'🟢' if side == 'LONG' else '🔴'} <b>{side}</b> "
+                             f"<code>{TF_LABEL.get(tf, tf)}</code>\n"
+                             + (f"🚦 Головну кнопку <b>{side}</b> {note}" if ok
+                                else f"⚠️ Кнопку {side} НЕ увімкнено: {note}"))
             except Exception:
                 pass
 

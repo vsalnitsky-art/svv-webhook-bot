@@ -7463,3 +7463,26 @@ OKBUSDT LONG відкрився при увімкнених «Через МММ-
   для real і paper, Symbol не ховається, «Показати всі»).
 Тести: `test_sbr_exit.py` (16), `test_trades_mmd.py` (JS переписано),
 замки `test_mm_monitor`/`test_opp_ob_per_trade`/`test_trades_mm_ob4h` оновлено.
+
+## ⏰ БУДИЛЬНИК SBR → ГОЛОВНА КНОПКА НАПРЯМКУ (вимога 01.11)
+Дослівно: «якщо я вимикаю основні кнопки бота, потім щоб активувати роботу бота
+по сигналу SBR… вибраної монети (за замовчуванням BTC)… сигнал 1Н або 4Н (або
+любий)… тільки LONG або тільки SHORT… моментально активуємо головну кнопку» +
+«головний тумблер будильника — активувати роботу або взагалі вимкнути».
+- Налаштування в `sbr_settings`: `alarm_on` (ГОЛОВНИЙ ТУМБЛЕР, деф. ВИМК) ·
+  `alarm_symbol` (BTCUSDT; `alarm_norm_symbol` 'btc'→'BTCUSDT') · `alarm_tf`
+  `any|1h|4h` · `alarm_side` `LONG|SHORT` · `alarm_last` (останнє спрацювання).
+- ЧИСТА `sbr_signals.alarm_match(settings, symbol, items)` → (tf, сигнал) |
+  None. Кличеться в `_on_signals` (лише СВІЖІ сигнали на щойно закритому
+  барі, той самий шлях, що TG) → `_alarm_check` → `direction_gate.live_enable
+  (side)` — вмикає ЛИШЕ кнопку цього боку, другу не чіпає (ключі кнопок у
+  sbr_signals НЕ набираються — тест-замок `test_single_source_of_keys`).
+- ⚠️ НЕ одноразовий: поки тумблер увімкнений, кожен збіг вмикає кнопку, якщо
+  вона вимкнена; кнопка вже увімкнена → лише `alarm_last`, без логу й TG.
+  Спрацювання (і відмова TM) → 🧾 Лог `source='SBR'` + TG у тему «🔔 Сигнали».
+- Монета будильника додається в `_universe` рушія навіть поза watchlist.
+- ⚠️ Auto-gate (якщо увімкнений) може потім перемкнути кнопки своїм вердиктом.
+- API: `POST /api/sbr/settings` приймає `alarm_*`; стан — у `/api/sbr/state`.
+  UI: блок `#sbr-alarm-box` у рядку Trade Direction (тумблер `sbr-alarm-on`,
+  `sbr-alarm-sym`/`-tf`/`-side`, статус `#sbr-alarm-status`), полл 20с.
+Тест: `test_sbr_signals.py` (24).

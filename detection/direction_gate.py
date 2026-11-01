@@ -144,6 +144,31 @@ def live_allows(side: Optional[str]) -> bool:
     return True
 
 
+def live_enable(side: Optional[str], source: str = '') -> Tuple[bool, str]:
+    """УВІМКНУТИ головну кнопку напрямку (⏰ будильник SBR, вимога 01.11).
+    Друга кнопка НЕ чіпається. → (ok, причина). Кнопка вже увімкнена →
+    (True, 'вже увімкнено'). TM недоступний → (False, причина)."""
+    sd = (side or '').upper().strip()
+    key = KEY_LONG if sd == LONG else (KEY_SHORT if sd == SHORT else None)
+    if key is None:
+        return False, f'невідомий напрямок {side!r}'
+    try:
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+    except Exception as e:
+        return False, f'Trade Manager недоступний: {e}'
+    if tm is None or not hasattr(tm, 'update_settings'):
+        return False, 'Trade Manager ще не піднявся'
+    try:
+        cur = tm.get_settings() if hasattr(tm, 'get_settings') else {}
+        if bool((cur or {}).get(key, True)):
+            return True, 'вже увімкнено'
+        tm.update_settings({key: True})
+        return True, 'увімкнено'
+    except Exception as e:
+        return False, f'не вдалося увімкнути: {e}'
+
+
 def live_reason(side: Optional[str]) -> str:
     """Причина відмови ЗАРАЗ або '' (fail-open, якщо TM недоступний)."""
     s = live_settings()

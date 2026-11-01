@@ -1431,6 +1431,25 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  і підпис був би шумом) — заповнює syncSideGateButtons(). -->
             <span class="sm-side-gates-state" id="sm-side-gates-state"
                   style="display:none"></span>
+            <!-- ⏰ БУДИЛЬНИК SBR (вимога 01.11): свіжий сигнал 🔔 SBR обраної
+                 монети / TF / боку вмикає відповідну головну кнопку. -->
+            <span class="sm-alarm" id="sbr-alarm-box"
+                  title="⏰ БУДИЛЬНИК: коли головні кнопки вимкнені, бот можна «розбудити» сигналом 🔔 SBR. Щойно на закритті бару прийде свіжий сигнал SBR обраної монети, на обраному TF (1H / 4H / будь-який) і в обраний бік — бот одразу УВІМКНЕ відповідну головну кнопку (LONG або SHORT; другу не чіпає). Головний тумблер вмикає/вимикає будильник повністю; поки він увімкнений, будильник працює постійно (кнопка вже увімкнена — нічого не робить). Подія пишеться в 🧾 Лог і в Telegram-тему «🔔 Сигнали». Монета будильника рахується рушієм SBR навіть поза WATCHLIST. ⚠️ Auto-gate (якщо увімкнений) може потім перемкнути кнопки за своїм вердиктом.">
+                <span class="sm-alarm-on">⏰ Будильник SBR</span>
+                <label class="tm-toggle-switch" title="ГОЛОВНИЙ ТУМБЛЕР будильника: увімкнено — будильник працює постійно (кожен відповідний сигнал SBR вмикає кнопку, якщо вона вимкнена); вимкнено — будильник не працює взагалі.">
+                    <input type="checkbox" id="sbr-alarm-on" onchange="sbrSaveAlarm()">
+                    <span class="slider"></span>
+                </label>
+                <input type="text" id="sbr-alarm-sym" class="sm-alarm-in" value="BTC" maxlength="20"
+                       onchange="sbrSaveAlarm()" title="Монета (BTC = BTCUSDT)">
+                <select id="sbr-alarm-tf" class="sm-alarm-in" onchange="sbrSaveAlarm()" title="Таймфрейм сигналу">
+                    <option value="any">1H або 4H</option><option value="1h">лише 1H</option><option value="4h">лише 4H</option>
+                </select>
+                <select id="sbr-alarm-side" class="sm-alarm-in" onchange="sbrSaveAlarm()" title="Який сигнал чекаємо — і яку кнопку вмикаємо">
+                    <option value="LONG">LONG → 📈</option><option value="SHORT">SHORT → 📉</option>
+                </select>
+                <span class="sm-alarm-st" id="sbr-alarm-status"></span>
+            </span>
         </div>
     </div>
 
@@ -1442,6 +1461,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         padding:4px 10px; border-radius:6px; white-space:nowrap;
         color:#fbbf24; border:1px solid rgba(251,191,36,0.35);
         background:rgba(251,191,36,0.08); }
+    .sm-alarm { display:inline-flex; align-items:center; gap:6px; padding:3px 8px;
+        border:1px solid #2b2f36; border-radius:6px; background:rgba(255,255,255,0.02);
+        font-size:0.74rem; color:#cbd5e1; white-space:nowrap; }
+    .sm-alarm.armed { border-color:rgba(251,191,36,0.45); background:rgba(251,191,36,0.06); }
+    .sm-alarm:not(.armed) .sm-alarm-in { opacity:0.55; }
+    .sm-alarm-on { display:inline-flex; align-items:center; gap:4px; cursor:pointer; font-weight:600; }
+    .sm-alarm-in { background:#141821; color:#dde3ee; border:1px solid #2b2f36; border-radius:4px;
+        font-size:0.72rem; height:24px; padding:0 4px; font-family:monospace; color-scheme:dark; }
+    input.sm-alarm-in { width:64px; text-transform:uppercase; }
+    .sm-alarm-st { font-family:monospace; font-size:0.7rem; color:#8b93a7; }
     .sm-side-gates-state.paused { color:#f87171;
         border-color:rgba(248,113,113,0.40); background:rgba(248,113,113,0.10); }
     /* Ліва половина рядка аналізу — настрій + ліквідність. Ширина РІВНА
@@ -19545,6 +19574,7 @@ async function sbrLoadState() {
         if (d.ok && d.settings) {
             sbrApplyTgSymbols(d.settings.tg_symbols || []);
             _sbrApplyTgSettings(d.settings);
+            _sbrApplyAlarm(d.settings);
         }
     } catch (e) { /* рушій ще не піднявся — лишаємо дефолт */ }
 }
@@ -19564,6 +19594,58 @@ function _sbrApplyTgSettings(st) {
             const e = document.getElementById(id);
             if (e && document.activeElement !== e) e.checked = v !== false;
         });
+}
+// ⏰ Будильник SBR — показ стану й збереження (вимога 01.11).
+function _sbrAlarmShortSym(s) { return String(s || 'BTCUSDT').replace(/USDT$/, ''); }
+function _sbrApplyAlarm(st) {
+    if (!st) return;
+    const on = document.getElementById('sbr-alarm-on');
+    const sym = document.getElementById('sbr-alarm-sym');
+    const tf = document.getElementById('sbr-alarm-tf');
+    const sd = document.getElementById('sbr-alarm-side');
+    const box = document.getElementById('sbr-alarm-box');
+    const out = document.getElementById('sbr-alarm-status');
+    const act = document.activeElement;
+    if (on && act !== on) on.checked = !!st.alarm_on;
+    if (sym && act !== sym) sym.value = _sbrAlarmShortSym(st.alarm_symbol);
+    if (tf && act !== tf) tf.value = st.alarm_tf || 'any';
+    if (sd && act !== sd) sd.value = st.alarm_side || 'LONG';
+    if (box) box.classList.toggle('armed', !!st.alarm_on);
+    if (out) {
+        const L = st.alarm_last;
+        if (st.alarm_on) {
+            out.style.color = '#fbbf24';
+            out.textContent = '⏳ чекаю ' + _sbrAlarmShortSym(st.alarm_symbol) + ' ' + (st.alarm_side || 'LONG')
+                + ' ' + ({any: '1H/4H', '1h': '1H', '4h': '4H'}[st.alarm_tf] || '1H/4H');
+        } else if (L && L.at) {
+            const t = new Date(_srvToPc(L.at) * 1000);
+            const hm = t.toLocaleString('uk-UA', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+            out.style.color = L.ok ? '#4ade80' : '#f87171';
+            out.textContent = (L.ok ? '✅ ' : '⚠️ ') + hm + ' · ' + _sbrAlarmShortSym(L.symbol) + ' ' + L.side + ' ' + L.tf
+                + (L.ok ? ' → кнопка ' + L.side + ' ' + (L.note || '') : ' · ' + (L.note || ''));
+        } else {
+            out.style.color = '#6b7280';
+            out.textContent = 'вимкнено';
+        }
+    }
+}
+async function sbrSaveAlarm() {
+    const on = document.getElementById('sbr-alarm-on');
+    const body = {
+        alarm_on: !!(on && on.checked),
+        alarm_symbol: (document.getElementById('sbr-alarm-sym') || {}).value || 'BTC',
+        alarm_tf: (document.getElementById('sbr-alarm-tf') || {}).value || 'any',
+        alarm_side: (document.getElementById('sbr-alarm-side') || {}).value || 'LONG',
+    };
+    try {
+        const res = await fetch('/api/sbr/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const d = res.ok ? await res.json() : {ok: false, reason: 'HTTP ' + res.status};
+        if (!d.ok) { alert('⏰ Не збережено: ' + (d.reason || '')); return; }
+        _sbrApplyAlarm(d.settings);
+    } catch (e) { alert('⏰ Помилка: ' + e); }
 }
 async function sbrSaveTg() {
     const tg = document.getElementById('mms-tg-enabled');
@@ -19672,7 +19754,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 🔔 Монети з Telegram-сигналами SBR — ДО першого рендера watchlist,
     // щоб кнопки 🔔 одразу стояли в правильному стані.
     await sbrLoadState();
-    setInterval(sbrLoadState, 60000);
+    setInterval(sbrLoadState, 20000);
     await loadWatchlist();
     await loadTMState();
     await loadTop100State();
