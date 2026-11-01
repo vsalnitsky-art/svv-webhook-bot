@@ -934,6 +934,8 @@ class SMCScanner:
         # Seeded from the most recent persisted signal marker at startup, so
         # dedup state survives restarts.
         self._last_signal_dir: Dict[str, str] = {}
+        # ⏸ Анти-флуд «напрямок на паузі» (символ, бік) — див. _dir_paused.
+        self._dir_pause_logged: set = set()
         # 🎯 Останній напрямок 1H OB (МАСТЕР стратегії) per symbol — {sym: 'LONG'|'SHORT'}.
         # Дедуп скидається САМЕ на фліпі 1H OB (не Volumized): напрямок задає
         # старший ТФ (Require OB Match), а 15m Vol OB + перший CHoCH — підпорядковані.
@@ -2885,6 +2887,11 @@ class SMCScanner:
                                                                     'зараз лише видно на графіку; '
                                                                     'чекаємо НАСТУПНИЙ VOB'))
                                                         continue
+                                                    # ⏸ Кнопка напрямку вимкнена → блок НЕ опрацьовуємо:
+                                                    # увімкнули (⏰ будильник) — цей самий свіжий блок
+                                                    # піде в роботу наступним проходом.
+                                                    if SMCScanner._dir_paused(self, symbol, _cside):
+                                                        continue
                                                     # 🔢 НОВИЙ СВІЖИЙ VOB → нумеруємо (опрацьовуємо РАЗ)
                                                     self._vob_seen_add(_seen, _cside, _ft)
                                                     self._vob_counter[symbol] = self._vob_counter.get(symbol, 0) + 1
@@ -2965,6 +2972,8 @@ class SMCScanner:
                                                         detail=(f'OB утворився {_age} барів тому, '
                                                                 f'поріг свіжості {_max_age}'))
                                                     continue
+                                                if SMCScanner._dir_paused(self, symbol, _cside):
+                                                    continue    # ⏸ не опрацьовано
                                                 self._vob_seen_add(_seen, _cside, _ft)
                                                 _entry = (self._get_live_price(symbol)
                                                           or (_cand.get('top') if _cside == 'SHORT'
@@ -3417,6 +3426,16 @@ class SMCScanner:
                 'note': _conv_note or (_note or ''), 'ts': _now}
             return 'wait_htf'
 
+        # ⏸ 🆕 Новий OB як ТИП СИГНАЛУ, а кнопка напрямку вимкнена → блок НЕ
+        # опрацьовуємо і тренд дедупу НЕ витрачаємо (як `wait_htf`): щойно
+        # кнопку увімкнено (⏰ будильник SBR), блок, поки свіжий, піде в роботу.
+        if (self._settings.get('ob_alert_signal', False)
+                and SMCScanner._dir_paused(self, symbol, _side1)):
+            self._ob_alert_diag[symbol] = {
+                'outcome': 'paused', 'side': _side1, 'combo': _combo,
+                'note': f'⏸ кнопку {_side1} вимкнено', 'ts': _now}
+            return 'paused'
+
         # 🔁 ДЕДУП «1 на тренд»: той самий напрямок у ТІЙ САМІЙ комбінації TF
         # глушиться — перебити може ЛИШЕ протилежний.
         _ded_note = ''
@@ -3479,6 +3498,8 @@ class SMCScanner:
         користувача — фікція.
         """
         from detection.activity_log import log_activity
+        if SMCScanner._dir_paused(self, symbol, side):
+            return False
         _ok, _reason, _detail = self._signal_allowed(symbol, side, at_intake=True,
                                                      origin='ob_alert')
         log_activity(symbol, 'signal',
@@ -4566,6 +4587,11 @@ class SMCScanner:
                 lh.note_vob_signal(symbol, side, 'in_trade',
                                    'угода по монеті вже відкрита')
                 return
+            if SMCScanner._dir_paused(self, symbol, side):
+                self._liqvob_diag[symbol] = {
+                    'ts': time.time(), 'side': side, 'state': 'wait', 'ft': ft,
+                    'tf': vol_tf, 'note': f'⏸ кнопку {side} вимкнено'}
+                return          # ⏸ блок НЕ опрацьовано — чекає вмикання кнопки
             # Блок опрацьовано (сигнал або відсів фільтрами — обидва рази РАЗ).
             self._vob_seen_add(self._liqvob_seen[symbol], side, ft)
             try:
@@ -5951,10 +5977,50 @@ class SMCScanner:
             return True
         return self._decision_gate(symbol, side, at_intake=at_intake)[0]
 
+    def _dir_paused(self, symbol: str, side: str) -> str:
+        """⏸ Головна кнопка цього напрямку ВИМКНЕНА → причина, інакше ''.
+
+        ⚠️ ВИМКНЕНА КНОПКА = «бот не сканує» цей напрямок, тобто сигнал НЕ
+        вважається опрацьованим (вимога 01.11: ⏰ будильник SBR вмикає кнопку,
+        і бот мусить ОДРАЗУ запрацювати, а не лише «засвітити» кнопку). Тому
+        всі шляхи сигналів питають це ДО того, як чіпати свою базу:
+        CHoCH не «спалює» дедуп тренду, VOB-блок не стає опрацьованим — і
+        щойно кнопку увімкнено, той самий ще свіжий блок / наступний CHoCH
+        іде в роботу як звичайно. Fail-open, коли стан кнопок невідомий.
+        Анти-флуд: рядок у 🧾 Лог ОДИН раз на (монета, бік) за паузу.
+        """
+        try:
+            _dg = _dg_mod()
+            _s = _dg.live_settings()
+            if _s is None or _dg.allows(_s, side):
+                getattr(self, '_dir_pause_logged', set()).discard((symbol, side))
+                return ''
+            why = _dg.reason(_s, side) or f'головну кнопку {side} вимкнено'
+        except Exception:
+            return ''
+        _lg = getattr(self, '_dir_pause_logged', None)
+        if _lg is None:
+            _lg = self._dir_pause_logged = set()
+        if (symbol, side) not in _lg:
+            _lg.add((symbol, side))
+            try:
+                from detection.activity_log import log_activity
+                log_activity(symbol, 'rejected',
+                             f'⏸ {why} — сигнал не опрацьовано, запрацює одразу '
+                             f'після вмикання кнопки', side=side, source='scanner')
+            except Exception:
+                pass
+        return why
+
     def _send_alert(self, symbol: str, event: Dict, mode: str, choch_event: Dict = None):
         try:
             is_bull = event['dir'] == 'bull'
             side_label = 'LONG' if is_bull else 'SHORT'
+            # ⏸ Кнопка напрямку вимкнена → сигнал НЕ опрацьовано: без маркера,
+            # без дедупу тренду (інакше після вмикання ⏰ будильником напрямок
+            # «горів» би до фліпу 1H-OB і бот мовчав би).
+            if SMCScanner._dir_paused(self, symbol, side_label):
+                return
 
             # 🧾 Activity log: record EVERY fresh qualified signal at the EARLIEST
             # point (before the scanner's OB/PD/Forecast filters), so a signal a
