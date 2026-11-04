@@ -550,6 +550,41 @@ _MM_BOOK_PREFIX = {'old': '_mm', 'new': '_mmn', 'ctr': '_mmc', 'fc': '_mmf',
                    'pull': '_mmp', 'dec': '_mmd', 'rdy': '_mmr', 'sbr': '_mms'}
 
 
+def sbr_pd_fit(side, pct, premium_min=75.0, discount_max=25.0) -> Optional[Dict]:
+    """📍 Положення монети в дилінг-діапазоні відносно напрямку SBR (вимога
+    04.11). ЧИСТА. `pct` — `scanner.get_pd_pct()` (0 = дно / Discount ..
+    100 = верх / Premium), пороги — `get_pd_thresholds()`: ТЕ САМЕ джерело, що
+    бейдж PD на графіку і PD-фільтр входу (урок PD-зони).
+
+    zone: 'premium' | 'discount' | 'eq'. fit: True — зона у бік сигналу
+    (SHORT у Premium, LONG у Discount); False — проти АБО рівновага (рівновага
+    не дає вигідного положення); None — бік сигналу невідомий (⚖ монета).
+    depth 0..1 — наскільки глибоко ціна зайшла у «свою» зону (лише при fit).
+    Немає `pct` → None («невідомо» ≠ «проти»)."""
+    try:
+        p = float(pct)
+    except (TypeError, ValueError):
+        return None
+    try:
+        hi = float(premium_min)
+        lo = float(discount_max)
+    except (TypeError, ValueError):
+        hi, lo = 75.0, 25.0
+    zone = 'premium' if p >= hi else ('discount' if p <= lo else 'eq')
+    sd = str(side or '').upper()
+    if sd not in ('LONG', 'SHORT'):
+        return {'pct': round(p, 1), 'zone': zone, 'fit': None, 'depth': None}
+    fit = (sd == 'SHORT' and zone == 'premium') or (sd == 'LONG' and zone == 'discount')
+    depth = None
+    if fit:
+        if sd == 'SHORT':
+            depth = (p - hi) / max(1e-9, 100.0 - hi)
+        else:
+            depth = (lo - p) / max(1e-9, lo)
+        depth = round(max(0.0, min(1.0, depth)), 3)
+    return {'pct': round(p, 1), 'zone': zone, 'fit': bool(fit), 'depth': depth}
+
+
 def sbr_tfs_of(settings) -> tuple:
     """🔔 TF, з якими працює банер МММ-SBR (тумблери `mms_tf_1h`/`mms_tf_4h`,
     деф. обидва). Обидва вимкнені → обидва (порожній банер читався б як «ринок
@@ -998,6 +1033,9 @@ DEFAULT_SETTINGS = {
     # 📶 TF банера: 1H / 4H / обидва (вимога 29.10). Обидва вимкнені = обидва.
     'mms_tf_1h': True,
     'mms_tf_4h': True,
+    # 📍 Показ лише монет у ВИГІДНІЙ зоні PD (SHORT у Premium, LONG у Discount),
+    # вимога 04.11. Лише фільтр ПОКАЗУ таблиці, банер і сигнали не чіпає.
+    'mms_pd_only': False,
     'mms_bias_tg': True,
     # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
     # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
@@ -2448,6 +2486,7 @@ class FuelFilterDaemon:
         s['mms_bias_tg'] = bool(s.get('mms_bias_tg', True))
         s['mms_tf_1h'] = bool(s.get('mms_tf_1h', True))
         s['mms_tf_4h'] = bool(s.get('mms_tf_4h', True))
+        s['mms_pd_only'] = bool(s.get('mms_pd_only', False))
         if not (s['mms_tf_1h'] or s['mms_tf_4h']):
             s['mms_tf_1h'] = s['mms_tf_4h'] = True
         try:
@@ -5836,6 +5875,25 @@ class FuelFilterDaemon:
             pass
         return {}
 
+    def _mm_pd_marks(self, symbols) -> Dict[str, tuple]:
+        """📍 {СИМВОЛ: (pd_pct, premium_min, discount_max)} — ЄДИНЕ джерело
+        `SMCScanner.get_pd_pct` + `get_pd_thresholds` (те саме, що бейдж PD на
+        графіку). Лише памʼять сканера. Монети без PD — немає в мапі."""
+        out: Dict[str, tuple] = {}
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            _sc = get_smc_scanner()
+            if _sc is None or not hasattr(_sc, 'get_pd_pct'):
+                return out
+            hi, lo = _sc.get_pd_thresholds()
+            for sym in symbols or []:
+                p = _sc.get_pd_pct(sym)
+                if p is not None:
+                    out[sym] = (p, hi, lo)
+        except Exception:
+            pass
+        return out
+
     def _mm_tradeable_set(self):
         """🏷 Прапорець TRD — ТОЙ САМИЙ список, що кнопка TRD у WATCHLIST
         (`SMCScanner.get_tradeable_symbols`). None = сканер недоступний."""
@@ -6424,6 +6482,13 @@ class FuelFilterDaemon:
             r['ob4h'] = _ob4.get(r['symbol'])
             r['ob1h'] = _ob1.get(r['symbol'])
             r['tradeable'] = (None if _trd is None else (r['symbol'] in _trd))
+        # 📍 PD-зона для 🔔 МММ-SBR (вимога 04.11) — лише ЧИТАННЯ кешу сканера.
+        if _bk == 'sbr' and rows:
+            _pd = self._mm_pd_marks([r['symbol'] for r in rows])
+            for r in rows:
+                _v = _pd.get(r['symbol'])
+                r['pd'] = (sbr_pd_fit(r.get('mm'), _v[0], _v[1], _v[2])
+                           if _v else None)
         # Сортування: спершу сила (найвиразніший напрямок зверху), потім символ —
         # стабільний порядок, щоб рядки не «стрибали» під курсором.
         rows.sort(key=lambda r: (-int(r.get('strength') or 0), r['symbol']))
@@ -6446,6 +6511,8 @@ class FuelFilterDaemon:
                                                    s.get('mmd_verdict_min', ''))
                              if _bk == 'dec' else {}),
             'book': _bk,
+            # 📍 Фільтр «лише у вигідній зоні PD» — лише книга SBR (вимога 04.11).
+            'pd_only': (bool(s.get('mms_pd_only', False)) if _bk == 'sbr' else False),
             # 🧭 МММ-Pull: стан ФОНОВОГО скану ліквідності (коли був, скільки
             # тривав, наступний, чи біжить зараз, причина невдачі, параметри).
             'scan': (self._mmp_scan_info(s) if (_bk == 'pull' and _on) else

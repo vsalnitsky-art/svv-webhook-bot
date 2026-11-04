@@ -3653,6 +3653,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     Сила ≥ <input type="number" id="mms-min-str" min="0" max="100" step="5" value="0" style="width:52px;font-size:0.68rem;padding:2px 4px" oninput="mmMinStrChanged('sbr')" onchange="mmMinStrSave()"> %
                 </label>
                 <span id="mms-str-out" style="font-size:0.66rem;color:#fbbf24;font-family:monospace"></span>
+                <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="📍 Показувати лише монети у ВИГІДНІЙ зоні дилінг-діапазону: SHORT — у Premium (дорого), LONG — у Discount (дешево). Рівновага (між порогами) і зона проти сигналу — ховаються. Зона — та сама, що бейдж PD на графіку (pd_zone_timeframe, пороги PD-фільтра). Монети без даних PD теж ховаються, поки сканер їх не порахує. Лише фільтр ПОКАЗУ: банер, сигнали й Telegram не чіпає. Зберігається в налаштуваннях бота.">
+                    <input type="checkbox" id="mms-pd-only" onchange="mmPdOnlyChanged()"> 📍 лише у вигідній зоні PD
+                </label>
                 <label style="display:flex;align-items:center;gap:5px;margin-left:8px;color:#8b93a7;cursor:pointer" title="⏱ АНТИСПАМ БАНЕРА: новий статус (🟢 LONG / 🔴 SHORT / ⏸ FLAT) показується лише коли протримався стільки секунд. Поки йде відлік, у банері видно кандидата (⏳). Плюс до цього діє гістерезис: зайти в напрямок можна за 10% важеля, а вийти — лише нижче 6%, тож коливання біля межі статус не смикають. 0 = перемикати миттєво (стара поведінка). ⚠️ Числа й смуга банера лишаються ЖИВИМИ — гаситься саме миготіння ПІДПИСУ.">
                     ⏱ Перехід ≥ <input type="number" id="ff-mms-bias-confirm" min="0" max="3600" step="30" value="120" style="width:60px;font-size:0.68rem;padding:2px 4px" onchange="saveFuelFilterSettings()"> с
                 </label>
@@ -3696,12 +3699,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th data-mmsort="strength" onclick="mmSort('strength','sbr')" style="cursor:pointer;user-select:none" title="🔔 МММ-SBR — напрямок = бік НАЙСВІЖІШОГО сигналу Session Band Reversal (1H або 4H); стан тримається до протилежного сигналу. Сила = Score вирішального сигналу (55–100). ⚖ = по монеті в історії 1000 барів немає жодного сигналу. Клік — сортувати за силою.">МММ-SBR<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="sbrtf" onclick="mmSort('sbrtf','sbr')" style="cursor:pointer;user-select:none" title="📶 ЯКИЙ сигнал прийшов: 1H, 4H або 1H+4H (обидва TF, чий ОСТАННІЙ сигнал у цьому самому боці). Повторення сигналу на іншому TF НЕ створює другого рядка — лише додає TF у цю колонку. 🆕 = сигнал на щойно закритому барі. Клік — сортувати (обидва TF зверху).">📶 TF<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="sbrsig" onclick="mmSort('sbrsig','sbr')" style="cursor:pointer;user-select:none" title="🔔 Вирішальний сигнал — як мітка в TradingView: #N за добу (Київ), час бару (Київ), Trigger (high/low бару), Score, Risk і SL. Розклад обох TF — у підказці комірки. Клік — сортувати за часом сигналу (найсвіжіші зверху).">🔔 Сигнал<span class="ff-sort-arrow"></span></th>
+                            <th data-mmsort="pd" onclick="mmSort('pd','sbr')" style="cursor:pointer;user-select:none" title="📍 Положення монети в дилінг-діапазоні (Premium / Discount / Рівновага) — те саме число, що бейдж PD на графіку. Зелена рамка — зона У БІК сигналу (SHORT у Premium, LONG у Discount) = вигідне положення; червона — проти; сіра — рівновага. Клік — сортувати за якістю входу (найглибше у «своїй» зоні зверху).">📍 PD<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="state" onclick="mmSort('state','sbr')" style="cursor:pointer;user-select:none" title="⏱ Скільки часу монета БЕЗПЕРЕРВНО тримає ПОТОЧНИЙ стан — 🟢 LONG, 🔴 SHORT або ⚖. Клік — сортувати (найсвіжіша зміна внизу/зверху).">⏱ У стані<span class="ff-sort-arrow"></span></th>
                             <th data-mmsort="price" onclick="mmSort('price','sbr')" style="cursor:pointer;user-select:none;text-align:right" title="Поточна ціна монети. Клік — сортувати за ціною.">Ціна<span class="ff-sort-arrow"></span></th>
                         </tr>
                     </thead>
                     <tbody id="mms-tbody">
-                        <tr><td colspan="9" class="tm-empty-msg">Немає сигналів SBR (рушій тягне бари 1H/4H — перший прохід іде у фоні)</td></tr>
+                        <tr><td colspan="10" class="tm-empty-msg">Немає сигналів SBR (рушій тягне бари 1H/4H — перший прохід іде у фоні)</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -13424,7 +13428,9 @@ _MMB.dec.cols = ['status', 'mm', 'dec', 'state', 'price', 'pchg', 'f1', 'f4'];
 _MMB.rdy.cols = ['status', 'mm', 'rdy', 'state', 'price', 'pchg', 'f1', 'f4'];
 // 🔔 SBR: сила = Score; «📶 TF» — який сигнал прийшов (1H / 4H / 1H+4H, без
 // другого рядка); «🔔 Сигнал» — мітка як у TradingView (#N · час · Trigger · Score).
-_MMB.sbr.cols = ['status', 'mm', 'sbrtf', 'sbrsig', 'state', 'price'];
+_MMB.sbr.cols = ['status', 'mm', 'sbrtf', 'sbrsig', 'pd', 'state', 'price'];
+// 📍 Фільтр «лише у вигідній зоні PD» (вимога 04.11) — лише книга SBR.
+_MMB.sbr.pdOnly = false;
 // Книга за кодом ('old' | 'new' | 'ctr' | 'fc' | 'pull' | 'dec' | 'rdy'); інше — 🧮 МММ-монітор.
 function _mmBk(bk) { return _MMB[(bk === 'new' || bk === 'ctr' || bk === 'fc' || bk === 'pull' || bk === 'dec' || bk === 'rdy' || bk === 'sbr') ? bk : 'old']; }
 const _mmBkCode = B => (B === _MMB.new ? 'new' : (B === _MMB.ctr ? 'ctr'
@@ -13491,6 +13497,9 @@ function _mmSortVal(r, col) {
     // сигнал — момент закриття бару вирішального сигналу (свіжі зверху).
     if (col === 'sbrtf') return (!r.sbr_tfs ? null
         : (r.sbr_tfs.indexOf('+') >= 0 ? 2 : 1) * 1000 + Number(r.strength || 0));
+    // 📍 PD — якість входу: глибина у «своїй» зоні; рівновага/проти — нижче.
+    if (col === 'pd') return (!r.pd ? null : (r.pd.fit === true ? 1 + Number(r.pd.depth || 0)
+        : (r.pd.zone === 'eq' ? 0 : -1)));
     if (col === 'sbrsig') return (r.sbr_sig && r.sbr_sig.close_t != null ? Number(r.sbr_sig.close_t) : null);
     // 💹 РУХ — власна колонка (17.09), тож «Ціна» сортується за ЦІНОЮ, а «яка
     // монета зараз іде вгору» — це колонка «Рух». Рядок без історії
@@ -13683,7 +13692,34 @@ const _MM_CELL = {
     rdy:    r => `<td>${_mmRdyCell(r)}</td>`,
     sbrtf:  r => `<td>${_mmSbrTfCell(r)}</td>`,
     sbrsig: r => `<td>${_mmSbrSigCell(r)}</td>`,
+    pd:     r => `<td>${_mmPdCell(r)}</td>`,
 };
+// 📍 «PD» — положення в дилінг-діапазоні відносно напрямку SBR (вимога 04.11).
+// Дані — `r.pd` = fuel_filter.sbr_pd_fit (джерело — бейдж PD графіка).
+const _MM_PD_UA = { premium: 'Premium', discount: 'Discount', eq: '⚖ Рівновага' };
+function _mmPdCell(r) {
+    const p = r.pd;
+    if (!p) return '<span style="color:#6b7280" title="PD ще не порахований сканером (монета поза watchlist або перший цикл)">—</span>';
+    const zc = p.zone === 'premium' ? '#f87171' : (p.zone === 'discount' ? '#4ade80' : '#8b93a7');
+    const bc = p.fit === true ? '#4ade80' : (p.fit === false && p.zone !== 'eq' ? '#f87171' : '#4b5563');
+    const mark = p.fit === true ? '✓' : (p.fit === false ? (p.zone === 'eq' ? '·' : '✗') : '');
+    const tip = `${_MM_PD_UA[p.zone] || p.zone} ${p.pct}% (0 = дно діапазону, 100 = верх)`
+        + (p.fit === true ? `\n✓ зона у бік сигналу ${r.mm} — вигідне положення · глибина ${Math.round((p.depth || 0) * 100)}%`
+            : p.fit === false ? (p.zone === 'eq' ? '\n· рівновага — вигідного положення немає'
+                : `\n✗ зона ПРОТИ сигналу ${r.mm}`) : '');
+    return `<span title="${_mmEsc(tip)}" style="font-family:monospace;white-space:nowrap;font-size:0.68rem">`
+        + `<span style="display:inline-block;min-width:118px;padding:0 6px;border:1px solid ${bc};border-radius:4px">`
+        + `<span style="display:inline-block;width:12px;color:${bc};font-weight:700">${mark}</span>`
+        + `<span style="display:inline-block;width:68px;color:${zc};font-weight:700">${_MM_PD_UA[p.zone] || ''}</span>`
+        + `<span style="display:inline-block;width:32px;text-align:right;color:#e5e7eb">${Math.round(p.pct)}%</span>`
+        + `</span></span>`;
+}
+function mmPdOnlyChanged() {
+    const el = document.getElementById('mms-pd-only');
+    _MMB.sbr.pdOnly = !!(el && el.checked);
+    mmRender('sbr');
+    mmMinStrSave();
+}
 // 🔔 «📶 TF» — який сигнал SBR дав поточний бік: 1H · 4H · 1H+4H (вимога 6:
 // повтор на іншому TF НЕ створює другого рядка — лише додає TF сюди).
 // 🆕 — сигнал на ЩОЙНО закритому барі (найсвіжіша зміна).
@@ -13952,7 +13988,8 @@ function _mmTabRows(B, d) {
     const minStr = _mmMinStr(B, d);
     return B.rows.filter(r => (d === 'all' || _mmTabOf(r) === d)
                               && (r.strength || 0) >= minStr
-                              && _mmVerdictOk(B, r, d));
+                              && _mmVerdictOk(B, r, d)
+                              && (!B.pdOnly || (r.pd && r.pd.fit === true)));
 }
 // 🧠 Фільтр «Вердикт ≥» блоку МММ-Decision (вимога 22.10) — дзеркало
 // `fuel_filter.dec_verdict_ok`: СЛАБКИЙ < СЕРЕДНІЙ < СИЛЬНИЙ; '' = не задіяно;
@@ -14006,7 +14043,7 @@ function _mmLoadUi(B) {
     const _ok = { newstr: 'new', liqstr: 'liq', runway: 'runway', price: 'price',
                   ctr1: 'ctr1', ctr4: 'ctr4', fc1: 'fc1', fc4: 'fc4',
                   mass: 'mass', magnet: 'magnet', magdist: 'magnet', dec: 'dec', rdy: 'rdy',
-                  sbrtf: 'sbrtf', sbrsig: 'sbrsig' };
+                  sbrtf: 'sbrtf', sbrsig: 'sbrsig', pd: 'pd' };
     if (v.sortCol && (!_ok[v.sortCol] || B.cols.includes(_ok[v.sortCol]))) {
         B.sort = { col: v.sortCol, dir: (v.sortDir < 0 ? -1 : 1) };
     }
@@ -14093,6 +14130,7 @@ function mmRender(bk) {
         _outEl.title = _outTotal > 0
             ? (`Фільтр вкладки «Сила ≥ ${_mmMinStr(B)}%»`
                + (_mmVerdictMin(B) ? ` + «Вердикт ≥ ${_MMD_V_UA[_mmVerdictMin(B)] || ''}»` : '')
+               + (B.pdOnly ? ' + «📍 лише у вигідній зоні PD»' : '')
                + ` лишив у таблиці ${_shown} `
                + `монет із ${_tot}; решта ${_outTotal} — зі слабшою силою`
                + (_mmVerdictMin(B) ? ' або слабшим вердиктом. ' : ' МММ. ')
@@ -14147,7 +14185,7 @@ function mmRender(bk) {
     // перемикання тумблера при порожній таблиці нічого б не перемалювало.
     // ⚠️ `state_since` — МОМЕНТ (змінюється рідко). Самі СЕКУНДИ
     // в неї НЕ входять: їх малює глобальний 1с-тікер (урок `held_sec`).
-    const sig = B.dir + '|' + JSON.stringify(B.verdictMins || {}) + '|' + (B.meta.enabled ? '1' : '0')
+    const sig = B.dir + '|' + JSON.stringify(B.verdictMins || {}) + '|' + (B.pdOnly ? 'P' : '') + '|' + (B.meta.enabled ? '1' : '0')
         + '|' + ((B.meta.pending || {}).reason || '')
         + '|' + B.sort.col + B.sort.dir + '|'
         + rows.map(r => [r.symbol, r.mm, r.strength, r.strength_prev,
@@ -14173,6 +14211,7 @@ function mmRender(bk) {
         r.dec_prob, r.dec_verdict || '', r.dec_conf || '',
         r.rdy_l, r.rdy_s, r.rdy_grade || '', r.rdy_hot ? 1 : 0,
         r.sbr_tfs || '', r.sbr_fresh ? 1 : 0, (r.sbr_sig ? r.sbr_sig.t : ''),
+        (r.pd ? [r.pd.zone, r.pd.pct, r.pd.fit].join('/') : ''),
         B.sel.has(r.symbol) ? 1 : 0].join(':')).join(',');
     if (tb.dataset.sig !== sig) {
         tb.dataset.sig = sig;
@@ -14476,6 +14515,12 @@ function mmApplyState(mm, bk) {
             }
         }
         _mmStrToInput(B);
+        // 📍 «лише у вигідній зоні PD» — теж із сервера (лише книга `sbr`).
+        if (code === 'sbr') {
+            B.pdOnly = !!(mm && mm.pd_only);
+            const _pe = document.getElementById('mms-pd-only');
+            if (_pe) _pe.checked = B.pdOnly;
+        }
         // 🧠 «Вердикт ≥» — теж із сервера (лише книга `dec`).
         if (code === 'dec') {
             // …свій на КОЖНУ вкладку (вимога 22.10); старий бекенд без словника
@@ -17236,6 +17281,7 @@ async function saveFuelFilterSettings() {
         mms_bias_tg: _c('ff-mms-bias-tg'),
         mms_tf_1h: _c('mms-tf-1h'),
         mms_tf_4h: _c('mms-tf-4h'),
+        mms_pd_only: !!_MMB.sbr.pdOnly,
         setup_max_per_cycle: parseInt(_v('ff-setup-cap', '16') || '16', 10),
         setup_ttl: parseInt(_v('ff-setup-ttl', '90') || '90', 10),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
