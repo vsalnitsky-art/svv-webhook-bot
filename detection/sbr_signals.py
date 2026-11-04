@@ -53,7 +53,9 @@ except Exception:          # pragma: no cover — без tzdata
 DEFAULTS = {
     'mid_len': 5, 'atr_len': 14, 'band_k': 0.5,
     'sc_base': 47.8, 'sc_slope': 41.2, 'min_score': 55.0,
-    'sl_k': 3.0, 'th_add': 90.0, 'th_1r': 70.0, 'th_half': 60.0,
+    # SL = close ± 3.7·ATR14 ПОТОЧНОГО бару (калібровано 04.11 за 12 мітками
+    # еталона BTC/ETH 4H: медіана 3.71, розкид 3.64-3.83).
+    'sl_k': 3.7, 'th_add': 90.0, 'th_1r': 70.0, 'th_half': 60.0,
     'rev_candle': True, 'close_out': True,
 }
 
@@ -245,6 +247,7 @@ def compute_signals(bars: List[Dict], tf_sec: int, cfg: Dict = None) -> List[Dic
         atr_p = atr[i - 1]
         if not atr_p or atr_p <= 0:
             continue
+        atr_c = atr[i] or atr_p          # SL — від ATR поточного (закритого) бару
         up_p = mid[i - 1] + c['band_k'] * atr_p
         lo_p = mid[i - 1] - c['band_k'] * atr_p
         s_sc = _clamp(c['sc_base'] + c['sc_slope'] * (h[i] - up_p) / atr_p)
@@ -260,13 +263,13 @@ def compute_signals(bars: List[Dict], tf_sec: int, cfg: Dict = None) -> List[Dic
             s_cnt += 1
             out.append({'side': 'SHORT', 't': t[i], 'close_t': ts + tf_sec,
                         'trigger': h[i], 'score': round(s_sc, 2),
-                        'risk': risk_text(s_sc, c), 'sl': h[i] + c['sl_k'] * atr_p,
+                        'risk': risk_text(s_sc, c), 'sl': cl[i] + c['sl_k'] * atr_c,
                         'n': s_cnt, 'time_kyiv': tk})
         if long_sig:
             l_cnt += 1
             out.append({'side': 'LONG', 't': t[i], 'close_t': ts + tf_sec,
                         'trigger': l[i], 'score': round(l_sc, 2),
-                        'risk': risk_text(l_sc, c), 'sl': l[i] - c['sl_k'] * atr_p,
+                        'risk': risk_text(l_sc, c), 'sl': cl[i] - c['sl_k'] * atr_c,
                         'n': l_cnt, 'time_kyiv': tk})
     return out
 

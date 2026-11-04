@@ -70,6 +70,16 @@ def test_reference_signals_of_the_original():
     _check('22.10 19:00' not in g, 'червона свічка не дає LONG')
 
 
+def test_sl_is_close_plus_atr_of_the_bar():
+    # Калібровка 04.11: SL = close ± 3.7·ATR14 поточного бару. Еталон (інша
+    # біржа): 20.10 2582.65 · 21.10 2634.52; на барах OKX — у межах 0.5%.
+    g = _sigs_by_kyiv()
+    for k, ref in (('20.10 19:00', 2582.65), ('21.10 19:00', 2634.52)):
+        sl = g[k]['sl']
+        _check(abs(sl - ref) / ref < 0.005, f'{k}: SL {sl:.2f} проти еталона {ref}')
+    _check(S.DEFAULTS['sl_k'] == 3.7, 'sl_k = 3.7')
+
+
 def test_history_start_does_not_change_the_signal():
     bars = _fixture()
     tail = bars[60:]
