@@ -374,7 +374,8 @@ def test_heavy_sections_are_declared():
     завжди і економія була б фікцією).
     """
     import re
-    _check({'q4', 'fund'} <= set(FF.HEAVY_SECTIONS),
+    # 'fund' прибрано 06.11: «💰 Funding — Пружина» має власний маршрут.
+    _check({'q4', 'mm'} <= set(FF.HEAVY_SECTIONS) and 'fund' not in FF.HEAVY_SECTIONS,
            f'базові важкі секції зникли: {FF.HEAVY_SECTIONS}')
     src = open(os.path.join(_ROOT, 'detection', 'fuel_filter.py'),
                encoding='utf-8').read()

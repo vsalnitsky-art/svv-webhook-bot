@@ -1390,9 +1390,9 @@ def test_breakeven_erases_the_tf_badge():
 def test_every_bot_sl_path_passes_a_timeframe():
     ff = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            'detection', 'fuel_filter.py'), encoding='utf-8').read()
-    for lbl in ("'Q3-VOB · трейл'", "'Q3-VOB · відкриття'"):
-        i = ff.index(lbl)
-        _check('origin_tf=' in ff[i:i + 160], f'{lbl}: TF funding-VOB не передано')
+    # Q3-VOB (funding) видалено 06.11 разом зі старим блоком «💰 Funding — МММ».
+    _check("'Q3-VOB · трейл'" not in ff and "'Q3-VOB · відкриття'" not in ff,
+           'шлях Q3-VOB (funding) видалено')
     tm = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            'detection', 'trade_manager.py'), encoding='utf-8').read()
     i = tm.index("origin_label='Автопілот · структура'")

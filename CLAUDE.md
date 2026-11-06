@@ -676,58 +676,59 @@ Binance Futures**, тож фільтр проходив «порожняком»
   на `/smart-money`. get_state → `timers3`/`pending3_visible`/`queue3_enabled`.
 - Тести: `test_readiness_strategy.py`.
 
-## ⚡ Скальперська «Готовність» для funding-монет
+## 💰🌀 «FUNDING — ПРУЖИНА» (06.11, ЗАМІЩУЄ «💰 Funding — МММ по монетах»)
 
-Окремий SMC-грейд ЛИШЕ для монет таблиці «💰 Funding — МММ» (`_anomalies`) на
-швидкому TF. `_compute_setup` параметризовано за TF (`base_tf`/`htf_tf`/
-`write_exit`); скальп-варіант зве його з `base_tf='5m'`, `htf_tf='15m'`,
-`write_exit=False` (не чіпає 1H-«Готовність виходу»). Окремий кеш
-`_setup_scalp_cache` + `_refresh_setup_scalp_cache` (власний TTL/cap, тільки
-funding-монети). Той самий `grade_setup` — інші свічки; на швидких TF
-структура/зона шумніші → трактувати як ОКРЕМИЙ показник, не 1:1 з 1H.
-- Налаштування: `funding_setup_scalp_on` (OFF), `funding_setup_tf` (5m),
-  `funding_setup_htf` (15m), `funding_setup_ttl` (45с), `funding_setup_max_per_cycle` (8).
-- get_state → funding-рядки несуть `setup_scalp`; UI — колонка «⚡ Скальп» у
-  funding-таблиці + блок налаштувань у акордеоні. Інфосайт дзеркалить колонку.
-- Навантаження мінімальне: klines кешуються (TTL), тротл cap/цикл; funding-
-  підмножина мала (одиниці–десятки монет).
-- TG на «хороший сигнал» по колонці Скальп: `scalp_tg_on`/`scalp_tg_min_score`
-  (HOT або score≥поріг) / `scalp_tg_cooldown_min` / `scalp_tg_dir`. Метод
-  `_scalp_setup_alert` (edge-trigger+кулдаун) у `_run_alerts` → топік 💰 funding.
-- Панель `/api/fuel-filter/panel/<sym>` віддає `setup_scalp`; TradingView-оверлей
-  (`tools/tradingview_mm_overlay.user.js`, v1.7.3) показує ⚡ Скальп-бейдж.
+Дослівно: «Перероби повністю Funding — МММ по монетах, видали попередні
+налаштування, таблицю організуй по алгоритму "Пружина" всі монети які будуть
+потрапляти із 💰 Funding Rate Scanner опрацьовуй і відображай згідно алгоритму
+"Пружина".» Рішення користувача: видалити **УСЕ** старе; монети — **УСІ** з
+💰 Funding Rate Scanner (без відбору за МММ).
 
-## 🎯 Шаровий конфлюенс (1..5) для funding-монет + консолідований TG
+**🗑 ВИДАЛЕНО ПОВНІСТЮ (не вимкнено) — повертати лише за явним рішенням:**
+таблиця `_anomalies` (відбір funding-монет за МММ, гістерезис, сеанси, spike) ·
+🎯 шари `_funding_layers` · ⚡ скальп-«Готовність» (`_setup_scalp_cache`) ·
+VOB (1m/5m) → Черга-4 / Q3-VOB авто-відкриття + трейл SL (`_layer_signal_alert`,
+`_vob_open_or_trail`, `_funding_vob`, `_funding_ob_dir`) · 🎯 «рекомендація бота»
+→ Черга-2 (`_opportunity_*`, епізоди `_opp_*`, `_signal_open`) · 🚀 spike-відкриття ·
+УСІ TG блоку (✦ Золотий funding, 🎯 Рекомендація шарів, ⚡ Скальп, поява/зникнення
+монет) · 📜 архів монет і 🔕 mute (маршрути `/api/fuel-filter/funding-*`,
+`/anomaly/*`) · секція `fund` у `get_state` · `anomalies` у стані/відповіді.
+⚠️ **Торгових шляхів поменшало:** funding більше НІЧОГО не відкриває і не ставить
+у черги. 💰 Funding Rate Scanner (`funding_monitor`) не чіпали.
+⚠️ `queue3_vob_sl_buffer_pct` ЛИШИВСЯ (буфер Manual SL Черги-4) — поле
+`ff-queue3-vob-buffer` у гармошці Черги-3.
+⚠️ «Готовність» (`_setup_inputs`) бере ставку/тренд funding напряму з
+`_funding_rates`/`_funding_trends` (сканер); `vol_up`/`spike` тепер False.
+🧹 Міграція: `PURGED_SETTING_PREFIXES` += `funding_`/`scalp_tg_`/`layer_tg_`/
+`opportunity_`/`ff_tg_`, `PURGED_SETTING_KEYS` += `spike_tg`, `spike_auto_open`,
+`queue3_vob_open`, `queue3_vob_block_against_trend`, `start_engine_use_anomalies`,
+`anomaly_hours`; `_purge_dead_funding_blobs` обнуляє блоби
+`fuel_filter_funding_archive` і `fuel_opportunity_stats`.
 
-`_funding_layers(sym, a)` рахує 5 шарів У БІК напрямку монети: 1) МММ ≥ легкий
-(сила ≥10) + тренд сили АСИМЕТРИЧНО за напрямком: **SHORT — НЕ слабшає (↑ або →;
-гасне ЛИШЕ на ↓)**, бо на встановленому спаді сила часто на плато (→) і строге ↑
-гасило шар майже завжди; **LONG — СТРОГО РОСТЕ (↑)**, як було раніше · 2) SCORE ≥
-СЕРЕДНІЙ (≥40) · 3) Готовність(1H) ≥ СЕРЕДНІЙ (≥38) · 4) Скальп ≥ СЕРЕДНІЙ (≥38) ·
-**5) ЦІНА у бік — свіжий рух (~15 хв) з 💰 Funding Rate Scanner: LONG=РОСТЕ (up),
-SHORT=СПАДАЄ (down)**. Кожен шар несе `dir` (напрямок монети, КОЛИ засвічений) →
-у колонці кольори за напрямком: **усі зелені (LONG) або всі червоні (SHORT)**.
-Повертає {count, `base`(=усі 5), base4, layers[]}. get_state → funding-рядки несуть
-`layers`; UI — колонка «🎯 Шари» (`ffLayersCell` фарбує крапки за `l.dir`).
-- **5-й шар «Ціна» — ПОСТІЙНИЙ (світиться в колонці)**, живиться
-  `self._funding_price` (кеш з `_get_funding_price_dirs()` → `FundingMonitor.
-  get_price_dirs()`; оновлюється в тіку поряд з `_funding_trends`). Джерело —
-  вікно `PRICE_WINDOW`=15хв, мертва зона `PRICE_DEADZONE`=0.10% (funding_monitor).
-- **VOB (1m) = ОКРЕМИЙ ОДНОРАЗОВИЙ ТРИГЕР сигналу (не колонка-шар).**
-  `_funding_vob(sym,d)` ПОСТІЙНО моніторить 1m-OB для КОЖНОЇ funding-монети (кеш
-  8с) → `detect_volumized_obs(swing=5, ob_end_method='Wick', max_atr_mult=3.5,
-  zone_count='Low')` → найновіший НЕ-breaker OB у бік. На НОВОМУ OB
-  (`formation_time` ≠ `_vob_seen`) перевіряємо всі 5 шарів САМЕ ЗАРАЗ: якщо
-  `base ≥ layer_tg_min` (cap 5) → сигнал; інакше чекаємо наступний OB.
-- На НОВОМУ OB (інший formation_time) + кулдаун → ОДИН TG «🎯 Рекомендація бота»
-  (`_layer_signal_alert`/`_send_layer_alert`, топік 💰 funding). Це ЗАМІНЯЄ старе
-  «рекомендована ботом» повідомлення.
-- Налаштування: `layer_tg_on` (OFF), `layer_tg_min` (скільки з 5, дефолт 5),
-  `layer_tg_cooldown_min` (30). VOB-параметри — константи `_VOB_*` (1m/5/Wick/3.5/Low).
-- Тести: `test_readiness_strategy.py` (funding_layers 5-шарів + ЦІНА-напрямок +
-  VOB-alert + all-layers-gate).
-- **Сортування таблиці «💰 Funding — МММ» — ЗА ШАРАМИ** (get_state): більше
-  засвічених шарів вище; тайбрейк — довше тримається (`held_sec`).
+**Новий рушій `detection/funding_spring.py`** (`FundingSpring`,
+`init_funding_spring`/`get_funding_spring`, старт у `flask_app`; ключі БД
+`funding_spring_v1` (записи) і `funding_spring_settings` {enabled, деф. УВІМК}):
+- монети = `funding_monitor.get_symbols()` (сканер вимкнено → порожньо);
+- розрахунок — ТОЙ САМИЙ `spring_coil.analyze` (своїх правил немає);
+- монета WATCHLIST → ГОТОВИЙ запис сканера (`scanner.spring_for`), 0 запитів —
+  число в обох таблицях одне;
+- решта → власні ЗАКРИТІ 1h-бари (`LIMIT`=300, живий бар відкидається), ОДИН
+  запит на монету на закритий бар, паралельно (`WORKERS`=4); біржа ще не віддала
+  закритий бар → повтор `RETRY_SEC`=10; збій → backoff до 600с;
+- записи персистяться (≤6 год), бар уже закрився → ↻ до перерахунку;
+- ЛИШЕ ПОКАЗ: нічого не відкриває і не шле в TG (тест-замок).
+API: `GET /api/funding-spring/state` (+`trade_side`/`queues` рядка),
+`POST /api/funding-spring/settings` {enabled}.
+**UI** `#funding-mmm-panel` (гармошка `fund`): тумблер `fspr-enabled`, рядок стану
+`#fspr-status`, підсумок `#fspr-agg` (спільний `_sprAggPaint(agg, elId, scope)`),
+вкладки як у 🌀, таблиця `#fspr-table` (13 колонок): рядок малює СПІЛЬНИЙ
+`_sprRowHTML(r, minPot, mode, extra)` (той самий, що в 🌀 Пружині) + комірка
+`_fsprFundCell` (ставка + F-Trend, у підказці виплата й обсяг). Монети без
+розрахунку (рахується / замало барів) — внизу з причиною. Полл 15с лише
+розгорнутої секції. 💰-мітка у відкритих угодах — `ffFundingSyms` із цих рядків.
+⚠️ Інфосайт (`infosite/app.js`) читав `anomalies` — тепер таблиця там порожня
+(окрема сесія).
+Тест: `test_funding_spring.py` (14).
 
 ## 🎯 Черга-4: пер-шарові тумблери (економія сервера)
 
@@ -746,49 +747,6 @@ SHORT=СПАДАЄ (down)**. Кожен шар несе `dir` (напрямок 
 і суворе `nd==side` при «рівновага» ніколи не збиралось). Інші пороги — суворо
 (напрямок у бік + сила ≥ порогу). Лічильник у 🎯 = `n/required` (к-сть увімкнених).
 
-## 🎯 Черга-3: авто-відкриття за «VOB + 5 шарів» (funding-монети)
-
-Той самий моніторинг VOB у `_layer_signal_alert` живить ДВА незалежні виходи на
-НОВОМУ Volumized OB (edge за formation_time): (1) TG-сигнал (`layer_tg_on`);
-(2) авто-відкриття угоди `queue3_vob_open` (дефолт **ON**). Логіка —
-`_vob_open_or_trail(sym,a,d,ob,lay,s,now)`:
-- **Нова угода:** усі 5 шарів зійшлись + монети ще немає в угоді → `_open(...,
-  opened_by='Q3-VOB(funding)', skip_ctr_safeguard=True)` за напрямком. **SL = межа
-  блоку OB + буфер**: SHORT → `top*(1+buf)` (над верхом), LONG → `bottom*(1-buf)`
-  (під низом); `buf = queue3_vob_sl_buffer_pct/100` (дефолт 0.10%). SL ставиться
-  через `tm.update_manual_sl_tp(sym, manual_sl=, is_shadow=)`.
-- **Повторний VOB** по вже відкритій ботом монеті → угоду НЕ відкриваємо, лише
-  ПЕРЕСУВАЄМО SL на новий блок. Трекер `self._vob_trade` {sym→{side,sl,ftime,
-  entry,mode}}; чиститься, коли монета зникла І позиції вже нема.
-- **Ворота «проти загального тренду»** (`queue3_vob_block_against_trend`, дефолт
-  **ON**): НОВУ угоду не відкриваємо, якщо напрямок проти ЗАГАЛЬНОГО тренду монети
-  (`dir_overall` ≈2 год з `_funding_price`): LONG у загальному ↓ / SHORT у ↑ →
-  skip (лог `Q3-VOB`). 'flat' — дозволяємо. Трейл SL — без цих воріт.
-- **TG «Рекомендація бота»** тепер надсилає `_vob_open_or_trail` (не окремий
-  alert-branch, щоб не дублювати), формат мінімальний (`_send_layer_alert(sym,a,
-  d,sl,mode)`): `🎯 Рекомендація бота · #SYM 🔴 SHORT` + `🛑 SL: <ціна>` (mode
-  'open') / `♻️ Угода вже відкрита — змінено лише SL: <ціна>` (mode 'trail').
-  Якщо `queue3_vob_open` OFF, а `layer_tg_on` ON — падає на просту «Рекомендацію»
-  (mode 'signal', без SL) за старим порогом `layer_tg_min`.
-- Усе (open / sl_moved / skipped) пишеться в 🧾 Лог роботи бота (`activity_log`,
-  source `Q3-VOB`) з міткою «монета з фандингу».
-- Налаштування: `queue3_vob_open` (True), `queue3_vob_sl_buffer_pct` (0.10),
-  `queue3_vob_block_against_trend` (True). UI — у гармошці **«⚙️ Налаштування
-  (Черга-3)»** (`templates/smart_money.html`), куди перенесено ВСІ параметри
-  Черги-3. Заголовок колонки шарів — лише «🎯».
-- **💰-мітка у відкритих угодах** (`histSymOpen` у smart_money + `renderTrades` в
-  infosite): монета з фандингу (є в `anomalies` АБО `opened_by` містить funding).
-- Тести: `test_vob_open_*` (+ ворота тренду) у `test_readiness_strategy.py`.
-
-## ✦ «Золотий funding» TG — формат + затримка-підтвердження
-
-`_send_gold_alert(sym,a,step)` формат (топік 💰 funding): `✦ FUNDING 🟢LONG /
-#SYM / 💰 Funding: -2.000%`. Показуємо СНЕПНУТЕ чисте значення (`step` зі знаком
-ставки) → завжди точне (−0.500/−1.500/−2.000%), а не сире (−0.495/−1.503%).
-Перед відправкою рівень має протриматись `funding_gold_confirm_sec` (дефолт 30с,
-«чітке визначення»); далі повтор раз на `funding_gold_cooldown_min` (60хв), поки
-той самий рівень тримається. Тест: `test_gold_funding_confirm_then_repeat`.
-
 ## 💰 Funding Rate Scanner — колонка «Price» (dashboard)
 
 Таблиця «💰 Funding Rate Scanner» (`templates/dashboard.html`, дані з
@@ -798,12 +756,9 @@ SHORT=СПАДАЄ (down)**. Кожен шар несе `dir` (напрямок 
 Плюс ЗАГАЛЬНИЙ тренд монети (`price_dir_overall`/`price_chg_overall`,
 `PRICE_WINDOW_LONG`≈2год, deadzone 0.30%) — рядок «загалом ▲/▼ X%», щоб не входити
 проти загального тренду (той самий `dir_overall` живить ворота VOB-відкриття).
-Цей самий блок (`price` у get_state anomaly-рядку = `_funding_price[sym]`)
-показується ДРУГИМ РЯДКОМ у таблиці «💰 Funding — МММ» (bot + infosite):
-«💹 Ціна: ▲ +X% 15хв · 📈 Загалом: ▲ +Y% ~2год», вирівняно в стовпчик.
-Це окремо від `price_change` (сумарно від старту стеження, тепер у підказці).
-`_recent_price_move(rates)` рахує рух по останніх ~15 семплах (мертва зона
-`PRICE_DEADZONE`=0.10%). Ту саму метрику віддає `get_price_dirs()` для 5-го шару.
+(Другий рядок у таблиці «💰 Funding — МММ» і 5-й шар — видалено 06.11 разом
+із таблицею.) `_recent_price_move(rates)` рахує рух по останніх ~15 семплах
+(мертва зона `PRICE_DEADZONE`=0.10%).
 
 ## Закриті угоди: постійний архів у БД + швидкість закриття
 
@@ -849,7 +804,7 @@ SHORT=СПАДАЄ (down)**. Кожен шар несе `dir` (напрямок 
 
 - `fuel_filter_settings` — налаштування FF (вкл. `queue3_enabled`,
   `readiness_log_enabled`).
-- `fuel_filter_state` — JSON-блоб стану: timers, fuel_managed, anomalies(=funding),
+- `fuel_filter_state` — JSON-блоб стану: timers, fuel_managed,
   engine_attempts, fuel_ema, fuel_hyst, btc_verdict_dir/since, pending, pending2,
   **pending3**.
 - `fuel_filter_scan_list` — дозволені для сканування символи.
@@ -992,13 +947,10 @@ Zone-Count-фіксу): десятки «сигналів» віком 4-7 ба�
 
 - `test_readiness_strategy.py::test_ob_match_gate` кличе `ff._ob_match_ok(...)`,
   якого в `detection/fuel_filter.py` **вже немає** (метод видалено/перейменовано).
-  Тест падає на цьому місці; попередні 12 тестів файлу проходять.
-- Виправлено в тому ж файлі: стаби `_funding_vob` відставали від сигнатури
-  `(sym, d, vob_tf)`; легасі-тести TG-шарів тепер явно ставлять
-  `funding_route_q4=False` (бо дефолт True → VOB іде прямо в Чергу-4).
-- **Відновлено мертве налаштування:** у `_layer_signal_alert` змінна `need`
-  (`layer_tg_min`) рахувалась, але НЕ застосовувалась → TG-алерт летів на КОЖЕН
-  новий VOB. Тепер алерт лише коли `base ≥ layer_tg_min` (як у пам'яті проєкту).
+  Там само давно падають `test_soft_safeguard_skip_exhaustion` (немає kwarg
+  `skip_exhaustion`) і `test_soft_safeguard_mm_price_override` — відтворено на
+  чистій гілці 06.11. Тести funding-шарів/скальпу/VOB-відкриття/золотого funding
+  з файлу ВИДАЛЕНО разом із функціями (06.11); решта 10 проходять.
 
 ## ⚡ ШВИДКІСТЬ ЦИКЛУ: паралельний префетч барів (не зламати!)
 

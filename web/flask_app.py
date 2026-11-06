@@ -560,6 +560,16 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start SBR engine: {e}")
 
+        if not _auto_started.get('funding_spring'):
+            _auto_started['funding_spring'] = True
+            try:
+                # 💰🌀 «Пружина» для монет 💰 Funding Rate Scanner (06.11): свій
+                # потік, 1h-бари поза WATCHLIST — раз на закритий бар.
+                from detection.funding_spring import init_funding_spring
+                init_funding_spring(db=get_db())
+            except Exception as e:
+                print(f"[APP] Failed to start Funding Spring: {e}")
+
         if not _auto_started.get('tickr_opp'):
             _auto_started['tickr_opp'] = True
             try:
@@ -3018,92 +3028,47 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
-    @app.route('/api/fuel-filter/funding-history')
-    def api_ff_funding_history():
-        """Archived per-coin funding history (signals, МММ, funding, price, ₿,
-        Vol) for one symbol. Spans multiple appear→exit episodes."""
+    # ═══ 💰🌀 «Funding — Пружина» (06.11): алгоритм «Пружина» для монет
+    # 💰 Funding Rate Scanner. Стара таблиця «💰 Funding — МММ» (шари, скальп,
+    # VOB→Черга-4, авто-відкриття, mute/архів, TG) видалена повністю.
+    @app.route('/api/funding-spring/state')
+    def api_funding_spring_state():
+        """Лише ЧИТАННЯ памʼяті рушія + де монета зараз (угода / черга)."""
         try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            return jsonify(ff.get_funding_history(request.args.get('symbol', '')))
+            from detection.funding_spring import get_funding_spring
+            eng = get_funding_spring()
+            if not eng:
+                return jsonify({'ok': False, 'reason': 'not initialized', 'rows': []})
+            st = eng.state()
+            sides, queues = {}, {}
+            try:
+                from detection.fuel_filter import get_fuel_filter
+                ff = get_fuel_filter()
+                if ff is not None:
+                    if hasattr(ff, '_mm_open_sides'):
+                        sides = ff._mm_open_sides() or {}
+                    if hasattr(ff, '_mm_queue_map'):
+                        queues = ff._mm_queue_map() or {}
+            except Exception:
+                pass
+            for r in st.get('rows') or []:
+                r['trade_side'] = sides.get(r['symbol'])
+                r['queues'] = list(queues.get(r['symbol']) or [])
+            return jsonify(st)
         except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
+            return jsonify({'ok': False, 'reason': str(e), 'rows': []})
 
-    @app.route('/api/fuel-filter/funding-archive')
-    def api_ff_funding_archive():
-        """Index of all archived funding coins (incl. ones off the radar now)."""
+    @app.route('/api/funding-spring/settings', methods=['POST'])
+    def api_funding_spring_settings():
+        """Тумблер рушія: {enabled}."""
         try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
+            from detection.funding_spring import get_funding_spring
+            eng = get_funding_spring()
+            if not eng:
                 return jsonify({'ok': False, 'reason': 'not initialized'})
-            return jsonify({'ok': True, 'coins': ff.get_funding_archive_list()})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/funding-archive/delete', methods=['POST'])
-    def api_ff_funding_archive_delete():
-        """Delete one coin's funding archive."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            sym = (request.get_json() or {}).get('symbol', '')
-            return jsonify({'ok': True, 'deleted': ff.delete_funding_archive(sym)})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/funding-archive/clear', methods=['POST'])
-    def api_ff_funding_archive_clear():
-        """Wipe the whole funding archive."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            return jsonify({'ok': True, 'cleared': ff.clear_funding_archive()})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/funding-mute', methods=['POST'])
-    def api_ff_funding_mute():
-        """Mute a funding coin for N hours (default 24). Body: {symbol, hours?}."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            body = request.get_json() or {}
-            until = ff.mute_funding(body.get('symbol', ''),
-                                    hours=float(body.get('hours', 24) or 24))
-            return jsonify({'ok': True, 'until': until})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/funding-unmute', methods=['POST'])
-    def api_ff_funding_unmute():
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            sym = (request.get_json() or {}).get('symbol', '')
-            return jsonify({'ok': True, 'unmuted': ff.unmute_funding(sym)})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/funding-muted')
-    def api_ff_funding_muted():
-        """List currently-muted funding coins with remaining time."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            return jsonify({'ok': True, 'muted': ff.list_funding_muted()})
+            data = request.get_json(silent=True) or {}
+            return jsonify({'ok': True, 'settings': eng.update_settings(
+                {k: data[k] for k in ('enabled',) if k in data})})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
@@ -3920,34 +3885,6 @@ def register_api_routes(app):
             if not ff:
                 return jsonify({'ok': False, 'reason': 'not initialized'})
             count = ff.clear_all_timers4()
-            return jsonify({'ok': True, 'cleared': count})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/anomaly/delete', methods=['POST'])
-    def api_fuel_filter_anomaly_delete():
-        """Remove one coin from the anomalies table. Body: {"symbol": "..."}."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            data = request.get_json(silent=True) or {}
-            symbol = data.get('symbol', '')
-            deleted = ff.delete_anomaly(symbol)
-            return jsonify({'ok': True, 'deleted': deleted, 'symbol': symbol.upper()})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
-    @app.route('/api/fuel-filter/anomaly/clear', methods=['POST'])
-    def api_fuel_filter_anomaly_clear():
-        """Clear the whole anomalies table."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            count = ff.clear_anomalies()
             return jsonify({'ok': True, 'cleared': count})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})

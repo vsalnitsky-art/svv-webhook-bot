@@ -55,26 +55,14 @@ class _DB:
         self.d[k] = v
 
 
-# ═══════════ 1. 💰 FUNDING-VOB ═══════════════════════════════════════════
-def test_first_sight_of_a_funding_coin_is_a_silent_base():
-    f = _ff.funding_vob_outcome
-    _check(f(None, 1700) == 'base', 'перший показ — тиха база, не сигнал')
-    _check(f(1700, 1700) == 'dup', 'той самий блок')
-    _check(f(1700, 1900) == 'new', 'інший formation_time — сигнал')
-    _check(f(None, 0) == 'none' and f(1700, None) == 'none', 'блоку немає')
-    print('✓ funding-VOB: перший показ мовчить, новим є лише інший блок')
-
-
-def test_funding_vob_baseline_survives_a_restart():
-    _check("'funding_vob_seen': dict(getattr(self, '_vob_seen'" in _FF_SRC, 'персист')
-    _check("st.get('funding_vob_seen')" in _FF_SRC, 'відновлення')
-    i = _FF_SRC.index('_fv = funding_vob_outcome(self._vob_seen.get(sym), ft)')
-    body = _FF_SRC[i:i + 600]
-    _check("if _fv == 'base':" in body and "elif _fv == 'new':" in body,
-           'сигнал іде лише з гілки new')
-    _check(body.index("elif _fv == 'new':") < body.index('self.intercept(sym, d'),
-           'intercept — лише всередині гілки new')
-    print('✓ funding-VOB: база опрацьованих блоків переживає рестарт')
+# ═══════════ 1. 💰 FUNDING-VOB — ВИДАЛЕНО 06.11 ═══════════════════════════
+# Старий блок «💰 Funding — МММ» (і його VOB→Черга-4) видалено повністю —
+# переживати рестарт нема чому. Замок: від нього не лишилось ні правила, ні стану.
+def test_funding_vob_is_gone():
+    _check(not hasattr(_ff, 'funding_vob_outcome'), 'правило funding-VOB видалено')
+    _check('funding_vob_seen' not in _FF_SRC and '_vob_seen' not in _FF_SRC,
+           'стану опрацьованих funding-VOB більше немає')
+    print('✓ funding-VOB видалено разом зі старим блоком')
 
 
 # ═══════════ 2. 🧱 OPPOSITE OB EXIT ══════════════════════════════════════

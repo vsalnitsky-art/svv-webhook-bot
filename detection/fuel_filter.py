@@ -184,16 +184,13 @@ MIN_HOLD_AFTER_OPEN_SEC = 90
 _DB_SETTINGS = 'fuel_filter_settings'
 _DB_STATE = 'fuel_filter_state'
 _DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
-_DB_FUNDING_ARCHIVE = 'fuel_filter_funding_archive'  # per-coin funding history
+# 🗑 Ключі БД старого блоку «💰 Funding — МММ» (видалено 06.11) — міграція
+# прибирає їх (`_migrate_settings`), щоб мертві блоби не лежали в БД.
+_DB_DEAD_FUNDING_KEYS = ('fuel_filter_funding_archive', 'fuel_opportunity_stats')
 # 💾 Знімки шести МММ-книг + їхні СИРІ кеші (STC, прогноз, вердикти Decision,
 # скан Pull) — щоб після рестарту блоки лише ОНОВЛЮВАЛИСЬ, а не збирались з нуля.
 # Окремий ключ: блоб великий, а `_DB_STATE` пишеться щотакту.
 _DB_MM_BOOKS = 'fuel_filter_mm_books_v1'
-FUNDING_ARCH_MAX = 400          # max samples kept per coin (RAM/512MB: was 800)
-FUNDING_ARCH_COINS_MAX = 200    # max distinct coins archived (RAM/512MB: was 400)
-_DB_OPP_STATS = 'fuel_opportunity_stats'  # 🎯 per-coin recommendation episodes
-OPP_HIST_MAX = 200              # max closed 🎯 episodes kept per coin (RAM: was 1000)
-FUNDING_ARCH_SAMPLE_SEC = 60    # periodic sample cadence while a coin is live
 
 # ─── queue (❤️ Черга на вхід) removal operations ───
 # Every place that REMOVES a coin from _pending is numbered and guarded. These
@@ -857,26 +854,6 @@ def dec_verdict_mins_norm(raw, legacy='') -> dict:
     return out
 
 
-def funding_vob_outcome(prev_ft, ft) -> str:
-    """💰 Рішення по 1m/5m-VOB funding-монети. ЧИСТА.
-
-    'none' — блоку немає · 'base' — перший показ монети (рестарт або монета
-    щойно в таблиці): блок, що вже стоїть, лише запамʼятовуємо, сигналу НЕМАЄ ·
-    'dup' — той самий блок · 'new' — інший formation_time, тобто сигнал."""
-    try:
-        ft = int(ft or 0)
-    except (TypeError, ValueError):
-        ft = 0
-    if not ft:
-        return 'none'
-    if prev_ft is None:
-        return 'base'
-    try:
-        return 'dup' if int(prev_ft) == ft else 'new'
-    except (TypeError, ValueError):
-        return 'base'
-
-
 def _q_allowed(op: int) -> bool:
     """True if queue-removal op #op is currently allowed (debug gate)."""
     if _QUEUE_OPS_ALLOWED.get(op, True):
@@ -1069,7 +1046,6 @@ DEFAULT_SETTINGS = {
     'close_on_btc_mode': 'off',
     'close_on_btc_flip': False,
     'direction_smoothing_min': 0,   # EMA window (min) for МММ direction; 0 = OFF (raw)
-    'anomaly_hours': 10,            # fuel held longer than this → "anomaly" list
     'start_signal_minutes': 5,      # BTC МММ held ≥ this → START signal (else STOP)
     # ── ₿ BTCUSDT banner mode ──
     #   'live'    (default) — ПОВНЕ ДУБЛЮВАННЯ без затримок: банер миттєво
@@ -1081,7 +1057,6 @@ DEFAULT_SETTINGS = {
     # ── BTC-START auto-engine (banner toggle) ──
     'start_engine_enabled': False,        # master: auto-open basket on BTC START
     'start_engine_independent': False,    # auto-open independent of BTC (own dir)
-    'start_engine_use_anomalies': True,   # source: 🜂 anomalies table
     'start_engine_use_timers': True,      # source: ⏱️ active timers table
     'start_engine_scan_secs': 15,         # engine scan cadence (sec)
     'start_engine_include_funding': False,# include 💰 funding-marked coins
@@ -1376,54 +1351,6 @@ DEFAULT_SETTINGS = {
     # самих джерел, що дадуть реальний SL і реальний TP-2 автопілота.
     'queue4_min_rr': 1.0,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
-    'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
-    'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
-    # A funding coin appears in the 💰 МММ table only if its МММ (fuel) STRENGTH
-    # (|fuel dir|×100) ≥ this. 0 = off, 30 = помірний (≥30%), 60 = сильне (≥60%).
-    'funding_min_mm_strength': 0,
-    # Extra filter for the ENTRY ("appear") Telegram message ONLY (does NOT
-    # affect the table, and does NOT affect exit messages):
-    #   funding_tg_entry_dir     — 'any' | 'LONG' | 'SHORT' (тільки цей напрямок)
-    #   funding_tg_entry_min_mm  — мін. сила МММ, щоб слати «появу» (0 = off)
-    'funding_tg_entry_dir': 'any',
-    'funding_tg_entry_min_mm': 0,
-    # Anti-spam for funding-coin appear alerts:
-    #  cooldown — не слати повторну «появу» по монеті стільки хвилин;
-    #  hysteresis — монета «зникає» лише коли сила МММ впаде на стільки % НИЖЧЕ
-    #  порога входу (тремтіння рівно на межі не робить churn).
-    'funding_notify_cooldown_min': 30,
-    'funding_mm_hysteresis': 10,
-    # Optional per-coin SESSION mode (like the ₿ banner). When ON, a funding
-    # coin's МММ direction commits into a session: WAIT = ПАУЗА (keeps the coin,
-    # no re-announce), opposite flip = NEW session (single re-announce). Kills
-    # spam far harder than cooldown/hysteresis. Off = classic behaviour.
-    'funding_session_mode': False,
-    # ── 🚀 Аномальний ріст (spike) ──────────────────────────────────────────
-    # У межах монет із 💰 Funding Rate Scanner ловимо АНОМАЛЬНИЙ рух ЦІНИ:
-    # |Δціни| ≥ funding_spike_pct% за funding_spike_window_min хв ПРИ зростанні
-    # обсягу. Така монета показується в 💰 МММ-таблиці з міткою 🚀 «варто
-    # розглянути» НАВІТЬ якщо МММ (МММ) низький — ловить памп/дамп поза
-    # логікою ліквідацій.
-    'funding_spike_enabled': True,
-    'funding_spike_pct': 8.0,          # мін. рух ціни, %
-    'funding_spike_window_min': 15,    # вікно спостереження, хв
-    # ── Telegram про 💰 funding-монети: поява/зникнення в таблиці МММ ──
-    # Replaces the old funding alert. Fires when a funding coin APPEARS
-    # (ff_tg_on_entry) / DISAPPEARS (ff_tg_on_exit) from the 💰 МММ table.
-    # Templates support {symbol} {dir} {side} {price} {funding} {funding_in}
-    # {fuel} {exhaustion} {reason} {btc}. Missing placeholders render as "—".
-    # {funding} = ставка фандінгу у %, {funding_in} = час до наступного фандінгу.
-    'ff_tg_on_entry': False,
-    'ff_tg_on_exit': False,
-    'ff_tg_entry_template': '🚀 FF вхід {side} {symbol} ·💲 {price} ·\nМММ {fuel}% фандінг {funding}% · 🔄 {funding_in}',
-    'ff_tg_exit_template': '☄️ {symbol} зникла з 📡 · {reason}\n💲 {price} · 📡 {fuel}%',
-    # 💰 «монета з'явилась» повідомлення (низькосигнальні) — ВИМКНЕНО за
-    # замовчуванням: замінені на 🎯 Opportunity-алерт нижче.
-    'funding_appear_tg': False,
-    # 🎯 Opportunity-алерт: слати в Telegram, коли монета досягає НАЙКРАЩОГО
-    # збігу показників для входу (edge-trigger + кулдаун, хв).
-    'opportunity_tg': True,
-    'opportunity_alert_cooldown_min': 30,
     # 🎯 SMC «готовність сетапу» (grade_setup, 1H) — колонка «Готовність» у таблицях
     # + чек-лист у Telegram. Це ПІДКАЗКА (радник), реального відкриття НЕ керує.
     'setup_grader_on': True,
@@ -1439,88 +1366,13 @@ DEFAULT_SETTINGS = {
     # щоб CTR не різав розворотні CHoCH+BOS) / 'normal' (старе: 0 + вето кап≤43)
     # / 'off' (CTR нейтральний). Впливає на «Готовність» усюди (черги, funding).
     'setup_ctr_mode': 'soft',
-    # ⚡ Скальперська «Готовність» ЛИШЕ для монет таблиці «💰 Funding — МММ»:
-    # окремий SMC-грейд на швидкому TF (той самий grade_setup, інші свічки).
-    # Не змішується з 1H-«Готовністю» черг; показується окремою колонкою.
-    'funding_setup_scalp_on': False,       # вмик/вимк скальп-грейд для funding
-    'funding_setup_tf': '5m',              # базовий TF (1m/3m/5m/15m)
-    'funding_setup_htf': '15m',            # HTF-контекст скальп-грейду
-    'funding_setup_ttl': 45,               # с — TTL скальп-кешу (свіжіше за 1H=90с)
-    'funding_setup_max_per_cycle': 8,      # ліміт важких перерахунків за цикл
-    # ⚡ Telegram на «хороший сигнал» у колонці Скальп (edge-trigger + кулдаун).
-    # Тригер: скальп-«Готовність» стала HOT АБО score ≥ scalp_tg_min_score.
-    'scalp_tg_on': False,                  # вмик/вимк оповіщення
-    'scalp_tg_min_score': 60,              # поріг «хорошого» (HOT завжди тригерить)
-    'scalp_tg_cooldown_min': 30,           # антиспам: не частіше разу на N хв/монету
-    'scalp_tg_dir': 'any',                 # 'any' | 'LONG' | 'SHORT'
-    # ── 🎯 Шаровий конфлюенс для «💰 Funding — МММ» (1..5) + консолідований TG ──
-    # 5 шарів у бік напрямку монети: 1) МММ ≥ легкий · 2) SCORE ≥ СЕРЕДНІЙ ·
-    # 3) Готовність ≥ СЕРЕДНІЙ · 4) Скальп ≥ СЕРЕДНІЙ · 5) фандінг поглиблюється.
-    # Коли зійшлось ≥ layer_tg_min шарів — ОДИН консолідований сигнал у Telegram
-    # (edge-trigger + кулдаун). Задум: замість купи розрізнених алертів — один
-    # «повний збіг».
-    'layer_tg_on': False,                  # вмик/вимк консолідований сигнал
-    'layer_tg_min': 5,                     # скільки шарів має зійтися (1..5)
-    'layer_tg_cooldown_min': 30,           # антиспам на монету, хв
-    # ── 🎯 Черга-3: авто-відкриття угоди за сигналом «VOB + 5 шарів» ──
-    # Коли зійшлись УСІ 5 шарів у бік монети І зʼявляється НОВИЙ Volumized OB
-    # (1m) у той самий бік — відкриваємо угоду за напрямком. SL = верхнє/нижнє
-    # значення блоку OB (SHORT=верх, LONG=низ) + буфер. Повторний VOB по вже
-    # відкритій монеті НЕ відкриває нову угоду, а лише пересуває SL на новий OB.
-    # Усе фіксується в 🧾 Лог роботи бота з міткою, що монета прийшла з фандингу.
-    'queue3_vob_open': True,               # авто-відкриття за VOB+5 шарів (дефолт ON)
-    # ── Funding-стратегія (редизайн): напрямок за Require OB (funding_ob_tf,
-    #   дефолт 1H), сигнал Volumized OB (funding_vob_tf, дефолт 5m), і МАРШРУТ
-    #   сигналу в Чергу-4 (funding_route_q4) для фільтрації 4-ма шарами.
-    'funding_ob_tf': '1h',
-    'funding_vob_tf': '5m',
-    'funding_route_q4': True,
     'queue3_vob_sl_buffer_pct': 0.10,      # буфер SL за межі блоку OB, % ціни
-    # Не відкривати НОВУ угоду ПРОТИ загального тренду монети (≈2 год з 💰 Funding
-    # Rate Scanner): LONG блокується коли загальний тренд ↓, SHORT — коли ↑.
-    # 'flat' (немає чіткого тренду) — дозволяємо. Трейл SL уже відкритої — без воріт.
-    'queue3_vob_block_against_trend': True,
     # 🛡 М'який запобіжник відкриття — блокує 3 «вбивці» (МММ<поріг / CTR
     # нейтральний-чи-проти / виснажено). Це РЕАЛЬНО впливає на відкриття угод.
     'safeguard_on': True,
     'safeguard_mm_min': 30,     # мін. сила МММ, %
     'safeguard_exh_max': 80,    # макс. виснаженість, %
     'safeguard_ctr': True,      # вимагати CTR не нейтральний і не проти напрямку
-    # 🎯 Вимагати вирівнювання з ₿ BTCUSDT сеансом (START + той самий бік), щоб
-    # монета стала 🎯 «рекомендована». True = «усі в один бік» (за замовч.).
-    'opportunity_require_btc': True,
-    # 🎯 CTR-перевірка ПЕРШИМ гейтом: монета стає 🎯 «рекомендованою» лише якщо
-    # CTR (Schaff Trend Cycle) НЕ проти напрямку сигналу. Нахил CTR у протилежний
-    # бік → рекомендації немає (решта алгоритму навіть не рахується). Вирівняний /
-    # нейтральний (у dead-zone `queue2_ctr_neutral_pct`) / немає даних → пропуск.
-    # True за замовч. — «спершу CTR, потім усе інше».
-    'opportunity_require_ctr': True,
-    # 🎯 Грейс (сек): не закривати епізод/не повторювати алерт на короткий провал
-    # у hot — таймер «продовжує тримати».
-    'opportunity_cold_grace_sec': 180,
-    # 🚀 Аномальний ріст: слати в Telegram, коли монета робить різкий рух.
-    'spike_tg': True,
-    # 🧪 Сигнали → угоди. Режим (real/paper) — за станом Trade Manager
-    # (real TM вимкнено + Test Mode → paper-угоди). Вихід веде FF/TM.
-    #   opportunity_auto_open — 🎯 «рекомендація» проходить через ЧЕРГУ-2 (повний
-    #     алгоритм ENTRY/CTR/Decision); позначка «рекомендована ботом» + Telegram
-    #     ставляться лише коли Черга-2 ВІДКРИВАЄ угоду. Потребує queue2_enabled.
-    #   spike_auto_open — 🚀 аномальний ріст відкривається ПРЯМО (без черги).
-    'opportunity_auto_open': True,   # 🎯 «рекомендацію бота» → через Чергу-2
-    'spike_auto_open': True,         # 🚀 відкривати по аномальному росту (прямо)
-    # ✦ «Золотий funding застиг»: слати TG, коли funding монети тримається на
-    # чіткому півцілому значенні (0.5/1.0/…/4.0 %) БЕЗ змін довше за поріг.
-    'funding_gold_tg': True,             # вмик/вимк оповіщення
-    'funding_gold_freeze_min': 60,       # (LEGACY, не використовується)
-    'funding_gold_tol': 0.005,           # «чистота» рівня: |rate−0.5×N| < tol (−1.007% → НЕ чистий)
-    # Невелика ЗАТРИМКА-підтвердження: рівень має протриматись ≥ N с, перш ніж
-    # слати TG — щоб значення було ЧІТКО визначене (не транзієнт на дотику до
-    # чистого рівня). У повідомленні показуємо СНЕПНУТЕ чисте значення (−1.500%),
-    # а не сире (−1.503%).
-    'funding_gold_confirm_sec': 30,
-    # Таймінг МІЖ повідомленнями: після підтвердження шлемо, а поки той самий
-    # рівень тримається — ПОВТОРНО раз на N хв (дефолт 60 = 1 год).
-    'funding_gold_cooldown_min': 60,
 }
 
 
@@ -1629,25 +1481,6 @@ class FuelFilterDaemon:
         # ЧИТАЄ їх → UI не рахує нічого під глобальним локом і не може розійтись
         # із рішенням двигуна. {sym: (ts, {side: layers})}.
         self._q4_layers_cache: Dict[str, tuple] = {}
-        # ⚡ Скальперська «Готовність» ЛИШЕ для funding-монет (окремий TF, напр.
-        # 5m+15m). Окремий кеш/TTL/лічильник — не змішується з 1H-грейдом і
-        # рахується тільки поки funding_setup_scalp_on. {sym: grade}, {sym: at}.
-        self._setup_scalp_cache: Dict[str, Dict] = {}
-        self._setup_scalp_at: Dict[str, float] = {}
-        # ⚡ TG на «хороший сигнал» у колонці Скальп: edge-trigger + cooldown.
-        self._scalp_alert_state: Dict[str, bool] = {}   # sym → був «good» минулого разу
-        self._scalp_alert_at: Dict[str, float] = {}     # sym → час останнього TG
-        # 🎯 Шаровий конфлюенс (1..5) → консолідований TG: edge-trigger + cooldown.
-        self._layer_alert_state: Dict[str, bool] = {}
-        self._layer_alert_at: Dict[str, float] = {}
-        # Volumized OB (1m) — одноразовий тригер сигналу. Стан + анти-повтор по ft.
-        self._vob_state: Dict[str, Dict] = {}    # sym → {ok, dir, ftime, top, bottom}
-        self._vob_seen: Dict[str, int] = {}      # sym → formation_time, по якому вже слали
-        self._vob_klines: Dict = {}              # (sym) → (ts, klines_1m) короткий кеш
-        # 🎯 Черга-3 авто-відкриття за VOB+5 шарів: відкриті ботом funding-угоди,
-        # щоб повторний VOB лише пересував SL, а не відкривав нову. {sym → {side,
-        # sl, ftime, entry, mode}}.
-        self._vob_trade: Dict[str, Dict] = {}
         # 🚪 SMC «Готовність виходу» per symbol (grade_exit) — рахується поряд із
         # setup з того самого sig, у бік ВІДКРИТОЇ позиції. РАДНИК (показ + лог).
         self._exit_cache: Dict[str, Dict] = {}
@@ -1843,69 +1676,10 @@ class FuelFilterDaemon:
         self._mmc_bias_tg_last = '__none__'
         self._mmc_bias_tg_at = 0.0
         self._mmc_bias_tg_restored = False
-        # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
-        # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
-        # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
-        self._funding_syms: set = set()
-        # {symbol: ts of last funding "appear" TG} — anti-spam cooldown so a coin
-        # that flickers around the МММ-strength threshold isn't re-announced.
-        self._funding_notify_at: Dict[str, float] = {}
-        # 🎯 Opportunity-alert edge state: {sym: was_hot} + {sym: last_alert_ts}.
-        # `_opp_cold_at` = when hot first dropped (grace timer against flicker).
-        self._opp_hot_state: Dict[str, bool] = {}
-        self._opp_alert_at: Dict[str, float] = {}
-        self._opp_cold_at: Dict[str, float] = {}
-        # 🚀 Spike-alert edge state (anomalous growth Telegram).
-        self._spike_alert_state: Dict[str, bool] = {}
-        self._spike_alert_at: Dict[str, float] = {}
-        # ✦ Gold-funding (stable clean value) freeze tracking: {sym: ts it first
-        # became gold (continuous)} + {sym: alerted this gold episode}. Fires a TG
-        # once a coin's funding stays «gold» ≥ funding_gold_freeze_min minutes.
-        self._gold_since: Dict[str, float] = {}
-        self._gold_alerted: set = set()
-        self._gold_step: Dict[str, float] = {}   # sym → який рівень band (0.5/1.0/…)
-        # Крос-епізодний антиспам: {f"{sym}:{step}": ts_останнього_алерту}. Живе
-        # довше за епізод (переживає вихід монети зі сканера й повернення), тож
-        # той самий рівень не дублюється щопівгодини. Чиститься за TTL кулдауна.
-        self._gold_alert_at: Dict[str, float] = {}
-        # 🎯 Per-coin 🎯-recommendation episodes (persisted to DB, survives restart):
-        #   {sym: {count, first_at, active:{start_at,start_price,opp_start}|None,
-        #          history:[ {start_at,end_at,dur_sec,start_price,end_price,
-        #                     opp_start,opp_end} ... ]}}
-        self._opp_episodes: Dict[str, Dict] = {}
-        self._opp_stats_dirty = False
-        self._opp_stats_saved_at = 0.0
-        try:
-            self._load_opp_stats()
-        except Exception as e:
-            print(f"[FuelFilter] opp-stats load error: {e}")
-        # Persistent per-coin funding archive: {sym: [ {t,ev,mm,mm_dir,funding,
-        # price,vol24h,btc_dir,btc_paused} ]}. Re-appearing coins APPEND to the
-        # existing series. _funding_prev_state tracks last snapshot for event
-        # detection; _funding_arch_last throttles periodic samples.
-        self._funding_archive: Dict[str, List[Dict]] = {}
-        self._funding_prev_state: Dict[str, Dict] = {}
-        self._funding_arch_last: Dict[str, float] = {}
-        self._funding_arch_dirty = False
-        self._funding_arch_saved_at = 0.0
-        # Per-coin MUTE: {sym: until_ts}. A muted coin is ignored entirely by
-        # the 💰 Funding — МММ scan (no table row, no TG, no archive) until then.
-        self._funding_muted: Dict[str, float] = {}
         # {symbol: current funding %} for funding-sourced coins (UI display).
         self._funding_rates: Dict[str, float] = {}
-        # {symbol: nextFundingTime ms} — countdown to next funding settlement.
-        self._funding_next: Dict[str, int] = {}
-        # {symbol: 24h volume USD} for funding-sourced coins (UI display).
-        self._funding_vols: Dict[str, float] = {}
         # {symbol: F-Trend -1/0/+1} — ~30-min funding direction (Dashboard metric).
         self._funding_trends: Dict[str, int] = {}
-        # {symbol: {'dir':'up'|'down'|'flat','chg':%}} — СВІЖИЙ рух ЦІНИ (~15 хв)
-        # з 💰 Funding Rate Scanner. Джерело 5-го шару «Ціна» у Шаровому конфлюенсі.
-        self._funding_price: Dict[str, Dict] = {}
-        # {symbol: 'LONG'|'SHORT'} — НАПРЯМОК funding-монети ЗА Require OB
-        # (funding_ob_tf). Заповнюється в _layer_signal_alert; get_state віддає
-        # його як 'dir' funding-рядка (нова стратегія: напрямок за OB, не МММ).
-        self._funding_ob_dir_cache: Dict[str, str] = {}
         # Short-TTL klines cache for candle confirmation at a custom TF:
         # {(symbol, tf): (ts, klines)}.
         self._candle_cache: Dict = {}
@@ -1935,8 +1709,6 @@ class FuelFilterDaemon:
         self._btc_start_last_alert: Optional[str] = None
         # Last live BTC direction — reported in the STOP message.
         self._btc_last_dir: Optional[str] = None
-        # Funding coins already TG-alerted as "entered the table" (alert once).
-        self._funding_alerted: set = set()
         # Latest BTC fuel snapshot — pinned permanently at the top of the table.
         self._btc_state: Dict = {}
         # ── BTC МММ "session" ──────────────────────────────────────────────
@@ -1959,12 +1731,6 @@ class FuelFilterDaemon:
         self._btc_live_since: float = 0.0
         self._btc_pause_since: float = 0.0             # коли почалась поточна пауза (анти-залипання)
         self._btc_mm: Dict = {}                       # останній повний вихід моделі МММ для BTC
-        # 💰 Funding fuel table (repurposed from the old anomalies storage):
-        # coins from the 💰 Funding Rate Scanner that currently show fuel. Same
-        # dict shape so the existing table/endpoints keep working. {symbol:
-        # {dir, started_at, start_price, holding, last_price, last_held_sec,
-        # ended_at, end_price}}
-        self._anomalies: Dict[str, Dict] = {}
         # ❤️ FF "база" — intercepted coins WAITING to open. Populated by
         # intercept() (every coin the main LONG/SHORT flow would open while FF
         # is on), direction = the signal side (self-overwrites on re-entry).
@@ -2032,12 +1798,18 @@ class FuelFilterDaemon:
         self._load_state()
         self._mm_books_load()
         self._migrate_settings()
+        self._purge_dead_funding_blobs()
 
     # 🗑 Ключі ВИДАЛЕНИХ функцій (01.10: «📈 Рух ринку» і «🔻 Корекція» прибрано
     # повністю). Сторінка шле налаштування одним блобом, тож без чистки ці
     # ключі вічно лежали б у БД мертвим вантажем і їздили б назад у UI.
-    PURGED_SETTING_PREFIXES = ('mm_corr_',)
-    PURGED_SETTING_KEYS = ('mm_move_window_min',)
+    PURGED_SETTING_PREFIXES = ('mm_corr_', 'funding_', 'scalp_tg_', 'layer_tg_',
+                               'opportunity_', 'ff_tg_')
+    # 🗑 06.11: старий блок «💰 Funding — МММ» (шари, скальп, VOB→Черга-4,
+    # авто-відкриття, усі його TG) видалено повністю — його ключі теж.
+    PURGED_SETTING_KEYS = ('mm_move_window_min', 'spike_tg', 'spike_auto_open',
+                           'queue3_vob_open', 'queue3_vob_block_against_trend',
+                           'start_engine_use_anomalies', 'anomaly_hours')
 
     def _migrate_settings(self):
         """🗑 Прибрати зі збереженого блобу ключі ВИДАЛЕНИХ функцій.
@@ -2060,20 +1832,17 @@ class FuelFilterDaemon:
         except Exception as e:
             print(f"[FuelFilter] settings migration warn: {e}")
 
-    def _get_funding_symbols(self) -> List[str]:
-        """Tracked coins from the 💰 Funding Rate Scanner — but only while that
-        module is enabled and running. Returns [] otherwise. These are merged
-        into fuel scanning for monitoring only."""
-        try:
-            from detection.funding_monitor import get_funding_monitor
-            fm = get_funding_monitor()
-            if not fm or not fm.is_enabled() or not getattr(fm, '_running', False):
-                return []
-            if hasattr(fm, 'get_symbols'):
-                return [s.upper() for s in fm.get_symbols()]
-            return []
-        except Exception:
-            return []
+    def _purge_dead_funding_blobs(self):
+        """🗑 06.11: окремі блоби старого «💰 Funding — МММ» (архів монет і
+        епізоди 🎯-рекомендацій) — обнулити, щоб не лежали в БД мертвим вантажем.
+        Ідемпотентно; збій БД не підіймається."""
+        for _dk in _DB_DEAD_FUNDING_KEYS:
+            try:
+                if self._db.get_setting(_dk, None) not in (None, {}, []):
+                    self._db.set_setting(_dk, {})
+                    print(f"[FuelFilter] 🗑 обнулено мертвий блоб {_dk}")
+            except Exception:
+                pass
 
     def _get_funding_rates(self) -> Dict[str, float]:
         """{SYMBOL: current funding %} from the 💰 Funding Rate Scanner."""
@@ -2086,28 +1855,6 @@ class FuelFilterDaemon:
             pass
         return {}
 
-    def _get_funding_next(self) -> Dict[str, int]:
-        """{SYMBOL: nextFundingTime ms} from the 💰 Funding Rate Scanner."""
-        try:
-            from detection.funding_monitor import get_funding_monitor
-            fm = get_funding_monitor()
-            if fm and hasattr(fm, 'get_next_funding'):
-                return {str(k).upper(): int(v) for k, v in fm.get_next_funding().items()}
-        except Exception:
-            pass
-        return {}
-
-    def _get_funding_volumes(self) -> Dict[str, float]:
-        """{SYMBOL: 24h volume (USD)} from the 💰 Funding Rate Scanner."""
-        try:
-            from detection.funding_monitor import get_funding_monitor
-            fm = get_funding_monitor()
-            if fm and hasattr(fm, 'get_volumes'):
-                return {str(k).upper(): float(v) for k, v in fm.get_volumes().items()}
-        except Exception:
-            pass
-        return {}
-
     def _get_funding_trends(self) -> Dict[str, int]:
         """{SYMBOL: F-Trend (-1/0/+1)} from the 💰 Funding Rate Scanner — the
         ~30-min funding direction (🔻 deeper / 🔺 easing / ➖)."""
@@ -2116,18 +1863,6 @@ class FuelFilterDaemon:
             fm = get_funding_monitor()
             if fm and hasattr(fm, 'get_trends'):
                 return {str(k).upper(): int(v) for k, v in fm.get_trends().items()}
-        except Exception:
-            pass
-        return {}
-
-    def _get_funding_price_dirs(self) -> Dict[str, Dict]:
-        """{SYMBOL: {'dir':'up'|'down'|'flat','chg':%}} — свіжий напрямок ЦІНИ
-        (≈15 хв) з 💰 Funding Rate Scanner. Живить 5-й шар «Ціна» конфлюенсу."""
-        try:
-            from detection.funding_monitor import get_funding_monitor
-            fm = get_funding_monitor()
-            if fm and hasattr(fm, 'get_price_dirs'):
-                return {str(k).upper(): v for k, v in fm.get_price_dirs().items()}
         except Exception:
             pass
         return {}
@@ -2254,53 +1989,10 @@ class FuelFilterDaemon:
             s['setup_ttl'] = max(20, min(600, int(s.get('setup_ttl', 90) or 90)))
         except (TypeError, ValueError):
             s['setup_ttl'] = 90
-        # ⚡ funding scalper «Готовність»
-        s['funding_setup_scalp_on'] = bool(s.get('funding_setup_scalp_on', False))
-        _valid_tf = ('1m', '3m', '5m', '15m', '30m', '1h')
-        if s.get('funding_setup_tf') not in _valid_tf:
-            s['funding_setup_tf'] = '5m'
-        if s.get('funding_setup_htf') not in _valid_tf:
-            s['funding_setup_htf'] = '15m'
-        try:
-            s['funding_setup_ttl'] = max(15, min(600, int(s.get('funding_setup_ttl', 45) or 45)))
-        except (TypeError, ValueError):
-            s['funding_setup_ttl'] = 45
-        try:
-            s['funding_setup_max_per_cycle'] = max(1, min(30, int(s.get('funding_setup_max_per_cycle', 8) or 8)))
-        except (TypeError, ValueError):
-            s['funding_setup_max_per_cycle'] = 8
-        s['scalp_tg_on'] = bool(s.get('scalp_tg_on', False))
-        try:
-            s['scalp_tg_min_score'] = max(0, min(100, int(s.get('scalp_tg_min_score', 60) or 0)))
-        except (TypeError, ValueError):
-            s['scalp_tg_min_score'] = 60
-        try:
-            s['scalp_tg_cooldown_min'] = max(0, min(720, int(s.get('scalp_tg_cooldown_min', 30) or 0)))
-        except (TypeError, ValueError):
-            s['scalp_tg_cooldown_min'] = 30
-        if s.get('scalp_tg_dir') not in ('any', 'LONG', 'SHORT'):
-            s['scalp_tg_dir'] = 'any'
-        s['layer_tg_on'] = bool(s.get('layer_tg_on', False))
-        try:
-            s['layer_tg_min'] = max(1, min(5, int(s.get('layer_tg_min', 5) or 5)))
-        except (TypeError, ValueError):
-            s['layer_tg_min'] = 5
-        try:
-            s['layer_tg_cooldown_min'] = max(0, min(720, int(s.get('layer_tg_cooldown_min', 30) or 0)))
-        except (TypeError, ValueError):
-            s['layer_tg_cooldown_min'] = 30
-        s['queue3_vob_open'] = bool(s.get('queue3_vob_open', True))
-        s['funding_route_q4'] = bool(s.get('funding_route_q4', True))
-        _ftf = ('1m', '3m', '5m', '15m', '30m', '1h', '4h')
-        if s.get('funding_ob_tf') not in _ftf:
-            s['funding_ob_tf'] = '1h'
-        if s.get('funding_vob_tf') not in _ftf:
-            s['funding_vob_tf'] = '5m'
         try:
             s['queue3_vob_sl_buffer_pct'] = max(0.0, min(10.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)))
         except (TypeError, ValueError):
             s['queue3_vob_sl_buffer_pct'] = 0.10
-        s['queue3_vob_block_against_trend'] = bool(s.get('queue3_vob_block_against_trend', True))
         # ── Queue 2 eject rules ──
         s['queue2_eject_ctr'] = bool(s.get('queue2_eject_ctr', False))
         s['queue2_eject_choch'] = bool(s.get('queue2_eject_choch', True))
@@ -3046,38 +2738,6 @@ class FuelFilterDaemon:
             _timers_raw = st.get('timers', {}) or {}
             self._timers = {s: v for s, v in _timers_raw.items()
                             if s in self._fuel_managed}
-            # Anomalies: coins that held fuel longer than anomaly_hours. They
-            # live in their OWN table, persist across fuel loss, and are removed
-            # only by the user (manual delete / clear). {symbol: {...}}
-            self._anomalies = st.get('anomalies', {}) or {}
-            # Persistent per-coin funding archive (separate DB key — can grow).
-            try:
-                fa = self._db.get_setting(_DB_FUNDING_ARCHIVE, {}) or {}
-                if isinstance(fa, dict):
-                    # Trim on load so an old oversized DB blob doesn't sit in RAM
-                    # (512MB cap): keep only the last FUNDING_ARCH_MAX samples per
-                    # coin, and only the FUNDING_ARCH_COINS_MAX most-recent coins.
-                    _fa = {str(k).upper(): (v[-FUNDING_ARCH_MAX:] if v else [])
-                           for k, v in fa.items() if isinstance(v, list)}
-                    if len(_fa) > FUNDING_ARCH_COINS_MAX:
-                        _fa = dict(sorted(
-                            _fa.items(),
-                            key=lambda kv: (kv[1][-1]['t'] if kv[1] else 0),
-                            reverse=True)[:FUNDING_ARCH_COINS_MAX])
-                    self._funding_archive = _fa
-                    print(f"[FuelFilter] restored funding archive: "
-                          f"{len(self._funding_archive)} coin(s)")
-            except Exception as e:
-                print(f"[FuelFilter] funding archive load error: {e}")
-            # Muted funding coins (drop already-expired ones).
-            try:
-                _now = time.time()
-                fm = st.get('funding_muted', {}) or {}
-                self._funding_muted = {str(k).upper(): float(v)
-                                       for k, v in fm.items()
-                                       if float(v) > _now}
-            except Exception:
-                self._funding_muted = {}
             # Candle-confirm attempt counters per coin — restored so the
             # "🕯️ Спроби" column and the "Opened by" attempt number survive
             # a bot restart instead of resetting to 0.
@@ -3236,15 +2896,6 @@ class FuelFilterDaemon:
             if self._mm_bias_sbr_since > time.time() + 60:
                 self._mm_bias_sbr_since = 0.0
                 self._mm_bias_sbr = {}
-            # 💰 Опрацьовані funding-VOB — без них перший показ після рестарту
-            # прийняв би будь-який наявний блок за новий сигнал.
-            _fvs = st.get('funding_vob_seen')
-            if isinstance(_fvs, dict):
-                for k, v in _fvs.items():
-                    try:
-                        self._vob_seen[str(k)] = int(v)
-                    except (TypeError, ValueError):
-                        continue
             # Restore the entry queue PER SESSION. We persist the queue now and
             # bring it back on boot, tied to the session it belonged to. The
             # session-flip logic in _update_btc_verdict handles staleness: on the
@@ -3290,13 +2941,12 @@ class FuelFilterDaemon:
                 self._consumed_signal_at = {str(k).upper(): float(v)
                                             for k, v in csa.items()
                                             if isinstance(v, (int, float)) and v}
-            if (self._fuel_managed or self._anomalies or self._engine_attempts
+            if (self._fuel_managed or self._engine_attempts
                     or self._timers or self._pending):
                 print(f"[FuelFilter] restored {len(self._pending)} queued "
                       f"(session={self._btc_verdict_dir or '—'}), "
                       f"{len(self._fuel_managed)} tracked position(s), "
                       f"{len(self._timers)} timer(s), "
-                      f"{len(self._anomalies)} anomaly(ies), "
                       f"{len(self._engine_attempts)} attempt-counter(s) from DB")
 
     def _persist_state(self):
@@ -3304,7 +2954,6 @@ class FuelFilterDaemon:
             self._db.set_setting(_DB_STATE, {
                 'timers': self._timers,
                 'fuel_managed': self._fuel_managed,
-                'anomalies': self._anomalies,
                 'engine_attempts': self._engine_attempts,
                 'fuel_ema': self._fuel_ema,
                 'fuel_hyst': self._fuel_hyst,
@@ -3318,7 +2967,6 @@ class FuelFilterDaemon:
                 'manual_closed_at': self._manual_closed_at,
                 'last_trade_end': self._last_trade_end,
                 'consumed_signal_at': self._consumed_signal_at,
-                'funding_muted': self._funding_muted,
                 # ⚖️ БАНЕР 🧮 МММ-МОНІТОРА — важіль І ЙОГО ТАЙМЕР (вимога 17.09:
                 # «банер не має втрачати таймер і показники після кожного
                 # рестарту»). `botupdate` роблять часто, а таймер міряє, скільки
@@ -3367,7 +3015,6 @@ class FuelFilterDaemon:
                 'mm_bias_dec': dict(getattr(self, '_mm_bias_dec', {}) or {}),
                 'mm_bias_dec_since': float(getattr(self, '_mm_bias_dec_since', 0.0) or 0.0),
                 # 🚨 Пік вердикту в бік угоди (база сигналу «слабшає»).
-                'funding_vob_seen': dict(getattr(self, '_vob_seen', {}) or {}),
                 'mmd_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmd_state_since', {})
@@ -3568,173 +3215,6 @@ class FuelFilterDaemon:
 
     # ------------------------------------------------------------------
     # per-coin funding ARCHIVE (history of what happened & when)
-    # ------------------------------------------------------------------
-    def _push_funding_arch(self, sym, event, snap, now):
-        """Append one archive record for `sym`. Re-appearing coins extend the
-        SAME series (self._funding_archive[sym] already exists)."""
-        rec = {
-            't': int(now), 'ev': event,
-            'mm': snap.get('mm'), 'mm_dir': snap.get('dir'),
-            'funding': snap.get('funding'), 'price': snap.get('price'),
-            'vol24h': snap.get('vol24h'),
-            'btc_dir': self._btc_verdict_dir,
-            'btc_paused': bool(self._btc_paused),
-        }
-        arr = self._funding_archive.get(sym)
-        if arr is None:
-            # cap distinct coins — drop the least-recently-updated archive
-            if len(self._funding_archive) >= FUNDING_ARCH_COINS_MAX:
-                try:
-                    oldest = min(self._funding_archive,
-                                 key=lambda k: (self._funding_archive[k][-1]['t']
-                                                if self._funding_archive[k] else 0))
-                    self._funding_archive.pop(oldest, None)
-                except Exception:
-                    pass
-            arr = self._funding_archive[sym] = []
-        arr.append(rec)
-        if len(arr) > FUNDING_ARCH_MAX:
-            del arr[:len(arr) - FUNDING_ARCH_MAX]
-        self._funding_arch_dirty = True
-
-    def _archive_funding_pass(self, now):
-        """Central event detector for the funding table → archive. Compares the
-        current holding coins to the previous tick and records appear / flip /
-        exit / periodic sample. One place → no edits to the scan branches."""
-        prev = self._funding_prev_state
-        cur = {}
-        for sym, a in self._anomalies.items():
-            if a.get('funding') and a.get('holding'):
-                rate = self._funding_rates.get(sym)
-                if rate is None:
-                    rate = a.get('rate')
-                cur[sym] = {
-                    'dir': a.get('dir'), 'mm': a.get('mm_str'),
-                    'price': a.get('last_price') or a.get('start_price'),
-                    'funding': rate, 'vol24h': a.get('vol24h'),
-                }
-        for sym in (set(prev) | set(cur)):
-            ps, cs = prev.get(sym), cur.get(sym)
-            if cs and not ps:
-                self._push_funding_arch(sym, 'appear', cs, now)
-                self._funding_arch_last[sym] = now
-            elif cs and ps and cs.get('dir') != ps.get('dir'):
-                self._push_funding_arch(sym, 'flip', cs, now)
-                self._funding_arch_last[sym] = now
-            elif ps and not cs:
-                self._push_funding_arch(sym, 'exit', ps, now)
-            elif cs and ps:
-                if (now - self._funding_arch_last.get(sym, 0)) >= FUNDING_ARCH_SAMPLE_SEC:
-                    self._push_funding_arch(sym, 'sample', cs, now)
-                    self._funding_arch_last[sym] = now
-        self._funding_prev_state = cur
-        # Throttled persist of the (growing) archive to its own DB key.
-        if self._funding_arch_dirty and (now - self._funding_arch_saved_at) >= 30:
-            try:
-                self._db.set_setting(_DB_FUNDING_ARCHIVE, self._funding_archive)
-                self._funding_arch_saved_at = now
-                self._funding_arch_dirty = False
-            except Exception as e:
-                print(f"[FuelFilter] funding archive persist error: {e}")
-
-    def get_funding_history(self, sym: str) -> List[Dict]:
-        """Full archived series for one funding coin (may span several
-        appear→exit episodes)."""
-        sym = (sym or '').upper()
-        with self._lock:
-            live = bool(sym in self._anomalies and self._anomalies[sym].get('holding'))
-            return {'ok': True, 'symbol': sym, 'live': live,
-                    'history': list(self._funding_archive.get(sym) or [])}
-
-    def delete_funding_archive(self, sym: str) -> bool:
-        """Remove one coin's archive."""
-        sym = (sym or '').upper()
-        with self._lock:
-            existed = self._funding_archive.pop(sym, None) is not None
-            self._funding_prev_state.pop(sym, None)
-            self._funding_arch_last.pop(sym, None)
-            if existed:
-                try:
-                    self._db.set_setting(_DB_FUNDING_ARCHIVE, self._funding_archive)
-                except Exception as e:
-                    print(f"[FuelFilter] archive delete persist: {e}")
-        return existed
-
-    def clear_funding_archive(self) -> int:
-        """Wipe the whole funding archive."""
-        with self._lock:
-            n = len(self._funding_archive)
-            self._funding_archive = {}
-            self._funding_prev_state = {}
-            self._funding_arch_last = {}
-            try:
-                self._db.set_setting(_DB_FUNDING_ARCHIVE, {})
-            except Exception as e:
-                print(f"[FuelFilter] archive clear persist: {e}")
-        return n
-
-    def mute_funding(self, sym: str, hours: float = 24.0) -> float:
-        """Mute a funding coin for `hours` — it's ignored entirely (no row, no
-        TG, no archive) until then. Removes it from the table immediately.
-        Returns the until-timestamp."""
-        sym = (sym or '').upper()
-        try:
-            hours = max(0.0, min(720.0, float(hours)))
-        except (TypeError, ValueError):
-            hours = 24.0
-        until = time.time() + hours * 3600.0
-        with self._lock:
-            self._funding_muted[sym] = until
-            self._anomalies.pop(sym, None)
-            self._funding_notify_at.pop(sym, None)
-            self._funding_prev_state.pop(sym, None)
-            self._persist_state()
-        return until
-
-    def unmute_funding(self, sym: str) -> bool:
-        sym = (sym or '').upper()
-        with self._lock:
-            existed = self._funding_muted.pop(sym, None) is not None
-            if existed:
-                self._persist_state()
-        return existed
-
-    def list_funding_muted(self) -> List[Dict]:
-        """Active mutes (auto-drops expired), with remaining seconds."""
-        now = time.time()
-        with self._lock:
-            for s in [k for k, v in self._funding_muted.items() if v <= now]:
-                self._funding_muted.pop(s, None)
-            return [{'symbol': s, 'until': v, 'remaining_sec': int(v - now)}
-                    for s, v in sorted(self._funding_muted.items(),
-                                       key=lambda kv: kv[1])]
-
-    def _is_funding_muted(self, sym: str, now: float) -> bool:
-        u = self._funding_muted.get(sym)
-        if u is None:
-            return False
-        if u <= now:
-            self._funding_muted.pop(sym, None)
-            return False
-        return True
-
-    def get_funding_archive_list(self) -> List[Dict]:
-        """Index of archived coins (incl. ones no longer on the radar), newest
-        activity first."""
-        with self._lock:
-            out = []
-            for s, arr in self._funding_archive.items():
-                if not arr:
-                    continue
-                live = bool(s in self._anomalies and self._anomalies[s].get('holding'))
-                out.append({'symbol': s, 'count': len(arr),
-                            'first_t': arr[0].get('t'), 'last_t': arr[-1].get('t'),
-                            'live': live})
-            out.sort(key=lambda x: -(x.get('last_t') or 0))
-            return out
-
-    # ------------------------------------------------------------------
-    # per-coin SCORE for the active-timers table
     # ------------------------------------------------------------------
     @staticmethod
     def _score_label(score: float):
@@ -7413,11 +6893,8 @@ class FuelFilterDaemon:
                 if setup is not None:
                     self._setup_cache[symbol] = setup
             out['setup'] = setup
-            # ⚡ Скальперська «Готовність» (лише funding-монети; окремий кеш).
-            out['setup_scalp'] = self._setup_scalp_cache.get(symbol)
         except Exception:
             out['setup'] = None
-            out['setup_scalp'] = None
         # 🚪 Готовність виходу — ЛИШЕ коли на монеті є ВІДКРИТА позиція.
         try:
             _pside = timer.get('dir') if (timer and timer.get('dir') in ('LONG', 'SHORT')) else None
@@ -7462,29 +6939,16 @@ class FuelFilterDaemon:
                               'strength': int(self._btc_fuel_strength or 0)}
         except Exception:
             out['btc'] = {'dir': None, 'paused': False, 'status': 'STOP', 'strength': 0}
-        # ── 💰 Funding info — only when the coin is in the «💰 Funding — МММ по
-        # монетах» table (self._anomalies). Adds current funding rate + time to
-        # the next settlement so the overlay can show them for funding coins. ──
+        # ── 💰 Funding — ставка з 💰 Funding Rate Scanner (таблиці «💰 Funding —
+        # МММ» більше немає, 06.11): монета є в сканері → є ставка. ──
         try:
             with self._lock:
-                a = self._anomalies.get(symbol)
-            out['funding'] = bool(a)
-            out['funding_rate'] = a.get('rate') if a else None
-            # prev rate → the overlay colours funding by TREND (deeper/easing/
-            # stable/✦ clean) EXACTLY like the 💰 Funding — МММ table.
-            out['funding_prev_rate'] = a.get('prev_rate') if a else None
-            out['funding_next_ms'] = a.get('next_funding') if a else None
-            # 24h turnover (+ ~2-min baseline for the ↑/↓ arrow) — same value the
-            # Vol 24h column shows in the funding table.
-            out['vol24h'] = a.get('vol24h') if a else None
-            out['vol24h_prev'] = a.get('vol24h_prev') if a else None
+                _fr = (self._funding_rates or {}).get(str(symbol).upper())
+            out['funding'] = _fr is not None
+            out['funding_rate'] = _fr
         except Exception:
             out['funding'] = False
             out['funding_rate'] = None
-            out['funding_prev_rate'] = None
-            out['funding_next_ms'] = None
-            out['vol24h'] = None
-            out['vol24h_prev'] = None
         # ── ⚡ CTR (STC) for the overlay foot line («⚡ CTR·15M 🟢 LONG-нахил X%») ──
         try:
             from detection.forecast_engine import get_forecast_engine
@@ -8101,9 +7565,6 @@ class FuelFilterDaemon:
                 self._pending2.pop(symbol, None)
                 self._pending3.pop(symbol, None)
             self._persist_state()
-        # 🎯 Close the «рекомендована ботом» episode (no-op unless this was a
-        # recommended trade). Exit price = the close price we just used.
-        self._opp_episode_close_if_open(symbol, time.time(), price=exit_price)
         print(f"[FuelFilter] CLOSE trigger {symbol} reason={reason}")
 
     # ------------------------------------------------------------------
@@ -8271,15 +7732,10 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] btc-flip close error: {e}")
 
 
-        # 💰 Funding scanner membership / rates — it has its OWN table now.
-        funding_syms = self._get_funding_symbols()
+        # 💰 Ставка/тренд funding — контекст для «Готовності» (grade_setup).
         with self._lock:
-            self._funding_syms = set(funding_syms)
             self._funding_rates = self._get_funding_rates()
-            self._funding_next = self._get_funding_next()
-            self._funding_vols = self._get_funding_volumes()
             self._funding_trends = self._get_funding_trends()
-            self._funding_price = self._get_funding_price_dirs()
             managed = list(self._fuel_managed.keys())
             pending = list(self._pending.keys())
             # УСІ черги (1..4) — усі вони «в роботі», їм потрібен розрахунок МММ.
@@ -8333,9 +7789,6 @@ class FuelFilterDaemon:
                     with self._lock:
                         self._fuel_managed.pop(sym, None)
                         self._timers.pop(sym, None)
-                    # 🎯 position gone (SL/TP/manual) → close its recommendation
-                    # episode (no-op unless it was a recommended trade).
-                    self._opp_episode_close_if_open(sym, now)
                     _pruned = True
         if _pruned:
             with self._lock:
@@ -8343,12 +7796,12 @@ class FuelFilterDaemon:
             self._persist_state()
 
         # 🧮 МММ target set. Coins «в роботі» рахуються ЗАВЖДИ: BTC + відкриті
-        # угоди (managed) + УСІ черги (1..4) + фандинг-монети + монети WATCHLIST,
+        # угоди (managed) + УСІ черги (1..4) + монети WATCHLIST,
         # додані ВРУЧНУ. У ПОВНОМУ режимі (mmm_limited_mode=False) додається ще й
         # ВЕСЬ WATCHLIST (у т.ч. bulk із Tickr-добірки). Обмежений режим (дефолт)
         # не ганяє важкий liqmap по всьому списку.
         # ⚠️ WATCHLIST-частина потрібна ЛИШЕ блокам 🧮/🆕 — обидва вимкнені →
-        # її не рахуємо (решта набору — черги/угоди/фандинг — потрібна двигуну).
+        # її не рахуємо (решта набору — черги/угоди — потрібна двигуну).
         _wl = (self._mm_watchlist_part(settings)
                if (settings.get('mm_monitor_enabled', True)
                    or settings.get('mm_new_enabled', True)
@@ -8356,7 +7809,7 @@ class FuelFilterDaemon:
                    or settings.get('mm_fc_enabled', True)
                    or settings.get('mm_dec_enabled', False)) else [])
         relevant = list(dict.fromkeys(
-            ['BTCUSDT'] + managed + pending_all + list(funding_syms)
+            ['BTCUSDT'] + managed + pending_all
             + [str(x).upper() for x in (_wl or [])]))
         self._register_with_liqmap(relevant)
 
@@ -8412,12 +7865,6 @@ class FuelFilterDaemon:
                 except Exception as e:
                     print(f"[FuelFilter] manage error {sym}: {e}")
 
-        # 💰 Funding fuel table — its OWN scan (separate from the base).
-        try:
-            self._scan_funding(settings, now, fuels)
-        except Exception as e:
-            print(f"[FuelFilter] funding scan error: {e}")
-
 
         # Header stats (now only over the relevant set).
         with self._lock:
@@ -8460,8 +7907,6 @@ class FuelFilterDaemon:
             with self._lock:
                 self._fuel_managed.pop(symbol, None)
                 self._timers.pop(symbol, None)
-            # 🎯 close the «рекомендована ботом» episode (no-op if not opp).
-            self._opp_episode_close_if_open(symbol, now, price=mark)
             return
 
         exh = self._exhaustion(symbol, side)
@@ -8519,339 +7964,6 @@ class FuelFilterDaemon:
         with self._lock:
             self._persist_state()
 
-    def _scan_funding(self, settings, now, fuels):
-        """💰 Funding fuel table (own scan): for each 💰 Funding Rate Scanner
-        coin, show ONLY while it currently holds fuel (no fuel → row removed).
-        Stores the live funding rate, next-funding time, previous rate (for the
-        rising/falling trend) and the entry threshold so the UI can draw a
-        progress bar from 'Entry ≤' → −4%. Telegram entry/exit alerts on
-        transitions. Stored in self._anomalies (existing table/endpoints)."""
-        funding = set(self._funding_syms)
-        thr = self._get_funding_threshold()
-        notifier = None
-        if settings.get('ff_tg_on_entry') or settings.get('ff_tg_on_exit'):
-            tm = self._get_tm() if self._get_tm else None
-            notifier = getattr(tm, 'notifier', None) if tm else None
-        btc_line = self._btc_status_text(settings, now)
-        with self._lock:
-            # МММ (fuel) strength filter: a coin enters the 💰 МММ table only if
-            # its strength (|fuel dir|×100) meets the selected minimum.
-            try:
-                fmin_mm = int(settings.get('funding_min_mm_strength', 0) or 0)
-            except (TypeError, ValueError):
-                fmin_mm = 0
-            # Anti-spam knobs: hysteresis (keep-in-table threshold sits below the
-            # enter threshold) + per-coin re-announce cooldown.
-            try:
-                _hyst = max(0, int(settings.get('funding_mm_hysteresis', 0) or 0))
-            except (TypeError, ValueError):
-                _hyst = 0
-            try:
-                _cool_sec = max(0, int(settings.get('funding_notify_cooldown_min', 0) or 0)) * 60
-            except (TypeError, ValueError):
-                _cool_sec = 0
-            _keep_mm = max(0, fmin_mm - _hyst)   # lower bar to STAY in table
-            _sess_mode = bool(settings.get('funding_session_mode', False))
-            # 🚀 Anomalous-growth (spike) detector settings.
-            _spike_on = bool(settings.get('funding_spike_enabled', True))
-            try:
-                _spike_pct = float(settings.get('funding_spike_pct', 8) or 8)
-            except (TypeError, ValueError):
-                _spike_pct = 8.0
-            try:
-                _spike_win = float(settings.get('funding_spike_window_min', 15) or 15)
-            except (TypeError, ValueError):
-                _spike_win = 15.0
-            # Evaluate BOTH coins currently in the funding scanner AND coins
-            # already in the 💰 МММ table. A coin ENTERS only from the scanner,
-            # but once in, it STAYS as long as it has fuel and meets the МММ
-            # filter — even if it dropped out of the 💰 Funding Rate Scanner
-            # (funding normalised). It leaves ONLY when fuel is gone / МММ below
-            # the keep-threshold. This fixes "МММ зникло" firing at МММ 100%.
-            _in_table = {s for s, a in self._anomalies.items() if a.get('funding')}
-            for sym in (funding | _in_table):
-                # Muted → ignore this coin entirely (no row, no TG, no archive).
-                if self._is_funding_muted(sym, now):
-                    self._anomalies.pop(sym, None)
-                    continue
-                in_scanner = sym in funding
-                fuel = fuels.get(sym) or self._fuel_dir_smoothed(sym)
-                status = fuel.get('status') if fuel else None
-                mark = fuel.get('mark_price') if fuel else None
-                # Funding rate/next: fresh from the scanner if still there, else
-                # keep the last-known values stored on the anomaly record.
-                a = self._anomalies.get(sym)
-                rate = self._funding_rates.get(sym)
-                if rate is None and a is not None:
-                    rate = a.get('rate')
-                nf = self._funding_next.get(sym)
-                if nf is None and a is not None:
-                    nf = a.get('next_funding')
-                vol = self._funding_vols.get(sym)
-                # Directional AND strong enough → in table; else treated as no-МММ.
-                _strength = abs(float(fuel.get('dir') or 0.0)) * 100.0 if fuel else 0.0
-                _mm = int(round(_strength))
-
-                # ── SESSION MODE (optional, like the ₿ banner) ──────────────
-                if _sess_mode:
-                    _dirl = status in ('LONG', 'SHORT')
-                    if a is None:
-                        # start a NEW session only from the scanner, directional,
-                        # and above the strength filter.
-                        if in_scanner and _dirl and _strength >= fmin_mm:
-                            self._anomalies[sym] = {
-                                'symbol': sym, 'dir': status, 'started_at': now,
-                                'start_price': mark, 'holding': True, 'sess_paused': False,
-                                'last_price': mark, 'last_held_sec': 0,
-                                'funding': True, 'rate': rate, 'prev_rate': rate,
-                                'next_funding': nf, 'entry_threshold': thr,
-                                'vol24h': vol, 'vol24h_prev': vol,
-                                'vol24h_base': vol, 'vol24h_base_at': now,
-                                'mm_str': _mm,
-                            }
-                            self._notify_funding(notifier, sym, status, mark, btc_line,
-                                                 settings, now, entered=True, strength=_mm)
-                            self._funding_notify_at[sym] = now
-                        continue
-                    if _dirl and status != a.get('dir'):
-                        # opposite flip → NEW session (the ONLY re-announce case)
-                        a.update({'dir': status, 'started_at': now, 'holding': True,
-                                  'sess_paused': False, 'rate': rate, 'next_funding': nf,
-                                  'mm_str': _mm, 'funding': True})
-                        if mark:
-                            a['last_price'] = mark
-                        self._set_vol(a, vol, now)
-                        self._notify_funding(notifier, sym, status, mark, btc_line,
-                                             settings, now, entered=True, strength=_mm)
-                        self._funding_notify_at[sym] = now
-                    elif _dirl:
-                        # same direction → hold / resume, NO announce
-                        a.update({'holding': True, 'sess_paused': False, 'dir': status,
-                                  'last_held_sec': int(now - a.get('started_at', now)),
-                                  'prev_rate': a.get('rate'), 'rate': rate,
-                                  'next_funding': nf, 'mm_str': _mm, 'funding': True})
-                        if mark:
-                            a['last_price'] = mark
-                        self._set_vol(a, vol, now)
-                    elif in_scanner:
-                        # WAIT while still in the funding scanner → PAUSE (keep,
-                        # no announce) — the session holds its direction.
-                        a.update({'holding': True, 'sess_paused': True,
-                                  'rate': rate, 'next_funding': nf,
-                                  'mm_str': _mm, 'funding': True})
-                        if mark:
-                            a['last_price'] = mark
-                        self._set_vol(a, vol, now)
-                    else:
-                        # WAIT and gone from the scanner → session finished.
-                        if a.get('holding'):
-                            self._notify_funding(notifier, sym, a.get('dir'),
-                                                 mark or a.get('last_price'), btc_line,
-                                                 settings, now, entered=False,
-                                                 strength=_mm, reason='сесію завершено')
-                        self._anomalies.pop(sym, None)
-                        self._funding_notify_at.pop(sym, None)
-                    continue
-                # ── end SESSION MODE ────────────────────────────────────────
-
-                _was_holding = bool(a and a.get('holding'))
-                # Enter needs full threshold; STAY only needs the (lower) keep
-                # threshold — that hysteresis stops boundary flicker.
-                _thr_now = _keep_mm if _was_holding else fmin_mm
-                _mm_ok = status in ('LONG', 'SHORT') and _strength >= _thr_now
-                # 🚀 Anomalous-growth (spike): a SCANNER coin with a sharp price
-                # move AND rising volume qualifies even with low МММ. Volume-rising
-                # is required once a baseline exists; a brand-new coin may enter on
-                # the price move alone (its vol trend firms up on the next ticks).
-                _spiked, _move, _spx = ((self._price_spike(sym, _spike_win, _spike_pct))
-                                        if (_spike_on and in_scanner) else (False, 0.0, None))
-                _vol_up = bool(a and a.get('vol24h') and a.get('vol24h_prev')
-                               and a['vol24h'] > a['vol24h_prev'] * 1.005)
-                _spike_ok = bool(_spiked and in_scanner and (_vol_up or a is None))
-                if mark is None and _spx:
-                    mark = _spx                       # price for a pure-spike coin
-                # Displayed direction: МММ side if any, else the spike's move side.
-                _row_dir = (status if status in ('LONG', 'SHORT')
-                            else (('LONG' if _move > 0 else 'SHORT') if _spike_ok else status))
-                _qualifies = _mm_ok or _spike_ok
-                # A fresh coin can only appear if it is in the scanner right now;
-                # a holding coin stays on fuel alone.
-                if _qualifies and (in_scanner or _was_holding):
-                    if not _was_holding:
-                        self._anomalies[sym] = {
-                            'symbol': sym, 'dir': _row_dir, 'started_at': now,
-                            'start_price': mark, 'holding': True,
-                            'last_price': mark, 'last_held_sec': 0,
-                            'funding': True, 'rate': rate, 'prev_rate': rate,
-                            'next_funding': nf, 'entry_threshold': thr,
-                            'vol24h': vol, 'vol24h_prev': vol,
-                            'vol24h_base': vol, 'vol24h_base_at': now,
-                            'mm_str': _mm, 'in_scanner': in_scanner,
-                            'spike': _spike_ok, 'spike_move': round(_move, 2),
-                        }
-                        # Cooldown: suppress the TG "appear" if this coin was
-                        # announced < cooldown ago (row still shows in the table).
-                        _last = self._funding_notify_at.get(sym, 0)
-                        if _cool_sec <= 0 or (now - _last) >= _cool_sec:
-                            self._notify_funding(notifier, sym, status, mark, btc_line,
-                                                 settings, now, entered=True, strength=_mm)
-                            self._funding_notify_at[sym] = now
-                    else:
-                        a['holding'] = True
-                        a['dir'] = _row_dir
-                        if mark:
-                            a['last_price'] = mark
-                        a['last_held_sec'] = int(now - a.get('started_at', now))
-                        a['prev_rate'] = a.get('rate')
-                        a['rate'] = rate
-                        a['next_funding'] = nf
-                        a['entry_threshold'] = thr
-                        self._set_vol(a, vol, now)
-                        a['funding'] = True
-                        a['mm_str'] = _mm
-                        a['in_scanner'] = in_scanner
-                        a['spike'] = _spike_ok
-                        a['spike_move'] = round(_move, 2)
-                else:
-                    # Leaves the table ONLY here: fuel gone or МММ below keep-thr.
-                    if a is not None:
-                        if a.get('holding'):
-                            _reason = ('бабло зникло'
-                                       if status not in ('LONG', 'SHORT')
-                                       else f'МММ {_mm}% нижче фільтра')
-                            self._notify_funding(
-                                notifier, sym, a.get('dir'),
-                                mark or a.get('last_price'), btc_line,
-                                settings, now, entered=False, strength=_mm,
-                                reason=_reason)
-                        self._anomalies.pop(sym, None)
-                        self._funding_notify_at.pop(sym, None)
-            # Record what happened this tick into the per-coin archive.
-            try:
-                self._archive_funding_pass(now)
-            except Exception as e:
-                print(f"[FuelFilter] funding archive pass error: {e}")
-            self._persist_state()
-
-    @staticmethod
-    def _fmt_funding_in(nf_ms, now) -> str:
-        """Human countdown to the next funding settlement.
-        nf_ms = nextFundingTime in ms; now = time.time() seconds.
-        → 'Nгод MMхв' / 'Nхв' / 'скоро' / '—'."""
-        try:
-            if not nf_ms:
-                return '—'
-            secs = int(int(nf_ms) / 1000 - now)
-            if secs <= 0:
-                return 'скоро'
-            h = secs // 3600
-            m = (secs % 3600) // 60
-            return f"{h}год {m:02d}хв" if h > 0 else f"{m}хв"
-        except (TypeError, ValueError):
-            return '—'
-
-    def _notify_funding(self, notifier, sym, d, price, btc_line, settings, now,
-                        entered, strength=None, reason=None):
-        """Telegram alert when a 💰 funding coin APPEARS (entered=True) or
-        DISAPPEARS (entered=False) from the 💰 МММ table. Gated by the user's
-        ff_tg_on_entry / ff_tg_on_exit toggles and rendered from the editable
-        templates. Placeholders: {symbol} {dir} {side} {price} {funding}
-        {fuel} {exhaustion} {reason} {btc} — missing → «—».
-
-        `strength` is the LIVE МММ strength (0..100) computed by the caller from
-        the current fuel direction. It is passed in because the background
-        score cache (self._fuel_str) usually has no entry yet at the exact
-        moment a coin first appears — which is why {fuel} used to render «—».
-        Falls back to the cache only when the caller could not supply it."""
-        # Per-user broadcast (💰 category + opted-in users) — fires on a coin's
-        # APPEARANCE. DISABLED by default now (`funding_appear_tg`=False): these
-        # low-signal «coin appeared» messages were replaced by the 🎯 Opportunity
-        # alert (fired from _run_alerts when the BEST entry confluence is reached).
-        if entered and settings.get('funding_appear_tg', False):
-            try:
-                _r = self._funding_rates.get(sym)
-                if _r is None:
-                    _a = self._anomalies.get(sym)
-                    _r = _a.get('rate') if _a else None
-                _emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
-                _side = d if d in ('LONG', 'SHORT') else ''
-                _rt = f"{_r:+.3f}%" if isinstance(_r, (int, float)) else '—'
-                self._broadcast_users('funding', 'notify_funding',
-                                      f"#{sym} направлення\n{_emoji}{_side} - funding {_rt}")
-            except Exception:
-                pass
-        if not notifier:
-            return
-        if entered and not settings.get('ff_tg_on_entry'):
-            return
-        if (not entered) and not settings.get('ff_tg_on_exit'):
-            return
-        # ENTRY-only extra filters (do NOT touch exit messages): direction and
-        # minimum МММ strength. E.g. «пропускати лише LONG і з МММ ≥ 90».
-        if entered:
-            _edir = str(settings.get('funding_tg_entry_dir', 'any') or 'any').upper()
-            if _edir in ('LONG', 'SHORT') and d != _edir:
-                return
-            try:
-                _emin = int(settings.get('funding_tg_entry_min_mm', 0) or 0)
-            except (TypeError, ValueError):
-                _emin = 0
-            if _emin > 0:
-                _sv = strength if strength is not None else self._fuel_str.get(sym)
-                if _sv is None or float(_sv) < _emin:
-                    return
-        try:
-            rate = self._funding_rates.get(sym)
-            # rate from the scanner may be gone once a coin left it — fall back
-            # to the last-known value stored on the anomaly record.
-            if rate is None:
-                _a = self._anomalies.get(sym)
-                rate = _a.get('rate') if _a else None
-            if strength is None:
-                strength = self._fuel_str.get(sym)
-            if strength is not None:
-                strength = int(round(float(strength)))
-            exh = self._exhaustion(sym, d) if d in ('LONG', 'SHORT') else None
-            _nf = self._funding_next.get(sym)
-            if _nf is None:
-                _a = self._anomalies.get(sym)
-                _nf = _a.get('next_funding') if _a else None
-            ctx = {
-                'symbol': sym,
-                'dir': d or '—', 'side': d or '—',
-                'price': (self._fmt_price(price) if price else '—'),
-                # get_rates() already returns funding in PERCENT (see
-                # funding_monitor: stored as rate*100) → do NOT scale again.
-                'funding': (f"{rate:+.4f}" if rate is not None else '—'),
-                # countdown to the next funding settlement (nextFundingTime ms).
-                'funding_in': self._fmt_funding_in(_nf, now),
-                'fuel': (str(strength) if strength is not None else '—'),
-                'exhaustion': (f"{exh:.0f}" if exh is not None else '—'),
-                'reason': (reason if reason is not None
-                           else ('зʼявилась у МММ' if entered else 'бабло зникло')),
-                'btc': (btc_line or ''),
-            }
-            tpl = (settings.get('ff_tg_entry_template') if entered
-                   else settings.get('ff_tg_exit_template')) or ''
-
-            class _Safe(dict):
-                def __missing__(self, k):
-                    return '—'
-            try:
-                msg = str(tpl).format_map(_Safe(ctx))
-            except Exception:
-                msg = str(tpl)
-            try:
-                from web.tg_bot import cat_tag
-                _t = cat_tag('funding')
-                if _t:
-                    msg = f"{_t}\n{msg}"
-            except Exception:
-                pass
-            notifier.send_message(msg)
-        except Exception as e:
-            print(f"[FuelFilter] funding TG error {sym}: {e}")
-
     def _broadcast_users(self, category, pref_key, text):
         """Send a market alert to the GROUP topic ONLY (funding/btc/…). It is NOT
         duplicated into the private bot — the private bot is for administrative
@@ -8892,7 +8004,6 @@ class FuelFilterDaemon:
                 pending3 = list(self._pending3.items())   # Queue 3 «Готовність»
                 pending4 = list(self._pending4.items())   # Queue 4 «Усі шари»
                 timers = list(self._timers.items())       # open positions
-                anomalies = [(s, a.get('dir')) for s, a in self._anomalies.items()]
             # ALL open TM positions (real + paper) — so the open-position tables'
             # МММ / виснаженість columns are filled for EVERY trade, regardless of
             # how it was opened (Черга-1, Черга-2 or a direct open). Read outside
@@ -8926,8 +8037,6 @@ class FuelFilterDaemon:
             for sym, side, oa in tm_positions:
                 if sym and side in ('LONG', 'SHORT'):
                     targets[sym] = (side, now - (oa or now))   # open position wins
-            for sym, d in anomalies:
-                targets.setdefault(sym, (d, 0.0))
             cache = {}
             for sym, (d, held) in targets.items():
                 try:
@@ -8946,8 +8055,6 @@ class FuelFilterDaemon:
                 self._fuel_str = new_str
             # 🎯 SMC-грейдер для тих самих рядків (окремий, довший TTL).
             self._refresh_setup_cache(settings, targets)
-            # ⚡ Скальп-«Готовність» лише для funding-монет (окремий швидкий TF).
-            self._refresh_setup_scalp_cache(settings)
         except Exception as e:
             print(f"[FuelFilter] score cache error: {e}")
 
@@ -8999,47 +8106,6 @@ class FuelFilterDaemon:
                 self._setup_cache.pop(k, None)
                 self._setup_at.pop(k, None)
                 self._exit_cache.pop(k, None)
-
-    def _refresh_setup_scalp_cache(self, settings: Dict):
-        """⚡ Скальперська «Готовність» ЛИШЕ для монет таблиці «💰 Funding — МММ»
-        (_anomalies) на швидкому TF. Той самий grade_setup, інші свічки; окремий
-        кеш/TTL/лічильник, не змішується з 1H-грейдом і не чіпає «Готовність
-        виходу». Вимкнено (funding_setup_scalp_on=False) → кеш очищується."""
-        if not bool(settings.get('funding_setup_scalp_on', False)):
-            if self._setup_scalp_cache:
-                self._setup_scalp_cache.clear()
-                self._setup_scalp_at.clear()
-            return
-        now = time.time()
-        base_tf = settings.get('funding_setup_tf', '5m')
-        htf_tf = settings.get('funding_setup_htf', '15m')
-        try:
-            ttl = float(settings.get('funding_setup_ttl', 45) or 45)
-            cap = int(settings.get('funding_setup_max_per_cycle', 8) or 8)
-        except (TypeError, ValueError):
-            ttl, cap = 45.0, 8
-        # Ціль — лише монети funding-таблиці з відомим напрямком.
-        with self._lock:
-            live = {s: a.get('dir') for s, a in self._anomalies.items()
-                    if a.get('dir') in ('LONG', 'SHORT')}
-        due = sorted((s for s in live if (now - self._setup_scalp_at.get(s, 0)) >= ttl),
-                     key=lambda s: self._setup_scalp_at.get(s, 0))
-        for sym in due[:cap]:
-            try:
-                res = self._compute_setup(sym, live.get(sym), settings,
-                                          base_tf=base_tf, htf_tf=htf_tf,
-                                          write_exit=False)
-            except Exception as e:
-                res = None
-                print(f"[FF-SetupScalp] {sym} compute error: {e}")
-            self._setup_scalp_at[sym] = now
-            if res is not None:
-                self._setup_scalp_cache[sym] = res
-        # Прибрати монети, що зникли з funding-таблиці.
-        for k in list(self._setup_scalp_cache.keys()):
-            if k not in live:
-                self._setup_scalp_cache.pop(k, None)
-                self._setup_scalp_at.pop(k, None)
 
     def _setup_klines(self, symbol: str, tf: str, limit: int):
         """Свічки для SMC-аналізу з довшим кешем (окремо від _candle_cache, бо
@@ -9122,9 +8188,9 @@ class FuelFilterDaemon:
             ctr1h = None
         # 6) ₿-сесія + funding/обсяг-контекст.
         btc_dir, btc_start = self._btc_session(settings)
-        a = self._anomalies.get(symbol) or {}
-        vol_up = bool(a.get('vol24h') and a.get('vol24h_prev')
-                      and a['vol24h'] > a['vol24h_prev'] * 1.005)
+        # Таблиці «💰 Funding — МММ» більше немає (06.11): ставка/тренд —
+        # напряму з 💰 Funding Rate Scanner; обсягу «до/після» і spike немає.
+        _frate = (self._funding_rates or {}).get(symbol.upper())
         return {
             'kl1_raw': kl1_raw,
             'smc': smc,
@@ -9138,10 +8204,10 @@ class FuelFilterDaemon:
             'mark_price': mark or mm.get('mark_price'),
             'btc_dir': btc_dir,
             'btc_start': btc_start,
-            'funding_rate': a.get('rate'),
+            'funding_rate': _frate,
             'funding_trend': (self._funding_trends or {}).get(symbol.upper()),
-            'vol_up': vol_up,
-            'spike': bool(a.get('spike')),
+            'vol_up': False,
+            'spike': False,
         }
 
     @staticmethod
@@ -9236,87 +8302,6 @@ class FuelFilterDaemon:
         if p >= 1:
             return f"{p:.4f}"
         return f"{p:.6g}"
-
-    def _funding_alert(self, s: Dict, now: float):
-        """Telegram alerts for 💰 funding coins, evaluated LIVE so they fire
-        within the fast alert cadence (not the 30s scan tick):
-          • ENTRY when a funding coin is in the table (timer ≥ threshold AND МММ
-            still holds its direction) — with direction, price and funding %;
-          • EXIT when МММ no longer holds (live) and it leaves the table.
-        Each fires once; re-armed on the opposite transition. Two-line layout."""
-        if not s.get('funding_tg_alerts', False):
-            self._funding_alerted.clear()
-            return
-        fdur = float(s.get('funding_duration_minutes', 0) or 0) * 60
-        tm = self._get_tm() if self._get_tm else None
-        notifier = getattr(tm, 'notifier', None) if tm else None
-        # Snapshot eligible funding timers under the lock; do the LIVE fuel
-        # checks (and Telegram) outside it.
-        with self._lock:
-            candidates = []
-            for sym in list(self._funding_syms):
-                if sym in self._fuel_managed or sym in self._anomalies:
-                    continue
-                t = self._timers.get(sym)
-                if not t or (now - t.get('since', now)) < fdur:
-                    continue
-                candidates.append((sym, t.get('dir')))
-            alerted = set(self._funding_alerted)
-            managed_or_anom = set(self._fuel_managed) | set(self._anomalies)
-        # Live membership: in the table only if МММ still holds the direction.
-        current, dir_of, price_of = set(), {}, {}
-        for sym, d in candidates:
-            fuel = self._fuel_dir_smoothed(sym)
-            # A clear opposite/neutral reading (with data) means МММ ended →
-            # not in the table. A data gap (fuel is None) keeps it (no flapping).
-            if fuel is not None and fuel.get('status') != d:
-                continue
-            current.add(sym)
-            dir_of[sym] = d
-            price_of[sym] = fuel.get('mark_price') if fuel else None
-        new_entries = [sym for sym in current if sym not in alerted]
-        # Exit = was alerted, now out of the table for МММ reasons (not because it
-        # moved to a position / anomalies table).
-        left = [sym for sym in (alerted - current) if sym not in managed_or_anom]
-        with self._lock:
-            self._funding_alerted = set(current)
-        if not notifier:
-            return
-        btc_line = self._btc_status_text(s, now)   # current ₿ status
-
-        def _line2(sym, d=None):
-            rate = self._funding_rates.get(sym)
-            rtxt = (f"funding {rate:+.3f}% · " if rate is not None else '')
-            etxt = ''
-            if d in ('LONG', 'SHORT'):
-                exh = self._exhaustion(sym, d)
-                if exh is not None:
-                    etxt = f"🔥 {exh:.1f}% · "
-            nf = self._funding_next.get(sym)
-            ntxt = ''
-            if nf:
-                rem = int(nf / 1000 - now)
-                if rem > 0:
-                    ntxt = f" · ⏳ {self._fmt_dur(rem)} до funding"
-            return f"{rtxt}{etxt}{btc_line}{ntxt}"
-
-        for sym in new_entries:
-            d = dir_of.get(sym)
-            dtxt = '🟢 LONG' if d == 'LONG' else ('🔴 SHORT' if d == 'SHORT' else '')
-            ptxt = (f" · {self._fmt_price(price_of.get(sym))}" if price_of.get(sym) else '')
-            try:
-                notifier.send_message(f"💰 <b>{sym}</b> {dtxt}{ptxt}\n{_line2(sym, d)}")
-            except Exception as e:
-                print(f"[FuelFilter] funding TG send error: {e}")
-        for sym in left:
-            fuel = self._fuel_dir_smoothed(sym)
-            price = fuel.get('mark_price') if fuel else None
-            d = fuel.get('status') if fuel else None
-            ptxt = (f" · {self._fmt_price(price)}" if price else '')
-            try:
-                notifier.send_message(f"💰 <b>{sym}</b> ⛔ вихід{ptxt}\n{_line2(sym, d)}")
-            except Exception as e:
-                print(f"[FuelFilter] funding exit TG send error: {e}")
 
     def _btc_status_text(self, s: Dict, now: float) -> str:
         """Compact current ₿ BTCUSDT status for messages as a direction:
@@ -9431,887 +8416,9 @@ class FuelFilterDaemon:
     # ------------------------------------------------------------------
     # 🎯 Opportunity-episode statistics (persisted to DB, no data loss)
     # ------------------------------------------------------------------
-    def _load_opp_stats(self):
-        raw = self._db.get_setting(_DB_OPP_STATS, {}) or {}
-        if isinstance(raw, dict):
-            self._opp_episodes = {str(k).upper(): v for k, v in raw.items()
-                                  if isinstance(v, dict)}
-            # Trim history on load so an old oversized DB blob doesn't sit in RAM
-            # (512MB cap): keep only the last OPP_HIST_MAX closed episodes/coin.
-            for _rec in self._opp_episodes.values():
-                _h = _rec.get('history')
-                if isinstance(_h, list) and len(_h) > OPP_HIST_MAX:
-                    del _h[:len(_h) - OPP_HIST_MAX]
-
-    def _persist_opp_stats(self, force: bool = False):
-        """Save the 🎯 episode stats to DB. Throttled (≥5s) unless force."""
-        now = time.time()
-        if not force and not self._opp_stats_dirty:
-            return
-        if not force and (now - self._opp_stats_saved_at) < 5:
-            return
-        try:
-            self._db.set_setting(_DB_OPP_STATS, self._opp_episodes)
-            self._opp_stats_dirty = False
-            self._opp_stats_saved_at = now
-        except Exception as e:
-            print(f"[FuelFilter] opp-stats persist error: {e}")
-
-    def _opp_episode_open(self, sym: str, a: Dict, opp: int, now: float):
-        """Open a NEW 🎯 episode: stamp start time + entry price + opp score."""
-        rec = self._opp_episodes.setdefault(sym.upper(), {
-            'count': 0, 'first_at': now, 'active': None, 'history': []})
-        if rec.get('first_at') is None:
-            rec['first_at'] = now
-        rec['count'] = int(rec.get('count', 0)) + 1
-        try:
-            _px = float(a.get('last_price') or a.get('start_price') or 0) or None
-        except (TypeError, ValueError):
-            _px = None
-        rec['active'] = {'start_at': now, 'start_price': _px, 'opp_start': int(opp)}
-        self._opp_stats_dirty = True
-        self._persist_opp_stats(force=True)
-
-    def _opp_episode_close(self, sym: str, a: Dict, opp: int, now: float):
-        """Close the active 🎯 episode: stamp end time + exit price + duration."""
-        rec = self._opp_episodes.get(sym.upper())
-        if not rec or not rec.get('active'):
-            return
-        act = rec['active']
-        try:
-            _px = float(a.get('last_price') or a.get('start_price') or 0) or None
-        except (TypeError, ValueError):
-            _px = None
-        ep = {
-            'start_at': act.get('start_at'), 'end_at': now,
-            'dur_sec': int(max(0, now - (act.get('start_at') or now))),
-            'start_price': act.get('start_price'), 'end_price': _px,
-            'opp_start': act.get('opp_start'), 'opp_end': int(opp),
-        }
-        hist = rec.setdefault('history', [])
-        hist.append(ep)
-        if len(hist) > OPP_HIST_MAX:
-            del hist[:len(hist) - OPP_HIST_MAX]
-        rec['active'] = None
-        self._opp_stats_dirty = True
-        self._persist_opp_stats(force=True)
-
-    def _opp_stats_summary(self, sym: str) -> Optional[Dict]:
-        """Compact stats for the UI second row: since (active start), count,
-        first_at, avg/total closed duration."""
-        rec = self._opp_episodes.get((sym or '').upper())
-        if not rec:
-            return None
-        hist = rec.get('history') or []
-        durs = [int(e.get('dur_sec') or 0) for e in hist]
-        total = sum(durs)
-        avg = int(total / len(durs)) if durs else 0
-        act = rec.get('active') or {}
-        return {
-            'since': act.get('start_at'),
-            'start_price': act.get('start_price'),
-            'count': int(rec.get('count', 0)),
-            'first_at': rec.get('first_at'),
-            'closed': len(hist),
-            'avg_dur_sec': avg,
-            'total_dur_sec': total,
-            # Last 5 CLOSED episodes for the UI tooltip (ціни входу/виходу, тривалість).
-            'recent': [{'start_price': e.get('start_price'),
-                        'end_price': e.get('end_price'),
-                        'dur_sec': e.get('dur_sec'),
-                        'end_at': e.get('end_at')} for e in hist[-5:]],
-        }
-
-    def _opp_enqueue_q2(self, sym: str, a: Dict, opp: int, s: Dict, now: float):
-        """🎯 Route a «best confluence» opportunity INTO Queue 2 instead of opening
-        it directly. The Q2 engine then applies its FULL algorithm (ENTRY score ≥
-        open threshold, CTR not opposing, Decision floor, optional ₿/buttons); only
-        if it OPENS is the coin marked «рекомендована ботом» (episode + TG, in
-        _engine_tick_q2). Requires Queue 2 enabled. Does NOT overwrite an existing
-        (e.g. CHoCH) Q2 entry — a real structure signal already owns the slot."""
-        side = a.get('dir')
-        if side not in ('LONG', 'SHORT'):
-            return
-        if not bool(s.get('queue2_enabled')):
-            print(f"[FF-Opp] {sym}: Черга-2 вимкнена — 🎯 не поставлено в чергу")
-            return
-        if sym in self._fuel_managed:
-            return   # already open/managed by FF
-        band = float(s.get('queue2_ctr_neutral_pct', 10) or 0)
-        _ctr_state, _ctr_stc, _ctr_pct = self._ctr_state(sym, band)
-        entry = self._entry_score_for(sym, side, 'opp')
-        _es = int(entry['score']) if entry else 0
-        with self._lock:
-            if sym in self._pending2:
-                return   # respect an existing Q2 entry (CHoCH / prior opp)
-            self._pending2[sym] = {
-                'dir': side, 'kind': 'opp', 'opp': True,
-                'added_at': now,
-                'entry_score': _es,
-                'ctr_signal': _ctr_state, 'ctr_stc_signal': _ctr_stc,
-                'opp_at_queue': int(opp),
-            }
-            self._persist_state()
-        try:
-            from detection.activity_log import log_activity
-            log_activity(sym, 'queued',
-                         f'Черга-2 · 🎯 Opportunity {int(opp)}% — чекає відкриття по алгоритму Q2 '
-                         f'(ENTRY {_es})',
-                         side=side, source='Q2',
-                         extra={'opp': True, 'opp_score': int(opp), 'entry_score': _es})
-        except Exception:
-            pass
-        print(f"[FF-Opp] {sym} {side}: 🎯 → Черга-2 (opp {int(opp)}%, ENTRY {_es})")
-
-    def _opp_episode_close_if_open(self, sym: str, now: float, price=None):
-        """Close an ACTIVE 🎯 «рекомендована ботом» episode when its trade closes.
-        An active episode ⟺ a recommended (Q2-opened) trade is open, so this is a
-        no-op for non-opp positions. Best-effort exit price: explicit → funding
-        table → live ticker."""
-        u = (sym or '').upper()
-        rec = self._opp_episodes.get(u)
-        if not rec or not rec.get('active'):
-            return
-        if price is None:
-            _a = self._anomalies.get(sym) or self._anomalies.get(u) or {}
-            price = _a.get('last_price')
-        if price is None:
-            try:
-                from detection.market_data import get_market_data
-                md = get_market_data()
-                if md:
-                    tk = md.get_ticker(sym)
-                    price = tk.get('last') if tk else None
-            except Exception:
-                price = None
-        try:
-            self._opp_episode_close(sym, {'last_price': price}, 0, now)
-            print(f"[FF-Opp] {sym}: епізод «рекомендована ботом» закрито (угоду закрито)")
-        except Exception as e:
-            print(f"[FF-Opp] episode close error {sym}: {e}")
-
-    def _opportunity_alert(self, s: Dict, now: float):
-        """🎯 Detect the 💰 funding coins that reach the BEST entry confluence and
-        ROUTE them into Queue 2 (edge-triggered per coin). The «рекомендована
-        ботом» mark + Telegram happen later, at the Queue-2 OPEN (_engine_tick_q2)
-        — reaching the confluence only queues the coin. Also drives 🚀 spike
-        alerts/opens (a separate signal, still direct)."""
-        _spike_on = bool(s.get('spike_tg', True))
-        try:
-            cool = max(60, int(s.get('opportunity_alert_cooldown_min', 30) or 30) * 60)
-        except (TypeError, ValueError):
-            cool = 1800
-        _gold_on = bool(s.get('funding_gold_tg', True))
-        try:
-            _gold_tol = float(s.get('funding_gold_tol', 0.005) or 0.005)
-        except (TypeError, ValueError):
-            _gold_tol = 0.005
-        try:
-            # Таймінг МІЖ повідомленнями (дефолт 60 хв). Мін. 1 хв — щоб не спамити.
-            _gold_cool = max(1, int(s.get('funding_gold_cooldown_min', 60) or 60)) * 60
-        except (TypeError, ValueError):
-            _gold_cool = 3600
-        try:
-            # Невелика затримка-підтвердження рівня перед відправкою (чітке визначення).
-            _gold_confirm = max(0, int(s.get('funding_gold_confirm_sec', 30) or 0))
-        except (TypeError, ValueError):
-            _gold_confirm = 30
-        # Прибрати прострочені записи антиспаму (старші за кулдаун).
-        if _gold_cool > 0:
-            for _k in [k for k, t0 in self._gold_alert_at.items() if (now - t0) > _gold_cool]:
-                self._gold_alert_at.pop(_k, None)
-        with self._lock:
-            items = list(self._anomalies.items())
-        live = set()
-        _route_q2 = bool(s.get('opportunity_auto_open', True))   # 🎯 → Черга-2
-        # 🧹 «Рекомендацію бота» через Чергу-2 ВИМКНЕНО → прибрати залишкові
-        # 🎯-opp записи з Черги-2, щоб раніше заведені монети не відкривались.
-        if not _route_q2:
-            self._purge_queue_kind('opp')
-        for sym, a in items:
-            live.add(sym)
-            # 🎯 Opportunity — ALWAYS computed (candidate detection). Reaching the
-            # best confluence NO LONGER opens directly and NO LONGER opens an
-            # «рекомендована ботом» episode here. Instead the coin is ROUTED INTO
-            # Queue 2; it is marked «рекомендована ботом» (episode + TG) only once
-            # Queue 2 actually OPENS the trade (in _engine_tick_q2). The episode
-            # then closes when that trade closes (_opp_episode_close_if_open).
-            try:
-                opp, hot, reasons = self._opportunity_for(sym, a, s)
-            except Exception:
-                opp, hot, reasons = 0, False, []
-            prev_hot = self._opp_hot_state.get(sym, False)
-            if hot and not prev_hot and _route_q2:
-                # Rising edge → enqueue into Queue 2 (does NOT open here).
-                try:
-                    self._opp_enqueue_q2(sym, a, opp, s, now)
-                except Exception as e:
-                    print(f"[FF-Opp] Q2 enqueue error {sym}: {e}")
-            self._opp_hot_state[sym] = hot
-            # 🚀 Spike — rising edge: Telegram (gated + cooldown) AND/OR test open.
-            _spk_open = bool(s.get('spike_auto_open', True))
-            if _spike_on or _spk_open:
-                spk = bool(a.get('spike'))
-                prev_spk = self._spike_alert_state.get(sym, False)
-                if spk and not prev_spk:
-                    if _spike_on and (now - self._spike_alert_at.get(sym, 0)) >= cool:
-                        try:
-                            self._send_spike_alert(sym, a)
-                        except Exception as e:
-                            print(f"[FF-Spike] alert send error {sym}: {e}")
-                        self._spike_alert_at[sym] = now
-                    # 🧪 TEST: open a trade directly on the 🚀 signal (no queue).
-                    if _spk_open:
-                        self._signal_open(sym, a, '🚀 Spike', s)
-                self._spike_alert_state[sym] = spk
-            # ✦ Gold funding «froze» — the rate is a stable clean value. Track how
-            # long it has stayed gold; once ≥ freeze threshold, fire ONE TG for
-            # this gold episode. Any change (loses gold) resets the timer + flag.
-            _step = self._gold_funding_step(a, _gold_tol)
-            if _step is not None:
-                # Епізод привʼязаний до РІВНЯ (band). Новий рівень (перехід на інший
-                # 0.5-multiple) → скид таймера появи (для тексту «тримається»).
-                if self._gold_step.get(sym) != _step:
-                    self._gold_step[sym] = _step
-                    self._gold_since[sym] = now
-                _since = self._gold_since.get(sym, now)
-                _ck = f"{sym}:{_step}"
-                # Рівень має ПРОТРИМАТИСЬ ≥ _gold_confirm с (чітке визначення), а
-                # далі — поки той самий рівень тримається — ПОВТОРНО раз на
-                # _gold_cool (дефолт 1 год). Кулдаун = таймінг МІЖ повідомленнями.
-                if _gold_on and (now - _since) >= _gold_confirm \
-                        and (now - self._gold_alert_at.get(_ck, 0)) >= _gold_cool:
-                    try:
-                        self._send_gold_alert(sym, a, _step)
-                    except Exception as e:
-                        print(f"[FF-Gold] alert send error {sym}: {e}")
-                    self._gold_alert_at[_ck] = now
-            else:
-                self._gold_since.pop(sym, None)
-                self._gold_step.pop(sym, None)
-        # Prune edge-state for coins that left the table. Do NOT close the 🎯
-        # episode here — it is tied to the OPEN TRADE now (closed by
-        # _opp_episode_close_if_open when the position closes), not to the coin's
-        # presence in the funding table.
-        for k in list(self._opp_hot_state.keys()):
-            if k not in live:
-                self._opp_hot_state.pop(k, None)
-                self._opp_alert_at.pop(k, None)
-                self._opp_cold_at.pop(k, None)
-        for k in list(self._spike_alert_state.keys()):
-            if k not in live:
-                self._spike_alert_state.pop(k, None)
-                self._spike_alert_at.pop(k, None)
-        for k in list(self._gold_since.keys()):
-            if k not in live:
-                self._gold_since.pop(k, None)
-                self._gold_step.pop(k, None)
-                self._gold_alerted.discard(k)
-        # 🎯 Reconcile ORPHANED «рекомендована ботом» episodes: an active episode
-        # must have a LIVE recommended trade behind it. If the coin is neither
-        # FF-managed nor held by TM (real OR paper), the trade is already gone —
-        # close the episode so it stops «hanging» for hours/days. Self-heals
-        # episodes left over from an old close path or a pre-change build.
-        for k in list(self._opp_episodes.keys()):
-            rec = self._opp_episodes.get(k)
-            if not rec or not rec.get('active'):
-                continue
-            if k in self._fuel_managed:
-                continue
-            try:
-                if self._tm_has_position(k, True) or self._tm_has_position(k, False):
-                    continue
-            except Exception:
-                continue   # TM transiently unavailable → don't close on a fluke
-            self._opp_episode_close_if_open(k, now)
-            print(f"[FF-Opp] {k}: осиротілий епізод закрито (немає живої угоди)")
-
-    def _send_opportunity_alert(self, sym: str, a: Dict, opp: int, reasons: list):
-        """Compose + broadcast the 🎯 «best moment to open» Telegram message when
-        Queue 2 opens a recommended trade. Goes to the 📈 Угоди group topic
-        (це подія відкриття угоди), enriched with the SMC 1H setup checklist."""
-        d = a.get('dir')
-        emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
-        side = d if d in ('LONG', 'SHORT') else ''
-        rt = a.get('rate')
-        rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
-        lines = [f"🎯 #{sym} — відкрито угоду за рекомендацією",
-                 f"{emoji} <b>{side}</b> · SMC-сетап {opp}% · funding {rt_s}"]
-        # SMC-чек-лист 1H (grade_setup): що саме зійшлося.
-        st = self._setup_cache.get(sym)
-        if st and st.get('ok'):
-            lines.append(f"Готовність: <b>{st.get('grade', '')}</b> {st.get('score', '')}%")
-            icon = {'ok': '✓', 'warn': '≈', 'miss': '·'}
-            for ch in st.get('checks', []):
-                lines.append(f"{icon.get(ch.get('state'), '·')} {ch.get('label')}: "
-                             f"{ch.get('detail', '')}")
-            for v in st.get('vetoes', []):
-                lines.append(f"⚠ {v}")
-        elif reasons:
-            for r in reasons[:6]:
-                lines.append(f"• {r}")
-        self._broadcast_users('trades', 'notify_opportunity', '\n'.join(lines))
-
-    def _send_spike_alert(self, sym: str, a: Dict):
-        """🚀 Broadcast an «anomalous growth» Telegram message when a funding coin
-        makes a sharp price move + rising volume — to the 💰 funding subscribers."""
-        d = a.get('dir')
-        emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
-        side = d if d in ('LONG', 'SHORT') else ''
-        mv = a.get('spike_move')
-        mv_s = (f"{mv:+.2f}%" if isinstance(mv, (int, float)) else '')
-        rt = a.get('rate')
-        rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
-        body = (f"🚀 #{sym} — аномальний ріст\n"
-                f"{emoji} {side} · рух {mv_s} · funding {rt_s}")
-        self._broadcast_users('funding', 'notify_spike', body)
-
-    def _scalp_setup_alert(self, s: Dict, now: float):
-        """⚡ Telegram на «хороший сигнал» у колонці Скальп: funding-монета, чия
-        скальперська «Готовність» стала HOT АБО SCORE ≥ scalp_tg_min_score (у
-        напрямку scalp_tg_dir). Edge-trigger на монету (шлемо ОДИН раз на появу
-        «good») + кулдаун; re-arm коли падає нижче. Потрібні `scalp_tg_on` і
-        `funding_setup_scalp_on` (інакше скальп-грейд не рахується)."""
-        if not s.get('scalp_tg_on') or not s.get('funding_setup_scalp_on'):
-            if self._scalp_alert_state:
-                self._scalp_alert_state.clear()
-                self._scalp_alert_at.clear()
-            return
-        try:
-            cool = max(0, int(s.get('scalp_tg_cooldown_min', 30) or 0) * 60)
-        except (TypeError, ValueError):
-            cool = 1800
-        try:
-            min_sc = int(s.get('scalp_tg_min_score', 60) or 0)
-        except (TypeError, ValueError):
-            min_sc = 60
-        want_dir = str(s.get('scalp_tg_dir', 'any') or 'any').upper()
-        with self._lock:
-            anoms = dict(self._anomalies)
-            cache = dict(self._setup_scalp_cache)
-        live = set()
-        for sym in cache:
-            if sym not in anoms:      # лише монети, що ЗАРАЗ у funding-таблиці
-                continue
-            live.add(sym)
-            su = cache.get(sym) or {}
-            good = bool(su.get('ok') and su.get('dir') in ('LONG', 'SHORT')
-                        and (su.get('hot')
-                             or (min_sc > 0 and (su.get('score') or 0) >= min_sc)))
-            if good and want_dir in ('LONG', 'SHORT') and su.get('dir') != want_dir:
-                good = False
-            prev = self._scalp_alert_state.get(sym, False)
-            if good and not prev and (now - self._scalp_alert_at.get(sym, 0)) >= cool:
-                try:
-                    self._send_scalp_alert(sym, anoms.get(sym) or {}, su, s)
-                except Exception as e:
-                    print(f"[FF-Scalp] alert send error {sym}: {e}")
-                self._scalp_alert_at[sym] = now
-            self._scalp_alert_state[sym] = good
-        # Прибрати edge-стан монет, що зникли з таблиці/кешу.
-        for k in list(self._scalp_alert_state.keys()):
-            if k not in live:
-                self._scalp_alert_state.pop(k, None)
-                self._scalp_alert_at.pop(k, None)
-
-    def _send_scalp_alert(self, sym: str, a: Dict, su: Dict, s: Dict):
-        """⚡ Broadcast a «good scalper-readiness» Telegram to the 💰 funding topic."""
-        d = su.get('dir')
-        emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
-        tf = s.get('funding_setup_tf', '5m')
-        rt = a.get('rate')
-        rt_s = f"{rt:+.3f}%" if isinstance(rt, (int, float)) else '—'
-        mm = self._fuel_str.get(sym)
-        mm_s = f"{int(mm)}%" if isinstance(mm, (int, float)) else '—'
-        hot = ' · 🎯HOT' if su.get('hot') else ''
-        body = (f"⚡ #{sym} — скальп-сигнал ({tf}){hot}\n"
-                f"{emoji} {d} · готовність {su.get('score')}/100 "
-                f"{su.get('grade') or ''} · МММ {mm_s} · funding {rt_s}")
-        self._broadcast_users('funding', 'notify_scalp', body)
-
-    def _funding_layers(self, sym: str, a: Dict) -> Dict:
-        """🎯 5-шаровий конфлюенс для funding-монети. Кожен шар = індикатор У БІК
-        напрямку монети (`a.dir`) + поріг якості: 1) МММ↑ · 2) SCORE · 3) Готовність ·
-        4) Скальп · 5) ЦІНА (свіжий рух ~15 хв: LONG=росте / SHORT=спадає). Кожен
-        шар несе `dir` (напрямок монети, коли засвічений) → у колонці кольори
-        відповідають напрямку: усі зелені (LONG) або всі червоні (SHORT). Повертає
-        {count, base(=усі 5), base4, layers:[{key,label,ok,dir,detail}]}. VOB (1m)
-        лишається ОКРЕМИМ одноразовим тригером TG-сигналу, не колонкою."""
-        d = a.get('dir')
-        layers = []
-
-        def add(key, label, ok, detail=''):
-            # `dir` = напрямок монети, КОЛИ шар засвічений (для кольору в UI:
-            # LONG→зелений, SHORT→червоний). Погашений шар напрямку не має.
-            layers.append({'key': key, 'label': label, 'ok': bool(ok),
-                           'dir': (d if ok else None), 'detail': detail})
-
-        if d not in ('LONG', 'SHORT'):
-            return {'count': 0, 'layers': []}
-        # 1) МММ у бік + ≥ легкий (сила ≥ 10%) + сила РОСТЕ (↑ — та сама стрілка
-        #    тренду з правого слоту пілюлі МММ: now > prev+1, як у ffFuelCell).
-        fd = self._fuel_dir_smoothed(sym) or {}
-        mm_dir = fd.get('status')
-        mm_str = self._fuel_str.get(sym)
-        if mm_str is None:
-            mm_str = (self._score_cache.get(sym) or {}).get('fuel_strength')
-        mm_str = mm_str or 0
-        mm_prev = self._fuel_str_prev.get(sym)
-        mm_rising = isinstance(mm_prev, (int, float)) and mm_str > mm_prev + 1
-        mm_falling = isinstance(mm_prev, (int, float)) and mm_str < mm_prev - 1
-        mm_arrow = ('↑' if mm_rising else ('↓' if mm_falling else '→'))
-        # Шар 1: напрямок МММ у бік монети + сила ≥ легкий (10) + тренд сили.
-        # АСИМЕТРІЯ за напрямком:
-        #  • SHORT — НЕ слабшає (↑ або →): на вже встановленому спаді сила часто
-        #    виходить на плато (→), тож строге ↑ гасило шар МММ майже завжди
-        #    (напр. GOOGLUSDT SHORT помірний 40% →). Гасне ЛИШЕ на ↓ (тиск згасає).
-        #  • LONG — як було РАНІШЕ: СТРОГО РОСТЕ (↑).
-        mm_trend_ok = (not mm_falling) if d == 'SHORT' else mm_rising
-        add('mm', 'МММ', mm_dir == d and mm_str >= 10 and mm_trend_ok,
-            f"{mm_dir or '—'} {int(mm_str)}% {mm_arrow}")
-        # 2-4) SCORE / Готовність / Скальп — поріг «СЕРЕДНІЙ» береться з ЄДИНОГО
-        # джерела (`setup_grader.grade_min`), а не хардкодиться числом. Раніше тут
-        # стояли 40 і 38 — тобто одне слово «СЕРЕДНІЙ» означало РІЗНІ числа.
-        _mid = _grade_min('СЕРЕДНІЙ')
-        sc = self._score_cache.get(sym) or {}
-        add('score', 'SCORE', sc.get('dir') == d and (sc.get('score') or 0) >= _mid,
-            f"{sc.get('label') or '—'} {sc.get('score') or 0}")
-        su = self._setup_cache.get(sym) or {}
-        add('setup', 'Готовність', su.get('ok') and su.get('dir') == d and (su.get('score') or 0) >= _mid,
-            f"{su.get('grade') or '—'} {su.get('score') or 0}")
-        ss = self._setup_scalp_cache.get(sym) or {}
-        add('scalp', 'Скальп', ss.get('ok') and ss.get('dir') == d and (ss.get('score') or 0) >= _mid,
-            f"{ss.get('grade') or '—'} {ss.get('score') or 0}" if ss.get('ok') else 'вимк/н-д')
-        # 5) ЦІНА у бік монети — свіжий рух (~15 хв) з 💰 Funding Rate Scanner:
-        #    LONG → ціна РОСТЕ (up), SHORT → ціна СПАДАЄ (down). Це ПОСТІЙНИЙ шар
-        #    (світиться в колонці), на відміну від старого VOB-плейсхолдера.
-        pm = (self._funding_price or {}).get(sym.upper()) or {}
-        p_dir = pm.get('dir')            # 'up' / 'down' / 'flat'
-        p_chg = pm.get('chg')
-        price_ok = (d == 'LONG' and p_dir == 'up') or (d == 'SHORT' and p_dir == 'down')
-        _pw = {'up': 'росте', 'down': 'спадає', 'flat': 'рівно'}.get(p_dir, 'н/д')
-        add('price', 'Ціна', price_ok,
-            f"{_pw}{'' if p_chg is None else f' {p_chg:+.2f}%'}")
-        # VOB (1m) — ОКРЕМИЙ одноразовий ТРИГЕР сигналу (не колонка-шар): щойно
-        # зʼявляється новий Volumized OB у бік і всі 5 шарів валідні → «Рекомендація
-        # бота» в Telegram (див. _layer_signal_alert). У колонці його немає.
-        base5 = sum(1 for l in layers if l['ok'])
-        return {'count': base5, 'layers': layers,
-                'base': base5,
-                'base4': sum(1 for l in layers[:4] if l['ok'])}
-
-    # Volumized OB (1m) параметри — саме як задав користувач.
-    _VOB_SWING = 5
-    _VOB_END = 'Wick'
-    _VOB_ATR_MULT = 3.5
-    _VOB_ZONE = 'Low'
-    _VOB_TTL = 8   # с — короткий кеш 1m-свічок (майже без затримки)
-
-    def _funding_ob_dir(self, sym: str, tf: str) -> Optional[str]:
-        """Напрямок за Require OB на `tf`: LONG якщо найновіший активний
-        (не-breaker) Volumized OB — бичачий, SHORT якщо ведмежий. None — немає."""
-        try:
-            now = time.time()
-            key = ('obdir', sym, tf)
-            c = self._vob_klines.get(key)
-            if c and (now - c[0]) < self._VOB_TTL * 6:   # OB-TF довший → довший кеш
-                kl = c[1]
-            else:
-                from detection.market_data import get_market_data
-                md = get_market_data()
-                kl = md.fetch_klines(sym, limit=200, interval=tf) if md else None
-                if kl:
-                    self._vob_klines[key] = (now, kl)
-            if not kl or len(kl) < 20:
-                return None
-            from detection.volumized_ob import detect_volumized_obs
-            res = detect_volumized_obs(kl, swing_length=self._VOB_SWING,
-                                       ob_end_method=self._VOB_END,
-                                       max_atr_mult=self._VOB_ATR_MULT,
-                                       zone_count=self._VOB_ZONE)
-            def _newest(obs):
-                for ob in (obs or []):        # newest first
-                    if not ob.get('breaker'):
-                        return int(ob.get('formation_time') or 0)
-                return -1
-            bt = _newest(res.get('bullish_obs'))
-            st = _newest(res.get('bearish_obs'))
-            if bt < 0 and st < 0:
-                return None
-            return 'LONG' if bt >= st else 'SHORT'
-        except Exception as e:
-            print(f"[FF-OBdir] {sym} error: {e}")
-            return None
-
-    def _funding_vob(self, sym: str, d: str, tf: str = '1m') -> Optional[Dict]:
-        """Найновіший АКТИВНИЙ Volumized OB (1m) у напрямку d (swing=5, Wick,
-        ATR×3.5, zone=Low). Повертає OB-dict або None. Короткий кеш 1m-свічок для
-        мінімальної затримки. Викликається ЛИШЕ для монет, де шари 1..4 зійшлись."""
-        if d not in ('LONG', 'SHORT'):
-            return None
-        try:
-            now = time.time()
-            key = ('vob', sym, tf)
-            c = self._vob_klines.get(key)
-            if c and (now - c[0]) < self._VOB_TTL:
-                kl = c[1]
-            else:
-                from detection.market_data import get_market_data
-                md = get_market_data()
-                kl = md.fetch_klines(sym, limit=200, interval=tf) if md else None
-                if kl:
-                    self._vob_klines[key] = (now, kl)
-            if not kl or len(kl) < 20:
-                return None
-            from detection.volumized_ob import detect_volumized_obs
-            res = detect_volumized_obs(kl, swing_length=self._VOB_SWING,
-                                       ob_end_method=self._VOB_END,
-                                       max_atr_mult=self._VOB_ATR_MULT,
-                                       zone_count=self._VOB_ZONE)
-            obs = res.get('bullish_obs' if d == 'LONG' else 'bearish_obs') or []
-            for ob in obs:                 # newest first
-                if not ob.get('breaker'):
-                    return ob
-            return None
-        except Exception as e:
-            print(f"[FF-VOB] {sym} error: {e}")
-            return None
-
-    def _purge_queue_kind(self, kind: str) -> int:
-        """Прибрати з УСІХ черг (1..4) записи вказаного джерела `kind`:
-          'vob' — монети, заведені стратегією фандингу (Маршрут у Чергу-4);
-          'opp' — монети, заведені 🎯 «Рекомендацією» у Чергу-2.
-        Викликається, коли відповідний funding-шлях ВИМКНЕНО, щоб залишкові
-        (persistent) записи більше НЕ відкривались. Повертає к-сть прибраних."""
-        kind = (kind or '').lower().strip()
-        if not kind:
-            return 0
-        removed = 0
-        with self._lock:
-            for q in (self._pending, self._pending2, self._pending3, self._pending4):
-                for sym in [s for s, i in q.items() if (i or {}).get('kind') == kind]:
-                    q.pop(sym, None)
-                    removed += 1
-            if removed:
-                self._persist_state()
-        if removed:
-            try:
-                from detection.activity_log import log_activity
-                log_activity('—', 'skipped',
-                             f'Funding-шлях "{kind}" вимкнено → прибрано {removed} '
-                             'залишкових записів із черг (не відкриваються)',
-                             source='Funding')
-            except Exception:
-                pass
-            print(f"[FF-Funding] purge kind='{kind}': прибрано {removed} записів із черг")
-        return removed
-
-    def _layer_signal_alert(self, s: Dict, now: float):
-        """🎯 Один моніторинг VOB (1m) для КОЖНОЇ funding-монети, що живить ДВА
-        незалежні виходи на НОВОМУ Volumized OB (edge за formation_time):
-          1) TG «Рекомендація бота» (`layer_tg_on`) — коли зійшлись ≥ layer_tg_min
-             шарів (МММ/SCORE/Готовність/Скальп/ЦІНА у бік).
-          2) Черга-3 авто-відкриття (`queue3_vob_open`) — коли зійшлись УСІ 5
-             шарів: відкрити угоду за напрямком, SL = верх/низ блоку OB + буфер;
-             повторний VOB по вже відкритій монеті лише пересуває SL. Усе — в
-             🧾 Лог роботи бота з міткою «з фандингу»."""
-        tg_on = bool(s.get('layer_tg_on'))
-        route = bool(s.get('funding_route_q4', True))   # маршрут сигналу в Чергу-4
-        ob_tf = s.get('funding_ob_tf', '1h') or '1h'    # напрямок за Require OB
-        vob_tf = s.get('funding_vob_tf', '5m') or '5m'  # TF сигналу Volumized OB
-        # 🧹 Маршрут у Чергу-4 ВИМКНЕНО → funding більше НЕ відкриває угод: чистимо
-        # залишкові funding-VOB записи (kind='vob') з усіх черг, щоб раніше заведені
-        # монети «з фандингу» не спрацьовували вже після вимкнення стратегії.
-        if not route:
-            self._purge_queue_kind('vob')
-        if not tg_on and not route:
-            if self._vob_state or self._layer_alert_at or self._vob_seen:
-                self._vob_state.clear()
-                self._vob_seen.clear()
-                self._layer_alert_at.clear()
-            return
-        try:
-            need = min(5, max(1, int(s.get('layer_tg_min', 5) or 5)))
-            cool = max(0, int(s.get('layer_tg_cooldown_min', 30) or 0) * 60)
-        except (TypeError, ValueError):
-            need, cool = 5, 1800
-        with self._lock:
-            anoms = dict(self._anomalies)
-        live = set()
-        for sym, a in anoms.items():
-            live.add(sym)
-            # НАПРЯМОК: за Require OB на funding_ob_tf (нове), інакше — МММ dir (legacy).
-            d = self._funding_ob_dir(sym, ob_tf) if route else a.get('dir')
-            # Кешуємо напрямок за OB → get_state віддасть його як 'dir' рядка
-            # (нова стратегія: напрямок funding-монети за Require OB, не МММ).
-            if route:
-                if d in ('LONG', 'SHORT'):
-                    self._funding_ob_dir_cache[sym] = d
-                else:
-                    self._funding_ob_dir_cache.pop(sym, None)
-            if d not in ('LONG', 'SHORT'):
-                self._vob_state.pop(sym, None)
-                continue
-            # Volumized OB на funding_vob_tf (дефолт 5m) у бік OB-напрямку.
-            ob = self._funding_vob(sym, d, vob_tf)
-            if not ob:
-                self._vob_state[sym] = {'ok': False, 'dir': d}
-                continue
-            ft = int(ob.get('formation_time') or 0)
-            self._vob_state[sym] = {'ok': True, 'dir': d, 'ftime': ft,
-                                    'top': round(float(ob.get('top') or 0), 6),
-                                    'bottom': round(float(ob.get('bottom') or 0), 6)}
-            # НОВИЙ OB (інший formation_time) → перевіряємо шари САМЕ ЗАРАЗ.
-            # Позначаємо OB опрацьованим (щоб не спрацювати двічі на тому самому).
-            # Перший показ монети (рестарт / монета щойно в таблиці) — ТИХА база:
-            # блок, що вже стоїть на графіку, сигналом не є.
-            _fv = funding_vob_outcome(self._vob_seen.get(sym), ft)
-            if _fv == 'base':
-                self._vob_seen[sym] = ft
-            elif _fv == 'new':
-                self._vob_seen[sym] = ft
-                if route:
-                    # Маршрут сигналу в Чергу-4 (фільтрація 4-ма шарами + відкриття).
-                    try:
-                        _disp = self.intercept(sym, d, kind='vob')
-                    except Exception as e:
-                        _disp = ''
-                        print(f"[FF-Funding→Q4] {sym} intercept error: {e}")
-                    try:
-                        from detection.activity_log import log_activity
-                        log_activity(sym, 'signal',
-                                     f'Funding: VOB({vob_tf}) у бік OB({ob_tf}) {d} → Черга-4'
-                                     + (f' ({_disp})' if _disp else ' (черги вимкнені)'),
-                                     side=d, source='FundingVOB')
-                    except Exception:
-                        pass
-                if tg_on and (now - self._layer_alert_at.get(sym, 0)) >= cool:
-                    # 🎯 TG-сигнал — ЛИШЕ коли зійшлося ≥ `layer_tg_min` шарів
-                    # (задокументована вимога). РАНІШЕ `need` рахувався, але НЕ
-                    # застосовувався → алерт летів на КОЖЕН новий VOB, а
-                    # налаштування «скільки з 5» було мертвим кодом.
-                    try:
-                        _lay_tg = self._funding_layers(sym, a) or {}
-                        _base_tg = int(_lay_tg.get('base') or 0)
-                    except Exception as e:
-                        print(f"[FF-Layer] layers error {sym}: {e}")
-                        _base_tg = 0
-                    if _base_tg >= need:
-                        try:
-                            self._send_layer_alert(sym, a, d, mode='signal')
-                        except Exception as e:
-                            print(f"[FF-Layer] alert send error {sym}: {e}")
-                        self._layer_alert_at[sym] = now
-        for k in list(self._vob_state.keys()):
-            if k not in live:
-                self._vob_state.pop(k, None)
-                self._vob_seen.pop(k, None)
-        for k in list(self._funding_ob_dir_cache.keys()):
-            if k not in live:
-                self._funding_ob_dir_cache.pop(k, None)
-        # Скид трекера авто-угод для монет, що зникли І вже не мають позиції.
-        for k in list(self._vob_trade.keys()):
-            if k not in live and not (self._tm_has_position(k, True)
-                                      or self._tm_has_position(k, False)):
-                self._vob_trade.pop(k, None)
-
-    def _vob_open_or_trail(self, sym: str, a: Dict, d: str, ob: Dict,
-                           lay: Dict, s: Dict, now: float):
-        """🎯 Черга-3: на НОВОМУ Volumized OB (1m) у бік монети — або ВІДКРИТИ
-        угоду (усі 5 шарів + монети ще немає в угоді), або лише ПЕРЕСУНУТИ SL на
-        новий блок (угода вже відкрита ботом за цим сигналом). SL = верх блоку OB
-        (SHORT) / низ блоку OB (LONG) + буфер. Усе — в 🧾 Лог роботи бота."""
-        top = float(ob.get('top') or 0)
-        bottom = float(ob.get('bottom') or 0)
-        if top <= 0 or bottom <= 0:
-            return
-        try:
-            buf = max(0.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)) / 100.0
-        except (TypeError, ValueError):
-            buf = 0.001
-        buf_pct = round(buf * 100.0, 3)
-        # SL за межею блоку + буфер: SHORT → над ВЕРХОМ, LONG → під НИЗОМ.
-        sl = round(top * (1.0 + buf), 8) if d == 'SHORT' else round(bottom * (1.0 - buf), 8)
-        ft = int(ob.get('formation_time') or 0)
-        tm = self._get_tm() if self._get_tm else None
-        if not tm:
-            return
-        try:
-            from detection.activity_log import log_activity
-        except Exception:
-            def log_activity(*_a, **_k):
-                pass
-        is_real = self._tm_has_position(sym, True)
-        is_shadow = self._tm_has_position(sym, False)
-        already = is_real or is_shadow
-        tracked = self._vob_trade.get(sym)
-        # Ми вважали монету відкритою, але позиції вже нема (закрилась) → скид.
-        if tracked and not already:
-            self._vob_trade.pop(sym, None)
-            tracked = None
-        if already and tracked:
-            # ПОВТОРНИЙ VOB → лише пересунути SL на новий блок (нову НЕ відкриваємо).
-            try:
-                res = tm.update_manual_sl_tp(sym, manual_sl=sl,
-                                             is_shadow=(is_shadow and not is_real),
-                                             origin='auto',
-                                             origin_label='Q3-VOB · трейл',
-                                         origin_tf=(s or {}).get('funding_vob_tf'))
-            except Exception as e:
-                print(f"[FF-VOB-open] {sym} SL update error: {e}")
-                return
-            if res and res.get('ok'):
-                self._vob_trade[sym] = {**tracked, 'sl': sl, 'ftime': ft}
-                log_activity(sym, 'sl_moved',
-                             f'Черга-3 (монета з фандингу): новий Volumized OB (1m) '
-                             f'→ SL пересунуто на {self._fmt_price(sl)}',
-                             side=d, source='Q3-VOB')
-                if s.get('layer_tg_on'):
-                    try:
-                        self._send_layer_alert(sym, a, d, sl=sl, mode='trail')
-                    except Exception as e:
-                        print(f"[FF-Layer] trail alert error {sym}: {e}")
-            return
-        if already and not tracked:
-            return   # позиція є, але не ми її відкрили за цим сигналом — не чіпаємо
-        # НОВА угода: потрібні УСІ 5 шарів.
-        if (lay or {}).get('base', 0) < 5:
-            return
-        # 🛡 Ворота «проти загального тренду»: НЕ відкриваємо LONG у загальному
-        # спаді / SHORT у загальному рості (≈2 год з 💰 Funding Rate Scanner).
-        # 'flat' (немає чіткого тренду) — дозволяємо. Трейл SL сюди не потрапляє.
-        if s.get('queue3_vob_block_against_trend', True):
-            _ov = (self._funding_price.get(sym.upper()) or {}).get('dir_overall')
-            if (d == 'LONG' and _ov == 'down') or (d == 'SHORT' and _ov == 'up'):
-                _ovc = (self._funding_price.get(sym.upper()) or {}).get('chg_overall')
-                log_activity(sym, 'skipped',
-                             f'Черга-3 (монета з фандингу): {d} проти ЗАГАЛЬНОГО '
-                             f'тренду ({_ov}{"" if _ovc is None else f" {_ovc:+.2f}%"}) '
-                             f'→ угоду НЕ відкрито',
-                             side=d, source='Q3-VOB')
-                return
-        fd = self._fuel_dir_smoothed(sym) or {}
-        entry = fd.get('mark_price') or a.get('last_price')
-        fuel = {'mark_price': entry}
-        ok = self._open(sym, d, fuel, s,
-                        opened_by=_ob_compose('vob', 'Q3-VOB(funding)'),
-                        skip_ctr_safeguard=True)
-        if not ok:
-            return
-        is_shadow2 = (self._tm_has_position(sym, False)
-                      and not self._tm_has_position(sym, True))
-        try:
-            res = tm.update_manual_sl_tp(sym, manual_sl=sl, is_shadow=is_shadow2,
-                                         origin='auto',
-                                         origin_label='Q3-VOB · відкриття',
-                                         origin_tf=(s or {}).get('funding_vob_tf'))
-            sl_note = (f'SL={self._fmt_price(sl)}' if (res and res.get('ok'))
-                       else f'SL={self._fmt_price(sl)} (не прийнято: {(res or {}).get("reason", "—")})')
-        except Exception as e:
-            print(f"[FF-VOB-open] {sym} SL set error: {e}")
-            sl_note = f'SL={self._fmt_price(sl)} (помилка встановлення)'
-        self._vob_trade[sym] = {'side': d, 'sl': sl, 'ftime': ft,
-                                'entry': entry, 'mode': ('paper' if is_shadow2 else 'real')}
-        log_activity(sym, 'opened',
-                     f'Черга-3 (монета з фандингу): VOB (1m) + 5 шарів → відкрито {d}, '
-                     f'{sl_note} (буфер {buf_pct}% за межею блоку OB)',
-                     side=d, source='Q3-VOB')
-        if s.get('layer_tg_on'):
-            try:
-                self._send_layer_alert(sym, a, d, sl=sl, mode='open')
-            except Exception as e:
-                print(f"[FF-Layer] open alert error {sym}: {e}")
-
-    def _send_layer_alert(self, sym: str, a: Dict, d: str,
-                          sl=None, mode: str = 'signal'):
-        """🎯 «Рекомендація бота» Telegram (топік 💰 funding). Мінімальний формат:
-            🎯 Рекомендація бота · #SYMBOL 🔴 SHORT
-            🛑 SL: <ціна>                      (mode='open' — відкрито угоду)
-        Повторний VOB по вже відкритій монеті (mode='trail'):
-            🎯 Рекомендація бота · #SYMBOL 🔴 SHORT
-            ♻️ Угода вже відкрита — змінено лише SL: <ціна>
-        mode='signal' (без авто-відкриття) — лише шапка + напрямок."""
-        emoji = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
-        head = f"🎯 <b>Рекомендація бота</b> · #{sym} {emoji} {d}"
-        if mode == 'open' and sl is not None:
-            body = f"{head}\n🛑 SL: <b>{self._fmt_price(sl)}</b>"
-        elif mode == 'trail' and sl is not None:
-            body = f"{head}\n♻️ Угода вже відкрита — змінено лише SL: <b>{self._fmt_price(sl)}</b>"
-        else:
-            body = head
-        self._broadcast_users('funding', 'notify_layer', body)
-
-    @staticmethod
-    def _gold_funding_step(a: Dict, tol: float = 0.005):
-        """✦ Return the clean LEVEL if this coin's funding sits on a clean value —
-        a clean 0.5-step у діапазоні 0.5..4.0: 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5,
-        4.0 (після коми лише 0 або рівно 5, напр. −2.000% чи −1.500%). Проміжні
-        (−1.007, −0.520) — НЕ золото. Tolerance `tol` (дефолт 0.005). Else None.
-
-        ВАЖЛИВО: НЕ звіряємо зі змінами vs prev_rate. Дрібне дрижання (−1.502 ↔
-        −1.501) лишається в тій самій band-і рівня 1.5 → це той самий епізод.
-        «Застиг» = тримається на цьому рівні (епізод-таймер веде виклик), а не
-        «жодного разу не змінився» — інакше алерт передзапускався й дублювався."""
-        r = a.get('rate')
-        if r is None:
-            return None
-        try:
-            r = float(r)
-        except (TypeError, ValueError):
-            return None
-        av = abs(r)
-        # Чисте значення = крок 0.5 у діапазоні 0.5..4.0 (після коми лише 0 або 5):
-        # 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0. Проміжні — НЕ золото.
-        _half = round(av * 2) / 2.0
-        if abs(av - _half) < tol and 0.5 <= _half <= 4.0:
-            return _half
-        return None
-
-    def _send_gold_alert(self, sym: str, a: Dict, step: float):
-        """✦ Broadcast a «gold funding» Telegram — a funding coin sitting on a clean
-        0.5-step value. Формат як раніше (скрін):
-            ✦ FUNDING 🟢LONG
-            #SYMBOL
-            💰 Funding: -2.000%
-        Показуємо СНЕПНУТЕ чисте значення (`step` зі знаком ставки) → завжди точне
-        (−0.500% / −1.500% / −2.000%), а не сире (−0.495% / −1.503%)."""
-        d = a.get('dir')
-        dot = '🟢' if d == 'LONG' else ('🔴' if d == 'SHORT' else '⚪')
-        side = d if d in ('LONG', 'SHORT') else '—'
-        rt = a.get('rate')
-        # Знак — від фактичної ставки (золотий funding зазвичай глибокий мінус).
-        sign = -1.0 if (isinstance(rt, (int, float)) and rt < 0) else 1.0
-        clean = f"{sign * float(step):+.3f}%"
-        body = (f"✦ <b>FUNDING</b> {dot}<b>{side}</b>\n"
-                f"<b>#{sym}</b>\n"
-                f"💰 Funding: <b>{clean}</b>")
-        self._broadcast_users('funding', 'notify_funding', body)
-
-    def _signal_open(self, sym: str, a: Dict, tag: str, settings: Dict):
-        """🧪 Open a TEST trade DIRECTLY on a 🎯/🚀 signal (no queue). Direction =
-        the coin's side; entry = its last price. Reuses _open() → real if TM is
-        enabled, else paper (Test Mode). FF/TM then manage the exit. No double-open."""
-        try:
-            side = a.get('dir')
-            if side not in ('LONG', 'SHORT'):
-                return
-            if sym in self._fuel_managed:
-                return   # already opened/managed by FF — don't duplicate
-            try:
-                px = float(a.get('last_price') or a.get('start_price') or 0)
-            except (TypeError, ValueError):
-                px = 0.0
-            if px <= 0:
-                return
-            ok = self._open(sym, side, {'mark_price': px, 'dir': side},
-                            settings, opened_by=tag)
-            if ok:
-                print(f"[FF-Signal] {tag} → відкрито {side} {sym} @ {px}")
-        except Exception as e:
-            print(f"[FF-Signal] open error {sym}: {e}")
 
     def _run_alerts(self):
-        """Fire BTC START/STOP and 🎯 opportunity Telegram alerts on a fast
+        """Fire BTC START/STOP Telegram alerts on a fast
         cadence (~3s) so they're near-instant — instead of waiting up to a full
         30s scan tick. Reads the live timer state (since is fixed; held grows),
         so threshold crossings are detected within seconds."""
@@ -10322,19 +8429,13 @@ class FuelFilterDaemon:
                 if s.get('enabled'):
                     now = time.time()
                     self._btc_start_alert(s, now)
-                    # 🎯 Opportunity alert (replaces the old funding appear/exit TG).
-                    self._opportunity_alert(s, now)
-                    # ⚡ TG на «хороший сигнал» у колонці Скальп (funding-монети).
-                    self._scalp_setup_alert(s, now)
-                    # 🎯 Консолідований шаровий сигнал (funding, ≥N/5 шарів).
-                    self._layer_signal_alert(s, now)
             except Exception as e:
                 print(f"[FuelFilter] alert loop error: {e}")
             self._stop.wait(3)
 
     # ------------------------------------------------------------------
     # BTC-START auto-engine: when ON and BTC banner == START, open the basket
-    # of coins from the chosen tables (anomalies / active timers) in the BANNER
+    # of coins from the chosen tables (active timers) in the BANNER
     # direction, via FF._open (→ _fuel_managed → exhaustion-exit + control).
     # ------------------------------------------------------------------
     # Re-log an unchanged hold/skip «Готовність» decision at most this often (s).
@@ -12403,26 +10504,6 @@ class FuelFilterDaemon:
                                          'start_price': fuel.get('mark_price')}
                 self.note_signal_consumed(sym, info.get('added_at'))
                 self._engine_skip.pop(sym, None)
-                # 🎯 A 🎯-recommended entry that FULLY passed Queue 2 → NOW mark it
-                # «рекомендована ботом»: open the episode (real entry price/time)
-                # and send ONE Telegram. This is the ONLY place a recommendation is
-                # written — reaching the confluence merely queued it.
-                if _is_opp:
-                    _px_open = fuel.get('mark_price')
-                    try:
-                        _opp_now, _, _opp_reasons = self._opportunity_for(
-                            sym, self._anomalies.get(sym) or {'dir': d, 'last_price': _px_open}, s)
-                    except Exception:
-                        _opp_now, _opp_reasons = int(info.get('opp_at_queue') or 0), []
-                    self._opp_episode_open(sym, {'last_price': _px_open}, _opp_now, _now_open)
-                    if bool(s.get('opportunity_tg', True)):
-                        try:
-                            self._send_opportunity_alert(
-                                sym, {'dir': d, 'rate': (self._anomalies.get(sym) or {}).get('rate')},
-                                _opp_now, _opp_reasons)
-                        except Exception as e:
-                            print(f"[FF-Opp] alert send error {sym}: {e}")
-                        self._opp_alert_at[sym] = _now_open
                 # Queue wait (signal→open latency) — a key calibration metric.
                 _wait = time.time() - float(info.get('added_at') or time.time())
                 _wlbl = (f"{_wait/3600:.1f}год" if _wait >= 3600
@@ -12768,41 +10849,6 @@ class FuelFilterDaemon:
         except Exception:
             a['vol24h'] = vol
 
-    def _price_spike(self, symbol: str, window_min: float, pct: float):
-        """🚀 Detect an ANOMALOUS price move that brought price to its CURRENT
-        level within the last `window_min` minutes. Instead of comparing only the
-        two endpoints (which misses «flat → sudden move» when earlier bars offset
-        it), we scan EVERY bar in the window and take the LARGEST move from any of
-        them to the current price. So a coin that sat flat and then ran, or moved
-        ≥pct% in a shorter burst inside the window, is caught. Returns
-        (spiked: bool, move_pct: float, last_price: float|None)."""
-        try:
-            tm = self._get_tm() if self._get_tm else None
-            scanner = getattr(tm, 'scanner', None) if tm else None
-            tf = (scanner.get_timeframe() if (scanner and hasattr(scanner, 'get_timeframe'))
-                  else '15m')
-            kl = self._candle_klines(symbol, tf)
-            if not kl or len(kl) < 2:
-                return (False, 0.0, None)
-            _tf_min = {'1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
-                       '1h': 60, '2h': 120, '4h': 240}.get(str(tf).lower(), 15)
-            bars = max(1, int(round(float(window_min) / _tf_min)))
-            # Window = last `bars` closed candles + the current one.
-            seg = kl[-(bars + 1):] if len(kl) > bars else kl[:]
-            last = float(seg[-1].get('p', 0) or 0)
-            if last <= 0 or len(seg) < 2:
-                return (False, 0.0, (last or None))
-            best = 0.0    # signed move (+ = rose to current, − = fell to current)
-            for k in seg[:-1]:
-                p = float(k.get('p', 0) or 0)
-                if p > 0:
-                    m = (last - p) / p * 100.0
-                    if abs(m) > abs(best):
-                        best = m
-            return (abs(best) >= float(pct), best, last)
-        except Exception:
-            return (False, 0.0, None)
-
     def _btc_session(self, settings: Dict):
         """(dir, is_start) of the ₿ BTCUSDT session RIGHT NOW. is_start = the
         session held its direction ≥ start_signal_minutes AND is not paused."""
@@ -12815,85 +10861,6 @@ class FuelFilterDaemon:
             period = 300.0
         held = time.time() - self._btc_verdict_since
         return (d, bool(held >= period and not self._btc_paused))
-
-    def _opportunity_for(self, sym: str, a: Dict, settings: Dict = None):
-        """🎯 Composite «best setup to open» analysis for a 💰 funding coin —
-        combines ALL table signals: SCORE quality (ВІДМІННИЙ), fuel/price
-        agreement, МММ strength + alignment with SCORE, funding depth/deepening
-        (squeeze fuel), rising volume, 🚀 spike AND ₿ BTCUSDT session alignment
-        (₿ START у той самий бік). Returns (score 0..100, hot, reasons). Shared by
-        get_state (UI) and the TG alert."""
-        s = settings if settings is not None else self.get_settings()
-        _sc = self._score_cache.get(sym) or {}
-        _sc_label = _sc.get('label')
-        _sc_dir = _sc.get('dir')
-        _sc_conflict = bool(_sc.get('conflict'))
-        _mm_dir_o = _sc.get('fuel_dir') or a.get('dir')
-        _mm_strength = float(self._fuel_str.get(sym) or 0)
-        _ft_o = (self._funding_trends or {}).get(sym.upper())
-        _vol_up_o = bool(a.get('vol24h') and a.get('vol24h_prev')
-                         and a['vol24h'] > a['vol24h_prev'] * 1.005)
-        _spk_o = bool(a.get('spike'))
-        _paused_o = bool(a.get('sess_paused'))
-        _fr_o = a.get('rate')
-        opp = 0
-        reasons = []
-        if _sc_label == 'STRONG HOLD':
-            opp += 40; reasons.append('SCORE відмінний')
-        elif _sc_label == 'HOLD':
-            opp += 22; reasons.append('SCORE хороший')
-        elif _sc_label == 'NEUTRAL':
-            opp += 6
-        if (not _sc_conflict) and _sc_label in ('STRONG HOLD', 'HOLD'):
-            opp += 8; reasons.append('без конфлікту (МММ=ціна)')
-        if _mm_strength >= 60:
-            opp += 16; reasons.append(f'сильний тиск МММ {int(_mm_strength)}%')
-        elif _mm_strength >= 30:
-            opp += 8
-        if _mm_dir_o in ('LONG', 'SHORT') and _sc_dir == _mm_dir_o:
-            opp += 8; reasons.append('МММ і SCORE в один бік')
-        if _fr_o is not None and _fr_o <= -0.5:
-            opp += 8; reasons.append('глибокий негативний funding')
-        if _ft_o is not None and _ft_o < 0:
-            opp += 8; reasons.append('funding поглиблюється (F-Trend)')
-        if _vol_up_o:
-            opp += 6; reasons.append('обсяг зростає')
-        if _spk_o:
-            opp += 6; reasons.append('🚀 аномальний ріст')
-        # ₿ BTCUSDT session alignment — alts follow BTC, so a coin whose side
-        # matches the ₿ START session is a much higher-probability entry.
-        _btc_dir, _btc_start = self._btc_session(s)
-        _btc_align = bool(_btc_start and _btc_dir in ('LONG', 'SHORT')
-                          and _sc_dir == _btc_dir)
-        if _btc_align:
-            opp += 14; reasons.append('₿ START у той самий бік')
-        opp = min(100, opp)
-        # ⚡ CTR gate FIRST — a 🎯 recommendation must NOT fight the CTR (Schaff
-        # Trend Cycle) timing. We check CTR before anything else: only if CTR lets
-        # the coin through does the rest of the algorithm decide 🎯. Opposite lean
-        # → no recommendation; aligned / neutral (dead-zone) / no-data → pass.
-        _ctr_block = False
-        if bool(s.get('opportunity_require_ctr', True)) and _sc_dir in ('LONG', 'SHORT'):
-            try:
-                _band = float(s.get('queue2_ctr_neutral_pct', 10) or 0)
-            except (TypeError, ValueError):
-                _band = 0.0
-            _ctr_st, _ctr_stc_v, _ctr_pct_v = self._ctr_state(sym, _band)
-            if _ctr_st in ('LONG', 'SHORT') and _ctr_st != _sc_dir:
-                _ctr_block = True
-                reasons.append(f'⚡ CTR проти ({_ctr_st} {_ctr_pct_v:.0f}%) — не рекомендую')
-        # Base confluence — evaluated only after CTR lets the coin through.
-        hot = bool(
-            not _ctr_block
-            and _sc_label == 'STRONG HOLD' and not _sc_conflict and not _paused_o
-            and _mm_strength >= 30 and _sc_dir in ('LONG', 'SHORT')
-            and _sc_dir == _mm_dir_o
-            and (_vol_up_o or (_ft_o is not None and _ft_o < 0) or _spk_o))
-        # Require ₿ START alignment for the 🎯 marker (default ON) — «усі в один
-        # бік»: no 🎯 unless the ₿ session is START and points the same way.
-        if hot and bool(s.get('opportunity_require_btc', True)) and not _btc_align:
-            hot = False
-        return opp, hot, reasons
 
     def _queue_row(self, sym: str, info: Dict, now: float, smart: bool = False) -> Optional[Dict]:
         """Build ONE queue-table row for `sym`. Shared by Queue 1 and Queue 2 so
@@ -12920,12 +10887,9 @@ class FuelFilterDaemon:
             'smart_dir': smart_flag,
             'held_sec': int(waited),
             'waiting': True,
-            # Signal source/type: 'choch' / 'choch_bos' (structure) or 'opp'
-            # (🎯 funding recommendation routed into Queue 2). `opp` lets the UI
-            # tag «зайшла з фандінгу 🎯».
+            # Signal source/type: 'choch' / 'choch_bos' (structure) / 'opp' (🔄 реверс).
             'kind': info.get('kind'),
             'opp': bool(info.get('opp')),
-            'opp_at_queue': info.get('opp_at_queue'),
             'exhaustion': (self._score_cache.get(sym) or {}).get('exh'),
             'score': self._score_cache.get(sym),
             # 🎯 SMC «готовність сетапу» 1H (grade_setup) — колонка «Готовність».
@@ -13045,13 +11009,6 @@ class FuelFilterDaemon:
                 {'k': 'OB-фільтр (сканер)', 'v': (f"УВІМК ({ob_tf})" if ob_enabled else 'вимк')},
                 {'k': 'Авто Manual SL з OB', 'v': (f"УВІМК (буфер {s.get('q2_auto_ob_sl_buffer_pct',0.2)}%, {s.get('q2_auto_ob_sl_tf','15m')})" if s.get('q2_auto_ob_sl') else 'вимк')},
             ]},
-            {'title': '⚡ Скальп-Готовність (funding)', 'items': [
-                {'k': 'Скальп-грейд для funding', 'v': _on(s.get('funding_setup_scalp_on', False))},
-                {'k': 'Скальп TF / HTF', 'v': f"{s.get('funding_setup_tf','5m')} / {s.get('funding_setup_htf','15m')}"},
-                {'k': 'Скальп TTL / cap', 'v': f"{s.get('funding_setup_ttl',45)}с / {s.get('funding_setup_max_per_cycle',8)} на цикл"},
-                {'k': 'TG скальп-сигнал', 'v': (f"УВІМК (HOT/≥{s.get('scalp_tg_min_score',60)}, {s.get('scalp_tg_dir','any')}, кулдаун {s.get('scalp_tg_cooldown_min',30)}хв)" if s.get('scalp_tg_on') else 'вимк')},
-                {'k': 'TG шаровий сигнал', 'v': (f"УВІМК (≥{s.get('layer_tg_min',5)}/5, кулдаун {s.get('layer_tg_cooldown_min',30)}хв)" if s.get('layer_tg_on') else 'вимк')},
-            ]},
             {'title': '🔍 SMC-сигнал (сканер)', 'items': [
                 {'k': 'Режим сигналу', 'v': alert_mode},
                 {'k': 'Свіжість сигналу', 'v': recency},
@@ -13155,7 +11112,7 @@ class FuelFilterDaemon:
     # згорнута. Усе інше (банер, лічильники, налаштування, Черги-1..3) віддається
     # завжди — воно дешеве. `None` = віддати ВСЕ (сумісність для інфо-сайту та
     # будь-якого стороннього споживача API).
-    HEAVY_SECTIONS = ('q4', 'fund', 'mm', 'mmn', 'mmc', 'mmf', 'mmp', 'mmd', 'mmr', 'mms')
+    HEAVY_SECTIONS = ('q4', 'mm', 'mmn', 'mmc', 'mmf', 'mmp', 'mmd', 'mmr', 'mms')
 
 
     def get_state(self, sections: Optional[set] = None) -> Dict:
@@ -13166,7 +11123,6 @@ class FuelFilterDaemon:
         NEW STRATEGY: shows only timers held >= duration_minutes (threshold).
         No auto-open. Position management (close) is optional via setting."""
         _want_q4 = (sections is None) or ('q4' in sections)
-        _want_fund = (sections is None) or ('fund' in sections)
         # 🧮 МММ-монітор: до 200+ рядків на кожен 10с-полл. Рахунку тут немає
         # (лише читання знімка двигуна), але ганяти їх, коли гармошка згорнута,
         # немає сенсу — той самий принцип C2, що для Черги-4 і фандингу.
@@ -13184,7 +11140,6 @@ class FuelFilterDaemon:
         with self._lock:
             settings = self.get_settings()
             duration_sec = settings['duration_minutes'] * 60
-            funding_dur = float(settings.get('funding_duration_minutes', 0) or 0) * 60
             now = time.time()
             # The table = the waiting BASE (_pending). Show EVERY queued coin
             # (that isn't already an open position), REGARDLESS of the current
@@ -13304,135 +11259,6 @@ class FuelFilterDaemon:
                     'strength': _lstr,
                     'mode': 'live',
                 }
-            # 💰 Funding table — only coins currently holding fuel. Carries the
-            # live funding rate + next-funding time + trend (prev_rate) + the
-            # entry threshold so the UI can draw the entry→−4% progress bar.
-            # LIVE set of coins currently tracked by the 💰 Funding Rate Scanner
-            # (authoritative — refreshed every scan). A coin NOT in it has no live
-            # funding source → its saved rate/next-funding are frozen (stale).
-            try:
-                _fund_set = {s.upper() for s in self._get_funding_symbols()}
-            except Exception:
-                _fund_set = None
-            anomalies = []
-            for sym, a in self._anomalies.items():
-                held = int(now - a.get('started_at', now))
-                # HARD RULE: a coin must currently be in the 💰 Funding Rate
-                # Scanner to appear here. Once it leaves, there is no live
-                # funding source — don't show it at all (it stays only in the
-                # 📜 archive). Fail-open when the scanner set is momentarily
-                # unavailable (_fund_set is None) so the table doesn't blank out.
-                _in_scanner = True
-                if _fund_set is not None:
-                    _in_scanner = (sym.upper() in _fund_set)
-                if a.get('in_scanner') is False:
-                    _in_scanner = False
-                if not _in_scanner:
-                    continue   # not in the scanner → nothing to show
-                # Every displayed coin is in the scanner → it carries a LIVE rate,
-                # so it is never «stale». The countdown simply hides itself when
-                # there is no FUTURE settlement time (funding_next_ms below).
-                _nf = a.get('next_funding')
-                # Track the range since this coin appeared: deepest funding
-                # (rate_min = most negative) + Vol 24h min/max. Sampled here on
-                # every UI poll (faster than the scan), so it captures each value.
-                _r = a.get('rate')
-                if _r is not None:
-                    a['rate_min'] = _r if a.get('rate_min') is None else min(a['rate_min'], _r)
-                    a['rate_max'] = _r if a.get('rate_max') is None else max(a['rate_max'], _r)
-                _vv = a.get('vol24h')
-                if _vv is not None:
-                    a['vol24h_min'] = _vv if a.get('vol24h_min') is None else min(a['vol24h_min'], _vv)
-                    a['vol24h_max'] = _vv if a.get('vol24h_max') is None else max(a['vol24h_max'], _vv)
-                # 🎯 OPPORTUNITY — composite «best setup to open» (shared helper).
-                _opp, _opp_hot_raw, _opp_reasons = self._opportunity_for(sym, a, settings)
-                _opp_stats = self._opp_stats_summary(sym)
-                # «Рекомендована ботом» row = an ACTIVE recommendation episode, i.e.
-                # a 🎯 trade that Queue 2 actually OPENED (episode opens at Q2 open,
-                # closes at trade close). Reaching the confluence (raw hot) only
-                # queues the coin into Q2 — it is NOT «рекомендована» until opened.
-                _opp_hot = bool(_opp_stats and _opp_stats.get('since'))
-                # Live PnL % of the OPEN recommended trade (price move from the
-                # episode entry, in the trade direction) — shown in the row.
-                if _opp_hot and _opp_stats.get('start_price') and a.get('last_price'):
-                    try:
-                        _e = float(_opp_stats['start_price']); _c = float(a['last_price'])
-                        if _e > 0:
-                            _mv = (_c - _e) / _e * 100.0
-                            _opp_stats['pnl_pct'] = round(
-                                _mv if a.get('dir') == 'LONG' else -_mv, 3)
-                    except (TypeError, ValueError):
-                        pass
-                # НАПРЯМОК рядка: СТРОГО за Require OB (нова стратегія), якщо
-                # маршрут у Чергу-4 увімкнено; інакше — legacy МММ-напрямок. Кеш
-                # заповнює _layer_signal_alert. БЕЗ фолбеку на МММ: поки OB не
-                # визначений — напрямку немає (None), а не оманливий МММ-LONG.
-                _route_q4 = bool(settings.get('funding_route_q4', True))
-                _row_dir = self._funding_ob_dir_cache.get(sym) \
-                    if _route_q4 else a.get('dir')
-                anomalies.append({
-                    'symbol': sym,
-                    'dir': _row_dir,
-                    'holding': True,
-                    'held_sec': held,
-                    'start_price': a.get('start_price'),
-                    'current_price': a.get('last_price'),
-                    'funding': True,
-                    'funding_stale': False,   # in-scanner → live rate, never stale
-                    'funding_rate': a.get('rate'),
-                    'funding_prev_rate': a.get('prev_rate'),
-                    # Range since appearance: deepest funding + Vol 24h min/max.
-                    'funding_rate_min': a.get('rate_min'),
-                    'vol24h_min': a.get('vol24h_min'),
-                    'vol24h_max': a.get('vol24h_max'),
-                    # Only a FUTURE settlement time — never a past one («до виплати 0»).
-                    'funding_next_ms': (_nf if (_nf and (_nf / 1000.0) > now) else None),
-                    'entry_threshold': a.get('entry_threshold'),
-                    'vol24h': a.get('vol24h'),
-                    # ~2-min rolling baseline → UI shows Vol 24h trend ↑/↓.
-                    'vol24h_prev': a.get('vol24h_prev'),
-                    # 🚀 Аномальний ріст: різкий рух ціни + зростання обсягу.
-                    'spike': bool(a.get('spike')),
-                    'spike_move': a.get('spike_move'),
-                    # F-Trend: напрямок funding за ~30 хв (-1 глибше / +1 послаб. / 0).
-                    'f_trend': (self._funding_trends or {}).get(sym.upper()),
-                    # МММ (fuel) direction + strength for the funding table's МММ
-                    # column (same widget as the queue / open positions).
-                    'mm': (self._score_cache.get(sym) or {}).get('fuel_dir') or a.get('dir'),
-                    'mm_str': self._fuel_str.get(sym),
-                    'mm_str_prev': self._fuel_str_prev.get(sym),
-                    # SCORE (hold quality) — same field the ❤️ queue rows carry,
-                    # so the funding table can draw the SAME badge. Read from the
-                    # background cache (cheap). CTR intentionally NOT included:
-                    # STC populates too slowly to be useful in this table.
-                    'score': self._score_cache.get(sym),
-                    # 🎯 SMC «готовність сетапу» 1H (grade_setup) — колонка «Готовність».
-                    'setup': self._setup_cache.get(sym),
-                    # ⚡ Скальперська «Готовність» на швидкому TF (лише funding).
-                    'setup_scalp': self._setup_scalp_cache.get(sym),
-                    # 🎯 5-шаровий конфлюенс (для колонки «Шари» + TG-сигналу).
-                    # ⚡ C2: чисто ВІДОБРАЖЕННЯ — коли гармошку 💰 Funding згорнуто,
-                    # фронт не просить секцію 'fund' і ми не рахуємо шари. Решта
-                    # рядка (і всі побічні ефекти циклу — rate_min/vol24h/епізоди)
-                    # лишається як було: TG-сигнали живуть у своєму `_run_alerts`,
-                    # а не тут, тож пропуск нічого не ламає.
-                    'layers': (self._funding_layers(sym, {**a, 'dir': _row_dir})
-                               if _want_fund else None),
-                    # 💹 Напрямок ЦІНИ з 💰 Funding Rate Scanner: свіжий (~15 хв)
-                    # + загальний тренд (~2 год) — другий рядок у таблиці.
-                    'price': (self._funding_price or {}).get(sym.upper()),
-                    # 🎯 Композитний аналіз «найкращий момент для входу».
-                    'opportunity': _opp,
-                    'opportunity_hot': _opp_hot,
-                    'opportunity_reasons': _opp_reasons,
-                    # 🎯-епізоди: таймер активного + статистика (з БД).
-                    'opp_stats': _opp_stats,
-                    'paused': bool(a.get('sess_paused')),
-                })
-            # Сортування ЗА ШАРАМИ: більше засвічених шарів (🎯 конфлюенс) — вище.
-            # Тайбрейк — довше тримається (held_sec).
-            anomalies.sort(key=lambda x: (-((x.get('layers') or {}).get('count') or 0),
-                                          -x['held_sec']))
         # Live main-button gates (for engine_mode='buttons' UI + working dir).
         try:
             _eg_long, _eg_short = self._entry_gates()
@@ -13456,7 +11282,7 @@ class FuelFilterDaemon:
             # ⚡ C2: які ВАЖКІ секції реально пораховано в цій відповіді. Фронт
             # МУСИТЬ це читати: без прапорця він прийняв би `timers4: []` за
             # «черга порожня» і стер би таблицю, хоча її просто не запитували.
-            'served': {'q4': _want_q4, 'fund': _want_fund, 'mm': _want_mm,
+            'served': {'q4': _want_q4, 'mm': _want_mm,
                        'mmn': _want_mmn, 'mmc': _want_mmc, 'mmf': _want_mmf,
                        'mmp': _want_mmp, 'mmd': _want_mmd, 'mmr': _want_mmr,
                        'mms': _want_mms},
@@ -13496,7 +11322,6 @@ class FuelFilterDaemon:
             'queue2_enabled': bool(settings.get('queue2_enabled', False)),
             'queue3_enabled': bool(settings.get('queue3_enabled', False)),
             'btc_start': btc_start,
-            'anomalies': anomalies,
             'active_symbols': list(self._fuel_managed.keys()),
             'tracked_count': len(self._fuel_managed),
             'scan_list': [],   # retired (FF no longer scans the WATCHLIST)
@@ -13809,27 +11634,6 @@ class FuelFilterDaemon:
             self._q4_layers_cache.clear()
             self._persist_state()
         return n
-
-    def delete_anomaly(self, symbol: str) -> bool:
-        """Remove ONE coin from the anomalies table (user action)."""
-        symbol = (symbol or '').upper()
-        with self._lock:
-            if symbol in self._anomalies:
-                self._anomalies.pop(symbol, None)
-                self._persist_state()
-                print(f"[FuelFilter] Anomaly deleted: {symbol}")
-                return True
-            return False
-
-    def clear_anomalies(self) -> int:
-        """Clear the whole anomalies table. Returns count removed."""
-        with self._lock:
-            count = len(self._anomalies)
-            self._anomalies.clear()
-            self._persist_state()
-            print(f"[FuelFilter] Cleared {count} anomalies")
-            return count
-
 
 _instance: Optional[FuelFilterDaemon] = None
 

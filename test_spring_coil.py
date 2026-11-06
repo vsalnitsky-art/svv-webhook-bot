@@ -419,7 +419,7 @@ def test_aggregate_reports_the_regime_and_candidates():
 
 def test_page_shows_phase_tabs_and_move_direction():
     for k in ("expansion: '🌋 Рух іде'", "cooling: '🧊 Охолоджуються'", "calm: '😐 Спокій'",
-              'function _sprPh(', 'фаза WATCHLIST', 'найближчі до стиснення', "рух ${mv24 > 0"):
+              'function _sprPh(', 'фаза ${SC}', 'найближчі до стиснення', "рух ${mv24 > 0"):
         _check(k in _HTML, k)
     for k in ("'phase'", "'move24_pct'", "'atr_peak_ratio'", "'unit_r'"):
         _check(k in _APP, k)
