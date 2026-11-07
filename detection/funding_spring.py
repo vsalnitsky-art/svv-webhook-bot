@@ -28,6 +28,8 @@ TICK_SEC = 5
 WORKERS = 4
 MAX_BACKOFF = 600
 RESTORE_MAX_AGE = 6 * 3600
+RATE_SAMPLE_SEC = 30      # «попередня» ставка = значення ~30с тому (тренд кольору)
+VOL_BASE_SEC = 120        # база обсягу 24h для стрілки ↑/↓ (як було в «Funding — МММ»)
 DB_KEY = 'funding_spring_v1'
 DB_SETTINGS = 'funding_spring_settings'
 ROW_KEYS = ('state', 'label', 'charge', 'bias', 'dir', 'pot_long', 'pot_short',
@@ -100,6 +102,7 @@ class FundingSpring:
         self._restored: set = set()
         self._stats = {'tick_at': 0.0, 'calc_at': 0.0, 'calc_n': 0, 'calc_bar': 0,
                        'fetched': 0, 'own': 0, 'watchlist': 0, 'errors': 0, 'last_err': ''}
+        self._fund: Dict[str, Dict] = {}       # S → трекер другого рядка
         self._dirty = False
         self._thread = None
         self._stop = threading.Event()
@@ -183,6 +186,54 @@ class FundingSpring:
         rec['bar_t'] = bar_t(closed[-1])
         return 'ok', rec
 
+    def _track_funding(self, info: Dict, syms: List[str], now: float) -> None:
+        """Другий рядок таблиці: ставка + тренд (попередня ~30с тому), обсяг 24h
+        з базою ~2 хв (стрілка) і мін/макс за час у сканері, рух ціни.
+        Монета вийшла зі сканера → трекер забуваємо."""
+        keep = set(syms)
+        for s in list(self._fund):
+            if s not in keep:
+                self._fund.pop(s, None)
+        for s in syms:
+            fi = info.get(s) or {}
+            t = self._fund.setdefault(s, {'first_at': now})
+            rate = fi.get('rate')
+            if rate is not None:
+                if t.get('rate') is None:
+                    t['prev_rate'], t['rate_at'] = rate, now
+                elif now - float(t.get('rate_at') or 0) >= RATE_SAMPLE_SEC:
+                    t['prev_rate'], t['rate_at'] = t.get('rate'), now
+                t['rate'] = rate
+                t['rate_min'] = rate if t.get('rate_min') is None else min(t['rate_min'], rate)
+            vol = fi.get('vol24h')
+            if vol is not None:
+                if t.get('vol_base_at') is None:
+                    t['vol_base'], t['vol_base_at'] = vol, now
+                    t.setdefault('vol_prev', vol)
+                elif now - t['vol_base_at'] >= VOL_BASE_SEC:
+                    t['vol_prev'] = t.get('vol_base', vol)
+                    t['vol_base'], t['vol_base_at'] = vol, now
+                t['vol'] = vol
+                t['vol_min'] = vol if t.get('vol_min') is None else min(t['vol_min'], vol)
+                t['vol_max'] = vol if t.get('vol_max') is None else max(t['vol_max'], vol)
+            t['next_ms'] = fi.get('next_ms')
+            t['f_trend'] = fi.get('f_trend')
+            t['price'] = fi.get('price')
+
+    def funding_view(self, s: str, now: float) -> Dict:
+        """Дані другого рядка однієї монети (лише памʼять)."""
+        t = self._fund.get(s) or {}
+        nx = t.get('next_ms')
+        try:
+            nx = int(nx) if nx and int(nx) / 1000.0 > now else None
+        except (TypeError, ValueError):
+            nx = None
+        return {'rate': t.get('rate'), 'prev_rate': t.get('prev_rate'),
+                'rate_min': t.get('rate_min'), 'next_ms': nx,
+                'f_trend': t.get('f_trend'), 'vol24h': t.get('vol'),
+                'vol24h_prev': t.get('vol_prev'), 'vol24h_min': t.get('vol_min'),
+                'vol24h_max': t.get('vol_max'), 'price': t.get('price')}
+
     def tick(self, now: Optional[float] = None) -> None:
         now = time.time() if now is None else now
         self._stats['tick_at'] = now
@@ -190,6 +241,10 @@ class FundingSpring:
             return
         syms = self._symbols()
         exp = expected_last(now)
+        try:
+            self._track_funding(self._funding_info() or {}, syms, now)
+        except Exception as e:
+            print(f"[FundSpring] funding track error: {e}")
         try:
             wl = self._scanner_recs(syms) or {}
         except Exception:
@@ -268,10 +323,6 @@ class FundingSpring:
     def state(self, now: Optional[float] = None) -> Dict:
         now = time.time() if now is None else now
         syms = self._symbols()
-        try:
-            info = self._funding_info() or {}
-        except Exception:
-            info = {}
         sc = _sc()
         rows, full, pending = [], {}, []
         with self._lock:
@@ -280,9 +331,7 @@ class FundingSpring:
             fails = dict(self._fail)
         for s in syms:
             rec = recs.get(s)
-            fi = info.get(s) or {}
-            fund = {'rate': fi.get('rate'), 'next_ms': fi.get('next_ms'),
-                    'vol24h': fi.get('vol24h'), 'f_trend': fi.get('f_trend')}
+            fund = self.funding_view(s, now)
             if not rec:
                 pending.append(s)
                 f = fails.get(s)
@@ -353,9 +402,10 @@ def _default_funding_info() -> Dict[str, Dict]:
         g = lambda n: ({str(k).upper(): v for k, v in (getattr(fm, n)() or {}).items()}
                        if hasattr(fm, n) else {})
         rates, nxt, vols, tr = g('get_rates'), g('get_next_funding'), g('get_volumes'), g('get_trends')
-        for s in set(rates) | set(nxt) | set(vols):
+        px = g('get_price_dirs')
+        for s in set(rates) | set(nxt) | set(vols) | set(px):
             out[s] = {'rate': rates.get(s), 'next_ms': nxt.get(s),
-                      'vol24h': vols.get(s), 'f_trend': tr.get(s)}
+                      'vol24h': vols.get(s), 'f_trend': tr.get(s), 'price': px.get(s)}
     except Exception:
         pass
     return out

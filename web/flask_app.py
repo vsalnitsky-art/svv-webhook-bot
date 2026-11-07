@@ -3729,6 +3729,8 @@ def register_api_routes(app):
             enabled = bool(_ss.get('spring_enabled', True))
             gate_on = enabled and bool(_ss.get('spring_gate_enabled', True))
             min_pot = _ss.get('spring_min_pot', 40)
+            charge_gate_on = enabled and bool(_ss.get('spring_charge_gate_enabled', False))
+            min_charge = _ss.get('spring_min_charge', 50)
             sides, queues = {}, {}
             try:
                 from detection.fuel_filter import get_fuel_filter
@@ -3777,6 +3779,7 @@ def register_api_routes(app):
             return jsonify({'ok': True, 'enabled': enabled, 'rows': rows, 'stats': stats,
                             'next_at': (int(_now // 3600) + 1) * 3600, 'server_now': _now,
                             'gate_on': gate_on, 'min_pot': min_pot,
+                            'charge_gate_on': charge_gate_on, 'min_charge': min_charge,
                             'agg': (_spc.aggregate(full, total=len(full)) if _spc is not None else None),
                             'watchlist': wl, 'tf': '1h', 'ts': time.time()})
         except Exception as e:

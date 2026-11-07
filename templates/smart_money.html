@@ -1374,6 +1374,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .spr-tug.big{width:260px;height:12px;border-radius:6px}
 .spr-agg{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 8px;padding:8px 10px;border:1px solid #2b2f36;border-radius:6px;background:#11141b;font-size:0.7rem;color:#8b93a7}
 .spr-agg .spr-k{text-transform:uppercase;letter-spacing:.04em;font-size:0.6rem;color:#6b7280}
+#fspr-table tbody tr > td { background: transparent; }
+#fspr-table tbody tr:not(.fspr-sub) > td { border-bottom: none; }
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -2744,6 +2746,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <input type="checkbox" id="spr-gate" onchange="updateSpringGate()"> 🚦 сигнали лише з потенціалом</label>
                 <label title="Мінімальний потенціал (0-100) у бік сигналу.">поріг ≥
                     <input type="text" inputmode="numeric" id="spr-min" value="40" onchange="updateSpringGate()" style="width:34px;background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;font-size:0.7rem;padding:1px 4px;font-family:monospace;text-align:right"></label>
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;margin-left:6px" title="🔋 ВОРОТА ПО «ЗАРЯДУ» — окрема перевірка КОЖНОГО сигналу: проходить лише монета, у якої ЗАРЯД (колонка «Заряд», 0-100, без напрямку) ≥ порогу. Незалежна від воріт потенціалу: увімкнені обидві — сигнал мусить пройти обидві. Немає даних по монеті → не блокує. ✋ Ручні сигнали й відкриття — без змін. За замовчуванням вимкнено.">
+                    <input type="checkbox" id="spr-charge-gate" onchange="updateSpringGate()"> 🔋 лише із зарядом</label>
+                <label title="Мінімальний ЗАРЯД (0-100).">поріг ≥
+                    <input type="text" inputmode="numeric" id="spr-min-charge" value="50" onchange="updateSpringGate()" style="width:34px;background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;font-size:0.7rem;padding:1px 4px;font-family:monospace;text-align:right"></label>
                 <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімк/вимк 🌀 Пружину повністю. ВИМКНЕНО — бот НЕ рахує заряд монет, ворота «Через Пружину» не діють (сигнали йдуть як без них), таблиця порожня. УВІМКНЕНО — розрахунок із тих самих закритих 1h-барів сканера, без додаткових запитів до біржі.">
                     <input type="checkbox" id="spr-enabled" checked onchange="updateSpringGate()">
                     <span class="slider"></span>
@@ -4523,7 +4529,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <table class="tm-table" id="fspr-table">
                 <thead><tr>
                     <th data-sprsort="symbol" onclick="fsprSort('symbol')" style="cursor:pointer">Монета<span class="ff-sort-arrow"></span></th>
-                    <th data-sprsort="funding" onclick="fsprSort('funding')" style="cursor:pointer;text-align:right" title="Поточна ставка funding із 💰 Funding Rate Scanner (F🔻 — поглиблюється за ~30 хв, F🔺 — послаблюється). У підказці — час до виплати й обсяг 24h.">💰 Funding<span class="ff-sort-arrow"></span></th>
                     <th data-sprsort="state" onclick="fsprSort('state')" style="cursor:pointer" title="💥 вистрілила · 🌀 заряджена · ⏳ заряджається · без заряду — фаза ринку (🌋 рух іде / 🧊 охолоджується / 😐 спокій)">Стан<span class="ff-sort-arrow"></span></th>
                     <th data-sprsort="charge" onclick="fsprSort('charge')" style="cursor:pointer" title="ЗАРЯД 0-100 — наскільки стиснута пружина (той самий розрахунок, що в панелі 🌀 Пружина)">Заряд<span class="ff-sort-arrow"></span></th>
                     <th data-sprsort="bias" onclick="fsprSort('bias')" style="cursor:pointer" title="Куди ймовірніше вистрілить (у флеті — не визначаємо)">Напрямок<span class="ff-sort-arrow"></span></th>
@@ -4536,10 +4541,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <th style="text-align:right" title="Обʼєм останніх 12 год проти попередніх 72 (менше 1 — висихає)">Обʼєм</th>
                     <th title="Де монета зараз: у відкритій угоді / у черзі">📍</th>
                 </tr></thead>
-                <tbody id="fspr-tbody"><tr><td colspan="13" class="tm-empty-msg">Завантаження…</td></tr></tbody>
+                <tbody id="fspr-tbody"><tr><td colspan="12" class="tm-empty-msg">Завантаження…</td></tr></tbody>
             </table>
             </div>
-            <div style="font-size:0.66rem;color:#6b7280;margin-top:6px">Монети — УСІ з 💰 Funding Rate Scanner. ЗАКРИТІ 1h-бари: монети WATCHLIST беруть готовий розрахунок сканера (без запитів), решта — ОДИН запит на монету раз на закритий бар. Лише показ: нічого не відкриває і не шле в Telegram.</div>
+            <div style="font-size:0.66rem;color:#6b7280;margin-top:6px">Під кожною монетою — другий рядок із 💰 Funding Rate Scanner: ставка (колір = тренд за ~30с, ✦ — стабільне чітке значення) і час до виплати · Vol 24h (стрілка проти бази ~2 хв, у дужках мін–макс за час у сканері) · рух ціни за ~15 хв і загальний ~2 год. Монети — УСІ з 💰 Funding Rate Scanner. ЗАКРИТІ 1h-бари: монети WATCHLIST беруть готовий розрахунок сканера (без запитів), решта — ОДИН запит на монету раз на закритий бар. Лише показ: нічого не відкриває і не шле в Telegram.</div>
             </div>
         </div>
     </div>
@@ -7492,6 +7497,10 @@ async function loadSettings() {
             if (sprG && document.activeElement !== sprG) sprG.checked = s.spring_gate_enabled !== false;   // default ON
             const sprM = document.getElementById('spr-min');
             if (sprM && document.activeElement !== sprM) sprM.value = String(s.spring_min_pot != null ? s.spring_min_pot : 40);
+            const sprCG = document.getElementById('spr-charge-gate');
+            if (sprCG && document.activeElement !== sprCG) sprCG.checked = !!s.spring_charge_gate_enabled;   // default OFF
+            const sprCM = document.getElementById('spr-min-charge');
+            if (sprCM && document.activeElement !== sprCM) sprCM.value = String(s.spring_min_charge != null ? s.spring_min_charge : 50);
             _smMmGateSync();
             // 🆕 Новий OB — окремий тип сигналу (master ON · збіг ON · дедуп ON ·
             // у торгівлю OFF).
@@ -7693,6 +7702,11 @@ function updateSettingsSummary() {
         const spM = document.getElementById('spr-min');
         summary += ' · 🌀 Пружина ≥' + (spM ? spM.value : '40');
     }
+    const spCG = document.getElementById('spr-charge-gate');
+    if (spCG && spCG.checked && !(spE && !spE.checked)) {
+        const spCM = document.getElementById('spr-min-charge');
+        summary += ' · 🔋 Заряд ≥' + (spCM ? spCM.value : '50');
+    }
     // 🆕 Новий OB — тип сигналу: показуємо АКТИВНУ комбінацію TF (те саме, чим
     // міряє «тренд» дедуп), щоб у шапці було видно, за чим саме бот реагує.
     const oaOn = document.getElementById('sm-ob-alert');
@@ -7823,12 +7837,18 @@ async function updateSpringGate() {
     const mi = document.getElementById('spr-min');
     let v = parseInt(mi ? mi.value : '40', 10);
     if (isNaN(v)) v = 40;   // 0 — змістовне значення, тому НЕ через `|| 40`
+    const cg = document.getElementById('spr-charge-gate');
+    const cm = document.getElementById('spr-min-charge');
+    let vc = parseInt(cm ? cm.value : '50', 10);
+    if (isNaN(vc)) vc = 50;
     try {
         const r = await fetch('/api/smc/settings', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({spring_enabled: !(en && !en.checked),
                                   spring_gate_enabled: !!(el && el.checked),
-                                  spring_min_pot: Math.max(0, Math.min(100, v))}),
+                                  spring_min_pot: Math.max(0, Math.min(100, v)),
+                                  spring_charge_gate_enabled: !!(cg && cg.checked),
+                                  spring_min_charge: Math.max(0, Math.min(100, vc))}),
         });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         try { updateSettingsSummary(); } catch (e) {}
@@ -16570,7 +16590,7 @@ function sprRender() {
     const offEl = document.getElementById('spr-off'), liveEl = document.getElementById('spr-live');
     if (offEl) offEl.style.display = on ? 'none' : '';
     if (liveEl) liveEl.style.display = on ? '' : 'none';
-    ['spr-gate', 'spr-min'].forEach(i => { const e = document.getElementById(i);
+    ['spr-gate', 'spr-min', 'spr-charge-gate', 'spr-min-charge'].forEach(i => { const e = document.getElementById(i);
         if (e) { e.disabled = !on; if (e.parentElement) e.parentElement.style.opacity = on ? '' : '0.45'; } });
     const sumEl = document.getElementById('spr-sum');
     if (!on) { if (sumEl) sumEl.textContent = '🔌 вимкнено'; tb.dataset.sig = ''; return; }
@@ -16615,7 +16635,7 @@ function sprRender() {
 }
 // 🌀 Рядок таблиці «Пружини» — ОДИН рендер на дві таблиці (🌀 Пружина і
 // 💰 Funding — Пружина). `extra` — додаткові комірки одразу за монетою.
-function _sprRowHTML(r, minPot, mode, extra) {
+function _sprRowHTML(r, minPot, mode, extra, trStyle) {
     const st = r.state || 'flat';
     const ph = _sprPh(r);
     const col = _SPR_COL[ph] || _SPR_COL[st] || '#8b93a7';
@@ -16635,7 +16655,7 @@ function _sprRowHTML(r, minPot, mode, extra) {
         + (r.restored ? ' | ↻ з минулого запуску — перерахується першим проходом' : '');
     const where = r.trade_side ? `<span style="color:#38bdf8">💼 ${r.trade_side}</span>`
         : (r.queues && r.queues.length ? `<span style="color:#fbbf24">🎯 ${r.queues.join(',')}</span>` : '<span style="color:#4b5563">—</span>');
-    return `<tr title="${tip}" style="${r.restored ? 'opacity:0.6' : ''}">`
+    return `<tr title="${tip}" style="${r.restored ? 'opacity:0.6;' : ''}${trStyle || ''}">`
         + `<td style="white-space:nowrap">${typeof tvSym === 'function' ? tvSym(r.symbol) : r.symbol}</td>`
         + (extra || '')
         + `<td style="white-space:nowrap;color:${col};font-weight:600" title="${_sprPhaseTip(r)}">${stLabel}<span style="color:#8b93a7;font-weight:400">${fired}</span></td>`
@@ -16687,7 +16707,13 @@ function _sprStatusPaint() {
           + `<span title="Лічильники накопичуються і переживають рестарт бота">від ${hmd(st.since)}</span>`
           + (st.last || []).slice(0, 5).map(x => `<span class="spr-chip" title="${hm(x.ts)} · потенціал ${x.pot != null ? x.pot : '—'}" style="color:${x.outcome === 'pass' ? '#4ade80' : x.outcome === 'block' ? '#f87171' : '#8b93a7'}">${x.outcome === 'pass' ? '✓' : x.outcome === 'block' ? '✗' : '?'} ${x.symbol} ${x.side}</span>`).join('')
         : '<span class="spr-k">ворота</span><span>вимкнено — сигнали йдуть без перевірки потенціалу</span>';
-    el.innerHTML = `<div class="spr-row">${dot}${scan}</div><div class="spr-row">${calc}</div><div class="spr-row">${g}</div>`;
+    const cgOn = !!_sprMeta.charge_gate_on, cgMin = Number(_sprMeta.min_charge != null ? _sprMeta.min_charge : 50);
+    const cgPass = _sprRows.filter(r => (Number(r.charge) || 0) >= cgMin).length;
+    const cg = cgOn
+        ? `<span class="spr-k">ворота заряду</span><span class="spr-chip" style="color:#facc15">🔋 ≥ ${cgMin}</span>`
+          + `<span title="Скільки монет WATCHLIST зараз проходять ворота по заряду">проходять ${cgPass} з ${_sprRows.length} монет</span>`
+        : '<span class="spr-k">ворота заряду</span><span>вимкнено</span>';
+    el.innerHTML = `<div class="spr-row">${dot}${scan}</div><div class="spr-row">${calc}</div><div class="spr-row">${g}</div><div class="spr-row">${cg}</div>`;
     // одразу намалювати секунди, не чекаючи тіка
     el.querySelectorAll('.ff-timer[data-since]').forEach(t => { if (typeof fmtTimer === 'function') t.textContent = fmtTimer(now - Number(t.getAttribute('data-since'))); });
     el.querySelectorAll('.ff-countdown[data-until]').forEach(t => { if (typeof _fmtCountdown === 'function') t.textContent = _fmtCountdown(Number(t.getAttribute('data-until')) - now); });
@@ -16712,7 +16738,7 @@ async function sprLoad(force) {
         _sprErr = '';
         _sprRows = d.rows || [];
         if (d.server_now && typeof _srvSkewNote === 'function') _srvSkewNote(d.server_now);
-        _sprMeta = {enabled: d.enabled, agg: d.agg || null, stats: d.stats || {}, next_at: d.next_at, gate_on: d.gate_on, min_pot: d.min_pot, watchlist: d.watchlist, ts: d.ts};
+        _sprMeta = {enabled: d.enabled, agg: d.agg || null, stats: d.stats || {}, next_at: d.next_at, gate_on: d.gate_on, min_pot: d.min_pot, charge_gate_on: d.charge_gate_on, min_charge: d.min_charge, watchlist: d.watchlist, ts: d.ts};
         sprRender();
     } catch (e) { console.error('spring load', e); fail('немає звʼязку з ботом (' + (e && e.message || e) + ')'); }
 }
@@ -16733,16 +16759,61 @@ function fsprSort(c) {
     fsprRender();
 }
 function fsprSetDir(d) { _fsprDir = d; fsprRender(); }
-function _fsprFundCell(r) {
+// 💰 Другий рядок під монетою (вимога 07.11 — повернуто зі старої таблиці
+// «💰 Funding — МММ», без «Дій»): ставка + тренд + відлік до виплати + F-Trend ·
+// Vol 24h зі стрілкою й діапазоном · рух ціни 15 хв / ~2 год. Дані — рушій
+// (`funding_view`), той самий 💰 Funding Rate Scanner.
+function _fsprSubRow(r, cols, bg) {
     const f = r.funding || {};
-    const v = Number(f.rate);
-    if (f.rate == null || !isFinite(v)) return '<td style="text-align:right;color:#4b5563">—</td>';
-    const col = v < 0 ? '#f87171' : '#4ade80';
-    const nx = f.next_ms ? new Date(Number(f.next_ms)) : null;
-    const tip = `Ставка funding ${v >= 0 ? '+' : ''}${v.toFixed(4)}%`
-        + (nx ? ` · виплата о ${String(nx.getHours()).padStart(2, '0')}:${String(nx.getMinutes()).padStart(2, '0')}` : '')
-        + (f.vol24h ? ` · обсяг 24h ${typeof fmtVolShort === 'function' ? fmtVolShort(Number(f.vol24h)) : f.vol24h}` : '');
-    return `<td style="white-space:nowrap;text-align:right;font-family:monospace;color:${col}" title="${tip}">${v >= 0 ? '+' : ''}${v.toFixed(3)}%${typeof fTrendBadge === 'function' ? fTrendBadge(f.f_trend) : ''}</td>`;
+    const rate = (f.rate != null && isFinite(Number(f.rate))) ? Number(f.rate) : null;
+    const prev = (f.prev_rate != null && isFinite(Number(f.prev_rate))) ? Number(f.prev_rate) : null;
+    let col = '#cbd5e1', tip = 'без даних тренду', extra = '', mark = '';
+    if (rate != null && prev != null) {
+        if (rate < prev - 0.0005) { col = '#f87171'; tip = 'зменшується (глибше в мінус)'; }
+        else if (rate > prev + 0.0005) { col = '#4ade80'; tip = 'збільшується (до нуля)'; }
+        else {
+            const av = Math.abs(rate), step = Math.round(av / 0.5) * 0.5;
+            if (Math.abs(av - step) < 0.01 && step >= 0.5 && step <= 4) {
+                col = '#fbbf24'; tip = `⚡ цікаве значення: стабільний funding ${step}% (чітке число)`;
+                extra = ';text-shadow:0 0 9px rgba(251,191,36,0.9);font-weight:800'; mark = '✦';
+            } else { col = '#7dd3fc'; tip = 'без змін (стабільний)'; }
+        }
+    }
+    const markSlot = `<span style="display:inline-block;width:0.95em;text-align:center;color:#fbbf24${mark ? ';text-shadow:0 0 9px rgba(251,191,36,0.9)' : ''}">${mark}</span>`;
+    const rateTxt = rate == null
+        ? `${markSlot}<span style="display:inline-block;width:66px;text-align:right;color:#667">—</span>`
+        : `${markSlot}<span title="Funding ${tip}" style="display:inline-block;width:66px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;color:${col}${extra}">${rate >= 0 ? '+' : ''}${rate.toFixed(3)}%</span>`;
+    const cdTxt = f.next_ms
+        ? `<span class="ff-fundnext" data-next="${f.next_ms}" style="font-size:0.66rem;color:#9aa3b5">⏳ ${typeof fmtFundLeft === 'function' ? fmtFundLeft(f.next_ms) : ''}</span>` : '';
+    const fv = (typeof fmtVolShort === 'function') ? fmtVolShort : (x => String(x));
+    const v = (f.vol24h != null) ? Number(f.vol24h) : null;
+    const vp = (f.vol24h_prev != null) ? Number(f.vol24h_prev) : null;
+    const arrow = (v == null || vp == null || !(vp > 0)) ? ''
+        : v > vp * 1.005 ? '<span title="Обсяг 24h зростає" style="color:#4ade80;font-size:0.72rem">▲</span>'
+        : v < vp * 0.995 ? '<span title="Обсяг 24h спадає" style="color:#f87171;font-size:0.72rem">▼</span>'
+        : '<span title="Обсяг 24h без змін" style="color:#8b93a7;font-size:0.72rem">→</span>';
+    const range = (f.vol24h_min != null && f.vol24h_max != null)
+        ? `<span title="Діапазон 24h-обсягу за час у сканері (мін–макс)" style="font-size:0.6rem;color:#8b93a7">(${fv(f.vol24h_min)}–${fv(f.vol24h_max)})</span>` : '';
+    const volTxt = (v != null && v > 0)
+        ? `<span style="display:inline-flex;align-items:center;gap:5px"><b style="display:inline-block;width:52px;text-align:right;font-variant-numeric:tabular-nums">${fv(v)}</b><span style="display:inline-block;width:12px;text-align:center">${arrow}</span>${range}</span>`
+        : '<span style="color:#667">—</span>';
+    const pz = f.price || {};
+    const pA = x => x === 'up' ? '▲' : (x === 'down' ? '▼' : '▬');
+    const pC = x => x === 'up' ? '#4ade80' : (x === 'down' ? '#f87171' : '#8b93a7');
+    const pW = x => x === 'up' ? 'росте' : (x === 'down' ? 'спадає' : 'рівно');
+    const pWo = x => x === 'up' ? 'росте' : (x === 'down' ? 'спадає' : 'в боці');
+    const pHas = (pz.dir != null || pz.chg != null);
+    const pd = pz.dir || 'flat', pc = Number(pz.chg != null ? pz.chg : 0);
+    const pdo = pz.dir_overall || 'flat', pco = Number(pz.chg_overall != null ? pz.chg_overall : 0);
+    const price = pHas
+        ? `<span title="Свіжий рух ціни за ~15 хв (з 💰 Funding Rate Scanner)" style="display:inline-flex;align-items:center;gap:6px;width:250px;flex:none">💹 <span style="color:#8b93a7">Ціна:</span> <b style="color:${pC(pd)};font-variant-numeric:tabular-nums;display:inline-block;width:74px;text-align:right">${pA(pd)} ${pc >= 0 ? '+' : ''}${pc.toFixed(2)}%</b> <span style="color:${pC(pd)};font-size:0.66rem;display:inline-block;width:44px">${pW(pd)}</span><span style="color:#556;font-size:0.62rem">15хв</span></span>`
+          + `<span title="Загальний тренд монети (~2 год)" style="display:inline-flex;align-items:center;gap:6px;width:300px;flex:none">📈 <span style="color:#8b93a7">Загалом:</span> <b style="color:${pC(pdo)};font-variant-numeric:tabular-nums;display:inline-block;width:74px;text-align:right">${pA(pdo)} ${pco >= 0 ? '+' : ''}${pco.toFixed(2)}%</b> <span style="color:${pC(pdo)};font-size:0.66rem;display:inline-block;width:44px">${pWo(pdo)}</span><span style="color:#556;font-size:0.62rem">~2год</span></span>`
+        : `<span style="display:inline-flex;align-items:center;gap:6px;width:250px;flex:none">💹 <span style="color:#8b93a7">Ціна:</span> <span style="color:#667">— немає у сканері</span></span>`;
+    return `<tr class="fspr-sub" style="${bg}"><td colspan="${cols}" style="padding:2px 8px 6px 34px;border-bottom:1px solid rgba(255,255,255,0.07)">`
+        + `<span style="display:flex;align-items:center;flex-wrap:wrap;font-size:0.72rem;color:#9aa3b5;width:100%;row-gap:3px">`
+        + `<span title="Поточний funding % і час до наступного нарахування" style="display:inline-flex;align-items:center;gap:6px;width:250px;flex:none">💵 <b style="color:#cbd5e1;font-weight:600;display:inline-flex;align-items:center;gap:6px">${rateTxt}<span style="display:inline-block;width:96px">${cdTxt}</span></b><span style="display:inline-block;width:26px;text-align:center">${typeof fTrendBadge === 'function' ? fTrendBadge(f.f_trend) : ''}</span></span>`
+        + `<span title="24-годинний обсяг торгів (USD)" style="display:inline-flex;align-items:center;gap:6px;width:300px;flex:none">📊 <span style="color:#8b93a7">Vol 24h:</span> <b style="color:#cbd5e1;font-weight:600">${volTxt}</b></span>`
+        + price + `</span></td></tr>`;
 }
 function _fsprStatusPaint() {
     const el = document.getElementById('fspr-status');
@@ -16795,11 +16866,9 @@ function fsprRender() {
     }
     if (sumEl) sumEl.textContent = `${ok.length} з ${_fsprMeta.coins || 0} · 🌀 ${ok.filter(r => r.state === 'charged').length}`;
     const rows = ok.filter(r => _sprFilter(r, _fsprDir)).slice().sort((a, b) => {
-        const x = _fsprSortCol === 'funding' ? Number((a.funding || {}).rate) : _sprVal(a, _fsprSortCol);
-        const y = _fsprSortCol === 'funding' ? Number((b.funding || {}).rate) : _sprVal(b, _fsprSortCol);
-        const xs = isFinite(x) ? x : -1e9, ys = isFinite(y) ? y : -1e9;
-        if (xs < ys) return -_fsprSortDir;
-        if (xs > ys) return _fsprSortDir;
+        const x = _sprVal(a, _fsprSortCol), y = _sprVal(b, _fsprSortCol);
+        if (x < y) return -_fsprSortDir;
+        if (x > y) return _fsprSortDir;
         return String(a.symbol).localeCompare(String(b.symbol));
     });
     // монети без розрахунку (нова / замало барів) — внизу, з причиною
@@ -16809,18 +16878,21 @@ function fsprRender() {
         if (ar) ar.textContent = th.getAttribute('data-sprsort') === _fsprSortCol ? (_fsprSortDir > 0 ? ' ▲' : ' ▼') : '';
     });
     const sig = JSON.stringify([_fsprDir, _fsprSortCol, _fsprSortDir,
-        rows.map(r => [r.symbol, r.state, r.phase, r.move24_pct, r.charge, r.bias, r.dir, r.pot_long, r.pot_short, r.tension_long, r.tension_short, r.lean, r.released, r.move_long_pct, r.move_short_pct, r.trade_side, (r.queues || []).join(','), r.restored, (r.funding || {}).rate, (r.funding || {}).f_trend]),
-        pend.map(r => [r.symbol, r.reason, (r.funding || {}).rate])]);
+        rows.map(r => [r.symbol, r.state, r.phase, r.move24_pct, r.charge, r.bias, r.dir, r.pot_long, r.pot_short, r.tension_long, r.tension_short, r.lean, r.released, r.move_long_pct, r.move_short_pct, r.trade_side, (r.queues || []).join(','), r.restored, JSON.stringify(r.funding || {})]),
+        pend.map(r => [r.symbol, r.reason, JSON.stringify(r.funding || {})])]);
     if (tb.dataset.sig === sig) return;
     tb.dataset.sig = sig;
     _fsprAggPaint();
     if (!rows.length && !pend.length) {
-        tb.innerHTML = `<tr><td colspan="13" class="tm-empty-msg">${_fsprRows.length ? 'Немає монет у цій вкладці' : (_fsprMeta.coins ? 'Рахується — перші монети зʼявляться за кілька секунд' : 'У 💰 Funding Rate Scanner зараз немає монет (або сканер вимкнено)')}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="12" class="tm-empty-msg">${_fsprRows.length ? 'Немає монет у цій вкладці' : (_fsprMeta.coins ? 'Рахується — перші монети зʼявляться за кілька секунд' : 'У 💰 Funding Rate Scanner зараз немає монет (або сканер вимкнено)')}</td></tr>`;
         return;
     }
-    tb.innerHTML = rows.map(r => _sprRowHTML(r, 101, 'off', _fsprFundCell(r))).join('')
-        + pend.map(r => `<tr style="opacity:0.55"><td style="white-space:nowrap">${typeof tvSym === 'function' ? tvSym(r.symbol) : r.symbol}</td>${_fsprFundCell(r)}`
-            + `<td colspan="11" style="color:#8b93a7">⏳ ${r.reason || 'рахується'}</td></tr>`).join('');
+    // Зебра — ПО МОНЕТІ (обидва рядки одного кольору), а не по <tr>.
+    const bgOf = i => i % 2 ? 'background:rgba(255,255,255,0.025)' : '';
+    tb.innerHTML = rows.map((r, i) => _sprRowHTML(r, 101, 'off', '', bgOf(i)) + _fsprSubRow(r, 12, bgOf(i))).join('')
+        + pend.map((r, j) => { const bg = bgOf(rows.length + j);
+            return `<tr style="opacity:0.55;${bg}"><td style="white-space:nowrap">${typeof tvSym === 'function' ? tvSym(r.symbol) : r.symbol}</td>`
+            + `<td colspan="11" style="color:#8b93a7">⏳ ${r.reason || 'рахується'}</td></tr>` + _fsprSubRow(r, 12, bg); }).join('');
 }
 async function fsprLoad(force) {
     if (!force && (_qCollapsed('fund') || (typeof document !== 'undefined' && document.hidden))) return;
@@ -16828,7 +16900,7 @@ async function fsprLoad(force) {
         const el = document.getElementById('fspr-status');
         if (el) el.innerHTML = `<div class="spr-row"><span class="spr-dot off" style="background:#f87171"></span><span style="color:#f87171">⚠️ дані не отримано: ${why}</span><span>· повтор через 15с</span></div>`;
         const tb = document.getElementById('fspr-tbody');
-        if (tb && !_fsprRows.length) { tb.dataset.sig = ''; tb.innerHTML = `<tr><td colspan="13" class="tm-empty-msg">⚠️ ${why}</td></tr>`; }
+        if (tb && !_fsprRows.length) { tb.dataset.sig = ''; tb.innerHTML = `<tr><td colspan="12" class="tm-empty-msg">⚠️ ${why}</td></tr>`; }
     };
     try {
         const r = await fetch('/api/funding-spring/state');

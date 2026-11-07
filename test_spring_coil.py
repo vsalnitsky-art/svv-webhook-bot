@@ -145,6 +145,32 @@ def test_signal_gate_behaviour():
 
 
 
+def test_charge_gate_behaviour():
+    """🔋 Вимога 07.11: окремі ворота по ЗАРЯДУ (деф. вимкнено, поріг 50)."""
+    _check("'spring_charge_gate_enabled': False" in _SC and "'spring_min_charge': 50" in _SC,
+           'дефолти: вимкнено, поріг 50')
+    rec = {'ok': True, 'pot_long': 70, 'pot_short': 10, 'label': '🌀', 'charge': 62}
+    sc = _scanner({'spring_min_charge': 50}, {'ETHUSDT': rec, 'XRPUSDT': dict(rec, charge=30)})
+    app, ok, chip, why = sc._spring_charge_gate('ETHUSDT', 'SHORT')
+    _check(app and ok and '62' in chip and '✓' in chip, 'заряд без напрямку: 62 ≥ 50 і для SHORT')
+    app, ok, chip, why = sc._spring_charge_gate('XRPUSDT', 'LONG')
+    _check(not ok and '30 < 50' in why, why)
+    app, ok, chip, why = sc._spring_charge_gate('BTCUSDT', 'LONG')
+    _check(ok and 'немає даних' in chip, 'немає даних → не блокуємо')
+    i = _SC.index('def _signal_allowed(')
+    fn = _SC[i:_SC.index('\n    def ', i + 10)]
+    _check(fn.index('_sg(symbol, side_label)') < fn.index('_cg(symbol, side_label)') < fn.index('# OB'),
+           'ворота заряду — одразу за воротами потенціалу, до OB/PD/…')
+    _check("spring_charge_gate_enabled', False" in fn, 'діють лише з увімкненим тумблером')
+    for k in ('id="spr-charge-gate"', 'id="spr-min-charge"', 'spring_charge_gate_enabled: !!(cg && cg.checked)',
+              'spring_min_charge: Math.max(0, Math.min(100, vc))'):
+        _check(k in _HTML, k)
+    p = _HTML.index('id="spr-gate"')
+    _check(p < _HTML.index('id="spr-charge-gate"') < _HTML.index('id="spr-enabled"'),
+           'чекбокс поруч із «🚦 сигнали лише з потенціалом», у шапці 🌀 Пружини')
+    print('✓ 🔋 ворота по заряду: поріг, без напрямку, fail-open, порядок, UI')
+
+
 def test_gate_decisions_are_counted_for_the_status_line():
     rec = {'ok': True, 'pot_long': 70, 'pot_short': 10, 'label': '🌀', 'charge': 80}
     sc = _scanner({'spring_min_pot': 40}, {'ETHUSDT': rec})

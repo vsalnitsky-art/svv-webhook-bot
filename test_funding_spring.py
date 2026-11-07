@@ -114,7 +114,7 @@ def test_rows_carry_funding_and_follow_the_scanner_list():
     net = _Net(NOW0)
     syms = ['AAAUSDT', 'BBBUSDT']
     e = _eng(syms, net, info={'AAAUSDT': {'rate': -1.25, 'next_ms': 1, 'f_trend': -1}})
-    e.tick(NOW0)
+    e.tick(NOW0)   # трекер другого рядка наповнює тік
     st = e.state(NOW0)
     a = next(r for r in st['rows'] if r['symbol'] == 'AAAUSDT')
     _check(a['funding']['rate'] == -1.25 and a['funding']['f_trend'] == -1, a['funding'])
@@ -235,26 +235,21 @@ def test_page_has_only_the_new_table():
         _check(good in _HTML, good)
     th = _HTML[_HTML.index('id="fspr-table"'):]
     th = th[:th.index('</thead>')]
-    _check(len(re.findall(r'<th[ >]', th)) == 13, '13 колонок')
-    _check('colspan="13"' in _HTML, 'colspan 13')
+    _check(len(re.findall(r'<th[ >]', th)) == 12, '12 колонок (ставка — у другому рядку)')
+    _check('colspan="12" class="tm-empty-msg">Завантаження' in _HTML, 'colspan 12')
+    _check('fsprSort(\'funding\')' not in _HTML, 'окремої колонки 💰 Funding немає — ставка в другому рядку')
     _check(_HTML.count('_sprRowHTML(') >= 3, 'обидві таблиці малює ОДИН рендер рядка')
     print('✓ сторінка: лише нова таблиця, спільний рендер рядка з 🌀 Пружиною')
 
 
-def test_js_funding_row_uses_the_spring_row():
+def _run_funding_js(row_js):
     a = _HTML.index("let _sprErr = ''")
     b = _HTML.index('\n}\n', _HTML.index('function _sprRowHTML(')) + 3
-    ft = _HTML.index('function fTrendBadge(')
-    ft = _HTML[ft:_HTML.index('\n}\n', ft) + 3]
-    fv = _HTML.index('function fmtVolShort(')
-    fv = _HTML[fv:_HTML.index('\n}\n', fv) + 3]
-    fc = _HTML.index('function _fsprFundCell(')
-    fc = _HTML[fc:_HTML.index('\n}\n', fc) + 3]
-    row = ("{symbol:'AAAUSDT',state:'charged',label:'🌀 заряджена',charge:72,dir:'SHORT',"
-           "pot_long:20,pot_short:52,lean:'SHORT',prob_long:28,tension_long:20,tension_short:52,"
-           "funding:{rate:-1.2345,f_trend:-1,next_ms:0}}")
-    js = (_HTML[a:b] + ft + fv + fc
-          + f"\nconst r={row};console.log(_sprRowHTML(r,101,'off',_fsprFundCell(r)));")
+    parts = [_HTML[a:b]]
+    for fn in ('function fTrendBadge(', 'function fmtVolShort(', 'function _fsprSubRow('):
+        i = _HTML.index(fn)
+        parts.append(_HTML[i:_HTML.index('\n}\n', i) + 3])
+    js = ''.join(parts) + "\nfunction fmtFundLeft(){return '2г 10хв';}\n" + row_js
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as f:
         f.write(js)
         path = f.name
@@ -262,13 +257,50 @@ def test_js_funding_row_uses_the_spring_row():
         res = subprocess.run(['node', path], capture_output=True, text=True, timeout=30)
     finally:
         os.unlink(path)
-    out = res.stdout
     _check(res.returncode == 0, res.stderr[-400:])
-    tds = out.split('<td')[1:]
-    _check(len(tds) == 13, f'13 комірок, а не {len(tds)}')
-    _check('-1.234%' in tds[1] and 'F🔻' in tds[1], 'друга комірка — ставка funding + F-Trend')
-    _check('заряджена' in tds[2] and '72' in tds[3], 'далі — стан і заряд «Пружини»')
-    print('✓ JS: рядок funding = рядок «Пружини» + комірка 💰 Funding')
+    return res.stdout
+
+
+def test_js_spring_row_plus_funding_second_row():
+    """Вимога 07.11: другий рядок повернуто (крім «Дій»)."""
+    row = ("{symbol:'AAAUSDT',state:'charged',label:'🌀 заряджена',charge:72,dir:'SHORT',"
+           "pot_long:20,pot_short:52,lean:'SHORT',prob_long:28,tension_long:20,tension_short:52,"
+           "funding:{rate:-1.2345,prev_rate:-1.10,f_trend:-1,next_ms:1900000000000,"
+           "vol24h:12500000,vol24h_prev:10000000,vol24h_min:9000000,vol24h_max:13000000,"
+           "price:{dir:'down',chg:-0.42,dir_overall:'up',chg_overall:1.3}}}")
+    out = _run_funding_js(f"const r={row};console.log(_sprRowHTML(r,101,'off','','') + '@@SPLIT@@' + _fsprSubRow(r,12,''));")
+    main, sub = out.split('@@SPLIT@@', 1)
+    tds = main.split('<td')[1:]
+    _check(len(tds) == 12, f'12 комірок, а не {len(tds)}')
+    _check('заряджена' in tds[1] and '72' in tds[2], 'стан і заряд «Пружини»')
+    _check('colspan="12"' in sub, 'другий рядок на всю ширину')
+    _check('-1.234%' in sub and '#f87171' in sub, 'ставка глибшає → червона')
+    _check('F🔻' in sub and 'ff-fundnext' in sub and '2г 10хв' in sub, 'F-Trend + відлік до виплати')
+    _check('Vol 24h' in sub and '▲' in sub and '$9.0M–$13.0M' in sub, 'обсяг: стрілка + діапазон')
+    _check('Ціна:' in sub and '-0.42%' in sub and 'Загалом:' in sub and '+1.30%' in sub, 'ціна 15хв + ~2год')
+    _check('Приглушити' not in sub and 'Прибрати' not in sub, '«Дії» не повертали')
+    print('✓ JS: рядок «Пружини» + другий рядок 💰 Funding (без «Дій»)')
+
+
+def test_second_row_tracker():
+    info = {'AAAUSDT': {'rate': -1.0, 'vol24h': 100.0, 'next_ms': (NOW0 + 3600) * 1000,
+                        'price': {'dir': 'up', 'chg': 0.5}}}
+    e = _eng(['AAAUSDT'], _Net(NOW0), info=info)
+    e._track_funding(info, ['AAAUSDT'], NOW0)
+    info['AAAUSDT'].update(rate=-1.2, vol24h=130.0)
+    e._track_funding(info, ['AAAUSDT'], NOW0 + 10)
+    v = e.funding_view('AAAUSDT', NOW0 + 10)
+    _check(v['prev_rate'] == -1.0 and v['rate'] == -1.2, 'попередня ставка тримається ~30с')
+    e._track_funding(info, ['AAAUSDT'], NOW0 + 40)
+    _check(e.funding_view('AAAUSDT', NOW0 + 40)['prev_rate'] == -1.2, 'через 30с база зсувається')
+    _check(v['vol24h_prev'] == 100.0 and v['vol24h_min'] == 100.0 and v['vol24h_max'] == 130.0, v)
+    e._track_funding(info, ['AAAUSDT'], NOW0 + 200)
+    _check(e.funding_view('AAAUSDT', NOW0 + 200)['vol24h_prev'] == 100.0, 'база обсягу ~2 хв')
+    _check(v['price']['dir'] == 'up' and v['next_ms'], 'ціна і час виплати')
+    _check(e.funding_view('AAAUSDT', NOW0 + 7200)['next_ms'] is None, 'минулий час виплати не показуємо')
+    e._track_funding(info, [], NOW0 + 300)
+    _check('AAAUSDT' not in e._fund, 'монета вийшла зі сканера — трекер забуто')
+    print('✓ трекер другого рядка: тренд ставки, база обсягу, мін/макс, ціна')
 
 
 if __name__ == '__main__':

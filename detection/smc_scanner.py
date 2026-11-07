@@ -468,6 +468,12 @@ DEFAULT_SETTINGS = {
     'spring_enabled': True,
     'spring_gate_enabled': True,
     'spring_min_pot': 40,
+    # 🔋 ВОРОТА ПО «ЗАРЯДУ» (вимога 07.11): окремо від потенціалу — сигнал
+    # проходить, лише коли ЗАРЯД монети (колонка «Заряд», без напрямку) ≥
+    # порогу. Тумблер деф. ВИМК: новий фільтр не має мовчки звузити потік
+    # (на ринку в русі заряд 2-12, тож 50 різав би майже все).
+    'spring_charge_gate_enabled': False,
+    'spring_min_charge': 50,
 
     # === 🆕 АЛЕРТ «НОВИЙ OB НА ГРАФІКУ» (вимога 09.09) ===================
     # «Моментальна реакція на появу на графіку нового OB 1H і моментальна
@@ -756,6 +762,18 @@ def calc_htf_bias(htf_klines, method, ema_fast=9, ema_slow=21, ema_trend=50,
         'close': round(last_close, 6),
     }
 
+
+
+def spring_charge_of(rec):
+    """🔋 ЗАРЯД запису «Пружини» (0-100) — те саме число, що колонка «Заряд».
+    Немає запису / не порахований → None («невідомо» ≠ «нуль»)."""
+    if not isinstance(rec, dict) or rec.get('ok') is False:
+        return None
+    try:
+        v = rec.get('charge')
+        return None if v is None else float(v)
+    except (TypeError, ValueError):
+        return None
 
 class SMCScanner:
     
@@ -1827,6 +1845,7 @@ class SMCScanner:
                        'mm_gate_strength',
                        'liq_gate_enabled',
                        'spring_enabled', 'spring_gate_enabled', 'spring_min_pot',
+                       'spring_charge_gate_enabled', 'spring_min_charge',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
@@ -1996,6 +2015,13 @@ class SMCScanner:
                     self._settings.get('spring_min_pot', 40)))))
             except (TypeError, ValueError):
                 self._settings['spring_min_pot'] = 40
+            self._settings['spring_charge_gate_enabled'] = bool(
+                self._settings.get('spring_charge_gate_enabled', False))
+            try:
+                self._settings['spring_min_charge'] = max(0, min(100, int(float(
+                    self._settings.get('spring_min_charge', 50)))))
+            except (TypeError, ValueError):
+                self._settings['spring_min_charge'] = 50
 
             # === 🆕 Алерт «новий OB»: валідація ===
             self._settings['ob_alert_enabled'] = bool(
@@ -3874,6 +3900,22 @@ class SMCScanner:
                 f"{rec.get('label', '')}):{'✓' if ok else '✗'}")
         return (True, ok, chip, '' if ok else why.replace(' — чекає в черзі', ''))
 
+    def _spring_charge_gate(self, symbol: str, side: str):
+        """🔋 (applies, ok, chip, reason) воріт «Пружина · заряд ≥ N».
+
+        Те саме число, що колонка «Заряд» (`rec['charge']`, без напрямку).
+        Немає запису → не блокує («невідомо» ≠ «без заряду»)."""
+        rec = (getattr(self, '_spring', None) or {}).get(str(symbol or '').upper())
+        need = int(self._settings.get('spring_min_charge', 50) or 0)
+        ch = spring_charge_of(rec)
+        if ch is None:
+            return (True, True, f'🔋Заряд[≥{need}](немає даних):✓', '')
+        ok = ch >= need
+        chip = f"🔋Заряд[≥{need}]({ch:.0f} · {rec.get('label', '')}):{'✓' if ok else '✗'}"
+        why = '' if ok else (f'🔋 Пружина: заряд {ch:.0f} < {need} — '
+                             f'монета не накручена (сигнал {side} відхилено)')
+        return (True, ok, chip, why)
+
     def spring_for(self, symbols=None) -> Dict[str, Dict]:
         """🌀 Записи «Пружини» (лише памʼять) для монет WATCHLIST."""
         if not (getattr(self, '_settings', None) or {}).get('spring_enabled', True):
@@ -5437,6 +5479,15 @@ class SMCScanner:
                 parts.append(_schip)
                 if not _sok:
                     return (False, _swhy, ' · '.join(parts))
+        # 🔋 ПРУЖИНА · ЗАРЯД ≥ N (вимога 07.11) — окремі ворота, той самий вузол.
+        _cg = getattr(self, '_spring_charge_gate', None)
+        if (_cg and self._settings.get('spring_enabled', True)
+                and self._settings.get('spring_charge_gate_enabled', False)):
+            _capp, _cok, _cchip, _cwhy = _cg(symbol, side_label)
+            if _capp:
+                parts.append(_cchip)
+                if not _cok:
+                    return (False, _cwhy, ' · '.join(parts))
 
         # OB
         if self._settings.get('ob_filter_enabled', False):
