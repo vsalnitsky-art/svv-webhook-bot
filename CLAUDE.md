@@ -7525,3 +7525,28 @@ OKBUSDT LONG відкрився при увімкнених «Через МММ-
 Тест: `test_sbr_pd_filter.py` (7). ⚠️ Давні падіння (є і без правки):
 `test_mm_monitor` (2: master switch групового відкриття, видалений модуль
 корекції), `test_mm_pull` (сирий `Date.now()/1000`).
+
+## 🔔 SBR-ВИХІД ПО УГОДІ · 🧪 P&L-ПАНЕЛЬ PAPER · 🪗 ГАРМОШКИ ЗАКРИТИХ (08.11)
+Дослівно: «📜 Recent Closed Trades і Recent Paper Closes — згортати в гармошку» ·
+«кнопку таку як 📌 Manual 🎯 БЗ 🧱 OB … 🔔 МММ-SBR проти → вихід … вказати
+таймфрейм 1Н 4Н або любий» · «таку ж панель для тестових угод і виділи їх».
+- **🔔 SBR по угоді** — колонка `data-col="sbrx"` після «🧱 OB» (real + paper,
+  colspan **19/17**): тумблер + випадайка TF (`1H` / `4H` / `1H|4H` = any),
+  видима лише на ввімкненому. Поля позиції `sbr_exit_on` / `sbr_exit_tf`;
+  `TradeManager.update_sbr_exit(sym, enabled, tf, is_shadow)` (лог ✏️, персист;
+  вимкнення при вимкненому глобальному правилі знімає `sbr_trail`),
+  `POST /api/tm/positions/sbr-exit`. `_sbr_exit_reason` діє, коли глобальний
+  `use_sbr_exit` АБО тумблер угоди; TF угоди (`pos_sbr_exit_tfs`) ЗАМІНЮЄ
+  глобальні 1H/4H для цієї угоди. Алгоритм той самий: лише сигнал ПІСЛЯ входу;
+  увімкнений «🔔⏳ трейл» у Exit Rules діє й тут; 📌 Manual — як і решта виходів.
+- **🧪 Paper-панель** `#tmp-stats-wrap` (у Test Mode, над Open Paper Positions):
+  ТА САМА `renderTmStats(st, label, note, book)` — стан книги `_TMS[real|paper]`
+  (id-префікс `tm-` / `tmp-`, свій період `tmpStatsPeriod`); `/api/tm/stats?book=paper`.
+  `get_state()['shadow_stats']` = `closed_stats(_shadow_closed)` (+ breakdown);
+  `closed_stats` бере $ paper з `paper_result.net_usd`, комісії — з
+  `paper_result.fees_usd` (`_trade_usd` / `_trade_fees`). Картка «Баланс» для
+  paper → «Сер. рух на угоду» (біржі немає). Вигляд: `.bb-paper` — фіолетова
+  гама, пунктирна рамка, смуга ліворуч; бейджі `🏦 Real` / `🧪 Paper`. Перемикач
+  сум спільний на обидві панелі.
+- **🪗** `tmclosed` / `tmpclosed` у `_PANEL_IDS` (деф. розгорнуто, стан памʼятається).
+Тести: `test_sbr_exit.py` (20), `test_tm_stats_period.py` (15).

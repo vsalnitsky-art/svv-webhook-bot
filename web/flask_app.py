@@ -6359,6 +6359,22 @@ def register_api_routes(app):
             symbol=symbol, enabled=bool(data.get('enabled')),
             is_shadow=bool(data.get('is_shadow')), origin='user'))
 
+    @app.route('/api/tm/positions/sbr-exit', methods=['POST'])
+    def api_tm_sbr_exit():
+        """🔔 Пер-угодний «МММ-SBR проти → вихід» (колонка «🔔 SBR»).
+        Body: {symbol, enabled: bool, tf: '1h'|'4h'|'any', is_shadow?: bool}."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        symbol = data.get('symbol', '')
+        if not symbol:
+            return jsonify({'ok': False, 'reason': 'symbol required'})
+        return jsonify(tm.update_sbr_exit(
+            symbol=symbol, enabled=bool(data.get('enabled')),
+            tf=str(data.get('tf') or 'any'), is_shadow=bool(data.get('is_shadow'))))
+
     @app.route('/api/tm/positions/breakeven-close', methods=['POST'])
     def api_tm_breakeven_close():
         """Toggle per-position breakeven + fees auto-close.

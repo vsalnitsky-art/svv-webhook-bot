@@ -248,6 +248,57 @@ def test_charge_is_remembered_at_open():
            'заряд пишеться на відкритті (real + paper) і добирається в моніторах')
 
 
+
+# ── 🔔 тумблер ПО УГОДІ (вимога 08.11) ─────────────────────────────────────
+class _TMp(_TM):
+    def _persist_book(self, is_shadow): pass
+
+
+def test_per_trade_switch_works_without_global_rule_and_uses_its_tf():
+    t = _TMp(side='LONG', use_sbr_exit=False)
+    _check(not _run(t, {'4h': {'tail': [_sig('SHORT', 20_000)]}}), 'без тумблера — нічого')
+    r = TM.update_sbr_exit(t, 'ETHUSDT', True, '1h')
+    _check(r['ok'] and r['sbr_exit_tf'] == '1h', r)
+    t._signal_exit_at.clear()
+    _check(not _run(t, {'4h': {'tail': [_sig('SHORT', 20_000)]}}) and t.closed == [],
+           'угода чекає САМЕ 1H — сигнал 4H не закриває')
+    t._signal_exit_at.clear()
+    _check(_run(t, {'1h': {'tail': [_sig('SHORT', 20_000)]}}) and t.closed == [('real', 'sbr_exit')], t.closed)
+
+
+def test_per_trade_any_tf_and_overrides_global_tfs():
+    t = _TMp(side='SHORT', sbr_exit_4h=False)       # глобально лише 1H
+    TM.update_sbr_exit(t, 'ETHUSDT', True, 'any')
+    _check(_run(t, {'4h': {'tail': [_sig('LONG', 20_000)]}}) and t.closed, 'будь-який TF — 4H теж закриває')
+    _check(TM.pos_sbr_exit_tfs({'sbr_exit_tf': '4h'}) == ('4h',)
+           and TM.pos_sbr_exit_tfs({}) == ('1h', '4h')
+           and TM.pos_sbr_exit_tfs({'sbr_exit_tf': 'xx'}) == ('1h', '4h'), 'TF угоди')
+
+
+def test_per_trade_switch_off_clears_and_rejects_unknown_symbol():
+    t = _TMp(side='LONG', use_sbr_exit=False)
+    TM.update_sbr_exit(t, 'ETHUSDT', True, '4h')
+    t._positions['ETHUSDT']['sbr_trail'] = {'armed_px': 1}
+    TM.update_sbr_exit(t, 'ETHUSDT', False)
+    pos = t._positions['ETHUSDT']
+    _check('sbr_exit_on' not in pos and 'sbr_exit_tf' not in pos and 'sbr_trail' not in pos, pos)
+    _check(TM.update_sbr_exit(t, 'XXXUSDT', True)['ok'] is False, 'немає позиції')
+    _check(TM.update_sbr_exit(t, 'ETHUSDT', True, 'bad')['sbr_exit_tf'] == 'any', 'невідомий TF → будь-який')
+
+
+def test_per_trade_column_route_and_ui():
+    with open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8') as f:
+        fl = f.read()
+    _check("@app.route('/api/tm/positions/sbr-exit'" in fl and '/api/tm/positions/sbr-exit' in _HTML, 'маршрут + сторінка')
+    for tid in ('tm-open-table', 'tm-shadow-open-table'):
+        i = _HTML.index(f'id="{tid}"')
+        _check('data-col="sbrx"' in _HTML[i:_HTML.index('</table>', i)], f'{tid}: колонка 🔔 SBR')
+    _check(_HTML.count('${sbrExitCellHTML(p, false)}') == 1 and _HTML.count('${sbrExitCellHTML(p, true)}') == 1,
+           'комірка в обох таблицях')
+    for o in ("any: '1H|4H'", "'1h': '1H'", "'4h': '4H'"):
+        _check(o in _HTML, f'вибір TF {o}')
+
+
 if __name__ == '__main__':
     n = 0
     for k, v in list(globals().items()):

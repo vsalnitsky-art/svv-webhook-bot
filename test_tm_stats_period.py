@@ -216,6 +216,48 @@ def test_amounts_hidden_by_default_without_flash():
     print('✓ суми сховані з першого рендера, % депозиту від балансу на початок')
 
 
+
+# ── 🧪 Paper-панель + гармошки закритих (вимога 08.11) ──────────────────────
+def test_paper_stats_use_paper_net_usd_and_fees():
+    pp = [{'closed_at': 1, 'pnl_pct': 1.0, 'paper_result': {'net_usd': 4.0, 'fees_usd': 0.5}},
+          {'closed_at': 2, 'pnl_pct': -1.0, 'paper_result': {'net_usd': -2.0, 'fees_usd': 0.3}}]
+    st = closed_stats(pp)
+    _check(st['total_pnl_usd'] == 2.0 and st['profit_factor'] == 2.0, st)
+    _check(abs(st['total_fees_usd'] - 0.8) < 1e-9, 'комісії paper — оцінка paper_result')
+    _check(closed_stats([_c(1, 1, 3.0, fees=0.2)])['total_pnl_usd'] == 3.0, 'real без змін')
+    src = open(os.path.join(_HERE, 'detection', 'trade_manager.py'), encoding='utf-8').read()
+    i = src.index('    def get_state(self)')
+    body = src[i:src.index('\n    def ', i + 10)]
+    _check('closed_stats(self._shadow_closed)' in body, 'shadow_stats — та сама closed_stats')
+    print('✓ paper-статистика: нетто paper з комісіями, та сама closed_stats')
+
+
+def test_paper_panel_is_the_same_but_visually_distinct():
+    for t in ('class="bb-stats bb-paper" id="tmp-stats-wrap"', 'id="tmp-stats-period"',
+              'id="tmp-stats"', 'id="tmp-stats-day"', 'id="tmp-stats-from"', 'id="tmp-stats-to"',
+              'id="tmp-entry-stats"', 'id="tmp-amt-toggle"', "tmSetPeriod('range', 'paper')",
+              'bb-book-paper', 'bb-book-real'):
+        _check(t in _HTML, f'немає {t}')
+    _check(_HTML.index('id="tmp-stats-wrap"') > _HTML.index('id="testmode-body"'), 'панель — у Test Mode')
+    css = _HTML[_HTML.index('.bb-stats.bb-paper'):]
+    _check('dashed' in css[:200] and '#8b5cf6' in css[:200], 'paper — інша рамка й акцент')
+    f = _js_fn('renderTmStats')
+    _check("book === 'paper'" in f and 'B.pfx' in f and "card('Баланс на біржі'" in f, 'ОДНА функція на обидві книги')
+    _check('&book=${book === ' in _js_fn('tmLoadPeriodStats'), 'період paper — book=paper')
+    _check("renderTmStats(_TMS.paper.live, 'за весь час', '', 'paper')" in _HTML, 'живий стан paper')
+    print('✓ 🧪 paper-панель: та сама сітка, свої id, фіолетова гама')
+
+
+def test_closed_tables_are_accordions():
+    for pid, tbl in (('tmclosed', 'tm-closed-table'), ('tmpclosed', 'tm-shadow-closed-table')):
+        _check(f"togglePanel('{pid}')" in _HTML and f'id="{pid}-caret"' in _HTML, pid)
+        i = _HTML.index(f'id="{pid}-body"')
+        _check(_HTML.index(f'id="{tbl}"') > i, f'{tbl} усередині гармошки')
+        _check(f"'{pid}'" in _HTML[_HTML.index('const _PANEL_IDS'):_HTML.index('const _PANEL_CLOSED_BY_DEFAULT')],
+               'стан памʼятається')
+    print('✓ 📜 Recent Closed / 🧪 Recent Paper Closes — гармошки')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:

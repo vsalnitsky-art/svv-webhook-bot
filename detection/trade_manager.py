@@ -138,20 +138,42 @@ def breakeven_with_fees(side, entry, buf_pct):
     return e * (1.0 + b / 100.0) if side == 'LONG' else e * (1.0 - b / 100.0)
 
 
+def _trade_usd(c) -> float:
+    """$-результат закритої угоди: real — `pnl_usd` (closedPnl біржі або
+    розрахунок бота); 🧪 paper — нетто з комісіями `paper_result.net_usd`."""
+    v = c.get('pnl_usd')
+    if v is None:
+        v = (c.get('paper_result') or {}).get('net_usd')
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _trade_fees(c) -> float:
+    """Комісії угоди: факт біржі (real) або оцінка paper (`paper_result`)."""
+    ex = c.get('exchange') or {}
+    v = ex.get('fees_usd') if ex else (c.get('paper_result') or {}).get('fees_usd')
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def closed_stats(trades) -> Dict:
     """ЧИСТА: підсумок закритих угод — ЄДИНЕ джерело для панелі статистики
     (весь час і будь-який період рахуються ОДНІЄЮ функцією). pnl_usd — для
     звірених із Bybit угод це closedPnl біржі (нетто з комісіями й фандингом)."""
     trades = list(trades or [])
     n = len(trades)
-    pnls = [float(c.get('pnl_usd') or 0) for c in trades]
+    pnls = [_trade_usd(c) for c in trades]
     pcts = [float(c.get('pnl_pct') or 0) for c in trades]
     wins = sum(1 for v in pcts if v > 0)
     losses = sum(1 for v in pcts if v < 0)
     win_usd = [v for v in pnls if v > 0]
     loss_usd = [v for v in pnls if v < 0]
     gp, gl = sum(win_usd), sum(loss_usd)
-    fees = sum(float((c.get('exchange') or {}).get('fees_usd') or 0) for c in trades)
+    fees = sum(_trade_fees(c) for c in trades)
     return {
         'total_closed': n,
         'wins': wins,
@@ -3472,6 +3494,59 @@ class TradeManager:
                 pass
         return {'ok': True, 'position': updated, 'opp_ob_exit': bool(enabled)}
 
+    SBR_EXIT_TF_CHOICES = ('any', '1h', '4h')
+
+    @staticmethod
+    def pos_sbr_exit_tfs(pos: Dict) -> tuple:
+        """TF пер-угодного 🔔 SBR-виходу: '1h' / '4h' / 'any' (будь-який)."""
+        tf = str((pos or {}).get('sbr_exit_tf') or 'any').lower()
+        return (tf,) if tf in ('1h', '4h') else ('1h', '4h')
+
+    def update_sbr_exit(self, symbol: str, enabled: bool, tf: str = 'any',
+                        is_shadow: bool = False) -> Dict:
+        """🔔 Пер-угодний тумблер «МММ-SBR проти → вихід» (колонка «🔔 SBR»).
+
+        Діє НЕЗАЛЕЖНО від глобального `use_sbr_exit`; TF сигналу — свій для
+        угоди: '1h' / '4h' / 'any' (будь-який із двох). Алгоритм той самий
+        (`_sbr_exit_reason`): закриває лише сигнал, що зʼявився ПІСЛЯ входу;
+        увімкнений «🔔⏳ трейл» у Exit Rules діє і тут."""
+        tf = str(tf or 'any').lower()
+        if tf not in self.SBR_EXIT_TF_CHOICES:
+            tf = 'any'
+        store = self._shadow_positions if is_shadow else self._positions
+        kind = 'shadow' if is_shadow else 'real'
+        with self._lock:
+            pos = store.get(symbol)
+            if not pos:
+                return {'ok': False, 'reason': f'No open {kind} position for {symbol}'}
+            was = (bool(pos.get('sbr_exit_on')), pos.get('sbr_exit_tf'))
+            if enabled:
+                pos['sbr_exit_on'] = True
+                pos['sbr_exit_tf'] = tf
+            else:
+                pos.pop('sbr_exit_on', None)
+                pos.pop('sbr_exit_tf', None)
+                # Трейл, озброєний цим тумблером, без правила не має сенсу.
+                if not self._settings.get('use_sbr_exit'):
+                    pos.pop('sbr_trail', None)
+            now_ = (bool(pos.get('sbr_exit_on')), pos.get('sbr_exit_tf'))
+            updated = dict(pos)
+        self._persist_book(is_shadow)
+        if was != now_:
+            try:
+                from detection.activity_log import log_activity
+                lab = {'1h': '1H', '4h': '4H'}.get(tf, '1H або 4H')
+                log_activity(symbol, 'sltp',
+                             f'✏️ Користувач: 🔔 МММ-SBR проти → вихід по угоді '
+                             + (f'УВІМКНЕНО (сигнал {lab})' if enabled else 'ВИМКНЕНО')
+                             + (' (paper)' if is_shadow else ''),
+                             side=updated.get('side'), source='user',
+                             extra={'is_shadow': is_shadow, 'sbr_exit_tf': tf if enabled else None})
+            except Exception:
+                pass
+        return {'ok': True, 'position': updated, 'sbr_exit_on': bool(enabled),
+                'sbr_exit_tf': tf if enabled else None}
+
     # ------------------------------------------------------------------
     # 🔮 Forecast 1H / 4H та 🧠 Decision Center як САМОСТІЙНІ правила виходу
     # ------------------------------------------------------------------
@@ -3769,7 +3844,8 @@ class TradeManager:
         Монети немає в рушії (поза WATCHLIST / ще не порахована) → правило
         мовчить: «немає даних» ≠ «сигнал проти»."""
         s = self._settings
-        if not s.get('use_sbr_exit'):
+        per = bool(pos.get('sbr_exit_on'))
+        if not (s.get('use_sbr_exit') or per):
             return None
         try:
             from detection.sbr_signals import get_sbr_engine
@@ -3778,8 +3854,10 @@ class TradeManager:
             eng = None
         if eng is None or not hasattr(eng, 'snaps'):
             return None
+        # 🔔 Тумблер угоди сильніший: його TF замінює глобальні для ЦІЄЇ угоди.
+        tfs = self.pos_sbr_exit_tfs(pos) if per else self.sbr_exit_tfs(s)
         hit = self.sbr_exit_hit(pos.get('side'), pos.get('opened_at'),
-                                eng.snaps(symbol), self.sbr_exit_tfs(s))
+                                eng.snaps(symbol), tfs)
         if not hit:
             return None
         tf, sig = hit
@@ -3905,7 +3983,8 @@ class TradeManager:
         True → позицію ЗАКРИТО."""
         st = pos.get('sbr_trail')
         s = self._settings
-        if not isinstance(st, dict) or not (s.get('use_sbr_exit') and s.get('sbr_exit_trail')):
+        if not isinstance(st, dict) or not (
+                (s.get('use_sbr_exit') or pos.get('sbr_exit_on')) and s.get('sbr_exit_trail')):
             return False
         side = str(pos.get('side') or '').upper()
         rec = self._spring_rec(symbol) or {}
@@ -3953,7 +4032,7 @@ class TradeManager:
         s = self._settings
         if not (s.get('use_forecast_1h_exit') or s.get('use_forecast_4h_exit')
                 or s.get('use_decision_exit') or s.get('use_mm_flat_exit')
-                or s.get('use_sbr_exit')):
+                or s.get('use_sbr_exit') or pos.get('sbr_exit_on')):
             return False
         now = time.time()
         _k = self._exit_key(symbol, is_shadow)
@@ -8427,11 +8506,9 @@ class TradeManager:
                 shadow_positions.append(_lite_trade(pos_dict))
             shadow_closed = [_lite_trade(c) for c in self._shadow_closed[-STATE_CLOSED_LIMIT:]]  # жива стрічка — останні N
             
-            # Stats — shadow
-            sh_total = len(self._shadow_closed)
-            sh_wins = sum(1 for c in self._shadow_closed if c.get('pnl_pct', 0) > 0)
-            sh_losses = sum(1 for c in self._shadow_closed if c.get('pnl_pct', 0) < 0)
-            sh_avg_pnl = (sum(c.get('pnl_pct', 0) for c in self._shadow_closed) / sh_total) if sh_total else 0
+            # Stats — shadow: ТА САМА closed_stats, що й для реальних (панель
+            # 🧪 P&L paper малює ті самі картки; $ = нетто paper з комісіями).
+            sh_stats = closed_stats(self._shadow_closed)
             
             # Entry Score validation stats — break down win rate by verdict
             # so the user can see whether the scorer's "good" predictions
@@ -8451,14 +8528,7 @@ class TradeManager:
                 'shadow_positions': shadow_positions,
                 'price_feed': self.price_feed_health(),
                 'shadow_closed': shadow_closed,
-                'shadow_stats': {
-                    'total_closed': sh_total,
-                    'wins': sh_wins,
-                    'losses': sh_losses,
-                    'win_rate': round(sh_wins / sh_total * 100, 1) if sh_total else 0,
-                    'avg_pnl_pct': round(sh_avg_pnl, 2),
-                    'entry_score_breakdown': entry_stats_shadow,
-                },
+                'shadow_stats': {**sh_stats, 'entry_score_breakdown': entry_stats_shadow},
                 'settings': dict(self._settings),
             }
     
@@ -8509,7 +8579,7 @@ class TradeManager:
         # 💰 База «% депозиту»: баланс на ПОЧАТОК періоду = поточний баланс
         # мінус усе, що закрилось ВІДТОДІ (і в періоді, і після нього).
         st['pnl_since_from_usd'] = round(sum(
-            float(c.get('pnl_usd') or 0) for c in src
+            _trade_usd(c) for c in src
             if lo is None or float(c.get('closed_at') or 0) >= lo), 2)
         return st
 

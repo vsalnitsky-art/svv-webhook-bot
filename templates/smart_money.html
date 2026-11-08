@@ -1119,6 +1119,23 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     padding: 3px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; white-space: nowrap; }
 .bb-eye:hover { color: #fff; border-color: #3a3f47; }
 .bb-mask { color: #71757a !important; letter-spacing: 0.12em; }
+/* 🏦 / 🧪 Бейдж книги в заголовку панелі — реальні й paper не зливаються. */
+.bb-book { font-size: 0.6rem; font-weight: 800; letter-spacing: 0.08em; padding: 2px 7px;
+    border-radius: 4px; text-transform: uppercase; white-space: nowrap; }
+.bb-book-real { color: #f7a600; background: rgba(247,166,0,0.12); border: 1px solid rgba(247,166,0,0.4); }
+.bb-book-paper { color: #c4b5fd; background: rgba(139,92,246,0.16); border: 1px solid rgba(139,92,246,0.5); }
+/* 🧪 Paper-панель: та сама сітка Bybit, але фіолетова гама + пунктирна рамка
+   й смуга ліворуч — щоб не сплутати з реальними грошима. */
+.bb-stats.bb-paper { background: #17152a; border: 1px dashed #5b4bb5; box-shadow: inset 3px 0 0 #8b5cf6; }
+.bb-paper .bb-period { background: #120f22; border-color: #3b3270; }
+.bb-paper .bb-period button.on { background: #2e2660; color: #c4b5fd; }
+.bb-paper .bb-dates input { background: #17152a; border-color: #3b3270; }
+.bb-paper .bb-kpi { background: #1d1a33; border-color: #332b66; }
+.bb-paper .bb-kpi-l { color: #8f86c4; }
+.bb-paper .bb-eye { background: #120f22; border-color: #3b3270; color: #c4b5fd; }
+/* 🪗 Заголовок-гармошка таблиць закритих угод. */
+.tm-acc-t { cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px; }
+.tm-acc-t .tm-acc-car { display: inline-block; width: 11px; color: #8b93a7; }
 
 .tm-entry-stats {
     display: flex;
@@ -5300,6 +5317,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <!-- Stats -->
             <div class="bb-stats" id="tm-stats-wrap">
                 <div class="bb-head">
+                    <span class="bb-book bb-book-real" title="Реальні угоди на Bybit">🏦 Real</span>
                     <span class="bb-title" title="Підсумок ЗАКРИТИХ реальних угод. Для угод, звірених із Bybit, PnL — це closedPnl біржі (нетто, з плечем, комісіями й фандингом). Джерело — живий список закритих угод (останні 2000); повна історія — «📚 За весь час (БД)» над таблицею.">P&amp;L · закриті угоди</span>
                     <div class="bb-period" id="tm-stats-period">
                         <button type="button" data-p="today" onclick="tmSetPeriod('today')">Сьогодні</button>
@@ -5350,16 +5368,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th data-col="manual" title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th data-col="be" title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
                         <th data-col="oppob" title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Якщо увімкнено «🤖 Автоконтроль «🧱 OB»» у Exit Rules (деф. вимкнено) — вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
+                        <th data-col="sbrx" title="🔔 «МММ-SBR проти → вихід» ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального правила в Exit Rules: закриває угоду, щойно зʼявляється ПРОТИЛЕЖНИЙ сигнал 🔔 МММ-SBR (після входу) на обраному TF. Після ввімкнення оберіть TF: 1H · 4H · 1H|4H (будь-який із них). Сигнал, що був ДО входу, не рахується. Якщо в Exit Rules увімкнено «🔔⏳ трейл» — замість миттєвого виходу запамʼятовується ціна і угода ведеться трейлом. 📌 Manual вимикає всі автоматичні виходи, і цей теж.">🔔 SBR</th>
                         <th data-col="timer" title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th data-col="act">Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="18" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="19" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table></div>
             
             <!-- Recent Closed -->
-            <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">📜 Recent Closed Trades
+            <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px"><span class="tm-acc-t" onclick="togglePanel('tmclosed')" title="Клік — згорнути / розгорнути таблицю (стан памʼятається)"><span class="tm-acc-car" id="tmclosed-caret">▼</span>📜 Recent Closed Trades</span>
                 <span id="tm-closed-src" style="font-size:0.66rem;font-weight:normal;color:#6b7280"></span>
                 <button id="tm-closed-archive-btn" class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Показати ВСЮ історію закритих угод із бази (таблиця sob_trade_archive), а не лише останні. Повторний клік — назад до живої стрічки."
                         onclick="toggleArchiveView('closed', this)">📚 За весь час (БД)</button>
@@ -5367,14 +5386,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         onclick="copyTableToClipboard('tm-closed-table', this)">📋 Копіювати</button>
                 <button class="tm-delete-btn" style="font-size:0.7rem;padding:2px 10px" title="Очистити весь список"
                         onclick="clearTMClosed()">🗑 Clear All</button></h3>
-            <div class="tm-vhscroll"><table class="tm-table" id="tm-closed-table">
+            <div id="tmclosed-body"><div class="tm-vhscroll"><table class="tm-table" id="tm-closed-table">
                 <thead>
                     <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th><th></th></tr>
                 </thead>
                 <tbody id="tm-closed-tbody">
                     <tr><td colspan="8" class="tm-empty-msg">No closed trades yet</td></tr>
                 </tbody>
-            </table></div>
+            </table></div></div>
             
         </div>
     </div>
@@ -5404,6 +5423,41 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </label>
             </div>
             
+            <!-- 🧪 P&L paper-угод — та сама панель, що в Trade Manager (вимога 08.11),
+                 але фіолетова: реальні гроші й тест не мають виглядати однаково. -->
+            <div class="bb-stats bb-paper" id="tmp-stats-wrap">
+                <div class="bb-head">
+                    <span class="bb-book bb-book-paper" title="Paper-угоди Test Mode — без реальних ордерів">🧪 Paper</span>
+                    <span class="bb-title" title="Підсумок ЗАКРИТИХ paper-угод (Test Mode). $ — нетто paper-результат з оцінкою комісій (розмір позиції на відкритті). Джерело — живий список paper-угод (останні 2000); повна історія — «📚 За весь час (БД)» над таблицею Recent Paper Closes.">P&amp;L · закриті paper-угоди</span>
+                    <div class="bb-period" id="tmp-stats-period">
+                        <button type="button" data-p="today" onclick="tmSetPeriod('today', 'paper')">Сьогодні</button>
+                        <button type="button" data-p="7d" onclick="tmSetPeriod('7d', 'paper')">7Д</button>
+                        <button type="button" data-p="30d" onclick="tmSetPeriod('30d', 'paper')">30Д</button>
+                        <button type="button" data-p="all" onclick="tmSetPeriod('all', 'paper')">Усе</button>
+                        <button type="button" data-p="day" onclick="tmSetPeriod('day', 'paper')" title="Статистика за конкретний день (за годинником вашого ПК)">📅 День</button>
+                        <button type="button" data-p="range" onclick="tmSetPeriod('range', 'paper')" title="Статистика за довільний період: від дати до дати включно">Період</button>
+                        <span class="bb-dates" id="tmp-stats-day-wrap" style="display:none">
+                            <input type="date" id="tmp-stats-day" onchange="tmPeriodInput('paper')">
+                        </span>
+                        <span class="bb-dates" id="tmp-stats-range-wrap" style="display:none">
+                            <input type="date" id="tmp-stats-from" onchange="tmPeriodInput('paper')">
+                            <span class="bb-dash">—</span>
+                            <input type="date" id="tmp-stats-to" onchange="tmPeriodInput('paper')">
+                        </span>
+                    </div>
+                    <span class="bb-note" id="tmp-stats-note"></span>
+                    <button type="button" class="bb-eye" id="tmp-amt-toggle" onclick="tmToggleAmounts()"
+                            title="Показати / сховати суми (спільно з панеллю реальних угод). За замовчуванням суми СХОВАНІ.">👁 Показати суми</button>
+                </div>
+                <div class="bb-kpis" id="tmp-stats"></div>
+            </div>
+            <div class="tm-entry-stats" id="tmp-entry-stats" style="display:none">
+                <span style="color:#8f86c4;font-size:0.72rem" title="Paper-угоди, згруповані за оцінкою входу (Entry Score) у момент відкриття: кількість · % у плюсі · середній рух ціни (без плеча й комісій).">🧪 Перевірка оцінки входу (paper):</span>
+                <span class="tm-es-cell" data-bucket="good"></span>
+                <span class="tm-es-cell" data-bucket="marginal"></span>
+                <span class="tm-es-cell" data-bucket="poor"></span>
+            </div>
+
             <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0">
                 Open Paper Positions <span id="tm-shadow-open-count" style="color:#666;font-weight:normal">(0)</span>
                 <span id="tm-shadow-stats-inline" style="color:#888;font-weight:normal;font-size:0.72rem;margin-left:8px"></span>
@@ -5421,15 +5475,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th data-col="manual" title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply."><span class="tm-pin-anim">📌</span> Manual</th>
                         <th data-col="be" title="Закрити угоду при досягненні беззбитку (вхід + комісії), щоб НЕ вийти в мінус: якщо угода в мінусі — закриє на відновленні до нуля; якщо в плюсі — підлога (закриє, якщо ціна впаде назад до беззбитку). Можна вмикати в будь-якому стані.">🎯 БЗ</th>
                         <th data-col="oppob" title="🧱 Opposite OB Exit ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального тумблера в Exit Rules (TF — звідти ж): закриває угоду, коли на TF зʼявляється НОВИЙ протилежний Order Block. 🤖 Якщо увімкнено «🤖 Автоконтроль «🧱 OB»» у Exit Rules (деф. вимкнено) — вмикається АВТОМАТИЧНО, щойно сигнальна колонка 🚨 переходить у «↓ слабшає / ⚖ нейтраль / ⚠ ПРОТИ»; вимикається автоматично, коли 🚨 повертається до ✓ (якщо вмикав автомат). Можна перемикати й вручну — рішення людини автомат не перебиває.">🧱 OB</th>
+                        <th data-col="sbrx" title="🔔 «МММ-SBR проти → вихід» ПО ЦІЙ УГОДІ — діє НЕЗАЛЕЖНО від глобального правила в Exit Rules: закриває угоду, щойно зʼявляється ПРОТИЛЕЖНИЙ сигнал 🔔 МММ-SBR (після входу) на обраному TF. Після ввімкнення оберіть TF: 1H · 4H · 1H|4H (будь-який із них). Сигнал, що був ДО входу, не рахується. Якщо в Exit Rules увімкнено «🔔⏳ трейл» — замість миттєвого виходу запамʼятовується ціна і угода ведеться трейлом. 📌 Manual вимикає всі автоматичні виходи, і цей теж.">🔔 SBR</th>
                         <th data-col="timer" title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th data-col="act"></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="16" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="17" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table></div>
             
-            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">Recent Paper Closes
+            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px"><span class="tm-acc-t" onclick="togglePanel('tmpclosed')" title="Клік — згорнути / розгорнути таблицю (стан памʼятається)"><span class="tm-acc-car" id="tmpclosed-caret">▼</span>🧪 Recent Paper Closes</span>
                 <span id="tm-shadow-src" style="font-size:0.66rem;font-weight:normal;color:#6b7280"></span>
                 <button id="tm-shadow-archive-btn" class="tm-copy-btn" style="font-size:0.7rem;padding:2px 10px" title="Показати ВСЮ історію paper-угод із бази (таблиця sob_trade_archive), а не лише останні. Повторний клік — назад до живої стрічки."
                         onclick="toggleArchiveView('shadow', this)">📚 За весь час (БД)</button>
@@ -5437,14 +5492,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         onclick="copyTableToClipboard('tm-shadow-closed-table', this)">📋 Копіювати</button>
                 <button class="tm-delete-btn" style="font-size:0.7rem;padding:2px 10px" title="Очистити весь список"
                         onclick="clearTMShadowClosed()">🗑 Clear All</button></h3>
-            <div class="tm-vhscroll"><table class="tm-table" id="tm-shadow-closed-table">
+            <div id="tmpclosed-body"><div class="tm-vhscroll"><table class="tm-table" id="tm-shadow-closed-table">
                 <thead>
                     <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th>Reason</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-closed-tbody">
                     <tr><td colspan="8" class="tm-empty-msg">No paper closes yet</td></tr>
                 </tbody>
-            </table></div>
+            </table></div></div>
             
         </div>
     </div>
@@ -6282,7 +6337,7 @@ function _qCollapsed(qid) {
 }
 // Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
 // 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
-const _PANEL_IDS = ['spr', 'tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'mms', 'mmslist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'testmode'];
+const _PANEL_IDS = ['spr', 'tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'mms', 'mmslist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'tmclosed', 'testmode', 'tmpclosed'];
 // Секції, ЗГОРНУТІ ЗА ЗАМОВЧУВАННЯМ (доки користувач сам не розгорне): список
 // монет МММ-монітора — вимога 18.09. Для решти дефолт лишається «розгорнуто»,
 // тобто збережений вибір користувача завжди сильніший за цей список.
@@ -11811,13 +11866,23 @@ const _ES_BUCKET_UA = {good: 'сильний', marginal: 'середній', poo
 // ── 📊 P&L: період статистики (вимога 27.10) ─────────────────────────────
 // Межі дня — за годинником ПК (локальний час користувача). Вибір періоду —
 // UI-налаштування, тож localStorage (як wlSortMode), а не БД.
+// 🧪 Дві панелі — реальні (`real`, id-префікс `tm-`) і paper (`paper`,
+// id-префікс `tmp-`): ОДИН код, свій період і свій кеш запиту на кожну.
 const _TM_PERIOD_KEY = 'tmStatsPeriod';
-let _tmPeriod = { mode: 'all', day: '', from: '', to: '' };
-try {
-    const _sv = JSON.parse(localStorage.getItem(_TM_PERIOD_KEY) || 'null');
-    if (_sv && _sv.mode) _tmPeriod = Object.assign(_tmPeriod, _sv);
-} catch (e) {}
-let _tmPeriodFetch = { key: '', at: 0, busy: false };
+const _TMS = {
+    real:  { pfx: 'tm',  key: _TM_PERIOD_KEY, period: { mode: 'all', day: '', from: '', to: '' },
+             fetch: { key: '', at: 0, busy: false }, live: null, last: null },
+    paper: { pfx: 'tmp', key: 'tmpStatsPeriod', period: { mode: 'all', day: '', from: '', to: '' },
+             fetch: { key: '', at: 0, busy: false }, live: null, last: null },
+};
+Object.values(_TMS).forEach(B => {
+    try {
+        const _sv = JSON.parse(localStorage.getItem(B.key) || 'null');
+        if (_sv && _sv.mode) Object.assign(B.period, _sv);
+    } catch (e) {}
+});
+const _tmPeriod = _TMS.real.period;      // історична назва (реальні угоди)
+function _tmB(book) { return _TMS[book === 'paper' ? 'paper' : 'real']; }
 
 function _tmYmd(d) {
     const p = n => String(n).padStart(2, '0');
@@ -11855,72 +11920,77 @@ function _tmPeriodRange(p, nowMs) {
     }
 }
 
-function _tmPeriodSync() {
-    document.querySelectorAll('#tm-stats-period button[data-p]').forEach(b =>
-        b.classList.toggle('on', b.getAttribute('data-p') === _tmPeriod.mode));
-    const dw = document.getElementById('tm-stats-day-wrap');
-    const rw = document.getElementById('tm-stats-range-wrap');
-    if (dw) dw.style.display = _tmPeriod.mode === 'day' ? 'inline-flex' : 'none';
-    if (rw) rw.style.display = _tmPeriod.mode === 'range' ? 'inline-flex' : 'none';
+function _tmPeriodSync(book) {
+    const B = _tmB(book), P = B.period, x = B.pfx;
+    document.querySelectorAll(`#${x}-stats-period button[data-p]`).forEach(b =>
+        b.classList.toggle('on', b.getAttribute('data-p') === P.mode));
+    const dw = document.getElementById(`${x}-stats-day-wrap`);
+    const rw = document.getElementById(`${x}-stats-range-wrap`);
+    if (dw) dw.style.display = P.mode === 'day' ? 'inline-flex' : 'none';
+    if (rw) rw.style.display = P.mode === 'range' ? 'inline-flex' : 'none';
     const today = _tmYmd(new Date());
-    const di = document.getElementById('tm-stats-day');
-    const fi = document.getElementById('tm-stats-from');
-    const ti = document.getElementById('tm-stats-to');
-    if (di) { di.value = _tmPeriod.day || today; di.max = today; }
-    if (fi) { fi.value = _tmPeriod.from || today; fi.max = today; }
-    if (ti) { ti.value = _tmPeriod.to || today; ti.max = today; }
+    const di = document.getElementById(`${x}-stats-day`);
+    const fi = document.getElementById(`${x}-stats-from`);
+    const ti = document.getElementById(`${x}-stats-to`);
+    if (di) { di.value = P.day || today; di.max = today; }
+    if (fi) { fi.value = P.from || today; fi.max = today; }
+    if (ti) { ti.value = P.to || today; ti.max = today; }
 }
 
-function _tmPeriodSave() {
-    try { localStorage.setItem(_TM_PERIOD_KEY, JSON.stringify(_tmPeriod)); } catch (e) {}
+function _tmPeriodSave(book) {
+    const B = _tmB(book);
+    try { localStorage.setItem(B.key, JSON.stringify(B.period)); } catch (e) {}
 }
 
-function tmSetPeriod(mode) {
-    _tmPeriod.mode = mode;
+function tmSetPeriod(mode, book) {
+    const B = _tmB(book), P = B.period;
+    P.mode = mode;
     const today = _tmYmd(new Date());
-    if (mode === 'day' && !_tmPeriod.day) _tmPeriod.day = today;
+    if (mode === 'day' && !P.day) P.day = today;
     if (mode === 'range') {
-        if (!_tmPeriod.from) _tmPeriod.from = today;
-        if (!_tmPeriod.to) _tmPeriod.to = today;
+        if (!P.from) P.from = today;
+        if (!P.to) P.to = today;
     }
-    _tmPeriodSave();
-    _tmPeriodSync();
-    if (mode === 'all') renderTmStats(window._tmLiveStats || {}, 'за весь час');
-    else tmLoadPeriodStats(true);
+    _tmPeriodSave(book);
+    _tmPeriodSync(book);
+    if (mode === 'all') renderTmStats(B.live || {}, 'за весь час', '', book);
+    else tmLoadPeriodStats(true, book);
 }
 
-function tmPeriodInput() {
+function tmPeriodInput(book) {
+    const B = _tmB(book), P = B.period, x = B.pfx;
     const v = id => (document.getElementById(id) || {}).value || '';
-    if (_tmPeriod.mode === 'day') _tmPeriod.day = v('tm-stats-day');
-    if (_tmPeriod.mode === 'range') { _tmPeriod.from = v('tm-stats-from'); _tmPeriod.to = v('tm-stats-to'); }
-    _tmPeriodSave();
-    tmLoadPeriodStats(true);
+    if (P.mode === 'day') P.day = v(`${x}-stats-day`);
+    if (P.mode === 'range') { P.from = v(`${x}-stats-from`); P.to = v(`${x}-stats-to`); }
+    _tmPeriodSave(book);
+    tmLoadPeriodStats(true, book);
 }
 
-async function tmLoadPeriodStats(force) {
-    const r = _tmPeriodRange(_tmPeriod);
-    if (!r) { renderTmStats(null, 'оберіть дату'); return; }
+async function tmLoadPeriodStats(force, book) {
+    const B = _tmB(book);
+    const r = _tmPeriodRange(B.period);
+    if (!r) { renderTmStats(null, 'оберіть дату', '', book); return; }
     const key = `${r.from}|${r.to}`;
     const now = Date.now();
     // Живі угоди закриваються рідко → перепитуємо не частіше ніж раз на 15с.
-    if (!force && _tmPeriodFetch.key === key && now - _tmPeriodFetch.at < 15000) return;
-    if (_tmPeriodFetch.busy && !force) return;
-    _tmPeriodFetch = { key, at: now, busy: true };
+    if (!force && B.fetch.key === key && now - B.fetch.at < 15000) return;
+    if (B.fetch.busy && !force) return;
+    B.fetch = { key, at: now, busy: true };
     try {
-        const q = `from=${r.from}${r.to != null ? `&to=${r.to}` : ''}&book=real`;
+        const q = `from=${r.from}${r.to != null ? `&to=${r.to}` : ''}&book=${book === 'paper' ? 'paper' : 'real'}`;
         const res = await fetch(`/api/tm/stats?${q}`);
         const j = await res.json();
-        if (_tmPeriodFetch.key !== key) return;   // поки чекали, обрали інший період
-        if (!res.ok || !j.ok) { renderTmStats(null, r.label, `⚠ ${j.reason || 'HTTP ' + res.status}`); return; }
+        if (B.fetch.key !== key) return;   // поки чекали, обрали інший період
+        if (!res.ok || !j.ok) { renderTmStats(null, r.label, `⚠ ${j.reason || 'HTTP ' + res.status}`, book); return; }
         let note = '';
         const st = j.stats || {};
-        if (st.oldest_at && r.from != null && r.from < st.oldest_at && (window._tmLiveStats || {}).total_closed >= 2000)
+        if (st.oldest_at && r.from != null && r.from < st.oldest_at && (B.live || {}).total_closed >= 2000)
             note = '⚠ період старший за живий список — повна історія в «📚 За весь час (БД)»';
-        renderTmStats(st, r.label, note);
+        renderTmStats(st, r.label, note, book);
     } catch (e) {
-        renderTmStats(null, r.label, '⚠ не вдалося завантажити');
+        renderTmStats(null, r.label, '⚠ не вдалося завантажити', book);
     } finally {
-        _tmPeriodFetch.busy = false;
+        B.fetch.busy = false;
     }
 }
 
@@ -11930,7 +12000,6 @@ async function tmLoadPeriodStats(force) {
 const _TM_AMT_KEY = 'tmAmountsShown';
 let _tmAmtShown = false;
 try { _tmAmtShown = localStorage.getItem(_TM_AMT_KEY) === '1'; } catch (e) {}
-let _tmStatsLast = null;                 // останні аргументи renderTmStats — для перемальовки
 let _tmWallet = null;                    // відповідь /api/tm/balance
 let _tmWalletAt = 0;
 
@@ -11940,15 +12009,18 @@ function _tmAmt(html) {
 }
 
 function _tmAmtSync() {
-    const b = document.getElementById('tm-amt-toggle');
-    if (b) b.textContent = _tmAmtShown ? '🙈 Сховати суми' : '👁 Показати суми';
+    ['tm-amt-toggle', 'tmp-amt-toggle'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.textContent = _tmAmtShown ? '🙈 Сховати суми' : '👁 Показати суми';
+    });
 }
 
+// Один перемикач сум на ОБИДВІ панелі (real + paper).
 function tmToggleAmounts() {
     _tmAmtShown = !_tmAmtShown;
     try { localStorage.setItem(_TM_AMT_KEY, _tmAmtShown ? '1' : '0'); } catch (e) {}
     _tmAmtSync();
-    if (_tmStatsLast) renderTmStats(..._tmStatsLast);
+    Object.values(_TMS).forEach(B => { if (B.last) renderTmStats(...B.last); });
 }
 
 // 💰 Баланс із біржі — раз на 30с (бекенд теж кешує 30с, біржу не смикаємо).
@@ -11962,7 +12034,7 @@ async function tmLoadBalance(force) {
     } catch (e) {
         _tmWallet = { ok: false, reason: 'не вдалося завантажити' };
     }
-    if (_tmStatsLast) renderTmStats(..._tmStatsLast);
+    if (_TMS.real.last) renderTmStats(..._TMS.real.last);
 }
 
 // % депозиту за період: база = баланс на ПОЧАТОК періоду = поточний гаманець
@@ -11975,14 +12047,17 @@ function _tmDepositPct(st, w) {
     return (st.total_pnl_usd || 0) / base * 100;
 }
 
-// Картки P&L у стилі Bybit. ОДНА функція на «Усе» і на будь-який період.
-function renderTmStats(st, label, note) {
-    _tmStatsLast = [st, label, note];
-    const host = document.getElementById('tm-stats');
+// Картки P&L у стилі Bybit. ОДНА функція на «Усе» і на будь-який період, на
+// реальні (`book` = 'real', за замовчуванням) і на 🧪 paper (`book` = 'paper').
+function renderTmStats(st, label, note, book) {
+    const paper = book === 'paper';
+    const B = _tmB(book);
+    B.last = [st, label, note, paper ? 'paper' : 'real'];
+    const host = document.getElementById(`${B.pfx}-stats`);
     if (!host) return;
-    _tmPeriodSync();
+    _tmPeriodSync(book);
     _tmAmtSync();
-    const noteEl = document.getElementById('tm-stats-note');
+    const noteEl = document.getElementById(`${B.pfx}-stats-note`);
     if (noteEl) noteEl.textContent = note || label || '';
     const usd = v => _tmAmt(`${(v || 0) >= 0 ? '+' : '−'}$${Math.abs(v || 0).toFixed(2)}`);
     const money = v => _tmAmt(`$${(v || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`);
@@ -11994,7 +12069,12 @@ function renderTmStats(st, label, note) {
     // 💰 Баланс — показуємо ЗАВЖДИ, навіть коли закритих угод за період немає.
     const w = _tmWallet;
     let balCard;
-    if (!w) {
+    if (paper) {
+        const ap = st ? (st.avg_pnl_pct || 0) : 0;
+        balCard = card('Сер. рух на угоду', st && st.total_closed ? `<span class="${cls(ap)}">${ap >= 0 ? '+' : '−'}${Math.abs(ap).toFixed(2)}%</span>` : '—',
+                       '🧪 paper · біржі немає', '',
+                       'Paper-угоди не мають рахунку на біржі, тож балансу й % депозиту тут немає. Середній рух ціни на угоду — без плеча й комісій.');
+    } else if (!w) {
         balCard = card('Баланс на біржі', '<span class="bb-mask">…</span>', 'завантаження', '', 'Баланс USDT на рахунку Bybit (UNIFIED).');
     } else if (!w.ok) {
         balCard = card('Баланс на біржі', '—', `<span class="bb-warn">⚠ ${w.reason || 'немає даних'}</span>`, '', 'Баланс USDT на рахунку Bybit (UNIFIED). Біржа не віддала баланс.');
@@ -12012,8 +12092,8 @@ function renderTmStats(st, label, note) {
     }
     const n = st ? (st.total_closed || 0) : 0;
     if (!st || !n) {
-        host.innerHTML = balCard + `<div class="bb-empty">${st ? `Закритих угод ${label || ''} немає` : 'Немає даних за обраний період'}</div>`;
-        renderEntryScoreBreakdown(null);
+        host.innerHTML = balCard + `<div class="bb-empty">${st ? `Закритих ${paper ? 'paper-' : ''}угод ${label || ''} немає` : 'Немає даних за обраний період'}</div>`;
+        renderEntryScoreBreakdown(null, book);
         return;
     }
     const wr = st.win_rate || 0;
@@ -12022,15 +12102,16 @@ function renderTmStats(st, label, note) {
         card('Чистий P&amp;L', usd(st.total_pnl_usd),
              `<span class="bb-up">${usd(st.gross_profit_usd)}</span> · <span class="bb-dn">${usd(st.gross_loss_usd)}</span>`,
              _tmAmtShown ? cls(st.total_pnl_usd) : '',
-             'Сумарний результат закритих угод у $. Для угод, звірених із Bybit, — closedPnl біржі (нетто: з плечем, комісіями й фандингом). Під числом — сума прибуткових і сума збиткових угод.') +
+             paper ? 'Сумарний результат закритих paper-угод у $ — нетто з оцінкою комісій (розмір позиції paper на відкритті). Під числом — сума прибуткових і сума збиткових угод.'
+                   : 'Сумарний результат закритих угод у $. Для угод, звірених із Bybit, — closedPnl біржі (нетто: з плечем, комісіями й фандингом). Під числом — сума прибуткових і сума збиткових угод.') +
         balCard +
         card('Відсоток успішних', `${wr}%`,
              `${n} угод · <span class="bb-up">${st.wins || 0} W</span> · <span class="bb-dn">${st.losses || 0} L</span>` +
-             (st.not_exchange ? ` · <span class="bb-warn">⏳ ${st.not_exchange}</span>` : '') +
+             (!paper && st.not_exchange ? ` · <span class="bb-warn">⏳ ${st.not_exchange}</span>` : '') +
              `<div class="bb-bar"><i style="width:${Math.max(0, Math.min(100, wr))}%"></i></div>`,
              wr >= 50 ? 'bb-up' : 'bb-dn',
              `Частка угод, закритих у плюсі (за рухом ціни). Усього закрито за період: ${n}.` +
-             (st.not_exchange ? ` ⏳ ${st.not_exchange} — ще не звірено з біржею (стоїть розрахунок бота; бот перепитує Bybit щохвилини до 3 діб).` : ' Усі звірено з Bybit.')) +
+             (paper ? ' 🧪 Paper — без біржі.' : (st.not_exchange ? ` ⏳ ${st.not_exchange} — ще не звірено з біржею (стоїть розрахунок бота; бот перепитує Bybit щохвилини до 3 діб).` : ' Усі звірено з Bybit.'))) +
         card('Profit factor', pf == null ? (st.gross_profit_usd > 0 ? '∞' : '—') : pf.toFixed(2),
              `сер. <span class="bb-up">${usd(st.avg_win_usd)}</span> / <span class="bb-dn">${usd(st.avg_loss_usd)}</span>`,
              pf == null ? (st.gross_profit_usd > 0 ? 'bb-up' : '') : (pf >= 1 ? 'bb-up' : 'bb-dn'),
@@ -12038,13 +12119,15 @@ function renderTmStats(st, label, note) {
         card('Найкраща / найгірша', `<span class="${_tmAmtShown ? cls(st.best_usd) : ''}">${usd(st.best_usd)}</span>`,
              `<span class="${cls(st.worst_usd)}">${usd(st.worst_usd)}</span> · сер. рух ${(st.avg_pnl_pct || 0) >= 0 ? '+' : ''}${(st.avg_pnl_pct || 0).toFixed(2)}%`,
              '', 'Найбільший результат однієї угоди в $ і найбільший збиток. «Сер. рух» — середній рух ціни на угоду (без плеча й комісій).') +
-        card('Комісії біржі', _tmAmt(`$${(st.total_fees_usd || 0).toFixed(2)}`),
-             'вхід + вихід, Bybit', '', 'Сума комісій біржі (вхід + вихід) по угодах, звірених із Bybit. Уже враховані в чистому P&L.');
-    renderEntryScoreBreakdown(st.entry_score_breakdown);
+        card(paper ? 'Комісії (оцінка)' : 'Комісії біржі', _tmAmt(`$${(st.total_fees_usd || 0).toFixed(2)}`),
+             paper ? 'вхід + вихід, тариф paper' : 'вхід + вихід, Bybit', '',
+             paper ? 'Оцінка комісій paper-угод (вхід + вихід, «Комісія / сторону, %»). Уже врахована в чистому P&L.'
+                   : 'Сума комісій біржі (вхід + вихід) по угодах, звірених із Bybit. Уже враховані в чистому P&L.');
+    renderEntryScoreBreakdown(st.entry_score_breakdown, book);
 }
 
-function renderEntryScoreBreakdown(breakdown) {
-    const host = document.getElementById('tm-entry-stats');
+function renderEntryScoreBreakdown(breakdown, book) {
+    const host = document.getElementById(book === 'paper' ? 'tmp-entry-stats' : 'tm-entry-stats');
     if (!host) return;
     if (!breakdown) {
         host.style.display = 'none';
@@ -18145,12 +18228,17 @@ async function loadTMState(isPoll) {
         // береться з /api/tm/stats (та сама closed_stats на бекенді).
         const st = d.stats || {};
         window._tmLiveStats = st;
+        _TMS.real.live = st;
         tmLoadBalance(false);
         if (_tmPeriod.mode === 'all') {
             renderTmStats(st, 'за весь час');
         } else {
             tmLoadPeriodStats(false);
         }
+        // 🧪 Та сама панель для paper-угод (та сама closed_stats на бекенді).
+        _TMS.paper.live = d.shadow_stats || {};
+        if (_TMS.paper.period.mode === 'all') renderTmStats(_TMS.paper.live, 'за весь час', '', 'paper');
+        else tmLoadPeriodStats(false, 'paper');
         
         // Open positions
         const positions = d.positions || [];
@@ -18159,7 +18247,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="18" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="19" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -18200,6 +18288,7 @@ async function loadTMState(isPoll) {
                     ${manualModeCellHTML(p, false)}
                     ${breakevenCloseCellHTML(p, false)}
                     ${oppObExitCellHTML(p, false)}
+                    ${sbrExitCellHTML(p, false)}
                     <td style="font-size:0.74rem;color:#cbd5e1">${p.opened_at ? `<span class="ff-timer" data-since="${Math.floor(p.opened_at)}">${fmtTimer(_nowS() - Math.floor(p.opened_at))}</span>` : '—'}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -18258,7 +18347,7 @@ async function loadTMState(isPoll) {
         document.getElementById('tm-shadow-open-count').textContent = `(${shadowPositions.length})`;
         
         // Inline stats
-        const sStats = `${shadowStats.total_closed || 0} closed · ${shadowStats.wins || 0}W / ${shadowStats.losses || 0}L · win rate ${shadowStats.win_rate || 0}% · avg ${(shadowStats.avg_pnl_pct >= 0 ? '+' : '') + (shadowStats.avg_pnl_pct || 0)}%`;
+        const sStats = `${shadowStats.total_closed || 0} закрито · ${shadowStats.wins || 0}W / ${shadowStats.losses || 0}L · ${shadowStats.win_rate || 0}% успішних · сер. ${(shadowStats.avg_pnl_pct >= 0 ? '+' : '') + (shadowStats.avg_pnl_pct || 0)}%`;
         document.getElementById('tm-shadow-stats-inline').textContent = sStats;
         
         // Open shadow positions
@@ -18266,7 +18355,7 @@ async function loadTMState(isPoll) {
         if (isPoll && _tmEditingIn('tm-shadow-open-tbody')) {
             // ⏸ користувач редагує поле/тумблер — не чіпаємо DOM цієї таблиці
         } else if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="16" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="17" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -18297,6 +18386,7 @@ async function loadTMState(isPoll) {
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}
                     ${oppObExitCellHTML(p, true)}
+                    ${sbrExitCellHTML(p, true)}
                     <td style="font-size:0.74rem;color:#cbd5e1">${p.opened_at ? `<span class="ff-timer" data-since="${Math.floor(p.opened_at)}">${fmtTimer(_nowS() - Math.floor(p.opened_at))}</span>` : '—'}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -18740,6 +18830,51 @@ function oppObExitCellHTML(p, isShadow) {
                 <span class="slider"></span>
             </label><span class="tm-oppob-by" style="display:inline-block;width:14px;margin-left:3px;font-size:0.68rem">${on ? (auto ? '🤖' : '✏️') : ''}</span>
         </td>`;
+}
+
+// 🔔 Пер-угодний «МММ-SBR проти → вихід» (вимога 08.11): тумблер + вибір TF
+// сигналу (1H / 4H / будь-який). Вибір TF зʼявляється лише на ввімкненому.
+const _SBRX_TF_LBL = { any: '1H|4H', '1h': '1H', '4h': '4H' };
+function sbrExitCellHTML(p, isShadow) {
+    const sym = p.symbol;
+    const shFlag = isShadow ? 'true' : 'false';
+    const on = !!p.sbr_exit_on;
+    const tf = _SBRX_TF_LBL[p.sbr_exit_tf] ? p.sbr_exit_tf : 'any';
+    const armed = p.sbr_trail && typeof p.sbr_trail === 'object';
+    const tip = on
+        ? `🔔 Вихід по протилежному сигналу МММ-SBR УВІМКНЕНО для цієї угоди · TF ${_SBRX_TF_LBL[tf]}` +
+          (tf === 'any' ? ' (будь-який із двох)' : '') +
+          '. Закриє угоду, щойно зʼявиться протилежний сигнал ПІСЛЯ входу (з увімкненим «🔔⏳ трейл» у Exit Rules — поведе трейлом).' +
+          (armed ? ' ⏳ Трейл уже озброєно.' : '')
+        : '🔔 Вихід по протилежному сигналу МММ-SBR для цієї угоди вимкнено. Увімкніть і оберіть TF сигналу: 1H · 4H · 1H|4H.';
+    const opts = Object.entries(_SBRX_TF_LBL)
+        .map(([v, l]) => `<option value="${v}"${v === tf ? ' selected' : ''}>${l}</option>`).join('');
+    return `
+        <td style="text-align:center;white-space:nowrap" title="${tip}">
+            <label class="tm-toggle-mini">
+                <input type="checkbox" ${on ? 'checked' : ''}
+                       onchange="submitSbrExit('${sym}', this.checked, ${shFlag}, this.closest('td').querySelector('select').value)">
+                <span class="slider"></span>
+            </label><select class="tm-sbrx-tf" style="width:58px;margin-left:4px;font-size:0.68rem;padding:1px 2px;background:#1d1e24;color:${on ? '#fbbf24' : '#6b7280'};border:1px solid ${on ? 'rgba(251,191,36,0.5)' : '#2b2f36'};border-radius:4px;visibility:${on ? 'visible' : 'hidden'}"
+                    onchange="submitSbrExit('${sym}', true, ${shFlag}, this.value)">${opts}</select>
+        </td>`;
+}
+
+async function submitSbrExit(symbol, enabled, isShadow, tf) {
+    try {
+        const res = await fetch('/api/tm/positions/sbr-exit', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol, enabled: !!enabled, tf: tf || 'any', is_shadow: !!isShadow}),
+        });
+        if (!res.ok) { alert('🔔 SBR-вихід: сервер відповів ' + res.status); setTimeout(loadTMState, 200); return; }
+        const d = await res.json();
+        if (!d.ok) alert('🔔 SBR-вихід: ' + (d.reason || 'не вдалося'));
+        setTimeout(loadTMState, 150);
+    } catch (err) {
+        console.error('SBR-exit toggle error:', err);
+        setTimeout(loadTMState, 200);
+    }
 }
 
 async function submitOppObExit(symbol, enabled, isShadow) {
