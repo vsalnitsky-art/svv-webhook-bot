@@ -196,15 +196,16 @@ SBR_SHOW = 40               # скільки останніх сигналів S
 
 
 def imb_of(klines, tf, now=None):
-    """📐 IMB (Fair Value Gap) на ЗАКРИТИХ барах графіка — `detection.imbalance`
-    (той самий модуль бот може брати для своєї логіки)."""
+    """📐 IMB (Fair Value Gap) — `detection.imbalance` на барах графіка
+    РАЗОМ із ЖИВИМ (вимога 08.11, кейс BTC 1H: обвал 21:00 — TV уже малював
+    розрив 74.7–75.7K, а кабінет мовчав, бо третя свічка ще не закрилась).
+    Як у TradingView: зона живого бару може змінитись або зникнути до його
+    закриття; закриті бари поводяться як раніше."""
     try:
         from detection.imbalance import detect_imbalances
     except Exception:
         return []
-    now = time.time() if now is None else now
-    b = bar_sec(tf)
-    closed = [k for k in (klines or []) if to_sec(k.get('t')) + b <= now + 0.5]
+    closed = [k for k in (klines or []) if k.get('t') is not None]
     out = []
     for z in detect_imbalances(closed, max_show=IMB_SHOW):
         out.append({'side': z['side'], 'top': z['top'], 'bottom': z['bottom'],
@@ -251,6 +252,7 @@ def sig_of(payload):
         len(payload.get('vob') or []), (payload.get('vob') or [{}])[0].get('start'),
         len(payload.get('events') or []), ev[-1].get('to'),
         len(payload.get('imb') or []), sum(round(float(z.get('top') or 0), 8) for z in payload.get('imb') or []),
+        sum(round(float(z.get('bottom') or 0), 8) for z in payload.get('imb') or []),
         len(payload.get('sbr') or []), ((payload.get('sbr') or [{}])[-1]).get('t'),
         (payload.get('pd') or {}).get('pct'), (payload.get('poc') or {}).get('poc'),
         ((payload.get('shl') or {}).get('high') or {}).get('price'),
@@ -978,14 +980,14 @@ def sbr_personal_send(symbol, items):
 
 
 # ── 🧪 ТЕСТОВІ (paper) угоди бота — лише читання (вимога 08.11) ─────────
-PAPER_TTL = 5.0                 # спільний кеш знімка (сторінки опитують часто)
+PAPER_TTL = 2.0                 # спільний кеш знімка (сторінки опитують часто)
 PAPER_CLOSED_SHOW = 50          # скільки останніх закритих paper-угод віддаємо
 _PAPER_POS_KEYS = ('symbol', 'side', 'entry_price', 'current_price', 'pnl_pct',
                    'pnl_net', 'paper_size', 'opened_at', 'opened_by', 'manual_sl',
                    'manual_tp', 'manual_tp1', 'tp1_done', 'spring_open', 'mmd')
 _PAPER_CLOSED_KEYS = ('symbol', 'side', 'entry_price', 'exit_price', 'opened_at',
                       'closed_at', 'pnl_pct', 'reason', 'opened_by')
-_paper_cache = {'at': 0.0, 'data': None}
+_paper_cache = {'at': 0.0, 'data': None, 'sig': None}
 
 
 def paper_pos_view(p, spring=None):
@@ -1006,11 +1008,28 @@ def paper_closed_view(c):
     return out
 
 
+def paper_book_sig(tm):
+    """Дешевий підпис paper-книги: склад відкритих і закритих угод. Будь-яке
+    видалення / закриття / відкриття міняє його → кеш знімка не віддає
+    угоду, якої в боті вже немає (кейс 08.11: видалена угода ще висіла)."""
+    try:
+        cl = list(getattr(tm, '_shadow_closed', None) or [])
+        op = dict(getattr(tm, '_shadow_positions', None) or {})
+        last = cl[-1] if cl else {}
+        return (len(cl), last.get('symbol'), last.get('closed_at'),
+                tuple(sorted((k, (v or {}).get('opened_at')) for k, v in op.items())))
+    except Exception:
+        return None
+
+
 def _paper_snapshot(tm):
-    """Знімок paper-книги з TM (ТІ САМІ числа, що таблиця бота) + кеш."""
+    """Знімок paper-книги з TM (ТІ САМІ числа, що таблиця бота) + кеш.
+    Кеш живе ≤ PAPER_TTL І лише поки склад книги не змінився."""
     now = time.time()
+    sig = paper_book_sig(tm)
     with _lock:
-        if _paper_cache['data'] and now - _paper_cache['at'] < PAPER_TTL:
+        if (_paper_cache['data'] and now - _paper_cache['at'] < PAPER_TTL
+                and sig is not None and sig == _paper_cache['sig']):
             return _paper_cache['data']
     st = tm.get_state()
     pos = st.get('shadow_positions') or []
@@ -1041,7 +1060,7 @@ def _paper_snapshot(tm):
         'test_mode': bool((st.get('settings') or {}).get('test_mode', True)),
     }
     with _lock:
-        _paper_cache.update(at=now, data=data)
+        _paper_cache.update(at=now, data=data, sig=sig)
     return data
 
 
@@ -1093,7 +1112,9 @@ def register_info_portal(app):
         else:
             d['stats'] = d.get('stats_all') or {}
         d.pop('stats_all', None)
-        return jsonify({'ok': True, 'ts': time.time(), **d})
+        r = jsonify({'ok': True, 'ts': time.time(), **d})
+        r.headers['Cache-Control'] = 'no-store'
+        return r
 
     @app.route('/api/info/paper/days')
     def api_info_paper_days():
@@ -1102,7 +1123,9 @@ def register_info_portal(app):
         tm = get_trade_manager()
         if not tm:
             return jsonify({'ok': False, 'reason': 'Trade Manager недоступний'})
-        return jsonify({'ok': True, 'items': tm.trade_days(shadow=True)})
+        r = jsonify({'ok': True, 'items': tm.trade_days(shadow=True)})
+        r.headers['Cache-Control'] = 'no-store'
+        return r
 
     @app.route('/api/me/watchlist', methods=['GET', 'POST'])
     def api_me_watchlist():

@@ -489,6 +489,39 @@ def test_sbr_last_badges_1h_4h():
     assert 'function sbrMove(' in js
 
 
+def test_paper_fresh_and_watchlist_height_0811():
+    """Видалена paper-угода не висить у кеші; WATCHLIST до низу графіка."""
+    import types
+    pass
+    tm = types.SimpleNamespace(_shadow_closed=[{'symbol': 'A', 'closed_at': 1}],
+                               _shadow_positions={})
+    s1 = ip.paper_book_sig(tm)
+    tm._shadow_closed = []
+    assert ip.paper_book_sig(tm) != s1
+    src = open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
+    assert "sig == _paper_cache['sig']" in src and src.count("'no-store'") >= 2
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    assert 'cache: "no-store"' in js and 'loadPaper(); }, 5000)' in js
+    css = open(os.path.join(_HERE, 'infosite', 'style.css'), encoding='utf-8').read()
+    assert 'align-items: stretch' in css and '.iw-list { flex: 1 1 0; min-height: 0;' in css
+
+
+def test_imb_counts_the_live_bar_like_tv():
+    """Кейс BTC 1H 08.11: розрив після обвалу видно ВЖЕ на живій свічці."""
+    T = 1_700_000_000_000
+    H = 3600_000
+    b = [{'t': T + i * H, 'o': 100, 'h': 100.5, 'l': 99.5, 'p': 100, 'v': 1000} for i in range(30)]
+    b += [{'t': T + 30 * H, 'o': 100, 'h': 100.4, 'l': 99.6, 'p': 99.8, 'v': 1000},
+          {'t': T + 31 * H, 'o': 99.8, 'h': 99.9, 'l': 95.0, 'p': 95.5, 'v': 9000},   # обвал
+          {'t': T + 32 * H, 'o': 95.5, 'h': 97.0, 'l': 94.8, 'p': 96.0, 'v': 2000}]   # ЖИВА
+    now = (T + 32 * H) / 1000 + 600   # жива свічка відкрита 10 хв
+    z = ip.imb_of(b, '1h', now)
+    _check(z and z[0]['side'] in ('bear', 'bearish', 'SHORT', 'short') or
+           (z and z[0]['top'] > z[0]['bottom']), ('IMB на живому барі', z))
+    _check(abs(z[0]['top'] - 99.6) < 1e-9 and abs(z[0]['bottom'] - 97.0) < 1e-9, z[0])
+    print('✓ IMB видно на живій свічці, як у TV')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:
