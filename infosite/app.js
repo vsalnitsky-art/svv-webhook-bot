@@ -1454,6 +1454,11 @@
     if (!v) return '<span class="muted">—</span>';
     return fmtPrice(v).replace("$", "") + (done ? ' <span class="pp-up">✓</span>' : "");
   }
+  // PnL рівними стовпчиками: % і $ — окремі сегменти сталої ширини, праворуч.
+  function ppPnlCols(pc, usd) {
+    return '<span class="pp-pnl"><span class="pp-pnl-p">' + ppPct(pc) + "</span>" +
+      (usd != null ? '<span class="pp-pnl-s">·</span><span class="pp-pnl-u">' + ppUsd(usd) + "</span>" : "") + "</span>";
+  }
   function ppRenderOpen(d) {
     var rows = d.positions || [], tb = $("#pp-open tbody");
     $("#pp-open-n").textContent = rows.length;
@@ -1461,7 +1466,7 @@
     tb.innerHTML = rows.map(function (p) {
       var pc = Number(p.pnl_pct || 0), n = p.pnl_net, z = p.paper_size || {};
       var cl = (n ? n.net_usd : pc) >= 0 ? "pp-up" : "pp-dn";
-      var pnl = ppPct(pc) + (n ? " · " + ppUsd(n.net_usd) : "");
+      var pnl = ppPnlCols(pc, n ? n.net_usd : null);
       var tip = n ? "Маржа $" + Number(z.margin || 0).toFixed(2) + " × " + z.lev + "x · брутто " + ppUsd(n.gross_usd).replace(/<[^>]+>/g, "") +
         " · комісії −$" + Number(n.fees_usd || 0).toFixed(2) + (n.roi_pct != null ? " · ROI " + ppPct(n.roi_pct, 1) : "") : "";
       var a = p.mmd && p.mmd.alert, al = a && PP_ALERT[a.level];
@@ -1488,7 +1493,7 @@
       return "<tr><td>" + p2(t.getDate()) + "." + p2(t.getMonth() + 1) + " " + p2(t.getHours()) + ":" + p2(t.getMinutes()) + "</td>" +
         '<td class="sym">' + tvSym(c.symbol) + '</td><td class="' + (c.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(c.side) + "</td>" +
         '<td class="r">' + fmtPrice(c.entry_price) + '</td><td class="r">' + fmtPrice(c.exit_price) + "</td>" +
-        '<td class="r ' + ppCls(c.net_usd != null ? c.net_usd : pc) + '">' + ppPct(pc) + (c.net_usd != null ? " · " + ppUsd(c.net_usd) : "") + "</td>" +
+        '<td class="r ' + ppCls(c.net_usd != null ? c.net_usd : pc) + '">' + ppPnlCols(pc, c.net_usd) + "</td>" +
         '<td style="font-family:var(--font)">' + esc(PP_REASON[c.reason] || c.reason || "—") + "</td></tr>";
     }).join("");
   }

@@ -565,3 +565,9 @@ td.mono, td .mono { font-family: var(--mono); }
 .pp-al.ok { color: var(--long); border-color: color-mix(in srgb, var(--long) 45%, transparent); }
 .pp-al.against { color: var(--short); border-color: color-mix(in srgb, var(--short) 55%, transparent); }
 .pp-al.pre { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+
+/* PnL тестових угод — % і $ рівними стовпчиками */
+.pp-pnl{display:inline-flex;align-items:baseline;justify-content:flex-end;white-space:nowrap;font-variant-numeric:tabular-nums;font-family:var(--mono,monospace)}
+.pp-pnl-p{display:inline-block;min-width:4.6em;text-align:right}
+.pp-pnl-s{display:inline-block;width:1.4em;text-align:center;opacity:.55}
+.pp-pnl-u{display:inline-block;min-width:5.6em;text-align:right}
