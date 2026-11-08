@@ -251,6 +251,48 @@ def test_wiring_and_page():
     print('✓ маршрути, доступ, нова сторінка без старих блоків')
 
 
+def test_imbalance_detection_and_fill():
+    import importlib.util as iu
+    sp = iu.spec_from_file_location('imbalance', os.path.join(_HERE, 'detection', 'imbalance.py'))
+    m = iu.module_from_spec(sp); sp.loader.exec_module(m)
+    T = 1_700_000_000_000
+    b = [{'t': T + i * 60000, 'o': 100, 'h': 101, 'l': 99, 'p': 100} for i in range(20)]
+    b += [{'t': T + 20 * 60000, 'o': 100, 'h': 101, 'l': 99, 'p': 101},
+          {'t': T + 21 * 60000, 'o': 101, 'h': 106, 'l': 100.5, 'p': 105.5},
+          {'t': T + 22 * 60000, 'o': 105.5, 'h': 107, 'l': 103, 'p': 106}]
+    z = m.detect_imbalances(b)
+    _check(len(z) == 1 and z[0]['side'] == 'LONG' and (z[0]['bottom'], z[0]['top']) == (101, 103), z)
+    _check(z[0]['t'] == (T + 21 * 60000) // 1000, 'початок зони = середня свічка, секунди')
+    b.append({'t': T + 23 * 60000, 'o': 106, 'h': 106.5, 'l': 102, 'p': 102.5})
+    z = m.detect_imbalances(b)
+    _check(z[0]['top'] == 102 and z[0]['filled_pct'] == 50, 'часткове заповнення зменшує зону')
+    b.append({'t': T + 24 * 60000, 'o': 102, 'h': 102.5, 'l': 100, 'p': 100.5})
+    _check(all(x['side'] != 'LONG' for x in m.detect_imbalances(b)), 'заповнений розрив зникає')
+    tiny = [{'t': T + i * 60000, 'o': 100, 'h': 101 + (i % 2) * 0.001, 'l': 99, 'p': 100} for i in range(40)]
+    _check(m.detect_imbalances(tiny) == [], 'шум без розриву')
+    print('✓ IMB: визначення, часткове й повне заповнення')
+
+
+def test_payload_carries_imb_and_sbr():
+    _reset()
+    sc = _Sc()
+    ip._kick = lambda: None
+    now = 1000 + 500 * 900 + 10
+    kl = sc._cache['BTCUSDT']['klines']
+    _check(isinstance(ip.imb_of(kl, '15m', now), list), 'imb_of')
+    sig = ip.sbr_of(kl, '15m', now)
+    _check(isinstance(sig, list) and all(set(('side', 't', 'trigger', 'score', 'sl', 'tf')) <= set(x) for x in sig), sig[:1])
+    p = ip.coin_payload('BTCUSDT', sc)
+    _check('imb' in p and 'sbr' in p, 'відповідь графіка несе IMB і SBR')
+    cur, _ = ip.apply_change(ip.user_info({}, []), {'show_imb': False}, [])
+    _check(cur['show_imb'] is False and cur['show_sbr'] is True, 'перемикачі шарів зберігаються')
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    _check('subscribeClick' in js and 'hitAt' in js and 'sigCard' in js, 'клік по позначці S/B → картка')
+    _check('overlaps(' in js and 'taken.push' in js, 'підписи розкладаються без накладань')
+    _check('"S" : "B"' in js, 'позначки S / B')
+    print('✓ графік: IMB, сигнали SBR, підписи без накладань')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:

@@ -190,6 +190,46 @@ def ohlc_of(klines, n=OHLC_BARS):
     return out
 
 
+IMB_SHOW = 12               # скільки незаповнених IMB малюємо
+SBR_SHOW = 40               # скільки останніх сигналів SBR на графіку
+
+
+def imb_of(klines, tf, now=None):
+    """📐 IMB (Fair Value Gap) на ЗАКРИТИХ барах графіка — `detection.imbalance`
+    (той самий модуль бот може брати для своєї логіки)."""
+    try:
+        from detection.imbalance import detect_imbalances
+    except Exception:
+        return []
+    now = time.time() if now is None else now
+    b = bar_sec(tf)
+    closed = [k for k in (klines or []) if to_sec(k.get('t')) + b <= now + 0.5]
+    out = []
+    for z in detect_imbalances(closed, max_show=IMB_SHOW):
+        out.append({'side': z['side'], 'top': z['top'], 'bottom': z['bottom'],
+                    'start': z['t'], 'filled_pct': z.get('filled_pct', 0)})
+    return out
+
+
+def sbr_of(klines, tf, now=None):
+    """🔔 Сигнали Session Band Reversal на ЗАКРИТИХ барах ГРАФІКА — той самий
+    `sbr_signals.compute_signals`, що рушій бота (1H/4H) і Telegram."""
+    try:
+        from detection.sbr_signals import compute_signals, closed_bars
+    except Exception:
+        return []
+    now = time.time() if now is None else now
+    b = bar_sec(tf)
+    cb = closed_bars(klines or [], b, now)
+    out = []
+    for x in compute_signals(cb, b)[-SBR_SHOW:]:
+        out.append({'side': x['side'], 't': to_sec(x['t']), 'n': x.get('n'),
+                    'trigger': x.get('trigger'), 'score': x.get('score'),
+                    'risk': x.get('risk'), 'sl': x.get('sl'),
+                    'time_kyiv': x.get('time_kyiv'), 'tf': str(tf).upper()})
+    return out
+
+
 def sig_of(payload):
     o = payload.get('ohlc') or []
     last = o[-1] if o else {}
@@ -200,6 +240,8 @@ def sig_of(payload):
         len(payload.get('ob') or []), (payload.get('ob') or [{}])[0].get('start'),
         len(payload.get('vob') or []), (payload.get('vob') or [{}])[0].get('start'),
         len(payload.get('events') or []), ev[-1].get('to'),
+        len(payload.get('imb') or []), sum(round(float(z.get('top') or 0), 8) for z in payload.get('imb') or []),
+        len(payload.get('sbr') or []), ((payload.get('sbr') or [{}])[-1]).get('t'),
         (payload.get('pd') or {}).get('pct'), (payload.get('poc') or {}).get('poc')))
 
 
@@ -582,6 +624,8 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
         'ok': bool(ohlc), 'symbol': sym, 'src': 'bot' if in_bot else 'ext', 'reason': reason,
         'tf': tf, 'ob_tf': ob_tf, 'vob_tf': vob_tf,
         'ohlc': ohlc, 'events': events,
+        'imb': imb_of((bars or {}).get('kl'), tf, now),
+        'sbr': sbr_of((bars or {}).get('kl'), tf, now),
         'ob': ob, 'vob': vob, 'ob_wait': ob_wait, 'vob_wait': vob_wait,
         'pd': _pd(sc, sym), 'poc': poc, 'poc_state': _st, 'ts': now,
     }
@@ -609,7 +653,10 @@ def user_info(prefs, uni, dfl=None):
     return {'wl': wl, 'sel': sel,
             'tf': norm_tf(info.get('tf'), CHART_TFS, dfl['tf']),
             'ob_tf': norm_tf(info.get('ob_tf'), OB_TFS, dfl['ob_tf'], allow_off=True),
-            'vob_tf': norm_tf(info.get('vob_tf'), VOB_TFS, dfl['vob_tf'], allow_off=True)}
+            'vob_tf': norm_tf(info.get('vob_tf'), VOB_TFS, dfl['vob_tf'], allow_off=True),
+            # що малювати на графіку (лише показ, рахується завжди)
+            'show_imb': bool(info.get('show_imb', True)),
+            'show_sbr': bool(info.get('show_sbr', True))}
 
 
 def apply_change(cur, body, uni):
@@ -645,6 +692,9 @@ def apply_change(cur, body, uni):
         out['ob_tf'] = norm_tf(body.get('ob_tf'), OB_TFS, cur.get('ob_tf') or '1h', allow_off=True)
     if 'vob_tf' in body:
         out['vob_tf'] = norm_tf(body.get('vob_tf'), VOB_TFS, cur.get('vob_tf') or '5m', allow_off=True)
+    for k in ('show_imb', 'show_sbr'):
+        if k in body:
+            out[k] = bool(body.get(k))
     out['wl'], out['sel'] = wl, sel
     return out, err
 

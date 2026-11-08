@@ -6,7 +6,7 @@
   <title>VSV — Мій кабінет</title>
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=68">
+  <link rel="stylesheet" href="style.css?v=69">
   <!-- ⏳ Анти-блимання: доки JS не перевірив авторизацію (клас app-ready ще не
        додано на <body>), не показуємо ні дашборд, ні hero — інакше на секунду
        спалахує «бот-панель» перед екраном входу. Після перевірки showData()
@@ -74,6 +74,7 @@
             <select id="iw-ob-tf"></select></label>
           <label class="iw-sel" title="Volumized Order Blocks — на якому таймфреймі шукати">VOB
             <select id="iw-vob-tf"></select></label>
+          <div class="iw-tfs iw-layers" id="iw-layers" title="Що показувати на графіку"></div>
           <span class="iw-sel" id="iw-tf-wait"></span>
         </div>
         <div class="iw-box" id="iw-box"><div class="iw-note" id="iw-note">оберіть монету зі списку</div></div>
@@ -113,7 +114,7 @@
     })();
   </script>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="config.js?v=68"></script>
-  <script src="app.js?v=68"></script>
+  <script src="config.js?v=69"></script>
+  <script src="app.js?v=69"></script>
 </body>
 </html>
