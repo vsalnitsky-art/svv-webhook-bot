@@ -33,11 +33,18 @@ import time
 
 IWL_MAX = 20                 # стеля особистого списку (вимога 08.11)
 IWL_DEFAULT = ('BTCUSDT', 'ETHUSDT')
-CHART_TFS = ('1m', '5m', '15m', '30m', '1h', '4h', '1d')
+# 1m/5m прибрано з графіка, 1m — з VOB (вимога 08.11: надто шумно і важко).
+CHART_TFS = ('15m', '30m', '1h', '4h', '1d')
 OB_TFS = ('15m', '30m', '1h', '4h')
-VOB_TFS = ('1m', '5m', '15m', '30m', '1h', '4h')
+VOB_TFS = ('5m', '15m', '30m', '1h', '4h')
 OFF = 'off'
-POC_TTL = 300.0              # спільний кеш POC на монету
+POC_TTL = 300.0              # спільний кеш POC на (монету, вікно, TF)
+# ⚪ POC — СВОЇ параметри кабінету (вимога 08.11: «вибір POC параметрів, за
+# замовчуванням 7 днів»). Ринок — як у бота (`poc_filter_market`).
+POC_DAYS = (1, 2, 3, 5, 7, 14, 30)
+POC_DAYS_DEFAULT = 7
+POC_TFS = ('15m', '1h', '4h')
+POC_TF_DEFAULT = '1h'
 COIN_TTL = 10.0              # спільний кеш відповіді графіка
 OHLC_BARS = 400              # скільки барів віддаємо на графік
 EVENTS_MAX = 80              # скільки останніх CHoCH/BOS малюємо
@@ -52,11 +59,11 @@ OB_BARS = 700                # як у сканера (_update_smc_ob)
 PD_BARS = 3000
 
 _lock = threading.Lock()
-_poc_cache = {}              # SYM → (ts, view|None)
+_poc_cache = {}              # (SYM, днів, TF) → (ts, view|None)
 _coin_cache = {}             # (SYM, tf, ob_tf, vob_tf) → (ts, payload)
 _comp = {}                   # (kind, SYM, tf) → {'data','at','until','err','err_at'}
 _want = {}                   # (kind, SYM, tf) → коли востаннє просили
-_poc_want = {}               # SYM → коли востаннє просили POC
+_poc_want = {}               # (SYM, днів, TF) → коли востаннє просили POC
 _thread = None
 
 
@@ -130,11 +137,30 @@ def next_close(now, tf):
     return (int(now // b) + 1) * b + SETTLE_SEC
 
 
+OB_SHOW = {'swing': 3, 'internal': 5}   # скільки блоків сім'ї малювати
+OB_OVERLAP_MAX = 0.7                     # перекриття з уже показаним → не малюємо
+
+
+def _overlap_share(a_top, a_bot, b_top, b_bot):
+    """ЧИСТА: частка перекриття двох цінових діапазонів (від МЕНШОГО з них)."""
+    lo, hi = max(min(a_top, a_bot), min(b_top, b_bot)), min(max(a_top, a_bot), max(b_top, b_bot))
+    span = min(abs(a_top - a_bot), abs(b_top - b_bot))
+    if hi <= lo:
+        return 0.0
+    return 1.0 if span <= 0 else (hi - lo) / span
+
+
 def ob_boxes(zones):
-    """Знімок OB-сімей → бокси для графіка (без дублів між сім'ями)."""
+    """Знімок OB-сімей → бокси для графіка. Без дублів між сім'ями, не більше
+    `OB_SHOW` найновіших на сімʼю і без блоків того самого боку, що майже
+    повністю лежать в уже показаному (скрін 08.11: 4-5 боксів «OB 1H int»
+    одне на одному в ±30 пунктах — графік ставав нечитабельним)."""
     out, seen = [], set()
     for fam in ('swing', 'internal'):
+        n = 0
         for o in (zones or {}).get(fam) or []:
+            if n >= OB_SHOW.get(fam, 5):
+                break
             try:
                 top, bot = float(o['bar_high']), float(o['bar_low'])
             except (KeyError, TypeError, ValueError):
@@ -144,6 +170,11 @@ def ob_boxes(zones):
             if key in seen:
                 continue
             seen.add(key)
+            side = 'LONG' if o.get('bias') == 'BULLISH' else 'SHORT'
+            if any(b['side'] == side and _overlap_share(top, bot, b['top'], b['bottom'])
+                   >= OB_OVERLAP_MAX for b in out):
+                continue
+            n += 1
             out.append({'side': 'LONG' if o.get('bias') == 'BULLISH' else 'SHORT',
                         'top': top, 'bottom': bot, 'start': st, 'fam': fam,
                         'tag': str(o.get('created_by_tag') or '')})
@@ -399,10 +430,23 @@ def want(key):
     return True
 
 
-def poc_want(sym):
+def poc_norm(days=None, tf=None):
+    """ЧИСТА: параметри POC кабінету → (днів, TF) з дозволених значень."""
+    try:
+        d = int(float(days))
+    except (TypeError, ValueError):
+        d = POC_DAYS_DEFAULT
+    if d not in POC_DAYS:
+        d = POC_DAYS_DEFAULT
+    t = str(tf or '').lower()
+    return d, (t if t in POC_TFS else POC_TF_DEFAULT)
+
+
+def poc_want(sym, days=None, tf=None):
+    key = (sym,) + poc_norm(days, tf)
     with _lock:
-        if sym in _poc_want or len(_poc_want) < WANT_MAX:
-            _poc_want[sym] = time.time()
+        if key in _poc_want or len(_poc_want) < WANT_MAX:
+            _poc_want[key] = time.time()
             _kick()
 
 
@@ -526,12 +570,13 @@ def _worker():
                     if key in _want:
                         _comp.setdefault(key, {}).update(upd)
                         _coin_drop(sym)
-            for sym in pwant:
+            for pk in pwant:
+                sym, pdays, ptf = pk
                 with _lock:
-                    hit = _poc_cache.get(sym)
+                    hit = _poc_cache.get(pk)
                 if hit and time.time() - hit[0] < POC_TTL:
                     continue
-                _poc(sc, sym, allow_compute=True)
+                _poc(sc, sym, allow_compute=True, days=pdays, tf=ptf)
                 with _lock:
                     _coin_drop(sym)
             time.sleep(1.0)
@@ -593,22 +638,20 @@ def _pd(sc, sym):
         return None
 
 
-def _poc_params(sc):
+def _poc_market(sc):
     s = getattr(sc, '_settings', {}) or {}
-    try:
-        days = float(s.get('poc_filter_window_days', 3) or 3)
-    except (TypeError, ValueError):
-        days = 3.0
-    return (str(s.get('poc_filter_market', 'futures') or 'futures'),
-            str(s.get('poc_filter_tf', '1h') or '1h'), days)
+    return str(s.get('poc_filter_market', 'futures') or 'futures')
 
 
-def _poc(sc, sym, allow_compute=True, price=None):
+def _poc(sc, sym, allow_compute=True, price=None, days=None, tf=None):
     """POC через ТОЙ САМИЙ compute_poc, що бейдж графіка, зі спільним кешем.
+    Вікно (днів) і TF — параметри кабінету (`poc_norm`, деф. 7 днів · 1H).
     Вікно прибите до години (to = поточна година) — ключ кешу стабільний."""
+    days, tf = poc_norm(days, tf)
+    ck = (sym, days, tf)
     now = time.time()
     with _lock:
-        hit = _poc_cache.get(sym)
+        hit = _poc_cache.get(ck)
     if hit and now - hit[0] < POC_TTL:
         view = hit[1]
     elif not allow_compute:
@@ -617,7 +660,7 @@ def _poc(sc, sym, allow_compute=True, price=None):
         view = None
         try:
             from detection.volume_profile import compute_poc
-            market, tf, days = _poc_params(sc)
+            market = _poc_market(sc)
             to_s = int(now // 3600 * 3600)
             res = compute_poc(sym, from_sec=to_s - int(days * 86400), to_sec=to_s,
                               interval=tf, market=market)
@@ -627,7 +670,7 @@ def _poc(sc, sym, allow_compute=True, price=None):
         except Exception as e:
             print(f"[INFO] POC {sym}: {e}")
         with _lock:
-            _poc_cache[sym] = (now, view)
+            _poc_cache[ck] = (now, view)
             if len(_poc_cache) > 600:
                 _poc_cache.clear()
     if not view:
@@ -736,7 +779,7 @@ def rows_for(symbols, sc=None):
     return rows
 
 
-def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
+def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, poc_tf=None):
     sc = sc or _scanner()
     sym = norm_symbol(sym)
     if not sc:
@@ -747,8 +790,9 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
     tf = norm_tf(tf, CHART_TFS, dfl['tf'])
     ob_tf = norm_tf(ob_tf, OB_TFS, dfl['ob_tf'], allow_off=True)
     vob_tf = norm_tf(vob_tf, VOB_TFS, dfl['vob_tf'], allow_off=True)
+    poc_days, poc_tf = poc_norm(poc_days, poc_tf)
     in_bot = _in_bot(sc, sym)
-    ck = (sym, tf, ob_tf, vob_tf)
+    ck = (sym, tf, ob_tf, vob_tf, poc_days, poc_tf)
     now = time.time()
     with _lock:
         hit = _coin_cache.get(ck)
@@ -760,7 +804,7 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
         for t in SBR_TFS:
             if _engine_sbr_last(sym, t) is None:
                 want(('sbrlast', sym, t))
-        poc_want(sym)
+        poc_want(sym, poc_days, poc_tf)
         return hit[1]
     bars, err = part(sc, 'bars', sym, tf)
     ohlc = ohlc_of((bars or {}).get('kl'))
@@ -789,12 +833,14 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
         _sd, _e = part(sc, 'sbrlast', sym, t)
         # None = ще рахується · {'none': True} = сигналів немає · інакше сигнал
         sbr_last[t] = None if _sd is None else (_sd.get('sig') or {'none': True})
-    poc_want(sym)
+    poc_want(sym, poc_days, poc_tf)
     _st, poc = _poc(sc, sym, allow_compute=False,
-                    price=(ohlc[-1]['close'] if ohlc else None))
+                    price=(ohlc[-1]['close'] if ohlc else None),
+                    days=poc_days, tf=poc_tf)
     payload = {
         'ok': bool(ohlc), 'symbol': sym, 'src': 'bot' if in_bot else 'ext', 'reason': reason,
         'tf': tf, 'ob_tf': ob_tf, 'vob_tf': vob_tf,
+        'poc_days': poc_days, 'poc_tf': poc_tf,
         'ohlc': ohlc, 'events': events,
         'imb': imb_of((bars or {}).get('kl'), tf, now),
         'sbr': sbr_of((bars or {}).get('kl'), tf, now),
@@ -845,6 +891,9 @@ def user_info(prefs, uni, dfl=None):
             'show_imb': bool(info.get('show_imb', True)),
             'show_sbr': bool(info.get('show_sbr', True)),
             'show_shl': bool(info.get('show_shl', True)),
+            # ⚪ POC: вікно (днів) і TF — свої для кабінету (деф. 7 днів · 1H)
+            'poc_days': poc_norm(info.get('poc_days'), info.get('poc_tf'))[0],
+            'poc_tf': poc_norm(info.get('poc_days'), info.get('poc_tf'))[1],
             # 🔔 особисті SBR-сповіщення в Telegram (вимога 09.11)
             'sbr': sbr_norm(info.get('sbr'), wl)}
 
@@ -885,6 +934,9 @@ def apply_change(cur, body, uni):
     for k in ('show_imb', 'show_sbr', 'show_shl'):
         if k in body:
             out[k] = bool(body.get(k))
+    if 'poc_days' in body or 'poc_tf' in body:
+        out['poc_days'], out['poc_tf'] = poc_norm(
+            body.get('poc_days', cur.get('poc_days')), body.get('poc_tf', cur.get('poc_tf')))
     sbr = dict(cur.get('sbr') or {})
     if isinstance(body.get('sbr'), dict):        # {symbol, tfs: ['1h','4h']}
         S = norm_symbol(body['sbr'].get('symbol'))
@@ -1077,7 +1129,8 @@ def register_info_portal(app):
         Додати можна й будь-яку іншу USDT-монету — її порахує фоновий потік."""
         return jsonify({'ok': True, 'symbols': sorted(universe()),
                         'tfs': list(CHART_TFS), 'ob_tfs': list(OB_TFS),
-                        'vob_tfs': list(VOB_TFS)})
+                        'vob_tfs': list(VOB_TFS), 'poc_days': list(POC_DAYS),
+                        'poc_tfs': list(POC_TFS)})
 
     @app.route('/api/info/rows')
     def api_info_rows():
@@ -1088,7 +1141,8 @@ def register_info_portal(app):
     def api_info_coin():
         a = request.args
         p = coin_payload(a.get('symbol') or '', tf=a.get('tf'), ob_tf=a.get('ob_tf'),
-                         vob_tf=a.get('vob_tf'))
+                         vob_tf=a.get('vob_tf'), poc_days=a.get('poc_days'),
+                         poc_tf=a.get('poc_tf'))
         if p.get('ok') and a.get('sig') and a.get('sig') == p.get('sig'):
             return jsonify({'ok': True, 'same': True, 'sig': p['sig']})
         return jsonify(p)

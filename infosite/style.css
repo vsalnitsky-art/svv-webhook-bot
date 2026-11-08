@@ -319,8 +319,10 @@ td.mono, td .mono { font-family: var(--mono); }
 
 
 /* ═══ 👤 особиста сторінка: WATCHLIST + графік ═══ */
-.iw-layout { display: grid; grid-template-columns: 372px minmax(0, 1fr); gap: 18px; align-items: start; }
-.iw-wl { padding: 16px 0 10px; }
+.iw-layout { display: grid; grid-template-columns: 372px minmax(0, 1fr); gap: 18px; align-items: stretch; }
+/* ⭐ WATCHLIST тягнеться до низу картки графіка: висоту ряду задає графік,
+   список гортається всередині (flex-basis 0 → не розпирає ряд). */
+.iw-wl { padding: 16px 0 10px; display: flex; flex-direction: column; min-height: 0; }
 .iw-wl h2 { margin: 0 16px 12px; }
 .iw-add { display: flex; gap: 8px; padding: 0 16px 12px; border-bottom: 1px solid var(--line-soft); }
 .iw-add input { flex: 1; min-width: 0; background: var(--elev); border: 1px solid var(--line); color: var(--txt);
@@ -331,7 +333,7 @@ td.mono, td .mono { font-family: var(--mono); }
 .iw-add button:hover { border-color: var(--accent); }
 .iw-msg { padding: 6px 16px 0; font-size: 12px; min-height: 18px; color: var(--muted); }
 .iw-msg.err { color: var(--short); }
-.iw-list { max-height: calc(100vh - 250px); overflow-y: auto; }
+.iw-list { flex: 1 1 0; min-height: 0; overflow-y: auto; }
 .iw-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px 58px 48px 16px; align-items: center; gap: 8px;
   padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line-soft); cursor: pointer;
   border-left: 3px solid transparent; }
@@ -440,7 +442,7 @@ td.mono, td .mono { font-family: var(--mono); }
 
 @media (max-width: 900px) {
   .iw-layout { grid-template-columns: 1fr; }
-  .iw-list { max-height: 320px; }
+  .iw-list { flex: none; max-height: 320px; }
   .iw-box { height: 62vh; }
 }
 @media (max-width: 620px) {
@@ -571,3 +573,9 @@ td.mono, td .mono { font-family: var(--mono); }
 .pp-pnl-p{display:inline-block;min-width:4.6em;text-align:right}
 .pp-pnl-s{display:inline-block;width:1.4em;text-align:center;opacity:.55}
 .pp-pnl-u{display:inline-block;min-width:5.6em;text-align:right}
+
+/* 🔗 привʼязка Telegram до існуючого акаунта */
+.tglink-btn{background:var(--elev);border:1px solid var(--accent);color:var(--accent);font-weight:700;
+  border-radius:7px;padding:3px 10px;cursor:pointer;font-size:12px;margin:0 2px}
+.tglink-btn:hover{background:var(--accent);color:var(--bg)}
+.tglink-btn:disabled{opacity:.5;cursor:default}

@@ -132,7 +132,7 @@ def test_bot_coin_reads_memory_only():
     # 🏁 High/Low бот у памʼяті не тримає — його рахує фоновий потік (не запит сторінки)
     _check(not calls and all(k[0] in ('shl', 'sbrlast') for k in ip._want),
            'монета бота + TF бота — жодного звернення до біржі із запиту сторінки')
-    _check('BTCUSDT' in ip._poc_want, 'POC поставлено фоновому потоку')
+    _check(('BTCUSDT', 7, '1h') in ip._poc_want, 'POC поставлено фоновому потоку (деф. 7 днів · 1H)')
     _check(ip.coin_payload('BTCUSDT', sc) is p, 'спільний кеш на монету')
     print('✓ монета бота на TF бота: лише памʼять сканера, спільний кеш')
 
@@ -520,6 +520,32 @@ def test_imb_counts_the_live_bar_like_tv():
            (z and z[0]['top'] > z[0]['bottom']), ('IMB на живому барі', z))
     _check(abs(z[0]['top'] - 99.6) < 1e-9 and abs(z[0]['bottom'] - 97.0) < 1e-9, z[0])
     print('✓ IMB видно на живій свічці, як у TV')
+
+
+def test_tfs_poc_params_ob_declutter_0811():
+    """1m/5m прибрано з графіка, 1m — з VOB; POC — свої параметри (деф. 7 днів ·
+    1H); OB-бокси без купи перекритих; підписи графіка без накладань."""
+    _check('1m' not in ip.CHART_TFS and '5m' not in ip.CHART_TFS and '1m' not in ip.VOB_TFS, 'TF прибрано')
+    _check(ip.norm_tf('1m', ip.CHART_TFS, '15m') == '15m', 'збережене 1m → дефолт')
+    _check(ip.poc_norm() == (7, '1h') and ip.poc_norm(14, '4h') == (14, '4h')
+           and ip.poc_norm(9, '1m') == (7, '1h'), 'POC: дозволені значення, деф. 7 · 1H')
+    cur = ip.user_info({}, [], None)
+    _check(cur['poc_days'] == 7 and cur['poc_tf'] == '1h', 'новий користувач — 7 днів')
+    out, err = ip.apply_change(cur, {'poc_days': 3}, [])
+    _check(not err and out['poc_days'] == 3 and out['poc_tf'] == '1h', 'зміна вікна POC')
+    z = {'internal': [{'bar_high': 101, 'bar_low': 100, 'bar_time': i * 3600 * 1000, 'bias': 'BULLISH'}
+                      for i in range(1, 9)] +
+                     [{'bar_high': 120, 'bar_low': 118, 'bar_time': 50 * 3600 * 1000, 'bias': 'BULLISH'}],
+         'swing': []}
+    bx = ip.ob_boxes(z)
+    _check(len(bx) == 2, ('перекриті блоки того самого боку не дублюються', len(bx)))
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    _check('"1m"' not in js.split('var CHART_TFS')[1][:80], 'фронт без 1m')
+    _check('iw-poc-days' in js and '&poc_days=' in js, 'вибір POC на графіку')
+    _check('sLbl.push' in js and 'text: e.tag, up: bull' in js, 'CHoCH/BOS — підпис на лінії, а не маркер')
+    _check('pct <= 0' in js, 'IMB: 0% не малюємо')
+    _check('self._lv.forEach' in js, 'чипи обходять підписи POC / High / Low')
+    print('✓ TF без 1m/5m · POC 7 днів · OB без купи · підписи без накладань')
 
 
 if __name__ == '__main__':

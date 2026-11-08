@@ -568,6 +568,35 @@ def _comment_begin(cid, arg):
     return True
 
 
+def _link_begin(cid, arg, username=None, name=None):
+    """/start lk_<код> → привʼязати цей Telegram до акаунта, що видав код
+    (кабінет «🔗 Привʼязати Telegram»). → True, якщо параметр був кодом."""
+    try:
+        from web.auth import TG_LINK_PREFIX, tg_link_consume, get_user_by_chat
+    except Exception:
+        return False
+    if not str(arg or '').startswith(TG_LINK_PREFIX):
+        return False
+    ok, msg, uid = tg_link_consume(str(arg)[len(TG_LINK_PREFIX):], str(cid),
+                                   username, name)
+    if not ok:
+        tg_send(cid, f"⚠️ Не вдалось привʼязати Telegram: {msg}")
+        return True
+    info = get_user_by_chat(str(cid)) or {}
+    tg_send(cid, f"✅ Telegram привʼязано до акаунта <b>{msg}</b>.\n"
+                 + ("Сповіщення й доступ до групи — як у зареєстрованого користувача."
+                    if info.get('active') else
+                    "⏳ Акаунт ще очікує схвалення адміністратора."))
+    # Активний (не адмін) → персональне запрошення в групу, як після схвалення.
+    if info.get('active') and not info.get('is_admin'):
+        try:
+            invite_user_to_group(str(cid))
+        except Exception as e:
+            print(f"[TG] link invite error: {e}")
+    print(f"[TG] 🔗 chat {cid} linked to user {uid}")
+    return True
+
+
 def _comment_take(cid, m, text, frm):
     """Наступне повідомлення після /start cm_… — опублікувати в групі.
     → True, якщо повідомлення оброблено як коментар."""
@@ -1044,6 +1073,9 @@ def _handle_start(chat_id, username=None, name=None, lang=None, premium=None):
             "3️⃣ Ринкові сигнали (угоди, 🧮 МММ-монітор, 💰 Funding) приходитимуть "
             "в <b>окрему групу</b> — посилання на вхід у групу надійде сюди "
             "<b>автоматично, після підтвердження реєстрації адміністратором</b>.\n\n"
+            "🔗 <b>Уже маєте акаунт</b> (створений адміністратором)? Не "
+            "реєструйтесь вдруге — увійдіть на сайт і в особистому кабінеті "
+            "натисніть «🔗 Привʼязати Telegram».\n\n"
             "💬 Виникли труднощі? Просто напишіть повідомлення сюди — "
             "я передам його адміністратору, і він відповість тут.",
             buttons=[[{'text': '📝 Реєстрація на сайті', 'url': link}]])
@@ -1265,6 +1297,8 @@ def _handle_message(m):
             _arg = text.split(None, 1)[1] if len(text.split(None, 1)) > 1 else ''
             if _arg.startswith('cm_') and _comment_begin(cid, _arg):
                 return
+            if _link_begin(cid, _arg, uname, fname):
+                return
             _handle_start(cid, uname, fname, flang, fprem)
             return
         if _comment_take(cid, m, text, frm):
@@ -1295,6 +1329,8 @@ def _handle_message(m):
     if text.startswith('/start'):
         _arg = text.split(None, 1)[1] if len(text.split(None, 1)) > 1 else ''
         if _arg.startswith('cm_') and _comment_begin(cid, _arg):
+            return
+        if _link_begin(cid, _arg, uname, fname):
             return
         _handle_start(cid, uname, fname, flang, fprem)
         return

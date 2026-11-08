@@ -512,6 +512,74 @@ def set_user_pref(uid, key, value):
     _update_user(uid, prefs=json.dumps(prefs)[:20000])
 
 
+# ── 🔗 ПРИВʼЯЗКА TELEGRAM ДО ІСНУЮЧОГО АКАУНТА (вимога 08.11) ────────────────
+# Акаунт, створений НЕ через бота (адмін, користувач з адмін-панелі), раніше не
+# мав способу отримати Telegram: /start шле лише посилання на НОВУ реєстрацію.
+# Тепер кабінет видає одноразовий код → deep-link `?start=lk_<код>` → бот
+# привʼязує chat_id саме до цього акаунта.
+TG_LINK_TTL_SEC = 30 * 60
+TG_LINK_PREFIX = 'lk_'
+
+
+def tg_link_code_ok(code):
+    """ЧИСТА: формат коду (start-параметр Telegram: ≤64, [A-Za-z0-9_-])."""
+    import re as _re
+    return bool(_re.fullmatch(r'[A-Za-z0-9]{12,40}', str(code or '')))
+
+
+def tg_link_issue(uid, now=None):
+    """Видати новий одноразовий код (старий стає недійсним) → (code, until)."""
+    import secrets as _sec
+    now = time.time() if now is None else now
+    code = _sec.token_hex(10)
+    until = int(now + TG_LINK_TTL_SEC)
+    set_user_pref(uid, 'tg_link', {'code': code, 'until': until})
+    return code, until
+
+
+def tg_link_consume(code, chat_id, username=None, name=None, now=None):
+    """Привʼязати Telegram-чат до акаунта за кодом → (ok, повідомлення, uid|None).
+    Код одноразовий і живе TG_LINK_TTL_SEC. Чат, уже привʼязаний до ІНШОГО
+    акаунта, вдруге не привʼязується (один Telegram — один акаунт)."""
+    now = time.time() if now is None else now
+    if not tg_link_code_ok(code) or not chat_id:
+        return False, 'Посилання недійсне.', None
+    s = get_session()
+    try:
+        target = None
+        for u in s.query(User).all():
+            lk = (_load_prefs(u) or {}).get('tg_link') or {}
+            if lk.get('code') == code:
+                target = u
+                break
+        if target is None:
+            return False, 'Посилання недійсне або вже використане.', None
+        lk = (_load_prefs(target) or {}).get('tg_link') or {}
+        if float(lk.get('until') or 0) < now:
+            return False, ('Посилання прострочене — отримайте нове в особистому '
+                           'кабінеті.'), None
+        other = s.query(User).filter_by(telegram_chat_id=str(chat_id)).first()
+        if other is not None and other.id != target.id:
+            return False, (f'Цей Telegram уже привʼязаний до акаунта '
+                           f'<b>{other.email}</b>.'), None
+        prefs = _load_prefs(target)
+        prefs.pop('tg_link', None)
+        target.prefs = json.dumps(prefs)[:20000]
+        target.telegram_chat_id = str(chat_id)
+        if username:
+            target.telegram_username = username
+        if name and hasattr(target, 'telegram_name'):
+            target.telegram_name = name
+        s.commit()
+        return True, target.email, target.id
+    except Exception as e:
+        s.rollback()
+        print(f"[AUTH] tg_link_consume error: {e}")
+        return False, 'Помилка привʼязки — спробуйте ще раз.', None
+    finally:
+        s.close()
+
+
 _DB_BOT_CONTACTS = 'tg_bot_contacts'   # {chat_id: {username, name, first_seen, last_seen}}
 _MAX_BOT_CONTACTS = 5000
 
@@ -1554,7 +1622,7 @@ def register_auth_routes(app):
                 'вхід прийде автоматично.</p>'
                 + ('' if _tg_ok else
                    '<p class="sub" style="color:#f5b544;margin-top:-4px">'
-                   '⚠️ Telegram ще не прив’язано — напишіть боту <b>/start</b>.</p>')
+                   '⚠️ Telegram ще не прив’язано — натисніть «🔗 Привʼязати Telegram» вище.</p>')
                 + '</div>'
             )
         body = (f'<h1>👤 Особистий кабінет</h1>'
@@ -1563,7 +1631,10 @@ def register_auth_routes(app):
                 f'<div class="idrow"><span class="k">Логін</span><span class="v">{u.email}</span></div>'
                 f'<div class="idrow"><span class="k">📨 Telegram</span><span class="v">{_tgv}</span></div>'
                 f'<div class="idrow"><span class="k">🤖 Доступ до бота</span><span class="v">{_bot}</span></div>'
-                f'</div>'
+                + ('<button onclick="tglink()" style="margin-top:8px">'
+                   + ('🔗 Перепривʼязати Telegram' if _tg_ok else '🔗 Привʼязати Telegram')
+                   + '</button><div id="tgm" class="msg" style="display:none"></div>')
+                + f'</div>'
                 f'{_ntf_section}'
                 + f'<div class="sect2"><div class="seclbl">🔑 Змінити пароль</div>'
                 f'<input id="np" type="password" placeholder="Новий пароль (мін. 8)">'
@@ -1582,6 +1653,18 @@ def register_auth_routes(app):
           const d=await r.json();
           m.className='msg '+(d.ok?'ok':'err'); m.textContent=d.ok?'Пароль змінено.':(d.error||'Помилка');
           if(d.ok){document.getElementById('np').value='';document.getElementById('np2').value='';}
+        }
+        async function tglink(){
+          const m=document.getElementById('tgm'); m.style.display='block';
+          m.className='msg'; m.textContent='⏳ …';
+          const r=await fetch('/api/me/tg-link',{method:'POST'});
+          const d=await r.json().catch(()=>({}));
+          if(!d.ok||!d.url){m.className='msg err'; m.textContent=d.error||'Помилка'; return;}
+          m.className='msg ok';
+          m.innerHTML='Відкрийте бота і натисніть «Start» — Telegram привʼяжеться до цього акаунта. '
+            +'<a href="'+d.url+'" target="_blank" rel="noopener"><b>Відкрити @'+d.bot+'</b></a> '
+            +'(посилання діє 30 хв, одноразове).';
+          try{window.open(d.url,'_blank');}catch(e){}
         }
         async function saventf(){
           const nb=document.getElementById('nbtc'), nf=document.getElementById('nfnd');
@@ -1640,6 +1723,27 @@ def register_auth_routes(app):
         out = {'ok': True, 'tg_linked': bool(getattr(u, 'telegram_chat_id', None))}
         for k in keys:
             out[k] = bool(prefs.get(k))
+        return jsonify(out)
+
+    @app.route('/api/me/tg-link', methods=['GET', 'POST'])
+    def api_me_tg_link():
+        """🔗 Привʼязати Telegram до ЦЬОГО акаунта: POST видає одноразове
+        посилання на бота (`?start=lk_<код>`, живе 30 хв); GET — лише стан."""
+        u = current_user()
+        out = {'ok': True, 'tg_linked': bool(getattr(u, 'telegram_chat_id', None)),
+               'tg_user': getattr(u, 'telegram_username', None)}
+        if request.method == 'POST':
+            try:
+                from web.tg_bot import _bot_username
+                bun = _bot_username()
+            except Exception:
+                bun = None
+            if not bun:
+                return jsonify({'ok': False, 'error': 'Бот Telegram недоступний '
+                                '(не вдалось дізнатись його імʼя).'})
+            code, until = tg_link_issue(u.id)
+            out.update(url=f"https://t.me/{bun}?start={TG_LINK_PREFIX}{code}",
+                       until=until, bot=bun)
         return jsonify(out)
 
     # ---- admin ----
