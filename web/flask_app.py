@@ -162,9 +162,17 @@ def create_app():
     @app.after_request
     def _add_cors_headers(resp):
         try:
-            if request.path.startswith('/api/') and request.method in ('GET', 'HEAD', 'OPTIONS'):
+            # 👤 /api/me/* — власні дані користувача (особистий watchlist інфосайту):
+            # тут дозволено ще й POST. Безпечно: крос-доменна авторизація йде
+            # заголовком X-Info-Token (без cookie), а cookie SameSite=Lax не
+            # їде з чужого сайту — підробити запис від імені людини не можна.
+            _own = request.path.startswith('/api/me')
+            if request.path.startswith('/api/') and (
+                    request.method in ('GET', 'HEAD', 'OPTIONS')
+                    or (_own and request.method == 'POST')):
                 resp.headers['Access-Control-Allow-Origin'] = '*'
-                resp.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+                resp.headers['Access-Control-Allow-Methods'] = (
+                    'GET, POST, HEAD, OPTIONS' if _own else 'GET, HEAD, OPTIONS')
                 # X-API-Key (public read) and X-Info-Token (per-user login) let
                 # the separately-hosted info-site authenticate cross-origin.
                 resp.headers['Access-Control-Allow-Headers'] = 'Accept, Content-Type, X-API-Key, X-Info-Token'
@@ -189,6 +197,12 @@ def create_app():
     
     # Register routes
     register_routes(app)
+    # 👤 Інфосайт: особистий watchlist користувача + легкі дані з памʼяті сканера.
+    try:
+        from web.info_portal import register_info_portal
+        register_info_portal(app)
+    except Exception as _e:
+        print(f"[INFO] info portal routes not registered: {_e}")
 
     # ── Authentication & access control ──────────────────────────────────
     # Gate the ENTIRE app behind login (nothing reachable unauthenticated);

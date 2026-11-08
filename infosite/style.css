@@ -272,11 +272,6 @@ td.mono, td .mono { font-family: var(--mono); }
   background: linear-gradient(90deg, var(--long), var(--long-2)); }
 
 /* ═══ KPI tiles ═══ */
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 12px; }
-.tile { background: var(--elev); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); padding: 14px 16px; }
-.tile-val { font-size: 21px; font-weight: 800; line-height: 1.15; letter-spacing: -.01em; }
-.tile-lbl { color: var(--muted); font-size: 11px; margin-top: 7px; text-transform: uppercase; letter-spacing: .04em; }
-
 /* ═══ 🔐 гостьовий hero (вхід/реєстрація) — компактна картка як на боті ═══ */
 .hero { text-align: center; max-width: 430px; margin: 6vh auto 0; padding: 28px 26px; }
 .hero-inner { margin: 0 auto; padding: 0; display: grid; gap: 12px; justify-items: center; }
@@ -317,47 +312,74 @@ td.mono, td .mono { font-family: var(--mono); }
 .switch:disabled { opacity: .45; cursor: not-allowed; }
 .switch:focus-visible { outline: none; box-shadow: var(--ring); }
 
+
+/* ═══ 👤 особиста сторінка: WATCHLIST + графік ═══ */
+.iw-layout { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 18px; align-items: start; }
+.iw-wl { padding: 16px 0 10px; }
+.iw-wl h2 { margin: 0 16px 12px; }
+.iw-add { display: flex; gap: 8px; padding: 0 16px 12px; border-bottom: 1px solid var(--line-soft); }
+.iw-add input { flex: 1; min-width: 0; background: var(--elev); border: 1px solid var(--line); color: var(--txt);
+  border-radius: 8px; padding: 8px 11px; font: 600 13px var(--mono); text-transform: uppercase; }
+.iw-add input:focus { outline: none; box-shadow: var(--ring); border-color: var(--accent); }
+.iw-add button { background: var(--elev); border: 1px solid var(--line); color: var(--accent); font-weight: 800;
+  border-radius: 8px; padding: 0 14px; cursor: pointer; font-size: 13px; }
+.iw-add button:hover { border-color: var(--accent); }
+.iw-msg { padding: 6px 16px 0; font-size: 12px; min-height: 18px; color: var(--muted); }
+.iw-msg.err { color: var(--short); }
+.iw-list { max-height: calc(100vh - 250px); overflow-y: auto; }
+.iw-row { display: grid; grid-template-columns: minmax(0, 1fr) 118px 18px; align-items: center; gap: 8px;
+  padding: 9px 12px 9px 16px; border-bottom: 1px solid var(--line-soft); cursor: pointer;
+  border-left: 3px solid transparent; }
+.iw-row:nth-child(even) { background: color-mix(in srgb, var(--elev) 45%, transparent); }
+.iw-row:hover { background: var(--elev); }
+.iw-row.sel { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--elev)); }
+.iw-sym { font: 800 13.5px var(--mono); letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.iw-sym small { font: 600 10.5px var(--font); color: var(--muted); margin-left: 4px; }
+.iw-sub .bdg { font-size: 10.5px; }
+.iw-sub { grid-column: 1 / 4; display: flex; gap: 6px; flex-wrap: nowrap; overflow: hidden; margin-top: -2px; }
+.iw-price { font: 600 12.5px var(--mono); color: var(--txt-dim); text-align: right; white-space: nowrap; }
+.iw-del { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 15px; padding: 0; line-height: 1; }
+.iw-del:hover { color: var(--short); }
+.iw-empty { padding: 22px 16px; color: var(--muted); font-size: 13px; text-align: center; }
+
+.bdg { display: inline-flex; align-items: center; gap: 5px; font: 700 11px var(--mono); white-space: nowrap;
+  padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line); background: var(--elev); color: var(--txt-dim); }
+.bdg .d { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.bdg.long { color: var(--long); border-color: color-mix(in srgb, var(--long) 45%, transparent);
+  background: color-mix(in srgb, var(--long) 10%, transparent); }
+.bdg.long .d { background: var(--long); }
+.bdg.short { color: var(--short); border-color: color-mix(in srgb, var(--short) 45%, transparent);
+  background: color-mix(in srgb, var(--short) 10%, transparent); }
+.bdg.short .d { background: var(--short); }
+.bdg.mute { color: var(--muted); }
+.bdg.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+
+.iw-chart { padding: 14px 16px 16px; min-width: 0; }
+.iw-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.iw-title { font: 900 18px var(--font); letter-spacing: -.01em; }
+.iw-title a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted); }
+.iw-tf { font: 700 11px var(--mono); color: var(--muted); }
+.iw-px { font: 800 15px var(--mono); }
+.iw-legend { margin-left: auto; display: flex; gap: 12px; font-size: 11.5px; color: var(--muted); flex-wrap: wrap; }
+.iw-legend i { display: inline-block; width: 12px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.iw-box { position: relative; height: calc(100vh - 220px); min-height: 380px; border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm); overflow: hidden; background: var(--bg2); }
+.iw-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-size: 13.5px; text-align: center; padding: 20px; pointer-events: none; }
+
 /* ═══ footer ═══ */
 .foot { width: 100%; margin: 4px 0 28px; padding: 0 24px;
   display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 
+@media (max-width: 900px) {
+  .iw-layout { grid-template-columns: 1fr; }
+  .iw-list { max-height: 320px; }
+  .iw-box { height: 62vh; }
+}
 @media (max-width: 620px) {
   .brand { font-size: 14px; }
   .wrap { padding: 16px 12px 32px; gap: 14px; }
   .card { padding: 15px 14px; }
-  th, td { padding: 9px 9px; }
-  .pot-verdict { font-size: 24px; }
-  .flip-digit { min-width: 27px; height: 40px; font-size: 24px; }
-  .price-row b { font-size: 18px; }
+  .iw-legend { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
-
-/* 📌 «жива» канцелярка для ручних угод — 1:1 з ботом: сидить нерухомо, раз на
-   ~4с короткий вибух-похитування (як анімований емодзі), швидша на hover. */
-@keyframes tmPinWobble {
-  0%, 86%, 100% { transform: rotate(0deg) scale(1); }
-  89%           { transform: rotate(-16deg) scale(1.22); }
-  92%           { transform: rotate(11deg)  scale(1.14); }
-  95%           { transform: rotate(-6deg)  scale(1.07); }
-  98%           { transform: rotate(3deg)   scale(1.03); }
-}
-.tm-pin-anim {
-  display: inline-block;
-  transform-origin: 50% 72%;
-  animation: tmPinWobble 4s ease-in-out infinite;
-  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.35));
-  will-change: transform;
-}
-.tm-pin-anim:hover { animation-duration: 0.85s; }
-@media (prefers-reduced-motion: reduce) { .tm-pin-anim { animation: none; } }
-
-/* 💰 Funding — МММ по монетах: акуратна картка як усі інші (повна ширина .wrap,
-   1px-бордер, заокруглення) + компактна, але не тісна висота рядків. Таблиця
-   тягнеться на всю ширину картки; якщо колонки не влазять — горизонтальний скрол
-   ЛИШЕ всередині своєї обгортки (сторінка по горизонталі не їде). */
-#funding-card .table-scroll { margin: 0; }
-#funding-table { width: 100%; }
-#funding-table th,
-#funding-table td { padding-top: 8px; padding-bottom: 8px; }
-/* Дрібні дії/бейджі не мають розпирати рядок — тримаємо рівну висоту. */
-#funding-table td { vertical-align: middle; }
