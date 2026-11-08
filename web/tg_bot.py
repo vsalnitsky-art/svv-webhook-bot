@@ -481,10 +481,144 @@ def notify_category(category, text, buttons=None):
     res = _api('sendMessage', p) or {}
     if res.get('ok'):
         _last_send_err = ''
+        try:
+            _add_comment_button(category, chat, res.get('result') or {}, buttons)
+        except Exception as e:
+            print(f"[TG] comment button error: {e}")
         return True
     _last_send_err = str(res.get('description') or res.get('error') or 'відмова')
     print(f"[TG] send to {category} failed: {_last_send_err}")
     return False
+
+
+# ── 💬 КНОПКА «КОМЕНТАР» ПІД ПОВІДОМЛЕННЯМИ ГРУПИ (вимога 09.11) ──────────────
+# Нативна кнопка «Залишити коментар» у Telegram існує ЛИШЕ для постів КАНАЛУ з
+# привʼязаною групою обговорень; у групі з темами її немає. Тому кнопку робить
+# бот: «💬 Коментар» відкриває особистий чат із ботом (deep-link
+# `?start=cm_<категорія>_<id>`), користувач пише текст, і бот публікує його
+# ВІДПОВІДДЮ під тим самим повідомленням у тій самій темі, з іменем автора.
+# Коментувати можуть лише АКТИВНІ (зареєстровані й схвалені) користувачі.
+COMMENT_WAIT_SEC = 600
+_comment_wait = {}            # {chat_id: {cat, mid, until}}
+_bot_username_cache = {'v': None, 'at': 0.0}
+
+
+def _bot_username():
+    now = time.time()
+    if _bot_username_cache['v'] and now - _bot_username_cache['at'] < 3600:
+        return _bot_username_cache['v']
+    env = (os.getenv('TELEGRAM_BOT_USERNAME') or '').lstrip('@').strip()
+    if env:
+        _bot_username_cache.update(v=env, at=now)
+        return env
+    r = _api('getMe', {}, timeout=10) or {}
+    un = ((r.get('result') or {}).get('username')) if r.get('ok') else None
+    if un:
+        _bot_username_cache.update(v=un, at=now)
+    return un
+
+
+def comment_link(category, msg_id, bot_username):
+    """ЧИСТА: deep-link кнопки коментаря (start-параметр ≤64, [A-Za-z0-9_])."""
+    if not bot_username or category not in _COMMENT_CATS or not msg_id:
+        return None
+    return f"https://t.me/{bot_username}?start=cm_{category}_{int(msg_id)}"
+
+
+def parse_comment_start(arg):
+    """ЧИСТА: 'cm_btc_123' → ('btc', 123) | None."""
+    m = re.fullmatch(r'cm_([a-z]+)_(\d{1,12})', str(arg or '').strip())
+    if not m or m.group(1) not in _COMMENT_CATS:
+        return None
+    return m.group(1), int(m.group(2))
+
+
+def _add_comment_button(category, chat, result, buttons=None):
+    """Після відправки в ГРУПУ дописати під повідомлення кнопку «💬 Коментар»."""
+    if category not in _COMMENT_CATS or not str(chat).startswith('-'):
+        return
+    mid = result.get('message_id')
+    link = comment_link(category, mid, _bot_username())
+    if not link:
+        return
+    kb = list(buttons or []) + [[{'text': '💬 Коментар', 'url': link}]]
+    _api('editMessageReplyMarkup', {'chat_id': chat, 'message_id': mid,
+                                    'reply_markup': {'inline_keyboard': kb}})
+
+
+def _comment_begin(cid, arg):
+    """/start cm_… у приватному чаті → чекаємо текст коментаря."""
+    pr = parse_comment_start(arg)
+    if not pr:
+        return False
+    try:
+        from web.auth import get_user_by_chat
+        info = get_user_by_chat(str(cid)) or {}
+    except Exception:
+        info = {}
+    if not info.get('active'):
+        tg_send(cid, "⛔ Коментувати можуть лише зареєстровані користувачі з "
+                     "активним доступом. Напишіть /start, щоб зареєструватись.")
+        return True
+    _comment_wait[str(cid)] = {'cat': pr[0], 'mid': pr[1],
+                               'until': time.time() + COMMENT_WAIT_SEC}
+    tg_send(cid, f"💬 <b>Коментар до повідомлення в темі «{_CAT_LABEL.get(pr[0], pr[0])}»</b>\n"
+                 "Напишіть текст одним повідомленням — я опублікую його під цим "
+                 "повідомленням у групі з вашим імʼям.\n/cancel — скасувати.")
+    return True
+
+
+def _comment_take(cid, m, text, frm):
+    """Наступне повідомлення після /start cm_… — опублікувати в групі.
+    → True, якщо повідомлення оброблено як коментар."""
+    w = _comment_wait.get(str(cid))
+    if not w:
+        return False
+    if time.time() > w['until']:
+        _comment_wait.pop(str(cid), None)
+        return False
+    if text.startswith('/cancel'):
+        _comment_wait.pop(str(cid), None)
+        tg_send(cid, "Скасовано.")
+        return True
+    if text.startswith('/'):
+        return False
+    if not text:
+        tg_send(cid, "Коментар — лише текстом. Напишіть текст або /cancel.")
+        return True
+    _comment_wait.pop(str(cid), None)
+    try:
+        from web.auth import get_user_by_chat
+        active = bool((get_user_by_chat(str(cid)) or {}).get('active'))
+    except Exception:
+        active = False
+    if not active:
+        tg_send(cid, "⛔ Доступ неактивний — коментар не опубліковано.")
+        return True
+    chat, thread = _cat_chat(w['cat'])
+    if not chat:
+        tg_send(cid, "⚠️ Тему не знайдено — коментар не опубліковано.")
+        return True
+    import html as _html
+    who = _html.escape(_full_name(frm) or 'Учасник')
+    un = frm.get('username')
+    p = {'chat_id': chat, 'parse_mode': 'HTML',
+         'text': f"💬 <b>{who}</b>" + (f" (@{_html.escape(un)})" if un else '')
+                 + f":\n{_html.escape(text[:3500])}",
+         'reply_parameters': {'message_id': int(w['mid']),
+                              'allow_sending_without_reply': True}}
+    if thread:
+        try:
+            p['message_thread_id'] = int(thread)
+        except (TypeError, ValueError):
+            pass
+    res = _api('sendMessage', p) or {}
+    if res.get('ok'):
+        tg_send(cid, "✅ Коментар опубліковано в групі.")
+    else:
+        tg_send(cid, "⚠️ Telegram не прийняв коментар: "
+                     + _html.escape(str(res.get('description') or res.get('error') or '?')))
+    return True
 
 
 def last_send_error():
@@ -613,6 +747,74 @@ def _group_chat():
     return os.getenv('TELEGRAM_FORUM_CHAT') or os.getenv('TELEGRAM_GROUP_CHAT')
 
 
+# ── 🚫 ЧЛЕНСТВО В ГРУПІ = ДОСТУП НА САЙТІ (вимога 09.11) ──────────────────
+# Telegram НЕ вміє ховати окремі теми від окремого учасника: учасник групи
+# бачить УСІ теми (і General теж). Тому заблокований користувач ВИДАЛЯЄТЬСЯ з
+# групи (бан — щоб не повернувся за старим посиланням); коли доступ знову
+# активний — бан знімається і приходить персональне запрошення.
+GROUP_SYNC_SEC = 600.0
+
+
+def group_ban(chat_id):
+    group = _group_chat()
+    if not group or not chat_id:
+        return False
+    try:
+        r = _api('banChatMember', {'chat_id': group, 'user_id': int(chat_id),
+                                   'revoke_messages': False}) or {}
+    except (TypeError, ValueError):
+        return False
+    if not r.get('ok'):
+        print(f"[TG-BOT] ban {chat_id} failed: {r.get('description') or r.get('error')}")
+    return bool(r.get('ok'))
+
+
+def group_unban(chat_id):
+    group = _group_chat()
+    if not group or not chat_id:
+        return False
+    try:
+        r = _api('unbanChatMember', {'chat_id': group, 'user_id': int(chat_id),
+                                     'only_if_banned': True}) or {}
+    except (TypeError, ValueError):
+        return False
+    return bool(r.get('ok'))
+
+
+def group_action(blocked, active, grp_banned):
+    """ЧИСТА: 'ban' | 'unban' | None."""
+    if blocked and not grp_banned:
+        return 'ban'
+    if active and grp_banned:
+        return 'unban'
+    return None
+
+
+def group_access_sync(uid=None):
+    """Синхронізувати одного (uid) або всіх користувачів. → к-сть дій."""
+    if not _group_chat():
+        return 0
+    try:
+        from web.auth import group_members_state, set_user_pref
+    except Exception:
+        return 0
+    n = 0
+    for _uid, chat, blocked, active, banned in group_members_state():
+        if uid is not None and str(_uid) != str(uid):
+            continue
+        act = group_action(blocked, active, banned)
+        if act == 'ban':
+            if group_ban(chat):
+                set_user_pref(_uid, 'grp_banned', True)
+                n += 1
+        elif act == 'unban':
+            group_unban(chat)
+            set_user_pref(_uid, 'grp_banned', None)
+            invite_user_to_group(chat)
+            n += 1
+    return n
+
+
 def invite_user_to_group(chat_id):
     """Auto-onboard an approved user into the community group. The Telegram Bot
     API CANNOT add a member directly, so we create a PERSONAL one-time invite
@@ -623,6 +825,7 @@ def invite_user_to_group(chat_id):
     if not group or not chat_id:
         return False
     try:
+        group_unban(chat_id)   # був заблокований → бан у групі знімаємо перед запрошенням
         link = None
         # creates_join_request=True → EVERY join via this link needs approval,
         # and the bot auto-approves ONLY registered+active users
@@ -696,7 +899,9 @@ def tg_send(chat_id, text, buttons=None):
         _last_send_err = ''
         return True
     _last_send_err = str(res.get('description') or res.get('error') or 'відмова')
-    print(f"[TG] send to {category} failed: {_last_send_err}")
+    # ⚠️ тут була змінна `category`, якої в цій функції немає → NameError на
+    # КОЖНІЙ відмові (виняток замість False).
+    print(f"[TG] send to chat {chat_id} failed: {_last_send_err}")
     return False
 
 
@@ -795,6 +1000,10 @@ def _handle_callback(cb):
         _edit(chat_id, msg_id, f"✅ <b>{u.email}</b> — схвалено (30 днів).")
     elif act == 'rj':
         _update_user(u.id, approved=False, disabled=True)
+        try:
+            group_access_sync(u.id)
+        except Exception:
+            pass
         _answer_cb(cb_id, 'Відхилено ✗')
         _edit(chat_id, msg_id, f"⛔ <b>{u.email}</b> — відхилено.")
     else:
@@ -978,7 +1187,12 @@ def _handle_message(m):
                          "Відповідай через <code>/reply &lt;chat_id&gt; текст</code>.")
             return
         if text.startswith('/start'):
+            _arg = text.split(None, 1)[1] if len(text.split(None, 1)) > 1 else ''
+            if _arg.startswith('cm_') and _comment_begin(cid, _arg):
+                return
             _handle_start(cid, uname, fname, flang, fprem)
+            return
+        if _comment_take(cid, m, text, frm):
             return
         # 📢 ANNOUNCEMENT to ALL subscribers — ONLY via an EXPLICIT command, so a
         # plain message or a failed reply can NEVER become an accidental mass send.
@@ -1004,7 +1218,12 @@ def _handle_message(m):
 
     # ---- user side ----
     if text.startswith('/start'):
+        _arg = text.split(None, 1)[1] if len(text.split(None, 1)) > 1 else ''
+        if _arg.startswith('cm_') and _comment_begin(cid, _arg):
+            return
         _handle_start(cid, uname, fname, flang, fprem)
+        return
+    if _comment_take(cid, m, text, frm):
         return
     has_media = _has_media(m)
     if not text and not has_media:
@@ -1059,7 +1278,18 @@ def _poll_loop():
         pass
     offset = None
     print("[TG-BOT] long-polling started")
+    _grp_at = 0.0
     while True:
+        # 🚫 строк доступу минає сам — без дії адміна; раз на 10 хв звіряємо
+        # членство в групі з доступом на сайті.
+        if time.time() - _grp_at >= GROUP_SYNC_SEC:
+            _grp_at = time.time()
+            try:
+                n = group_access_sync()
+                if n:
+                    print(f"[TG-BOT] group access sync: {n} змін")
+            except Exception as e:
+                print(f"[TG-BOT] group access sync error: {e}")
         try:
             payload = {'timeout': 30,
                        'allowed_updates': ['message', 'callback_query',

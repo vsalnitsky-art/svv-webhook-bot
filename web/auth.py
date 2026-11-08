@@ -247,11 +247,26 @@ def approve_user(uid, days=DEFAULT_ACCESS_DAYS):
     return True
 
 
+def sync_user_group(uid):
+    """Привести членство користувача в Telegram-групі до його доступу на сайті
+    (заблоковано → видалити з групи; знову активний → зняти бан + запрошення).
+    Best-effort."""
+    try:
+        from web.tg_bot import group_access_sync
+        group_access_sync(uid)
+    except Exception as e:
+        print(f"[AUTH] sync_user_group error: {e}")
+
+
 def notify_user_approved(uid):
     """Tell the user (via their linked Telegram) that access is granted."""
     try:
         u = get_user_by_id(uid)
-        if not u or not u.telegram_chat_id:
+        if not u:
+            return
+        # «було схвалено» — щоб знятий доступ відрізнявся від «очікує схвалення»
+        set_user_pref(uid, 'ever_approved', True)
+        if not u.telegram_chat_id:
             return
         from web.tg_bot import tg_send, base_url
         b = base_url()
@@ -263,7 +278,8 @@ def notify_user_approved(uid):
         # one-time invite link — Bot API can't add a member directly).
         try:
             from web.tg_bot import invite_user_to_group
-            invite_user_to_group(u.telegram_chat_id)
+            invite_user_to_group(u.telegram_chat_id)   # сам знімає бан у групі
+            set_user_pref(uid, 'grp_banned', None)
         except Exception as _e:
             print(f"[AUTH][TG] group invite error: {_e}")
     except Exception as e:
@@ -410,6 +426,84 @@ def subscriber_chats(pref_key):
         s.close()
 
 
+def info_sbr_subscribers():
+    """🔔 Особисті SBR-підписки з кабінету (вимога 09.11):
+    [(chat_id, {SYM: ['1h','4h']})] — ЛИШЕ АКТИВНІ користувачі з привʼязаним
+    Telegram. Заблокований / протермінований / не схвалений — нічого не отримує."""
+    s = get_session()
+    try:
+        out = []
+        for u in s.query(User).filter(User.telegram_chat_id.isnot(None)).all():
+            if not _is_active(u):
+                continue
+            try:
+                prefs = json.loads(u.prefs or '{}')
+            except Exception:
+                prefs = {}
+            sub = ((prefs.get('info') or {}).get('sbr')) or {}
+            if isinstance(sub, dict) and sub:
+                out.append((str(u.telegram_chat_id), sub))
+        return out
+    except Exception:
+        return []
+    finally:
+        s.close()
+
+
+def is_blocked(u):
+    """ЧИСТА від I/O: акаунт ЗАБЛОКОВАНО (не плутати з «очікує схвалення»):
+    вимкнено адміністратором · строк доступу минув · схвалення знято після
+    того, як воно вже було. Адмін не блокується ніколи."""
+    if u is None or getattr(u, 'is_admin', False):
+        return False
+    if getattr(u, 'disabled', False):
+        return True
+    if _is_active(u):
+        return False
+    try:
+        prefs = json.loads(getattr(u, 'prefs', None) or '{}')
+    except Exception:
+        prefs = {}
+    au = getattr(u, 'access_until', None)
+    expired = bool(au and getattr(u, 'approved', False))
+    return expired or bool(prefs.get('ever_approved'))
+
+
+def group_members_state():
+    """[(uid, chat_id, blocked, active, grp_banned)] — для синхронізації
+    членства в Telegram-групі з доступом на сайті."""
+    s = get_session()
+    try:
+        out = []
+        for u in s.query(User).filter(User.telegram_chat_id.isnot(None)).all():
+            if u.is_admin:
+                continue
+            try:
+                prefs = json.loads(u.prefs or '{}')
+            except Exception:
+                prefs = {}
+            out.append((u.id, str(u.telegram_chat_id), is_blocked(u),
+                        _is_active(u), bool(prefs.get('grp_banned'))))
+        return out
+    except Exception:
+        return []
+    finally:
+        s.close()
+
+
+def set_user_pref(uid, key, value):
+    """Записати ОДИН ключ prefs, не чіпаючи решту (None — прибрати)."""
+    u = get_user_by_id(uid)
+    if not u:
+        return
+    prefs = _load_prefs(u)
+    if value is None:
+        prefs.pop(key, None)
+    else:
+        prefs[key] = value
+    _update_user(uid, prefs=json.dumps(prefs)[:20000])
+
+
 _DB_BOT_CONTACTS = 'tg_bot_contacts'   # {chat_id: {username, name, first_seen, last_seen}}
 _MAX_BOT_CONTACTS = 5000
 
@@ -466,7 +560,8 @@ def all_bot_chats(exclude_chat=None):
     try:
         for u in s.query(User).filter(User.telegram_chat_id.isnot(None)).all():
             c = str(u.telegram_chat_id)
-            (disabled if getattr(u, 'disabled', False) else registered).add(c)
+            # заблокований (вимкнено / строк минув / схвалення знято) — без розсилок
+            (disabled if is_blocked(u) else registered).add(c)
     except Exception:
         pass
     finally:
@@ -911,7 +1006,11 @@ def install_auth_gate(app):
         # a matching X-API-Key. OFF unless INFO_API_KEY env is set (full lockdown
         # by default). Read-only (GET/HEAD) — never enables writes.
         _api_key = os.getenv('INFO_API_KEY')
+        # ⚠️ Особистий кабінет (/api/me*, /api/info/*) ключ НЕ відкриває: там
+        # дані конкретного користувача, і заблокований акаунт не має бачити
+        # сторінку лише тому, що ключ лежить у config.js (вимога 09.11).
         if (_api_key and path.startswith('/api/')
+                and not path.startswith(('/api/me', '/api/info/'))
                 and request.method in ('GET', 'HEAD', 'OPTIONS')
                 and request.headers.get('X-API-Key') == _api_key):
             return None
@@ -927,7 +1026,8 @@ def install_auth_gate(app):
                             and not u.disabled)
             if _wants_json(path):
                 return jsonify({'ok': False,
-                                'error': 'expired' if _expired else 'not_active',
+                                'error': ('blocked' if (is_blocked(u) and not _expired)
+                                          else ('expired' if _expired else 'not_active')),
                                 'email_confirmed': bool(u.email_confirmed),
                                 'approved': bool(u.approved)}), 403
             return redirect(url_for('auth_pending'))
@@ -1593,6 +1693,7 @@ def register_auth_routes(app):
             _update_user(uid, approved=False)
             _notify_change("⚠️ Ваш доступ призупинено адміністратором.",
                            f"⚠️ <b>{_lbl}</b> — схвалення знято.")
+            sync_user_group(uid)
         elif action == 'grant_bot':
             _update_user(uid, bot_access=True)
             _notify_change("🤖 Вам надано доступ до бота.",
@@ -1609,10 +1710,12 @@ def register_auth_routes(app):
             _update_user(uid, disabled=True, session_token=None)
             _notify_change("⛔ Ваш акаунт вимкнено адміністратором.",
                            f"⛔ <b>{_lbl}</b> — вимкнено.")
+            sync_user_group(uid)
         elif action == 'enable':
             _update_user(uid, disabled=False)
             _notify_change("✅ Ваш акаунт знову активний.",
                            f"✅ <b>{_lbl}</b> — увімкнено.")
+            sync_user_group(uid)
         elif action == 'make_admin':
             _update_user(uid, is_admin=True, approved=True, email_confirmed=True)
             _notify_change("🛡 Вам надано права адміністратора.",
@@ -1661,6 +1764,12 @@ def register_auth_routes(app):
             # Notify the user BEFORE removing them (their chat link is gone after).
             _notify_change("🗑 Ваш акаунт видалено адміністратором.",
                            f"🗑 <b>{_lbl}</b> — акаунт видалено.")
+            try:                       # прибрати з групи ДО видалення (потім chat_id вже немає)
+                from web.tg_bot import group_ban
+                if target.telegram_chat_id:
+                    group_ban(target.telegram_chat_id)
+            except Exception:
+                pass
             _delete_user(uid)
         else:
             return jsonify({'ok': False, 'error': 'unknown action'})

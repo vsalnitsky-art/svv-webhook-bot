@@ -76,7 +76,11 @@
   function api(path) {
     return fetch(BASE + path, { headers: _headers(), credentials: CREDS })
       .then(function (r) {
-        if (!r.ok) { var e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
+        if (!r.ok) {
+          var e = new Error("HTTP " + r.status); e.status = r.status;
+          return r.json().then(function (j) { e.code = j && j.error; throw e; },
+                               function () { throw e; });
+        }
         return r.json();
       });
   }
@@ -208,12 +212,17 @@
       ? ' <a href="' + esc(BOT_LINK) + '" target="_blank" rel="noopener">відкрити бота</a>' : "";
     var warn = linked ? "" :
       '<p class="ntf-warn">⚠️ Telegram ще не прив’язано — напишіть боту <b>/start</b>' + linkA + '.</p>';
+    var nSub = Object.keys(IW.sbr || {}).length;
     body.innerHTML =
       '<div class="ntf-info">' +
-        '<p>Ринкові сигнали (₿ BTCUSDT, 💰 Funding, 🎯 рекомендації, 🚀 аномальний ріст, ' +
-        'угоди) приходять у <b>Telegram-групу</b>, а не в приватний чат.</p>' +
-        '<p>Доступ до групи — <b>після реєстрації та схвалення адміністратором</b>; ' +
-        'посилання на вхід прийде автоматично.</p>' +
+        '<p><b>👤 Особисто вам</b> (чат із ботом): сигнали <b>🔔 SBR</b> по монетах вашого ' +
+        'WATCHLIST — натисніть 🔔 біля монети й оберіть <b>1H</b> та/або <b>4H</b>. ' +
+        (nSub ? "Зараз підписано монет: <b>" + nSub + "</b>." : "Зараз підписок немає.") + "</p>" +
+        '<p><b>👥 У Telegram-групі</b> (теми): <b>🧮 МММ-монітор</b> — зміни банерів МММ, ' +
+        '<b>🔔 Сигнали</b> — SBR 1H/4H по основних монетах, <b>📈 Угоди</b> — відкриття й закриття угод бота. ' +
+        'Під повідомленнями є кнопка <b>💬 Коментар</b> — коментар публікує бот із вашим імʼям.</p>' +
+        '<p>Доступ до групи — <b>після реєстрації та схвалення адміністратором</b>; посилання прийде автоматично. ' +
+        'Якщо доступ закрито (вимкнено / строк минув) — бот видаляє з групи і нічого не надсилає.</p>' +
         warn +
       '</div>';
   }
@@ -264,7 +273,10 @@
   var VOB_TFS = ["1m", "5m", "15m", "30m", "1h", "4h"];
   var IW = { wl: [], sel: "", rows: {}, max: 20, sig: "", coin: null, chart: null, series: null,
              prim: null, pocLine: null, chartKey: "", universe: [],
-             tf: "15m", ob_tf: "1h", vob_tf: "5m", show_imb: true, show_sbr: true };
+             tf: "15m", ob_tf: "1h", vob_tf: "5m", show_imb: true, show_sbr: true,
+             sbr: {}, tg_linked: true, bellOpen: "" };
+  var SBR_TFS = ["1h", "4h"];          // SBR веде бот і Telegram лише на цих TF
+  function sbrTfOk(tf) { return SBR_TFS.indexOf(String(tf || "").toLowerCase()) >= 0; }
 
   function tfLbl(tf) {
     tf = String(tf || "").toLowerCase();
@@ -328,17 +340,42 @@
       var r = IW.rows[sym] || {};
       var ext = r.src === "ext"
         ? '<small title="Монети немає у WATCHLIST бота — сайт рахує її окремо">🛰</small>' : "";
-      var c = r.chg24;
+      var c = r.chg24, bell = bellHTML(sym);
       var chg = c == null ? '<span class="iw-chg">—</span>'
         : '<span class="iw-chg ' + (c > 0 ? "up" : (c < 0 ? "dn" : "")) + '" title="Зміна ціни за ~24 год">' +
           (c > 0 ? "+" : "") + Number(c).toFixed(2) + "%</span>";
       return '<div class="iw-row' + (sym === IW.sel ? " sel" : "") + '" data-sym="' + esc(sym) + '">' +
         '<span class="iw-sym">' + esc(sym.replace(/USDT$/, "")) + '<small>USDT</small>' + ext + "</span>" +
         '<span class="iw-price">' + (r.price ? fmtPrice(r.price) : "—") + "</span>" + chg +
-        '<button class="iw-del" data-del="' + esc(sym) + '" title="Прибрати зі списку">×</button>' +
+        bell.btn +
+        '<button class="iw-del" data-del="' + esc(sym) + '" title="Прибрати зі списку">×</button>' + bell.menu +
         (r.err ? '<div class="iw-err" title="' + esc(r.err) + '">⚠ ' + esc(r.err) + "</div>" : "") +
       "</div>";
     }).join("");
+  }
+
+  // 🔔 Особисті SBR-сповіщення по монеті: 1H / 4H (вимога 09.11). Сигнал
+  // приходить у ВАШ особистий чат із ботом, а не в групу.
+  function bellHTML(sym) {
+    var tfs = IW.sbr[sym] || [];
+    var on = tfs.length > 0;
+    var lbl = on ? tfs.map(tfLbl).join("+") : "";
+    var tip = on ? "SBR-сигнали " + lbl + " по " + sym + " приходять вам у Telegram. Клік — змінити."
+                 : "Отримувати сигнали SBR по " + sym + " у свій Telegram (обрати 1H / 4H)";
+    var menu = IW.bellOpen === sym
+      ? '<div class="iw-bell-menu" data-bellmenu="' + esc(sym) + '">' +
+          '<div class="t">🔔 SBR у Telegram · ' + esc(sym.replace(/USDT$/, "")) + "</div>" +
+          SBR_TFS.map(function (tf) {
+            return '<label><input type="checkbox" data-belltf="' + tf + '"' + (tfs.indexOf(tf) >= 0 ? " checked" : "") +
+              "> " + tfLbl(tf) + "</label>";
+          }).join("") +
+          (IW.tg_linked ? "" : '<div class="w">⚠️ Telegram не прив’язано — напишіть боту /start, інакше сигнали не дійдуть.</div>') +
+          '<div class="n">Сигнал приходить у ваш особистий чат із ботом одразу після закриття бару.</div>' +
+        "</div>"
+      : "";
+    return { btn: '<span class="iw-bell-wrap"><button type="button" class="iw-bell' + (on ? " on" : "") +
+      '" data-bell="' + esc(sym) + '" title="' + esc(tip) + '">🔔' + (lbl ? "<small>" + esc(lbl) + "</small>" : "") +
+      "</button></span>", menu: menu };
   }
 
   function renderTfBar() {
@@ -357,8 +394,10 @@
     if (lay) lay.innerHTML =
       '<button type="button" data-layer="show_imb" class="' + (IW.show_imb ? "on" : "") +
         '" title="Імбаланси (Fair Value Gap): розрив між 1-ю і 3-ю свічками, який ціна ще не заповнила">IMB</button>' +
-      '<button type="button" data-layer="show_sbr" class="' + (IW.show_sbr ? "on" : "") +
-        '" title="Сигнали Session Band Reversal на цьому таймфреймі: S — SHORT, B — LONG (BUY). Клік по позначці — подробиці">SBR</button>';
+      (sbrTfOk(IW.tf)
+        ? '<button type="button" data-layer="show_sbr" class="' + (IW.show_sbr ? "on" : "") +
+          '" title="Сигнали Session Band Reversal на ' + tfLbl(IW.tf) + ': S — SHORT, B — LONG (BUY). Клік по позначці — подробиці.">SBR</button>'
+        : '<button type="button" disabled class="off" title="SBR показується лише на 1H і 4H: саме на цих таймфреймах індикатор калібровано і саме їх веде бот та Telegram-сигнали. Перемкніть графік на 1H або 4H.">SBR</button>');
   }
 
   function applyMine(d) {
@@ -373,6 +412,8 @@
     if (d.vob_tf) IW.vob_tf = d.vob_tf;
     if (typeof d.show_imb === "boolean") IW.show_imb = d.show_imb;
     if (typeof d.show_sbr === "boolean") IW.show_sbr = d.show_sbr;
+    if (d.sbr && typeof d.sbr === "object") IW.sbr = d.sbr;
+    if (typeof d.tg_linked === "boolean") IW.tg_linked = d.tg_linked;
     renderList();
     renderTfBar();
     if (changed) { IW.sig = ""; IW.coin = null; loadCoin(true); }
@@ -417,6 +458,31 @@
     if (!v) return;
     inp.value = "";
     saveMine({ add: v });
+  });
+
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest) return;
+    var bell = e.target.closest("[data-bell]");
+    if (bell) {
+      e.stopPropagation();
+      var bs = bell.getAttribute("data-bell");
+      IW.bellOpen = IW.bellOpen === bs ? "" : bs;
+      renderList();
+      return;
+    }
+    if (e.target.closest("[data-bellmenu]")) { e.stopPropagation(); return; }
+    if (IW.bellOpen) { IW.bellOpen = ""; renderList(); }
+  }, true);
+
+  document.addEventListener("change", function (e) {
+    var cb = e.target && e.target.closest ? e.target.closest("[data-belltf]") : null;
+    if (!cb) return;
+    var menu = cb.closest("[data-bellmenu]");
+    var sym = menu.getAttribute("data-bellmenu");
+    var tfs = [];
+    menu.querySelectorAll("[data-belltf]").forEach(function (x) { if (x.checked) tfs.push(x.getAttribute("data-belltf")); });
+    if (tfs.length) IW.sbr[sym] = tfs; else delete IW.sbr[sym];
+    saveMine({ sbr: { symbol: sym, tfs: tfs } }).then(function () { IW.bellOpen = sym; renderList(); refreshNotify(); });
   });
 
   document.addEventListener("click", function (e) {
@@ -495,6 +561,38 @@
     ctx.closePath();
   }
 
+  // 📐 IMB «як на скріні» (вимога 09.11): зона + смуга у верхній половині,
+  // довжина якої = % обсягу імпульсної свічки (число — праворуч у смузі), і
+  // великий напівпрозорий обсяг розриву «водяним знаком» на всю висоту зони.
+  // Зона нижча за ~14px — лише смуга без тексту (інакше текст нечитабельний).
+  function _imbBody(ctx, b, X1, X2, yT, yB, hr, vr, font, dark) {
+    var w = X2 - X1, h = yB - yT;
+    if (b.pct != null && w > 4 * hr) {
+      var sw = Math.max(2 * hr, w * Math.min(100, Math.max(0, b.pct)) / 100);
+      ctx.fillStyle = b.strip; ctx.fillRect(X1, yT, sw, h / 2);
+      ctx.strokeStyle = dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.25)";
+      ctx.lineWidth = Math.max(1, Math.round(hr));
+      ctx.strokeRect(X1, yT, sw, h / 2);
+      if (h >= 12 * vr) {
+        var fp = Math.max(8.5, Math.min(34, h / vr * 0.38));
+        ctx.font = font(600, fp); ctx.textBaseline = "middle";
+        ctx.fillStyle = dark ? "rgba(235,238,245,.95)" : "rgba(20,24,32,.88)";
+        var tw = ctx.measureText(b.pct + "%").width;
+        if (sw >= tw + 10 * hr) { ctx.textAlign = "right"; ctx.fillText(b.pct + "%", X1 + sw - 5 * hr, yT + h / 4); }
+        else if (X2 - (X1 + sw) >= tw + 8 * hr) { ctx.textAlign = "left"; ctx.fillText(b.pct + "%", X1 + sw + 4 * hr, yT + h / 4); }
+      }
+    }
+    if (b.volTxt && h >= 18 * vr && w > 40 * hr) {
+      var fv = Math.max(10, Math.min(110, h / vr * 0.82));
+      ctx.font = font(500, fv);
+      while (fv > 10 && ctx.measureText(b.volTxt).width > w * 0.92) { fv -= 2; ctx.font = font(500, fv); }
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = dark ? "rgba(4,6,12,.78)" : "rgba(0,0,0,.2)";
+      ctx.fillText(b.volTxt, (X1 + X2) / 2, (yT + yB) / 2 + fv * vr * 0.04);
+    }
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  }
+
   BoxPrimitive.prototype.paneViews = function () {
     var self = this;
     return [{ renderer: function () { return { draw: function (target) {
@@ -530,6 +628,7 @@
           if (X2 <= X1) continue;
           if (yBt - yT < 1) yBt = yT + 1;
           ctx.fillStyle = b.fill; ctx.fillRect(X1, yT, X2 - X1, yBt - yT);
+          if (b.kind === "imb") _imbBody(ctx, b, X1, X2, yT, yBt, hr, vr, font, dark);
           ctx.strokeStyle = b.stroke; ctx.lineWidth = Math.max(1, Math.round((b.thin ? 1 : 1.2) * hr));
           if (b.dashed && ctx.setLineDash) ctx.setLineDash([6 * hr, 4 * hr]);
           ctx.strokeRect(X1, yT, X2 - X1, yBt - yT);
@@ -563,19 +662,7 @@
         placed.forEach(function (p) {
           var b = p.b;
           if (!b.label) return;
-          if (b.kind === "imb") {
-            // тихий підпис усередині зони, без чипа; немає місця — без підпису
-            if (p.yB - p.yT < 11 * vr || p.X2 - p.X1 < 46 * hr) return;
-            ctx.font = font(600, 9.5);
-            var tw = ctx.measureText(b.label + (b.sub ? " " + b.sub : "")).width;
-            var rr = { x0: p.X1 + 3 * hr, x1: p.X1 + 3 * hr + tw, y0: (p.yT + p.yB) / 2 - 6 * vr, y1: (p.yT + p.yB) / 2 + 6 * vr };
-            if (overlaps(rr)) return;
-            taken.push(rr);
-            ctx.fillStyle = b.text; ctx.textBaseline = "middle"; ctx.textAlign = "left";
-            ctx.fillText(b.label + (b.sub ? " " + b.sub : ""), rr.x0, (p.yT + p.yB) / 2);
-            ctx.textBaseline = "alphabetic";
-            return;
-          }
+          if (b.kind === "imb") return;   // обсяг і % намальовано всередині зони (_imbBody)
           ctx.font = font(700, 11);
           var w1 = ctx.measureText(b.label).width;
           ctx.font = font(500, 10.5);
@@ -719,17 +806,18 @@
     if (IW.show_imb) (c.imb || []).forEach(function (z) {
       var L = z.side === "LONG";
       out.push({ kind: "imb", thin: true, ext: 30, t: snapSec(z.start, o), top: z.top, bottom: z.bottom,
-        fill: L ? "rgba(96,165,250,.13)" : "rgba(192,132,252,.13)",
-        stroke: L ? "rgba(96,165,250,.55)" : "rgba(192,132,252,.55)",
-        text: L ? "#93c5fd" : "#d8b4fe",
-        label: "IMB", sub: z.filled_pct ? z.filled_pct + "%" : "" });
+        fill: L ? "rgba(59,130,246,.36)" : "rgba(234,128,38,.36)",
+        strip: L ? "rgba(59,130,246,.72)" : "rgba(234,128,38,.72)",
+        stroke: L ? "rgba(59,130,246,.65)" : "rgba(234,128,38,.65)",
+        text: L ? "#93c5fd" : "#fdba74",
+        volTxt: fmtVol(z.vol), pct: z.pct, label: "IMB" });
     });
     return out;
   }
 
   // Сигнали SBR → позначки біля свічки (S над high, B під low).
   function sbrOf(c) {
-    if (!IW.show_sbr) return [];
+    if (!IW.show_sbr || !sbrTfOk(c.tf || IW.tf)) return [];
     var o = c.ohlc || [], byT = {};
     o.forEach(function (b) { byT[b.time] = b; });
     var out = [];
@@ -817,7 +905,7 @@
         '<span title="Volumized Order Block: обсяг блоку і (%) — баланс обсягу між половинами; пунктир із ✕ — блок пробитий (breaker)"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
         '<span title="Order Block — пунктир; густіший — swing, світліший — internal"><i style="background:rgba(45,212,191,.35);outline:1px dashed rgba(45,212,191,.9)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
         '<span title="Структура: CHoCH — пунктир (розворот), BOS — суцільна (продовження)"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
-        '<span title="IMB — імбаланс (Fair Value Gap): розрив між 1-ю і 3-ю свічками, ще не заповнений ціною; % — скільки вже заповнено"><i style="background:rgba(96,165,250,.35)"></i>IMB</span>' +
+        '<span title="IMB — імбаланс (Fair Value Gap): розрив між 1-ю і 3-ю свічками, ще не заповнений ціною (заповнення звужує зону). Велике число — обсяг трьох свічок розриву; смуга і % — частка обсягу імпульсної (середньої) свічки. Синій — бичачий, помаранчевий — ведмежий"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
         '<span title="Сигнали SBR на цьому таймфреймі: S — SHORT, B — LONG; клік по позначці — подробиці"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +
         '<span title="POC — ціна найбільшого обсягу"><i style="background:#f5f5f5;height:2px"></i>POC</span>' +
       "</span>";
@@ -897,9 +985,18 @@
   });
 
   // ═══ показ / автооновлення ═════════════════════════════════════════════
-  function showData(ok) {
+  // Акаунт є, але доступ закрито (вимога 09.11): сторінка не показується,
+  // лише пояснення. Повідомлення — від бота (`error` у відповіді 403).
+  var DENY_TXT = {
+    blocked: "⛔ Ваш акаунт заблоковано адміністратором — доступ до кабінету закрито.",
+    expired: "⏳ Строк вашого доступу завершився — зверніться до адміністратора для продовження.",
+    not_active: "⏳ Акаунт очікує схвалення адміністратора."
+  };
+  function showData(ok, code) {
     document.body.classList.add("app-ready");
     var hero = $("#auth-hero"); if (hero) hero.style.display = ok ? "none" : "";
+    var dn = $("#auth-deny");
+    if (dn) { dn.textContent = (!ok && DENY_TXT[code]) || ""; dn.style.display = (!ok && DENY_TXT[code]) ? "" : "none"; }
     var lay = $("#iw-layout"); if (lay) lay.style.display = ok ? "" : "none";
     if (!ok) { var n = $("#notify-card"); if (n) n.style.display = "none"; }
     var tb = $(".topbar"); if (tb) tb.style.display = ok ? "" : "none";
@@ -922,9 +1019,10 @@
       $("#last-update").textContent = "оновлено: " + new Date().toLocaleTimeString("uk-UA");
     }).catch(function (e) {
       if (e && (e.status === 401 || e.status === 403)) {
+        var deny = e.status === 403 && DENY_TXT[e.code];
         if (getTok()) setTok("");
-        showData(false);
-        setConn("wait", "потрібен вхід");
+        showData(false, deny ? e.code : "");
+        setConn(deny ? "err" : "wait", deny ? "доступ закрито" : "потрібен вхід");
       } else {
         showData(true);
         setConn("err", "бот недоступний");

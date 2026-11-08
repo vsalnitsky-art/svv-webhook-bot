@@ -6,7 +6,7 @@
   <title>VSV — Мій кабінет</title>
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=69">
+  <link rel="stylesheet" href="style.css?v=70">
   <!-- ⏳ Анти-блимання: доки JS не перевірив авторизацію (клас app-ready ще не
        додано на <body>), не показуємо ні дашборд, ні hero — інакше на секунду
        спалахує «бот-панель» перед екраном входу. Після перевірки showData()
@@ -44,6 +44,7 @@
       <div class="hero-inner">
         <img class="hero-logo" src="vsv-logo.png" alt="VSV" onerror="this.style.display='none'">
         <h1 class="hero-title"><span class="brand-name">VSV Bot</span> — особистий кабінет</h1>
+        <p class="hero-deny" id="auth-deny" style="display:none"></p>
         <div class="hero-actions">
           <a id="hero-login" class="btn btn-primary" href="/login">🔐 Вхід</a>
           <a id="hero-register" class="btn btn-ghost" href="/register">📝 Реєстрація</a>
@@ -114,7 +115,7 @@
     })();
   </script>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="config.js?v=69"></script>
-  <script src="app.js?v=69"></script>
+  <script src="config.js?v=70"></script>
+  <script src="app.js?v=70"></script>
 </body>
 </html>

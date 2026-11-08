@@ -280,7 +280,9 @@ def test_payload_carries_imb_and_sbr():
     now = 1000 + 500 * 900 + 10
     kl = sc._cache['BTCUSDT']['klines']
     _check(isinstance(ip.imb_of(kl, '15m', now), list), 'imb_of')
-    sig = ip.sbr_of(kl, '15m', now)
+    _check(ip.sbr_of(kl, '15m', now) == [], 'SBR лише на 1H / 4H (вимога 09.11)')
+    kl1h = [dict(k, t=(3600 * 400 + i * 3600) * 1000) for i, k in enumerate(kl)]
+    sig = ip.sbr_of(kl1h, '1h', 3600 * 400 + 500 * 3600 + 10)
     _check(isinstance(sig, list) and all(set(('side', 't', 'trigger', 'score', 'sl', 'tf')) <= set(x) for x in sig), sig[:1])
     p = ip.coin_payload('BTCUSDT', sc)
     _check('imb' in p and 'sbr' in p, 'відповідь графіка несе IMB і SBR')
@@ -291,6 +293,91 @@ def test_payload_carries_imb_and_sbr():
     _check('overlaps(' in js and 'taken.push' in js, 'підписи розкладаються без накладань')
     _check('"S" : "B"' in js, 'позначки S / B')
     print('✓ графік: IMB, сигнали SBR, підписи без накладань')
+
+
+def _load(name, rel):
+    sp = importlib.util.spec_from_file_location(name, os.path.join(_HERE, *rel.split('/')))
+    m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m)
+    return m
+
+
+def test_imb_carries_volume_and_impulse_share():
+    m = _load('imbalance2', 'detection/imbalance.py')
+    T = 1_700_000_000_000
+    b = [{'t': T + i * 60000, 'o': 100, 'h': 101, 'l': 99, 'p': 100, 'v': 10} for i in range(20)]
+    b += [{'t': T + 20 * 60000, 'o': 100, 'h': 101, 'l': 99, 'p': 101, 'v': 100},
+          {'t': T + 21 * 60000, 'o': 101, 'h': 106, 'l': 100.5, 'p': 105.5, 'v': 800},
+          {'t': T + 22 * 60000, 'o': 105.5, 'h': 107, 'l': 103, 'p': 106, 'v': 100}]
+    z = m.detect_imbalances(b)[0]
+    _check(z['vol'] == 1000 and z['pct'] == 80, z)
+    nov = [dict(x, v=0) for x in b]
+    _check(m.detect_imbalances(nov)[0]['pct'] is None, 'немає обсягу → None, а не вигадане число')
+    _check(ip.imb_of(b, '1m', (T + 30 * 60000) / 1000)[0]['vol'] == 1000, 'обсяг доходить до графіка')
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    _check('_imbBody' in js and 'volTxt' in js, 'IMB: обсяг + % у зоні')
+    print('✓ IMB: обсяг 3 свічок і % імпульсної свічки')
+
+
+def test_personal_sbr_subscriptions():
+    cur = ip.user_info({'info': {'wl': ['BTCUSDT', 'ETHUSDT'],
+                                 'sbr': {'BTCUSDT': ['1h', '15m'], 'XRPUSDT': ['4h']}}}, [])
+    _check(cur['sbr'] == {'BTCUSDT': ['1h']}, 'лише 1H/4H і лише монети списку')
+    cur, _ = ip.apply_change(cur, {'sbr': {'symbol': 'eth', 'tfs': ['4h', '1h']}}, [])
+    _check(cur['sbr'] == {'BTCUSDT': ['1h'], 'ETHUSDT': ['1h', '4h']}, cur['sbr'])
+    cur, _ = ip.apply_change(cur, {'sbr': {'symbol': 'BTCUSDT', 'tfs': []}}, [])
+    _check('BTCUSDT' not in cur['sbr'], 'порожній вибір = відписка')
+    cur, _ = ip.apply_change(cur, {'remove': 'ETHUSDT'}, [])
+    _check(cur['sbr'] == {}, 'прибрали монету → і підписку')
+    s1, s4 = {'side': 'LONG'}, {'side': 'LONG'}
+    rc = ip.sbr_recipients([('11', {'BTCUSDT': ['1h']}), ('22', {'BTCUSDT': ['4h']}),
+                            ('33', {'ETHUSDT': ['1h']})], 'BTCUSDT', [('1h', s1), ('4h', s4)])
+    _check(rc == {'11': [('1h', s1)], '22': [('4h', s4)]}, rc)
+    print('✓ особисті SBR-підписки: 1H/4H по монеті, отримувачі')
+
+
+def test_sbr_engine_delivers_personally_and_tracks_extra():
+    S = _load('sbr_signals_t', 'detection/sbr_signals.py')
+    got = []
+    e = S.SbrEngine(db=None, get_watchlist=lambda: ['BTCUSDT'], fetch=lambda *a: None,
+                    notify=None, get_extra=lambda: ['ZZZUSDT'],
+                    personal=lambda sym, items: (got.append((sym, items)) or (1, 0)))
+    _check('ZZZUSDT' in e._universe(), 'монета підписки рахується і поза WATCHLIST бота')
+    sig = {'side': 'SHORT', 'score': 70.0, 'trigger': 1.0, 'n': 1, 't': 0, 'close_t': 0}
+    e._on_signals('ZZZUSDT', [('1h', sig)], 0)
+    _check(got and got[0][0] == 'ZZZUSDT', 'свіжий сигнал → особиста доставка')
+    print('✓ рушій SBR: особиста доставка + монети підписок')
+
+
+def test_blocked_user_has_no_access_and_no_group():
+    tg = _load('tg_bot_t', 'web/tg_bot.py')
+    _check(tg.group_action(True, False, False) == 'ban', 'заблокований → геть із групи')
+    _check(tg.group_action(False, True, True) == 'unban', 'знову активний → бан знято')
+    _check(tg.group_action(False, False, False) is None, 'очікує схвалення — не чіпаємо')
+    auth = open(os.path.join(_HERE, 'web', 'auth.py'), encoding='utf-8').read()
+    _check("not path.startswith(('/api/me', '/api/info/'))" in auth,
+           'API-ключ не відкриває особистий кабінет')
+    _check("'blocked' if" in auth and 'sync_user_group(uid)' in auth, 'причина 403 + синхронізація групи')
+    _check('if not _is_active(u):' in auth.split('def info_sbr_subscribers')[1][:900],
+           'особисті сигнали — лише активним')
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    _check('DENY_TXT' in js and 'blocked:' in js, 'сайт пояснює закритий доступ')
+    print('✓ заблокований: без кабінету, без розсилок, поза групою')
+
+
+def test_comment_button():
+    tg = _load('tg_bot_c', 'web/tg_bot.py')
+    link = tg.comment_link('sbr', 123, 'vsv_bot')
+    _check(link == 'https://t.me/vsv_bot?start=cm_sbr_123', link)
+    _check(len(link.split('start=')[1]) <= 64, 'start-параметр ≤ 64')
+    _check(tg.parse_comment_start('cm_sbr_123') == ('sbr', 123), 'розбір')
+    _check(tg.parse_comment_start('cm_register_1') is None, 'службові теми не коментуються')
+    _check(tg.comment_link('register', 1, 'b') is None, 'без кнопки в службових темах')
+    src = open(os.path.join(_HERE, 'web', 'tg_bot.py'), encoding='utf-8').read()
+    _check("_add_comment_button(category, chat" in src and "'reply_parameters'" in src,
+           'кнопка після відправки + коментар відповіддю під повідомленням')
+    _check("send to {category} failed" not in src.split('def tg_send')[1].split('def _send_get_id')[0],
+           'tg_send більше не падає NameError')
+    print('✓ 💬 кнопка «Коментар» під повідомленнями групи')
 
 
 if __name__ == '__main__':

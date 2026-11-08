@@ -207,13 +207,21 @@ def imb_of(klines, tf, now=None):
     out = []
     for z in detect_imbalances(closed, max_show=IMB_SHOW):
         out.append({'side': z['side'], 'top': z['top'], 'bottom': z['bottom'],
-                    'start': z['t'], 'filled_pct': z.get('filled_pct', 0)})
+                    'start': z['t'], 'filled_pct': z.get('filled_pct', 0),
+                    'vol': z.get('vol'), 'pct': z.get('pct')})
     return out
+
+
+SBR_TFS = ('1h', '4h')       # SBR — лише ті TF, на яких його веде бот і TG
 
 
 def sbr_of(klines, tf, now=None):
     """🔔 Сигнали Session Band Reversal на ЗАКРИТИХ барах ГРАФІКА — той самий
-    `sbr_signals.compute_signals`, що рушій бота (1H/4H) і Telegram."""
+    `sbr_signals.compute_signals`, що рушій бота (1H/4H) і Telegram.
+    Лише 1H / 4H (вимога 09.11): індикатор калібровано на цих TF, на інших
+    позначки не малюємо."""
+    if str(tf).lower() not in SBR_TFS:
+        return []
     try:
         from detection.sbr_signals import compute_signals, closed_bars
     except Exception:
@@ -640,6 +648,20 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
 
 
 # ── Особисті дані користувача ─────────────────────────────────────────────
+def sbr_norm(raw, wl=None):
+    """ЧИСТА: {SYM: ['1h','4h']} — персональні 🔔 SBR-підписки. Лише монети
+    списку (якщо `wl` задано), лише TF 1H/4H; порожній вибір = немає підписки."""
+    out = {}
+    for k, v in (raw or {}).items() if isinstance(raw, dict) else []:
+        S = norm_symbol(k)
+        if not valid_symbol(S) or (wl is not None and S not in wl):
+            continue
+        tfs = [t for t in SBR_TFS if t in [str(x).lower() for x in (v or [])]]
+        if tfs:
+            out[S] = tfs
+    return out
+
+
 def user_info(prefs, uni, dfl=None):
     dfl = dfl or {'tf': '15m', 'ob_tf': '1h', 'vob_tf': '5m'}
     info = (prefs or {}).get('info') or {}
@@ -656,7 +678,9 @@ def user_info(prefs, uni, dfl=None):
             'vob_tf': norm_tf(info.get('vob_tf'), VOB_TFS, dfl['vob_tf'], allow_off=True),
             # що малювати на графіку (лише показ, рахується завжди)
             'show_imb': bool(info.get('show_imb', True)),
-            'show_sbr': bool(info.get('show_sbr', True))}
+            'show_sbr': bool(info.get('show_sbr', True)),
+            # 🔔 особисті SBR-сповіщення в Telegram (вимога 09.11)
+            'sbr': sbr_norm(info.get('sbr'), wl)}
 
 
 def apply_change(cur, body, uni):
@@ -695,8 +719,98 @@ def apply_change(cur, body, uni):
     for k in ('show_imb', 'show_sbr'):
         if k in body:
             out[k] = bool(body.get(k))
+    sbr = dict(cur.get('sbr') or {})
+    if isinstance(body.get('sbr'), dict):        # {symbol, tfs: ['1h','4h']}
+        S = norm_symbol(body['sbr'].get('symbol'))
+        tfs = sbr_norm({S: body['sbr'].get('tfs') or []}).get(S)
+        if S in wl:
+            if tfs:
+                sbr[S] = tfs
+            else:
+                sbr.pop(S, None)
+    out['sbr'] = sbr_norm(sbr, wl)               # прибрана монета → і підписка
     out['wl'], out['sel'] = wl, sel
     return out, err
+
+
+# ── 🔔 Особисті SBR-сповіщення (вимога 09.11) ────────────────────────────
+# Користувач у кабінеті вмикає 🔔 біля монети й обирає 1H / 4H → сигнал іде
+# ЙОМУ в особистий чат із головним ботом (не в групу). Розрахунок — той самий
+# рушій `sbr_signals` (монети підписок додаються в його набір), тож сигнал у
+# кабінеті, у групі і в особистому чаті — один і той самий.
+SUBS_TTL = 30.0
+SUBS_EXTRA_MAX = 300           # стеля монет поза WATCHLIST бота, які веде рушій
+_subs = {'at': 0.0, 'data': []}
+_subs_lock = threading.Lock()
+
+
+def sbr_subs(force=False):
+    """[(chat_id, {SYM: [tfs]})] активних користувачів (кеш 30с)."""
+    now = time.time()
+    with _subs_lock:
+        if not force and now - _subs['at'] < SUBS_TTL:
+            return _subs['data']
+    try:
+        from web.auth import info_sbr_subscribers
+        data = info_sbr_subscribers()
+    except Exception:
+        data = []
+    with _subs_lock:
+        _subs['at'], _subs['data'] = now, data
+    return data
+
+
+def sbr_subs_invalidate():
+    with _subs_lock:
+        _subs['at'] = 0.0
+
+
+def sbr_extra_symbols():
+    """Монети особистих підписок — рушій SBR рахує їх навіть поза WATCHLIST бота."""
+    out = []
+    for _c, sub in sbr_subs():
+        for S in sub:
+            if S not in out:
+                out.append(S)
+    return out[:SUBS_EXTRA_MAX]
+
+
+def sbr_recipients(subs, symbol, items):
+    """ЧИСТА: {chat_id: [(tf, сигнал)…]} — хто що отримує з цих сигналів."""
+    S = norm_symbol(symbol)
+    out = {}
+    for chat, sub in subs or []:
+        tfs = sbr_norm(sub).get(S) or []
+        got = [(tf, sig) for tf, sig in items if tf in tfs]
+        if got:
+            out[str(chat)] = got
+    return out
+
+
+def sbr_personal_send(symbol, items):
+    """Розіслати свіжі сигнали монети підписникам. → (надіслано, помилок)."""
+    rc = sbr_recipients(sbr_subs(), symbol, items)
+    if not rc:
+        return 0, 0
+    try:
+        from detection.sbr_signals import tg_text
+        from web.tg_bot import tg_send
+    except Exception:
+        return 0, len(rc)
+    ok = bad = 0
+    for chat, got in rc.items():
+        by_side = {}
+        for tf, sig in got:
+            by_side.setdefault(sig.get('side'), []).append((tf, sig))
+        for grp in by_side.values():
+            try:
+                if tg_send(chat, '👤 <i>Ваш сигнал з кабінету</i>\n' + tg_text(norm_symbol(symbol), grp)):
+                    ok += 1
+                else:
+                    bad += 1
+            except Exception:
+                bad += 1
+    return ok, bad
 
 
 def register_info_portal(app):
@@ -743,5 +857,7 @@ def register_info_portal(app):
             cur, err = apply_change(cur, request.get_json(silent=True) or {}, uni)
             prefs['info'] = cur
             _update_user(u.id, prefs=json.dumps(prefs)[:20000])
+            sbr_subs_invalidate()
         return jsonify({'ok': not err, 'error': err, 'max': IWL_MAX, 'universe_n': len(uni),
-                        **cur})
+                        'tg_linked': bool(getattr(u, 'telegram_chat_id', None)),
+                        'sbr_tfs': list(SBR_TFS), **cur})
