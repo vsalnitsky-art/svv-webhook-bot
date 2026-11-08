@@ -466,8 +466,10 @@ def test_alarm_enables_the_main_button_and_keeps_working():
     sys.modules['detection.direction_gate'] = dg
     pkg.direction_gate = dg
     sent = []
+    group = []
     try:
-        e = S.SbrEngine(_MemDB(), lambda: [], None, lambda t: (sent.append(t) or True, ''))
+        e = S.SbrEngine(_MemDB(), lambda: [], None, lambda t: (group.append(t) or True, ''))
+        e._admin_notify = lambda t: sent.append(t) or True
         e.update_settings({'alarm_on': True, 'alarm_symbol': 'BTC', 'alarm_tf': 'any',
                            'alarm_side': 'LONG'})
         _check('BTCUSDT' in e._universe(), 'монета будильника рахується рушієм')
@@ -478,7 +480,9 @@ def test_alarm_enables_the_main_button_and_keeps_working():
         _check(calls == ['LONG'] and state['LONG'], 'кнопку LONG увімкнено')
         _check(st['alarm_on'] is True, 'головний тумблер лишається увімкненим (не одноразовий)')
         _check(st['alarm_last']['ok'] and st['alarm_last']['side'] == 'LONG', st['alarm_last'])
-        _check(any('Будильник SBR' in x for x in sent), 'повідомлення в TG')
+        _check(any('Будильник SBR' in x for x in sent), 'повідомлення особисто адміну')
+        _check(not any('Будильник' in x for x in group), 'у групу будильник НЕ йде')
+        _check(not any('кнопку' in x.lower() for x in sent), 'без рядка про головну кнопку')
         n = len(sent)
         e._on_signals('BTCUSDT', [('4h', _asig('LONG'))], 300.0)
         _check(len(sent) == n, 'кнопка вже увімкнена → без повторного TG')

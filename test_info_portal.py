@@ -302,20 +302,29 @@ def _load(name, rel):
 
 
 def test_imb_carries_volume_and_impulse_share():
+    """Обсяг — у МОНЕТАХ (обіг / типова ціна) імпульсної свічки, як у TV
+    («11.461K», а не «3.64B»); розклад продаж/купівля — за кольором 3 свічок."""
     m = _load('imbalance2', 'detection/imbalance.py')
     T = 1_700_000_000_000
     b = [{'t': T + i * 60000, 'o': 100, 'h': 101, 'l': 99, 'p': 100, 'v': 10} for i in range(20)]
-    b += [{'t': T + 20 * 60000, 'o': 100, 'h': 101, 'l': 99, 'p': 101, 'v': 100},
-          {'t': T + 21 * 60000, 'o': 101, 'h': 106, 'l': 100.5, 'p': 105.5, 'v': 800},
-          {'t': T + 22 * 60000, 'o': 105.5, 'h': 107, 'l': 103, 'p': 106, 'v': 100}]
+    b += [{'t': T + 20 * 60000, 'o': 101, 'h': 101, 'l': 99, 'p': 100, 'v': 100},      # червона: 1 монета
+          {'t': T + 21 * 60000, 'o': 101, 'h': 106, 'l': 100.5, 'p': 105.5, 'v': 832},  # зелена: 8 монет
+          {'t': T + 22 * 60000, 'o': 105.5, 'h': 107, 'l': 103, 'p': 106, 'v': 316}]    # зелена: 3 монети
     z = m.detect_imbalances(b)[0]
-    _check(z['vol'] == 1000 and z['pct'] == 80, z)
+    _check(abs(z['vol'] - 8.0) < 1e-6, ('обсяг імпульсної свічки в монетах', z))
+    _check(z['sell_pct'] == 8 and z['buy_pct'] == 92 and z['pct'] == 92, z)
     nov = [dict(x, v=0) for x in b]
-    _check(m.detect_imbalances(nov)[0]['pct'] is None, 'немає обсягу → None, а не вигадане число')
-    _check(ip.imb_of(b, '1m', (T + 30 * 60000) / 1000)[0]['vol'] == 1000, 'обсяг доходить до графіка')
+    zz = m.detect_imbalances(nov)[0]
+    _check(zz['pct'] is None and zz['sell_pct'] is None and zz['vol'] is None,
+           'немає обсягу → None, а не вигадане число')
+    r = ip.imb_of(b, '1m', (T + 30 * 60000) / 1000)[0]
+    _check(abs(r['vol'] - 8.0) < 1e-6 and r['sell_pct'] == 8 and r['buy_pct'] == 92,
+           'обсяг і розклад доходять до графіка')
     js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
-    _check('_imbBody' in js and 'volTxt' in js, 'IMB: обсяг + % у зоні')
-    print('✓ IMB: обсяг 3 свічок і % імпульсної свічки')
+    _check('_imbBody' in js and 'volTxt' in js and 'sellPct' in js and 'buyPct' in js,
+           'IMB: обсяг + дві смуги продаж/купівля')
+    _check('IMB_SELL' in js and 'IMB_BUY' in js, 'смуги різних кольорів')
+    print('✓ IMB: обсяг у монетах і розклад продаж/купівля')
 
 
 def test_personal_sbr_subscriptions():
@@ -402,6 +411,39 @@ def test_cabinet_polish_0911():
     _check('function livePx' in js and js.count('livePx(sym)') >= 3, 'ціна списку = ціна шапки')
     _check('dirCls(sym)' in js, 'ціна за напрямком')
     print('✓ кабінет: шапка, VOB, гармошка, картка SBR, одна ціна')
+
+
+def test_mm_babl_colour_and_tv_like_chart():
+    """🧭 Назва монети кольором «МММ-бабло» (та сама формула, що 🧮 МММ LiQ):
+    спершу знімок двигуна, далі `_fuel_dir_legacy`; немає даних → без кольору.
+    🖱 Графік: інерція миші, вертикальний рух вимикає автомасштаб, кнопка «A»,
+    оновлення хвостом (`update`), а не повною заміною даних."""
+    class FF:
+        calls = []
+        def mm_snapshot_for(self, syms):
+            return {'BTCUSDT': {'mm': 'SHORT', 'strength': 34}}
+        def _fuel_dir_legacy(self, sym):
+            self.calls.append(sym)
+            return {'status': 'LONG', 'strength': 21} if sym == 'ETHUSDT' else None
+    ip._mm_cache.clear()
+    ff = FF()
+    m = ip.mm_marks(['btcusdt', 'ETHUSDT', 'XRPUSDT'], ff=ff, now=1000.0)
+    _check(m['BTCUSDT'] == {'dir': 'SHORT', 'str': 34}, m)
+    _check(m['ETHUSDT'] == {'dir': 'LONG', 'str': 21}, m)
+    _check('XRPUSDT' not in m, 'немає даних → без кольору (не «рівновага»)')
+    _check('BTCUSDT' not in ff.calls, 'монета зі знімка не перераховується')
+    ip.mm_marks(['ETHUSDT'], ff=ff, now=1010.0)
+    _check(ff.calls.count('ETHUSDT') == 1, 'фолбек кешується')
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    css = open(os.path.join(_HERE, 'infosite', 'style.css'), encoding='utf-8').read()
+    _check('mmCls(sym)' in js and "' mm-short'" not in js and 'mm-short' in js
+           and '.iw-sym.mm-short' in css and '.iw-title.mm-long' in css, 'колір назви в списку й шапці')
+    _check(js.count('mmCls(sym)') >= 3, 'і список, і шапка')
+    _check('kineticScroll: { mouse: true' in js, 'інерція миші як у TradingView')
+    _check('function tvPanInit' in js and 'setAutoScale(false)' in js and 'id = "iw-auto"' in js,
+           'вертикальний рух → вільний рух, кнопка A')
+    _check('IW.series.update(o[u])' in js, 'оновлення хвостом, без setData посеред руху')
+    print('✓ МММ-бабло на назві монети · графік як у TradingView')
 
 
 if __name__ == '__main__':

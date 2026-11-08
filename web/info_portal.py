@@ -208,7 +208,8 @@ def imb_of(klines, tf, now=None):
     for z in detect_imbalances(closed, max_show=IMB_SHOW):
         out.append({'side': z['side'], 'top': z['top'], 'bottom': z['bottom'],
                     'start': z['t'], 'filled_pct': z.get('filled_pct', 0),
-                    'vol': z.get('vol'), 'pct': z.get('pct')})
+                    'vol': z.get('vol'), 'pct': z.get('pct'),
+                    'sell_pct': z.get('sell_pct'), 'buy_pct': z.get('buy_pct')})
     return out
 
 
@@ -558,6 +559,64 @@ def _poc(sc, sym, allow_compute=True, price=None):
     return ('ok', out)
 
 
+MM_TTL = 60.0                # кеш фолбеку МММ-бабло для монет поза знімком
+_mm_cache = {}               # {SYM: (ts, mark|None)}
+
+
+def mm_marks(symbols, ff=None, now=None):
+    """🧭 «МММ-бабло» по монетах кабінету (вимога 08.11): напис монети фарбується
+    так само, як рядок «МММ-бабло ↑ зверху → тягне в LONG / ↓ знизу → SHORT».
+
+    Формула в боті ОДНА: (fa−fb)/den по liq-map, поріг ±0.1 — її рахує
+    `FuelFilterDaemon._fuel_dir_legacy` (колонка «🧮 МММ LiQ»). Тут — ЛИШЕ
+    читання: спершу готовий знімок двигуна (`mm_snapshot_for`), а для монет, яких
+    у знімку немає, — той самий `_fuel_dir_legacy` над кешованим (20с) станом
+    liq-map, з власним кешем MM_TTL. Біржу НЕ смикаємо і liq-map нових монет НЕ
+    замовляємо: немає даних → кольору немає («невідомо» ≠ «рівновага»).
+    → {SYM: {'dir': 'LONG'|'SHORT'|'FLAT', 'str': 0..100}}."""
+    now = time.time() if now is None else now
+    want = [norm_symbol(x) for x in (symbols or []) if x]
+    want = [x for x in want if x]
+    if not want:
+        return {}
+    if ff is None:
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+        except Exception:
+            ff = None
+    if ff is None:
+        return {}
+    out = {}
+    try:
+        snap = ff.mm_snapshot_for(want) or {}
+    except Exception:
+        snap = {}
+    for sym in want:
+        v = snap.get(sym)
+        if v is not None:
+            st = v.get('mm')
+            out[sym] = {'dir': st if st in ('LONG', 'SHORT') else 'FLAT',
+                        'str': int(v.get('strength') or 0)}
+            continue
+        hit = _mm_cache.get(sym)
+        if hit and now - hit[0] < MM_TTL:
+            m = hit[1]
+        else:
+            try:
+                m = ff._fuel_dir_legacy(sym)
+            except Exception:
+                m = None
+            _mm_cache[sym] = (now, m)
+            if len(_mm_cache) > 600:
+                _mm_cache.clear()
+        if m:
+            st = m.get('status')
+            out[sym] = {'dir': st if st in ('LONG', 'SHORT') else 'FLAT',
+                        'str': int(m.get('strength') or 0)}
+    return out
+
+
 def rows_for(symbols, sc=None):
     """Рядки особистого списку: лише назва, ціна і стан (PD/POC тепер на
     графіку — вимога 08.11). Ціна — з тих самих барів, що графік за TF бота."""
@@ -580,6 +639,12 @@ def rows_for(symbols, sc=None):
         except Exception:
             pass
         rows.append({'symbol': sym, 'price': price, 'chg24': chg, 'src': src, 'err': err})
+    try:
+        mm = mm_marks([r['symbol'] for r in rows])
+    except Exception:
+        mm = {}
+    for r in rows:
+        r['mm'] = mm.get(r['symbol'])
     return rows
 
 

@@ -458,3 +458,16 @@ td.mono, td .mono { font-family: var(--mono); }
 .iw-sig .v-hi { color: #4ade80; } .iw-sig .v-mid { color: #fbbf24; } .iw-sig .v-lo { color: #94a3b8; }
 .iw-sig .v-risk { color: #93c5fd; }
 .iw-sig .h { white-space: nowrap; }
+
+/* 🖱 «A» — автомасштаб ціни, як у TradingView (вимога 08.11) */
+.iw-auto { position: absolute; right: 8px; bottom: 5px; z-index: 5; width: 22px; height: 20px;
+  padding: 0; border: 1px solid var(--line-soft); border-radius: 4px; background: var(--panel, #131722);
+  color: var(--muted, #8a94a6); font: 700 11px/18px -apple-system, Segoe UI, Roboto, sans-serif; cursor: pointer; opacity: .85; }
+.iw-auto:hover { opacity: 1; color: var(--text, #e6e9ef); }
+.iw-auto.on { color: #f5a524; border-color: rgba(245,165,36,.55); }
+
+/* 🧭 Назва монети кольором «МММ-бабло» (вимога 08.11): ті самі кольори, що рядок
+   «МММ-бабло … тягне в LONG / SHORT» у боті */
+.iw-sym.mm-long, .iw-title.mm-long { color: #22c55e; text-shadow: 0 0 8px rgba(34,197,94,.35); }
+.iw-sym.mm-short, .iw-title.mm-short { color: #ef4444; text-shadow: 0 0 8px rgba(239,68,68,.35); }
+.iw-title.mm-long a, .iw-title.mm-short a { border-bottom-color: currentColor; }

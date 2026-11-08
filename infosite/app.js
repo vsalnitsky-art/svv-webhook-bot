@@ -305,13 +305,13 @@
     if (!m) return String(tf || "").toUpperCase();
     return m[1] + " " + ({ m: "Min", h: "H", d: "D" })[m[2]];
   }
-  function fmtVol(v) {
-    v = Number(v);
+  function fmtVol(v, dp) {
+    v = Number(v); dp = dp == null ? 2 : dp;
     if (!isFinite(v) || v <= 0) return "";
-    if (v >= 1e9) return (v / 1e9).toFixed(2) + "B";
-    if (v >= 1e6) return (v / 1e6).toFixed(2) + "M";
-    if (v >= 1e3) return (v / 1e3).toFixed(2) + "K";
-    return String(Math.round(v));
+    if (v >= 1e9) return (v / 1e9).toFixed(dp) + "B";
+    if (v >= 1e6) return (v / 1e6).toFixed(dp) + "M";
+    if (v >= 1e3) return (v / 1e3).toFixed(dp) + "K";
+    return v >= 10 ? String(Math.round(v)) : v.toFixed(2);
   }
 
   function pdBadge(pd) {
@@ -331,7 +331,8 @@
     var d = poc.dist_pct, rel = poc.rel;
     var cls = rel === "above" ? "short" : (rel === "below" ? "long" : "mute");
     var hint = rel === "above" ? "краще SHORT" : (rel === "below" ? "краще LONG" : "на POC");
-    var tip = "POC " + poc.days + "д · " + poc.tf + " · " + poc.market + " · " + hint;
+    var tip = "POC — ціна з найбільшим обсягом торгів за останні " + poc.days + " доби (свічки " + poc.tf +
+      ", " + String(poc.exchange || "binance").toUpperCase() + " " + poc.market + ") · " + hint;
     return '<span class="bdg ' + cls + '" title="' + esc(tip) + '">POC ' +
       fmtPrice(poc.poc).replace("$", "") +
       (d == null ? "" : " " + (d >= 0 ? "+" : "") + Number(d).toFixed(2) + "%") + "</span>";
@@ -354,6 +355,22 @@
     return c == null ? "" : (c > 0 ? " up" : (c < 0 ? " dn" : ""));
   }
 
+  // 🧭 Колір НАЗВИ монети = «МММ-бабло» бота (вимога 08.11): та сама формула,
+  // що рядок «МММ-бабло ↑ зверху → тягне в LONG / ↓ знизу → тягне в SHORT»
+  // (зелений / червоний; ⚖ рівновага — без кольору; немає даних — без кольору).
+  function mmCls(sym) {
+    var m = (IW.rows[sym] || {}).mm;
+    if (!m) return "";
+    return m.dir === "LONG" ? " mm-long" : (m.dir === "SHORT" ? " mm-short" : "");
+  }
+  function mmTip(sym) {
+    var m = (IW.rows[sym] || {}).mm;
+    if (!m) return "МММ-бабло: даних немає";
+    if (m.dir === "LONG") return "МММ-бабло ↑ зверху → тягне в LONG · " + m.str + "%";
+    if (m.dir === "SHORT") return "МММ-бабло ↓ знизу → тягне в SHORT · " + m.str + "%";
+    return "МММ-бабло ⚖ рівновага — напрямку немає · " + m.str + "%";
+  }
+
   // Рядок списку — ЛИШЕ назва, ціна і зміна (PD і POC тепер на графіку).
   function renderList() {
     var host = $("#iw-list");
@@ -371,7 +388,7 @@
         : '<span class="iw-chg ' + (c > 0 ? "up" : (c < 0 ? "dn" : "")) + '" title="Зміна ціни за ~24 год">' +
           (c > 0 ? "+" : "") + Number(c).toFixed(2) + "%</span>";
       return '<div class="iw-row' + (sym === IW.sel ? " sel" : "") + '" data-sym="' + esc(sym) + '">' +
-        '<span class="iw-sym">' + esc(sym.replace(/USDT$/, "")) + '<small>USDT</small>' + ext + "</span>" +
+        '<span class="iw-sym' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + esc(sym.replace(/USDT$/, "")) + '<small>USDT</small>' + ext + "</span>" +
         '<span class="iw-price' + dirCls(sym) + '">' + (livePx(sym) ? fmtPrice(livePx(sym)) : "—") + "</span>" + chg +
         bell.btn +
         '<button class="iw-del" data-del="' + esc(sym) + '" title="Прибрати зі списку">×</button>' + bell.menu +
@@ -588,33 +605,46 @@
     ctx.closePath();
   }
 
-  // 📐 IMB «як на скріні» (вимога 09.11): зона + смуга у верхній половині,
-  // довжина якої = % обсягу імпульсної свічки (число — праворуч у смузі), і
-  // великий напівпрозорий обсяг розриву «водяним знаком» на всю висоту зони.
-  // Зона нижча за ~14px — лише смуга без тексту (інакше текст нечитабельний).
+  // 📐 IMB «як у TradingView» (вимога 08.11): дві смуги РІЗНИХ кольорів —
+  // зверху продаж (помаранчева), знизу купівля (бірюзова); довжина = частка
+  // обсягу трьох свічок розриву, число — в кінці смуги. Великий напівпрозорий
+  // обсяг імпульсної свічки (у монетах, «11.461K») — поверх смуг, як у TV.
+  var IMB_SELL = "rgba(234,128,38,.92)", IMB_BUY = "rgba(38,166,154,.92)";
+  function _imbBar(ctx, X1, w, y, bh, pct, color, hr, vr, font, dark) {
+    if (pct == null || bh < 1) return;
+    var sw = Math.max(2 * hr, w * Math.min(100, Math.max(0, pct)) / 100);
+    ctx.fillStyle = color; ctx.fillRect(X1, y, sw, bh);
+    ctx.strokeStyle = dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.25)";
+    ctx.lineWidth = Math.max(1, Math.round(hr));
+    ctx.strokeRect(X1, y, sw, bh);
+    if (bh < 9 * vr) return;
+    var fp = Math.max(8, Math.min(32, bh / vr * 0.62));
+    ctx.font = font(600, fp); ctx.textBaseline = "middle";
+    ctx.fillStyle = dark ? "rgba(240,242,248,.96)" : "rgba(20,24,32,.9)";
+    var t = pct + "%", tw = ctx.measureText(t).width;
+    if (sw >= tw + 10 * hr) { ctx.textAlign = "right"; ctx.fillText(t, X1 + sw - 5 * hr, y + bh / 2); }
+    else if (w - sw >= tw + 8 * hr) { ctx.textAlign = "left"; ctx.fillText(t, X1 + sw + 4 * hr, y + bh / 2); }
+  }
   function _imbBody(ctx, b, X1, X2, yT, yB, hr, vr, font, dark) {
     var w = X2 - X1, h = yB - yT;
-    if (b.pct != null && w > 4 * hr) {
-      var sw = Math.max(2 * hr, w * Math.min(100, Math.max(0, b.pct)) / 100);
-      ctx.fillStyle = b.strip; ctx.fillRect(X1, yT, sw, h / 2);
-      ctx.strokeStyle = dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.25)";
-      ctx.lineWidth = Math.max(1, Math.round(hr));
-      ctx.strokeRect(X1, yT, sw, h / 2);
-      if (h >= 12 * vr) {
-        var fp = Math.max(8.5, Math.min(34, h / vr * 0.38));
-        ctx.font = font(600, fp); ctx.textBaseline = "middle";
-        ctx.fillStyle = dark ? "rgba(235,238,245,.95)" : "rgba(20,24,32,.88)";
-        var tw = ctx.measureText(b.pct + "%").width;
-        if (sw >= tw + 10 * hr) { ctx.textAlign = "right"; ctx.fillText(b.pct + "%", X1 + sw - 5 * hr, yT + h / 4); }
-        else if (X2 - (X1 + sw) >= tw + 8 * hr) { ctx.textAlign = "left"; ctx.fillText(b.pct + "%", X1 + sw + 4 * hr, yT + h / 4); }
-      }
+    if (w > 4 * hr && (b.sellPct != null || b.buyPct != null)) {
+      var bh = h / 2;
+      _imbBar(ctx, X1, w, yT, bh, b.sellPct, IMB_SELL, hr, vr, font, dark);
+      _imbBar(ctx, X1, w, yT + bh, bh, b.buyPct, IMB_BUY, hr, vr, font, dark);
     }
     if (b.volTxt && h >= 18 * vr && w > 40 * hr) {
-      var fv = Math.max(10, Math.min(110, h / vr * 0.82));
-      ctx.font = font(500, fv);
-      while (fv > 10 && ctx.measureText(b.volTxt).width > w * 0.92) { fv -= 2; ctx.font = font(500, fv); }
+      // Розмір шрифту кешується на зоні: підбір через measureText на кожному
+      // кадрі перетягування гальмував малювання (менше кадрів = «ривки»).
+      var wk = b.volTxt + "|" + Math.round(w) + "|" + Math.round(h), fv;
+      if (b._wk === wk) { fv = b._fv; ctx.font = font(500, fv); }
+      else {
+        fv = Math.max(10, Math.min(110, h / vr * 0.82));
+        ctx.font = font(500, fv);
+        while (fv > 10 && ctx.measureText(b.volTxt).width > w * 0.92) { fv -= 2; ctx.font = font(500, fv); }
+        b._wk = wk; b._fv = fv;
+      }
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillStyle = dark ? "rgba(4,6,12,.78)" : "rgba(0,0,0,.2)";
+      ctx.fillStyle = dark ? "rgba(4,6,12,.62)" : "rgba(0,0,0,.2)";
       ctx.fillText(b.volTxt, (X1 + X2) / 2, (yT + yB) / 2 + fv * vr * 0.04);
     }
     ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
@@ -764,6 +794,47 @@
     return ans;
   }
 
+  // 🖱 Вільний рух графіка «як у TradingView» (вимога 08.11). За замовчуванням
+  // ціна масштабується автоматично (при горизонтальному русі шкала стежить за
+  // свічками). Щойно графік потягнули ВЕРТИКАЛЬНО — автомасштаб вимикається, і
+  // графік далі рухається вільно в обидва боки, без «стрибків» шкали під кожну
+  // нову свічку в кадрі. Кнопка «A» (праворуч унизу) або подвійний клік по шкалі
+  // ціни повертає автомасштаб; зміна монети / TF — теж.
+  function autoScaleOn() {
+    try { return IW.chart.priceScale("right").options().autoScale !== false; } catch (e) { return true; }
+  }
+  function setAutoScale(on) {
+    if (!IW.chart) return;
+    IW.chart.priceScale("right").applyOptions({ autoScale: !!on });
+    var b = $("#iw-auto");
+    if (b) b.classList.toggle("on", !!on);
+  }
+  function tvPanInit(box) {
+    var y0 = null, x0 = null;
+    box.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      var r = box.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+      var psw = 0, tsh = 0;
+      try { psw = IW.chart.priceScale("right").width(); tsh = IW.chart.timeScale().height(); } catch (er) {}
+      if (x > r.width - psw || y > r.height - tsh) { y0 = null; return; }   // шкали — їхня власна логіка
+      x0 = e.clientX; y0 = e.clientY;
+    }, true);
+    box.addEventListener("pointermove", function (e) {
+      if (y0 == null || !(e.buttons & 1)) return;
+      var dy = Math.abs(e.clientY - y0), dx = Math.abs(e.clientX - x0);
+      if (dy > 5 && dy > dx * 0.6 && autoScaleOn()) setAutoScale(false);
+    }, true);
+    window.addEventListener("pointerup", function () { y0 = null; }, true);
+    box.addEventListener("dblclick", function () {
+      setTimeout(function () { var b = $("#iw-auto"); if (b) b.classList.toggle("on", autoScaleOn()); }, 0);
+    });
+    var b = document.createElement("button");
+    b.id = "iw-auto"; b.type = "button"; b.className = "iw-auto on"; b.textContent = "A";
+    b.title = "Автомасштаб ціни (як «A» у TradingView). Вимикається сам, щойно потягнете графік вертикально.";
+    b.addEventListener("click", function () { setAutoScale(!autoScaleOn()); });
+    box.appendChild(b);
+  }
+
   function ensureChart() {
     if (IW.chart || !window.LightweightCharts) return !!IW.chart;
     var box = $("#iw-box");
@@ -778,6 +849,14 @@
       timeScale: { borderColor: dark ? "#26324a" : "#d3dae6", timeVisible: true, secondsVisible: false,
                    rightOffset: 18 },
       crosshair: { mode: 0 },
+      // 🖱 Керування «як у TradingView» (вимога 08.11): інерція після відпускання
+      // миші (у бібліотеці за замовчуванням лише для дотику) — графік «доїжджає»
+      // плавно, а не зупиняється ривком.
+      kineticScroll: { mouse: true, touch: true },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
+      handleScale: { mouseWheel: true, pinch: true,
+                     axisPressedMouseMove: { time: true, price: true },
+                     axisDoubleClickReset: { time: true, price: true } },
       // Мова явно: деякі браузери віддають тег на кшталт «en-US@posix», на
       // якому бібліотека падає і графік лишається порожнім.
       localization: { locale: "uk-UA" },
@@ -801,6 +880,7 @@
       var hit = p && p.point ? IW.prim.hitAt(p.point.x, p.point.y) : null;
       box.style.cursor = hit ? "pointer" : "";
     });
+    tvPanInit(box);
     return true;
   }
 
@@ -833,11 +913,10 @@
     if (IW.show_imb) (c.imb || []).forEach(function (z) {
       var L = z.side === "LONG";
       out.push({ kind: "imb", thin: true, ext: 30, t: snapSec(z.start, o), top: z.top, bottom: z.bottom,
-        fill: L ? "rgba(59,130,246,.36)" : "rgba(234,128,38,.36)",
-        strip: L ? "rgba(59,130,246,.72)" : "rgba(234,128,38,.72)",
-        stroke: L ? "rgba(59,130,246,.65)" : "rgba(234,128,38,.65)",
-        text: L ? "#93c5fd" : "#fdba74",
-        volTxt: fmtVol(z.vol), pct: z.pct, label: "IMB" });
+        fill: L ? "rgba(38,166,154,.22)" : "rgba(160,92,40,.30)",
+        stroke: L ? "rgba(38,166,154,.6)" : "rgba(234,128,38,.6)",
+        text: L ? "#5eead4" : "#fdba74",
+        volTxt: fmtVol(z.vol, 3), sellPct: z.sell_pct, buyPct: z.buy_pct, label: "IMB" });
     });
     return out;
   }
@@ -925,7 +1004,7 @@
     var c = IW.coin || {}, r = IW.rows[sym] || {};
     var px = livePx(sym);
     h.innerHTML =
-      '<span class="iw-title">' + tvSym(sym) + "</span>" +
+      '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym) + "</span>" +
       '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" +
       pdBadge(c.pd) + pocBadge(c.poc, c.poc_state) +
       (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "") +
@@ -958,15 +1037,30 @@
   function drawCoin(c, fit) {
     if (!ensureChart()) { setNote("графічна бібліотека не завантажилась"); return; }
     var o = c.ohlc || [];
+    var key = c.symbol + "|" + c.tf;
     var prec = precisionOf(o.length ? o[o.length - 1].close : 0);
-    IW.series.applyOptions({ priceFormat: { type: "price", precision: prec, minMove: Math.pow(10, -prec) } });
-    IW.series.setData(o);
+    if (IW.prec !== prec) {
+      IW.series.applyOptions({ priceFormat: { type: "price", precision: prec, minMove: Math.pow(10, -prec) } });
+      IW.prec = prec;
+    }
+    // Плавність (вимога 08.11): оновлення того самого графіка — лише хвіст
+    // (`update` останніх свічок), а не повна заміна даних. `setData` посеред
+    // перетягування перебудовує шкалу й «смикає» картинку.
+    var j = -1;
+    if (!fit && IW.chartKey === key && IW.lastT != null && o.length) {
+      for (var q = o.length - 1; q >= Math.max(0, o.length - 4); q--) {
+        if (o[q].time === IW.lastT) { j = q; break; }
+      }
+    }
+    if (j >= 0) { for (var u = j; u < o.length; u++) IW.series.update(o[u]); }
+    else IW.series.setData(o);
+    IW.lastT = o.length ? o[o.length - 1].time : null;
     var st = structOf(c);
     IW.series.setMarkers(st.marks);
     IW.prim.set(boxesOf(c), st.lines, sbrOf(c));
     setPoc(c.poc);
-    var key = c.symbol + "|" + c.tf;
     if (fit || IW.chartKey !== key) {
+      setAutoScale(true);
       IW.chart.timeScale().fitContent();
       IW.chartKey = key;
     }
@@ -982,7 +1076,7 @@
     coinBusy = true;
     if (force) {
       setNote("завантаження " + sym + " · " + tfLbl(IW.tf) + "…");
-      if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.set([], [], []); setPoc(null); }
+      if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.set([], [], []); setPoc(null); IW.lastT = null; }
       sigCard(null);
     }
     var want = [IW.sel, IW.tf, IW.ob_tf, IW.vob_tf].join("|");

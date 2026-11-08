@@ -374,6 +374,7 @@ class SbrEngine:
         self._get_watchlist = get_watchlist or (lambda: [])
         self._fetch = fetch            # (sym, tf, limit) → bars | None
         self._notify = notify          # (text) → (ok, why)
+        self._admin_notify = None      # ⏰ будильник → особисто адміну (None = за замовч.)
         self._clock = clock or time.time
         self._lock = threading.Lock()
         self._state: Dict[str, Dict] = {}      # {SYM: {'1h': snap, '4h': snap}}
@@ -817,15 +818,15 @@ class SbrEngine:
                          extra={'alarm': True, 'ok': bool(ok)})
         except Exception:
             pass
-        if s.get('tg_enabled') and self._notify:
-            try:
-                self._notify(f"⏰ <b>Будильник SBR</b> · #{S} "
-                             f"{'🟢' if side == 'LONG' else '🔴'} <b>{side}</b> "
-                             f"<code>{TF_LABEL.get(tf, tf)}</code>\n"
-                             + (f"🚦 Головну кнопку <b>{side}</b> {note}" if ok
-                                else f"⚠️ Кнопку {side} НЕ увімкнено: {note}"))
-            except Exception:
-                pass
+        # 📨 Будильник — ОСОБИСТО адміну в головний бот, а НЕ в групу (вимога
+        # 08.11) і незалежно від групового тумблера `tg_enabled`. Рядка про
+        # увімкнену головну кнопку немає (на прохання); лише відмова — бо тоді
+        # бот НЕ запрацював, і про це треба знати.
+        notify = self._admin_notify or _default_admin_notify
+        try:
+            notify(alarm_tg_text(S, side, tf, sig, ok, note))
+        except Exception:
+            pass
 
 
 _instance: Optional[SbrEngine] = None
@@ -834,6 +835,32 @@ _instance: Optional[SbrEngine] = None
 def _default_fetch(sym: str, tf: str, limit: int):
     from detection.market_data import get_market_data
     return get_market_data().fetch_klines(sym, limit=limit, interval=tf)
+
+
+def alarm_tg_text(S, side, tf, sig, ok=True, note='') -> str:
+    """⏰ Текст будильника для особистого чату: сигнал без рядка про кнопку."""
+    sd = str(side or '').upper()
+    lines = [f"⏰ <b>Будильник SBR</b> · #{S} "
+             f"{'🟢' if sd == 'LONG' else '🔴'} <b>{sd}</b> "
+             f"<code>{TF_LABEL.get(tf, tf)}</code>"]
+    try:
+        lines.append(f"📊 Score <b>{float(sig.get('score') or 0):.2f}%</b>")
+    except Exception:
+        pass
+    if sig.get('trigger') is not None:
+        lines.append(f"🎯 Trigger: <code>{fmt_price(sig.get('trigger'))}</code>")
+    if sig.get('sl') is not None:
+        lines.append(f"🛑 SL: <code>{fmt_price(sig.get('sl'))}</code>")
+    if not ok:
+        lines.append(f"⚠️ Кнопку {sd} НЕ увімкнено: {note}")
+    return "\n".join(lines)
+
+
+def _default_admin_notify(text: str):
+    """Особисто адміну (TELEGRAM_CHAT_ID) з головного бота, повз групу."""
+    from web.tg_bot import tg_send, _admin_chat
+    chat = _admin_chat()
+    return bool(chat) and bool(tg_send(chat, text))
 
 
 def _default_notify(text: str):
