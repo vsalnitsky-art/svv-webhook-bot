@@ -579,3 +579,37 @@ td.mono, td .mono { font-family: var(--mono); }
   border-radius:7px;padding:3px 10px;cursor:pointer;font-size:12px;margin:0 2px}
 .tglink-btn:hover{background:var(--accent);color:var(--bg)}
 .tglink-btn:disabled{opacity:.5;cursor:default}
+
+/* ⛶ Графік на весь екран (вимога 08.11): кнопка в панелі TF, Esc — назад */
+.iw-fs { margin-left: auto; background: var(--elev); border: 1px solid var(--line); color: var(--txt-dim);
+  border-radius: 7px; font: 700 14px/1 var(--font); padding: 5px 9px; cursor: pointer; }
+.iw-fs:hover { color: var(--txt); border-color: var(--accent); }
+.iw-chart.iw-full .iw-fs { color: var(--accent); border-color: var(--accent); }
+.iw-chart.iw-full { position: fixed; inset: 0; z-index: 1000; margin: 0; border-radius: 0;
+  display: flex; flex-direction: column; background: var(--surface, var(--bg2)); }
+.iw-chart.iw-full .iw-box { flex: 1 1 auto; height: auto; min-height: 0; }
+body.iw-full-on { overflow: hidden; }
+
+/* 🎨 Шапка графіка: назва / значення / TF — різними кольорами (вимога 08.11) */
+.bdg.hb { gap: 6px; }
+.bdg.hb .hb-k { font-weight: 800; letter-spacing: .03em; }
+.bdg.hb .k-poc { color: #c4b5fd; }
+.bdg.hb .k-sbr { color: #fb923c; }
+.bdg.hb .hb-px { color: var(--txt, #e5e7eb); font-weight: 800; }
+.bdg.hb .hb-tf { color: #7dd3fc; font-weight: 600; font-size: 10.5px; opacity: .9; }
+.bdg.hb.long .hb-z, .bdg.hb.long .hb-v { color: var(--long); }
+.bdg.hb.short .hb-z, .bdg.hb.short .hb-v { color: var(--short); }
+.bdg.hb.mute .hb-v { color: var(--txt, #e5e7eb); }
+.bdg.hb .hb-z { font-weight: 800; }
+.bdg.hb .hb-v { font-weight: 800; }
+/* 🎨 Панель TF: кожен параметр — свій колір (як шари на графіку) */
+.iw-sel.s-ob { color: #2dd4bf; }   .iw-sel.s-ob select { color: #5eead4; border-color: rgba(45,212,191,.4); }
+.iw-sel.s-vob { color: #4ade80; }  .iw-sel.s-vob select { color: #86efac; border-color: rgba(74,222,128,.4); }
+.iw-sel.s-poc { color: #c4b5fd; }  .iw-sel.s-poc select { color: #ddd6fe; border-color: rgba(196,181,253,.4); }
+.iw-layers button.ly-imb { color: #fdba74; }
+.iw-layers button.ly-sbr { color: #fb923c; }
+.iw-layers button.ly-shl { color: #fca5a5; }
+.iw-layers button.ly-imb.on { box-shadow: inset 0 0 0 1px #f59e0b; background: rgba(245,158,11,.16); color: #fde68a; }
+.iw-layers button.ly-sbr.on { box-shadow: inset 0 0 0 1px #f97316; background: rgba(249,115,22,.16); color: #fed7aa; }
+.iw-layers button.ly-shl.on { box-shadow: inset 0 0 0 1px #f87171; background: rgba(248,113,113,.14); color: #fecaca; }
+.iw-layers button.off { opacity: .4; cursor: not-allowed; }

@@ -238,9 +238,9 @@
         (nSub ? "Зараз підписано монет: <b>" + nSub + "</b>." : "Зараз підписок немає.") + "</p>" +
         '<p><b>👥 У Telegram-групі</b> (теми): <b>🧮 МММ-монітор</b> — зміни банерів МММ, ' +
         '<b>🔔 Сигнали</b> — SBR 1H/4H по основних монетах, <b>📈 Угоди</b> — відкриття й закриття угод бота. ' +
-        'Під повідомленнями є кнопка <b>💬 Коментар</b> — коментар публікує бот із вашим імʼям.</p>' +
+        'Група — лише для читання.</p>' +
         '<p>Доступ до групи — <b>після реєстрації та схвалення адміністратором</b>; посилання прийде автоматично. ' +
-        'Якщо доступ закрито (вимкнено / строк минув) — у групі лише читання, без повідомлень і коментарів, ' +
+        'Якщо доступ закрито (вимкнено / строк минув) — доступу до групи немає, ' +
         'а особисто бот нічого не надсилає. Видалений акаунт прибирається з групи повністю.</p>' +
         warn +
       '</div>';
@@ -351,8 +351,9 @@
     var name = pd.zone === "discount" ? "Discount" : (pd.zone === "premium" ? "Premium" : "Equilibrium");
     var cls = pd.zone === "discount" ? "long" : (pd.zone === "premium" ? "short" : "mute");
     var tip = "Premium / Discount · " + pd.tf;
-    return '<span class="bdg ' + cls + '" title="' + esc(tip) + '"><span class="d"></span>' +
-      name + " " + Math.round(pd.pct) + "% " + esc(pd.tf) + "</span>";
+    return '<span class="bdg hb ' + cls + '" title="' + esc(tip) + '"><span class="d"></span>' +
+      '<span class="hb-z">' + name + '</span><span class="hb-v">' + Math.round(pd.pct) + '%</span>' +
+      '<span class="hb-tf">' + esc(pd.tf) + "</span></span>";
   }
 
   function pocBadge(poc, state) {
@@ -365,10 +366,10 @@
     var hint = rel === "above" ? "краще SHORT" : (rel === "below" ? "краще LONG" : "на POC");
     var tip = "POC — ціна з найбільшим обсягом торгів за останні " + poc.days + " доби (свічки " + poc.tf +
       ", " + String(poc.exchange || "binance").toUpperCase() + " " + poc.market + ") · " + hint;
-    return '<span class="bdg ' + cls + '" title="' + esc(tip) + '">POC ' +
-      fmtPrice(poc.poc).replace("$", "") +
-      (d == null ? "" : " " + (d >= 0 ? "+" : "") + Number(d).toFixed(2) + "%") +
-      ' <small class="bdg-sub">' + esc(poc.days) + "д·" + esc(poc.tf) + "</small></span>";
+    return '<span class="bdg hb ' + cls + '" title="' + esc(tip) + '"><span class="hb-k k-poc">POC</span>' +
+      '<span class="hb-px">' + fmtPrice(poc.poc).replace("$", "") + "</span>" +
+      (d == null ? "" : '<span class="hb-v">' + (d >= 0 ? "+" : "") + Number(d).toFixed(2) + "%</span>") +
+      '<span class="hb-tf">' + esc(poc.days) + "д·" + esc(poc.tf) + "</span></span>";
   }
 
   // 🔔 Останній сигнал SBR 1H / 4H → % від його ціни (Trigger) до поточної.
@@ -392,8 +393,8 @@
       " · Trigger " + fmtPrice(s.trigger) + (s.score != null ? " · Score " + Number(s.score).toFixed(1) + "%" : "") +
       " → зараз " + (price ? fmtPrice(price) : "—") + " · " +
       (!m || m.fav == null ? "без руху" : (m.fav ? "ціна йде В БІК сигналу" : "ціна йде ПРОТИ сигналу"));
-    return '<span class="bdg sbr-last ' + cls + '" title="' + esc(tip) + '">' +
-      '<span class="sl-tf">SBR ' + T + "</span>" +
+    return '<span class="bdg hb sbr-last ' + cls + '" title="' + esc(tip) + '">' +
+      '<span class="hb-k k-sbr">SBR</span><span class="hb-tf">' + T + "</span>" +
       '<span class="sl-side ' + (lg ? "lg" : "sh") + '">' + (lg ? "▲ LONG" : "▼ SHORT") + "</span>" +
       '<span class="sl-pct">' + pct + "</span></span>";
   }
@@ -506,13 +507,13 @@
     }).join("");
     var lay = $("#iw-layers");
     if (lay) lay.innerHTML =
-      '<button type="button" data-layer="show_imb" class="' + (IW.show_imb ? "on" : "") +
+      '<button type="button" data-layer="show_imb" class="ly-imb ' + (IW.show_imb ? "on" : "") +
         '" title="IMB">IMB</button>' +
       (sbrTfOk(IW.tf)
-        ? '<button type="button" data-layer="show_sbr" class="' + (IW.show_sbr ? "on" : "") +
+        ? '<button type="button" data-layer="show_sbr" class="ly-sbr ' + (IW.show_sbr ? "on" : "") +
           '" title="SBR · ' + tfLbl(IW.tf) + '">SBR</button>'
-        : '<button type="button" disabled class="off" title="SBR — лише на 1H і 4H">SBR</button>') +
-      '<button type="button" data-layer="show_shl" class="' + (IW.show_shl ? "on" : "") +
+        : '<button type="button" disabled class="ly-sbr off" title="SBR — лише на 1H і 4H">SBR</button>') +
+      '<button type="button" data-layer="show_shl" class="ly-shl ' + (IW.show_shl ? "on" : "") +
         '" title="Swing High / Low (як у боті)">High/Low</button>';
   }
 
@@ -1003,6 +1004,30 @@
     IW.series.applyOptions({ autoscaleInfoProvider: priceRangeProvider });
     box.appendChild(b);
   }
+
+  // ⛶ Графік на весь екран (вимога 08.11): кнопка в панелі TF і Esc — назад.
+  // Розгортаємо сам блок графіка (CSS fixed), тож працює й на телефоні;
+  // розмір підхоплює `autoSize` графіка.
+  function setFull(on) {
+    var card = $("#iw-chart"), b = $("#iw-fs");
+    if (!card) return;
+    on = !!on;
+    card.classList.toggle("iw-full", on);
+    document.body.classList.toggle("iw-full-on", on);
+    if (b) {
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      b.textContent = on ? "✕" : "⛶";
+      b.title = on ? "Згорнути (Esc)" : "На весь екран (Esc — назад)";
+    }
+  }
+  function isFull() { var c = $("#iw-chart"); return !!(c && c.classList.contains("iw-full")); }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest("#iw-fs") : null;
+    if (b) { e.preventDefault(); setFull(!isFull()); }
+  });
+  document.addEventListener("keydown", function (e) {
+    if ((e.key === "Escape" || e.key === "Esc") && isFull()) { setFull(false); }
+  });
 
   function ensureChart() {
     if (IW.chart || !window.LightweightCharts) return !!IW.chart;

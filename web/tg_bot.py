@@ -481,25 +481,14 @@ def notify_category(category, text, buttons=None):
     res = _api('sendMessage', p) or {}
     if res.get('ok'):
         _last_send_err = ''
-        try:
-            _add_comment_button(category, chat, res.get('result') or {}, buttons)
-        except Exception as e:
-            print(f"[TG] comment button error: {e}")
         return True
     _last_send_err = str(res.get('description') or res.get('error') or 'відмова')
     print(f"[TG] send to {category} failed: {_last_send_err}")
     return False
 
 
-# ── 💬 КНОПКА «КОМЕНТАР» ПІД ПОВІДОМЛЕННЯМИ ГРУПИ (вимога 09.11) ──────────────
-# Нативна кнопка «Залишити коментар» у Telegram існує ЛИШЕ для постів КАНАЛУ з
-# привʼязаною групою обговорень; у групі з темами її немає. Тому кнопку робить
-# бот: «💬 Коментар» відкриває особистий чат із ботом (deep-link
-# `?start=cm_<категорія>_<id>`), користувач пише текст, і бот публікує його
-# ВІДПОВІДДЮ під тим самим повідомленням у тій самій темі, з іменем автора.
-# Коментувати можуть лише АКТИВНІ (зареєстровані й схвалені) користувачі.
-COMMENT_WAIT_SEC = 600
-_comment_wait = {}            # {chat_id: {cat, mid, until}}
+# 💬 Коментарі в групі ПРИБРАНО (вимога 08.11): кнопка «💬 Коментар» і
+# перевірка/увімкнення прав коментування більше не існують.
 _bot_username_cache = {'v': None, 'at': 0.0}
 
 
@@ -516,56 +505,6 @@ def _bot_username():
     if un:
         _bot_username_cache.update(v=un, at=now)
     return un
-
-
-def comment_link(category, msg_id, bot_username):
-    """ЧИСТА: deep-link кнопки коментаря (start-параметр ≤64, [A-Za-z0-9_])."""
-    if not bot_username or category not in _COMMENT_CATS or not msg_id:
-        return None
-    return f"https://t.me/{bot_username}?start=cm_{category}_{int(msg_id)}"
-
-
-def parse_comment_start(arg):
-    """ЧИСТА: 'cm_btc_123' → ('btc', 123) | None."""
-    m = re.fullmatch(r'cm_([a-z]+)_(\d{1,12})', str(arg or '').strip())
-    if not m or m.group(1) not in _COMMENT_CATS:
-        return None
-    return m.group(1), int(m.group(2))
-
-
-def _add_comment_button(category, chat, result, buttons=None):
-    """Після відправки в ГРУПУ дописати під повідомлення кнопку «💬 Коментар»."""
-    if category not in _COMMENT_CATS or not str(chat).startswith('-'):
-        return
-    mid = result.get('message_id')
-    link = comment_link(category, mid, _bot_username())
-    if not link:
-        return
-    kb = list(buttons or []) + [[{'text': '💬 Коментар', 'url': link}]]
-    _api('editMessageReplyMarkup', {'chat_id': chat, 'message_id': mid,
-                                    'reply_markup': {'inline_keyboard': kb}})
-
-
-def _comment_begin(cid, arg):
-    """/start cm_… у приватному чаті → чекаємо текст коментаря."""
-    pr = parse_comment_start(arg)
-    if not pr:
-        return False
-    try:
-        from web.auth import get_user_by_chat
-        info = get_user_by_chat(str(cid)) or {}
-    except Exception:
-        info = {}
-    if not info.get('active'):
-        tg_send(cid, "⛔ Коментувати можуть лише зареєстровані користувачі з "
-                     "активним доступом. Напишіть /start, щоб зареєструватись.")
-        return True
-    _comment_wait[str(cid)] = {'cat': pr[0], 'mid': pr[1],
-                               'until': time.time() + COMMENT_WAIT_SEC}
-    tg_send(cid, f"💬 <b>Коментар до повідомлення в темі «{_CAT_LABEL.get(pr[0], pr[0])}»</b>\n"
-                 "Напишіть текст одним повідомленням — я опублікую його під цим "
-                 "повідомленням у групі з вашим імʼям.\n/cancel — скасувати.")
-    return True
 
 
 def _link_begin(cid, arg, username=None, name=None):
@@ -597,59 +536,6 @@ def _link_begin(cid, arg, username=None, name=None):
     return True
 
 
-def _comment_take(cid, m, text, frm):
-    """Наступне повідомлення після /start cm_… — опублікувати в групі.
-    → True, якщо повідомлення оброблено як коментар."""
-    w = _comment_wait.get(str(cid))
-    if not w:
-        return False
-    if time.time() > w['until']:
-        _comment_wait.pop(str(cid), None)
-        return False
-    if text.startswith('/cancel'):
-        _comment_wait.pop(str(cid), None)
-        tg_send(cid, "Скасовано.")
-        return True
-    if text.startswith('/'):
-        return False
-    if not text:
-        tg_send(cid, "Коментар — лише текстом. Напишіть текст або /cancel.")
-        return True
-    _comment_wait.pop(str(cid), None)
-    try:
-        from web.auth import get_user_by_chat
-        active = bool((get_user_by_chat(str(cid)) or {}).get('active'))
-    except Exception:
-        active = False
-    if not active:
-        tg_send(cid, "⛔ Доступ неактивний — коментар не опубліковано.")
-        return True
-    chat, thread = _cat_chat(w['cat'])
-    if not chat:
-        tg_send(cid, "⚠️ Тему не знайдено — коментар не опубліковано.")
-        return True
-    import html as _html
-    who = _html.escape(_full_name(frm) or 'Учасник')
-    un = frm.get('username')
-    p = {'chat_id': chat, 'parse_mode': 'HTML',
-         'text': f"💬 <b>{who}</b>" + (f" (@{_html.escape(un)})" if un else '')
-                 + f":\n{_html.escape(text[:3500])}",
-         'reply_parameters': {'message_id': int(w['mid']),
-                              'allow_sending_without_reply': True}}
-    if thread:
-        try:
-            p['message_thread_id'] = int(thread)
-        except (TypeError, ValueError):
-            pass
-    res = _api('sendMessage', p) or {}
-    if res.get('ok'):
-        tg_send(cid, "✅ Коментар опубліковано в групі.")
-    else:
-        tg_send(cid, "⚠️ Telegram не прийняв коментар: "
-                     + _html.escape(str(res.get('description') or res.get('error') or '?')))
-    return True
-
-
 def last_send_error():
     """Причина ОСТАННЬОЇ невдалої відправки в групову тему.
 
@@ -658,91 +544,6 @@ def last_send_error():
     stdout, якого на проді не видно (скарга 22.09).
     """
     return _last_send_err
-
-
-# 💬 КОМЕНТАРІ В ТЕМАХ (вимога 30.10). Бот сам писати учасникам НЕ заважає —
-# повідомлення в групі він просто ігнорує (`_handle_message`). Коментувати не
-# дають НАЛАШТУВАННЯ ЧАТУ: у групи вимкнено «надсилання повідомлень» для
-# учасників, тему закрито, або це КАНАЛ без групи обговорень.
-_COMMENT_CATS = ('funding', 'btc', 'trades', 'sbr')
-
-
-def _merge_send_permission(perms):
-    """Поточні права учасників + `can_send_messages=True`. ЧИСТА.
-    ⚠️ Решту прав ПЕРЕНОСИМО як були: `setChatPermissions` скидає в False усе,
-    чого немає в запиті — інакше «увімкнути коментарі» мовчки забрало б медіа,
-    опитування тощо."""
-    out = {k: bool(v) for k, v in (perms or {}).items() if isinstance(v, bool)}
-    out['can_send_messages'] = True
-    return out
-
-
-def comments_status(enable=False):
-    """💬 Стан коментарів у публічних темах: [{category, label, chat, thread,
-    type, can_comment, reason, fixed}]. `enable=True` — ще й ВМИКАЄ там, де це
-    дозволяє Bot API: права учасників групи на повідомлення + відкриття
-    закритої теми. Канал так не вмикається (групу обговорень привʼязують у
-    налаштуваннях каналу) — про це сказано в `reason`."""
-    out, chats = [], {}
-    for cat in _COMMENT_CATS:
-        chat, thread = _cat_chat(cat)
-        row = {'category': cat, 'label': _CAT_LABEL.get(cat, cat), 'chat': chat,
-               'thread': thread, 'type': '', 'can_comment': False, 'reason': '',
-               'fixed': False}
-        out.append(row)
-        if not chat:
-            row['reason'] = 'чат не налаштовано'
-            continue
-        if str(chat) == str(_admin_chat() or ''):
-            row['reason'] = 'йде в ПРИВАТНИЙ чат адміна — там коментарів немає'
-            continue
-        info = chats.get(str(chat))
-        if info is None:
-            res = _api('getChat', {'chat_id': chat}) or {}
-            info = res.get('result') if res.get('ok') else {
-                'error': str(res.get('description') or res.get('error') or 'getChat не вдався')}
-            chats[str(chat)] = info
-        if info.get('error'):
-            row['reason'] = info['error']
-            continue
-        row['type'] = info.get('type', '')
-        if row['type'] == 'channel':
-            if info.get('linked_chat_id'):
-                row['can_comment'] = True
-            else:
-                row['reason'] = ('це КАНАЛ без групи обговорень — привʼяжіть групу: '
-                                 'Канал → Налаштування → Обговорення')
-            continue
-        perms = info.get('permissions') or {}
-        can = bool(perms.get('can_send_messages', True))
-        if not can and enable and not info.get('_perm_set'):
-            r = _api('setChatPermissions', {
-                'chat_id': chat, 'permissions': _merge_send_permission(perms),
-                'use_independent_chat_permissions': True}) or {}
-            if r.get('ok'):
-                perms = dict(perms, can_send_messages=True)
-                info['permissions'] = perms
-                info['_perm_set'] = True
-                can, row['fixed'] = True, True
-            else:
-                row['reason'] = ('не вдалось дозволити повідомлення: '
-                                 + str(r.get('description') or r.get('error') or 'відмова')
-                                 + ' (боту потрібне право адміна «Блокувати учасників»)')
-        elif info.get('_perm_set'):
-            can = True
-        if not can and not row['reason']:
-            row['reason'] = 'учасникам заборонено писати в групі (права групи)'
-        if can and thread and enable:
-            r = _api('reopenForumTopic', {'chat_id': chat,
-                                          'message_thread_id': int(thread)}) or {}
-            if r.get('ok'):
-                row['fixed'] = True
-            elif 'TOPIC_NOT_MODIFIED' not in str(r.get('description') or ''):
-                row['reason'] = ('тему не вдалось відкрити: '
-                                 + str(r.get('description') or r.get('error') or 'відмова'))
-                can = False
-        row['can_comment'] = can
-    return out
 
 
 def cat_tag(category):
@@ -779,7 +580,7 @@ def _group_chat():
 # ── 🚫 ЧЛЕНСТВО В ГРУПІ = ДОСТУП НА САЙТІ (вимога 09.11, уточнено) ────────
 # • ЗАБЛОКОВАНИЙ (вимкнено / строк минув / схвалення знято) лишається в групі,
 #   але ОБМЕЖЕНИЙ: `restrictChatMember` знімає ВСІ права учасника — писати,
-#   медіа, опитування, коментувати (і кнопка «💬 Коментар» йому відмовляє).
+#   медіа, опитування, коментувати.
 #   ⚠️ ОБМЕЖИТИ ПЕРЕГЛЯД Telegram НЕ ДОЗВОЛЯЄ: такого права в Bot API немає,
 #   учасник бачить усю історію і всі теми. Пересилати/копіювати пости робочих
 #   тем не дає `protect_content`. Заблокований акаунт також нічого не отримує
@@ -904,7 +705,6 @@ def forget_bot_user(chat_id):
         group_ban(cid)
     except Exception:
         pass
-    _comment_wait.pop(cid, None)
     try:
         with _map_lock:
             for k in [k for k, v in _reply_map.items() if str(v) == cid]:
@@ -1295,13 +1095,9 @@ def _handle_message(m):
             return
         if text.startswith('/start'):
             _arg = text.split(None, 1)[1] if len(text.split(None, 1)) > 1 else ''
-            if _arg.startswith('cm_') and _comment_begin(cid, _arg):
-                return
             if _link_begin(cid, _arg, uname, fname):
                 return
             _handle_start(cid, uname, fname, flang, fprem)
-            return
-        if _comment_take(cid, m, text, frm):
             return
         # 📢 ANNOUNCEMENT to ALL subscribers — ONLY via an EXPLICIT command, so a
         # plain message or a failed reply can NEVER become an accidental mass send.
@@ -1328,13 +1124,9 @@ def _handle_message(m):
     # ---- user side ----
     if text.startswith('/start'):
         _arg = text.split(None, 1)[1] if len(text.split(None, 1)) > 1 else ''
-        if _arg.startswith('cm_') and _comment_begin(cid, _arg):
-            return
         if _link_begin(cid, _arg, uname, fname):
             return
         _handle_start(cid, uname, fname, flang, fprem)
-        return
-    if _comment_take(cid, m, text, frm):
         return
     has_media = _has_media(m)
     if not text and not has_media:

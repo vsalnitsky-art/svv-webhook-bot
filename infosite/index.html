@@ -6,7 +6,7 @@
   <title>VSV — Мій кабінет</title>
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=80">
+  <link rel="stylesheet" href="style.css?v=81">
   <!-- ⏳ Анти-блимання: доки JS не перевірив авторизацію (клас app-ready ще не
        додано на <body>), не показуємо ні дашборд, ні hero — інакше на секунду
        спалахує «бот-панель» перед екраном входу. Після перевірки showData()
@@ -67,18 +67,19 @@
         <div class="iw-msg" id="iw-msg"></div>
         <div class="iw-list" id="iw-list"><div class="iw-empty">завантаження…</div></div>
       </div>
-      <div class="card iw-chart">
+      <div class="card iw-chart" id="iw-chart">
         <div class="iw-head" id="iw-head"><span class="iw-title">—</span></div>
         <div class="iw-tfbar" id="iw-tfbar">
           <div class="iw-tfs" id="iw-tfs" title="Таймфрейм графіка"></div>
-          <label class="iw-sel" title="Таймфрейм OB">OB
+          <label class="iw-sel s-ob" title="Таймфрейм OB">OB
             <select id="iw-ob-tf"></select></label>
-          <label class="iw-sel" title="Таймфрейм VOB">VOB
+          <label class="iw-sel s-vob" title="Таймфрейм VOB">VOB
             <select id="iw-vob-tf"></select></label>
-          <label class="iw-sel" title="POC: вікно (днів) і таймфрейм свічок профілю обсягу">POC
+          <label class="iw-sel s-poc" title="POC: вікно (днів) і таймфрейм свічок профілю обсягу">POC
             <select id="iw-poc-days"></select><select id="iw-poc-tf"></select></label>
           <div class="iw-tfs iw-layers" id="iw-layers" title="Що показувати на графіку"></div>
           <span class="iw-sel" id="iw-tf-wait"></span>
+          <button type="button" class="iw-fs" id="iw-fs" title="На весь екран (Esc — назад)" aria-pressed="false">⛶</button>
         </div>
         <div class="iw-box" id="iw-box"><div class="iw-note" id="iw-note">оберіть монету зі списку</div></div>
       </div>
@@ -159,6 +160,6 @@
   </script>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="config.js?v=75"></script>
-  <script src="app.js?v=80"></script>
+  <script src="app.js?v=81"></script>
 </body>
 </html>

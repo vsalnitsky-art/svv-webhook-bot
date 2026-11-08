@@ -383,20 +383,18 @@ def test_blocked_user_has_no_access_and_no_group():
     print('✓ заблокований: без кабінету, без розсилок, поза групою')
 
 
-def test_comment_button():
-    tg = _load('tg_bot_c', 'web/tg_bot.py')
-    link = tg.comment_link('sbr', 123, 'vsv_bot')
-    _check(link == 'https://t.me/vsv_bot?start=cm_sbr_123', link)
-    _check(len(link.split('start=')[1]) <= 64, 'start-параметр ≤ 64')
-    _check(tg.parse_comment_start('cm_sbr_123') == ('sbr', 123), 'розбір')
-    _check(tg.parse_comment_start('cm_register_1') is None, 'службові теми не коментуються')
-    _check(tg.comment_link('register', 1, 'b') is None, 'без кнопки в службових темах')
+def test_no_group_comments_0811():
+    """💬 Коментарі в групі ПРИБРАНО (вимога 08.11)."""
     src = open(os.path.join(_HERE, 'web', 'tg_bot.py'), encoding='utf-8').read()
-    _check("_add_comment_button(category, chat" in src and "'reply_parameters'" in src,
-           'кнопка після відправки + коментар відповіддю під повідомленням')
+    for w in ('_add_comment_button', '_comment_begin', '_comment_take',
+              'comments_status', 'editMessageReplyMarkup', '_COMMENT_CATS'):
+        _check(w not in src, f'залишок коментарів: {w}')
+    app = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
+    html = open(os.path.join(_HERE, 'templates', 'smart_money.html'), encoding='utf-8').read()
+    _check('/api/tg/comments' not in app and 'tgComments' not in html, 'маршрут і кнопки прибрано')
     _check("send to {category} failed" not in src.split('def tg_send')[1].split('def _send_get_id')[0],
            'tg_send більше не падає NameError')
-    print('✓ 💬 кнопка «Коментар» під повідомленнями групи')
+    print('✓ 💬 коментарів у групі немає')
 
 
 def test_cabinet_polish_0911():
