@@ -200,11 +200,26 @@
     '</div>';
   }
 
+  // 🪗 Картка сповіщень — гармошка, за замовчуванням ЗГОРНУТО (стан памʼятається).
+  var NTF_KEY = "vsv_ntf_open";
+  function ntfOpen() { try { return localStorage.getItem(NTF_KEY) === "1"; } catch (e) { return false; } }
+  function ntfApply() {
+    var on = ntfOpen(), b = $("#notify-body"), h = $("#notify-head");
+    if (b) b.style.display = on ? "" : "none";
+    if (h) h.setAttribute("aria-expanded", on ? "true" : "false");
+  }
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest || !e.target.closest("#notify-head")) return;
+    try { localStorage.setItem(NTF_KEY, ntfOpen() ? "0" : "1"); } catch (x) {}
+    ntfApply();
+  });
+
   function renderNotify(n) {
     var card = $("#notify-card"), body = $("#notify-body");
     if (!card || !body) return;
     if (!n || n.ok === false) { card.style.display = "none"; return; }
     card.style.display = "";
+    ntfApply();
     // Ринкові сигнали йдуть у Telegram-ГРУПУ (не персонально). Персональних
     // опт-інів більше немає — тому показуємо пояснення, а не перемикачі.
     var linked = !!n.tg_linked;
@@ -251,8 +266,8 @@
     if (!el) return;
     if (me && me.ok) {
       el.innerHTML =
-        '<span class="who">👤 ' + esc(me.email || "") + (me.is_admin ? " · адмін" : "") + '</span>' +
-        '<a href="' + botUrl("/cabinet?from=info") + '">Кабінет</a>' +
+        '<a class="who" href="' + botUrl("/cabinet?from=info") + '" title="Мій кабінет">👤 ' +
+          esc(me.email || "") + (me.is_admin ? " · адмін" : "") + '</a>' +
         '<a href="#" class="lo">Вихід</a>';
     } else {
       var reg = BOT_LINK || botUrl("/register");
@@ -303,8 +318,7 @@
     if (!pd) return '<span class="bdg mute" title="PD-зона ще не порахована">PD —</span>';
     var name = pd.zone === "discount" ? "Discount" : (pd.zone === "premium" ? "Premium" : "Equilibrium");
     var cls = pd.zone === "discount" ? "long" : (pd.zone === "premium" ? "short" : "mute");
-    var tip = "Premium / Discount: де ціна в дилінг-діапазоні " + pd.tf + " (0% — низ, 100% — верх). " +
-      "Discount — дешева зона (краще для LONG), Premium — дорога (краще для SHORT).";
+    var tip = "Premium / Discount · " + pd.tf;
     return '<span class="bdg ' + cls + '" title="' + esc(tip) + '"><span class="d"></span>' +
       name + " " + Math.round(pd.pct) + "% " + esc(pd.tf) + "</span>";
   }
@@ -312,13 +326,12 @@
   function pocBadge(poc, state) {
     if (!poc) {
       var t = state === "none" ? "POC немає даних" : "POC ⏳";
-      return '<span class="bdg mute" title="POC (ціна найбільшого обсягу) рахується окремо — до хвилини">' + t + "</span>";
+      return '<span class="bdg mute" title="POC рахується">' + t + "</span>";
     }
     var d = poc.dist_pct, rel = poc.rel;
     var cls = rel === "above" ? "short" : (rel === "below" ? "long" : "mute");
     var hint = rel === "above" ? "краще SHORT" : (rel === "below" ? "краще LONG" : "на POC");
-    var tip = "POC " + poc.days + "д · " + poc.tf + " · " + poc.market + " — ціна найбільшого обсягу (лінія на графіку). " +
-      "Ціна ВИЩЕ POC → краще SHORT, НИЖЧЕ → краще LONG. " + hint + ".";
+    var tip = "POC " + poc.days + "д · " + poc.tf + " · " + poc.market + " · " + hint;
     return '<span class="bdg ' + cls + '" title="' + esc(tip) + '">POC ' +
       fmtPrice(poc.poc).replace("$", "") +
       (d == null ? "" : " " + (d >= 0 ? "+" : "") + Number(d).toFixed(2) + "%") + "</span>";
@@ -327,6 +340,18 @@
   function iwMsg(t, err) {
     var el = $("#iw-msg");
     if (el) { el.textContent = t || ""; el.className = "iw-msg" + (err ? " err" : ""); }
+  }
+
+  // Ціна монети — ОДНЕ джерело для списку і шапки графіка: для відкритої монети —
+  // остання свічка графіка (свіжіша), для решти — ціна рядка. Колір — за зміною ~24 год.
+  function livePx(sym) {
+    var c = IW.coin;
+    if (c && c.symbol === sym && c.ohlc && c.ohlc.length) return c.ohlc[c.ohlc.length - 1].close;
+    return (IW.rows[sym] || {}).price;
+  }
+  function dirCls(sym) {
+    var c = (IW.rows[sym] || {}).chg24;
+    return c == null ? "" : (c > 0 ? " up" : (c < 0 ? " dn" : ""));
   }
 
   // Рядок списку — ЛИШЕ назва, ціна і зміна (PD і POC тепер на графіку).
@@ -340,14 +365,14 @@
     host.innerHTML = IW.wl.map(function (sym) {
       var r = IW.rows[sym] || {};
       var ext = r.src === "ext"
-        ? '<small title="Монети немає у WATCHLIST бота — сайт рахує її окремо">🛰</small>' : "";
+        ? '<small title="Поза WATCHLIST бота">🛰</small>' : "";
       var c = r.chg24, bell = bellHTML(sym);
       var chg = c == null ? '<span class="iw-chg">—</span>'
         : '<span class="iw-chg ' + (c > 0 ? "up" : (c < 0 ? "dn" : "")) + '" title="Зміна ціни за ~24 год">' +
           (c > 0 ? "+" : "") + Number(c).toFixed(2) + "%</span>";
       return '<div class="iw-row' + (sym === IW.sel ? " sel" : "") + '" data-sym="' + esc(sym) + '">' +
         '<span class="iw-sym">' + esc(sym.replace(/USDT$/, "")) + '<small>USDT</small>' + ext + "</span>" +
-        '<span class="iw-price">' + (r.price ? fmtPrice(r.price) : "—") + "</span>" + chg +
+        '<span class="iw-price' + dirCls(sym) + '">' + (livePx(sym) ? fmtPrice(livePx(sym)) : "—") + "</span>" + chg +
         bell.btn +
         '<button class="iw-del" data-del="' + esc(sym) + '" title="Прибрати зі списку">×</button>' + bell.menu +
         (r.err ? '<div class="iw-err" title="' + esc(r.err) + '">⚠ ' + esc(r.err) + "</div>" : "") +
@@ -394,11 +419,11 @@
     var lay = $("#iw-layers");
     if (lay) lay.innerHTML =
       '<button type="button" data-layer="show_imb" class="' + (IW.show_imb ? "on" : "") +
-        '" title="Імбаланси (Fair Value Gap): розрив між 1-ю і 3-ю свічками, який ціна ще не заповнила">IMB</button>' +
+        '" title="IMB">IMB</button>' +
       (sbrTfOk(IW.tf)
         ? '<button type="button" data-layer="show_sbr" class="' + (IW.show_sbr ? "on" : "") +
-          '" title="Сигнали Session Band Reversal на ' + tfLbl(IW.tf) + ': S — SHORT, B — LONG (BUY). Клік по позначці — подробиці.">SBR</button>'
-        : '<button type="button" disabled class="off" title="SBR показується лише на 1H і 4H: саме на цих таймфреймах індикатор калібровано і саме їх веде бот та Telegram-сигнали. Перемкніть графік на 1H або 4H.">SBR</button>');
+          '" title="SBR · ' + tfLbl(IW.tf) + '">SBR</button>'
+        : '<button type="button" disabled class="off" title="SBR — лише на 1H і 4H">SBR</button>');
   }
 
   function applyMine(d) {
@@ -438,6 +463,7 @@
     return api("/api/info/rows?symbols=" + encodeURIComponent(IW.wl.join(","))).then(function (d) {
       (d.rows || []).forEach(function (r) { IW.rows[r.symbol] = r; });
       renderList();
+      renderHead();
     }).catch(function () {});
   }
 
@@ -794,7 +820,7 @@
         stroke: L ? "rgba(34,197,94,.95)" : "rgba(242,54,69,.95)",
         text: L ? "#86efac" : "#fca5a5",
         label: (vol || "VOB") + (v.pct != null ? " (" + v.pct + "%)" : "") + (v.breaker ? " ✕" : ""),
-        sub: tfWord(v.tf || c.vob_tf) + " OB" });
+        sub: tfWord(v.tf || c.vob_tf) + " VOB" });
     });
     (c.ob || []).forEach(function (b) {
       var L = b.side === "LONG", sw = b.fam === "swing";
@@ -842,18 +868,19 @@
     try { dd = new Date(s.t * 1000).toLocaleDateString("uk-UA", { timeZone: "Europe/Kyiv", day: "2-digit", month: "2-digit" }); }
     catch (x) { var d = new Date(s.t * 1000); dd = ("0" + d.getDate()).slice(-2) + "." + ("0" + (d.getMonth() + 1)).slice(-2); }
     var slPct = s.sl && s.close ? Math.abs(s.sl / s.close - 1) * 100 : null;
-    var row = function (k, v) { return '<div class="r"><span>' + k + "</span><b>" + v + "</b></div>"; };
+    var row = function (k, v, cls) { return '<div class="r"><span>' + k + '</span><b class="' + (cls || "") + '">' + v + "</b></div>"; };
+    var sc = s.score != null ? Number(s.score) : null;
+    var scCls = sc == null ? "" : (sc >= 85 ? "v-hi" : (sc >= 65 ? "v-mid" : "v-lo"));
     el.innerHTML =
       '<div class="h ' + (S ? "short" : "long") + '"><span class="tag">' + (S ? "S" : "B") + "</span>" +
-        (S ? "SHORT" : "LONG") + (s.n ? " #" + s.n : "") + '<span class="tf">SBR · ' + esc(s.tf || "") + "</span>" +
+        (S ? "SHORT" : "LONG") + (s.n ? " #" + s.n : "") + '<span class="tf">SBR · ' + esc(s.tf || "") + " · " +
+        esc(dd) + " " + esc(s.time_kyiv || "") + "</span>" +
         '<button class="x" aria-label="Закрити">×</button></div>' +
-      row("Бар", dd + " " + esc(s.time_kyiv || "") + " (Київ)") +
-      row("Trigger", fmtPrice(s.trigger)) +
-      row("Score", s.score != null ? Number(s.score).toFixed(2) : "—") +
-      row("Ризик", esc(s.risk || "—")) +
-      row("SL", fmtPrice(s.sl) + (slPct != null ? ' <i>' + slPct.toFixed(2) + "%</i>" : "")) +
-      '<div class="note">Session Band Reversal — розворот від смуги EMA5 ± 0.5·ATR14 на закритому барі. ' +
-        "Той самий алгоритм, що сигнали бота 1H/4H.</div>";
+      row("Trigger", fmtPrice(s.trigger), "v-trg") +
+      '<div class="r"><span>Score<small>(сила сигналу)</small></span><b class="' + scCls + '">' +
+        (sc != null ? sc.toFixed(2) + "%" : "—") + "</b></div>" +
+      row("Ризик", esc(s.risk || "—"), "v-risk") +
+      row("SL", fmtPrice(s.sl) + (slPct != null ? ' <i>' + slPct.toFixed(2) + "%</i>" : ""), "v-sl");
     el.style.display = "block";
     var bw = box.clientWidth, bh = box.clientHeight, ew = el.offsetWidth, eh = el.offsetHeight;
     var left = Math.min(Math.max(8, x + 14), bw - ew - 8), top = Math.min(Math.max(8, y - eh / 2), bh - eh - 8);
@@ -896,19 +923,19 @@
     var sym = IW.sel;
     if (!sym) { h.innerHTML = '<span class="iw-title">—</span>'; return; }
     var c = IW.coin || {}, r = IW.rows[sym] || {};
-    var o = c.ohlc || [], px = o.length ? o[o.length - 1].close : r.price;
+    var px = livePx(sym);
     h.innerHTML =
       '<span class="iw-title">' + tvSym(sym) + "</span>" +
-      '<span class="iw-px">' + (px ? fmtPrice(px) : "—") + "</span>" +
+      '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" +
       pdBadge(c.pd) + pocBadge(c.poc, c.poc_state) +
-      (c.src === "ext" ? '<span class="bdg warn" title="Монети немає у WATCHLIST бота — сайт рахує її окремо тими самими алгоритмами">🛰 поза ботом</span>' : "") +
+      (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "") +
       '<span class="iw-legend">' +
-        '<span title="Volumized Order Block: обсяг блоку і (%) — баланс обсягу між половинами; пунктир із ✕ — блок пробитий (breaker)"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
-        '<span title="Order Block — пунктир; густіший — swing, світліший — internal"><i style="background:rgba(45,212,191,.35);outline:1px dashed rgba(45,212,191,.9)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
-        '<span title="Структура: CHoCH — пунктир (розворот), BOS — суцільна (продовження)"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
-        '<span title="IMB — імбаланс (Fair Value Gap): розрив між 1-ю і 3-ю свічками, ще не заповнений ціною (заповнення звужує зону). Велике число — обсяг трьох свічок розриву; смуга і % — частка обсягу імпульсної (середньої) свічки. Синій — бичачий, помаранчевий — ведмежий"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
-        '<span title="Сигнали SBR на цьому таймфреймі: S — SHORT, B — LONG; клік по позначці — подробиці"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +
-        '<span title="POC — ціна найбільшого обсягу"><i style="background:#f5f5f5;height:2px"></i>POC</span>' +
+        '<span title="Volumized Order Block"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
+        '<span title="Order Block"><i style="background:rgba(45,212,191,.35);outline:1px dashed rgba(45,212,191,.9)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
+        '<span title="CHoCH / BOS"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
+        '<span title="Imbalance (FVG)"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
+        '<span title="Session Band Reversal"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +
+        '<span title="POC"><i style="background:#f5f5f5;height:2px"></i>POC</span>' +
       "</span>";
   }
 
@@ -967,6 +994,7 @@
       if (c.same) return;
       IW.coin = c; IW.sig = c.sig || "";
       renderHead();
+      renderList();
       drawCoin(c, force);
       // щось ще рахується (монета поза ботом / свій TF) — перепитуємо швидше
       if (!c.ok || c.ob_wait || c.vob_wait)

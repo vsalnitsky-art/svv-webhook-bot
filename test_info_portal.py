@@ -388,6 +388,22 @@ def test_comment_button():
     print('✓ 💬 кнопка «Коментар» під повідомленнями групи')
 
 
+def test_cabinet_polish_0911():
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    html = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
+    _check('brand-sub' not in html and '· Мій кабінет' not in html, 'напис «Мій кабінет» прибрано')
+    _check('<a class="who"' in js and '>Кабінет</a>' not in js, '👤 імʼя = посилання на кабінет')
+    _check('" VOB" });' in js, 'підпис «15 Min VOB»')
+    _check('id="notify-head"' in html and 'style="display:none"' in html.split('id="notify-body"')[1][:30]
+           and 'ntfApply' in js, '🔔 сповіщення — гармошка, згорнуто')
+    card = js.split('function sigCard')[1].split('document.addEventListener')[0]
+    _check('row("Бар"' not in card and 'розворот від смуги' not in js and '(сила сигналу)' in card
+           and '"%"' in card, 'картка SBR: без «Бар» і пояснень, Score у %')
+    _check('function livePx' in js and js.count('livePx(sym)') >= 3, 'ціна списку = ціна шапки')
+    _check('dirCls(sym)' in js, 'ціна за напрямком')
+    print('✓ кабінет: шапка, VOB, гармошка, картка SBR, одна ціна')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:

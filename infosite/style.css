@@ -404,7 +404,7 @@ td.mono, td .mono { font-family: var(--mono); }
 .iw-layers button.on { background: color-mix(in srgb, var(--accent) 22%, var(--elev)); color: var(--txt);
   box-shadow: inset 0 0 0 1px var(--accent); }
 /* Картка сигналу SBR (клік по «S» / «B» на графіку) */
-.iw-sig { position: absolute; z-index: 5; display: none; width: 250px; padding: 0 0 8px;
+.iw-sig { position: absolute; z-index: 5; display: none; width: 310px; padding: 0 0 8px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
   box-shadow: 0 12px 32px -12px rgba(0,0,0,.7); font-size: 12.5px; }
 .iw-sig .h { display: flex; align-items: center; gap: 8px; padding: 9px 10px; font-weight: 800;
@@ -442,3 +442,19 @@ td.mono, td .mono { font-family: var(--mono); }
   .iw-legend { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* 🪗 гармошка картки сповіщень (за замовчуванням згорнуто) */
+.acc-h { cursor: pointer; user-select: none; display: flex; align-items: center; }
+.acc-caret { margin-left: auto; color: var(--muted); font-size: 12px; transition: transform .15s; }
+.acc-h[aria-expanded="true"] .acc-caret { transform: rotate(90deg); }
+/* 👤 ім'я = посилання на кабінет */
+.auth-links a.who { color: var(--txt); font-weight: 700; text-decoration: none; }
+.auth-links a.who:hover { color: var(--accent); }
+/* ціна в списку / шапці — за напрямком */
+.iw-price.up, .iw-px.up { color: var(--long); }
+.iw-price.dn, .iw-px.dn { color: var(--short); }
+.iw-sig .r small { font: 600 10px var(--font); color: var(--muted); margin-left: 4px; text-transform: none; letter-spacing: 0; }
+.iw-sig .v-trg { color: #fbbf24; } .iw-sig .v-sl { color: #f87171; }
+.iw-sig .v-hi { color: #4ade80; } .iw-sig .v-mid { color: #fbbf24; } .iw-sig .v-lo { color: #94a3b8; }
+.iw-sig .v-risk { color: #93c5fd; }
+.iw-sig .h { white-space: nowrap; }
