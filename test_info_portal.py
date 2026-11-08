@@ -130,7 +130,7 @@ def test_bot_coin_reads_memory_only():
     _check(p['vob'][0]['side'] == 'SHORT' and p['vob'][0]['tf'] == '5M', p['vob'])
     _check(p['events'] and p['events'][-1]['tag'] == 'CHoCH', 'структура CHoCH/BOS з памʼяті сканера')
     # 🏁 High/Low бот у памʼяті не тримає — його рахує фоновий потік (не запит сторінки)
-    _check(not calls and all(k[0] == 'shl' for k in ip._want),
+    _check(not calls and all(k[0] in ('shl', 'sbrlast') for k in ip._want),
            'монета бота + TF бота — жодного звернення до біржі із запиту сторінки')
     _check('BTCUSDT' in ip._poc_want, 'POC поставлено фоновому потоку')
     _check(ip.coin_payload('BTCUSDT', sc) is p, 'спільний кеш на монету')
@@ -467,6 +467,26 @@ def test_swing_hl_btc_colour_and_price_wheel():
     _check('addEventListener("wheel"' in js and 'autoscaleInfoProvider: priceRangeProvider' in js
            and 'passive: false' in js, 'колесо над шкалою цін масштабує висоту')
     print('✓ High/Low · колір лише BTC · колесо над шкалою цін')
+
+
+def test_sbr_last_badges_1h_4h():
+    """🔔 Останній сигнал SBR 1H/4H у шапці графіка: % від Trigger до ціни."""
+
+    v = ip.sbr_last_view({'side': 'SHORT', 't': 1762560000000, 'n': 2,
+                          'trigger': 100.0, 'score': 76.27, 'time_kyiv': '08.11 10:00'}, '4h')
+    assert v['tf'] == '4H' and v['trigger'] == 100.0 and v['t'] == 1762560000
+    assert ip.sbr_last_view(None, '1h') is None
+    m = ip.sbr_move('SHORT', 100.0, 98.0)
+    assert m['pct'] == -2.0 and m['fav'] is True
+    m = ip.sbr_move('LONG', 100.0, 98.0)
+    assert m['fav'] is False
+    assert ip.sbr_move('LONG', 0, 98) is None
+    src = open(ip.__file__, encoding='utf-8').read()
+    assert "'sbr_last': sbr_last" in src and "('sbrlast', sym, t)" in src
+    assert 'get_sbr_engine' in src          # монета в рушії → памʼять, без мережі
+    js = open('infosite/app.js', encoding='utf-8').read()
+    assert 'sbrLastBadge("1h"' in js and 'sbrLastBadge("4h"' in js
+    assert 'function sbrMove(' in js
 
 
 if __name__ == '__main__':

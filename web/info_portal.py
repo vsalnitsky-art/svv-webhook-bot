@@ -254,7 +254,8 @@ def sig_of(payload):
         len(payload.get('sbr') or []), ((payload.get('sbr') or [{}])[-1]).get('t'),
         (payload.get('pd') or {}).get('pct'), (payload.get('poc') or {}).get('poc'),
         ((payload.get('shl') or {}).get('high') or {}).get('price'),
-        ((payload.get('shl') or {}).get('low') or {}).get('price')))
+        ((payload.get('shl') or {}).get('low') or {}).get('price'),
+        *[((payload.get('sbr_last') or {}).get(t) or {}).get('t') for t in SBR_TFS]))
 
 
 def due(kind, rec, now):
@@ -335,6 +336,45 @@ def _bot_part(sc, kind, sym, tf):
     return None
 
 
+def _engine_sbr_last(sym, tf):
+    """🔔 Останній сигнал SBR із ПАМ'ЯТІ рушія бота (той самий, що блок
+    🔔 МММ-SBR і Telegram). None → рушій монету на цьому TF не веде."""
+    try:
+        from detection.sbr_signals import get_sbr_engine
+        eng = get_sbr_engine()
+        snap = (eng.snaps(sym) or {}).get(tf) if eng else None
+    except Exception:
+        return None
+    if not snap:
+        return None
+    return {'sig': sbr_last_view(snap.get('last'), tf)}
+
+
+def sbr_last_view(sig, tf):
+    """ЧИСТА: останній сигнал SBR → поля для бейджа кабінету."""
+    if not sig or not sig.get('trigger'):
+        return None
+    return {'side': sig.get('side'), 't': to_sec(sig.get('t')), 'n': sig.get('n'),
+            'trigger': float(sig['trigger']), 'score': sig.get('score'),
+            'time_kyiv': sig.get('time_kyiv'), 'tf': str(tf).upper()}
+
+
+def sbr_move(side, trigger, price):
+    """ЧИСТА: рух ціни від ціни сигналу (Trigger) до поточної, % → {pct, fav}.
+    fav=True — ціна пішла В БІК сигналу (LONG угору, SHORT униз)."""
+    try:
+        tr, px = float(trigger), float(price)
+    except (TypeError, ValueError):
+        return None
+    if tr <= 0 or px <= 0:
+        return None
+    pct = (px - tr) / tr * 100.0
+    fav = pct > 0 if side == 'LONG' else (pct < 0 if side == 'SHORT' else None)
+    if abs(pct) < 1e-9:
+        fav = None
+    return {'pct': round(pct, 3), 'fav': fav}
+
+
 def _get(key):
     with _lock:
         return dict(_comp.get(key) or {})
@@ -366,7 +406,7 @@ def poc_want(sym):
 
 def part(sc, kind, sym, tf):
     """(дані|None, помилка). Пам'ять сканера, інакше спільний кеш + фоновий потік."""
-    d = _bot_part(sc, kind, sym, tf)
+    d = _engine_sbr_last(sym, tf) if kind == 'sbrlast' else _bot_part(sc, kind, sym, tf)
     if d is not None:
         return d, ''
     key = (kind, sym, tf)
@@ -424,6 +464,16 @@ def _compute(sc, kind, sym, tf):
         # 🏁 Swing High / Low — ТА САМА функція бота, що лінії Strong/Weak на
         # графіку /smart-money (дилінг-діапазон = єдине джерело з PD-зоною).
         return {'levels': sc._swing_hl_for_tf(sym, tf)}, now + SHL_TTL
+    if kind == 'sbrlast':
+        # 🔔 Монети немає в рушії SBR → ТА САМА compute_signals на тих самих
+        # 1000 закритих барах (як рушій), раз на закриття бару.
+        from detection.sbr_signals import compute_signals, closed_bars, BARS
+        sk = md.fetch_klines(sym, limit=BARS, interval=tf)
+        if not sk or len(sk) < 30:
+            raise ValueError('немає барів ' + tf.upper())
+        sigs = compute_signals(closed_bars(sk, bar_sec(tf), now), bar_sec(tf))
+        return ({'sig': sbr_last_view(sigs[-1] if sigs else None, tf)},
+                next_close(now, tf) + SETTLE_SEC)
     if kind == 'pd':
         from detection.smc_structure import detect_smc_structure
         pk = md.fetch_klines(sym, limit=PD_BARS, interval=tf)
@@ -460,8 +510,9 @@ def _worker():
                 continue
             for key in keys:
                 kind, sym, tf = key
-                if _bot_part(sc, kind, sym, tf) is not None:
-                    continue                      # сканер уже веде цю частину
+                if (_engine_sbr_last(sym, tf) if kind == 'sbrlast'
+                        else _bot_part(sc, kind, sym, tf)) is not None:
+                    continue                      # бот уже веде цю частину
                 if not due(kind, _get(key), time.time()):
                     continue
                 try:
@@ -704,6 +755,9 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
         for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf), ('shl', shl_tf(sc))):
             if t != OFF and _bot_part(sc, k, sym, t) is None:
                 want((k, sym, t))
+        for t in SBR_TFS:
+            if _engine_sbr_last(sym, t) is None:
+                want(('sbrlast', sym, t))
         poc_want(sym)
         return hit[1]
     bars, err = part(sc, 'bars', sym, tf)
@@ -728,6 +782,11 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
     _shl_tf = shl_tf(sc)
     _shd, _e = part(sc, 'shl', sym, _shl_tf)
     shl = shl_view((_shd or {}).get('levels'), _shl_tf)
+    sbr_last = {}
+    for t in SBR_TFS:
+        _sd, _e = part(sc, 'sbrlast', sym, t)
+        # None = ще рахується · {'none': True} = сигналів немає · інакше сигнал
+        sbr_last[t] = None if _sd is None else (_sd.get('sig') or {'none': True})
     poc_want(sym)
     _st, poc = _poc(sc, sym, allow_compute=False,
                     price=(ohlc[-1]['close'] if ohlc else None))
@@ -737,6 +796,7 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
         'ohlc': ohlc, 'events': events,
         'imb': imb_of((bars or {}).get('kl'), tf, now),
         'sbr': sbr_of((bars or {}).get('kl'), tf, now),
+        'sbr_last': sbr_last,
         'ob': ob, 'vob': vob, 'ob_wait': ob_wait, 'vob_wait': vob_wait,
         'pd': _pd(sc, sym), 'poc': poc, 'poc_state': _st, 'shl': shl, 'ts': now,
     }

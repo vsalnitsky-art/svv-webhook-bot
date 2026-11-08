@@ -378,6 +378,14 @@ td.mono, td .mono { font-family: var(--mono); }
 .bdg.short .d { background: var(--short); }
 .bdg.mute { color: var(--muted); }
 .bdg.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+/* 🔔 останній сигнал SBR 1H/4H: TF приглушено · бік своїм кольором · % — за рухом */
+.bdg.sbr-last { gap: 6px; }
+.bdg.sbr-last .sl-tf { color: var(--muted); font-weight: 600; }
+.bdg.sbr-last .sl-side.lg { color: var(--long); }
+.bdg.sbr-last .sl-side.sh { color: var(--short); }
+.bdg.sbr-last.long .sl-pct { color: var(--long); }
+.bdg.sbr-last.short .sl-pct { color: var(--short); }
+.bdg.sbr-last.mute .sl-pct { color: var(--text, #e5e7eb); }
 
 .iw-chart { padding: 14px 16px 16px; min-width: 0; }
 .iw-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }

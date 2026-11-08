@@ -338,6 +338,33 @@
       (d == null ? "" : " " + (d >= 0 ? "+" : "") + Number(d).toFixed(2) + "%") + "</span>";
   }
 
+  // 🔔 Останній сигнал SBR 1H / 4H → % від його ціни (Trigger) до поточної.
+  // Колір: зелений — ціна пішла В БІК сигналу, червоний — проти.
+  function sbrMove(side, trigger, price) {
+    var tr = Number(trigger), px = Number(price);
+    if (!(tr > 0) || !(px > 0)) return null;
+    var pct = (px - tr) / tr * 100;
+    var fav = Math.abs(pct) < 1e-9 ? null : (side === "LONG" ? pct > 0 : (side === "SHORT" ? pct < 0 : null));
+    return { pct: pct, fav: fav };
+  }
+
+  function sbrLastBadge(tf, s, price) {
+    var T = tf.toUpperCase();
+    if (!s) return '<span class="bdg mute sbr-last" title="SBR ' + T + ' рахується">SBR ' + T + " ⏳</span>";
+    if (s.none) return '<span class="bdg mute sbr-last" title="Сигналів SBR ' + T + ' за останні бари немає">SBR ' + T + " —</span>";
+    var lg = s.side === "LONG", m = sbrMove(s.side, s.trigger, price);
+    var cls = !m || m.fav == null ? "mute" : (m.fav ? "long" : "short");
+    var pct = m ? (m.pct >= 0 ? "+" : "") + m.pct.toFixed(2) + "%" : "—";
+    var tip = "Останній сигнал SBR " + T + (s.n ? " #" + s.n : "") + " · " + (s.time_kyiv || "") +
+      " · Trigger " + fmtPrice(s.trigger) + (s.score != null ? " · Score " + Number(s.score).toFixed(1) + "%" : "") +
+      " → зараз " + (price ? fmtPrice(price) : "—") + " · " +
+      (!m || m.fav == null ? "без руху" : (m.fav ? "ціна йде В БІК сигналу" : "ціна йде ПРОТИ сигналу"));
+    return '<span class="bdg sbr-last ' + cls + '" title="' + esc(tip) + '">' +
+      '<span class="sl-tf">SBR ' + T + "</span>" +
+      '<span class="sl-side ' + (lg ? "lg" : "sh") + '">' + (lg ? "▲ LONG" : "▼ SHORT") + "</span>" +
+      '<span class="sl-pct">' + pct + "</span></span>";
+  }
+
   function iwMsg(t, err) {
     var el = $("#iw-msg");
     if (el) { el.textContent = t || ""; el.className = "iw-msg" + (err ? " err" : ""); }
@@ -1087,6 +1114,8 @@
       '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym) + "</span>" +
       '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" +
       pdBadge(c.pd) + pocBadge(c.poc, c.poc_state) +
+      sbrLastBadge("1h", (c.sbr_last || {})["1h"], px) +
+      sbrLastBadge("4h", (c.sbr_last || {})["4h"], px) +
       (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "") +
       '<span class="iw-legend">' +
         '<span title="Volumized Order Block"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
