@@ -129,7 +129,9 @@ def test_bot_coin_reads_memory_only():
     _check(len(p['ob']) == 1 and p['ob'][0]['start'] == 2_000_000_000, 'OB без дублів, час у секундах')
     _check(p['vob'][0]['side'] == 'SHORT' and p['vob'][0]['tf'] == '5M', p['vob'])
     _check(p['events'] and p['events'][-1]['tag'] == 'CHoCH', 'структура CHoCH/BOS з памʼяті сканера')
-    _check(not calls and not ip._want, 'монета бота + TF бота — жодного звернення до біржі')
+    # 🏁 High/Low бот у памʼяті не тримає — його рахує фоновий потік (не запит сторінки)
+    _check(not calls and all(k[0] == 'shl' for k in ip._want),
+           'монета бота + TF бота — жодного звернення до біржі із запиту сторінки')
     _check('BTCUSDT' in ip._poc_want, 'POC поставлено фоновому потоку')
     _check(ip.coin_payload('BTCUSDT', sc) is p, 'спільний кеш на монету')
     print('✓ монета бота на TF бота: лише памʼять сканера, спільний кеш')
@@ -440,10 +442,31 @@ def test_mm_babl_colour_and_tv_like_chart():
            and '.iw-sym.mm-short' in css and '.iw-title.mm-long' in css, 'колір назви в списку й шапці')
     _check(js.count('mmCls(sym)') >= 3, 'і список, і шапка')
     _check('kineticScroll: { mouse: true' in js, 'інерція миші як у TradingView')
-    _check('function tvPanInit' in js and 'setAutoScale(false)' in js and 'id = "iw-auto"' in js,
+    _check('function tvPanInit' in js and 'autoScale: false' in js and 'id = "iw-auto"' in js,
            'вертикальний рух → вільний рух, кнопка A')
     _check('IW.series.update(o[u])' in js, 'оновлення хвостом, без setData посеред руху')
     print('✓ МММ-бабло на назві монети · графік як у TradingView')
+
+
+def test_swing_hl_btc_colour_and_price_wheel():
+    """🏁 High/Low як у боті (та сама `_swing_hl_for_tf`), колір МММ-бабло лише
+    для BTC, колесо над шкалою цін — масштаб по висоті."""
+    v = ip.shl_view({'high': {'price': 81199.9, 'label': 'Strong High'},
+                     'low': {'price': 75143.5, 'label': 'Weak Low'}}, '1h')
+    _check(v == {'high': {'price': 81199.9, 'label': 'Strong High'},
+                 'low': {'price': 75143.5, 'label': 'Weak Low'}, 'tf': '1H'}, v)
+    _check(ip.shl_view(None, '1h') is None and ip.shl_view({'high': {'price': 0}}, '1h') is None,
+           'немає рівнів → нічого не малюємо')
+    src = open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
+    _check("sc._swing_hl_for_tf(sym, tf)" in src, 'джерело — функція бота, своєї копії немає')
+    _check("swing_hl_timeframe" in src, 'TF — той самий, що в боті')
+    _check(ip.MM_SYMBOLS == ('BTCUSDT',), 'МММ-бабло лише BTC')
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    _check('function setShl' in js and 'data-layer="show_shl"' in js, 'лінії High/Low + перемикач шару')
+    _check('var MM_SYMS = ["BTCUSDT"]' in js, 'колір назви — лише BTC')
+    _check('addEventListener("wheel"' in js and 'autoscaleInfoProvider: priceRangeProvider' in js
+           and 'passive: false' in js, 'колесо над шкалою цін масштабує висоту')
+    print('✓ High/Low · колір лише BTC · колесо над шкалою цін')
 
 
 if __name__ == '__main__':

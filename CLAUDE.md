@@ -7724,3 +7724,22 @@ OKBUSDT LONG відкрився при увімкнених «Через МММ-
   (3) доби, свічки `poc_filter_tf` (1H), Binance FUTURES (фолбек Bybit),
   150 бінів, обсяг свічки рівномірно по її діапазону.
 Тести: `test_info_portal.py` (18), `test_sbr_signals.py` (25).
+
+### 🏁 HIGH/LOW У КАБІНЕТІ · 🧭 МММ-бабло лише BTC · 🖱 колесо над шкалою цін (08.11)
+- **🏁 Swing High/Low** як у боті: нова частина `shl` кабінету = `sc.
+  _swing_hl_for_tf(sym, swing_hl_timeframe)` — ТА САМА функція, що лінії
+  Strong/Weak на /smart-money (дилінг-діапазон = джерело PD-зони). Бот у
+  памʼяті її не тримає → рахує фоновий потік (`SHL_TTL`=120с); запит сторінки
+  біржу не смикає. `shl_view` → `payload['shl']` {high, low, tf}. Фронт
+  `setShl` — дві price-лінії (High червона, Low зелена, «Strong High 1H»),
+  перемикач шару `show_shl` (`prefs['info']`), легенда «High/Low».
+- **🧭 МММ-бабло — ЛИШЕ BTC** (`MM_SYMBOLS` на бекенді, `MM_SYMS` у JS): решта
+  назв без кольору, і mm по них не рахується.
+- **🖱 Колесо над шкалою цін = масштаб по висоті** (як у TV; бібліотека колесом
+  масштабує лише час): capture-`wheel` на `#iw-box` у зоні шкали цін →
+  `wheelPrice` бере видимий діапазон, масштабує навколо центру (ЧИСТА
+  `zoomRange`) і віддає через `autoscaleInfoProvider: priceRangeProvider`
+  (`IW.fixedRange`, поля scaleMargins знято наперед). Вертикальний drag →
+  `fixedRange` скидається, далі вільний рух; «A» / подвійний клік по шкалі /
+  нова монета чи TF → автомасштаб.
+Тест: `test_info_portal.py` (19).

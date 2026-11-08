@@ -289,7 +289,7 @@
   var VOB_TFS = ["1m", "5m", "15m", "30m", "1h", "4h"];
   var IW = { wl: [], sel: "", rows: {}, max: 20, sig: "", coin: null, chart: null, series: null,
              prim: null, pocLine: null, chartKey: "", universe: [],
-             tf: "15m", ob_tf: "1h", vob_tf: "5m", show_imb: true, show_sbr: true,
+             tf: "15m", ob_tf: "1h", vob_tf: "5m", show_imb: true, show_sbr: true, show_shl: true,
              sbr: {}, tg_linked: true, bellOpen: "" };
   var SBR_TFS = ["1h", "4h"];          // SBR веде бот і Telegram лише на цих TF
   function sbrTfOk(tf) { return SBR_TFS.indexOf(String(tf || "").toLowerCase()) >= 0; }
@@ -355,15 +355,18 @@
     return c == null ? "" : (c > 0 ? " up" : (c < 0 ? " dn" : ""));
   }
 
-  // 🧭 Колір НАЗВИ монети = «МММ-бабло» бота (вимога 08.11): та сама формула,
+  // 🧭 Колір НАЗВИ монети = «МММ-бабло» бота (вимога 08.11, лише BTC): та сама формула,
   // що рядок «МММ-бабло ↑ зверху → тягне в LONG / ↓ знизу → тягне в SHORT»
   // (зелений / червоний; ⚖ рівновага — без кольору; немає даних — без кольору).
+  var MM_SYMS = ["BTCUSDT"];   // колір МММ-бабло — лише BTC (вимога 08.11)
   function mmCls(sym) {
+    if (MM_SYMS.indexOf(sym) < 0) return "";
     var m = (IW.rows[sym] || {}).mm;
     if (!m) return "";
     return m.dir === "LONG" ? " mm-long" : (m.dir === "SHORT" ? " mm-short" : "");
   }
   function mmTip(sym) {
+    if (MM_SYMS.indexOf(sym) < 0) return sym;
     var m = (IW.rows[sym] || {}).mm;
     if (!m) return "МММ-бабло: даних немає";
     if (m.dir === "LONG") return "МММ-бабло ↑ зверху → тягне в LONG · " + m.str + "%";
@@ -440,7 +443,9 @@
       (sbrTfOk(IW.tf)
         ? '<button type="button" data-layer="show_sbr" class="' + (IW.show_sbr ? "on" : "") +
           '" title="SBR · ' + tfLbl(IW.tf) + '">SBR</button>'
-        : '<button type="button" disabled class="off" title="SBR — лише на 1H і 4H">SBR</button>');
+        : '<button type="button" disabled class="off" title="SBR — лише на 1H і 4H">SBR</button>') +
+      '<button type="button" data-layer="show_shl" class="' + (IW.show_shl ? "on" : "") +
+        '" title="Swing High / Low (як у боті)">High/Low</button>';
   }
 
   function applyMine(d) {
@@ -455,6 +460,7 @@
     if (d.vob_tf) IW.vob_tf = d.vob_tf;
     if (typeof d.show_imb === "boolean") IW.show_imb = d.show_imb;
     if (typeof d.show_sbr === "boolean") IW.show_sbr = d.show_sbr;
+    if (typeof d.show_shl === "boolean") IW.show_shl = d.show_shl;
     if (d.sbr && typeof d.sbr === "object") IW.sbr = d.sbr;
     if (typeof d.tg_linked === "boolean") IW.tg_linked = d.tg_linked;
     renderList();
@@ -801,14 +807,42 @@
   // нову свічку в кадрі. Кнопка «A» (праворуч унизу) або подвійний клік по шкалі
   // ціни повертає автомасштаб; зміна монети / TF — теж.
   function autoScaleOn() {
+    if (IW.fixedRange) return false;          // діапазон задано колесом — це вже не авто
     try { return IW.chart.priceScale("right").options().autoScale !== false; } catch (e) { return true; }
   }
   function setAutoScale(on) {
     if (!IW.chart) return;
+    if (on) IW.fixedRange = null;            // «A» / нова монета → знову за свічками
     IW.chart.priceScale("right").applyOptions({ autoScale: !!on });
     var b = $("#iw-auto");
     if (b) b.classList.toggle("on", !!on);
   }
+  // ЧИСТА: новий видимий діапазон ціни (lo, hi) після масштабу `k` навколо центру.
+  function zoomRange(lo, hi, k) {
+    var mid = (lo + hi) / 2, half = (hi - lo) / 2 * k;
+    if (!(half > 0)) return null;
+    return { lo: mid - half, hi: mid + half };
+  }
+  // Видимий діапазон → priceRange для бібліотеки: вона сама додає поля шкали
+  // (scaleMargins), тож прибираємо їх наперед — інакше кожен крок колеса
+  // додатково «відʼїжджав» би.
+  function wheelPrice(k, paneH) {
+    var sr = IW.series, top = sr.coordinateToPrice(0), bot = sr.coordinateToPrice(paneH);
+    if (top == null || bot == null) return;
+    var v = zoomRange(Math.min(top, bot), Math.max(top, bot), k);
+    if (!v) return;
+    var m = (IW.chart.priceScale("right").options().scaleMargins) || { top: 0.2, bottom: 0.1 };
+    var span = v.hi - v.lo;
+    IW.fixedRange = { minValue: v.lo + span * (m.bottom || 0), maxValue: v.hi - span * (m.top || 0) };
+    IW.chart.priceScale("right").applyOptions({ autoScale: true });
+    var b = $("#iw-auto"); if (b) b.classList.remove("on");
+    sr.applyOptions({ autoscaleInfoProvider: priceRangeProvider });
+  }
+  function priceRangeProvider(base) {
+    if (IW.fixedRange) return { priceRange: IW.fixedRange };
+    return base();
+  }
+
   function tvPanInit(box) {
     var y0 = null, x0 = null;
     box.addEventListener("pointerdown", function (e) {
@@ -822,16 +856,43 @@
     box.addEventListener("pointermove", function (e) {
       if (y0 == null || !(e.buttons & 1)) return;
       var dy = Math.abs(e.clientY - y0), dx = Math.abs(e.clientX - x0);
-      if (dy > 5 && dy > dx * 0.6 && autoScaleOn()) setAutoScale(false);
+      if (dy > 5 && dy > dx * 0.6 && (autoScaleOn() || IW.fixedRange)) {
+        IW.fixedRange = null;
+        IW.chart.priceScale("right").applyOptions({ autoScale: false });
+        var ab = $("#iw-auto"); if (ab) ab.classList.remove("on");
+      }
     }, true);
     window.addEventListener("pointerup", function () { y0 = null; }, true);
-    box.addEventListener("dblclick", function () {
+    box.addEventListener("dblclick", function (e) {
+      // подвійний клік по шкалі цін = автомасштаб (і скид діапазону колеса)
+      var r = box.getBoundingClientRect(), psw = 0;
+      try { psw = IW.chart.priceScale("right").width(); } catch (er) {}
+      if (psw > 0 && e.clientX - r.left >= r.width - psw) { setAutoScale(true); }
       setTimeout(function () { var b = $("#iw-auto"); if (b) b.classList.toggle("on", autoScaleOn()); }, 0);
     });
+    // 🖱 Колесо миші над ШКАЛОЮ ЦІН = масштаб по висоті (як у TradingView):
+    // вниз — ширше (більше ціни в кадрі), вгору — вужче. Бібліотека сама цього
+    // не вміє (колесо там завжди масштабує час), тож беремо поточний видимий
+    // діапазон, масштабуємо навколо центру і віддаємо його через
+    // `autoscaleInfoProvider` (див. `wheelPrice`). Над самим графіком колесо
+    // і далі масштабує час.
+    box.addEventListener("wheel", function (e) {
+      if (!IW.chart || !IW.series) return;
+      var r = box.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+      var psw = 0, tsh = 0;
+      try { psw = IW.chart.priceScale("right").width(); tsh = IW.chart.timeScale().height(); } catch (er) {}
+      if (!(psw > 0) || x < r.width - psw || y > r.height - tsh) return;
+      e.preventDefault(); e.stopPropagation();
+      var dy = e.deltaY || 0;
+      if (e.deltaMode === 1) dy *= 16;
+      if (!dy) return;
+      wheelPrice(Math.pow(1.0015, Math.max(-300, Math.min(300, dy))), r.height - tsh);
+    }, { capture: true, passive: false });
     var b = document.createElement("button");
     b.id = "iw-auto"; b.type = "button"; b.className = "iw-auto on"; b.textContent = "A";
-    b.title = "Автомасштаб ціни (як «A» у TradingView). Вимикається сам, щойно потягнете графік вертикально.";
+    b.title = "Автомасштаб ціни (як «A» у TradingView). Вимикається сам, щойно потягнете графік вертикально або покрутите колесо над шкалою цін.";
     b.addEventListener("click", function () { setAutoScale(!autoScaleOn()); });
+    IW.series.applyOptions({ autoscaleInfoProvider: priceRangeProvider });
     box.appendChild(b);
   }
 
@@ -988,6 +1049,25 @@
     return { lines: lines, marks: marks };
   }
 
+  // 🏁 Swing High / Low — як у боті (/smart-money): дві лінії дилінг-діапазону
+  // на TF бота (`swing_hl_timeframe`), High червона, Low зелена, підпис —
+  // «Weak/Strong High/Low» за swing-трендом. Перемальовуємо лише на зміну.
+  function setShl(shl) {
+    if (!IW.series) return;
+    var key = shl && IW.show_shl ? [shl.tf, (shl.high || {}).price, (shl.low || {}).price,
+                     (shl.high || {}).label, (shl.low || {}).label].join("|") : "";
+    if (key === IW.shlKey) return;
+    (IW.shlLines || []).forEach(function (l) { try { IW.series.removePriceLine(l); } catch (x) {} });
+    IW.shlLines = []; IW.shlKey = key;
+    if (!shl || !IW.show_shl) return;
+    [["high", "#f87171"], ["low", "#4ade80"]].forEach(function (p) {
+      var v = shl[p[0]];
+      if (!v || !(v.price > 0)) return;
+      IW.shlLines.push(IW.series.createPriceLine({ price: Number(v.price), color: p[1], lineWidth: 1,
+        lineStyle: 0, axisLabelVisible: true, title: (v.label || "") + " " + (shl.tf || "") }));
+    });
+  }
+
   function setPoc(poc) {
     if (!IW.series) return;
     if (IW.pocLine) { try { IW.series.removePriceLine(IW.pocLine); } catch (x) {} IW.pocLine = null; }
@@ -1015,6 +1095,7 @@
         '<span title="Imbalance (FVG)"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
         '<span title="Session Band Reversal"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +
         '<span title="POC"><i style="background:#f5f5f5;height:2px"></i>POC</span>' +
+        '<span title="Swing High / Low"><i style="background:#f87171;height:2px;width:7px"></i><i style="background:#4ade80;height:2px;width:7px;margin-left:-3px"></i>High/Low</span>' +
       "</span>";
   }
 
@@ -1059,6 +1140,7 @@
     IW.series.setMarkers(st.marks);
     IW.prim.set(boxesOf(c), st.lines, sbrOf(c));
     setPoc(c.poc);
+    setShl(c.shl);
     if (fit || IW.chartKey !== key) {
       setAutoScale(true);
       IW.chart.timeScale().fitContent();
@@ -1076,7 +1158,7 @@
     coinBusy = true;
     if (force) {
       setNote("завантаження " + sym + " · " + tfLbl(IW.tf) + "…");
-      if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.set([], [], []); setPoc(null); IW.lastT = null; }
+      if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.set([], [], []); setPoc(null); setShl(null); IW.lastT = null; }
       sigCard(null);
     }
     var want = [IW.sel, IW.tf, IW.ob_tf, IW.vob_tf].join("|");

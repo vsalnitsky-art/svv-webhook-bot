@@ -43,6 +43,7 @@ OHLC_BARS = 400              # скільки барів віддаємо на �
 EVENTS_MAX = 80              # скільки останніх CHoCH/BOS малюємо
 BARS_TTL = 30.0              # свічки графіка (живий бар)
 VOB_MAX_TTL = 300.0          # VOB рахується на живому барі — не рідше ніж раз на 5 хв
+SHL_TTL = 120.0              # 🏁 High/Low: межі тягнуться за живим баром — раз на 2 хв
 SETTLE_SEC = 3.0             # біржі треба кілька секунд, щоб віддати закритий бар
 IDLE_SEC = 900.0             # ніхто не просив 15 хв → не рахуємо
 WANT_MAX = 600               # стеля одночасно відстежуваних частин
@@ -251,7 +252,9 @@ def sig_of(payload):
         len(payload.get('events') or []), ev[-1].get('to'),
         len(payload.get('imb') or []), sum(round(float(z.get('top') or 0), 8) for z in payload.get('imb') or []),
         len(payload.get('sbr') or []), ((payload.get('sbr') or [{}])[-1]).get('t'),
-        (payload.get('pd') or {}).get('pct'), (payload.get('poc') or {}).get('poc')))
+        (payload.get('pd') or {}).get('pct'), (payload.get('poc') or {}).get('poc'),
+        ((payload.get('shl') or {}).get('high') or {}).get('price'),
+        ((payload.get('shl') or {}).get('low') or {}).get('price')))
 
 
 def due(kind, rec, now):
@@ -417,6 +420,10 @@ def _compute(sc, kind, sym, tf):
                      reverse=True)
             vz = [z for z in (sc._format_vob(o, tf) for o in obs) if z]
         return {'vz': vz}, min(next_close(now, tf), now + VOB_MAX_TTL)
+    if kind == 'shl':
+        # 🏁 Swing High / Low — ТА САМА функція бота, що лінії Strong/Weak на
+        # графіку /smart-money (дилінг-діапазон = єдине джерело з PD-зоною).
+        return {'levels': sc._swing_hl_for_tf(sym, tf)}, now + SHL_TTL
     if kind == 'pd':
         from detection.smc_structure import detect_smc_structure
         pk = md.fetch_klines(sym, limit=PD_BARS, interval=tf)
@@ -494,6 +501,31 @@ def _price(sc, sym):
         return None
 
 
+def shl_tf(sc):
+    """TF ліній High/Low — той самий, що в боті (`swing_hl_timeframe`, деф. 1H)."""
+    try:
+        return str(sc._settings.get('swing_hl_timeframe', '1h') or '1h').lower()
+    except Exception:
+        return '1h'
+
+
+def shl_view(levels, tf):
+    """ЧИСТА: {high:{price,label}, low:{price,label}} → для графіка (+ TF)."""
+    out = {}
+    for k in ('high', 'low'):
+        v = (levels or {}).get(k) or {}
+        try:
+            p = float(v.get('price') or 0)
+        except (TypeError, ValueError):
+            p = 0.0
+        if p > 0:
+            out[k] = {'price': p, 'label': str(v.get('label') or k.title())}
+    if not out:
+        return None
+    out['tf'] = str(tf).upper()
+    return out
+
+
 def _pd(sc, sym):
     try:
         prem, disc = sc.get_pd_thresholds()
@@ -560,6 +592,7 @@ def _poc(sc, sym, allow_compute=True, price=None):
 
 
 MM_TTL = 60.0                # кеш фолбеку МММ-бабло для монет поза знімком
+MM_SYMBOLS = ('BTCUSDT',)    # 🧭 назва кольором МММ-бабло — лише BTC
 _mm_cache = {}               # {SYM: (ts, mark|None)}
 
 
@@ -639,8 +672,10 @@ def rows_for(symbols, sc=None):
         except Exception:
             pass
         rows.append({'symbol': sym, 'price': price, 'chg24': chg, 'src': src, 'err': err})
+    # 🧭 Колір «МММ-бабло» — ЛИШЕ для BTC (вимога 08.11): решта монет без
+    # кольору, тож і рахувати по них нічого.
     try:
-        mm = mm_marks([r['symbol'] for r in rows])
+        mm = mm_marks([r['symbol'] for r in rows if r['symbol'] in MM_SYMBOLS])
     except Exception:
         mm = {}
     for r in rows:
@@ -666,7 +701,7 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
         hit = _coin_cache.get(ck)
     if hit and now - hit[0] < COIN_TTL:
         # частини все одно «просимо», інакше кеш потоку їх забуде
-        for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf)):
+        for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf), ('shl', shl_tf(sc))):
             if t != OFF and _bot_part(sc, k, sym, t) is None:
                 want((k, sym, t))
         poc_want(sym)
@@ -690,6 +725,9 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
         reason = '⏳ завантаження барів ' + tf.upper()
     else:
         reason = '⏳ монети немає в боті — рахуємо окремо, кілька секунд'
+    _shl_tf = shl_tf(sc)
+    _shd, _e = part(sc, 'shl', sym, _shl_tf)
+    shl = shl_view((_shd or {}).get('levels'), _shl_tf)
     poc_want(sym)
     _st, poc = _poc(sc, sym, allow_compute=False,
                     price=(ohlc[-1]['close'] if ohlc else None))
@@ -700,7 +738,7 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
         'imb': imb_of((bars or {}).get('kl'), tf, now),
         'sbr': sbr_of((bars or {}).get('kl'), tf, now),
         'ob': ob, 'vob': vob, 'ob_wait': ob_wait, 'vob_wait': vob_wait,
-        'pd': _pd(sc, sym), 'poc': poc, 'poc_state': _st, 'ts': now,
+        'pd': _pd(sc, sym), 'poc': poc, 'poc_state': _st, 'shl': shl, 'ts': now,
     }
     payload['sig'] = sig_of(payload)
     if not ohlc or ob_wait or vob_wait:
@@ -744,6 +782,7 @@ def user_info(prefs, uni, dfl=None):
             # що малювати на графіку (лише показ, рахується завжди)
             'show_imb': bool(info.get('show_imb', True)),
             'show_sbr': bool(info.get('show_sbr', True)),
+            'show_shl': bool(info.get('show_shl', True)),
             # 🔔 особисті SBR-сповіщення в Telegram (вимога 09.11)
             'sbr': sbr_norm(info.get('sbr'), wl)}
 
@@ -781,7 +820,7 @@ def apply_change(cur, body, uni):
         out['ob_tf'] = norm_tf(body.get('ob_tf'), OB_TFS, cur.get('ob_tf') or '1h', allow_off=True)
     if 'vob_tf' in body:
         out['vob_tf'] = norm_tf(body.get('vob_tf'), VOB_TFS, cur.get('vob_tf') or '5m', allow_off=True)
-    for k in ('show_imb', 'show_sbr'):
+    for k in ('show_imb', 'show_sbr', 'show_shl'):
         if k in body:
             out[k] = bool(body.get(k))
     sbr = dict(cur.get('sbr') or {})
