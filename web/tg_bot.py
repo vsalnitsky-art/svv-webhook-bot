@@ -747,12 +747,23 @@ def _group_chat():
     return os.getenv('TELEGRAM_FORUM_CHAT') or os.getenv('TELEGRAM_GROUP_CHAT')
 
 
-# ── 🚫 ЧЛЕНСТВО В ГРУПІ = ДОСТУП НА САЙТІ (вимога 09.11) ──────────────────
-# Telegram НЕ вміє ховати окремі теми від окремого учасника: учасник групи
-# бачить УСІ теми (і General теж). Тому заблокований користувач ВИДАЛЯЄТЬСЯ з
-# групи (бан — щоб не повернувся за старим посиланням); коли доступ знову
-# активний — бан знімається і приходить персональне запрошення.
+# ── 🚫 ЧЛЕНСТВО В ГРУПІ = ДОСТУП НА САЙТІ (вимога 09.11, уточнено) ────────
+# • ЗАБЛОКОВАНИЙ (вимкнено / строк минув / схвалення знято) лишається в групі,
+#   але ОБМЕЖЕНИЙ: `restrictChatMember` знімає ВСІ права учасника — писати,
+#   медіа, опитування, коментувати (і кнопка «💬 Коментар» йому відмовляє).
+#   ⚠️ ОБМЕЖИТИ ПЕРЕГЛЯД Telegram НЕ ДОЗВОЛЯЄ: такого права в Bot API немає,
+#   учасник бачить усю історію і всі теми. Пересилати/копіювати пости робочих
+#   тем не дає `protect_content`. Заблокований акаунт також нічого не отримує
+#   ОСОБИСТО від бота.
+# • Доступ знову активний → права повертаються (як у решти учасників групи).
+# • ВИДАЛЕНИЙ із бота → БАН у групі (видалено, повернутись за посиланням не
+#   може) + слід у головному боті прибирається (`forget_bot_user`).
 GROUP_SYNC_SEC = 600.0
+_NO_RIGHTS = {k: False for k in (
+    'can_send_messages', 'can_send_audios', 'can_send_documents', 'can_send_photos',
+    'can_send_videos', 'can_send_video_notes', 'can_send_voice_notes', 'can_send_polls',
+    'can_send_other_messages', 'can_add_web_page_previews', 'can_change_info',
+    'can_invite_users', 'can_pin_messages', 'can_manage_topics')}
 
 
 def group_ban(chat_id):
@@ -781,12 +792,46 @@ def group_unban(chat_id):
     return bool(r.get('ok'))
 
 
-def group_action(blocked, active, grp_banned):
-    """ЧИСТА: 'ban' | 'unban' | None."""
-    if blocked and not grp_banned:
-        return 'ban'
-    if active and grp_banned:
-        return 'unban'
+def _restrict(chat_id, perms):
+    group = _group_chat()
+    if not group or not chat_id:
+        return False
+    try:
+        r = _api('restrictChatMember', {'chat_id': group, 'user_id': int(chat_id),
+                                        'permissions': perms,
+                                        'use_independent_chat_permissions': True}) or {}
+    except (TypeError, ValueError):
+        return False
+    if not r.get('ok'):
+        print(f"[TG-BOT] restrict {chat_id} failed: {r.get('description') or r.get('error')}")
+    return bool(r.get('ok'))
+
+
+def group_restrict(chat_id):
+    """Заблокований: лишається в групі, але без жодних прав (лише читання)."""
+    return _restrict(chat_id, dict(_NO_RIGHTS))
+
+
+def group_unrestrict(chat_id):
+    """Знову активний: права = як у всіх учасників групи (`getChat.permissions`)."""
+    group = _group_chat()
+    perms = None
+    if group:
+        r = _api('getChat', {'chat_id': group}, timeout=15) or {}
+        perms = (r.get('result') or {}).get('permissions') if r.get('ok') else None
+    if not isinstance(perms, dict):
+        perms = {'can_send_messages': True}
+    return _restrict(chat_id, {k: bool(v) for k, v in perms.items() if isinstance(v, bool)})
+
+
+def group_action(blocked, active, state):
+    """ЧИСТА: що зробити з учасником групи. `state` — позначка в prefs:
+    None | 'restricted' | 'banned' (стара версія банила). → 'restrict' |
+    'restore' | None. «Очікує схвалення» (не blocked і не active) — не чіпаємо."""
+    if blocked and state != 'restricted':
+        return 'restrict'
+    if active and state in ('restricted', 'banned'):
+        return 'restore'
     return None
 
 
@@ -799,20 +844,50 @@ def group_access_sync(uid=None):
     except Exception:
         return 0
     n = 0
-    for _uid, chat, blocked, active, banned in group_members_state():
+    for _uid, chat, blocked, active, state in group_members_state():
         if uid is not None and str(_uid) != str(uid):
             continue
-        act = group_action(blocked, active, banned)
-        if act == 'ban':
-            if group_ban(chat):
-                set_user_pref(_uid, 'grp_banned', True)
+        act = group_action(blocked, active, state)
+        if act == 'restrict':
+            if state == 'banned':          # стара версія банила → повертаємо, але обмеженим
+                group_unban(chat)
+            if group_restrict(chat):
+                set_user_pref(_uid, 'grp_state', 'restricted')
                 n += 1
-        elif act == 'unban':
-            group_unban(chat)
-            set_user_pref(_uid, 'grp_banned', None)
-            invite_user_to_group(chat)
+        elif act == 'restore':
+            if state == 'banned':
+                group_unban(chat)
+                invite_user_to_group(chat)
+            else:
+                group_unrestrict(chat)
+            set_user_pref(_uid, 'grp_state', None)
             n += 1
     return n
+
+
+def forget_bot_user(chat_id):
+    """Користувача ВИДАЛЕНО: бан у групі + прибрати з контактів бота і зі
+    звʼязків «відповісти користувачу». Наступний /start — як від нового."""
+    cid = str(chat_id or '')
+    if not cid:
+        return
+    try:
+        group_ban(cid)
+    except Exception:
+        pass
+    _comment_wait.pop(cid, None)
+    try:
+        with _map_lock:
+            for k in [k for k, v in _reply_map.items() if str(v) == cid]:
+                _reply_map.pop(k, None)
+        _persist_reply_map()
+    except Exception:
+        pass
+    try:
+        from web.auth import forget_bot_contact
+        forget_bot_contact(cid)
+    except Exception:
+        pass
 
 
 def invite_user_to_group(chat_id):

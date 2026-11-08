@@ -350,13 +350,21 @@ def test_sbr_engine_delivers_personally_and_tracks_extra():
 
 def test_blocked_user_has_no_access_and_no_group():
     tg = _load('tg_bot_t', 'web/tg_bot.py')
-    _check(tg.group_action(True, False, False) == 'ban', 'заблокований → геть із групи')
-    _check(tg.group_action(False, True, True) == 'unban', 'знову активний → бан знято')
-    _check(tg.group_action(False, False, False) is None, 'очікує схвалення — не чіпаємо')
+    _check(tg.group_action(True, False, None) == 'restrict', 'заблокований → лишається, але без прав')
+    _check(tg.group_action(True, False, 'restricted') is None, 'вже обмежений — без повторів')
+    _check(tg.group_action(True, False, 'banned') == 'restrict', 'старий бан → повертаємо обмеженим')
+    _check(tg.group_action(False, True, 'restricted') == 'restore', 'знову активний → права назад')
+    _check(tg.group_action(False, False, None) is None, 'очікує схвалення — не чіпаємо')
+    _check(all(v is False for v in tg._NO_RIGHTS.values()) and 'can_send_messages' in tg._NO_RIGHTS,
+           'обмеження знімає всі права учасника')
+    src = open(os.path.join(_HERE, 'web', 'tg_bot.py'), encoding='utf-8').read()
+    fb = src.split('def forget_bot_user')[1][:900]
+    _check('group_ban(' in fb and 'forget_bot_contact' in fb, 'видалений → бан у групі + слід у боті')
     auth = open(os.path.join(_HERE, 'web', 'auth.py'), encoding='utf-8').read()
     _check("not path.startswith(('/api/me', '/api/info/'))" in auth,
            'API-ключ не відкриває особистий кабінет')
     _check("'blocked' if" in auth and 'sync_user_group(uid)' in auth, 'причина 403 + синхронізація групи')
+    _check('forget_bot_user(target.telegram_chat_id)' in auth, 'видалення акаунта кличе повне видалення')
     _check('if not _is_active(u):' in auth.split('def info_sbr_subscribers')[1][:900],
            'особисті сигнали — лише активним')
     js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()

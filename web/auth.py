@@ -282,6 +282,13 @@ def notify_user_approved(uid):
             set_user_pref(uid, 'grp_banned', None)
         except Exception as _e:
             print(f"[AUTH][TG] group invite error: {_e}")
+        try:                                           # був обмежений → права назад
+            if (_load_prefs(get_user_by_id(uid)) or {}).get('grp_state'):
+                from web.tg_bot import group_unrestrict
+                group_unrestrict(u.telegram_chat_id)
+                set_user_pref(uid, 'grp_state', None)
+        except Exception as _e:
+            print(f"[AUTH][TG] group invite error: {_e}")
     except Exception as e:
         print(f"[AUTH][TG] notify user error: {e}")
 
@@ -470,7 +477,7 @@ def is_blocked(u):
 
 
 def group_members_state():
-    """[(uid, chat_id, blocked, active, grp_banned)] — для синхронізації
+    """[(uid, chat_id, blocked, active, grp_state)] — для синхронізації
     членства в Telegram-групі з доступом на сайті."""
     s = get_session()
     try:
@@ -482,8 +489,9 @@ def group_members_state():
                 prefs = json.loads(u.prefs or '{}')
             except Exception:
                 prefs = {}
+            st = prefs.get('grp_state') or ('banned' if prefs.get('grp_banned') else None)
             out.append((u.id, str(u.telegram_chat_id), is_blocked(u),
-                        _is_active(u), bool(prefs.get('grp_banned'))))
+                        _is_active(u), st))
         return out
     except Exception:
         return []
@@ -537,6 +545,19 @@ def record_bot_contact(chat_id, username=None, name=None):
         db.set_setting(_DB_BOT_CONTACTS, data)
     except Exception as e:
         print(f"[AUTH] record_bot_contact error: {e}")
+
+
+def forget_bot_contact(chat_id):
+    """Прибрати чат зі списку контактів бота (користувача видалено)."""
+    try:
+        from storage.db_operations import get_db
+        db = get_db()
+        data = db.get_setting(_DB_BOT_CONTACTS, {}) or {}
+        if isinstance(data, dict) and str(chat_id) in data:
+            data.pop(str(chat_id), None)
+            db.set_setting(_DB_BOT_CONTACTS, data)
+    except Exception as e:
+        print(f"[AUTH] forget_bot_contact error: {e}")
 
 
 def bot_contacts():
@@ -1764,10 +1785,10 @@ def register_auth_routes(app):
             # Notify the user BEFORE removing them (their chat link is gone after).
             _notify_change("🗑 Ваш акаунт видалено адміністратором.",
                            f"🗑 <b>{_lbl}</b> — акаунт видалено.")
-            try:                       # прибрати з групи ДО видалення (потім chat_id вже немає)
-                from web.tg_bot import group_ban
+            try:                       # ВИДАЛЕНО: бан у групі + слід у боті (ДО видалення —
+                from web.tg_bot import forget_bot_user   # потім chat_id вже немає)
                 if target.telegram_chat_id:
-                    group_ban(target.telegram_chat_id)
+                    forget_bot_user(target.telegram_chat_id)
             except Exception:
                 pass
             _delete_user(uid)
