@@ -977,6 +977,74 @@ def sbr_personal_send(symbol, items):
     return ok, bad
 
 
+# ── 🧪 ТЕСТОВІ (paper) угоди бота — лише читання (вимога 08.11) ─────────
+PAPER_TTL = 5.0                 # спільний кеш знімка (сторінки опитують часто)
+PAPER_CLOSED_SHOW = 50          # скільки останніх закритих paper-угод віддаємо
+_PAPER_POS_KEYS = ('symbol', 'side', 'entry_price', 'current_price', 'pnl_pct',
+                   'pnl_net', 'paper_size', 'opened_at', 'opened_by', 'manual_sl',
+                   'manual_tp', 'manual_tp1', 'tp1_done', 'spring_open', 'mmd')
+_PAPER_CLOSED_KEYS = ('symbol', 'side', 'entry_price', 'exit_price', 'opened_at',
+                      'closed_at', 'pnl_pct', 'reason', 'opened_by')
+_paper_cache = {'at': 0.0, 'data': None}
+
+
+def paper_pos_view(p, spring=None):
+    """ЧИСТА: відкрита paper-позиція → поля для кабінету (без службових)."""
+    out = {k: p.get(k) for k in _PAPER_POS_KEYS if p.get(k) is not None}
+    if spring:
+        out['spring'] = {k: spring.get(k) for k in ('charge', 'state', 'label', 'dir', 'restored')}
+    return out
+
+
+def paper_closed_view(c):
+    """ЧИСТА: закрита paper-угода → поля кабінету + віртуальний нетто $."""
+    out = {k: c.get(k) for k in _PAPER_CLOSED_KEYS if c.get(k) is not None}
+    pr = c.get('paper_result') or {}
+    if pr.get('net_usd') is not None:
+        out['net_usd'] = pr.get('net_usd')
+        out['roi_pct'] = pr.get('roi_margin_pct')
+    return out
+
+
+def _paper_snapshot(tm):
+    """Знімок paper-книги з TM (ТІ САМІ числа, що таблиця бота) + кеш."""
+    now = time.time()
+    with _lock:
+        if _paper_cache['data'] and now - _paper_cache['at'] < PAPER_TTL:
+            return _paper_cache['data']
+    st = tm.get_state()
+    pos = st.get('shadow_positions') or []
+    spr = {}
+    try:
+        sc = _scanner()
+        if sc is not None and hasattr(sc, 'spring_for'):
+            spr = sc.spring_for([p.get('symbol') for p in pos]) or {}
+    except Exception:
+        spr = {}
+    # 🚨 Сигнал угоди (той самий `dec_trade_for`, що колонка 🚨 у боті).
+    try:
+        from detection.fuel_filter import get_fuel_filter, mmd_trade_key
+        ff = get_fuel_filter()
+        dm = ff.dec_trade_for([(p.get('symbol'), p.get('side'), p.get('opened_at'))
+                               for p in pos]) if ff else {}
+        for p in pos:
+            k = mmd_trade_key(p.get('symbol'), p.get('side'), p.get('opened_at'))
+            if k in (dm or {}):
+                p['mmd'] = dm[k]
+    except Exception:
+        pass
+    data = {
+        'account': st.get('paper_account') or {},
+        'stats_all': st.get('shadow_stats') or {},
+        'positions': [paper_pos_view(p, spr.get(str(p.get('symbol') or '').upper())) for p in pos],
+        'closed': [paper_closed_view(c) for c in (st.get('shadow_closed') or [])[-PAPER_CLOSED_SHOW:]][::-1],
+        'test_mode': bool((st.get('settings') or {}).get('test_mode', True)),
+    }
+    with _lock:
+        _paper_cache.update(at=now, data=data)
+    return data
+
+
 def register_info_portal(app):
     from flask import jsonify, request
 
@@ -1005,6 +1073,36 @@ def register_info_portal(app):
         if p.get('ok') and a.get('sig') and a.get('sig') == p.get('sig'):
             return jsonify({'ok': True, 'same': True, 'sig': p['sig']})
         return jsonify(p)
+
+    @app.route('/api/info/paper')
+    def api_info_paper():
+        """🧪 Тестові угоди бота: віртуальний рахунок, статистика за період
+        (?from&to — межі дня рахує сторінка за годинником ПК), відкриті й
+        останні закриті paper-угоди. Лише читання."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Trade Manager недоступний'})
+        d = dict(_paper_snapshot(tm))
+        a = request.args
+        if a.get('from') or a.get('to'):
+            try:
+                d['stats'] = tm.stats_for_period(a.get('from'), a.get('to'), shadow=True)
+            except (TypeError, ValueError) as e:
+                return jsonify({'ok': False, 'reason': f'некоректний період: {e}'})
+        else:
+            d['stats'] = d.get('stats_all') or {}
+        d.pop('stats_all', None)
+        return jsonify({'ok': True, 'ts': time.time(), **d})
+
+    @app.route('/api/info/paper/days')
+    def api_info_paper_days():
+        """📅 Дні з закритими paper-угодами — для календаря."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Trade Manager недоступний'})
+        return jsonify({'ok': True, 'items': tm.trade_days(shadow=True)})
 
     @app.route('/api/me/watchlist', methods=['GET', 'POST'])
     def api_me_watchlist():

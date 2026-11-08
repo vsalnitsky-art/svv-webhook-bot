@@ -1218,6 +1218,343 @@
     }, 30);
   });
 
+  // 📅 КАЛЕНДАР ІЗ ДНЯМИ ТОРГІВЛІ (вимога 08.11) — той самий код у
+  // templates/smart_money.html і infosite/app.js. Рідний <input type="date">
+  // позначати дні не вміє, тож свій: день із закритими угодами має лічильник і
+  // колір за результатом дня (зелений — плюс, червоний — мінус). Межі дня — за
+  // годинником ПК (як і межі періоду статистики).
+  const TCAL_MON = ['січень', 'лютий', 'березень', 'квітень', 'травень', 'червень',
+      'липень', 'серпень', 'вересень', 'жовтень', 'листопад', 'грудень'];
+  const TCal = { el: null, inp: null, y: 0, m: 0, days: {}, onPick: null, max: '', usd: true };
+  function tcalYmd(d) {
+      const p = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+  // ЧИСТА: [[closed_at, $, %]] → {ymd: {n, w, l, usd, pct}} за МІСЦЕВИМ днем.
+  function tcalBucket(items) {
+      const out = {};
+      (items || []).forEach(it => {
+          const t = Number(it && it[0]);
+          if (!(t > 0)) return;
+          const k = tcalYmd(new Date(t * 1000));
+          const o = out[k] || (out[k] = { n: 0, w: 0, l: 0, usd: 0, pct: 0 });
+          const u = Number(it[1]) || 0, pc = Number(it[2]) || 0;
+          o.n += 1; o.usd += u; o.pct += pc;
+          if ((u || pc) > 0) o.w += 1; else if ((u || pc) < 0) o.l += 1;
+      });
+      return out;
+  }
+  function tcalFmt(ymd) { const [y, m, d] = String(ymd).split('-'); return `${d}.${m}.${y}`; }
+  function tcalClose() {
+      if (TCal.el) TCal.el.remove();
+      TCal.el = null; TCal.inp = null;
+      document.removeEventListener('mousedown', tcalOutside, true);
+      document.removeEventListener('keydown', tcalKey, true);
+  }
+  function tcalOutside(e) {
+      if (TCal.el && !TCal.el.contains(e.target) && e.target !== TCal.inp) tcalClose();
+  }
+  function tcalKey(e) { if (e.key === 'Escape') tcalClose(); }
+  // inp — поле дати (value = ДД.ММ.РРРР, data-ymd = РРРР-ММ-ДД); days — tcalBucket;
+  // onPick(ymd) — обрано день; usd — чи показувати суми в підказці.
+  function tcalOpen(inp, days, onPick, usd) {
+      if (TCal.el && TCal.inp === inp) { tcalClose(); return; }
+      tcalClose();
+      const cur = inp.dataset.ymd || tcalYmd(new Date());
+      const [y, m] = cur.split('-').map(Number);
+      Object.assign(TCal, { inp, days: days || {}, onPick, y, m: m - 1, max: tcalYmd(new Date()), usd: usd !== false });
+      const el = document.createElement('div');
+      el.className = 'tcal';
+      document.body.appendChild(el);
+      TCal.el = el;
+      tcalRender();
+      const r = inp.getBoundingClientRect();
+      const w = el.offsetWidth, h = el.offsetHeight;
+      let left = r.left + window.scrollX, top = r.bottom + window.scrollY + 4;
+      if (left + w > window.scrollX + document.documentElement.clientWidth - 8)
+          left = window.scrollX + document.documentElement.clientWidth - w - 8;
+      if (r.bottom + h + 8 > window.innerHeight && r.top > h) top = r.top + window.scrollY - h - 4;
+      el.style.left = Math.max(8, left) + 'px';
+      el.style.top = top + 'px';
+      document.addEventListener('mousedown', tcalOutside, true);
+      document.addEventListener('keydown', tcalKey, true);
+  }
+  function tcalNav(step) {
+      let m = TCal.m + step, y = TCal.y;
+      if (m < 0) { m = 11; y -= 1; } else if (m > 11) { m = 0; y += 1; }
+      TCal.m = m; TCal.y = y;
+      tcalRender();
+  }
+  function tcalPick(ymd) {
+      if (!ymd || ymd > TCal.max) return;
+      const inp = TCal.inp, fn = TCal.onPick;
+      if (inp) { inp.dataset.ymd = ymd; inp.value = tcalFmt(ymd); }
+      tcalClose();
+      if (fn) fn(ymd);
+  }
+  function tcalRender() {
+      const el = TCal.el;
+      if (!el) return;
+      const y = TCal.y, m = TCal.m;
+      const first = new Date(y, m, 1);
+      const shift = (first.getDay() + 6) % 7;          // понеділок першим
+      const start = new Date(y, m, 1 - shift);
+      const sel = TCal.inp ? TCal.inp.dataset.ymd : '';
+      const today = tcalYmd(new Date());
+      let mn = 0, musd = 0;
+      let cells = '';
+      for (let i = 0; i < 42; i++) {
+          const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+          const k = tcalYmd(d), info = TCal.days[k];
+          const out = d.getMonth() !== m, fut = k > TCal.max;
+          if (info && !out) { mn += info.n; musd += info.usd; }
+          const v = info ? (info.usd || info.pct) : 0;
+          let cls = 'tcal-d' + (out ? ' out' : '') + (fut ? ' fut' : '') +
+              (k === today ? ' today' : '') + (k === sel ? ' sel' : '');
+          let tip = tcalFmt(k), badge = '';
+          if (info) {
+              cls += v > 0 ? ' up' : (v < 0 ? ' dn' : ' eq');
+              const ap = info.pct / info.n;
+              tip += ` · угод: ${info.n} · ${info.w} W / ${info.l} L` +
+                  (TCal.usd ? ` · ${info.usd >= 0 ? '+' : '−'}$${Math.abs(info.usd).toFixed(2)}` : '') +
+                  ` · сер. рух ${ap >= 0 ? '+' : ''}${ap.toFixed(2)}%`;
+              badge = `<i class="tcal-n">${info.n}</i>`;
+          } else if (!fut) tip += ' · угод не було';
+          cells += `<button type="button" class="${cls}" title="${tip}"` +
+              (fut ? ' disabled' : ` onclick="tcalPick('${k}')"`) + `><span>${d.getDate()}</span>${badge}</button>`;
+      }
+      const sum = mn ? `угод за місяць: <b>${mn}</b>` +
+          (TCal.usd ? ` · <b class="${musd >= 0 ? 'up' : 'dn'}">${musd >= 0 ? '+' : '−'}$${Math.abs(musd).toFixed(2)}</b>` : '')
+          : 'угод цього місяця не було';
+      const nextOk = tcalYmd(new Date(y, m + 1, 1)) <= TCal.max;
+      el.innerHTML =
+          `<div class="tcal-h"><button type="button" onclick="tcalNav(-1)" title="Попередній місяць">‹</button>` +
+          `<b>${TCAL_MON[m]} ${y}</b>` +
+          `<button type="button" onclick="tcalNav(1)" title="Наступний місяць"${nextOk ? '' : ' disabled'}>›</button></div>` +
+          `<div class="tcal-w">${['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'].map(x => `<span>${x}</span>`).join('')}</div>` +
+          `<div class="tcal-g">${cells}</div>` +
+          `<div class="tcal-s">${sum}</div>` +
+          `<div class="tcal-f"><span class="tcal-lg"><i class="up"></i>плюс <i class="dn"></i>мінус · N угод</span>` +
+          `<button type="button" onclick="tcalPick('${today}')">Сьогодні</button></div>`;
+  }
+
+  window.tcalPick = tcalPick; window.tcalNav = tcalNav;   // інлайнові onclick календаря
+
+  // ═══ 🧪 ТЕСТОВІ (paper) УГОДИ БОТА — лише перегляд (вимога 08.11) ═══════
+  // Ті самі числа, що панель «🧪 PAPER» і таблиця Open Paper Positions у боті
+  // (`/api/info/paper` читає get_state TM). Суми за замовчуванням сховані.
+  var PP = { period: { mode: "all" }, last: null, days: {}, daysAt: 0, shown: false, busy: false };
+  var PP_KEY = "vsv_pp_period", PP_AMT = "vsv_pp_amt", PP_CL = "vsv_pp_closed_open";
+  try { PP.period = JSON.parse(localStorage.getItem(PP_KEY) || "") || PP.period; } catch (e) {}
+  try { PP.shown = localStorage.getItem(PP_AMT) === "1"; } catch (e) {}
+  var PP_MON = 86400;
+  function ppDayStart(ymd) {
+    var a = String(ymd || "").split("-").map(Number);
+    return a[0] ? new Date(a[0], a[1] - 1, a[2]).getTime() / 1000 : null;
+  }
+  function ppNextDay(ts) { return ppDayStart(tcalYmd(new Date((ts + PP_MON + 3600) * 1000))); }
+  // ЧИСТА: режим періоду → {from, to, label} — дзеркало _tmPeriodRange бота.
+  function ppRange(p) {
+    var now = new Date(), t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+    switch (p.mode) {
+      case "today": return { from: t0, to: t0 + PP_MON, label: "сьогодні" };
+      case "7d": return { from: t0 - 6 * PP_MON, to: t0 + PP_MON, label: "за 7 днів" };
+      case "30d": return { from: t0 - 29 * PP_MON, to: t0 + PP_MON, label: "за 30 днів" };
+      case "day": { var f = ppDayStart(p.day); return f == null ? null : { from: f, to: ppNextDay(f), label: "за " + tcalFmt(p.day) }; }
+      case "range": {
+        var a = ppDayStart(p.from), b = ppDayStart(p.to);
+        if (a == null || b == null) return null;
+        var lo = Math.min(a, b), hi = Math.max(a, b);
+        var x = a <= b ? p.from : p.to, y = a <= b ? p.to : p.from;
+        return { from: lo, to: ppNextDay(hi), label: x === y ? "за " + tcalFmt(x) : tcalFmt(x) + " — " + tcalFmt(y) };
+      }
+      default: return { from: null, to: null, label: "за весь час" };
+    }
+  }
+  function ppAmt(h) { return PP.shown ? h : '<span class="pp-mask">••••</span>'; }
+  function ppUsd(v) { v = Number(v || 0); return ppAmt((v >= 0 ? "+" : "−") + "$" + Math.abs(v).toFixed(2)); }
+  function ppMoney(v) { return ppAmt("$" + Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })); }
+  function ppCls(v) { v = Number(v || 0); return v > 0 ? "pp-up" : (v < 0 ? "pp-dn" : ""); }
+  function ppPct(v, dp) { v = Number(v || 0); return (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(dp == null ? 2 : dp) + "%"; }
+
+  function ppSync() {
+    var P = PP.period, today = tcalYmd(new Date());
+    document.querySelectorAll("#pp-period button[data-p]").forEach(function (b) {
+      b.classList.toggle("on", b.getAttribute("data-p") === P.mode);
+    });
+    $("#pp-day-wrap").style.display = P.mode === "day" ? "inline-flex" : "none";
+    $("#pp-range-wrap").style.display = P.mode === "range" ? "inline-flex" : "none";
+    [["#pp-day", P.day], ["#pp-from", P.from], ["#pp-to", P.to]].forEach(function (x) {
+      var el = $(x[0]); if (el) { el.dataset.ymd = x[1] || today; el.value = tcalFmt(x[1] || today); }
+    });
+    var eb = $("#pp-amt"); if (eb) eb.textContent = PP.shown ? "🙈 Сховати суми" : "👁 Показати суми";
+  }
+  function ppSave() { try { localStorage.setItem(PP_KEY, JSON.stringify(PP.period)); } catch (e) {} }
+
+  function ppCard(l, v, sub, vc, tip) {
+    return '<div class="pp-kpi" title="' + esc(tip || "") + '"><div class="pp-kpi-l">' + l + '</div>' +
+      '<div class="pp-kpi-v ' + (vc || "") + '">' + v + "</div>" + (sub ? '<div class="pp-kpi-s">' + sub + "</div>" : "") + "</div>";
+  }
+  function ppRenderKpis(d, label) {
+    var st = d.stats || {}, pa = d.account || {}, host = $("#pp-kpis");
+    var since = st.pnl_since_from_usd != null ? st.pnl_since_from_usd : st.total_pnl_usd;
+    var base = (pa.balance || 0) - (since || 0);
+    var dp = base > 0 ? (st.total_pnl_usd || 0) / base * 100 : null;
+    var bal = ppCard("Тестовий баланс", ppMoney(pa.equity),
+      dp == null ? "депозит " + ppMoney(pa.deposit) : '<span class="' + ppCls(dp) + '">' + ppPct(dp) + "</span> депозиту",
+      "", "Віртуальний рахунок: депозит + чистий результат закритих тестових угод (з комісіями) + нереалізований результат відкритих. " +
+      "Депозит $" + (pa.deposit || 0) + " · сума на угоду $" + (pa.margin_usd || 0) + " × плече " + (pa.leverage || 0) + "x · комісія " + (pa.fee_pct || 0) + "% / сторону.");
+    var n = st.total_closed || 0;
+    if (!n) { host.innerHTML = bal + '<div class="pp-empty">Закритих тестових угод ' + label + " немає</div>"; return; }
+    var wr = st.win_rate || 0, pf = st.profit_factor;
+    host.innerHTML =
+      ppCard("Чистий P&amp;L", ppUsd(st.total_pnl_usd),
+        '<span class="pp-up">' + ppUsd(st.gross_profit_usd) + '</span> · <span class="pp-dn">' + ppUsd(st.gross_loss_usd) + "</span>",
+        PP.shown ? ppCls(st.total_pnl_usd) : "", "Сумарний віртуальний результат закритих тестових угод — нетто з комісіями.") +
+      bal +
+      ppCard("Відсоток успішних", wr + "%",
+        n + ' угод · <span class="pp-up">' + (st.wins || 0) + ' W</span> · <span class="pp-dn">' + (st.losses || 0) + " L</span>" +
+        '<div class="pp-bar"><i style="width:' + Math.max(0, Math.min(100, wr)) + '%"></i></div>',
+        wr >= 50 ? "pp-up" : "pp-dn", "Частка угод, закритих у плюсі.") +
+      ppCard("Profit factor", pf == null ? (st.gross_profit_usd > 0 ? "∞" : "—") : Number(pf).toFixed(2),
+        'сер. <span class="pp-up">' + ppUsd(st.avg_win_usd) + '</span> / <span class="pp-dn">' + ppUsd(st.avg_loss_usd) + "</span>",
+        pf == null ? (st.gross_profit_usd > 0 ? "pp-up" : "") : (pf >= 1 ? "pp-up" : "pp-dn"),
+        "Сума прибутку ÷ сума збитку. Більше 1 — система заробляє.") +
+      ppCard("Найкраща / найгірша", '<span class="' + (PP.shown ? ppCls(st.best_usd) : "") + '">' + ppUsd(st.best_usd) + "</span>",
+        '<span class="' + ppCls(st.worst_usd) + '">' + ppUsd(st.worst_usd) + "</span> · сер. рух " + ppPct(st.avg_pnl_pct),
+        "", "Найбільший результат однієї угоди і найбільший збиток. «Сер. рух» — рух ціни без плеча й комісій.") +
+      ppCard("Комісії (оцінка)", ppAmt("$" + Number(st.total_fees_usd || 0).toFixed(2)), "вхід + вихід, тариф paper", "",
+        "Оцінка комісій тестових угод. Уже врахована в чистому P&L.");
+    var es = st.entry_score_breakdown, eh = $("#pp-es"), parts = [];
+    var NM = { good: "✅ сильний", marginal: "🟡 середній", poor: "⚠️ слабкий" };
+    ["good", "marginal", "poor"].forEach(function (k) {
+      var b = es && es[k]; if (!b || !b.count) return;
+      parts.push("<span>" + NM[k] + ": " + b.count + ' (<b class="' + (b.win_rate >= 50 ? "pp-up" : "pp-dn") + '">' +
+        b.win_rate + '% у плюсі</b>, <b class="' + ppCls(b.avg_pnl_pct) + '">сер. ' + ppPct(b.avg_pnl_pct) + "</b>)</span>");
+    });
+    eh.innerHTML = parts.length ? "🧪 Перевірка оцінки входу: " + parts.join("") : "";
+    eh.style.display = parts.length ? "" : "none";
+  }
+
+  var PP_ALERT = { ok: ["✓ OK", "ok"], against: ["⚠ ПРОТИ", "against"], pre: ["⚑ ДО ВХОДУ", "pre"] };
+  function ppTimer(t) {
+    var s = Math.max(0, Math.floor(Date.now() / 1000 - t)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+    var p = function (n) { return String(n).padStart(2, "0"); };
+    return (h >= 24 ? Math.floor(h / 24) + "д " + p(h % 24) : p(h)) + ":" + p(m) + ":" + p(s % 60);
+  }
+  function ppCharge(p) {
+    var a = p.spring_open && p.spring_open.charge, c = p.spring && p.spring.charge;
+    if (a == null && c == null) return '<span class="muted">—</span>';
+    var now = c != null ? Math.round(c) : null, op = a != null ? Math.round(a) : null;
+    var col = now == null ? "var(--muted)" : (now >= 65 ? "#f87171" : (now >= 45 ? "#fbbf24" : "#94a3b8"));
+    return '<span class="pp-chg" title="Заряд Пружини: на вході → зараз">' + (op == null ? "—" : op) + " → <b style=\"color:" + col + '">' +
+      (now == null ? "—" : now) + '</b><i><b style="width:' + Math.max(0, Math.min(100, now || 0)) + "%;background:" + col + '"></b></i></span>';
+  }
+  function ppLvl(v, done) {
+    if (!v) return '<span class="muted">—</span>';
+    return fmtPrice(v).replace("$", "") + (done ? ' <span class="pp-up">✓</span>' : "");
+  }
+  function ppRenderOpen(d) {
+    var rows = d.positions || [], tb = $("#pp-open tbody");
+    $("#pp-open-n").textContent = rows.length;
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="11" class="muted">Відкритих тестових угод немає</td></tr>'; return; }
+    tb.innerHTML = rows.map(function (p) {
+      var pc = Number(p.pnl_pct || 0), n = p.pnl_net, z = p.paper_size || {};
+      var cl = (n ? n.net_usd : pc) >= 0 ? "pp-up" : "pp-dn";
+      var pnl = ppPct(pc) + (n ? " · " + ppUsd(n.net_usd) : "");
+      var tip = n ? "Маржа $" + Number(z.margin || 0).toFixed(2) + " × " + z.lev + "x · брутто " + ppUsd(n.gross_usd).replace(/<[^>]+>/g, "") +
+        " · комісії −$" + Number(n.fees_usd || 0).toFixed(2) + (n.roi_pct != null ? " · ROI " + ppPct(n.roi_pct, 1) : "") : "";
+      var a = p.mmd && p.mmd.alert, al = a && PP_ALERT[a.level];
+      return "<tr><td class=\"sym\">" + tvSym(p.symbol) + '</td><td class="' + (p.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(p.side) + "</td>" +
+        '<td class="r">' + fmtPrice(p.entry_price) + '</td><td class="r">' + fmtPrice(p.current_price) + "</td>" +
+        '<td class="r ' + cl + '" title="' + esc(tip) + '">' + pnl + "</td>" +
+        "<td>" + ppCharge(p) + "</td>" +
+        "<td>" + (al ? '<span class="pp-al ' + al[1] + '" title="' + esc(a.text || "") + '">' + al[0] + (a.level === "against" && a.tf ? " " + esc(a.tf) : "") + "</span>" : '<span class="muted">—</span>') + "</td>" +
+        '<td class="r">' + ppLvl(p.manual_sl) + '</td><td class="r">' + ppLvl(p.manual_tp1, p.tp1_done) + '</td><td class="r">' + ppLvl(p.manual_tp) + "</td>" +
+        '<td class="r pp-timer" data-since="' + Math.floor(p.opened_at || 0) + '">' + (p.opened_at ? ppTimer(p.opened_at) : "—") + "</td></tr>";
+    }).join("");
+  }
+  var PP_REASON = { manual: "✋ закрито вручну", stop_loss: "🛡 Stop Loss", take_profit: "🎯 Take Profit",
+    manual_sl: "🛡 Manual SL", manual_tp: "🎯 Manual TP-2", pilot_target: "🎯 ціль автопілота",
+    breakeven: "🟰 беззбиток", sbr_exit: "🔔 протилежний SBR", sbr_trail_exit: "🔔⏳ трейл SBR",
+    opposite_ob_exit: "🧱 протилежний OB", mm_flat_exit: "🧮 МММ LiQ ⚖", mm_against_exit: "🧮 МММ LiQ проти" };
+  function ppRenderClosed(d) {
+    var rows = d.closed || [], tb = $("#pp-closed tbody");
+    $("#pp-closed-n").textContent = rows.length;
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">Закритих тестових угод ще немає</td></tr>'; return; }
+    tb.innerHTML = rows.map(function (c) {
+      var pc = Number(c.pnl_pct || 0), t = new Date((c.closed_at || 0) * 1000);
+      var p2 = function (n) { return String(n).padStart(2, "0"); };
+      return "<tr><td>" + p2(t.getDate()) + "." + p2(t.getMonth() + 1) + " " + p2(t.getHours()) + ":" + p2(t.getMinutes()) + "</td>" +
+        '<td class="sym">' + tvSym(c.symbol) + '</td><td class="' + (c.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(c.side) + "</td>" +
+        '<td class="r">' + fmtPrice(c.entry_price) + '</td><td class="r">' + fmtPrice(c.exit_price) + "</td>" +
+        '<td class="r ' + ppCls(c.net_usd != null ? c.net_usd : pc) + '">' + ppPct(pc) + (c.net_usd != null ? " · " + ppUsd(c.net_usd) : "") + "</td>" +
+        '<td style="font-family:var(--font)">' + esc(PP_REASON[c.reason] || c.reason || "—") + "</td></tr>";
+    }).join("");
+  }
+  function ppClosedApply() {
+    var on = false; try { on = localStorage.getItem(PP_CL) === "1"; } catch (e) {}
+    $("#pp-closed-body").style.display = on ? "" : "none";
+    $("#pp-closed-head").setAttribute("aria-expanded", on ? "true" : "false");
+  }
+  function loadPaper() {
+    var card = $("#pp-card"); if (!card || PP.busy) return;
+    var r = ppRange(PP.period);
+    if (!r) return;
+    var q = r.from != null ? "?from=" + r.from + "&to=" + r.to : "";
+    PP.busy = true;
+    api("/api/info/paper" + q).then(function (d) {
+      PP.busy = false;
+      if (!d || !d.ok) { card.style.display = "none"; return; }
+      card.style.display = "";
+      PP.last = d; PP.label = r.label;
+      ppSync(); ppClosedApply();
+      $("#pp-note").textContent = r.label;
+      var sa = d.account || {};
+      $("#pp-inline").textContent = "депозит $" + (sa.deposit || 0) + " · угода $" + (sa.margin_usd || 0) + " × " + (sa.leverage || 0) + "x · комісія " + (sa.fee_pct || 0) + "%";
+      ppRenderKpis(d, r.label); ppRenderOpen(d); ppRenderClosed(d);
+    }, function () { PP.busy = false; });
+  }
+  function ppRerender() { if (PP.last) { ppSync(); ppRenderKpis(PP.last, PP.label || ""); ppRenderOpen(PP.last); ppRenderClosed(PP.last); } }
+  function ppOpenCal(inp) {
+    var go = function () {
+      tcalOpen(inp, PP.days, function (ymd) {
+        PP.period[inp.dataset.k] = ymd; ppSave(); loadPaper();
+      }, PP.shown);
+    };
+    if (Date.now() - PP.daysAt < 60000) { go(); return; }
+    api("/api/info/paper/days").then(function (j) {
+      if (j && j.ok) { PP.days = tcalBucket(j.items); PP.daysAt = Date.now(); }
+      go();
+    }, go);
+  }
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest) return;
+    var b = e.target.closest("#pp-period button[data-p]");
+    if (b) {
+      var P = PP.period, today = tcalYmd(new Date());
+      P.mode = b.getAttribute("data-p");
+      if (P.mode === "day" && !P.day) P.day = today;
+      if (P.mode === "range") { if (!P.from) P.from = today; if (!P.to) P.to = today; }
+      ppSave(); ppSync(); loadPaper(); return;
+    }
+    var di = e.target.closest(".pp-dateinp"); if (di) { ppOpenCal(di); return; }
+    if (e.target.closest("#pp-amt")) {
+      PP.shown = !PP.shown; try { localStorage.setItem(PP_AMT, PP.shown ? "1" : "0"); } catch (x) {}
+      ppRerender(); return;
+    }
+    if (e.target.closest("#pp-closed-head")) {
+      var on = false; try { on = localStorage.getItem(PP_CL) === "1"; } catch (x) {}
+      try { localStorage.setItem(PP_CL, on ? "0" : "1"); } catch (x) {}
+      ppClosedApply();
+    }
+  });
+  setInterval(function () {
+    document.querySelectorAll(".pp-timer[data-since]").forEach(function (el) {
+      var t = Number(el.getAttribute("data-since")); if (t > 0) el.textContent = ppTimer(t);
+    });
+  }, 1000);
+
   // ═══ показ / автооновлення ═════════════════════════════════════════════
   // Акаунт є, але доступ закрито (вимога 09.11): сторінка не показується,
   // лише пояснення. Повідомлення — від бота (`error` у відповіді 403).
@@ -1233,6 +1570,7 @@
     if (dn) { dn.textContent = (!ok && DENY_TXT[code]) || ""; dn.style.display = (!ok && DENY_TXT[code]) ? "" : "none"; }
     var lay = $("#iw-layout"); if (lay) lay.style.display = ok ? "" : "none";
     if (!ok) { var n = $("#notify-card"); if (n) n.style.display = "none"; }
+    if (!ok) { var pc = $("#pp-card"); if (pc) pc.style.display = "none"; }
     var tb = $(".topbar"); if (tb) tb.style.display = ok ? "" : "none";
   }
 
@@ -1246,6 +1584,8 @@
         loadUniverse();
         loadRows();
         loadCoin(true);
+        loadPaper();
+        setInterval(function () { if (!document.hidden) loadPaper(); }, 10000);
         setInterval(function () { if (!document.hidden) loadRows(); }, ROWS_MS);
         setInterval(function () { if (!document.hidden) loadCoin(false); }, COIN_MS);
         setInterval(function () { if (!document.hidden) { refreshAuth(); refreshNotify(); } }, 60000);

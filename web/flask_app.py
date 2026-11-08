@@ -6092,6 +6092,16 @@ def register_api_routes(app):
         except (TypeError, ValueError) as e:
             return jsonify({'ok': False, 'reason': f'некоректний період: {e}'})
 
+    @app.route('/api/tm/trade-days')
+    def api_tm_trade_days():
+        """📅 Час закриття і результат кожної закритої угоди (?book=real|paper)
+        — сторінка позначає в календарі дні, коли була торгівля."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Trade Manager недоступний'})
+        return jsonify({'ok': True, 'items': tm.trade_days(shadow=(request.args.get('book') == 'paper'))})
+
     @app.route('/api/tm/balance')
     def api_tm_balance():
         """💰 Баланс USDT на Bybit (кеш 30с у TM)."""

@@ -193,6 +193,55 @@ def closed_stats(trades) -> Dict:
     }
 
 
+def paper_size(settings, entry, sl_price=None):
+    """🧪 ЧИСТА: розмір paper-угоди за віртуальним рахунком.
+
+    - `fixed` (деф.): маржа = `paper_margin_usd` (не більше депозиту),
+      нотіонал = маржа × `paper_leverage` — SL не потрібен;
+    - `risk`: втрата на SL = `paper_risk_pct` % депозиту, нотіонал = ризик /
+      відстань до SL, маржа ≤ депозиту (`capped`); без SL → фолбек `fixed`.
+    Комісія `paper_fee_pct` %/сторону застосовується при закритті."""
+    s = settings or {}
+    try:
+        e = float(entry or 0)
+    except (TypeError, ValueError):
+        return None
+    if e <= 0:
+        return None
+    dep = max(1.0, float(s.get('paper_deposit', 1000.0) or 1000.0))
+    lev = max(1, int(float(s.get('paper_leverage', s.get('leverage', 10)) or 10)))
+    fee = max(0.0, float(s.get('paper_fee_pct', 0.055) or 0.0))
+    mode = s.get('paper_sizing_mode', 'fixed')
+    d = None
+    try:
+        sl = float(sl_price) if sl_price else 0.0
+        if sl > 0 and sl != e:
+            d = abs(e - sl) / e
+    except (TypeError, ValueError):
+        sl = 0.0
+    capped, fallback = False, False
+    risk_pct = float(s.get('paper_risk_pct', 3.0) or 3.0)
+    if mode == 'risk' and d:
+        notional = dep * risk_pct / 100.0 / d
+        margin = notional / lev
+        if margin > dep:
+            margin, notional, capped = dep, dep * lev, True
+    else:
+        fallback = mode == 'risk'
+        margin = min(max(0.01, float(s.get('paper_margin_usd', 100.0) or 100.0)), dep)
+        capped = margin < float(s.get('paper_margin_usd', 100.0) or 100.0)
+        notional = margin * lev
+    return {
+        'mode': 'fixed' if (mode != 'risk' or fallback) else 'risk', 'fallback': fallback,
+        'cash': round(dep, 2), 'risk_pct': risk_pct, 'lev': lev, 'fee_pct': fee,
+        'sl_price': round(sl, 10) if d else None,
+        'sl_dist_pct': round(d * 100, 4) if d else None,
+        'notional': round(notional, 4), 'margin': round(margin, 4),
+        'qty': notional / e, 'risk_at_sl': round(notional * d, 4) if d else None,
+        'risk_usd': round(notional * d, 4) if d else None, 'capped': capped,
+    }
+
+
 def real_pnl_net(side, entry, current, qty, leverage, fee_pct, gross_usd=None):
     """💰 PnL ВІДКРИТОЇ реальної угоди з урахуванням ПЛЕЧА і КОМІСІЙ.
 
@@ -366,6 +415,14 @@ DEFAULT_SETTINGS = {
     'paper_cash': 100.0,             # fixed cash base ($) risk is measured against
     'paper_risk_pct': 3.0,           # loss at SL as % of paper_cash (e.g. 3% = $3)
     'paper_fee_pct': 0.055,          # commission % PER SIDE (Bybit taker ≈ 0.055%)
+    # 🧪 Віртуальний рахунок paper (вимога 08.11): тестовий депозит, сума на
+    # угоду (МАРЖА) і власне плече paper. `fixed` — кожна угода = маржа ×
+    # плече (працює й без SL); `risk` — старий ризик-сайзинг від депозиту
+    # (`paper_risk_pct` на SL), без SL → фолбек на `fixed`.
+    'paper_sizing_mode': 'fixed',    # 'fixed' | 'risk'
+    'paper_deposit': 1000.0,         # тестовий депозит, $
+    'paper_margin_usd': 100.0,       # сума на угоду (маржа), $
+    'paper_leverage': 10,            # плече paper (1-125)
     # 🟰 Breakeven auto-close (🎯 БЗ, per-position toggle): round-trip fee buffer
     # so «breakeven» covers entry+exit commissions (default 0.12% ≈ 2×0.06%).
     'breakeven_fee_pct': 0.12,
@@ -947,6 +1004,10 @@ class TradeManager:
                 # автозаповнення TP лишалось мертвим попри новий дефолт.
                 # ОДНОРАЗОВА міграція вмикає його один раз; далі поважаємо вибір
                 # користувача. (Той самий прийом, що `interval_migrated_v2`.)
+                # 🧪 Плече paper — новий ключ: переносимо РЕАЛЬНЕ плече, щоб
+                # чинний розрахунок paper не змінився мовчки.
+                if 'paper_leverage' not in stored and stored.get('leverage'):
+                    merged['paper_leverage'] = stored.get('leverage')
                 if not merged.get('pilot_autofill_migrated_v1'):
                     merged['pilot_autofill_tp'] = True
                     merged['pilot_autofill_migrated_v1'] = True
@@ -1093,6 +1154,20 @@ class TradeManager:
                 self._settings['paper_fee_pct'] = max(0.0, min(1.0, float(self._settings.get('paper_fee_pct', 0.055) or 0.0)))
             except (TypeError, ValueError):
                 self._settings['paper_fee_pct'] = 0.055
+            if self._settings.get('paper_sizing_mode') not in ('fixed', 'risk'):
+                self._settings['paper_sizing_mode'] = 'fixed'
+            try:
+                self._settings['paper_deposit'] = max(1.0, min(1e9, float(self._settings.get('paper_deposit', 1000.0) or 1000.0)))
+            except (TypeError, ValueError):
+                self._settings['paper_deposit'] = 1000.0
+            try:
+                self._settings['paper_margin_usd'] = max(0.01, min(1e9, float(self._settings.get('paper_margin_usd', 100.0) or 100.0)))
+            except (TypeError, ValueError):
+                self._settings['paper_margin_usd'] = 100.0
+            try:
+                self._settings['paper_leverage'] = max(1, min(125, int(float(self._settings.get('paper_leverage', 10) or 10))))
+            except (TypeError, ValueError):
+                self._settings['paper_leverage'] = 10
             try:
                 self._settings['breakeven_fee_pct'] = max(0.0, min(5.0, float(self._settings.get('breakeven_fee_pct', 0.12) or 0.0)))
             except (TypeError, ValueError):
@@ -7393,10 +7468,10 @@ class TradeManager:
         _sz = self._paper_sizing(float(entry_price), _sl)
         if _sz:
             _cap = ' · ⚠️ маржу обмежено кешем' if _sz.get('capped') else ''
-            print(f"[TM] [TEST] 🧪 sizing {symbol} {side}: notional ${_sz['notional']:.2f} "
+            _risk = (f" · ризик на SL ${_sz['risk_at_sl']:.2f}" if _sz.get('risk_at_sl') else '')
+            print(f"[TM] [TEST] 🧪 sizing {symbol} {side} [{_sz.get('mode')}]: notional ${_sz['notional']:.2f} "
                   f"(qty {_sz['qty']:.6g}) · маржа ${_sz['margin']:.2f} · плече {_sz['lev']}x · "
-                  f"ризик на SL ${_sz['risk_at_sl']:.2f} ({_sz['risk_pct']}% від ${_sz['cash']}) · "
-                  f"SL {self._fmt_sltp(_sz['sl_price'])} (dist {_sz['sl_dist_pct']:.2f}%){_cap}")
+                  f"депозит ${_sz['cash']}{_risk}{_cap}")
         pos = {
             'symbol': symbol,
             'side': side,
@@ -7688,7 +7763,8 @@ class TradeManager:
             pass
 
         # 🧪 Net paper result WITH commissions (from the open-time risk sizing).
-        _pp = self._paper_pnl(pos.get('sz'), entry, exit_price, pos['side'])
+        _psz = self._paper_size_of(pos)
+        _pp = self._paper_pnl(_psz, entry, exit_price, pos['side'])
         closed = {
             'symbol': symbol,
             'side': pos['side'],
@@ -7705,7 +7781,7 @@ class TradeManager:
             'ctr_open': pos.get('ctr_open'),
             'ctr_close': self._ctr_snapshot(symbol),
             # 🧪 Risk-sizing snapshot (at open) + net $ result (with commissions).
-            'paper_sizing': pos.get('sz'),
+            'paper_sizing': _psz,
             'paper_result': _pp,
             # All Manual SL/TP levels that applied during the trade (+ final) —
             # shown in the trade-history modal.
@@ -7780,44 +7856,54 @@ class TradeManager:
     # ============================================================
 
     def _paper_sizing(self, entry: float, sl_price) -> Optional[Dict]:
-        """🧪 Risk-based PAPER sizing: size the position so the loss at the
-        strategic SL equals a fixed % (`paper_risk_pct`) of a fixed cash base
-        (`paper_cash`), opened with `leverage`. Margin is capped to the cash base
-        — if the SL is so tight that the needed margin > cash, we cap it and the
-        actual risk ends up SMALLER than target (flagged `capped`). Returns the
-        sizing dict, or None when disabled / no usable SL (caller keeps the unit
-        model). Real trades never use this — the exchange sizes/charges them."""
+        """🧪 Розмір paper-позиції за налаштуваннями віртуального рахунку
+        (`paper_size`, ЧИСТА). Без SL у режимі `risk` → фолбек на `fixed`, тож
+        угода ЗАВЖДИ має розмір і рахує $ (раніше без SL було $0.00)."""
+        return paper_size(self._settings, entry, sl_price)
+
+    def _paper_size_of(self, pos: Dict) -> Optional[Dict]:
+        """Розмір відкритої paper-позиції: знімок із відкриття, а для старих
+        угод без нього — за поточними налаштуваннями на ціні входу (`late`)."""
+        sz = pos.get('sz')
+        if sz:
+            return sz
+        sz = paper_size(self._settings, pos.get('entry_price'), None)
+        if sz:
+            sz = dict(sz, late=True)
+        return sz
+
+    def paper_account(self) -> Dict:
+        """🧪 Віртуальний рахунок paper (публічний, бере лок сам)."""
+        with self._lock:
+            rows = []
+            for sym, p in self._shadow_positions.items():
+                sz = self._paper_size_of(p)
+                cur = self._get_current_price(sym, cache_only=True) or p.get('entry_price')
+                rows.append({'paper_size': sz, 'pnl_net': real_pnl_net(
+                    p.get('side'), p.get('entry_price'), cur, (sz or {}).get('qty'),
+                    (sz or {}).get('lev'), (sz or {}).get('fee_pct')) if sz else None})
+            return self._paper_account_locked(rows)
+
+    def _paper_account_locked(self, rows) -> Dict:
+        """Депозит + реалізований нетто (усі закриті paper-угоди) + нереалізований
+        нетто відкритих (рядки з `pnl_net`/`paper_size`). Викликати ПІД локом."""
         s = self._settings
-        if not s.get('paper_risk_enabled', True):
-            return None
-        try:
-            entry = float(entry); sl = float(sl_price)
-        except (TypeError, ValueError):
-            return None
-        if entry <= 0 or sl <= 0:
-            return None
-        d = abs(entry - sl) / entry
-        if d <= 0:
-            return None
-        cash = float(s.get('paper_cash', 100.0) or 100.0)
-        risk_pct = float(s.get('paper_risk_pct', 3.0) or 3.0)
-        lev = int(s.get('leverage', 10) or 10)
-        fee_pct = float(s.get('paper_fee_pct', 0.055) or 0.0)
-        risk_usd = cash * risk_pct / 100.0
-        notional = risk_usd / d
-        margin = notional / lev
-        capped = False
-        if margin > cash:                 # SL too tight for target risk → cap
-            margin = cash
-            notional = margin * lev
-            capped = True
-        qty = notional / entry
+        dep = float(s.get('paper_deposit', 1000.0) or 1000.0)
+        realized = sum(_trade_usd(c) for c in self._shadow_closed)
+        unreal = sum(float((r.get('pnl_net') or {}).get('net_usd') or 0) for r in rows)
+        used = sum(float((r.get('paper_size') or {}).get('margin') or 0) for r in rows)
+        bal = dep + realized
         return {
-            'cash': round(cash, 2), 'risk_pct': risk_pct,
-            'risk_usd': round(risk_usd, 4), 'lev': lev, 'fee_pct': fee_pct,
-            'sl_price': round(sl, 10), 'sl_dist_pct': round(d * 100, 4),
-            'notional': round(notional, 4), 'margin': round(margin, 4),
-            'qty': qty, 'risk_at_sl': round(notional * d, 4), 'capped': capped,
+            'deposit': round(dep, 2), 'realized_usd': round(realized, 2),
+            'unrealized_usd': round(unreal, 2), 'balance': round(bal, 2),
+            'equity': round(bal + unreal, 2), 'margin_used': round(used, 2),
+            'available': round(bal + min(0.0, unreal) - used, 2),
+            'open_n': len(rows),
+            'pnl_pct': round(realized / dep * 100, 3) if dep else None,
+            'mode': s.get('paper_sizing_mode', 'fixed'),
+            'margin_usd': float(s.get('paper_margin_usd', 100.0) or 0),
+            'leverage': int(s.get('paper_leverage', 10) or 10),
+            'fee_pct': float(s.get('paper_fee_pct', 0.055) or 0),
         }
 
     @staticmethod
@@ -8497,6 +8583,13 @@ class TradeManager:
                     'pnl_pct': round(pnl_pct, 3),
                     'px': self.price_meta(sym),
                 }
+                # 🧪 Віртуальний $: нетто з плечем і комісіями (розмір paper).
+                _psz = self._paper_size_of(pos)
+                if _psz:
+                    pos_dict['paper_size'] = {k: _psz.get(k) for k in
+                                              ('margin', 'notional', 'lev', 'qty', 'mode', 'late')}
+                    pos_dict['pnl_net'] = real_pnl_net(pos['side'], entry, current, _psz.get('qty'),
+                                                       _psz.get('lev'), _psz.get('fee_pct'))
                 health = self._compute_health(pos, is_shadow=True)
                 if health is not None:
                     pos_dict['health'] = health
@@ -8529,6 +8622,7 @@ class TradeManager:
                 'price_feed': self.price_feed_health(),
                 'shadow_closed': shadow_closed,
                 'shadow_stats': {**sh_stats, 'entry_score_breakdown': entry_stats_shadow},
+                'paper_account': self._paper_account_locked(shadow_positions),
                 'settings': dict(self._settings),
             }
     
@@ -8582,6 +8676,23 @@ class TradeManager:
             _trade_usd(c) for c in src
             if lo is None or float(c.get('closed_at') or 0) >= lo), 2)
         return st
+
+    def trade_days(self, shadow: bool = False):
+        """📅 Закриті угоди для календаря: [[closed_at, $ нетто, рух %]] —
+        ті самі записи, що статистика за період. День рахує СТОРІНКА за
+        годинником ПК (як межі періоду), тож тут лише час закриття."""
+        with self._lock:
+            src = list(self._shadow_closed if shadow else self._closed_trades)
+        out = []
+        for c in src:
+            try:
+                t = float(c.get('closed_at') or 0)
+            except (TypeError, ValueError):
+                continue
+            if t > 0:
+                out.append([round(t, 1), round(_trade_usd(c), 4),
+                            round(float(c.get('pnl_pct') or 0), 4)])
+        return out
 
     WALLET_TTL_SEC = 30.0
 
@@ -9789,7 +9900,7 @@ class TradeManager:
             cap = ' ⚠️(маржу обмежено кешем)' if sz.get('capped') else ''
             return (f"💵 Розмір: notional ${float(sz.get('notional', 0)):.2f} · "
                     f"маржа ${float(sz.get('margin', 0)):.2f} · плече {sz.get('lev')}x · "
-                    f"ризик на SL ${float(sz.get('risk_at_sl', 0)):.2f} "
+                    f"ризик на SL ${float(sz.get('risk_at_sl') or 0):.2f} "
                     f"({sz.get('risk_pct')}% від ${sz.get('cash')}) · "
                     f"SL {self._fmt_sltp(sz.get('sl_price'))} (dist {sz.get('sl_dist_pct')}%){cap}\n")
         except Exception:

@@ -1098,6 +1098,42 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     padding: 3px 10px; border-radius: 4px; cursor: pointer; font-weight: 600; }
 .bb-period button:hover { color: #fff; }
 .bb-period button.on { background: #2b2f36; color: #f7a600; }
+/* 📅 Календар із днями торгівлі */
+.tcal { position: absolute; z-index: 9999; width: 272px; padding: 10px; background: #17181e;
+  border: 1px solid #2b2f36; border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.55);
+  color: #e6e8ee; font: 12px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.tcal-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.tcal-h b { font-size: 13px; text-transform: capitalize; }
+.tcal-h button { width: 26px; height: 26px; border-radius: 6px; border: 1px solid #2b2f36;
+  background: #1f2128; color: #e6e8ee; cursor: pointer; font-size: 15px; line-height: 1; }
+.tcal-h button:disabled { opacity: .3; cursor: default; }
+.tcal-w, .tcal-g { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.tcal-w span { text-align: center; color: #7d8494; font-size: 10px; text-transform: uppercase; padding-bottom: 2px; }
+.tcal-d { position: relative; height: 32px; border-radius: 6px; border: 1px solid transparent;
+  background: transparent; color: #cfd3dc; cursor: pointer; font: 600 12px/1 ui-monospace, monospace; }
+.tcal-d:hover:not(:disabled) { border-color: #3b4252; background: #1f2128; }
+.tcal-d.out { color: #4b5160; }
+.tcal-d.fut { color: #3a3f4b; cursor: default; }
+.tcal-d.today { border-color: #f7a600; }
+.tcal-d.sel { background: #2b3550; border-color: #60a5fa; color: #fff; }
+.tcal-d.up { background: rgba(32,178,108,.20); color: #6ee7b7; }
+.tcal-d.dn { background: rgba(239,69,74,.20); color: #fca5a5; }
+.tcal-d.eq { background: rgba(148,163,184,.16); }
+.tcal-d.up.sel, .tcal-d.dn.sel { border-color: #60a5fa; }
+.tcal-d.out.up, .tcal-d.out.dn { opacity: .5; }
+.tcal-n { position: absolute; top: 2px; right: 3px; min-width: 12px; padding: 0 2px; border-radius: 6px;
+  font: 700 9px/12px ui-monospace, monospace; font-style: normal; color: #0b0c10; background: #cbd5e1; }
+.tcal-d.up .tcal-n { background: #20b26c; }
+.tcal-d.dn .tcal-n { background: #ef454a; color: #fff; }
+.tcal-s { margin-top: 8px; color: #9aa1b0; font-size: 11px; }
+.tcal-s .up { color: #20b26c; } .tcal-s .dn { color: #ef454a; }
+.tcal-f { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; gap: 6px; }
+.tcal-lg { color: #7d8494; font-size: 10px; display: inline-flex; align-items: center; gap: 3px; }
+.tcal-lg i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+.tcal-lg i.up { background: rgba(32,178,108,.55); } .tcal-lg i.dn { background: rgba(239,69,74,.55); margin-left: 4px; }
+.tcal-f button { border: 1px solid #2b2f36; background: #1f2128; color: #93c5fd; border-radius: 6px;
+  padding: 4px 8px; cursor: pointer; font-size: 11px; }
+.tm-dateinp { cursor: pointer; width: 104px; text-align: center; }
 .bb-dates { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; }
 .bb-dates input { color-scheme: dark; background: #17181e; border: 1px solid #2b2f36; color: #fff;
     border-radius: 4px; font-size: 0.72rem; padding: 2px 6px; font-family: inherit; }
@@ -4774,24 +4810,44 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="tm-leverage" min="1" max="50" step="1" onchange="saveTMSettings()">
                             <span style="color:#888;font-size:0.75rem">x</span>
                         </div>
-                        <!-- 🧪 Paper (test) risk sizing + commissions. Real trades are
-                             sized/charged by the exchange — this applies to paper only. -->
+                        <!-- 🧪 Віртуальний рахунок тестових (paper) угод: депозит, сума
+                             на угоду, плече, комісія. Реальні угоди рахує біржа. -->
                         <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
-                            <label>
-                                <input type="checkbox" id="tm-paper-risk" onchange="saveTMSettings()">
-                                🧪 Paper risk-sizing
-                                <span class="tm-help" title="Лише для ТЕСТОВИХ угод. Розмір позиції рахується так, щоб втрата на стратегічному SL = вказаний % від фіксованого кешу, з обраним плечем. Комісії враховуються — при закритті показує чистий результат. Маржа обмежується кешем.">?</span>
+                            <label style="color:#c4b5fd;font-weight:600">🧪 Тестові угоди (paper) — віртуальний рахунок
+                                <span class="tm-help" title="Лише для ТЕСТОВИХ угод: з цих параметрів рахуються віртуальні прибутки, збитки, комісії і баланс. Нові параметри діють на НОВІ угоди; відкриті paper-угоди без розміру рахуються за поточними.">?</span>
                             </label>
                         </div>
                         <div class="tm-row">
-                            <label>Кеш для тесту, $:
-                                <span class="tm-help" title="Фіксована сума кешу, від якої рахується ризик (напр. $100).">?</span>
+                            <label>Тестовий депозит, $:
+                                <span class="tm-help" title="Віртуальний депозит, від якого рахуються баланс, % депозиту і ризик (у режимі «ризик на SL»).">?</span>
                             </label>
-                            <input type="number" id="tm-paper-cash" min="1" max="1000000" step="10" onchange="saveTMSettings()">
+                            <input type="number" id="tm-paper-deposit" min="1" max="1000000000" step="100" onchange="saveTMSettings()">
                         </div>
                         <div class="tm-row">
-                            <label>Ризик на SL, % кешу:
-                                <span class="tm-help" title="Скільки % від кешу втрачаємо, якщо ціна дійде до SL (напр. 3% від $100 = $3).">?</span>
+                            <label>Розмір угоди:
+                                <span class="tm-help" title="«Сума на угоду» — кожна угода відкривається на вказану маржу × плече. «Ризик на SL» — розмір так, щоб втрата на стратегічному SL = % депозиту (без SL — як «сума на угоду»).">?</span>
+                            </label>
+                            <select id="tm-paper-mode" onchange="_tmPaperModeSync();saveTMSettings()">
+                                <option value="fixed">сума на угоду</option>
+                                <option value="risk">ризик на SL</option>
+                            </select>
+                        </div>
+                        <div class="tm-row" id="tm-paper-margin-row">
+                            <label>Сума на угоду (маржа), $:
+                                <span class="tm-help" title="Власні кошти на одну угоду. Розмір позиції = маржа × плече (напр. $100 × 10 = $1000). Не більше депозиту.">?</span>
+                            </label>
+                            <input type="number" id="tm-paper-margin" min="0.01" max="1000000000" step="10" onchange="saveTMSettings()">
+                        </div>
+                        <div class="tm-row">
+                            <label>Плече paper:
+                                <span class="tm-help" title="Плече тестових угод — окремо від реального. Множить розмір позиції, а з ним і прибуток, збиток та комісії в $.">?</span>
+                            </label>
+                            <input type="number" id="tm-paper-lev" min="1" max="125" step="1" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.75rem">x</span>
+                        </div>
+                        <div class="tm-row" id="tm-paper-risk-row">
+                            <label>Ризик на SL, % депозиту:
+                                <span class="tm-help" title="Режим «ризик на SL»: скільки % депозиту втрачаємо, якщо ціна дійде до SL.">?</span>
                             </label>
                             <input type="number" id="tm-paper-risk-pct" min="0.01" max="100" step="0.1" onchange="saveTMSettings()">
                             <span style="color:#888;font-size:0.75rem">%</span>
@@ -5327,12 +5383,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <button type="button" data-p="day" onclick="tmSetPeriod('day')" title="Статистика за конкретний день (за годинником вашого ПК)">📅 День</button>
                         <button type="button" data-p="range" onclick="tmSetPeriod('range')" title="Статистика за довільний період: від дати до дати включно">Період</button>
                         <span class="bb-dates" id="tm-stats-day-wrap" style="display:none">
-                            <input type="date" id="tm-stats-day" onchange="tmPeriodInput()">
+                            <input type="text" readonly class="tm-dateinp" id="tm-stats-day" onclick="tmCalOpen(this, 'real')" title="Відкрити календар: дні з угодами позначено">
                         </span>
                         <span class="bb-dates" id="tm-stats-range-wrap" style="display:none">
-                            <input type="date" id="tm-stats-from" onchange="tmPeriodInput()">
+                            <input type="text" readonly class="tm-dateinp" id="tm-stats-from" onclick="tmCalOpen(this, 'real')" title="Відкрити календар: дні з угодами позначено">
                             <span class="bb-dash">—</span>
-                            <input type="date" id="tm-stats-to" onchange="tmPeriodInput()">
+                            <input type="text" readonly class="tm-dateinp" id="tm-stats-to" onclick="tmCalOpen(this, 'real')" title="Відкрити календар: дні з угодами позначено">
                         </span>
                     </div>
                     <span class="bb-note" id="tm-stats-note"></span>
@@ -5437,12 +5493,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <button type="button" data-p="day" onclick="tmSetPeriod('day', 'paper')" title="Статистика за конкретний день (за годинником вашого ПК)">📅 День</button>
                         <button type="button" data-p="range" onclick="tmSetPeriod('range', 'paper')" title="Статистика за довільний період: від дати до дати включно">Період</button>
                         <span class="bb-dates" id="tmp-stats-day-wrap" style="display:none">
-                            <input type="date" id="tmp-stats-day" onchange="tmPeriodInput('paper')">
+                            <input type="text" readonly class="tm-dateinp" id="tmp-stats-day" onclick="tmCalOpen(this, 'paper')" title="Відкрити календар: дні з угодами позначено">
                         </span>
                         <span class="bb-dates" id="tmp-stats-range-wrap" style="display:none">
-                            <input type="date" id="tmp-stats-from" onchange="tmPeriodInput('paper')">
+                            <input type="text" readonly class="tm-dateinp" id="tmp-stats-from" onclick="tmCalOpen(this, 'paper')" title="Відкрити календар: дні з угодами позначено">
                             <span class="bb-dash">—</span>
-                            <input type="date" id="tmp-stats-to" onchange="tmPeriodInput('paper')">
+                            <input type="text" readonly class="tm-dateinp" id="tmp-stats-to" onclick="tmCalOpen(this, 'paper')" title="Відкрити календар: дні з угодами позначено">
                         </span>
                     </div>
                     <span class="bb-note" id="tmp-stats-note"></span>
@@ -10554,10 +10610,14 @@ async function loadTMSettings() {
         document.getElementById('tm-max-positions').value = s.max_open_positions || 10;
         document.getElementById('tm-require-fuel-confirm').checked = (s.require_fuel_confirm !== false);  // default true
         // 🧪 Paper risk-sizing + fees.
-        if (document.getElementById('tm-paper-risk'))
-            document.getElementById('tm-paper-risk').checked = (s.paper_risk_enabled !== false);
-        if (document.getElementById('tm-paper-cash'))
-            document.getElementById('tm-paper-cash').value = (s.paper_cash != null ? s.paper_cash : 100);
+        {
+            const _pv = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
+            _pv('tm-paper-deposit', s.paper_deposit != null ? s.paper_deposit : 1000);
+            _pv('tm-paper-mode', s.paper_sizing_mode || 'fixed');
+            _pv('tm-paper-margin', s.paper_margin_usd != null ? s.paper_margin_usd : 100);
+            _pv('tm-paper-lev', s.paper_leverage != null ? s.paper_leverage : 10);
+            _tmPaperModeSync();
+        }
         if (document.getElementById('tm-paper-risk-pct'))
             document.getElementById('tm-paper-risk-pct').value = (s.paper_risk_pct != null ? s.paper_risk_pct : 3);
         if (document.getElementById('tm-paper-fee'))
@@ -11111,8 +11171,10 @@ async function saveTMSettings() {
             max_open_positions: parseInt(document.getElementById('tm-max-positions').value) || 10,
             require_fuel_confirm: document.getElementById('tm-require-fuel-confirm').checked,
             // 🧪 Paper risk-sizing + fees.
-            paper_risk_enabled: document.getElementById('tm-paper-risk') ? document.getElementById('tm-paper-risk').checked : true,
-            paper_cash: parseFloat((document.getElementById('tm-paper-cash') || {}).value) || 100,
+            paper_deposit: parseFloat((document.getElementById('tm-paper-deposit') || {}).value) || 1000,
+            paper_sizing_mode: (document.getElementById('tm-paper-mode') || {}).value || 'fixed',
+            paper_margin_usd: parseFloat((document.getElementById('tm-paper-margin') || {}).value) || 100,
+            paper_leverage: parseInt((document.getElementById('tm-paper-lev') || {}).value) || 10,
             paper_risk_pct: parseFloat((document.getElementById('tm-paper-risk-pct') || {}).value) || 3,
             paper_fee_pct: (function () { const e = document.getElementById('tm-paper-fee'); const v = e ? e.value : ''; return (v === '' || isNaN(parseFloat(v))) ? 0.055 : parseFloat(v); })(),
             use_sl: document.getElementById('tm-use-sl').checked,
@@ -11932,9 +11994,10 @@ function _tmPeriodSync(book) {
     const di = document.getElementById(`${x}-stats-day`);
     const fi = document.getElementById(`${x}-stats-from`);
     const ti = document.getElementById(`${x}-stats-to`);
-    if (di) { di.value = P.day || today; di.max = today; }
-    if (fi) { fi.value = P.from || today; fi.max = today; }
-    if (ti) { ti.value = P.to || today; ti.max = today; }
+    const _set = (el, ymd) => { if (el) { el.dataset.ymd = ymd; el.value = tcalFmt(ymd); } };
+    _set(di, P.day || today);
+    _set(fi, P.from || today);
+    _set(ti, P.to || today);
 }
 
 function _tmPeriodSave(book) {
@@ -11957,9 +12020,145 @@ function tmSetPeriod(mode, book) {
     else tmLoadPeriodStats(true, book);
 }
 
+// 📅 КАЛЕНДАР ІЗ ДНЯМИ ТОРГІВЛІ (вимога 08.11) — той самий код у
+// templates/smart_money.html і infosite/app.js. Рідний <input type="date">
+// позначати дні не вміє, тож свій: день із закритими угодами має лічильник і
+// колір за результатом дня (зелений — плюс, червоний — мінус). Межі дня — за
+// годинником ПК (як і межі періоду статистики).
+const TCAL_MON = ['січень', 'лютий', 'березень', 'квітень', 'травень', 'червень',
+    'липень', 'серпень', 'вересень', 'жовтень', 'листопад', 'грудень'];
+const TCal = { el: null, inp: null, y: 0, m: 0, days: {}, onPick: null, max: '', usd: true };
+function tcalYmd(d) {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+// ЧИСТА: [[closed_at, $, %]] → {ymd: {n, w, l, usd, pct}} за МІСЦЕВИМ днем.
+function tcalBucket(items) {
+    const out = {};
+    (items || []).forEach(it => {
+        const t = Number(it && it[0]);
+        if (!(t > 0)) return;
+        const k = tcalYmd(new Date(t * 1000));
+        const o = out[k] || (out[k] = { n: 0, w: 0, l: 0, usd: 0, pct: 0 });
+        const u = Number(it[1]) || 0, pc = Number(it[2]) || 0;
+        o.n += 1; o.usd += u; o.pct += pc;
+        if ((u || pc) > 0) o.w += 1; else if ((u || pc) < 0) o.l += 1;
+    });
+    return out;
+}
+function tcalFmt(ymd) { const [y, m, d] = String(ymd).split('-'); return `${d}.${m}.${y}`; }
+function tcalClose() {
+    if (TCal.el) TCal.el.remove();
+    TCal.el = null; TCal.inp = null;
+    document.removeEventListener('mousedown', tcalOutside, true);
+    document.removeEventListener('keydown', tcalKey, true);
+}
+function tcalOutside(e) {
+    if (TCal.el && !TCal.el.contains(e.target) && e.target !== TCal.inp) tcalClose();
+}
+function tcalKey(e) { if (e.key === 'Escape') tcalClose(); }
+// inp — поле дати (value = ДД.ММ.РРРР, data-ymd = РРРР-ММ-ДД); days — tcalBucket;
+// onPick(ymd) — обрано день; usd — чи показувати суми в підказці.
+function tcalOpen(inp, days, onPick, usd) {
+    if (TCal.el && TCal.inp === inp) { tcalClose(); return; }
+    tcalClose();
+    const cur = inp.dataset.ymd || tcalYmd(new Date());
+    const [y, m] = cur.split('-').map(Number);
+    Object.assign(TCal, { inp, days: days || {}, onPick, y, m: m - 1, max: tcalYmd(new Date()), usd: usd !== false });
+    const el = document.createElement('div');
+    el.className = 'tcal';
+    document.body.appendChild(el);
+    TCal.el = el;
+    tcalRender();
+    const r = inp.getBoundingClientRect();
+    const w = el.offsetWidth, h = el.offsetHeight;
+    let left = r.left + window.scrollX, top = r.bottom + window.scrollY + 4;
+    if (left + w > window.scrollX + document.documentElement.clientWidth - 8)
+        left = window.scrollX + document.documentElement.clientWidth - w - 8;
+    if (r.bottom + h + 8 > window.innerHeight && r.top > h) top = r.top + window.scrollY - h - 4;
+    el.style.left = Math.max(8, left) + 'px';
+    el.style.top = top + 'px';
+    document.addEventListener('mousedown', tcalOutside, true);
+    document.addEventListener('keydown', tcalKey, true);
+}
+function tcalNav(step) {
+    let m = TCal.m + step, y = TCal.y;
+    if (m < 0) { m = 11; y -= 1; } else if (m > 11) { m = 0; y += 1; }
+    TCal.m = m; TCal.y = y;
+    tcalRender();
+}
+function tcalPick(ymd) {
+    if (!ymd || ymd > TCal.max) return;
+    const inp = TCal.inp, fn = TCal.onPick;
+    if (inp) { inp.dataset.ymd = ymd; inp.value = tcalFmt(ymd); }
+    tcalClose();
+    if (fn) fn(ymd);
+}
+function tcalRender() {
+    const el = TCal.el;
+    if (!el) return;
+    const y = TCal.y, m = TCal.m;
+    const first = new Date(y, m, 1);
+    const shift = (first.getDay() + 6) % 7;          // понеділок першим
+    const start = new Date(y, m, 1 - shift);
+    const sel = TCal.inp ? TCal.inp.dataset.ymd : '';
+    const today = tcalYmd(new Date());
+    let mn = 0, musd = 0;
+    let cells = '';
+    for (let i = 0; i < 42; i++) {
+        const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+        const k = tcalYmd(d), info = TCal.days[k];
+        const out = d.getMonth() !== m, fut = k > TCal.max;
+        if (info && !out) { mn += info.n; musd += info.usd; }
+        const v = info ? (info.usd || info.pct) : 0;
+        let cls = 'tcal-d' + (out ? ' out' : '') + (fut ? ' fut' : '') +
+            (k === today ? ' today' : '') + (k === sel ? ' sel' : '');
+        let tip = tcalFmt(k), badge = '';
+        if (info) {
+            cls += v > 0 ? ' up' : (v < 0 ? ' dn' : ' eq');
+            const ap = info.pct / info.n;
+            tip += ` · угод: ${info.n} · ${info.w} W / ${info.l} L` +
+                (TCal.usd ? ` · ${info.usd >= 0 ? '+' : '−'}$${Math.abs(info.usd).toFixed(2)}` : '') +
+                ` · сер. рух ${ap >= 0 ? '+' : ''}${ap.toFixed(2)}%`;
+            badge = `<i class="tcal-n">${info.n}</i>`;
+        } else if (!fut) tip += ' · угод не було';
+        cells += `<button type="button" class="${cls}" title="${tip}"` +
+            (fut ? ' disabled' : ` onclick="tcalPick('${k}')"`) + `><span>${d.getDate()}</span>${badge}</button>`;
+    }
+    const sum = mn ? `угод за місяць: <b>${mn}</b>` +
+        (TCal.usd ? ` · <b class="${musd >= 0 ? 'up' : 'dn'}">${musd >= 0 ? '+' : '−'}$${Math.abs(musd).toFixed(2)}</b>` : '')
+        : 'угод цього місяця не було';
+    const nextOk = tcalYmd(new Date(y, m + 1, 1)) <= TCal.max;
+    el.innerHTML =
+        `<div class="tcal-h"><button type="button" onclick="tcalNav(-1)" title="Попередній місяць">‹</button>` +
+        `<b>${TCAL_MON[m]} ${y}</b>` +
+        `<button type="button" onclick="tcalNav(1)" title="Наступний місяць"${nextOk ? '' : ' disabled'}>›</button></div>` +
+        `<div class="tcal-w">${['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'].map(x => `<span>${x}</span>`).join('')}</div>` +
+        `<div class="tcal-g">${cells}</div>` +
+        `<div class="tcal-s">${sum}</div>` +
+        `<div class="tcal-f"><span class="tcal-lg"><i class="up"></i>плюс <i class="dn"></i>мінус · N угод</span>` +
+        `<button type="button" onclick="tcalPick('${today}')">Сьогодні</button></div>`;
+}
+
+// 📅 Дні з угодами для календаря книги (кеш 60с; ті самі записи, що статистика).
+const _tmCalDays = { real: { at: 0, days: {} }, paper: { at: 0, days: {} } };
+async function tmCalOpen(inp, book) {
+    const bk = book === 'paper' ? 'paper' : 'real';
+    const C = _tmCalDays[bk];
+    const pick = () => tmPeriodInput(bk === 'paper' ? 'paper' : undefined);
+    if (Date.now() - C.at > 60000) {
+        try {
+            const r = await fetch(`/api/tm/trade-days?book=${bk}`);
+            const j = await r.json();
+            if (j.ok) { C.days = tcalBucket(j.items); C.at = Date.now(); }
+        } catch (e) {}
+    }
+    tcalOpen(inp, C.days, pick, _tmAmtShown);
+}
+
 function tmPeriodInput(book) {
     const B = _tmB(book), P = B.period, x = B.pfx;
-    const v = id => (document.getElementById(id) || {}).value || '';
+    const v = id => { const e = document.getElementById(id); return e ? (e.dataset.ymd || '') : ''; };
     if (P.mode === 'day') P.day = v(`${x}-stats-day`);
     if (P.mode === 'range') { P.from = v(`${x}-stats-from`); P.to = v(`${x}-stats-to`); }
     _tmPeriodSave(book);
@@ -12049,6 +12248,44 @@ function _tmDepositPct(st, w) {
 
 // Картки P&L у стилі Bybit. ОДНА функція на «Усе» і на будь-який період, на
 // реальні (`book` = 'real', за замовчуванням) і на 🧪 paper (`book` = 'paper').
+// 🧪 Віртуальний рахунок paper (get_state.paper_account) і % депозиту за
+// період: база = тестовий баланс на ПОЧАТОК періоду (депозит + усе закрите
+// до нього = баланс − закрите відтоді).
+let _tmPaperAcc = null;
+function _tmPaperDepositPct(st, pa) {
+    if (!st || !pa) return null;
+    const since = (st.pnl_since_from_usd != null) ? st.pnl_since_from_usd : st.total_pnl_usd;
+    const base = (pa.balance || 0) - (since || 0);
+    return base > 0 ? (st.total_pnl_usd || 0) / base * 100 : null;
+}
+
+// 🧪 Режим розміру paper: «ризик на SL» показує поле ризику, «сума на угоду» — маржу.
+function _tmPaperModeSync() {
+    const m = (document.getElementById('tm-paper-mode') || {}).value || 'fixed';
+    const r = document.getElementById('tm-paper-risk-row'), g = document.getElementById('tm-paper-margin-row');
+    if (r) r.style.display = m === 'risk' ? '' : 'none';
+    if (g) g.style.opacity = m === 'risk' ? '0.6' : '';
+}
+
+// 🧪 PnL відкритої paper-угоди: рух ціни % + віртуальний нетто $ (плече й
+// комісії) + ROI на маржу. Суми ховаються тим самим перемикачем, що й панель.
+function paperPnlCellHTML(p) {
+    const pc = Number(p.pnl_pct || 0);
+    const n = p.pnl_net;
+    const val = n ? Number(n.net_usd || 0) : pc;
+    const cl = val >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
+    const pct = `${pc >= 0 ? '+' : ''}${pc.toFixed(2)}%`;
+    if (!n) return `<td class="${cl}" style="white-space:nowrap">${pct}</td>`;
+    const z = p.paper_size || {};
+    const usd = _tmAmt(`${n.net_usd >= 0 ? '+' : '−'}$${Math.abs(n.net_usd).toFixed(2)}`);
+    const roi = n.roi_pct != null ? `ROI ${n.roi_pct >= 0 ? '+' : ''}${Number(n.roi_pct).toFixed(1)}%` : '';
+    const tip = `Рух ціни ${pct} · віртуально: маржа $${Number(z.margin || 0).toFixed(2)} × ${z.lev}x = позиція $${Number(z.notional || 0).toFixed(2)} · ` +
+        `брутто ${n.gross_usd >= 0 ? '+' : '−'}$${Math.abs(n.gross_usd).toFixed(2)} · комісії −$${Number(n.fees_usd || 0).toFixed(2)} (вхід + вихід) → нетто ${n.net_usd >= 0 ? '+' : '−'}$${Math.abs(n.net_usd).toFixed(2)}` +
+        (z.late ? ' · розмір за поточними налаштуваннями (угода старша за них)' : '');
+    return `<td class="${cl}" style="white-space:nowrap" title="${tip.replace(/"/g, '&quot;')}">${pct} · ${usd}` +
+        (roi ? ` <span style="opacity:.75;font-size:0.72rem">${roi} ×${z.lev}</span>` : '') + `</td>`;
+}
+
 function renderTmStats(st, label, note, book) {
     const paper = book === 'paper';
     const B = _tmB(book);
@@ -12070,10 +12307,20 @@ function renderTmStats(st, label, note, book) {
     const w = _tmWallet;
     let balCard;
     if (paper) {
-        const ap = st ? (st.avg_pnl_pct || 0) : 0;
-        balCard = card('Сер. рух на угоду', st && st.total_closed ? `<span class="${cls(ap)}">${ap >= 0 ? '+' : '−'}${Math.abs(ap).toFixed(2)}%</span>` : '—',
-                       '🧪 paper · біржі немає', '',
-                       'Paper-угоди не мають рахунку на біржі, тож балансу й % депозиту тут немає. Середній рух ціни на угоду — без плеча й комісій.');
+        const pa = _tmPaperAcc;
+        if (!pa) {
+            balCard = card('Тестовий баланс', '—', '🧪 paper', '', 'Віртуальний рахунок тестових угод.');
+        } else {
+            const dp = _tmPaperDepositPct(st, pa);
+            const dpTxt = dp == null ? `депозит ${money(pa.deposit)}`
+                : `<span class="${cls(dp)}">${dp >= 0 ? '+' : '−'}${Math.abs(dp).toFixed(2)}%</span> депозиту ${label || ''}`;
+            const tip = 'Віртуальний рахунок тестових угод: депозит + чистий результат усіх закритих paper-угод (з комісіями) + нереалізований результат відкритих. ' +
+                `Депозит ${pa.deposit} $ · сума на угоду ${pa.margin_usd} $ × плече ${pa.leverage}x · комісія ${pa.fee_pct}% / сторону` +
+                (pa.mode === 'risk' ? ' · режим «ризик на SL»' : '') +
+                (_tmAmtShown ? ` · Баланс $${(pa.balance || 0).toFixed(2)} · нереаліз. ${(pa.unrealized_usd || 0) >= 0 ? '+' : '−'}$${Math.abs(pa.unrealized_usd || 0).toFixed(2)} · у позиціях $${(pa.margin_used || 0).toFixed(2)} · вільно $${(pa.available || 0).toFixed(2)}` : '') +
+                '. % депозиту = чистий P&L за період ÷ тестовий баланс на початок періоду.';
+            balCard = card('Тестовий баланс', money(pa.equity), dpTxt, '', tip);
+        }
     } else if (!w) {
         balCard = card('Баланс на біржі', '<span class="bb-mask">…</span>', 'завантаження', '', 'Баланс USDT на рахунку Bybit (UNIFIED).');
     } else if (!w.ok) {
@@ -18237,6 +18484,7 @@ async function loadTMState(isPoll) {
         }
         // 🧪 Та сама панель для paper-угод (та сама closed_stats на бекенді).
         _TMS.paper.live = d.shadow_stats || {};
+        _tmPaperAcc = d.paper_account || null;
         if (_TMS.paper.period.mode === 'all') renderTmStats(_TMS.paper.live, 'за весь час', '', 'paper');
         else tmLoadPeriodStats(false, 'paper');
         
@@ -18378,7 +18626,7 @@ async function loadTMState(isPoll) {
                     <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${ob1hMarkHTML(p, null, true)}${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}</td>
-                    <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
+                    ${paperPnlCellHTML(p)}
                     ${springTradeCellHTML(p)}
                     ${mmdAlertCellHTML(p)}
                     ${manualSlTpCellsHTML(p, true)}
