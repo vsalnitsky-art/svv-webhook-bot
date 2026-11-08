@@ -6,7 +6,7 @@
   <title>VSV — Мій кабінет</title>
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=67">
+  <link rel="stylesheet" href="style.css?v=68">
   <!-- ⏳ Анти-блимання: доки JS не перевірив авторизацію (клас app-ready ще не
        додано на <body>), не показуємо ні дашборд, ні hero — інакше на секунду
        спалахує «бот-панель» перед екраном входу. Після перевірки showData()
@@ -28,7 +28,7 @@
     <div class="brand">
       <img class="logo" src="vsv-logo.png" alt="VSV" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'">
       <span class="dot" style="display:none"></span>
-      <span>VSV · Мій кабінет</span>
+      <span class="brand-name">VSV Bot</span><span class="brand-sub">· Мій кабінет</span>
     </div>
     <div class="top-actions">
       <nav id="auth-links" class="auth-links"></nav>
@@ -43,7 +43,7 @@
     <section class="card hero" id="auth-hero" style="display:none">
       <div class="hero-inner">
         <img class="hero-logo" src="vsv-logo.png" alt="VSV" onerror="this.style.display='none'">
-        <h1 class="hero-title">VSV — особистий кабінет</h1>
+        <h1 class="hero-title"><span class="brand-name">VSV Bot</span> — особистий кабінет</h1>
         <div class="hero-actions">
           <a id="hero-login" class="btn btn-primary" href="/login">🔐 Вхід</a>
           <a id="hero-register" class="btn btn-ghost" href="/register">📝 Реєстрація</a>
@@ -59,7 +59,7 @@
         <h2>⭐ Мій WATCHLIST <span id="iw-count" class="pill">0</span></h2>
         <form class="iw-add" id="iw-add-form" autocomplete="off">
           <input id="iw-add-in" list="iw-universe" placeholder="BTC, ETHUSDT…" maxlength="24"
-                 title="Будь-яка USDT-монета Bybit. Монети з WATCHLIST бота (підказки в списку) показуються миттєво; решту сайт рахує окремо — дані зʼявляться за кілька секунд.">
+                 title="Будь-яка USDT-монета Bybit (до 20 монет). Монети з WATCHLIST бота (підказки в списку) показуються миттєво; решту сайт рахує окремо — дані зʼявляться за кілька секунд.">
           <datalist id="iw-universe"></datalist>
           <button type="submit" title="Додати монету у свій список">＋ Додати</button>
         </form>
@@ -68,6 +68,14 @@
       </div>
       <div class="card iw-chart">
         <div class="iw-head" id="iw-head"><span class="iw-title">—</span></div>
+        <div class="iw-tfbar" id="iw-tfbar">
+          <div class="iw-tfs" id="iw-tfs" title="Таймфрейм графіка"></div>
+          <label class="iw-sel" title="Order Blocks (internal + swing) — на якому таймфреймі шукати">OB
+            <select id="iw-ob-tf"></select></label>
+          <label class="iw-sel" title="Volumized Order Blocks — на якому таймфреймі шукати">VOB
+            <select id="iw-vob-tf"></select></label>
+          <span class="iw-sel" id="iw-tf-wait"></span>
+        </div>
         <div class="iw-box" id="iw-box"><div class="iw-note" id="iw-note">оберіть монету зі списку</div></div>
       </div>
     </section>
@@ -105,7 +113,7 @@
     })();
   </script>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="config.js?v=67"></script>
-  <script src="app.js?v=67"></script>
+  <script src="config.js?v=68"></script>
+  <script src="app.js?v=68"></script>
 </body>
 </html>

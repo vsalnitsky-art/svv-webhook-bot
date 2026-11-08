@@ -51,12 +51,15 @@ CORS для read-only `GET /api/*` **вже увімкнено на боці б�
 ## Що показує
 
 Особистий кабінет користувача (вхід через бота):
-- **⭐ Мій WATCHLIST** — свій список монет (зберігається в БД бота на акаунт):
-  назва, ціна, Premium/Discount 1H, POC. Додати можна будь-яку USDT-монету;
+- **⭐ Мій WATCHLIST** — свій список до 20 монет (зберігається в БД бота на
+  акаунт): назва, ціна, зміна за ~24 год. Додати можна будь-яку USDT-монету;
   монети, яких немає в боті (🛰), сайт рахує окремо.
-- **Графік** обраної монети зі структурою Order Block 1H і Volumized OB.
+- **Графік** обраної монети: CHoCH/BOS, Order Blocks, Volumized OB, лінія POC;
+  у шапці — Premium/Discount і POC, вибір TF графіка (1m…1D) і TF для OB / VOB
+  (зберігається на акаунт).
 - 🔔 стан Telegram.
 
 API: `/api/me`, `/api/me/watchlist` (GET/POST — лише свій акаунт),
-`/api/info/universe`, `/api/info/rows`, `/api/info/coin`, `/api/me/notify`.
+`/api/info/universe`, `/api/info/rows`, `/api/info/coin`, `/api/me/notify`,
+`/api/me/logout` (вихід: відкликає всі токени сайту, далі `/logout?next=info`).
 Сервер віддає готові дані зі спільного кешу — сторінка біржу не смикає.

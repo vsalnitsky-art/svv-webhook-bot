@@ -1,52 +1,62 @@
-"""👤 ІНФОСАЙТ — ОСОБИСТА СТОРІНКА КОРИСТУВАЧА (вимога 08.11).
+"""👤 ІНФОСАЙТ — ОСОБИСТА СТОРІНКА КОРИСТУВАЧА (вимоги 08.11).
 
 Дослівно: «Це буде особиста сторінка кожного користувача окремо… Для кожного
 користувача в базі має бути окрема збережена інформація… вигляд як у боті
-WATCHLIST із своїм списком монет і графік… (для початку лише назва монети,
-🟢 Discount 18% 1H, POC), а на графіку структуру OB і VOB.»
+WATCHLIST із своїм списком монет і графік…» + «Графік відобрази всі дані, що
+на скріні… POC також нанеси на графік. Додай вибір таймфрейму в шапці
+графіку, як на біржі, і вибір таймфреймів для OB і VOB.»
 
 ГОЛОВНЕ ПРАВИЛО НАВАНТАЖЕННЯ: вартість НЕ росте з кількістю користувачів.
-- Монета з WATCHLIST бота (`universe`): усе, що показуємо, сканер УЖЕ рахує у
-  своєму робочому такті (бари, OB 1H, VOB, PD). Ми лише ЧИТАЄМО памʼять.
-  Тисяча користувачів = нуль додаткових запитів до біржі за цими даними.
-- Монета, якої в боті НЕМАЄ (вимога 08.11: «все одно обробити»), — рахується
-  ТИМИ САМИМИ функціями детекції з ТИМИ САМИМИ параметрами сканера, але в
-  ОДНОМУ фоновому потоці (`_ext_worker`) зі спільним кешем на монету: бари
-  головного TF раз на `EXT_FAST_TTL`, VOB — раз на закриття бару свого TF,
-  OB 1H і PD — раз на закриття 1h-бару. Навантаження = кількість УНІКАЛЬНИХ
-  таких монет, а не людей; монета, яку ніхто не відкривав `EXT_IDLE_SEC`,
-  більше не рахується (стеля `EXT_MAX`). Запит сторінки біржу НЕ чекає —
-  лише читає кеш («⏳ рахується» до першого результату).
-- Єдине, чого сканер не тримає постійно, — POC. Він рахується через ТОЙ САМИЙ
-  `volume_profile.compute_poc`, що бейдж графіка і POC-фільтр, але зі СПІЛЬНИМ
-  кешем на монету (`POC_TTL`), і рахує його лише фоновий потік. Тобто на біржу
-  йде ≤ 1 запит на монету раз на 5 хв — незалежно від того, скільки людей
-  дивиться, і жоден HTTP-запит сторінки біржу не чекає.
-- Відповідь графіка кешується на монету (`COIN_TTL`) і має сигнатуру `sig`:
-  клієнт шле свою — незмінна відповідь іде порожньою (`same: true`).
+Графік складається з НЕЗАЛЕЖНИХ частин, кожна зі своїм TF і СПІЛЬНИМ кешем
+на (частина, монета, TF):
+- `bars`  — свічки графіка + структура CHoCH/BOS (той самий
+  `detect_smc_structure`, що в боті) на TF графіка;
+- `ob`    — Order Blocks (обидві сім'ї, `detect_order_blocks`) на TF OB,
+  закриті бари → кеш до закриття бару;
+- `vob`   — Volumized OB (`detect_volumized_obs` з параметрами сканера) на
+  TF VOB, кеш до закриття бару (≤ `VOB_MAX_TTL`);
+- `pd`    — Premium/Discount на `pd_zone_timeframe` сканера (лише монети поза
+  ботом; для монет бота — `scanner.get_pd_pct`).
+Монета бота + TF, що збігається з TF сканера → частина береться з ПАМ'ЯТІ
+сканера (нуль запитів). Інакше частину рахує ОДИН фоновий потік
+(`_worker`), і запит сторінки біржу НЕ чекає («⏳ рахується»). Навантаження =
+кількість УНІКАЛЬНИХ (монета, TF), а не людей; частину, яку ніхто не просив
+`IDLE_SEC`, більше не рахуємо (стеля `WANT_MAX`). POC — той самий
+`compute_poc`, кеш на монету `POC_TTL`, рахує лише потік.
 
-Особисті дані (список монет і обрана монета) — у `User.prefs['info']`, тобто в
-БД ОКРЕМО на кожного користувача. Писати може лише сам користувач (/api/me/…).
+Особисті дані (список монет, обрана монета, TF графіка/OB/VOB) — у
+`User.prefs['info']`, тобто в БД ОКРЕМО на кожного користувача.
 """
 import json
 import threading
 import time
 
-IWL_MAX = 40                 # стеля особистого списку
+IWL_MAX = 20                 # стеля особистого списку (вимога 08.11)
 IWL_DEFAULT = ('BTCUSDT', 'ETHUSDT')
+CHART_TFS = ('1m', '5m', '15m', '30m', '1h', '4h', '1d')
+OB_TFS = ('15m', '30m', '1h', '4h')
+VOB_TFS = ('1m', '5m', '15m', '30m', '1h', '4h')
+OFF = 'off'
 POC_TTL = 300.0              # спільний кеш POC на монету
-COIN_TTL = 10.0              # спільний кеш відповіді графіка на монету
+COIN_TTL = 10.0              # спільний кеш відповіді графіка
 OHLC_BARS = 400              # скільки барів віддаємо на графік
-# ── монети ПОЗА ботом ──
-EXT_FAST_TTL = 30.0          # бари головного TF (живий бар)
-EXT_IDLE_SEC = 900.0         # ніхто не відкривав 15 хв → не рахуємо
-EXT_MAX = 300                # стеля одночасно відстежуваних монет поза ботом
-EXT_RETRY_SEC = 120.0        # біржа не віддала / монети немає → повтор
-EXT_OB_BARS = 700            # як у сканера (_update_smc_ob)
+EVENTS_MAX = 80              # скільки останніх CHoCH/BOS малюємо
+BARS_TTL = 30.0              # свічки графіка (живий бар)
+VOB_MAX_TTL = 300.0          # VOB рахується на живому барі — не рідше ніж раз на 5 хв
+SETTLE_SEC = 3.0             # біржі треба кілька секунд, щоб віддати закритий бар
+IDLE_SEC = 900.0             # ніхто не просив 15 хв → не рахуємо
+WANT_MAX = 600               # стеля одночасно відстежуваних частин
+RETRY_SEC = 120.0            # біржа не віддала / монети немає → повтор
+OB_BARS = 700                # як у сканера (_update_smc_ob)
+PD_BARS = 3000
 
 _lock = threading.Lock()
 _poc_cache = {}              # SYM → (ts, view|None)
-_coin_cache = {}             # SYM → (ts, payload)
+_coin_cache = {}             # (SYM, tf, ob_tf, vob_tf) → (ts, payload)
+_comp = {}                   # (kind, SYM, tf) → {'data','at','until','err','err_at'}
+_want = {}                   # (kind, SYM, tf) → коли востаннє просили
+_poc_want = {}               # SYM → коли востаннє просили POC
+_thread = None
 
 
 # ── ЧИСТІ функції ─────────────────────────────────────────────────────────
@@ -63,9 +73,15 @@ def valid_symbol(s):
     return bool(s) and s.endswith('USDT') and s.isalnum() and 6 <= len(s) <= 24
 
 
+def norm_tf(v, allowed, default, allow_off=False):
+    t = str(v or '').lower().strip()
+    if allow_off and t == OFF:
+        return OFF
+    return t if t in allowed else default
+
+
 def iwl_norm(lst, universe=None, cap=IWL_MAX):
-    """Особистий список: верхній регістр, без дублів, стеля. `universe` (якщо
-    задано) — обмежити лише монетами бота; None → будь-який валідний символ."""
+    """Особистий список: верхній регістр, без дублів, стеля."""
     out, seen = [], set()
     uni = set(universe) if universe is not None else None
     for x in (lst or []):
@@ -100,8 +116,21 @@ def to_sec(t):
     return int(t // 1000) if t > 1e12 else int(t)
 
 
+def bar_sec(tf):
+    t = str(tf or '').lower()
+    try:
+        return int(t[:-1]) * {'m': 60, 'h': 3600, 'd': 86400}[t[-1]]
+    except Exception:
+        return 3600
+
+
+def next_close(now, tf):
+    b = bar_sec(tf)
+    return (int(now // b) + 1) * b + SETTLE_SEC
+
+
 def ob_boxes(zones):
-    """Знімок OB-сімей сканера → бокси для графіка (без дублів між сім'ями)."""
+    """Знімок OB-сімей → бокси для графіка (без дублів між сім'ями)."""
     out, seen = [], set()
     for fam in ('swing', 'internal'):
         for o in (zones or {}).get(fam) or []:
@@ -128,10 +157,24 @@ def vob_boxes(zones):
                         'top': float(z['top']), 'bottom': float(z['bottom']),
                         'start': to_sec(z.get('start_time_sec')),
                         'breaker': bool(z.get('breaker')), 'tf': str(z.get('tf') or '').upper(),
-                        'pct': z.get('pct')})
+                        'volume': z.get('volume'), 'pct': z.get('pct')})
         except (KeyError, TypeError, ValueError):
             continue
     return out
+
+
+def events_of(analysis, n=EVENTS_MAX):
+    """CHoCH/BOS внутрішньої структури (як на графіку бота) → лінія від півота
+    до бару пробою + мітка. Найновіші `n`."""
+    out = []
+    for e in ((analysis or {}).get('internal') or {}).get('events') or []:
+        try:
+            out.append({'from': to_sec(e.get('from_t')), 'to': to_sec(e.get('to_t')),
+                        'level': float(e['level']), 'tag': str(e.get('tag') or ''),
+                        'dir': 'bull' if e.get('dir') == 'bull' else 'bear'})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out[-int(n):]
 
 
 def ohlc_of(klines, n=OHLC_BARS):
@@ -150,11 +193,26 @@ def ohlc_of(klines, n=OHLC_BARS):
 def sig_of(payload):
     o = payload.get('ohlc') or []
     last = o[-1] if o else {}
+    ev = payload.get('events') or [{}]
     return '|'.join(str(x) for x in (
+        payload.get('tf'), payload.get('ob_tf'), payload.get('vob_tf'),
         len(o), last.get('time'), last.get('close'),
         len(payload.get('ob') or []), (payload.get('ob') or [{}])[0].get('start'),
         len(payload.get('vob') or []), (payload.get('vob') or [{}])[0].get('start'),
+        len(payload.get('events') or []), ev[-1].get('to'),
         (payload.get('pd') or {}).get('pct'), (payload.get('poc') or {}).get('poc')))
+
+
+def due(kind, rec, now):
+    """ЧИСТА: чи пора перерахувати частину."""
+    rec = rec or {}
+    if rec.get('err') and now - float(rec.get('err_at') or 0) < RETRY_SEC:
+        return False
+    if not rec.get('at'):
+        return True
+    if kind == 'bars':
+        return now - float(rec['at']) >= BARS_TTL
+    return now >= float(rec.get('until') or 0)
 
 
 # ── Доступ до бота (лише памʼять) ─────────────────────────────────────────
@@ -178,14 +236,208 @@ def _in_bot(sc, sym):
     return sym in set(universe(sc))
 
 
-def _price(sc, sym):
+def defaults(sc):
+    st = getattr(sc, '_settings', {}) or {}
     try:
-        if not _in_bot(sc, sym):
-            kl = (_ext_get(sym).get('main') or [])
-        else:
-            with sc._lock:
-                c = sc._cache.get(sym)
-            kl = (c or {}).get('klines') or []
+        tf = sc.get_timeframe()
+    except Exception:
+        tf = '15m'
+    return {'tf': norm_tf(tf, CHART_TFS, '15m'),
+            'ob_tf': norm_tf(st.get('ob_filter_timeframe'), OB_TFS, '1h'),
+            'vob_tf': (norm_tf(st.get('volumized_timeframe'), VOB_TFS, '5m')
+                       if st.get('use_volumized_ob', True) else OFF)}
+
+
+def _bot_part(sc, kind, sym, tf):
+    """Частина з ПАМ'ЯТІ сканера, коли монета в боті й TF збігається. None →
+    сканер цю частину на цьому TF не рахує."""
+    if not _in_bot(sc, sym):
+        return None
+    st = sc._settings
+    if kind == 'bars':
+        try:
+            if tf != str(sc.get_timeframe()).lower():
+                return None
+        except Exception:
+            return None
+        with sc._lock:
+            c = sc._cache.get(sym)
+        if not c or not c.get('klines'):
+            return None
+        return {'kl': c['klines'], 'events': events_of(c.get('analysis'))}
+    if kind == 'ob':
+        if tf != str(st.get('ob_filter_timeframe', '1h')).lower():
+            return None
+        with sc._lock:
+            z = dict((getattr(sc, '_ob_zones', {}) or {}).get(sym) or {})
+        return {'zones': z} if z else None
+    if kind == 'vob':
+        if not st.get('use_volumized_ob', True) or tf != str(st.get('volumized_timeframe', '')).lower():
+            return None
+        try:
+            return {'vz': sc._volumized_zones(sym)}
+        except Exception:
+            return None
+    return None
+
+
+def _get(key):
+    with _lock:
+        return dict(_comp.get(key) or {})
+
+
+def _kick():
+    global _thread
+    if _thread is None or not _thread.is_alive():
+        _thread = threading.Thread(target=_worker, name='info-portal', daemon=True)
+        _thread.start()
+
+
+def want(key):
+    """Сторінка попросила частину → поставити в роботу (без чекання)."""
+    with _lock:
+        if key not in _want and len(_want) >= WANT_MAX:
+            return False
+        _want[key] = time.time()
+        _kick()
+    return True
+
+
+def poc_want(sym):
+    with _lock:
+        if sym in _poc_want or len(_poc_want) < WANT_MAX:
+            _poc_want[sym] = time.time()
+            _kick()
+
+
+def part(sc, kind, sym, tf):
+    """(дані|None, помилка). Пам'ять сканера, інакше спільний кеш + фоновий потік."""
+    d = _bot_part(sc, kind, sym, tf)
+    if d is not None:
+        return d, ''
+    key = (kind, sym, tf)
+    want(key)
+    rec = _get(key)
+    return rec.get('data'), rec.get('err') or ''
+
+
+# ── 🛰 Фоновий розрахунок — ТИМИ САМИМИ функціями й параметрами ──────────
+def _compute(sc, kind, sym, tf):
+    from detection.market_data import get_market_data
+    md = get_market_data()
+    st = sc._settings
+    isize = sc.get_internal_size()
+    ssize = int(st.get('swing_size', 50))
+    now = time.time()
+    if kind == 'bars':
+        from detection.smc_structure import detect_smc_structure
+        kl = md.fetch_klines(sym, limit=OHLC_BARS, interval=tf)
+        if not kl or len(kl) < 20:
+            raise ValueError('монету не знайдено на біржі (немає барів)')
+        an = detect_smc_structure(kl, internal_size=isize, swing_size=ssize)
+        return {'kl': kl, 'events': events_of(an)}, now + BARS_TTL
+    if kind == 'ob':
+        from detection.smc_structure import detect_smc_structure
+        from detection.ob_detector import detect_order_blocks
+        ok = md.fetch_klines(sym, limit=OB_BARS, interval=tf)
+        zones = {'tf': tf}
+        if ok and len(ok) > 60:
+            cl = ok[:-1]
+            res = detect_smc_structure(cl, internal_size=isize, swing_size=ssize)
+            for fam in ('internal', 'swing'):
+                f = res.get(fam, {}) or {}
+                zones[fam] = detect_order_blocks(klines=cl, pivots=f.get('pivots', []),
+                                                 events=f.get('events', []),
+                                                 limit=getattr(sc, 'OB_ZONES_SHOW', 8))
+        return {'zones': zones}, next_close(now, tf)
+    if kind == 'vob':
+        from detection.volumized_ob import detect_volumized_obs
+        vk = md.fetch_klines(sym, limit=getattr(sc, 'VOB_KLINES_LIMIT', 3000), interval=tf)
+        vz = []
+        if vk and len(vk) > 20:
+            r = detect_volumized_obs(
+                vk, swing_length=int(st.get('volumized_swing_length', 10)),
+                ob_end_method=st.get('volumized_ob_end_method', 'Wick'),
+                max_atr_mult=float(st.get('volumized_max_atr_mult', 3.5)),
+                zone_count=st.get('volumized_zone_count', 'Low'),
+                combine_obs=bool(st.get('volumized_combine_obs', True)))
+            obs = list(r.get('bullish_obs') or []) + list(r.get('bearish_obs') or [])
+            obs.sort(key=lambda o: o.get('formation_time', o.get('start_time', 0)) or 0,
+                     reverse=True)
+            vz = [z for z in (sc._format_vob(o, tf) for o in obs) if z]
+        return {'vz': vz}, min(next_close(now, tf), now + VOB_MAX_TTL)
+    if kind == 'pd':
+        from detection.smc_structure import detect_smc_structure
+        pk = md.fetch_klines(sym, limit=PD_BARS, interval=tf)
+        pd_pct = None
+        if pk and len(pk) > 60:
+            pcl = pk[:-1]
+            pres = detect_smc_structure(pcl, internal_size=isize, swing_size=ssize)
+            pd_pct = sc._compute_pd_pct(pcl, (pres.get('swing', {}) or {}).get('pivots', []),
+                                        pcl[-1].get('p'))
+        return {'pd_pct': pd_pct}, next_close(now, tf)
+    raise ValueError(kind)
+
+
+def _worker():
+    """ОДИН потік на всі частини — біржу не смикаємо паралельно."""
+    global _thread
+    while True:
+        try:
+            sc = _scanner()
+            now = time.time()
+            with _lock:
+                for k in [k for k, t in _want.items() if now - t > IDLE_SEC]:
+                    _want.pop(k, None)
+                    _comp.pop(k, None)
+                for k in [k for k, t in _poc_want.items() if now - t > IDLE_SEC]:
+                    _poc_want.pop(k, None)
+                keys = sorted(_want, key=lambda k: float((_comp.get(k) or {}).get('at') or 0))
+                pwant = list(_poc_want)
+                if not keys and not pwant:
+                    _thread = None
+                    return
+            if sc is None:
+                time.sleep(5)
+                continue
+            for key in keys:
+                kind, sym, tf = key
+                if _bot_part(sc, kind, sym, tf) is not None:
+                    continue                      # сканер уже веде цю частину
+                if not due(kind, _get(key), time.time()):
+                    continue
+                try:
+                    data, until = _compute(sc, kind, sym, tf)
+                    upd = {'data': data, 'at': time.time(), 'until': until, 'err': ''}
+                except Exception as e:
+                    upd = {'err': str(e)[:160], 'err_at': time.time()}
+                with _lock:
+                    if key in _want:
+                        _comp.setdefault(key, {}).update(upd)
+                        _coin_drop(sym)
+            for sym in pwant:
+                with _lock:
+                    hit = _poc_cache.get(sym)
+                if hit and time.time() - hit[0] < POC_TTL:
+                    continue
+                _poc(sc, sym, allow_compute=True)
+                with _lock:
+                    _coin_drop(sym)
+            time.sleep(1.0)
+        except Exception as e:
+            print(f"[INFO] portal worker: {e}")
+            time.sleep(5)
+
+
+def _coin_drop(sym):
+    for k in [k for k in _coin_cache if k[0] == sym]:
+        _coin_cache.pop(k, None)
+
+
+def _price(sc, sym):
+    d, _e = part(sc, 'bars', sym, defaults(sc)['tf'])
+    kl = (d or {}).get('kl') or []
+    try:
         return float(kl[-1].get('p') or 0) if kl else None
     except Exception:
         return None
@@ -194,184 +446,15 @@ def _price(sc, sym):
 def _pd(sc, sym):
     try:
         prem, disc = sc.get_pd_thresholds()
-        pct = sc.get_pd_pct(sym) if _in_bot(sc, sym) else _ext_get(sym).get('pd_pct')
-        return pd_view(pct, prem, disc, sc._settings.get('pd_zone_timeframe', '1h'))
+        pd_tf = str(sc._settings.get('pd_zone_timeframe', '1h')).lower()
+        if _in_bot(sc, sym):
+            pct = sc.get_pd_pct(sym)
+        else:
+            d, _e = part(sc, 'pd', sym, pd_tf)
+            pct = (d or {}).get('pd_pct')
+        return pd_view(pct, prem, disc, pd_tf)
     except Exception:
         return None
-
-
-# ── 🛰 МОНЕТИ ПОЗА БОТОМ — власний розрахунок тими самими функціями ──────
-_ext = {}                    # SYM → {'main','main_at','vz','vob_at','zones','pd_pct','slow_at','err','err_at'}
-_ext_want = {}               # SYM → коли востаннє просили (монети поза ботом)
-_poc_want = {}               # SYM → коли востаннє просили POC (будь-яка монета)
-_ext_thread = None
-
-
-def _bar_sec(tf):
-    t = str(tf or '').lower()
-    try:
-        n = int(t[:-1])
-        return n * {'m': 60, 'h': 3600, 'd': 86400}[t[-1]]
-    except Exception:
-        return 3600
-
-
-def _ext_get(sym):
-    with _lock:
-        return dict(_ext.get(sym) or {})
-
-
-def _kick():
-    global _ext_thread
-    if _ext_thread is None or not _ext_thread.is_alive():
-        _ext_thread = threading.Thread(target=_ext_worker, name='info-ext', daemon=True)
-        _ext_thread.start()
-
-
-def poc_want(sym):
-    with _lock:
-        if sym in _poc_want or len(_poc_want) < EXT_MAX * 2:
-            _poc_want[sym] = time.time()
-            _kick()
-
-
-def ext_want(sym):
-    """Сторінка попросила монету поза ботом → поставити в роботу (без чекання)."""
-    now = time.time()
-    with _lock:
-        if sym not in _ext_want and len(_ext_want) >= EXT_MAX:
-            return False
-        _ext_want[sym] = now
-        _kick()
-    return True
-
-
-def ext_due(rec, now, vol_tf, slow_tf):
-    """ЧИСТА: які частини монети пора перерахувати → set('main'|'vob'|'slow')."""
-    rec = rec or {}
-    if rec.get('err') and now - float(rec.get('err_at') or 0) < EXT_RETRY_SEC:
-        return set()
-    due = set()
-    if now - float(rec.get('main_at') or 0) >= EXT_FAST_TTL:
-        due.add('main')
-    if int(now // _bar_sec(vol_tf)) != int(float(rec.get('vob_at') or 0) // _bar_sec(vol_tf)):
-        due.add('vob')
-    if int(now // _bar_sec(slow_tf)) != int(float(rec.get('slow_at') or 0) // _bar_sec(slow_tf)):
-        due.add('slow')
-    return due
-
-
-def _ext_compute(sc, sym, due):
-    """Рахуємо ТИМИ САМИМИ функціями й параметрами, що сканер."""
-    from detection.market_data import get_market_data
-    from detection.smc_structure import detect_smc_structure
-    md = get_market_data()
-    st = sc._settings
-    isize = sc.get_internal_size()
-    ssize = int(st.get('swing_size', 50))
-    upd = {}
-    now = time.time()
-    if 'main' in due:
-        kl = md.fetch_klines(sym, limit=OHLC_BARS, interval=sc.get_timeframe())
-        if not kl or len(kl) < 20:
-            raise ValueError('монету не знайдено на біржі (немає барів)')
-        upd['main'], upd['main_at'] = kl, now
-    if 'vob' in due:
-        vz = []
-        if st.get('use_volumized_ob', True):
-            from detection.volumized_ob import detect_volumized_obs
-            vtf = st.get('volumized_timeframe', '1h')
-            vk = md.fetch_klines(sym, limit=sc.VOB_KLINES_LIMIT, interval=vtf)
-            if vk and len(vk) > 20:
-                r = detect_volumized_obs(
-                    vk, swing_length=int(st.get('volumized_swing_length', 10)),
-                    ob_end_method=st.get('volumized_ob_end_method', 'Wick'),
-                    max_atr_mult=float(st.get('volumized_max_atr_mult', 3.5)),
-                    zone_count=st.get('volumized_zone_count', 'Low'),
-                    combine_obs=bool(st.get('volumized_combine_obs', True)))
-                obs = list(r.get('bullish_obs') or []) + list(r.get('bearish_obs') or [])
-                obs.sort(key=lambda o: o.get('formation_time', o.get('start_time', 0)) or 0,
-                         reverse=True)
-                vz = [z for z in (sc._format_vob(o, vtf) for o in obs) if z]
-        upd['vz'], upd['vob_at'] = vz, now
-    if 'slow' in due:
-        from detection.ob_detector import detect_order_blocks
-        ob_tf = st.get('ob_filter_timeframe', '1h')
-        ok = md.fetch_klines(sym, limit=EXT_OB_BARS, interval=ob_tf)
-        zones = {}
-        if ok and len(ok) > 60:
-            cl = ok[:-1]
-            res = detect_smc_structure(cl, internal_size=isize, swing_size=ssize)
-            zones = {'tf': ob_tf}
-            for fam in ('internal', 'swing'):
-                f = res.get(fam, {}) or {}
-                zones[fam] = detect_order_blocks(klines=cl, pivots=f.get('pivots', []),
-                                                 events=f.get('events', []),
-                                                 limit=getattr(sc, 'OB_ZONES_SHOW', 8))
-        pd_tf = st.get('pd_zone_timeframe', '1h')
-        pk = md.fetch_klines(sym, limit=3000, interval=pd_tf)
-        pd_pct = None
-        if pk and len(pk) > 60:
-            pcl = pk[:-1]
-            pres = detect_smc_structure(pcl, internal_size=isize, swing_size=ssize)
-            pd_pct = sc._compute_pd_pct(pcl, (pres.get('swing', {}) or {}).get('pivots', []),
-                                        pcl[-1].get('p'))
-        upd['zones'], upd['pd_pct'], upd['slow_at'] = zones, pd_pct, now
-    return upd
-
-
-def _ext_worker():
-    """ОДИН потік на всі монети поза ботом — біржу не смикаємо паралельно."""
-    global _ext_thread
-    while True:
-        try:
-            sc = _scanner()
-            now = time.time()
-            with _lock:
-                for k in [k for k, t in _ext_want.items() if now - t > EXT_IDLE_SEC]:
-                    _ext_want.pop(k, None)
-                    _ext.pop(k, None)
-                for k in [k for k, t in _poc_want.items() if now - t > EXT_IDLE_SEC]:
-                    _poc_want.pop(k, None)
-                want = list(_ext_want)
-                pwant = list(_poc_want)
-                if not want and not pwant:
-                    _ext_thread = None
-                    return
-            if sc is None:
-                time.sleep(5)
-                continue
-            uni = set(universe(sc))
-            st = sc._settings
-            vtf = st.get('volumized_timeframe', '1h')
-            slow_tf = st.get('ob_filter_timeframe', '1h')
-            for sym in want:
-                if sym in uni:
-                    continue                      # бот уже веде цю монету
-                due = ext_due(_ext_get(sym), time.time(), vtf, slow_tf)
-                if not due:
-                    continue
-                try:
-                    upd = _ext_compute(sc, sym, due)
-                    upd['err'] = ''
-                except Exception as e:
-                    upd = {'err': str(e)[:160], 'err_at': time.time()}
-                with _lock:
-                    if sym in _ext_want:
-                        _ext.setdefault(sym, {}).update(upd)
-                        _coin_cache.pop(sym, None)
-            for sym in pwant:
-                with _lock:
-                    hit = _poc_cache.get(sym)
-                if hit and time.time() - hit[0] < POC_TTL:
-                    continue
-                _poc(sc, sym, allow_compute=True)
-                with _lock:
-                    _coin_cache.pop(sym, None)
-            time.sleep(2.0)
-        except Exception as e:
-            print(f"[INFO] ext worker: {e}")
-            time.sleep(5)
 
 
 def _poc_params(sc):
@@ -384,19 +467,17 @@ def _poc_params(sc):
             str(s.get('poc_filter_tf', '1h') or '1h'), days)
 
 
-def _poc(sc, sym, allow_compute=True):
+def _poc(sc, sym, allow_compute=True, price=None):
     """POC через ТОЙ САМИЙ compute_poc, що бейдж графіка, зі спільним кешем.
     Вікно прибите до години (to = поточна година) — ключ кешу стабільний."""
     now = time.time()
-    computed = False
     with _lock:
         hit = _poc_cache.get(sym)
     if hit and now - hit[0] < POC_TTL:
         view = hit[1]
     elif not allow_compute:
-        return ('pending', None, False)
+        return ('pending', None)
     else:
-        computed = True
         view = None
         try:
             from detection.volume_profile import compute_poc
@@ -414,93 +495,109 @@ def _poc(sc, sym, allow_compute=True):
             if len(_poc_cache) > 600:
                 _poc_cache.clear()
     if not view:
-        return ('none', None, computed)
+        return ('none', None)
     out = dict(view)
-    price = _price(sc, sym)
+    if price is None and allow_compute is False:
+        price = _price(sc, sym)
     try:
         from detection.volume_profile import price_vs_poc
         v = price_vs_poc(out['poc'], price)
         out['rel'], out['dist_pct'] = v.get('rel'), v.get('dist_pct')
     except Exception:
         out['rel'] = out['dist_pct'] = None
-    return ('ok', out, computed)
+    return ('ok', out)
 
 
 def rows_for(symbols, sc=None):
+    """Рядки особистого списку: лише назва, ціна і стан (PD/POC тепер на
+    графіку — вимога 08.11). Ціна — з тих самих барів, що графік за TF бота."""
     sc = sc or _scanner()
     uni = set(universe(sc))
     rows = []
     for sym in iwl_norm(symbols):
         src = 'bot' if sym in uni else 'ext'
-        ext_err = ""
-        if src == 'ext':
-            ext_want(sym)
-            ext_err = _ext_get(sym).get('err') or ""
-        poc_want(sym)
-        st, poc, _c = _poc(sc, sym, allow_compute=False)
-        rows.append({'symbol': sym, 'price': _price(sc, sym), 'pd': _pd(sc, sym),
-                     'poc': poc, 'poc_state': st, 'src': src, 'err': ext_err})
+        tf = defaults(sc)['tf'] if sc else '15m'
+        d, err = part(sc, 'bars', sym, tf) if sc else (None, '')
+        kl = (d or {}).get('kl') or []
+        price = chg = None
+        try:
+            if kl:
+                price = float(kl[-1].get('p') or 0) or None
+                day = max(1, int(86400 // bar_sec(tf)))
+                base = float(kl[-min(len(kl), day + 1)].get('p') or 0)
+                if base > 0 and price:
+                    chg = round((price / base - 1) * 100, 2)
+        except Exception:
+            pass
+        rows.append({'symbol': sym, 'price': price, 'chg24': chg, 'src': src, 'err': err})
     return rows
 
 
-def coin_payload(sym, sc=None):
+def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None):
     sc = sc or _scanner()
     sym = norm_symbol(sym)
     if not sc:
         return {'ok': False, 'reason': 'сканер бота недоступний'}
     if not valid_symbol(sym):
         return {'ok': False, 'reason': (sym or "?") + ' — некоректна назва монети'}
+    dfl = defaults(sc)
+    tf = norm_tf(tf, CHART_TFS, dfl['tf'])
+    ob_tf = norm_tf(ob_tf, OB_TFS, dfl['ob_tf'], allow_off=True)
+    vob_tf = norm_tf(vob_tf, VOB_TFS, dfl['vob_tf'], allow_off=True)
     in_bot = _in_bot(sc, sym)
-    if not in_bot:
-        ext_want(sym)
+    ck = (sym, tf, ob_tf, vob_tf)
     now = time.time()
     with _lock:
-        hit = _coin_cache.get(sym)
+        hit = _coin_cache.get(ck)
     if hit and now - hit[0] < COIN_TTL:
+        # частини все одно «просимо», інакше кеш потоку їх забуде
+        for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf)):
+            if t != OFF and _bot_part(sc, k, sym, t) is None:
+                want((k, sym, t))
+        poc_want(sym)
         return hit[1]
-    if in_bot:
-        with sc._lock:
-            c = sc._cache.get(sym)
-            zones = dict(sc._ob_zones.get(sym) or {}) if hasattr(sc, '_ob_zones') else {}
-        ohlc = ohlc_of((c or {}).get('klines'))
-        try:
-            vz = sc._volumized_zones(sym) if sc._settings.get('use_volumized_ob', True) else []
-        except Exception:
-            vz = []
-        reason = "" if ohlc else "сканер ще не дійшов до монети — дані зʼявляться за хвилину"
+    bars, err = part(sc, 'bars', sym, tf)
+    ohlc = ohlc_of((bars or {}).get('kl'))
+    events = list((bars or {}).get('events') or [])
+    ob, ob_wait = [], False
+    if ob_tf != OFF:
+        d, _e = part(sc, 'ob', sym, ob_tf)
+        ob, ob_wait = ob_boxes((d or {}).get('zones')), d is None
+    vob, vob_wait = [], False
+    if vob_tf != OFF:
+        d, _e = part(sc, 'vob', sym, vob_tf)
+        vob, vob_wait = vob_boxes((d or {}).get('vz')), d is None
+    if ohlc:
+        reason = ''
+    elif err:
+        reason = err
+    elif in_bot:
+        reason = '⏳ завантаження барів ' + tf.upper()
     else:
-        rec = _ext_get(sym)
-        ohlc = ohlc_of(rec.get('main'))
-        zones, vz = dict(rec.get('zones') or {}), list(rec.get('vz') or [])
-        reason = (rec.get('err') or "") if not ohlc else ""
-        if not ohlc and not reason:
-            reason = "⏳ монети немає в боті — рахуємо окремо, кілька секунд"
+        reason = '⏳ монети немає в боті — рахуємо окремо, кілька секунд'
     poc_want(sym)
-    _st, poc, _c = _poc(sc, sym, allow_compute=False)
-    try:
-        tf_lbl = sc.get_display_label()
-    except Exception:
-        tf_lbl = ''
+    _st, poc = _poc(sc, sym, allow_compute=False,
+                    price=(ohlc[-1]['close'] if ohlc else None))
     payload = {
-        'ok': bool(ohlc), 'symbol': sym, 'tf': tf_lbl, 'src': 'bot' if in_bot else 'ext',
-        'reason': reason,
-        'ohlc': ohlc,
-        'ob': ob_boxes(zones), 'ob_tf': str(zones.get('tf') or '').upper(),
-        'vob': vob_boxes(vz),
-        'pd': _pd(sc, sym), 'poc': poc, 'ts': now,
+        'ok': bool(ohlc), 'symbol': sym, 'src': 'bot' if in_bot else 'ext', 'reason': reason,
+        'tf': tf, 'ob_tf': ob_tf, 'vob_tf': vob_tf,
+        'ohlc': ohlc, 'events': events,
+        'ob': ob, 'vob': vob, 'ob_wait': ob_wait, 'vob_wait': vob_wait,
+        'pd': _pd(sc, sym), 'poc': poc, 'poc_state': _st, 'ts': now,
     }
     payload['sig'] = sig_of(payload)
-    if not ohlc:
+    if not ohlc or ob_wait or vob_wait:
         return payload                 # «рахується» не кешуємо
     with _lock:
-        _coin_cache[sym] = (now, payload)
-        if len(_coin_cache) > 600:
+        _coin_cache[ck] = (now, payload)
+        if len(_coin_cache) > 1200:
             _coin_cache.clear()
     return payload
 
 
 # ── Особисті дані користувача ─────────────────────────────────────────────
-def user_info(prefs, uni):
+def user_info(prefs, uni, dfl=None):
+    dfl = dfl or {'tf': '15m', 'ob_tf': '1h', 'vob_tf': '5m'}
     info = (prefs or {}).get('info') or {}
     wl = info.get('wl')
     if wl is None:                       # перший вхід — стартовий набір
@@ -509,11 +606,15 @@ def user_info(prefs, uni):
     sel = norm_symbol(info.get('sel'))
     if sel not in wl:
         sel = wl[0] if wl else ''
-    return {'wl': wl, 'sel': sel}
+    return {'wl': wl, 'sel': sel,
+            'tf': norm_tf(info.get('tf'), CHART_TFS, dfl['tf']),
+            'ob_tf': norm_tf(info.get('ob_tf'), OB_TFS, dfl['ob_tf'], allow_off=True),
+            'vob_tf': norm_tf(info.get('vob_tf'), VOB_TFS, dfl['vob_tf'], allow_off=True)}
 
 
 def apply_change(cur, body, uni):
-    """ЧИСТА: зміна особистого списку з тіла запиту {add|remove|set|sel}."""
+    """ЧИСТА: зміна особистих даних з тіла запиту {add|remove|set|sel|tf|ob_tf|vob_tf}."""
+    out = dict(cur)
     wl = list(cur.get('wl') or [])
     sel = cur.get('sel') or ''
     err = ''
@@ -538,7 +639,14 @@ def apply_change(cur, body, uni):
             sel = s
     if sel not in wl:
         sel = wl[0] if wl else ''
-    return {'wl': wl, 'sel': sel}, err
+    if 'tf' in body:
+        out['tf'] = norm_tf(body.get('tf'), CHART_TFS, cur.get('tf') or '15m')
+    if 'ob_tf' in body:
+        out['ob_tf'] = norm_tf(body.get('ob_tf'), OB_TFS, cur.get('ob_tf') or '1h', allow_off=True)
+    if 'vob_tf' in body:
+        out['vob_tf'] = norm_tf(body.get('vob_tf'), VOB_TFS, cur.get('vob_tf') or '5m', allow_off=True)
+    out['wl'], out['sel'] = wl, sel
+    return out, err
 
 
 def register_info_portal(app):
@@ -552,7 +660,9 @@ def register_info_portal(app):
     def api_info_universe():
         """Монети WATCHLIST бота — підказка при додаванні (дані вже пораховані).
         Додати можна й будь-яку іншу USDT-монету — її порахує фоновий потік."""
-        return jsonify({'ok': True, 'symbols': sorted(universe())})
+        return jsonify({'ok': True, 'symbols': sorted(universe()),
+                        'tfs': list(CHART_TFS), 'ob_tfs': list(OB_TFS),
+                        'vob_tfs': list(VOB_TFS)})
 
     @app.route('/api/info/rows')
     def api_info_rows():
@@ -561,10 +671,11 @@ def register_info_portal(app):
 
     @app.route('/api/info/coin')
     def api_info_coin():
-        p = coin_payload(request.args.get('symbol') or '')
-        if p.get('ok') and request.args.get('sig') and request.args.get('sig') == p.get('sig'):
-            return jsonify({'ok': True, 'same': True, 'sig': p['sig'],
-                            'pd': p.get('pd'), 'poc': p.get('poc')})
+        a = request.args
+        p = coin_payload(a.get('symbol') or '', tf=a.get('tf'), ob_tf=a.get('ob_tf'),
+                         vob_tf=a.get('vob_tf'))
+        if p.get('ok') and a.get('sig') and a.get('sig') == p.get('sig'):
+            return jsonify({'ok': True, 'same': True, 'sig': p['sig']})
         return jsonify(p)
 
     @app.route('/api/me/watchlist', methods=['GET', 'POST'])
@@ -573,13 +684,14 @@ def register_info_portal(app):
         u = _me()
         if u is None:
             return jsonify({'ok': False, 'error': 'auth_required'}), 401
-        uni = universe()
+        sc = _scanner()
+        uni = universe(sc)
         prefs = _load_prefs(u)
-        cur = user_info(prefs, uni)
+        cur = user_info(prefs, uni, defaults(sc) if sc else None)
         err = ''
         if request.method == 'POST':
             cur, err = apply_change(cur, request.get_json(silent=True) or {}, uni)
             prefs['info'] = cur
             _update_user(u.id, prefs=json.dumps(prefs)[:20000])
-        return jsonify({'ok': not err, 'error': err, 'wl': cur['wl'], 'sel': cur['sel'],
-                        'max': IWL_MAX, 'universe_n': len(uni)})
+        return jsonify({'ok': not err, 'error': err, 'max': IWL_MAX, 'universe_n': len(uni),
+                        **cur})

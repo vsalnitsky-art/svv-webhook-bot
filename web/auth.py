@@ -113,11 +113,48 @@ def _make_info_token(uid):
 
 
 def _read_info_token(token, max_age=_INFO_TOK_MAX_AGE):
+    v = _read_info_token_ts(token, max_age)
+    return v[0] if v else None
+
+
+def _read_info_token_ts(token, max_age=_INFO_TOK_MAX_AGE):
+    """(uid, коли видано — epoch-секунди) або None."""
     try:
-        v = URLSafeTimedSerializer(_tg_secret(), salt='infotok').loads(token, max_age=max_age)
-        return int(v['u']) if isinstance(v, dict) and 'u' in v else None
+        v, ts = URLSafeTimedSerializer(_tg_secret(), salt='infotok').loads(
+            token, max_age=max_age, return_timestamp=True)
+        if not (isinstance(v, dict) and 'u' in v):
+            return None
+        try:
+            if getattr(ts, 'tzinfo', None) is None:      # itsdangerous 1.x: naive UTC
+                from datetime import timezone as _tz
+                ts = ts.replace(tzinfo=_tz.utc)
+            issued = ts.timestamp()
+        except Exception:
+            issued = 0.0
+        return int(v['u']), float(issued)
     except Exception:
         return None
+
+
+def info_token_revoked(prefs, issued):
+    """ЧИСТА: токен інфосайту видано ДО виходу користувача → недійсний.
+    `info_logout_at` пишеться на «Вихід» (вимога 08.11: «Вихід не відбувається
+    … потім на сайт відбувається автоматично»)."""
+    try:
+        lo = float((prefs or {}).get('info_logout_at') or 0)
+    except (TypeError, ValueError):
+        lo = 0.0
+    return lo > 0 and float(issued or 0) < lo
+
+
+def _revoke_info_tokens(u):
+    """Усі видані досі токени інфосайту цього користувача — недійсні."""
+    try:
+        prefs = json.loads(u.prefs or '{}')
+    except Exception:
+        prefs = {}
+    prefs['info_logout_at'] = int(time.time()) + 1
+    _update_user(u.id, prefs=json.dumps(prefs)[:20000])
 
 
 # ==================================================================
@@ -561,9 +598,16 @@ def current_user():
         except Exception:
             tok = None
         if tok:
-            uid = _read_info_token(tok)
-            if uid:
-                u = get_user_by_id(uid)
+            v = _read_info_token_ts(tok)
+            if v:
+                u = get_user_by_id(v[0])
+                if u is not None:
+                    try:
+                        _pr = json.loads(u.prefs or '{}')
+                    except Exception:
+                        _pr = {}
+                    if info_token_revoked(_pr, v[1]):
+                        u = None
                 if u:
                     g._via_token = True
     g._cur_user = u
@@ -1241,8 +1285,27 @@ def register_auth_routes(app):
 
     @app.route('/logout', methods=['GET', 'POST'])
     def auth_logout():
+        u = current_user()
+        if u is not None:
+            _revoke_info_tokens(u)          # вихід = вихід і з інфосайту
         logout_user()
+        if request.args.get('next') == 'info':
+            # Вихід з інфосайту: сесію бота закрито (інакше «Вхід» миттєво
+            # видавав новий токен без пароля) → назад на сайт.
+            site = os.getenv('INFO_SITE_URL')
+            return redirect(site or '/info/')
         return redirect(url_for('auth_login'))
+
+    @app.route('/api/me/logout', methods=['POST'])
+    def api_me_logout():
+        """Вихід з інфосайту: відкликати ВСІ токени користувача (токен живе 7
+        діб і лежить у localStorage — без відкликання його копія лишалась би
+        дійсною) і закрити сесію бота, якщо запит прийшов із cookie."""
+        u = current_user()
+        if u is not None:
+            _revoke_info_tokens(u)
+        logout_user()
+        return jsonify({'ok': True})
 
     @app.route('/favicon.ico')
     def favicon():

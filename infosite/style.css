@@ -99,6 +99,11 @@ body {
   box-shadow: 0 0 0 1px var(--line), 0 2px 8px -3px rgba(0,0,0,.6); }
 .brand .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent);
   box-shadow: 0 0 0 4px rgba(245,166,35,.18); }
+/* «VSV Bot» — виділено на банері (вимога 08.11) */
+.brand-name { font: 900 17px var(--font); letter-spacing: .02em; padding: 3px 10px; border-radius: 8px;
+  color: #1a1206; background: linear-gradient(135deg, #ffd27a 0%, var(--accent) 55%, #e8891a 100%);
+  box-shadow: 0 0 0 1px rgba(245,166,35,.55), 0 4px 14px -6px rgba(245,166,35,.7); }
+.brand-sub { font-weight: 700; color: var(--txt-dim); }
 
 .top-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .auth-links { display: flex; align-items: center; gap: 12px; font-size: 12.5px; }
@@ -314,7 +319,7 @@ td.mono, td .mono { font-family: var(--mono); }
 
 
 /* ═══ 👤 особиста сторінка: WATCHLIST + графік ═══ */
-.iw-layout { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 18px; align-items: start; }
+.iw-layout { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px; align-items: start; }
 .iw-wl { padding: 16px 0 10px; }
 .iw-wl h2 { margin: 0 16px 12px; }
 .iw-add { display: flex; gap: 8px; padding: 0 16px 12px; border-bottom: 1px solid var(--line-soft); }
@@ -327,17 +332,18 @@ td.mono, td .mono { font-family: var(--mono); }
 .iw-msg { padding: 6px 16px 0; font-size: 12px; min-height: 18px; color: var(--muted); }
 .iw-msg.err { color: var(--short); }
 .iw-list { max-height: calc(100vh - 250px); overflow-y: auto; }
-.iw-row { display: grid; grid-template-columns: minmax(0, 1fr) 118px 18px; align-items: center; gap: 8px;
-  padding: 9px 12px 9px 16px; border-bottom: 1px solid var(--line-soft); cursor: pointer;
+.iw-row { display: grid; grid-template-columns: minmax(0, 1fr) 104px 62px 16px; align-items: center; gap: 8px;
+  padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line-soft); cursor: pointer;
   border-left: 3px solid transparent; }
 .iw-row:nth-child(even) { background: color-mix(in srgb, var(--elev) 45%, transparent); }
 .iw-row:hover { background: var(--elev); }
 .iw-row.sel { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--elev)); }
 .iw-sym { font: 800 13.5px var(--mono); letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .iw-sym small { font: 600 10.5px var(--font); color: var(--muted); margin-left: 4px; }
-.iw-sub .bdg { font-size: 10.5px; }
-.iw-sub { grid-column: 1 / 4; display: flex; gap: 6px; flex-wrap: nowrap; overflow: hidden; margin-top: -2px; }
 .iw-price { font: 600 12.5px var(--mono); color: var(--txt-dim); text-align: right; white-space: nowrap; }
+.iw-chg { font: 700 11.5px var(--mono); text-align: right; white-space: nowrap; color: var(--muted); }
+.iw-chg.up { color: var(--long); } .iw-chg.dn { color: var(--short); }
+.iw-err { grid-column: 1 / 5; font-size: 11px; color: var(--warn); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .iw-del { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 15px; padding: 0; line-height: 1; }
 .iw-del:hover { color: var(--short); }
 .iw-empty { padding: 22px 16px; color: var(--muted); font-size: 13px; text-align: center; }
@@ -362,6 +368,20 @@ td.mono, td .mono { font-family: var(--mono); }
 .iw-px { font: 800 15px var(--mono); }
 .iw-legend { margin-left: auto; display: flex; gap: 12px; font-size: 11.5px; color: var(--muted); flex-wrap: wrap; }
 .iw-legend i { display: inline-block; width: 12px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+/* Панель TF як на біржі + вибір TF для OB / VOB */
+.iw-tfbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -4px 0 10px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
+.iw-tfs { display: inline-flex; gap: 2px; background: var(--elev); border: 1px solid var(--line);
+  border-radius: 8px; padding: 2px; }
+.iw-tfs button { background: none; border: 0; color: var(--txt-dim); font: 700 12px var(--mono);
+  padding: 4px 9px; border-radius: 6px; cursor: pointer; }
+.iw-tfs button:hover { color: var(--txt); }
+.iw-tfs button.on { background: var(--accent); color: #1a1206; }
+.iw-sel { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); font-weight: 700; }
+.iw-sel select { background: var(--elev); color: var(--txt); border: 1px solid var(--line); border-radius: 7px;
+  font: 700 12px var(--mono); padding: 4px 6px; color-scheme: dark; cursor: pointer; }
+:root[data-theme="light"] .iw-sel select { color-scheme: light; }
+.iw-sel .wait { color: var(--warn); }
 .iw-box { position: relative; height: calc(100vh - 220px); min-height: 380px; border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm); overflow: hidden; background: var(--bg2); }
 .iw-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;

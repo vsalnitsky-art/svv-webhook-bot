@@ -6,10 +6,11 @@
 //  API бота:
 //    GET  /api/me                     — хто увійшов
 //    GET  /api/me/watchlist           — мій список монет + обрана монета
-//    POST /api/me/watchlist           — {add|remove|sel} (лише свій акаунт)
+//    POST /api/me/watchlist           — {add|remove|sel|tf|ob_tf|vob_tf} (лише свій акаунт)
 //    GET  /api/info/universe          — монети WATCHLIST бота (підказки)
-//    GET  /api/info/rows?symbols=…    — PD-зона + POC по моїх монетах
-//    GET  /api/info/coin?symbol=&sig= — графік: бари + OB + VOB + PD + POC
+//    GET  /api/info/rows?symbols=…    — ціна і зміна за добу по моїх монетах
+//    GET  /api/info/coin?symbol=&tf=&ob_tf=&vob_tf=&sig= — графік: бари + CHoCH/BOS + OB + VOB + PD + POC
+//    POST /api/me/logout               — вихід (відкликає всі токени)
 //    GET  /api/me/notify              — стан Telegram
 //  Сервер віддає ЛИШЕ готові дані зі спільного кешу — сторінка біржу не смикає.
 // ─────────────────────────────────────────────────────────────────────────
@@ -42,7 +43,18 @@
       try { history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) {}
     }
   })();
-  function logout() { setTok(""); window.location.reload(); }
+  // Вихід (вимога 08.11: «Вихід не відбувається… потім на сайт відбувається
+  // автоматично»). Раніше лише стирався локальний токен, а сесія БОТА лишалась
+  // живою → «Вхід» миттєво видавав новий токен. Тепер: (1) бот відкликає ВСІ
+  // токени цього користувача, (2) сесію бота закриваємо переходом на /logout,
+  // який повертає назад на сайт.
+  function logout() {
+    var go = function () {
+      setTok("");
+      window.location.href = botUrl("/logout?next=info");
+    };
+    apiPost("/api/me/logout", {}).then(go, go);
+  }
 
   // ── helpers ──────────────────────────────────────────────────────────────
   function $(sel) { return document.querySelector(sel); }
@@ -247,8 +259,32 @@
 
   // ═══ 👤 МІЙ WATCHLIST ════════════════════════════════════════════════════
   var ROWS_MS = 15000, COIN_MS = 15000;
-  var IW = { wl: [], sel: "", rows: {}, max: 40, sig: "", coin: null, chart: null, series: null,
-             prim: null, chartSym: "", universe: [] };
+  var CHART_TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
+  var OB_TFS = ["15m", "30m", "1h", "4h"];
+  var VOB_TFS = ["1m", "5m", "15m", "30m", "1h", "4h"];
+  var IW = { wl: [], sel: "", rows: {}, max: 20, sig: "", coin: null, chart: null, series: null,
+             prim: null, pocLine: null, chartKey: "", universe: [],
+             tf: "15m", ob_tf: "1h", vob_tf: "5m" };
+
+  function tfLbl(tf) {
+    tf = String(tf || "").toLowerCase();
+    if (tf === "off") return "вимк.";
+    return /[hd]$/.test(tf) ? tf.toUpperCase() : tf;
+  }
+  // «5 Min OB» / «1 H OB» — як підпис боксу в TradingView.
+  function tfWord(tf) {
+    var m = String(tf || "").toLowerCase().match(/^(\d+)([mhd])$/);
+    if (!m) return String(tf || "").toUpperCase();
+    return m[1] + " " + ({ m: "Min", h: "H", d: "D" })[m[2]];
+  }
+  function fmtVol(v) {
+    v = Number(v);
+    if (!isFinite(v) || v <= 0) return "";
+    if (v >= 1e9) return (v / 1e9).toFixed(2) + "B";
+    if (v >= 1e6) return (v / 1e6).toFixed(2) + "M";
+    if (v >= 1e3) return (v / 1e3).toFixed(2) + "K";
+    return String(Math.round(v));
+  }
 
   function pdBadge(pd) {
     if (!pd) return '<span class="bdg mute" title="PD-зона ще не порахована">PD —</span>';
@@ -268,9 +304,9 @@
     var d = poc.dist_pct, rel = poc.rel;
     var cls = rel === "above" ? "short" : (rel === "below" ? "long" : "mute");
     var hint = rel === "above" ? "краще SHORT" : (rel === "below" ? "краще LONG" : "на POC");
-    var tip = "POC " + poc.days + "д · " + poc.tf + " · " + poc.market + " — ціна найбільшого обсягу. " +
+    var tip = "POC " + poc.days + "д · " + poc.tf + " · " + poc.market + " — ціна найбільшого обсягу (лінія на графіку). " +
       "Ціна ВИЩЕ POC → краще SHORT, НИЖЧЕ → краще LONG. " + hint + ".";
-    return '<span class="bdg ' + cls + '" title="' + esc(tip + " Ціна↔POC: " + (d == null ? "—" : d + "%")) + '">POC ' +
+    return '<span class="bdg ' + cls + '" title="' + esc(tip) + '">POC ' +
       fmtPrice(poc.poc).replace("$", "") +
       (d == null ? "" : " " + (d >= 0 ? "+" : "") + Number(d).toFixed(2) + "%") + "</span>";
   }
@@ -280,6 +316,7 @@
     if (el) { el.textContent = t || ""; el.className = "iw-msg" + (err ? " err" : ""); }
   }
 
+  // Рядок списку — ЛИШЕ назва, ціна і зміна (PD і POC тепер на графіку).
   function renderList() {
     var host = $("#iw-list");
     $("#iw-count").textContent = IW.wl.length + " / " + IW.max;
@@ -291,25 +328,45 @@
       var r = IW.rows[sym] || {};
       var ext = r.src === "ext"
         ? '<small title="Монети немає у WATCHLIST бота — сайт рахує її окремо">🛰</small>' : "";
-      var sub = r.err
-        ? '<span class="bdg warn" title="' + esc(r.err) + '">⚠ ' + esc(r.err).slice(0, 40) + "</span>"
-        : pdBadge(r.pd) + pocBadge(r.poc, r.poc_state);
+      var c = r.chg24;
+      var chg = c == null ? '<span class="iw-chg">—</span>'
+        : '<span class="iw-chg ' + (c > 0 ? "up" : (c < 0 ? "dn" : "")) + '" title="Зміна ціни за ~24 год">' +
+          (c > 0 ? "+" : "") + Number(c).toFixed(2) + "%</span>";
       return '<div class="iw-row' + (sym === IW.sel ? " sel" : "") + '" data-sym="' + esc(sym) + '">' +
         '<span class="iw-sym">' + esc(sym.replace(/USDT$/, "")) + '<small>USDT</small>' + ext + "</span>" +
-        '<span class="iw-price">' + (r.price ? fmtPrice(r.price) : "—") + "</span>" +
+        '<span class="iw-price">' + (r.price ? fmtPrice(r.price) : "—") + "</span>" + chg +
         '<button class="iw-del" data-del="' + esc(sym) + '" title="Прибрати зі списку">×</button>' +
-        '<div class="iw-sub">' + sub + "</div>" +
+        (r.err ? '<div class="iw-err" title="' + esc(r.err) + '">⚠ ' + esc(r.err) + "</div>" : "") +
       "</div>";
     }).join("");
+  }
+
+  function renderTfBar() {
+    var host = $("#iw-tfs");
+    if (host) host.innerHTML = CHART_TFS.map(function (tf) {
+      return '<button type="button" data-tf="' + tf + '" class="' + (tf === IW.tf ? "on" : "") + '">' + tfLbl(tf) + "</button>";
+    }).join("");
+    var opt = function (list, cur) {
+      return list.concat(["off"]).map(function (tf) {
+        return '<option value="' + tf + '"' + (tf === cur ? " selected" : "") + ">" + tfLbl(tf) + "</option>";
+      }).join("");
+    };
+    var o = $("#iw-ob-tf"); if (o) o.innerHTML = opt(OB_TFS, IW.ob_tf);
+    var v = $("#iw-vob-tf"); if (v) v.innerHTML = opt(VOB_TFS, IW.vob_tf);
   }
 
   function applyMine(d) {
     if (!d) return;
     IW.wl = d.wl || [];
     IW.max = d.max || IW.max;
-    var changed = (d.sel || "") !== IW.sel;
+    var key = [d.sel, d.tf, d.ob_tf, d.vob_tf].join("|");
+    var changed = key !== [IW.sel, IW.tf, IW.ob_tf, IW.vob_tf].join("|");
     IW.sel = d.sel || "";
+    if (d.tf) IW.tf = d.tf;
+    if (d.ob_tf) IW.ob_tf = d.ob_tf;
+    if (d.vob_tf) IW.vob_tf = d.vob_tf;
     renderList();
+    renderTfBar();
     if (changed) { IW.sig = ""; IW.coin = null; loadCoin(true); }
   }
 
@@ -331,7 +388,6 @@
     return api("/api/info/rows?symbols=" + encodeURIComponent(IW.wl.join(","))).then(function (d) {
       (d.rows || []).forEach(function (r) { IW.rows[r.symbol] = r; });
       renderList();
-      renderHead();
     }).catch(function () {});
   }
 
@@ -356,6 +412,15 @@
   });
 
   document.addEventListener("click", function (e) {
+    var tfb = e.target.closest ? e.target.closest("#iw-tfs [data-tf]") : null;
+    if (tfb) {
+      var tf = tfb.getAttribute("data-tf");
+      if (tf === IW.tf) return;
+      IW.tf = tf; IW.sig = ""; IW.coin = null;
+      renderTfBar(); loadCoin(true);
+      saveMine({ tf: tf });
+      return;
+    }
     var del = e.target.closest ? e.target.closest("[data-del]") : null;
     if (del) { e.stopPropagation(); saveMine({ remove: del.getAttribute("data-del") }); return; }
     var row = e.target.closest ? e.target.closest(".iw-row[data-sym]") : null;
@@ -368,40 +433,67 @@
     }
   });
 
-  // ═══ 📈 ГРАФІК: бари + бокси OB 1H і Volumized OB ═════════════════════════
-  // Примітив малює прямокутники від свічки блоку до правого краю (як LuxAlgo /
-  // «Volumized Order Blocks» у TradingView).
-  function BoxPrimitive() { this._b = []; this._chart = null; this._series = null; this._req = null; }
+  document.addEventListener("change", function (e) {
+    var id = e.target && e.target.id;
+    if (id !== "iw-ob-tf" && id !== "iw-vob-tf") return;
+    var k = id === "iw-ob-tf" ? "ob_tf" : "vob_tf";
+    IW[k] = e.target.value; IW.sig = "";
+    loadCoin(false, true);
+    var b = {}; b[k] = e.target.value;
+    saveMine(b);
+  });
+
+  // ═══ 📈 ГРАФІК: бари + структура CHoCH/BOS + OB + Volumized OB + POC ══════
+  // Примітив малює (а) прямокутники блоків від свічки блоку до правого краю
+  // (як «Volumized Order Blocks» / LuxAlgo у TradingView) і (б) лінії
+  // структури від півота до бару пробою.
+  function BoxPrimitive() { this._b = []; this._l = []; this._chart = null; this._series = null; this._req = null; }
   BoxPrimitive.prototype.attached = function (p) { this._chart = p.chart; this._series = p.series; this._req = p.requestUpdate; };
   BoxPrimitive.prototype.detached = function () { this._chart = null; this._series = null; this._req = null; };
-  BoxPrimitive.prototype.set = function (list) { this._b = list || []; if (this._req) this._req(); };
+  BoxPrimitive.prototype.set = function (boxes, lines) { this._b = boxes || []; this._l = lines || []; if (this._req) this._req(); };
   BoxPrimitive.prototype.paneViews = function () {
     var self = this;
     return [{ renderer: function () { return { draw: function (target) {
       if (!self._chart || !self._series) return;
-      for (var i = self._b.length - 1; i >= 0; i--) {
-        var b = self._b[i];
-        var x1 = self._chart.timeScale().timeToCoordinate(b.t);
-        var yA = self._series.priceToCoordinate(b.top), yB = self._series.priceToCoordinate(b.bottom);
-        if (x1 == null || yA == null || yB == null) continue;
-        target.useBitmapCoordinateSpace(function (sc) {
-          var ctx = sc.context, hr = sc.horizontalPixelRatio, vr = sc.verticalPixelRatio;
+      var ts = self._chart.timeScale(), sr = self._series;
+      target.useBitmapCoordinateSpace(function (sc) {
+        var ctx = sc.context, hr = sc.horizontalPixelRatio, vr = sc.verticalPixelRatio;
+        var font = function (w, px) { return w + " " + Math.round(px * vr) + "px -apple-system,Segoe UI,Roboto,sans-serif"; };
+        // ── лінії структури ──
+        self._l.forEach(function (l) {
+          var x1 = ts.timeToCoordinate(l.t1), x2 = ts.timeToCoordinate(l.t2), y = sr.priceToCoordinate(l.price);
+          if (x1 == null || x2 == null || y == null) return;
+          ctx.strokeStyle = l.color; ctx.lineWidth = Math.max(1, Math.round(hr));
+          if (l.dashed && ctx.setLineDash) ctx.setLineDash([4 * hr, 3 * hr]);
+          ctx.beginPath(); ctx.moveTo(x1 * hr, Math.round(y * vr) + 0.5); ctx.lineTo(x2 * hr, Math.round(y * vr) + 0.5); ctx.stroke();
+          if (ctx.setLineDash) ctx.setLineDash([]);
+        });
+        // ── бокси (найновіший — зверху) ──
+        for (var i = self._b.length - 1; i >= 0; i--) {
+          var b = self._b[i];
+          var x1 = ts.timeToCoordinate(b.t);
+          var yA = sr.priceToCoordinate(b.top), yB = sr.priceToCoordinate(b.bottom);
+          if (x1 == null || yA == null || yB == null) continue;
           var X1 = Math.max(0, x1 * hr), X2 = sc.bitmapSize.width;
           var yT = Math.min(yA, yB) * vr, yBt = Math.max(yA, yB) * vr;
-          if (X2 <= X1 || yBt - yT <= 0) return;
+          if (X2 <= X1 || yBt - yT <= 0) continue;
           ctx.fillStyle = b.fill; ctx.fillRect(X1, yT, X2 - X1, yBt - yT);
           ctx.strokeStyle = b.stroke; ctx.lineWidth = Math.max(1, Math.round(1.2 * hr));
           if (b.dashed && ctx.setLineDash) ctx.setLineDash([6 * hr, 4 * hr]);
           ctx.strokeRect(X1, yT, X2 - X1, yBt - yT);
           if (ctx.setLineDash) ctx.setLineDash([]);
-          if (b.label) {
-            ctx.font = "700 " + Math.round(10.5 * vr) + "px -apple-system,Segoe UI,Roboto,sans-serif";
-            ctx.fillStyle = b.text; ctx.textAlign = "right"; ctx.textBaseline = "middle";
-            ctx.fillText(b.label, X2 - 10 * hr, (yT + yBt) / 2);
-            ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+          ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillStyle = b.text;
+          var mid = (yT + yBt) / 2, h = yBt - yT;
+          if (b.label && b.sub && h >= 26 * vr) {
+            ctx.font = font(800, 12); ctx.fillText(b.label, X2 - 8 * hr, mid - 7 * vr);
+            ctx.font = font(600, 11); ctx.fillText(b.sub, X2 - 8 * hr, mid + 8 * vr);
+          } else if (b.label) {
+            ctx.font = font(700, 10.5);
+            ctx.fillText(b.label + (b.sub ? "  " + b.sub : ""), X2 - 8 * hr, mid);
           }
-        });
-      }
+          ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+        }
+      });
     } }; } }];
   };
 
@@ -420,10 +512,6 @@
     return ans;
   }
 
-  function cssVar(n, d) {
-    try { return getComputedStyle(document.documentElement).getPropertyValue(n).trim() || d; } catch (e) { return d; }
-  }
-
   function ensureChart() {
     if (IW.chart || !window.LightweightCharts) return !!IW.chart;
     var box = $("#iw-box");
@@ -435,19 +523,24 @@
       grid: { vertLines: { color: dark ? "rgba(38,50,74,.45)" : "rgba(211,218,230,.6)" },
               horzLines: { color: dark ? "rgba(38,50,74,.45)" : "rgba(211,218,230,.6)" } },
       rightPriceScale: { borderColor: dark ? "#26324a" : "#d3dae6" },
-      timeScale: { borderColor: dark ? "#26324a" : "#d3dae6", timeVisible: true, secondsVisible: false },
+      timeScale: { borderColor: dark ? "#26324a" : "#d3dae6", timeVisible: true, secondsVisible: false,
+                   rightOffset: 18 },
       crosshair: { mode: 0 },
       // Мова явно: деякі браузери віддають тег на кшталт «en-US@posix», на
       // якому бібліотека падає і графік лишається порожнім.
       localization: { locale: "uk-UA" },
     });
     IW.series = IW.chart.addCandlestickSeries({
-      upColor: "#2fd18b", downColor: "#ff5d6c", borderVisible: false,
-      wickUpColor: "#2fd18b", wickDownColor: "#ff5d6c",
+      upColor: "#c7ccd6", downColor: "#5b6475", borderVisible: true,
+      borderUpColor: "#c7ccd6", borderDownColor: "#8b94a5",
+      wickUpColor: "#c7ccd6", wickDownColor: "#8b94a5",
       priceFormat: { type: "price", precision: 6, minMove: 0.000001 },
     });
+    if (!dark) IW.series.applyOptions({ upColor: "#26a69a", downColor: "#ef5350", borderUpColor: "#26a69a",
+      borderDownColor: "#ef5350", wickUpColor: "#26a69a", wickDownColor: "#ef5350" });
     IW.prim = new BoxPrimitive();
     IW.series.attachPrimitive(IW.prim);
+    IW.pocLine = null;
     return true;
   }
 
@@ -459,22 +552,49 @@
   function boxesOf(c) {
     var o = c.ohlc || [], out = [];
     (c.vob || []).forEach(function (v) {
-      var L = v.side === "LONG";
+      var L = v.side === "LONG", vol = fmtVol(v.volume);
       out.push({ t: snapSec(v.start, o), top: v.top, bottom: v.bottom, dashed: v.breaker,
-        fill: L ? "rgba(47,209,139,.16)" : "rgba(255,93,108,.16)",
-        stroke: L ? "rgba(47,209,139,.85)" : "rgba(255,93,108,.85)",
-        text: L ? "#6ee7b7" : "#ff9aa4",
-        label: "VOB " + (v.tf || "") + (v.breaker ? " ✕" : "") + (v.pct != null ? " · " + v.pct + "%" : "") });
+        fill: L ? "rgba(34,171,94,.16)" : "rgba(242,54,69,.16)",
+        stroke: L ? "rgba(34,197,94,.95)" : "rgba(242,54,69,.95)",
+        text: L ? "#86efac" : "#fca5a5",
+        label: (vol || "VOB") + (v.pct != null ? " (" + v.pct + "%)" : "") + (v.breaker ? " ✕" : ""),
+        sub: tfWord(v.tf || c.vob_tf) + " OB" });
     });
     (c.ob || []).forEach(function (b) {
       var L = b.side === "LONG", sw = b.fam === "swing";
       out.push({ t: snapSec(b.start, o), top: b.top, bottom: b.bottom, dashed: true,
-        fill: L ? (sw ? "rgba(45,212,191,.14)" : "rgba(45,212,191,.07)") : (sw ? "rgba(251,146,60,.14)" : "rgba(251,146,60,.07)"),
+        fill: L ? (sw ? "rgba(45,212,191,.12)" : "rgba(45,212,191,.06)") : (sw ? "rgba(251,146,60,.12)" : "rgba(251,146,60,.06)"),
         stroke: L ? "rgba(45,212,191,.8)" : "rgba(251,146,60,.8)",
         text: L ? "#5eead4" : "#fdba74",
-        label: "OB " + (c.ob_tf || "") + " " + (sw ? "swing" : "internal") + (b.tag ? " · " + b.tag : "") });
+        label: "OB " + tfLbl(c.ob_tf) + " " + (sw ? "swing" : "internal") + (b.tag ? " · " + b.tag : "") });
     });
     return out;
+  }
+
+  // CHoCH / BOS: лінія від півота до бару пробою + стрілка з підписом (як на
+  // графіку бота / LuxAlgo). CHoCH — пунктир, BOS — суцільна.
+  function structOf(c) {
+    var o = c.ohlc || [], lines = [], marks = [];
+    if (!o.length) return { lines: lines, marks: marks };
+    var first = o[0].time;
+    (c.events || []).forEach(function (e) {
+      if (!e.to || e.to < first) return;
+      var bull = e.dir === "bull", col = bull ? "#22c55e" : "#ef4444";
+      var t2 = snapSec(e.to, o);
+      lines.push({ t1: snapSec(e.from, o), t2: t2, price: e.level, color: col, dashed: e.tag !== "BOS" });
+      marks.push({ time: t2, position: bull ? "aboveBar" : "belowBar", color: col,
+                   shape: bull ? "arrowDown" : "arrowUp", text: e.tag });
+    });
+    marks.sort(function (a, b) { return a.time - b.time; });
+    return { lines: lines, marks: marks };
+  }
+
+  function setPoc(poc) {
+    if (!IW.series) return;
+    if (IW.pocLine) { try { IW.series.removePriceLine(IW.pocLine); } catch (x) {} IW.pocLine = null; }
+    if (!poc || !poc.poc) return;
+    IW.pocLine = IW.series.createPriceLine({ price: Number(poc.poc), color: "#f5f5f5", lineWidth: 1,
+      lineStyle: 0, axisLabelVisible: true, title: "POC" });
   }
 
   function renderHead() {
@@ -483,17 +603,17 @@
     var sym = IW.sel;
     if (!sym) { h.innerHTML = '<span class="iw-title">—</span>'; return; }
     var c = IW.coin || {}, r = IW.rows[sym] || {};
-    var pd = c.pd || r.pd, poc = c.poc || r.poc;
     var o = c.ohlc || [], px = o.length ? o[o.length - 1].close : r.price;
     h.innerHTML =
       '<span class="iw-title">' + tvSym(sym) + "</span>" +
-      (c.tf ? '<span class="iw-tf">' + esc(c.tf) + "</span>" : "") +
       '<span class="iw-px">' + (px ? fmtPrice(px) : "—") + "</span>" +
-      pdBadge(pd) + pocBadge(poc, r.poc_state) +
+      pdBadge(c.pd) + pocBadge(c.poc, c.poc_state) +
       (c.src === "ext" ? '<span class="bdg warn" title="Монети немає у WATCHLIST бота — сайт рахує її окремо тими самими алгоритмами">🛰 поза ботом</span>' : "") +
       '<span class="iw-legend">' +
-        '<span title="Volumized Order Block — суцільна рамка; пунктир із ✕ — блок уже пробитий (breaker)"><i style="background:rgba(47,209,139,.5)"></i>VOB</span>' +
-        '<span title="Order Block ' + esc(c.ob_tf || "1H") + ' — пунктир; густіший — swing, світліший — internal"><i style="background:rgba(45,212,191,.35);outline:1px dashed rgba(45,212,191,.9)"></i>OB ' + esc(c.ob_tf || "1H") + "</span>" +
+        '<span title="Volumized Order Block: обсяг блоку і (%) — баланс обсягу між половинами; пунктир із ✕ — блок пробитий (breaker)"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
+        '<span title="Order Block — пунктир; густіший — swing, світліший — internal"><i style="background:rgba(45,212,191,.35);outline:1px dashed rgba(45,212,191,.9)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
+        '<span title="Структура: CHoCH — пунктир (розворот), BOS — суцільна (продовження)"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
+        '<span title="POC — ціна найбільшого обсягу"><i style="background:#f5f5f5;height:2px"></i>POC</span>' +
       "</span>";
   }
 
@@ -504,40 +624,57 @@
     n.style.display = t ? "" : "none";
   }
 
+  function setWait(c) {
+    var w = $("#iw-tf-wait");
+    if (!w) return;
+    var parts = [];
+    if (c && c.ob_wait) parts.push("OB " + tfLbl(c.ob_tf));
+    if (c && c.vob_wait) parts.push("VOB " + tfLbl(c.vob_tf));
+    w.innerHTML = parts.length ? '<span class="wait">⏳ рахується: ' + esc(parts.join(", ")) + "</span>" : "";
+  }
+
   function drawCoin(c, fit) {
     if (!ensureChart()) { setNote("графічна бібліотека не завантажилась"); return; }
     var o = c.ohlc || [];
     var prec = precisionOf(o.length ? o[o.length - 1].close : 0);
     IW.series.applyOptions({ priceFormat: { type: "price", precision: prec, minMove: Math.pow(10, -prec) } });
     IW.series.setData(o);
-    IW.prim.set(boxesOf(c));
-    if (fit || IW.chartSym !== c.symbol) {
+    var st = structOf(c);
+    IW.series.setMarkers(st.marks);
+    IW.prim.set(boxesOf(c), st.lines);
+    setPoc(c.poc);
+    var key = c.symbol + "|" + c.tf;
+    if (fit || IW.chartKey !== key) {
       IW.chart.timeScale().fitContent();
-      IW.chartSym = c.symbol;
+      IW.chartKey = key;
     }
     setNote(o.length ? "" : (c.reason || "немає даних"));
+    setWait(c);
   }
 
   var coinBusy = false;
-  function loadCoin(force) {
+  function loadCoin(force, keepBars) {
     var sym = IW.sel;
     if (!sym) { setNote("оберіть монету зі списку"); renderHead(); return; }
-    if (coinBusy && !force) return;
+    if (coinBusy && !force && !keepBars) return;
     coinBusy = true;
-    if (force) { setNote("завантаження " + sym + "…"); if (IW.series) { IW.series.setData([]); IW.prim.set([]); } }
-    var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + (IW.sig && !force ? "&sig=" + encodeURIComponent(IW.sig) : "");
+    if (force) {
+      setNote("завантаження " + sym + " · " + tfLbl(IW.tf) + "…");
+      if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.set([], []); setPoc(null); }
+    }
+    var want = [IW.sel, IW.tf, IW.ob_tf, IW.vob_tf].join("|");
+    var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + "&tf=" + IW.tf +
+      "&ob_tf=" + IW.ob_tf + "&vob_tf=" + IW.vob_tf +
+      (IW.sig && !force ? "&sig=" + encodeURIComponent(IW.sig) : "");
     api(q).then(function (c) {
-      if (sym !== IW.sel) return;              // поки чекали — обрали іншу монету
-      if (c.same) {
-        if (IW.coin) { IW.coin.pd = c.pd; IW.coin.poc = c.poc; }
-        renderHead();
-        return;
-      }
+      if (want !== [IW.sel, IW.tf, IW.ob_tf, IW.vob_tf].join("|")) return;  // поки чекали — змінили вибір
+      if (c.same) return;
       IW.coin = c; IW.sig = c.sig || "";
       renderHead();
       drawCoin(c, force);
-      // монета ще рахується (поза ботом) — перепитуємо швидше
-      if (!c.ok) setTimeout(function () { if (sym === IW.sel) loadCoin(false); }, 4000);
+      // щось ще рахується (монета поза ботом / свій TF) — перепитуємо швидше
+      if (!c.ok || c.ob_wait || c.vob_wait)
+        setTimeout(function () { if (want === [IW.sel, IW.tf, IW.ob_tf, IW.vob_tf].join("|")) loadCoin(false, true); }, 4000);
     }).catch(function () { setNote("не вдалося завантажити графік"); })
       .then(function () { coinBusy = false; });
   }
@@ -547,7 +684,7 @@
     if (!e.target.closest || !e.target.closest("#theme-btn") || !IW.chart) return;
     setTimeout(function () {
       try { IW.chart.remove(); } catch (x) {}
-      IW.chart = null; IW.series = null; IW.prim = null; IW.chartSym = "";
+      IW.chart = null; IW.series = null; IW.prim = null; IW.pocLine = null; IW.chartKey = "";
       if (IW.coin) drawCoin(IW.coin, true);
     }, 30);
   });

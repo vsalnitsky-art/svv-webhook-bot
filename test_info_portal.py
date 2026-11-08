@@ -45,6 +45,9 @@ class _Sc:
                           'poc_filter_market': 'futures', 'poc_filter_tf': '1h',
                           'poc_filter_window_days': 3}
         self._cache = {'BTCUSDT': {'klines': [_k(1000 + i * 900, 100 + i) for i in range(500)],
+                                   'analysis': {'internal': {'events': [
+                                       {'from_t': 1_000_000, 'to_t': 1_400_000, 'level': 150.0,
+                                        'tag': 'CHoCH', 'dir': 'bull'}]}},
                                    'updated_at': time.time()}}
         self._ob_zones = {'BTCUSDT': {'tf': '1h', 'internal': [
             {'bias': 'BULLISH', 'bar_high': 120.0, 'bar_low': 110.0,
@@ -85,25 +88,31 @@ class _Sc:
 def _reset():
     with ip._lock:
         ip._coin_cache.clear(); ip._poc_cache.clear()
-        ip._ext.clear(); ip._ext_want.clear(); ip._poc_want.clear()
+        ip._comp.clear(); ip._want.clear(); ip._poc_want.clear()
 
 
 def test_personal_list_rules():
+    _check(ip.IWL_MAX == 20, 'стеля 20 монет (вимога 08.11)')
     _check(ip.norm_symbol('btc') == 'BTCUSDT' and ip.norm_symbol('eth-usdt') == 'ETHUSDT', 'назва')
     _check(ip.iwl_norm(['btc', 'BTCUSDT', 'x!', 'SOL']) == ['BTCUSDT', 'SOLUSDT'], 'дублі / сміття')
     _check(len(ip.iwl_norm(['C%dUSDT' % i for i in range(100)])) == ip.IWL_MAX, 'стеля')
     cur = ip.user_info({}, ['BTCUSDT'])
-    _check(cur == {'wl': ['BTCUSDT', 'ETHUSDT'], 'sel': 'BTCUSDT'}, 'стартовий набір для нового користувача')
+    _check(cur['wl'] == ['BTCUSDT', 'ETHUSDT'] and cur['sel'] == 'BTCUSDT', 'стартовий набір')
+    _check((cur['tf'], cur['ob_tf'], cur['vob_tf']) == ('15m', '1h', '5m'), 'TF за замовчуванням')
     cur, err = ip.apply_change(cur, {'add': 'pepe'}, ['BTCUSDT'])
     _check(not err and cur['wl'][-1] == 'PEPEUSDT' and cur['sel'] == 'PEPEUSDT',
-           'монету поза ботом теж можна додати (вимога 08.11)')
+           'монету поза ботом теж можна додати')
     cur, err = ip.apply_change(cur, {'add': '!!'}, [])
     _check(err, 'некоректна назва → помилка')
     cur, _ = ip.apply_change(cur, {'remove': 'PEPEUSDT'}, [])
     _check('PEPEUSDT' not in cur['wl'] and cur['sel'] in cur['wl'], 'видалення обраної → обирається інша')
-    cur, _ = ip.apply_change(cur, {'sel': 'ETHUSDT'}, [])
-    _check(cur['sel'] == 'ETHUSDT', 'вибір монети')
-    print('✓ особистий список: дублі, стеля, будь-яка монета, обрана монета')
+    cur, _ = ip.apply_change(cur, {'sel': 'ETHUSDT', 'tf': '4h', 'ob_tf': 'off', 'vob_tf': 'zz'}, [])
+    _check(cur['sel'] == 'ETHUSDT' and cur['tf'] == '4h' and cur['ob_tf'] == 'off'
+           and cur['vob_tf'] == '5m', 'вибір монети і TF (некоректний TF ігнорується)')
+    full = {'wl': ['C%dUSDT' % i for i in range(20)], 'sel': 'C0USDT'}
+    _c, err = ip.apply_change(full, {'add': 'ZZZ'}, [])
+    _check('20' in err, 'понад 20 монет — відмова')
+    print('✓ особистий список: дублі, стеля 20, будь-яка монета, TF графіка/OB/VOB')
 
 
 def test_bot_coin_reads_memory_only():
@@ -117,12 +126,28 @@ def test_bot_coin_reads_memory_only():
     p = ip.coin_payload('btc', sc)
     _check(p['ok'] and p['src'] == 'bot' and len(p['ohlc']) == ip.OHLC_BARS, p.get('reason'))
     _check(p['pd'] == {'pct': 18.0, 'zone': 'discount', 'tf': '1H'}, p['pd'])
-    _check(len(p['ob']) == 1 and p['ob'][0]['start'] == 2_000_000_000, 'OB без дублів між сім\'ями, час у секундах')
+    _check(len(p['ob']) == 1 and p['ob'][0]['start'] == 2_000_000_000, 'OB без дублів, час у секундах')
     _check(p['vob'][0]['side'] == 'SHORT' and p['vob'][0]['tf'] == '5M', p['vob'])
-    _check(not calls, 'монета бота — жодного звернення до біржі')
-    _check('BTCUSDT' in ip._poc_want, 'POC поставлено фоновому потоку, а не рахується в запиті')
+    _check(p['events'] and p['events'][-1]['tag'] == 'CHoCH', 'структура CHoCH/BOS з памʼяті сканера')
+    _check(not calls and not ip._want, 'монета бота + TF бота — жодного звернення до біржі')
+    _check('BTCUSDT' in ip._poc_want, 'POC поставлено фоновому потоку')
     _check(ip.coin_payload('BTCUSDT', sc) is p, 'спільний кеш на монету')
-    print('✓ монета бота: лише памʼять сканера, спільний кеш')
+    print('✓ монета бота на TF бота: лише памʼять сканера, спільний кеш')
+
+
+def test_own_tf_goes_to_background():
+    _reset()
+    sc = _Sc()
+    ip._kick = lambda: None
+    p = ip.coin_payload('BTCUSDT', sc, tf='4h', ob_tf='4h', vob_tf='off')
+    _check(not p['ok'] and p['tf'] == '4h' and p['vob'] == [] and p['vob_tf'] == 'off', p)
+    _check(('bars', 'BTCUSDT', '4h') in ip._want and ('ob', 'BTCUSDT', '4h') in ip._want,
+           'свій TF → фоновий потік, запит біржу не чекає')
+    _check(not any(k[0] == 'vob' for k in ip._want), 'VOB вимкнено — не рахуємо')
+    p = ip.coin_payload('BTCUSDT', sc, tf='15m', ob_tf='4h')
+    _check(p['ok'] and p['ob_wait'] and p not in [v[1] for v in ip._coin_cache.values()],
+           'бари з памʼяті, OB 4H ще рахується — не кешуємо')
+    print('✓ свій TF графіка / OB / VOB: фоновий розрахунок')
 
 
 def test_ext_coin_never_blocks_the_request():
@@ -131,14 +156,16 @@ def test_ext_coin_never_blocks_the_request():
     ip._kick = lambda: None
     p = ip.coin_payload('PEPE', sc)
     _check(not p['ok'] and p['src'] == 'ext' and '⏳' in p['reason'], p)
-    _check('PEPEUSDT' in ip._ext_want, 'монету поставлено в чергу фонового потоку')
-    _check('PEPEUSDT' not in ip._coin_cache, '«рахується» не кешуємо')
+    _check(('bars', 'PEPEUSDT', '15m') in ip._want, 'монету поставлено в чергу фонового потоку')
+    _check(not ip._coin_cache, '«рахується» не кешуємо')
     rows = ip.rows_for(['BTCUSDT', 'PEPEUSDT'], sc)
     _check([r['src'] for r in rows] == ['bot', 'ext'], rows)
+    _check(rows[0]['price'] and 'pd' not in rows[0] and 'poc' not in rows[0],
+           'у списку лише ціна (PD/POC — на графіку)')
     print('✓ монета поза ботом: запит не чекає біржу, «⏳ рахується»')
 
 
-def test_ext_compute_uses_the_scanner_functions():
+def test_compute_uses_the_scanner_functions():
     _reset()
     sc = _Sc()
     bars = [_k(1000 + i * 900, 100 + (i % 7)) for i in range(800)]
@@ -146,25 +173,34 @@ def test_ext_compute_uses_the_scanner_functions():
     md.get_market_data = lambda: types.SimpleNamespace(
         fetch_klines=lambda s, limit=0, interval='': bars[-limit:])
     sys.modules['detection.market_data'] = md
-    upd = ip._ext_compute(sc, 'PEPEUSDT', {'main', 'vob', 'slow'})
-    _check(len(upd['main']) == ip.OHLC_BARS and upd['pd_pct'] == 81.0, 'бари + PD тією ж _compute_pd_pct')
-    _check(upd['zones'].get('tf') == '1h' and 'internal' in upd['zones'], 'OB — detect_order_blocks')
+    d, until = ip._compute(sc, 'bars', 'PEPEUSDT', '15m')
+    _check(len(d['kl']) == ip.OHLC_BARS and isinstance(d['events'], list), 'бари + структура')
+    d, until = ip._compute(sc, 'ob', 'PEPEUSDT', '1h')
+    _check(d['zones'].get('tf') == '1h' and 'internal' in d['zones'], 'OB — detect_order_blocks')
+    _check(until > time.time(), 'кеш OB до закриття бару')
+    d, _u = ip._compute(sc, 'pd', 'PEPEUSDT', '1h')
+    _check(d['pd_pct'] == 81.0, 'PD тією ж _compute_pd_pct')
+    now = time.time()
     with ip._lock:
-        ip._ext['PEPEUSDT'] = dict(upd, err='')
-        ip._ext_want['PEPEUSDT'] = time.time()
+        for k, t in (('bars', '15m'), ('ob', '1h'), ('vob', '5m'), ('pd', '1h')):
+            ip._want[(k, 'PEPEUSDT', t)] = now
+        ip._comp[('bars', 'PEPEUSDT', '15m')] = {'data': {'kl': bars, 'events': []}, 'at': now}
+        ip._comp[('ob', 'PEPEUSDT', '1h')] = {'data': {'zones': {}}, 'at': now}
+        ip._comp[('vob', 'PEPEUSDT', '5m')] = {'data': {'vz': []}, 'at': now}
+        ip._comp[('pd', 'PEPEUSDT', '1h')] = {'data': {'pd_pct': 81.0}, 'at': now}
     p = ip.coin_payload('PEPEUSDT', sc)
     _check(p['ok'] and p['pd']['pct'] == 81.0 and p['pd']['zone'] == 'premium', p)
-    print('✓ монета поза ботом: ті самі функції детекції й параметри сканера')
+    print('✓ розрахунок — ті самі функції детекції й параметри сканера')
 
 
-def test_ext_due_schedule():
+def test_due_schedule():
     now = 10_000.0
-    _check(ip.ext_due({}, now, '5m', '1h') == {'main', 'vob', 'slow'}, 'перший раз — усе')
-    rec = {'main_at': now - 5, 'vob_at': now - 5, 'slow_at': now - 5}
-    _check(ip.ext_due(rec, now, '5m', '1h') == set(), 'свіже — нічого')
-    rec = {'err': 'x', 'err_at': now - 5}
-    _check(ip.ext_due(rec, now, '5m', '1h') == set(), 'після помилки — пауза')
-    print('✓ розклад перерахунку монет поза ботом')
+    _check(ip.due('bars', {}, now), 'перший раз — рахуємо')
+    _check(not ip.due('bars', {'at': now - 5}, now) and ip.due('bars', {'at': now - 40}, now), 'бари — 30с')
+    _check(not ip.due('ob', {'at': now - 5, 'until': now + 100}, now), 'OB — до закриття бару')
+    _check(ip.due('ob', {'at': now - 5, 'until': now - 1}, now), 'бар закрився — перерахунок')
+    _check(not ip.due('vob', {'err': 'x', 'err_at': now - 5}, now), 'після помилки — пауза')
+    print('✓ розклад перерахунку частин')
 
 
 def test_sig_skips_unchanged_payload():
@@ -174,6 +210,24 @@ def test_sig_skips_unchanged_payload():
     p = ip.coin_payload('BTCUSDT', sc)
     _check(p['sig'] and p['sig'] == ip.sig_of(p), 'sig')
     print('✓ сигнатура відповіді графіка')
+
+
+def test_logout_revokes_tokens():
+    src = open(os.path.join(_HERE, 'web', 'auth.py'), encoding='utf-8').read()
+    import ast
+    tree = ast.parse(src)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'info_token_revoked')
+    g = {}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), 'auth', 'exec'), g)
+    rev = g['info_token_revoked']
+    _check(rev({'info_logout_at': 1000}, 999) and not rev({'info_logout_at': 1000}, 1000),
+           'токен, виданий ДО виходу, — недійсний; новий вхід — дійсний')
+    _check(not rev({}, 5), 'без виходу — дійсний')
+    _check("route('/api/me/logout'" in src and "_revoke_info_tokens(u)" in src
+           and "request.args.get('next') == 'info'" in src, 'маршрути виходу')
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    _check('"/api/me/logout"' in js and '/logout?next=info' in js, 'сайт закриває і токен, і сесію бота')
+    print('✓ вихід: токени відкликано, сесію бота закрито')
 
 
 def test_wiring_and_page():
@@ -190,6 +244,10 @@ def test_wiring_and_page():
         _check(old not in js and old not in html, f'старе наповнення лишилось: {old}')
     _check('id="iw-list"' in html and 'id="iw-box"' in html and 'lightweight-charts@4.1.3' in html, 'розмітка')
     _check('vsv-logo.png' in html and 'id="auth-links"' in html, 'логотип і кабінет лишились')
+    _check('class="brand-name">VSV Bot<' in html, '«VSV Bot» виділено на банері')
+    _check('id="iw-tfs"' in html and 'id="iw-ob-tf"' in html and 'id="iw-vob-tf"' in html, 'вибір TF')
+    _check('createPriceLine' in js and 'title: "POC"' in js and 'setMarkers' in js, 'POC і CHoCH/BOS на графіку')
+    _check('pdBadge(r.pd)' not in js and 'pocBadge(r.poc' not in js, 'PD/POC прибрано зі списку')
     print('✓ маршрути, доступ, нова сторінка без старих блоків')
 
 
