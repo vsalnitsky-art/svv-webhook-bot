@@ -613,3 +613,10 @@ body.iw-full-on { overflow: hidden; }
 .iw-layers button.ly-sbr.on { box-shadow: inset 0 0 0 1px #f97316; background: rgba(249,115,22,.16); color: #fed7aa; }
 .iw-layers button.ly-shl.on { box-shadow: inset 0 0 0 1px #f87171; background: rgba(248,113,113,.14); color: #fecaca; }
 .iw-layers button.off { opacity: .4; cursor: not-allowed; }
+
+/* 🎨 Рядок параметрів paper-рахунку: $ / % / плече — різними кольорами */
+.pp-inline .ppi-l { color: var(--muted); font-weight: 400; }
+.pp-inline .ppi-sep { color: var(--line); margin: 0 2px; }
+.pp-inline .ppi-usd { color: #fbbf24; font: 700 12px var(--mono); }
+.pp-inline .ppi-pct { color: #7dd3fc; font: 700 12px var(--mono); }
+.pp-inline .ppi-lev { color: #c4b5fd; font: 700 12px var(--mono); }

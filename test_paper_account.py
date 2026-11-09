@@ -142,6 +142,33 @@ def test_pages_use_the_calendar_and_paper_controls():
     print('✓ бот і інфосайт: календар, налаштування paper, панель')
 
 
+def test_margin_as_percent_of_deposit_0811():
+    """🧪 Вимога 08.11: маржа = % депозиту (деф. 3%) · рядок кольорами."""
+    _check(tm_mod.DEFAULT_SETTINGS['paper_sizing_mode'] == 'pct'
+           and tm_mod.DEFAULT_SETTINGS['paper_margin_pct'] == 3.0, 'дефолт: 3% депозиту')
+    z = paper_size({'paper_deposit': 1000.0, 'paper_leverage': 20, 'paper_fee_pct': 0.055}, 50.0)
+    _check(z['mode'] == 'pct' and z['margin'] == 30.0 and z['notional'] == 600.0
+           and z['margin_pct'] == 3.0, z)
+    z = paper_size(dict(S, paper_sizing_mode='pct', paper_margin_pct=10), 50.0, None)
+    _check(z['margin'] == 100.0 and z['notional'] == 1000.0, z)
+    _check(tm_mod.paper_margin_pct_of({'paper_margin_pct': 0}) == 3.0
+           and tm_mod.paper_margin_pct_of({'paper_margin_pct': 500}) == 100.0, 'межі %')
+    acc = TM.paper_account(_tm(dict(S, paper_sizing_mode='pct', paper_margin_pct=3)))
+    _check(acc['mode'] == 'pct' and acc['margin_usd'] == 30.0 and acc['margin_pct'] == 3.0, acc)
+    # міграція збереженого 'fixed' → 'pct' разово; 'risk' не чіпаємо
+    src = open(os.path.join(_HERE, 'detection', 'trade_manager.py'), encoding='utf-8').read()
+    _check("paper_pct_migrated_v1" in src.split('def _load_settings')[1].split('def ')[0], 'міграція')
+    _check('<option value="pct">% депозиту</option>' in _HTML and 'id="tm-paper-mpct"' in _HTML
+           and 'paper_margin_pct:' in _HTML, 'UI бота: режим і поле %')
+    _check('ppInlineHTML(sa)' in _IJS and 'ppi-usd' in _IJS and 'ppi-pct' in _IJS, 'рядок кольорами')
+    for i in ('tmpq-dep', 'tmpq-mpct', 'tmpq-lev', 'tmpq-fee'):
+        _check(f'id="{i}"' in _HTML, i)
+    _check('function tmpqApply()' in _HTML and 'saveTMSettings()' in _HTML.split('function tmpqApply()')[1][:1500],
+           'швидкий рядок пише ті самі налаштування')
+    _check(_HTML.index('id="tmpq-row"') < _HTML.index('id="tmp-stats-wrap"'), 'рядок над панеллю Paper')
+    print('✓ маржа = % депозиту + кольоровий рядок + вибір у боті')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:

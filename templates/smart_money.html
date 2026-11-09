@@ -1429,6 +1429,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .spr-agg .spr-k{text-transform:uppercase;letter-spacing:.04em;font-size:0.6rem;color:#6b7280}
 #fspr-table tbody tr > td { background: transparent; }
 #fspr-table tbody tr:not(.fspr-sub) > td { border-bottom: none; }
+/* 🧪 Швидкий рядок paper-рахунку: $ — бурштин, % — блакитний, плече — фіолетовий */
+.tmpq { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:10px 0 6px; padding:7px 10px;
+  border:1px dashed rgba(167,139,250,0.35); border-radius:8px; background:rgba(167,139,250,0.05);
+  font-size:0.78rem; }
+.tmpq-h { color:#c4b5fd; font-weight:700; margin-right:2px; }
+.tmpq-l { color:#8b93a7; }
+.tmpq-sep { color:#4b5563; }
+.tmpq-f { display:inline-flex; align-items:center; gap:1px; font:700 0.8rem monospace; }
+.tmpq-f input { width:58px; padding:2px 4px; background:#141821; border:1px solid #2b2f36; border-radius:5px;
+  font:700 0.8rem monospace; text-align:right; color:inherit; }
+.tmpq-f input:focus { outline:none; border-color:currentColor; }
+.tmpq-usd { color:#fbbf24; font:700 0.8rem monospace; }
+.tmpq-pct { color:#7dd3fc; }
+.tmpq-lev { color:#c4b5fd; }
+.tmpq-lev input { width:42px; }
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -4807,16 +4822,25 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label>Тестовий депозит, $:
                                 <span class="tm-help" title="Віртуальний депозит, від якого рахуються баланс, % депозиту і ризик (у режимі «ризик на SL»).">?</span>
                             </label>
-                            <input type="number" id="tm-paper-deposit" min="1" max="1000000000" step="100" onchange="saveTMSettings()">
+                            <input type="number" id="tm-paper-deposit" min="1" max="1000000000" step="100" oninput="_tmPaperModeSync()" onchange="saveTMSettings()">
                         </div>
                         <div class="tm-row">
                             <label>Розмір угоди:
-                                <span class="tm-help" title="«Сума на угоду» — кожна угода відкривається на вказану маржу × плече. «Ризик на SL» — розмір так, щоб втрата на стратегічному SL = % депозиту (без SL — як «сума на угоду»).">?</span>
+                                <span class="tm-help" title="«% депозиту» — маржа кожної угоди = вказаний % тестового депозиту (позиція = маржа × плече). «Сума на угоду» — фіксована маржа в $. «Ризик на SL» — розмір так, щоб втрата на стратегічному SL = % депозиту (без SL — як «сума на угоду»).">?</span>
                             </label>
                             <select id="tm-paper-mode" onchange="_tmPaperModeSync();saveTMSettings()">
+                                <option value="pct">% депозиту</option>
                                 <option value="fixed">сума на угоду</option>
                                 <option value="risk">ризик на SL</option>
                             </select>
+                        </div>
+                        <div class="tm-row" id="tm-paper-mpct-row">
+                            <label>Маржа на угоду, % депозиту:
+                                <span class="tm-help" title="Частка тестового депозиту, яка йде маржею в КОЖНУ угоду (деф. 3%). Напр. депозит $1000 × 3% = $30 маржі × плече 20x = позиція $600.">?</span>
+                            </label>
+                            <input type="number" id="tm-paper-mpct" min="0.01" max="100" step="0.5" oninput="_tmPaperModeSync()" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.75rem">%</span>
+                            <span id="tm-paper-mpct-usd" style="color:#888;font-size:0.72rem;margin-left:6px;font-family:monospace"></span>
                         </div>
                         <div class="tm-row" id="tm-paper-margin-row">
                             <label>Сума на угоду (маржа), $:
@@ -4828,7 +4852,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label>Плече paper:
                                 <span class="tm-help" title="Плече тестових угод — окремо від реального. Множить розмір позиції, а з ним і прибуток, збиток та комісії в $.">?</span>
                             </label>
-                            <input type="number" id="tm-paper-lev" min="1" max="125" step="1" onchange="saveTMSettings()">
+                            <input type="number" id="tm-paper-lev" min="1" max="125" step="1" oninput="_tmpqSync()" onchange="saveTMSettings()">
                             <span style="color:#888;font-size:0.75rem">x</span>
                         </div>
                         <div class="tm-row" id="tm-paper-risk-row">
@@ -4842,7 +4866,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label>Комісія / сторону, %:
                                 <span class="tm-help" title="Комісія за одну сторону угоди (Bybit taker ≈ 0.055%). Застосовується на вхід і на вихід при розрахунку чистого результату paper-угоди, а також у колонці PnL (нетто) відкритих РЕАЛЬНИХ угод.">?</span>
                             </label>
-                            <input type="number" id="tm-paper-fee" min="0" max="1" step="0.005" onchange="saveTMSettings()">
+                            <input type="number" id="tm-paper-fee" min="0" max="1" step="0.005" oninput="_tmpqSync()" onchange="saveTMSettings()">
                             <span style="color:#888;font-size:0.75rem">%</span>
                         </div>
                     </div>
@@ -5465,6 +5489,24 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </label>
             </div>
             
+            <!-- 🧪 Віртуальний рахунок paper — швидкий вибір просто над панеллю
+                 (вимога 08.11): ті самі ключі, що в Trade Manager → Тестові угоди. -->
+            <div class="tmpq" id="tmpq-row" title="Параметри тестового рахунку. Ті самі налаштування, що в Trade Manager → «🧪 Тестові угоди (paper)». Діють на НОВІ paper-угоди.">
+                <span class="tmpq-h">🧪 Рахунок:</span>
+                <span class="tmpq-l">депозит</span>
+                <span class="tmpq-f tmpq-usd">$<input type="text" inputmode="decimal" id="tmpq-dep" onchange="tmpqApply()"></span>
+                <span class="tmpq-sep">·</span>
+                <span class="tmpq-l">угода</span>
+                <span class="tmpq-f tmpq-pct"><input type="text" inputmode="decimal" id="tmpq-mpct" onchange="tmpqApply()">%</span>
+                <span class="tmpq-l">депозиту =</span>
+                <b class="tmpq-usd" id="tmpq-musd">—</b>
+                <span class="tmpq-l">×</span>
+                <span class="tmpq-f tmpq-lev"><input type="text" inputmode="numeric" id="tmpq-lev" onchange="tmpqApply()">x</span>
+                <span class="tmpq-sep">·</span>
+                <span class="tmpq-l">комісія</span>
+                <span class="tmpq-f tmpq-pct"><input type="text" inputmode="decimal" id="tmpq-fee" onchange="tmpqApply()">%</span>
+                <span class="tmpq-l" id="tmpq-note"></span>
+            </div>
             <!-- 🧪 P&L paper-угод — та сама панель, що в Trade Manager (вимога 08.11),
                  але фіолетова: реальні гроші й тест не мають виглядати однаково. -->
             <div class="bb-stats bb-paper" id="tmp-stats-wrap">
@@ -10599,7 +10641,8 @@ async function loadTMSettings() {
         {
             const _pv = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
             _pv('tm-paper-deposit', s.paper_deposit != null ? s.paper_deposit : 1000);
-            _pv('tm-paper-mode', s.paper_sizing_mode || 'fixed');
+            _pv('tm-paper-mode', s.paper_sizing_mode || 'pct');
+            _pv('tm-paper-mpct', s.paper_margin_pct != null ? s.paper_margin_pct : 3);
             _pv('tm-paper-margin', s.paper_margin_usd != null ? s.paper_margin_usd : 100);
             _pv('tm-paper-lev', s.paper_leverage != null ? s.paper_leverage : 10);
             _tmPaperModeSync();
@@ -10608,6 +10651,7 @@ async function loadTMSettings() {
             document.getElementById('tm-paper-risk-pct').value = (s.paper_risk_pct != null ? s.paper_risk_pct : 3);
         if (document.getElementById('tm-paper-fee'))
             document.getElementById('tm-paper-fee').value = (s.paper_fee_pct != null ? s.paper_fee_pct : 0.055);
+        _tmpqSync();
         onTMSizingChange();
 
         // Exit rules
@@ -11158,7 +11202,8 @@ async function saveTMSettings() {
             require_fuel_confirm: document.getElementById('tm-require-fuel-confirm').checked,
             // 🧪 Paper risk-sizing + fees.
             paper_deposit: parseFloat((document.getElementById('tm-paper-deposit') || {}).value) || 1000,
-            paper_sizing_mode: (document.getElementById('tm-paper-mode') || {}).value || 'fixed',
+            paper_sizing_mode: (document.getElementById('tm-paper-mode') || {}).value || 'pct',
+            paper_margin_pct: parseFloat((document.getElementById('tm-paper-mpct') || {}).value) || 3,
             paper_margin_usd: parseFloat((document.getElementById('tm-paper-margin') || {}).value) || 100,
             paper_leverage: parseInt((document.getElementById('tm-paper-lev') || {}).value) || 10,
             paper_risk_pct: parseFloat((document.getElementById('tm-paper-risk-pct') || {}).value) || 3,
@@ -12246,11 +12291,57 @@ function _tmPaperDepositPct(st, pa) {
 }
 
 // 🧪 Режим розміру paper: «ризик на SL» показує поле ризику, «сума на угоду» — маржу.
+// 🧪 Швидкий рядок рахунку над панеллю Paper: ДЗЕРКАЛО полів Trade Manager
+// (джерело одне — ті самі input-и й той самий saveTMSettings).
+function _tmpqSync() {
+    const g = id => (document.getElementById(id) || {}).value;
+    const put = (id, v) => { const e = document.getElementById(id); if (e && document.activeElement !== e) e.value = v; };
+    const dep = parseFloat(g('tm-paper-deposit')) || 0, pc = parseFloat(g('tm-paper-mpct')) || 0;
+    put('tmpq-dep', g('tm-paper-deposit') || '');
+    put('tmpq-mpct', g('tm-paper-mpct') || '');
+    put('tmpq-lev', g('tm-paper-lev') || '');
+    put('tmpq-fee', g('tm-paper-fee') || '');
+    const mu = document.getElementById('tmpq-musd');
+    if (mu) mu.textContent = dep > 0 && pc > 0 ? '$' + (dep * pc / 100).toFixed(2) : '—';
+    const m = g('tm-paper-mode') || 'pct', n = document.getElementById('tmpq-note');
+    if (n) n.textContent = m === 'pct' ? '' : (m === 'risk' ? ' · зараз режим «ризик на SL» — зміна % перемкне на «% депозиту»'
+                                                          : ' · зараз «сума на угоду» — зміна % перемкне на «% депозиту»');
+}
+function tmpqApply() {
+    const num = id => { const v = String((document.getElementById(id) || {}).value || '').replace(',', '.').trim(); const n = parseFloat(v); return isFinite(n) && n > 0 ? n : null; };
+    const set = (id, v) => { const e = document.getElementById(id); if (e && v != null) e.value = v; };
+    const dep = num('tmpq-dep'), pc = num('tmpq-mpct'), lev = num('tmpq-lev'), fee = num('tmpq-fee');
+    if (dep != null) set('tm-paper-deposit', dep);
+    if (pc != null) {
+        // змінили % → рахуємо маржу саме як % депозиту
+        const prev = parseFloat((document.getElementById('tm-paper-mpct') || {}).value);
+        set('tm-paper-mpct', Math.min(100, pc));
+        if (prev !== Math.min(100, pc)) set('tm-paper-mode', 'pct');
+    }
+    if (lev != null) set('tm-paper-lev', Math.max(1, Math.min(125, Math.round(lev))));
+    if (fee != null) set('tm-paper-fee', Math.min(1, fee));
+    _tmPaperModeSync();
+    saveTMSettings();
+}
+
 function _tmPaperModeSync() {
-    const m = (document.getElementById('tm-paper-mode') || {}).value || 'fixed';
+    const m = (document.getElementById('tm-paper-mode') || {}).value || 'pct';
     const r = document.getElementById('tm-paper-risk-row'), g = document.getElementById('tm-paper-margin-row');
+    const pr = document.getElementById('tm-paper-mpct-row');
     if (r) r.style.display = m === 'risk' ? '' : 'none';
-    if (g) g.style.opacity = m === 'risk' ? '0.6' : '';
+    if (pr) pr.style.display = m === 'pct' ? '' : 'none';
+    if (g) {
+        g.style.display = m === 'pct' ? 'none' : '';
+        g.style.opacity = m === 'risk' ? '0.6' : '';
+    }
+    // підказка: скільки це в $ від поточного депозиту
+    const u = document.getElementById('tm-paper-mpct-usd');
+    if (u) {
+        const dep = parseFloat((document.getElementById('tm-paper-deposit') || {}).value) || 0;
+        const pc = parseFloat((document.getElementById('tm-paper-mpct') || {}).value) || 0;
+        u.textContent = dep > 0 && pc > 0 ? `= $${(dep * pc / 100).toFixed(2)}` : '';
+    }
+    _tmpqSync();
 }
 
 // 🧪 PnL відкритої paper-угоди: рух ціни % + віртуальний нетто $ (плече й
@@ -12301,7 +12392,7 @@ function renderTmStats(st, label, note, book) {
             const dpTxt = dp == null ? `депозит ${money(pa.deposit)}`
                 : `<span class="${cls(dp)}">${dp >= 0 ? '+' : '−'}${Math.abs(dp).toFixed(2)}%</span> депозиту ${label || ''}`;
             const tip = 'Віртуальний рахунок тестових угод: депозит + чистий результат усіх закритих paper-угод (з комісіями) + нереалізований результат відкритих. ' +
-                `Депозит ${pa.deposit} $ · сума на угоду ${pa.margin_usd} $ × плече ${pa.leverage}x · комісія ${pa.fee_pct}% / сторону` +
+                `Депозит ${pa.deposit} $ · на угоду ${pa.mode === 'pct' ? `${pa.margin_pct}% депозиту = ` : ''}${pa.margin_usd} $ маржі × плече ${pa.leverage}x · комісія ${pa.fee_pct}% / сторону` +
                 (pa.mode === 'risk' ? ' · режим «ризик на SL»' : '') +
                 (_tmAmtShown ? ` · Баланс $${(pa.balance || 0).toFixed(2)} · нереаліз. ${(pa.unrealized_usd || 0) >= 0 ? '+' : '−'}$${Math.abs(pa.unrealized_usd || 0).toFixed(2)} · у позиціях $${(pa.margin_used || 0).toFixed(2)} · вільно $${(pa.available || 0).toFixed(2)}` : '') +
                 '. % депозиту = чистий P&L за період ÷ тестовий баланс на початок періоду.';

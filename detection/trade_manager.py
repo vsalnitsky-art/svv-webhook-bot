@@ -193,10 +193,33 @@ def closed_stats(trades) -> Dict:
     }
 
 
+def paper_margin_pct_of(settings):
+    """🧪 ЧИСТА: % депозиту на угоду (маржа) — `paper_margin_pct`, 0.01…100,
+    деф. 3."""
+    try:
+        v = float((settings or {}).get('paper_margin_pct', 3.0))
+    except (TypeError, ValueError):
+        v = 3.0
+    if not (v > 0):
+        v = 3.0
+    return max(0.01, min(100.0, v))
+
+
+def paper_margin_usd_of(settings):
+    """🧪 ЧИСТА: маржа на угоду в $ за поточним режимом (для показу)."""
+    s = settings or {}
+    dep = max(1.0, float(s.get('paper_deposit', 1000.0) or 1000.0))
+    if s.get('paper_sizing_mode', 'pct') == 'fixed':
+        return min(max(0.01, float(s.get('paper_margin_usd', 100.0) or 100.0)), dep)
+    return dep * paper_margin_pct_of(s) / 100.0
+
+
 def paper_size(settings, entry, sl_price=None):
     """🧪 ЧИСТА: розмір paper-угоди за віртуальним рахунком.
 
-    - `fixed` (деф.): маржа = `paper_margin_usd` (не більше депозиту),
+    - `pct` (деф., вимога 08.11): маржа = `paper_margin_pct` % ТЕСТОВОГО
+      ДЕПОЗИТУ (`paper_deposit`), нотіонал = маржа × плече — SL не потрібен;
+    - `fixed`: маржа = `paper_margin_usd` (не більше депозиту),
       нотіонал = маржа × `paper_leverage` — SL не потрібен;
     - `risk`: втрата на SL = `paper_risk_pct` % депозиту, нотіонал = ризик /
       відстань до SL, маржа ≤ депозиту (`capped`); без SL → фолбек `fixed`.
@@ -211,7 +234,10 @@ def paper_size(settings, entry, sl_price=None):
     dep = max(1.0, float(s.get('paper_deposit', 1000.0) or 1000.0))
     lev = max(1, int(float(s.get('paper_leverage', s.get('leverage', 10)) or 10)))
     fee = max(0.0, float(s.get('paper_fee_pct', 0.055) or 0.0))
-    mode = s.get('paper_sizing_mode', 'fixed')
+    mode = s.get('paper_sizing_mode', 'pct')
+    if mode not in ('pct', 'fixed', 'risk'):
+        mode = 'pct'
+    mpct = paper_margin_pct_of(s)
     d = None
     try:
         sl = float(sl_price) if sl_price else 0.0
@@ -226,13 +252,17 @@ def paper_size(settings, entry, sl_price=None):
         margin = notional / lev
         if margin > dep:
             margin, notional, capped = dep, dep * lev, True
+    elif mode == 'pct':
+        margin = dep * mpct / 100.0
+        notional = margin * lev
     else:
         fallback = mode == 'risk'
         margin = min(max(0.01, float(s.get('paper_margin_usd', 100.0) or 100.0)), dep)
         capped = margin < float(s.get('paper_margin_usd', 100.0) or 100.0)
         notional = margin * lev
     return {
-        'mode': 'fixed' if (mode != 'risk' or fallback) else 'risk', 'fallback': fallback,
+        'mode': mode if not fallback else 'fixed', 'fallback': fallback,
+        'margin_pct': mpct if mode == 'pct' else round(margin / dep * 100, 4),
         'cash': round(dep, 2), 'risk_pct': risk_pct, 'lev': lev, 'fee_pct': fee,
         'sl_price': round(sl, 10) if d else None,
         'sl_dist_pct': round(d * 100, 4) if d else None,
@@ -419,9 +449,11 @@ DEFAULT_SETTINGS = {
     # угоду (МАРЖА) і власне плече paper. `fixed` — кожна угода = маржа ×
     # плече (працює й без SL); `risk` — старий ризик-сайзинг від депозиту
     # (`paper_risk_pct` на SL), без SL → фолбек на `fixed`.
-    'paper_sizing_mode': 'fixed',    # 'fixed' | 'risk'
+    'paper_sizing_mode': 'pct',      # 'pct' | 'fixed' | 'risk'
     'paper_deposit': 1000.0,         # тестовий депозит, $
-    'paper_margin_usd': 100.0,       # сума на угоду (маржа), $
+    'paper_margin_pct': 3.0,         # маржа на угоду, % депозиту (режим 'pct')
+    'paper_margin_usd': 100.0,       # сума на угоду (маржа), $ (режим 'fixed')
+    'paper_pct_migrated_v1': False,  # одноразовий перехід на 'pct' (08.11)
     'paper_leverage': 10,            # плече paper (1-125)
     # 🟰 Breakeven auto-close (🎯 БЗ, per-position toggle): round-trip fee buffer
     # so «breakeven» covers entry+exit commissions (default 0.12% ≈ 2×0.06%).
@@ -987,6 +1019,7 @@ class TradeManager:
         перекрила б вибір, який користувач уже встиг зробити."""
         cfg = DEFAULT_SETTINGS.copy()
         cfg['pilot_autofill_migrated_v1'] = True
+        cfg['paper_pct_migrated_v1'] = True
         return cfg
 
     def _load_settings(self) -> Dict:
@@ -1008,6 +1041,17 @@ class TradeManager:
                 # чинний розрахунок paper не змінився мовчки.
                 if 'paper_leverage' not in stored and stored.get('leverage'):
                     merged['paper_leverage'] = stored.get('leverage')
+                # 🧪 08.11: розмір paper — % депозиту (деф. 3%). Збережений
+                # блоб тримає 'fixed' (сторінка шле всі ключі), тож разово
+                # переводимо на 'pct'; 'risk' (свідомий вибір) не чіпаємо.
+                if not merged.get('paper_pct_migrated_v1'):
+                    if merged.get('paper_sizing_mode', 'fixed') == 'fixed':
+                        merged['paper_sizing_mode'] = 'pct'
+                    merged['paper_pct_migrated_v1'] = True
+                    try:
+                        self.db.set_setting(DB_KEY_TM_SETTINGS, merged)
+                    except Exception:
+                        pass
                 if not merged.get('pilot_autofill_migrated_v1'):
                     merged['pilot_autofill_tp'] = True
                     merged['pilot_autofill_migrated_v1'] = True
@@ -1154,8 +1198,9 @@ class TradeManager:
                 self._settings['paper_fee_pct'] = max(0.0, min(1.0, float(self._settings.get('paper_fee_pct', 0.055) or 0.0)))
             except (TypeError, ValueError):
                 self._settings['paper_fee_pct'] = 0.055
-            if self._settings.get('paper_sizing_mode') not in ('fixed', 'risk'):
-                self._settings['paper_sizing_mode'] = 'fixed'
+            if self._settings.get('paper_sizing_mode') not in ('pct', 'fixed', 'risk'):
+                self._settings['paper_sizing_mode'] = 'pct'
+            self._settings['paper_margin_pct'] = paper_margin_pct_of(self._settings)
             try:
                 self._settings['paper_deposit'] = max(1.0, min(1e9, float(self._settings.get('paper_deposit', 1000.0) or 1000.0)))
             except (TypeError, ValueError):
@@ -7900,8 +7945,10 @@ class TradeManager:
             'available': round(bal + min(0.0, unreal) - used, 2),
             'open_n': len(rows),
             'pnl_pct': round(realized / dep * 100, 3) if dep else None,
-            'mode': s.get('paper_sizing_mode', 'fixed'),
-            'margin_usd': float(s.get('paper_margin_usd', 100.0) or 0),
+            'mode': s.get('paper_sizing_mode', 'pct'),
+            'margin_usd': round(paper_margin_usd_of(s), 2),
+            'margin_pct': (paper_margin_pct_of(s) if s.get('paper_sizing_mode', 'pct') == 'pct'
+                           else round(paper_margin_usd_of(s) / max(1.0, dep) * 100, 2)),
             'leverage': int(s.get('paper_leverage', 10) or 10),
             'fee_pct': float(s.get('paper_fee_pct', 0.055) or 0),
         }
