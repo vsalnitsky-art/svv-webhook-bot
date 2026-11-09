@@ -1427,6 +1427,46 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .spr-tug.big{width:260px;height:12px;border-radius:6px}
 .spr-agg{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 8px;padding:8px 10px;border:1px solid #2b2f36;border-radius:6px;background:#11141b;font-size:0.7rem;color:#8b93a7}
 .spr-agg .spr-k{text-transform:uppercase;letter-spacing:.04em;font-size:0.6rem;color:#6b7280}
+/* 🔭 Пружина — скан біржі: візуалізація процесу */
+.xs-ctrl{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 8px;font-size:0.7rem;color:#8b93a7}
+.xs-ctrl select,.xs-ctrl input{background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;font-size:0.72rem;padding:3px 6px;font-family:monospace;color-scheme:dark}
+.xs-ctrl option{background:#141821;color:#dde3ee}
+.xs-btn{border:1px solid rgba(167,139,250,.55);background:linear-gradient(135deg,rgba(167,139,250,.22),rgba(56,189,248,.18));color:#e9e5ff;border-radius:6px;padding:4px 14px;font-size:0.74rem;font-weight:700;cursor:pointer;letter-spacing:.02em}
+.xs-btn:hover{background:linear-gradient(135deg,rgba(167,139,250,.35),rgba(56,189,248,.28))}
+.xs-btn[disabled]{opacity:.55;cursor:wait}
+.xs-viz{margin:0 0 10px;padding:10px 12px;border:1px solid #2b2f36;border-radius:8px;background:#11141b;font-size:0.68rem;color:#8b93a7}
+.xs-steps{display:flex;align-items:center;gap:0;margin-bottom:10px}
+.xs-step{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.xs-step i{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;border:1px solid #2b2f36;background:#141821;font-style:normal;font-size:0.64rem;color:#6b7280;font-family:monospace}
+.xs-step span{font-size:0.66rem;color:#6b7280;text-transform:uppercase;letter-spacing:.04em}
+.xs-step.done i{background:rgba(74,222,128,.15);border-color:#4ade80;color:#4ade80}
+.xs-step.done span{color:#9aa3b5}
+.xs-step.act i{background:rgba(167,139,250,.2);border-color:#a78bfa;color:#e9e5ff;animation:xsGlow 1.4s infinite}
+.xs-step.act span{color:#e9e5ff;font-weight:700}
+.xs-step.err i{background:rgba(248,113,113,.2);border-color:#f87171;color:#f87171}
+.xs-line{flex:1 1 24px;min-width:16px;height:1px;margin:0 8px;background:#2b2f36}
+.xs-line.done{background:#4ade80}
+@keyframes xsGlow{0%{box-shadow:0 0 0 0 rgba(167,139,250,.55)}70%{box-shadow:0 0 0 7px rgba(167,139,250,0)}100%{box-shadow:0 0 0 0 rgba(167,139,250,0)}}
+.xs-prog{position:relative;height:12px;border-radius:6px;background:rgba(255,255,255,0.06);overflow:hidden}
+.xs-prog>b{position:absolute;left:0;top:0;bottom:0;border-radius:6px;background:linear-gradient(90deg,#7c3aed,#38bdf8,#facc15);transition:width .8s ease}
+.xs-prog.run>b::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:xsShine 1.3s linear infinite}
+@keyframes xsShine{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+.xs-prog>em{position:absolute;right:6px;top:-1px;font-style:normal;font-family:monospace;font-size:0.62rem;color:#fff;text-shadow:0 0 3px #000}
+.xs-kpis{display:flex;gap:8px;flex-wrap:nowrap;overflow-x:auto;margin:10px 0 8px}
+.xs-kpi{flex:1 0 108px;padding:6px 9px;border:1px solid #2b2f36;border-radius:6px;background:#141821}
+.xs-kpi .k{text-transform:uppercase;letter-spacing:.04em;font-size:0.58rem;color:#6b7280}
+.xs-kpi .v{font-family:monospace;font-size:0.92rem;font-weight:700;color:#dde3ee;margin-top:2px}
+.xs-kpi.hot .v{color:#facc15;text-shadow:0 0 8px rgba(250,204,21,.45)}
+.xs-mix{display:flex;height:6px;border-radius:3px;overflow:hidden;background:rgba(255,255,255,0.05);margin:2px 0 8px}
+.xs-mix>span{display:block;height:100%;transition:width .6s}
+.xs-feed{display:flex;gap:5px;flex-wrap:wrap;min-height:20px}
+.xs-chip{font-family:monospace;font-size:0.64rem;padding:1px 6px;border-radius:10px;border:1px solid #2b2f36;color:#9aa3b5;background:#141821;animation:xsIn .45s ease}
+.xs-chip.charged{border-color:#facc15;color:#facc15;background:rgba(250,204,21,.10);font-weight:700}
+.xs-chip.building{border-color:rgba(56,189,248,.5);color:#7dd3fc}
+.xs-chip.fired{border-color:rgba(248,113,113,.5);color:#fca5a5}
+.xs-chip.err,.xs-chip.short{opacity:.5}
+@keyframes xsIn{0%{opacity:0;transform:translateY(-4px) scale(.92)}100%{opacity:1;transform:none}}
+.xs-found{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
 #fspr-table tbody tr > td { background: transparent; }
 #fspr-table tbody tr:not(.fspr-sub) > td { border-bottom: none; }
 /* 🧪 Швидкий рядок paper-рахунку: $ — бурштин, % — блакитний, плече — фіолетовий */
@@ -2851,6 +2891,54 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:6px">Аналізуються ЛИШЕ монети WATCHLIST · ЗАКРИТІ 1h-бари · перерахунок раз на годину з тих самих барів, що вже тягне сканер (без додаткових запитів до біржі).</div>
             </div>
+        </div>
+    </div>
+
+    <div class="tm-panel" id="xspr-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(167,139,250,0.30);border-radius:8px;background:rgba(167,139,250,0.04)">
+        <!-- 🔭 «Пружина — скан біржі» (08.11): той самий алгоритм «Пружина», але
+             не по WATCHLIST, а РУЧНИМ сканом усіх USDT-перпетуалів Bybit/Binance
+             з обігом 24 год ≥ порогу. У таблиці — ЛИШЕ заряджені монети. -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px;gap:10px;flex-wrap:wrap">
+            <div style="font-size:0.74rem;font-weight:700;color:#c4b5fd;cursor:pointer;user-select:none" onclick="togglePanel('xspr')" title="Клік — згорнути/розгорнути. Поки згорнуто, сторінка не опитує ці дані."><span id="xspr-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> 🔭 Пружина — скан біржі <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— ручний пошук УЖЕ заряджених монет на всій біржі · 1H</span></div>
+            <span id="xspr-sum" style="font-size:0.7rem;color:#8b93a7;font-family:monospace"></span>
+        </div>
+        <div id="xspr-body">
+            <div class="xs-ctrl">
+                <label title="Біржа, USDT-перпетуали якої скануються">Біржа
+                    <select id="xspr-exchange"><option value="bybit">Bybit</option><option value="binance">Binance</option></select></label>
+                <label title="Відбір монет за обігом за 24 год (у $). Менший поріг — більше монет і довший скан.">Обіг 24h ≥
+                    <select id="xspr-minvol">
+                        <option value="10000000">$10M</option><option value="20000000">$20M</option>
+                        <option value="50000000" selected>$50M</option><option value="100000000">$100M</option>
+                        <option value="200000000">$200M</option><option value="500000000">$500M</option>
+                    </select></label>
+                <button class="xs-btn" id="xspr-run" onclick="xsprRun()" title="Запустити скан зараз. Ручний запуск: бот сам біржу не сканує. Кожна монета — ОДИН запит 300 закритих 1h-барів; сканує через спільну чергу (за раз — лише один скан біржі).">🔭 Сканувати</button>
+                <span id="xspr-cost" style="color:#6b7280"></span>
+            </div>
+            <div id="xspr-viz" class="xs-viz"><span style="color:#6b7280">⏳ запит стану до бота…</span></div>
+            <div id="xspr-agg" class="spr-agg" style="display:none"></div>
+            <div id="xspr-tabs" style="display:flex;gap:6px;margin:4px 0 6px;flex-wrap:wrap"></div>
+            <div class="tm-hscroll" style="max-height:420px;overflow:auto">
+            <table class="tm-table" id="xspr-table">
+                <thead><tr>
+                    <th data-sprsort="symbol" onclick="xsprSort('symbol')" style="cursor:pointer">Монета<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="vol" onclick="xsprSort('vol')" style="cursor:pointer;text-align:right" title="Обіг за 24 год (у $) на момент скану">Обіг 24h<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="state" onclick="xsprSort('state')" style="cursor:pointer" title="Стан на момент скану — у таблицю потрапляють ЛИШЕ 🌀 заряджені">Стан<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="charge" onclick="xsprSort('charge')" style="cursor:pointer" title="ЗАРЯД 0-100 — той самий розрахунок, що в панелі 🌀 Пружина">Заряд<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="bias" onclick="xsprSort('bias')" style="cursor:pointer" title="Куди ймовірніше вистрілить">Напрямок<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="lean" onclick="xsprSort('lean')" style="cursor:pointer" title="⚖ У який бік найсильніше накручено пружину: ліва червона половина — SHORT, права зелена — LONG">⚖ Накручено<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="move" onclick="xsprSort('move')" style="cursor:pointer" title="🎯 Ймовірний хід (виміряний рух коробки 24 год)">🎯 Ймовірний хід<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="pl" onclick="xsprSort('pl')" style="cursor:pointer;text-align:right" title="Потенціал LONG = заряд × частка напрямку вгору">🟢 LONG<span class="ff-sort-arrow"></span></th>
+                    <th data-sprsort="ps" onclick="xsprSort('ps')" style="cursor:pointer;text-align:right" title="Потенціал SHORT = заряд × частка напрямку вниз">🔴 SHORT<span class="ff-sort-arrow"></span></th>
+                    <th title="Скільки годинних барів поспіль триває стиснення і його глибина">Стиснення</th>
+                    <th style="text-align:right" title="Ширина коробки останніх 24 год у % від ціни">Коробка</th>
+                    <th style="text-align:right" title="Обʼєм останніх 12 год проти попередніх 72 (менше 1 — висихає)">Обʼєм</th>
+                    <th title="Де монета зараз: у відкритій угоді / у черзі">📍</th>
+                </tr></thead>
+                <tbody id="xspr-tbody"><tr><td colspan="13" class="tm-empty-msg">Скан ще не запускали — натисніть «🔭 Сканувати»</td></tr></tbody>
+            </table>
+            </div>
+            <div style="font-size:0.66rem;color:#6b7280;margin-top:6px">Алгоритм — той самий, що в 🌀 Пружині (ЗАКРИТІ 1h-бари, 300 барів на монету). Монети — усі USDT-перпетуали обраної біржі з обігом за 24 год ≥ порогу (без стейблів і обгорток). У таблицю потрапляють ЛИШЕ монети, заряджені НА МОМЕНТ СКАНУ — це знімок, сам він не оновлюється. Лише показ: нічого не відкриває і не шле в Telegram.</div>
         </div>
     </div>
 
@@ -6398,6 +6486,7 @@ function togglePanel(pid) {
     // гармошка була згорнута, ми їх не просили — тож на РОЗГОРТАННІ тягнемо
     // стан одразу, а не чекаємо до 30с наступного полла.
     if (open && pid === 'fund') { try { fsprLoad(true); } catch (e) {} }
+    if (open && pid === 'xspr') { try { xsprLoad(true); } catch (e) {} }
     if (open && (pid === 'q4' || pid === 'mm' || pid === 'mmn' || pid === 'mmc' || pid === 'mmf' || pid === 'mmp' || pid === 'mmd' || pid === 'mmr' || pid === 'mms')) {
         try { loadFuelFilterStatus(); } catch (e) {}
     }
@@ -6423,7 +6512,7 @@ function _qCollapsed(qid) {
 }
 // Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
 // 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
-const _PANEL_IDS = ['spr', 'tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'mms', 'mmslist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'tmclosed', 'testmode', 'tmpclosed'];
+const _PANEL_IDS = ['spr', 'xspr', 'tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'mms', 'mmslist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'tmclosed', 'testmode', 'tmpclosed'];
 // Секції, ЗГОРНУТІ ЗА ЗАМОВЧУВАННЯМ (доки користувач сам не розгорне): список
 // монет МММ-монітора — вимога 18.09. Для решти дефолт лишається «розгорнуто»,
 // тобто збережений вибір користувача завжди сильніший за цей список.
@@ -17338,6 +17427,212 @@ async function fsprSaveEnabled() {
     fsprLoad(true);
 }
 setInterval(() => { try { fsprLoad(false); } catch (e) {} }, 15000);
+// ═══ 🔭 «ПРУЖИНА — СКАН БІРЖІ» (08.11) ═════════════════════════════════════
+// Ручний скан усіх USDT-перпетуалів Bybit/Binance з обігом ≥ порогу; у таблиці
+// — ЛИШЕ заряджені на момент скану. Рядки — спільний `_sprRowHTML` (той самий
+// рендер, що 🌀 Пружина) + комірка «Обіг 24h». Під час скану сторінка опитує
+// стан раз на 1с і малює процес: етапи · прогрес · лічильники · стрічка монет.
+let _xsRows = [], _xsRes = {}, _xsProg = {}, _xsSet = {}, _xsDir = 'all', _xsSortCol = 'charge', _xsSortDir = -1;
+let _xsPollT = null, _xsSetInit = false;
+const _XS_STATE_COL = {charged: '#facc15', building: '#38bdf8', fired: '#f87171', flat: '#4b5563', short: '#374151', err: '#7f1d1d'};
+const _XS_STATE_LBL = {charged: '🌀 заряджені', building: '⏳ заряджаються', fired: '💥 вистрілили', flat: 'без заряду', short: 'замало історії', err: 'збій'};
+function xsprSort(c) {
+    if (_xsSortCol === c) _xsSortDir = -_xsSortDir;
+    else { _xsSortCol = c; _xsSortDir = c === 'symbol' ? 1 : -1; }
+    xsprRender(true);
+}
+function xsprSetDir(d) { _xsDir = d; xsprRender(true); }
+function _xsVol(v) { v = Number(v) || 0; return (typeof fmtVolShort === 'function') ? fmtVolShort(v) : (v / 1e6).toFixed(0) + 'M'; }
+function _xsHM(t) {
+    if (!t) return '—';
+    const d = new Date(((typeof _srvToPc === 'function') ? _srvToPc(t) : t) * 1000);
+    const td = new Date();
+    const same = d.toDateString() === td.toDateString();
+    return (same ? '' : String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + ' ')
+        + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function _xsDur(sec) {
+    sec = Math.max(0, Math.round(Number(sec) || 0));
+    return sec >= 60 ? Math.floor(sec / 60) + 'хв ' + String(sec % 60).padStart(2, '0') + 'с' : sec + 'с';
+}
+// 🔭 Етапи скану: ① тікери біржі → ② відбір за обігом → ③ 1h-бари й аналіз → ④ готово.
+function _xsSteps(p) {
+    const ph = p.phase || '';
+    const order = {queued: 0, tickers: 1, bars: 3, done: 4, error: -1};
+    const cur = order[ph] != null ? order[ph] : 0;
+    const steps = [['1', 'черга'], ['2', 'тікери біржі'], ['3', 'відбір за обігом'], ['4', '1h-бари · аналіз'], ['✓', 'готово']];
+    return '<div class="xs-steps">' + steps.map((st, i) => {
+        let cls = i < cur ? 'done' : (i === cur ? (ph === 'done' ? 'done' : 'act') : '');
+        if (ph === 'error' && i === Math.max(0, Number(p._errStep) || 0)) cls = 'err';
+        const line = i ? `<span class="xs-line ${i <= cur ? 'done' : ''}"></span>` : '';
+        return line + `<span class="xs-step ${cls}"><i>${i < cur ? '✓' : st[0]}</i><span>${st[1]}</span></span>`;
+    }).join('') + '</div>';
+}
+function _xsMix(bs, total) {
+    const keys = ['charged', 'building', 'fired', 'flat', 'short', 'err'];
+    const sum = keys.reduce((a, k) => a + (Number(bs[k]) || 0), 0) || 0;
+    const base = Math.max(sum, Number(total) || 0) || 1;
+    const bar = keys.map(k => { const n = Number(bs[k]) || 0; return n ? `<span title="${_XS_STATE_LBL[k]}: ${n}" style="width:${(n / base * 100).toFixed(2)}%;background:${_XS_STATE_COL[k]}"></span>` : ''; }).join('');
+    const leg = keys.filter(k => Number(bs[k])).map(k => `<span style="color:${_XS_STATE_COL[k] === '#4b5563' || _XS_STATE_COL[k] === '#374151' ? '#8b93a7' : _XS_STATE_COL[k]}">● ${_XS_STATE_LBL[k]} ${bs[k]}</span>`).join(' · ');
+    return `<div class="xs-mix">${bar}</div>` + (leg ? `<div style="margin:-4px 0 8px;font-size:0.62rem">${leg}</div>` : '');
+}
+function _xsKpi(k, v, hot, tip) { return `<div class="xs-kpi${hot ? ' hot' : ''}" title="${tip || ''}"><div class="k">${k}</div><div class="v">${v}</div></div>`; }
+function xsprVizPaint() {
+    const el = document.getElementById('xspr-viz');
+    if (!el) return;
+    const p = _xsProg || {}, r = _xsRes || {};
+    const now = (typeof _nowS === 'function') ? _nowS() : Math.floor(Date.now() / 1000);
+    const btn = document.getElementById('xspr-run');
+    if (btn) { btn.disabled = !!p.running; btn.textContent = p.running ? '⏳ Сканую…' : '🔭 Сканувати'; }
+    if (p.running) {
+        const tot = Number(p.total) || 0, done = Number(p.done) || 0;
+        const pct = p.phase === 'bars' && tot ? Math.min(100, done / tot * 100) : (p.phase === 'tickers' ? 4 : 1);
+        const el0 = Number(p.scan_started || p.started_at) || now;
+        const spent = Math.max(0.1, now - el0);
+        const speed = done / spent;
+        const eta = (speed > 0 && tot > done) ? (tot - done) / speed : null;
+        const brk = p.breakdown || {};
+        const exName = String(p.exchange || '').toUpperCase();
+        const head = p.phase === 'queued' ? `⏳ у черзі сканів — чекаю, поки завершиться інший скан біржі`
+            : p.phase === 'tickers' ? `📡 тягну тікери ${exName}…`
+            : `🔭 ${exName} · сканую <b style="color:#e9e5ff;font-family:monospace">${p.cur || '…'}</b>`;
+        el.innerHTML = _xsSteps(p)
+            + `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span class="spr-dot" style="background:#a78bfa"></span><span>${head}</span></div>`
+            + `<div class="xs-prog run"><b style="width:${pct.toFixed(1)}%"></b><em>${p.phase === 'bars' ? done + ' / ' + tot : ''}</em></div>`
+            + '<div class="xs-kpis">'
+            + _xsKpi('перевірено', `${done}<span style="color:#6b7280;font-size:0.7rem"> / ${tot || '—'}</span>`, false, 'Монет, по яких уже отримано 1h-бари і пораховано «Пружину»')
+            + _xsKpi('🌀 заряджені', `${Number(p.found) || 0}`, (Number(p.found) || 0) > 0, 'Знайдено монет зі станом «заряджена»')
+            + _xsKpi('швидкість', `${speed.toFixed(1)}<span style="color:#6b7280;font-size:0.7rem"> мон/с</span>`)
+            + _xsKpi('минуло', _xsDur(spent))
+            + _xsKpi('залишилось', eta != null ? '~' + _xsDur(eta) : '—')
+            + _xsKpi('відібрано', brk.kept != null ? `${brk.kept}<span style="color:#6b7280;font-size:0.7rem"> з ${brk.total}</span>` : '—', false, `Обіг 24h ≥ $${_xsVol(p.min_vol_usd)} · відсіяно: низький обіг ${brk.low_vol || 0} · стейбли/обгортки ${brk.stable || 0} · не USDT-перп ${brk.not_usdt || 0}`)
+            + '</div>'
+            + _xsMix(p.by_state || {}, tot)
+            + `<div class="spr-k" style="margin-bottom:4px">щойно перевірені</div>`
+            + `<div class="xs-feed">${(p.recent || []).map(x => `<span class="xs-chip ${x.state}" title="${_XS_STATE_LBL[x.state] || x.state}${x.charge != null ? ' · заряд ' + x.charge : ''}">${x.symbol.replace(/USDT$/, '')}${x.charge != null ? ' ' + Math.round(x.charge) : ''}</span>`).join('') || '<span style="color:#4b5563">…</span>'}</div>`
+            + ((p.found_syms || []).length ? `<div class="spr-k" style="margin:8px 0 2px;color:#facc15">🌀 знайдено</div><div class="xs-found">${p.found_syms.map(x => `<span class="xs-chip charged">${x.replace(/USDT$/, '')}</span>`).join('')}</div>` : '');
+        return;
+    }
+    if (p.phase === 'error') {
+        el.innerHTML = _xsSteps(p) + `<div style="color:#f87171">⚠️ скан не вдався: ${p.error || 'невідома помилка'} — спробуйте ще раз</div>`;
+        return;
+    }
+    if (!r.ts) { el.innerHTML = '<span style="color:#8b93a7">Скан ще не запускали. Оберіть біржу і поріг обігу та натисніть «🔭 Сканувати».</span>'; return; }
+    const brk = r.breakdown || {};
+    const bs = Object.assign({}, r.by_state || {});
+    bs.err = Number(r.errors) || 0;
+    const short = Math.max(0, (Number(r.scanned) || 0) - (Number(r.analyzed) || 0) - bs.err);
+    if (short) bs.short = short;
+    el.innerHTML = _xsSteps({phase: 'done'})
+        + `<div class="xs-prog"><b style="width:100%"></b><em>${r.scanned || 0} / ${r.scanned || 0}</em></div>`
+        + '<div class="xs-kpis">'
+        + _xsKpi('скан', _xsHM(r.ts) + (r.restored ? ' ↻' : ''), false, r.restored ? 'Результат минулого запуску бота — це знімок на момент скану' : 'Знімок на момент скану')
+        + _xsKpi('біржа', String(r.exchange || '').toUpperCase())
+        + _xsKpi('обіг 24h ≥', '$' + _xsVol(r.min_vol_usd))
+        + _xsKpi('перевірено', `${r.analyzed || 0}<span style="color:#6b7280;font-size:0.7rem"> / ${r.scanned || 0}</span>`, false, `Відібрано ${brk.kept || 0} з ${brk.total || 0} контрактів · відсіяно: низький обіг ${brk.low_vol || 0} · стейбли/обгортки ${brk.stable || 0} · не USDT-перп ${brk.not_usdt || 0}${brk.capped ? ' · понад стелю ' + brk.capped : ''}`)
+        + _xsKpi('🌀 заряджені', `${r.charged || 0}`, (Number(r.charged) || 0) > 0)
+        + _xsKpi('тривалість', _xsDur(r.took))
+        + '</div>'
+        + _xsMix(bs, r.scanned)
+        + (r.errors ? `<div style="color:#fbbf24" title="${(r.error_samples || []).join(' | ').replace(/"/g, '&quot;')}">⚠ збоїв завантаження: ${r.errors}</div>` : '');
+}
+function xsprRender(force) {
+    xsprVizPaint();
+    const tb = document.getElementById('xspr-tbody');
+    if (!tb) return;
+    const sumEl = document.getElementById('xspr-sum');
+    const r = _xsRes || {};
+    if (sumEl) sumEl.textContent = _xsProg.running ? `⏳ ${_xsProg.done || 0}/${_xsProg.total || '…'} · 🌀 ${_xsProg.found || 0}`
+        : (r.ts ? `🌀 ${r.charged || 0} з ${r.scanned || 0} · ${String(r.exchange || '').toUpperCase()} · ${_xsHM(r.ts)}` : '');
+    const cnt = {all: 0, LONG: 0, SHORT: 0};
+    _xsRows.forEach(x => { Object.keys(cnt).forEach(k => { if (_sprFilter(x, k)) cnt[k]++; }); });
+    const tabs = document.getElementById('xspr-tabs');
+    if (tabs) {
+        const lbl = {all: 'Всі', LONG: '🟢 LONG', SHORT: '🔴 SHORT'};
+        tabs.innerHTML = Object.keys(lbl).map(k =>
+            `<button onclick="xsprSetDir('${k}')" style="font-size:0.7rem;padding:2px 9px;border-radius:4px;cursor:pointer;border:1px solid ${_xsDir === k ? '#a78bfa' : '#2b2f36'};background:${_xsDir === k ? 'rgba(167,139,250,0.14)' : '#141821'};color:${_xsDir === k ? '#c4b5fd' : '#cbd5e1'}">${lbl[k]} (${cnt[k]})</button>`).join('');
+    }
+    const val = (x, c) => c === 'vol' ? (Number(x.vol_usd) || 0) : _sprVal(x, c);
+    const rows = _xsRows.filter(x => _sprFilter(x, _xsDir)).slice().sort((a, b) => {
+        const x = val(a, _xsSortCol), y = val(b, _xsSortCol);
+        if (x < y) return -_xsSortDir;
+        if (x > y) return _xsSortDir;
+        return String(a.symbol).localeCompare(String(b.symbol));
+    });
+    document.querySelectorAll('#xspr-table th[data-sprsort]').forEach(th => {
+        const ar = th.querySelector('.ff-sort-arrow');
+        if (ar) ar.textContent = th.getAttribute('data-sprsort') === _xsSortCol ? (_xsSortDir > 0 ? ' ▲' : ' ▼') : '';
+    });
+    const sig = JSON.stringify([_xsDir, _xsSortCol, _xsSortDir, r.ts, rows.map(x => [x.symbol, x.trade_side, (x.queues || []).join(',')])]);
+    if (!force && tb.dataset.sig === sig) return;
+    tb.dataset.sig = sig;
+    try { _sprAggPaint(r.agg || null, 'xspr-agg', String(r.exchange || 'біржа').toUpperCase()); } catch (e) {}
+    if (!rows.length) {
+        tb.innerHTML = `<tr><td colspan="13" class="tm-empty-msg">${!r.ts ? 'Скан ще не запускали — натисніть «🔭 Сканувати»' : (_xsRows.length ? 'Немає монет у цій вкладці' : 'На момент скану заряджених монет не знайдено')}</td></tr>`;
+        return;
+    }
+    tb.innerHTML = rows.map(x => _sprRowHTML(x, 101, 'off',
+        `<td style="text-align:right;font-family:monospace;color:#cbd5e1">$${_xsVol(x.vol_usd)}</td>`)).join('');
+}
+function _xsCostHint() {
+    const el = document.getElementById('xspr-cost');
+    const mv = Number((document.getElementById('xspr-minvol') || {}).value) || 50e6;
+    if (el) el.textContent = `≈ 1 запит тікерів + 1 запит на монету · $${_xsVol(mv)}+ зазвичай ${mv >= 1e8 ? '60-120' : mv >= 5e7 ? '100-200' : '200-400'} монет`;
+}
+function _xsSchedule() {
+    clearTimeout(_xsPollT);
+    _xsPollT = setTimeout(() => { xsprLoad(false); }, _xsProg.running ? 1000 : 15000);
+}
+async function xsprLoad(force) {
+    const collapsed = (typeof _qCollapsed === 'function') && _qCollapsed('xspr');
+    if (!force && (collapsed || (typeof document !== 'undefined' && document.hidden)) && !_xsProg.running) { _xsSchedule(); return; }
+    try {
+        const resp = await fetch('/api/spring-scan/state', {cache: 'no-store'});
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + (resp.status === 404 ? ' (маршрут ще не задеплоєно)' : ''));
+        const d = await resp.json();
+        if (!d || !d.ok) throw new Error((d && d.reason) || 'помилка на сервері');
+        if (d.server_now && typeof _srvSkewNote === 'function') _srvSkewNote(d.server_now);
+        _xsRes = d.result || {};
+        _xsProg = d.progress || {};
+        _xsRows = _xsRes.rows || [];
+        _xsSet = d.settings || {};
+        if (!_xsSetInit) {
+            _xsSetInit = true;
+            const ex = document.getElementById('xspr-exchange'), mv = document.getElementById('xspr-minvol');
+            if (ex && _xsSet.exchange) ex.value = _xsSet.exchange;
+            if (mv && _xsSet.min_vol_usd) {
+                const v = String(Math.round(_xsSet.min_vol_usd));
+                if (![...mv.options].some(o => o.value === v)) { const o = document.createElement('option'); o.value = v; o.textContent = '$' + _xsVol(v); mv.appendChild(o); }
+                mv.value = v;
+            }
+            _xsCostHint();
+        }
+        xsprRender(false);
+    } catch (e) {
+        const el = document.getElementById('xspr-viz');
+        if (el) el.innerHTML = `<span style="color:#f87171">⚠️ стан скану не отримано: ${e && e.message || e}</span> <span>· повтор через 15с</span>`;
+    }
+    _xsSchedule();
+}
+async function xsprRun() {
+    const ex = (document.getElementById('xspr-exchange') || {}).value || 'bybit';
+    const mv = Number((document.getElementById('xspr-minvol') || {}).value) || 50e6;
+    const btn = document.getElementById('xspr-run');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Запускаю…'; }
+    try {
+        const r = await fetch('/api/spring-scan/run', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({exchange: ex, min_vol_usd: mv})});
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.reason || 'відмова сервера');
+        _xsProg = {running: true, phase: 'queued', exchange: ex, min_vol_usd: mv, started_at: (typeof _nowS === 'function') ? _nowS() : Date.now() / 1000};
+        xsprVizPaint();
+    } catch (e) { alert('Скан не запущено: ' + (e && e.message || e)); if (btn) { btn.disabled = false; btn.textContent = '🔭 Сканувати'; } }
+    xsprLoad(true);
+}
+try { document.addEventListener('change', ev => { if (ev.target && ev.target.id === 'xspr-minvol') _xsCostHint(); }); } catch (e) {}
+setTimeout(() => { try { xsprLoad(false); } catch (e) {} }, 1800);
+
 setTimeout(() => { try { fsprLoad(false); } catch (e) {} }, 2000);
 
 async function saveFuelFilterSettings() {

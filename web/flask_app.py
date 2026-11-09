@@ -3086,6 +3086,45 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    # ── 🔭 «Пружина — скан біржі» (08.11): РУЧНИЙ скан усіх USDT-перпів ──
+    def _spring_scan_eng():
+        from detection.spring_scan import get_spring_scan, init_spring_scan
+        return get_spring_scan() or init_spring_scan(db=get_db())
+
+    @app.route('/api/spring-scan/state', methods=['GET'])
+    def api_spring_scan_state():
+        """Лише ЧИТАННЯ: налаштування, останній результат і живий прогрес."""
+        import time
+        try:
+            st = _spring_scan_eng().state()
+            sides, queues = {}, {}
+            try:
+                from detection.fuel_filter import get_fuel_filter
+                ff = get_fuel_filter()
+                if ff is not None:
+                    if hasattr(ff, '_mm_open_sides'):
+                        sides = ff._mm_open_sides() or {}
+                    if hasattr(ff, '_mm_queue_map'):
+                        queues = ff._mm_queue_map() or {}
+            except Exception:
+                pass
+            for r in (st.get('result') or {}).get('rows') or []:
+                r['trade_side'] = sides.get(r.get('symbol'))
+                r['queues'] = list(queues.get(r.get('symbol')) or [])
+            st['server_now'] = time.time()
+            return jsonify(st)
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/spring-scan/run', methods=['POST'])
+    def api_spring_scan_run():
+        """Ручний запуск {exchange, min_vol_usd} — у фоні, через спільну чергу сканів."""
+        try:
+            data = request.get_json(silent=True) or {}
+            return jsonify(_spring_scan_eng().start(data.get('exchange'), data.get('min_vol_usd')))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     # ── 🧾 Activity log (bot decisions on every signal) ──
     @app.route('/api/activity-log', methods=['GET'])
     def api_activity_log():
