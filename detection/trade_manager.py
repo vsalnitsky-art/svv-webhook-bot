@@ -205,20 +205,35 @@ def paper_margin_pct_of(settings):
     return max(0.01, min(100.0, v))
 
 
-def paper_margin_usd_of(settings):
+def paper_base_of(settings, balance=None):
+    """🧪 ЧИСТА: від чого рахуються % угоди — НАЯВНИЙ тестовий баланс на момент
+    відкриття (депозит + чистий результат закритих paper-угод, вимога 08.11);
+    немає/некоректний → стартовий `paper_deposit`."""
+    try:
+        b = float(balance) if balance is not None else 0.0
+    except (TypeError, ValueError):
+        b = 0.0
+    if b > 0:
+        return max(1.0, b)
+    return max(1.0, float((settings or {}).get('paper_deposit', 1000.0) or 1000.0))
+
+
+def paper_margin_usd_of(settings, balance=None):
     """🧪 ЧИСТА: маржа на угоду в $ за поточним режимом (для показу)."""
     s = settings or {}
-    dep = max(1.0, float(s.get('paper_deposit', 1000.0) or 1000.0))
+    dep = paper_base_of(s, balance)
     if s.get('paper_sizing_mode', 'pct') == 'fixed':
         return min(max(0.01, float(s.get('paper_margin_usd', 100.0) or 100.0)), dep)
     return dep * paper_margin_pct_of(s) / 100.0
 
 
-def paper_size(settings, entry, sl_price=None):
+def paper_size(settings, entry, sl_price=None, balance=None):
     """🧪 ЧИСТА: розмір paper-угоди за віртуальним рахунком.
 
-    - `pct` (деф., вимога 08.11): маржа = `paper_margin_pct` % ТЕСТОВОГО
-      ДЕПОЗИТУ (`paper_deposit`), нотіонал = маржа × плече — SL не потрібен;
+    - `pct` (деф., вимога 08.11): маржа = `paper_margin_pct` % НАЯВНОГО
+      тестового балансу на момент відкриття (`balance`; без нього —
+      `paper_deposit`), нотіонал = маржа × плече — SL не потрібен;
+      усі % (і `risk`) рахуються від того самого балансу;
     - `fixed`: маржа = `paper_margin_usd` (не більше депозиту),
       нотіонал = маржа × `paper_leverage` — SL не потрібен;
     - `risk`: втрата на SL = `paper_risk_pct` % депозиту, нотіонал = ризик /
@@ -231,7 +246,7 @@ def paper_size(settings, entry, sl_price=None):
         return None
     if e <= 0:
         return None
-    dep = max(1.0, float(s.get('paper_deposit', 1000.0) or 1000.0))
+    dep = paper_base_of(s, balance)
     lev = max(1, int(float(s.get('paper_leverage', s.get('leverage', 10)) or 10)))
     fee = max(0.0, float(s.get('paper_fee_pct', 0.055) or 0.0))
     mode = s.get('paper_sizing_mode', 'pct')
@@ -7516,7 +7531,7 @@ class TradeManager:
             _risk = (f" · ризик на SL ${_sz['risk_at_sl']:.2f}" if _sz.get('risk_at_sl') else '')
             print(f"[TM] [TEST] 🧪 sizing {symbol} {side} [{_sz.get('mode')}]: notional ${_sz['notional']:.2f} "
                   f"(qty {_sz['qty']:.6g}) · маржа ${_sz['margin']:.2f} · плече {_sz['lev']}x · "
-                  f"депозит ${_sz['cash']}{_risk}{_cap}")
+                  f"баланс ${_sz['cash']}{_risk}{_cap}")
         pos = {
             'symbol': symbol,
             'side': side,
@@ -7904,7 +7919,17 @@ class TradeManager:
         """🧪 Розмір paper-позиції за налаштуваннями віртуального рахунку
         (`paper_size`, ЧИСТА). Без SL у режимі `risk` → фолбек на `fixed`, тож
         угода ЗАВЖДИ має розмір і рахує $ (раніше без SL було $0.00)."""
-        return paper_size(self._settings, entry, sl_price)
+        return paper_size(self._settings, entry, sl_price, balance=self._paper_balance())
+
+    def _paper_balance(self) -> float:
+        """🧪 Наявний тестовий баланс ЗАРАЗ = депозит + чистий результат усіх
+        закритих paper-угод. ТЕ САМЕ число, що `balance` у панелі рахунку
+        (одне джерело). Від нього рахується % угоди на момент відкриття."""
+        dep = float(self._settings.get('paper_deposit', 1000.0) or 1000.0)
+        try:
+            return dep + sum(_trade_usd(c) for c in list(self._shadow_closed))
+        except Exception:
+            return dep
 
     def _paper_size_of(self, pos: Dict) -> Optional[Dict]:
         """Розмір відкритої paper-позиції: знімок із відкриття, а для старих
@@ -7912,7 +7937,8 @@ class TradeManager:
         sz = pos.get('sz')
         if sz:
             return sz
-        sz = paper_size(self._settings, pos.get('entry_price'), None)
+        sz = paper_size(self._settings, pos.get('entry_price'), None,
+                        balance=self._paper_balance())
         if sz:
             sz = dict(sz, late=True)
         return sz
@@ -7934,7 +7960,7 @@ class TradeManager:
         нетто відкритих (рядки з `pnl_net`/`paper_size`). Викликати ПІД локом."""
         s = self._settings
         dep = float(s.get('paper_deposit', 1000.0) or 1000.0)
-        realized = sum(_trade_usd(c) for c in self._shadow_closed)
+        realized = self._paper_balance() - dep
         unreal = sum(float((r.get('pnl_net') or {}).get('net_usd') or 0) for r in rows)
         used = sum(float((r.get('paper_size') or {}).get('margin') or 0) for r in rows)
         bal = dep + realized
@@ -7946,9 +7972,10 @@ class TradeManager:
             'open_n': len(rows),
             'pnl_pct': round(realized / dep * 100, 3) if dep else None,
             'mode': s.get('paper_sizing_mode', 'pct'),
-            'margin_usd': round(paper_margin_usd_of(s), 2),
+            # Маржа НАСТУПНОЇ угоди — від наявного балансу, а не стартового депозиту.
+            'margin_usd': round(paper_margin_usd_of(s, bal), 2),
             'margin_pct': (paper_margin_pct_of(s) if s.get('paper_sizing_mode', 'pct') == 'pct'
-                           else round(paper_margin_usd_of(s) / max(1.0, dep) * 100, 2)),
+                           else round(paper_margin_usd_of(s, bal) / max(1.0, bal) * 100, 2)),
             'leverage': int(s.get('paper_leverage', 10) or 10),
             'fee_pct': float(s.get('paper_fee_pct', 0.055) or 0),
         }

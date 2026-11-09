@@ -1516,7 +1516,7 @@
     var usd = function (v) { return '<b class="ppi-usd">$' + ppNum(v) + "</b>"; };
     var pct = function (v) { return '<b class="ppi-pct">' + ppNum(v) + "%</b>"; };
     var deal = a.mode === "pct" && a.margin_pct != null
-      ? pct(a.margin_pct) + ' <span class="ppi-l">депозиту =</span> ' + usd(a.margin_usd)
+      ? pct(a.margin_pct) + ' <span class="ppi-l">від балансу</span> ' + usd(a.balance) + ' <span class="ppi-l">=</span> ' + usd(a.margin_usd)
       : usd(a.margin_usd);
     return '<span class="ppi-l">депозит</span> ' + usd(a.deposit) +
       ' <span class="ppi-sep">·</span> <span class="ppi-l">угода</span> ' + deal +
@@ -1531,7 +1531,7 @@
     var bal = ppCard("Тестовий баланс", ppMoney(pa.equity),
       dp == null ? "депозит " + ppMoney(pa.deposit) : '<span class="' + ppCls(dp) + '">' + ppPct(dp) + "</span> депозиту",
       "", "Віртуальний рахунок: депозит + чистий результат закритих тестових угод (з комісіями) + нереалізований результат відкритих. " +
-      "Депозит $" + (pa.deposit || 0) + " · на угоду " + (pa.mode === "pct" && pa.margin_pct != null ? pa.margin_pct + "% депозиту = " : "") + "$" + (pa.margin_usd || 0) + " маржі × плече " + (pa.leverage || 0) + "x · комісія " + (pa.fee_pct || 0) + "% / сторону.");
+      "Депозит $" + (pa.deposit || 0) + " · на угоду " + (pa.mode === "pct" && pa.margin_pct != null ? pa.margin_pct + "% балансу $" + (pa.balance || 0) + " = " : "") + "$" + (pa.margin_usd || 0) + " маржі × плече " + (pa.leverage || 0) + "x · комісія " + (pa.fee_pct || 0) + "% / сторону.");
     var n = st.total_closed || 0;
     if (!n) { host.innerHTML = bal + '<div class="pp-empty">Закритих тестових угод ' + label + " немає</div>"; return; }
     var wr = st.win_rate || 0, pf = st.profit_factor;

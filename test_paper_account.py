@@ -158,7 +158,7 @@ def test_margin_as_percent_of_deposit_0811():
     # міграція збереженого 'fixed' → 'pct' разово; 'risk' не чіпаємо
     src = open(os.path.join(_HERE, 'detection', 'trade_manager.py'), encoding='utf-8').read()
     _check("paper_pct_migrated_v1" in src.split('def _load_settings')[1].split('def ')[0], 'міграція')
-    _check('<option value="pct">% депозиту</option>' in _HTML and 'id="tm-paper-mpct"' in _HTML
+    _check('<option value="pct">% балансу</option>' in _HTML and 'id="tm-paper-mpct"' in _HTML
            and 'paper_margin_pct:' in _HTML, 'UI бота: режим і поле %')
     _check('ppInlineHTML(sa)' in _IJS and 'ppi-usd' in _IJS and 'ppi-pct' in _IJS, 'рядок кольорами')
     for i in ('tmpq-dep', 'tmpq-mpct', 'tmpq-lev', 'tmpq-fee'):
@@ -167,6 +167,27 @@ def test_margin_as_percent_of_deposit_0811():
            'швидкий рядок пише ті самі налаштування')
     _check(_HTML.index('id="tmpq-row"') < _HTML.index('id="tmp-stats-wrap"'), 'рядок над панеллю Paper')
     print('✓ маржа = % депозиту + кольоровий рядок + вибір у боті')
+
+
+def test_margin_pct_is_from_balance_at_open_0811():
+    """🧪 % угоди рахується від НАЯВНОГО балансу на момент відкриття, а не
+    від стартового депозиту (вимога 08.11, друга правка)."""
+    base = {'paper_deposit': 1000.0, 'paper_leverage': 20, 'paper_margin_pct': 3}
+    z = paper_size(base, 50.0, None, balance=1200.0)
+    _check(z['margin'] == 36.0 and z['notional'] == 720.0 and z['cash'] == 1200.0, z)
+    z = paper_size(base, 50.0, None, balance=800.0)
+    _check(z['margin'] == 24.0, 'збиток зменшує наступну угоду')
+    _check(paper_size(base, 50.0, None, balance=None)['margin'] == 30.0, 'без балансу → депозит')
+    _check(paper_size(base, 50.0, None, balance=-5)['margin'] == 30.0, 'сміття → депозит')
+    t = _tm(dict(S, paper_sizing_mode='pct', paper_margin_pct=3),
+            closed=[{'closed_at': 10, 'pnl_pct': 1, 'paper_result': {'net_usd': 200.0}}])
+    _check(TM._paper_balance(t) == 1200.0, 'баланс = депозит + закриті')
+    _check(TM._paper_sizing(t, 50.0, None)['margin'] == 36.0, 'відкриття бере наявний баланс')
+    acc = TM.paper_account(t)
+    _check(acc['balance'] == 1200.0 and acc['margin_usd'] == 36.0, acc)
+    _check('_tmPaperBase()' in _HTML and 'id="tmpq-bal"' in _HTML, 'бот показує баланс')
+    _check('usd(a.balance)' in _IJS, 'інфосайт показує баланс')
+    print('✓ % угоди — від наявного балансу на момент відкриття')
 
 
 if __name__ == '__main__':
