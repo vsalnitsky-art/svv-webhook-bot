@@ -575,36 +575,147 @@ def test_sig_card_drag_and_arrow():
     print('✓ картка SBR: перетягування + стрілка до позначки')
 
 
+def _liq_raw(price=100.0, n=200, ex='bybit', sym='ETHUSDT'):
+    import math
+    kl = []
+    for k in range(n):
+        p = price * (1 + 0.05 * math.sin(k / 9.0))
+        kl.append({'h': p * 1.01, 'l': p * 0.99, 'c': p, 'v': 1000 + (k % 7) * 300})
+    return {'ok': True, 'exchange': ex, 'symbol': sym, 'price': price,
+            'oi_usd': 5e8, 'bars': n, 'klines': kl, 'took_sec': 0.4,
+            'fetched_at': 1000.0}
+
+
+def _liq_reset():
+    ip._liq_cache.clear(); ip._liq_user_at.clear(); ip._liq_calc_at.clear()
+    ip._liq_pause.clear()
+
+
 def test_liq_profile_button_only_and_cached():
-    """💧 Профіль ліквідності: параметри нормалізуються, рахунок — ТОЙ САМИЙ
-    scan_one (через runner), спільний кеш, відмова НЕ кешується."""
+    """💧 Профіль: параметри нормалізуються; кеш — СИРІ дані на (монета,
+    біржа, глибина), крок застосовується без нового запиту; відмова НЕ
+    кешується."""
     _check(ip.liq_params('BYBIT', '720', 'fine') == ('bybit', 720, 'fine'), 'параметри')
     _check(ip.liq_params('mexc', '999', 'x') == ('binance', ip.LIQ_BARS_DEFAULT, ip.LIQ_RES_DEFAULT),
            'невідоме → дефолт')
     calls = []
 
-    def runner(sym, ex, b, sp, st=None):
-        calls.append((sym, ex, b, sp, st))
-        return {'ok': True, 'price': 100.0, 'step': 0.5, 'total_usd': 1e6, 'above_pct': 60,
-                'below_pct': 40, 'pull': 'up', 'verdict': 'v', 'exchange': ex,
-                'rows': [{'price': 101, 'price_hi': 101.5, 'usd': 5e5, 'pct': 50, 'dir': 'up', 'dist_pct': 1.2},
-                         {'price': 'x'}]}
-    ip._liq_cache.clear()
+    def runner(sym, ex, b):
+        calls.append((sym, ex, b))
+        return _liq_raw(ex=ex, sym=sym)
+    _liq_reset()
     v = ip.liq_profile('eth', 'bybit', 168, 'mid', now=1000, runner=runner)
-    _check(v['ok'] and v['symbol'] == 'ETHUSDT' and len(v['rows']) == 1, 'рядки (сміття відкинуто)')
-    _check(v['rows'][0] == {'lo': 101.0, 'hi': 101.5, 'usd': 5e5, 'pct': 50.0, 'dir': 'up', 'dist': 1.2}, 'форма рядка')
-    _check(calls == [('ETHUSDT', 'bybit', 168, ip.LIQ_RES['mid'], None)], 'дрібніший крок передано')
-    ip.liq_profile('ETHUSDT', 'bybit', 168, 'mid', now=1001, runner=runner, step='0.0025')
-    _check(calls[-1][4] == 0.0025, 'крок від графіка передано і він у ключі кешу')
+    _check(v['ok'] and v['symbol'] == 'ETHUSDT' and v['rows'], v)
+    _check(set(v['rows'][0]) == {'lo', 'hi', 'usd', 'pct', 'dir', 'dist'}, 'форма рядка')
+    _check(calls == [('ETHUSDT', 'bybit', 168)], 'крок у запит до біржі НЕ входить')
+    _check(v['src'] == 'server' and v['age'] == 0, 'джерело і вік даних')
+    v2 = ip.liq_profile('ETHUSDT', 'bybit', 168, 'mid', now=1030, runner=runner, step='0.5')
+    _check(len(calls) == 1, 'інший крок — той самий кеш, без нового запиту')
+    _check(v2['step'] == 0.5 and v2['age'] == 30, f'крок від графіка застосовано: {v2.get("step")}')
     _check(ip.liq_step('-1') is None and ip.liq_step('abc') is None, 'сміттєвий крок відкинуто')
-    ip.liq_profile('ETHUSDT', 'bybit', 168, 'mid', now=1000 + ip.LIQ_TTL - 1, runner=runner)
-    _check(len(calls) == 2, 'кеш')
+    ip.liq_profile('ETHUSDT', 'bybit', 168, 'fine', now=1000 + ip.LIQ_TTL - 1, runner=runner)
+    _check(len(calls) == 1, 'кеш до LIQ_TTL')
     ip.liq_profile('ETHUSDT', 'binance', 168, 'mid', now=1001, runner=runner)
-    _check(len(calls) == 3, 'інша біржа — свій ключ')
+    _check(len(calls) == 2, 'інша біржа — свій ключ')
     bad = ip.liq_profile('SOLUSDT', now=1, runner=lambda *a: {'ok': False, 'reason': 'немає OI'})
     _check(not bad['ok'] and bad['reason'] == 'немає OI', 'причина відмови')
     _check(not any(k[0] == 'SOLUSDT' for k in ip._liq_cache), 'відмова не кешується')
-    print('✓ 💧 профіль: параметри, кеш, причина')
+    print('✓ 💧 профіль: сирий кеш, крок без запиту, причина')
+
+
+def test_liq_cache_gives_same_numbers_as_direct_scan():
+    """Кеш сирих даних НЕ змінює чисел: драбина з кешу == прямий scan_one."""
+    from detection import liq_scan
+    _liq_reset()
+    raw = _liq_raw()
+    for step in (None, '0.5', '2'):
+        v = ip.liq_profile('ETHUSDT', 'bybit', 168, 'mid', now=1000, runner=lambda *a: raw,
+                           step=step)
+        direct = liq_scan.summarise_raw(raw, rows=ip.LIQ_ROWS, step_pct=ip.LIQ_RES['mid'],
+                                        step_usd=ip.liq_step(step), min_row_pct=ip.LIQ_MIN_ROW_PCT)
+        ref = ip.liq_view(direct, 'ETHUSDT', 'bybit', 168, 'mid')
+        for k in ('rows', 'magnet', 'above_pct', 'below_pct', 'pull', 'step', 'total_usd', 'verdict'):
+            _check(v[k] == ref[k], f'{k} (крок {step})')
+    print('✓ 💧 кеш сирих даних дає ті самі числа, що прямий розрахунок')
+
+
+def test_liq_user_cooldown_and_exchange_pause():
+    _liq_reset()
+    calls = []
+
+    def runner(sym, ex, b):
+        calls.append(sym)
+        return _liq_raw(sym=sym)
+    v = ip.liq_profile('ETHUSDT', 'bybit', 168, now=1000, runner=runner, user=7)
+    _check(v['ok'], v)
+    w = ip.liq_profile('SOLUSDT', 'bybit', 168, now=1010, runner=runner, user=7)
+    _check(not w['ok'] and w.get('retry_in') and len(calls) == 1, f'ліміт користувача: {w}')
+    c = ip.liq_profile('ETHUSDT', 'bybit', 168, now=1010, runner=runner, user=7, step='1')
+    _check(c['ok'] and len(calls) == 1, 'кеш — без ліміту')
+    o = ip.liq_profile('SOLUSDT', 'bybit', 168, now=1010, runner=runner, user=8)
+    _check(o['ok'] and len(calls) == 2, 'інший користувач — свій ліміт')
+    ok = ip.liq_profile('SOLUSDT', 'bybit', 168, now=1000 + ip.LIQ_USER_COOLDOWN + 1,
+                        runner=runner, user=7)
+    _check(ok['ok'], 'після паузи — знову можна')
+    # Біржа відповіла лімітом → пауза всім запитам кабінету до неї.
+    _liq_reset()
+    b = ip.liq_profile('ADAUSDT', 'binance', 168, now=2000,
+                       runner=lambda *a: {'ok': False, 'blocked': 429, 'reason': 'x'}, user=1)
+    _check(not b['ok'] and b.get('paused'), b)
+    n = []
+    p = ip.liq_profile('XRPUSDT', 'binance', 168, now=2100, user=2,
+                       runner=lambda *a: n.append(1) or _liq_raw())
+    _check(not p['ok'] and p.get('paused') and not n, 'під час паузи біржу не питаємо')
+    q = ip.liq_profile('XRPUSDT', 'bybit', 168, now=2100, user=3, runner=lambda *a: _liq_raw())
+    _check(q['ok'], 'пауза — лише для своєї біржі')
+    r = ip.liq_profile('XRPUSDT', 'binance', 168, now=2000 + ip.LIQ_PAUSE_SEC + 1, user=4,
+                       runner=lambda *a: _liq_raw())
+    _check(r['ok'], 'після паузи — знову')
+    print('✓ 💧 ліміт на користувача + пауза при блокуванні біржею')
+
+
+def test_liq_from_browser_data_matches_server():
+    """Дані, які взяв браузер, рахуються ТІЄЮ САМОЮ формулою; сміття відкинуто;
+    чужого кешу не наповнюють."""
+    _liq_reset()
+    raw = _liq_raw()
+    srv = ip.liq_profile('ETHUSDT', 'bybit', 168, 'mid', now=1000, runner=lambda *a: raw, step='0.5')
+    body = {'symbol': 'eth', 'exchange': 'bybit', 'bars': 168, 'res': 'mid', 'step': 0.5,
+            'price': raw['price'], 'oi_usd': raw['oi_usd'],
+            'klines': [[k['h'], k['l'], k['c'], k['v']] for k in raw['klines']]}
+    _liq_reset()
+    br = ip.liq_from_client(body, user=5, now=1000)
+    _check(br['ok'] and br['src'] == 'browser', br)
+    for k in ('rows', 'magnet', 'above_pct', 'pull', 'step', 'total_usd'):
+        _check(br[k] == srv[k], f'браузерний шлях == серверний: {k}')
+    _check(not ip._liq_cache, 'дані від клієнта не йдуть у спільний кеш')
+    _check(not ip.liq_from_client(body, user=5, now=1000.5)['ok'], 'ліміт частоти розрахунку')
+    for bad in ({'price': 0}, {'oi_usd': 'x'}, {'klines': [[1, 1, 1, 1]] * 5},
+                {'klines': [[1, 1, 1, 1]] * (ip.LIQ_CLIENT_MAX_BARS + 1)}, {'symbol': '!!'}):
+        b2 = dict(body); b2.update(bad)
+        _check(not ip.liq_from_client(b2, now=5000)['ok'], f'відкинуто: {list(bad)}')
+    print('✓ 💧 дані з браузера: та сама формула, перевірка входу')
+
+
+def test_exchange_block_is_detected():
+    from detection import liq_scan
+
+    class R:
+        def __init__(self, st, j=None):
+            self.status_code, self._j, self.text = st, j or {}, ''
+
+        def json(self):
+            return self._j
+    for ex, r in (('binance', R(429)), ('binance', R(418)), ('bybit', R(403)),
+                  ('bybit', R(200, {'retCode': 10006}))):
+        try:
+            liq_scan._guard(ex, r)
+            raise AssertionError(f'не впізнано блок {ex}')
+        except liq_scan.ExchangeBlocked:
+            pass
+    liq_scan._guard('binance', R(451))     # регіон ≠ ліміт
+    liq_scan._guard('bybit', R(200, {'retCode': 0}))
+    print('✓ 💧 ліміт / блок IP біржі впізнається, регіон — ні')
 
 
 def test_liq_step_pct_is_finer():
@@ -625,7 +736,13 @@ def test_liq_frontend_contract():
     for i in ('iw-liq-btn', 'iw-liq-ex', 'iw-liq-bars', 'iw-liq-res'):
         _check('id="' + i + '"' in html, i)
     _check('value="binance"' in html and 'value="bybit"' in html, 'дві біржі')
-    _check('/api/info/liq?' in js and js.count('/api/info/liq?') == 1, 'один виклик — у liqLoad')
+    _check('/api/info/liq?' in js and js.count('/api/info/liq?') == 1, 'один виклик — у liqFromServer')
+    ld = js.split('function liqLoad()')[1][:1500]
+    _check(ld.index('liqFromBrowser(') < ld.index('liqFromServer('), 'спершу браузер, фолбек — сервер')
+    _check('/api/me/liq-calc' in js and 'fapi.binance.com/fapi/v1/' in js and '"klines?symbol="' in js
+           and 'api.bybit.com/v5/market/' in js and '"kline?category=linear' in js, 'браузер тягне ті самі ендпоінти')
+    _check('x[7]' in js.split('binance: function')[1][:900] and 'x[6]' in js.split('bybit: function')[1][:1200],
+           'обсяг у доларах — як на сервері')
     lc = js.split('function loadCoin')[1][:1500]
     _check('LQ.sym !== sym) liqOff()' in lc, 'інша монета → профіль прибрано')
     _check('LQ.sym !== IW.sel) return' in js, 'запізніла відповідь для іншої монети ігнорується')

@@ -717,14 +717,96 @@
     if (p0 == null || p1 == null) return null;
     return liqNiceStep(Math.abs(p0 - p1) * (LIQ_RES_PX[LQ.res] || 9) / h);
   }
+  // ── 🖥 ДАНІ З БРАУЗЕРА (вимога 09.11) ───────────────────────────────────
+  // Сирі дані (ціна · OI · свічки) браузер бере в біржі САМ — з IP
+  // користувача, тож ліміт біржі не ділиться з ботом. Сервер лише рахує
+  // драбину (POST /api/me/liq-calc, та сама формула). Ті самі запити, що
+  // `liq_scan._oi_one_*` / `_klines_*` на сервері — числа однакові.
+  // Браузер не зміг (мережа / CORS / регіон / ліміт) → фолбек на сервер, а
+  // невдала біржа памʼятається LIQ_BR_FAIL_MS, щоб не пробувати щоразу.
+  var LIQ_BR_FAIL_MS = 30 * 60 * 1000;
+  var LIQ_BR_KEY = "vsv_liq_br_fail";
+  function liqBrFailed(ex) {
+    try { var m = JSON.parse(localStorage.getItem(LIQ_BR_KEY) || "{}");
+      return m[ex] && Date.now() - m[ex] < LIQ_BR_FAIL_MS; } catch (e) { return false; }
+  }
+  function liqBrMark(ex, bad) {
+    try { var m = JSON.parse(localStorage.getItem(LIQ_BR_KEY) || "{}");
+      if (bad) m[ex] = Date.now(); else delete m[ex];
+      localStorage.setItem(LIQ_BR_KEY, JSON.stringify(m)); } catch (e) {}
+  }
+  function liqXGet(url) {
+    var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var tm = ctl ? setTimeout(function () { ctl.abort(); }, 12000) : null;
+    return fetch(url, { credentials: "omit", cache: "no-store", signal: ctl ? ctl.signal : undefined })
+      .then(function (r) {
+        if (tm) clearTimeout(tm);
+        if (!r.ok) { var e = new Error("HTTP " + r.status); e.net = true; throw e; }
+        return r.json();
+      }, function (e) { if (tm) clearTimeout(tm); e.net = true; throw e; });
+  }
+  function liqNotFound(sym, ex) { var e = new Error(sym + " не знайдено на " + ex.toUpperCase() + " (перевір назву)"); e.data = true; return e; }
+  var LIQ_BROWSER = {
+    binance: function (sym, bars) {
+      var B = "https://fapi.binance.com/fapi/v1/";
+      return Promise.all([
+        liqXGet(B + "openInterest?symbol=" + sym),
+        liqXGet(B + "ticker/price?symbol=" + sym),
+        liqXGet(B + "klines?symbol=" + sym + "&interval=1h&limit=" + bars)
+      ]).then(function (a) {
+        var px = Number(a[1] && a[1].price) || 0, oi = Number(a[0] && a[0].openInterest) || 0;
+        if (!(px > 0) || !Array.isArray(a[2])) throw liqNotFound(sym, "binance");
+        // [openTime, o, h, l, c, volume, closeTime, quoteVolume…] — QUOTE-обсяг, як на сервері
+        return { price: px, oi_usd: oi * px,
+                 klines: a[2].map(function (x) { return [x[2], x[3], x[4], x[7]]; }) };
+      });
+    },
+    bybit: function (sym, bars) {
+      var B = "https://api.bybit.com/v5/market/";
+      return Promise.all([
+        liqXGet(B + "tickers?category=linear&symbol=" + sym),
+        liqXGet(B + "kline?category=linear&symbol=" + sym + "&interval=60&limit=" + bars)
+      ]).then(function (a) {
+        if (a[0] && a[0].retCode === 10006) { var e = new Error("ліміт Bybit"); e.net = true; throw e; }
+        var t = ((a[0] && a[0].result) || {}).list || [];
+        if (!t.length) throw liqNotFound(sym, "bybit");
+        var px = Number(t[0].lastPrice) || 0, oi = Number(t[0].openInterest) || 0;
+        var kl = (((a[1] && a[1].result) || {}).list || []).slice().reverse();   // найстаріший першим
+        return { price: px, oi_usd: oi * px,
+                 klines: kl.map(function (x) { return [x[2], x[3], x[4], x[6]]; }) };
+      });
+    }
+  };
+  function liqFromBrowser(sym, st) {
+    var ex = LQ.ex, f = LIQ_BROWSER[ex];
+    if (!f || liqBrFailed(ex)) return Promise.reject(Object.assign(new Error("skip"), { net: true }));
+    return f(sym, LQ.bars).then(function (raw) {
+      if (!(raw.oi_usd > 0)) { var e = new Error(ex.toUpperCase() + " не віддає відкритий інтерес по " + sym); e.data = true; throw e; }
+      liqBrMark(ex, false);
+      return apiPost("/api/me/liq-calc", { symbol: sym, exchange: ex, bars: LQ.bars, res: LQ.res,
+        step: st || null, price: raw.price, oi_usd: raw.oi_usd, klines: raw.klines });
+    }, function (e) { if (e && e.net) liqBrMark(ex, true); throw e; });
+  }
+  function liqFromServer(sym, st) {
+    return api("/api/info/liq?symbol=" + encodeURIComponent(sym) + "&exchange=" + LQ.ex + "&bars=" + LQ.bars + "&res=" + LQ.res +
+        (st ? "&step=" + st : ""));
+  }
+  function liqSrcLbl(d) {
+    if (d.src === "browser") return '<span class="src" title="Дані з біржі взяв ваш браузер">🖥</span>';
+    var a = Number(d.age) || 0;
+    return '<span class="src" title="Дані взяв сервер (спільний кеш)">☁' + (a >= 5 ? " " + a + "с" : "") + "</span>";
+  }
   function liqLoad() {
     var sym = IW.sel; if (!sym) return;
     var tok = ++LQ.seq;
     LQ.on = true; LQ.sym = sym; LQ.busy = tok; liqUi();
     liqStatus('<span class="wait">⏳ рахую ' + esc(sym) + " · " + LQ.ex.toUpperCase() + "…</span>");
     var st = liqStepFromChart();
-    api("/api/info/liq?symbol=" + encodeURIComponent(sym) + "&exchange=" + LQ.ex + "&bars=" + LQ.bars + "&res=" + LQ.res +
-        (st ? "&step=" + st : ""))
+    liqFromBrowser(sym, st)
+      .then(null, function (e) {
+        if (e && e.data) return { ok: false, reason: e.message };   // відповідь біржі: монети немає
+        return liqFromServer(sym, st);                              // браузер не зміг → сервер
+      })
       .then(function (d) {
         if (LQ.busy !== tok || !LQ.on || LQ.sym !== IW.sel) return;   // встигли перемкнути
         LQ.busy = 0;
@@ -736,9 +818,10 @@
         liqLevelTitles();
         var up = Number(d.above_pct) || 0, dn = Number(d.below_pct) || 0;
         var pull = d.pull === "up" ? '<b class="up">⬆ вгору</b>' : d.pull === "down" ? '<b class="dn">⬇ вниз</b>' : "<b>⚖ рівновага</b>";
-        liqStatus('<span class="up">▲' + up.toFixed(1) + '%</span> <span class="dn">▼' + dn.toFixed(1) + "%</span> · " + pull,
+        liqStatus('<span class="up">▲' + up.toFixed(1) + '%</span> <span class="dn">▼' + dn.toFixed(1) + "%</span> · " + pull + " " + liqSrcLbl(d),
           (d.verdict || "") + "\nБіржа " + String(d.exchange || "").toUpperCase() + " · історія " + d.bars +
-          " год · крок " + d.step + " · всього " + liqUsd(d.total_usd) + " · пораховано за " + d.took_sec + "с");
+          " год · крок " + d.step + " · всього " + liqUsd(d.total_usd) +
+          (d.src === "browser" ? " · дані взяв ваш браузер" : " · дані з сервера, " + (Number(d.age) || 0) + " с тому"));
         liqUi();
       }, function (e) {
         if (LQ.busy !== tok) return;

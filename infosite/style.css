@@ -650,6 +650,7 @@ body.iw-full-on { overflow: hidden; }
   white-space: nowrap; }
 .iw-liq-st .up { color: #26a69a; } .iw-liq-st .dn { color: #ef5350; }
 .iw-liq-st .wait { color: var(--warn); } .iw-liq-st .bad { color: #f87171; }
+.iw-liq-st .src { margin-left: 4px; opacity: .8; font-weight: 500; }
 :root[data-theme="light"] .iw-liq-btn { color: #0369a1; }
 :root[data-theme="light"] .iw-liq-btn.on { color: #0c4a6e; }
 

@@ -1167,7 +1167,26 @@ LIQ_RES_DEFAULT = 'mid'
 LIQ_ROWS = 120
 LIQ_MIN_ROW_PCT = 0.3        # профілю потрібні й дрібні сходинки (драбина Tickr — 1%)
 LIQ_TTL = 120.0
-_liq_cache = {}
+# ⚖ НАВАНТАЖЕННЯ БІРЖІ (вимога 09.11). Запити кабінету йдуть з IP СЕРВЕРА —
+# того самого, яким живе бот. Тому:
+#  1) СИРІ дані (ціна · OI · свічки → рівні) кешуються на (монета, біржа,
+#     глибина) — крок сходинок рахується з них БЕЗ мережі, тож сто кліків по
+#     BTC з різним масштабом = один запит на `LIQ_TTL`;
+#  2) кожен користувач може змусити сервер піти на біржу не частіше ніж раз
+#     на `LIQ_USER_COOLDOWN` (кеш — без обмежень);
+#  3) біржа відповіла лімітом / блоком IP → ПАУЗА всім запитам кабінету до
+#     неї на `LIQ_PAUSE_SEC`, щоб не з'їсти ліміт бота;
+#  4) основний шлях — БРАУЗЕР користувача тягне сирі дані сам (його IP) і
+#     надсилає їх на розрахунок (`liq_from_client`); сервер — лише фолбек.
+LIQ_USER_COOLDOWN = 30.0
+LIQ_PAUSE_SEC = 300.0
+LIQ_CALC_COOLDOWN = 2.0       # клієнтський шлях: лише арифметика (~10 мс)
+LIQ_CLIENT_MAX_BARS = 1000
+_liq_cache = {}               # (sym, ex, bars) → (ts, сирі дані + рівні)
+_liq_user_at = {}             # користувач → час останнього походу на біржу
+_liq_calc_at = {}             # користувач → час останнього розрахунку з браузера
+_liq_pause = {}               # біржа → до коли пауза
+_liq_lock = threading.Lock()
 
 
 def liq_params(exchange=None, bars=None, res=None):
@@ -1230,45 +1249,153 @@ def liq_step(v):
     return float('%.6g' % f) if f > 0 and f == f and f != float('inf') else None
 
 
-def liq_profile(symbol, exchange=None, bars=None, res=None, now=None, runner=None,
-                step=None):
-    """Профіль ліквідності монети (кеш `LIQ_TTL` на (монета, біржа, глибина, крок)).
+def liq_pause_left(ex, now=None):
+    """Скільки секунд ще триває пауза запитів кабінету до біржі (0 — немає)."""
+    now = time.time() if now is None else now
+    return max(0.0, _liq_pause.get(ex, 0.0) - now)
 
-    `step` — крок сходинки, який сторінка рахує з ВИДИМОГО діапазону графіка
-    (сходинка = кілька пікселів екрана), тож профіль прив'язаний до шкали.
-    Без нього — авто-крок за `res` (% ціни)."""
+
+def _liq_render(raw, levels, sym, ex, b, r, st, now, src):
+    """Драбина під потрібний крок із сирих даних — БЕЗ мережі."""
+    from detection import liq_scan
+    out = liq_scan.summarise_raw(raw, rows=LIQ_ROWS, step_pct=LIQ_RES[r],
+                                 step_usd=st, min_row_pct=LIQ_MIN_ROW_PCT,
+                                 levels=levels)
+    v = liq_view(out, sym, ex, b, r)
+    if v.get('ok'):
+        v['src'] = src
+        v['age'] = max(0, int(now - (raw.get('fetched_at') or now)))
+    return v
+
+
+def liq_profile(symbol, exchange=None, bars=None, res=None, now=None, runner=None,
+                step=None, user=None):
+    """Профіль ліквідності монети з сервера (фолбек браузерного шляху).
+
+    Кеш — СИРІ дані на (монета, біржа, глибина), `LIQ_TTL`; крок (`step` з
+    видимого діапазону графіка або `res` — % ціни) застосовується до них без
+    нового запиту. Похід на біржу — не частіше `LIQ_USER_COOLDOWN` на
+    користувача; блок біржі → пауза `LIQ_PAUSE_SEC`."""
     sym = norm_symbol(symbol)
     if not valid_symbol(sym):
         return {'ok': False, 'reason': 'невірна назва монети'}
     ex, b, r = liq_params(exchange, bars, res)
     st = liq_step(step)
     now = time.time() if now is None else now
-    key = (sym, ex, b, r, st)
+    key = (sym, ex, b)
     hit = _liq_cache.get(key)
-    if hit and now - hit[0] < LIQ_TTL:
-        return hit[1]
-    if runner is None:
-        from detection import liq_scan, scan_queue
+    if not (hit and now - hit[0] < LIQ_TTL):
+        left = liq_pause_left(ex, now)
+        if left > 0:
+            return {'ok': False, 'paused': int(left) + 1,
+                    'reason': f'{ex.upper()} тимчасово обмежила запити — '
+                              f'пауза ще {int(left) + 1} с'}
+        uk = str(user) if user is not None else None
+        with _liq_lock:
+            last = _liq_user_at.get(uk, 0.0) if uk else 0.0
+            if uk and now - last < LIQ_USER_COOLDOWN:
+                w = int(LIQ_USER_COOLDOWN - (now - last)) + 1
+                return {'ok': False, 'retry_in': w,
+                        'reason': f'зачекайте {w} с — запит до біржі не частіше '
+                                  f'ніж раз на {int(LIQ_USER_COOLDOWN)} с'}
+            if uk:
+                _liq_user_at[uk] = now
+                if len(_liq_user_at) > 2000:
+                    for k in sorted(_liq_user_at, key=_liq_user_at.get)[:500]:
+                        _liq_user_at.pop(k, None)
+        if runner is None:
+            from detection import liq_scan, scan_queue
 
-        def runner(sym, ex, b, step_pct, step_usd=None):
-            return scan_queue.run(
-                f'info:liq:{sym}:{ex}:{b}:{step_pct}:{step_usd}',
-                lambda: liq_scan.scan_one(exchange=ex, symbol=sym, bars=b,
-                                          rows=LIQ_ROWS, step_pct=step_pct,
-                                          step_usd=step_usd,
-                                          min_row_pct=LIQ_MIN_ROW_PCT),
-                source='info', timeout=180.0)
-    try:
-        out = runner(sym, ex, b, LIQ_RES[r], st)
-    except Exception as e:
-        out = {'ok': False, 'reason': f'помилка: {str(e)[:100]}'}
-    v = liq_view(out, sym, ex, b, r)
-    if v.get('ok'):
-        _liq_cache[key] = (now, v)
+            def runner(sym, ex, b):
+                # Ім'я завдання БЕЗ кроку → однакові запити зливаються в черзі.
+                return scan_queue.run(
+                    f'info:liq:{sym}:{ex}:{b}',
+                    lambda: liq_scan.fetch_one_raw(exchange=ex, symbol=sym, bars=b),
+                    source='info', timeout=180.0)
+        try:
+            raw = runner(sym, ex, b)
+        except Exception as e:
+            raw = {'ok': False, 'reason': f'помилка: {str(e)[:100]}'}
+        raw = raw or {}
+        if raw.get('blocked'):
+            _liq_pause[ex] = now + LIQ_PAUSE_SEC
+            print(f'[INFO] 💧 {ex} відмовила ({raw.get("blocked")}) — пауза '
+                  f'запитів кабінету {int(LIQ_PAUSE_SEC)} с')
+            return {'ok': False, 'paused': int(LIQ_PAUSE_SEC),
+                    'reason': f'{ex.upper()} обмежила запити — пауза '
+                              f'{int(LIQ_PAUSE_SEC // 60)} хв'}
+        if not raw.get('ok'):
+            return liq_view(raw, sym, ex, b, r)
+        from detection import liq_scan
+        lv = liq_scan.build_levels(raw.get('klines') or [], raw['oi_usd'],
+                                   raw['price'], symbol=sym)
+        hit = (now, raw, lv)
+        _liq_cache[key] = hit
         if len(_liq_cache) > 200:
             for k in sorted(_liq_cache, key=lambda k: _liq_cache[k][0])[:50]:
                 _liq_cache.pop(k, None)
-    return v
+    return _liq_render(hit[1], hit[2], sym, ex, b, r, st, now, 'server')
+
+
+def liq_client_raw(body):
+    """Сирі дані, які браузер узяв у біржі сам → формат `fetch_one_raw`.
+
+    Перевіряємо форму й межі; чужого кешу НЕ наповнюємо (дані від клієнта
+    бачить лише він сам)."""
+    body = body or {}
+    try:
+        price = float(body.get('price'))
+        oi = float(body.get('oi_usd'))
+    except (TypeError, ValueError):
+        return None, 'немає ціни / OI'
+    if not (price > 0 and oi > 0) or price != price or oi != oi \
+            or price == float('inf') or oi == float('inf'):
+        return None, 'невірні ціна / OI'
+    kl = body.get('klines')
+    if not isinstance(kl, list) or not (24 <= len(kl) <= LIQ_CLIENT_MAX_BARS):
+        return None, 'невірна кількість свічок'
+    bars = []
+    for x in kl:
+        if not isinstance(x, (list, tuple)) or len(x) < 4:
+            continue
+        try:
+            h, l, c, v = (float(x[0]), float(x[1]), float(x[2]), float(x[3]))
+        except (TypeError, ValueError):
+            continue
+        bars.append({'h': h, 'l': l, 'c': c, 'v': v})
+    if len(bars) < 24:
+        return None, 'замало свічок'
+    return {'ok': True, 'price': price, 'oi_usd': oi, 'klines': bars,
+            'took_sec': None, 'fetched_at': time.time()}, ''
+
+
+def liq_from_client(body, user=None, now=None):
+    """💧 Профіль із даних, завантажених БРАУЗЕРОМ (IP користувача)."""
+    body = body or {}
+    sym = norm_symbol(body.get('symbol') or '')
+    if not valid_symbol(sym):
+        return {'ok': False, 'reason': 'невірна назва монети'}
+    ex, b, r = liq_params(body.get('exchange'), body.get('bars'), body.get('res'))
+    now = time.time() if now is None else now
+    uk = str(user) if user is not None else None
+    if uk:
+        with _liq_lock:
+            if now - _liq_calc_at.get(uk, 0.0) < LIQ_CALC_COOLDOWN:
+                return {'ok': False, 'retry_in': int(LIQ_CALC_COOLDOWN) + 1,
+                        'reason': 'занадто часто — зачекайте секунду'}
+            _liq_calc_at[uk] = now
+            if len(_liq_calc_at) > 2000:
+                for k in sorted(_liq_calc_at, key=_liq_calc_at.get)[:500]:
+                    _liq_calc_at.pop(k, None)
+    raw, why = liq_client_raw(body)
+    if raw is None:
+        return {'ok': False, 'reason': why}
+    raw.update({'exchange': ex, 'symbol': sym, 'bars': len(raw['klines'])})
+    try:
+        return _liq_render(raw, None, sym, ex, b, r, liq_step(body.get('step')),
+                           now, 'browser')
+    except Exception as e:
+        return {'ok': False, 'reason': f'помилка: {str(e)[:100]}'}
 
 
 def register_info_portal(app):
@@ -1296,8 +1423,19 @@ def register_info_portal(app):
     def api_info_liq():
         """💧 Профіль ліквідності монети — ЛИШЕ за кнопкою (ходить на біржу)."""
         a = request.args
+        u = _me()
         return jsonify(liq_profile(a.get('symbol') or '', a.get('exchange'),
-                                   a.get('bars'), a.get('res'), step=a.get('step')))
+                                   a.get('bars'), a.get('res'), step=a.get('step'),
+                                   user=getattr(u, 'id', None) if u else
+                                   (request.remote_addr or None)))
+
+    @app.route('/api/me/liq-calc', methods=['POST'])
+    def api_info_liq_calc():
+        """💧 Розрахунок профілю з сирих даних, які браузер узяв у біржі сам."""
+        u = _me()
+        return jsonify(liq_from_client(request.get_json(silent=True) or {},
+                                       user=getattr(u, 'id', None) if u else
+                                       (request.remote_addr or None)))
 
     @app.route('/api/info/coin')
     def api_info_coin():

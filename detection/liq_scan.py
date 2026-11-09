@@ -297,6 +297,7 @@ def _klines_bybit(session, symbol, interval, limit):
                     params={'category': 'linear',
                             'symbol': _ex_symbol('bybit', symbol),
                             'interval': interval, 'limit': limit}, timeout=10)
+    _guard('bybit', r)
     lst = ((r.json().get('result') or {}).get('list') or [])
     # Bybit віддає найновіший першим — розвертаємо.
     return [{'h': x[2], 'l': x[3], 'c': x[4], 'v': x[6]} for x in reversed(lst)]
@@ -316,6 +317,7 @@ def _klines_binance(session, symbol, interval, limit):
     r = session.get('https://fapi.binance.com/fapi/v1/klines',
                     params={'symbol': _ex_symbol('binance', symbol),
                             'interval': '1h', 'limit': limit}, timeout=10)
+    _guard('binance', r)
     lst = r.json()
     if not isinstance(lst, list):
         raise RuntimeError(str(lst)[:80])
@@ -369,6 +371,7 @@ def _oi_one_bybit(session, symbol):
     r = session.get('https://api.bybit.com/v5/market/tickers',
                     params={'category': 'linear',
                             'symbol': _ex_symbol('bybit', symbol)}, timeout=10)
+    _guard('bybit', r)
     lst = ((r.json().get('result') or {}).get('list') or [])
     if not lst:
         return None, None
@@ -379,10 +382,10 @@ def _oi_one_bybit(session, symbol):
 
 def _oi_one_binance(session, symbol):
     sym = _ex_symbol('binance', symbol)
-    oi = session.get('https://fapi.binance.com/fapi/v1/openInterest',
-                     params={'symbol': sym}, timeout=10).json()
-    px_j = session.get('https://fapi.binance.com/fapi/v1/ticker/price',
-                       params={'symbol': sym}, timeout=10).json()
+    oi = _guard('binance', session.get('https://fapi.binance.com/fapi/v1/openInterest',
+                                       params={'symbol': sym}, timeout=10)).json()
+    px_j = _guard('binance', session.get('https://fapi.binance.com/fapi/v1/ticker/price',
+                                         params={'symbol': sym}, timeout=10)).json()
     px = _f((px_j or {}).get('price')) or 0.0
     # `openInterest` — у БАЗОВІЙ монеті, тож переводимо в долари ціною.
     return px, (_f((oi or {}).get('openInterest')) or 0.0) * px
@@ -479,19 +482,46 @@ def _resolve_symbol(session, exchange: str, symbol: str) -> Dict:
             'reason': 'немає даних — ' + ' · '.join(tried)}
 
 
-def scan_one(exchange: str = 'binance', symbol: str = 'BTCUSDT',
-             bars: int = DEFAULT_BARS, rows: int = 12,
-             step_pct=None, step_usd=None, min_row_pct=None) -> Dict:
-    """💧 Аналіз ЛІКВІДНОСТІ ОДНІЄЇ МОНЕТИ — повна драбина + вердикт.
+class ExchangeBlocked(RuntimeError):
+    """Біржа відмовила через ЛІМІТ / блок IP (418/429, Bybit 403/10006).
 
-    Тут питання bulk-OI не стоїть узагалі: на одну монету потрібні 2-3
-    запити (OI + ціна + свічки), тож режим працює на ВСІХ біржах, зокрема
-    на Binance і BingX.
+    Окремий тип, щоб споживачі (кабінет інфосайту) могли поставити ПАУЗУ всім
+    своїм запитам до цієї біржі й не з'їсти ліміт IP, яким живе сам бот."""
 
-    Розрахунок — ТІ САМІ `build_levels`/`build_ladder`/`make_verdict`, що й у
-    скані списку і в блоці 💧 на Smart Money: одна монета не має показувати
-    інші числа, ніж та сама монета в списку.
-    """
+    def __init__(self, exchange, status, text=''):
+        self.exchange, self.status = exchange, status
+        super().__init__(f'{exchange} відмовила ({status}): {str(text)[:60]}')
+
+
+BLOCK_STATUS = (418, 429)
+
+
+def _guard(exchange, r):
+    """Відповідь біржі → виняток `ExchangeBlocked`, якщо це ліміт / блок IP.
+
+    ⚠️ 451 (регіон) — НЕ ліміт: його не лікує пауза, тож не блокуємо ним."""
+    st = getattr(r, 'status_code', 200) or 200
+    if st in BLOCK_STATUS or (exchange == 'bybit' and st == 403):
+        raise ExchangeBlocked(exchange, st, getattr(r, 'text', ''))
+    if exchange == 'bybit':
+        try:
+            if (r.json() or {}).get('retCode') == 10006:
+                raise ExchangeBlocked(exchange, 10006, 'too many visits')
+        except ExchangeBlocked:
+            raise
+        except Exception:
+            pass
+    return r
+
+
+def fetch_one_raw(exchange: str = 'binance', symbol: str = 'BTCUSDT',
+                  bars: int = DEFAULT_BARS) -> Dict:
+    """ЄДИНЕ мережеве в `scan_one`: ціна + OI + свічки ОДНІЄЇ монети.
+
+    Крок сходинок тут НЕ бере участі — тому результат можна кешувати на
+    (монета, біржа, глибина) і будувати з нього драбину під БУДЬ-ЯКИЙ крок
+    без нового запиту (див. `info_portal.liq_profile`).
+    Ліміт / блок IP → `{'ok': False, 'blocked': статус, ...}`."""
     import requests
 
     exchange = (exchange or 'binance').lower()
@@ -504,6 +534,9 @@ def scan_one(exchange: str = 'binance', symbol: str = 'BTCUSDT',
     t0 = time.time()
     try:
         price, oi = _OI_ONE[exchange](session, sym)
+    except ExchangeBlocked as e:
+        return {'ok': False, 'exchange': exchange, 'symbol': sym,
+                'blocked': e.status, 'reason': str(e)}
     except Exception as e:
         return {'ok': False, 'exchange': exchange, 'symbol': sym,
                 'reason': f'не вдалось отримати відкритий інтерес: {str(e)[:80]}'}
@@ -518,11 +551,25 @@ def scan_one(exchange: str = 'binance', symbol: str = 'BTCUSDT',
     bars = max(24, min(int(bars or DEFAULT_BARS), 1000))
     try:
         kl = _KLINES[exchange](session, sym, DEFAULT_INTERVAL, bars)
+    except ExchangeBlocked as e:
+        return {'ok': False, 'exchange': exchange, 'symbol': sym,
+                'blocked': e.status, 'reason': str(e)}
     except Exception as e:
         return {'ok': False, 'exchange': exchange, 'symbol': sym,
                 'reason': f'свічки недоступні: {str(e)[:80]}'}
+    return {'ok': True, 'exchange': exchange, 'symbol': sym, 'price': price,
+            'oi_usd': oi, 'bars': bars, 'klines': kl,
+            'took_sec': round(time.time() - t0, 1), 'fetched_at': time.time()}
 
-    lv = build_levels(kl, oi, price, symbol=sym)
+
+def summarise_raw(raw: Dict, rows: int = 12, step_pct=None, step_usd=None,
+                  min_row_pct=None, levels=None) -> Dict:
+    """Драбина + вердикт із СИРИХ даних `fetch_one_raw` (без мережі).
+
+    `levels` — уже пораховані `build_levels` (кеш), інакше рахуємо тут."""
+    sym, price, oi = raw['symbol'], float(raw['price']), float(raw['oi_usd'])
+    lv = levels if levels is not None else build_levels(raw.get('klines') or [],
+                                                         oi, price, symbol=sym)
     # Явний крок (профіль кабінету рахує його з видимого діапазону графіка)
     # приймаємо лише в розумних межах від ціни, інакше — авто-крок.
     try:
@@ -534,11 +581,32 @@ def scan_one(exchange: str = 'binance', symbol: str = 'BTCUSDT',
     out = summarise(lv, price, sym, top_n=max(3, int(rows or 12)),
                     step_pct=step_pct, step_usd=step_usd,
                     min_row_pct=min_row_pct)
-    out.update({'exchange': exchange, 'oi_usd': round(oi, 0),
-                'bars': bars, 'levels': len(lv),
-                'took_sec': round(time.time() - t0, 1),
-                'fetched_at': time.time()})
+    out.update({'exchange': raw.get('exchange'), 'oi_usd': round(oi, 0),
+                'bars': raw.get('bars'), 'levels': len(lv),
+                'took_sec': raw.get('took_sec'),
+                'fetched_at': raw.get('fetched_at') or time.time()})
     return out
+
+
+def scan_one(exchange: str = 'binance', symbol: str = 'BTCUSDT',
+             bars: int = DEFAULT_BARS, rows: int = 12,
+             step_pct=None, step_usd=None, min_row_pct=None) -> Dict:
+    """💧 Аналіз ЛІКВІДНОСТІ ОДНІЄЇ МОНЕТИ — повна драбина + вердикт.
+
+    Тут питання bulk-OI не стоїть узагалі: на одну монету потрібні 2-3
+    запити (OI + ціна + свічки), тож режим працює на ВСІХ біржах, зокрема
+    на Binance і BingX.
+
+    Розрахунок — ТІ САМІ `build_levels`/`build_ladder`/`make_verdict`, що й у
+    скані списку і в блоці 💧 на Smart Money: одна монета не має показувати
+    інші числа, ніж та сама монета в списку.
+    = `fetch_one_raw` (мережа) + `summarise_raw` (арифметика).
+    """
+    raw = fetch_one_raw(exchange, symbol, bars)
+    if not raw.get('ok'):
+        return raw
+    return summarise_raw(raw, rows=rows, step_pct=step_pct, step_usd=step_usd,
+                         min_row_pct=min_row_pct)
 
 
 def scan_liquidity(exchange: str = 'binance', top_n: int = 40,
