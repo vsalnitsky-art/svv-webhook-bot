@@ -3156,6 +3156,18 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/spring-scan/remove', methods=['POST'])
+    def api_spring_scan_remove():
+        """✕ {symbol} — прибрати монету з таблиці; {all: true} — очистити таблицю."""
+        try:
+            data = request.get_json(silent=True) or {}
+            eng = _spring_scan_eng()
+            if data.get('all'):
+                return jsonify(eng.clear())
+            return jsonify(eng.remove(data.get('symbol')))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     # ── 🧾 Activity log (bot decisions on every signal) ──
     @app.route('/api/activity-log', methods=['GET'])
     def api_activity_log():

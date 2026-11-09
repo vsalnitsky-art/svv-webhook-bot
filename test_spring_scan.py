@@ -213,6 +213,8 @@ def test_routes_and_ui():
         assert f'id="{id_}"' in HTML, id_
     assert "'xspr'" in HTML.split('const _PANEL_IDS = ')[1].split('\n')[0]
     assert '<option value="50000000" selected>' in HTML
+    assert '<option value="5000000">$5M</option>' in HTML
+    assert ss.norm_min_vol(5e6) == 5e6
     assert 'value="bybit"' in HTML and 'value="binance"' in HTML
     # рядок — той самий спільний рендер «Пружини»
     j = HTML.index('function xsprRender(')
@@ -220,7 +222,7 @@ def test_routes_and_ui():
     # колонок у заголовку стільки ж, скільки colspan порожнього рядка
     t = HTML[HTML.index('id="xspr-table"'):]
     t = t[:t.index('</thead>')]
-    assert len(re.findall(r'<th[ >]', t)) == 14 and 'colspan="14"' in HTML
+    assert len(re.findall(r'<th[ >]', t)) == 15 and 'colspan="15"' in HTML and 'colspan="14"' not in HTML
     assert 'id="xspr-mincharge" value="80"' in HTML and 'id="xspr-auto-min" value="30"' in HTML
 
 
@@ -371,6 +373,43 @@ def test_table_and_tg_survive_restart():
     assert [r['symbol'] for r in eng2.rows()] == ['COILUSDT']
     assert eng2.rows()[0]['tg'] == ['1h', '4h']
     assert eng2.state()['recalc'].get('checked') == 1
+
+
+def test_manual_remove_and_clear():
+    eng, _ = _mk(db=_DB(), kinds={'COILUSDT': 'coil', 'COIL2USDT': 'coil'})
+    TICKERS['COIL2USDT'] = {'vol_usd': 70e6, 'last': 100}
+    try:
+        eng.scan('bybit', 50e6)
+    finally:
+        TICKERS.pop('COIL2USDT', None)
+    assert set(eng._table) == {'COILUSDT', 'COIL2USDT'}
+    eng.set_tg('COILUSDT', ['1h'])
+    r = eng.remove('coilusdt')
+    assert r['ok'] and 'COILUSDT' not in eng._table and 'COILUSDT' not in eng.settings()['tg']
+    assert eng.state()['removed'][-1]['why'].startswith('✕')
+    assert not eng.remove('NOPEUSDT')['ok']
+    eng.set_tg('COIL2USDT', ['4h'])
+    c = eng.clear()
+    assert c['ok'] and c['cleared'] == 1 and not eng._table and not eng.settings()['tg']
+    assert eng.rows() == []
+    fl = open(os.path.join(ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
+    assert '/api/spring-scan/remove' in fl
+    assert 'id="xspr-clear"' in HTML
+    assert 'function xsprRemove(' in HTML and 'function xsprClear(' in HTML and '_xsDelCell(x)' in HTML
+
+
+def test_recalc_does_not_resurrect_a_removed_coin():
+    eng, _ = _mk()
+    eng.scan('bybit', 50e6)
+    orig = eng._analyze_many
+
+    def am(syms, fetch, now):
+        out = orig(syms, fetch, now)
+        eng.remove('COILUSDT')          # прибрали вручну посеред перерахунку
+        return out
+    eng._analyze_many = am
+    eng.recalc()
+    assert 'COILUSDT' not in eng._table
 
 
 def test_sbr_engine_feeds_and_calls_spring_scan():

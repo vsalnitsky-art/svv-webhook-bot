@@ -359,6 +359,32 @@ class SpringScan:
         self._save_settings()
         return {'ok': True, 'symbol': S, 'tfs': t}
 
+    def remove(self, symbol: str, now: Optional[float] = None) -> Dict:
+        """✕ Прибрати монету з таблиці вручну (разом із кнопками 1H/4H).
+        Наступний повний скан знову додасть її, якщо вона ще заряджена ≥ фільтра."""
+        S = str(symbol or '').upper()
+        if S not in self._table:
+            return {'ok': False, 'reason': f'{S} немає в таблиці'}
+        now = now if now is not None else self._clock()
+        self._drop(S, self._table.get(S), '✕ прибрано вручну', now)
+        self._save_settings()
+        self._persist()
+        return {'ok': True, 'symbol': S, 'left': len(self._table)}
+
+    def clear(self, now: Optional[float] = None) -> Dict:
+        """🗑 Очистити всю таблицю (і кнопки 1H/4H усіх монет)."""
+        n = len(self._table)
+        now = now if now is not None else self._clock()
+        self._table = {}
+        self._settings['tg'] = {}
+        if n:
+            self._removed.append({'symbol': f'усі ({n})', 'at': now,
+                                  'why': '🗑 таблицю очищено вручну', 'state': None, 'charge': None})
+            self._removed = self._removed[-REMOVED_KEEP:]
+        self._save_settings()
+        self._persist()
+        return {'ok': True, 'cleared': n}
+
     def tg_symbols(self) -> List[str]:
         """Монети з увімкненими 1H/4H — рушій SBR рахує їх і поза WATCHLIST."""
         return [s for s in self._settings['tg'] if s in self._table]
@@ -573,6 +599,8 @@ class SpringScan:
         for S in syms:
             rec = recs.get(S)
             if rec is None:
+                continue
+            if S not in self._table:        # прибрали вручну під час перерахунку
                 continue
             if stays_in_table(rec):
                 self._table[S] = self._row(S, rec, now)
