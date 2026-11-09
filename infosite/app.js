@@ -663,7 +663,7 @@
     if (!LQ) return;   // renderTfBar може бути викликаний до ініціалізації блоку
     var b = $("#iw-liq-bars");
     if (b && !b.options.length) b.innerHTML = LIQ_BARS.map(function (n) {
-      return '<option value="' + n + '">' + (n >= 48 && n % 24 === 0 ? (n / 24) + " дн" : n + " год") + "</option>"; }).join("");
+      return '<option value="' + n + '">' + liqBarsLbl(n) + "</option>"; }).join("");
     if (b) b.value = String(LQ.bars);
     var ex = $("#iw-liq-ex"); if (ex) ex.value = LQ.ex;
     var rs = $("#iw-liq-res"); if (rs) rs.value = LQ.res;
@@ -690,17 +690,41 @@
     } catch (e) {}
   }
   function liqOff() {
+    var had = !!LQ.data;
     LQ.on = false; LQ.sym = ""; LQ.data = null; LQ.busy = 0;
     if (IW.prim) IW.prim.setLiq(null);
     liqOffset(false);
+    if (had) liqLevelTitles();
     liqStatus(""); liqUi();
+  }
+  // Крок сходинки — з ВИДИМОГО діапазону графіка: сходинка = LIQ_RES_PX пікселів
+  // по висоті, округлено до 1/2/2.5/5 × 10^k. Так профіль прив'язаний до шкали і
+  // читається на будь-якому масштабі.
+  var LIQ_RES_PX = { fine: 5, mid: 9, coarse: 14 };
+  function liqNiceStep(raw) {
+    if (!(raw > 0)) return null;
+    var mag = Math.pow(10, Math.floor(Math.log10(raw))), ms = [1, 2, 2.5, 5, 10];
+    for (var i = 0; i < ms.length; i++) if (raw <= mag * ms[i] * 1.0000001) return +(mag * ms[i]).toPrecision(6);
+    return +(mag * 10).toPrecision(6);
+  }
+  function liqStepFromChart() {
+    if (!IW.chart || !IW.series) return null;
+    var h = 0;
+    try { h = IW.chart.paneSize ? IW.chart.paneSize().height : 0; } catch (e) { h = 0; }
+    if (!(h > 50)) { var bx = $("#iw-box"); h = bx ? bx.clientHeight - 28 : 0; }
+    if (!(h > 50)) return null;
+    var p0 = IW.series.coordinateToPrice(0), p1 = IW.series.coordinateToPrice(h);
+    if (p0 == null || p1 == null) return null;
+    return liqNiceStep(Math.abs(p0 - p1) * (LIQ_RES_PX[LQ.res] || 9) / h);
   }
   function liqLoad() {
     var sym = IW.sel; if (!sym) return;
     var tok = ++LQ.seq;
     LQ.on = true; LQ.sym = sym; LQ.busy = tok; liqUi();
     liqStatus('<span class="wait">⏳ рахую ' + esc(sym) + " · " + LQ.ex.toUpperCase() + "…</span>");
-    api("/api/info/liq?symbol=" + encodeURIComponent(sym) + "&exchange=" + LQ.ex + "&bars=" + LQ.bars + "&res=" + LQ.res)
+    var st = liqStepFromChart();
+    api("/api/info/liq?symbol=" + encodeURIComponent(sym) + "&exchange=" + LQ.ex + "&bars=" + LQ.bars + "&res=" + LQ.res +
+        (st ? "&step=" + st : ""))
       .then(function (d) {
         if (LQ.busy !== tok || !LQ.on || LQ.sym !== IW.sel) return;   // встигли перемкнути
         LQ.busy = 0;
@@ -709,6 +733,7 @@
         LQ.data = d;
         if (IW.prim) IW.prim.setLiq(d);
         liqOffset(true);
+        liqLevelTitles();
         var up = Number(d.above_pct) || 0, dn = Number(d.below_pct) || 0;
         var pull = d.pull === "up" ? '<b class="up">⬆ вгору</b>' : d.pull === "down" ? '<b class="dn">⬇ вниз</b>' : "<b>⚖ рівновага</b>";
         liqStatus('<span class="up">▲' + up.toFixed(1) + '%</span> <span class="dn">▼' + dn.toFixed(1) + "%</span> · " + pull,
@@ -732,7 +757,9 @@
     if (id === "iw-liq-bars") LQ.bars = Number(e.target.value);
     if (id === "iw-liq-res") LQ.res = e.target.value;
     liqSaveUi();
-    if (LQ.on) liqLoad();
+    // Біржу питаємо ЛИШЕ кнопкою: зміна параметра гасить профіль (дані вже
+    // не відповідають вибору) і чекає натискання.
+    if (LQ.on || LQ.busy) { liqOff(); liqStatus('<span class="wait">параметри змінено — натисніть «Ліквідність»</span>'); }
   });
 
   // ═══ 📈 ГРАФІК: бари + структура + OB + VOB + IMB + POC + сигнали SBR ═════
@@ -748,50 +775,127 @@
     var css = W / hr;
     return Math.round(Math.max(70, Math.min(190, css * 0.2)) * hr);
   }
-  var LIQ_UP = "38,166,154", LIQ_DN = "239,83,80";
-  // Сходинка = смуга по ВИСОТІ (її діапазон цін), довжина ∝ частці від
-  // найбільшої сходинки; колір — куди тягне ціну (вище — зелений, нижче — червоний).
+  var LIQ_UP = "38,166,154", LIQ_DN = "239,83,80", LIQ_MAG = "245,158,11";
+  function _liqPx(v) { var d = IW.prec != null ? IW.prec : 4; return Number(v).toFixed(d); }
+  // Профіль = власна картка біля правого краю. Сходинка = свій діапазон цін,
+  // довжина ∝ частці від найбільшої, колір — куди тягне ціну (вище — зелений,
+  // нижче — червоний). 🧲 магніт підсвічено бурштином + пунктир через увесь
+  // графік і чип із ціною. Повертає прямокутники, які інші підписи обходять.
   function _liqDraw(ctx, liq, sr, XR, W, H, hr, vr, font, dark, levels) {
-    var rows = liq.rows, LW = W - XR;
+    var rows = liq.rows, taken = [];
+    var px0 = XR + 3 * hr, px1 = W - 3 * hr, PW = px1 - px0;
     var mx = 0;
     rows.forEach(function (r) { if (r.pct > mx) mx = r.pct; });
-    if (mx <= 0) return;
-    ctx.fillStyle = dark ? "rgba(13,17,26,.35)" : "rgba(255,255,255,.45)";
-    ctx.fillRect(XR, 0, LW, H);
-    ctx.strokeStyle = dark ? "rgba(148,163,184,.25)" : "rgba(91,100,117,.25)";
+    if (mx <= 0 || PW <= 10 * hr) return taken;
+    // картка-підкладка
+    ctx.fillStyle = dark ? "rgba(13,17,26,.72)" : "rgba(248,250,252,.82)";
+    _rrect(ctx, px0, 2 * vr, PW, H - 4 * vr, 6 * vr); ctx.fill();
+    ctx.strokeStyle = dark ? "rgba(56,189,248,.28)" : "rgba(14,116,144,.25)";
     ctx.lineWidth = Math.max(1, Math.round(hr));
-    ctx.beginPath(); ctx.moveTo(XR + 0.5, 0); ctx.lineTo(XR + 0.5, H); ctx.stroke();
-    var lbl = [];
+    _rrect(ctx, px0, 2 * vr, PW, H - 4 * vr, 6 * vr); ctx.stroke();
+    // заголовок
+    ctx.font = font(700, 10); ctx.textBaseline = "middle"; ctx.textAlign = "left";
+    ctx.fillStyle = dark ? "#7dd3fc" : "#0369a1";
+    ctx.fillText("💧 " + String(liq.exchange || "").toUpperCase() + " · " + liqBarsLbl(liq.bars), px0 + 7 * hr, 12 * vr);
+    var up = Number(liq.above_pct) || 0, dn = Number(liq.below_pct) || 0;
+    ctx.textAlign = "right";
+    var tDn = "▼" + dn.toFixed(0) + "%", wDn = ctx.measureText(tDn).width;
+    ctx.fillStyle = "rgb(" + LIQ_DN + ")"; ctx.fillText(tDn, px1 - 6 * hr, 12 * vr);
+    ctx.fillStyle = "rgb(" + LIQ_UP + ")"; ctx.fillText("▲" + up.toFixed(0) + "%", px1 - 6 * hr - wDn - 6 * hr, 12 * vr);
+    var top = 22 * vr, bx0 = px0 + 6 * hr, bx1 = px1 - 6 * hr, BW = bx1 - bx0;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(px0, top, PW, H - top - 4 * vr); ctx.clip();
+    var mag = liq.magnet, magY = null, lbl = [];
     rows.forEach(function (r) {
       var yA = sr.priceToCoordinate(r.hi), yB = sr.priceToCoordinate(r.lo);
       if (yA == null || yB == null) return;
       var y0 = Math.min(yA, yB) * vr, y1 = Math.max(yA, yB) * vr;
-      if (y1 < 0 || y0 > H) return;
-      var gap = Math.min(1 * vr, (y1 - y0) * 0.15);
-      var len = Math.max(2 * hr, (LW - 6 * hr) * r.pct / mx);
-      var rgb = r.dir === "up" ? LIQ_UP : LIQ_DN;
-      var top = r.pct >= mx * 0.999;
-      ctx.fillStyle = "rgba(" + rgb + "," + (top ? 0.62 : 0.38) + ")";
-      ctx.fillRect(W - len, y0 + gap, len, Math.max(1, y1 - y0 - gap * 2));
-      ctx.fillStyle = "rgba(" + rgb + ",.95)";
-      ctx.fillRect(W - len, y0 + gap, Math.max(1, Math.round(hr * 1.5)), Math.max(1, y1 - y0 - gap * 2));
-      if (y1 - y0 >= 10 * vr) lbl.push({ r: r, y: (y0 + y1) / 2, len: len, top: top });
+      if (y1 < top || y0 > H) return;
+      var mid = (y0 + y1) / 2, h = Math.max(3 * vr, (y1 - y0) - 2 * vr);
+      if (h > y1 - y0 && y1 - y0 > 0) h = Math.max(3 * vr, y1 - y0);
+      var len = Math.max(3 * hr, BW * r.pct / mx);
+      var isMag = mag && Math.abs(r.lo - mag.lo) < 1e-12 * Math.max(1, Math.abs(mag.lo)) + 1e-9;
+      var rgb = isMag ? LIQ_MAG : (r.dir === "up" ? LIQ_UP : LIQ_DN);
+      var x = bx1 - len, yy = mid - h / 2;
+      var g = ctx.createLinearGradient(bx1, 0, x, 0);
+      g.addColorStop(0, "rgba(" + rgb + ",.18)");
+      g.addColorStop(1, "rgba(" + rgb + "," + (isMag ? ".95" : ".72") + ")");
+      ctx.fillStyle = g;
+      _rrect(ctx, x, yy, len, h, Math.min(3 * vr, h / 2)); ctx.fill();
+      if (isMag) {
+        magY = mid;
+        ctx.strokeStyle = "rgba(" + LIQ_MAG + ",1)"; ctx.lineWidth = Math.max(1, Math.round(1.5 * hr));
+        _rrect(ctx, x, yy, len, h, Math.min(3 * vr, h / 2)); ctx.stroke();
+      }
+      lbl.push({ r: r, y: mid, x: x, isMag: isMag });
     });
-    // підписи сум — найбільші першими, без накладань по висоті
-    lbl.sort(function (a, b) { return b.r.pct - a.r.pct; });
-    // мітки POC / High / Low бібліотека малює біля правого краю — суми там не пишемо
+    // лінія поточної ціни всередині картки
+    var cp = liq.price != null ? sr.priceToCoordinate(Number(liq.price)) : null;
+    if (cp != null) {
+      var cy = cp * vr;
+      ctx.strokeStyle = dark ? "rgba(226,232,240,.75)" : "rgba(30,41,59,.65)";
+      ctx.lineWidth = Math.max(1, Math.round(hr));
+      if (ctx.setLineDash) ctx.setLineDash([3 * hr, 3 * hr]);
+      ctx.beginPath(); ctx.moveTo(bx0, Math.round(cy) + 0.5); ctx.lineTo(bx1, Math.round(cy) + 0.5); ctx.stroke();
+      if (ctx.setLineDash) ctx.setLineDash([]);
+    }
+    // підписи: найбільші 4 сходинки (магніт — завжди), без накладань і не на рівнях POC/High/Low
     var used = (levels || []).map(function (lv) { var y = sr.priceToCoordinate(lv.price); return y == null ? -1e9 : y * vr; });
-    var lh = 11 * vr;
-    ctx.font = font(600, 10); ctx.textBaseline = "middle"; ctx.textAlign = "right";
+    lbl.sort(function (a, b) { return (b.isMag - a.isMag) || (b.r.pct - a.r.pct); });
+    var lh = 12 * vr, shown = 0;
+    ctx.font = font(700, 10); ctx.textAlign = "right";
     lbl.forEach(function (q) {
+      if (shown >= 4 && !q.isMag) return;
       if (used.some(function (u) { return Math.abs(u - q.y) < lh; })) return;
-      used.push(q.y);
-      var t = liqUsd(q.r.usd) + " · " + Number(q.r.pct).toFixed(1) + "%";
-      ctx.fillStyle = q.top ? (dark ? "#fde68a" : "#92400e") : (dark ? "#cbd5e1" : "#334155");
-      ctx.fillText(t, W - 4 * hr, q.y);
+      used.push(q.y); shown++;
+      var t = (q.isMag ? "🧲 " : "") + liqUsd(q.r.usd) + " · " + Number(q.r.pct).toFixed(1) + "%";
+      ctx.lineWidth = 3 * hr; ctx.strokeStyle = dark ? "rgba(13,17,26,.9)" : "rgba(248,250,252,.9)";
+      ctx.strokeText(t, bx1 - 2 * hr, q.y);
+      ctx.fillStyle = q.isMag ? (dark ? "#fcd34d" : "#92400e") : (dark ? "#e2e8f0" : "#1e293b");
+      ctx.fillText(t, bx1 - 2 * hr, q.y);
     });
+    ctx.restore();
+    // 🧲 магніт: пунктир через увесь графік + стрілка від ціни + чип із ціною
+    if (mag && magY == null) {
+      var ya = sr.priceToCoordinate(mag.hi), yb = sr.priceToCoordinate(mag.lo);
+      if (ya != null && yb != null) magY = (ya + yb) / 2 * vr;
+    }
+    if (mag && magY != null && magY > top && magY < H) {
+      ctx.strokeStyle = "rgba(" + LIQ_MAG + ",.55)"; ctx.lineWidth = Math.max(1, Math.round(hr));
+      if (ctx.setLineDash) ctx.setLineDash([6 * hr, 5 * hr]);
+      ctx.beginPath(); ctx.moveTo(0, Math.round(magY) + 0.5); ctx.lineTo(XR - 10 * hr, Math.round(magY) + 0.5); ctx.stroke();
+      if (ctx.setLineDash) ctx.setLineDash([]);
+      if (cp != null) {
+        var ax = px0 + 3 * hr, y0a = cp * vr, y1a = magY, dirUp = y1a < y0a;
+        if (Math.abs(y1a - y0a) > 8 * vr) {
+          ctx.strokeStyle = "rgba(" + LIQ_MAG + ",.95)"; ctx.lineWidth = Math.max(1, Math.round(2 * hr));
+          ctx.beginPath(); ctx.moveTo(ax, y0a); ctx.lineTo(ax, y1a + (dirUp ? 5 : -5) * vr); ctx.stroke();
+          ctx.fillStyle = "rgba(" + LIQ_MAG + ",1)";
+          ctx.beginPath(); ctx.moveTo(ax - 4 * hr, y1a + (dirUp ? 6 : -6) * vr);
+          ctx.lineTo(ax + 4 * hr, y1a + (dirUp ? 6 : -6) * vr); ctx.lineTo(ax, y1a); ctx.closePath(); ctx.fill();
+        }
+      }
+      var dist = mag.dist != null ? (mag.dir === "up" ? "↑" : "↓") + Number(mag.dist).toFixed(2) + "%" : "";
+      var t1 = "🧲 магніт " + _liqPx(mag.lo) + (mag.hi > mag.lo ? "–" + _liqPx(mag.hi) : ""), t2 = dist;
+      ctx.font = font(700, 11); var w1 = ctx.measureText(t1).width;
+      ctx.font = font(600, 10.5); var w2 = t2 ? ctx.measureText(t2).width + 8 * hr : 0;
+      var cw = w1 + w2 + 16 * hr, ch = 18 * vr, cx = XR - cw - 10 * hr, cyy = magY - ch / 2;
+      if (cx < 2 * hr) cx = 2 * hr;
+      ctx.fillStyle = dark ? "rgba(28,20,4,.95)" : "rgba(255,251,235,.97)";
+      _rrect(ctx, cx, cyy, cw, ch, 4 * vr); ctx.fill();
+      ctx.strokeStyle = "rgba(" + LIQ_MAG + ",.95)"; ctx.lineWidth = Math.max(1, Math.round(hr));
+      _rrect(ctx, cx, cyy, cw, ch, 4 * vr); ctx.stroke();
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.font = font(700, 11); ctx.fillStyle = dark ? "#fcd34d" : "#92400e";
+      ctx.fillText(t1, cx + 8 * hr, cyy + ch / 2 + 0.5 * vr);
+      if (t2) { ctx.font = font(600, 10.5); ctx.fillStyle = dark ? "#fde68a" : "#b45309";
+        ctx.fillText(t2, cx + 8 * hr + w1 + 8 * hr, cyy + ch / 2 + 0.5 * vr); }
+      taken.push({ x0: cx - 2 * hr, x1: cx + cw + 2 * hr, y0: cyy - 2 * vr, y1: cyy + ch + 2 * vr });
+    }
     ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    return taken;
   }
+  function liqBarsLbl(n) { n = Number(n) || 0; return n >= 48 && n % 24 === 0 ? (n / 24) + " дн" : n + " год"; }
   function liqUsd(v) {
     v = Number(v) || 0;
     if (v >= 1e9) return "$" + (v / 1e9).toFixed(2) + "B";
@@ -894,7 +998,7 @@
         // ── 💧 профіль ліквідності: ВЛАСНА смуга біля правого краю. Зони, чипи й
         // підписи відсуваються лівіше неї — нічого не малюється одне поверх одного.
         var LW = self._liq ? liqWidth(W, hr) : 0, XR = W - LW;
-        if (LW) _liqDraw(ctx, self._liq, sr, XR, W, H, hr, vr, font, dark, self._lv);
+        var liqTaken = LW ? _liqDraw(ctx, self._liq, sr, XR, W, H, hr, vr, font, dark, self._lv) : [];
         // ── лінії структури (підписи CHoCH/BOS — пізніше, без накладань) ──
         var sLbl = [];
         self._l.forEach(function (l) {
@@ -950,6 +1054,7 @@
           return { x0: (m.x0 - 2) * hr, x1: (m.x0 + bs + 2) * hr, y0: (m.y0 - 2) * vr, y1: (m.y0 + bs + 7) * vr };
         });
         if (LW) taken.push({ x0: XR - 2 * hr, x1: W, y0: 0, y1: H });
+        liqTaken.forEach(function (r) { taken.push(r); });
         // підписи ліній POC / High / Low (правий край)
         self._lv.forEach(function (lv) {
           var y = sr.priceToCoordinate(lv.price);
@@ -965,6 +1070,36 @@
           }
           return false;
         };
+        // підписи POC / High / Low ліворуч від профілю (на краю їх ховав би профіль)
+        // Поки профіль увімкнений, лінії POC / High / Low малює примітив і
+        // обриває їх за LIQ_GAP до профілю — у смугу профілю вони не заходять.
+        var LIQ_GAP = 10 * hr;
+        if (LW) self._lv.forEach(function (lv) {
+          var y = sr.priceToCoordinate(lv.price);
+          if (y == null) return;
+          ctx.strokeStyle = lv.color || "#f5f5f5"; ctx.lineWidth = Math.max(1, Math.round(hr));
+          ctx.beginPath(); ctx.moveTo(0, Math.round(y * vr) + 0.5); ctx.lineTo(XR - LIQ_GAP, Math.round(y * vr) + 0.5); ctx.stroke();
+        });
+        if (LW) self._lv.forEach(function (lv) {
+          if (!lv.title) return;
+          var y = sr.priceToCoordinate(lv.price);
+          if (y == null) return;
+          ctx.font = font(700, 11);
+          var tw = ctx.measureText(lv.title).width + 14 * hr, chh = 17 * vr;
+          var r = { x0: XR - LIQ_GAP - tw, x1: XR - LIQ_GAP, y0: y * vr - chh / 2, y1: y * vr + chh / 2 };
+          for (var g = 0; g < 6 && overlaps(r); g++) {
+            var mv = 0;
+            taken.forEach(function (q) { if (r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0) mv = Math.max(mv, r.x1 - q.x0 + 4 * hr); });
+            r.x0 -= mv; r.x1 -= mv;
+          }
+          if (r.x0 < 0) return;
+          taken.push(r);
+          ctx.fillStyle = lv.color || "#f5f5f5";
+          _rrect(ctx, r.x0, r.y0, tw, chh, 3 * vr); ctx.fill();
+          ctx.fillStyle = "#0b0f17"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+          ctx.fillText(lv.title, r.x0 + 7 * hr, y * vr + 0.5 * vr);
+          ctx.textBaseline = "alphabetic";
+        });
         var prio = { vob: 0, ob: 1, imb: 2 };
         var pr = function (k) { return Object.prototype.hasOwnProperty.call(prio, k) ? prio[k] : 9; };
         placed.sort(function (a, c) { return pr(a.b.kind) - pr(c.b.kind); });
@@ -979,7 +1114,7 @@
           var w2 = b.sub ? ctx.measureText(b.sub).width + 6 * hr : 0;
           var w = w1 + w2 + padX * 2 + 4 * hr;
           var right = b.kind === "vob";
-          var x0 = right ? (XR - w - 8 * hr) : Math.min(p.X1 + 4 * hr, XR - w - 8 * hr);
+          var x0 = right ? (XR - w - (LW ? 10 : 8) * hr) : Math.min(p.X1 + 4 * hr, XR - w - (LW ? 10 : 8) * hr);
           if (x0 < 2 * hr) x0 = 2 * hr;
           var mid = (p.yT + p.yB) / 2;
           var tries = [0, -1, 1, -2, 2, -3, 3], ok = null;
@@ -1311,6 +1446,7 @@
         (sc != null ? sc.toFixed(2) + "%" : "—") + "</b></div>" +
       row("Ризик", esc(s.risk || "—"), "v-risk") +
       row("SL", fmtPrice(s.sl) + (slPct != null ? ' <i>' + slPct.toFixed(2) + "%</i>" : ""), "v-sl");
+    el.classList.toggle("is-short", S); el.classList.toggle("is-long", !S);
     el.style.display = "block";
     var bw = box.clientWidth, bh = box.clientHeight, ew = el.offsetWidth, eh = el.offsetHeight;
     var left = Math.min(Math.max(8, x + 14), bw - ew - 8), top = Math.min(Math.max(8, y - eh / 2), bh - eh - 8);
@@ -1349,7 +1485,7 @@
     if (!svg) {
       svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.id = "iw-sig-arrow"; svg.setAttribute("class", "iw-sig-arrow");
-      svg.innerHTML = '<path class="tail"/><circle class="ring" r="0"/>';
+      svg.innerHTML = '<path class="tail"/><path class="edge"/><circle class="ring" r="0"/>';
       box.appendChild(svg);
     }
     var a = el && el.style.display !== "none" ? sigAnchor() : null;
@@ -1360,13 +1496,19 @@
     // кінчик — на краю позначки, а не в її центрі (щоб не закривати «S»/«B»)
     var len = Math.hypot(a.x - e.x, a.y - e.y) || 1, ux = (a.x - e.x) / len, uy = (a.y - e.y) / len;
     var tx = a.x - ux * (a.r + 3), ty = a.y - uy * (a.r + 3);
-    // основа хвостика на краю картки: ширина — до 22px, але не більше відстані
-    var half = Math.min(14, Math.max(5, len / 5)), px = -uy * half, py = ux * half;
-    var bx = e.x - ux * 2, by = e.y - uy * 2;   // трохи заходимо під картку, без щілини
+    // Виноска як у мовної бульбашки: широка основа на краю картки, боки злегка
+    // ввігнуті до вістря. Заливка — та сама, що в картки, і перекриває її рамку
+    // в місці стику (svg над карткою), обводка — лише по двох боках.
+    var half = Math.min(13, Math.max(6, len / 4)), px = -uy * half, py = ux * half;
+    var bx = e.x - ux * 1.5, by = e.y - uy * 1.5;
+    var mx = (bx + tx) / 2, my = (by + ty) / 2;
+    var c1x = mx + px * 0.35, c1y = my + py * 0.35, c2x = mx - px * 0.35, c2y = my - py * 0.35;
+    var A = (bx + px) + "," + (by + py), B = (bx - px) + "," + (by - py), P = tx + "," + ty;
     svg.style.display = "block";
     svg.setAttribute("width", box.clientWidth); svg.setAttribute("height", box.clientHeight);
-    var path = svg.querySelector(".tail"), ring = svg.querySelector(".ring");
-    path.setAttribute("d", "M" + (bx + px) + "," + (by + py) + " L" + tx + "," + ty + " L" + (bx - px) + "," + (by - py) + " Z");
+    var path = svg.querySelector(".tail"), edge = svg.querySelector(".edge"), ring = svg.querySelector(".ring");
+    path.setAttribute("d", "M" + A + " Q" + c1x + "," + c1y + " " + P + " Q" + c2x + "," + c2y + " " + B + " Z");
+    edge.setAttribute("d", "M" + A + " Q" + c1x + "," + c1y + " " + P + " Q" + c2x + "," + c2y + " " + B);
     ring.setAttribute("cx", a.x); ring.setAttribute("cy", a.y); ring.setAttribute("r", a.r + 3);
     var S = IW.sigSel && IW.sigSel.side === "SHORT";
     svg.classList.toggle("short", S); svg.classList.toggle("long", !S);
@@ -1440,7 +1582,7 @@
   function setShl(shl) {
     if (!IW.series) return;
     var key = shl && IW.show_shl ? [shl.tf, (shl.high || {}).price, (shl.low || {}).price,
-                     (shl.high || {}).label, (shl.low || {}).label].join("|") : "";
+                     (shl.high || {}).label, (shl.low || {}).label, _lvTitleOff()].join("|") : "";
     if (key === IW.shlKey) return;
     (IW.shlLines || []).forEach(function (l) { try { IW.series.removePriceLine(l); } catch (x) {} });
     IW.shlLines = []; IW.shlKey = key;
@@ -1449,7 +1591,8 @@
       var v = shl[p[0]];
       if (!v || !(v.price > 0)) return;
       IW.shlLines.push(IW.series.createPriceLine({ price: Number(v.price), color: p[1], lineWidth: 1,
-        lineStyle: 0, axisLabelVisible: true, title: (v.label || "") + " " + (shl.tf || "") }));
+        lineStyle: 0, axisLabelVisible: true, lineVisible: !_lvTitleOff(),
+        title: _lvTitleOff() ? "" : (v.label || "") + " " + (shl.tf || "") }));
     });
   }
 
@@ -1458,7 +1601,16 @@
     if (IW.pocLine) { try { IW.series.removePriceLine(IW.pocLine); } catch (x) {} IW.pocLine = null; }
     if (!poc || !poc.poc) return;
     IW.pocLine = IW.series.createPriceLine({ price: Number(poc.poc), color: "#f5f5f5", lineWidth: 1,
-      lineStyle: 0, axisLabelVisible: true, title: "POC" });
+      lineStyle: 0, axisLabelVisible: true, lineVisible: !_lvTitleOff(), title: _lvTitleOff() ? "" : "POC" });
+  }
+  // 💧 Профіль займає правий край, де бібліотека малює підписи ліній POC /
+  // High / Low. Поки він увімкнений, підписи малює примітив ЛІВІШЕ профілю.
+  function _lvTitleOff() { return !!(LQ && LQ.on && LQ.data); }
+  function liqLevelTitles() {
+    if (!IW.series) return;
+    var c = IW.coin || {};
+    setShl(c.shl); setPoc(c.poc);
+    if (IW.prim && IW.prim._req) IW.prim._req();
   }
 
   function renderHead() {
@@ -1526,9 +1678,10 @@
     var st = structOf(c);
     IW.series.setMarkers(st.marks);
     var lv = [];
-    if (c.poc && c.poc.poc) lv.push({ price: Number(c.poc.poc), title: "POC" });
+    if (c.poc && c.poc.poc) lv.push({ price: Number(c.poc.poc), title: "POC", color: "#f5f5f5" });
     if (c.shl && IW.show_shl) ["high", "low"].forEach(function (k) {
-      var v = c.shl[k]; if (v && v.price > 0) lv.push({ price: Number(v.price), title: (v.label || "") + " " + (c.shl.tf || "") });
+      var v = c.shl[k]; if (v && v.price > 0) lv.push({ price: Number(v.price), title: (v.label || "") + " " + (c.shl.tf || ""),
+        color: k === "high" ? "#f87171" : "#4ade80" });
     });
     IW.prim.set(boxesOf(c), st.lines, sbrOf(c), lv);
     setPoc(c.poc);

@@ -1126,7 +1126,8 @@ LIQ_BARS = (24, 48, 72, 120, 168, 240, 336, 504, 720, 1000)
 LIQ_BARS_DEFAULT = 168
 LIQ_RES = {'fine': 0.0025, 'mid': 0.005, 'coarse': 0.0125}
 LIQ_RES_DEFAULT = 'mid'
-LIQ_ROWS = 60
+LIQ_ROWS = 120
+LIQ_MIN_ROW_PCT = 0.3        # профілю потрібні й дрібні сходинки (драбина Tickr — 1%)
 LIQ_TTL = 120.0
 _liq_cache = {}
 
@@ -1159,7 +1160,20 @@ def liq_view(out, sym, ex, bars, res):
         rows.append({'lo': lo, 'hi': hi, 'usd': float(r.get('usd') or 0),
                      'pct': float(r.get('pct') or 0), 'dir': r.get('dir'),
                      'dist': r.get('dist_pct')})
+    # 🧲 магніт — найбільша сходинка (та сама, що «найбільший магніт» у
+    # вердикті Tickr); сирі числа з `magnet_row`, а не форматований підпис.
+    mag = None
+    m = out.get('magnet_row') or {}
+    try:
+        if m.get('price') is not None:
+            lo = float(m['price'])
+            mag = {'lo': lo, 'hi': float(m.get('price_hi') or lo),
+                   'pct': float(m.get('pct') or 0), 'usd': float(m.get('usd') or 0),
+                   'dist': m.get('dist_pct'), 'dir': m.get('dir')}
+    except (TypeError, ValueError):
+        mag = None
     return {'ok': True, 'symbol': sym, 'exchange': out.get('exchange') or ex,
+            'magnet': mag,
             'bars': bars, 'res': res, 'price': out.get('price'),
             'step': out.get('step'), 'total_usd': out.get('total_usd'),
             'above_pct': out.get('above_pct'), 'below_pct': out.get('below_pct'),
@@ -1169,28 +1183,45 @@ def liq_view(out, sym, ex, bars, res):
             'at': out.get('fetched_at') or time.time(), 'rows': rows}
 
 
-def liq_profile(symbol, exchange=None, bars=None, res=None, now=None, runner=None):
-    """Профіль ліквідності монети (кеш `LIQ_TTL` на (монета, біржа, глибина, крок))."""
+def liq_step(v):
+    """Явний крок сходинки (у ціні) від сторінки: число > 0, інакше None."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return float('%.6g' % f) if f > 0 and f == f and f != float('inf') else None
+
+
+def liq_profile(symbol, exchange=None, bars=None, res=None, now=None, runner=None,
+                step=None):
+    """Профіль ліквідності монети (кеш `LIQ_TTL` на (монета, біржа, глибина, крок)).
+
+    `step` — крок сходинки, який сторінка рахує з ВИДИМОГО діапазону графіка
+    (сходинка = кілька пікселів екрана), тож профіль прив'язаний до шкали.
+    Без нього — авто-крок за `res` (% ціни)."""
     sym = norm_symbol(symbol)
     if not valid_symbol(sym):
         return {'ok': False, 'reason': 'невірна назва монети'}
     ex, b, r = liq_params(exchange, bars, res)
+    st = liq_step(step)
     now = time.time() if now is None else now
-    key = (sym, ex, b, r)
+    key = (sym, ex, b, r, st)
     hit = _liq_cache.get(key)
     if hit and now - hit[0] < LIQ_TTL:
         return hit[1]
     if runner is None:
         from detection import liq_scan, scan_queue
 
-        def runner(sym, ex, b, step_pct):
+        def runner(sym, ex, b, step_pct, step_usd=None):
             return scan_queue.run(
-                f'info:liq:{sym}:{ex}:{b}:{step_pct}',
+                f'info:liq:{sym}:{ex}:{b}:{step_pct}:{step_usd}',
                 lambda: liq_scan.scan_one(exchange=ex, symbol=sym, bars=b,
-                                          rows=LIQ_ROWS, step_pct=step_pct),
+                                          rows=LIQ_ROWS, step_pct=step_pct,
+                                          step_usd=step_usd,
+                                          min_row_pct=LIQ_MIN_ROW_PCT),
                 source='info', timeout=180.0)
     try:
-        out = runner(sym, ex, b, LIQ_RES[r])
+        out = runner(sym, ex, b, LIQ_RES[r], st)
     except Exception as e:
         out = {'ok': False, 'reason': f'помилка: {str(e)[:100]}'}
     v = liq_view(out, sym, ex, b, r)
@@ -1228,7 +1259,7 @@ def register_info_portal(app):
         """💧 Профіль ліквідності монети — ЛИШЕ за кнопкою (ходить на біржу)."""
         a = request.args
         return jsonify(liq_profile(a.get('symbol') or '', a.get('exchange'),
-                                   a.get('bars'), a.get('res')))
+                                   a.get('bars'), a.get('res'), step=a.get('step')))
 
     @app.route('/api/info/coin')
     def api_info_coin():

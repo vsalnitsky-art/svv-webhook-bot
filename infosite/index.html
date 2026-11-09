@@ -6,7 +6,7 @@
   <title>VSV — Мій кабінет</title>
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=86">
+  <link rel="stylesheet" href="style.css?v=88">
   <!-- ⏳ Анти-блимання: доки JS не перевірив авторизацію (клас app-ready ще не
        додано на <body>), не показуємо ні дашборд, ні hero — інакше на секунду
        спалахує «бот-панель» перед екраном входу. Після перевірки showData()
@@ -88,7 +88,7 @@
               <span>Ліквідність</span></button>
             <select id="iw-liq-ex" title="Біржа"><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
             <select id="iw-liq-bars" title="Глибина історії, годин"></select>
-            <select id="iw-liq-res" title="Крок сходинок профілю"><option value="fine">дрібно</option><option value="mid">середньо</option><option value="coarse">крупно</option></select>
+            <select id="iw-liq-res" title="Висота сходинки на екрані: дрібно ≈5px · середньо ≈9px · крупно ≈14px (крок рахується з видимого діапазону графіка в момент натискання)"><option value="fine">дрібно</option><option value="mid" selected>середньо</option><option value="coarse">крупно</option></select>
             <span class="iw-liq-st" id="iw-liq-st"></span>
           </span>
           <span class="iw-sel" id="iw-tf-wait"></span>
@@ -173,6 +173,6 @@
   </script>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="config.js?v=75"></script>
-  <script src="app.js?v=86"></script>
+  <script src="app.js?v=88"></script>
 </body>
 </html>

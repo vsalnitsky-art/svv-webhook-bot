@@ -571,8 +571,8 @@ def test_liq_profile_button_only_and_cached():
            'невідоме → дефолт')
     calls = []
 
-    def runner(sym, ex, b, sp):
-        calls.append((sym, ex, b, sp))
+    def runner(sym, ex, b, sp, st=None):
+        calls.append((sym, ex, b, sp, st))
         return {'ok': True, 'price': 100.0, 'step': 0.5, 'total_usd': 1e6, 'above_pct': 60,
                 'below_pct': 40, 'pull': 'up', 'verdict': 'v', 'exchange': ex,
                 'rows': [{'price': 101, 'price_hi': 101.5, 'usd': 5e5, 'pct': 50, 'dir': 'up', 'dist_pct': 1.2},
@@ -581,11 +581,14 @@ def test_liq_profile_button_only_and_cached():
     v = ip.liq_profile('eth', 'bybit', 168, 'mid', now=1000, runner=runner)
     _check(v['ok'] and v['symbol'] == 'ETHUSDT' and len(v['rows']) == 1, 'рядки (сміття відкинуто)')
     _check(v['rows'][0] == {'lo': 101.0, 'hi': 101.5, 'usd': 5e5, 'pct': 50.0, 'dir': 'up', 'dist': 1.2}, 'форма рядка')
-    _check(calls == [('ETHUSDT', 'bybit', 168, ip.LIQ_RES['mid'])], 'дрібніший крок передано')
+    _check(calls == [('ETHUSDT', 'bybit', 168, ip.LIQ_RES['mid'], None)], 'дрібніший крок передано')
+    ip.liq_profile('ETHUSDT', 'bybit', 168, 'mid', now=1001, runner=runner, step='0.0025')
+    _check(calls[-1][4] == 0.0025, 'крок від графіка передано і він у ключі кешу')
+    _check(ip.liq_step('-1') is None and ip.liq_step('abc') is None, 'сміттєвий крок відкинуто')
     ip.liq_profile('ETHUSDT', 'bybit', 168, 'mid', now=1000 + ip.LIQ_TTL - 1, runner=runner)
-    _check(len(calls) == 1, 'кеш')
+    _check(len(calls) == 2, 'кеш')
     ip.liq_profile('ETHUSDT', 'binance', 168, 'mid', now=1001, runner=runner)
-    _check(len(calls) == 2, 'інша біржа — свій ключ')
+    _check(len(calls) == 3, 'інша біржа — свій ключ')
     bad = ip.liq_profile('SOLUSDT', now=1, runner=lambda *a: {'ok': False, 'reason': 'немає OI'})
     _check(not bad['ok'] and bad['reason'] == 'немає OI', 'причина відмови')
     _check(not any(k[0] == 'SOLUSDT' for k in ip._liq_cache), 'відмова не кешується')
@@ -614,8 +617,14 @@ def test_liq_frontend_contract():
     lc = js.split('function loadCoin')[1][:1500]
     _check('LQ.sym !== sym) liqOff()' in lc, 'інша монета → профіль прибрано')
     _check('LQ.sym !== IW.sel) return' in js, 'запізніла відповідь для іншої монети ігнорується')
-    _check('X2 = XR -' in js and '(XR - w - 8 * hr)' in js, 'зони й VOB-чипи лівіше профілю')
+    _check('X2 = XR -' in js and '(XR - w - (LW ? 10 : 8) * hr)' in js, 'зони й VOB-чипи лівіше профілю')
     _check('rightOffset' in js.split('function liqOffset')[1][:600], 'свічки не під профілем')
+    _check('"&step=" + st' in js and 'function liqStepFromChart' in js, 'крок — з видимого діапазону графіка')
+    ch = js.split('if (id !== "iw-liq-ex"')[1][:700]
+    _check('liqLoad' not in ch, 'зміна параметра біржу НЕ питає — лише кнопка')
+    _check(js.count('lineVisible: !_lvTitleOff()') == 2, 'лінії High/Low/POC не заходять у профіль')
+    _check("'magnet': mag" in open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read(),
+           'магніт віддається сирими числами')
     print('✓ 💧 фронт: кнопка, зміна монети, без накладань')
 
 
