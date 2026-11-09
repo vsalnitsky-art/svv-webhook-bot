@@ -308,6 +308,7 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
     # реальний стан береться одразу, без вікна підтвердження.
     _fresh = not ((prev_bias and prev_bias.get('coins', 1)) or prev_since)
     side, cand_dir, cand_since, cand = prev, None, 0.0, {}
+    _start = 0.0     # коли новий стан РЕАЛЬНО почався (початок кандидата)
     if raw == prev or _fresh or need <= 0:
         side = raw
     else:
@@ -317,12 +318,16 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
         held = max(0.0, now - float(c.get('since') or now))
         if held >= need:
             side = raw
+            _start = float(c.get('since') or 0.0)
         else:
             cand = c
             cand_dir, cand_since = raw, float(c['since'])
     since = float(prev_since or 0.0)
     if side != prev or not since:
-        since = now
+        # ⏱ Підтверджений через вікно стан ПОЧАВСЯ, коли зʼявився кандидат, а
+        # не в момент підтвердження (вимога 09.11: таймери «не відповідали
+        # дійсності» — новий статус губив вікно, а старий отримував його собі).
+        since = _start if (side != prev and 0 < _start <= now) else now
     if _empty:
         since = 0.0          # даних ще не було — таймера немає взагалі
     bias = {
@@ -4522,41 +4527,38 @@ class FuelFilterDaemon:
         _p = _B['pref']
         try:
             _prev_seen = getattr(self, _p + '_last', '__none__')
-            _seen_at = float(getattr(self, _p + '_at', 0) or 0)
+            # ⏱ ТРИВАЛІСТЬ — З ТАЙМЕРА САМОГО БАНЕРА (вимога 09.11: «таймер у
+            # повідомленнях не відповідає дійсності»). Раніше рахувалось від
+            # моменту, коли СПОВІЩУВАЧ побачив статус: після кожного рестарту це
+            # був час старту бота («↻ 5хв» замість реальних годин), а вікно
+            # підтвердження (120с) зараховувалось старому статусу. Тепер:
+            #   тримався = початок НОВОГО статусу − початок СТАРОГО,
+            # обидва — `since` банера (персиститься → рестарт не обнуляє).
+            _cur_since = float(getattr(self, _B['bias'] + '_since', 0) or 0)
+            _old_since = float(getattr(self, _p + '_since', 0) or 0)
             if _prev_seen == side:
+                if _cur_since:
+                    setattr(self, _p + '_since', _cur_since)
                 return                      # статус не змінився — не подія
             setattr(self, _p + '_last', side)
             setattr(self, _p + '_at', now)
+            setattr(self, _p + '_since', _cur_since)
             # ⚠️ Позначку ведемо й при ВИМКНЕНОМУ тумблері (аудит 24.10): інакше
             # після вмикання перша ж «зміна» порівнювалась би зі статусом
-            # годинної давності — і в групу йшло б «було: … · тримався 5г»
-            # про подію, якої за ці години могло бути кілька.
+            # годинної давності.
             if not bool(settings.get(_B['key'], True)):
-                if _prev_seen == '__none__':
-                    setattr(self, _p + '_restored', bool(
-                        getattr(self, _B['bias'] + '_since', 0)))
-                else:
-                    setattr(self, _p + '_restored', False)
                 return
             if _prev_seen == '__none__':
-                # Перший такт після старту: лише запамʼятали, що бачимо.
-                setattr(self, _p + '_restored', bool(
-                    getattr(self, _B['bias'] + '_since', 0)))
-                return
+                return              # перший такт після старту: лише запамʼятали
             b = dict(getattr(self, _B['bias'], {}) or {})
             _ico = {'LONG': '🟢', 'SHORT': '🔴'}.get(side, '⏸')
             _now_txt = f"{_ico} <b>{side}</b>" if side else "⏸ <b>РІВНОВАГА</b>"
             _pico = {'LONG': '🟢', 'SHORT': '🔴'}.get(_prev_seen, '⏸')
             _was = (f"{_pico} {_prev_seen}" if _prev_seen else "⏸ рівновага")
-            # ⚠️ Тривалість — від моменту, ВІДКОЛИ МИ БАЧИЛИ той статус, а не
-            # `_mm_bias['since']`: його вже перезаписано на поточний статус,
-            # тож там завжди був би нуль. Якщо відлік почався з нашого першого
-            # такту після рестарту, ставимо ↻ — та сама конвенція, що в банері.
             _held = ''
-            if _seen_at and now > _seen_at:
-                _mark = '↻' if getattr(self, _p + '_restored', False) else ''
-                _held = f" · тримався {_mark}<b>{self._fmt_dur(now - _seen_at)}</b>"
-            setattr(self, _p + '_restored', False)
+            _end = _cur_since if 0 < _cur_since <= now else now
+            if _old_since and _end > _old_since:
+                _held = f" · тримався <b>{self._fmt_dur(_end - _old_since)}</b>"
             _title = _B['title']
             msg = (f"{_title} → {_now_txt} · "
                    f"важіль <b>{b.get('pct', 0)}%</b>\n"
@@ -8282,6 +8284,9 @@ class FuelFilterDaemon:
         """Compact duration: 'Hг MMхв' / 'Mхв SSс' / 'Sс'."""
         sec = max(0, int(sec))
         h, m, s = sec // 3600, (sec % 3600) // 60, sec % 60
+        if h >= 24:
+            # Доба — як у таймері банера («2д 09:57:19»), а не «57г 57хв».
+            return f"{h // 24}д {h % 24:02d}г {m:02d}хв"
         if h:
             return f"{h}г {m:02d}хв"
         if m:

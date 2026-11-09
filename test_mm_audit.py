@@ -58,17 +58,56 @@ def test_tg_mark_is_tracked_while_toggle_is_off():
     sent = []
     ff._broadcast_users = lambda *a, **k: (sent.append(a) or (True, ''))
     on, off = {'mm_bias_tg': True}, {'mm_bias_tg': False}
-    ff._mm_bias_alert('LONG', 0.0, on)          # перший такт — мовчки
-    ff._mm_bias_alert('SHORT', 10.0, off)
-    ff._mm_bias_alert('LONG', 20.0, off)
+
+    def _tick(side, t, s):
+        ff._mm_bias_since = t            # банер щойно перейшов у `side`
+        ff._mm_bias_alert(side, t, s)
+    _tick('LONG', 0.0, on)               # перший такт — мовчки
+    _tick('SHORT', 10.0, off)
+    _tick('LONG', 20.0, off)
     _check(not sent, 'вимкнений тумблер не шле')
     _check(ff._mm_bias_tg_last == 'LONG' and ff._mm_bias_tg_at == 20.0,
            'позначка ведеться і при вимкненому тумблері')
-    ff._mm_bias_alert('SHORT', 50.0, on)
+    _tick('SHORT', 50.0, on)
     _check(len(sent) == 1, sent)
     _check('30с' in sent[0][2] or '30 с' in sent[0][2],
            f'«тримався» — від реальної зміни (20с), а не від старої позначки: {sent[0][2]}')
     print('✓ Telegram банера: позначка ведеться при вимкненому тумблері')
+
+
+def test_tg_held_comes_from_the_banner_timer_0911():
+    """09.11: «тримався» = початок нового статусу банера − початок старого.
+    Рестарт (сповіщувач бачить статус уперше) і вікно підтвердження не
+    псують тривалість."""
+    ff = _mon._mk()
+    sent = []
+    ff._broadcast_users = lambda *a, **k: (sent.append(a) or (True, ''))
+    on = {'mm_bias_tg': True}
+    # Після рестарту: банер відновив LONG, що триває з t=1000 (5 год тому).
+    ff._mm_bias_since = 1000.0
+    ff._mm_bias_alert('LONG', 19000.0, on)          # перший такт — мовчки
+    # Кандидат SHORT зʼявився на 19500, підтвердився на 19620 → since=19500.
+    ff._mm_bias_since = 19500.0
+    ff._mm_bias_alert('SHORT', 19620.0, on)
+    _check(len(sent) == 1 and '5г 08хв' in sent[0][2] and '↻' not in sent[0][2],
+           f'тривалість із таймера банера, без ↻ і без вікна: {sent and sent[0][2]}')
+    # Доба й більше — як у банері.
+    ff._mm_bias_since = 19500.0 + 2 * 86400 + 3600
+    ff._mm_bias_alert('LONG', ff._mm_bias_since + 120, on)
+    _check('2д 01г 00хв' in sent[1][2], sent[1][2])
+    print('✓ «тримався» — з таймера банера, переживає рестарт, показує доби')
+
+
+def test_confirmed_state_starts_when_candidate_appeared():
+    snap_l = {'A': {'status': 'LONG', 'strength': 70}}
+    snap_s = {'A': {'status': 'SHORT', 'strength': 70}}
+    b, since, cand = _m.mm_bias_step(snap_l, 100.0, 120, {}, 0.0, {})
+    b, since, cand = _m.mm_bias_step(snap_s, 200.0, 120, b, since, cand)
+    _check(b['dir'] == 'LONG' and since == 100.0, 'ще кандидат')
+    b, since, cand = _m.mm_bias_step(snap_s, 330.0, 120, b, since, cand)
+    _check(b['dir'] == 'SHORT' and since == 200.0 and b['since'] == 200,
+           f'новий статус — з моменту появи кандидата: {since}')
+    print('✓ підтверджений статус стартує з появи кандидата')
 
 
 # ═══ 3. ⚡ CTR: НЕВДАХИ НЕ ЗʼЇДАЮТЬ БЮДЖЕТ ════════════════════════════════
