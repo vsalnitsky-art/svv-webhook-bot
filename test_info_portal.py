@@ -563,6 +563,62 @@ def test_sig_card_drag_and_arrow():
     print('✓ картка SBR: перетягування + стрілка до позначки')
 
 
+def test_liq_profile_button_only_and_cached():
+    """💧 Профіль ліквідності: параметри нормалізуються, рахунок — ТОЙ САМИЙ
+    scan_one (через runner), спільний кеш, відмова НЕ кешується."""
+    _check(ip.liq_params('BYBIT', '720', 'fine') == ('bybit', 720, 'fine'), 'параметри')
+    _check(ip.liq_params('mexc', '999', 'x') == ('binance', ip.LIQ_BARS_DEFAULT, ip.LIQ_RES_DEFAULT),
+           'невідоме → дефолт')
+    calls = []
+
+    def runner(sym, ex, b, sp):
+        calls.append((sym, ex, b, sp))
+        return {'ok': True, 'price': 100.0, 'step': 0.5, 'total_usd': 1e6, 'above_pct': 60,
+                'below_pct': 40, 'pull': 'up', 'verdict': 'v', 'exchange': ex,
+                'rows': [{'price': 101, 'price_hi': 101.5, 'usd': 5e5, 'pct': 50, 'dir': 'up', 'dist_pct': 1.2},
+                         {'price': 'x'}]}
+    ip._liq_cache.clear()
+    v = ip.liq_profile('eth', 'bybit', 168, 'mid', now=1000, runner=runner)
+    _check(v['ok'] and v['symbol'] == 'ETHUSDT' and len(v['rows']) == 1, 'рядки (сміття відкинуто)')
+    _check(v['rows'][0] == {'lo': 101.0, 'hi': 101.5, 'usd': 5e5, 'pct': 50.0, 'dir': 'up', 'dist': 1.2}, 'форма рядка')
+    _check(calls == [('ETHUSDT', 'bybit', 168, ip.LIQ_RES['mid'])], 'дрібніший крок передано')
+    ip.liq_profile('ETHUSDT', 'bybit', 168, 'mid', now=1000 + ip.LIQ_TTL - 1, runner=runner)
+    _check(len(calls) == 1, 'кеш')
+    ip.liq_profile('ETHUSDT', 'binance', 168, 'mid', now=1001, runner=runner)
+    _check(len(calls) == 2, 'інша біржа — свій ключ')
+    bad = ip.liq_profile('SOLUSDT', now=1, runner=lambda *a: {'ok': False, 'reason': 'немає OI'})
+    _check(not bad['ok'] and bad['reason'] == 'немає OI', 'причина відмови')
+    _check(not any(k[0] == 'SOLUSDT' for k in ip._liq_cache), 'відмова не кешується')
+    print('✓ 💧 профіль: параметри, кеш, причина')
+
+
+def test_liq_step_pct_is_finer():
+    """Крок сходинок профілю — частка ціни, округлена до 1/2/5 × 10^k."""
+    spec = importlib.util.spec_from_file_location('ladder_t', os.path.join(_HERE, 'detection', 'liquidation_map', 'ladder.py'))
+    ld = importlib.util.module_from_spec(spec); spec.loader.exec_module(ld)
+    _check(ld.step_for(100000) == 2000, 'дефолт банера не змінився')
+    _check(ld.step_for(100000, pct=0.005) == 500, '0.5% → 500')
+    _check(ld.step_for(4000, pct=0.0025) == 10, '0.25% → 10')
+    print('✓ 💧 крок профілю')
+
+
+def test_liq_frontend_contract():
+    """Кнопка вмикає лише за натисканням; зміна монети прибирає профіль і гасить
+    кнопку; зони й чипи закінчуються перед смугою профілю."""
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    html = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
+    for i in ('iw-liq-btn', 'iw-liq-ex', 'iw-liq-bars', 'iw-liq-res'):
+        _check('id="' + i + '"' in html, i)
+    _check('value="binance"' in html and 'value="bybit"' in html, 'дві біржі')
+    _check('/api/info/liq?' in js and js.count('/api/info/liq?') == 1, 'один виклик — у liqLoad')
+    lc = js.split('function loadCoin')[1][:1500]
+    _check('LQ.sym !== sym) liqOff()' in lc, 'інша монета → профіль прибрано')
+    _check('LQ.sym !== IW.sel) return' in js, 'запізніла відповідь для іншої монети ігнорується')
+    _check('X2 = XR -' in js and '(XR - w - 8 * hr)' in js, 'зони й VOB-чипи лівіше профілю')
+    _check('rightOffset' in js.split('function liqOffset')[1][:600], 'свічки не під профілем')
+    print('✓ 💧 фронт: кнопка, зміна монети, без накладань')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:

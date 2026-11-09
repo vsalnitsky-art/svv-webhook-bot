@@ -515,6 +515,7 @@
         : '<button type="button" disabled class="ly-sbr off" title="SBR — лише на 1H і 4H">SBR</button>') +
       '<button type="button" data-layer="show_shl" class="ly-shl ' + (IW.show_shl ? "on" : "") +
         '" title="Swing High / Low (як у боті)">High/Low</button>';
+    liqUi();
   }
 
   function applyMine(d) {
@@ -649,6 +650,91 @@
     saveMine(b);
   });
 
+  // ═══ 💧 ПРОФІЛЬ ЛІКВІДНОСТІ (вимога 09.11) ════════════════════════════════
+  // Лише за кнопкою: дані — тієї монети, для якої натиснули, і живуть, доки
+  // вона на графіку. Інша монета → профіль прибрано, кнопка вимкнена.
+  var LIQ_KEY = "vsv_liq_ui";
+  var LIQ_BARS = [24, 48, 72, 120, 168, 240, 336, 504, 720, 1000];
+  var LQ = { ex: "binance", bars: 168, res: "mid", on: false, sym: "", data: null, busy: 0, seq: 0 };
+  try { var _lq = JSON.parse(localStorage.getItem(LIQ_KEY) || "{}");
+    if (_lq.ex) LQ.ex = _lq.ex; if (_lq.bars) LQ.bars = Number(_lq.bars); if (_lq.res) LQ.res = _lq.res; } catch (e) {}
+  function liqSaveUi() { try { localStorage.setItem(LIQ_KEY, JSON.stringify({ ex: LQ.ex, bars: LQ.bars, res: LQ.res })); } catch (e) {} }
+  function liqUi() {
+    if (!LQ) return;   // renderTfBar може бути викликаний до ініціалізації блоку
+    var b = $("#iw-liq-bars");
+    if (b && !b.options.length) b.innerHTML = LIQ_BARS.map(function (n) {
+      return '<option value="' + n + '">' + (n >= 48 && n % 24 === 0 ? (n / 24) + " дн" : n + " год") + "</option>"; }).join("");
+    if (b) b.value = String(LQ.bars);
+    var ex = $("#iw-liq-ex"); if (ex) ex.value = LQ.ex;
+    var rs = $("#iw-liq-res"); if (rs) rs.value = LQ.res;
+    var btn = $("#iw-liq-btn");
+    if (btn) { btn.classList.toggle("on", LQ.on); btn.classList.toggle("busy", !!LQ.busy); btn.setAttribute("aria-pressed", LQ.on ? "true" : "false"); }
+    var box = $("#iw-liq"); if (box) box.classList.toggle("on", LQ.on);
+  }
+  function liqStatus(html, title) {
+    var st = $("#iw-liq-st"); if (!st) return;
+    st.innerHTML = html || ""; st.title = title || "";
+  }
+  // Відступ праворуч, щоб останні свічки стояли ЛІВІШЕ смуги профілю, а не під нею
+  function liqOffset(on) {
+    if (!IW.chart) return;
+    var ts = IW.chart.timeScale();
+    try {
+      if (on) {
+        if (LQ.prevRO == null) LQ.prevRO = ts.options().rightOffset || 0;
+        var css = Math.max(70, Math.min(190, (ts.width() || 600) * 0.2));
+        ts.applyOptions({ rightOffset: Math.ceil(css / (ts.options().barSpacing || 6)) + 2 });
+      } else if (LQ.prevRO != null) {
+        ts.applyOptions({ rightOffset: LQ.prevRO }); LQ.prevRO = null;
+      }
+    } catch (e) {}
+  }
+  function liqOff() {
+    LQ.on = false; LQ.sym = ""; LQ.data = null; LQ.busy = 0;
+    if (IW.prim) IW.prim.setLiq(null);
+    liqOffset(false);
+    liqStatus(""); liqUi();
+  }
+  function liqLoad() {
+    var sym = IW.sel; if (!sym) return;
+    var tok = ++LQ.seq;
+    LQ.on = true; LQ.sym = sym; LQ.busy = tok; liqUi();
+    liqStatus('<span class="wait">⏳ рахую ' + esc(sym) + " · " + LQ.ex.toUpperCase() + "…</span>");
+    api("/api/info/liq?symbol=" + encodeURIComponent(sym) + "&exchange=" + LQ.ex + "&bars=" + LQ.bars + "&res=" + LQ.res)
+      .then(function (d) {
+        if (LQ.busy !== tok || !LQ.on || LQ.sym !== IW.sel) return;   // встигли перемкнути
+        LQ.busy = 0;
+        if (!d || !d.ok) { LQ.data = null; if (IW.prim) IW.prim.setLiq(null);
+          liqStatus('<span class="bad">' + esc((d && d.reason) || "немає даних") + "</span>"); liqUi(); return; }
+        LQ.data = d;
+        if (IW.prim) IW.prim.setLiq(d);
+        liqOffset(true);
+        var up = Number(d.above_pct) || 0, dn = Number(d.below_pct) || 0;
+        var pull = d.pull === "up" ? '<b class="up">⬆ вгору</b>' : d.pull === "down" ? '<b class="dn">⬇ вниз</b>' : "<b>⚖ рівновага</b>";
+        liqStatus('<span class="up">▲' + up.toFixed(1) + '%</span> <span class="dn">▼' + dn.toFixed(1) + "%</span> · " + pull,
+          (d.verdict || "") + "\nБіржа " + String(d.exchange || "").toUpperCase() + " · історія " + d.bars +
+          " год · крок " + d.step + " · всього " + liqUsd(d.total_usd) + " · пораховано за " + d.took_sec + "с");
+        liqUi();
+      }, function (e) {
+        if (LQ.busy !== tok) return;
+        LQ.busy = 0; liqStatus('<span class="bad">помилка: ' + esc(e && e.message || "") + "</span>"); liqUi();
+      });
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest("#iw-liq-btn") : null;
+    if (!b) return;
+    if (LQ.on) liqOff(); else liqLoad();
+  });
+  document.addEventListener("change", function (e) {
+    var id = e.target && e.target.id;
+    if (id !== "iw-liq-ex" && id !== "iw-liq-bars" && id !== "iw-liq-res") return;
+    if (id === "iw-liq-ex") LQ.ex = e.target.value;
+    if (id === "iw-liq-bars") LQ.bars = Number(e.target.value);
+    if (id === "iw-liq-res") LQ.res = e.target.value;
+    liqSaveUi();
+    if (LQ.on) liqLoad();
+  });
+
   // ═══ 📈 ГРАФІК: бари + структура + OB + VOB + IMB + POC + сигнали SBR ═════
   // Примітив малює: (а) лінії структури; (б) зони (бокси) від свічки зони до
   // правого краю; (в) ПІДПИСИ зон — окремим проходом, «чипами» з фоном і
@@ -656,8 +742,66 @@
   // чип, що наліз би на вже поставлений, зсувається вгору/вниз, а коли місця
   // немає — не малюється, повний опис лишається в підказці легенди);
   // (г) позначки сигналів SBR «S»/«B», клікабельні.
+  // ── 💧 ПРОФІЛЬ ЛІКВІДНОСТІ (вимога 09.11) ─────────────────────────────────
+  // Ширина смуги — частка панелі, але в розумних межах (css px).
+  function liqWidth(W, hr) {
+    var css = W / hr;
+    return Math.round(Math.max(70, Math.min(190, css * 0.2)) * hr);
+  }
+  var LIQ_UP = "38,166,154", LIQ_DN = "239,83,80";
+  // Сходинка = смуга по ВИСОТІ (її діапазон цін), довжина ∝ частці від
+  // найбільшої сходинки; колір — куди тягне ціну (вище — зелений, нижче — червоний).
+  function _liqDraw(ctx, liq, sr, XR, W, H, hr, vr, font, dark, levels) {
+    var rows = liq.rows, LW = W - XR;
+    var mx = 0;
+    rows.forEach(function (r) { if (r.pct > mx) mx = r.pct; });
+    if (mx <= 0) return;
+    ctx.fillStyle = dark ? "rgba(13,17,26,.35)" : "rgba(255,255,255,.45)";
+    ctx.fillRect(XR, 0, LW, H);
+    ctx.strokeStyle = dark ? "rgba(148,163,184,.25)" : "rgba(91,100,117,.25)";
+    ctx.lineWidth = Math.max(1, Math.round(hr));
+    ctx.beginPath(); ctx.moveTo(XR + 0.5, 0); ctx.lineTo(XR + 0.5, H); ctx.stroke();
+    var lbl = [];
+    rows.forEach(function (r) {
+      var yA = sr.priceToCoordinate(r.hi), yB = sr.priceToCoordinate(r.lo);
+      if (yA == null || yB == null) return;
+      var y0 = Math.min(yA, yB) * vr, y1 = Math.max(yA, yB) * vr;
+      if (y1 < 0 || y0 > H) return;
+      var gap = Math.min(1 * vr, (y1 - y0) * 0.15);
+      var len = Math.max(2 * hr, (LW - 6 * hr) * r.pct / mx);
+      var rgb = r.dir === "up" ? LIQ_UP : LIQ_DN;
+      var top = r.pct >= mx * 0.999;
+      ctx.fillStyle = "rgba(" + rgb + "," + (top ? 0.62 : 0.38) + ")";
+      ctx.fillRect(W - len, y0 + gap, len, Math.max(1, y1 - y0 - gap * 2));
+      ctx.fillStyle = "rgba(" + rgb + ",.95)";
+      ctx.fillRect(W - len, y0 + gap, Math.max(1, Math.round(hr * 1.5)), Math.max(1, y1 - y0 - gap * 2));
+      if (y1 - y0 >= 10 * vr) lbl.push({ r: r, y: (y0 + y1) / 2, len: len, top: top });
+    });
+    // підписи сум — найбільші першими, без накладань по висоті
+    lbl.sort(function (a, b) { return b.r.pct - a.r.pct; });
+    // мітки POC / High / Low бібліотека малює біля правого краю — суми там не пишемо
+    var used = (levels || []).map(function (lv) { var y = sr.priceToCoordinate(lv.price); return y == null ? -1e9 : y * vr; });
+    var lh = 11 * vr;
+    ctx.font = font(600, 10); ctx.textBaseline = "middle"; ctx.textAlign = "right";
+    lbl.forEach(function (q) {
+      if (used.some(function (u) { return Math.abs(u - q.y) < lh; })) return;
+      used.push(q.y);
+      var t = liqUsd(q.r.usd) + " · " + Number(q.r.pct).toFixed(1) + "%";
+      ctx.fillStyle = q.top ? (dark ? "#fde68a" : "#92400e") : (dark ? "#cbd5e1" : "#334155");
+      ctx.fillText(t, W - 4 * hr, q.y);
+    });
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  }
+  function liqUsd(v) {
+    v = Number(v) || 0;
+    if (v >= 1e9) return "$" + (v / 1e9).toFixed(2) + "B";
+    if (v >= 1e6) return "$" + (v / 1e6).toFixed(v >= 1e8 ? 0 : 1) + "M";
+    if (v >= 1e3) return "$" + (v / 1e3).toFixed(0) + "K";
+    return "$" + v.toFixed(0);
+  }
+
   function BoxPrimitive() {
-    this._b = []; this._l = []; this._s = []; this._lv = []; this._hits = [];
+    this._b = []; this._l = []; this._s = []; this._lv = []; this._hits = []; this._liq = null;
     this._chart = null; this._series = null; this._req = null;
   }
   BoxPrimitive.prototype.attached = function (p) { this._chart = p.chart; this._series = p.series; this._req = p.requestUpdate; };
@@ -667,6 +811,11 @@
   // ховався під «POC»).
   BoxPrimitive.prototype.set = function (boxes, lines, sigs, levels) {
     this._b = boxes || []; this._l = lines || []; this._s = sigs || []; this._lv = levels || [];
+    if (this._req) this._req();
+  };
+  // 💧 профіль ліквідності — окремо від зон: його вмикає кнопка, а не дані монети
+  BoxPrimitive.prototype.setLiq = function (liq) {
+    this._liq = liq && liq.rows && liq.rows.length ? liq : null;
     if (this._req) this._req();
   };
   BoxPrimitive.prototype.hitAt = function (x, y) {
@@ -742,6 +891,10 @@
         var W = sc.bitmapSize.width, H = sc.bitmapSize.height;
         var FONT = "-apple-system,Segoe UI,Roboto,sans-serif";
         var font = function (w, px) { return w + " " + Math.round(px * vr) + "px " + FONT; };
+        // ── 💧 профіль ліквідності: ВЛАСНА смуга біля правого краю. Зони, чипи й
+        // підписи відсуваються лівіше неї — нічого не малюється одне поверх одного.
+        var LW = self._liq ? liqWidth(W, hr) : 0, XR = W - LW;
+        if (LW) _liqDraw(ctx, self._liq, sr, XR, W, H, hr, vr, font, dark, self._lv);
         // ── лінії структури (підписи CHoCH/BOS — пізніше, без накладань) ──
         var sLbl = [];
         self._l.forEach(function (l) {
@@ -760,10 +913,10 @@
           var x1 = ts.timeToCoordinate(b.t);
           var yA = sr.priceToCoordinate(b.top), yB = sr.priceToCoordinate(b.bottom);
           if (x1 == null || yA == null || yB == null) continue;
-          var X1 = Math.max(0, x1 * hr), X2 = W;
+          var X1 = Math.max(0, x1 * hr), X2 = XR - (LW ? 3 * hr : 0);
           // IMB тягнемо лише `ext` барів (як FVG-індикатори TV), а не до краю —
           // інакше десяток розривів перетворюється на суцільну штриховку.
-          if (b.ext) X2 = Math.min(W, (x1 + b.ext * ts.options().barSpacing) * hr);
+          if (b.ext) X2 = Math.min(X2, (x1 + b.ext * ts.options().barSpacing) * hr);
           var yT = Math.min(yA, yB) * vr, yBt = Math.max(yA, yB) * vr;
           if (X2 <= X1) continue;
           if (yBt - yT < 1) yBt = yT + 1;
@@ -796,6 +949,7 @@
         var taken = marks.map(function (m) {
           return { x0: (m.x0 - 2) * hr, x1: (m.x0 + bs + 2) * hr, y0: (m.y0 - 2) * vr, y1: (m.y0 + bs + 7) * vr };
         });
+        if (LW) taken.push({ x0: XR - 2 * hr, x1: W, y0: 0, y1: H });
         // підписи ліній POC / High / Low (правий край)
         self._lv.forEach(function (lv) {
           var y = sr.priceToCoordinate(lv.price);
@@ -825,7 +979,7 @@
           var w2 = b.sub ? ctx.measureText(b.sub).width + 6 * hr : 0;
           var w = w1 + w2 + padX * 2 + 4 * hr;
           var right = b.kind === "vob";
-          var x0 = right ? (W - w - 8 * hr) : Math.min(p.X1 + 4 * hr, W - w - 8 * hr);
+          var x0 = right ? (XR - w - 8 * hr) : Math.min(p.X1 + 4 * hr, XR - w - 8 * hr);
           if (x0 < 2 * hr) x0 = 2 * hr;
           var mid = (p.yT + p.yB) / 2;
           var tries = [0, -1, 1, -2, 2, -3, 3], ok = null;
@@ -865,7 +1019,7 @@
           var cx = q.x * hr, up = q.l.up;
           var y0 = up ? q.y * vr - 3 * vr - th : q.y * vr + 3 * vr;
           var r = { x0: cx - tw / 2 - 2 * hr, x1: cx + tw / 2 + 2 * hr, y0: y0, y1: y0 + th };
-          if (r.y0 < 0 || r.y1 > H || overlaps(r)) return;
+          if (r.y0 < 0 || r.y1 > H || r.x1 > XR || overlaps(r)) return;
           taken.push(r);
           ctx.fillStyle = q.l.color; ctx.textAlign = "center"; ctx.textBaseline = "middle";
           ctx.fillText(q.l.text, cx, y0 + th / 2);
@@ -1398,6 +1552,7 @@
       setNote("завантаження " + sym + " · " + tfLbl(IW.tf) + "…");
       if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.set([], [], []); setPoc(null); setShl(null); IW.lastT = null; }
       sigCard(null);
+      if (LQ && LQ.on && LQ.sym !== sym) liqOff();   // інша монета → профілю немає
     }
     var want = iwKey();
     var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + "&tf=" + IW.tf +

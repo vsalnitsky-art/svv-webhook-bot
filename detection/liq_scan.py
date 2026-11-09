@@ -184,14 +184,15 @@ def build_levels(bars: List[Dict], oi_usd: float, price: float,
 
 
 def summarise(levels: List[Dict], price: float, symbol: str,
-              step_usd=None, top_n: int = 6) -> Dict:
+              step_usd=None, top_n: int = 6, step_pct=None) -> Dict:
     """Звести рівні монети до рядка списку. Драбина й вердикт — ТІ САМІ
     функції, що й у блоці на сторінці Smart Money: щоб «тягне вниз» означало
     одне й те саме в обох місцях.
 
     `top_n` — скільки сходинок лишити: 6 для рядка списку, більше — для
     режиму однієї монети, де драбина малюється повністю."""
-    lad = _ladder.build_ladder(levels, price, step_usd=step_usd, top_n=top_n)
+    lad = _ladder.build_ladder(levels, price, step_usd=step_usd, top_n=top_n,
+                               step_pct=step_pct)
     if not lad.get('ok'):
         return {'symbol': symbol, 'ok': False,
                 'reason': lad.get('reason', 'немає рівнів')}
@@ -477,7 +478,8 @@ def _resolve_symbol(session, exchange: str, symbol: str) -> Dict:
 
 
 def scan_one(exchange: str = 'binance', symbol: str = 'BTCUSDT',
-             bars: int = DEFAULT_BARS, rows: int = 12) -> Dict:
+             bars: int = DEFAULT_BARS, rows: int = 12,
+             step_pct=None) -> Dict:
     """💧 Аналіз ЛІКВІДНОСТІ ОДНІЄЇ МОНЕТИ — повна драбина + вердикт.
 
     Тут питання bulk-OI не стоїть узагалі: на одну монету потрібні 2-3
@@ -519,7 +521,8 @@ def scan_one(exchange: str = 'binance', symbol: str = 'BTCUSDT',
                 'reason': f'свічки недоступні: {str(e)[:80]}'}
 
     lv = build_levels(kl, oi, price, symbol=sym)
-    out = summarise(lv, price, sym, top_n=max(3, int(rows or 12)))
+    out = summarise(lv, price, sym, top_n=max(3, int(rows or 12)),
+                    step_pct=step_pct)
     out.update({'exchange': exchange, 'oi_usd': round(oi, 0),
                 'bars': bars, 'levels': len(lv),
                 'took_sec': round(time.time() - t0, 1),

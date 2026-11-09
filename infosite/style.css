@@ -630,3 +630,24 @@ body.iw-full-on { overflow: hidden; }
 .pp-inline .ppi-usd { color: #fbbf24; font: 700 12px var(--mono); }
 .pp-inline .ppi-pct { color: #7dd3fc; font: 700 12px var(--mono); }
 .pp-inline .ppi-lev { color: #c4b5fd; font: 700 12px var(--mono); }
+
+/* 💧 Профіль ліквідності: кнопка + параметри поруч (09.11) */
+.iw-liq { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 2px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--elev); }
+.iw-liq.on { border-color: #0ea5e9; box-shadow: 0 0 0 1px rgba(14,165,233,.25); }
+.iw-liq-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px;
+  border: 0; border-radius: 7px; background: transparent; color: #7dd3fc; font-weight: 700;
+  font-size: 11.5px; cursor: pointer; }
+.iw-liq-btn:hover { background: rgba(14,165,233,.12); }
+.iw-liq-btn.on { background: rgba(14,165,233,.22); color: #e0f2fe; }
+.iw-liq-btn.busy svg { animation: iwLiqPulse 1s ease-in-out infinite; }
+@keyframes iwLiqPulse { 50% { opacity: .35; } }
+.iw-liq select { background: var(--surface); color: var(--txt); border: 1px solid var(--line);
+  border-radius: 6px; font-size: 11px; height: 24px; padding: 0 4px; color-scheme: dark; }
+:root[data-theme="light"] .iw-liq select { color-scheme: light; }
+.iw-liq-st { font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+  white-space: nowrap; }
+.iw-liq-st .up { color: #26a69a; } .iw-liq-st .dn { color: #ef5350; }
+.iw-liq-st .wait { color: var(--warn); } .iw-liq-st .bad { color: #f87171; }
+:root[data-theme="light"] .iw-liq-btn { color: #0369a1; }
+:root[data-theme="light"] .iw-liq-btn.on { color: #0c4a6e; }

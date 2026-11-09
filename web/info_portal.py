@@ -1116,6 +1116,92 @@ def _paper_snapshot(tm):
     return data
 
 
+# ── 💧 ПРОФІЛЬ ЛІКВІДНОСТІ на графіку кабінету (вимога 09.11) ──────────────
+# Розрахунок — ТОЙ САМИЙ `liq_scan.scan_one`, що режим однієї монети на
+# 📡 Tickr (драбина + вердикт); відрізняється лише дрібніший крок сходинок,
+# щоб профіль на графіку мав «рядки», як Volume Profile у TradingView.
+# Рахується ЛИШЕ за кнопкою (через спільну чергу сканів біржі), спільний кеш.
+LIQ_EXCHANGES = ('binance', 'bybit')
+LIQ_BARS = (24, 48, 72, 120, 168, 240, 336, 504, 720, 1000)
+LIQ_BARS_DEFAULT = 168
+LIQ_RES = {'fine': 0.0025, 'mid': 0.005, 'coarse': 0.0125}
+LIQ_RES_DEFAULT = 'mid'
+LIQ_ROWS = 60
+LIQ_TTL = 120.0
+_liq_cache = {}
+
+
+def liq_params(exchange=None, bars=None, res=None):
+    """Нормалізувати параметри профілю: невідоме → дефолт."""
+    ex = (exchange or '').lower()
+    ex = ex if ex in LIQ_EXCHANGES else LIQ_EXCHANGES[0]
+    try:
+        b = int(bars)
+    except (TypeError, ValueError):
+        b = LIQ_BARS_DEFAULT
+    b = b if b in LIQ_BARS else LIQ_BARS_DEFAULT
+    r = res if res in LIQ_RES else LIQ_RES_DEFAULT
+    return ex, b, r
+
+
+def liq_view(out, sym, ex, bars, res):
+    """Те, що потрібно графіку: сходинки + підсумок + вердикт (без зайвого)."""
+    out = out or {}
+    if not out.get('ok'):
+        return {'ok': False, 'symbol': sym, 'exchange': ex, 'bars': bars, 'res': res,
+                'reason': out.get('reason') or 'немає даних'}
+    rows = []
+    for r in out.get('rows') or []:
+        try:
+            lo, hi = float(r['price']), float(r.get('price_hi') or r['price'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        rows.append({'lo': lo, 'hi': hi, 'usd': float(r.get('usd') or 0),
+                     'pct': float(r.get('pct') or 0), 'dir': r.get('dir'),
+                     'dist': r.get('dist_pct')})
+    return {'ok': True, 'symbol': sym, 'exchange': out.get('exchange') or ex,
+            'bars': bars, 'res': res, 'price': out.get('price'),
+            'step': out.get('step'), 'total_usd': out.get('total_usd'),
+            'above_pct': out.get('above_pct'), 'below_pct': out.get('below_pct'),
+            'pull': out.get('pull'), 'verdict': out.get('verdict'),
+            'verdict_parts': out.get('verdict_parts'),
+            'oi_usd': out.get('oi_usd'), 'took_sec': out.get('took_sec'),
+            'at': out.get('fetched_at') or time.time(), 'rows': rows}
+
+
+def liq_profile(symbol, exchange=None, bars=None, res=None, now=None, runner=None):
+    """Профіль ліквідності монети (кеш `LIQ_TTL` на (монета, біржа, глибина, крок))."""
+    sym = norm_symbol(symbol)
+    if not valid_symbol(sym):
+        return {'ok': False, 'reason': 'невірна назва монети'}
+    ex, b, r = liq_params(exchange, bars, res)
+    now = time.time() if now is None else now
+    key = (sym, ex, b, r)
+    hit = _liq_cache.get(key)
+    if hit and now - hit[0] < LIQ_TTL:
+        return hit[1]
+    if runner is None:
+        from detection import liq_scan, scan_queue
+
+        def runner(sym, ex, b, step_pct):
+            return scan_queue.run(
+                f'info:liq:{sym}:{ex}:{b}:{step_pct}',
+                lambda: liq_scan.scan_one(exchange=ex, symbol=sym, bars=b,
+                                          rows=LIQ_ROWS, step_pct=step_pct),
+                source='info', timeout=180.0)
+    try:
+        out = runner(sym, ex, b, LIQ_RES[r])
+    except Exception as e:
+        out = {'ok': False, 'reason': f'помилка: {str(e)[:100]}'}
+    v = liq_view(out, sym, ex, b, r)
+    if v.get('ok'):
+        _liq_cache[key] = (now, v)
+        if len(_liq_cache) > 200:
+            for k in sorted(_liq_cache, key=lambda k: _liq_cache[k][0])[:50]:
+                _liq_cache.pop(k, None)
+    return v
+
+
 def register_info_portal(app):
     from flask import jsonify, request
 
@@ -1136,6 +1222,13 @@ def register_info_portal(app):
     def api_info_rows():
         syms = [x for x in (request.args.get('symbols') or '').split(',') if x]
         return jsonify({'ok': True, 'rows': rows_for(syms), 'ts': time.time()})
+
+    @app.route('/api/info/liq')
+    def api_info_liq():
+        """💧 Профіль ліквідності монети — ЛИШЕ за кнопкою (ходить на біржу)."""
+        a = request.args
+        return jsonify(liq_profile(a.get('symbol') or '', a.get('exchange'),
+                                   a.get('bars'), a.get('res')))
 
     @app.route('/api/info/coin')
     def api_info_coin():

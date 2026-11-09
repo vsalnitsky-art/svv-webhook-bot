@@ -35,7 +35,7 @@ def _f(v) -> Optional[float]:
         return None
 
 
-def step_for(mark_price, step_usd=None) -> float:
+def step_for(mark_price, step_usd=None, pct=None) -> float:
     """Крок драбини. Явно заданий виграє; інакше — $1000 на BTC-масштабі і
     пропорційно менший на дешевших монетах (щоб на ETH не вийшла одна сходинка
     на весь графік)."""
@@ -51,7 +51,9 @@ def step_for(mark_price, step_usd=None) -> float:
     # сходинки, а магніт підписувався «$0». Відколи драбина рахується не лише
     # по BTC (скан біржі, режим однієї монети), крок мусить масштабуватись
     # униз так само вільно, як і вгору.
-    raw = p * 0.0125
+    # `pct` — частка ціни на сходинку (профіль на графіку кабінету бере
+    # дрібніший крок, ніж драбина банера); за замовчуванням ~1.25%.
+    raw = p * (float(pct) if pct and float(pct) > 0 else 0.0125)
     if raw <= 0:
         return DEFAULT_STEP_USD
     mag = 10.0 ** math.floor(math.log10(raw))
@@ -262,7 +264,7 @@ def make_verdict(pull: str, pull_pct: float, above_pct: float,
 
 
 def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
-                 top_n: int = DEFAULT_TOP_N,
+                 top_n: int = DEFAULT_TOP_N, step_pct=None,
                  min_row_pct: float = MIN_ROW_PCT) -> Dict:
     """Згорнути рівні ліквідації у сходинки по $step і перевести у відсотки.
 
@@ -301,7 +303,7 @@ def build_ladder(levels: List[Dict], mark_price, *, step_usd=None,
                 'pull': 'flat', 'pull_pct': 0.0, 'total_usd': 0.0,
                 'verdict': _empty_verdict}
 
-    step = step_for(mp, step_usd)
+    step = step_for(mp, step_usd, step_pct)
     buckets: Dict[tuple, Dict] = {}
     total = 0.0
     up_usd = down_usd = 0.0
