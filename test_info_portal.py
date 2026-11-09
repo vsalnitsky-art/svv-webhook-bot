@@ -754,6 +754,9 @@ def test_liq_frontend_contract():
     _check(js.count('lineVisible: !_lvTitleOff()') == 2, 'лінії High/Low/POC не заходять у профіль')
     _check("'magnet': mag" in open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read(),
            'магніт віддається сирими числами')
+    i0 = html.index('id="iw-tf-wait"')
+    _check(html.index('id="iw-chart"') < i0 < html.index('id="iw-tfbar"'), 'статус — поза панеллю кнопок')
+    _check('class="iw-status"' in html, 'загальний статус — у куті блоку графіка')
     print('✓ 💧 фронт: кнопка, зміна монети, без накладань')
 
 
