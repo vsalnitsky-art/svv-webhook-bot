@@ -546,6 +546,23 @@ def test_tfs_poc_params_ob_declutter_0811():
     print('✓ TF без 1m/5m · POC 7 днів · OB без купи · підписи без накладань')
 
 
+
+def test_sig_card_drag_and_arrow():
+    """↔ Картку SBR тягнуть за шапку; стрілка-виноска вказує на свою позначку
+    S/B (за тими самими `_hits`, що й клік) і йде за нею при прокрутці графіка."""
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    css = open(os.path.join(_HERE, 'infosite', 'style.css'), encoding='utf-8').read()
+    _check('function sigDragInit' in js and 'setPointerCapture' in js, 'картку тягнуть за шапку')
+    _check('function sigAnchor' in js and 'IW.prim._hits' in js and 'g.t === sel.t && g.side === sel.side' in js,
+           'стрілка шукає СВОЮ позначку (час + бік)')
+    _check('function sigArrowLoop' in js and 'requestAnimationFrame' in js, 'стрілка йде за графіком щокадру')
+    pan = js.split('function tvPanInit')[1][:900]
+    _check('closest("#iw-sig")' in pan, 'перетягування картки не рухає графік')
+    _check('.iw-sig-arrow' in css and 'pointer-events: none' in css.split('.iw-sig-arrow {')[1][:200],
+           'стрілка не перехоплює кліки')
+    print('✓ картка SBR: перетягування + стрілка до позначки')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:

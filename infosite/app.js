@@ -956,6 +956,7 @@
     var y0 = null, x0 = null;
     box.addEventListener("pointerdown", function (e) {
       if (e.button !== 0) return;
+      if (e.target.closest && e.target.closest("#iw-sig")) { y0 = null; return; }   // тягнуть картку сигналу
       var r = box.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
       var psw = 0, tsh = 0;
       try { psw = IW.chart.priceScale("right").width(); tsh = IW.chart.timeScale().height(); } catch (er) {}
@@ -987,6 +988,7 @@
     // і далі масштабує час.
     box.addEventListener("wheel", function (e) {
       if (!IW.chart || !IW.series) return;
+      if (e.target.closest && e.target.closest("#iw-sig")) return;
       var r = box.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
       var psw = 0, tsh = 0;
       try { psw = IW.chart.priceScale("right").width(); tsh = IW.chart.timeScale().height(); } catch (er) {}
@@ -1133,8 +1135,9 @@
   function sigCard(s, x, y) {
     var box = $("#iw-box"), el = $("#iw-sig");
     if (!box) return;
-    if (!el) { el = document.createElement("div"); el.id = "iw-sig"; el.className = "iw-sig"; box.appendChild(el); }
-    if (!s) { el.style.display = "none"; return; }
+    if (!el) { el = document.createElement("div"); el.id = "iw-sig"; el.className = "iw-sig"; box.appendChild(el); sigDragInit(el, box); }
+    if (!s) { el.style.display = "none"; IW.sigSel = null; sigArrow(); return; }
+    IW.sigSel = { t: s.t, side: s.side };
     var S = s.side === "SHORT";
     // дата — у тому самому часовому поясі, що й час сигналу (Europe/Kyiv)
     var dd = "";
@@ -1158,6 +1161,100 @@
     var bw = box.clientWidth, bh = box.clientHeight, ew = el.offsetWidth, eh = el.offsetHeight;
     var left = Math.min(Math.max(8, x + 14), bw - ew - 8), top = Math.min(Math.max(8, y - eh / 2), bh - eh - 8);
     el.style.left = left + "px"; el.style.top = top + "px";
+    sigArrowLoop();
+  }
+
+  // ↔ Картку можна перетягнути за шапку в будь-яке місце графіка, а стрілка
+  // («хвостик» як у виносці) і далі вказує саме на ту позначку S/B, до якої
+  // належить картка — і при перетягуванні картки, і при прокрутці/масштабі
+  // графіка (позиція позначки береться з тих самих `_hits`, що й клік).
+  function sigAnchor() {
+    var sel = IW.sigSel, hits = (IW.prim && IW.prim._hits) || [];
+    if (!sel) return null;
+    for (var i = 0; i < hits.length; i++) {
+      var h = hits[i], g = h.sig || {};
+      if (g.t === sel.t && g.side === sel.side)
+        return { x: (h.x0 + h.x1) / 2, y: (h.y0 + h.y1) / 2, r: (h.x1 - h.x0) / 2 };
+    }
+    return null;   // позначка поза кадром — стрілку ховаємо
+  }
+
+  // Точка на межі прямокутника картки в напрямку від центру до (tx, ty).
+  function sigEdge(L, T, W, H, tx, ty) {
+    var cx = L + W / 2, cy = T + H / 2, dx = tx - cx, dy = ty - cy;
+    if (!dx && !dy) return null;
+    var k = Math.min(dx ? (W / 2) / Math.abs(dx) : Infinity, dy ? (H / 2) / Math.abs(dy) : Infinity);
+    if (k >= 1) return null;   // позначка під самою карткою
+    return { x: cx + dx * k, y: cy + dy * k, ux: dx, uy: dy };
+  }
+
+  function sigArrow() {
+    var box = $("#iw-box"), el = $("#iw-sig");
+    if (!box) return false;
+    var svg = $("#iw-sig-arrow");
+    if (!svg) {
+      svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.id = "iw-sig-arrow"; svg.setAttribute("class", "iw-sig-arrow");
+      svg.innerHTML = '<path class="tail"/><circle class="ring" r="0"/>';
+      box.appendChild(svg);
+    }
+    var a = el && el.style.display !== "none" ? sigAnchor() : null;
+    if (!a) { svg.style.display = "none"; return !!(el && el.style.display !== "none"); }
+    var L = el.offsetLeft, T = el.offsetTop, W = el.offsetWidth, H = el.offsetHeight;
+    var e = sigEdge(L, T, W, H, a.x, a.y);
+    if (!e) { svg.style.display = "none"; return true; }
+    // кінчик — на краю позначки, а не в її центрі (щоб не закривати «S»/«B»)
+    var len = Math.hypot(a.x - e.x, a.y - e.y) || 1, ux = (a.x - e.x) / len, uy = (a.y - e.y) / len;
+    var tx = a.x - ux * (a.r + 3), ty = a.y - uy * (a.r + 3);
+    // основа хвостика на краю картки: ширина — до 22px, але не більше відстані
+    var half = Math.min(14, Math.max(5, len / 5)), px = -uy * half, py = ux * half;
+    var bx = e.x - ux * 2, by = e.y - uy * 2;   // трохи заходимо під картку, без щілини
+    svg.style.display = "block";
+    svg.setAttribute("width", box.clientWidth); svg.setAttribute("height", box.clientHeight);
+    var path = svg.querySelector(".tail"), ring = svg.querySelector(".ring");
+    path.setAttribute("d", "M" + (bx + px) + "," + (by + py) + " L" + tx + "," + ty + " L" + (bx - px) + "," + (by - py) + " Z");
+    ring.setAttribute("cx", a.x); ring.setAttribute("cy", a.y); ring.setAttribute("r", a.r + 3);
+    var S = IW.sigSel && IW.sigSel.side === "SHORT";
+    svg.classList.toggle("short", S); svg.classList.toggle("long", !S);
+    return true;
+  }
+
+  // Поки картка відкрита — стрілка йде за позначкою кожен кадр (графік
+  // прокручують, масштабують, оновлюють дані). Закрилась — цикл зупиняється.
+  function sigArrowLoop() {
+    if (IW.sigRaf) return;
+    var step = function () {
+      IW.sigRaf = null;
+      if (sigArrow()) IW.sigRaf = requestAnimationFrame(step);
+    };
+    IW.sigRaf = requestAnimationFrame(step);
+  }
+
+  function sigDragInit(el, box) {
+    var d = null;
+    el.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0 || !(e.target.closest && e.target.closest(".h")) || e.target.closest(".x")) return;
+      d = { id: e.pointerId, sx: e.clientX, sy: e.clientY, l: el.offsetLeft, t: el.offsetTop };
+      try { el.setPointerCapture(e.pointerId); } catch (x) {}
+      el.classList.add("drag");
+      e.preventDefault();
+    });
+    el.addEventListener("pointermove", function (e) {
+      if (!d || e.pointerId !== d.id) return;
+      var bw = box.clientWidth, bh = box.clientHeight, ew = el.offsetWidth, eh = el.offsetHeight;
+      var l = Math.min(Math.max(0, d.l + e.clientX - d.sx), Math.max(0, bw - ew));
+      var t = Math.min(Math.max(0, d.t + e.clientY - d.sy), Math.max(0, bh - eh));
+      el.style.left = l + "px"; el.style.top = t + "px";
+      sigArrow();
+    });
+    var end = function (e) {
+      if (!d || (e && e.pointerId !== d.id)) return;
+      d = null; el.classList.remove("drag");
+    };
+    el.addEventListener("pointerup", end);
+    el.addEventListener("pointercancel", end);
+    // кліки / колесо по картці не мають рухати чи масштабувати графік під нею
+    ["wheel", "dblclick"].forEach(function (ev) { el.addEventListener(ev, function (e) { e.stopPropagation(); }); });
   }
 
   document.addEventListener("click", function (e) {
