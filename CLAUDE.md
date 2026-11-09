@@ -7886,3 +7886,30 @@ OKBUSDT LONG відкрився при увімкнених «Через МММ-
   = депозит + `realized_usd`); інфосайт — «3% від балансу $1,120 = $33.60».
 Тест: `test_paper_account.py` (9).
 
+
+### 🏦 PAPER-РАХУНОК = ЯК НА БІРЖІ (вимога 08.11, ЗАМІЩУЄ «від закритих» вище)
+Дослівно: «Всі розрахунки мають бути як в реальній торгівлі… як ніби це все
+відбувається на даний момент на біржі.» Модель Bybit UTA (крос-маржа):
+- ЧИСТІ функції: `paper_position_now(side, entry, cur, sz, remaining,
+  realized_usd, realized_fees)` (позиція зараз: `upnl_usd` без комісії виходу,
+  `net_usd` = якщо закрити зараз, `wallet_delta` = часткові − комісія входу,
+  `margin_usd` залишку) · `paper_ledger(deposit, closed_net, views)` →
+  `wallet` / `equity` / `margin_used` / `available` / `closed_balance`;
+  `balance` = equity.
+- **% угоди — від EQUITY в момент відкриття** (з незакритими збитками/
+  прибутками). `paper_size(..., balance=equity, available=вільно)`: маржа +
+  комісія входу ≤ вільних коштів (`capped`); нотіонал < `PAPER_MIN_NOTIONAL`
+  (5 USDT) → `insufficient` → `_open_shadow` ВІДМОВЛЯЄ («недостатньо вільних
+  коштів», рядок у 🧾 Лог), як відхилила б біржа.
+- Комісія входу списується з гаманця ОДРАЗУ; часткові закриття (TP-1, BOS)
+  фіксують брутто + комісію виходу частини в `pos['paper_part_usd/_fees']`;
+  `_paper_pnl(..., remaining, part_usd, part_fees)` рахує підсумок усієї угоди
+  (раніше часткові ігнорувались — результат рахувався на повну кількість).
+- ЄДИНЕ джерело — `_paper_ledger_now()`: і розмір нової угоди (`_paper_sizing`),
+  і картка «Тестовий баланс», і `paper_account` (+`next_capped`/
+  `next_insufficient`). PnL відкритих paper у таблиці — `_paper_view`.
+- Старі угоди без `sz` (`late`) — від стартового депозиту (не «пливуть» з equity).
+- UI: «від equity $X = $Y» (бот `_tmPaperBase`/`_tmPaperNextMargin`, інфосайт
+  `ppInlineHTML`), % депозиту за період — від `closed_balance`. Ассети `?v=84`.
+- ⚠️ Ліквідації paper-позицій НЕ моделюються.
+Тест: `test_paper_account.py` (10).

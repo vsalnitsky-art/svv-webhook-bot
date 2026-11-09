@@ -206,9 +206,8 @@ def paper_margin_pct_of(settings):
 
 
 def paper_base_of(settings, balance=None):
-    """🧪 ЧИСТА: від чого рахуються % угоди — НАЯВНИЙ тестовий баланс на момент
-    відкриття (депозит + чистий результат закритих paper-угод, вимога 08.11);
-    немає/некоректний → стартовий `paper_deposit`."""
+    """🧪 ЧИСТА: від чого рахуються % угоди — EQUITY тестового рахунку в момент
+    відкриття (як на біржі, вимога 08.11); немає/некоректний → `paper_deposit`."""
     try:
         b = float(balance) if balance is not None else 0.0
     except (TypeError, ValueError):
@@ -218,27 +217,30 @@ def paper_base_of(settings, balance=None):
     return max(1.0, float((settings or {}).get('paper_deposit', 1000.0) or 1000.0))
 
 
-def paper_margin_usd_of(settings, balance=None):
-    """🧪 ЧИСТА: маржа на угоду в $ за поточним режимом (для показу)."""
-    s = settings or {}
-    dep = paper_base_of(s, balance)
-    if s.get('paper_sizing_mode', 'pct') == 'fixed':
-        return min(max(0.01, float(s.get('paper_margin_usd', 100.0) or 100.0)), dep)
-    return dep * paper_margin_pct_of(s) / 100.0
+PAPER_MIN_NOTIONAL = 5.0   # 🧪 мін. вартість ордера, як у Bybit USDT-перпах (5 USDT)
 
 
-def paper_size(settings, entry, sl_price=None, balance=None):
-    """🧪 ЧИСТА: розмір paper-угоди за віртуальним рахунком.
+def paper_margin_usd_of(settings, balance=None, available=None):
+    """🧪 ЧИСТА: маржа НАСТУПНОЇ угоди в $ — рівно та, що дасть `paper_size`
+    (те саме правило й та сама стеля вільних коштів)."""
+    z = paper_size(settings, 1.0, None, balance=balance, available=available)
+    return float((z or {}).get('margin') or 0.0)
 
-    - `pct` (деф., вимога 08.11): маржа = `paper_margin_pct` % НАЯВНОГО
-      тестового балансу на момент відкриття (`balance`; без нього —
-      `paper_deposit`), нотіонал = маржа × плече — SL не потрібен;
-      усі % (і `risk`) рахуються від того самого балансу;
-    - `fixed`: маржа = `paper_margin_usd` (не більше депозиту),
-      нотіонал = маржа × `paper_leverage` — SL не потрібен;
-    - `risk`: втрата на SL = `paper_risk_pct` % депозиту, нотіонал = ризик /
-      відстань до SL, маржа ≤ депозиту (`capped`); без SL → фолбек `fixed`.
-    Комісія `paper_fee_pct` %/сторону застосовується при закритті."""
+
+def paper_size(settings, entry, sl_price=None, balance=None, available=None):
+    """🧪 ЧИСТА: розмір paper-угоди — ЯК НА БІРЖІ в момент відкриття.
+
+    - `balance` — EQUITY рахунку ЗАРАЗ (гаманець + нереалізований PnL відкритих
+      угод, вимога 08.11 «як ніби це на біржі»); без нього — `paper_deposit`;
+    - `pct` (деф.): маржа = `paper_margin_pct` % equity, нотіонал = маржа × плече;
+    - `fixed`: маржа = `paper_margin_usd`;
+    - `risk`: втрата на SL = `paper_risk_pct` % equity (без SL → як `fixed`);
+    - `available` — ВІЛЬНІ кошти (equity − маржа відкритих). Біржа не відкриє
+      ордер, на який не вистачає вільних коштів: маржа + комісія входу не
+      перевищує `available` (`capped`); нотіонал < `PAPER_MIN_NOTIONAL` →
+      `insufficient` (ордер біржа відхилила б).
+    Комісія `paper_fee_pct` %/сторону: вхід списується з гаманця при відкритті,
+    вихід — при закритті."""
     s = settings or {}
     try:
         e = float(entry or 0)
@@ -260,30 +262,110 @@ def paper_size(settings, entry, sl_price=None, balance=None):
             d = abs(e - sl) / e
     except (TypeError, ValueError):
         sl = 0.0
-    capped, fallback = False, False
+    capped, fallback, cap_why = False, False, ''
     risk_pct = float(s.get('paper_risk_pct', 3.0) or 3.0)
     if mode == 'risk' and d:
         notional = dep * risk_pct / 100.0 / d
         margin = notional / lev
-        if margin > dep:
-            margin, notional, capped = dep, dep * lev, True
     elif mode == 'pct':
         margin = dep * mpct / 100.0
         notional = margin * lev
     else:
         fallback = mode == 'risk'
-        margin = min(max(0.01, float(s.get('paper_margin_usd', 100.0) or 100.0)), dep)
-        capped = margin < float(s.get('paper_margin_usd', 100.0) or 100.0)
+        margin = max(0.01, float(s.get('paper_margin_usd', 100.0) or 100.0))
         notional = margin * lev
+    # 🏦 Стеля вільних коштів: маржа + комісія входу ≤ available.
+    room = dep if available is None else max(0.0, float(available or 0))
+    need = margin * (1.0 + lev * fee / 100.0)
+    if need > room + 1e-9:
+        margin = room / (1.0 + lev * fee / 100.0)
+        notional = margin * lev
+        capped, cap_why = True, ('вільних коштів' if available is not None else 'балансу')
+    insufficient = notional < PAPER_MIN_NOTIONAL
     return {
         'mode': mode if not fallback else 'fixed', 'fallback': fallback,
-        'margin_pct': mpct if mode == 'pct' else round(margin / dep * 100, 4),
+        'margin_pct': mpct if (mode == 'pct' and not capped) else round(margin / dep * 100, 4),
         'cash': round(dep, 2), 'risk_pct': risk_pct, 'lev': lev, 'fee_pct': fee,
+        'available': round(room, 2) if available is not None else None,
         'sl_price': round(sl, 10) if d else None,
         'sl_dist_pct': round(d * 100, 4) if d else None,
         'notional': round(notional, 4), 'margin': round(margin, 4),
+        'fee_open_usd': round(notional * fee / 100.0, 4),
         'qty': notional / e, 'risk_at_sl': round(notional * d, 4) if d else None,
-        'risk_usd': round(notional * d, 4) if d else None, 'capped': capped,
+        'risk_usd': round(notional * d, 4) if d else None,
+        'capped': capped, 'cap_why': cap_why, 'insufficient': insufficient,
+    }
+
+
+def paper_position_now(side, entry, current, sz, remaining=1.0,
+                       realized_usd=0.0, realized_fees=0.0):
+    """🧪 ЧИСТА: відкрита paper-позиція ЗАРАЗ — так, як її бачить біржа.
+
+    - `remaining` — частка, що лишилась після часткових закриттів (TP-1 тощо);
+    - `realized_usd` / `realized_fees` — уже зафіксоване частковими закриттями
+      (брутто частин і комісії їх виходу);
+    - `upnl_usd` — нереалізований PnL залишку за поточною ціною БЕЗ комісії
+      виходу (як `unrealisedPnl` Bybit — це він іде в equity);
+    - `net_usd` — скільки дасть угода, якщо закрити ЗАРАЗ: частини + залишок −
+      комісія входу (уся) − комісії виходів (частин і оцінка залишку);
+    - `wallet_delta` — що вже змінилось у гаманці: частини − комісія входу;
+    - `margin_usd` — маржа залишку (те, що зайнято в позиції)."""
+    if not sz:
+        return None
+    try:
+        e, c = float(entry or 0), float(current or 0)
+        q = abs(float(sz.get('qty') or 0))
+        lev = max(1.0, float(sz.get('lev') or 1))
+        fee = max(0.0, float(sz.get('fee_pct') or 0)) / 100.0
+        rem = max(0.0, min(1.0, float(remaining if remaining is not None else 1.0)))
+        r_usd, r_fee = float(realized_usd or 0), float(realized_fees or 0)
+    except (TypeError, ValueError):
+        return None
+    if e <= 0 or c <= 0 or q <= 0 or side not in ('LONG', 'SHORT'):
+        return None
+    dirmul = 1.0 if side == 'LONG' else -1.0
+    qr = q * rem
+    upnl = qr * (c - e) * dirmul
+    fee_in = q * e * fee
+    fee_out = qr * c * fee
+    gross = r_usd + upnl
+    fees = fee_in + r_fee + fee_out
+    net = gross - fees
+    margin = qr * e / lev
+    margin0 = q * e / lev
+    return {
+        'gross_usd': round(gross, 4), 'upnl_usd': round(upnl, 4),
+        'realized_usd': round(r_usd - r_fee, 4),
+        'fee_in_usd': round(fee_in, 4), 'fee_out_usd': round(fee_out + r_fee, 4),
+        'fees_usd': round(fees, 4), 'net_usd': round(net, 4),
+        'wallet_delta': round(r_usd - r_fee - fee_in, 4),
+        'margin_usd': round(margin, 4),
+        'roi_pct': round(net / margin0 * 100, 3) if margin0 > 0 else None,
+        'move_pct': round((c - e) / e * 100 * dirmul, 3),
+        'lev': round(lev, 2), 'fee_pct': round(fee * 100, 4), 'remaining': round(rem, 4),
+    }
+
+
+def paper_ledger(deposit, closed_net, open_views):
+    """🧪 ЧИСТА: віртуальний рахунок ЯК НА БІРЖІ (Bybit UTA, крос-маржа).
+
+    - гаманець = депозит + нетто закритих + Σ(часткові − комісія входу) відкритих;
+    - equity = гаманець + Σ нереалізованого PnL відкритих (без комісії виходу);
+    - у позиціях = Σ маржі залишків; вільно = equity − у позиціях (≥ 0).
+    `balance` = equity — від нього рахується % НАСТУПНОЇ угоди."""
+    dep = float(deposit or 0)
+    views = [v for v in (open_views or []) if v]
+    wallet = dep + float(closed_net or 0) + sum(float(v.get('wallet_delta') or 0) for v in views)
+    upnl = sum(float(v.get('upnl_usd') or 0) for v in views)
+    used = sum(float(v.get('margin_usd') or 0) for v in views)
+    equity = wallet + upnl
+    return {
+        'deposit': round(dep, 2),
+        'closed_balance': round(dep + float(closed_net or 0), 2),
+        'wallet': round(wallet, 2), 'realized_usd': round(wallet - dep, 2),
+        'unrealized_usd': round(upnl, 2), 'equity': round(equity, 2),
+        'balance': round(equity, 2), 'margin_used': round(used, 2),
+        'available': round(max(0.0, equity - used), 2), 'open_n': len(views),
     }
 
 
@@ -7445,7 +7527,19 @@ class TradeManager:
             self._close_shadow(symbol, exit_price, reason=reason)
             return
         
+        # 🧪 Як на біржі: частина фіксує брутто й платить комісію виходу саме зараз.
+        _psz = self._paper_size_of(pos)
         with self._lock:
+            if _psz:
+                try:
+                    _q = float(_psz.get('qty') or 0) * close_qty
+                    _e = float(pos['entry_price']); _x = float(exit_price)
+                    _dm = 1.0 if pos['side'] == 'LONG' else -1.0
+                    pos['paper_part_usd'] = float(pos.get('paper_part_usd') or 0) + _q * (_x - _e) * _dm
+                    pos['paper_part_fees'] = (float(pos.get('paper_part_fees') or 0)
+                                              + _q * _x * float(_psz.get('fee_pct') or 0) / 100.0)
+                except (TypeError, ValueError, KeyError):
+                    pass
             pos['remaining_qty'] = new_remaining
         self._persist_shadow_positions()
         
@@ -7526,8 +7620,21 @@ class TradeManager:
         # of paper_cash, using leverage; commissions applied at close. None when
         # disabled or no usable SL (then the unit model + %-only PnL stays).
         _sz = self._paper_sizing(float(entry_price), _sl)
+        if _sz and _sz.get('insufficient'):
+            # 🏦 Як на біржі: на ордер не вистачає вільних коштів — його не буде.
+            _why = (f"🧪 недостатньо вільних коштів на тестовому рахунку: вільно "
+                    f"${_sz.get('available') or 0:.2f}, мін. ордер ${PAPER_MIN_NOTIONAL:.0f} "
+                    f"(маржа × плече {_sz.get('lev')}x)")
+            print(f"[TM] [TEST] 🚫 {symbol} {side}: {_why}")
+            try:
+                from detection.activity_log import log_activity
+                log_activity(symbol, 'rejected', _why, side=side, source='TM')
+            except Exception:
+                pass
+            return {'ok': False, 'reason': _why}
         if _sz:
-            _cap = ' · ⚠️ маржу обмежено кешем' if _sz.get('capped') else ''
+            _cap = (f" · ⚠️ маржу обмежено вільними коштами ${_sz.get('available')}"
+                    if _sz.get('capped') else '')
             _risk = (f" · ризик на SL ${_sz['risk_at_sl']:.2f}" if _sz.get('risk_at_sl') else '')
             print(f"[TM] [TEST] 🧪 sizing {symbol} {side} [{_sz.get('mode')}]: notional ${_sz['notional']:.2f} "
                   f"(qty {_sz['qty']:.6g}) · маржа ${_sz['margin']:.2f} · плече {_sz['lev']}x · "
@@ -7824,7 +7931,10 @@ class TradeManager:
 
         # 🧪 Net paper result WITH commissions (from the open-time risk sizing).
         _psz = self._paper_size_of(pos)
-        _pp = self._paper_pnl(_psz, entry, exit_price, pos['side'])
+        _pp = self._paper_pnl(_psz, entry, exit_price, pos['side'],
+                              remaining=pos.get('remaining_qty', 1.0),
+                              part_usd=pos.get('paper_part_usd', 0.0),
+                              part_fees=pos.get('paper_part_fees', 0.0))
         closed = {
             'symbol': symbol,
             'side': pos['side'],
@@ -7916,85 +8026,96 @@ class TradeManager:
     # ============================================================
 
     def _paper_sizing(self, entry: float, sl_price) -> Optional[Dict]:
-        """🧪 Розмір paper-позиції за налаштуваннями віртуального рахунку
-        (`paper_size`, ЧИСТА). Без SL у режимі `risk` → фолбек на `fixed`, тож
-        угода ЗАВЖДИ має розмір і рахує $ (раніше без SL було $0.00)."""
-        return paper_size(self._settings, entry, sl_price, balance=self._paper_balance())
+        """🧪 Розмір paper-позиції ЯК НА БІРЖІ в цю мить (`paper_size`, ЧИСТА):
+        % рахується від EQUITY рахунку зараз, маржа обмежена ВІЛЬНИМИ коштами."""
+        led = self._paper_ledger_now()
+        return paper_size(self._settings, entry, sl_price,
+                          balance=led.get('equity'), available=led.get('available'))
+
+    def _paper_view(self, sym: str, pos: Dict, current=None) -> Optional[Dict]:
+        """🧪 Стан відкритої paper-позиції зараз (`paper_position_now`)."""
+        sz = self._paper_size_of(pos)
+        if not sz:
+            return None
+        cur = current or self._get_current_price(sym, cache_only=True) or pos.get('entry_price')
+        return paper_position_now(pos.get('side'), pos.get('entry_price'), cur, sz,
+                                  remaining=pos.get('remaining_qty', 1.0),
+                                  realized_usd=pos.get('paper_part_usd', 0.0),
+                                  realized_fees=pos.get('paper_part_fees', 0.0))
+
+    def _paper_ledger_now(self, views=None) -> Dict:
+        """🧪 Віртуальний рахунок ЗАРАЗ (`paper_ledger`, ЧИСТА) — ЄДИНЕ джерело
+        для розміру нової угоди й для картки «Тестовий баланс»."""
+        dep = float(self._settings.get('paper_deposit', 1000.0) or 1000.0)
+        with self._lock:
+            try:
+                closed_net = sum(_trade_usd(c) for c in list(self._shadow_closed))
+            except Exception:
+                closed_net = 0.0
+            if views is None:
+                views = [self._paper_view(sym, p) for sym, p in list(self._shadow_positions.items())]
+        return paper_ledger(dep, closed_net, views)
 
     def _paper_balance(self) -> float:
-        """🧪 Наявний тестовий баланс ЗАРАЗ = депозит + чистий результат усіх
-        закритих paper-угод. ТЕ САМЕ число, що `balance` у панелі рахунку
-        (одне джерело). Від нього рахується % угоди на момент відкриття."""
-        dep = float(self._settings.get('paper_deposit', 1000.0) or 1000.0)
+        """🧪 EQUITY тестового рахунку ЗАРАЗ — база % наступної угоди."""
         try:
-            return dep + sum(_trade_usd(c) for c in list(self._shadow_closed))
+            return float(self._paper_ledger_now().get('equity') or 0)
         except Exception:
-            return dep
+            return float(self._settings.get('paper_deposit', 1000.0) or 1000.0)
 
     def _paper_size_of(self, pos: Dict) -> Optional[Dict]:
         """Розмір відкритої paper-позиції: знімок із відкриття, а для старих
-        угод без нього — за поточними налаштуваннями на ціні входу (`late`)."""
+        угод без нього — за поточними налаштуваннями від стартового депозиту на
+        ціні входу (`late`; без equity — інакше розмір «плив» би разом з ним)."""
         sz = pos.get('sz')
         if sz:
             return sz
-        sz = paper_size(self._settings, pos.get('entry_price'), None,
-                        balance=self._paper_balance())
+        sz = paper_size(self._settings, pos.get('entry_price'), None)
         if sz:
             sz = dict(sz, late=True)
         return sz
 
     def paper_account(self) -> Dict:
-        """🧪 Віртуальний рахунок paper (публічний, бере лок сам)."""
-        with self._lock:
-            rows = []
-            for sym, p in self._shadow_positions.items():
-                sz = self._paper_size_of(p)
-                cur = self._get_current_price(sym, cache_only=True) or p.get('entry_price')
-                rows.append({'paper_size': sz, 'pnl_net': real_pnl_net(
-                    p.get('side'), p.get('entry_price'), cur, (sz or {}).get('qty'),
-                    (sz or {}).get('lev'), (sz or {}).get('fee_pct')) if sz else None})
-            return self._paper_account_locked(rows)
+        """🧪 Віртуальний рахунок paper (публічний)."""
+        return self._paper_account_locked(None)
 
-    def _paper_account_locked(self, rows) -> Dict:
-        """Депозит + реалізований нетто (усі закриті paper-угоди) + нереалізований
-        нетто відкритих (рядки з `pnl_net`/`paper_size`). Викликати ПІД локом."""
+    def _paper_account_locked(self, rows=None) -> Dict:
+        """🧪 Рахунок ЯК НА БІРЖІ: гаманець · equity · у позиціях · вільно +
+        маржа НАСТУПНОЇ угоди (та сама `paper_size`, що відкриє угоду).
+        `rows` не використовуються (лишено для сумісності виклику)."""
         s = self._settings
-        dep = float(s.get('paper_deposit', 1000.0) or 1000.0)
-        realized = self._paper_balance() - dep
-        unreal = sum(float((r.get('pnl_net') or {}).get('net_usd') or 0) for r in rows)
-        used = sum(float((r.get('paper_size') or {}).get('margin') or 0) for r in rows)
-        bal = dep + realized
-        return {
-            'deposit': round(dep, 2), 'realized_usd': round(realized, 2),
-            'unrealized_usd': round(unreal, 2), 'balance': round(bal, 2),
-            'equity': round(bal + unreal, 2), 'margin_used': round(used, 2),
-            'available': round(bal + min(0.0, unreal) - used, 2),
-            'open_n': len(rows),
-            'pnl_pct': round(realized / dep * 100, 3) if dep else None,
-            'mode': s.get('paper_sizing_mode', 'pct'),
-            # Маржа НАСТУПНОЇ угоди — від наявного балансу, а не стартового депозиту.
-            'margin_usd': round(paper_margin_usd_of(s, bal), 2),
-            'margin_pct': (paper_margin_pct_of(s) if s.get('paper_sizing_mode', 'pct') == 'pct'
-                           else round(paper_margin_usd_of(s, bal) / max(1.0, bal) * 100, 2)),
-            'leverage': int(s.get('paper_leverage', 10) or 10),
-            'fee_pct': float(s.get('paper_fee_pct', 0.055) or 0),
-        }
+        led = self._paper_ledger_now()
+        nxt = paper_size(s, 1.0, None, balance=led['equity'], available=led['available']) or {}
+        return dict(
+            led,
+            mode=s.get('paper_sizing_mode', 'pct'),
+            pnl_pct=round((led['equity'] - led['deposit']) / led['deposit'] * 100, 3) if led['deposit'] else None,
+            margin_usd=round(float(nxt.get('margin') or 0), 2),
+            margin_pct=(paper_margin_pct_of(s) if s.get('paper_sizing_mode', 'pct') == 'pct'
+                        else round(float(nxt.get('margin') or 0) / max(1.0, led['equity']) * 100, 2)),
+            next_capped=bool(nxt.get('capped')), next_insufficient=bool(nxt.get('insufficient')),
+            leverage=int(s.get('paper_leverage', 10) or 10),
+            fee_pct=float(s.get('paper_fee_pct', 0.055) or 0),
+        )
 
     @staticmethod
-    def _paper_pnl(sz: Optional[Dict], entry, exit_price, side: str) -> Optional[Dict]:
-        """🧪 Net paper result WITH commissions: gross $ − entry fee − exit fee.
-        Fee = paper_fee_pct % per side, on the traded notional. Returns
-        {gross_usd, fees_usd, net_usd, net_pct_cash, roi_margin_pct} or None."""
+    def _paper_pnl(sz: Optional[Dict], entry, exit_price, side: str, remaining=1.0,
+                   part_usd=0.0, part_fees=0.0) -> Optional[Dict]:
+        """🧪 Нетто paper-угоди ЯК НА БІРЖІ: брутто часткових закриттів + брутто
+        залишку − комісія входу (уся позиція) − комісії всіх виходів.
+        Returns {gross_usd, fees_usd, net_usd, net_pct_cash, roi_margin_pct} or None."""
         if not sz:
             return None
         try:
             qty = float(sz['qty']); e = float(entry); x = float(exit_price)
+            rem = max(0.0, min(1.0, float(remaining if remaining is not None else 1.0)))
+            pu, pf = float(part_usd or 0), float(part_fees or 0)
         except (TypeError, ValueError, KeyError):
             return None
         dirmul = 1.0 if side == 'LONG' else -1.0
-        gross = qty * (x - e) * dirmul
         fee = float(sz.get('fee_pct', 0.0)) / 100.0
-        fees = qty * e * fee + qty * x * fee          # entry + exit commissions
+        gross = qty * rem * (x - e) * dirmul + pu
+        fees = qty * e * fee + qty * rem * x * fee + pf
         net = gross - fees
         cash = float(sz.get('cash') or 0) or None
         margin = float(sz.get('margin') or 0) or None
@@ -8662,8 +8783,7 @@ class TradeManager:
                 if _psz:
                     pos_dict['paper_size'] = {k: _psz.get(k) for k in
                                               ('margin', 'notional', 'lev', 'qty', 'mode', 'late')}
-                    pos_dict['pnl_net'] = real_pnl_net(pos['side'], entry, current, _psz.get('qty'),
-                                                       _psz.get('lev'), _psz.get('fee_pct'))
+                    pos_dict['pnl_net'] = self._paper_view(sym, pos, current)
                 health = self._compute_health(pos, is_shadow=True)
                 if health is not None:
                     pos_dict['health'] = health

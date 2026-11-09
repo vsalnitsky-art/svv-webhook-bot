@@ -5498,8 +5498,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="tmpq-sep">·</span>
                 <span class="tmpq-l">угода</span>
                 <span class="tmpq-f tmpq-pct"><input type="text" inputmode="decimal" id="tmpq-mpct" onchange="tmpqApply()">%</span>
-                <span class="tmpq-l">від балансу</span>
-                <b class="tmpq-usd" id="tmpq-bal" title="Наявний тестовий баланс = депозит + чистий результат закритих paper-угод. Від нього рахується % КОЖНОЇ нової угоди на момент відкриття.">—</b>
+                <span class="tmpq-l">від equity</span>
+                <b class="tmpq-usd" id="tmpq-bal" title="Equity тестового рахунку ЗАРАЗ — як на біржі: гаманець (депозит + закриті угоди − комісії входу відкритих) + нереалізований PnL відкритих угод. Від нього рахується % КОЖНОЇ нової угоди в момент відкриття; маржа не перевищує вільних коштів.">—</b>
                 <span class="tmpq-l">=</span>
                 <b class="tmpq-usd" id="tmpq-musd">—</b>
                 <span class="tmpq-l">×</span>
@@ -12288,21 +12288,36 @@ let _tmPaperAcc = null;
 function _tmPaperDepositPct(st, pa) {
     if (!st || !pa) return null;
     const since = (st.pnl_since_from_usd != null) ? st.pnl_since_from_usd : st.total_pnl_usd;
-    const base = (pa.balance || 0) - (since || 0);
+    const base = (pa.closed_balance != null ? pa.closed_balance : (pa.balance || 0)) - (since || 0);
     return base > 0 ? (st.total_pnl_usd || 0) / base * 100 : null;
 }
 
 // 🧪 Режим розміру paper: «ризик на SL» показує поле ризику, «сума на угоду» — маржу.
 // 🧪 Швидкий рядок рахунку над панеллю Paper: ДЗЕРКАЛО полів Trade Manager
 // (джерело одне — ті самі input-и й той самий saveTMSettings).
-// 🧪 Наявний тестовий баланс = депозит (поле) + чистий результат закритих
-// paper-угод (з сервера). Від нього рахується % угоди на момент відкриття —
-// те саме правило, що в `paper_size` на бекенді.
+// 🧪 База % угоди — EQUITY тестового рахунку ЗАРАЗ (як на біржі): гаманець +
+// нереалізований PnL відкритих угод (з сервера). Змінений у полі депозит
+// зсуває його на різницю — щоб підказка відповідала тому, що збережеться.
 function _tmPaperBase() {
     const dep = parseFloat((document.getElementById('tm-paper-deposit') || {}).value) || 0;
-    const rz = (typeof _tmPaperAcc !== 'undefined' && _tmPaperAcc) ? Number(_tmPaperAcc.realized_usd || 0) : 0;
-    const b = dep + rz;
-    return b > 0 ? b : dep;
+    const pa = (typeof _tmPaperAcc !== 'undefined') ? _tmPaperAcc : null;
+    if (!pa || pa.equity == null) return dep;
+    const b = Number(pa.equity) + (dep - Number(pa.deposit || dep));
+    return b > 0 ? b : 0;
+}
+// 🧪 Маржа наступної угоди: % equity, але не більше ВІЛЬНИХ коштів (як біржа).
+function _tmPaperNextMargin(pc) {
+    const base = _tmPaperBase();
+    let m = base * (pc || 0) / 100;
+    const pa = (typeof _tmPaperAcc !== 'undefined') ? _tmPaperAcc : null;
+    if (pa && pa.available != null) {
+        const dep = parseFloat((document.getElementById('tm-paper-deposit') || {}).value) || 0;
+        const lev = parseFloat((document.getElementById('tm-paper-lev') || {}).value) || 1;
+        const fee = parseFloat((document.getElementById('tm-paper-fee') || {}).value) || 0;
+        const room = Math.max(0, Number(pa.available) + (dep - Number(pa.deposit || dep)));
+        m = Math.min(m, room / (1 + lev * fee / 100));
+    }
+    return m;
 }
 function _tmpqSync() {
     const g = id => (document.getElementById(id) || {}).value;
@@ -12313,7 +12328,7 @@ function _tmpqSync() {
     put('tmpq-lev', g('tm-paper-lev') || '');
     put('tmpq-fee', g('tm-paper-fee') || '');
     const mu = document.getElementById('tmpq-musd');
-    if (mu) mu.textContent = base > 0 && pc > 0 ? '$' + (base * pc / 100).toFixed(2) : '—';
+    if (mu) mu.textContent = base > 0 && pc > 0 ? '$' + _tmPaperNextMargin(pc).toFixed(2) : '—';
     const bl = document.getElementById('tmpq-bal');
     if (bl) bl.textContent = base > 0 ? '$' + base.toFixed(2) : '—';
     const m = g('tm-paper-mode') || 'pct', n = document.getElementById('tmpq-note');
@@ -12352,7 +12367,7 @@ function _tmPaperModeSync() {
     if (u) {
         const base = _tmPaperBase();
         const pc = parseFloat((document.getElementById('tm-paper-mpct') || {}).value) || 0;
-        u.textContent = base > 0 && pc > 0 ? `від балансу $${base.toFixed(2)} = $${(base * pc / 100).toFixed(2)}` : '';
+        u.textContent = base > 0 && pc > 0 ? `від equity $${base.toFixed(2)} = $${_tmPaperNextMargin(pc).toFixed(2)}` : '';
     }
     _tmpqSync();
 }
@@ -12404,10 +12419,11 @@ function renderTmStats(st, label, note, book) {
             const dp = _tmPaperDepositPct(st, pa);
             const dpTxt = dp == null ? `депозит ${money(pa.deposit)}`
                 : `<span class="${cls(dp)}">${dp >= 0 ? '+' : '−'}${Math.abs(dp).toFixed(2)}%</span> депозиту ${label || ''}`;
-            const tip = 'Віртуальний рахунок тестових угод: депозит + чистий результат усіх закритих paper-угод (з комісіями) + нереалізований результат відкритих. ' +
-                `Депозит ${pa.deposit} $ · на угоду ${pa.mode === 'pct' ? `${pa.margin_pct}% балансу $${pa.balance} = ` : ''}${pa.margin_usd} $ маржі × плече ${pa.leverage}x · комісія ${pa.fee_pct}% / сторону` +
+            const tip = 'Віртуальний рахунок ЯК НА БІРЖІ: equity = гаманець (депозит + закриті угоди з комісіями + часткові закриття − комісії входу відкритих) + нереалізований PnL відкритих. ' +
+                `Депозит ${pa.deposit} $ · наступна угода ${pa.mode === 'pct' ? `${pa.margin_pct}% від equity $${pa.equity} = ` : ''}${pa.margin_usd} $ маржі × плече ${pa.leverage}x · комісія ${pa.fee_pct}% / сторону` +
+                (pa.next_capped ? ' · ⚠️ обмежено вільними коштами' : '') + (pa.next_insufficient ? ' · ⛔ вільних коштів не вистачає на новий ордер' : '') +
                 (pa.mode === 'risk' ? ' · режим «ризик на SL»' : '') +
-                (_tmAmtShown ? ` · Баланс $${(pa.balance || 0).toFixed(2)} · нереаліз. ${(pa.unrealized_usd || 0) >= 0 ? '+' : '−'}$${Math.abs(pa.unrealized_usd || 0).toFixed(2)} · у позиціях $${(pa.margin_used || 0).toFixed(2)} · вільно $${(pa.available || 0).toFixed(2)}` : '') +
+                (_tmAmtShown ? ` · Гаманець $${(pa.wallet != null ? pa.wallet : pa.balance || 0).toFixed(2)} · нереаліз. ${(pa.unrealized_usd || 0) >= 0 ? '+' : '−'}$${Math.abs(pa.unrealized_usd || 0).toFixed(2)} · у позиціях $${(pa.margin_used || 0).toFixed(2)} · вільно $${(pa.available || 0).toFixed(2)}` : '') +
                 '. % депозиту = чистий P&L за період ÷ тестовий баланс на початок періоду.';
             balCard = card('Тестовий баланс', money(pa.equity), dpTxt, '', tip);
         }

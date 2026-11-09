@@ -43,7 +43,9 @@ def test_fixed_size_needs_no_sl():
     _check(abs(z['qty'] - 20.0) < 1e-9 and z['lev'] == 10 and z['cash'] == 1000.0, z)
     _check(paper_size(S, 0, None) is None, 'без ціни розміру немає')
     big = paper_size(dict(S, paper_margin_usd=5000), 50.0, None)
-    _check(big['margin'] == 1000.0 and big['capped'], 'маржа не більша за депозит')
+    # як на біржі: маржа + комісія входу вміщаються в кошти (1000 / (1 + 10·0.05%))
+    _check(big['capped'] and abs(big['margin'] + big['fee_open_usd'] - 1000.0) < 0.01,
+           'маржа + комісія входу не більші за кошти')
     print('✓ «сума на угоду»: маржа × плече, SL не потрібен (кінець $0.00)')
 
 
@@ -83,8 +85,11 @@ def test_account_and_late_sizing():
     late = TM._paper_size_of(t, pos)
     _check(late and late.get('late') and late['notional'] == 1000.0, 'стара угода без sz → поточні налаштування')
     acc = TM.paper_account(t)
-    _check(acc['deposit'] == 1000.0 and acc['realized_usd'] == 12.5 and acc['balance'] == 1012.5, acc)
-    _check(acc['unrealized_usd'] > 0 and acc['equity'] > acc['balance'] and acc['margin_used'] == 100.0, acc)
+    # гаманець = 1000 + 12.5 закрите − 0.5 комісія входу відкритої ($1000 × 0.05%)
+    _check(acc['deposit'] == 1000.0 and acc['closed_balance'] == 1012.5 and acc['wallet'] == 1012.0, acc)
+    # equity = гаманець + нереалізований (+4% × $1000 = +$40) — він і база наступної угоди
+    _check(acc['unrealized_usd'] == 40.0 and acc['equity'] == 1052.0 and acc['balance'] == acc['equity'], acc)
+    _check(acc['margin_used'] == 100.0 and acc['available'] == 952.0, acc)
     _check(acc['leverage'] == 10 and acc['margin_usd'] == 100.0, acc)
     print('✓ віртуальний рахунок: депозит + реалізований + нереалізований')
 
@@ -181,13 +186,51 @@ def test_margin_pct_is_from_balance_at_open_0811():
     _check(paper_size(base, 50.0, None, balance=-5)['margin'] == 30.0, 'сміття → депозит')
     t = _tm(dict(S, paper_sizing_mode='pct', paper_margin_pct=3),
             closed=[{'closed_at': 10, 'pnl_pct': 1, 'paper_result': {'net_usd': 200.0}}])
-    _check(TM._paper_balance(t) == 1200.0, 'баланс = депозит + закриті')
+    _check(TM._paper_balance(t) == 1200.0, 'equity без відкритих = депозит + закриті')
     _check(TM._paper_sizing(t, 50.0, None)['margin'] == 36.0, 'відкриття бере наявний баланс')
     acc = TM.paper_account(t)
     _check(acc['balance'] == 1200.0 and acc['margin_usd'] == 36.0, acc)
     _check('_tmPaperBase()' in _HTML and 'id="tmpq-bal"' in _HTML, 'бот показує баланс')
-    _check('usd(a.balance)' in _IJS, 'інфосайт показує баланс')
+    _check('usd(a.equity' in _IJS, 'інфосайт показує базу угоди (equity)')
     print('✓ % угоди — від наявного балансу на момент відкриття')
+
+
+def test_exchange_like_account_0811():
+    """🏦 Рахунок і розмір угоди ЯК НА БІРЖІ (вимога 08.11): % наступної угоди —
+    від EQUITY зараз (з незакритими збитками), маржа не більша за вільні кошти,
+    комісія входу списується одразу, часткові закриття — у гаманці."""
+    from detection.trade_manager import paper_position_now, paper_ledger
+    sz = paper_size({'paper_deposit': 1000.0, 'paper_leverage': 20, 'paper_margin_pct': 3,
+                     'paper_fee_pct': 0.06}, 2.0, None, balance=1000.0)
+    _check(sz['margin'] == 30.0 and sz['notional'] == 600.0, sz)
+    v = paper_position_now('LONG', 2.0, 1.9, sz)               # −5% руху ×20 = −$30
+    _check(abs(v['upnl_usd'] + 30.0) < 1e-6, v)
+    _check(abs(v['wallet_delta'] + 0.36) < 1e-6, 'комісія входу 0.06% × $600')
+    led = paper_ledger(1000.0, 0.0, [v] * 8)
+    _check(abs(led['equity'] - (1000 - 8 * 30.36)) < 0.01, led)
+    _check(abs(led['available'] - (led['equity'] - 240)) < 0.01, led)
+    nxt = paper_size({'paper_deposit': 1000.0, 'paper_leverage': 20, 'paper_margin_pct': 3,
+                      'paper_fee_pct': 0.06}, 1.0, None,
+                     balance=led['equity'], available=led['available'])
+    _check(abs(nxt['margin'] - led['equity'] * 0.03) < 0.01 and not nxt['capped'],
+           '9-та угода — 3% від equity з незакритими збитками')
+    # вільних коштів мало → маржу обрізає біржа
+    cap = paper_size({'paper_deposit': 1000.0, 'paper_leverage': 20, 'paper_margin_pct': 3,
+                      'paper_fee_pct': 0.06}, 1.0, None, balance=800.0, available=10.0)
+    _check(cap['capped'] and cap['margin'] < 10.0, cap)
+    none = paper_size({'paper_deposit': 1000.0, 'paper_leverage': 20, 'paper_margin_pct': 3,
+                       'paper_fee_pct': 0.06}, 1.0, None, balance=800.0, available=0.1)
+    _check(none['insufficient'], 'на ордер не вистачає — біржа відхилила б')
+    # часткове закриття 50% на +5%: частина в гаманці, залишок — нереалізований
+    p = paper_position_now('LONG', 2.0, 2.1, sz, remaining=0.5,
+                           realized_usd=15.0, realized_fees=0.189)
+    _check(abs(p['margin_usd'] - 15.0) < 1e-6 and abs(p['upnl_usd'] - 15.0) < 1e-6, p)
+    r = TM._paper_pnl(sz, 2.0, 2.1, 'LONG', remaining=0.5, part_usd=15.0, part_fees=0.189)
+    _check(abs(r['gross_usd'] - 30.0) < 1e-6, r)
+    _check(abs(r['fees_usd'] - (0.36 + 0.189 + 300 * 1.05 * 0.0006)) < 1e-6, r)
+    _check('_tmPaperNextMargin' in _HTML and 'від equity' in _HTML, 'бот показує equity')
+    _check('від equity' in _IJS and 'closed_balance' in _IJS, 'інфосайт показує equity')
+    print('✓ рахунок як на біржі: equity · вільні кошти · комісія входу · часткові')
 
 
 if __name__ == '__main__':
