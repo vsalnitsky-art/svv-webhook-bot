@@ -258,8 +258,12 @@ def sync_user_group(uid):
         print(f"[AUTH] sync_user_group error: {e}")
 
 
-def notify_user_approved(uid):
-    """Tell the user (via their linked Telegram) that access is granted."""
+def notify_user_approved(uid, silent=False):
+    """Tell the user (via their linked Telegram) that access is granted.
+
+    `silent=True` — без повідомлення користувачу (зміна ТЕРМІНУ доступу,
+    вимога 09.11: «повідомлень про продовження на 10/30 днів не потрібно»);
+    позначка `ever_approved` і повернення в групу — як і раніше."""
     try:
         u = get_user_by_id(uid)
         if not u:
@@ -270,10 +274,11 @@ def notify_user_approved(uid):
             return
         from web.tg_bot import tg_send, base_url
         b = base_url()
-        tg_send(u.telegram_chat_id,
-                "✅ <b>Ваш акаунт активовано!</b>\nТепер увійдіть на сайті "
-                "своїм <b>логіном</b> і паролем.",
-                buttons=[[{'text': '🔐 Увійти', 'url': f"{b}/login"}]] if b else None)
+        if not silent:
+            tg_send(u.telegram_chat_id,
+                    "✅ <b>Ваш акаунт активовано!</b>\nТепер увійдіть на сайті "
+                    "своїм <b>логіном</b> і паролем.",
+                    buttons=[[{'text': '🔐 Увійти', 'url': f"{b}/login"}]] if b else None)
         # 🎉 Auto-onboard the approved user into the community group (personal
         # one-time invite link — Bot API can't add a member directly).
         try:
@@ -1868,10 +1873,11 @@ def register_auth_routes(app):
                 days = 0
             au = (datetime.utcnow() + timedelta(days=days)) if days > 0 else None
             _update_user(uid, access_until=au, approved=True, disabled=False)
-            notify_user_approved(uid)   # ping the user's Telegram if linked
+            # 🔕 Користувачу про зміну/продовження терміну НЕ пишемо (вимога
+            # 09.11); групу й позначку `ever_approved` відновлюємо як і раніше.
+            notify_user_approved(uid, silent=True)
             _dtxt = f"{days} дн." if days > 0 else "без обмеження"
-            _notify_change(f"⏳ Ваш доступ оновлено: <b>{_dtxt}</b>.",
-                           f"⏳ <b>{_lbl}</b> — доступ {_dtxt}.")
+            _notify_change(admin_text=f"⏳ <b>{_lbl}</b> — доступ {_dtxt}.")
         elif action == 'kick':
             # Invalidate all live sessions of this user (force re-login).
             _update_user(uid, session_token=None)
