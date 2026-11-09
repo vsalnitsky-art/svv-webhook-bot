@@ -944,6 +944,7 @@
   // обсягу трьох свічок розриву, число — в кінці смуги. Великий напівпрозорий
   // обсяг імпульсної свічки (у монетах, «11.461K») — поверх смуг, як у TV.
   var IMB_SELL = "rgba(234,128,38,.92)", IMB_BUY = "rgba(38,166,154,.92)";
+  var IMB_MIN_PX = 4;      // тонші IMB на екрані не малюємо (смужки-шум)
   function _imbBar(ctx, X1, w, y, bh, pct, color, hr, vr, font, dark) {
     if (pct == null || pct <= 0 || bh < 1) return;   // 0% — не смужка, а шум
     var sw = Math.max(2 * hr, w * Math.min(100, Math.max(0, pct)) / 100);
@@ -1023,6 +1024,9 @@
           if (b.ext) X2 = Math.min(X2, (x1 + b.ext * ts.options().barSpacing) * hr);
           var yT = Math.min(yA, yB) * vr, yBt = Math.max(yA, yB) * vr;
           if (X2 <= X1) continue;
+          // IMB тонший за IMB_MIN_PX css-пікселів на поточному масштабі — лише
+          // смужка-шум (вимога 09.11), не малюємо; збільшите масштаб — зʼявиться.
+          if (b.kind === "imb" && (yBt - yT) < IMB_MIN_PX * vr) continue;
           if (yBt - yT < 1) yBt = yT + 1;
           ctx.fillStyle = b.fill; ctx.fillRect(X1, yT, X2 - X1, yBt - yT);
           if (b.kind === "imb") _imbBody(ctx, b, X1, X2, yT, yBt, hr, vr, font, dark);

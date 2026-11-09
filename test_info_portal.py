@@ -520,6 +520,18 @@ def test_imb_counts_the_live_bar_like_tv():
     print('✓ IMB видно на живій свічці, як у TV')
 
 
+def test_imb_slivers_are_hidden():
+    """09.11: мізерні смужки IMB (майже заповнені / тонші за 0.25·ATR) не малюються."""
+    vis = ip.imb_visible
+    _check(vis({'top': 102, 'bottom': 100, 'filled_pct': 0}, 2.0), 'нормальний розрив видно')
+    _check(not vis({'top': 102, 'bottom': 100, 'filled_pct': 85}, 2.0), '≥80% заповнено — сховано')
+    _check(not vis({'top': 100.3, 'bottom': 100, 'filled_pct': 10}, 2.0), 'залишок < 0.25·ATR — сховано')
+    _check(vis({'top': 100.3, 'bottom': 100, 'filled_pct': 10}, None), 'ATR невідомий → лише заповнення')
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    _check('b.kind === "imb" && (yBt - yT) < IMB_MIN_PX * vr' in js, 'фронт: тонкі IMB на екрані не малюються')
+    print('✓ IMB-смужки прибрано')
+
+
 def test_tfs_poc_params_ob_declutter_0811():
     """1m/5m прибрано з графіка, 1m — з VOB; POC — свої параметри (деф. 7 днів ·
     1H); OB-бокси без купи перекритих; підписи графіка без накладань."""

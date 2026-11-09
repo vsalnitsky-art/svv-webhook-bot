@@ -226,6 +226,39 @@ IMB_SHOW = 12               # скільки незаповнених IMB мал
 SBR_SHOW = 40               # скільки останніх сигналів SBR на графіку
 
 
+IMB_MAX_FILLED = 80         # заповнено ≥ N% → розрив відпрацьовано, не малюємо
+IMB_MIN_REST_ATR = 0.25     # залишок зони < N·ATR(14) → лише смужка-шум
+
+
+def _imb_atr(bars):
+    """Останній ATR(14) барів графіка (та сама RMA, що в детекторі) або None."""
+    try:
+        from detection.imbalance import _atr, _close
+        h = [float(b['h']) for b in bars]
+        l = [float(b['l']) for b in bars]
+        c = [_close(b) for b in bars]
+        a = _atr(h, l, c)
+        return next((x for x in reversed(a) if x), None)
+    except Exception:
+        return None
+
+
+def imb_visible(z, atr):
+    """ЧИСТА: чи варто малювати IMB (вимога 09.11 — «мізерні полоси захламляють
+    графік»). Ховаємо розрив, який ціна вже майже закрила (filled_pct ≥
+    IMB_MAX_FILLED) або чий НЕЗАПОВНЕНИЙ залишок тонший за IMB_MIN_REST_ATR·ATR.
+    ATR невідомий → судимо лише за заповненням."""
+    try:
+        if float(z.get('filled_pct') or 0) >= IMB_MAX_FILLED:
+            return False
+        rest = float(z['top']) - float(z['bottom'])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if atr and rest < IMB_MIN_REST_ATR * float(atr):
+        return False
+    return rest > 0
+
+
 def imb_of(klines, tf, now=None):
     """📐 IMB (Fair Value Gap) — `detection.imbalance` на барах графіка
     РАЗОМ із ЖИВИМ (вимога 08.11, кейс BTC 1H: обвал 21:00 — TV уже малював
@@ -237,8 +270,13 @@ def imb_of(klines, tf, now=None):
     except Exception:
         return []
     closed = [k for k in (klines or []) if k.get('t') is not None]
+    atr = _imb_atr(closed)
     out = []
-    for z in detect_imbalances(closed, max_show=IMB_SHOW):
+    for z in detect_imbalances(closed, max_show=IMB_SHOW * 3):
+        if not imb_visible(z, atr):
+            continue                     # майже заповнений «ошматок» — не засмічує графік
+        if len(out) >= IMB_SHOW:
+            break
         out.append({'side': z['side'], 'top': z['top'], 'bottom': z['bottom'],
                     'start': z['t'], 'filled_pct': z.get('filled_pct', 0),
                     'vol': z.get('vol'), 'pct': z.get('pct'),
