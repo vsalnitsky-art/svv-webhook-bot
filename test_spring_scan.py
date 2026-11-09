@@ -71,13 +71,14 @@ TICKERS = {
 }
 
 
-def _mk(db=None, queued=None):
+def _mk(db=None, queued=None, notify=None, clock=None, kinds=None):
     calls = {'fetch': [], 'queue': []}
 
     def fetch_factory(ex):
         def f(sym):
             calls['fetch'].append((ex, sym))
-            return _bars('coil' if sym.startswith('COIL') else 'wild')
+            k = (kinds or {}).get(sym) or ('coil' if sym.startswith('COIL') else 'wild')
+            return _bars(k)
         return f
 
     def run_q(name, fn, source):
@@ -85,7 +86,8 @@ def _mk(db=None, queued=None):
         return fn()
 
     eng = ss.SpringScan(db=db, tickers=lambda ex: dict(TICKERS),
-                        fetch_factory=fetch_factory, run_queued=queued or run_q, workers=2)
+                        fetch_factory=fetch_factory, run_queued=queued or run_q, workers=2,
+                        notify=notify, clock=clock)
     return eng, calls
 
 
@@ -108,7 +110,7 @@ def test_only_charged_rows_land_in_table():
     res = eng.scan('bybit', 50e6)
     assert [r['symbol'] for r in res['rows']] == ['COILUSDT']
     assert res['rows'][0]['state'] == 'charged'
-    assert res['scanned'] == 2 and res['charged'] == 1
+    assert res['scanned'] == 2 and res['charged'] == 1 and res['added'] == 1
     assert {s for _, s in calls['fetch']} == {'COILUSDT', 'WILDUSDT'}
     assert 'LOWUSDT' not in {s for _, s in calls['fetch']}
 
@@ -142,7 +144,9 @@ def test_start_runs_through_shared_queue_and_tracks_progress():
     p = eng.progress()
     assert p['phase'] == 'done' and p['done'] == 2 and p['total'] == 2 and p['found'] == 1
     assert p['found_syms'] == ['COILUSDT'] and len(p['recent']) == 2
-    assert eng.settings() == {'exchange': 'binance', 'min_vol_usd': 60e6}
+    st0 = eng.settings()
+    assert st0['exchange'] == 'binance' and st0['min_vol_usd'] == 60e6
+    assert st0['min_charge'] == 80 and st0['auto_on'] is False and st0['auto_min'] == 30
     # персист і відновлення після рестарту
     eng2 = ss.SpringScan(db=db)
     st = eng2.state()
@@ -187,8 +191,13 @@ def test_show_only_never_trades():
     tree = ast.parse(src)
     names = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)} | \
             {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
-    for bad in ('on_signal', 'intercept', '_open', 'manual_open', 'notify_category', 'tg_send'):
+    for bad in ('on_signal', 'intercept', '_open', 'manual_open', 'tg_send'):
         assert bad not in names, bad
+    # Telegram — лише попередження через ОДНЕ місце (_default_notify → тема «🔔 Сигнали»).
+    fns = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    users = [k for k, f in fns.items()
+             if any(isinstance(x, ast.Name) and x.id == 'notify_category' for x in ast.walk(f))]
+    assert users == ['_default_notify'], users
 
 
 def test_routes_and_ui():
@@ -196,8 +205,11 @@ def test_routes_and_ui():
     assert "/api/spring-scan/state" in fl and "/api/spring-scan/run" in fl
     i = fl.index('def api_spring_scan_state')
     assert 'import time' in fl[i:i + 400]
+    assert '/api/spring-scan/settings' in fl and '/api/spring-scan/tg' in fl
+    assert "init_spring_scan(db=get_db(), start_loop=True)" in fl
     for id_ in ('xspr-panel', 'xspr-exchange', 'xspr-minvol', 'xspr-run', 'xspr-viz',
-                'xspr-tbody', 'xspr-agg', 'xspr-caret', 'xspr-body'):
+                'xspr-tbody', 'xspr-agg', 'xspr-caret', 'xspr-body',
+                'xspr-mincharge', 'xspr-auto', 'xspr-auto-min'):
         assert f'id="{id_}"' in HTML, id_
     assert "'xspr'" in HTML.split('const _PANEL_IDS = ')[1].split('\n')[0]
     assert '<option value="50000000" selected>' in HTML
@@ -208,7 +220,8 @@ def test_routes_and_ui():
     # колонок у заголовку стільки ж, скільки colspan порожнього рядка
     t = HTML[HTML.index('id="xspr-table"'):]
     t = t[:t.index('</thead>')]
-    assert len(re.findall(r'<th[ >]', t)) == 13 and 'colspan="13"' in HTML
+    assert len(re.findall(r'<th[ >]', t)) == 14 and 'colspan="14"' in HTML
+    assert 'id="xspr-mincharge" value="80"' in HTML and 'id="xspr-auto-min" value="30"' in HTML
 
 
 def test_page_script_parses():
@@ -222,6 +235,148 @@ def test_page_script_parses():
     r = subprocess.run([node, '--check', f.name], capture_output=True, text=True)
     os.unlink(f.name)
     assert r.returncode == 0, r.stderr
+
+
+
+# ═══ 09.11: фільтр заряду · автоскан · перерахунок · TG по SBR ═══════════════
+
+class _Clock:
+    def __init__(self, t):
+        self.t = float(t)
+
+    def __call__(self):
+        return self.t
+
+
+def test_min_charge_filter_gates_the_entry():
+    eng, _ = _mk()
+    eng.update_settings({'min_charge': 99.5})
+    res = eng.scan('bybit', 50e6)
+    assert res['charged'] == 1 and res['added'] == 0 and res['rows'] == []
+    eng.update_settings({'min_charge': 80})
+    assert [r['symbol'] for r in eng.scan('bybit', 50e6)['rows']] == ['COILUSDT']
+    assert ss.takes_in_work({'state': 'charged', 'charge': 80}, 80)
+    assert not ss.takes_in_work({'state': 'charged', 'charge': 79.9}, 80)
+    assert not ss.takes_in_work({'state': 'building', 'charge': 99}, 80)
+
+
+def test_repeat_scan_supplements_the_table():
+    kinds = {}
+    eng, _ = _mk(kinds=kinds)
+    eng.scan('bybit', 50e6)
+    assert [r['symbol'] for r in eng.rows()] == ['COILUSDT']
+    first_added = eng.rows()[0]['added_at']
+    kinds['WILDUSDT'] = 'coil'                      # друга монета зарядилась
+    res = eng.scan('bybit', 50e6)
+    assert sorted(r['symbol'] for r in eng.rows()) == ['COILUSDT', 'WILDUSDT']
+    assert res['added'] == 1
+    assert [r for r in eng.rows() if r['symbol'] == 'COILUSDT'][0]['added_at'] == first_added
+    # монета таблиці, що вже не заряджена, вибуває і на повному скані
+    kinds['COILUSDT'] = 'wild'
+    eng.scan('bybit', 50e6)
+    assert [r['symbol'] for r in eng.rows()] == ['WILDUSDT']
+
+
+def test_recalc_touches_only_table_coins_and_drops_uncharged():
+    kinds = {}
+    eng, calls = _mk(kinds=kinds)
+    eng.scan('bybit', 50e6)
+    eng.set_tg('COILUSDT', ['1h'])
+    calls['fetch'].clear()
+    out = eng.recalc()
+    assert [s for _, s in calls['fetch']] == ['COILUSDT']   # лише таблиця
+    assert out['checked'] == 1 and out['removed'] == []
+    kinds['COILUSDT'] = 'wild'
+    out = eng.recalc()
+    assert out['removed'] == ['COILUSDT'] and eng.rows() == []
+    assert 'COILUSDT' not in eng.settings()['tg']              # кнопки — разом із монетою
+    assert eng.state()['removed'][0]['symbol'] == 'COILUSDT'
+
+
+def test_recalc_keeps_charged_below_entry_filter():
+    """Фільтр заряду — лише на вхід; лишаємося, поки «🌀 заряджена»."""
+    assert ss.stays_in_table({'state': 'charged', 'charge': 66})
+    assert not ss.stays_in_table({'state': 'fired', 'charge': 90})
+    assert not ss.stays_in_table(None)
+
+
+def test_fetch_failure_does_not_remove_a_coin():
+    eng, _ = _mk()
+    eng.scan('bybit', 50e6)
+
+    def boom(ex):
+        def f(sym):
+            raise RuntimeError('net')
+        return f
+    eng._fetch_factory = boom
+    out = eng.recalc()
+    assert out['errors'] == 1 and [r['symbol'] for r in eng.rows()] == ['COILUSDT']
+
+
+def test_tick_runs_recalc_on_new_bar_and_autoscan_on_schedule():
+    clk = _Clock(1_800_000_000 + 30 * 60)
+    eng, calls = _mk(clock=clk)
+    started = []
+    eng.start_recalc = lambda source='bar': started.append('recalc') or {'started': True}
+    eng.start = lambda **kw: started.append('scan') or {'started': True}
+    assert eng.tick() is None                      # таблиця порожня, авто вимкнено
+    eng.update_settings({'auto_on': True, 'auto_min': 30})
+    assert eng.tick() == 'scan'
+    eng._result = {'ts': clk.t}
+    assert eng.tick() is None                      # ще не минуло 30 хв
+    clk.t += 30 * 60
+    assert eng.tick() == 'scan'
+    eng._result = {'ts': clk.t}
+    eng._table = {'COILUSDT': {'symbol': 'COILUSDT', 'state': 'charged'}}
+    eng._recalc = {'bar': ss.next_bar_due(clk.t) - 3600}
+    assert eng.tick() == 'recalc'
+    eng._recalc = {'bar': ss.next_bar_due(clk.t)}
+    assert eng.tick() is None                      # цей бар уже перераховано
+    eng._table = {}
+    clk.t += 30 * 60 + 1
+    eng._auto_fail_at = clk.t
+    eng._result = {'ts': 0}
+    assert eng.tick() is None                      # після невдачі — пауза
+    clk.t += ss.FAIL_RETRY_SEC
+    assert eng.tick() == 'scan'
+
+
+def test_sbr_signal_in_coin_direction_sends_once():
+    sent = []
+    eng, _ = _mk(notify=lambda txt: (sent.append(txt) or True, ''))
+    eng.scan('bybit', 50e6)
+    side = ss.row_side(eng.rows()[0])
+    assert side in ('LONG', 'SHORT')
+    opp = 'SHORT' if side == 'LONG' else 'LONG'
+    sig = lambda s, t=1000: {'side': s, 'close_t': t, 'trigger': 1.5, 'sl': 1.4, 'n': 1, 'score': 80}
+    assert eng.on_sbr('COILUSDT', [('1h', sig(side))]) == 0         # кнопки не увімкнені
+    eng.set_tg('COILUSDT', ['1h'])
+    assert eng.on_sbr('COILUSDT', [('4h', sig(side))]) == 0         # не той TF
+    assert eng.on_sbr('COILUSDT', [('1h', sig(opp))]) == 0          # проти напрямку
+    assert eng.on_sbr('COILUSDT', [('1h', sig(side))]) == 1
+    assert eng.on_sbr('COILUSDT', [('1h', sig(side))]) == 0         # той самий сигнал
+    assert len(sent) == 1 and '#COILUSDT' in sent[0] and side in sent[0]
+    assert eng.on_sbr('WILDUSDT', [('1h', sig(side))]) == 0         # монети нема в таблиці
+    assert eng.set_tg('WILDUSDT', ['1h'])['ok'] is False
+    assert eng.tg_symbols() == ['COILUSDT']
+
+
+def test_table_and_tg_survive_restart():
+    db = _DB()
+    eng, _ = _mk(db=db)
+    eng.scan('bybit', 50e6)
+    eng.set_tg('COILUSDT', ['4h', '1h'])
+    eng.recalc()
+    eng2 = ss.SpringScan(db=db)
+    assert [r['symbol'] for r in eng2.rows()] == ['COILUSDT']
+    assert eng2.rows()[0]['tg'] == ['1h', '4h']
+    assert eng2.state()['recalc'].get('checked') == 1
+
+
+def test_sbr_engine_feeds_and_calls_spring_scan():
+    src = open(os.path.join(ROOT, 'detection', 'sbr_signals.py'), encoding='utf-8').read()
+    assert 'from detection.spring_scan import sbr_symbols' in src
+    assert 'spring=_default_spring' in src and 'self._spring(S, items)' in src
 
 
 if __name__ == '__main__':

@@ -584,6 +584,16 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Funding Spring: {e}")
 
+        if not _auto_started.get('spring_scan'):
+            _auto_started['spring_scan'] = True
+            try:
+                # 🔭 Пружина — скан біржі (09.11): автоскан + перерахунок заряду
+                # монет таблиці на закритті 1h-бару + попередження TG по SBR.
+                from detection.spring_scan import init_spring_scan
+                init_spring_scan(db=get_db(), start_loop=True)
+            except Exception as e:
+                print(f"[APP] Failed to start Spring Scan: {e}")
+
         if not _auto_started.get('tickr_opp'):
             _auto_started['tickr_opp'] = True
             try:
@@ -3089,7 +3099,7 @@ def register_api_routes(app):
     # ── 🔭 «Пружина — скан біржі» (08.11): РУЧНИЙ скан усіх USDT-перпів ──
     def _spring_scan_eng():
         from detection.spring_scan import get_spring_scan, init_spring_scan
-        return get_spring_scan() or init_spring_scan(db=get_db())
+        return get_spring_scan() or init_spring_scan(db=get_db(), start_loop=True)
 
     @app.route('/api/spring-scan/state', methods=['GET'])
     def api_spring_scan_state():
@@ -3121,7 +3131,28 @@ def register_api_routes(app):
         """Ручний запуск {exchange, min_vol_usd} — у фоні, через спільну чергу сканів."""
         try:
             data = request.get_json(silent=True) or {}
-            return jsonify(_spring_scan_eng().start(data.get('exchange'), data.get('min_vol_usd')))
+            return jsonify(_spring_scan_eng().start(data.get('exchange'), data.get('min_vol_usd'),
+                                                    data.get('min_charge')))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/spring-scan/settings', methods=['POST'])
+    def api_spring_scan_settings():
+        """{exchange, min_vol_usd, min_charge, auto_on, auto_min}."""
+        try:
+            data = request.get_json(silent=True) or {}
+            keys = ('exchange', 'min_vol_usd', 'min_charge', 'auto_on', 'auto_min')
+            return jsonify({'ok': True, 'settings': _spring_scan_eng().update_settings(
+                {k: data[k] for k in keys if k in data})})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/spring-scan/tg', methods=['POST'])
+    def api_spring_scan_tg():
+        """Кнопки 1H/4H рядка: {symbol, tfs: ['1h','4h']}."""
+        try:
+            data = request.get_json(silent=True) or {}
+            return jsonify(_spring_scan_eng().set_tg(data.get('symbol'), data.get('tfs') or []))
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 

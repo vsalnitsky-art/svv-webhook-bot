@@ -365,12 +365,13 @@ class SbrEngine:
     шле Telegram по монетах, відмічених кнопкою 🔔 у WATCHLIST."""
 
     def __init__(self, db=None, get_watchlist=None, fetch=None, notify=None,
-                 clock=None, get_extra=None, personal=None):
+                 clock=None, get_extra=None, personal=None, spring=None):
         self.db = db
         # 👤 особисті підписки з кабінету (вимога 09.11): монети, які треба
         # вести навіть поза WATCHLIST, і доставка сигналу в особистий чат.
         self._get_extra = get_extra or (lambda: [])
         self._personal = personal
+        self._spring = spring          # 🔭 Пружина — скан біржі (попередження TG)
         self._get_watchlist = get_watchlist or (lambda: [])
         self._fetch = fetch            # (sym, tf, limit) → bars | None
         self._notify = notify          # (text) → (ok, why)
@@ -748,6 +749,13 @@ class SbrEngine:
                 pers_ok, pers_bad = self._personal(S, items) or (0, 0)
             except Exception as e:
                 print(f"[SBR] personal send error {S}: {e}")
+        # 🔭 Монети з таблиці «Пружина — скан біржі» (кнопки 1H/4H): незалежно
+        # від групових тумблерів SBR — у таблиці людина обрала монету сама.
+        if self._spring:
+            try:
+                self._spring(S, items)
+            except Exception as e:
+                print(f"[SBR] spring-scan hook error {S}: {e}")
         for side, grp in by_side.items():
             tf_lbl = '+'.join(TF_LABEL[tf] for tf, _ in sorted(grp, key=lambda x: TF_SEC[x[0]]))
             ev = {'symbol': S, 'side': side, 'tfs': tf_lbl, 'at': now,
@@ -870,8 +878,23 @@ def _default_notify(text: str):
 
 
 def _default_extra():
-    from web.info_portal import sbr_extra_symbols
-    return sbr_extra_symbols()
+    out = []
+    try:
+        from web.info_portal import sbr_extra_symbols
+        out += list(sbr_extra_symbols() or [])
+    except Exception:
+        pass
+    try:
+        from detection.spring_scan import sbr_symbols
+        out += list(sbr_symbols() or [])
+    except Exception:
+        pass
+    return out
+
+
+def _default_spring(symbol, items):
+    from detection.spring_scan import on_sbr_signals
+    return on_sbr_signals(symbol, items)
 
 
 def _default_personal(symbol, items):
@@ -884,7 +907,8 @@ def init_sbr_engine(db=None, get_watchlist=None, fetch=None, notify=None) -> Sbr
     if _instance is None:
         _instance = SbrEngine(db, get_watchlist, fetch or _default_fetch,
                               notify or _default_notify,
-                              get_extra=_default_extra, personal=_default_personal)
+                              get_extra=_default_extra, personal=_default_personal,
+                              spring=_default_spring)
         if _instance.is_enabled():
             _instance.start()
     return _instance
