@@ -6366,6 +6366,62 @@ class FuelFilterDaemon:
             print(f"[FF-MMM] SL error {sym}: {e}")
         return {'symbol': sym, 'side': side, 'ok': True, 'reason': 'відкрито'}
 
+    def hand_open(self, sym: str, side: str, engine: str, name: str,
+                  source: str, note: str = '', price: Optional[float] = None) -> Dict:
+        """✋ РУЧНЕ відкриття ОДНІЄЇ монети з будь-якої таблиці-рекомендації
+        (напр. 🔭 Пружина — скан біржі). Той самий шлях, що ✋ групове МММ:
+        `_open(by_hand=True)` (жодних воріт, лише технічні умови) → таймер →
+        той самий Manual SL `_q4_set_vob_sl`. Мітка `manual → <engine>`."""
+        from detection.activity_log import log_activity
+        S = str(sym or '').upper().strip()
+        side = str(side or '').upper().strip()
+        if not S:
+            return {'symbol': S, 'side': None, 'ok': False, 'reason': 'symbol required'}
+        if side not in ('LONG', 'SHORT'):
+            return {'symbol': S, 'side': None, 'ok': False,
+                    'reason': 'немає напрямку (⚖) — нічого відкривати'}
+        if self._tm_blocks_open(S):
+            return {'symbol': S, 'side': side, 'ok': False,
+                    'reason': 'уже в угоді (відкрита позиція)'}
+        mark = None
+        try:
+            from detection.market_data import get_market_data
+            md = get_market_data()
+            tk = md.get_ticker(S) if md else None
+            mark = (tk or {}).get('last')
+        except Exception:
+            mark = None
+        if (not mark or mark <= 0) and price:
+            mark = float(price)
+        if not mark or mark <= 0:
+            return {'symbol': S, 'side': side, 'ok': False,
+                    'reason': 'не вдалося отримати ціну'}
+        s = self.get_settings()
+        try:
+            opened = self._open(S, side, {'mark_price': mark, 'dir': side}, s,
+                                opened_by=_ob_compose('manual', engine),
+                                skip_ctr_safeguard=True, skip_safeguard=True,
+                                by_hand=True)
+        except Exception as e:
+            print(f"[FF-HAND] open error {S}: {e}")
+            return {'symbol': S, 'side': side, 'ok': False, 'reason': f'помилка: {e}'}
+        if not opened:
+            _why = getattr(self, '_engine_skip', {}).get(S) or 'невідома причина'
+            log_activity(S, 'skipped', f'{name}: ✋ відкриття {side} не відбулось — {_why}',
+                         side=side, source=source)
+            return {'symbol': S, 'side': side, 'ok': False, 'reason': _why}
+        with self._lock:
+            self._timers[S] = {'dir': side, 'since': time.time(), 'start_price': mark}
+        log_activity(S, 'opened',
+                     f'{name}: ✋ РУЧНЕ відкриття {side}' + (f' · {note}' if note else '')
+                     + ' — ворота пропущено (рішення користувача)',
+                     side=side, source=source)
+        try:
+            self._q4_set_vob_sl(S, side, s)
+        except Exception as e:
+            print(f"[FF-HAND] SL error {S}: {e}")
+        return {'symbol': S, 'side': side, 'ok': True, 'reason': 'відкрито'}
+
     def get_btc_session(self) -> Dict:
         """The committed ₿ BTCUSDT session that the banner shows:
         {'dir': 'LONG'|'SHORT'|None, 'paused': bool, 'since': float}.

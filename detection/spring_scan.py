@@ -145,6 +145,19 @@ def row_side(row: Optional[Dict]) -> Optional[str]:
     return d if d in ('LONG', 'SHORT') else None
 
 
+def open_plan(row: Optional[Dict], side=None):
+    """ЧИСТА: чи можна ✋ відкрити угоду по рядку таблиці скану →
+    (ok, side, причина). Бік — обраний людиною, інакше напрямок рядка."""
+    if not row:
+        return False, None, 'монети немає в таблиці скану'
+    sd = str(side or '').upper().strip() or row_side(row)
+    if sd not in ('LONG', 'SHORT'):
+        return False, None, 'немає напрямку (⚖) — оберіть LONG або SHORT'
+    if row.get('bybit') is False:
+        return False, sd, 'монети немає на Bybit — бот торгує там, угоду не відкрити'
+    return True, sd, ''
+
+
 def sbr_hits(row: Optional[Dict], tfs, items) -> List[tuple]:
     """ЧИСТА: сигнали SBR [(tf, sig)], що відповідають кнопкам рядка (1H/4H)
     і НАПРЯМКУ монети в таблиці."""

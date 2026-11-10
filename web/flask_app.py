@@ -3157,6 +3157,33 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/spring-scan/open', methods=['POST'])
+    def api_spring_scan_open():
+        """✋ {symbol, side?} — відкрити угоду по монеті з таблиці 🔭 Пружина —
+        скан біржі. Напрямок — обраний людиною, інакше напрямок рядка
+        (`row_side`: dir, інакше lean). Ворота не діють (✋ ручне), лишаються
+        технічні умови; монета не з Bybit → відмова (бот торгує на Bybit)."""
+        try:
+            data = request.get_json(silent=True) or {}
+            from detection import spring_scan as _ss
+            from detection.fuel_filter import get_fuel_filter
+            eng = _spring_scan_eng()
+            row = eng.row_for(data.get('symbol'))
+            ok, side, why = _ss.open_plan(row, data.get('side'))
+            if not ok:
+                return jsonify({'ok': False, 'symbol': str(data.get('symbol') or '').upper(),
+                                'side': side, 'reason': why})
+            ff = get_fuel_filter()
+            if not ff or not hasattr(ff, 'hand_open'):
+                return jsonify({'ok': False, 'reason': 'Fuel Filter не ініціалізовано'})
+            note = (f"заряд {row.get('charge')} · напрямок рядка "
+                    f"{_ss.row_side(row) or '⚖'}")
+            return jsonify(ff.hand_open(row['symbol'], side, 'XSPR',
+                                        '🔭 Пружина-скан', 'XSPR', note=note,
+                                        price=row.get('price')))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/spring-scan/remove', methods=['POST'])
     def api_spring_scan_remove():
         """✕ {symbol} — прибрати монету з таблиці; {all: true} — очистити таблицю."""

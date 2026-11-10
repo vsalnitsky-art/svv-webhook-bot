@@ -222,7 +222,7 @@ def test_routes_and_ui():
     # колонок у заголовку стільки ж, скільки colspan порожнього рядка
     t = HTML[HTML.index('id="xspr-table"'):]
     t = t[:t.index('</thead>')]
-    assert len(re.findall(r'<th[ >]', t)) == 15 and 'colspan="15"' in HTML and 'colspan="14"' not in HTML
+    assert len(re.findall(r'<th[ >]', t)) == 16 and 'colspan="16"' in HTML and 'colspan="15"' not in HTML
     assert 'id="xspr-mincharge" value="80"' in HTML and 'id="xspr-auto-min" value="30"' in HTML
 
 
@@ -416,6 +416,41 @@ def test_sbr_engine_feeds_and_calls_spring_scan():
     src = open(os.path.join(ROOT, 'detection', 'sbr_signals.py'), encoding='utf-8').read()
     assert 'from detection.spring_scan import sbr_symbols' in src
     assert 'spring=_default_spring' in src and 'self._spring(S, items)' in src
+
+
+# ── ✋ ВІДКРИТТЯ УГОДИ З ТАБЛИЦІ СКАНУ (вимога 10.11) ──
+def test_open_plan_side_and_refusals():
+    assert ss.open_plan(None)[0] is False
+    ok, sd, _ = ss.open_plan({'symbol': 'AUSDT', 'dir': 'LONG'})
+    assert ok and sd == 'LONG'
+    ok, sd, _ = ss.open_plan({'symbol': 'AUSDT', 'dir': None, 'lean': 'SHORT'})
+    assert ok and sd == 'SHORT'
+    # людина обрала бік ПРОТИ рядка — її вибір сильніший
+    ok, sd, _ = ss.open_plan({'symbol': 'AUSDT', 'dir': 'LONG'}, 'short')
+    assert ok and sd == 'SHORT'
+    ok, sd, why = ss.open_plan({'symbol': 'AUSDT'})
+    assert not ok and sd is None and '⚖' in why
+    ok, sd, why = ss.open_plan({'symbol': 'AUSDT', 'dir': 'LONG', 'bybit': False})
+    assert not ok and 'Bybit' in why
+
+
+def test_open_route_goes_through_hand_open_with_label():
+    src = open(os.path.join(ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
+    i = src.index("'/api/spring-scan/open'")
+    body = src[i:src.index('@app.route', i + 10)]
+    assert 'open_plan(' in body and "ff.hand_open(" in body and "'XSPR'" in body
+    ff = open(os.path.join(ROOT, 'detection', 'fuel_filter.py'), encoding='utf-8').read()
+    j = ff.index('def hand_open(')
+    hb = ff[j:ff.index('\n    def ', j + 10)]
+    assert 'by_hand=True' in hb and "_ob_compose('manual', engine)" in hb
+    assert '_q4_set_vob_sl' in hb and '_tm_blocks_open' in hb
+
+
+def test_open_button_rendered():
+    assert 'function _xsOpenCell(' in HTML and '_xsOpenCell(x) + _xsDelCell(x)' in HTML
+    assert "fetch('/api/spring-scan/open'" in HTML
+    lab = open(os.path.join(ROOT, 'detection', 'signal_labels.py'), encoding='utf-8').read()
+    assert "'XSPR':             '🔭 Пружина-скан'" in lab
 
 
 if __name__ == '__main__':

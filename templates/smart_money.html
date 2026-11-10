@@ -1474,6 +1474,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .xs-found{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
 .xs-del { background:transparent; border:1px solid #3a2a2e; color:#f87171; border-radius:4px; padding:0 6px; font-size:11px; line-height:18px; cursor:pointer; }
 .xs-del:hover { background:rgba(248,113,113,0.12); border-color:#f87171; }
+.xs-open { background:transparent; border:1px solid #2b2f36; color:#94a3b8; border-radius:4px; padding:0 6px; margin-right:3px; font-size:11px; line-height:18px; cursor:pointer; font-family:monospace; }
+.xs-open-l.rec { border-color:#22c55e; color:#4ade80; background:rgba(34,197,94,0.10); }
+.xs-open-s.rec { border-color:#ef4444; color:#f87171; background:rgba(239,68,68,0.10); }
+.xs-open-l:hover { border-color:#4ade80; color:#4ade80; }
+.xs-open-s:hover { border-color:#f87171; color:#f87171; }
 .xs-btn.xs-btn-clr { background:transparent; border-color:#4b2a2e; color:#fca5a5; }
 .xs-tg{font-family:monospace;font-size:0.64rem;padding:1px 6px;border-radius:4px;border:1px solid #2b2f36;background:#141821;color:#6b7280;cursor:pointer;margin-right:3px}
 .xs-tg.on{border-color:#f59e0b;color:#fbbf24;background:rgba(245,158,11,.12);font-weight:700}
@@ -2973,9 +2978,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <th style="text-align:right" title="Обʼєм останніх 12 год проти попередніх 72 (менше 1 — висихає)">Обʼєм</th>
                     <th title="Де монета зараз: у відкритій угоді / у черзі">📍</th>
                     <th title="📨 Telegram: увімкніть 1H та/або 4H — щойно на цьому TF прийде сигнал 🔔 SBR У НАПРЯМКУ монети (колонка «Напрямок»), у тему «🔔 Сигнали» піде попередження «монету взято в роботу». Кожен сигнал — один раз.">📨 SBR</th>
+                    <th title="✋ Відкрити угоду по монеті (ручне відкриття: ворота не діють, лишаються технічні умови; реальна чи paper — за звичним правилом TRD / Trade Manager / Test Mode). Підсвічена кнопка — напрямок рядка. Стоп ставить той самий ланцюг «🛑 SL з».">✋ Угода</th>
                     <th title="✕ Прибрати монету з таблиці (разом із її кнопками 1H/4H). Наступний повний скан знову додасть її, якщо вона ще заряджена ≥ фільтра."></th>
                 </tr></thead>
-                <tbody id="xspr-tbody"><tr><td colspan="15" class="tm-empty-msg">Скан ще не запускали — натисніть «🔭 Сканувати»</td></tr></tbody>
+                <tbody id="xspr-tbody"><tr><td colspan="16" class="tm-empty-msg">Скан ще не запускали — натисніть «🔭 Сканувати»</td></tr></tbody>
             </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:6px">Алгоритм — той самий, що в 🌀 Пружині (ЗАКРИТІ 1h-бари, 300 барів на монету). Монети — усі USDT-перпетуали обраної біржі з обігом за 24 год ≥ порогу (без стейблів і обгорток). У таблицю потрапляють ЛИШЕ монети зі станом «🌀 заряджена» і зарядом ≥ фільтра; повторний скан (ручний або 🔁 авто) таблицю ДОПОВНЮЄ. На кожному закритому 1h-барі бот перераховує заряд ЛИШЕ монет таблиці: статус уже не «🌀 заряджена» → монета вибуває (разом зі своїми кнопками 1H/4H). Нічого не відкриває; Telegram — лише попередження «в роботу» за кнопками 📨 SBR.</div>
@@ -17757,6 +17763,29 @@ function _xsTgCell(x) {
     const b = tf => `<button class="xs-tg${on.has(tf) ? ' on' : ''}" onclick="xsprTg('${x.symbol}','${tf}')" title="${on.has(tf) ? 'Вимкнути' : 'Увімкнути'}: сигнал 🔔 SBR ${tf.toUpperCase()}${sideTxt ? ' у бік ' + sideTxt : ''} → попередження в Telegram">${tf.toUpperCase()}</button>`;
     return `<td style="white-space:nowrap">${b('1h')}${b('4h')}</td>`;
 }
+// ✋ Відкрити угоду з таблиці скану (вимога 10.11). Підсвічено напрямок рядка.
+function _xsOpenCell(x) {
+    if (x.trade_side) return `<td style="white-space:nowrap;color:#38bdf8;font-size:11px" title="Монета вже у відкритій угоді">💼 ${x.trade_side}</td>`;
+    if (x.bybit === false) return `<td style="color:#6b7280;font-size:11px" title="Монети немає на Bybit — угоду не відкрити">—</td>`;
+    const rec = x.dir || x.lean || '';
+    const b = sd => `<button class="xs-open xs-open-${sd === 'LONG' ? 'l' : 's'}${rec === sd ? ' rec' : ''}" onclick="xsprOpen('${x.symbol}','${sd}')" title="✋ Відкрити ${sd} по ${x.symbol}${rec === sd ? ' (напрямок рядка)' : (rec ? ' — ПРОТИ напрямку рядка (' + rec + ')' : '')}">${sd === 'LONG' ? '▲ L' : '▼ S'}</button>`;
+    return `<td style="white-space:nowrap">${b('LONG')}${b('SHORT')}</td>`;
+}
+async function xsprOpen(sym, side) {
+    const row = _xsRows.find(r => r.symbol === sym) || {};
+    const rec = row.dir || row.lean || '';
+    if (!confirm('✋ Відкрити ' + side + ' по ' + sym + '?' + (rec && rec !== side ? '\n⚠ Напрямок рядка — ' + rec + '.' : ''))) return;
+    try {
+        const r = await fetch('/api/spring-scan/open', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: sym, side})});
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.reason || 'відмова сервера');
+        alert('✅ ' + sym + ' ' + side + ' — відкрито');
+        xsprLoad(true);
+        if (typeof loadTMState === 'function') loadTMState(true);
+    } catch (e) { alert('Не відкрито: ' + (e && e.message || e)); }
+}
 // ✕ Прибрати монету / 🗑 очистити таблицю.
 function _xsDelCell(x) {
     return `<td style="text-align:center"><button class="xs-del" onclick="xsprRemove('${x.symbol}')" title="Прибрати ${x.symbol} з таблиці">✕</button></td>`;
@@ -17863,11 +17892,11 @@ function xsprRender(force) {
     tb.dataset.sig = sig;
     try { _sprAggPaint(r.agg || null, 'xspr-agg', String(r.exchange || 'біржа').toUpperCase()); } catch (e) {}
     if (!rows.length) {
-        tb.innerHTML = `<tr><td colspan="15" class="tm-empty-msg">${!r.ts ? 'Скан ще не запускали — натисніть «🔭 Сканувати»' : (_xsRows.length ? 'Немає монет у цій вкладці' : 'У таблиці немає заряджених монет (заряд ≥ ' + (_xsSet.min_charge != null ? _xsSet.min_charge : 80) + ')')}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="16" class="tm-empty-msg">${!r.ts ? 'Скан ще не запускали — натисніть «🔭 Сканувати»' : (_xsRows.length ? 'Немає монет у цій вкладці' : 'У таблиці немає заряджених монет (заряд ≥ ' + (_xsSet.min_charge != null ? _xsSet.min_charge : 80) + ')')}</td></tr>`;
         return;
     }
     tb.innerHTML = rows.map(x => _sprRowHTML(x, 101, 'off',
-        `<td style="text-align:right;font-family:monospace;color:#cbd5e1">$${_xsVol(x.vol_usd)}</td>`).replace('</td>', _xsBybitBadge(x) + '</td>').replace(/<\/tr>$/, _xsTgCell(x) + _xsDelCell(x) + '</tr>')).join('');
+        `<td style="text-align:right;font-family:monospace;color:#cbd5e1">$${_xsVol(x.vol_usd)}</td>`).replace('</td>', _xsBybitBadge(x) + '</td>').replace(/<\/tr>$/, _xsTgCell(x) + _xsOpenCell(x) + _xsDelCell(x) + '</tr>')).join('');
 }
 function _xsCostHint() {
     const el = document.getElementById('xspr-cost');
@@ -18578,7 +18607,7 @@ const SIGNAL_BADGES_JS = {
 const ENGINE_BADGES_JS = {
     'Q1': '🎯 Черга-1', 'Q2': '🎯 Черга-2', 'Q3': '🎯 Готовність', 'Q4': '🎯 Черга-4',
     'Q3-VOB(funding)': '💰 VOB+Шари', 'POC-сетап': '🎯 POC-сетап',
-    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-Trend', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Local', 'MMP': '🧭 МММ-Pull', 'MMD': '🧠 МММ-Decision', 'MMR': '🧩 МММ-Готовність', 'MMS': '🔔 МММ-SBR',
+    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-Trend', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Local', 'MMP': '🧭 МММ-Pull', 'MMD': '🧠 МММ-Decision', 'MMR': '🧩 МММ-Готовність', 'MMS': '🔔 МММ-SBR', 'XSPR': '🔭 Пружина-скан',
     'EXH': '🔥 Виснаженість', 'FF': '🔥 FF', 'direct': '⚡ Прямий',
 };
 const SIGNAL_ICON_JS = {
@@ -18588,12 +18617,12 @@ const SIGNAL_ICON_JS = {
     'poc': '🎯', 'opp': '🔄', 'external': '🔌', 'manual': '✋',
     'manual_ui': '✋', 'manual_ui_overflow': '✋',
     'Q3-VOB(funding)': '💰', 'POC-сетап': '🎯', 'EXH': '🔥', 'FF': '🔥',
-    'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩', 'MMS': '🔔',
+    'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩', 'MMS': '🔔', 'XSPR': '🔭',
 };
 // Двигун, чия картинка ПЕРЕКРИВАЄ картинку сигналу: угоди 🧮 МММ-монітора
 // йдуть від того самого `vob_alert`, що й угоди Черги-4, тож 🟪 їх не
 // розрізняло. Мітка у підказці лишається повною.
-const ENGINE_ICON_OVERRIDE_JS = { 'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩', 'MMS': '🔔' };
+const ENGINE_ICON_OVERRIDE_JS = { 'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩', 'MMS': '🔔', 'XSPR': '🔭' };
 function signalCodeOf(raw) {
     if (!raw) return '';
     return String(raw).split(' · ')[0].split(' → ')[0].trim();
