@@ -190,6 +190,41 @@ console.log(springFireCellHTML({side:'LONG', spring_fire:{pct:42.4,parts:{range:
     _check('42%' in c and 'width:42.4%' in c, c)
 
 
+
+def test_exhaustion_climax_exit():
+    """🎯 10.11: вихід на кульмінації — сплеск «Виснаження» у бік угоди в плюсі
+    озброює трейл від вершини на k·ATR; не гірше входу + мін. прибуток."""
+    b = _fire(_coil())
+    vw = S.live_fire_view(b)
+    _check(vw['climax'] == 'LONG' and vw['atr'] > 0 and vw['bar_hi'] >= vw['price'], vw)
+    _check(S.live_fire_view(_coil())['climax'] is None, 'у коробці кульмінації немає')
+    TM = _tm_cls()
+    step = TM.exh_exit_step
+    view = {'beyond': 'LONG', 'pct': 80, 'atr': 2.0, 'bar_hi': 112.0, 't': 1}
+    _check(step('LONG', 100, None, dict(view, pct=60), 110)[0] is None, 'нижче порогу — не озброюємо')
+    _check(step('LONG', 100, None, dict(view, beyond='SHORT'), 110)[0] is None, 'сплеск проти угоди — не наш')
+    _check(step('LONG', 100, None, view, 100.1)[0] is None, 'не в плюсі — не озброюємо')
+    st, why = step('LONG', 100, None, view, 110)
+    _check(st and why is None and st['best_px'] == 112.0 and st['stop_px'] == 111.0, st)
+    st, why = step('LONG', 100, st, None, 113, lo=112.5, hi=114)
+    _check(why is None and st['best_px'] == 114 and st['stop_px'] == 113.0, st)
+    st2, why = step('LONG', 100, st, None, 112.8, lo=112.8, hi=113)
+    _check(why == 'trail', (st2, why))
+    sh, _ = step('SHORT', 100, None, dict(view, beyond='SHORT', bar_lo=88.0), 90)
+    _check(sh['best_px'] == 88.0 and sh['stop_px'] == 89.0, sh)
+    _, why = step('SHORT', 100, sh, None, 89.5, lo=89.2, hi=89.5)
+    _check(why == 'trail', why)
+    fl, _ = step('LONG', 100, None, dict(view, atr=50.0), 110)
+    _check(abs(fl['stop_px'] - 100.3) < 1e-9, ('стоп не гірший за вхід + комісії', fl))
+    _, why = step('LONG', 100, fl, None, 100.2, lo=100.2, hi=100.2)
+    _check(why == 'floor', why)
+    T = sys.modules['detection.trade_manager']
+    _check(T.DEFAULT_SETTINGS['use_exh_exit'] is False, 'дефолт OFF')
+    _check(_TM.count('self._exh_exit_tick(symbol, pos, current_price,') == 2, 'обидва монітори')
+    _check(_TM.count("'exh_exit':") >= 2 and "'exh_exit': '🎯 Кульмінація'" in _HTML, 'підписи причини')
+    _check('id="tm-use-exh-exit"' in _HTML and 'exhTrailBadgeHTML(p)' in _HTML, 'UI бота')
+    _check("'exh_trail'" in _IP and 'pp-exh-st' in _JS, 'інфосайт')
+
 if __name__ == '__main__':
     n = 0
     for k, fn in list(globals().items()):

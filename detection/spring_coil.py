@@ -261,6 +261,13 @@ def live_fire_view(klines: List[Dict]) -> Optional[Dict]:
         'beyond': 'LONG' if c[i] > bh else ('SHORT' if c[i] < bl else None),
         'pre_sq': pre_sq, 'sq_need': FIRE_MIN_SQ, 't': t,
         'fired': dict(f, t=t, live=True, price=c[i]) if f else None,
+        # 🎯 КУЛЬМІНАЦІЯ (для виходу з угоди, 10.11): бар-сплеск ≥ потрібного
+        # діапазону І обʼєму, закриття за 24-год коробкою — без вимоги
+        # стиснення (у русі, що вже йде, його немає). Бік = куди вийшло.
+        'climax': (('LONG' if c[i] > bh else 'SHORT')
+                   if (rx >= FIRE_RANGE_ATR and vx >= FIRE_VOL_X
+                       and (c[i] > bh or c[i] < bl)) else None),
+        'atr': a_prev, 'bar_hi': h[i], 'bar_lo': lo[i],
     }
 
 

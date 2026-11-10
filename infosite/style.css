@@ -739,3 +739,4 @@ body.iw-full-on { overflow: hidden; }
 /* 📏 Відкриті тестові угоди вписуються в ширину екрана: заголовки переносяться, щільніші відступи. */
 #pp-open th { white-space: normal; line-height: 1.2; vertical-align: bottom; }
 #pp-open td, #pp-open th { padding-left: 6px; padding-right: 6px; }
+.pp-exh-st{color:#22d3ee;font-size:.68rem;margin-left:4px}

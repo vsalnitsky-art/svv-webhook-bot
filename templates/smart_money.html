@@ -5230,6 +5230,19 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
 
+                        <!-- 🎯 Вихід на КУЛЬМІНАЦІЇ (10.11): сплеск «Виснаження» у бік
+                             угоди в плюсі → стоп від вершини на k·ATR(1h). -->
+                        <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
+                            <label>
+                                <input type="checkbox" id="tm-use-exh-exit" onchange="saveTMSettings()">
+                                🎯 Вихід на кульмінації (Виснаження)
+                                <span class="tm-help" title="САМОСТІЙНЕ правило фіксації прибутку. Коли на ЖИВОМУ 1h-барі «💥 Виснаження» у БІК угоди досягло порогу (бар-сплеск: діапазон і обʼєм ≥ порогів вистрілу, закриття за 24-год коробкою) і угода в плюсі — це кульмінація руху: енергію витрачено. Вершину заздалегідь не знати, тому бот веде стоп від найкращої ціни на N·ATR(1h) і закриває на першому відкаті; стоп не гірший за вхід + мін. прибуток (комісії). Трейл веде БОТ, на біржу нічого не виставляється. 📌 Manual не чіпає. За замовчуванням ВИМКНЕНО.">?</span>
+                            </label>
+                            <label style="margin-left:10px" title="Поріг «Виснаження» у бік угоди, з якого вважаємо бар кульмінацією">Виснаження ≥ <input type="number" id="tm-exh-exit-min" min="30" max="100" step="5" style="width:52px" onchange="saveTMSettings()"> %</label>
+                            <label style="margin-left:10px" title="Відкат від вершини, що закриває угоду, у ATR(1h)">відкат ≥ <input type="number" id="tm-exh-exit-atr" min="0.05" max="5" step="0.05" style="width:52px" onchange="saveTMSettings()"> ATR</label>
+                            <label style="margin-left:10px" title="Мінімальний прибуток від входу: і умова озброєння, і найгірший стоп (покриває комісії)">мін. прибуток <input type="number" id="tm-exh-exit-profit" min="0" max="10" step="0.05" style="width:52px" onchange="saveTMSettings()"> %</label>
+                        </div>
+
                         <!-- 🧮 ОКРЕМЕ правило — СВІДОМО стоїть ПІСЛЯ «Комбінувати»,
                              щоб не читалось як четверте правило того збігу: там
                              нейтраль ЛАМАЄ збіг, а тут вона і є підставою вийти. -->
@@ -10902,6 +10915,10 @@ async function loadTMSettings() {
         document.getElementById('tm-sbr-exit-trail').checked = !!s.sbr_exit_trail;
         document.getElementById('tm-use-spring-fired-exit').checked = !!s.use_spring_fired_exit;
         document.getElementById('tm-spring-fired-exit-dir').value = s.spring_fired_exit_dir || 'any';
+        document.getElementById('tm-use-exh-exit').checked = !!s.use_exh_exit;
+        document.getElementById('tm-exh-exit-min').value = (s.exh_exit_min != null) ? s.exh_exit_min : 75;
+        document.getElementById('tm-exh-exit-atr').value = (s.exh_exit_atr != null) ? s.exh_exit_atr : 0.5;
+        document.getElementById('tm-exh-exit-profit').value = (s.exh_exit_min_profit != null) ? s.exh_exit_min_profit : 0.3;
         document.getElementById('tm-sbr-trail-pct').value = (s.sbr_trail_pct != null) ? s.sbr_trail_pct : 0.3;
         document.getElementById('tm-sbr-trail-charge').value = (s.sbr_trail_charge_min != null) ? s.sbr_trail_charge_min : 40;
         _tmSbrExitSync();
@@ -11451,6 +11468,10 @@ async function saveTMSettings() {
             sbr_exit_trail: document.getElementById('tm-sbr-exit-trail').checked,
             use_spring_fired_exit: document.getElementById('tm-use-spring-fired-exit').checked,
             spring_fired_exit_dir: document.getElementById('tm-spring-fired-exit-dir').value,
+            use_exh_exit: document.getElementById('tm-use-exh-exit').checked,
+            exh_exit_min: _numOr('tm-exh-exit-min', 75),
+            exh_exit_atr: _numOr('tm-exh-exit-atr', 0.5),
+            exh_exit_min_profit: _numOr('tm-exh-exit-profit', 0.3),
             sbr_trail_pct: _numOr('tm-sbr-trail-pct', 0.3),
             sbr_trail_charge_min: _numOr('tm-sbr-trail-charge', 40),
             mm_flat_exit_mode: document.getElementById('tm-mm-flat-exit-mode').value || 'flat',
@@ -11753,6 +11774,7 @@ function reasonLabel(r) {
         'mm_against_exit': '🧮 МММ LiQ ПРОТИ',
         'sbr_exit': '🔔 SBR проти',
         'spring_fired_exit': '💥 Пружина вистрілила',
+        'exh_exit': '🎯 Кульмінація',
         'sbr_trail_exit': '🔔⏳ SBR трейл',
         'signal_exit_and': '🔗 AND (усі проти)',
         'pilot_target': '🎯 Автопілот (ціль)',
@@ -18276,7 +18298,17 @@ function springFireCellHTML(p) {
     return `<td><span title="${tip}" style="display:inline-flex;align-items:center;gap:5px;font-family:monospace;white-space:nowrap;font-size:0.72rem">`
         + `<span style="position:relative;display:inline-block;width:46px;height:7px;border-radius:4px;background:rgba(255,255,255,0.07);overflow:hidden">`
         + `<span style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;border-radius:4px;background:linear-gradient(90deg,#60a5fa,#facc15 55%,#fb923c 80%,#f472b6);background-size:${pct > 0 ? (10000 / pct) : 100}% 100%;box-shadow:0 0 6px ${col}66;transition:width .6s ease"></span></span>`
-        + `<span style="display:inline-block;min-width:34px;text-align:right">${lab}</span></span></td>`;
+        + `<span style="display:inline-block;min-width:34px;text-align:right">${lab}</span>`
+        + exhTrailBadgeHTML(p) + `</span></td>`;
+}
+// 🎯 Кульмінацію зловлено (правило «Вихід на кульмінації») — бот веде стоп від вершини.
+function exhTrailBadgeHTML(p) {
+    const t = p && p.exh_trail;
+    if (!t || t.stop_px == null) return '';
+    const tip = '🎯 Кульмінація у бік угоди (Виснаження ' + (t.pct != null ? t.pct : '—') + '%): '
+        + 'вершина ' + fmtPriceJS(t.best_px) + ' · стоп ' + fmtPriceJS(t.stop_px)
+        + ' · не гірше ' + fmtPriceJS(t.floor_px) + ' — відкат до стопа закриє угоду (веде бот)';
+    return `<b title="${tip}" style="margin-left:4px;color:#22d3ee;font-size:0.68rem">🎯 ${fmtPriceJS(t.stop_px)}</b>`;
 }
 function springTradeCellHTML(p) {
     const sp = (p && p.spring) || null;

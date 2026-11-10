@@ -2154,7 +2154,9 @@
     var lab = fd ? '<b class="' + (fd.side !== p.side ? "pp-blink" : "") + '" style="color:' + (fd.side === "LONG" ? "#4ade80" : "#f87171") + '">💥' +
       (fd.side === "LONG" ? "▲" : "▼") + (fd.side === p.side ? "за" : "проти") + "</b>" : '<b style="color:' + col + '">' + Math.round(pct) + "%</b>";
     return '<span class="pp-exh" title="Виснаження: процес вистрілу Пружини на живому 1h-барі">' +
-      '<i><b style="width:' + pct + "%;background-size:" + (pct > 0 ? 10000 / pct : 100) + '% 100%"></b></i>' + lab + "</span>";
+      '<i><b style="width:' + pct + "%;background-size:" + (pct > 0 ? 10000 / pct : 100) + '% 100%"></b></i>' + lab +
+      (p.exh_trail && p.exh_trail.stop_px != null ? ' <b class="pp-exh-st" title="🎯 Кульмінацію зловлено: бот веде стоп від вершини ' +
+        esc(fmtPrice(p.exh_trail.best_px)) + '">🎯 ' + fmtPrice(p.exh_trail.stop_px).replace("$", "") + "</b>" : "") + "</span>";
   }
   function ppLvl(v, done) {
     if (!v) return '<span class="muted">—</span>';

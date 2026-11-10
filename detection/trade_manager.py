@@ -686,6 +686,13 @@ DEFAULT_SETTINGS = {
     # dir: any = будь-який вистріл · with = у бік угоди · against = проти.
     'use_spring_fired_exit': False,
     'spring_fired_exit_dir': 'any',
+    # 🎯 Вихід на КУЛЬМІНАЦІЇ (за «💥 Виснаженням», 10.11, деф. OFF): бар-сплеск
+    # у бік угоди (Виснаження ≥ exh_exit_min) у плюсі → стоп від вершини на
+    # exh_exit_atr·ATR(1h), не гірше входу + exh_exit_min_profit %.
+    'use_exh_exit': False,
+    'exh_exit_min': 75,
+    'exh_exit_atr': 0.5,
+    'exh_exit_min_profit': 0.3,
     'sbr_exit_1h': True,
     'sbr_exit_4h': True,
     # 🔔⏳ ТРЕЙЛ замість миттєвого виходу (вимога 31.10, деф. OFF): протилежний
@@ -1375,7 +1382,7 @@ class TradeManager:
                       'use_forecast_1h_exit', 'use_forecast_4h_exit',
                       'use_decision_exit', 'use_mm_flat_exit',
                       'use_sbr_exit', 'sbr_exit_1h', 'sbr_exit_4h', 'sbr_exit_trail',
-                      'use_spring_fired_exit',
+                      'use_spring_fired_exit', 'use_exh_exit',
                       'pilot_enabled',
                       'pilot_autofill_tp', 'pilot_tp2_from_magnet',
                       'tp1_move_to_be',
@@ -1459,6 +1466,13 @@ class TradeManager:
                     self._settings.get('sbr_trail_charge_min', 40) or 0)))
             except (TypeError, ValueError):
                 self._settings['sbr_trail_charge_min'] = 40
+            for _k, _d, _lo, _hi in (('exh_exit_min', 75, 30.0, 100.0),
+                                     ('exh_exit_atr', 0.5, 0.05, 5.0),
+                                     ('exh_exit_min_profit', 0.3, 0.0, 10.0)):
+                try:
+                    self._settings[_k] = max(_lo, min(_hi, float(self._settings.get(_k, _d))))
+                except (TypeError, ValueError):
+                    self._settings[_k] = _d
 
             # opposite_ob_exit_timeframe — validated string, default '15m'
             ALLOWED_EXIT_TFS = ('5m', '15m', '30m', '1h', '4h')
@@ -2196,6 +2210,8 @@ class TradeManager:
         _lo, _hi = self._px_range(symbol, False, current_price)
         if not _manual and self._sbr_trail_tick(symbol, pos, current_price, False, _lo, _hi):
             return
+        if not _manual and self._exh_exit_tick(symbol, pos, current_price, False, _lo, _hi):
+            return
         self._check_manual_tp1(symbol, pos, current_price, False, _lo, _hi)
         manual_reason = self._check_manual_sl_tp(pos, current_price, _lo, _hi)
         if manual_reason:
@@ -2876,6 +2892,8 @@ class TradeManager:
         # TP-2, який лежить далі, ніколи не дав би частковому спрацювати.
         _lo, _hi = self._px_range(symbol, True, current_price)
         if not _manual and self._sbr_trail_tick(symbol, pos, current_price, True, _lo, _hi):
+            return
+        if not _manual and self._exh_exit_tick(symbol, pos, current_price, True, _lo, _hi):
             return
         self._check_manual_tp1(symbol, pos, current_price, True, _lo, _hi)
         manual_reason = self._check_manual_sl_tp(pos, current_price, _lo, _hi)
@@ -4393,6 +4411,126 @@ class TradeManager:
         else:
             self._close_position(symbol, px, reason='sbr_trail_exit')
         return True
+
+    @staticmethod
+    def exh_exit_step(side, entry, st, view, price, lo=None, hi=None,
+                      min_pct=75.0, atr_k=0.5, min_profit_pct=0.3):
+        """🎯 Вихід на КУЛЬМІНАЦІЇ руху (за «💥 Виснаженням», 10.11). ЧИСТА.
+
+        Ідея: найвигідніший момент виходу — бар-сплеск У БІК угоди (діапазон і
+        обʼєм ≥ порогів вистрілу, закриття за 24-год коробкою, «Виснаження» ≥
+        `min_pct`), поки угода в плюсі. Такий бар зазвичай і є вершиною руху:
+        енергію витрачено. Вершину заздалегідь не знати, тому після сплеску
+        ведемо стоп від найкращої ціни на `atr_k`·ATR(1h) і виходимо на першому
+        відкаті; стоп не гірший за вхід + `min_profit_pct` (комісії).
+
+        `st` None → лише перевірка озброєння. Повертає (стан|None, причина|None):
+        причина 'trail' = відкат від вершини, 'floor' = повернулись до входу."""
+        sd = str(side or '').upper()
+        try:
+            px = float(price)
+            en = float(entry)
+        except (TypeError, ValueError):
+            return st, None
+        if sd not in ('LONG', 'SHORT') or px <= 0 or en <= 0:
+            return st, None
+        lo = px if lo is None else float(lo)
+        hi = px if hi is None else float(hi)
+        mp = max(0.0, float(min_profit_pct or 0)) / 100.0
+        floor = en * (1 + mp) if sd == 'LONG' else en * (1 - mp)
+        if not isinstance(st, dict):
+            vw = view if isinstance(view, dict) else {}
+            try:
+                pct = float(vw.get('pct') or 0)
+                atr = float(vw.get('atr') or 0)
+            except (TypeError, ValueError):
+                return None, None
+            in_profit = px >= floor if sd == 'LONG' else px <= floor
+            if not (vw.get('beyond') == sd and pct >= float(min_pct) and atr > 0 and in_profit):
+                return None, None
+            ext = vw.get('bar_hi') if sd == 'LONG' else vw.get('bar_lo')
+            try:
+                ext = float(ext)
+            except (TypeError, ValueError):
+                ext = px
+            best = max(px, ext) if sd == 'LONG' else min(px, ext)
+            k = max(0.0, float(atr_k or 0)) * atr
+            stop = max(best - k, floor) if sd == 'LONG' else min(best + k, floor)
+            return {'armed_px': px, 'best_px': best, 'atr': atr, 'stop_px': stop,
+                    'floor_px': floor, 'pct': round(pct, 1), 't': vw.get('t'),
+                    'armed_at': time.time()}, None
+        try:
+            best = float(st.get('best_px'))
+            k = max(0.0, float(atr_k or 0)) * float(st.get('atr') or 0)
+        except (TypeError, ValueError):
+            return st, None
+        out = dict(st)
+        why = None
+        if sd == 'LONG':
+            stop = max(best - k, floor)
+            if lo < stop:
+                why = 'trail' if stop > floor else 'floor'
+            best = max(best, hi)
+            out['stop_px'] = max(best - k, floor)
+        else:
+            stop = min(best + k, floor)
+            if hi > stop:
+                why = 'trail' if stop < floor else 'floor'
+            best = min(best, lo)
+            out['stop_px'] = min(best + k, floor)
+        out['best_px'] = best
+        out['floor_px'] = floor
+        if why:
+            out['hit_px'] = px
+        return out, why
+
+    def _exh_exit_tick(self, symbol: str, pos: Dict, current_price: float,
+                       is_shadow: bool, lo=None, hi=None) -> bool:
+        """🎯 Кожен тік монітора: озброєння на кульмінації + трейл від вершини.
+        Живий 1h-бар — з кешу `_spring_fire_view` (його вже тягне монітор).
+        True → позицію ЗАКРИТО."""
+        s = self._settings
+        if not s.get('use_exh_exit'):
+            return False
+        side = str(pos.get('side') or '').upper()
+        st = pos.get('exh_trail')
+        kw = dict(min_pct=s.get('exh_exit_min', 75), atr_k=s.get('exh_exit_atr', 0.5),
+                  min_profit_pct=s.get('exh_exit_min_profit', 0.3))
+        if not isinstance(st, dict):
+            vw = self._spring_fire_view(symbol, fetch=False)
+            new, _ = self.exh_exit_step(side, pos.get('entry_price'), None, vw,
+                                        current_price, lo, hi, **kw)
+            if not new:
+                return False
+            pos['exh_trail'] = new
+            self._persist_book(is_shadow)
+            msg = (f"🎯 Кульмінація руху: «Виснаження» {new['pct']:g}% у бік угоди, "
+                   f"ціна {float(current_price):g} — ведемо стоп від вершини "
+                   f"{float(new['best_px']):g} на {float(kw['atr_k'] or 0):g}·ATR "
+                   f"(стоп {float(new['stop_px']):g})")
+            try:
+                from detection.activity_log import log_activity
+                log_activity(symbol, 'sltp', msg, side=pos.get('side'), source='TM')
+            except Exception:
+                pass
+            return False
+        prev_best = st.get('best_px')
+        new, why = self.exh_exit_step(side, pos.get('entry_price'), st, None,
+                                      current_price, lo, hi, **kw)
+        st.clear()
+        st.update(new)
+        now = time.time()
+        if new.get('best_px') != prev_best and now - float(st.get('_saved', 0) or 0) > 30:
+            st['_saved'] = now
+            self._persist_book(is_shadow)
+        if not why:
+            return False
+        txt = ('відкат від вершини після кульмінації' if why == 'trail'
+               else 'ціна повернулась до входу після кульмінації')
+        msg = (f"🎯 Виснаження: {txt} (вершина {float(st['best_px']):g}, "
+               f"стоп {float(st['stop_px']):g}, зараз {float(current_price):g})")
+        return self._signal_exit_close(symbol, pos, current_price, is_shadow,
+                                       ('exh_exit', msg))
 
     def _check_signal_exits(self, symbol: str, pos: Dict,
                             current_price: float, is_shadow: bool) -> bool:
@@ -7384,6 +7522,7 @@ class TradeManager:
             'sbr_exit': '🔔 Протилежний сигнал МММ-SBR після входу',
             'sbr_trail_exit': '🔔⏳ МММ-SBR проти: ціна не продовжила угоду (трейл від ціни сигналу)',
             'spring_fired_exit': '💥 Пружина монети вистрілила після входу',
+            'exh_exit': '🎯 Кульмінація руху: відкат від вершини після сплеску «Виснаження»',
             'signal_exit_and': '🔗 AND: усі увімкнені вердикти проти позиції',
             'pilot_target': '🎯 Автопілот: ціль на графіку досягнута',
         }
@@ -10303,6 +10442,7 @@ class TradeManager:
             'sbr_exit': '🔔 SBR проти',
             'sbr_trail_exit': '🔔⏳ SBR трейл',
             'spring_fired_exit': '💥 Пружина вистрілила',
+            'exh_exit': '🎯 Кульмінація',
             'signal_exit_and': '🔗 Signal Exit (AND)',
             'pilot_target': '🎯 Автопілот (ціль)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',
