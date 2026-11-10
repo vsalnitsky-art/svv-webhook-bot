@@ -6640,6 +6640,46 @@ let volObPrim = null;
 // Той самий VolOBPrimitive-механізм, але інші кольори (teal/orange + пунктир),
 // щоб НЕ плутати з зелено-червоними Volumized-блоками.
 let obMatchPrim = null;
+// 📊 VOB «як IMB» (вимога 10.11, дзеркало `_imbBar`/`_imbBody` інфосайту):
+// дві смуги-частки обсягу блоку (зверху основна половина, знизу менша) з % і
+// загальний обсяг водяним знаком. Лише показ — числа VOB рахуються як раніше.
+function _vobBar(ctx, X1, w, y, bh, pct, color, hr, vr) {
+    if (pct == null || pct <= 0 || bh < 1) return;
+    const sw = Math.max(2 * hr, w * Math.min(100, Math.max(0, pct)) / 100);
+    ctx.fillStyle = color; ctx.fillRect(X1, y, sw, bh);
+    ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = Math.max(1, Math.round(hr));
+    ctx.strokeRect(X1, y, sw, bh);
+    if (bh < 9 * vr) return;
+    const fp = Math.max(8, Math.min(32, bh / vr * 0.62));
+    ctx.font = '600 ' + Math.round(fp * vr) + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+    ctx.textBaseline = 'middle'; ctx.fillStyle = 'rgba(240,242,248,.96)';
+    const t = pct + '%', tw = ctx.measureText(t).width;
+    if (sw >= tw + 10 * hr) { ctx.textAlign = 'right'; ctx.fillText(t, X1 + sw - 5 * hr, y + bh / 2); }
+    else if (w - sw >= tw + 8 * hr) { ctx.textAlign = 'left'; ctx.fillText(t, X1 + sw + 4 * hr, y + bh / 2); }
+}
+function _vobBody(ctx, ob, X1, X2, yT, yB, hr, vr) {
+    const w = X2 - X1, h = yB - yT;
+    if (w > 4 * hr && (ob.topPct != null || ob.botPct != null)) {
+        const bh = h / 2;
+        _vobBar(ctx, X1, w, yT, bh, ob.topPct, ob.topCol, hr, vr);
+        _vobBar(ctx, X1, w, yT + bh, bh, ob.botPct, ob.botCol, hr, vr);
+    }
+    if (ob.volTxt && h >= 18 * vr && w > 40 * hr) {
+        const wk = ob.volTxt + '|' + Math.round(w) + '|' + Math.round(h);
+        let fv;
+        const F = (px) => '500 ' + Math.round(px * vr) + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+        if (ob._wk === wk) { fv = ob._fv; ctx.font = F(fv); }
+        else {
+            fv = Math.max(10, Math.min(110, h / vr * 0.82)); ctx.font = F(fv);
+            while (fv > 10 && ctx.measureText(ob.volTxt).width > w * 0.92) { fv -= 2; ctx.font = F(fv); }
+            ob._wk = wk; ob._fv = fv;
+        }
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(4,6,12,.62)';
+        ctx.fillText(ob.volTxt, (X1 + X2) / 2, (yT + yB) / 2 + fv * vr * 0.04);
+    }
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+}
 class VolOBPrimitive {
     // ⚠️ Тримає СПИСОК боксів, а не один. Причина: LuxAlgo малює ВСІ живі
     // блоки одночасно, і поки примітив умів лише один, графік бота фізично
@@ -6676,6 +6716,7 @@ class VolOBPrimitive {
                         if (x2 <= x1 || h <= 0) return;
                         ctx.fillStyle = ob.fill;
                         ctx.fillRect(x1, yT, x2 - x1, h);
+                        if (ob.vobBars) _vobBody(ctx, ob, x1, x2, yT, yBot, hr, vr);
                         ctx.strokeStyle = ob.stroke;
                         ctx.lineWidth = Math.max(1, Math.round(1.2 * hr));
                         if (ob.dashed && ctx.setLineDash) ctx.setLineDash([6 * hr, 4 * hr]);
@@ -9166,8 +9207,15 @@ async function loadChart() {
                     textColor: isBull ? '#c7f9d4' : '#fcd0d0',
                     subColor: isBull ? '#86efac' : '#fca5a5',
                     dashed: !!vob.breaker,
-                    labelMain: `${volK}${pctS}`,
-                    labelSub: `${tfWord} OB${vob.breaker ? ' ✕' : ''}`,
+                    // 📊 як IMB (вимога 10.11): смуги-частки + обсяг водяним знаком.
+                    // Без розкладу (старіший бекенд) — старий підпис «обсяг (%)».
+                    vobBars: vob.hi_pct != null,
+                    topPct: vob.hi_pct, botPct: vob.lo_pct,
+                    topCol: isBull ? 'rgba(34,197,94,.85)' : 'rgba(242,54,69,.85)',
+                    botCol: isBull ? 'rgba(34,197,94,.38)' : 'rgba(242,54,69,.38)',
+                    volTxt: volK,
+                    labelMain: vob.hi_pct != null ? `${tfWord} VOB${vob.breaker ? ' ✕' : ''}` : `${volK}${pctS}`,
+                    labelSub: vob.hi_pct != null ? (vob.pct != null ? `${vob.pct}%` : '') : `${tfWord} OB${vob.breaker ? ' ✕' : ''}`,
                 };
             });
             volObPrim.setOBs(_boxes);   // порожньо → нічого не малюємо

@@ -780,7 +780,11 @@ def test_vob_drawn_like_imb_without_changing_the_math():
     _check('topPct: v.hi_pct' in js and 'botPct: v.lo_pct' in js and 'volTxt: fmtVol(v.volume, 3)' in js,
            'VOB малюється смугами + обсягом')
     _check('b.kind === "imb" || b.kind === "vob"' in js, 'той самий рендер, що IMB')
-    print('✓ 📊 VOB як IMB, математика без змін')
+    sm = open(os.path.join(_HERE, 'templates', 'smart_money.html'), encoding='utf-8').read()
+    _check('function _vobBody' in sm and 'if (ob.vobBars) _vobBody(' in sm
+           and 'topPct: vob.hi_pct' in sm and 'botPct: vob.lo_pct' in sm,
+           'графік бота малює VOB так само')
+    print('✓ 📊 VOB як IMB (бот + інфосайт), математика без змін')
 
 
 if __name__ == '__main__':
