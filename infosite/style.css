@@ -714,3 +714,13 @@ body.iw-full-on { overflow: hidden; }
 .rs.r { text-align: right; } .rs.l { text-align: left; padding-left: 4px; } .rs.c { text-align: center; }
 .rec-tf { color: #7dd3fc; font-weight: 700; }
 .rec-dir { display: inline-block; min-width: 72px; text-align: center; }
+
+/* OB / VOB — кнопки-перемикачі шару (вимога 10.11), стиль як IMB/SBR/High-Low */
+.iw-tgl { font: inherit; font-weight: 700; font-size: 11.5px; padding: 3px 9px; border-radius: 7px; cursor: pointer;
+  background: var(--elev); border: 1px solid var(--line); color: var(--muted); }
+.iw-sel.s-ob .iw-tgl { color: #5eead4; }
+.iw-sel.s-vob .iw-tgl { color: #86efac; }
+.iw-sel.s-ob .iw-tgl.on { box-shadow: inset 0 0 0 1px #2dd4bf; background: rgba(45,212,191,.16); color: #ccfbf1; }
+.iw-sel.s-vob .iw-tgl.on { box-shadow: inset 0 0 0 1px #4ade80; background: rgba(74,222,128,.16); color: #dcfce7; }
+.iw-tgl:not(.on) { opacity: .55; }
+.iw-sel select:disabled { opacity: .4; cursor: not-allowed; }

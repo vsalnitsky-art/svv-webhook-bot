@@ -485,13 +485,33 @@
       "</button></span>", menu: menu };
   }
 
+  var TF_LAST_KEY = "vsv_tf_last";
+  function tfLast(k) {
+    var d = k === "ob_tf" ? "1h" : "5m", L = k === "ob_tf" ? OB_TFS : VOB_TFS;
+    try { var v = (JSON.parse(localStorage.getItem(TF_LAST_KEY) || "{}") || {})[k]; if (L.indexOf(v) >= 0) return v; } catch (e) {}
+    return d;
+  }
+  function tfLastSet(k, v) {
+    try { var o = JSON.parse(localStorage.getItem(TF_LAST_KEY) || "{}") || {}; o[k] = v;
+      localStorage.setItem(TF_LAST_KEY, JSON.stringify(o)); } catch (e) {}
+  }
+
   function renderTfBar() {
     var host = $("#iw-tfs");
     if (host) host.innerHTML = CHART_TFS.map(function (tf) {
       return '<button type="button" data-tf="' + tf + '" class="' + (tf === IW.tf ? "on" : "") + '">' + tfLbl(tf) + "</button>";
     }).join("");
+    // OB / VOB: кнопка вмикає-вимикає шар (вимога 10.11), випадайка — лише TF.
+    // Вимкнено = ob_tf/vob_tf 'off' (сервер тоді й не рахує); останній TF
+    // памʼятаємо, щоб увімкнення повернуло саме його.
+    ["ob_tf", "vob_tf"].forEach(function (k) {
+      var on = IW[k] !== "off", bt = $("#iw-" + k.replace("_tf", "") + "-on");
+      if (bt) { bt.className = "iw-tgl" + (on ? " on" : ""); bt.setAttribute("aria-pressed", on ? "true" : "false"); }
+      var se = $("#iw-" + k.replace("_", "-")); if (se) se.disabled = !on;
+    });
     var opt = function (list, cur) {
-      return list.concat(["off"]).map(function (tf) {
+      if (cur === "off") cur = tfLast(list === OB_TFS ? "ob_tf" : "vob_tf");
+      return list.map(function (tf) {
         return '<option value="' + tf + '"' + (tf === cur ? " selected" : "") + ">" + tfLbl(tf) + "</option>";
       }).join("");
     };
@@ -617,6 +637,15 @@
       saveMine({ tf: tf });
       return;
     }
+    var tg = e.target.closest ? e.target.closest("[data-tgl]") : null;
+    if (tg) {
+      var tk = tg.getAttribute("data-tgl");
+      if (IW[tk] === "off") IW[tk] = tfLast(tk);
+      else { tfLastSet(tk, IW[tk]); IW[tk] = "off"; }
+      IW.sig = ""; renderTfBar(); loadCoin(false, true);
+      var tb = {}; tb[tk] = IW[tk]; saveMine(tb);
+      return;
+    }
     var lyr = e.target.closest ? e.target.closest("#iw-layers [data-layer]") : null;
     if (lyr) {
       var k = lyr.getAttribute("data-layer");
@@ -645,6 +674,7 @@
     var k = MAP[id];
     if (!k) return;
     IW[k] = k === "poc_days" ? Number(e.target.value) : e.target.value; IW.sig = "";
+    if (k === "ob_tf" || k === "vob_tf") tfLastSet(k, e.target.value);
     loadCoin(false, true);
     var b = {}; b[k] = e.target.value;
     saveMine(b);
@@ -1046,7 +1076,7 @@
   // Спільний для IMB і VOB (вимога 10.11: «вигляд VOB по принципу IMB»):
   // дві смуги-частки (b.topPct / b.botPct, кольори b.topCol / b.botCol)
   // + великий обсяг «водяним знаком».
-  function _imbBody(ctx, b, X1, X2, yT, yB, hr, vr, font, dark) {
+  function _imbBody(ctx, b, X1, X2, yT, yB, hr, vr, font, dark, wms) {
     var w = X2 - X1, h = yB - yT;
     if (w > 4 * hr && (b.topPct != null || b.botPct != null)) {
       var bh = h / 2;
@@ -1059,16 +1089,36 @@
       var wk = b.volTxt + "|" + Math.round(w) + "|" + Math.round(h), fv;
       if (b._wk === wk) { fv = b._fv; ctx.font = font(500, fv); }
       else {
-        fv = Math.max(10, Math.min(110, h / vr * 0.82));
+        fv = Math.max(10, Math.min(WM_MAX_PX, h / vr * 0.82));
         ctx.font = font(500, fv);
         while (fv > 10 && ctx.measureText(b.volTxt).width > w * 0.92) { fv -= 2; ctx.font = font(500, fv); }
         b._wk = wk; b._fv = fv;
       }
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillStyle = dark ? "rgba(4,6,12,.62)" : "rgba(0,0,0,.2)";
-      ctx.fillText(b.volTxt, (X1 + X2) / 2, (yT + yB) / 2 + fv * vr * 0.04);
+      // Водяний знак малюється ПІЗНІШЕ (wmDraw): два великі числа сусідніх
+      // зон (VOB поверх IMB) налазили одне на одне — лишаємо лише верхнє.
+      var tw = ctx.measureText(b.volTxt).width, cx = (X1 + X2) / 2, cy = (yT + yB) / 2;
+      var wm = { txt: b.volTxt, fv: fv, x: cx, y: cy + fv * vr * 0.04,
+                 r: { x0: cx - tw / 2, x1: cx + tw / 2, y0: cy - fv * vr * 0.45, y1: cy + fv * vr * 0.45 } };
+      if (wms) wms.push(wm); else wmDraw(ctx, [wm], font, dark);
     }
     ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  }
+
+  // Водяні знаки обсягу: верхня зона (остання в списку) першою; знак, що
+  // перетнувся б із уже поставленим, НЕ малюємо (число є в чипі / підказці).
+  var WM_MAX_PX = 64;
+  function wmDraw(ctx, wms, font, dark) {
+    var done = [];
+    for (var i = wms.length - 1; i >= 0; i--) {
+      var w = wms[i], r = w.r;
+      if (done.some(function (q) { return r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0; })) continue;
+      done.push(r);
+      ctx.font = font(500, w.fv); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = dark ? "rgba(4,6,12,.5)" : "rgba(0,0,0,.16)";
+      ctx.fillText(w.txt, w.x, w.y);
+    }
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    return done;
   }
 
   BoxPrimitive.prototype.paneViews = function () {
@@ -1098,7 +1148,7 @@
           if (l.text) sLbl.push({ l: l, x: (x1 + x2) / 2, y: y });
         });
         // ── зони (найновіша — зверху) ──
-        var placed = [];        // геометрія для підписів
+        var placed = [], wms = [];   // геометрія для підписів · водяні знаки
         for (var i = self._b.length - 1; i >= 0; i--) {
           var b = self._b[i];
           var x1 = ts.timeToCoordinate(b.t);
@@ -1115,13 +1165,14 @@
           if (b.kind === "imb" && (yBt - yT) < IMB_MIN_PX * vr) continue;
           if (yBt - yT < 1) yBt = yT + 1;
           ctx.fillStyle = b.fill; ctx.fillRect(X1, yT, X2 - X1, yBt - yT);
-          if (b.kind === "imb" || b.kind === "vob") _imbBody(ctx, b, X1, X2, yT, yBt, hr, vr, font, dark);
+          if (b.kind === "imb" || b.kind === "vob") _imbBody(ctx, b, X1, X2, yT, yBt, hr, vr, font, dark, wms);
           ctx.strokeStyle = b.stroke; ctx.lineWidth = Math.max(1, Math.round((b.thin ? 1 : 1.2) * hr));
           if (b.dashed && ctx.setLineDash) ctx.setLineDash([6 * hr, 4 * hr]);
           ctx.strokeRect(X1, yT, X2 - X1, yBt - yT);
           if (ctx.setLineDash) ctx.setLineDash([]);
           placed.push({ b: b, X1: X1, X2: X2, yT: yT, yB: yBt });
         }
+        var wmTaken = wmDraw(ctx, wms, font, dark);
         // ── геометрія позначок SBR — ДО підписів, щоб чипи їх обходили ──
         var bs = 18, marks = [];   // css px
         self._s.forEach(function (s) {
@@ -1194,6 +1245,8 @@
         var pr = function (k) { return Object.prototype.hasOwnProperty.call(prio, k) ? prio[k] : 9; };
         placed.sort(function (a, c) { return pr(a.b.kind) - pr(c.b.kind); });
         var padX = 6 * hr, chipH = 17 * vr, gap = 2 * vr;
+        var vobBodies = placed.filter(function (p) { return p.b.kind === "vob"; })
+          .map(function (p) { return { x0: p.X1, x1: p.X2, y0: p.yT, y1: p.yB }; });
         placed.forEach(function (p) {
           var b = p.b;
           if (!b.label) return;
@@ -1208,11 +1261,18 @@
           if (x0 < 2 * hr) x0 = 2 * hr;
           var mid = (p.yT + p.yB) / 2;
           var tries = [0, -1, 1, -2, 2, -3, 3], ok = null;
-          for (var k = 0; k < tries.length; k++) {
-            var y0 = mid - chipH / 2 + tries[k] * (chipH + gap);
-            if (y0 < 0 || y0 + chipH > H) continue;
-            var r = { x0: x0, x1: x0 + w, y0: y0, y1: y0 + chipH };
-            if (!overlaps(r)) { ok = r; break; }
+          // чип OB спершу шукає місце ПОЗА тілом VOB (інакше лежав поверх
+          // його смуг); не вийшло — як раніше, лише без накладань на чипи
+          var avoid = b.kind === "ob" ? vobBodies : [];
+          for (var pass = avoid.length ? 0 : 1; pass < 2 && !ok; pass++) {
+            for (var k = 0; k < tries.length; k++) {
+              var y0 = mid - chipH / 2 + tries[k] * (chipH + gap);
+              if (y0 < 0 || y0 + chipH > H) continue;
+              var r = { x0: x0, x1: x0 + w, y0: y0, y1: y0 + chipH };
+              if (overlaps(r)) continue;
+              if (pass === 0 && avoid.some(function (q) { return r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0; })) continue;
+              ok = r; break;
+            }
           }
           if (!ok) return;            // місця немає — не малюємо (опис — у легенді)
           taken.push(ok);
@@ -1237,6 +1297,7 @@
         // ── підписи CHoCH / BOS: посередині своєї лінії (як LuxAlgo), над
         // лінією для пробою вгору і під нею — для пробою вниз. Не на свічці,
         // тож не налазять на «S»/«B»; підпис, що наліз би на інший, пропускаємо.
+        wmTaken.forEach(function (r) { taken.push(r); });   // CHoCH/BOS не лізуть на числа зон
         ctx.font = font(600, 10.5);
         sLbl.sort(function (a, c) { return c.l.t2 - a.l.t2; });   // свіжіші — першими
         sLbl.forEach(function (q) {
@@ -1471,17 +1532,18 @@
     (c.vob || []).forEach(function (v) {
       var L = v.side === "LONG";
       out.push({ kind: "vob", t: snapSec(v.start, o), top: v.top, bottom: v.bottom, dashed: v.breaker,
-        fill: L ? "rgba(34,171,94,.16)" : "rgba(242,54,69,.16)",
-        stroke: L ? "rgba(34,197,94,.95)" : "rgba(242,54,69,.95)",
+        fill: L ? "rgba(34,171,94,.07)" : "rgba(242,54,69,.07)",
+        stroke: L ? "rgba(34,197,94,.7)" : "rgba(242,54,69,.7)",
         text: L ? "#86efac" : "#fca5a5",
         // 📊 як IMB: зверху — частка ОСНОВНОЇ половини обсягу (колір блоку),
         // знизу — меншої (приглушено); загальний обсяг — водяним знаком.
         volTxt: fmtVol(v.volume, 3),
         topPct: v.hi_pct, botPct: v.lo_pct,
-        topCol: L ? "rgba(34,197,94,.85)" : "rgba(242,54,69,.85)",
-        botCol: L ? "rgba(34,197,94,.38)" : "rgba(242,54,69,.38)",
+        topCol: L ? "rgba(34,197,94,.45)" : "rgba(242,54,69,.45)",
+        botCol: L ? "rgba(34,197,94,.18)" : "rgba(242,54,69,.18)",
         label: tfWord(v.tf || c.vob_tf) + " VOB" + (v.breaker ? " ✕" : ""),
-        sub: (v.pct != null ? v.pct + "%" : "") });
+        // обсяг — і в чипі: водяний знак може бути прибраний через накладання
+        sub: [fmtVol(v.volume, 3), v.pct != null ? v.pct + "%" : ""].filter(Boolean).join(" · ") });
     });
     (c.ob || []).forEach(function (b) {
       var L = b.side === "LONG", sw = b.fam === "swing";

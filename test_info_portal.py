@@ -787,6 +787,21 @@ def test_vob_drawn_like_imb_without_changing_the_math():
     print('✓ 📊 VOB як IMB (бот + інфосайт), математика без змін')
 
 
+def test_ob_vob_toggles_and_no_label_pileup():
+    """10.11: OB/VOB — кнопки увімкнення; водяні знаки не налазять; VOB прозоріший."""
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    html = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
+    sm = open(os.path.join(_HERE, 'templates', 'smart_money.html'), encoding='utf-8').read()
+    _check('data-tgl="ob_tf"' in html and 'data-tgl="vob_tf"' in html, 'кнопки OB/VOB у панелі')
+    _check('list.concat(["off"])' not in js and 'tfLast(' in js, 'випадайка — лише TF, «вимк» — кнопкою')
+    _check('function wmDraw' in js and 'wmTaken.forEach' in js, 'водяні знаки без накладань, CHoCH їх обходить')
+    _check('vobBodies' in js, 'чип OB шукає місце поза тілом VOB')
+    _check('rgba(34,171,94,.07)' in js and "rgba(22,163,74,0.07)" in sm, 'VOB прозоріший (бот + інфосайт)')
+    # розрахунок не змінено: перемикач лише міняє ob_tf/vob_tf ('off' уже підтримувався)
+    cur, _ = ip.apply_change(ip.user_info({}, []), {'vob_tf': 'off'}, [])
+    _check(cur['vob_tf'] == 'off', 'вимкнення VOB зберігається')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:
