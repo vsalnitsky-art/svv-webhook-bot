@@ -1825,6 +1825,9 @@
       IW.series.applyOptions({ priceFormat: { type: "price", precision: prec, minMove: Math.pow(10, -prec) } });
       IW.prec = prec;
     }
+    // 🏷 Назва монети на мітці поточної ціни (як у TradingView, вимога 10.11).
+    var ttl = String(c.symbol || "");
+    if (IW.seriesTitle !== ttl) { IW.series.applyOptions({ title: ttl }); IW.seriesTitle = ttl; }
     // Плавність (вимога 08.11): оновлення того самого графіка — лише хвіст
     // (`update` останніх свічок), а не повна заміна даних. `setData` посеред
     // перетягування перебудовує шкалу й «смикає» картинку.

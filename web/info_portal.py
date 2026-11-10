@@ -196,6 +196,51 @@ def vob_boxes(zones):
     return out
 
 
+VOB_CHOP_FLIPS = 2          # закриття перескочило зону туди-назад ≥ N разів → «пропиляна»
+
+
+def vob_stale(v, ohlc):
+    """Причина, чому VOB уже не відповідає ситуації (вимога 10.11), або ''.
+
+    Лише ПОКАЗ кабінету — детектор і сигнали бота не чіпаємо.
+    • `breaker` — детектор сам визнав зону знеціненою;
+    • ціна вже ЗА зоною проти її сенсу (LONG — закриття нижче низу, SHORT —
+      вище верху): детектор ще не встиг позначити breaker, а зона вже пробита;
+    • «пропиляна»: після появи закриття перескакувало зону з одного боку на
+      інший ≥ `VOB_CHOP_FLIPS` разів — рівень не тримає, ціна ходить крізь нього.
+    """
+    if v.get('breaker'):
+        return 'breaker'
+    try:
+        top, bot = float(v['top']), float(v['bottom'])
+    except (KeyError, TypeError, ValueError):
+        return ''
+    st = v.get('start') or 0
+    after = [b for b in (ohlc or []) if (b.get('time') or 0) >= st]
+    if not after:
+        return ''
+    last = float(after[-1]['close'])
+    if v.get('side') == 'LONG' and last < bot:
+        return 'below'
+    if v.get('side') == 'SHORT' and last > top:
+        return 'above'
+    flips, prev = 0, None
+    for b in after:
+        c = float(b['close'])
+        s = 1 if c > top else (-1 if c < bot else 0)
+        if s == 0:
+            continue
+        if prev is not None and s != prev:
+            flips += 1
+        prev = s
+    return 'chop' if flips >= VOB_CHOP_FLIPS else ''
+
+
+def vob_fresh(boxes, ohlc):
+    """VOB-бокси без тих, що вже не відповідають ситуації (`vob_stale`)."""
+    return [v for v in (boxes or []) if not vob_stale(v, ohlc)]
+
+
 def events_of(analysis, n=EVENTS_MAX):
     """CHoCH/BOS внутрішньої структури (як на графіку бота) → лінія від півота
     до бару пробою + мітка. Найновіші `n`."""
@@ -855,7 +900,7 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
     vob, vob_wait = [], False
     if vob_tf != OFF:
         d, _e = part(sc, 'vob', sym, vob_tf)
-        vob, vob_wait = vob_boxes((d or {}).get('vz')), d is None
+        vob, vob_wait = vob_fresh(vob_boxes((d or {}).get('vz')), ohlc), d is None
     if ohlc:
         reason = ''
     elif err:

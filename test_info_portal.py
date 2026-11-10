@@ -804,6 +804,27 @@ def test_ob_vob_toggles_and_no_label_pileup():
     _check(cur['vob_tf'] == 'off', 'вимкнення VOB зберігається')
 
 
+def test_stale_vob_hidden_and_symbol_on_price_label():
+    """10.11: VOB, що вже не відповідає ситуації, не малюється; назва монети —
+    на мітці поточної ціни (як у TradingView)."""
+    def bars(closes):
+        return [{'time': 100 + i, 'close': c} for i, c in enumerate(closes)]
+    L = {'side': 'LONG', 'top': 110.0, 'bottom': 100.0, 'start': 100, 'breaker': False}
+    S = dict(L, side='SHORT')
+    _check(ip.vob_stale(L, bars([115, 120, 118])) == '', 'LONG тримає — показуємо')
+    _check(ip.vob_stale(dict(L, breaker=True), bars([115])) == 'breaker', 'breaker — ховаємо')
+    _check(ip.vob_stale(L, bars([115, 95])) == 'below', 'LONG пробито донизу — ховаємо')
+    _check(ip.vob_stale(S, bars([95, 115])) == 'above', 'SHORT пробито вгору — ховаємо')
+    _check(ip.vob_stale(L, bars([115, 95, 116, 104])) == 'chop', 'ціна пиляє зону — ховаємо')
+    _check(ip.vob_stale(L, bars([115, 104, 112, 108])) == '', 'лише заходи в зону — ще зона')
+    _check(ip.vob_stale(L, [{'time': 50, 'close': 90}]) == '', 'бари ДО появи не важать')
+    _check(len(ip.vob_fresh([L, dict(L, breaker=True)], bars([115]))) == 1, 'vob_fresh фільтрує')
+    src = open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
+    _check("vob_fresh(vob_boxes(" in src, 'фільтр стоїть на шляху графіка')
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    _check('applyOptions({ title: ttl })' in js, 'назва монети на мітці ціни')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:
