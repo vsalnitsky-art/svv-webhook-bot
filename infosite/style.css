@@ -724,3 +724,18 @@ body.iw-full-on { overflow: hidden; }
 .iw-sel.s-vob .iw-tgl.on { box-shadow: inset 0 0 0 1px #4ade80; background: rgba(74,222,128,.16); color: #dcfce7; }
 .iw-tgl:not(.on) { opacity: .55; }
 .iw-sel select:disabled { opacity: .4; cursor: not-allowed; }
+
+/* 💥 Виснаження (вимога 10.11) — градієнт синій → бурштин → рожевий. */
+.pp-exh { display: inline-flex; align-items: center; gap: 6px; }
+.pp-exh i { display: inline-block; width: 46px; height: 7px; border-radius: 4px; background: var(--line-soft); position: relative; overflow: hidden; }
+.pp-exh i b { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: linear-gradient(90deg,#60a5fa,#facc15 55%,#fb923c 80%,#f472b6); }
+.pp-exh > b { min-width: 3.2em; text-align: right; }
+.pp-blink { animation: ppBlink 1s steps(2, start) infinite; }
+@keyframes ppBlink { to { opacity: .35; } }
+/* 💵 $ у PnL — плашка кольору результату. */
+.pp-usd { font-weight: 700; padding: 0 5px; border-radius: 4px; border: 1px solid transparent; }
+.pp-usd.up { background: rgba(34,197,94,.14); border-color: rgba(74,222,128,.35); }
+.pp-usd.dn { background: rgba(239,68,68,.14); border-color: rgba(248,113,113,.35); }
+/* 📏 Відкриті тестові угоди вписуються в ширину екрана: заголовки переносяться, щільніші відступи. */
+#pp-open th { white-space: normal; line-height: 1.2; vertical-align: bottom; }
+#pp-open td, #pp-open th { padding-left: 6px; padding-right: 6px; }

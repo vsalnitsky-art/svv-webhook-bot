@@ -18,6 +18,8 @@ _sp.loader.exec_module(S)
 _TM = open(os.path.join(_ROOT, 'detection', 'trade_manager.py'), encoding='utf-8').read()
 _HTML = open(os.path.join(_ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
 _APP = open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
+_IP = open(os.path.join(_ROOT, 'web', 'info_portal.py'), encoding='utf-8').read()
+_JS = open(os.path.join(_ROOT, 'infosite', 'app.js'), encoding='utf-8').read()
 
 
 def _check(c, m):
@@ -65,6 +67,9 @@ def test_live_view_shows_progress_of_each_condition():
     vf = S.live_fire_view(_fire(_coil()))
     _check(vf['fired'] and vf['beyond'] == 'LONG' and vf['range_x'] > vf['range_need']
            and vf['vol_x'] > vf['vol_need'], vf)
+    _check(vf['pct'] == 100.0, 'вистріл = 100% виснаження')
+    _check(0 <= vw['pct'] < 100 and set(vw['parts']) == {'range', 'vol', 'box', 'sq'}
+           and abs(vw['pct'] - sum(vw['parts'].values()) / 4) < 0.2, vw)
 
 
 def test_analyze_unchanged_by_refactor():
@@ -158,24 +163,31 @@ def test_wiring():
     _check("'spring_fired_exit': '💥 Пружина вистрілила'" in _HTML, 'JS-мапа причин')
     _check('id="tm-use-spring-fired-exit"' in _HTML and 'id="tm-spring-fired-exit-dir"' in _HTML, 'UI')
     _check(_HTML.count('${springFireCellHTML(p)}') == 2 and '${springTradeCellHTML(p)}' not in _HTML,
-           'колонка «💥 Вистріл» замість «🌀 Заряд» у обох таблицях')
+           'колонка «💥 Виснаження» замість «🌀 Заряд» у обох таблицях')
+    _check(_HTML.count('>💥 Виснаження</th>') == 2, 'заголовок обох таблиць')
+    _check('${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}' in _HTML and 'curPxHTML' not in _HTML,
+           'Current — як було')
+    _check(_HTML.count('pnlUsdChip(') >= 3, '$ у PnL виділено (real + paper)')
+    _check("'spring_fire'" in _IP and '_spring_fire_view(p.get(\'symbol\'), fetch=False)' in _IP,
+           'інфосайт: той самий кеш TM')
+    _check('function ppExh(' in _JS and 'ppExh(p)' in _JS and 'pp-usd' in _JS, 'інфосайт: комірка й $')
     _check("_spring_fire_view(sym, fetch=False)" in _APP, '/api/tm/state лише читає кеш')
 
 
 def test_js_cell():
-    i = _HTML.index('function springFireCellHTML(')
+    i = _HTML.index('function exhColor(')
     j = _HTML.index('function springTradeCellHTML(', i)
     js = _HTML[i:j] + r"""
 console.log(springFireCellHTML({}));
-console.log(springFireCellHTML({side:'SHORT', spring_fire:{range_x:2.5,range_need:1.8,vol_x:3,vol_need:1.8,beyond:'LONG',pre_sq:8,sq_need:6,price:1,box_hi:0.9,box_lo:0.8,fired:{side:'LONG',live:true}}}));
-console.log(springFireCellHTML({side:'LONG', spring_fire:{range_x:0.9,range_need:1.8,vol_x:0.5,vol_need:1.8,beyond:null,pre_sq:7,sq_need:6,price:1,box_hi:1.1,box_lo:0.9,fired:null}}));
+console.log(springFireCellHTML({side:'SHORT', spring_fire:{pct:100,parts:{},beyond:'LONG',fired:{side:'LONG',live:true}}}));
+console.log(springFireCellHTML({side:'LONG', spring_fire:{pct:42.4,parts:{range:50,vol:28,box:40,sq:100},fired:null}}));
 """
     out = subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=20)
     _check(out.returncode == 0, out.stderr)
     a, b, c = out.stdout.strip().split('\n')
     _check('—' in a, a)
-    _check('💥 ▲ проти' in b and 'tm-mmd-alert-hot' in b, b)
-    _check('1/4' in c, c)
+    _check('💥▲проти' in b and 'tm-mmd-alert-hot' in b, b)
+    _check('42%' in c and 'width:42.4%' in c, c)
 
 
 if __name__ == '__main__':

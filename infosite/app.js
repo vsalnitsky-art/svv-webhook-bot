@@ -2138,22 +2138,30 @@
     var p = function (n) { return String(n).padStart(2, "0"); };
     return (h >= 24 ? Math.floor(h / 24) + "д " + p(h % 24) : p(h)) + ":" + p(m) + ":" + p(s % 60);
   }
-  function ppCharge(p) {
-    var a = p.spring_open && p.spring_open.charge, c = p.spring && p.spring.charge;
-    if (a == null && c == null) return '<span class="muted">—</span>';
-    var now = c != null ? Math.round(c) : null, op = a != null ? Math.round(a) : null;
-    var col = now == null ? "var(--muted)" : (now >= 65 ? "#f87171" : (now >= 45 ? "#fbbf24" : "#94a3b8"));
-    return '<span class="pp-chg" title="Заряд Пружини: на вході → зараз">' + (op == null ? "—" : op) + " → <b style=\"color:" + col + '">' +
-      (now == null ? "—" : now) + '</b><i><b style="width:' + Math.max(0, Math.min(100, now || 0)) + "%;background:" + col + '"></b></i></span>';
+  // 💥 Виснаження — процес вистрілу Пружини на живому 1h-барі у % (дзеркало
+  // `springFireCellHTML` бота; число рахує бекенд — `spring_fire.pct`).
+  function exhColor(x) {
+    x = Math.max(0, Math.min(100, Number(x) || 0));
+    return x >= 100 ? "#f472b6" : (x >= 75 ? "#fb923c" : (x >= 50 ? "#facc15" : "#60a5fa"));
+  }
+  function ppExh(p) {
+    var f = p.spring_fire;
+    if (!f) return '<span class="muted">—</span>';
+    var fd = f.fired, pct = fd ? 100 : Math.max(0, Math.min(100, Number(f.pct) || 0)), col = exhColor(pct);
+    var lab = fd ? '<b class="' + (fd.side !== p.side ? "pp-blink" : "") + '" style="color:' + (fd.side === "LONG" ? "#4ade80" : "#f87171") + '">💥' +
+      (fd.side === "LONG" ? "▲" : "▼") + (fd.side === p.side ? "за" : "проти") + "</b>" : '<b style="color:' + col + '">' + Math.round(pct) + "%</b>";
+    return '<span class="pp-exh" title="Виснаження: процес вистрілу Пружини на живому 1h-барі">' +
+      '<i><b style="width:' + pct + "%;background-size:" + (pct > 0 ? 10000 / pct : 100) + '% 100%"></b></i>' + lab + "</span>";
   }
   function ppLvl(v, done) {
     if (!v) return '<span class="muted">—</span>';
     return fmtPrice(v).replace("$", "") + (done ? ' <span class="pp-up">✓</span>' : "");
   }
   // PnL рівними стовпчиками: % і $ — окремі сегменти сталої ширини, праворуч.
+  // $ у PnL виділено плашкою кольору результату (вимога 10.11).
   function ppPnlCols(pc, usd) {
     return '<span class="pp-pnl"><span class="pp-pnl-p">' + ppPct(pc) + "</span>" +
-      (usd != null ? '<span class="pp-pnl-s">·</span><span class="pp-pnl-u">' + ppUsd(usd) + "</span>" : "") + "</span>";
+      (usd != null ? '<span class="pp-pnl-s">·</span><span class="pp-pnl-u"><b class="pp-usd ' + (Number(usd) >= 0 ? "up" : "dn") + '">' + ppUsd(usd) + "</b></span>" : "") + "</span>";
   }
   function ppRenderOpen(d) {
     var rows = d.positions || [], tb = $("#pp-open tbody");
@@ -2169,7 +2177,7 @@
       return "<tr><td class=\"sym\">" + tvSym(p.symbol) + '</td><td class="' + (p.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(p.side) + "</td>" +
         '<td class="r">' + fmtPrice(p.entry_price) + '</td><td class="r">' + fmtPrice(p.current_price) + "</td>" +
         '<td class="r ' + cl + '" title="' + esc(tip) + '">' + pnl + "</td>" +
-        "<td>" + ppCharge(p) + "</td>" +
+        "<td>" + ppExh(p) + "</td>" +
         "<td>" + (al ? '<span class="pp-al ' + al[1] + '" title="' + esc(a.text || "") + '">' + al[0] + (a.level === "against" && a.tf ? " " + esc(a.tf) : "") + "</span>" : '<span class="muted">—</span>') + "</td>" +
         '<td class="r">' + ppLvl(p.manual_sl) + '</td><td class="r">' + ppLvl(p.manual_tp1, p.tp1_done) + '</td><td class="r">' + ppLvl(p.manual_tp) + "</td>" +
         '<td class="r pp-timer" data-since="' + Math.floor(p.opened_at || 0) + '">' + (p.opened_at ? ppTimer(p.opened_at) : "—") + "</td></tr>";

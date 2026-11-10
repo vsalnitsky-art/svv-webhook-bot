@@ -72,8 +72,9 @@ def test_page_renders_net_cell_and_ukrainian_stats():
     # Панель P&L у стилі Bybit (27.10) — підписи карток («Закрито угод» прибрано 27.10).
     for w in ('Чистий P&amp;L', 'Відсоток успішних', 'Баланс на біржі'):
         _check(w in _HTML, w)
-    i = _HTML.index('function realPnlCellHTML(')
-    fn = _HTML[i:_HTML.index('\n}\n', i) + 2]
+    i = _HTML.index('function pnlUsdChip(')
+    j = _HTML.index('function realPnlCellHTML(')
+    fn = _HTML[i:_HTML.index('\n}\n', j) + 2]
     js = fn + "\nconst h = realPnlCellHTML({pnl_pct: 1, pnl_source: 'bybit', pnl_net: " \
         "{roi_pct: 8.89, net_usd: 8.89, gross_usd: 10, fee_in_usd: 0.55, fee_out_usd: 0.56, " \
         "margin_usd: 100, move_pct: 1, lev: 10, fee_pct: 0.055}}, '', '');\nconsole.log(h);"

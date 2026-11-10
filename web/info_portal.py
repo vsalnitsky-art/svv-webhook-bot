@@ -1075,7 +1075,8 @@ PAPER_TTL = 2.0                 # спільний кеш знімка (стор
 PAPER_CLOSED_SHOW = 50          # скільки останніх закритих paper-угод віддаємо
 _PAPER_POS_KEYS = ('symbol', 'side', 'entry_price', 'current_price', 'pnl_pct',
                    'pnl_net', 'paper_size', 'opened_at', 'opened_by', 'manual_sl',
-                   'manual_tp', 'manual_tp1', 'tp1_done', 'spring_open', 'mmd')
+                   'manual_tp', 'manual_tp1', 'tp1_done', 'spring_open', 'mmd',
+                   'spring_fire')
 _PAPER_CLOSED_KEYS = ('symbol', 'side', 'entry_price', 'exit_price', 'opened_at',
                       'closed_at', 'pnl_pct', 'reason', 'opened_by')
 _paper_cache = {'at': 0.0, 'data': None, 'sig': None}
@@ -1143,6 +1144,14 @@ def _paper_snapshot(tm):
                 p['mmd'] = dm[k]
     except Exception:
         pass
+    # 💥 Виснаження (процес вистрілу) — ЛИШЕ кеш TM, той самий, що колонка бота.
+    for p in pos:
+        try:
+            sf = tm._spring_fire_view(p.get('symbol'), fetch=False)
+        except Exception:
+            sf = None
+        if sf:
+            p['spring_fire'] = sf
     data = {
         'account': st.get('paper_account') or {},
         'stats_all': st.get('shadow_stats') or {},

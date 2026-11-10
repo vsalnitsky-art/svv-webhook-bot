@@ -781,7 +781,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 /* Таблиці ВІДКРИТИХ угод (real + paper): теж кожен рядок в ОДНУ стрічку —
    символ і клітинки не переносяться; надто широка → скрол контейнера. */
 #tm-open-table th, #tm-open-table td,
-#tm-shadow-open-table th, #tm-shadow-open-table td { white-space: nowrap; padding: 3px 6px; }
+#tm-shadow-open-table th, #tm-shadow-open-table td { white-space: nowrap; padding: 3px 4px; }
+/* 📏 Таблиця вписується в ширину екрана (вимога 10.11): заголовки
+   переносяться (лише вони — рядки й далі в одну стрічку), поля рівнів вужчі. */
+#tm-open-table th, #tm-shadow-open-table th { white-space: normal; line-height: 1.2; vertical-align: bottom; }
+#tm-open-table td input[inputmode="decimal"],
+#tm-shadow-open-table td input[inputmode="decimal"] { width: 72px !important; }
 /* 🦓 Зебра + підсвітка рядка (вимога 26.10) — рядки не зливаються. Ручні
    (📌) рядки лишаються зі своїм бурштиновим тлом — правило нижче сильніше. */
 #tm-open-table tbody tr:nth-child(even) td,
@@ -5564,7 +5569,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th data-col="sym">Symbol</th><th data-col="side">Side</th><th data-col="entry">Entry</th><th data-col="cur">Current</th><th data-col="liq" title="💀 Ціна ліквідації реальної позиції на Bybit і відстань до неї від поточної ціни: червоний < 5%, бурштиновий < 15%. ⚠ — Manual SL стоїть за ліквідацією (стоп не встигне спрацювати).">💀 Ліквідація</th><th data-col="pnl" title="💰 PnL з урахуванням ПЛЕЧА і КОМІСІЙ. Велике число — ROI на маржу (як у застосунку біржі): нетто ÷ (нотіонал входу ÷ плече). Під ним — нетто $ (брутто − комісія входу − оцінка комісії виходу), якщо закрити зараз, і плече. Рух ціни без плеча та розклад — у підказці комірки. Комісія — поле «Комісія / сторону, %» (Bybit taker ≈ 0.055%).">PnL <span style="font-size:0.62rem;color:#8b93a7;font-weight:400">ROI · нетто</span></th>
-                        <th data-col="charge" title="💥 ПРОЦЕС ВИСТРІЛУ Пружини на ЖИВОМУ 1h-барі (оновлюється ~10с): 4 квадрати — умови вистрілу (↕ діапазон > 1.8×ATR · 📊 обʼєм > 1.8× бази · 📦 закриття за 24-год коробкою · 🗜 ≥6 барів стиснення перед баром), заповнення = наскільки умова близька, рожевий = виконана. Усі 4 → «💥 ▲/▼ за/проти» угоди. Цим самим правилом працює вихід «💥 Пружина вистрілила» (Exit Rules).">💥 Вистріл</th>
+                        <th data-col="charge" title="💥 ВИСНАЖЕННЯ — процес вистрілу Пружини на ЖИВОМУ 1h-барі (оновлюється ~10с) у відсотках: середня готовність 4 умов вистрілу (↕ діапазон &gt; 1.8×ATR · 📊 обʼєм &gt; 1.8× бази · 📦 закриття за 24-год коробкою · 🗜 ≥6 барів стиснення перед баром). Градієнт: синій → бурштин → рожевий; 100% = вистрілила → «💥 ▲/▼ за/проти» угоди (проти — блимає). Розклад по умовах — у підказці комірки. Цим самим правилом працює вихід «💥 Пружина вистрілила» (Exit Rules).">💥 Виснаження</th>
                         <th data-col="alert" title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. ⏳ бурштиновий «🔔⏳ TF» — увімкнено «трейл»: протилежний сигнал запамʼятав ціну, угоду ведемо; поруч — стоп і відстань ціни від запамʼятованої (🌀 = заряд ще тримає угоду, відкат не закриває). Сам сигнал нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
                         <th data-col="qty">Qty</th>
                         <th data-col="sl" title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
@@ -5692,7 +5697,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th data-col="sym">Symbol</th><th data-col="side">Side</th><th data-col="entry">Entry</th><th data-col="cur">Current</th><th data-col="pnl">PnL</th>
-                        <th data-col="charge" title="💥 ПРОЦЕС ВИСТРІЛУ Пружини на ЖИВОМУ 1h-барі (оновлюється ~10с): 4 квадрати — умови вистрілу (↕ діапазон > 1.8×ATR · 📊 обʼєм > 1.8× бази · 📦 закриття за 24-год коробкою · 🗜 ≥6 барів стиснення перед баром), заповнення = наскільки умова близька, рожевий = виконана. Усі 4 → «💥 ▲/▼ за/проти» угоди. Цим самим правилом працює вихід «💥 Пружина вистрілила» (Exit Rules).">💥 Вистріл</th>
+                        <th data-col="charge" title="💥 ВИСНАЖЕННЯ — процес вистрілу Пружини на ЖИВОМУ 1h-барі (оновлюється ~10с) у відсотках: середня готовність 4 умов вистрілу (↕ діапазон &gt; 1.8×ATR · 📊 обʼєм &gt; 1.8× бази · 📦 закриття за 24-год коробкою · 🗜 ≥6 барів стиснення перед баром). Градієнт: синій → бурштин → рожевий; 100% = вистрілила → «💥 ▲/▼ за/проти» угоди (проти — блимає). Розклад по умовах — у підказці комірки. Цим самим правилом працює вихід «💥 Пружина вистрілила» (Exit Rules).">💥 Виснаження</th>
                         <th data-col="alert" title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. ⏳ бурштиновий «🔔⏳ TF» — увімкнено «трейл»: протилежний сигнал запамʼятав ціну, угоду ведемо; поруч — стоп і відстань ціни від запамʼятованої (🌀 = заряд ще тримає угоду, відкат не закриває). Сам сигнал нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
                         <th data-col="sl" title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th data-col="tp1" title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
@@ -12093,6 +12098,12 @@ function entryBadgeHTML(e) {
 // trade_manager.real_pnl_net). Головне число — ROI на маржу (як на біржі),
 // під ним нетто $ і плече; рух ціни без плеча та розклад комісій — у підказці.
 // Немає pnl_net (старіший бекенд) → старий показ (рух ціни + $).
+// 💵 Нетто $ у полі PnL — ВИДІЛЕНО (вимога 10.11): жирна плашка кольору
+// результату; `html` уже відформатований (paper — через `_tmAmt`).
+function pnlUsdChip(html, v) {
+    const up = Number(v) >= 0;
+    return `<b class="tm-pnl-usd" title="нетто $: брутто − комісії (якщо закрити зараз)" style="font-size:0.74rem;color:${up ? '#4ade80' : '#f87171'};background:${up ? 'rgba(34,197,94,0.14)' : 'rgba(239,68,68,0.14)'};border:1px solid ${up ? '#4ade8055' : '#f8717155'};border-radius:4px;padding:0 5px">${html}</b>`;
+}
 function realPnlCellHTML(p, usd, syncMark) {
     const n = p.pnl_net;
     if (!n || n.roi_pct == null) {
@@ -12113,7 +12124,7 @@ function realPnlCellHTML(p, usd, syncMark) {
     ].join('\n').replace(/"/g, '&quot;');
     return `<td class="${cls}" style="white-space:nowrap;font-family:monospace" title="${tip}">` +
         `<b>${sgn(n.roi_pct)}${Math.abs(n.roi_pct).toFixed(2)}%</b>${syncMark}` +
-        `<br><span style="font-size:0.7rem;opacity:0.85">${usd2(n.net_usd)} нетто · ×${n.lev}</span></td>`;
+        `<br>${pnlUsdChip(usd2(n.net_usd), n.net_usd)}<span style="font-size:0.68rem;opacity:0.8"> ×${n.lev}</span></td>`;
 }
 
 // 🏦 PnL ЗАКРИТОЇ реальної угоди: ⇄ = факт біржі (Bybit closed-pnl, уже з
@@ -12591,7 +12602,7 @@ function paperPnlCellHTML(p) {
         (z.late ? ' · розмір за поточними налаштуваннями (угода старша за них)' : '');
     // Два рядки (як у реальній таблиці): зверху рух %, знизу нетто $ · ROI ×плече.
     return `<td class="${cl}" style="white-space:nowrap;font-family:monospace" title="${tip.replace(/"/g, '&quot;')}"><b>${pct}</b>` +
-        `<br><span style="font-size:0.7rem;opacity:0.85">${usd} нетто${roi ? ` · ${roi} ×${z.lev}` : ''}</span></td>`;
+        `<br>${pnlUsdChip(usd, n.net_usd)}<span style="font-size:0.68rem;opacity:0.8">${roi ? ` ${roi} ×${z.lev}` : ''}</span></td>`;
 }
 
 function renderTmStats(st, label, note, book) {
@@ -18224,10 +18235,18 @@ function chargeColor(v) {
     }
     return 'rgb(244,114,182)';
 }
-// 💥 ПРОЦЕС ВИСТРІЛУ Пружини по угоді (вимога 10.11, замість «🌀 Заряд»).
-// Живий 1h-бар (`pos.spring_fire` з кешу TM, раз на ~10с): 4 умови вистрілу
-// тим самим правилом, що `_fire_at` — ↕ діапазон/ATR · 📊 обʼєм/база ·
-// 📦 закриття за коробкою · 🗜 стиснення перед баром. Усі 4 → 💥.
+// 💥 ВИСНАЖЕННЯ по угоді (вимога 10.11): процес вистрілу Пружини на ЖИВОМУ
+// 1h-барі у % (`pos.spring_fire.pct` — бекенд `live_fire_view`, ЄДИНЕ джерело:
+// середня готовність 4 умов — ↕ діапазон/ATR · 📊 обʼєм/база · 📦 пробій
+// коробки · 🗜 стиснення). Градієнт смужки синій → бурштин → рожевий; 100% =
+// вистріл → «💥 ▲/▼ за/проти» угоди (проти — блимає).
+function exhColor(x) {
+    x = Math.max(0, Math.min(100, Number(x) || 0));
+    if (x >= 100) return '#f472b6';
+    if (x >= 75) return '#fb923c';
+    if (x >= 50) return '#facc15';
+    return '#60a5fa';
+}
 function springFireCellHTML(p) {
     const f = (p && p.spring_fire) || null;
     if (!f) {
@@ -18235,41 +18254,29 @@ function springFireCellHTML(p) {
     }
     const side = String(p.side || '').toUpperCase();
     const fd = f.fired || null;
-    const seg = (frac, ok, title) => {
-        const w = Math.max(0, Math.min(1, Number(frac) || 0)) * 100;
-        const col = ok ? '#f472b6' : (w >= 70 ? '#facc15' : '#60a5fa');
-        return `<span title="${title}" style="position:relative;display:inline-block;width:12px;height:12px;margin-right:2px;border-radius:2px;background:rgba(255,255,255,0.07);overflow:hidden">`
-            + `<span style="position:absolute;left:0;right:0;bottom:0;height:${w}%;background:${col};transition:height .5s ease"></span></span>`;
-    };
-    const rx = Number(f.range_x), rn = Number(f.range_need) || 1.8;
-    const vx = Number(f.vol_x), vn = Number(f.vol_need) || 1.8;
-    const sq = Number(f.pre_sq) || 0, sn = Number(f.sq_need) || 6;
-    const okR = rx > rn, okV = vx > vn, okB = !!f.beyond, okS = sq >= sn;
-    const px = Number(f.price), hi = Number(f.box_hi), lo = Number(f.box_lo);
-    let bFrac = 0;
-    if (okB) bFrac = 1;
-    else if (hi > lo && isFinite(px)) bFrac = Math.abs((px - (hi + lo) / 2) / ((hi - lo) / 2));
-    const n = [okR, okV, okB, okS].filter(Boolean).length;
-    const f2 = x => isFinite(x) ? x.toFixed(2) : '—';
-    const tip = '💥 Вистріл Пружини на ЖИВОМУ 1h-барі (оновлюється ~10с): '
-        + '↕ діапазон ' + f2(rx) + '×ATR (треба > ' + rn + ') · '
-        + '📊 обʼєм ' + f2(vx) + '× бази (треба > ' + vn + ', набраний досі) · '
-        + '📦 ' + (okB ? 'закриття ЗА коробкою ' + (f.beyond === 'LONG' ? '▲ вгору' : '▼ вниз') : 'ціна в коробці 24 год') + ' · '
-        + '🗜 стиснення перед баром ' + sq + ' бар. (треба ≥ ' + sn + ')'
+    const pt = f.parts || {};
+    const pct = fd ? 100 : Math.max(0, Math.min(100, Number(f.pct) || 0));
+    const col = exhColor(pct);
+    const f2 = x => (x != null && isFinite(Number(x))) ? Number(x).toFixed(2) : '—';
+    const pp = x => (x != null && isFinite(Number(x))) ? Math.round(Number(x)) + '%' : '—';
+    const tip = '💥 Виснаження (процес вистрілу Пружини на ЖИВОМУ 1h-барі, ~10с): ' + Math.round(pct) + '%'
+        + ' · ↕ діапазон ' + f2(f.range_x) + '×ATR / ' + (f.range_need || 1.8) + ' (' + pp(pt.range) + ')'
+        + ' · 📊 обʼєм ' + f2(f.vol_x) + '× / ' + (f.vol_need || 1.8) + ' (' + pp(pt.vol) + ')'
+        + ' · 📦 ' + (f.beyond ? 'закриття ЗА коробкою ' + (f.beyond === 'LONG' ? '▲' : '▼') : 'у коробці 24 год') + ' (' + pp(pt.box) + ')'
+        + ' · 🗜 стиснення ' + (f.pre_sq != null ? f.pre_sq : '—') + '/' + (f.sq_need || 6) + ' бар. (' + pp(pt.sq) + ')'
         + (fd ? ' · 💥 ВИСТРІЛИЛА ' + fd.side + (fd.live ? ' (живий бар)' : ' (закритий бар)') : '')
         + (f.stale ? ' · дані сканера (живий бар недоступний)' : '');
-    const bars = seg(rx / rn, okR, '↕ діапазон / ATR') + seg(vx / vn, okV, '📊 обʼєм / база')
-        + seg(bFrac, okB, '📦 пробій коробки') + seg(sq / sn, okS, '🗜 стиснення');
     let lab;
     if (fd) {
         const up = fd.side === 'LONG';
-        const rel = fd.side === side ? 'за' : 'проти';
-        lab = `<b class="${fd.side !== side ? 'tm-mmd-alert-hot' : ''}" style="color:${up ? '#4ade80' : '#f87171'}">💥 ${up ? '▲' : '▼'} ${rel}</b>`;
+        lab = `<b class="${fd.side !== side ? 'tm-mmd-alert-hot' : ''}" style="color:${up ? '#4ade80' : '#f87171'}">💥${up ? '▲' : '▼'}${fd.side === side ? 'за' : 'проти'}</b>`;
     } else {
-        lab = `<span style="color:${n >= 3 ? '#facc15' : '#8b93a7'}">${n}/4</span>`;
+        lab = `<b style="color:${col}">${Math.round(pct)}%</b>`;
     }
-    return `<td><span title="${tip}" style="display:inline-flex;align-items:center;font-family:monospace;white-space:nowrap;font-size:0.74rem">`
-        + bars + `<span style="display:inline-block;min-width:44px;margin-left:4px">${lab}</span></span></td>`;
+    return `<td><span title="${tip}" style="display:inline-flex;align-items:center;gap:5px;font-family:monospace;white-space:nowrap;font-size:0.72rem">`
+        + `<span style="position:relative;display:inline-block;width:46px;height:7px;border-radius:4px;background:rgba(255,255,255,0.07);overflow:hidden">`
+        + `<span style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;border-radius:4px;background:linear-gradient(90deg,#60a5fa,#facc15 55%,#fb923c 80%,#f472b6);background-size:${pct > 0 ? (10000 / pct) : 100}% 100%;box-shadow:0 0 6px ${col}66;transition:width .6s ease"></span></span>`
+        + `<span style="display:inline-block;min-width:34px;text-align:right">${lab}</span></span></td>`;
 }
 function springTradeCellHTML(p) {
     const sp = (p && p.spring) || null;
@@ -18360,20 +18367,6 @@ function mmdAlertCellHTML(p) {
 // — бурштинове «⏱ Nс», за 60с — червоне: такій ціні виходи довіряти не можна.
 const _PX_SRC = {feed: '⚡ стрічка цін Bybit', rest: 'прямий запит Bybit',
                  scanner: 'кеш SMC-сканера'};
-// 💲 Поточна ціна монети в угоді — ВИДІЛЕНА (вимога 10.11): жирний
-// моноширинний шрифт на плашці кольору результату (за угодою — зелений,
-// проти — червоний); зміна від входу — у підказці.
-function curPxHTML(p) {
-    const cur = Number(p && p.current_price), ent = Number(p && p.entry_price);
-    if (!isFinite(cur) || cur <= 0) return '—';
-    const side = String(p.side || '').toUpperCase();
-    let d = 0;
-    if (isFinite(ent) && ent > 0) d = (cur - ent) / ent * 100 * (side === 'SHORT' ? -1 : 1);
-    const up = d >= 0;
-    const col = up ? '#4ade80' : '#f87171', bg = up ? 'rgba(34,197,94,0.14)' : 'rgba(239,68,68,0.14)';
-    const tip = `Поточна ціна · від входу ${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(2)}% ${up ? 'за угодою' : 'проти угоди'}`;
-    return `<b class="tm-cur-px" title="${tip}" style="font-family:monospace;font-size:0.86rem;color:${col};background:${bg};border:1px solid ${col}55;border-radius:4px;padding:1px 6px;white-space:nowrap">${fmtPriceJS(cur)}</b>`;
-}
 function pxAgeHTML(p) {
     const m = p && p.px;
     if (!m || m.age == null) return '';
@@ -19216,7 +19209,7 @@ async function loadTMState(isPoll) {
                     <td>${manualMark}${histSymOpen(p, false)}${badges}</td>
                     <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${ob1hMarkHTML(p, null, true)}${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
-                    <td>${curPxHTML(p)}${pxAgeHTML(p)}</td>
+                    <td>${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}</td>
                     ${liqCellHTML(p)}
                     ${realPnlCellHTML(p, usd, syncMark)}
                     ${springFireCellHTML(p)}
@@ -19316,7 +19309,7 @@ async function loadTMState(isPoll) {
                     <td>${manualMark}${histSymOpen(p, true)}</td>
                     <td class="${sideClass}" style="white-space:nowrap">${ob4hMarkHTML(p, null, true)}${ob1hMarkHTML(p, null, true)}${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
-                    <td>${curPxHTML(p)}${pxAgeHTML(p)}</td>
+                    <td>${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}</td>
                     ${paperPnlCellHTML(p)}
                     ${springFireCellHTML(p)}
                     ${mmdAlertCellHTML(p)}

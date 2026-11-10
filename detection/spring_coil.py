@@ -213,7 +213,9 @@ def live_fire_view(klines: List[Dict]) -> Optional[Dict]:
     `_fire_at` — для показу в угодах — і сам вистріл (`fired`), якщо всі
     умови зійшлись. Обʼєм — набраний ДОСІ (умова строгіша, а не мʼякша).
     {range_x, range_need, vol_x, vol_need, box_hi, box_lo, price, beyond
-    ('LONG'|'SHORT'|None), pre_sq, sq_need, fired, t}."""
+    ('LONG'|'SHORT'|None), pre_sq, sq_need, fired, t, pct, parts}.
+    `pct` 0-100 — «💥 Виснаження»: середня готовність чотирьох умов (кожна
+    обрізана до 100%), вистріл = 100; `parts` — та сама готовність по умовах."""
     if not klines or len(klines) < BOX_BARS + ATR_LEN + 2:
         return None
     kl = klines[-LOOKBACK:]
@@ -240,7 +242,19 @@ def live_fire_view(klines: List[Dict]) -> Optional[Dict]:
         pre_sq += 1
     f = _fire_at(c, h, lo, v, atr, i)
     t = _bar_t(kl[-1])
+    rx = (h[i] - lo[i]) / a_prev
+    vx = v[i] / vb if vb > 0 else 0.0
+    if c[i] > bh or c[i] < bl:
+        bx = 1.0
+    elif bh > bl:
+        bx = abs(c[i] - (bh + bl) / 2.0) / ((bh - bl) / 2.0)
+    else:
+        bx = 0.0
+    parts = {'range': _clamp(rx / FIRE_RANGE_ATR), 'vol': _clamp(vx / FIRE_VOL_X),
+             'box': _clamp(bx), 'sq': _clamp(pre_sq / float(FIRE_MIN_SQ))}
+    pct = 100.0 if f else 100.0 * sum(parts.values()) / len(parts)
     return {
+        'pct': round(pct, 1), 'parts': {k: round(x * 100.0, 1) for k, x in parts.items()},
         'range_x': round((h[i] - lo[i]) / a_prev, 2), 'range_need': FIRE_RANGE_ATR,
         'vol_x': round(v[i] / vb, 2) if vb > 0 else None, 'vol_need': FIRE_VOL_X,
         'box_hi': bh, 'box_lo': bl, 'price': c[i],
