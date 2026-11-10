@@ -6263,6 +6263,13 @@ def register_api_routes(app):
                         pos['ob4h'] = _ob4_map[sym]
                     if sym in _ob1_map:
                         pos['ob1h'] = _ob1_map[sym]
+                    # 💥 Процес вистрілу Пружини — ЛИШЕ кеш TM (рахує монітор угод).
+                    try:
+                        _sf = tm._spring_fire_view(sym, fetch=False)
+                    except Exception:
+                        _sf = None
+                    if _sf:
+                        pos['spring_fire'] = _sf
                     _sr = _spr_map.get(str(sym or '').upper())
                     if _sr:
                         pos['spring'] = {k: _sr.get(k) for k in (

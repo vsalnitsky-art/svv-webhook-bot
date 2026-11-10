@@ -95,7 +95,7 @@ def test_tables_have_the_new_column_and_matching_colspans():
     for tid in ('tm-open-table', 'tm-shadow-open-table'):
         i = _HTML.index(f'id="{tid}"')
         tbl = _HTML[i:_HTML.index('</table>', i)]
-        _check('>🌀 Заряд</th>' in tbl, f'{tid}: немає колонки 🌀 Заряд')
+        _check('>💥 Вистріл</th>' in tbl, f'{tid}: немає колонки 💥 Вистріл (10.11 — замість 🌀 Заряд)')
         n = len(re.findall(r'<th[\s>]', tbl))
         m = re.search(r'colspan="(\d+)"', tbl)
         _check(m and int(m.group(1)) == n, f'{tid}: colspan ≠ {n}')

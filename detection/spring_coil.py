@@ -166,6 +166,95 @@ def _slope(vals: List[float]) -> float:
     return num / den if den else 0.0
 
 
+def _fire_at(c, h, lo, v, atr, i) -> Optional[Dict]:
+    """💥 Чи «вистрілив» бар `i`. ЄДИНЕ правило вистрілу — його кличе і
+    `analyze` (закриті бари), і `live_fire` (бар, що ще формується):
+    діапазон > FIRE_RANGE_ATR × ATR попереднього бару · обʼєм > FIRE_VOL_X ×
+    базового · закриття за 24-год коробкою · перед баром ≥ FIRE_MIN_SQ барів
+    справжнього стиснення (BB ≤ FIRE_SQ_R · ATR)."""
+    j0 = i - BOX_BARS
+    if j0 < 1 or atr[i - 1] is None:
+        return None
+    bh = max(h[j0:i])
+    bl = min(lo[j0:i])
+    bv = v[max(0, i - 84):i - 12] or v[max(0, i - 24):i]
+    vb = sum(bv) / len(bv) if bv else 0.0
+    rng = h[i] - lo[i]
+    big = rng > FIRE_RANGE_ATR * atr[i - 1] and vb > 0 and v[i] > FIRE_VOL_X * vb
+    if not big or not (c[i] > bh or c[i] < bl):
+        return None
+    pre_sq = 0
+    for k in range(i - 1, max(0, i - 73), -1):
+        r = _unit_r(c, atr, k)
+        if r is None or r >= FIRE_SQ_R:
+            break
+        pre_sq += 1
+    if pre_sq < FIRE_MIN_SQ:
+        return None   # велика свічка без попереднього стиснення — це не пружина
+    wk = max(h[max(0, i - WIDE_BARS):i]) - min(lo[max(0, i - WIDE_BARS):i])
+    pre_ratio = (bh - bl) / wk if wk > 0 else 1.0
+    side_f = 'LONG' if c[i] > bh else 'SHORT'
+    return {'side': side_f, 'level': bh if side_f == 'LONG' else bl,
+            'box_hi': bh, 'box_lo': bl, 'pre_sq': pre_sq,
+            'pre_ratio': round(pre_ratio, 3)}
+
+
+def _bar_t(b) -> Optional[int]:
+    try:
+        t = int(float((b or {}).get('t')))
+    except (TypeError, ValueError):
+        return None
+    return t // 1000 if t > 10 ** 12 else t
+
+
+def live_fire_view(klines: List[Dict]) -> Optional[Dict]:
+    """💥 ПРОЦЕС вистрілу на ЖИВОМУ барі (останній у `klines` формується).
+    ЧИСТА. Віддає, наскільки бар близький до вистрілу за КОЖНОЮ умовою
+    `_fire_at` — для показу в угодах — і сам вистріл (`fired`), якщо всі
+    умови зійшлись. Обʼєм — набраний ДОСІ (умова строгіша, а не мʼякша).
+    {range_x, range_need, vol_x, vol_need, box_hi, box_lo, price, beyond
+    ('LONG'|'SHORT'|None), pre_sq, sq_need, fired, t}."""
+    if not klines or len(klines) < BOX_BARS + ATR_LEN + 2:
+        return None
+    kl = klines[-LOOKBACK:]
+    c = [_f(b, 'p', 'c', 'close') for b in kl]
+    h = [_f(b, 'h', 'high') for b in kl]
+    lo = [_f(b, 'l', 'low') for b in kl]
+    v = [_f(b, 'v', 'volume') for b in kl]
+    if not all(c) or not all(h) or not all(lo):
+        return None
+    atr = _atr_series(h, lo, c, ATR_LEN)
+    i = len(c) - 1
+    a_prev = atr[i - 1]
+    if not a_prev or a_prev <= 0:
+        return None
+    bh = max(h[i - BOX_BARS:i])
+    bl = min(lo[i - BOX_BARS:i])
+    bv = v[max(0, i - 84):i - 12] or v[max(0, i - 24):i]
+    vb = sum(bv) / len(bv) if bv else 0.0
+    pre_sq = 0
+    for k in range(i - 1, max(0, i - 73), -1):
+        r = _unit_r(c, atr, k)
+        if r is None or r >= FIRE_SQ_R:
+            break
+        pre_sq += 1
+    f = _fire_at(c, h, lo, v, atr, i)
+    t = _bar_t(kl[-1])
+    return {
+        'range_x': round((h[i] - lo[i]) / a_prev, 2), 'range_need': FIRE_RANGE_ATR,
+        'vol_x': round(v[i] / vb, 2) if vb > 0 else None, 'vol_need': FIRE_VOL_X,
+        'box_hi': bh, 'box_lo': bl, 'price': c[i],
+        'beyond': 'LONG' if c[i] > bh else ('SHORT' if c[i] < bl else None),
+        'pre_sq': pre_sq, 'sq_need': FIRE_MIN_SQ, 't': t,
+        'fired': dict(f, t=t, live=True, price=c[i]) if f else None,
+    }
+
+
+def live_fire(klines: List[Dict]) -> Optional[Dict]:
+    """💥 Вистріл на живому барі (або None) — те саме правило `_fire_at`."""
+    vw = live_fire_view(klines)
+    return vw.get('fired') if vw else None
+
 def analyze(klines: List[Dict]) -> Dict:
     """Заряд + напрямок + вистріл по ЗАКРИТИХ барах (найстаріший першим)."""
     if not klines or len(klines) < MIN_BARS:
@@ -243,33 +332,12 @@ def analyze(klines: List[Dict]) -> Dict:
     fired = None
     for back in range(0, FIRE_LOOK):
         i = last - back
-        j0 = i - BOX_BARS
-        if j0 < 1 or atr[i - 1] is None:
+        if i - BOX_BARS < 1 or atr[i - 1] is None:
             break
-        bh = max(h[j0:i])
-        bl = min(lo[j0:i])
-        bv = v[max(0, i - 84):i - 12] or v[max(0, i - 24):i]
-        vb = sum(bv) / len(bv) if bv else 0.0
-        rng = h[i] - lo[i]
-        big = rng > FIRE_RANGE_ATR * atr[i - 1] and vb > 0 and v[i] > FIRE_VOL_X * vb
-        if not big or not (c[i] > bh or c[i] < bl):
-            continue
-        pre_sq = 0
-        for k in range(i - 1, max(0, i - 73), -1):
-            r = _unit_r(c, atr, k)
-            if r is None or r >= FIRE_SQ_R:
-                break
-            pre_sq += 1
-        wk = max(h[max(0, i - WIDE_BARS):i]) - min(lo[max(0, i - WIDE_BARS):i])
-        pre_ratio = (bh - bl) / wk if wk > 0 else 1.0
-        if pre_sq < FIRE_MIN_SQ:
-            continue   # велика свічка без попереднього стиснення — це не пружина
-        side_f = 'LONG' if c[i] > bh else 'SHORT'
-        fired = {'side': side_f, 'bars_ago': back,
-                 'level': bh if side_f == 'LONG' else bl,
-                 'box_hi': bh, 'box_lo': bl, 'pre_sq': pre_sq,
-                 'pre_ratio': round(pre_ratio, 3)}
-        break
+        f = _fire_at(c, h, lo, v, atr, i)
+        if f:
+            fired = dict(f, bars_ago=back)
+            break
 
     if fired:
         bias = 1.0 if fired['side'] == 'LONG' else -1.0

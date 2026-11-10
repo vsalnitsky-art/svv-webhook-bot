@@ -682,6 +682,10 @@ DEFAULT_SETTINGS = {
     # Session Band Reversal ПРОТИ угоди → закриваємо. Сигнали ДО входу — не
     # подія. Джерело — той самий рушій `sbr_signals`, що малює блок 🔔 МММ-SBR.
     'use_sbr_exit': False,
+    # 💥 Вихід, коли 🌀 Пружина монети «вистрілила» після входу (вимога 10.11).
+    # dir: any = будь-який вистріл · with = у бік угоди · against = проти.
+    'use_spring_fired_exit': False,
+    'spring_fired_exit_dir': 'any',
     'sbr_exit_1h': True,
     'sbr_exit_4h': True,
     # 🔔⏳ ТРЕЙЛ замість миттєвого виходу (вимога 31.10, деф. OFF): протилежний
@@ -1371,6 +1375,7 @@ class TradeManager:
                       'use_forecast_1h_exit', 'use_forecast_4h_exit',
                       'use_decision_exit', 'use_mm_flat_exit',
                       'use_sbr_exit', 'sbr_exit_1h', 'sbr_exit_4h', 'sbr_exit_trail',
+                      'use_spring_fired_exit',
                       'pilot_enabled',
                       'pilot_autofill_tp', 'pilot_tp2_from_magnet',
                       'tp1_move_to_be',
@@ -1426,6 +1431,8 @@ class TradeManager:
                 self._settings.get('pilot_tp1_from_liquidity', True))
             _sem = str(self._settings.get('signal_exit_mode', 'or') or 'or').lower()
             self._settings['signal_exit_mode'] = _sem if _sem in ('or', 'and') else 'or'
+            _sfd = str(self._settings.get('spring_fired_exit_dir', 'any') or 'any').lower()
+            self._settings['spring_fired_exit_dir'] = _sfd if _sfd in self.SPRING_FIRE_DIRS else 'any'
             # 🧮 Вихід по «МММ LiQ»: некоректний режим → дефолт 'flat'
             # (дослівна вимога), а не збій; підтвердження — секунди ≥ 0.
             _mfm = str(self._settings.get('mm_flat_exit_mode', 'flat')
@@ -2149,6 +2156,12 @@ class TradeManager:
         # EVERY trade, not only those opened when the data was already warm.
         if pos.get('spring_open') is None:
             self._spring_open_mark(symbol, pos)
+        # 💥 Живий процес вистрілу (колонка угод + правило виходу) — один
+        # запит 1h-барів на монету раз на SPRING_FIRE_TTL с.
+        try:
+            self._spring_fire_view(symbol)
+        except Exception:
+            pass
         if pos.get('ctr_open') is None:
             _c = self._ctr_snapshot(symbol)
             if _c:
@@ -2835,6 +2848,12 @@ class TradeManager:
         # trade-history modal shows «на вході» for CTR + Decision on paper trades.
         if pos.get('spring_open') is None:
             self._spring_open_mark(symbol, pos)
+        # 💥 Живий процес вистрілу (колонка угод + правило виходу) — один
+        # запит 1h-барів на монету раз на SPRING_FIRE_TTL с.
+        try:
+            self._spring_fire_view(symbol)
+        except Exception:
+            pass
         if pos.get('ctr_open') is None:
             _c = self._ctr_snapshot(symbol)
             if _c:
@@ -4117,6 +4136,138 @@ class TradeManager:
                 f"🔔 МММ-SBR {lab}: протилежний сигнал {sig.get('side')}{when}{sc} "
                 f"після входу — проти {str(pos.get('side') or '').upper()}")
 
+    SPRING_FIRE_TTL = 10       # с — як часто дивимось живий 1h-бар по угоді
+    SPRING_FIRE_DIRS = ('any', 'with', 'against')
+
+    @staticmethod
+    def spring_fire_hit(side, opened_at, fire, mode='any', base=None) -> Optional[str]:
+        """💥 Чи є вистріл підставою закрити угоду. ЧИСТА.
+
+        `fire` = {side, t (початок бару вистрілу, с), …}; повертає ключ
+        вистрілу 'SIDE|t' або None. Вистріл рахується, лише коли його бар
+        закінчується ПІСЛЯ входу (вистріл, що вже відбувся до угоди, — не
+        подія) і він не є базою, зафіксованою на вході (`base`). `mode`:
+        any — будь-який бік · with — у бік угоди · against — проти."""
+        sd = str(side or '').upper()
+        if sd not in ('LONG', 'SHORT') or not isinstance(fire, dict):
+            return None
+        fs = str(fire.get('side') or '').upper()
+        if fs not in ('LONG', 'SHORT'):
+            return None
+        m = mode if mode in TradeManager.SPRING_FIRE_DIRS else 'any'
+        if (m == 'with' and fs != sd) or (m == 'against' and fs == sd):
+            return None
+        try:
+            oa = float(opened_at or 0)
+            t = float(fire.get('t') or 0)
+        except (TypeError, ValueError):
+            return None
+        if oa <= 0 or t <= 0 or t + 3600 <= oa:
+            return None
+        key = f'{fs}|{int(t)}'
+        return None if key == base else key
+
+    def _spring_fire_now(self, symbol: str) -> Optional[Dict]:
+        """💥 Поточний вистріл монети (див. `_spring_fire_view`)."""
+        vw = self._spring_fire_view(symbol) or {}
+        return vw.get('fired')
+
+    def _spring_fire_view(self, symbol: str, fetch: bool = True) -> Optional[Dict]:
+        """💥 Живий ПРОЦЕС вистрілу монети: ЖИВИЙ 1h-бар (`live_fire_view`),
+        кеш на монету SPRING_FIRE_TTL с — обидві книги, правило виходу і
+        колонка угод беруть ОДИН запит. Немає вистрілу на живому барі →
+        вистріл останніх закритих барів (`analyze`), інакше запис сканера.
+        `fetch=False` — лише кеш (для `get_state` під локом)."""
+        S = str(symbol or '').upper()
+        cache = getattr(self, '_spring_fire_cache', None)
+        if cache is None:
+            cache = self._spring_fire_cache = {}
+        now = time.time()
+        hit = cache.get(S)
+        if hit and (not fetch or now - hit[0] < self.SPRING_FIRE_TTL):
+            return hit[1]
+        if not fetch:
+            return None
+        vw = None
+        try:
+            from detection import spring_coil
+            from detection.market_data import get_market_data
+            kl = get_market_data().fetch_klines(S, limit=300, interval='1h')
+            if kl:
+                vw = spring_coil.live_fire_view(kl)
+                if vw is not None and not vw.get('fired') and len(kl) > 1:
+                    vw['fired'] = self._spring_rec_fire(spring_coil.analyze(kl[:-1]))
+        except Exception as e:
+            print(f"[TM] spring live-fire {S}: {e}")
+        if vw is None:
+            f = self._spring_rec_fire(self._spring_rec(S))
+            vw = {'fired': f, 'stale': True} if f else None
+        if vw is not None:
+            vw['ts'] = now
+        cache[S] = (now, vw)
+        return vw
+
+    @staticmethod
+    def _spring_rec_fire(rec) -> Optional[Dict]:
+        """Вистріл із запису `analyze` (закриті бари) → {side, t, …}."""
+        if not isinstance(rec, dict) or rec.get('state') != 'fired':
+            return None
+        f = rec.get('fired') or {}
+        try:
+            t = float(rec.get('bar_t') or 0) - 3600.0 * int(f.get('bars_ago') or 0)
+        except (TypeError, ValueError):
+            return None
+        if t <= 0 or not f.get('side'):
+            return None
+        return dict(f, t=int(t), live=False)
+
+    def _spring_fired_exit_reason(self, symbol: str, pos: Dict,
+                                  is_shadow: bool = False) -> Optional[tuple]:
+        """💥 Вихід «Пружина вистрілила» (вимога 10.11). Для відкритих угод
+        вистріл дивимось на ЖИВОМУ 1h-барі (раз на SPRING_FIRE_TTL с), а не
+        чекаємо закриття бару і скану. Вистріл, що вже стояв на вході, —
+        база (`spring_fire_base`), закриває лише НОВИЙ."""
+        s = self._settings
+        if not s.get('use_spring_fired_exit'):
+            return None
+        tk = getattr(self, '_spring_fire_at', None)
+        if tk is None:
+            tk = self._spring_fire_at = {}
+        k = self._exit_key(symbol, is_shadow)
+        now = time.time()
+        if now - float(tk.get(k) or 0) < self.SPRING_FIRE_TTL:
+            return None
+        tk[k] = now
+        fire = self._spring_fire_now(symbol)
+        if 'spring_fire_base' not in pos:
+            # Перша перевірка угоди: вистріл, що вже є в перші 2 хв після
+            # входу, — стан на вході, а не подія.
+            try:
+                oa = float(pos.get('opened_at') or 0)
+            except (TypeError, ValueError):
+                oa = 0.0
+            key0 = None
+            if fire and oa > 0 and now - oa <= 120:
+                key0 = f"{str(fire.get('side')).upper()}|{int(float(fire.get('t') or 0))}"
+            pos['spring_fire_base'] = key0
+            self._persist_book(is_shadow)
+            if key0:
+                return None
+        key = self.spring_fire_hit(pos.get('side'), pos.get('opened_at'), fire,
+                                   s.get('spring_fired_exit_dir') or 'any',
+                                   pos.get('spring_fire_base'))
+        if not key:
+            return None
+        sd = str(pos.get('side') or '').upper()
+        fs = str(fire.get('side')).upper()
+        rel = 'у бік угоди' if fs == sd else 'ПРОТИ угоди'
+        lvl = fire.get('level')
+        lvl = f' · пробій {float(lvl):g}' if lvl else ''
+        src = 'живий 1h-бар' if fire.get('live') else 'закритий 1h-бар'
+        return ('spring_fired_exit',
+                f"💥 Пружина вистрілила {'▲' if fs == 'LONG' else '▼'} {fs} "
+                f"({rel}){lvl} · {src} · стиснення {fire.get('pre_sq')} бар.")
+
     def _spring_open_mark(self, symbol: str, pos: Dict) -> None:
         """🌀 Запамʼятати «Заряд» на відкритті угоди (`spring_open`).
         Монета ще не порахована → пробуємо на наступних тіках; якщо число
@@ -4247,6 +4398,16 @@ class TradeManager:
                             current_price: float, is_shadow: bool) -> bool:
         """Прогнати самостійні правила виходу. True → позицію ЗАКРИТО."""
         s = self._settings
+        # 💥 Пружина — ВЛАСНИЙ, коротший тротл (живий бар, реагуємо швидко).
+        if s.get('use_spring_fired_exit'):
+            try:
+                hit = self._spring_fired_exit_reason(symbol, pos, is_shadow)
+            except Exception as e:
+                print(f"[TM] spring-fired check error {symbol}: {e}")
+                hit = None
+            if hit:
+                return self._signal_exit_close(symbol, pos, current_price,
+                                               is_shadow, hit)
         if not (s.get('use_forecast_1h_exit') or s.get('use_forecast_4h_exit')
                 or s.get('use_decision_exit') or s.get('use_mm_flat_exit')
                 or s.get('use_sbr_exit') or pos.get('sbr_exit_on')):
@@ -4273,6 +4434,10 @@ class TradeManager:
             return False
         if not hit:
             return False
+        return self._signal_exit_close(symbol, pos, current_price, is_shadow, hit)
+
+    def _signal_exit_close(self, symbol: str, pos: Dict, current_price: float,
+                           is_shadow: bool, hit: tuple) -> bool:
         reason, why = hit
         print(f"[TM] 🔻 {reason} for {symbol}: {why}")
         try:
@@ -7218,6 +7383,7 @@ class TradeManager:
             'mm_against_exit': '🧮 МММ LiQ РОЗВЕРНУВСЯ ПРОТИ позиції',
             'sbr_exit': '🔔 Протилежний сигнал МММ-SBR після входу',
             'sbr_trail_exit': '🔔⏳ МММ-SBR проти: ціна не продовжила угоду (трейл від ціни сигналу)',
+            'spring_fired_exit': '💥 Пружина монети вистрілила після входу',
             'signal_exit_and': '🔗 AND: усі увімкнені вердикти проти позиції',
             'pilot_target': '🎯 Автопілот: ціль на графіку досягнута',
         }
@@ -10136,6 +10302,7 @@ class TradeManager:
             'mm_against_exit': '🧮 МММ LiQ ПРОТИ',
             'sbr_exit': '🔔 SBR проти',
             'sbr_trail_exit': '🔔⏳ SBR трейл',
+            'spring_fired_exit': '💥 Пружина вистрілила',
             'signal_exit_and': '🔗 Signal Exit (AND)',
             'pilot_target': '🎯 Автопілот (ціль)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',
