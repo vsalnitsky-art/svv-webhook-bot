@@ -5238,7 +5238,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 🎯 Вихід на кульмінації (Виснаження)
                                 <span class="tm-help" title="САМОСТІЙНЕ правило фіксації прибутку. Коли на ЖИВОМУ 1h-барі «💥 Виснаження» у БІК угоди досягло порогу (бар-сплеск: діапазон і обʼєм ≥ порогів вистрілу, закриття за 24-год коробкою) і угода в плюсі — це кульмінація руху: енергію витрачено. Вершину заздалегідь не знати, тому бот веде стоп від найкращої ціни на N·ATR(1h) і закриває на першому відкаті; стоп не гірший за вхід + мін. прибуток (комісії). Трейл веде БОТ, на біржу нічого не виставляється. 📌 Manual не чіпає. За замовчуванням ВИМКНЕНО.">?</span>
                             </label>
-                            <label style="margin-left:10px" title="Поріг «Виснаження» у бік угоди, з якого вважаємо бар кульмінацією">Виснаження ≥ <input type="number" id="tm-exh-exit-min" min="30" max="100" step="5" style="width:52px" onchange="saveTMSettings()"> %</label>
+                            <label style="margin-left:10px" title="Поріг «Виснаження» угоди (% шляху від входу до цілі Пружини), з якого ведемо стоп від вершини; бар-сплеск у бік угоди озброює і без порогу">Виснаження ≥ <input type="number" id="tm-exh-exit-min" min="30" max="100" step="5" style="width:52px" onchange="saveTMSettings()"> %</label>
                             <label style="margin-left:10px" title="Відкат від вершини, що закриває угоду, у ATR(1h)">відкат ≥ <input type="number" id="tm-exh-exit-atr" min="0.05" max="5" step="0.05" style="width:52px" onchange="saveTMSettings()"> ATR</label>
                             <label style="margin-left:10px" title="Мінімальний прибуток від входу: і умова озброєння, і найгірший стоп (покриває комісії)">мін. прибуток <input type="number" id="tm-exh-exit-profit" min="0" max="10" step="0.05" style="width:52px" onchange="saveTMSettings()"> %</label>
                         </div>
@@ -5582,7 +5582,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th data-col="sym">Symbol</th><th data-col="side">Side</th><th data-col="entry">Entry</th><th data-col="cur">Current</th><th data-col="liq" title="💀 Ціна ліквідації реальної позиції на Bybit і відстань до неї від поточної ціни: червоний < 5%, бурштиновий < 15%. ⚠ — Manual SL стоїть за ліквідацією (стоп не встигне спрацювати).">💀 Ліквідація</th><th data-col="pnl" title="💰 PnL з урахуванням ПЛЕЧА і КОМІСІЙ. Велике число — ROI на маржу (як у застосунку біржі): нетто ÷ (нотіонал входу ÷ плече). Під ним — нетто $ (брутто − комісія входу − оцінка комісії виходу), якщо закрити зараз, і плече. Рух ціни без плеча та розклад — у підказці комірки. Комісія — поле «Комісія / сторону, %» (Bybit taker ≈ 0.055%).">PnL <span style="font-size:0.62rem;color:#8b93a7;font-weight:400">ROI · нетто</span></th>
-                        <th data-col="charge" title="💥 ВИСНАЖЕННЯ — процес вистрілу Пружини на ЖИВОМУ 1h-барі (оновлюється ~10с) у відсотках: середня готовність 4 умов вистрілу (↕ діапазон &gt; 1.8×ATR · 📊 обʼєм &gt; 1.8× бази · 📦 закриття за 24-год коробкою · 🗜 ≥6 барів стиснення перед баром). Градієнт: синій → бурштин → рожевий; 100% = вистрілила → «💥 ▲/▼ за/проти» угоди (проти — блимає). Розклад по умовах — у підказці комірки. Цим самим правилом працює вихід «💥 Пружина вистрілила» (Exit Rules).">💥 Виснаження</th>
+                        <th data-col="charge" title="💥 ВИСНАЖЕННЯ УГОДИ — скільки шляху від ВХОДУ до цілі «Ймовірного ходу» Пружини (записаної на вході) уже пройдено: на вході 0%, ціль досягнута 100%, ціна проти угоди 0%. 💥 поруч — зараз бар-сплеск у бік угоди (кульмінація руху); ⚠ — Пружина вистрілила ПРОТИ угоди. «—» — у монети на вході не було цілі Пружини. Цим самим числом працює «🎯 Вихід на кульмінації» (Exit Rules)">💥 Виснаження</th>
                         <th data-col="alert" title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. ⏳ бурштиновий «🔔⏳ TF» — увімкнено «трейл»: протилежний сигнал запамʼятав ціну, угоду ведемо; поруч — стоп і відстань ціни від запамʼятованої (🌀 = заряд ще тримає угоду, відкат не закриває). Сам сигнал нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
                         <th data-col="qty">Qty</th>
                         <th data-col="sl" title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
@@ -5710,7 +5710,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th data-col="sym">Symbol</th><th data-col="side">Side</th><th data-col="entry">Entry</th><th data-col="cur">Current</th><th data-col="pnl">PnL</th>
-                        <th data-col="charge" title="💥 ВИСНАЖЕННЯ — процес вистрілу Пружини на ЖИВОМУ 1h-барі (оновлюється ~10с) у відсотках: середня готовність 4 умов вистрілу (↕ діапазон &gt; 1.8×ATR · 📊 обʼєм &gt; 1.8× бази · 📦 закриття за 24-год коробкою · 🗜 ≥6 барів стиснення перед баром). Градієнт: синій → бурштин → рожевий; 100% = вистрілила → «💥 ▲/▼ за/проти» угоди (проти — блимає). Розклад по умовах — у підказці комірки. Цим самим правилом працює вихід «💥 Пружина вистрілила» (Exit Rules).">💥 Виснаження</th>
+                        <th data-col="charge" title="💥 ВИСНАЖЕННЯ УГОДИ — скільки шляху від ВХОДУ до цілі «Ймовірного ходу» Пружини (записаної на вході) уже пройдено: на вході 0%, ціль досягнута 100%, ціна проти угоди 0%. 💥 поруч — зараз бар-сплеск у бік угоди (кульмінація руху); ⚠ — Пружина вистрілила ПРОТИ угоди. «—» — у монети на вході не було цілі Пружини. Цим самим числом працює «🎯 Вихід на кульмінації» (Exit Rules)">💥 Виснаження</th>
                         <th data-col="alert" title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. ⏳ бурштиновий «🔔⏳ TF» — увімкнено «трейл»: протилежний сигнал запамʼятав ціну, угоду ведемо; поруч — стоп і відстань ціни від запамʼятованої (🌀 = заряд ще тримає угоду, відкат не закриває). Сам сигнал нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
                         <th data-col="sl" title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th data-col="tp1" title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
@@ -18282,31 +18282,30 @@ function exhColor(x) {
     return '#60a5fa';
 }
 function springFireCellHTML(p) {
+    // 💥 «Виснаження» УГОДИ (калібровка 10.11): скільки шляху від ВХОДУ до цілі
+    // «Ймовірного ходу» Пружини (запамʼятованої на вході) уже пройдено.
+    // На вході = 0%, ціль = 100%. Окремо — 💥 бар-сплеск у бік угоди (кульмінація).
+    const e = (p && p.exh) || null;
+    const side = String(p && p.side || '').toUpperCase();
     const f = (p && p.spring_fire) || null;
-    if (!f) {
-        return '<td><span style="color:#6b7280" title="💥 Живого 1h-бару по монеті ще немає (монітор угоди підтягне його за ~10с)">—</span></td>';
+    const fd = f && f.fired;
+    if (!e) {
+        const why = (p && p.spring_open_tgt === null)
+            ? 'ціль Пружини на вході не визначена (монета не заряджена або ціль уже позаду)'
+            : 'чекаємо ціль Пружини і живий 1h-бар (≈10с)';
+        return `<td><span style="color:#6b7280" title="💥 Виснаження угоди: ${why}">—</span></td>`;
     }
-    const side = String(p.side || '').toUpperCase();
-    const fd = f.fired || null;
-    const pt = f.parts || {};
-    const pct = fd ? 100 : Math.max(0, Math.min(100, Number(f.pct) || 0));
+    const pct = Math.max(0, Math.min(100, Number(e.pct) || 0));
     const col = exhColor(pct);
-    const f2 = x => (x != null && isFinite(Number(x))) ? Number(x).toFixed(2) : '—';
-    const pp = x => (x != null && isFinite(Number(x))) ? Math.round(Number(x)) + '%' : '—';
-    const tip = '💥 Виснаження (процес вистрілу Пружини на ЖИВОМУ 1h-барі, ~10с): ' + Math.round(pct) + '%'
-        + ' · ↕ діапазон ' + f2(f.range_x) + '×ATR / ' + (f.range_need || 1.8) + ' (' + pp(pt.range) + ')'
-        + ' · 📊 обʼєм ' + f2(f.vol_x) + '× / ' + (f.vol_need || 1.8) + ' (' + pp(pt.vol) + ')'
-        + ' · 📦 ' + (f.beyond ? 'закриття ЗА коробкою ' + (f.beyond === 'LONG' ? '▲' : '▼') : 'у коробці 24 год') + ' (' + pp(pt.box) + ')'
-        + ' · 🗜 стиснення ' + (f.pre_sq != null ? f.pre_sq : '—') + '/' + (f.sq_need || 6) + ' бар. (' + pp(pt.sq) + ')'
-        + (fd ? ' · 💥 ВИСТРІЛИЛА ' + fd.side + (fd.live ? ' (живий бар)' : ' (закритий бар)') : '')
-        + (f.stale ? ' · дані сканера (живий бар недоступний)' : '');
-    let lab;
-    if (fd) {
-        const up = fd.side === 'LONG';
-        lab = `<b class="${fd.side !== side ? 'tm-mmd-alert-hot' : ''}" style="color:${up ? '#4ade80' : '#f87171'}">💥${up ? '▲' : '▼'}${fd.side === side ? 'за' : 'проти'}</b>`;
-    } else {
-        lab = `<b style="color:${col}">${Math.round(pct)}%</b>`;
-    }
+    const sg = x => (x >= 0 ? '+' : '') + Number(x).toFixed(2) + '%';
+    const tip = '💥 Виснаження угоди: пройдено ' + Math.round(pct) + '% шляху від входу до цілі Пружини'
+        + ' · рух від входу ' + sg(e.done_pct) + ' з ' + sg(e.target_pct)
+        + ' · ціль ' + fmtPriceJS(e.target) + (p.spring_open_tgt_late ? ' (ціль записано пізніше входу)' : '')
+        + (e.climax ? ' · 💥 зараз бар-сплеск у бік угоди — кульмінація руху' : '')
+        + (fd && fd.side !== side ? ' · ⚠ Пружина вистрілила ПРОТИ угоди' : '');
+    let lab = `<b style="color:${col}">${Math.round(pct)}%</b>`;
+    if (e.climax) lab += `<b title="бар-сплеск у бік угоди" style="color:#f472b6;margin-left:2px">💥</b>`;
+    if (fd && fd.side !== side) lab += `<b class="tm-mmd-alert-hot" style="color:#f87171;margin-left:2px">⚠</b>`;
     return `<td><span title="${tip}" style="display:inline-flex;align-items:center;gap:5px;font-family:monospace;white-space:nowrap;font-size:0.72rem">`
         + `<span style="position:relative;display:inline-block;width:46px;height:7px;border-radius:4px;background:rgba(255,255,255,0.07);overflow:hidden">`
         + `<span style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;border-radius:4px;background:linear-gradient(90deg,#60a5fa,#facc15 55%,#fb923c 80%,#f472b6);background-size:${pct > 0 ? (10000 / pct) : 100}% 100%;box-shadow:0 0 6px ${col}66;transition:width .6s ease"></span></span>`
@@ -18317,7 +18316,7 @@ function springFireCellHTML(p) {
 function exhTrailBadgeHTML(p) {
     const t = p && p.exh_trail;
     if (!t || t.stop_px == null) return '';
-    const tip = '🎯 Кульмінація у бік угоди (Виснаження ' + (t.pct != null ? t.pct : '—') + '%): '
+    const tip = '🎯 Кульмінація руху (Виснаження угоди ' + (t.pct != null ? t.pct : '—') + '%): '
         + 'вершина ' + fmtPriceJS(t.best_px) + ' · стоп ' + fmtPriceJS(t.stop_px)
         + ' · не гірше ' + fmtPriceJS(t.floor_px) + ' — відкат до стопа закриє угоду (веде бот)';
     return `<b title="${tip}" style="margin-left:4px;color:#22d3ee;font-size:0.68rem">🎯 ${fmtPriceJS(t.stop_px)}</b>`;

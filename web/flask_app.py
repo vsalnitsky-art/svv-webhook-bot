@@ -6270,6 +6270,13 @@ def register_api_routes(app):
                         _sf = None
                     if _sf:
                         pos['spring_fire'] = _sf
+                    # 💥 «Виснаження» УГОДИ: вхід → ціль Пружини (те саме, що правило виходу).
+                    try:
+                        _ex = tm.trade_exh_for(pos, _sf)
+                    except Exception:
+                        _ex = None
+                    if _ex:
+                        pos['exh'] = _ex
                     _sr = _spr_map.get(str(sym or '').upper())
                     if _sr:
                         pos['spring'] = {k: _sr.get(k) for k in (

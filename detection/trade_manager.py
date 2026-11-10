@@ -2168,7 +2168,7 @@ class TradeManager:
         # (CTR / Decision data can lag the open by a tick). Filled ONCE — so the
         # trade-history modal shows «на вході» for CTR and Decision Center on
         # EVERY trade, not only those opened when the data was already warm.
-        if pos.get('spring_open') is None:
+        if pos.get('spring_open') is None or 'spring_open_tgt' not in pos:
             self._spring_open_mark(symbol, pos)
         # 💥 Живий процес вистрілу (колонка угод + правило виходу) — один
         # запит 1h-барів на монету раз на SPRING_FIRE_TTL с.
@@ -2862,7 +2862,7 @@ class TradeManager:
         # Backfill entry snapshots that were unavailable at the exact open moment
         # (CTR / Decision data can lag the open by a tick) — filled ONCE so the
         # trade-history modal shows «на вході» for CTR + Decision on paper trades.
-        if pos.get('spring_open') is None:
+        if pos.get('spring_open') is None or 'spring_open_tgt' not in pos:
             self._spring_open_mark(symbol, pos)
         # 💥 Живий процес вистрілу (колонка угод + правило виходу) — один
         # запит 1h-барів на монету раз на SPRING_FIRE_TTL с.
@@ -4287,23 +4287,83 @@ class TradeManager:
                 f"({rel}){lvl} · {src} · стиснення {fire.get('pre_sq')} бар.")
 
     def _spring_open_mark(self, symbol: str, pos: Dict) -> None:
-        """🌀 Запамʼятати «Заряд» на відкритті угоди (`spring_open`).
-        Монета ще не порахована → пробуємо на наступних тіках; якщо число
-        прийшло пізніше ніж за 5 хв після входу — позначка `spring_open_late`
-        (це вже не «на вході», а перше відоме значення)."""
+        """🌀 Запамʼятати «Заряд» і ЦІЛЬ «Ймовірного ходу» Пружини на відкритті
+        угоди (`spring_open`, `spring_open_tgt`). Монета ще не порахована →
+        пробуємо на наступних тіках; число, що прийшло пізніше ніж за 5 хв
+        після входу, позначається `spring_open_late` / `spring_open_tgt_late`
+        (це вже не «на вході», а перше відоме значення).
+        Ціль береться в бік угоди і мусить лежати ПОПЕРЕДУ входу, інакше —
+        None (ціль уже пройдена, міряти «виснаження» нема від чого)."""
         rec = self._spring_rec(symbol)
-        if not rec or rec.get('charge') is None:
-            return
-        try:
-            pos['spring_open'] = round(float(rec.get('charge')), 1)
-        except (TypeError, ValueError):
+        if not rec:
             return
         try:
             oa = float(pos.get('opened_at') or 0)
         except (TypeError, ValueError):
             oa = 0.0
-        if oa > 0 and time.time() - oa > 300:
-            pos['spring_open_late'] = True
+        late = oa > 0 and time.time() - oa > 300
+        if pos.get('spring_open') is None and rec.get('charge') is not None:
+            try:
+                pos['spring_open'] = round(float(rec.get('charge')), 1)
+                if late:
+                    pos['spring_open_late'] = True
+            except (TypeError, ValueError):
+                pass
+        if 'spring_open_tgt' not in pos:
+            side = str(pos.get('side') or '').upper()
+            tg = rec.get('tgt_long' if side == 'LONG' else 'tgt_short')
+            try:
+                tg = float(tg)
+                en = float(pos.get('entry_price') or 0)
+            except (TypeError, ValueError):
+                return
+            ok = en > 0 and ((side == 'LONG' and tg > en) or (side == 'SHORT' and 0 < tg < en))
+            pos['spring_open_tgt'] = round(tg, 10) if ok else None
+            if late:
+                pos['spring_open_tgt_late'] = True
+
+    @staticmethod
+    def trade_exhaustion(side, entry, price, target, climax=None):
+        """💥 «Виснаження» УГОДИ (калібровка 10.11). ЧИСТА.
+
+        Скільки шляху руху вже пройдено: від ВХОДУ до цілі «Ймовірного ходу»
+        Пружини, запамʼятованої на вході. На вході = 0%, ціль досягнута = 100%,
+        ціна проти угоди = 0%. `climax` (бік бару-сплеску на живому 1h-барі) —
+        окрема ознака кульмінації: сплеск у бік угоди теж означає, що енергію
+        руху витрачено. Немає цілі → None («невідомо» ≠ «0%»).
+        → {pct, done_pct, target, target_pct, climax}"""
+        sd = str(side or '').upper()
+        try:
+            en = float(entry)
+            px = float(price)
+            tg = float(target)
+        except (TypeError, ValueError):
+            return None
+        if sd not in ('LONG', 'SHORT') or en <= 0 or px <= 0 or tg <= 0:
+            return None
+        sign = 1.0 if sd == 'LONG' else -1.0
+        tpct = sign * (tg - en) / en * 100.0
+        if tpct <= 0:
+            return None
+        done = sign * (px - en) / en * 100.0
+        pct = max(0.0, min(100.0, done / tpct * 100.0))
+        return {'pct': round(pct, 1), 'done_pct': round(done, 2), 'target': tg,
+                'target_pct': round(tpct, 2), 'climax': climax == sd}
+
+    def trade_exh_for(self, pos: Dict, view: Optional[Dict] = None) -> Optional[Dict]:
+        """💥 «Виснаження» угоди для показу І для правила виходу — ОДНЕ джерело.
+        Ціна — живий 1h-бар (`view.price`), інакше поточна з кешу (без мережі)."""
+        if not isinstance(pos, dict):
+            return None
+        vw = view if isinstance(view, dict) else {}
+        px = vw.get('price')
+        if not px:
+            try:
+                px = self._get_current_price(pos.get('symbol'), cache_only=True)
+            except Exception:
+                px = None
+        return self.trade_exhaustion(pos.get('side'), pos.get('entry_price'), px,
+                                     pos.get('spring_open_tgt'), vw.get('climax'))
 
     def _spring_rec(self, symbol: str) -> Optional[Dict]:
         """🌀 Запис «Пружини» монети — лише памʼять сканера (той самий
@@ -4417,9 +4477,10 @@ class TradeManager:
                       min_pct=75.0, atr_k=0.5, min_profit_pct=0.3):
         """🎯 Вихід на КУЛЬМІНАЦІЇ руху (за «💥 Виснаженням», 10.11). ЧИСТА.
 
-        Ідея: найвигідніший момент виходу — бар-сплеск У БІК угоди (діапазон і
-        обʼєм ≥ порогів вистрілу, закриття за 24-год коробкою, «Виснаження» ≥
-        `min_pct`), поки угода в плюсі. Такий бар зазвичай і є вершиною руху:
+        Ідея: найвигідніший момент виходу — коли рух угоди вичерпано:
+        «Виснаження» угоди (пройдено ≥ `min_pct` шляху від входу до цілі
+        Пружини) АБО бар-сплеск У БІК угоди (`climax`: діапазон і обʼєм ≥
+        порогів вистрілу, закриття за 24-год коробкою), поки угода в плюсі. Такий бар зазвичай і є вершиною руху:
         енергію витрачено. Вершину заздалегідь не знати, тому після сплеску
         ведемо стоп від найкращої ціни на `atr_k`·ATR(1h) і виходимо на першому
         відкаті; стоп не гірший за вхід + `min_profit_pct` (комісії).
@@ -4446,7 +4507,7 @@ class TradeManager:
             except (TypeError, ValueError):
                 return None, None
             in_profit = px >= floor if sd == 'LONG' else px <= floor
-            if not (vw.get('beyond') == sd and pct >= float(min_pct) and atr > 0 and in_profit):
+            if not ((pct >= float(min_pct) or vw.get('climax') == sd) and atr > 0 and in_profit):
                 return None, None
             ext = vw.get('bar_hi') if sd == 'LONG' else vw.get('bar_lo')
             try:
@@ -4497,14 +4558,17 @@ class TradeManager:
         kw = dict(min_pct=s.get('exh_exit_min', 75), atr_k=s.get('exh_exit_atr', 0.5),
                   min_profit_pct=s.get('exh_exit_min_profit', 0.3))
         if not isinstance(st, dict):
-            vw = self._spring_fire_view(symbol, fetch=False)
+            vw = dict(self._spring_fire_view(symbol, fetch=False) or {})
+            ex = self.trade_exh_for(pos, vw) or {}
+            vw['pct'] = ex.get('pct') or 0.0     # «Виснаження» УГОДИ, а не готовність вистрілу
             new, _ = self.exh_exit_step(side, pos.get('entry_price'), None, vw,
                                         current_price, lo, hi, **kw)
             if not new:
                 return False
             pos['exh_trail'] = new
             self._persist_book(is_shadow)
-            msg = (f"🎯 Кульмінація руху: «Виснаження» {new['pct']:g}% у бік угоди, "
+            msg = (f"🎯 Кульмінація руху: «Виснаження» угоди {new['pct']:g}%"
+                   f"{' · сплеск у бік угоди' if vw.get('climax') == side else ''}, "
                    f"ціна {float(current_price):g} — ведемо стоп від вершини "
                    f"{float(new['best_px']):g} на {float(kw['atr_k'] or 0):g}·ATR "
                    f"(стоп {float(new['stop_px']):g})")

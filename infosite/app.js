@@ -2165,13 +2165,19 @@
     x = Math.max(0, Math.min(100, Number(x) || 0));
     return x >= 100 ? "#f472b6" : (x >= 75 ? "#fb923c" : (x >= 50 ? "#facc15" : "#60a5fa"));
   }
+  // 💥 «Виснаження» угоди: пройдено % шляху від входу до цілі Пружини (0% на вході).
   function ppExh(p) {
-    var f = p.spring_fire;
-    if (!f) return '<span class="muted">—</span>';
-    var fd = f.fired, pct = fd ? 100 : Math.max(0, Math.min(100, Number(f.pct) || 0)), col = exhColor(pct);
-    var lab = fd ? '<b class="' + (fd.side !== p.side ? "pp-blink" : "") + '" style="color:' + (fd.side === "LONG" ? "#4ade80" : "#f87171") + '">💥' +
-      (fd.side === "LONG" ? "▲" : "▼") + (fd.side === p.side ? "за" : "проти") + "</b>" : '<b style="color:' + col + '">' + Math.round(pct) + "%</b>";
-    return '<span class="pp-exh" title="Виснаження: процес вистрілу Пружини на живому 1h-барі">' +
+    var e = p.exh, f = p.spring_fire, fd = f && f.fired;
+    if (!e) return '<span class="muted" title="Ціль Пружини для угоди ще не визначена">—</span>';
+    var pct = Math.max(0, Math.min(100, Number(e.pct) || 0)), col = exhColor(pct);
+    var sg = function (x) { return (x >= 0 ? "+" : "") + Number(x).toFixed(2) + "%"; };
+    var tip = "Виснаження угоди: пройдено " + Math.round(pct) + "% шляху від входу до цілі Пружини " +
+      fmtPrice(e.target) + " · рух " + sg(e.done_pct) + " з " + sg(e.target_pct) +
+      (e.climax ? " · 💥 бар-сплеск у бік угоди (кульмінація)" : "");
+    var lab = '<b style="color:' + col + '">' + Math.round(pct) + "%</b>" +
+      (e.climax ? '<b style="color:#f472b6">💥</b>' : "") +
+      (fd && fd.side !== p.side ? '<b class="pp-blink" style="color:#f87171">⚠</b>' : "");
+    return '<span class="pp-exh" title="' + esc(tip) + '">' +
       '<i><b style="width:' + pct + "%;background-size:" + (pct > 0 ? 10000 / pct : 100) + '% 100%"></b></i>' + lab +
       (p.exh_trail && p.exh_trail.stop_px != null ? ' <b class="pp-exh-st" title="🎯 Кульмінацію зловлено: бот веде стоп від вершини ' +
         esc(fmtPrice(p.exh_trail.best_px)) + '">🎯 ' + fmtPrice(p.exh_trail.stop_px).replace("$", "") + "</b>" : "") + "</span>";

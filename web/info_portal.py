@@ -1136,7 +1136,7 @@ PAPER_CLOSED_SHOW = 50          # скільки останніх закрити
 _PAPER_POS_KEYS = ('symbol', 'side', 'entry_price', 'current_price', 'pnl_pct',
                    'pnl_net', 'paper_size', 'opened_at', 'opened_by', 'manual_sl',
                    'manual_tp', 'manual_tp1', 'tp1_done', 'spring_open', 'mmd',
-                   'spring_fire', 'exh_trail')
+                   'spring_fire', 'exh_trail', 'exh', 'spring_open_tgt')
 _PAPER_CLOSED_KEYS = ('symbol', 'side', 'entry_price', 'exit_price', 'opened_at',
                       'closed_at', 'pnl_pct', 'reason', 'opened_by')
 _paper_cache = {'at': 0.0, 'data': None, 'sig': None}
@@ -1212,6 +1212,12 @@ def _paper_snapshot(tm):
             sf = None
         if sf:
             p['spring_fire'] = sf
+        try:
+            ex = tm.trade_exh_for(p, sf)
+        except Exception:
+            ex = None
+        if ex:
+            p['exh'] = ex
     data = {
         'account': st.get('paper_account') or {},
         'stats_all': st.get('shadow_stats') or {},

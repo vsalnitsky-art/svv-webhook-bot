@@ -175,20 +175,41 @@ def test_wiring():
 
 
 def test_js_cell():
+    """💥 Комірка «Виснаження» = прогрес угоди від входу до цілі Пружини (10.11)."""
     i = _HTML.index('function exhColor(')
     j = _HTML.index('function springTradeCellHTML(', i)
-    js = _HTML[i:j] + r"""
+    js = 'const fmtPriceJS = p => String(p);\n' + _HTML[i:j] + r"""
 console.log(springFireCellHTML({}));
-console.log(springFireCellHTML({side:'SHORT', spring_fire:{pct:100,parts:{},beyond:'LONG',fired:{side:'LONG',live:true}}}));
-console.log(springFireCellHTML({side:'LONG', spring_fire:{pct:42.4,parts:{range:50,vol:28,box:40,sq:100},fired:null}}));
+console.log(springFireCellHTML({side:'SHORT', exh:{pct:30,done_pct:1.5,target:90,target_pct:5,climax:false}, spring_fire:{pct:100,fired:{side:'LONG',live:true}}}));
+console.log(springFireCellHTML({side:'LONG', exh:{pct:0,done_pct:-0.24,target:0.0543,target_pct:29.3,climax:false}, spring_fire:{pct:20,fired:null}}));
+console.log(springFireCellHTML({side:'LONG', exh:{pct:82,done_pct:8,target:110,target_pct:10,climax:true}}));
 """
     out = subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=20)
     _check(out.returncode == 0, out.stderr)
-    a, b, c = out.stdout.strip().split('\n')
+    a, b, c, d = out.stdout.strip().split('\n')
     _check('—' in a, a)
-    _check('💥▲проти' in b and 'tm-mmd-alert-hot' in b, b)
-    _check('42%' in c and 'width:42.4%' in c, c)
+    _check('30%' in b and '⚠' in b and 'tm-mmd-alert-hot' in b, b)
+    _check('>0%<' in c and 'width:0%' in c and '20%' not in c, ('на вході — 0%, а не готовність вистрілу', c))
+    _check('82%' in d and '💥' in d, d)
 
+
+def test_trade_exhaustion_is_progress_to_target():
+    """💥 Калібровка 10.11 (кейс UAIUSDT): на вході виснаження = 0%, а не 20%
+    від стиснення. % = пройдений шлях від входу до цілі «Ймовірного ходу»."""
+    TM = _tm_cls()
+    ex = TM.trade_exhaustion
+    _check(ex('LONG', 0.042, 0.042, 0.0543)['pct'] == 0.0, 'на вході 0%')
+    _check(ex('LONG', 0.042, 0.0419, 0.0543)['pct'] == 0.0, 'проти угоди — 0%, не мінус')
+    _check(abs(ex('LONG', 100, 105, 110)['pct'] - 50.0) < 1e-9, 'пів шляху = 50%')
+    _check(ex('LONG', 100, 120, 110)['pct'] == 100.0, 'ціль пройдена — 100%')
+    _check(abs(ex('SHORT', 100, 96, 92)['pct'] - 50.0) < 1e-9, 'SHORT дзеркально')
+    _check(ex('LONG', 100, 105, 95) is None and ex('LONG', 100, 105, None) is None, 'немає цілі попереду → None')
+    _check(ex('LONG', 100, 105, 110, 'LONG')['climax'] is True
+           and ex('LONG', 100, 105, 110, 'SHORT')['climax'] is False, 'сплеск лише у бік угоди')
+    # одне джерело: колонка й правило виходу кличуть trade_exh_for
+    _check("tm.trade_exh_for(pos, _sf)" in _APP and 'trade_exh_for(p, sf)' in _IP
+           and 'self.trade_exh_for(pos, vw)' in _TM, 'одне джерело для показу і виходу')
+    _check("'spring_open_tgt' not in pos" in _TM, 'ціль записується на вході (і добирається для старих угод)')
 
 
 def test_exhaustion_climax_exit():
@@ -200,9 +221,10 @@ def test_exhaustion_climax_exit():
     _check(S.live_fire_view(_coil())['climax'] is None, 'у коробці кульмінації немає')
     TM = _tm_cls()
     step = TM.exh_exit_step
-    view = {'beyond': 'LONG', 'pct': 80, 'atr': 2.0, 'bar_hi': 112.0, 't': 1}
+    view = {'pct': 80, 'atr': 2.0, 'bar_hi': 112.0, 't': 1}
     _check(step('LONG', 100, None, dict(view, pct=60), 110)[0] is None, 'нижче порогу — не озброюємо')
-    _check(step('LONG', 100, None, dict(view, beyond='SHORT'), 110)[0] is None, 'сплеск проти угоди — не наш')
+    _check(step('LONG', 100, None, dict(view, pct=10, climax='SHORT'), 110)[0] is None, 'сплеск проти угоди — не наш')
+    _check(step('LONG', 100, None, dict(view, pct=10, climax='LONG'), 110)[0] is not None, 'сплеск у бік угоди озброює і без порогу')
     _check(step('LONG', 100, None, view, 100.1)[0] is None, 'не в плюсі — не озброюємо')
     st, why = step('LONG', 100, None, view, 110)
     _check(st and why is None and st['best_px'] == 112.0 and st['stop_px'] == 111.0, st)
@@ -210,7 +232,7 @@ def test_exhaustion_climax_exit():
     _check(why is None and st['best_px'] == 114 and st['stop_px'] == 113.0, st)
     st2, why = step('LONG', 100, st, None, 112.8, lo=112.8, hi=113)
     _check(why == 'trail', (st2, why))
-    sh, _ = step('SHORT', 100, None, dict(view, beyond='SHORT', bar_lo=88.0), 90)
+    sh, _ = step('SHORT', 100, None, dict(view, bar_lo=88.0), 90)
     _check(sh['best_px'] == 88.0 and sh['stop_px'] == 89.0, sh)
     _, why = step('SHORT', 100, sh, None, 89.5, lo=89.2, hi=89.5)
     _check(why == 'trail', why)
