@@ -189,7 +189,8 @@ def vob_boxes(zones):
                         'top': float(z['top']), 'bottom': float(z['bottom']),
                         'start': to_sec(z.get('start_time_sec')),
                         'breaker': bool(z.get('breaker')), 'tf': str(z.get('tf') or '').upper(),
-                        'volume': z.get('volume'), 'pct': z.get('pct')})
+                        'volume': z.get('volume'), 'pct': z.get('pct'),
+                        'hi_pct': z.get('hi_pct'), 'lo_pct': z.get('lo_pct')})
         except (KeyError, TypeError, ValueError):
             continue
     return out

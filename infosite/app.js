@@ -1043,12 +1043,15 @@
     if (sw >= tw + 10 * hr) { ctx.textAlign = "right"; ctx.fillText(t, X1 + sw - 5 * hr, y + bh / 2); }
     else if (w - sw >= tw + 8 * hr) { ctx.textAlign = "left"; ctx.fillText(t, X1 + sw + 4 * hr, y + bh / 2); }
   }
+  // Спільний для IMB і VOB (вимога 10.11: «вигляд VOB по принципу IMB»):
+  // дві смуги-частки (b.topPct / b.botPct, кольори b.topCol / b.botCol)
+  // + великий обсяг «водяним знаком».
   function _imbBody(ctx, b, X1, X2, yT, yB, hr, vr, font, dark) {
     var w = X2 - X1, h = yB - yT;
-    if (w > 4 * hr && (b.sellPct != null || b.buyPct != null)) {
+    if (w > 4 * hr && (b.topPct != null || b.botPct != null)) {
       var bh = h / 2;
-      _imbBar(ctx, X1, w, yT, bh, b.sellPct, IMB_SELL, hr, vr, font, dark);
-      _imbBar(ctx, X1, w, yT + bh, bh, b.buyPct, IMB_BUY, hr, vr, font, dark);
+      _imbBar(ctx, X1, w, yT, bh, b.topPct, b.topCol || IMB_SELL, hr, vr, font, dark);
+      _imbBar(ctx, X1, w, yT + bh, bh, b.botPct, b.botCol || IMB_BUY, hr, vr, font, dark);
     }
     if (b.volTxt && h >= 18 * vr && w > 40 * hr) {
       // Розмір шрифту кешується на зоні: підбір через measureText на кожному
@@ -1112,7 +1115,7 @@
           if (b.kind === "imb" && (yBt - yT) < IMB_MIN_PX * vr) continue;
           if (yBt - yT < 1) yBt = yT + 1;
           ctx.fillStyle = b.fill; ctx.fillRect(X1, yT, X2 - X1, yBt - yT);
-          if (b.kind === "imb") _imbBody(ctx, b, X1, X2, yT, yBt, hr, vr, font, dark);
+          if (b.kind === "imb" || b.kind === "vob") _imbBody(ctx, b, X1, X2, yT, yBt, hr, vr, font, dark);
           ctx.strokeStyle = b.stroke; ctx.lineWidth = Math.max(1, Math.round((b.thin ? 1 : 1.2) * hr));
           if (b.dashed && ctx.setLineDash) ctx.setLineDash([6 * hr, 4 * hr]);
           ctx.strokeRect(X1, yT, X2 - X1, yBt - yT);
@@ -1466,13 +1469,19 @@
   function boxesOf(c) {
     var o = c.ohlc || [], out = [];
     (c.vob || []).forEach(function (v) {
-      var L = v.side === "LONG", vol = fmtVol(v.volume);
+      var L = v.side === "LONG";
       out.push({ kind: "vob", t: snapSec(v.start, o), top: v.top, bottom: v.bottom, dashed: v.breaker,
         fill: L ? "rgba(34,171,94,.16)" : "rgba(242,54,69,.16)",
         stroke: L ? "rgba(34,197,94,.95)" : "rgba(242,54,69,.95)",
         text: L ? "#86efac" : "#fca5a5",
-        label: (vol || "VOB") + (v.pct != null ? " (" + v.pct + "%)" : "") + (v.breaker ? " ✕" : ""),
-        sub: tfWord(v.tf || c.vob_tf) + " VOB" });
+        // 📊 як IMB: зверху — частка ОСНОВНОЇ половини обсягу (колір блоку),
+        // знизу — меншої (приглушено); загальний обсяг — водяним знаком.
+        volTxt: fmtVol(v.volume, 3),
+        topPct: v.hi_pct, botPct: v.lo_pct,
+        topCol: L ? "rgba(34,197,94,.85)" : "rgba(242,54,69,.85)",
+        botCol: L ? "rgba(34,197,94,.38)" : "rgba(242,54,69,.38)",
+        label: tfWord(v.tf || c.vob_tf) + " VOB" + (v.breaker ? " ✕" : ""),
+        sub: (v.pct != null ? v.pct + "%" : "") });
     });
     (c.ob || []).forEach(function (b) {
       var L = b.side === "LONG", sw = b.fam === "swing";
@@ -1488,7 +1497,8 @@
         fill: L ? "rgba(38,166,154,.22)" : "rgba(160,92,40,.30)",
         stroke: L ? "rgba(38,166,154,.6)" : "rgba(234,128,38,.6)",
         text: L ? "#5eead4" : "#fdba74",
-        volTxt: fmtVol(z.vol, 3), sellPct: z.sell_pct, buyPct: z.buy_pct, label: "IMB" });
+        volTxt: fmtVol(z.vol, 3), topPct: z.sell_pct, botPct: z.buy_pct,
+        topCol: IMB_SELL, botCol: IMB_BUY, label: "IMB" });
     });
     return out;
   }

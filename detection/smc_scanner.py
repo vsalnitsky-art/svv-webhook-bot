@@ -6494,6 +6494,9 @@ class SMCScanner:
             vol_base = (v / _mid) if _mid > 0 else v
             # % = дисбаланс між двома половинами OB (min/max), як у Pine.
             _pct = (round(min(lo, hi) / max(lo, hi) * 100) if max(lo, hi) > 0 else None)
+            # 📊 Розклад обсягу на дві частини блоку (як смуги IMB, вимога 10.11):
+            # частка кожної половини від їх суми.
+            _hi_pct = (round(hi / (hi + lo) * 100) if (hi + lo) > 0 else None)
             return {
                 'type': lob.get('type'),                      # 'Bull' | 'Bear'
                 'top': top,
@@ -6501,6 +6504,8 @@ class SMCScanner:
                 'start_time_sec': int(st // 1000) if st > 1e12 else int(st),
                 'volume': round(vol_base),
                 'pct': _pct,
+                'hi_pct': _hi_pct,
+                'lo_pct': (100 - _hi_pct) if _hi_pct is not None else None,
                 'breaker': bool(lob.get('breaker')),
                 'tf': vtf,
             }

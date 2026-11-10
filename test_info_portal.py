@@ -323,8 +323,8 @@ def test_imb_carries_volume_and_impulse_share():
     _check(abs(r['vol'] - 8.0) < 1e-6 and r['sell_pct'] == 8 and r['buy_pct'] == 92,
            'обсяг і розклад доходять до графіка')
     js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
-    _check('_imbBody' in js and 'volTxt' in js and 'sellPct' in js and 'buyPct' in js,
-           'IMB: обсяг + дві смуги продаж/купівля')
+    _check('_imbBody' in js and 'volTxt' in js and 'topPct: z.sell_pct' in js
+           and 'botPct: z.buy_pct' in js, 'IMB: обсяг + дві смуги продаж/купівля')
     _check('IMB_SELL' in js and 'IMB_BUY' in js, 'смуги різних кольорів')
     print('✓ IMB: обсяг у монетах і розклад продаж/купівля')
 
@@ -402,7 +402,7 @@ def test_cabinet_polish_0911():
     html = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
     _check('brand-sub' not in html and '· Мій кабінет' not in html, 'напис «Мій кабінет» прибрано')
     _check('<a class="who"' in js and '>Кабінет</a>' not in js, '👤 імʼя = посилання на кабінет')
-    _check('" VOB" });' in js, 'підпис «15 Min VOB»')
+    _check('" VOB" + (v.breaker' in js, 'підпис «15 Min VOB»')
     _check('id="notify-head"' in html and 'style="display:none"' in html.split('id="notify-body"')[1][:30]
            and 'ntfApply' in js, '🔔 сповіщення — гармошка, згорнуто')
     card = js.split('function sigCard')[1].split('document.addEventListener')[0]
@@ -758,6 +758,29 @@ def test_liq_frontend_contract():
     _check(html.index('id="iw-chart"') < i0 < html.index('id="iw-tfbar"'), 'статус — поза панеллю кнопок')
     _check('class="iw-status"' in html, 'загальний статус — у куті блоку графіка')
     print('✓ 💧 фронт: кнопка, зміна монети, без накладань')
+
+
+def test_vob_drawn_like_imb_without_changing_the_math():
+    """📊 VOB «як IMB» (вимога 10.11): дві смуги-частки + обсяг; самі числа VOB
+    (обсяг, %, межі) рахуються як раніше — додано лише розклад для показу."""
+    import importlib.util, types
+    sc = types.SimpleNamespace()
+    src = open(os.path.join(_HERE, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
+    i = src.index('    def _format_vob(self, lob, vtf):')
+    j = src.index('\n    def ', i + 10)
+    ns = {}
+    exec('import textwrap\n' + 'def _f' + src[i + len('    def _format_vob'):j].replace('\n    ', '\n'), ns)
+    z = ns['_f'](sc, {'type': 'Bull', 'top': 110.0, 'bottom': 90.0, 'start_time': 1000,
+                       'ob_volume': 3000.0, 'ob_low_volume': 1000.0, 'ob_high_volume': 3000.0}, '15m')
+    _check(z['volume'] == 30 and z['pct'] == 33, ('обсяг і % — як раніше', z))
+    _check(z['hi_pct'] == 75 and z['lo_pct'] == 25, ('розклад половин', z))
+    vb = ip.vob_boxes([z])[0]
+    _check(vb['hi_pct'] == 75 and vb['lo_pct'] == 25, 'розклад доходить до графіка')
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    _check('topPct: v.hi_pct' in js and 'botPct: v.lo_pct' in js and 'volTxt: fmtVol(v.volume, 3)' in js,
+           'VOB малюється смугами + обсягом')
+    _check('b.kind === "imb" || b.kind === "vob"' in js, 'той самий рендер, що IMB')
+    print('✓ 📊 VOB як IMB, математика без змін')
 
 
 if __name__ == '__main__':
