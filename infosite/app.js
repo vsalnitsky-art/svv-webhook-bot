@@ -2188,25 +2188,56 @@
   var REC = { dir: "all", rows: [], meta: {} };
   try { var _rd = localStorage.getItem("vsv_rec_dir"); if (_rd) REC.dir = _rd; } catch (e) {}
   function recSide(r) { return r.side === "LONG" || r.side === "SHORT" ? r.side : ""; }
+  function recPct(v) {
+    v = Number(v); if (!isFinite(v)) return "";
+    return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2) + "%";
+  }
+  // Колір заряду: фіолетовий (слабкий) → бурштин → помаранчевий (сильний)
+  function recChCol(c) { return c >= 85 ? "#fb923c" : c >= 65 ? "#facc15" : "#a78bfa"; }
+  // Смуга «SL ── ціна ── TP»: шкала за ЦІНОЮ (низ ліворуч), маркер — ціна.
+  function recPath(r, up) {
+    var sl = Number(r.sl), tp = Number(r.tp), px = Number(r.price);
+    if (!(sl > 0 && tp > 0 && px > 0)) return '<span class="muted">' + (r.sl_wait ? "⏳" : "—") + "</span>";
+    var lo = Math.min(sl, tp), hi = Math.max(sl, tp), pos = hi > lo ? (px - lo) / (hi - lo) * 100 : 50;
+    pos = Math.max(0, Math.min(100, pos));
+    var p0 = pos.toFixed(0);
+    var grad = up ? "linear-gradient(90deg,#ef4444,#f59e0b " + (pos / 2).toFixed(0) + "%,#64748b " + p0 + "%,#22c55e)"
+                  : "linear-gradient(90deg,#22c55e,#64748b " + p0 + "%,#f59e0b " + ((pos + 100) / 2).toFixed(0) + "%,#ef4444)";
+    var rr = Number(r.rr), rrc = !isFinite(rr) ? "" : rr >= 1.5 ? "rr-good" : rr >= 1 ? "rr-mid" : "rr-bad";
+    return '<span class="rec-path" title="Ризик ' + recPct(r.sl_pct) + " · хід " + recPct(r.tp_pct) +
+      (isFinite(rr) ? " · R " + rr.toFixed(2) : "") + '"><span class="bar" style="background:' + grad + '">' +
+      '<i style="left:' + pos.toFixed(1) + '%"></i></span>' +
+      (isFinite(rr) ? '<b class="rr ' + rrc + '">' + rr.toFixed(2) + "R</b>" : "") + "</span>";
+  }
   function recRow(r) {
-    var sd = recSide(r), up = sd === "LONG";
-    var pot = Number(up ? r.pot_long : r.pot_short) || 0;
+    var sd = recSide(r), up = sd === "LONG", dc = sd ? (up ? "up" : "dn") : "";
     var prob = r.prob_long != null ? (up ? Number(r.prob_long) : 100 - Number(r.prob_long)) : null;
-    var mv = Number(up ? r.move_long_pct : r.move_short_pct);
-    var tgt = up ? r.tgt_long : r.tgt_short;
     var ch = Math.max(0, Math.min(100, Math.round(Number(r.charge) || 0)));
-    var src = r.src === "wl"
-      ? '<span class="rec-src wl" title="Монета WATCHLIST бота: проходить ворота «Пружини» у бік ' + sd + '">🌀 WATCHLIST</span>'
-      : '<span class="rec-src xs" title="Таблиця «Пружина — скан біржі»">🔭 скан</span>' +
-        (r.bybit === false ? ' <span class="rec-nb" title="Монети немає на Bybit — бот там торгує">⚠ не на Bybit</span>' : "");
-    return "<tr><td class=\"sym\">" + tvSym(r.symbol) + "</td><td>" + src + "</td>" +
-      '<td class="' + (up ? "pp-up" : "pp-dn") + '">' + (sd ? (up ? "▲ LONG" : "▼ SHORT") : "⚖") + "</td>" +
-      "<td>" + esc(r.label || r.state || "—") + "</td>" +
-      '<td class="r"><span class="rec-ch"><i style="width:' + ch + '%"></i></span> ' + ch + "</td>" +
-      '<td class="r ' + (up ? "pp-up" : "pp-dn") + '">' + pot.toFixed(0) + "</td>" +
-      '<td class="r">' + (prob != null && isFinite(prob) ? prob.toFixed(0) + "%" : "—") + "</td>" +
-      '<td class="r ' + (up ? "pp-up" : "pp-dn") + '">' + (isFinite(mv) && mv ? (mv > 0 ? "+" : "−") + Math.abs(mv).toFixed(2) + "%" : "—") + "</td>" +
-      '<td class="r">' + (tgt ? fmtPrice(tgt) : "—") + "</td></tr>";
+    var chIn = Number(r.charge_in), chD = isFinite(chIn) && chIn > 0 ? ch - Math.round(chIn) : null;
+    var icon = r.src === "wl"
+      ? '<span class="rec-ic" title="WATCHLIST бота">🌀</span>'
+      : '<span class="rec-ic" title="Скан біржі">🔭</span>';
+    var nb = r.bybit === false ? ' <span class="rec-nb" title="Монети немає на Bybit">⚠</span>' : "";
+    var chCell = '<span class="rec-ch"><i style="width:' + ch + "%;background:linear-gradient(90deg,#a78bfa," + recChCol(ch) + ')"></i></span>' +
+      '<b class="mono" style="color:' + recChCol(ch) + '">' + ch + "</b>" +
+      (chD ? ' <small class="' + (chD > 0 ? "pp-up" : "pp-dn") + '" title="Заряд на вході в таблицю ' + Math.round(chIn) + '">' +
+        (chD > 0 ? "▲" : "▼") + Math.abs(chD) + "</small>" : "");
+    var pr = prob != null && isFinite(prob) ? prob : null;
+    var prCell = pr == null ? "—" : '<span class="rec-prob ' + dc + '"><i style="width:' + Math.max(0, Math.min(100, pr)).toFixed(0) + '%"></i></span>' +
+      '<b class="mono rec-' + dc + '">' + pr.toFixed(0) + "%</b>";
+    var slCell = r.sl > 0
+      ? '<span class="rec-lv sl" title="🛑 SL з: ' + esc(r.sl_label || "") + (r.sl_fb ? " (фолбек)" : "") + '">' + fmtPrice(r.sl) +
+        " <small>" + recPct(r.sl_pct) + "</small></span>"
+      : '<span class="muted" title="' + esc(r.sl_label || "рахується") + '">' + (r.sl_wait ? "⏳" : "—") + "</span>";
+    var tpCell = r.tp > 0
+      ? '<span class="rec-lv tp">' + fmtPrice(r.tp) + " <small>" + recPct(r.tp_pct) + "</small></span>" : "—";
+    return '<tr class="rec-row ' + dc + '"><td class="sym">' + icon + tvSym(r.symbol) + nb + "</td>" +
+      '<td><span class="rec-dir ' + dc + '">' + (sd ? (up ? "▲ LONG" : "▼ SHORT") : "⚖") + "</span></td>" +
+      '<td class="r">' + chCell + "</td>" +
+      '<td class="r">' + prCell + "</td>" +
+      '<td class="r">' + slCell + "</td>" +
+      '<td class="c">' + recPath(r, up) + "</td>" +
+      '<td class="r">' + tpCell + "</td></tr>";
   }
   function recRender() {
     var rows = REC.rows || [], n = { all: rows.length, LONG: 0, SHORT: 0 };
@@ -2219,11 +2250,8 @@
     var vis = rows.filter(function (r) { return REC.dir === "all" || recSide(r) === REC.dir; });
     var tb = $("#rec-tbl tbody"); if (!tb) return;
     tb.innerHTML = vis.length ? vis.map(recRow).join("")
-      : '<tr><td colspan="9" class="muted">' + (rows.length ? "Немає монет у цій вкладці" : "Зараз немає рекомендованих монет") + "</td></tr>";
-    var m = REC.meta || {}, sc = m.scan || {};
-    $("#rec-note").textContent = (sc.ts ? "скан " + String(sc.exchange || "").toUpperCase() + " · " +
-      new Date(sc.ts * 1000).toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" }) + " · " : "") +
-      "оновлено " + new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
+      : '<tr><td colspan="7" class="muted">' + (rows.length ? "Немає монет у цій вкладці" : "Зараз немає рекомендованих монет") + "</td></tr>";
+    $("#rec-note").textContent = new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
   }
   function loadRec() {
     var card = $("#rec-card"); if (!card) return;

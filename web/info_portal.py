@@ -1404,7 +1404,8 @@ def liq_from_client(body, user=None, now=None):
 REC_TTL = 10.0
 REC_KEYS = ('state', 'label', 'charge', 'dir', 'lean', 'pot_long', 'pot_short',
             'prob_long', 'price', 'tgt_long', 'tgt_short', 'move_long_pct',
-            'move_short_pct', 'box_pct', 'squeeze_bars', 'fired', 'bar_t')
+            'move_short_pct', 'box_pct', 'squeeze_bars', 'fired', 'bar_t',
+            'charge_in')
 _rec_cache = {}
 
 
@@ -1449,6 +1450,149 @@ def recommended_rows(wl_recs, wl_pass, scan_rows):
     return out
 
 
+# ─── 🛑 SL рекомендованих монет — ТОЙ САМИЙ ланцюг «🛑 SL з», що в угодах ──
+# (`FuelFilterDaemon._q4_pick_sl`: обране джерело 1H OB / 15m Volumized →
+# сходи 15m → 5m → 1H, буфер `queue3_vob_sl_buffer_pct`, стеля
+# `autosl_max_pct`, гарантія «% від входу»). Volumized тягне свічки, тож
+# рахує ЛИШЕ фоновий потік; запит сторінки читає готовий кеш.
+REC_SL_TTL = 600.0
+REC_SL_RETRY = 120.0
+REC_SL_MAX = 120
+_rec_sl = {}            # (SYM, side) -> {'at', 'sl', 'label', 'fb', 'pct', 'ref'}
+_rec_sl_want = {}       # (SYM, side) -> (ціна, коли просили)
+_rec_sl_lock = threading.Lock()
+_rec_sl_thr = [None]
+
+
+def rec_sl_compute(ff, sym, side, ref, s):
+    """Рівень SL для (монета, бік) за поточною ціною `ref`. Без кешу.
+
+    → {'sl', 'label', 'fb', 'pct'} або {'sl': None, 'label': причина}."""
+    try:
+        ref = float(ref or 0)
+    except (TypeError, ValueError):
+        ref = 0.0
+    if ref <= 0 or side not in ('LONG', 'SHORT'):
+        return {'sl': None, 'label': 'немає ціни'}
+    s = s or {}
+    lvl, label, fb = None, '', False
+    if ff is not None and (ff.sl_source_on(s) if hasattr(ff, 'sl_source_on') else True):
+        src = str(s.get('queue4_sl_source', '1h') or '1h').lower()
+        if src not in ('1h', '15m'):
+            src = '1h'
+        try:
+            buf = max(0.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)) / 100.0
+        except (TypeError, ValueError):
+            buf = 0.001
+        try:
+            chosen, _sk = ff._q4_pick_sl(sym, side, src, buf, ref)
+        except Exception:
+            chosen = None
+        if chosen:
+            lvl, label, fb = chosen
+            try:
+                mx = float(s.get('autosl_max_pct', 0) or 0)
+            except (TypeError, ValueError):
+                mx = 0.0
+            if mx > 0:
+                try:
+                    from detection.trade_manager import clamp_sl_distance
+                    lvl2, was = clamp_sl_distance(side, ref, lvl, mx)
+                    if was is not None:
+                        lvl, label = lvl2, f'{label} · стеля {mx:g}%'
+                except Exception:
+                    pass
+    if lvl is None and s.get('autosl_fallback_on', True):
+        try:
+            p = float(s.get('autosl_fallback_pct', 2.0) or 2.0)
+        except (TypeError, ValueError):
+            p = 2.0
+        lvl = ref * (1 - p / 100.0) if side == 'LONG' else ref * (1 + p / 100.0)
+        label, fb = f'{p:g}% від входу', True
+    if lvl is None:
+        return {'sl': None, 'label': 'джерело не дало рівня'}
+    pct = (lvl - ref) / ref * 100.0
+    return {'sl': round(float(lvl), 10), 'label': label, 'fb': bool(fb),
+            'pct': round(pct, 2)}
+
+
+def rec_sl_get(sym, side, ref, now=None):
+    """Кешований SL; промах/старе → у чергу фонового потоку. Мережі немає."""
+    now = time.time() if now is None else now
+    k = (str(sym).upper(), side)
+    with _rec_sl_lock:
+        hit = _rec_sl.get(k)
+        fresh = hit and now - hit.get('at', 0) < (REC_SL_TTL if hit.get('sl') else REC_SL_RETRY)
+        if not fresh:
+            if len(_rec_sl_want) < REC_SL_MAX or k in _rec_sl_want:
+                _rec_sl_want[k] = (ref, now)
+    _rec_sl_start()
+    return hit
+
+
+def _rec_sl_start():
+    t = _rec_sl_thr[0]
+    if t is not None and t.is_alive():
+        return
+    t = threading.Thread(target=_rec_sl_worker, name='info-rec-sl', daemon=True)
+    _rec_sl_thr[0] = t
+    t.start()
+
+
+def _rec_sl_worker():
+    while True:
+        with _rec_sl_lock:
+            items = list(_rec_sl_want.items())
+            _rec_sl_want.clear()
+        if not items:
+            time.sleep(5)
+            continue
+        ff, s = None, {}
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            s = ff.get_settings() if ff else {}
+        except Exception:
+            ff = None
+        for (S, side), (ref, _t) in items:
+            try:
+                r = rec_sl_compute(ff, S, side, ref, s)
+            except Exception as e:
+                r = {'sl': None, 'label': f'помилка: {str(e)[:60]}'}
+            r['at'] = time.time()
+            r['ref'] = ref
+            with _rec_sl_lock:
+                _rec_sl[(S, side)] = r
+            time.sleep(0.2)
+        with _rec_sl_lock:
+            if len(_rec_sl) > REC_SL_MAX * 2:
+                for k in sorted(_rec_sl, key=lambda x: _rec_sl[x].get('at', 0))[:len(_rec_sl) - REC_SL_MAX]:
+                    _rec_sl.pop(k, None)
+
+
+def rec_levels(row, sl=None):
+    """ЧИСТА: SL/TP/R рядка. TP = ціль «Ймовірний хід» у бік рядка."""
+    side = row.get('side')
+    up = side == 'LONG'
+    tp = row.get('tgt_long' if up else 'tgt_short')
+    mv = row.get('move_long_pct' if up else 'move_short_pct')
+    out = {'tp': tp, 'tp_pct': mv, 'sl': None, 'sl_pct': None, 'sl_label': '',
+           'sl_fb': False, 'rr': None}
+    if side not in ('LONG', 'SHORT'):
+        return out
+    if sl and sl.get('sl'):
+        out.update(sl=sl['sl'], sl_pct=sl.get('pct'), sl_label=sl.get('label') or '',
+                   sl_fb=bool(sl.get('fb')))
+        try:
+            risk, gain = abs(float(sl['pct'])), abs(float(mv))
+            out['rr'] = round(gain / risk, 2) if risk > 0 else None
+        except (TypeError, ValueError, KeyError):
+            pass
+    elif sl:
+        out['sl_label'] = sl.get('label') or ''
+    return out
+
+
 def recommended_payload(now=None):
     now = time.time() if now is None else now
     hit = _rec_cache.get('p')
@@ -1471,7 +1615,13 @@ def recommended_payload(now=None):
             scan_meta = {'ts': st.get('ts'), 'exchange': st.get('exchange')}
     except Exception:
         pass
-    p = {'ok': True, 'rows': recommended_rows(wl_recs, wl_pass, scan_rows),
+    rows = recommended_rows(wl_recs, wl_pass, scan_rows)
+    for r in rows:
+        if r.get('side') in ('LONG', 'SHORT'):
+            h = rec_sl_get(r['symbol'], r['side'], r.get('price'), now)
+            r.update(rec_levels(r, h))
+            r['sl_wait'] = h is None
+    p = {'ok': True, 'rows': rows,
          'scan': scan_meta, 'wl_n': len(wl_recs), 'ts': now}
     _rec_cache['p'] = (now, p)
     return p

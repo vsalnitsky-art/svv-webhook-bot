@@ -234,6 +234,49 @@ def test_recommended_rows():
     assert next(r for r in rows if r['symbol'] == 'XYZUSDT')['bybit'] is False
 
 
+def test_rec_sl_uses_the_sl_source_chain_and_tp_is_the_move_target():
+    """SL — ланцюг «🛑 SL з» (`_q4_pick_sl`) + стеля; TP — ціль «Ймовірний хід»."""
+    sys.modules.setdefault('detection', types.ModuleType('detection')).__path__ = [os.path.join(ROOT, 'detection')]
+    ip = _load('_t_info_portal_rec2', 'web/info_portal.py')
+    calls = []
+
+    class FF:
+        def sl_source_on(self, s): return True
+        def _q4_pick_sl(self, sym, side, src, buf, ref):
+            calls.append((sym, side, src, round(buf, 4), ref))
+            return (105.0, 'Volumized OB (15m)', True), []
+    s = {'queue4_sl_source': '15m', 'queue3_vob_sl_buffer_pct': 0.2}
+    r = ip.rec_sl_compute(FF(), 'AAAUSDT', 'SHORT', 100.0, s)
+    assert calls == [('AAAUSDT', 'SHORT', '15m', 0.002, 100.0)]
+    assert r['sl'] == 105.0 and r['pct'] == 5.0 and r['fb'] is True
+
+    class FF0(FF):
+        def _q4_pick_sl(self, *a): return None, ['немає блоку']
+    fb = ip.rec_sl_compute(FF0(), 'AAAUSDT', 'LONG', 100.0, {'autosl_fallback_pct': 2})
+    assert abs(fb['sl'] - 98.0) < 1e-9 and '% від входу' in fb['label']
+
+    row = dict(_rec(10, 60), symbol='AAAUSDT', side='SHORT', tgt_short=90.0, move_short_pct=-10.0)
+    lv = ip.rec_levels(row, r)
+    assert lv['tp'] == 90.0 and lv['sl'] == 105.0 and lv['rr'] == 2.0
+
+
+def test_rec_table_layout():
+    """Без колонок «Джерело» / «Стан» / «Потенціал» і без пояснень; є SL і TP."""
+    i = IDX.index('id="rec-tbl"'); head = IDX[i:IDX.index('</thead>', i)]
+    for gone in ('Джерело', 'Стан', 'Потенціал'):
+        assert gone not in head, gone
+    assert 'SL' in head and 'TP' in head
+    assert 'rec-foot' not in IDX
+    assert 'function recPath' in APP and 'rec-ic' in APP
+
+
+def test_gate_mark_is_left_of_the_coin():
+    i = HTML.index('r.gate_ok ? h.replace(')
+    seg = HTML[i:i + 600]
+    assert "h.replace('<td style=\"white-space:nowrap\">'" in seg
+    assert seg.index('spr-gate-ok') < seg.index('`)'), 'позначка на початку першої комірки'
+
+
 def test_infosite_has_the_table_with_tabs():
     assert 'id="rec-card"' in IDX and 'id="rec-tabs"' in IDX
     for d in ('all', 'LONG', 'SHORT'):

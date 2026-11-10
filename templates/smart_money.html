@@ -1474,7 +1474,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .xs-tg.on{border-color:#f59e0b;color:#fbbf24;background:rgba(245,158,11,.12);font-weight:700}
 .xs-line2{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:0.66rem;color:#8b93a7}
 .xs-line2 .spr-k{text-transform:uppercase;letter-spacing:.04em;font-size:0.58rem;color:#6b7280}
-.spr-gate-ok { font-size:0.64rem; color:#4ade80; font-weight:700; margin-left:4px; }
+.spr-gate-ok { font-size:0.64rem; color:#4ade80; font-weight:700; margin-right:5px; }
 .xs-nobybit { font-size:0.62rem; color:#fbbf24; border:1px solid rgba(251,191,36,0.45); border-radius:3px; padding:0 4px; margin-left:4px; font-weight:600; }
 .xs-gone{font-family:monospace;font-size:0.62rem;padding:0 5px;border-radius:3px;border:1px solid rgba(248,113,113,.35);color:#fca5a5}
 #fspr-table tbody tr > td { background: transparent; }
@@ -17176,8 +17176,9 @@ function sprRender() {
     // ✅ Монети, що ПРОХОДЯТЬ ворота «Пружини» у бік своєї вкладки — підсвічені
     // (вони ж ідуть у «Рекомендовані ботом» на інфосайті).
     tb.innerHTML = rows.map(r => {
-        const h = _sprRowHTML(r, minPot, mode, '', r.gate_ok ? 'box-shadow:inset 3px 0 0 #4ade80;background:rgba(74,222,128,0.07);' : '');
-        return r.gate_ok ? h.replace('</td>', ` <span class="spr-gate-ok" title="Проходить ворота «Пружини» у бік ${r.gate_side}: потенціал і заряд ≥ порогів увімкнених воріт. Ця монета — у «Рекомендовані ботом» на інфосайті.">✅ ${r.gate_side === 'LONG' ? '▲' : '▼'}</span></td>`) : h;
+        const h = _sprRowHTML(r, minPot, mode, '', r.gate_ok ? 'background:rgba(74,222,128,0.07);' : '');
+        // ✅ кант і позначка — ЛІВОРУЧ від назви монети (у першій комірці)
+        return r.gate_ok ? h.replace('<td style="white-space:nowrap">', `<td style="white-space:nowrap;box-shadow:inset 3px 0 0 #4ade80"><span class="spr-gate-ok" title="Проходить ворота «Пружини» у бік ${r.gate_side}: потенціал і заряд ≥ порогів увімкнених воріт. Ця монета — у «Рекомендовані ботом» на інфосайті.">✅ ${r.gate_side === 'LONG' ? '▲' : '▼'}</span>`) : h;
     }).join('');
 }
 // 🌀 Рядок таблиці «Пружини» — ОДИН рендер на дві таблиці (🌀 Пружина і
