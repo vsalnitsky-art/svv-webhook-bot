@@ -1440,134 +1440,128 @@ def recommended_rows(wl_recs, wl_pass, scan_rows):
         out.append(row)
         seen.add(S)
 
-    def _pot(x):
-        k = 'pot_long' if x.get('side') == 'LONG' else 'pot_short'
-        try:
-            return float(x.get(k) or 0)
-        except (TypeError, ValueError):
-            return 0.0
-    out.sort(key=lambda x: (-_pot(x), x['symbol']))
+    out.sort(key=lambda x: (-(rec_prob(x) if rec_prob(x) is not None else -1), x['symbol']))
     return out
 
 
-# ─── 🛑 SL рекомендованих монет — ТОЙ САМИЙ ланцюг «🛑 SL з», що в угодах ──
-# (`FuelFilterDaemon._q4_pick_sl`: обране джерело 1H OB / 15m Volumized →
-# сходи 15m → 5m → 1H, буфер `queue3_vob_sl_buffer_pct`, стеля
-# `autosl_max_pct`, гарантія «% від входу»). Volumized тягне свічки, тож
-# рахує ЛИШЕ фоновий потік; запит сторінки читає готовий кеш.
-REC_SL_TTL = 600.0
-REC_SL_RETRY = 120.0
-REC_SL_MAX = 120
-_rec_sl = {}            # (SYM, side) -> {'at', 'sl', 'label', 'fb', 'pct', 'ref'}
-_rec_sl_want = {}       # (SYM, side) -> (ціна, коли просили)
-_rec_sl_lock = threading.Lock()
-_rec_sl_thr = [None]
-
-
-def rec_sl_compute(ff, sym, side, ref, s):
-    """Рівень SL для (монета, бік) за поточною ціною `ref`. Без кешу.
-
-    → {'sl', 'label', 'fb', 'pct'} або {'sl': None, 'label': причина}."""
+def rec_prob(row):
+    """ЧИСТА: ймовірність у бік рядка (%), None — немає даних. Сортування
+    таблиці «Рекомендовані ботом» — за нею (вимога 10.11)."""
     try:
-        ref = float(ref or 0)
+        pl = float(row.get('prob_long'))
     except (TypeError, ValueError):
-        ref = 0.0
-    if ref <= 0 or side not in ('LONG', 'SHORT'):
-        return {'sl': None, 'label': 'немає ціни'}
-    s = s or {}
-    lvl, label, fb = None, '', False
-    if ff is not None and (ff.sl_source_on(s) if hasattr(ff, 'sl_source_on') else True):
-        src = str(s.get('queue4_sl_source', '1h') or '1h').lower()
-        if src not in ('1h', '15m'):
-            src = '1h'
-        try:
-            buf = max(0.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)) / 100.0
-        except (TypeError, ValueError):
-            buf = 0.001
-        try:
-            chosen, _sk = ff._q4_pick_sl(sym, side, src, buf, ref)
-        except Exception:
-            chosen = None
-        if chosen:
-            lvl, label, fb = chosen
+        return None
+    side = row.get('side')
+    if side == 'LONG':
+        return pl
+    if side == 'SHORT':
+        return 100.0 - pl
+    return None
+
+
+# ─── 🛑 SL рекомендованих монет — СХОДИ ORDER BLOCK 1H → 15m → 5m (10.11) ──
+# Вимога: «пріоритет 1Н за напрямком, а якщо немає — шукаємо OB на меншому
+# таймфреймі… визначати з алгоритму OB, а не з VOB». Блоки — ТІ САМІ, що бокси
+# OB на графіку кабінету (`part(sc, 'ob', …)`: памʼять сканера для TF воріт,
+# інакше фоновий потік тим самим `detect_order_blocks`, кеш до закриття бару).
+# Запит сторінки біржу НЕ чекає: молодший TF питаємо, лише коли старший блоку
+# в бік угоди не дав. Буфер / стеля / гарантія % — ті самі налаштування, що в
+# угод (`queue3_vob_sl_buffer_pct`, `autosl_max_pct`, `autosl_fallback_pct`).
+REC_SL_TFS = ('1h', '15m', '5m')
+
+
+def rec_ob_level(zones, side, price, buf=0.0):
+    """ЧИСТА: стоп із OB-сімей одного TF → (рівень, блок) або None.
+
+    LONG — найновіший БИЧАЧИЙ блок ПІД ціною (стоп під його низом), SHORT —
+    найновіший ВЕДМЕЖИЙ НАД ціною (стоп над верхом). Спершу internal-блоки
+    (ті, що живлять ворота бота), потім swing. Блок, через який ціна вже
+    пройшла, стопом бути не може."""
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return None
+    if px <= 0 or side not in ('LONG', 'SHORT'):
+        return None
+    want = 'BULLISH' if side == 'LONG' else 'BEARISH'
+    for fam in ('internal', 'swing'):
+        blocks = sorted((zones or {}).get(fam) or [],
+                        key=lambda o: to_sec(o.get('bar_time')), reverse=True)
+        for o in blocks:
+            if o.get('bias') != want:
+                continue
             try:
-                mx = float(s.get('autosl_max_pct', 0) or 0)
-            except (TypeError, ValueError):
-                mx = 0.0
-            if mx > 0:
-                try:
-                    from detection.trade_manager import clamp_sl_distance
-                    lvl2, was = clamp_sl_distance(side, ref, lvl, mx)
-                    if was is not None:
-                        lvl, label = lvl2, f'{label} · стеля {mx:g}%'
-                except Exception:
-                    pass
-    if lvl is None and s.get('autosl_fallback_on', True):
+                top, bot = float(o['bar_high']), float(o['bar_low'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            lvl = bot * (1.0 - buf) if side == 'LONG' else top * (1.0 + buf)
+            if (side == 'LONG' and lvl < px) or (side == 'SHORT' and lvl > px):
+                return lvl, dict(o, fam=fam)
+    return None
+
+
+def rec_sl_from_obs(zs, side, price, s=None):
+    """ЧИСТА: сходи TF → {'sl', 'pct', 'label', 'tf', 'fb'} або {'wait': True}.
+
+    `zs` = {tf: zones | None}; None = блоки цього TF ще рахуються → чекаємо
+    (молодший TF не підставляємо раніше за старший). Жоден TF не дав → гарантія
+    «% від ціни» (якщо увімкнена), інакше sl=None з причиною."""
+    s = s or {}
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        px = 0.0
+    if px <= 0 or side not in ('LONG', 'SHORT'):
+        return {'sl': None, 'label': 'немає ціни'}
+    try:
+        buf = max(0.0, float(s.get('queue3_vob_sl_buffer_pct', 0.10) or 0)) / 100.0
+    except (TypeError, ValueError):
+        buf = 0.001
+    try:
+        mx = float(s.get('autosl_max_pct', 0) or 0)
+    except (TypeError, ValueError):
+        mx = 0.0
+    lvl, label, tf_hit, fb = None, '', '', False
+    for i, tf in enumerate(REC_SL_TFS):
+        if tf not in zs or zs.get(tf) is None:
+            return {'wait': True, 'label': f'рахується OB {tf.upper()}'}
+        got = rec_ob_level(zs.get(tf), side, px, buf)
+        if got:
+            lvl, o = got
+            tf_hit, fb = tf, i > 0
+            label = f'OB {tf.upper()} {o.get("fam", "")}'.strip()
+            break
+    if lvl is not None and mx > 0 and abs(lvl - px) / px * 100.0 > mx:
+        lvl = px * (1 - mx / 100.0) if side == 'LONG' else px * (1 + mx / 100.0)
+        label += f' · стеля {mx:g}%'
+    if lvl is None:
+        if not s.get('autosl_fallback_on', True):
+            return {'sl': None, 'label': 'OB у бік угоди немає на 1H/15m/5m'}
         try:
             p = float(s.get('autosl_fallback_pct', 2.0) or 2.0)
         except (TypeError, ValueError):
             p = 2.0
-        lvl = ref * (1 - p / 100.0) if side == 'LONG' else ref * (1 + p / 100.0)
-        label, fb = f'{p:g}% від входу', True
-    if lvl is None:
-        return {'sl': None, 'label': 'джерело не дало рівня'}
-    pct = (lvl - ref) / ref * 100.0
-    return {'sl': round(float(lvl), 10), 'label': label, 'fb': bool(fb),
-            'pct': round(pct, 2)}
+        lvl = px * (1 - p / 100.0) if side == 'LONG' else px * (1 + p / 100.0)
+        label, tf_hit, fb = f'{p:g}% від ціни (OB немає)', '%', True
+    return {'sl': round(float(lvl), 10), 'pct': round((lvl - px) / px * 100.0, 2),
+            'label': label, 'tf': tf_hit, 'fb': fb}
 
 
-def rec_sl_get(sym, side, ref, now=None):
-    """Кешований SL; промах/старе → у чергу фонового потоку. Мережі немає."""
-    now = time.time() if now is None else now
-    k = (str(sym).upper(), side)
-    with _rec_sl_lock:
-        hit = _rec_sl.get(k)
-        fresh = hit and now - hit.get('at', 0) < (REC_SL_TTL if hit.get('sl') else REC_SL_RETRY)
-        if not fresh:
-            if len(_rec_sl_want) < REC_SL_MAX or k in _rec_sl_want:
-                _rec_sl_want[k] = (ref, now)
-    _rec_sl_start()
-    return hit
-
-
-def _rec_sl_start():
-    t = _rec_sl_thr[0]
-    if t is not None and t.is_alive():
-        return
-    t = threading.Thread(target=_rec_sl_worker, name='info-rec-sl', daemon=True)
-    _rec_sl_thr[0] = t
-    t.start()
-
-
-def _rec_sl_worker():
-    while True:
-        with _rec_sl_lock:
-            items = list(_rec_sl_want.items())
-            _rec_sl_want.clear()
-        if not items:
-            time.sleep(5)
+def rec_sl_get(sc, sym, side, price, s=None):
+    """Збирає блоки сходами (лише поки старший TF не дав рівня) → SL. Без мережі:
+    чого немає в кеші — ставиться у фоновий потік і чекає («⏳»)."""
+    zs = {}
+    for tf in REC_SL_TFS:
+        d, err = part(sc, 'ob', sym, tf) if sc is not None else (None, 'немає сканера')
+        if d is None:
+            zs[tf] = {} if err else None
+            if not err:
+                break
             continue
-        ff, s = None, {}
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            s = ff.get_settings() if ff else {}
-        except Exception:
-            ff = None
-        for (S, side), (ref, _t) in items:
-            try:
-                r = rec_sl_compute(ff, S, side, ref, s)
-            except Exception as e:
-                r = {'sl': None, 'label': f'помилка: {str(e)[:60]}'}
-            r['at'] = time.time()
-            r['ref'] = ref
-            with _rec_sl_lock:
-                _rec_sl[(S, side)] = r
-            time.sleep(0.2)
-        with _rec_sl_lock:
-            if len(_rec_sl) > REC_SL_MAX * 2:
-                for k in sorted(_rec_sl, key=lambda x: _rec_sl[x].get('at', 0))[:len(_rec_sl) - REC_SL_MAX]:
-                    _rec_sl.pop(k, None)
+        zs[tf] = d.get('zones') or {}
+        if rec_ob_level(zs[tf], side, price):
+            break
+    return rec_sl_from_obs(zs, side, price, s)
 
 
 def rec_levels(row, sl=None):
@@ -1582,7 +1576,7 @@ def rec_levels(row, sl=None):
         return out
     if sl and sl.get('sl'):
         out.update(sl=sl['sl'], sl_pct=sl.get('pct'), sl_label=sl.get('label') or '',
-                   sl_fb=bool(sl.get('fb')))
+                   sl_fb=bool(sl.get('fb')), sl_tf=sl.get('tf') or '')
         try:
             risk, gain = abs(float(sl['pct'])), abs(float(mv))
             out['rr'] = round(gain / risk, 2) if risk > 0 else None
@@ -1616,11 +1610,21 @@ def recommended_payload(now=None):
     except Exception:
         pass
     rows = recommended_rows(wl_recs, wl_pass, scan_rows)
+    ffs = {}
+    try:
+        from detection.fuel_filter import get_fuel_filter
+        _ff = get_fuel_filter()
+        ffs = _ff.get_settings() if _ff else {}
+    except Exception:
+        ffs = {}
     for r in rows:
         if r.get('side') in ('LONG', 'SHORT'):
-            h = rec_sl_get(r['symbol'], r['side'], r.get('price'), now)
+            try:
+                h = rec_sl_get(sc, r['symbol'], r['side'], r.get('price'), ffs)
+            except Exception as e:
+                h = {'sl': None, 'label': f'помилка: {str(e)[:60]}'}
             r.update(rec_levels(r, h))
-            r['sl_wait'] = h is None
+            r['sl_wait'] = bool(h.get('wait'))
     p = {'ok': True, 'rows': rows,
          'scan': scan_meta, 'wl_n': len(wl_recs), 'ts': now}
     _rec_cache['p'] = (now, p)

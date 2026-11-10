@@ -2192,12 +2192,16 @@
     v = Number(v); if (!isFinite(v)) return "";
     return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2) + "%";
   }
+  // Сегмент фіксованої ширини — щоб числа й відсотки стояли рівним стовпчиком
+  function rs(w, html, cls) { return '<span class="rs ' + (cls || "") + '" style="width:' + w + 'px">' + html + "</span>"; }
   // Колір заряду: фіолетовий (слабкий) → бурштин → помаранчевий (сильний)
   function recChCol(c) { return c >= 85 ? "#fb923c" : c >= 65 ? "#facc15" : "#a78bfa"; }
   // Смуга «SL ── ціна ── TP»: шкала за ЦІНОЮ (низ ліворуч), маркер — ціна.
   function recPath(r, up) {
     var sl = Number(r.sl), tp = Number(r.tp), px = Number(r.price);
-    if (!(sl > 0 && tp > 0 && px > 0)) return '<span class="muted">' + (r.sl_wait ? "⏳" : "—") + "</span>";
+    if (!(sl > 0 && tp > 0 && px > 0)) {
+      return rs(120, '<span class="muted" title="' + esc(r.sl_label || "") + '">' + (r.sl_wait ? "⏳" : "—") + "</span>", "c") + rs(44, "");
+    }
     var lo = Math.min(sl, tp), hi = Math.max(sl, tp), pos = hi > lo ? (px - lo) / (hi - lo) * 100 : 50;
     pos = Math.max(0, Math.min(100, pos));
     var p0 = pos.toFixed(0);
@@ -2206,8 +2210,8 @@
     var rr = Number(r.rr), rrc = !isFinite(rr) ? "" : rr >= 1.5 ? "rr-good" : rr >= 1 ? "rr-mid" : "rr-bad";
     return '<span class="rec-path" title="Ризик ' + recPct(r.sl_pct) + " · хід " + recPct(r.tp_pct) +
       (isFinite(rr) ? " · R " + rr.toFixed(2) : "") + '"><span class="bar" style="background:' + grad + '">' +
-      '<i style="left:' + pos.toFixed(1) + '%"></i></span>' +
-      (isFinite(rr) ? '<b class="rr ' + rrc + '">' + rr.toFixed(2) + "R</b>" : "") + "</span>";
+      '<i style="left:' + pos.toFixed(1) + '%"></i></span></span>' +
+      rs(44, isFinite(rr) ? '<b class="rr ' + rrc + '">' + rr.toFixed(2) + "R</b>" : "", "r");
   }
   function recRow(r) {
     var sd = recSide(r), up = sd === "LONG", dc = sd ? (up ? "up" : "dn") : "";
@@ -2219,18 +2223,20 @@
       : '<span class="rec-ic" title="Скан біржі">🔭</span>';
     var nb = r.bybit === false ? ' <span class="rec-nb" title="Монети немає на Bybit">⚠</span>' : "";
     var chCell = '<span class="rec-ch"><i style="width:' + ch + "%;background:linear-gradient(90deg,#a78bfa," + recChCol(ch) + ')"></i></span>' +
-      '<b class="mono" style="color:' + recChCol(ch) + '">' + ch + "</b>" +
-      (chD ? ' <small class="' + (chD > 0 ? "pp-up" : "pp-dn") + '" title="Заряд на вході в таблицю ' + Math.round(chIn) + '">' +
-        (chD > 0 ? "▲" : "▼") + Math.abs(chD) + "</small>" : "");
+      rs(26, '<b style="color:' + recChCol(ch) + '">' + ch + "</b>", "r") +
+      rs(30, chD ? '<small class="' + (chD > 0 ? "pp-up" : "pp-dn") + '" title="Заряд на вході в таблицю ' + Math.round(chIn) + '">' +
+        (chD > 0 ? "▲" : "▼") + Math.abs(chD) + "</small>" : "", "l");
     var pr = prob != null && isFinite(prob) ? prob : null;
-    var prCell = pr == null ? "—" : '<span class="rec-prob ' + dc + '"><i style="width:' + Math.max(0, Math.min(100, pr)).toFixed(0) + '%"></i></span>' +
-      '<b class="mono rec-' + dc + '">' + pr.toFixed(0) + "%</b>";
+    var prCell = pr == null ? rs(100, "—", "r") : '<span class="rec-prob ' + dc + '"><i style="width:' + Math.max(0, Math.min(100, pr)).toFixed(0) + '%"></i></span>' +
+      rs(40, '<b class="rec-' + dc + '">' + pr.toFixed(0) + "%</b>", "r");
     var slCell = r.sl > 0
-      ? '<span class="rec-lv sl" title="🛑 SL з: ' + esc(r.sl_label || "") + (r.sl_fb ? " (фолбек)" : "") + '">' + fmtPrice(r.sl) +
-        " <small>" + recPct(r.sl_pct) + "</small></span>"
-      : '<span class="muted" title="' + esc(r.sl_label || "рахується") + '">' + (r.sl_wait ? "⏳" : "—") + "</span>";
+      ? '<span class="rec-lv sl" title="🛑 SL: ' + esc(r.sl_label || "") + (r.sl_fb ? " (фолбек)" : "") + '">' +
+        rs(96, fmtPrice(r.sl), "r") + rs(64, "<small>" + recPct(r.sl_pct) + "</small>", "r") +
+        rs(30, '<small class="rec-tf">' + esc(String(r.sl_tf || "").toUpperCase()) + "</small>", "r") + "</span>"
+      : rs(190, '<span class="muted" title="' + esc(r.sl_label || "рахується") + '">' + (r.sl_wait ? "⏳" : "—") + "</span>", "r");
     var tpCell = r.tp > 0
-      ? '<span class="rec-lv tp">' + fmtPrice(r.tp) + " <small>" + recPct(r.tp_pct) + "</small></span>" : "—";
+      ? '<span class="rec-lv tp">' + rs(96, fmtPrice(r.tp), "r") + rs(64, "<small>" + recPct(r.tp_pct) + "</small>", "r") + "</span>"
+      : rs(160, "—", "r");
     return '<tr class="rec-row ' + dc + '"><td class="sym">' + icon + tvSym(r.symbol) + nb + "</td>" +
       '<td><span class="rec-dir ' + dc + '">' + (sd ? (up ? "▲ LONG" : "▼ SHORT") : "⚖") + "</span></td>" +
       '<td class="r">' + chCell + "</td>" +

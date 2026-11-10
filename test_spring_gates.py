@@ -234,30 +234,47 @@ def test_recommended_rows():
     assert next(r for r in rows if r['symbol'] == 'XYZUSDT')['bybit'] is False
 
 
-def test_rec_sl_uses_the_sl_source_chain_and_tp_is_the_move_target():
-    """SL — ланцюг «🛑 SL з» (`_q4_pick_sl`) + стеля; TP — ціль «Ймовірний хід»."""
+def _ipl(name):
     sys.modules.setdefault('detection', types.ModuleType('detection')).__path__ = [os.path.join(ROOT, 'detection')]
-    ip = _load('_t_info_portal_rec2', 'web/info_portal.py')
-    calls = []
+    return _load(name, 'web/info_portal.py')
 
-    class FF:
-        def sl_source_on(self, s): return True
-        def _q4_pick_sl(self, sym, side, src, buf, ref):
-            calls.append((sym, side, src, round(buf, 4), ref))
-            return (105.0, 'Volumized OB (15m)', True), []
-    s = {'queue4_sl_source': '15m', 'queue3_vob_sl_buffer_pct': 0.2}
-    r = ip.rec_sl_compute(FF(), 'AAAUSDT', 'SHORT', 100.0, s)
-    assert calls == [('AAAUSDT', 'SHORT', '15m', 0.002, 100.0)]
-    assert r['sl'] == 105.0 and r['pct'] == 5.0 and r['fb'] is True
 
-    class FF0(FF):
-        def _q4_pick_sl(self, *a): return None, ['немає блоку']
-    fb = ip.rec_sl_compute(FF0(), 'AAAUSDT', 'LONG', 100.0, {'autosl_fallback_pct': 2})
-    assert abs(fb['sl'] - 98.0) < 1e-9 and '% від входу' in fb['label']
+def _ob(bias, hi, lo, t):
+    return {'bias': bias, 'bar_high': hi, 'bar_low': lo, 'bar_time': t}
 
+
+def test_rec_sl_ladder_ob_1h_then_lower_tf():
+    """🛑 SL = OB у бік угоди: пріоритет 1H, далі 15m → 5m; не VOB (вимога 10.11)."""
+    ip = _ipl('_t_info_portal_rec2')
+    z1 = {'internal': [_ob('BULLISH', 96, 94, 2000)]}            # під ціною — не для SHORT
+    z15 = {'internal': [_ob('BEARISH', 104, 102, 3000)]}
+    r = ip.rec_sl_from_obs({'1h': z1, '15m': z15, '5m': {}}, 'SHORT', 100.0,
+                           {'queue3_vob_sl_buffer_pct': 0.0})
+    assert r['sl'] == 104.0 and r['tf'] == '15m' and r['fb'] is True, r
+    r2 = ip.rec_sl_from_obs({'1h': z1}, 'LONG', 100.0, {'queue3_vob_sl_buffer_pct': 0.0})
+    assert r2['sl'] == 94.0 and r2['tf'] == '1h' and r2['fb'] is False
+    # старший TF ще рахується → чекаємо, молодший не підставляємо
+    assert ip.rec_sl_from_obs({'1h': None, '15m': z15}, 'SHORT', 100.0, {})['wait']
+    # блок, через який ціна пройшла, стопом не є; нічого → гарантія %
+    gone = {'internal': [_ob('BEARISH', 99, 98, 1)]}
+    fb = ip.rec_sl_from_obs({'1h': gone, '15m': {}, '5m': {}}, 'SHORT', 100.0,
+                            {'autosl_fallback_pct': 2})
+    assert abs(fb['sl'] - 102.0) < 1e-9 and fb['tf'] == '%'
+    # найновіший internal першим
+    zz = {'internal': [_ob('BEARISH', 110, 108, 1), _ob('BEARISH', 105, 103, 9)]}
+    assert ip.rec_ob_level(zz, 'SHORT', 100.0)[0] == 105.0
+
+
+def test_rec_levels_and_sort_by_probability():
+    ip = _ipl('_t_info_portal_rec3')
     row = dict(_rec(10, 60), symbol='AAAUSDT', side='SHORT', tgt_short=90.0, move_short_pct=-10.0)
-    lv = ip.rec_levels(row, r)
-    assert lv['tp'] == 90.0 and lv['sl'] == 105.0 and lv['rr'] == 2.0
+    lv = ip.rec_levels(row, {'sl': 105.0, 'pct': 5.0, 'label': 'OB 1H', 'tf': '1h'})
+    assert lv['tp'] == 90.0 and lv['sl'] == 105.0 and lv['rr'] == 2.0 and lv['sl_tf'] == '1h'
+    scan = [dict(_rec(70, 5), symbol='AUSDT', prob_long=60),
+            dict(_rec(5, 70), symbol='BUSDT', prob_long=10),
+            dict(_rec(70, 5), symbol='CUSDT', prob_long=80)]
+    rows = ip.recommended_rows({}, {}, scan)
+    assert [r['symbol'] for r in rows] == ['BUSDT', 'CUSDT', 'AUSDT']   # 90 · 80 · 60
 
 
 def test_rec_table_layout():
@@ -268,6 +285,7 @@ def test_rec_table_layout():
     assert 'SL' in head and 'TP' in head
     assert 'rec-foot' not in IDX
     assert 'function recPath' in APP and 'rec-ic' in APP
+    assert 'rec-wrap' in IDX and '.rec-wrap { max-height' in open(os.path.join(ROOT, 'infosite', 'style.css'), encoding='utf-8').read()
 
 
 def test_gate_mark_is_left_of_the_coin():
