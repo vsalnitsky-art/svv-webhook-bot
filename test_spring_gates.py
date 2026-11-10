@@ -81,8 +81,21 @@ def test_scan_member_for_watchlist_coins():
     assert sg.scan_member(row, None, 80) == (row, 'скан')
     wl = _rec(5, 60, charge=85)
     assert sg.scan_member(None, wl, 80) == (wl, 'WATCHLIST')
-    assert sg.scan_member(None, _rec(5, 60, charge=70), 80) == (None, '')
-    assert sg.scan_member(None, _rec(5, 60, state='building', charge=90), 80) == (None, '')
+    assert sg.scan_member(None, None, 80) == (None, '')
+    r, why = sg.scan_member(None, _rec(5, 60, charge=70), 80)
+    assert r is None and '70 < 80' in why
+    r, why = sg.scan_member(None, _rec(5, 60, state='building', charge=90), 80)
+    assert r is None and 'заряджається' in why
+
+
+def test_watchlist_miss_names_the_real_reason():
+    # Кейс DOGE/MNT 10.11: заряд 66-68 ≥ 🔋 60, але < фільтра скану 80 —
+    # відмова мусить казати це, а не «монети немає в таблиці».
+    rec, why = sg.scan_member(None, _rec(5, 60, charge=66), 80)
+    ok = sg.book_decide(sg.TAG_XS, rec, None, 'SHORT', src=why)
+    assert ok[0] and not ok[1]
+    assert '66 < 80' in ok[2] and '66 < 80' in ok[3]
+    assert 'немає в таблиці' not in ok[2]
 
 
 # ── 2. сканер: ворота в _signal_allowed ─────────────────────────────────────

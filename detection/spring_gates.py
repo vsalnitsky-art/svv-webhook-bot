@@ -76,6 +76,10 @@ def passes_gates(rec: Optional[Dict], settings: Dict, potential=None) -> Tuple[b
     return True, side, ''
 
 
+STATE_UA = {'building': '⏳ заряджається', 'flat': '😴 без заряду',
+            'fired': '💥 вистрілила'}
+
+
 def scan_member(row: Optional[Dict], wl_rec: Optional[Dict], min_charge) -> Tuple[Optional[Dict], str]:
     """Запис, за яким судимо монету в 🔭 таблиці скану → (запис, джерело).
 
@@ -84,9 +88,15 @@ def scan_member(row: Optional[Dict], wl_rec: Optional[Dict], min_charge) -> Tupl
     ≥ фільтра скану — за ТИМ САМИМ записом бота (ті самі закриті 1h-бари)."""
     if isinstance(row, dict):
         return row, 'скан'
-    if (isinstance(wl_rec, dict) and wl_rec.get('state') == 'charged'
-            and _f(wl_rec.get('charge')) >= _f(min_charge)):
-        return wl_rec, 'WATCHLIST'
+    if isinstance(wl_rec, dict):
+        st, ch = wl_rec.get('state'), _f(wl_rec.get('charge'))
+        if st == 'charged' and ch >= _f(min_charge):
+            return wl_rec, 'WATCHLIST'
+        # ⚠️ Справжня причина, а не голе «немає в таблиці»: монета WATCHLIST
+        # у таблицю скану не потрапляє ніколи, тож судимо за відбором скану.
+        if st != 'charged':
+            return None, f'WATCHLIST: стан {STATE_UA.get(st, st or "—")}, а не 🌀 заряджена'
+        return None, f'WATCHLIST: заряд {ch:.0f} < {_f(min_charge):.0f} (фільтр скану)'
     return None, ''
 
 
@@ -101,6 +111,9 @@ def book_decide(tag: str, rec: Optional[Dict], banner: Optional[str], side: str,
     bn = f' · банер {banner or "⚖"}' if need_banner else ''
     where = f' · {src}' if src and src != 'скан' else ''
     if rec is None:
+        if src and src != 'скан':
+            return (True, False, f'{tag}[{src}{bn}]:✗',
+                    f'{name}: {src} — у таблицю скану не пройшла б (сигнал {side} відхилено)')
         return (True, False, f'{tag}[немає в таблиці{bn}]:✗',
                 f'{name}: монети немає в таблиці (сигнал {side} відхилено)')
     if cs != side:
