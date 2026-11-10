@@ -388,6 +388,8 @@
   // свічка мала три різні часи.
   function p2(n) { return ("0" + n).slice(-2); }
   function locHM(sec) { var d = new Date(sec * 1000); return p2(d.getHours()) + ":" + p2(d.getMinutes()); }
+  // момент спрацювання сигналу SBR = закриття бару (`ct`), а не його відкриття
+  function sct(s) { return s ? (s.ct || 0) : 0; }
   function locDM(sec) { var d = new Date(sec * 1000); return p2(d.getDate()) + "." + p2(d.getMonth() + 1); }
   var LOC_MON = ["січ", "лют", "бер", "кві", "тра", "чер", "лип", "сер", "вер", "жов", "лис", "гру"];
   function locTick(t, type) {
@@ -407,7 +409,7 @@
     var lg = s.side === "LONG", m = sbrMove(s.side, s.trigger, price);
     var cls = !m || m.fav == null ? "mute" : (m.fav ? "long" : "short");
     var pct = m ? (m.pct >= 0 ? "+" : "") + m.pct.toFixed(2) + "%" : "—";
-    var tip = "Останній сигнал SBR " + T + (s.n ? " #" + s.n : "") + " · бар " + (s.t ? locDM(s.t) + " " + locHM(s.t) : "") +
+    var tip = "Останній сигнал SBR " + T + (s.n ? " #" + s.n : "") + " · спрацював " + (sct(s) ? locDM(sct(s)) + " " + locHM(sct(s)) : "") +
       " · Trigger " + fmtPrice(s.trigger) + (s.score != null ? " · Score " + Number(s.score).toFixed(1) + "%" : "") +
       " → зараз " + (price ? fmtPrice(price) : "—") + " · " +
       (!m || m.fav == null ? "без руху" : (m.fav ? "ціна йде В БІК сигналу" : "ціна йде ПРОТИ сигналу"));
@@ -1608,8 +1610,8 @@
     if (!s) { el.style.display = "none"; IW.sigSel = null; sigArrow(); return; }
     IW.sigSel = { t: s.t, side: s.side };
     var S = s.side === "SHORT";
-    // дата і час відкриття бару сигналу — годинником ПК, як шкала графіка
-    var dd = s.t ? locDM(s.t) : "";
+    // час СПРАЦЮВАННЯ сигналу (закриття бару) — годинником ПК, як у Telegram
+    var ct = sct(s), dd = ct ? locDM(ct) : "";
     var slPct = s.sl && s.close ? Math.abs(s.sl / s.close - 1) * 100 : null;
     var row = function (k, v, cls) { return '<div class="r"><span>' + k + '</span><b class="' + (cls || "") + '">' + v + "</b></div>"; };
     var sc = s.score != null ? Number(s.score) : null;
@@ -1617,7 +1619,7 @@
     el.innerHTML =
       '<div class="h ' + (S ? "short" : "long") + '"><span class="tag">' + (S ? "S" : "B") + "</span>" +
         (S ? "SHORT" : "LONG") + (s.n ? " #" + s.n : "") + '<span class="tf">SBR · ' + esc(s.tf || "") + " · " +
-        esc(dd) + " " + esc(s.t ? locHM(s.t) : "") + "</span>" +
+        esc(dd) + " " + esc(ct ? locHM(ct) : "") + "</span>" +
         '<button class="x" aria-label="Закрити">×</button></div>' +
       row("Trigger", fmtPrice(s.trigger), "v-trg") +
       '<div class="r"><span>Score<small>(сила сигналу)</small></span><b class="' + scCls + '">' +

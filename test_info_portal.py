@@ -836,6 +836,20 @@ def test_one_clock_everywhere():
     _check('time_kyiv' not in sm and 'Europe/Kyiv' not in sm and 'getUTCHours' not in sm, 'бот: без UTC/Київ')
     _check('_pcFull(p.appeared)' in sm, '🆕 Новий OB у лозі — годинником ПК')
 
+def test_signal_shows_fire_time_not_bar_open():
+    """🔔 Сигнал SBR підписується моментом СПРАЦЮВАННЯ (закриття бару), а не
+    відкриттям свічки — той самий момент, що в Telegram (вимога 10.11)."""
+    ip = _load('info_portal_ct', 'web/info_portal.py')
+    t0 = 1789052400  # відкриття 4H-бару
+    v = ip.sbr_last_view({'side': 'LONG', 't': t0 * 1000, 'close_t': t0 + 14400,
+                          'trigger': 72686.6}, '4h')
+    assert v['ct'] == t0 + 14400 and v['t'] == t0
+    assert ip.sig_close_sec({'t': t0}, 3600) == t0 + 3600
+    js = open(os.path.join(os.path.dirname(__file__), 'infosite', 'app.js'), encoding='utf-8').read()
+    assert 'var ct = sct(s)' in js and 's.t ? locHM(s.t)' not in js
+    html = open(os.path.join(os.path.dirname(__file__), 'templates', 'smart_money.html'), encoding='utf-8').read()
+    assert '_pcDM(_sbrCt(g))' in html and '· бар ${_pcDM(g.t)}' not in html
+
 
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]

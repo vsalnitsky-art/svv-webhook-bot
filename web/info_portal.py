@@ -349,7 +349,7 @@ def sbr_of(klines, tf, now=None):
     cb = closed_bars(klines or [], b, now)
     out = []
     for x in compute_signals(cb, b)[-SBR_SHOW:]:
-        out.append({'side': x['side'], 't': to_sec(x['t']), 'n': x.get('n'),
+        out.append({'side': x['side'], 't': to_sec(x['t']), 'ct': sig_close_sec(x, b), 'n': x.get('n'),
                     'trigger': x.get('trigger'), 'score': x.get('score'),
                     'risk': x.get('risk'), 'sl': x.get('sl'),
                     'time_kyiv': x.get('time_kyiv'), 'tf': str(tf).upper()})
@@ -467,11 +467,26 @@ def _engine_sbr_last(sym, tf):
     return {'sig': sbr_last_view(snap.get('last'), tf)}
 
 
+def sig_close_sec(sig, b=0):
+    """ЧИСТА: момент СПРАЦЮВАННЯ сигналу (закриття його бару), epoch с.
+    Саме його показуємо в картці/бейджі — той самий момент, коли сигнал іде в
+    Telegram (вимога 10.11). Немає `close_t` → відкриття бару + тривалість."""
+    try:
+        ct = float(sig.get('close_t') or 0)
+    except (TypeError, ValueError):
+        ct = 0
+    if ct > 0:
+        return to_sec(ct)
+    t = to_sec(sig.get('t'))
+    return t + int(b or 0) if t else 0
+
+
 def sbr_last_view(sig, tf):
     """ЧИСТА: останній сигнал SBR → поля для бейджа кабінету."""
     if not sig or not sig.get('trigger'):
         return None
-    return {'side': sig.get('side'), 't': to_sec(sig.get('t')), 'n': sig.get('n'),
+    return {'side': sig.get('side'), 't': to_sec(sig.get('t')),
+            'ct': sig_close_sec(sig, bar_sec(tf)), 'n': sig.get('n'),
             'trigger': float(sig['trigger']), 'score': sig.get('score'),
             'time_kyiv': sig.get('time_kyiv'), 'tf': str(tf).upper()}
 

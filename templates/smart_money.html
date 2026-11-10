@@ -14189,11 +14189,13 @@ function mmPdOnlyChanged() {
 // 🔔 «📶 TF» — який сигнал SBR дав поточний бік: 1H · 4H · 1H+4H (вимога 6:
 // повтор на іншому TF НЕ створює другого рядка — лише додає TF сюди).
 // 🆕 — сигнал на ЩОЙНО закритому барі (найсвіжіша зміна).
+// момент СПРАЦЮВАННЯ сигналу = закриття його бару (той самий, що в Telegram)
+function _sbrCt(g) { return g ? (Number(g.close_t) || 0) : 0; }
 function _sbrTfTip(r) {
     const by = r.sbr_by_tf || {};
     return ['1h', '4h'].filter(tf => by[tf]).map(tf => {
         const g = by[tf];
-        return `${tf.toUpperCase()}: ${r.mm || ''} #${g.n} · бар ${_pcDM(g.t)} ${_pcHM(g.t)} · Trigger ${fmtPriceJS(g.trigger)}`
+        return `${tf.toUpperCase()}: ${r.mm || ''} #${g.n} · спрацював ${_pcDM(_sbrCt(g))} ${_pcHM(_sbrCt(g))} · Trigger ${fmtPriceJS(g.trigger)}`
             + ` · Score ${Number(g.score).toFixed(2)} · Risk ${g.risk} · SL ${fmtPriceJS(g.sl)}`;
     }).join('\n');
 }
@@ -14216,7 +14218,7 @@ function _mmSbrSigCell(r) {
     const seg = (w, al, h) => `<span style="display:inline-block;width:${w}px;text-align:${al}">${h}</span>`;
     return `<span title="${_mmEsc(_sbrTfTip(r))}" style="font-family:monospace;white-space:nowrap;font-size:0.68rem">`
         + seg(78, 'left', `<b style="color:${col}">${_mmEsc(r.mm || '')} #${g.n}</b>`)
-        + seg(92, 'left', `<span style="color:#cbd5e1">${g.t ? _pcDM(g.t) + ' ' + _pcHM(g.t) : ''}</span>`)
+        + seg(92, 'left', `<span style="color:#cbd5e1">${_sbrCt(g) ? _pcDM(_sbrCt(g)) + ' ' + _pcHM(_sbrCt(g)) : ''}</span>`)
         + seg(96, 'right', `<span style="color:#e5e7eb">${fmtPriceJS(g.trigger)}</span>`)
         + seg(56, 'right', `<b style="color:${col}">${Number(g.score).toFixed(2)}</b>`)
         + seg(66, 'right', `<span style="color:#fbbf24">${_mmEsc(g.risk || '')}</span>`)

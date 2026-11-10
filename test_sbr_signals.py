@@ -298,7 +298,7 @@ def test_js_cells_render():
     esc = _HTML[_HTML.index('const _mmEsc'):]
     esc = esc[:esc.index(';\n') + 2]
     pc = _HTML[_HTML.index('function _pz('):_HTML.index('function _pcTick(')]
-    js = ('const fmtPriceJS = p => String(p);\n' + esc + '\n' + pc + fn('_sbrTfTip')
+    js = ('const fmtPriceJS = p => String(p);\n' + esc + '\n' + pc + fn('_sbrCt') + '\n' + fn('_sbrTfTip')
           + '\n' + fn('_mmSbrTfCell') + '\n' + fn('_mmSbrSigCell') + r"""
 const g = {t: 1792857600000, close_t: 1792872000, trigger: 2293, score: 100, risk: '1R + Add', sl: 2184.43, n: 1, time_kyiv: '07:00'};
 console.log(_mmSbrTfCell({mm:'LONG', sbr_tfs:'1H+4H', sbr_fresh:true, sbr_by_tf:{'1h':g,'4h':g}}));
@@ -318,7 +318,9 @@ console.log('|'); console.log(_mmSbrTfCell({}));
     # 🕐 Час бару — годинником ПК (тут TZ процесу = Kyiv), а не серверне time_kyiv:
     # 1792857600 = 24.10.2026 16:00 UTC = 19:00 Kyiv (+3); серверне time_kyiv
     # навмисно інше ('07:00') — сторінка його більше не читає.
-    _check('24.10 19:00' in p[1] and '07:00' not in p[1], p[1])
+    # Показуємо момент СПРАЦЮВАННЯ (close_t = 20:00 UTC = 23:00 Kyiv), а не
+    # відкриття бару 19:00 — той самий час, що в Telegram (вимога 10.11).
+    _check('24.10 23:00' in p[1] and '24.10 19:00' not in p[1] and '07:00' not in p[1], p[1])
     _check('1H+4H' in p[0] and '🆕' in p[0], p[0])
     _check('LONG #1' in p[1] and '2293' in p[1] and '100.00' in p[1]
            and '1R + Add' in p[1] and 'SL 2184.43' in p[1], p[1])
