@@ -17178,7 +17178,7 @@ function sprRender() {
     tb.innerHTML = rows.map(r => {
         const h = _sprRowHTML(r, minPot, mode, '', r.gate_ok ? 'background:rgba(74,222,128,0.07);' : '');
         // ✅ кант і позначка — ЛІВОРУЧ від назви монети (у першій комірці)
-        return r.gate_ok ? h.replace('<td style="white-space:nowrap">', `<td style="white-space:nowrap;box-shadow:inset 3px 0 0 #4ade80"><span class="spr-gate-ok" title="Проходить ворота «Пружини» у бік ${r.gate_side}: потенціал і заряд ≥ порогів увімкнених воріт. Ця монета — у «Рекомендовані ботом» на інфосайті.">✅ ${r.gate_side === 'LONG' ? '▲' : '▼'}</span>`) : h;
+        return r.gate_ok ? h.replace('<td style="white-space:nowrap">', `<td style="white-space:nowrap;box-shadow:inset 3px 0 0 ${r.gate_side === 'LONG' ? '#4ade80' : '#f87171'}"><span class="spr-gate-ok" title="Проходить ворота «Пружини» у бік ${r.gate_side}: потенціал і заряд ≥ порогів увімкнених воріт. Ця монета — у «Рекомендовані ботом» на інфосайті.">✅</span>`) : h;
     }).join('');
 }
 // 🌀 Рядок таблиці «Пружини» — ОДИН рендер на дві таблиці (🌀 Пружина і

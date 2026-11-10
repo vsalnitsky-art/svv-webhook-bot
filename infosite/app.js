@@ -2239,11 +2239,11 @@
       : rs(160, "—", "r");
     return '<tr class="rec-row ' + dc + '"><td class="sym">' + icon + tvSym(r.symbol) + nb + "</td>" +
       '<td><span class="rec-dir ' + dc + '">' + (sd ? (up ? "▲ LONG" : "▼ SHORT") : "⚖") + "</span></td>" +
-      '<td class="r">' + chCell + "</td>" +
       '<td class="r">' + prCell + "</td>" +
       '<td class="r">' + slCell + "</td>" +
+      '<td class="r">' + tpCell + "</td>" +
       '<td class="c">' + recPath(r, up) + "</td>" +
-      '<td class="r">' + tpCell + "</td></tr>";
+      '<td class="r">' + chCell + "</td></tr>";
   }
   function recRender() {
     var rows = REC.rows || [], n = { all: rows.length, LONG: 0, SHORT: 0 };

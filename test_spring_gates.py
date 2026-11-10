@@ -2,6 +2,7 @@
 таблиця скану без монет WATCHLIST, монети Binance без Bybit, виділення
 монет, що проходять ворота, і «Рекомендовані ботом» на інфосайті."""
 import importlib.util
+import re
 import json
 import os
 import sys
@@ -283,6 +284,9 @@ def test_rec_table_layout():
     for gone in ('Джерело', 'Стан', 'Потенціал'):
         assert gone not in head, gone
     assert 'SL' in head and 'TP' in head
+    cols = re.findall(r'<th[^>]*>([^<]*)</th>', head)
+    assert cols[-1] == 'Заряд', cols
+    assert cols.index('🎯 TP') == cols.index('🛑 SL') + 1, cols
     assert 'rec-foot' not in IDX
     assert 'function recPath' in APP and 'rec-ic' in APP
     assert 'rec-wrap' in IDX and '.rec-wrap { max-height' in open(os.path.join(ROOT, 'infosite', 'style.css'), encoding='utf-8').read()
@@ -293,6 +297,8 @@ def test_gate_mark_is_left_of_the_coin():
     seg = HTML[i:i + 600]
     assert "h.replace('<td style=\"white-space:nowrap\">'" in seg
     assert seg.index('spr-gate-ok') < seg.index('`)'), 'позначка на початку першої комірки'
+    assert '▲' not in seg and '▼' not in seg, 'без трикутників — напрямок показує кант'
+    assert '#f87171' in seg, 'кант SHORT червоний'
 
 
 def test_infosite_has_the_table_with_tabs():
