@@ -1398,6 +1398,85 @@ def liq_from_client(body, user=None, now=None):
         return {'ok': False, 'reason': f'помилка: {str(e)[:100]}'}
 
 
+# ═══ 🤖 «РЕКОМЕНДОВАНІ БОТОМ» (вимога 10.11) ════════════════════════════════
+# Монети 🌀 Пружини (WATCHLIST), що ПРОХОДЯТЬ її ворота у бік своєї вкладки, +
+# усі монети таблиці 🔭 «Пружина — скан біржі». Лише читання памʼяті бота.
+REC_TTL = 10.0
+REC_KEYS = ('state', 'label', 'charge', 'dir', 'lean', 'pot_long', 'pot_short',
+            'prob_long', 'price', 'tgt_long', 'tgt_short', 'move_long_pct',
+            'move_short_pct', 'box_pct', 'squeeze_bars', 'fired', 'bar_t')
+_rec_cache = {}
+
+
+def recommended_rows(wl_recs, wl_pass, scan_rows):
+    """ЧИСТА: рядки «Рекомендовані ботом» → [{symbol, src, side, …}].
+
+    `wl_pass` — {SYM: {ok, side}} (`SMCScanner.spring_pass_map`); зі скану —
+    усі видимі рядки таблиці, бік = вкладка (`spring_gates.tab_side`).
+    Монета, що є в обох, береться один раз (WATCHLIST сильніший)."""
+    try:
+        from detection import spring_gates as _sg
+    except Exception:
+        _sg = None
+    out, seen = [], set()
+    for S, rec in (wl_recs or {}).items():
+        g = (wl_pass or {}).get(S) or {}
+        if not g.get('ok') or g.get('side') not in ('LONG', 'SHORT'):
+            continue
+        row = {k: (rec or {}).get(k) for k in REC_KEYS}
+        row.update({'symbol': S, 'src': 'wl', 'side': g['side']})
+        out.append(row)
+        seen.add(S)
+    for r in scan_rows or []:
+        S = str((r or {}).get('symbol') or '').upper()
+        if not S or S in seen:
+            continue
+        side = _sg.tab_side(r) if _sg else (r.get('dir') or r.get('lean'))
+        row = {k: r.get(k) for k in REC_KEYS}
+        row.update({'symbol': S, 'src': 'scan', 'side': side if side in ('LONG', 'SHORT') else None,
+                    'vol_usd': r.get('vol_usd'), 'bybit': r.get('bybit'),
+                    'added_at': r.get('added_at')})
+        out.append(row)
+        seen.add(S)
+
+    def _pot(x):
+        k = 'pot_long' if x.get('side') == 'LONG' else 'pot_short'
+        try:
+            return float(x.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    out.sort(key=lambda x: (-_pot(x), x['symbol']))
+    return out
+
+
+def recommended_payload(now=None):
+    now = time.time() if now is None else now
+    hit = _rec_cache.get('p')
+    if hit and now - hit[0] < REC_TTL:
+        return hit[1]
+    sc = _scanner()
+    wl_recs, wl_pass, scan_rows, scan_meta = {}, {}, [], {}
+    try:
+        if sc is not None and hasattr(sc, 'spring_for'):
+            wl_recs = sc.spring_for() or {}
+            wl_pass = sc.spring_pass_map() if hasattr(sc, 'spring_pass_map') else {}
+    except Exception:
+        pass
+    try:
+        from detection.spring_scan import get_spring_scan
+        eng = get_spring_scan()
+        if eng is not None:
+            scan_rows = eng.rows()
+            st = eng.state().get('result') or {}
+            scan_meta = {'ts': st.get('ts'), 'exchange': st.get('exchange')}
+    except Exception:
+        pass
+    p = {'ok': True, 'rows': recommended_rows(wl_recs, wl_pass, scan_rows),
+         'scan': scan_meta, 'wl_n': len(wl_recs), 'ts': now}
+    _rec_cache['p'] = (now, p)
+    return p
+
+
 def register_info_portal(app):
     from flask import jsonify, request
 
@@ -1467,6 +1546,13 @@ def register_info_portal(app):
             d['stats'] = d.get('stats_all') or {}
         d.pop('stats_all', None)
         r = jsonify({'ok': True, 'ts': time.time(), **d})
+        r.headers['Cache-Control'] = 'no-store'
+        return r
+
+    @app.route('/api/info/recommended')
+    def api_info_recommended():
+        """🤖 «Рекомендовані ботом» — лише читання памʼяті бота."""
+        r = jsonify(recommended_payload())
         r.headers['Cache-Control'] = 'no-store'
         return r
 

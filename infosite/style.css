@@ -675,3 +675,17 @@ body.iw-full-on { overflow: hidden; }
 .iw-sig .r span { color: #a8b3c7; }
 .iw-sig .tf { color: #b6c2d6; }
 :root[data-theme="light"] .iw-sig .r span, :root[data-theme="light"] .iw-sig .tf { color: #5b6475; }
+
+/* 🤖 Рекомендовані ботом (вимога 10.11) */
+.rec-card { border-left: 3px solid #22c55e; }
+.rec-badge { font: 700 11px var(--mono); color: #86efac; background: rgba(34,197,94,.14);
+  border: 1px solid rgba(34,197,94,.4); border-radius: 6px; padding: 3px 8px; }
+#rec-tabs button.on { background: rgba(34,197,94,.22); color: #dcfce7; }
+.rec-src { font: 700 11px var(--font); border-radius: 5px; padding: 2px 7px; border: 1px solid var(--line); }
+.rec-src.wl { color: #c4b5fd; border-color: rgba(167,139,250,.45); background: rgba(167,139,250,.10); }
+.rec-src.xs { color: #93c5fd; border-color: rgba(96,165,250,.45); background: rgba(96,165,250,.10); }
+.rec-nb { font: 700 10px var(--font); color: #fbbf24; }
+.rec-ch { display: inline-block; width: 46px; height: 5px; border-radius: 3px; background: var(--line-soft);
+  overflow: hidden; vertical-align: middle; }
+.rec-ch i { display: block; height: 100%; background: linear-gradient(90deg, #a78bfa, #facc15); }
+.rec-foot { font-size: 11.5px; margin-top: 8px; }

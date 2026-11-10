@@ -6,7 +6,7 @@
   <title>VSV — Мій кабінет</title>
   <link rel="icon" type="image/png" href="vsv-logo.png">
   <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=91">
+  <link rel="stylesheet" href="style.css?v=92">
   <!-- ⏳ Анти-блимання: доки JS не перевірив авторизацію (клас app-ready ще не
        додано на <body>), не показуємо ні дашборд, ні hero — інакше на секунду
        спалахує «бот-панель» перед екраном входу. Після перевірки showData()
@@ -98,6 +98,27 @@
       </div>
     </section>
 
+    <!-- 🤖 Рекомендовані ботом (вимога 10.11): 🌀 Пружина WATCHLIST, що проходить
+         ворота, + 🔭 Пружина — скан біржі. Лише перегляд. -->
+    <section class="card rec-card" id="rec-card" style="display:none">
+      <div class="pp-head">
+        <span class="rec-badge" title="Монети, які бот зараз вважає найбільш «накрученими» для руху">🤖 БОТ</span>
+        <span class="pp-title">Рекомендовані ботом</span>
+        <div class="pp-period" id="rec-tabs">
+          <button type="button" data-d="all">Всі (0)</button>
+          <button type="button" data-d="LONG">🟢 LONG (0)</button>
+          <button type="button" data-d="SHORT">🔴 SHORT (0)</button>
+        </div>
+        <span class="pp-note muted" id="rec-note"></span>
+      </div>
+      <div class="pp-wrap"><table class="pp-tbl" id="rec-tbl">
+        <thead><tr><th>Монета</th><th>Джерело</th><th>Напрямок</th><th>Стан</th><th class="r">Заряд</th>
+          <th class="r">Потенціал</th><th class="r">Ймовірність</th><th class="r">Ймовірний хід</th><th class="r">Ціль</th></tr></thead>
+        <tbody><tr><td colspan="9" class="muted">завантаження…</td></tr></tbody>
+      </table></div>
+      <div class="rec-foot muted">🌀 WATCHLIST — монети бота, що проходять ворота «Пружини» у бік своєї вкладки · 🔭 скан — заряджені монети всієї біржі з таблиці «Пружина — скан біржі». Заряд, напрямок і хід рахуються по закритих 1h-барах; це орієнтир, а не сигнал на вхід.</div>
+    </section>
+
     <!-- 🧪 Тестові (paper) угоди бота — лише перегляд (вимога 08.11) -->
     <section class="card pp-card" id="pp-card" style="display:none">
       <div class="pp-head">
@@ -173,6 +194,6 @@
   </script>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="config.js?v=75"></script>
-  <script src="app.js?v=91"></script>
+  <script src="app.js?v=92"></script>
 </body>
 </html>

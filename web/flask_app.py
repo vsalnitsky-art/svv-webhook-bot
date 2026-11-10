@@ -3138,10 +3138,11 @@ def register_api_routes(app):
 
     @app.route('/api/spring-scan/settings', methods=['POST'])
     def api_spring_scan_settings():
-        """{exchange, min_vol_usd, min_charge, auto_on, auto_min}."""
+        """{exchange, min_vol_usd, min_charge, auto_on, auto_min, show_non_bybit}."""
         try:
             data = request.get_json(silent=True) or {}
-            keys = ('exchange', 'min_vol_usd', 'min_charge', 'auto_on', 'auto_min')
+            keys = ('exchange', 'min_vol_usd', 'min_charge', 'auto_on', 'auto_min',
+                    'show_non_bybit')
             return jsonify({'ok': True, 'settings': _spring_scan_eng().update_settings(
                 {k: data[k] for k in keys if k in data})})
         except Exception as e:
@@ -3832,6 +3833,10 @@ def register_api_routes(app):
             except Exception:
                 _spc = None
             rows, full = [], {}
+            try:
+                passmap = sc.spring_pass_map() if sc is not None and hasattr(sc, 'spring_pass_map') else {}
+            except Exception:
+                passmap = {}
             for sym, r in recs.items():
                 r = dict(r)
                 if _spc is not None and 'tension_long' not in r and r.get('box_hi') is not None:
@@ -3856,6 +3861,10 @@ def register_api_routes(app):
                     'phase', 'atr_peak_ratio', 'move24_pct', 'unit_r')}}
                 row['trade_side'] = sides.get(sym)
                 row['queues'] = list(queues.get(sym) or [])
+                _gp = passmap.get(sym) or {}
+                row['gate_ok'] = bool(_gp.get('ok'))
+                row['gate_side'] = _gp.get('side')
+                row['gate_why'] = _gp.get('why') or ''
                 rows.append(row)
             rows.sort(key=lambda x: -max(x.get('pot_long') or 0, x.get('pot_short') or 0))
             wl = len(sc.get_watchlist() or []) if sc is not None else 0

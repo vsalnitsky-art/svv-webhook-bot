@@ -251,6 +251,32 @@ def _default_tickers(exchange: str) -> Dict[str, Dict]:
     return tickr_core._ACTIVITY[exchange](tickr_core.MARKET_SWAP)
 
 
+def _default_watchlist() -> List[str]:
+    """WATCHLIST бота — ті самі монети, що в 🌀 Пружині (сканер того самого
+    процесу; не піднятий → порожньо, нічого не виключаємо)."""
+    import sys
+    m = sys.modules.get('detection.smc_scanner')
+    sc = m.get_smc_scanner() if m is not None and hasattr(m, 'get_smc_scanner') else None
+    try:
+        return list(sc.get_watchlist() or []) if sc is not None else []
+    except Exception:
+        return []
+
+
+def split_bybit(syms: List[str], bybit: Optional[set], show: bool):
+    """ЧИСТА: скан Binance → (монети в роботу, {S: є на Bybit|None}, відсіяно).
+
+    `bybit` — множина USDT-перпетуалів Bybit (None = перевірити не вдалось →
+    нічого не відсіюємо і не позначаємо: «невідомо» ≠ «немає»). `show=False` —
+    монети, яких немає на Bybit, не беремо взагалі (дефолт); `True` — беремо
+    з позначкою."""
+    if bybit is None:
+        return list(syms), {S: None for S in syms}, 0
+    flag = {S: (S in bybit) for S in syms}
+    keep = [S for S in syms if flag[S] or show]
+    return keep, flag, len(syms) - len(keep)
+
+
 def _default_fetch(exchange: str):
     import requests
     sess = requests.Session()
@@ -266,8 +292,10 @@ def _default_run(name, fn, source):
 class SpringScan:
     def __init__(self, db=None, tickers: Callable = None, fetch_factory: Callable = None,
                  run_queued: Callable = None, workers: int = WORKERS,
-                 notify: Callable = None, clock: Callable = None):
+                 notify: Callable = None, clock: Callable = None,
+                 watchlist: Callable = None):
         self._db = db
+        self._watchlist = watchlist or _default_watchlist
         self._tickers = tickers or _default_tickers
         self._fetch_factory = fetch_factory or _default_fetch
         self._run_queued = run_queued or _default_run
@@ -277,7 +305,8 @@ class SpringScan:
         self._lock = threading.Lock()
         self._settings = {'exchange': DEFAULT_EXCHANGE, 'min_vol_usd': DEFAULT_MIN_VOL,
                           'min_charge': DEFAULT_MIN_CHARGE, 'auto_on': False,
-                          'auto_min': DEFAULT_AUTO_MIN, 'tg': {}}
+                          'auto_min': DEFAULT_AUTO_MIN, 'tg': {},
+                          'show_non_bybit': False}
         self._result: Dict = {}
         self._table: Dict[str, Dict] = {}      # S → рядок таблиці
         self._removed: List[Dict] = []          # хто вибув і чому
@@ -325,6 +354,8 @@ class SpringScan:
             self._settings['auto_on'] = bool(s.get('auto_on'))
         if 'auto_min' in s:
             self._settings['auto_min'] = norm_auto_min(s.get('auto_min'))
+        if 'show_non_bybit' in s:
+            self._settings['show_non_bybit'] = bool(s.get('show_non_bybit'))
         if isinstance(s.get('tg'), dict):
             self._settings['tg'] = {str(k).upper(): norm_tfs(v) for k, v in s['tg'].items()
                                     if norm_tfs(v)}
@@ -519,7 +550,7 @@ class SpringScan:
                 self._p_coin(s, rec)
         return recs, errors
 
-    def _row(self, S: str, rec: Dict, now: float, vol=None) -> Dict:
+    def _row(self, S: str, rec: Dict, now: float, vol=None, bybit=None) -> Dict:
         fs = _fs()
         row = fs.shape_row(rec)
         row['symbol'] = S
@@ -528,6 +559,7 @@ class SpringScan:
         row['charge_in'] = old.get('charge_in', rec.get('charge'))
         row['vol_usd'] = vol if vol is not None else old.get('vol_usd')
         row['calc_at'] = now
+        row['bybit'] = old.get('bybit') if bybit is None else bybit
         return row
 
     def _drop(self, S: str, rec: Optional[Dict], why: str, now: float):
@@ -548,19 +580,38 @@ class SpringScan:
         self._p(phase='tickers', scan_started=t0)
         tickers = self._tickers(exchange) or {}
         syms, vols, brk = pick_symbols(tickers, min_vol)
-        self._p(phase='bars', total=len(syms), breakdown=brk)
         now = now if now is not None else self._clock()
+        # 🌀 Монети WATCHLIST уже є в таблиці «Пружина» — не дублюємо (вимога 10.11).
+        wl = self._wl_set()
+        brk['in_wl'] = sum(1 for S in syms if S in wl)
+        syms = [S for S in syms if S not in wl]
+        for S in [S for S in self._table if S in wl]:
+            self._drop(S, self._table.get(S), 'монета в WATCHLIST — уже в 🌀 Пружині', now)
+        # 🅱 Скан Binance: монети, яких немає на Bybit (там бот торгує).
+        flags: Dict[str, Optional[bool]] = {}
+        brk['bybit_check'] = None
+        if exchange == 'binance':
+            bys = None
+            try:
+                bys = {str(k).upper() for k in (self._tickers('bybit') or {})}
+                if not bys:
+                    bys = None
+            except Exception as e:
+                brk['bybit_err'] = str(e)[:120]
+            syms, flags, brk['not_bybit'] = split_bybit(syms, bys, self._settings['show_non_bybit'])
+            brk['bybit_check'] = bys is not None
+        self._p(phase='bars', total=len(syms), breakdown=brk)
         recs, errors = self._analyze_many(syms, self._fetch_factory(exchange), now)
         mc = self._settings['min_charge']
         added = 0
         for S, rec in recs.items():
             if S in self._table:
                 if stays_in_table(rec):
-                    self._table[S] = self._row(S, rec, now, vols.get(S))
+                    self._table[S] = self._row(S, rec, now, vols.get(S), flags.get(S))
                 else:
                     self._drop(S, rec, 'скан: статус уже не «🌀 заряджена»', now)
             elif takes_in_work(rec, mc):
-                self._table[S] = self._row(S, rec, now, vols.get(S))
+                self._table[S] = self._row(S, rec, now, vols.get(S), flags.get(S))
                 added += 1
         by_state: Dict[str, int] = {}
         for rec in recs.values():
@@ -591,9 +642,12 @@ class SpringScan:
         """Перерахунок заряду ЛИШЕ монет таблиці. Статус не «🌀 заряджена» →
         монета вибуває. Збій завантаження монету НЕ видаляє."""
         t0 = self._clock()
+        now = now if now is not None else self._clock()
+        wl = self._wl_set()
+        for S in [S for S in self._table if S in wl]:
+            self._drop(S, self._table.get(S), 'монета в WATCHLIST — уже в 🌀 Пружині', now)
         syms = list(self._table)
         self._p(phase='bars', total=len(syms))
-        now = now if now is not None else self._clock()
         recs, errors = self._analyze_many(syms, self._fetch_factory(self._settings['exchange']), now)
         gone = []
         for S in syms:
@@ -700,9 +754,36 @@ class SpringScan:
         self._thread = threading.Thread(target=self._loop, daemon=True, name='spring-scan-loop')
         self._thread.start()
 
+    def _wl_set(self) -> set:
+        try:
+            return {str(x).upper() for x in (self._watchlist() or [])}
+        except Exception:
+            return set()
+
+    def _visible(self, r: Dict, wl: set) -> bool:
+        """Рядок показуємо: не WATCHLIST і (є на Bybit або показ таких увімкнено)."""
+        if str(r.get('symbol') or '').upper() in wl:
+            return False
+        return not (r.get('bybit') is False and not self._settings['show_non_bybit'])
+
+    def row_for(self, symbol: str) -> Optional[Dict]:
+        """Рядок таблиці монети (лише видимий) — для воріт «Через Пружину-скан»."""
+        S = str(symbol or '').upper()
+        with self._lock:
+            r = self._table.get(S)
+            r = dict(r) if r else None
+        return r if r and self._visible(r, self._wl_set()) else None
+
+    def banner_agg(self) -> Optional[Dict]:
+        """Банер «Куди накручено» останнього скану."""
+        with self._lock:
+            return self._result.get('agg')
+
     def rows(self) -> List[Dict]:
+        wl = self._wl_set()
         with self._lock:
             rows = [dict(r) for r in self._table.values()]
+        rows = [r for r in rows if self._visible(r, wl)]
         tg = self._settings['tg']
         for r in rows:
             r['tg'] = list(tg.get(r['symbol']) or [])

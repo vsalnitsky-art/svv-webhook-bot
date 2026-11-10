@@ -1474,6 +1474,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .xs-tg.on{border-color:#f59e0b;color:#fbbf24;background:rgba(245,158,11,.12);font-weight:700}
 .xs-line2{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:0.66rem;color:#8b93a7}
 .xs-line2 .spr-k{text-transform:uppercase;letter-spacing:.04em;font-size:0.58rem;color:#6b7280}
+.spr-gate-ok { font-size:0.64rem; color:#4ade80; font-weight:700; margin-left:4px; }
+.xs-nobybit { font-size:0.62rem; color:#fbbf24; border:1px solid rgba(251,191,36,0.45); border-radius:3px; padding:0 4px; margin-left:4px; font-weight:600; }
 .xs-gone{font-family:monospace;font-size:0.62rem;padding:0 5px;border-radius:3px;border:1px solid rgba(248,113,113,.35);color:#fca5a5}
 #fspr-table tbody tr > td { background: transparent; }
 #fspr-table tbody tr:not(.fspr-sub) > td { border-bottom: none; }
@@ -2544,6 +2546,22 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mms-gate-banner" onchange="updateMmGate()">
                         за банером МММ-SBR
                     </label>
+                    <label class="sm-checkbox" title="🌀 Ворота «Через Пружину-WL» (вимога 10.11): сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG таблиці 🌀 Пружина (WATCHLIST) — потенціал LONG більший за SHORT і стан не «без заряду»; SHORT — у вкладці 🔴 SHORT. Без напрямку / протилежна вкладка / монети немає в таблиці → сигнал не пропускаємо (причина — у 🧾 Лозі). Незалежні від інших воріт і від «🚦 потенціал ≥» / «🔋 заряд ≥» самої Пружини. Діє на ВСІ сигнали сканера і на 🔁 повторній перевірці Черги-4. Вимкнена Пружина → умова не діє. ✋ Ручний сигнал її не проходить. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-sprw-gate" onchange="updateMmGate()">
+                        🌀 Через Пружину-WL
+                    </label>
+                    <label class="sm-checkbox" title="Додатково до «Через Пружину-WL»: банер «Куди накручено» 🌀 Пружини мусить мати той самий напрямок, що й сигнал (⚖ / замало заряджених / протилежний → сигнал відхиляється). ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-sprw-gate-banner" onchange="updateMmGate()">
+                        за банером Пружини-WL
+                    </label>
+                    <label class="sm-checkbox" title="🔭 Ворота «Через Пружину-скан» (вимога 10.11): сигнал проходить, лише якщо монета у вкладці свого боку таблиці 🔭 Пружина — скан біржі. ⚠ Монети WATCHLIST у таблицю скану НЕ потрапляють (вони вже в 🌀 Пружині), тож для них «у таблиці скану» = пройшла б її відбір: 🌀 заряджена і заряд ≥ фільтра скану (за тим самим записом бота). Інакше → сигнал не пропускаємо. Рушій скану не піднято → умова не діє. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-sprx-gate" onchange="updateMmGate()">
+                        🔭 Через Пружину-скан
+                    </label>
+                    <label class="sm-checkbox" title="Додатково до «Через Пружину-скан»: банер «Куди накручено» останнього скану біржі мусить мати той самий напрямок, що й сигнал. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-sprx-gate-banner" onchange="updateMmGate()">
+                        за банером Пружини-скан
+                    </label>
                     <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-Trend» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» / «Через МММ-Pull» / «Через МММ-Decision» (для кожного блоку — його власні пороги; у 🧠 МММ-Decision — ще й фільтр «Вердикт ≥»). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-str" onchange="updateMmGate()">
                         ⚑ з порогом «Сила ≥» вкладки
@@ -2926,6 +2944,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Автоскан: повний скан біржі з тими самими параметрами раз на N хвилин. Повторний скан ДОПОВНЮЄ таблицю новими зарядженими монетами (наявні оновлюються, а ті, що вже не заряджені, вибувають).">
                     <input type="checkbox" id="xspr-auto" onchange="xsprSaveSettings()"> 🔁 Автоскан раз на</label>
                 <input type="text" inputmode="numeric" id="xspr-auto-min" value="30" onchange="xsprSaveSettings()" style="width:36px;text-align:right" title="Інтервал автоскану, хвилин (5…1440)"> хв
+                <label title="Лише для скану BINANCE: показувати монети, яких немає на Bybit (USDT-перпетуал). Бот торгує на Bybit, тож відкрити угоду по такій монеті не вийде. ВИМК (дефолт) — такі монети не беруться в роботу взагалі (і не коштують запиту барів); УВІМК — показуються з позначкою «⚠ не на Bybit»." style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="xspr-nonbybit" onchange="xsprSaveSettings()"> 🅱 показувати монети, яких немає на Bybit</label>
                 <button class="xs-btn xs-btn-clr" id="xspr-clear" onclick="xsprClear()" title="🗑 Очистити всю таблицю (разом із кнопками 📨 1H/4H усіх монет). Наступний скан знову додасть заряджені монети.">🗑 Очистити</button>
                 <span id="xspr-cost" style="color:#6b7280"></span>
             </div>
@@ -7730,6 +7749,8 @@ async function loadSettings() {
              ['sm-mmd-gate', 'mmd_gate_enabled'], ['sm-mmd-gate-banner', 'mmd_gate_banner'],
              ['sm-mmr-gate', 'mmr_gate_enabled'], ['sm-mmr-gate-banner', 'mmr_gate_banner'],
              ['sm-mms-gate', 'mms_gate_enabled'], ['sm-mms-gate-banner', 'mms_gate_banner'],
+             ['sm-sprw-gate', 'sprw_gate_enabled'], ['sm-sprw-gate-banner', 'sprw_gate_banner'],
+             ['sm-sprx-gate', 'sprx_gate_enabled'], ['sm-sprx-gate-banner', 'sprx_gate_banner'],
              ['sm-mm-gate-str', 'mm_gate_strength']]
                 .forEach(([id, k]) => {
                     const el = document.getElementById(id);
@@ -7930,7 +7951,9 @@ function updateSettingsSummary() {
      ['sm-mmp-gate', 'sm-mmp-gate-banner', '🧭 МММ-Pull'],
      ['sm-mmd-gate', 'sm-mmd-gate-banner', '🧠 МММ-Decision'],
      ['sm-mmr-gate', 'sm-mmr-gate-banner', '🧩 МММ-Готовність'],
-     ['sm-mms-gate', 'sm-mms-gate-banner', '🔔 МММ-SBR']].forEach(([g, b, t]) => {
+     ['sm-mms-gate', 'sm-mms-gate-banner', '🔔 МММ-SBR'],
+     ['sm-sprw-gate', 'sm-sprw-gate-banner', '🌀 Пружина-WL'],
+     ['sm-sprx-gate', 'sm-sprx-gate-banner', '🔭 Пружина-скан']].forEach(([g, b, t]) => {
         const _g = document.getElementById(g);
         if (!_g || !_g.checked) return;
         const _b = document.getElementById(b);
@@ -8057,8 +8080,12 @@ const _SM_MM_GATES = [['sm-mm-gate', 'sm-mm-gate-banner', 'mm_gate_enabled', 'mm
                       ['sm-mmd-gate', 'sm-mmd-gate-banner', 'mmd_gate_enabled', 'mmd_gate_banner'],
                       ['sm-mmr-gate', 'sm-mmr-gate-banner', 'mmr_gate_enabled', 'mmr_gate_banner'],
                       ['sm-mms-gate', 'sm-mms-gate-banner', 'mms_gate_enabled', 'mms_gate_banner']];
+// 🌀/🔭 Ворота обох «Пружин» (вимога 10.11) — та сама механіка, що МММ-ворота,
+// але «⚑ поріг Сила ≥» до них не стосується.
+const _SM_SPR_GATES = [['sm-sprw-gate', 'sm-sprw-gate-banner', 'sprw_gate_enabled', 'sprw_gate_banner'],
+                       ['sm-sprx-gate', 'sm-sprx-gate-banner', 'sprx_gate_enabled', 'sprx_gate_banner']];
 function _smMmGateSync() {
-    _SM_MM_GATES.forEach(([gi, bi]) => {
+    _SM_MM_GATES.concat(_SM_SPR_GATES).forEach(([gi, bi]) => {
         const g = document.getElementById(gi);
         const b = document.getElementById(bi);
         if (!g || !b) return;
@@ -8115,7 +8142,7 @@ async function updateLiqGate() {
 }
 async function updateMmGate() {
     const body = {};
-    _SM_MM_GATES.forEach(([gi, bi, gk, bk]) => {
+    _SM_MM_GATES.concat(_SM_SPR_GATES).forEach(([gi, bi, gk, bk]) => {
         const g = document.getElementById(gi);
         const b = document.getElementById(bi);
         body[gk] = !!(g && g.checked);
@@ -17139,14 +17166,19 @@ function sprRender() {
         if (a) a.textContent = th.getAttribute('data-sprsort') === _sprSortCol ? (_sprSortDir > 0 ? ' ▲' : ' ▼') : '';
     });
     const sig = JSON.stringify([_sprDir, _sprSortCol, _sprSortDir, minPot, mode,
-        rows.map(r => [r.symbol, r.state, r.phase, r.move24_pct, r.charge, r.bias, r.dir, r.pot_long, r.pot_short, r.tension_long, r.tension_short, r.lean, r.released, r.move_long_pct, r.move_short_pct, r.trade_side, (r.queues || []).join(','), r.restored])]);
+        rows.map(r => [r.symbol, r.state, r.phase, r.move24_pct, r.charge, r.bias, r.dir, r.pot_long, r.pot_short, r.tension_long, r.tension_short, r.lean, r.released, r.move_long_pct, r.move_short_pct, r.trade_side, (r.queues || []).join(','), r.restored, r.gate_ok, r.gate_side])]);
     if (tb.dataset.sig === sig) return;
     tb.dataset.sig = sig;
     if (!rows.length) {
         tb.innerHTML = `<tr><td colspan="12" class="tm-empty-msg">${_sprRows.length ? 'Немає монет у цій вкладці' : 'Даних ще немає — сканер рахує «Пружину» на першому проході по WATCHLIST'}</td></tr>`;
         return;
     }
-    tb.innerHTML = rows.map(r => _sprRowHTML(r, minPot, mode, '')).join('');
+    // ✅ Монети, що ПРОХОДЯТЬ ворота «Пружини» у бік своєї вкладки — підсвічені
+    // (вони ж ідуть у «Рекомендовані ботом» на інфосайті).
+    tb.innerHTML = rows.map(r => {
+        const h = _sprRowHTML(r, minPot, mode, '', r.gate_ok ? 'box-shadow:inset 3px 0 0 #4ade80;background:rgba(74,222,128,0.07);' : '');
+        return r.gate_ok ? h.replace('</td>', ` <span class="spr-gate-ok" title="Проходить ворота «Пружини» у бік ${r.gate_side}: потенціал і заряд ≥ порогів увімкнених воріт. Ця монета — у «Рекомендовані ботом» на інфосайті.">✅ ${r.gate_side === 'LONG' ? '▲' : '▼'}</span></td>`) : h;
+    }).join('');
 }
 // 🌀 Рядок таблиці «Пружини» — ОДИН рендер на дві таблиці (🌀 Пружина і
 // 💰 Funding — Пружина). `extra` — додаткові комірки одразу за монетою.
@@ -17458,7 +17490,8 @@ function xsprSort(c) {
     xsprRender(true);
 }
 function xsprSetDir(d) { _xsDir = d; xsprRender(true); }
-function _xsVol(v) { v = Number(v) || 0; return (typeof fmtVolShort === 'function') ? fmtVolShort(v) : (v / 1e6).toFixed(0) + 'M'; }
+// ⚠️ fmtVolShort уже ставить «$» — тут його знімаємо, бо всі виклики пишуть '$' + _xsVol(...) (кейс «$$13.4M»).
+function _xsVol(v) { v = Number(v) || 0; return String((typeof fmtVolShort === 'function') ? fmtVolShort(v) : (v / 1e6).toFixed(0) + 'M').replace(/^\$/, ''); }
 function _xsHM(t) {
     if (!t) return '—';
     const d = new Date(((typeof _srvToPc === 'function') ? _srvToPc(t) : t) * 1000);
@@ -17561,7 +17594,7 @@ function xsprVizPaint() {
         + _xsKpi('скан', _xsHM(r.ts) + (r.restored ? ' ↻' : ''), false, r.restored ? 'Результат минулого запуску бота — це знімок на момент скану' : 'Знімок на момент скану')
         + _xsKpi('біржа', String(r.exchange || '').toUpperCase())
         + _xsKpi('обіг 24h ≥', '$' + _xsVol(r.min_vol_usd))
-        + _xsKpi('перевірено', `${r.analyzed || 0}<span style="color:#6b7280;font-size:0.7rem"> / ${r.scanned || 0}</span>`, false, `Відібрано ${brk.kept || 0} з ${brk.total || 0} контрактів · відсіяно: низький обіг ${brk.low_vol || 0} · стейбли/обгортки ${brk.stable || 0} · не USDT-перп ${brk.not_usdt || 0}${brk.capped ? ' · понад стелю ' + brk.capped : ''}`)
+        + _xsKpi('перевірено', `${r.analyzed || 0}<span style="color:#6b7280;font-size:0.7rem"> / ${r.scanned || 0}</span>`, false, `Відібрано ${brk.kept || 0} з ${brk.total || 0} контрактів · відсіяно: низький обіг ${brk.low_vol || 0} · стейбли/обгортки ${brk.stable || 0} · не USDT-перп ${brk.not_usdt || 0}${brk.capped ? ' · понад стелю ' + brk.capped : ''}${brk.in_wl ? ' · уже в 🌀 Пружині (WATCHLIST) ' + brk.in_wl : ''}${brk.not_bybit ? ' · немає на Bybit ' + brk.not_bybit : ''}${brk.bybit_check === false ? ' · ⚠ перевірити Bybit не вдалось — нічого не відсіяно' : ''}`)
         + _xsKpi('🌀 заряджені', `${r.charged || 0}`, false, 'Усі заряджені на момент скану (без фільтра заряду)')
         + _xsKpi('➕ нових у таблиці', `${r.added || 0}`, (Number(r.added) || 0) > 0, `Додано цим сканом: заряд ≥ ${r.min_charge != null ? r.min_charge : 80}`)
         + _xsKpi('у таблиці', `${_xsRows.length}`)
@@ -17582,12 +17615,23 @@ function _xsLine2(now) {
     const rcl = `<span class="spr-k">🔄 перерахунок заряду</span>`
         + (rc.at ? `<span class="spr-v">${_xsHM(rc.at)}</span><span>${rc.checked || 0} монет таблиці${rc.removed && rc.removed.length ? ' · 📤 вибули ' + rc.removed.length : ''}${rc.errors ? ' · ⚠ збоїв ' + rc.errors : ''}</span>` : '<span>ще не було</span>')
         + (_xsRows.length && m.recalc_next ? `<span>· наступний через ${cd(m.recalc_next)} (закриття 1h-бару)</span>` : '');
-    const rm = (m.removed || []).slice(0, 8);
-    const rml = rm.length ? `<span class="spr-k">📤 вибули</span>` + rm.map(x => `<span class="xs-gone" title="${_xsHM(x.at)} · ${String(x.why || '').replace(/"/g, '&quot;')}${x.charge != null ? ' · заряд ' + Math.round(x.charge) : ''}">${String(x.symbol).replace(/USDT$/, '')}</span>`).join('') : '';
+    const rm = _xsGoneGroups(m.removed || []).slice(0, 10);
+    const rml = rm.length ? `<span class="spr-k">📤 вибули</span>` + rm.map(g => `<span class="xs-gone" title="${g.items.map(x => _xsHM(x.at) + ' · ' + String(x.why || '').replace(/"/g, '&quot;') + (x.charge != null ? ' · заряд ' + Math.round(x.charge) : '')).join('&#10;')}">${/USDT$/.test(g.symbol) ? g.symbol.replace(/USDT$/, '') : '🗑 ' + g.symbol}${g.items.length > 1 ? ' ×' + g.items.length : ''}</span>`).join('') : '';
     const ev = (m.events || []).slice(0, 6);
     const evl = ev.length ? `<span class="spr-k">📨 в роботу</span>` + ev.map(x => `<span class="xs-chip ${x.tg ? 'charged' : 'err'}" title="${_xsHM(x.at)} · SBR ${x.tfs} ${x.side}${x.tg ? '' : ' · не надіслано: ' + String(x.err || '').replace(/"/g, '&quot;')}">${x.side === 'LONG' ? '🟢' : '🔴'} ${String(x.symbol).replace(/USDT$/, '')} ${x.tfs}</span>`).join('') : '';
     return `<div class="xs-line2">${auto}</div><div class="xs-line2">${rcl}</div>`
         + (rml ? `<div class="xs-line2">${rml}</div>` : '') + (evl ? `<div class="xs-line2">${evl}</div>` : '');
+}
+// 📤 Вибули: та сама монета кількома записами (вибула → повернулась → знову
+// вибула) — один чип «ARIA ×2», усі причини в підказці.
+function _xsGoneGroups(list) {
+    const by = new Map();
+    (list || []).forEach(x => { const k = String(x.symbol || ''); if (!by.has(k)) by.set(k, {symbol: k, items: []}); by.get(k).items.push(x); });
+    return [...by.values()];
+}
+// 🅱 Позначка біля монети скану Binance, якої немає на Bybit (там бот торгує).
+function _xsBybitBadge(x) {
+    return x.bybit === false ? ' <span class="xs-nobybit" title="Монети немає на Bybit (USDT-перпетуал) — бот там торгує, тож відкрити угоду по ній не вийде. Показано, бо увімкнено «показувати монети, яких немає на Bybit».">⚠ не на Bybit</span>' : '';
 }
 // 📨 Кнопки 1H / 4H рядка.
 function _xsTgCell(x) {
@@ -17647,6 +17691,7 @@ async function xsprSaveSettings() {
     const num = (id, d) => { const v = parseFloat(String((document.getElementById(id) || {}).value || '').replace(',', '.')); return isFinite(v) ? v : d; };
     const body = {min_charge: num('xspr-mincharge', 80), auto_on: !!(document.getElementById('xspr-auto') || {}).checked,
                   auto_min: num('xspr-auto-min', 30),
+                  show_non_bybit: !!(document.getElementById('xspr-nonbybit') || {}).checked,
                   exchange: (document.getElementById('xspr-exchange') || {}).value || 'bybit',
                   min_vol_usd: Number((document.getElementById('xspr-minvol') || {}).value) || 50e6};
     try {
@@ -17666,6 +17711,8 @@ function _xsApplyControls(force) {
     set('xspr-auto-min', s.auto_min);
     const a = document.getElementById('xspr-auto');
     if (a && s.auto_on != null) a.checked = !!s.auto_on;
+    const nb = document.getElementById('xspr-nonbybit');
+    if (nb && s.show_non_bybit != null) nb.checked = !!s.show_non_bybit;
 }
 function xsprRender(force) {
     xsprVizPaint();
@@ -17694,7 +17741,7 @@ function xsprRender(force) {
         const ar = th.querySelector('.ff-sort-arrow');
         if (ar) ar.textContent = th.getAttribute('data-sprsort') === _xsSortCol ? (_xsSortDir > 0 ? ' ▲' : ' ▼') : '';
     });
-    const sig = JSON.stringify([_xsDir, _xsSortCol, _xsSortDir, r.ts, rows.map(x => [x.symbol, x.charge, x.state, x.dir, x.calc_at, (x.tg || []).join(','), x.trade_side, (x.queues || []).join(',')])]);
+    const sig = JSON.stringify([_xsDir, _xsSortCol, _xsSortDir, r.ts, rows.map(x => [x.symbol, x.charge, x.state, x.dir, x.calc_at, (x.tg || []).join(','), x.trade_side, (x.queues || []).join(','), x.bybit, x.vol_usd])]);
     if (!force && tb.dataset.sig === sig) return;
     tb.dataset.sig = sig;
     try { _sprAggPaint(r.agg || null, 'xspr-agg', String(r.exchange || 'біржа').toUpperCase()); } catch (e) {}
@@ -17703,7 +17750,7 @@ function xsprRender(force) {
         return;
     }
     tb.innerHTML = rows.map(x => _sprRowHTML(x, 101, 'off',
-        `<td style="text-align:right;font-family:monospace;color:#cbd5e1">$${_xsVol(x.vol_usd)}</td>`).replace(/<\/tr>$/, _xsTgCell(x) + _xsDelCell(x) + '</tr>')).join('');
+        `<td style="text-align:right;font-family:monospace;color:#cbd5e1">$${_xsVol(x.vol_usd)}</td>`).replace('</td>', _xsBybitBadge(x) + '</td>').replace(/<\/tr>$/, _xsTgCell(x) + _xsDelCell(x) + '</tr>')).join('');
 }
 function _xsCostHint() {
     const el = document.getElementById('xspr-cost');

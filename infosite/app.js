@@ -2184,6 +2184,64 @@
     });
   }, 1000);
 
+  // ═══ 🤖 РЕКОМЕНДОВАНІ БОТОМ (вимога 10.11) ══════════════════════════════
+  var REC = { dir: "all", rows: [], meta: {} };
+  try { var _rd = localStorage.getItem("vsv_rec_dir"); if (_rd) REC.dir = _rd; } catch (e) {}
+  function recSide(r) { return r.side === "LONG" || r.side === "SHORT" ? r.side : ""; }
+  function recRow(r) {
+    var sd = recSide(r), up = sd === "LONG";
+    var pot = Number(up ? r.pot_long : r.pot_short) || 0;
+    var prob = r.prob_long != null ? (up ? Number(r.prob_long) : 100 - Number(r.prob_long)) : null;
+    var mv = Number(up ? r.move_long_pct : r.move_short_pct);
+    var tgt = up ? r.tgt_long : r.tgt_short;
+    var ch = Math.max(0, Math.min(100, Math.round(Number(r.charge) || 0)));
+    var src = r.src === "wl"
+      ? '<span class="rec-src wl" title="Монета WATCHLIST бота: проходить ворота «Пружини» у бік ' + sd + '">🌀 WATCHLIST</span>'
+      : '<span class="rec-src xs" title="Таблиця «Пружина — скан біржі»">🔭 скан</span>' +
+        (r.bybit === false ? ' <span class="rec-nb" title="Монети немає на Bybit — бот там торгує">⚠ не на Bybit</span>' : "");
+    return "<tr><td class=\"sym\">" + tvSym(r.symbol) + "</td><td>" + src + "</td>" +
+      '<td class="' + (up ? "pp-up" : "pp-dn") + '">' + (sd ? (up ? "▲ LONG" : "▼ SHORT") : "⚖") + "</td>" +
+      "<td>" + esc(r.label || r.state || "—") + "</td>" +
+      '<td class="r"><span class="rec-ch"><i style="width:' + ch + '%"></i></span> ' + ch + "</td>" +
+      '<td class="r ' + (up ? "pp-up" : "pp-dn") + '">' + pot.toFixed(0) + "</td>" +
+      '<td class="r">' + (prob != null && isFinite(prob) ? prob.toFixed(0) + "%" : "—") + "</td>" +
+      '<td class="r ' + (up ? "pp-up" : "pp-dn") + '">' + (isFinite(mv) && mv ? (mv > 0 ? "+" : "−") + Math.abs(mv).toFixed(2) + "%" : "—") + "</td>" +
+      '<td class="r">' + (tgt ? fmtPrice(tgt) : "—") + "</td></tr>";
+  }
+  function recRender() {
+    var rows = REC.rows || [], n = { all: rows.length, LONG: 0, SHORT: 0 };
+    rows.forEach(function (r) { var s = recSide(r); if (s) n[s]++; });
+    var lbl = { all: "Всі", LONG: "🟢 LONG", SHORT: "🔴 SHORT" };
+    document.querySelectorAll("#rec-tabs button[data-d]").forEach(function (b) {
+      var d = b.getAttribute("data-d"); b.textContent = lbl[d] + " (" + n[d] + ")";
+      b.classList.toggle("on", d === REC.dir);
+    });
+    var vis = rows.filter(function (r) { return REC.dir === "all" || recSide(r) === REC.dir; });
+    var tb = $("#rec-tbl tbody"); if (!tb) return;
+    tb.innerHTML = vis.length ? vis.map(recRow).join("")
+      : '<tr><td colspan="9" class="muted">' + (rows.length ? "Немає монет у цій вкладці" : "Зараз немає рекомендованих монет") + "</td></tr>";
+    var m = REC.meta || {}, sc = m.scan || {};
+    $("#rec-note").textContent = (sc.ts ? "скан " + String(sc.exchange || "").toUpperCase() + " · " +
+      new Date(sc.ts * 1000).toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" }) + " · " : "") +
+      "оновлено " + new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
+  }
+  function loadRec() {
+    var card = $("#rec-card"); if (!card) return;
+    api("/api/info/recommended").then(function (d) {
+      if (!d || !d.ok) { card.style.display = "none"; return; }
+      card.style.display = "";
+      REC.rows = d.rows || []; REC.meta = d;
+      recRender();
+    }, function () {});
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest("#rec-tabs button[data-d]") : null;
+    if (!b) return;
+    REC.dir = b.getAttribute("data-d");
+    try { localStorage.setItem("vsv_rec_dir", REC.dir); } catch (x) {}
+    recRender();
+  });
+
   // ═══ показ / автооновлення ═════════════════════════════════════════════
   // Акаунт є, але доступ закрито (вимога 09.11): сторінка не показується,
   // лише пояснення. Повідомлення — від бота (`error` у відповіді 403).
@@ -2200,6 +2258,7 @@
     var lay = $("#iw-layout"); if (lay) lay.style.display = ok ? "" : "none";
     if (!ok) { var n = $("#notify-card"); if (n) n.style.display = "none"; }
     if (!ok) { var pc = $("#pp-card"); if (pc) pc.style.display = "none"; }
+    if (!ok) { var rc = $("#rec-card"); if (rc) rc.style.display = "none"; }
     var tb = $(".topbar"); if (tb) tb.style.display = ok ? "" : "none";
   }
 
@@ -2214,6 +2273,8 @@
         loadRows();
         loadCoin(true);
         loadPaper();
+        loadRec();
+        setInterval(function () { if (!document.hidden) loadRec(); }, 30000);
         setInterval(function () { if (!document.hidden) loadPaper(); }, 5000);
         // повернувся на вкладку → одразу свіжі дані, без очікування такту
         document.addEventListener("visibilitychange", function () { if (!document.hidden) loadPaper(); });

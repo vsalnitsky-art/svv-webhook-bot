@@ -8017,6 +8017,52 @@ OKBUSDT LONG відкрився при увімкнених «Через МММ-
 - «Обіг 24h ≥» — додано опцію **$5M** (підлога `MIN_VOL_FLOOR` = $1M).
 Тест: `test_spring_scan.py` (23).
 
+### 🌀/🔭 ВОРОТА ОБОХ ПРУЖИН · БЕЗ WATCHLIST У СКАНІ · BYBIT · 🤖 РЕКОМЕНДОВАНІ (10.11)
+Дослівно: «Не повторюй монети, які є у таблиці "Пружина" із WATCHLIST» ·
+«скан на Binance — не відображай монети, яких немає на Bybit (тумблер, деф.
+вимкнений; увімкнений — позначка)» · «такі ж фільтри як "🔔 Через МММ-SBR" для
+обох пружин окремо» · «монети Пружини, що проходять ворота, виділи; разом зі
+скан-таблицею — таблиця "Рекомендовані ботом" на інфосайті (Всі/LONG/SHORT)».
+- **Аудит скріна:** «$$13.4M» — `fmtVolShort` уже ставить «$», а
+  `_xsVol` викликали як `'$' + _xsVol(…)` → `_xsVol` знімає «$»; «yci (1)» у
+  📤 вибули = «усі (1)» від 🗑 Очистити → чип «🗑 усі (1)»; дублі (ARIA двічі) —
+  один чип «ARIA ×2» (`_xsGoneGroups`, усі причини в підказці). Числа таблиці
+  (заряд = pot_long+pot_short, ймовірність, хід) — узгоджені.
+- **ЧИСТІ правила `detection/spring_gates.py`:** `tab_side` (дзеркало JS
+  `_sprFilter`: стан не flat і pot у бік більший) · `banner_side` (`agg.lean`,
+  лише `enough`) · `passes_gates(rec, s, potential)` — бік вкладки + КОЖНІ
+  увімкнені ворота Пружини (потенціал ≥ / заряд ≥) · `scan_member` · `book_decide`
+  → (applies, ok, chip, reason).
+- **Ворота** (smc_scanner, деф. ВИМК, білий список + валідація):
+  `sprw_gate_enabled`/`sprw_gate_banner` (🌀 WATCHLIST: вкладка монети +
+  банер `spring_banner()` = `aggregate` над `spring_for`, кеш 15с) ·
+  `sprx_gate_enabled`/`sprx_gate_banner` (🔭 скан: рядок `eng.row_for`, банер
+  `eng.banner_agg()`; рушій — ЛИШЕ `sys.modules['detection.spring_scan']`, не
+  копія модуля; не піднято → умова не діє). `_spring_book_gates` у
+  `_signal_allowed` одразу за 🔋 воротами заряду (до OB/PD/…). ⚠️ Монети
+  WATCHLIST у скан-таблиці немає → для них «у таблиці скану» = пройшла б відбір
+  (🌀 заряджена і заряд ≥ фільтра скану) за записом бота. Монети немає →
+  відмова («невідомо» ≠ «за напрямком»). UI: `sm-sprw-gate(-banner)`,
+  `sm-sprx-gate(-banner)` поруч із 🔔 МММ-SBR, масив `_SM_SPR_GATES` (без ⚑).
+- **Скан без WATCHLIST:** `SpringScan(watchlist=)` (деф. — сканер того самого
+  процесу); монети watchlist не беруться в скан (`breakdown.in_wl`), рядки, що
+  стали watchlist, вибувають («уже в 🌀 Пружині») у скані й перерахунку,
+  `rows()` їх не показує.
+- **🅱 Bybit:** скан Binance тягне тікери Bybit (1 запит); ЧИСТА
+  `split_bybit(syms, bybit, show)`: `show_non_bybit` ВИМК (деф.) → таких монет
+  не беремо (і барів не тягнемо, `breakdown.not_bybit`), УВІМК → рядок із
+  `bybit: False` і позначкою «⚠ не на Bybit». Список Bybit недоступний → нічого
+  не відсіюємо (`bybit_check: False`, `bybit: None`). UI `xspr-nonbybit`.
+- **Виділення:** `SMCScanner.spring_pass_map()` → `/api/spring/state` рядки
+  `gate_ok/gate_side/gate_why`; рядок 🌀 таблиці з зеленим кантом і «✅ ▲/▼».
+- **🤖 Інфосайт:** `GET /api/info/recommended` (`recommended_payload`, кеш 10с,
+  ЧИСТА `recommended_rows`): 🌀 WATCHLIST, що проходять ворота, + усі видимі
+  рядки 🔭 скану (бік = `tab_side`, дубль береться раз). Секція `#rec-card`
+  (вкладки `#rec-tabs` Всі/🟢/🔴, `localStorage['vsv_rec_dir']`, полл 30с):
+  монета · джерело · напрямок · стан · заряд · потенціал · ймовірність · хід ·
+  ціль. Ассети `?v=92`.
+Тест: `test_spring_gates.py` (20).
+
 ### 💧 ПРОФІЛЬ ЛІКВІДНОСТІ НА ГРАФІКУ КАБІНЕТУ (вимога 09.11)
 Дослівно: «щось типу як у TradingView (Профиль объёма) на графіку з правої
 сторони… щоб не перемішувалась … з OB IMB VOB… побудову візьми за основу

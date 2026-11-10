@@ -474,6 +474,13 @@ DEFAULT_SETTINGS = {
     # (на ринку в русі заряд 2-12, тож 50 різав би майже все).
     'spring_charge_gate_enabled': False,
     'spring_min_charge': 50,
+    # 🌀/🔭 «ЧЕРЕЗ ПРУЖИНУ-WL» і «ЧЕРЕЗ ПРУЖИНУ-СКАН» (вимога 10.11) — як
+    # «🔔 Через МММ-SBR»: монета у вкладці свого боку таблиці (+ за бажанням
+    # банер «Куди накручено» того самого боку). Усі деф. ВИМК.
+    'sprw_gate_enabled': False,
+    'sprw_gate_banner': False,
+    'sprx_gate_enabled': False,
+    'sprx_gate_banner': False,
 
     # === 🆕 АЛЕРТ «НОВИЙ OB НА ГРАФІКУ» (вимога 09.09) ===================
     # «Моментальна реакція на появу на графіку нового OB 1H і моментальна
@@ -1846,6 +1853,8 @@ class SMCScanner:
                        'liq_gate_enabled',
                        'spring_enabled', 'spring_gate_enabled', 'spring_min_pot',
                        'spring_charge_gate_enabled', 'spring_min_charge',
+                       'sprw_gate_enabled', 'sprw_gate_banner',
+                       'sprx_gate_enabled', 'sprx_gate_banner',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
@@ -2000,6 +2009,8 @@ class SMCScanner:
                         'mmd_gate_enabled', 'mmd_gate_banner',
                         'mmr_gate_enabled', 'mmr_gate_banner',
                         'mms_gate_enabled', 'mms_gate_banner',
+                        'sprw_gate_enabled', 'sprw_gate_banner',
+                        'sprx_gate_enabled', 'sprx_gate_banner',
                         'mm_gate_strength'):
                 self._settings[_gk] = bool(self._settings.get(_gk, False))
             self._settings['liq_gate_enabled'] = bool(
@@ -3916,6 +3927,72 @@ class SMCScanner:
                              f'монета не накручена (сигнал {side} відхилено)')
         return (True, ok, chip, why)
 
+    def spring_banner(self) -> Optional[Dict]:
+        """🌀 Банер «Куди накручено» WATCHLIST — `spring_coil.aggregate` над тими
+        самими записами, що таблиця (кеш 15с; лише памʼять)."""
+        now = time.time()
+        c = getattr(self, '_spring_agg_c', None)
+        if c and now - c[0] < 15:
+            return c[1]
+        recs = self.spring_for()
+        agg = None
+        if recs:
+            try:
+                sc = _sibling_mod('spring_coil', '_SPRING_MOD')
+                agg = sc.aggregate(recs, total=len(recs))
+            except Exception:
+                agg = None
+        self._spring_agg_c = (now, agg)
+        return agg
+
+    def spring_pass_map(self) -> Dict[str, Dict]:
+        """🌀 Монети WATCHLIST, що ПРОХОДЯТЬ ворота «Пружини» у бік своєї вкладки
+        → {SYM: {'side', 'ok', 'why'}} (виділення в таблиці і «Рекомендовані»)."""
+        try:
+            sg = _sibling_mod('spring_gates', '_SPRING_GATES_MOD')
+            sc = _sibling_mod('spring_coil', '_SPRING_MOD')
+        except Exception:
+            return {}
+        s = getattr(self, '_settings', None) or {}
+        out = {}
+        for S, rec in self.spring_for().items():
+            ok, side, why = sg.passes_gates(rec, s, getattr(sc, 'potential', None))
+            out[S] = {'ok': ok, 'side': side, 'why': why}
+        return out
+
+    def _spring_book_gates(self, symbol: str, side: str):
+        """🌀/🔭 Список (applies, ok, chip, reason) увімкнених воріт «Через
+        Пружину-WL» і «Через Пружину-скан»."""
+        s = getattr(self, '_settings', None) or {}
+        if not (s.get('sprw_gate_enabled') or s.get('sprx_gate_enabled')):
+            return []
+        try:
+            sg = _sibling_mod('spring_gates', '_SPRING_GATES_MOD')
+        except Exception:
+            return []
+        S = str(symbol or '').upper()
+        out = []
+        wl_rec = (self.spring_for([S]) or {}).get(S) if s.get('spring_enabled', True) else None
+        if s.get('sprw_gate_enabled') and s.get('spring_enabled', True):
+            bn = sg.banner_side(self.spring_banner()) if s.get('sprw_gate_banner') else None
+            out.append(sg.book_decide(sg.TAG_WL, wl_rec, bn, side,
+                                      bool(s.get('sprw_gate_banner'))))
+        if s.get('sprx_gate_enabled'):
+            # ⚠️ Той самий екземпляр, що веде flask_app (не копія модуля):
+            # рушій скану не піднято → умова не діє.
+            import sys as _sys
+            _m = _sys.modules.get('detection.spring_scan')
+            eng = _m.get_spring_scan() if _m is not None else None
+            if eng is not None:
+                row = eng.row_for(S) if hasattr(eng, 'row_for') else None
+                mc = (eng.settings() or {}).get('min_charge', 80)
+                rec, src = sg.scan_member(row, wl_rec, mc)
+                bn = (sg.banner_side(eng.banner_agg()) if s.get('sprx_gate_banner')
+                      and hasattr(eng, 'banner_agg') else None)
+                out.append(sg.book_decide(sg.TAG_XS, rec, bn, side,
+                                          bool(s.get('sprx_gate_banner')), src))
+        return out
+
     def spring_for(self, symbols=None) -> Dict[str, Dict]:
         """🌀 Записи «Пружини» (лише памʼять) для монет WATCHLIST."""
         if not (getattr(self, '_settings', None) or {}).get('spring_enabled', True):
@@ -5488,6 +5565,15 @@ class SMCScanner:
                 parts.append(_cchip)
                 if not _cok:
                     return (False, _cwhy, ' · '.join(parts))
+        # 🌀/🔭 ЧЕРЕЗ ПРУЖИНУ-WL / ПРУЖИНУ-СКАН (вимога 10.11) — як «🔔 Через
+        # МММ-SBR»: вкладка монети + (за бажанням) банер. Лише памʼять.
+        _bg = getattr(self, '_spring_book_gates', None)
+        if _bg:
+            for _bapp, _bok, _bchip, _bwhy in _bg(symbol, side_label):
+                if _bapp:
+                    parts.append(_bchip)
+                    if not _bok:
+                        return (False, _bwhy, ' · '.join(parts))
 
         # OB
         if self._settings.get('ob_filter_enabled', False):
