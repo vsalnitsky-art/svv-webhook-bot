@@ -297,9 +297,10 @@ def test_js_cells_render():
         return _HTML[a:_HTML.index('\n}', a) + 2]
     esc = _HTML[_HTML.index('const _mmEsc'):]
     esc = esc[:esc.index(';\n') + 2]
-    js = ('const fmtPriceJS = p => String(p);\n' + esc + '\n' + fn('_sbrTfTip')
+    pc = _HTML[_HTML.index('function _pz('):_HTML.index('function _pcTick(')]
+    js = ('const fmtPriceJS = p => String(p);\n' + esc + '\n' + pc + fn('_sbrTfTip')
           + '\n' + fn('_mmSbrTfCell') + '\n' + fn('_mmSbrSigCell') + r"""
-const g = {t: 1792857600000, close_t: 1792872000, trigger: 2293, score: 100, risk: '1R + Add', sl: 2184.43, n: 1, time_kyiv: '19:00'};
+const g = {t: 1792857600000, close_t: 1792872000, trigger: 2293, score: 100, risk: '1R + Add', sl: 2184.43, n: 1, time_kyiv: '07:00'};
 console.log(_mmSbrTfCell({mm:'LONG', sbr_tfs:'1H+4H', sbr_fresh:true, sbr_by_tf:{'1h':g,'4h':g}}));
 console.log('|'); console.log(_mmSbrSigCell({mm:'LONG', sbr_sig:g, sbr_by_tf:{'4h':g}}));
 console.log('|'); console.log(_mmSbrTfCell({}));
@@ -308,13 +309,18 @@ console.log('|'); console.log(_mmSbrTfCell({}));
         f.write(js)
         path = f.name
     try:
-        r = subprocess.run(['node', path], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(['node', path], capture_output=True, text=True, timeout=30,
+                           env=dict(os.environ, TZ='Europe/Kyiv'))
     finally:
         os.unlink(path)
     p = r.stdout.split('|')
     _check(len(p) == 3, r.stderr)
+    # 🕐 Час бару — годинником ПК (тут TZ процесу = Kyiv), а не серверне time_kyiv:
+    # 1792857600 = 24.10.2026 16:00 UTC = 19:00 Kyiv (+3); серверне time_kyiv
+    # навмисно інше ('07:00') — сторінка його більше не читає.
+    _check('24.10 19:00' in p[1] and '07:00' not in p[1], p[1])
     _check('1H+4H' in p[0] and '🆕' in p[0], p[0])
-    _check('LONG #1' in p[1] and '19:00' in p[1] and '2293' in p[1] and '100.00' in p[1]
+    _check('LONG #1' in p[1] and '2293' in p[1] and '100.00' in p[1]
            and '1R + Add' in p[1] and 'SL 2184.43' in p[1], p[1])
     _check('—' in p[2], p[2])
 

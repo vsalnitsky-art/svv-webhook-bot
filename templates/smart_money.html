@@ -6286,6 +6286,24 @@ const _actMeta = {
 // ⚠️ Ціну форматує `fmtPriceJS` — ЄДИНИЙ формат ціни на сторінці (Python
 // дзеркалить його пороги лише для CSV/TG; тест-замок звіряє їх).
 const _OB_SIDE_COL = { LONG: '#22c55e', SHORT: '#ef4444' };
+// 🕐 ОДИН ЧАС СКРІЗЬ = годинник ПК (вимога 10.11). Усі моменти сторінки —
+// шкала графіка, перехрестя, сигнали SBR, «🆕 Новий OB», OB-позначки — з
+// одного epoch через локальний час браузера (як «оновлено …» і таймери).
+// Раніше одна свічка мала три часи: графік UTC, сигнал Київ, ПК — свій.
+function _pz(n) { return String(n).padStart(2, '0'); }
+function _pcSec(t) { t = Number(t) || 0; return t > 1e12 ? t / 1000 : t; }
+function _pcHM(t) { const d = new Date(_pcSec(t) * 1000); return `${_pz(d.getHours())}:${_pz(d.getMinutes())}`; }
+function _pcDM(t) { const d = new Date(_pcSec(t) * 1000); return `${_pz(d.getDate())}.${_pz(d.getMonth() + 1)}`; }
+function _pcFull(t) { const d = new Date(_pcSec(t) * 1000); return `${_pcDM(t)}.${String(d.getFullYear()).slice(-2)} ${_pcHM(t)}`; }
+const _PC_MON = ['січ', 'лют', 'бер', 'кві', 'тра', 'чер', 'лип', 'сер', 'вер', 'жов', 'лис', 'гру'];
+function _pcTick(t, type) {
+    const d = new Date(_pcSec(t) * 1000);
+    if (type === 0) return String(d.getFullYear());
+    if (type === 1) return _PC_MON[d.getMonth()];
+    if (type === 2) return String(d.getDate());
+    if (type === 4) return `${_pcHM(t)}:${_pz(d.getSeconds())}`;
+    return _pcHM(t);
+}
 function _obNewHTML(p, fallback) {
     if (!p || typeof p !== 'object') return `<span style="color:#cbd5e1">${fallback}</span>`;
     const sep = '<span style="color:#4b5563"> · </span>';
@@ -6308,14 +6326,13 @@ function _obNewHTML(p, fallback) {
     // 3) Свічка САМОГО блоку — вона лежить «назад у часі», і саме через це
     // виникало питання «бокс на графіку з 12:00, а бот побачив о 21:00?».
     // Приглушений колір: це довідка, а не момент події.
-    if (p.bar_time_txt) {
+    if (p.bar_time || p.bar_time_txt) {
         bits.push(`<span style="color:#6b7280">свічка блоку</span> `
-            + `<span style="color:#9aa3b5;font-family:monospace">${p.bar_time_txt}</span>`);
+            + `<span style="color:#9aa3b5;font-family:monospace">${p.bar_time ? _pcFull(p.bar_time) : p.bar_time_txt}</span>`);
     }
     // 4) Час появи: слово сіре, ЧИСЛО світле monospace.
     bits.push(`<span style="color:#6b7280">зʼявився</span> `
-        + `<span style="color:#e5e7eb;font-family:monospace">${p.appeared_txt || '—'}</span>`
-        + `<span style="color:#6b7280;font-size:0.62rem"> UTC</span>`);
+        + `<span style="color:#e5e7eb;font-family:monospace">${p.appeared ? _pcFull(p.appeared) : (p.appeared_txt ? p.appeared_txt + ' UTC' : '—')}</span>`);
     // 4) Швидкість реакції — окремим акцентом: це те, що користувач перевіряє.
     if (p.lag_txt && p.lag_txt !== '—') {
         bits.push(`<span style="color:#6b7280">⚡ виявлено за </span>`
@@ -8697,17 +8714,13 @@ function ensureChart() {
             borderColor: 'rgba(255,255,255,0.08)',
             timeVisible: true,
             secondsVisible: false,
+            // шкала — годинником ПК (раніше підписи шкали були UTC, а
+            // перехрестя — локальні: дві різні години на одному графіку)
+            tickMarkFormatter: _pcTick,
         },
-        // Show times in user's local timezone (matches TradingView default)
         localization: {
             locale: navigator.language || 'en-US',
-            timeFormatter: (time) => {
-                const d = new Date(time * 1000);
-                return d.toLocaleString(navigator.language || 'en-US', {
-                    month: '2-digit', day: '2-digit',
-                    hour: '2-digit', minute: '2-digit',
-                });
-            },
+            timeFormatter: _pcFull,
         },
     });
     
@@ -14180,7 +14193,7 @@ function _sbrTfTip(r) {
     const by = r.sbr_by_tf || {};
     return ['1h', '4h'].filter(tf => by[tf]).map(tf => {
         const g = by[tf];
-        return `${tf.toUpperCase()}: ${r.mm || ''} #${g.n} · ${g.time_kyiv} Kyiv · Trigger ${fmtPriceJS(g.trigger)}`
+        return `${tf.toUpperCase()}: ${r.mm || ''} #${g.n} · бар ${_pcDM(g.t)} ${_pcHM(g.t)} · Trigger ${fmtPriceJS(g.trigger)}`
             + ` · Score ${Number(g.score).toFixed(2)} · Risk ${g.risk} · SL ${fmtPriceJS(g.sl)}`;
     }).join('\n');
 }
@@ -14195,18 +14208,15 @@ function _mmSbrTfCell(r) {
         + `<span style="display:inline-block;width:20px;text-align:center">${r.sbr_fresh ? '🆕' : ''}</span></span>`;
 }
 // 🔔 «🔔 Сигнал» — вирішальний сигнал як мітка TradingView: #N · час бару
-// (Київ) · Trigger · Score · Risk · SL. Сегменти ФІКСОВАНОЇ ширини → стовпчики рівні.
+// (годинник ПК) · Trigger · Score · Risk · SL. Сегменти ФІКСОВАНОЇ ширини → стовпчики рівні.
 function _mmSbrSigCell(r) {
     const g = r.sbr_sig;
     if (!g) return '<span style="color:#6b7280">—</span>';
     const col = r.mm === 'LONG' ? '#4ade80' : '#f87171';
     const seg = (w, al, h) => `<span style="display:inline-block;width:${w}px;text-align:${al}">${h}</span>`;
-    const d = new Date(Number(g.t));
-    let day = '';
-    try { day = d.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Kyiv' }); } catch (e) { day = ''; }
     return `<span title="${_mmEsc(_sbrTfTip(r))}" style="font-family:monospace;white-space:nowrap;font-size:0.68rem">`
         + seg(78, 'left', `<b style="color:${col}">${_mmEsc(r.mm || '')} #${g.n}</b>`)
-        + seg(92, 'left', `<span style="color:#cbd5e1">${day} ${_mmEsc(g.time_kyiv || '')}</span>`)
+        + seg(92, 'left', `<span style="color:#cbd5e1">${g.t ? _pcDM(g.t) + ' ' + _pcHM(g.t) : ''}</span>`)
         + seg(96, 'right', `<span style="color:#e5e7eb">${fmtPriceJS(g.trigger)}</span>`)
         + seg(56, 'right', `<b style="color:${col}">${Number(g.score).toFixed(2)}</b>`)
         + seg(66, 'right', `<span style="color:#fbbf24">${_mmEsc(g.risk || '')}</span>`)
@@ -18466,9 +18476,7 @@ function obMarkHTML(p, what, left, tf) {
     const tag = o.tag ? (String(o.tag).toUpperCase() === 'CHOCH' ? 'CHoCH' : String(o.tag).toUpperCase()) : '';
     let when = '';
     if (o.bar_time) {
-        const t = Number(o.bar_time); const d = new Date(t > 1e12 ? t : t * 1000);
-        const z = n => String(n).padStart(2, '0');
-        when = ` · свічка ${z(d.getUTCDate())}.${z(d.getUTCMonth() + 1)} ${z(d.getUTCHours())}:${z(d.getUTCMinutes())} UTC`;
+        when = ` · свічка ${_pcDM(o.bar_time)} ${_pcHM(o.bar_time)}`;
     }
     const rng = (o.low != null && o.high != null) ? ` · ${fmtPriceJS(o.low)}–${fmtPriceJS(o.high)}` : '';
     const tip = `Останній OB ${L}: ${bull ? '🟢 BULLISH (LONG)' : '🔴 BEARISH (SHORT)'}`

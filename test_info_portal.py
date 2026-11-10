@@ -825,6 +825,18 @@ def test_stale_vob_hidden_and_symbol_on_price_label():
     _check('applyOptions({ title: ttl })' in js, 'назва монети на мітці ціни')
 
 
+
+def test_one_clock_everywhere():
+    """🕐 10.11: графік, перехрестя і SBR — годинником ПК (бот + кабінет)."""
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    sm = open(os.path.join(_HERE, 'templates', 'smart_money.html'), encoding='utf-8').read()
+    _check('tickMarkFormatter: locTick' in js and 'timeFormatter: locFull' in js, 'кабінет: шкала й перехрестя')
+    _check('time_kyiv' not in js and 'Europe/Kyiv' not in js, 'кабінет не показує серверний Київ')
+    _check('tickMarkFormatter: _pcTick' in sm and 'timeFormatter: _pcFull' in sm, 'бот: шкала й перехрестя')
+    _check('time_kyiv' not in sm and 'Europe/Kyiv' not in sm and 'getUTCHours' not in sm, 'бот: без UTC/Київ')
+    _check('_pcFull(p.appeared)' in sm, '🆕 Новий OB у лозі — годинником ПК')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:

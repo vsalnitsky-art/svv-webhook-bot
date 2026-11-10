@@ -382,6 +382,24 @@
     return { pct: pct, fav: fav };
   }
 
+  // 🕐 ОДИН ЧАС СКРІЗЬ = годинник ПК (вимога 10.11): шкала графіка, перехрестя,
+  // картка й бейджі SBR — усе з одного epoch через локальний час браузера.
+  // Раніше графік показував UTC, а сигнал — Київ (сервер), тож одна й та сама
+  // свічка мала три різні часи.
+  function p2(n) { return ("0" + n).slice(-2); }
+  function locHM(sec) { var d = new Date(sec * 1000); return p2(d.getHours()) + ":" + p2(d.getMinutes()); }
+  function locDM(sec) { var d = new Date(sec * 1000); return p2(d.getDate()) + "." + p2(d.getMonth() + 1); }
+  var LOC_MON = ["січ", "лют", "бер", "кві", "тра", "чер", "лип", "сер", "вер", "жов", "лис", "гру"];
+  function locTick(t, type) {
+    var d = new Date(t * 1000);
+    if (type === 0) return String(d.getFullYear());
+    if (type === 1) return LOC_MON[d.getMonth()];
+    if (type === 2) return String(d.getDate());
+    if (type === 4) return locHM(t) + ":" + p2(d.getSeconds());
+    return locHM(t);
+  }
+  function locFull(t) { return locDM(t) + "." + String(new Date(t * 1000).getFullYear()).slice(-2) + " " + locHM(t); }
+
   function sbrLastBadge(tf, s, price) {
     var T = tf.toUpperCase();
     if (!s) return '<span class="bdg mute sbr-last" title="SBR ' + T + ' рахується">SBR ' + T + " ⏳</span>";
@@ -389,7 +407,7 @@
     var lg = s.side === "LONG", m = sbrMove(s.side, s.trigger, price);
     var cls = !m || m.fav == null ? "mute" : (m.fav ? "long" : "short");
     var pct = m ? (m.pct >= 0 ? "+" : "") + m.pct.toFixed(2) + "%" : "—";
-    var tip = "Останній сигнал SBR " + T + (s.n ? " #" + s.n : "") + " · " + (s.time_kyiv || "") +
+    var tip = "Останній сигнал SBR " + T + (s.n ? " #" + s.n : "") + " · бар " + (s.t ? locDM(s.t) + " " + locHM(s.t) : "") +
       " · Trigger " + fmtPrice(s.trigger) + (s.score != null ? " · Score " + Number(s.score).toFixed(1) + "%" : "") +
       " → зараз " + (price ? fmtPrice(price) : "—") + " · " +
       (!m || m.fav == null ? "без руху" : (m.fav ? "ціна йде В БІК сигналу" : "ціна йде ПРОТИ сигналу"));
@@ -1483,7 +1501,7 @@
               horzLines: { color: dark ? "rgba(38,50,74,.45)" : "rgba(211,218,230,.6)" } },
       rightPriceScale: { borderColor: dark ? "#26324a" : "#d3dae6" },
       timeScale: { borderColor: dark ? "#26324a" : "#d3dae6", timeVisible: true, secondsVisible: false,
-                   rightOffset: 18 },
+                   rightOffset: 18, tickMarkFormatter: locTick },
       crosshair: { mode: 0 },
       // 🖱 Керування «як у TradingView» (вимога 08.11): інерція після відпускання
       // миші (у бібліотеці за замовчуванням лише для дотику) — графік «доїжджає»
@@ -1495,7 +1513,7 @@
                      axisDoubleClickReset: { time: true, price: true } },
       // Мова явно: деякі браузери віддають тег на кшталт «en-US@posix», на
       // якому бібліотека падає і графік лишається порожнім.
-      localization: { locale: "uk-UA" },
+      localization: { locale: "uk-UA", timeFormatter: locFull },
     });
     IW.series = IW.chart.addCandlestickSeries({
       upColor: "#c7ccd6", downColor: "#5b6475", borderVisible: true,
@@ -1590,10 +1608,8 @@
     if (!s) { el.style.display = "none"; IW.sigSel = null; sigArrow(); return; }
     IW.sigSel = { t: s.t, side: s.side };
     var S = s.side === "SHORT";
-    // дата — у тому самому часовому поясі, що й час сигналу (Europe/Kyiv)
-    var dd = "";
-    try { dd = new Date(s.t * 1000).toLocaleDateString("uk-UA", { timeZone: "Europe/Kyiv", day: "2-digit", month: "2-digit" }); }
-    catch (x) { var d = new Date(s.t * 1000); dd = ("0" + d.getDate()).slice(-2) + "." + ("0" + (d.getMonth() + 1)).slice(-2); }
+    // дата і час відкриття бару сигналу — годинником ПК, як шкала графіка
+    var dd = s.t ? locDM(s.t) : "";
     var slPct = s.sl && s.close ? Math.abs(s.sl / s.close - 1) * 100 : null;
     var row = function (k, v, cls) { return '<div class="r"><span>' + k + '</span><b class="' + (cls || "") + '">' + v + "</b></div>"; };
     var sc = s.score != null ? Number(s.score) : null;
@@ -1601,7 +1617,7 @@
     el.innerHTML =
       '<div class="h ' + (S ? "short" : "long") + '"><span class="tag">' + (S ? "S" : "B") + "</span>" +
         (S ? "SHORT" : "LONG") + (s.n ? " #" + s.n : "") + '<span class="tf">SBR · ' + esc(s.tf || "") + " · " +
-        esc(dd) + " " + esc(s.time_kyiv || "") + "</span>" +
+        esc(dd) + " " + esc(s.t ? locHM(s.t) : "") + "</span>" +
         '<button class="x" aria-label="Закрити">×</button></div>' +
       row("Trigger", fmtPrice(s.trigger), "v-trg") +
       '<div class="r"><span>Score<small>(сила сигналу)</small></span><b class="' + scCls + '">' +
