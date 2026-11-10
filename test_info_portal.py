@@ -796,6 +796,8 @@ def test_ob_vob_toggles_and_no_label_pileup():
     _check('list.concat(["off"])' not in js and 'tfLast(' in js, 'випадайка — лише TF, «вимк» — кнопкою')
     _check('function wmDraw' in js and 'wmTaken.forEach' in js, 'водяні знаки без накладань, CHoCH їх обходить')
     _check('vobBodies' in js, 'чип OB шукає місце поза тілом VOB')
+    _check('Math.max(v.hi_pct, v.lo_pct)' in js and 'Math.max(vob.hi_pct, vob.lo_pct)' in sm,
+           'у чипі VOB — частка переможної половини')
     _check('rgba(34,171,94,.07)' in js and "rgba(22,163,74,0.07)" in sm, 'VOB прозоріший (бот + інфосайт)')
     # розрахунок не змінено: перемикач лише міняє ob_tf/vob_tf ('off' уже підтримувався)
     cur, _ = ip.apply_change(ip.user_info({}, []), {'vob_tf': 'off'}, [])

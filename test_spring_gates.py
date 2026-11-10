@@ -296,7 +296,7 @@ def test_gate_mark_is_left_of_the_coin():
     i = HTML.index('r.gate_ok ? h.replace(')
     seg = HTML[i:i + 600]
     assert "h.replace('<td style=\"white-space:nowrap\">'" in seg
-    assert seg.index('spr-gate-ok') < seg.index('`)'), 'позначка на початку першої комірки'
+    assert 'spr-gate-ok' not in seg and '✅' not in seg, 'без квадрата ✅ — лише кант (вимога 10.11)'
     assert '▲' not in seg and '▼' not in seg, 'без трикутників — напрямок показує кант'
     assert '#f87171' in seg, 'кант SHORT червоний'
 

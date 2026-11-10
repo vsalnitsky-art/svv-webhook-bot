@@ -1543,7 +1543,10 @@
         botCol: L ? "rgba(34,197,94,.18)" : "rgba(242,54,69,.18)",
         label: tfWord(v.tf || c.vob_tf) + " VOB" + (v.breaker ? " ✕" : ""),
         // обсяг — і в чипі: водяний знак може бути прибраний через накладання
-        sub: [fmtVol(v.volume, 3), v.pct != null ? v.pct + "%" : ""].filter(Boolean).join(" · ") });
+        // у чипі — частка ПЕРЕМОЖНОЇ половини (та сама, що в смузі), а не
+        // співвідношення меншої до більшої (v.pct): «4%» біля «96%» вводило в оману
+        sub: [fmtVol(v.volume, 3), v.hi_pct != null ? Math.round(Math.max(v.hi_pct, v.lo_pct)) + "%"
+              : (v.pct != null ? v.pct + "%" : "")].filter(Boolean).join(" · ") });
     });
     (c.ob || []).forEach(function (b) {
       var L = b.side === "LONG", sw = b.fam === "swing";
