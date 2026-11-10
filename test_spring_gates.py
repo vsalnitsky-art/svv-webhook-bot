@@ -148,6 +148,36 @@ def test_scanner_book_gates_scan_uses_the_live_engine():
             sys.modules.pop('detection.spring_scan', None)
 
 
+def test_both_gates_judge_each_coin_by_its_own_table():
+    # Вимога 10.11: увімкнені обидва → монета WATCHLIST іде ЛИШЕ через 🌀,
+    # монета скану — ЛИШЕ через 🔭 (одна монета не буває в обох таблицях).
+    m, sc = _scanner({'spring_enabled': True, 'sprw_gate_enabled': True,
+                      'sprx_gate_enabled': True},
+                     {'MNTUSDT': _rec(10, 60, charge=66)})
+    fake = types.ModuleType('detection.spring_scan')
+
+    class E:
+        def row_for(self, s): return _rec(5, 60) if s == 'XYZUSDT' else None
+        def settings(self): return {'min_charge': 80}
+        def banner_agg(self): return None
+    fake.get_spring_scan = lambda: E()
+    old = sys.modules.get('detection.spring_scan')
+    sys.modules['detection.spring_scan'] = fake
+    try:
+        r = sc._spring_book_gates('MNTUSDT', 'SHORT')
+        assert len(r) == 1 and r[0][1] and r[0][2].startswith(m._sibling_mod(
+            'spring_gates', '_SPRING_GATES_MOD').TAG_WL), r
+        r = sc._spring_book_gates('XYZUSDT', 'SHORT')
+        assert len(r) == 1 and r[0][1], r
+        r = sc._spring_book_gates('QQQUSDT', 'SHORT')
+        assert len(r) == 1 and not r[0][1], 'немає в жодній таблиці → відмова'
+    finally:
+        if old is not None:
+            sys.modules['detection.spring_scan'] = old
+        else:
+            sys.modules.pop('detection.spring_scan', None)
+
+
 def test_gate_sits_in_signal_allowed_and_settings():
     src = open(os.path.join(ROOT, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
     i = src.index('def _signal_allowed(')

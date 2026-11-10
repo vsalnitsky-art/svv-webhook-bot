@@ -3973,11 +3973,25 @@ class SMCScanner:
         S = str(symbol or '').upper()
         out = []
         wl_rec = (self.spring_for([S]) or {}).get(S) if s.get('spring_enabled', True) else None
-        if s.get('sprw_gate_enabled') and s.get('spring_enabled', True):
+        wl_on = bool(s.get('sprw_gate_enabled') and s.get('spring_enabled', True))
+        xs_on = bool(s.get('sprx_gate_enabled'))
+        # ⚠️ Увімкнені ОБИДВА → кожна монета судиться ЛИШЕ своєю таблицею
+        # (вимога 10.11): монета WATCHLIST — 🌀 Пружиною-WL, решта — 🔭 скан.
+        # В обох таблицях одночасно монета бути не може (скан WATCHLIST не бере).
+        if wl_on and xs_on:
+            try:
+                in_wl = S in {str(x).upper() for x in (self.get_watchlist() or [])}
+            except Exception:
+                in_wl = wl_rec is not None
+            if in_wl:
+                xs_on = False
+            else:
+                wl_on = False
+        if wl_on:
             bn = sg.banner_side(self.spring_banner()) if s.get('sprw_gate_banner') else None
             out.append(sg.book_decide(sg.TAG_WL, wl_rec, bn, side,
                                       bool(s.get('sprw_gate_banner'))))
-        if s.get('sprx_gate_enabled'):
+        if xs_on:
             # ⚠️ Той самий екземпляр, що веде flask_app (не копія модуля):
             # рушій скану не піднято → умова не діє.
             import sys as _sys
