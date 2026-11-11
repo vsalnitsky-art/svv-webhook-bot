@@ -5,8 +5,8 @@
 :root {
   --bg:        #06080e;
   --bg2:       #0a0e17;
-  --surface:   rgba(16, 22, 35, 0.65);
-  --elev:      rgba(26, 35, 51, 0.8);
+  --surface:   rgba(16, 22, 35, 0.85);
+  --elev:      rgba(26, 35, 51, 0.9);
   --line:      rgba(255, 255, 255, 0.08);
   --line-soft: rgba(255, 255, 255, 0.04);
   --txt:       #e2e8f0;
@@ -38,7 +38,7 @@
 :root[data-theme="light"] {
   --bg:        #f0f4f8;
   --bg2:       #e2e8f0;
-  --surface:   rgba(255, 255, 255, 0.75);
+  --surface:   rgba(255, 255, 255, 0.85);
   --elev:      rgba(241, 245, 249, 0.9);
   --line:      rgba(0, 0, 0, 0.08);
   --line-soft: rgba(0, 0, 0, 0.04);
@@ -93,13 +93,12 @@ body {
   display: flex; align-items: center; justify-content: space-between;
   gap: 14px; flex-wrap: wrap;
   padding: 16px 24px;
-  background: rgba(6, 8, 14, 0.6);
+  background: var(--surface);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid var(--line);
   transition: all 0.3s ease;
 }
-:root[data-theme="light"] .topbar { background: rgba(255, 255, 255, 0.6); }
 
 .brand { margin-right: auto; display: flex; align-items: center; gap: 14px; }
 .logo-wrapper { position: relative; }
@@ -295,7 +294,7 @@ body {
 .iw-box { position: relative; height: calc(100vh - 280px); min-height: 450px; border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm); overflow: hidden; background: var(--bg2); box-shadow: inset 0 0 20px rgba(0,0,0,0.5); }
 .iw-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  color: var(--muted); font-size: 14px; text-align: center; padding: 20px; pointer-events: none; }
+  color: var(--muted); font-size: 14px; text-align: center; padding: 20px; pointer-events: none; z-index: 1; }
 
 .iw-fs { margin-left: auto; background: var(--elev); border: 1px solid var(--line); color: var(--txt-dim);
   border-radius: 7px; font: 700 14px/1 var(--font); padding: 5px 9px; cursor: pointer; }
@@ -578,24 +577,24 @@ body.iw-full-on { overflow: hidden; }
    TradingView-подібні елементи (chart-pro.js)
    ═══════════════════════════════════════════════════════════════════════ */
 
+/* Панель інструментів (z-index високий, щоб бути поверх графіка) */
 .tv-toolbar {
-  position: absolute; top: 8px; right: 64px; z-index: 8;
+  position: absolute; top: 8px; right: 64px; z-index: 50;
   display: flex; gap: 3px; padding: 3px;
-  background: rgba(13, 17, 26, 0.75);
+  background: var(--surface);
   backdrop-filter: blur(8px);
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   border-radius: 8px;
-  opacity: 0.55; transition: opacity 0.2s;
+  opacity: 0.85; transition: opacity 0.2s;
 }
 #iw-box:hover .tv-toolbar { opacity: 1; }
-:root[data-theme="light"] .tv-toolbar { background: rgba(255,255,255,.85); }
 
 .tv-btn {
-  width: 30px; height: 26px; padding: 0;
+  height: 28px; padding: 0 8px;
   background: transparent; border: 1px solid transparent; border-radius: 5px;
-  color: var(--txt-dim); font: 700 11px var(--mono);
+  color: var(--txt-dim); font: 700 11.5px var(--font);
   cursor: pointer; transition: all 0.15s;
-  display: inline-flex; align-items: center; justify-content: center;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
 }
 .tv-btn:hover { background: var(--elev); color: var(--txt); border-color: var(--line); }
 .tv-btn.on {
@@ -603,11 +602,15 @@ body.iw-full-on { overflow: hidden; }
   border-color: rgba(255,184,0,0.55);
   box-shadow: 0 0 10px rgba(255,184,0,0.25);
 }
+.tv-btn-pos { color: var(--accent-2); font-weight: 800; }
+.tv-btn-pos:hover { color: #fff; background: rgba(255,184,0,0.2); }
+.tv-sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; align-self: center; }
 
+/* OHLC-легенда (z-index вище за canvas) */
 .tv-ohlc {
-  position: absolute; top: 8px; left: 10px; z-index: 6;
+  position: absolute; top: 8px; left: 10px; z-index: 49;
   pointer-events: none; font: 600 11.5px var(--mono);
-  color: var(--txt-dim); text-shadow: 0 1px 2px rgba(0,0,0,.6);
+  color: var(--txt-dim); text-shadow: 0 1px 3px rgba(0,0,0,0.9);
   white-space: nowrap;
   display: flex; gap: 8px; align-items: center;
 }
@@ -625,24 +628,25 @@ body.iw-full-on { overflow: hidden; }
 .tv-ohlc .chg.up { color: var(--long); background: rgba(0,230,118,.12); }
 .tv-ohlc .chg.dn { color: var(--short); background: rgba(255,23,68,.12); }
 
+/* Лічильник барів (z-index високий) */
 .tv-bars {
-  position: absolute; right: 64px; bottom: 8px; z-index: 6;
+  position: absolute; right: 64px; bottom: 8px; z-index: 49;
   padding: 3px 8px; border-radius: 5px;
-  background: rgba(13,17,26,.65); backdrop-filter: blur(6px);
-  border: 1px solid var(--line-soft);
+  background: var(--surface); backdrop-filter: blur(6px);
+  border: 1px solid var(--line);
   font: 700 10.5px var(--mono); color: var(--txt-dim);
   pointer-events: none;
 }
-:root[data-theme="light"] .tv-bars { background: rgba(255,255,255,.85); }
 
+/* Лінійка */
 .tv-measure-overlay {
-  position: absolute; inset: 0; z-index: 9;
+  position: absolute; inset: 0; z-index: 45;
   display: none; cursor: crosshair;
 }
 #iw-box.measuring .tv-measure-overlay { display: block; }
 
 .tv-measure {
-  position: absolute; inset: 0; z-index: 10;
+  position: absolute; inset: 0; z-index: 46;
   pointer-events: none; display: none;
   overflow: visible;
 }
@@ -678,9 +682,56 @@ body.iw-full-on { overflow: hidden; }
   stroke-width: 1;
 }
 
+/* ═══ Інструмент позицій (Long/Short) ═══════════════════════════════════════ */
+.pos-layer {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 10; overflow: hidden;
+}
+.pos-wrap {
+  position: absolute; pointer-events: none;
+}
+.pos-box {
+  position: absolute; pointer-events: none;
+}
+.pos-box.profit { background: rgba(0, 230, 118, 0.15); border-top: 1px dashed rgba(0, 230, 118, 0.4); border-bottom: 1px dashed rgba(0, 230, 118, 0.4); }
+.pos-box.loss { background: rgba(255, 23, 68, 0.15); border-top: 1px dashed rgba(255, 23, 68, 0.4); border-bottom: 1px dashed rgba(255, 23, 68, 0.4); }
+
+.pos-line {
+  position: absolute; width: 100%; height: 20px; margin-top: -10px;
+  cursor: ns-resize; pointer-events: auto;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.pos-line::after {
+  content: ""; position: absolute; left: 0; width: 100%; height: 1px;
+  background: #fff; pointer-events: none;
+}
+.pos-line.profit::after { background: var(--long); height: 2px; }
+.pos-line.loss::after { background: var(--short); height: 2px; }
+.pos-line.entry::after { background: #fff; border-top: 1px dashed #fff; background: transparent; }
+
+.pos-label {
+  position: relative; pointer-events: auto; padding: 3px 8px;
+  background: rgba(13, 17, 26, 0.9); border: 1px solid var(--line);
+  border-radius: 4px; font: 700 11px var(--mono); color: var(--txt);
+  white-space: nowrap; z-index: 2; margin-left: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+}
+.pos-line.profit .pos-label { border-color: var(--long); color: var(--long); }
+.pos-line.loss .pos-label { border-color: var(--short); color: var(--short); }
+.pos-line.entry .pos-label { border-color: #fff; color: #fff; }
+
+.pos-del {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 20px; height: 20px; border-radius: 4px;
+  background: rgba(255,255,255,0.1); border: 0; color: #fff;
+  font-size: 14px; line-height: 1; cursor: pointer; pointer-events: auto;
+  display: flex; align-items: center; justify-content: center; z-index: 2;
+}
+.pos-del:hover { background: var(--short); }
+
 @media (max-width: 720px) {
   .tv-toolbar { right: 56px; gap: 2px; padding: 2px; }
-  .tv-btn { width: 26px; height: 22px; font-size: 10px; }
+  .tv-btn { height: 24px; padding: 0 6px; font-size: 10px; }
   .tv-ohlc { font-size: 10px; gap: 5px; }
   .tv-ohlc .t, .tv-ohlc .k { display: none; }
   .tv-bars { right: 56px; bottom: 6px; }

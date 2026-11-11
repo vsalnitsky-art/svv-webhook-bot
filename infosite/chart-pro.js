@@ -1,21 +1,17 @@
 // ═══════════════════════════════════════════════════════════════════════
 //  chart-pro.js — TradingView-подібні функції для lightweight-charts v4
-//  Підключається ПІСЛЯ app.js. Використовує window.VSV_HOOK та VSV_PRO.
 // ═══════════════════════════════════════════════════════════════════════
 (function () {
   "use strict";
 
   var PRO = {
-    type: "candles",          // "candles" | "ha"
+    type: "candles",
     log: false,
     measure: { on: false, start: null, end: null },
     lastHA: null,
-    bound: false,
   };
 
   // ── helpers ────────────────────────────────────────────────────────────
-  function px(v) { return v == null ? "—" : String(v); }
-
   function fmtBar(v, IW) {
     if (v == null) return "—";
     var d = IW && IW.prec != null ? IW.prec : 4;
@@ -36,63 +32,250 @@
     return out;
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ПОЗИЦІЇ (Long/Short Tools)
+  // ═══════════════════════════════════════════════════════════════════════
+  var posList = [];
+  var pendingPos = null; // 'long' | 'short'
+  var posLayer = null;
+
+  function initPosLayer() {
+    if (posLayer) return;
+    var box = document.getElementById("iw-box");
+    if (!box) return;
+    posLayer = document.createElement("div");
+    posLayer.className = "pos-layer";
+    box.appendChild(posLayer);
+  }
+
+  function addPos(type, entryPrice, clickX) {
+    var IW = window.VSV_HOOK && window.VSV_HOOK.IW;
+    if (!IW) return;
+    
+    // Отримуємо час кліку (початок позиції)
+    var time = IW.chart.timeScale().coordinateToTime(clickX);
+    if (time === null) time = IW.coin.ohlc[IW.coin.ohlc.length - 1].time; // fallback
+
+    var id = "pos_" + Date.now();
+    var wrap = document.createElement("div");
+    wrap.className = "pos-wrap";
+    wrap.innerHTML = 
+      '<div class="pos-box profit"></div>' +
+      '<div class="pos-box loss"></div>' +
+      '<div class="pos-line entry"><div class="pos-label">Відкр. поз.</div></div>' +
+      '<div class="pos-line profit"><div class="pos-label">Ціль</div></div>' +
+      '<div class="pos-line loss"><div class="pos-label">Стоп</div></div>' +
+      '<button class="pos-del" title="Видалити">×</button>';
+    
+    posLayer.appendChild(wrap);
+
+    // Дефолтні значення (5% TP, 2% SL)
+    var tpPct = type === "long" ? 0.05 : -0.05;
+    var slPct = type === "long" ? -0.02 : 0.02;
+
+    var pos = {
+      id: id,
+      type: type,
+      entry: entryPrice,
+      target: entryPrice * (1 + tpPct),
+      stop: entryPrice * (1 + slPct),
+      time: time,
+      dom: {
+        wrap: wrap,
+        boxProfit: wrap.querySelector(".profit.pos-box"),
+        boxLoss: wrap.querySelector(".loss.pos-box"),
+        lineEntry: wrap.querySelector(".pos-line.entry"),
+        lineTarget: wrap.querySelector(".pos-line.profit"),
+        lineStop: wrap.querySelector(".pos-line.loss"),
+        labelEntry: wrap.querySelector(".pos-line.entry .pos-label"),
+        labelTarget: wrap.querySelector(".pos-line.profit .pos-label"),
+        labelStop: wrap.querySelector(".pos-line.loss .pos-label"),
+        delBtn: wrap.querySelector(".pos-del")
+      }
+    };
+
+    // Обробка перетягування (Таргет)
+    setupDrag(pos.dom.lineTarget, function(dy) {
+      var y = IW.series.priceToCoordinate(pos.target) + dy;
+      var p = IW.series.coordinateToPrice(y);
+      pos.target = p;
+    });
+
+    // Обробка перетягування (Стоп)
+    setupDrag(pos.dom.lineStop, function(dy) {
+      var y = IW.series.priceToCoordinate(pos.stop) + dy;
+      var p = IW.series.coordinateToPrice(y);
+      pos.stop = p;
+    });
+
+    // Обробка перетягування (Вхід - тягне всю позицію)
+    setupDrag(pos.dom.lineEntry, function(dy) {
+      var yEntry = IW.series.priceToCoordinate(pos.entry) + dy;
+      var yTgt = IW.series.priceToCoordinate(pos.target) + dy;
+      var yStop = IW.series.priceToCoordinate(pos.stop) + dy;
+      
+      pos.entry = IW.series.coordinateToPrice(yEntry);
+      pos.target = IW.series.coordinateToPrice(yTgt);
+      pos.stop = IW.series.coordinateToPrice(yStop);
+    });
+
+    // Видалення
+    pos.dom.delBtn.addEventListener("pointerdown", function(e) {
+      e.stopPropagation();
+      removePos(pos);
+    });
+
+    posList.push(pos);
+    renderPositions(IW);
+  }
+
+  function removePos(pos) {
+    pos.dom.wrap.remove();
+    posList = posList.filter(function(p) { return p.id !== pos.id; });
+  }
+
+  function setupDrag(el, onMove) {
+    var dragging = false;
+    var startY = 0;
+
+    el.addEventListener("pointerdown", function(e) {
+      if (e.button !== 0) return;
+      dragging = true;
+      startY = e.clientY;
+      el.setPointerCapture(e.pointerId);
+      e.stopPropagation(); // Блокуємо скрол графіка
+    });
+
+    el.addEventListener("pointermove", function(e) {
+      if (!dragging) return;
+      var dy = e.clientY - startY;
+      onMove(dy);
+      startY = e.clientY;
+      
+      var IW = window.VSV_HOOK && window.VSV_HOOK.IW;
+      if (IW) renderPositions(IW);
+    });
+
+    el.addEventListener("pointerup", function(e) {
+      if (!dragging) return;
+      dragging = false;
+      el.releasePointerCapture(e.pointerId);
+    });
+  }
+
+  function renderPositions(IW) {
+    if (!IW || !IW.chart || !IW.series) return;
+    var ts = IW.chart.timeScale();
+    var chartWidth = document.getElementById("iw-box").clientWidth;
+    var psWidth = 60; // приблизна ширина шкали цін
+
+    posList.forEach(function(pos) {
+      var x1 = ts.timeToCoordinate(pos.time);
+      if (x1 === null) {
+        // Якщо час поза екраном, але ми можемо перевірити, з якого боку
+        var range = ts.getVisibleLogicalRange();
+        if (range && pos.time < IW.coin.ohlc[0].time) x1 = 0;
+        else x1 = chartWidth - psWidth; // показуємо біля правого краю
+      }
+      
+      var yEntry = IW.series.priceToCoordinate(pos.entry);
+      var yTarget = IW.series.priceToCoordinate(pos.target);
+      var yStop = IW.series.priceToCoordinate(pos.stop);
+
+      if (yEntry === null || yTarget === null || yStop === null) {
+        pos.dom.wrap.style.display = "none";
+        return;
+      }
+      pos.dom.wrap.style.display = "block";
+
+      // Встановлюємо позицію контейнера
+      pos.dom.wrap.style.left = x1 + "px";
+      pos.dom.wrap.style.top = "0px";
+      pos.dom.wrap.style.width = (chartWidth - psWidth - x1) + "px";
+      pos.dom.wrap.style.height = "100%";
+
+      // Бокси
+      var pTop = Math.min(yEntry, yTarget);
+      var pHeight = Math.abs(yEntry - yTarget);
+      pos.dom.boxProfit.style.top = pTop + "px";
+      pos.dom.boxProfit.style.height = pHeight + "px";
+      pos.dom.boxProfit.style.left = "0px";
+      pos.dom.boxProfit.style.width = "100%";
+
+      var lTop = Math.min(yEntry, yStop);
+      var lHeight = Math.abs(yEntry - yStop);
+      pos.dom.boxLoss.style.top = lTop + "px";
+      pos.dom.boxLoss.style.height = lHeight + "px";
+      pos.dom.boxLoss.style.left = "0px";
+      pos.dom.boxLoss.style.width = "100%";
+
+      // Лінії
+      pos.dom.lineEntry.style.top = yEntry + "px";
+      pos.dom.lineTarget.style.top = yTarget + "px";
+      pos.dom.lineStop.style.top = yStop + "px";
+
+      // Розрахунок даних для лейблів
+      var isLong = pos.type === "long";
+      var targetPct = Math.abs((pos.target - pos.entry) / pos.entry) * 100;
+      var stopPct = Math.abs((pos.stop - pos.entry) / pos.entry) * 100;
+      var rr = targetPct / (stopPct || 1);
+
+      pos.dom.labelEntry.innerHTML = "Відкр. поз: " + fmtBar(pos.entry, IW) + 
+        '<br><span style="font-size:10px;opacity:0.8">Ризик/Прибуток: ' + rr.toFixed(2) + '</span>';
+      
+      pos.dom.labelTarget.innerHTML = "Ціль: " + fmtBar(pos.target, IW) + " (" + targetPct.toFixed(2) + "%)";
+      pos.dom.labelStop.innerHTML = "Стоп: " + fmtBar(pos.stop, IW) + " (" + stopPct.toFixed(2) + "%)";
+    });
+  }
+
   // ── HOOK: викликається з app.js ПІСЛЯ створення графіка ────────────────
   function attach(IW) {
     if (!IW || !IW.chart || !IW.series) return;
     var box = document.getElementById("iw-box");
     if (!box) return;
 
-    // Очищення старих overlay-елементів (після зміни теми графік пересоздається)
     box.querySelectorAll(".tv-pro").forEach(function (el) { el.remove(); });
+    initPosLayer();
 
-    // ── 1. OHLC-легенда (як TradingView) ────────────────────────────────
     var legend = document.createElement("div");
     legend.className = "tv-pro tv-ohlc";
     legend.innerHTML = '<div class="ohlc-legend"></div>';
     box.appendChild(legend);
 
-    // ── 2. Overlay для лінійки (щоб не заважати скролу) ─────────────────
     var ov = document.createElement("div");
     ov.className = "tv-pro tv-measure-overlay";
     box.appendChild(ov);
 
-    // ── 3. SVG для візуалізації вимірювання ─────────────────────────────
     var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("class", "tv-pro tv-measure");
     box.appendChild(svg);
 
-    // ── 4. Лічильник барів ───────────────────────────────────────────────
     var bars = document.createElement("div");
     bars.className = "tv-pro tv-bars";
     bars.id = "tv-bars";
     box.appendChild(bars);
 
-    // ── 5. Підписка на crosshair (легенда слідує за мишкою) ─────────────
     IW.chart.subscribeCrosshairMove(function (param) {
-      if (!param || !param.time) {
-        renderLegendLast(IW);
-        return;
-      }
+      if (!param || !param.time) { renderLegendLast(IW); return; }
       var data = param.seriesData && param.seriesData.get(IW.series);
-      if (!data || data.open == null) {
-        renderLegendLast(IW);
-      } else {
-        renderLegend(IW, data, param.time);
-      }
+      if (!data || data.open == null) renderLegendLast(IW);
+      else renderLegend(IW, data, param.time);
     });
 
-    // ── 6. Підписка на видимий діапазон (лічильник барів) ───────────────
     IW.chart.timeScale().subscribeVisibleLogicalRangeChange(function (r) {
       var el = document.getElementById("tv-bars");
-      if (!el || !r) return;
-      el.textContent = "📊 " + Math.round(r.to - r.from) + " бар";
+      if (el && r) el.textContent = "📊 " + Math.round(r.to - r.from) + " бар";
+      renderPositions(IW);
     });
 
-    // ── 7. Обгортка setData/update для Heikin Ashi ──────────────────────
+    // Перемальовка позицій при русі графіка
+    IW.chart.subscribeCrosshairMove(function() {
+      if (posList.length) renderPositions(IW);
+    });
+
     if (!IW.series.__proWrapped) {
       var origSetData = IW.series.setData.bind(IW.series);
       var origUpdate = IW.series.update.bind(IW.series);
-
       IW.series.setData = function (data) {
         if (PRO.type === "ha") {
           var ha = toHA(data || []);
@@ -118,20 +301,49 @@
       IW.series.__proWrapped = true;
     }
 
-    // ── 8. Прив'язка подій лінійки (один раз на #iw-box) ────────────────
     bindMeasure(IW, box, ov, svg);
 
-    // ── 9. Відновлення налаштувань (після зміни теми) ────────────────────
     if (PRO.log) applyLog(IW);
     updateTypeBtn();
     renderLegendLast(IW);
+
+    // Обробка кліку для створення позиції
+    IW.chart.subscribeClick(function (param) {
+      if (!pendingPos) return;
+      if (!param.point) return;
+      var price = IW.series.coordinateToPrice(param.point.y);
+      if (price) {
+        addPos(pendingPos, price, param.point.x);
+        pendingPos = null;
+        document.getElementById("iw-box").style.cursor = "";
+        document.getElementById("tv-long").classList.remove("on");
+        document.getElementById("tv-short").classList.remove("on");
+      }
+    });
+
+    // Кнопки інструментів
+    document.getElementById("tv-long").onclick = function() {
+      pendingPos = "long";
+      document.getElementById("iw-box").style.cursor = "crosshair";
+      document.getElementById("tv-long").classList.add("on");
+      document.getElementById("tv-short").classList.remove("on");
+    };
+    document.getElementById("tv-short").onclick = function() {
+      pendingPos = "short";
+      document.getElementById("iw-box").style.cursor = "crosshair";
+      document.getElementById("tv-short").classList.add("on");
+      document.getElementById("tv-long").classList.remove("on");
+    };
+    document.getElementById("tv-clear-pos").onclick = function() {
+      posList.forEach(removePos);
+      posList = [];
+    };
   }
 
-  // ── HOOK: викликається з app.js ПІСЛЯ оновлення даних ─────────────────
   function onData(IW, c) {
     if (!IW || !c) return;
     renderLegendLast(IW);
-    // Якщо HA — переприкладаємо дані (бо drawCoin ставить сирі)
+    renderPositions(IW); // Перемальовуємо позиції при оновленні даних
     if (PRO.type === "ha" && IW.series && c.ohlc) {
       var range = IW.chart && IW.chart.timeScale().getVisibleLogicalRange();
       IW.series.setData(c.ohlc);
@@ -139,7 +351,6 @@
     }
   }
 
-  // ═══ OHLC-легенда ══════════════════════════════════════════════════════
   function renderLegend(IW, bar, time) {
     var el = document.querySelector(".tv-ohlc .ohlc-legend");
     if (!el || !bar) return;
@@ -154,8 +365,7 @@
       t = '<span class="t">' + p2(d.getDate()) + "." + p2(d.getMonth() + 1) + " " + p2(d.getHours()) + ":" + p2(d.getMinutes()) + "</span>";
     }
     el.innerHTML =
-      '<span class="sym">' + (IW.sel || "") + "</span>" +
-      t +
+      '<span class="sym">' + (IW.sel || "") + "</span>" + t +
       '<span class="k">O</span><span class="v">' + f(o) + "</span>" +
       '<span class="k">H</span><span class="v">' + f(h) + "</span>" +
       '<span class="k">L</span><span class="v">' + f(l) + "</span>" +
@@ -170,12 +380,10 @@
     renderLegend(IW, ohlc[ohlc.length - 1], ohlc[ohlc.length - 1].time);
   }
 
-  // ═══ Heikin Ashi ════════════════════════════════════════════════════════
   function toggleType() {
     var IW = window.VSV_HOOK && window.VSV_HOOK.IW;
     if (!IW || !IW.series || !IW.coin) return;
     PRO.type = PRO.type === "candles" ? "ha" : "candles";
-    // Переприкладаємо дані через обгортку (вона сама вирішить HA чи ні)
     var range = IW.chart.timeScale().getVisibleLogicalRange();
     IW.series.setData(IW.coin.ohlc || []);
     if (range) IW.chart.timeScale().setVisibleLogicalRange(range);
@@ -186,11 +394,9 @@
     var b = document.getElementById("tv-type");
     if (!b) return;
     b.textContent = PRO.type === "ha" ? "HA" : "🕯";
-    b.title = PRO.type === "ha" ? "Heikin Ashi — натисніть для свічок (H)" : "Свічки — натисніть для Heikin Ashi (H)";
     b.classList.toggle("on", PRO.type === "ha");
   }
 
-  // ═══ Логарифмічна шкала ═════════════════════════════════════════════════
   function toggleLog() {
     var IW = window.VSV_HOOK && window.VSV_HOOK.IW;
     if (!IW || !IW.chart) return;
@@ -203,13 +409,10 @@
   function applyLog(IW) {
     if (!IW.chart) return;
     IW.chart.priceScale("right").applyOptions({
-      mode: PRO.log
-        ? LightweightCharts.PriceScaleMode.Logarithmic
-        : LightweightCharts.PriceScaleMode.Normal,
+      mode: PRO.log ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal,
     });
   }
 
-  // ═══ Скріншот ═══════════════════════════════════════════════════════════
   function screenshot() {
     var IW = window.VSV_HOOK && window.VSV_HOOK.IW;
     if (!IW || !IW.chart) return;
@@ -219,15 +422,13 @@
         if (!blob) return;
         var url = URL.createObjectURL(blob);
         var a = document.createElement("a");
-        a.href = url;
-        a.download = "vsv-" + (IW.sel || "chart") + "-" + Date.now() + ".png";
+        a.href = url; a.download = "vsv-" + (IW.sel || "chart") + "-" + Date.now() + ".png";
         a.click();
         setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
       });
     } catch (e) { console.error("screenshot:", e); }
   }
 
-  // ═══ Лінійка (Measure) ══════════════════════════════════════════════════
   function toggleMeasure() {
     PRO.measure.on = !PRO.measure.on;
     var box = document.getElementById("iw-box");
@@ -273,8 +474,7 @@
     var s = PRO.measure.start, e = PRO.measure.end;
     if (!s || !e) return;
     svg.style.display = "block";
-    svg.setAttribute("width", "100%");
-    svg.setAttribute("height", "100%");
+    svg.setAttribute("width", "100%"); svg.setAttribute("height", "100%");
     svg.setAttribute("viewBox", "0 0 " + document.getElementById("iw-box").clientWidth + " " + document.getElementById("iw-box").clientHeight);
 
     var x = Math.min(s.x, e.x), y = Math.min(s.y, e.y);
@@ -286,18 +486,10 @@
     var pct = p1 && p2 ? (p2 - p1) / p1 * 100 : 0;
     var cls = chg >= 0 ? "up" : "dn";
 
-    // Кількість барів
-    var ohlc = IW.coin && IW.coin.ohlc;
-    var tfSec = 60;
-    if (ohlc && ohlc.length > 1) tfSec = ohlc[1].time - ohlc[0].time;
     var bars = Math.round(Math.abs(e.x - s.x) / Math.max(1, (IW.chart.timeScale().options().barSpacing || 6))) || 0;
-
-    // Значення для підпису
     var df = IW.prec != null ? IW.prec : 4;
-    var lbl = (chg >= 0 ? "+" : "") + Number(chg).toFixed(df) +
-              " (" + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%) · " + bars + " бар";
+    var lbl = (chg >= 0 ? "+" : "") + Number(chg).toFixed(df) + " (" + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%) · " + bars + " бар";
 
-    // Позиція підпису (над прямокутником, або під ним якщо мало місця)
     var lblY = y > 36 ? y - 10 : y + h + 22;
     var lblX = Math.max(70, Math.min(x + w / 2, document.getElementById("iw-box").clientWidth - 70));
 
@@ -310,7 +502,6 @@
       '<circle cx="' + e.x + '" cy="' + e.y + '" r="3" class="meas-dot"/>';
   }
 
-  // ═══ Клавіатура ═════════════════════════════════════════════════════════
   function onKey(e) {
     var t = e.target;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
@@ -322,53 +513,36 @@
     var step = e.shiftKey ? 10 : 1;
 
     switch (e.key) {
-      case "ArrowLeft":
-        ts.setVisibleLogicalRange({ from: range.from - step, to: range.to - step });
-        e.preventDefault(); break;
-      case "ArrowRight":
-        ts.setVisibleLogicalRange({ from: range.from + step, to: range.to + step });
-        e.preventDefault(); break;
-      case "Home":
-        ts.fitContent(); e.preventDefault(); break;
-      case "End":
-        ts.scrollToRealTime(); e.preventDefault(); break;
+      case "ArrowLeft": ts.setVisibleLogicalRange({ from: range.from - step, to: range.to - step }); e.preventDefault(); break;
+      case "ArrowRight": ts.setVisibleLogicalRange({ from: range.from + step, to: range.to + step }); e.preventDefault(); break;
+      case "Home": ts.fitContent(); e.preventDefault(); break;
+      case "End": ts.scrollToRealTime(); e.preventDefault(); break;
       case "+": case "=": {
         var mid = (range.from + range.to) / 2, w = (range.to - range.from) * 0.85;
-        ts.setVisibleLogicalRange({ from: mid - w / 2, to: mid + w / 2 });
-        e.preventDefault(); break;
+        ts.setVisibleLogicalRange({ from: mid - w / 2, to: mid + w / 2 }); e.preventDefault(); break;
       }
       case "-": case "_": {
         var mid2 = (range.from + range.to) / 2, w2 = (range.to - range.from) * 1.15;
-        ts.setVisibleLogicalRange({ from: mid2 - w2 / 2, to: mid2 + w2 / 2 });
-        e.preventDefault(); break;
+        ts.setVisibleLogicalRange({ from: mid2 - w2 / 2, to: mid2 + w2 / 2 }); e.preventDefault(); break;
       }
       case "l": case "L": toggleLog(); e.preventDefault(); break;
       case "h": case "H": toggleType(); e.preventDefault(); break;
-      case "f": case "F":
-        var fs = document.getElementById("iw-fs"); if (fs) fs.click();
-        e.preventDefault(); break;
+      case "f": case "F": var fs = document.getElementById("iw-fs"); if (fs) fs.click(); e.preventDefault(); break;
       case "m": case "M": toggleMeasure(); e.preventDefault(); break;
       case "s": case "S": screenshot(); e.preventDefault(); break;
-      case "Escape":
-        if (PRO.measure.on) toggleMeasure();
-        break;
+      case "Escape": if (PRO.measure.on) toggleMeasure(); break;
     }
   }
 
-  // ═══ Init ═══════════════════════════════════════════════════════════════
   function init() {
-    if (window.VSV_PRO) return;   // вже
+    if (window.VSV_PRO) return;
     window.VSV_PRO = { attach: attach, onData: onData };
     document.addEventListener("keydown", onKey);
 
-    var bType = document.getElementById("tv-type");
-    if (bType) bType.addEventListener("click", toggleType);
-    var bLog = document.getElementById("tv-log");
-    if (bLog) bLog.addEventListener("click", toggleLog);
-    var bMeas = document.getElementById("tv-measure");
-    if (bMeas) bMeas.addEventListener("click", toggleMeasure);
-    var bShot = document.getElementById("tv-shot");
-    if (bShot) bShot.addEventListener("click", screenshot);
+    var bType = document.getElementById("tv-type"); if (bType) bType.addEventListener("click", toggleType);
+    var bLog = document.getElementById("tv-log"); if (bLog) bLog.addEventListener("click", toggleLog);
+    var bMeas = document.getElementById("tv-measure"); if (bMeas) bMeas.addEventListener("click", toggleMeasure);
+    var bShot = document.getElementById("tv-shot"); if (bShot) bShot.addEventListener("click", screenshot);
   }
 
   if (document.readyState === "loading") {
