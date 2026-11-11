@@ -293,7 +293,7 @@ def test_route_and_page_show_the_tug_bar_and_move():
         _check(k in _HTML, k)
     i = _HTML.index('<table class="tm-table" id="spr-table">')
     t = _HTML[i:_HTML.index('</table>', i)]
-    _check(len(re.findall(r'<th[ >]', t)) == 12 and 'colspan="12"' in t, 'колонок 12')
+    _check(len(re.findall(r'<th[ >]', t)) == 13 and 'colspan="13"' in t, 'колонок 13 (+ ✋ Угода)')
 
 
 def test_tug_cells_render_in_node():
@@ -488,6 +488,34 @@ def test_gate_counters_survive_a_restart():
     b._spring_gate('ETHUSDT', 'LONG')
     _check(b.spring_stats()['pass'] == 2, 'лічильник продовжує рахувати')
     _check('hmd(st.since)' in _HTML, 'сторінка показує дату початку накопичення')
+
+
+# ── ⚖ КАЛІБРОВКА БАНЕРА 11.11: «рівновага 54/46 при 🟢 24 / 🔴 8» ──
+def test_banner_is_not_diluted_by_the_common_base_of_both_potentials():
+    # 24 монети з легким перекосом угору, 8 — униз: сума потенціалів ≈ 53/47
+    # (стара міра → «⚖ рівновага»), але ринок явно накручений у LONG.
+    recs = {}
+    for i in range(24):
+        recs[f'L{i}'] = {'ok': True, 'state': 'charged', 'charge': 60, 'pot_long': 34, 'pot_short': 26}
+    for i in range(8):
+        recs[f'S{i}'] = {'ok': True, 'state': 'charged', 'charge': 60, 'pot_long': 26, 'pot_short': 34}
+    a = S.aggregate(recs, total=32)
+    old = 100 * a['sum_long'] / (a['sum_long'] + a['sum_short'])
+    _check(old < 55, old)                                  # стара міра розмита
+    _check(a['net_long'] == 192 and a['net_short'] == 64, a)
+    _check(a['prob_long'] == 75.0 and a['lean'] == 'LONG', a)
+    # справжня рівновага лишається рівновагою
+    eq = {**{f'L{i}': recs['L0'] for i in range(10)}, **{f'S{i}': recs['S0'] for i in range(10)}}
+    b = S.aggregate(eq, total=20)
+    _check(b['prob_long'] == 50.0 and b['lean'] is None, b)
+    # сила переваги важить: дві монети з сильним натягом SHORT переважують
+    # три зі слабким LONG у частці натягу
+    _check(S.agg_prob_long(3, 90, 3, 2) < 50, S.agg_prob_long(3, 90, 3, 2))
+    _check(S.agg_prob_long(0, 0, 0, 0) == 50.0, 'немає даних → 50')
+    # сторінка малює смугу за тією самою часткою і показує чисту перевагу
+    i = _HTML.index('function _sprAggPaint(')
+    f = _HTML[i:_HTML.index('\nfunction ', i + 10)]
+    _check('_sprTugHTML(2 * pL, 2 * (100 - pL), true)' in f and 'a.net_long' in f, 'UI банера')
 
 
 if __name__ == '__main__':

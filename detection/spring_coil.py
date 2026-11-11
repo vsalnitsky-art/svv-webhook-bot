@@ -89,6 +89,13 @@ PHASE_LABEL = {'expansion': '🌋 рух іде', 'cooling': '🧊 охолод�
 # видавалась би за весь WATCHLIST (кейс 29.10: «LONG 88%» з 1 монети з 55).
 AGG_MIN_COINS = 3
 AGG_MIN_SHARE = 0.10
+# ⚖ Калібровка 11.11 (скарга «⚖ рівновага 54/46 при 🟢 24 / 🔴 8»): сума
+# pot_long/pot_short розмивала перекіс — у кожної монети обидва потенціали
+# великі (разом = заряд), тож спільна «база» тягла частку до 50%. Тепер
+# частка LONG = середнє з ДВОХ мір: ЧИСТОЇ переваги натягу (по монеті в
+# рахунок іде лише |pot_long − pot_short| у бік переможця) і частки монет за
+# напрямком. Поріг напряму — AGG_LEAN_PP від 50 (міри вже не розмиті).
+AGG_LEAN_PP = 10.0
 
 # 🎯 Ймовірний хід після вистрілу = «виміряний рух»: висота коробки,
 # відкладена від її межі (класична проєкція стиснення). Підлога — ATR×N, бо
@@ -472,6 +479,19 @@ def projection(price: float, box_h: float, box_l: float, atr: float,
     }
 
 
+def agg_prob_long(net_long: float, net_short: float, n_long: int, n_short: int) -> float:
+    """⚖ Частка LONG банера (0-100). ЧИСТА. Середнє з чистої переваги натягу
+    і частки монет за напрямком; міри без даних не беруть участі."""
+    parts = []
+    t = (net_long or 0.0) + (net_short or 0.0)
+    if t > 0:
+        parts.append(100.0 * net_long / t)
+    c = (n_long or 0) + (n_short or 0)
+    if c > 0:
+        parts.append(100.0 * n_long / c)
+    return round(sum(parts) / len(parts), 1) if parts else 50.0
+
+
 def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING,
               total: Optional[int] = None) -> Dict:
     """⚖ Куди накручено WATCHLIST загалом. ЧИСТА.
@@ -486,6 +506,7 @@ def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING,
     `total`); інакше `lean` = None: напрям ринку з однієї монети не робимо.
     """
     sl = ss = 0.0
+    nl_t = ns_t = 0.0
     n_l = n_s = n = 0
     f_l = f_s = 0
     top = {'LONG': None, 'SHORT': None}
@@ -519,6 +540,8 @@ def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING,
         n += 1
         sl += pl
         ss += ps
+        nl_t += max(pl - ps, 0.0)
+        ns_t += max(ps - pl, 0.0)
         if pl > ps:
             n_l += 1
         elif ps > pl:
@@ -528,14 +551,13 @@ def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING,
             if mine and v > 0 and (top[side] is None or v > top[side]['pot']):
                 top[side] = {'symbol': sym, 'pot': round(v, 1), 'move_pct': mv,
                              'state': r.get('state')}
-    tot = sl + ss
-    pl_ = round(100.0 * sl / tot, 1) if tot > 0 else 50.0
+    pl_ = agg_prob_long(nl_t, ns_t, n_l, n_s)
     base = int(total) if total else counted
     need = max(AGG_MIN_COINS, int(math.ceil(AGG_MIN_SHARE * base)))
     enough = n >= need
     lean = None
     if enough:
-        lean = 'LONG' if pl_ - 50 > 5 else ('SHORT' if 50 - pl_ > 5 else None)
+        lean = 'LONG' if pl_ - 50 >= AGG_LEAN_PP else ('SHORT' if 50 - pl_ >= AGG_LEAN_PP else None)
     cand.sort(key=lambda x: (-x[0], x[1]))
     regime = None
     if counted and not enough:
@@ -551,6 +573,8 @@ def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING,
                            for c_, s_, p_ in cand[:3]],
             'coins': n, 'total': base, 'need': need, 'enough': enough, 'n_long': n_l, 'n_short': n_s,
             'sum_long': round(sl, 1), 'sum_short': round(ss, 1),
+            'net_long': round(nl_t, 1), 'net_short': round(ns_t, 1),
+            'lean_pp': AGG_LEAN_PP,
             'prob_long': pl_, 'lean': lean, 'fired_long': f_l, 'fired_short': f_s,
             'top_long': top['LONG'], 'top_short': top['SHORT']}
 

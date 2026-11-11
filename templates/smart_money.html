@@ -2973,8 +2973,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <th style="text-align:right" title="Ширина коробки останніх 24 год у % від ціни">Коробка</th>
                     <th style="text-align:right" title="Обʼєм останніх 12 год проти попередніх 72 (менше 1 — висихає)">Обʼєм</th>
                     <th title="Де монета зараз: у відкритій угоді / у черзі">📍</th>
+                    <th title="✋ Відкрити угоду вручну (як у 🔭 скані): підсвічено напрямок рядка; ворота не діють, лишаються технічні умови. Монета вже в угоді — «—».">✋ Угода</th>
                 </tr></thead>
-                <tbody id="spr-tbody"><tr><td colspan="12" class="tm-empty-msg">Завантаження…</td></tr></tbody>
+                <tbody id="spr-tbody"><tr><td colspan="13" class="tm-empty-msg">Завантаження…</td></tr></tbody>
             </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:6px">Аналізуються ЛИШЕ монети WATCHLIST · ЗАКРИТІ 1h-бари · перерахунок раз на годину з тих самих барів, що вже тягне сканер (без додаткових запитів до біржі).</div>
@@ -17214,7 +17215,6 @@ function _sprAggPaint(aggIn, elId, scope) {
     const lean = a.lean === 'LONG' ? `<span style="color:#4ade80;font-weight:700">▲ LONG ${pL.toFixed(0)}%</span>`
         : a.lean === 'SHORT' ? `<span style="color:#f87171;font-weight:700">▼ SHORT ${(100 - pL).toFixed(0)}%</span>`
         : `<span style="color:#cbd5e1;font-weight:700">⚖ рівновага ${pL.toFixed(0)}/${(100 - pL).toFixed(0)}</span>`;
-    const tot = (Number(a.sum_long) || 0) + (Number(a.sum_short) || 0);
     const enough = a.enough !== false;
     const top = (t, side) => t ? `<span class="spr-k">найсильніша ${side}</span><span style="font-family:monospace;color:${side === 'LONG' ? '#4ade80' : '#f87171'}">${t.symbol} ${Math.round(t.pot)}${t.move_pct != null ? ` · ${side === 'LONG' ? '+' : '−'}${Number(t.move_pct).toFixed(2)}%` : ''}</span>` : '';
     const fired = (a.fired_long || a.fired_short) ? `<span title="Уже вистрілили — у натяг не входять">· 💥 вистрілили: <span style="color:#4ade80">▲${a.fired_long || 0}</span> / <span style="color:#f87171">▼${a.fired_short || 0}</span></span>` : '';
@@ -17238,10 +17238,16 @@ function _sprAggPaint(aggIn, elId, scope) {
             + fired + top(a.top_long, 'LONG') + top(a.top_short, 'SHORT');
         return;
     }
+    // ⚖ Калібровка 11.11: смуга = та сама частка, що й вердикт (середнє чистої
+    // переваги натягу і частки монет); числа біля смуги — ЧИСТА перевага натягу.
+    const hasNet = a.net_long != null && a.net_short != null;
+    const vS = hasNet ? a.net_short : a.sum_short, vL = hasNet ? a.net_long : a.sum_long;
+    const lpp = Number(a.lean_pp) || 10;
+    const tip = `Частка LONG ${pL.toFixed(1)}% = середнє з двох мір: чиста перевага натягу (по кожній монеті рахується лише різниця потенціалів у бік переможця) — LONG ${Math.round(a.net_long || 0)} / SHORT ${Math.round(a.net_short || 0)} — і частка монет за напрямком 🟢 ${a.n_long} / 🔴 ${a.n_short}. Напрям — від ${50 + lpp}/${50 - lpp}. Повна сума потенціалів: LONG ${Math.round(a.sum_long || 0)} / SHORT ${Math.round(a.sum_short || 0)}. Монети із зарядом < 45 і вистрілені не враховуються.`;
     el.innerHTML = `<span class="spr-k">куди накручено ${SC}</span>`
-        + `<span style="font-family:monospace;color:#f87171">SHORT ${Math.round(a.sum_short || 0)}</span>`
-        + `<span title="Сума натягу LONG проти SHORT по ${a.coins} монетах із зарядом ≥ 45. Плоскі монети не враховуються — вони нічого не накручують; вистрілені теж — їхня пружина вже розпрямилась.">${_sprTugHTML(tot ? 200 * (a.sum_long || 0) / tot : 0, tot ? 200 * (a.sum_short || 0) / tot : 0, true)}</span>`
-        + `<span style="font-family:monospace;color:#4ade80">${Math.round(a.sum_long || 0)} LONG</span>`
+        + `<span style="font-family:monospace;color:#f87171" title="${tip}">SHORT ${Math.round(vS || 0)}</span>`
+        + `<span title="${tip}">${_sprTugHTML(2 * pL, 2 * (100 - pL), true)}</span>`
+        + `<span style="font-family:monospace;color:#4ade80" title="${tip}">${Math.round(vL || 0)} LONG</span>`
         + lean + `<span>· ${a.coins} монет: 🟢 ${a.n_long} / 🔴 ${a.n_short}</span>`
         + fired
         + top(a.top_long, 'LONG') + top(a.top_short, 'SHORT');
@@ -17355,13 +17361,14 @@ function sprRender() {
     if (tb.dataset.sig === sig) return;
     tb.dataset.sig = sig;
     if (!rows.length) {
-        tb.innerHTML = `<tr><td colspan="12" class="tm-empty-msg">${_sprRows.length ? 'Немає монет у цій вкладці' : 'Даних ще немає — сканер рахує «Пружину» на першому проході по WATCHLIST'}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="13" class="tm-empty-msg">${_sprRows.length ? 'Немає монет у цій вкладці' : 'Даних ще немає — сканер рахує «Пружину» на першому проході по WATCHLIST'}</td></tr>`;
         return;
     }
     // ✅ Монети, що ПРОХОДЯТЬ ворота «Пружини» у бік своєї вкладки — підсвічені
     // (вони ж ідуть у «Рекомендовані ботом» на інфосайті).
     tb.innerHTML = rows.map(r => {
-        const h = _sprRowHTML(r, minPot, mode, '', r.gate_ok ? 'background:rgba(74,222,128,0.07);' : '');
+        const h = _sprRowHTML(r, minPot, mode, '', r.gate_ok ? 'background:rgba(74,222,128,0.07);' : '')
+            .replace(/<\/tr>$/, _xsOpenCell(r, 'sprOpen') + '</tr>');
         // ✅ кант і позначка — ЛІВОРУЧ від назви монети (у першій комірці)
         return r.gate_ok ? h.replace('<td style="white-space:nowrap">', `<td style="white-space:nowrap;box-shadow:inset 3px 0 0 ${r.gate_side === 'LONG' ? '#4ade80' : '#f87171'}" title="Проходить ворота «Пружини» у бік ${r.gate_side}: потенціал і заряд ≥ порогів увімкнених воріт. Ця монета — у «Рекомендовані ботом» на інфосайті.">`) : h;
     }).join('');
@@ -17461,7 +17468,7 @@ async function sprLoad(force) {
             + `<span style="color:#f87171">⚠️ дані «Пружини» не отримано: ${why}</span>`
             + `<span>· повтор через 5с</span></div>`;
         const tb = document.getElementById('spr-tbody');
-        if (tb && !_sprRows.length) { tb.dataset.sig = ''; tb.innerHTML = `<tr><td colspan="12" class="tm-empty-msg">⚠️ ${why}</td></tr>`; }
+        if (tb && !_sprRows.length) { tb.dataset.sig = ''; tb.innerHTML = `<tr><td colspan="13" class="tm-empty-msg">⚠️ ${why}</td></tr>`; }
     };
     try {
         const r = await fetch('/api/spring/state');
@@ -17969,12 +17976,13 @@ function _xsTgCell(x) {
     return `<td style="white-space:nowrap">${b('1h')}${b('4h')}</td>`;
 }
 // ✋ Відкрити угоду з таблиці скану (вимога 10.11). Підсвічено напрямок рядка.
-function _xsOpenCell(x) {
+function _xsOpenCell(x, fn) {
+    fn = fn || 'xsprOpen';
     // Монета вже в угоді — це показує колонка «📍»; тут кнопок просто немає.
     if (x.trade_side) return `<td style="color:#4b5563;font-size:11px" title="Монета вже у відкритій угоді (див. 📍)">—</td>`;
     if (x.bybit === false) return `<td style="color:#6b7280;font-size:11px" title="Монети немає на Bybit — угоду не відкрити">—</td>`;
     const rec = x.dir || x.lean || '';
-    const b = sd => `<button class="xs-open xs-open-${sd === 'LONG' ? 'l' : 's'}${rec === sd ? ' rec' : ''}" onclick="xsprOpen('${x.symbol}','${sd}')" title="✋ Відкрити ${sd} по ${x.symbol}${rec === sd ? ' (напрямок рядка)' : (rec ? ' — ПРОТИ напрямку рядка (' + rec + ')' : '')}">${sd === 'LONG' ? '▲ L' : '▼ S'}</button>`;
+    const b = sd => `<button class="xs-open xs-open-${sd === 'LONG' ? 'l' : 's'}${rec === sd ? ' rec' : ''}" onclick="${fn}('${x.symbol}','${sd}')" title="✋ Відкрити ${sd} по ${x.symbol}${rec === sd ? ' (напрямок рядка)' : (rec ? ' — ПРОТИ напрямку рядка (' + rec + ')' : '')}">${sd === 'LONG' ? '▲ L' : '▼ S'}</button>`;
     return `<td style="white-space:nowrap">${b('LONG')}${b('SHORT')}</td>`;
 }
 async function xsprOpen(sym, side) {
@@ -17989,6 +17997,22 @@ async function xsprOpen(sym, side) {
         if (!d.ok) throw new Error(d.reason || 'відмова сервера');
         alert('✅ ' + sym + ' ' + side + ' — відкрито');
         xsprLoad(true);
+        if (typeof loadTMState === 'function') loadTMState(true);
+    } catch (e) { alert('Не відкрито: ' + (e && e.message || e)); }
+}
+// ✋ Відкрити угоду з таблиці 🌀 Пружина (WATCHLIST) — той самий алгоритм, що 🔭.
+async function sprOpen(sym, side) {
+    const row = _sprRows.find(r => r.symbol === sym) || {};
+    const rec = row.dir || row.lean || '';
+    if (!confirm('✋ Відкрити ' + side + ' по ' + sym + '?' + (rec && rec !== side ? '\n⚠ Напрямок рядка — ' + rec + '.' : ''))) return;
+    try {
+        const r = await fetch('/api/spring/open', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: sym, side})});
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.reason || 'відмова сервера');
+        alert('✅ ' + sym + ' ' + side + ' — відкрито');
+        sprLoad(true);
         if (typeof loadTMState === 'function') loadTMState(true);
     } catch (e) { alert('Не відкрито: ' + (e && e.message || e)); }
 }
@@ -18817,7 +18841,7 @@ const SIGNAL_BADGES_JS = {
 const ENGINE_BADGES_JS = {
     'Q1': '🎯 Черга-1', 'Q2': '🎯 Черга-2', 'Q3': '🎯 Готовність', 'Q4': '🎯 Черга-4',
     'Q3-VOB(funding)': '💰 VOB+Шари', 'POC-сетап': '🎯 POC-сетап',
-    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-Trend', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Local', 'MMP': '🧭 МММ-Pull', 'MMD': '🧠 МММ-Decision', 'MMR': '🧩 МММ-Готовність', 'MMS': '🔔 МММ-SBR', 'XSPR': '🔭 Пружина-скан',
+    'MMM': '🧮 МММ-монітор', 'MMN': '🧮 МММ-Trend', 'MMC': '⚡ МММ-CTR', 'MMF': '🔮 МММ-Local', 'MMP': '🧭 МММ-Pull', 'MMD': '🧠 МММ-Decision', 'MMR': '🧩 МММ-Готовність', 'MMS': '🔔 МММ-SBR', 'XSPR': '🔭 Пружина-скан', 'SPR': '🌀 Пружина',
     'EXH': '🔥 Виснаженість', 'FF': '🔥 FF', 'direct': '⚡ Прямий',
 };
 const SIGNAL_ICON_JS = {
@@ -18827,12 +18851,12 @@ const SIGNAL_ICON_JS = {
     'poc': '🎯', 'opp': '🔄', 'external': '🔌', 'manual': '✋',
     'manual_ui': '✋', 'manual_ui_overflow': '✋',
     'Q3-VOB(funding)': '💰', 'POC-сетап': '🎯', 'EXH': '🔥', 'FF': '🔥',
-    'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩', 'MMS': '🔔', 'XSPR': '🔭',
+    'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩', 'MMS': '🔔', 'XSPR': '🔭', 'SPR': '🌀',
 };
 // Двигун, чия картинка ПЕРЕКРИВАЄ картинку сигналу: угоди 🧮 МММ-монітора
 // йдуть від того самого `vob_alert`, що й угоди Черги-4, тож 🟪 їх не
 // розрізняло. Мітка у підказці лишається повною.
-const ENGINE_ICON_OVERRIDE_JS = { 'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩', 'MMS': '🔔', 'XSPR': '🔭' };
+const ENGINE_ICON_OVERRIDE_JS = { 'MMM': '🧮', 'MMN': '🧮', 'MMC': '⚡', 'MMF': '🔮', 'MMP': '🧭', 'MMD': '🧠', 'MMR': '🧩', 'MMS': '🔔', 'XSPR': '🔭', 'SPR': '🌀' };
 function signalCodeOf(raw) {
     if (!raw) return '';
     return String(raw).split(' · ')[0].split(' → ')[0].trim();
