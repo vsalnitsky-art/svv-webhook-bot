@@ -605,6 +605,17 @@ def _compute(sc, kind, sym, tf):
                      reverse=True)
             vz = [z for z in (sc._format_vob(o, tf) for o in obs) if z]
         return {'vz': vz}, min(next_close(now, tf), now + VOB_MAX_TTL)
+    if kind == 'spring':
+        # 📊 «Пружина» на барах цього TF для групи 15m «Рекомендовані ботом» —
+        # ТОЙ САМИЙ `spring_coil.analyze`, лише закриті бари, раз на закриття.
+        from detection.spring_coil import analyze
+        sk = md.fetch_klines(sym, limit=REC_SPRING15_BARS, interval=tf)
+        b = bar_sec(tf)
+        cl = [x for x in (sk or []) if to_sec(x.get('t')) and to_sec(x.get('t')) + b <= now]
+        rec = analyze(cl)
+        if not rec.get('ok', True) and rec.get('reason'):
+            raise ValueError(rec['reason'])
+        return {'rec': rec}, next_close(now, tf) + SETTLE_SEC
     if kind == 'shl':
         # 🏁 Swing High / Low — ТА САМА функція бота, що лінії Strong/Weak на
         # графіку /smart-money (дилінг-діапазон = єдине джерело з PD-зоною).
@@ -1544,6 +1555,10 @@ def rec_prob(row):
 # в бік угоди не дав. Буфер / стеля / гарантія % — ті самі налаштування, що в
 # угод (`queue3_vob_sl_buffer_pct`, `autosl_max_pct`, `autosl_fallback_pct`).
 REC_SL_TFS = ('1h', '15m', '5m')
+# 📊 Дві групи розрахунку (вимога 11.11): 1H — SL з OB 1H, TP/хід з Пружини на
+# 1h-барах; 15m — SL з OB 15m (→ 5m), TP/хід з Пружини на 15m-барах.
+REC_GROUP_TFS = {'1h': ('1h',), '15m': ('15m', '5m')}
+REC_SPRING15_BARS = 300
 
 
 def rec_ob_level(zones, side, price, buf=0.0):
@@ -1576,7 +1591,7 @@ def rec_ob_level(zones, side, price, buf=0.0):
     return None
 
 
-def rec_sl_from_obs(zs, side, price, s=None):
+def rec_sl_from_obs(zs, side, price, s=None, tfs=REC_SL_TFS):
     """ЧИСТА: сходи TF → {'sl', 'pct', 'label', 'tf', 'fb'} або {'wait': True}.
 
     `zs` = {tf: zones | None}; None = блоки цього TF ще рахуються → чекаємо
@@ -1598,7 +1613,7 @@ def rec_sl_from_obs(zs, side, price, s=None):
     except (TypeError, ValueError):
         mx = 0.0
     lvl, label, tf_hit, fb = None, '', '', False
-    for i, tf in enumerate(REC_SL_TFS):
+    for i, tf in enumerate(tfs):
         if tf not in zs or zs.get(tf) is None:
             return {'wait': True, 'label': f'рахується OB {tf.upper()}'}
         got = rec_ob_level(zs.get(tf), side, px, buf)
@@ -1612,7 +1627,7 @@ def rec_sl_from_obs(zs, side, price, s=None):
         label += f' · стеля {mx:g}%'
     if lvl is None:
         if not s.get('autosl_fallback_on', True):
-            return {'sl': None, 'label': 'OB у бік угоди немає на 1H/15m/5m'}
+            return {'sl': None, 'label': 'OB у бік угоди немає на ' + '/'.join(t.upper() for t in tfs)}
         try:
             p = float(s.get('autosl_fallback_pct', 2.0) or 2.0)
         except (TypeError, ValueError):
@@ -1623,11 +1638,11 @@ def rec_sl_from_obs(zs, side, price, s=None):
             'label': label, 'tf': tf_hit, 'fb': fb}
 
 
-def rec_sl_get(sc, sym, side, price, s=None):
+def rec_sl_get(sc, sym, side, price, s=None, tfs=REC_SL_TFS):
     """Збирає блоки сходами (лише поки старший TF не дав рівня) → SL. Без мережі:
     чого немає в кеші — ставиться у фоновий потік і чекає («⏳»)."""
     zs = {}
-    for tf in REC_SL_TFS:
+    for tf in tfs:
         d, err = part(sc, 'ob', sym, tf) if sc is not None else (None, 'немає сканера')
         if d is None:
             zs[tf] = {} if err else None
@@ -1637,7 +1652,51 @@ def rec_sl_get(sc, sym, side, price, s=None):
         zs[tf] = d.get('zones') or {}
         if rec_ob_level(zs[tf], side, price):
             break
-    return rec_sl_from_obs(zs, side, price, s)
+    return rec_sl_from_obs(zs, side, price, s, tfs)
+
+
+def rec_group(side, spr, sl):
+    """ЧИСТА: група розрахунку одного TF → {price, sl, sl_pct, sl_tf, sl_label,
+    sl_fb, sl_wait, tp, tp_pct, rr, prob, wait}.
+
+    `spr` — запис Пружини цього TF (`analyze`): ціна, ціль «Ймовірного ходу» в
+    бік рядка (ціль позаду ціни → TP немає), ймовірність. None → ще рахується."""
+    out = {'price': None, 'sl': None, 'sl_pct': None, 'sl_tf': '', 'sl_label': '',
+           'sl_fb': False, 'sl_wait': bool((sl or {}).get('wait')), 'tp': None,
+           'tp_pct': None, 'rr': None, 'prob': None, 'wait': spr is None}
+    if side not in ('LONG', 'SHORT'):
+        return out
+    up = side == 'LONG'
+    if isinstance(spr, dict) and spr.get('ok', True):
+        try:
+            px = float(spr.get('price') or 0)
+        except (TypeError, ValueError):
+            px = 0.0
+        out['price'] = px or None
+        try:
+            pl = float(spr.get('prob_long'))
+            out['prob'] = round(pl if up else 100.0 - pl, 1)
+        except (TypeError, ValueError):
+            pass
+        tp = spr.get('tgt_long' if up else 'tgt_short')
+        mv = spr.get('move_long_pct' if up else 'move_short_pct')
+        try:
+            if tp and float(mv) > 0:
+                out['tp'], out['tp_pct'] = float(tp), float(mv)
+        except (TypeError, ValueError):
+            pass
+    if sl and sl.get('sl'):
+        out.update(sl=sl['sl'], sl_pct=sl.get('pct'), sl_label=sl.get('label') or '',
+                   sl_fb=bool(sl.get('fb')), sl_tf=sl.get('tf') or '')
+        try:
+            risk = abs(float(sl['pct']))
+            if out['tp_pct'] and risk > 0:
+                out['rr'] = round(float(out['tp_pct']) / risk, 2)
+        except (TypeError, ValueError, KeyError):
+            pass
+    elif sl:
+        out['sl_label'] = sl.get('label') or ''
+    return out
 
 
 def rec_levels(row, sl=None):
@@ -1694,6 +1753,16 @@ def spb_track(prev, lean, now, data_ts=None):
     return {'lean': lean, 'since': float(ts)}
 
 
+def spb_combined(leans):
+    """ЧИСТА: спільний напрямок банера (один таймер, вимога 11.11). Обидві
+    пружини в один бік → він; одна з напрямком, друга ⚖ → її бік; протилежні →
+    FLAT; даних немає ні в кого → None."""
+    ds = [x for x in leans if x in ('LONG', 'SHORT')]
+    if not ds:
+        return 'FLAT' if any(x == 'FLAT' for x in leans) else None
+    return ds[0] if all(x == ds[0] for x in ds) else 'FLAT'
+
+
 def spb_view(key, label, agg, st):
     """ЧИСТА: рядок банера для сторінки."""
     if not isinstance(agg, dict):
@@ -1729,14 +1798,14 @@ def spring_banners(sc, eng, now):
             if isinstance(raw, str):
                 raw = json.loads(raw)
             if isinstance(raw, dict):
-                for k in ('scan', 'wl'):
+                for k in ('scan', 'wl', 'all'):
                     v = raw.get(k)
                     if isinstance(v, dict) and v.get('lean') and v.get('since'):
                         _spb_state[k] = {'lean': v['lean'], 'since': float(v['since'])}
         except Exception:
             pass
     out, changed = [], False
-    src = []
+    src, leans, tss = [], [], []
     try:
         if eng is not None:
             st = eng.state().get('result') or {}
@@ -1756,6 +1825,12 @@ def spring_banners(sc, eng, now):
         pass
     for key, label, agg, ts in src:
         prev = _spb_state.get(key)
+        leans.append(spb_lean_of(agg))
+        try:
+            if ts:
+                tss.append(float(ts))
+        except (TypeError, ValueError):
+            pass
         nxt = spb_track(prev, spb_lean_of(agg), now, ts)
         if nxt and nxt != prev:
             _spb_state[key] = nxt
@@ -1763,6 +1838,15 @@ def spring_banners(sc, eng, now):
         v = spb_view(key, SPB_EX_LABEL.get(label, label.title()), agg, _spb_state.get(key))
         v['ex'] = label
         out.append(v)
+    # ⏱ ОДИН таймер на банер: відколи тримається СПІЛЬНИЙ напрямок обох пружин.
+    prev = _spb_state.get('all')
+    nxt = spb_track(prev, spb_combined(leans) if src else None, now, max(tss) if tss else None)
+    if nxt and nxt != prev:
+        _spb_state['all'] = nxt
+        changed = True
+    if out:
+        a = _spb_state.get('all') or {}
+        out.append({'key': 'all', 'ok': bool(a), 'lean': a.get('lean'), 'since': a.get('since')})
     if changed:
         db = _spb_db()
         try:
@@ -1807,11 +1891,23 @@ def recommended_payload(now=None):
     for r in rows:
         if r.get('side') in ('LONG', 'SHORT'):
             try:
-                h = rec_sl_get(sc, r['symbol'], r['side'], r.get('price'), ffs)
+                h = rec_sl_get(sc, r['symbol'], r['side'], r.get('price'), ffs,
+                               REC_GROUP_TFS['1h'])
             except Exception as e:
                 h = {'sl': None, 'label': f'помилка: {str(e)[:60]}'}
             r.update(rec_levels(r, h))
             r['sl_wait'] = bool(h.get('wait'))
+            # 📊 Група 15m: Пружина на 15m-барах + SL з OB 15m → 5m.
+            try:
+                d15, e15 = part(sc, 'spring', r['symbol'], '15m') if sc is not None else (None, 'немає сканера')
+                spr15 = (d15 or {}).get('rec') if d15 else ({'ok': False} if e15 else None)
+                px15 = (spr15 or {}).get('price') or r.get('price')
+                h15 = rec_sl_get(sc, r['symbol'], r['side'], px15, ffs, REC_GROUP_TFS['15m'])
+                r['m15'] = rec_group(r['side'], spr15, h15)
+                if e15 and not d15:
+                    r['m15']['err'] = e15[:80]
+            except Exception as e:
+                r['m15'] = {'err': str(e)[:80]}
     try:
         banners = spring_banners(sc, eng, now)
     except Exception:

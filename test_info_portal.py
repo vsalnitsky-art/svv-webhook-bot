@@ -886,6 +886,43 @@ def test_spring_banner_both_books_with_timer():
     assert "'banners': banners" in open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
 
 
+
+def test_rec_two_groups_and_single_timer():
+    """📊 Дві групи 1H / 15m у «Рекомендовані ботом» і ОДИН таймер банера
+    (вимога 11.11)."""
+    ip = _load('info_portal_grp', 'web/info_portal.py')
+    assert ip.REC_GROUP_TFS == {'1h': ('1h',), '15m': ('15m', '5m')}
+    spr = {'price': 100.0, 'prob_long': 30.0, 'tgt_long': 104.0, 'tgt_short': 94.0,
+           'move_long_pct': 4.0, 'move_short_pct': 6.0}
+    g = ip.rec_group('SHORT', spr, {'sl': 103.0, 'pct': 3.0, 'tf': '15m', 'label': 'OB 15M'})
+    assert g['tp'] == 94.0 and g['tp_pct'] == 6.0 and g['rr'] == 2.0 and g['prob'] == 70.0
+    assert g['sl_tf'] == '15m' and not g['wait']
+    # ціль позаду ціни → TP немає
+    assert ip.rec_group('LONG', dict(spr, move_long_pct=-1.0), None)['tp'] is None
+    assert ip.rec_group('LONG', None, {'wait': True})['wait'] is True
+    # SL групи 15m — лише 15m → 5m (1H не підставляється)
+    z = {'internal': [{'bias': 'BEARISH', 'bar_high': 105.0, 'bar_low': 103.0, 'bar_time': 1}]}
+    r = ip.rec_sl_from_obs({'15m': {}, '5m': z}, 'SHORT', 100.0,
+                           {'queue3_vob_sl_buffer_pct': 0.0}, ip.REC_GROUP_TFS['15m'])
+    assert r['sl'] == 105.0 and r['tf'] == '5m'
+    # один спільний таймер
+    assert ip.spb_combined(['LONG', 'LONG']) == 'LONG'
+    assert ip.spb_combined(['SHORT', 'FLAT']) == 'SHORT'
+    assert ip.spb_combined(['LONG', 'SHORT']) == 'FLAT'
+    assert ip.spb_combined([None, None]) is None
+    html = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
+    blk = html[html.index('id="spb-card"'):html.index('id="rec-card"')]
+    assert blk.count('class="spb-tm"') == 1 and blk.index('spb-title') < blk.index('spb-tm')
+    tb = html[html.index('id="rec-tbl"'):]
+    assert '⏱ 1H' in tb and '⏱ 15m' in tb and 'colspan="10"' in tb
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    side = js[js.index('function spbSide('):js.index('function spbRender(')]
+    assert 'spb-tm' not in side, 'таймер лише один — посередині'
+    assert 'function recGroupCells(' in js and 'r.m15' in js
+    css = open(os.path.join(_HERE, 'infosite', 'style.css'), encoding='utf-8').read()
+    assert '#spb-wl .spb-h { flex-direction: row-reverse; }' in css
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:

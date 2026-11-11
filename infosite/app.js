@@ -1506,13 +1506,21 @@
   function recChCol(c) { return c >= 85 ? "#fb923c" : c >= 65 ? "#facc15" : "#a78bfa"; }
   function recPath(r, up) {
     var sl = Number(r.sl), tp = Number(r.tp), px = Number(r.price);
-    if (!(sl > 0 && tp > 0 && px > 0)) return rs(120, '<span class="muted" title="' + esc(r.sl_label || "") + '">' + (r.sl_wait ? "⏳" : "—") + "</span>", "c") + rs(44, "");
+    if (!(sl > 0 && tp > 0 && px > 0)) return rs(120, '<span class="muted" title="' + esc(r.sl_label || "") + '">' + (r.sl_wait || r.wait ? "⏳" : "—") + "</span>", "c") + rs(44, "");
     var lo = Math.min(sl, tp), hi = Math.max(sl, tp), pos = hi > lo ? (px - lo) / (hi - lo) * 100 : 50;
     pos = Math.max(0, Math.min(100, pos)); var p0 = pos.toFixed(0);
-    var grad = up ? "linear-gradient(90deg,#ef4444,#f59e0b " + (pos / 2).toFixed(0) + "%,#64748b " + p0 + "%,#22c55e)" : "linear-gradient(90deg,#22c55e,#64748b " + p0 + "%,#f59e0b " + ((pos + 100) / 2).toFixed(0) + "%,#ef4444)";
+    var grad = up ? "linear-gradient(90deg,#ff3b3b,#ffb020 " + (pos / 2).toFixed(0) + "%,#94a3b8 " + p0 + "%,#00e676)" : "linear-gradient(90deg,#00e676,#94a3b8 " + p0 + "%,#ffb020 " + ((pos + 100) / 2).toFixed(0) + "%,#ff3b3b)";
     var rr = Number(r.rr), rrc = !isFinite(rr) ? "" : rr >= 1.5 ? "rr-good" : rr >= 1 ? "rr-mid" : "rr-bad";
     return '<span class="rec-path" title="Ризик ' + recPct(r.sl_pct) + " · хід " + recPct(r.tp_pct) + (isFinite(rr) ? " · R " + rr.toFixed(2) : "") + '"><span class="bar" style="background:' + grad + '">' +
       '<i style="left:' + pos.toFixed(1) + '%"></i></span></span>' + rs(44, isFinite(rr) ? '<b class="rr ' + rrc + '">' + rr.toFixed(2) + "R</b>" : "", "r");
+  }
+  // 📊 Група розрахунку одного TF (1H / 15m): 🛑 SL · 🎯 TP · Хід (вимога 11.11).
+  function recGroupCells(g, up, cls) {
+    var sl = Number(g.sl) > 0, tp = Number(g.tp) > 0;
+    var wt = '<span class="muted" title="' + esc(g.err || g.sl_label || "рахується") + '">' + (g.wait || g.sl_wait ? "⏳" : "—") + "</span>";
+    var slC = sl ? '<span class="rec-lv sl">' + rs(84, fmtPrice(g.sl), "r") + rs(58, "<small>" + recPct(g.sl_pct) + "</small>", "r") + rs(28, '<small class="rec-tf" title="' + esc(g.sl_label || "") + '">' + esc(String(g.sl_tf || "").toUpperCase()) + "</small>", "r") + "</span>" : rs(170, wt, "r");
+    var tpC = tp ? '<span class="rec-lv tp">' + rs(84, fmtPrice(g.tp), "r") + rs(58, "<small>" + recPct(g.tp_pct) + "</small>", "r") + "</span>" : rs(142, g.wait ? wt : '<span class="muted" title="Цілі в бік угоди немає">—</span>', "r");
+    return '<td class="r ' + cls + ' gs">' + slC + '</td><td class="r ' + cls + '">' + tpC + '</td><td class="c ' + cls + '">' + recPath(g, up) + "</td>";
   }
   function recRow(r) {
     var sd = recSide(r), up = sd === "LONG", dc = sd ? (up ? "up" : "dn") : "";
@@ -1523,12 +1531,10 @@
     var chCell = '<span class="rec-ch"><i style="width:' + ch + "%;background:linear-gradient(90deg,#a78bfa," + recChCol(ch) + ')"></i></span>' + rs(26, '<b style="color:' + recChCol(ch) + '">' + ch + "</b>", "r") + rs(30, chD ? '<small class="' + (chD > 0 ? "pp-up" : "pp-dn") + '">' + (chD > 0 ? "▲" : "▼") + Math.abs(chD) + "</small>" : "", "l");
     var pr = prob != null && isFinite(prob) ? prob : null;
     var prCell = pr == null ? rs(100, "—", "r") : '<span class="rec-prob ' + dc + '"><i style="width:' + Math.max(0, Math.min(100, pr)).toFixed(0) + '%"></i></span>' + rs(40, '<b class="rec-' + dc + '">' + pr.toFixed(0) + "%</b>", "r");
-    var slCell = r.sl > 0 ? '<span class="rec-lv sl">' + rs(96, fmtPrice(r.sl), "r") + rs(64, "<small>" + recPct(r.sl_pct) + "</small>", "r") + rs(30, '<small class="rec-tf">' + esc(String(r.sl_tf || "").toUpperCase()) + "</small>", "r") + "</span>" : rs(190, "—", "r");
-    var tpCell = r.tp > 0 ? '<span class="rec-lv tp">' + rs(96, fmtPrice(r.tp), "r") + rs(64, "<small>" + recPct(r.tp_pct) + "</small>", "r") + "</span>" : rs(160, "—", "r");
+    var g1 = recGroupCells(r, up, "g1"), g15 = recGroupCells(r.m15 || { wait: true }, up, "g15");
     return '<tr class="rec-row ' + dc + '"><td class="sym">' + icon + tvSym(r.symbol) + nb + "</td>" +
       '<td><span class="rec-dir ' + dc + '">' + (sd ? (up ? "▲ LONG" : "▼ SHORT") : "⚖") + "</span></td>" +
-      '<td class="r">' + prCell + "</td>" + '<td class="r">' + slCell + "</td>" + '<td class="r">' + tpCell + "</td>" +
-      '<td class="c">' + recPath(r, up) + "</td>" + '<td class="r">' + chCell + "</td></tr>";
+      '<td class="r">' + prCell + "</td>" + g1 + g15 + '<td class="r">' + chCell + "</td></tr>";
   }
   function recRender() {
     var rows = REC.rows || [], n = { all: rows.length, LONG: 0, SHORT: 0 };
@@ -1536,7 +1542,7 @@
     var lbl = { all: "Всі", LONG: "🟢 LONG", SHORT: "🔴 SHORT" };
     document.querySelectorAll("#rec-tabs button[data-d]").forEach(function (b) { var d = b.getAttribute("data-d"); b.textContent = lbl[d] + " (" + n[d] + ")"; b.classList.toggle("on", d === REC.dir); });
     var vis = rows.filter(function (r) { return REC.dir === "all" || recSide(r) === REC.dir; }), tb = $("#rec-tbl tbody");
-    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="7" class="muted">' + (rows.length ? "Немає монет у цій вкладці" : "Зараз немає рекомендованих монет") + "</td></tr>";
+    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="10" class="muted">' + (rows.length ? "Немає монет у цій вкладці" : "Зараз немає рекомендованих монет") + "</td></tr>";
     var rn = $("#rec-note"); if (rn) rn.textContent = new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
   }
   // ⚖ Банер «SMC Forecast» (вимога 11.11): куди накручено пружину — 🔭 скан біржі
@@ -1578,11 +1584,10 @@
     var tip = "▲ LONG " + pl.toFixed(1) + "% · ▼ SHORT " + ps.toFixed(1) + "% · заряджених " + b.coins + " з " + b.total + " (потрібно ≥ " + b.need + ") · у бік LONG " + b.n_long + " / SHORT " + b.n_short + (b.fired_long || b.fired_short ? " · 💥 вистрілили ▲" + b.fired_long + " / ▼" + b.fired_short : "");
     // Подвійна смуга: зелена LONG ліворуч → плавний перехід → червона SHORT праворуч.
     var a = Math.max(0, pl - 7).toFixed(1), z = Math.min(100, pl + 7).toFixed(1);
-    var grad = "linear-gradient(90deg,#15803d 0%,#22c55e " + a + "%,#ef4444 " + z + "%,#b91c1c 100%)";
+    var grad = "linear-gradient(90deg,#00c853 0%,#00e676 " + a + "%,#ff3d3d " + z + "%,#ff1744 100%)";
     return head + '<span class="spb-st ' + st[1] + '">' + st[0] + "</span></div>" +
       '<div class="spb-bar' + (dir ? "" : " mute") + '" title="' + esc(tip) + '" style="background:' + grad + '">' +
-        '<em class="l' + (pl >= ps ? " win" : "") + '">▲ ' + Math.round(pl) + '%</em><em class="r' + (ps > pl ? " win" : "") + '">' + Math.round(ps) + "% ▼</em></div>" +
-      '<div class="spb-tm" data-since="' + (b.since || 0) + '">' + (b.since ? spbFlipHTML(b.since) : '<span class="muted">—</span>') + "</div>";
+        '<em class="l' + (pl >= ps ? " win" : "") + '">▲ ' + Math.round(pl) + '%</em><em class="r' + (ps > pl ? " win" : "") + '">' + Math.round(ps) + "% ▼</em></div>";
   }
   function spbRender(d) {
     var card = $("#spb-card"); if (!card) return;
@@ -1595,6 +1600,15 @@
       var el = $(k[1]); if (!el) return;
       el.innerHTML = by[k[0]] ? spbSide(by[k[0]]) : ""; el.style.visibility = by[k[0]] ? "" : "hidden";
     });
+    // ⏱ ОДИН таймер (вимога 11.11): відколи тримається спільний напрямок обох пружин.
+    var tm = $("#spb-tm"), a = by.all || {};
+    if (tm) {
+      var lc = a.lean === "LONG" ? "up" : a.lean === "SHORT" ? "dn" : "flat";
+      tm.className = "spb-tm " + lc;
+      tm.title = "Спільний напрямок обох пружин: " + (a.lean === "LONG" ? "LONG" : a.lean === "SHORT" ? "SHORT" : "⚖ рівновага / розбіжність") + " — тримається стільки";
+      if (a.since) { if (Number(tm.getAttribute("data-since")) !== Number(a.since) || !tm.querySelector(".fl")) { tm.setAttribute("data-since", a.since); tm.innerHTML = spbFlipHTML(a.since); } }
+      else { tm.removeAttribute("data-since"); tm.innerHTML = '<span class="muted">—</span>'; }
+    }
   }
   setInterval(function () { document.querySelectorAll(".spb-tm[data-since]").forEach(spbFlipTick); }, 1000);
   function loadRec() {
