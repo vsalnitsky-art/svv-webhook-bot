@@ -24,6 +24,7 @@ paper_size = tm_mod.paper_size
 _HTML = open(os.path.join(_HERE, 'templates', 'smart_money.html'), encoding='utf-8').read()
 _FLASK = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
 _IJS = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+_SRC = open(os.path.join(_HERE, 'detection', 'trade_manager.py'), encoding='utf-8').read()
 _IHTML = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
 _IPORT = open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
 
@@ -89,7 +90,8 @@ def test_account_and_late_sizing():
     _check(acc['deposit'] == 1000.0 and acc['closed_balance'] == 1012.5 and acc['wallet'] == 1012.0, acc)
     # equity = гаманець + нереалізований (+4% × $1000 = +$40) — він і база наступної угоди
     _check(acc['unrealized_usd'] == 40.0 and acc['equity'] == 1052.0 and acc['balance'] == acc['equity'], acc)
-    _check(acc['margin_used'] == 100.0 and acc['available'] == 952.0, acc)
+    # 11.11: вільні = гаманець − маржа відкритих; незафіксований ПРИБУТОК не рахується
+    _check(acc['margin_used'] == 100.0 and acc['available'] == 912.0 and acc['base'] == 912.0, acc)
     _check(acc['leverage'] == 10 and acc['margin_usd'] == 100.0, acc)
     print('✓ віртуальний рахунок: депозит + реалізований + нереалізований')
 
@@ -191,7 +193,7 @@ def test_margin_pct_is_from_balance_at_open_0811():
     acc = TM.paper_account(t)
     _check(acc['balance'] == 1200.0 and acc['margin_usd'] == 36.0, acc)
     _check('_tmPaperBase()' in _HTML and 'id="tmpq-bal"' in _HTML, 'бот показує баланс')
-    _check('usd(a.equity' in _IJS, 'інфосайт показує базу угоди (equity)')
+    _check('usd(a.available' in _IJS, 'інфосайт показує базу угоди (вільні кошти)')
     print('✓ % угоди — від наявного балансу на момент відкриття')
 
 
@@ -228,9 +230,27 @@ def test_exchange_like_account_0811():
     r = TM._paper_pnl(sz, 2.0, 2.1, 'LONG', remaining=0.5, part_usd=15.0, part_fees=0.189)
     _check(abs(r['gross_usd'] - 30.0) < 1e-6, r)
     _check(abs(r['fees_usd'] - (0.36 + 0.189 + 300 * 1.05 * 0.0006)) < 1e-6, r)
-    _check('_tmPaperNextMargin' in _HTML and 'від equity' in _HTML, 'бот показує equity')
-    _check('від equity' in _IJS and 'closed_balance' in _IJS, 'інфосайт показує equity')
+    _check('_tmPaperNextMargin' in _HTML and 'від вільних' in _HTML, 'бот показує базу — вільні кошти')
+    _check('від вільних' in _IJS and 'closed_balance' in _IJS, 'інфосайт показує базу — вільні кошти')
     print('✓ рахунок як на біржі: equity · вільні кошти · комісія входу · часткові')
+
+
+def test_base_is_free_cash_like_exchange_1111():
+    """🏦 11.11: «біржа не використовує кеш, який в угоді, і не рахує прибуток,
+    що ще в угоді». База % = гаманець − маржа відкритих + незафіксований ЗБИТОК."""
+    from detection.trade_manager import paper_position_now, paper_ledger
+    s = {'paper_deposit': 1000.0, 'paper_leverage': 20, 'paper_margin_pct': 3, 'paper_fee_pct': 0.06}
+    sz = paper_size(s, 2.0, None, balance=1000.0)
+    win = paper_position_now('LONG', 2.0, 2.1, sz)          # +$30 незафіксованого прибутку
+    led = paper_ledger(1000.0, 0.0, [win])
+    _check(abs(led['equity'] - (1000 - 0.36 + 30)) < 0.01, led)
+    _check(abs(led['available'] - (1000 - 0.36 - 30)) < 0.01, 'прибуток у угоді не рахується, маржа зайнята')
+    lose = paper_position_now('LONG', 2.0, 1.9, sz)          # −$30 збитку
+    led2 = paper_ledger(1000.0, 0.0, [lose])
+    _check(abs(led2['available'] - (1000 - 0.36 - 30 - 30)) < 0.01, 'незафіксований збиток зменшує вільні')
+    _check('balance=led.get(\'available\')' in _SRC and "balance=led['available']" in _SRC,
+           'розмір і картка рахуються від вільних коштів')
+    print('✓ база % угоди = вільні кошти (без маржі відкритих і їхнього прибутку)')
 
 
 if __name__ == '__main__':

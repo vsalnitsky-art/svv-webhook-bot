@@ -8465,3 +8465,34 @@ Heikin-Ashi, лог-шкала, лінійка, скріншот, локальн
   SBR», і 🧱-автомат. OB 4H/1H поза watchlist і далі не показуються.
 - 🔭 скан-таблиця: «✋ Угода» для монети в угоді — «—» (статус уже в «📍»).
 Тести: `test_unwatched_state.py` (5, замок переписано), `test_spring_fired_exit.py` (10).
+
+## 🌀 СКАН WATCHLIST · 🎯 % ДО ЦІЛІ В 🚨 · 🏦 БАЗА PAPER = ВІЛЬНІ · 📌 ШАПКА (11.11)
+1-2. **🌀 Пружина WATCHLIST: ручний скан + автоскан** «як у 🔭 скані біржі».
+- `spring_scan.SpringWlScan` (`init_spring_wl_scan`/`get_spring_wl_scan`, старт
+  у `flask_app` поряд зі 🔭): WATCHLIST → 300 закритих 1h-барів **Bybit** (біржа
+  бота) → СПІЛЬНИЙ `analyze_many` (винесено з `SpringScan._analyze_many`) →
+  `SMCScanner.spring_put(S, rec)` (лише монети watchlist, при `spring_enabled`).
+  Таблиця, ворота й банер читають той самий `_spring`. Черга сканів
+  `spring-wl-scan`; 🌀 вимкнено → відмова.
+- `auto_on` (деф. **ВИМК**) / `auto_min` (деф. 30, 5…1440), невдача → повтор
+  через 300с; ключі БД `spring_wl_scan_settings` / `spring_wl_scan_v1` (↻).
+  Сканер і далі перераховує монети на кожному закритому 1h-барі (крок 6).
+- API `POST /api/spring-wl-scan/run` · `/settings` {auto_on, auto_min}; стан —
+  поле `wl_scan` у `/api/spring/state`. UI: `.xs-ctrl` (`sprw-run`, `sprw-auto`,
+  `sprw-auto-min`) + `#sprw-viz` (`sprwPaint` — ті самі `_xsSteps` з
+  `kind:'wl'`, `_xsKpi`, `_xsMix`, стрічка чипів); під час скану полл 1с.
+3. **🚨 + 🎯 % до ймовірної цілі:** `trade_exhaustion` віддає ще `prog` —
+   ЗНАКОВИЙ прогрес до цілі Пружини (мінус = ціна проти угоди, >100 = понад
+   ціль); `pct` («💥 Виснаження») лишився 0..100. Бот `exhProgHTML` (у
+   `mmdAlertCellHTML`, і поруч із трейлом SBR), інфосайт `ppProg`.
+4. **🧪 База % угоди = ВІЛЬНІ кошти** (ЗАМІЩУЄ «від equity» 08.11): дослівно
+   «біржа не використовує кеш, який в угоді, і не рахує прибуток, що ще в угоді».
+   `paper_ledger`: `available` = `base` = гаманець − маржа відкритих +
+   незафіксований ЗБИТОК (прибуток не рахується); `equity` лишився для картки
+   «Тестовий баланс». `_paper_sizing` і `paper_account` рахують від `available`;
+   підписи «від вільних $X» (бот `_tmPaperBase`, інфосайт `ppInlineHTML`).
+5. **Липка шапка не просвічує:** `.rec-wrap .pp-tbl th` — суцільне тло
+   (`--surface` поверх `--bg`) + лінія. У боті липкі шапки (`.tm-vhscroll`,
+   `.ff-timers-scroll`, tickr) уже були непрозорі. Ассети інфосайту `?v=109/111`.
+Тести: `test_spring_wl_scan.py` (6), `test_paper_account.py` (11),
+`test_trades_mmd.py` (8).

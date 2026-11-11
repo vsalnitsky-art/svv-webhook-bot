@@ -1402,7 +1402,7 @@
   function ppInlineHTML(a) {
     a = a || {};
     var usd = function (v) { return '<b class="ppi-usd">$' + ppNum(v) + "</b>"; }, pct = function (v) { return '<b class="ppi-pct">' + ppNum(v) + "%</b>"; };
-    var deal = a.mode === "pct" && a.margin_pct != null ? pct(a.margin_pct) + ' <span class="ppi-l">від equity</span> ' + usd(a.equity != null ? a.equity : a.balance) + ' <span class="ppi-l">=</span> ' + usd(a.margin_usd) : usd(a.margin_usd);
+    var deal = a.mode === "pct" && a.margin_pct != null ? pct(a.margin_pct) + ' <span class="ppi-l" title="Вільні кошти: гаманець − маржа відкритих угод + їхній незафіксований збиток (прибуток, що ще в угоді, не рахується) — як на біржі">від вільних</span> ' + usd(a.available != null ? a.available : a.balance) + ' <span class="ppi-l">=</span> ' + usd(a.margin_usd) : usd(a.margin_usd);
     return '<span class="ppi-l">депозит</span> ' + usd(a.deposit) + ' <span class="ppi-sep">·</span> <span class="ppi-l">угода</span> ' + deal + ' <span class="ppi-l">×</span> <b class="ppi-lev">' + (a.leverage || 0) + "x</b>" + ' <span class="ppi-sep">·</span> <span class="ppi-l">комісія</span> ' + pct(a.fee_pct);
   }
   function ppRenderKpis(d, label) {
@@ -1435,6 +1435,12 @@
     var lab = '<b style="color:' + col + '">' + Math.round(pct) + "%</b>" + (e.climax ? '<b style="color:#f472b6">💥</b>' : "") + (fd && fd.side !== p.side ? '<b class="pp-blink" style="color:#f87171">⚠</b>' : "");
     return '<span class="pp-exh" title=""><i><b style="width:' + pct + "%;background-size:" + (pct > 0 ? 10000 / pct : 100) + '% 100%"></b></i>' + lab + (p.exh_trail && p.exh_trail.stop_px != null ? ' <b class="pp-exh-st" title="🎯 Кульмінацію зловлено">🎯 ' + fmtPrice(p.exh_trail.stop_px).replace("$", "") + "</b>" : "") + "</span>";
   }
+  // 🎯 Знаковий прогрес до ймовірної цілі (дзеркало бота exhProgHTML): мінус — угода відхиляється.
+  function ppProg(p) {
+    var e = p.exh; if (!e || e.prog == null || !isFinite(Number(e.prog))) return "";
+    var v = Number(e.prog), c = v >= 100 ? "#f472b6" : (v > 0 ? "#4ade80" : (v < 0 ? "#f87171" : "#cbd5e1"));
+    return ' <b class="pp-prog" style="color:' + c + '" title="🎯 До ймовірної цілі ' + fmtPrice(e.target) + ': пройдено ' + (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(0) + '% шляху">🎯' + (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(0) + "%</b>";
+  }
   function ppLvl(v, done) { return !v ? '<span class="muted">—</span>' : fmtPrice(v).replace("$", "") + (done ? ' <span class="pp-up">✓</span>' : ""); }
   function ppPnlCols(pc, usd) { return '<span class="pp-pnl"><span class="pp-pnl-p">' + ppPct(pc) + "</span>" + (usd != null ? '<span class="pp-pnl-s">·</span><span class="pp-pnl-u"><b class="pp-usd ' + (Number(usd) >= 0 ? "up" : "dn") + '">' + ppUsd(usd) + "</b></span>" : "") + "</span>"; }
   function ppRenderOpen(d) {
@@ -1446,7 +1452,7 @@
       return "<tr><td class=\"sym\">" + tvSym(p.symbol) + '</td><td class="' + (p.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(p.side) + "</td>" +
         '<td class="r">' + fmtPrice(p.entry_price) + '</td><td class="r">' + fmtPrice(p.current_price) + "</td>" +
         '<td class="r ' + cl + '">' + ppPnlCols(pc, n ? n.net_usd : null) + "</td>" + "<td>" + ppExh(p) + "</td>" +
-        "<td>" + (al ? '<span class="pp-al ' + al[1] + '">' + al[0] + (a.level === "against" && a.tf ? " " + esc(a.tf) : "") + "</span>" : '<span class="muted">—</span>') + "</td>" +
+        '<td class="nw">' + (al ? '<span class="pp-al ' + al[1] + '">' + al[0] + (a.level === "against" && a.tf ? " " + esc(a.tf) : "") + "</span>" : '<span class="muted">—</span>') + ppProg(p) + "</td>" +
         '<td class="r">' + ppLvl(p.manual_sl) + '</td><td class="r">' + ppLvl(p.manual_tp1, p.tp1_done) + '</td><td class="r">' + ppLvl(p.manual_tp) + "</td>" +
         '<td class="r pp-timer" data-since="' + Math.floor(p.opened_at || 0) + '">' + (p.opened_at ? ppTimer(p.opened_at) : "—") + "</td></tr>";
     }).join("");

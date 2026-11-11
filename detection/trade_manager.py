@@ -351,21 +351,27 @@ def paper_ledger(deposit, closed_net, open_views):
 
     - гаманець = депозит + нетто закритих + Σ(часткові − комісія входу) відкритих;
     - equity = гаманець + Σ нереалізованого PnL відкритих (без комісії виходу);
-    - у позиціях = Σ маржі залишків; вільно = equity − у позиціях (≥ 0).
-    `balance` = equity — від нього рахується % НАСТУПНОЇ угоди."""
+    - у позиціях = Σ маржі залишків;
+    - вільно = гаманець − у позиціях + нереалізований ЗБИТОК (вимога 11.11:
+      «біржа не використовує кеш, який в угоді, і не рахує прибуток, що ще в
+      угоді») — маржа відкритих угод зайнята, незафіксований прибуток не є
+      коштами, а незафіксований збиток їх уже зменшує.
+    `available` (= `base`) — від нього рахується % НАСТУПНОЇ угоди; `equity`
+    лишається для картки «Тестовий баланс»."""
     dep = float(deposit or 0)
     views = [v for v in (open_views or []) if v]
     wallet = dep + float(closed_net or 0) + sum(float(v.get('wallet_delta') or 0) for v in views)
     upnl = sum(float(v.get('upnl_usd') or 0) for v in views)
     used = sum(float(v.get('margin_usd') or 0) for v in views)
     equity = wallet + upnl
+    free = max(0.0, wallet - used + min(0.0, upnl))
     return {
         'deposit': round(dep, 2),
         'closed_balance': round(dep + float(closed_net or 0), 2),
         'wallet': round(wallet, 2), 'realized_usd': round(wallet - dep, 2),
         'unrealized_usd': round(upnl, 2), 'equity': round(equity, 2),
         'balance': round(equity, 2), 'margin_used': round(used, 2),
-        'available': round(max(0.0, equity - used), 2), 'open_n': len(views),
+        'available': round(free, 2), 'base': round(free, 2), 'open_n': len(views),
     }
 
 
@@ -4354,8 +4360,12 @@ class TradeManager:
         if tpct <= 0:
             return None
         done = sign * (px - en) / en * 100.0
-        pct = max(0.0, min(100.0, done / tpct * 100.0))
-        return {'pct': round(pct, 1), 'done_pct': round(done, 2), 'target': tg,
+        prog = done / tpct * 100.0
+        pct = max(0.0, min(100.0, prog))
+        # `prog` — ЗНАКОВИЙ прогрес до цілі (колонка 🚨, вимога 11.11): ціна
+        # проти угоди → від'ємний відсоток; понад ціль → >100.
+        return {'pct': round(pct, 1), 'prog': round(max(-999.0, min(999.0, prog)), 1),
+                'done_pct': round(done, 2), 'target': tg,
                 'target_pct': round(tpct, 2), 'climax': climax == sd}
 
     def trade_exh_for(self, pos: Dict, view: Optional[Dict] = None) -> Optional[Dict]:
@@ -8424,10 +8434,11 @@ class TradeManager:
 
     def _paper_sizing(self, entry: float, sl_price) -> Optional[Dict]:
         """🧪 Розмір paper-позиції ЯК НА БІРЖІ в цю мить (`paper_size`, ЧИСТА):
-        % рахується від EQUITY рахунку зараз, маржа обмежена ВІЛЬНИМИ коштами."""
+        % рахується від ВІЛЬНИХ коштів (без маржі відкритих угод і без їхнього
+        незафіксованого прибутку, вимога 11.11), маржа ними ж і обмежена."""
         led = self._paper_ledger_now()
         return paper_size(self._settings, entry, sl_price,
-                          balance=led.get('equity'), available=led.get('available'))
+                          balance=led.get('available'), available=led.get('available'))
 
     def _paper_view(self, sym: str, pos: Dict, current=None) -> Optional[Dict]:
         """🧪 Стан відкритої paper-позиції зараз (`paper_position_now`)."""
@@ -8482,14 +8493,14 @@ class TradeManager:
         `rows` не використовуються (лишено для сумісності виклику)."""
         s = self._settings
         led = self._paper_ledger_now()
-        nxt = paper_size(s, 1.0, None, balance=led['equity'], available=led['available']) or {}
+        nxt = paper_size(s, 1.0, None, balance=led['available'], available=led['available']) or {}
         return dict(
             led,
             mode=s.get('paper_sizing_mode', 'pct'),
             pnl_pct=round((led['equity'] - led['deposit']) / led['deposit'] * 100, 3) if led['deposit'] else None,
             margin_usd=round(float(nxt.get('margin') or 0), 2),
             margin_pct=(paper_margin_pct_of(s) if s.get('paper_sizing_mode', 'pct') == 'pct'
-                        else round(float(nxt.get('margin') or 0) / max(1.0, led['equity']) * 100, 2)),
+                        else round(float(nxt.get('margin') or 0) / max(1.0, led['available']) * 100, 2)),
             next_capped=bool(nxt.get('capped')), next_insufficient=bool(nxt.get('insufficient')),
             leverage=int(s.get('paper_leverage', 10) or 10),
             fee_pct=float(s.get('paper_fee_pct', 0.055) or 0),

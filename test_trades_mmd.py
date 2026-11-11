@@ -164,7 +164,7 @@ def test_route_only_reads():
 def _js(body):
     src = ''
     for f in ('function chargeColor(', 'function springTradeCellHTML(',
-              'function sbrTrailBadgeHTML(', 'function mmdAlertCellHTML('):
+              'function sbrTrailBadgeHTML(', 'function exhProgHTML(', 'function mmdAlertCellHTML('):
         a = _HTML.index(f)
         src += _HTML[a:_HTML.index('\n}', a) + 2] + '\n'
     for c in ('const _MMD_ALERT', 'const _CHG_STOPS'):

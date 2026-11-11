@@ -302,6 +302,36 @@ def _default_run(name, fn, source):
     return scan_queue.run(name, fn, source, timeout=900)
 
 
+def analyze_many(syms: List[str], fetch, now: float, workers: int, on_coin: Callable):
+    """1h-бари → `spring_coil.analyze` паралельно; `on_coin(sym, rec, err=)` —
+    прогрес. Спільне для 🔭 скану біржі й 🌀 скану WATCHLIST (той самий розрахунок)."""
+    fs = _fs()
+    sc = fs._sc()
+    recs: Dict[str, Dict] = {}
+    errors: List[str] = []
+
+    def one(sym):
+        bars = fs.closed_only(fetch(sym), now)
+        if len(bars) < getattr(sc, 'MIN_BARS', 220):
+            return sym, None
+        return sym, sc.analyze(bars)
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futs = {pool.submit(one, s): s for s in syms}
+        for fu in as_completed(futs):
+            s = futs[fu]
+            try:
+                _, rec = fu.result()
+            except Exception as e:
+                errors.append(f"{s}: {str(e)[:80]}")
+                on_coin(s, None, err=str(e))
+                continue
+            if rec:
+                recs[s] = rec
+            on_coin(s, rec)
+    return recs, errors
+
+
 class SpringScan:
     def __init__(self, db=None, tickers: Callable = None, fetch_factory: Callable = None,
                  run_queued: Callable = None, workers: int = WORKERS,
@@ -537,31 +567,7 @@ class SpringScan:
                     finished_at=self._clock())
 
     def _analyze_many(self, syms: List[str], fetch, now: float):
-        fs = _fs()
-        sc = fs._sc()
-        recs: Dict[str, Dict] = {}
-        errors: List[str] = []
-
-        def one(sym):
-            bars = fs.closed_only(fetch(sym), now)
-            if len(bars) < getattr(sc, 'MIN_BARS', 220):
-                return sym, None
-            return sym, sc.analyze(bars)
-
-        with ThreadPoolExecutor(max_workers=max(1, self._workers)) as pool:
-            futs = {pool.submit(one, s): s for s in syms}
-            for fu in as_completed(futs):
-                s = futs[fu]
-                try:
-                    _, rec = fu.result()
-                except Exception as e:
-                    errors.append(f"{s}: {str(e)[:80]}")
-                    self._p_coin(s, None, err=str(e))
-                    continue
-                if rec:
-                    recs[s] = rec
-                self._p_coin(s, rec)
-        return recs, errors
+        return analyze_many(syms, fetch, now, self._workers, self._p_coin)
 
     def _row(self, S: str, rec: Dict, now: float, vol=None, bybit=None) -> Dict:
         fs = _fs()
@@ -852,3 +858,236 @@ def sbr_symbols() -> List[str]:
 
 def on_sbr_signals(symbol: str, items: List[tuple]) -> int:
     return _instance.on_sbr(symbol, items) if _instance else 0
+
+
+# ═══ 🌀 «ПРУЖИНА WATCHLIST» — ручний скан + автоскан (вимога 11.11) ═══════
+# Дослівно: «Додай до "Пружина WATCHLIST" ручного сканування і автосканування
+# як у "Пружина - скан біржі"… процес сканування зроби в такому ж стилі».
+# Звичайно монети WATCHLIST рахує сканер (крок 6, раз на закритий 1h-бар); цей
+# скан — ПРИМУСОВИЙ повний прохід: 300 закритих 1h-барів Bybit (біржа, на
+# якій бот торгує, — ті самі дані, що в сканера) → ТОЙ САМИЙ `analyze` →
+# `scanner.spring_put`. Таблиця й ворота читають ті самі записи `_spring`.
+DB_WL = 'spring_wl_scan_v1'
+DB_WL_SETTINGS = 'spring_wl_scan_settings'
+QUEUE_WL = 'spring-wl-scan'
+WL_EXCHANGE = 'bybit'
+
+
+def _default_scanner():
+    import sys
+    m = sys.modules.get('detection.smc_scanner')
+    return m.get_smc_scanner() if m is not None and hasattr(m, 'get_smc_scanner') else None
+
+
+class SpringWlScan:
+    def __init__(self, db=None, fetch_factory: Callable = None, run_queued: Callable = None,
+                 workers: int = WORKERS, clock: Callable = None, watchlist: Callable = None,
+                 scanner: Callable = None):
+        self._db = db
+        self._fetch_factory = fetch_factory or _default_fetch
+        self._run_queued = run_queued or _default_run
+        self._workers = workers
+        self._clock = clock or time.time
+        self._watchlist = watchlist or _default_watchlist
+        self._scanner = scanner or _default_scanner
+        self._lock = threading.Lock()
+        self._settings = {'auto_on': False, 'auto_min': DEFAULT_AUTO_MIN}
+        self._result: Dict = {}
+        self._prog: Dict = {'running': False}
+        self._auto_fail_at = 0.0
+        self._thread = None
+        self._stop = threading.Event()
+        if db:
+            try:
+                st = db.get_setting(DB_WL_SETTINGS, None)
+                if isinstance(st, dict):
+                    self._apply(st)
+                res = db.get_setting(DB_WL, None)
+                if isinstance(res, dict):
+                    self._result = dict(res, restored=True)
+            except Exception as e:
+                print(f"[SpringWlScan] load error: {e}")
+
+    def _apply(self, s: Dict):
+        if 'auto_on' in s:
+            self._settings['auto_on'] = bool(s.get('auto_on'))
+        if 'auto_min' in s:
+            self._settings['auto_min'] = norm_auto_min(s.get('auto_min'))
+
+    def settings(self) -> Dict:
+        return dict(self._settings)
+
+    def update_settings(self, patch: Dict) -> Dict:
+        self._apply(patch or {})
+        if self._db:
+            try:
+                self._db.set_setting(DB_WL_SETTINGS, self.settings())
+            except Exception:
+                pass
+        return self.settings()
+
+    def _enabled(self) -> bool:
+        sc = self._scanner()
+        return bool(sc is not None and (getattr(sc, '_settings', None) or {}).get('spring_enabled', True))
+
+    # ── прогрес (та сама форма, що в 🔭 скані — сторінка малює її тим самим кодом)
+    def _p(self, **kw):
+        with self._lock:
+            self._prog.update(kw)
+
+    def _p_coin(self, sym: str, rec: Optional[Dict], err: str = ''):
+        with self._lock:
+            p = self._prog
+            p['done'] = int(p.get('done') or 0) + 1
+            p['cur'] = sym
+            if err:
+                p['errors'] = int(p.get('errors') or 0) + 1
+                st, ch = 'err', None
+            elif not rec:
+                p['short'] = int(p.get('short') or 0) + 1
+                st, ch = 'short', None
+            else:
+                st, ch = rec.get('state') or 'flat', rec.get('charge')
+                if st == 'charged':
+                    p['found'] = int(p.get('found') or 0) + 1
+                    p.setdefault('found_syms', []).append(sym)
+                bs = p.setdefault('by_state', {})
+                bs[st] = int(bs.get(st) or 0) + 1
+            rl = p.setdefault('recent', [])
+            rl.insert(0, {'symbol': sym, 'state': st,
+                          'charge': round(float(ch), 1) if ch is not None else None})
+            del rl[RECENT_N:]
+
+    def progress(self) -> Dict:
+        with self._lock:
+            p = dict(self._prog)
+            for k in ('recent', 'found_syms'):
+                if k in p:
+                    p[k] = list(p[k])
+            if 'by_state' in p:
+                p['by_state'] = dict(p['by_state'])
+        return p
+
+    def is_running(self) -> bool:
+        with self._lock:
+            return bool(self._prog.get('running'))
+
+    def start(self, source: str = 'ui') -> Dict:
+        if not self._enabled():
+            return {'ok': False, 'started': False, 'reason': '🌀 Пружину вимкнено (або сканер ще не піднявся)'}
+        with self._lock:
+            if self._prog.get('running'):
+                return {'ok': True, 'started': False, 'reason': 'скан уже йде'}
+            self._prog = {'running': True, 'kind': 'wl', 'phase': 'queued', 'source': source,
+                          'exchange': WL_EXCHANGE, 'started_at': self._clock(), 'total': 0,
+                          'done': 0, 'found': 0, 'errors': 0, 'short': 0, 'by_state': {},
+                          'recent': [], 'found_syms': [], 'cur': ''}
+        threading.Thread(target=self._bg, args=(source,), daemon=True, name='spring-wl-scan').start()
+        return {'ok': True, 'started': True}
+
+    def _bg(self, source: str):
+        try:
+            res = self._run_queued(QUEUE_WL, self.scan, source)
+            if isinstance(res, dict) and res.get('error') and 'scanned' not in res:
+                raise RuntimeError(res.get('error'))
+        except Exception as e:
+            self._auto_fail_at = self._clock()
+            self._p(running=False, phase='error', error=str(e)[:200], finished_at=self._clock())
+
+    def scan(self, now: Optional[float] = None) -> Dict:
+        t0 = self._clock()
+        sc = self._scanner()
+        if sc is None or not hasattr(sc, 'spring_put'):
+            raise RuntimeError('сканер не піднявся')
+        try:
+            syms = [str(x).upper() for x in (self._watchlist() or []) if x]
+        except Exception:
+            syms = []
+        syms = list(dict.fromkeys(syms))
+        now = now if now is not None else self._clock()
+        self._p(phase='bars', total=len(syms), scan_started=t0)
+        recs, errors = analyze_many(syms, self._fetch_factory(WL_EXCHANGE), now,
+                                    self._workers, self._p_coin)
+        put = 0
+        for S, rec in recs.items():
+            try:
+                if sc.spring_put(S, rec):
+                    put += 1
+            except Exception as e:
+                errors.append(f"{S}: {str(e)[:80]}")
+        by_state: Dict[str, int] = {}
+        for rec in recs.values():
+            k = rec.get('state') or 'flat'
+            by_state[k] = by_state.get(k, 0) + 1
+        took = round(self._clock() - t0, 1)
+        res = {'ts': self._clock(), 'scanned': len(syms), 'analyzed': len(recs),
+               'updated': put, 'charged': by_state.get('charged', 0), 'by_state': by_state,
+               'errors': len(errors), 'error_samples': errors[:5], 'took': took}
+        with self._lock:
+            self._result = res
+            self._prog.update({'running': False, 'phase': 'done', 'finished_at': self._clock(),
+                               'took': took, 'cur': ''})
+        self._auto_fail_at = 0.0
+        if self._db:
+            try:
+                self._db.set_setting(DB_WL, res)
+            except Exception:
+                pass
+        print(f"[SpringWlScan] WATCHLIST: {len(syms)} монет за {took}с, оновлено {put}, "
+              f"заряджених {res['charged']}, збоїв {len(errors)}")
+        return dict(res)
+
+    def next_auto_at(self) -> Optional[float]:
+        if not self._settings['auto_on']:
+            return None
+        nxt = float(self._result.get('ts') or 0) + self._settings['auto_min'] * 60
+        if self._auto_fail_at:
+            nxt = max(nxt, self._auto_fail_at + FAIL_RETRY_SEC)
+        return nxt
+
+    def tick(self, now: Optional[float] = None) -> Optional[str]:
+        now = now if now is not None else self._clock()
+        if self.is_running() or not self._settings['auto_on'] or not self._enabled():
+            return None
+        nxt = self.next_auto_at()
+        if nxt is not None and now >= nxt and self.start('auto').get('started'):
+            return 'scan'
+        return None
+
+    def _loop(self):
+        while not self._stop.wait(TICK_SEC):
+            try:
+                self.tick()
+            except Exception as e:
+                print(f"[SpringWlScan] tick error: {e}")
+
+    def run_forever(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name='spring-wl-scan-loop')
+        self._thread.start()
+
+    def state(self) -> Dict:
+        with self._lock:
+            res = dict(self._result)
+        return {'settings': self.settings(), 'result': res, 'progress': self.progress(),
+                'auto_next': self.next_auto_at(), 'exchange': WL_EXCHANGE,
+                'running_loop': bool(self._thread and self._thread.is_alive())}
+
+
+_wl_instance: Optional[SpringWlScan] = None
+
+
+def init_spring_wl_scan(db=None, start_loop: bool = False, **kw) -> SpringWlScan:
+    global _wl_instance
+    with _ilock:
+        if _wl_instance is None:
+            _wl_instance = SpringWlScan(db=db, **kw)
+    if start_loop:
+        _wl_instance.run_forever()
+    return _wl_instance
+
+
+def get_spring_wl_scan() -> Optional[SpringWlScan]:
+    return _wl_instance

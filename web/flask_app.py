@@ -589,8 +589,10 @@ def create_app():
             try:
                 # 🔭 Пружина — скан біржі (09.11): автоскан + перерахунок заряду
                 # монет таблиці на закритті 1h-бару + попередження TG по SBR.
-                from detection.spring_scan import init_spring_scan
+                from detection.spring_scan import init_spring_scan, init_spring_wl_scan
                 init_spring_scan(db=get_db(), start_loop=True)
+                # 🌀 Пружина WATCHLIST — ручний скан + автоскан (11.11).
+                init_spring_wl_scan(db=get_db(), start_loop=True)
             except Exception as e:
                 print(f"[APP] Failed to start Spring Scan: {e}")
 
@@ -3101,6 +3103,28 @@ def register_api_routes(app):
         from detection.spring_scan import get_spring_scan, init_spring_scan
         return get_spring_scan() or init_spring_scan(db=get_db(), start_loop=True)
 
+    def _spring_wl_eng():
+        from detection.spring_scan import get_spring_wl_scan, init_spring_wl_scan
+        return get_spring_wl_scan() or init_spring_wl_scan(db=get_db(), start_loop=True)
+
+    @app.route('/api/spring-wl-scan/run', methods=['POST'])
+    def api_spring_wl_scan_run():
+        """🌀 Ручний скан «Пружини» WATCHLIST — у фоні, через спільну чергу сканів."""
+        try:
+            return jsonify(_spring_wl_eng().start('ui'))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/spring-wl-scan/settings', methods=['POST'])
+    def api_spring_wl_scan_settings():
+        """{auto_on, auto_min} автоскану «Пружини» WATCHLIST."""
+        try:
+            data = request.get_json(silent=True) or {}
+            return jsonify({'ok': True, 'settings': _spring_wl_eng().update_settings(
+                {k: data[k] for k in ('auto_on', 'auto_min') if k in data})})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/spring-scan/state', methods=['GET'])
     def api_spring_scan_state():
         """Лише ЧИТАННЯ: налаштування, останній результат і живий прогрес."""
@@ -3828,6 +3852,12 @@ def register_api_routes(app):
             return jsonify({'ok': False, 'reason': str(e)})
 
     # ═══════ 🔔 SBR — сигнали Session Band Reversal 1H/4H (вимога 29.10) ═══
+    def _wl_scan_state():
+        try:
+            return _spring_wl_eng().state()
+        except Exception as e:
+            return {'error': str(e)}
+
     @app.route('/api/spring/state')
     def api_spring_state():
         """🌀 «Пружина» по монетах WATCHLIST (лише ЧИТАННЯ памʼяті сканера):
@@ -3902,7 +3932,8 @@ def register_api_routes(app):
                             'gate_on': gate_on, 'min_pot': min_pot,
                             'charge_gate_on': charge_gate_on, 'min_charge': min_charge,
                             'agg': (_spc.aggregate(full, total=len(full)) if _spc is not None else None),
-                            'watchlist': wl, 'tf': '1h', 'ts': time.time()})
+                            'watchlist': wl, 'tf': '1h', 'ts': time.time(),
+                            'wl_scan': _wl_scan_state()})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e), 'rows': []})
 

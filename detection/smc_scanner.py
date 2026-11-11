@@ -3864,6 +3864,30 @@ class SMCScanner:
         st['calc_n'] = int(st.get('calc_n') or 0) + 1
         st['calc_at'] = rec['ts']
 
+    def spring_put(self, symbol: str, rec: Dict) -> bool:
+        """🌀 Записати «Пружину» монети WATCHLIST, пораховану ПРИМУСОВИМ сканом
+        (ручний / автоскан, вимога 11.11). Той самий `analyze`, ті самі закриті
+        1h-бари — тож таблиця, ворота й банер читають ОДНЕ джерело `_spring`."""
+        if not (getattr(self, '_settings', None) or {}).get('spring_enabled', True):
+            return False
+        if not isinstance(rec, dict) or not rec.get('ok'):
+            return False
+        S = str(symbol or '').upper()
+        try:
+            wl = {str(x).upper() for x in (self.get_watchlist() or [])}
+        except Exception:
+            wl = set()
+        if wl and S not in wl:
+            return False
+        if getattr(self, '_spring', None) is None:
+            self._spring = {}
+        rec = dict(rec)
+        rec['ts'] = time.time()
+        self._spring[S] = rec
+        st = self._spring_stats_ref()
+        st['calc_at'] = rec['ts']
+        return True
+
     def _spring_stats_ref(self) -> Dict:
         st = getattr(self, '_spring_stats', None)
         if not isinstance(st, dict):
