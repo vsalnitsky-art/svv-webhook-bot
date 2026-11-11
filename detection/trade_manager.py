@@ -4213,8 +4213,16 @@ class TradeManager:
             kl = get_market_data().fetch_klines(S, limit=300, interval='1h')
             if kl:
                 vw = spring_coil.live_fire_view(kl)
-                if vw is not None and not vw.get('fired') and len(kl) > 1:
-                    vw['fired'] = self._spring_rec_fire(spring_coil.analyze(kl[:-1]))
+                rec = spring_coil.analyze(kl[:-1]) if len(kl) > 1 else None
+                if isinstance(rec, dict):
+                    # 🌀 Запис Пружини з ТИХ САМИХ барів — фолбек для монети
+                    # поза WATCHLIST і поза 🔭 скан-таблицею (`_spring_rec`).
+                    br = getattr(self, '_spring_bar_rec', None)
+                    if br is None:
+                        br = self._spring_bar_rec = {}
+                    br[S] = (now, rec)
+                if vw is not None and not vw.get('fired') and rec is not None:
+                    vw['fired'] = self._spring_rec_fire(rec)
         except Exception as e:
             print(f"[TM] spring live-fire {S}: {e}")
         if vw is None:
@@ -4367,14 +4375,34 @@ class TradeManager:
 
     def _spring_rec(self, symbol: str) -> Optional[Dict]:
         """🌀 Запис «Пружини» монети — лише памʼять сканера (той самий
-        `spring_for`, що малює панель 🌀 і колонку «Заряд» угод)."""
+        `spring_for`, що малює панель 🌀 і колонку «Заряд» угод).
+
+        Монети поза WATCHLIST (угода з 🔭 скану, ✋ ручна) сканер не веде —
+        тоді (вимога 11.11): рядок 🔭 скан-таблиці (той самий `analyze`),
+        інакше запис `analyze` по 1h-барах, які TM уже тягне для колонки
+        «💥 Виснаження» (`_spring_fire_view`, без додаткових запитів)."""
+        S = str(symbol or '').upper()
         sc = getattr(self, 'scanner', None)
-        if sc is None or not hasattr(sc, 'spring_for'):
-            return None
+        if sc is not None and hasattr(sc, 'spring_for'):
+            try:
+                r = (sc.spring_for([S]) or {}).get(S)
+                if r:
+                    return r
+            except Exception:
+                pass
         try:
-            return (sc.spring_for([symbol]) or {}).get(str(symbol or '').upper())
+            import sys as _sys
+            m = _sys.modules.get('detection.spring_scan')
+            eng = m.get_spring_scan() if m and hasattr(m, 'get_spring_scan') else None
+            r = eng.row_for(S) if eng is not None else None
+            if r:
+                return r
         except Exception:
-            return None
+            pass
+        hit = (getattr(self, '_spring_bar_rec', None) or {}).get(S)
+        if hit and time.time() - hit[0] < 3 * 3600:
+            return hit[1]
+        return None
 
     @staticmethod
     def sbr_trail_step(side, st, price, lo=None, hi=None, trail_pct=0.3,

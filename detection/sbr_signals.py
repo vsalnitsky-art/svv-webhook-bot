@@ -889,7 +889,26 @@ def _default_extra():
         out += list(sbr_symbols() or [])
     except Exception:
         pass
+    out += _open_trade_symbols()
     return out
+
+
+def _open_trade_symbols() -> List[str]:
+    """💼 Монети ВІДКРИТИХ угод (real + paper) — рушій веде їх навіть поза
+    WATCHLIST (вимога 11.11): інакше колонка 🚨, правило виходу «протилежний
+    SBR» і 🧱-автомат по угоді з 🔭 скану / ✋ ручного відкриття не мали
+    б даних узагалі. Лише памʼять TM."""
+    try:
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if tm is None:
+            return []
+        with tm._lock:
+            keys = list((getattr(tm, '_positions', {}) or {}).keys()) + \
+                list((getattr(tm, '_shadow_positions', {}) or {}).keys())
+        return [str(k).upper() for k in keys if k]
+    except Exception:
+        return []
 
 
 def _default_spring(symbol, items):

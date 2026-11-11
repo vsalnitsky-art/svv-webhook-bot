@@ -29,7 +29,9 @@ def _ff_with_wl(wl, **kw):
     return ff, tm
 
 
-def test_trade_coin_outside_watchlist_has_no_decision():
+def test_trade_coin_outside_watchlist_gets_live_sbr_alert():
+    """🚨 ПЕРЕПИСАНО 11.11: угода з 🔭 скану / ✋ ручна поза watchlist має 🚨 —
+    рушій SBR веде монети відкритих угод (дані живі, а не застиглі)."""
     pos = {'BTCUSDT': {'side': 'LONG', 'opened_at': 1000.0},
            'DOGEUSDT': {'side': 'SHORT', 'opened_at': 1000.0}}
     ff, tm = _ff_with_wl({'BTCUSDT'}, data={'BTCUSDT': _t._dec('LONG', 0.85),
@@ -38,14 +40,21 @@ def test_trade_coin_outside_watchlist_has_no_decision():
                          sbr={'BTCUSDT': _t._row(_t._sig('LONG', 1500)),
                               'DOGEUSDT': _t._row(_t._sig('SHORT', 1500))})
     ff._mm_capture(_mon._fuels(BTCUSDT=0.3, DOGEUSDT=-0.3), now=2000.0)
-    _check('DOGEUSDT' not in tm.calls, f'вердикт для прибраної монети не рахується: {tm.calls}')
+    _check('DOGEUSDT' not in tm.calls, f'🧠 вердикт для монети поза списком не рахується: {tm.calls}')
     r = ff.dec_trade_for([('BTCUSDT', 'LONG', 1000.0), ('DOGEUSDT', 'SHORT', 1000.0)])
-    _check(_m.mmd_trade_key('BTCUSDT', 'LONG', 1000.0) in r, r)
-    _check(_m.mmd_trade_key('DOGEUSDT', 'SHORT', 1000.0) not in r,
-           'угода по прибраній монеті — 🧠/🚨 порожні')
+    _check(_m.mmd_trade_key('DOGEUSDT', 'SHORT', 1000.0) in r,
+           'угода поза watchlist — 🚨 SBR є')
     rows = {x['symbol'] for x in ff.mm_monitor_state(book='dec')['rows']}
     _check(rows == {'BTCUSDT'}, rows)
-    print('✓ угода поза watchlist: 🧠/🚨 порожні, у таблиці 🧠 її немає')
+    print('✓ угода поза watchlist: 🚨 живий, у таблиці блоку її немає')
+
+
+def test_sbr_engine_tracks_open_trade_coins():
+    src = open(os.path.join(_HERE, 'detection', 'sbr_signals.py'), encoding='utf-8').read()
+    a = src.index('def _default_extra(')
+    fn = src[a:src.index('\ndef ', a + 10)]
+    _check('_open_trade_symbols()' in fn, 'рушій SBR веде монети відкритих угод')
+    print('✓ рушій SBR рахує монети відкритих угод навіть поза watchlist')
 
 
 def test_old_book_keeps_exit_data_but_hides_the_row():

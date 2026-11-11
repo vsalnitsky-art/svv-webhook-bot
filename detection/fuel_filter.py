@@ -4175,13 +4175,10 @@ class FuelFilterDaemon:
         """
         with self._lock:
             cache = dict(getattr(self, '_mmt_trade', {}) or {})
-        _W = self._mm_watched()
         out = {}
         for sym, side, opened_at in (pairs or ()):
             S = str(sym or '').upper()
             sd = str(side or '').upper()
-            if _W is not None and S not in _W:
-                continue    # 👁 монету прибрано зі списку — стану не показуємо
             hit = cache.get(S)
             cur = hit[1] if hit else None
             if not cur:
@@ -4971,14 +4968,12 @@ class FuelFilterDaemon:
         # «слабшає / ПРОТИ» у таблицях угод — це супровід угод, а не монітор.
         _tpairs = self._mm_open_pairs()
         _tsyms = {p.split('|')[0] for p in _tpairs} | self._mm_open_syms()
-        if _W is not None:
-            # 👁 Угода по монеті поза watchlist: вердикт не рахуємо і не
-            # показуємо (🧠/🚨 порожні, 🧱-автомат її не чіпає).
-            _tpairs = {p for p in _tpairs if p.split('|')[0] in _W}
-            _tsyms = {x for x in _tsyms if x in _W}
         # 🔔 Колонки угод (з 29.10) — МММ-SBR: той самий `sbr_mm_dir` на тих
-        # самих TF банера, що й таблиця блоку МММ-SBR. Рядки рушія є для КОЖНОЇ
-        # монети watchlist незалежно від тумблера блоку (рушій працює завжди).
+        # самих TF банера, що й таблиця блоку МММ-SBR. Рушій SBR веде КОЖНУ
+        # монету watchlist І кожну монету відкритої угоди (вимога 11.11:
+        # угода з 🔭 скану / ✋ ручна поза watchlist теж має 🚨) — дані живі,
+        # тож фільтр «поза watchlist» (26.10) тут більше не потрібен: монети
+        # без рядка рушія просто не потрапляють у `_mmt_trade`.
         _srows_t = self._sbr_rows() if _tsyms else {}
         _tfs_t = sbr_tfs_of(s)
         with self._lock:

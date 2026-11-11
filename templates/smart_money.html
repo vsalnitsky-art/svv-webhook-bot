@@ -17765,7 +17765,8 @@ function _xsTgCell(x) {
 }
 // ✋ Відкрити угоду з таблиці скану (вимога 10.11). Підсвічено напрямок рядка.
 function _xsOpenCell(x) {
-    if (x.trade_side) return `<td style="white-space:nowrap;color:#38bdf8;font-size:11px" title="Монета вже у відкритій угоді">💼 ${x.trade_side}</td>`;
+    // Монета вже в угоді — це показує колонка «📍»; тут кнопок просто немає.
+    if (x.trade_side) return `<td style="color:#4b5563;font-size:11px" title="Монета вже у відкритій угоді (див. 📍)">—</td>`;
     if (x.bybit === false) return `<td style="color:#6b7280;font-size:11px" title="Монети немає на Bybit — угоду не відкрити">—</td>`;
     const rec = x.dir || x.lean || '';
     const b = sd => `<button class="xs-open xs-open-${sd === 'LONG' ? 'l' : 's'}${rec === sd ? ' rec' : ''}" onclick="xsprOpen('${x.symbol}','${sd}')" title="✋ Відкрити ${sd} по ${x.symbol}${rec === sd ? ' (напрямок рядка)' : (rec ? ' — ПРОТИ напрямку рядка (' + rec + ')' : '')}">${sd === 'LONG' ? '▲ L' : '▼ S'}</button>`;

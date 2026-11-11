@@ -247,6 +247,35 @@ def test_exhaustion_climax_exit():
     _check('id="tm-use-exh-exit"' in _HTML and 'exhTrailBadgeHTML(p)' in _HTML, 'UI бота')
     _check("'exh_trail'" in _IP and 'pp-exh-st' in _JS, 'інфосайт')
 
+def test_spring_rec_fallback_outside_watchlist():
+    """💥 Угода поза WATCHLIST (вимога 11.11): «Виснаження» бере ціль із
+    🔭 скан-таблиці, інакше — з `analyze` тих самих 1h-барів, що вже тягне
+    `_spring_fire_view` (без додаткових запитів)."""
+    TM = _tm_cls()
+    tm = TM.__new__(TM)
+    tm.scanner = types.SimpleNamespace(spring_for=lambda syms: {})
+    sys.modules.pop('detection.spring_scan', None)
+    _check(tm._spring_rec('ICNTUSDT') is None, 'даних немає — None')
+    # 🔭 рядок скан-таблиці
+    eng = types.SimpleNamespace(row_for=lambda s: {'charge': 81, 'tgt_short': 0.27} if s == 'ICNTUSDT' else None)
+    sm = types.ModuleType('detection.spring_scan'); sm.get_spring_scan = lambda: eng
+    sys.modules['detection.spring_scan'] = sm
+    _check(tm._spring_rec('ICNTUSDT')['tgt_short'] == 0.27, 'рядок 🔭 скану')
+    sys.modules.pop('detection.spring_scan', None)
+    # бари, які TM уже тягнув для колонки
+    rec = S.analyze(_coil())
+    tm._spring_bar_rec = {'UAIUSDT': (time.time(), rec)}
+    _check(tm._spring_rec('UAIUSDT') is rec, 'запис із барів TM')
+    tm._spring_bar_rec = {'UAIUSDT': (time.time() - 4 * 3600, rec)}
+    _check(tm._spring_rec('UAIUSDT') is None, 'застарілий запис не береться')
+    # ціль для угоди → «Виснаження» рахується
+    tm._spring_bar_rec = {'UAIUSDT': (time.time(), rec)}
+    pos = {'side': 'LONG', 'entry_price': rec['price'] * 0.99, 'opened_at': time.time()}
+    tm._spring_open_mark('UAIUSDT', pos)
+    _check(pos.get('spring_open_tgt') == round(rec['tgt_long'], 10), pos)
+    _check("br[S] = (now, rec)" in _TM, '_spring_fire_view кешує запис із тих самих барів')
+
+
 if __name__ == '__main__':
     n = 0
     for k, fn in list(globals().items()):
