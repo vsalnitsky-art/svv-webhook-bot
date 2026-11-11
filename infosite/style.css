@@ -291,7 +291,15 @@ body {
 .iw-tgl:not(.on) { opacity: .55; }
 .iw-sel select:disabled { opacity: .4; cursor: not-allowed; }
 
-.iw-box { position: relative; height: calc(100vh - 280px); min-height: 450px; border: 1px solid var(--line-soft);
+/* ШАПКА ГРАФІКА */
+.chart-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px; padding: 4px 8px;
+  background: rgba(13, 17, 26, 0.4); border-radius: 8px;
+  border: 1px solid var(--line-soft);
+}
+
+.iw-box { position: relative; height: calc(100vh - 320px); min-height: 400px; border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm); overflow: hidden; background: var(--bg2); box-shadow: inset 0 0 20px rgba(0,0,0,0.5); }
 .iw-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   color: var(--muted); font-size: 14px; text-align: center; padding: 20px; pointer-events: none; z-index: 1; }
@@ -577,17 +585,11 @@ body.iw-full-on { overflow: hidden; }
    TradingView-подібні елементи (chart-pro.js)
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* Панель інструментів (z-index високий, щоб бути поверх графіка) */
 .tv-toolbar {
-  position: absolute; top: 8px; right: 64px; z-index: 50;
   display: flex; gap: 3px; padding: 3px;
-  background: var(--surface);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--line);
+  background: transparent;
   border-radius: 8px;
-  opacity: 0.85; transition: opacity 0.2s;
 }
-#iw-box:hover .tv-toolbar { opacity: 1; }
 
 .tv-btn {
   height: 28px; padding: 0 8px;
@@ -606,9 +608,7 @@ body.iw-full-on { overflow: hidden; }
 .tv-btn-pos:hover { color: #fff; background: rgba(255,184,0,0.2); }
 .tv-sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; align-self: center; }
 
-/* OHLC-легенда (z-index вище за canvas) */
 .tv-ohlc {
-  position: absolute; top: 8px; left: 10px; z-index: 49;
   pointer-events: none; font: 600 11.5px var(--mono);
   color: var(--txt-dim); text-shadow: 0 1px 3px rgba(0,0,0,0.9);
   white-space: nowrap;
@@ -628,7 +628,6 @@ body.iw-full-on { overflow: hidden; }
 .tv-ohlc .chg.up { color: var(--long); background: rgba(0,230,118,.12); }
 .tv-ohlc .chg.dn { color: var(--short); background: rgba(255,23,68,.12); }
 
-/* Лічильник барів (z-index високий) */
 .tv-bars {
   position: absolute; right: 64px; bottom: 8px; z-index: 49;
   padding: 3px 8px; border-radius: 5px;
@@ -638,7 +637,6 @@ body.iw-full-on { overflow: hidden; }
   pointer-events: none;
 }
 
-/* Лінійка */
 .tv-measure-overlay {
   position: absolute; inset: 0; z-index: 45;
   display: none; cursor: crosshair;
@@ -720,17 +718,28 @@ body.iw-full-on { overflow: hidden; }
 .pos-line.loss .pos-label { border-color: var(--short); color: var(--short); }
 .pos-line.entry .pos-label { border-color: #fff; color: #fff; }
 
+/* ПОВЗУНОК ДЛЯ ЗМІНИ ШИРИНИ ПОЗИЦІЇ */
+.pos-resize {
+  position: absolute; right: -6px; top: 0; bottom: 0; width: 12px;
+  cursor: ew-resize; pointer-events: auto; z-index: 5;
+}
+.pos-resize::after {
+  content: ""; position: absolute; left: 5px; top: 50%; transform: translateY(-50%);
+  width: 2px; height: 40px; background: rgba(255,255,255,0.3); border-radius: 2px;
+}
+.pos-resize:hover::after { background: var(--accent); }
+
 .pos-del {
   position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
   width: 20px; height: 20px; border-radius: 4px;
   background: rgba(255,255,255,0.1); border: 0; color: #fff;
   font-size: 14px; line-height: 1; cursor: pointer; pointer-events: auto;
-  display: flex; align-items: center; justify-content: center; z-index: 2;
+  display: flex; align-items: center; justify-content: center; z-index: 10;
 }
 .pos-del:hover { background: var(--short); }
 
 @media (max-width: 720px) {
-  .tv-toolbar { right: 56px; gap: 2px; padding: 2px; }
+  .tv-toolbar { gap: 2px; padding: 2px; }
   .tv-btn { height: 24px; padding: 0 6px; font-size: 10px; }
   .tv-ohlc { font-size: 10px; gap: 5px; }
   .tv-ohlc .t, .tv-ohlc .k { display: none; }

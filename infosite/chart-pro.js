@@ -11,7 +11,6 @@
     lastHA: null,
   };
 
-  // ── helpers ────────────────────────────────────────────────────────────
   function fmtBar(v, IW) {
     if (v == null) return "—";
     var d = IW && IW.prec != null ? IW.prec : 4;
@@ -36,7 +35,7 @@
   //  ПОЗИЦІЇ (Long/Short Tools)
   // ═══════════════════════════════════════════════════════════════════════
   var posList = [];
-  var pendingPos = null; // 'long' | 'short'
+  var pendingPos = null;
   var posLayer = null;
 
   function initPosLayer() {
@@ -52,9 +51,8 @@
     var IW = window.VSV_HOOK && window.VSV_HOOK.IW;
     if (!IW) return;
     
-    // Отримуємо час кліку (початок позиції)
     var time = IW.chart.timeScale().coordinateToTime(clickX);
-    if (time === null) time = IW.coin.ohlc[IW.coin.ohlc.length - 1].time; // fallback
+    if (time === null) time = IW.coin.ohlc[IW.coin.ohlc.length - 1].time;
 
     var id = "pos_" + Date.now();
     var wrap = document.createElement("div");
@@ -65,11 +63,11 @@
       '<div class="pos-line entry"><div class="pos-label">Відкр. поз.</div></div>' +
       '<div class="pos-line profit"><div class="pos-label">Ціль</div></div>' +
       '<div class="pos-line loss"><div class="pos-label">Стоп</div></div>' +
+      '<div class="pos-resize" title="Змінити ширину"></div>' +
       '<button class="pos-del" title="Видалити">×</button>';
     
     posLayer.appendChild(wrap);
 
-    // Дефолтні значення (5% TP, 2% SL)
     var tpPct = type === "long" ? 0.05 : -0.05;
     var slPct = type === "long" ? -0.02 : 0.02;
 
@@ -80,6 +78,7 @@
       target: entryPrice * (1 + tpPct),
       stop: entryPrice * (1 + slPct),
       time: time,
+      width: 250,
       dom: {
         wrap: wrap,
         boxProfit: wrap.querySelector(".profit.pos-box"),
@@ -90,25 +89,21 @@
         labelEntry: wrap.querySelector(".pos-line.entry .pos-label"),
         labelTarget: wrap.querySelector(".pos-line.profit .pos-label"),
         labelStop: wrap.querySelector(".pos-line.loss .pos-label"),
+        resizeHandle: wrap.querySelector(".pos-resize"),
         delBtn: wrap.querySelector(".pos-del")
       }
     };
 
-    // Обробка перетягування (Таргет)
     setupDrag(pos.dom.lineTarget, function(dy) {
       var y = IW.series.priceToCoordinate(pos.target) + dy;
-      var p = IW.series.coordinateToPrice(y);
-      pos.target = p;
+      pos.target = IW.series.coordinateToPrice(y);
     });
 
-    // Обробка перетягування (Стоп)
     setupDrag(pos.dom.lineStop, function(dy) {
       var y = IW.series.priceToCoordinate(pos.stop) + dy;
-      var p = IW.series.coordinateToPrice(y);
-      pos.stop = p;
+      pos.stop = IW.series.coordinateToPrice(y);
     });
 
-    // Обробка перетягування (Вхід - тягне всю позицію)
     setupDrag(pos.dom.lineEntry, function(dy) {
       var yEntry = IW.series.priceToCoordinate(pos.entry) + dy;
       var yTgt = IW.series.priceToCoordinate(pos.target) + dy;
@@ -119,7 +114,10 @@
       pos.stop = IW.series.coordinateToPrice(yStop);
     });
 
-    // Видалення
+    setupDragX(pos.dom.resizeHandle, function(dx) {
+      pos.width = Math.max(60, pos.width + dx);
+    });
+
     pos.dom.delBtn.addEventListener("pointerdown", function(e) {
       e.stopPropagation();
       removePos(pos);
@@ -143,7 +141,7 @@
       dragging = true;
       startY = e.clientY;
       el.setPointerCapture(e.pointerId);
-      e.stopPropagation(); // Блокуємо скрол графіка
+      e.stopPropagation(); 
     });
 
     el.addEventListener("pointermove", function(e) {
@@ -163,19 +161,47 @@
     });
   }
 
+  function setupDragX(el, onMove) {
+    var dragging = false;
+    var startX = 0;
+
+    el.addEventListener("pointerdown", function(e) {
+      if (e.button !== 0) return;
+      dragging = true;
+      startX = e.clientX;
+      el.setPointerCapture(e.pointerId);
+      e.stopPropagation(); 
+    });
+
+    el.addEventListener("pointermove", function(e) {
+      if (!dragging) return;
+      var dx = e.clientX - startX;
+      onMove(dx);
+      startX = e.clientX;
+      
+      var IW = window.VSV_HOOK && window.VSV_HOOK.IW;
+      if (IW) renderPositions(IW);
+    });
+
+    el.addEventListener("pointerup", function(e) {
+      if (!dragging) return;
+      dragging = false;
+      el.releasePointerCapture(e.pointerId);
+    });
+  }
+
   function renderPositions(IW) {
     if (!IW || !IW.chart || !IW.series) return;
     var ts = IW.chart.timeScale();
     var chartWidth = document.getElementById("iw-box").clientWidth;
-    var psWidth = 60; // приблизна ширина шкали цін
+    var psWidth = 60; 
 
     posList.forEach(function(pos) {
       var x1 = ts.timeToCoordinate(pos.time);
       if (x1 === null) {
-        // Якщо час поза екраном, але ми можемо перевірити, з якого боку
         var range = ts.getVisibleLogicalRange();
         if (range && pos.time < IW.coin.ohlc[0].time) x1 = 0;
-        else x1 = chartWidth - psWidth; // показуємо біля правого краю
+        else x1 = chartWidth - psWidth; 
       }
       
       var yEntry = IW.series.priceToCoordinate(pos.entry);
@@ -188,13 +214,11 @@
       }
       pos.dom.wrap.style.display = "block";
 
-      // Встановлюємо позицію контейнера
       pos.dom.wrap.style.left = x1 + "px";
       pos.dom.wrap.style.top = "0px";
-      pos.dom.wrap.style.width = (chartWidth - psWidth - x1) + "px";
+      pos.dom.wrap.style.width = pos.width + "px";
       pos.dom.wrap.style.height = "100%";
 
-      // Бокси
       var pTop = Math.min(yEntry, yTarget);
       var pHeight = Math.abs(yEntry - yTarget);
       pos.dom.boxProfit.style.top = pTop + "px";
@@ -209,12 +233,10 @@
       pos.dom.boxLoss.style.left = "0px";
       pos.dom.boxLoss.style.width = "100%";
 
-      // Лінії
       pos.dom.lineEntry.style.top = yEntry + "px";
       pos.dom.lineTarget.style.top = yTarget + "px";
       pos.dom.lineStop.style.top = yStop + "px";
 
-      // Розрахунок даних для лейблів
       var isLong = pos.type === "long";
       var targetPct = Math.abs((pos.target - pos.entry) / pos.entry) * 100;
       var stopPct = Math.abs((pos.stop - pos.entry) / pos.entry) * 100;
@@ -228,19 +250,12 @@
     });
   }
 
-  // ── HOOK: викликається з app.js ПІСЛЯ створення графіка ────────────────
   function attach(IW) {
     if (!IW || !IW.chart || !IW.series) return;
     var box = document.getElementById("iw-box");
     if (!box) return;
 
-    box.querySelectorAll(".tv-pro").forEach(function (el) { el.remove(); });
     initPosLayer();
-
-    var legend = document.createElement("div");
-    legend.className = "tv-pro tv-ohlc";
-    legend.innerHTML = '<div class="ohlc-legend"></div>';
-    box.appendChild(legend);
 
     var ov = document.createElement("div");
     ov.className = "tv-pro tv-measure-overlay";
@@ -268,7 +283,6 @@
       renderPositions(IW);
     });
 
-    // Перемальовка позицій при русі графіка
     IW.chart.subscribeCrosshairMove(function() {
       if (posList.length) renderPositions(IW);
     });
@@ -307,7 +321,6 @@
     updateTypeBtn();
     renderLegendLast(IW);
 
-    // Обробка кліку для створення позиції
     IW.chart.subscribeClick(function (param) {
       if (!pendingPos) return;
       if (!param.point) return;
@@ -321,7 +334,6 @@
       }
     });
 
-    // Кнопки інструментів
     document.getElementById("tv-long").onclick = function() {
       pendingPos = "long";
       document.getElementById("iw-box").style.cursor = "crosshair";
@@ -343,7 +355,7 @@
   function onData(IW, c) {
     if (!IW || !c) return;
     renderLegendLast(IW);
-    renderPositions(IW); // Перемальовуємо позиції при оновленні даних
+    renderPositions(IW);
     if (PRO.type === "ha" && IW.series && c.ohlc) {
       var range = IW.chart && IW.chart.timeScale().getVisibleLogicalRange();
       IW.series.setData(c.ohlc);
@@ -352,7 +364,7 @@
   }
 
   function renderLegend(IW, bar, time) {
-    var el = document.querySelector(".tv-ohlc .ohlc-legend");
+    var el = document.querySelector("#tv-ohlc .ohlc-legend");
     if (!el || !bar) return;
     var o = bar.open, h = bar.high, l = bar.low, c = bar.close;
     var chg = o ? ((c - o) / o) * 100 : 0;
