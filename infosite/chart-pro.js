@@ -214,28 +214,36 @@
       }
       pos.dom.wrap.style.display = "block";
 
-      pos.dom.wrap.style.left = x1 + "px";
-      pos.dom.wrap.style.top = "0px";
-      pos.dom.wrap.style.width = pos.width + "px";
-      pos.dom.wrap.style.height = "100%";
+      // Динамічний розрахунок розмірів контейнера позиції
+      var pTop = Math.min(yEntry, yTarget, yStop);
+      var pBottom = Math.max(yEntry, yTarget, yStop);
+      var pHeightTotal = Math.max(10, pBottom - pTop);
 
-      var pTop = Math.min(yEntry, yTarget);
-      var pHeight = Math.abs(yEntry - yTarget);
-      pos.dom.boxProfit.style.top = pTop + "px";
-      pos.dom.boxProfit.style.height = pHeight + "px";
+      pos.dom.wrap.style.left = x1 + "px";
+      pos.dom.wrap.style.top = pTop + "px";
+      pos.dom.wrap.style.width = pos.width + "px";
+      pos.dom.wrap.style.height = pHeightTotal + "px";
+
+      // Блок прибутку (відносно контейнера)
+      var pTopProfit = Math.min(yEntry, yTarget);
+      var pHeightProfit = Math.abs(yEntry - yTarget);
+      pos.dom.boxProfit.style.top = (pTopProfit - pTop) + "px";
+      pos.dom.boxProfit.style.height = pHeightProfit + "px";
       pos.dom.boxProfit.style.left = "0px";
       pos.dom.boxProfit.style.width = "100%";
 
+      // Блок збитку (відносно контейнера)
       var lTop = Math.min(yEntry, yStop);
       var lHeight = Math.abs(yEntry - yStop);
-      pos.dom.boxLoss.style.top = lTop + "px";
+      pos.dom.boxLoss.style.top = (lTop - pTop) + "px";
       pos.dom.boxLoss.style.height = lHeight + "px";
       pos.dom.boxLoss.style.left = "0px";
       pos.dom.boxLoss.style.width = "100%";
 
-      pos.dom.lineEntry.style.top = yEntry + "px";
-      pos.dom.lineTarget.style.top = yTarget + "px";
-      pos.dom.lineStop.style.top = yStop + "px";
+      // Лінії (відносно контейнера)
+      pos.dom.lineEntry.style.top = (yEntry - pTop) + "px";
+      pos.dom.lineTarget.style.top = (yTarget - pTop) + "px";
+      pos.dom.lineStop.style.top = (yStop - pTop) + "px";
 
       var isLong = pos.type === "long";
       var targetPct = Math.abs((pos.target - pos.entry) / pos.entry) * 100;

@@ -736,8 +736,9 @@ body.iw-full-on { overflow: hidden; }
 }
 .pos-resize:hover::after { background: var(--accent); }
 
+/* КНОПКА ВИДАЛЕННЯ (ТЕПЕР ПРИВ'ЯЗАНА ДО ВЕРХНЬОГО ПРАВОГО КУТА ПОЗИЦІЇ) */
 .pos-del {
-  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  position: absolute; right: 4px; top: 4px; /* Змінено з top: 50% */
   width: 20px; height: 20px; border-radius: 4px;
   background: rgba(255,255,255,0.1); border: 0; color: #fff;
   font-size: 14px; line-height: 1; cursor: pointer; pointer-events: auto;
