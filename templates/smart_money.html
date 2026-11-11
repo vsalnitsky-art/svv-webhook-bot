@@ -1504,6 +1504,26 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .tmpq-pct { color:#7dd3fc; }
 .tmpq-lev { color:#c4b5fd; }
 .tmpq-lev input { width:42px; }
+/* ⚖ Банер «SMC Forecast» (вимога 11.11) */
+.smcf-card { margin-top:14px; padding:12px 16px; border:1px solid rgba(56,189,248,0.30); border-radius:8px; background:rgba(56,189,248,0.04); }
+.smcf-grid { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:18px; }
+.smcf-side { display:flex; flex-direction:column; gap:7px; min-width:0; }
+.smcf-h { display:flex; align-items:center; gap:7px; font:700 0.74rem monospace; color:#e5e7eb; }
+.smcf-r .smcf-h { flex-direction:row-reverse; }
+.smcf-st { margin-left:auto; padding:2px 8px; border-radius:6px; font:800 0.68rem monospace; letter-spacing:.04em; }
+.smcf-r .smcf-st { margin-left:0; margin-right:auto; }
+.smcf-st.up { color:#00e676; background:rgba(0,230,118,.12); border:1px solid rgba(0,230,118,.45); }
+.smcf-st.dn { color:#ff4d5e; background:rgba(255,61,61,.12); border:1px solid rgba(255,61,61,.45); }
+.smcf-st.flat { color:#cbd5e1; background:rgba(148,163,184,.1); border:1px solid rgba(148,163,184,.35); }
+.smcf-bar { height:18px; border-radius:9px; display:flex; align-items:center; justify-content:space-between; padding:0 9px; }
+.smcf-bar.mute { filter:saturate(.55) brightness(.9); }
+.smcf-bar em { font:700 0.68rem monospace; font-style:normal; color:rgba(255,255,255,.88); text-shadow:0 1px 2px rgba(0,0,0,.6); }
+.smcf-bar em.win { color:#fff; font-weight:800; }
+.smcf-mid { display:flex; flex-direction:column; align-items:center; gap:5px; }
+.smcf-title { font:800 0.9rem monospace; color:#7dd3fc; white-space:nowrap; }
+.smcf-all { font:700 0.66rem monospace; color:#8b93a7; }
+.smcf-all.up { color:#00e676; } .smcf-all.dn { color:#ff4d5e; }
+@media (max-width: 760px) { .smcf-grid { grid-template-columns:1fr; } .smcf-mid { order:-1; } }
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -2572,6 +2592,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-sprx-gate-banner" onchange="updateMmGate()">
                         за банером Пружини-скан
                     </label>
+                    <label class="sm-checkbox" title="⚖ Ворота за банером «SMC Forecast» — сторона 🔭 скану біржі (вимога 11.11): банер LONG → пропускаємо лише LONG-сигнали, SHORT → лише SHORT; ⚖ рівновага / замало заряджених / ще немає скану → сигнал відхиляється (причина — у 🧾 Лозі). Незалежні від таблиць і від «Через Пружину-скан». Діє на ВСІ сигнали сканера і на 🔁 повторній перевірці Черги-4. ✋ Ручне відкриття їх не проходить. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-spbx-gate" onchange="updateMmGate()">
+                        ⚖ за банером SMC Binance
+                    </label>
+                    <label class="sm-checkbox" title="⚖ Ворота за банером «SMC Forecast» — сторона 🌀 WATCHLIST (бари Bybit): банер LONG → лише LONG-сигнали, SHORT → лише SHORT; ⚖ / замало заряджених → відхиляється. Незалежні від таблиць. Вимкнена 🌀 Пружина → умова не діє. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-spbw-gate" onchange="updateMmGate()">
+                        ⚖ за банером SMC Bybit
+                    </label>
                     <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-Trend» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» / «Через МММ-Pull» / «Через МММ-Decision» (для кожного блоку — його власні пороги; у 🧠 МММ-Decision — ще й фільтр «Вердикт ≥»). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-str" onchange="updateMmGate()">
                         ⚑ з порогом «Сила ≥» вкладки
@@ -2876,6 +2904,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
          сам не відкриває. Поки він лежав усередині панелі Fuel Auto-Filter,
          це читалось як «ще одна черга» — і зникав разом із нею. Тепер стоїть
          НАД 🎯 POC-сетапом, як окремий блок верхнього рівня. -->
+    <!-- ===== ⚖ БАНЕР «SMC Forecast» (вимога 11.11) =====
+         Куди накручено обидві «Пружини»: 🔭 скан біржі і 🌀 WATCHLIST (Bybit).
+         Рахує й веде бот (detection/spring_banner.py, таймер переживає рестарт);
+         інфосайт показує ТІ САМІ числа. -->
+    <div class="tm-panel smcf-card" id="smcf-panel" style="display:none">
+        <div class="smcf-grid">
+            <div class="smcf-side" id="smcf-scan"></div>
+            <div class="smcf-mid">
+                <span class="smcf-title">⚖ SMC Forecast</span>
+                <div class="smcf-tm" id="smcf-tm"></div>
+                <span class="smcf-all" id="smcf-all"></span>
+            </div>
+            <div class="smcf-side smcf-r" id="smcf-wl"></div>
+        </div>
+    </div>
     <!-- ===== 🌀 «ПРУЖИНА» — потенціал монет WATCHLIST (вимога 29.10) =====
          Заряд (стиснення волатильності/коробки/обʼєму), напрямок і вистріл по
          ЗАКРИТИХ 1h-барах, які сканер уже тримає (detection/spring_coil.py).
@@ -7859,6 +7902,7 @@ async function loadSettings() {
              ['sm-mms-gate', 'mms_gate_enabled'], ['sm-mms-gate-banner', 'mms_gate_banner'],
              ['sm-sprw-gate', 'sprw_gate_enabled'], ['sm-sprw-gate-banner', 'sprw_gate_banner'],
              ['sm-sprx-gate', 'sprx_gate_enabled'], ['sm-sprx-gate-banner', 'sprx_gate_banner'],
+             ['sm-spbx-gate', 'spbx_gate_enabled'], ['sm-spbw-gate', 'spbw_gate_enabled'],
              ['sm-mm-gate-str', 'mm_gate_strength']]
                 .forEach(([id, k]) => {
                     const el = document.getElementById(id);
@@ -8067,6 +8111,10 @@ function updateSettingsSummary() {
         const _b = document.getElementById(b);
         summary += ' · ' + t + (_b && _b.checked ? ' +банер' : '');
     });
+    [['sm-spbx-gate', '⚖ SMC Binance'], ['sm-spbw-gate', '⚖ SMC Bybit']].forEach(([g, t]) => {
+        const _g = document.getElementById(g);
+        if (_g && _g.checked) summary += ' · ' + t;
+    });
     const _gs = document.getElementById('sm-mm-gate-str');
     const _anyMm = ['sm-mm-gate', 'sm-mmo-gate', 'sm-mmc-gate', 'sm-mmf-gate', 'sm-mmp-gate', 'sm-mmd-gate', 'sm-mmr-gate', 'sm-mms-gate'].some(i => {
         const e = document.getElementById(i); return e && e.checked; });
@@ -8258,6 +8306,8 @@ async function updateMmGate() {
     });
     const _gs = document.getElementById('sm-mm-gate-str');
     body.mm_gate_strength = !!(_gs && _gs.checked);
+    [['sm-spbx-gate', 'spbx_gate_enabled'], ['sm-spbw-gate', 'spbw_gate_enabled']].forEach(([i, k]) => {
+        const e = document.getElementById(i); body[k] = !!(e && e.checked); });
     _smMmGateSync();
     try {
         const r = await fetch('/api/smc/settings', {
@@ -16953,6 +17003,10 @@ if (!window._ffTimerTick) {
         updateBtcStartBanner();
         // ⚖️ Банер монітора — той самий такт, окремого інтервалу не заводимо.
         if (typeof mmRenderBias === 'function') mmRenderBias();
+        document.querySelectorAll('.smcf-tm[data-since]').forEach(el => {
+            const t = parseInt(el.getAttribute('data-since'), 10);
+            if (!isNaN(t)) el.innerHTML = flipTimerHTML(nowS - t);
+        });
     }, 1000);
 }
 
@@ -17520,6 +17574,51 @@ async function sprwSaveSettings() {
 // 5с — щоб пульс і прогрес були живими; запит лише читає памʼять бота і
 // пропускається, коли гармошка згорнута або вкладка неактивна.
 setInterval(() => { try { sprLoad(false); } catch (e) {} }, 5000);
+
+// ⚖ Банер «SMC Forecast» (вимога 11.11) — показники рахує бот
+// (`/api/spring-banner`), ті самі, що бачить інфосайт.
+function _smcfSide(b, right) {
+    if (!b) return '';
+    const head = `<div class="smcf-h">${b.ex === 'binance' ? '🟡' : '⬛'} ${b.label || ''}`;
+    if (!b.ok) return head + '</div><div style="font-size:0.7rem;color:#8b93a7">ще немає даних</div>';
+    const pl = Math.max(0, Math.min(100, Number(b.prob_long) || 50)), ps = 100 - pl;
+    const dir = b.lean === 'LONG' || b.lean === 'SHORT';
+    const st = b.lean === 'LONG' ? ['● LONG', 'up'] : b.lean === 'SHORT' ? ['● SHORT', 'dn']
+        : ['⚖ ' + (b.enough ? 'РІВНОВАГА' : 'ЗАМАЛО'), 'flat'];
+    const a = Math.max(0, pl - 7).toFixed(1), z = Math.min(100, pl + 7).toFixed(1);
+    const grad = `linear-gradient(90deg,#00c853 0%,#00e676 ${a}%,#ff3d3d ${z}%,#ff1744 100%)`;
+    const tip = `▲ LONG ${pl.toFixed(1)}% · ▼ SHORT ${ps.toFixed(1)}% · заряджених ${b.coins} з ${b.total} (потрібно ≥ ${b.need})`;
+    return head + `<span class="smcf-st ${st[1]}">${st[0]}</span></div>` +
+        `<div class="smcf-bar${dir ? '' : ' mute'}" title="${tip}" style="background:${grad}">` +
+        `<em class="${pl >= ps ? 'win' : ''}">▲ ${Math.round(pl)}%</em><em class="${ps > pl ? 'win' : ''}">${Math.round(ps)}% ▼</em></div>`;
+}
+async function smcfLoad() {
+    if (document.hidden) return;
+    try {
+        const r = await fetch('/api/spring-banner', {cache: 'no-store'});
+        if (!r.ok) return;
+        const d = await r.json();
+        const card = document.getElementById('smcf-panel');
+        if (!card || !d || !d.ok || !(d.banners || []).length) { if (card) card.style.display = 'none'; return; }
+        card.style.display = '';
+        const by = {};
+        d.banners.forEach(b => { by[b.key] = b; });
+        const sc = document.getElementById('smcf-scan'), wl = document.getElementById('smcf-wl');
+        if (sc) sc.innerHTML = _smcfSide(by.scan, false);
+        if (wl) wl.innerHTML = _smcfSide(by.wl, true);
+        const a = by.all || {}, tm = document.getElementById('smcf-tm'), al = document.getElementById('smcf-all');
+        if (tm) {
+            if (a.since) { tm.setAttribute('data-since', Math.floor(a.since)); tm.innerHTML = flipTimerHTML(_nowS() - a.since); }
+            else { tm.removeAttribute('data-since'); tm.textContent = '—'; }
+        }
+        if (al) {
+            al.className = 'smcf-all ' + (a.lean === 'LONG' ? 'up' : a.lean === 'SHORT' ? 'dn' : '');
+            al.textContent = a.lean === 'LONG' ? 'спільно ▲ LONG' : a.lean === 'SHORT' ? 'спільно ▼ SHORT' : (a.lean ? 'спільно ⚖ рівновага' : '');
+        }
+    } catch (e) {}
+}
+smcfLoad();
+setInterval(() => { try { smcfLoad(); } catch (e) {} }, 15000);
 setTimeout(() => { try { sprLoad(false); } catch (e) {} }, 1500);
 
 // ═══ 💰🌀 «FUNDING — ПРУЖИНА» (06.11) ═══════════════════════════════════════

@@ -123,3 +123,17 @@ def book_decide(tag: str, rec: Optional[Dict], banner: Optional[str], side: str,
         return (True, False, f'{tag}[вкладка {cs}{bn}{where}]:✗',
                 f'{name}: банер «Куди накручено» {banner or "⚖"}, а сигнал {side}')
     return (True, True, f'{tag}[вкладка {cs}{bn}{where}]:✓', '')
+
+
+def banner_decide(tag: str, banner: Optional[str], side: str) -> Tuple[bool, bool, str, str]:
+    """⚖ Ворота за банером «SMC Forecast» (вимога 11.11): банер LONG → лише
+    LONG-сигнали, SHORT → лише SHORT; ⚖ рівновага / замало заряджених / немає
+    даних → відмова («невідомо» ≠ «за напрямком»)."""
+    side = str(side or '').upper()
+    if side not in SIDES:
+        return (False, True, '', '')
+    if banner == side:
+        return (True, True, f'{tag}[{banner}]:✓', '')
+    return (True, False, f'{tag}[{banner or "⚖"}]:✗',
+            f'⚖ SMC Forecast {tag.lstrip("⚖")}: банер {banner or "⚖ без напрямку"}, '
+            f'а сигнал {side} (відхилено)')

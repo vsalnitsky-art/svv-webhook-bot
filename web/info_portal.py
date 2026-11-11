@@ -605,17 +605,6 @@ def _compute(sc, kind, sym, tf):
                      reverse=True)
             vz = [z for z in (sc._format_vob(o, tf) for o in obs) if z]
         return {'vz': vz}, min(next_close(now, tf), now + VOB_MAX_TTL)
-    if kind == 'spring':
-        # 📊 «Пружина» на барах цього TF для групи 15m «Рекомендовані ботом» —
-        # ТОЙ САМИЙ `spring_coil.analyze`, лише закриті бари, раз на закриття.
-        from detection.spring_coil import analyze
-        sk = md.fetch_klines(sym, limit=REC_SPRING15_BARS, interval=tf)
-        b = bar_sec(tf)
-        cl = [x for x in (sk or []) if to_sec(x.get('t')) and to_sec(x.get('t')) + b <= now]
-        rec = analyze(cl)
-        if not rec.get('ok', True) and rec.get('reason'):
-            raise ValueError(rec['reason'])
-        return {'rec': rec}, next_close(now, tf) + SETTLE_SEC
     if kind == 'shl':
         # 🏁 Swing High / Low — ТА САМА функція бота, що лінії Strong/Weak на
         # графіку /smart-money (дилінг-діапазон = єдине джерело з PD-зоною).
@@ -1555,10 +1544,10 @@ def rec_prob(row):
 # в бік угоди не дав. Буфер / стеля / гарантія % — ті самі налаштування, що в
 # угод (`queue3_vob_sl_buffer_pct`, `autosl_max_pct`, `autosl_fallback_pct`).
 REC_SL_TFS = ('1h', '15m', '5m')
-# 📊 Дві групи розрахунку (вимога 11.11): 1H — SL з OB 1H, TP/хід з Пружини на
-# 1h-барах; 15m — SL з OB 15m (→ 5m), TP/хід з Пружини на 15m-барах.
+# 📊 Дві групи розрахунку (вимога 11.11): 1H — SL з OB 1H; 15m — SL з OB
+# 15m (→ 5m). 🎯 TP СПІЛЬНИЙ для обох (ціль «Ймовірного ходу» Пружини 1h),
+# тож групи відрізняються лише стопом і R.
 REC_GROUP_TFS = {'1h': ('1h',), '15m': ('15m', '5m')}
-REC_SPRING15_BARS = 300
 
 
 def rec_ob_level(zones, side, price, buf=0.0):
@@ -1655,50 +1644,6 @@ def rec_sl_get(sc, sym, side, price, s=None, tfs=REC_SL_TFS):
     return rec_sl_from_obs(zs, side, price, s, tfs)
 
 
-def rec_group(side, spr, sl):
-    """ЧИСТА: група розрахунку одного TF → {price, sl, sl_pct, sl_tf, sl_label,
-    sl_fb, sl_wait, tp, tp_pct, rr, prob, wait}.
-
-    `spr` — запис Пружини цього TF (`analyze`): ціна, ціль «Ймовірного ходу» в
-    бік рядка (ціль позаду ціни → TP немає), ймовірність. None → ще рахується."""
-    out = {'price': None, 'sl': None, 'sl_pct': None, 'sl_tf': '', 'sl_label': '',
-           'sl_fb': False, 'sl_wait': bool((sl or {}).get('wait')), 'tp': None,
-           'tp_pct': None, 'rr': None, 'prob': None, 'wait': spr is None}
-    if side not in ('LONG', 'SHORT'):
-        return out
-    up = side == 'LONG'
-    if isinstance(spr, dict) and spr.get('ok', True):
-        try:
-            px = float(spr.get('price') or 0)
-        except (TypeError, ValueError):
-            px = 0.0
-        out['price'] = px or None
-        try:
-            pl = float(spr.get('prob_long'))
-            out['prob'] = round(pl if up else 100.0 - pl, 1)
-        except (TypeError, ValueError):
-            pass
-        tp = spr.get('tgt_long' if up else 'tgt_short')
-        mv = spr.get('move_long_pct' if up else 'move_short_pct')
-        try:
-            if tp and float(mv) > 0:
-                out['tp'], out['tp_pct'] = float(tp), float(mv)
-        except (TypeError, ValueError):
-            pass
-    if sl and sl.get('sl'):
-        out.update(sl=sl['sl'], sl_pct=sl.get('pct'), sl_label=sl.get('label') or '',
-                   sl_fb=bool(sl.get('fb')), sl_tf=sl.get('tf') or '')
-        try:
-            risk = abs(float(sl['pct']))
-            if out['tp_pct'] and risk > 0:
-                out['rr'] = round(float(out['tp_pct']) / risk, 2)
-        except (TypeError, ValueError, KeyError):
-            pass
-    elif sl:
-        out['sl_label'] = sl.get('label') or ''
-    return out
-
-
 def rec_levels(row, sl=None):
     """ЧИСТА: SL/TP/R рядка. TP = ціль «Ймовірний хід» у бік рядка."""
     side = row.get('side')
@@ -1722,139 +1667,46 @@ def rec_levels(row, sl=None):
     return out
 
 
-# ⚖ БАНЕР «КУДИ НАКРУЧЕНО» ОБОХ ПРУЖИН (вимога 11.11): 🔭 скан біржі і 🌀
-# WATCHLIST — у відсотках і з таймером «відколи тримається напрямок».
-# Джерело — ті самі `aggregate`, що банери на /smart-money (лише памʼять).
-SPB_DB_KEY = 'info_spring_banner_v1'
-# Підпис біржі (вимога 11.11: замість «WATCHLIST» — біржа, з якої бари: Bybit).
-SPB_EX_LABEL = {'binance': 'Binance', 'bybit': 'Bybit'}
-_spb_state = {}              # {'scan'|'wl': {'lean': 'LONG'|'SHORT'|'FLAT', 'since': ts}}
-_spb_loaded = [False]
+# ⚖ БАНЕР «SMC Forecast» — рахує й веде БОТ (`detection/spring_banner.py`,
+# вимога 11.11); тут лише делегування (інфосайт транслює показники бота).
+def _sb():
+    import importlib
+    import sys
+    m = sys.modules.get('detection.spring_banner')
+    if m is not None:
+        return m
+    try:
+        return importlib.import_module('detection.spring_banner')
+    except Exception:
+        import importlib.util
+        import os
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         'detection', 'spring_banner.py')
+        spec = importlib.util.spec_from_file_location('detection.spring_banner', p)
+        m = importlib.util.module_from_spec(spec)
+        sys.modules['detection.spring_banner'] = m
+        spec.loader.exec_module(m)
+        return m
 
 
 def spb_lean_of(agg):
-    """Напрямок банера: LONG / SHORT / FLAT (рівновага або замало заряджених)."""
-    if not isinstance(agg, dict):
-        return None
-    return agg.get('lean') if agg.get('lean') in ('LONG', 'SHORT') else 'FLAT'
+    return _sb().lean_of(agg)
 
 
 def spb_track(prev, lean, now, data_ts=None):
-    """ЧИСТА: новий стан таймера. Той самий напрямок → `since` не рухається;
-    зміна → відлік від моменту ДАНИХ, що її показали (скан / перерахунок), а
-    не від того, коли сторінку відкрили. Немає даних (`lean` None) → без змін."""
-    if lean is None:
-        return dict(prev) if prev else None
-    if prev and prev.get('lean') == lean and prev.get('since'):
-        return dict(prev)
-    ts = data_ts if (data_ts and 0 < float(data_ts) <= now) else now
-    if prev and prev.get('since') and float(prev['since']) > ts:
-        ts = now
-    return {'lean': lean, 'since': float(ts)}
-
-
-def spb_combined(leans):
-    """ЧИСТА: спільний напрямок банера (один таймер, вимога 11.11). Обидві
-    пружини в один бік → він; одна з напрямком, друга ⚖ → її бік; протилежні →
-    FLAT; даних немає ні в кого → None."""
-    ds = [x for x in leans if x in ('LONG', 'SHORT')]
-    if not ds:
-        return 'FLAT' if any(x == 'FLAT' for x in leans) else None
-    return ds[0] if all(x == ds[0] for x in ds) else 'FLAT'
+    return _sb().track(prev, lean, now, data_ts)
 
 
 def spb_view(key, label, agg, st):
-    """ЧИСТА: рядок банера для сторінки."""
-    if not isinstance(agg, dict):
-        return {'key': key, 'label': label, 'ok': False}
-    pl = float(agg.get('prob_long') or 50.0)
-    lean = spb_lean_of(agg)
-    win = 'LONG' if pl >= 50 else 'SHORT'
-    return {'key': key, 'label': label, 'ok': True, 'lean': lean,
-            'pct': round(pl if win == 'LONG' else 100.0 - pl, 1), 'win': win,
-            'prob_long': round(pl, 1), 'enough': bool(agg.get('enough')),
-            'coins': int(agg.get('coins') or 0), 'total': int(agg.get('total') or 0),
-            'need': int(agg.get('need') or 0),
-            'n_long': int(agg.get('n_long') or 0), 'n_short': int(agg.get('n_short') or 0),
-            'fired_long': int(agg.get('fired_long') or 0),
-            'fired_short': int(agg.get('fired_short') or 0),
-            'since': (st or {}).get('since') if (st or {}).get('lean') == lean else None}
+    return _sb().view(key, label, agg, st)
 
 
-def _spb_db():
-    try:
-        from storage.db_operations import get_db
-        return get_db()
-    except Exception:
-        return None
+def spb_combined(leans, warm=False):
+    return _sb().combined(leans, warm)
 
 
 def spring_banners(sc, eng, now):
-    if not _spb_loaded[0]:
-        _spb_loaded[0] = True
-        db = _spb_db()
-        try:
-            raw = db.get_setting(SPB_DB_KEY, None) if db else None
-            if isinstance(raw, str):
-                raw = json.loads(raw)
-            if isinstance(raw, dict):
-                for k in ('scan', 'wl', 'all'):
-                    v = raw.get(k)
-                    if isinstance(v, dict) and v.get('lean') and v.get('since'):
-                        _spb_state[k] = {'lean': v['lean'], 'since': float(v['since'])}
-        except Exception:
-            pass
-    out, changed = [], False
-    src, leans, tss = [], [], []
-    try:
-        if eng is not None:
-            st = eng.state().get('result') or {}
-            _ex = str(st.get('exchange') or 'binance').lower()
-            src.append(('scan', _ex, eng.banner_agg(), st.get('ts')))
-    except Exception:
-        pass
-    try:
-        if sc is not None and hasattr(sc, 'spring_banner'):
-            ts = None
-            try:
-                ts = (sc.spring_stats() or {}).get('calc_at')
-            except Exception:
-                pass
-            src.append(('wl', 'bybit', sc.spring_banner(), ts))
-    except Exception:
-        pass
-    for key, label, agg, ts in src:
-        prev = _spb_state.get(key)
-        leans.append(spb_lean_of(agg))
-        try:
-            if ts:
-                tss.append(float(ts))
-        except (TypeError, ValueError):
-            pass
-        nxt = spb_track(prev, spb_lean_of(agg), now, ts)
-        if nxt and nxt != prev:
-            _spb_state[key] = nxt
-            changed = True
-        v = spb_view(key, SPB_EX_LABEL.get(label, label.title()), agg, _spb_state.get(key))
-        v['ex'] = label
-        out.append(v)
-    # ⏱ ОДИН таймер на банер: відколи тримається СПІЛЬНИЙ напрямок обох пружин.
-    prev = _spb_state.get('all')
-    nxt = spb_track(prev, spb_combined(leans) if src else None, now, max(tss) if tss else None)
-    if nxt and nxt != prev:
-        _spb_state['all'] = nxt
-        changed = True
-    if out:
-        a = _spb_state.get('all') or {}
-        out.append({'key': 'all', 'ok': bool(a), 'lean': a.get('lean'), 'since': a.get('since')})
-    if changed:
-        db = _spb_db()
-        try:
-            if db:
-                db.set_setting(SPB_DB_KEY, dict(_spb_state))
-        except Exception:
-            pass
-    return out
+    return _sb().compute(sc, eng, now)
 
 
 def recommended_payload(now=None):
@@ -1897,15 +1749,14 @@ def recommended_payload(now=None):
                 h = {'sl': None, 'label': f'помилка: {str(e)[:60]}'}
             r.update(rec_levels(r, h))
             r['sl_wait'] = bool(h.get('wait'))
-            # 📊 Група 15m: Пружина на 15m-барах + SL з OB 15m → 5m.
+            # 📊 Група 15m: SL з OB 15m → 5m, TP — СПІЛЬНИЙ (той самий, що 1H).
             try:
-                d15, e15 = part(sc, 'spring', r['symbol'], '15m') if sc is not None else (None, 'немає сканера')
-                spr15 = (d15 or {}).get('rec') if d15 else ({'ok': False} if e15 else None)
-                px15 = (spr15 or {}).get('price') or r.get('price')
-                h15 = rec_sl_get(sc, r['symbol'], r['side'], px15, ffs, REC_GROUP_TFS['15m'])
-                r['m15'] = rec_group(r['side'], spr15, h15)
-                if e15 and not d15:
-                    r['m15']['err'] = e15[:80]
+                h15 = rec_sl_get(sc, r['symbol'], r['side'], r.get('price'), ffs,
+                                 REC_GROUP_TFS['15m'])
+                m15 = rec_levels(r, h15)
+                m15['sl_wait'] = bool(h15.get('wait'))
+                m15['price'] = r.get('price')
+                r['m15'] = m15
             except Exception as e:
                 r['m15'] = {'err': str(e)[:80]}
     try:

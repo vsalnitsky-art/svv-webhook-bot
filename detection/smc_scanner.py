@@ -481,6 +481,11 @@ DEFAULT_SETTINGS = {
     'sprw_gate_banner': False,
     'sprx_gate_enabled': False,
     'sprx_gate_banner': False,
+    # ⚖ ВОРОТА ЗА БАНЕРОМ «SMC Forecast» (вимога 11.11): банер 🔭 скану
+    # (Binance) LONG → пропускаємо LONG-сигнали, SHORT → SHORT; ⚖ → нічого.
+    # Окремо — банер 🌀 WATCHLIST (Bybit). Незалежні від таблиць. Деф. ВИМК.
+    'spbx_gate_enabled': False,
+    'spbw_gate_enabled': False,
 
     # === 🆕 АЛЕРТ «НОВИЙ OB НА ГРАФІКУ» (вимога 09.09) ===================
     # «Моментальна реакція на появу на графіку нового OB 1H і моментальна
@@ -1855,6 +1860,7 @@ class SMCScanner:
                        'spring_charge_gate_enabled', 'spring_min_charge',
                        'sprw_gate_enabled', 'sprw_gate_banner',
                        'sprx_gate_enabled', 'sprx_gate_banner',
+                       'spbx_gate_enabled', 'spbw_gate_enabled',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
@@ -2011,6 +2017,7 @@ class SMCScanner:
                         'mms_gate_enabled', 'mms_gate_banner',
                         'sprw_gate_enabled', 'sprw_gate_banner',
                         'sprx_gate_enabled', 'sprx_gate_banner',
+                        'spbx_gate_enabled', 'spbw_gate_enabled',
                         'mm_gate_strength'):
                 self._settings[_gk] = bool(self._settings.get(_gk, False))
             self._settings['liq_gate_enabled'] = bool(
@@ -3988,7 +3995,8 @@ class SMCScanner:
         """🌀/🔭 Список (applies, ok, chip, reason) увімкнених воріт «Через
         Пружину-WL» і «Через Пружину-скан»."""
         s = getattr(self, '_settings', None) or {}
-        if not (s.get('sprw_gate_enabled') or s.get('sprx_gate_enabled')):
+        if not (s.get('sprw_gate_enabled') or s.get('sprx_gate_enabled')
+                or s.get('spbx_gate_enabled') or s.get('spbw_gate_enabled')):
             return []
         try:
             sg = _sibling_mod('spring_gates', '_SPRING_GATES_MOD')
@@ -3996,6 +4004,21 @@ class SMCScanner:
             return []
         S = str(symbol or '').upper()
         out = []
+        # ⚖ ЗА БАНЕРОМ «SMC Forecast» — ТІ САМІ банери, що на сторінці.
+        if s.get('spbx_gate_enabled'):
+            import sys as _sys
+            _m = _sys.modules.get('detection.spring_scan')
+            eng = _m.get_spring_scan() if _m is not None else None
+            if eng is not None and hasattr(eng, 'banner_agg'):
+                try:
+                    ex = str(((eng.state() or {}).get('result') or {}).get('exchange') or 'binance')
+                except Exception:
+                    ex = 'binance'
+                out.append(sg.banner_decide(f'⚖{ex.title()}', sg.banner_side(eng.banner_agg()), side))
+        if s.get('spbw_gate_enabled') and s.get('spring_enabled', True):
+            out.append(sg.banner_decide('⚖Bybit', sg.banner_side(self.spring_banner()), side))
+        if not (s.get('sprw_gate_enabled') or s.get('sprx_gate_enabled')):
+            return out
         wl_rec = (self.spring_for([S]) or {}).get(S) if s.get('spring_enabled', True) else None
         wl_on = bool(s.get('sprw_gate_enabled') and s.get('spring_enabled', True))
         xs_on = bool(s.get('sprx_gate_enabled'))

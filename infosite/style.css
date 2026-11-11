@@ -149,7 +149,10 @@ body {
 .conn--wait { color: var(--warn); background: rgba(255, 179, 0, 0.1); border: 1px solid rgba(255, 179, 0, 0.2); }
 .conn--err  { color: var(--short); background: rgba(255, 23, 68, 0.1); border: 1px solid rgba(255, 23, 68, 0.2); box-shadow: 0 0 10px rgba(255,23,68,0.1); }
 
-.wrap { width: 100%; max-width: 1600px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+.wrap { width: 100%; max-width: 1600px; margin: 0 auto; padding: 24px; display: grid; gap: 20px;
+  grid-template-columns: minmax(0, 1fr); }
+/* Сітка не розтягується вміст ширших таблиць: вони гортаються в своїй рамці (11.11). */
+.wrap > * { min-width: 0; }
 
 .card {
   background: var(--surface);
@@ -521,15 +524,19 @@ td.nw { white-space: nowrap; }
 .rec-lv { font: 600 12.5px var(--mono); white-space: nowrap; }
 .rec-lv small { font-size: 11px; opacity: .85; }
 .rec-lv.sl { color: #ff4d5e; } .rec-lv.tp { color: #00e676; }
-/* 📊 Групи розрахунку 1H / 15m — власне тло і межа, щоб не зливались (11.11) */
-#rec-tbl .g1 { background: rgba(56,189,248,.06); }
-#rec-tbl .g15 { background: rgba(192,132,252,.07); }
+/* 📊 Групи 1H / 15m (вимога 11.11): тло рядка ОДНЕ на весь рядок (за
+   напрямком, рівною мірою в кожній комірці) — без «обірваних кусків»; групи
+   розділяє лише тонка кольорова межа + тонована шапка. */
 #rec-tbl .gs { border-left: 2px solid rgba(148,163,184,.35); }
-#rec-tbl th.g1.gs, #rec-tbl td.g1.gs { border-left-color: rgba(56,189,248,.6); }
-#rec-tbl th.g15.gs, #rec-tbl td.g15.gs { border-left-color: rgba(192,132,252,.65); }
+#rec-tbl th.g1.gs, #rec-tbl td.g1.gs { border-left-color: rgba(56,189,248,.55); }
+#rec-tbl th.g15.gs, #rec-tbl td.g15.gs { border-left-color: rgba(192,132,252,.6); }
 #rec-tbl tr.rec-gh th.g1 { color: #7dd3fc; } #rec-tbl tr.rec-gh th.g15 { color: #d8b4fe; }
-#rec-tbl thead th.g1 { background: linear-gradient(rgba(56,189,248,.12), rgba(56,189,248,.12)), var(--surface); }
-#rec-tbl thead th.g15 { background: linear-gradient(rgba(192,132,252,.14), rgba(192,132,252,.14)), var(--surface); }
+#rec-tbl thead th.g1 { background: linear-gradient(rgba(56,189,248,.12), rgba(56,189,248,.12)), var(--surface), var(--bg); }
+#rec-tbl thead th.g15 { background: linear-gradient(rgba(192,132,252,.14), rgba(192,132,252,.14)), var(--surface), var(--bg); }
+#rec-tbl tbody tr.rec-row.up td { background: linear-gradient(rgba(0,230,118,.045), rgba(0,230,118,.045)), var(--elev); }
+#rec-tbl tbody tr.rec-row.dn td { background: linear-gradient(rgba(255,61,61,.05), rgba(255,61,61,.05)), var(--elev); }
+#rec-tbl tbody tr.rec-row:hover td { background: var(--line-soft); }
+#rec-tbl td.tpc, #rec-tbl th.tpc { border-left: 1px solid var(--line-soft); }
 .rec-wrap #rec-tbl tr.rec-sh th { top: 27px; }
 .rec-path { display: inline-flex; align-items: center; gap: 6px; }
 .rec-path .bar { position: relative; display: inline-block; width: 120px; height: 7px; border-radius: 4px; }

@@ -71,6 +71,26 @@ def _fs():
         return m
 
 
+def _spring_banner():
+    """⚖ Модуль банера — ОДИН екземпляр на процес (стан таймера)."""
+    import importlib
+    import sys
+    m = sys.modules.get('detection.spring_banner')
+    if m is not None:
+        return m
+    try:
+        return importlib.import_module('detection.spring_banner')
+    except Exception:
+        import importlib.util
+        import os
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'spring_banner.py')
+        spec = importlib.util.spec_from_file_location('detection.spring_banner', p)
+        m = importlib.util.module_from_spec(spec)
+        sys.modules['detection.spring_banner'] = m
+        spec.loader.exec_module(m)
+        return m
+
+
 def _excluded() -> set:
     try:
         from detection.tickr_core import WL_LIKE_EXCLUDE
@@ -765,6 +785,12 @@ class SpringScan:
                 self.tick()
             except Exception as e:
                 print(f"[SpringScan] tick error: {e}")
+            # ⚖ Банер «SMC Forecast» веде БОТ безперервно (таймер не залежить
+            # від того, чи хтось відкрив сторінку).
+            try:
+                _spring_banner().compute(eng=self)
+            except Exception as e:
+                print(f"[SpringScan] banner error: {e}")
 
     def run_forever(self):
         if self._thread and self._thread.is_alive():

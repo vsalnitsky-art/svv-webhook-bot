@@ -1498,7 +1498,7 @@
   });
   setInterval(function () { document.querySelectorAll(".pp-timer[data-since]").forEach(function (el) { var t = Number(el.getAttribute("data-since")); if (t > 0) el.textContent = ppTimer(t); }); }, 1000);
 
-  var REC = { dir: "all", rows: [], meta: {} };
+  var REC = { dir: "all", rows: [], meta: {}, autoLean: "" };
   try { var _rd = localStorage.getItem("vsv_rec_dir"); if (_rd) REC.dir = _rd; } catch (e) {}
   function recSide(r) { return r.side === "LONG" || r.side === "SHORT" ? r.side : ""; }
   function recPct(v) { v = Number(v); if (!isFinite(v)) return ""; return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2) + "%"; }
@@ -1515,12 +1515,13 @@
       '<i style="left:' + pos.toFixed(1) + '%"></i></span></span>' + rs(44, isFinite(rr) ? '<b class="rr ' + rrc + '">' + rr.toFixed(2) + "R</b>" : "", "r");
   }
   // 📊 Група розрахунку одного TF (1H / 15m): 🛑 SL · 🎯 TP · Хід (вимога 11.11).
+  // 📊 Група розрахунку одного TF (1H / 15m): 🛑 SL · Хід (вимога 11.11).
+  // 🎯 TP СПІЛЬНИЙ для обох груп — окрема колонка перед ними.
   function recGroupCells(g, up, cls) {
-    var sl = Number(g.sl) > 0, tp = Number(g.tp) > 0;
+    var sl = Number(g.sl) > 0;
     var wt = '<span class="muted" title="' + esc(g.err || g.sl_label || "рахується") + '">' + (g.wait || g.sl_wait ? "⏳" : "—") + "</span>";
     var slC = sl ? '<span class="rec-lv sl">' + rs(84, fmtPrice(g.sl), "r") + rs(58, "<small>" + recPct(g.sl_pct) + "</small>", "r") + rs(28, '<small class="rec-tf" title="' + esc(g.sl_label || "") + '">' + esc(String(g.sl_tf || "").toUpperCase()) + "</small>", "r") + "</span>" : rs(170, wt, "r");
-    var tpC = tp ? '<span class="rec-lv tp">' + rs(84, fmtPrice(g.tp), "r") + rs(58, "<small>" + recPct(g.tp_pct) + "</small>", "r") + "</span>" : rs(142, g.wait ? wt : '<span class="muted" title="Цілі в бік угоди немає">—</span>', "r");
-    return '<td class="r ' + cls + ' gs">' + slC + '</td><td class="r ' + cls + '">' + tpC + '</td><td class="c ' + cls + '">' + recPath(g, up) + "</td>";
+    return '<td class="r ' + cls + ' gs">' + slC + '</td><td class="c ' + cls + '">' + recPath(g, up) + "</td>";
   }
   function recRow(r) {
     var sd = recSide(r), up = sd === "LONG", dc = sd ? (up ? "up" : "dn") : "";
@@ -1532,9 +1533,10 @@
     var pr = prob != null && isFinite(prob) ? prob : null;
     var prCell = pr == null ? rs(100, "—", "r") : '<span class="rec-prob ' + dc + '"><i style="width:' + Math.max(0, Math.min(100, pr)).toFixed(0) + '%"></i></span>' + rs(40, '<b class="rec-' + dc + '">' + pr.toFixed(0) + "%</b>", "r");
     var g1 = recGroupCells(r, up, "g1"), g15 = recGroupCells(r.m15 || { wait: true }, up, "g15");
+    var tpCell = Number(r.tp) > 0 ? '<span class="rec-lv tp">' + rs(84, fmtPrice(r.tp), "r") + rs(58, "<small>" + recPct(r.tp_pct) + "</small>", "r") + "</span>" : rs(142, '<span class="muted" title="Цілі в бік угоди немає">—</span>', "r");
     return '<tr class="rec-row ' + dc + '"><td class="sym">' + icon + tvSym(r.symbol) + nb + "</td>" +
       '<td><span class="rec-dir ' + dc + '">' + (sd ? (up ? "▲ LONG" : "▼ SHORT") : "⚖") + "</span></td>" +
-      '<td class="r">' + prCell + "</td>" + g1 + g15 + '<td class="r">' + chCell + "</td></tr>";
+      '<td class="r">' + prCell + "</td>" + '<td class="r tpc">' + tpCell + "</td>" + g1 + g15 + '<td class="r">' + chCell + "</td></tr>";
   }
   function recRender() {
     var rows = REC.rows || [], n = { all: rows.length, LONG: 0, SHORT: 0 };
@@ -1542,7 +1544,7 @@
     var lbl = { all: "Всі", LONG: "🟢 LONG", SHORT: "🔴 SHORT" };
     document.querySelectorAll("#rec-tabs button[data-d]").forEach(function (b) { var d = b.getAttribute("data-d"); b.textContent = lbl[d] + " (" + n[d] + ")"; b.classList.toggle("on", d === REC.dir); });
     var vis = rows.filter(function (r) { return REC.dir === "all" || recSide(r) === REC.dir; }), tb = $("#rec-tbl tbody");
-    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="10" class="muted">' + (rows.length ? "Немає монет у цій вкладці" : "Зараз немає рекомендованих монет") + "</td></tr>";
+    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="9" class="muted">' + (rows.length ? "Немає монет у цій вкладці" : "Зараз немає рекомендованих монет") + "</td></tr>";
     var rn = $("#rec-note"); if (rn) rn.textContent = new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
   }
   // ⚖ Банер «SMC Forecast» (вимога 11.11): куди накручено пружину — 🔭 скан біржі
@@ -1611,9 +1613,19 @@
     }
   }
   setInterval(function () { document.querySelectorAll(".spb-tm[data-since]").forEach(spbFlipTick); }, 1000);
+  // 🧭 Вкладка «Рекомендовані ботом» іде за СПІЛЬНИМ напрямком банера SMC
+  // Forecast (вимога 11.11): LONG → 🟢, SHORT → 🔴, ⚖ → Всі. Ручний вибір
+  // діє, доки банер не змінив напрямок.
+  function recAutoTab(d) {
+    var a = null; ((d && d.banners) || []).forEach(function (b) { if (b.key === "all") a = b; });
+    var ln = a && a.lean ? a.lean : "";
+    if (!ln || ln === REC.autoLean) return;
+    REC.autoLean = ln;
+    REC.dir = ln === "LONG" || ln === "SHORT" ? ln : "all";
+  }
   function loadRec() {
     var card = $("#rec-card"); if (!card) return;
-    api("/api/info/recommended").then(function (d) { if (!d || !d.ok) { card.style.display = "none"; spbRender(null); return; } card.style.display = ""; REC.rows = d.rows || []; REC.meta = d; recRender(); spbRender(d); }, function () {});
+    api("/api/info/recommended").then(function (d) { if (!d || !d.ok) { card.style.display = "none"; spbRender(null); return; } card.style.display = ""; REC.rows = d.rows || []; REC.meta = d; recAutoTab(d); recRender(); spbRender(d); }, function () {});
   }
   document.addEventListener("click", function (e) {
     var b = e.target.closest ? e.target.closest("#rec-tabs button[data-d]") : null; if (!b) return;

@@ -3858,6 +3858,16 @@ def register_api_routes(app):
         except Exception as e:
             return {'error': str(e)}
 
+    @app.route('/api/spring-banner')
+    def api_spring_banner():
+        """⚖ Банер «SMC Forecast» (вимога 11.11): обидві «Пружини» + один
+        спільний таймер. Рахує й веде бот; інфосайт читає ті самі числа."""
+        try:
+            from detection import spring_banner as _sb
+            return jsonify(_sb.payload())
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)[:200]})
+
     @app.route('/api/spring/state')
     def api_spring_state():
         """🌀 «Пружина» по монетах WATCHLIST (лише ЧИТАННЯ памʼяті сканера):

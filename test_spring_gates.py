@@ -326,11 +326,12 @@ def test_rec_table_layout():
     i = IDX.index('id="rec-tbl"'); head = IDX[i:IDX.index('</thead>', i)]
     for gone in ('Джерело', 'Стан', 'Потенціал'):
         assert gone not in head, gone
-    assert 'SL' in head and 'TP' in head
+    assert 'SL' in head and 'Ймовірна ціль' in head
     cols = re.findall(r'<th[^>]*>([^<]*)</th>', head)
     # 11.11: дві групи 1H / 15m — «Заряд» закриває рядок групових заголовків
     assert 'Заряд' in cols and cols.count('🛑 SL') == 2, cols
-    assert cols.index('🎯 TP') == cols.index('🛑 SL') + 1, cols
+    # 11.11: 🎯 TP спільний для обох груп — одна колонка перед групами
+    assert cols.count('🎯 Ймовірна ціль') == 1 and cols.index('🎯 Ймовірна ціль') < cols.index('🛑 SL'), cols
     assert 'rec-foot' not in IDX
     assert 'function recPath' in APP and 'rec-ic' in APP
     assert 'rec-wrap' in IDX and '.rec-wrap { max-height' in open(os.path.join(ROOT, 'infosite', 'style.css'), encoding='utf-8').read()
