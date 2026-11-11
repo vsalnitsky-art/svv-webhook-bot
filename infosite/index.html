@@ -4,108 +4,128 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VSV — Мій кабінет</title>
-  <link rel="icon" type="image/png" href="vsv-logo.png">
-  <link rel="apple-touch-icon" href="vsv-logo.png">
-  <link rel="stylesheet" href="style.css?v=104">
-  <!-- ⏳ Анти-блимання: доки JS не перевірив авторизацію (клас app-ready ще не
-       додано на <body>), не показуємо ні дашборд, ні hero — інакше на секунду
-       спалахує «бот-панель» перед екраном входу. Після перевірки showData()
-       додає app-ready і сам вирішує, що показати. -->
+  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="apple-touch-icon" href="logo.png">
+  
+  <!-- Сучасні шрифти -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css?v=105">
+  
   <style>
+    /* Анти-блимання та анімований прелоадер */
     body:not(.app-ready) .topbar,
     body:not(.app-ready) .wrap > .card,
     body:not(.app-ready) .wrap > .iw-layout { display: none !important; }
     body:not(.app-ready) .wrap::before {
-      content: ""; display: block; width: 34px; height: 34px; margin: 22vh auto 0;
-      border: 3px solid rgba(148,163,184,.3); border-top-color: #94a3b8;
-      border-radius: 50%; animation: vsvspin .8s linear infinite;
+      content: ""; display: block; width: 40px; height: 40px; margin: 30vh auto 0;
+      border: 3px solid rgba(255, 184, 0, 0.1); border-top-color: #ffb800;
+      border-radius: 50%; animation: vsvspin 0.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      box-shadow: 0 0 20px rgba(255, 184, 0, 0.2);
     }
     @keyframes vsvspin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
+  <!-- Динамічний фон -->
+  <div class="bg-orbs">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+  </div>
+
   <header class="topbar">
     <div class="brand">
-      <img class="logo" src="vsv-logo.png" alt="VSV" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-block'">
-      <span class="dot" style="display:none"></span>
+      <div class="logo-wrapper">
+        <img class="logo" src="logo.png" alt="VSV" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+        <span class="dot" style="display:none"></span>
+      </div>
       <span class="brand-name">VSV Bot</span>
     </div>
     <div class="top-actions">
       <nav id="auth-links" class="auth-links"></nav>
-      <button id="theme-btn" class="pill" style="cursor:pointer;background:var(--elev)" title="Змінити тему" aria-label="Змінити тему">🌗</button>
+      <button id="theme-btn" class="pill icon-btn" title="Змінити тему" aria-label="Змінити тему">🌗</button>
       <div id="conn" class="conn conn--wait">● підключення…</div>
     </div>
   </header>
 
   <main class="wrap">
 
-    <!-- 🔐 Гостьовий блок входу/реєстрації (показується, коли не авторизовано) -->
     <section class="card hero" id="auth-hero" style="display:none">
       <div class="hero-inner">
-        <img class="hero-logo" src="vsv-logo.png" alt="VSV" onerror="this.style.display='none'">
-        <h1 class="hero-title"><span class="brand-name">VSV Bot</span> — особистий кабінет</h1>
+        <img class="hero-logo" src="logo.png" alt="VSV" onerror="this.style.display='none'">
+        <h1 class="hero-title"><span class="brand-name">VSV Bot</span><br>Особистий кабінет</h1>
         <p class="hero-deny" id="auth-deny" style="display:none"></p>
         <div class="hero-actions">
           <a id="hero-login" class="btn btn-primary" href="/login">🔐 Вхід</a>
           <a id="hero-register" class="btn btn-ghost" href="/register">📝 Реєстрація</a>
-          <a id="hero-bot" class="btn btn-ghost" href="#" target="_blank" rel="noopener" style="display:none">📨 Telegram-бот</a>
         </div>
-        <p class="hero-note">Реєстрація — через Telegram, без email. Напишіть боту <b>/start</b>.</p>
+        <p class="hero-note">Реєстрація через Telegram. Напишіть боту <b>/start</b>.</p>
       </div>
     </section>
 
-    <!-- 👤 Особиста сторінка: свій WATCHLIST + графік обраної монети -->
+    <!-- WATCHLIST + Графік -->
     <section class="iw-layout" id="iw-layout">
       <div class="card iw-wl">
         <h2>⭐ Мій WATCHLIST <span id="iw-count" class="pill">0</span></h2>
         <form class="iw-add" id="iw-add-form" autocomplete="off">
-          <input id="iw-add-in" list="iw-universe" placeholder="BTC, ETHUSDT…" maxlength="24"
-                 title="До 20 монет">
+          <input id="iw-add-in" list="iw-universe" placeholder="Додати монету (BTC, ETH...)" maxlength="24" title="До 20 монет">
           <datalist id="iw-universe"></datalist>
-          <button type="submit" title="Додати монету у свій список">＋ Додати</button>
+          <button type="submit" title="Додати монету">＋</button>
         </form>
         <div class="iw-msg" id="iw-msg"></div>
-        <div class="iw-list" id="iw-list"><div class="iw-empty">завантаження…</div></div>
+        <div class="iw-list" id="iw-list"><div class="iw-empty">завантаження...</div></div>
       </div>
+
       <div class="card iw-chart" id="iw-chart">
         <span class="iw-status" id="iw-tf-wait" aria-live="polite"></span>
         <div class="iw-head" id="iw-head"><span class="iw-title">—</span></div>
+        
         <div class="iw-tfbar" id="iw-tfbar">
           <div class="iw-tfs" id="iw-tfs" title="Таймфрейм графіка"></div>
-          <span class="iw-sel s-ob"><button type="button" id="iw-ob-on" class="iw-tgl" data-tgl="ob_tf"
-            title="OB на графіку: увімкнути / вимкнути">OB</button>
-            <select id="iw-ob-tf" title="Таймфрейм OB"></select></span>
-          <span class="iw-sel s-vob"><button type="button" id="iw-vob-on" class="iw-tgl" data-tgl="vob_tf"
-            title="VOB на графіку: увімкнути / вимкнути">VOB</button>
-            <select id="iw-vob-tf" title="Таймфрейм VOB"></select></span>
-          <label class="iw-sel s-poc" title="POC: вікно (днів) і таймфрейм свічок профілю обсягу">POC
-            <select id="iw-poc-days"></select><select id="iw-poc-tf"></select></label>
-          <div class="iw-tfs iw-layers" id="iw-layers" title="Що показувати на графіку"></div>
+          
+          <span class="iw-sel s-ob">
+            <button type="button" id="iw-ob-on" class="iw-tgl" data-tgl="ob_tf" title="OB на графіку">OB</button>
+            <select id="iw-ob-tf" title="Таймфрейм OB"></select>
+          </span>
+          
+          <span class="iw-sel s-vob">
+            <button type="button" id="iw-vob-on" class="iw-tgl" data-tgl="vob_tf" title="VOB на графіку">VOB</button>
+            <select id="iw-vob-tf" title="Таймфрейм VOB"></select>
+          </span>
+          
+          <label class="iw-sel s-poc" title="POC">
+            POC <select id="iw-poc-days"></select><select id="iw-poc-tf"></select>
+          </label>
+          
+          <div class="iw-tfs iw-layers" id="iw-layers" title="Шари графіка"></div>
+          
           <span class="iw-liq" id="iw-liq">
-            <button type="button" class="iw-liq-btn" id="iw-liq-btn" aria-pressed="false"
-                    title="💧 Профіль ліквідності (рівні ліквідації) — праворуч на графіку. Рахується лише за натисканням">
+            <button type="button" class="iw-liq-btn" id="iw-liq-btn" aria-pressed="false" title="Профіль ліквідності">
               <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true"><g fill="currentColor">
                 <rect x="1" y="2" width="5" height="2" rx=".5"/><rect x="1" y="5" width="9" height="2" rx=".5"/>
                 <rect x="1" y="8" width="14" height="2" rx=".5" opacity=".95"/><rect x="1" y="11" width="8" height="2" rx=".5"/>
                 <rect x="1" y="14" width="4" height="2" rx=".5"/><rect x="16" y="1" width="1.2" height="16" rx=".4" opacity=".55"/></g></svg>
               <span>Ліквідність</span></button>
             <select id="iw-liq-ex" title="Біржа"><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
-            <select id="iw-liq-bars" title="Глибина історії, годин"></select>
-            <select id="iw-liq-res" title="Висота сходинки на екрані: дрібно ≈5px · середньо ≈9px · крупно ≈14px (крок рахується з видимого діапазону графіка в момент натискання)"><option value="fine">дрібно</option><option value="mid" selected>середньо</option><option value="coarse">крупно</option></select>
+            <select id="iw-liq-bars" title="Глибина історії"></select>
+            <select id="iw-liq-res" title="Деталізація"><option value="fine">дрібно</option><option value="mid" selected>середньо</option><option value="coarse">крупно</option></select>
             <span class="iw-liq-st" id="iw-liq-st"></span>
           </span>
-          <button type="button" class="iw-fs" id="iw-fs" title="На весь екран (Esc — назад)" aria-pressed="false">⛶</button>
+          <button type="button" class="iw-fs" id="iw-fs" title="На весь екран" aria-pressed="false">⛶</button>
         </div>
+        
         <div class="iw-box" id="iw-box"><div class="iw-note" id="iw-note">оберіть монету зі списку</div></div>
       </div>
     </section>
 
-    <!-- 🤖 Рекомендовані ботом (вимога 10.11): 🌀 Пружина WATCHLIST, що проходить
-         ворота, + 🔭 Пружина — скан біржі. Лише перегляд. -->
+    <!-- Рекомендовані -->
     <section class="card rec-card" id="rec-card" style="display:none">
       <div class="pp-head">
         <span class="rec-badge">🤖 БОТ</span>
-        <span class="pp-title">Рекомендовані ботом</span>
+        <span class="pp-title">Рекомендовані</span>
         <div class="pp-period" id="rec-tabs">
           <button type="button" data-d="all">Всі (0)</button>
           <button type="button" data-d="LONG">🟢 LONG (0)</button>
@@ -116,44 +136,46 @@
       <div class="pp-wrap rec-wrap"><table class="pp-tbl" id="rec-tbl">
         <thead><tr><th>Монета</th><th>Напрямок</th><th class="r">Ймовірність</th>
           <th class="r">🛑 SL</th><th class="r">🎯 TP</th><th class="c">Хід</th><th class="r">Заряд</th></tr></thead>
-        <tbody><tr><td colspan="7" class="muted">завантаження…</td></tr></tbody>
+        <tbody><tr><td colspan="7" class="muted">завантаження...</td></tr></tbody>
       </table></div>
     </section>
 
-    <!-- 🧪 Тестові (paper) угоди бота — лише перегляд (вимога 08.11) -->
+    <!-- PAPER -->
     <section class="card pp-card" id="pp-card" style="display:none">
       <div class="pp-head">
-        <span class="pp-badge" title="Тестові угоди бота: віртуальний рахунок, без біржі">🧪 PAPER</span>
-        <span class="pp-title">P&amp;L · тестові угоди бота</span>
+        <span class="pp-badge" title="Віртуальний рахунок">🧪 PAPER</span>
+        <span class="pp-title">P&L · Тестові угоди</span>
         <div class="pp-period" id="pp-period">
           <button type="button" data-p="today">Сьогодні</button>
           <button type="button" data-p="7d">7Д</button>
           <button type="button" data-p="30d">30Д</button>
           <button type="button" data-p="all">Усе</button>
-          <button type="button" data-p="day" title="Статистика за конкретний день (за годинником вашого ПК)">📅 День</button>
-          <button type="button" data-p="range" title="Від дати до дати включно">Період</button>
+          <button type="button" data-p="day" title="Конкретний день">📅 День</button>
+          <button type="button" data-p="range" title="Період">Період</button>
           <span class="pp-dates" id="pp-day-wrap" style="display:none">
-            <input type="text" readonly class="pp-dateinp" id="pp-day" data-k="day" title="Відкрити календар: дні з угодами позначено">
+            <input type="text" readonly class="pp-dateinp" id="pp-day" data-k="day">
           </span>
           <span class="pp-dates" id="pp-range-wrap" style="display:none">
-            <input type="text" readonly class="pp-dateinp" id="pp-from" data-k="from" title="Відкрити календар">
+            <input type="text" readonly class="pp-dateinp" id="pp-from" data-k="from">
             <span class="muted">—</span>
-            <input type="text" readonly class="pp-dateinp" id="pp-to" data-k="to" title="Відкрити календар">
+            <input type="text" readonly class="pp-dateinp" id="pp-to" data-k="to">
           </span>
         </div>
         <span class="pp-note muted" id="pp-note"></span>
         <button type="button" class="pp-eye" id="pp-amt">👁 Показати суми</button>
       </div>
-      <div class="pp-kpis" id="pp-kpis"><div class="muted">завантаження…</div></div>
+      <div class="pp-kpis" id="pp-kpis"><div class="muted">завантаження...</div></div>
       <div class="pp-es" id="pp-es" style="display:none"></div>
-      <h3 class="pp-h">Відкриті тестові угоди <span class="pill" id="pp-open-n">0</span>
+      
+      <h3 class="pp-h">Відкриті угоди <span class="pill" id="pp-open-n">0</span>
         <span class="pp-inline muted" id="pp-inline"></span></h3>
       <div class="pp-wrap"><table class="pp-tbl" id="pp-open">
         <thead><tr><th>Монета</th><th>Бік</th><th class="r">Вхід</th><th class="r">Зараз</th><th class="r">PnL</th>
-          <th title="Процес вистрілу Пружини на живому 1h-барі у %: 100% = вистрілила">💥 Виснаження</th><th>🚨</th><th class="r">Manual SL</th><th class="r">TP-1</th><th class="r">TP-2</th><th class="r">Таймер</th></tr></thead>
+          <th title="Виснаження">💥 Виснаж.</th><th>🚨</th><th class="r">Manual SL</th><th class="r">TP-1</th><th class="r">TP-2</th><th class="r">Таймер</th></tr></thead>
         <tbody><tr><td colspan="11" class="muted">—</td></tr></tbody>
       </table></div>
-      <h3 class="pp-h acc-h" id="pp-closed-head" role="button" tabindex="0" aria-expanded="false">Останні закриті тестові угоди
+      
+      <h3 class="pp-h acc-h" id="pp-closed-head" role="button" tabindex="0" aria-expanded="false">Останні закриті
         <span class="pill" id="pp-closed-n">0</span><span class="acc-caret">▸</span></h3>
       <div class="pp-wrap" id="pp-closed-body" style="display:none"><table class="pp-tbl" id="pp-closed">
         <thead><tr><th>Закрито</th><th>Монета</th><th>Бік</th><th class="r">Вхід</th><th class="r">Вихід</th><th class="r">PnL</th><th>Причина</th></tr></thead>
@@ -161,11 +183,11 @@
       </table></div>
     </section>
 
-    <!-- 🔔 Мої сповіщення (для авторизованого користувача) -->
+    <!-- Сповіщення -->
     <section class="card" id="notify-card" style="display:none">
       <h2 class="acc-h" id="notify-head" role="button" tabindex="0" aria-expanded="false">🔔 Сповіщення в Telegram<span class="acc-caret" id="notify-caret">▸</span></h2>
       <div id="notify-body" style="display:none">
-        <div class="muted">завантаження…</div>
+        <div class="muted">завантаження...</div>
       </div>
     </section>
 
@@ -177,7 +199,6 @@
   </footer>
 
   <script>
-    // Theme toggle (persists locally). Default = DARK unless the user chose otherwise.
     (function () {
       var KEY = "vsv-info-theme";
       var saved = null;
