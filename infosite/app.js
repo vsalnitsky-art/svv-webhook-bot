@@ -1124,16 +1124,24 @@
     if (!a) { svg.style.display = "none"; return !!(el && el.style.display !== "none"); }
     var L = el.offsetLeft, T = el.offsetTop, W = el.offsetWidth, H = el.offsetHeight, e = sigEdge(L, T, W, H, a.x, a.y);
     if (!e) { svg.style.display = "none"; return true; }
+    
     var len = Math.hypot(a.x - e.x, a.y - e.y) || 1, ux = (a.x - e.x) / len, uy = (a.y - e.y) / len;
     var tx = a.x - ux * (a.r + 3), ty = a.y - uy * (a.r + 3);
     var half = Math.min(13, Math.max(6, len / 4)), px = -uy * half, py = ux * half;
-    var bx = e.x - ux * 1.5, by = e.y - uy * 1.5, mx = (bx + tx) / 2, my = (by + ty) / 2;
+    
+    // ЗМІНА: Заводимо основу стрілки глибоко всередину картки, щоб вона зливалася з нею
+    var bx = e.x - ux * 24, by = e.y - uy * 24;
+    
+    var mx = (bx + tx) / 2, my = (by + ty) / 2;
     var c1x = mx + px * 0.35, c1y = my + py * 0.35, c2x = mx - px * 0.35, c2y = my - py * 0.35;
     var A = (bx + px) + "," + (by + py), B = (bx - px) + "," + (by - py), P = tx + "," + ty;
+    
     svg.style.display = "block"; svg.setAttribute("width", box.clientWidth); svg.setAttribute("height", box.clientHeight);
     var path = svg.querySelector(".tail"), edge = svg.querySelector(".edge"), ring = svg.querySelector(".ring");
+    
     path.setAttribute("d", "M" + A + " Q" + c1x + "," + c1y + " " + P + " Q" + c2x + "," + c2y + " " + B + " Z");
     edge.setAttribute("d", "M" + A + " Q" + c1x + "," + c1y + " " + P + " Q" + c2x + "," + c2y + " " + B);
+    
     ring.setAttribute("cx", a.x); ring.setAttribute("cy", a.y); ring.setAttribute("r", a.r + 3);
     var S = IW.sigSel && IW.sigSel.side === "SHORT"; svg.classList.toggle("short", S); svg.classList.toggle("long", !S);
     return true;
