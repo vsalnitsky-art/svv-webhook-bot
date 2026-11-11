@@ -8523,3 +8523,18 @@ Heikin-Ashi, лог-шкала, лінійка, скріншот, локальн
 `test_spring_wl_scan`, `test_trades_mmd`, `test_mm_monitor`, `test_trades_mm_ob4h`
 переписано на «🎯 Ціль». ⚠️ Давнє падіння (є і без правки):
 `test_trades_mm_ob4h::test_js_side_mark_render`.
+
+### ⚖ БАНЕР «SMC Forecast» v2 — дві біржі, подвійна смуга, перекидний таймер (11.11)
+- Розмітка `#spb-card`: `.spb-grid` = [`#spb-scan`] [`.spb-mid` лого + «SMC
+  Forecast» ПОСЕРЕДИНІ] [`#spb-wl`]; на вузькому — у стовпчик, назва зверху.
+  Підзаголовок «куди накручено пружину» прибрано.
+- Підписи — біржа замість «WATCHLIST»: `spring_banners` віддає `ex`
+  (`binance`/`bybit`) + `label` з `SPB_EX_LABEL` (WATCHLIST → `bybit`: бари
+  `SpringWlScan` з Bybit). Іконки бірж — інлайн-SVG `SPB_ICON` (без запитів).
+- Смуга — подвійна: зелена LONG → перехід ±7% → червона SHORT, у кожній
+  половині свій % (`▲ 38%` / `62% ▼`, переможний — жирний); ⚖ → `.mute`.
+  Текст «N% за … · заряджених» прибрано (розклад — у підказці смуги).
+- ⏱ Перекидний таймер `spbFlipHTML` / `spbFlipTick` (одна реалізація на обидва
+  банери): плитка на кожну цифру, анімація `flFlip` лише на зміненій цифрі.
+Тест: `test_info_portal.py` (38). Ассети `app.js?v=111`, `style.css?v=113`.
+

@@ -874,8 +874,15 @@ def test_spring_banner_both_books_with_timer():
     assert i < j, 'банер над «Рекомендовані ботом»'
     blk = html[i:j]
     assert 'src="logo.png"' in blk and 'SMC Forecast' in blk and 'SMC прогноз' not in html
+    assert 'куди накручено' not in blk, '11.11: підзаголовок прибрано'
+    # назва — ПОСЕРЕДИНІ між двома банерами
+    assert blk.index('spb-scan') < blk.index('spb-mid') < blk.index('spb-wl')
     js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
     assert 'function spbRender(' in js and 'spbRender(d)' in js and '.spb-tm[data-since]' in js
+    assert 'function spbFlipHTML(' in js and 'SPB_ICON' in js and 'binance:' in js and 'bybit:' in js
+    assert 'заряджених " + b.coins + "/"' not in js, '11.11: текст «% за … · заряджених» прибрано'
+    src = open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
+    assert "('wl', 'bybit'" in src and "'WATCHLIST'" not in src.split('def spring_banners')[1]
     assert "'banners': banners" in open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
 
 

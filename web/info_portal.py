@@ -1667,6 +1667,8 @@ def rec_levels(row, sl=None):
 # WATCHLIST — у відсотках і з таймером «відколи тримається напрямок».
 # Джерело — ті самі `aggregate`, що банери на /smart-money (лише памʼять).
 SPB_DB_KEY = 'info_spring_banner_v1'
+# Підпис біржі (вимога 11.11: замість «WATCHLIST» — біржа, з якої бари: Bybit).
+SPB_EX_LABEL = {'binance': 'Binance', 'bybit': 'Bybit'}
 _spb_state = {}              # {'scan'|'wl': {'lean': 'LONG'|'SHORT'|'FLAT', 'since': ts}}
 _spb_loaded = [False]
 
@@ -1738,8 +1740,8 @@ def spring_banners(sc, eng, now):
     try:
         if eng is not None:
             st = eng.state().get('result') or {}
-            src.append(('scan', str(st.get('exchange') or 'binance').upper(),
-                        eng.banner_agg(), st.get('ts')))
+            _ex = str(st.get('exchange') or 'binance').lower()
+            src.append(('scan', _ex, eng.banner_agg(), st.get('ts')))
     except Exception:
         pass
     try:
@@ -1749,7 +1751,7 @@ def spring_banners(sc, eng, now):
                 ts = (sc.spring_stats() or {}).get('calc_at')
             except Exception:
                 pass
-            src.append(('wl', 'WATCHLIST', sc.spring_banner(), ts))
+            src.append(('wl', 'bybit', sc.spring_banner(), ts))
     except Exception:
         pass
     for key, label, agg, ts in src:
@@ -1758,7 +1760,9 @@ def spring_banners(sc, eng, now):
         if nxt and nxt != prev:
             _spb_state[key] = nxt
             changed = True
-        out.append(spb_view(key, label, agg, _spb_state.get(key)))
+        v = spb_view(key, SPB_EX_LABEL.get(label, label.title()), agg, _spb_state.get(key))
+        v['ex'] = label
+        out.append(v)
     if changed:
         db = _spb_db()
         try:

@@ -1542,31 +1542,61 @@
   // ⚖ Банер «SMC Forecast» (вимога 11.11): куди накручено пружину — 🔭 скан біржі
   // і 🌀 WATCHLIST, у відсотках і з таймером «відколи тримається напрямок».
   var SPB = { skew: 0 };
-  function spbTimer(since) {
-    var s = Math.max(0, Math.floor(Date.now() / 1000 - SPB.skew - since)), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sc = s % 60;
+  // Іконки бірж (маленькі SVG, без зовнішніх запитів).
+  var SPB_ICON = {
+    binance: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><g fill="#F3BA2F"><path d="M12 3.5l2.6 2.6-2.6 2.6-2.6-2.6z"/><path d="M6.1 9.4l2.6 2.6-2.6 2.6L3.5 12z"/><path d="M17.9 9.4l2.6 2.6-2.6 2.6-2.6-2.6z"/><path d="M12 9.4l2.6 2.6-2.6 2.6-2.6-2.6z"/><path d="M12 15.3l2.6 2.6-2.6 2.6-2.6-2.6z"/></g></svg>',
+    bybit: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="5" fill="#17181E" stroke="#3a3f48"/><path d="M6 7h4.2c1.7 0 2.7.8 2.7 2.1 0 .8-.4 1.4-1.1 1.7.9.3 1.5 1 1.5 2 0 1.5-1.1 2.3-2.9 2.3H6z" fill="#fff"/><rect x="15.2" y="6" width="2.4" height="12" rx="1" fill="#F7A600"/></svg>'
+  };
+  // ⏱ Перекидний таймер (спільний для обох банерів): кожна цифра — окрема плитка.
+  function spbParts(since) {
+    var s = Math.max(0, Math.floor(Date.now() / 1000 - SPB.skew - since)), d = Math.floor(s / 86400);
     var p = function (n) { return String(n).padStart(2, "0"); };
-    var t = function (x) { return '<span class="spb-d">' + x + "</span>"; };
-    return (d ? t(d + "<small>д</small>") : "") + t(p(h)) + "<i>:</i>" + t(p(m)) + "<i>:</i>" + t(p(sc));
+    return { d: d ? String(d) : "", t: p(Math.floor(s % 86400 / 3600)) + p(Math.floor(s % 3600 / 60)) + p(s % 60) };
   }
-  function spbRow(b) {
-    if (!b.ok) return '<div class="spb-row"><span class="spb-lab">' + esc(b.label) + '</span><span class="muted spb-empty">ще немає даних</span></div>';
-    var long = b.win === "LONG", col = long ? "#22c55e" : "#ef4444", dir = b.lean === "LONG" || b.lean === "SHORT";
+  function spbFlipHTML(since) {
+    var x = spbParts(since), h = "", i;
+    var tile = function (ch) { return '<span class="fl"><b>' + ch + "</b></span>"; };
+    if (x.d) { h += '<span class="fl-g fl-day">'; for (i = 0; i < x.d.length; i++) h += tile(x.d[i]); h += '<em>д</em></span>'; }
+    for (i = 0; i < 6; i++) { if (i === 2 || i === 4) h += '<i class="fl-sep">:</i>'; if (i % 2 === 0) h += '<span class="fl-g">'; h += tile(x.t[i]); if (i % 2 === 1) h += "</span>"; }
+    return h;
+  }
+  function spbFlipTick(el) {
+    var t = Number(el.getAttribute("data-since")); if (!(t > 0)) return;
+    var x = spbParts(t), digits = (x.d + x.t).split(""), tiles = el.querySelectorAll(".fl b");
+    if (tiles.length !== digits.length) { el.innerHTML = spbFlipHTML(t); return; }
+    for (var i = 0; i < digits.length; i++) {
+      if (tiles[i].textContent === digits[i]) continue;
+      tiles[i].textContent = digits[i];
+      var f = tiles[i].parentNode; f.classList.remove("flip"); void f.offsetWidth; f.classList.add("flip");
+    }
+  }
+  function spbSide(b) {
+    var icon = SPB_ICON[b.ex] || "", head = '<div class="spb-h">' + icon + '<span class="spb-lab">' + esc(b.label) + "</span>";
+    if (!b.ok) return head + '</div><div class="spb-empty muted">ще немає даних</div>';
+    var dir = b.lean === "LONG" || b.lean === "SHORT", pl = Math.max(0, Math.min(100, Number(b.prob_long) || 50)), ps = 100 - pl;
     var st = b.lean === "LONG" ? ['<span class="spb-dot up"></span>LONG', "up"] : (b.lean === "SHORT" ? ['<span class="spb-dot dn"></span>SHORT', "dn"] : ["⚖ " + (b.enough ? "РІВНОВАГА" : "ЗАМАЛО"), "flat"]);
-    var tip = "▲ LONG " + b.prob_long + "% · ▼ SHORT " + (100 - b.prob_long).toFixed(1) + "% · заряджених " + b.coins + " з " + b.total + " (потрібно ≥ " + b.need + ") · у бік LONG " + b.n_long + " / SHORT " + b.n_short + (b.fired_long || b.fired_short ? " · 💥 вистрілили ▲" + b.fired_long + " / ▼" + b.fired_short : "");
-    var grad = dir ? (long ? "linear-gradient(90deg,#86efac,#16a34a)" : "linear-gradient(90deg,#fca5a5,#dc2626)") : "linear-gradient(90deg,#94a3b8,#475569)";
-    return '<div class="spb-row" title="' + esc(tip) + '"><span class="spb-lab">' + esc(b.label) + "</span>" +
-      '<span class="spb-bar"><b style="width:' + Math.max(2, Math.min(100, b.pct)) + "%;background:" + grad + '"></b><em>' + b.pct.toFixed(0) + "% за " + b.win + " · заряджених " + b.coins + "/" + b.total + "</em></span>" +
-      '<span class="spb-tm" data-since="' + (b.since || 0) + '">' + (b.since ? spbTimer(b.since) : '<span class="muted">—</span>') + "</span>" +
-      '<span class="spb-st ' + st[1] + '"' + (dir ? ' style="--c:' + col + '"' : "") + ">" + st[0] + "</span></div>";
+    var tip = "▲ LONG " + pl.toFixed(1) + "% · ▼ SHORT " + ps.toFixed(1) + "% · заряджених " + b.coins + " з " + b.total + " (потрібно ≥ " + b.need + ") · у бік LONG " + b.n_long + " / SHORT " + b.n_short + (b.fired_long || b.fired_short ? " · 💥 вистрілили ▲" + b.fired_long + " / ▼" + b.fired_short : "");
+    // Подвійна смуга: зелена LONG ліворуч → плавний перехід → червона SHORT праворуч.
+    var a = Math.max(0, pl - 7).toFixed(1), z = Math.min(100, pl + 7).toFixed(1);
+    var grad = "linear-gradient(90deg,#15803d 0%,#22c55e " + a + "%,#ef4444 " + z + "%,#b91c1c 100%)";
+    return head + '<span class="spb-st ' + st[1] + '">' + st[0] + "</span></div>" +
+      '<div class="spb-bar' + (dir ? "" : " mute") + '" title="' + esc(tip) + '" style="background:' + grad + '">' +
+        '<em class="l' + (pl >= ps ? " win" : "") + '">▲ ' + Math.round(pl) + '%</em><em class="r' + (ps > pl ? " win" : "") + '">' + Math.round(ps) + "% ▼</em></div>" +
+      '<div class="spb-tm" data-since="' + (b.since || 0) + '">' + (b.since ? spbFlipHTML(b.since) : '<span class="muted">—</span>') + "</div>";
   }
   function spbRender(d) {
-    var card = $("#spb-card"), box = $("#spb-rows"); if (!card || !box) return;
+    var card = $("#spb-card"); if (!card) return;
     var bs = (d && d.banners) || [];
     if (!bs.length) { card.style.display = "none"; return; }
     if (d.ts) SPB.skew = Date.now() / 1000 - Number(d.ts);
-    card.style.display = ""; box.innerHTML = bs.map(spbRow).join("");
+    card.style.display = "";
+    var by = {}; bs.forEach(function (b) { by[b.key] = b; });
+    [["scan", "#spb-scan"], ["wl", "#spb-wl"]].forEach(function (k) {
+      var el = $(k[1]); if (!el) return;
+      el.innerHTML = by[k[0]] ? spbSide(by[k[0]]) : ""; el.style.visibility = by[k[0]] ? "" : "hidden";
+    });
   }
-  setInterval(function () { document.querySelectorAll(".spb-tm[data-since]").forEach(function (el) { var t = Number(el.getAttribute("data-since")); if (t > 0) el.innerHTML = spbTimer(t); }); }, 1000);
+  setInterval(function () { document.querySelectorAll(".spb-tm[data-since]").forEach(spbFlipTick); }, 1000);
   function loadRec() {
     var card = $("#rec-card"); if (!card) return;
     api("/api/info/recommended").then(function (d) { if (!d || !d.ok) { card.style.display = "none"; spbRender(null); return; } card.style.display = ""; REC.rows = d.rows || []; REC.meta = d; recRender(); spbRender(d); }, function () {});
