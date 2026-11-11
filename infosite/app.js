@@ -1425,21 +1425,19 @@
     });
     if (eh) { eh.innerHTML = parts.length ? "🧪 Оцінка входу: " + parts.join("") : ""; eh.style.display = parts.length ? "" : "none"; }
   }
-  var PP_ALERT = { ok: ["✓ OK", "ok"], against: ["⚠ ПРОТИ", "against"], pre: ["⚑ ДО ВХОДУ", "pre"] };
+  var PP_ALERT = { ok: ["✓ OK", "ok"], against: ["⚠ ПРОТИ", "against"] };
   function ppTimer(t) { var s = Math.max(0, Math.floor(Date.now() / 1000 - t)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); var p = function (n) { return String(n).padStart(2, "0"); }; return (h >= 24 ? Math.floor(h / 24) + "д " + p(h % 24) : p(h)) + ":" + p(m) + ":" + p(s % 60); }
   function exhColor(x) { x = Math.max(0, Math.min(100, Number(x) || 0)); return x >= 100 ? "#f472b6" : (x >= 75 ? "#fb923c" : (x >= 50 ? "#facc15" : "#60a5fa")); }
+  // 🎯 «Ціль» (дзеркало бота springFireCellHTML, 11.11): знаковий прогрес угоди до
+  // цілі Пружини — смужка 0..100%, мінус = угода відхиляється від цілі.
   function ppExh(p) {
     var e = p.exh, f = p.spring_fire, fd = f && f.fired;
     if (!e) return '<span class="muted">—</span>';
-    var pct = Math.max(0, Math.min(100, Number(e.pct) || 0)), col = exhColor(pct), sg = function (x) { return (x >= 0 ? "+" : "") + Number(x).toFixed(2) + "%"; };
-    var lab = '<b style="color:' + col + '">' + Math.round(pct) + "%</b>" + (e.climax ? '<b style="color:#f472b6">💥</b>' : "") + (fd && fd.side !== p.side ? '<b class="pp-blink" style="color:#f87171">⚠</b>' : "");
-    return '<span class="pp-exh" title=""><i><b style="width:' + pct + "%;background-size:" + (pct > 0 ? 10000 / pct : 100) + '% 100%"></b></i>' + lab + (p.exh_trail && p.exh_trail.stop_px != null ? ' <b class="pp-exh-st" title="🎯 Кульмінацію зловлено">🎯 ' + fmtPrice(p.exh_trail.stop_px).replace("$", "") + "</b>" : "") + "</span>";
-  }
-  // 🎯 Знаковий прогрес до ймовірної цілі (дзеркало бота exhProgHTML): мінус — угода відхиляється.
-  function ppProg(p) {
-    var e = p.exh; if (!e || e.prog == null || !isFinite(Number(e.prog))) return "";
-    var v = Number(e.prog), c = v >= 100 ? "#f472b6" : (v > 0 ? "#4ade80" : (v < 0 ? "#f87171" : "#cbd5e1"));
-    return ' <b class="pp-prog" style="color:' + c + '" title="🎯 До ймовірної цілі ' + fmtPrice(e.target) + ': пройдено ' + (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(0) + '% шляху">🎯' + (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(0) + "%</b>";
+    var prog = (e.prog != null && isFinite(Number(e.prog))) ? Number(e.prog) : (Number(e.pct) || 0);
+    var pct = Math.max(0, Math.min(100, prog)), col = prog < 0 ? "#f87171" : exhColor(pct);
+    var tip = "🎯 Ціль " + fmtPrice(e.target) + ": " + (prog >= 0 ? "пройдено +" : "відхилення −") + Math.abs(Math.round(prog)) + "% шляху від входу";
+    var lab = '<b style="color:' + col + '">' + (prog >= 0 ? "+" : "−") + Math.abs(Math.round(prog)) + "%</b>" + (e.climax ? '<b style="color:#f472b6">💥</b>' : "") + (fd && fd.side !== p.side ? '<b class="pp-blink" style="color:#f87171">⚠</b>' : "");
+    return '<span class="pp-exh' + (prog < 0 ? " neg" : "") + '" title="' + esc(tip) + '"><i><b style="width:' + pct + "%;background-size:" + (pct > 0 ? 10000 / pct : 100) + '% 100%"></b></i>' + lab + (p.exh_trail && p.exh_trail.stop_px != null ? ' <b class="pp-exh-st" title="🎯 Кульмінацію зловлено">🎯 ' + fmtPrice(p.exh_trail.stop_px).replace("$", "") + "</b>" : "") + "</span>";
   }
   function ppLvl(v, done) { return !v ? '<span class="muted">—</span>' : fmtPrice(v).replace("$", "") + (done ? ' <span class="pp-up">✓</span>' : ""); }
   function ppPnlCols(pc, usd) { return '<span class="pp-pnl"><span class="pp-pnl-p">' + ppPct(pc) + "</span>" + (usd != null ? '<span class="pp-pnl-s">·</span><span class="pp-pnl-u"><b class="pp-usd ' + (Number(usd) >= 0 ? "up" : "dn") + '">' + ppUsd(usd) + "</b></span>" : "") + "</span>"; }
@@ -1452,7 +1450,7 @@
       return "<tr><td class=\"sym\">" + tvSym(p.symbol) + '</td><td class="' + (p.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(p.side) + "</td>" +
         '<td class="r">' + fmtPrice(p.entry_price) + '</td><td class="r">' + fmtPrice(p.current_price) + "</td>" +
         '<td class="r ' + cl + '">' + ppPnlCols(pc, n ? n.net_usd : null) + "</td>" + "<td>" + ppExh(p) + "</td>" +
-        '<td class="nw">' + (al ? '<span class="pp-al ' + al[1] + '">' + al[0] + (a.level === "against" && a.tf ? " " + esc(a.tf) : "") + "</span>" : '<span class="muted">—</span>') + ppProg(p) + "</td>" +
+        '<td class="nw">' + (al ? '<span class="pp-al ' + al[1] + '">' + al[0] + (a.level === "against" && a.tf ? " " + esc(a.tf) : "") + "</span>" : '<span class="muted">—</span>') + "</td>" +
         '<td class="r">' + ppLvl(p.manual_sl) + '</td><td class="r">' + ppLvl(p.manual_tp1, p.tp1_done) + '</td><td class="r">' + ppLvl(p.manual_tp) + "</td>" +
         '<td class="r pp-timer" data-since="' + Math.floor(p.opened_at || 0) + '">' + (p.opened_at ? ppTimer(p.opened_at) : "—") + "</td></tr>";
     }).join("");
@@ -1541,9 +1539,37 @@
     if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="7" class="muted">' + (rows.length ? "Немає монет у цій вкладці" : "Зараз немає рекомендованих монет") + "</td></tr>";
     var rn = $("#rec-note"); if (rn) rn.textContent = new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
   }
+  // ⚖ Банер «SMC Forecast» (вимога 11.11): куди накручено пружину — 🔭 скан біржі
+  // і 🌀 WATCHLIST, у відсотках і з таймером «відколи тримається напрямок».
+  var SPB = { skew: 0 };
+  function spbTimer(since) {
+    var s = Math.max(0, Math.floor(Date.now() / 1000 - SPB.skew - since)), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sc = s % 60;
+    var p = function (n) { return String(n).padStart(2, "0"); };
+    var t = function (x) { return '<span class="spb-d">' + x + "</span>"; };
+    return (d ? t(d + "<small>д</small>") : "") + t(p(h)) + "<i>:</i>" + t(p(m)) + "<i>:</i>" + t(p(sc));
+  }
+  function spbRow(b) {
+    if (!b.ok) return '<div class="spb-row"><span class="spb-lab">' + esc(b.label) + '</span><span class="muted spb-empty">ще немає даних</span></div>';
+    var long = b.win === "LONG", col = long ? "#22c55e" : "#ef4444", dir = b.lean === "LONG" || b.lean === "SHORT";
+    var st = b.lean === "LONG" ? ['<span class="spb-dot up"></span>LONG', "up"] : (b.lean === "SHORT" ? ['<span class="spb-dot dn"></span>SHORT', "dn"] : ["⚖ " + (b.enough ? "РІВНОВАГА" : "ЗАМАЛО"), "flat"]);
+    var tip = "▲ LONG " + b.prob_long + "% · ▼ SHORT " + (100 - b.prob_long).toFixed(1) + "% · заряджених " + b.coins + " з " + b.total + " (потрібно ≥ " + b.need + ") · у бік LONG " + b.n_long + " / SHORT " + b.n_short + (b.fired_long || b.fired_short ? " · 💥 вистрілили ▲" + b.fired_long + " / ▼" + b.fired_short : "");
+    var grad = dir ? (long ? "linear-gradient(90deg,#86efac,#16a34a)" : "linear-gradient(90deg,#fca5a5,#dc2626)") : "linear-gradient(90deg,#94a3b8,#475569)";
+    return '<div class="spb-row" title="' + esc(tip) + '"><span class="spb-lab">' + esc(b.label) + "</span>" +
+      '<span class="spb-bar"><b style="width:' + Math.max(2, Math.min(100, b.pct)) + "%;background:" + grad + '"></b><em>' + b.pct.toFixed(0) + "% за " + b.win + " · заряджених " + b.coins + "/" + b.total + "</em></span>" +
+      '<span class="spb-tm" data-since="' + (b.since || 0) + '">' + (b.since ? spbTimer(b.since) : '<span class="muted">—</span>') + "</span>" +
+      '<span class="spb-st ' + st[1] + '"' + (dir ? ' style="--c:' + col + '"' : "") + ">" + st[0] + "</span></div>";
+  }
+  function spbRender(d) {
+    var card = $("#spb-card"), box = $("#spb-rows"); if (!card || !box) return;
+    var bs = (d && d.banners) || [];
+    if (!bs.length) { card.style.display = "none"; return; }
+    if (d.ts) SPB.skew = Date.now() / 1000 - Number(d.ts);
+    card.style.display = ""; box.innerHTML = bs.map(spbRow).join("");
+  }
+  setInterval(function () { document.querySelectorAll(".spb-tm[data-since]").forEach(function (el) { var t = Number(el.getAttribute("data-since")); if (t > 0) el.innerHTML = spbTimer(t); }); }, 1000);
   function loadRec() {
     var card = $("#rec-card"); if (!card) return;
-    api("/api/info/recommended").then(function (d) { if (!d || !d.ok) { card.style.display = "none"; return; } card.style.display = ""; REC.rows = d.rows || []; REC.meta = d; recRender(); }, function () {});
+    api("/api/info/recommended").then(function (d) { if (!d || !d.ok) { card.style.display = "none"; spbRender(null); return; } card.style.display = ""; REC.rows = d.rows || []; REC.meta = d; recRender(); spbRender(d); }, function () {});
   }
   document.addEventListener("click", function (e) {
     var b = e.target.closest ? e.target.closest("#rec-tabs button[data-d]") : null; if (!b) return;
@@ -1563,6 +1589,7 @@
     if (!ok) { var n = $("#notify-card"); if (n) n.style.display = "none"; }
     if (!ok) { var pc = $("#pp-card"); if (pc) pc.style.display = "none"; }
     if (!ok) { var rc = $("#rec-card"); if (rc) rc.style.display = "none"; }
+    if (!ok) { var sb = $("#spb-card"); if (sb) sb.style.display = "none"; }
     var tb = $(".topbar"); if (tb) tb.style.display = ok ? "" : "none";
   }
 

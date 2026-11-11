@@ -6,7 +6,7 @@
   <title>Мій кабінет</title>
   <link rel="icon" type="image/png" href="logo.png">
   <link rel="apple-touch-icon" href="logo.png">
-  <link rel="stylesheet" href="style.css?v=111">
+  <link rel="stylesheet" href="style.css?v=112">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -135,6 +135,15 @@
       </div>
     </section>
 
+    <section class="card spb-card" id="spb-card" style="display:none">
+      <div class="spb-head">
+        <img class="spb-logo" src="logo.png" alt="VSV" onerror="this.style.display='none'">
+        <span class="spb-title">SMC Forecast</span>
+        <span class="spb-sub muted">куди накручено пружину</span>
+      </div>
+      <div class="spb-rows" id="spb-rows"></div>
+    </section>
+
     <section class="card rec-card" id="rec-card" style="display:none">
       <div class="pp-head">
         <span class="rec-badge">🤖 БОТ</span>
@@ -182,7 +191,7 @@
         <span class="pp-inline muted" id="pp-inline"></span></h3>
       <div class="pp-wrap"><table class="pp-tbl" id="pp-open">
         <thead><tr><th>Монета</th><th>Бік</th><th class="r">Вхід</th><th class="r">Зараз</th><th class="r">PnL</th>
-          <th title="Процес вистрілу Пружини">💥 Виснаження</th><th>🚨</th><th class="r">Manual SL</th><th class="r">TP-1</th><th class="r">TP-2</th><th class="r">Таймер</th></tr></thead>
+          <th title="Скільки шляху від входу до цілі Пружини пройдено; мінус — угода відхиляється">🎯 Ціль</th><th>🚨</th><th class="r">Manual SL</th><th class="r">TP-1</th><th class="r">TP-2</th><th class="r">Таймер</th></tr></thead>
         <tbody><tr><td colspan="11" class="muted">—</td></tr></tbody>
       </table></div>
       <h3 class="pp-h acc-h" id="pp-closed-head" role="button" tabindex="0" aria-expanded="false">Останні закриті тестові угоди
@@ -225,7 +234,7 @@
   </script>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="config.js?v=75"></script>
-  <script src="app.js?v=109"></script>
+  <script src="app.js?v=110"></script>
   <script src="chart-pro.js?v=4"></script>
 </body>
 </html>

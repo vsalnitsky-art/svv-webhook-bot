@@ -245,7 +245,7 @@ def test_wiring_and_page():
     for old in ('/api/fuel-filter/state', '/api/tm/state', '/api/sm/bias', 'funding-table', 'btc-card'):
         _check(old not in js and old not in html, f'старе наповнення лишилось: {old}')
     _check('id="iw-list"' in html and 'id="iw-box"' in html and 'lightweight-charts@4.1.3' in html, 'розмітка')
-    _check('vsv-logo.png' in html and 'id="auth-links"' in html, 'логотип і кабінет лишились')
+    _check('logo.png' in html and 'id="auth-links"' in html, 'логотип і кабінет лишились')
     _check('class="brand-name">VSV Bot<' in html, '«VSV Bot» виділено на банері')
     _check('id="iw-tfs"' in html and 'id="iw-ob-tf"' in html and 'id="iw-vob-tf"' in html, 'вибір TF')
     _check('createPriceLine' in js and 'title: "POC"' in js and 'setMarkers' in js, 'POC і CHoCH/BOS на графіку')
@@ -406,7 +406,7 @@ def test_cabinet_polish_0911():
     _check('id="notify-head"' in html and 'style="display:none"' in html.split('id="notify-body"')[1][:30]
            and 'ntfApply' in js, '🔔 сповіщення — гармошка, згорнуто')
     card = js.split('function sigCard')[1].split('document.addEventListener')[0]
-    _check('row("Бар"' not in card and 'розворот від смуги' not in js and '(сила сигналу)' in card
+    _check('row("Бар"' not in card and 'розворот від смуги' not in js and 'Score<small>(сила' in card
            and '"%"' in card, 'картка SBR: без «Бар» і пояснень, Score у %')
     _check('function livePx' in js and js.count('livePx(sym)') >= 3, 'ціна списку = ціна шапки')
     _check('dirCls(sym)' in js, 'ціна за напрямком')
@@ -846,9 +846,37 @@ def test_signal_shows_fire_time_not_bar_open():
     assert v['ct'] == t0 + 14400 and v['t'] == t0
     assert ip.sig_close_sec({'t': t0}, 3600) == t0 + 3600
     js = open(os.path.join(os.path.dirname(__file__), 'infosite', 'app.js'), encoding='utf-8').read()
-    assert 'var ct = sct(s)' in js and 's.t ? locHM(s.t)' not in js
+    assert 'ct = sct(s)' in js and 's.t ? locHM(s.t)' not in js
     html = open(os.path.join(os.path.dirname(__file__), 'templates', 'smart_money.html'), encoding='utf-8').read()
     assert '_pcDM(_sbrCt(g))' in html and '· бар ${_pcDM(g.t)}' not in html
+
+
+def test_spring_banner_both_books_with_timer():
+    """⚖ Банер «SMC Forecast» (вимога 11.11): обидві пружини у % і з таймером
+    «відколи тримається напрямок»; лого бота, назва англійською."""
+    ip = _load('info_portal_spb', 'web/info_portal.py')
+    agg = {'lean': 'SHORT', 'prob_long': 20.0, 'enough': True, 'coins': 6, 'total': 40,
+           'need': 4, 'n_long': 1, 'n_short': 5}
+    assert ip.spb_lean_of(agg) == 'SHORT' and ip.spb_lean_of(dict(agg, lean=None)) == 'FLAT'
+    assert ip.spb_lean_of(None) is None
+    st = ip.spb_track(None, 'SHORT', 1000.0, 900.0)
+    assert st == {'lean': 'SHORT', 'since': 900.0}, st          # від моменту даних
+    assert ip.spb_track(st, 'SHORT', 2000.0, 1900.0)['since'] == 900.0   # той самий — не рухається
+    assert ip.spb_track(st, None, 2000.0) == st                  # немає даних — без змін
+    fl = ip.spb_track(st, 'LONG', 3000.0, 5000.0)                # дані «з майбутнього» → зараз
+    assert fl == {'lean': 'LONG', 'since': 3000.0}, fl
+    v = ip.spb_view('wl', 'WATCHLIST', agg, st)
+    assert v['pct'] == 80.0 and v['win'] == 'SHORT' and v['since'] == 900.0 and v['ok']
+    assert ip.spb_view('wl', 'WATCHLIST', dict(agg, lean='LONG', prob_long=70), st)['since'] is None
+    assert ip.spb_view('scan', 'BINANCE', None, None)['ok'] is False
+    html = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
+    i, j = html.index('id="spb-card"'), html.index('id="rec-card"')
+    assert i < j, 'банер над «Рекомендовані ботом»'
+    blk = html[i:j]
+    assert 'src="logo.png"' in blk and 'SMC Forecast' in blk and 'SMC прогноз' not in html
+    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    assert 'function spbRender(' in js and 'spbRender(d)' in js and '.spb-tm[data-since]' in js
+    assert "'banners': banners" in open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
 
 
 if __name__ == '__main__':

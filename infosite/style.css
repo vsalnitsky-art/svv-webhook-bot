@@ -473,7 +473,6 @@ body.iw-full-on { overflow: hidden; }
 .pp-al.ok { color: var(--long); border-color: rgba(0,230,118,.45); }
 .pp-al.against { color: var(--short); border-color: rgba(255,23,68,.55); }
 .pp-al.pre { color: var(--warn); border-color: rgba(255,179,0,.45); }
-.pp-prog { font: 700 11px var(--mono); margin-left: 6px; }
 td.nw { white-space: nowrap; }
 .pp-pnl { display:inline-flex;align-items:baseline;justify-content:flex-end;white-space:nowrap;font-variant-numeric:tabular-nums;font-family:var(--mono) }
 .pp-pnl-p { display:inline-block;min-width:4.6em;text-align:right }
@@ -492,6 +491,7 @@ td.nw { white-space: nowrap; }
 .pp-exh i { display: inline-block; width: 46px; height: 7px; border-radius: 4px; background: var(--line-soft); position: relative; overflow: hidden; }
 .pp-exh i b { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: linear-gradient(90deg,#60a5fa,#facc15 55%,#fb923c 80%,#f472b6); }
 .pp-exh > b { min-width: 3.2em; text-align: right; }
+.pp-exh.neg i { background: rgba(248,113,113,.18); }
 .pp-blink { animation: ppBlink 1s steps(2, start) infinite; }
 @keyframes ppBlink { to { opacity: .35; } }
 .pp-exh-st { color: #22d3ee; font-size: .68rem; margin-left: 4px; }
@@ -763,4 +763,36 @@ td.nw { white-space: nowrap; }
   .tv-ohlc { font-size: 10px; gap: 5px; }
   .tv-ohlc .t, .tv-ohlc .k { display: none; }
   .tv-bars { right: 56px; bottom: 6px; }
+}
+/* ⚖ Банер «SMC Forecast» — куди накручено пружину (11.11) */
+.spb-card { padding: 12px 16px; }
+.spb-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.spb-logo { width: 28px; height: 28px; border-radius: 7px; object-fit: contain; filter: drop-shadow(0 0 6px rgba(56,189,248,.35)); }
+.spb-title { font: 800 17px var(--mono); letter-spacing: .02em; background: linear-gradient(90deg,#7dd3fc,#38bdf8); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.spb-sub { font-size: 12px; }
+.spb-rows { display: flex; flex-direction: column; gap: 6px; }
+.spb-row { display: grid; grid-template-columns: 110px minmax(120px,1fr) 190px 130px; align-items: center; gap: 14px;
+  padding: 8px 12px; border: 1px solid var(--line-soft); border-radius: 10px; background: rgba(255,255,255,.02); }
+.spb-lab { font: 800 13px var(--mono); color: #7dd3fc; letter-spacing: .03em; }
+.spb-empty { grid-column: 2 / -1; font-size: 12px; }
+.spb-bar { position: relative; height: 20px; border-radius: 10px; background: rgba(148,163,184,.12); overflow: hidden; }
+.spb-bar b { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 10px; transition: width .6s ease; }
+.spb-bar em { position: absolute; inset: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px;
+  font: 600 11px var(--mono); font-style: normal; color: #e5e7eb; text-shadow: 0 1px 2px rgba(0,0,0,.6); white-space: nowrap; }
+.spb-tm { display: inline-flex; align-items: center; justify-content: flex-end; gap: 2px; font: 700 14px var(--mono); }
+.spb-tm .spb-d { display: inline-block; min-width: 24px; padding: 2px 4px; text-align: center; border-radius: 5px;
+  background: rgba(255,255,255,.07); border: 1px solid var(--line-soft); color: #f3f4f6; }
+.spb-tm .spb-d small { font-size: 10px; color: var(--muted); margin-left: 1px; }
+.spb-tm i { font-style: normal; color: var(--muted); }
+.spb-st { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; border-radius: 8px;
+  font: 800 13px var(--mono); letter-spacing: .04em; }
+.spb-st.up { color: #4ade80; background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.4); }
+.spb-st.dn { color: #f87171; background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.4); }
+.spb-st.flat { color: #cbd5e1; background: rgba(148,163,184,.1); border: 1px solid rgba(148,163,184,.35); }
+.spb-dot { width: 10px; height: 10px; border-radius: 50%; }
+.spb-dot.up { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+.spb-dot.dn { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+@media (max-width: 760px) {
+  .spb-row { grid-template-columns: 1fr auto; gap: 8px; }
+  .spb-bar { grid-column: 1 / -1; order: 3; }
 }

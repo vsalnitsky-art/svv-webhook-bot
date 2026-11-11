@@ -164,7 +164,7 @@ def test_wiring():
     _check('id="tm-use-spring-fired-exit"' in _HTML and 'id="tm-spring-fired-exit-dir"' in _HTML, 'UI')
     _check(_HTML.count('${springFireCellHTML(p)}') == 2 and '${springTradeCellHTML(p)}' not in _HTML,
            'колонка «💥 Виснаження» замість «🌀 Заряд» у обох таблицях')
-    _check(_HTML.count('>💥 Виснаження</th>') == 2, 'заголовок обох таблиць')
+    _check(_HTML.count('>🎯 Ціль</th>') == 2, 'заголовок обох таблиць (11.11: «Ціль»)')
     _check('${fmtPriceJS(p.current_price)}${pxAgeHTML(p)}' in _HTML and 'curPxHTML' not in _HTML,
            'Current — як було')
     _check(_HTML.count('pnlUsdChip(') >= 3, '$ у PnL виділено (real + paper)')
@@ -180,8 +180,8 @@ def test_js_cell():
     j = _HTML.index('function springTradeCellHTML(', i)
     js = 'const fmtPriceJS = p => String(p);\n' + _HTML[i:j] + r"""
 console.log(springFireCellHTML({}));
-console.log(springFireCellHTML({side:'SHORT', exh:{pct:30,done_pct:1.5,target:90,target_pct:5,climax:false}, spring_fire:{pct:100,fired:{side:'LONG',live:true}}}));
-console.log(springFireCellHTML({side:'LONG', exh:{pct:0,done_pct:-0.24,target:0.0543,target_pct:29.3,climax:false}, spring_fire:{pct:20,fired:null}}));
+console.log(springFireCellHTML({side:'SHORT', exh:{pct:30,prog:30,done_pct:1.5,target:90,target_pct:5,climax:false}, spring_fire:{pct:100,fired:{side:'LONG',live:true}}}));
+console.log(springFireCellHTML({side:'LONG', exh:{pct:0,prog:-1,done_pct:-0.24,target:0.0543,target_pct:29.3,climax:false}, spring_fire:{pct:20,fired:null}}));
 console.log(springFireCellHTML({side:'LONG', exh:{pct:82,done_pct:8,target:110,target_pct:10,climax:true}}));
 """
     out = subprocess.run(['node', '-e', js], capture_output=True, text=True, timeout=20)
@@ -189,7 +189,7 @@ console.log(springFireCellHTML({side:'LONG', exh:{pct:82,done_pct:8,target:110,t
     a, b, c, d = out.stdout.strip().split('\n')
     _check('—' in a, a)
     _check('30%' in b and '⚠' in b and 'tm-mmd-alert-hot' in b, b)
-    _check('>0%<' in c and 'width:0%' in c and '20%' not in c, ('на вході — 0%, а не готовність вистрілу', c))
+    _check('−1%' in c and 'width:0%' in c and '20%' not in c, ('проти угоди — мінус, смужка порожня', c))
     _check('82%' in d and '💥' in d, d)
 
 

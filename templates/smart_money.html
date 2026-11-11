@@ -5597,7 +5597,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-open-table">
                 <thead>
                     <tr><th data-col="sym">Symbol</th><th data-col="side">Side</th><th data-col="entry">Entry</th><th data-col="cur">Current</th><th data-col="liq" title="💀 Ціна ліквідації реальної позиції на Bybit і відстань до неї від поточної ціни: червоний < 5%, бурштиновий < 15%. ⚠ — Manual SL стоїть за ліквідацією (стоп не встигне спрацювати).">💀 Ліквідація</th><th data-col="pnl" title="💰 PnL з урахуванням ПЛЕЧА і КОМІСІЙ. Велике число — ROI на маржу (як у застосунку біржі): нетто ÷ (нотіонал входу ÷ плече). Під ним — нетто $ (брутто − комісія входу − оцінка комісії виходу), якщо закрити зараз, і плече. Рух ціни без плеча та розклад — у підказці комірки. Комісія — поле «Комісія / сторону, %» (Bybit taker ≈ 0.055%).">PnL <span style="font-size:0.62rem;color:#8b93a7;font-weight:400">ROI · нетто</span></th>
-                        <th data-col="charge" title="💥 ВИСНАЖЕННЯ УГОДИ — скільки шляху від ВХОДУ до цілі «Ймовірного ходу» Пружини (записаної на вході) уже пройдено: на вході 0%, ціль досягнута 100%, ціна проти угоди 0%. 💥 поруч — зараз бар-сплеск у бік угоди (кульмінація руху); ⚠ — Пружина вистрілила ПРОТИ угоди. «—» — у монети на вході не було цілі Пружини. Цим самим числом працює «🎯 Вихід на кульмінації» (Exit Rules)">💥 Виснаження</th>
+                        <th data-col="charge" title="🎯 ЦІЛЬ УГОДИ — скільки шляху від ВХОДУ до цілі «Ймовірного ходу» Пружини (записаної на вході) уже пройдено: на вході 0%, ціль досягнута +100%, ціна проти угоди — мінус (відхилення від цілі). 💥 поруч — зараз бар-сплеск у бік угоди (кульмінація руху); ⚠ — Пружина вистрілила ПРОТИ угоди. «—» — у монети на вході не було цілі Пружини. Цим самим числом працює «🎯 Вихід на кульмінації» (Exit Rules)">🎯 Ціль</th>
                         <th data-col="alert" title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. ⏳ бурштиновий «🔔⏳ TF» — увімкнено «трейл»: протилежний сигнал запамʼятав ціну, угоду ведемо; поруч — стоп і відстань ціни від запамʼятованої (🌀 = заряд ще тримає угоду, відкат не закриває). Сам сигнал нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
                         <th data-col="qty">Qty</th>
                         <th data-col="sl" title="Manual SL — leave empty for none. Bot closes when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
@@ -5725,7 +5725,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="tm-hscroll"><table class="tm-table" id="tm-shadow-open-table">
                 <thead>
                     <tr><th data-col="sym">Symbol</th><th data-col="side">Side</th><th data-col="entry">Entry</th><th data-col="cur">Current</th><th data-col="pnl">PnL</th>
-                        <th data-col="charge" title="💥 ВИСНАЖЕННЯ УГОДИ — скільки шляху від ВХОДУ до цілі «Ймовірного ходу» Пружини (записаної на вході) уже пройдено: на вході 0%, ціль досягнута 100%, ціна проти угоди 0%. 💥 поруч — зараз бар-сплеск у бік угоди (кульмінація руху); ⚠ — Пружина вистрілила ПРОТИ угоди. «—» — у монети на вході не було цілі Пружини. Цим самим числом працює «🎯 Вихід на кульмінації» (Exit Rules)">💥 Виснаження</th>
+                        <th data-col="charge" title="🎯 ЦІЛЬ УГОДИ — скільки шляху від ВХОДУ до цілі «Ймовірного ходу» Пружини (записаної на вході) уже пройдено: на вході 0%, ціль досягнута +100%, ціна проти угоди — мінус (відхилення від цілі). 💥 поруч — зараз бар-сплеск у бік угоди (кульмінація руху); ⚠ — Пружина вистрілила ПРОТИ угоди. «—» — у монети на вході не було цілі Пружини. Цим самим числом працює «🎯 Вихід на кульмінації» (Exit Rules)">🎯 Ціль</th>
                         <th data-col="alert" title="🚨 Сигнал 🔔 МММ-SBR ВІДНОСНО угоди: ⚠ червоний, що блимає, + TF — ПРОТИЛЕЖНИЙ сигнал SBR зʼявився вже ПІСЛЯ входу (угода йде проти нового розвороту); ⚑ бурштиновий — SBR протилежний, але сигнал був ще ДО входу (не новий); ✓ зелений — останній сигнал SBR за угодою; «—» — сигналу немає. ⏳ бурштиновий «🔔⏳ TF» — увімкнено «трейл»: протилежний сигнал запамʼятав ціну, угоду ведемо; поруч — стоп і відстань ціни від запамʼятованої (🌀 = заряд ще тримає угоду, відкат не закриває). Сам сигнал нічого не закриває: лише ⚠ ПРОТИ вмикає «🧱 OB» через 🤖 Автоконтроль (якщо увімкнено).">🚨</th>
                         <th data-col="sl" title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level." Колір поля показує, ХТО поставив рівень: блакитний — виставив бот автоматично, бурштиновий — змінено вручну, зелений — переведено в БЕЗЗБИТОК після TP-1 (вхід + запас на комісії), тобто решта позиції вже не ризикує.">Manual SL<span style="font-size:0.62rem;color:#8b93a7;font-weight:400"><br><span style="color:#38bdf8">🤖 авто</span> · <span style="color:#fbbf24">✏️ вручну</span> · <span style="color:#4ade80">⚖️ БЗ</span></span></th>
                         <th data-col="tp1" title="🎯 Manual TP-1 — ЧАСТКОВА фіксація. При досягненні рівня закривається задана частка позиції (за замовчуванням 50%), решта йде далі до TP-2. Спрацьовує РІВНО ОДИН раз за угоду; після спрацювання рівень лишається видимим з ✓, але вже не діє. Автопілот може заповнювати його сам — найближчою змістовною перепоною попереду руху. Колір поля: блакитний — виставив бот, бурштиновий — ви.">Manual TP-1</th>
@@ -18429,23 +18429,27 @@ function springFireCellHTML(p) {
         const why = (p && p.spring_open_tgt === null)
             ? 'ціль Пружини на вході не визначена (монета не заряджена або ціль уже позаду)'
             : 'чекаємо ціль Пружини і живий 1h-бар (≈10с)';
-        return `<td><span style="color:#6b7280" title="💥 Виснаження угоди: ${why}">—</span></td>`;
+        return `<td><span style="color:#6b7280" title="🎯 Ціль угоди: ${why}">—</span></td>`;
     }
-    const pct = Math.max(0, Math.min(100, Number(e.pct) || 0));
-    const col = exhColor(pct);
+    // 🎯 «Ціль» (вимога 11.11): знаковий прогрес до цілі Пружини — мінус = угода
+    // відхиляється від цілі, >100 = понад ціль. Смужка — 0..100% шляху.
+    const prog = (e.prog != null && isFinite(Number(e.prog))) ? Number(e.prog) : Number(e.pct) || 0;
+    const pct = Math.max(0, Math.min(100, prog));
+    const col = prog < 0 ? '#f87171' : exhColor(pct);
     const sg = x => (x >= 0 ? '+' : '') + Number(x).toFixed(2) + '%';
-    const tip = '💥 Виснаження угоди: пройдено ' + Math.round(pct) + '% шляху від входу до цілі Пружини'
+    const tip = '🎯 Ціль угоди: ' + (prog >= 0 ? 'пройдено ' : 'відхилення ') + (prog >= 0 ? '+' : '−') + Math.abs(Math.round(prog)) + '% шляху від входу до цілі Пружини'
         + ' · рух від входу ' + sg(e.done_pct) + ' з ' + sg(e.target_pct)
         + ' · ціль ' + fmtPriceJS(e.target) + (p.spring_open_tgt_late ? ' (ціль записано пізніше входу)' : '')
+        + (prog < 0 ? ' · угода відхиляється від цілі' : '')
         + (e.climax ? ' · 💥 зараз бар-сплеск у бік угоди — кульмінація руху' : '')
         + (fd && fd.side !== side ? ' · ⚠ Пружина вистрілила ПРОТИ угоди' : '');
-    let lab = `<b style="color:${col}">${Math.round(pct)}%</b>`;
+    let lab = `<b style="color:${col}">${prog >= 0 ? '+' : '−'}${Math.abs(Math.round(prog))}%</b>`;
     if (e.climax) lab += `<b title="бар-сплеск у бік угоди" style="color:#f472b6;margin-left:2px">💥</b>`;
     if (fd && fd.side !== side) lab += `<b class="tm-mmd-alert-hot" style="color:#f87171;margin-left:2px">⚠</b>`;
     return `<td><span title="${tip}" style="display:inline-flex;align-items:center;gap:5px;font-family:monospace;white-space:nowrap;font-size:0.72rem">`
-        + `<span style="position:relative;display:inline-block;width:46px;height:7px;border-radius:4px;background:rgba(255,255,255,0.07);overflow:hidden">`
+        + `<span style="position:relative;display:inline-block;width:46px;height:7px;border-radius:4px;background:${prog < 0 ? 'rgba(248,113,113,0.18)' : 'rgba(255,255,255,0.07)'};overflow:hidden">`
         + `<span style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;border-radius:4px;background:linear-gradient(90deg,#60a5fa,#facc15 55%,#fb923c 80%,#f472b6);background-size:${pct > 0 ? (10000 / pct) : 100}% 100%;box-shadow:0 0 6px ${col}66;transition:width .6s ease"></span></span>`
-        + `<span style="display:inline-block;min-width:34px;text-align:right">${lab}</span>`
+        + `<span style="display:inline-block;min-width:40px;text-align:right">${lab}</span>`
         + exhTrailBadgeHTML(p) + `</span></td>`;
 }
 // 🎯 Кульмінацію зловлено (правило «Вихід на кульмінації») — бот веде стоп від вершини.
@@ -18493,7 +18497,6 @@ function springTradeCellHTML(p) {
 // блиманням + TF сигналу · none — «—».
 const _MMD_ALERT = {
     ok:      { ic: '✓', col: '#4ade80', bg: '#22c55e1f', txt: 'OK' },
-    pre:     { ic: '⚑', col: '#fbbf24', bg: '#f59e0b26', txt: 'ДО ВХОДУ' },
     against: { ic: '⚠', col: '#fecaca', bg: '#dc2626', txt: 'ПРОТИ' },
 };
 // 🔔⏳ Трейл після протилежного сигналу SBR (вимога 31.10) — компактно:
@@ -18521,27 +18524,14 @@ function sbrTrailBadgeHTML(p) {
         + (t.charge_ok ? '<span style="color:#facc15">🌀</span>' : '')
         + `</span></td>`;
 }
-// 🎯 Знаковий прогрес угоди до ймовірної цілі «Пружини» (вимога 11.11):
-// +34% — пройдено третину шляху до цілі, −12% — ціна пішла проти угоди.
-// Джерело — те саме `pos.exh` (ціль, запамʼятована на вході), що «💥 Виснаження».
-function exhProgHTML(p) {
-    const e = p && p.exh;
-    if (!e || e.prog == null || !isFinite(Number(e.prog))) return '';
-    const v = Number(e.prog);
-    const col = v >= 100 ? '#f472b6' : (v > 0 ? '#4ade80' : (v < 0 ? '#f87171' : '#cbd5e1'));
-    const tip = `🎯 До ймовірної цілі ${fmtPriceJS(e.target)} (${Number(e.target_pct) >= 0 ? '+' : ''}${Number(e.target_pct).toFixed(2)}% від входу): `
-        + `пройдено ${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(0)}% шляху · рух ціни ${Number(e.done_pct) >= 0 ? '+' : '−'}${Math.abs(Number(e.done_pct)).toFixed(2)}%`
-        + (v < 0 ? ' — угода відхиляється від цілі' : '');
-    return ` <span title="${tip}" style="display:inline-block;min-width:42px;text-align:right;font-family:monospace;font-size:0.68rem;font-weight:700;color:${col}">🎯${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(0)}%</span>`;
-}
 function mmdAlertCellHTML(p) {
-    const _pg = exhProgHTML(p);
+    // 🎯 % до цілі переїхав у колонку «Ціль»; «⚑ ДО ВХОДУ» не показуємо (вимога 11.11).
     const _tr = sbrTrailBadgeHTML(p);
-    if (_tr) return _pg ? _tr.replace(/<\/td>$/, _pg + '</td>') : _tr;
+    if (_tr) return _tr;
     const a = p && p.mmd && p.mmd.alert;
     if (!a || !_MMD_ALERT[a.level]) {
         const why = a && a.text ? a.text : 'немає даних 🔔 МММ-SBR';
-        return `<td style="white-space:nowrap"><span style="color:#6b7280" title="Сигналу немає — ${why}">—</span>${_pg}</td>`;
+        return `<td style="white-space:nowrap"><span style="color:#6b7280" title="Сигналу немає — ${why}">—</span></td>`;
     }
     const st = _MMD_ALERT[a.level];
     const tf = (a.level === 'against' && a.tf) ? ` ${a.tf}` : '';
@@ -18549,7 +18539,7 @@ function mmdAlertCellHTML(p) {
         + (a.level === 'against' ? ' — угода йде проти нового розвороту, зверніть увагу' : '');
     return `<td style="white-space:nowrap"><span class="tm-mmd-alert${a.level === 'against' ? ' tm-mmd-alert-hot' : ''}" title="${tip}" `
         + `style="display:inline-block;min-width:58px;text-align:center;padding:1px 5px;border-radius:4px;font-family:monospace;font-size:0.68rem;font-weight:700;color:${st.col};background:${st.bg};border:1px solid ${st.col}55;white-space:nowrap">`
-        + `${st.ic} ${st.txt}${tf}</span>${_pg}</td>`;
+        + `${st.ic} ${st.txt}${tf}</span></td>`;
 }
 // 🏷 Позначка «останній OB 4H» у полі Side (вимога 12.10). `pos.ob4h` —
 // памʼять сканера (`ob_mark_for`, той самий `_ob_on_htf`, що дає «OB 4H» в

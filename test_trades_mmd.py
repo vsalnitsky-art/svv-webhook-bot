@@ -164,7 +164,7 @@ def test_route_only_reads():
 def _js(body):
     src = ''
     for f in ('function chargeColor(', 'function springTradeCellHTML(',
-              'function sbrTrailBadgeHTML(', 'function exhProgHTML(', 'function mmdAlertCellHTML('):
+              'function sbrTrailBadgeHTML(', 'function mmdAlertCellHTML('):
         a = _HTML.index(f)
         src += _HTML[a:_HTML.index('\n}', a) + 2] + '\n'
     for c in ('const _MMD_ALERT', 'const _CHG_STOPS'):
@@ -203,11 +203,12 @@ console.log(mmdAlertCellHTML({side:'LONG', current_price:102, mmd:m,
     _check('>30<' in p[0] and '>70<' in p[0] and '+40' in p[0] and 'linear-gradient' in p[0]
            and 'width:70%' in p[0] and 'left:calc(30%' in p[0], p[0])
     _check('ПРОТИ 1H+4H' in p[1] and 'tm-mmd-alert-hot' in p[1] and '#dc2626' in p[1], p[1])
-    _check('ДО ВХОДУ' in p[2] and '#fbbf24' in p[2] and 'hot' not in p[2], p[2])
+    # 11.11: «⚑ ДО ВХОДУ» прибрано — рівень pre показується як «—»
+    _check('ДО ВХОДУ' not in p[2] and '>—<' in p[2], p[2])
     _check(p[3].count('>—<') == 2, 'немає даних → «—» в обох комірках')
     _check('🔔⏳ 1H' in p[4] and '🛡101' in p[4] and '+2.00%' in p[4] and '🌀' in p[4]
            and 'ПРОТИ' not in p[4].split('title=')[0], p[4])
-    print('✓ JS: 🌀 заряд (вхід → зараз, градієнт) + 🚨 ПРОТИ / ДО ВХОДУ / 🔔⏳ трейл')
+    print('✓ JS: 🌀 заряд (вхід → зараз, градієнт) + 🚨 ПРОТИ / (pre → —) / 🔔⏳ трейл')
 
 
 def test_blink_css_exists():

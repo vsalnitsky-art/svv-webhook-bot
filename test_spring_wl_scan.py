@@ -103,9 +103,10 @@ def test_signed_progress_to_target():
     _check(f('LONG', 100, 98, 110)['prog'] == -20.0, 'проти угоди — від\'ємний')
     _check(f('SHORT', 100, 102, 90)['prog'] == -20.0, 'SHORT дзеркально')
     _check(f('LONG', 100, 98, 110)['pct'] == 0.0, '«Виснаження» лишилось 0..100')
-    _check('function exhProgHTML(' in HTML and 'exhProgHTML(p)' in HTML, 'бот: 🎯 у 🚨')
-    _check('function ppProg(' in IJS and 'ppProg(p)' in IJS, 'інфосайт: 🎯 у 🚨')
-    print('✓ 🚨 + 🎯 знаковий % до ймовірної цілі (мінус — відхиляємось)')
+    # 11.11 (друга правка): % до цілі переїхав із 🚨 у колонку «🎯 Ціль»
+    _check('exhProgHTML' not in HTML and 'ppProg' not in IJS, '🚨 більше не несе %')
+    _check('e.prog' in HTML[HTML.index('function springFireCellHTML('):] and 'e.prog' in IJS, 'Ціль = знаковий %')
+    print('✓ 🎯 знаковий % до ймовірної цілі — у колонці «Ціль» (мінус — відхиляємось)')
 
 
 def test_sticky_header_is_opaque():

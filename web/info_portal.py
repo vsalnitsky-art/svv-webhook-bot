@@ -1663,6 +1663,112 @@ def rec_levels(row, sl=None):
     return out
 
 
+# ⚖ БАНЕР «КУДИ НАКРУЧЕНО» ОБОХ ПРУЖИН (вимога 11.11): 🔭 скан біржі і 🌀
+# WATCHLIST — у відсотках і з таймером «відколи тримається напрямок».
+# Джерело — ті самі `aggregate`, що банери на /smart-money (лише памʼять).
+SPB_DB_KEY = 'info_spring_banner_v1'
+_spb_state = {}              # {'scan'|'wl': {'lean': 'LONG'|'SHORT'|'FLAT', 'since': ts}}
+_spb_loaded = [False]
+
+
+def spb_lean_of(agg):
+    """Напрямок банера: LONG / SHORT / FLAT (рівновага або замало заряджених)."""
+    if not isinstance(agg, dict):
+        return None
+    return agg.get('lean') if agg.get('lean') in ('LONG', 'SHORT') else 'FLAT'
+
+
+def spb_track(prev, lean, now, data_ts=None):
+    """ЧИСТА: новий стан таймера. Той самий напрямок → `since` не рухається;
+    зміна → відлік від моменту ДАНИХ, що її показали (скан / перерахунок), а
+    не від того, коли сторінку відкрили. Немає даних (`lean` None) → без змін."""
+    if lean is None:
+        return dict(prev) if prev else None
+    if prev and prev.get('lean') == lean and prev.get('since'):
+        return dict(prev)
+    ts = data_ts if (data_ts and 0 < float(data_ts) <= now) else now
+    if prev and prev.get('since') and float(prev['since']) > ts:
+        ts = now
+    return {'lean': lean, 'since': float(ts)}
+
+
+def spb_view(key, label, agg, st):
+    """ЧИСТА: рядок банера для сторінки."""
+    if not isinstance(agg, dict):
+        return {'key': key, 'label': label, 'ok': False}
+    pl = float(agg.get('prob_long') or 50.0)
+    lean = spb_lean_of(agg)
+    win = 'LONG' if pl >= 50 else 'SHORT'
+    return {'key': key, 'label': label, 'ok': True, 'lean': lean,
+            'pct': round(pl if win == 'LONG' else 100.0 - pl, 1), 'win': win,
+            'prob_long': round(pl, 1), 'enough': bool(agg.get('enough')),
+            'coins': int(agg.get('coins') or 0), 'total': int(agg.get('total') or 0),
+            'need': int(agg.get('need') or 0),
+            'n_long': int(agg.get('n_long') or 0), 'n_short': int(agg.get('n_short') or 0),
+            'fired_long': int(agg.get('fired_long') or 0),
+            'fired_short': int(agg.get('fired_short') or 0),
+            'since': (st or {}).get('since') if (st or {}).get('lean') == lean else None}
+
+
+def _spb_db():
+    try:
+        from storage.db_operations import get_db
+        return get_db()
+    except Exception:
+        return None
+
+
+def spring_banners(sc, eng, now):
+    if not _spb_loaded[0]:
+        _spb_loaded[0] = True
+        db = _spb_db()
+        try:
+            raw = db.get_setting(SPB_DB_KEY, None) if db else None
+            if isinstance(raw, str):
+                raw = json.loads(raw)
+            if isinstance(raw, dict):
+                for k in ('scan', 'wl'):
+                    v = raw.get(k)
+                    if isinstance(v, dict) and v.get('lean') and v.get('since'):
+                        _spb_state[k] = {'lean': v['lean'], 'since': float(v['since'])}
+        except Exception:
+            pass
+    out, changed = [], False
+    src = []
+    try:
+        if eng is not None:
+            st = eng.state().get('result') or {}
+            src.append(('scan', str(st.get('exchange') or 'binance').upper(),
+                        eng.banner_agg(), st.get('ts')))
+    except Exception:
+        pass
+    try:
+        if sc is not None and hasattr(sc, 'spring_banner'):
+            ts = None
+            try:
+                ts = (sc.spring_stats() or {}).get('calc_at')
+            except Exception:
+                pass
+            src.append(('wl', 'WATCHLIST', sc.spring_banner(), ts))
+    except Exception:
+        pass
+    for key, label, agg, ts in src:
+        prev = _spb_state.get(key)
+        nxt = spb_track(prev, spb_lean_of(agg), now, ts)
+        if nxt and nxt != prev:
+            _spb_state[key] = nxt
+            changed = True
+        out.append(spb_view(key, label, agg, _spb_state.get(key)))
+    if changed:
+        db = _spb_db()
+        try:
+            if db:
+                db.set_setting(SPB_DB_KEY, dict(_spb_state))
+        except Exception:
+            pass
+    return out
+
+
 def recommended_payload(now=None):
     now = time.time() if now is None else now
     hit = _rec_cache.get('p')
@@ -1670,6 +1776,7 @@ def recommended_payload(now=None):
         return hit[1]
     sc = _scanner()
     wl_recs, wl_pass, scan_rows, scan_meta = {}, {}, [], {}
+    eng = None
     try:
         if sc is not None and hasattr(sc, 'spring_for'):
             wl_recs = sc.spring_for() or {}
@@ -1701,7 +1808,11 @@ def recommended_payload(now=None):
                 h = {'sl': None, 'label': f'помилка: {str(e)[:60]}'}
             r.update(rec_levels(r, h))
             r['sl_wait'] = bool(h.get('wait'))
-    p = {'ok': True, 'rows': rows,
+    try:
+        banners = spring_banners(sc, eng, now)
+    except Exception:
+        banners = []
+    p = {'ok': True, 'rows': rows, 'banners': banners,
          'scan': scan_meta, 'wl_n': len(wl_recs), 'ts': now}
     _rec_cache['p'] = (now, p)
     return p
