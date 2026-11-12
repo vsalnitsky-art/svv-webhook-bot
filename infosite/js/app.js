@@ -1062,7 +1062,7 @@
     var box = $("#iw-box"), dark = (document.documentElement.getAttribute("data-theme") || "dark") === "dark";
     IW.chart = LightweightCharts.createChart(box, {
       autoSize: true,
-      layout: { background: { color: "transparent" }, textColor: dark ? "#8f9aad" : "#4b5565", fontFamily: "Inter,Segoe UI,sans-serif" },
+      layout: { background: { color: "transparent" }, textColor: dark ? "#8f9aad" : "#4b5565", fontFamily: "Inter,Segoe UI,sans-serif", fontSize: 13 },
       grid: { vertLines: { color: dark ? "rgba(42,46,57,.55)" : "rgba(225,229,235,.75)" }, horzLines: { color: dark ? "rgba(42,46,57,.55)" : "rgba(225,229,235,.75)" } },
       rightPriceScale: { borderColor: dark ? "#2a2e39" : "#d7dde5" },
       timeScale: { borderColor: dark ? "#2a2e39" : "#d7dde5", timeVisible: true, secondsVisible: false, rightOffset: 18, tickMarkFormatter: locTick },
@@ -1097,10 +1097,8 @@
     });
     (c.ob || []).forEach(function (b) {
       var L = b.side === "LONG", sw = b.fam === "swing";
-      out.push({ kind: "ob", t: snapSec(b.start, o), top: b.top, bottom: b.bottom, dashed: false,
-        fill: L ? "rgba(41,98,255,.13)" : "rgba(242,54,69,.10)",
-        stroke: L ? "rgba(59,130,246,.38)" : "rgba(244,63,94,.34)", text: L ? "#93c5fd" : "#fda4af",
-        edge: L ? "top" : "bottom", edgeCol: L ? "rgba(56,189,248,.95)" : "rgba(251,113,133,.95)",
+      out.push({ kind: "ob", thin: true, t: snapSec(b.start, o), top: b.top, bottom: b.bottom, dashed: false,
+        fill: "rgba(148,163,184,.05)", stroke: "rgba(148,180,220,.5)", text: "#c3cbd8",
         label: "OB " + tfLbl(c.ob_tf), sub: (sw ? "swing" : "int") + (b.tag ? " · " + b.tag : "") });
     });
     if (IW.show_imb) (c.imb || []).forEach(function (z) {
@@ -1259,7 +1257,7 @@
       sbrLastBadge("1h", (c.sbr_last || {})["1h"], px) + sbrLastBadge("4h", (c.sbr_last || {})["4h"], px) +
       (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "") +
       '<span class="iw-legend"><span title="VOB"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
-      '<span title="OB"><i style="background:rgba(41,98,255,.3);outline:1px solid rgba(56,189,248,.9)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
+      '<span title="OB"><i style="background:transparent;outline:1px solid rgba(148,180,220,.55)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
       '<span title="CHoCH / BOS"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
       '<span title="IMB"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
       '<span title="SBR"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +

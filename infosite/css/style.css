@@ -1,11 +1,11 @@
 /* VSV Trading Terminal — professional market workspace */
 :root{
-  --p-ink-0:oklch(.155 .014 260);--p-ink-1:oklch(.185 .016 260);--p-ink-2:oklch(.215 .018 260);--p-ink-3:oklch(.255 .02 260);
-  --p-text:oklch(.96 .008 250);--p-muted:oklch(.68 .018 255);--p-faint:oklch(.53 .018 255);
-  --p-blue:oklch(.62 .19 263);--p-cyan:oklch(.78 .13 210);--p-green:oklch(.72 .17 155);--p-red:oklch(.63 .22 25);--p-amber:oklch(.78 .16 75);
+  --p-ink-0:oklch(.19 .005 265);--p-ink-1:oklch(.225 .006 265);--p-ink-2:oklch(.26 .007 265);--p-ink-3:oklch(.30 .008 265);
+  --p-text:oklch(.93 .005 260);--p-muted:oklch(.70 .007 260);--p-faint:oklch(.57 .007 260);
+  --p-blue:oklch(.66 .12 262);--p-cyan:oklch(.76 .09 215);--p-green:oklch(.72 .17 155);--p-red:oklch(.63 .22 25);--p-amber:oklch(.78 .16 75);
   --bg:var(--p-ink-0);--bg2:var(--p-ink-1);--surface:var(--p-ink-1);--elev:var(--p-ink-2);--elev-2:var(--p-ink-3);
   --txt:var(--p-text);--txt-dim:var(--p-muted);--muted:var(--p-faint);
-  --line:oklch(.29 .018 260);--line-soft:oklch(.235 .016 260);
+  --line:oklch(.30 .007 265);--line-soft:oklch(.255 .006 265);
   --accent:var(--p-blue);--accent-2:var(--p-cyan);--long:var(--p-green);--short:var(--p-red);--warn:var(--p-amber);
   --bybit:#f7a600;--sig-bg:#131722;--radius:10px;--radius-sm:6px;
   --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;--mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,monospace;
@@ -172,3 +172,78 @@ body{display:flex;flex-direction:column}
 .iw-row{min-height:52px}
 .spb-card{padding:14px 20px}
 .hero{margin:6vh auto;padding:38px 44px}
+
+
+/* ── v203 · Neutral Kimi-dark palette, bigger type, denser watchlist ── */
+/* Кнопки з видимою нейтральною заливкою (стиль скрін-референсу) */
+.tv-btn,.draw-btn,.iw-tgl,.iw-liq-btn,.iw-tfs button,.top-icon,.pp-eye,.iw-auto,.tcal-f button,.tglink-btn,.tcal-h button{background:var(--elev);border:1px solid var(--line);color:var(--txt-dim)}
+.tv-btn:hover,.draw-btn:hover,.iw-tgl:hover,.iw-liq-btn:hover,.iw-tfs button:hover,.top-icon:hover,.pp-eye:hover,.iw-auto:hover,.tcal-f button:hover,.tglink-btn:hover,.tcal-h button:hover{background:var(--elev-2);color:var(--txt);border-color:var(--line)}
+.tv-btn.on,.draw-btn.on,.iw-tgl.on,.iw-liq-btn.on,.iw-tfs button.on,.iw-auto.on,#rec-tabs button.on,.pp-period button.on{background:var(--p-ink-3);border-color:var(--p-faint);color:var(--txt);font-weight:600;box-shadow:none}
+:root[data-theme="light"] .tv-btn.on,:root[data-theme="light"] .draw-btn.on,:root[data-theme="light"] .iw-tgl.on,:root[data-theme="light"] .iw-liq-btn.on,:root[data-theme="light"] .iw-tfs button.on,:root[data-theme="light"] #rec-tabs button.on,:root[data-theme="light"] .pp-period button.on{background:var(--p-ink-2);border-color:var(--p-muted);color:var(--p-text)}
+.pp-period button.on{text-shadow:none}
+.auth-links a:last-child:not(.who){background:var(--p-ink-3);border:1px solid var(--line);color:var(--txt)}
+
+/* Бейджі-банери в стилі головного напису VSV */
+.rec-badge,.pp-badge{font:800 18px var(--font);letter-spacing:.05em;padding:2px 0;border:0;border-radius:0;color:transparent;background:linear-gradient(92deg,var(--txt) 20%,var(--accent-2) 50%,var(--txt) 80%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:brandSheen 5.5s linear infinite}
+.pp-title{font-size:16px;font-weight:600}
+
+/* LOADING з крапками в стилі Kimi */
+.boot-loader b{display:inline-flex;align-items:center}
+.boot-loader b:after{content:none}
+.boot-dots{display:inline-flex;gap:4px;margin-left:9px}
+.boot-dots i{width:5px;height:5px;border-radius:50%;background:var(--muted);animation:kimiDot 1.2s ease-in-out infinite}
+.boot-dots i:nth-child(2){animation-delay:.15s}
+.boot-dots i:nth-child(3){animation-delay:.3s}
+@keyframes kimiDot{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-4px);opacity:1}}
+
+/* Більші шрифти, особливо в робочій зоні графіка */
+body{font-size:15px}
+@media(min-width:1081px){
+.iw-title{font-size:20px}
+.iw-px{font-size:18px}
+.card h2{font-size:14px}
+.pp-h{font-size:14px}
+.hero-title{font-size:44px}
+.spb-title{font-size:17px}
+}
+.tv-btn{font-size:11px;height:34px;min-width:34px}
+.tv-btn svg{width:17px;height:17px}
+.iw-tfs button{height:34px;font-size:12px;min-width:36px}
+.tv-ohlc{font-size:11px}
+.tv-ohlc .sym{font-size:11px}
+.tv-ohlc .t{font-size:10px}
+.iw-sel,.iw-liq-btn,.iw-liq select,.iw-sel select{font-size:10.5px}
+.iw-sel select,.iw-liq select{height:30px}
+.iw-tgl{height:30px;font-size:10px}
+.iw-layers button{height:30px;font-size:10px}
+.iw-liq-btn{height:30px}
+.iw-liq-st{font-size:10px}
+.chart-footer{font-size:10px}
+.chart-footer kbd{font-size:9px}
+.iw-legend{font-size:10px}
+.bdg{font-size:10px}
+.iw-cols{font-size:10px}
+.iw-msg{font-size:12px}
+.watchlist-foot{font-size:11px}
+.pp-tbl th{font-size:11px}
+.pp-tbl td{font-size:11.5px}
+.pp-period button{font-size:11px}
+.pp-note{font-size:11px}
+.pp-eye{font-size:11px}
+.pp-dateinp{font-size:11px}
+.iw-add input{font-size:13px}
+
+/* Таблиці та блоки не зливаються з фоном */
+.pp-wrap,.rec-wrap{background:color-mix(in oklch,var(--p-ink-0) 55%,var(--p-ink-1))}
+:root[data-theme="light"] .pp-wrap,:root[data-theme="light"] .rec-wrap{background:var(--p-ink-1)}
+.pp-kpis{background:color-mix(in oklch,var(--p-ink-1) 70%,var(--p-ink-2))}
+:root[data-theme="light"] .pp-kpis{background:var(--p-ink-1)}
+
+/* Watchlist: ще щільніше */
+.iw-row{min-height:44px;gap:4px;padding:4px 6px 4px 9px}
+.iw-main{gap:2px}
+.iw-list{padding:3px 4px}
+.iw-sym b{font-size:15px}
+.iw-price{font-size:11px}
+.iw-chg{font-size:10px}
+.iw-wl{min-height:600px}
