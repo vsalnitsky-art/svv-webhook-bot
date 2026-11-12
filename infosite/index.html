@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=201">
+  <link rel="stylesheet" href="css/style.css?v=202">
 </head>
 <body>
   <svg class="svg-sprite" aria-hidden="true">
@@ -51,7 +51,7 @@
     </defs>
   </svg>
 
-  <div class="boot-loader" aria-label="Завантаження термінала"><span></span><b>VSV</b></div>
+  <div class="boot-loader" aria-label="Loading terminal"><span class="boot-mark"><img src="img/logo.svg" alt="VSV"></span><b>LOADING</b></div>
 
   <header class="topbar">
     <a class="brand" href="#forecast" aria-label="VSV — на головну">
@@ -233,7 +233,7 @@
     </section>
   </main>
 
-  <footer class="foot"><span class="foot-brand"><img src="img/logo.png" alt="">VSV INTELLIGENCE</span><span id="last-update" class="muted">—</span><span class="muted">Персональні дані · захищене з’єднання</span></footer>
+  <footer class="foot"><span class="foot-brand"><img src="img/logo.png" alt="">VSV INTELLIGENCE</span><span id="last-update" class="muted"></span><span class="muted">Персональні дані · захищене з’єднання</span></footer>
 
   <script>
     (function(){var k="vsv-info-theme",s=null;try{s=localStorage.getItem(k)}catch(e){}document.documentElement.setAttribute("data-theme",s||"dark");document.addEventListener("click",function(e){if(!e.target.closest||!e.target.closest("#theme-btn"))return;var c=document.documentElement.getAttribute("data-theme")||"dark",n=c==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem(k,n)}catch(x){}})})();
@@ -241,7 +241,7 @@
   <script src="js/vendor/lightweight-charts.js"></script>
   <script src="js/config.js?v=76"></script>
   <script src="js/demo.js?v=2"></script>
-  <script src="js/app.js?v=201"></script>
+  <script src="js/app.js?v=202"></script>
   <script src="js/chart-pro.js?v=201"></script>
   <script src="js/chart-tools.js?v=201"></script>
   <script src="js/ui.js?v=201"></script>

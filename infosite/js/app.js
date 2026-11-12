@@ -684,13 +684,28 @@
     if (mx <= 0 || PW <= 10 * hr) return taken;
     ctx.fillStyle = dark ? "rgba(13,17,26,.26)" : "rgba(248,250,252,.46)"; _rrect(ctx, px0, 2 * vr, PW, H - 4 * vr, 4 * vr); ctx.fill();
     ctx.strokeStyle = dark ? "rgba(6,182,192,.14)" : "rgba(14,116,144,.16)"; ctx.lineWidth = Math.max(1, Math.round(hr)); _rrect(ctx, px0, 2 * vr, PW, H - 4 * vr, 4 * vr); ctx.stroke();
-    ctx.font = font(700, 10); ctx.textBaseline = "middle"; ctx.textAlign = "left"; ctx.fillStyle = dark ? "#7dd3fc" : "#0369a1";
-    ctx.fillText("LIQUIDITY · " + String(liq.exchange || "").toUpperCase() + " · " + liqBarsLbl(liq.bars), px0 + 7 * hr, 12 * vr);
-    var up = Number(liq.above_pct) || 0, dn = Number(liq.below_pct) || 0; ctx.textAlign = "right";
-    var tDn = "▼" + dn.toFixed(0) + "%", wDn = ctx.measureText(tDn).width;
-    ctx.fillStyle = "rgb(" + LIQ_DN + ")"; ctx.fillText(tDn, px1 - 6 * hr, 12 * vr);
-    ctx.fillStyle = "rgb(" + LIQ_UP + ")"; ctx.fillText("▲" + up.toFixed(0) + "%", px1 - 6 * hr - wDn - 6 * hr, 12 * vr);
-    var top = 22 * vr, bx0 = px0 + 6 * hr, bx1 = px1 - 6 * hr, BW = bx1 - bx0;
+    ctx.font = font(700, 10); ctx.textBaseline = "middle";
+    var up = Number(liq.above_pct) || 0, dn = Number(liq.below_pct) || 0;
+    var tUp = "▲" + up.toFixed(0) + "%", tDn = "▼" + dn.toFixed(0) + "%";
+    var wDn = ctx.measureText(tDn).width, wUp = ctx.measureText(tUp).width;
+    var wRight = wDn + wUp + 6 * hr, xRight = px1 - 6 * hr;
+    var tTitle = "LIQUIDITY · " + String(liq.exchange || "").toUpperCase() + " · " + liqBarsLbl(liq.bars);
+    var wTitle = ctx.measureText(tTitle).width, twoLines = false;
+    if (px0 + 7 * hr + wTitle + 10 * hr > xRight - wRight) {
+      tTitle = "LIQUIDITY · " + String(liq.exchange || "").toUpperCase(); wTitle = ctx.measureText(tTitle).width;
+      if (px0 + 7 * hr + wTitle + 10 * hr > xRight - wRight) {
+        tTitle = "LIQUIDITY"; wTitle = ctx.measureText(tTitle).width;
+        if (px0 + 7 * hr + wTitle + 10 * hr > xRight - wRight) twoLines = true;
+      }
+    }
+    var top = (twoLines ? 34 : 22) * vr;
+    ctx.textAlign = "left"; ctx.fillStyle = dark ? "#7dd3fc" : "#0369a1";
+    ctx.fillText(tTitle, px0 + 7 * hr, 12 * vr);
+    var yPct = twoLines ? 26 * vr : 12 * vr;
+    ctx.textAlign = "right";
+    ctx.fillStyle = "rgb(" + LIQ_DN + ")"; ctx.fillText(tDn, xRight, yPct);
+    ctx.fillStyle = "rgb(" + LIQ_UP + ")"; ctx.fillText(tUp, xRight - wDn - 6 * hr, yPct);
+    var bx0 = px0 + 6 * hr, bx1 = px1 - 6 * hr, BW = bx1 - bx0;
     ctx.save(); ctx.beginPath(); ctx.rect(px0, top, PW, H - top - 4 * vr); ctx.clip();
     var mag = liq.magnet, magY = null, lbl = [];
     rows.forEach(function (r) {
@@ -852,6 +867,11 @@
           if (b.dashed && ctx.setLineDash) ctx.setLineDash([6 * hr, 4 * hr]);
           ctx.strokeRect(X1, yT, X2 - X1, yBt - yT);
           if (ctx.setLineDash) ctx.setLineDash([]);
+          if (b.edgeCol) {
+            var ey = b.edge === "top" ? yT : yBt;
+            ctx.strokeStyle = b.edgeCol; ctx.lineWidth = Math.max(2, Math.round(2 * hr));
+            ctx.beginPath(); ctx.moveTo(X1, Math.round(ey) + 0.5); ctx.lineTo(X2, Math.round(ey) + 0.5); ctx.stroke();
+          }
           placed.push({ b: b, X1: X1, X2: X2, yT: yT, yB: yBt });
         }
         var wmTaken = wmDraw(ctx, wms, font, dark);
@@ -1077,9 +1097,10 @@
     });
     (c.ob || []).forEach(function (b) {
       var L = b.side === "LONG", sw = b.fam === "swing";
-      out.push({ kind: "ob", t: snapSec(b.start, o), top: b.top, bottom: b.bottom, dashed: true,
-        fill: L ? (sw ? "rgba(45,212,191,.12)" : "rgba(45,212,191,.06)") : (sw ? "rgba(251,146,60,.12)" : "rgba(251,146,60,.06)"),
-        stroke: L ? "rgba(45,212,191,.8)" : "rgba(251,146,60,.8)", text: L ? "#5eead4" : "#fdba74",
+      out.push({ kind: "ob", t: snapSec(b.start, o), top: b.top, bottom: b.bottom, dashed: false,
+        fill: L ? "rgba(41,98,255,.13)" : "rgba(242,54,69,.10)",
+        stroke: L ? "rgba(59,130,246,.38)" : "rgba(244,63,94,.34)", text: L ? "#93c5fd" : "#fda4af",
+        edge: L ? "top" : "bottom", edgeCol: L ? "rgba(56,189,248,.95)" : "rgba(251,113,133,.95)",
         label: "OB " + tfLbl(c.ob_tf), sub: (sw ? "swing" : "int") + (b.tag ? " · " + b.tag : "") });
     });
     if (IW.show_imb) (c.imb || []).forEach(function (z) {
@@ -1238,7 +1259,7 @@
       sbrLastBadge("1h", (c.sbr_last || {})["1h"], px) + sbrLastBadge("4h", (c.sbr_last || {})["4h"], px) +
       (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "") +
       '<span class="iw-legend"><span title="VOB"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
-      '<span title="OB"><i style="background:rgba(45,212,191,.35);outline:1px dashed rgba(45,212,191,.9)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
+      '<span title="OB"><i style="background:rgba(41,98,255,.3);outline:1px solid rgba(56,189,248,.9)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
       '<span title="CHoCH / BOS"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
       '<span title="IMB"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
       '<span title="SBR"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +
