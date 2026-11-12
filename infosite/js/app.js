@@ -872,6 +872,13 @@
             ctx.strokeStyle = b.edgeCol; ctx.lineWidth = Math.max(2, Math.round(2 * hr));
             ctx.beginPath(); ctx.moveTo(X1, Math.round(ey) + 0.5); ctx.lineTo(X2, Math.round(ey) + 0.5); ctx.stroke();
           }
+          if (b.centerCol) {
+            var cym = (yT + yBt) / 2;
+            ctx.strokeStyle = b.centerCol; ctx.lineWidth = Math.max(1, Math.round(hr));
+            if (ctx.setLineDash) ctx.setLineDash([3 * hr, 3 * hr]);
+            ctx.beginPath(); ctx.moveTo(X1, Math.round(cym) + 0.5); ctx.lineTo(X2, Math.round(cym) + 0.5); ctx.stroke();
+            if (ctx.setLineDash) ctx.setLineDash([]);
+          }
           placed.push({ b: b, X1: X1, X2: X2, yT: yT, yB: yBt });
         }
         var wmTaken = wmDraw(ctx, wms, font, dark);
@@ -1089,7 +1096,7 @@
     (c.vob || []).forEach(function (v) {
       var L = v.side === "LONG";
       out.push({ kind: "vob", t: snapSec(v.start, o), top: v.top, bottom: v.bottom, dashed: v.breaker,
-        fill: L ? "rgba(34,171,94,.07)" : "rgba(242,54,69,.07)", stroke: L ? "rgba(34,197,94,.7)" : "rgba(242,54,69,.7)", text: L ? "#86efac" : "#fca5a5",
+        fill: L ? "rgba(34,197,94,.30)" : "rgba(242,54,69,.32)", stroke: L ? "rgba(34,197,94,.55)" : "rgba(242,54,69,.6)", text: L ? "#86efac" : "#fca5a5",
         volTxt: fmtVol(v.volume, 3), topPct: v.hi_pct, botPct: v.lo_pct,
         topCol: L ? "rgba(34,197,94,.45)" : "rgba(242,54,69,.45)", botCol: L ? "rgba(34,197,94,.18)" : "rgba(242,54,69,.18)",
         label: tfWord(v.tf || c.vob_tf) + " VOB" + (v.breaker ? " ✕" : ""),
@@ -1098,7 +1105,8 @@
     (c.ob || []).forEach(function (b) {
       var L = b.side === "LONG", sw = b.fam === "swing";
       out.push({ kind: "ob", thin: true, t: snapSec(b.start, o), top: b.top, bottom: b.bottom, dashed: false,
-        fill: L ? "rgba(45,212,191,.08)" : "rgba(251,146,60,.08)", stroke: L ? "rgba(45,212,191,.6)" : "rgba(251,146,60,.6)", text: L ? "#5eead4" : "#fdba74",
+        fill: L ? "rgba(41,98,255,.16)" : "rgba(190,90,105,.18)", stroke: L ? "rgba(96,140,255,.4)" : "rgba(224,122,138,.45)", text: L ? "#93c5fd" : "#fda4af",
+        centerCol: L ? "rgba(120,160,255,.8)" : "rgba(230,140,155,.8)",
         label: "OB " + tfLbl(c.ob_tf), sub: (sw ? "swing" : "int") + (b.tag ? " · " + b.tag : "") });
     });
     if (IW.show_imb) (c.imb || []).forEach(function (z) {
@@ -1257,7 +1265,7 @@
       sbrLastBadge("1h", (c.sbr_last || {})["1h"], px) + sbrLastBadge("4h", (c.sbr_last || {})["4h"], px) +
       (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "") +
       '<span class="iw-legend"><span title="VOB"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
-      '<span title="OB"><i style="background:rgba(45,212,191,.12);outline:1px solid rgba(45,212,191,.6)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
+      '<span title="OB"><i style="background:rgba(41,98,255,.2);outline:1px solid rgba(120,160,255,.7)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
       '<span title="CHoCH / BOS"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
       '<span title="IMB"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
       '<span title="SBR"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +
@@ -1424,10 +1432,10 @@
     }
   }
   function ppAmt(h) { return PP.shown ? h : '<span class="pp-mask">••••</span>'; }
-  function ppUsd(v) { v = Number(v || 0); return ppAmt((v >= 0 ? "+" : "−") + "$" + Math.abs(v).toFixed(2)); }
+  function ppUsd(v) { v = Number(v || 0); return ppAmt('<span class="pp-cur">' + (v >= 0 ? "+" : "−") + "$</span>" + Math.abs(v).toFixed(2)); }
   function ppMoney(v) { return ppAmt("$" + Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })); }
   function ppCls(v) { v = Number(v || 0); return v > 0 ? "pp-up" : (v < 0 ? "pp-dn" : ""); }
-  function ppPct(v, dp) { v = Number(v || 0); return (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(dp == null ? 2 : dp) + "%"; }
+  function ppPct(v, dp) { v = Number(v || 0); return (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(dp == null ? 2 : dp) + '<span class="pp-pc">%</span>'; }
 
   function ppSync() {
     var P = PP.period, today = tcalYmd(new Date());
@@ -1503,7 +1511,7 @@
     if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">Закритих угод немає</td></tr>'; return; }
     tb.innerHTML = rows.map(function (c) {
       var pc = Number(c.pnl_pct || 0), t = new Date((c.closed_at || 0) * 1000), p2 = function (n) { return String(n).padStart(2, "0"); };
-      return "<tr><td>" + p2(t.getDate()) + "." + p2(t.getMonth() + 1) + " " + p2(t.getHours()) + ":" + p2(t.getMinutes()) + "</td>" +
+      return "<tr><td><span class=\"dt-d\">" + p2(t.getDate()) + "." + p2(t.getMonth() + 1) + "</span> <span class=\"dt-t\">" + p2(t.getHours()) + ":" + p2(t.getMinutes()) + "</span></td>" +
         '<td class="sym">' + tvSym(c.symbol) + '</td><td class="' + (c.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(c.side) + "</td>" +
         '<td class="r">' + fmtPrice(c.entry_price) + '</td><td class="r">' + fmtPrice(c.exit_price) + "</td>" +
         '<td class="r ' + ppCls(c.net_usd != null ? c.net_usd : pc) + '">' + ppPnlCols(pc, c.net_usd) + "</td>" +
@@ -1543,7 +1551,7 @@
   var REC = { dir: "all", rows: [], meta: {}, autoLean: "" };
   try { var _rd = localStorage.getItem("vsv_rec_dir"); if (_rd) REC.dir = _rd; } catch (e) {}
   function recSide(r) { return r.side === "LONG" || r.side === "SHORT" ? r.side : ""; }
-  function recPct(v) { v = Number(v); if (!isFinite(v)) return ""; return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2) + "%"; }
+  function recPct(v) { v = Number(v); if (!isFinite(v)) return ""; return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2) + '<span class="pp-pc">%</span>'; }
   function rs(w, html, cls) { return '<span class="rs ' + (cls || "") + '" style="width:' + w + 'px">' + html + "</span>"; }
   function recChCol(c) { return c >= 85 ? "#fb923c" : c >= 65 ? "#facc15" : "#a78bfa"; }
   function recPath(r, up) {

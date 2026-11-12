@@ -1,6 +1,6 @@
 /* VSV Trading Terminal — professional market workspace */
 :root{
-  --p-ink-0:oklch(.19 .005 265);--p-ink-1:oklch(.225 .006 265);--p-ink-2:oklch(.26 .007 265);--p-ink-3:oklch(.30 .008 265);
+  --p-ink-0:#000;--p-ink-1:oklch(.225 .006 265);--p-ink-2:oklch(.26 .007 265);--p-ink-3:oklch(.30 .008 265);
   --p-text:oklch(.93 .005 260);--p-muted:oklch(.70 .007 260);--p-faint:oklch(.57 .007 260);
   --p-blue:oklch(.66 .12 262);--p-cyan:oklch(.76 .09 215);--p-green:oklch(.72 .17 155);--p-red:oklch(.63 .22 25);--p-amber:oklch(.78 .16 75);
   --bg:var(--p-ink-0);--bg2:var(--p-ink-1);--surface:var(--p-ink-1);--elev:var(--p-ink-2);--elev-2:var(--p-ink-3);
@@ -291,3 +291,44 @@ body{font-size:15px}
 :root[data-theme="light"] .tv-tip-kbd{background:var(--p-ink-2)}
 .tv-tip-hint{color:var(--muted);font-size:10px}
 @keyframes tipIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+
+
+/* ── v205 · black canvas, distinct headers, column colors, table type ── */
+/* Чітко чорний фон: сторінка, графік, всередині таблиць */
+.chart-workspace,.iw-box{background:#000}
+.pp-wrap,.rec-wrap{background:#000}
+:root[data-theme="light"] .chart-workspace,:root[data-theme="light"] .iw-box{background:var(--bg2)}
+:root[data-theme="light"] .pp-wrap,:root[data-theme="light"] .rec-wrap{background:var(--p-ink-1)}
+
+/* Шапки панелей — світліші за картку, одразу видно що це шапка */
+.panel-heading,.iw-head,.pp-head{background:color-mix(in oklch,var(--p-ink-2) 55%,var(--p-ink-3))}
+:root[data-theme="light"] .panel-heading,:root[data-theme="light"] .iw-head,:root[data-theme="light"] .pp-head{background:var(--p-ink-2)}
+
+/* «Символ / ціна» — піднято вище */
+.iw-cols{padding:2px 10px 3px}
+
+/* Решітка в шапках таблиць — помітні лінії стовпчиків */
+.pp-tbl th{border-right:1px solid color-mix(in srgb,var(--p-faint) 55%,transparent)}
+.pp-tbl th:last-child{border-right:0}
+.pp-tbl thead tr:last-child th,.rec-wrap #rec-tbl tr.rec-sh th{border-bottom:2px solid color-mix(in srgb,var(--p-faint) 65%,transparent)}
+
+/* KPI-панель світліша за фон картки */
+.pp-kpis{background:color-mix(in oklch,var(--p-ink-2) 60%,var(--p-ink-3))}
+:root[data-theme="light"] .pp-kpis{background:var(--p-ink-2)}
+
+/* Кольорова схема стовпчиків: Вхід — cyan, Вихід/Зараз — violet */
+#pp-closed td:nth-child(4){color:#67e8f9}
+#pp-closed td:nth-child(5){color:#c4b5fd}
+#pp-open td:nth-child(3){color:#67e8f9}
+#pp-open td:nth-child(4){color:#c4b5fd}
+
+/* Єдина типографіка трьох таблиць + монети в стилі Watchlist */
+#rec-tbl td{font-size:11.5px}
+#rec-tbl .rec-lv,#rec-tbl .rs{font-size:11.5px}
+#rec-tbl small{font-size:10.5px}
+.pp-tbl td.sym,#rec-tbl td.sym{color:#f0b90b;font:700 12.5px var(--mono);letter-spacing:.01em}
+.dt-d{color:var(--accent-2);font-weight:600}
+.dt-t{color:var(--muted)}
+.pp-cur{color:#22c55e;font-weight:700;margin-right:1px}
+.pp-usd.dn .pp-cur{color:#f23645}
+.pp-pc{color:var(--accent-2);opacity:.95;margin-left:1px;font-size:.9em}
