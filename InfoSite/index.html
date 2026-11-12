@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="uk" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b0e11">
+  <meta name="description" content="VSV — професійний термінал для аналізу криптовалютного ринку, сигналів і тестових угод.">
+  <title>VSV — Trading Terminal</title>
+  <link rel="icon" type="image/png" href="img/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css?v=201">
+</head>
+<body>
+  <svg class="svg-sprite" aria-hidden="true">
+    <defs>
+      <symbol id="vsv-mark" viewBox="0 0 40 40">
+        <path d="M5 8h8l7 17 7-17h8L23 34h-6L5 8Z" fill="currentColor"/>
+        <path d="M20 4v8M16 4h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="20" cy="4" r="2.2" fill="currentColor"/>
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-candles" viewBox="0 0 24 24"><path d="M7 3v4m0 10v4M4 7h6v10H4zM17 2v5m0 11v4M14 7h6v11h-6z"/></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18M6 15l4-5 4 3 6-8"/></symbol>
+      <symbol id="i-ruler" viewBox="0 0 24 24"><path d="m4 16 12-12 4 4L8 20l-4-4Z"/><path d="m13 7 2 2m-5 1 2 2m-5 1 2 2"/></symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 7h4l2-3h4l2 3h4v13H4z"/><circle cx="12" cy="13" r="4"/></symbol>
+      <symbol id="i-long" viewBox="0 0 24 24"><path d="M4 17 17 4m-7 0h7v7M4 7v13h13"/></symbol>
+      <symbol id="i-short" viewBox="0 0 24 24"><path d="M4 7 17 20m-7 0h7v-7M4 20V7h13"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 3h6l1 4H8l1-4Zm-3 4 1 14h10l1-14M10 11v6m4-6v6"/></symbol>
+      <symbol id="i-full" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></symbol>
+      <symbol id="i-cursor" viewBox="0 0 24 24"><path d="m5 3 14 10-7 1-3 7L5 3Z"/></symbol>
+      <symbol id="i-trend" viewBox="0 0 24 24"><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/><path d="m7 17 10-10"/></symbol>
+      <symbol id="i-hline" viewBox="0 0 24 24"><path d="M3 12h18M8 8l4 4 4-4"/></symbol>
+      <symbol id="i-rect" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1"/></symbol>
+      <symbol id="i-fib" viewBox="0 0 24 24"><path d="M4 5h16M4 10h16M4 15h16M4 20h16M7 3v18"/></symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24"><path d="m4 20 4.5-1 11-11a2.1 2.1 0 0 0-3-3l-11 11L4 20Z"/><path d="m14.5 6 3 3M5.5 15l3 3"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5M5 12h8a6 6 0 0 1 6 6"/></symbol>
+      <symbol id="i-zoom-in" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5M7 10h6m-3-3v6"/></symbol>
+      <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5M7 10h6"/></symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 10a8 8 0 1 1 2 8M4 4v6h6"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10m4 0h2M4 17h3m4 0h9M14 4v6M7 14v6"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Zm-8 12h4"/></symbol>
+    </defs>
+  </svg>
+
+  <div class="boot-loader" aria-label="Завантаження термінала"><span></span><b>VSV</b></div>
+
+  <header class="topbar">
+    <a class="brand" href="#forecast" aria-label="VSV — на головну">
+      <span class="brand-mark"><img src="img/logo.png" alt="VSV"></span>
+      <span class="brand-copy"><b>VSV</b><small>TRADING INTELLIGENCE</small></span>
+    </a>
+    <nav class="main-nav" aria-label="Основна навігація">
+      <a href="#iw-layout" class="active">Термінал</a>
+      <a href="#rec-card">Сигнали</a>
+      <a href="#pp-card">P&amp;L</a>
+    </nav>
+    <div class="top-actions">
+      <button id="site-search" class="top-icon" type="button" title="Знайти монету" aria-label="Знайти монету"><svg><use href="#i-search"/></svg></button>
+      <button id="theme-btn" class="top-icon" type="button" title="Змінити тему" aria-label="Змінити тему"><svg><use href="#i-sun"/></svg></button>
+      <div id="conn" class="conn conn--wait" role="status">● підключення…</div>
+      <nav id="auth-links" class="auth-links" aria-label="Акаунт"></nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card spb-card" id="spb-card" style="display:none" aria-label="VSV Forecast">
+      <a id="forecast" class="section-anchor" aria-hidden="true"></a>
+      <div class="spb-grid">
+        <div class="spb-side spb-side-left" id="spb-scan"></div>
+        <div class="spb-mid">
+          <div class="spb-brandline">
+            <span class="spb-orbit"><img src="img/forecast-mark.svg" alt="" aria-hidden="true"></span>
+            <div><span class="spb-title">VSV Forecast</span><small>SPRING BALANCE · LIVE</small></div>
+          </div>
+          <div class="spb-tm" id="spb-tm" aria-label="Час поточного прогнозу"></div>
+        </div>
+        <div class="spb-side spb-side-right" id="spb-wl"></div>
+      </div>
+    </section>
+
+    <section class="card hero" id="auth-hero" style="display:none">
+      <div class="hero-inner">
+        <span class="hero-mark"><img src="img/logo.png" alt="VSV"></span>
+        <p class="hero-kicker">PROFESSIONAL CRYPTO TERMINAL</p>
+        <h1 class="hero-title">Ваш ринок.<br><span>Ваші правила.</span></h1>
+        <p class="hero-copy">Увійдіть, щоб відкрити персональний watchlist, прогнози VSV і результати тестових угод.</p>
+        <p class="hero-deny" id="auth-deny" style="display:none"></p>
+        <div class="hero-actions">
+          <a id="hero-login" class="btn btn-primary" href="/login">Увійти в термінал</a>
+          <a id="hero-register" class="btn btn-ghost" href="/register">Створити акаунт</a>
+          <a id="hero-bot" class="btn btn-ghost" href="https://t.me/svv_hris_bot" target="_blank" rel="noopener" style="display:none">Telegram-бот</a>
+        </div>
+        <p class="hero-note">Реєстрація через Telegram · без email і складних форм</p>
+      </div>
+    </section>
+
+    <section class="iw-layout" id="iw-layout">
+      <aside class="card iw-wl" aria-label="Список монет">
+        <div class="panel-heading">
+          <h2><svg><use href="#i-star"/></svg>Watchlist</h2>
+          <span id="iw-count" class="count-badge">0</span>
+        </div>
+        <form class="iw-add" id="iw-add-form" autocomplete="off">
+          <svg class="input-icon"><use href="#i-search"/></svg>
+          <input id="iw-add-in" list="iw-universe" placeholder="Знайти або додати" maxlength="24" title="До 20 монет" aria-label="Додати монету">
+          <datalist id="iw-universe"></datalist>
+          <button type="submit" title="Додати монету" aria-label="Додати монету"><svg><use href="#i-plus"/></svg></button>
+        </form>
+        <div class="iw-msg" id="iw-msg" aria-live="polite"></div>
+        <div class="iw-cols"><span>Символ / ціна</span><label class="iw-sort-label">Сортування<select id="iw-sort" aria-label="Сортування Watchlist"><option value="default">За списком</option><option value="name">За назвою</option><option value="price">За ціною</option><option value="change">За зміною 24г</option></select></label></div>
+        <div class="iw-list" id="iw-list"><div class="iw-empty"><span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span></div></div>
+        <div class="watchlist-foot"><span class="live-dot"></span>Дані оновлюються автоматично</div>
+      </aside>
+
+      <section class="card iw-chart" id="iw-chart" aria-label="Графік ціни">
+        <span class="iw-status" id="iw-tf-wait" aria-live="polite"></span>
+        <div class="iw-head" id="iw-head"><span class="iw-title">VSV Terminal</span></div>
+
+        <div class="iw-tfbar" id="iw-tfbar">
+          <div class="iw-tfs" id="iw-tfs" title="Таймфрейм графіка"></div>
+          <span class="toolbar-divider"></span>
+          <div class="chart-quick-actions">
+            <button type="button" id="tv-type" class="tv-btn" title="Свічки / Heikin Ashi (H)"><svg><use href="#i-candles"/></svg></button>
+            <div class="tv-ind-wrap">
+              <button type="button" id="tv-indicators" class="tv-btn tv-btn-labeled" title="Індикатори" aria-expanded="false"><svg><use href="#i-sliders"/></svg><span>Індикатори</span><svg class="chev"><use href="#i-chevron"/></svg></button>
+              <div class="indicator-menu" id="tv-indicators-menu" hidden>
+                <div class="menu-title">Індикатори графіка</div>
+                <label><input type="checkbox" data-indicator="ema20"><span>EMA</span><b>20</b></label>
+                <label><input type="checkbox" data-indicator="ema50"><span>EMA</span><b>50</b></label>
+                <label><input type="checkbox" data-indicator="ema200"><span>EMA</span><b>200</b></label>
+                <label><input type="checkbox" data-indicator="volume"><span>Обсяг</span><b>Volume</b></label>
+                <div class="menu-title menu-separator">Вигляд свічок</div>
+                <label><input type="checkbox" id="tv-standard-candles"><span>Біржові кольори</span><b>Green / Red</b></label>
+              </div>
+            </div>
+            <button type="button" id="tv-log" class="tv-btn tv-log" title="Логарифмічна шкала (L)">log</button>
+            <button type="button" id="tv-measure" class="tv-btn" title="Лінійка (M)"><svg><use href="#i-ruler"/></svg></button>
+            <button type="button" id="tv-shot" class="tv-btn" title="Завантажити знімок (S)"><svg><use href="#i-camera"/></svg></button>
+            <button type="button" id="tv-zoom-out" class="tv-btn" title="Зменшити масштаб"><svg><use href="#i-zoom-out"/></svg></button>
+            <button type="button" id="tv-zoom-in" class="tv-btn" title="Збільшити масштаб"><svg><use href="#i-zoom-in"/></svg></button>
+            <button type="button" id="tv-reset" class="tv-btn" title="Скинути масштаб (Home)"><svg><use href="#i-reset"/></svg></button>
+          </div>
+          <button type="button" class="iw-fs" id="iw-fs" title="На весь екран (F)" aria-pressed="false"><svg><use href="#i-full"/></svg></button>
+        </div>
+
+        <div class="chart-head">
+          <div class="tv-ohlc" id="tv-ohlc"><div class="ohlc-legend">Завантаження ринкових даних…</div></div>
+          <div class="tv-toolbar" id="tv-toolbar">
+            <button type="button" id="tv-long" class="tv-btn tv-btn-pos long" title="Довга позиція"><svg><use href="#i-long"/></svg><span>Long</span></button>
+            <button type="button" id="tv-short" class="tv-btn tv-btn-pos short" title="Коротка позиція"><svg><use href="#i-short"/></svg><span>Short</span></button>
+            <span class="tv-sep"></span>
+            <button type="button" id="tv-clear-pos" class="tv-btn" title="Видалити всі позиції"><svg><use href="#i-trash"/></svg></button>
+          </div>
+        </div>
+
+        <div class="advanced-strip">
+          <span class="iw-sel s-ob"><button type="button" id="iw-ob-on" class="iw-tgl" data-tgl="ob_tf" title="OB на графіку">OB</button><select id="iw-ob-tf" title="Таймфрейм OB" aria-label="Таймфрейм OB"></select></span>
+          <span class="iw-sel s-vob"><button type="button" id="iw-vob-on" class="iw-tgl" data-tgl="vob_tf" title="VOB на графіку">VOB</button><select id="iw-vob-tf" title="Таймфрейм VOB" aria-label="Таймфрейм VOB"></select></span>
+          <label class="iw-sel s-poc" title="Профіль обсягу">POC <select id="iw-poc-days" aria-label="Дні POC"></select><select id="iw-poc-tf" aria-label="Таймфрейм POC"></select></label>
+          <div class="iw-tfs iw-layers" id="iw-layers" title="Шари графіка"></div>
+          <span class="iw-liq" id="iw-liq">
+            <button type="button" class="iw-liq-btn" id="iw-liq-btn" aria-pressed="false" title="Профіль ліквідності"><svg><use href="#i-chart"/></svg><span>Ліквідність</span></button>
+            <select id="iw-liq-ex" title="Біржа" aria-label="Біржа ліквідності"><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
+            <select id="iw-liq-bars" title="Глибина історії" aria-label="Глибина історії"></select>
+            <select id="iw-liq-res" title="Розмір сходинки" aria-label="Розмір сходинки"><option value="fine">Дрібно</option><option value="mid" selected>Середньо</option><option value="coarse">Крупно</option></select>
+            <span class="iw-liq-st" id="iw-liq-st"></span>
+          </span>
+        </div>
+
+        <div class="chart-workspace">
+          <div class="drawing-rail" role="toolbar" aria-label="Інструменти малювання">
+            <button type="button" class="draw-btn on" data-draw="cursor" title="Курсор (Esc)" aria-label="Курсор"><svg><use href="#i-cursor"/></svg></button>
+            <button type="button" class="draw-btn" data-draw="trend" title="Трендова лінія" aria-label="Трендова лінія"><svg><use href="#i-trend"/></svg></button>
+            <button type="button" class="draw-btn" data-draw="hline" title="Горизонтальна лінія" aria-label="Горизонтальна лінія"><svg><use href="#i-hline"/></svg></button>
+            <button type="button" class="draw-btn" data-draw="rect" title="Прямокутник" aria-label="Прямокутник"><svg><use href="#i-rect"/></svg></button>
+            <button type="button" class="draw-btn" data-draw="fib" title="Корекція Фібоначчі" aria-label="Корекція Фібоначчі"><svg><use href="#i-fib"/></svg></button>
+            <button type="button" class="draw-btn" data-draw="pencil" title="Олівець — вільне малювання" aria-label="Олівець"><svg><use href="#i-pencil"/></svg></button>
+            <span></span>
+            <button type="button" class="draw-btn" id="tv-undo-draw" title="Скасувати останнє малювання" aria-label="Скасувати малювання"><svg><use href="#i-undo"/></svg></button>
+            <button type="button" class="draw-btn" id="tv-delete-draw" title="Видалити виділений об’єкт (Delete)" aria-label="Видалити виділений об’єкт" disabled><svg><use href="#i-trash"/></svg></button>
+            <button type="button" class="draw-btn" id="tv-clear-draw" title="Видалити всі малювання" aria-label="Видалити всі малювання"><svg><use href="#i-trash"/></svg></button>
+          </div>
+          <div class="iw-box" id="iw-box"><div class="iw-note" id="iw-note">Оберіть монету зі списку</div></div>
+        </div>
+        <div class="chart-footer"><span><kbd>←</kbd><kbd>→</kbd> навігація</span><span><kbd>+</kbd><kbd>−</kbd> масштаб</span><span><kbd>H</kbd> Heikin Ashi</span><span><kbd>M</kbd> вимірювання</span><b>VSV CHART ENGINE</b></div>
+      </section>
+    </section>
+
+    <section class="card rec-card" id="rec-card" style="display:none">
+      <div class="pp-head">
+        <span class="rec-badge">VSV SIGNALS</span><span class="pp-title">Рекомендовані ботом</span>
+        <div class="pp-period" id="rec-tabs"><button type="button" data-d="all">Всі (0)</button><button type="button" data-d="LONG">LONG (0)</button><button type="button" data-d="SHORT">SHORT (0)</button></div>
+        <span class="pp-note muted" id="rec-note"></span>
+      </div>
+      <div class="pp-wrap rec-wrap"><table class="pp-tbl" id="rec-tbl">
+        <thead><tr class="rec-gh"><th rowspan="2">Монета</th><th rowspan="2">Напрямок</th><th rowspan="2" class="r">СИЛА СИГНАЛУ</th><th rowspan="2" class="r tpc">ЦІЛЬ</th><th colspan="2" class="c g1 gs">1H · OB 1H</th><th colspan="2" class="c g15 gs">15m · OB 15m→5m</th><th rowspan="2" class="r">Заряд</th></tr><tr class="rec-sh"><th class="r g1 gs">SL</th><th class="c g1">Хід</th><th class="r g15 gs">SL</th><th class="c g15">Хід</th></tr></thead>
+        <tbody><tr><td colspan="9" class="muted">Завантаження…</td></tr></tbody>
+      </table></div>
+    </section>
+
+    <section class="card pp-card" id="pp-card" style="display:none">
+      <div class="pp-head">
+        <div class="pp-heading"><span class="pp-badge">PAPER</span><div><span class="pp-title">P&amp;L · Тестові угоди</span><small>Результати без реального ризику</small></div></div>
+        <div class="pp-period" id="pp-period">
+          <button type="button" data-p="today">Сьогодні</button><button type="button" data-p="7d">7Д</button><button type="button" data-p="30d">30Д</button><button type="button" data-p="all">Усе</button>
+          <button type="button" data-p="day" title="Конкретний день"><svg><use href="#i-calendar"/></svg>День</button><button type="button" data-p="range" title="Період">Період</button>
+          <span class="pp-dates" id="pp-day-wrap" style="display:none"><input type="text" readonly class="pp-dateinp" id="pp-day" data-k="day" title="Відкрити календар" aria-label="Обраний день"></span>
+          <span class="pp-dates" id="pp-range-wrap" style="display:none"><input type="text" readonly class="pp-dateinp" id="pp-from" data-k="from" title="Початок періоду" aria-label="Початок періоду"><span class="muted">—</span><input type="text" readonly class="pp-dateinp" id="pp-to" data-k="to" title="Кінець періоду" aria-label="Кінець періоду"></span>
+        </div>
+        <span class="pp-note muted" id="pp-note"></span>
+        <button type="button" class="pp-eye" id="pp-amt"><svg><use href="#i-eye"/></svg>Показати суми</button>
+      </div>
+      <div class="pp-kpis" id="pp-kpis"><div class="muted">Завантаження…</div></div>
+      <div class="pp-es" id="pp-es" style="display:none"></div>
+      <div class="pp-section-head"><h3 class="pp-h">Відкриті тестові угоди <span class="count-badge" id="pp-open-n">0</span></h3><span class="pp-inline muted" id="pp-inline"></span></div>
+      <div class="pp-wrap"><table class="pp-tbl" id="pp-open"><thead><tr><th>Монета</th><th>Бік</th><th class="r">Вхід</th><th class="r">Зараз</th><th class="r">PnL</th><th>Ціль</th><th>Стан</th><th class="r">Manual SL</th><th class="r">TP-1</th><th class="r">TP-2</th><th class="r">Таймер</th></tr></thead><tbody><tr><td colspan="11" class="muted">—</td></tr></tbody></table></div>
+      <h3 class="pp-h acc-h" id="pp-closed-head" role="button" tabindex="0" aria-expanded="false">Останні закриті тестові угоди <span class="count-badge" id="pp-closed-n">0</span><span class="acc-caret">▸</span></h3>
+      <div class="pp-wrap" id="pp-closed-body" style="display:none"><table class="pp-tbl" id="pp-closed"><thead><tr><th>Закрито</th><th>Монета</th><th>Бік</th><th class="r">Вхід</th><th class="r">Вихід</th><th class="r">PnL</th><th>Причина</th></tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="card" id="notify-card" style="display:none">
+      <h2 class="acc-h" id="notify-head" role="button" tabindex="0" aria-expanded="false"><svg><use href="#i-bell"/></svg>Сповіщення в Telegram<span class="acc-caret" id="notify-caret">▸</span></h2>
+      <div id="notify-body" style="display:none"><div class="muted">Завантаження…</div></div>
+    </section>
+  </main>
+
+  <footer class="foot"><span class="foot-brand"><img src="img/logo.png" alt="">VSV INTELLIGENCE</span><span id="last-update" class="muted">—</span><span class="muted">Персональні дані · захищене з’єднання</span></footer>
+
+  <script>
+    (function(){var k="vsv-info-theme",s=null;try{s=localStorage.getItem(k)}catch(e){}document.documentElement.setAttribute("data-theme",s||"dark");document.addEventListener("click",function(e){if(!e.target.closest||!e.target.closest("#theme-btn"))return;var c=document.documentElement.getAttribute("data-theme")||"dark",n=c==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem(k,n)}catch(x){}})})();
+  </script>
+  <script src="js/vendor/lightweight-charts.js"></script>
+  <script src="js/config.js?v=76"></script>
+  <script src="js/demo.js?v=2"></script>
+  <script src="js/app.js?v=201"></script>
+  <script src="js/chart-pro.js?v=201"></script>
+  <script src="js/chart-tools.js?v=201"></script>
+  <script src="js/ui.js?v=201"></script>
+</body>
+</html>
