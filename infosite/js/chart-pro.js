@@ -462,18 +462,32 @@
     } catch (e) { console.error("screenshot:", e); }
   }
 
+  function setMeasureUI(on) {
+    var box = document.getElementById("iw-box");
+    if (box) box.classList.toggle("measuring", on);
+    var b = document.getElementById("tv-measure");
+    if (b) b.classList.toggle("on", on);
+  }
+
   function toggleMeasure() {
     PRO.measure.on = !PRO.measure.on;
-    var box = document.getElementById("iw-box");
-    if (box) box.classList.toggle("measuring", PRO.measure.on);
-    var b = document.getElementById("tv-measure");
-    if (b) b.classList.toggle("on", PRO.measure.on);
+    setMeasureUI(PRO.measure.on);
     if (!PRO.measure.on) clearMeasure();
+    else { PRO.measure.start = null; PRO.measure.end = null; PRO.measure.finished = false; }
+  }
+
+  function finishMeasure(IW, svg) {
+    PRO.measure.finished = true;
+    PRO.measure.on = false;
+    setMeasureUI(false);
+    drawMeasure(IW, svg);
   }
 
   function clearMeasure() {
     PRO.measure.start = null;
     PRO.measure.end = null;
+    PRO.measure.finished = false;
+    PRO.measure.dragging = false;
     var svg = document.querySelector(".tv-measure");
     if (svg) { svg.style.display = "none"; svg.innerHTML = ""; }
   }
@@ -482,23 +496,43 @@
     if (box.__proMeasureBound) return;
     box.__proMeasureBound = true;
 
+    function pt(e) { var r = box.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+    function beginAt(e) {
+      PRO.measure.start = pt(e);
+      PRO.measure.end = { x: PRO.measure.start.x, y: PRO.measure.start.y };
+      PRO.measure.dragging = true; PRO.measure.finished = false;
+    }
+
+    // Shift + клік по графіку — старт лінійки, як у TradingView
+    box.addEventListener("mousedown", function (e) {
+      if (!e.shiftKey || e.button !== 0 || !IW.series) return;
+      if (!PRO.measure.on) { PRO.measure.on = true; setMeasureUI(true); }
+      beginAt(e);
+      e.preventDefault(); e.stopPropagation();
+    }, true);
+
     ov.addEventListener("mousedown", function (e) {
       if (!PRO.measure.on || e.button !== 0) return;
-      var r = box.getBoundingClientRect();
-      PRO.measure.start = { x: e.clientX - r.left, y: e.clientY - r.top };
-      PRO.measure.end = { x: PRO.measure.start.x, y: PRO.measure.start.y };
+      beginAt(e);
       e.preventDefault(); e.stopPropagation();
     });
 
     ov.addEventListener("mousemove", function (e) {
-      if (!PRO.measure.on || !PRO.measure.start) return;
-      var r = box.getBoundingClientRect();
-      PRO.measure.end = { x: e.clientX - r.left, y: e.clientY - r.top };
+      if (!PRO.measure.on || !PRO.measure.start || PRO.measure.finished) return;
+      PRO.measure.end = pt(e);
       drawMeasure(IW, svg);
     });
 
-    ov.addEventListener("mouseup", function () {
-      if (PRO.measure.on && PRO.measure.start) drawMeasure(IW, svg);
+    ov.addEventListener("mouseup", function (e) {
+      if (!PRO.measure.on || !PRO.measure.start || !PRO.measure.dragging) return;
+      PRO.measure.dragging = false;
+      var d = pt(e);
+      if (Math.abs(d.x - PRO.measure.start.x) + Math.abs(d.y - PRO.measure.start.y) > 4) finishMeasure(IW, svg);
+    });
+
+    // Другий клік завершує сценарій «клік-рух-клік»
+    ov.addEventListener("click", function () {
+      if (PRO.measure.on && PRO.measure.start && !PRO.measure.finished && !PRO.measure.dragging) finishMeasure(IW, svg);
     });
   }
 
@@ -521,15 +555,24 @@
 
     var bars = Math.round(Math.abs(e.x - s.x) / Math.max(1, (IW.chart.timeScale().options().barSpacing || 6))) || 0;
     var df = IW.prec != null ? IW.prec : 4;
-    var lbl = (chg >= 0 ? "+" : "") + Number(chg).toFixed(df) + " (" + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%) · " + bars + " бар";
+    var dur = "";
+    var tA = IW.chart.timeScale().coordinateToTime(s.x), tB = IW.chart.timeScale().coordinateToTime(e.x);
+    if (tA != null && tB != null) {
+      var sec = Math.abs(Number(tA) - Number(tB));
+      var dd = Math.floor(sec / 86400), hh = Math.floor(sec % 86400 / 3600), mm2 = Math.floor(sec % 3600 / 60);
+      if (dd || hh || mm2) dur = " · " + (dd ? dd + "д " : "") + (hh ? hh + "г " : "") + (!dd && mm2 ? mm2 + "хв" : "");
+      dur = dur.replace(/[ \u00a0]+$/, "");
+    }
+    var lbl = (chg >= 0 ? "+" : "") + Number(chg).toFixed(df) + " (" + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%) · " + bars + " бар" + dur;
 
+    var lblW = Math.max(170, Math.round(lbl.length * 6.4) + 16);
     var lblY = y > 36 ? y - 10 : y + h + 22;
-    var lblX = Math.max(70, Math.min(x + w / 2, document.getElementById("iw-box").clientWidth - 70));
+    var lblX = Math.max(lblW / 2 + 4, Math.min(x + w / 2, document.getElementById("iw-box").clientWidth - lblW / 2 - 4));
 
     svg.innerHTML =
       '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" class="meas-box ' + cls + '"/>' +
       '<line x1="' + s.x + '" y1="' + s.y + '" x2="' + e.x + '" y2="' + e.y + '" class="meas-line ' + cls + '"/>' +
-      '<rect x="' + (lblX - 85) + '" y="' + (lblY - 9) + '" width="170" height="22" rx="4" class="meas-lbl"/>' +
+      '<rect x="' + (lblX - lblW / 2) + '" y="' + (lblY - 10) + '" width="' + lblW + '" height="22" rx="4" class="meas-lbl"/>' +
       '<text x="' + lblX + '" y="' + (lblY + 4) + '" class="meas-txt ' + cls + '" text-anchor="middle">' + lbl + "</text>" +
       '<circle cx="' + s.x + '" cy="' + s.y + '" r="3" class="meas-dot"/>' +
       '<circle cx="' + e.x + '" cy="' + e.y + '" r="3" class="meas-dot"/>';
@@ -563,14 +606,75 @@
       case "f": case "F": var fs = document.getElementById("iw-fs"); if (fs) fs.click(); e.preventDefault(); break;
       case "m": case "M": toggleMeasure(); e.preventDefault(); break;
       case "s": case "S": screenshot(); e.preventDefault(); break;
-      case "Escape": if (PRO.measure.on) toggleMeasure(); break;
+      case "Escape": if (PRO.measure.on) toggleMeasure(); else clearMeasure(); break;
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ТУЛТІПИ в стилі TradingView: іконка + назва + гаряча клавіша + підказка
+  // ═══════════════════════════════════════════════════════════════════════
+  var TIPS = [
+    ["#tv-type", "i-candles", "Тип свічок", "H", "Звичайні / Heikin Ashi"],
+    ["#tv-indicators", "i-sliders", "Індикатори", "", "EMA 20/50/200 · Обсяг"],
+    ["#tv-log", "", "Логарифмічна шкала", "L", "Цінова шкала log"],
+    ["#tv-measure", "i-ruler", "Лінійка", "M", "Shift + клік на графіку"],
+    ["#tv-shot", "i-camera", "Знімок графіка", "S", "Завантажити PNG"],
+    ["#tv-zoom-out", "i-zoom-out", "Зменшити", "−", "Масштаб графіка"],
+    ["#tv-zoom-in", "i-zoom-in", "Збільшити", "+", "Масштаб графіка"],
+    ["#tv-reset", "i-reset", "Скинути масштаб", "Home", "Підігнати всі бари"],
+    ["#iw-fs", "i-full", "На весь екран", "F", ""],
+    ["#tv-long", "i-long", "Довга позиція", "", "Клікніть на графіку, щоб розмістити"],
+    ["#tv-short", "i-short", "Коротка позиція", "", "Клікніть на графіку, щоб розмістити"],
+    ["#tv-clear-pos", "i-trash", "Видалити позиції", "", "Очистити всі Long/Short"],
+    ['[data-draw="cursor"]', "i-cursor", "Курсор", "Esc", "Вибір і переміщення об’єктів"],
+    ['[data-draw="trend"]', "i-trend", "Трендова лінія", "", "Тягніть між двома точками"],
+    ['[data-draw="hline"]', "i-hline", "Горизонтальна лінія", "", "Клік для розміщення"],
+    ['[data-draw="rect"]', "i-rect", "Прямокутник", "", "Тягніть між двома точками"],
+    ['[data-draw="fib"]', "i-fib", "Корекція Фібоначчі", "", "Тягніть між двома точками"],
+    ['[data-draw="pencil"]', "i-pencil", "Олівець", "", "Вільне малювання"],
+    ["#tv-undo-draw", "i-undo", "Скасувати", "", "Прибрати останнє малювання"],
+    ["#tv-delete-draw", "i-trash", "Видалити об’єкт", "Delete", "Виділений об’єкт"],
+    ["#tv-clear-draw", "i-trash", "Очистити малювання", "", "Видалити всі об’єкти"],
+    ["#iw-liq-btn", "i-chart", "Профіль ліквідності", "", "Шари скупчення ліквідацій"],
+    ["#iw-ob-on", "", "Order Block", "", "Показати / сховати OB"],
+    ["#iw-vob-on", "", "Volumized OB", "", "Показати / сховати VOB"],
+    ["#theme-btn", "i-sun", "Тема оформлення", "", "Темна / світла"],
+    ["#site-search", "i-search", "Пошук монети", "", "Знайти у всесвіті бота"],
+    ["#pp-amt", "i-eye", "Суми P&L", "", "Показати / сховати"]
+  ];
+  function initTips() {
+    var tip = null, tm = null;
+    function hide() { clearTimeout(tm); tm = null; if (tip) { tip.remove(); tip = null; } }
+    TIPS.forEach(function (t) {
+      var el = document.querySelector(t[0]);
+      if (!el) return;
+      if (t[2] && !el.getAttribute("aria-label")) el.setAttribute("aria-label", t[2]);
+      el.removeAttribute("title");
+      el.addEventListener("pointerenter", function () {
+        hide();
+        tm = setTimeout(function () {
+          tip = document.createElement("div");
+          tip.className = "tv-tip";
+          tip.innerHTML = (t[1] ? '<svg class="tv-tip-ic"><use href="#' + t[1] + '"/></svg>' : "") +
+            '<span class="tv-tip-name">' + t[2] + "</span>" +
+            (t[3] ? '<kbd class="tv-tip-kbd">' + t[3] + "</kbd>" : "") +
+            (t[4] ? '<span class="tv-tip-hint">' + t[4] + "</span>" : "");
+          document.body.appendChild(tip);
+          var r = el.getBoundingClientRect(), tw = tip.offsetWidth;
+          tip.style.left = Math.max(6, Math.min(r.left + r.width / 2 - tw / 2, window.innerWidth - tw - 6)) + "px";
+          tip.style.top = (r.bottom + 8) + "px";
+        }, 380);
+      });
+      el.addEventListener("pointerleave", hide);
+      el.addEventListener("pointerdown", hide);
+    });
   }
 
   function init() {
     if (window.VSV_PRO) return;
     window.VSV_PRO = { attach: attach, onData: onData };
     document.addEventListener("keydown", onKey);
+    initTips();
 
     var bType = document.getElementById("tv-type"); if (bType) bType.addEventListener("click", toggleType);
     var bLog = document.getElementById("tv-log"); if (bLog) bLog.addEventListener("click", toggleLog);

@@ -1098,7 +1098,7 @@
     (c.ob || []).forEach(function (b) {
       var L = b.side === "LONG", sw = b.fam === "swing";
       out.push({ kind: "ob", thin: true, t: snapSec(b.start, o), top: b.top, bottom: b.bottom, dashed: false,
-        fill: "rgba(148,163,184,.05)", stroke: "rgba(148,180,220,.5)", text: "#c3cbd8",
+        fill: L ? "rgba(45,212,191,.08)" : "rgba(251,146,60,.08)", stroke: L ? "rgba(45,212,191,.6)" : "rgba(251,146,60,.6)", text: L ? "#5eead4" : "#fdba74",
         label: "OB " + tfLbl(c.ob_tf), sub: (sw ? "swing" : "int") + (b.tag ? " · " + b.tag : "") });
     });
     if (IW.show_imb) (c.imb || []).forEach(function (z) {
@@ -1257,7 +1257,7 @@
       sbrLastBadge("1h", (c.sbr_last || {})["1h"], px) + sbrLastBadge("4h", (c.sbr_last || {})["4h"], px) +
       (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "") +
       '<span class="iw-legend"><span title="VOB"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
-      '<span title="OB"><i style="background:transparent;outline:1px solid rgba(148,180,220,.55)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
+      '<span title="OB"><i style="background:rgba(45,212,191,.12);outline:1px solid rgba(45,212,191,.6)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
       '<span title="CHoCH / BOS"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
       '<span title="IMB"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
       '<span title="SBR"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +

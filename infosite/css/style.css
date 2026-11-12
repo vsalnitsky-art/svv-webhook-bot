@@ -247,3 +247,47 @@ body{font-size:15px}
 .iw-price{font-size:11px}
 .iw-chg{font-size:10px}
 .iw-wl{min-height:600px}
+
+
+/* ── v204 · density, table grid, tooltips, animated heading icons ── */
+/* Watchlist: мінімальна висота рядків */
+.iw-row{min-height:40px;gap:3px;padding:3px 6px 3px 9px}
+.iw-main{gap:1px}
+.iw-list{padding:2px 4px}
+
+/* Ім'я користувача в правому куті — ширше */
+.auth-links a.who{max-width:280px}
+@media(max-width:820px){.auth-links a.who{max-width:170px}}
+
+/* Вертикальні лінії стовпчиків у шапках таблиць */
+.pp-tbl th{border-right:1px solid var(--line)}
+.pp-tbl th:last-child{border-right:0}
+#rec-tbl .gs{border-left:1px solid var(--line)}
+
+/* Головне лого трохи крупніше */
+.brand-mark{width:40px;height:40px;border-radius:11px}
+.brand-copy b{font-size:21px}
+.brand-copy small{font-size:8.5px}
+@media(max-width:520px){.brand-mark{width:32px;height:32px}.brand-copy b{font-size:17px}}
+
+/* Анімовані іконки в заголовках секцій */
+.h-ic{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;color:var(--accent-2);flex:none}
+.pp-h .h-ic,.acc-h .h-ic{margin-right:2px}
+.h-ic-pulse{animation:icPulse 1.8s ease-in-out infinite}
+.h-ic-spin{animation:icSpin 9s linear infinite}
+.h-ic-twinkle{animation:icTwinkle 2.4s ease-in-out infinite}
+.h-ic-ring{transform-origin:50% 12%;animation:icRing 2.8s ease-in-out infinite}
+@keyframes icPulse{50%{opacity:.4;transform:scale(.85)}}
+@keyframes icSpin{to{transform:rotate(360deg)}}
+@keyframes icTwinkle{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.18);opacity:.72}}
+@keyframes icRing{0%,42%,100%{transform:rotate(0)}6%{transform:rotate(14deg)}12%{transform:rotate(-11deg)}18%{transform:rotate(7deg)}24%{transform:rotate(-4deg)}30%{transform:rotate(0)}}
+
+/* Тултіпи в стилі TradingView (скрін 2) — світліші за фон */
+.tv-tip{position:fixed;z-index:120;display:flex;align-items:center;gap:8px;padding:7px 11px;background:color-mix(in oklch,var(--p-ink-3) 80%,var(--p-ink-2));border:1px solid var(--p-faint);border-radius:7px;box-shadow:0 10px 30px oklch(.05 .01 260 / .55);font:500 11px var(--font);color:var(--txt);pointer-events:none;white-space:nowrap;animation:tipIn .14s ease-out}
+:root[data-theme="light"] .tv-tip{background:var(--p-ink-1);border-color:var(--p-muted);box-shadow:var(--shadow-lg)}
+.tv-tip-ic{width:15px;height:15px;fill:none;stroke:var(--txt-dim);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.tv-tip-name{font-weight:600}
+.tv-tip-kbd{font:600 9px var(--mono);background:var(--p-ink-1);border:1px solid var(--line);border-radius:4px;padding:2px 6px;color:var(--txt)}
+:root[data-theme="light"] .tv-tip-kbd{background:var(--p-ink-2)}
+.tv-tip-hint{color:var(--muted);font-size:10px}
+@keyframes tipIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
