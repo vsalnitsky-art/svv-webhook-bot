@@ -332,3 +332,11 @@ body{font-size:15px}
 .pp-cur{color:#22c55e;font-weight:700;margin-right:1px}
 .pp-usd.dn .pp-cur{color:#f23645}
 .pp-pc{color:var(--accent-2);opacity:.95;margin-left:1px;font-size:.9em}
+
+/* v206: уніфікація таблиць під стиль «Останні закриті тестові угоди» + монети базис/котирування */
+#rec-tbl .rs{width:auto!important;min-width:0;padding-left:8px;padding-right:8px}
+#pp-open td,#pp-open th{padding-left:8px;padding-right:8px}
+.pp-tbl td.sym,#rec-tbl td.sym{color:var(--txt);font:600 12px var(--font);letter-spacing:0}
+.pp-tbl td.sym .sym-b{font:700 12.5px var(--mono);color:#f0b90b}
+.pp-tbl td.sym .sym-q{font:500 10px var(--font);color:var(--muted);margin-left:3px}
+.pp-tbl td,#rec-tbl td{white-space:nowrap}

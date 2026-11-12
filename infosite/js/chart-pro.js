@@ -661,8 +661,14 @@
             (t[4] ? '<span class="tv-tip-hint">' + t[4] + "</span>" : "");
           document.body.appendChild(tip);
           var r = el.getBoundingClientRect(), tw = tip.offsetWidth;
-          tip.style.left = Math.max(6, Math.min(r.left + r.width / 2 - tw / 2, window.innerWidth - tw - 6)) + "px";
-          tip.style.top = (r.bottom + 8) + "px";
+          if (el.closest(".drawing-rail")) {
+            /* Кнопки лівої рейки: підказка праворуч від кнопки, по центру її висоти */
+            tip.style.left = (r.right + 9) + "px";
+            tip.style.top = Math.max(6, Math.min(r.top + r.height / 2 - tip.offsetHeight / 2, window.innerHeight - tip.offsetHeight - 6)) + "px";
+          } else {
+            tip.style.left = Math.max(6, Math.min(r.left + r.width / 2 - tw / 2, window.innerWidth - tw - 6)) + "px";
+            tip.style.top = (r.bottom + 8) + "px";
+          }
         }, 380);
       });
       el.addEventListener("pointerleave", hide);

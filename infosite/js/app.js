@@ -76,10 +76,12 @@
   function tvSym(sym) {
     var s = String(sym || "").toUpperCase();
     var url = "https://ru.tradingview.com/chart/?symbol=BYBIT:" + s + ".P";
+    var m = s.match(/^(.*?)(USDT|USDC\.P|USDC|USD)$/);
+    var inner = m && m[1] ? '<b class="sym-b">' + esc(m[1]) + '</b><small class="sym-q">' + esc(m[2]) + "</small>" : esc(s);
     return '<a href="' + url + '" target="tvchart" rel="noopener" ' +
       'title="Відкрити BYBIT:' + s + '.P (ф’ючерс) у TradingView" ' +
       'style="color:inherit;text-decoration:none;border-bottom:1px dotted rgba(255,255,255,0.4)">' +
-      esc(s) + "</a>";
+      inner + "</a>";
   }
 
   var SIGNAL_BADGES_JS = { "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS", "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB", "mm_vob": "🧮 VOB з МММ-монітора", "liq_vob": "💧 VOB + Сканер ліквідності", "ob_alert": "🆕 Новий OB", "poc": "🎯 POC-сетап", "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний", "manual_ui": "✋ Ручний", "manual_ui_overflow": "✋ Ручний" };
