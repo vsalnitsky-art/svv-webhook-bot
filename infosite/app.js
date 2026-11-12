@@ -341,6 +341,8 @@
     return "МММ-бабло ⚖ рівновага — напрямку немає · " + m.str + "%";
   }
 
+  var IW_SORT = "default";
+  try { IW_SORT = localStorage.getItem("vsv_watchlist_sort") || "default"; } catch (e) {}
   function renderList() {
     var host = $("#iw-list");
     if (!host) return;
@@ -349,7 +351,11 @@
       host.innerHTML = '<div class="iw-empty">Список порожній — додайте монету вище.</div>';
       return;
     }
-    host.innerHTML = IW.wl.map(function (sym) {
+    var sorted = IW.wl.slice();
+    if (IW_SORT === "name") sorted.sort(function (a, b) { return a.localeCompare(b); });
+    if (IW_SORT === "price") sorted.sort(function (a, b) { return (Number(livePx(b)) || 0) - (Number(livePx(a)) || 0); });
+    if (IW_SORT === "change") sorted.sort(function (a, b) { var av = Number((IW.rows[a] || {}).chg24), bv = Number((IW.rows[b] || {}).chg24); return (isFinite(bv) ? bv : -Infinity) - (isFinite(av) ? av : -Infinity); });
+    host.innerHTML = sorted.map(function (sym) {
       var r = IW.rows[sym] || {};
       var ext = r.src === "ext" ? '<small title="Поза WATCHLIST бота">🛰</small>' : "";
       var chg = r.chg24, bell = bellHTML(sym);
@@ -357,11 +363,18 @@
         : '<span class="iw-chg ' + (chg > 0 ? "up" : (chg < 0 ? "dn" : "")) + '" title="Зміна ціни за ~24 год">' +
           (chg > 0 ? "+" : "") + Number(chg).toFixed(2) + "%</span>";
       return '<div class="iw-row' + (sym === IW.sel ? " sel" : "") + '" data-sym="' + esc(sym) + '">' +
-        '<span class="iw-sym' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + esc(sym.replace(/USDT$/, "")) + '<small>USDT</small>' + ext + "</span>" +
-        '<span class="iw-price' + dirCls(sym) + '">' + (livePx(sym) ? fmtPrice(livePx(sym)) : "—") + "</span>" + chgHtml +
+        '<div class="iw-main"><span class="iw-sym' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '"><b>' + esc(sym.replace(/USDT$/, "")) + '</b><small>USDT</small>' + ext + "</span>" +
+        '<span class="iw-quote"><span class="iw-price' + dirCls(sym) + '">' + (livePx(sym) ? fmtPrice(livePx(sym)) : "—") + "</span>" + chgHtml + '</span></div>' +
         bell.btn + '<button class="iw-del" data-del="' + esc(sym) + '" title="Прибрати зі списку">×</button>' + bell.menu +
         (r.err ? '<div class="iw-err" title="' + esc(r.err) + '">⚠ ' + esc(r.err) + "</div>" : "") + "</div>";
     }).join("");
+  }
+
+  var sortSelect = $("#iw-sort");
+  if (sortSelect) {
+    if (["default", "name", "price", "change"].indexOf(IW_SORT) < 0) IW_SORT = "default";
+    sortSelect.value = IW_SORT;
+    sortSelect.addEventListener("change", function () { IW_SORT = sortSelect.value; try { localStorage.setItem("vsv_watchlist_sort", IW_SORT); } catch (e) {} renderList(); });
   }
 
   function bellHTML(sym) {
@@ -558,7 +571,7 @@
     try {
       if (on) {
         if (LQ.prevRO == null) LQ.prevRO = ts.options().rightOffset || 0;
-        var css = Math.max(70, Math.min(190, (ts.width() || 600) * 0.2));
+        var css = Math.max(64, Math.min(148, (ts.width() || 600) * 0.15));
         ts.applyOptions({ rightOffset: Math.ceil(css / (ts.options().barSpacing || 6)) + 2 });
       } else if (LQ.prevRO != null) { ts.applyOptions({ rightOffset: LQ.prevRO }); LQ.prevRO = null; }
     } catch (e) {}
@@ -662,17 +675,17 @@
     liqSaveUi(); if (LQ.on || LQ.busy) { liqOff(); liqStatus('<span class="wait">параметри змінено</span>'); }
   });
 
-  function liqWidth(W, hr) { return Math.round(Math.max(70, Math.min(190, (W / hr) * 0.2)) * hr); }
-  var LIQ_UP = "38,166,154", LIQ_DN = "239,83,80", LIQ_MAG = "245,158,11";
+  function liqWidth(W, hr) { return Math.round(Math.max(64, Math.min(148, (W / hr) * 0.15)) * hr); }
+  var LIQ_UP = "6,182,192", LIQ_DN = "194,24,91", LIQ_MAG = "245,158,11";
   function _liqPx(v) { var d = IW.prec != null ? IW.prec : 4; return Number(v).toFixed(d); }
   function _liqDraw(ctx, liq, sr, XR, W, H, hr, vr, font, dark, levels) {
     var rows = liq.rows, taken = [], px0 = XR + 3 * hr, px1 = W - 3 * hr, PW = px1 - px0, mx = 0;
     rows.forEach(function (r) { if (r.pct > mx) mx = r.pct; });
     if (mx <= 0 || PW <= 10 * hr) return taken;
-    ctx.fillStyle = dark ? "rgba(13,17,26,.72)" : "rgba(248,250,252,.82)"; _rrect(ctx, px0, 2 * vr, PW, H - 4 * vr, 6 * vr); ctx.fill();
-    ctx.strokeStyle = dark ? "rgba(56,189,248,.28)" : "rgba(14,116,144,.25)"; ctx.lineWidth = Math.max(1, Math.round(hr)); _rrect(ctx, px0, 2 * vr, PW, H - 4 * vr, 6 * vr); ctx.stroke();
+    ctx.fillStyle = dark ? "rgba(13,17,26,.26)" : "rgba(248,250,252,.46)"; _rrect(ctx, px0, 2 * vr, PW, H - 4 * vr, 4 * vr); ctx.fill();
+    ctx.strokeStyle = dark ? "rgba(6,182,192,.14)" : "rgba(14,116,144,.16)"; ctx.lineWidth = Math.max(1, Math.round(hr)); _rrect(ctx, px0, 2 * vr, PW, H - 4 * vr, 4 * vr); ctx.stroke();
     ctx.font = font(700, 10); ctx.textBaseline = "middle"; ctx.textAlign = "left"; ctx.fillStyle = dark ? "#7dd3fc" : "#0369a1";
-    ctx.fillText("💧 " + String(liq.exchange || "").toUpperCase() + " · " + liqBarsLbl(liq.bars), px0 + 7 * hr, 12 * vr);
+    ctx.fillText("LIQUIDITY · " + String(liq.exchange || "").toUpperCase() + " · " + liqBarsLbl(liq.bars), px0 + 7 * hr, 12 * vr);
     var up = Number(liq.above_pct) || 0, dn = Number(liq.below_pct) || 0; ctx.textAlign = "right";
     var tDn = "▼" + dn.toFixed(0) + "%", wDn = ctx.measureText(tDn).width;
     ctx.fillStyle = "rgb(" + LIQ_DN + ")"; ctx.fillText(tDn, px1 - 6 * hr, 12 * vr);
@@ -757,7 +770,7 @@
   };
   function _rrect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r); ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath(); }
 
-  var IMB_SELL = "rgba(234,128,38,.92)", IMB_BUY = "rgba(38,166,154,.92)", IMB_MIN_PX = 4;
+  var IMB_SELL = "rgba(168,138,74,.88)", IMB_BUY = "rgba(27,154,170,.88)", IMB_MIN_PX = 4;
   function _imbBar(ctx, X1, w, y, bh, pct, color, hr, vr, font, dark) {
     if (pct == null || pct <= 0 || bh < 1) return;
     var sw = Math.max(2 * hr, w * Math.min(100, Math.max(0, pct)) / 100);
@@ -771,6 +784,11 @@
   }
   function _imbBody(ctx, b, X1, X2, yT, yB, hr, vr, font, dark, wms) {
     var w = X2 - X1, h = yB - yT;
+    if (b.kind === "ob" && w > 4 * hr) {
+      var bhOb = h / 2;
+      ctx.fillStyle = IMB_SELL; ctx.globalAlpha = .55; ctx.fillRect(X1, yT, w * .5, bhOb);
+      ctx.fillStyle = IMB_BUY; ctx.fillRect(X1, yT + bhOb, w * .5, bhOb); ctx.globalAlpha = 1;
+    }
     if (w > 4 * hr && (b.topPct != null || b.botPct != null)) {
       var bh = h / 2;
       _imbBar(ctx, X1, w, yT, bh, b.topPct, b.topCol || IMB_SELL, hr, vr, font, dark);
@@ -779,9 +797,9 @@
     if (b.volTxt && h >= 18 * vr && w > 40 * hr) {
       var wk = b.volTxt + "|" + Math.round(w) + "|" + Math.round(h), fv;
       if (b._wk === wk) { fv = b._fv; ctx.font = font(500, fv); }
-      else { fv = Math.max(10, Math.min(64, h / vr * 0.82)); ctx.font = font(500, fv); while (fv > 10 && ctx.measureText(b.volTxt).width > w * 0.92) { fv -= 2; ctx.font = font(500, fv); } b._wk = wk; b._fv = fv; }
+      else { fv = b.kind === "vob" ? Math.max(10, Math.min(30, h / vr * 0.32)) : Math.max(10, Math.min(64, h / vr * 0.82)); ctx.font = font(500, fv); while (fv > 10 && ctx.measureText(b.volTxt).width > w * 0.92) { fv -= 2; ctx.font = font(500, fv); } b._wk = wk; b._fv = fv; }
       var tw = ctx.measureText(b.volTxt).width, cx = (X1 + X2) / 2, cy = (yT + yB) / 2;
-      var wm = { txt: b.volTxt, fv: fv, x: cx, y: cy + fv * vr * 0.04, r: { x0: cx - tw / 2, x1: cx + tw / 2, y0: cy - fv * vr * 0.45, y1: cy + fv * vr * 0.45 } };
+      var wm = { txt: b.volTxt, fv: fv, x: cx, y: cy + fv * vr * 0.04, color: b.kind === "vob" ? b.text : null, r: { x0: cx - tw / 2, x1: cx + tw / 2, y0: cy - fv * vr * 0.45, y1: cy + fv * vr * 0.45 } };
       if (wms) wms.push(wm); else wmDraw(ctx, [wm], font, dark);
     }
     ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
@@ -792,7 +810,7 @@
       var w = wms[i], r = w.r;
       if (done.some(function (q) { return r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0; })) continue;
       done.push(r); ctx.font = font(500, w.fv); ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillStyle = dark ? "rgba(4,6,12,.5)" : "rgba(0,0,0,.16)"; ctx.fillText(w.txt, w.x, w.y);
+      ctx.fillStyle = w.color || (dark ? "rgba(4,6,12,.5)" : "rgba(0,0,0,.16)"); ctx.fillText(w.txt, w.x, w.y);
     }
     ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; return done;
   }
@@ -833,7 +851,7 @@
           if (b.kind === "imb" && (yBt - yT) < IMB_MIN_PX * vr) continue;
           if (yBt - yT < 1) yBt = yT + 1;
           ctx.fillStyle = b.fill; ctx.fillRect(X1, yT, X2 - X1, yBt - yT);
-          if (b.kind === "imb" || b.kind === "vob") _imbBody(ctx, b, X1, X2, yT, yBt, hr, vr, font, dark, wms);
+          if (b.kind === "imb" || b.kind === "vob" || b.kind === "ob") _imbBody(ctx, b, X1, X2, yT, yBt, hr, vr, font, dark, wms);
           ctx.strokeStyle = b.stroke; ctx.lineWidth = Math.max(1, Math.round((b.thin ? 1 : 1.2) * hr));
           if (b.dashed && ctx.setLineDash) ctx.setLineDash([6 * hr, 4 * hr]);
           ctx.strokeRect(X1, yT, X2 - X1, yBt - yT);
@@ -1014,6 +1032,15 @@
   document.addEventListener("click", function (e) { var b = e.target.closest ? e.target.closest("#iw-fs") : null; if (b) { e.preventDefault(); setFull(!isFull()); } });
   document.addEventListener("keydown", function (e) { if ((e.key === "Escape" || e.key === "Esc") && isFull()) { setFull(false); } });
 
+  function standardCandles() { try { return localStorage.getItem("vsv_candle_standard") === "1"; } catch (e) { return false; } }
+  function applyCandlePalette() {
+    if (!IW.series) return;
+    var dark = (document.documentElement.getAttribute("data-theme") || "dark") === "dark", standard = standardCandles();
+    var up = standard ? (dark ? "#00bb7f" : "#26a69a") : "#c7ccd6";
+    var down = standard ? (dark ? "#fb2c36" : "#ef5350") : "#5b6475";
+    IW.series.applyOptions({ upColor: up, downColor: down, borderVisible: !standard, borderUpColor: up, borderDownColor: standard ? down : "#8b94a5", wickUpColor: up, wickDownColor: standard ? down : "#8b94a5" });
+  }
+
   function ensureChart() {
     if (IW.chart || !window.LightweightCharts) return !!IW.chart;
     var box = $("#iw-box"), dark = (document.documentElement.getAttribute("data-theme") || "dark") === "dark";
@@ -1028,8 +1055,8 @@
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: { time: true, price: true } },
       localization: { locale: "uk-UA", timeFormatter: locFull },
     });
-    IW.series = IW.chart.addCandlestickSeries({ upColor: "#00bb7f", downColor: "#fb2c36", borderVisible: false, wickUpColor: "#00bb7f", wickDownColor: "#fb2c36", priceFormat: { type: "price", precision: 6, minMove: 0.000001 } });
-    if (!dark) IW.series.applyOptions({ upColor: "#00966a", downColor: "#e42b38", wickUpColor: "#00966a", wickDownColor: "#e42b38" });
+    IW.series = IW.chart.addCandlestickSeries({ priceFormat: { type: "price", precision: 6, minMove: 0.000001 } });
+    applyCandlePalette();
     IW.prim = new BoxPrimitive(); IW.series.attachPrimitive(IW.prim); IW.pocLine = null;
     IW.chart.subscribeClick(function (p) { var s = p && p.point ? IW.prim.hitAt(p.point.x, p.point.y) : null; sigCard(s, p && p.point ? p.point.x : 0, p && p.point ? p.point.y : 0); });
     IW.chart.subscribeCrosshairMove(function (p) { var hit = p && p.point ? IW.prim.hitAt(p.point.x, p.point.y) : null; box.style.cursor = hit ? "pointer" : ""; });
@@ -1046,23 +1073,20 @@
     (c.vob || []).forEach(function (v) {
       var L = v.side === "LONG";
       out.push({ kind: "vob", t: snapSec(v.start, o), top: v.top, bottom: v.bottom, dashed: v.breaker,
-        fill: L ? "rgba(34,171,94,.07)" : "rgba(242,54,69,.07)", stroke: L ? "rgba(34,197,94,.7)" : "rgba(242,54,69,.7)", text: L ? "#86efac" : "#fca5a5",
-        volTxt: fmtVol(v.volume, 3), topPct: v.hi_pct, botPct: v.lo_pct,
-        topCol: L ? "rgba(34,197,94,.45)" : "rgba(242,54,69,.45)", botCol: L ? "rgba(34,197,94,.18)" : "rgba(242,54,69,.18)",
-        label: tfWord(v.tf || c.vob_tf) + " VOB" + (v.breaker ? " ✕" : ""),
-        sub: [fmtVol(v.volume, 3), v.hi_pct != null ? Math.round(Math.max(v.hi_pct, v.lo_pct)) + "%" : (v.pct != null ? v.pct + "%" : "")].filter(Boolean).join(" · ") });
+        fill: L ? "rgba(8,145,128,.25)" : "rgba(179,38,67,.34)", stroke: L ? "rgba(19,181,157,.28)" : "rgba(211,55,83,.28)", text: L ? "#d7f7ef" : "#f4d5dc",
+        volTxt: fmtVol(v.volume, 3) + (v.hi_pct != null ? " (" + Math.round(Math.max(v.hi_pct, v.lo_pct)) + "%)" : ""), topPct: null, botPct: null,
+        label: null, sub: "" });
     });
     (c.ob || []).forEach(function (b) {
       var L = b.side === "LONG", sw = b.fam === "swing";
-      out.push({ kind: "ob", t: snapSec(b.start, o), top: b.top, bottom: b.bottom, dashed: true,
-        fill: L ? (sw ? "rgba(45,212,191,.12)" : "rgba(45,212,191,.06)") : (sw ? "rgba(251,146,60,.12)" : "rgba(251,146,60,.06)"),
-        stroke: L ? "rgba(45,212,191,.8)" : "rgba(251,146,60,.8)", text: L ? "#5eead4" : "#fdba74",
+      out.push({ kind: "ob", t: snapSec(b.start, o), top: b.top, bottom: b.bottom, dashed: false,
+        fill: "rgba(21,106,119,.16)", stroke: "rgba(49,151,157,.24)", text: "#d5edf0",
         label: "OB " + tfLbl(c.ob_tf), sub: (sw ? "swing" : "int") + (b.tag ? " · " + b.tag : "") });
     });
     if (IW.show_imb) (c.imb || []).forEach(function (z) {
       var L = z.side === "LONG";
       out.push({ kind: "imb", thin: true, ext: 30, t: snapSec(z.start, o), top: z.top, bottom: z.bottom,
-        fill: L ? "rgba(38,166,154,.22)" : "rgba(160,92,40,.30)", stroke: L ? "rgba(38,166,154,.6)" : "rgba(234,128,38,.6)", text: L ? "#5eead4" : "#fdba74",
+        fill: "rgba(21,106,119,.22)", stroke: "rgba(49,151,157,.35)", text: "#d5edf0",
         volTxt: fmtVol(z.vol, 3), topPct: z.sell_pct, botPct: z.buy_pct, topCol: IMB_SELL, botCol: IMB_BUY, label: "IMB" });
     });
     return out;
@@ -1214,8 +1238,8 @@
       '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" + pdBadge(c.pd) + pocBadge(c.poc, c.poc_state) +
       sbrLastBadge("1h", (c.sbr_last || {})["1h"], px) + sbrLastBadge("4h", (c.sbr_last || {})["4h"], px) +
       (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "") +
-      '<span class="iw-legend"><span title="VOB"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
-      '<span title="OB"><i style="background:rgba(45,212,191,.35);outline:1px dashed rgba(45,212,191,.9)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
+      '<span class="iw-legend"><span title="VOB"><i style="background:rgba(179,38,67,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
+      '<span title="OB"><i style="background:rgba(27,154,170,.55)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
       '<span title="CHoCH / BOS"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
       '<span title="IMB"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
       '<span title="SBR"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +
@@ -1550,10 +1574,10 @@
   // ⚖ Банер «SMC Forecast» (вимога 11.11): куди накручено пружину — 🔭 скан біржі
   // і 🌀 WATCHLIST, у відсотках і з таймером «відколи тримається напрямок».
   var SPB = { skew: 0 };
-  // Іконки бірж (маленькі SVG, без зовнішніх запитів).
+  // Локальні векторні знаки бірж; зовнішні запити під час роботи не потрібні.
   var SPB_ICON = {
-    binance: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><g fill="#F3BA2F"><path d="M12 3.5l2.6 2.6-2.6 2.6-2.6-2.6z"/><path d="M6.1 9.4l2.6 2.6-2.6 2.6L3.5 12z"/><path d="M17.9 9.4l2.6 2.6-2.6 2.6-2.6-2.6z"/><path d="M12 9.4l2.6 2.6-2.6 2.6-2.6-2.6z"/><path d="M12 15.3l2.6 2.6-2.6 2.6-2.6-2.6z"/></g></svg>',
-    bybit: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="5" fill="#17181E" stroke="#3a3f48"/><path d="M6 7h4.2c1.7 0 2.7.8 2.7 2.1 0 .8-.4 1.4-1.1 1.7.9.3 1.5 1 1.5 2 0 1.5-1.1 2.3-2.9 2.3H6z" fill="#fff"/><rect x="15.2" y="6" width="2.4" height="12" rx="1" fill="#F7A600"/></svg>'
+    binance: '<img class="exchange-logo binance-logo" src="binance.svg" alt="" aria-hidden="true">',
+    bybit: '<img class="exchange-logo bybit-logo" src="bybit.svg" alt="" aria-hidden="true">'
   };
   // ⏱ Перекидний таймер (спільний для обох банерів): кожна цифра — окрема плитка.
   function spbParts(since) {
@@ -1584,11 +1608,11 @@
     var dir = b.lean === "LONG" || b.lean === "SHORT", pl = Math.max(0, Math.min(100, Number(b.prob_long) || 50)), ps = 100 - pl;
     var st = b.lean === "LONG" ? ['<span class="spb-dot up"></span>LONG', "up"] : (b.lean === "SHORT" ? ['<span class="spb-dot dn"></span>SHORT', "dn"] : ["⚖ " + (b.enough ? "РІВНОВАГА" : "ЗАМАЛО"), "flat"]);
     var tip = "▲ LONG " + pl.toFixed(1) + "% · ▼ SHORT " + ps.toFixed(1) + "% · заряджених " + b.coins + " з " + b.total + " (потрібно ≥ " + b.need + ") · у бік LONG " + b.n_long + " / SHORT " + b.n_short + (b.fired_long || b.fired_short ? " · 💥 вистрілили ▲" + b.fired_long + " / ▼" + b.fired_short : "");
-    // Дзеркальні смуги від центру: для SHORT червоний біля центру, для LONG — зелений.
-    var a = Math.max(0, pl - 7).toFixed(1), z = Math.min(100, pl + 7).toFixed(1);
-    var right = b.ex === "bybit", longCol = "#00bb7f", shortCol = "#fb2c36";
-    // Напрямок визначає колір біля центру; протилежний колір розходиться назовні.
+    // Ширина кольору відповідає відсотку напрямку; центральний колір — колір LONG/SHORT.
+    var right = b.ex === "bybit", longCol = "#08775b", shortCol = "#a92b3c";
     var innerLong = b.lean === "LONG", innerCol = innerLong ? longCol : shortCol, outerCol = innerLong ? shortCol : longCol;
+    var innerPct = innerLong ? pl : ps, boundary = right ? innerPct : 100 - innerPct;
+    var a = Math.max(0, boundary - 1.5).toFixed(1), z = Math.min(100, boundary + 1.5).toFixed(1);
     var grad = right
       ? "linear-gradient(90deg," + innerCol + " 0%," + innerCol + " " + a + "%," + outerCol + " " + z + "%," + outerCol + " 100%)"
       : "linear-gradient(90deg," + outerCol + " 0%," + outerCol + " " + a + "%," + innerCol + " " + z + "%," + innerCol + " 100%)";
@@ -1704,5 +1728,5 @@
   boot();
 
   // ХУК ДЛЯ CHART-PRO.JS (доступ до внутрішніх змінних)
-  window.VSV_HOOK = { get IW() { return IW; } };
+  window.VSV_HOOK = { get IW() { return IW; }, applyCandles: applyCandlePalette };
 })();
