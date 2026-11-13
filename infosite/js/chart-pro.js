@@ -274,6 +274,8 @@
     // оверлеї, щоб не накопичувались дублікати, і дозволяємо переприв'язку лінійки.
     box.querySelectorAll(".tv-pro").forEach(function (el) { el.remove(); });
     box.__proMeasureBound = false;
+    PRO.measure.on = false; PRO.measure.start = null; PRO.measure.end = null;
+    PRO.measure.finished = false; PRO.measure.dragging = false; PRO.measureSym = null;
 
     initPosLayer();
 
@@ -374,6 +376,8 @@
 
   function onData(IW, c) {
     if (!IW || !c) return;
+    /* Лінійка прив'язана до монети: незавершений кресленик чужої монети зникає. */
+    if (PRO.measure.start && PRO.measureSym && PRO.measureSym !== IW.sel) clearMeasure();
     renderLegendLast(IW);
     renderPositions(IW);
     if (PRO.type === "ha" && IW.series && c.ohlc) {
@@ -477,30 +481,37 @@
   }
 
   function finishMeasure(IW, svg) {
-    /* Перетворюємо готову лінійку на персистентний об’єкт шару малювання:
-       зберігається в localStorage, виділяється кліком, видаляється Delete. */
+    /* Готова лінійка одразу стає персистентним об’єктом шару малювання:
+       зберігається в localStorage, рухається разом із графіком, прив’язана
+       до монети, виділяється кліком і видаляється Delete. Жодних
+       «застряглих» піксельних оверлеїв — або збережено, або очищено. */
     var s = PRO.measure.start, e = PRO.measure.end, saved = false;
     if (s && e && IW.series && window.VSV_TOOLS && window.VSV_TOOLS.addMeasure) {
       try {
-        var ts = IW.chart.timeScale();
-        var t1 = ts.coordinateToTime(s.x), t2 = ts.coordinateToTime(e.x);
+        var ts = IW.chart.timeScale(), ohlc = (IW.coin && IW.coin.ohlc) || [];
+        var x2t = function (x) {
+          var t = ts.coordinateToTime(x);
+          if (t != null) return Number(t);
+          var l = ts.coordinateToLogical ? ts.coordinateToLogical(x) : null;
+          if (l != null && ohlc.length) {
+            var i = Math.max(0, Math.min(ohlc.length - 1, Math.round(l)));
+            return Number(ohlc[i].time);
+          }
+          return null;
+        };
+        var t1 = x2t(s.x), t2 = x2t(e.x);
         var p1 = IW.series.coordinateToPrice(s.y), p2 = IW.series.coordinateToPrice(e.y);
         if (t1 != null && p1 != null && t2 != null && p2 != null) {
-          window.VSV_TOOLS.addMeasure({ t1: Number(t1), p1: p1, t2: Number(t2), p2: p2 });
+          window.VSV_TOOLS.addMeasure({ t1: t1, p1: p1, t2: t2, p2: p2 });
           saved = true;
-        }
-      } catch (x) { console.error("measure save:", x); }
-    }
+        } else if (window.console) console.warn("[VSV] лінійка: координати поза діапазоном даних, об’єкт не збережено");
+      } catch (x) { console.error("[VSV] measure save:", x); }
+    } else if (window.console) console.warn("[VSV] лінійка: шар малювання недоступний (VSV_TOOLS)");
     PRO.measure.on = false;
+    PRO.measure.start = null; PRO.measure.end = null;
+    PRO.measure.finished = false; PRO.measure.dragging = false;
     setMeasureUI(false);
-    if (saved) {
-      PRO.measure.start = null; PRO.measure.end = null;
-      PRO.measure.finished = false; PRO.measure.dragging = false;
-      svg.style.display = "none"; svg.innerHTML = "";
-    } else {
-      PRO.measure.finished = true;
-      drawMeasure(IW, svg);
-    }
+    svg.style.display = "none"; svg.innerHTML = "";
   }
 
   function clearMeasure() {
@@ -521,6 +532,7 @@
       PRO.measure.start = pt(e);
       PRO.measure.end = { x: PRO.measure.start.x, y: PRO.measure.start.y };
       PRO.measure.dragging = true; PRO.measure.finished = false;
+      PRO.measureSym = IW.sel;
     }
 
     // Shift + клік по графіку — старт лінійки, як у TradingView

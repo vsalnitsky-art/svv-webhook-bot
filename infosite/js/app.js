@@ -1274,7 +1274,14 @@
       '<span title="High/Low"><i style="background:#f87171;height:2px;width:7px"></i><i style="background:#4ade80;height:2px;width:7px;margin-left:-3px"></i>High/Low</span></span>';
   }
 
-  function setNote(t) { var n = $("#iw-note"); if (n) { n.textContent = t || ""; n.style.display = t ? "" : "none"; } }
+  function setNote(t) {
+    var n = $("#iw-note"); if (!n) return;
+    /* Усі повідомлення про процес завантаження — лише у новому вигляді
+       лоадера; тексти помилок лишаються текстовими. */
+    var s = String(t || "");
+    if (s && /завантаж|очіку|рахуєть|loading|загруз/i.test(s) && !/не вдалося|не завантажилась|помилка|error|fail/i.test(s)) { setLoading(s.toUpperCase()); return; }
+    n.textContent = s; n.style.display = s ? "" : "none";
+  }
   function setLoading(t) {
     var n = $("#iw-note"); if (!n) return;
     n.innerHTML = '<span class="chart-loading"><img src="img/logo-loading.svg" alt="VSV"><b>' + esc(t || "ЗАВАНТАЖЕННЯ") + '</b><span class="boot-spin" aria-hidden="true"></span></span>';

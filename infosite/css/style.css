@@ -125,7 +125,7 @@ button:disabled{cursor:not-allowed;opacity:.4}svg{display:block}button svg,a svg
 
 /* Завантаження графіка: той самий логотип, що й на boot-екрані */
 .chart-loading{display:flex;flex-direction:column;align-items:center;gap:13px;color:var(--txt-dim)}
-.chart-loading img{width:56px;height:56px;border-radius:15px;display:block;box-shadow:0 0 0 1px rgba(240,185,11,.4),0 10px 30px rgba(240,185,11,.24);animation:bootFloat 2.8s ease-in-out infinite}
+.chart-loading img{width:56px;height:56px;border-radius:15px;display:block;box-shadow:0 0 0 1px rgba(240,185,11,.4),0 10px 30px rgba(240,185,11,.24)}
 .chart-loading b{font:600 11px var(--mono);letter-spacing:.34em;text-indent:.34em;color:var(--txt-dim)}
 .chart-loading .boot-spin{width:18px;height:18px;border:2px solid var(--line);border-top-color:#f0b90b;border-radius:50%;animation:spin .8s linear infinite}
 
