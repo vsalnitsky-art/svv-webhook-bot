@@ -362,3 +362,8 @@ body{font-size:15px}
 .tv-drawings .meas-txt.dn{fill:var(--short)}
 .tv-drawings .drawing.selected .meas-box{stroke:#f7a600;stroke-width:2;stroke-dasharray:none}
 .tv-drawings .drawing.selected .meas-line{stroke:#f7a600}
+
+/* v210: легенда шарів переїхала у нижній рядок графіка; шапка стала однорядковою */
+.chart-footer #iw-legend{flex-basis:auto;order:0;display:inline-flex;flex-wrap:nowrap;gap:10px;overflow:hidden;white-space:nowrap}
+.chart-footer #iw-legend span{white-space:nowrap}
+.iw-head{min-height:52px;padding:10px 14px 8px}

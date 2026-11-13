@@ -489,20 +489,20 @@
     if (s && e && IW.series && window.VSV_TOOLS && window.VSV_TOOLS.addMeasure) {
       try {
         var ts = IW.chart.timeScale(), ohlc = (IW.coin && IW.coin.ohlc) || [];
-        var x2t = function (x) {
-          var t = ts.coordinateToTime(x);
-          if (t != null) return Number(t);
+        var last = ohlc.length - 1, step = ohlc.length > 1 ? Number(ohlc[last].time) - Number(ohlc[last - 1].time) : 0;
+        /* Права область за останнім баром: час відновлюємо з логічного індексу,
+           а сам індекс зберігаємо — об’єкт лишається точно там, де його намалювали. */
+        var x2p = function (x) {
           var l = ts.coordinateToLogical ? ts.coordinateToLogical(x) : null;
-          if (l != null && ohlc.length) {
-            var i = Math.max(0, Math.min(ohlc.length - 1, Math.round(l)));
-            return Number(ohlc[i].time);
-          }
-          return null;
+          var t = ts.coordinateToTime(x);
+          if (t == null && l != null && step > 0) t = Number(ohlc[last].time) + Math.round(l - last) * step;
+          if (t == null && ohlc.length) t = Number(ohlc[last].time);
+          return { t: t != null ? Number(t) : null, l: l };
         };
-        var t1 = x2t(s.x), t2 = x2t(e.x);
+        var a = x2p(s.x), b = x2p(e.x);
         var p1 = IW.series.coordinateToPrice(s.y), p2 = IW.series.coordinateToPrice(e.y);
-        if (t1 != null && p1 != null && t2 != null && p2 != null) {
-          window.VSV_TOOLS.addMeasure({ t1: t1, p1: p1, t2: t2, p2: p2 });
+        if (a.t != null && p1 != null && b.t != null && p2 != null) {
+          window.VSV_TOOLS.addMeasure({ t1: a.t, p1: p1, t2: b.t, p2: p2, l1: a.l, l2: b.l });
           saved = true;
         } else if (window.console) console.warn("[VSV] лінійка: координати поза діапазоном даних, об’єкт не збережено");
       } catch (x) { console.error("[VSV] measure save:", x); }

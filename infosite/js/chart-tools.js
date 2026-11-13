@@ -15,7 +15,14 @@
   function point(iw,e){
     var r=T.svg.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,ts=iw.chart.timeScale();
     var t=ts.coordinateToTime(x),p=iw.series.coordinateToPrice(y),l=ts.coordinateToLogical?ts.coordinateToLogical(x):null;
-    if(t==null&&iw.coin&&iw.coin.ohlc&&iw.coin.ohlc.length)t=iw.coin.ohlc[iw.coin.ohlc.length-1].time;
+    /* Права область за останнім баром: час обчислюємо через логічний індекс,
+       щоб об’єкти можна було малювати де завгодно, без «прилипання». */
+    var ohlc=iw.coin&&iw.coin.ohlc;
+    if(ohlc&&ohlc.length){
+      var last=ohlc.length-1,step=ohlc.length>1?Number(ohlc[last].time)-Number(ohlc[last-1].time):0;
+      if(t==null&&l!=null&&step>0)t=Number(ohlc[last].time)+Math.round(l-last)*step;
+      if(t==null)t=Number(ohlc[last].time);
+    }
     return{x:x,y:y,t:t,p:p,l:l};
   }
   function select(id){T.selected=id||null;var del=document.getElementById("tv-delete-draw");if(del)del.disabled=!T.selected;render()}
@@ -37,7 +44,10 @@
       return '<g class="'+cls+'" data-id="'+esc(d.id)+'"><path class="draw-hit" d="'+path+'"/><path class="pencil-line" d="'+path+'"/></g>';
     }
     if(d.t1==null||d.p1==null)return"";
-    var x1=d.type==="hline"?0:ts.timeToCoordinate(d.t1),x2=d.type==="hline"?T.svg.clientWidth:ts.timeToCoordinate(d.t2),y1=sr.priceToCoordinate(d.p1),y2=sr.priceToCoordinate(d.p2);
+    /* Спочатку логічні координати (працюють і вільній правій області),
+       часові — як запасний варіант для старих збережених об’єктів. */
+    var xOf=function(tm,lg){return lg!=null&&ts.logicalToCoordinate?ts.logicalToCoordinate(lg):ts.timeToCoordinate(tm)};
+    var x1=d.type==="hline"?0:xOf(d.t1,d.l1),x2=d.type==="hline"?T.svg.clientWidth:xOf(d.t2,d.l2),y1=sr.priceToCoordinate(d.p1),y2=sr.priceToCoordinate(d.p2);
     if(y1==null)return"";
     if(d.type==="trend"){
       if(x1==null||x2==null||y2==null)return"";
@@ -105,9 +115,10 @@
     if(d.type==="pencil"){
       d.points=ed.original.points.map(function(q){return{l:q.l+dl,t:q.t,p:q.p+dp}});render();return;
     }
-    if(ed.handle===0){d.t1=ed.original.t1+dt;d.p1=ed.original.p1+dp;if(d.type==="hline"){d.t2=d.t1;d.p2=d.p1}}
-    else if(ed.handle===1){d.t2=ed.original.t2+dt;d.p2=ed.original.p2+dp}
-    else{d.t1=ed.original.t1+dt;d.p1=ed.original.p1+dp;d.t2=ed.original.t2+dt;d.p2=ed.original.p2+dp}
+    var ol1=ed.original.l1,ol2=ed.original.l2;
+    if(ed.handle===0){d.t1=ed.original.t1+dt;d.p1=ed.original.p1+dp;if(ol1!=null)d.l1=ol1+dl;if(d.type==="hline"){d.t2=d.t1;d.p2=d.p1;d.l2=d.l1}}
+    else if(ed.handle===1){d.t2=ed.original.t2+dt;d.p2=ed.original.p2+dp;if(ol2!=null)d.l2=ol2+dl}
+    else{d.t1=ed.original.t1+dt;d.p1=ed.original.p1+dp;d.t2=ed.original.t2+dt;d.p2=ed.original.p2+dp;if(ol1!=null)d.l1=ol1+dl;if(ol2!=null)d.l2=ol2+dl}
     render();
   }
   function initDrawings(iw){
@@ -123,7 +134,7 @@
         e.preventDefault();e.stopPropagation();var h=e.target.getAttribute&&e.target.getAttribute("data-handle");beginEdit(d,h,e);return;
       }
       var p=point(iw,e);if(p.p==null)return;e.preventDefault();e.stopPropagation();try{T.svg.setPointerCapture(e.pointerId)}catch(x){}
-      var d={id:uid(),type:T.tool,symbol:iw.sel,t1:p.t,p1:p.p,t2:p.t,p2:p.p,x1:p.x,x2:p.x,y1:p.y,y2:p.y};
+      var d={id:uid(),type:T.tool,symbol:iw.sel,t1:p.t,p1:p.p,t2:p.t,p2:p.p,l1:p.l,l2:p.l,x1:p.x,x2:p.x,y1:p.y,y2:p.y};
       if(T.tool==="pencil")d.points=[{l:p.l,t:p.t,p:p.p,x:p.x,y:p.y}];
       if(T.tool==="hline"){delete d.x1;delete d.x2;delete d.y1;delete d.y2;T.drawings.push(d);save();select(d.id);activate("cursor")}else{T.draft=d;render()}
     });
@@ -131,7 +142,7 @@
       try{var r0=T.svg.getBoundingClientRect(),pr=iw.series.coordinateToPrice(e.clientY-r0.top),tm=iw.chart.timeScale().coordinateToTime(e.clientX-r0.left);if(pr!=null&&tm!=null&&iw.chart.setCrosshairPosition)iw.chart.setCrosshairPosition(pr,tm,iw.series)}catch(x){}
       if(T.edit){e.preventDefault();moveEdit(iw,e);return}
       if(!T.draft)return;var p=point(iw,e);if(p.p==null)return;
-      if(T.draft.type==="pencil"){var pts=T.draft.points,last=pts[pts.length-1];if(!last||Math.abs(last.x-p.x)+Math.abs(last.y-p.y)>2){pts.push({l:p.l,t:p.t,p:p.p,x:p.x,y:p.y})}if(pts.length>1200)pts.splice(1,1)}else{T.draft.t2=p.t;T.draft.p2=p.p;T.draft.x2=p.x;T.draft.y2=p.y}
+      if(T.draft.type==="pencil"){var pts=T.draft.points,last=pts[pts.length-1];if(!last||Math.abs(last.x-p.x)+Math.abs(last.y-p.y)>2){pts.push({l:p.l,t:p.t,p:p.p,x:p.x,y:p.y})}if(pts.length>1200)pts.splice(1,1)}else{T.draft.t2=p.t;T.draft.p2=p.p;T.draft.l2=p.l;T.draft.x2=p.x;T.draft.y2=p.y}
       e.preventDefault();render();
     });
     function up(e){if(T.edit){T.edit=null;save();activate("cursor");e.preventDefault();return}if(!T.draft)return;e.preventDefault();finishDraft()}
@@ -172,7 +183,8 @@
      об’єкт стає звичайним персистентним малюнком (виділення, Delete, localStorage). */
   window.VSV_TOOLS={addMeasure:function(m){
     var iw=currentIW();if(!iw||!m)return;
-    var d={id:uid(),type:"measure",symbol:iw.sel,t1:Number(m.t1),p1:Number(m.p1),t2:Number(m.t2),p2:Number(m.p2)};
+    var d={id:uid(),type:"measure",symbol:iw.sel,t1:Number(m.t1),p1:Number(m.p1),t2:Number(m.t2),p2:Number(m.p2),
+      l1:m.l1!=null?Number(m.l1):null,l2:m.l2!=null?Number(m.l2):null};
     if(!isFinite(d.t1)||!isFinite(d.p1)||!isFinite(d.t2)||!isFinite(d.p2))return;
     T.drawings.push(d);save();select(d.id);render();
   }};

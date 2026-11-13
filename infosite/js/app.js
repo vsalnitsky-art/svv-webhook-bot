@@ -1258,20 +1258,24 @@
   function liqLevelTitles() { if (!IW.series) return; var c = IW.coin || {}; setShl(c.shl); setPoc(c.poc); if (IW.prim && IW.prim._req) IW.prim._req(); }
 
   function renderHead() {
-    var h = $("#iw-head"); if (!h) return;
-    var sym = IW.sel; if (!sym) { h.innerHTML = '<span class="iw-title">—</span>'; return; }
+    var h = $("#iw-head"), lg = $("#iw-legend");
+    if (!h) return;
+    var sym = IW.sel;
+    if (!sym) { h.innerHTML = '<span class="iw-title">—</span>'; if (lg) lg.innerHTML = ""; return; }
     var c = IW.coin || {}, px = livePx(sym);
     h.innerHTML = '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym) + "</span>" +
       '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" + pdBadge(c.pd) + pocBadge(c.poc, c.poc_state) +
       sbrLastBadge("1h", (c.sbr_last || {})["1h"], px) + sbrLastBadge("4h", (c.sbr_last || {})["4h"], px) +
-      (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "") +
-      '<span class="iw-legend"><span title="VOB"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
+      (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "");
+    /* Легенда шарів переїхала в нижній рядок графіка (chart-footer). */
+    if (lg) lg.innerHTML =
+      '<span title="VOB"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
       '<span title="OB"><i style="background:rgba(41,98,255,.2);outline:1px solid rgba(120,160,255,.7)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
       '<span title="CHoCH / BOS"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
       '<span title="IMB"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
       '<span title="SBR"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +
       '<span title="POC"><i style="background:#f5f5f5;height:2px"></i>POC</span>' +
-      '<span title="High/Low"><i style="background:#f87171;height:2px;width:7px"></i><i style="background:#4ade80;height:2px;width:7px;margin-left:-3px"></i>High/Low</span></span>';
+      '<span title="High/Low"><i style="background:#f87171;height:2px;width:7px"></i><i style="background:#4ade80;height:2px;width:7px;margin-left:-3px"></i>High/Low</span>';
   }
 
   function setNote(t) {
@@ -1279,12 +1283,14 @@
     /* Усі повідомлення про процес завантаження — лише у новому вигляді
        лоадера; тексти помилок лишаються текстовими. */
     var s = String(t || "");
-    if (s && /завантаж|очіку|рахуєть|loading|загруз/i.test(s) && !/не вдалося|не завантажилась|помилка|error|fail/i.test(s)) { setLoading(s.toUpperCase()); return; }
+    if (s && /завантаж|очіку|рахуєть|loading|загруз/i.test(s) && !/не вдалося|не завантажилась|помилка|error|fail/i.test(s)) { setLoading(); return; }
     n.textContent = s; n.style.display = s ? "" : "none";
   }
-  function setLoading(t) {
+  function setLoading() {
+    /* Єдиний вигляд процесу завантаження скрізь: лого → LOADING → круг.
+       Жодних додаткових текстів. */
     var n = $("#iw-note"); if (!n) return;
-    n.innerHTML = '<span class="chart-loading"><img src="img/logo-loading.svg" alt="VSV"><b>' + esc(t || "ЗАВАНТАЖЕННЯ") + '</b><span class="boot-spin" aria-hidden="true"></span></span>';
+    n.innerHTML = '<span class="chart-loading"><img src="img/logo-loading.svg" alt="VSV"><b>LOADING</b><span class="boot-spin" aria-hidden="true"></span></span>';
     n.style.display = "";
   }
   function setWait(c) {
@@ -1315,7 +1321,7 @@
     if (o.length) setNote("");
     else {
       var rsn = String(c.reason || "");
-      if (rsn) setLoading(rsn.toUpperCase());
+      if (rsn) setLoading();
       else setNote("немає даних");
     }
     setWait(c);
@@ -1330,7 +1336,7 @@
     if (coinBusy && !force && !keepBars) return;
     coinBusy = true;
     if (force) {
-      setLoading("ЗАВАНТАЖЕННЯ " + sym + " · " + tfLbl(IW.tf));
+      setLoading();
       if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.set([], [], []); setPoc(null); setShl(null); IW.lastT = null; }
       sigCard(null); if (LQ && LQ.on && LQ.sym !== sym) liqOff();
     }
