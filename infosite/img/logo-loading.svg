@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#131a26"/><stop offset="1" stop-color="#080b11"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#f8d573"/><stop offset=".55" stop-color="#f0b90b"/><stop offset="1" stop-color="#c99200"/>
+    </linearGradient>
+    <style>
+      .coin{transform-box:fill-box;transform-origin:center;animation:coinSpin 1.8s cubic-bezier(.4,.05,.6,.95) infinite}
+      .coinface{transform-box:fill-box;transform-origin:center;animation:coinFace 1.8s cubic-bezier(.4,.05,.6,.95) infinite}
+      @keyframes coinSpin{0%{transform:scaleX(1)}25%{transform:scaleX(0)}50%{transform:scaleX(-1)}75%{transform:scaleX(0)}100%{transform:scaleX(1)}}
+      @keyframes coinFace{0%,12%{opacity:1}25%,75%{opacity:0}88%,100%{opacity:1}}
+      .gleam{transform-box:fill-box;transform-origin:center;animation:gleam 1.8s ease-in-out infinite}
+      @keyframes gleam{0%,100%{opacity:.9}25%,75%{opacity:.25}50%{opacity:.6}}
+    </style>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <rect x="1" y="1" width="62" height="62" rx="15" fill="none" stroke="#f0b90b" stroke-opacity=".55"/>
+  <path d="M13 22h9l8 20 8-20h9L35 49h-9L13 22Z" fill="#f0f3fa"/>
+  <g class="coin">
+    <circle cx="32" cy="10.5" r="7.5" fill="url(#gold)"/>
+    <circle cx="32" cy="10.5" r="7.5" fill="none" stroke="#8a6500" stroke-opacity=".6" stroke-width=".8"/>
+    <circle cx="32" cy="10.5" r="5.6" fill="none" stroke="#fff3c4" stroke-opacity=".5" stroke-width=".7"/>
+    <g class="coinface">
+      <path d="M30.1 6.9v1.1h1.4V6.9h1v1.1c1.2.1 2.2.7 2.2 1.9 0 .9-.5 1.5-1.3 1.7.9.2 1.6.8 1.6 1.8 0 1.3-1.1 2-2.4 2v1.2h-1v-1.2h-1.4v1.2h-1v-1.2h-1.6v-1h1.1V9h-1.1v-1h1.6zm2.4 3.6c0-.7-.6-1.1-1.5-1.1h-1.3v2.2h1.3c.9 0 1.5-.4 1.5-1.1zm.3 3.5c0-.8-.7-1.2-1.7-1.2h-1.4v2.4h1.4c1 0 1.7-.4 1.7-1.2z" fill="#3d2c00"/>
+    </g>
+    <ellipse class="gleam" cx="29.4" cy="7.8" rx="2.1" ry="1.2" fill="#ffffff" opacity=".85" transform="rotate(-24 29.4 7.8)"/>
+  </g>
+</svg>

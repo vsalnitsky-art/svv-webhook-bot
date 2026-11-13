@@ -54,6 +54,26 @@
       out='<line class="draw-hit" x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'"/>';
       levels.forEach(function(l){var y=y1+(y2-y1)*l,p=d.p1+(d.p2-d.p1)*l;out+='<line class="fib-line" x1="'+left+'" y1="'+y+'" x2="'+right+'" y2="'+y+'"/><text class="fib-label" x="'+(left+5)+'" y="'+(y-4)+'">'+l.toFixed(3)+' · '+priceFmt(p)+'</text>'});
       out+='<line class="draw-line" x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke-dasharray="3 4"/>'+handle(x1,y1,0)+handle(x2,y2,1);
+    }else if(d.type==="measure"){
+      if(x1==null||x2==null||y2==null)return"";
+      var mx=Math.min(x1,x2),my=Math.min(y1,y2),mw=Math.abs(x2-x1),mh=Math.abs(y2-y1);
+      var chg=d.p2-d.p1,pct=d.p1?(chg/d.p1*100):0,mcls=chg>=0?"up":"dn";
+      var bars=Math.round(Math.abs(x2-x1)/Math.max(1,(ts.options().barSpacing||6)))||0;
+      var mdur="";
+      var sec=Math.abs(Number(d.t2)-Number(d.t1));
+      if(sec>0){var dd=Math.floor(sec/86400),hh=Math.floor(sec%86400/3600),mm2=Math.floor(sec%3600/60);if(dd||hh||mm2)mdur=" · "+(dd?dd+"д ":"")+(hh?hh+"г ":"")+(!dd&&mm2?mm2+"хв":"");mdur=mdur.replace(/[  ]+$/,"")}
+      var df=iw.prec!=null?iw.prec:4;
+      var lbl=(chg>=0?"+":"")+Number(chg).toFixed(df)+" ("+(pct>=0?"+":"")+pct.toFixed(2)+"%) · "+bars+" бар"+mdur;
+      var lblW=Math.max(170,Math.round(lbl.length*6.4)+16);
+      var lblY=my>36?my-10:my+mh+22;
+      var lblX=Math.max(lblW/2+4,Math.min(mx+mw/2,T.svg.clientWidth-lblW/2-4));
+      out='<rect class="draw-rect-hit" x="'+mx+'" y="'+my+'" width="'+Math.max(1,mw)+'" height="'+Math.max(1,mh)+'"/>'+
+        '<rect class="meas-box '+mcls+'" x="'+mx+'" y="'+my+'" width="'+Math.max(1,mw)+'" height="'+Math.max(1,mh)+'"/>'+
+        '<line class="draw-hit" x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'"/>'+
+        '<line class="meas-line" x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'"/>'+
+        '<rect class="meas-lbl" x="'+(lblX-lblW/2)+'" y="'+(lblY-10)+'" width="'+lblW+'" height="22" rx="4"/>'+
+        '<text class="meas-txt '+mcls+'" x="'+lblX+'" y="'+(lblY+4)+'" text-anchor="middle">'+esc(lbl)+'</text>'+
+        handle(x1,y1,0)+handle(x2,y2,1);
     }
     return '<g class="'+cls+'" data-id="'+esc(d.id)+'">'+out+'</g>';
   }
@@ -148,6 +168,14 @@
     document.addEventListener("keydown",function(e){var tag=e.target&&e.target.tagName;if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT")return;if((e.key==="Delete"||e.key==="Backspace")&&T.selected){e.preventDefault();removeSelected();return}if(e.key==="Escape"){closeMenu();if(T.edit){var d=T.drawings.find(function(x){return x.id===T.edit.id});if(d)Object.assign(d,T.edit.original);T.edit=null;save()}if(T.draft)T.draft=null;if(T.tool!=="cursor")activate("cursor");else select(null)}});
     syncIndUI();
   }
+  /* Зовнішній API: лінійка з chart-pro завершує малювання тут —
+     об’єкт стає звичайним персистентним малюнком (виділення, Delete, localStorage). */
+  window.VSV_TOOLS={addMeasure:function(m){
+    var iw=currentIW();if(!iw||!m)return;
+    var d={id:uid(),type:"measure",symbol:iw.sel,t1:Number(m.t1),p1:Number(m.p1),t2:Number(m.t2),p2:Number(m.p2)};
+    if(!isFinite(d.t1)||!isFinite(d.p1)||!isFinite(d.t2)||!isFinite(d.p2))return;
+    T.drawings.push(d);save();select(d.id);render();
+  }};
   function install(){if(!window.VSV_PRO)return;var oldAttach=window.VSV_PRO.attach,oldData=window.VSV_PRO.onData;window.VSV_PRO.attach=function(iw){oldAttach(iw);initDrawings(iw);ensureIndicatorSeries(iw);updateIndicators(iw,iw.coin)};window.VSV_PRO.onData=function(iw,c){oldData(iw,c);updateIndicators(iw,c);render()};bindUI()}
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",install);else install();
 })();

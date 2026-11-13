@@ -477,10 +477,30 @@
   }
 
   function finishMeasure(IW, svg) {
-    PRO.measure.finished = true;
+    /* Перетворюємо готову лінійку на персистентний об’єкт шару малювання:
+       зберігається в localStorage, виділяється кліком, видаляється Delete. */
+    var s = PRO.measure.start, e = PRO.measure.end, saved = false;
+    if (s && e && IW.series && window.VSV_TOOLS && window.VSV_TOOLS.addMeasure) {
+      try {
+        var ts = IW.chart.timeScale();
+        var t1 = ts.coordinateToTime(s.x), t2 = ts.coordinateToTime(e.x);
+        var p1 = IW.series.coordinateToPrice(s.y), p2 = IW.series.coordinateToPrice(e.y);
+        if (t1 != null && p1 != null && t2 != null && p2 != null) {
+          window.VSV_TOOLS.addMeasure({ t1: Number(t1), p1: p1, t2: Number(t2), p2: p2 });
+          saved = true;
+        }
+      } catch (x) { console.error("measure save:", x); }
+    }
     PRO.measure.on = false;
     setMeasureUI(false);
-    drawMeasure(IW, svg);
+    if (saved) {
+      PRO.measure.start = null; PRO.measure.end = null;
+      PRO.measure.finished = false; PRO.measure.dragging = false;
+      svg.style.display = "none"; svg.innerHTML = "";
+    } else {
+      PRO.measure.finished = true;
+      drawMeasure(IW, svg);
+    }
   }
 
   function clearMeasure() {

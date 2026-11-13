@@ -1108,7 +1108,6 @@
       var L = b.side === "LONG", sw = b.fam === "swing";
       out.push({ kind: "ob", thin: true, t: snapSec(b.start, o), top: b.top, bottom: b.bottom, dashed: false,
         fill: L ? "rgba(41,98,255,.16)" : "rgba(190,90,105,.18)", stroke: L ? "rgba(96,140,255,.4)" : "rgba(224,122,138,.45)", text: L ? "#93c5fd" : "#fda4af",
-        centerCol: L ? "rgba(120,160,255,.8)" : "rgba(230,140,155,.8)",
         label: "OB " + tfLbl(c.ob_tf), sub: (sw ? "swing" : "int") + (b.tag ? " · " + b.tag : "") });
     });
     if (IW.show_imb) (c.imb || []).forEach(function (z) {
@@ -1276,6 +1275,11 @@
   }
 
   function setNote(t) { var n = $("#iw-note"); if (n) { n.textContent = t || ""; n.style.display = t ? "" : "none"; } }
+  function setLoading(t) {
+    var n = $("#iw-note"); if (!n) return;
+    n.innerHTML = '<span class="chart-loading"><img src="img/logo-loading.svg" alt="VSV"><b>' + esc(t || "ЗАВАНТАЖЕННЯ") + '</b><span class="boot-spin" aria-hidden="true"></span></span>';
+    n.style.display = "";
+  }
   function setWait(c) {
     var w = $("#iw-tf-wait"); if (!w) return;
     var parts = []; if (c && c.ob_wait) parts.push("OB " + tfLbl(c.ob_tf)); if (c && c.vob_wait) parts.push("VOB " + tfLbl(c.vob_tf));
@@ -1310,7 +1314,7 @@
     if (coinBusy && !force && !keepBars) return;
     coinBusy = true;
     if (force) {
-      setNote("завантаження " + sym + " · " + tfLbl(IW.tf) + "…");
+      setLoading("ЗАВАНТАЖЕННЯ " + sym + " · " + tfLbl(IW.tf));
       if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.set([], [], []); setPoc(null); setShl(null); IW.lastT = null; }
       sigCard(null); if (LQ && LQ.on && LQ.sym !== sym) liqOff();
     }

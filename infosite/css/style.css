@@ -25,7 +25,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,[r
 button:disabled{cursor:not-allowed;opacity:.4}svg{display:block}button svg,a svg,h2 svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .svg-sprite{position:absolute;width:0;height:0;overflow:hidden}.muted{color:var(--muted)!important}.up,.pp-up,.rec-up{color:var(--long)!important}.dn,.pp-dn,.rec-dn{color:var(--short)!important}
 ::selection{background:var(--accent);color:#fff}::-webkit-scrollbar{width:7px;height:7px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--elev-2);border-radius:6px}::-webkit-scrollbar-thumb:hover{background:var(--muted)}
-.boot-loader{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;gap:12px;background:var(--bg);font:700 20px var(--mono);letter-spacing:.18em}.boot-loader span{width:24px;height:24px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}.app-ready .boot-loader{display:none}body:not(.app-ready) .topbar,body:not(.app-ready) .wrap,body:not(.app-ready) .foot{visibility:hidden}@keyframes spin{to{transform:rotate(360deg)}}
+.boot-loader{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;gap:12px;background:var(--bg);font:700 20px var(--mono);letter-spacing:.18em}.app-ready .boot-loader{display:none}body:not(.app-ready) .topbar,body:not(.app-ready) .wrap,body:not(.app-ready) .foot{visibility:hidden}@keyframes spin{to{transform:rotate(360deg)}}
 /* Header */
 .topbar{height:58px;position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:28px;padding:0 18px;background:var(--surface);border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:10px;flex:none}.brand-mark{width:34px;height:34px;display:grid;place-items:center;background:var(--elev);border:1px solid var(--line);border-radius:7px;color:var(--txt);transition:transform .18s ease,border-color .18s ease}.brand:hover .brand-mark{transform:translateY(-1px);border-color:var(--accent)}.brand-mark svg{width:25px;height:25px;fill:currentColor;stroke:none}.brand-copy{display:flex;flex-direction:column;line-height:1}.brand-copy b{font-size:19px;letter-spacing:.08em}.brand-copy small{font:500 8px/1.4 var(--mono);letter-spacing:.13em;color:var(--muted);margin-top:4px}
@@ -114,13 +114,20 @@ button:disabled{cursor:not-allowed;opacity:.4}svg{display:block}button svg,a svg
 /* Boot-екран: логотип «V» з анімацією + LOADING */
 .boot-loader{flex-direction:column;gap:20px}
 .boot-loader .boot-mark{position:relative;width:78px;height:78px;border:0;border-radius:20px;animation:bootPop .55s cubic-bezier(.2,.8,.2,1) both}
-.boot-loader .boot-mark img{width:78px;height:78px;border-radius:20px;display:block;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 35%,transparent),0 14px 42px color-mix(in srgb,var(--accent) 30%,transparent);animation:bootFloat 2.8s ease-in-out .55s infinite}
-.boot-loader .boot-mark:after{content:"";position:absolute;inset:-7px;border-radius:26px;border:1px solid var(--accent);opacity:0;animation:orbitPulse 2.2s ease-out infinite}
+.boot-loader .boot-mark img{width:78px;height:78px;border-radius:20px;display:block;box-shadow:0 0 0 1px rgba(240,185,11,.4),0 14px 42px rgba(240,185,11,.28);animation:bootFloat 2.8s ease-in-out .55s infinite}
+.boot-loader .boot-mark:after{content:"";position:absolute;inset:-7px;border-radius:26px;border:1px solid #f0b90b;opacity:0;animation:orbitPulse 2.2s ease-out infinite}
 .boot-loader b{font:600 12px var(--mono);letter-spacing:.42em;text-indent:.42em;color:var(--txt-dim)}
 .boot-loader b:after{content:"";animation:bootDots 1.2s steps(1) infinite}
+.boot-loader .boot-spin{width:22px;height:22px;border:2px solid var(--line);border-top-color:#f0b90b;border-radius:50%;animation:spin .8s linear infinite}
 @keyframes bootPop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
 @keyframes bootFloat{50%{transform:translateY(-4px)}}
 @keyframes bootDots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+
+/* Завантаження графіка: той самий логотип, що й на boot-екрані */
+.chart-loading{display:flex;flex-direction:column;align-items:center;gap:13px;color:var(--txt-dim)}
+.chart-loading img{width:56px;height:56px;border-radius:15px;display:block;box-shadow:0 0 0 1px rgba(240,185,11,.4),0 10px 30px rgba(240,185,11,.24);animation:bootFloat 2.8s ease-in-out infinite}
+.chart-loading b{font:600 11px var(--mono);letter-spacing:.34em;text-indent:.34em;color:var(--txt-dim)}
+.chart-loading .boot-spin{width:18px;height:18px;border:2px solid var(--line);border-top-color:#f0b90b;border-radius:50%;animation:spin .8s linear infinite}
 
 /* Футер завжди притиснутий до низу сторінки */
 body{display:flex;flex-direction:column}
@@ -340,3 +347,18 @@ body{font-size:15px}
 .pp-tbl td.sym .sym-b{font:700 12.5px var(--mono);color:#f0b90b}
 .pp-tbl td.sym .sym-q{font:500 10px var(--font);color:var(--muted);margin-left:3px}
 .pp-tbl td,#rec-tbl td{white-space:nowrap}
+
+/* v207: двокрапка таймера — у колір рамки цифрових плиток */
+.fl-sep{color:var(--line)}
+.spb-tm.up .fl-sep{color:color-mix(in srgb,var(--long) 35%,var(--line))}
+.spb-tm.dn .fl-sep{color:color-mix(in srgb,var(--short) 35%,var(--line))}
+
+/* v207: лінійка як персистентний об'єкт шару малювання (виділення + Delete) */
+.tv-drawings .meas-box{fill:color-mix(in srgb,var(--long) 12%,transparent);stroke:var(--long);stroke-width:1.2;stroke-dasharray:4 3}
+.tv-drawings .meas-box.dn{fill:color-mix(in srgb,var(--short) 12%,transparent);stroke:var(--short)}
+.tv-drawings .meas-line{stroke:var(--txt-dim);stroke-width:1;stroke-dasharray:3 3;fill:none}
+.tv-drawings .meas-lbl{fill:var(--elev);stroke:var(--line)}
+.tv-drawings .meas-txt{fill:var(--long);font:600 11px var(--mono)}
+.tv-drawings .meas-txt.dn{fill:var(--short)}
+.tv-drawings .drawing.selected .meas-box{stroke:#f7a600;stroke-width:2;stroke-dasharray:none}
+.tv-drawings .drawing.selected .meas-line{stroke:#f7a600}
