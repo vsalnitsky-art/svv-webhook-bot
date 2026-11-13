@@ -1302,7 +1302,16 @@
     if (c.shl && IW.show_shl) ["high", "low"].forEach(function (k) { var v = c.shl[k]; if (v && v.price > 0) lv.push({ price: Number(v.price), title: (v.label || "") + " " + (c.shl.tf || ""), color: k === "high" ? "#f87171" : "#4ade80" }); });
     IW.prim.set(boxesOf(c), st.lines, sbrOf(c), lv); setPoc(c.poc); setShl(c.shl);
     if (fit || IW.chartKey !== key) { setAutoScale(true); IW.chart.timeScale().fitContent(); IW.chartKey = key; }
-    setNote(o.length ? "" : (c.reason || "немає даних")); setWait(c);
+    /* Єдиний вигляд завантаження на графіку: будь-який текстовий варіант
+       (зокрема reason із бекенду на кшталт «завантаження барів 1H»)
+       замінюється на лого-лоадер. */
+    if (o.length) setNote("");
+    else {
+      var rsn = String(c.reason || "");
+      if (rsn) setLoading(rsn.toUpperCase());
+      else setNote("немає даних");
+    }
+    setWait(c);
     
     if (window.VSV_PRO) { try { window.VSV_PRO.onData(IW, c); } catch (err) { console.error("[VSV_PRO]", err); } }
   }
