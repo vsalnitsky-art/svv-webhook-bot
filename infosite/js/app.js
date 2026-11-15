@@ -810,12 +810,14 @@
   }
   function _imbBody(ctx, b, X1, X2, yT, yB, hr, vr, font, dark, wms) {
     var w = X2 - X1, h = yB - yT;
+    /* 15.11 як у TV: обсяг IMB — на ЗАДНЬОМУ плані (під смугами), а не поверх */
+    if (b.kind === "imb") _imbVol(ctx, b, X1, X2, yT, yB, hr, vr, font, dark);
     if (w > 4 * hr && (b.topPct != null || b.botPct != null)) {
       var bh = h / 2;
       _imbBar(ctx, X1, w, yT, bh, b.topPct, b.topCol || IMB_SELL, hr, vr, font, dark, b.kind === "imb");
       _imbBar(ctx, X1, w, yT + bh, bh, b.botPct, b.botCol || IMB_BUY, hr, vr, font, dark, b.kind === "imb");
     }
-    if (b.kind === "imb") { _imbVol(ctx, b, X1, X2, yT, yB, hr, vr, font, dark); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; return; }
+    if (b.kind === "imb") { ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; return; }
     if (b.volTxt && h >= 18 * vr && w > 40 * hr) {
       var wk = b.volTxt + "|" + Math.round(w) + "|" + Math.round(h), fv;
       if (b._wk === wk) { fv = b._fv; ctx.font = font(500, fv); }
@@ -830,7 +832,7 @@
   function _imbVol(ctx, b, X1, X2, yT, yB, hr, vr, font, dark) {
     var w = X2 - X1, h = yB - yT;
     if (!b.volTxt || h < 7 * vr || w < 30 * hr) return;
-    /* 15.11 як у TV: обсяг ТЕМНИЙ, поверх смуг, праворуч, розмір від висоти зони */
+    /* 15.11 як у TV: обсяг ТЕМНИЙ, ПІД смугами (малюється першим), праворуч, розмір від висоти зони */
     var fv = Math.max(7, Math.min(120, h / vr * 0.6));
     ctx.font = font(400, fv);
     while (fv > 7 && ctx.measureText(b.volTxt).width > w * 0.62) { fv -= 1; ctx.font = font(400, fv); }
@@ -1350,6 +1352,89 @@
     w.innerHTML = parts.length ? '<span class="wait">⏳ рахується: ' + esc(parts.join(", ")) + "</span>" : "";
   }
 
+  /* ⚡ 15.11 ЖИВА СВІЧКА як у TradingView: публічний WebSocket Bybit
+     (kline.<iv>.<SYM>) прямо з браузера — ціна рухається щосекунди, сервер
+     бота не навантажується. Мережа/обрив → перепідключення з паузою; полл
+     сервера (раз на 15-30с) лишається запасним шляхом. */
+  var LIVE_WS_URL = "wss://stream.bybit.com/v5/public/linear";
+  var LIVE_IV = { "1m": "1", "3m": "3", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "2h": "120", "4h": "240", "6h": "360", "12h": "720", "1d": "D" };
+  function liveIv(tf) { return LIVE_IV[String(tf || "").toLowerCase()] || null; }
+  function liveBarOf(k) {
+    if (!k) return null;
+    var t = Math.floor(Number(k.start) / 1000), o = Number(k.open), h = Number(k.high), l = Number(k.low), c = Number(k.close);
+    if (!(t > 0) || !(c > 0) || !(h > 0) || !(l > 0)) return null;
+    return { time: t, open: o, high: h, low: l, close: c, confirm: !!k.confirm };
+  }
+  function LiveKline(onBar) { this.onBar = onBar; this.ws = null; this.key = ""; this.retry = 0; this.ping = null; this.rt = null; this.last = 0; }
+  LiveKline.prototype.set = function (sym, tf) {
+    var iv = liveIv(tf), s = String(sym || "").toUpperCase();
+    var key = (iv && /^[A-Z0-9]+USDT$/.test(s)) ? "kline." + iv + "." + s : "";
+    if (key === this.key) return;
+    this.key = key; this.retry = 0; this._close();
+    if (key) this._open();
+  };
+  LiveKline.prototype._close = function () {
+    clearInterval(this.ping); this.ping = null; clearTimeout(this.rt); this.rt = null;
+    if (this.ws) { var w = this.ws; this.ws = null; w.onclose = w.onmessage = w.onerror = null; try { w.close(); } catch (e) {} }
+  };
+  LiveKline.prototype._open = function () {
+    if (typeof WebSocket === "undefined" || !this.key) return;
+    var self = this, key = this.key, ws;
+    try { ws = new WebSocket(LIVE_WS_URL); } catch (e) { return this._later(); }
+    this.ws = ws;
+    ws.onopen = function () {
+      if (self.ws !== ws) return;
+      self.retry = 0;
+      ws.send(JSON.stringify({ op: "subscribe", args: [key] }));
+      self.ping = setInterval(function () { try { ws.send('{"op":"ping"}'); } catch (e) {} }, 20000);
+    };
+    ws.onmessage = function (ev) {
+      if (self.ws !== ws) return;
+      var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!m || m.topic !== key || !m.data) return;
+      self.last = Date.now();
+      for (var i = 0; i < m.data.length; i++) { var b = liveBarOf(m.data[i]); if (b) { try { self.onBar(key, b); } catch (e) { console.error("[live]", e); } } }
+    };
+    ws.onerror = function () {};
+    ws.onclose = function () { if (self.ws === ws) { self.ws = null; clearInterval(self.ping); self.ping = null; self._later(); } };
+  };
+  LiveKline.prototype._later = function () {
+    var self = this; if (!this.key) return;
+    var d = Math.min(30000, 1000 * Math.pow(2, this.retry++));
+    clearTimeout(this.rt); this.rt = setTimeout(function () { self._open(); }, d);
+  };
+  LiveKline.prototype.ok = function () { return !!this.ws && Date.now() - this.last < 15000; };
+
+  function liveKeyOf(sym, tf) { var iv = liveIv(tf); return iv ? "kline." + iv + "." + String(sym || "").toUpperCase() : ""; }
+  /* Свіжий бар потоку поверх даних сервера: той самий бар → ціни з потоку;
+     новіший → дописується (ahead: true — сервер його ще не бачив). */
+  function liveMerge(c) {
+    var b = IW.liveBar, o = c && c.ohlc;
+    if (!b || !o || !o.length || !IW.live || !IW.live.ok() || b.key !== liveKeyOf(c.symbol, c.tf)) return {};
+    var last = o[o.length - 1];
+    if (b.time === last.time) { last.open = b.open; last.high = b.high; last.low = b.low; last.close = b.close; return { same: true }; }
+    if (b.time > last.time) { o.push({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }); return { ahead: true, bar: b }; }
+    return {};
+  }
+  function liveSet(c) {
+    if (!IW.live) IW.live = new LiveKline(onLiveBar);
+    IW.live.set(c && c.symbol, c && c.tf);
+  }
+  var liveUiAt = 0;
+  function onLiveBar(key, b) {
+    var c = IW.coin;
+    if (!IW.series || !c || !c.ohlc || !c.ohlc.length || key !== liveKeyOf(c.symbol, c.tf)) return;
+    var o = c.ohlc, last = o[o.length - 1];
+    if (b.time < last.time) return;
+    b.key = key; IW.liveBar = b;
+    var bar = { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
+    if (b.time === last.time) { last.open = b.open; last.high = b.high; last.low = b.low; last.close = b.close; }
+    else o.push({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close });
+    try { IW.series.update(bar); } catch (e) { return; }
+    var now = Date.now();
+    if (now - liveUiAt >= 1000) { liveUiAt = now; try { renderHead(); renderList(); } catch (e) {} }
+  }
+
   function drawCoin(c, fit) {
     if (!ensureChart()) { setNote("графічна бібліотека не завантажилась"); return; }
     var o = c.ohlc || [], key = c.symbol + "|" + c.tf;
@@ -1362,10 +1447,12 @@
     }
     var ttl = String(c.symbol || "");
     if (IW.seriesTitle !== ttl) { IW.series.applyOptions({ title: ttl }); IW.seriesTitle = ttl; }
-    var j = -1;
-    if (!fit && IW.chartKey === key && IW.lastT != null && o.length) { for (var q = o.length - 1; q >= Math.max(0, o.length - 4); q--) { if (o[q].time === IW.lastT) { j = q; break; } } }
-    if (j >= 0) { for (var u = j; u < o.length; u++) IW.series.update(o[u]); } else IW.series.setData(o);
+    var j = -1, lv0 = liveMerge(c);
+    if (!fit && IW.chartKey === key && IW.lastT != null && o.length && !lv0.ahead) { for (var q = o.length - 1; q >= Math.max(0, o.length - 4); q--) { if (o[q].time === IW.lastT) { j = q; break; } } }
+    try { if (j >= 0) { for (var u = j; u < o.length; u++) IW.series.update(o[u]); } else IW.series.setData(o); } catch (e) { IW.series.setData(o); }
+    if (lv0.ahead) { try { IW.series.update(lv0.bar); } catch (e) {} }
     IW.lastT = o.length ? o[o.length - 1].time : null;
+    liveSet(c);
     var st = structOf(c); IW.series.setMarkers(st.marks);
     var lv = [];
     if (c.poc && c.poc.poc) lv.push({ price: Number(c.poc.poc), title: "POC", color: "#f5f5f5" });
@@ -1396,6 +1483,7 @@
       setLoading();
       if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.set([], [], []); setPoc(null); setShl(null); IW.lastT = null; }
       sigCard(null); if (LQ && LQ.on && LQ.sym !== sym) liqOff();
+      IW.liveBar = null;
     }
     var want = iwKey();
     var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + "&tf=" + IW.tf + "&ob_tf=" + IW.ob_tf + "&vob_tf=" + IW.vob_tf + "&poc_days=" + IW.poc_days + "&poc_tf=" + IW.poc_tf + (IW.sig && !force ? "&sig=" + encodeURIComponent(IW.sig) : "");

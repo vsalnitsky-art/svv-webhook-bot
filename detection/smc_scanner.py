@@ -6917,6 +6917,7 @@ class SMCScanner:
         return {
             'symbol': symbol,
             'interval': self.get_display_label(),
+            'tf': self.get_timeframe(),   # 15.11: TF для живого потоку свічок у браузері
             'ohlc': ohlc,
             # Internal Structure — ALL events, frontend toggles display
             'pivots': fmt_pivots(internal),

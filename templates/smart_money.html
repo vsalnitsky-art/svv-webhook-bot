@@ -9120,6 +9120,82 @@ function focusChartOnEvents(ohlc, events, pivots, signals) {
     });
 }
 
+/* ⚡ ЖИВА СВІЧКА — дзеркало infosite/js/app.js (LiveKline) */
+  /* ⚡ 15.11 ЖИВА СВІЧКА як у TradingView: публічний WebSocket Bybit
+   (kline.<iv>.<SYM>) прямо з браузера — ціна рухається щосекунди, сервер
+   бота не навантажується. Мережа/обрив → перепідключення з паузою; полл
+   сервера (раз на 15-30с) лишається запасним шляхом. */
+var LIVE_WS_URL = "wss://stream.bybit.com/v5/public/linear";
+var LIVE_IV = { "1m": "1", "3m": "3", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "2h": "120", "4h": "240", "6h": "360", "12h": "720", "1d": "D" };
+function liveIv(tf) { return LIVE_IV[String(tf || "").toLowerCase()] || null; }
+function liveBarOf(k) {
+  if (!k) return null;
+  var t = Math.floor(Number(k.start) / 1000), o = Number(k.open), h = Number(k.high), l = Number(k.low), c = Number(k.close);
+  if (!(t > 0) || !(c > 0) || !(h > 0) || !(l > 0)) return null;
+  return { time: t, open: o, high: h, low: l, close: c, confirm: !!k.confirm };
+}
+function LiveKline(onBar) { this.onBar = onBar; this.ws = null; this.key = ""; this.retry = 0; this.ping = null; this.rt = null; this.last = 0; }
+LiveKline.prototype.set = function (sym, tf) {
+  var iv = liveIv(tf), s = String(sym || "").toUpperCase();
+  var key = (iv && /^[A-Z0-9]+USDT$/.test(s)) ? "kline." + iv + "." + s : "";
+  if (key === this.key) return;
+  this.key = key; this.retry = 0; this._close();
+  if (key) this._open();
+};
+LiveKline.prototype._close = function () {
+  clearInterval(this.ping); this.ping = null; clearTimeout(this.rt); this.rt = null;
+  if (this.ws) { var w = this.ws; this.ws = null; w.onclose = w.onmessage = w.onerror = null; try { w.close(); } catch (e) {} }
+};
+LiveKline.prototype._open = function () {
+  if (typeof WebSocket === "undefined" || !this.key) return;
+  var self = this, key = this.key, ws;
+  try { ws = new WebSocket(LIVE_WS_URL); } catch (e) { return this._later(); }
+  this.ws = ws;
+  ws.onopen = function () {
+    if (self.ws !== ws) return;
+    self.retry = 0;
+    ws.send(JSON.stringify({ op: "subscribe", args: [key] }));
+    self.ping = setInterval(function () { try { ws.send('{"op":"ping"}'); } catch (e) {} }, 20000);
+  };
+  ws.onmessage = function (ev) {
+    if (self.ws !== ws) return;
+    var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (!m || m.topic !== key || !m.data) return;
+    self.last = Date.now();
+    for (var i = 0; i < m.data.length; i++) { var b = liveBarOf(m.data[i]); if (b) { try { self.onBar(key, b); } catch (e) { console.error("[live]", e); } } }
+  };
+  ws.onerror = function () {};
+  ws.onclose = function () { if (self.ws === ws) { self.ws = null; clearInterval(self.ping); self.ping = null; self._later(); } };
+};
+LiveKline.prototype._later = function () {
+  var self = this; if (!this.key) return;
+  var d = Math.min(30000, 1000 * Math.pow(2, this.retry++));
+  clearTimeout(this.rt); this.rt = setTimeout(function () { self._open(); }, d);
+};
+LiveKline.prototype.ok = function () { return !!this.ws && Date.now() - this.last < 15000; };
+
+let _smLive = null, _smLiveBar = null, _smLiveCtx = null;
+function _smLiveKey(sym, tf) { const iv = liveIv(tf); return iv ? `kline.${iv}.${String(sym || '').toUpperCase()}` : ''; }
+// Свіжий бар потоку поверх відповіді сервера (той самий бар → ціни потоку; новіший → дописати).
+function _smLiveMerge(ohlc, d) {
+    const b = _smLiveBar;
+    if (!b || !ohlc || !ohlc.length || !_smLive || !_smLive.ok() || b.key !== _smLiveKey(currentSymbol, d && d.tf)) return {};
+    const last = ohlc[ohlc.length - 1];
+    if (b.time === last.time) { Object.assign(last, { open: b.open, high: b.high, low: b.low, close: b.close }); return { same: true }; }
+    if (b.time > last.time) { ohlc.push({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }); return { ahead: true }; }
+    return {};
+}
+function _smOnLiveBar(key, b) {
+    const c = _smLiveCtx;
+    if (!candleSeries || !c || c.symbol !== currentSymbol || key !== _smLiveKey(c.symbol, c.tf) || !c.ohlc.length) return;
+    const last = c.ohlc[c.ohlc.length - 1];
+    if (b.time < last.time) return;
+    b.key = key; _smLiveBar = b;
+    const bar = { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
+    if (b.time === last.time) Object.assign(last, bar); else c.ohlc.push(bar);
+    try { candleSeries.update(bar); } catch (e) {}
+}
+
 async function loadChart() {
     if (!currentSymbol) return;
     
@@ -9177,20 +9253,31 @@ async function loadChart() {
         // === Candles ===
         if (isSymbolChange) {
             // New symbol — full reset and fit
+            _smLiveBar = null;
             candleSeries.setData(ohlc);
             _removeSwingHLLines();   // 🏁 скинути лінії H/L при зміні монети
         } else {
             // Same symbol — incremental update to preserve user's zoom/pan
-            if (ohlc.length > lastOhlcLength) {
-                for (let i = lastOhlcLength; i < ohlc.length; i++) {
-                    candleSeries.update(ohlc[i]);
+            const _lv = _smLiveMerge(ohlc, d);
+            try {
+                if (_lv.ahead) {
+                    candleSeries.setData(ohlc);
+                } else {
+                    if (ohlc.length > lastOhlcLength) {
+                        for (let i = lastOhlcLength; i < ohlc.length; i++) {
+                            candleSeries.update(ohlc[i]);
+                        }
+                    }
+                    if (ohlc.length > 0) {
+                        candleSeries.update(ohlc[ohlc.length - 1]);
+                    }
                 }
-            }
-            if (ohlc.length > 0) {
-                candleSeries.update(ohlc[ohlc.length - 1]);
-            }
+            } catch (_e) { try { candleSeries.setData(ohlc); } catch (__) {} }
         }
         lastOhlcLength = ohlc.length;
+        _smLiveCtx = { symbol: currentSymbol, tf: d.tf || '', ohlc: ohlc };
+        if (!_smLive) _smLive = new LiveKline(_smOnLiveBar);
+        _smLive.set(currentSymbol, d.tf || '');
 
         // 🏁 Strong High / Weak Low — перемалювати лінії з чарт-стану (кожен
         // полінг: рівні можуть оновитись; при вимкненні бекенд шле show_swing_hl=false).

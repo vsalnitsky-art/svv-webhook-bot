@@ -316,6 +316,7 @@
         if (PRO.type === "ha") {
           var ha = toHA(data || []);
           PRO.lastHA = ha.length ? ha[ha.length - 1] : null;
+          PRO.prevHA = ha.length > 1 ? ha[ha.length - 2] : null;
           return origSetData(ha);
         }
         PRO.lastHA = null;
@@ -323,12 +324,17 @@
       };
       IW.series.update = function (bar) {
         if (PRO.type === "ha" && bar) {
-          var prevO = PRO.lastHA && PRO.lastHA.open, prevC = PRO.lastHA && PRO.lastHA.close;
+          /* 15.11: жива свічка оновлює ТОЙ САМИЙ бар щосекунди — база HA
+             лишається попереднім баром, а не поточним (інакше «пливе»). */
+          var same = PRO.lastHA && PRO.lastHA.time === bar.time;
+          var base = same ? PRO.prevHA : PRO.lastHA;
+          var prevO = base && base.open, prevC = base && base.close;
           var c = (bar.open + bar.high + bar.low + bar.close) / 4;
           var o = prevO == null ? (bar.open + bar.close) / 2 : (prevO + prevC) / 2;
           var h = Math.max(bar.high, o, c);
           var l = Math.min(bar.low, o, c);
           var ha = { time: bar.time, open: o, high: h, low: l, close: c };
+          if (!same) PRO.prevHA = PRO.lastHA;
           PRO.lastHA = ha;
           return origUpdate(ha);
         }
