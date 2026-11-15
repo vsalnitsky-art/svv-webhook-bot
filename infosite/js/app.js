@@ -1292,7 +1292,7 @@
     /* Єдиний вигляд процесу завантаження скрізь: лого → LOADING → круг.
        Жодних додаткових текстів. */
     var n = $("#iw-note"); if (!n) return;
-    n.innerHTML = '<span class="chart-loading"><img src="img/logo-loading.svg?v=213" alt="VSV"><b>LOADING</b><span class="boot-spin" aria-hidden="true"></span></span>';
+    n.innerHTML = '<span class="chart-loading"><img src="img/logo-loading.svg?v=214" alt="VSV"><b>LOADING</b><span class="boot-spin" aria-hidden="true"></span></span>';
     n.style.display = "";
   }
   function setWait(c) {

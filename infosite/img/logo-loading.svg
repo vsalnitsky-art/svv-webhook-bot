@@ -7,8 +7,9 @@
       <stop stop-color="#fbb045"/><stop offset=".5" stop-color="#f7931a"/><stop offset="1" stop-color="#d96f0e"/>
     </linearGradient>
     <style>
-      .coin{transform-box:fill-box;transform-origin:center;animation:coinFlip 2.2s cubic-bezier(.45,.05,.55,.95) infinite}
+      .coin{transform-box:fill-box;transform-origin:center;animation:coinFlip 2.2s cubic-bezier(.45,.05,.55,.95) infinite,coinFade 2.2s linear infinite}
       @keyframes coinFlip{0%{transform:scaleX(1)}25%{transform:scaleX(0)}50%{transform:scaleX(-1)}75%{transform:scaleX(0)}100%{transform:scaleX(1)}}
+      @keyframes coinFade{0%,22%{opacity:1}25%{opacity:0}28%,72%{opacity:1}75%{opacity:0}78%,100%{opacity:1}}
       .face-front{animation:faceFront 2.2s linear infinite}
       .face-back{animation:faceBack 2.2s linear infinite}
       @keyframes faceFront{0%,24.9%{opacity:1}25%,74.9%{opacity:0}75%,100%{opacity:1}}
@@ -32,5 +33,4 @@
       </g>
     </g>
   </g>
-  <ellipse cx="28.8" cy="6.6" rx="2.6" ry="1.5" fill="#ffffff" opacity=".5" transform="rotate(-24 28.8 6.6)"/>
 </svg>
