@@ -37,6 +37,12 @@ IWL_DEFAULT = ('BTCUSDT', 'ETHUSDT')
 CHART_TFS = ('15m', '30m', '1h', '4h', '1d')
 OB_TFS = ('15m', '30m', '1h', '4h')
 VOB_TFS = ('5m', '15m', '30m', '1h', '4h')
+# 📈 HH / HL / LH / LL — свінг-структура на графіку кабінету (вимога 15.11):
+# ті самі свінг-півоти `detect_smc_structure` (swing_size сканера), що дають
+# swing-OB і High/Low; TF — свій, деф. вимкнено (новий шар).
+HL_TFS = ('15m', '30m', '1h', '4h', '1d')
+HL_TF_DEFAULT = '1h'
+HL_SHOW = 40                 # скільки останніх півотів малюємо
 OFF = 'off'
 POC_TTL = 300.0              # спільний кеш POC на (монету, вікно, TF)
 # ⚪ POC — СВОЇ параметри кабінету (вимога 08.11: «вибір POC параметрів, за
@@ -241,6 +247,24 @@ def vob_fresh(boxes, ohlc):
     return [v for v in (boxes or []) if not vob_stale(v, ohlc)]
 
 
+def hl_points(pivots, n=HL_SHOW):
+    """ЧИСТА: свінг-півоти → [{t, price, type, dir}] для HH/HL/LH/LL на графіку.
+    Колір за напрямком структури: HH/HL — бичача (bull), LH/LL — ведмежа (bear)."""
+    out = []
+    for p in pivots or []:
+        ty = str(p.get('type') or '').upper()
+        if ty not in ('HH', 'HL', 'LH', 'LL'):
+            continue
+        try:
+            out.append({'t': to_sec(p.get('t')), 'price': float(p['price']), 'type': ty,
+                        'high': ty in ('HH', 'LH'),
+                        'dir': 'bull' if ty in ('HH', 'HL') else 'bear'})
+        except (KeyError, TypeError, ValueError):
+            continue
+    out.sort(key=lambda x: x['t'])
+    return out[-int(n):]
+
+
 def events_of(analysis, n=EVENTS_MAX):
     """CHoCH/BOS внутрішньої структури (як на графіку бота) → лінія від півота
     до бару пробою + мітка. Найновіші `n`."""
@@ -430,7 +454,8 @@ def sig_of(payload):
     last = o[-1] if o else {}
     ev = payload.get('events') or [{}]
     return '|'.join(str(x) for x in (
-        payload.get('tf'), payload.get('ob_tf'), payload.get('vob_tf'),
+        payload.get('tf'), payload.get('ob_tf'), payload.get('vob_tf'), payload.get('hl_tf'),
+        len(payload.get('hl') or []), ((payload.get('hl') or [{}])[-1]).get('t'),
         len(o), last.get('time'), last.get('close'),
         len(payload.get('ob') or []), (payload.get('ob') or [{}])[0].get('start'),
         len(payload.get('vob') or []), (payload.get('vob') or [{}])[0].get('start'),
@@ -690,6 +715,15 @@ def _compute(sc, kind, sym, tf):
                      reverse=True)
             vz = [z for z in (sc._format_vob(o, tf) for o in obs) if z]
         return {'vz': vz}, min(next_close(now, tf), now + VOB_MAX_TTL)
+    if kind == 'hl':
+        # 📈 HH/HL/LH/LL — свінг-півоти на ЗАКРИТИХ барах свого TF (як OB).
+        from detection.smc_structure import detect_smc_structure
+        hk = md.fetch_klines(sym, limit=OB_BARS, interval=tf)
+        pts = []
+        if hk and len(hk) > 60:
+            res = detect_smc_structure(hk[:-1], internal_size=isize, swing_size=ssize)
+            pts = hl_points((res.get('swing') or {}).get('pivots') or [])
+        return {'pts': pts}, next_close(now, tf)
     if kind == 'shl':
         # 🏁 Swing High / Low — ТА САМА функція бота, що лінії Strong/Weak на
         # графіку /smart-money (дилінг-діапазон = єдине джерело з PD-зоною).
@@ -963,7 +997,8 @@ def rows_for(symbols, sc=None):
     return rows
 
 
-def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, poc_tf=None):
+def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, poc_tf=None,
+                 hl_tf=None):
     sc = sc or _scanner()
     sym = norm_symbol(sym)
     if not sc:
@@ -975,14 +1010,16 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
     ob_tf = norm_tf(ob_tf, OB_TFS, dfl['ob_tf'], allow_off=True)
     vob_tf = norm_tf(vob_tf, VOB_TFS, dfl['vob_tf'], allow_off=True)
     poc_days, poc_tf = poc_norm(poc_days, poc_tf)
+    hl_tf = norm_tf(hl_tf, HL_TFS, OFF, allow_off=True)
     in_bot = _in_bot(sc, sym)
-    ck = (sym, tf, ob_tf, vob_tf, poc_days, poc_tf)
+    ck = (sym, tf, ob_tf, vob_tf, poc_days, poc_tf, hl_tf)
     now = time.time()
     with _lock:
         hit = _coin_cache.get(ck)
     if hit and now - hit[0] < COIN_TTL:
         # частини все одно «просимо», інакше кеш потоку їх забуде
-        for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf), ('shl', shl_tf(sc)), ('imb', tf)):
+        for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf), ('shl', shl_tf(sc)), ('imb', tf),
+                     ('hl', hl_tf)):
             if t != OFF and _bot_part(sc, k, sym, t) is None:
                 want((k, sym, t))
         for t in SBR_TFS:
@@ -1001,6 +1038,10 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
     if vob_tf != OFF:
         d, _e = part(sc, 'vob', sym, vob_tf)
         vob, vob_wait = vob_fresh(vob_boxes((d or {}).get('vz')), ohlc), d is None
+    hl, hl_wait = [], False
+    if hl_tf != OFF:
+        d, _e = part(sc, 'hl', sym, hl_tf)
+        hl, hl_wait = list((d or {}).get('pts') or []), d is None
     if ohlc:
         reason = ''
     elif err:
@@ -1023,7 +1064,7 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
                     days=poc_days, tf=poc_tf)
     payload = {
         'ok': bool(ohlc), 'symbol': sym, 'src': 'bot' if in_bot else 'ext', 'reason': reason,
-        'tf': tf, 'ob_tf': ob_tf, 'vob_tf': vob_tf,
+        'tf': tf, 'ob_tf': ob_tf, 'vob_tf': vob_tf, 'hl_tf': hl_tf, 'hl': hl, 'hl_wait': hl_wait,
         'poc_days': poc_days, 'poc_tf': poc_tf,
         'ohlc': ohlc, 'events': events,
         'imb': imb_of((bars or {}).get('kl'), tf, now, sym=sym,
@@ -1034,7 +1075,7 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
         'pd': _pd(sc, sym), 'poc': poc, 'poc_state': _st, 'shl': shl, 'ts': now,
     }
     payload['sig'] = sig_of(payload)
-    if not ohlc or ob_wait or vob_wait:
+    if not ohlc or ob_wait or vob_wait or hl_wait:
         return payload                 # «рахується» не кешуємо
     with _lock:
         _coin_cache[ck] = (now, payload)
@@ -1072,6 +1113,7 @@ def user_info(prefs, uni, dfl=None):
             'tf': norm_tf(info.get('tf'), CHART_TFS, dfl['tf']),
             'ob_tf': norm_tf(info.get('ob_tf'), OB_TFS, dfl['ob_tf'], allow_off=True),
             'vob_tf': norm_tf(info.get('vob_tf'), VOB_TFS, dfl['vob_tf'], allow_off=True),
+            'hl_tf': norm_tf(info.get('hl_tf'), HL_TFS, OFF, allow_off=True),
             # що малювати на графіку (лише показ, рахується завжди)
             'show_imb': bool(info.get('show_imb', True)),
             'show_sbr': bool(info.get('show_sbr', True)),
@@ -1116,6 +1158,8 @@ def apply_change(cur, body, uni):
         out['ob_tf'] = norm_tf(body.get('ob_tf'), OB_TFS, cur.get('ob_tf') or '1h', allow_off=True)
     if 'vob_tf' in body:
         out['vob_tf'] = norm_tf(body.get('vob_tf'), VOB_TFS, cur.get('vob_tf') or '5m', allow_off=True)
+    if 'hl_tf' in body:
+        out['hl_tf'] = norm_tf(body.get('hl_tf'), HL_TFS, cur.get('hl_tf') or OFF, allow_off=True)
     for k in ('show_imb', 'show_sbr', 'show_shl'):
         if k in body:
             out[k] = bool(body.get(k))
@@ -1222,9 +1266,13 @@ PAPER_CLOSED_SHOW = 50          # скільки останніх закрити
 _PAPER_POS_KEYS = ('symbol', 'side', 'entry_price', 'current_price', 'pnl_pct',
                    'pnl_net', 'paper_size', 'opened_at', 'opened_by', 'manual_sl',
                    'manual_tp', 'manual_tp1', 'tp1_done', 'spring_open', 'mmd',
-                   'spring_fire', 'exh_trail', 'exh', 'spring_open_tgt')
+                   'spring_fire', 'exh_trail', 'exh', 'spring_open_tgt',
+                   # 15.11: ті самі поля, що таблиця бота (Side, 📌, 🚨-трейл, SL-TF)
+                   'ob4h', 'ob1h', 'manual_mode', 'manual_sl_tf', 'manual_sl_src',
+                   'sl_breakeven', 'sbr_trail')
 _PAPER_CLOSED_KEYS = ('symbol', 'side', 'entry_price', 'exit_price', 'opened_at',
-                      'closed_at', 'pnl_pct', 'reason', 'opened_by')
+                      'closed_at', 'pnl_pct', 'reason', 'opened_by', 'peak_pnl_pct',
+                      'was_manual')
 _paper_cache = {'at': 0.0, 'data': None, 'sig': None}
 
 
@@ -1278,6 +1326,24 @@ def _paper_snapshot(tm):
             spr = sc.spring_for([p.get('symbol') for p in pos]) or {}
     except Exception:
         spr = {}
+    # 🏷 OB 4H / 1H у полі Side — та сама памʼять сканера, що в таблиці бота.
+    try:
+        sc = _scanner()
+        if sc is not None and hasattr(sc, 'ob_mark_for'):
+            syms = [p.get('symbol') for p in pos]
+            m4 = sc.ob_mark_for(syms) or {}
+            try:
+                m1 = sc.ob_mark_for(syms, tf='1h') or {}
+            except TypeError:
+                m1 = {}
+            for p in pos:
+                S = str(p.get('symbol') or '').upper()
+                if m4.get(S):
+                    p['ob4h'] = m4[S]
+                if m1.get(S):
+                    p['ob1h'] = m1[S]
+    except Exception:
+        pass
     # 🚨 Сигнал угоди (той самий `dec_trade_for`, що колонка 🚨 у боті).
     try:
         from detection.fuel_filter import get_fuel_filter, mmd_trade_key
@@ -1868,7 +1934,7 @@ def register_info_portal(app):
         Додати можна й будь-яку іншу USDT-монету — її порахує фоновий потік."""
         return jsonify({'ok': True, 'symbols': sorted(universe()),
                         'tfs': list(CHART_TFS), 'ob_tfs': list(OB_TFS),
-                        'vob_tfs': list(VOB_TFS), 'poc_days': list(POC_DAYS),
+                        'vob_tfs': list(VOB_TFS), 'hl_tfs': list(HL_TFS), 'poc_days': list(POC_DAYS),
                         'poc_tfs': list(POC_TFS)})
 
     @app.route('/api/info/rows')
@@ -1899,7 +1965,7 @@ def register_info_portal(app):
         a = request.args
         p = coin_payload(a.get('symbol') or '', tf=a.get('tf'), ob_tf=a.get('ob_tf'),
                          vob_tf=a.get('vob_tf'), poc_days=a.get('poc_days'),
-                         poc_tf=a.get('poc_tf'))
+                         poc_tf=a.get('poc_tf'), hl_tf=a.get('hl_tf'))
         if p.get('ok') and a.get('sig') and a.get('sig') == p.get('sig'):
             return jsonify({'ok': True, 'same': True, 'sig': p['sig']})
         return jsonify(p)

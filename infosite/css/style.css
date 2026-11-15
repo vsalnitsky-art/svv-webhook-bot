@@ -390,3 +390,14 @@ body{font-size:15px}
 .iw-sym.mm-short,.iw-title.mm-short{color:var(--short)}
 .iw-sym.mm-long b,.iw-title.mm-long b,.iw-title.mm-long a{background:none;-webkit-text-fill-color:var(--long);color:var(--long);animation:none}
 .iw-sym.mm-short b,.iw-title.mm-short b,.iw-title.mm-short a{background:none;-webkit-text-fill-color:var(--short);color:var(--short);animation:none}
+
+/* 15.11 paper-таблиця як у боті */
+.pp-ob{display:inline-block;font:700 9px var(--mono);padding:0 3px;margin-right:3px;border:1px solid;border-radius:3px;line-height:14px;vertical-align:1px}
+.pp-pnl2{white-space:nowrap;line-height:1.35}
+.pp-roi{font-size:10px;opacity:.8;color:var(--txt-dim)}
+.pp-al-now{border-style:dashed}
+.pp-al.pp-long{color:var(--long)}
+.pp-al.pp-short{color:var(--short)}
+.pp-sltf{font:600 9px var(--mono);color:#7dd3fc}
+.pp-sltf.be{color:#4ade80}
+.pp-pin{margin-right:3px}

@@ -221,14 +221,16 @@
   var CHART_TFS = ["15m", "30m", "1h", "4h", "1d"];
   var OB_TFS = ["15m", "30m", "1h", "4h"];
   var VOB_TFS = ["5m", "15m", "30m", "1h", "4h"];
+  // 📈 HH/HL/LH/LL — свінг-структура на графіку (15.11), свій TF, деф. вимкнено
+  var HL_TFS = ["15m", "30m", "1h", "4h", "1d"];
   var POC_DAYS = [1, 2, 3, 5, 7, 14, 30];
   var POC_TFS = ["15m", "1h", "4h"];
   var IW = { wl: [], sel: "", rows: {}, max: 20, sig: "", coin: null, chart: null, series: null,
              prim: null, pocLine: null, chartKey: "", universe: [],
-             tf: "15m", ob_tf: "1h", vob_tf: "5m", poc_days: 7, poc_tf: "1h", show_imb: true, show_sbr: true, show_shl: true,
+             tf: "15m", ob_tf: "1h", vob_tf: "5m", hl_tf: "off", poc_days: 7, poc_tf: "1h", show_imb: true, show_sbr: true, show_shl: true,
              sbr: {}, tg_linked: true, bellOpen: "" };
   var SBR_TFS = ["1h", "4h"];
-  function iwKey(o) { o = o || IW; return [o.sel, o.tf, o.ob_tf, o.vob_tf, o.poc_days, o.poc_tf].join("|"); }
+  function iwKey(o) { o = o || IW; return [o.sel, o.tf, o.ob_tf, o.vob_tf, o.poc_days, o.poc_tf, o.hl_tf].join("|"); }
   function sbrTfOk(tf) { return SBR_TFS.indexOf(String(tf || "").toLowerCase()) >= 0; }
 
   function tfLbl(tf) {
@@ -400,7 +402,7 @@
 
   var TF_LAST_KEY = "vsv_tf_last";
   function tfLast(k) {
-    var d = k === "ob_tf" ? "1h" : "5m", L = k === "ob_tf" ? OB_TFS : VOB_TFS;
+    var d = k === "vob_tf" ? "5m" : "1h", L = k === "ob_tf" ? OB_TFS : (k === "hl_tf" ? HL_TFS : VOB_TFS);
     try { var v = (JSON.parse(localStorage.getItem(TF_LAST_KEY) || "{}") || {})[k]; if (L.indexOf(v) >= 0) return v; } catch (e) {}
     return d;
   }
@@ -431,19 +433,30 @@
     var lay = $("#iw-layers");
     if (lay) lay.innerHTML =
       '<button type="button" data-layer="show_imb" class="ly-imb ' + (IW.show_imb ? "on" : "") + '" title="IMB">IMB</button>' +
+      hlCtl() +
       (sbrTfOk(IW.tf) ? '<button type="button" data-layer="show_sbr" class="ly-sbr ' + (IW.show_sbr ? "on" : "") + '" title="SBR">SBR</button>' : '<button type="button" disabled class="ly-sbr off" title="SBR — лише на 1H і 4H">SBR</button>') +
       '<button type="button" data-layer="show_shl" class="ly-shl ' + (IW.show_shl ? "on" : "") + '" title="High/Low">High/Low</button>';
     liqUi();
   }
 
+  // 📈 Кнопка HH/HL + вибір TF (поруч з IMB). Вимкнено = hl_tf "off" (сервер не рахує).
+  function hlCtl() {
+    var on = IW.hl_tf !== "off", cur = on ? IW.hl_tf : tfLast("hl_tf");
+    return '<span class="iw-sel s-hl"><button type="button" id="iw-hl-on" class="iw-tgl ly-hl' + (on ? " on" : "") + '" data-tgl="hl_tf" aria-pressed="' + (on ? "true" : "false") +
+      '" title="HH · HL · LH · LL — свінг-структура (зелений — бичача, червоний — ведмежа)">HH/HL</button>' +
+      '<select id="iw-hl-tf" title="Таймфрейм HH/HL" aria-label="Таймфрейм HH/HL"' + (on ? "" : " disabled") + ">" +
+      HL_TFS.map(function (tf) { return '<option value="' + tf + '"' + (tf === cur ? " selected" : "") + ">" + tfLbl(tf) + "</option>"; }).join("") + "</select></span>";
+  }
+
   function applyMine(d) {
     if (!d) return;
     IW.wl = d.wl || []; IW.max = d.max || IW.max;
-    var changed = iwKey({ sel: d.sel, tf: d.tf || IW.tf, ob_tf: d.ob_tf || IW.ob_tf, vob_tf: d.vob_tf || IW.vob_tf, poc_days: d.poc_days || IW.poc_days, poc_tf: d.poc_tf || IW.poc_tf }) !== iwKey();
+    var changed = iwKey({ sel: d.sel, tf: d.tf || IW.tf, ob_tf: d.ob_tf || IW.ob_tf, vob_tf: d.vob_tf || IW.vob_tf, poc_days: d.poc_days || IW.poc_days, poc_tf: d.poc_tf || IW.poc_tf, hl_tf: d.hl_tf || IW.hl_tf }) !== iwKey();
     IW.sel = d.sel || "";
     if (d.tf) IW.tf = d.tf;
     if (d.ob_tf) IW.ob_tf = d.ob_tf;
     if (d.vob_tf) IW.vob_tf = d.vob_tf;
+    if (d.hl_tf) IW.hl_tf = d.hl_tf;
     if (d.poc_days) IW.poc_days = Number(d.poc_days);
     if (d.poc_tf) IW.poc_tf = d.poc_tf;
     if (typeof d.show_imb === "boolean") IW.show_imb = d.show_imb;
@@ -545,10 +558,10 @@
 
   document.addEventListener("change", function (e) {
     var id = e.target && e.target.id;
-    var MAP = { "iw-ob-tf": "ob_tf", "iw-vob-tf": "vob_tf", "iw-poc-days": "poc_days", "iw-poc-tf": "poc_tf" };
+    var MAP = { "iw-ob-tf": "ob_tf", "iw-vob-tf": "vob_tf", "iw-hl-tf": "hl_tf", "iw-poc-days": "poc_days", "iw-poc-tf": "poc_tf" };
     var k = MAP[id]; if (!k) return;
     IW[k] = k === "poc_days" ? Number(e.target.value) : e.target.value; IW.sig = "";
-    if (k === "ob_tf" || k === "vob_tf") tfLastSet(k, e.target.value);
+    if (k === "ob_tf" || k === "vob_tf" || k === "hl_tf") tfLastSet(k, e.target.value);
     loadCoin(false, true); var b = {}; b[k] = e.target.value; saveMine(b);
   });
 
@@ -1284,6 +1297,14 @@
       var bull = e.dir === "bull", col = bull ? "#22c55e" : "#ef4444", t2 = snapSec(e.to, o);
       lines.push({ t1: snapSec(e.from, o), t2: t2, price: e.level, color: col, dashed: e.tag !== "BOS", text: e.tag, up: bull });
     });
+    // 📈 HH/HL/LH/LL: мітка над (high) / під (low) свічкою півота, колір —
+    // напрямок структури. Півот іншого TF прив'язується до свічки графіка.
+    (c.hl || []).forEach(function (h) {
+      if (!h.t || h.t < first) return;
+      var bull = h.dir === "bull";
+      marks.push({ time: snapSec(h.t, o), position: h.high ? "aboveBar" : "belowBar", color: bull ? "#22c55e" : "#ef4444",
+                   shape: "circle", size: 0.1, text: h.type });
+    });
     marks.sort(function (a, b) { return a.time - b.time; });
     return { lines: lines, marks: marks };
   }
@@ -1348,7 +1369,7 @@
   }
   function setWait(c) {
     var w = $("#iw-tf-wait"); if (!w) return;
-    var parts = []; if (c && c.ob_wait) parts.push("OB " + tfLbl(c.ob_tf)); if (c && c.vob_wait) parts.push("VOB " + tfLbl(c.vob_tf));
+    var parts = []; if (c && c.ob_wait) parts.push("OB " + tfLbl(c.ob_tf)); if (c && c.vob_wait) parts.push("VOB " + tfLbl(c.vob_tf)); if (c && c.hl_wait) parts.push("HH/HL " + tfLbl(c.hl_tf));
     w.innerHTML = parts.length ? '<span class="wait">⏳ рахується: ' + esc(parts.join(", ")) + "</span>" : "";
   }
 
@@ -1486,12 +1507,12 @@
       IW.liveBar = null;
     }
     var want = iwKey();
-    var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + "&tf=" + IW.tf + "&ob_tf=" + IW.ob_tf + "&vob_tf=" + IW.vob_tf + "&poc_days=" + IW.poc_days + "&poc_tf=" + IW.poc_tf + (IW.sig && !force ? "&sig=" + encodeURIComponent(IW.sig) : "");
+    var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + "&tf=" + IW.tf + "&ob_tf=" + IW.ob_tf + "&vob_tf=" + IW.vob_tf + "&poc_days=" + IW.poc_days + "&poc_tf=" + IW.poc_tf + "&hl_tf=" + IW.hl_tf + (IW.sig && !force ? "&sig=" + encodeURIComponent(IW.sig) : "");
     api(q).then(function (c) {
       if (want !== iwKey() || c.same) return;
       IW.coin = c; IW.sig = c.sig || "";
       renderHead(); renderList(); drawCoin(c, force);
-      if (!c.ok || c.ob_wait || c.vob_wait) setTimeout(function () { if (want === iwKey()) loadCoin(false, true); }, 4000);
+      if (!c.ok || c.ob_wait || c.vob_wait || c.hl_wait) setTimeout(function () { if (want === iwKey()) loadCoin(false, true); }, 4000);
     }).catch(function () { setNote("не вдалося завантажити графік"); })
       .then(function () { coinBusy = false; });
   }
@@ -1664,30 +1685,78 @@
   }
   function ppLvl(v, done) { return !v ? '<span class="muted">—</span>' : fmtPrice(v).replace("$", "") + (done ? ' <span class="pp-up">✓</span>' : ""); }
   function ppPnlCols(pc, usd) { return '<span class="pp-pnl"><span class="pp-pnl-p">' + ppPct(pc) + "</span>" + (usd != null ? '<span class="pp-pnl-s">·</span><span class="pp-pnl-u"><b class="pp-usd ' + (Number(usd) >= 0 ? "up" : "dn") + '">' + ppUsd(usd) + "</b></span>" : "") + "</span>"; }
+  // 15.11 — поля paper-таблиці ЯК У БОТІ: PnL у два рядки (рух % · нетто $ ·
+  // ROI ×плече), OB 4H/1H у полі «Бік», 🚨 завжди з реальним станом SBR.
+  function ppPnlCell(p) {
+    var pc = Number(p.pnl_pct || 0), n = p.pnl_net, z = p.paper_size || {};
+    if (!n) return '<td class="r ' + ppCls(pc) + '">' + ppPct(pc) + "</td>";
+    var roi = n.roi_pct != null ? "ROI " + (n.roi_pct >= 0 ? "+" : "−") + Math.abs(Number(n.roi_pct)).toFixed(1) + "%" : "";
+    var tip = "Рух ціни " + (pc >= 0 ? "+" : "−") + Math.abs(pc).toFixed(2) + "% · маржа $" + Number(z.margin || 0).toFixed(2) + " × " + (z.lev || "?") + "x · комісії −$" + Number(n.fees_usd || 0).toFixed(2) + " (вхід + вихід)";
+    return '<td class="r pp-pnl2 ' + ppCls(n.net_usd) + '" title="' + esc(tip) + '"><b>' + ppPct(pc) + "</b><br>" +
+      '<b class="pp-usd ' + (Number(n.net_usd) >= 0 ? "up" : "dn") + '">' + ppUsd(n.net_usd) + "</b>" +
+      (roi ? ' <span class="pp-roi">' + roi + (z.lev ? " ×" + z.lev : "") + "</span>" : "") + "</td>";
+  }
+  function ppObMark(p, tf) {
+    var o = p["ob" + tf], L = tf.toUpperCase();
+    if (!o) return "";
+    if (!o.bias) return '<span class="pp-ob" style="color:#6b7280;border-color:#4b5563" title="OB ' + L + ': живого блоку немає">' + L + " —</span>";
+    var bull = o.bias === "BULLISH", col = bull ? "#22c55e" : "#ef4444", agree = (bull && p.side === "LONG") || (!bull && p.side === "SHORT");
+    var tip = "Останній OB " + L + ": " + (bull ? "BULLISH (LONG)" : "BEARISH (SHORT)") + (o.tag ? " · " + o.tag : "") + (o.bar_time ? " · свічка " + locDM(o.bar_time) + " " + locHM(o.bar_time) : "") + (agree ? " — ЗА угодою" : " — ПРОТИ угоди") + (o.restored ? " · ↻ з минулого запуску" : "");
+    return '<span class="pp-ob" style="color:' + col + ";border-color:" + (agree ? col : "#fbbf24") + (o.restored ? ";opacity:.5" : "") + '" title="' + esc(tip) + '">' + L + (bull ? "▲" : "▼") + "</span>";
+  }
+  function ppAlertCell(p) {
+    var t = p.sbr_trail;
+    if (t && t.armed_px) {
+      var armed = Number(t.armed_px), cur = Number(p.current_price) || armed, stop = Number(t.stop_px) || armed;
+      var dist = armed > 0 ? (cur - armed) / armed * 100 * (p.side === "SHORT" ? -1 : 1) : 0;
+      return '<td class="nw"><span class="pp-al pre" title="🔔⏳ протилежний сигнал SBR — угоду ведемо трейлом · стоп ' + esc(fmtPrice(stop)) + '">🔔⏳ ' + esc(t.tf || "") + " 🛡" + fmtPrice(stop).replace("$", "") + ' <b class="' + ppCls(dist) + '">' + (dist >= 0 ? "+" : "−") + Math.abs(dist).toFixed(2) + "%</b></span></td>";
+    }
+    var m = p.mmd, a = m && m.alert;
+    if (!a) return '<td class="nw"><span class="muted" title="Даних 🔔 МММ-SBR по монеті ще немає">—</span></td>';
+    var al = PP_ALERT[a.level];
+    if (al) return '<td class="nw"><span class="pp-al ' + al[1] + '" title="' + esc(a.text || "") + '">' + al[0] + (a.level === "against" && a.tf ? " " + esc(a.tf) : "") + "</span></td>";
+    if (a.level === "pre" && a.side) {
+      return '<td class="nw"><span class="pp-al pp-al-now ' + (a.side === "LONG" ? "pp-long" : "pp-short") + '" title="' + esc(a.text || "") + '">🔔 ' + (a.side === "LONG" ? "▲ LONG" : "▼ SHORT") + (a.tf ? " " + esc(a.tf) : "") + "</span></td>";
+    }
+    return '<td class="nw"><span class="pp-al pp-al-now muted" title="' + esc(a.text || "сигналу SBR по монеті немає") + '">🔔 без сигналу</span></td>';
+  }
+  function ppSlCell(p) {
+    var v = p.manual_sl; if (!v) return '<td class="r"><span class="muted">—</span></td>';
+    var tag = p.sl_breakeven ? ' <span class="pp-sltf be" title="Стоп у беззбитку">⚖️БЗ</span>'
+      : (p.manual_sl_src === "auto" && p.manual_sl_tf ? ' <span class="pp-sltf" title="SL виставив бот із ' + esc(p.manual_sl_tf) + '">' + esc(p.manual_sl_tf) + "</span>" : "");
+    return '<td class="r">' + fmtPrice(v).replace("$", "") + tag + "</td>";
+  }
+  function ppPeak(c) {
+    var pk = c.peak_pnl_pct != null ? Number(c.peak_pnl_pct) : null;
+    if (pk == null || !isFinite(pk)) return '<td class="r"><span class="muted">—</span></td>';
+    var fin = c.pnl_pct != null ? Number(c.pnl_pct) : null;
+    if (fin != null && fin > pk) pk = fin;
+    var tip = "Пік угоди: найкращий рух ціни від входу" + (fin != null ? " · віддано від піку " + Math.max(0, pk - fin).toFixed(2) + " п.п." : "");
+    return '<td class="r ' + ppCls(pk) + '" title="' + esc(tip) + '">' + ppPct(pk) + "</td>";
+  }
+  var PP_PIN = '<span class="pp-pin" title="Ручне керування (Manual mode)">📌</span>';
   function ppRenderOpen(d) {
     var rows = d.positions || [], tb = $("#pp-open tbody"); $("#pp-open-n").textContent = rows.length;
     if (!rows.length) { tb.innerHTML = '<tr><td colspan="11" class="muted">Відкритих угод немає</td></tr>'; return; }
     tb.innerHTML = rows.map(function (p) {
-      var pc = Number(p.pnl_pct || 0), n = p.pnl_net, z = p.paper_size || {}, cl = (n ? n.net_usd : pc) >= 0 ? "pp-up" : "pp-dn";
-      var a = p.mmd && p.mmd.alert, al = a && PP_ALERT[a.level];
-      return "<tr><td class=\"sym\">" + tvSym(p.symbol) + '</td><td class="' + (p.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(p.side) + "</td>" +
+      return "<tr><td class=\"sym\">" + (p.manual_mode ? PP_PIN : "") + signalIconHtml(p.opened_by) + tvSym(p.symbol) + '</td><td class="nw ' + (p.side === "LONG" ? "pp-long" : "pp-short") + '">' + ppObMark(p, "4h") + ppObMark(p, "1h") + esc(p.side) + "</td>" +
         '<td class="r">' + fmtPrice(p.entry_price) + '</td><td class="r">' + fmtPrice(p.current_price) + "</td>" +
-        '<td class="r ' + cl + '">' + ppPnlCols(pc, n ? n.net_usd : null) + "</td>" + "<td>" + ppExh(p) + "</td>" +
-        '<td class="nw">' + (al ? '<span class="pp-al ' + al[1] + '">' + al[0] + (a.level === "against" && a.tf ? " " + esc(a.tf) : "") + "</span>" : '<span class="muted">—</span>') + "</td>" +
-        '<td class="r">' + ppLvl(p.manual_sl) + '</td><td class="r">' + ppLvl(p.manual_tp1, p.tp1_done) + '</td><td class="r">' + ppLvl(p.manual_tp) + "</td>" +
+        ppPnlCell(p) + "<td>" + ppExh(p) + "</td>" + ppAlertCell(p) +
+        ppSlCell(p) + '<td class="r">' + ppLvl(p.manual_tp1, p.tp1_done) + '</td><td class="r">' + ppLvl(p.manual_tp) + "</td>" +
         '<td class="r pp-timer" data-since="' + Math.floor(p.opened_at || 0) + '">' + (p.opened_at ? ppTimer(p.opened_at) : "—") + "</td></tr>";
     }).join("");
   }
   var PP_REASON = { manual: "✋ вручну", stop_loss: "🛡 Stop Loss", take_profit: "🎯 Take Profit", manual_sl: "🛡 Manual SL", manual_tp: "🎯 Manual TP-2", pilot_target: "🎯 автопілот", breakeven: "🟰 беззбиток", sbr_exit: "🔔 протилежний SBR", sbr_trail_exit: "🔔⏳ трейл SBR", opposite_ob_exit: "🧱 протилежний OB", mm_flat_exit: "🧮 МММ ⚖", mm_against_exit: "🧮 МММ проти" };
   function ppRenderClosed(d) {
     var rows = d.closed || [], tb = $("#pp-closed tbody"); $("#pp-closed-n").textContent = rows.length;
-    if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">Закритих угод немає</td></tr>'; return; }
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">Закритих угод немає</td></tr>'; return; }
     tb.innerHTML = rows.map(function (c) {
       var pc = Number(c.pnl_pct || 0), t = new Date((c.closed_at || 0) * 1000), p2 = function (n) { return String(n).padStart(2, "0"); };
       return "<tr><td><span class=\"dt-d\">" + p2(t.getDate()) + "." + p2(t.getMonth() + 1) + "</span> <span class=\"dt-t\">" + p2(t.getHours()) + ":" + p2(t.getMinutes()) + "</span></td>" +
-        '<td class="sym">' + tvSym(c.symbol) + '</td><td class="' + (c.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(c.side) + "</td>" +
+        '<td class="sym">' + (c.was_manual ? PP_PIN : "") + signalIconHtml(c.opened_by) + tvSym(c.symbol) + '</td><td class="' + (c.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(c.side) + "</td>" +
         '<td class="r">' + fmtPrice(c.entry_price) + '</td><td class="r">' + fmtPrice(c.exit_price) + "</td>" +
         '<td class="r ' + ppCls(c.net_usd != null ? c.net_usd : pc) + '">' + ppPnlCols(pc, c.net_usd) + "</td>" +
+        ppPeak(c) +
         '<td style="font-family:var(--font)">' + esc(PP_REASON[c.reason] || c.reason || "—") + "</td></tr>";
     }).join("");
   }

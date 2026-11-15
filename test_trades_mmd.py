@@ -191,7 +191,7 @@ console.log(springTradeCellHTML({side:'LONG', spring_open:30, spring:{charge:70,
 console.log('|');
 console.log(mmdAlertCellHTML({mmd:m}));
 console.log('|');
-console.log(mmdAlertCellHTML({mmd:{alert:{level:'pre', tf:'4H', text:'до входу'}}}));
+console.log(mmdAlertCellHTML({mmd:{alert:{level:'pre', side:'SHORT', tf:'4H', text:'до входу'}}}) + mmdAlertCellHTML({mmd:{alert:{level:'none', text:'немає'}}}));
 console.log('|');
 console.log(mmdAlertCellHTML({}) + springTradeCellHTML({}));
 console.log('|');
@@ -203,12 +203,13 @@ console.log(mmdAlertCellHTML({side:'LONG', current_price:102, mmd:m,
     _check('>30<' in p[0] and '>70<' in p[0] and '+40' in p[0] and 'linear-gradient' in p[0]
            and 'width:70%' in p[0] and 'left:calc(30%' in p[0], p[0])
     _check('ПРОТИ 1H+4H' in p[1] and 'tm-mmd-alert-hot' in p[1] and '#dc2626' in p[1], p[1])
-    # 11.11: «⚑ ДО ВХОДУ» прибрано — рівень pre показується як «—»
-    _check('ДО ВХОДУ' not in p[2] and '>—<' in p[2], p[2])
+    # 11.11: «⚑ ДО ВХОДУ» прибрано; 15.11: замість «—» — реальний стан SBR
+    _check('ДО ВХОДУ' not in p[2] and '>—<' not in p[2] and '▼ SHORT 4H' in p[2]
+           and '🔔 без сигналу' in p[2], p[2])
     _check(p[3].count('>—<') == 2, 'немає даних → «—» в обох комірках')
     _check('🔔⏳ 1H' in p[4] and '🛡101' in p[4] and '+2.00%' in p[4] and '🌀' in p[4]
            and 'ПРОТИ' not in p[4].split('title=')[0], p[4])
-    print('✓ JS: 🌀 заряд (вхід → зараз, градієнт) + 🚨 ПРОТИ / (pre → —) / 🔔⏳ трейл')
+    print('✓ JS: 🌀 заряд (вхід → зараз, градієнт) + 🚨 ПРОТИ / (pre → бік SBR · none → без сигналу) / 🔔⏳ трейл')
 
 
 def test_blink_css_exists():

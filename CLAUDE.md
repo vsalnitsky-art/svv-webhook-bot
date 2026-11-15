@@ -8762,3 +8762,31 @@ config,demo,ui}.js` · `js/vendor/lightweight-charts.js` (4.1.3, локальн�
     попереднього (`PRO.prevHA`), інакше свічка «пливла».
   - ⚠️ Структура/OB/VOB/IMB і далі оновлюються з полла сервера.
 Тест: `test_live_kline.py` (5).
+
+## 📈 HH/HL/LH/LL У КАБІНЕТІ · 📈 «ПІК» У ЗАКРИТИХ · 🧪 PAPER ІНФОСАЙТУ = БОТ (15.11)
+Дослівно: «нанесення на графік HH HL LL LH відповідного кольору напрямку із
+вибором рідних таймфреймів, кнопку поруч із IMB» · «до таблиць закритих угод
+поле Пік у відсотках» · «PnL показуй так само як і в боті, в Side 1H 4H, у 🚨
+замість прочерку — реальні на даний момент дані».
+- **HH/HL/LH/LL:** частина `('hl', sym, tf)` фонового потоку — свінг-півоти
+  `detect_smc_structure` (swing_size сканера) на ЗАКРИТИХ барах свого TF
+  (`OB_BARS`), кеш до закриття бару; ЧИСТА `hl_points` → {t, price, type, high,
+  dir}, ≤`HL_SHOW`=40. TF — `HL_TFS` 15m…1d, pref `hl_tf` (деф. **off**),
+  `coin_payload(hl_tf=)` → `hl`/`hl_wait`, у ключі кешу й `sig_of`. Фронт:
+  `hlCtl()` (кнопка `#iw-hl-on` data-tgl + `#iw-hl-tf`) одразу за IMB у
+  `#iw-layers`; мітки — маркери серії (`structOf`): high над / low під свічкою,
+  HH/HL зелений, LH/LL червоний, півот іншого TF → `snapSec`.
+- **📈 Пік** (бот: real + paper + архів БД; інфосайт: закриті paper) =
+  `peak_pnl_pct` запису закриття (MFE, % руху ціни), не менший за фінальний
+  результат; у підказці «віддано від піку». Бот `closedPeakPct`/`peakCellHTML`,
+  інфосайт `ppPeak`; архів БД піку не має → «—». colspan закритих 8 → 9.
+- **🚨 замість «—»** (бот `mmdAlertCellHTML` + інфосайт `ppAlertCell`): `pre` →
+  «🔔 ▲/▼ БІК TF» (пунктир, без слова «ДО ВХОДУ»), `none` → «🔔 без сигналу»;
+  «—» лише коли даних SBR по монеті немає. Інфосайт показує й трейл 🔔⏳.
+- **Інфосайт paper = бот:** PnL у два рядки `ppPnlCell` (рух % · нетто $ · ROI
+  ×плече), Side з `ppObMark` 4H/1H (те саме `ob_mark_for`, що бот), 📌 і
+  іконка сигналу біля монети, TF-тег / ⚖️БЗ біля Manual SL. `_PAPER_POS_KEYS`
+  += ob4h/ob1h/manual_mode/manual_sl_tf/manual_sl_src/sl_breakeven/sbr_trail;
+  `_PAPER_CLOSED_KEYS` += peak_pnl_pct/was_manual. Ассети `app.js?v=223`,
+  `style.css?v=215`.
+Тести: `test_hl_peak_paper.py` (6), `test_trades_mmd.py` (замок 🚨 переписано).

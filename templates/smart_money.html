@@ -5673,10 +5673,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         onclick="clearTMClosed()">🗑 Clear All</button></h3>
             <div id="tmclosed-body"><div class="tm-vhscroll"><table class="tm-table" id="tm-closed-table">
                 <thead>
-                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th><th></th></tr>
+                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th title="Пік — найкращий результат угоди, % руху ціни від входу (MFE)">Пік</th><th>Reason</th><th></th></tr>
                 </thead>
                 <tbody id="tm-closed-tbody">
-                    <tr><td colspan="8" class="tm-empty-msg">No closed trades yet</td></tr>
+                    <tr><td colspan="9" class="tm-empty-msg">No closed trades yet</td></tr>
                 </tbody>
             </table></div></div>
             
@@ -5799,10 +5799,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         onclick="clearTMShadowClosed()">🗑 Clear All</button></h3>
             <div id="tmpclosed-body"><div class="tm-vhscroll"><table class="tm-table" id="tm-shadow-closed-table">
                 <thead>
-                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th>Reason</th><th></th></tr>
+                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th title="Пік — найкращий результат угоди, % руху ціни від входу (MFE)">Пік</th><th>Reason</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-closed-tbody">
-                    <tr><td colspan="8" class="tm-empty-msg">No paper closes yet</td></tr>
+                    <tr><td colspan="9" class="tm-empty-msg">No paper closes yet</td></tr>
                 </tbody>
             </table></div></div>
             
@@ -12330,6 +12330,25 @@ function realPnlCellHTML(p, usd, syncMark) {
 // 🏦 PnL ЗАКРИТОЇ реальної угоди: ⇄ = факт біржі (Bybit closed-pnl, уже з
 // комісіями й фандингом); ⏳ = біржа ще не віддала запис, показано
 // розрахунок бота (дотягується фоново). Розклад біржі — у підказці.
+// 📈 ПІК закритої угоди (15.11) — найкращий результат, % руху ціни від входу
+// (MFE, `peak_pnl_pct` запису закриття). Не менший за фінальний результат;
+// у підказці — скільки віддано від піку. Немає даних (архів БД) → «—».
+function closedPeakPct(c) {
+    const pk = (c && c.peak_pnl_pct != null) ? Number(c.peak_pnl_pct) : null;
+    if (pk == null || !isFinite(pk)) return null;
+    const mv = (c.pnl_pct != null) ? Number(c.pnl_pct) : null;
+    return (mv != null && isFinite(mv) && mv > pk) ? mv : pk;
+}
+function peakCellHTML(c) {
+    const pk = closedPeakPct(c);
+    if (pk == null) return '<td style="color:#64748b">—</td>';
+    const fin = (c.pnl_pct != null) ? Number(c.pnl_pct) : null;
+    const gave = (fin != null && isFinite(fin)) ? Math.max(0, pk - fin) : null;
+    const col = pk > 0 ? '#20b26c' : (pk < 0 ? '#ef454a' : '#94a3b8');
+    const tip = `Пік угоди: ${pk >= 0 ? '+' : ''}${pk.toFixed(2)}% (найкращий рух ціни від входу)`
+        + (gave != null ? ` · віддано від піку ${gave.toFixed(2)} п.п.` : '');
+    return `<td class="tm-pnl-cell" style="color:${col};font-family:monospace" title="${tip}">${pk >= 0 ? '+' : ''}${pk.toFixed(2)}%</td>`;
+}
 function closedRealPnlCellHTML(c) {
     const cls = (c.pnl_usd || 0) >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
     const sg = v => (v >= 0 ? '+' : '−');
@@ -18744,9 +18763,18 @@ function mmdAlertCellHTML(p) {
     const _tr = sbrTrailBadgeHTML(p);
     if (_tr) return _tr;
     const a = p && p.mmd && p.mmd.alert;
-    if (!a || !_MMD_ALERT[a.level]) {
-        const why = a && a.text ? a.text : 'немає даних 🔔 МММ-SBR';
-        return `<td style="white-space:nowrap"><span style="color:#6b7280" title="Сигналу немає — ${why}">—</span></td>`;
+    if (!a) {
+        return `<td style="white-space:nowrap"><span style="color:#6b7280" title="Даних 🔔 МММ-SBR по монеті ще немає">—</span></td>`;
+    }
+    if (!_MMD_ALERT[a.level]) {
+        // 15.11: замість прочерку — поточний стан SBR (без «⚑ ДО ВХОДУ»):
+        // pre → бік і TF останнього сигналу; none → «без сигналу».
+        const _b = 'display:inline-block;min-width:58px;text-align:center;padding:1px 5px;border-radius:4px;font-family:monospace;font-size:0.68rem;font-weight:600;border:1px dashed;white-space:nowrap';
+        if (a.level === 'pre' && a.side) {
+            const c = a.side === 'LONG' ? '#4ade80' : '#f87171';
+            return `<td style="white-space:nowrap"><span title="🚨 ${(a.text || '').replace(/"/g, '&quot;')}" style="${_b};color:${c};border-color:${c}66">🔔 ${a.side === 'LONG' ? '▲' : '▼'} ${a.side}${a.tf ? ' ' + a.tf : ''}</span></td>`;
+        }
+        return `<td style="white-space:nowrap"><span title="${(a.text || 'сигналу 🔔 МММ-SBR по монеті немає').replace(/"/g, '&quot;')}" style="${_b};color:#94a3b8;border-color:#64748b66">🔔 без сигналу</span></td>`;
     }
     const st = _MMD_ALERT[a.level];
     const tf = (a.level === 'against' && a.tf) ? ` ${a.tf}` : '';
@@ -19642,7 +19670,7 @@ async function loadTMState(isPoll) {
         if (window._tmArchiveMode && window._tmArchiveMode.closed) {
             // Таблиця показує повний архів із БД — жива стрічка її не чіпає.
         } else if (closed.length === 0) {
-            closedTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No closed trades yet</td></tr>';
+            closedTbody.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">No closed trades yet</td></tr>';
             window._tmClosedSig = _cSig;
         } else if (window._tmClosedSig !== _cSig) {
             window._tmClosedSig = _cSig;
@@ -19661,6 +19689,7 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
                     ${closedRealPnlCellHTML(c)}
+                    ${peakCellHTML(c)}
                     ${reasonCellHTML(c)}
                     <td><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMClosed('${c.symbol}', ${JSON.stringify(c.closed_at)}, ${c.exit_price})">✕</button></td>
                 </tr>`;
@@ -19734,7 +19763,7 @@ async function loadTMState(isPoll) {
         if (window._tmArchiveMode && window._tmArchiveMode.shadow) {
             // Таблиця показує повний архів із БД — жива стрічка її не чіпає.
         } else if (shadowClosed.length === 0) {
-            shadowClosedTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No paper closes yet</td></tr>';
+            shadowClosedTbody.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">No paper closes yet</td></tr>';
             window._tmShadowClosedSig = _scSig;
         } else if (window._tmShadowClosedSig !== _scSig) {
             window._tmShadowClosedSig = _scSig;
@@ -19753,6 +19782,7 @@ async function loadTMState(isPoll) {
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
                     <td class="${pnlClass} tm-pnl-cell">${pnlSign}${c.pnl_pct.toFixed(2)}%</td>
+                    ${peakCellHTML(c)}
                     ${reasonCellHTML(c)}
                     <td><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMShadowClosed('${c.symbol}', ${JSON.stringify(c.closed_at)}, ${c.exit_price})">✕</button></td>
                 </tr>`;
@@ -20452,8 +20482,8 @@ function _copyFallback(text, cb) {
 window._tmArchiveMode = { closed: false, shadow: false };
 async function toggleArchiveView(which, btn) {
     const cfg = which === 'closed'
-        ? { tbody: 'tm-closed-tbody', src: 'tm-closed-src', isPaper: 'false', cols: 8, usd: true }
-        : { tbody: 'tm-shadow-closed-tbody', src: 'tm-shadow-src', isPaper: 'true', cols: 8, usd: false };
+        ? { tbody: 'tm-closed-tbody', src: 'tm-closed-src', isPaper: 'false', cols: 9, usd: true }
+        : { tbody: 'tm-shadow-closed-tbody', src: 'tm-shadow-src', isPaper: 'true', cols: 9, usd: false };
     const on = !window._tmArchiveMode[which];
     const srcEl = document.getElementById(cfg.src);
     if (!on) {
@@ -20489,6 +20519,7 @@ async function toggleArchiveView(which, btn) {
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
                     <td class="${pnlClass}">${sign}${pnl.toFixed(2)}%${usd}</td>
+                    ${peakCellHTML(c)}
                     <td title="${rDet}">${reason}</td>
                     <td></td>
                 </tr>`;
