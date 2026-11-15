@@ -381,3 +381,6 @@ body{font-size:15px}
 .hero .btn-primary:hover{background:#ffd45a;border-color:#ffd45a;color:#141414}
 .hero .btn-ghost{background:var(--elev);color:var(--txt)}
 .hero .btn-ghost:hover{border-color:rgba(240,185,11,.6);color:#ffd45a}
+
+/* v213: компактний бейдж NOT IN BOT */
+.bdg.ext-badge{font-size:7px;padding:1px 4px;gap:3px;letter-spacing:.04em}

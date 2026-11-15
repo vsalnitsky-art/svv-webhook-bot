@@ -1267,7 +1267,7 @@
     /* OHLC-легенда переїхала у шапку графіка; SBR-бейджі 1H/4H видалені. */
     h.innerHTML = '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym, !!(c.src && c.src !== "ext")) + "</span>" +
       '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" + pdBadge(c.pd) + pocBadge(c.poc, c.poc_state) +
-      (c.src === "ext" ? '<span class="bdg warn" title="Outside the bot\'s WATCHLIST">🛰 NOT IN BOT</span>' : "") +
+      (c.src === "ext" ? '<span class="bdg warn ext-badge" title="Outside the bot\'s WATCHLIST">🛰 NOT IN BOT</span>' : "") +
       '<span class="tv-ohlc" id="tv-ohlc"><span class="ohlc-legend"></span></span>';
     /* Легенда шарів переїхала в нижній рядок графіка (chart-footer). */
     if (lg) lg.innerHTML =
@@ -1292,7 +1292,7 @@
     /* Єдиний вигляд процесу завантаження скрізь: лого → LOADING → круг.
        Жодних додаткових текстів. */
     var n = $("#iw-note"); if (!n) return;
-    n.innerHTML = '<span class="chart-loading"><img src="img/logo-loading.svg?v=212" alt="VSV"><b>LOADING</b><span class="boot-spin" aria-hidden="true"></span></span>';
+    n.innerHTML = '<span class="chart-loading"><img src="img/logo-loading.svg?v=213" alt="VSV"><b>LOADING</b><span class="boot-spin" aria-hidden="true"></span></span>';
     n.style.display = "";
   }
   function setWait(c) {
