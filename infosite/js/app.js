@@ -790,14 +790,17 @@
 
   /* 15.11 IMB «як у TradingView»: зверху помаранчева смуга продажу, знизу бірюзова купівлі
      (довжина = %), обсяг — праворуч у зоні світлим текстом, зона тягнеться за останню свічку. */
-  var IMB_SELL = "rgba(234,128,38,.92)", IMB_BUY = "rgba(38,166,154,.92)", IMB_MIN_PX = 1.5, IMB_EXT_BARS = 20;
-  function _imbBar(ctx, X1, w, y, bh, pct, color, hr, vr, font, dark) {
+  var IMB_SELL = "rgba(230,126,34,.92)", IMB_BUY = "rgba(36,160,160,.88)", IMB_MIN_PX = 1.5, IMB_EXT_BARS = 50;
+  var IMB_BG_SELL = "rgba(150,80,20,.32)", IMB_BG_BUY = "rgba(24,120,125,.30)";
+  function _imbBar(ctx, X1, w, y, bh, pct, color, hr, vr, font, dark, tv) {
     if (pct == null || pct <= 0 || bh < 1) return;
     var sw = Math.max(2 * hr, w * Math.min(100, Math.max(0, pct)) / 100);
     ctx.fillStyle = color; ctx.fillRect(X1, y, sw, bh);
-    ctx.strokeStyle = dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.25)"; ctx.lineWidth = Math.max(1, Math.round(hr)); ctx.strokeRect(X1, y, sw, bh);
-    if (bh < 9 * vr) return;
-    var fp = Math.max(7, Math.min(13, bh / vr * 0.5)); ctx.font = font(600, fp); ctx.textBaseline = "middle"; ctx.fillStyle = dark ? "rgba(240,242,248,.96)" : "rgba(20,24,32,.9)";
+    ctx.strokeStyle = tv ? "rgba(0,0,0,.75)" : (dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.25)"); ctx.lineWidth = Math.max(1, Math.round(hr)); ctx.strokeRect(X1, y, sw, bh);
+    if (bh < 8 * vr) return;
+    /* 15.11 як у TV: % білий, розмір від висоти смуги (у високій зоні — великий) */
+    var fp = tv ? Math.max(7, Math.min(44, bh / vr * 0.5)) : Math.max(8, Math.min(32, bh / vr * 0.62));
+    ctx.font = font(tv ? 500 : 600, fp); ctx.textBaseline = "middle"; ctx.fillStyle = (tv || dark) ? "rgba(240,242,248,.94)" : "rgba(20,24,32,.9)";
     var t = pct + "%", tw = ctx.measureText(t).width;
     if (sw >= tw + 10 * hr) { ctx.textAlign = "right"; ctx.fillText(t, X1 + sw - 5 * hr, y + bh / 2); }
     else if (w - sw >= tw + 8 * hr) { ctx.textAlign = "left"; ctx.fillText(t, X1 + sw + 4 * hr, y + bh / 2); }
@@ -806,8 +809,8 @@
     var w = X2 - X1, h = yB - yT;
     if (w > 4 * hr && (b.topPct != null || b.botPct != null)) {
       var bh = h / 2;
-      _imbBar(ctx, X1, w, yT, bh, b.topPct, b.topCol || IMB_SELL, hr, vr, font, dark);
-      _imbBar(ctx, X1, w, yT + bh, bh, b.botPct, b.botCol || IMB_BUY, hr, vr, font, dark);
+      _imbBar(ctx, X1, w, yT, bh, b.topPct, b.topCol || IMB_SELL, hr, vr, font, dark, b.kind === "imb");
+      _imbBar(ctx, X1, w, yT + bh, bh, b.botPct, b.botCol || IMB_BUY, hr, vr, font, dark, b.kind === "imb");
     }
     if (b.kind === "imb") { _imbVol(ctx, b, X1, X2, yT, yB, hr, vr, font, dark); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; return; }
     if (b.volTxt && h >= 18 * vr && w > 40 * hr) {
@@ -824,11 +827,12 @@
   function _imbVol(ctx, b, X1, X2, yT, yB, hr, vr, font, dark) {
     var w = X2 - X1, h = yB - yT;
     if (!b.volTxt || h < 7 * vr || w < 30 * hr) return;
-    var fv = Math.max(7, Math.min(46, h / vr * 0.62));
-    ctx.font = font(500, fv);
-    while (fv > 7 && ctx.measureText(b.volTxt).width > w * 0.45) { fv -= 1; ctx.font = font(500, fv); }
+    /* 15.11 як у TV: обсяг ТЕМНИЙ, поверх смуг, праворуч, розмір від висоти зони */
+    var fv = Math.max(7, Math.min(120, h / vr * 0.6));
+    ctx.font = font(400, fv);
+    while (fv > 7 && ctx.measureText(b.volTxt).width > w * 0.62) { fv -= 1; ctx.font = font(400, fv); }
     ctx.textAlign = "right"; ctx.textBaseline = "middle";
-    ctx.fillStyle = dark ? "rgba(236,239,244,.82)" : "rgba(20,24,32,.78)";
+    ctx.fillStyle = dark ? "rgba(0,0,0,.72)" : "rgba(0,0,0,.6)";
     ctx.fillText(b.volTxt, X2 - 5 * hr, (yT + yB) / 2 + fv * vr * 0.04);
   }
   function wmDraw(ctx, wms, font, dark) {
@@ -1156,7 +1160,7 @@
       var t0 = snapSec(z.start, o), k0 = o.length - 1;
       while (k0 > 0 && Number(o[k0].time) > t0) k0--;
       out.push({ kind: "imb", thin: true, t: t0, top: z.top, bottom: z.bottom, ext: (o.length - 1 - k0) + IMB_EXT_BARS,
-        fill: L ? "rgba(38,166,154,.22)" : "rgba(160,92,40,.30)", stroke: L ? "rgba(38,166,154,.6)" : "rgba(234,128,38,.6)", text: L ? "#5eead4" : "#fdba74",
+        fill: L ? IMB_BG_BUY : IMB_BG_SELL, stroke: "rgba(0,0,0,.6)", text: L ? "#5eead4" : "#fdba74",
         volTxt: fmtVol(z.vol, 3), topPct: z.sell_pct, botPct: z.buy_pct, topCol: IMB_SELL, botCol: IMB_BUY, label: "IMB" });
     });
     return out;

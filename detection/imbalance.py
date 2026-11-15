@@ -29,6 +29,9 @@
   (колір 3 свічок — ~40 п.п.). `split='color'` — стара формула.
 - `pct` — частка БІЛЬШОЇ сторони (сумісність зі старим показом).
 
+НАКЛАДАННЯ (15.11): розрив, що перекриває ЖИВУ зону того самого боку, не
+створюється (`skip_overlap`) — так TV не малює 64 500–65 079 поверх 63 437–64 711.
+
 ЛИШЕ ЧИСТІ ФУНКЦІЇ, без I/O. Бар: {t (мс), o, h, l, p|c|close, v}.
 """
 from typing import Dict, List
@@ -43,8 +46,13 @@ def _close(b):
 
 
 def _vol(b):
-    """Обсяг бару в МОНЕТАХ: обіг ($) / типова ціна. Немає даних → 0."""
+    """Обсяг бару в МОНЕТАХ. Є поле біржі `q` (обсяг у монетах, 15.11) → саме
+    воно (TV показує рівно його: «9.245K»); інакше обіг ($) / типова ціна.
+    Немає даних → 0."""
     try:
+        q = b.get('q')
+        if q is not None and float(q) > 0:
+            return float(q)
         v = float(b.get('v', b.get('volume', 0)) or 0)
         if v <= 0:
             return 0.0
@@ -107,7 +115,8 @@ def _atr(h, l, c, n=ATR_LEN):
 
 def detect_imbalances(bars: List[Dict], min_atr: float = MIN_ATR,
                       max_show: int = MAX_SHOW, keep_filled: bool = False,
-                      mitigation: str = 'close', split: str = 'clv') -> List[Dict]:
+                      mitigation: str = 'close', split: str = 'clv',
+                      skip_overlap: bool = True) -> List[Dict]:
     """Незаповнені IMB (найновіший першим):
     [{side: LONG|SHORT, top, bottom, top0, bottom0, t (сек, середня свічка),
       t_form (сек, бар, що підтвердив розрив), filled_pct, filled,
@@ -147,13 +156,22 @@ def detect_imbalances(bars: List[Dict], min_atr: float = MIN_ATR,
                 z['top'], z['bottom'] = z['rt'], z['rb']
         a = atr[i] or atr[i - 1]
         thr = (a or 0.0) * float(min_atr)
-        if l[i] > h[i - 2] and (l[i] - h[i - 2]) > thr:
+
+        def _overlaps(side, lo, hi):
+            # 15.11 як у TV: новий розрив, що накладається на ЖИВУ зону того
+            # самого боку, не створюється (кейс BTC 1H 15.11: 64 500–65 079
+            # всередині живої 63 437–64 711 — у TV її немає).
+            if not skip_overlap:
+                return False
+            return any((not z['filled']) and z['side'] == side
+                       and lo < z['top0'] and hi > z['bottom0'] for z in live)
+        if l[i] > h[i - 2] and (l[i] - h[i - 2]) > thr and not _overlaps('LONG', h[i - 2], l[i]):
             vol, sp, bp = _vol_view(bars, i, split)
             live.append({'vol': vol, 'sell_pct': sp, 'buy_pct': bp,
                          'pct': (None if sp is None else max(sp, bp)), 'side': 'LONG', 'top': l[i], 'bottom': h[i - 2],
                          'top0': l[i], 'bottom0': h[i - 2], 'rt': l[i], 'rb': h[i - 2],
                          't': t[i - 1], 't_form': t[i], 'filled': False})
-        elif h[i] < l[i - 2] and (l[i - 2] - h[i]) > thr:
+        elif h[i] < l[i - 2] and (l[i - 2] - h[i]) > thr and not _overlaps('SHORT', h[i], l[i - 2]):
             vol, sp, bp = _vol_view(bars, i, split)
             live.append({'vol': vol, 'sell_pct': sp, 'buy_pct': bp,
                          'pct': (None if sp is None else max(sp, bp)), 'side': 'SHORT', 'top': l[i - 2], 'bottom': h[i],

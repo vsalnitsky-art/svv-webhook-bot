@@ -934,6 +934,34 @@ def test_rec_two_groups_and_single_timer():
     assert '#spb-wl .spb-h' in css and 'flex-direction' in css
 
 
+def test_imb_like_tv_volume_and_overlap_1511():
+    """15.11 (скріни TV BTC 1H): обсяг — поле біржі `q` (монети, як «9.245K»);
+    розрив, що накладається на ЖИВУ зону того самого боку, не створюється
+    (64 500–65 079 усередині 63 437–64 711 — у TV її немає)."""
+    m = _load('imbalance3', 'detection/imbalance.py')
+    T = 1_700_000_000_000
+    b = [{'t': T + i * 60000, 'o': 100, 'h': 101, 'l': 99, 'p': 100, 'v': 10} for i in range(20)]
+    b += [{'t': T + 20 * 60000, 'o': 100, 'h': 101, 'l': 99, 'p': 101, 'v': 100},
+          {'t': T + 21 * 60000, 'o': 101, 'h': 106, 'l': 100.5, 'p': 105.5, 'v': 832, 'q': 9.245},
+          {'t': T + 22 * 60000, 'o': 105.5, 'h': 107, 'l': 103, 'p': 106, 'v': 316}]
+    z = m.detect_imbalances(b)[0]
+    _check(z['vol'] == 9.245, ('обсяг = поле q біржі', z['vol']))
+    # друга бичача зона всередині першої (живої) → не створюється
+    b += [{'t': T + 23 * 60000, 'o': 102, 'h': 102.2, 'l': 101.5, 'p': 101.8, 'v': 10},
+          {'t': T + 24 * 60000, 'o': 101.8, 'h': 103.5, 'l': 101.7, 'p': 103.4, 'v': 10},
+          {'t': T + 25 * 60000, 'o': 103.4, 'h': 104, 'l': 102.9, 'p': 103.9, 'v': 10}]
+    longs = [x for x in m.detect_imbalances(b) if x['side'] == 'LONG']
+    _check(len(longs) == 1, ('накладка на живу зону того самого боку не створюється', longs))
+    _check(len([x for x in m.detect_imbalances(b, skip_overlap=False) if x['side'] == 'LONG']) == 2,
+           'стара поведінка — за параметром')
+    md = open(os.path.join(_HERE, 'detection', 'market_data.py'), encoding='utf-8').read()
+    _check(md.count("'q': float(k[") == 3, 'усі три біржі віддають обсяг у монетах')
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
+    _check('IMB_BG_SELL' in js and 'IMB_EXT_BARS = 50' in js and 'rgba(0,0,0,.72)' in js,
+           'кольори й порядок як у TV: темний обсяг поверх смуг, зона далі в майбутнє')
+    print('✓ IMB як у TV: обсяг біржі, без накладок, вигляд')
+
+
 if __name__ == '__main__':
     fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in fns:

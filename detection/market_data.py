@@ -187,6 +187,7 @@ class MarketData:
                     try:
                         tv = float(k[7]); tb = float(k[10])
                         page.append({'t': int(k[0]), 'p': float(k[4]),
+                                     'q': float(k[5]),   # обсяг у МОНЕТАХ (як TV)
                                      'v': round(tv), 'b': round(tb),
                                      's': round(tv - tb),
                                      'h': float(k[2]), 'l': float(k[3]),
@@ -260,6 +261,7 @@ class MarketData:
                         buy_ratio = 0.6 if c > o else 0.4 if c < o else 0.5
                         tb = tv * buy_ratio
                         page.append({'t': int(k[0]), 'p': c, 'v': round(tv),
+                                     'q': float(k[6]),   # volCcy — обсяг у монетах
                                      'b': round(tb), 's': round(tv - tb),
                                      'h': float(k[2]), 'l': float(k[3]), 'o': o})
                     except Exception:
@@ -327,6 +329,7 @@ class MarketData:
                         buy_ratio = 0.6 if c > o else 0.4 if c < o else 0.5
                         tb = tv * buy_ratio
                         page.append({'t': int(k[0]), 'p': c, 'v': round(tv),
+                                     'q': float(k[5]),   # обсяг у МОНЕТАХ (як TV «9.245K»)
                                      'b': round(tb), 's': round(tv - tb),
                                      'h': float(k[2]), 'l': float(k[3]), 'o': o})
                     except Exception:
