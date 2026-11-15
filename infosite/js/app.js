@@ -788,7 +788,7 @@
   };
   function _rrect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r); ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath(); }
 
-  var IMB_SELL = "rgba(234,128,38,.92)", IMB_BUY = "rgba(38,166,154,.92)", IMB_MIN_PX = 4;
+  var IMB_SELL = "rgba(234,128,38,.92)", IMB_BUY = "rgba(38,166,154,.92)";
   function _imbBar(ctx, X1, w, y, bh, pct, color, hr, vr, font, dark) {
     if (pct == null || pct <= 0 || bh < 1) return;
     var sw = Math.max(2 * hr, w * Math.min(100, Math.max(0, pct)) / 100);
@@ -862,8 +862,7 @@
           if (b.tEnd != null) { var xe = ts.timeToCoordinate(b.tEnd); if (xe != null) X2 = Math.min(X2, (xe + ts.options().barSpacing / 2) * hr); }
           var yT = Math.min(yA, yB) * vr, yBt = Math.max(yA, yB) * vr;
           if (X2 <= X1) continue;
-          if (b.kind === "imb" && (yBt - yT) < IMB_MIN_PX * vr) continue;
-          if (yBt - yT < 1) yBt = yT + 1;
+          if (yBt - yT < 1) yBt = yT + 1; // тонкі валідні зони не пропускаємо
           ctx.fillStyle = b.fill; ctx.fillRect(X1, yT, X2 - X1, yBt - yT);
           if (b.kind === "imb" || b.kind === "vob") _imbBody(ctx, b, X1, X2, yT, yBt, hr, vr, font, dark, wms);
           ctx.strokeStyle = b.stroke; ctx.lineWidth = Math.max(1, Math.round((b.thin ? 1 : 1.2) * hr));
@@ -1094,47 +1093,12 @@
 
   function precisionOf(p) { p = Number(p) || 0; return p < 0.0001 ? 8 : p < 0.01 ? 6 : p < 1 ? 5 : p < 100 ? 4 : 2; }
 
-  /* IMB / FVG: зона між фітилями першої й третьої свічок підтвердженого
-     трисвічкового патерна. Час start від бекенду може вказувати на будь-яку
-     зі свічок утворення, тому спочатку знаходимо точну трійку в OHLC. */
-  var IMB_SEEN = {};
-  function imbBarIndex(sec, o) {
-    var start = Number(sec);
-    if (!o.length || !isFinite(start) || start < Number(o[0].time) || start > Number(o[o.length - 1].time)) return -1;
-    var t = Number(snapSec(start, o));
-    for (var i = 0; i < o.length; i++) if (Number(o[i].time) === t) return i;
-    return -1;
-  }
-  function imbGeometry(z, o) {
-    var side = String(z.side || "").toUpperCase(), rt = Number(z.top), rb = Number(z.bottom);
-    if ((side !== "LONG" && side !== "SHORT") || o.length < 3 || !isFinite(rt) || !isFinite(rb) || rt <= rb) return null;
-    var anchor = imbBarIndex(z.start, o);
-    if (anchor < 0) return null;
-    var tol = Math.max(Math.abs(rt - rb) * 0.02, Math.abs(rt) * 1e-8, 1e-12), best = null;
-    for (var i = Math.max(0, anchor - 2); i <= Math.min(anchor, o.length - 3); i++) {
-      var first = o[i], third = o[i + 2];
-      var top = side === "LONG" ? Number(third.low) : Number(first.low);
-      var bottom = side === "LONG" ? Number(first.high) : Number(third.high);
-      if (!isFinite(top) || !isFinite(bottom) || top <= bottom) continue;
-      var err = Math.abs(top - rt) + Math.abs(bottom - rb);
-      if (Math.abs(top - rt) > tol || Math.abs(bottom - rb) > tol) continue;
-      if (!best || err < best.err) best = { i: i, top: top, bottom: bottom, err: err };
-    }
-    if (!best) return null; // межі не відповідають жодному FVG поруч — не малюємо
-    var step = o.length > 1 ? Number(o[1].time) - Number(o[0].time) : 0;
-    if (step > 0 && Date.now() / 1000 < Number(o[best.i + 2].time) + step) return null; // третя свічка ще не закрилася
-    return { start: Number(o[best.i].time), top: best.top, bottom: best.bottom, side: side };
-  }
-  function imbKey(c, z) { return c.symbol + "|" + (c.tf || IW.tf) + "|" + z.start + "|" + z.top + "|" + z.bottom + "|" + z.side; }
-  function imbEnd(c, z, o) {
-    if (!o.length) return null;
-    var k = imbKey(c, z);
-    if (IMB_SEEN[k] == null) IMB_SEEN[k] = o[o.length - 1].time;
-    return IMB_SEEN[k];
-  }
+  /* Об'ємні IMB-зони надходить уже розрахованими з бота. Не підмінюємо їх
+     трисвічковою моделлю FVG: зберігаємо оригінальні start/top/bottom,
+     продовжуємо до правого краю й прибираємо лише повністю пройдені зони. */
   function imbMitigated(z, o) {
     var t0 = Number(z.start) || 0, step = o.length > 1 ? Number(o[1].time) - Number(o[0].time) : 0;
-    var from = t0 + 3 * step; // перевіряємо лише свічки після завершення утворення
+    var from = t0 + step; // свічка утворення не вважається ретестом
     for (var i = 0; i < o.length; i++) {
       var b = o[i]; if (Number(b.time) < from) continue;
       if (z.side === "LONG" && Number(b.low) <= Number(z.bottom)) return true;
@@ -1188,14 +1152,16 @@
         label: "OB " + tfLbl(c.ob_tf), sub: (sw ? "swing" : "int") + (b.tag ? " · " + b.tag : "") });
     });
     if (IW.show_imb) (c.imb || []).forEach(function (raw) {
-      var g = imbGeometry(raw, o);
+      var g = blockGeometry(raw, o);
       if (!g) return;
       var z = Object.assign({}, raw, g);
-      if (imbMitigated(z, o)) { delete IMB_SEEN[imbKey(c, z)]; return; }
+      if (imbMitigated(z, o)) return;
       var L = z.side === "LONG";
-      out.push({ kind: "imb", thin: true, tEnd: imbEnd(c, z, o), t: z.start, top: z.top, bottom: z.bottom,
+      out.push({ kind: "imb", thin: true, t: z.start, top: z.top, bottom: z.bottom,
         fill: L ? "rgba(38,166,154,.22)" : "rgba(160,92,40,.30)", stroke: L ? "rgba(38,166,154,.6)" : "rgba(234,128,38,.6)", text: L ? "#5eead4" : "#fdba74",
-        volTxt: fmtVol(z.vol, 3), topPct: z.sell_pct, botPct: z.buy_pct, topCol: IMB_SELL, botCol: IMB_BUY, label: "IMB" });
+        volTxt: fmtVol(z.vol != null ? z.vol : z.volume, 3),
+        topPct: z.sell_pct != null ? z.sell_pct : z.hi_pct, botPct: z.buy_pct != null ? z.buy_pct : z.lo_pct,
+        topCol: IMB_SELL, botCol: IMB_BUY, label: "IMB" });
     });
     return out;
   }
