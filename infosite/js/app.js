@@ -1094,6 +1094,28 @@
 
   function precisionOf(p) { p = Number(p) || 0; return p < 0.0001 ? 8 : p < 0.01 ? 6 : p < 1 ? 5 : p < 100 ? 4 : 2; }
 
+  /* IMB як у TradingView: права межа зони фіксується в момент її першої появи
+     і більше не рухається — блок лишається на свічках, де утворився. Зона,
+     яку ціна повністю «розпилила» (фітиль за протилежним краєм), зникає. */
+  var IMB_SEEN = {};
+  function imbKey(c, z) { return c.symbol + "|" + z.start + "|" + z.top + "|" + z.bottom + "|" + z.side; }
+  function imbEnd(c, z, o) {
+    if (!o.length) return null;
+    var k = imbKey(c, z);
+    if (IMB_SEEN[k] == null) IMB_SEEN[k] = o[o.length - 1].time;
+    return IMB_SEEN[k];
+  }
+  function imbMitigated(z, o) {
+    var t0 = Number(z.start) || 0, step = o.length > 1 ? Number(o[1].time) - Number(o[0].time) : 0;
+    var from = t0 + 3 * step; // перші свічки — це утворення зони, їх пропускаємо
+    for (var i = 0; i < o.length; i++) {
+      var b = o[i]; if (Number(b.time) < from) continue;
+      if (z.side === "LONG" && Number(b.low) < Number(z.bottom)) return true;
+      if (z.side === "SHORT" && Number(b.high) > Number(z.top)) return true;
+    }
+    return false;
+  }
+
   function boxesOf(c) {
     var o = c.ohlc || [], out = [];
     (c.vob || []).forEach(function (v) {
@@ -1112,8 +1134,9 @@
         label: "OB " + tfLbl(c.ob_tf), sub: (sw ? "swing" : "int") + (b.tag ? " · " + b.tag : "") });
     });
     if (IW.show_imb) (c.imb || []).forEach(function (z) {
+      if (imbMitigated(z, o)) { delete IMB_SEEN[imbKey(c, z)]; return; }
       var L = z.side === "LONG";
-      out.push({ kind: "imb", thin: true, tEnd: o.length ? o[o.length - 1].time : null, t: snapSec(z.start, o), top: z.top, bottom: z.bottom,
+      out.push({ kind: "imb", thin: true, tEnd: imbEnd(c, z, o), t: snapSec(z.start, o), top: z.top, bottom: z.bottom,
         fill: L ? "rgba(38,166,154,.22)" : "rgba(160,92,40,.30)", stroke: L ? "rgba(38,166,154,.6)" : "rgba(234,128,38,.6)", text: L ? "#5eead4" : "#fdba74",
         volTxt: fmtVol(z.vol, 3), topPct: z.sell_pct, botPct: z.buy_pct, topCol: IMB_SELL, botCol: IMB_BUY, label: "IMB" });
     });
