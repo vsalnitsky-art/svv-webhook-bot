@@ -1094,11 +1094,38 @@
 
   function precisionOf(p) { p = Number(p) || 0; return p < 0.0001 ? 8 : p < 0.01 ? 6 : p < 1 ? 5 : p < 100 ? 4 : 2; }
 
-  /* IMB як у TradingView: права межа зони фіксується в момент її першої появи
-     і більше не рухається — блок лишається на свічках, де утворився. Зона,
-     яку ціна повністю «розпилила» (фітиль за протилежним краєм), зникає. */
+  /* IMB / FVG: зона між фітилями першої й третьої свічок підтвердженого
+     трисвічкового патерна. Час start від бекенду може вказувати на будь-яку
+     зі свічок утворення, тому спочатку знаходимо точну трійку в OHLC. */
   var IMB_SEEN = {};
-  function imbKey(c, z) { return c.symbol + "|" + z.start + "|" + z.top + "|" + z.bottom + "|" + z.side; }
+  function imbBarIndex(sec, o) {
+    var start = Number(sec);
+    if (!o.length || !isFinite(start) || start < Number(o[0].time) || start > Number(o[o.length - 1].time)) return -1;
+    var t = Number(snapSec(start, o));
+    for (var i = 0; i < o.length; i++) if (Number(o[i].time) === t) return i;
+    return -1;
+  }
+  function imbGeometry(z, o) {
+    var side = String(z.side || "").toUpperCase(), rt = Number(z.top), rb = Number(z.bottom);
+    if ((side !== "LONG" && side !== "SHORT") || o.length < 3 || !isFinite(rt) || !isFinite(rb) || rt <= rb) return null;
+    var anchor = imbBarIndex(z.start, o);
+    if (anchor < 0) return null;
+    var tol = Math.max(Math.abs(rt - rb) * 0.02, Math.abs(rt) * 1e-8, 1e-12), best = null;
+    for (var i = Math.max(0, anchor - 2); i <= Math.min(anchor, o.length - 3); i++) {
+      var first = o[i], third = o[i + 2];
+      var top = side === "LONG" ? Number(third.low) : Number(first.low);
+      var bottom = side === "LONG" ? Number(first.high) : Number(third.high);
+      if (!isFinite(top) || !isFinite(bottom) || top <= bottom) continue;
+      var err = Math.abs(top - rt) + Math.abs(bottom - rb);
+      if (Math.abs(top - rt) > tol || Math.abs(bottom - rb) > tol) continue;
+      if (!best || err < best.err) best = { i: i, top: top, bottom: bottom, err: err };
+    }
+    if (!best) return null; // межі не відповідають жодному FVG поруч — не малюємо
+    var step = o.length > 1 ? Number(o[1].time) - Number(o[0].time) : 0;
+    if (step > 0 && Date.now() / 1000 < Number(o[best.i + 2].time) + step) return null; // третя свічка ще не закрилася
+    return { start: Number(o[best.i].time), top: best.top, bottom: best.bottom, side: side };
+  }
+  function imbKey(c, z) { return c.symbol + "|" + (c.tf || IW.tf) + "|" + z.start + "|" + z.top + "|" + z.bottom + "|" + z.side; }
   function imbEnd(c, z, o) {
     if (!o.length) return null;
     var k = imbKey(c, z);
@@ -1107,36 +1134,66 @@
   }
   function imbMitigated(z, o) {
     var t0 = Number(z.start) || 0, step = o.length > 1 ? Number(o[1].time) - Number(o[0].time) : 0;
-    var from = t0 + 3 * step; // перші свічки — це утворення зони, їх пропускаємо
+    var from = t0 + 3 * step; // перевіряємо лише свічки після завершення утворення
     for (var i = 0; i < o.length; i++) {
       var b = o[i]; if (Number(b.time) < from) continue;
-      if (z.side === "LONG" && Number(b.low) < Number(z.bottom)) return true;
-      if (z.side === "SHORT" && Number(b.high) > Number(z.top)) return true;
+      if (z.side === "LONG" && Number(b.low) <= Number(z.bottom)) return true;
+      if (z.side === "SHORT" && Number(b.high) >= Number(z.top)) return true;
+    }
+    return false;
+  }
+
+  /* OB і VOB утворює бот. Тут не змінюємо їхні межі чи модель виявлення:
+     лише відсіюємо пошкоджені дані, прив'язуємо до реальної ділянки OHLC
+     та прибираємо звичайний блок після закриття за протилежною межею. */
+  function blockGeometry(z, o) {
+    var side = String(z.side || "").toUpperCase(), top = Number(z.top), bottom = Number(z.bottom), start = Number(z.start);
+    if ((side !== "LONG" && side !== "SHORT") || !o.length || !isFinite(start) || !isFinite(top) || !isFinite(bottom) || top <= bottom) return null;
+    if (start < Number(o[0].time) || start > Number(o[o.length - 1].time)) return null;
+    return { start: snapSec(start, o), top: top, bottom: bottom, side: side };
+  }
+  function blockMitigated(z, o) {
+    var step = o.length > 1 ? Number(o[1].time) - Number(o[0].time) : 0;
+    var from = Number(z.start) + step; // свічка утворення не вважається ретестом
+    for (var i = 0; i < o.length; i++) {
+      var b = o[i]; if (Number(b.time) < from) continue;
+      var close = Number(b.close); if (!isFinite(close)) continue;
+      if (z.side === "LONG" && close < Number(z.bottom)) return true;
+      if (z.side === "SHORT" && close > Number(z.top)) return true;
     }
     return false;
   }
 
   function boxesOf(c) {
     var o = c.ohlc || [], out = [];
-    (c.vob || []).forEach(function (v) {
+    (c.vob || []).forEach(function (raw) {
+      var g = blockGeometry(raw, o); if (!g) return;
+      var v = Object.assign({}, raw, g);
+      if (!v.breaker && blockMitigated(v, o)) return;
       var L = v.side === "LONG";
-      out.push({ kind: "vob", t: snapSec(v.start, o), top: v.top, bottom: v.bottom, dashed: v.breaker,
+      out.push({ kind: "vob", t: v.start, top: v.top, bottom: v.bottom, dashed: v.breaker,
         fill: L ? "rgba(34,197,94,.30)" : "rgba(242,54,69,.32)", stroke: L ? "rgba(34,197,94,.55)" : "rgba(242,54,69,.6)", text: L ? "#86efac" : "#fca5a5",
         volTxt: fmtVol(v.volume, 3), topPct: v.hi_pct, botPct: v.lo_pct,
         topCol: L ? "rgba(34,197,94,.45)" : "rgba(242,54,69,.45)", botCol: L ? "rgba(34,197,94,.18)" : "rgba(242,54,69,.18)",
         label: tfWord(v.tf || c.vob_tf) + " VOB" + (v.breaker ? " ✕" : ""),
         sub: [fmtVol(v.volume, 3), v.hi_pct != null ? Math.round(Math.max(v.hi_pct, v.lo_pct)) + "%" : (v.pct != null ? v.pct + "%" : "")].filter(Boolean).join(" · ") });
     });
-    (c.ob || []).forEach(function (b) {
+    (c.ob || []).forEach(function (raw) {
+      var g = blockGeometry(raw, o); if (!g) return;
+      var b = Object.assign({}, raw, g);
+      if (blockMitigated(b, o)) return;
       var L = b.side === "LONG", sw = b.fam === "swing";
-      out.push({ kind: "ob", thin: true, t: snapSec(b.start, o), top: b.top, bottom: b.bottom, dashed: false,
+      out.push({ kind: "ob", thin: true, t: b.start, top: b.top, bottom: b.bottom, dashed: false,
         fill: L ? "rgba(41,98,255,.16)" : "rgba(190,90,105,.18)", stroke: L ? "rgba(96,140,255,.4)" : "rgba(224,122,138,.45)", text: L ? "#93c5fd" : "#fda4af",
         label: "OB " + tfLbl(c.ob_tf), sub: (sw ? "swing" : "int") + (b.tag ? " · " + b.tag : "") });
     });
-    if (IW.show_imb) (c.imb || []).forEach(function (z) {
+    if (IW.show_imb) (c.imb || []).forEach(function (raw) {
+      var g = imbGeometry(raw, o);
+      if (!g) return;
+      var z = Object.assign({}, raw, g);
       if (imbMitigated(z, o)) { delete IMB_SEEN[imbKey(c, z)]; return; }
       var L = z.side === "LONG";
-      out.push({ kind: "imb", thin: true, tEnd: imbEnd(c, z, o), t: snapSec(z.start, o), top: z.top, bottom: z.bottom,
+      out.push({ kind: "imb", thin: true, tEnd: imbEnd(c, z, o), t: z.start, top: z.top, bottom: z.bottom,
         fill: L ? "rgba(38,166,154,.22)" : "rgba(160,92,40,.30)", stroke: L ? "rgba(38,166,154,.6)" : "rgba(234,128,38,.6)", text: L ? "#5eead4" : "#fdba74",
         volTxt: fmtVol(z.vol, 3), topPct: z.sell_pct, botPct: z.buy_pct, topCol: IMB_SELL, botCol: IMB_BUY, label: "IMB" });
     });
